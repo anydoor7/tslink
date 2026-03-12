@@ -1,0 +1,12 @@
+TSLink
+Copyright 2026 Maintainer (monody0007)
+
+This product includes software developed by Maintainer (https://github.com/monody0007).
+
+Licensed under the Apache License, Version 2.0.
+
+This product uses the following open source components:
+
+- Tailscale (tailscale.com) - BSD-3-Clause License
+- Cobra (github.com/spf13/cobra) - Apache License 2.0
+- fsnotify (github.com/fsnotify/fsnotify) - BSD-3-Clause License
