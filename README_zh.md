@@ -74,7 +74,7 @@ cd tslink && go install .
 ### 30 秒上手
 
 ```bash
-# 1. 认证 Tailscale
+# 1. 认证 Tailscale（浏览器登录 + API 密钥）
 tslink login
 
 # 2. 暴露本地 Web 服务
@@ -83,8 +83,10 @@ tslink add myapp --proxy localhost:3000
 # 3. 启动网关
 tslink serve --daemon
 
-# 从任何设备打开 https://tslink.<your-tailnet>.ts.net/s/myapp
+# 从任何设备访问 https://myapp.<your-tailnet>.ts.net
 ```
+
+TSLink 只需要一个密钥 — 你的 [Tailscale API 访问令牌](https://login.tailscale.com/admin/settings/keys)。认证密钥自动派生。API 密钥存储在系统钥匙串（macOS Keychain）中，不以明文保存。
 
 ### 暴露文件目录
 

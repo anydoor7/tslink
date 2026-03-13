@@ -74,7 +74,7 @@ cd tslink && go install .
 ### Get Started in 30 Seconds
 
 ```bash
-# 1. Authenticate with Tailscale
+# 1. Authenticate with Tailscale (browser login + API key)
 tslink login
 
 # 2. Expose a local web service
@@ -83,8 +83,10 @@ tslink add myapp --proxy localhost:3000
 # 3. Start the gateway
 tslink serve --daemon
 
-# Open https://tslink.<your-tailnet>.ts.net/s/myapp from any device
+# Access https://myapp.<your-tailnet>.ts.net from any device
 ```
+
+TSLink only needs one key — your [Tailscale API access token](https://login.tailscale.com/admin/settings/keys). Auth keys are derived automatically. Your API key is stored in the system keychain (macOS Keychain), never in plaintext.
 
 ### Expose a File Directory
 
@@ -97,11 +99,11 @@ tslink add documents --dir ~/Documents
 
 | Command | Description |
 |---------|-------------|
-| `tslink login` | Authenticate with your Tailscale account |
-| `tslink logout` | Clear authentication state |
+| `tslink login` | Authenticate with Tailscale (OAuth + API key) |
+| `tslink logout` | Clear credentials from keychain and files |
 | `tslink add <name> --proxy host:port` | Expose a local web service |
 | `tslink add <name> --dir /path` | Expose a file directory |
-| `tslink remove <name>` | Remove a registered service |
+| `tslink remove <name>` | Remove a service (+ auto-delete tailnet device) |
 | `tslink list` | List all registered services |
 | `tslink serve` | Start the gateway (foreground) |
 | `tslink serve --daemon` | Start the gateway (background) |
