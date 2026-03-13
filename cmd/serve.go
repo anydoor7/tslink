@@ -31,11 +31,11 @@ Examples:
 				return err
 			}
 
-			stateDir, err := config.TsnetStateDir()
+			nodesDir, err := config.NodesDir()
 			if err != nil {
 				return err
 			}
-			info, err := os.Stat(stateDir)
+			info, err := os.Stat(nodesDir)
 			if err != nil {
 				if os.IsNotExist(err) {
 					return fmt.Errorf("not authenticated — run 'tslink login' first")

@@ -22,7 +22,7 @@ Example:
 			return err
 		}
 
-		stateDir, err := config.TsnetStateDir()
+		nodesDir, err := config.NodesDir()
 		if err != nil {
 			return err
 		}
@@ -31,7 +31,7 @@ Example:
 
 		srv := &tsnet.Server{
 			Hostname: "tslink",
-			Dir:      stateDir,
+			Dir:      nodesDir,
 		}
 
 		status, err := srv.Up(context.Background())

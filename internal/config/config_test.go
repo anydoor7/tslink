@@ -40,13 +40,23 @@ func TestPIDPath(t *testing.T) {
 	}
 }
 
-func TestTsnetStateDir(t *testing.T) {
-	dir, err := TsnetStateDir()
+func TestNodesDir(t *testing.T) {
+	dir, err := NodesDir()
 	if err != nil {
-		t.Fatalf("TsnetStateDir() error = %v", err)
+		t.Fatalf("NodesDir() error = %v", err)
 	}
-	if !strings.HasSuffix(dir, "tsnet-state") {
-		t.Fatalf("TsnetStateDir() = %q, want suffix tsnet-state", dir)
+	if !strings.HasSuffix(dir, filepath.Join("tslink", "nodes")) {
+		t.Fatalf("NodesDir() = %q, want suffix %q", dir, filepath.Join("tslink", "nodes"))
+	}
+}
+
+func TestAuthKeyPath(t *testing.T) {
+	path, err := AuthKeyPath()
+	if err != nil {
+		t.Fatalf("AuthKeyPath() error = %v", err)
+	}
+	if !strings.HasSuffix(path, filepath.Join("tslink", "authkey")) {
+		t.Fatalf("AuthKeyPath() = %q, want suffix %q", path, filepath.Join("tslink", "authkey"))
 	}
 }
 
@@ -64,10 +74,11 @@ func TestAllPathsSharePrefix(t *testing.T) {
 	dir, _ := Dir()
 	regPath, _ := RegistryPath()
 	pidPath, _ := PIDPath()
-	stateDir, _ := TsnetStateDir()
+	nodesDir, _ := NodesDir()
+	authKeyPath, _ := AuthKeyPath()
 	logDir, _ := LogDir()
 
-	for _, p := range []string{regPath, pidPath, stateDir, logDir} {
+	for _, p := range []string{regPath, pidPath, nodesDir, authKeyPath, logDir} {
 		if !strings.HasPrefix(p, dir) {
 			t.Fatalf("path %q does not start with Dir() %q", p, dir)
 		}
@@ -75,6 +86,8 @@ func TestAllPathsSharePrefix(t *testing.T) {
 }
 
 func TestEnsureDir(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
 	if err := EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
@@ -95,5 +108,14 @@ func TestEnsureDir(t *testing.T) {
 	}
 	if !info.IsDir() {
 		t.Fatal("log dir is not a directory")
+	}
+
+	nodesDir, _ := NodesDir()
+	info, err = os.Stat(nodesDir)
+	if err != nil {
+		t.Fatalf("nodes dir does not exist after EnsureDir: %v", err)
+	}
+	if !info.IsDir() {
+		t.Fatal("nodes dir is not a directory")
 	}
 }

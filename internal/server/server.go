@@ -28,7 +28,7 @@ type Server struct {
 }
 
 func New() (*Server, error) {
-	stateDir, err := config.TsnetStateDir()
+	nodesDir, err := config.NodesDir()
 	if err != nil {
 		return nil, err
 	}
@@ -36,7 +36,7 @@ func New() (*Server, error) {
 	s := &Server{
 		tsnetSrv: &tsnet.Server{
 			Hostname: "tslink",
-			Dir:      stateDir,
+			Dir:      nodesDir,
 		},
 		mux:      http.NewServeMux(),
 		routes:   make(map[string]registry.Service),

@@ -22,17 +22,17 @@ Example:
 			return fmt.Errorf("tslink is currently running — run 'tslink stop' first")
 		}
 
-		stateDir, err := config.TsnetStateDir()
+		nodesDir, err := config.NodesDir()
 		if err != nil {
 			return err
 		}
 
-		if _, err := os.Stat(stateDir); os.IsNotExist(err) {
+		if _, err := os.Stat(nodesDir); os.IsNotExist(err) {
 			fmt.Println("→ Not logged in")
 			return nil
 		}
 
-		if err := os.RemoveAll(stateDir); err != nil {
+		if err := os.RemoveAll(nodesDir); err != nil {
 			return fmt.Errorf("clear auth state: %w", err)
 		}
 

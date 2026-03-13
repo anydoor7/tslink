@@ -29,12 +29,20 @@ func PIDPath() (string, error) {
 	return filepath.Join(dir, "tslink.pid"), nil
 }
 
-func TsnetStateDir() (string, error) {
+func NodesDir() (string, error) {
 	dir, err := Dir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "tsnet-state"), nil
+	return filepath.Join(dir, "nodes"), nil
+}
+
+func AuthKeyPath() (string, error) {
+	dir, err := Dir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "authkey"), nil
 }
 
 func LogDir() (string, error) {
@@ -50,8 +58,15 @@ func EnsureDir() error {
 	if err != nil {
 		return err
 	}
-	logDir, _ := LogDir()
-	for _, d := range []string{dir, logDir} {
+	logDir, err := LogDir()
+	if err != nil {
+		return err
+	}
+	nodesDir, err := NodesDir()
+	if err != nil {
+		return err
+	}
+	for _, d := range []string{dir, logDir, nodesDir} {
 		if err := os.MkdirAll(d, 0o700); err != nil {
 			return err
 		}
