@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/monody0007/tslink/internal/config"
@@ -31,19 +32,20 @@ Examples:
 				return err
 			}
 
-			nodesDir, err := config.NodesDir()
+			authKeyPath, err := config.AuthKeyPath()
 			if err != nil {
 				return err
 			}
-			info, err := os.Stat(nodesDir)
+			authKeyBytes, err := os.ReadFile(authKeyPath)
 			if err != nil {
 				if os.IsNotExist(err) {
 					return fmt.Errorf("not authenticated — run 'tslink login' first")
 				}
 				return err
 			}
-			if !info.IsDir() {
-				return fmt.Errorf("not authenticated — run 'tslink login' first")
+			authKey := strings.TrimSpace(string(authKeyBytes))
+			if authKey == "" {
+				return fmt.Errorf("empty auth key — run 'tslink login' first")
 			}
 
 			pidPath, err := config.PIDPath()
@@ -73,7 +75,7 @@ Examples:
 				return nil
 			}
 
-			return runForeground(pidPath)
+			return runForeground(pidPath, authKey)
 		},
 	}
 
@@ -81,7 +83,7 @@ Examples:
 	rootCmd.AddCommand(serveCmd)
 }
 
-func runForeground(pidPath string) error {
+func runForeground(pidPath, authKey string) error {
 	if err := daemon.WritePID(pidPath); err != nil {
 		return fmt.Errorf("write PID: %w", err)
 	}
@@ -90,14 +92,10 @@ func runForeground(pidPath string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	srv, err := server.New()
+	srv, err := server.New(authKey)
 	if err != nil {
 		return err
 	}
 
-	if err := srv.Run(ctx); err != nil {
-		return err
-	}
-
-	return nil
+	return srv.Run(ctx)
 }
