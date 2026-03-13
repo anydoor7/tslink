@@ -1,10 +1,12 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/registry"
+	"github.com/monody0007/tslink/internal/tailapi"
 	"github.com/spf13/cobra"
 )
 
@@ -33,6 +35,12 @@ Example:
 			}
 
 			fmt.Fprintf(cmd.OutOrStdout(), "→ ✓ removed: %s\n", name)
+
+			// Clean up tailnet node(s)
+			if err := tailapi.DeleteDevicesByHostname(context.Background(), name); err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "→ warning: could not remove tailnet node: %v\n", err)
+			}
+
 			return nil
 		},
 	}

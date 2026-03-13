@@ -45,6 +45,14 @@ func AuthKeyPath() (string, error) {
 	return filepath.Join(dir, "authkey"), nil
 }
 
+func APIKeyPath() (string, error) {
+	dir, err := Dir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "apikey"), nil
+}
+
 func LogDir() (string, error) {
 	dir, err := Dir()
 	if err != nil {

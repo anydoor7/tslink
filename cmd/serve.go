@@ -3,15 +3,16 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"os"
 	"os/signal"
 	"path/filepath"
-	"strings"
 	"syscall"
 
 	"github.com/monody0007/tslink/internal/config"
+	"github.com/monody0007/tslink/internal/credentials"
 	"github.com/monody0007/tslink/internal/daemon"
+	"github.com/monody0007/tslink/internal/registry"
 	"github.com/monody0007/tslink/internal/server"
+	"github.com/monody0007/tslink/internal/tailapi"
 	"github.com/spf13/cobra"
 )
 
@@ -32,20 +33,15 @@ Examples:
 				return err
 			}
 
-			authKeyPath, err := config.AuthKeyPath()
+			// Migrate file-based API key to keychain if possible
+			if credentials.MigrateFromLegacy() {
+				fmt.Fprintln(cmd.OutOrStdout(), "→ migrated API key to system keychain")
+			}
+
+			// Get auth key (derive from API key, or fall back to legacy authkey file)
+			authKey, err := credentials.GetAuthKey(context.Background())
 			if err != nil {
 				return err
-			}
-			authKeyBytes, err := os.ReadFile(authKeyPath)
-			if err != nil {
-				if os.IsNotExist(err) {
-					return fmt.Errorf("not authenticated — run 'tslink login' first")
-				}
-				return err
-			}
-			authKey := strings.TrimSpace(string(authKeyBytes))
-			if authKey == "" {
-				return fmt.Errorf("empty auth key — run 'tslink login' first")
 			}
 
 			pidPath, err := config.PIDPath()
@@ -55,6 +51,18 @@ Examples:
 
 			if daemon.IsRunning(pidPath) {
 				return fmt.Errorf("tslink is already running (see: tslink status)")
+			}
+
+			// Clean up stale tailnet nodes before starting
+			regPath, err := config.RegistryPath()
+			if err == nil {
+				if reg, err := registry.Load(regPath); err == nil {
+					var names []string
+					for _, s := range reg.Services {
+						names = append(names, s.Name)
+					}
+					_ = tailapi.CleanupStaleNodes(context.Background(), names)
+				}
 			}
 
 			if serveDaemon {

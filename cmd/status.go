@@ -2,9 +2,9 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/monody0007/tslink/internal/config"
+	"github.com/monody0007/tslink/internal/credentials"
 	"github.com/monody0007/tslink/internal/daemon"
 	"github.com/monody0007/tslink/internal/registry"
 	"github.com/spf13/cobra"
@@ -23,10 +23,6 @@ Example:
 		if err != nil {
 			return err
 		}
-		authKeyPath, err := config.AuthKeyPath()
-		if err != nil {
-			return err
-		}
 		regPath, err := config.RegistryPath()
 		if err != nil {
 			return err
@@ -39,10 +35,10 @@ Example:
 			fmt.Println("→ tslink: not running")
 		}
 
-		if _, err := os.Stat(authKeyPath); os.IsNotExist(err) {
-			fmt.Println("→ tailnet: not authenticated (run: tslink login)")
-		} else {
+		if apiKey, _ := credentials.GetAPIKey(); apiKey != "" {
 			fmt.Println("→ tailnet: authenticated")
+		} else {
+			fmt.Println("→ tailnet: not authenticated (run: tslink login)")
 		}
 
 		reg, err := registry.Load(regPath)

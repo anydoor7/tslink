@@ -2,14 +2,13 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
 	"github.com/monody0007/tslink/internal/config"
+	"github.com/monody0007/tslink/internal/credentials"
 	"github.com/spf13/cobra"
 	"tailscale.com/tsnet"
 )
@@ -17,8 +16,12 @@ import (
 var loginCmd = &cobra.Command{
 	Use:   "login",
 	Short: "Login to Tailscale",
-	Long: `Authenticate with your Tailscale account and generate an auth key.
-Opens a browser for OAuth login. Run this before 'tslink serve'.
+	Long: `Authenticate with your Tailscale account.
+
+Opens a browser for OAuth login, then asks for your API key.
+The API key is used to manage tailnet devices and derive auth keys automatically.
+
+Generate an API key at: https://login.tailscale.com/admin/settings/keys
 
 Example:
   tslink login`,
@@ -58,69 +61,54 @@ Example:
 			}
 		}
 
-		// Create reusable auth key
-		authKey, err := createAuthKey()
-		if err != nil {
-			srv.Close()
-			return fmt.Errorf("create auth key: %w", err)
-		}
-
 		srv.Close()
 
-		// Save auth key
-		authKeyPath, err := config.AuthKeyPath()
-		if err != nil {
-			return err
+		if loginName != "" {
+			fmt.Printf("→ Logged in: %s\n", loginName)
+		} else {
+			fmt.Println("→ Logged in to Tailscale")
 		}
-		if err := os.WriteFile(authKeyPath, []byte(authKey), 0o600); err != nil {
-			return fmt.Errorf("save auth key: %w", err)
+
+		// Ask for API key (the only key we need now)
+		fmt.Print("\n  Paste your API access token\n")
+		fmt.Print("  (generate at https://login.tailscale.com/admin/settings/keys)\n")
+		fmt.Print("  API key: ")
+		var apiKey string
+		fmt.Scanln(&apiKey)
+		apiKey = strings.TrimSpace(apiKey)
+		if apiKey == "" {
+			return fmt.Errorf("API key is required — tslink uses it to manage devices and derive auth keys")
+		}
+
+		// Verify the key works by trying to list devices
+		fmt.Println("→ Verifying API key...")
+		if err := credentials.SetAPIKey(apiKey); err != nil {
+			return fmt.Errorf("save API key: %w", err)
+		}
+
+		client, err := credentials.NewTailscaleClient()
+		if err != nil || client == nil {
+			credentials.DeleteAPIKey()
+			return fmt.Errorf("invalid API key")
+		}
+		if _, err := client.Devices(context.Background(), nil); err != nil {
+			credentials.DeleteAPIKey()
+			return fmt.Errorf("API key verification failed: %w", err)
+		}
+
+		// Remove legacy authkey file (no longer needed)
+		if authKeyPath, e := config.AuthKeyPath(); e == nil {
+			os.Remove(authKeyPath)
 		}
 
 		// Delete legacy tsnet-state/ if present
 		legacyDir := filepath.Join(cfgDir, "tsnet-state")
 		os.RemoveAll(legacyDir)
 
-		if loginName != "" {
-			fmt.Printf("→ ✓ Logged in: %s\n", loginName)
-		} else {
-			fmt.Println("→ ✓ Logged in to Tailscale")
-		}
-		fmt.Println("→ ✓ Auth key saved — services will auto-join your tailnet")
+		fmt.Println("→ API key saved (system keychain)")
+		fmt.Println("→ Auth keys will be derived automatically on 'tslink serve'")
 		return nil
 	},
-}
-
-// createAuthKey attempts to create a reusable auth key.
-// Strategy: try `tailscale` CLI first, then prompt user for manual creation.
-func createAuthKey() (string, error) {
-	// Try using the tailscale CLI to create an auth key
-	out, err := exec.Command("tailscale", "api", "post", "/api/v2/tailnet/-/keys",
-		"--data", `{"capabilities":{"devices":{"create":{"reusable":true,"ephemeral":false,"preauthorized":true}}}}`).Output()
-	if err == nil {
-		var resp struct {
-			Key string `json:"key"`
-		}
-		if json.Unmarshal(out, &resp) == nil && resp.Key != "" {
-			return resp.Key, nil
-		}
-	}
-
-	// Fallback: prompt user to create key manually
-	fmt.Println("\n→ Could not auto-create auth key.")
-	fmt.Println("  Please create a reusable auth key at:")
-	fmt.Println("  https://login.tailscale.com/admin/settings/keys")
-	fmt.Println("  (Enable: Reusable, Pre-authorized)")
-	fmt.Print("\n  Paste your auth key: ")
-
-	var key string
-	if _, err := fmt.Scanln(&key); err != nil {
-		return "", fmt.Errorf("read auth key: %w", err)
-	}
-	key = strings.TrimSpace(key)
-	if key == "" {
-		return "", fmt.Errorf("empty auth key")
-	}
-	return key, nil
 }
 
 func init() {

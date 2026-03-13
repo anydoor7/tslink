@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/monody0007/tslink/internal/config"
+	"github.com/monody0007/tslink/internal/credentials"
 	"github.com/monody0007/tslink/internal/daemon"
 	"github.com/spf13/cobra"
 )
@@ -32,14 +33,17 @@ Example:
 			return err
 		}
 
-		// Check if logged in
+		// Check if logged in (check keychain, apikey file, and legacy authkey)
+		apiKey, _ := credentials.GetAPIKey()
 		_, authErr := os.Stat(authKeyPath)
 		_, nodesErr := os.Stat(nodesDir)
-		if os.IsNotExist(authErr) && os.IsNotExist(nodesErr) {
+		if apiKey == "" && os.IsNotExist(authErr) && os.IsNotExist(nodesErr) {
 			fmt.Println("→ Not logged in")
 			return nil
 		}
 
+		// Remove credentials from keychain and files
+		credentials.DeleteAPIKey()
 		os.Remove(authKeyPath)
 		os.RemoveAll(nodesDir)
 
