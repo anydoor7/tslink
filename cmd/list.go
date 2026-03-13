@@ -31,16 +31,14 @@ func init() {
 			}
 
 			writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-			fmt.Fprintln(writer, "NAME\tTYPE\tTARGET\tPATH")
+			fmt.Fprintln(writer, "NAME\tTYPE\tTARGET\tURL")
 			for _, svc := range reg.Services {
 				target := svc.Target
-				route := "/s/" + svc.Name
 				if svc.Type == registry.TypeFile {
 					target = svc.Path
-					route = "/f/" + svc.Name + "/"
 				}
-
-				fmt.Fprintf(writer, "%s\t%s\t%s\t%s\n", svc.Name, svc.Type, target, route)
+				url := fmt.Sprintf("https://%s.<tailnet>.ts.net", svc.Name)
+				fmt.Fprintf(writer, "%s\t%s\t%s\t%s\n", svc.Name, svc.Type, target, url)
 			}
 
 			return writer.Flush()

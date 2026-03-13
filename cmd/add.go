@@ -67,8 +67,8 @@ Examples:
 					return err
 				}
 
-				fmt.Fprintf(cmd.OutOrStdout(), "→ ✓ registered: /s/%s (→ %s)\n", name, proxyTarget)
-				fmt.Fprintln(cmd.OutOrStdout(), "Full URL available after 'tslink serve' starts")
+				fmt.Fprintf(cmd.OutOrStdout(), "→ ✓ Service %q registered\n", name)
+				fmt.Fprintf(cmd.OutOrStdout(), "URL: https://%s.<tailnet>.ts.net (available after tslink serve)\n", name)
 				return nil
 			}
 
@@ -93,8 +93,8 @@ Examples:
 				return err
 			}
 
-			fmt.Fprintf(cmd.OutOrStdout(), "→ ✓ registered: /f/%s/ (→ %s)\n", name, absPath)
-			fmt.Fprintln(cmd.OutOrStdout(), "Full URL available after 'tslink serve' starts")
+			fmt.Fprintf(cmd.OutOrStdout(), "→ ✓ Service %q registered\n", name)
+			fmt.Fprintf(cmd.OutOrStdout(), "URL: https://%s.<tailnet>.ts.net (available after tslink serve)\n", name)
 			return nil
 		},
 	}
