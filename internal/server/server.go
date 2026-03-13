@@ -7,8 +7,8 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 
@@ -18,157 +18,50 @@ import (
 	"tailscale.com/tsnet"
 )
 
-type Server struct {
-	tsnetSrv    *tsnet.Server
-	localClient *LocalClient
-	mux         *http.ServeMux
-	mu          sync.RWMutex
-	routes      map[string]registry.Service
-	handlers    map[string]http.Handler
+// ServiceNode represents a single tsnet node serving one service.
+type ServiceNode struct {
+	tsnetSrv *tsnet.Server
+	service  registry.Service
+	listener net.Listener
+	cancel   context.CancelFunc
 }
 
-func New() (*Server, error) {
-	nodesDir, err := config.NodesDir()
+// Server manages multiple tsnet nodes, one per registered service.
+type Server struct {
+	nodes   map[string]*ServiceNode
+	authKey string
+	mu      sync.RWMutex
+	cfgDir  string
+}
+
+// New creates a new multi-node server.
+func New(authKey string) (*Server, error) {
+	cfgDir, err := config.Dir()
 	if err != nil {
 		return nil, err
 	}
-
-	s := &Server{
-		tsnetSrv: &tsnet.Server{
-			Hostname: "tslink",
-			Dir:      nodesDir,
-		},
-		mux:      http.NewServeMux(),
-		routes:   make(map[string]registry.Service),
-		handlers: make(map[string]http.Handler),
-	}
-	s.mux.HandleFunc("/", s.serveHTTP)
-
-	return s, nil
+	return &Server{
+		nodes:   make(map[string]*ServiceNode),
+		authKey: authKey,
+		cfgDir:  cfgDir,
+	}, nil
 }
 
+// Run starts all registered service nodes and watches for registry changes.
 func (s *Server) Run(ctx context.Context) error {
-	if _, err := s.tsnetSrv.Up(ctx); err != nil {
-		return fmt.Errorf("tsnet up: %w", err)
-	}
-
-	localClient, err := s.tsnetSrv.LocalClient()
-	if err != nil {
-		_ = s.tsnetSrv.Close()
-		return fmt.Errorf("local client: %w", err)
-	}
-	s.localClient = localClient
-
-	if domains := s.tsnetSrv.CertDomains(); len(domains) > 0 {
-		log.Printf("tslink ready: https://%s", domains[0])
-	}
-
-	if err := s.loadRegistry(); err != nil {
-		log.Printf("warning: failed to load registry: %v", err)
+	if err := s.syncNodes(ctx); err != nil {
+		log.Printf("warning: initial sync: %v", err)
 	}
 
 	go s.watchRegistry(ctx)
 
-	ln, err := s.tsnetSrv.ListenTLS("tcp", ":443")
-	if err != nil {
-		_ = s.tsnetSrv.Close()
-		return fmt.Errorf("listen TLS: %w", err)
-	}
-
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- http.Serve(ln, s.mux)
-	}()
-
-	select {
-	case <-ctx.Done():
-		_ = ln.Close()
-		serveErr := <-errCh
-		closeErr := s.tsnetSrv.Close()
-		if serveErr != nil && !isClosedListenerError(serveErr) {
-			return serveErr
-		}
-		return closeErr
-	case err := <-errCh:
-		closeErr := s.tsnetSrv.Close()
-		if err != nil && !isClosedListenerError(err) {
-			return err
-		}
-		return closeErr
-	}
+	<-ctx.Done()
+	s.closeAllNodes()
+	return nil
 }
 
-func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
-	path := r.URL.Path
-
-	if strings.HasPrefix(path, "/s/") {
-		name := routeName(strings.TrimPrefix(path, "/s/"))
-
-		s.mu.RLock()
-		svc, ok := s.routes[name]
-		handler := s.handlers[name]
-		s.mu.RUnlock()
-
-		if !ok || svc.Type != registry.TypeProxy || handler == nil {
-			http.NotFound(w, r)
-			return
-		}
-
-		http.StripPrefix("/s/"+name, handler).ServeHTTP(w, r)
-		return
-	}
-
-	if strings.HasPrefix(path, "/f/") {
-		name := routeName(strings.TrimPrefix(path, "/f/"))
-
-		s.mu.RLock()
-		svc, ok := s.routes[name]
-		handler := s.handlers[name]
-		s.mu.RUnlock()
-
-		if !ok || svc.Type != registry.TypeFile || handler == nil {
-			http.NotFound(w, r)
-			return
-		}
-
-		if path == "/f/"+name {
-			http.Redirect(w, r, path+"/", http.StatusMovedPermanently)
-			return
-		}
-
-		http.StripPrefix("/f/"+name+"/", handler).ServeHTTP(w, r)
-		return
-	}
-
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	fmt.Fprintln(w, "tslink is running")
-
-	s.mu.RLock()
-	services := make([]registry.Service, 0, len(s.routes))
-	for _, svc := range s.routes {
-		services = append(services, svc)
-	}
-	s.mu.RUnlock()
-
-	if len(services) == 0 {
-		fmt.Fprintln(w, "No services registered.")
-		return
-	}
-
-	sort.Slice(services, func(i, j int) bool {
-		return services[i].Name < services[j].Name
-	})
-
-	for _, svc := range services {
-		if svc.Type == registry.TypeProxy {
-			fmt.Fprintf(w, "/s/%s -> %s\n", svc.Name, svc.Target)
-			continue
-		}
-		fmt.Fprintf(w, "/f/%s/ -> %s\n", svc.Name, svc.Path)
-	}
-}
-
-func (s *Server) loadRegistry() error {
+// syncNodes compares registry to running nodes and starts/stops as needed.
+func (s *Server) syncNodes(ctx context.Context) error {
 	regPath, err := config.RegistryPath()
 	if err != nil {
 		return err
@@ -179,43 +72,159 @@ func (s *Server) loadRegistry() error {
 		return err
 	}
 
-	routes := make(map[string]registry.Service, len(reg.Services))
-	handlers := make(map[string]http.Handler, len(reg.Services))
-
+	// Build desired state
+	desired := make(map[string]registry.Service, len(reg.Services))
 	for _, svc := range reg.Services {
-		switch svc.Type {
-		case registry.TypeProxy:
-			handler, err := NewProxyHandler(svc.Target, s.localClient)
-			if err != nil {
-				log.Printf("skip proxy %q: %v", svc.Name, err)
-				continue
-			}
-			routes[svc.Name] = svc
-			handlers[svc.Name] = handler
-		case registry.TypeFile:
-			routes[svc.Name] = svc
-			handlers[svc.Name] = NewFileHandler(svc.Path)
-		default:
-			log.Printf("skip service %q: unknown type %q", svc.Name, svc.Type)
-		}
+		desired[svc.Name] = svc
 	}
 
 	s.mu.Lock()
-	s.routes = routes
-	s.handlers = handlers
-	s.mu.Unlock()
+	defer s.mu.Unlock()
+
+	// Stop nodes for removed or changed services
+	for name, node := range s.nodes {
+		svc, exists := desired[name]
+		if !exists {
+			log.Printf("removing node %q", name)
+			s.stopNodeLocked(name, true) // remove state for deleted services
+		} else if serviceChanged(node.service, svc) {
+			log.Printf("restarting node %q", name)
+			s.stopNodeLocked(name, false) // keep state for changed services
+		}
+	}
+
+	// Start nodes for new or changed services
+	for name, svc := range desired {
+		if _, running := s.nodes[name]; running {
+			continue
+		}
+		if err := s.startNodeLocked(ctx, svc); err != nil {
+			log.Printf("failed to start node %q: %v", name, err)
+		}
+	}
 
 	return nil
 }
 
-func (s *Server) watchRegistry(ctx context.Context) {
-	regPath, err := config.RegistryPath()
+func serviceChanged(old, new registry.Service) bool {
+	return old.Type != new.Type || old.Target != new.Target || old.Path != new.Path
+}
+
+func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service) error {
+	nodesDir, err := config.NodesDir()
 	if err != nil {
-		log.Printf("registry watch disabled: %v", err)
+		return err
+	}
+
+	stateDir := filepath.Join(nodesDir, svc.Name)
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		return err
+	}
+
+	tsnetSrv := &tsnet.Server{
+		Hostname: svc.Name,
+		Dir:      stateDir,
+		AuthKey:  s.authKey,
+	}
+
+	nodeCtx, cancel := context.WithCancel(ctx)
+
+	if _, err := tsnetSrv.Up(nodeCtx); err != nil {
+		cancel()
+		return fmt.Errorf("tsnet up for %q: %w", svc.Name, err)
+	}
+
+	// Create handler based on service type
+	var handler http.Handler
+	switch svc.Type {
+	case registry.TypeProxy:
+		lc, err := tsnetSrv.LocalClient()
+		if err != nil {
+			cancel()
+			tsnetSrv.Close()
+			return fmt.Errorf("local client for %q: %w", svc.Name, err)
+		}
+		h, err := NewProxyHandler(svc.Target, lc)
+		if err != nil {
+			cancel()
+			tsnetSrv.Close()
+			return fmt.Errorf("proxy handler for %q: %w", svc.Name, err)
+		}
+		handler = h
+	case registry.TypeFile:
+		handler = NewFileHandler(svc.Path)
+	default:
+		cancel()
+		tsnetSrv.Close()
+		return fmt.Errorf("unknown service type %q", svc.Type)
+	}
+
+	ln, err := tsnetSrv.ListenTLS("tcp", ":443")
+	if err != nil {
+		cancel()
+		tsnetSrv.Close()
+		return fmt.Errorf("listen TLS for %q: %w", svc.Name, err)
+	}
+
+	node := &ServiceNode{
+		tsnetSrv: tsnetSrv,
+		service:  svc,
+		listener: ln,
+		cancel:   cancel,
+	}
+
+	// Serve in background
+	go func() {
+		if err := http.Serve(ln, handler); err != nil && !isClosedListenerError(err) {
+			log.Printf("node %q serve error: %v", svc.Name, err)
+		}
+	}()
+
+	if domains := tsnetSrv.CertDomains(); len(domains) > 0 {
+		log.Printf("node %q ready: https://%s", svc.Name, domains[0])
+	}
+
+	s.nodes[svc.Name] = node
+	return nil
+}
+
+// stopNodeLocked stops a node. If removeState is true, its tsnet state dir is deleted.
+// Use removeState=true only when a service is removed from the registry.
+func (s *Server) stopNodeLocked(name string, removeState bool) {
+	node, ok := s.nodes[name]
+	if !ok {
 		return
 	}
 
-	cfgDir, err := config.Dir()
+	node.cancel()
+	if node.listener != nil {
+		node.listener.Close()
+	}
+	if node.tsnetSrv != nil {
+		node.tsnetSrv.Close()
+	}
+
+	if removeState {
+		nodesDir, err := config.NodesDir()
+		if err == nil {
+			os.RemoveAll(filepath.Join(nodesDir, name))
+		}
+	}
+
+	delete(s.nodes, name)
+}
+
+func (s *Server) closeAllNodes() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for name := range s.nodes {
+		s.stopNodeLocked(name, false) // keep state on graceful shutdown
+	}
+}
+
+func (s *Server) watchRegistry(ctx context.Context) {
+	regPath, err := config.RegistryPath()
 	if err != nil {
 		log.Printf("registry watch disabled: %v", err)
 		return
@@ -228,8 +237,8 @@ func (s *Server) watchRegistry(ctx context.Context) {
 	}
 	defer watcher.Close()
 
-	if err := watcher.Add(cfgDir); err != nil {
-		log.Printf("watch %s: %v", cfgDir, err)
+	if err := watcher.Add(s.cfgDir); err != nil {
+		log.Printf("watch %s: %v", s.cfgDir, err)
 		return
 	}
 
@@ -247,7 +256,7 @@ func (s *Server) watchRegistry(ctx context.Context) {
 				continue
 			}
 			if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) {
-				if err := s.loadRegistry(); err != nil {
+				if err := s.syncNodes(ctx); err != nil {
 					log.Printf("reload registry: %v", err)
 				}
 			}
@@ -258,23 +267,6 @@ func (s *Server) watchRegistry(ctx context.Context) {
 			log.Printf("fsnotify error: %v", err)
 		}
 	}
-}
-
-func (s *Server) Close() error {
-	if s.tsnetSrv == nil {
-		return nil
-	}
-	return s.tsnetSrv.Close()
-}
-
-func routeName(path string) string {
-	if path == "" {
-		return ""
-	}
-	if idx := strings.Index(path, "/"); idx >= 0 {
-		return path[:idx]
-	}
-	return path
 }
 
 func isClosedListenerError(err error) bool {
