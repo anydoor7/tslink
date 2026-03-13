@@ -23,7 +23,7 @@ Example:
 		if err != nil {
 			return err
 		}
-		nodesDir, err := config.NodesDir()
+		authKeyPath, err := config.AuthKeyPath()
 		if err != nil {
 			return err
 		}
@@ -39,7 +39,7 @@ Example:
 			fmt.Println("→ tslink: not running")
 		}
 
-		if _, err := os.Stat(nodesDir); os.IsNotExist(err) {
+		if _, err := os.Stat(authKeyPath); os.IsNotExist(err) {
 			fmt.Println("→ tailnet: not authenticated (run: tslink login)")
 		} else {
 			fmt.Println("→ tailnet: authenticated")

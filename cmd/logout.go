@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/daemon"
@@ -22,19 +23,29 @@ Example:
 			return fmt.Errorf("tslink is currently running — run 'tslink stop' first")
 		}
 
+		authKeyPath, err := config.AuthKeyPath()
+		if err != nil {
+			return err
+		}
 		nodesDir, err := config.NodesDir()
 		if err != nil {
 			return err
 		}
 
-		if _, err := os.Stat(nodesDir); os.IsNotExist(err) {
+		// Check if logged in
+		_, authErr := os.Stat(authKeyPath)
+		_, nodesErr := os.Stat(nodesDir)
+		if os.IsNotExist(authErr) && os.IsNotExist(nodesErr) {
 			fmt.Println("→ Not logged in")
 			return nil
 		}
 
-		if err := os.RemoveAll(nodesDir); err != nil {
-			return fmt.Errorf("clear auth state: %w", err)
-		}
+		os.Remove(authKeyPath)
+		os.RemoveAll(nodesDir)
+
+		// Also clean legacy tsnet-state/ if present
+		cfgDir, _ := config.Dir()
+		os.RemoveAll(filepath.Join(cfgDir, "tsnet-state"))
 
 		fmt.Println("→ ✓ Logged out")
 		return nil
