@@ -50,13 +50,22 @@ TSLink 直接解决了这个缺口。
 
 ## TSLink 做什么
 
-TSLink 将你的机器变成一个安全网关。一条命令就能将任何本地服务——Web 应用、API、文件目录——暴露到你的私有 [Tailscale](https://tailscale.com) 网络上。从你的手机、平板或 tailnet 上的任何设备访问。
+TSLink 将你的机器变成一个安全网关。一条命令就能将任何本地服务——Web 应用、API、文件目录、数据库——暴露到你的私有 [Tailscale](https://tailscale.com) 网络上。每个服务获得独立的 tailnet 主机名和自动 TLS 证书。从你的手机、平板或 tailnet 上的任何设备访问。
 
 - **零配置** — 无需端口转发、DNS 或证书管理
 - **端到端加密** — 通过 Tailscale 的 WireGuard 加密，你的数据永远不经过公共互联网
 - **即时 TLS** — 自动 HTTPS，有效证书，无需设置
+- **独立节点** — 每个服务获得独立的 tailnet 主机名（`https://<name>.<tailnet>.ts.net`）
 - **热重载** — 在 TSLink 运行时添加或移除服务，更改立即生效
-- **守护进程运行** — 启动一次，后台运行，通过 macOS LaunchAgent 开机自启
+- **全平台支持** — 支持 macOS、Linux 和 Windows
+- **守护进程运行** — 启动一次，后台运行，支持开机自启
+- **TCP 代理** — 暴露数据库、SSH、Redis 等非 HTTP 服务
+- **访问控制** — 基于用户/标签的 per-service ACL
+- **中间件** — 内置限流、Basic Auth、IP 白名单、CORS
+- **Prometheus 指标** — 请求计数、延迟直方图、活跃连接数
+- **Docker 发现** — 通过标签自动注册容器
+- **API 模式** — JSON-over-stdin/stdout，供 AI 代理和脚本程序化控制
+- **Funnel** — 可选通过 Tailscale Funnel 暴露到公网
 
 ## 快速开始
 
@@ -88,11 +97,31 @@ tslink serve --daemon
 
 TSLink 只需要一个密钥 — 你的 [Tailscale API 访问令牌](https://login.tailscale.com/admin/settings/keys)。认证密钥自动派生。API 密钥存储在系统钥匙串（macOS Keychain）中，不以明文保存。
 
-### 暴露文件目录
+### 更多示例
 
 ```bash
+# 暴露文件目录
 tslink add documents --dir ~/Documents
-# 访问 https://tslink.<your-tailnet>.ts.net/f/documents/
+# 访问 https://documents.<your-tailnet>.ts.net
+
+# 通过 TCP 代理暴露数据库
+tslink add mydb --tcp localhost:5432
+# 从任何设备连接: psql -h mydb.<your-tailnet>.ts.net
+
+# 临时节点（停止后自动从 tailnet 移除）
+tslink add demo --proxy localhost:8080 --ephemeral
+
+# 访问控制
+tslink add internal --proxy localhost:9090 --allow user@example.com,tag:admin
+
+# 通过 Tailscale Funnel 公开暴露
+tslink add public --proxy localhost:3000 --funnel
+
+# 自定义域名
+tslink add mysite --proxy localhost:3000 --domain app.example.com
+
+# ACL 标签
+tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 ```
 
 ## 命令
@@ -103,14 +132,29 @@ tslink add documents --dir ~/Documents
 | `tslink logout` | 清除认证状态 |
 | `tslink add <name> --proxy host:port` | 暴露本地 Web 服务 |
 | `tslink add <name> --dir /path` | 暴露文件目录 |
-| `tslink remove <name>` | 移除已注册的服务 |
+| `tslink add <name> --tcp host:port` | 暴露 TCP 服务（数据库、SSH 等） |
+| `tslink remove <name>` | 移除已注册的服务（+ 自动清理 tailnet 设备） |
 | `tslink list` | 列出所有已注册的服务 |
 | `tslink serve` | 启动网关（前台） |
 | `tslink serve --daemon` | 启动网关（后台） |
 | `tslink stop` | 停止网关 |
 | `tslink status` | 显示网关状态 |
-| `tslink install` | 开机自启（macOS LaunchAgent） |
+| `tslink api` | JSON-over-stdin/stdout 模式，用于程序化控制 |
+| `tslink install` | 开机自启（macOS LaunchAgent / Linux systemd / Windows 启动文件夹） |
 | `tslink uninstall` | 移除自启 |
+
+### add 命令标志
+
+| 标志 | 描述 |
+|------|------|
+| `--proxy host:port` | 反向代理到本地 HTTP 服务 |
+| `--dir /path` | 文件目录服务 |
+| `--tcp host:port` | 原始 TCP 转发 |
+| `--ephemeral` | 临时节点，停止后自动从 tailnet 移除 |
+| `--tags tag:a,tag:b` | ACL 标签，用于 Tailscale 网络策略 |
+| `--allow user@,tag:x` | Per-service 访问控制（逗号分隔） |
+| `--funnel` | 通过 Tailscale Funnel 暴露到公网（仅限 proxy） |
+| `--domain example.com` | 自定义域名映射（仅限 proxy） |
 
 ## 工作原理
 
@@ -120,17 +164,71 @@ tslink add documents --dir ~/Documents
 │             │         │   (WireGuard 网状)    │         │              │
 │  localhost   │◄──────►│                      │◄──────►│  浏览器      │
 │  :3000      │  tsnet  │  端到端加密           │  HTTPS │              │
-│  ~/Documents│  节点   │  不经过公共互联网      │  +TLS  │              │
+│  :5432      │  节点   │  不经过公共互联网      │  +TLS  │              │
+│  ~/Documents│ (1/服务)│                       │        │              │
 └─────────────┘         └──────────────────────┘         └──────────────┘
 ```
 
-TSLink 在二进制文件中嵌入了一个 [tsnet](https://tailscale.com/kb/1244/tsnet) 节点——服务端无需安装 Tailscale 客户端。它作为名为 `tslink` 的设备加入你的 tailnet，自动获取 TLS 证书，并将请求反向代理到你的本地服务。
+TSLink 为每个注册的服务创建一个专用的 [tsnet](https://tailscale.com/kb/1244/tsnet) 节点——服务端无需安装 Tailscale 客户端。每个服务作为独立设备加入 tailnet（如 `myapp`、`docs`、`mydb`），自动获取 TLS 证书，并将请求代理到你的本地服务。
 
 **关键架构决策：**
-- **嵌入式节点** — 不依赖外部 Tailscale 守护进程
+- **独立嵌入式节点** — 每个服务获得独立的 tailnet 主机名和 TLS 证书
 - **基于文件的注册表** — 服务在 `~/.config/tslink/registry.json` 中持久化，跨重启保存
 - **热重载** — 注册表文件监听意味着 `tslink add` 无需重启服务即可生效
 - **基于 PID 的生命周期** — 信号处理实现干净的守护进程管理
+- **中间件管道** — per-service 限流、Basic Auth、IP 白名单、CORS
+- **Prometheus 指标** — `tslink_requests_total`、`tslink_request_duration_seconds`、`tslink_active_connections`
+- **Docker 发现** — 通过 `tslink.enable=true` 标签自动注册容器
+
+## API 模式
+
+TSLink 提供 JSON-over-stdin/stdout API 模式，专为 AI 代理、脚本和 CI/CD 流水线设计。
+
+```bash
+# 列出服务
+echo '{"action":"list"}' | tslink api
+
+# 添加服务
+echo '{"action":"add","name":"myapp","type":"proxy","target":"localhost:3000"}' | tslink api
+
+# 删除服务
+echo '{"action":"remove","name":"myapp"}' | tslink api
+
+# 查看状态
+echo '{"action":"status"}' | tslink api
+```
+
+## Docker 自动发现
+
+TSLink 可以通过标签自动发现和注册 Docker 容器：
+
+```yaml
+services:
+  webapp:
+    image: nginx
+    labels:
+      tslink.enable: "true"
+      tslink.name: "webapp"
+      tslink.type: "proxy"
+      tslink.port: "8080"
+```
+
+容器启动时自动注册，停止时自动注销。
+
+## 中间件
+
+每个服务可以通过 `registry.json` 配置中间件：
+
+```json
+{
+  "middleware": {
+    "rate_limit": 10.0,
+    "basic_auth": "admin:secret",
+    "ip_allow_list": ["100.64.0.1/16"],
+    "cors_origins": ["https://frontend.example.com"]
+  }
+}
+```
 
 ## 前置条件
 
@@ -138,14 +236,21 @@ TSLink 在二进制文件中嵌入了一个 [tsnet](https://tailscale.com/kb/124
 - 你要访问的设备上安装 Tailscale（手机、平板等）
 - Go 1.25+（如果从源码构建）
 
+## 平台支持
+
+| 平台 | 守护进程 | 自动启动 |
+|------|---------|---------|
+| macOS | `--daemon` | LaunchAgent |
+| Linux | `--daemon` | systemd user service |
+| Windows | `--daemon` | 启动文件夹 |
+
 ## 路线图
 
-- [ ] Linux 和 Windows 支持
-- [ ] Web 管理面板
-- [ ] 多节点服务共享
-- [ ] 自定义域名映射
-- [ ] API 模式，支持编程集成
-- [ ] 按服务的访问控制
+- [ ] OAuth 长期凭证（目前基于 API key）
+- [ ] Let's Encrypt 集成自定义域名证书
+- [ ] Docker 镜像（`ghcr.io/monody0007/tslink`）
+- [ ] Headscale `--control-url` 全局配置持久化
+- [ ] 可从 tailnet 访问的 Web 管理面板
 
 ## 贡献
 

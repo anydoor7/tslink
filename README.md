@@ -50,13 +50,22 @@ TSLink addresses this gap directly.
 
 ## What TSLink Does
 
-TSLink turns your machine into a secure gateway. One command exposes any local service — a web app, an API, a file directory — to your private [Tailscale](https://tailscale.com) network. Accessible from your phone, tablet, or any device on your tailnet.
+TSLink turns your machine into a secure gateway. One command exposes any local service — a web app, an API, a file directory, a database — to your private [Tailscale](https://tailscale.com) network. Each service gets its own dedicated hostname with automatic TLS. Accessible from your phone, tablet, or any device on your tailnet.
 
 - **Zero configuration** — no port forwarding, no DNS, no certificates to manage
 - **End-to-end encrypted** — WireGuard encryption via Tailscale, your data never touches the public internet
 - **Instant TLS** — automatic HTTPS with valid certificates, no setup required
+- **Per-service nodes** — each service gets its own tailnet hostname (`https://<name>.<tailnet>.ts.net`)
 - **Live reload** — add or remove services while TSLink is running, changes take effect immediately
-- **Runs as a daemon** — start once, runs in the background, auto-starts on login via macOS LaunchAgent
+- **Cross-platform** — runs on macOS, Linux, and Windows
+- **Runs as a daemon** — start once, runs in the background, auto-starts on login
+- **TCP proxy** — expose databases, SSH, Redis, and other non-HTTP services
+- **Access control** — per-service ACL with user/tag-based filtering
+- **Middleware** — built-in rate limiting, Basic Auth, IP allowlist, and CORS
+- **Prometheus metrics** — request counts, latency histograms, active connections
+- **Docker discovery** — auto-register containers via labels
+- **API mode** — JSON-over-stdin/stdout for programmatic integration by AI agents and scripts
+- **Funnel** — optionally expose services to the public internet via Tailscale Funnel
 
 ## Quick Start
 
@@ -88,11 +97,31 @@ tslink serve --daemon
 
 TSLink only needs one key — your [Tailscale API access token](https://login.tailscale.com/admin/settings/keys). Auth keys are derived automatically. Your API key is stored in the system keychain (macOS Keychain), never in plaintext.
 
-### Expose a File Directory
+### More Examples
 
 ```bash
+# Expose a file directory
 tslink add documents --dir ~/Documents
-# Access at https://tslink.<your-tailnet>.ts.net/f/documents/
+# Access at https://documents.<your-tailnet>.ts.net
+
+# Expose a database via TCP proxy
+tslink add mydb --tcp localhost:5432
+# Connect from any device: psql -h mydb.<your-tailnet>.ts.net
+
+# Ephemeral node (auto-removed when stopped)
+tslink add demo --proxy localhost:8080 --ephemeral
+
+# With access control
+tslink add internal --proxy localhost:9090 --allow user@example.com,tag:admin
+
+# Public exposure via Tailscale Funnel
+tslink add public --proxy localhost:3000 --funnel
+
+# Custom domain
+tslink add mysite --proxy localhost:3000 --domain app.example.com
+
+# ACL tags for Tailscale network policy
+tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 ```
 
 ## Commands
@@ -103,14 +132,29 @@ tslink add documents --dir ~/Documents
 | `tslink logout` | Clear credentials from keychain and files |
 | `tslink add <name> --proxy host:port` | Expose a local web service |
 | `tslink add <name> --dir /path` | Expose a file directory |
+| `tslink add <name> --tcp host:port` | Expose a raw TCP service (databases, SSH, etc.) |
 | `tslink remove <name>` | Remove a service (+ auto-delete tailnet device) |
 | `tslink list` | List all registered services |
 | `tslink serve` | Start the gateway (foreground) |
 | `tslink serve --daemon` | Start the gateway (background) |
 | `tslink stop` | Stop the gateway |
 | `tslink status` | Show gateway status |
-| `tslink install` | Auto-start on login (macOS LaunchAgent) |
+| `tslink api` | JSON-over-stdin/stdout mode for programmatic control |
+| `tslink install` | Auto-start on login (macOS LaunchAgent / Linux systemd / Windows Startup) |
 | `tslink uninstall` | Remove auto-start |
+
+### Add Command Flags
+
+| Flag | Description |
+|------|-------------|
+| `--proxy host:port` | Reverse proxy to a local HTTP service |
+| `--dir /path` | Serve a local file directory |
+| `--tcp host:port` | Raw TCP forwarding |
+| `--ephemeral` | Ephemeral node, auto-removed from tailnet when stopped |
+| `--tags tag:a,tag:b` | ACL tags for Tailscale network policy |
+| `--allow user@,tag:x` | Per-service access control (comma-separated) |
+| `--funnel` | Expose via Tailscale Funnel (public internet, proxy only) |
+| `--domain example.com` | Custom domain mapping (proxy only) |
 
 ## How It Works
 
@@ -120,17 +164,71 @@ tslink add documents --dir ~/Documents
 │             │         │   (WireGuard mesh)    │         │              │
 │  localhost   │◄──────►│                      │◄──────►│  Browser     │
 │  :3000      │  tsnet  │  End-to-end encrypted │  HTTPS │              │
-│  ~/Documents│  node   │  No public internet   │  +TLS  │              │
+│  :5432      │  nodes  │  No public internet   │  +TLS  │              │
+│  ~/Documents│  (1/svc)│                       │        │              │
 └─────────────┘         └──────────────────────┘         └──────────────┘
 ```
 
-TSLink embeds a [tsnet](https://tailscale.com/kb/1244/tsnet) node directly into the binary — no Tailscale client installation required on the server side. It joins your tailnet as a device called `tslink`, obtains automatic TLS certificates, and reverse-proxies requests to your local services.
+TSLink creates a dedicated [tsnet](https://tailscale.com/kb/1244/tsnet) node for each registered service — no Tailscale client installation required on the server side. Each service joins your tailnet as its own device (e.g., `myapp`, `docs`, `mydb`), obtains automatic TLS certificates, and proxies requests to your local services.
 
 **Key architectural decisions:**
-- **Embedded node** — no dependency on an external Tailscale daemon
+- **Per-service embedded nodes** — each service gets its own tailnet hostname and TLS certificate
 - **File-based registry** — services persist across restarts in `~/.config/tslink/registry.json`
 - **Hot reload** — file watcher on the registry means `tslink add` takes effect without restarting the server
 - **PID-based lifecycle** — clean daemon management with signal handling
+- **Middleware pipeline** — rate limiting, Basic Auth, IP allowlist, CORS per service
+- **Prometheus metrics** — `tslink_requests_total`, `tslink_request_duration_seconds`, `tslink_active_connections`
+- **Docker discovery** — auto-register containers with `tslink.enable=true` label
+
+## API Mode
+
+TSLink includes a JSON-over-stdin/stdout API mode for programmatic integration — designed for AI agents, scripts, and CI/CD pipelines.
+
+```bash
+# List services
+echo '{"action":"list"}' | tslink api
+
+# Add a service
+echo '{"action":"add","name":"myapp","type":"proxy","target":"localhost:3000"}' | tslink api
+
+# Remove a service
+echo '{"action":"remove","name":"myapp"}' | tslink api
+
+# Check status
+echo '{"action":"status"}' | tslink api
+```
+
+## Docker Auto-Discovery
+
+TSLink can auto-discover and register Docker containers using labels:
+
+```yaml
+services:
+  webapp:
+    image: nginx
+    labels:
+      tslink.enable: "true"
+      tslink.name: "webapp"
+      tslink.type: "proxy"
+      tslink.port: "8080"
+```
+
+Containers are automatically registered when started and unregistered when stopped.
+
+## Middleware
+
+Each service can be configured with middleware via `registry.json`:
+
+```json
+{
+  "middleware": {
+    "rate_limit": 10.0,
+    "basic_auth": "admin:secret",
+    "ip_allow_list": ["100.64.0.1/16"],
+    "cors_origins": ["https://frontend.example.com"]
+  }
+}
+```
 
 ## Prerequisites
 
@@ -138,14 +236,21 @@ TSLink embeds a [tsnet](https://tailscale.com/kb/1244/tsnet) node directly into 
 - Tailscale installed on the devices you want to access from (phone, tablet, etc.)
 - Go 1.25+ (if building from source)
 
+## Platform Support
+
+| Platform | Daemon | Auto-start |
+|----------|--------|------------|
+| macOS | `--daemon` | LaunchAgent |
+| Linux | `--daemon` | systemd user service |
+| Windows | `--daemon` | Startup folder |
+
 ## Roadmap
 
-- [ ] Linux and Windows support
-- [ ] Web dashboard for service management
-- [ ] Multi-node service sharing
-- [ ] Custom domain mapping
-- [ ] API mode for programmatic integration
-- [ ] Access control per service
+- [ ] OAuth long-lived credentials (currently API key based)
+- [ ] Let's Encrypt integration for custom domains
+- [ ] Docker image (`ghcr.io/monody0007/tslink`)
+- [ ] Headscale `--control-url` global config persistence
+- [ ] Web dashboard accessible from tailnet
 
 ## Contributing
 
