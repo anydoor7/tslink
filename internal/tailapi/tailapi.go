@@ -3,6 +3,7 @@ package tailapi
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/monody0007/tslink/internal/credentials"
@@ -28,7 +29,7 @@ func DeleteDevicesByHostname(ctx context.Context, hostname string) error {
 			if err := client.DeleteDevice(ctx, d.DeviceID); err != nil {
 				return fmt.Errorf("delete device %s: %w", d.Hostname, err)
 			}
-			fmt.Printf("→ removed tailnet node: %s\n", d.Hostname)
+			slog.Info("removed tailnet node", "hostname", d.Hostname)
 		}
 	}
 	return nil

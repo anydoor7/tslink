@@ -1,3 +1,5 @@
+//go:build darwin
+
 package cmd
 
 import (
@@ -10,8 +12,8 @@ import (
 
 var uninstallCmd = &cobra.Command{
 	Use:   "uninstall",
-	Short: "Remove macOS LaunchAgent",
-	Long: `Remove the TSLink LaunchAgent so it no longer auto-starts.
+	Short: "Remove as macOS LaunchAgent",
+	Long: `Remove TSLink as a macOS LaunchAgent so it no longer auto-starts.
 
 Example:
   tslink uninstall`,

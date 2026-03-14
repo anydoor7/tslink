@@ -16,6 +16,15 @@ const (
 	keychainAPIKey  = "api-key"
 )
 
+// Testable seams.
+var (
+	newTailscaleClientFunc = NewTailscaleClient
+	createKeyFunc          = func(client *tailscale.Client, ctx context.Context, caps tailscale.KeyCapabilities) (string, *tailscale.Key, error) {
+		return client.CreateKey(ctx, caps)
+	}
+	authKeyPathFunc = config.AuthKeyPath
+)
+
 func init() {
 	tailscale.I_Acknowledge_This_API_Is_Unstable = true
 }
@@ -81,9 +90,15 @@ func NewTailscaleClient() (*tailscale.Client, error) {
 	return tailscale.NewClient("-", tailscale.APIKey(key)), nil
 }
 
+// AuthKeyOptions configures the derived auth key.
+type AuthKeyOptions struct {
+	Tags      []string
+	Ephemeral bool
+}
+
 // DeriveAuthKey creates a reusable, pre-authorized auth key from the API key.
-func DeriveAuthKey(ctx context.Context) (string, error) {
-	client, err := NewTailscaleClient()
+func DeriveAuthKey(ctx context.Context, opts AuthKeyOptions) (string, error) {
+	client, err := newTailscaleClientFunc()
 	if err != nil {
 		return "", fmt.Errorf("create client: %w", err)
 	}
@@ -95,13 +110,14 @@ func DeriveAuthKey(ctx context.Context) (string, error) {
 		Devices: tailscale.KeyDeviceCapabilities{
 			Create: tailscale.KeyDeviceCreateCapabilities{
 				Reusable:      true,
-				Ephemeral:     false,
+				Ephemeral:     opts.Ephemeral,
 				Preauthorized: true,
+				Tags:          opts.Tags,
 			},
 		},
 	}
 
-	secret, _, err := client.CreateKey(ctx, caps)
+	secret, _, err := createKeyFunc(client, ctx, caps)
 	if err != nil {
 		return "", fmt.Errorf("derive auth key: %w", err)
 	}
@@ -111,14 +127,14 @@ func DeriveAuthKey(ctx context.Context) (string, error) {
 // GetAuthKey returns a usable auth key, trying (in order):
 //  1. Derive from API key (if available)
 //  2. Read legacy authkey file
-func GetAuthKey(ctx context.Context) (string, error) {
+func GetAuthKey(ctx context.Context, opts AuthKeyOptions) (string, error) {
 	// Try deriving from API key
 	apiKey, err := GetAPIKey()
 	if err != nil {
 		return "", err
 	}
 	if apiKey != "" {
-		secret, err := DeriveAuthKey(ctx)
+		secret, err := DeriveAuthKey(ctx, opts)
 		if err != nil {
 			return "", err
 		}
@@ -126,7 +142,7 @@ func GetAuthKey(ctx context.Context) (string, error) {
 	}
 
 	// Legacy fallback: read authkey file
-	authKeyPath, err := config.AuthKeyPath()
+	authKeyPath, err := authKeyPathFunc()
 	if err != nil {
 		return "", err
 	}

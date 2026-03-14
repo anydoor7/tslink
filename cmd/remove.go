@@ -3,12 +3,29 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"io"
 
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/registry"
 	"github.com/monody0007/tslink/internal/tailapi"
 	"github.com/spf13/cobra"
 )
+
+var deleteDevicesFn = tailapi.DeleteDevicesByHostname
+
+func removeService(regPath, name string, out, errOut io.Writer) error {
+	if err := registry.Remove(regPath, name); err != nil {
+		return err
+	}
+
+	fmt.Fprintf(out, "→ ✓ removed: %s\n", name)
+
+	if err := deleteDevicesFn(context.Background(), name); err != nil {
+		fmt.Fprintf(errOut, "→ warning: could not remove tailnet node: %v\n", err)
+	}
+
+	return nil
+}
 
 func init() {
 	removeCmd := &cobra.Command{
@@ -29,19 +46,7 @@ Example:
 				return err
 			}
 
-			name := args[0]
-			if err := registry.Remove(regPath, name); err != nil {
-				return err
-			}
-
-			fmt.Fprintf(cmd.OutOrStdout(), "→ ✓ removed: %s\n", name)
-
-			// Clean up tailnet node(s)
-			if err := tailapi.DeleteDevicesByHostname(context.Background(), name); err != nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "→ warning: could not remove tailnet node: %v\n", err)
-			}
-
-			return nil
+			return removeService(regPath, args[0], cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 

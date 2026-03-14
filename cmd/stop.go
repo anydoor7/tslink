@@ -2,11 +2,31 @@ package cmd
 
 import (
 	"fmt"
+	"io"
 
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/daemon"
 	"github.com/spf13/cobra"
 )
+
+var isRunningFn = daemon.IsRunning
+var stopDaemonFn = daemon.StopDaemon
+var removePIDFn = daemon.RemovePID
+
+func stopService(pidPath string, out io.Writer) error {
+	if !isRunningFn(pidPath) {
+		removePIDFn(pidPath)
+		fmt.Fprintln(out, "tslink is not running")
+		return nil
+	}
+
+	if err := stopDaemonFn(pidPath); err != nil {
+		return err
+	}
+
+	fmt.Fprintln(out, "tslink stopped")
+	return nil
+}
 
 func init() {
 	stopCmd := &cobra.Command{
@@ -18,19 +38,7 @@ func init() {
 			if err != nil {
 				return err
 			}
-
-			if !daemon.IsRunning(pidPath) {
-				daemon.RemovePID(pidPath)
-				fmt.Fprintln(cmd.OutOrStdout(), "tslink is not running")
-				return nil
-			}
-
-			if err := daemon.StopDaemon(pidPath); err != nil {
-				return err
-			}
-
-			fmt.Fprintln(cmd.OutOrStdout(), "tslink stopped")
-			return nil
+			return stopService(pidPath, cmd.OutOrStdout())
 		},
 	}
 

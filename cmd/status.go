@@ -2,13 +2,52 @@ package cmd
 
 import (
 	"fmt"
+	"io"
 
 	"github.com/monody0007/tslink/internal/config"
-	"github.com/monody0007/tslink/internal/credentials"
 	"github.com/monody0007/tslink/internal/daemon"
 	"github.com/monody0007/tslink/internal/registry"
 	"github.com/spf13/cobra"
 )
+
+var readPIDFn = daemon.ReadPID
+
+// StatusResult holds the status information for display.
+type StatusResult struct {
+	DaemonRunning bool
+	DaemonPID     int
+	Authenticated bool
+	ServiceCount  int
+}
+
+func getStatus(pidPath, regPath string) StatusResult {
+	var r StatusResult
+	if isRunningFn(pidPath) {
+		r.DaemonRunning = true
+		r.DaemonPID, _ = readPIDFn(pidPath)
+	}
+	if apiKey, _ := getAPIKeyFn(); apiKey != "" {
+		r.Authenticated = true
+	}
+	if reg, err := registry.Load(regPath); err == nil {
+		r.ServiceCount = len(reg.Services)
+	}
+	return r
+}
+
+func formatStatus(r StatusResult, out io.Writer) {
+	if r.DaemonRunning {
+		fmt.Fprintf(out, "→ tslink: running (pid %d)\n", r.DaemonPID)
+	} else {
+		fmt.Fprintln(out, "→ tslink: not running")
+	}
+	if r.Authenticated {
+		fmt.Fprintln(out, "→ tailnet: authenticated")
+	} else {
+		fmt.Fprintln(out, "→ tailnet: not authenticated (run: tslink login)")
+	}
+	fmt.Fprintf(out, "→ services: %d registered\n", r.ServiceCount)
+}
 
 var statusCmd = &cobra.Command{
 	Use:   "status",
@@ -27,27 +66,8 @@ Example:
 		if err != nil {
 			return err
 		}
-
-		if daemon.IsRunning(pidPath) {
-			pid, _ := daemon.ReadPID(pidPath)
-			fmt.Printf("→ tslink: running (pid %d)\n", pid)
-		} else {
-			fmt.Println("→ tslink: not running")
-		}
-
-		if apiKey, _ := credentials.GetAPIKey(); apiKey != "" {
-			fmt.Println("→ tailnet: authenticated")
-		} else {
-			fmt.Println("→ tailnet: not authenticated (run: tslink login)")
-		}
-
-		reg, err := registry.Load(regPath)
-		if err != nil {
-			fmt.Println("→ services: 0 registered")
-		} else {
-			fmt.Printf("→ services: %d registered\n", len(reg.Services))
-		}
-
+		r := getStatus(pidPath, regPath)
+		formatStatus(r, cmd.OutOrStdout())
 		return nil
 	},
 }

@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -39,11 +39,14 @@ func NewProxyHandler(target string, localClient *LocalClient) (http.Handler, err
 					r.Out.Header.Set("X-Tailscale-User-Login", whois.UserProfile.LoginName)
 					r.Out.Header.Set("X-Tailscale-User-Name", whois.UserProfile.DisplayName)
 					r.Out.Header.Set("X-Tailscale-Node", whois.Node.ComputedName)
+					if whois.UserProfile.ProfilePicURL != "" {
+						r.Out.Header.Set("X-Tailscale-User-Picture", whois.UserProfile.ProfilePicURL)
+					}
 				}
 			}
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
-			log.Printf("proxy error for %s: %v", r.URL.Path, err)
+			slog.Error("proxy error", "path", r.URL.Path, "error", err)
 			if isTimeout(err) {
 				http.Error(w, "Gateway timeout — backend did not respond in time", http.StatusGatewayTimeout)
 			} else {

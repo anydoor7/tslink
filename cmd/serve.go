@@ -27,7 +27,8 @@ func init() {
 
 Examples:
   tslink serve
-  tslink serve --daemon`,
+  tslink serve --daemon
+  tslink serve --control-url https://headscale.example.com`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := config.EnsureDir(); err != nil {
 				return err
@@ -38,8 +39,37 @@ Examples:
 				fmt.Fprintln(cmd.OutOrStdout(), "→ migrated API key to system keychain")
 			}
 
+			// Load registry to collect tags and ephemeral flags
+			regPath, err := config.RegistryPath()
+			if err != nil {
+				return err
+			}
+			reg, err := registry.Load(regPath)
+			if err != nil {
+				return fmt.Errorf("load registry: %w", err)
+			}
+
+			// Collect unique tags and check if any service needs ephemeral
+			tagSet := make(map[string]struct{})
+			hasEphemeral := false
+			for _, svc := range reg.Services {
+				for _, tag := range svc.Tags {
+					tagSet[tag] = struct{}{}
+				}
+				if svc.Ephemeral {
+					hasEphemeral = true
+				}
+			}
+			var allTags []string
+			for tag := range tagSet {
+				allTags = append(allTags, tag)
+			}
+
 			// Get auth key (derive from API key, or fall back to legacy authkey file)
-			authKey, err := credentials.GetAuthKey(context.Background())
+			authKey, err := credentials.GetAuthKey(context.Background(), credentials.AuthKeyOptions{
+				Tags:      allTags,
+				Ephemeral: hasEphemeral,
+			})
 			if err != nil {
 				return err
 			}
@@ -54,14 +84,17 @@ Examples:
 			}
 
 			// Clean up stale tailnet nodes before starting
-			regPath, err := config.RegistryPath()
-			if err == nil {
-				if reg, err := registry.Load(regPath); err == nil {
-					var names []string
-					for _, s := range reg.Services {
-						names = append(names, s.Name)
-					}
-					_ = tailapi.CleanupStaleNodes(context.Background(), names)
+			var names []string
+			for _, s := range reg.Services {
+				names = append(names, s.Name)
+			}
+			_ = tailapi.CleanupStaleNodes(context.Background(), names)
+
+			// Resolve control URL: flag > config > default
+			controlURL, _ := cmd.Flags().GetString("control-url")
+			if controlURL == "" {
+				if globalCfg, err := config.LoadGlobalConfig(); err == nil {
+					controlURL = globalCfg.ControlURL
 				}
 			}
 
@@ -83,15 +116,16 @@ Examples:
 				return nil
 			}
 
-			return runForeground(pidPath, authKey)
+			return runForeground(pidPath, authKey, controlURL)
 		},
 	}
 
 	serveCmd.Flags().BoolVar(&serveDaemon, "daemon", false, "Run as background daemon")
+	serveCmd.Flags().String("control-url", "", "Custom control server URL (e.g., Headscale)")
 	rootCmd.AddCommand(serveCmd)
 }
 
-func runForeground(pidPath, authKey string) error {
+func runForeground(pidPath, authKey, controlURL string) error {
 	if err := daemon.WritePID(pidPath); err != nil {
 		return fmt.Errorf("write PID: %w", err)
 	}
@@ -100,7 +134,7 @@ func runForeground(pidPath, authKey string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	srv, err := server.New(authKey)
+	srv, err := server.New(authKey, controlURL)
 	if err != nil {
 		return err
 	}

@@ -1,3 +1,5 @@
+//go:build darwin
+
 package cmd
 
 import (
@@ -45,7 +47,7 @@ type plistData struct {
 
 var installCmd = &cobra.Command{
 	Use:   "install",
-	Short: "Install as macOS LaunchAgent (auto-start on login)",
+	Short: "Install as macOS LaunchAgent",
 	Long: `Register TSLink as a macOS LaunchAgent so it starts automatically
 when you log in and restarts if it crashes.
 

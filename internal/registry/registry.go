@@ -7,23 +7,48 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"syscall"
 	"time"
+
+	"github.com/monody0007/tslink/internal/filelock"
 )
 
 const (
 	TypeProxy = "proxy"
 	TypeFile  = "file"
+	TypeTCP   = "tcp"
 )
 
 var nameRegexp = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
 
+// lockFn, unlockFn, and marshalFn are test hooks.
+var (
+	lockFn    = filelock.Lock
+	unlockFn  = filelock.Unlock
+	marshalFn = json.MarshalIndent
+)
+
+// MiddlewareConfig defines optional middleware settings for a service.
+type MiddlewareConfig struct {
+	RateLimit   float64  `json:"rate_limit,omitempty"`    // requests per second, 0 = disabled
+	BasicAuth   string   `json:"basic_auth,omitempty"`    // "user:pass" format
+	IPAllowList []string `json:"ip_allow_list,omitempty"` // CIDR strings
+	CORSOrigins []string `json:"cors_origins,omitempty"`  // allowed origins
+}
+
 type Service struct {
-	Name      string    `json:"name"`
-	Type      string    `json:"type"`
-	Target    string    `json:"target,omitempty"`
-	Path      string    `json:"path,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
+	Name         string            `json:"name"`
+	Type         string            `json:"type"`
+	Target       string            `json:"target,omitempty"`
+	Path         string            `json:"path,omitempty"`
+	Port         int               `json:"port,omitempty"`
+	Ephemeral    bool              `json:"ephemeral,omitempty"`
+	Tags         []string          `json:"tags,omitempty"`
+	AllowedUsers []string          `json:"allowed_users,omitempty"`
+	ControlURL   string            `json:"control_url,omitempty"`
+	Funnel       bool              `json:"funnel,omitempty"`
+	Domain       string            `json:"domain,omitempty"`
+	Middleware   *MiddlewareConfig `json:"middleware,omitempty"`
+	CreatedAt    time.Time         `json:"created_at"`
 }
 
 type Registry struct {
@@ -73,10 +98,10 @@ func withLock(regPath string, fn func() error) error {
 	}
 	defer lockFile.Close()
 
-	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX); err != nil {
+	if err := lockFn(lockFile); err != nil {
 		return err
 	}
-	defer syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN)
+	defer unlockFn(lockFile)
 
 	return fn()
 }
@@ -89,7 +114,7 @@ func save(path string, reg *Registry) error {
 		reg.Services = []Service{}
 	}
 
-	data, err := json.MarshalIndent(reg, "", "  ")
+	data, err := marshalFn(reg, "", "  ")
 	if err != nil {
 		return err
 	}

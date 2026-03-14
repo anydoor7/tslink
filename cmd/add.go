@@ -2,17 +2,122 @@ package cmd
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/monody0007/tslink/internal/config"
+	"github.com/monody0007/tslink/internal/domain"
 	"github.com/monody0007/tslink/internal/registry"
 	"github.com/spf13/cobra"
 )
 
 func hasScheme(target string) bool {
 	return strings.HasPrefix(target, "http://") || strings.HasPrefix(target, "https://")
+}
+
+// AddParams holds parsed flags for the add command.
+type AddParams struct {
+	Name      string
+	Proxy     string
+	Dir       string
+	TCP       string
+	Ephemeral bool
+	Tags      string
+	Allow     string
+	Funnel    bool
+	Domain    string
+}
+
+// buildService validates parameters and constructs a registry.Service.
+// For Dir type, it returns the service with Type set but Path empty —
+// the caller must resolve and validate the filesystem path.
+func buildService(p AddParams) (registry.Service, error) {
+	if err := registry.ValidateName(p.Name); err != nil {
+		return registry.Service{}, err
+	}
+
+	var allowedUsers []string
+	if p.Allow != "" {
+		for _, a := range strings.Split(p.Allow, ",") {
+			a = strings.TrimSpace(a)
+			if a != "" {
+				allowedUsers = append(allowedUsers, a)
+			}
+		}
+	}
+
+	modes := 0
+	if p.Proxy != "" {
+		modes++
+	}
+	if p.Dir != "" {
+		modes++
+	}
+	if p.TCP != "" {
+		modes++
+	}
+	if modes != 1 {
+		return registry.Service{}, fmt.Errorf("exactly one of --proxy, --dir, or --tcp must be provided")
+	}
+
+	if p.Funnel && p.Proxy == "" {
+		return registry.Service{}, fmt.Errorf("--funnel can only be used with --proxy")
+	}
+	if p.Domain != "" && p.Proxy == "" {
+		return registry.Service{}, fmt.Errorf("--domain can only be used with --proxy")
+	}
+	if p.Domain != "" {
+		if err := domain.ValidateDomain(p.Domain); err != nil {
+			return registry.Service{}, err
+		}
+	}
+
+	var tags []string
+	if p.Tags != "" {
+		for _, t := range strings.Split(p.Tags, ",") {
+			t = strings.TrimSpace(t)
+			if t != "" {
+				tags = append(tags, t)
+			}
+		}
+	}
+
+	if p.TCP != "" {
+		host, portStr, err := net.SplitHostPort(p.TCP)
+		if err != nil {
+			return registry.Service{}, fmt.Errorf("--tcp requires host:port format: %w", err)
+		}
+		port, err := strconv.Atoi(portStr)
+		if err != nil || port <= 0 || port > 65535 {
+			return registry.Service{}, fmt.Errorf("invalid port: %s", portStr)
+		}
+		return registry.Service{
+			Name: p.Name, Type: registry.TypeTCP,
+			Target: net.JoinHostPort(host, portStr), Port: port,
+			Ephemeral: p.Ephemeral, Tags: tags, AllowedUsers: allowedUsers,
+		}, nil
+	}
+
+	if p.Proxy != "" {
+		target := p.Proxy
+		if !hasScheme(target) {
+			target = "http://" + target
+		}
+		return registry.Service{
+			Name: p.Name, Type: registry.TypeProxy, Target: target,
+			Ephemeral: p.Ephemeral, Tags: tags, AllowedUsers: allowedUsers,
+			Funnel: p.Funnel, Domain: p.Domain,
+		}, nil
+	}
+
+	// Dir mode — path validation is done in RunE (needs filesystem)
+	return registry.Service{
+		Name: p.Name, Type: registry.TypeFile,
+		Ephemeral: p.Ephemeral, Tags: tags, AllowedUsers: allowedUsers,
+	}, nil
 }
 
 func init() {
@@ -22,27 +127,52 @@ func init() {
 		Long: `Register a local service or file directory to expose on the Tailscale network.
 
 Examples:
-  tslink add myapp --proxy localhost:3000    Expose a web service
-  tslink add docs --dir ~/Documents          Expose a file directory`,
+  tslink add myapp --proxy localhost:3000         Expose a web service
+  tslink add docs --dir ~/Documents               Expose a file directory
+  tslink add mydb --tcp localhost:5432             Expose raw TCP (e.g., database)
+  tslink add myapp --proxy :3000 --ephemeral      Ephemeral node (removed on disconnect)
+  tslink add myapp --proxy :3000 --tags tag:web    Tag the node in the tailnet
+  tslink add myapp --proxy :3000 --funnel          Expose publicly via Tailscale Funnel`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			name := args[0]
-			if err := registry.ValidateName(name); err != nil {
-				return err
-			}
+			proxyTarget, _ := cmd.Flags().GetString("proxy")
+			dirPath, _ := cmd.Flags().GetString("dir")
+			tcpTarget, _ := cmd.Flags().GetString("tcp")
+			ephemeral, _ := cmd.Flags().GetBool("ephemeral")
+			tagsStr, _ := cmd.Flags().GetString("tags")
+			allowStr, _ := cmd.Flags().GetString("allow")
+			funnel, _ := cmd.Flags().GetBool("funnel")
+			domainName, _ := cmd.Flags().GetString("domain")
 
-			proxyTarget, err := cmd.Flags().GetString("proxy")
+			svc, err := buildService(AddParams{
+				Name:      args[0],
+				Proxy:     proxyTarget,
+				Dir:       dirPath,
+				TCP:       tcpTarget,
+				Ephemeral: ephemeral,
+				Tags:      tagsStr,
+				Allow:     allowStr,
+				Funnel:    funnel,
+				Domain:    domainName,
+			})
 			if err != nil {
 				return err
 			}
 
-			dirPath, err := cmd.Flags().GetString("dir")
-			if err != nil {
-				return err
-			}
-
-			if (proxyTarget == "" && dirPath == "") || (proxyTarget != "" && dirPath != "") {
-				return fmt.Errorf("exactly one of --proxy or --dir must be provided")
+			// For dir type, resolve and validate filesystem path
+			if svc.Type == registry.TypeFile {
+				absPath, err := filepath.Abs(dirPath)
+				if err != nil {
+					return err
+				}
+				info, err := os.Stat(absPath)
+				if err != nil {
+					return err
+				}
+				if !info.IsDir() {
+					return fmt.Errorf("not a directory: %s", absPath)
+				}
+				svc.Path = absPath
 			}
 
 			if err := config.EnsureDir(); err != nil {
@@ -54,52 +184,31 @@ Examples:
 				return err
 			}
 
-			if proxyTarget != "" {
-				if !hasScheme(proxyTarget) {
-					proxyTarget = "http://" + proxyTarget
+			if err := registry.Add(regPath, svc); err != nil {
+				return err
+			}
+
+			if svc.Type == registry.TypeTCP {
+				fmt.Fprintf(cmd.OutOrStdout(), "→ ✓ TCP service %q registered (target %s, port %d)\n", svc.Name, svc.Target, svc.Port)
+			} else {
+				fmt.Fprintf(cmd.OutOrStdout(), "→ ✓ Service %q registered\n", svc.Name)
+				if svc.Funnel {
+					fmt.Fprintf(cmd.OutOrStdout(), "URL: https://%s.<tailnet>.ts.net (public via Funnel, available after tslink serve)\n", svc.Name)
+				} else {
+					fmt.Fprintf(cmd.OutOrStdout(), "URL: https://%s.<tailnet>.ts.net (available after tslink serve)\n", svc.Name)
 				}
-
-				if err := registry.Add(regPath, registry.Service{
-					Name:   name,
-					Type:   registry.TypeProxy,
-					Target: proxyTarget,
-				}); err != nil {
-					return err
-				}
-
-				fmt.Fprintf(cmd.OutOrStdout(), "→ ✓ Service %q registered\n", name)
-				fmt.Fprintf(cmd.OutOrStdout(), "URL: https://%s.<tailnet>.ts.net (available after tslink serve)\n", name)
-				return nil
 			}
-
-			absPath, err := filepath.Abs(dirPath)
-			if err != nil {
-				return err
-			}
-
-			info, err := os.Stat(absPath)
-			if err != nil {
-				return err
-			}
-			if !info.IsDir() {
-				return fmt.Errorf("not a directory: %s", absPath)
-			}
-
-			if err := registry.Add(regPath, registry.Service{
-				Name: name,
-				Type: registry.TypeFile,
-				Path: absPath,
-			}); err != nil {
-				return err
-			}
-
-			fmt.Fprintf(cmd.OutOrStdout(), "→ ✓ Service %q registered\n", name)
-			fmt.Fprintf(cmd.OutOrStdout(), "URL: https://%s.<tailnet>.ts.net (available after tslink serve)\n", name)
 			return nil
 		},
 	}
 
 	addCmd.Flags().String("proxy", "", "Proxy target in host:port or URL form")
 	addCmd.Flags().String("dir", "", "Directory to expose")
+	addCmd.Flags().String("tcp", "", "TCP proxy target in host:port form")
+	addCmd.Flags().Bool("ephemeral", false, "Register as ephemeral node (removed on disconnect)")
+	addCmd.Flags().String("tags", "", "Comma-separated ACL tags (e.g., tag:web,tag:internal)")
+	addCmd.Flags().Bool("funnel", false, "Expose publicly via Tailscale Funnel (proxy only)")
+	addCmd.Flags().String("domain", "", "Custom domain name for the service (proxy only, e.g., app.example.com)")
+	addCmd.Flags().String("allow", "", "Comma-separated allowed identities (e.g., user@example.com,tag:admin)")
 	rootCmd.AddCommand(addCmd)
 }

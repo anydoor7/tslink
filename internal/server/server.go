@@ -4,16 +4,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/monody0007/tslink/internal/config"
+	"github.com/monody0007/tslink/internal/metrics"
 	"github.com/monody0007/tslink/internal/registry"
 	"tailscale.com/tsnet"
 )
@@ -24,33 +26,38 @@ type ServiceNode struct {
 	service  registry.Service
 	listener net.Listener
 	cancel   context.CancelFunc
+	closed   atomic.Bool
 }
 
 // Server manages multiple tsnet nodes, one per registered service.
 type Server struct {
-	nodes   map[string]*ServiceNode
-	authKey string
-	mu      sync.RWMutex
-	cfgDir  string
+	nodes      map[string]*ServiceNode
+	authKey    string
+	controlURL string
+	mu         sync.RWMutex
+	cfgDir     string
+	metrics    *metrics.Metrics
 }
 
 // New creates a new multi-node server.
-func New(authKey string) (*Server, error) {
+func New(authKey, controlURL string) (*Server, error) {
 	cfgDir, err := config.Dir()
 	if err != nil {
 		return nil, err
 	}
 	return &Server{
-		nodes:   make(map[string]*ServiceNode),
-		authKey: authKey,
-		cfgDir:  cfgDir,
+		nodes:      make(map[string]*ServiceNode),
+		authKey:    authKey,
+		controlURL: controlURL,
+		cfgDir:     cfgDir,
+		metrics:    metrics.New(),
 	}, nil
 }
 
 // Run starts all registered service nodes and watches for registry changes.
 func (s *Server) Run(ctx context.Context) error {
 	if err := s.syncNodes(ctx); err != nil {
-		log.Printf("warning: initial sync: %v", err)
+		slog.Warn("initial sync failed", "error", err)
 	}
 
 	go s.watchRegistry(ctx)
@@ -85,10 +92,10 @@ func (s *Server) syncNodes(ctx context.Context) error {
 	for name, node := range s.nodes {
 		svc, exists := desired[name]
 		if !exists {
-			log.Printf("removing node %q", name)
+			slog.Info("removing node", "name", name)
 			s.stopNodeLocked(name, true) // remove state for deleted services
 		} else if serviceChanged(node.service, svc) {
-			log.Printf("restarting node %q", name)
+			slog.Info("restarting node", "name", name)
 			s.stopNodeLocked(name, false) // keep state for changed services
 		}
 	}
@@ -99,7 +106,7 @@ func (s *Server) syncNodes(ctx context.Context) error {
 			continue
 		}
 		if err := s.startNodeLocked(ctx, svc); err != nil {
-			log.Printf("failed to start node %q: %v", name, err)
+			slog.Error("failed to start node", "name", name, "error", err)
 		}
 	}
 
@@ -107,7 +114,29 @@ func (s *Server) syncNodes(ctx context.Context) error {
 }
 
 func serviceChanged(old, new registry.Service) bool {
-	return old.Type != new.Type || old.Target != new.Target || old.Path != new.Path
+	if old.Type != new.Type || old.Target != new.Target || old.Path != new.Path {
+		return true
+	}
+	if old.Port != new.Port || old.Ephemeral != new.Ephemeral || old.ControlURL != new.ControlURL || old.Funnel != new.Funnel || old.Domain != new.Domain {
+		return true
+	}
+	if len(old.Tags) != len(new.Tags) {
+		return true
+	}
+	for i := range old.Tags {
+		if old.Tags[i] != new.Tags[i] {
+			return true
+		}
+	}
+	if len(old.AllowedUsers) != len(new.AllowedUsers) {
+		return true
+	}
+	for i := range old.AllowedUsers {
+		if old.AllowedUsers[i] != new.AllowedUsers[i] {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service) error {
@@ -121,10 +150,18 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service) erro
 		return err
 	}
 
+	// Resolve control URL: per-service > global > default
+	controlURL := s.controlURL
+	if svc.ControlURL != "" {
+		controlURL = svc.ControlURL
+	}
+
 	tsnetSrv := &tsnet.Server{
-		Hostname: svc.Name,
-		Dir:      stateDir,
-		AuthKey:  s.authKey,
+		Hostname:   svc.Name,
+		Dir:        stateDir,
+		AuthKey:    s.authKey,
+		Ephemeral:  svc.Ephemeral,
+		ControlURL: controlURL,
 	}
 
 	nodeCtx, cancel := context.WithCancel(ctx)
@@ -134,21 +171,52 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service) erro
 		return fmt.Errorf("tsnet up for %q: %w", svc.Name, err)
 	}
 
-	// Create handler based on service type
+	// TCP proxy: raw TCP forwarding, no HTTP/TLS
+	if svc.Type == registry.TypeTCP {
+		port := svc.Port
+		if port == 0 {
+			port = 443
+		}
+		ln, err := tsnetSrv.Listen("tcp", fmt.Sprintf(":%d", port))
+		if err != nil {
+			cancel()
+			tsnetSrv.Close()
+			return fmt.Errorf("listen TCP for %q: %w", svc.Name, err)
+		}
+
+		node := &ServiceNode{
+			tsnetSrv: tsnetSrv,
+			service:  svc,
+			listener: ln,
+			cancel:   cancel,
+		}
+
+		go func() {
+			serveTCP(ln, svc.Target, svc.Name)
+		}()
+
+		slog.Info("tcp node ready", "name", svc.Name, "target", svc.Target, "port", port)
+		s.nodes[svc.Name] = node
+		return nil
+	}
+
+	// HTTP-based services (proxy, file)
 	var handler http.Handler
+	var lc *LocalClient
 	switch svc.Type {
 	case registry.TypeProxy:
-		lc, err := tsnetSrv.LocalClient()
-		if err != nil {
+		var err2 error
+		lc, err2 = tsnetSrv.LocalClient()
+		if err2 != nil {
 			cancel()
 			tsnetSrv.Close()
-			return fmt.Errorf("local client for %q: %w", svc.Name, err)
+			return fmt.Errorf("local client for %q: %w", svc.Name, err2)
 		}
-		h, err := NewProxyHandler(svc.Target, lc)
-		if err != nil {
+		h, err2 := NewProxyHandler(svc.Target, lc)
+		if err2 != nil {
 			cancel()
 			tsnetSrv.Close()
-			return fmt.Errorf("proxy handler for %q: %w", svc.Name, err)
+			return fmt.Errorf("proxy handler for %q: %w", svc.Name, err2)
 		}
 		handler = h
 	case registry.TypeFile:
@@ -159,7 +227,29 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service) erro
 		return fmt.Errorf("unknown service type %q", svc.Type)
 	}
 
-	ln, err := tsnetSrv.ListenTLS("tcp", ":443")
+	// ACL middleware: enforce per-service access control
+	if len(svc.AllowedUsers) > 0 {
+		if lc == nil {
+			var err2 error
+			lc, err2 = tsnetSrv.LocalClient()
+			if err2 != nil {
+				cancel()
+				tsnetSrv.Close()
+				return fmt.Errorf("local client for %q (acl): %w", svc.Name, err2)
+			}
+		}
+		handler = ACLMiddleware(svc.AllowedUsers, lc)(handler)
+	}
+
+	handler = AccessLogMiddleware(svc.Name, handler)
+	handler = s.metrics.Middleware(svc.Name, handler)
+
+	var ln net.Listener
+	if svc.Funnel && svc.Type == registry.TypeProxy {
+		ln, err = tsnetSrv.ListenFunnel("tcp", ":443")
+	} else {
+		ln, err = tsnetSrv.ListenTLS("tcp", ":443")
+	}
 	if err != nil {
 		cancel()
 		tsnetSrv.Close()
@@ -176,12 +266,16 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service) erro
 	// Serve in background
 	go func() {
 		if err := http.Serve(ln, handler); err != nil && !isClosedListenerError(err) {
-			log.Printf("node %q serve error: %v", svc.Name, err)
+			slog.Error("node serve error", "name", svc.Name, "error", err)
 		}
 	}()
 
 	if domains := tsnetSrv.CertDomains(); len(domains) > 0 {
-		log.Printf("node %q ready: https://%s", svc.Name, domains[0])
+		slog.Info("node ready", "name", svc.Name, "url", "https://"+domains[0])
+	}
+
+	if svc.Domain != "" {
+		slog.Info("custom domain configured", "name", svc.Name, "domain", svc.Domain)
 	}
 
 	s.nodes[svc.Name] = node
@@ -193,6 +287,12 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service) erro
 func (s *Server) stopNodeLocked(name string, removeState bool) {
 	node, ok := s.nodes[name]
 	if !ok {
+		return
+	}
+
+	if !node.closed.CompareAndSwap(false, true) {
+		// Already closed by another goroutine
+		delete(s.nodes, name)
 		return
 	}
 
@@ -226,19 +326,19 @@ func (s *Server) closeAllNodes() {
 func (s *Server) watchRegistry(ctx context.Context) {
 	regPath, err := config.RegistryPath()
 	if err != nil {
-		log.Printf("registry watch disabled: %v", err)
+		slog.Warn("registry watch disabled", "error", err)
 		return
 	}
 
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
-		log.Printf("fsnotify: %v", err)
+		slog.Error("fsnotify setup failed", "error", err)
 		return
 	}
 	defer watcher.Close()
 
 	if err := watcher.Add(s.cfgDir); err != nil {
-		log.Printf("watch %s: %v", s.cfgDir, err)
+		slog.Error("watch directory failed", "dir", s.cfgDir, "error", err)
 		return
 	}
 
@@ -257,16 +357,21 @@ func (s *Server) watchRegistry(ctx context.Context) {
 			}
 			if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) {
 				if err := s.syncNodes(ctx); err != nil {
-					log.Printf("reload registry: %v", err)
+					slog.Warn("reload registry failed", "error", err)
 				}
 			}
 		case err, ok := <-watcher.Errors:
 			if !ok {
 				return
 			}
-			log.Printf("fsnotify error: %v", err)
+			slog.Error("fsnotify error", "error", err)
 		}
 	}
+}
+
+// MetricsHandler returns the Prometheus metrics HTTP handler.
+func (s *Server) MetricsHandler() http.Handler {
+	return s.metrics.Handler()
 }
 
 func isClosedListenerError(err error) bool {

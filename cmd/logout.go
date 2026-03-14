@@ -2,14 +2,39 @@ package cmd
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/credentials"
-	"github.com/monody0007/tslink/internal/daemon"
 	"github.com/spf13/cobra"
 )
+
+var getAPIKeyFn = credentials.GetAPIKey
+var deleteAPIKeyFn = credentials.DeleteAPIKey
+
+func logoutUser(pidPath, authKeyPath, nodesDir, cfgDir string, out io.Writer) error {
+	if isRunningFn(pidPath) {
+		return fmt.Errorf("tslink is currently running — run 'tslink stop' first")
+	}
+
+	apiKey, _ := getAPIKeyFn()
+	_, authErr := os.Stat(authKeyPath)
+	_, nodesErr := os.Stat(nodesDir)
+	if apiKey == "" && os.IsNotExist(authErr) && os.IsNotExist(nodesErr) {
+		fmt.Fprintln(out, "→ Not logged in")
+		return nil
+	}
+
+	deleteAPIKeyFn()
+	os.Remove(authKeyPath)
+	os.RemoveAll(nodesDir)
+	os.RemoveAll(filepath.Join(cfgDir, "tsnet-state"))
+
+	fmt.Fprintln(out, "→ ✓ Logged out")
+	return nil
+}
 
 var logoutCmd = &cobra.Command{
 	Use:   "logout",
@@ -20,10 +45,9 @@ Example:
   tslink logout`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		pidPath, err := config.PIDPath()
-		if err == nil && daemon.IsRunning(pidPath) {
-			return fmt.Errorf("tslink is currently running — run 'tslink stop' first")
+		if err != nil {
+			return err
 		}
-
 		authKeyPath, err := config.AuthKeyPath()
 		if err != nil {
 			return err
@@ -32,27 +56,9 @@ Example:
 		if err != nil {
 			return err
 		}
-
-		// Check if logged in (check keychain, apikey file, and legacy authkey)
-		apiKey, _ := credentials.GetAPIKey()
-		_, authErr := os.Stat(authKeyPath)
-		_, nodesErr := os.Stat(nodesDir)
-		if apiKey == "" && os.IsNotExist(authErr) && os.IsNotExist(nodesErr) {
-			fmt.Println("→ Not logged in")
-			return nil
-		}
-
-		// Remove credentials from keychain and files
-		credentials.DeleteAPIKey()
-		os.Remove(authKeyPath)
-		os.RemoveAll(nodesDir)
-
-		// Also clean legacy tsnet-state/ if present
 		cfgDir, _ := config.Dir()
-		os.RemoveAll(filepath.Join(cfgDir, "tsnet-state"))
 
-		fmt.Println("→ ✓ Logged out")
-		return nil
+		return logoutUser(pidPath, authKeyPath, nodesDir, cfgDir, cmd.OutOrStdout())
 	},
 }
 

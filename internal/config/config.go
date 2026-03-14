@@ -1,9 +1,64 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 )
+
+// jsonMarshalIndent is a package-level variable to allow test injection.
+var jsonMarshalIndent = json.MarshalIndent
+
+// GlobalConfig holds tslink-wide settings persisted in config.json.
+type GlobalConfig struct {
+	ControlURL string `json:"control_url,omitempty"`
+}
+
+// ConfigPath returns the path to the global config file.
+func ConfigPath() (string, error) {
+	dir, err := Dir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "config.json"), nil
+}
+
+// LoadGlobalConfig reads the global config file. Returns zero-value config if not found.
+func LoadGlobalConfig() (GlobalConfig, error) {
+	path, err := ConfigPath()
+	if err != nil {
+		return GlobalConfig{}, err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return GlobalConfig{}, nil
+		}
+		return GlobalConfig{}, err
+	}
+	var cfg GlobalConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return GlobalConfig{}, err
+	}
+	return cfg, nil
+}
+
+// SaveGlobalConfig writes the global config to disk.
+func SaveGlobalConfig(cfg GlobalConfig) error {
+	path, err := ConfigPath()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	data, err := jsonMarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	return os.WriteFile(path, data, 0o600)
+}
 
 func Dir() (string, error) {
 	home, err := os.UserHomeDir()
@@ -66,14 +121,8 @@ func EnsureDir() error {
 	if err != nil {
 		return err
 	}
-	logDir, err := LogDir()
-	if err != nil {
-		return err
-	}
-	nodesDir, err := NodesDir()
-	if err != nil {
-		return err
-	}
+	logDir := filepath.Join(dir, "logs")
+	nodesDir := filepath.Join(dir, "nodes")
 	for _, d := range []string{dir, logDir, nodesDir} {
 		if err := os.MkdirAll(d, 0o700); err != nil {
 			return err

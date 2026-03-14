@@ -1,6 +1,7 @@
 package registry
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -165,16 +166,16 @@ func TestValidateNameEdgeCases(t *testing.T) {
 		{"a1b2", true},
 		{"123", true},
 
-		{"-abc", false},   // leading hyphen
-		{"abc-", false},   // trailing hyphen
-		{"ABC", false},    // uppercase
-		{"a_b", false},    // underscore
-		{"a b", false},    // space
-		{"a/b", false},    // slash
-		{"a.b", false},    // dot
-		{"", false},       // empty
-		{"-", false},      // just hyphen
-		{"a--b", true},    // double hyphen is valid per regex
+		{"-abc", false}, // leading hyphen
+		{"abc-", false}, // trailing hyphen
+		{"ABC", false},  // uppercase
+		{"a_b", false},  // underscore
+		{"a b", false},  // space
+		{"a/b", false},  // slash
+		{"a.b", false},  // dot
+		{"", false},     // empty
+		{"-", false},    // just hyphen
+		{"a--b", true},  // double hyphen is valid per regex
 		{"hello world", false},
 	}
 
@@ -330,5 +331,477 @@ func TestAddFileService(t *testing.T) {
 	}
 	if svc.Path != dir {
 		t.Fatalf("expected path %q, got %q", dir, svc.Path)
+	}
+}
+
+func TestLoadNullServices(t *testing.T) {
+	path := testRegistryPath(t)
+	if err := os.WriteFile(path, []byte(`{"services": null}`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	reg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if reg.Services == nil {
+		t.Fatal("Services should be non-nil even when JSON has null")
+	}
+}
+
+func TestLoadReadError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "registry-dir")
+	if err := os.Mkdir(path, 0o700); err != nil {
+		t.Fatalf("Mkdir() error = %v", err)
+	}
+
+	if _, err := Load(path); err == nil {
+		t.Fatal("Load() error = nil, want error")
+	}
+}
+
+func TestSaveAndLoadRoundTrip(t *testing.T) {
+	path := testRegistryPath(t)
+
+	svc := Service{
+		Name:   "roundtrip",
+		Type:   TypeProxy,
+		Target: "http://localhost:9999",
+	}
+	if err := Add(path, svc); err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+
+	reg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	loaded := reg.Services[0]
+	if loaded.Name != svc.Name || loaded.Type != svc.Type || loaded.Target != svc.Target {
+		t.Fatalf("round-trip mismatch: got %+v want %+v", loaded, svc)
+	}
+}
+
+func TestRemoveLastService(t *testing.T) {
+	path := testRegistryPath(t)
+	if err := Add(path, Service{Name: "only", Type: TypeProxy, Target: "http://localhost:1000"}); err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+
+	if err := Remove(path, "only"); err != nil {
+		t.Fatalf("Remove() error = %v", err)
+	}
+
+	reg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(reg.Services) != 0 {
+		t.Fatalf("expected 0 services, got %d", len(reg.Services))
+	}
+}
+
+func TestAddPreservesOtherServices(t *testing.T) {
+	path := testRegistryPath(t)
+	if err := Add(path, Service{Name: "first", Type: TypeProxy, Target: "http://localhost:1000"}); err != nil {
+		t.Fatalf("Add(first) error = %v", err)
+	}
+	if err := Add(path, Service{Name: "second", Type: TypeFile, Path: "/tmp"}); err != nil {
+		t.Fatalf("Add(second) error = %v", err)
+	}
+
+	if err := Add(path, Service{Name: "first", Type: TypeProxy, Target: "http://localhost:2000"}); err != nil {
+		t.Fatalf("Add(update first) error = %v", err)
+	}
+
+	reg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(reg.Services) != 2 {
+		t.Fatalf("expected 2 services, got %d", len(reg.Services))
+	}
+}
+
+func TestAdd_PathError(t *testing.T) {
+	parent := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(parent, []byte("x"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	err := Add(filepath.Join(parent, "registry.json"), Service{Name: "svc", Type: TypeProxy, Target: "http://localhost:3000"})
+	if err == nil {
+		t.Fatal("Add() error = nil, want error")
+	}
+}
+
+func TestAdd_LockFileOpenError(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "locked")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatalf("Mkdir() error = %v", err)
+	}
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatalf("Chmod() error = %v", err)
+	}
+	defer os.Chmod(dir, 0o700)
+
+	err := Add(filepath.Join(dir, "registry.json"), Service{Name: "svc", Type: TypeProxy, Target: "http://localhost:3000"})
+	if err == nil {
+		t.Fatal("Add() error = nil, want error")
+	}
+}
+
+func TestSave_NilServices(t *testing.T) {
+	path := testRegistryPath(t)
+
+	if err := save(path, &Registry{}); err != nil {
+		t.Fatalf("save() error = %v", err)
+	}
+
+	reg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if reg.Services == nil {
+		t.Fatal("Services should be initialized by save()")
+	}
+}
+
+func TestSave_PathError(t *testing.T) {
+	parent := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(parent, []byte("x"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	err := save(filepath.Join(parent, "registry.json"), &Registry{Services: []Service{{Name: "svc"}}})
+	if err == nil {
+		t.Fatal("save() error = nil, want error")
+	}
+}
+
+func TestSave_TempWriteError(t *testing.T) {
+	path := testRegistryPath(t)
+	if err := os.Mkdir(path+".tmp", 0o700); err != nil {
+		t.Fatalf("Mkdir() error = %v", err)
+	}
+
+	err := save(path, &Registry{Services: []Service{{Name: "svc"}}})
+	if err == nil {
+		t.Fatal("save() error = nil, want error")
+	}
+}
+
+func TestSave_RenameError(t *testing.T) {
+	path := testRegistryPath(t)
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		t.Fatalf("Remove() error = %v", err)
+	}
+	if err := os.Mkdir(path, 0o700); err != nil {
+		t.Fatalf("Mkdir() error = %v", err)
+	}
+
+	err := save(path, &Registry{Services: []Service{{Name: "svc"}}})
+	if err == nil {
+		t.Fatal("save() error = nil, want error")
+	}
+}
+
+func TestAdd_LoadError(t *testing.T) {
+	path := testRegistryPath(t)
+	if err := os.WriteFile(path, []byte("{invalid json"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	err := Add(path, Service{Name: "svc", Type: TypeProxy, Target: "http://localhost:3000"})
+	if err == nil {
+		t.Fatal("Add() error = nil, want error")
+	}
+}
+
+func TestAdd_UpdateSaveError(t *testing.T) {
+	path := testRegistryPath(t)
+	if err := Add(path, Service{Name: "svc", Type: TypeProxy, Target: "http://localhost:3000"}); err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+	if err := os.Mkdir(path+".tmp", 0o700); err != nil {
+		t.Fatalf("Mkdir() error = %v", err)
+	}
+
+	err := Add(path, Service{Name: "svc", Type: TypeProxy, Target: "http://localhost:4000"})
+	if err == nil {
+		t.Fatal("Add() error = nil, want error")
+	}
+}
+
+func TestRemove_LoadError(t *testing.T) {
+	path := testRegistryPath(t)
+	if err := os.WriteFile(path, []byte("{invalid json"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	err := Remove(path, "svc")
+	if err == nil {
+		t.Fatal("Remove() error = nil, want error")
+	}
+}
+
+func TestAddTCPService(t *testing.T) {
+	path := testRegistryPath(t)
+
+	if err := Add(path, Service{
+		Name: "db",
+		Type: TypeTCP,
+		Port: 5432,
+	}); err != nil {
+		t.Fatalf("Add returned error: %v", err)
+	}
+
+	reg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if len(reg.Services) != 1 {
+		t.Fatalf("expected 1 service, got %d", len(reg.Services))
+	}
+
+	svc := reg.Services[0]
+	if svc.Name != "db" {
+		t.Fatalf("expected name db, got %q", svc.Name)
+	}
+	if svc.Type != TypeTCP {
+		t.Fatalf("expected type %q, got %q", TypeTCP, svc.Type)
+	}
+	if svc.Port != 5432 {
+		t.Fatalf("expected port 5432, got %d", svc.Port)
+	}
+	if svc.CreatedAt.IsZero() {
+		t.Fatal("expected created_at to be set")
+	}
+}
+
+func TestAddEphemeralService(t *testing.T) {
+	path := testRegistryPath(t)
+
+	if err := Add(path, Service{
+		Name:      "temp",
+		Type:      TypeProxy,
+		Target:    "http://localhost:8080",
+		Ephemeral: true,
+	}); err != nil {
+		t.Fatalf("Add returned error: %v", err)
+	}
+
+	reg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if len(reg.Services) != 1 {
+		t.Fatalf("expected 1 service, got %d", len(reg.Services))
+	}
+
+	svc := reg.Services[0]
+	if !svc.Ephemeral {
+		t.Fatal("expected ephemeral to be true")
+	}
+}
+
+func TestAddServiceWithTags(t *testing.T) {
+	path := testRegistryPath(t)
+
+	tags := []string{"web", "production", "api"}
+	if err := Add(path, Service{
+		Name:   "tagged",
+		Type:   TypeProxy,
+		Target: "http://localhost:3000",
+		Tags:   tags,
+	}); err != nil {
+		t.Fatalf("Add returned error: %v", err)
+	}
+
+	reg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if len(reg.Services) != 1 {
+		t.Fatalf("expected 1 service, got %d", len(reg.Services))
+	}
+
+	svc := reg.Services[0]
+	if len(svc.Tags) != len(tags) {
+		t.Fatalf("expected %d tags, got %d", len(tags), len(svc.Tags))
+	}
+	for i, tag := range tags {
+		if svc.Tags[i] != tag {
+			t.Fatalf("expected tag[%d] = %q, got %q", i, tag, svc.Tags[i])
+		}
+	}
+}
+
+func TestAddServiceWithControlURL(t *testing.T) {
+	path := testRegistryPath(t)
+
+	if err := Add(path, Service{
+		Name:       "custom",
+		Type:       TypeProxy,
+		Target:     "http://localhost:3000",
+		ControlURL: "https://headscale.example.com",
+	}); err != nil {
+		t.Fatalf("Add returned error: %v", err)
+	}
+
+	reg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if len(reg.Services) != 1 {
+		t.Fatalf("expected 1 service, got %d", len(reg.Services))
+	}
+
+	svc := reg.Services[0]
+	if svc.ControlURL != "https://headscale.example.com" {
+		t.Fatalf("expected control_url %q, got %q", "https://headscale.example.com", svc.ControlURL)
+	}
+}
+
+func TestAddServiceAllFields(t *testing.T) {
+	path := testRegistryPath(t)
+
+	if err := Add(path, Service{
+		Name:       "full",
+		Type:       TypeTCP,
+		Port:       3306,
+		Ephemeral:  true,
+		Tags:       []string{"db", "internal"},
+		ControlURL: "https://control.example.com",
+	}); err != nil {
+		t.Fatalf("Add returned error: %v", err)
+	}
+
+	reg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if len(reg.Services) != 1 {
+		t.Fatalf("expected 1 service, got %d", len(reg.Services))
+	}
+
+	svc := reg.Services[0]
+	if svc.Name != "full" {
+		t.Fatalf("expected name full, got %q", svc.Name)
+	}
+	if svc.Type != TypeTCP {
+		t.Fatalf("expected type %q, got %q", TypeTCP, svc.Type)
+	}
+	if svc.Port != 3306 {
+		t.Fatalf("expected port 3306, got %d", svc.Port)
+	}
+	if !svc.Ephemeral {
+		t.Fatal("expected ephemeral to be true")
+	}
+	if len(svc.Tags) != 2 || svc.Tags[0] != "db" || svc.Tags[1] != "internal" {
+		t.Fatalf("expected tags [db internal], got %v", svc.Tags)
+	}
+	if svc.ControlURL != "https://control.example.com" {
+		t.Fatalf("expected control_url %q, got %q", "https://control.example.com", svc.ControlURL)
+	}
+	if svc.CreatedAt.IsZero() {
+		t.Fatal("expected created_at to be set")
+	}
+}
+
+func TestUpdateServicePreservesNewFields(t *testing.T) {
+	path := testRegistryPath(t)
+
+	if err := Add(path, Service{
+		Name:       "updatable",
+		Type:       TypeTCP,
+		Target:     "http://localhost:3000",
+		Port:       5432,
+		Ephemeral:  true,
+		Tags:       []string{"v1", "staging"},
+		ControlURL: "https://control.example.com",
+	}); err != nil {
+		t.Fatalf("first Add returned error: %v", err)
+	}
+
+	reg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load after first Add returned error: %v", err)
+	}
+	firstCreatedAt := reg.Services[0].CreatedAt
+
+	if err := Add(path, Service{
+		Name:       "updatable",
+		Type:       TypeTCP,
+		Target:     "http://localhost:4000",
+		Port:       3306,
+		Ephemeral:  false,
+		Tags:       []string{"v2", "production"},
+		ControlURL: "https://new-control.example.com",
+	}); err != nil {
+		t.Fatalf("second Add returned error: %v", err)
+	}
+
+	reg, err = Load(path)
+	if err != nil {
+		t.Fatalf("Load after second Add returned error: %v", err)
+	}
+	if len(reg.Services) != 1 {
+		t.Fatalf("expected 1 service after update, got %d", len(reg.Services))
+	}
+
+	svc := reg.Services[0]
+	if svc.Target != "http://localhost:4000" {
+		t.Fatalf("expected target to be updated, got %q", svc.Target)
+	}
+	if svc.Port != 3306 {
+		t.Fatalf("expected port to be updated to 3306, got %d", svc.Port)
+	}
+	if svc.Ephemeral {
+		t.Fatal("expected ephemeral to be updated to false")
+	}
+	if len(svc.Tags) != 2 || svc.Tags[0] != "v2" || svc.Tags[1] != "production" {
+		t.Fatalf("expected tags to be updated to [v2 production], got %v", svc.Tags)
+	}
+	if svc.ControlURL != "https://new-control.example.com" {
+		t.Fatalf("expected control_url to be updated, got %q", svc.ControlURL)
+	}
+	if !svc.CreatedAt.Equal(firstCreatedAt) {
+		t.Fatalf("expected created_at to be preserved, got %v want %v", svc.CreatedAt, firstCreatedAt)
+	}
+}
+
+func TestSave_MarshalError(t *testing.T) {
+	origMarshal := marshalFn
+	marshalFn = func(_ any, _ string, _ string) ([]byte, error) {
+		return nil, errors.New("injected marshal error")
+	}
+	defer func() { marshalFn = origMarshal }()
+
+	path := testRegistryPath(t)
+	err := save(path, &Registry{Services: []Service{{Name: "svc"}}})
+	if err == nil {
+		t.Fatal("save() error = nil, want error from marshal failure")
+	}
+	if err.Error() != "injected marshal error" {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestWithLock_LockError(t *testing.T) {
+	origLock := lockFn
+	lockFn = func(_ *os.File) error {
+		return errors.New("injected lock error")
+	}
+	defer func() { lockFn = origLock }()
+
+	path := testRegistryPath(t)
+	err := Add(path, Service{Name: "svc", Type: TypeProxy, Target: "http://localhost:3000"})
+	if err == nil {
+		t.Fatal("Add() error = nil, want error from lock failure")
+	}
+	if err.Error() != "injected lock error" {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
