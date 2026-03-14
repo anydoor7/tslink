@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/domain"
 	"github.com/monody0007/tslink/internal/registry"
 	"github.com/spf13/cobra"
@@ -29,6 +28,7 @@ type AddParams struct {
 	Allow     string
 	Funnel    bool
 	Domain    string
+	AcmeEmail string
 }
 
 // buildService validates parameters and constructs a registry.Service.
@@ -68,6 +68,9 @@ func buildService(p AddParams) (registry.Service, error) {
 	}
 	if p.Domain != "" && p.Proxy == "" {
 		return registry.Service{}, fmt.Errorf("--domain can only be used with --proxy")
+	}
+	if p.AcmeEmail != "" && p.Domain == "" {
+		return registry.Service{}, fmt.Errorf("--acme-email requires --domain to be set")
 	}
 	if p.Domain != "" {
 		if err := domain.ValidateDomain(p.Domain); err != nil {
@@ -109,7 +112,7 @@ func buildService(p AddParams) (registry.Service, error) {
 		return registry.Service{
 			Name: p.Name, Type: registry.TypeProxy, Target: target,
 			Ephemeral: p.Ephemeral, Tags: tags, AllowedUsers: allowedUsers,
-			Funnel: p.Funnel, Domain: p.Domain,
+			Funnel: p.Funnel, Domain: p.Domain, AcmeEmail: p.AcmeEmail,
 		}, nil
 	}
 
@@ -143,6 +146,7 @@ Examples:
 			allowStr, _ := cmd.Flags().GetString("allow")
 			funnel, _ := cmd.Flags().GetBool("funnel")
 			domainName, _ := cmd.Flags().GetString("domain")
+			acmeEmail, _ := cmd.Flags().GetString("acme-email")
 
 			svc, err := buildService(AddParams{
 				Name:      args[0],
@@ -154,6 +158,7 @@ Examples:
 				Allow:     allowStr,
 				Funnel:    funnel,
 				Domain:    domainName,
+				AcmeEmail: acmeEmail,
 			})
 			if err != nil {
 				return err
@@ -175,11 +180,11 @@ Examples:
 				svc.Path = absPath
 			}
 
-			if err := config.EnsureDir(); err != nil {
+			if err := ensureDirFn(); err != nil {
 				return err
 			}
 
-			regPath, err := config.RegistryPath()
+			regPath, err := registryPathFn()
 			if err != nil {
 				return err
 			}
@@ -210,5 +215,6 @@ Examples:
 	addCmd.Flags().Bool("funnel", false, "Expose publicly via Tailscale Funnel (proxy only)")
 	addCmd.Flags().String("domain", "", "Custom domain name for the service (proxy only, e.g., app.example.com)")
 	addCmd.Flags().String("allow", "", "Comma-separated allowed identities (e.g., user@example.com,tag:admin)")
+	addCmd.Flags().String("acme-email", "", "Email for Let's Encrypt ACME certificates (requires --domain)")
 	rootCmd.AddCommand(addCmd)
 }

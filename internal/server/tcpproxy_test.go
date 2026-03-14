@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"io"
 	"net"
 	"testing"
@@ -177,6 +178,60 @@ func TestServeTCP_NonFatalAcceptError(t *testing.T) {
 	case <-done:
 	case <-time.After(3 * time.Second):
 		t.Fatal("serveTCP did not return")
+	}
+}
+
+// errorListener is a net.Listener that returns configurable errors from Accept.
+type errorListener struct {
+	errors chan error
+	closed chan struct{}
+}
+
+func (l *errorListener) Accept() (net.Conn, error) {
+	select {
+	case err := <-l.errors:
+		return nil, err
+	case <-l.closed:
+		return nil, net.ErrClosed
+	}
+}
+
+func (l *errorListener) Close() error {
+	select {
+	case <-l.closed:
+	default:
+		close(l.closed)
+	}
+	return nil
+}
+
+func (l *errorListener) Addr() net.Addr { return &net.TCPAddr{} }
+
+func TestServeTCP_AcceptError_NonClosed(t *testing.T) {
+	el := &errorListener{
+		errors: make(chan error, 1),
+		closed: make(chan struct{}),
+	}
+
+	// Send a non-closed error; serveTCP should log it and continue.
+	el.errors <- errors.New("temporary accept failure")
+
+	done := make(chan struct{})
+	go func() {
+		serveTCP(el, "127.0.0.1:1", "test-err")
+		close(done)
+	}()
+
+	// Give serveTCP time to process the error and loop back to Accept.
+	time.Sleep(50 * time.Millisecond)
+
+	// Close the listener to stop the loop.
+	el.Close()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("serveTCP did not return after closing errorListener")
 	}
 }
 

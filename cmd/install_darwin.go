@@ -13,6 +13,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var userHomeDirFn = os.UserHomeDir
+
 const plistLabel = "com.tslink.daemon"
 
 var plistTemplate = template.Must(template.New("plist").Parse(`<?xml version="1.0" encoding="UTF-8"?>
@@ -71,7 +73,10 @@ Example:
 		outLog := filepath.Join(logDir, "tslink.out.log")
 		errLog := filepath.Join(logDir, "tslink.err.log")
 
-		plistPath := plistPath()
+		plistPath, err := plistPath()
+		if err != nil {
+			return err
+		}
 		f, err := os.Create(plistPath)
 		if err != nil {
 			return fmt.Errorf("create plist: %w", err)
@@ -98,9 +103,12 @@ Example:
 	},
 }
 
-func plistPath() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, "Library", "LaunchAgents", plistLabel+".plist")
+func plistPath() (string, error) {
+	home, err := userHomeDirFn()
+	if err != nil {
+		return "", fmt.Errorf("get home directory: %w", err)
+	}
+	return filepath.Join(home, "Library", "LaunchAgents", plistLabel+".plist"), nil
 }
 
 func init() {

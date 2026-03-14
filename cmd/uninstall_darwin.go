@@ -18,7 +18,10 @@ var uninstallCmd = &cobra.Command{
 Example:
   tslink uninstall`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		path := plistPath()
+		path, err := plistPath()
+		if err != nil {
+			return err
+		}
 
 		if _, err := os.Stat(path); os.IsNotExist(err) {
 			fmt.Println("→ LaunchAgent not installed")

@@ -12,6 +12,7 @@ import (
 )
 
 var deleteDevicesFn = tailapi.DeleteDevicesByHostname
+var ensureDirFn = config.EnsureDir
 
 func removeService(regPath, name string, out, errOut io.Writer) error {
 	if err := registry.Remove(regPath, name); err != nil {
@@ -37,11 +38,11 @@ Example:
   tslink remove myapp`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := config.EnsureDir(); err != nil {
+			if err := ensureDirFn(); err != nil {
 				return err
 			}
 
-			regPath, err := config.RegistryPath()
+			regPath, err := registryPathFn()
 			if err != nil {
 				return err
 			}

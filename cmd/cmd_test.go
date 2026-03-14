@@ -30,6 +30,7 @@ func runAddCmd(t *testing.T, args []string, flags map[string]string) error {
 	addCmd.Flags().Set("allow", "")
 	addCmd.Flags().Set("funnel", "false")
 	addCmd.Flags().Set("domain", "")
+	addCmd.Flags().Set("acme-email", "")
 
 	for k, v := range flags {
 		addCmd.Flags().Set(k, v)
@@ -59,6 +60,7 @@ func runAddCmdOutput(t *testing.T, args []string, flags map[string]string) (stri
 	addCmd.Flags().Set("allow", "")
 	addCmd.Flags().Set("funnel", "false")
 	addCmd.Flags().Set("domain", "")
+	addCmd.Flags().Set("acme-email", "")
 
 	for k, v := range flags {
 		addCmd.Flags().Set(k, v)
@@ -800,8 +802,10 @@ func TestRemoveService_TailapiWarning(t *testing.T) {
 func TestLogoutUser_NotLoggedIn(t *testing.T) {
 	dir := t.TempDir()
 	old := getAPIKeyFn
+	oldCS := hasClientSecretFn
 	getAPIKeyFn = func() (string, error) { return "", nil }
-	defer func() { getAPIKeyFn = old }()
+	hasClientSecretFn = func() bool { return false }
+	defer func() { getAPIKeyFn = old; hasClientSecretFn = oldCS }()
 
 	var buf bytes.Buffer
 	err := logoutUser(
@@ -843,10 +847,15 @@ func TestLogoutUser_CleansUp(t *testing.T) {
 
 	oldGet := getAPIKeyFn
 	oldDel := deleteAPIKeyFn
+	oldCS := hasClientSecretFn
+	oldDelCS := deleteClientSecretFn
 	getAPIKeyFn = func() (string, error) { return "tskey-api-xxx", nil }
 	deleted := false
 	deleteAPIKeyFn = func() { deleted = true }
-	defer func() { getAPIKeyFn = oldGet; deleteAPIKeyFn = oldDel }()
+	csDeleted := false
+	hasClientSecretFn = func() bool { return false }
+	deleteClientSecretFn = func() { csDeleted = true }
+	defer func() { getAPIKeyFn = oldGet; deleteAPIKeyFn = oldDel; hasClientSecretFn = oldCS; deleteClientSecretFn = oldDelCS }()
 
 	var buf bytes.Buffer
 	err := logoutUser(filepath.Join(dir, "pid"), authKeyPath, nodesDir, dir, &buf)
@@ -859,11 +868,41 @@ func TestLogoutUser_CleansUp(t *testing.T) {
 	if !deleted {
 		t.Error("expected deleteAPIKeyFn to be called")
 	}
+	if !csDeleted {
+		t.Error("expected deleteClientSecretFn to be called")
+	}
 	if _, err := os.Stat(authKeyPath); !os.IsNotExist(err) {
 		t.Error("authkey should be removed")
 	}
 	if _, err := os.Stat(nodesDir); !os.IsNotExist(err) {
 		t.Error("nodes dir should be removed")
+	}
+}
+
+func TestLogoutUser_WithClientSecret(t *testing.T) {
+	dir := t.TempDir()
+
+	oldGet := getAPIKeyFn
+	oldDel := deleteAPIKeyFn
+	oldCS := hasClientSecretFn
+	oldDelCS := deleteClientSecretFn
+	getAPIKeyFn = func() (string, error) { return "", nil }
+	deleteAPIKeyFn = func() {}
+	hasClientSecretFn = func() bool { return true }
+	csDeleted := false
+	deleteClientSecretFn = func() { csDeleted = true }
+	defer func() { getAPIKeyFn = oldGet; deleteAPIKeyFn = oldDel; hasClientSecretFn = oldCS; deleteClientSecretFn = oldDelCS }()
+
+	var buf bytes.Buffer
+	err := logoutUser(filepath.Join(dir, "pid"), filepath.Join(dir, "authkey"), filepath.Join(dir, "nodes"), dir, &buf)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(buf.String(), "Logged out") {
+		t.Errorf("expected 'Logged out', got: %s", buf.String())
+	}
+	if !csDeleted {
+		t.Error("expected deleteClientSecretFn to be called")
 	}
 }
 
@@ -941,6 +980,81 @@ func TestBuildService_DomainWithoutProxy(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
+}
+
+func TestBuildService_AcmeEmailWithoutDomain(t *testing.T) {
+	_, err := buildService(AddParams{Name: "bad", Proxy: "localhost:3000", AcmeEmail: "user@example.com"})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "--acme-email requires --domain") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestBuildService_AcmeEmailWithDomain(t *testing.T) {
+	svc, err := buildService(AddParams{
+		Name: "acme-app", Proxy: "localhost:3000",
+		Domain: "app.example.com", AcmeEmail: "admin@example.com",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if svc.AcmeEmail != "admin@example.com" {
+		t.Errorf("expected AcmeEmail %q, got %q", "admin@example.com", svc.AcmeEmail)
+	}
+	if svc.Domain != "app.example.com" {
+		t.Errorf("expected Domain %q, got %q", "app.example.com", svc.Domain)
+	}
+}
+
+func TestAddCmd_AcmeEmailWithoutDomain(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+
+	os.MkdirAll(filepath.Join(dir, ".config", "tslink"), 0o700)
+
+	err := runAddCmd(t, []string{"acmeapp"}, map[string]string{
+		"proxy":      "localhost:3000",
+		"acme-email": "user@example.com",
+	})
+	if err == nil {
+		t.Fatal("expected error when --acme-email used without --domain")
+	}
+	if !strings.Contains(err.Error(), "--acme-email requires --domain") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestAddCmd_AcmeEmailWithDomain(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+
+	os.MkdirAll(filepath.Join(dir, ".config", "tslink"), 0o700)
+
+	_, err := runAddCmdOutput(t, []string{"acmeapp"}, map[string]string{
+		"proxy":      "localhost:3000",
+		"domain":     "app.example.com",
+		"acme-email": "admin@example.com",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	regPath := filepath.Join(dir, ".config", "tslink", "registry.json")
+	reg, _ := registry.Load(regPath)
+	for _, svc := range reg.Services {
+		if svc.Name == "acmeapp" {
+			if svc.AcmeEmail != "admin@example.com" {
+				t.Errorf("expected acme_email %q, got %q", "admin@example.com", svc.AcmeEmail)
+			}
+			if svc.Domain != "app.example.com" {
+				t.Errorf("expected domain %q, got %q", "app.example.com", svc.Domain)
+			}
+			return
+		}
+	}
+	t.Error("acmeapp not found in registry")
 }
 
 func TestBuildService_InvalidName(t *testing.T) {
@@ -1032,11 +1146,13 @@ func TestStopService_Error(t *testing.T) {
 
 func TestGetStatus_Running_Authenticated(t *testing.T) {
 	oldIsRunning, oldReadPID, oldGetKey := isRunningFn, readPIDFn, getAPIKeyFn
-	defer func() { isRunningFn, readPIDFn, getAPIKeyFn = oldIsRunning, oldReadPID, oldGetKey }()
+	oldCS := hasClientSecretFn
+	defer func() { isRunningFn, readPIDFn, getAPIKeyFn = oldIsRunning, oldReadPID, oldGetKey; hasClientSecretFn = oldCS }()
 
 	isRunningFn = func(string) bool { return true }
 	readPIDFn = func(string) (int, error) { return 42, nil }
 	getAPIKeyFn = func() (string, error) { return "tskey-api-xxx", nil }
+	hasClientSecretFn = func() bool { return false }
 
 	dir := t.TempDir()
 	regPath := filepath.Join(dir, "registry.json")
@@ -1054,6 +1170,290 @@ func TestGetStatus_Running_Authenticated(t *testing.T) {
 	}
 	if r.ServiceCount != 1 {
 		t.Errorf("expected 1 service, got %d", r.ServiceCount)
+	}
+}
+
+func TestGetStatus_AuthenticatedViaClientSecret(t *testing.T) {
+	oldIsRunning, oldGetKey := isRunningFn, getAPIKeyFn
+	oldCS := hasClientSecretFn
+	defer func() { isRunningFn = oldIsRunning; getAPIKeyFn = oldGetKey; hasClientSecretFn = oldCS }()
+
+	isRunningFn = func(string) bool { return false }
+	getAPIKeyFn = func() (string, error) { return "", nil }
+	hasClientSecretFn = func() bool { return true }
+
+	dir := t.TempDir()
+	r := getStatus(filepath.Join(dir, "pid"), filepath.Join(dir, "registry.json"))
+	if !r.Authenticated {
+		t.Error("expected authenticated via client secret")
+	}
+}
+
+// --- remove command Cobra-level test ---
+
+// --- config command tests ---
+
+func TestConfigSet_ValidURL(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	var buf bytes.Buffer
+	err := configSet("control-url", "https://headscale.example.com", &buf)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(buf.String(), "control-url = https://headscale.example.com") {
+		t.Errorf("expected confirmation, got: %s", buf.String())
+	}
+}
+
+func TestConfigSet_ClearValue(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	var buf bytes.Buffer
+	// Set a value first
+	if err := configSet("control-url", "https://headscale.example.com", &buf); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	buf.Reset()
+	// Clear it
+	if err := configSet("control-url", "", &buf); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(buf.String(), "control-url cleared") {
+		t.Errorf("expected 'cleared', got: %s", buf.String())
+	}
+}
+
+func TestConfigSet_InvalidURL(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	var buf bytes.Buffer
+	err := configSet("control-url", "not-a-url", &buf)
+	if err == nil {
+		t.Fatal("expected error for invalid URL")
+	}
+	if !strings.Contains(err.Error(), "invalid URL") {
+		t.Errorf("expected 'invalid URL' error, got: %v", err)
+	}
+}
+
+func TestConfigSet_UnknownKey(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	var buf bytes.Buffer
+	err := configSet("nonexistent", "value", &buf)
+	if err == nil {
+		t.Fatal("expected error for unknown key")
+	}
+	if !strings.Contains(err.Error(), "unknown config key") {
+		t.Errorf("expected 'unknown config key' error, got: %v", err)
+	}
+}
+
+func TestConfigGet_WithValue(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	var buf bytes.Buffer
+	if err := configSet("control-url", "https://headscale.example.com", &buf); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	buf.Reset()
+	if err := configGet("control-url", &buf); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(buf.String(), "https://headscale.example.com") {
+		t.Errorf("expected URL, got: %s", buf.String())
+	}
+}
+
+func TestConfigGet_NotSet(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	var buf bytes.Buffer
+	if err := configGet("control-url", &buf); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(buf.String(), "not set") {
+		t.Errorf("expected 'not set', got: %s", buf.String())
+	}
+}
+
+func TestConfigGet_UnknownKey(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	var buf bytes.Buffer
+	err := configGet("nonexistent", &buf)
+	if err == nil {
+		t.Fatal("expected error for unknown key")
+	}
+	if !strings.Contains(err.Error(), "unknown config key") {
+		t.Errorf("expected 'unknown config key' error, got: %v", err)
+	}
+}
+
+func TestConfigList_WithValue(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	var buf bytes.Buffer
+	if err := configSet("control-url", "https://headscale.example.com", &buf); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	buf.Reset()
+	if err := configList(&buf); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(buf.String(), "control-url = https://headscale.example.com") {
+		t.Errorf("expected URL in list, got: %s", buf.String())
+	}
+}
+
+func TestConfigList_Empty(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	var buf bytes.Buffer
+	if err := configList(&buf); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(buf.String(), "(not set)") {
+		t.Errorf("expected '(not set)', got: %s", buf.String())
+	}
+}
+
+func TestConfigCmd_SetThenGet(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	// Use Cobra commands for integration test
+	setCmd, _, _ := rootCmd.Find([]string{"config", "set"})
+	var buf bytes.Buffer
+	setCmd.SetOut(&buf)
+
+	err := setCmd.RunE(setCmd, []string{"control-url", "https://hs.example.com"})
+	if err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	getCmd, _, _ := rootCmd.Find([]string{"config", "get"})
+	buf.Reset()
+	getCmd.SetOut(&buf)
+
+	err = getCmd.RunE(getCmd, []string{"control-url"})
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if !strings.Contains(buf.String(), "https://hs.example.com") {
+		t.Errorf("round-trip failed, got: %s", buf.String())
+	}
+}
+
+func TestConfigCmd_SetClearWithOneArg(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	// set with only 1 arg (key) should clear the value
+	setCmd, _, _ := rootCmd.Find([]string{"config", "set"})
+	var buf bytes.Buffer
+	setCmd.SetOut(&buf)
+
+	err := setCmd.RunE(setCmd, []string{"control-url"})
+	if err != nil {
+		t.Fatalf("set (clear): %v", err)
+	}
+	if !strings.Contains(buf.String(), "cleared") {
+		t.Errorf("expected 'cleared', got: %s", buf.String())
+	}
+}
+
+func TestConfigCmd_ListAlias(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	// "ls" should resolve to list command
+	listCmd, _, err := rootCmd.Find([]string{"config", "ls"})
+	if err != nil {
+		t.Fatalf("find config ls: %v", err)
+	}
+
+	var buf bytes.Buffer
+	listCmd.SetOut(&buf)
+
+	if err := listCmd.RunE(listCmd, []string{}); err != nil {
+		t.Fatalf("ls: %v", err)
+	}
+	if !strings.Contains(buf.String(), "control-url") {
+		t.Errorf("expected control-url in output, got: %s", buf.String())
+	}
+}
+
+func TestConfigSet_LoadError(t *testing.T) {
+	// HOME points to a file, not a directory — Dir() will fail
+	tmp := t.TempDir()
+	fakePath := filepath.Join(tmp, "not-a-dir")
+	os.WriteFile(fakePath, []byte("x"), 0o600)
+	t.Setenv("HOME", fakePath)
+
+	var buf bytes.Buffer
+	err := configSet("control-url", "https://example.com", &buf)
+	if err == nil {
+		t.Fatal("expected error when HOME is invalid")
+	}
+	if !strings.Contains(err.Error(), "load config") {
+		t.Errorf("expected 'load config' error, got: %v", err)
+	}
+}
+
+func TestConfigSet_SaveError(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	// Create config dir (Load will succeed with IsNotExist),
+	// then make it read-only so WriteFile fails.
+	cfgDir := filepath.Join(tmp, ".config", "tslink")
+	os.MkdirAll(cfgDir, 0o700)
+	os.Chmod(cfgDir, 0o500)
+	defer os.Chmod(cfgDir, 0o700)
+
+	var buf bytes.Buffer
+	err := configSet("control-url", "https://example.com", &buf)
+	if err == nil {
+		// On some systems (root, or macOS w/ SIP) chmod may not prevent writes.
+		// Skip the test rather than fail.
+		t.Skip("chmod did not prevent writes; skipping save-error test")
+	}
+	if !strings.Contains(err.Error(), "save config") {
+		t.Errorf("expected 'save config' error, got: %v", err)
+	}
+}
+
+func TestConfigGet_LoadError(t *testing.T) {
+	tmp := t.TempDir()
+	fakePath := filepath.Join(tmp, "not-a-dir")
+	os.WriteFile(fakePath, []byte("x"), 0o600)
+	t.Setenv("HOME", fakePath)
+
+	var buf bytes.Buffer
+	err := configGet("control-url", &buf)
+	if err == nil {
+		t.Fatal("expected error when HOME is invalid")
+	}
+	if !strings.Contains(err.Error(), "load config") {
+		t.Errorf("expected 'load config' error, got: %v", err)
+	}
+}
+
+func TestConfigList_LoadError(t *testing.T) {
+	tmp := t.TempDir()
+	fakePath := filepath.Join(tmp, "not-a-dir")
+	os.WriteFile(fakePath, []byte("x"), 0o600)
+	t.Setenv("HOME", fakePath)
+
+	var buf bytes.Buffer
+	err := configList(&buf)
+	if err == nil {
+		t.Fatal("expected error when HOME is invalid")
+	}
+	if !strings.Contains(err.Error(), "load config") {
+		t.Errorf("expected 'load config' error, got: %v", err)
 	}
 }
 
@@ -1082,6 +1482,32 @@ func TestRemoveCmd_Success(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "removed") {
 		t.Errorf("expected 'removed', got: %s", buf.String())
+	}
+}
+
+func TestExecute(t *testing.T) {
+	// Execute wraps rootCmd.Execute(). Passing --help ensures it runs without
+	// side effects and exercises the function.
+	origArgs := os.Args
+	t.Cleanup(func() { os.Args = origArgs })
+
+	os.Args = []string{"tslink", "--help"}
+	if err := Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+}
+
+func TestBuildService_InvalidDomain(t *testing.T) {
+	_, err := buildService(AddParams{
+		Name:   "web",
+		Proxy:  "localhost:3000",
+		Domain: "not a valid domain",
+	})
+	if err == nil {
+		t.Fatal("buildService() error = nil, want domain validation error")
+	}
+	if !strings.Contains(err.Error(), "domain") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

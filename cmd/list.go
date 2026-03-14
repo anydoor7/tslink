@@ -10,6 +10,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var registryPathFn = config.RegistryPath
+
 func listServices(regPath string, out io.Writer) error {
 	reg, err := registry.Load(regPath)
 	if err != nil {
@@ -41,7 +43,7 @@ func init() {
 		Args:  cobra.NoArgs,
 		Short: "List registered services",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			regPath, err := config.RegistryPath()
+			regPath, err := registryPathFn()
 			if err != nil {
 				return err
 			}

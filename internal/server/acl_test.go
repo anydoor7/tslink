@@ -1,9 +1,16 @@
 package server
 
 import (
+	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+
+	"tailscale.com/client/tailscale/apitype"
+	"tailscale.com/tailcfg"
 )
 
 func TestIsAllowed_EmptyList(t *testing.T) {
@@ -133,5 +140,145 @@ func TestACLMiddleware_WhoIsError_ReturnsForbidden(t *testing.T) {
 	}
 	if ct := rr.Header().Get("Content-Type"); ct != "application/json" {
 		t.Errorf("expected Content-Type application/json, got %q", ct)
+	}
+}
+
+// fakeWhoIsClient creates a LocalClient that returns the given WhoIs response or error.
+func fakeWhoIsClient(t *testing.T, resp *apitype.WhoIsResponse, respErr error) *LocalClient {
+	t.Helper()
+
+	return &LocalClient{
+		OmitAuth: true,
+		Transport: roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+			if respErr != nil {
+				return nil, respErr
+			}
+			body, err := json.Marshal(resp)
+			if err != nil {
+				t.Fatalf("json.Marshal() error = %v", err)
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(string(body))),
+			}, nil
+		}),
+	}
+}
+
+func TestACLMiddleware_WhoIsError_WithFakeTransport(t *testing.T) {
+	called := false
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+	})
+
+	lc := fakeWhoIsClient(t, nil, errors.New("whois unavailable"))
+	mw := ACLMiddleware([]string{"alice@example.com"}, lc)
+	handler := mw(inner)
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "100.64.0.1:1234"
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if called {
+		t.Error("inner handler should NOT have been called when WhoIs fails")
+	}
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("expected 403, got %d", rr.Code)
+	}
+}
+
+func TestACLMiddleware_AccessDenied(t *testing.T) {
+	called := false
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+	})
+
+	lc := fakeWhoIsClient(t, &apitype.WhoIsResponse{
+		UserProfile: &tailcfg.UserProfile{
+			LoginName: "eve@example.com",
+		},
+		Node: &tailcfg.Node{},
+	}, nil)
+
+	mw := ACLMiddleware([]string{"alice@example.com"}, lc)
+	handler := mw(inner)
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "100.64.0.1:1234"
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if called {
+		t.Error("inner handler should NOT have been called for denied user")
+	}
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("expected 403, got %d", rr.Code)
+	}
+	if ct := rr.Header().Get("Content-Type"); ct != "application/json" {
+		t.Errorf("expected Content-Type application/json, got %q", ct)
+	}
+}
+
+func TestACLMiddleware_AccessAllowed(t *testing.T) {
+	called := false
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	})
+
+	lc := fakeWhoIsClient(t, &apitype.WhoIsResponse{
+		UserProfile: &tailcfg.UserProfile{
+			LoginName: "alice@example.com",
+		},
+		Node: &tailcfg.Node{},
+	}, nil)
+
+	mw := ACLMiddleware([]string{"alice@example.com"}, lc)
+	handler := mw(inner)
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "100.64.0.1:1234"
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if !called {
+		t.Error("inner handler should have been called for allowed user")
+	}
+	if rr.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", rr.Code)
+	}
+}
+
+func TestACLMiddleware_AccessAllowed_ByTag(t *testing.T) {
+	called := false
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	})
+
+	lc := fakeWhoIsClient(t, &apitype.WhoIsResponse{
+		UserProfile: &tailcfg.UserProfile{
+			LoginName: "bob@example.com",
+		},
+		Node: &tailcfg.Node{
+			Tags: []string{"tag:admin"},
+		},
+	}, nil)
+
+	mw := ACLMiddleware([]string{"tag:admin"}, lc)
+	handler := mw(inner)
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "100.64.0.1:1234"
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if !called {
+		t.Error("inner handler should have been called for node with matching tag")
+	}
+	if rr.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", rr.Code)
 	}
 }

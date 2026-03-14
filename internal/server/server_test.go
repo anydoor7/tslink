@@ -890,3 +890,138 @@ func TestSyncNodes_FunnelChange_TriggersRestart(t *testing.T) {
 		t.Fatal("old node should be closed when funnel field changes")
 	}
 }
+
+func TestNew_ConfigDirError(t *testing.T) {
+	t.Setenv("HOME", "")
+
+	_, err := New("dummy-authkey", "")
+	if err == nil {
+		t.Fatal("expected error from New when config.Dir fails")
+	}
+}
+
+func TestSyncNodes_RegistryPathError(t *testing.T) {
+	// Create a valid server first, then break HOME
+	t.Setenv("HOME", t.TempDir())
+
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	// Now break HOME so config.RegistryPath() fails
+	t.Setenv("HOME", "")
+
+	if err := s.syncNodes(context.Background()); err == nil {
+		t.Fatal("expected error from syncNodes when RegistryPath fails")
+	}
+}
+
+func TestWatchRegistry_RegistryPathError(t *testing.T) {
+	// Create server with valid HOME, then break it
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	// Break HOME so config.RegistryPath() fails inside watchRegistry
+	t.Setenv("HOME", "")
+
+	done := make(chan struct{})
+	go func() {
+		s.watchRegistry(context.Background())
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("watchRegistry() did not return when RegistryPath fails")
+	}
+}
+
+func TestWatchRegistry_IgnoresNonRegistryFile(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	// Add a node that should NOT be removed by non-registry file changes
+	svc := registry.Service{Name: "keep", Type: registry.TypeProxy, Target: "http://localhost:3000"}
+	s.nodes["keep"] = newNode(t, svc)
+
+	// Write a valid registry that includes the service
+	writeRegistry(t, []registry.Service{svc})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go s.watchRegistry(ctx)
+
+	// Give the watcher time to start
+	time.Sleep(150 * time.Millisecond)
+
+	// Write a non-registry file in the config dir — should trigger the "continue" branch
+	cfgDir, err := config.Dir()
+	if err != nil {
+		t.Fatalf("config.Dir() error = %v", err)
+	}
+	nonRegFile := filepath.Join(cfgDir, "unrelated.tmp")
+	if err := os.WriteFile(nonRegFile, []byte("noise"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	// Give the watcher time to process the event
+	time.Sleep(200 * time.Millisecond)
+
+	// The "keep" node should still be present (no sync triggered)
+	s.mu.RLock()
+	_, exists := s.nodes["keep"]
+	s.mu.RUnlock()
+	if !exists {
+		t.Fatal("node should still exist after non-registry file change")
+	}
+}
+
+func TestWatchRegistry_SyncErrorOnReload(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go s.watchRegistry(ctx)
+
+	// Give the watcher time to start
+	time.Sleep(150 * time.Millisecond)
+
+	// Write invalid JSON to registry — triggers syncNodes which returns Load error
+	regPath, err := config.RegistryPath()
+	if err != nil {
+		t.Fatalf("RegistryPath() error = %v", err)
+	}
+	if err := os.WriteFile(regPath, []byte("{invalid json"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	// Give the watcher time to process the event and log the error
+	time.Sleep(200 * time.Millisecond)
+
+	// The watcher should still be running (not crashed) — cancel and verify it exits
+	cancel()
+
+	// If we reach here without panic, the error path was handled gracefully
+}

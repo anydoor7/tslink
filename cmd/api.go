@@ -11,7 +11,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/daemon"
 	"github.com/monody0007/tslink/internal/registry"
 	"github.com/spf13/cobra"
@@ -221,14 +220,14 @@ Supported actions:
   {"action":"remove","name":"myapp"}
   {"action":"status"}`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := config.EnsureDir(); err != nil {
+			if err := ensureDirFn(); err != nil {
 				return err
 			}
-			regPath, err := config.RegistryPath()
+			regPath, err := registryPathFn()
 			if err != nil {
 				return err
 			}
-			pidPath, err := config.PIDPath()
+			pidPath, err := pidPathFn()
 			if err != nil {
 				return err
 			}

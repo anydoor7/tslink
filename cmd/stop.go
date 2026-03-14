@@ -12,6 +12,7 @@ import (
 var isRunningFn = daemon.IsRunning
 var stopDaemonFn = daemon.StopDaemon
 var removePIDFn = daemon.RemovePID
+var pidPathFn = config.PIDPath
 
 func stopService(pidPath string, out io.Writer) error {
 	if !isRunningFn(pidPath) {
@@ -34,7 +35,7 @@ func init() {
 		Args:  cobra.NoArgs,
 		Short: "Stop the TSLink daemon",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			pidPath, err := config.PIDPath()
+			pidPath, err := pidPathFn()
 			if err != nil {
 				return err
 			}
