@@ -12,8 +12,9 @@ import (
 )
 
 const (
-	keychainService = "tslink"
-	keychainAPIKey  = "api-key"
+	keychainService      = "tslink"
+	keychainAPIKey       = "api-key"
+	keychainClientSecret = "client-secret"
 )
 
 // Testable seams.
@@ -77,6 +78,64 @@ func DeleteAPIKey() {
 	}
 }
 
+// SaveClientSecret stores an OAuth client secret. The key must start with "tskey-client-".
+// Prefers macOS Keychain; falls back to file (0600).
+func SaveClientSecret(secret string) error {
+	if !strings.HasPrefix(secret, "tskey-client-") {
+		return fmt.Errorf("invalid client secret: must start with 'tskey-client-'")
+	}
+	if err := keyring.Set(keychainService, keychainClientSecret, secret); err == nil {
+		// Keychain succeeded — remove file copy if it exists
+		if path, e := config.ClientSecretPath(); e == nil {
+			os.Remove(path)
+		}
+		return nil
+	}
+	// Fallback: write to file
+	path, err := config.ClientSecretPath()
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(secret), 0o600)
+}
+
+// GetClientSecret retrieves the client secret from keychain or file.
+// Returns ("", nil) if no client secret is stored.
+func GetClientSecret() (string, error) {
+	// Keychain first
+	if secret, err := keyring.Get(keychainService, keychainClientSecret); err == nil && secret != "" {
+		return secret, nil
+	}
+	// File fallback
+	path, err := config.ClientSecretPath()
+	if err != nil {
+		return "", err
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", err
+	}
+	secret := strings.TrimSpace(string(b))
+	return secret, nil
+}
+
+// HasClientSecret returns true if a client secret is stored.
+func HasClientSecret() bool {
+	secret, err := GetClientSecret()
+	return err == nil && secret != ""
+}
+
+// DeleteClientSecret removes the client secret from all storage locations.
+func DeleteClientSecret() {
+	_ = keyring.Delete(keychainService, keychainClientSecret)
+	if path, err := config.ClientSecretPath(); err == nil {
+		os.Remove(path)
+	}
+}
+
 // NewTailscaleClient creates a Tailscale API client from stored API key.
 // Returns (nil, nil) if no API key is configured.
 func NewTailscaleClient() (*tailscale.Client, error) {
@@ -125,9 +184,19 @@ func DeriveAuthKey(ctx context.Context, opts AuthKeyOptions) (string, error) {
 }
 
 // GetAuthKey returns a usable auth key, trying (in order):
-//  1. Derive from API key (if available)
-//  2. Read legacy authkey file
+//  1. Client secret (OAuth long-lived credential, used directly)
+//  2. Derive from API key (if available)
+//  3. Read legacy authkey file
 func GetAuthKey(ctx context.Context, opts AuthKeyOptions) (string, error) {
+	// Try client secret first (never expires, used directly as auth key)
+	clientSecret, csErr := GetClientSecret()
+	if csErr != nil {
+		return "", csErr
+	}
+	if clientSecret != "" {
+		return clientSecret, nil
+	}
+
 	// Try deriving from API key
 	apiKey, err := GetAPIKey()
 	if err != nil {

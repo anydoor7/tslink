@@ -513,6 +513,272 @@ func TestMigrateFromLegacy_PathError(t *testing.T) {
 	}
 }
 
+// --- ClientSecret tests ---
+
+func clientSecretPath(t *testing.T) string {
+	t.Helper()
+	path, err := config.ClientSecretPath()
+	if err != nil {
+		t.Fatalf("ClientSecretPath() error = %v", err)
+	}
+	return path
+}
+
+func TestSaveClientSecret_Keychain(t *testing.T) {
+	setup(t)
+
+	path := clientSecretPath(t)
+	// Write a file to ensure it gets cleaned up on keychain success
+	if err := os.WriteFile(path, []byte("old-secret\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	if err := SaveClientSecret("tskey-client-my-secret"); err != nil {
+		t.Fatalf("SaveClientSecret() error = %v", err)
+	}
+
+	got, err := GetClientSecret()
+	if err != nil {
+		t.Fatalf("GetClientSecret() error = %v", err)
+	}
+	if got != "tskey-client-my-secret" {
+		t.Fatalf("GetClientSecret() = %q, want %q", got, "tskey-client-my-secret")
+	}
+
+	// File should be removed since keychain succeeded
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("expected %q to be removed, stat err = %v", path, err)
+	}
+}
+
+func TestSaveClientSecret_InvalidPrefix(t *testing.T) {
+	setup(t)
+
+	err := SaveClientSecret("tskey-api-wrong-prefix")
+	if err == nil {
+		t.Fatal("SaveClientSecret() error = nil, want error for invalid prefix")
+	}
+	if !strings.Contains(err.Error(), "tskey-client-") {
+		t.Fatalf("SaveClientSecret() error = %v, want prefix error", err)
+	}
+}
+
+func TestSaveClientSecret_FileFallback(t *testing.T) {
+	setup(t)
+	keyring.MockInitWithError(errors.New("no keychain"))
+
+	path := clientSecretPath(t)
+	if err := SaveClientSecret("tskey-client-file-secret"); err != nil {
+		t.Fatalf("SaveClientSecret() error = %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if got := string(data); got != "tskey-client-file-secret" {
+		t.Fatalf("file contents = %q, want %q", got, "tskey-client-file-secret")
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat() error = %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("file perms = %o, want %o", got, 0o600)
+	}
+}
+
+func TestSaveClientSecret_FileFallback_PathError(t *testing.T) {
+	keyring.MockInitWithError(errors.New("no keychain"))
+	t.Setenv("HOME", "")
+
+	err := SaveClientSecret("tskey-client-some-key")
+	if err == nil {
+		t.Fatal("SaveClientSecret() error = nil, want error when HOME is unset")
+	}
+}
+
+func TestGetClientSecret_KeychainFirst(t *testing.T) {
+	setup(t)
+
+	if err := keyring.Set(keychainService, keychainClientSecret, "from-keychain"); err != nil {
+		t.Fatalf("keyring.Set() error = %v", err)
+	}
+	if err := os.WriteFile(clientSecretPath(t), []byte("from-file\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	got, err := GetClientSecret()
+	if err != nil {
+		t.Fatalf("GetClientSecret() error = %v", err)
+	}
+	if got != "from-keychain" {
+		t.Fatalf("GetClientSecret() = %q, want %q", got, "from-keychain")
+	}
+}
+
+func TestGetClientSecret_FileFallback(t *testing.T) {
+	setup(t)
+
+	if err := os.WriteFile(clientSecretPath(t), []byte("from-file\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	got, err := GetClientSecret()
+	if err != nil {
+		t.Fatalf("GetClientSecret() error = %v", err)
+	}
+	if got != "from-file" {
+		t.Fatalf("GetClientSecret() = %q, want %q", got, "from-file")
+	}
+}
+
+func TestGetClientSecret_NoSecret(t *testing.T) {
+	setup(t)
+
+	got, err := GetClientSecret()
+	if err != nil {
+		t.Fatalf("GetClientSecret() error = %v", err)
+	}
+	if got != "" {
+		t.Fatalf("GetClientSecret() = %q, want empty string", got)
+	}
+}
+
+func TestGetClientSecret_FileReadError(t *testing.T) {
+	setup(t)
+
+	// Create a directory at the file path to cause ReadFile to fail
+	if err := os.Mkdir(clientSecretPath(t), 0o700); err != nil {
+		t.Fatalf("Mkdir() error = %v", err)
+	}
+
+	_, err := GetClientSecret()
+	if err == nil {
+		t.Fatal("GetClientSecret() error = nil, want error")
+	}
+}
+
+func TestGetClientSecret_PathError(t *testing.T) {
+	keyring.MockInit()
+	t.Setenv("HOME", "")
+
+	_, err := GetClientSecret()
+	if err == nil {
+		t.Fatal("GetClientSecret() error = nil, want error when HOME is unset")
+	}
+}
+
+func TestHasClientSecret_True(t *testing.T) {
+	setup(t)
+
+	if err := SaveClientSecret("tskey-client-test"); err != nil {
+		t.Fatalf("SaveClientSecret() error = %v", err)
+	}
+
+	if !HasClientSecret() {
+		t.Fatal("HasClientSecret() = false, want true")
+	}
+}
+
+func TestHasClientSecret_False(t *testing.T) {
+	setup(t)
+
+	if HasClientSecret() {
+		t.Fatal("HasClientSecret() = true, want false")
+	}
+}
+
+func TestDeleteClientSecret(t *testing.T) {
+	setup(t)
+
+	if err := SaveClientSecret("tskey-client-secret"); err != nil {
+		t.Fatalf("SaveClientSecret() error = %v", err)
+	}
+
+	DeleteClientSecret()
+
+	got, err := GetClientSecret()
+	if err != nil {
+		t.Fatalf("GetClientSecret() error = %v", err)
+	}
+	if got != "" {
+		t.Fatalf("GetClientSecret() = %q, want empty string", got)
+	}
+}
+
+func TestDeleteClientSecret_Both(t *testing.T) {
+	setup(t)
+
+	if err := keyring.Set(keychainService, keychainClientSecret, "from-keychain"); err != nil {
+		t.Fatalf("keyring.Set() error = %v", err)
+	}
+	path := clientSecretPath(t)
+	if err := os.WriteFile(path, []byte("from-file\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	DeleteClientSecret()
+
+	if _, err := keyring.Get(keychainService, keychainClientSecret); err == nil {
+		t.Fatal("expected keychain entry to be deleted")
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("expected %q to be removed, stat err = %v", path, err)
+	}
+}
+
+func TestGetAuthKey_ClientSecretFirst(t *testing.T) {
+	setup(t)
+
+	// Set both API key and client secret
+	if err := SetAPIKey("tskey-api-fake"); err != nil {
+		t.Fatalf("SetAPIKey() error = %v", err)
+	}
+	if err := SaveClientSecret("tskey-client-my-secret"); err != nil {
+		t.Fatalf("SaveClientSecret() error = %v", err)
+	}
+
+	got, err := GetAuthKey(context.Background(), AuthKeyOptions{})
+	if err != nil {
+		t.Fatalf("GetAuthKey() error = %v", err)
+	}
+	if got != "tskey-client-my-secret" {
+		t.Fatalf("GetAuthKey() = %q, want %q (client secret should take priority)", got, "tskey-client-my-secret")
+	}
+}
+
+func TestGetAuthKey_ClientSecretOnly(t *testing.T) {
+	setup(t)
+
+	if err := SaveClientSecret("tskey-client-only"); err != nil {
+		t.Fatalf("SaveClientSecret() error = %v", err)
+	}
+
+	got, err := GetAuthKey(context.Background(), AuthKeyOptions{})
+	if err != nil {
+		t.Fatalf("GetAuthKey() error = %v", err)
+	}
+	if got != "tskey-client-only" {
+		t.Fatalf("GetAuthKey() = %q, want %q", got, "tskey-client-only")
+	}
+}
+
+func TestGetAuthKey_ClientSecretError(t *testing.T) {
+	setup(t)
+
+	// Create a directory at the client secret file path to cause GetClientSecret to fail
+	if err := os.Mkdir(clientSecretPath(t), 0o700); err != nil {
+		t.Fatalf("Mkdir() error = %v", err)
+	}
+
+	_, err := GetAuthKey(context.Background(), AuthKeyOptions{})
+	if err == nil {
+		t.Fatal("GetAuthKey() error = nil, want error from GetClientSecret")
+	}
+}
+
 func TestDeriveAuthKey_Success(t *testing.T) {
 	setup(t)
 

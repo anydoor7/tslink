@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -803,5 +804,81 @@ func TestWithLock_LockError(t *testing.T) {
 	}
 	if err.Error() != "injected lock error" {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestAddServiceWithAcmeEmail(t *testing.T) {
+	path := testRegistryPath(t)
+
+	if err := Add(path, Service{
+		Name:      "acme-svc",
+		Type:      TypeProxy,
+		Target:    "http://localhost:3000",
+		Domain:    "app.example.com",
+		AcmeEmail: "admin@example.com",
+	}); err != nil {
+		t.Fatalf("Add returned error: %v", err)
+	}
+
+	reg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if len(reg.Services) != 1 {
+		t.Fatalf("expected 1 service, got %d", len(reg.Services))
+	}
+
+	svc := reg.Services[0]
+	if svc.AcmeEmail != "admin@example.com" {
+		t.Fatalf("expected acme_email %q, got %q", "admin@example.com", svc.AcmeEmail)
+	}
+	if svc.Domain != "app.example.com" {
+		t.Fatalf("expected domain %q, got %q", "app.example.com", svc.Domain)
+	}
+}
+
+func TestAcmeEmailJSONRoundTrip(t *testing.T) {
+	path := testRegistryPath(t)
+
+	original := Service{
+		Name:      "roundtrip-acme",
+		Type:      TypeProxy,
+		Target:    "http://localhost:8080",
+		Domain:    "test.example.com",
+		AcmeEmail: "certs@example.com",
+	}
+	if err := Add(path, original); err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+
+	reg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	loaded := reg.Services[0]
+	if loaded.AcmeEmail != original.AcmeEmail {
+		t.Fatalf("AcmeEmail round-trip: got %q, want %q", loaded.AcmeEmail, original.AcmeEmail)
+	}
+}
+
+func TestAcmeEmailOmittedWhenEmpty(t *testing.T) {
+	path := testRegistryPath(t)
+
+	if err := Add(path, Service{
+		Name:   "no-acme",
+		Type:   TypeProxy,
+		Target: "http://localhost:3000",
+	}); err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+
+	if strings.Contains(string(data), "acme_email") {
+		t.Fatal("acme_email should be omitted from JSON when empty")
 	}
 }

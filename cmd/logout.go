@@ -13,6 +13,8 @@ import (
 
 var getAPIKeyFn = credentials.GetAPIKey
 var deleteAPIKeyFn = credentials.DeleteAPIKey
+var hasClientSecretFn = credentials.HasClientSecret
+var deleteClientSecretFn = credentials.DeleteClientSecret
 
 func logoutUser(pidPath, authKeyPath, nodesDir, cfgDir string, out io.Writer) error {
 	if isRunningFn(pidPath) {
@@ -20,14 +22,16 @@ func logoutUser(pidPath, authKeyPath, nodesDir, cfgDir string, out io.Writer) er
 	}
 
 	apiKey, _ := getAPIKeyFn()
+	hasCS := hasClientSecretFn()
 	_, authErr := os.Stat(authKeyPath)
 	_, nodesErr := os.Stat(nodesDir)
-	if apiKey == "" && os.IsNotExist(authErr) && os.IsNotExist(nodesErr) {
+	if apiKey == "" && !hasCS && os.IsNotExist(authErr) && os.IsNotExist(nodesErr) {
 		fmt.Fprintln(out, "→ Not logged in")
 		return nil
 	}
 
 	deleteAPIKeyFn()
+	deleteClientSecretFn()
 	os.Remove(authKeyPath)
 	os.RemoveAll(nodesDir)
 	os.RemoveAll(filepath.Join(cfgDir, "tsnet-state"))

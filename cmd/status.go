@@ -28,6 +28,8 @@ func getStatus(pidPath, regPath string) StatusResult {
 	}
 	if apiKey, _ := getAPIKeyFn(); apiKey != "" {
 		r.Authenticated = true
+	} else if hasClientSecretFn() {
+		r.Authenticated = true
 	}
 	if reg, err := registry.Load(regPath); err == nil {
 		r.ServiceCount = len(reg.Services)

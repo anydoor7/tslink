@@ -69,44 +69,64 @@ Example:
 			fmt.Println("→ Logged in to Tailscale")
 		}
 
-		// Ask for API key (the only key we need now)
-		fmt.Print("\n  Paste your API access token\n")
+		// Ask for API key or client secret
+		fmt.Print("\n  Paste your API access token or OAuth client secret\n")
 		fmt.Print("  (generate at https://login.tailscale.com/admin/settings/keys)\n")
-		fmt.Print("  API key: ")
-		var apiKey string
-		fmt.Scanln(&apiKey)
-		apiKey = strings.TrimSpace(apiKey)
-		if apiKey == "" {
-			return fmt.Errorf("API key is required — tslink uses it to manage devices and derive auth keys")
+		fmt.Print("  Key: ")
+		var inputKey string
+		fmt.Scanln(&inputKey)
+		inputKey = strings.TrimSpace(inputKey)
+		if inputKey == "" {
+			return fmt.Errorf("API key or client secret is required — tslink uses it to manage devices and derive auth keys")
 		}
 
-		// Verify the key works by trying to list devices
-		fmt.Println("→ Verifying API key...")
-		if err := credentials.SetAPIKey(apiKey); err != nil {
-			return fmt.Errorf("save API key: %w", err)
-		}
+		if strings.HasPrefix(inputKey, "tskey-client-") {
+			// OAuth client secret — store directly, no verification via API
+			fmt.Println("→ Saving client secret...")
+			if err := credentials.SaveClientSecret(inputKey); err != nil {
+				return fmt.Errorf("save client secret: %w", err)
+			}
 
-		client, err := credentials.NewTailscaleClient()
-		if err != nil || client == nil {
-			credentials.DeleteAPIKey()
-			return fmt.Errorf("invalid API key")
-		}
-		if _, err := client.Devices(context.Background(), nil); err != nil {
-			credentials.DeleteAPIKey()
-			return fmt.Errorf("API key verification failed: %w", err)
-		}
+			// Remove legacy authkey file (no longer needed)
+			if authKeyPath, e := config.AuthKeyPath(); e == nil {
+				os.Remove(authKeyPath)
+			}
 
-		// Remove legacy authkey file (no longer needed)
-		if authKeyPath, e := config.AuthKeyPath(); e == nil {
-			os.Remove(authKeyPath)
+			// Delete legacy tsnet-state/ if present
+			legacyDir := filepath.Join(cfgDir, "tsnet-state")
+			os.RemoveAll(legacyDir)
+
+			fmt.Println("→ Client secret saved (system keychain)")
+			fmt.Println("→ OAuth client secret never expires — no auth key derivation needed")
+		} else {
+			// API key — verify and store
+			fmt.Println("→ Verifying API key...")
+			if err := credentials.SetAPIKey(inputKey); err != nil {
+				return fmt.Errorf("save API key: %w", err)
+			}
+
+			client, err := credentials.NewTailscaleClient()
+			if err != nil || client == nil {
+				credentials.DeleteAPIKey()
+				return fmt.Errorf("invalid API key")
+			}
+			if _, err := client.Devices(context.Background(), nil); err != nil {
+				credentials.DeleteAPIKey()
+				return fmt.Errorf("API key verification failed: %w", err)
+			}
+
+			// Remove legacy authkey file (no longer needed)
+			if authKeyPath, e := config.AuthKeyPath(); e == nil {
+				os.Remove(authKeyPath)
+			}
+
+			// Delete legacy tsnet-state/ if present
+			legacyDir := filepath.Join(cfgDir, "tsnet-state")
+			os.RemoveAll(legacyDir)
+
+			fmt.Println("→ API key saved (system keychain)")
+			fmt.Println("→ Auth keys will be derived automatically on 'tslink serve'")
 		}
-
-		// Delete legacy tsnet-state/ if present
-		legacyDir := filepath.Join(cfgDir, "tsnet-state")
-		os.RemoveAll(legacyDir)
-
-		fmt.Println("→ API key saved (system keychain)")
-		fmt.Println("→ Auth keys will be derived automatically on 'tslink serve'")
 		return nil
 	},
 }

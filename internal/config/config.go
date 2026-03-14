@@ -108,12 +108,28 @@ func APIKeyPath() (string, error) {
 	return filepath.Join(dir, "apikey"), nil
 }
 
+func ClientSecretPath() (string, error) {
+	dir, err := Dir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "clientsecret"), nil
+}
+
 func LogDir() (string, error) {
 	dir, err := Dir()
 	if err != nil {
 		return "", err
 	}
 	return filepath.Join(dir, "logs"), nil
+}
+
+func CertsDir() (string, error) {
+	dir, err := Dir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "certs"), nil
 }
 
 func EnsureDir() error {
@@ -123,7 +139,8 @@ func EnsureDir() error {
 	}
 	logDir := filepath.Join(dir, "logs")
 	nodesDir := filepath.Join(dir, "nodes")
-	for _, d := range []string{dir, logDir, nodesDir} {
+	certsDir := filepath.Join(dir, "certs")
+	for _, d := range []string{dir, logDir, nodesDir, certsDir} {
 		if err := os.MkdirAll(d, 0o700); err != nil {
 			return err
 		}

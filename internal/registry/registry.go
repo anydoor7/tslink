@@ -47,6 +47,7 @@ type Service struct {
 	ControlURL   string            `json:"control_url,omitempty"`
 	Funnel       bool              `json:"funnel,omitempty"`
 	Domain       string            `json:"domain,omitempty"`
+	AcmeEmail    string            `json:"acme_email,omitempty"`
 	Middleware   *MiddlewareConfig `json:"middleware,omitempty"`
 	CreatedAt    time.Time         `json:"created_at"`
 }

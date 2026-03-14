@@ -685,6 +685,103 @@ func TestEnsureDir_DirPermissions(t *testing.T) {
 	}
 }
 
+func TestCertsDir(t *testing.T) {
+	dir, err := CertsDir()
+	if err != nil {
+		t.Fatalf("CertsDir() error = %v", err)
+	}
+	if !strings.HasSuffix(dir, filepath.Join("tslink", "certs")) {
+		t.Fatalf("CertsDir() = %q, want suffix %q", dir, filepath.Join("tslink", "certs"))
+	}
+}
+
+func TestCertsDir_DirError(t *testing.T) {
+	t.Setenv("HOME", "")
+	_, err := Dir()
+	if err == nil {
+		t.Skip("os.UserHomeDir() does not fail with empty HOME on this platform")
+	}
+	_, err = CertsDir()
+	if err == nil {
+		t.Fatal("CertsDir() error = nil, want error when Dir() fails")
+	}
+}
+
+func TestCertsDir_SharesPrefix(t *testing.T) {
+	dir, _ := Dir()
+	certsDir, _ := CertsDir()
+	if !strings.HasPrefix(certsDir, dir) {
+		t.Fatalf("CertsDir() %q does not start with Dir() %q", certsDir, dir)
+	}
+}
+
+func TestEnsureDir_CreatesCertsDir(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	if err := EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+
+	certsDir, _ := CertsDir()
+	info, err := os.Stat(certsDir)
+	if err != nil {
+		t.Fatalf("certs dir does not exist after EnsureDir: %v", err)
+	}
+	if !info.IsDir() {
+		t.Fatal("certs dir is not a directory")
+	}
+}
+
+func TestEnsureDir_CertsDirError(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	// Create the base config dir, logs dir, and nodes dir, but block certs dir.
+	dir, _ := Dir()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	logDir, _ := LogDir()
+	if err := os.MkdirAll(logDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll(logDir) error = %v", err)
+	}
+	nodesDir, _ := NodesDir()
+	if err := os.MkdirAll(nodesDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll(nodesDir) error = %v", err)
+	}
+	certsPath := filepath.Join(dir, "certs")
+	if err := os.WriteFile(certsPath, []byte("blocker"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	err := EnsureDir()
+	if err == nil {
+		t.Fatal("EnsureDir() error = nil, want error when certs dir creation fails")
+	}
+}
+
+func TestClientSecretPath(t *testing.T) {
+	path, err := ClientSecretPath()
+	if err != nil {
+		t.Fatalf("ClientSecretPath() error = %v", err)
+	}
+	if !strings.HasSuffix(path, filepath.Join("tslink", "clientsecret")) {
+		t.Fatalf("ClientSecretPath() = %q, want suffix %q", path, filepath.Join("tslink", "clientsecret"))
+	}
+}
+
+func TestClientSecretPath_DirError(t *testing.T) {
+	t.Setenv("HOME", "")
+	_, err := Dir()
+	if err == nil {
+		t.Skip("os.UserHomeDir() does not fail with empty HOME on this platform")
+	}
+	_, err = ClientSecretPath()
+	if err == nil {
+		t.Fatal("ClientSecretPath() error = nil, want error when Dir() fails")
+	}
+}
+
 func TestSaveGlobalConfig_MarshalError(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
