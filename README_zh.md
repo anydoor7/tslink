@@ -96,7 +96,7 @@ tslink serve --daemon
 # 从任何设备访问 https://myapp.<your-tailnet>.ts.net
 ```
 
-TSLink 只需要一个密钥 — 你的 [Tailscale API 访问令牌](https://login.tailscale.com/admin/settings/keys)。认证密钥自动派生。API 密钥存储在系统钥匙串（macOS Keychain）中，不以明文保存。
+TSLink 只需要一个密钥 — 你的 [Tailscale API 访问令牌](https://login.tailscale.com/admin/settings/keys)。认证密钥自动派生。API 密钥存储在系统钥匙串（macOS Keychain / Linux secret service / Windows 凭据管理器）中，不以明文保存。
 
 ### 更多示例
 
@@ -156,7 +156,7 @@ tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 
 ```
 ┌─────────────┐         ┌──────────────────────┐         ┌──────────────┐
-│   你的 Mac  │         │   Tailscale 网络     │         │   你的手机   │
+│  你的机器   │         │   Tailscale 网络     │         │   你的手机   │
 │             │         │   (WireGuard 网状)    │         │              │
 │  localhost   │◄──────►│                      │◄──────►│  浏览器      │
 │  :3000      │  tsnet  │  端到端加密           │  HTTPS │              │
@@ -222,7 +222,7 @@ services:
 {
   "middleware": {
     "rate_limit": 10.0,
-    "basic_auth": "admin:secret",
+    "basic_auth": "user:hashed-password",
     "ip_allow_list": ["100.64.0.1/16"],
     "cors_origins": ["https://frontend.example.com"]
   }

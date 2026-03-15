@@ -96,7 +96,7 @@ tslink serve --daemon
 # Access https://myapp.<your-tailnet>.ts.net from any device
 ```
 
-TSLink only needs one key — your [Tailscale API access token](https://login.tailscale.com/admin/settings/keys). Auth keys are derived automatically. Your API key is stored in the system keychain (macOS Keychain), never in plaintext.
+TSLink only needs one key — your [Tailscale API access token](https://login.tailscale.com/admin/settings/keys). Auth keys are derived automatically. Your API key is stored in the system keychain (macOS Keychain / Linux secret service / Windows Credential Manager), never in plaintext.
 
 ### More Examples
 
@@ -156,7 +156,7 @@ tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 
 ```
 ┌─────────────┐         ┌──────────────────────┐         ┌──────────────┐
-│   Your Mac  │         │   Tailscale Network  │         │  Your Phone  │
+│ Your Machine│         │   Tailscale Network  │         │  Your Phone  │
 │             │         │   (WireGuard mesh)    │         │              │
 │  localhost   │◄──────►│                      │◄──────►│  Browser     │
 │  :3000      │  tsnet  │  End-to-end encrypted │  HTTPS │              │
@@ -222,7 +222,7 @@ Each service can be configured with middleware via `registry.json`:
 {
   "middleware": {
     "rate_limit": 10.0,
-    "basic_auth": "admin:secret",
+    "basic_auth": "user:hashed-password",
     "ip_allow_list": ["100.64.0.1/16"],
     "cors_origins": ["https://frontend.example.com"]
   }
