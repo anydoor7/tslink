@@ -1,2 +1,5 @@
 .worktrees/
 .claude/
+tslink
+coverage*.out
+coverage*.html
