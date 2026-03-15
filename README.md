@@ -1,70 +1,72 @@
 <p align="center">
   <h1 align="center">TSLink</h1>
-  <p align="center">Your local services, securely accessible from anywhere on your private network.</p>
+  <p align="center">Zero-trust service gateway for your private network.<br>Expose local services securely with one command — no public internet, no third-party servers.</p>
 </p>
 
 <p align="center">
+  <a href="https://github.com/monody0007/tslink/actions"><img src="https://img.shields.io/github/actions/workflow/status/monody0007/tslink/ci.yml?branch=main&label=CI" alt="Build Status"></a>
   <a href="https://github.com/monody0007/tslink/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License"></a>
   <a href="https://github.com/monody0007/tslink"><img src="https://img.shields.io/badge/Go-1.25+-00ADD8.svg" alt="Go"></a>
   <a href="https://github.com/monody0007/tslink"><img src="https://img.shields.io/github/stars/monody0007/tslink?style=social" alt="Stars"></a>
 </p>
 
 <p align="center">
-  <a href="./README_zh.md">中文文档</a>
+  <a href="./README_zh.md">中文文档</a> ·
+  <a href="https://tslink.dev">Website</a> ·
+  <a href="https://tslink.dev/docs">Documentation</a>
 </p>
+
+<!-- TODO: Add terminal recording / GIF demo here -->
+<!-- <p align="center"><img src="docs/demo.gif" alt="TSLink Demo" width="700"></p> -->
 
 ---
 
-## Why TSLink Exists
+## Why TSLink?
 
-We are entering a new era of personal computing.
+Traditional approaches to exposing local services — port forwarding, VPNs, ngrok, Cloudflare Tunnel — were not designed for a zero-trust world. They either expose your services to the public internet, route private data through third-party servers, or require significant operational overhead.
 
-AI agents now run on your machine — generating reports, processing data, building applications, serving local tools. Your Mac or PC is no longer just a workstation. It is becoming your **personal server**, a private hub of intelligence and productivity.
+As local AI workloads, self-hosted services, and personal infrastructure grow, the gap between what individuals need and what enterprise security tools provide keeps widening. The federal government recognized this shift: [Executive Order 14028](https://www.whitehouse.gov/briefing-room/presidential-actions/2021/05/12/executive-order-on-improving-the-nations-cybersecurity/) mandates zero-trust adoption, and [NIST SP 800-207](https://csrc.nist.gov/publications/detail/sp/800-207/final) defines the architecture. But most zero-trust tooling targets large enterprises with dedicated security teams.
 
-But here is the problem: **everything is locked inside your machine.**
+**TSLink brings zero-trust networking to everyone.** One command turns your machine into a secure gateway. Each service gets its own isolated identity on your [Tailscale](https://tailscale.com) network — encrypted, authenticated, and invisible to the public internet.
 
-Want to check that AI-generated report from your phone? Want to access your local development server from a tablet on the couch? Today, your options are:
+## Security Model
 
-- **Port forwarding** — complex, insecure, exposes your home network
-- **ngrok / Cloudflare Tunnel** — routes your private data through third-party servers
-- **VPN** — heavy, slow, requires infrastructure and maintenance
+TSLink implements zero-trust principles at every layer:
 
-None of these were designed for the world we are entering — a world where every person has an AI-powered machine generating valuable, private content that needs to be **securely accessible from any device, instantly**.
-
-### Privacy Is Not Optional
-
-Your AI outputs — research, code, personal documents, business data — should never traverse a third-party server. In an age of increasing data breaches and surveillance, **the safest path between your devices is a direct one**.
-
-### The National and Global Interest
-
-As AI becomes embedded in daily work, a critical infrastructure gap has emerged: **how do individuals and organizations securely bridge the output of local AI systems to the devices they actually use?**
-
-This is not just a convenience problem. It is a **security problem**, a **productivity problem**, and an **infrastructure problem** that affects:
-
-- **Individual developers and researchers** who need private, zero-trust access to local services
-- **Small businesses and startups** accelerating AI adoption without enterprise IT budgets
-- **Enterprises** seeking to reduce attack surface by eliminating public exposure of internal tools
-- **National cybersecurity posture** — every service that stays off the public internet is one less target
-
-TSLink addresses this gap directly.
+| Zero-Trust Principle | TSLink Implementation |
+|-----|-----|
+| **Never trust, always verify** | Every request is authenticated via Tailscale WhoIs — identity headers (`X-Tailscale-User-Login`, `X-Tailscale-User-Name`) are injected into every proxied request. Inbound identity headers are stripped to prevent spoofing. |
+| **Least-privilege access** | Per-service ACL via `--allow` restricts access to specific users or tags. Each service operates under its own identity. |
+| **Assume breach** | End-to-end WireGuard encryption on every connection. Even if your local network is compromised, traffic between your devices remains encrypted. |
+| **Microsegmentation** | Each service runs as an isolated tsnet node with its own hostname, TLS certificate, and network identity. Compromising one service does not grant access to others. |
+| **No implicit trust** | No services are exposed to the public internet by default. Credentials are stored in the system keychain (macOS Keychain / Linux secret service), never in plaintext config files. Auth keys are derived dynamically and never persisted. |
 
 ## What TSLink Does
 
-TSLink turns your machine into a secure gateway. One command exposes any local service — a web app, an API, a file directory, a database — to your private [Tailscale](https://tailscale.com) network. Each service gets its own dedicated hostname with automatic TLS. Accessible from your phone, tablet, or any device on your tailnet.
+One command exposes any local service — a web app, an API, a file directory, a database — to your private Tailscale network with automatic TLS.
+
+```bash
+tslink add myapp --proxy localhost:3000
+tslink serve --daemon
+# → https://myapp.<your-tailnet>.ts.net — accessible from any device on your tailnet
+```
+
+### Features
 
 - **Zero configuration** — no port forwarding, no DNS, no certificates to manage
 - **End-to-end encrypted** — WireGuard encryption via Tailscale, your data never touches the public internet
 - **Instant TLS** — automatic HTTPS with valid certificates, no setup required
-- **Per-service nodes** — each service gets its own tailnet hostname (`https://<name>.<tailnet>.ts.net`)
+- **Per-service isolation** — each service gets its own tailnet hostname and identity (`https://<name>.<tailnet>.ts.net`)
 - **Live reload** — add or remove services while TSLink is running, changes take effect immediately
 - **Cross-platform** — runs on macOS, Linux, and Windows
 - **Runs as a daemon** — start once, runs in the background, auto-starts on login
 - **TCP proxy** — expose databases, SSH, Redis, and other non-HTTP services
-- **Access control** — per-service ACL with user/tag-based filtering
+- **Access control** — per-service ACL with user/tag-based filtering (`--allow user@example.com,tag:admin`)
 - **Middleware** — built-in rate limiting, Basic Auth, IP allowlist, and CORS
 - **Prometheus metrics** — request counts, latency histograms, active connections
-- **Docker discovery** — auto-register containers via labels
+- **Docker discovery** — auto-register containers via labels (`tslink.enable=true`)
 - **API mode** — JSON-over-stdin/stdout for programmatic integration by AI agents and scripts
+- **Headscale compatible** — works with self-hosted control servers via `--control-url`
 - **Funnel** — optionally expose services to the public internet via Tailscale Funnel
 
 ## Quick Start
@@ -75,9 +77,8 @@ TSLink turns your machine into a secure gateway. One command exposes any local s
 # Homebrew (macOS)
 brew install monody0007/tap/tslink
 
-# From source
-git clone https://github.com/monody0007/tslink.git
-cd tslink && go install .
+# From source (any platform)
+go install github.com/monody0007/tslink@latest
 ```
 
 ### Get Started in 30 Seconds
@@ -102,23 +103,18 @@ TSLink only needs one key — your [Tailscale API access token](https://login.ta
 ```bash
 # Expose a file directory
 tslink add documents --dir ~/Documents
-# Access at https://documents.<your-tailnet>.ts.net
 
 # Expose a database via TCP proxy
 tslink add mydb --tcp localhost:5432
-# Connect from any device: psql -h mydb.<your-tailnet>.ts.net
 
-# Ephemeral node (auto-removed when stopped)
+# Ephemeral node (auto-removed from tailnet when stopped)
 tslink add demo --proxy localhost:8080 --ephemeral
 
-# With access control
+# Identity-aware access control
 tslink add internal --proxy localhost:9090 --allow user@example.com,tag:admin
 
 # Public exposure via Tailscale Funnel
 tslink add public --proxy localhost:3000 --funnel
-
-# Custom domain
-tslink add mysite --proxy localhost:3000 --domain app.example.com
 
 # ACL tags for Tailscale network policy
 tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
@@ -172,11 +168,14 @@ tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 TSLink creates a dedicated [tsnet](https://tailscale.com/kb/1244/tsnet) node for each registered service — no Tailscale client installation required on the server side. Each service joins your tailnet as its own device (e.g., `myapp`, `docs`, `mydb`), obtains automatic TLS certificates, and proxies requests to your local services.
 
 **Key architectural decisions:**
-- **Per-service embedded nodes** — each service gets its own tailnet hostname and TLS certificate
+- **Per-service embedded nodes** — each service gets its own tailnet identity, hostname, and TLS certificate (microsegmentation)
+- **Identity-aware proxying** — WhoIs verification on every request, with identity headers injected and spoofing prevented
+- **Secure credential management** — system keychain storage with dynamic auth key derivation (no keys stored in files)
 - **File-based registry** — services persist across restarts in `~/.config/tslink/registry.json`
 - **Hot reload** — file watcher on the registry means `tslink add` takes effect without restarting the server
 - **PID-based lifecycle** — clean daemon management with signal handling
 - **Middleware pipeline** — rate limiting, Basic Auth, IP allowlist, CORS per service
+- **Structured logging** — slog-based structured logging with access logs
 - **Prometheus metrics** — `tslink_requests_total`, `tslink_request_duration_seconds`, `tslink_active_connections`
 - **Docker discovery** — auto-register containers with `tslink.enable=true` label
 
@@ -246,15 +245,20 @@ Each service can be configured with middleware via `registry.json`:
 
 ## Roadmap
 
-- [ ] OAuth long-lived credentials (currently API key based)
-- [ ] Let's Encrypt integration for custom domains
+- [x] OAuth long-lived credentials (`tskey-client-*` support)
+- [x] Let's Encrypt integration for custom domains (`--domain` + `--acme-email`)
+- [x] Web dashboard accessible from tailnet (admin API + HTML dashboard)
 - [ ] Docker image (`ghcr.io/monody0007/tslink`)
-- [ ] Headscale `--control-url` global config persistence
-- [ ] Web dashboard accessible from tailnet
+- [ ] Headscale end-to-end testing
+- [ ] Web dashboard enhancements
 
 ## Contributing
 
-Contributions are welcome. Please open an issue first to discuss what you would like to change.
+Contributions are welcome! Please see [CONTRIBUTING.md](./CONTRIBUTING.md) for guidelines.
+
+## Security
+
+For security concerns, please see [SECURITY.md](./SECURITY.md).
 
 ## License
 
