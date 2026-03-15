@@ -19,8 +19,23 @@ var installCmd = &cobra.Command{
 	Long: `Register TSLink as a systemd user service so it starts automatically
 for your user session and restarts if it crashes.
 
-Example:
-  tslink install`,
+This command:
+  1. Creates a unit file at ~/.config/systemd/user/tslink.service
+  2. Configures it to run 'tslink serve' with auto-restart on failure (5s delay)
+  3. Runs 'systemctl --user daemon-reload' to pick up the new unit
+  4. Enables and starts the service immediately
+
+To check the service status:
+  systemctl --user status tslink
+
+To view logs:
+  journalctl --user -u tslink
+
+To remove the autostart:
+  tslink uninstall
+
+Examples:
+  tslink install                Register and start the systemd service`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		exe, err := os.Executable()
 		if err != nil {

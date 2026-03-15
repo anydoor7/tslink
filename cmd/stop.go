@@ -34,6 +34,18 @@ func init() {
 		Use:   "stop",
 		Args:  cobra.NoArgs,
 		Short: "Stop the TSLink daemon",
+		Long: `Stop the running TSLink gateway daemon.
+
+Reads the PID from ~/.config/tslink/tslink.pid and sends a termination signal
+(SIGTERM on macOS/Linux, process kill on Windows). The daemon shuts down all
+tsnet nodes gracefully before exiting.
+
+If the daemon is not running, the stale PID file (if any) is cleaned up and
+a "not running" message is displayed.
+
+Examples:
+  tslink stop                  Stop the background daemon
+  tslink stop && tslink serve  Restart the gateway`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			pidPath, err := pidPathFn()
 			if err != nil {

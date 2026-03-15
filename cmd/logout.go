@@ -43,10 +43,24 @@ func logoutUser(pidPath, authKeyPath, nodesDir, cfgDir string, out io.Writer) er
 var logoutCmd = &cobra.Command{
 	Use:   "logout",
 	Short: "Logout from Tailscale",
-	Long: `Clear Tailscale authentication state.
+	Long: `Clear all Tailscale authentication state and node data.
 
-Example:
-  tslink logout`,
+This command removes:
+  - API access token (from system keychain and ~/.config/tslink/apikey)
+  - OAuth client secret (from system keychain and ~/.config/tslink/clientsecret)
+  - Legacy auth key file (~/.config/tslink/authkey)
+  - All tsnet node state (~/.config/tslink/nodes/) including WireGuard keys
+  - Legacy tsnet-state directory (if present)
+
+The service registry (~/.config/tslink/registry.json) is NOT removed, so your
+service definitions are preserved. Run 'tslink login' to re-authenticate.
+
+The daemon must be stopped before logging out. If it is running, you will be
+prompted to run 'tslink stop' first.
+
+Examples:
+  tslink logout                 Clear credentials and node state
+  tslink stop && tslink logout  Stop daemon then logout`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		pidPath, err := config.PIDPath()
 		if err != nil {

@@ -16,8 +16,19 @@ var uninstallCmd = &cobra.Command{
 	Long: `Remove TSLink as a systemd user service so it no longer starts
 automatically for your user session.
 
-Example:
-  tslink uninstall`,
+This command:
+  1. Stops the service via 'systemctl --user stop tslink'
+  2. Disables it via 'systemctl --user disable tslink'
+  3. Deletes the unit file at ~/.config/systemd/user/tslink.service
+  4. Runs 'systemctl --user daemon-reload' to clean up systemd state
+
+If the service is not installed, prints a message and exits cleanly.
+
+To check if the service is still active after removal:
+  systemctl --user status tslink
+
+Examples:
+  tslink uninstall              Remove the systemd user service`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		servicePath := systemdServicePath()
 

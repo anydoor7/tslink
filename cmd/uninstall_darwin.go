@@ -13,10 +13,17 @@ import (
 var uninstallCmd = &cobra.Command{
 	Use:   "uninstall",
 	Short: "Remove as macOS LaunchAgent",
-	Long: `Remove TSLink as a macOS LaunchAgent so it no longer auto-starts.
+	Long: `Remove the TSLink macOS LaunchAgent so it no longer auto-starts.
 
-Example:
-  tslink uninstall`,
+This command:
+  1. Unloads the agent via 'launchctl unload'
+  2. Deletes ~/Library/LaunchAgents/com.tslink.daemon.plist
+
+If the LaunchAgent is not installed, prints a message and exits cleanly.
+Log files in ~/.config/tslink/logs/ are NOT removed.
+
+Examples:
+  tslink uninstall              Remove the LaunchAgent`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		path, err := plistPath()
 		if err != nil {

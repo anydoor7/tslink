@@ -53,8 +53,21 @@ var installCmd = &cobra.Command{
 	Long: `Register TSLink as a macOS LaunchAgent so it starts automatically
 when you log in and restarts if it crashes.
 
-Example:
-  tslink install`,
+This command:
+  1. Creates a LaunchAgent plist at ~/Library/LaunchAgents/com.tslink.daemon.plist
+  2. Configures it to run 'tslink serve' at login with auto-restart (KeepAlive)
+  3. Logs stdout to ~/.config/tslink/logs/tslink.out.log
+  4. Logs stderr to ~/.config/tslink/logs/tslink.err.log
+  5. Loads the agent immediately via 'launchctl load'
+
+To check if the agent is loaded:
+  launchctl list | grep tslink
+
+To remove the autostart:
+  tslink uninstall
+
+Examples:
+  tslink install                Register and start the LaunchAgent`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := config.EnsureDir(); err != nil {
 			return err

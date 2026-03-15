@@ -15,8 +15,20 @@ var uninstallCmd = &cobra.Command{
 	Long: `Remove the TSLink Startup entry so it no longer launches in the
 background when you sign in.
 
-Example:
-  tslink uninstall`,
+This command:
+  1. Deletes the VBScript at %APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\tslink.vbs
+
+If the Startup script is not installed, prints a message and exits cleanly.
+
+Note: This only removes the autostart script. If TSLink is currently running,
+use 'tslink stop' first to stop the daemon.
+
+To verify the script was removed:
+  dir "%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\tslink.vbs"
+
+Examples:
+  tslink uninstall              Remove the Startup script
+  tslink stop && tslink uninstall   Stop daemon then remove autostart`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		startupPath, err := windowsStartupScriptPath()
 		if err != nil {

@@ -57,8 +57,15 @@ var statusCmd = &cobra.Command{
 	Long: `Show the current status of TSLink: whether the daemon is running,
 Tailscale authentication state, and number of registered services.
 
-Example:
-  tslink status`,
+Output lines:
+  → tslink: running (pid 12345)     Daemon is active with its process ID
+  → tslink: not running             Daemon is not active
+  → tailnet: authenticated          Valid API key or OAuth client secret found
+  → tailnet: not authenticated      No credentials — run 'tslink login'
+  → services: 3 registered          Number of services in the registry
+
+Examples:
+  tslink status                     Show current status`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		pidPath, err := config.PIDPath()
 		if err != nil {

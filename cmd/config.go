@@ -95,7 +95,25 @@ Examples:
 	setCmd := &cobra.Command{
 		Use:   "set <key> <value>",
 		Short: "Set a global config value",
-		Args:  cobra.RangeArgs(1, 2),
+		Long: `Set a global configuration value. Settings are stored in
+~/.config/tslink/config.json and persist across sessions.
+
+Available keys:
+
+  control-url    Custom Tailscale control server URL (e.g. Headscale).
+                 Must be a valid URL. Set to "" to clear and use the
+                 default Tailscale coordination server.
+
+Priority order (highest to lowest):
+  1. Per-service control_url in registry.json
+  2. CLI flag: tslink serve --control-url
+  3. Global config: tslink config set control-url
+  4. Default: Tailscale managed servers
+
+Examples:
+  tslink config set control-url https://headscale.example.com
+  tslink config set control-url ""     Clear (revert to default)`,
+		Args: cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			value := ""
 			if len(args) == 2 {
@@ -108,7 +126,14 @@ Examples:
 	getCmd := &cobra.Command{
 		Use:   "get <key>",
 		Short: "Get a global config value",
-		Args:  cobra.ExactArgs(1),
+		Long: `Read a global configuration value. If the key has not been set,
+prints "(not set, using default Tailscale)" for control-url.
+
+Available keys: control-url
+
+Examples:
+  tslink config get control-url`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return configGet(args[0], cmd.OutOrStdout())
 		},
@@ -118,7 +143,16 @@ Examples:
 		Use:     "list",
 		Aliases: []string{"ls"},
 		Short:   "List all global config values",
-		Args:    cobra.NoArgs,
+		Long: `Display all global configuration key-value pairs.
+
+Output format:
+  control-url = https://headscale.example.com
+  control-url = (not set)
+
+Examples:
+  tslink config list
+  tslink config ls`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return configList(cmd.OutOrStdout())
 		},

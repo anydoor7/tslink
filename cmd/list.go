@@ -42,6 +42,26 @@ func init() {
 		Use:   "list",
 		Args:  cobra.NoArgs,
 		Short: "List registered services",
+		Long: `List all services registered in the TSLink registry.
+
+Displays a table with columns:
+
+  NAME     Service hostname on your tailnet
+  TYPE     Service type: proxy, file, or tcp
+  TARGET   Local target (host:port for proxy/tcp, path for file)
+  URL      Expected tailnet URL (https://<name>.<tailnet>.ts.net)
+
+The list reflects the contents of ~/.config/tslink/registry.json. Services
+are shown whether or not the gateway is currently running.
+
+Example output:
+  NAME      TYPE   TARGET                URL
+  myapp     proxy  http://localhost:3000  https://myapp.<tailnet>.ts.net
+  docs      file   /Users/testuser/Documents  https://docs.<tailnet>.ts.net
+  mydb      tcp    localhost:5432         https://mydb.<tailnet>.ts.net
+
+Examples:
+  tslink list              Show all registered services`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			regPath, err := registryPathFn()
 			if err != nil {

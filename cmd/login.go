@@ -18,13 +18,28 @@ var loginCmd = &cobra.Command{
 	Short: "Login to Tailscale",
 	Long: `Authenticate with your Tailscale account.
 
-Opens a browser for OAuth login, then asks for your API key.
-The API key is used to manage tailnet devices and derive auth keys automatically.
+Opens a browser for OAuth login, then prompts for a credential. TSLink accepts
+two credential types:
 
-Generate an API key at: https://login.tailscale.com/admin/settings/keys
+  API access token (tskey-api-*)
+    Used to manage tailnet devices and derive ephemeral auth keys automatically.
+    Expires periodically — regenerate at the Tailscale admin console when needed.
 
-Example:
-  tslink login`,
+  OAuth client secret (tskey-client-*)
+    Used directly by tsnet for authentication. Never expires, so no renewal is
+    needed. Recommended for long-running or unattended setups.
+
+Credentials are stored in the system keychain (macOS Keychain, Linux secret
+service, Windows Credential Manager). On systems without keychain support,
+they fall back to files in ~/.config/tslink/ with restricted permissions (0600).
+
+Generate credentials at: https://login.tailscale.com/admin/settings/keys
+
+Examples:
+  tslink login                  Interactive login with browser + key prompt
+
+  # Or store a key directly (skip interactive login):
+  echo -n "tskey-api-..." > ~/.config/tslink/apikey && chmod 600 ~/.config/tslink/apikey`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := config.EnsureDir(); err != nil {
 			return err

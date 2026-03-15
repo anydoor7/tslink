@@ -19,8 +19,22 @@ var installCmd = &cobra.Command{
 	Long: `Register TSLink in the Windows Startup folder so it launches in the
 background when you sign in.
 
-Example:
-  tslink install`,
+This command:
+  1. Creates a VBScript at %APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\tslink.vbs
+  2. The script runs 'tslink serve' silently (no console window) at login
+
+Note: Unlike macOS LaunchAgent and Linux systemd, the Windows Startup script
+does not auto-restart on crash. If the process exits, it will only restart on
+the next login.
+
+To verify the script exists:
+  dir "%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\tslink.vbs"
+
+To remove the autostart:
+  tslink uninstall
+
+Examples:
+  tslink install                Register the Startup script`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		exe, err := os.Executable()
 		if err != nil {
