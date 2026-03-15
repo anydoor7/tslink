@@ -12,8 +12,7 @@
 
 <p align="center">
   <a href="./README.md">English</a> ·
-  <a href="https://tslink.dev">官网</a> ·
-  <a href="https://tslink.dev/docs">文档</a>
+  <a href="https://github.com/monody0007/tslink">GitHub</a>
 </p>
 
 <!-- TODO: 添加终端录屏 / GIF 演示 -->
@@ -136,6 +135,7 @@ tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 | `tslink stop` | 停止网关 |
 | `tslink status` | 显示网关状态 |
 | `tslink api` | JSON-over-stdin/stdout 模式，用于程序化控制 |
+| `tslink config` | 管理全局配置（set/get/list） |
 | `tslink install` | 开机自启（macOS LaunchAgent / Linux systemd / Windows 启动文件夹） |
 | `tslink uninstall` | 移除自启 |
 
@@ -151,6 +151,7 @@ tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 | `--allow user@,tag:x` | Per-service 访问控制（逗号分隔） |
 | `--funnel` | 通过 Tailscale Funnel 暴露到公网（仅限 proxy） |
 | `--domain example.com` | 自定义域名映射（仅限 proxy） |
+| `--acme-email user@example.com` | Let's Encrypt 证书邮箱（需要 `--domain`） |
 
 ## 工作原理
 
@@ -208,24 +209,34 @@ services:
     labels:
       tslink.enable: "true"
       tslink.name: "webapp"
-      tslink.type: "proxy"
-      tslink.port: "8080"
+      tslink.type: "proxy"        # proxy（默认）或 tcp
+      tslink.target: "localhost:8080"  # proxy 类型可选（自动检测首个暴露端口）
+      tslink.port: "8080"         # tcp 类型必填
+      tslink.ephemeral: "true"    # 可选
+      tslink.tags: "tag:web"      # 可选，逗号分隔
 ```
 
 容器启动时自动注册，停止时自动注销。
 
 ## 中间件
 
-每个服务可以通过 `registry.json` 配置中间件：
+`registry.json` 中的每个服务可以包含 `middleware` 配置块：
 
 ```json
 {
-  "middleware": {
-    "rate_limit": 10.0,
-    "basic_auth": "user:hashed-password",
-    "ip_allow_list": ["100.64.0.1/16"],
-    "cors_origins": ["https://frontend.example.com"]
-  }
+  "services": [
+    {
+      "name": "myapp",
+      "type": "proxy",
+      "target": "http://localhost:3000",
+      "middleware": {
+        "rate_limit": 10.0,
+        "basic_auth": "user:password",
+        "ip_allow_list": ["100.64.0.1/16"],
+        "cors_origins": ["https://frontend.example.com"]
+      }
+    }
+  ]
 }
 ```
 

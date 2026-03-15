@@ -12,8 +12,7 @@
 
 <p align="center">
   <a href="./README_zh.md">中文文档</a> ·
-  <a href="https://tslink.dev">Website</a> ·
-  <a href="https://tslink.dev/docs">Documentation</a>
+  <a href="https://github.com/monody0007/tslink">GitHub</a>
 </p>
 
 <!-- TODO: Add terminal recording / GIF demo here -->
@@ -136,6 +135,7 @@ tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 | `tslink stop` | Stop the gateway |
 | `tslink status` | Show gateway status |
 | `tslink api` | JSON-over-stdin/stdout mode for programmatic control |
+| `tslink config` | Manage global configuration (set/get/list) |
 | `tslink install` | Auto-start on login (macOS LaunchAgent / Linux systemd / Windows Startup) |
 | `tslink uninstall` | Remove auto-start |
 
@@ -151,6 +151,7 @@ tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 | `--allow user@,tag:x` | Per-service access control (comma-separated) |
 | `--funnel` | Expose via Tailscale Funnel (public internet, proxy only) |
 | `--domain example.com` | Custom domain mapping (proxy only) |
+| `--acme-email user@example.com` | Email for Let's Encrypt certificates (requires `--domain`) |
 
 ## How It Works
 
@@ -208,24 +209,34 @@ services:
     labels:
       tslink.enable: "true"
       tslink.name: "webapp"
-      tslink.type: "proxy"
-      tslink.port: "8080"
+      tslink.type: "proxy"        # proxy (default) or tcp
+      tslink.target: "localhost:8080"  # optional for proxy (auto-detects first exposed port)
+      tslink.port: "8080"         # required for tcp type
+      tslink.ephemeral: "true"    # optional
+      tslink.tags: "tag:web"      # optional, comma-separated
 ```
 
 Containers are automatically registered when started and unregistered when stopped.
 
 ## Middleware
 
-Each service can be configured with middleware via `registry.json`:
+Each service in `registry.json` can include a `middleware` block:
 
 ```json
 {
-  "middleware": {
-    "rate_limit": 10.0,
-    "basic_auth": "user:hashed-password",
-    "ip_allow_list": ["100.64.0.1/16"],
-    "cors_origins": ["https://frontend.example.com"]
-  }
+  "services": [
+    {
+      "name": "myapp",
+      "type": "proxy",
+      "target": "http://localhost:3000",
+      "middleware": {
+        "rate_limit": 10.0,
+        "basic_auth": "user:password",
+        "ip_allow_list": ["100.64.0.1/16"],
+        "cors_origins": ["https://frontend.example.com"]
+      }
+    }
+  ]
 }
 ```
 
