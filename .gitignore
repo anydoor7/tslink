@@ -3,3 +3,5 @@
 tslink
 coverage*.out
 coverage*.html
+dist/
+RELEASE.md
