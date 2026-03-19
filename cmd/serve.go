@@ -30,6 +30,7 @@ var (
 	serveGetAuthKeyFn   = credentials.GetAuthKey
 	servePIDPathFn      = config.PIDPath
 	serveIsRunningFn    = daemon.IsRunning
+	serveEnsureTagsFn   = tailapi.EnsureTags
 	serveCleanupFn      = tailapi.CleanupStaleNodes
 	serveLoadGlobalFn   = config.LoadGlobalConfig
 	serveLogDirFn       = config.LogDir
@@ -86,6 +87,11 @@ Examples:
 			var allTags []string
 			for tag := range tagSet {
 				allTags = append(allTags, tag)
+			}
+
+			// Ensure all required tags exist in tailnet ACL
+			if err := serveEnsureTagsFn(context.Background(), allTags); err != nil {
+				return fmt.Errorf("ensure tags in ACL: %w", err)
 			}
 
 			// Get auth key (derive from API key, or fall back to legacy authkey file)

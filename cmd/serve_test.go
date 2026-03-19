@@ -36,6 +36,7 @@ func saveServeState(t *testing.T) {
 		getAuthKey   func(context.Context, credentials.AuthKeyOptions) (string, error)
 		pidPath      func() (string, error)
 		isRunning    func(string) bool
+		ensureTags   func(context.Context, []string) error
 		cleanup      func(context.Context, []string) error
 		loadGlobal   func() (config.GlobalConfig, error)
 		logDir       func() (string, error)
@@ -45,7 +46,7 @@ func saveServeState(t *testing.T) {
 		newServer    func(string, string) (serverRunner, error)
 	}{
 		serveEnsureDirFn, serveMigrateFn, serveRegistryPathFn, serveLoadRegistryFn,
-		serveGetAuthKeyFn, servePIDPathFn, serveIsRunningFn, serveCleanupFn,
+		serveGetAuthKeyFn, servePIDPathFn, serveIsRunningFn, serveEnsureTagsFn, serveCleanupFn,
 		serveLoadGlobalFn, serveLogDirFn, serveDaemonizeFn,
 		serveWritePIDFn, serveRemovePIDFn, serveNewServerFn,
 	}
@@ -57,6 +58,7 @@ func saveServeState(t *testing.T) {
 		serveGetAuthKeyFn = old.getAuthKey
 		servePIDPathFn = old.pidPath
 		serveIsRunningFn = old.isRunning
+		serveEnsureTagsFn = old.ensureTags
 		serveCleanupFn = old.cleanup
 		serveLoadGlobalFn = old.loadGlobal
 		serveLogDirFn = old.logDir
@@ -92,6 +94,7 @@ func mockServeDefaults(t *testing.T, dir string) {
 	}
 	servePIDPathFn = func() (string, error) { return pidPath, nil }
 	serveIsRunningFn = func(string) bool { return false }
+	serveEnsureTagsFn = func(ctx context.Context, tags []string) error { return nil }
 	serveCleanupFn = func(ctx context.Context, names []string) error { return nil }
 	serveLoadGlobalFn = func() (config.GlobalConfig, error) { return config.GlobalConfig{}, nil }
 	serveLogDirFn = func() (string, error) { return dir, nil }
@@ -345,5 +348,46 @@ func TestServeCmd_DaemonizeError(t *testing.T) {
 	err := cmd.RunE(cmd, nil)
 	if err == nil || !strings.Contains(err.Error(), "fork failed") {
 		t.Fatalf("expected daemonize error, got: %v", err)
+	}
+}
+
+func TestServeCmd_EnsureTagsOnStartup(t *testing.T) {
+	dir := t.TempDir()
+	mockServeDefaults(t, dir)
+
+	reg := &registry.Registry{
+		Services: []registry.Service{
+			{Name: "svc1", Type: "proxy", Target: "localhost:3000", Tags: []string{"tag:tsmain", "tag:shared"}},
+		},
+	}
+	data, _ := json.Marshal(reg)
+	os.WriteFile(filepath.Join(dir, "registry.json"), data, 0600)
+
+	var ensuredTags []string
+	serveEnsureTagsFn = func(ctx context.Context, tags []string) error {
+		ensuredTags = tags
+		return nil
+	}
+
+	cmd := findServeCmd(t)
+	_ = cmd.RunE(cmd, nil)
+
+	if len(ensuredTags) < 2 {
+		t.Fatalf("expected at least 2 tags ensured, got: %v", ensuredTags)
+	}
+}
+
+func TestServeCmd_EnsureTagsError(t *testing.T) {
+	dir := t.TempDir()
+	mockServeDefaults(t, dir)
+
+	serveEnsureTagsFn = func(ctx context.Context, tags []string) error {
+		return fmt.Errorf("ACL write denied")
+	}
+
+	cmd := findServeCmd(t)
+	err := cmd.RunE(cmd, nil)
+	if err == nil || !strings.Contains(err.Error(), "ACL write denied") {
+		t.Fatalf("expected ACL error, got: %v", err)
 	}
 }
