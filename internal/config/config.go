@@ -12,6 +12,16 @@ var jsonMarshalIndent = json.MarshalIndent
 // GlobalConfig holds tslink-wide settings persisted in config.json.
 type GlobalConfig struct {
 	ControlURL string `json:"control_url,omitempty"`
+	DefaultTag string `json:"default_tag,omitempty"`
+}
+
+// GetDefaultTag returns the configured default tag, falling back to "tag:tsmain".
+func GetDefaultTag() string {
+	cfg, err := LoadGlobalConfig()
+	if err != nil || cfg.DefaultTag == "" {
+		return "tag:tsmain"
+	}
+	return cfg.DefaultTag
 }
 
 // ConfigPath returns the path to the global config file.

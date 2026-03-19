@@ -800,3 +800,41 @@ func TestSaveGlobalConfig_MarshalError(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestGlobalConfig_DefaultTag(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	os.MkdirAll(filepath.Join(os.Getenv("HOME"), ".config", "tslink"), 0o700)
+
+	want := GlobalConfig{DefaultTag: "tag:myteam"}
+	if err := SaveGlobalConfig(want); err != nil {
+		t.Fatalf("SaveGlobalConfig() error = %v", err)
+	}
+	got, err := LoadGlobalConfig()
+	if err != nil {
+		t.Fatalf("LoadGlobalConfig() error = %v", err)
+	}
+	if got.DefaultTag != want.DefaultTag {
+		t.Fatalf("DefaultTag = %q, want %q", got.DefaultTag, want.DefaultTag)
+	}
+}
+
+func TestGetDefaultTag_Unset(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	os.MkdirAll(filepath.Join(os.Getenv("HOME"), ".config", "tslink"), 0o700)
+
+	tag := GetDefaultTag()
+	if tag != "tag:tsmain" {
+		t.Fatalf("GetDefaultTag() = %q, want tag:tsmain", tag)
+	}
+}
+
+func TestGetDefaultTag_Custom(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	os.MkdirAll(filepath.Join(os.Getenv("HOME"), ".config", "tslink"), 0o700)
+
+	SaveGlobalConfig(GlobalConfig{DefaultTag: "tag:myteam"})
+	tag := GetDefaultTag()
+	if tag != "tag:myteam" {
+		t.Fatalf("GetDefaultTag() = %q, want tag:myteam", tag)
+	}
+}
