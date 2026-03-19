@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -1024,4 +1025,103 @@ func TestWatchRegistry_SyncErrorOnReload(t *testing.T) {
 	cancel()
 
 	// If we reach here without panic, the error path was handled gracefully
+}
+
+func TestSetEnsureTagsFn(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	called := false
+	s.SetEnsureTagsFn(func(ctx context.Context, tags []string) error {
+		called = true
+		return nil
+	})
+
+	if s.ensureTagsFn == nil {
+		t.Fatal("ensureTagsFn should be set")
+	}
+
+	// Verify it's callable
+	s.ensureTagsFn(context.Background(), []string{"tag:test"})
+	if !called {
+		t.Fatal("ensureTagsFn was not called")
+	}
+}
+
+func TestSyncNodes_EnsureTagsCalledOnNewService(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+
+	writeRegistry(t, []registry.Service{
+		{Name: "newapp", Type: "proxy", Target: "localhost:3000", Tags: []string{"tag:tsmain", "tag:shared"}},
+	})
+
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	var ensuredTags []string
+	s.SetEnsureTagsFn(func(ctx context.Context, tags []string) error {
+		ensuredTags = tags
+		return nil
+	})
+
+	// syncNodes will fail on startNodeLocked (no real tsnet), but ensureTagsFn should be called first
+	_ = s.syncNodes(context.Background())
+
+	if len(ensuredTags) < 2 {
+		t.Fatalf("expected at least 2 tags ensured, got: %v", ensuredTags)
+	}
+}
+
+func TestSyncNodes_EnsureTagsNotCalledWhenNil(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+
+	writeRegistry(t, []registry.Service{
+		{Name: "app", Type: "proxy", Target: "localhost:3000", Tags: []string{"tag:tsmain"}},
+	})
+
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	// ensureTagsFn is nil by default — should not panic
+	_ = s.syncNodes(context.Background())
+}
+
+func TestSyncNodes_EnsureTagsErrorLogged(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+
+	writeRegistry(t, []registry.Service{
+		{Name: "app", Type: "proxy", Target: "localhost:3000", Tags: []string{"tag:tsmain"}},
+	})
+
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	s.SetEnsureTagsFn(func(ctx context.Context, tags []string) error {
+		return fmt.Errorf("ACL write denied")
+	})
+
+	// Should not return error (ensureTagsFn error is logged, not returned)
+	_ = s.syncNodes(context.Background())
 }

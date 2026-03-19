@@ -29,14 +29,18 @@ type ServiceNode struct {
 	closed   atomic.Bool
 }
 
+// EnsureTagsFunc is the signature for ensuring ACL tags exist.
+type EnsureTagsFunc func(ctx context.Context, tags []string) error
+
 // Server manages multiple tsnet nodes, one per registered service.
 type Server struct {
-	nodes      map[string]*ServiceNode
-	authKey    string
-	controlURL string
-	mu         sync.RWMutex
-	cfgDir     string
-	metrics    *metrics.Metrics
+	nodes        map[string]*ServiceNode
+	authKey      string
+	controlURL   string
+	mu           sync.RWMutex
+	cfgDir       string
+	metrics      *metrics.Metrics
+	ensureTagsFn EnsureTagsFunc
 }
 
 // New creates a new multi-node server.
@@ -52,6 +56,11 @@ func New(authKey, controlURL string) (*Server, error) {
 		cfgDir:     cfgDir,
 		metrics:    metrics.New(),
 	}, nil
+}
+
+// SetEnsureTagsFn sets the function called to ensure ACL tags before starting nodes.
+func (s *Server) SetEnsureTagsFn(fn EnsureTagsFunc) {
+	s.ensureTagsFn = fn
 }
 
 // Run starts all registered service nodes and watches for registry changes.
@@ -97,6 +106,28 @@ func (s *Server) syncNodes(ctx context.Context) error {
 		} else if serviceChanged(node.service, svc) {
 			slog.Info("restarting node", "name", name)
 			s.stopNodeLocked(name, false) // keep state for changed services
+		}
+	}
+
+	// Ensure ACL tags exist before starting new/changed nodes
+	if s.ensureTagsFn != nil {
+		var tagsToEnsure []string
+		tagSet := make(map[string]struct{})
+		for name, svc := range desired {
+			if _, running := s.nodes[name]; running {
+				continue
+			}
+			for _, tag := range svc.Tags {
+				if _, seen := tagSet[tag]; !seen {
+					tagSet[tag] = struct{}{}
+					tagsToEnsure = append(tagsToEnsure, tag)
+				}
+			}
+		}
+		if len(tagsToEnsure) > 0 {
+			if err := s.ensureTagsFn(ctx, tagsToEnsure); err != nil {
+				slog.Error("failed to ensure ACL tags", "error", err)
+			}
 		}
 	}
 
@@ -157,11 +188,12 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service) erro
 	}
 
 	tsnetSrv := &tsnet.Server{
-		Hostname:   svc.Name,
-		Dir:        stateDir,
-		AuthKey:    s.authKey,
-		Ephemeral:  svc.Ephemeral,
-		ControlURL: controlURL,
+		Hostname:      svc.Name,
+		Dir:           stateDir,
+		AuthKey:       s.authKey,
+		Ephemeral:     svc.Ephemeral,
+		ControlURL:    controlURL,
+		AdvertiseTags: svc.Tags,
 	}
 
 	nodeCtx, cancel := context.WithCancel(ctx)
