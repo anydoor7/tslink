@@ -102,6 +102,36 @@ TSLink 支持两种凭证（只需选一种）：
 
 `tslink login` 会交互式引导你完成任一路径。凭证存储在系统钥匙串（macOS Keychain / Linux secret service / Windows 凭据管理器）中，不以明文保存。
 
+### 标签自动管理
+
+TSLink 会自动为你的服务管理 Tailscale ACL 标签：
+
+- **默认标签** — 当 `tslink add` 未指定 `--tags` 时，每个服务自动应用 `tag:tsmain`。该标签也会在 `tslink login` 时自动创建到你的 Tailscale ACL 中。
+- **ACL 标签自动同步** — `tslink serve` 在启动节点前会确保注册表中所有标签都已存在于 Tailscale ACL，彻底避免"未知标签"错误。
+- **标签热更新** — 通过 `tslink tags set` 或 `tslink tags add` 修改服务标签后，受影响的节点立即重启并应用新标签，无需手动重启网关。
+
+使用 `tslink tags` 查看和自定义标签分配：
+
+```bash
+# 查看所有服务及其标签
+tslink tags list
+
+# 拉取 Tailscale ACL 中当前定义的标签
+tslink tags pull
+
+# 为某个服务添加标签（节点自动重启）
+tslink tags add myapp tag:production
+
+# 替换某个服务的全部标签
+tslink tags set myapp tag:webserver
+
+# 修改新服务的默认标签
+tslink tags set-default tag:myteam
+
+# 从 Tailscale ACL 删除标签
+tslink tags delete-remote tag:old-tag
+```
+
 ### 更多示例
 
 ```bash
@@ -139,6 +169,12 @@ tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 | `tslink serve --daemon` | 启动网关（后台） |
 | `tslink stop` | 停止网关 |
 | `tslink status` | 显示网关状态 |
+| `tslink tags list` | 列出所有服务及其标签 |
+| `tslink tags pull` | 从 Tailscale ACL 拉取远端标签 |
+| `tslink tags add <service> <tag>` | 为服务追加一个标签 |
+| `tslink tags set <service> <tag>` | 替换服务的全部标签 |
+| `tslink tags set-default <tag>` | 修改新服务的默认标签 |
+| `tslink tags delete-remote <tag>` | 从 Tailscale ACL 删除一个标签 |
 | `tslink api` | JSON-over-stdin/stdout 模式，用于程序化控制 |
 | `tslink config` | 管理全局配置（set/get/list） |
 | `tslink install` | 开机自启（macOS LaunchAgent / Linux systemd / Windows 启动文件夹） |

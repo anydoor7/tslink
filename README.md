@@ -102,6 +102,36 @@ TSLink accepts two credential types (you only need one):
 
 `tslink login` guides you through either path interactively. Credentials are stored in the system keychain (macOS Keychain / Linux secret service / Windows Credential Manager), never in plaintext.
 
+### Tag Auto-Management
+
+TSLink automatically manages Tailscale ACL tags for your services:
+
+- **Default tag** — every service gets `tag:tsmain` applied automatically when `--tags` is not specified. This tag is also created in your Tailscale ACL on `tslink login`.
+- **ACL tags are auto-managed** — `tslink serve` ensures all tags used in the registry exist in Tailscale ACL before starting nodes, so you never encounter "unknown tag" errors.
+- **Live tag updates** — changing a service's tags via `tslink tags set` or `tslink tags add` triggers an immediate node restart with the new tags applied, no manual restart required.
+
+Use `tslink tags` to inspect and customize tag assignments:
+
+```bash
+# See all services and their tags
+tslink tags list
+
+# Fetch tags currently defined in your Tailscale ACL
+tslink tags pull
+
+# Add a tag to a specific service (node restarts automatically)
+tslink tags add myapp tag:production
+
+# Replace all tags on a service
+tslink tags set myapp tag:webserver
+
+# Change the default tag applied to new services
+tslink tags set-default tag:myteam
+
+# Remove a tag from Tailscale ACL
+tslink tags delete-remote tag:old-tag
+```
+
 ### More Examples
 
 ```bash
@@ -139,6 +169,12 @@ tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 | `tslink serve --daemon` | Start the gateway (background) |
 | `tslink stop` | Stop the gateway |
 | `tslink status` | Show gateway status |
+| `tslink tags list` | List services and their assigned tags |
+| `tslink tags pull` | Fetch remote tags from Tailscale ACL |
+| `tslink tags add <service> <tag>` | Append a tag to a service |
+| `tslink tags set <service> <tag>` | Replace a service's tags |
+| `tslink tags set-default <tag>` | Change the default tag applied to new services |
+| `tslink tags delete-remote <tag>` | Delete a tag from Tailscale ACL |
 | `tslink api` | JSON-over-stdin/stdout mode for programmatic control |
 | `tslink config` | Manage global configuration (set/get/list) |
 | `tslink install` | Auto-start on login (macOS LaunchAgent / Linux systemd / Windows Startup) |
