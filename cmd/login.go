@@ -25,7 +25,7 @@ var (
 			credentials.DeleteAPIKey()
 			return fmt.Errorf("invalid API key")
 		}
-		if _, err := client.Devices(ctx, nil); err != nil {
+		if _, err := client.Devices().List(ctx); err != nil {
 			credentials.DeleteAPIKey()
 			return fmt.Errorf("API key verification failed: %w", err)
 		}

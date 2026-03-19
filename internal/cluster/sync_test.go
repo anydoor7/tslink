@@ -1147,7 +1147,7 @@ func TestCluster_SendHeartbeat_MarshalError(t *testing.T) {
 	c := NewCluster("node-1", tr, rp)
 
 	old := jsonMarshal
-	jsonMarshal = func(_ interface{}) ([]byte, error) {
+	jsonMarshal = func(_ any) ([]byte, error) {
 		return nil, fmt.Errorf("marshal boom")
 	}
 	defer func() { jsonMarshal = old }()

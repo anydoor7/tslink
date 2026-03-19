@@ -14,7 +14,6 @@ import (
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/credentials"
 	"github.com/zalando/go-keyring"
-	tailscale "tailscale.com/client/tailscale"
 )
 
 // aclSetup initialises a clean test environment and saves/restores aclClientFn.
@@ -27,12 +26,6 @@ func aclSetup(t *testing.T) {
 	}
 	orig := aclClientFn
 	t.Cleanup(func() { aclClientFn = orig })
-}
-
-// setACLClientFn overrides aclClientFn for one test.
-func setACLClientFn(t *testing.T, fn func() (*tailscale.Client, error)) {
-	t.Helper()
-	aclClientFn = fn
 }
 
 // aclRoundTripper creates a roundTripperFunc and installs it as DefaultTransport.
@@ -215,7 +208,7 @@ func TestEnsureTags_CreatesMissing(t *testing.T) {
 		t.Fatalf("SetAPIKey() error = %v", err)
 	}
 
-	var postedACL map[string]interface{}
+	var postedACL map[string]any
 	aclWithTransport(t, func(req *http.Request) (*http.Response, error) {
 		switch {
 		case req.Method == http.MethodGet && strings.HasSuffix(req.URL.Path, "/acl"):
@@ -236,7 +229,7 @@ func TestEnsureTags_CreatesMissing(t *testing.T) {
 	}
 
 	// Verify the posted ACL includes both tags
-	tagOwners, ok := postedACL["tagowners"].(map[string]interface{})
+	tagOwners, ok := postedACL["tagOwners"].(map[string]any)
 	if !ok {
 		t.Fatalf("posted ACL missing tagowners: %v", postedACL)
 	}
@@ -254,7 +247,7 @@ func TestEnsureTags_NilTagOwners(t *testing.T) {
 		t.Fatalf("SetAPIKey() error = %v", err)
 	}
 
-	var postedACL map[string]interface{}
+	var postedACL map[string]any
 	aclWithTransport(t, func(req *http.Request) (*http.Response, error) {
 		switch {
 		case req.Method == http.MethodGet && strings.HasSuffix(req.URL.Path, "/acl"):
@@ -274,7 +267,7 @@ func TestEnsureTags_NilTagOwners(t *testing.T) {
 		t.Fatalf("EnsureTags() error = %v", err)
 	}
 
-	tagOwners, ok := postedACL["tagowners"].(map[string]interface{})
+	tagOwners, ok := postedACL["tagOwners"].(map[string]any)
 	if !ok {
 		t.Fatalf("posted ACL missing tagowners: %v", postedACL)
 	}
@@ -385,7 +378,7 @@ func TestDeleteTag_Success(t *testing.T) {
 		t.Fatalf("SetAPIKey() error = %v", err)
 	}
 
-	var postedACL map[string]interface{}
+	var postedACL map[string]any
 	aclWithTransport(t, func(req *http.Request) (*http.Response, error) {
 		switch {
 		case req.Method == http.MethodGet && strings.HasSuffix(req.URL.Path, "/acl"):
@@ -404,7 +397,7 @@ func TestDeleteTag_Success(t *testing.T) {
 		t.Fatalf("DeleteTag() error = %v", err)
 	}
 
-	tagOwners, ok := postedACL["tagowners"].(map[string]interface{})
+	tagOwners, ok := postedACL["tagOwners"].(map[string]any)
 	if !ok {
 		t.Fatalf("posted ACL missing tagowners: %v", postedACL)
 	}

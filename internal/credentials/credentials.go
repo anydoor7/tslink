@@ -8,7 +8,7 @@ import (
 
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/zalando/go-keyring"
-	tailscale "tailscale.com/client/tailscale"
+	tailscale "tailscale.com/client/tailscale/v2"
 )
 
 const (
@@ -20,15 +20,11 @@ const (
 // Testable seams.
 var (
 	newTailscaleClientFunc = NewTailscaleClient
-	createKeyFunc          = func(client *tailscale.Client, ctx context.Context, caps tailscale.KeyCapabilities) (string, *tailscale.Key, error) {
-		return client.CreateKey(ctx, caps)
+	createKeyFunc          = func(client *tailscale.Client, ctx context.Context, req tailscale.CreateKeyRequest) (*tailscale.Key, error) {
+		return client.Keys().CreateAuthKey(ctx, req)
 	}
 	authKeyPathFunc = config.AuthKeyPath
 )
-
-func init() {
-	tailscale.I_Acknowledge_This_API_Is_Unstable = true
-}
 
 // SetAPIKey stores the API key. Prefers macOS Keychain; falls back to file (0600).
 func SetAPIKey(key string) error {
@@ -146,7 +142,7 @@ func NewTailscaleClient() (*tailscale.Client, error) {
 	if key == "" {
 		return nil, nil
 	}
-	return tailscale.NewClient("-", tailscale.APIKey(key)), nil
+	return &tailscale.Client{Tailnet: "-", APIKey: key}, nil
 }
 
 // AuthKeyOptions configures the derived auth key.
@@ -165,22 +161,21 @@ func DeriveAuthKey(ctx context.Context, opts AuthKeyOptions) (string, error) {
 		return "", fmt.Errorf("no API key configured — run 'tslink login' first")
 	}
 
-	caps := tailscale.KeyCapabilities{
-		Devices: tailscale.KeyDeviceCapabilities{
-			Create: tailscale.KeyDeviceCreateCapabilities{
-				Reusable:      true,
-				Ephemeral:     opts.Ephemeral,
-				Preauthorized: true,
-				Tags:          opts.Tags,
-			},
-		},
+	var caps tailscale.KeyCapabilities
+	caps.Devices.Create.Reusable = true
+	caps.Devices.Create.Ephemeral = opts.Ephemeral
+	caps.Devices.Create.Preauthorized = true
+	caps.Devices.Create.Tags = opts.Tags
+
+	req := tailscale.CreateKeyRequest{
+		Capabilities: caps,
 	}
 
-	secret, _, err := createKeyFunc(client, ctx, caps)
+	key, err := createKeyFunc(client, ctx, req)
 	if err != nil {
 		return "", fmt.Errorf("derive auth key: %w", err)
 	}
-	return secret, nil
+	return key.Key, nil
 }
 
 // GetAuthKey returns a usable auth key, trying (in order):

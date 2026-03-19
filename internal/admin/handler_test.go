@@ -24,7 +24,7 @@ func newTestHandler(t *testing.T) (*Handler, string, string) {
 	return New(regPath, pidPath), regPath, pidPath
 }
 
-func doRequest(t *testing.T, h *Handler, method, path string, body interface{}) *httptest.ResponseRecorder {
+func doRequest(t *testing.T, h *Handler, method, path string, body any) *httptest.ResponseRecorder {
 	t.Helper()
 	var buf *bytes.Buffer
 	if body != nil {
@@ -73,7 +73,7 @@ func decodeStatusData(t *testing.T, resp APIResponse) statusData {
 	return sd
 }
 
-func decodeServiceFromData(t *testing.T, data interface{}) registry.Service {
+func decodeServiceFromData(t *testing.T, data any) registry.Service {
 	t.Helper()
 	raw, _ := json.Marshal(data)
 	var svc registry.Service

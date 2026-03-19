@@ -9,7 +9,7 @@ import (
 
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/zalando/go-keyring"
-	tailscale "tailscale.com/client/tailscale"
+	tailscale "tailscale.com/client/tailscale/v2"
 )
 
 func setup(t *testing.T) {
@@ -270,8 +270,8 @@ func TestNewTailscaleClient_WithKey(t *testing.T) {
 	if client == nil {
 		t.Fatal("NewTailscaleClient() returned nil client")
 	}
-	if got := client.Tailnet(); got != "-" {
-		t.Fatalf("client.Tailnet() = %q, want %q", got, "-")
+	if got := client.Tailnet; got != "-" {
+		t.Fatalf("client.Tailnet = %q, want %q", got, "-")
 	}
 }
 
@@ -789,8 +789,9 @@ func TestDeriveAuthKey_Success(t *testing.T) {
 	// Override createKeyFunc to simulate a successful CreateKey call.
 	origCreateKey := createKeyFunc
 	t.Cleanup(func() { createKeyFunc = origCreateKey })
-	createKeyFunc = func(_ *tailscale.Client, _ context.Context, caps tailscale.KeyCapabilities) (string, *tailscale.Key, error) {
+	createKeyFunc = func(_ *tailscale.Client, _ context.Context, req tailscale.CreateKeyRequest) (*tailscale.Key, error) {
 		// Verify capabilities are passed correctly.
+		caps := req.Capabilities
 		if !caps.Devices.Create.Reusable {
 			t.Error("expected Reusable=true")
 		}
@@ -803,7 +804,7 @@ func TestDeriveAuthKey_Success(t *testing.T) {
 		if len(caps.Devices.Create.Tags) != 1 || caps.Devices.Create.Tags[0] != "tag:test" {
 			t.Errorf("Tags = %v, want [tag:test]", caps.Devices.Create.Tags)
 		}
-		return "tskey-auth-derived", nil, nil
+		return &tailscale.Key{Key: "tskey-auth-derived"}, nil
 	}
 
 	secret, err := DeriveAuthKey(context.Background(), AuthKeyOptions{
@@ -828,8 +829,8 @@ func TestGetAuthKey_DeriveSuccess(t *testing.T) {
 	// Override createKeyFunc to simulate a successful CreateKey call.
 	origCreateKey := createKeyFunc
 	t.Cleanup(func() { createKeyFunc = origCreateKey })
-	createKeyFunc = func(_ *tailscale.Client, _ context.Context, _ tailscale.KeyCapabilities) (string, *tailscale.Key, error) {
-		return "tskey-auth-from-derive", nil, nil
+	createKeyFunc = func(_ *tailscale.Client, _ context.Context, _ tailscale.CreateKeyRequest) (*tailscale.Key, error) {
+		return &tailscale.Key{Key: "tskey-auth-from-derive"}, nil
 	}
 
 	got, err := GetAuthKey(context.Background(), AuthKeyOptions{})

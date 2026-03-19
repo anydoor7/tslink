@@ -19,14 +19,14 @@ func DeleteDevicesByHostname(ctx context.Context, hostname string) error {
 		return nil // no API key, skip
 	}
 
-	devices, err := client.Devices(ctx, nil)
+	devices, err := client.Devices().List(ctx)
 	if err != nil {
 		return fmt.Errorf("list devices: %w", err)
 	}
 
 	for _, d := range devices {
 		if d.Hostname == hostname || strings.HasPrefix(d.Hostname, hostname+"-") {
-			if err := client.DeleteDevice(ctx, d.DeviceID); err != nil {
+			if err := client.Devices().Delete(ctx, d.ID); err != nil {
 				return fmt.Errorf("delete device %s: %w", d.Hostname, err)
 			}
 			slog.Info("removed tailnet node", "hostname", d.Hostname)
@@ -45,7 +45,7 @@ func CleanupStaleNodes(ctx context.Context, hostnames []string) error {
 		return nil
 	}
 
-	devices, err := client.Devices(ctx, nil)
+	devices, err := client.Devices().List(ctx)
 	if err != nil {
 		return nil // non-fatal on serve
 	}
@@ -62,7 +62,7 @@ func CleanupStaleNodes(ctx context.Context, hostnames []string) error {
 			base = base[:idx]
 		}
 		if nameSet[d.Hostname] || nameSet[base] {
-			_ = client.DeleteDevice(ctx, d.DeviceID)
+			_ = client.Devices().Delete(ctx, d.ID)
 		}
 	}
 	return nil

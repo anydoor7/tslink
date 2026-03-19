@@ -29,7 +29,7 @@ type Handler struct {
 // APIResponse is the standard JSON envelope returned by all API endpoints.
 type APIResponse struct {
 	OK      bool        `json:"ok"`
-	Data    interface{} `json:"data,omitempty"`
+	Data    any `json:"data,omitempty"`
 	Error   string      `json:"error,omitempty"`
 	Message string      `json:"message,omitempty"`
 }

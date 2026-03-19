@@ -24,13 +24,13 @@ func ReadTags(ctx context.Context) ([]string, error) {
 		return nil, nil
 	}
 
-	acl, err := client.ACL(ctx)
+	acl, err := client.PolicyFile().Get(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("read ACL: %w", err)
 	}
 
 	var tags []string
-	for tag := range acl.ACL.TagOwners {
+	for tag := range acl.TagOwners {
 		tags = append(tags, tag)
 	}
 	return tags, nil
@@ -48,19 +48,19 @@ func EnsureTags(ctx context.Context, tags []string) error {
 		return nil
 	}
 
-	acl, err := client.ACL(ctx)
+	acl, err := client.PolicyFile().Get(ctx)
 	if err != nil {
 		return fmt.Errorf("read ACL: %w", err)
 	}
 
-	if acl.ACL.TagOwners == nil {
-		acl.ACL.TagOwners = make(map[string][]string)
+	if acl.TagOwners == nil {
+		acl.TagOwners = make(map[string][]string)
 	}
 
 	changed := false
 	for _, tag := range tags {
-		if _, exists := acl.ACL.TagOwners[tag]; !exists {
-			acl.ACL.TagOwners[tag] = []string{"autogroup:admin"}
+		if _, exists := acl.TagOwners[tag]; !exists {
+			acl.TagOwners[tag] = []string{"autogroup:admin"}
 			changed = true
 		}
 	}
@@ -69,7 +69,7 @@ func EnsureTags(ctx context.Context, tags []string) error {
 		return nil
 	}
 
-	if _, err := client.SetACL(ctx, *acl, true); err != nil {
+	if err := client.PolicyFile().Set(ctx, *acl, acl.ETag); err != nil {
 		return fmt.Errorf("update ACL: %w", err)
 	}
 	return nil
@@ -86,18 +86,18 @@ func DeleteTag(ctx context.Context, tag string) error {
 		return fmt.Errorf("no API client available")
 	}
 
-	acl, err := client.ACL(ctx)
+	acl, err := client.PolicyFile().Get(ctx)
 	if err != nil {
 		return fmt.Errorf("read ACL: %w", err)
 	}
 
-	if _, exists := acl.ACL.TagOwners[tag]; !exists {
+	if _, exists := acl.TagOwners[tag]; !exists {
 		return fmt.Errorf("tag %q not found in tailnet ACL", tag)
 	}
 
-	delete(acl.ACL.TagOwners, tag)
+	delete(acl.TagOwners, tag)
 
-	if _, err := client.SetACL(ctx, *acl, true); err != nil {
+	if err := client.PolicyFile().Set(ctx, *acl, acl.ETag); err != nil {
 		return fmt.Errorf("update ACL: %w", err)
 	}
 	return nil
