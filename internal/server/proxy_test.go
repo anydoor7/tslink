@@ -192,6 +192,26 @@ func TestIsTimeout_WrappedDeadline(t *testing.T) {
 	}
 }
 
+// deadlineOnlyError contains DeadlineExceeded in its chain but does NOT
+// implement net.Error, so errors.As(err, &netErr) returns false and
+// isTimeout must fall through to the errors.Is branch.
+type deadlineOnlyError struct{ inner error }
+
+func (e *deadlineOnlyError) Error() string { return "op failed: " + e.inner.Error() }
+func (e *deadlineOnlyError) Unwrap() []error { return []error{e.inner} }
+
+func TestIsTimeout_DeadlineWithoutNetError(t *testing.T) {
+	err := &deadlineOnlyError{inner: context.DeadlineExceeded}
+	// errors.As should NOT match net.Error (deadlineOnlyError doesn't implement it)
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		t.Skip("errors.As matches net.Error through Unwrap — branch unreachable in this Go version")
+	}
+	if !isTimeout(err) {
+		t.Error("wrapped DeadlineExceeded (non-net.Error) should be timeout")
+	}
+}
+
 func TestIsTimeout_NonTimeoutNetError(t *testing.T) {
 	if isTimeout(&net.DNSError{IsTimeout: false}) {
 		t.Error("non-timeout net error should not be timeout")

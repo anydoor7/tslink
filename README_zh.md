@@ -95,7 +95,12 @@ tslink serve --daemon
 # 从任何设备访问 https://myapp.<your-tailnet>.ts.net
 ```
 
-TSLink 只需要一个密钥 — 你的 [Tailscale API 访问令牌](https://login.tailscale.com/admin/settings/keys)。认证密钥自动派生。API 密钥存储在系统钥匙串（macOS Keychain / Linux secret service / Windows 凭据管理器）中，不以明文保存。
+TSLink 支持两种凭证（只需选一种）：
+
+- **API 访问令牌** (`tskey-api-*`) — 在 [管理后台 → Keys](https://login.tailscale.com/admin/settings/keys) 生成。点击 "Generate access token..."。简单快捷，但会过期。
+- **OAuth 客户端密钥** (`tskey-client-*`) — 在 [管理后台 → OAuth](https://login.tailscale.com/admin/settings/oauth) 生成。点击 "+ credential" → "OAuth client" → scope 选 "all" → 复制下方的 **client secret**（不是上方较短的 client ID）。永不过期，推荐使用。
+
+`tslink login` 会交互式引导你完成任一路径。凭证存储在系统钥匙串（macOS Keychain / Linux secret service / Windows 凭据管理器）中，不以明文保存。
 
 ### 更多示例
 

@@ -18,6 +18,29 @@ import (
 
 var serveDaemon bool
 
+// Testable function variables for serve
+var (
+	serveWritePIDFn     = daemon.WritePID
+	serveRemovePIDFn    = daemon.RemovePID
+	serveNewServerFn    = func(authKey, controlURL string) (serverRunner, error) { return server.New(authKey, controlURL) }
+	serveEnsureDirFn    = config.EnsureDir
+	serveMigrateFn      = credentials.MigrateFromLegacy
+	serveRegistryPathFn = config.RegistryPath
+	serveLoadRegistryFn = registry.Load
+	serveGetAuthKeyFn   = credentials.GetAuthKey
+	servePIDPathFn      = config.PIDPath
+	serveIsRunningFn    = daemon.IsRunning
+	serveCleanupFn      = tailapi.CleanupStaleNodes
+	serveLoadGlobalFn   = config.LoadGlobalConfig
+	serveLogDirFn       = config.LogDir
+	serveDaemonizeFn    = daemon.Daemonize
+)
+
+// serverRunner abstracts server.Server for testing.
+type serverRunner interface {
+	Run(ctx context.Context) error
+}
+
 func init() {
 	serveCmd := &cobra.Command{
 		Use:   "serve",
@@ -30,21 +53,21 @@ Examples:
   tslink serve --daemon
   tslink serve --control-url https://headscale.example.com`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := config.EnsureDir(); err != nil {
+			if err := serveEnsureDirFn(); err != nil {
 				return err
 			}
 
 			// Migrate file-based API key to keychain if possible
-			if credentials.MigrateFromLegacy() {
+			if serveMigrateFn() {
 				fmt.Fprintln(cmd.OutOrStdout(), "→ migrated API key to system keychain")
 			}
 
 			// Load registry to collect tags and ephemeral flags
-			regPath, err := config.RegistryPath()
+			regPath, err := serveRegistryPathFn()
 			if err != nil {
 				return err
 			}
-			reg, err := registry.Load(regPath)
+			reg, err := serveLoadRegistryFn(regPath)
 			if err != nil {
 				return fmt.Errorf("load registry: %w", err)
 			}
@@ -66,7 +89,7 @@ Examples:
 			}
 
 			// Get auth key (derive from API key, or fall back to legacy authkey file)
-			authKey, err := credentials.GetAuthKey(context.Background(), credentials.AuthKeyOptions{
+			authKey, err := serveGetAuthKeyFn(context.Background(), credentials.AuthKeyOptions{
 				Tags:      allTags,
 				Ephemeral: hasEphemeral,
 			})
@@ -74,12 +97,12 @@ Examples:
 				return err
 			}
 
-			pidPath, err := config.PIDPath()
+			pidPath, err := servePIDPathFn()
 			if err != nil {
 				return err
 			}
 
-			if daemon.IsRunning(pidPath) {
+			if serveIsRunningFn(pidPath) {
 				return fmt.Errorf("tslink is already running (see: tslink status)")
 			}
 
@@ -88,18 +111,18 @@ Examples:
 			for _, s := range reg.Services {
 				names = append(names, s.Name)
 			}
-			_ = tailapi.CleanupStaleNodes(context.Background(), names)
+			_ = serveCleanupFn(context.Background(), names)
 
 			// Resolve control URL: flag > config > default
 			controlURL, _ := cmd.Flags().GetString("control-url")
 			if controlURL == "" {
-				if globalCfg, err := config.LoadGlobalConfig(); err == nil {
+				if globalCfg, err := serveLoadGlobalFn(); err == nil {
 					controlURL = globalCfg.ControlURL
 				}
 			}
 
 			if serveDaemon {
-				logDir, err := config.LogDir()
+				logDir, err := serveLogDirFn()
 				if err != nil {
 					return err
 				}
@@ -107,7 +130,7 @@ Examples:
 				outLog := filepath.Join(logDir, "tslink.out.log")
 				errLog := filepath.Join(logDir, "tslink.err.log")
 
-				pid, err := daemon.Daemonize(outLog, errLog)
+				pid, err := serveDaemonizeFn(outLog, errLog)
 				if err != nil {
 					return err
 				}
@@ -126,15 +149,15 @@ Examples:
 }
 
 func runForeground(pidPath, authKey, controlURL string) error {
-	if err := daemon.WritePID(pidPath); err != nil {
+	if err := serveWritePIDFn(pidPath); err != nil {
 		return fmt.Errorf("write PID: %w", err)
 	}
-	defer daemon.RemovePID(pidPath)
+	defer serveRemovePIDFn(pidPath)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	srv, err := server.New(authKey, controlURL)
+	srv, err := serveNewServerFn(authKey, controlURL)
 	if err != nil {
 		return err
 	}

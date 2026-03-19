@@ -352,3 +352,14 @@ func TestAPIAdd_InvalidName(t *testing.T) {
 		t.Fatal("expected error for invalid name")
 	}
 }
+
+func TestAPIAdd_InvalidType(t *testing.T) {
+	h, _ := newTestHandler(t)
+	resp := sendRequest(t, h, APIRequest{Action: "add", Name: "myapp", Type: "websocket", Target: "localhost:3000"})
+	if resp.OK {
+		t.Fatal("expected error for invalid type")
+	}
+	if !strings.Contains(resp.Error, "type must be one of") {
+		t.Errorf("expected type validation error, got: %s", resp.Error)
+	}
+}

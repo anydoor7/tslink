@@ -95,7 +95,12 @@ tslink serve --daemon
 # Access https://myapp.<your-tailnet>.ts.net from any device
 ```
 
-TSLink only needs one key — your [Tailscale API access token](https://login.tailscale.com/admin/settings/keys). Auth keys are derived automatically. Your API key is stored in the system keychain (macOS Keychain / Linux secret service / Windows Credential Manager), never in plaintext.
+TSLink accepts two credential types (you only need one):
+
+- **API access token** (`tskey-api-*`) — generate at [Admin → Keys](https://login.tailscale.com/admin/settings/keys). Click "Generate access token...". Simple, but expires periodically.
+- **OAuth client secret** (`tskey-client-*`) — generate at [Admin → OAuth](https://login.tailscale.com/admin/settings/oauth). Click "+ credential" → "OAuth client" → set scope to "all" → copy the **client secret** (not the shorter client ID). Never expires — recommended.
+
+`tslink login` guides you through either path interactively. Credentials are stored in the system keychain (macOS Keychain / Linux secret service / Windows Credential Manager), never in plaintext.
 
 ### More Examples
 
