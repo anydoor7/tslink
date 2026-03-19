@@ -23,14 +23,31 @@ builds:
       - -s -w
 
 archives:
-  - format: tar.gz
-    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+  - name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats:
+      - tar.gz
     format_overrides:
       - goos: windows
-        format: zip
+        formats:
+          - zip
 
 checksum:
   name_template: "checksums.txt"
+
+homebrew_casks:
+  - name: tslink
+    binaries:
+      - tslink
+    repository:
+      owner: monody0007
+      name: homebrew-tap
+      branch: main
+    directory: Casks
+    homepage: "https://github.com/monody0007/tslink"
+    description: "Zero-trust service gateway for Tailscale — expose local services to your private network"
+    license: "MIT"
+    skip_upload: auto
+    commit_msg_template: "Brew cask update for {{ .ProjectName }} version {{ .Tag }}"
 
 changelog:
   sort: asc
