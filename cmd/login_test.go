@@ -256,3 +256,43 @@ func TestLoginCmd_FullFlow_WithMocks(t *testing.T) {
 		t.Fatalf("expected success, got: %v", err)
 	}
 }
+
+func TestLoginCredentialFlow_CreatesDefaultTag(t *testing.T) {
+	dir := setupLoginTest(t)
+	mockStdin(t, "1", "tskey-api-test-12345")
+	mockAPIKeySuccess(t)
+
+	var ensuredTags []string
+	old := loginEnsureTagsFn
+	t.Cleanup(func() { loginEnsureTagsFn = old })
+	loginEnsureTagsFn = func(ctx context.Context, tags []string) error {
+		ensuredTags = tags
+		return nil
+	}
+
+	err := loginCredentialFlow(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(ensuredTags) != 1 || ensuredTags[0] != "tag:tsmain" {
+		t.Fatalf("expected EnsureTags([tag:tsmain]), got: %v", ensuredTags)
+	}
+}
+
+func TestLoginCredentialFlow_EnsureTagsFailureNonFatal(t *testing.T) {
+	dir := setupLoginTest(t)
+	mockStdin(t, "2", "tskey-client-test-secret-12345")
+	mockClientSecretSuccess(t)
+
+	old := loginEnsureTagsFn
+	t.Cleanup(func() { loginEnsureTagsFn = old })
+	loginEnsureTagsFn = func(ctx context.Context, tags []string) error {
+		return fmt.Errorf("ACL write denied")
+	}
+
+	// Should NOT return error — EnsureTags failure is non-fatal
+	err := loginCredentialFlow(dir)
+	if err != nil {
+		t.Fatalf("expected success (non-fatal), got: %v", err)
+	}
+}

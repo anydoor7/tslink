@@ -10,6 +10,7 @@ import (
 
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/credentials"
+	"github.com/monody0007/tslink/internal/tailapi"
 	"github.com/spf13/cobra"
 	"tailscale.com/tsnet"
 )
@@ -31,6 +32,7 @@ var (
 		return nil
 	}
 	loginSaveClientSecretFn = credentials.SaveClientSecret
+	loginEnsureTagsFn       = tailapi.EnsureTags
 	loginTsnetLoginFn       = func(cfgDir string) (string, error) {
 		tmpStateDir := filepath.Join(cfgDir, "tsnet-login-tmp")
 		defer os.RemoveAll(tmpStateDir)
@@ -162,6 +164,13 @@ func loginCredentialFlow(cfgDir string) error {
 		fmt.Println("→ API key saved (system keychain)")
 		fmt.Println("→ Auth keys will be derived automatically on 'tslink serve'")
 
+		// Auto-create default tag in tailnet ACL
+		if err := loginEnsureTagsFn(context.Background(), []string{config.GetDefaultTag()}); err != nil {
+			fmt.Fprintf(os.Stderr, "⚠ Could not create default tag in ACL: %v\n", err)
+		} else {
+			fmt.Printf("→ Ensured %s exists in tailnet ACL\n", config.GetDefaultTag())
+		}
+
 	case "2":
 		fmt.Print("\n  ─── OAuth Client Secret ───\n")
 		fmt.Print("  1. Open: https://login.tailscale.com/admin/settings/oauth\n")
@@ -196,6 +205,13 @@ func loginCredentialFlow(cfgDir string) error {
 
 		fmt.Println("→ Client secret saved (system keychain)")
 		fmt.Println("→ Never expires — no renewal needed")
+
+		// Auto-create default tag in tailnet ACL
+		if err := loginEnsureTagsFn(context.Background(), []string{config.GetDefaultTag()}); err != nil {
+			fmt.Fprintf(os.Stderr, "⚠ Could not create default tag in ACL: %v\n", err)
+		} else {
+			fmt.Printf("→ Ensured %s exists in tailnet ACL\n", config.GetDefaultTag())
+		}
 
 	default:
 		return fmt.Errorf("invalid choice: %q — enter 1 or 2", choiceStr)
