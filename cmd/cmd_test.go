@@ -1511,3 +1511,42 @@ func TestBuildService_InvalidDomain(t *testing.T) {
 	}
 }
 
+func TestAddCmd_DefaultTag(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	os.MkdirAll(filepath.Join(dir, ".config", "tslink"), 0o700)
+
+	err := runAddCmd(t, []string{"myapp"}, map[string]string{"proxy": "localhost:3000"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	regPath := filepath.Join(dir, ".config", "tslink", "registry.json")
+	reg, _ := registry.Load(regPath)
+	svc := reg.Services[0]
+	if len(svc.Tags) != 1 || svc.Tags[0] != "tag:tsmain" {
+		t.Fatalf("expected default tag [tag:tsmain], got: %v", svc.Tags)
+	}
+}
+
+func TestAddCmd_ExplicitTagOverridesDefault(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	os.MkdirAll(filepath.Join(dir, ".config", "tslink"), 0o700)
+
+	err := runAddCmd(t, []string{"myapp"}, map[string]string{
+		"proxy": "localhost:3000",
+		"tags":  "tag:custom",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	regPath := filepath.Join(dir, ".config", "tslink", "registry.json")
+	reg, _ := registry.Load(regPath)
+	svc := reg.Services[0]
+	if len(svc.Tags) != 1 || svc.Tags[0] != "tag:custom" {
+		t.Fatalf("expected [tag:custom], got: %v", svc.Tags)
+	}
+}
+

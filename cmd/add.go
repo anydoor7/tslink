@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/domain"
 	"github.com/monody0007/tslink/internal/registry"
 	"github.com/spf13/cobra"
@@ -86,6 +87,10 @@ func buildService(p AddParams) (registry.Service, error) {
 				tags = append(tags, t)
 			}
 		}
+	}
+	// If no tags specified, use default
+	if len(tags) == 0 {
+		tags = []string{config.GetDefaultTag()}
 	}
 
 	if p.TCP != "" {
