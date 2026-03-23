@@ -129,12 +129,12 @@ func save(path string, reg *Registry) error {
 	return os.Rename(tmpPath, path)
 }
 
-func Add(path string, svc Service) error {
+func Add(path string, svc Service) (created bool, err error) {
 	if err := ValidateName(svc.Name); err != nil {
-		return err
+		return false, err
 	}
 
-	return withLock(path, func() error {
+	err = withLock(path, func() error {
 		reg, err := Load(path)
 		if err != nil {
 			return err
@@ -147,6 +147,7 @@ func Add(path string, svc Service) error {
 
 			svc.CreatedAt = existing.CreatedAt
 			reg.Services[i] = svc
+			created = false
 			return save(path, reg)
 		}
 
@@ -155,8 +156,10 @@ func Add(path string, svc Service) error {
 		}
 
 		reg.Services = append(reg.Services, svc)
+		created = true
 		return save(path, reg)
 	})
+	return created, err
 }
 
 func Remove(path, name string) error {

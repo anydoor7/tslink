@@ -180,7 +180,8 @@ func (c *Cluster) handleServiceAdd(msg Message) error {
 		return fmt.Errorf("cluster: failed to unmarshal service_add: %w", err)
 	}
 
-	return registry.Add(c.regPath, payload.Service)
+	_, addErr := registry.Add(c.regPath, payload.Service)
+	return addErr
 }
 
 // handleServiceRemove removes a remote service from the local registry.
@@ -234,7 +235,7 @@ func (c *Cluster) handleFullSync(msg Message) error {
 
 	// Add/update all services from the sync.
 	for _, svc := range payload.Services {
-		if err := registry.Add(c.regPath, svc); err != nil {
+		if _, err := registry.Add(c.regPath, svc); err != nil {
 			return fmt.Errorf("cluster: failed to add service %q during full_sync: %w", svc.Name, err)
 		}
 	}

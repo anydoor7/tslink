@@ -163,7 +163,7 @@ func (d *Discovery) initialSync(ctx context.Context) error {
 			continue
 		}
 
-		if err := registry.Add(d.regPath, *svc); err != nil {
+		if _, err := registry.Add(d.regPath, *svc); err != nil {
 			slog.Warn("docker discovery: failed to register container",
 				"container_id", c.ID,
 				"service", svc.Name,
@@ -198,7 +198,7 @@ func (d *Discovery) syncContainer(ctx context.Context, containerID string) error
 		return nil
 	}
 
-	if err := registry.Add(d.regPath, *svc); err != nil {
+	if _, err := registry.Add(d.regPath, *svc); err != nil {
 		return fmt.Errorf("register service %s: %w", svc.Name, err)
 	}
 

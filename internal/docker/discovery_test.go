@@ -445,7 +445,7 @@ func TestDiscovery_EventDie(t *testing.T) {
 	defer cancel()
 
 	// Pre-register so we have something to remove
-	if err := registry.Add(regPath, registry.Service{
+	if _, err := registry.Add(regPath, registry.Service{
 		Name:   "dying",
 		Type:   registry.TypeProxy,
 		Target: "http://localhost:8000",
@@ -783,7 +783,7 @@ func TestDiscovery_Run_EventStop(t *testing.T) {
 	d := New(client, regPath)
 
 	// Pre-register so we have something to remove
-	if err := registry.Add(regPath, registry.Service{
+	if _, err := registry.Add(regPath, registry.Service{
 		Name:   "stopsvc",
 		Type:   registry.TypeProxy,
 		Target: "http://localhost:7000",
@@ -822,7 +822,7 @@ func TestDiscovery_Run_EventDestroy(t *testing.T) {
 	d := New(client, regPath)
 
 	// Pre-register
-	if err := registry.Add(regPath, registry.Service{
+	if _, err := registry.Add(regPath, registry.Service{
 		Name:   "destroysvc",
 		Type:   registry.TypeProxy,
 		Target: "http://localhost:9000",

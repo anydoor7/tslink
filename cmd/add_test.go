@@ -19,7 +19,7 @@ func TestAddFunnel_WithProxy_Persisted(t *testing.T) {
 		Target: "http://localhost:3000",
 		Funnel: true,
 	}
-	if err := registry.Add(regPath, svc); err != nil {
+	if _, err := registry.Add(regPath, svc); err != nil {
 		t.Fatalf("registry.Add: %v", err)
 	}
 
@@ -47,7 +47,7 @@ func TestAddFunnel_WithProxy_NotSet(t *testing.T) {
 		Type:   registry.TypeProxy,
 		Target: "http://localhost:3000",
 	}
-	if err := registry.Add(regPath, svc); err != nil {
+	if _, err := registry.Add(regPath, svc); err != nil {
 		t.Fatalf("registry.Add: %v", err)
 	}
 

@@ -117,7 +117,7 @@ func TestListServices_WithServices(t *testing.T) {
 	h, regPath, _ := newTestHandler(t)
 
 	svc := registry.Service{Name: "myapp", Type: registry.TypeProxy, Target: "http://localhost:3000"}
-	if err := registry.Add(regPath, svc); err != nil {
+	if _, err := registry.Add(regPath, svc); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 
@@ -525,7 +525,7 @@ func TestRemoveService(t *testing.T) {
 	h, regPath, _ := newTestHandler(t)
 
 	svc := registry.Service{Name: "gone", Type: registry.TypeProxy, Target: "http://localhost:9000"}
-	if err := registry.Add(regPath, svc); err != nil {
+	if _, err := registry.Add(regPath, svc); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 
@@ -608,7 +608,7 @@ func TestStatus_WithServices(t *testing.T) {
 	h, regPath, _ := newTestHandler(t)
 
 	for _, name := range []string{"svc1", "svc2"} {
-		_ = registry.Add(regPath, registry.Service{
+		_, _ = registry.Add(regPath, registry.Service{
 			Name: name, Type: registry.TypeProxy, Target: "http://localhost:3000",
 		})
 	}

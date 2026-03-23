@@ -96,7 +96,7 @@ func (h *apiHandler) handleAdd(req APIRequest, out io.Writer) {
 		if !hasScheme(target) {
 			target = "http://" + target
 		}
-		if err := registry.Add(h.regPath, registry.Service{
+		if _, err := registry.Add(h.regPath, registry.Service{
 			Name:   req.Name,
 			Type:   registry.TypeProxy,
 			Target: target,
@@ -130,7 +130,7 @@ func (h *apiHandler) handleAdd(req APIRequest, out io.Writer) {
 			writeResponse(out, APIResponse{OK: false, Error: fmt.Sprintf("not a directory: %s", absPath)})
 			return
 		}
-		if err := registry.Add(h.regPath, registry.Service{
+		if _, err := registry.Add(h.regPath, registry.Service{
 			Name: req.Name,
 			Type: registry.TypeFile,
 			Path: absPath,
@@ -161,7 +161,7 @@ func (h *apiHandler) handleAdd(req APIRequest, out io.Writer) {
 			return
 		}
 		joinedTarget := net.JoinHostPort(host, portStr)
-		if err := registry.Add(h.regPath, registry.Service{
+		if _, err := registry.Add(h.regPath, registry.Service{
 			Name:   req.Name,
 			Type:   registry.TypeTCP,
 			Target: joinedTarget,

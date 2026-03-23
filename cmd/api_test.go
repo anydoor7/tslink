@@ -55,7 +55,7 @@ func TestAPIList_WithServices(t *testing.T) {
 	h, _ := newTestHandler(t)
 
 	// Pre-populate registry.
-	if err := registry.Add(h.regPath, registry.Service{
+	if _, err := registry.Add(h.regPath, registry.Service{
 		Name:   "myapp",
 		Type:   registry.TypeProxy,
 		Target: "http://localhost:3000",
@@ -223,7 +223,7 @@ func TestAPIRemove(t *testing.T) {
 	h, _ := newTestHandler(t)
 
 	// Add then remove.
-	if err := registry.Add(h.regPath, registry.Service{
+	if _, err := registry.Add(h.regPath, registry.Service{
 		Name:   "myapp",
 		Type:   registry.TypeProxy,
 		Target: "http://localhost:3000",
@@ -275,8 +275,8 @@ func TestAPIStatus(t *testing.T) {
 
 func TestAPIStatus_WithServices(t *testing.T) {
 	h, _ := newTestHandler(t)
-	_ = registry.Add(h.regPath, registry.Service{Name: "svc1", Type: registry.TypeProxy, Target: "http://localhost:3000"})
-	_ = registry.Add(h.regPath, registry.Service{Name: "svc2", Type: registry.TypeProxy, Target: "http://localhost:4000"})
+	_, _ = registry.Add(h.regPath, registry.Service{Name: "svc1", Type: registry.TypeProxy, Target: "http://localhost:3000"})
+	_, _ = registry.Add(h.regPath, registry.Service{Name: "svc2", Type: registry.TypeProxy, Target: "http://localhost:4000"})
 
 	resp := sendRequest(t, h, APIRequest{Action: "status"})
 	if !resp.OK {

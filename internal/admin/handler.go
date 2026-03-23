@@ -154,7 +154,7 @@ func (h *Handler) handleAddService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := registry.Add(h.regPath, svc); err != nil {
+	if _, err := registry.Add(h.regPath, svc); err != nil {
 		writeJSON(w, http.StatusInternalServerError, APIResponse{Error: err.Error()})
 		return
 	}

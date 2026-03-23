@@ -76,7 +76,7 @@ func TestNewCluster(t *testing.T) {
 func TestCluster_SendHeartbeat(t *testing.T) {
 	rp := regPath(t)
 	// Add a service so the heartbeat includes it.
-	if err := registry.Add(rp, registry.Service{
+	if _, err := registry.Add(rp, registry.Service{
 		Name: "web",
 		Type: registry.TypeProxy,
 	}); err != nil {
@@ -199,7 +199,7 @@ func TestCluster_HandleServiceAdd(t *testing.T) {
 func TestCluster_HandleServiceRemove(t *testing.T) {
 	rp := regPath(t)
 	// Pre-populate the registry.
-	if err := registry.Add(rp, registry.Service{
+	if _, err := registry.Add(rp, registry.Service{
 		Name: "to-remove",
 		Type: registry.TypeProxy,
 	}); err != nil {
@@ -248,7 +248,7 @@ func TestCluster_HandleFullSync(t *testing.T) {
 	c.mu.Unlock()
 
 	// Add the old service to registry so it can be removed.
-	if err := registry.Add(rp, registry.Service{
+	if _, err := registry.Add(rp, registry.Service{
 		Name: "old-svc",
 		Type: registry.TypeProxy,
 	}); err != nil {
@@ -755,7 +755,7 @@ func TestCluster_ProcessMessage_ServiceRemove(t *testing.T) {
 	c := NewCluster("node-1", tr, rp)
 
 	// Add a service first.
-	_ = registry.Add(rp, registry.Service{Name: "to-del", Type: registry.TypeProxy})
+	_, _ = registry.Add(rp, registry.Service{Name: "to-del", Type: registry.TypeProxy})
 
 	payload, _ := json.Marshal(ServicePayload{
 		Service: registry.Service{Name: "to-del"},
@@ -1057,8 +1057,8 @@ func TestCluster_HandleFullSync_ServiceRemoval(t *testing.T) {
 	c.mu.Unlock()
 
 	// Add both services to registry (simulating prior sync).
-	_ = registry.Add(rp, registry.Service{Name: "svc-a", Type: registry.TypeProxy, Target: "localhost:3000"})
-	_ = registry.Add(rp, registry.Service{Name: "svc-b", Type: registry.TypeProxy, Target: "localhost:3001"})
+	_, _ = registry.Add(rp, registry.Service{Name: "svc-a", Type: registry.TypeProxy, Target: "localhost:3000"})
+	_, _ = registry.Add(rp, registry.Service{Name: "svc-b", Type: registry.TypeProxy, Target: "localhost:3001"})
 
 	// Now peer only has svc-a (svc-b was removed).
 	payload, _ := json.Marshal(FullSyncPayload{
@@ -1111,7 +1111,7 @@ func TestCluster_HandleFullSync_AddError(t *testing.T) {
 	// Use a path where the registry file exists but is a directory for the Add call.
 	// A simpler approach: use a read-only file that Load can read but Add can't write.
 	goodPath := filepath.Join(dir, "registry.json")
-	_ = registry.Add(goodPath, registry.Service{Name: "existing", Type: registry.TypeProxy})
+	_, _ = registry.Add(goodPath, registry.Service{Name: "existing", Type: registry.TypeProxy})
 	// Make the file read-only so Add fails.
 	_ = os.Chmod(goodPath, 0o444)
 	// Also make the directory read-only to prevent temp file creation.
