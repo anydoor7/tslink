@@ -74,7 +74,7 @@ func TestLoginCredentialFlow_APIToken_Success(t *testing.T) {
 	mockStdin(t, "1", "tskey-api-test-token-12345")
 	mockAPIKeySuccess(t)
 
-	err := loginCredentialFlow(dir)
+	err := loginCredentialFlow(loginCmd, dir)
 	if err != nil {
 		t.Fatalf("expected success, got: %v", err)
 	}
@@ -85,7 +85,7 @@ func TestLoginCredentialFlow_ClientSecret_Success(t *testing.T) {
 	mockStdin(t, "2", "tskey-client-test-secret-12345")
 	mockClientSecretSuccess(t)
 
-	err := loginCredentialFlow(dir)
+	err := loginCredentialFlow(loginCmd, dir)
 	if err != nil {
 		t.Fatalf("expected success, got: %v", err)
 	}
@@ -95,7 +95,7 @@ func TestLoginCredentialFlow_InvalidChoice(t *testing.T) {
 	dir := setupLoginTest(t)
 	mockStdin(t, "3")
 
-	err := loginCredentialFlow(dir)
+	err := loginCredentialFlow(loginCmd, dir)
 	if err == nil {
 		t.Fatal("expected error for invalid choice")
 	}
@@ -108,7 +108,7 @@ func TestLoginCredentialFlow_EmptyChoice(t *testing.T) {
 	dir := setupLoginTest(t)
 	mockStdin(t, "")
 
-	err := loginCredentialFlow(dir)
+	err := loginCredentialFlow(loginCmd, dir)
 	if err == nil {
 		t.Fatal("expected error for empty choice")
 	}
@@ -121,7 +121,7 @@ func TestLoginCredentialFlow_APIToken_EmptyKey(t *testing.T) {
 	dir := setupLoginTest(t)
 	mockStdin(t, "1", "")
 
-	err := loginCredentialFlow(dir)
+	err := loginCredentialFlow(loginCmd, dir)
 	if err == nil {
 		t.Fatal("expected error for empty token")
 	}
@@ -134,7 +134,7 @@ func TestLoginCredentialFlow_APIToken_WrongPrefix(t *testing.T) {
 	dir := setupLoginTest(t)
 	mockStdin(t, "1", "tskey-client-wrong-type")
 
-	err := loginCredentialFlow(dir)
+	err := loginCredentialFlow(loginCmd, dir)
 	if err == nil {
 		t.Fatal("expected error for wrong prefix")
 	}
@@ -147,7 +147,7 @@ func TestLoginCredentialFlow_APIToken_AuthKeyRejected(t *testing.T) {
 	dir := setupLoginTest(t)
 	mockStdin(t, "1", "tskey-auth-some-auth-key")
 
-	err := loginCredentialFlow(dir)
+	err := loginCredentialFlow(loginCmd, dir)
 	if err == nil {
 		t.Fatal("expected error for auth key")
 	}
@@ -160,7 +160,7 @@ func TestLoginCredentialFlow_ClientSecret_EmptyKey(t *testing.T) {
 	dir := setupLoginTest(t)
 	mockStdin(t, "2", "")
 
-	err := loginCredentialFlow(dir)
+	err := loginCredentialFlow(loginCmd, dir)
 	if err == nil {
 		t.Fatal("expected error for empty secret")
 	}
@@ -173,7 +173,7 @@ func TestLoginCredentialFlow_ClientSecret_WrongPrefix(t *testing.T) {
 	dir := setupLoginTest(t)
 	mockStdin(t, "2", "tskey-api-wrong-type")
 
-	err := loginCredentialFlow(dir)
+	err := loginCredentialFlow(loginCmd, dir)
 	if err == nil {
 		t.Fatal("expected error for wrong prefix")
 	}
@@ -187,7 +187,7 @@ func TestLoginCredentialFlow_ClientSecret_ClientIDRejected(t *testing.T) {
 	// User accidentally pastes the short Client ID instead of the secret
 	mockStdin(t, "2", "km9GkSnaBK11CNTRL")
 
-	err := loginCredentialFlow(dir)
+	err := loginCredentialFlow(loginCmd, dir)
 	if err == nil {
 		t.Fatal("expected error for client ID")
 	}
@@ -212,7 +212,7 @@ func TestLoginCredentialFlow_APIToken_VerifyFails(t *testing.T) {
 		return fmt.Errorf("API key verification failed: Status: 401")
 	}
 
-	err := loginCredentialFlow(dir)
+	err := loginCredentialFlow(loginCmd, dir)
 	if err == nil {
 		t.Fatal("expected verification error")
 	}
@@ -231,7 +231,7 @@ func TestLoginCredentialFlow_ClientSecret_SaveFails(t *testing.T) {
 		return fmt.Errorf("keychain locked")
 	}
 
-	err := loginCredentialFlow(dir)
+	err := loginCredentialFlow(loginCmd, dir)
 	if err == nil {
 		t.Fatal("expected save error")
 	}
@@ -270,7 +270,7 @@ func TestLoginCredentialFlow_CreatesDefaultTag(t *testing.T) {
 		return nil
 	}
 
-	err := loginCredentialFlow(dir)
+	err := loginCredentialFlow(loginCmd, dir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -291,7 +291,7 @@ func TestLoginCredentialFlow_EnsureTagsFailureNonFatal(t *testing.T) {
 	}
 
 	// Should NOT return error — EnsureTags failure is non-fatal
-	err := loginCredentialFlow(dir)
+	err := loginCredentialFlow(loginCmd, dir)
 	if err != nil {
 		t.Fatalf("expected success (non-fatal), got: %v", err)
 	}

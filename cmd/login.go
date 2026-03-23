@@ -10,10 +10,18 @@ import (
 
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/credentials"
+	"github.com/monody0007/tslink/internal/output"
 	"github.com/monody0007/tslink/internal/tailapi"
 	"github.com/spf13/cobra"
 	"tailscale.com/tsnet"
 )
+
+// LoginResult represents the JSON output of a successful login.
+type LoginResult struct {
+	Method     string `json:"method"`
+	LoginName  string `json:"login_name,omitempty"`
+	TagCreated string `json:"tag_created,omitempty"`
+}
 
 // Testable function variables for login credential flow
 var (
@@ -86,6 +94,12 @@ Credentials are stored in the system keychain (macOS Keychain, Linux secret
 service, Windows Credential Manager). On systems without keychain support,
 they fall back to files in ~/.config/tslink/ with restricted permissions (0600).
 
+Non-interactive mode:
+  tslink login --api-key "tskey-api-..."
+  tslink login --client-secret "tskey-client-..."
+  TSLINK_API_KEY="tskey-api-..." tslink login
+  TSLINK_CLIENT_SECRET="tskey-client-..." tslink login
+
 Examples:
   tslink login                  Interactive login with browser + credential prompt
 
@@ -96,6 +110,29 @@ Examples:
 			return err
 		}
 
+		// Non-interactive: flag > env var
+		apiKey, _ := cmd.Flags().GetString("api-key")
+		if apiKey == "" {
+			apiKey = os.Getenv("TSLINK_API_KEY")
+		}
+		clientSecret, _ := cmd.Flags().GetString("client-secret")
+		if clientSecret == "" {
+			clientSecret = os.Getenv("TSLINK_CLIENT_SECRET")
+		}
+
+		if apiKey != "" {
+			return loginWithAPIKey(cmd, apiKey)
+		}
+		if clientSecret != "" {
+			return loginWithClientSecret(cmd, clientSecret)
+		}
+
+		// JSON mode requires non-interactive credentials
+		if jsonOutput(cmd) {
+			return fmt.Errorf("--json requires --api-key or --client-secret (interactive login not available in JSON mode)")
+		}
+
+		// Interactive flow
 		cfgDir, err := config.Dir()
 		if err != nil {
 			return err
@@ -113,11 +150,93 @@ Examples:
 			fmt.Println("→ Logged in to Tailscale")
 		}
 
-		return loginCredentialFlow(cfgDir)
+		return loginCredentialFlow(cmd, cfgDir)
 	},
 }
 
-func loginCredentialFlow(cfgDir string) error {
+func loginWithAPIKey(cmd *cobra.Command, key string) error {
+	if !strings.HasPrefix(key, "tskey-api-") {
+		return fmt.Errorf("expected an API access token (tskey-api-...), got: %s...", key[:min(20, len(key))])
+	}
+
+	if err := loginSetAPIKeyFn(key); err != nil {
+		return fmt.Errorf("save API key: %w", err)
+	}
+
+	if err := loginVerifyAPIKeyFn(context.Background()); err != nil {
+		return err
+	}
+
+	// Remove legacy files
+	if authKeyPath, e := config.AuthKeyPath(); e == nil {
+		os.Remove(authKeyPath)
+	}
+	cfgDir, _ := config.Dir()
+	os.RemoveAll(filepath.Join(cfgDir, "tsnet-state"))
+
+	// Ensure default tag
+	tagCreated := ""
+	defaultTag := config.GetDefaultTag()
+	if err := loginEnsureTagsFn(context.Background(), []string{defaultTag}); err != nil {
+		if !jsonOutput(cmd) {
+			fmt.Fprintf(os.Stderr, "⚠ Could not create default tag in ACL: %v\n", err)
+		}
+	} else {
+		tagCreated = defaultTag
+	}
+
+	if jsonOutput(cmd) {
+		output.Success("login", LoginResult{Method: "api-key", TagCreated: tagCreated})
+	} else {
+		fmt.Println("→ API key saved (system keychain)")
+		fmt.Println("→ Auth keys will be derived automatically on 'tslink serve'")
+		if tagCreated != "" {
+			fmt.Printf("→ Ensured %s exists in tailnet ACL\n", tagCreated)
+		}
+	}
+	return nil
+}
+
+func loginWithClientSecret(cmd *cobra.Command, secret string) error {
+	if !strings.HasPrefix(secret, "tskey-client-") {
+		return fmt.Errorf("expected an OAuth client secret (tskey-client-...), got: %s...", secret[:min(20, len(secret))])
+	}
+
+	if err := loginSaveClientSecretFn(secret); err != nil {
+		return fmt.Errorf("save client secret: %w", err)
+	}
+
+	// Remove legacy files
+	if authKeyPath, e := config.AuthKeyPath(); e == nil {
+		os.Remove(authKeyPath)
+	}
+	cfgDir, _ := config.Dir()
+	os.RemoveAll(filepath.Join(cfgDir, "tsnet-state"))
+
+	// Ensure default tag
+	tagCreated := ""
+	defaultTag := config.GetDefaultTag()
+	if err := loginEnsureTagsFn(context.Background(), []string{defaultTag}); err != nil {
+		if !jsonOutput(cmd) {
+			fmt.Fprintf(os.Stderr, "⚠ Could not create default tag in ACL: %v\n", err)
+		}
+	} else {
+		tagCreated = defaultTag
+	}
+
+	if jsonOutput(cmd) {
+		output.Success("login", LoginResult{Method: "client-secret", TagCreated: tagCreated})
+	} else {
+		fmt.Println("→ Client secret saved (system keychain)")
+		fmt.Println("→ Never expires — no renewal needed")
+		if tagCreated != "" {
+			fmt.Printf("→ Ensured %s exists in tailnet ACL\n", tagCreated)
+		}
+	}
+	return nil
+}
+
+func loginCredentialFlow(cmd *cobra.Command, cfgDir string) error {
 	reader := loginStdinReaderFn()
 
 	fmt.Print("\n  Choose a credential type:\n\n")
@@ -141,35 +260,9 @@ func loginCredentialFlow(cfgDir string) error {
 		if inputKey == "" {
 			return fmt.Errorf("no token provided")
 		}
-		if !strings.HasPrefix(inputKey, "tskey-api-") {
-			return fmt.Errorf("expected an API access token (tskey-api-...), got: %s...", inputKey[:min(20, len(inputKey))])
-		}
 
 		fmt.Println("→ Verifying API key...")
-		if err := loginSetAPIKeyFn(inputKey); err != nil {
-			return fmt.Errorf("save API key: %w", err)
-		}
-
-		if err := loginVerifyAPIKeyFn(context.Background()); err != nil {
-			return err
-		}
-
-		// Remove legacy files
-		if authKeyPath, e := config.AuthKeyPath(); e == nil {
-			os.Remove(authKeyPath)
-		}
-		legacyDir := filepath.Join(cfgDir, "tsnet-state")
-		os.RemoveAll(legacyDir)
-
-		fmt.Println("→ API key saved (system keychain)")
-		fmt.Println("→ Auth keys will be derived automatically on 'tslink serve'")
-
-		// Auto-create default tag in tailnet ACL
-		if err := loginEnsureTagsFn(context.Background(), []string{config.GetDefaultTag()}); err != nil {
-			fmt.Fprintf(os.Stderr, "⚠ Could not create default tag in ACL: %v\n", err)
-		} else {
-			fmt.Printf("→ Ensured %s exists in tailnet ACL\n", config.GetDefaultTag())
-		}
+		return loginWithAPIKey(cmd, inputKey)
 
 	case "2":
 		fmt.Print("\n  ─── OAuth Client Secret ───\n")
@@ -187,38 +280,17 @@ func loginCredentialFlow(cfgDir string) error {
 		if inputKey == "" {
 			return fmt.Errorf("no secret provided")
 		}
-		if !strings.HasPrefix(inputKey, "tskey-client-") {
-			return fmt.Errorf("expected an OAuth client secret (tskey-client-...), got: %s...", inputKey[:min(20, len(inputKey))])
-		}
 
 		fmt.Println("→ Saving client secret...")
-		if err := loginSaveClientSecretFn(inputKey); err != nil {
-			return fmt.Errorf("save client secret: %w", err)
-		}
-
-		// Remove legacy files
-		if authKeyPath, e := config.AuthKeyPath(); e == nil {
-			os.Remove(authKeyPath)
-		}
-		legacyDir := filepath.Join(cfgDir, "tsnet-state")
-		os.RemoveAll(legacyDir)
-
-		fmt.Println("→ Client secret saved (system keychain)")
-		fmt.Println("→ Never expires — no renewal needed")
-
-		// Auto-create default tag in tailnet ACL
-		if err := loginEnsureTagsFn(context.Background(), []string{config.GetDefaultTag()}); err != nil {
-			fmt.Fprintf(os.Stderr, "⚠ Could not create default tag in ACL: %v\n", err)
-		} else {
-			fmt.Printf("→ Ensured %s exists in tailnet ACL\n", config.GetDefaultTag())
-		}
+		return loginWithClientSecret(cmd, inputKey)
 
 	default:
 		return fmt.Errorf("invalid choice: %q — enter 1 or 2", choiceStr)
 	}
-	return nil
 }
 
 func init() {
 	rootCmd.AddCommand(loginCmd)
+	loginCmd.Flags().String("api-key", "", "API access token (tskey-api-*) for non-interactive login")
+	loginCmd.Flags().String("client-secret", "", "OAuth client secret (tskey-client-*) for non-interactive login")
 }
