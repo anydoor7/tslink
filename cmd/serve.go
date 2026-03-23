@@ -10,11 +10,18 @@ import (
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/credentials"
 	"github.com/monody0007/tslink/internal/daemon"
+	"github.com/monody0007/tslink/internal/output"
 	"github.com/monody0007/tslink/internal/registry"
 	"github.com/monody0007/tslink/internal/server"
 	"github.com/monody0007/tslink/internal/tailapi"
 	"github.com/spf13/cobra"
 )
+
+// ServeResult is the JSON payload for the serve command.
+type ServeResult struct {
+	Daemon bool `json:"daemon"`
+	PID    int  `json:"pid"`
+}
 
 var serveDaemon bool
 
@@ -100,7 +107,7 @@ Examples:
 				Ephemeral: hasEphemeral,
 			})
 			if err != nil {
-				return err
+				return output.ErrAuth(err.Error())
 			}
 
 			pidPath, err := servePIDPathFn()
@@ -109,7 +116,7 @@ Examples:
 			}
 
 			if serveIsRunningFn(pidPath) {
-				return fmt.Errorf("tslink is already running (see: tslink status)")
+				return output.ErrConflict("tslink is already running (see: tslink status)")
 			}
 
 			// Clean up stale tailnet nodes before starting
@@ -141,7 +148,11 @@ Examples:
 					return err
 				}
 
-				fmt.Fprintf(cmd.OutOrStdout(), "tslink started as daemon (pid %d)\n", pid)
+				if jsonOutput(cmd) {
+					output.Success("serve", ServeResult{Daemon: true, PID: pid})
+				} else {
+					fmt.Fprintf(cmd.OutOrStdout(), "tslink started as daemon (pid %d)\n", pid)
+				}
 				return nil
 			}
 

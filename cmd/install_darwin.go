@@ -10,8 +10,15 @@ import (
 	"text/template"
 
 	"github.com/monody0007/tslink/internal/config"
+	"github.com/monody0007/tslink/internal/output"
 	"github.com/spf13/cobra"
 )
+
+// InstallResult is the JSON payload for the install command.
+type InstallResult struct {
+	PlistPath string `json:"plist_path"`
+	Loaded    bool   `json:"loaded"`
+}
 
 var userHomeDirFn = os.UserHomeDir
 
@@ -106,8 +113,15 @@ Examples:
 			return fmt.Errorf("write plist: %w", err)
 		}
 
-		if err := exec.Command("launchctl", "load", plistPath).Run(); err != nil {
-			fmt.Printf("→ ⚠ LaunchAgent installed but could not auto-load: %v\n", err)
+		loadErr := exec.Command("launchctl", "load", plistPath).Run()
+
+		if jsonOutput(cmd) {
+			output.Success("install", InstallResult{PlistPath: plistPath, Loaded: loadErr == nil})
+			return nil
+		}
+
+		if loadErr != nil {
+			fmt.Printf("→ ⚠ LaunchAgent installed but could not auto-load: %v\n", loadErr)
 			fmt.Println("  Run 'launchctl load " + plistPath + "' manually")
 		} else {
 			fmt.Printf("→ ✓ LaunchAgent installed and loaded: %s\n", plistPath)

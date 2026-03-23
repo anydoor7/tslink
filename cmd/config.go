@@ -7,14 +7,41 @@ import (
 	"strings"
 
 	"github.com/monody0007/tslink/internal/config"
+	"github.com/monody0007/tslink/internal/output"
 	"github.com/spf13/cobra"
 )
+
+// ConfigSetResult is the JSON payload for config set.
+type ConfigSetResult struct {
+	Key     string `json:"key"`
+	Value   string `json:"value"`
+	Cleared bool   `json:"cleared"`
+}
+
+// ConfigGetResult is the JSON payload for config get.
+type ConfigGetResult struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+	IsSet bool   `json:"is_set"`
+}
+
+// ConfigListResult is the JSON payload for config list.
+type ConfigListResult struct {
+	Items []ConfigItem `json:"items"`
+}
+
+// ConfigItem represents a single config key-value pair.
+type ConfigItem struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+	IsSet bool   `json:"is_set"`
+}
 
 // validConfigKeys lists all supported global config keys.
 var validConfigKeys = []string{"control-url"}
 
 // configSet persists a key-value pair to global config.
-func configSet(key, value string, out io.Writer) error {
+func configSet(key, value string, out io.Writer, isJSON bool) error {
 	cfg, err := config.LoadGlobalConfig()
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
@@ -36,6 +63,11 @@ func configSet(key, value string, out io.Writer) error {
 		return fmt.Errorf("save config: %w", err)
 	}
 
+	if isJSON {
+		output.Success("config set", ConfigSetResult{Key: key, Value: value, Cleared: value == ""})
+		return nil
+	}
+
 	if value == "" {
 		fmt.Fprintf(out, "→ %s cleared\n", key)
 	} else {
@@ -45,7 +77,7 @@ func configSet(key, value string, out io.Writer) error {
 }
 
 // configGet reads a key from global config and writes it to out.
-func configGet(key string, out io.Writer) error {
+func configGet(key string, out io.Writer, isJSON bool) error {
 	cfg, err := config.LoadGlobalConfig()
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
@@ -53,6 +85,10 @@ func configGet(key string, out io.Writer) error {
 
 	switch key {
 	case "control-url":
+		if isJSON {
+			output.Success("config get", ConfigGetResult{Key: key, Value: cfg.ControlURL, IsSet: cfg.ControlURL != ""})
+			return nil
+		}
 		value := cfg.ControlURL
 		if value == "" {
 			value = "(not set, using default Tailscale)"
@@ -65,10 +101,18 @@ func configGet(key string, out io.Writer) error {
 }
 
 // configList writes all config key-value pairs to out.
-func configList(out io.Writer) error {
+func configList(out io.Writer, isJSON bool) error {
 	cfg, err := config.LoadGlobalConfig()
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
+	}
+
+	if isJSON {
+		items := []ConfigItem{
+			{Key: "control-url", Value: cfg.ControlURL, IsSet: cfg.ControlURL != ""},
+		}
+		output.Success("config list", ConfigListResult{Items: items})
+		return nil
 	}
 
 	controlURL := cfg.ControlURL
@@ -119,7 +163,7 @@ Examples:
 			if len(args) == 2 {
 				value = args[1]
 			}
-			return configSet(args[0], value, cmd.OutOrStdout())
+			return configSet(args[0], value, cmd.OutOrStdout(), jsonOutput(cmd))
 		},
 	}
 
@@ -135,7 +179,7 @@ Examples:
   tslink config get control-url`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return configGet(args[0], cmd.OutOrStdout())
+			return configGet(args[0], cmd.OutOrStdout(), jsonOutput(cmd))
 		},
 	}
 
@@ -154,7 +198,7 @@ Examples:
   tslink config ls`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return configList(cmd.OutOrStdout())
+			return configList(cmd.OutOrStdout(), jsonOutput(cmd))
 		},
 	}
 

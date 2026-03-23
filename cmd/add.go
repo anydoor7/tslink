@@ -10,9 +10,18 @@ import (
 
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/domain"
+	"github.com/monody0007/tslink/internal/output"
 	"github.com/monody0007/tslink/internal/registry"
 	"github.com/spf13/cobra"
 )
+
+// AddResult is the JSON data for the add command.
+type AddResult struct {
+	Name    string `json:"name"`
+	Type    string `json:"type"`
+	Created bool   `json:"created"`
+	URL     string `json:"url"`
+}
 
 func hasScheme(target string) bool {
 	return strings.HasPrefix(target, "http://") || strings.HasPrefix(target, "https://")
@@ -194,8 +203,21 @@ Examples:
 				return err
 			}
 
-			if err := registry.Add(regPath, svc); err != nil {
+			created, err := registry.Add(regPath, svc)
+			if err != nil {
 				return err
+			}
+
+			url := fmt.Sprintf("https://%s.<tailnet>.ts.net", svc.Name)
+
+			if jsonOutput(cmd) {
+				output.Success("add", AddResult{
+					Name:    svc.Name,
+					Type:    svc.Type,
+					Created: created,
+					URL:     url,
+				})
+				return nil
 			}
 
 			if svc.Type == registry.TypeTCP {
@@ -203,9 +225,9 @@ Examples:
 			} else {
 				fmt.Fprintf(cmd.OutOrStdout(), "→ ✓ Service %q registered\n", svc.Name)
 				if svc.Funnel {
-					fmt.Fprintf(cmd.OutOrStdout(), "URL: https://%s.<tailnet>.ts.net (public via Funnel, available after tslink serve)\n", svc.Name)
+					fmt.Fprintf(cmd.OutOrStdout(), "URL: %s (public via Funnel, available after tslink serve)\n", url)
 				} else {
-					fmt.Fprintf(cmd.OutOrStdout(), "URL: https://%s.<tailnet>.ts.net (available after tslink serve)\n", svc.Name)
+					fmt.Fprintf(cmd.OutOrStdout(), "URL: %s (available after tslink serve)\n", url)
 				}
 			}
 			return nil

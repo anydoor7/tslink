@@ -415,7 +415,7 @@ func TestListCmd_WithServices(t *testing.T) {
 
 	os.MkdirAll(filepath.Join(dir, ".config", "tslink"), 0o700)
 	regPath := filepath.Join(dir, ".config", "tslink", "registry.json")
-	registry.Add(regPath, registry.Service{
+	_, _ = registry.Add(regPath, registry.Service{
 		Name:   "svc1",
 		Type:   registry.TypeProxy,
 		Target: "http://localhost:3000",
@@ -444,7 +444,7 @@ func TestListCmd_FileService(t *testing.T) {
 
 	os.MkdirAll(filepath.Join(dir, ".config", "tslink"), 0o700)
 	regPath := filepath.Join(dir, ".config", "tslink", "registry.json")
-	registry.Add(regPath, registry.Service{
+	_, _ = registry.Add(regPath, registry.Service{
 		Name: "docs",
 		Type: registry.TypeFile,
 		Path: "/tmp/docs",
@@ -636,8 +636,8 @@ func TestListServices_Empty(t *testing.T) {
 func TestListServices_WithServices(t *testing.T) {
 	dir := t.TempDir()
 	regPath := filepath.Join(dir, "registry.json")
-	registry.Add(regPath, registry.Service{Name: "web", Type: registry.TypeProxy, Target: "http://localhost:3000"})
-	registry.Add(regPath, registry.Service{Name: "docs", Type: registry.TypeFile, Path: "/tmp/docs"})
+	_, _ = registry.Add(regPath, registry.Service{Name: "web", Type: registry.TypeProxy, Target: "http://localhost:3000"})
+	_, _ = registry.Add(regPath, registry.Service{Name: "docs", Type: registry.TypeFile, Path: "/tmp/docs"})
 
 	var buf bytes.Buffer
 	if err := listServices(regPath, &buf); err != nil {
@@ -681,7 +681,7 @@ func TestGetStatus_WithServices(t *testing.T) {
 	dir := t.TempDir()
 	pidPath := filepath.Join(dir, "tslink.pid")
 	regPath := filepath.Join(dir, "registry.json")
-	registry.Add(regPath, registry.Service{Name: "a", Type: registry.TypeProxy, Target: "http://localhost:3000"})
+	_, _ = registry.Add(regPath, registry.Service{Name: "a", Type: registry.TypeProxy, Target: "http://localhost:3000"})
 	r := getStatus(pidPath, regPath)
 	if r.ServiceCount != 1 {
 		t.Errorf("expected 1 service, got %d", r.ServiceCount)
@@ -724,7 +724,7 @@ func TestStopService_NotRunning(t *testing.T) {
 	dir := t.TempDir()
 	pidPath := filepath.Join(dir, "tslink.pid")
 	var buf bytes.Buffer
-	if err := stopService(pidPath, &buf); err != nil {
+	if err := stopService(pidPath, false, &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !strings.Contains(buf.String(), "not running") {
@@ -737,7 +737,7 @@ func TestStopService_StalePIDFile(t *testing.T) {
 	pidPath := filepath.Join(dir, "tslink.pid")
 	os.WriteFile(pidPath, []byte("99999999"), 0o600)
 	var buf bytes.Buffer
-	if err := stopService(pidPath, &buf); err != nil {
+	if err := stopService(pidPath, false, &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !strings.Contains(buf.String(), "not running") {
@@ -753,14 +753,14 @@ func TestStopService_StalePIDFile(t *testing.T) {
 func TestRemoveService_Success(t *testing.T) {
 	dir := t.TempDir()
 	regPath := filepath.Join(dir, "registry.json")
-	registry.Add(regPath, registry.Service{Name: "web", Type: registry.TypeProxy, Target: "http://localhost:3000"})
+	_, _ = registry.Add(regPath, registry.Service{Name: "web", Type: registry.TypeProxy, Target: "http://localhost:3000"})
 
 	old := deleteDevicesFn
 	deleteDevicesFn = func(ctx context.Context, hostname string) error { return nil }
 	defer func() { deleteDevicesFn = old }()
 
 	var out, errOut bytes.Buffer
-	if err := removeService(regPath, "web", &out, &errOut); err != nil {
+	if err := removeService(regPath, "web", &out, &errOut, false); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !strings.Contains(out.String(), "removed") {
@@ -772,7 +772,7 @@ func TestRemoveService_NotFound(t *testing.T) {
 	dir := t.TempDir()
 	regPath := filepath.Join(dir, "registry.json")
 	var out, errOut bytes.Buffer
-	if err := removeService(regPath, "nonexistent", &out, &errOut); err == nil {
+	if err := removeService(regPath, "nonexistent", &out, &errOut, false); err == nil {
 		t.Fatal("expected error for nonexistent service")
 	}
 }
@@ -780,7 +780,7 @@ func TestRemoveService_NotFound(t *testing.T) {
 func TestRemoveService_TailapiWarning(t *testing.T) {
 	dir := t.TempDir()
 	regPath := filepath.Join(dir, "registry.json")
-	registry.Add(regPath, registry.Service{Name: "web", Type: registry.TypeProxy, Target: "http://localhost:3000"})
+	_, _ = registry.Add(regPath, registry.Service{Name: "web", Type: registry.TypeProxy, Target: "http://localhost:3000"})
 
 	old := deleteDevicesFn
 	deleteDevicesFn = func(ctx context.Context, hostname string) error {
@@ -789,7 +789,7 @@ func TestRemoveService_TailapiWarning(t *testing.T) {
 	defer func() { deleteDevicesFn = old }()
 
 	var out, errOut bytes.Buffer
-	if err := removeService(regPath, "web", &out, &errOut); err != nil {
+	if err := removeService(regPath, "web", &out, &errOut, false); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !strings.Contains(errOut.String(), "warning") {
@@ -813,6 +813,7 @@ func TestLogoutUser_NotLoggedIn(t *testing.T) {
 		filepath.Join(dir, "authkey"),
 		filepath.Join(dir, "nodes"),
 		dir,
+		false,
 		&buf,
 	)
 	if err != nil {
@@ -829,7 +830,7 @@ func TestLogoutUser_DaemonRunning(t *testing.T) {
 	os.WriteFile(pidPath, []byte(fmt.Sprintf("%d", os.Getpid())), 0o600)
 
 	var buf bytes.Buffer
-	err := logoutUser(pidPath, filepath.Join(dir, "authkey"), filepath.Join(dir, "nodes"), dir, &buf)
+	err := logoutUser(pidPath, filepath.Join(dir, "authkey"), filepath.Join(dir, "nodes"), dir, false, &buf)
 	if err == nil {
 		t.Fatal("expected error when daemon is running")
 	}
@@ -858,7 +859,7 @@ func TestLogoutUser_CleansUp(t *testing.T) {
 	defer func() { getAPIKeyFn = oldGet; deleteAPIKeyFn = oldDel; hasClientSecretFn = oldCS; deleteClientSecretFn = oldDelCS }()
 
 	var buf bytes.Buffer
-	err := logoutUser(filepath.Join(dir, "pid"), authKeyPath, nodesDir, dir, &buf)
+	err := logoutUser(filepath.Join(dir, "pid"), authKeyPath, nodesDir, dir, false, &buf)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -894,7 +895,7 @@ func TestLogoutUser_WithClientSecret(t *testing.T) {
 	defer func() { getAPIKeyFn = oldGet; deleteAPIKeyFn = oldDel; hasClientSecretFn = oldCS; deleteClientSecretFn = oldDelCS }()
 
 	var buf bytes.Buffer
-	err := logoutUser(filepath.Join(dir, "pid"), filepath.Join(dir, "authkey"), filepath.Join(dir, "nodes"), dir, &buf)
+	err := logoutUser(filepath.Join(dir, "pid"), filepath.Join(dir, "authkey"), filepath.Join(dir, "nodes"), dir, false, &buf)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1116,7 +1117,7 @@ func TestStopService_Success(t *testing.T) {
 	removePIDFn = func(string) {}
 
 	var buf bytes.Buffer
-	if err := stopService("/fake/pid", &buf); err != nil {
+	if err := stopService("/fake/pid", false, &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !strings.Contains(buf.String(), "tslink stopped") {
@@ -1133,7 +1134,7 @@ func TestStopService_Error(t *testing.T) {
 	removePIDFn = func(string) {}
 
 	var buf bytes.Buffer
-	err := stopService("/fake/pid", &buf)
+	err := stopService("/fake/pid", false, &buf)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -1156,7 +1157,7 @@ func TestGetStatus_Running_Authenticated(t *testing.T) {
 
 	dir := t.TempDir()
 	regPath := filepath.Join(dir, "registry.json")
-	registry.Add(regPath, registry.Service{Name: "a", Type: registry.TypeProxy, Target: "http://localhost:3000"})
+	_, _ = registry.Add(regPath, registry.Service{Name: "a", Type: registry.TypeProxy, Target: "http://localhost:3000"})
 
 	r := getStatus(filepath.Join(dir, "pid"), regPath)
 	if !r.DaemonRunning {
@@ -1197,7 +1198,7 @@ func TestConfigSet_ValidURL(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
 	var buf bytes.Buffer
-	err := configSet("control-url", "https://headscale.example.com", &buf)
+	err := configSet("control-url", "https://headscale.example.com", &buf, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1211,13 +1212,13 @@ func TestConfigSet_ClearValue(t *testing.T) {
 
 	var buf bytes.Buffer
 	// Set a value first
-	if err := configSet("control-url", "https://headscale.example.com", &buf); err != nil {
+	if err := configSet("control-url", "https://headscale.example.com", &buf, false); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 
 	buf.Reset()
 	// Clear it
-	if err := configSet("control-url", "", &buf); err != nil {
+	if err := configSet("control-url", "", &buf, false); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !strings.Contains(buf.String(), "control-url cleared") {
@@ -1229,7 +1230,7 @@ func TestConfigSet_InvalidURL(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
 	var buf bytes.Buffer
-	err := configSet("control-url", "not-a-url", &buf)
+	err := configSet("control-url", "not-a-url", &buf, false)
 	if err == nil {
 		t.Fatal("expected error for invalid URL")
 	}
@@ -1242,7 +1243,7 @@ func TestConfigSet_UnknownKey(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
 	var buf bytes.Buffer
-	err := configSet("nonexistent", "value", &buf)
+	err := configSet("nonexistent", "value", &buf, false)
 	if err == nil {
 		t.Fatal("expected error for unknown key")
 	}
@@ -1255,12 +1256,12 @@ func TestConfigGet_WithValue(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
 	var buf bytes.Buffer
-	if err := configSet("control-url", "https://headscale.example.com", &buf); err != nil {
+	if err := configSet("control-url", "https://headscale.example.com", &buf, false); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 
 	buf.Reset()
-	if err := configGet("control-url", &buf); err != nil {
+	if err := configGet("control-url", &buf, false); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !strings.Contains(buf.String(), "https://headscale.example.com") {
@@ -1272,7 +1273,7 @@ func TestConfigGet_NotSet(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
 	var buf bytes.Buffer
-	if err := configGet("control-url", &buf); err != nil {
+	if err := configGet("control-url", &buf, false); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !strings.Contains(buf.String(), "not set") {
@@ -1284,7 +1285,7 @@ func TestConfigGet_UnknownKey(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
 	var buf bytes.Buffer
-	err := configGet("nonexistent", &buf)
+	err := configGet("nonexistent", &buf, false)
 	if err == nil {
 		t.Fatal("expected error for unknown key")
 	}
@@ -1297,12 +1298,12 @@ func TestConfigList_WithValue(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
 	var buf bytes.Buffer
-	if err := configSet("control-url", "https://headscale.example.com", &buf); err != nil {
+	if err := configSet("control-url", "https://headscale.example.com", &buf, false); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 
 	buf.Reset()
-	if err := configList(&buf); err != nil {
+	if err := configList(&buf, false); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !strings.Contains(buf.String(), "control-url = https://headscale.example.com") {
@@ -1314,7 +1315,7 @@ func TestConfigList_Empty(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
 	var buf bytes.Buffer
-	if err := configList(&buf); err != nil {
+	if err := configList(&buf, false); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !strings.Contains(buf.String(), "(not set)") {
@@ -1393,7 +1394,7 @@ func TestConfigSet_LoadError(t *testing.T) {
 	t.Setenv("HOME", fakePath)
 
 	var buf bytes.Buffer
-	err := configSet("control-url", "https://example.com", &buf)
+	err := configSet("control-url", "https://example.com", &buf, false)
 	if err == nil {
 		t.Fatal("expected error when HOME is invalid")
 	}
@@ -1414,7 +1415,7 @@ func TestConfigSet_SaveError(t *testing.T) {
 	defer os.Chmod(cfgDir, 0o700)
 
 	var buf bytes.Buffer
-	err := configSet("control-url", "https://example.com", &buf)
+	err := configSet("control-url", "https://example.com", &buf, false)
 	if err == nil {
 		// On some systems (root, or macOS w/ SIP) chmod may not prevent writes.
 		// Skip the test rather than fail.
@@ -1432,7 +1433,7 @@ func TestConfigGet_LoadError(t *testing.T) {
 	t.Setenv("HOME", fakePath)
 
 	var buf bytes.Buffer
-	err := configGet("control-url", &buf)
+	err := configGet("control-url", &buf, false)
 	if err == nil {
 		t.Fatal("expected error when HOME is invalid")
 	}
@@ -1448,7 +1449,7 @@ func TestConfigList_LoadError(t *testing.T) {
 	t.Setenv("HOME", fakePath)
 
 	var buf bytes.Buffer
-	err := configList(&buf)
+	err := configList(&buf, false)
 	if err == nil {
 		t.Fatal("expected error when HOME is invalid")
 	}
@@ -1466,7 +1467,7 @@ func TestRemoveCmd_Success(t *testing.T) {
 	cfgDir := filepath.Join(dir, ".config", "tslink")
 	os.MkdirAll(cfgDir, 0o700)
 	regPath := filepath.Join(cfgDir, "registry.json")
-	registry.Add(regPath, registry.Service{Name: "web", Type: registry.TypeProxy, Target: "http://localhost:3000"})
+	_, _ = registry.Add(regPath, registry.Service{Name: "web", Type: registry.TypeProxy, Target: "http://localhost:3000"})
 
 	old := deleteDevicesFn
 	deleteDevicesFn = func(ctx context.Context, hostname string) error { return nil }

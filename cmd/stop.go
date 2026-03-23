@@ -6,6 +6,7 @@ import (
 
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/daemon"
+	"github.com/monody0007/tslink/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -14,9 +15,19 @@ var stopDaemonFn = daemon.StopDaemon
 var removePIDFn = daemon.RemovePID
 var pidPathFn = config.PIDPath
 
-func stopService(pidPath string, out io.Writer) error {
+// StopResult holds the result for JSON output.
+type StopResult struct {
+	WasRunning bool `json:"was_running"`
+	Stopped    bool `json:"stopped"`
+}
+
+func stopService(pidPath string, isJSON bool, out io.Writer) error {
 	if !isRunningFn(pidPath) {
 		removePIDFn(pidPath)
+		if isJSON {
+			output.Success("stop", StopResult{WasRunning: false, Stopped: false})
+			return nil
+		}
 		fmt.Fprintln(out, "tslink is not running")
 		return nil
 	}
@@ -25,6 +36,10 @@ func stopService(pidPath string, out io.Writer) error {
 		return err
 	}
 
+	if isJSON {
+		output.Success("stop", StopResult{WasRunning: true, Stopped: true})
+		return nil
+	}
 	fmt.Fprintln(out, "tslink stopped")
 	return nil
 }
@@ -51,7 +66,7 @@ Examples:
 			if err != nil {
 				return err
 			}
-			return stopService(pidPath, cmd.OutOrStdout())
+			return stopService(pidPath, jsonOutput(cmd), cmd.OutOrStdout())
 		},
 	}
 

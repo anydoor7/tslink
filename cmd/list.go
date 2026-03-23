@@ -6,11 +6,18 @@ import (
 	"text/tabwriter"
 
 	"github.com/monody0007/tslink/internal/config"
+	"github.com/monody0007/tslink/internal/output"
 	"github.com/monody0007/tslink/internal/registry"
 	"github.com/spf13/cobra"
 )
 
 var registryPathFn = config.RegistryPath
+
+// ListResult holds the result for JSON output.
+type ListResult struct {
+	Services []registry.Service `json:"services"`
+	Count    int                `json:"count"`
+}
 
 func listServices(regPath string, out io.Writer) error {
 	reg, err := registry.Load(regPath)
@@ -66,6 +73,18 @@ Examples:
 			regPath, err := registryPathFn()
 			if err != nil {
 				return err
+			}
+			if jsonOutput(cmd) {
+				reg, err := registry.Load(regPath)
+				if err != nil {
+					return err
+				}
+				result := ListResult{
+					Services: reg.Services,
+					Count:    len(reg.Services),
+				}
+				output.Success("list", result)
+				return nil
 			}
 			return listServices(regPath, cmd.OutOrStdout())
 		},

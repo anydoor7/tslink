@@ -59,7 +59,7 @@ func TestTagsList_Empty(t *testing.T) {
 	mockRegistryWithServices(nil)
 
 	var buf bytes.Buffer
-	err := tagsListRun(&buf)
+	err := tagsListRun(&buf, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -78,7 +78,7 @@ func TestTagsList_WithServices(t *testing.T) {
 	})
 
 	var buf bytes.Buffer
-	err := tagsListRun(&buf)
+	err := tagsListRun(&buf, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestTagsList_RegistryPathError(t *testing.T) {
 	setTagsMocks(t)
 	tagsRegistryPathFn = func() (string, error) { return "", fmt.Errorf("path error") }
 
-	err := tagsListRun(&bytes.Buffer{})
+	err := tagsListRun(&bytes.Buffer{}, false)
 	if err == nil || !strings.Contains(err.Error(), "path error") {
 		t.Errorf("expected path error, got: %v", err)
 	}
@@ -114,7 +114,7 @@ func TestTagsList_LoadRegistryError(t *testing.T) {
 		return nil, fmt.Errorf("load error")
 	}
 
-	err := tagsListRun(&bytes.Buffer{})
+	err := tagsListRun(&bytes.Buffer{}, false)
 	if err == nil || !strings.Contains(err.Error(), "load error") {
 		t.Errorf("expected load error, got: %v", err)
 	}
@@ -130,7 +130,7 @@ func TestTagsPull_WithTags(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	err := tagsPullRun(context.Background(), &buf)
+	err := tagsPullRun(context.Background(), &buf, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -161,7 +161,7 @@ func TestTagsPull_Empty(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	err := tagsPullRun(context.Background(), &buf)
+	err := tagsPullRun(context.Background(), &buf, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -176,7 +176,7 @@ func TestTagsPull_Error(t *testing.T) {
 		return nil, fmt.Errorf("api error")
 	}
 
-	err := tagsPullRun(context.Background(), &bytes.Buffer{})
+	err := tagsPullRun(context.Background(), &bytes.Buffer{}, false)
 	if err == nil || !strings.Contains(err.Error(), "api error") {
 		t.Errorf("expected api error, got: %v", err)
 	}
@@ -191,13 +191,13 @@ func TestTagsAdd_Success(t *testing.T) {
 		{Name: "myapp", Tags: []string{"tag:tsmain"}},
 	})
 	var savedSvc registry.Service
-	tagsAddRegistryFn = func(path string, svc registry.Service) error {
+	tagsAddRegistryFn = func(path string, svc registry.Service) (bool, error) {
 		savedSvc = svc
-		return nil
+		return true, nil
 	}
 
 	var buf bytes.Buffer
-	err := tagsAddRun(&buf, "myapp", "tag:shared")
+	err := tagsAddRun(&buf, "myapp", "tag:shared", false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -217,7 +217,7 @@ func TestTagsAdd_Duplicate(t *testing.T) {
 	})
 
 	var buf bytes.Buffer
-	err := tagsAddRun(&buf, "myapp", "tag:shared")
+	err := tagsAddRun(&buf, "myapp", "tag:shared", false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -231,7 +231,7 @@ func TestTagsAdd_ServiceNotFound(t *testing.T) {
 	mockDefaults()
 	mockRegistryWithServices(nil)
 
-	err := tagsAddRun(&bytes.Buffer{}, "nosvc", "tag:test")
+	err := tagsAddRun(&bytes.Buffer{}, "nosvc", "tag:test", false)
 	if err == nil || !strings.Contains(err.Error(), "service not found: nosvc") {
 		t.Errorf("expected service not found, got: %v", err)
 	}
@@ -240,7 +240,7 @@ func TestTagsAdd_ServiceNotFound(t *testing.T) {
 func TestTagsAdd_InvalidPrefix(t *testing.T) {
 	setTagsMocks(t)
 
-	err := tagsAddRun(&bytes.Buffer{}, "myapp", "notag")
+	err := tagsAddRun(&bytes.Buffer{}, "myapp", "notag", false)
 	if err == nil || !strings.Contains(err.Error(), "tag must start with") {
 		t.Errorf("expected prefix error, got: %v", err)
 	}
@@ -250,7 +250,7 @@ func TestTagsAdd_EnsureDirError(t *testing.T) {
 	setTagsMocks(t)
 	tagsEnsureDirFn = func() error { return fmt.Errorf("dir error") }
 
-	err := tagsAddRun(&bytes.Buffer{}, "myapp", "tag:test")
+	err := tagsAddRun(&bytes.Buffer{}, "myapp", "tag:test", false)
 	if err == nil || !strings.Contains(err.Error(), "dir error") {
 		t.Errorf("expected dir error, got: %v", err)
 	}
@@ -261,7 +261,7 @@ func TestTagsAdd_RegistryPathError(t *testing.T) {
 	tagsEnsureDirFn = func() error { return nil }
 	tagsRegistryPathFn = func() (string, error) { return "", fmt.Errorf("path error") }
 
-	err := tagsAddRun(&bytes.Buffer{}, "myapp", "tag:test")
+	err := tagsAddRun(&bytes.Buffer{}, "myapp", "tag:test", false)
 	if err == nil || !strings.Contains(err.Error(), "path error") {
 		t.Errorf("expected path error, got: %v", err)
 	}
@@ -274,7 +274,7 @@ func TestTagsAdd_LoadRegistryError(t *testing.T) {
 		return nil, fmt.Errorf("load error")
 	}
 
-	err := tagsAddRun(&bytes.Buffer{}, "myapp", "tag:test")
+	err := tagsAddRun(&bytes.Buffer{}, "myapp", "tag:test", false)
 	if err == nil || !strings.Contains(err.Error(), "load error") {
 		t.Errorf("expected load error, got: %v", err)
 	}
@@ -286,11 +286,11 @@ func TestTagsAdd_SaveError(t *testing.T) {
 	mockRegistryWithServices([]registry.Service{
 		{Name: "myapp", Tags: []string{"tag:tsmain"}},
 	})
-	tagsAddRegistryFn = func(path string, svc registry.Service) error {
-		return fmt.Errorf("save error")
+	tagsAddRegistryFn = func(path string, svc registry.Service) (bool, error) {
+		return false, fmt.Errorf("save error")
 	}
 
-	err := tagsAddRun(&bytes.Buffer{}, "myapp", "tag:new")
+	err := tagsAddRun(&bytes.Buffer{}, "myapp", "tag:new", false)
 	if err == nil || !strings.Contains(err.Error(), "save error") {
 		t.Errorf("expected save error, got: %v", err)
 	}
@@ -305,13 +305,13 @@ func TestTagsSet_Success(t *testing.T) {
 		{Name: "myapp", Tags: []string{"tag:tsmain", "tag:old"}},
 	})
 	var savedSvc registry.Service
-	tagsAddRegistryFn = func(path string, svc registry.Service) error {
+	tagsAddRegistryFn = func(path string, svc registry.Service) (bool, error) {
 		savedSvc = svc
-		return nil
+		return true, nil
 	}
 
 	var buf bytes.Buffer
-	err := tagsSetRun(&buf, "myapp", "tag:shared")
+	err := tagsSetRun(&buf, "myapp", "tag:shared", false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -328,7 +328,7 @@ func TestTagsSet_ServiceNotFound(t *testing.T) {
 	mockDefaults()
 	mockRegistryWithServices(nil)
 
-	err := tagsSetRun(&bytes.Buffer{}, "nosvc", "tag:test")
+	err := tagsSetRun(&bytes.Buffer{}, "nosvc", "tag:test", false)
 	if err == nil || !strings.Contains(err.Error(), "service not found: nosvc") {
 		t.Errorf("expected service not found, got: %v", err)
 	}
@@ -337,7 +337,7 @@ func TestTagsSet_ServiceNotFound(t *testing.T) {
 func TestTagsSet_InvalidPrefix(t *testing.T) {
 	setTagsMocks(t)
 
-	err := tagsSetRun(&bytes.Buffer{}, "myapp", "notag")
+	err := tagsSetRun(&bytes.Buffer{}, "myapp", "notag", false)
 	if err == nil || !strings.Contains(err.Error(), "tag must start with") {
 		t.Errorf("expected prefix error, got: %v", err)
 	}
@@ -347,7 +347,7 @@ func TestTagsSet_EnsureDirError(t *testing.T) {
 	setTagsMocks(t)
 	tagsEnsureDirFn = func() error { return fmt.Errorf("dir error") }
 
-	err := tagsSetRun(&bytes.Buffer{}, "myapp", "tag:test")
+	err := tagsSetRun(&bytes.Buffer{}, "myapp", "tag:test", false)
 	if err == nil || !strings.Contains(err.Error(), "dir error") {
 		t.Errorf("expected dir error, got: %v", err)
 	}
@@ -358,7 +358,7 @@ func TestTagsSet_RegistryPathError(t *testing.T) {
 	tagsEnsureDirFn = func() error { return nil }
 	tagsRegistryPathFn = func() (string, error) { return "", fmt.Errorf("path error") }
 
-	err := tagsSetRun(&bytes.Buffer{}, "myapp", "tag:test")
+	err := tagsSetRun(&bytes.Buffer{}, "myapp", "tag:test", false)
 	if err == nil || !strings.Contains(err.Error(), "path error") {
 		t.Errorf("expected path error, got: %v", err)
 	}
@@ -371,7 +371,7 @@ func TestTagsSet_LoadRegistryError(t *testing.T) {
 		return nil, fmt.Errorf("load error")
 	}
 
-	err := tagsSetRun(&bytes.Buffer{}, "myapp", "tag:test")
+	err := tagsSetRun(&bytes.Buffer{}, "myapp", "tag:test", false)
 	if err == nil || !strings.Contains(err.Error(), "load error") {
 		t.Errorf("expected load error, got: %v", err)
 	}
@@ -383,11 +383,11 @@ func TestTagsSet_SaveError(t *testing.T) {
 	mockRegistryWithServices([]registry.Service{
 		{Name: "myapp", Tags: []string{"tag:tsmain"}},
 	})
-	tagsAddRegistryFn = func(path string, svc registry.Service) error {
-		return fmt.Errorf("save error")
+	tagsAddRegistryFn = func(path string, svc registry.Service) (bool, error) {
+		return false, fmt.Errorf("save error")
 	}
 
-	err := tagsSetRun(&bytes.Buffer{}, "myapp", "tag:new")
+	err := tagsSetRun(&bytes.Buffer{}, "myapp", "tag:new", false)
 	if err == nil || !strings.Contains(err.Error(), "save error") {
 		t.Errorf("expected save error, got: %v", err)
 	}
@@ -409,7 +409,7 @@ func TestTagsSetDefault_Success(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	err := tagsSetDefaultRun(&buf, "tag:myteam")
+	err := tagsSetDefaultRun(&buf, "tag:myteam", false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -424,7 +424,7 @@ func TestTagsSetDefault_Success(t *testing.T) {
 func TestTagsSetDefault_InvalidPrefix(t *testing.T) {
 	setTagsMocks(t)
 
-	err := tagsSetDefaultRun(&bytes.Buffer{}, "notag")
+	err := tagsSetDefaultRun(&bytes.Buffer{}, "notag", false)
 	if err == nil || !strings.Contains(err.Error(), "tag must start with") {
 		t.Errorf("expected prefix error, got: %v", err)
 	}
@@ -436,7 +436,7 @@ func TestTagsSetDefault_LoadError(t *testing.T) {
 		return config.GlobalConfig{}, fmt.Errorf("load error")
 	}
 
-	err := tagsSetDefaultRun(&bytes.Buffer{}, "tag:test")
+	err := tagsSetDefaultRun(&bytes.Buffer{}, "tag:test", false)
 	if err == nil || !strings.Contains(err.Error(), "load error") {
 		t.Errorf("expected load error, got: %v", err)
 	}
@@ -451,7 +451,7 @@ func TestTagsSetDefault_SaveError(t *testing.T) {
 		return fmt.Errorf("save error")
 	}
 
-	err := tagsSetDefaultRun(&bytes.Buffer{}, "tag:test")
+	err := tagsSetDefaultRun(&bytes.Buffer{}, "tag:test", false)
 	if err == nil || !strings.Contains(err.Error(), "save error") {
 		t.Errorf("expected save error, got: %v", err)
 	}
@@ -472,7 +472,7 @@ func TestTagsDeleteRemote_Success(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	err := tagsDeleteRemoteRun(context.Background(), &buf, "tag:shared")
+	err := tagsDeleteRemoteRun(context.Background(), &buf, "tag:shared", false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -492,7 +492,7 @@ func TestTagsDeleteRemote_TagInUse(t *testing.T) {
 		{Name: "dashboard", Tags: []string{"tag:shared", "tag:tsmain"}},
 	})
 
-	err := tagsDeleteRemoteRun(context.Background(), &bytes.Buffer{}, "tag:shared")
+	err := tagsDeleteRemoteRun(context.Background(), &bytes.Buffer{}, "tag:shared", false)
 	if err == nil {
 		t.Fatal("expected error for tag in use")
 	}
@@ -508,7 +508,7 @@ func TestTagsDeleteRemote_DefaultTag(t *testing.T) {
 	setTagsMocks(t)
 	mockDefaults()
 
-	err := tagsDeleteRemoteRun(context.Background(), &bytes.Buffer{}, "tag:tsmain")
+	err := tagsDeleteRemoteRun(context.Background(), &bytes.Buffer{}, "tag:tsmain", false)
 	if err == nil {
 		t.Fatal("expected error for default tag")
 	}
@@ -520,7 +520,7 @@ func TestTagsDeleteRemote_DefaultTag(t *testing.T) {
 func TestTagsDeleteRemote_InvalidPrefix(t *testing.T) {
 	setTagsMocks(t)
 
-	err := tagsDeleteRemoteRun(context.Background(), &bytes.Buffer{}, "notag")
+	err := tagsDeleteRemoteRun(context.Background(), &bytes.Buffer{}, "notag", false)
 	if err == nil || !strings.Contains(err.Error(), "tag must start with") {
 		t.Errorf("expected prefix error, got: %v", err)
 	}
@@ -534,7 +534,7 @@ func TestTagsDeleteRemote_DeleteError(t *testing.T) {
 		return fmt.Errorf("tag %q not found in tailnet ACL", tag)
 	}
 
-	err := tagsDeleteRemoteRun(context.Background(), &bytes.Buffer{}, "tag:gone")
+	err := tagsDeleteRemoteRun(context.Background(), &bytes.Buffer{}, "tag:gone", false)
 	if err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Errorf("expected not-found error, got: %v", err)
 	}
@@ -545,7 +545,7 @@ func TestTagsDeleteRemote_RegistryPathError(t *testing.T) {
 	tagsGetDefaultFn = func() string { return "tag:tsmain" }
 	tagsRegistryPathFn = func() (string, error) { return "", fmt.Errorf("path error") }
 
-	err := tagsDeleteRemoteRun(context.Background(), &bytes.Buffer{}, "tag:other")
+	err := tagsDeleteRemoteRun(context.Background(), &bytes.Buffer{}, "tag:other", false)
 	if err == nil || !strings.Contains(err.Error(), "path error") {
 		t.Errorf("expected path error, got: %v", err)
 	}
@@ -558,7 +558,7 @@ func TestTagsDeleteRemote_LoadRegistryError(t *testing.T) {
 		return nil, fmt.Errorf("load error")
 	}
 
-	err := tagsDeleteRemoteRun(context.Background(), &bytes.Buffer{}, "tag:other")
+	err := tagsDeleteRemoteRun(context.Background(), &bytes.Buffer{}, "tag:other", false)
 	if err == nil || !strings.Contains(err.Error(), "load error") {
 		t.Errorf("expected load error, got: %v", err)
 	}
@@ -596,7 +596,7 @@ func TestTagsCmd_ListIntegration(t *testing.T) {
 	tagsRegistryPathFn = func() (string, error) { return regPath, nil }
 
 	var buf bytes.Buffer
-	err := tagsListRun(&buf)
+	err := tagsListRun(&buf, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

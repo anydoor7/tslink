@@ -28,6 +28,19 @@ Examples:
 Use "tslink <command> --help" for detailed information about each command.`,
 }
 
+func init() {
+	rootCmd.PersistentFlags().Bool("json", false, "Output as JSON")
+	rootCmd.SilenceErrors = true
+	rootCmd.SilenceUsage = true
+}
+
+// WasJSONRequested returns true if --json was passed on the command line.
+// Safe to call after rootCmd.Execute() returns.
+func WasJSONRequested() bool {
+	v, _ := rootCmd.PersistentFlags().GetBool("json")
+	return v
+}
+
 func Execute() error {
 	return rootCmd.Execute()
 }

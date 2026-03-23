@@ -8,6 +8,7 @@ import (
 
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/credentials"
+	"github.com/monody0007/tslink/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -16,7 +17,12 @@ var deleteAPIKeyFn = credentials.DeleteAPIKey
 var hasClientSecretFn = credentials.HasClientSecret
 var deleteClientSecretFn = credentials.DeleteClientSecret
 
-func logoutUser(pidPath, authKeyPath, nodesDir, cfgDir string, out io.Writer) error {
+// LogoutResult holds the result for JSON output.
+type LogoutResult struct {
+	WasLoggedIn bool `json:"was_logged_in"`
+}
+
+func logoutUser(pidPath, authKeyPath, nodesDir, cfgDir string, isJSON bool, out io.Writer) error {
 	if isRunningFn(pidPath) {
 		return fmt.Errorf("tslink is currently running — run 'tslink stop' first")
 	}
@@ -26,6 +32,10 @@ func logoutUser(pidPath, authKeyPath, nodesDir, cfgDir string, out io.Writer) er
 	_, authErr := os.Stat(authKeyPath)
 	_, nodesErr := os.Stat(nodesDir)
 	if apiKey == "" && !hasCS && os.IsNotExist(authErr) && os.IsNotExist(nodesErr) {
+		if isJSON {
+			output.Success("logout", LogoutResult{WasLoggedIn: false})
+			return nil
+		}
 		fmt.Fprintln(out, "→ Not logged in")
 		return nil
 	}
@@ -36,6 +46,10 @@ func logoutUser(pidPath, authKeyPath, nodesDir, cfgDir string, out io.Writer) er
 	os.RemoveAll(nodesDir)
 	os.RemoveAll(filepath.Join(cfgDir, "tsnet-state"))
 
+	if isJSON {
+		output.Success("logout", LogoutResult{WasLoggedIn: true})
+		return nil
+	}
 	fmt.Fprintln(out, "→ ✓ Logged out")
 	return nil
 }
@@ -76,7 +90,7 @@ Examples:
 		}
 		cfgDir, _ := config.Dir()
 
-		return logoutUser(pidPath, authKeyPath, nodesDir, cfgDir, cmd.OutOrStdout())
+		return logoutUser(pidPath, authKeyPath, nodesDir, cfgDir, jsonOutput(cmd), cmd.OutOrStdout())
 	},
 }
 

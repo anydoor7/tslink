@@ -8,10 +8,46 @@ import (
 	"text/tabwriter"
 
 	"github.com/monody0007/tslink/internal/config"
+	"github.com/monody0007/tslink/internal/output"
 	"github.com/monody0007/tslink/internal/registry"
 	"github.com/monody0007/tslink/internal/tailapi"
 	"github.com/spf13/cobra"
 )
+
+// Result structs for JSON output.
+
+type TagsListResult struct {
+	Services []TagsServiceEntry `json:"services"`
+}
+
+type TagsServiceEntry struct {
+	Name string   `json:"name"`
+	Tags []string `json:"tags"`
+}
+
+type TagsPullResult struct {
+	Tags       []string `json:"tags"`
+	DefaultTag string   `json:"default_tag"`
+}
+
+type TagsAddResult struct {
+	Service        string `json:"service"`
+	Tag            string `json:"tag"`
+	AlreadyExisted bool   `json:"already_existed"`
+}
+
+type TagsSetResult struct {
+	Service string   `json:"service"`
+	Tags    []string `json:"tags"`
+}
+
+type TagsSetDefaultResult struct {
+	Tag string `json:"tag"`
+}
+
+type TagsDeleteResult struct {
+	Tag string `json:"tag"`
+}
 
 // Testable function variables for tags commands.
 var (
@@ -19,7 +55,7 @@ var (
 	tagsDeleteTagFn    = tailapi.DeleteTag
 	tagsRegistryPathFn = config.RegistryPath
 	tagsLoadRegistryFn = registry.Load
-	tagsAddRegistryFn  = registry.Add
+	tagsAddRegistryFn  func(string, registry.Service) (bool, error) = registry.Add
 	tagsEnsureDirFn    = config.EnsureDir
 	tagsLoadGlobalFn   = config.LoadGlobalConfig
 	tagsSaveGlobalFn   = config.SaveGlobalConfig
@@ -43,7 +79,7 @@ func findService(reg *registry.Registry, name string) (int, error) {
 }
 
 // tagsListRun lists all services and their tags.
-func tagsListRun(out io.Writer) error {
+func tagsListRun(out io.Writer, isJSON bool) error {
 	regPath, err := tagsRegistryPathFn()
 	if err != nil {
 		return err
@@ -51,6 +87,14 @@ func tagsListRun(out io.Writer) error {
 	reg, err := tagsLoadRegistryFn(regPath)
 	if err != nil {
 		return err
+	}
+	if isJSON {
+		entries := make([]TagsServiceEntry, len(reg.Services))
+		for i, svc := range reg.Services {
+			entries[i] = TagsServiceEntry{Name: svc.Name, Tags: svc.Tags}
+		}
+		output.Success("tags list", TagsListResult{Services: entries})
+		return nil
 	}
 	if len(reg.Services) == 0 {
 		fmt.Fprintln(out, "No services registered")
@@ -69,16 +113,20 @@ func tagsListRun(out io.Writer) error {
 }
 
 // tagsPullRun fetches and displays remote ACL tags.
-func tagsPullRun(ctx context.Context, out io.Writer) error {
+func tagsPullRun(ctx context.Context, out io.Writer, isJSON bool) error {
 	tags, err := tagsReadTagsFn(ctx)
 	if err != nil {
 		return err
+	}
+	defaultTag := tagsGetDefaultFn()
+	if isJSON {
+		output.Success("tags pull", TagsPullResult{Tags: tags, DefaultTag: defaultTag})
+		return nil
 	}
 	if len(tags) == 0 {
 		fmt.Fprintln(out, "No tags found in tailnet ACL")
 		return nil
 	}
-	defaultTag := tagsGetDefaultFn()
 	fmt.Fprintln(out, "REMOTE TAGS (tailnet ACL)")
 	for _, tag := range tags {
 		if tag == defaultTag {
@@ -91,7 +139,7 @@ func tagsPullRun(ctx context.Context, out io.Writer) error {
 }
 
 // tagsAddRun appends a tag to a service (dedup).
-func tagsAddRun(out io.Writer, serviceName, tag string) error {
+func tagsAddRun(out io.Writer, serviceName, tag string, isJSON bool) error {
 	if err := validateTagPrefix(tag); err != nil {
 		return err
 	}
@@ -108,25 +156,36 @@ func tagsAddRun(out io.Writer, serviceName, tag string) error {
 	}
 	idx, err := findService(reg, serviceName)
 	if err != nil {
+		if isJSON {
+			return output.ErrNotFound(err.Error())
+		}
 		return err
 	}
 	svc := reg.Services[idx]
 	for _, t := range svc.Tags {
 		if t == tag {
+			if isJSON {
+				output.Success("tags add", TagsAddResult{Service: serviceName, Tag: tag, AlreadyExisted: true})
+				return nil
+			}
 			fmt.Fprintf(out, "→ %s already on %s\n", tag, serviceName)
 			return nil
 		}
 	}
 	svc.Tags = append(svc.Tags, tag)
-	if err := tagsAddRegistryFn(regPath, svc); err != nil {
+	if _, err := tagsAddRegistryFn(regPath, svc); err != nil {
 		return err
+	}
+	if isJSON {
+		output.Success("tags add", TagsAddResult{Service: serviceName, Tag: tag, AlreadyExisted: false})
+		return nil
 	}
 	fmt.Fprintf(out, "→ Added %s to %s\n", tag, serviceName)
 	return nil
 }
 
 // tagsSetRun replaces a service's tags with a single tag.
-func tagsSetRun(out io.Writer, serviceName, tag string) error {
+func tagsSetRun(out io.Writer, serviceName, tag string, isJSON bool) error {
 	if err := validateTagPrefix(tag); err != nil {
 		return err
 	}
@@ -143,19 +202,26 @@ func tagsSetRun(out io.Writer, serviceName, tag string) error {
 	}
 	idx, err := findService(reg, serviceName)
 	if err != nil {
+		if isJSON {
+			return output.ErrNotFound(err.Error())
+		}
 		return err
 	}
 	svc := reg.Services[idx]
 	svc.Tags = []string{tag}
-	if err := tagsAddRegistryFn(regPath, svc); err != nil {
+	if _, err := tagsAddRegistryFn(regPath, svc); err != nil {
 		return err
+	}
+	if isJSON {
+		output.Success("tags set", TagsSetResult{Service: serviceName, Tags: []string{tag}})
+		return nil
 	}
 	fmt.Fprintf(out, "→ Set %s tags to [%s]\n", serviceName, tag)
 	return nil
 }
 
 // tagsSetDefaultRun sets the global default tag.
-func tagsSetDefaultRun(out io.Writer, tag string) error {
+func tagsSetDefaultRun(out io.Writer, tag string, isJSON bool) error {
 	if err := validateTagPrefix(tag); err != nil {
 		return err
 	}
@@ -167,19 +233,27 @@ func tagsSetDefaultRun(out io.Writer, tag string) error {
 	if err := tagsSaveGlobalFn(cfg); err != nil {
 		return err
 	}
+	if isJSON {
+		output.Success("tags set-default", TagsSetDefaultResult{Tag: tag})
+		return nil
+	}
 	fmt.Fprintf(out, "→ Default tag set to %s\n", tag)
 	return nil
 }
 
 // tagsDeleteRemoteRun deletes a tag from the tailnet ACL after safety checks.
-func tagsDeleteRemoteRun(ctx context.Context, out io.Writer, tag string) error {
+func tagsDeleteRemoteRun(ctx context.Context, out io.Writer, tag string, isJSON bool) error {
 	if err := validateTagPrefix(tag); err != nil {
 		return err
 	}
 	// Check if tag is the current default
 	defaultTag := tagsGetDefaultFn()
 	if tag == defaultTag {
-		return fmt.Errorf("cannot delete default tag %q — change the default first with: tslink tags set-default <other-tag>", tag)
+		msg := fmt.Sprintf("cannot delete default tag %q — change the default first with: tslink tags set-default <other-tag>", tag)
+		if isJSON {
+			return output.ErrConflict(msg)
+		}
+		return fmt.Errorf("%s", msg)
 	}
 	// Check local registry for services using this tag
 	regPath, err := tagsRegistryPathFn()
@@ -200,10 +274,18 @@ func tagsDeleteRemoteRun(ctx context.Context, out io.Writer, tag string) error {
 		}
 	}
 	if len(usedBy) > 0 {
-		return fmt.Errorf("cannot delete %q — in use by services: %s", tag, strings.Join(usedBy, ", "))
+		msg := fmt.Sprintf("cannot delete %q — in use by services: %s", tag, strings.Join(usedBy, ", "))
+		if isJSON {
+			return output.ErrConflict(msg)
+		}
+		return fmt.Errorf("%s", msg)
 	}
 	if err := tagsDeleteTagFn(ctx, tag); err != nil {
 		return err
+	}
+	if isJSON {
+		output.Success("tags delete-remote", TagsDeleteResult{Tag: tag})
+		return nil
 	}
 	fmt.Fprintf(out, "→ Deleted %s from tailnet ACL\n", tag)
 	return nil
@@ -237,7 +319,7 @@ Examples:
 		Short: "Show tags for all registered services",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return tagsListRun(cmd.OutOrStdout())
+			return tagsListRun(cmd.OutOrStdout(), jsonOutput(cmd))
 		},
 	}
 
@@ -246,7 +328,7 @@ Examples:
 		Short: "Fetch remote tags from tailnet ACL",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return tagsPullRun(cmd.Context(), cmd.OutOrStdout())
+			return tagsPullRun(cmd.Context(), cmd.OutOrStdout(), jsonOutput(cmd))
 		},
 	}
 
@@ -255,7 +337,7 @@ Examples:
 		Short: "Add a tag to a service",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return tagsAddRun(cmd.OutOrStdout(), args[0], args[1])
+			return tagsAddRun(cmd.OutOrStdout(), args[0], args[1], jsonOutput(cmd))
 		},
 	}
 
@@ -264,7 +346,7 @@ Examples:
 		Short: "Replace a service's tags with a single tag",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return tagsSetRun(cmd.OutOrStdout(), args[0], args[1])
+			return tagsSetRun(cmd.OutOrStdout(), args[0], args[1], jsonOutput(cmd))
 		},
 	}
 
@@ -273,7 +355,7 @@ Examples:
 		Short: "Set the default tag for new services",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return tagsSetDefaultRun(cmd.OutOrStdout(), args[0])
+			return tagsSetDefaultRun(cmd.OutOrStdout(), args[0], jsonOutput(cmd))
 		},
 	}
 
@@ -282,7 +364,7 @@ Examples:
 		Short: "Delete a tag from the tailnet ACL",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return tagsDeleteRemoteRun(cmd.Context(), cmd.OutOrStdout(), args[0])
+			return tagsDeleteRemoteRun(cmd.Context(), cmd.OutOrStdout(), args[0], jsonOutput(cmd))
 		},
 	}
 

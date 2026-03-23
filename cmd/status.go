@@ -6,6 +6,7 @@ import (
 
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/daemon"
+	"github.com/monody0007/tslink/internal/output"
 	"github.com/monody0007/tslink/internal/registry"
 	"github.com/spf13/cobra"
 )
@@ -14,10 +15,10 @@ var readPIDFn = daemon.ReadPID
 
 // StatusResult holds the status information for display.
 type StatusResult struct {
-	DaemonRunning bool
-	DaemonPID     int
-	Authenticated bool
-	ServiceCount  int
+	DaemonRunning bool `json:"daemon_running"`
+	DaemonPID     int  `json:"daemon_pid"`
+	Authenticated bool `json:"authenticated"`
+	ServiceCount  int  `json:"service_count"`
 }
 
 func getStatus(pidPath, regPath string) StatusResult {
@@ -76,6 +77,10 @@ Examples:
 			return err
 		}
 		r := getStatus(pidPath, regPath)
+		if jsonOutput(cmd) {
+			output.Success("status", r)
+			return nil
+		}
 		formatStatus(r, cmd.OutOrStdout())
 		return nil
 	},

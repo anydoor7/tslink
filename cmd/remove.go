@@ -4,27 +4,50 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/monody0007/tslink/internal/config"
+	"github.com/monody0007/tslink/internal/output"
 	"github.com/monody0007/tslink/internal/registry"
 	"github.com/monody0007/tslink/internal/tailapi"
 	"github.com/spf13/cobra"
 )
 
+// RemoveResult is the JSON payload for the remove command.
+type RemoveResult struct {
+	Name          string `json:"name"`
+	DeviceCleaned bool   `json:"device_cleaned"`
+	DeviceWarning string `json:"device_warning,omitempty"`
+}
+
 var deleteDevicesFn = tailapi.DeleteDevicesByHostname
 var ensureDirFn = config.EnsureDir
 
-func removeService(regPath, name string, out, errOut io.Writer) error {
+func removeService(regPath, name string, out, errOut io.Writer, isJSON bool) error {
 	if err := registry.Remove(regPath, name); err != nil {
+		if strings.Contains(err.Error(), "service not found") {
+			return output.ErrNotFound(err.Error())
+		}
 		return err
 	}
 
-	fmt.Fprintf(out, "→ ✓ removed: %s\n", name)
+	result := RemoveResult{Name: name}
 
 	if err := deleteDevicesFn(context.Background(), name); err != nil {
-		fmt.Fprintf(errOut, "→ warning: could not remove tailnet node: %v\n", err)
+		result.DeviceWarning = fmt.Sprintf("could not remove tailnet node: %v", err)
+		if !isJSON {
+			fmt.Fprintf(errOut, "→ warning: could not remove tailnet node: %v\n", err)
+		}
+	} else {
+		result.DeviceCleaned = true
 	}
 
+	if isJSON {
+		output.Success("remove", result)
+		return nil
+	}
+
+	fmt.Fprintf(out, "→ ✓ removed: %s\n", name)
 	return nil
 }
 
@@ -61,7 +84,7 @@ Examples:
 				return err
 			}
 
-			return removeService(regPath, args[0], cmd.OutOrStdout(), cmd.ErrOrStderr())
+			return removeService(regPath, args[0], cmd.OutOrStdout(), cmd.ErrOrStderr(), jsonOutput(cmd))
 		},
 	}
 
