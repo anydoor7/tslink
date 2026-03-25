@@ -162,8 +162,8 @@ func Add(path string, svc Service) (created bool, err error) {
 	return created, err
 }
 
-func Remove(path, name string) error {
-	return withLock(path, func() error {
+func Remove(path, name string) (removed bool, err error) {
+	err = withLock(path, func() error {
 		reg, err := Load(path)
 		if err != nil {
 			return err
@@ -175,9 +175,11 @@ func Remove(path, name string) error {
 			}
 
 			reg.Services = append(reg.Services[:i], reg.Services[i+1:]...)
+			removed = true
 			return save(path, reg)
 		}
 
-		return fmt.Errorf("service not found: %s", name)
+		return nil
 	})
+	return removed, err
 }

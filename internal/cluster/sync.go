@@ -191,7 +191,8 @@ func (c *Cluster) handleServiceRemove(msg Message) error {
 		return fmt.Errorf("cluster: failed to unmarshal service_remove: %w", err)
 	}
 
-	return registry.Remove(c.regPath, payload.Service.Name)
+	_, err := registry.Remove(c.regPath, payload.Service.Name)
+	return err
 }
 
 // handleFullSync replaces the peer's services with the provided list.
@@ -228,7 +229,7 @@ func (c *Cluster) handleFullSync(msg Message) error {
 	if hasPeer {
 		for _, existing := range reg.Services {
 			if oldServices[existing.Name] && !newNames[existing.Name] {
-				_ = registry.Remove(c.regPath, existing.Name)
+				_, _ = registry.Remove(c.regPath, existing.Name)
 			}
 		}
 	}

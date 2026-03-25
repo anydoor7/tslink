@@ -170,16 +170,17 @@ func (h *Handler) handleRemoveService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := registry.Remove(h.regPath, name); err != nil {
-		if strings.Contains(err.Error(), "not found") {
-			writeJSON(w, http.StatusNotFound, APIResponse{Error: err.Error()})
-			return
-		}
+	removed, err := registry.Remove(h.regPath, name)
+	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, APIResponse{Error: err.Error()})
 		return
 	}
 
-	writeJSON(w, http.StatusOK, APIResponse{OK: true, Message: "service removed"})
+	if removed {
+		writeJSON(w, http.StatusOK, APIResponse{OK: true, Message: "service removed"})
+	} else {
+		writeJSON(w, http.StatusOK, APIResponse{OK: true, Message: "service not registered, nothing to remove"})
+	}
 }
 
 // statusData is the payload returned by GET /api/status.

@@ -111,8 +111,10 @@ func TestRemove(t *testing.T) {
 		t.Fatalf("Add docs returned error: %v", err)
 	}
 
-	if err := Remove(path, "report"); err != nil {
+	if removed, err := Remove(path, "report"); err != nil {
 		t.Fatalf("Remove returned error: %v", err)
+	} else if !removed {
+		t.Fatal("expected removed=true for existing service")
 	}
 
 	reg, err := Load(path)
@@ -134,8 +136,10 @@ func TestRemoveNotFound(t *testing.T) {
 		t.Fatalf("Add returned error: %v", err)
 	}
 
-	if err := Remove(path, "missing"); err == nil {
-		t.Fatal("expected Remove to fail for missing service")
+	if removed, err := Remove(path, "missing"); err != nil {
+		t.Fatalf("Remove returned error: %v", err)
+	} else if removed {
+		t.Fatal("expected removed=false for missing service")
 	}
 }
 
@@ -243,9 +247,12 @@ func TestAddInvalidName(t *testing.T) {
 
 func TestRemoveFromEmpty(t *testing.T) {
 	path := testRegistryPath(t)
-	err := Remove(path, "anything")
-	if err == nil {
-		t.Fatal("Remove() from empty registry should return error")
+	removed, err := Remove(path, "anything")
+	if err != nil {
+		t.Fatalf("Remove() from empty registry returned error: %v", err)
+	}
+	if removed {
+		t.Fatal("expected removed=false from empty registry")
 	}
 }
 
@@ -282,7 +289,7 @@ func TestRemoveMiddleService(t *testing.T) {
 		}
 	}
 
-	if err := Remove(path, "beta"); err != nil {
+	if _, err := Remove(path, "beta"); err != nil {
 		t.Fatalf("Remove(beta) error = %v", err)
 	}
 
@@ -390,7 +397,7 @@ func TestRemoveLastService(t *testing.T) {
 		t.Fatalf("Add() error = %v", err)
 	}
 
-	if err := Remove(path, "only"); err != nil {
+	if _, err := Remove(path, "only"); err != nil {
 		t.Fatalf("Remove() error = %v", err)
 	}
 
@@ -541,7 +548,7 @@ func TestRemove_LoadError(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	err := Remove(path, "svc")
+	_, err := Remove(path, "svc")
 	if err == nil {
 		t.Fatal("Remove() error = nil, want error")
 	}

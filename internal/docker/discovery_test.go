@@ -3,6 +3,7 @@ package docker
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -645,8 +646,10 @@ func TestDiscovery_SyncContainer_RegisterError(t *testing.T) {
 
 func TestDiscovery_RemoveContainer_RegistryRemoveError(t *testing.T) {
 	client := newMockClient()
-	// Use a path that doesn't have a valid registry to trigger Remove error
-	regPath := filepath.Join(t.TempDir(), "nonexistent-dir", "sub", "registry.json")
+	// Write corrupt JSON so registry.Remove's Load fails
+	dir := t.TempDir()
+	regPath := filepath.Join(dir, "registry.json")
+	os.WriteFile(regPath, []byte("{corrupt json!"), 0o600)
 	d := New(client, regPath)
 
 	// Manually set the mapping so removeContainer tries to call registry.Remove

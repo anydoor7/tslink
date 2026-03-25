@@ -248,11 +248,8 @@ func TestAPIRemove(t *testing.T) {
 func TestAPIRemove_NotFound(t *testing.T) {
 	h, _ := newTestHandler(t)
 	resp := sendRequest(t, h, APIRequest{Action: "remove", Name: "xyz"})
-	if resp.OK {
-		t.Fatal("expected error when removing non-existent service")
-	}
-	if !strings.Contains(resp.Error, "service not found") {
-		t.Errorf("unexpected error: %s", resp.Error)
+	if !resp.OK {
+		t.Fatalf("expected ok=true for idempotent remove, got error: %s", resp.Error)
 	}
 }
 

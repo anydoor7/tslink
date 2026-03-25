@@ -190,7 +190,7 @@ func (h *apiHandler) handleRemove(req APIRequest, out io.Writer) {
 		writeResponse(out, APIResponse{OK: false, Error: "name is required"})
 		return
 	}
-	if err := registry.Remove(h.regPath, req.Name); err != nil {
+	if _, err := registry.Remove(h.regPath, req.Name); err != nil {
 		writeResponse(out, APIResponse{OK: false, Error: err.Error()})
 		return
 	}

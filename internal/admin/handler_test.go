@@ -551,15 +551,15 @@ func TestRemoveService_NotFound(t *testing.T) {
 	h, _, _ := newTestHandler(t)
 
 	w := doRequest(t, h, http.MethodDelete, "/api/services/nonexistent", nil)
-	if w.Code != http.StatusNotFound {
-		t.Fatalf("expected 404, got %d", w.Code)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
 	}
 	resp := decodeResponse(t, w)
-	if resp.OK {
-		t.Fatal("expected ok=false for not-found service")
+	if !resp.OK {
+		t.Fatal("expected ok=true for idempotent remove")
 	}
-	if !strings.Contains(resp.Error, "not found") {
-		t.Fatalf("expected 'not found' in error, got %q", resp.Error)
+	if !strings.Contains(resp.Message, "not registered") {
+		t.Fatalf("expected 'not registered' in message, got %q", resp.Message)
 	}
 }
 

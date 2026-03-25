@@ -341,6 +341,9 @@ func TestRemoveJSON_Success(t *testing.T) {
 	if data["name"] != "web" {
 		t.Errorf("expected name=web, got %v", data["name"])
 	}
+	if data["removed"] != true {
+		t.Errorf("expected removed=true, got %v", data["removed"])
+	}
 	if data["device_cleaned"] != true {
 		t.Errorf("expected device_cleaned=true, got %v", data["device_cleaned"])
 	}
@@ -352,16 +355,22 @@ func TestRemoveJSON_NotFound(t *testing.T) {
 	os.WriteFile(regPath, []byte(`{"services":[]}`), 0o600)
 
 	var out, errOut bytes.Buffer
-	err := removeService(regPath, "nonexistent", &out, &errOut, true)
-	if err == nil {
-		t.Fatal("expected error for nonexistent service")
+	got := captureStdout(t, func() {
+		if err := removeService(regPath, "nonexistent", &out, &errOut, true); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	res := parseResult(t, got)
+	if !res.OK {
+		t.Error("expected ok=true")
 	}
-	ce, ok := err.(*output.CodeError)
-	if !ok {
-		t.Fatalf("expected *output.CodeError, got %T: %v", err, err)
+	data := dataMap(t, got)
+	if data["name"] != "nonexistent" {
+		t.Errorf("expected name=nonexistent, got %v", data["name"])
 	}
-	if ce.Code != output.ExitNotFound {
-		t.Errorf("expected exit code %d, got %d", output.ExitNotFound, ce.Code)
+	if data["removed"] != false {
+		t.Errorf("expected removed=false, got %v", data["removed"])
 	}
 }
 

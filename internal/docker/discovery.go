@@ -228,7 +228,7 @@ func (d *Discovery) removeContainer(ctx context.Context, containerID string) err
 		return nil
 	}
 
-	if err := registry.Remove(d.regPath, name); err != nil {
+	if _, err := registry.Remove(d.regPath, name); err != nil {
 		return fmt.Errorf("remove service %s: %w", name, err)
 	}
 

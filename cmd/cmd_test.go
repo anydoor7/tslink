@@ -772,8 +772,11 @@ func TestRemoveService_NotFound(t *testing.T) {
 	dir := t.TempDir()
 	regPath := filepath.Join(dir, "registry.json")
 	var out, errOut bytes.Buffer
-	if err := removeService(regPath, "nonexistent", &out, &errOut, false); err == nil {
-		t.Fatal("expected error for nonexistent service")
+	if err := removeService(regPath, "nonexistent", &out, &errOut, false); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out.String(), "not registered") {
+		t.Fatalf("expected 'not registered' message, got %q", out.String())
 	}
 }
 
