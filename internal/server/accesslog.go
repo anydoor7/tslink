@@ -1,7 +1,10 @@
 package server
 
 import (
+	"bufio"
+	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"time"
 )
@@ -29,6 +32,14 @@ func (rw *responseWriter) Write(b []byte) (int, error) {
 	n, err := rw.ResponseWriter.Write(b)
 	rw.bytes += int64(n)
 	return n, err
+}
+
+// Hijack implements http.Hijacker, required for WebSocket upgrade (101 Switching Protocols).
+func (rw *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if hj, ok := rw.ResponseWriter.(http.Hijacker); ok {
+		return hj.Hijack()
+	}
+	return nil, nil, fmt.Errorf("underlying ResponseWriter does not implement http.Hijacker")
 }
 
 // AccessLogMiddleware logs every HTTP request with structured fields via slog.
