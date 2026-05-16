@@ -2,6 +2,7 @@ package tailapi
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -9,6 +10,9 @@ import (
 
 	"github.com/monody0007/tslink/internal/credentials"
 )
+
+// ErrNoAPIClient means cleanup cannot use the Tailscale API because no API key is configured.
+var ErrNoAPIClient = errors.New("no API client available")
 
 // CleanupResult describes a stale-node cleanup attempt.
 type CleanupResult struct {
@@ -26,8 +30,8 @@ func hostnameMatchesCleanupTarget(hostname, target string) bool {
 	if !ok || suffix == "" {
 		return false
 	}
-	_, err := strconv.Atoi(suffix)
-	return err == nil
+	n, err := strconv.Atoi(suffix)
+	return err == nil && n > 0 && strconv.Itoa(n) == suffix
 }
 
 // DeleteDevicesByHostname deletes all devices matching the given hostname from the tailnet.
@@ -37,7 +41,7 @@ func DeleteDevicesByHostname(ctx context.Context, hostname string) error {
 		return err
 	}
 	if client == nil {
-		return fmt.Errorf("no API client available")
+		return ErrNoAPIClient
 	}
 
 	devices, err := client.Devices().List(ctx)
@@ -69,7 +73,7 @@ func CleanupStaleNodesResult(ctx context.Context, hostnames []string) (CleanupRe
 		return CleanupResult{}, err
 	}
 	if client == nil {
-		return CleanupResult{Skipped: true, SkipReason: "no API client available"}, fmt.Errorf("cleanup skipped: no API client available")
+		return CleanupResult{Skipped: true, SkipReason: ErrNoAPIClient.Error()}, nil
 	}
 
 	devices, err := client.Devices().List(ctx)

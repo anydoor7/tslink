@@ -2,7 +2,9 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
 	"os/signal"
 	"path/filepath"
 	"syscall"
@@ -35,10 +37,11 @@ var (
 	serveRegistryPathFn = config.RegistryPath
 	serveLoadRegistryFn = registry.Load
 	serveGetAuthKeyFn   = credentials.GetAuthKey
+	serveCheckAuthFn    = credentials.RequireStoredCredential
 	servePIDPathFn      = config.PIDPath
 	serveIsRunningFn    = daemon.IsRunning
 	serveEnsureTagsFn   = tailapi.EnsureTags
-	serveCleanupFn      = tailapi.CleanupStaleNodes
+	serveCleanupFn      = tailapi.CleanupStaleNodesResult
 	serveLoadGlobalFn   = config.LoadGlobalConfig
 	serveLogDirFn       = config.LogDir
 	serveDaemonizeFn    = daemon.Daemonize
@@ -51,6 +54,10 @@ type serverRunner interface {
 
 type ensureTagsSetter interface {
 	SetEnsureTagsFn(server.EnsureTagsFunc)
+}
+
+type authKeyProviderSetter interface {
+	SetAuthKeyProvider(server.AuthKeyProvider)
 }
 
 func init() {
@@ -84,15 +91,14 @@ Examples:
 				return fmt.Errorf("load registry: %w", err)
 			}
 
-			// Collect unique tags and check if any service needs ephemeral
+			// Collect unique tags for startup ACL preflight. Auth keys are resolved per service.
 			tagSet := make(map[string]struct{})
-			hasEphemeral := false
 			for _, svc := range reg.Services {
+				if err := validateServiceForServe(svc); err != nil {
+					return err
+				}
 				for _, tag := range svc.Tags {
 					tagSet[tag] = struct{}{}
-				}
-				if svc.Ephemeral {
-					hasEphemeral = true
 				}
 			}
 			var allTags []string
@@ -102,15 +108,15 @@ Examples:
 
 			// Ensure all required tags exist in tailnet ACL
 			if err := serveEnsureTagsFn(context.Background(), allTags); err != nil {
-				return fmt.Errorf("ensure tags in ACL: %w", err)
+				if errors.Is(err, tailapi.ErrNoAPIClient) {
+					slog.Info("skipped ACL tag ensure", "reason", err.Error(), "tags", allTags)
+				} else {
+					return fmt.Errorf("ensure tags in ACL: %w", err)
+				}
 			}
 
-			// Get auth key (derive from API key, or fall back to legacy authkey file)
-			authKey, err := serveGetAuthKeyFn(context.Background(), credentials.AuthKeyOptions{
-				Tags:      allTags,
-				Ephemeral: hasEphemeral,
-			})
-			if err != nil {
+			// Verify that some credential exists without deriving or consuming a one-shot auth key.
+			if err := serveCheckAuthFn(); err != nil {
 				return output.ErrAuth(err.Error())
 			}
 
@@ -128,8 +134,17 @@ Examples:
 			for _, s := range reg.Services {
 				names = append(names, s.Name)
 			}
-			if err := serveCleanupFn(context.Background(), names); err != nil {
-				return fmt.Errorf("cleanup stale nodes: %w", err)
+			cleanup, err := serveCleanupFn(context.Background(), names)
+			if err != nil {
+				if !errors.Is(err, tailapi.ErrNoAPIClient) {
+					return fmt.Errorf("cleanup stale nodes: %w", err)
+				}
+				cleanup = tailapi.CleanupResult{Skipped: true, SkipReason: err.Error()}
+			}
+			if cleanup.Skipped {
+				slog.Info("skipped stale tailnet node cleanup", "reason", cleanup.SkipReason)
+			} else if len(cleanup.Deleted) > 0 {
+				slog.Info("removed stale tailnet nodes", "matched", cleanup.Matched, "deleted", cleanup.Deleted)
 			}
 
 			// Resolve control URL: flag > config > default
@@ -162,13 +177,25 @@ Examples:
 				return nil
 			}
 
-			return runForeground(pidPath, authKey, controlURL)
+			return runForeground(pidPath, "", controlURL)
 		},
 	}
 
 	serveCmd.Flags().BoolVar(&serveDaemon, "daemon", false, "Run as background daemon")
 	serveCmd.Flags().String("control-url", "", "Custom control server URL (e.g., Headscale)")
 	rootCmd.AddCommand(serveCmd)
+}
+
+func validateServiceForServe(svc registry.Service) error {
+	if err := registry.ValidateName(svc.Name); err != nil {
+		return fmt.Errorf("service %q: %w", svc.Name, err)
+	}
+	for _, tag := range svc.Tags {
+		if err := registry.ValidateTag(tag); err != nil {
+			return fmt.Errorf("service %q has invalid tag %q: %w", svc.Name, tag, err)
+		}
+	}
+	return nil
 }
 
 func runForeground(pidPath, authKey, controlURL string) error {
@@ -186,6 +213,15 @@ func runForeground(pidPath, authKey, controlURL string) error {
 	}
 	if setter, ok := srv.(ensureTagsSetter); ok {
 		setter.SetEnsureTagsFn(serveEnsureTagsFn)
+	}
+	if setter, ok := srv.(authKeyProviderSetter); ok {
+		setter.SetAuthKeyProvider(func(ctx context.Context, svc registry.Service) (string, error) {
+			return serveGetAuthKeyFn(ctx, credentials.AuthKeyOptions{
+				Tags:        svc.Tags,
+				Ephemeral:   svc.Ephemeral,
+				Description: fmt.Sprintf("TSLink service %q startup auth key", svc.Name),
+			})
+		})
 	}
 
 	return srv.Run(ctx)

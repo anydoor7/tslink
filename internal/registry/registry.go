@@ -16,6 +16,8 @@ const (
 	TypeProxy = "proxy"
 	TypeFile  = "file"
 	TypeTCP   = "tcp"
+
+	maxTagLength = 63
 )
 
 var nameRegexp = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
@@ -65,6 +67,9 @@ func ValidateName(name string) error {
 }
 
 func ValidateTag(tag string) error {
+	if len(tag) > maxTagLength {
+		return fmt.Errorf("invalid tag: %q exceeds %d characters", tag, maxTagLength)
+	}
 	if !tagRegexp.MatchString(tag) {
 		return fmt.Errorf("invalid tag: %q", tag)
 	}

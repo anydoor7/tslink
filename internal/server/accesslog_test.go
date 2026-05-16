@@ -204,4 +204,67 @@ func TestResponseWriter_FlushDelegates(t *testing.T) {
 	if !rec.flushed {
 		t.Fatal("underlying flusher was not called")
 	}
+	if !rw.wroteHeader {
+		t.Fatal("Flush should mark the response header as written")
+	}
+	if rw.status != http.StatusOK {
+		t.Fatalf("status after Flush = %d, want 200", rw.status)
+	}
+}
+
+func TestResponseWriter_FlushSetsImplicitStatus(t *testing.T) {
+	rec := &flushRecorder{ResponseRecorder: httptest.NewRecorder()}
+	rw := &responseWriter{ResponseWriter: rec}
+
+	rw.Flush()
+	rw.WriteHeader(http.StatusAccepted)
+
+	if !rec.flushed {
+		t.Fatal("underlying flusher was not called")
+	}
+	if !rw.wroteHeader {
+		t.Fatal("Flush should mark the response header as written")
+	}
+	if rw.status != http.StatusOK {
+		t.Fatalf("status after Flush then WriteHeader = %d, want 200", rw.status)
+	}
+}
+
+func TestAccessLogMiddleware_FlushLogsImplicitStatusOK(t *testing.T) {
+	ch := installCaptureLogger()
+
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			t.Fatal("wrapped writer should implement http.Flusher")
+		}
+		flusher.Flush()
+		w.WriteHeader(http.StatusAccepted)
+	})
+
+	handler := AccessLogMiddleware("svc", inner)
+	req := httptest.NewRequest(http.MethodGet, "/stream", nil)
+	rec := &flushRecorder{ResponseRecorder: httptest.NewRecorder()}
+	handler.ServeHTTP(rec, req)
+
+	if !rec.flushed {
+		t.Fatal("underlying flusher was not called")
+	}
+	attrs := ch.attrMap(t, 0)
+	status, ok := attrs["status"]
+	if !ok {
+		t.Fatal("status attribute missing from log")
+	}
+	switch v := status.(type) {
+	case int64:
+		if v != http.StatusOK {
+			t.Fatalf("logged status = %d, want 200", v)
+		}
+	case int:
+		if v != http.StatusOK {
+			t.Fatalf("logged status = %d, want 200", v)
+		}
+	default:
+		t.Fatalf("unexpected status type %T: %v", status, status)
+	}
 }

@@ -144,8 +144,16 @@ func TestReadTags_SuccessEmpty(t *testing.T) {
 
 func TestEnsureTags_NoClient(t *testing.T) {
 	aclSetup(t)
-	if err := EnsureTags(context.Background(), []string{"tag:test"}); err != nil {
-		t.Fatalf("EnsureTags() error = %v", err)
+	err := EnsureTags(context.Background(), []string{"tag:test"})
+	if !errors.Is(err, ErrNoAPIClient) {
+		t.Fatalf("EnsureTags() error = %v, want ErrNoAPIClient", err)
+	}
+}
+
+func TestEnsureTags_NoClientEmptyTagsOK(t *testing.T) {
+	aclSetup(t)
+	if err := EnsureTags(context.Background(), nil); err != nil {
+		t.Fatalf("EnsureTags() error = %v, want nil for empty tags", err)
 	}
 }
 

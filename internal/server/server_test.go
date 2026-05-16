@@ -11,6 +11,8 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 	"unsafe"
@@ -56,13 +58,13 @@ func markTSNetServerClosed(t *testing.T, srv *tsnet.Server) {
 }
 
 type fakeListener struct {
-	closed bool
+	closed atomic.Bool
 }
 
 func (l *fakeListener) Accept() (net.Conn, error) { return nil, net.ErrClosed }
 func (l *fakeListener) Addr() net.Addr            { return &net.TCPAddr{} }
 func (l *fakeListener) Close() error {
-	l.closed = true
+	l.closed.Store(true)
 	return nil
 }
 
@@ -271,7 +273,7 @@ func TestStopNodeLocked_ClosesListenerAndServer(t *testing.T) {
 
 	s.stopNodeLocked("test", false)
 
-	if !ln.closed {
+	if !ln.closed.Load() {
 		t.Fatal("listener should be closed")
 	}
 }
@@ -356,6 +358,102 @@ func TestStartNodeLocked_ClosesTSNetServerOnUpError(t *testing.T) {
 	}
 }
 
+func TestStartNodeLocked_UsesPerServiceAuthKeyProvider(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+
+	s, err := New("static-key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	var providerService registry.Service
+	s.SetAuthKeyProvider(func(ctx context.Context, svc registry.Service) (string, error) {
+		providerService = svc
+		if len(svc.Tags) != 1 || svc.Tags[0] != "tag:svc" {
+			t.Fatalf("provider tags = %v, want [tag:svc]", svc.Tags)
+		}
+		if !svc.Ephemeral {
+			t.Fatal("provider service Ephemeral = false, want true")
+		}
+		return "per-service-key", nil
+	})
+
+	var capturedAuthKey string
+	oldNew := newTSNetServerFn
+	newTSNetServerFn = func(svc registry.Service, stateDir, authKey, controlURL string) tsnetServer {
+		capturedAuthKey = authKey
+		return &fakeTSNetServer{}
+	}
+	t.Cleanup(func() { newTSNetServerFn = oldNew })
+
+	err = s.startNodeLocked(context.Background(), registry.Service{
+		Name:      "svc",
+		Type:      registry.TypeFile,
+		Path:      t.TempDir(),
+		Tags:      []string{"tag:svc"},
+		Ephemeral: true,
+	})
+	if err != nil {
+		t.Fatalf("startNodeLocked() error = %v", err)
+	}
+	if providerService.Name != "svc" {
+		t.Fatalf("provider service name = %q, want svc", providerService.Name)
+	}
+	if capturedAuthKey != "per-service-key" {
+		t.Fatalf("authKey = %q, want per-service-key", capturedAuthKey)
+	}
+}
+
+func TestStartNodeLocked_AuthKeyProviderErrorIncludesService(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+
+	s, err := New("static-key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	s.SetAuthKeyProvider(func(ctx context.Context, svc registry.Service) (string, error) {
+		return "", errors.New("derive failed")
+	})
+
+	err = s.startNodeLocked(context.Background(), registry.Service{
+		Name: "svc", Type: registry.TypeFile, Path: t.TempDir(), Tags: []string{"tag:svc"},
+	})
+	if err == nil {
+		t.Fatal("startNodeLocked() error = nil, want auth provider error")
+	}
+	if !strings.Contains(err.Error(), `auth key for service "svc"`) {
+		t.Fatalf("error = %v, want service context", err)
+	}
+}
+
+func TestStartNodeLocked_InvalidTagIncludesServiceContext(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	err = s.startNodeLocked(context.Background(), registry.Service{
+		Name: "legacy", Type: registry.TypeFile, Path: t.TempDir(), Tags: []string{"tag:Bad"},
+	})
+	if err == nil {
+		t.Fatal("startNodeLocked() error = nil, want invalid tag error")
+	}
+	if !strings.Contains(err.Error(), `service "legacy" has invalid tag "tag:Bad"`) {
+		t.Fatalf("error = %v, want service/tag context", err)
+	}
+}
+
 func TestSyncNodes_RemovesDeletedService(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	if err := config.EnsureDir(); err != nil {
@@ -388,6 +486,59 @@ func TestSyncNodes_RemovesDeletedService(t *testing.T) {
 	}
 	if _, err := os.Stat(stateDir); !os.IsNotExist(err) {
 		t.Fatalf("expected %q to be removed, stat err = %v", stateDir, err)
+	}
+}
+
+func TestSyncNodes_HotReloadUsesFreshPerServiceAuthMaterial(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+
+	oldNew := newTSNetServerFn
+	var constructedKeys []string
+	newTSNetServerFn = func(svc registry.Service, stateDir, authKey, controlURL string) tsnetServer {
+		constructedKeys = append(constructedKeys, authKey)
+		return &fakeTSNetServer{}
+	}
+	t.Cleanup(func() { newTSNetServerFn = oldNew })
+
+	s, err := New("static-key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	var providerCalls []registry.Service
+	s.SetAuthKeyProvider(func(ctx context.Context, svc registry.Service) (string, error) {
+		providerCalls = append(providerCalls, svc)
+		return fmt.Sprintf("key-%d", len(providerCalls)), nil
+	})
+
+	writeRegistry(t, []registry.Service{
+		{Name: "app", Type: registry.TypeFile, Path: t.TempDir(), Tags: []string{"tag:one"}},
+	})
+	if err := s.syncNodes(context.Background()); err != nil {
+		t.Fatalf("first syncNodes() error = %v", err)
+	}
+
+	writeRegistry(t, []registry.Service{
+		{Name: "app", Type: registry.TypeFile, Path: t.TempDir(), Tags: []string{"tag:two"}, Ephemeral: true},
+	})
+	if err := s.syncNodes(context.Background()); err != nil {
+		t.Fatalf("second syncNodes() error = %v", err)
+	}
+
+	if len(providerCalls) != 2 {
+		t.Fatalf("provider calls = %d, want 2 fresh calls", len(providerCalls))
+	}
+	if providerCalls[0].Tags[0] != "tag:one" {
+		t.Fatalf("first provider tags = %v, want [tag:one]", providerCalls[0].Tags)
+	}
+	if providerCalls[1].Tags[0] != "tag:two" || !providerCalls[1].Ephemeral {
+		t.Fatalf("second provider service = %+v, want tag:two ephemeral=true", providerCalls[1])
+	}
+	if strings.Join(constructedKeys, ",") != "key-1,key-2" {
+		t.Fatalf("constructed auth keys = %v, want fresh per sync", constructedKeys)
 	}
 }
 

@@ -3,6 +3,7 @@ package credentials
 import (
 	"context"
 	"errors"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -740,12 +741,23 @@ func TestGetAuthKey_ClientSecretFirst(t *testing.T) {
 		t.Fatalf("SaveClientSecret() error = %v", err)
 	}
 
-	got, err := GetAuthKey(context.Background(), AuthKeyOptions{})
+	got, err := GetAuthKey(context.Background(), AuthKeyOptions{
+		Tags:      []string{"tag:test"},
+		Ephemeral: true,
+	})
 	if err != nil {
 		t.Fatalf("GetAuthKey() error = %v", err)
 	}
-	if got != "tskey-client-my-secret" {
-		t.Fatalf("GetAuthKey() = %q, want %q (client secret should take priority)", got, "tskey-client-my-secret")
+	base, rawQuery, _ := strings.Cut(got, "?")
+	if base != "tskey-client-my-secret" {
+		t.Fatalf("GetAuthKey() base = %q, want client secret priority", base)
+	}
+	values, err := url.ParseQuery(rawQuery)
+	if err != nil {
+		t.Fatalf("ParseQuery() error = %v", err)
+	}
+	if values.Get("ephemeral") != "true" || values.Get("preauthorized") != "true" {
+		t.Fatalf("GetAuthKey() query = %q, want explicit ephemeral/preauthorized", rawQuery)
 	}
 }
 
@@ -756,12 +768,65 @@ func TestGetAuthKey_ClientSecretOnly(t *testing.T) {
 		t.Fatalf("SaveClientSecret() error = %v", err)
 	}
 
-	got, err := GetAuthKey(context.Background(), AuthKeyOptions{})
+	got, err := GetAuthKey(context.Background(), AuthKeyOptions{Tags: []string{"tag:test"}})
 	if err != nil {
 		t.Fatalf("GetAuthKey() error = %v", err)
 	}
-	if got != "tskey-client-only" {
-		t.Fatalf("GetAuthKey() = %q, want %q", got, "tskey-client-only")
+	if !strings.HasPrefix(got, "tskey-client-only?") {
+		t.Fatalf("GetAuthKey() = %q, want client secret with auth attributes", got)
+	}
+	values, err := url.ParseQuery(strings.TrimPrefix(got, "tskey-client-only?"))
+	if err != nil {
+		t.Fatalf("ParseQuery() error = %v", err)
+	}
+	if values.Get("ephemeral") != "false" || values.Get("preauthorized") != "true" {
+		t.Fatalf("query = %q, want explicit ephemeral=false and preauthorized=true", values.Encode())
+	}
+}
+
+func TestGetAuthKey_ClientSecretRequiresTags(t *testing.T) {
+	setup(t)
+
+	if err := SaveClientSecret("tskey-client-only"); err != nil {
+		t.Fatalf("SaveClientSecret() error = %v", err)
+	}
+
+	_, err := GetAuthKey(context.Background(), AuthKeyOptions{})
+	if err == nil {
+		t.Fatal("GetAuthKey() error = nil, want tags-required error")
+	}
+	if !strings.Contains(err.Error(), "requires service tags") {
+		t.Fatalf("GetAuthKey() error = %v, want service tags error", err)
+	}
+}
+
+func TestGetAuthKey_ClientSecretPreservesBaseURLAndOverwritesAttrs(t *testing.T) {
+	setup(t)
+
+	if err := SaveClientSecret("tskey-client-secret?baseURL=https%3A%2F%2Fheadscale.example.com&ephemeral=true&preauthorized=false"); err != nil {
+		t.Fatalf("SaveClientSecret() error = %v", err)
+	}
+
+	got, err := GetAuthKey(context.Background(), AuthKeyOptions{
+		Tags:      []string{"tag:test"},
+		Ephemeral: false,
+	})
+	if err != nil {
+		t.Fatalf("GetAuthKey() error = %v", err)
+	}
+	_, rawQuery, ok := strings.Cut(got, "?")
+	if !ok {
+		t.Fatalf("GetAuthKey() = %q, want query attributes", got)
+	}
+	values, err := url.ParseQuery(rawQuery)
+	if err != nil {
+		t.Fatalf("ParseQuery() error = %v", err)
+	}
+	if values.Get("baseURL") != "https://headscale.example.com" {
+		t.Fatalf("baseURL = %q, want preserved Headscale URL", values.Get("baseURL"))
+	}
+	if values.Get("ephemeral") != "false" || values.Get("preauthorized") != "true" {
+		t.Fatalf("query = %q, want overwritten ephemeral=false/preauthorized=true", values.Encode())
 	}
 }
 
@@ -792,8 +857,8 @@ func TestDeriveAuthKey_Success(t *testing.T) {
 	createKeyFunc = func(_ *tailscale.Client, _ context.Context, req tailscale.CreateKeyRequest) (*tailscale.Key, error) {
 		// Verify capabilities are passed correctly.
 		caps := req.Capabilities
-		if !caps.Devices.Create.Reusable {
-			t.Error("expected Reusable=true")
+		if caps.Devices.Create.Reusable {
+			t.Error("expected Reusable=false")
 		}
 		if !caps.Devices.Create.Preauthorized {
 			t.Error("expected Preauthorized=true")
@@ -804,12 +869,19 @@ func TestDeriveAuthKey_Success(t *testing.T) {
 		if len(caps.Devices.Create.Tags) != 1 || caps.Devices.Create.Tags[0] != "tag:test" {
 			t.Errorf("Tags = %v, want [tag:test]", caps.Devices.Create.Tags)
 		}
+		if req.ExpirySeconds <= 0 || req.ExpirySeconds > derivedAuthKeyExpirySeconds {
+			t.Errorf("ExpirySeconds = %d, want short-lived startup key", req.ExpirySeconds)
+		}
+		if req.Description != "TSLink service test startup auth key" {
+			t.Errorf("Description = %q, want service-specific description", req.Description)
+		}
 		return &tailscale.Key{Key: "tskey-auth-derived"}, nil
 	}
 
 	secret, err := DeriveAuthKey(context.Background(), AuthKeyOptions{
-		Tags:      []string{"tag:test"},
-		Ephemeral: true,
+		Tags:        []string{"tag:test"},
+		Ephemeral:   true,
+		Description: "TSLink service test startup auth key",
 	})
 	if err != nil {
 		t.Fatalf("DeriveAuthKey() error = %v", err)

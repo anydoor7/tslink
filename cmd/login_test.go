@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/monody0007/tslink/internal/credentials"
+	"github.com/monody0007/tslink/internal/tailapi"
 	"github.com/zalando/go-keyring"
 )
 
@@ -294,5 +296,74 @@ func TestLoginCredentialFlow_EnsureTagsFailureNonFatal(t *testing.T) {
 	err := loginCredentialFlow(loginCmd, dir)
 	if err != nil {
 		t.Fatalf("expected success (non-fatal), got: %v", err)
+	}
+}
+
+func TestLoginWithAPIKeyClearsStaleClientSecret(t *testing.T) {
+	setupLoginTest(t)
+
+	if err := credentials.SaveClientSecret("tskey-client-stale"); err != nil {
+		t.Fatalf("SaveClientSecret() error = %v", err)
+	}
+
+	oldVerify := loginVerifyAPIKeyFn
+	oldEnsure := loginEnsureTagsFn
+	t.Cleanup(func() {
+		loginVerifyAPIKeyFn = oldVerify
+		loginEnsureTagsFn = oldEnsure
+	})
+	loginVerifyAPIKeyFn = func(ctx context.Context) error { return nil }
+	loginEnsureTagsFn = func(ctx context.Context, tags []string) error { return nil }
+
+	if err := loginWithAPIKey(loginCmd, "tskey-api-new"); err != nil {
+		t.Fatalf("loginWithAPIKey() error = %v", err)
+	}
+
+	gotSecret, err := credentials.GetClientSecret()
+	if err != nil {
+		t.Fatalf("GetClientSecret() error = %v", err)
+	}
+	if gotSecret != "" {
+		t.Fatalf("client secret = %q, want cleared", gotSecret)
+	}
+	gotAPIKey, err := credentials.GetAPIKey()
+	if err != nil {
+		t.Fatalf("GetAPIKey() error = %v", err)
+	}
+	if gotAPIKey != "tskey-api-new" {
+		t.Fatalf("api key = %q, want newly selected API key", gotAPIKey)
+	}
+}
+
+func TestLoginWithClientSecretClearsStaleAPIKey(t *testing.T) {
+	setupLoginTest(t)
+
+	if err := credentials.SetAPIKey("tskey-api-stale"); err != nil {
+		t.Fatalf("SetAPIKey() error = %v", err)
+	}
+
+	oldEnsure := loginEnsureTagsFn
+	t.Cleanup(func() { loginEnsureTagsFn = oldEnsure })
+	loginEnsureTagsFn = func(ctx context.Context, tags []string) error {
+		return tailapi.ErrNoAPIClient
+	}
+
+	if err := loginWithClientSecret(loginCmd, "tskey-client-new"); err != nil {
+		t.Fatalf("loginWithClientSecret() error = %v", err)
+	}
+
+	gotAPIKey, err := credentials.GetAPIKey()
+	if err != nil {
+		t.Fatalf("GetAPIKey() error = %v", err)
+	}
+	if gotAPIKey != "" {
+		t.Fatalf("api key = %q, want cleared", gotAPIKey)
+	}
+	gotAuth, err := credentials.GetAuthKey(context.Background(), credentials.AuthKeyOptions{Tags: []string{"tag:tsmain"}})
+	if err != nil {
+		t.Fatalf("GetAuthKey() error = %v", err)
+	}
+	if !strings.HasPrefix(gotAuth, "tskey-client-new?") {
+		t.Fatalf("GetAuthKey() = %q, want newly selected client secret", gotAuth)
 	}
 }

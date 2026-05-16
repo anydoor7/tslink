@@ -39,12 +39,15 @@ func ReadTags(ctx context.Context) ([]string, error) {
 
 // EnsureTags checks that the given tags exist in the ACL tagOwners.
 // Missing tags are created with owner ["autogroup:admin"].
-// Returns nil if no API client is available.
+// Returns ErrNoAPIClient for non-empty tag input if no API client is available.
 func EnsureTags(ctx context.Context, tags []string) error {
 	for _, tag := range tags {
 		if err := registry.ValidateTag(tag); err != nil {
 			return err
 		}
+	}
+	if len(tags) == 0 {
+		return nil
 	}
 
 	client, err := aclClientFn()
@@ -52,7 +55,7 @@ func EnsureTags(ctx context.Context, tags []string) error {
 		return err
 	}
 	if client == nil {
-		return nil
+		return ErrNoAPIClient
 	}
 
 	acl, err := client.PolicyFile().Get(ctx)

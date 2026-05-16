@@ -2,8 +2,10 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/output"
 	"github.com/monody0007/tslink/internal/registry"
@@ -32,9 +34,11 @@ func removeService(regPath, name string, out, errOut io.Writer, isJSON bool) err
 
 	if removed {
 		if err := deleteDevicesFn(context.Background(), name); err != nil {
-			result.DeviceWarning = fmt.Sprintf("could not remove tailnet node: %v", err)
-			if !isJSON {
-				fmt.Fprintf(errOut, "→ warning: could not remove tailnet node: %v\n", err)
+			if !errors.Is(err, tailapi.ErrNoAPIClient) {
+				result.DeviceWarning = fmt.Sprintf("could not remove tailnet node: %v", err)
+				if !isJSON {
+					fmt.Fprintf(errOut, "→ warning: could not remove tailnet node: %v\n", err)
+				}
 			}
 		} else {
 			result.DeviceCleaned = true

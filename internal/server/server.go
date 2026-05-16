@@ -17,6 +17,7 @@ import (
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/metrics"
 	"github.com/monody0007/tslink/internal/registry"
+	"github.com/monody0007/tslink/internal/tailapi"
 	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/tsnet"
 )
@@ -54,15 +55,19 @@ type ServiceNode struct {
 // EnsureTagsFunc is the signature for ensuring ACL tags exist.
 type EnsureTagsFunc func(ctx context.Context, tags []string) error
 
+// AuthKeyProvider resolves auth material for a service immediately before its tsnet node starts.
+type AuthKeyProvider func(ctx context.Context, svc registry.Service) (string, error)
+
 // Server manages multiple tsnet nodes, one per registered service.
 type Server struct {
-	nodes        map[string]*ServiceNode
-	authKey      string
-	controlURL   string
-	mu           sync.RWMutex
-	cfgDir       string
-	metrics      *metrics.Metrics
-	ensureTagsFn EnsureTagsFunc
+	nodes           map[string]*ServiceNode
+	authKey         string
+	authKeyProvider AuthKeyProvider
+	controlURL      string
+	mu              sync.RWMutex
+	cfgDir          string
+	metrics         *metrics.Metrics
+	ensureTagsFn    EnsureTagsFunc
 }
 
 // New creates a new multi-node server.
@@ -72,17 +77,33 @@ func New(authKey, controlURL string) (*Server, error) {
 		return nil, err
 	}
 	return &Server{
-		nodes:      make(map[string]*ServiceNode),
-		authKey:    authKey,
-		controlURL: controlURL,
-		cfgDir:     cfgDir,
-		metrics:    metrics.New(),
+		nodes:           make(map[string]*ServiceNode),
+		authKey:         authKey,
+		authKeyProvider: staticAuthKeyProvider(authKey),
+		controlURL:      controlURL,
+		cfgDir:          cfgDir,
+		metrics:         metrics.New(),
 	}, nil
 }
 
 // SetEnsureTagsFn sets the function called to ensure ACL tags before starting nodes.
 func (s *Server) SetEnsureTagsFn(fn EnsureTagsFunc) {
 	s.ensureTagsFn = fn
+}
+
+// SetAuthKeyProvider sets the function used to resolve auth material per service.
+func (s *Server) SetAuthKeyProvider(fn AuthKeyProvider) {
+	if fn == nil {
+		s.authKeyProvider = staticAuthKeyProvider(s.authKey)
+		return
+	}
+	s.authKeyProvider = fn
+}
+
+func staticAuthKeyProvider(authKey string) AuthKeyProvider {
+	return func(context.Context, registry.Service) (string, error) {
+		return authKey, nil
+	}
 }
 
 // Run starts all registered service nodes and watches for registry changes.
@@ -113,6 +134,9 @@ func (s *Server) syncNodes(ctx context.Context) error {
 	// Build desired state
 	desired := make(map[string]registry.Service, len(reg.Services))
 	for _, svc := range reg.Services {
+		if err := validateServiceForStartup(svc); err != nil {
+			return err
+		}
 		desired[svc.Name] = svc
 	}
 
@@ -148,7 +172,11 @@ func (s *Server) syncNodes(ctx context.Context) error {
 		}
 		if len(tagsToEnsure) > 0 {
 			if err := s.ensureTagsFn(ctx, tagsToEnsure); err != nil {
-				slog.Error("failed to ensure ACL tags", "error", err)
+				if errors.Is(err, tailapi.ErrNoAPIClient) {
+					slog.Info("skipped ACL tag ensure", "reason", err.Error(), "tags", tagsToEnsure)
+				} else {
+					slog.Error("failed to ensure ACL tags", "error", err)
+				}
 			}
 		}
 	}
@@ -202,7 +230,23 @@ func sameStringSet(a, b []string) bool {
 	return true
 }
 
+func validateServiceForStartup(svc registry.Service) error {
+	if err := registry.ValidateName(svc.Name); err != nil {
+		return fmt.Errorf("service %q: %w", svc.Name, err)
+	}
+	for _, tag := range svc.Tags {
+		if err := registry.ValidateTag(tag); err != nil {
+			return fmt.Errorf("service %q has invalid tag %q: %w", svc.Name, tag, err)
+		}
+	}
+	return nil
+}
+
 func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service) error {
+	if err := validateServiceForStartup(svc); err != nil {
+		return err
+	}
+
 	nodesDir, err := config.NodesDir()
 	if err != nil {
 		return err
@@ -219,7 +263,11 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service) erro
 		controlURL = svc.ControlURL
 	}
 
-	tsnetSrv := newTSNetServerFn(svc, stateDir, s.authKey, controlURL)
+	authKey, err := s.authKeyProvider(ctx, svc)
+	if err != nil {
+		return fmt.Errorf("auth key for service %q: %w", svc.Name, err)
+	}
+	tsnetSrv := newTSNetServerFn(svc, stateDir, authKey, controlURL)
 
 	nodeCtx, cancel := context.WithCancel(ctx)
 

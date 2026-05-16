@@ -196,14 +196,14 @@ func TestValidateNameEdgeCases(t *testing.T) {
 }
 
 func TestValidateTag(t *testing.T) {
-	valid := []string{"tag:web", "tag:a", "tag:web-1", "tag:internal-api"}
+	valid := []string{"tag:web", "tag:a", "tag:web-1", "tag:internal-api", "tag:" + strings.Repeat("a", 59)}
 	for _, tag := range valid {
 		if err := ValidateTag(tag); err != nil {
 			t.Errorf("ValidateTag(%q) = error %v, want valid", tag, err)
 		}
 	}
 
-	invalid := []string{"tag:", "web", "tag:Web", "tag:-web", "tag:web-", "tag:web_api", ""}
+	invalid := []string{"tag:", "web", "tag:Web", "tag:-web", "tag:web-", "tag:web_api", "", "tag:" + strings.Repeat("a", 60)}
 	for _, tag := range invalid {
 		if err := ValidateTag(tag); err == nil {
 			t.Errorf("ValidateTag(%q) = nil, want error", tag)

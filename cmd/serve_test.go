@@ -14,6 +14,7 @@ import (
 	"github.com/monody0007/tslink/internal/credentials"
 	"github.com/monody0007/tslink/internal/registry"
 	"github.com/monody0007/tslink/internal/server"
+	"github.com/monody0007/tslink/internal/tailapi"
 	"github.com/spf13/cobra"
 	"github.com/zalando/go-keyring"
 )
@@ -45,6 +46,23 @@ func (m *mockServerWithEnsureTags) Run(ctx context.Context) error {
 	return m.ensureTagsFn(ctx, []string{"tag:hot"})
 }
 
+type mockServerWithAuthProvider struct {
+	authProvider server.AuthKeyProvider
+	service      registry.Service
+}
+
+func (m *mockServerWithAuthProvider) SetAuthKeyProvider(fn server.AuthKeyProvider) {
+	m.authProvider = fn
+}
+
+func (m *mockServerWithAuthProvider) Run(ctx context.Context) error {
+	if m.authProvider == nil {
+		return fmt.Errorf("auth key provider was not set")
+	}
+	_, err := m.authProvider(ctx, m.service)
+	return err
+}
+
 // saveServeState saves all serve function variables and returns a cleanup func.
 func saveServeState(t *testing.T) {
 	t.Helper()
@@ -54,10 +72,11 @@ func saveServeState(t *testing.T) {
 		registryPath func() (string, error)
 		loadRegistry func(string) (*registry.Registry, error)
 		getAuthKey   func(context.Context, credentials.AuthKeyOptions) (string, error)
+		checkAuth    func() error
 		pidPath      func() (string, error)
 		isRunning    func(string) bool
 		ensureTags   func(context.Context, []string) error
-		cleanup      func(context.Context, []string) error
+		cleanup      func(context.Context, []string) (tailapi.CleanupResult, error)
 		loadGlobal   func() (config.GlobalConfig, error)
 		logDir       func() (string, error)
 		daemonize    func(string, string) (int, error)
@@ -66,7 +85,7 @@ func saveServeState(t *testing.T) {
 		newServer    func(string, string) (serverRunner, error)
 	}{
 		serveEnsureDirFn, serveMigrateFn, serveRegistryPathFn, serveLoadRegistryFn,
-		serveGetAuthKeyFn, servePIDPathFn, serveIsRunningFn, serveEnsureTagsFn, serveCleanupFn,
+		serveGetAuthKeyFn, serveCheckAuthFn, servePIDPathFn, serveIsRunningFn, serveEnsureTagsFn, serveCleanupFn,
 		serveLoadGlobalFn, serveLogDirFn, serveDaemonizeFn,
 		serveWritePIDFn, serveRemovePIDFn, serveNewServerFn,
 	}
@@ -76,6 +95,7 @@ func saveServeState(t *testing.T) {
 		serveRegistryPathFn = old.registryPath
 		serveLoadRegistryFn = old.loadRegistry
 		serveGetAuthKeyFn = old.getAuthKey
+		serveCheckAuthFn = old.checkAuth
 		servePIDPathFn = old.pidPath
 		serveIsRunningFn = old.isRunning
 		serveEnsureTagsFn = old.ensureTags
@@ -112,10 +132,13 @@ func mockServeDefaults(t *testing.T, dir string) {
 	serveGetAuthKeyFn = func(ctx context.Context, opts credentials.AuthKeyOptions) (string, error) {
 		return "fake-auth-key", nil
 	}
+	serveCheckAuthFn = func() error { return nil }
 	servePIDPathFn = func() (string, error) { return pidPath, nil }
 	serveIsRunningFn = func(string) bool { return false }
 	serveEnsureTagsFn = func(ctx context.Context, tags []string) error { return nil }
-	serveCleanupFn = func(ctx context.Context, names []string) error { return nil }
+	serveCleanupFn = func(ctx context.Context, names []string) (tailapi.CleanupResult, error) {
+		return tailapi.CleanupResult{}, nil
+	}
 	serveLoadGlobalFn = func() (config.GlobalConfig, error) { return config.GlobalConfig{}, nil }
 	serveLogDirFn = func() (string, error) { return dir, nil }
 	serveDaemonizeFn = func(out, err string) (int, error) { return 99999, nil }
@@ -243,11 +266,11 @@ func TestServeCmd_LoadRegistryError(t *testing.T) {
 	}
 }
 
-func TestServeCmd_GetAuthKeyError(t *testing.T) {
+func TestServeCmd_AuthPreflightError(t *testing.T) {
 	dir := t.TempDir()
 	mockServeDefaults(t, dir)
-	serveGetAuthKeyFn = func(ctx context.Context, opts credentials.AuthKeyOptions) (string, error) {
-		return "", fmt.Errorf("not authenticated")
+	serveCheckAuthFn = func() error {
+		return fmt.Errorf("not authenticated")
 	}
 
 	cmd := findServeCmd(t)
@@ -286,8 +309,8 @@ func TestServeCmd_CleanupErrorStopsStartup(t *testing.T) {
 	mockServeDefaults(t, dir)
 
 	serverStarted := false
-	serveCleanupFn = func(ctx context.Context, names []string) error {
-		return fmt.Errorf("no API client available")
+	serveCleanupFn = func(ctx context.Context, names []string) (tailapi.CleanupResult, error) {
+		return tailapi.CleanupResult{}, fmt.Errorf("list devices: network down")
 	}
 	serveNewServerFn = func(authKey, controlURL string) (serverRunner, error) {
 		serverStarted = true
@@ -301,6 +324,28 @@ func TestServeCmd_CleanupErrorStopsStartup(t *testing.T) {
 	}
 	if serverStarted {
 		t.Fatal("server should not start after cleanup error")
+	}
+}
+
+func TestServeCmd_CleanupSkippedNoAPIClientStarts(t *testing.T) {
+	dir := t.TempDir()
+	mockServeDefaults(t, dir)
+
+	serverStarted := false
+	serveCleanupFn = func(ctx context.Context, names []string) (tailapi.CleanupResult, error) {
+		return tailapi.CleanupResult{Skipped: true, SkipReason: tailapi.ErrNoAPIClient.Error()}, tailapi.ErrNoAPIClient
+	}
+	serveNewServerFn = func(authKey, controlURL string) (serverRunner, error) {
+		serverStarted = true
+		return &mockServer{}, nil
+	}
+
+	cmd := findServeCmd(t)
+	if err := cmd.RunE(cmd, nil); err != nil {
+		t.Fatalf("RunE() error = %v, want nil for skipped cleanup", err)
+	}
+	if !serverStarted {
+		t.Fatal("server should start after no-client cleanup skip")
 	}
 }
 
@@ -341,16 +386,26 @@ func TestServeCmd_WithTagsAndEphemeral(t *testing.T) {
 		capturedOpts = opts
 		return "fake-key", nil
 	}
+	serveNewServerFn = func(authKey, controlURL string) (serverRunner, error) {
+		if authKey != "" {
+			t.Fatalf("process authKey = %q, want empty static key", authKey)
+		}
+		return &mockServerWithAuthProvider{service: reg.Services[0]}, nil
+	}
 
 	cmd := findServeCmd(t)
-	// Will call runForeground which uses mock server
-	_ = cmd.RunE(cmd, nil)
+	if err := cmd.RunE(cmd, nil); err != nil {
+		t.Fatalf("RunE() error = %v", err)
+	}
 
 	if !capturedOpts.Ephemeral {
 		t.Error("expected ephemeral=true")
 	}
 	if len(capturedOpts.Tags) != 1 || capturedOpts.Tags[0] != "tag:web" {
 		t.Errorf("expected tags=[tag:web], got: %v", capturedOpts.Tags)
+	}
+	if !strings.Contains(capturedOpts.Description, "svc1") {
+		t.Errorf("description = %q, want service name", capturedOpts.Description)
 	}
 }
 
@@ -458,5 +513,57 @@ func TestServeCmd_EnsureTagsError(t *testing.T) {
 	err := cmd.RunE(cmd, nil)
 	if err == nil || !strings.Contains(err.Error(), "ACL write denied") {
 		t.Fatalf("expected ACL error, got: %v", err)
+	}
+}
+
+func TestServeCmd_EnsureTagsNoAPIClientSkipped(t *testing.T) {
+	dir := t.TempDir()
+	mockServeDefaults(t, dir)
+
+	reg := &registry.Registry{
+		Services: []registry.Service{
+			{Name: "svc1", Type: "proxy", Target: "localhost:3000", Tags: []string{"tag:tsmain"}},
+		},
+	}
+	data, _ := json.Marshal(reg)
+	os.WriteFile(filepath.Join(dir, "registry.json"), data, 0600)
+
+	serverStarted := false
+	serveEnsureTagsFn = func(ctx context.Context, tags []string) error {
+		return tailapi.ErrNoAPIClient
+	}
+	serveNewServerFn = func(authKey, controlURL string) (serverRunner, error) {
+		serverStarted = true
+		return &mockServer{}, nil
+	}
+
+	cmd := findServeCmd(t)
+	if err := cmd.RunE(cmd, nil); err != nil {
+		t.Fatalf("RunE() error = %v, want nil for skipped tag ensure", err)
+	}
+	if !serverStarted {
+		t.Fatal("server should start after no-client tag ensure skip")
+	}
+}
+
+func TestServeCmd_InvalidTagIncludesServiceContext(t *testing.T) {
+	dir := t.TempDir()
+	mockServeDefaults(t, dir)
+
+	reg := &registry.Registry{
+		Services: []registry.Service{
+			{Name: "legacy", Type: "proxy", Target: "localhost:3000", Tags: []string{"tag:Bad"}},
+		},
+	}
+	data, _ := json.Marshal(reg)
+	os.WriteFile(filepath.Join(dir, "registry.json"), data, 0600)
+
+	cmd := findServeCmd(t)
+	err := cmd.RunE(cmd, nil)
+	if err == nil {
+		t.Fatal("RunE() error = nil, want invalid tag error")
+	}
+	if !strings.Contains(err.Error(), `service "legacy" has invalid tag "tag:Bad"`) {
+		t.Fatalf("error = %v, want service/tag context", err)
 	}
 }

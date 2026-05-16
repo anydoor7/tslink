@@ -3,7 +3,9 @@ package credentials
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/monody0007/tslink/internal/config"
@@ -15,6 +17,8 @@ const (
 	keychainService      = "tslink"
 	keychainAPIKey       = "api-key"
 	keychainClientSecret = "client-secret"
+
+	derivedAuthKeyExpirySeconds = 10 * 60
 )
 
 // Testable seams.
@@ -147,11 +151,12 @@ func NewTailscaleClient() (*tailscale.Client, error) {
 
 // AuthKeyOptions configures the derived auth key.
 type AuthKeyOptions struct {
-	Tags      []string
-	Ephemeral bool
+	Tags        []string
+	Ephemeral   bool
+	Description string
 }
 
-// DeriveAuthKey creates a reusable, pre-authorized auth key from the API key.
+// DeriveAuthKey creates a short-lived, single-use, pre-authorized auth key from the API key.
 func DeriveAuthKey(ctx context.Context, opts AuthKeyOptions) (string, error) {
 	client, err := newTailscaleClientFunc()
 	if err != nil {
@@ -162,13 +167,19 @@ func DeriveAuthKey(ctx context.Context, opts AuthKeyOptions) (string, error) {
 	}
 
 	var caps tailscale.KeyCapabilities
-	caps.Devices.Create.Reusable = true
+	caps.Devices.Create.Reusable = false
 	caps.Devices.Create.Ephemeral = opts.Ephemeral
 	caps.Devices.Create.Preauthorized = true
 	caps.Devices.Create.Tags = opts.Tags
 
+	description := strings.TrimSpace(opts.Description)
+	if description == "" {
+		description = "TSLink service startup auth key"
+	}
 	req := tailscale.CreateKeyRequest{
-		Capabilities: caps,
+		Capabilities:  caps,
+		ExpirySeconds: derivedAuthKeyExpirySeconds,
+		Description:   description,
 	}
 
 	key, err := createKeyFunc(client, ctx, req)
@@ -176,6 +187,67 @@ func DeriveAuthKey(ctx context.Context, opts AuthKeyOptions) (string, error) {
 		return "", fmt.Errorf("derive auth key: %w", err)
 	}
 	return key.Key, nil
+}
+
+// HasStoredCredential reports whether any supported auth credential is configured
+// without deriving or consuming a fresh auth key.
+func HasStoredCredential() (bool, error) {
+	clientSecret, err := GetClientSecret()
+	if err != nil {
+		return false, err
+	}
+	if clientSecret != "" {
+		return true, nil
+	}
+
+	apiKey, err := GetAPIKey()
+	if err != nil {
+		return false, err
+	}
+	if apiKey != "" {
+		return true, nil
+	}
+
+	authKeyPath, err := authKeyPathFunc()
+	if err != nil {
+		return false, err
+	}
+	b, err := os.ReadFile(authKeyPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return strings.TrimSpace(string(b)) != "", nil
+}
+
+// RequireStoredCredential returns a user-facing auth error if no credential exists.
+func RequireStoredCredential() error {
+	ok, err := HasStoredCredential()
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("not authenticated — run 'tslink login' first")
+	}
+	return nil
+}
+
+func clientSecretAuthKey(clientSecret string, opts AuthKeyOptions) (string, error) {
+	if len(opts.Tags) == 0 {
+		return "", fmt.Errorf("client secret auth requires service tags — configure at least one tag for this service")
+	}
+
+	base, rawQuery, _ := strings.Cut(clientSecret, "?")
+	values, err := url.ParseQuery(rawQuery)
+	if err != nil {
+		return "", fmt.Errorf("parse client secret auth attributes: %w", err)
+	}
+	values.Set("ephemeral", strconv.FormatBool(opts.Ephemeral))
+	values.Set("preauthorized", "true")
+
+	return base + "?" + values.Encode(), nil
 }
 
 // GetAuthKey returns a usable auth key, trying (in order):
@@ -189,7 +261,7 @@ func GetAuthKey(ctx context.Context, opts AuthKeyOptions) (string, error) {
 		return "", csErr
 	}
 	if clientSecret != "" {
-		return clientSecret, nil
+		return clientSecretAuthKey(clientSecret, opts)
 	}
 
 	// Try deriving from API key
