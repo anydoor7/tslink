@@ -27,6 +27,9 @@ If the service is not installed, prints a message and exits cleanly.
 To check if the service is still active after removal:
   systemctl --user status tslink
 
+If you enabled lingering only for TSLink, disable it after uninstall:
+  loginctl disable-linger "$USER"
+
 Examples:
   tslink uninstall              Remove the systemd user service`,
 	RunE: func(cmd *cobra.Command, args []string) error {

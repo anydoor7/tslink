@@ -5,11 +5,11 @@ package cmd
 import (
 	"bytes"
 	"fmt"
+	"html/template"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"text/template"
 
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/output"
@@ -37,6 +37,14 @@ var (
 
 const plistLabel = "com.tslink.daemon"
 const launchdThrottleInterval = 30
+
+type launchctlLoadResult struct {
+	Domain  string
+	Target  string
+	Output  string
+	Err     error
+	Warning string
+}
 
 var plistTemplate = template.Must(template.New("plist").Parse(`<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -82,15 +90,22 @@ This command:
   2. Configures it to run 'tslink serve' at login with auto-restart (KeepAlive)
   3. Logs stdout to ~/.config/tslink/logs/tslink.out.log
   4. Logs stderr to ~/.config/tslink/logs/tslink.err.log
-  5. Uses launchd throttling to avoid tight restart loops on repeated failures
-  6. Loads the agent immediately via 'launchctl bootstrap gui/$(id -u)'
+  5. Uses launchd ThrottleInterval=30 to avoid tight restart loops on failures
+  6. Reloads the agent immediately with bootout-then-bootstrap
+  7. Falls back from gui/$(id -u) to user/$(id -u) in SSH/headless sessions
 
 To check if the agent is loaded:
   launchctl list | grep tslink
   launchctl print gui/$(id -u)/com.tslink.daemon
+  launchctl print user/$(id -u)/com.tslink.daemon
 
 To remove the autostart:
   tslink uninstall
+
+Headless/SSH caveat:
+  macOS may not expose gui/$(id -u) until a desktop login exists. In that case
+  tslink install tries launchctl bootstrap user/$(id -u) and prints the domain
+  it used. Re-run tslink install from a desktop login to move back to gui/$(id -u).
 
 Examples:
   tslink install                Register and start the LaunchAgent`,
@@ -135,32 +150,38 @@ Examples:
 			return fmt.Errorf("write plist: %w", err)
 		}
 
-		target := launchctlServiceTarget()
-		loadOutput, loadErr := launchctlCombinedOutput("bootstrap", launchctlDomain(), plistPath)
-		outputText := strings.TrimSpace(string(loadOutput))
+		loadResult := reinstallLaunchAgent(plistPath)
 
 		if jsonOutput(cmd) {
 			result := InstallResult{
 				PlistPath:       plistPath,
-				Loaded:          loadErr == nil,
-				LaunchctlTarget: target,
-				LaunchctlOutput: outputText,
+				Loaded:          loadResult.Err == nil,
+				LaunchctlTarget: loadResult.Target,
+				LaunchctlOutput: loadResult.Output,
+				Warning:         loadResult.Warning,
 			}
-			if loadErr != nil {
-				result.Warning = launchctlWarning("LaunchAgent plist installed but launchctl bootstrap failed", loadErr, loadOutput)
+			if loadResult.Err != nil && result.Warning == "" {
+				result.Warning = launchctlWarning("LaunchAgent plist installed but launchctl bootstrap failed", loadResult.Err, []byte(loadResult.Output))
 			}
 			output.Success("install", result)
 			return nil
 		}
 
-		if loadErr != nil {
-			fmt.Fprintf(cmd.OutOrStdout(), "→ ⚠ %s\n", launchctlWarning("LaunchAgent installed but could not auto-load", loadErr, loadOutput))
-			fmt.Fprintf(cmd.OutOrStdout(), "  Run 'launchctl bootstrap %s %s' manually\n", launchctlDomain(), plistPath)
-		} else {
-			if outputText != "" {
-				fmt.Fprintf(cmd.OutOrStdout(), "→ launchctl output: %s\n", outputText)
+		if loadResult.Err != nil {
+			warning := loadResult.Warning
+			if warning == "" {
+				warning = launchctlWarning("LaunchAgent installed but could not auto-load", loadResult.Err, []byte(loadResult.Output))
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "→ ✓ LaunchAgent installed and loaded: %s\n", plistPath)
+			fmt.Fprintf(cmd.OutOrStdout(), "→ ⚠ %s\n", warning)
+			fmt.Fprintf(cmd.OutOrStdout(), "  Run 'launchctl bootstrap %s %s' manually\n", loadResult.Domain, plistPath)
+		} else {
+			if loadResult.Warning != "" {
+				fmt.Fprintf(cmd.OutOrStdout(), "→ ⚠ %s\n", loadResult.Warning)
+			}
+			if loadResult.Output != "" {
+				fmt.Fprintf(cmd.OutOrStdout(), "→ launchctl output: %s\n", loadResult.Output)
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "→ ✓ LaunchAgent installed and loaded in %s: %s\n", loadResult.Domain, plistPath)
 		}
 		return nil
 	},
@@ -178,8 +199,86 @@ func launchctlDomain() string {
 	return fmt.Sprintf("gui/%d", userUIDFn())
 }
 
+func launchctlUserDomain() string {
+	return fmt.Sprintf("user/%d", userUIDFn())
+}
+
 func launchctlServiceTarget() string {
-	return launchctlDomain() + "/" + plistLabel
+	return launchctlServiceTargetForDomain(launchctlDomain())
+}
+
+func launchctlServiceTargetForDomain(domain string) string {
+	return domain + "/" + plistLabel
+}
+
+func reinstallLaunchAgent(plistPath string) launchctlLoadResult {
+	guiDomain := launchctlDomain()
+	userDomain := launchctlUserDomain()
+	bootoutLaunchAgentTargets(guiDomain, userDomain)
+
+	output, err := launchctlCombinedOutput("bootstrap", guiDomain, plistPath)
+	if err == nil {
+		return launchctlLoadResult{
+			Domain: guiDomain,
+			Target: launchctlServiceTargetForDomain(guiDomain),
+			Output: strings.TrimSpace(string(output)),
+		}
+	}
+	if !launchctlDomainNotFound(output, err) {
+		return launchctlLoadResult{
+			Domain: guiDomain,
+			Target: launchctlServiceTargetForDomain(guiDomain),
+			Output: strings.TrimSpace(string(output)),
+			Err:    err,
+		}
+	}
+
+	fallbackOutput, fallbackErr := launchctlCombinedOutput("bootstrap", userDomain, plistPath)
+	combinedOutput := combineLaunchctlOutput(output, fallbackOutput)
+	warning := fmt.Sprintf("launchctl %s is unavailable in this SSH/headless session; tried %s fallback", guiDomain, userDomain)
+	if fallbackErr != nil {
+		return launchctlLoadResult{
+			Domain:  userDomain,
+			Target:  launchctlServiceTargetForDomain(userDomain),
+			Output:  combinedOutput,
+			Err:     fallbackErr,
+			Warning: launchctlWarning(warning, fallbackErr, []byte(combinedOutput)),
+		}
+	}
+	return launchctlLoadResult{
+		Domain:  userDomain,
+		Target:  launchctlServiceTargetForDomain(userDomain),
+		Output:  combinedOutput,
+		Warning: warning,
+	}
+}
+
+func bootoutLaunchAgentTargets(domains ...string) {
+	for _, domain := range domains {
+		_, _ = launchctlCombinedOutput("bootout", launchctlServiceTargetForDomain(domain))
+	}
+}
+
+func launchctlDomainNotFound(output []byte, err error) bool {
+	text := strings.ToLower(string(output))
+	if err != nil {
+		text += "\n" + strings.ToLower(err.Error())
+	}
+	return strings.Contains(text, "domain does not exist") ||
+		strings.Contains(text, "could not find domain for:") ||
+		strings.Contains(text, "domain is not found") ||
+		strings.Contains(text, "no such domain")
+}
+
+func combineLaunchctlOutput(outputs ...[]byte) string {
+	var parts []string
+	for _, output := range outputs {
+		text := strings.TrimSpace(string(output))
+		if text != "" {
+			parts = append(parts, text)
+		}
+	}
+	return strings.Join(parts, "\n")
 }
 
 func launchctlWarning(message string, err error, combinedOutput []byte) string {

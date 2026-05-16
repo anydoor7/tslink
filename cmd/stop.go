@@ -56,9 +56,10 @@ to TSLink before stopping it. On macOS/Linux, TSLink sends SIGTERM so the
 daemon can shut down tsnet nodes gracefully. On Windows, TSLink currently uses
 process termination, so stop is not graceful there.
 
-If TSLink was installed as a macOS LaunchAgent, launchd KeepAlive may restart
-the daemon after 'tslink stop'. Run 'tslink uninstall' first when you want to
-disable macOS autostart instead of restarting.
+If TSLink was installed as a macOS LaunchAgent, launchd KeepAlive will restart
+the daemon after 'tslink stop', throttled by ThrottleInterval=30. Run
+'tslink uninstall' first when you want to disable macOS autostart instead of
+restarting.
 
 If the daemon is not running, the stale PID file (if any) is cleaned up and
 a "not running" message is displayed.

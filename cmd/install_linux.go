@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -19,7 +20,8 @@ var (
 	linuxUserHomeDirFn       = os.UserHomeDir
 	linuxExecutablePathFn    = os.Executable
 	linuxEvalSymlinksFn      = filepath.EvalSymlinks
-	linuxUserNameFn          = func() string { return os.Getenv("USER") }
+	linuxUserNameFn          = defaultLinuxUserName
+	linuxUserIDFn            = os.Getuid
 	systemctlCombinedOutput  = func(args ...string) ([]byte, error) { return exec.Command("systemctl", args...).CombinedOutput() }
 	loginctlCombinedOutputFn = func(args ...string) ([]byte, error) { return exec.Command("loginctl", args...).CombinedOutput() }
 )
@@ -48,6 +50,9 @@ To remove the autostart:
 
 For headless Linux hosts where the service must survive logout:
   loginctl enable-linger "$USER"
+
+If lingering was enabled only for TSLink, disable it after uninstall:
+  loginctl disable-linger "$USER"
 
 Examples:
   tslink install                Register and start the systemd service`,
@@ -108,12 +113,41 @@ RestartSec=%d
 
 [Install]
 WantedBy=default.target
-`, exe, systemdRestartSec)
+`, systemdQuoteExecPath(exe), systemdRestartSec)
+}
+
+func systemdQuoteExecPath(path string) string {
+	var b strings.Builder
+	b.WriteByte('"')
+	for _, r := range path {
+		switch r {
+		case '%':
+			b.WriteString("%%")
+		case '"':
+			b.WriteString(`\"`)
+		case '\\':
+			b.WriteString(`\\`)
+		default:
+			b.WriteRune(r)
+		}
+	}
+	b.WriteByte('"')
+	return b.String()
+}
+
+func defaultLinuxUserName() string {
+	if user := os.Getenv("USER"); user != "" {
+		return user
+	}
+	if logname := os.Getenv("LOGNAME"); logname != "" {
+		return logname
+	}
+	return strconv.Itoa(linuxUserIDFn())
 }
 
 func linuxLingerWarning() string {
 	user := linuxUserNameFn()
-	guidance := `run 'loginctl enable-linger "$USER"' so the user service can survive logout`
+	guidance := `run 'loginctl enable-linger "$USER"' so the user service can survive logout; after uninstall, run 'loginctl disable-linger "$USER"' if lingering was enabled only for TSLink`
 	if user == "" {
 		return "could not check systemd lingering because USER is not set; " + guidance
 	}

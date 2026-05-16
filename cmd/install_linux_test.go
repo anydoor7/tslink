@@ -16,12 +16,27 @@ func TestSystemdServiceContentsThrottlesRestart(t *testing.T) {
 	for _, want := range []string{
 		"StartLimitIntervalSec=300",
 		"StartLimitBurst=5",
+		`ExecStart="/usr/local/bin/tslink" serve`,
 		"Restart=on-failure",
 		"RestartSec=30",
 	} {
 		if !strings.Contains(unit, want) {
 			t.Fatalf("unit missing %q:\n%s", want, unit)
 		}
+	}
+}
+
+func TestSystemdServiceContentsQuotesExecutableWithSpaces(t *testing.T) {
+	unit := systemdServiceContents("/opt/My App/tslink")
+	if !strings.Contains(unit, `ExecStart="/opt/My App/tslink" serve`) {
+		t.Fatalf("unit did not quote executable path with spaces:\n%s", unit)
+	}
+}
+
+func TestSystemdServiceContentsEscapesSystemdSpecials(t *testing.T) {
+	unit := systemdServiceContents(`/opt/100% "TSLink"\tslink`)
+	if !strings.Contains(unit, `ExecStart="/opt/100%% \"TSLink\"\\tslink" serve`) {
+		t.Fatalf("unit did not escape systemd executable path:\n%s", unit)
 	}
 }
 
@@ -44,7 +59,7 @@ func TestLinuxInstallCommandRunsSystemctlAndWarnsAboutLinger(t *testing.T) {
 	})
 
 	linuxUserHomeDirFn = func() (string, error) { return home, nil }
-	linuxExecutablePathFn = func() (string, error) { return "/opt/TSLink/tslink", nil }
+	linuxExecutablePathFn = func() (string, error) { return "/opt/My App/tslink", nil }
 	linuxEvalSymlinksFn = func(path string) (string, error) { return path, nil }
 	linuxUserNameFn = func() string { return "alice" }
 	loginctlCombinedOutputFn = func(args ...string) ([]byte, error) {
@@ -76,6 +91,9 @@ func TestLinuxInstallCommandRunsSystemctlAndWarnsAboutLinger(t *testing.T) {
 	if !strings.Contains(errOut.String(), `loginctl enable-linger "$USER"`) {
 		t.Fatalf("linger warning missing guidance: %s", errOut.String())
 	}
+	if !strings.Contains(errOut.String(), `loginctl disable-linger "$USER"`) {
+		t.Fatalf("linger warning missing uninstall guidance: %s", errOut.String())
+	}
 
 	servicePath := filepath.Join(home, ".config", "systemd", "user", systemdServiceName)
 	unit, readErr := os.ReadFile(servicePath)
@@ -84,6 +102,9 @@ func TestLinuxInstallCommandRunsSystemctlAndWarnsAboutLinger(t *testing.T) {
 	}
 	if !strings.Contains(string(unit), "StartLimitBurst=5") {
 		t.Fatalf("unit missing StartLimitBurst:\n%s", unit)
+	}
+	if !strings.Contains(string(unit), `ExecStart="/opt/My App/tslink" serve`) {
+		t.Fatalf("unit missing quoted ExecStart:\n%s", unit)
 	}
 }
 
@@ -183,7 +204,26 @@ func TestLinuxLingerWarningWhenLoginctlUnavailable(t *testing.T) {
 	}
 
 	warning := linuxLingerWarning()
-	if !strings.Contains(warning, "loginctl missing") || !strings.Contains(warning, `loginctl enable-linger "$USER"`) {
-		t.Fatalf("warning = %q, want loginctl output and enable-linger guidance", warning)
+	for _, want := range []string{"loginctl missing", `loginctl enable-linger "$USER"`, `loginctl disable-linger "$USER"`} {
+		if !strings.Contains(warning, want) {
+			t.Fatalf("warning = %q, want %q", warning, want)
+		}
+	}
+}
+
+func TestDefaultLinuxUserNameFallsBackToLognameAndUID(t *testing.T) {
+	oldUID := linuxUserIDFn
+	t.Cleanup(func() { linuxUserIDFn = oldUID })
+
+	t.Setenv("USER", "")
+	t.Setenv("LOGNAME", "logname-user")
+	if got := defaultLinuxUserName(); got != "logname-user" {
+		t.Fatalf("defaultLinuxUserName() = %q, want LOGNAME fallback", got)
+	}
+
+	t.Setenv("LOGNAME", "")
+	linuxUserIDFn = func() int { return 12345 }
+	if got := defaultLinuxUserName(); got != "12345" {
+		t.Fatalf("defaultLinuxUserName() = %q, want UID fallback", got)
 	}
 }

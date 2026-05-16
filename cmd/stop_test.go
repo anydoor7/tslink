@@ -27,7 +27,7 @@ func TestStopHelpDocumentsMacOSLaunchAgentRestart(t *testing.T) {
 	}
 
 	help := stopCmd.Long
-	for _, want := range []string{"LaunchAgent", "KeepAlive", "tslink uninstall"} {
+	for _, want := range []string{"LaunchAgent", "KeepAlive", "will restart", "ThrottleInterval=30", "tslink uninstall"} {
 		if !strings.Contains(help, want) {
 			t.Fatalf("stop help = %q, want macOS autostart restart caveat containing %q", help, want)
 		}

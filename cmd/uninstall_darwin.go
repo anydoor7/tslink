@@ -5,6 +5,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/monody0007/tslink/internal/output"
 	"github.com/spf13/cobra"
@@ -19,13 +20,19 @@ type UninstallResult struct {
 	Warning         string `json:"warning,omitempty"`
 }
 
+type launchctlBootoutResult struct {
+	Target string
+	Output string
+	Err    error
+}
+
 var uninstallCmd = &cobra.Command{
 	Use:   "uninstall",
 	Short: "Remove as macOS LaunchAgent",
 	Long: `Remove the TSLink macOS LaunchAgent so it no longer auto-starts.
 
 This command:
-  1. Unloads the agent via 'launchctl bootout gui/$(id -u)/com.tslink.daemon'
+  1. Unloads the agent from gui/$(id -u), or user/$(id -u) for headless installs
   2. Deletes ~/Library/LaunchAgents/com.tslink.daemon.plist
 
 If the LaunchAgent is not installed, prints a message and exits cleanly.
@@ -50,11 +57,10 @@ Examples:
 			return fmt.Errorf("stat plist: %w", err)
 		}
 
-		target := launchctlServiceTarget()
-		bootoutOutput, bootoutErr := launchctlCombinedOutput("bootout", target)
+		bootout := bootoutLaunchAgent()
 		warning := ""
-		if bootoutErr != nil {
-			warning = launchctlWarning("LaunchAgent plist removed but launchctl bootout failed", bootoutErr, bootoutOutput)
+		if bootout.Err != nil {
+			warning = launchctlWarning("LaunchAgent plist removed but launchctl bootout failed", bootout.Err, []byte(bootout.Output))
 		}
 
 		if err := os.Remove(path); err != nil {
@@ -65,8 +71,8 @@ Examples:
 			output.Success("uninstall", UninstallResult{
 				PlistPath:       path,
 				Removed:         true,
-				LaunchctlTarget: target,
-				LaunchctlOutput: string(bootoutOutput),
+				LaunchctlTarget: bootout.Target,
+				LaunchctlOutput: bootout.Output,
 				Warning:         warning,
 			})
 			return nil
@@ -78,6 +84,28 @@ Examples:
 		fmt.Fprintln(cmd.OutOrStdout(), "→ ✓ LaunchAgent removed")
 		return nil
 	},
+}
+
+func bootoutLaunchAgent() launchctlBootoutResult {
+	targets := []string{
+		launchctlServiceTargetForDomain(launchctlDomain()),
+		launchctlServiceTargetForDomain(launchctlUserDomain()),
+	}
+	var outputs []string
+	var last launchctlBootoutResult
+	for _, target := range targets {
+		output, err := launchctlCombinedOutput("bootout", target)
+		text := strings.TrimSpace(string(output))
+		if text != "" {
+			outputs = append(outputs, text)
+		}
+		last = launchctlBootoutResult{Target: target, Output: strings.Join(outputs, "\n"), Err: err}
+		if err == nil {
+			last.Output = strings.Join(outputs, "\n")
+			return last
+		}
+	}
+	return last
 }
 
 func init() {

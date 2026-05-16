@@ -20,6 +20,7 @@ var (
 	executable  = os.Executable
 	execCommand = exec.Command
 	startCmd    = func(cmd *exec.Cmd) error { return cmd.Start() }
+	setUmask    = syscall.Umask
 
 	processExecutable = defaultProcessExecutable
 )
@@ -79,10 +80,13 @@ func Daemonize(outLog, errLog, controlURL string) (int, error) {
 	cmd.Dir = "/"
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 
-	if err := startCmd(cmd); err != nil {
+	oldUmask := setUmask(0o077)
+	startErr := startCmd(cmd)
+	setUmask(oldUmask)
+	if startErr != nil {
 		_ = stdout.Close()
 		_ = stderr.Close()
-		return 0, fmt.Errorf("start daemon: %w", err)
+		return 0, fmt.Errorf("start daemon: %w", startErr)
 	}
 
 	pid := cmd.Process.Pid
