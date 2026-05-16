@@ -192,7 +192,7 @@ func validateServiceForServe(svc registry.Service) error {
 	}
 	for _, tag := range svc.Tags {
 		if err := registry.ValidateTag(tag); err != nil {
-			return fmt.Errorf("service %q has invalid tag %q: %w", svc.Name, tag, err)
+			return fmt.Errorf("service %q has invalid tag %q: %w; fix with `tslink tags set %s tag:<lowercase-hyphen-name>` or edit registry.json", svc.Name, tag, err, svc.Name)
 		}
 	}
 	return nil

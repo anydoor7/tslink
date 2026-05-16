@@ -349,6 +349,28 @@ func TestServeCmd_CleanupSkippedNoAPIClientStarts(t *testing.T) {
 	}
 }
 
+func TestServeCmd_CleanupSkippedNoAPIClientNilErrorStarts(t *testing.T) {
+	dir := t.TempDir()
+	mockServeDefaults(t, dir)
+
+	serverStarted := false
+	serveCleanupFn = func(ctx context.Context, names []string) (tailapi.CleanupResult, error) {
+		return tailapi.CleanupResult{Skipped: true, SkipReason: tailapi.ErrNoAPIClient.Error()}, nil
+	}
+	serveNewServerFn = func(authKey, controlURL string) (serverRunner, error) {
+		serverStarted = true
+		return &mockServer{}, nil
+	}
+
+	cmd := findServeCmd(t)
+	if err := cmd.RunE(cmd, nil); err != nil {
+		t.Fatalf("RunE() error = %v, want nil for skipped cleanup", err)
+	}
+	if !serverStarted {
+		t.Fatal("server should start after no-client cleanup skip")
+	}
+}
+
 func TestServeCmd_MigrationMessage(t *testing.T) {
 	dir := t.TempDir()
 	mockServeDefaults(t, dir)
@@ -565,5 +587,8 @@ func TestServeCmd_InvalidTagIncludesServiceContext(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), `service "legacy" has invalid tag "tag:Bad"`) {
 		t.Fatalf("error = %v, want service/tag context", err)
+	}
+	if !strings.Contains(err.Error(), "tag:<lowercase-hyphen-name>") || !strings.Contains(err.Error(), "tslink tags set legacy") {
+		t.Fatalf("error = %v, want grammar and migration action", err)
 	}
 }

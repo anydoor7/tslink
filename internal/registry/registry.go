@@ -18,6 +18,9 @@ const (
 	TypeTCP   = "tcp"
 
 	maxTagLength = 63
+
+	// TagGrammar describes the strict Tailscale ACL tag syntax accepted by TSLink.
+	TagGrammar = "tag:<lowercase-hyphen-name> using lowercase letters, numbers, and hyphens"
 )
 
 var nameRegexp = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
@@ -68,10 +71,10 @@ func ValidateName(name string) error {
 
 func ValidateTag(tag string) error {
 	if len(tag) > maxTagLength {
-		return fmt.Errorf("invalid tag: %q exceeds %d characters", tag, maxTagLength)
+		return fmt.Errorf("invalid tag %q: exceeds %d characters; must match %s", tag, maxTagLength, TagGrammar)
 	}
 	if !tagRegexp.MatchString(tag) {
-		return fmt.Errorf("invalid tag: %q", tag)
+		return fmt.Errorf("invalid tag %q: must match %s", tag, TagGrammar)
 	}
 	return nil
 }

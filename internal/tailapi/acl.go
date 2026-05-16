@@ -15,14 +15,14 @@ const DefaultTag = "tag:tsmain"
 var aclClientFn = credentials.NewTailscaleClient
 
 // ReadTags returns all tag names from the tailnet ACL tagOwners.
-// Returns (nil, nil) if no API client is available.
+// Returns ErrNoAPIClient if no API client is available.
 func ReadTags(ctx context.Context) ([]string, error) {
 	client, err := aclClientFn()
 	if err != nil {
 		return nil, err
 	}
 	if client == nil {
-		return nil, nil
+		return nil, ErrNoAPIClient
 	}
 
 	acl, err := client.PolicyFile().Get(ctx)

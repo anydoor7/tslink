@@ -12,6 +12,7 @@ import (
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/output"
 	"github.com/monody0007/tslink/internal/registry"
+	"github.com/monody0007/tslink/internal/tailapi"
 )
 
 // captureStdout captures output written to os.Stdout during fn execution.
@@ -720,6 +721,34 @@ func TestTagsPullJSON(t *testing.T) {
 	}
 	if data["default_tag"] != "tag:tsmain" {
 		t.Errorf("expected default_tag=tag:tsmain, got %v", data["default_tag"])
+	}
+}
+
+func TestTagsPullJSON_NoAPIClientSkipped(t *testing.T) {
+	setTagsMocks(t)
+	mockDefaults()
+	tagsReadTagsFn = func(ctx context.Context) ([]string, error) {
+		return nil, tailapi.ErrNoAPIClient
+	}
+
+	var buf bytes.Buffer
+	got := captureStdout(t, func() {
+		if err := tagsPullRun(context.Background(), &buf, true); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	res := parseResult(t, got)
+	if res.Command != "tags pull" {
+		t.Errorf("expected command='tags pull', got %s", res.Command)
+	}
+
+	data := dataMap(t, got)
+	if data["skipped"] != true {
+		t.Fatalf("expected skipped=true, got %v", data["skipped"])
+	}
+	if data["skip_reason"] != tailapi.ErrNoAPIClient.Error() {
+		t.Fatalf("skip_reason = %v, want %q", data["skip_reason"], tailapi.ErrNoAPIClient.Error())
 	}
 }
 

@@ -19,6 +19,7 @@ import (
 
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/registry"
+	"github.com/monody0007/tslink/internal/tailapi"
 	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/tsnet"
 )
@@ -452,6 +453,9 @@ func TestStartNodeLocked_InvalidTagIncludesServiceContext(t *testing.T) {
 	if !strings.Contains(err.Error(), `service "legacy" has invalid tag "tag:Bad"`) {
 		t.Fatalf("error = %v, want service/tag context", err)
 	}
+	if !strings.Contains(err.Error(), "tag:<lowercase-hyphen-name>") || !strings.Contains(err.Error(), "tslink tags set legacy") {
+		t.Fatalf("error = %v, want grammar and migration action", err)
+	}
 }
 
 func TestSyncNodes_RemovesDeletedService(t *testing.T) {
@@ -513,12 +517,26 @@ func TestSyncNodes_HotReloadUsesFreshPerServiceAuthMaterial(t *testing.T) {
 		providerCalls = append(providerCalls, svc)
 		return fmt.Sprintf("key-%d", len(providerCalls)), nil
 	})
+	var cleanupNames []string
+	s.SetCleanupStaleNodesFn(func(ctx context.Context, names []string) (tailapi.CleanupResult, error) {
+		cleanupNames = append(cleanupNames, names...)
+		return tailapi.CleanupResult{Matched: names, Deleted: names}, nil
+	})
 
 	writeRegistry(t, []registry.Service{
 		{Name: "app", Type: registry.TypeFile, Path: t.TempDir(), Tags: []string{"tag:one"}},
 	})
 	if err := s.syncNodes(context.Background()); err != nil {
 		t.Fatalf("first syncNodes() error = %v", err)
+	}
+
+	nodesDir, err := config.NodesDir()
+	if err != nil {
+		t.Fatalf("NodesDir() error = %v", err)
+	}
+	marker := filepath.Join(nodesDir, "app", "stale-state")
+	if err := os.WriteFile(marker, []byte("old identity"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
 	}
 
 	writeRegistry(t, []registry.Service{
@@ -539,6 +557,12 @@ func TestSyncNodes_HotReloadUsesFreshPerServiceAuthMaterial(t *testing.T) {
 	}
 	if strings.Join(constructedKeys, ",") != "key-1,key-2" {
 		t.Fatalf("constructed auth keys = %v, want fresh per sync", constructedKeys)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("expected stale state marker to be removed, stat err = %v", err)
+	}
+	if strings.Join(cleanupNames, ",") != "app" {
+		t.Fatalf("cleanup names = %v, want [app]", cleanupNames)
 	}
 }
 
@@ -608,8 +632,8 @@ func TestSyncNodes_ChangedService_RemovesOldNodeWhenRestartFails(t *testing.T) {
 	node := newNode(t, oldSvc)
 	s.nodes["svc"] = node
 
-	if err := s.syncNodes(context.Background()); err != nil {
-		t.Fatalf("syncNodes() error = %v", err)
+	if err := s.syncNodes(context.Background()); err == nil {
+		t.Fatal("syncNodes() error = nil, want restart failure")
 	}
 
 	if _, exists := s.nodes["svc"]; exists {
@@ -729,7 +753,7 @@ func TestRun(t *testing.T) {
 	}
 }
 
-func TestRun_InitialSyncFailureStillReturns(t *testing.T) {
+func TestRun_InitialSyncFailureReturnsError(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
@@ -748,14 +772,53 @@ func TestRun_InitialSyncFailureStillReturns(t *testing.T) {
 		t.Fatalf("New() error = %v", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	go func() {
-		time.Sleep(50 * time.Millisecond)
-		cancel()
-	}()
+	if err := s.Run(context.Background()); err == nil || !strings.Contains(err.Error(), "initial sync failed") {
+		t.Fatalf("Run() error = %v, want initial sync failure", err)
+	}
+}
 
-	if err := s.Run(ctx); err != nil {
-		t.Fatalf("Run() error = %v", err)
+func TestRun_InitialStartFailureClosesStartedNodes(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+
+	writeRegistry(t, []registry.Service{
+		{Name: "ok", Type: registry.TypeFile, Path: t.TempDir()},
+		{Name: "bad", Type: registry.TypeFile, Path: t.TempDir()},
+	})
+
+	var okServer *fakeTSNetServer
+	oldNew := newTSNetServerFn
+	newTSNetServerFn = func(svc registry.Service, stateDir, authKey, controlURL string) tsnetServer {
+		fake := &fakeTSNetServer{}
+		if svc.Name == "ok" {
+			okServer = fake
+		}
+		if svc.Name == "bad" {
+			fake.upErr = errors.New("up failed")
+		}
+		return fake
+	}
+	t.Cleanup(func() { newTSNetServerFn = oldNew })
+
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	err = s.Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), `start service "bad"`) {
+		t.Fatalf("Run() error = %v, want bad service start failure", err)
+	}
+	if okServer == nil {
+		t.Fatal("expected ok service to start before bad service failed")
+	}
+	if !okServer.closed {
+		t.Fatal("started node should be closed before Run returns")
+	}
+	if len(s.nodes) != 0 {
+		t.Fatalf("nodes remaining after failed initial sync = %d, want 0", len(s.nodes))
 	}
 }
 
@@ -821,11 +884,37 @@ func TestSyncNodes_NewServiceStartFailure(t *testing.T) {
 		t.Fatalf("New() error = %v", err)
 	}
 
-	// syncNodes should not return an error for start failures (they're logged)
-	if err := s.syncNodes(context.Background()); err != nil {
-		t.Fatalf("syncNodes() error = %v, want nil", err)
+	if err := s.syncNodes(context.Background()); err == nil {
+		t.Fatal("syncNodes() error = nil, want start failure")
 	}
 
+	if _, exists := s.nodes["newnode"]; exists {
+		t.Fatal("failed node should not be in map")
+	}
+}
+
+func TestSyncNodes_AuthKeyProviderFailureReturnsError(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+
+	writeRegistry(t, []registry.Service{
+		{Name: "newnode", Type: registry.TypeFile, Path: t.TempDir(), Tags: []string{"tag:svc"}},
+	})
+
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	s.SetAuthKeyProvider(func(ctx context.Context, svc registry.Service) (string, error) {
+		return "", errors.New("provider down")
+	})
+
+	err = s.syncNodes(context.Background())
+	if err == nil || !strings.Contains(err.Error(), `auth key for service "newnode"`) {
+		t.Fatalf("syncNodes() error = %v, want auth provider failure with service context", err)
+	}
 	if _, exists := s.nodes["newnode"]; exists {
 		t.Fatal("failed node should not be in map")
 	}
@@ -887,6 +976,35 @@ func TestServiceChanged_ControlURL(t *testing.T) {
 	changed.ControlURL = "https://headscale.example.com"
 	if !serviceChanged(base, changed) {
 		t.Error("different controlURL should be changed")
+	}
+}
+
+func TestAuthIdentityChanged_EffectiveControlURL(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	s, err := New("key", "https://control.example.com")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	base := registry.Service{
+		Name:       "a",
+		Type:       registry.TypeProxy,
+		Target:     "http://localhost:3000",
+		Tags:       []string{"tag:web"},
+		ControlURL: "",
+	}
+
+	sameEffective := base
+	sameEffective.ControlURL = "https://control.example.com"
+	if s.authIdentityChanged(base, sameEffective) {
+		t.Fatal("same effective control URL should not be an auth identity change")
+	}
+
+	differentEffective := base
+	differentEffective.ControlURL = "https://headscale.example.com"
+	if !s.authIdentityChanged(base, differentEffective) {
+		t.Fatal("different effective control URL should be an auth identity change")
 	}
 }
 
@@ -1136,8 +1254,8 @@ func TestSyncNodes_FunnelChange_TriggersRestart(t *testing.T) {
 	node := newNode(t, oldSvc)
 	s.nodes["svc"] = node
 
-	if err := s.syncNodes(context.Background()); err != nil {
-		t.Fatalf("syncNodes() error = %v", err)
+	if err := s.syncNodes(context.Background()); err == nil {
+		t.Fatal("syncNodes() error = nil, want restart failure")
 	}
 
 	if !node.closed.Load() {
@@ -1375,6 +1493,7 @@ func TestSyncNodes_EnsureTagsErrorLogged(t *testing.T) {
 		return fmt.Errorf("ACL write denied")
 	})
 
-	// Should not return error (ensureTagsFn error is logged, not returned)
-	_ = s.syncNodes(context.Background())
+	if err := s.syncNodes(context.Background()); err == nil || !strings.Contains(err.Error(), "ACL write denied") {
+		t.Fatalf("syncNodes() error = %v, want ACL write denied", err)
+	}
 }

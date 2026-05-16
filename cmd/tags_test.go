@@ -11,6 +11,7 @@ import (
 
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/registry"
+	"github.com/monody0007/tslink/internal/tailapi"
 )
 
 // helpers to save/restore function variables
@@ -167,6 +168,27 @@ func TestTagsPull_Empty(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "No tags found in tailnet ACL") {
 		t.Errorf("expected no tags message, got: %s", buf.String())
+	}
+}
+
+func TestTagsPull_NoAPIClientSkipped(t *testing.T) {
+	setTagsMocks(t)
+	mockDefaults()
+	tagsReadTagsFn = func(ctx context.Context) ([]string, error) {
+		return nil, tailapi.ErrNoAPIClient
+	}
+
+	var buf bytes.Buffer
+	err := tagsPullRun(context.Background(), &buf, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "Skipped remote tag read") || !strings.Contains(out, "tslink login --api-key") {
+		t.Fatalf("expected skipped no-API-client guidance, got: %s", out)
+	}
+	if strings.Contains(out, "No tags found") {
+		t.Fatalf("no-API-client should not be rendered as empty ACL state, got: %s", out)
 	}
 }
 

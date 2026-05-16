@@ -117,7 +117,8 @@ TSLink automatically manages Tailscale ACL tags for your services:
 
 - **Default tag** — every service gets `tag:tsmain` applied automatically when `--tags` is not specified.
 - **API-key tag automation** — with an API access token, startup can ensure registry tags exist before nodes start.
-- **Runtime caveat** — if you introduce a new tag while `tslink serve` is already running, restart the gateway so auth material and tag state are derived from the updated registry.
+- **Strict tag grammar** — tags must match `tag:<lowercase-hyphen-name>` with lowercase letters, numbers, and hyphens. Migrate legacy tags such as `tag:Web`, `tag:db_main`, or `web` with `tslink tags set <service> tag:<lowercase-hyphen-name>` or by editing `registry.json`.
+- **Runtime auth refresh** — tag, ephemeral, and effective control-server URL changes restart affected nodes with fresh per-service auth material. Restart `tslink serve` after credential mode swaps or legacy `authkey` file changes.
 
 Use `tslink tags` to inspect and customize tag assignments:
 

@@ -50,8 +50,8 @@ func TestReadTags_NoClient(t *testing.T) {
 	aclSetup(t)
 	// No API key → credentials.NewTailscaleClient returns (nil, nil)
 	tags, err := ReadTags(context.Background())
-	if err != nil {
-		t.Fatalf("ReadTags() error = %v", err)
+	if !errors.Is(err, ErrNoAPIClient) {
+		t.Fatalf("ReadTags() error = %v, want ErrNoAPIClient", err)
 	}
 	if tags != nil {
 		t.Fatalf("ReadTags() = %v, want nil", tags)

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -28,6 +29,8 @@ type TagsServiceEntry struct {
 type TagsPullResult struct {
 	Tags       []string `json:"tags"`
 	DefaultTag string   `json:"default_tag"`
+	Skipped    bool     `json:"skipped,omitempty"`
+	SkipReason string   `json:"skip_reason,omitempty"`
 }
 
 type TagsAddResult struct {
@@ -113,6 +116,20 @@ func tagsListRun(out io.Writer, isJSON bool) error {
 func tagsPullRun(ctx context.Context, out io.Writer, isJSON bool) error {
 	tags, err := tagsReadTagsFn(ctx)
 	if err != nil {
+		if errors.Is(err, tailapi.ErrNoAPIClient) {
+			defaultTag := tagsGetDefaultFn()
+			if isJSON {
+				output.Success("tags pull", TagsPullResult{
+					Tags:       nil,
+					DefaultTag: defaultTag,
+					Skipped:    true,
+					SkipReason: err.Error(),
+				})
+				return nil
+			}
+			fmt.Fprintf(out, "Skipped remote tag read: %s. Configure an API access token with `tslink login --api-key ...` to read tailnet ACL tags.\n", err)
+			return nil
+		}
 		return err
 	}
 	defaultTag := tagsGetDefaultFn()

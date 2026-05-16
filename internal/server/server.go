@@ -58,6 +58,9 @@ type EnsureTagsFunc func(ctx context.Context, tags []string) error
 // AuthKeyProvider resolves auth material for a service immediately before its tsnet node starts.
 type AuthKeyProvider func(ctx context.Context, svc registry.Service) (string, error)
 
+// CleanupStaleNodesFunc removes stale tailnet nodes for hostnames before forced reauth.
+type CleanupStaleNodesFunc func(ctx context.Context, hostnames []string) (tailapi.CleanupResult, error)
+
 // Server manages multiple tsnet nodes, one per registered service.
 type Server struct {
 	nodes           map[string]*ServiceNode
@@ -68,6 +71,7 @@ type Server struct {
 	cfgDir          string
 	metrics         *metrics.Metrics
 	ensureTagsFn    EnsureTagsFunc
+	cleanupNodesFn  CleanupStaleNodesFunc
 }
 
 // New creates a new multi-node server.
@@ -83,6 +87,7 @@ func New(authKey, controlURL string) (*Server, error) {
 		controlURL:      controlURL,
 		cfgDir:          cfgDir,
 		metrics:         metrics.New(),
+		cleanupNodesFn:  tailapi.CleanupStaleNodesResult,
 	}, nil
 }
 
@@ -100,6 +105,11 @@ func (s *Server) SetAuthKeyProvider(fn AuthKeyProvider) {
 	s.authKeyProvider = fn
 }
 
+// SetCleanupStaleNodesFn sets the function used to remove stale tailnet nodes before forced reauth.
+func (s *Server) SetCleanupStaleNodesFn(fn CleanupStaleNodesFunc) {
+	s.cleanupNodesFn = fn
+}
+
 func staticAuthKeyProvider(authKey string) AuthKeyProvider {
 	return func(context.Context, registry.Service) (string, error) {
 		return authKey, nil
@@ -109,7 +119,8 @@ func staticAuthKeyProvider(authKey string) AuthKeyProvider {
 // Run starts all registered service nodes and watches for registry changes.
 func (s *Server) Run(ctx context.Context) error {
 	if err := s.syncNodes(ctx); err != nil {
-		slog.Warn("initial sync failed", "error", err)
+		s.closeAllNodes()
+		return fmt.Errorf("initial sync failed: %w", err)
 	}
 
 	go s.watchRegistry(ctx)
@@ -133,9 +144,13 @@ func (s *Server) syncNodes(ctx context.Context) error {
 
 	// Build desired state
 	desired := make(map[string]registry.Service, len(reg.Services))
+	desiredOrder := make([]string, 0, len(reg.Services))
 	for _, svc := range reg.Services {
 		if err := validateServiceForStartup(svc); err != nil {
 			return err
+		}
+		if _, seen := desired[svc.Name]; !seen {
+			desiredOrder = append(desiredOrder, svc.Name)
 		}
 		desired[svc.Name] = svc
 	}
@@ -144,15 +159,27 @@ func (s *Server) syncNodes(ctx context.Context) error {
 	defer s.mu.Unlock()
 
 	// Stop nodes for removed or changed services
+	var authIdentityRestartNames []string
 	for name, node := range s.nodes {
 		svc, exists := desired[name]
 		if !exists {
 			slog.Info("removing node", "name", name)
 			s.stopNodeLocked(name, true) // remove state for deleted services
 		} else if serviceChanged(node.service, svc) {
-			slog.Info("restarting node", "name", name)
-			s.stopNodeLocked(name, false) // keep state for changed services
+			authIdentityChanged := s.authIdentityChanged(node.service, svc)
+			slog.Info("restarting node", "name", name, "auth_identity_changed", authIdentityChanged)
+			s.stopNodeLocked(name, false)
+			if authIdentityChanged {
+				if err := removeServiceStateDir(name); err != nil {
+					return fmt.Errorf("remove state for auth identity change %q: %w", name, err)
+				}
+				authIdentityRestartNames = append(authIdentityRestartNames, name)
+			}
 		}
+	}
+
+	if err := s.cleanupAuthIdentityNodes(ctx, authIdentityRestartNames); err != nil {
+		return err
 	}
 
 	// Ensure ACL tags exist before starting new/changed nodes
@@ -176,22 +203,26 @@ func (s *Server) syncNodes(ctx context.Context) error {
 					slog.Info("skipped ACL tag ensure", "reason", err.Error(), "tags", tagsToEnsure)
 				} else {
 					slog.Error("failed to ensure ACL tags", "error", err)
+					return fmt.Errorf("ensure ACL tags before start: %w", err)
 				}
 			}
 		}
 	}
 
 	// Start nodes for new or changed services
-	for name, svc := range desired {
+	var startErrs []error
+	for _, name := range desiredOrder {
+		svc := desired[name]
 		if _, running := s.nodes[name]; running {
 			continue
 		}
 		if err := s.startNodeLocked(ctx, svc); err != nil {
 			slog.Error("failed to start node", "name", name, "error", err)
+			startErrs = append(startErrs, fmt.Errorf("start service %q: %w", name, err))
 		}
 	}
 
-	return nil
+	return errors.Join(startErrs...)
 }
 
 func serviceChanged(old, new registry.Service) bool {
@@ -230,13 +261,60 @@ func sameStringSet(a, b []string) bool {
 	return true
 }
 
+func (s *Server) authIdentityChanged(old, new registry.Service) bool {
+	if old.Ephemeral != new.Ephemeral {
+		return true
+	}
+	if !sameStringSet(old.Tags, new.Tags) {
+		return true
+	}
+	return effectiveControlURL(old, s.controlURL) != effectiveControlURL(new, s.controlURL)
+}
+
+func effectiveControlURL(svc registry.Service, fallback string) string {
+	if svc.ControlURL != "" {
+		return svc.ControlURL
+	}
+	return fallback
+}
+
+func removeServiceStateDir(name string) error {
+	nodesDir, err := config.NodesDir()
+	if err != nil {
+		return err
+	}
+	return os.RemoveAll(filepath.Join(nodesDir, name))
+}
+
+func (s *Server) cleanupAuthIdentityNodes(ctx context.Context, names []string) error {
+	if len(names) == 0 || s.cleanupNodesFn == nil {
+		return nil
+	}
+	cleanup, err := s.cleanupNodesFn(ctx, names)
+	if err != nil {
+		if errors.Is(err, tailapi.ErrNoAPIClient) {
+			slog.Info("skipped stale tailnet node cleanup", "reason", err.Error(), "hostnames", names)
+			return nil
+		}
+		return fmt.Errorf("cleanup stale tailnet nodes before auth identity restart: %w", err)
+	}
+	if cleanup.Skipped {
+		slog.Info("skipped stale tailnet node cleanup", "reason", cleanup.SkipReason, "hostnames", names)
+		return nil
+	}
+	if len(cleanup.Deleted) > 0 {
+		slog.Info("removed stale tailnet nodes before auth identity restart", "matched", cleanup.Matched, "deleted", cleanup.Deleted)
+	}
+	return nil
+}
+
 func validateServiceForStartup(svc registry.Service) error {
 	if err := registry.ValidateName(svc.Name); err != nil {
 		return fmt.Errorf("service %q: %w", svc.Name, err)
 	}
 	for _, tag := range svc.Tags {
 		if err := registry.ValidateTag(tag); err != nil {
-			return fmt.Errorf("service %q has invalid tag %q: %w", svc.Name, tag, err)
+			return fmt.Errorf("service %q has invalid tag %q: %w; fix with `tslink tags set %s tag:<lowercase-hyphen-name>` or edit registry.json", svc.Name, tag, err, svc.Name)
 		}
 	}
 	return nil

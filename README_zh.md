@@ -117,7 +117,8 @@ TSLink 会自动为你的服务管理 Tailscale ACL 标签：
 
 - **默认标签** — 当 `tslink add` 未指定 `--tags` 时，每个服务自动应用 `tag:tsmain`。
 - **API-key 标签自动化** — 使用 API 访问令牌时，启动阶段可以在节点启动前确保注册表中的标签存在。
-- **运行时边界** — 如果在 `tslink serve` 已运行时引入新标签，重启网关，让认证材料和标签状态从更新后的注册表重新派生。
+- **严格标签语法** — 标签必须匹配 `tag:<lowercase-hyphen-name>`，只使用小写字母、数字和连字符。将 `tag:Web`、`tag:db_main` 或 `web` 这类旧值迁移为 `tslink tags set <service> tag:<lowercase-hyphen-name>`，也可以直接编辑 `registry.json`。
+- **运行时认证刷新** — 标签、临时节点设置和有效控制服务器 URL 变化时，受影响节点会删除本地状态并用新的每服务认证材料重启。切换凭证模式或修改旧版 `authkey` 文件后仍需重启 `tslink serve` 进程。
 
 使用 `tslink tags` 查看和自定义标签分配：
 
