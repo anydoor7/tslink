@@ -562,6 +562,26 @@ func TestTagsDeleteRemote_DeleteError(t *testing.T) {
 	}
 }
 
+func TestTagsDeleteRemote_NoAPIClientGuidance(t *testing.T) {
+	setTagsMocks(t)
+	mockDefaults()
+	mockRegistryWithServices(nil)
+	tagsDeleteTagFn = func(ctx context.Context, tag string) error {
+		return fmt.Errorf("wrapped auth failure: %w", tailapi.ErrNoAPIClient)
+	}
+
+	err := tagsDeleteRemoteRun(context.Background(), &bytes.Buffer{}, "tag:gone", false)
+	if err == nil {
+		t.Fatal("expected no-client auth guidance error")
+	}
+	if !strings.Contains(err.Error(), "remote tag deletion requires a Tailscale API access token") {
+		t.Fatalf("error = %v, want API access token guidance", err)
+	}
+	if !strings.Contains(err.Error(), "tslink login --api-key") {
+		t.Fatalf("error = %v, want login command guidance", err)
+	}
+}
+
 func TestTagsDeleteRemote_RegistryPathError(t *testing.T) {
 	setTagsMocks(t)
 	tagsGetDefaultFn = func() string { return "tag:tsmain" }

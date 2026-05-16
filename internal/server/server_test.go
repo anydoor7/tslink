@@ -566,6 +566,95 @@ func TestSyncNodes_HotReloadUsesFreshPerServiceAuthMaterial(t *testing.T) {
 	}
 }
 
+func TestSyncNodes_CleanupFailureStillRestartsChangedService(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+
+	oldNew := newTSNetServerFn
+	var started []string
+	newTSNetServerFn = func(svc registry.Service, stateDir, authKey, controlURL string) tsnetServer {
+		started = append(started, svc.Name)
+		return &fakeTSNetServer{}
+	}
+	t.Cleanup(func() { newTSNetServerFn = oldNew })
+
+	oldSvc := registry.Service{Name: "app", Type: registry.TypeFile, Path: t.TempDir(), Tags: []string{"tag:old"}}
+	newSvc := registry.Service{Name: "app", Type: registry.TypeFile, Path: t.TempDir(), Tags: []string{"tag:new"}}
+	writeRegistry(t, []registry.Service{newSvc})
+
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	oldNode := newNode(t, oldSvc)
+	s.nodes["app"] = oldNode
+	s.SetCleanupStaleNodesFn(func(ctx context.Context, names []string) (tailapi.CleanupResult, error) {
+		return tailapi.CleanupResult{}, errors.New("tailnet cleanup down")
+	})
+
+	err = s.syncNodes(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "cleanup stale tailnet nodes before auth identity restart") {
+		t.Fatalf("syncNodes() error = %v, want cleanup error", err)
+	}
+	if !oldNode.closed.Load() {
+		t.Fatal("old node should be stopped before restart")
+	}
+	if strings.Join(started, ",") != "app" {
+		t.Fatalf("started = %v, want [app]", started)
+	}
+	if got := s.nodes["app"].service.Tags; len(got) != 1 || got[0] != "tag:new" {
+		t.Fatalf("running service tags = %v, want [tag:new]", got)
+	}
+}
+
+func TestSyncNodes_StateRemovalFailureStillRestartsChangedService(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+
+	oldNew := newTSNetServerFn
+	var started []string
+	newTSNetServerFn = func(svc registry.Service, stateDir, authKey, controlURL string) tsnetServer {
+		started = append(started, svc.Name)
+		return &fakeTSNetServer{}
+	}
+	t.Cleanup(func() { newTSNetServerFn = oldNew })
+
+	oldRemove := removeServiceStateDirFn
+	removeServiceStateDirFn = func(name string) error {
+		return errors.New("permission denied")
+	}
+	t.Cleanup(func() { removeServiceStateDirFn = oldRemove })
+
+	oldSvc := registry.Service{Name: "app", Type: registry.TypeFile, Path: t.TempDir(), Tags: []string{"tag:old"}}
+	newSvc := registry.Service{Name: "app", Type: registry.TypeFile, Path: t.TempDir(), Tags: []string{"tag:new"}}
+	writeRegistry(t, []registry.Service{newSvc})
+
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	oldNode := newNode(t, oldSvc)
+	s.nodes["app"] = oldNode
+
+	err = s.syncNodes(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "remove state for auth identity change") {
+		t.Fatalf("syncNodes() error = %v, want state removal error", err)
+	}
+	if !oldNode.closed.Load() {
+		t.Fatal("old node should be stopped before restart")
+	}
+	if strings.Join(started, ",") != "app" {
+		t.Fatalf("started = %v, want [app]", started)
+	}
+	if got := s.nodes["app"].service.Tags; len(got) != 1 || got[0] != "tag:new" {
+		t.Fatalf("running service tags = %v, want [tag:new]", got)
+	}
+}
+
 func TestSyncNodes_UnchangedService(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	if err := config.EnsureDir(); err != nil {

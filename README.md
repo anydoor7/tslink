@@ -38,7 +38,7 @@ TSLink implements zero-trust principles at every layer:
 | **HTTP least-privilege access** | `--allow` restricts proxy and file services to specific users or tags. TCP services rely on Tailscale network ACLs and tags. |
 | **Assume breach** | End-to-end WireGuard encryption on every connection. Even if your local network is compromised, traffic between your devices remains encrypted. |
 | **Microsegmentation** | Each service runs as an isolated tsnet node with its own hostname, TLS certificate, and network identity. Compromising one service does not grant access to others. |
-| **No implicit trust** | No services are exposed to the public internet by default. Credentials are stored in the system keychain (macOS Keychain / Linux secret service), never in plaintext config files. Auth keys are derived dynamically and never persisted. |
+| **No implicit trust** | No services are exposed to the public internet by default. Credentials are stored in the system keychain first, with restricted-permission file fallback for headless environments. Auth keys are derived dynamically and never persisted. |
 
 ## What TSLink Does
 
@@ -92,7 +92,7 @@ go install github.com/monody0007/tslink@latest
 ### Get Started in 30 Seconds
 
 ```bash
-# 1. Authenticate with Tailscale (browser login + API key)
+# 1. Authenticate with Tailscale (choose API access token or OAuth client secret)
 tslink login
 
 # 2. Expose a local web service
@@ -109,15 +109,15 @@ TSLink accepts two credential types (you only need one):
 - **API access token** (`tskey-api-*`) — generate at [Admin → Keys](https://login.tailscale.com/admin/settings/keys). Use this for the most complete automation today, including tag and device management through the Tailscale API. It expires periodically.
 - **OAuth client secret** (`tskey-client-*`) — generate at [Admin → OAuth](https://login.tailscale.com/admin/settings/oauth). It does not expire, but TSLink's current REST API automation paths are narrower in this mode. Use it only after validating your required tag/device operations.
 
-`tslink login` guides you through either path interactively. Credentials are stored in the system keychain (macOS Keychain / Linux secret service / Windows Credential Manager), never in plaintext.
+`tslink login` guides you through either path interactively. Credentials are stored in the system keychain first (macOS Keychain / Linux secret service / Windows Credential Manager), with restricted-permission file fallback for headless environments.
 
 ### Tag Auto-Management
 
 TSLink automatically manages Tailscale ACL tags for your services:
 
 - **Default tag** — every service gets `tag:tsmain` applied automatically when `--tags` is not specified.
-- **API-key tag automation** — with an API access token, startup can ensure registry tags exist before nodes start.
-- **Strict tag grammar** — tags must match `tag:<lowercase-hyphen-name>` with lowercase letters, numbers, and hyphens. Migrate legacy tags such as `tag:Web`, `tag:db_main`, or `web` with `tslink tags set <service> tag:<lowercase-hyphen-name>` or by editing `registry.json`.
+- **API access token tag automation** — with an API access token, startup can ensure registry tags exist before nodes start. `tslink tags pull` also fetches remote ACL tags only in API access token mode; OAuth-only mode skips the remote read and reports that an API access token is required.
+- **Strict tag grammar** — tags must match `tag:<lowercase-hyphen-name>` with lowercase letters, numbers, and hyphens. Migrate legacy tags such as `tag:Web`, `tag:db_main`, or `web` with `tslink tags set <service> tag:<lowercase-hyphen-name>` or by editing `registry.json`. Invalid legacy tags fail `tslink serve` validation and must be fixed before the gateway starts.
 - **Runtime auth refresh** — tag, ephemeral, and effective control-server URL changes restart affected nodes with fresh per-service auth material. Restart `tslink serve` after credential mode swaps or legacy `authkey` file changes.
 
 Use `tslink tags` to inspect and customize tag assignments:
@@ -126,7 +126,7 @@ Use `tslink tags` to inspect and customize tag assignments:
 # See all services and their tags
 tslink tags list
 
-# Fetch tags currently defined in your Tailscale ACL
+# Fetch tags currently defined in your Tailscale ACL (requires API access token; skipped in OAuth-only mode)
 tslink tags pull
 
 # Add a tag to a specific service (node restarts automatically)
@@ -168,7 +168,7 @@ tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 
 | Command | Description |
 |---------|-------------|
-| `tslink login` | Authenticate with Tailscale (OAuth + API key) |
+| `tslink login` | Authenticate with Tailscale using either an API access token or an OAuth client secret |
 | `tslink logout` | Clear credentials from keychain and files |
 | `tslink add <name> --proxy host:port` | Expose a local web service |
 | `tslink add <name> --dir /path` | Expose a file directory |
@@ -180,7 +180,7 @@ tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 | `tslink stop` | Stop the gateway |
 | `tslink status` | Show gateway status |
 | `tslink tags list` | List services and their assigned tags |
-| `tslink tags pull` | Fetch remote tags from Tailscale ACL |
+| `tslink tags pull` | Fetch remote tags from Tailscale ACL with an API access token; skipped in OAuth-only mode |
 | `tslink tags add <service> <tag>` | Append a tag to a service |
 | `tslink tags set <service> <tag>` | Replace a service's tags |
 | `tslink tags set-default <tag>` | Change the default tag applied to new services |
@@ -222,7 +222,7 @@ TSLink creates a dedicated [tsnet](https://tailscale.com/kb/1244/tsnet) node for
 **Key architectural decisions:**
 - **Per-service embedded nodes** — each service gets its own tailnet identity, hostname, and TLS certificate (microsegmentation)
 - **Identity-aware proxying** — WhoIs verification on every request, with identity headers injected and spoofing prevented
-- **Secure credential management** — system keychain storage with file fallback for headless environments
+- **Secure credential management** — system keychain storage with restricted-permission file fallback for headless environments
 - **File-based registry** — services persist across restarts in `~/.config/tslink/registry.json`
 - **Hot reload** — file watcher on the registry means `tslink add` takes effect without restarting the server
 - **PID-based lifecycle** — clean daemon management with signal handling

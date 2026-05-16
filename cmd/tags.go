@@ -52,6 +52,8 @@ type TagsDeleteResult struct {
 	Tag string `json:"tag"`
 }
 
+const tagsRemoteAPITokenMessage = "remote tag deletion requires a Tailscale API access token; configure one with `tslink login --api-key ...`"
+
 // Testable function variables for tags commands.
 var (
 	tagsReadTagsFn                                                  = tailapi.ReadTags
@@ -295,6 +297,12 @@ func tagsDeleteRemoteRun(ctx context.Context, out io.Writer, tag string, isJSON 
 		return fmt.Errorf("%s", msg)
 	}
 	if err := tagsDeleteTagFn(ctx, tag); err != nil {
+		if errors.Is(err, tailapi.ErrNoAPIClient) {
+			if isJSON {
+				return output.ErrAuth(tagsRemoteAPITokenMessage)
+			}
+			return fmt.Errorf("%s", tagsRemoteAPITokenMessage)
+		}
 		return err
 	}
 	if isJSON {

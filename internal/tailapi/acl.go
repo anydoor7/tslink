@@ -86,7 +86,7 @@ func EnsureTags(ctx context.Context, tags []string) error {
 }
 
 // DeleteTag removes a tag from the ACL tagOwners.
-// Returns an error if no API client is available or the tag does not exist.
+// Returns ErrNoAPIClient if no API client is available.
 func DeleteTag(ctx context.Context, tag string) error {
 	if err := registry.ValidateTag(tag); err != nil {
 		return err
@@ -97,7 +97,7 @@ func DeleteTag(ctx context.Context, tag string) error {
 		return err
 	}
 	if client == nil {
-		return fmt.Errorf("no API client available")
+		return ErrNoAPIClient
 	}
 
 	acl, err := client.PolicyFile().Get(ctx)

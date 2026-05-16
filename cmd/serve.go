@@ -109,7 +109,7 @@ Examples:
 			// Ensure all required tags exist in tailnet ACL
 			if err := serveEnsureTagsFn(context.Background(), allTags); err != nil {
 				if errors.Is(err, tailapi.ErrNoAPIClient) {
-					slog.Info("skipped ACL tag ensure", "reason", err.Error(), "tags", allTags)
+					slog.Warn("degraded mode: skipped ACL tag ensure", "reason", err.Error(), "tags", allTags, "degraded_mode", true)
 				} else {
 					return fmt.Errorf("ensure tags in ACL: %w", err)
 				}
@@ -142,7 +142,7 @@ Examples:
 				cleanup = tailapi.CleanupResult{Skipped: true, SkipReason: err.Error()}
 			}
 			if cleanup.Skipped {
-				slog.Info("skipped stale tailnet node cleanup", "reason", cleanup.SkipReason)
+				slog.Warn("degraded mode: skipped stale tailnet node cleanup", "reason", cleanup.SkipReason, "degraded_mode", true)
 			} else if len(cleanup.Deleted) > 0 {
 				slog.Info("removed stale tailnet nodes", "matched", cleanup.Matched, "deleted", cleanup.Deleted)
 			}

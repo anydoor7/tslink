@@ -319,6 +319,9 @@ func TestDeleteTag_NoClient(t *testing.T) {
 	if err == nil {
 		t.Fatal("DeleteTag() error = nil, want error")
 	}
+	if !errors.Is(err, ErrNoAPIClient) {
+		t.Fatalf("DeleteTag() error = %v, want ErrNoAPIClient", err)
+	}
 	if !strings.Contains(err.Error(), "no API client") {
 		t.Fatalf("DeleteTag() error = %v, want 'no API client' error", err)
 	}

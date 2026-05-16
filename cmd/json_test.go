@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/monody0007/tslink/internal/config"
@@ -810,6 +811,30 @@ func TestTagsDeleteRemoteJSON_TagInUse(t *testing.T) {
 	}
 	if ce.Code != output.ExitConflict {
 		t.Errorf("expected exit code %d, got %d", output.ExitConflict, ce.Code)
+	}
+}
+
+func TestTagsDeleteRemoteJSON_NoAPIClientAuthError(t *testing.T) {
+	setTagsMocks(t)
+	mockDefaults()
+	mockRegistryWithServices(nil)
+	tagsDeleteTagFn = func(ctx context.Context, tag string) error {
+		return tailapi.ErrNoAPIClient
+	}
+
+	err := tagsDeleteRemoteRun(context.Background(), &bytes.Buffer{}, "tag:other", true)
+	if err == nil {
+		t.Fatal("expected auth error for missing API client")
+	}
+	ce, ok := err.(*output.CodeError)
+	if !ok {
+		t.Fatalf("expected *output.CodeError, got %T: %v", err, err)
+	}
+	if ce.Code != output.ExitAuth {
+		t.Fatalf("code = %d, want %d", ce.Code, output.ExitAuth)
+	}
+	if !strings.Contains(ce.Message, "API access token") || !strings.Contains(ce.Message, "tslink login --api-key") {
+		t.Fatalf("message = %q, want auth-specific guidance", ce.Message)
 	}
 }
 

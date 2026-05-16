@@ -160,6 +160,7 @@ func (s *Server) syncNodes(ctx context.Context) error {
 
 	// Stop nodes for removed or changed services
 	var authIdentityRestartNames []string
+	var reloadErrs []error
 	for name, node := range s.nodes {
 		svc, exists := desired[name]
 		if !exists {
@@ -170,16 +171,19 @@ func (s *Server) syncNodes(ctx context.Context) error {
 			slog.Info("restarting node", "name", name, "auth_identity_changed", authIdentityChanged)
 			s.stopNodeLocked(name, false)
 			if authIdentityChanged {
-				if err := removeServiceStateDir(name); err != nil {
-					return fmt.Errorf("remove state for auth identity change %q: %w", name, err)
-				}
 				authIdentityRestartNames = append(authIdentityRestartNames, name)
+				if err := removeServiceStateDirFn(name); err != nil {
+					reloadErr := fmt.Errorf("remove state for auth identity change %q: %w", name, err)
+					slog.Warn("failed to remove node state before auth identity restart; continuing restart", "name", name, "error", err)
+					reloadErrs = append(reloadErrs, reloadErr)
+				}
 			}
 		}
 	}
 
 	if err := s.cleanupAuthIdentityNodes(ctx, authIdentityRestartNames); err != nil {
-		return err
+		slog.Warn("failed to cleanup stale tailnet nodes before auth identity restart; continuing restart", "error", err)
+		reloadErrs = append(reloadErrs, err)
 	}
 
 	// Ensure ACL tags exist before starting new/changed nodes
@@ -200,7 +204,7 @@ func (s *Server) syncNodes(ctx context.Context) error {
 		if len(tagsToEnsure) > 0 {
 			if err := s.ensureTagsFn(ctx, tagsToEnsure); err != nil {
 				if errors.Is(err, tailapi.ErrNoAPIClient) {
-					slog.Info("skipped ACL tag ensure", "reason", err.Error(), "tags", tagsToEnsure)
+					slog.Warn("degraded mode: skipped ACL tag ensure", "reason", err.Error(), "tags", tagsToEnsure, "degraded_mode", true)
 				} else {
 					slog.Error("failed to ensure ACL tags", "error", err)
 					return fmt.Errorf("ensure ACL tags before start: %w", err)
@@ -222,7 +226,7 @@ func (s *Server) syncNodes(ctx context.Context) error {
 		}
 	}
 
-	return errors.Join(startErrs...)
+	return errors.Join(append(reloadErrs, startErrs...)...)
 }
 
 func serviceChanged(old, new registry.Service) bool {
@@ -286,6 +290,8 @@ func removeServiceStateDir(name string) error {
 	return os.RemoveAll(filepath.Join(nodesDir, name))
 }
 
+var removeServiceStateDirFn = removeServiceStateDir
+
 func (s *Server) cleanupAuthIdentityNodes(ctx context.Context, names []string) error {
 	if len(names) == 0 || s.cleanupNodesFn == nil {
 		return nil
@@ -293,13 +299,13 @@ func (s *Server) cleanupAuthIdentityNodes(ctx context.Context, names []string) e
 	cleanup, err := s.cleanupNodesFn(ctx, names)
 	if err != nil {
 		if errors.Is(err, tailapi.ErrNoAPIClient) {
-			slog.Info("skipped stale tailnet node cleanup", "reason", err.Error(), "hostnames", names)
+			slog.Warn("degraded mode: skipped stale tailnet node cleanup", "reason", err.Error(), "hostnames", names, "degraded_mode", true)
 			return nil
 		}
 		return fmt.Errorf("cleanup stale tailnet nodes before auth identity restart: %w", err)
 	}
 	if cleanup.Skipped {
-		slog.Info("skipped stale tailnet node cleanup", "reason", cleanup.SkipReason, "hostnames", names)
+		slog.Warn("degraded mode: skipped stale tailnet node cleanup", "reason", cleanup.SkipReason, "hostnames", names, "degraded_mode", true)
 		return nil
 	}
 	if len(cleanup.Deleted) > 0 {
