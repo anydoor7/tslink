@@ -3,7 +3,6 @@ package cmd
 import (
 	"fmt"
 	"net"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -41,16 +40,6 @@ func parseTags(tagsStr string) ([]string, error) {
 		tags = append(tags, t)
 	}
 	return tags, nil
-}
-
-func validateControlURL(value string) error {
-	if value == "" {
-		return nil
-	}
-	if _, err := url.ParseRequestURI(value); err != nil {
-		return fmt.Errorf("invalid URL %q: %w", value, err)
-	}
-	return nil
 }
 
 // AddParams holds parsed flags for the add command.
@@ -114,7 +103,7 @@ func buildService(p AddParams) (registry.Service, error) {
 	if p.AcmeEmail != "" && p.Domain == "" {
 		return registry.Service{}, fmt.Errorf("--acme-email requires --domain to be set")
 	}
-	if err := validateControlURL(p.ControlURL); err != nil {
+	if err := registry.ValidateControlURL(p.ControlURL); err != nil {
 		return registry.Service{}, err
 	}
 	if p.TCP != "" && len(allowedUsers) > 0 {

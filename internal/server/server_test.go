@@ -504,6 +504,62 @@ func TestStartNodeLocked_UsesPerServiceAuthKeyProvider(t *testing.T) {
 	}
 }
 
+func TestStartNodeLocked_UsesEffectiveControlURL(t *testing.T) {
+	tests := []struct {
+		name              string
+		serviceControlURL string
+		serverControlURL  string
+		wantControlURL    string
+	}{
+		{
+			name:              "per service control URL wins",
+			serviceControlURL: "https://service-control.example.com",
+			serverControlURL:  "https://server-control.example.com",
+			wantControlURL:    "https://service-control.example.com",
+		},
+		{
+			name:             "server control URL fallback",
+			serverControlURL: "https://server-control.example.com",
+			wantControlURL:   "https://server-control.example.com",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			if err := config.EnsureDir(); err != nil {
+				t.Fatalf("EnsureDir() error = %v", err)
+			}
+
+			s, err := New("key", tc.serverControlURL)
+			if err != nil {
+				t.Fatalf("New() error = %v", err)
+			}
+
+			var capturedControlURL string
+			oldNew := newTSNetServerFn
+			newTSNetServerFn = func(svc registry.Service, stateDir, authKey, controlURL string) tsnetServer {
+				capturedControlURL = controlURL
+				return &fakeTSNetServer{}
+			}
+			t.Cleanup(func() { newTSNetServerFn = oldNew })
+
+			err = s.startNodeLocked(context.Background(), registry.Service{
+				Name:       "svc",
+				Type:       registry.TypeFile,
+				Path:       t.TempDir(),
+				ControlURL: tc.serviceControlURL,
+			})
+			if err != nil {
+				t.Fatalf("startNodeLocked() error = %v", err)
+			}
+			if capturedControlURL != tc.wantControlURL {
+				t.Fatalf("controlURL = %q, want %q", capturedControlURL, tc.wantControlURL)
+			}
+		})
+	}
+}
+
 func TestStartNodeLocked_HTTPServerHasTimeouts(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	if err := config.EnsureDir(); err != nil {
@@ -1419,6 +1475,26 @@ func TestServiceChanged_ControlURL(t *testing.T) {
 	changed.ControlURL = "https://headscale.example.com"
 	if !serviceChanged(base, changed) {
 		t.Error("different controlURL should be changed")
+	}
+}
+
+func TestServiceChangedWithFallback_ControlURL(t *testing.T) {
+	base := registry.Service{
+		Name:   "a",
+		Type:   registry.TypeProxy,
+		Target: "http://localhost:3000",
+	}
+
+	sameEffective := base
+	sameEffective.ControlURL = "https://control.example.com"
+	if serviceChangedWithFallback(base, sameEffective, "https://control.example.com") {
+		t.Fatal("same effective control URL should not be changed")
+	}
+
+	differentEffective := base
+	differentEffective.ControlURL = "https://headscale.example.com"
+	if !serviceChangedWithFallback(base, differentEffective, "https://control.example.com") {
+		t.Fatal("different effective control URL should be changed")
 	}
 }
 

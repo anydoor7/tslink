@@ -209,7 +209,7 @@ func (s *Server) syncNodes(ctx context.Context) error {
 		if !exists {
 			slog.Info("removing node", "name", name)
 			s.stopNodeLocked(name, true) // remove state for deleted services
-		} else if serviceChanged(node.service, svc) {
+		} else if serviceChangedWithFallback(node.service, svc, s.controlURL) {
 			authIdentityChanged := s.authIdentityChanged(node.service, svc)
 			slog.Info("restarting node", "name", name, "auth_identity_changed", authIdentityChanged)
 			s.stopNodeLocked(name, false)
@@ -294,10 +294,17 @@ func (s *Server) ensureRunning(ctx context.Context) error {
 }
 
 func serviceChanged(old, new registry.Service) bool {
+	return serviceChangedWithFallback(old, new, "")
+}
+
+func serviceChangedWithFallback(old, new registry.Service, fallbackControlURL string) bool {
 	if old.Type != new.Type || old.Target != new.Target || old.Path != new.Path {
 		return true
 	}
-	if old.Port != new.Port || old.Ephemeral != new.Ephemeral || old.ControlURL != new.ControlURL || old.Funnel != new.Funnel || old.Domain != new.Domain {
+	if old.Port != new.Port || old.Ephemeral != new.Ephemeral || old.Funnel != new.Funnel || old.Domain != new.Domain {
+		return true
+	}
+	if effectiveControlURL(old, fallbackControlURL) != effectiveControlURL(new, fallbackControlURL) {
 		return true
 	}
 	if !sameStringSet(old.Tags, new.Tags) {
@@ -393,6 +400,9 @@ func validateServiceForStartup(svc registry.Service) error {
 	}
 	if svc.Type == registry.TypeTCP && len(svc.AllowedUsers) > 0 {
 		return fmt.Errorf("service %q: tcp services do not support allowed_users; remove allowed_users from registry.json", svc.Name)
+	}
+	if err := registry.ValidateControlURL(svc.ControlURL); err != nil {
+		return fmt.Errorf("service %q has invalid control_url: %w; edit registry.json", svc.Name, err)
 	}
 	for _, tag := range svc.Tags {
 		if err := registry.ValidateTag(tag); err != nil {

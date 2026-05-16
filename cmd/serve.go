@@ -233,6 +233,9 @@ func validateServiceForServe(svc registry.Service) error {
 	if svc.Type == registry.TypeTCP && len(svc.AllowedUsers) > 0 {
 		return fmt.Errorf("service %q: tcp services do not support allowed_users; remove allowed_users from registry.json", svc.Name)
 	}
+	if err := registry.ValidateControlURL(svc.ControlURL); err != nil {
+		return fmt.Errorf("service %q has invalid control_url: %w; edit registry.json", svc.Name, err)
+	}
 	for _, tag := range svc.Tags {
 		if err := registry.ValidateTag(tag); err != nil {
 			return fmt.Errorf("service %q has invalid tag %q: %w; fix with `tslink tags set %s tag:<lowercase-hyphen-name>` or edit registry.json", svc.Name, tag, err, svc.Name)

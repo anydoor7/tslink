@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -79,12 +80,25 @@ func ValidateTag(tag string) error {
 	return nil
 }
 
+func ValidateControlURL(value string) error {
+	if value == "" {
+		return nil
+	}
+	if _, err := url.ParseRequestURI(value); err != nil {
+		return fmt.Errorf("invalid URL %q: %w", value, err)
+	}
+	return nil
+}
+
 func ValidateService(svc Service) error {
 	if err := ValidateName(svc.Name); err != nil {
 		return err
 	}
 	if svc.Type == TypeTCP && len(svc.AllowedUsers) > 0 {
 		return fmt.Errorf("tcp services do not support allowed_users; TSLink cannot enforce user ACLs on raw TCP services")
+	}
+	if err := ValidateControlURL(svc.ControlURL); err != nil {
+		return err
 	}
 	for _, tag := range svc.Tags {
 		if err := ValidateTag(tag); err != nil {

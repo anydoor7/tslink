@@ -744,6 +744,62 @@ func TestAddServiceWithControlURL(t *testing.T) {
 	}
 }
 
+func TestValidateServiceRejectsInvalidControlURL(t *testing.T) {
+	err := ValidateService(Service{
+		Name:       "custom",
+		Type:       TypeProxy,
+		Target:     "http://localhost:3000",
+		ControlURL: "not-a-url",
+	})
+	if err == nil {
+		t.Fatal("ValidateService() error = nil, want invalid control_url error")
+	}
+	if !strings.Contains(err.Error(), "invalid URL") {
+		t.Fatalf("ValidateService() error = %v, want invalid URL error", err)
+	}
+}
+
+func TestAddRejectsInvalidControlURLBeforeMutation(t *testing.T) {
+	path := testRegistryPath(t)
+
+	if _, err := Add(path, Service{
+		Name:       "custom",
+		Type:       TypeProxy,
+		Target:     "http://localhost:3000",
+		ControlURL: "https://control.example.com",
+	}); err != nil {
+		t.Fatalf("initial Add returned error: %v", err)
+	}
+
+	created, err := Add(path, Service{
+		Name:       "custom",
+		Type:       TypeProxy,
+		Target:     "http://localhost:4000",
+		ControlURL: "not-a-url",
+	})
+	if err == nil {
+		t.Fatal("Add() error = nil, want invalid control_url error")
+	}
+	if created {
+		t.Fatal("Add() created = true, want false on validation error")
+	}
+
+	reg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if len(reg.Services) != 1 {
+		t.Fatalf("expected 1 service after rejected update, got %d", len(reg.Services))
+	}
+	svc := reg.Services[0]
+	if svc.Target != "http://localhost:3000" {
+		t.Fatalf("target mutated to %q, want original target", svc.Target)
+	}
+	if svc.ControlURL != "https://control.example.com" {
+		t.Fatalf("control_url mutated to %q, want original control_url", svc.ControlURL)
+	}
+}
+
 func TestAddRejectsInvalidTag(t *testing.T) {
 	path := testRegistryPath(t)
 
