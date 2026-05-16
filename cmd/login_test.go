@@ -138,7 +138,7 @@ func TestLoginCredentialFlow_APIToken_WrongPrefix(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for wrong prefix")
 	}
-	if !strings.Contains(err.Error(), "expected an API access token") {
+	if !strings.Contains(err.Error(), "expected access token prefix tskey-api-") {
 		t.Fatalf("expected prefix error, got: %v", err)
 	}
 }
@@ -151,7 +151,7 @@ func TestLoginCredentialFlow_APIToken_AuthKeyRejected(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for auth key")
 	}
-	if !strings.Contains(err.Error(), "expected an API access token") {
+	if !strings.Contains(err.Error(), "expected access token prefix tskey-api-") {
 		t.Fatalf("expected prefix error, got: %v", err)
 	}
 }
@@ -177,7 +177,7 @@ func TestLoginCredentialFlow_ClientSecret_WrongPrefix(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for wrong prefix")
 	}
-	if !strings.Contains(err.Error(), "expected an OAuth client secret") {
+	if !strings.Contains(err.Error(), "expected client secret prefix tskey-client-") {
 		t.Fatalf("expected prefix error, got: %v", err)
 	}
 }
@@ -191,7 +191,7 @@ func TestLoginCredentialFlow_ClientSecret_ClientIDRejected(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for client ID")
 	}
-	if !strings.Contains(err.Error(), "expected an OAuth client secret") {
+	if !strings.Contains(err.Error(), "expected client secret prefix tskey-client-") {
 		t.Fatalf("expected prefix error, got: %v", err)
 	}
 }

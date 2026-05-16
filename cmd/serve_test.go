@@ -13,6 +13,7 @@ import (
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/credentials"
 	"github.com/monody0007/tslink/internal/registry"
+	"github.com/monody0007/tslink/internal/server"
 	"github.com/spf13/cobra"
 	"github.com/zalando/go-keyring"
 )
@@ -23,6 +24,25 @@ type mockServer struct {
 
 func (m *mockServer) Run(ctx context.Context) error {
 	return m.runErr
+}
+
+type mockServerWithEnsureTags struct {
+	ensureTagsFn server.EnsureTagsFunc
+	runErr       error
+}
+
+func (m *mockServerWithEnsureTags) SetEnsureTagsFn(fn server.EnsureTagsFunc) {
+	m.ensureTagsFn = fn
+}
+
+func (m *mockServerWithEnsureTags) Run(ctx context.Context) error {
+	if m.runErr != nil {
+		return m.runErr
+	}
+	if m.ensureTagsFn == nil {
+		return fmt.Errorf("ensure tags function was not set")
+	}
+	return m.ensureTagsFn(ctx, []string{"tag:hot"})
 }
 
 // saveServeState saves all serve function variables and returns a cleanup func.
@@ -157,6 +177,32 @@ func TestRunForeground_ServerRunError(t *testing.T) {
 	}
 }
 
+func TestRunForeground_WiresEnsureTagsFn(t *testing.T) {
+	dir := t.TempDir()
+	saveServeState(t)
+	serveWritePIDFn = func(path string) error { return os.WriteFile(path, []byte("1"), 0600) }
+	serveRemovePIDFn = func(path string) { os.Remove(path) }
+
+	called := false
+	serveEnsureTagsFn = func(ctx context.Context, tags []string) error {
+		called = true
+		if len(tags) != 1 || tags[0] != "tag:hot" {
+			t.Fatalf("tags = %v, want [tag:hot]", tags)
+		}
+		return nil
+	}
+	serveNewServerFn = func(authKey, controlURL string) (serverRunner, error) {
+		return &mockServerWithEnsureTags{}, nil
+	}
+
+	if err := runForeground(filepath.Join(dir, "test.pid"), "fake-key", ""); err != nil {
+		t.Fatalf("runForeground() error = %v", err)
+	}
+	if !called {
+		t.Fatal("serveEnsureTagsFn was not wired into server")
+	}
+}
+
 // --- serve command RunE tests ---
 
 func TestServeCmd_EnsureDirError(t *testing.T) {
@@ -232,6 +278,29 @@ func TestServeCmd_AlreadyRunning(t *testing.T) {
 	err := cmd.RunE(cmd, nil)
 	if err == nil || !strings.Contains(err.Error(), "already running") {
 		t.Fatalf("expected already running error, got: %v", err)
+	}
+}
+
+func TestServeCmd_CleanupErrorStopsStartup(t *testing.T) {
+	dir := t.TempDir()
+	mockServeDefaults(t, dir)
+
+	serverStarted := false
+	serveCleanupFn = func(ctx context.Context, names []string) error {
+		return fmt.Errorf("no API client available")
+	}
+	serveNewServerFn = func(authKey, controlURL string) (serverRunner, error) {
+		serverStarted = true
+		return &mockServer{}, nil
+	}
+
+	cmd := findServeCmd(t)
+	err := cmd.RunE(cmd, nil)
+	if err == nil || !strings.Contains(err.Error(), "cleanup stale nodes") {
+		t.Fatalf("expected cleanup error, got: %v", err)
+	}
+	if serverStarted {
+		t.Fatal("server should not start after cleanup error")
 	}
 }
 

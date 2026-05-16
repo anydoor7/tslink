@@ -1,11 +1,20 @@
 package server
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"net"
 	"sync"
+	"time"
 )
+
+const tcpBackendDialTimeout = 10 * time.Second
+
+var tcpDialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+	var dialer net.Dialer
+	return dialer.DialContext(ctx, network, address)
+}
 
 // serveTCP accepts connections on ln and forwards them to target via bidirectional io.Copy.
 func serveTCP(ln net.Listener, target, name string) {
@@ -25,7 +34,10 @@ func serveTCP(ln net.Listener, target, name string) {
 func handleTCPConn(clientConn net.Conn, target, name string) {
 	defer clientConn.Close()
 
-	backendConn, err := net.Dial("tcp", target)
+	ctx, cancel := context.WithTimeout(context.Background(), tcpBackendDialTimeout)
+	defer cancel()
+
+	backendConn, err := tcpDialContext(ctx, "tcp", target)
 	if err != nil {
 		slog.Error("tcp dial backend", "name", name, "target", target, "error", err)
 		return

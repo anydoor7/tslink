@@ -17,14 +17,14 @@ TSLink is designed around zero-trust principles. Security is not an afterthought
 If you discover a security vulnerability, please report it responsibly:
 
 1. **Do not** open a public GitHub issue
-2. Email: **maintainer@example.com** (or the maintainer directly if this address is not yet active)
+2. Open a private GitHub Security Advisory: <https://github.com/monody0007/tslink/security/advisories/new>
 3. Include:
    - Description of the vulnerability
    - Steps to reproduce
    - Potential impact
    - Suggested fix (if any)
 
-We aim to acknowledge reports within 48 hours and provide a fix or mitigation plan within 7 days.
+Private GitHub Security Advisories are the supported vulnerability intake channel for this repository. Maintainers coordinate disclosure, fixes, and credit in the advisory thread before any public issue or pull request is opened.
 
 ## Supported Versions
 

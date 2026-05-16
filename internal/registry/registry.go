@@ -19,6 +19,7 @@ const (
 )
 
 var nameRegexp = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
+var tagRegexp = regexp.MustCompile(`^tag:[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
 
 // lockFn, unlockFn, and marshalFn are test hooks.
 var (
@@ -59,6 +60,25 @@ type Registry struct {
 func ValidateName(name string) error {
 	if !nameRegexp.MatchString(name) {
 		return fmt.Errorf("invalid service name: %q", name)
+	}
+	return nil
+}
+
+func ValidateTag(tag string) error {
+	if !tagRegexp.MatchString(tag) {
+		return fmt.Errorf("invalid tag: %q", tag)
+	}
+	return nil
+}
+
+func ValidateService(svc Service) error {
+	if err := ValidateName(svc.Name); err != nil {
+		return err
+	}
+	for _, tag := range svc.Tags {
+		if err := ValidateTag(tag); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -130,7 +150,7 @@ func save(path string, reg *Registry) error {
 }
 
 func Add(path string, svc Service) (created bool, err error) {
-	if err := ValidateName(svc.Name); err != nil {
+	if err := ValidateService(svc); err != nil {
 		return false, err
 	}
 

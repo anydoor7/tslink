@@ -1,0 +1,79 @@
+name: Bug report
+description: Report a reproducible TSLink defect
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include Tailscale API keys, OAuth client secrets, auth keys, or private service URLs. Report vulnerabilities through GitHub Security Advisories instead of public issues.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What failed?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      description: Provide the exact commands, service config, or workflow needed to reproduce the issue.
+      placeholder: |
+        1. Run ...
+        2. Add service ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: input
+    id: tslink-version
+    attributes:
+      label: TSLink version
+      placeholder: tslink --version
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS
+        - Linux
+        - Windows
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: go-version
+    attributes:
+      label: Go version
+      placeholder: go version
+    validations:
+      required: true
+  - type: textarea
+    id: tailscale
+    attributes:
+      label: Tailscale or Headscale environment
+      description: Include Tailscale/Headscale version, control URL type, and whether the service uses API-key or OAuth client-secret login. Remove secrets.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Sanitized logs or config
+      description: Paste only redacted output. Replace secrets with REDACTED.
+      render: shell
+    validations:
+      required: false

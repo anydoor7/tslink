@@ -143,6 +143,45 @@ func TestProxyRewrite_AddsIdentityHeaders(t *testing.T) {
 	}
 }
 
+func TestProxyRewrite_NilUserProfileSkipsIdentityHeaders(t *testing.T) {
+	body, err := json.Marshal(&apitype.WhoIsResponse{
+		UserProfile: nil,
+		Node: &tailcfg.Node{
+			ComputedName: "workstation",
+		},
+	})
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+
+	localClient := &LocalClient{
+		OmitAuth: true,
+		Transport: roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(string(body))),
+			}, nil
+		}),
+	}
+
+	rp := mustReverseProxy(t, "http://localhost:8080", localClient)
+
+	in := httptest.NewRequest(http.MethodGet, "http://incoming.example/path", nil)
+	in.RemoteAddr = "100.64.0.1:1234"
+	out := in.Clone(context.Background())
+	out.Header = in.Header.Clone()
+
+	rp.Rewrite(&httputil.ProxyRequest{In: in, Out: out})
+
+	if got := out.Header.Get("X-Tailscale-User-Login"); got != "" {
+		t.Fatalf("X-Tailscale-User-Login = %q, want empty", got)
+	}
+	if got := out.Header.Get("X-Tailscale-Node"); got != "" {
+		t.Fatalf("X-Tailscale-Node = %q, want empty", got)
+	}
+}
+
 func TestProxyErrorHandler_Timeout(t *testing.T) {
 	rp := mustReverseProxy(t, "http://localhost:8080", nil)
 	req := httptest.NewRequest(http.MethodGet, "http://incoming.example/path", nil)
@@ -197,7 +236,7 @@ func TestIsTimeout_WrappedDeadline(t *testing.T) {
 // isTimeout must fall through to the errors.Is branch.
 type deadlineOnlyError struct{ inner error }
 
-func (e *deadlineOnlyError) Error() string { return "op failed: " + e.inner.Error() }
+func (e *deadlineOnlyError) Error() string   { return "op failed: " + e.inner.Error() }
 func (e *deadlineOnlyError) Unwrap() []error { return []error{e.inner} }
 
 func TestIsTimeout_DeadlineWithoutNetError(t *testing.T) {

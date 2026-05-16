@@ -1,6 +1,6 @@
 <p align="center">
   <h1 align="center">TSLink</h1>
-  <p align="center">面向私有网络的零信任服务网关。<br>一条命令安全暴露本地服务 — 不经公网，不过第三方。</p>
+  <p align="center">面向本地服务的私有 Tailscale 网关。<br>一条命令让每个 HTTP、文件或 TCP 服务获得独立 tailnet 身份。</p>
 </p>
 
 <p align="center">
@@ -35,7 +35,7 @@ TSLink 在每一层实现零信任原则：
 | 零信任原则 | TSLink 实现 |
 |-----------|------------|
 | **永不信任，始终验证** | 每个请求通过 Tailscale WhoIs 认证 — 身份头（`X-Tailscale-User-Login`、`X-Tailscale-User-Name`）注入每个代理请求。入站身份头被剥离以防伪造。 |
-| **最小权限访问** | 通过 `--allow` 实现 per-service ACL，限制特定用户或标签访问。每个服务以独立身份运行。 |
+| **HTTP 最小权限访问** | `--allow` 限制 proxy 和 file 服务的访问用户或标签。TCP 服务依赖 Tailscale 网络 ACL 和标签。 |
 | **假设已被攻破** | 每个连接都有端到端 WireGuard 加密。即使本地网络被攻破，设备间流量仍然加密。 |
 | **微分段** | 每个服务作为隔离的 tsnet 节点运行，拥有独立的主机名、TLS 证书和网络身份。攻破一个服务不会影响其他服务。 |
 | **消除隐式信任** | 默认不暴露任何服务到公网。凭证存储在系统钥匙串（macOS Keychain / Linux secret service）中，不以明文存储。认证密钥动态派生，从不持久化。 |
@@ -60,13 +60,22 @@ tslink serve --daemon
 - **全平台支持** — 支持 macOS、Linux 和 Windows
 - **守护进程运行** — 启动一次，后台运行，支持开机自启
 - **TCP 代理** — 暴露数据库、SSH、Redis 等非 HTTP 服务
-- **访问控制** — 基于用户/标签的 per-service ACL（`--allow user@example.com,tag:admin`）
-- **中间件** — 内置限流、Basic Auth、IP 白名单、CORS
-- **Prometheus 指标** — 请求计数、延迟直方图、活跃连接数
-- **Docker 发现** — 通过标签自动注册容器（`tslink.enable=true`）
-- **API 模式** — JSON-over-stdin/stdout，供 AI 代理和脚本程序化控制
+- **HTTP 访问控制** — proxy 和 file 服务支持 `--allow user@example.com,tag:admin`
+- **最小 API 模式** — JSON-over-stdin/stdout，支持 list/add/remove/status 自动化
 - **Headscale 兼容** — 通过 `--control-url` 支持自托管控制服务器
 - **Funnel** — 可选通过 Tailscale Funnel 暴露到公网
+
+### 发布状态
+
+| 已交付 | Roadmap / experimental |
+|---|---|
+| Proxy、file、原始 TCP 服务 | Roadmap/experimental 中间件管道（限流、Basic Auth、IP 白名单、CORS） |
+| 每服务一个嵌入式 `tsnet` 节点 | Roadmap/experimental Docker 标签自动发现 |
+| 身份感知 HTTP 代理头 | Roadmap/experimental 管理面板和 REST API |
+| proxy/file 的 HTTP `--allow` | Roadmap/experimental Prometheus `/metrics` 端点 |
+| 注册表热重载 | Roadmap/experimental 自定义域名 / ACME 运行时 TLS |
+| 守护进程和开机自启 | Roadmap/experimental Cluster / 多节点注册表同步 |
+| 最小本地 `tslink api` | Roadmap/experimental 与 `tslink add` 全量标志对齐的 API |
 
 ## 快速开始
 
@@ -97,8 +106,8 @@ tslink serve --daemon
 
 TSLink 支持两种凭证（只需选一种）：
 
-- **API 访问令牌** (`tskey-api-*`) — 在 [管理后台 → Keys](https://login.tailscale.com/admin/settings/keys) 生成。点击 "Generate access token..."。简单快捷，但会过期。
-- **OAuth 客户端密钥** (`tskey-client-*`) — 在 [管理后台 → OAuth](https://login.tailscale.com/admin/settings/oauth) 生成。点击 "+ credential" → "OAuth client" → scope 选 "all" → 复制下方的 **client secret**（不是上方较短的 client ID）。永不过期，推荐使用。
+- **API 访问令牌** (`tskey-api-*`) — 在 [管理后台 → Keys](https://login.tailscale.com/admin/settings/keys) 生成。当前自动化能力最完整，包括通过 Tailscale API 管理标签和设备。它会周期性过期。
+- **OAuth 客户端密钥** (`tskey-client-*`) — 在 [管理后台 → OAuth](https://login.tailscale.com/admin/settings/oauth) 生成。它不会过期，但 TSLink 当前的 REST API 自动化路径在该模式下更窄。用于无人值守前请先验证所需的标签/设备操作。
 
 `tslink login` 会交互式引导你完成任一路径。凭证存储在系统钥匙串（macOS Keychain / Linux secret service / Windows 凭据管理器）中，不以明文保存。
 
@@ -106,9 +115,9 @@ TSLink 支持两种凭证（只需选一种）：
 
 TSLink 会自动为你的服务管理 Tailscale ACL 标签：
 
-- **默认标签** — 当 `tslink add` 未指定 `--tags` 时，每个服务自动应用 `tag:tsmain`。该标签也会在 `tslink login` 时自动创建到你的 Tailscale ACL 中。
-- **ACL 标签自动同步** — `tslink serve` 在启动节点前会确保注册表中所有标签都已存在于 Tailscale ACL，彻底避免"未知标签"错误。
-- **标签热更新** — 通过 `tslink tags set` 或 `tslink tags add` 修改服务标签后，受影响的节点立即重启并应用新标签，无需手动重启网关。
+- **默认标签** — 当 `tslink add` 未指定 `--tags` 时，每个服务自动应用 `tag:tsmain`。
+- **API-key 标签自动化** — 使用 API 访问令牌时，启动阶段可以在节点启动前确保注册表中的标签存在。
+- **运行时边界** — 如果在 `tslink serve` 已运行时引入新标签，重启网关，让认证材料和标签状态从更新后的注册表重新派生。
 
 使用 `tslink tags` 查看和自定义标签分配：
 
@@ -144,7 +153,7 @@ tslink add mydb --tcp localhost:5432
 # 临时节点（停止后自动从 tailnet 移除）
 tslink add demo --proxy localhost:8080 --ephemeral
 
-# 基于身份的访问控制
+# 基于身份的 HTTP 访问控制（仅 proxy/file）
 tslink add internal --proxy localhost:9090 --allow user@example.com,tag:admin
 
 # 通过 Tailscale Funnel 公开暴露
@@ -189,10 +198,10 @@ tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 | `--tcp host:port` | 原始 TCP 转发 |
 | `--ephemeral` | 临时节点，停止后自动从 tailnet 移除 |
 | `--tags tag:a,tag:b` | ACL 标签，用于 Tailscale 网络策略 |
-| `--allow user@,tag:x` | Per-service 访问控制（逗号分隔） |
+| `--allow user@,tag:x` | proxy/file 服务的 HTTP 访问控制；TCP 不应用该 HTTP ACL |
 | `--funnel` | 通过 Tailscale Funnel 暴露到公网（仅限 proxy） |
-| `--domain example.com` | 自定义域名映射（仅限 proxy） |
-| `--acme-email user@example.com` | Let's Encrypt 证书邮箱（需要 `--domain`） |
+| `--domain example.com` | Roadmap/experimental：可写入服务配置，但自定义域名运行时 TLS 尚未接入 |
+| `--acme-email user@example.com` | Roadmap/experimental：随 `--domain` 存储；尚无已交付 ACME listener |
 
 ## 工作原理
 
@@ -212,18 +221,16 @@ TSLink 为每个注册的服务创建一个专用的 [tsnet](https://tailscale.c
 **关键架构决策：**
 - **Per-service 嵌入式节点** — 每个服务获得独立的 tailnet 身份、主机名和 TLS 证书（微分段）
 - **身份感知代理** — 每个请求进行 WhoIs 验证，注入身份头并防止伪造
-- **安全凭证管理** — 系统钥匙串存储 + 动态认证密钥派生（无密钥文件存储）
+- **安全凭证管理** — 系统钥匙串存储，headless 环境支持文件后备
 - **基于文件的注册表** — 服务在 `~/.config/tslink/registry.json` 中持久化，跨重启保存
 - **热重载** — 注册表文件监听意味着 `tslink add` 无需重启服务即可生效
 - **基于 PID 的生命周期** — 信号处理实现干净的守护进程管理
-- **中间件管道** — per-service 限流、Basic Auth、IP 白名单、CORS
 - **结构化日志** — 基于 slog 的结构化日志 + 访问日志
-- **Prometheus 指标** — `tslink_requests_total`、`tslink_request_duration_seconds`、`tslink_active_connections`
-- **Docker 发现** — 通过 `tslink.enable=true` 标签自动注册容器
+- **指标采集** — 内部记录请求指标；公开 `/metrics` 端点仍在 roadmap
 
 ## API 模式
 
-TSLink 提供 JSON-over-stdin/stdout API 模式，专为 AI 代理、脚本和 CI/CD 流水线设计。
+TSLink 提供最小 JSON-over-stdin/stdout API 模式，用于本地自动化。当前支持基础 `list`、`add`、`remove`、`status` 动作；尚未与每个 `tslink add` 标志完全对齐。
 
 ```bash
 # 列出服务
@@ -239,47 +246,18 @@ echo '{"action":"remove","name":"myapp"}' | tslink api
 echo '{"action":"status"}' | tslink api
 ```
 
-## Docker 自动发现
+## Roadmap / Experimental 包
 
-TSLink 可以通过标签自动发现和注册 Docker 容器：
+仓库中包含一些尚未接入已交付 `tslink serve` 运行路径的包和注册表字段。除非后续有端到端集成测试证明，否则请把它们视为 roadmap 或 experimental：
 
-```yaml
-services:
-  webapp:
-    image: nginx
-    labels:
-      tslink.enable: "true"
-      tslink.name: "webapp"
-      tslink.type: "proxy"        # proxy（默认）或 tcp
-      tslink.target: "localhost:8080"  # proxy 类型可选（自动检测首个暴露端口）
-      tslink.port: "8080"         # tcp 类型必填
-      tslink.ephemeral: "true"    # 可选
-      tslink.tags: "tag:web"      # 可选，逗号分隔
-```
-
-容器启动时自动注册，停止时自动注销。
-
-## 中间件
-
-`registry.json` 中的每个服务可以包含 `middleware` 配置块：
-
-```json
-{
-  "services": [
-    {
-      "name": "myapp",
-      "type": "proxy",
-      "target": "http://localhost:3000",
-      "middleware": {
-        "rate_limit": 10.0,
-        "basic_auth": "user:password",
-        "ip_allow_list": ["100.64.0.1/16"],
-        "cors_origins": ["https://frontend.example.com"]
-      }
-    }
-  ]
-}
-```
+| 领域 | 当前状态 |
+|---|---|
+| Docker 标签 | 包存在，但 `serve` 不会启动 Docker discovery。 |
+| Middleware | 包和 schema 存在，但 runtime 不应用限流、Basic Auth、IP 白名单或 CORS。 |
+| Admin dashboard / REST API | handler 存在，但不会启动 admin 节点。 |
+| Prometheus `/metrics` | 内部 instrumentation 存在，但没有挂载 scrape endpoint。 |
+| Custom domain / ACME | 字段可写入，但 runtime TLS/ACME listener 尚未接入。 |
+| Cluster sync | 包存在，但没有 production transport 或 `serve` 集成。 |
 
 ## 前置条件
 
@@ -297,12 +275,12 @@ services:
 
 ## 路线图
 
-- [x] OAuth 长期凭证（`tskey-client-*` 支持）
-- [x] Let's Encrypt 集成自定义域名证书（`--domain` + `--acme-email`）
-- [x] 可从 tailnet 访问的 Web 管理面板（管理 API + HTML 仪表板）
-- [ ] Docker 镜像（`ghcr.io/monody0007/tslink`）
+- [x] OAuth client secret 可由 login 和 tsnet auth 路径接受；无人值守前需验证标签/设备自动化
+- [ ] 自定义域名 / ACME 运行时 TLS
+- [ ] 可从 tailnet 访问的 Web 管理面板
+- [ ] Docker 镜像和 Docker 标签发现
 - [ ] Headscale 端到端测试
-- [ ] Web 管理面板增强
+- [ ] 完整 API parity 和经过集成测试的 Layer 2 模块
 
 ## 贡献
 

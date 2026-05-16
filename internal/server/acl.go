@@ -47,14 +47,21 @@ func ACLMiddleware(allowedUsers []string, localClient *LocalClient) func(http.Ha
 				return
 			}
 
+			if localClient == nil {
+				slog.Warn("acl: no local client available", "remote_addr", r.RemoteAddr)
+				writeAccessDenied(w, "access denied: unable to identify caller")
+				return
+			}
+
 			whois, err := localClient.WhoIs(r.Context(), r.RemoteAddr)
 			if err != nil {
 				slog.Warn("acl: failed to identify caller", "remote_addr", r.RemoteAddr, "error", err)
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusForbidden)
-				json.NewEncoder(w).Encode(map[string]string{
-					"error": "access denied: unable to identify caller",
-				})
+				writeAccessDenied(w, "access denied: unable to identify caller")
+				return
+			}
+			if whois == nil || whois.UserProfile == nil {
+				slog.Warn("acl: caller identity missing user profile", "remote_addr", r.RemoteAddr)
+				writeAccessDenied(w, "access denied: unable to identify caller")
 				return
 			}
 
@@ -66,15 +73,19 @@ func ACLMiddleware(allowedUsers []string, localClient *LocalClient) func(http.Ha
 
 			if !isAllowed(login, nodeTags, allowedUsers) {
 				slog.Info("acl: access denied", "login", login, "remote_addr", r.RemoteAddr)
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusForbidden)
-				json.NewEncoder(w).Encode(map[string]string{
-					"error": "access denied",
-				})
+				writeAccessDenied(w, "access denied")
 				return
 			}
 
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+func writeAccessDenied(w http.ResponseWriter, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusForbidden)
+	json.NewEncoder(w).Encode(map[string]string{
+		"error": msg,
+	})
 }

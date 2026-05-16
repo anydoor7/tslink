@@ -195,6 +195,22 @@ func TestValidateNameEdgeCases(t *testing.T) {
 	}
 }
 
+func TestValidateTag(t *testing.T) {
+	valid := []string{"tag:web", "tag:a", "tag:web-1", "tag:internal-api"}
+	for _, tag := range valid {
+		if err := ValidateTag(tag); err != nil {
+			t.Errorf("ValidateTag(%q) = error %v, want valid", tag, err)
+		}
+	}
+
+	invalid := []string{"tag:", "web", "tag:Web", "tag:-web", "tag:web-", "tag:web_api", ""}
+	for _, tag := range invalid {
+		if err := ValidateTag(tag); err == nil {
+			t.Errorf("ValidateTag(%q) = nil, want error", tag)
+		}
+	}
+}
+
 func TestLoadCorruptedJSON(t *testing.T) {
 	path := testRegistryPath(t)
 	if err := os.WriteFile(path, []byte("{invalid json"), 0o600); err != nil {
@@ -617,7 +633,7 @@ func TestAddEphemeralService(t *testing.T) {
 func TestAddServiceWithTags(t *testing.T) {
 	path := testRegistryPath(t)
 
-	tags := []string{"web", "production", "api"}
+	tags := []string{"tag:web", "tag:production", "tag:api"}
 	if _, err := Add(path, Service{
 		Name:   "tagged",
 		Type:   TypeProxy,
@@ -672,6 +688,20 @@ func TestAddServiceWithControlURL(t *testing.T) {
 	}
 }
 
+func TestAddRejectsInvalidTag(t *testing.T) {
+	path := testRegistryPath(t)
+
+	_, err := Add(path, Service{
+		Name:   "tagged",
+		Type:   TypeProxy,
+		Target: "http://localhost:3000",
+		Tags:   []string{"tag:"},
+	})
+	if err == nil {
+		t.Fatal("Add() error = nil, want invalid tag error")
+	}
+}
+
 func TestAddServiceAllFields(t *testing.T) {
 	path := testRegistryPath(t)
 
@@ -680,7 +710,7 @@ func TestAddServiceAllFields(t *testing.T) {
 		Type:       TypeTCP,
 		Port:       3306,
 		Ephemeral:  true,
-		Tags:       []string{"db", "internal"},
+		Tags:       []string{"tag:db", "tag:internal"},
 		ControlURL: "https://control.example.com",
 	}); err != nil {
 		t.Fatalf("Add returned error: %v", err)
@@ -707,8 +737,8 @@ func TestAddServiceAllFields(t *testing.T) {
 	if !svc.Ephemeral {
 		t.Fatal("expected ephemeral to be true")
 	}
-	if len(svc.Tags) != 2 || svc.Tags[0] != "db" || svc.Tags[1] != "internal" {
-		t.Fatalf("expected tags [db internal], got %v", svc.Tags)
+	if len(svc.Tags) != 2 || svc.Tags[0] != "tag:db" || svc.Tags[1] != "tag:internal" {
+		t.Fatalf("expected tags [tag:db tag:internal], got %v", svc.Tags)
 	}
 	if svc.ControlURL != "https://control.example.com" {
 		t.Fatalf("expected control_url %q, got %q", "https://control.example.com", svc.ControlURL)
@@ -727,7 +757,7 @@ func TestUpdateServicePreservesNewFields(t *testing.T) {
 		Target:     "http://localhost:3000",
 		Port:       5432,
 		Ephemeral:  true,
-		Tags:       []string{"v1", "staging"},
+		Tags:       []string{"tag:v1", "tag:staging"},
 		ControlURL: "https://control.example.com",
 	}); err != nil {
 		t.Fatalf("first Add returned error: %v", err)
@@ -745,7 +775,7 @@ func TestUpdateServicePreservesNewFields(t *testing.T) {
 		Target:     "http://localhost:4000",
 		Port:       3306,
 		Ephemeral:  false,
-		Tags:       []string{"v2", "production"},
+		Tags:       []string{"tag:v2", "tag:production"},
 		ControlURL: "https://new-control.example.com",
 	}); err != nil {
 		t.Fatalf("second Add returned error: %v", err)
@@ -769,8 +799,8 @@ func TestUpdateServicePreservesNewFields(t *testing.T) {
 	if svc.Ephemeral {
 		t.Fatal("expected ephemeral to be updated to false")
 	}
-	if len(svc.Tags) != 2 || svc.Tags[0] != "v2" || svc.Tags[1] != "production" {
-		t.Fatalf("expected tags to be updated to [v2 production], got %v", svc.Tags)
+	if len(svc.Tags) != 2 || svc.Tags[0] != "tag:v2" || svc.Tags[1] != "tag:production" {
+		t.Fatalf("expected tags to be updated to [tag:v2 tag:production], got %v", svc.Tags)
 	}
 	if svc.ControlURL != "https://new-control.example.com" {
 		t.Fatalf("expected control_url to be updated, got %q", svc.ControlURL)

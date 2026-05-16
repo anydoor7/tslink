@@ -17,6 +17,11 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      - name: Check GoReleaser config
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: check
       - uses: goreleaser/goreleaser-action@v6
         with:
           version: "~> v2"

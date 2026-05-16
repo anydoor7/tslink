@@ -133,3 +133,39 @@ func TestAddFunnel_WithTCP_Error(t *testing.T) {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
+
+func TestBuildService_TCPRejectsAllow(t *testing.T) {
+	_, err := buildService(AddParams{
+		Name:  "mydb",
+		TCP:   "localhost:5432",
+		Allow: "alice@example.com",
+	})
+	if err == nil {
+		t.Fatal("expected error when using --allow with --tcp")
+	}
+	if !strings.Contains(err.Error(), "--allow is not supported for --tcp") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestBuildService_RejectsInvalidTags(t *testing.T) {
+	_, err := buildService(AddParams{
+		Name:  "app",
+		Proxy: "localhost:3000",
+		Tags:  "tag:",
+	})
+	if err == nil {
+		t.Fatal("expected invalid tag error")
+	}
+}
+
+func TestBuildService_RejectsInvalidAllowTag(t *testing.T) {
+	_, err := buildService(AddParams{
+		Name:  "app",
+		Proxy: "localhost:3000",
+		Allow: "tag:",
+	})
+	if err == nil {
+		t.Fatal("expected invalid allow tag error")
+	}
+}

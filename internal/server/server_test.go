@@ -17,6 +17,7 @@ import (
 
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/registry"
+	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/tsnet"
 )
 
@@ -62,6 +63,43 @@ func (l *fakeListener) Accept() (net.Conn, error) { return nil, net.ErrClosed }
 func (l *fakeListener) Addr() net.Addr            { return &net.TCPAddr{} }
 func (l *fakeListener) Close() error {
 	l.closed = true
+	return nil
+}
+
+type fakeTSNetServer struct {
+	upErr  error
+	closed bool
+}
+
+func (s *fakeTSNetServer) Up(context.Context) (*ipnstate.Status, error) {
+	if s.upErr != nil {
+		return nil, s.upErr
+	}
+	return &ipnstate.Status{}, nil
+}
+
+func (s *fakeTSNetServer) Listen(network, addr string) (net.Listener, error) {
+	return &fakeListener{}, nil
+}
+
+func (s *fakeTSNetServer) ListenTLS(network, addr string) (net.Listener, error) {
+	return &fakeListener{}, nil
+}
+
+func (s *fakeTSNetServer) ListenFunnel(network, addr string, opts ...tsnet.FunnelOption) (net.Listener, error) {
+	return &fakeListener{}, nil
+}
+
+func (s *fakeTSNetServer) LocalClient() (*LocalClient, error) {
+	return nil, errors.New("local client unavailable")
+}
+
+func (s *fakeTSNetServer) CertDomains() []string {
+	return nil
+}
+
+func (s *fakeTSNetServer) Close() error {
+	s.closed = true
 	return nil
 }
 
@@ -281,6 +319,40 @@ func TestStartNodeLocked_NodesDirError(t *testing.T) {
 	err = s.startNodeLocked(context.Background(), registry.Service{Name: "svc", Type: registry.TypeFile, Path: t.TempDir()})
 	if err == nil {
 		t.Fatal("startNodeLocked() error = nil, want error")
+	}
+}
+
+func TestStartNodeLocked_ClosesTSNetServerOnUpError(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	fake := &fakeTSNetServer{upErr: errors.New("up failed")}
+	oldNew := newTSNetServerFn
+	newTSNetServerFn = func(svc registry.Service, stateDir, authKey, controlURL string) tsnetServer {
+		return fake
+	}
+	t.Cleanup(func() { newTSNetServerFn = oldNew })
+
+	err = s.startNodeLocked(context.Background(), registry.Service{
+		Name:   "svc",
+		Type:   registry.TypeProxy,
+		Target: "http://localhost:3000",
+	})
+	if err == nil {
+		t.Fatal("startNodeLocked() error = nil, want Up error")
+	}
+	if !fake.closed {
+		t.Fatal("tsnet server should be closed after Up error")
+	}
+	if _, ok := s.nodes["svc"]; ok {
+		t.Fatal("failed node should not be registered")
 	}
 }
 
@@ -697,6 +769,21 @@ func TestServiceChanged_Tags_DifferentContent(t *testing.T) {
 	}
 }
 
+func TestServiceChanged_TagsSameSetDifferentOrder(t *testing.T) {
+	base := registry.Service{
+		Name:   "a",
+		Type:   registry.TypeProxy,
+		Target: "http://localhost:3000",
+		Tags:   []string{"tag:web", "tag:prod"},
+	}
+
+	changed := base
+	changed.Tags = []string{"tag:prod", "tag:web"}
+	if serviceChanged(base, changed) {
+		t.Error("same tag set in different order should not be changed")
+	}
+}
+
 func TestServiceChanged_Funnel(t *testing.T) {
 	base := registry.Service{
 		Name:   "a",
@@ -751,6 +838,21 @@ func TestServiceChanged_AllowedUsers_DifferentContent(t *testing.T) {
 	changed.AllowedUsers = []string{"bob@example.com"}
 	if !serviceChanged(base, changed) {
 		t.Error("different AllowedUsers content should be changed")
+	}
+}
+
+func TestServiceChanged_AllowedUsersSameSetDifferentOrder(t *testing.T) {
+	base := registry.Service{
+		Name:         "a",
+		Type:         registry.TypeProxy,
+		Target:       "http://localhost:3000",
+		AllowedUsers: []string{"alice@example.com", "bob@example.com"},
+	}
+
+	changed := base
+	changed.AllowedUsers = []string{"bob@example.com", "alice@example.com"}
+	if serviceChanged(base, changed) {
+		t.Error("same AllowedUsers set in different order should not be changed")
 	}
 }
 

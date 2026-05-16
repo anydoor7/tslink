@@ -11,10 +11,10 @@ import (
 	"net/url"
 	"strings"
 
-	"tailscale.com/client/tailscale"
+	"tailscale.com/client/local"
 )
 
-type LocalClient = tailscale.LocalClient
+type LocalClient = local.Client
 
 func NewProxyHandler(target string, localClient *LocalClient) (http.Handler, error) {
 	targetURL, err := url.Parse(target)
@@ -35,10 +35,12 @@ func NewProxyHandler(target string, localClient *LocalClient) (http.Handler, err
 			// Inject caller identity
 			if localClient != nil {
 				whois, err := localClient.WhoIs(r.In.Context(), r.In.RemoteAddr)
-				if err == nil {
+				if err == nil && whois != nil && whois.UserProfile != nil {
 					r.Out.Header.Set("X-Tailscale-User-Login", whois.UserProfile.LoginName)
 					r.Out.Header.Set("X-Tailscale-User-Name", whois.UserProfile.DisplayName)
-					r.Out.Header.Set("X-Tailscale-Node", whois.Node.ComputedName)
+					if whois.Node != nil {
+						r.Out.Header.Set("X-Tailscale-Node", whois.Node.ComputedName)
+					}
 					if whois.UserProfile.ProfilePicURL != "" {
 						r.Out.Header.Set("X-Tailscale-User-Picture", whois.UserProfile.ProfilePicURL)
 					}

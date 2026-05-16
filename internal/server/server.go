@@ -17,12 +17,34 @@ import (
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/metrics"
 	"github.com/monody0007/tslink/internal/registry"
+	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/tsnet"
 )
 
+type tsnetServer interface {
+	Up(context.Context) (*ipnstate.Status, error)
+	Listen(network, addr string) (net.Listener, error)
+	ListenTLS(network, addr string) (net.Listener, error)
+	ListenFunnel(network, addr string, opts ...tsnet.FunnelOption) (net.Listener, error)
+	LocalClient() (*LocalClient, error)
+	CertDomains() []string
+	Close() error
+}
+
+var newTSNetServerFn = func(svc registry.Service, stateDir, authKey, controlURL string) tsnetServer {
+	return &tsnet.Server{
+		Hostname:      svc.Name,
+		Dir:           stateDir,
+		AuthKey:       authKey,
+		Ephemeral:     svc.Ephemeral,
+		ControlURL:    controlURL,
+		AdvertiseTags: svc.Tags,
+	}
+}
+
 // ServiceNode represents a single tsnet node serving one service.
 type ServiceNode struct {
-	tsnetSrv *tsnet.Server
+	tsnetSrv tsnetServer
 	service  registry.Service
 	listener net.Listener
 	cancel   context.CancelFunc
@@ -151,23 +173,33 @@ func serviceChanged(old, new registry.Service) bool {
 	if old.Port != new.Port || old.Ephemeral != new.Ephemeral || old.ControlURL != new.ControlURL || old.Funnel != new.Funnel || old.Domain != new.Domain {
 		return true
 	}
-	if len(old.Tags) != len(new.Tags) {
+	if !sameStringSet(old.Tags, new.Tags) {
 		return true
 	}
-	for i := range old.Tags {
-		if old.Tags[i] != new.Tags[i] {
-			return true
-		}
-	}
-	if len(old.AllowedUsers) != len(new.AllowedUsers) {
+	if !sameStringSet(old.AllowedUsers, new.AllowedUsers) {
 		return true
-	}
-	for i := range old.AllowedUsers {
-		if old.AllowedUsers[i] != new.AllowedUsers[i] {
-			return true
-		}
 	}
 	return false
+}
+
+func sameStringSet(a, b []string) bool {
+	aSet := make(map[string]struct{}, len(a))
+	for _, v := range a {
+		aSet[v] = struct{}{}
+	}
+	bSet := make(map[string]struct{}, len(b))
+	for _, v := range b {
+		bSet[v] = struct{}{}
+	}
+	if len(aSet) != len(bSet) {
+		return false
+	}
+	for v := range aSet {
+		if _, ok := bSet[v]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service) error {
@@ -187,19 +219,13 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service) erro
 		controlURL = svc.ControlURL
 	}
 
-	tsnetSrv := &tsnet.Server{
-		Hostname:      svc.Name,
-		Dir:           stateDir,
-		AuthKey:       s.authKey,
-		Ephemeral:     svc.Ephemeral,
-		ControlURL:    controlURL,
-		AdvertiseTags: svc.Tags,
-	}
+	tsnetSrv := newTSNetServerFn(svc, stateDir, s.authKey, controlURL)
 
 	nodeCtx, cancel := context.WithCancel(ctx)
 
 	if _, err := tsnetSrv.Up(nodeCtx); err != nil {
 		cancel()
+		tsnetSrv.Close()
 		return fmt.Errorf("tsnet up for %q: %w", svc.Name, err)
 	}
 

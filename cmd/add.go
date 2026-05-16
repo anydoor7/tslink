@@ -27,6 +27,21 @@ func hasScheme(target string) bool {
 	return strings.HasPrefix(target, "http://") || strings.HasPrefix(target, "https://")
 }
 
+func parseTags(tagsStr string) ([]string, error) {
+	var tags []string
+	for _, t := range strings.Split(tagsStr, ",") {
+		t = strings.TrimSpace(t)
+		if t == "" {
+			continue
+		}
+		if err := registry.ValidateTag(t); err != nil {
+			return nil, err
+		}
+		tags = append(tags, t)
+	}
+	return tags, nil
+}
+
 // AddParams holds parsed flags for the add command.
 type AddParams struct {
 	Name      string
@@ -56,6 +71,11 @@ func buildService(p AddParams) (registry.Service, error) {
 			if a != "" {
 				allowedUsers = append(allowedUsers, a)
 			}
+			if strings.HasPrefix(a, "tag:") {
+				if err := registry.ValidateTag(a); err != nil {
+					return registry.Service{}, err
+				}
+			}
 		}
 	}
 
@@ -82,6 +102,9 @@ func buildService(p AddParams) (registry.Service, error) {
 	if p.AcmeEmail != "" && p.Domain == "" {
 		return registry.Service{}, fmt.Errorf("--acme-email requires --domain to be set")
 	}
+	if p.TCP != "" && len(allowedUsers) > 0 {
+		return registry.Service{}, fmt.Errorf("--allow is not supported for --tcp services")
+	}
 	if p.Domain != "" {
 		if err := domain.ValidateDomain(p.Domain); err != nil {
 			return registry.Service{}, err
@@ -90,11 +113,10 @@ func buildService(p AddParams) (registry.Service, error) {
 
 	var tags []string
 	if p.Tags != "" {
-		for _, t := range strings.Split(p.Tags, ",") {
-			t = strings.TrimSpace(t)
-			if t != "" {
-				tags = append(tags, t)
-			}
+		var err error
+		tags, err = parseTags(p.Tags)
+		if err != nil {
+			return registry.Service{}, err
 		}
 	}
 	// If no tags specified, use default

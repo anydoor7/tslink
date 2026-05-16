@@ -241,7 +241,7 @@ func TestTagsAdd_InvalidPrefix(t *testing.T) {
 	setTagsMocks(t)
 
 	err := tagsAddRun(&bytes.Buffer{}, "myapp", "notag", false)
-	if err == nil || !strings.Contains(err.Error(), "tag must start with") {
+	if err == nil || !strings.Contains(err.Error(), "invalid tag") {
 		t.Errorf("expected prefix error, got: %v", err)
 	}
 }
@@ -338,7 +338,7 @@ func TestTagsSet_InvalidPrefix(t *testing.T) {
 	setTagsMocks(t)
 
 	err := tagsSetRun(&bytes.Buffer{}, "myapp", "notag", false)
-	if err == nil || !strings.Contains(err.Error(), "tag must start with") {
+	if err == nil || !strings.Contains(err.Error(), "invalid tag") {
 		t.Errorf("expected prefix error, got: %v", err)
 	}
 }
@@ -425,7 +425,7 @@ func TestTagsSetDefault_InvalidPrefix(t *testing.T) {
 	setTagsMocks(t)
 
 	err := tagsSetDefaultRun(&bytes.Buffer{}, "notag", false)
-	if err == nil || !strings.Contains(err.Error(), "tag must start with") {
+	if err == nil || !strings.Contains(err.Error(), "invalid tag") {
 		t.Errorf("expected prefix error, got: %v", err)
 	}
 }
@@ -521,7 +521,7 @@ func TestTagsDeleteRemote_InvalidPrefix(t *testing.T) {
 	setTagsMocks(t)
 
 	err := tagsDeleteRemoteRun(context.Background(), &bytes.Buffer{}, "notag", false)
-	if err == nil || !strings.Contains(err.Error(), "tag must start with") {
+	if err == nil || !strings.Contains(err.Error(), "invalid tag") {
 		t.Errorf("expected prefix error, got: %v", err)
 	}
 }
@@ -564,24 +564,6 @@ func TestTagsDeleteRemote_LoadRegistryError(t *testing.T) {
 	}
 }
 
-// --- Integration: test via cobra command tree ---
-
-func runTagsCmd(t *testing.T, args ...string) (string, error) {
-	t.Helper()
-	cmd, _, err := rootCmd.Find(append([]string{"tags"}, args...))
-	if err != nil {
-		t.Fatalf("find tags command: %v", err)
-	}
-	var buf bytes.Buffer
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
-
-	// Build the full args for rootCmd execution
-	rootCmd.SetArgs(append([]string{"tags"}, args...))
-	execErr := rootCmd.Execute()
-	return buf.String(), execErr
-}
-
 func TestTagsCmd_ListIntegration(t *testing.T) {
 	setTagsMocks(t)
 
@@ -613,10 +595,11 @@ func TestValidateTagPrefix(t *testing.T) {
 		wantErr bool
 	}{
 		{"tag:valid", false},
-		{"tag:", false},
+		{"tag:", true},
 		{"notag", true},
 		{"", true},
 		{"Tag:case", true},
+		{"tag:bad_value", true},
 	}
 	for _, tt := range tests {
 		err := validateTagPrefix(tt.tag)

@@ -6,7 +6,7 @@ Thank you for your interest in contributing to TSLink! This document provides gu
 
 ### Prerequisites
 
-- Go 1.25+
+- Go 1.26.3 or newer. The `go` directive in [`go.mod`](./go.mod) is the source of truth for the supported minimum toolchain, and CI uses that file through `actions/setup-go`.
 - A [Tailscale account](https://tailscale.com) (free for personal use) for integration testing
 - Git
 
@@ -25,6 +25,10 @@ go test ./...
 
 # Static analysis
 go vet ./...
+
+# Optional local mirrors of CI release gates
+go run honnef.co/go/tools/cmd/staticcheck@latest ./...
+go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
 # Install locally
 go install .
@@ -52,15 +56,17 @@ internal/
 ### Reporting Bugs
 
 1. Check existing [issues](https://github.com/monody0007/tslink/issues) to avoid duplicates
-2. Open a new issue with:
+2. Open a new issue with the bug report template, including:
    - Steps to reproduce
    - Expected vs. actual behavior
    - Platform (macOS/Linux/Windows) and Go version
    - TSLink version (`tslink --version`)
+   - Tailscale or Headscale version and control URL type
+   - Sanitized logs or configuration snippets with credentials removed
 
 ### Suggesting Features
 
-Open an issue with the `enhancement` label. Describe:
+Open an issue with the feature request template. Describe:
 - The problem you're trying to solve
 - Your proposed solution
 - Any alternatives you've considered
@@ -76,6 +82,8 @@ Open an issue with the `enhancement` label. Describe:
    go build ./...
    go vet ./...
    go test ./...
+   go test ./... -race -coverprofile=coverage.out
+   go tool cover -func=coverage.out
    ```
 6. Submit a pull request
 

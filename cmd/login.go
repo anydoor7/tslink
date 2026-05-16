@@ -25,8 +25,8 @@ type LoginResult struct {
 
 // Testable function variables for login credential flow
 var (
-	loginStdinReaderFn = func() *bufio.Reader { return bufio.NewReader(os.Stdin) }
-	loginSetAPIKeyFn   = credentials.SetAPIKey
+	loginStdinReaderFn  = func() *bufio.Reader { return bufio.NewReader(os.Stdin) }
+	loginSetAPIKeyFn    = credentials.SetAPIKey
 	loginVerifyAPIKeyFn = func(ctx context.Context) error {
 		client, err := credentials.NewTailscaleClient()
 		if err != nil || client == nil {
@@ -156,7 +156,7 @@ Examples:
 
 func loginWithAPIKey(cmd *cobra.Command, key string) error {
 	if !strings.HasPrefix(key, "tskey-api-") {
-		return fmt.Errorf("expected an API access token (tskey-api-...), got: %s...", key[:min(20, len(key))])
+		return fmt.Errorf("expected access token prefix tskey-api-, got redacted prefix %q", key[:min(20, len(key))])
 	}
 
 	if err := loginSetAPIKeyFn(key); err != nil {
@@ -199,7 +199,7 @@ func loginWithAPIKey(cmd *cobra.Command, key string) error {
 
 func loginWithClientSecret(cmd *cobra.Command, secret string) error {
 	if !strings.HasPrefix(secret, "tskey-client-") {
-		return fmt.Errorf("expected an OAuth client secret (tskey-client-...), got: %s...", secret[:min(20, len(secret))])
+		return fmt.Errorf("expected client secret prefix tskey-client-, got redacted prefix %q", secret[:min(20, len(secret))])
 	}
 
 	if err := loginSaveClientSecretFn(secret); err != nil {

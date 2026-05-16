@@ -1,0 +1,46 @@
+name: Feature request
+description: Propose a new TSLink capability or workflow improvement
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user workflow or failure mode should this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the behavior, CLI/API shape, and expected security boundary.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+    validations:
+      required: false
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Relevant platforms
+      multiple: true
+      options:
+        - macOS
+        - Linux
+        - Windows
+        - Tailscale
+        - Headscale
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Compatibility and release impact
+      description: Note migration concerns, config changes, or release-gate implications.
+    validations:
+      required: false

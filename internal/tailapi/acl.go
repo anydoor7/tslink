@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/monody0007/tslink/internal/credentials"
+	"github.com/monody0007/tslink/internal/registry"
 )
 
 // DefaultTag is the default ACL tag applied to tslink services.
@@ -40,6 +41,12 @@ func ReadTags(ctx context.Context) ([]string, error) {
 // Missing tags are created with owner ["autogroup:admin"].
 // Returns nil if no API client is available.
 func EnsureTags(ctx context.Context, tags []string) error {
+	for _, tag := range tags {
+		if err := registry.ValidateTag(tag); err != nil {
+			return err
+		}
+	}
+
 	client, err := aclClientFn()
 	if err != nil {
 		return err
@@ -78,6 +85,10 @@ func EnsureTags(ctx context.Context, tags []string) error {
 // DeleteTag removes a tag from the ACL tagOwners.
 // Returns an error if no API client is available or the tag does not exist.
 func DeleteTag(ctx context.Context, tag string) error {
+	if err := registry.ValidateTag(tag); err != nil {
+		return err
+	}
+
 	client, err := aclClientFn()
 	if err != nil {
 		return err

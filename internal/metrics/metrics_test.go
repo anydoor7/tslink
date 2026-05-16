@@ -93,6 +93,27 @@ func TestMetricsMiddleware_ResponseBytes(t *testing.T) {
 	}
 }
 
+func TestMetricsMiddleware_DelegatesFlush(t *testing.T) {
+	m := New()
+	const svc = "flushsvc"
+
+	handler := m.Middleware(svc, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			t.Fatal("wrapped ResponseWriter should implement http.Flusher")
+		}
+		flusher.Flush()
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/events", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if !rec.Flushed {
+		t.Fatal("expected Flush to delegate to the underlying ResponseWriter")
+	}
+}
+
 func TestMetricsHandler(t *testing.T) {
 	m := New()
 	const svc = "handlersvc"

@@ -189,6 +189,53 @@ func TestACLMiddleware_WhoIsError_WithFakeTransport(t *testing.T) {
 	}
 }
 
+func TestACLMiddleware_NilLocalClient_ReturnsForbidden(t *testing.T) {
+	called := false
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+	})
+
+	mw := ACLMiddleware([]string{"alice@example.com"}, nil)
+	handler := mw(inner)
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if called {
+		t.Error("inner handler should NOT have been called when LocalClient is nil")
+	}
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("expected 403, got %d", rr.Code)
+	}
+}
+
+func TestACLMiddleware_NilUserProfile_ReturnsForbidden(t *testing.T) {
+	called := false
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+	})
+
+	lc := fakeWhoIsClient(t, &apitype.WhoIsResponse{
+		UserProfile: nil,
+		Node:        &tailcfg.Node{},
+	}, nil)
+	mw := ACLMiddleware([]string{"alice@example.com"}, lc)
+	handler := mw(inner)
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "100.64.0.1:1234"
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if called {
+		t.Error("inner handler should NOT have been called when UserProfile is nil")
+	}
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("expected 403, got %d", rr.Code)
+	}
+}
+
 func TestACLMiddleware_AccessDenied(t *testing.T) {
 	called := false
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

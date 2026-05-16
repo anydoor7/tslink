@@ -90,6 +90,16 @@ func (rw *responseWriter) Write(b []byte) (int, error) {
 	return n, err
 }
 
+// Flush implements http.Flusher for streaming responses.
+func (rw *responseWriter) Flush() {
+	if !rw.wroteHeader {
+		rw.WriteHeader(http.StatusOK)
+	}
+	if flusher, ok := rw.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
 // Hijack implements http.Hijacker, required for WebSocket upgrade (101 Switching Protocols).
 func (rw *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	if hj, ok := rw.ResponseWriter.(http.Hijacker); ok {

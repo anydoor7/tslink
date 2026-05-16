@@ -9,6 +9,15 @@ import (
 	"testing"
 )
 
+type flushRecorder struct {
+	*httptest.ResponseRecorder
+	flushed bool
+}
+
+func (r *flushRecorder) Flush() {
+	r.flushed = true
+}
+
 // captureHandler is a slog.Handler that collects log records for assertions.
 type captureHandler struct {
 	records []slog.Record
@@ -176,5 +185,23 @@ func TestResponseWriter_WriteBeforeWriteHeader(t *testing.T) {
 	}
 	if rw.bytes != 4 {
 		t.Errorf("bytes=%d, want 4", rw.bytes)
+	}
+}
+
+func TestResponseWriter_FlushDelegates(t *testing.T) {
+	rec := &flushRecorder{ResponseRecorder: httptest.NewRecorder()}
+	rw := &responseWriter{
+		ResponseWriter: rec,
+		status:         http.StatusOK,
+	}
+
+	flusher, ok := any(rw).(http.Flusher)
+	if !ok {
+		t.Fatal("responseWriter should implement http.Flusher")
+	}
+	flusher.Flush()
+
+	if !rec.flushed {
+		t.Fatal("underlying flusher was not called")
 	}
 }

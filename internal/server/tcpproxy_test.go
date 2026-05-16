@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net"
@@ -250,5 +251,48 @@ func TestHandleTCPConn_UnreachableBackend(t *testing.T) {
 	case <-done:
 	case <-time.After(5 * time.Second):
 		t.Fatal("handleTCPConn should return quickly for unreachable backend")
+	}
+}
+
+func TestHandleTCPConn_DialsBackendWithTimeoutContext(t *testing.T) {
+	oldDial := tcpDialContext
+	t.Cleanup(func() { tcpDialContext = oldDial })
+
+	seenDeadline := false
+	tcpDialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+		if network != "tcp" {
+			t.Fatalf("network = %q, want tcp", network)
+		}
+		if address != "127.0.0.1:1" {
+			t.Fatalf("address = %q, want 127.0.0.1:1", address)
+		}
+		deadline, ok := ctx.Deadline()
+		if !ok {
+			t.Fatal("dial context has no deadline")
+		}
+		remaining := time.Until(deadline)
+		if remaining <= 0 || remaining > tcpBackendDialTimeout {
+			t.Fatalf("deadline remaining = %v, want within %v", remaining, tcpBackendDialTimeout)
+		}
+		seenDeadline = true
+		return nil, errors.New("dial stopped")
+	}
+
+	clientConn, proxyConn := net.Pipe()
+	defer clientConn.Close()
+
+	done := make(chan struct{})
+	go func() {
+		handleTCPConn(proxyConn, "127.0.0.1:1", "test")
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("handleTCPConn did not return after dial error")
+	}
+	if !seenDeadline {
+		t.Fatal("dial context was not observed")
 	}
 }

@@ -49,6 +49,10 @@ type serverRunner interface {
 	Run(ctx context.Context) error
 }
 
+type ensureTagsSetter interface {
+	SetEnsureTagsFn(server.EnsureTagsFunc)
+}
+
 func init() {
 	serveCmd := &cobra.Command{
 		Use:   "serve",
@@ -124,7 +128,9 @@ Examples:
 			for _, s := range reg.Services {
 				names = append(names, s.Name)
 			}
-			_ = serveCleanupFn(context.Background(), names)
+			if err := serveCleanupFn(context.Background(), names); err != nil {
+				return fmt.Errorf("cleanup stale nodes: %w", err)
+			}
 
 			// Resolve control URL: flag > config > default
 			controlURL, _ := cmd.Flags().GetString("control-url")
@@ -177,6 +183,9 @@ func runForeground(pidPath, authKey, controlURL string) error {
 	srv, err := serveNewServerFn(authKey, controlURL)
 	if err != nil {
 		return err
+	}
+	if setter, ok := srv.(ensureTagsSetter); ok {
+		setter.SetEnsureTagsFn(serveEnsureTagsFn)
 	}
 
 	return srv.Run(ctx)

@@ -51,22 +51,19 @@ type TagsDeleteResult struct {
 
 // Testable function variables for tags commands.
 var (
-	tagsReadTagsFn     = tailapi.ReadTags
-	tagsDeleteTagFn    = tailapi.DeleteTag
-	tagsRegistryPathFn = config.RegistryPath
-	tagsLoadRegistryFn = registry.Load
+	tagsReadTagsFn                                                  = tailapi.ReadTags
+	tagsDeleteTagFn                                                 = tailapi.DeleteTag
+	tagsRegistryPathFn                                              = config.RegistryPath
+	tagsLoadRegistryFn                                              = registry.Load
 	tagsAddRegistryFn  func(string, registry.Service) (bool, error) = registry.Add
-	tagsEnsureDirFn    = config.EnsureDir
-	tagsLoadGlobalFn   = config.LoadGlobalConfig
-	tagsSaveGlobalFn   = config.SaveGlobalConfig
-	tagsGetDefaultFn   = config.GetDefaultTag
+	tagsEnsureDirFn                                                 = config.EnsureDir
+	tagsLoadGlobalFn                                                = config.LoadGlobalConfig
+	tagsSaveGlobalFn                                                = config.SaveGlobalConfig
+	tagsGetDefaultFn                                                = config.GetDefaultTag
 )
 
 func validateTagPrefix(tag string) error {
-	if !strings.HasPrefix(tag, "tag:") {
-		return fmt.Errorf("tag must start with \"tag:\": got %q", tag)
-	}
-	return nil
+	return registry.ValidateTag(tag)
 }
 
 func findService(reg *registry.Registry, name string) (int, error) {
