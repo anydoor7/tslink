@@ -76,6 +76,7 @@ func Daemonize(outLog, errLog, controlURL string) (int, error) {
 	cmd := execCommand(exe, args...)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
+	cmd.Dir = "/"
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 
 	if err := startCmd(cmd); err != nil {

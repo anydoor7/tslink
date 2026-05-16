@@ -19,3 +19,17 @@ func TestStopHelpDocumentsWindowsForcedTermination(t *testing.T) {
 		t.Fatalf("stop help = %q, want explicit Windows non-graceful caveat", help)
 	}
 }
+
+func TestStopHelpDocumentsMacOSLaunchAgentRestart(t *testing.T) {
+	stopCmd, _, err := rootCmd.Find([]string{"stop"})
+	if err != nil {
+		t.Fatalf("find stop command: %v", err)
+	}
+
+	help := stopCmd.Long
+	for _, want := range []string{"LaunchAgent", "KeepAlive", "tslink uninstall"} {
+		if !strings.Contains(help, want) {
+			t.Fatalf("stop help = %q, want macOS autostart restart caveat containing %q", help, want)
+		}
+	}
+}

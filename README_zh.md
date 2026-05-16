@@ -428,6 +428,8 @@ echo '{"action":"status"}' | tslink api
 | Linux | `--daemon` | systemd user service | SIGTERM 优雅停止 |
 | Windows | `--daemon` | 启动文件夹 | 强制终止进程 |
 
+macOS LaunchAgent 安装会使用 launchd `KeepAlive`。如果 LaunchAgent 仍在安装状态，运行 `tslink stop` 后 launchd 可能会重启 TSLink。想禁用自启动时，先运行 `tslink uninstall`，再运行 `tslink stop`。Linux headless user service 如需登出后继续运行，可能需要执行 `loginctl enable-linger "$USER"`。
+
 ## 路线图
 
 - [x] OAuth client secret 可由 login 和 tsnet auth 路径接受；无人值守前需验证标签/设备自动化

@@ -36,15 +36,17 @@ Examples:
 		}
 
 		if _, err := os.Stat(startupPath); os.IsNotExist(err) {
-			fmt.Println("→ Startup script not installed")
+			fmt.Fprintln(cmd.OutOrStdout(), "→ Startup script not installed")
 			return nil
+		} else if err != nil {
+			return fmt.Errorf("stat Startup script: %w", err)
 		}
 
 		if err := os.Remove(startupPath); err != nil {
 			return fmt.Errorf("remove Startup script: %w", err)
 		}
 
-		fmt.Println("→ ✓ Startup script removed")
+		fmt.Fprintln(cmd.OutOrStdout(), "→ ✓ Startup script removed")
 		return nil
 	},
 }

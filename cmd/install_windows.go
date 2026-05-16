@@ -13,6 +13,11 @@ import (
 
 const windowsStartupScriptName = "tslink.vbs"
 
+var (
+	windowsExecutablePathFn = os.Executable
+	windowsEvalSymlinksFn   = filepath.EvalSymlinks
+)
+
 var installCmd = &cobra.Command{
 	Use:   "install",
 	Short: "Install from Windows Startup",
@@ -36,11 +41,11 @@ To remove the autostart:
 Examples:
   tslink install                Register the Startup script`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		exe, err := os.Executable()
+		exe, err := windowsExecutablePathFn()
 		if err != nil {
 			return fmt.Errorf("find executable: %w", err)
 		}
-		exe, err = filepath.EvalSymlinks(exe)
+		exe, err = windowsEvalSymlinksFn(exe)
 		if err != nil {
 			return fmt.Errorf("resolve executable path: %w", err)
 		}
@@ -53,14 +58,12 @@ Examples:
 			return fmt.Errorf("create Startup directory: %w", err)
 		}
 
-		escapedExe := strings.ReplaceAll(exe, `"`, `""`)
-		script := fmt.Sprintf(`CreateObject("Wscript.Shell").Run """" & "%s" & """ serve", 0, False
-`, escapedExe)
+		script := windowsStartupScript(exe)
 		if err := os.WriteFile(startupPath, []byte(script), 0o644); err != nil {
 			return fmt.Errorf("write Startup script: %w", err)
 		}
 
-		fmt.Printf("→ ✓ Startup script installed: %s\n", startupPath)
+		fmt.Fprintf(cmd.OutOrStdout(), "→ ✓ Startup script installed: %s\n", startupPath)
 		return nil
 	},
 }
@@ -71,6 +74,14 @@ func windowsStartupScriptPath() (string, error) {
 		return "", fmt.Errorf("APPDATA is not set")
 	}
 	return filepath.Join(appData, "Microsoft", "Windows", "Start Menu", "Programs", "Startup", windowsStartupScriptName), nil
+}
+
+func windowsStartupScript(exe string) string {
+	return fmt.Sprintf("CreateObject(\"Wscript.Shell\").Run \"\"\"\" & %s & \"\"\" serve\", 0, False\r\n", vbsStringLiteral(exe))
+}
+
+func vbsStringLiteral(value string) string {
+	return `"` + strings.ReplaceAll(value, `"`, `""`) + `"`
 }
 
 func init() {

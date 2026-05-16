@@ -428,6 +428,8 @@ The repository contains packages and registry fields for features that are not w
 | Linux | `--daemon` | systemd user service | Graceful SIGTERM |
 | Windows | `--daemon` | Startup folder | Forced process termination |
 
+macOS LaunchAgent installs use launchd `KeepAlive`. If `tslink stop` is run while the LaunchAgent remains installed, launchd may restart TSLink. Run `tslink uninstall` before `tslink stop` when the intent is to disable autostart. Linux headless user services may need `loginctl enable-linger "$USER"` to keep running after logout.
+
 ## Roadmap
 
 - [x] OAuth client secret accepted by login and tsnet auth paths; validate tag/device automation before unattended use

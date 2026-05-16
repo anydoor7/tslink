@@ -5,7 +5,7 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"os/exec"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -30,24 +30,37 @@ To check if the service is still active after removal:
 Examples:
   tslink uninstall              Remove the systemd user service`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		servicePath := systemdServicePath()
-
-		if _, err := os.Stat(servicePath); os.IsNotExist(err) {
-			fmt.Println("→ systemd user service not installed")
-			return nil
+		servicePath, err := systemdServicePath()
+		if err != nil {
+			return err
 		}
 
-		exec.Command("systemctl", "--user", "stop", systemdServiceName).Run()
-		exec.Command("systemctl", "--user", "disable", systemdServiceName).Run()
+		if _, err := os.Stat(servicePath); os.IsNotExist(err) {
+			fmt.Fprintln(cmd.OutOrStdout(), "→ systemd user service not installed")
+			return nil
+		} else if err != nil {
+			return fmt.Errorf("stat systemd service: %w", err)
+		}
+
+		var warnings []string
+		if output, err := systemctlCombinedOutput("--user", "stop", systemdServiceName); err != nil {
+			warnings = append(warnings, fmt.Sprintf("stop systemd user service: %v%s", err, commandOutputSuffix(output)))
+		}
+		if output, err := systemctlCombinedOutput("--user", "disable", systemdServiceName); err != nil {
+			warnings = append(warnings, fmt.Sprintf("disable systemd user service: %v%s", err, commandOutputSuffix(output)))
+		}
 
 		if err := os.Remove(servicePath); err != nil {
 			return fmt.Errorf("remove systemd service: %w", err)
 		}
-		if output, err := exec.Command("systemctl", "--user", "daemon-reload").CombinedOutput(); err != nil {
+		if output, err := systemctlCombinedOutput("--user", "daemon-reload"); err != nil {
 			return fmt.Errorf("reload systemd user daemon: %w: %s", err, output)
 		}
 
-		fmt.Println("→ ✓ systemd user service removed")
+		if len(warnings) > 0 {
+			fmt.Fprintf(cmd.ErrOrStderr(), "→ ⚠ %s\n", strings.Join(warnings, "; "))
+		}
+		fmt.Fprintln(cmd.OutOrStdout(), "→ ✓ systemd user service removed")
 		return nil
 	},
 }

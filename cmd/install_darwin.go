@@ -3,10 +3,12 @@
 package cmd
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"text/template"
 
 	"github.com/monody0007/tslink/internal/config"
@@ -16,13 +18,25 @@ import (
 
 // InstallResult is the JSON payload for the install command.
 type InstallResult struct {
-	PlistPath string `json:"plist_path"`
-	Loaded    bool   `json:"loaded"`
+	PlistPath       string `json:"plist_path"`
+	Loaded          bool   `json:"loaded"`
+	LaunchctlTarget string `json:"launchctl_target"`
+	LaunchctlOutput string `json:"launchctl_output,omitempty"`
+	Warning         string `json:"warning,omitempty"`
 }
 
-var userHomeDirFn = os.UserHomeDir
+var (
+	userHomeDirFn           = os.UserHomeDir
+	executablePathFn        = os.Executable
+	evalSymlinksFn          = filepath.EvalSymlinks
+	userUIDFn               = os.Getuid
+	launchctlCombinedOutput = func(args ...string) ([]byte, error) {
+		return exec.Command("launchctl", args...).CombinedOutput()
+	}
+)
 
 const plistLabel = "com.tslink.daemon"
+const launchdThrottleInterval = 30
 
 var plistTemplate = template.Must(template.New("plist").Parse(`<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -39,6 +53,8 @@ var plistTemplate = template.Must(template.New("plist").Parse(`<?xml version="1.
     <true/>
     <key>KeepAlive</key>
     <true/>
+    <key>ThrottleInterval</key>
+    <integer>{{.ThrottleInterval}}</integer>
     <key>StandardOutPath</key>
     <string>{{.OutLog}}</string>
     <key>StandardErrorPath</key>
@@ -48,10 +64,11 @@ var plistTemplate = template.Must(template.New("plist").Parse(`<?xml version="1.
 `))
 
 type plistData struct {
-	Label      string
-	Executable string
-	OutLog     string
-	ErrLog     string
+	Label            string
+	Executable       string
+	OutLog           string
+	ErrLog           string
+	ThrottleInterval int
 }
 
 var installCmd = &cobra.Command{
@@ -65,10 +82,12 @@ This command:
   2. Configures it to run 'tslink serve' at login with auto-restart (KeepAlive)
   3. Logs stdout to ~/.config/tslink/logs/tslink.out.log
   4. Logs stderr to ~/.config/tslink/logs/tslink.err.log
-  5. Loads the agent immediately via 'launchctl load'
+  5. Uses launchd throttling to avoid tight restart loops on repeated failures
+  6. Loads the agent immediately via 'launchctl bootstrap gui/$(id -u)'
 
 To check if the agent is loaded:
   launchctl list | grep tslink
+  launchctl print gui/$(id -u)/com.tslink.daemon
 
 To remove the autostart:
   tslink uninstall
@@ -80,11 +99,11 @@ Examples:
 			return err
 		}
 
-		exe, err := os.Executable()
+		exe, err := executablePathFn()
 		if err != nil {
 			return fmt.Errorf("find executable: %w", err)
 		}
-		exe, err = filepath.EvalSymlinks(exe)
+		exe, err = evalSymlinksFn(exe)
 		if err != nil {
 			return fmt.Errorf("resolve executable path: %w", err)
 		}
@@ -97,34 +116,51 @@ Examples:
 		if err != nil {
 			return err
 		}
-		f, err := os.Create(plistPath)
-		if err != nil {
-			return fmt.Errorf("create plist: %w", err)
+		if err := os.MkdirAll(filepath.Dir(plistPath), 0o755); err != nil {
+			return fmt.Errorf("create LaunchAgents directory: %w", err)
 		}
-		defer f.Close()
 
 		data := plistData{
-			Label:      plistLabel,
-			Executable: exe,
-			OutLog:     outLog,
-			ErrLog:     errLog,
+			Label:            plistLabel,
+			Executable:       exe,
+			OutLog:           outLog,
+			ErrLog:           errLog,
+			ThrottleInterval: launchdThrottleInterval,
 		}
-		if err := plistTemplate.Execute(f, data); err != nil {
+		var plist bytes.Buffer
+		if err := plistTemplate.Execute(&plist, data); err != nil {
+			return fmt.Errorf("write plist: %w", err)
+		}
+		if err := os.WriteFile(plistPath, plist.Bytes(), 0o644); err != nil {
 			return fmt.Errorf("write plist: %w", err)
 		}
 
-		loadErr := exec.Command("launchctl", "load", plistPath).Run()
+		target := launchctlServiceTarget()
+		loadOutput, loadErr := launchctlCombinedOutput("bootstrap", launchctlDomain(), plistPath)
+		outputText := strings.TrimSpace(string(loadOutput))
 
 		if jsonOutput(cmd) {
-			output.Success("install", InstallResult{PlistPath: plistPath, Loaded: loadErr == nil})
+			result := InstallResult{
+				PlistPath:       plistPath,
+				Loaded:          loadErr == nil,
+				LaunchctlTarget: target,
+				LaunchctlOutput: outputText,
+			}
+			if loadErr != nil {
+				result.Warning = launchctlWarning("LaunchAgent plist installed but launchctl bootstrap failed", loadErr, loadOutput)
+			}
+			output.Success("install", result)
 			return nil
 		}
 
 		if loadErr != nil {
-			fmt.Printf("→ ⚠ LaunchAgent installed but could not auto-load: %v\n", loadErr)
-			fmt.Println("  Run 'launchctl load " + plistPath + "' manually")
+			fmt.Fprintf(cmd.OutOrStdout(), "→ ⚠ %s\n", launchctlWarning("LaunchAgent installed but could not auto-load", loadErr, loadOutput))
+			fmt.Fprintf(cmd.OutOrStdout(), "  Run 'launchctl bootstrap %s %s' manually\n", launchctlDomain(), plistPath)
 		} else {
-			fmt.Printf("→ ✓ LaunchAgent installed and loaded: %s\n", plistPath)
+			if outputText != "" {
+				fmt.Fprintf(cmd.OutOrStdout(), "→ launchctl output: %s\n", outputText)
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "→ ✓ LaunchAgent installed and loaded: %s\n", plistPath)
 		}
 		return nil
 	},
@@ -136,6 +172,22 @@ func plistPath() (string, error) {
 		return "", fmt.Errorf("get home directory: %w", err)
 	}
 	return filepath.Join(home, "Library", "LaunchAgents", plistLabel+".plist"), nil
+}
+
+func launchctlDomain() string {
+	return fmt.Sprintf("gui/%d", userUIDFn())
+}
+
+func launchctlServiceTarget() string {
+	return launchctlDomain() + "/" + plistLabel
+}
+
+func launchctlWarning(message string, err error, combinedOutput []byte) string {
+	detail := strings.TrimSpace(string(combinedOutput))
+	if detail == "" {
+		return fmt.Sprintf("%s: %v", message, err)
+	}
+	return fmt.Sprintf("%s: %v; output: %s", message, err, detail)
 }
 
 func init() {
