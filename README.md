@@ -353,7 +353,8 @@ tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 | `--tcp host:port` | Raw TCP forwarding |
 | `--ephemeral` | Ephemeral node, auto-removed from tailnet when stopped |
 | `--tags tag:a,tag:b` | ACL tags for Tailscale network policy |
-| `--allow user@,tag:x` | HTTP access control for proxy/file services; TCP ignores this HTTP ACL |
+| `--allow user@,tag:x` | HTTP access control for proxy/file services; rejected for TCP because raw TCP uses Tailscale ACL tags and target-service auth |
+| `--control-url URL` | Per-service control server override, e.g. Headscale |
 | `--funnel` | Expose via Tailscale Funnel (public internet, proxy only) |
 | `--domain example.com` | Roadmap/experimental: accepted in service config, but custom-domain runtime TLS is not wired |
 | `--acme-email user@example.com` | Roadmap/experimental: stored with `--domain`; no shipped ACME listener |

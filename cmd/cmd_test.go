@@ -32,6 +32,7 @@ func runAddCmd(t *testing.T, args []string, flags map[string]string) error {
 	addCmd.Flags().Set("funnel", "false")
 	addCmd.Flags().Set("domain", "")
 	addCmd.Flags().Set("acme-email", "")
+	addCmd.Flags().Set("control-url", "")
 
 	for k, v := range flags {
 		addCmd.Flags().Set(k, v)
@@ -62,6 +63,7 @@ func runAddCmdOutput(t *testing.T, args []string, flags map[string]string) (stri
 	addCmd.Flags().Set("funnel", "false")
 	addCmd.Flags().Set("domain", "")
 	addCmd.Flags().Set("acme-email", "")
+	addCmd.Flags().Set("control-url", "")
 
 	for k, v := range flags {
 		addCmd.Flags().Set(k, v)
@@ -85,6 +87,44 @@ func TestAddCmd_NoFlags(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "exactly one of --proxy, --dir, or --tcp must be provided") {
 		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestAddCmd_ControlURLPersisted(t *testing.T) {
+	dir := t.TempDir()
+	regPath := filepath.Join(dir, "registry.json")
+	addCmd, _, err := rootCmd.Find([]string{"add"})
+	if err != nil {
+		t.Fatalf("find add command: %v", err)
+	}
+
+	oldRegPath := registryPathFn
+	oldEnsureDir := ensureDirFn
+	t.Cleanup(func() {
+		registryPathFn = oldRegPath
+		ensureDirFn = oldEnsureDir
+		_ = addCmd.Flags().Set("control-url", "")
+	})
+	registryPathFn = func() (string, error) { return regPath, nil }
+	ensureDirFn = func() error { return nil }
+
+	err = runAddCmd(t, []string{"headscale-app"}, map[string]string{
+		"proxy":       "localhost:3000",
+		"control-url": "https://headscale.example.com",
+	})
+	if err != nil {
+		t.Fatalf("run add: %v", err)
+	}
+
+	reg, err := registry.Load(regPath)
+	if err != nil {
+		t.Fatalf("load registry: %v", err)
+	}
+	if len(reg.Services) != 1 {
+		t.Fatalf("services = %d, want 1", len(reg.Services))
+	}
+	if reg.Services[0].ControlURL != "https://headscale.example.com" {
+		t.Fatalf("control_url = %q, want %q", reg.Services[0].ControlURL, "https://headscale.example.com")
 	}
 }
 

@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -42,18 +43,29 @@ func parseTags(tagsStr string) ([]string, error) {
 	return tags, nil
 }
 
+func validateControlURL(value string) error {
+	if value == "" {
+		return nil
+	}
+	if _, err := url.ParseRequestURI(value); err != nil {
+		return fmt.Errorf("invalid URL %q: %w", value, err)
+	}
+	return nil
+}
+
 // AddParams holds parsed flags for the add command.
 type AddParams struct {
-	Name      string
-	Proxy     string
-	Dir       string
-	TCP       string
-	Ephemeral bool
-	Tags      string
-	Allow     string
-	Funnel    bool
-	Domain    string
-	AcmeEmail string
+	Name       string
+	Proxy      string
+	Dir        string
+	TCP        string
+	Ephemeral  bool
+	Tags       string
+	Allow      string
+	Funnel     bool
+	Domain     string
+	AcmeEmail  string
+	ControlURL string
 }
 
 // buildService validates parameters and constructs a registry.Service.
@@ -102,6 +114,9 @@ func buildService(p AddParams) (registry.Service, error) {
 	if p.AcmeEmail != "" && p.Domain == "" {
 		return registry.Service{}, fmt.Errorf("--acme-email requires --domain to be set")
 	}
+	if err := validateControlURL(p.ControlURL); err != nil {
+		return registry.Service{}, err
+	}
 	if p.TCP != "" && len(allowedUsers) > 0 {
 		return registry.Service{}, fmt.Errorf("--allow is not supported for --tcp services")
 	}
@@ -137,6 +152,7 @@ func buildService(p AddParams) (registry.Service, error) {
 			Name: p.Name, Type: registry.TypeTCP,
 			Target: net.JoinHostPort(host, portStr), Port: port,
 			Ephemeral: p.Ephemeral, Tags: tags, AllowedUsers: allowedUsers,
+			ControlURL: p.ControlURL,
 		}, nil
 	}
 
@@ -149,6 +165,7 @@ func buildService(p AddParams) (registry.Service, error) {
 			Name: p.Name, Type: registry.TypeProxy, Target: target,
 			Ephemeral: p.Ephemeral, Tags: tags, AllowedUsers: allowedUsers,
 			Funnel: p.Funnel, Domain: p.Domain, AcmeEmail: p.AcmeEmail,
+			ControlURL: p.ControlURL,
 		}, nil
 	}
 
@@ -156,6 +173,7 @@ func buildService(p AddParams) (registry.Service, error) {
 	return registry.Service{
 		Name: p.Name, Type: registry.TypeFile,
 		Ephemeral: p.Ephemeral, Tags: tags, AllowedUsers: allowedUsers,
+		ControlURL: p.ControlURL,
 	}, nil
 }
 
@@ -183,18 +201,20 @@ Examples:
 			funnel, _ := cmd.Flags().GetBool("funnel")
 			domainName, _ := cmd.Flags().GetString("domain")
 			acmeEmail, _ := cmd.Flags().GetString("acme-email")
+			controlURL, _ := cmd.Flags().GetString("control-url")
 
 			svc, err := buildService(AddParams{
-				Name:      args[0],
-				Proxy:     proxyTarget,
-				Dir:       dirPath,
-				TCP:       tcpTarget,
-				Ephemeral: ephemeral,
-				Tags:      tagsStr,
-				Allow:     allowStr,
-				Funnel:    funnel,
-				Domain:    domainName,
-				AcmeEmail: acmeEmail,
+				Name:       args[0],
+				Proxy:      proxyTarget,
+				Dir:        dirPath,
+				TCP:        tcpTarget,
+				Ephemeral:  ephemeral,
+				Tags:       tagsStr,
+				Allow:      allowStr,
+				Funnel:     funnel,
+				Domain:     domainName,
+				AcmeEmail:  acmeEmail,
+				ControlURL: controlURL,
 			})
 			if err != nil {
 				return err
@@ -265,5 +285,6 @@ Examples:
 	addCmd.Flags().String("domain", "", "Custom domain name for the service (proxy only, e.g., app.example.com)")
 	addCmd.Flags().String("allow", "", "Comma-separated allowed identities (e.g., user@example.com,tag:admin)")
 	addCmd.Flags().String("acme-email", "", "Email for Let's Encrypt ACME certificates (requires --domain)")
+	addCmd.Flags().String("control-url", "", "Per-service custom control server URL (e.g., Headscale)")
 	rootCmd.AddCommand(addCmd)
 }

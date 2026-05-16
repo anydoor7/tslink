@@ -89,6 +89,7 @@ func TestAddFunnel_WithDir_Error(t *testing.T) {
 	defer func() {
 		addCmd.Flags().Set("dir", "")
 		addCmd.Flags().Set("funnel", "false")
+		addCmd.Flags().Set("control-url", "")
 	}()
 
 	err = addCmd.RunE(addCmd, []string{"docs"})
@@ -123,6 +124,7 @@ func TestAddFunnel_WithTCP_Error(t *testing.T) {
 	defer func() {
 		addCmd.Flags().Set("tcp", "")
 		addCmd.Flags().Set("funnel", "false")
+		addCmd.Flags().Set("control-url", "")
 	}()
 
 	err = addCmd.RunE(addCmd, []string{"mydb"})
@@ -144,6 +146,34 @@ func TestBuildService_TCPRejectsAllow(t *testing.T) {
 		t.Fatal("expected error when using --allow with --tcp")
 	}
 	if !strings.Contains(err.Error(), "--allow is not supported for --tcp") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestBuildService_ControlURLPersisted(t *testing.T) {
+	svc, err := buildService(AddParams{
+		Name:       "app",
+		Proxy:      "localhost:3000",
+		ControlURL: "https://headscale.example.com",
+	})
+	if err != nil {
+		t.Fatalf("buildService: %v", err)
+	}
+	if svc.ControlURL != "https://headscale.example.com" {
+		t.Fatalf("control_url = %q, want %q", svc.ControlURL, "https://headscale.example.com")
+	}
+}
+
+func TestBuildService_RejectsInvalidControlURL(t *testing.T) {
+	_, err := buildService(AddParams{
+		Name:       "app",
+		Proxy:      "localhost:3000",
+		ControlURL: "not-a-url",
+	})
+	if err == nil {
+		t.Fatal("expected invalid control-url error")
+	}
+	if !strings.Contains(err.Error(), "invalid URL") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

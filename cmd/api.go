@@ -18,15 +18,16 @@ import (
 type APIRequest struct {
 	Action string `json:"action"`
 	// add fields
-	Name      string   `json:"name,omitempty"`
-	Type      string   `json:"type,omitempty"`
-	Target    string   `json:"target,omitempty"`
-	Path      string   `json:"path,omitempty"`
-	Port      int      `json:"port,omitempty"`
-	Tags      []string `json:"tags,omitempty"`
-	Allow     []string `json:"allow,omitempty"`
-	Ephemeral bool     `json:"ephemeral,omitempty"`
-	Funnel    bool     `json:"funnel,omitempty"`
+	Name       string   `json:"name,omitempty"`
+	Type       string   `json:"type,omitempty"`
+	Target     string   `json:"target,omitempty"`
+	Path       string   `json:"path,omitempty"`
+	Port       int      `json:"port,omitempty"`
+	Tags       []string `json:"tags,omitempty"`
+	Allow      []string `json:"allow,omitempty"`
+	Ephemeral  bool     `json:"ephemeral,omitempty"`
+	Funnel     bool     `json:"funnel,omitempty"`
+	ControlURL string   `json:"control_url,omitempty"`
 }
 
 // APIResponse is written back to stdout for each request.
@@ -156,11 +157,12 @@ func addParamsFromAPIRequest(req APIRequest) (AddParams, error) {
 	}
 
 	params := AddParams{
-		Name:      req.Name,
-		Ephemeral: req.Ephemeral,
-		Tags:      strings.Join(req.Tags, ","),
-		Allow:     strings.Join(req.Allow, ","),
-		Funnel:    req.Funnel,
+		Name:       req.Name,
+		Ephemeral:  req.Ephemeral,
+		Tags:       strings.Join(req.Tags, ","),
+		Allow:      strings.Join(req.Allow, ","),
+		Funnel:     req.Funnel,
+		ControlURL: req.ControlURL,
 	}
 
 	switch req.Type {
@@ -226,7 +228,7 @@ func init() {
 
 Supported actions:
   {"action":"list"}
-  {"action":"add","name":"myapp","type":"proxy","target":"localhost:3000","tags":["tag:tsmain"],"allow":["user@example.com"],"ephemeral":false,"funnel":false}
+  {"action":"add","name":"myapp","type":"proxy","target":"localhost:3000","tags":["tag:tsmain"],"allow":["user@example.com"],"ephemeral":false,"funnel":false,"control_url":"https://headscale.example.com"}
   {"action":"add","name":"docs","type":"file","path":"/path/to/dir","tags":["tag:docs"]}
   {"action":"add","name":"mydb","type":"tcp","target":"localhost:5432","tags":["tag:db"]}
   {"action":"remove","name":"myapp"}

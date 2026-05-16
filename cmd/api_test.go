@@ -157,6 +157,52 @@ func TestAPIAdd_Proxy_WithProvidedTags(t *testing.T) {
 	}
 }
 
+func TestAPIAdd_Proxy_WithControlURL(t *testing.T) {
+	h, _ := newTestHandler(t)
+
+	var buf bytes.Buffer
+	h.handleLine(`{"action":"add","name":"headscale-app","type":"proxy","target":"localhost:3000","control_url":"https://headscale.example.com"}`, &buf)
+
+	resp := parseResponse(t, &buf)
+	if !resp.OK {
+		t.Fatalf("expected ok, got error: %s", resp.Error)
+	}
+
+	reg, err := registry.Load(h.regPath)
+	if err != nil {
+		t.Fatalf("load registry: %v", err)
+	}
+	if len(reg.Services) != 1 {
+		t.Fatalf("expected 1 service, got %d", len(reg.Services))
+	}
+	if reg.Services[0].ControlURL != "https://headscale.example.com" {
+		t.Fatalf("control_url = %q, want %q", reg.Services[0].ControlURL, "https://headscale.example.com")
+	}
+}
+
+func TestAPIAdd_RejectsInvalidControlURLWithoutCreatingService(t *testing.T) {
+	h, _ := newTestHandler(t)
+
+	var buf bytes.Buffer
+	h.handleLine(`{"action":"add","name":"headscale-app","type":"proxy","target":"localhost:3000","control_url":"not-a-url"}`, &buf)
+
+	resp := parseResponse(t, &buf)
+	if resp.OK {
+		t.Fatal("expected error for invalid control_url")
+	}
+	if !strings.Contains(resp.Error, "invalid URL") {
+		t.Fatalf("unexpected error: %s", resp.Error)
+	}
+
+	reg, err := registry.Load(h.regPath)
+	if err != nil {
+		t.Fatalf("load registry: %v", err)
+	}
+	if len(reg.Services) != 0 {
+		t.Fatalf("services = %+v, want none after rejected request", reg.Services)
+	}
+}
+
 // --- add file ---
 
 func TestAPIAdd_File(t *testing.T) {

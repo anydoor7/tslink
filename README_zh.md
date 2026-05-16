@@ -353,7 +353,8 @@ tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 | `--tcp host:port` | 原始 TCP 转发 |
 | `--ephemeral` | 临时节点，停止后自动从 tailnet 移除 |
 | `--tags tag:a,tag:b` | ACL 标签，用于 Tailscale 网络策略 |
-| `--allow user@,tag:x` | proxy/file 服务的 HTTP 访问控制；TCP 不应用该 HTTP ACL |
+| `--allow user@,tag:x` | proxy/file 服务的 HTTP 访问控制；TCP 会拒绝该标志，因为原始 TCP 使用 Tailscale ACL 标签和目标服务自身认证 |
+| `--control-url URL` | 服务级控制服务器覆盖，例如 Headscale |
 | `--funnel` | 通过 Tailscale Funnel 暴露到公网（仅限 proxy） |
 | `--domain example.com` | Roadmap/experimental：可写入服务配置，但自定义域名运行时 TLS 尚未接入 |
 | `--acme-email user@example.com` | Roadmap/experimental：随 `--domain` 存储；尚无已交付 ACME listener |
