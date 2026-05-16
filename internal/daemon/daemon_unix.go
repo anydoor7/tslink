@@ -81,8 +81,8 @@ func Daemonize(outLog, errLog, controlURL string) (int, error) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 
 	oldUmask := setUmask(0o077)
+	defer setUmask(oldUmask)
 	startErr := startCmd(cmd)
-	setUmask(oldUmask)
 	if startErr != nil {
 		_ = stdout.Close()
 		_ = stderr.Close()

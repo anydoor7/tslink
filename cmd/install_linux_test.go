@@ -34,8 +34,8 @@ func TestSystemdServiceContentsQuotesExecutableWithSpaces(t *testing.T) {
 }
 
 func TestSystemdServiceContentsEscapesSystemdSpecials(t *testing.T) {
-	unit := systemdServiceContents(`/opt/100% "TSLink"\tslink`)
-	if !strings.Contains(unit, `ExecStart="/opt/100%% \"TSLink\"\\tslink" serve`) {
+	unit := systemdServiceContents(`/opt/100%/$build "TSLink"\tslink`)
+	if !strings.Contains(unit, `ExecStart="/opt/100%%/$$build \"TSLink\"\\tslink" serve`) {
 		t.Fatalf("unit did not escape systemd executable path:\n%s", unit)
 	}
 }
@@ -83,7 +83,7 @@ func TestLinuxInstallCommandRunsSystemctlAndWarnsAboutLinger(t *testing.T) {
 	wantCalls := []string{
 		strings.Join([]string{"--user", "daemon-reload"}, "\x00"),
 		strings.Join([]string{"--user", "enable", systemdServiceName}, "\x00"),
-		strings.Join([]string{"--user", "start", systemdServiceName}, "\x00"),
+		strings.Join([]string{"--user", "restart", systemdServiceName}, "\x00"),
 	}
 	if strings.Join(systemctlCalls, "\n") != strings.Join(wantCalls, "\n") {
 		t.Fatalf("systemctl calls = %q, want %q", systemctlCalls, wantCalls)

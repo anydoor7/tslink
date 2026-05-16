@@ -36,7 +36,7 @@ This command:
   1. Creates a unit file at ~/.config/systemd/user/tslink.service
   2. Configures it to run 'tslink serve' with throttled auto-restart on failure
   3. Runs 'systemctl --user daemon-reload' to pick up the new unit
-  4. Enables and starts the service immediately
+  4. Enables and restarts the service immediately so the new unit takes effect
   5. Checks systemd lingering and prints guidance for headless/logout survival
 
 To check the service status:
@@ -55,7 +55,7 @@ If lingering was enabled only for TSLink, disable it after uninstall:
   loginctl disable-linger "$USER"
 
 Examples:
-  tslink install                Register and start the systemd service`,
+  tslink install                Register and restart the systemd service`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		exe, err := linuxExecutablePathFn()
 		if err != nil {
@@ -85,15 +85,15 @@ Examples:
 		if output, err := systemctlCombinedOutput("--user", "enable", systemdServiceName); err != nil {
 			return fmt.Errorf("enable systemd user service: %w: %s", err, output)
 		}
-		if output, err := systemctlCombinedOutput("--user", "start", systemdServiceName); err != nil {
-			return fmt.Errorf("start systemd user service: %w: %s", err, output)
+		if output, err := systemctlCombinedOutput("--user", "restart", systemdServiceName); err != nil {
+			return fmt.Errorf("restart systemd user service: %w: %s", err, output)
 		}
 
 		if warning := linuxLingerWarning(); warning != "" {
 			fmt.Fprintf(cmd.ErrOrStderr(), "→ ⚠ %s\n", warning)
 		}
 
-		fmt.Fprintf(cmd.OutOrStdout(), "→ ✓ systemd user service installed and started: %s\n", servicePath)
+		fmt.Fprintf(cmd.OutOrStdout(), "→ ✓ systemd user service installed and restarted: %s\n", servicePath)
 		return nil
 	},
 }
@@ -127,6 +127,8 @@ func systemdQuoteExecPath(path string) string {
 			b.WriteString(`\"`)
 		case '\\':
 			b.WriteString(`\\`)
+		case '$':
+			b.WriteString("$$")
 		default:
 			b.WriteRune(r)
 		}
