@@ -138,8 +138,8 @@ tslink tags set myapp tag:webserver
 # 修改新服务的默认标签
 tslink tags set-default tag:myteam
 
-# 从 Tailscale ACL 删除标签
-tslink tags delete-remote tag:old-tag
+# 通过本地安全检查后全局移除 ACL 标签所有者规则
+tslink tags delete-remote tag:old-tag --force
 ```
 
 ### 更多示例
@@ -184,7 +184,7 @@ tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 | `tslink tags add <service> <tag>` | 为服务追加一个标签 |
 | `tslink tags set <service> <tag>` | 替换服务的全部标签 |
 | `tslink tags set-default <tag>` | 修改新服务的默认标签 |
-| `tslink tags delete-remote <tag>` | 从 Tailscale ACL 删除一个标签 |
+| `tslink tags delete-remote <tag> --force` | 通过本地安全检查后从 Tailscale ACL 全局移除 ACL 标签所有者规则 |
 | `tslink api` | JSON-over-stdin/stdout 模式，用于程序化控制 |
 | `tslink config` | 管理全局配置（set/get/list） |
 | `tslink install` | 开机自启（macOS LaunchAgent / Linux systemd / Windows 启动文件夹） |

@@ -458,6 +458,32 @@ func TestStartNodeLocked_InvalidTagIncludesServiceContext(t *testing.T) {
 	}
 }
 
+func TestStartNodeLocked_RejectsTCPAllowedUsers(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	err = s.startNodeLocked(context.Background(), registry.Service{
+		Name:         "db",
+		Type:         registry.TypeTCP,
+		Target:       "localhost:5432",
+		Port:         5432,
+		AllowedUsers: []string{"alice@example.com"},
+	})
+	if err == nil {
+		t.Fatal("startNodeLocked() error = nil, want tcp allowed_users error")
+	}
+	if !strings.Contains(err.Error(), "tcp services do not support allowed_users") {
+		t.Fatalf("error = %v, want tcp allowed_users error", err)
+	}
+}
+
 func TestSyncNodes_RemovesDeletedService(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	if err := config.EnsureDir(); err != nil {
@@ -518,9 +544,13 @@ func TestSyncNodes_HotReloadUsesFreshPerServiceAuthMaterial(t *testing.T) {
 		return fmt.Sprintf("key-%d", len(providerCalls)), nil
 	})
 	var cleanupNames []string
-	s.SetCleanupStaleNodesFn(func(ctx context.Context, names []string) (tailapi.CleanupResult, error) {
-		cleanupNames = append(cleanupNames, names...)
-		return tailapi.CleanupResult{Matched: names, Deleted: names}, nil
+	var cleanupTags []string
+	s.SetCleanupStaleNodesFn(func(ctx context.Context, targets []tailapi.CleanupTarget) (tailapi.CleanupResult, error) {
+		for _, target := range targets {
+			cleanupNames = append(cleanupNames, target.Hostname)
+			cleanupTags = append(cleanupTags, target.Tags...)
+		}
+		return tailapi.CleanupResult{Matched: cleanupNames, Deleted: cleanupNames}, nil
 	})
 
 	writeRegistry(t, []registry.Service{
@@ -564,6 +594,9 @@ func TestSyncNodes_HotReloadUsesFreshPerServiceAuthMaterial(t *testing.T) {
 	if strings.Join(cleanupNames, ",") != "app" {
 		t.Fatalf("cleanup names = %v, want [app]", cleanupNames)
 	}
+	if strings.Join(cleanupTags, ",") != "tag:one" {
+		t.Fatalf("cleanup tags = %v, want old service tag [tag:one]", cleanupTags)
+	}
 }
 
 func TestSyncNodes_CleanupFailureStillRestartsChangedService(t *testing.T) {
@@ -590,7 +623,7 @@ func TestSyncNodes_CleanupFailureStillRestartsChangedService(t *testing.T) {
 	}
 	oldNode := newNode(t, oldSvc)
 	s.nodes["app"] = oldNode
-	s.SetCleanupStaleNodesFn(func(ctx context.Context, names []string) (tailapi.CleanupResult, error) {
+	s.SetCleanupStaleNodesFn(func(ctx context.Context, targets []tailapi.CleanupTarget) (tailapi.CleanupResult, error) {
 		return tailapi.CleanupResult{}, errors.New("tailnet cleanup down")
 	})
 

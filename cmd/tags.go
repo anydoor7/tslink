@@ -49,7 +49,9 @@ type TagsSetDefaultResult struct {
 }
 
 type TagsDeleteResult struct {
-	Tag string `json:"tag"`
+	Tag                          string `json:"tag"`
+	RemoteACLTagOwnerRuleRemoved bool   `json:"remote_acl_tag_owner_rule_removed"`
+	Message                      string `json:"message"`
 }
 
 const tagsRemoteAPITokenMessage = "remote tag deletion requires a Tailscale API access token; configure one with `tslink login --api-key ...`"
@@ -258,7 +260,7 @@ func tagsSetDefaultRun(out io.Writer, tag string, isJSON bool) error {
 }
 
 // tagsDeleteRemoteRun deletes a tag from the tailnet ACL after safety checks.
-func tagsDeleteRemoteRun(ctx context.Context, out io.Writer, tag string, isJSON bool) error {
+func tagsDeleteRemoteRun(ctx context.Context, out io.Writer, tag string, force bool, isJSON bool) error {
 	if err := validateTagPrefix(tag); err != nil {
 		return err
 	}
@@ -296,6 +298,13 @@ func tagsDeleteRemoteRun(ctx context.Context, out io.Writer, tag string, isJSON 
 		}
 		return fmt.Errorf("%s", msg)
 	}
+	forceMsg := fmt.Sprintf("refusing to delete %q from the tailnet ACL without --force; this removes the ACL tag owner rule globally", tag)
+	if !force {
+		if isJSON {
+			return output.ErrConflict(forceMsg)
+		}
+		return fmt.Errorf("%s", forceMsg)
+	}
 	if err := tagsDeleteTagFn(ctx, tag); err != nil {
 		if errors.Is(err, tailapi.ErrNoAPIClient) {
 			if isJSON {
@@ -305,11 +314,16 @@ func tagsDeleteRemoteRun(ctx context.Context, out io.Writer, tag string, isJSON 
 		}
 		return err
 	}
+	message := fmt.Sprintf("deleted %s from the tailnet ACL; the ACL tag owner rule was removed globally", tag)
 	if isJSON {
-		output.Success("tags delete-remote", TagsDeleteResult{Tag: tag})
+		output.Success("tags delete-remote", TagsDeleteResult{
+			Tag:                          tag,
+			RemoteACLTagOwnerRuleRemoved: true,
+			Message:                      message,
+		})
 		return nil
 	}
-	fmt.Fprintf(out, "→ Deleted %s from tailnet ACL\n", tag)
+	fmt.Fprintf(out, "→ Deleted %s from tailnet ACL; ACL tag owner rule removed globally\n", tag)
 	return nil
 }
 
@@ -325,7 +339,7 @@ Subcommands:
   add             Add a tag to a service
   set             Replace a service's tags
   set-default     Change the default tag for new services
-  delete-remote   Delete a tag from the tailnet ACL
+  delete-remote   Remove an ACL tag owner rule globally after local safety checks
 
 Examples:
   tslink tags list
@@ -333,7 +347,7 @@ Examples:
   tslink tags add myapp tag:shared
   tslink tags set myapp tag:web
   tslink tags set-default tag:myteam
-  tslink tags delete-remote tag:old`,
+  tslink tags delete-remote tag:old --force`,
 	}
 
 	tagsListCmd := &cobra.Command{
@@ -382,13 +396,15 @@ Examples:
 	}
 
 	tagsDeleteRemoteCmd := &cobra.Command{
-		Use:   "delete-remote <tag>",
-		Short: "Delete a tag from the tailnet ACL",
+		Use:   "delete-remote <tag> --force",
+		Short: "Remove an ACL tag owner rule globally after local safety checks",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return tagsDeleteRemoteRun(cmd.Context(), cmd.OutOrStdout(), args[0], jsonOutput(cmd))
+			force, _ := cmd.Flags().GetBool("force")
+			return tagsDeleteRemoteRun(cmd.Context(), cmd.OutOrStdout(), args[0], force, jsonOutput(cmd))
 		},
 	}
+	tagsDeleteRemoteCmd.Flags().Bool("force", false, "Delete the ACL tag owner rule globally after local safety checks")
 
 	tagsCmd.AddCommand(tagsListCmd, tagsPullCmd, tagsAddCmd, tagsSetCmd, tagsSetDefaultCmd, tagsDeleteRemoteCmd)
 	rootCmd.AddCommand(tagsCmd)

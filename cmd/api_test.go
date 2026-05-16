@@ -106,6 +106,9 @@ func TestAPIAdd_Proxy(t *testing.T) {
 	if !strings.HasPrefix(reg.Services[0].Target, "http://") {
 		t.Errorf("expected http:// prefix, got %s", reg.Services[0].Target)
 	}
+	if len(reg.Services[0].Tags) != 1 || reg.Services[0].Tags[0] != "tag:tsmain" {
+		t.Errorf("expected default tag:tsmain, got %v", reg.Services[0].Tags)
+	}
 }
 
 func TestAPIAdd_Proxy_WithScheme(t *testing.T) {
@@ -123,6 +126,34 @@ func TestAPIAdd_Proxy_WithScheme(t *testing.T) {
 	reg, _ := registry.Load(h.regPath)
 	if reg.Services[0].Target != "https://localhost:8443" {
 		t.Errorf("scheme should not be changed, got %s", reg.Services[0].Target)
+	}
+}
+
+func TestAPIAdd_Proxy_WithProvidedTags(t *testing.T) {
+	h, _ := newTestHandler(t)
+	resp := sendRequest(t, h, APIRequest{
+		Action: "add",
+		Name:   "tagged",
+		Type:   "proxy",
+		Target: "localhost:3000",
+		Tags:   []string{"tag:web", "tag:internal"},
+		Allow:  []string{"user@example.com", "tag:admin"},
+		Funnel: true,
+	})
+	if !resp.OK {
+		t.Fatalf("expected ok, got error: %s", resp.Error)
+	}
+
+	reg, _ := registry.Load(h.regPath)
+	svc := reg.Services[0]
+	if strings.Join(svc.Tags, ",") != "tag:web,tag:internal" {
+		t.Fatalf("tags = %v, want provided tags", svc.Tags)
+	}
+	if strings.Join(svc.AllowedUsers, ",") != "user@example.com,tag:admin" {
+		t.Fatalf("allowed_users = %v, want provided allow list", svc.AllowedUsers)
+	}
+	if !svc.Funnel {
+		t.Fatal("expected funnel=true")
 	}
 }
 
@@ -214,6 +245,40 @@ func TestAPIAdd_TCP_BadFormat(t *testing.T) {
 	})
 	if resp.OK {
 		t.Fatal("expected error for bad host:port")
+	}
+}
+
+func TestAPIAdd_TCP_RejectsAllow(t *testing.T) {
+	h, _ := newTestHandler(t)
+	resp := sendRequest(t, h, APIRequest{
+		Action: "add",
+		Name:   "mydb",
+		Type:   "tcp",
+		Target: "localhost:5432",
+		Allow:  []string{"user@example.com"},
+	})
+	if resp.OK {
+		t.Fatal("expected error for tcp allow")
+	}
+	if !strings.Contains(resp.Error, "allow is not supported") {
+		t.Errorf("unexpected error: %s", resp.Error)
+	}
+}
+
+func TestAPIAdd_RejectsInconsistentFields(t *testing.T) {
+	h, _ := newTestHandler(t)
+	resp := sendRequest(t, h, APIRequest{
+		Action: "add",
+		Name:   "myapp",
+		Type:   "proxy",
+		Target: "localhost:3000",
+		Path:   "/tmp/ignored",
+	})
+	if resp.OK {
+		t.Fatal("expected error for proxy path")
+	}
+	if !strings.Contains(resp.Error, "path is not supported for proxy type") {
+		t.Errorf("unexpected error: %s", resp.Error)
 	}
 }
 

@@ -76,7 +76,7 @@ func saveServeState(t *testing.T) {
 		pidPath      func() (string, error)
 		isRunning    func(string) bool
 		ensureTags   func(context.Context, []string) error
-		cleanup      func(context.Context, []string) (tailapi.CleanupResult, error)
+		cleanup      func(context.Context, []tailapi.CleanupTarget) (tailapi.CleanupResult, error)
 		loadGlobal   func() (config.GlobalConfig, error)
 		logDir       func() (string, error)
 		daemonize    func(string, string) (int, error)
@@ -136,7 +136,7 @@ func mockServeDefaults(t *testing.T, dir string) {
 	servePIDPathFn = func() (string, error) { return pidPath, nil }
 	serveIsRunningFn = func(string) bool { return false }
 	serveEnsureTagsFn = func(ctx context.Context, tags []string) error { return nil }
-	serveCleanupFn = func(ctx context.Context, names []string) (tailapi.CleanupResult, error) {
+	serveCleanupFn = func(ctx context.Context, targets []tailapi.CleanupTarget) (tailapi.CleanupResult, error) {
 		return tailapi.CleanupResult{}, nil
 	}
 	serveLoadGlobalFn = func() (config.GlobalConfig, error) { return config.GlobalConfig{}, nil }
@@ -309,7 +309,7 @@ func TestServeCmd_CleanupErrorStopsStartup(t *testing.T) {
 	mockServeDefaults(t, dir)
 
 	serverStarted := false
-	serveCleanupFn = func(ctx context.Context, names []string) (tailapi.CleanupResult, error) {
+	serveCleanupFn = func(ctx context.Context, targets []tailapi.CleanupTarget) (tailapi.CleanupResult, error) {
 		return tailapi.CleanupResult{}, fmt.Errorf("list devices: network down")
 	}
 	serveNewServerFn = func(authKey, controlURL string) (serverRunner, error) {
@@ -332,7 +332,7 @@ func TestServeCmd_CleanupSkippedNoAPIClientStarts(t *testing.T) {
 	mockServeDefaults(t, dir)
 
 	serverStarted := false
-	serveCleanupFn = func(ctx context.Context, names []string) (tailapi.CleanupResult, error) {
+	serveCleanupFn = func(ctx context.Context, targets []tailapi.CleanupTarget) (tailapi.CleanupResult, error) {
 		return tailapi.CleanupResult{Skipped: true, SkipReason: tailapi.ErrNoAPIClient.Error()}, tailapi.ErrNoAPIClient
 	}
 	serveNewServerFn = func(authKey, controlURL string) (serverRunner, error) {
@@ -354,7 +354,7 @@ func TestServeCmd_CleanupSkippedNoAPIClientNilErrorStarts(t *testing.T) {
 	mockServeDefaults(t, dir)
 
 	serverStarted := false
-	serveCleanupFn = func(ctx context.Context, names []string) (tailapi.CleanupResult, error) {
+	serveCleanupFn = func(ctx context.Context, targets []tailapi.CleanupTarget) (tailapi.CleanupResult, error) {
 		return tailapi.CleanupResult{Skipped: true, SkipReason: tailapi.ErrNoAPIClient.Error()}, nil
 	}
 	serveNewServerFn = func(authKey, controlURL string) (serverRunner, error) {
@@ -368,6 +368,38 @@ func TestServeCmd_CleanupSkippedNoAPIClientNilErrorStarts(t *testing.T) {
 	}
 	if !serverStarted {
 		t.Fatal("server should start after no-client cleanup skip")
+	}
+}
+
+func TestServeCmd_CleanupUsesServiceTargets(t *testing.T) {
+	dir := t.TempDir()
+	mockServeDefaults(t, dir)
+
+	regPath := filepath.Join(dir, "registry.json")
+	if _, err := registry.Add(regPath, registry.Service{
+		Name:   "web",
+		Type:   registry.TypeProxy,
+		Target: "http://localhost:3000",
+		Tags:   []string{"tag:web"},
+	}); err != nil {
+		t.Fatalf("registry.Add() error = %v", err)
+	}
+
+	var gotTargets []tailapi.CleanupTarget
+	serveCleanupFn = func(ctx context.Context, targets []tailapi.CleanupTarget) (tailapi.CleanupResult, error) {
+		gotTargets = append(gotTargets, targets...)
+		return tailapi.CleanupResult{}, nil
+	}
+
+	cmd := findServeCmd(t)
+	if err := cmd.RunE(cmd, nil); err != nil {
+		t.Fatalf("RunE() error = %v", err)
+	}
+	if len(gotTargets) != 1 {
+		t.Fatalf("cleanup targets = %+v, want one target", gotTargets)
+	}
+	if gotTargets[0].Hostname != "web" || strings.Join(gotTargets[0].Tags, ",") != "tag:web" {
+		t.Fatalf("cleanup target = %+v, want service hostname and tags", gotTargets[0])
 	}
 }
 

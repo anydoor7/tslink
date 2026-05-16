@@ -138,8 +138,8 @@ tslink tags set myapp tag:webserver
 # Change the default tag applied to new services
 tslink tags set-default tag:myteam
 
-# Remove a tag from Tailscale ACL
-tslink tags delete-remote tag:old-tag
+# Remove an ACL tag owner rule globally after local safety checks
+tslink tags delete-remote tag:old-tag --force
 ```
 
 ### More Examples
@@ -184,7 +184,7 @@ tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 | `tslink tags add <service> <tag>` | Append a tag to a service |
 | `tslink tags set <service> <tag>` | Replace a service's tags |
 | `tslink tags set-default <tag>` | Change the default tag applied to new services |
-| `tslink tags delete-remote <tag>` | Delete a tag from Tailscale ACL |
+| `tslink tags delete-remote <tag> --force` | Remove an ACL tag owner rule globally from Tailscale ACL after local safety checks |
 | `tslink api` | JSON-over-stdin/stdout mode for programmatic control |
 | `tslink config` | Manage global configuration (set/get/list) |
 | `tslink install` | Auto-start on login (macOS LaunchAgent / Linux systemd / Windows Startup) |

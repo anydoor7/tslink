@@ -702,6 +702,24 @@ func TestAddRejectsInvalidTag(t *testing.T) {
 	}
 }
 
+func TestAddRejectsTCPAllowedUsers(t *testing.T) {
+	path := testRegistryPath(t)
+
+	_, err := Add(path, Service{
+		Name:         "db",
+		Type:         TypeTCP,
+		Target:       "localhost:5432",
+		Port:         5432,
+		AllowedUsers: []string{"alice@example.com"},
+	})
+	if err == nil {
+		t.Fatal("Add() error = nil, want tcp allowed_users error")
+	}
+	if !strings.Contains(err.Error(), "tcp services do not support allowed_users") {
+		t.Fatalf("Add() error = %v, want tcp allowed_users error", err)
+	}
+}
+
 func TestAddServiceAllFields(t *testing.T) {
 	path := testRegistryPath(t)
 

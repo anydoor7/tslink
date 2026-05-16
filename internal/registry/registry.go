@@ -83,6 +83,9 @@ func ValidateService(svc Service) error {
 	if err := ValidateName(svc.Name); err != nil {
 		return err
 	}
+	if svc.Type == TypeTCP && len(svc.AllowedUsers) > 0 {
+		return fmt.Errorf("tcp services do not support allowed_users; TSLink cannot enforce user ACLs on raw TCP services")
+	}
 	for _, tag := range svc.Tags {
 		if err := ValidateTag(tag); err != nil {
 			return err

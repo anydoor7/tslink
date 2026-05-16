@@ -58,8 +58,8 @@ type EnsureTagsFunc func(ctx context.Context, tags []string) error
 // AuthKeyProvider resolves auth material for a service immediately before its tsnet node starts.
 type AuthKeyProvider func(ctx context.Context, svc registry.Service) (string, error)
 
-// CleanupStaleNodesFunc removes stale tailnet nodes for hostnames before forced reauth.
-type CleanupStaleNodesFunc func(ctx context.Context, hostnames []string) (tailapi.CleanupResult, error)
+// CleanupStaleNodesFunc removes stale tailnet nodes for service targets before forced reauth.
+type CleanupStaleNodesFunc func(ctx context.Context, targets []tailapi.CleanupTarget) (tailapi.CleanupResult, error)
 
 // Server manages multiple tsnet nodes, one per registered service.
 type Server struct {
@@ -159,7 +159,7 @@ func (s *Server) syncNodes(ctx context.Context) error {
 	defer s.mu.Unlock()
 
 	// Stop nodes for removed or changed services
-	var authIdentityRestartNames []string
+	var authIdentityRestartTargets []tailapi.CleanupTarget
 	var reloadErrs []error
 	for name, node := range s.nodes {
 		svc, exists := desired[name]
@@ -171,7 +171,7 @@ func (s *Server) syncNodes(ctx context.Context) error {
 			slog.Info("restarting node", "name", name, "auth_identity_changed", authIdentityChanged)
 			s.stopNodeLocked(name, false)
 			if authIdentityChanged {
-				authIdentityRestartNames = append(authIdentityRestartNames, name)
+				authIdentityRestartTargets = append(authIdentityRestartTargets, tailapi.CleanupTargetForService(node.service))
 				if err := removeServiceStateDirFn(name); err != nil {
 					reloadErr := fmt.Errorf("remove state for auth identity change %q: %w", name, err)
 					slog.Warn("failed to remove node state before auth identity restart; continuing restart", "name", name, "error", err)
@@ -181,7 +181,7 @@ func (s *Server) syncNodes(ctx context.Context) error {
 		}
 	}
 
-	if err := s.cleanupAuthIdentityNodes(ctx, authIdentityRestartNames); err != nil {
+	if err := s.cleanupAuthIdentityNodes(ctx, authIdentityRestartTargets); err != nil {
 		slog.Warn("failed to cleanup stale tailnet nodes before auth identity restart; continuing restart", "error", err)
 		reloadErrs = append(reloadErrs, err)
 	}
@@ -292,20 +292,29 @@ func removeServiceStateDir(name string) error {
 
 var removeServiceStateDirFn = removeServiceStateDir
 
-func (s *Server) cleanupAuthIdentityNodes(ctx context.Context, names []string) error {
-	if len(names) == 0 || s.cleanupNodesFn == nil {
+func cleanupTargetHostnames(targets []tailapi.CleanupTarget) []string {
+	hostnames := make([]string, 0, len(targets))
+	for _, target := range targets {
+		hostnames = append(hostnames, target.Hostname)
+	}
+	return hostnames
+}
+
+func (s *Server) cleanupAuthIdentityNodes(ctx context.Context, targets []tailapi.CleanupTarget) error {
+	if len(targets) == 0 || s.cleanupNodesFn == nil {
 		return nil
 	}
-	cleanup, err := s.cleanupNodesFn(ctx, names)
+	hostnames := cleanupTargetHostnames(targets)
+	cleanup, err := s.cleanupNodesFn(ctx, targets)
 	if err != nil {
 		if errors.Is(err, tailapi.ErrNoAPIClient) {
-			slog.Warn("degraded mode: skipped stale tailnet node cleanup", "reason", err.Error(), "hostnames", names, "degraded_mode", true)
+			slog.Warn("degraded mode: skipped stale tailnet node cleanup", "reason", err.Error(), "hostnames", hostnames, "degraded_mode", true)
 			return nil
 		}
 		return fmt.Errorf("cleanup stale tailnet nodes before auth identity restart: %w", err)
 	}
 	if cleanup.Skipped {
-		slog.Warn("degraded mode: skipped stale tailnet node cleanup", "reason", cleanup.SkipReason, "hostnames", names, "degraded_mode", true)
+		slog.Warn("degraded mode: skipped stale tailnet node cleanup", "reason", cleanup.SkipReason, "hostnames", hostnames, "degraded_mode", true)
 		return nil
 	}
 	if len(cleanup.Deleted) > 0 {
@@ -317,6 +326,9 @@ func (s *Server) cleanupAuthIdentityNodes(ctx context.Context, names []string) e
 func validateServiceForStartup(svc registry.Service) error {
 	if err := registry.ValidateName(svc.Name); err != nil {
 		return fmt.Errorf("service %q: %w", svc.Name, err)
+	}
+	if svc.Type == registry.TypeTCP && len(svc.AllowedUsers) > 0 {
+		return fmt.Errorf("service %q: tcp services do not support allowed_users; remove allowed_users from registry.json", svc.Name)
 	}
 	for _, tag := range svc.Tags {
 		if err := registry.ValidateTag(tag); err != nil {

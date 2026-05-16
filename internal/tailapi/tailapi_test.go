@@ -53,11 +53,19 @@ func jsonResponse(status int, body string) *http.Response {
 	}
 }
 
-func TestDeleteDevicesByHostname_NoClient(t *testing.T) {
+func cleanupTarget(hostname string) CleanupTarget {
+	return CleanupTarget{Hostname: hostname, Tags: []string{"tag:tsmain"}}
+}
+
+func TestDeleteDevicesForService_NoClient(t *testing.T) {
 	setup(t)
 
-	if err := DeleteDevicesByHostname(context.Background(), "test-host"); !errors.Is(err, ErrNoAPIClient) {
-		t.Fatalf("DeleteDevicesByHostname() error = %v, want ErrNoAPIClient", err)
+	result, err := DeleteDevicesForService(context.Background(), cleanupTarget("test-host"))
+	if err != nil {
+		t.Fatalf("DeleteDevicesForService() error = %v, want nil skip", err)
+	}
+	if !result.Skipped || result.SkipReason != ErrNoAPIClient.Error() {
+		t.Fatalf("DeleteDevicesForService() result = %+v, want no-client skip", result)
 	}
 }
 
@@ -84,7 +92,7 @@ func TestHostnameMatchesCleanupTarget_PositiveNumericSuffixesOnly(t *testing.T) 
 	}
 }
 
-func TestDeleteDevicesByHostname_ClientError(t *testing.T) {
+func TestDeleteDevicesForService_ClientError(t *testing.T) {
 	setup(t)
 
 	path, err := config.APIKeyPath()
@@ -95,12 +103,12 @@ func TestDeleteDevicesByHostname_ClientError(t *testing.T) {
 		t.Fatalf("Mkdir() error = %v", err)
 	}
 
-	if err := DeleteDevicesByHostname(context.Background(), "test-host"); err == nil {
-		t.Fatal("DeleteDevicesByHostname() error = nil, want error")
+	if _, err := DeleteDevicesForService(context.Background(), cleanupTarget("test-host")); err == nil {
+		t.Fatal("DeleteDevicesForService() error = nil, want error")
 	}
 }
 
-func TestDeleteDevicesByHostname_DeletesMatchingDevices(t *testing.T) {
+func TestDeleteDevicesForService_DeletesMatchingTaggedDevices(t *testing.T) {
 	setup(t)
 	mustSetAPIKey(t, "api-key")
 
@@ -112,7 +120,7 @@ func TestDeleteDevicesByHostname_DeletesMatchingDevices(t *testing.T) {
 
 		switch {
 		case req.Method == http.MethodGet && req.URL.Path == "/api/v2/tailnet/-/devices":
-			return jsonResponse(http.StatusOK, `{"devices":[{"id":"dev1","hostname":"test-host"},{"id":"dev2","hostname":"test-host-1"},{"id":"dev3","hostname":"other"}]}`), nil
+			return jsonResponse(http.StatusOK, `{"devices":[{"id":"dev1","hostname":"test-host","tags":["tag:tsmain"]},{"id":"dev2","hostname":"test-host-1","tags":["tag:tsmain"]},{"id":"dev3","hostname":"other","tags":["tag:tsmain"]}]}`), nil
 		case req.Method == http.MethodDelete && req.URL.Path == "/api/v2/device/dev1":
 			deleted = append(deleted, "dev1")
 			return jsonResponse(http.StatusOK, `{}`), nil
@@ -125,8 +133,8 @@ func TestDeleteDevicesByHostname_DeletesMatchingDevices(t *testing.T) {
 		}
 	}))
 
-	if err := DeleteDevicesByHostname(context.Background(), "test-host"); err != nil {
-		t.Fatalf("DeleteDevicesByHostname() error = %v", err)
+	if _, err := DeleteDevicesForService(context.Background(), cleanupTarget("test-host")); err != nil {
+		t.Fatalf("DeleteDevicesForService() error = %v", err)
 	}
 
 	if got := strings.Join(deleted, ","); got != "dev1,dev2" {
@@ -134,7 +142,7 @@ func TestDeleteDevicesByHostname_DeletesMatchingDevices(t *testing.T) {
 	}
 }
 
-func TestDeleteDevicesByHostname_DoesNotDeleteAdjacentHyphenatedHostnames(t *testing.T) {
+func TestDeleteDevicesForService_DoesNotDeleteAdjacentHyphenatedHostnames(t *testing.T) {
 	setup(t)
 	mustSetAPIKey(t, "api-key")
 
@@ -142,7 +150,7 @@ func TestDeleteDevicesByHostname_DoesNotDeleteAdjacentHyphenatedHostnames(t *tes
 	withDefaultTransport(t, roundTripperFunc(func(req *http.Request) (*http.Response, error) {
 		switch {
 		case req.Method == http.MethodGet && req.URL.Path == "/api/v2/tailnet/-/devices":
-			return jsonResponse(http.StatusOK, `{"devices":[{"id":"dev1","hostname":"app"},{"id":"dev2","hostname":"app-1"},{"id":"dev3","hostname":"app-staging"},{"id":"dev4","hostname":"app-0"},{"id":"dev5","hostname":"app--1"},{"id":"dev6","hostname":"app-01a"}]}`), nil
+			return jsonResponse(http.StatusOK, `{"devices":[{"id":"dev1","hostname":"app","tags":["tag:tsmain"]},{"id":"dev2","hostname":"app-1","tags":["tag:tsmain"]},{"id":"dev3","hostname":"app-staging","tags":["tag:tsmain"]},{"id":"dev4","hostname":"app-0","tags":["tag:tsmain"]},{"id":"dev5","hostname":"app--1","tags":["tag:tsmain"]},{"id":"dev6","hostname":"app-01a","tags":["tag:tsmain"]}]}`), nil
 		case req.Method == http.MethodDelete && strings.HasPrefix(req.URL.Path, "/api/v2/device/"):
 			deleted = append(deleted, strings.TrimPrefix(req.URL.Path, "/api/v2/device/"))
 			return jsonResponse(http.StatusOK, `{}`), nil
@@ -152,8 +160,8 @@ func TestDeleteDevicesByHostname_DoesNotDeleteAdjacentHyphenatedHostnames(t *tes
 		}
 	}))
 
-	if err := DeleteDevicesByHostname(context.Background(), "app"); err != nil {
-		t.Fatalf("DeleteDevicesByHostname() error = %v", err)
+	if _, err := DeleteDevicesForService(context.Background(), cleanupTarget("app")); err != nil {
+		t.Fatalf("DeleteDevicesForService() error = %v", err)
 	}
 
 	if got := strings.Join(deleted, ","); got != "dev1,dev2" {
@@ -161,7 +169,40 @@ func TestDeleteDevicesByHostname_DoesNotDeleteAdjacentHyphenatedHostnames(t *tes
 	}
 }
 
-func TestDeleteDevicesByHostname_ListError(t *testing.T) {
+func TestDeleteDevicesForService_ProtectsSameHostnameWithoutExpectedTag(t *testing.T) {
+	setup(t)
+	mustSetAPIKey(t, "api-key")
+
+	var deleted []string
+	withDefaultTransport(t, roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		switch {
+		case req.Method == http.MethodGet && req.URL.Path == "/api/v2/tailnet/-/devices":
+			return jsonResponse(http.StatusOK, `{"devices":[{"id":"dev1","hostname":"app","tags":["tag:other"]},{"id":"dev2","hostname":"app-1"}]}`), nil
+		case req.Method == http.MethodDelete && strings.HasPrefix(req.URL.Path, "/api/v2/device/"):
+			deleted = append(deleted, strings.TrimPrefix(req.URL.Path, "/api/v2/device/"))
+			return jsonResponse(http.StatusOK, `{}`), nil
+		default:
+			t.Fatalf("unexpected request: %s %s", req.Method, req.URL.String())
+			return nil, nil
+		}
+	}))
+
+	result, err := DeleteDevicesForService(context.Background(), cleanupTarget("app"))
+	if err != nil {
+		t.Fatalf("DeleteDevicesForService() error = %v", err)
+	}
+	if len(deleted) != 0 {
+		t.Fatalf("deleted devices = %v, want none", deleted)
+	}
+	if got := strings.Join(result.Protected, ","); got != "app,app-1" {
+		t.Fatalf("result.Protected = %q, want app,app-1", got)
+	}
+	if !result.Skipped || !strings.Contains(result.SkipReason, "ownership could not be proven") {
+		t.Fatalf("result = %+v, want protected skip", result)
+	}
+}
+
+func TestDeleteDevicesForService_ListError(t *testing.T) {
 	setup(t)
 	mustSetAPIKey(t, "api-key")
 
@@ -169,23 +210,23 @@ func TestDeleteDevicesByHostname_ListError(t *testing.T) {
 		return nil, errors.New("network down")
 	}))
 
-	err := DeleteDevicesByHostname(context.Background(), "test-host")
+	_, err := DeleteDevicesForService(context.Background(), cleanupTarget("test-host"))
 	if err == nil {
-		t.Fatal("DeleteDevicesByHostname() error = nil, want error")
+		t.Fatal("DeleteDevicesForService() error = nil, want error")
 	}
 	if !strings.Contains(err.Error(), "list devices") {
-		t.Fatalf("DeleteDevicesByHostname() error = %v, want list devices error", err)
+		t.Fatalf("DeleteDevicesForService() error = %v, want list devices error", err)
 	}
 }
 
-func TestDeleteDevicesByHostname_DeleteError(t *testing.T) {
+func TestDeleteDevicesForService_DeleteError(t *testing.T) {
 	setup(t)
 	mustSetAPIKey(t, "api-key")
 
 	withDefaultTransport(t, roundTripperFunc(func(req *http.Request) (*http.Response, error) {
 		switch {
 		case req.Method == http.MethodGet && req.URL.Path == "/api/v2/tailnet/-/devices":
-			return jsonResponse(http.StatusOK, `{"devices":[{"id":"dev1","hostname":"test-host"}]}`), nil
+			return jsonResponse(http.StatusOK, `{"devices":[{"id":"dev1","hostname":"test-host","tags":["tag:tsmain"]}]}`), nil
 		case req.Method == http.MethodDelete && req.URL.Path == "/api/v2/device/dev1":
 			return jsonResponse(http.StatusInternalServerError, `{"message":"boom"}`), nil
 		default:
@@ -194,26 +235,26 @@ func TestDeleteDevicesByHostname_DeleteError(t *testing.T) {
 		}
 	}))
 
-	err := DeleteDevicesByHostname(context.Background(), "test-host")
+	_, err := DeleteDevicesForService(context.Background(), cleanupTarget("test-host"))
 	if err == nil {
-		t.Fatal("DeleteDevicesByHostname() error = nil, want error")
+		t.Fatal("DeleteDevicesForService() error = nil, want error")
 	}
 	if !strings.Contains(err.Error(), "delete device test-host") {
-		t.Fatalf("DeleteDevicesByHostname() error = %v, want delete error", err)
+		t.Fatalf("DeleteDevicesForService() error = %v, want delete error", err)
 	}
 }
 
 func TestCleanupStaleNodes_NoClient(t *testing.T) {
 	setup(t)
 
-	result, err := CleanupStaleNodesResult(context.Background(), []string{"host1", "host2"})
+	result, err := CleanupStaleNodesResult(context.Background(), []CleanupTarget{cleanupTarget("host1"), cleanupTarget("host2")})
 	if err != nil {
 		t.Fatalf("CleanupStaleNodesResult() error = %v, want nil skip", err)
 	}
 	if !result.Skipped || result.SkipReason == "" {
 		t.Fatalf("CleanupStaleNodesResult() result = %+v, want skipped with reason", result)
 	}
-	if err := CleanupStaleNodes(context.Background(), []string{"host1", "host2"}); err != nil {
+	if err := CleanupStaleNodes(context.Background(), []CleanupTarget{cleanupTarget("host1"), cleanupTarget("host2")}); err != nil {
 		t.Fatalf("CleanupStaleNodes() error = %v, want nil skip", err)
 	}
 }
@@ -229,7 +270,7 @@ func TestCleanupStaleNodes_ClientError(t *testing.T) {
 		t.Fatalf("Mkdir() error = %v", err)
 	}
 
-	if err := CleanupStaleNodes(context.Background(), []string{"host1"}); err == nil {
+	if err := CleanupStaleNodes(context.Background(), []CleanupTarget{cleanupTarget("host1")}); err == nil {
 		t.Fatal("CleanupStaleNodes() error = nil, want error")
 	}
 }
@@ -242,7 +283,7 @@ func TestCleanupStaleNodes_ListErrorIsFatal(t *testing.T) {
 		return nil, errors.New("network down")
 	}))
 
-	if err := CleanupStaleNodes(context.Background(), []string{"host1"}); err == nil {
+	if err := CleanupStaleNodes(context.Background(), []CleanupTarget{cleanupTarget("host1")}); err == nil {
 		t.Fatal("CleanupStaleNodes() error = nil, want list devices error")
 	}
 }
@@ -255,7 +296,7 @@ func TestCleanupStaleNodes_DeletesExactAndSuffixedMatches(t *testing.T) {
 	withDefaultTransport(t, roundTripperFunc(func(req *http.Request) (*http.Response, error) {
 		switch {
 		case req.Method == http.MethodGet && req.URL.Path == "/api/v2/tailnet/-/devices":
-			return jsonResponse(http.StatusOK, `{"devices":[{"id":"dev1","hostname":"host1"},{"id":"dev2","hostname":"host1-1"},{"id":"dev3","hostname":"host2"},{"id":"dev4","hostname":"host2-2"},{"id":"dev5","hostname":"other-1"}]}`), nil
+			return jsonResponse(http.StatusOK, `{"devices":[{"id":"dev1","hostname":"host1","tags":["tag:tsmain"]},{"id":"dev2","hostname":"host1-1","tags":["tag:tsmain"]},{"id":"dev3","hostname":"host2","tags":["tag:tsmain"]},{"id":"dev4","hostname":"host2-2","tags":["tag:tsmain"]},{"id":"dev5","hostname":"other-1","tags":["tag:tsmain"]}]}`), nil
 		case req.Method == http.MethodDelete && strings.HasPrefix(req.URL.Path, "/api/v2/device/"):
 			deleted = append(deleted, strings.TrimPrefix(req.URL.Path, "/api/v2/device/"))
 			return jsonResponse(http.StatusOK, `{}`), nil
@@ -265,7 +306,7 @@ func TestCleanupStaleNodes_DeletesExactAndSuffixedMatches(t *testing.T) {
 		}
 	}))
 
-	if err := CleanupStaleNodes(context.Background(), []string{"host1", "host2"}); err != nil {
+	if err := CleanupStaleNodes(context.Background(), []CleanupTarget{cleanupTarget("host1"), cleanupTarget("host2")}); err != nil {
 		t.Fatalf("CleanupStaleNodes() error = %v", err)
 	}
 
@@ -282,7 +323,7 @@ func TestCleanupStaleNodes_DoesNotDeleteAdjacentHyphenatedHostnames(t *testing.T
 	withDefaultTransport(t, roundTripperFunc(func(req *http.Request) (*http.Response, error) {
 		switch {
 		case req.Method == http.MethodGet && req.URL.Path == "/api/v2/tailnet/-/devices":
-			return jsonResponse(http.StatusOK, `{"devices":[{"id":"dev1","hostname":"app"},{"id":"dev2","hostname":"app-1"},{"id":"dev3","hostname":"app-staging"},{"id":"dev4","hostname":"app-0"},{"id":"dev5","hostname":"app--1"},{"id":"dev6","hostname":"app-01a"}]}`), nil
+			return jsonResponse(http.StatusOK, `{"devices":[{"id":"dev1","hostname":"app","tags":["tag:tsmain"]},{"id":"dev2","hostname":"app-1","tags":["tag:tsmain"]},{"id":"dev3","hostname":"app-staging","tags":["tag:tsmain"]},{"id":"dev4","hostname":"app-0","tags":["tag:tsmain"]},{"id":"dev5","hostname":"app--1","tags":["tag:tsmain"]},{"id":"dev6","hostname":"app-01a","tags":["tag:tsmain"]}]}`), nil
 		case req.Method == http.MethodDelete && strings.HasPrefix(req.URL.Path, "/api/v2/device/"):
 			deleted = append(deleted, strings.TrimPrefix(req.URL.Path, "/api/v2/device/"))
 			return jsonResponse(http.StatusOK, `{}`), nil
@@ -292,7 +333,7 @@ func TestCleanupStaleNodes_DoesNotDeleteAdjacentHyphenatedHostnames(t *testing.T
 		}
 	}))
 
-	result, err := CleanupStaleNodesResult(context.Background(), []string{"app"})
+	result, err := CleanupStaleNodesResult(context.Background(), []CleanupTarget{cleanupTarget("app")})
 	if err != nil {
 		t.Fatalf("CleanupStaleNodesResult() error = %v", err)
 	}

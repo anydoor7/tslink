@@ -322,7 +322,9 @@ func TestRemoveJSON_Success(t *testing.T) {
 
 	oldDelete := deleteDevicesFn
 	t.Cleanup(func() { deleteDevicesFn = oldDelete })
-	deleteDevicesFn = func(ctx context.Context, hostname string) error { return nil }
+	deleteDevicesFn = func(ctx context.Context, target tailapi.CleanupTarget) (tailapi.CleanupResult, error) {
+		return tailapi.CleanupResult{Deleted: []string{target.Hostname}}, nil
+	}
 
 	var out, errOut bytes.Buffer
 	got := captureStdout(t, func() {
@@ -373,6 +375,78 @@ func TestRemoveJSON_NotFound(t *testing.T) {
 	}
 	if data["removed"] != false {
 		t.Errorf("expected removed=false, got %v", data["removed"])
+	}
+}
+
+func TestRemoveJSON_DeviceCleanupSkipped(t *testing.T) {
+	dir := t.TempDir()
+	regPath := filepath.Join(dir, "registry.json")
+	_, _ = registry.Add(regPath, registry.Service{
+		Name:   "web",
+		Type:   registry.TypeProxy,
+		Target: "http://localhost:3000",
+		Tags:   []string{"tag:tsmain"},
+	})
+
+	oldDelete := deleteDevicesFn
+	t.Cleanup(func() { deleteDevicesFn = oldDelete })
+	deleteDevicesFn = func(ctx context.Context, target tailapi.CleanupTarget) (tailapi.CleanupResult, error) {
+		return tailapi.CleanupResult{
+			Matched:    []string{target.Hostname},
+			Protected:  []string{target.Hostname},
+			Skipped:    true,
+			SkipReason: "ownership could not be proven",
+		}, nil
+	}
+
+	var out, errOut bytes.Buffer
+	got := captureStdout(t, func() {
+		if err := removeService(regPath, "web", &out, &errOut, true); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	data := dataMap(t, got)
+	if data["device_cleanup_skipped"] != true {
+		t.Errorf("expected device_cleanup_skipped=true, got %v", data["device_cleanup_skipped"])
+	}
+	if data["device_skip_reason"] != "ownership could not be proven" {
+		t.Errorf("expected device_skip_reason, got %v", data["device_skip_reason"])
+	}
+}
+
+func TestRemoveJSON_NoAPIClientCleanupSkipped(t *testing.T) {
+	dir := t.TempDir()
+	regPath := filepath.Join(dir, "registry.json")
+	_, _ = registry.Add(regPath, registry.Service{
+		Name:   "web",
+		Type:   registry.TypeProxy,
+		Target: "http://localhost:3000",
+		Tags:   []string{"tag:tsmain"},
+	})
+
+	oldDelete := deleteDevicesFn
+	t.Cleanup(func() { deleteDevicesFn = oldDelete })
+	deleteDevicesFn = func(ctx context.Context, target tailapi.CleanupTarget) (tailapi.CleanupResult, error) {
+		return tailapi.CleanupResult{
+			Skipped:    true,
+			SkipReason: tailapi.ErrNoAPIClient.Error(),
+		}, nil
+	}
+
+	var out, errOut bytes.Buffer
+	got := captureStdout(t, func() {
+		if err := removeService(regPath, "web", &out, &errOut, true); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	data := dataMap(t, got)
+	if data["device_cleanup_skipped"] != true {
+		t.Errorf("expected device_cleanup_skipped=true, got %v", data["device_cleanup_skipped"])
+	}
+	if data["device_skip_reason"] != tailapi.ErrNoAPIClient.Error() {
+		t.Errorf("expected no-client skip reason, got %v", data["device_skip_reason"])
 	}
 }
 
@@ -761,7 +835,7 @@ func TestTagsDeleteRemoteJSON_Success(t *testing.T) {
 
 	var buf bytes.Buffer
 	got := captureStdout(t, func() {
-		if err := tagsDeleteRemoteRun(context.Background(), &buf, "tag:other", true); err != nil {
+		if err := tagsDeleteRemoteRun(context.Background(), &buf, "tag:other", true, true); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	})
@@ -775,13 +849,16 @@ func TestTagsDeleteRemoteJSON_Success(t *testing.T) {
 	if data["tag"] != "tag:other" {
 		t.Errorf("expected tag=tag:other, got %v", data["tag"])
 	}
+	if data["remote_acl_tag_owner_rule_removed"] != true {
+		t.Errorf("expected remote_acl_tag_owner_rule_removed=true, got %v", data["remote_acl_tag_owner_rule_removed"])
+	}
 }
 
 func TestTagsDeleteRemoteJSON_DefaultTag(t *testing.T) {
 	setTagsMocks(t)
 	mockDefaults()
 
-	err := tagsDeleteRemoteRun(context.Background(), &bytes.Buffer{}, "tag:tsmain", true)
+	err := tagsDeleteRemoteRun(context.Background(), &bytes.Buffer{}, "tag:tsmain", false, true)
 	if err == nil {
 		t.Fatal("expected error for default tag")
 	}
@@ -801,7 +878,7 @@ func TestTagsDeleteRemoteJSON_TagInUse(t *testing.T) {
 		{Name: "myapp", Tags: []string{"tag:shared"}},
 	})
 
-	err := tagsDeleteRemoteRun(context.Background(), &bytes.Buffer{}, "tag:shared", true)
+	err := tagsDeleteRemoteRun(context.Background(), &bytes.Buffer{}, "tag:shared", false, true)
 	if err == nil {
 		t.Fatal("expected error for tag in use")
 	}
@@ -822,7 +899,7 @@ func TestTagsDeleteRemoteJSON_NoAPIClientAuthError(t *testing.T) {
 		return tailapi.ErrNoAPIClient
 	}
 
-	err := tagsDeleteRemoteRun(context.Background(), &bytes.Buffer{}, "tag:other", true)
+	err := tagsDeleteRemoteRun(context.Background(), &bytes.Buffer{}, "tag:other", true, true)
 	if err == nil {
 		t.Fatal("expected auth error for missing API client")
 	}
@@ -889,8 +966,8 @@ func TestRemoveJSON_WithDeviceWarning(t *testing.T) {
 
 	oldDelete := deleteDevicesFn
 	t.Cleanup(func() { deleteDevicesFn = oldDelete })
-	deleteDevicesFn = func(ctx context.Context, hostname string) error {
-		return os.ErrPermission
+	deleteDevicesFn = func(ctx context.Context, target tailapi.CleanupTarget) (tailapi.CleanupResult, error) {
+		return tailapi.CleanupResult{}, os.ErrPermission
 	}
 
 	var out, errOut bytes.Buffer

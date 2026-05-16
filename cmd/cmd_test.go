@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/monody0007/tslink/internal/registry"
+	"github.com/monody0007/tslink/internal/tailapi"
 )
 
 // runAddCmd finds the add command, resets all flags, sets the given flags, and runs it.
@@ -756,7 +757,9 @@ func TestRemoveService_Success(t *testing.T) {
 	_, _ = registry.Add(regPath, registry.Service{Name: "web", Type: registry.TypeProxy, Target: "http://localhost:3000"})
 
 	old := deleteDevicesFn
-	deleteDevicesFn = func(ctx context.Context, hostname string) error { return nil }
+	deleteDevicesFn = func(ctx context.Context, target tailapi.CleanupTarget) (tailapi.CleanupResult, error) {
+		return tailapi.CleanupResult{Deleted: []string{target.Hostname}}, nil
+	}
 	defer func() { deleteDevicesFn = old }()
 
 	var out, errOut bytes.Buffer
@@ -786,8 +789,8 @@ func TestRemoveService_TailapiWarning(t *testing.T) {
 	_, _ = registry.Add(regPath, registry.Service{Name: "web", Type: registry.TypeProxy, Target: "http://localhost:3000"})
 
 	old := deleteDevicesFn
-	deleteDevicesFn = func(ctx context.Context, hostname string) error {
-		return fmt.Errorf("API error")
+	deleteDevicesFn = func(ctx context.Context, target tailapi.CleanupTarget) (tailapi.CleanupResult, error) {
+		return tailapi.CleanupResult{}, fmt.Errorf("API error")
 	}
 	defer func() { deleteDevicesFn = old }()
 
@@ -859,7 +862,12 @@ func TestLogoutUser_CleansUp(t *testing.T) {
 	csDeleted := false
 	hasClientSecretFn = func() bool { return false }
 	deleteClientSecretFn = func() { csDeleted = true }
-	defer func() { getAPIKeyFn = oldGet; deleteAPIKeyFn = oldDel; hasClientSecretFn = oldCS; deleteClientSecretFn = oldDelCS }()
+	defer func() {
+		getAPIKeyFn = oldGet
+		deleteAPIKeyFn = oldDel
+		hasClientSecretFn = oldCS
+		deleteClientSecretFn = oldDelCS
+	}()
 
 	var buf bytes.Buffer
 	err := logoutUser(filepath.Join(dir, "pid"), authKeyPath, nodesDir, dir, false, &buf)
@@ -895,7 +903,12 @@ func TestLogoutUser_WithClientSecret(t *testing.T) {
 	hasClientSecretFn = func() bool { return true }
 	csDeleted := false
 	deleteClientSecretFn = func() { csDeleted = true }
-	defer func() { getAPIKeyFn = oldGet; deleteAPIKeyFn = oldDel; hasClientSecretFn = oldCS; deleteClientSecretFn = oldDelCS }()
+	defer func() {
+		getAPIKeyFn = oldGet
+		deleteAPIKeyFn = oldDel
+		hasClientSecretFn = oldCS
+		deleteClientSecretFn = oldDelCS
+	}()
 
 	var buf bytes.Buffer
 	err := logoutUser(filepath.Join(dir, "pid"), filepath.Join(dir, "authkey"), filepath.Join(dir, "nodes"), dir, false, &buf)
@@ -1072,7 +1085,7 @@ func TestBuildService_WithAllOptions(t *testing.T) {
 	svc, err := buildService(AddParams{
 		Name: "full", Proxy: "localhost:3000",
 		Ephemeral: true, Tags: "tag:web,tag:prod",
-		Allow: "alice@example.com,bob@example.com",
+		Allow:  "alice@example.com,bob@example.com",
 		Funnel: true, Domain: "app.example.com",
 	})
 	if err != nil {
@@ -1151,7 +1164,10 @@ func TestStopService_Error(t *testing.T) {
 func TestGetStatus_Running_Authenticated(t *testing.T) {
 	oldIsRunning, oldReadPID, oldGetKey := isRunningFn, readPIDFn, getAPIKeyFn
 	oldCS := hasClientSecretFn
-	defer func() { isRunningFn, readPIDFn, getAPIKeyFn = oldIsRunning, oldReadPID, oldGetKey; hasClientSecretFn = oldCS }()
+	defer func() {
+		isRunningFn, readPIDFn, getAPIKeyFn = oldIsRunning, oldReadPID, oldGetKey
+		hasClientSecretFn = oldCS
+	}()
 
 	isRunningFn = func(string) bool { return true }
 	readPIDFn = func(string) (int, error) { return 42, nil }
@@ -1473,7 +1489,9 @@ func TestRemoveCmd_Success(t *testing.T) {
 	_, _ = registry.Add(regPath, registry.Service{Name: "web", Type: registry.TypeProxy, Target: "http://localhost:3000"})
 
 	old := deleteDevicesFn
-	deleteDevicesFn = func(ctx context.Context, hostname string) error { return nil }
+	deleteDevicesFn = func(ctx context.Context, target tailapi.CleanupTarget) (tailapi.CleanupResult, error) {
+		return tailapi.CleanupResult{Deleted: []string{target.Hostname}}, nil
+	}
 	defer func() { deleteDevicesFn = old }()
 
 	removeCmd, _, _ := rootCmd.Find([]string{"remove"})
@@ -1553,4 +1571,3 @@ func TestAddCmd_ExplicitTagOverridesDefault(t *testing.T) {
 		t.Fatalf("expected [tag:custom], got: %v", svc.Tags)
 	}
 }
-

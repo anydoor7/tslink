@@ -130,11 +130,8 @@ Examples:
 			}
 
 			// Clean up stale tailnet nodes before starting
-			var names []string
-			for _, s := range reg.Services {
-				names = append(names, s.Name)
-			}
-			cleanup, err := serveCleanupFn(context.Background(), names)
+			cleanupTargets := tailapi.CleanupTargetsForServices(reg.Services)
+			cleanup, err := serveCleanupFn(context.Background(), cleanupTargets)
 			if err != nil {
 				if !errors.Is(err, tailapi.ErrNoAPIClient) {
 					return fmt.Errorf("cleanup stale nodes: %w", err)
@@ -189,6 +186,9 @@ Examples:
 func validateServiceForServe(svc registry.Service) error {
 	if err := registry.ValidateName(svc.Name); err != nil {
 		return fmt.Errorf("service %q: %w", svc.Name, err)
+	}
+	if svc.Type == registry.TypeTCP && len(svc.AllowedUsers) > 0 {
+		return fmt.Errorf("service %q: tcp services do not support allowed_users; remove allowed_users from registry.json", svc.Name)
 	}
 	for _, tag := range svc.Tags {
 		if err := registry.ValidateTag(tag); err != nil {
