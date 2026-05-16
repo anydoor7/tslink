@@ -43,7 +43,8 @@ sboms:
     args: ["$artifact", "--output", "cyclonedx-json=$document"]
 
 signs:
-  - cmd: cosign
+  - id: checksums
+    cmd: cosign
     signature: "${artifact}.sigstore.json"
     args:
       - "sign-blob"
@@ -51,6 +52,15 @@ signs:
       - "${artifact}"
       - "--yes"
     artifacts: checksum
+  - id: sboms
+    cmd: cosign
+    signature: "${artifact}.sigstore.json"
+    args:
+      - "sign-blob"
+      - "--bundle=${signature}"
+      - "${artifact}"
+      - "--yes"
+    artifacts: sbom
 
 nfpms:
   - id: linux-packages
@@ -74,6 +84,7 @@ brews:
       owner: monody0007
       name: homebrew-tap
       branch: main
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     directory: Formula
     homepage: "https://github.com/monody0007/tslink"
     description: "Private Tailscale gateway for local services"

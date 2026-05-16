@@ -27,12 +27,19 @@ go test ./...
 go vet ./...
 
 # Optional local mirrors of CI release gates
-go run honnef.co/go/tools/cmd/staticcheck@latest ./...
+go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 ./...
 go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+go run github.com/goreleaser/goreleaser/v2@v2.9.0 check
 
 # Install locally
 go install .
 ```
+
+### Maintainer Release Notes
+
+Stable releases publish a Homebrew formula to `monody0007/homebrew-tap`. The release workflow requires a repository secret named `HOMEBREW_TAP_GITHUB_TOKEN` with write access to that tap; the default repository-scoped `GITHUB_TOKEN` cannot write to the separate tap repository.
+
+GoReleaser signs `checksums.txt` and generated SBOM sidecars with keyless Sigstore bundles, then the release workflow publishes GitHub artifact attestations for installable artifacts and supply-chain sidecars. Keep the `release.yml` attestation globs aligned with `.goreleaser.yml` when adding or removing release asset types.
 
 ### Project Structure
 

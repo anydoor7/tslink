@@ -37,16 +37,40 @@ jobs:
           fi
           mkdir -p dist/native
           go build -trimpath -o "$bin" .
-          "$bin" --help >/dev/null
-          "$bin" serve --help >/dev/null
-          "$bin" stop --help >/dev/null
-          "$bin" install --help >/dev/null
-          "$bin" uninstall --help >/dev/null
-      - name: Test
-        if: matrix.os == 'windows-latest'
-        run: go test ./...
+          # Windows runs this in Git Bash; keep command splitting in bash and
+          # add .exe above so one smoke list covers every runner OS.
+          commands=(
+            "--help"
+            "login --help"
+            "logout --help"
+            "add --help"
+            "remove --help"
+            "list --help"
+            "serve --help"
+            "stop --help"
+            "status --help"
+            "logs --help"
+            "api --help"
+            "config --help"
+            "config set --help"
+            "config get --help"
+            "config list --help"
+            "tags --help"
+            "tags list --help"
+            "tags pull --help"
+            "tags add --help"
+            "tags set --help"
+            "tags set-default --help"
+            "tags delete-remote --help"
+            "install --help"
+            "uninstall --help"
+          )
+          for command in "${commands[@]}"; do
+            read -r -a args <<< "$command"
+            "$bin" "${args[@]}" >/dev/null
+          done
       - name: Race
-        if: matrix.os == 'macos-latest'
+        if: matrix.os == 'macos-latest' || matrix.os == 'windows-latest'
         run: go test ./... -race
       - name: Race and coverage
         if: matrix.os == 'ubuntu-latest'

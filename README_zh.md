@@ -6,7 +6,7 @@
 <p align="center">
   <a href="https://github.com/monody0007/tslink/actions"><img src="https://img.shields.io/github/actions/workflow/status/monody0007/tslink/ci.yml?branch=main&label=CI" alt="Build Status"></a>
   <a href="https://github.com/monody0007/tslink/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License"></a>
-  <a href="https://github.com/monody0007/tslink"><img src="https://img.shields.io/badge/Go-1.25+-00ADD8.svg" alt="Go"></a>
+  <a href="https://github.com/monody0007/tslink"><img src="https://img.shields.io/badge/Go-1.26.3%2B-00ADD8.svg" alt="Go"></a>
   <a href="https://github.com/monody0007/tslink"><img src="https://img.shields.io/github/stars/monody0007/tslink?style=social" alt="Stars"></a>
 </p>
 
@@ -99,7 +99,63 @@ GitHub Releases 发布以下可安装产物：
 | Linux | `.deb`、`.rpm` 和 `tar.gz` 归档 | 包内包含原生 `tslink` 二进制。安装后用 `tslink install` 注册 user service。 |
 | Windows | `.zip` 归档 | Windows 当前是 archive-only 支持。尚未提供 MSI/MSIX/Winget 包或 Windows 代码签名安装器。解压后用 `tslink install` 注册 Startup 自启动。 |
 
-Release archives 包含 checksums、CycloneDX SBOM 文档、`checksums.txt` 的 keyless Sigstore bundle 签名，以及 GitHub Actions 生成的 artifact attestations。
+发布产物是并列的 release assets，不是嵌入归档内部的文件。GoReleaser 会上传可安装归档/包、`checksums.txt`、归档对应的 CycloneDX SBOM sidecar，以及 `checksums.txt` 和 SBOM sidecar 的 keyless Sigstore bundle 签名。签名后的 `checksums.txt` 覆盖可安装产物和 SBOM sidecar。release workflow 还会为可安装产物和供应链 sidecar 发布 GitHub artifact attestations。
+
+### 验证发布完整性
+
+下面命令需要 `gh`、`cosign` 和 `shasum`。将 `<version>` 替换为 GitHub Release tag，将 `<artifact>` 替换为该 release 里的产物文件名。
+
+```bash
+repo="monody0007/tslink"
+version="<version>"
+artifact="<artifact>"
+
+mkdir -p "tslink-$version-verify"
+cd "tslink-$version-verify"
+
+gh release download "$version" --repo "$repo" \
+  --pattern "$artifact" \
+  --pattern "checksums.txt" \
+  --pattern "checksums.txt.sigstore.json"
+
+expected="$(awk -v file="$artifact" '$2 == file {print $1}' checksums.txt)"
+actual="$(shasum -a 256 "$artifact" | awk '{print $1}')"
+test -n "$expected" && test "$actual" = "$expected"
+
+cosign verify-blob checksums.txt \
+  --bundle checksums.txt.sigstore.json \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+  --certificate-identity "https://github.com/$repo/.github/workflows/release.yml@refs/tags/$version"
+
+gh attestation verify "$artifact" \
+  --repo "$repo" \
+  --source-ref "refs/tags/$version" \
+  --signer-workflow "github.com/$repo/.github/workflows/release.yml"
+```
+
+归档 SBOM sidecar 是独立 release asset，需要单独验证：
+
+```bash
+sbom="$artifact.sbom.json"
+
+gh release download "$version" --repo "$repo" \
+  --pattern "$sbom" \
+  --pattern "$sbom.sigstore.json"
+
+expected="$(awk -v file="$sbom" '$2 == file {print $1}' checksums.txt)"
+actual="$(shasum -a 256 "$sbom" | awk '{print $1}')"
+test -n "$expected" && test "$actual" = "$expected"
+
+cosign verify-blob "$sbom" \
+  --bundle "$sbom.sigstore.json" \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+  --certificate-identity "https://github.com/$repo/.github/workflows/release.yml@refs/tags/$version"
+
+gh attestation verify "$sbom" \
+  --repo "$repo" \
+  --source-ref "refs/tags/$version" \
+  --signer-workflow "github.com/$repo/.github/workflows/release.yml"
+```
 
 ### 30 秒上手
 
@@ -276,7 +332,7 @@ echo '{"action":"status"}' | tslink api
 
 - [Tailscale 账户](https://tailscale.com)（个人使用免费）
 - 你要访问的设备上安装 Tailscale（手机、平板等）
-- Go 1.25+（如果从源码构建）
+- Go 1.26.3+（如果从源码构建）
 
 ## 平台支持
 

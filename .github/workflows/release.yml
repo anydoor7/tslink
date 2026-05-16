@@ -37,6 +37,15 @@ jobs:
         uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610
         with:
           syft-version: v1.44.0
+      - name: Check Homebrew tap token
+        if: ${{ !contains(github.ref_name, '-') }}
+        env:
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+        run: |
+          if [ -z "$HOMEBREW_TAP_GITHUB_TOKEN" ]; then
+            echo "::error::Stable releases require HOMEBREW_TAP_GITHUB_TOKEN with write access to monody0007/homebrew-tap"
+            exit 1
+          fi
       - name: Release
         # goreleaser/goreleaser-action v6.4.0
         uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a
@@ -45,12 +54,17 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
       - name: Attest release artifacts
         # actions/attest-build-provenance v4.1.0
         uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32
         with:
+          # Keep this in sync with .goreleaser.yml release assets: installable
+          # artifacts, checksums, SBOM sidecars, and Sigstore bundle sidecars.
           subject-path: |
             dist/checksums.txt
+            dist/*.sigstore.json
+            dist/*.sbom.json
             dist/*.tar.gz
             dist/*.zip
             dist/*.deb
