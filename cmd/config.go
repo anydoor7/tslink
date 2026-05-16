@@ -3,11 +3,11 @@ package cmd
 import (
 	"fmt"
 	"io"
-	"net/url"
 	"strings"
 
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/output"
+	"github.com/monody0007/tslink/internal/registry"
 	"github.com/spf13/cobra"
 )
 
@@ -49,10 +49,8 @@ func configSet(key, value string, out io.Writer, isJSON bool) error {
 
 	switch key {
 	case "control-url":
-		if value != "" {
-			if _, err := url.ParseRequestURI(value); err != nil {
-				return fmt.Errorf("invalid URL %q: %w", value, err)
-			}
+		if err := registry.ValidateControlURL(value); err != nil {
+			return err
 		}
 		cfg.ControlURL = value
 	default:

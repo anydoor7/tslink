@@ -1286,15 +1286,19 @@ func TestConfigSet_ClearValue(t *testing.T) {
 }
 
 func TestConfigSet_InvalidURL(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	for _, value := range []string{"/control", "https://", "ftp://example.com", "not-a-url"} {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
 
-	var buf bytes.Buffer
-	err := configSet("control-url", "not-a-url", &buf, false)
-	if err == nil {
-		t.Fatal("expected error for invalid URL")
-	}
-	if !strings.Contains(err.Error(), "invalid URL") {
-		t.Errorf("expected 'invalid URL' error, got: %v", err)
+			var buf bytes.Buffer
+			err := configSet("control-url", value, &buf, false)
+			if err == nil {
+				t.Fatal("expected error for invalid URL")
+			}
+			if !strings.Contains(err.Error(), "invalid URL") {
+				t.Errorf("expected 'invalid URL' error, got: %v", err)
+			}
+		})
 	}
 }
 

@@ -744,6 +744,40 @@ func TestAddServiceWithControlURL(t *testing.T) {
 	}
 }
 
+func TestValidateControlURLRequiresAbsoluteHTTPURL(t *testing.T) {
+	valid := []string{
+		"",
+		"http://headscale.example.com",
+		"https://headscale.example.com",
+		"https://headscale.example.com:8080/path",
+	}
+	for _, value := range valid {
+		t.Run("valid_"+value, func(t *testing.T) {
+			if err := ValidateControlURL(value); err != nil {
+				t.Fatalf("ValidateControlURL(%q) error = %v, want nil", value, err)
+			}
+		})
+	}
+
+	invalid := []string{
+		"/control",
+		"https://",
+		"ftp://example.com",
+		"not-a-url",
+	}
+	for _, value := range invalid {
+		t.Run("invalid_"+value, func(t *testing.T) {
+			err := ValidateControlURL(value)
+			if err == nil {
+				t.Fatalf("ValidateControlURL(%q) error = nil, want invalid URL error", value)
+			}
+			if !strings.Contains(err.Error(), "invalid URL") {
+				t.Fatalf("ValidateControlURL(%q) error = %v, want invalid URL error", value, err)
+			}
+		})
+	}
+}
+
 func TestValidateServiceRejectsInvalidControlURL(t *testing.T) {
 	err := ValidateService(Service{
 		Name:       "custom",

@@ -333,6 +333,7 @@ tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 | `tslink serve --daemon` | Start the gateway (background) |
 | `tslink stop` | Stop the gateway |
 | `tslink status` | Show gateway status |
+| `tslink logs` | Show recent gateway logs |
 | `tslink tags list` | List services and their assigned tags |
 | `tslink tags pull` | Fetch remote tags from Tailscale ACL with an API access token; skipped in OAuth-only mode |
 | `tslink tags add <service> <tag>` | Append a tag to a service |

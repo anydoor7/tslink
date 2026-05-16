@@ -333,6 +333,7 @@ tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 | `tslink serve --daemon` | 启动网关（后台） |
 | `tslink stop` | 停止网关 |
 | `tslink status` | 显示网关状态 |
+| `tslink logs` | 查看最近的网关日志 |
 | `tslink tags list` | 列出所有服务及其标签 |
 | `tslink tags pull` | 使用 API 访问令牌从 Tailscale ACL 拉取远端标签；OAuth-only 模式会跳过 |
 | `tslink tags add <service> <tag>` | 为服务追加一个标签 |

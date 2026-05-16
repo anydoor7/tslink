@@ -93,6 +93,9 @@ Examples:
 					controlURL = globalCfg.ControlURL
 				}
 			}
+			if err := registry.ValidateControlURL(controlURL); err != nil {
+				return fmt.Errorf("invalid control-url: %w", err)
+			}
 
 			pidPath, err := servePIDPathFn()
 			if err != nil {

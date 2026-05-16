@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/monody0007/tslink/internal/filelock"
@@ -84,8 +85,15 @@ func ValidateControlURL(value string) error {
 	if value == "" {
 		return nil
 	}
-	if _, err := url.ParseRequestURI(value); err != nil {
+	parsed, err := url.ParseRequestURI(value)
+	if err != nil {
 		return fmt.Errorf("invalid URL %q: %w", value, err)
+	}
+	if !strings.EqualFold(parsed.Scheme, "http") && !strings.EqualFold(parsed.Scheme, "https") {
+		return fmt.Errorf("invalid URL %q: scheme must be http or https", value)
+	}
+	if parsed.Host == "" {
+		return fmt.Errorf("invalid URL %q: host is required", value)
 	}
 	return nil
 }

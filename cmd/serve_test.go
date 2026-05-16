@@ -502,6 +502,65 @@ func TestServeCmd_ControlURLFromConfig(t *testing.T) {
 	}
 }
 
+func TestServeCmd_InvalidFlagControlURLFailsBeforeDaemonize(t *testing.T) {
+	dir := t.TempDir()
+	mockServeDefaults(t, dir)
+	serveDaemon = true
+
+	cmd := findServeCmd(t)
+	if err := cmd.Flags().Set("control-url", "/control"); err != nil {
+		t.Fatalf("set control-url flag: %v", err)
+	}
+	t.Cleanup(func() { _ = cmd.Flags().Set("control-url", "") })
+
+	daemonizeCalled := false
+	serveDaemonizeFn = func(out, errLog, controlURL string) (int, error) {
+		daemonizeCalled = true
+		return 0, fmt.Errorf("daemonize should not be called")
+	}
+	serveNewServerFn = func(authKey, controlURL string) (serverRunner, error) {
+		t.Fatal("server startup should not be reached")
+		return nil, nil
+	}
+
+	err := cmd.RunE(cmd, nil)
+	if err == nil {
+		t.Fatal("RunE() error = nil, want invalid control-url error")
+	}
+	if !strings.Contains(err.Error(), "invalid control-url") || !strings.Contains(err.Error(), "invalid URL") {
+		t.Fatalf("RunE() error = %v, want invalid control-url URL error", err)
+	}
+	if daemonizeCalled {
+		t.Fatal("daemonize was called for invalid control-url")
+	}
+}
+
+func TestServeCmd_InvalidPersistedControlURLFailsBeforeServerStartup(t *testing.T) {
+	dir := t.TempDir()
+	mockServeDefaults(t, dir)
+	serveLoadGlobalFn = func() (config.GlobalConfig, error) {
+		return config.GlobalConfig{ControlURL: "/control"}, nil
+	}
+
+	serverCalled := false
+	serveNewServerFn = func(authKey, controlURL string) (serverRunner, error) {
+		serverCalled = true
+		return &mockServer{}, nil
+	}
+
+	cmd := findServeCmd(t)
+	err := cmd.RunE(cmd, nil)
+	if err == nil {
+		t.Fatal("RunE() error = nil, want invalid control-url error")
+	}
+	if !strings.Contains(err.Error(), "invalid control-url") || !strings.Contains(err.Error(), "invalid URL") {
+		t.Fatalf("RunE() error = %v, want invalid control-url URL error", err)
+	}
+	if serverCalled {
+		t.Fatal("server startup was reached for invalid persisted control-url")
+	}
+}
+
 func TestServeCmd_DaemonMode(t *testing.T) {
 	dir := t.TempDir()
 	mockServeDefaults(t, dir)
