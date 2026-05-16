@@ -187,6 +187,41 @@ func TestDeleteDevicesForService_DeletesOnlyExactDeviceProof(t *testing.T) {
 	}
 }
 
+func TestDeleteDevicesForService_DeletesOnlyExactNodeProof(t *testing.T) {
+	setup(t)
+	mustSetAPIKey(t, "api-key")
+
+	var deleted []string
+	withDefaultTransport(t, roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		switch {
+		case req.Method == http.MethodGet && req.URL.Path == "/api/v2/tailnet/-/devices":
+			return jsonResponse(http.StatusOK, `{"devices":[{"id":"dev1","nodeId":"node1","hostname":"app","tags":["tag:tsmain"]},{"id":"dev2","nodeId":"node2","hostname":"app-1","tags":["tag:tsmain"]}]}`), nil
+		case req.Method == http.MethodDelete && req.URL.Path == "/api/v2/device/node1":
+			deleted = append(deleted, "node1")
+			return jsonResponse(http.StatusOK, `{}`), nil
+		default:
+			t.Fatalf("unexpected request: %s %s", req.Method, req.URL.String())
+			return nil, nil
+		}
+	}))
+
+	target := CleanupTarget{Hostname: "app", Tags: []string{"tag:tsmain"}, NodeID: "node1"}
+	result, err := DeleteDevicesForService(context.Background(), target)
+	if err != nil {
+		t.Fatalf("DeleteDevicesForService() error = %v", err)
+	}
+
+	if got := strings.Join(deleted, ","); got != "node1" {
+		t.Fatalf("deleted devices = %q, want node1", got)
+	}
+	if got := strings.Join(result.Deleted, ","); got != "app" {
+		t.Fatalf("result.Deleted = %q, want app", got)
+	}
+	if got := strings.Join(result.Protected, ","); got != "app-1" {
+		t.Fatalf("result.Protected = %q, want app-1", got)
+	}
+}
+
 func TestDeleteDevicesForService_ProtectsAppAndNumericSuffixWithSharedDefaultTag(t *testing.T) {
 	setup(t)
 	mustSetAPIKey(t, "api-key")
