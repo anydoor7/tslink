@@ -14,6 +14,16 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+// Seams for testing – overridden in tests to inject errors.
+var (
+	findProcess = os.FindProcess
+	executable  = os.Executable
+	execCommand = exec.Command
+	startCmd    = func(cmd *exec.Cmd) error { return cmd.Start() }
+
+	processExecutable = defaultProcessExecutable
+)
+
 // IsRunning reports whether the process referenced by path is alive.
 func IsRunning(path string) bool {
 	pid, err := ReadPID(path)
@@ -26,12 +36,12 @@ func IsRunning(path string) bool {
 		return false
 	}
 	_ = windows.CloseHandle(handle)
-	return true
+	return verifyProcessIdentity(pid) == nil
 }
 
 // Daemonize re-launches the current binary in the background with the serve command.
-func Daemonize(outLog, errLog string) (int, error) {
-	exe, err := os.Executable()
+func Daemonize(outLog, errLog, controlURL string) (int, error) {
+	exe, err := executable()
 	if err != nil {
 		return 0, fmt.Errorf("find executable: %w", err)
 	}
@@ -57,31 +67,25 @@ func Daemonize(outLog, errLog string) (int, error) {
 	const createNewProcessGroup = 0x00000200
 	const createNoWindow = 0x08000000
 
-	cmd := exec.Command(exe, "serve")
+	args := []string{"serve"}
+	if controlURL != "" {
+		args = append(args, "--control-url", controlURL)
+	}
+
+	cmd := execCommand(exe, args...)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		CreationFlags: createNewProcessGroup | createNoWindow,
 	}
 
-	if err := cmd.Start(); err != nil {
+	if err := startCmd(cmd); err != nil {
 		_ = stdout.Close()
 		_ = stderr.Close()
 		return 0, fmt.Errorf("start daemon: %w", err)
 	}
 
 	pid := cmd.Process.Pid
-
-	time.Sleep(200 * time.Millisecond)
-
-	// On Windows, check if the process is still alive by opening its handle.
-	handle, openErr := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
-	if openErr != nil {
-		_ = stdout.Close()
-		_ = stderr.Close()
-		return 0, fmt.Errorf("daemon exited during startup: %w", openErr)
-	}
-	_ = windows.CloseHandle(handle)
 
 	_ = cmd.Process.Release()
 	_ = stdout.Close()
@@ -100,6 +104,20 @@ func StopDaemon(pidPath string) error {
 	proc, err := os.FindProcess(pid)
 	if err != nil {
 		return fmt.Errorf("find process: %w", err)
+	}
+
+	handle, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
+	if err != nil {
+		if errors.Is(err, windows.ERROR_INVALID_PARAMETER) {
+			RemovePID(pidPath)
+			return nil
+		}
+		return fmt.Errorf("inspect process %d: %w", pid, err)
+	}
+	_ = windows.CloseHandle(handle)
+
+	if err := verifyProcessIdentity(pid); err != nil {
+		return fmt.Errorf("refusing to stop process from PID file: %w", err)
 	}
 
 	// On Windows there is no SIGTERM; use Kill (TerminateProcess).
@@ -124,4 +142,19 @@ func StopDaemon(pidPath string) error {
 	}
 
 	return fmt.Errorf("process %d did not exit after termination", pid)
+}
+
+func defaultProcessExecutable(pid int) (string, error) {
+	handle, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
+	if err != nil {
+		return "", err
+	}
+	defer windows.CloseHandle(handle)
+
+	buffer := make([]uint16, 32768)
+	size := uint32(len(buffer))
+	if err := windows.QueryFullProcessImageName(handle, 0, &buffer[0], &size); err != nil {
+		return "", err
+	}
+	return windows.UTF16ToString(buffer[:size]), nil
 }

@@ -8,6 +8,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -18,6 +20,8 @@ var (
 	executable  = os.Executable
 	execCommand = exec.Command
 	startCmd    = func(cmd *exec.Cmd) error { return cmd.Start() }
+
+	processExecutable = defaultProcessExecutable
 )
 
 // IsRunning reports whether the process referenced by path is alive.
@@ -32,12 +36,15 @@ func IsRunning(path string) bool {
 		return false
 	}
 
-	err = proc.Signal(syscall.Signal(0))
-	return err == nil || errors.Is(err, syscall.EPERM)
+	if err := proc.Signal(syscall.Signal(0)); err != nil && !errors.Is(err, syscall.EPERM) {
+		return false
+	}
+
+	return verifyProcessIdentity(pid) == nil
 }
 
 // Daemonize re-launches the current binary in the background with the serve command.
-func Daemonize(outLog, errLog string) (int, error) {
+func Daemonize(outLog, errLog, controlURL string) (int, error) {
 	exe, err := executable()
 	if err != nil {
 		return 0, fmt.Errorf("find executable: %w", err)
@@ -61,7 +68,12 @@ func Daemonize(outLog, errLog string) (int, error) {
 		return 0, fmt.Errorf("open stderr log: %w", err)
 	}
 
-	cmd := execCommand(exe, "serve")
+	args := []string{"serve"}
+	if controlURL != "" {
+		args = append(args, "--control-url", controlURL)
+	}
+
+	cmd := execCommand(exe, args...)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
@@ -73,13 +85,6 @@ func Daemonize(outLog, errLog string) (int, error) {
 	}
 
 	pid := cmd.Process.Pid
-
-	time.Sleep(200 * time.Millisecond)
-	if err := cmd.Process.Signal(syscall.Signal(0)); err != nil && !errors.Is(err, syscall.EPERM) {
-		_ = stdout.Close()
-		_ = stderr.Close()
-		return 0, fmt.Errorf("daemon exited during startup: %w", err)
-	}
 
 	_ = cmd.Process.Release()
 	_ = stdout.Close()
@@ -98,6 +103,20 @@ func StopDaemon(pidPath string) error {
 	proc, err := findProcess(pid)
 	if err != nil {
 		return fmt.Errorf("find process: %w", err)
+	}
+
+	if err := proc.Signal(syscall.Signal(0)); err != nil {
+		if errors.Is(err, syscall.ESRCH) || errors.Is(err, os.ErrProcessDone) {
+			RemovePID(pidPath)
+			return nil
+		}
+		if !errors.Is(err, syscall.EPERM) {
+			return fmt.Errorf("check process %d: %w", pid, err)
+		}
+	}
+
+	if err := verifyProcessIdentity(pid); err != nil {
+		return fmt.Errorf("refusing to stop process from PID file: %w", err)
 	}
 
 	if err := proc.Signal(syscall.SIGTERM); err != nil {
@@ -119,4 +138,20 @@ func StopDaemon(pidPath string) error {
 	}
 
 	return fmt.Errorf("process %d did not exit after SIGTERM", pid)
+}
+
+func defaultProcessExecutable(pid int) (string, error) {
+	if path, err := os.Readlink(fmt.Sprintf("/proc/%d/exe", pid)); err == nil {
+		return path, nil
+	}
+
+	out, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "comm=").Output()
+	if err != nil {
+		return "", err
+	}
+	identity := strings.TrimSpace(string(out))
+	if identity == "" {
+		return "", fmt.Errorf("empty process identity")
+	}
+	return identity, nil
 }

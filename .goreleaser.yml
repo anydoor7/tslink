@@ -8,7 +8,8 @@ before:
     - go vet ./...
 
 builds:
-  - main: .
+  - id: tslink
+    main: .
     binary: tslink
     env:
       - CGO_ENABLED=0
@@ -23,7 +24,8 @@ builds:
       - -s -w
 
 archives:
-  - name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+  - id: archive
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     formats:
       - tar.gz
     format_overrides:
@@ -34,20 +36,52 @@ archives:
 checksum:
   name_template: "checksums.txt"
 
-homebrew_casks:
-  - name: tslink
-    binaries:
+sboms:
+  - artifacts: archive
+    documents:
+      - "${artifact}.sbom.json"
+    args: ["$artifact", "--output", "cyclonedx-json=$document"]
+
+signs:
+  - cmd: cosign
+    signature: "${artifact}.sigstore.json"
+    args:
+      - "sign-blob"
+      - "--bundle=${signature}"
+      - "${artifact}"
+      - "--yes"
+    artifacts: checksum
+
+nfpms:
+  - id: linux-packages
+    ids:
       - tslink
+    package_name: tslink
+    vendor: monody0007
+    homepage: "https://github.com/monody0007/tslink"
+    maintainer: "Maintainer <monody0007@users.noreply.github.com>"
+    description: "Private Tailscale gateway for local services"
+    license: "Apache-2.0"
+    formats:
+      - deb
+      - rpm
+
+brews:
+  - name: tslink
+    ids:
+      - archive
     repository:
       owner: monody0007
       name: homebrew-tap
       branch: main
-    directory: Casks
+    directory: Formula
     homepage: "https://github.com/monody0007/tslink"
     description: "Private Tailscale gateway for local services"
     license: "Apache-2.0"
     skip_upload: auto
-    commit_msg_template: "Brew cask update for {{ .ProjectName }} version {{ .Tag }}"
+    install: |
+      bin.install "tslink"
+    commit_msg_template: "Brew formula update for {{ .ProjectName }} version {{ .Tag }}"
 
 changelog:
   sort: asc

@@ -89,6 +89,18 @@ brew install monody0007/tap/tslink
 go install github.com/monody0007/tslink@latest
 ```
 
+### 发布产物
+
+GitHub Releases 发布以下可安装产物：
+
+| 平台 | 产物 | 说明 |
+|---|---|---|
+| macOS | Homebrew formula 和 `tar.gz` 归档 | Homebrew formula 使用 GoReleaser `skip_upload: auto`，pre-release tag 可以跳过 tap upload 且不让发布失败。预发布验证优先使用归档产物。 |
+| Linux | `.deb`、`.rpm` 和 `tar.gz` 归档 | 包内包含原生 `tslink` 二进制。安装后用 `tslink install` 注册 user service。 |
+| Windows | `.zip` 归档 | Windows 当前是 archive-only 支持。尚未提供 MSI/MSIX/Winget 包或 Windows 代码签名安装器。解压后用 `tslink install` 注册 Startup 自启动。 |
+
+Release archives 包含 checksums、CycloneDX SBOM 文档、`checksums.txt` 的 keyless Sigstore bundle 签名，以及 GitHub Actions 生成的 artifact attestations。
+
 ### 30 秒上手
 
 ```bash
@@ -225,7 +237,7 @@ TSLink 为每个注册的服务创建一个专用的 [tsnet](https://tailscale.c
 - **安全凭证管理** — 系统钥匙串存储，headless 环境支持受限权限文件后备
 - **基于文件的注册表** — 服务在 `~/.config/tslink/registry.json` 中持久化，跨重启保存
 - **热重载** — 注册表文件监听意味着 `tslink add` 无需重启服务即可生效
-- **基于 PID 的生命周期** — 信号处理实现干净的守护进程管理
+- **基于 PID 的生命周期** — 通过进程身份检查管理守护进程，并按平台明确停止行为
 - **结构化日志** — 基于 slog 的结构化日志 + 访问日志
 - **指标采集** — 内部记录请求指标；公开 `/metrics` 端点仍在 roadmap
 
@@ -268,11 +280,11 @@ echo '{"action":"status"}' | tslink api
 
 ## 平台支持
 
-| 平台 | 守护进程 | 自动启动 |
-|------|---------|---------|
-| macOS | `--daemon` | LaunchAgent |
-| Linux | `--daemon` | systemd user service |
-| Windows | `--daemon` | 启动文件夹 |
+| 平台 | 守护进程 | 自动启动 | 停止行为 |
+|------|---------|---------|---------|
+| macOS | `--daemon` | LaunchAgent | SIGTERM 优雅停止 |
+| Linux | `--daemon` | systemd user service | SIGTERM 优雅停止 |
+| Windows | `--daemon` | 启动文件夹 | 强制终止进程 |
 
 ## 路线图
 

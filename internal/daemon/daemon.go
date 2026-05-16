@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 )
@@ -36,4 +37,51 @@ func ReadPID(path string) (int, error) {
 // RemovePID removes the PID file on a best-effort basis.
 func RemovePID(path string) {
 	_ = os.Remove(path)
+}
+
+func verifyProcessIdentity(pid int) error {
+	expected, err := executable()
+	if err != nil {
+		return fmt.Errorf("find executable: %w", err)
+	}
+	actual, err := processExecutable(pid)
+	if err != nil {
+		return fmt.Errorf("inspect process %d: %w", pid, err)
+	}
+	if !sameExecutable(actual, expected) {
+		return fmt.Errorf("process %d is %q, not %q", pid, actual, expected)
+	}
+	return nil
+}
+
+func sameExecutable(actual, expected string) bool {
+	actual = strings.TrimSpace(actual)
+	expected = strings.TrimSpace(expected)
+	if actual == "" || expected == "" {
+		return false
+	}
+
+	if filepath.IsAbs(actual) && filepath.IsAbs(expected) {
+		return samePath(cleanExecutablePath(actual), cleanExecutablePath(expected))
+	}
+
+	return samePath(filepath.Base(actual), filepath.Base(expected))
+}
+
+func cleanExecutablePath(path string) string {
+	path = strings.TrimSuffix(path, " (deleted)")
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
+	}
+	if abs, err := filepath.Abs(path); err == nil {
+		path = abs
+	}
+	return filepath.Clean(path)
+}
+
+func samePath(a, b string) bool {
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
 }

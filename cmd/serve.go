@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/credentials"
@@ -45,6 +46,10 @@ var (
 	serveLoadGlobalFn   = config.LoadGlobalConfig
 	serveLogDirFn       = config.LogDir
 	serveDaemonizeFn    = daemon.Daemonize
+	serveReadPIDFn      = daemon.ReadPID
+
+	serveDaemonReadyTimeout      = 10 * time.Second
+	serveDaemonReadyPollInterval = 50 * time.Millisecond
 )
 
 // serverRunner abstracts server.Server for testing.
@@ -79,6 +84,51 @@ Examples:
 			// Migrate file-based API key to keychain if possible
 			if serveMigrateFn() {
 				fmt.Fprintln(cmd.OutOrStdout(), "→ migrated API key to system keychain")
+			}
+
+			// Resolve control URL: flag > config > default
+			controlURL, _ := cmd.Flags().GetString("control-url")
+			if controlURL == "" {
+				if globalCfg, err := serveLoadGlobalFn(); err == nil {
+					controlURL = globalCfg.ControlURL
+				}
+			}
+
+			pidPath, err := servePIDPathFn()
+			if err != nil {
+				return err
+			}
+
+			if serveIsRunningFn(pidPath) {
+				return output.ErrConflict("tslink is already running (see: tslink status)")
+			}
+			// Clear stale state so daemon readiness waits for the child PID write.
+			serveRemovePIDFn(pidPath)
+
+			if serveDaemon {
+				logDir, err := serveLogDirFn()
+				if err != nil {
+					return err
+				}
+
+				outLog := filepath.Join(logDir, "tslink.out.log")
+				errLog := filepath.Join(logDir, "tslink.err.log")
+
+				pid, err := serveDaemonizeFn(outLog, errLog, controlURL)
+				if err != nil {
+					return err
+				}
+
+				if err := waitForDaemonReady(pidPath, pid, serveDaemonReadyTimeout, serveDaemonReadyPollInterval); err != nil {
+					return fmt.Errorf("daemon startup did not complete: %w; check logs: %s and %s", err, outLog, errLog)
+				}
+
+				if jsonOutput(cmd) {
+					output.Success("serve", ServeResult{Daemon: true, PID: pid})
+				} else {
+					fmt.Fprintf(cmd.OutOrStdout(), "tslink started as daemon (pid %d)\n", pid)
+				}
+				return nil
 			}
 
 			// Load registry to collect tags and ephemeral flags
@@ -120,15 +170,6 @@ Examples:
 				return output.ErrAuth(err.Error())
 			}
 
-			pidPath, err := servePIDPathFn()
-			if err != nil {
-				return err
-			}
-
-			if serveIsRunningFn(pidPath) {
-				return output.ErrConflict("tslink is already running (see: tslink status)")
-			}
-
 			// Clean up stale tailnet nodes before starting
 			cleanupTargets := tailapi.CleanupTargetsForServices(reg.Services)
 			cleanup, err := serveCleanupFn(context.Background(), cleanupTargets)
@@ -144,36 +185,6 @@ Examples:
 				slog.Info("removed stale tailnet nodes", "matched", cleanup.Matched, "deleted", cleanup.Deleted)
 			}
 
-			// Resolve control URL: flag > config > default
-			controlURL, _ := cmd.Flags().GetString("control-url")
-			if controlURL == "" {
-				if globalCfg, err := serveLoadGlobalFn(); err == nil {
-					controlURL = globalCfg.ControlURL
-				}
-			}
-
-			if serveDaemon {
-				logDir, err := serveLogDirFn()
-				if err != nil {
-					return err
-				}
-
-				outLog := filepath.Join(logDir, "tslink.out.log")
-				errLog := filepath.Join(logDir, "tslink.err.log")
-
-				pid, err := serveDaemonizeFn(outLog, errLog)
-				if err != nil {
-					return err
-				}
-
-				if jsonOutput(cmd) {
-					output.Success("serve", ServeResult{Daemon: true, PID: pid})
-				} else {
-					fmt.Fprintf(cmd.OutOrStdout(), "tslink started as daemon (pid %d)\n", pid)
-				}
-				return nil
-			}
-
 			return runForeground(pidPath, "", controlURL)
 		},
 	}
@@ -181,6 +192,38 @@ Examples:
 	serveCmd.Flags().BoolVar(&serveDaemon, "daemon", false, "Run as background daemon")
 	serveCmd.Flags().String("control-url", "", "Custom control server URL (e.g., Headscale)")
 	rootCmd.AddCommand(serveCmd)
+}
+
+func waitForDaemonReady(pidPath string, expectedPID int, timeout, pollInterval time.Duration) error {
+	if pollInterval <= 0 {
+		pollInterval = 50 * time.Millisecond
+	}
+
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+	for {
+		pid, err := serveReadPIDFn(pidPath)
+		if err == nil {
+			if pid == expectedPID {
+				if serveIsRunningFn(pidPath) {
+					return nil
+				}
+				lastErr = fmt.Errorf("PID file %s contains expected pid %d, but daemon is not running", pidPath, expectedPID)
+			} else {
+				lastErr = fmt.Errorf("PID file %s contains pid %d, expected %d", pidPath, pid, expectedPID)
+			}
+		} else {
+			lastErr = err
+		}
+
+		if !time.Now().Before(deadline) {
+			if lastErr != nil {
+				return fmt.Errorf("expected daemon PID file %s was not ready before timeout: %w", pidPath, lastErr)
+			}
+			return fmt.Errorf("expected daemon PID file %s was not ready before timeout", pidPath)
+		}
+		time.Sleep(pollInterval)
+	}
 }
 
 func validateServiceForServe(svc registry.Service) error {

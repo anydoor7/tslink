@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/credentials"
@@ -79,15 +80,19 @@ func saveServeState(t *testing.T) {
 		cleanup      func(context.Context, []tailapi.CleanupTarget) (tailapi.CleanupResult, error)
 		loadGlobal   func() (config.GlobalConfig, error)
 		logDir       func() (string, error)
-		daemonize    func(string, string) (int, error)
+		daemonize    func(string, string, string) (int, error)
+		readPID      func(string) (int, error)
 		writePID     func(string) error
 		removePID    func(string)
 		newServer    func(string, string) (serverRunner, error)
+		readyTimeout time.Duration
+		readyPoll    time.Duration
 	}{
 		serveEnsureDirFn, serveMigrateFn, serveRegistryPathFn, serveLoadRegistryFn,
 		serveGetAuthKeyFn, serveCheckAuthFn, servePIDPathFn, serveIsRunningFn, serveEnsureTagsFn, serveCleanupFn,
-		serveLoadGlobalFn, serveLogDirFn, serveDaemonizeFn,
+		serveLoadGlobalFn, serveLogDirFn, serveDaemonizeFn, serveReadPIDFn,
 		serveWritePIDFn, serveRemovePIDFn, serveNewServerFn,
+		serveDaemonReadyTimeout, serveDaemonReadyPollInterval,
 	}
 	t.Cleanup(func() {
 		serveEnsureDirFn = old.ensureDir
@@ -103,9 +108,12 @@ func saveServeState(t *testing.T) {
 		serveLoadGlobalFn = old.loadGlobal
 		serveLogDirFn = old.logDir
 		serveDaemonizeFn = old.daemonize
+		serveReadPIDFn = old.readPID
 		serveWritePIDFn = old.writePID
 		serveRemovePIDFn = old.removePID
 		serveNewServerFn = old.newServer
+		serveDaemonReadyTimeout = old.readyTimeout
+		serveDaemonReadyPollInterval = old.readyPoll
 		serveDaemon = false
 	})
 }
@@ -141,11 +149,21 @@ func mockServeDefaults(t *testing.T, dir string) {
 	}
 	serveLoadGlobalFn = func() (config.GlobalConfig, error) { return config.GlobalConfig{}, nil }
 	serveLogDirFn = func() (string, error) { return dir, nil }
-	serveDaemonizeFn = func(out, err string) (int, error) { return 99999, nil }
+	serveDaemonizeFn = func(out, err, controlURL string) (int, error) { return 99999, nil }
+	serveReadPIDFn = func(path string) (int, error) { return 99999, nil }
 	serveWritePIDFn = func(path string) error { return os.WriteFile(path, []byte("12345"), 0600) }
 	serveRemovePIDFn = func(path string) { os.Remove(path) }
 	serveNewServerFn = func(authKey, controlURL string) (serverRunner, error) {
 		return &mockServer{}, nil
+	}
+}
+
+func mockServeDaemonReadyAfterInitialCheck(t *testing.T) {
+	t.Helper()
+	runningChecks := 0
+	serveIsRunningFn = func(string) bool {
+		runningChecks++
+		return runningChecks > 1
 	}
 }
 
@@ -488,6 +506,7 @@ func TestServeCmd_DaemonMode(t *testing.T) {
 	dir := t.TempDir()
 	mockServeDefaults(t, dir)
 	serveDaemon = true
+	mockServeDaemonReadyAfterInitialCheck(t)
 
 	cmd := findServeCmd(t)
 	var buf bytes.Buffer
@@ -498,6 +517,163 @@ func TestServeCmd_DaemonMode(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "tslink started as daemon") {
 		t.Fatalf("expected daemon message, got: %s", buf.String())
+	}
+}
+
+func TestServeCmd_DaemonModeForwardsControlURL(t *testing.T) {
+	dir := t.TempDir()
+	mockServeDefaults(t, dir)
+	serveDaemon = true
+	mockServeDaemonReadyAfterInitialCheck(t)
+
+	cmd := findServeCmd(t)
+	if err := cmd.Flags().Set("control-url", "https://headscale.example.com"); err != nil {
+		t.Fatalf("set control-url flag: %v", err)
+	}
+	t.Cleanup(func() { _ = cmd.Flags().Set("control-url", "") })
+
+	var capturedControlURL string
+	serveDaemonizeFn = func(out, errLog, controlURL string) (int, error) {
+		capturedControlURL = controlURL
+		return 99999, nil
+	}
+
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	if err := cmd.RunE(cmd, nil); err != nil {
+		t.Fatalf("RunE() error = %v", err)
+	}
+	if capturedControlURL != "https://headscale.example.com" {
+		t.Fatalf("controlURL = %q, want explicit flag value", capturedControlURL)
+	}
+}
+
+func TestServeCmd_DaemonModeWaitsForPIDReadiness(t *testing.T) {
+	dir := t.TempDir()
+	mockServeDefaults(t, dir)
+	serveDaemon = true
+	mockServeDaemonReadyAfterInitialCheck(t)
+	serveDaemonReadyTimeout = 100 * time.Millisecond
+	serveDaemonReadyPollInterval = time.Millisecond
+
+	attempts := 0
+	serveReadPIDFn = func(path string) (int, error) {
+		attempts++
+		if attempts < 3 {
+			return 0, fmt.Errorf("not ready")
+		}
+		return 99999, nil
+	}
+
+	cmd := findServeCmd(t)
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	if err := cmd.RunE(cmd, nil); err != nil {
+		t.Fatalf("RunE() error = %v", err)
+	}
+	if attempts < 3 {
+		t.Fatalf("readiness attempts = %d, want at least 3", attempts)
+	}
+	if !strings.Contains(buf.String(), "tslink started as daemon") {
+		t.Fatalf("expected daemon success after readiness, got: %s", buf.String())
+	}
+}
+
+func TestServeCmd_DaemonReadinessFailureDoesNotReportSuccess(t *testing.T) {
+	dir := t.TempDir()
+	mockServeDefaults(t, dir)
+	serveDaemon = true
+	serveDaemonReadyTimeout = time.Millisecond
+	serveDaemonReadyPollInterval = time.Millisecond
+	serveReadPIDFn = func(path string) (int, error) {
+		return 0, fmt.Errorf("pid file missing")
+	}
+
+	cmd := findServeCmd(t)
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	err := cmd.RunE(cmd, nil)
+	if err == nil {
+		t.Fatal("RunE() error = nil, want readiness failure")
+	}
+	if !strings.Contains(err.Error(), "daemon startup did not complete") || !strings.Contains(err.Error(), "tslink.err.log") {
+		t.Fatalf("RunE() error = %v, want readiness failure with log paths", err)
+	}
+	if strings.Contains(buf.String(), "tslink started as daemon") {
+		t.Fatalf("reported daemon success despite readiness failure: %s", buf.String())
+	}
+}
+
+func TestServeCmd_DaemonReadinessPIDMatchRequiresRunningProcess(t *testing.T) {
+	dir := t.TempDir()
+	mockServeDefaults(t, dir)
+	serveDaemon = true
+	serveDaemonReadyTimeout = 3 * time.Millisecond
+	serveDaemonReadyPollInterval = time.Millisecond
+
+	runningChecks := 0
+	serveIsRunningFn = func(string) bool {
+		runningChecks++
+		return false
+	}
+	serveReadPIDFn = func(path string) (int, error) {
+		return 99999, nil
+	}
+
+	cmd := findServeCmd(t)
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	err := cmd.RunE(cmd, nil)
+	if err == nil {
+		t.Fatal("RunE() error = nil, want readiness failure")
+	}
+	if !strings.Contains(err.Error(), "daemon is not running") {
+		t.Fatalf("RunE() error = %v, want daemon liveness readiness failure", err)
+	}
+	if runningChecks < 2 {
+		t.Fatalf("running checks = %d, want initial check plus readiness confirmation", runningChecks)
+	}
+	if strings.Contains(buf.String(), "tslink started as daemon") {
+		t.Fatalf("reported daemon success despite failed liveness: %s", buf.String())
+	}
+}
+
+func TestServeCmd_DaemonModeSkipsParentPreflight(t *testing.T) {
+	dir := t.TempDir()
+	mockServeDefaults(t, dir)
+	serveDaemon = true
+	mockServeDaemonReadyAfterInitialCheck(t)
+
+	calls := 0
+	serveRegistryPathFn = func() (string, error) {
+		calls++
+		return "", fmt.Errorf("registry path should not be called in daemon parent")
+	}
+	serveLoadRegistryFn = func(path string) (*registry.Registry, error) {
+		calls++
+		return nil, fmt.Errorf("load registry should not be called in daemon parent")
+	}
+	serveEnsureTagsFn = func(ctx context.Context, tags []string) error {
+		calls++
+		return fmt.Errorf("ensure tags should not be called in daemon parent")
+	}
+	serveCheckAuthFn = func() error {
+		calls++
+		return fmt.Errorf("auth check should not be called in daemon parent")
+	}
+	serveCleanupFn = func(ctx context.Context, targets []tailapi.CleanupTarget) (tailapi.CleanupResult, error) {
+		calls++
+		return tailapi.CleanupResult{}, fmt.Errorf("cleanup should not be called in daemon parent")
+	}
+
+	cmd := findServeCmd(t)
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	if err := cmd.RunE(cmd, nil); err != nil {
+		t.Fatalf("RunE() error = %v", err)
+	}
+	if calls != 0 {
+		t.Fatalf("parent preflight calls = %d, want 0", calls)
 	}
 }
 
@@ -518,7 +694,7 @@ func TestServeCmd_DaemonizeError(t *testing.T) {
 	dir := t.TempDir()
 	mockServeDefaults(t, dir)
 	serveDaemon = true
-	serveDaemonizeFn = func(out, err string) (int, error) {
+	serveDaemonizeFn = func(out, errLog, controlURL string) (int, error) {
 		return 0, fmt.Errorf("fork failed")
 	}
 

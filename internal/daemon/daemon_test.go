@@ -92,6 +92,23 @@ func TestIsRunningCurrentProcess(t *testing.T) {
 	}
 }
 
+func TestIsRunningRejectsMismatchedProcessIdentity(t *testing.T) {
+	orig := processExecutable
+	t.Cleanup(func() { processExecutable = orig })
+	processExecutable = func(pid int) (string, error) {
+		return filepath.Join(t.TempDir(), "not-tslink"), nil
+	}
+
+	path := filepath.Join(t.TempDir(), "tslink.pid")
+	if err := WritePID(path); err != nil {
+		t.Fatalf("WritePID() error = %v", err)
+	}
+
+	if IsRunning(path) {
+		t.Fatal("IsRunning() = true for mismatched process identity, want false")
+	}
+}
+
 func TestWritePIDCreatesParentDir(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nested", "deep", "tslink.pid")
 
@@ -237,7 +254,7 @@ func TestDaemonize_CreateStdoutLogDirError(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	_, err := Daemonize(filepath.Join(parent, "stdout.log"), filepath.Join(t.TempDir(), "stderr.log"))
+	_, err := Daemonize(filepath.Join(parent, "stdout.log"), filepath.Join(t.TempDir(), "stderr.log"), "")
 	if err == nil {
 		t.Fatal("Daemonize() error = nil, want error")
 	}
@@ -253,7 +270,7 @@ func TestDaemonize_OpenStdoutLogError(t *testing.T) {
 		t.Fatalf("Mkdir() error = %v", err)
 	}
 
-	_, err := Daemonize(outLog, filepath.Join(dir, "stderr.log"))
+	_, err := Daemonize(outLog, filepath.Join(dir, "stderr.log"), "")
 	if err == nil {
 		t.Fatal("Daemonize() error = nil, want error")
 	}
@@ -269,7 +286,7 @@ func TestDaemonize_OpenStderrLogError(t *testing.T) {
 		t.Fatalf("Mkdir() error = %v", err)
 	}
 
-	_, err := Daemonize(filepath.Join(dir, "stdout.log"), errLog)
+	_, err := Daemonize(filepath.Join(dir, "stdout.log"), errLog, "")
 	if err == nil {
 		t.Fatal("Daemonize() error = nil, want error")
 	}
@@ -285,7 +302,7 @@ func TestDaemonize_CreateStderrLogDirError(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	_, err := Daemonize(filepath.Join(dir, "stdout.log"), filepath.Join(errParent, "stderr.log"))
+	_, err := Daemonize(filepath.Join(dir, "stdout.log"), filepath.Join(errParent, "stderr.log"), "")
 	if err == nil {
 		t.Fatal("Daemonize() error = nil, want error")
 	}
@@ -297,11 +314,22 @@ func TestDaemonize_CreateStderrLogDirError(t *testing.T) {
 func TestDaemonize_Success(t *testing.T) {
 	t.Setenv("TSLINK_DAEMON_TEST_MODE", "success")
 
+	orig := execCommand
+	t.Cleanup(func() { execCommand = orig })
+
+	var gotName string
+	var gotArgs []string
+	execCommand = func(name string, args ...string) *exec.Cmd {
+		gotName = name
+		gotArgs = append([]string(nil), args...)
+		return exec.Command(name, args...)
+	}
+
 	dir := t.TempDir()
 	outLog := filepath.Join(dir, "stdout.log")
 	errLog := filepath.Join(dir, "stderr.log")
 
-	pid, err := Daemonize(outLog, errLog)
+	pid, err := Daemonize(outLog, errLog, "")
 	if err != nil {
 		t.Fatalf("Daemonize() error = %v", err)
 	}
@@ -316,6 +344,51 @@ func TestDaemonize_Success(t *testing.T) {
 	t.Cleanup(func() {
 		_ = proc.Kill()
 	})
+
+	if gotName == "" {
+		t.Fatal("execCommand was not called")
+	}
+	wantArgs := []string{"serve"}
+	if strings.Join(gotArgs, "\x00") != strings.Join(wantArgs, "\x00") {
+		t.Fatalf("daemon argv = %q, want %q", gotArgs, wantArgs)
+	}
+}
+
+func TestDaemonize_ForwardsControlURL(t *testing.T) {
+	t.Setenv("TSLINK_DAEMON_TEST_MODE", "success")
+
+	orig := execCommand
+	t.Cleanup(func() { execCommand = orig })
+
+	var gotName string
+	var gotArgs []string
+	execCommand = func(name string, args ...string) *exec.Cmd {
+		gotName = name
+		gotArgs = append([]string(nil), args...)
+		return exec.Command(name, args...)
+	}
+
+	dir := t.TempDir()
+	pid, err := Daemonize(filepath.Join(dir, "stdout.log"), filepath.Join(dir, "stderr.log"), "https://headscale.example.com")
+	if err != nil {
+		t.Fatalf("Daemonize() error = %v", err)
+	}
+	if pid <= 0 {
+		t.Fatalf("Daemonize() pid = %d, want positive PID", pid)
+	}
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		t.Fatalf("FindProcess() error = %v", err)
+	}
+	t.Cleanup(func() { _ = proc.Kill() })
+
+	if gotName == "" {
+		t.Fatal("execCommand was not called")
+	}
+	wantArgs := []string{"serve", "--control-url", "https://headscale.example.com"}
+	if strings.Join(gotArgs, "\x00") != strings.Join(wantArgs, "\x00") {
+		t.Fatalf("daemon argv = %q, want %q", gotArgs, wantArgs)
+	}
 }
 
 func TestStopDaemon_ReadPIDError(t *testing.T) {
@@ -364,6 +437,30 @@ func TestStopDaemon_Success(t *testing.T) {
 
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("expected pid file removal, stat err = %v", err)
+	}
+}
+
+func TestStopDaemonRejectsMismatchedProcessIdentity(t *testing.T) {
+	orig := processExecutable
+	t.Cleanup(func() { processExecutable = orig })
+	processExecutable = func(pid int) (string, error) {
+		return filepath.Join(t.TempDir(), "not-tslink"), nil
+	}
+
+	path := filepath.Join(t.TempDir(), "tslink.pid")
+	if err := os.WriteFile(path, []byte(strconv.Itoa(os.Getpid())+"\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	err := StopDaemon(path)
+	if err == nil {
+		t.Fatal("StopDaemon() error = nil, want identity refusal")
+	}
+	if !strings.Contains(err.Error(), "refusing to stop process") {
+		t.Fatalf("StopDaemon() error = %v, want identity refusal", err)
+	}
+	if _, statErr := os.Stat(path); statErr != nil {
+		t.Fatalf("PID file should remain after refused stop, stat error = %v", statErr)
 	}
 }
 
@@ -436,36 +533,6 @@ func TestIsRunning_EPERM(t *testing.T) {
 	}
 }
 
-func TestDaemonize_DaemonExitsDuringStartup(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("test uses Unix-specific process behavior")
-	}
-
-	// Set mode="crash" so the child sends SIGKILL to itself immediately.
-	// Install SA_NOCLDWAIT via signal.Ignore(SIGCHLD) so the kernel
-	// auto-reaps the zombie. Then Daemonize's Signal(0) call after
-	// the 200ms sleep will find the process gone and return an error.
-	t.Setenv("TSLINK_DAEMON_TEST_MODE", "crash")
-
-	// Tell the kernel to auto-reap child processes
-	signal.Ignore(syscall.SIGCHLD)
-	t.Cleanup(func() {
-		signal.Reset(syscall.SIGCHLD)
-	})
-
-	dir := t.TempDir()
-	outLog := filepath.Join(dir, "stdout.log")
-	errLog := filepath.Join(dir, "stderr.log")
-
-	_, err := Daemonize(outLog, errLog)
-	if err == nil {
-		t.Fatal("Daemonize() error = nil, want daemon exited during startup error")
-	}
-	if !strings.Contains(err.Error(), "daemon exited during startup") {
-		t.Fatalf("Daemonize() error = %v, want daemon exited during startup error", err)
-	}
-}
-
 func TestStopDaemon_SignalError(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("SIGTERM not applicable on Windows")
@@ -482,8 +549,8 @@ func TestStopDaemon_SignalError(t *testing.T) {
 	if err == nil {
 		t.Fatal("StopDaemon() error = nil, want signal error")
 	}
-	if !strings.Contains(err.Error(), "signal SIGTERM to 1") {
-		t.Fatalf("StopDaemon() error = %v, want signal SIGTERM error", err)
+	if !strings.Contains(err.Error(), "refusing to stop process") {
+		t.Fatalf("StopDaemon() error = %v, want identity refusal error", err)
 	}
 }
 
@@ -612,7 +679,7 @@ func TestDaemonize_ExecutableError(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	_, err := Daemonize(filepath.Join(dir, "stdout.log"), filepath.Join(dir, "stderr.log"))
+	_, err := Daemonize(filepath.Join(dir, "stdout.log"), filepath.Join(dir, "stderr.log"), "")
 	if err == nil {
 		t.Fatal("Daemonize() error = nil, want error")
 	}
@@ -629,7 +696,7 @@ func TestDaemonize_StartError(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	_, err := Daemonize(filepath.Join(dir, "stdout.log"), filepath.Join(dir, "stderr.log"))
+	_, err := Daemonize(filepath.Join(dir, "stdout.log"), filepath.Join(dir, "stderr.log"), "")
 	if err == nil {
 		t.Fatal("Daemonize() error = nil, want error")
 	}

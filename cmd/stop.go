@@ -51,9 +51,10 @@ func init() {
 		Short: "Stop the TSLink daemon",
 		Long: `Stop the running TSLink gateway daemon.
 
-Reads the PID from ~/.config/tslink/tslink.pid and sends a termination signal
-(SIGTERM on macOS/Linux, process kill on Windows). The daemon shuts down all
-tsnet nodes gracefully before exiting.
+Reads the PID from ~/.config/tslink/tslink.pid and verifies it still belongs
+to TSLink before stopping it. On macOS/Linux, TSLink sends SIGTERM so the
+daemon can shut down tsnet nodes gracefully. On Windows, TSLink currently uses
+process termination, so stop is not graceful there.
 
 If the daemon is not running, the stale PID file (if any) is cleaned up and
 a "not running" message is displayed.
