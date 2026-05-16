@@ -84,6 +84,8 @@ brews:
       owner: monody0007
       name: homebrew-tap
       branch: main
+      # Pre-release tags may have an empty token because skip_upload: auto
+      # skips tap upload; stable tags are checked by the release workflow.
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     directory: Formula
     homepage: "https://github.com/monody0007/tslink"

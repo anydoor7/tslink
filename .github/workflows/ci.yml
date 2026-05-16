@@ -69,7 +69,7 @@ jobs:
             read -r -a args <<< "$command"
             "$bin" "${args[@]}" >/dev/null
           done
-      - name: Race
+      - name: Race tests (macOS/Windows)
         if: matrix.os == 'macos-latest' || matrix.os == 'windows-latest'
         run: go test ./... -race
       - name: Race and coverage
