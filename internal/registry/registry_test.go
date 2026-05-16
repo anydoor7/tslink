@@ -129,6 +129,43 @@ func TestRemove(t *testing.T) {
 	}
 }
 
+func TestRemoveAndReturn(t *testing.T) {
+	path := testRegistryPath(t)
+
+	original := Service{Name: "report", Type: TypeProxy, Target: "http://localhost:3000", Tags: []string{"tag:tsmain"}}
+	if _, err := Add(path, original); err != nil {
+		t.Fatalf("Add report returned error: %v", err)
+	}
+	if _, err := Add(path, Service{Name: "docs", Type: TypeFile, Path: "/tmp/docs"}); err != nil {
+		t.Fatalf("Add docs returned error: %v", err)
+	}
+
+	removedSvc, removed, err := RemoveAndReturn(path, "report")
+	if err != nil {
+		t.Fatalf("RemoveAndReturn returned error: %v", err)
+	}
+	if !removed {
+		t.Fatal("expected removed=true for existing service")
+	}
+	if removedSvc.Name != "report" || removedSvc.Target != original.Target {
+		t.Fatalf("removed service = %+v, want report target %q", removedSvc, original.Target)
+	}
+	if len(removedSvc.Tags) != 1 || removedSvc.Tags[0] != "tag:tsmain" {
+		t.Fatalf("removed service tags = %v, want [tag:tsmain]", removedSvc.Tags)
+	}
+	if removedSvc.CreatedAt.IsZero() {
+		t.Fatal("removed service should include created_at from registry")
+	}
+
+	reg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if len(reg.Services) != 1 || reg.Services[0].Name != "docs" {
+		t.Fatalf("remaining services = %+v, want docs only", reg.Services)
+	}
+}
+
 func TestRemoveNotFound(t *testing.T) {
 	path := testRegistryPath(t)
 
@@ -140,6 +177,25 @@ func TestRemoveNotFound(t *testing.T) {
 		t.Fatalf("Remove returned error: %v", err)
 	} else if removed {
 		t.Fatal("expected removed=false for missing service")
+	}
+}
+
+func TestRemoveAndReturnNotFound(t *testing.T) {
+	path := testRegistryPath(t)
+
+	if _, err := Add(path, Service{Name: "report", Type: TypeProxy, Target: "http://localhost:3000"}); err != nil {
+		t.Fatalf("Add returned error: %v", err)
+	}
+
+	removedSvc, removed, err := RemoveAndReturn(path, "missing")
+	if err != nil {
+		t.Fatalf("RemoveAndReturn returned error: %v", err)
+	}
+	if removed {
+		t.Fatal("expected removed=false for missing service")
+	}
+	if removedSvc.Name != "" || removedSvc.Type != "" || len(removedSvc.Tags) != 0 || !removedSvc.CreatedAt.IsZero() {
+		t.Fatalf("removed service = %+v, want zero value", removedSvc)
 	}
 }
 

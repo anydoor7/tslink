@@ -484,6 +484,44 @@ func TestStartNodeLocked_RejectsTCPAllowedUsers(t *testing.T) {
 	}
 }
 
+func TestSyncNodes_RejectsHandEditedTCPAllowedUsers(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+
+	writeRegistry(t, []registry.Service{{
+		Name:         "db",
+		Type:         registry.TypeTCP,
+		Target:       "localhost:5432",
+		Port:         5432,
+		AllowedUsers: []string{"alice@example.com"},
+	}})
+
+	oldNew := newTSNetServerFn
+	newTSNetServerFn = func(svc registry.Service, stateDir, authKey, controlURL string) tsnetServer {
+		t.Fatalf("syncNodes should reject tcp allowed_users before constructing tsnet server")
+		return &fakeTSNetServer{}
+	}
+	t.Cleanup(func() { newTSNetServerFn = oldNew })
+
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	err = s.syncNodes(context.Background())
+	if err == nil {
+		t.Fatal("syncNodes() error = nil, want tcp allowed_users error")
+	}
+	if !strings.Contains(err.Error(), `service "db": tcp services do not support allowed_users`) {
+		t.Fatalf("syncNodes() error = %v, want tcp allowed_users service context", err)
+	}
+	if len(s.nodes) != 0 {
+		t.Fatalf("nodes = %+v, want none after rejected hand-edited registry", s.nodes)
+	}
+}
+
 func TestSyncNodes_RemovesDeletedService(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	if err := config.EnsureDir(); err != nil {

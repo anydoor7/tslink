@@ -26,26 +26,8 @@ type RemoveResult struct {
 var deleteDevicesFn = tailapi.DeleteDevicesForService
 var ensureDirFn = config.EnsureDir
 
-func serviceForRemoval(regPath, name string) (registry.Service, bool, error) {
-	reg, err := registry.Load(regPath)
-	if err != nil {
-		return registry.Service{}, false, err
-	}
-	for _, svc := range reg.Services {
-		if svc.Name == name {
-			return svc, true, nil
-		}
-	}
-	return registry.Service{}, false, nil
-}
-
 func removeService(regPath, name string, out, errOut io.Writer, isJSON bool) error {
-	svc, found, err := serviceForRemoval(regPath, name)
-	if err != nil {
-		return err
-	}
-
-	removed, err := registry.Remove(regPath, name)
+	svc, removed, err := registry.RemoveAndReturn(regPath, name)
 	if err != nil {
 		return err
 	}
@@ -53,27 +35,22 @@ func removeService(regPath, name string, out, errOut io.Writer, isJSON bool) err
 	result := RemoveResult{Name: name, Removed: removed}
 
 	if removed {
-		if !found {
-			result.DeviceCleanupSkipped = true
-			result.DeviceSkipReason = "removed service was not available for ownership-safe remote cleanup"
-		} else {
-			cleanup, err := deleteDevicesFn(context.Background(), tailapi.CleanupTargetForService(svc))
-			if err != nil {
-				if errors.Is(err, tailapi.ErrNoAPIClient) {
-					result.DeviceCleanupSkipped = true
-					result.DeviceSkipReason = err.Error()
-				} else {
-					result.DeviceWarning = fmt.Sprintf("could not remove tailnet node: %v", err)
-					if !isJSON {
-						fmt.Fprintf(errOut, "→ warning: could not remove tailnet node: %v\n", err)
-					}
-				}
+		cleanup, err := deleteDevicesFn(context.Background(), tailapi.CleanupTargetForService(svc))
+		if err != nil {
+			if errors.Is(err, tailapi.ErrNoAPIClient) {
+				result.DeviceCleanupSkipped = true
+				result.DeviceSkipReason = err.Error()
 			} else {
-				result.DeviceCleaned = len(cleanup.Deleted) > 0
-				if cleanup.Skipped {
-					result.DeviceCleanupSkipped = true
-					result.DeviceSkipReason = cleanup.SkipReason
+				result.DeviceWarning = fmt.Sprintf("could not remove tailnet node: %v", err)
+				if !isJSON {
+					fmt.Fprintf(errOut, "→ warning: could not remove tailnet node: %v\n", err)
 				}
+			}
+		} else {
+			result.DeviceCleaned = len(cleanup.Deleted) > 0
+			if cleanup.Skipped {
+				result.DeviceCleanupSkipped = true
+				result.DeviceSkipReason = cleanup.SkipReason
 			}
 		}
 	}
@@ -102,8 +79,9 @@ func init() {
 
 This command:
   1. Removes the service entry from ~/.config/tslink/registry.json
-  2. Automatically deletes the corresponding tailnet device via the Tailscale API
-     (requires a valid API access token; skipped if using OAuth client secret)
+  2. Attempts ownership-safe remote cleanup via the Tailscale API. Remote
+     devices are deleted only when TSLink has exact device ownership proof;
+     hostname/tag matches without that proof are reported as protected.
 
 If the gateway is running, it will detect the registry change via hot-reload
 and stop the removed service's tsnet node automatically.

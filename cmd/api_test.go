@@ -367,15 +367,9 @@ func TestAPIUnknownAction(t *testing.T) {
 func TestAPIInvalidJSON(t *testing.T) {
 	h, _ := newTestHandler(t)
 
-	// Simulate what the cobra RunE does with a bad line.
 	line := `{not valid json`
 	var buf bytes.Buffer
-	var req APIRequest
-	if err := json.Unmarshal([]byte(line), &req); err != nil {
-		writeResponse(&buf, APIResponse{OK: false, Error: "invalid JSON: " + err.Error()})
-	} else {
-		h.handle(req, &buf)
-	}
+	h.handleLine(line, &buf)
 
 	resp := parseResponse(t, &buf)
 	if resp.OK {
@@ -383,6 +377,28 @@ func TestAPIInvalidJSON(t *testing.T) {
 	}
 	if !strings.Contains(resp.Error, "invalid JSON") {
 		t.Errorf("unexpected error: %s", resp.Error)
+	}
+}
+
+func TestAPIRejectsUnknownJSONFieldWithoutCreatingService(t *testing.T) {
+	h, _ := newTestHandler(t)
+
+	var buf bytes.Buffer
+	h.handleLine(`{"action":"add","name":"myapp","type":"proxy","target":"localhost:3000","unknown":true}`, &buf)
+
+	resp := parseResponse(t, &buf)
+	if resp.OK {
+		t.Fatal("expected ok=false for unknown field")
+	}
+	if !strings.Contains(resp.Error, `unknown field "unknown"`) {
+		t.Fatalf("error = %q, want unknown field", resp.Error)
+	}
+	reg, err := registry.Load(h.regPath)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(reg.Services) != 0 {
+		t.Fatalf("services = %+v, want none after rejected request", reg.Services)
 	}
 }
 

@@ -108,7 +108,7 @@ func TestDeleteDevicesForService_ClientError(t *testing.T) {
 	}
 }
 
-func TestDeleteDevicesForService_DeletesMatchingTaggedDevices(t *testing.T) {
+func TestDeleteDevicesForService_ProtectsMatchingTaggedDevicesWithoutExactProof(t *testing.T) {
 	setup(t)
 	mustSetAPIKey(t, "api-key")
 
@@ -133,16 +133,61 @@ func TestDeleteDevicesForService_DeletesMatchingTaggedDevices(t *testing.T) {
 		}
 	}))
 
-	if _, err := DeleteDevicesForService(context.Background(), cleanupTarget("test-host")); err != nil {
+	result, err := DeleteDevicesForService(context.Background(), cleanupTarget("test-host"))
+	if err != nil {
 		t.Fatalf("DeleteDevicesForService() error = %v", err)
 	}
 
-	if got := strings.Join(deleted, ","); got != "dev1,dev2" {
-		t.Fatalf("deleted devices = %q, want %q", got, "dev1,dev2")
+	if len(deleted) != 0 {
+		t.Fatalf("deleted devices = %v, want none without exact ownership proof", deleted)
+	}
+	if got := strings.Join(result.Matched, ","); got != "test-host,test-host-1" {
+		t.Fatalf("result.Matched = %q, want test-host,test-host-1", got)
+	}
+	if got := strings.Join(result.Protected, ","); got != "test-host,test-host-1" {
+		t.Fatalf("result.Protected = %q, want test-host,test-host-1", got)
+	}
+	if !result.Skipped || !strings.Contains(result.SkipReason, "exact TSLink ownership proof") {
+		t.Fatalf("result = %+v, want protected skip", result)
 	}
 }
 
-func TestDeleteDevicesForService_DoesNotDeleteAdjacentHyphenatedHostnames(t *testing.T) {
+func TestDeleteDevicesForService_DeletesOnlyExactDeviceProof(t *testing.T) {
+	setup(t)
+	mustSetAPIKey(t, "api-key")
+
+	var deleted []string
+	withDefaultTransport(t, roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		switch {
+		case req.Method == http.MethodGet && req.URL.Path == "/api/v2/tailnet/-/devices":
+			return jsonResponse(http.StatusOK, `{"devices":[{"id":"dev1","hostname":"app","tags":["tag:tsmain"]},{"id":"dev2","hostname":"app-1","tags":["tag:tsmain"]}]}`), nil
+		case req.Method == http.MethodDelete && req.URL.Path == "/api/v2/device/dev1":
+			deleted = append(deleted, "dev1")
+			return jsonResponse(http.StatusOK, `{}`), nil
+		default:
+			t.Fatalf("unexpected request: %s %s", req.Method, req.URL.String())
+			return nil, nil
+		}
+	}))
+
+	target := CleanupTarget{Hostname: "app", Tags: []string{"tag:tsmain"}, DeviceID: "dev1"}
+	result, err := DeleteDevicesForService(context.Background(), target)
+	if err != nil {
+		t.Fatalf("DeleteDevicesForService() error = %v", err)
+	}
+
+	if got := strings.Join(deleted, ","); got != "dev1" {
+		t.Fatalf("deleted devices = %q, want dev1", got)
+	}
+	if got := strings.Join(result.Deleted, ","); got != "app" {
+		t.Fatalf("result.Deleted = %q, want app", got)
+	}
+	if got := strings.Join(result.Protected, ","); got != "app-1" {
+		t.Fatalf("result.Protected = %q, want app-1", got)
+	}
+}
+
+func TestDeleteDevicesForService_ProtectsAppAndNumericSuffixWithSharedDefaultTag(t *testing.T) {
 	setup(t)
 	mustSetAPIKey(t, "api-key")
 
@@ -160,12 +205,19 @@ func TestDeleteDevicesForService_DoesNotDeleteAdjacentHyphenatedHostnames(t *tes
 		}
 	}))
 
-	if _, err := DeleteDevicesForService(context.Background(), cleanupTarget("app")); err != nil {
+	result, err := DeleteDevicesForService(context.Background(), cleanupTarget("app"))
+	if err != nil {
 		t.Fatalf("DeleteDevicesForService() error = %v", err)
 	}
 
-	if got := strings.Join(deleted, ","); got != "dev1,dev2" {
-		t.Fatalf("deleted devices = %q, want %q", got, "dev1,dev2")
+	if len(deleted) != 0 {
+		t.Fatalf("deleted devices = %v, want none without exact ownership proof", deleted)
+	}
+	if got := strings.Join(result.Matched, ","); got != "app,app-1" {
+		t.Fatalf("result.Matched = %q, want app,app-1", got)
+	}
+	if got := strings.Join(result.Protected, ","); got != "app,app-1" {
+		t.Fatalf("result.Protected = %q, want app,app-1", got)
 	}
 }
 
@@ -197,7 +249,7 @@ func TestDeleteDevicesForService_ProtectsSameHostnameWithoutExpectedTag(t *testi
 	if got := strings.Join(result.Protected, ","); got != "app,app-1" {
 		t.Fatalf("result.Protected = %q, want app,app-1", got)
 	}
-	if !result.Skipped || !strings.Contains(result.SkipReason, "ownership could not be proven") {
+	if !result.Skipped || !strings.Contains(result.SkipReason, "exact TSLink ownership proof") {
 		t.Fatalf("result = %+v, want protected skip", result)
 	}
 }
@@ -210,7 +262,7 @@ func TestDeleteDevicesForService_ListError(t *testing.T) {
 		return nil, errors.New("network down")
 	}))
 
-	_, err := DeleteDevicesForService(context.Background(), cleanupTarget("test-host"))
+	_, err := DeleteDevicesForService(context.Background(), CleanupTarget{Hostname: "test-host", Tags: []string{"tag:tsmain"}, DeviceID: "dev1"})
 	if err == nil {
 		t.Fatal("DeleteDevicesForService() error = nil, want error")
 	}
@@ -235,7 +287,7 @@ func TestDeleteDevicesForService_DeleteError(t *testing.T) {
 		}
 	}))
 
-	_, err := DeleteDevicesForService(context.Background(), cleanupTarget("test-host"))
+	_, err := DeleteDevicesForService(context.Background(), CleanupTarget{Hostname: "test-host", Tags: []string{"tag:tsmain"}, DeviceID: "dev1"})
 	if err == nil {
 		t.Fatal("DeleteDevicesForService() error = nil, want error")
 	}
@@ -288,7 +340,7 @@ func TestCleanupStaleNodes_ListErrorIsFatal(t *testing.T) {
 	}
 }
 
-func TestCleanupStaleNodes_DeletesExactAndSuffixedMatches(t *testing.T) {
+func TestCleanupStaleNodes_ProtectsExactAndSuffixedMatchesWithoutExactProof(t *testing.T) {
 	setup(t)
 	mustSetAPIKey(t, "api-key")
 
@@ -310,8 +362,8 @@ func TestCleanupStaleNodes_DeletesExactAndSuffixedMatches(t *testing.T) {
 		t.Fatalf("CleanupStaleNodes() error = %v", err)
 	}
 
-	if got := strings.Join(deleted, ","); got != "dev1,dev2,dev3,dev4" {
-		t.Fatalf("deleted devices = %q, want %q", got, "dev1,dev2,dev3,dev4")
+	if len(deleted) != 0 {
+		t.Fatalf("deleted devices = %v, want none without exact ownership proof", deleted)
 	}
 }
 
@@ -338,10 +390,13 @@ func TestCleanupStaleNodes_DoesNotDeleteAdjacentHyphenatedHostnames(t *testing.T
 		t.Fatalf("CleanupStaleNodesResult() error = %v", err)
 	}
 
-	if got := strings.Join(deleted, ","); got != "dev1,dev2" {
-		t.Fatalf("deleted devices = %q, want %q", got, "dev1,dev2")
+	if len(deleted) != 0 {
+		t.Fatalf("deleted devices = %v, want none without exact ownership proof", deleted)
 	}
-	if got := strings.Join(result.Deleted, ","); got != "app,app-1" {
-		t.Fatalf("result.Deleted = %q, want %q", got, "app,app-1")
+	if got := strings.Join(result.Matched, ","); got != "app,app-1" {
+		t.Fatalf("result.Matched = %q, want app,app-1", got)
+	}
+	if got := strings.Join(result.Protected, ","); got != "app,app-1" {
+		t.Fatalf("result.Protected = %q, want app,app-1", got)
 	}
 }

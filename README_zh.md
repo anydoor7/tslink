@@ -34,7 +34,7 @@ TSLink 在每一层实现零信任原则：
 
 | 零信任原则 | TSLink 实现 |
 |-----------|------------|
-| **永不信任，始终验证** | 每个请求通过 Tailscale WhoIs 认证 — 身份头（`X-Tailscale-User-Login`、`X-Tailscale-User-Name`）注入每个代理请求。入站身份头被剥离以防伪造。 |
+| **永不信任，始终验证** | 每个请求通过 Tailscale WhoIs 认证 — 身份头（`X-Tailscale-User-Login`、`X-Tailscale-User-Name`、`X-Tailscale-User-Picture`、`X-Tailscale-Node`）注入每个代理请求。入站身份头被剥离以防伪造。 |
 | **HTTP 最小权限访问** | `--allow` 限制 proxy 和 file 服务的访问用户或标签。TCP 服务依赖 Tailscale 网络 ACL 和标签。 |
 | **假设已被攻破** | 每个连接都有端到端 WireGuard 加密。即使本地网络被攻破，设备间流量仍然加密。 |
 | **微分段** | 每个服务作为隔离的 tsnet 节点运行，拥有独立的主机名、TLS 证书和网络身份。攻破一个服务不会影响其他服务。 |
@@ -173,7 +173,7 @@ tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 | `tslink add <name> --proxy host:port` | 暴露本地 Web 服务 |
 | `tslink add <name> --dir /path` | 暴露文件目录 |
 | `tslink add <name> --tcp host:port` | 暴露 TCP 服务（数据库、SSH 等） |
-| `tslink remove <name>` | 移除已注册的服务（+ 自动清理 tailnet 设备） |
+| `tslink remove <name>` | 移除已注册的服务（+ 所有权安全的远端清理尝试） |
 | `tslink list` | 列出所有已注册的服务 |
 | `tslink serve` | 启动网关（前台） |
 | `tslink serve --daemon` | 启动网关（后台） |

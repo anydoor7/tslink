@@ -194,6 +194,11 @@ func Add(path string, svc Service) (created bool, err error) {
 }
 
 func Remove(path, name string) (removed bool, err error) {
+	_, removed, err = RemoveAndReturn(path, name)
+	return removed, err
+}
+
+func RemoveAndReturn(path, name string) (removedService Service, removed bool, err error) {
 	err = withLock(path, func() error {
 		reg, err := Load(path)
 		if err != nil {
@@ -205,6 +210,7 @@ func Remove(path, name string) (removed bool, err error) {
 				continue
 			}
 
+			removedService = svc
 			reg.Services = append(reg.Services[:i], reg.Services[i+1:]...)
 			removed = true
 			return save(path, reg)
@@ -212,5 +218,5 @@ func Remove(path, name string) (removed bool, err error) {
 
 		return nil
 	})
-	return removed, err
+	return removedService, removed, err
 }

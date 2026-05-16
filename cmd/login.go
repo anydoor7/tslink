@@ -82,9 +82,9 @@ Opens a browser for OAuth login, then guides you to choose a credential type:
   [1] API access token (tskey-api-*)
       Generate at: https://login.tailscale.com/admin/settings/keys
       → Click "Generate access token..."
-      Expires periodically — quick setup and full TSLink automation.
+      Expires periodically — quick setup for API-backed TSLink automation.
       Supports API verification, ACL tag setup, auth-key derivation, and
-      stale-device cleanup.
+      ownership-verified stale-device cleanup attempts.
 
   [2] OAuth client secret (tskey-client-*)
       Generate at: https://login.tailscale.com/admin/settings/oauth
@@ -268,8 +268,8 @@ func loginCredentialFlow(cmd *cobra.Command, cfgDir string) error {
 	switch choiceStr {
 	case "1":
 		fmt.Print("\n  ─── API Access Token ───\n")
-		fmt.Print("  Use this for full TSLink automation: API verification, ACL tags,\n")
-		fmt.Print("  auth-key derivation, and stale-device cleanup.\n\n")
+		fmt.Print("  Use this for API-backed TSLink automation: API verification, ACL tags,\n")
+		fmt.Print("  auth-key derivation, and ownership-verified stale-device cleanup attempts.\n\n")
 		fmt.Print("  1. Open: https://login.tailscale.com/admin/settings/keys\n")
 		fmt.Print("  2. Click \"Generate access token...\"\n")
 		fmt.Print("  3. Copy the token (starts with tskey-api-...)\n\n")

@@ -45,10 +45,32 @@ func writeResponse(out io.Writer, resp APIResponse) {
 	fmt.Fprintf(out, "%s\n", data)
 }
 
+func decodeAPIRequest(line string) (APIRequest, error) {
+	var req APIRequest
+	dec := json.NewDecoder(strings.NewReader(line))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		return APIRequest{}, err
+	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		return APIRequest{}, fmt.Errorf("multiple JSON values in one request")
+	}
+	return req, nil
+}
+
 // apiHandler holds paths so the logic is unit-testable without touching real config.
 type apiHandler struct {
 	regPath string
 	pidPath string
+}
+
+func (h *apiHandler) handleLine(line string, out io.Writer) {
+	req, err := decodeAPIRequest(line)
+	if err != nil {
+		writeResponse(out, APIResponse{OK: false, Error: fmt.Sprintf("invalid JSON: %v", err)})
+		return
+	}
+	h.handle(req, out)
 }
 
 func (h *apiHandler) handle(req APIRequest, out io.Writer) {
@@ -231,12 +253,7 @@ Supported actions:
 				if line == "" {
 					continue
 				}
-				var req APIRequest
-				if err := json.Unmarshal([]byte(line), &req); err != nil {
-					writeResponse(out, APIResponse{OK: false, Error: fmt.Sprintf("invalid JSON: %v", err)})
-					continue
-				}
-				h.handle(req, out)
+				h.handleLine(line, out)
 			}
 
 			return scanner.Err()

@@ -28,9 +28,11 @@ type CleanupResult struct {
 type CleanupTarget struct {
 	Hostname string
 	Tags     []string
+	DeviceID string
+	NodeID   string
 }
 
-const cleanupOwnershipSkipReason = "matched tailnet devices did not carry an expected TSLink service tag; ownership could not be proven"
+const cleanupOwnershipSkipReason = "matched tailnet devices require exact TSLink ownership proof before deletion"
 
 // CleanupTargetForService builds the remote cleanup ownership target for a service.
 func CleanupTargetForService(svc registry.Service) CleanupTarget {
@@ -70,23 +72,29 @@ func validateCleanupTarget(target CleanupTarget) error {
 	return nil
 }
 
-func deviceCarriesExpectedTag(deviceTags, expectedTags []string) bool {
-	if len(expectedTags) == 0 {
-		return false
+func cleanupTargetMatchesExactDevice(target CleanupTarget, deviceID, nodeID string) bool {
+	if target.NodeID != "" && nodeID != "" && target.NodeID == nodeID {
+		return true
 	}
-	expected := make(map[string]struct{}, len(expectedTags))
-	for _, tag := range expectedTags {
-		expected[tag] = struct{}{}
-	}
-	for _, tag := range deviceTags {
-		if _, ok := expected[tag]; ok {
-			return true
-		}
+	if target.DeviceID != "" && deviceID != "" && target.DeviceID == deviceID {
+		return true
 	}
 	return false
 }
 
-func matchingCleanupTarget(hostname string, targets []CleanupTarget) (CleanupTarget, bool) {
+func deviceDeleteID(deviceID, nodeID string) string {
+	if nodeID != "" {
+		return nodeID
+	}
+	return deviceID
+}
+
+func matchingCleanupTarget(hostname, deviceID, nodeID string, targets []CleanupTarget) (CleanupTarget, bool) {
+	for _, target := range targets {
+		if cleanupTargetMatchesExactDevice(target, deviceID, nodeID) {
+			return target, true
+		}
+	}
 	for _, target := range targets {
 		if hostname == target.Hostname {
 			return target, true
@@ -137,16 +145,21 @@ func CleanupStaleNodesResult(ctx context.Context, targets []CleanupTarget) (Clea
 
 	var result CleanupResult
 	for _, d := range devices {
-		target, ok := matchingCleanupTarget(d.Hostname, targets)
+		target, ok := matchingCleanupTarget(d.Hostname, d.ID, d.NodeID, targets)
 		if !ok {
 			continue
 		}
 		result.Matched = append(result.Matched, d.Hostname)
-		if !deviceCarriesExpectedTag(d.Tags, target.Tags) {
+		if !cleanupTargetMatchesExactDevice(target, d.ID, d.NodeID) {
 			result.Protected = append(result.Protected, d.Hostname)
 			continue
 		}
-		if err := client.Devices().Delete(ctx, d.ID); err != nil {
+		deleteID := deviceDeleteID(d.ID, d.NodeID)
+		if deleteID == "" {
+			result.Protected = append(result.Protected, d.Hostname)
+			continue
+		}
+		if err := client.Devices().Delete(ctx, deleteID); err != nil {
 			return result, fmt.Errorf("delete device %s: %w", d.Hostname, err)
 		}
 		result.Deleted = append(result.Deleted, d.Hostname)

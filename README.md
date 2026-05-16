@@ -34,7 +34,7 @@ TSLink implements zero-trust principles at every layer:
 
 | Zero-Trust Principle | TSLink Implementation |
 |-----|-----|
-| **Never trust, always verify** | Every request is authenticated via Tailscale WhoIs — identity headers (`X-Tailscale-User-Login`, `X-Tailscale-User-Name`) are injected into every proxied request. Inbound identity headers are stripped to prevent spoofing. |
+| **Never trust, always verify** | Every request is authenticated via Tailscale WhoIs — identity headers (`X-Tailscale-User-Login`, `X-Tailscale-User-Name`, `X-Tailscale-User-Picture`, `X-Tailscale-Node`) are injected into every proxied request. Inbound identity headers are stripped to prevent spoofing. |
 | **HTTP least-privilege access** | `--allow` restricts proxy and file services to specific users or tags. TCP services rely on Tailscale network ACLs and tags. |
 | **Assume breach** | End-to-end WireGuard encryption on every connection. Even if your local network is compromised, traffic between your devices remains encrypted. |
 | **Microsegmentation** | Each service runs as an isolated tsnet node with its own hostname, TLS certificate, and network identity. Compromising one service does not grant access to others. |
@@ -173,7 +173,7 @@ tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 | `tslink add <name> --proxy host:port` | Expose a local web service |
 | `tslink add <name> --dir /path` | Expose a file directory |
 | `tslink add <name> --tcp host:port` | Expose a raw TCP service (databases, SSH, etc.) |
-| `tslink remove <name>` | Remove a service (+ auto-delete tailnet device) |
+| `tslink remove <name>` | Remove a service (+ ownership-safe remote cleanup attempt) |
 | `tslink list` | List all registered services |
 | `tslink serve` | Start the gateway (foreground) |
 | `tslink serve --daemon` | Start the gateway (background) |
