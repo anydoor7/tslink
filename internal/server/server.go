@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/monody0007/tslink/internal/config"
@@ -43,11 +44,36 @@ var newTSNetServerFn = func(svc registry.Service, stateDir, authKey, controlURL 
 	}
 }
 
+const (
+	httpReadHeaderTimeout = 10 * time.Second
+	httpIdleTimeout       = 60 * time.Second
+	httpShutdownTimeout   = 5 * time.Second
+)
+
+var errServerShuttingDown = errors.New("server shutting down")
+
+var newHTTPServerFn = func(handler http.Handler) *http.Server {
+	return &http.Server{
+		Handler:           handler,
+		ReadHeaderTimeout: httpReadHeaderTimeout,
+		IdleTimeout:       httpIdleTimeout,
+	}
+}
+
+var shutdownHTTPServerFn = func(ctx context.Context, srv *http.Server) error {
+	return srv.Shutdown(ctx)
+}
+
+var closeHTTPServerFn = func(srv *http.Server) error {
+	return srv.Close()
+}
+
 // ServiceNode represents a single tsnet node serving one service.
 type ServiceNode struct {
 	tsnetSrv tsnetServer
 	service  registry.Service
 	listener net.Listener
+	httpSrv  *http.Server
 	cancel   context.CancelFunc
 	closed   atomic.Bool
 }
@@ -72,6 +98,7 @@ type Server struct {
 	metrics         *metrics.Metrics
 	ensureTagsFn    EnsureTagsFunc
 	cleanupNodesFn  CleanupStaleNodesFunc
+	shuttingDown    atomic.Bool
 }
 
 // New creates a new multi-node server.
@@ -118,20 +145,32 @@ func staticAuthKeyProvider(authKey string) AuthKeyProvider {
 
 // Run starts all registered service nodes and watches for registry changes.
 func (s *Server) Run(ctx context.Context) error {
+	s.shuttingDown.Store(false)
 	if err := s.syncNodes(ctx); err != nil {
+		s.beginShutdown()
 		s.closeAllNodes()
 		return fmt.Errorf("initial sync failed: %w", err)
 	}
 
-	go s.watchRegistry(ctx)
+	watchDone := make(chan struct{})
+	go func() {
+		defer close(watchDone)
+		s.watchRegistry(ctx)
+	}()
 
 	<-ctx.Done()
+	s.beginShutdown()
+	<-watchDone
 	s.closeAllNodes()
 	return nil
 }
 
 // syncNodes compares registry to running nodes and starts/stops as needed.
 func (s *Server) syncNodes(ctx context.Context) error {
+	if err := s.ensureRunning(ctx); err != nil {
+		return err
+	}
+
 	regPath, err := config.RegistryPath()
 	if err != nil {
 		return err
@@ -157,6 +196,10 @@ func (s *Server) syncNodes(ctx context.Context) error {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if err := s.ensureRunning(ctx); err != nil {
+		return err
+	}
 
 	// Stop nodes for removed or changed services
 	var authIdentityRestartTargets []tailapi.CleanupTarget
@@ -215,10 +258,17 @@ func (s *Server) syncNodes(ctx context.Context) error {
 
 	// Start nodes for new or changed services
 	var startErrs []error
+	if err := s.ensureRunning(ctx); err != nil {
+		return errors.Join(append(reloadErrs, err)...)
+	}
 	for _, name := range desiredOrder {
 		svc := desired[name]
 		if _, running := s.nodes[name]; running {
 			continue
+		}
+		if err := s.ensureRunning(ctx); err != nil {
+			startErrs = append(startErrs, err)
+			break
 		}
 		if err := s.startNodeLocked(ctx, svc); err != nil {
 			slog.Error("failed to start node", "name", name, "error", err)
@@ -227,6 +277,20 @@ func (s *Server) syncNodes(ctx context.Context) error {
 	}
 
 	return errors.Join(append(reloadErrs, startErrs...)...)
+}
+
+func (s *Server) beginShutdown() {
+	s.shuttingDown.Store(true)
+}
+
+func (s *Server) ensureRunning(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if s.shuttingDown.Load() {
+		return errServerShuttingDown
+	}
+	return nil
 }
 
 func serviceChanged(old, new registry.Service) bool {
@@ -339,6 +403,9 @@ func validateServiceForStartup(svc registry.Service) error {
 }
 
 func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service) error {
+	if err := s.ensureRunning(ctx); err != nil {
+		return err
+	}
 	if err := validateServiceForStartup(svc); err != nil {
 		return err
 	}
@@ -384,6 +451,12 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service) erro
 			cancel()
 			tsnetSrv.Close()
 			return fmt.Errorf("listen TCP for %q: %w", svc.Name, err)
+		}
+		if err := s.ensureRunning(ctx); err != nil {
+			ln.Close()
+			cancel()
+			tsnetSrv.Close()
+			return err
 		}
 
 		node := &ServiceNode{
@@ -457,17 +530,26 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service) erro
 		tsnetSrv.Close()
 		return fmt.Errorf("listen TLS for %q: %w", svc.Name, err)
 	}
+	if err := s.ensureRunning(ctx); err != nil {
+		ln.Close()
+		cancel()
+		tsnetSrv.Close()
+		return err
+	}
+
+	httpSrv := newHTTPServerFn(handler)
 
 	node := &ServiceNode{
 		tsnetSrv: tsnetSrv,
 		service:  svc,
 		listener: ln,
+		httpSrv:  httpSrv,
 		cancel:   cancel,
 	}
 
 	// Serve in background
 	go func() {
-		if err := http.Serve(ln, handler); err != nil && !isClosedListenerError(err) {
+		if err := httpSrv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) && !isClosedListenerError(err) {
 			slog.Error("node serve error", "name", svc.Name, "error", err)
 		}
 	}()
@@ -499,8 +581,20 @@ func (s *Server) stopNodeLocked(name string, removeState bool) {
 	}
 
 	node.cancel()
+	if node.httpSrv != nil {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), httpShutdownTimeout)
+		if err := shutdownHTTPServerFn(shutdownCtx, node.httpSrv); err != nil {
+			slog.Warn("http server graceful shutdown failed; closing", "name", name, "error", err)
+			if closeErr := closeHTTPServerFn(node.httpSrv); closeErr != nil && !errors.Is(closeErr, http.ErrServerClosed) && !isClosedListenerError(closeErr) {
+				slog.Warn("http server close failed", "name", name, "error", closeErr)
+			}
+		}
+		cancel()
+	}
 	if node.listener != nil {
-		node.listener.Close()
+		// Shutdown only closes listeners already registered by Serve; stop can race a just-started
+		// Serve goroutine before registration, and TCP nodes still need this defensive final guard.
+		_ = node.listener.Close()
 	}
 	if node.tsnetSrv != nil {
 		node.tsnetSrv.Close()
@@ -554,11 +648,17 @@ func (s *Server) watchRegistry(ctx context.Context) {
 			if !ok {
 				return
 			}
+			if err := s.ensureRunning(ctx); err != nil {
+				return
+			}
 			if filepath.Clean(event.Name) != regPath {
 				continue
 			}
 			if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) {
 				if err := s.syncNodes(ctx); err != nil {
+					if errors.Is(err, context.Canceled) || errors.Is(err, errServerShuttingDown) {
+						return
+					}
 					slog.Warn("reload registry failed", "error", err)
 				}
 			}

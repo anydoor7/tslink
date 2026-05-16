@@ -106,6 +106,43 @@ func (s *fakeTSNetServer) Close() error {
 	return nil
 }
 
+type listenerTSNetServer struct {
+	ln     net.Listener
+	closed atomic.Bool
+}
+
+func (s *listenerTSNetServer) Up(context.Context) (*ipnstate.Status, error) {
+	return &ipnstate.Status{}, nil
+}
+
+func (s *listenerTSNetServer) Listen(network, addr string) (net.Listener, error) {
+	return s.ln, nil
+}
+
+func (s *listenerTSNetServer) ListenTLS(network, addr string) (net.Listener, error) {
+	return s.ln, nil
+}
+
+func (s *listenerTSNetServer) ListenFunnel(network, addr string, opts ...tsnet.FunnelOption) (net.Listener, error) {
+	return s.ln, nil
+}
+
+func (s *listenerTSNetServer) LocalClient() (*LocalClient, error) {
+	return nil, errors.New("local client unavailable")
+}
+
+func (s *listenerTSNetServer) CertDomains() []string {
+	return nil
+}
+
+func (s *listenerTSNetServer) Close() error {
+	s.closed.Store(true)
+	if s.ln != nil {
+		return s.ln.Close()
+	}
+	return nil
+}
+
 func TestServiceChanged(t *testing.T) {
 	base := registry.Service{
 		Name:   "a",
@@ -279,6 +316,65 @@ func TestStopNodeLocked_ClosesListenerAndServer(t *testing.T) {
 	}
 }
 
+func TestStopNodeLocked_HTTPServerShutdownFallsBackToClose(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	ln := &fakeListener{}
+	fakeTS := &fakeTSNetServer{}
+
+	oldShutdown := shutdownHTTPServerFn
+	oldClose := closeHTTPServerFn
+	t.Cleanup(func() {
+		shutdownHTTPServerFn = oldShutdown
+		closeHTTPServerFn = oldClose
+	})
+
+	var shutdownCalled atomic.Int32
+	var closeCalled atomic.Int32
+	shutdownHTTPServerFn = func(ctx context.Context, srv *http.Server) error {
+		shutdownCalled.Add(1)
+		if _, ok := ctx.Deadline(); !ok {
+			t.Fatal("shutdown context should have a deadline")
+		}
+		return context.DeadlineExceeded
+	}
+	closeHTTPServerFn = func(srv *http.Server) error {
+		closeCalled.Add(1)
+		return nil
+	}
+
+	s.nodes["test"] = &ServiceNode{
+		service:  registry.Service{Name: "test"},
+		listener: ln,
+		httpSrv:  &http.Server{},
+		tsnetSrv: fakeTS,
+		cancel:   func() {},
+	}
+
+	s.stopNodeLocked("test", false)
+
+	if shutdownCalled.Load() != 1 {
+		t.Fatalf("shutdown calls = %d, want 1", shutdownCalled.Load())
+	}
+	if closeCalled.Load() != 1 {
+		t.Fatalf("close calls = %d, want 1 fallback close", closeCalled.Load())
+	}
+	if !ln.closed.Load() {
+		t.Fatal("listener should be closed after HTTP shutdown")
+	}
+	if !fakeTS.closed {
+		t.Fatal("tsnet server should be closed")
+	}
+	if _, exists := s.nodes["test"]; exists {
+		t.Fatal("node should be removed after stop")
+	}
+}
+
 func TestCloseAllNodes(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
@@ -408,6 +504,119 @@ func TestStartNodeLocked_UsesPerServiceAuthKeyProvider(t *testing.T) {
 	}
 }
 
+func TestStartNodeLocked_HTTPServerHasTimeouts(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+
+	oldNew := newTSNetServerFn
+	newTSNetServerFn = func(svc registry.Service, stateDir, authKey, controlURL string) tsnetServer {
+		return &fakeTSNetServer{}
+	}
+	t.Cleanup(func() { newTSNetServerFn = oldNew })
+
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	err = s.startNodeLocked(context.Background(), registry.Service{
+		Name: "files",
+		Type: registry.TypeFile,
+		Path: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("startNodeLocked() error = %v", err)
+	}
+	t.Cleanup(func() {
+		s.stopNodeLocked("files", false)
+	})
+
+	node := s.nodes["files"]
+	if node.httpSrv == nil {
+		t.Fatal("HTTP service should store configured http.Server")
+	}
+	if node.httpSrv.ReadHeaderTimeout <= 0 {
+		t.Fatalf("ReadHeaderTimeout = %v, want non-zero", node.httpSrv.ReadHeaderTimeout)
+	}
+	if node.httpSrv.IdleTimeout <= 0 {
+		t.Fatalf("IdleTimeout = %v, want non-zero", node.httpSrv.IdleTimeout)
+	}
+	if node.httpSrv.WriteTimeout != 0 {
+		t.Fatalf("WriteTimeout = %v, want zero to avoid breaking long streams", node.httpSrv.WriteTimeout)
+	}
+}
+
+func TestStartNodeLocked_HTTPServerReadHeaderTimeoutClosesSlowClient(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen() error = %v", err)
+	}
+
+	oldNew := newTSNetServerFn
+	newTSNetServerFn = func(svc registry.Service, stateDir, authKey, controlURL string) tsnetServer {
+		return &listenerTSNetServer{ln: ln}
+	}
+	oldHTTP := newHTTPServerFn
+	newHTTPServerFn = func(handler http.Handler) *http.Server {
+		return &http.Server{
+			Handler:           handler,
+			ReadHeaderTimeout: 25 * time.Millisecond,
+			IdleTimeout:       time.Second,
+		}
+	}
+	t.Cleanup(func() {
+		newTSNetServerFn = oldNew
+		newHTTPServerFn = oldHTTP
+	})
+
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	err = s.startNodeLocked(context.Background(), registry.Service{
+		Name: "files",
+		Type: registry.TypeFile,
+		Path: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("startNodeLocked() error = %v", err)
+	}
+	t.Cleanup(func() {
+		s.stopNodeLocked("files", false)
+	})
+
+	conn, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatalf("Dial() error = %v", err)
+	}
+	defer conn.Close()
+
+	if _, err := conn.Write([]byte("GET / HTTP/1.1\r\nHost: localhost\r\n")); err != nil {
+		t.Fatalf("partial Write() error = %v", err)
+	}
+	if err := conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond)); err != nil {
+		t.Fatalf("SetReadDeadline() error = %v", err)
+	}
+
+	var b [1]byte
+	_, err = conn.Read(b[:])
+	if err == nil {
+		t.Fatal("partial request unexpectedly received data; want timeout-driven close")
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		t.Fatalf("connection remained open until client read deadline; http.Server ReadHeaderTimeout was not applied: %v", err)
+	}
+}
+
 func TestStartNodeLocked_AuthKeyProviderErrorIncludesService(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	if err := config.EnsureDir(); err != nil {
@@ -519,6 +728,80 @@ func TestSyncNodes_RejectsHandEditedTCPAllowedUsers(t *testing.T) {
 	}
 	if len(s.nodes) != 0 {
 		t.Fatalf("nodes = %+v, want none after rejected hand-edited registry", s.nodes)
+	}
+}
+
+func TestSyncNodes_ContextCancelledPreventsStartingNode(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+
+	writeRegistry(t, []registry.Service{
+		{Name: "newnode", Type: registry.TypeFile, Path: t.TempDir()},
+	})
+
+	var constructed atomic.Int32
+	oldNew := newTSNetServerFn
+	newTSNetServerFn = func(svc registry.Service, stateDir, authKey, controlURL string) tsnetServer {
+		constructed.Add(1)
+		return &fakeTSNetServer{}
+	}
+	t.Cleanup(func() { newTSNetServerFn = oldNew })
+
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err = s.syncNodes(ctx)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("syncNodes() error = %v, want context.Canceled", err)
+	}
+	if constructed.Load() != 0 {
+		t.Fatalf("constructed tsnet servers = %d, want 0 after cancellation", constructed.Load())
+	}
+	if len(s.nodes) != 0 {
+		t.Fatalf("nodes = %d, want 0", len(s.nodes))
+	}
+}
+
+func TestSyncNodes_ShutdownStatePreventsStartingNode(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+
+	writeRegistry(t, []registry.Service{
+		{Name: "newnode", Type: registry.TypeFile, Path: t.TempDir()},
+	})
+
+	var constructed atomic.Int32
+	oldNew := newTSNetServerFn
+	newTSNetServerFn = func(svc registry.Service, stateDir, authKey, controlURL string) tsnetServer {
+		constructed.Add(1)
+		return &fakeTSNetServer{}
+	}
+	t.Cleanup(func() { newTSNetServerFn = oldNew })
+
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	s.beginShutdown()
+
+	err = s.syncNodes(context.Background())
+	if !errors.Is(err, errServerShuttingDown) {
+		t.Fatalf("syncNodes() error = %v, want errServerShuttingDown", err)
+	}
+	if constructed.Load() != 0 {
+		t.Fatalf("constructed tsnet servers = %d, want 0 after shutdown begins", constructed.Load())
+	}
+	if len(s.nodes) != 0 {
+		t.Fatalf("nodes = %d, want 0", len(s.nodes))
 	}
 }
 
