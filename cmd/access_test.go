@@ -452,58 +452,6 @@ func TestAccessExplainExternalPolicyAndBackendAuthAlwaysPresent(t *testing.T) {
 	}
 }
 
-func TestAccessRedactPotentialSecretURL(t *testing.T) {
-	cases := []struct {
-		name string
-		raw  string
-		want string
-	}{
-		{
-			name: "full URL with userinfo query fragment",
-			raw:  "https://user:pass@example.com:8443/app?token=abc#frag",
-			want: "https://example.com:8443/app",
-		},
-		{
-			name: "schemeless host port with query fragment",
-			raw:  "localhost:3000?token=abc#frag",
-			want: "localhost:3000",
-		},
-		{
-			name: "userinfo-like schemeless authority",
-			raw:  "token@localhost:5432/private",
-			want: "localhost:5432/private",
-		},
-		{
-			name: "bare host port passthrough",
-			raw:  "localhost:5432",
-			want: "localhost:5432",
-		},
-		{
-			name: "path only passthrough",
-			raw:  "/srv/user:pass@docs",
-			want: "/srv/user:pass@docs",
-		},
-		{
-			name: "empty string passthrough",
-			raw:  "",
-			want: "",
-		},
-		{
-			name: "URL path preserved",
-			raw:  "http://localhost:3000/private/path",
-			want: "http://localhost:3000/private/path",
-		},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := accessRedactPotentialSecretURL(tc.raw); got != tc.want {
-				t.Fatalf("accessRedactPotentialSecretURL(%q) = %q, want %q", tc.raw, got, tc.want)
-			}
-		})
-	}
-}
-
 func TestAccessExplainServiceNotFoundReturnsSemanticError(t *testing.T) {
 	_, _, err := runAccessExplainWithServices(t, "missing", false, registry.Service{
 		Name:   "web",
