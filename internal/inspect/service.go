@@ -211,11 +211,11 @@ func allowSummary(svc registry.Service) SummaryView {
 func backendFor(svc registry.Service) BackendView {
 	switch svc.Type {
 	case registry.TypeProxy:
-		return BackendView{Kind: "http_target", Display: svc.Target}
+		return BackendView{Kind: "http_target", Display: SanitizeBackendDisplay(svc.Target)}
 	case registry.TypeFile:
 		return BackendView{Kind: "directory", Display: svc.Path}
 	case registry.TypeTCP:
-		return BackendView{Kind: "tcp_target", Display: svc.Target}
+		return BackendView{Kind: "tcp_target", Display: SanitizeBackendDisplay(svc.Target)}
 	default:
 		return BackendView{Kind: "unknown"}
 	}

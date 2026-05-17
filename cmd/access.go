@@ -399,7 +399,7 @@ func accessIsLoopbackOrLocalHost(host string) bool {
 }
 
 func accessSafeBackendView(view inspect.BackendView) inspect.BackendView {
-	view.Display = accessRedactPotentialSecretURL(view.Display)
+	view.Display = inspect.SanitizeBackendDisplay(view.Display)
 	return view
 }
 

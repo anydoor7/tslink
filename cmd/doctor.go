@@ -70,7 +70,10 @@ var (
 )
 
 type doctorOptions struct {
-	ProbeExternal bool
+	ProbeExternal       bool
+	RegistryPath        string
+	PIDPath             string
+	RuntimeSnapshotPath string
 }
 
 type DoctorResult struct {
@@ -146,7 +149,7 @@ func buildDoctorResult(opts doctorOptions) DoctorResult {
 		},
 	}
 
-	pathsOK := discoverDoctorPaths(&result)
+	pathsOK := discoverDoctorPaths(&result, opts)
 	diagnoseCredentials(&result)
 
 	var cfg config.GlobalConfig
@@ -210,7 +213,7 @@ func buildDoctorResult(opts doctorOptions) DoctorResult {
 	return result
 }
 
-func discoverDoctorPaths(result *DoctorResult) bool {
+func discoverDoctorPaths(result *DoctorResult, opts doctorOptions) bool {
 	ok := true
 	if dir, err := doctorConfigDirFn(); err != nil {
 		ok = false
@@ -218,19 +221,25 @@ func discoverDoctorPaths(result *DoctorResult) bool {
 	} else {
 		result.Paths.ConfigDir = dir
 	}
-	if path, err := doctorRegistryPathFn(); err != nil {
+	if opts.RegistryPath != "" {
+		result.Paths.Registry = opts.RegistryPath
+	} else if path, err := doctorRegistryPathFn(); err != nil {
 		ok = false
 		result.addFinding(inspect.WarningCodeConfigPathUnavailable, "", "config", "Registry path could not be discovered.", evidenceError(err))
 	} else {
 		result.Paths.Registry = path
 	}
-	if path, err := doctorRuntimeSnapshotPathFn(); err != nil {
+	if opts.RuntimeSnapshotPath != "" {
+		result.Paths.RuntimeSnapshot = opts.RuntimeSnapshotPath
+	} else if path, err := doctorRuntimeSnapshotPathFn(); err != nil {
 		ok = false
 		result.addFinding(inspect.WarningCodeConfigPathUnavailable, "", "config", "Runtime snapshot path could not be discovered.", evidenceError(err))
 	} else {
 		result.Paths.RuntimeSnapshot = path
 	}
-	if path, err := doctorPIDPathFn(); err != nil {
+	if opts.PIDPath != "" {
+		result.Paths.PID = opts.PIDPath
+	} else if path, err := doctorPIDPathFn(); err != nil {
 		ok = false
 		result.addFinding(inspect.WarningCodeConfigPathUnavailable, "", "config", "PID path could not be discovered.", evidenceError(err))
 	} else {

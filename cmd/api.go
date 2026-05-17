@@ -42,6 +42,7 @@ type APIResponse struct {
 	URL      string                `json:"url,omitempty"`
 	Endpoint *inspect.EndpointView `json:"endpoint,omitempty"`
 	Exposure *inspect.ExposureView `json:"exposure,omitempty"`
+	Warnings []inspect.WarningView `json:"warnings,omitempty"`
 	Services []inspect.ServiceView `json:"services,omitempty"`
 	Running  bool                  `json:"running,omitempty"`
 	Count    int                   `json:"count,omitempty"`
@@ -50,6 +51,7 @@ type APIResponse struct {
 	Doctor        *DoctorResult        `json:"doctor,omitempty"`
 	AccessExplain *AccessExplainResult `json:"access_explain,omitempty"`
 	TemplateList  *TemplateListResult  `json:"template_list,omitempty"`
+	TemplatePlan  *TemplateApplyResult `json:"template_plan,omitempty"`
 	TemplateApply *TemplateApplyResult `json:"template_apply,omitempty"`
 }
 
@@ -169,6 +171,7 @@ func (h *apiHandler) handleAdd(req APIRequest, out io.Writer) {
 		URL:      endpoint.Display,
 		Endpoint: &endpoint,
 		Exposure: &view.Exposure,
+		Warnings: view.Warnings,
 	})
 }
 
@@ -277,7 +280,12 @@ func (h *apiHandler) handleStatusURLs(out io.Writer) {
 }
 
 func (h *apiHandler) handleDoctor(req APIRequest, out io.Writer) {
-	result := buildDoctorResult(doctorOptions{ProbeExternal: req.ProbeExternal})
+	result := buildDoctorResult(doctorOptions{
+		ProbeExternal:       req.ProbeExternal,
+		RegistryPath:        h.regPath,
+		PIDPath:             h.pidPath,
+		RuntimeSnapshotPath: h.runtimeSnapshotPath,
+	})
 	writeResponse(out, APIResponse{OK: true, Doctor: &result})
 }
 
@@ -317,7 +325,7 @@ func (h *apiHandler) handleTemplatePlan(req APIRequest, out io.Writer) {
 		writeResponse(out, APIResponse{OK: false, Error: err.Error()})
 		return
 	}
-	writeResponse(out, APIResponse{OK: true, TemplateApply: &result})
+	writeResponse(out, APIResponse{OK: true, TemplatePlan: &result, TemplateApply: &result})
 }
 
 func (h *apiHandler) handleTemplateApply(req APIRequest, out io.Writer) {
