@@ -3,6 +3,7 @@ package registry
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -23,6 +24,9 @@ const (
 
 	// TagGrammar describes the strict Tailscale ACL tag syntax accepted by TSLink.
 	TagGrammar = "tag:<lowercase-hyphen-name> using lowercase letters, numbers, and hyphens"
+
+	ErrFunnelAllowedUsers = "funnel services do not support allowed_users; public Funnel cannot be combined with TSLink allow lists"
+	ErrFunnelControlURL   = "funnel services do not support per-service control_url; use the default Tailscale control server or disable funnel"
 )
 
 var nameRegexp = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
@@ -104,6 +108,12 @@ func ValidateService(svc Service) error {
 	}
 	if svc.Type == TypeTCP && len(svc.AllowedUsers) > 0 {
 		return fmt.Errorf("tcp services do not support allowed_users; TSLink cannot enforce user ACLs on raw TCP services")
+	}
+	if svc.Funnel && len(svc.AllowedUsers) > 0 {
+		return errors.New(ErrFunnelAllowedUsers)
+	}
+	if svc.Funnel && svc.ControlURL != "" {
+		return errors.New(ErrFunnelControlURL)
 	}
 	if err := ValidateControlURL(svc.ControlURL); err != nil {
 		return err

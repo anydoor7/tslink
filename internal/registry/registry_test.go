@@ -866,6 +866,38 @@ func TestAddRejectsTCPAllowedUsers(t *testing.T) {
 	}
 }
 
+func TestValidateServiceRejectsFunnelAllowedUsers(t *testing.T) {
+	err := ValidateService(Service{
+		Name:         "public-app",
+		Type:         TypeProxy,
+		Target:       "http://localhost:3000",
+		Funnel:       true,
+		AllowedUsers: []string{"alice@example.com"},
+	})
+	if err == nil {
+		t.Fatal("ValidateService() error = nil, want funnel allowed_users error")
+	}
+	if !strings.Contains(err.Error(), ErrFunnelAllowedUsers) {
+		t.Fatalf("ValidateService() error = %v, want funnel allowed_users error", err)
+	}
+}
+
+func TestValidateServiceRejectsFunnelControlURL(t *testing.T) {
+	err := ValidateService(Service{
+		Name:       "public-app",
+		Type:       TypeProxy,
+		Target:     "http://localhost:3000",
+		Funnel:     true,
+		ControlURL: "https://headscale.example.com",
+	})
+	if err == nil {
+		t.Fatal("ValidateService() error = nil, want funnel control_url error")
+	}
+	if !strings.Contains(err.Error(), ErrFunnelControlURL) {
+		t.Fatalf("ValidateService() error = %v, want funnel control_url error", err)
+	}
+}
+
 func TestAddServiceAllFields(t *testing.T) {
 	path := testRegistryPath(t)
 

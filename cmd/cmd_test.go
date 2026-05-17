@@ -30,6 +30,7 @@ func runAddCmd(t *testing.T, args []string, flags map[string]string) error {
 	addCmd.Flags().Set("tags", "")
 	addCmd.Flags().Set("allow", "")
 	addCmd.Flags().Set("funnel", "false")
+	addCmd.Flags().Set("public", "false")
 	addCmd.Flags().Set("domain", "")
 	addCmd.Flags().Set("acme-email", "")
 	addCmd.Flags().Set("control-url", "")
@@ -61,6 +62,7 @@ func runAddCmdOutput(t *testing.T, args []string, flags map[string]string) (stri
 	addCmd.Flags().Set("tags", "")
 	addCmd.Flags().Set("allow", "")
 	addCmd.Flags().Set("funnel", "false")
+	addCmd.Flags().Set("public", "false")
 	addCmd.Flags().Set("domain", "")
 	addCmd.Flags().Set("acme-email", "")
 	addCmd.Flags().Set("control-url", "")
@@ -375,7 +377,7 @@ func TestAddCmd_WithFunnel(t *testing.T) {
 
 	os.MkdirAll(filepath.Join(dir, ".config", "tslink"), 0o700)
 
-	out, err := runAddCmdOutput(t, []string{"funnelapp"}, map[string]string{"proxy": "localhost:3000", "funnel": "true"})
+	out, err := runAddCmdOutput(t, []string{"funnelapp"}, map[string]string{"proxy": "localhost:3000", "funnel": "true", "public": "true"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1126,7 +1128,7 @@ func TestBuildService_WithAllOptions(t *testing.T) {
 		Name: "full", Proxy: "localhost:3000",
 		Ephemeral: true, Tags: "tag:web,tag:prod",
 		Allow:  "alice@example.com,bob@example.com",
-		Funnel: true, Domain: "app.example.com",
+		Domain: "app.example.com",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1140,8 +1142,8 @@ func TestBuildService_WithAllOptions(t *testing.T) {
 	if len(svc.AllowedUsers) != 2 {
 		t.Errorf("expected 2 allowed users, got %d", len(svc.AllowedUsers))
 	}
-	if !svc.Funnel {
-		t.Error("expected funnel")
+	if svc.Funnel {
+		t.Error("expected funnel=false when allow list is configured")
 	}
 	if svc.Domain != "app.example.com" {
 		t.Error("expected domain")

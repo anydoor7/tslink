@@ -89,6 +89,7 @@ func TestAddFunnel_WithDir_Error(t *testing.T) {
 	defer func() {
 		addCmd.Flags().Set("dir", "")
 		addCmd.Flags().Set("funnel", "false")
+		addCmd.Flags().Set("public", "false")
 		addCmd.Flags().Set("control-url", "")
 	}()
 
@@ -124,6 +125,7 @@ func TestAddFunnel_WithTCP_Error(t *testing.T) {
 	defer func() {
 		addCmd.Flags().Set("tcp", "")
 		addCmd.Flags().Set("funnel", "false")
+		addCmd.Flags().Set("public", "false")
 		addCmd.Flags().Set("control-url", "")
 	}()
 
@@ -146,6 +148,84 @@ func TestBuildService_TCPRejectsAllow(t *testing.T) {
 		t.Fatal("expected error when using --allow with --tcp")
 	}
 	if !strings.Contains(err.Error(), "--allow is not supported for --tcp") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestBuildService_FunnelRejectsMissingPublicAck(t *testing.T) {
+	_, err := buildService(AddParams{
+		Name:   "app",
+		Proxy:  "localhost:3000",
+		Funnel: true,
+	})
+	if err == nil {
+		t.Fatal("expected missing public acknowledgement error")
+	}
+	if !strings.Contains(err.Error(), publicAckRequiredError) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestBuildService_FunnelAcceptsPublicAckWithoutAllow(t *testing.T) {
+	svc, err := buildService(AddParams{
+		Name:   "app",
+		Proxy:  "localhost:3000",
+		Funnel: true,
+		Public: true,
+	})
+	if err != nil {
+		t.Fatalf("buildService: %v", err)
+	}
+	if !svc.Funnel {
+		t.Fatal("expected funnel=true")
+	}
+	if len(svc.AllowedUsers) != 0 {
+		t.Fatalf("allowed_users = %v, want none", svc.AllowedUsers)
+	}
+}
+
+func TestBuildService_FunnelRejectsAllowEvenWithPublicAck(t *testing.T) {
+	_, err := buildService(AddParams{
+		Name:   "app",
+		Proxy:  "localhost:3000",
+		Allow:  "alice@example.com",
+		Funnel: true,
+		Public: true,
+	})
+	if err == nil {
+		t.Fatal("expected funnel allowed_users error")
+	}
+	if !strings.Contains(err.Error(), registry.ErrFunnelAllowedUsers) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestBuildService_RejectsPublicAckWithoutFunnel(t *testing.T) {
+	_, err := buildService(AddParams{
+		Name:   "app",
+		Proxy:  "localhost:3000",
+		Public: true,
+	})
+	if err == nil {
+		t.Fatal("expected public without funnel error")
+	}
+	if !strings.Contains(err.Error(), "--public can only be used with --funnel") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestBuildService_FunnelRejectsControlURL(t *testing.T) {
+	_, err := buildService(AddParams{
+		Name:       "app",
+		Proxy:      "localhost:3000",
+		Funnel:     true,
+		Public:     true,
+		ControlURL: "https://headscale.example.com",
+	})
+	if err == nil {
+		t.Fatal("expected funnel control_url error")
+	}
+	if !strings.Contains(err.Error(), registry.ErrFunnelControlURL) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -197,5 +277,45 @@ func TestBuildService_RejectsInvalidAllowTag(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected invalid allow tag error")
+	}
+}
+
+func TestAddJSON_TCPUsesTypedEndpoint(t *testing.T) {
+	dir := t.TempDir()
+	regPath := dir + "/registry.json"
+
+	oldRegPath := registryPathFn
+	oldEnsureDir := ensureDirFn
+	t.Cleanup(func() {
+		registryPathFn = oldRegPath
+		ensureDirFn = oldEnsureDir
+	})
+	registryPathFn = func() (string, error) { return regPath, nil }
+	ensureDirFn = func() error { return nil }
+	t.Cleanup(func() {
+		rootCmd.SetArgs(nil)
+		_ = rootCmd.PersistentFlags().Set("json", "false")
+	})
+
+	rootCmd.SetArgs([]string{"add", "db", "--tcp", "localhost:5432", "--json"})
+	got := captureStdout(t, func() {
+		if err := rootCmd.Execute(); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+	if strings.Contains(got, "https://db.<tailnet>.ts.net") {
+		t.Fatalf("add --json rendered TCP service as HTTPS: %s", got)
+	}
+
+	data := dataMap(t, got)
+	if data["url"] != "db.<tailnet>.ts.net:5432" {
+		t.Fatalf("url = %v, want typed TCP display", data["url"])
+	}
+	endpoint, ok := data["endpoint"].(map[string]any)
+	if !ok {
+		t.Fatalf("endpoint = %T, want object", data["endpoint"])
+	}
+	if endpoint["kind"] != "tcp" || endpoint["display"] != "db.<tailnet>.ts.net:5432" {
+		t.Fatalf("endpoint = %+v, want typed TCP endpoint", endpoint)
 	}
 }

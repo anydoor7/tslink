@@ -401,6 +401,12 @@ func validateServiceForStartup(svc registry.Service) error {
 	if svc.Type == registry.TypeTCP && len(svc.AllowedUsers) > 0 {
 		return fmt.Errorf("service %q: tcp services do not support allowed_users; remove allowed_users from registry.json", svc.Name)
 	}
+	if svc.Funnel && len(svc.AllowedUsers) > 0 {
+		return fmt.Errorf("service %q: %s; edit registry.json", svc.Name, registry.ErrFunnelAllowedUsers)
+	}
+	if svc.Funnel && svc.ControlURL != "" {
+		return fmt.Errorf("service %q: %s; edit registry.json", svc.Name, registry.ErrFunnelControlURL)
+	}
 	if err := registry.ValidateControlURL(svc.ControlURL); err != nil {
 		return fmt.Errorf("service %q has invalid control_url: %w; edit registry.json", svc.Name, err)
 	}
@@ -531,6 +537,7 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service) erro
 
 	var ln net.Listener
 	if svc.Funnel && svc.Type == registry.TypeProxy {
+		slog.Warn("funnel.listener.public", "code", "funnel.listener.public", "message", "Tailscale Funnel listener exposes this service to the public internet", "name", svc.Name)
 		ln, err = tsnetSrv.ListenFunnel("tcp", ":443")
 	} else {
 		ln, err = tsnetSrv.ListenTLS("tcp", ":443")

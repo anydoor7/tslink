@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -10,17 +11,21 @@ import (
 
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/domain"
+	"github.com/monody0007/tslink/internal/inspect"
 	"github.com/monody0007/tslink/internal/output"
 	"github.com/monody0007/tslink/internal/registry"
 	"github.com/spf13/cobra"
 )
 
+const publicAckRequiredError = "funnel requires explicit public acknowledgement (--public on CLI, public_ack:true in API)"
+
 // AddResult is the JSON data for the add command.
 type AddResult struct {
-	Name    string `json:"name"`
-	Type    string `json:"type"`
-	Created bool   `json:"created"`
-	URL     string `json:"url"`
+	Name     string               `json:"name"`
+	Type     string               `json:"type"`
+	Created  bool                 `json:"created"`
+	URL      string               `json:"url"`
+	Endpoint inspect.EndpointView `json:"endpoint"`
 }
 
 func hasScheme(target string) bool {
@@ -52,6 +57,7 @@ type AddParams struct {
 	Tags       string
 	Allow      string
 	Funnel     bool
+	Public     bool
 	Domain     string
 	AcmeEmail  string
 	ControlURL string
@@ -96,6 +102,18 @@ func buildService(p AddParams) (registry.Service, error) {
 
 	if p.Funnel && p.Proxy == "" {
 		return registry.Service{}, fmt.Errorf("--funnel can only be used with --proxy")
+	}
+	if p.Public && !p.Funnel {
+		return registry.Service{}, fmt.Errorf("--public can only be used with --funnel")
+	}
+	if p.Funnel && !p.Public {
+		return registry.Service{}, fmt.Errorf(publicAckRequiredError)
+	}
+	if p.Funnel && len(allowedUsers) > 0 {
+		return registry.Service{}, errors.New(registry.ErrFunnelAllowedUsers)
+	}
+	if p.Funnel && p.ControlURL != "" {
+		return registry.Service{}, errors.New(registry.ErrFunnelControlURL)
 	}
 	if p.Domain != "" && p.Proxy == "" {
 		return registry.Service{}, fmt.Errorf("--domain can only be used with --proxy")
@@ -178,7 +196,7 @@ Examples:
   tslink add mydb --tcp localhost:5432             Expose raw TCP (e.g., database)
   tslink add myapp --proxy :3000 --ephemeral      Ephemeral node (removed on disconnect)
   tslink add myapp --proxy :3000 --tags tag:web    Tag the node in the tailnet
-  tslink add myapp --proxy :3000 --funnel          Expose publicly via Tailscale Funnel`,
+  tslink add myapp --proxy :3000 --funnel --public Expose publicly via Tailscale Funnel`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			proxyTarget, _ := cmd.Flags().GetString("proxy")
@@ -188,6 +206,7 @@ Examples:
 			tagsStr, _ := cmd.Flags().GetString("tags")
 			allowStr, _ := cmd.Flags().GetString("allow")
 			funnel, _ := cmd.Flags().GetBool("funnel")
+			public, _ := cmd.Flags().GetBool("public")
 			domainName, _ := cmd.Flags().GetString("domain")
 			acmeEmail, _ := cmd.Flags().GetString("acme-email")
 			controlURL, _ := cmd.Flags().GetString("control-url")
@@ -201,6 +220,7 @@ Examples:
 				Tags:       tagsStr,
 				Allow:      allowStr,
 				Funnel:     funnel,
+				Public:     public,
 				Domain:     domainName,
 				AcmeEmail:  acmeEmail,
 				ControlURL: controlURL,
@@ -239,14 +259,16 @@ Examples:
 				return err
 			}
 
-			url := fmt.Sprintf("https://%s.<tailnet>.ts.net", svc.Name)
+			endpoint := inspect.ServiceViewFor(svc).Endpoint
+			url := endpoint.Display
 
 			if jsonOutput(cmd) {
 				output.Success("add", AddResult{
-					Name:    svc.Name,
-					Type:    svc.Type,
-					Created: created,
-					URL:     url,
+					Name:     svc.Name,
+					Type:     svc.Type,
+					Created:  created,
+					URL:      url,
+					Endpoint: endpoint,
 				})
 				return nil
 			}
@@ -271,6 +293,7 @@ Examples:
 	addCmd.Flags().Bool("ephemeral", false, "Register as ephemeral node (removed on disconnect)")
 	addCmd.Flags().String("tags", "", "Comma-separated ACL tags (e.g., tag:web,tag:internal)")
 	addCmd.Flags().Bool("funnel", false, "Expose publicly via Tailscale Funnel (proxy only)")
+	addCmd.Flags().Bool("public", false, "Acknowledge public internet exposure for --funnel")
 	addCmd.Flags().String("domain", "", "Custom domain name for the service (proxy only, e.g., app.example.com)")
 	addCmd.Flags().String("allow", "", "Comma-separated allowed identities (e.g., user@example.com,tag:admin)")
 	addCmd.Flags().String("acme-email", "", "Email for Let's Encrypt ACME certificates (requires --domain)")

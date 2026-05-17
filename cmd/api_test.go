@@ -243,6 +243,9 @@ func TestAPIAdd_Proxy(t *testing.T) {
 	if !strings.Contains(resp.URL, "myapp") {
 		t.Errorf("URL should contain service name, got: %s", resp.URL)
 	}
+	if resp.Endpoint == nil || resp.Endpoint.Kind != inspect.EndpointKindHTTPS || resp.Endpoint.Display != "https://myapp.<tailnet>.ts.net" {
+		t.Fatalf("endpoint = %+v, want https add endpoint", resp.Endpoint)
+	}
 
 	// Verify the scheme was prepended.
 	reg, err := registry.Load(h.regPath)
@@ -287,7 +290,6 @@ func TestAPIAdd_Proxy_WithProvidedTags(t *testing.T) {
 		Target: "localhost:3000",
 		Tags:   []string{"tag:web", "tag:internal"},
 		Allow:  []string{"user@example.com", "tag:admin"},
-		Funnel: true,
 	})
 	if !resp.OK {
 		t.Fatalf("expected ok, got error: %s", resp.Error)
@@ -301,8 +303,80 @@ func TestAPIAdd_Proxy_WithProvidedTags(t *testing.T) {
 	if strings.Join(svc.AllowedUsers, ",") != "user@example.com,tag:admin" {
 		t.Fatalf("allowed_users = %v, want provided allow list", svc.AllowedUsers)
 	}
+	if svc.Funnel {
+		t.Fatal("expected funnel=false when allow list is configured")
+	}
+}
+
+func TestAPIAdd_FunnelRejectsMissingPublicAck(t *testing.T) {
+	h, _ := newTestHandler(t)
+	resp := sendRequest(t, h, APIRequest{
+		Action: "add",
+		Name:   "public-app",
+		Type:   "proxy",
+		Target: "localhost:3000",
+		Funnel: true,
+	})
+	if resp.OK {
+		t.Fatal("expected missing public_ack error")
+	}
+	if !strings.Contains(resp.Error, "public_ack must be true when funnel is true") {
+		t.Fatalf("unexpected error: %s", resp.Error)
+	}
+	if !strings.Contains(resp.Error, publicAckRequiredError) {
+		t.Fatalf("error = %q, want shared public acknowledgement guidance", resp.Error)
+	}
+}
+
+func TestAPIAdd_FunnelRejectsAllowWithPublicAck(t *testing.T) {
+	h, _ := newTestHandler(t)
+	resp := sendRequest(t, h, APIRequest{
+		Action:    "add",
+		Name:      "public-app",
+		Type:      "proxy",
+		Target:    "localhost:3000",
+		Allow:     []string{"alice@example.com"},
+		Funnel:    true,
+		PublicAck: true,
+	})
+	if resp.OK {
+		t.Fatal("expected funnel allowed_users error")
+	}
+	if !strings.Contains(resp.Error, registry.ErrFunnelAllowedUsers) {
+		t.Fatalf("unexpected error: %s", resp.Error)
+	}
+}
+
+func TestAPIAdd_FunnelAcceptsPublicAck(t *testing.T) {
+	h, _ := newTestHandler(t)
+	resp := sendRequest(t, h, APIRequest{
+		Action:    "add",
+		Name:      "public-app",
+		Type:      "proxy",
+		Target:    "localhost:3000",
+		Funnel:    true,
+		PublicAck: true,
+	})
+	if !resp.OK {
+		t.Fatalf("expected ok, got error: %s", resp.Error)
+	}
+	if resp.Endpoint == nil || resp.Endpoint.Kind != inspect.EndpointKindPublicHTTPS {
+		t.Fatalf("endpoint = %+v, want public https endpoint", resp.Endpoint)
+	}
+
+	reg, err := registry.Load(h.regPath)
+	if err != nil {
+		t.Fatalf("load registry: %v", err)
+	}
+	if len(reg.Services) != 1 {
+		t.Fatalf("services = %d, want 1", len(reg.Services))
+	}
+	svc := reg.Services[0]
 	if !svc.Funnel {
 		t.Fatal("expected funnel=true")
+	}
+	if len(svc.AllowedUsers) != 0 || svc.ControlURL != "" {
+		t.Fatalf("service = %+v, want no allow/control_url", svc)
 	}
 }
 
@@ -415,6 +489,15 @@ func TestAPIAdd_TCP(t *testing.T) {
 	})
 	if !resp.OK {
 		t.Fatalf("expected ok, got error: %s", resp.Error)
+	}
+	if strings.Contains(resp.URL, "https://mydb.<tailnet>.ts.net") {
+		t.Fatalf("api add rendered TCP URL as HTTPS: %+v", resp)
+	}
+	if resp.URL != "mydb.<tailnet>.ts.net:5432" {
+		t.Fatalf("url = %q, want typed TCP display", resp.URL)
+	}
+	if resp.Endpoint == nil || resp.Endpoint.Kind != inspect.EndpointKindTCP || resp.Endpoint.Display != "mydb.<tailnet>.ts.net:5432" || resp.Endpoint.Port != 5432 {
+		t.Fatalf("endpoint = %+v, want typed TCP endpoint", resp.Endpoint)
 	}
 
 	reg, _ := registry.Load(h.regPath)

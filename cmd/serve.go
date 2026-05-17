@@ -109,6 +109,10 @@ Examples:
 			serveRemovePIDFn(pidPath)
 
 			if serveDaemon {
+				if _, err := loadValidatedRegistryForServe(); err != nil {
+					return err
+				}
+
 				logDir, err := serveLogDirFn()
 				if err != nil {
 					return err
@@ -135,21 +139,14 @@ Examples:
 			}
 
 			// Load registry to collect tags and ephemeral flags
-			regPath, err := serveRegistryPathFn()
+			reg, err := loadValidatedRegistryForServe()
 			if err != nil {
 				return err
-			}
-			reg, err := serveLoadRegistryFn(regPath)
-			if err != nil {
-				return fmt.Errorf("load registry: %w", err)
 			}
 
 			// Collect unique tags for startup ACL preflight. Auth keys are resolved per service.
 			tagSet := make(map[string]struct{})
 			for _, svc := range reg.Services {
-				if err := validateServiceForServe(svc); err != nil {
-					return err
-				}
 				for _, tag := range svc.Tags {
 					tagSet[tag] = struct{}{}
 				}
@@ -197,6 +194,23 @@ Examples:
 	rootCmd.AddCommand(serveCmd)
 }
 
+func loadValidatedRegistryForServe() (*registry.Registry, error) {
+	regPath, err := serveRegistryPathFn()
+	if err != nil {
+		return nil, err
+	}
+	reg, err := serveLoadRegistryFn(regPath)
+	if err != nil {
+		return nil, fmt.Errorf("load registry: %w", err)
+	}
+	for _, svc := range reg.Services {
+		if err := validateServiceForServe(svc); err != nil {
+			return nil, err
+		}
+	}
+	return reg, nil
+}
+
 func waitForDaemonReady(pidPath string, expectedPID int, timeout, pollInterval time.Duration) error {
 	if pollInterval <= 0 {
 		pollInterval = 50 * time.Millisecond
@@ -235,6 +249,12 @@ func validateServiceForServe(svc registry.Service) error {
 	}
 	if svc.Type == registry.TypeTCP && len(svc.AllowedUsers) > 0 {
 		return fmt.Errorf("service %q: tcp services do not support allowed_users; remove allowed_users from registry.json", svc.Name)
+	}
+	if svc.Funnel && len(svc.AllowedUsers) > 0 {
+		return fmt.Errorf("service %q: %s; edit registry.json", svc.Name, registry.ErrFunnelAllowedUsers)
+	}
+	if svc.Funnel && svc.ControlURL != "" {
+		return fmt.Errorf("service %q: %s; edit registry.json", svc.Name, registry.ErrFunnelControlURL)
 	}
 	if err := registry.ValidateControlURL(svc.ControlURL); err != nil {
 		return fmt.Errorf("service %q has invalid control_url: %w; edit registry.json", svc.Name, err)

@@ -1,10 +1,12 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -140,6 +142,47 @@ func (s *listenerTSNetServer) Close() error {
 	if s.ln != nil {
 		return s.ln.Close()
 	}
+	return nil
+}
+
+type funnelWarningTSNetServer struct {
+	t        *testing.T
+	logBuf   *bytes.Buffer
+	listened atomic.Bool
+	closed   atomic.Bool
+}
+
+func (s *funnelWarningTSNetServer) Up(context.Context) (*ipnstate.Status, error) {
+	return &ipnstate.Status{}, nil
+}
+
+func (s *funnelWarningTSNetServer) Listen(network, addr string) (net.Listener, error) {
+	return &fakeListener{}, nil
+}
+
+func (s *funnelWarningTSNetServer) ListenTLS(network, addr string) (net.Listener, error) {
+	return &fakeListener{}, nil
+}
+
+func (s *funnelWarningTSNetServer) ListenFunnel(network, addr string, opts ...tsnet.FunnelOption) (net.Listener, error) {
+	s.t.Helper()
+	if !strings.Contains(s.logBuf.String(), "funnel.listener.public") {
+		s.t.Fatalf("ListenFunnel opened before public Funnel warning was logged; logs: %s", s.logBuf.String())
+	}
+	s.listened.Store(true)
+	return &fakeListener{}, nil
+}
+
+func (s *funnelWarningTSNetServer) LocalClient() (*LocalClient, error) {
+	return nil, nil
+}
+
+func (s *funnelWarningTSNetServer) CertDomains() []string {
+	return nil
+}
+
+func (s *funnelWarningTSNetServer) Close() error {
+	s.closed.Store(true)
 	return nil
 }
 
@@ -784,6 +827,123 @@ func TestSyncNodes_RejectsHandEditedTCPAllowedUsers(t *testing.T) {
 	}
 	if len(s.nodes) != 0 {
 		t.Fatalf("nodes = %+v, want none after rejected hand-edited registry", s.nodes)
+	}
+}
+
+func TestSyncNodes_RejectsHandEditedFunnelAllowedUsersBeforeListenFunnel(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+
+	writeRegistry(t, []registry.Service{{
+		Name:         "public-app",
+		Type:         registry.TypeProxy,
+		Target:       "http://localhost:3000",
+		Funnel:       true,
+		AllowedUsers: []string{"alice@example.com"},
+	}})
+
+	oldNew := newTSNetServerFn
+	newTSNetServerFn = func(svc registry.Service, stateDir, authKey, controlURL string) tsnetServer {
+		t.Fatalf("syncNodes should reject funnel allowed_users before constructing tsnet server")
+		return &fakeTSNetServer{}
+	}
+	t.Cleanup(func() { newTSNetServerFn = oldNew })
+
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	err = s.syncNodes(context.Background())
+	if err == nil {
+		t.Fatal("syncNodes() error = nil, want funnel allowed_users error")
+	}
+	if !strings.Contains(err.Error(), registry.ErrFunnelAllowedUsers) {
+		t.Fatalf("syncNodes() error = %v, want funnel allowed_users error", err)
+	}
+	if len(s.nodes) != 0 {
+		t.Fatalf("nodes = %+v, want none after rejected hand-edited registry", s.nodes)
+	}
+}
+
+func TestSyncNodes_RejectsHandEditedFunnelControlURLBeforeListenFunnel(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+
+	writeRegistry(t, []registry.Service{{
+		Name:       "public-app",
+		Type:       registry.TypeProxy,
+		Target:     "http://localhost:3000",
+		Funnel:     true,
+		ControlURL: "https://headscale.example.com",
+	}})
+
+	oldNew := newTSNetServerFn
+	newTSNetServerFn = func(svc registry.Service, stateDir, authKey, controlURL string) tsnetServer {
+		t.Fatalf("syncNodes should reject funnel control_url before constructing tsnet server")
+		return &fakeTSNetServer{}
+	}
+	t.Cleanup(func() { newTSNetServerFn = oldNew })
+
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	err = s.syncNodes(context.Background())
+	if err == nil {
+		t.Fatal("syncNodes() error = nil, want funnel control_url error")
+	}
+	if !strings.Contains(err.Error(), registry.ErrFunnelControlURL) {
+		t.Fatalf("syncNodes() error = %v, want funnel control_url error", err)
+	}
+	if len(s.nodes) != 0 {
+		t.Fatalf("nodes = %+v, want none after rejected hand-edited registry", s.nodes)
+	}
+}
+
+func TestStartNodeLocked_FunnelLogsWarningBeforeListenFunnel(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+
+	var logBuf bytes.Buffer
+	oldLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, nil)))
+	t.Cleanup(func() { slog.SetDefault(oldLogger) })
+
+	funnelSrv := &funnelWarningTSNetServer{t: t, logBuf: &logBuf}
+	oldNew := newTSNetServerFn
+	newTSNetServerFn = func(svc registry.Service, stateDir, authKey, controlURL string) tsnetServer {
+		return funnelSrv
+	}
+	t.Cleanup(func() { newTSNetServerFn = oldNew })
+
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(s.closeAllNodes)
+
+	err = s.startNodeLocked(context.Background(), registry.Service{
+		Name:   "public-app",
+		Type:   registry.TypeProxy,
+		Target: "http://localhost:3000",
+		Funnel: true,
+	})
+	if err != nil {
+		t.Fatalf("startNodeLocked() error = %v", err)
+	}
+	if !funnelSrv.listened.Load() {
+		t.Fatal("ListenFunnel was not opened")
+	}
+	if !strings.Contains(logBuf.String(), "Tailscale Funnel listener exposes this service to the public internet") {
+		t.Fatalf("logs = %s, want public Funnel warning message", logBuf.String())
 	}
 }
 

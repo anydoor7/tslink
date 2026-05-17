@@ -28,6 +28,7 @@ type APIRequest struct {
 	Allow      []string `json:"allow,omitempty"`
 	Ephemeral  bool     `json:"ephemeral,omitempty"`
 	Funnel     bool     `json:"funnel,omitempty"`
+	PublicAck  bool     `json:"public_ack,omitempty"`
 	ControlURL string   `json:"control_url,omitempty"`
 }
 
@@ -37,6 +38,7 @@ type APIResponse struct {
 	Error    string                `json:"error,omitempty"`
 	Message  string                `json:"message,omitempty"`
 	URL      string                `json:"url,omitempty"`
+	Endpoint *inspect.EndpointView `json:"endpoint,omitempty"`
 	Services []inspect.ServiceView `json:"services,omitempty"`
 	Running  bool                  `json:"running,omitempty"`
 	Count    int                   `json:"count,omitempty"`
@@ -139,10 +141,12 @@ func (h *apiHandler) handleAdd(req APIRequest, out io.Writer) {
 		writeResponse(out, APIResponse{OK: false, Error: err.Error()})
 		return
 	}
+	endpoint := inspect.ServiceViewFor(svc).Endpoint
 	writeResponse(out, APIResponse{
-		OK:      true,
-		Message: "service added",
-		URL:     fmt.Sprintf("https://%s.<tailnet>.ts.net", req.Name),
+		OK:       true,
+		Message:  "service added",
+		URL:      endpoint.Display,
+		Endpoint: &endpoint,
 	})
 }
 
@@ -152,6 +156,12 @@ func addParamsFromAPIRequest(req APIRequest) (AddParams, error) {
 	}
 	if req.Funnel && req.Type != registry.TypeProxy {
 		return AddParams{}, fmt.Errorf("funnel is supported only for proxy type")
+	}
+	if req.PublicAck && !req.Funnel {
+		return AddParams{}, fmt.Errorf("public_ack is supported only when funnel is true")
+	}
+	if req.Funnel && !req.PublicAck {
+		return AddParams{}, fmt.Errorf("public_ack must be true when funnel is true; %s", publicAckRequiredError)
 	}
 	if len(req.Allow) > 0 && req.Type == registry.TypeTCP {
 		return AddParams{}, fmt.Errorf("allow is not supported for tcp type")
@@ -163,6 +173,7 @@ func addParamsFromAPIRequest(req APIRequest) (AddParams, error) {
 		Tags:       strings.Join(req.Tags, ","),
 		Allow:      strings.Join(req.Allow, ","),
 		Funnel:     req.Funnel,
+		Public:     req.PublicAck,
 		ControlURL: req.ControlURL,
 	}
 
@@ -229,7 +240,7 @@ func init() {
 
 Supported actions:
   {"action":"list"}
-  {"action":"add","name":"myapp","type":"proxy","target":"localhost:3000","tags":["tag:tsmain"],"allow":["user@example.com"],"ephemeral":false,"funnel":false,"control_url":"https://headscale.example.com"}
+  {"action":"add","name":"myapp","type":"proxy","target":"localhost:3000","tags":["tag:tsmain"],"allow":["user@example.com"],"ephemeral":false,"funnel":false,"public_ack":false,"control_url":"https://headscale.example.com"}
   {"action":"add","name":"docs","type":"file","path":"/path/to/dir","tags":["tag:docs"]}
   {"action":"add","name":"mydb","type":"tcp","target":"localhost:5432","tags":["tag:db"]}
   {"action":"remove","name":"myapp"}

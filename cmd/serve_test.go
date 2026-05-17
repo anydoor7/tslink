@@ -697,21 +697,13 @@ func TestServeCmd_DaemonReadinessPIDMatchRequiresRunningProcess(t *testing.T) {
 	}
 }
 
-func TestServeCmd_DaemonModeSkipsParentPreflight(t *testing.T) {
+func TestServeCmd_DaemonModeSkipsHeavyweightParentPreflight(t *testing.T) {
 	dir := t.TempDir()
 	mockServeDefaults(t, dir)
 	serveDaemon = true
 	mockServeDaemonReadyAfterInitialCheck(t)
 
 	calls := 0
-	serveRegistryPathFn = func() (string, error) {
-		calls++
-		return "", fmt.Errorf("registry path should not be called in daemon parent")
-	}
-	serveLoadRegistryFn = func(path string) (*registry.Registry, error) {
-		calls++
-		return nil, fmt.Errorf("load registry should not be called in daemon parent")
-	}
 	serveEnsureTagsFn = func(ctx context.Context, tags []string) error {
 		calls++
 		return fmt.Errorf("ensure tags should not be called in daemon parent")
@@ -732,7 +724,47 @@ func TestServeCmd_DaemonModeSkipsParentPreflight(t *testing.T) {
 		t.Fatalf("RunE() error = %v", err)
 	}
 	if calls != 0 {
-		t.Fatalf("parent preflight calls = %d, want 0", calls)
+		t.Fatalf("heavyweight parent preflight calls = %d, want 0", calls)
+	}
+}
+
+func TestServeCmd_DaemonModeValidatesRegistryBeforeDaemonize(t *testing.T) {
+	dir := t.TempDir()
+	mockServeDefaults(t, dir)
+	serveDaemon = true
+
+	reg := &registry.Registry{
+		Services: []registry.Service{
+			{
+				Name:         "public-app",
+				Type:         registry.TypeProxy,
+				Target:       "http://localhost:3000",
+				Funnel:       true,
+				AllowedUsers: []string{"alice@example.com"},
+			},
+		},
+	}
+	data, _ := json.Marshal(reg)
+	if err := os.WriteFile(filepath.Join(dir, "registry.json"), data, 0o600); err != nil {
+		t.Fatalf("write registry: %v", err)
+	}
+
+	daemonizeCalled := false
+	serveDaemonizeFn = func(out, errLog, controlURL string) (int, error) {
+		daemonizeCalled = true
+		return 0, fmt.Errorf("daemonize should not be called")
+	}
+
+	cmd := findServeCmd(t)
+	err := cmd.RunE(cmd, nil)
+	if err == nil {
+		t.Fatal("RunE() error = nil, want funnel allowed_users error")
+	}
+	if !strings.Contains(err.Error(), registry.ErrFunnelAllowedUsers) {
+		t.Fatalf("RunE() error = %v, want funnel allowed_users error", err)
+	}
+	if daemonizeCalled {
+		t.Fatal("daemonize was called after invalid registry")
 	}
 }
 
