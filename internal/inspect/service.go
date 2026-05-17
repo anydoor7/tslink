@@ -43,6 +43,7 @@ type SummaryView struct {
 	Mode    string   `json:"mode,omitempty"`
 	Count   int      `json:"count"`
 	Entries []string `json:"entries,omitempty"`
+	Redacted bool    `json:"redacted,omitempty"`
 }
 
 type BackendView struct {
@@ -164,15 +165,21 @@ func exposureFor(svc registry.Service) ExposureView {
 			Public:  false,
 		}
 	}
-	if len(svc.AllowedUsers) > 0 {
+	switch svc.Type {
+	case registry.TypeProxy, registry.TypeFile:
+		if len(svc.AllowedUsers) > 0 {
+			return ExposureView{
+				Kind:    ExposureTailnetAllow,
+				Display: "tailnet with TSLink allow list",
+				Public:  false,
+			}
+		}
 		return ExposureView{
-			Kind:    ExposureTailnetAllow,
-			Display: "tailnet with TSLink allow list",
+			Kind:    ExposureTailnet,
+			Display: "tailnet",
 			Public:  false,
 		}
-	}
-	switch svc.Type {
-	case registry.TypeProxy, registry.TypeFile, registry.TypeTCP:
+	case registry.TypeTCP:
 		return ExposureView{
 			Kind:    ExposureTailnet,
 			Display: "tailnet",
@@ -189,7 +196,7 @@ func exposureFor(svc registry.Service) ExposureView {
 
 func allowSummary(svc registry.Service) SummaryView {
 	if len(svc.AllowedUsers) > 0 {
-		return entriesSummary("restricted", svc.AllowedUsers)
+		return redactedEntriesSummary("restricted", svc.AllowedUsers)
 	}
 	if svc.Funnel {
 		return SummaryView{Mode: "public", Count: 0}
@@ -232,30 +239,40 @@ func middlewareFor(mw *registry.MiddlewareConfig) *MiddlewareView {
 func warningsFor(svc registry.Service, mw *MiddlewareView) []WarningView {
 	var warnings []WarningView
 	if svc.Type == registry.TypeTCP {
-		warnings = append(warnings, WarningView{
-			Code:     "tcp_http_acl_not_applicable",
-			Severity: "warning",
-			Message:  "Raw TCP is routed privately; TSLink HTTP identity and allow filtering do not apply.",
-			Source:   "service.type",
-		})
+		if len(svc.AllowedUsers) > 0 {
+			warnings = append(warnings, warningView(
+				WarningCodeTCPAllowedUsersInvalid,
+				"Raw TCP services cannot enforce allowed_users; remove the allow list or convert the service to HTTP.",
+			))
+		}
+		warnings = append(warnings, warningView(
+			WarningCodeTCPHTTPACLNotApplicable,
+			"Raw TCP is routed privately; TSLink HTTP identity and allow filtering do not apply.",
+		))
 	}
 	if svc.Type != registry.TypeProxy && svc.Type != registry.TypeFile && svc.Type != registry.TypeTCP {
-		warnings = append(warnings, WarningView{
-			Code:     "service_type_unknown",
-			Severity: "warning",
-			Message:  fmt.Sprintf("Unknown service type %q.", svc.Type),
-			Source:   "service.type",
-		})
+		warnings = append(warnings, warningView(
+			WarningCodeServiceTypeUnknown,
+			fmt.Sprintf("Unknown service type %q.", svc.Type),
+		))
 	}
 	if mw != nil && mw.HTTPAuth {
-		warnings = append(warnings, WarningView{
-			Code:     "http_auth_configured",
-			Severity: "info",
-			Message:  "HTTP authentication is configured; credentials are redacted.",
-			Source:   "service.middleware",
-		})
+		warnings = append(warnings, warningView(
+			WarningCodeHTTPAuthConfigured,
+			"HTTP authentication is configured; credentials are redacted.",
+		))
 	}
 	return warnings
+}
+
+func warningView(code, message string) WarningView {
+	meta := WarningCodeRegistry[code]
+	return WarningView{
+		Code:     code,
+		Severity: meta.Severity,
+		Message:  message,
+		Source:   meta.Source,
+	}
 }
 
 func entriesSummary(mode string, entries []string) SummaryView {
@@ -264,6 +281,14 @@ func entriesSummary(mode string, entries []string) SummaryView {
 		Mode:    mode,
 		Count:   len(copied),
 		Entries: copied,
+	}
+}
+
+func redactedEntriesSummary(mode string, entries []string) SummaryView {
+	return SummaryView{
+		Mode:     mode,
+		Count:    len(entries),
+		Redacted: true,
 	}
 }
 
