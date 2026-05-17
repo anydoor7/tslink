@@ -32,6 +32,16 @@ func TestRegistryPath(t *testing.T) {
 	}
 }
 
+func TestRuntimeSnapshotPath(t *testing.T) {
+	path, err := RuntimeSnapshotPath()
+	if err != nil {
+		t.Fatalf("RuntimeSnapshotPath() error = %v", err)
+	}
+	if !strings.HasSuffix(path, "runtime.json") {
+		t.Fatalf("RuntimeSnapshotPath() = %q, want suffix runtime.json", path)
+	}
+}
+
 func TestPIDPath(t *testing.T) {
 	path, err := PIDPath()
 	if err != nil {

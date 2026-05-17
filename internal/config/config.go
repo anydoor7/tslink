@@ -86,6 +86,14 @@ func RegistryPath() (string, error) {
 	return filepath.Join(dir, "registry.json"), nil
 }
 
+func RuntimeSnapshotPath() (string, error) {
+	dir, err := Dir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "runtime.json"), nil
+}
+
 func PIDPath() (string, error) {
 	dir, err := Dir()
 	if err != nil {
