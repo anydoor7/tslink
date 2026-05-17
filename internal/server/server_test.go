@@ -21,6 +21,7 @@ import (
 
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/registry"
+	runtimesnapshot "github.com/monody0007/tslink/internal/runtime"
 	"github.com/monody0007/tslink/internal/tailapi"
 	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/tsnet"
@@ -72,8 +73,9 @@ func (l *fakeListener) Close() error {
 }
 
 type fakeTSNetServer struct {
-	upErr  error
-	closed bool
+	upErr       error
+	closed      bool
+	certDomains []string
 }
 
 func (s *fakeTSNetServer) Up(context.Context) (*ipnstate.Status, error) {
@@ -100,7 +102,7 @@ func (s *fakeTSNetServer) LocalClient() (*LocalClient, error) {
 }
 
 func (s *fakeTSNetServer) CertDomains() []string {
-	return nil
+	return append([]string(nil), s.certDomains...)
 }
 
 func (s *fakeTSNetServer) Close() error {
@@ -1122,6 +1124,176 @@ func TestSyncNodes_RemovesDeletedService(t *testing.T) {
 	}
 	if _, err := os.Stat(stateDir); !os.IsNotExist(err) {
 		t.Fatalf("expected %q to be removed, stat err = %v", stateDir, err)
+	}
+}
+
+func TestSyncNodes_WritesRuntimeSnapshotAfterServiceStarts(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+
+	services := []registry.Service{
+		{Name: "files", Type: registry.TypeFile, Path: t.TempDir(), Tags: []string{"tag:files"}},
+	}
+	regPath := writeRegistry(t, services)
+
+	oldNew := newTSNetServerFn
+	newTSNetServerFn = func(svc registry.Service, stateDir, authKey, controlURL string) tsnetServer {
+		return &fakeTSNetServer{certDomains: []string{"files.tailnet.ts.net"}}
+	}
+	t.Cleanup(func() { newTSNetServerFn = oldNew })
+
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	if err := s.syncNodes(context.Background()); err != nil {
+		t.Fatalf("syncNodes() error = %v", err)
+	}
+
+	snapshotPath, err := config.RuntimeSnapshotPath()
+	if err != nil {
+		t.Fatalf("RuntimeSnapshotPath() error = %v", err)
+	}
+	snapshot, err := runtimesnapshot.Load(snapshotPath)
+	if err != nil {
+		t.Fatalf("runtime Load() error = %v", err)
+	}
+	if snapshot.SchemaVersion != runtimesnapshot.SchemaVersion {
+		t.Fatalf("schema_version = %q, want %q", snapshot.SchemaVersion, runtimesnapshot.SchemaVersion)
+	}
+	if snapshot.DaemonPID != os.Getpid() {
+		t.Fatalf("daemon_pid = %d, want %d", snapshot.DaemonPID, os.Getpid())
+	}
+	if snapshot.DaemonStartedAt.IsZero() || snapshot.UpdatedAt.IsZero() {
+		t.Fatalf("snapshot timestamps should be set: %+v", snapshot)
+	}
+	reg, err := registry.Load(regPath)
+	if err != nil {
+		t.Fatalf("registry.Load() error = %v", err)
+	}
+	wantFingerprint, err := runtimesnapshot.RegistryFingerprint(reg)
+	if err != nil {
+		t.Fatalf("RegistryFingerprint() error = %v", err)
+	}
+	if snapshot.RegistryFingerprint != wantFingerprint {
+		t.Fatalf("registry_fingerprint = %q, want %q", snapshot.RegistryFingerprint, wantFingerprint)
+	}
+	if len(snapshot.Services) != 1 {
+		t.Fatalf("snapshot services = %d, want 1", len(snapshot.Services))
+	}
+	entry := snapshot.Services[0]
+	if entry.Name != "files" || entry.Type != registry.TypeFile {
+		t.Fatalf("service entry = %+v, want files file", entry)
+	}
+	if entry.Endpoint.Display != "https://files.tailnet.ts.net" || entry.Endpoint.State != "exact" {
+		t.Fatalf("endpoint = %+v, want exact cert-domain URL", entry.Endpoint)
+	}
+	if entry.Exposure.Kind != "tailnet" || entry.Exposure.Public {
+		t.Fatalf("exposure = %+v, want private tailnet", entry.Exposure)
+	}
+	if strings.Join(entry.CertDomains, ",") != "files.tailnet.ts.net" {
+		t.Fatalf("cert domains = %v, want files.tailnet.ts.net", entry.CertDomains)
+	}
+}
+
+func TestSyncNodes_UpdatesRuntimeSnapshotAfterServiceStops(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+	writeRegistry(t, []registry.Service{})
+
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	s.nodes["old"] = &ServiceNode{
+		service:  registry.Service{Name: "old", Type: registry.TypeFile, Path: t.TempDir()},
+		tsnetSrv: &fakeTSNetServer{},
+		cancel:   func() {},
+	}
+
+	if err := s.syncNodes(context.Background()); err != nil {
+		t.Fatalf("syncNodes() error = %v", err)
+	}
+	snapshotPath, err := config.RuntimeSnapshotPath()
+	if err != nil {
+		t.Fatalf("RuntimeSnapshotPath() error = %v", err)
+	}
+	snapshot, err := runtimesnapshot.Load(snapshotPath)
+	if err != nil {
+		t.Fatalf("runtime Load() error = %v", err)
+	}
+	if len(snapshot.Services) != 0 {
+		t.Fatalf("snapshot services = %+v, want empty after service stop", snapshot.Services)
+	}
+}
+
+func TestCloseAllNodes_RemovesRuntimeSnapshot(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+	snapshotPath, err := config.RuntimeSnapshotPath()
+	if err != nil {
+		t.Fatalf("RuntimeSnapshotPath() error = %v", err)
+	}
+	if err := runtimesnapshot.Save(snapshotPath, runtimesnapshot.NewSnapshot(os.Getpid(), time.Now(), "sha256:test", time.Now(), nil)); err != nil {
+		t.Fatalf("runtime Save() error = %v", err)
+	}
+
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	s.closeAllNodes()
+
+	if _, err := os.Stat(snapshotPath); !os.IsNotExist(err) {
+		t.Fatalf("runtime snapshot should be removed on close, stat err = %v", err)
+	}
+}
+
+func TestSyncNodes_RuntimeSnapshotWriteFailureLoggedNonFatal(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+	writeRegistry(t, []registry.Service{
+		{Name: "files", Type: registry.TypeFile, Path: t.TempDir()},
+	})
+
+	oldNew := newTSNetServerFn
+	newTSNetServerFn = func(svc registry.Service, stateDir, authKey, controlURL string) tsnetServer {
+		return &fakeTSNetServer{certDomains: []string{"files.tailnet.ts.net"}}
+	}
+	t.Cleanup(func() { newTSNetServerFn = oldNew })
+
+	oldSave := runtimeSaveSnapshotFn
+	runtimeSaveSnapshotFn = func(path string, snapshot runtimesnapshot.Snapshot) error {
+		return errors.New("disk full")
+	}
+	t.Cleanup(func() { runtimeSaveSnapshotFn = oldSave })
+
+	var logBuf bytes.Buffer
+	oldLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, nil)))
+	t.Cleanup(func() { slog.SetDefault(oldLogger) })
+
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	err = s.syncNodes(context.Background())
+	if err != nil {
+		t.Fatalf("syncNodes() error = %v, want snapshot write failure to be non-fatal", err)
+	}
+	if _, exists := s.nodes["files"]; !exists {
+		t.Fatal("service should remain running after snapshot write failure")
+	}
+	if !strings.Contains(logBuf.String(), "runtime snapshot write failed") || !strings.Contains(logBuf.String(), "disk full") {
+		t.Fatalf("logs = %s, want runtime snapshot warning", logBuf.String())
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -18,6 +19,7 @@ import (
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/metrics"
 	"github.com/monody0007/tslink/internal/registry"
+	runtimesnapshot "github.com/monody0007/tslink/internal/runtime"
 	"github.com/monody0007/tslink/internal/tailapi"
 	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/tsnet"
@@ -43,6 +45,12 @@ var newTSNetServerFn = func(svc registry.Service, stateDir, authKey, controlURL 
 		AdvertiseTags: svc.Tags,
 	}
 }
+
+var (
+	runtimeSnapshotPathFn   = config.RuntimeSnapshotPath
+	runtimeSaveSnapshotFn   = runtimesnapshot.Save
+	runtimeRemoveSnapshotFn = runtimesnapshot.Remove
+)
 
 const (
 	httpReadHeaderTimeout = 10 * time.Second
@@ -99,6 +107,8 @@ type Server struct {
 	ensureTagsFn    EnsureTagsFunc
 	cleanupNodesFn  CleanupStaleNodesFunc
 	shuttingDown    atomic.Bool
+	daemonPID       int
+	daemonStartedAt time.Time
 }
 
 // New creates a new multi-node server.
@@ -115,6 +125,8 @@ func New(authKey, controlURL string) (*Server, error) {
 		cfgDir:          cfgDir,
 		metrics:         metrics.New(),
 		cleanupNodesFn:  tailapi.CleanupStaleNodesResult,
+		daemonPID:       os.Getpid(),
+		daemonStartedAt: time.Now().UTC(),
 	}, nil
 }
 
@@ -179,6 +191,10 @@ func (s *Server) syncNodes(ctx context.Context) error {
 	reg, err := registry.Load(regPath)
 	if err != nil {
 		return err
+	}
+	registryFingerprint, err := runtimesnapshot.RegistryFingerprint(reg)
+	if err != nil {
+		return fmt.Errorf("runtime snapshot registry fingerprint: %w", err)
 	}
 
 	// Build desired state
@@ -276,6 +292,7 @@ func (s *Server) syncNodes(ctx context.Context) error {
 		}
 	}
 
+	s.writeRuntimeSnapshotLocked(registryFingerprint)
 	return errors.Join(append(reloadErrs, startErrs...)...)
 }
 
@@ -392,6 +409,47 @@ func (s *Server) cleanupAuthIdentityNodes(ctx context.Context, targets []tailapi
 		slog.Info("removed stale tailnet nodes before auth identity restart", "matched", cleanup.Matched, "deleted", cleanup.Deleted)
 	}
 	return nil
+}
+
+func (s *Server) writeRuntimeSnapshotLocked(registryFingerprint string) {
+	path, err := runtimeSnapshotPathFn()
+	if err != nil {
+		slog.Warn("runtime snapshot path unavailable", "error", err)
+		return
+	}
+	names := make([]string, 0, len(s.nodes))
+	for name := range s.nodes {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	states := make([]runtimesnapshot.ServiceState, 0, len(names))
+	for _, name := range names {
+		node := s.nodes[name]
+		var certDomains []string
+		if node.tsnetSrv != nil {
+			certDomains = node.tsnetSrv.CertDomains()
+		}
+		states = append(states, runtimesnapshot.ServiceState{
+			Service:     node.service,
+			CertDomains: certDomains,
+		})
+	}
+	snapshot := runtimesnapshot.NewSnapshot(s.daemonPID, s.daemonStartedAt, registryFingerprint, time.Now().UTC(), states)
+	if err := runtimeSaveSnapshotFn(path, snapshot); err != nil {
+		slog.Warn("runtime snapshot write failed; continuing with running services", "path", path, "error", err)
+	}
+}
+
+func (s *Server) removeRuntimeSnapshot() {
+	path, err := runtimeSnapshotPathFn()
+	if err != nil {
+		slog.Warn("runtime snapshot path unavailable during shutdown", "error", err)
+		return
+	}
+	if err := runtimeRemoveSnapshotFn(path); err != nil {
+		slog.Warn("runtime snapshot remove failed during shutdown", "path", path, "error", err)
+	}
 }
 
 func validateServiceForStartup(svc registry.Service) error {
@@ -626,11 +684,11 @@ func (s *Server) stopNodeLocked(name string, removeState bool) {
 
 func (s *Server) closeAllNodes() {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	for name := range s.nodes {
 		s.stopNodeLocked(name, false) // keep state on graceful shutdown
 	}
+	s.mu.Unlock()
+	s.removeRuntimeSnapshot()
 }
 
 func (s *Server) watchRegistry(ctx context.Context) {
