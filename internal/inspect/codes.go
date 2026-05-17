@@ -7,6 +7,8 @@ const (
 	WarningCodeTCPAllowedUsersInvalid   = "tcp_allowed_users_invalid"
 	WarningCodeHTTPAuthConfigured       = "http_auth_configured"
 	WarningCodeServiceTypeUnknown       = "service_type_unknown"
+	WarningCodeRuntimeSnapshotMissing   = "runtime_snapshot_missing"
+	WarningCodeRuntimeSnapshotStale     = "runtime_snapshot_stale"
 	WarningCodeFunnelAllowConflict      = registry.CodeFunnelAllowConflict
 	WarningCodeFunnelControlURLConflict = registry.CodeFunnelControlURLConflict
 	WarningCodeFunnelTypeConflict       = registry.CodeFunnelTypeConflict
@@ -38,6 +40,16 @@ var WarningCodeRegistry = map[string]WarningCodeMeta{
 		Severity:    "warning",
 		Source:      "service.type",
 		Description: "The registry contains a service type unknown to this TSLink version.",
+	},
+	WarningCodeRuntimeSnapshotMissing: {
+		Severity:    "warning",
+		Source:      "runtime.snapshot",
+		Description: "No runtime snapshot is available, so exact runtime endpoints cannot be proven.",
+	},
+	WarningCodeRuntimeSnapshotStale: {
+		Severity:    "warning",
+		Source:      "runtime.snapshot",
+		Description: "The runtime snapshot is malformed or does not match the current daemon or registry.",
 	},
 	WarningCodeFunnelAllowConflict: {
 		Severity:    "error",

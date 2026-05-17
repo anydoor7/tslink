@@ -16,6 +16,7 @@ const (
 	EndpointKindTCP         = "tcp"
 	EndpointKindUnknown     = "unknown"
 
+	EndpointStateExact    = "exact"
 	EndpointStateExpected = "expected"
 
 	ExposureTailnet      = "tailnet"

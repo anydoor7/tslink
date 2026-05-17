@@ -243,3 +243,19 @@ func TestFunnelConflictCodesAreRegistered(t *testing.T) {
 		}
 	}
 }
+
+func TestRuntimeSnapshotCodesAreRegistered(t *testing.T) {
+	required := []string{
+		WarningCodeRuntimeSnapshotMissing,
+		WarningCodeRuntimeSnapshotStale,
+	}
+	for _, code := range required {
+		meta, ok := WarningCodeRegistry[code]
+		if !ok {
+			t.Fatalf("runtime snapshot code %s is not registered", code)
+		}
+		if meta.Severity != "warning" || meta.Source != "runtime.snapshot" || meta.Description == "" {
+			t.Fatalf("runtime snapshot code %s has incomplete metadata: %+v", code, meta)
+		}
+	}
+}
