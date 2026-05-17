@@ -1,6 +1,9 @@
 package metrics
 
 import (
+	"bufio"
+	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -111,6 +114,58 @@ func TestMetricsMiddleware_DelegatesFlush(t *testing.T) {
 
 	if !rec.Flushed {
 		t.Fatal("expected Flush to delegate to the underlying ResponseWriter")
+	}
+}
+
+type hijackRecorder struct {
+	*httptest.ResponseRecorder
+	conn   net.Conn
+	called bool
+}
+
+func (r *hijackRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	r.called = true
+	if r.conn == nil {
+		return nil, nil, errors.New("no conn")
+	}
+	return r.conn, bufio.NewReadWriter(bufio.NewReader(r.conn), bufio.NewWriter(r.conn)), nil
+}
+
+func TestResponseWriterHijackDelegates(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+
+	rec := &hijackRecorder{
+		ResponseRecorder: httptest.NewRecorder(),
+		conn:             server,
+	}
+	rw := &responseWriter{ResponseWriter: rec}
+
+	conn, _, err := rw.Hijack()
+	if err != nil {
+		t.Fatalf("Hijack() error = %v", err)
+	}
+	if conn != server {
+		t.Fatalf("Hijack() conn = %v, want delegated server conn", conn)
+	}
+	if !rec.called {
+		t.Fatal("underlying Hijack was not called")
+	}
+}
+
+func TestResponseWriterHijackRequiresUnderlyingHijacker(t *testing.T) {
+	rw := &responseWriter{ResponseWriter: httptest.NewRecorder()}
+
+	conn, buf, err := rw.Hijack()
+	if err == nil {
+		t.Fatal("Hijack() error = nil, want unsupported error")
+	}
+	if conn != nil || buf != nil {
+		t.Fatalf("Hijack() = conn %v buf %v, want nils on error", conn, buf)
+	}
+	if !strings.Contains(err.Error(), "does not implement http.Hijacker") {
+		t.Fatalf("Hijack() error = %v, want unsupported hijacker message", err)
 	}
 }
 
