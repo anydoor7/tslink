@@ -7,7 +7,7 @@ TSLink is designed around zero-trust principles. Security is not an afterthought
 - **No public internet exposure by default** — all services are only accessible within your Tailscale network
 - **Explicit public exposure guardrail** — Tailscale Funnel is proxy-only and requires an explicit `--public` / `public_ack:true` acknowledgement
 - **End-to-end WireGuard encryption** — all traffic is encrypted between devices
-- **Identity verification on every request** — Tailscale WhoIs authenticates each request
+- **HTTP identity verification for proxy/file requests** — Tailscale WhoIs authenticates TSLink-managed HTTP requests before identity headers are injected; raw TCP streams and public Funnel exposure are not treated as TSLink-enforced Tailscale user authentication
 - **System keychain credential storage** — API keys are stored in macOS Keychain / Linux secret service, not in plaintext files
 - **Dynamic auth key derivation** — authentication keys are derived on demand and never persisted to disk
 - **Per-service isolation** — each service runs as its own tsnet node with an independent identity

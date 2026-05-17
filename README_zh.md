@@ -34,7 +34,7 @@ TSLink 在每一层实现零信任原则：
 
 | 零信任原则 | TSLink 实现 |
 |-----------|------------|
-| **永不信任，始终验证** | 每个请求通过 Tailscale WhoIs 认证 — 身份头（`X-Tailscale-User-Login`、`X-Tailscale-User-Name`、`X-Tailscale-User-Picture`、`X-Tailscale-Node`）注入每个代理请求。入站身份头被剥离以防伪造。 |
+| **永不信任，始终验证** | TSLink 管理的 HTTP 代理/文件请求通过 Tailscale WhoIs 认证 — 身份头（`X-Tailscale-User-Login`、`X-Tailscale-User-Name`、`X-Tailscale-User-Picture`、`X-Tailscale-Node`）注入代理请求。入站身份头被剥离以防伪造。 |
 | **HTTP 最小权限访问** | `--allow` 限制 proxy 和 file 服务的访问用户或标签。TCP 服务依赖 Tailscale 网络 ACL 和标签。 |
 | **假设已被攻破** | 每个连接都有端到端 WireGuard 加密。即使本地网络被攻破，设备间流量仍然加密。 |
 | **微分段** | 每个服务作为隔离的 tsnet 节点运行，拥有独立的主机名、TLS 证书和网络身份。攻破一个服务不会影响其他服务。 |
@@ -265,7 +265,7 @@ tslink serve --daemon
 TSLink 支持两种凭证（只需选一种）：
 
 - **API 访问令牌** (`tskey-api-*`) — 在 [管理后台 → Keys](https://login.tailscale.com/admin/settings/keys) 生成。当前自动化能力最完整，包括通过 Tailscale API 管理标签和设备。它会周期性过期。
-- **OAuth 客户端密钥** (`tskey-client-*`) — 在 [管理后台 → OAuth](https://login.tailscale.com/admin/settings/oauth) 生成。它不会过期，但 TSLink 当前的 REST API 自动化路径在该模式下更窄。用于无人值守前请先验证所需的标签/设备操作。
+- **OAuth 客户端密钥** (`tskey-client-*`) — 在 [管理后台 → OAuth](https://login.tailscale.com/admin/settings/oauth) 生成。它不会过期，但 TSLink 当前的 Tailscale 标签/设备自动化在该模式下更窄，因为这些操作依赖 Tailscale REST API。用于无人值守前请先验证所需的标签/设备操作。
 
 `tslink login` 会交互式引导你完成任一路径。凭证优先存储在系统钥匙串（macOS Keychain / Linux secret service / Windows 凭据管理器）中；headless 环境可回退到受限权限文件。
 
@@ -388,7 +388,7 @@ TSLink 为每个注册的服务创建一个专用的 [tsnet](https://tailscale.c
 
 **关键架构决策：**
 - **Per-service 嵌入式节点** — 每个服务获得独立的 tailnet 身份、主机名和 TLS 证书（微分段）
-- **身份感知代理** — 每个请求进行 WhoIs 验证，注入身份头并防止伪造
+- **身份感知代理** — TSLink 管理的 HTTP 代理/文件请求进行 WhoIs 验证，注入身份头并防止伪造
 - **安全凭证管理** — 系统钥匙串存储，headless 环境支持受限权限文件后备
 - **基于文件的注册表** — 服务在 `~/.config/tslink/registry.json` 中持久化，跨重启保存
 - **热重载** — 注册表文件监听意味着 `tslink add` 无需重启服务即可生效

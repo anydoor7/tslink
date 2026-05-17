@@ -34,7 +34,7 @@ TSLink implements zero-trust principles at every layer:
 
 | Zero-Trust Principle | TSLink Implementation |
 |-----|-----|
-| **Never trust, always verify** | Every request is authenticated via Tailscale WhoIs — identity headers (`X-Tailscale-User-Login`, `X-Tailscale-User-Name`, `X-Tailscale-User-Picture`, `X-Tailscale-Node`) are injected into every proxied request. Inbound identity headers are stripped to prevent spoofing. |
+| **Never trust, always verify** | TSLink-managed HTTP proxy/file requests are authenticated via Tailscale WhoIs — identity headers (`X-Tailscale-User-Login`, `X-Tailscale-User-Name`, `X-Tailscale-User-Picture`, `X-Tailscale-Node`) are injected into proxied requests. Inbound identity headers are stripped to prevent spoofing. |
 | **HTTP least-privilege access** | `--allow` restricts proxy and file services to specific users or tags. TCP services rely on Tailscale network ACLs and tags. |
 | **Assume breach** | End-to-end WireGuard encryption on every connection. Even if your local network is compromised, traffic between your devices remains encrypted. |
 | **Microsegmentation** | Each service runs as an isolated tsnet node with its own hostname, TLS certificate, and network identity. Compromising one service does not grant access to others. |
@@ -265,7 +265,7 @@ tslink serve --daemon
 TSLink accepts two credential types (you only need one):
 
 - **API access token** (`tskey-api-*`) — generate at [Admin → Keys](https://login.tailscale.com/admin/settings/keys). Use this for the most complete automation today, including tag and device management through the Tailscale API. It expires periodically.
-- **OAuth client secret** (`tskey-client-*`) — generate at [Admin → OAuth](https://login.tailscale.com/admin/settings/oauth). It does not expire, but TSLink's current REST API automation paths are narrower in this mode. Use it only after validating your required tag/device operations.
+- **OAuth client secret** (`tskey-client-*`) — generate at [Admin → OAuth](https://login.tailscale.com/admin/settings/oauth). It does not expire, but TSLink's current Tailscale tag/device automation is narrower in this mode because those operations use the Tailscale REST API. Use it only after validating your required tag/device operations.
 
 `tslink login` guides you through either path interactively. Credentials are stored in the system keychain first (macOS Keychain / Linux secret service / Windows Credential Manager), with restricted-permission file fallback for headless environments.
 
@@ -388,7 +388,7 @@ TSLink creates a dedicated [tsnet](https://tailscale.com/kb/1244/tsnet) node for
 
 **Key architectural decisions:**
 - **Per-service embedded nodes** — each service gets its own tailnet identity, hostname, and TLS certificate (microsegmentation)
-- **Identity-aware proxying** — WhoIs verification on every request, with identity headers injected and spoofing prevented
+- **Identity-aware proxying** — WhoIs verification on TSLink-managed HTTP proxy/file requests, with identity headers injected and spoofing prevented
 - **Secure credential management** — system keychain storage with restricted-permission file fallback for headless environments
 - **File-based registry** — services persist across restarts in `~/.config/tslink/registry.json`
 - **Hot reload** — file watcher on the registry means `tslink add` takes effect without restarting the server
