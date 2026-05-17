@@ -2,11 +2,13 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/monody0007/tslink/internal/inspect"
 	"github.com/monody0007/tslink/internal/registry"
@@ -18,7 +20,8 @@ func newTestHandler(t *testing.T) (*apiHandler, string) {
 	dir := t.TempDir()
 	regPath := filepath.Join(dir, "registry.json")
 	pidPath := filepath.Join(dir, "tslink.pid")
-	return &apiHandler{regPath: regPath, pidPath: pidPath}, dir
+	snapshotPath := filepath.Join(dir, "runtime.json")
+	return &apiHandler{regPath: regPath, pidPath: pidPath, runtimeSnapshotPath: snapshotPath}, dir
 }
 
 // parseResponse decodes the first JSON line written to buf.
@@ -37,6 +40,26 @@ func sendRequest(t *testing.T, h *apiHandler, req APIRequest) APIResponse {
 	var buf bytes.Buffer
 	h.handle(req, &buf)
 	return parseResponse(t, &buf)
+}
+
+func assertAPIRawJSONHasNoPrivateRegistryFields(t *testing.T, raw string, forbiddenValues ...string) {
+	t.Helper()
+	for _, forbidden := range []string{
+		`"basic_auth"`,
+		`"control_url"`,
+		`"acme_email"`,
+		`"domain"`,
+		`"allowed_users"`,
+	} {
+		if strings.Contains(raw, forbidden) {
+			t.Fatalf("api JSON leaked private registry field %s: %s", forbidden, raw)
+		}
+	}
+	for _, forbidden := range forbiddenValues {
+		if strings.Contains(raw, forbidden) {
+			t.Fatalf("api JSON leaked private value %q: %s", forbidden, raw)
+		}
+	}
 }
 
 // --- list ---
@@ -630,6 +653,290 @@ func TestAPIStatus_WithServices(t *testing.T) {
 	}
 }
 
+func TestAPIStatusURLsReturnsVNextPayload(t *testing.T) {
+	h, _ := newTestHandler(t)
+	if _, err := registry.Add(h.regPath, registry.Service{
+		Name:         "web",
+		Type:         registry.TypeProxy,
+		Target:       "http://localhost:3000",
+		AllowedUsers: []string{"alice@example.com", "tag:admin"},
+		Middleware: &registry.MiddlewareConfig{
+			BasicAuth: "user:pass",
+		},
+	}); err != nil {
+		t.Fatalf("registry.Add web: %v", err)
+	}
+	if _, err := registry.Add(h.regPath, registry.Service{
+		Name:   "db",
+		Type:   registry.TypeTCP,
+		Target: "localhost:5432",
+		Port:   5432,
+	}); err != nil {
+		t.Fatalf("registry.Add db: %v", err)
+	}
+	withStatusURLSeams(t, true, 4242, time.Date(2026, 5, 17, 12, 0, 0, 0, time.UTC))
+
+	var buf bytes.Buffer
+	h.handle(APIRequest{Action: "status", URLs: true}, &buf)
+	raw := buf.String()
+	assertAPIRawJSONHasNoPrivateRegistryFields(t, raw, "alice@example.com", "tag:admin", "user:pass")
+
+	resp := parseResponse(t, &buf)
+	if !resp.OK {
+		t.Fatalf("expected ok, got error: %s", resp.Error)
+	}
+	if resp.StatusURLs == nil {
+		t.Fatalf("status_urls missing in response: %+v", resp)
+	}
+	result := *resp.StatusURLs
+	if result.SchemaVersion != inspect.SchemaVersion {
+		t.Fatalf("schema_version = %q, want %q", result.SchemaVersion, inspect.SchemaVersion)
+	}
+	if !result.DaemonRunning || result.DaemonPID != 4242 || result.ServiceCount != 2 {
+		t.Fatalf("status urls = %+v, want running pid 4242 with 2 services", result)
+	}
+	if result.RuntimeSnapshot.Code != inspect.WarningCodeRuntimeSnapshotMissing {
+		t.Fatalf("runtime snapshot = %+v, want missing warning code", result.RuntimeSnapshot)
+	}
+
+	web := findStatusService(t, result, "web")
+	if web.Endpoint.Kind != inspect.EndpointKindHTTPS || web.Endpoint.Display != "https://web.<tailnet>.ts.net" {
+		t.Fatalf("web endpoint = %+v, want typed private HTTPS endpoint", web.Endpoint)
+	}
+	if web.Allow.Mode != "restricted" || web.Allow.Count != 2 || !web.Allow.Redacted || len(web.Allow.Entries) != 0 {
+		t.Fatalf("web allow = %+v, want redacted allow summary", web.Allow)
+	}
+	if !hasStatusWarningCode(web.Warnings, inspect.WarningCodeHTTPAuthConfigured) {
+		t.Fatalf("web warnings = %+v, want http_auth_configured", web.Warnings)
+	}
+	if !hasStatusWarningCode(web.Warnings, inspect.WarningCodeRuntimeSnapshotMissing) {
+		t.Fatalf("web warnings = %+v, want runtime_snapshot_missing", web.Warnings)
+	}
+
+	db := findStatusService(t, result, "db")
+	if db.Endpoint.Kind != inspect.EndpointKindTCP || db.Endpoint.Port != 5432 || db.Endpoint.Display != "db.<tailnet>.ts.net:5432" {
+		t.Fatalf("db endpoint = %+v, want typed TCP endpoint", db.Endpoint)
+	}
+	if !hasStatusWarningCode(db.Warnings, inspect.WarningCodeTCPHTTPACLNotApplicable) {
+		t.Fatalf("db warnings = %+v, want tcp_http_acl_not_applicable", db.Warnings)
+	}
+}
+
+func TestAPIDoctorReturnsVNextPayloadReadOnly(t *testing.T) {
+	env := newDoctorTestEnv(t, nil)
+	before, err := os.ReadFile(env.regPath)
+	if err != nil {
+		t.Fatalf("read registry before doctor: %v", err)
+	}
+	h := &apiHandler{regPath: env.regPath, pidPath: env.pidPath, runtimeSnapshotPath: env.snapshotPath}
+
+	var buf bytes.Buffer
+	h.handle(APIRequest{Action: "doctor"}, &buf)
+	raw := buf.String()
+	assertAPIRawJSONHasNoPrivateRegistryFields(t, raw, "tskey-api-secret-value")
+
+	resp := parseResponse(t, &buf)
+	if !resp.OK {
+		t.Fatalf("expected ok, got error: %s", resp.Error)
+	}
+	if resp.Doctor == nil {
+		t.Fatalf("doctor missing in response: %+v", resp)
+	}
+	result := *resp.Doctor
+	if result.SchemaVersion != inspect.SchemaVersion {
+		t.Fatalf("schema_version = %q, want %q", result.SchemaVersion, inspect.SchemaVersion)
+	}
+	if result.Paths.Registry != env.regPath || result.Paths.RuntimeSnapshot != env.snapshotPath || result.Paths.PID != env.pidPath {
+		t.Fatalf("doctor paths = %+v, want test env paths", result.Paths)
+	}
+	if result.Counts.Services != 0 || result.CredentialMode != doctorCredentialAPIToken || !result.Daemon.Running {
+		t.Fatalf("doctor result = %+v, want local read-only status with API token and running daemon", result)
+	}
+	assertDoctorFinding(t, result, inspect.WarningCodeRuntimeSnapshotMissing)
+
+	after, err := os.ReadFile(env.regPath)
+	if err != nil {
+		t.Fatalf("read registry after doctor: %v", err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatalf("doctor mutated registry:\nbefore=%s\nafter=%s", before, after)
+	}
+}
+
+func TestAPIDoctorProbeExternalOption(t *testing.T) {
+	env := newDoctorTestEnv(t, []registry.Service{{
+		Name:   "web",
+		Type:   registry.TypeProxy,
+		Target: "http://192.0.2.10:3000",
+	}})
+	probeCalls := 0
+	doctorProbeTargetFn = func(_ context.Context, address string, _ time.Duration) error {
+		probeCalls++
+		if address != "192.0.2.10:3000" {
+			t.Fatalf("probe address = %q, want 192.0.2.10:3000", address)
+		}
+		return nil
+	}
+	h := &apiHandler{regPath: env.regPath, pidPath: env.pidPath, runtimeSnapshotPath: env.snapshotPath}
+
+	resp := sendRequest(t, h, APIRequest{Action: "doctor", ProbeExternal: true})
+	if !resp.OK {
+		t.Fatalf("expected ok, got error: %s", resp.Error)
+	}
+	if resp.Doctor == nil {
+		t.Fatalf("doctor missing in response: %+v", resp)
+	}
+	if probeCalls != 1 {
+		t.Fatalf("probeCalls = %d, want 1", probeCalls)
+	}
+	assertDoctorFinding(t, *resp.Doctor, inspect.WarningCodeProxyNonLoopbackTarget)
+	assertDoctorNoFinding(t, *resp.Doctor, inspect.WarningCodeTargetProbeSkippedExternal)
+}
+
+func TestAPIAccessExplainReturnsRedactedVNextPayload(t *testing.T) {
+	h, _ := newTestHandler(t)
+	if _, err := registry.Add(h.regPath, registry.Service{
+		Name:         "web",
+		Type:         registry.TypeProxy,
+		Target:       "user:pass@localhost:3000?token=abc",
+		AllowedUsers: []string{"alice@example.com", "tag:admin"},
+	}); err != nil {
+		t.Fatalf("registry.Add: %v", err)
+	}
+
+	var buf bytes.Buffer
+	h.handle(APIRequest{Action: "access_explain", Name: "web"}, &buf)
+	raw := buf.String()
+	assertAPIRawJSONHasNoPrivateRegistryFields(t, raw, "alice@example.com", "tag:admin", "user:pass", "token=abc")
+
+	resp := parseResponse(t, &buf)
+	if !resp.OK {
+		t.Fatalf("expected ok, got error: %s", resp.Error)
+	}
+	if resp.AccessExplain == nil {
+		t.Fatalf("access_explain missing in response: %+v", resp)
+	}
+	result := *resp.AccessExplain
+	if result.SchemaVersion != inspect.SchemaVersion {
+		t.Fatalf("schema_version = %q, want %q", result.SchemaVersion, inspect.SchemaVersion)
+	}
+	if result.TSLinkKnown.Allow.Count != 2 || !result.TSLinkKnown.Allow.Redacted || len(result.TSLinkKnown.Allow.Entries) != 0 {
+		t.Fatalf("known allow = %+v, want redacted summary", result.TSLinkKnown.Allow)
+	}
+	if result.TSLinkLocalEnforcement.FailureMode != accessIdentityFailureModeDenyWhenUnresolved {
+		t.Fatalf("failure_mode = %q, want %q", result.TSLinkLocalEnforcement.FailureMode, accessIdentityFailureModeDenyWhenUnresolved)
+	}
+	if result.TSLinkKnown.Backend.Display != "localhost:3000" {
+		t.Fatalf("backend display = %q, want schemeless secret redaction", result.TSLinkKnown.Backend.Display)
+	}
+	classification := result.TSLinkKnown.TargetLoopbackClassification
+	if classification.Classification != "loopback_or_local" || classification.Host != "localhost" || classification.Port != "3000" {
+		t.Fatalf("target classification = %+v, want redacted loopback localhost:3000", classification)
+	}
+}
+
+func TestAPIAccessExplainNotFound(t *testing.T) {
+	h, _ := newTestHandler(t)
+	resp := sendRequest(t, h, APIRequest{Action: "access_explain", Name: "missing"})
+	if resp.OK {
+		t.Fatal("expected not-found error")
+	}
+	if !strings.Contains(resp.Error, "service not found: missing") {
+		t.Fatalf("error = %q, want stable not-found message", resp.Error)
+	}
+}
+
+func TestAPITemplateListReturnsBuiltins(t *testing.T) {
+	h, _ := newTestHandler(t)
+	resp := sendRequest(t, h, APIRequest{Action: "template_list"})
+	if !resp.OK {
+		t.Fatalf("expected ok, got error: %s", resp.Error)
+	}
+	if resp.TemplateList == nil {
+		t.Fatalf("template_list missing in response: %+v", resp)
+	}
+	if resp.TemplateList.SchemaVersion != inspect.SchemaVersion {
+		t.Fatalf("schema_version = %q, want %q", resp.TemplateList.SchemaVersion, inspect.SchemaVersion)
+	}
+	found := map[string]bool{}
+	for _, tmpl := range resp.TemplateList.Templates {
+		found[tmpl.Name] = true
+	}
+	for _, tmpl := range templateSummaries() {
+		if !found[tmpl.Name] {
+			t.Fatalf("template_list missing %q: %+v", tmpl.Name, resp.TemplateList.Templates)
+		}
+	}
+	if resp.TemplateList.Count != len(templateSummaries()) {
+		t.Fatalf("count = %d, want %d", resp.TemplateList.Count, len(templateSummaries()))
+	}
+}
+
+func TestAPITemplatePlanDryRunDoesNotCreateRegistry(t *testing.T) {
+	h, _ := newTestHandler(t)
+
+	var buf bytes.Buffer
+	h.handle(APIRequest{Action: "template_plan", Name: "personal-harness"}, &buf)
+	raw := buf.String()
+	assertAPIRawJSONHasNoPrivateRegistryFields(t, raw)
+
+	resp := parseResponse(t, &buf)
+	if !resp.OK {
+		t.Fatalf("expected ok, got error: %s", resp.Error)
+	}
+	if resp.TemplateApply == nil {
+		t.Fatalf("template_apply missing in response: %+v", resp)
+	}
+	if _, err := os.Stat(h.regPath); !os.IsNotExist(err) {
+		t.Fatalf("dry-run registry stat err = %v, want not exist", err)
+	}
+	result := *resp.TemplateApply
+	if result.SchemaVersion != inspect.SchemaVersion || !result.DryRun || result.Applied {
+		t.Fatalf("template plan = %+v, want vNext dry-run not applied", result)
+	}
+	if result.Created != 2 || result.Skipped != 0 {
+		t.Fatalf("created/skipped = %d/%d, want 2/0", result.Created, result.Skipped)
+	}
+}
+
+func TestAPITemplateApplyWritesMissingAndPreservesExisting(t *testing.T) {
+	h, _ := newTestHandler(t)
+	if _, err := registry.Add(h.regPath, registry.Service{
+		Name:   "harness-web",
+		Type:   registry.TypeProxy,
+		Target: "http://localhost:9999",
+		Tags:   []string{"tag:custom"},
+	}); err != nil {
+		t.Fatalf("prepopulate registry: %v", err)
+	}
+
+	var buf bytes.Buffer
+	h.handle(APIRequest{Action: "template_apply", Name: "personal-harness"}, &buf)
+	raw := buf.String()
+	assertAPIRawJSONHasNoPrivateRegistryFields(t, raw)
+
+	resp := parseResponse(t, &buf)
+	if !resp.OK {
+		t.Fatalf("expected ok, got error: %s", resp.Error)
+	}
+	if resp.TemplateApply == nil {
+		t.Fatalf("template_apply missing in response: %+v", resp)
+	}
+	result := *resp.TemplateApply
+	if result.DryRun || !result.Applied || result.Created != 1 || result.Skipped != 1 {
+		t.Fatalf("template apply = %+v, want applied with 1 created and 1 skipped", result)
+	}
+
+	reg, err := registry.Load(h.regPath)
+	if err != nil {
+		t.Fatalf("load registry: %v", err)
+	}
+	if len(reg.Services) != 2 || !hasRegistryService(reg, "harness-api") {
+		t.Fatalf("registry services = %+v, want harness-web and harness-api", reg.Services)
+	}
+	assertHarnessWebCustomized(t, reg)
+}
+
 // --- unknown action ---
 
 func TestAPIUnknownAction(t *testing.T) {
@@ -680,6 +987,21 @@ func TestAPIRejectsUnknownJSONFieldWithoutCreatingService(t *testing.T) {
 	}
 	if len(reg.Services) != 0 {
 		t.Fatalf("services = %+v, want none after rejected request", reg.Services)
+	}
+}
+
+func TestAPIRejectsUnknownJSONFieldWithD7Fields(t *testing.T) {
+	h, _ := newTestHandler(t)
+
+	var buf bytes.Buffer
+	h.handleLine(`{"action":"status","urls":true,"probe_external":false,"unknown":true}`, &buf)
+
+	resp := parseResponse(t, &buf)
+	if resp.OK {
+		t.Fatal("expected ok=false for unknown field")
+	}
+	if !strings.Contains(resp.Error, `unknown field "unknown"`) {
+		t.Fatalf("error = %q, want unknown field", resp.Error)
 	}
 }
 

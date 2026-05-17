@@ -19,17 +19,19 @@ import (
 type APIRequest struct {
 	Action string `json:"action"`
 	// add fields
-	Name       string   `json:"name,omitempty"`
-	Type       string   `json:"type,omitempty"`
-	Target     string   `json:"target,omitempty"`
-	Path       string   `json:"path,omitempty"`
-	Port       int      `json:"port,omitempty"`
-	Tags       []string `json:"tags,omitempty"`
-	Allow      []string `json:"allow,omitempty"`
-	Ephemeral  bool     `json:"ephemeral,omitempty"`
-	Funnel     bool     `json:"funnel,omitempty"`
-	PublicAck  bool     `json:"public_ack,omitempty"`
-	ControlURL string   `json:"control_url,omitempty"`
+	Name          string   `json:"name,omitempty"`
+	Type          string   `json:"type,omitempty"`
+	Target        string   `json:"target,omitempty"`
+	Path          string   `json:"path,omitempty"`
+	Port          int      `json:"port,omitempty"`
+	Tags          []string `json:"tags,omitempty"`
+	Allow         []string `json:"allow,omitempty"`
+	Ephemeral     bool     `json:"ephemeral,omitempty"`
+	Funnel        bool     `json:"funnel,omitempty"`
+	PublicAck     bool     `json:"public_ack,omitempty"`
+	ControlURL    string   `json:"control_url,omitempty"`
+	URLs          bool     `json:"urls,omitempty"`
+	ProbeExternal bool     `json:"probe_external,omitempty"`
 }
 
 // APIResponse is written back to stdout for each request.
@@ -43,6 +45,12 @@ type APIResponse struct {
 	Services []inspect.ServiceView `json:"services,omitempty"`
 	Running  bool                  `json:"running,omitempty"`
 	Count    int                   `json:"count,omitempty"`
+
+	StatusURLs    *StatusURLsResult    `json:"status_urls,omitempty"`
+	Doctor        *DoctorResult        `json:"doctor,omitempty"`
+	AccessExplain *AccessExplainResult `json:"access_explain,omitempty"`
+	TemplateList  *TemplateListResult  `json:"template_list,omitempty"`
+	TemplateApply *TemplateApplyResult `json:"template_apply,omitempty"`
 }
 
 func writeResponse(out io.Writer, resp APIResponse) {
@@ -65,8 +73,9 @@ func decodeAPIRequest(line string) (APIRequest, error) {
 
 // apiHandler holds paths so the logic is unit-testable without touching real config.
 type apiHandler struct {
-	regPath string
-	pidPath string
+	regPath             string
+	pidPath             string
+	runtimeSnapshotPath string
 }
 
 func (h *apiHandler) handleLine(line string, out io.Writer) {
@@ -87,7 +96,17 @@ func (h *apiHandler) handle(req APIRequest, out io.Writer) {
 	case "remove":
 		h.handleRemove(req, out)
 	case "status":
-		h.handleStatus(out)
+		h.handleStatus(req, out)
+	case "doctor":
+		h.handleDoctor(req, out)
+	case "access_explain":
+		h.handleAccessExplain(req, out)
+	case "template_list":
+		h.handleTemplateList(out)
+	case "template_plan":
+		h.handleTemplatePlan(req, out)
+	case "template_apply":
+		h.handleTemplateApply(req, out)
 	default:
 		writeResponse(out, APIResponse{
 			OK:    false,
@@ -226,13 +245,92 @@ func (h *apiHandler) handleRemove(req APIRequest, out io.Writer) {
 	writeResponse(out, APIResponse{OK: true, Message: "service removed"})
 }
 
-func (h *apiHandler) handleStatus(out io.Writer) {
+func (h *apiHandler) handleStatus(req APIRequest, out io.Writer) {
+	if req.URLs {
+		h.handleStatusURLs(out)
+		return
+	}
 	running := daemon.IsRunning(h.pidPath)
 	count := 0
 	if reg, err := registry.Load(h.regPath); err == nil {
 		count = len(reg.Services)
 	}
 	writeResponse(out, APIResponse{OK: true, Running: running, Count: count})
+}
+
+func (h *apiHandler) handleStatusURLs(out io.Writer) {
+	snapshotPath := h.runtimeSnapshotPath
+	if snapshotPath == "" {
+		var err error
+		snapshotPath, err = statusRuntimeSnapshotPathFn()
+		if err != nil {
+			writeResponse(out, APIResponse{OK: false, Error: err.Error()})
+			return
+		}
+	}
+	result, err := getStatusURLs(h.pidPath, h.regPath, snapshotPath)
+	if err != nil {
+		writeResponse(out, APIResponse{OK: false, Error: err.Error()})
+		return
+	}
+	writeResponse(out, APIResponse{OK: true, StatusURLs: &result})
+}
+
+func (h *apiHandler) handleDoctor(req APIRequest, out io.Writer) {
+	result := buildDoctorResult(doctorOptions{ProbeExternal: req.ProbeExternal})
+	writeResponse(out, APIResponse{OK: true, Doctor: &result})
+}
+
+func (h *apiHandler) handleAccessExplain(req APIRequest, out io.Writer) {
+	if req.Name == "" {
+		writeResponse(out, APIResponse{OK: false, Error: "name is required"})
+		return
+	}
+	reg, err := registry.Load(h.regPath)
+	if err != nil {
+		writeResponse(out, APIResponse{OK: false, Error: err.Error()})
+		return
+	}
+	for _, svc := range reg.Services {
+		if svc.Name != req.Name {
+			continue
+		}
+		result := buildAccessExplainResult(svc)
+		writeResponse(out, APIResponse{OK: true, AccessExplain: &result})
+		return
+	}
+	writeResponse(out, APIResponse{OK: false, Error: fmt.Sprintf("service not found: %s", req.Name)})
+}
+
+func (h *apiHandler) handleTemplateList(out io.Writer) {
+	result := listTemplatesResult()
+	writeResponse(out, APIResponse{OK: true, TemplateList: &result})
+}
+
+func (h *apiHandler) handleTemplatePlan(req APIRequest, out io.Writer) {
+	if req.Name == "" {
+		writeResponse(out, APIResponse{OK: false, Error: "name is required"})
+		return
+	}
+	result, err := applyTemplate(req.Name, h.regPath, true)
+	if err != nil {
+		writeResponse(out, APIResponse{OK: false, Error: err.Error()})
+		return
+	}
+	writeResponse(out, APIResponse{OK: true, TemplateApply: &result})
+}
+
+func (h *apiHandler) handleTemplateApply(req APIRequest, out io.Writer) {
+	if req.Name == "" {
+		writeResponse(out, APIResponse{OK: false, Error: "name is required"})
+		return
+	}
+	result, err := applyTemplate(req.Name, h.regPath, false)
+	if err != nil {
+		writeResponse(out, APIResponse{OK: false, Error: err.Error()})
+		return
+	}
+	writeResponse(out, APIResponse{OK: true, TemplateApply: &result})
 }
 
 func init() {
@@ -247,7 +345,13 @@ Supported actions:
   {"action":"add","name":"docs","type":"file","path":"/path/to/dir","tags":["tag:docs"]}
   {"action":"add","name":"mydb","type":"tcp","target":"localhost:5432","tags":["tag:db"]}
   {"action":"remove","name":"myapp"}
-  {"action":"status"}`,
+  {"action":"status"}
+  {"action":"status","urls":true}
+  {"action":"doctor","probe_external":false}
+  {"action":"access_explain","name":"myapp"}
+  {"action":"template_list"}
+  {"action":"template_plan","name":"personal-harness"}
+  {"action":"template_apply","name":"personal-harness"}`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := ensureDirFn(); err != nil {
 				return err
