@@ -4,7 +4,7 @@
 
 TSLink is designed around zero-trust principles. Security is not an afterthought — it is a core architectural decision:
 
-- **No public internet exposure by default** — all services are only accessible within your Tailscale network
+- **No public internet exposure by default** — services are private to your Tailscale network unless proxy-only Funnel exposure is explicitly acknowledged
 - **Explicit public exposure guardrail** — Tailscale Funnel is proxy-only and requires an explicit `--public` / `public_ack:true` acknowledgement
 - **End-to-end WireGuard encryption** — all traffic is encrypted between devices
 - **HTTP identity verification for proxy/file requests** — Tailscale WhoIs authenticates TSLink-managed HTTP requests before identity headers are injected; raw TCP streams and public Funnel exposure are not treated as TSLink-enforced Tailscale user authentication
