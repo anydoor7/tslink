@@ -154,10 +154,13 @@ func TestAccessExplainHumanRedactsAllowAndIncludesCaveats(t *testing.T) {
 
 func TestAccessExplainBackendDisplayRedactsSchemelessSecrets(t *testing.T) {
 	cases := []struct {
-		name        string
-		svc         registry.Service
-		wantDisplay string
-		forbidden   []string
+		name               string
+		svc                registry.Service
+		wantDisplay        string
+		forbidden          []string
+		wantClassification string
+		wantHost           string
+		wantPort           string
 	}{
 		{
 			name: "schemeless proxy target",
@@ -166,8 +169,24 @@ func TestAccessExplainBackendDisplayRedactsSchemelessSecrets(t *testing.T) {
 				Type:   registry.TypeProxy,
 				Target: "localhost:3000?token=abc#frag",
 			},
-			wantDisplay: "localhost:3000",
-			forbidden:   []string{"token=abc", "#frag"},
+			wantDisplay:        "localhost:3000",
+			forbidden:          []string{"token=abc", "#frag"},
+			wantClassification: "loopback_or_local",
+			wantHost:           "localhost",
+			wantPort:           "3000",
+		},
+		{
+			name: "schemeless proxy userinfo target",
+			svc: registry.Service{
+				Name:   "web",
+				Type:   registry.TypeProxy,
+				Target: "user:pass@localhost:5432",
+			},
+			wantDisplay:        "localhost:5432",
+			forbidden:          []string{"user:pass"},
+			wantClassification: "loopback_or_local",
+			wantHost:           "localhost",
+			wantPort:           "5432",
 		},
 		{
 			name: "tcp userinfo target",
@@ -194,6 +213,12 @@ func TestAccessExplainBackendDisplayRedactsSchemelessSecrets(t *testing.T) {
 			for _, forbidden := range tc.forbidden {
 				if strings.Contains(raw, forbidden) {
 					t.Fatalf("access explain JSON leaked %q: %s", forbidden, raw)
+				}
+			}
+			if tc.wantClassification != "" {
+				classification := result.TSLinkKnown.TargetLoopbackClassification
+				if classification.Classification != tc.wantClassification || classification.Host != tc.wantHost || classification.Port != tc.wantPort {
+					t.Fatalf("target classification = %+v, want classification %q host %q port %q", classification, tc.wantClassification, tc.wantHost, tc.wantPort)
 				}
 			}
 		})

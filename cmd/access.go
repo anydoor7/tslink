@@ -339,7 +339,7 @@ func accessClassifyProxyTarget(raw string) (accessTarget, error) {
 		return accessTarget{}, fmt.Errorf("empty proxy target")
 	}
 	if !strings.Contains(raw, "://") {
-		return accessClassifyHostPortTarget(raw, "80")
+		return accessClassifyHostPortTarget(accessRedactSchemelessTargetDisplay(raw), "80")
 	}
 	parsed, err := url.Parse(raw)
 	if err != nil {
