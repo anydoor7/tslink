@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/monody0007/tslink/internal/inspect"
 	"github.com/monody0007/tslink/internal/registry"
 )
 
@@ -72,6 +73,87 @@ func TestAPIList_WithServices(t *testing.T) {
 	}
 	if resp.Services[0].Name != "myapp" {
 		t.Errorf("expected name myapp, got %s", resp.Services[0].Name)
+	}
+	if resp.Services[0].Endpoint.Kind != inspect.EndpointKindHTTPS {
+		t.Errorf("endpoint kind = %s, want https", resp.Services[0].Endpoint.Kind)
+	}
+	if resp.Services[0].Exposure.Kind != inspect.ExposureTailnet {
+		t.Errorf("exposure = %s, want tailnet", resp.Services[0].Exposure.Kind)
+	}
+}
+
+func TestAPIList_RedactsMiddlewareAuth(t *testing.T) {
+	h, _ := newTestHandler(t)
+	if _, err := registry.Add(h.regPath, registry.Service{
+		Name:   "myapp",
+		Type:   registry.TypeProxy,
+		Target: "http://localhost:3000",
+		Middleware: &registry.MiddlewareConfig{
+			BasicAuth: "user:pass",
+		},
+	}); err != nil {
+		t.Fatalf("registry.Add: %v", err)
+	}
+
+	var buf bytes.Buffer
+	h.handle(APIRequest{Action: "list"}, &buf)
+	raw := buf.String()
+	if strings.Contains(raw, "user:pass") {
+		t.Fatalf("api list leaked credential: %s", raw)
+	}
+	if strings.Contains(raw, "basic_auth") {
+		t.Fatalf("api list leaked private field name: %s", raw)
+	}
+
+	resp := parseResponse(t, &buf)
+	if !resp.OK {
+		t.Fatalf("expected ok, got error: %s", resp.Error)
+	}
+	if len(resp.Services) != 1 {
+		t.Fatalf("expected 1 service, got %d", len(resp.Services))
+	}
+	if resp.Services[0].Middleware == nil || !resp.Services[0].Middleware.HTTPAuth {
+		t.Fatalf("middleware summary = %+v, want redacted auth presence", resp.Services[0].Middleware)
+	}
+}
+
+func TestAPIList_UsesPublicServiceViewsWithUsefulFields(t *testing.T) {
+	h, _ := newTestHandler(t)
+	if _, err := registry.Add(h.regPath, registry.Service{
+		Name:         "docs",
+		Type:         registry.TypeFile,
+		Path:         "/tmp/docs",
+		Tags:         []string{"tag:docs"},
+		AllowedUsers: []string{"alice@example.com"},
+	}); err != nil {
+		t.Fatalf("registry.Add: %v", err)
+	}
+
+	resp := sendRequest(t, h, APIRequest{Action: "list"})
+	if !resp.OK {
+		t.Fatalf("expected ok, got error: %s", resp.Error)
+	}
+	if resp.Count != 1 {
+		t.Fatalf("count = %d, want 1", resp.Count)
+	}
+	got := resp.Services[0]
+	if got.SchemaVersion != inspect.SchemaVersion {
+		t.Fatalf("schema_version = %q, want %q", got.SchemaVersion, inspect.SchemaVersion)
+	}
+	if got.Endpoint.Kind != inspect.EndpointKindHTTPS || got.Endpoint.Display != "https://docs.<tailnet>.ts.net" {
+		t.Fatalf("endpoint = %+v, want https typed endpoint", got.Endpoint)
+	}
+	if got.Exposure.Kind != inspect.ExposureTailnetAllow {
+		t.Fatalf("exposure = %+v, want tailnet_allow", got.Exposure)
+	}
+	if got.Backend.Kind != "directory" || got.Backend.Display != "/tmp/docs" {
+		t.Fatalf("backend = %+v, want directory backend", got.Backend)
+	}
+	if got.Tags.Count != 1 || got.Tags.Entries[0] != "tag:docs" {
+		t.Fatalf("tags = %+v, want useful tag summary", got.Tags)
+	}
+	if got.Allow.Count != 1 || got.Allow.Entries[0] != "alice@example.com" {
+		t.Fatalf("allow = %+v, want useful allow summary", got.Allow)
 	}
 }
 

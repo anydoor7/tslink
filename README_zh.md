@@ -411,7 +411,7 @@ echo '{"action":"status"}' | tslink api
 |---|---|
 | Docker 标签 | 包存在，但 `serve` 不会启动 Docker discovery。 |
 | Middleware | 包和 schema 存在，但 runtime 不应用限流、Basic Auth、IP 白名单或 CORS。 |
-| Admin dashboard / REST API | handler 存在，但不会启动 admin 节点。 |
+| Admin dashboard / REST API | 默认构建不包含 package、REST handler 或 admin 节点。未来恢复必须显式标为 experimental，并补端到端测试。 |
 | Prometheus `/metrics` | 内部 instrumentation 存在，但没有挂载 scrape endpoint。 |
 | Custom domain / ACME | 字段可写入，但 runtime TLS/ACME listener 尚未接入。 |
 | Cluster sync | 包存在，但没有 production transport 或 `serve` 集成。 |

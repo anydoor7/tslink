@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/monody0007/tslink/internal/daemon"
+	"github.com/monody0007/tslink/internal/inspect"
 	"github.com/monody0007/tslink/internal/registry"
 	"github.com/spf13/cobra"
 )
@@ -32,13 +33,13 @@ type APIRequest struct {
 
 // APIResponse is written back to stdout for each request.
 type APIResponse struct {
-	OK       bool               `json:"ok"`
-	Error    string             `json:"error,omitempty"`
-	Message  string             `json:"message,omitempty"`
-	URL      string             `json:"url,omitempty"`
-	Services []registry.Service `json:"services,omitempty"`
-	Running  bool               `json:"running,omitempty"`
-	Count    int                `json:"count,omitempty"`
+	OK       bool                  `json:"ok"`
+	Error    string                `json:"error,omitempty"`
+	Message  string                `json:"message,omitempty"`
+	URL      string                `json:"url,omitempty"`
+	Services []inspect.ServiceView `json:"services,omitempty"`
+	Running  bool                  `json:"running,omitempty"`
+	Count    int                   `json:"count,omitempty"`
 }
 
 func writeResponse(out io.Writer, resp APIResponse) {
@@ -98,7 +99,7 @@ func (h *apiHandler) handleList(out io.Writer) {
 		writeResponse(out, APIResponse{OK: false, Error: err.Error()})
 		return
 	}
-	writeResponse(out, APIResponse{OK: true, Services: reg.Services})
+	writeResponse(out, APIResponse{OK: true, Services: inspect.ServiceViews(reg.Services), Count: len(reg.Services)})
 }
 
 func (h *apiHandler) handleAdd(req APIRequest, out io.Writer) {

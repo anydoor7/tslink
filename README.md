@@ -411,7 +411,7 @@ The repository contains packages and registry fields for features that are not w
 |---|---|
 | Docker labels | Package exists, but `serve` does not start Docker discovery. |
 | Middleware | Package and schema exist, but runtime does not apply rate limit, Basic Auth, IP allow list, or CORS. |
-| Admin dashboard / REST API | Handler exists, but no admin node is launched. |
+| Admin dashboard / REST API | No default-build package, REST handler, or admin node is shipped. Future work must be explicitly experimental and tested end to end. |
 | Prometheus `/metrics` | Instrumentation exists, but no scrape endpoint is mounted. |
 | Custom domain / ACME | Fields are accepted, but runtime TLS/ACME listener is not wired. |
 | Cluster sync | Package exists without production transport or `serve` integration. |
