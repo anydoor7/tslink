@@ -1007,10 +1007,19 @@ func TestAPITemplatePlanDryRunDoesNotCreateRegistry(t *testing.T) {
 	h.handle(APIRequest{Action: "template_plan", Name: "personal-harness"}, &buf)
 	raw := buf.String()
 	assertAPIRawJSONHasNoPrivateRegistryFields(t, raw)
+	if !strings.Contains(raw, `"template_plan"`) {
+		t.Fatalf("template_plan response key missing: %s", raw)
+	}
+	if !strings.Contains(raw, `"template_apply"`) {
+		t.Fatalf("template_apply compatibility key missing: %s", raw)
+	}
 
 	resp := parseResponse(t, &buf)
 	if !resp.OK {
 		t.Fatalf("expected ok, got error: %s", resp.Error)
+	}
+	if resp.TemplatePlan == nil {
+		t.Fatalf("template_plan missing in response: %+v", resp)
 	}
 	if resp.TemplateApply == nil {
 		t.Fatalf("template_apply missing in response: %+v", resp)
@@ -1018,9 +1027,17 @@ func TestAPITemplatePlanDryRunDoesNotCreateRegistry(t *testing.T) {
 	if _, err := os.Stat(h.regPath); !os.IsNotExist(err) {
 		t.Fatalf("dry-run registry stat err = %v, want not exist", err)
 	}
-	result := *resp.TemplateApply
+	result := *resp.TemplatePlan
 	if result.SchemaVersion != inspect.SchemaVersion || !result.DryRun || result.Applied {
 		t.Fatalf("template plan = %+v, want vNext dry-run not applied", result)
+	}
+	if resp.TemplateApply.Name != result.Name ||
+		resp.TemplateApply.DryRun != result.DryRun ||
+		resp.TemplateApply.Applied != result.Applied ||
+		resp.TemplateApply.Created != result.Created ||
+		resp.TemplateApply.Skipped != result.Skipped ||
+		len(resp.TemplateApply.Services) != len(result.Services) {
+		t.Fatalf("template_plan = %+v, template_apply = %+v, want compatibility alias", resp.TemplatePlan, resp.TemplateApply)
 	}
 	if result.Created != 2 || result.Skipped != 0 {
 		t.Fatalf("created/skipped = %d/%d, want 2/0", result.Created, result.Skipped)
