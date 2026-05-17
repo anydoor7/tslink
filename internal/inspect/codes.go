@@ -13,6 +13,29 @@ const (
 	WarningCodeFunnelAllowConflict       = registry.CodeFunnelAllowConflict
 	WarningCodeFunnelControlURLConflict  = registry.CodeFunnelControlURLConflict
 	WarningCodeFunnelTypeConflict        = registry.CodeFunnelTypeConflict
+
+	WarningCodeConfigPathUnavailable               = "config_path_unavailable"
+	WarningCodeConfigLoadFailed                    = "config_load_failed"
+	WarningCodeRegistryLoadFailed                  = "registry_load_failed"
+	WarningCodeRegistryServiceInvalid              = "registry_service_invalid"
+	WarningCodeControlURLInvalid                   = "control_url_invalid"
+	WarningCodeCredentialNone                      = "credential_none"
+	WarningCodeCredentialLegacyAuthKey             = "credential_legacy_authkey"
+	WarningCodeCredentialNoAPIClient               = "credential_no_api_client"
+	WarningCodeCredentialReadFailed                = "credential_read_failed"
+	WarningCodeDaemonNotRunning                    = "daemon_not_running"
+	WarningCodeDaemonPIDUnreadable                 = "daemon_pid_unreadable"
+	WarningCodeTargetProbeSkippedExternal          = "target_probe_skipped_external"
+	WarningCodeTargetProbeFailed                   = "target_probe_failed"
+	WarningCodeTargetProbeRefused                  = "target_probe_refused"
+	WarningCodeTargetProbeTimeout                  = "target_probe_timeout"
+	WarningCodeTargetInvalid                       = "target_invalid"
+	WarningCodeProxyNonLoopbackTarget              = "proxy_non_loopback_target"
+	WarningCodeTCPNonLoopbackTarget                = "tcp_non_loopback_target"
+	WarningCodeFilePathMissing                     = "file_path_missing"
+	WarningCodeFilePathUnreadable                  = "file_path_unreadable"
+	WarningCodeFunnelGlobalControlURLUnknownCompat = "funnel_global_control_url_unknown_compat"
+	WarningCodeIdentityResolutionUnknown           = "identity_resolution_unknown"
 )
 
 type WarningCodeMeta struct {
@@ -71,5 +94,115 @@ var WarningCodeRegistry = map[string]WarningCodeMeta{
 		Severity:    "error",
 		Source:      "service.type",
 		Description: "Public Funnel services can only be proxy services.",
+	},
+	WarningCodeConfigPathUnavailable: {
+		Severity:    "error",
+		Source:      "config.path",
+		Description: "TSLink config paths could not be discovered locally.",
+	},
+	WarningCodeConfigLoadFailed: {
+		Severity:    "error",
+		Source:      "config.global",
+		Description: "TSLink global config could not be loaded.",
+	},
+	WarningCodeRegistryLoadFailed: {
+		Severity:    "error",
+		Source:      "registry.load",
+		Description: "TSLink registry could not be loaded.",
+	},
+	WarningCodeRegistryServiceInvalid: {
+		Severity:    "error",
+		Source:      "registry.service",
+		Description: "A registry service failed validation.",
+	},
+	WarningCodeControlURLInvalid: {
+		Severity:    "error",
+		Source:      "control_url",
+		Description: "A configured control_url is not a valid HTTP or HTTPS URL.",
+	},
+	WarningCodeCredentialNone: {
+		Severity:    "error",
+		Source:      "credentials",
+		Description: "No supported TSLink credential is configured.",
+	},
+	WarningCodeCredentialLegacyAuthKey: {
+		Severity:    "warning",
+		Source:      "credentials",
+		Description: "A legacy reusable auth key is configured; API token or OAuth client secret is preferred.",
+	},
+	WarningCodeCredentialNoAPIClient: {
+		Severity:    "info",
+		Source:      "credentials",
+		Description: "Configured credentials can start services but do not provide a local Tailscale API client.",
+	},
+	WarningCodeCredentialReadFailed: {
+		Severity:    "error",
+		Source:      "credentials",
+		Description: "Stored credentials could not be inspected locally.",
+	},
+	WarningCodeDaemonNotRunning: {
+		Severity:    "warning",
+		Source:      "daemon",
+		Description: "The TSLink daemon is not currently running.",
+	},
+	WarningCodeDaemonPIDUnreadable: {
+		Severity:    "warning",
+		Source:      "daemon.pid",
+		Description: "The TSLink daemon appears to be running, but the PID file could not be read.",
+	},
+	WarningCodeTargetProbeSkippedExternal: {
+		Severity:    "warning",
+		Source:      "target.probe",
+		Description: "External target probing is skipped unless --probe-external is set.",
+	},
+	WarningCodeTargetProbeFailed: {
+		Severity:    "error",
+		Source:      "target.probe",
+		Description: "A target probe failed.",
+	},
+	WarningCodeTargetProbeRefused: {
+		Severity:    "error",
+		Source:      "target.probe",
+		Description: "A target probe was refused.",
+	},
+	WarningCodeTargetProbeTimeout: {
+		Severity:    "error",
+		Source:      "target.probe",
+		Description: "A target probe timed out.",
+	},
+	WarningCodeTargetInvalid: {
+		Severity:    "error",
+		Source:      "target",
+		Description: "A service target could not be parsed for local diagnostics.",
+	},
+	WarningCodeProxyNonLoopbackTarget: {
+		Severity:    "warning",
+		Source:      "service.target",
+		Description: "A proxy service points at a non-loopback target.",
+	},
+	WarningCodeTCPNonLoopbackTarget: {
+		Severity:    "warning",
+		Source:      "service.target",
+		Description: "A TCP service points at a non-loopback target.",
+	},
+	WarningCodeFilePathMissing: {
+		Severity:    "error",
+		Source:      "service.path",
+		Description: "A file service path does not exist.",
+	},
+	WarningCodeFilePathUnreadable: {
+		Severity:    "error",
+		Source:      "service.path",
+		Description: "A file service path is not readable as a directory.",
+	},
+	WarningCodeFunnelGlobalControlURLUnknownCompat: {
+		Severity:    "warning",
+		Source:      "config.control_url",
+		Description: "A global custom control_url is configured while Funnel services exist; compatibility cannot be proven locally.",
+	},
+	WarningCodeIdentityResolutionUnknown: {
+		Severity:    "info",
+		Source:      "identity",
+		Description: "Local diagnostics cannot prove real Tailscale identity resolution or remote ACL policy.",
 	},
 }

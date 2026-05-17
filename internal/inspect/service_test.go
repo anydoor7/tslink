@@ -260,3 +260,39 @@ func TestRuntimeSnapshotCodesAreRegistered(t *testing.T) {
 		}
 	}
 }
+
+func TestDoctorCodesAreRegistered(t *testing.T) {
+	required := []string{
+		WarningCodeConfigPathUnavailable,
+		WarningCodeConfigLoadFailed,
+		WarningCodeRegistryLoadFailed,
+		WarningCodeRegistryServiceInvalid,
+		WarningCodeControlURLInvalid,
+		WarningCodeCredentialNone,
+		WarningCodeCredentialLegacyAuthKey,
+		WarningCodeCredentialNoAPIClient,
+		WarningCodeCredentialReadFailed,
+		WarningCodeDaemonNotRunning,
+		WarningCodeDaemonPIDUnreadable,
+		WarningCodeTargetProbeSkippedExternal,
+		WarningCodeTargetProbeFailed,
+		WarningCodeTargetProbeRefused,
+		WarningCodeTargetProbeTimeout,
+		WarningCodeTargetInvalid,
+		WarningCodeProxyNonLoopbackTarget,
+		WarningCodeTCPNonLoopbackTarget,
+		WarningCodeFilePathMissing,
+		WarningCodeFilePathUnreadable,
+		WarningCodeFunnelGlobalControlURLUnknownCompat,
+		WarningCodeIdentityResolutionUnknown,
+	}
+	for _, code := range required {
+		meta, ok := WarningCodeRegistry[code]
+		if !ok {
+			t.Fatalf("doctor code %s is not registered", code)
+		}
+		if meta.Severity == "" || meta.Source == "" || meta.Description == "" {
+			t.Fatalf("doctor code %s has incomplete metadata: %+v", code, meta)
+		}
+	}
+}

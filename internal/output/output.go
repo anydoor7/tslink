@@ -15,6 +15,8 @@ const (
 	ExitAuth     = 3
 	ExitConflict = 4
 	ExitNotFound = 5
+	ExitWarning  = 64
+	ExitCritical = 65
 )
 
 // CodeError is an error that carries a semantic exit code.
@@ -24,6 +26,25 @@ type CodeError struct {
 }
 
 func (e *CodeError) Error() string { return e.Message }
+
+// SilentCodeError carries an exit code for commands that have already printed
+// their complete result and should not receive the generic failure envelope.
+type SilentCodeError struct {
+	Code int
+}
+
+func (e *SilentCodeError) Error() string { return "" }
+
+// SilentExit returns a non-printing error for the requested exit code.
+func SilentExit(code int) *SilentCodeError {
+	return &SilentCodeError{Code: code}
+}
+
+// IsSilent reports whether err should set an exit code without extra output.
+func IsSilent(err error) bool {
+	_, ok := err.(*SilentCodeError)
+	return ok
+}
 
 // ErrAuth returns an authentication error (exit code 3).
 func ErrAuth(msg string) *CodeError {
@@ -83,6 +104,9 @@ func ExitCode(err error) int {
 	}
 	if ce, ok := err.(*CodeError); ok {
 		return ce.Code
+	}
+	if se, ok := err.(*SilentCodeError); ok {
+		return se.Code
 	}
 	return ExitError
 }

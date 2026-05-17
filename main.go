@@ -15,6 +15,10 @@ func main() {
 
 	code := output.ExitCode(err)
 
+	if output.IsSilent(err) {
+		os.Exit(code)
+	}
+
 	if cmd.WasJSONRequested() {
 		output.Failure("", code, err.Error())
 	} else {

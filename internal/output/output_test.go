@@ -88,6 +88,22 @@ func TestCodeError(t *testing.T) {
 	}
 }
 
+func TestSilentCodeError(t *testing.T) {
+	err := SilentExit(ExitWarning)
+	if !IsSilent(err) {
+		t.Fatal("SilentExit error should be silent")
+	}
+	if err.Error() != "" {
+		t.Fatalf("silent error message = %q, want empty", err.Error())
+	}
+	if ExitCode(err) != ExitWarning {
+		t.Fatalf("ExitCode(SilentExit) = %d, want %d", ExitCode(err), ExitWarning)
+	}
+	if IsSilent(ErrAuth("bad key")) {
+		t.Fatal("CodeError should not be silent")
+	}
+}
+
 func captureStdout(fn func()) string {
 	old := os.Stdout
 	r, w, _ := os.Pipe()
@@ -158,5 +174,8 @@ func TestExitCode(t *testing.T) {
 	}
 	if ExitCode(ErrConflict("x")) != ExitConflict {
 		t.Error("ErrConflict should return ExitConflict")
+	}
+	if ExitCode(SilentExit(ExitCritical)) != ExitCritical {
+		t.Error("SilentExit should return its embedded exit code")
 	}
 }
