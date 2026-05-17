@@ -76,13 +76,18 @@ type fakeTSNetServer struct {
 	upErr       error
 	closed      bool
 	certDomains []string
+	dnsName     string
 }
 
 func (s *fakeTSNetServer) Up(context.Context) (*ipnstate.Status, error) {
 	if s.upErr != nil {
 		return nil, s.upErr
 	}
-	return &ipnstate.Status{}, nil
+	status := &ipnstate.Status{}
+	if s.dnsName != "" {
+		status.Self = &ipnstate.PeerStatus{DNSName: s.dnsName}
+	}
+	return status, nil
 }
 
 func (s *fakeTSNetServer) Listen(network, addr string) (net.Listener, error) {
@@ -1195,6 +1200,177 @@ func TestSyncNodes_WritesRuntimeSnapshotAfterServiceStarts(t *testing.T) {
 	}
 	if strings.Join(entry.CertDomains, ",") != "files.tailnet.ts.net" {
 		t.Fatalf("cert domains = %v, want files.tailnet.ts.net", entry.CertDomains)
+	}
+}
+
+func TestSyncNodes_WritesConcreteTCPRuntimeHostFromStatus(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+
+	writeRegistry(t, []registry.Service{
+		{Name: "db", Type: registry.TypeTCP, Target: "localhost:5432", Port: 5432},
+	})
+
+	oldNew := newTSNetServerFn
+	newTSNetServerFn = func(svc registry.Service, stateDir, authKey, controlURL string) tsnetServer {
+		return &fakeTSNetServer{dnsName: "db.tailnet.ts.net."}
+	}
+	t.Cleanup(func() { newTSNetServerFn = oldNew })
+
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	if err := s.syncNodes(context.Background()); err != nil {
+		t.Fatalf("syncNodes() error = %v", err)
+	}
+
+	snapshotPath, err := config.RuntimeSnapshotPath()
+	if err != nil {
+		t.Fatalf("RuntimeSnapshotPath() error = %v", err)
+	}
+	snapshot, err := runtimesnapshot.Load(snapshotPath)
+	if err != nil {
+		t.Fatalf("runtime Load() error = %v", err)
+	}
+	if len(snapshot.Services) != 1 {
+		t.Fatalf("snapshot services = %d, want 1", len(snapshot.Services))
+	}
+	endpoint := snapshot.Services[0].Endpoint
+	if endpoint.Display != "db.tailnet.ts.net:5432" || endpoint.Host != "db.tailnet.ts.net" || endpoint.State != "exact" {
+		t.Fatalf("tcp endpoint = %+v, want concrete exact runtime DNS host", endpoint)
+	}
+	if strings.Contains(endpoint.Display, "<tailnet>") {
+		t.Fatalf("tcp endpoint = %+v, must not mark placeholder exact", endpoint)
+	}
+}
+
+func TestSyncNodes_PartialStartFailureRemovesRuntimeSnapshot(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+
+	oldNew := newTSNetServerFn
+	newTSNetServerFn = func(svc registry.Service, stateDir, authKey, controlURL string) tsnetServer {
+		if svc.Name == "bad" {
+			return &fakeTSNetServer{upErr: errors.New("tsnet down")}
+		}
+		return &fakeTSNetServer{certDomains: []string{svc.Name + ".tailnet.ts.net"}}
+	}
+	t.Cleanup(func() { newTSNetServerFn = oldNew })
+
+	writeRegistry(t, []registry.Service{
+		{Name: "ok", Type: registry.TypeFile, Path: t.TempDir()},
+	})
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	if err := s.syncNodes(context.Background()); err != nil {
+		t.Fatalf("initial syncNodes() error = %v", err)
+	}
+	snapshotPath, err := config.RuntimeSnapshotPath()
+	if err != nil {
+		t.Fatalf("RuntimeSnapshotPath() error = %v", err)
+	}
+	if _, err := runtimesnapshot.Load(snapshotPath); err != nil {
+		t.Fatalf("initial runtime Load() error = %v", err)
+	}
+
+	regPath := writeRegistry(t, []registry.Service{
+		{Name: "ok", Type: registry.TypeFile, Path: t.TempDir()},
+		{Name: "bad", Type: registry.TypeFile, Path: t.TempDir()},
+	})
+	err = s.syncNodes(context.Background())
+	if err == nil || !strings.Contains(err.Error(), `start service "bad"`) {
+		t.Fatalf("syncNodes() error = %v, want bad service start error", err)
+	}
+
+	snapshot, loadErr := runtimesnapshot.Load(snapshotPath)
+	reg, err := registry.Load(regPath)
+	if err != nil {
+		t.Fatalf("registry.Load() error = %v", err)
+	}
+	fingerprint, err := runtimesnapshot.RegistryFingerprint(reg)
+	if err != nil {
+		t.Fatalf("RegistryFingerprint() error = %v", err)
+	}
+	freshness := runtimesnapshot.Classify(snapshot, loadErr, runtimesnapshot.ExpectedRuntime{
+		DaemonPID:                  s.daemonPID,
+		DaemonStartedAtLowerBound:  s.daemonStartedAt,
+		CurrentRegistryFingerprint: fingerprint,
+	})
+	if freshness.Exact {
+		t.Fatalf("freshness = %+v, partial start failure must not leave an exact current snapshot", freshness)
+	}
+	if freshness.Status != runtimesnapshot.StatusMissing {
+		t.Fatalf("freshness = %+v, want fail-closed missing snapshot after partial start failure", freshness)
+	}
+	if _, exists := s.nodes["ok"]; !exists {
+		t.Fatal("already-running service should remain running after partial failure")
+	}
+	if _, exists := s.nodes["bad"]; exists {
+		t.Fatal("failed service should not be in running node map")
+	}
+}
+
+func TestSyncNodes_UpdatesRuntimeSnapshotFingerprintAfterSuccessfulReload(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+
+	oldNew := newTSNetServerFn
+	newTSNetServerFn = func(svc registry.Service, stateDir, authKey, controlURL string) tsnetServer {
+		return &fakeTSNetServer{certDomains: []string{svc.Name + ".tailnet.ts.net"}}
+	}
+	t.Cleanup(func() { newTSNetServerFn = oldNew })
+
+	regPath := writeRegistry(t, []registry.Service{
+		{Name: "files", Type: registry.TypeFile, Path: t.TempDir()},
+	})
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	if err := s.syncNodes(context.Background()); err != nil {
+		t.Fatalf("initial syncNodes() error = %v", err)
+	}
+	snapshotPath, err := config.RuntimeSnapshotPath()
+	if err != nil {
+		t.Fatalf("RuntimeSnapshotPath() error = %v", err)
+	}
+	initial, err := runtimesnapshot.Load(snapshotPath)
+	if err != nil {
+		t.Fatalf("initial runtime Load() error = %v", err)
+	}
+
+	regPath = writeRegistry(t, []registry.Service{
+		{Name: "files", Type: registry.TypeFile, Path: t.TempDir()},
+	})
+	if err := s.syncNodes(context.Background()); err != nil {
+		t.Fatalf("reload syncNodes() error = %v", err)
+	}
+	reloaded, err := runtimesnapshot.Load(snapshotPath)
+	if err != nil {
+		t.Fatalf("reloaded runtime Load() error = %v", err)
+	}
+	reg, err := registry.Load(regPath)
+	if err != nil {
+		t.Fatalf("registry.Load() error = %v", err)
+	}
+	wantFingerprint, err := runtimesnapshot.RegistryFingerprint(reg)
+	if err != nil {
+		t.Fatalf("RegistryFingerprint() error = %v", err)
+	}
+	if reloaded.RegistryFingerprint != wantFingerprint {
+		t.Fatalf("registry_fingerprint = %q, want %q", reloaded.RegistryFingerprint, wantFingerprint)
+	}
+	if reloaded.RegistryFingerprint == initial.RegistryFingerprint {
+		t.Fatalf("registry_fingerprint did not change after successful reload: %q", reloaded.RegistryFingerprint)
 	}
 }
 

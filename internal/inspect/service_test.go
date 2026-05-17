@@ -248,6 +248,7 @@ func TestRuntimeSnapshotCodesAreRegistered(t *testing.T) {
 	required := []string{
 		WarningCodeRuntimeSnapshotMissing,
 		WarningCodeRuntimeSnapshotStale,
+		WarningCodeRuntimeSnapshotUnreadable,
 	}
 	for _, code := range required {
 		meta, ok := WarningCodeRegistry[code]

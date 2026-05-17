@@ -179,6 +179,17 @@ func TestLoadMissingAndMalformedSnapshot(t *testing.T) {
 	assertSnapshotError(t, err, StatusMalformed, inspect.WarningCodeRuntimeSnapshotStale)
 }
 
+func TestLoadUnreadableSnapshot(t *testing.T) {
+	oldRead := readFile
+	readFile = func(path string) ([]byte, error) {
+		return nil, os.ErrPermission
+	}
+	t.Cleanup(func() { readFile = oldRead })
+
+	_, err := Load("/does/not/matter/runtime.json")
+	assertSnapshotError(t, err, StatusUnreadable, inspect.WarningCodeRuntimeSnapshotUnreadable)
+}
+
 func TestLoadRetriesOnceOnMalformedThenSucceeds(t *testing.T) {
 	valid, err := json.Marshal(testSnapshot())
 	if err != nil {
@@ -226,26 +237,168 @@ func TestLoadRetriesOnceOnMalformedThenReturnsStale(t *testing.T) {
 
 func TestClassifyFreshness(t *testing.T) {
 	snapshot := testSnapshot()
-	if got := Classify(&snapshot, nil, snapshot.DaemonPID, snapshot.RegistryFingerprint); got.Status != StatusExact || !got.Exact || got.Code != "" {
+	expected := ExpectedRuntime{
+		DaemonPID:                  snapshot.DaemonPID,
+		DaemonStartedAtLowerBound:  snapshot.DaemonStartedAt,
+		CurrentRegistryFingerprint: snapshot.RegistryFingerprint,
+	}
+	if got := Classify(&snapshot, nil, expected); got.Status != StatusExact || !got.Exact || got.Code != "" {
 		t.Fatalf("Classify(exact) = %+v", got)
 	}
 
-	if got := Classify(&snapshot, nil, 9999, snapshot.RegistryFingerprint); got.Status != StatusPIDMismatch || got.Code != inspect.WarningCodeRuntimeSnapshotStale || got.Exact {
+	pidMismatch := expected
+	pidMismatch.DaemonPID = 9999
+	if got := Classify(&snapshot, nil, pidMismatch); got.Status != StatusPIDMismatch || got.Code != inspect.WarningCodeRuntimeSnapshotStale || got.Exact {
 		t.Fatalf("Classify(pid mismatch) = %+v", got)
 	}
 
-	if got := Classify(&snapshot, nil, snapshot.DaemonPID, "sha256:other"); got.Status != StatusRegistryMismatch || got.Code != inspect.WarningCodeRuntimeSnapshotStale || got.Exact {
+	registryMismatch := expected
+	registryMismatch.CurrentRegistryFingerprint = "sha256:other"
+	if got := Classify(&snapshot, nil, registryMismatch); got.Status != StatusRegistryMismatch || got.Code != inspect.WarningCodeRuntimeSnapshotStale || got.Exact {
 		t.Fatalf("Classify(registry mismatch) = %+v", got)
 	}
 
 	missingErr := &SnapshotError{Status: StatusMissing, Code: inspect.WarningCodeRuntimeSnapshotMissing, Err: os.ErrNotExist}
-	if got := Classify(nil, missingErr, snapshot.DaemonPID, snapshot.RegistryFingerprint); got.Status != StatusMissing || got.Code != inspect.WarningCodeRuntimeSnapshotMissing || got.Exact {
+	if got := Classify(nil, missingErr, expected); got.Status != StatusMissing || got.Code != inspect.WarningCodeRuntimeSnapshotMissing || got.Exact {
 		t.Fatalf("Classify(missing) = %+v", got)
 	}
 
 	malformedErr := &SnapshotError{Status: StatusMalformed, Code: inspect.WarningCodeRuntimeSnapshotStale, Err: errors.New("bad json")}
-	if got := Classify(nil, malformedErr, snapshot.DaemonPID, snapshot.RegistryFingerprint); got.Status != StatusMalformed || got.Code != inspect.WarningCodeRuntimeSnapshotStale || got.Exact {
+	if got := Classify(nil, malformedErr, expected); got.Status != StatusMalformed || got.Code != inspect.WarningCodeRuntimeSnapshotStale || got.Exact {
 		t.Fatalf("Classify(malformed) = %+v", got)
+	}
+
+	unreadableErr := &SnapshotError{Status: StatusUnreadable, Code: inspect.WarningCodeRuntimeSnapshotUnreadable, Err: os.ErrPermission}
+	if got := Classify(nil, unreadableErr, expected); got.Status != StatusUnreadable || got.Code != inspect.WarningCodeRuntimeSnapshotUnreadable || got.Exact {
+		t.Fatalf("Classify(unreadable) = %+v", got)
+	}
+}
+
+func TestClassifyRejectsMissingExpectedRuntimeIdentity(t *testing.T) {
+	snapshot := testSnapshot()
+	expected := ExpectedRuntime{
+		DaemonPID:                  snapshot.DaemonPID,
+		CurrentRegistryFingerprint: snapshot.RegistryFingerprint,
+	}
+
+	got := Classify(&snapshot, nil, expected)
+	if got.Status != StatusStale || got.Code != inspect.WarningCodeRuntimeSnapshotStale || got.Exact {
+		t.Fatalf("Classify(missing identity) = %+v, want stale not exact", got)
+	}
+}
+
+func TestClassifyRejectsPriorDaemonSnapshotWithReusedPIDAndFingerprint(t *testing.T) {
+	snapshot := testSnapshot()
+	expected := ExpectedRuntime{
+		DaemonPID:                  snapshot.DaemonPID,
+		DaemonStartedAtLowerBound:  snapshot.UpdatedAt.Add(time.Second),
+		CurrentRegistryFingerprint: snapshot.RegistryFingerprint,
+	}
+
+	got := Classify(&snapshot, nil, expected)
+	if got.Status != StatusStale || got.Code != inspect.WarningCodeRuntimeSnapshotStale || got.Exact {
+		t.Fatalf("Classify(reused pid stale snapshot) = %+v, want stale not exact", got)
+	}
+}
+
+func TestNewSnapshotTCPPlaceholderRemainsExpected(t *testing.T) {
+	startedAt := time.Date(2026, 5, 17, 12, 0, 0, 0, time.UTC)
+	updatedAt := startedAt.Add(time.Minute)
+	snapshot := NewSnapshot(1234, startedAt, "sha256:test", updatedAt, []ServiceState{
+		{
+			Service: registry.Service{
+				Name:   "db",
+				Type:   registry.TypeTCP,
+				Target: "localhost:5432",
+				Port:   5432,
+			},
+		},
+	})
+
+	endpoint := snapshot.Services[0].Endpoint
+	if endpoint.Display != "db.<tailnet>.ts.net:5432" || endpoint.State != inspect.EndpointStateExpected {
+		t.Fatalf("tcp endpoint = %+v, want placeholder expected", endpoint)
+	}
+}
+
+func TestNewSnapshotTCPRuntimeHostIsExact(t *testing.T) {
+	startedAt := time.Date(2026, 5, 17, 12, 0, 0, 0, time.UTC)
+	updatedAt := startedAt.Add(time.Minute)
+	snapshot := NewSnapshot(1234, startedAt, "sha256:test", updatedAt, []ServiceState{
+		{
+			Service: registry.Service{
+				Name:   "db",
+				Type:   registry.TypeTCP,
+				Target: "localhost:5432",
+				Port:   5432,
+			},
+			RuntimeHost: "db.tailnet.ts.net.",
+		},
+	})
+
+	endpoint := snapshot.Services[0].Endpoint
+	if endpoint.Display != "db.tailnet.ts.net:5432" || endpoint.Host != "db.tailnet.ts.net" || endpoint.State != inspect.EndpointStateExact {
+		t.Fatalf("tcp endpoint = %+v, want concrete exact runtime host", endpoint)
+	}
+}
+
+func TestNewSnapshotFunnelExposure(t *testing.T) {
+	startedAt := time.Date(2026, 5, 17, 12, 0, 0, 0, time.UTC)
+	updatedAt := startedAt.Add(time.Minute)
+	snapshot := NewSnapshot(1234, startedAt, "sha256:test", updatedAt, []ServiceState{
+		{
+			Service: registry.Service{
+				Name:   "web",
+				Type:   registry.TypeProxy,
+				Target: "http://localhost:3000",
+				Funnel: true,
+			},
+			RuntimeHost: "web.tailnet.ts.net.",
+		},
+	})
+
+	entry := snapshot.Services[0]
+	if entry.Endpoint.Kind != inspect.EndpointKindPublicHTTPS || entry.Endpoint.Display != "https://web.tailnet.ts.net" || entry.Endpoint.State != inspect.EndpointStateExact {
+		t.Fatalf("funnel endpoint = %+v, want public https exact runtime host", entry.Endpoint)
+	}
+	if entry.Exposure.Kind != inspect.ExposurePublicFunnel || !entry.Exposure.Public {
+		t.Fatalf("funnel exposure = %+v, want public funnel", entry.Exposure)
+	}
+}
+
+func TestNewSnapshotServicesAreSortedByName(t *testing.T) {
+	startedAt := time.Date(2026, 5, 17, 12, 0, 0, 0, time.UTC)
+	updatedAt := startedAt.Add(time.Minute)
+	snapshot := NewSnapshot(1234, startedAt, "sha256:test", updatedAt, []ServiceState{
+		{Service: registry.Service{Name: "zeta", Type: registry.TypeFile, Path: "/tmp/zeta"}},
+		{Service: registry.Service{Name: "alpha", Type: registry.TypeFile, Path: "/tmp/alpha"}},
+		{Service: registry.Service{Name: "middle", Type: registry.TypeFile, Path: "/tmp/middle"}},
+	})
+
+	got := []string{snapshot.Services[0].Name, snapshot.Services[1].Name, snapshot.Services[2].Name}
+	if strings.Join(got, ",") != "alpha,middle,zeta" {
+		t.Fatalf("service order = %v, want alpha,middle,zeta", got)
+	}
+}
+
+func TestNewSnapshotCertDomainRewritesCustomDomainEndpoint(t *testing.T) {
+	startedAt := time.Date(2026, 5, 17, 12, 0, 0, 0, time.UTC)
+	updatedAt := startedAt.Add(time.Minute)
+	snapshot := NewSnapshot(1234, startedAt, "sha256:test", updatedAt, []ServiceState{
+		{
+			Service: registry.Service{
+				Name:   "web",
+				Type:   registry.TypeProxy,
+				Target: "http://localhost:3000",
+				Domain: "configured.example.com",
+			},
+			CertDomains: []string{"runtime.example.com"},
+		},
+	})
+
+	endpoint := snapshot.Services[0].Endpoint
+	if endpoint.Display != "https://runtime.example.com" || endpoint.Host != "runtime.example.com" || endpoint.State != inspect.EndpointStateExact {
+		t.Fatalf("endpoint = %+v, want runtime cert-domain rewrite", endpoint)
 	}
 }
 

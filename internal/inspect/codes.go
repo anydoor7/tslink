@@ -3,15 +3,16 @@ package inspect
 import "github.com/monody0007/tslink/internal/registry"
 
 const (
-	WarningCodeTCPHTTPACLNotApplicable  = "tcp_http_acl_not_applicable"
-	WarningCodeTCPAllowedUsersInvalid   = "tcp_allowed_users_invalid"
-	WarningCodeHTTPAuthConfigured       = "http_auth_configured"
-	WarningCodeServiceTypeUnknown       = "service_type_unknown"
-	WarningCodeRuntimeSnapshotMissing   = "runtime_snapshot_missing"
-	WarningCodeRuntimeSnapshotStale     = "runtime_snapshot_stale"
-	WarningCodeFunnelAllowConflict      = registry.CodeFunnelAllowConflict
-	WarningCodeFunnelControlURLConflict = registry.CodeFunnelControlURLConflict
-	WarningCodeFunnelTypeConflict       = registry.CodeFunnelTypeConflict
+	WarningCodeTCPHTTPACLNotApplicable   = "tcp_http_acl_not_applicable"
+	WarningCodeTCPAllowedUsersInvalid    = "tcp_allowed_users_invalid"
+	WarningCodeHTTPAuthConfigured        = "http_auth_configured"
+	WarningCodeServiceTypeUnknown        = "service_type_unknown"
+	WarningCodeRuntimeSnapshotMissing    = "runtime_snapshot_missing"
+	WarningCodeRuntimeSnapshotStale      = "runtime_snapshot_stale"
+	WarningCodeRuntimeSnapshotUnreadable = "runtime_snapshot_unreadable"
+	WarningCodeFunnelAllowConflict       = registry.CodeFunnelAllowConflict
+	WarningCodeFunnelControlURLConflict  = registry.CodeFunnelControlURLConflict
+	WarningCodeFunnelTypeConflict        = registry.CodeFunnelTypeConflict
 )
 
 type WarningCodeMeta struct {
@@ -50,6 +51,11 @@ var WarningCodeRegistry = map[string]WarningCodeMeta{
 		Severity:    "warning",
 		Source:      "runtime.snapshot",
 		Description: "The runtime snapshot is malformed or does not match the current daemon or registry.",
+	},
+	WarningCodeRuntimeSnapshotUnreadable: {
+		Severity:    "warning",
+		Source:      "runtime.snapshot",
+		Description: "The runtime snapshot could not be read because of a raw filesystem or permission error.",
 	},
 	WarningCodeFunnelAllowConflict: {
 		Severity:    "error",

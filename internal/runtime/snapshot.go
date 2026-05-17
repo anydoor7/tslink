@@ -7,9 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/monody0007/tslink/internal/inspect"
@@ -22,6 +25,8 @@ const (
 	StatusExact            = "exact"
 	StatusMissing          = "missing"
 	StatusMalformed        = "malformed"
+	StatusUnreadable       = "unreadable"
+	StatusStale            = "stale"
 	StatusPIDMismatch      = "pid_mismatch"
 	StatusRegistryMismatch = "registry_mismatch"
 )
@@ -51,7 +56,14 @@ type ServiceSnapshot struct {
 
 type ServiceState struct {
 	Service     registry.Service
+	RuntimeHost string
 	CertDomains []string
+}
+
+type ExpectedRuntime struct {
+	DaemonPID                  int
+	DaemonStartedAtLowerBound  time.Time
+	CurrentRegistryFingerprint string
 }
 
 type SnapshotError struct {
@@ -101,11 +113,12 @@ func NewSnapshot(daemonPID int, daemonStartedAt time.Time, registryFingerprint s
 	for _, state := range sorted {
 		view := inspect.ServiceViewFor(state.Service)
 		endpoint := view.Endpoint
-		endpoint.State = inspect.EndpointStateExact
+		endpoint = applyRuntimeHost(endpoint, state.Service, state.RuntimeHost)
 		if len(state.CertDomains) > 0 && (state.Service.Type == registry.TypeProxy || state.Service.Type == registry.TypeFile) {
 			endpoint.Display = "https://" + state.CertDomains[0]
 			endpoint.Host = state.CertDomains[0]
 		}
+		endpoint.State = endpointState(endpoint)
 		certDomains := append([]string(nil), state.CertDomains...)
 		services = append(services, ServiceSnapshot{
 			Name:        state.Service.Name,
@@ -210,7 +223,7 @@ func Remove(path string) error {
 	return nil
 }
 
-func Classify(snapshot *Snapshot, loadErr error, expectedPID int, currentRegistryFingerprint string) Freshness {
+func Classify(snapshot *Snapshot, loadErr error, expected ExpectedRuntime) Freshness {
 	if loadErr != nil {
 		var snapshotErr *SnapshotError
 		if errors.As(loadErr, &snapshotErr) {
@@ -222,8 +235,8 @@ func Classify(snapshot *Snapshot, loadErr error, expectedPID int, currentRegistr
 			}
 		}
 		return Freshness{
-			Status:  StatusMalformed,
-			Code:    inspect.WarningCodeRuntimeSnapshotStale,
+			Status:  StatusUnreadable,
+			Code:    inspect.WarningCodeRuntimeSnapshotUnreadable,
 			Exact:   false,
 			Message: loadErr.Error(),
 		}
@@ -236,15 +249,32 @@ func Classify(snapshot *Snapshot, loadErr error, expectedPID int, currentRegistr
 			Message: "runtime snapshot is missing",
 		}
 	}
-	if snapshot.DaemonPID != expectedPID {
+	if expected.DaemonPID <= 0 || expected.DaemonStartedAtLowerBound.IsZero() || expected.CurrentRegistryFingerprint == "" {
+		return Freshness{
+			Status:  StatusStale,
+			Code:    inspect.WarningCodeRuntimeSnapshotStale,
+			Exact:   false,
+			Message: "runtime snapshot exactness requires expected daemon PID, daemon freshness lower bound, and registry fingerprint",
+		}
+	}
+	if snapshot.DaemonPID != expected.DaemonPID {
 		return Freshness{
 			Status:  StatusPIDMismatch,
 			Code:    inspect.WarningCodeRuntimeSnapshotStale,
 			Exact:   false,
-			Message: fmt.Sprintf("runtime snapshot daemon PID %d does not match expected PID %d", snapshot.DaemonPID, expectedPID),
+			Message: fmt.Sprintf("runtime snapshot daemon PID %d does not match expected PID %d", snapshot.DaemonPID, expected.DaemonPID),
 		}
 	}
-	if snapshot.RegistryFingerprint != currentRegistryFingerprint {
+	lowerBound := expected.DaemonStartedAtLowerBound.UTC()
+	if snapshot.DaemonStartedAt.Before(lowerBound) || snapshot.UpdatedAt.Before(lowerBound) {
+		return Freshness{
+			Status:  StatusStale,
+			Code:    inspect.WarningCodeRuntimeSnapshotStale,
+			Exact:   false,
+			Message: "runtime snapshot predates expected daemon freshness lower bound",
+		}
+	}
+	if snapshot.RegistryFingerprint != expected.CurrentRegistryFingerprint {
 		return Freshness{
 			Status:  StatusRegistryMismatch,
 			Code:    inspect.WarningCodeRuntimeSnapshotStale,
@@ -268,7 +298,7 @@ func loadOnce(path string) (*Snapshot, error) {
 				Err:    err,
 			}
 		}
-		return nil, err
+		return nil, unreadableError(err)
 	}
 	var snapshot Snapshot
 	if err := json.Unmarshal(data, &snapshot); err != nil {
@@ -291,6 +321,14 @@ func malformedError(err error) error {
 	}
 }
 
+func unreadableError(err error) error {
+	return &SnapshotError{
+		Status: StatusUnreadable,
+		Code:   inspect.WarningCodeRuntimeSnapshotUnreadable,
+		Err:    err,
+	}
+}
+
 func retryableReadError(err error) bool {
 	var snapshotErr *SnapshotError
 	if !errors.As(err, &snapshotErr) || snapshotErr.Status != StatusMalformed {
@@ -300,4 +338,40 @@ func retryableReadError(err error) bool {
 	return errors.As(snapshotErr.Err, &syntaxErr) ||
 		errors.Is(snapshotErr.Err, io.ErrUnexpectedEOF) ||
 		errors.Is(snapshotErr.Err, io.EOF)
+}
+
+func applyRuntimeHost(endpoint inspect.EndpointView, svc registry.Service, runtimeHost string) inspect.EndpointView {
+	runtimeHost = normalizeRuntimeHost(runtimeHost)
+	if runtimeHost == "" {
+		return endpoint
+	}
+
+	endpoint.Host = runtimeHost
+	switch svc.Type {
+	case registry.TypeTCP:
+		if endpoint.Port > 0 {
+			endpoint.Display = net.JoinHostPort(runtimeHost, strconv.Itoa(endpoint.Port))
+		} else {
+			endpoint.Display = runtimeHost
+		}
+	case registry.TypeProxy, registry.TypeFile:
+		endpoint.Display = "https://" + runtimeHost
+	default:
+		endpoint.Display = runtimeHost
+	}
+	return endpoint
+}
+
+func normalizeRuntimeHost(host string) string {
+	return strings.TrimSuffix(strings.TrimSpace(host), ".")
+}
+
+func endpointState(endpoint inspect.EndpointView) string {
+	if endpoint.Display == "" || endpoint.Host == "" {
+		return inspect.EndpointStateExpected
+	}
+	if strings.Contains(endpoint.Display, "<tailnet>") || strings.Contains(endpoint.Host, "<tailnet>") {
+		return inspect.EndpointStateExpected
+	}
+	return inspect.EndpointStateExact
 }

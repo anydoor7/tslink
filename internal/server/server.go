@@ -78,12 +78,13 @@ var closeHTTPServerFn = func(srv *http.Server) error {
 
 // ServiceNode represents a single tsnet node serving one service.
 type ServiceNode struct {
-	tsnetSrv tsnetServer
-	service  registry.Service
-	listener net.Listener
-	httpSrv  *http.Server
-	cancel   context.CancelFunc
-	closed   atomic.Bool
+	tsnetSrv    tsnetServer
+	service     registry.Service
+	runtimeHost string
+	listener    net.Listener
+	httpSrv     *http.Server
+	cancel      context.CancelFunc
+	closed      atomic.Bool
 }
 
 // EnsureTagsFunc is the signature for ensuring ACL tags exist.
@@ -275,7 +276,11 @@ func (s *Server) syncNodes(ctx context.Context) error {
 	// Start nodes for new or changed services
 	var startErrs []error
 	if err := s.ensureRunning(ctx); err != nil {
-		return errors.Join(append(reloadErrs, err)...)
+		syncErr := errors.Join(append(reloadErrs, err)...)
+		if syncErr != nil {
+			s.removeRuntimeSnapshot()
+		}
+		return syncErr
 	}
 	for _, name := range desiredOrder {
 		svc := desired[name]
@@ -292,8 +297,14 @@ func (s *Server) syncNodes(ctx context.Context) error {
 		}
 	}
 
+	syncErr := errors.Join(append(reloadErrs, startErrs...)...)
+	if syncErr != nil {
+		s.removeRuntimeSnapshot()
+		return syncErr
+	}
+
 	s.writeRuntimeSnapshotLocked(registryFingerprint)
-	return errors.Join(append(reloadErrs, startErrs...)...)
+	return nil
 }
 
 func (s *Server) beginShutdown() {
@@ -432,6 +443,7 @@ func (s *Server) writeRuntimeSnapshotLocked(registryFingerprint string) {
 		}
 		states = append(states, runtimesnapshot.ServiceState{
 			Service:     node.service,
+			RuntimeHost: node.runtimeHost,
 			CertDomains: certDomains,
 		})
 	}
@@ -505,11 +517,13 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service) erro
 
 	nodeCtx, cancel := context.WithCancel(ctx)
 
-	if _, err := tsnetSrv.Up(nodeCtx); err != nil {
+	status, err := tsnetSrv.Up(nodeCtx)
+	if err != nil {
 		cancel()
 		tsnetSrv.Close()
 		return fmt.Errorf("tsnet up for %q: %w", svc.Name, err)
 	}
+	runtimeHost := runtimeHostFromStatus(status)
 
 	// TCP proxy: raw TCP forwarding, no HTTP/TLS
 	if svc.Type == registry.TypeTCP {
@@ -531,10 +545,11 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service) erro
 		}
 
 		node := &ServiceNode{
-			tsnetSrv: tsnetSrv,
-			service:  svc,
-			listener: ln,
-			cancel:   cancel,
+			tsnetSrv:    tsnetSrv,
+			service:     svc,
+			runtimeHost: runtimeHost,
+			listener:    ln,
+			cancel:      cancel,
 		}
 
 		go func() {
@@ -612,11 +627,12 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service) erro
 	httpSrv := newHTTPServerFn(handler)
 
 	node := &ServiceNode{
-		tsnetSrv: tsnetSrv,
-		service:  svc,
-		listener: ln,
-		httpSrv:  httpSrv,
-		cancel:   cancel,
+		tsnetSrv:    tsnetSrv,
+		service:     svc,
+		runtimeHost: runtimeHost,
+		listener:    ln,
+		httpSrv:     httpSrv,
+		cancel:      cancel,
 	}
 
 	// Serve in background
@@ -636,6 +652,13 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service) erro
 
 	s.nodes[svc.Name] = node
 	return nil
+}
+
+func runtimeHostFromStatus(status *ipnstate.Status) string {
+	if status == nil || status.Self == nil {
+		return ""
+	}
+	return strings.TrimSuffix(strings.TrimSpace(status.Self.DNSName), ".")
 }
 
 // stopNodeLocked stops a node. If removeState is true, its tsnet state dir is deleted.
