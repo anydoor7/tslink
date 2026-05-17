@@ -27,9 +27,11 @@ const (
 
 	CodeFunnelAllowConflict      = "funnel_allow_conflict"
 	CodeFunnelControlURLConflict = "funnel_control_url_conflict"
+	CodeFunnelTypeConflict       = "funnel_type_conflict"
 
 	ErrFunnelAllowedUsers = "funnel services do not support allowed_users; public Funnel cannot be combined with TSLink allow lists"
 	ErrFunnelControlURL   = "funnel services do not support per-service control_url; use the default Tailscale control server or disable funnel"
+	ErrFunnelTypeConflict = "funnel can only be used with proxy services; public Funnel is not supported for file or tcp services"
 )
 
 var nameRegexp = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
@@ -69,9 +71,20 @@ func FunnelControlURLError() error {
 	return CodedError{Code: CodeFunnelControlURLConflict, Message: ErrFunnelControlURL}
 }
 
-func ValidateFunnelGuardrails(funnel bool, allowedUsers []string, controlURL string) error {
+func FunnelTypeConflictError(serviceType string) error {
+	message := ErrFunnelTypeConflict
+	if serviceType != "" {
+		message = fmt.Sprintf("%s (got %q)", message, serviceType)
+	}
+	return CodedError{Code: CodeFunnelTypeConflict, Message: message}
+}
+
+func ValidateFunnelGuardrails(serviceType string, funnel bool, allowedUsers []string, controlURL string) error {
 	if !funnel {
 		return nil
+	}
+	if serviceType != TypeProxy {
+		return FunnelTypeConflictError(serviceType)
 	}
 	if len(allowedUsers) > 0 {
 		return FunnelAllowedUsersError()
@@ -156,11 +169,11 @@ func ValidateService(svc Service) error {
 	if err := ValidateName(svc.Name); err != nil {
 		return err
 	}
+	if err := ValidateFunnelGuardrails(svc.Type, svc.Funnel, svc.AllowedUsers, svc.ControlURL); err != nil {
+		return err
+	}
 	if svc.Type == TypeTCP && len(svc.AllowedUsers) > 0 {
 		return fmt.Errorf("tcp services do not support allowed_users; TSLink cannot enforce user ACLs on raw TCP services")
-	}
-	if err := ValidateFunnelGuardrails(svc.Funnel, svc.AllowedUsers, svc.ControlURL); err != nil {
-		return err
 	}
 	if err := ValidateControlURL(svc.ControlURL); err != nil {
 		return err

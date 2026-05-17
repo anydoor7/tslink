@@ -231,6 +231,7 @@ func TestFunnelConflictCodesAreRegistered(t *testing.T) {
 	required := []string{
 		WarningCodeFunnelAllowConflict,
 		WarningCodeFunnelControlURLConflict,
+		WarningCodeFunnelTypeConflict,
 	}
 	for _, code := range required {
 		meta, ok := WarningCodeRegistry[code]

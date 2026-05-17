@@ -910,6 +910,41 @@ func TestValidateServiceRejectsFunnelControlURL(t *testing.T) {
 	}
 }
 
+func TestValidateServiceRejectsFunnelNonProxyTypes(t *testing.T) {
+	cases := []Service{
+		{
+			Name:   "public-files",
+			Type:   TypeFile,
+			Path:   "/tmp/public-files",
+			Funnel: true,
+		},
+		{
+			Name:   "public-db",
+			Type:   TypeTCP,
+			Target: "localhost:5432",
+			Port:   5432,
+			Funnel: true,
+		},
+	}
+	for _, svc := range cases {
+		t.Run(svc.Type, func(t *testing.T) {
+			err := ValidateService(svc)
+			if err == nil {
+				t.Fatal("ValidateService() error = nil, want funnel type conflict error")
+			}
+			if !strings.Contains(err.Error(), ErrFunnelTypeConflict) {
+				t.Fatalf("ValidateService() error = %v, want funnel type conflict error", err)
+			}
+			if !strings.Contains(err.Error(), CodeFunnelTypeConflict) {
+				t.Fatalf("ValidateService() error = %v, want stable code %s", err, CodeFunnelTypeConflict)
+			}
+			if code, ok := ErrorCode(err); !ok || code != CodeFunnelTypeConflict {
+				t.Fatalf("ErrorCode() = %q, %v; want %s, true", code, ok, CodeFunnelTypeConflict)
+			}
+		})
+	}
+}
+
 func TestAddServiceAllFields(t *testing.T) {
 	path := testRegistryPath(t)
 

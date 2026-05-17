@@ -243,11 +243,11 @@ func validateServiceForServe(svc registry.Service) error {
 	if err := registry.ValidateName(svc.Name); err != nil {
 		return fmt.Errorf("service %q: %w", svc.Name, err)
 	}
+	if err := registry.ValidateFunnelGuardrails(svc.Type, svc.Funnel, svc.AllowedUsers, svc.ControlURL); err != nil {
+		return fmt.Errorf("service %q: %w; edit registry.json", svc.Name, err)
+	}
 	if svc.Type == registry.TypeTCP && len(svc.AllowedUsers) > 0 {
 		return fmt.Errorf("service %q: tcp services do not support allowed_users; remove allowed_users from registry.json", svc.Name)
-	}
-	if err := registry.ValidateFunnelGuardrails(svc.Funnel, svc.AllowedUsers, svc.ControlURL); err != nil {
-		return fmt.Errorf("service %q: %w; edit registry.json", svc.Name, err)
 	}
 	if err := registry.ValidateControlURL(svc.ControlURL); err != nil {
 		return fmt.Errorf("service %q has invalid control_url: %w; edit registry.json", svc.Name, err)

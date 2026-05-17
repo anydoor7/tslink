@@ -818,6 +818,61 @@ func TestServeCmd_DaemonModeFunnelControlURLIncludesStableCode(t *testing.T) {
 	}
 }
 
+func TestServeCmd_DaemonModeFunnelNonProxyTypesIncludeStableCode(t *testing.T) {
+	cases := []registry.Service{
+		{
+			Name:   "public-files",
+			Type:   registry.TypeFile,
+			Path:   "/tmp/public-files",
+			Funnel: true,
+		},
+		{
+			Name:   "public-db",
+			Type:   registry.TypeTCP,
+			Target: "localhost:5432",
+			Port:   5432,
+			Funnel: true,
+		},
+	}
+	for _, svc := range cases {
+		t.Run(svc.Type, func(t *testing.T) {
+			dir := t.TempDir()
+			mockServeDefaults(t, dir)
+			serveDaemon = true
+
+			reg := &registry.Registry{Services: []registry.Service{svc}}
+			data, _ := json.Marshal(reg)
+			if err := os.WriteFile(filepath.Join(dir, "registry.json"), data, 0o600); err != nil {
+				t.Fatalf("write registry: %v", err)
+			}
+
+			daemonizeCalled := false
+			serveDaemonizeFn = func(out, errLog, controlURL string) (int, error) {
+				daemonizeCalled = true
+				return 0, fmt.Errorf("daemonize should not be called")
+			}
+
+			cmd := findServeCmd(t)
+			err := cmd.RunE(cmd, nil)
+			if err == nil {
+				t.Fatal("RunE() error = nil, want funnel type conflict error")
+			}
+			if !strings.Contains(err.Error(), registry.ErrFunnelTypeConflict) {
+				t.Fatalf("RunE() error = %v, want funnel type conflict error", err)
+			}
+			if !strings.Contains(err.Error(), registry.CodeFunnelTypeConflict) {
+				t.Fatalf("RunE() error = %v, want stable code %s", err, registry.CodeFunnelTypeConflict)
+			}
+			if code, ok := registry.ErrorCode(err); !ok || code != registry.CodeFunnelTypeConflict {
+				t.Fatalf("ErrorCode() = %q, %v; want %s, true", code, ok, registry.CodeFunnelTypeConflict)
+			}
+			if daemonizeCalled {
+				t.Fatal("daemonize was called after invalid registry")
+			}
+		})
+	}
+}
+
 func TestServeCmd_DaemonLogDirError(t *testing.T) {
 	dir := t.TempDir()
 	mockServeDefaults(t, dir)

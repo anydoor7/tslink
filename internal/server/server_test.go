@@ -918,6 +918,63 @@ func TestSyncNodes_RejectsHandEditedFunnelControlURLBeforeListenFunnel(t *testin
 	}
 }
 
+func TestSyncNodes_RejectsHandEditedFunnelNonProxyTypesBeforeTSNet(t *testing.T) {
+	cases := []registry.Service{
+		{
+			Name:   "public-files",
+			Type:   registry.TypeFile,
+			Path:   "/tmp/public-files",
+			Funnel: true,
+		},
+		{
+			Name:   "public-db",
+			Type:   registry.TypeTCP,
+			Target: "localhost:5432",
+			Port:   5432,
+			Funnel: true,
+		},
+	}
+	for _, svc := range cases {
+		t.Run(svc.Type, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			if err := config.EnsureDir(); err != nil {
+				t.Fatalf("EnsureDir() error = %v", err)
+			}
+
+			writeRegistry(t, []registry.Service{svc})
+
+			oldNew := newTSNetServerFn
+			newTSNetServerFn = func(svc registry.Service, stateDir, authKey, controlURL string) tsnetServer {
+				t.Fatalf("syncNodes should reject funnel type conflict before constructing tsnet server")
+				return &fakeTSNetServer{}
+			}
+			t.Cleanup(func() { newTSNetServerFn = oldNew })
+
+			s, err := New("key", "")
+			if err != nil {
+				t.Fatalf("New() error = %v", err)
+			}
+
+			err = s.syncNodes(context.Background())
+			if err == nil {
+				t.Fatal("syncNodes() error = nil, want funnel type conflict error")
+			}
+			if !strings.Contains(err.Error(), registry.ErrFunnelTypeConflict) {
+				t.Fatalf("syncNodes() error = %v, want funnel type conflict error", err)
+			}
+			if !strings.Contains(err.Error(), registry.CodeFunnelTypeConflict) {
+				t.Fatalf("syncNodes() error = %v, want stable code %s", err, registry.CodeFunnelTypeConflict)
+			}
+			if code, ok := registry.ErrorCode(err); !ok || code != registry.CodeFunnelTypeConflict {
+				t.Fatalf("ErrorCode() = %q, %v; want %s, true", code, ok, registry.CodeFunnelTypeConflict)
+			}
+			if len(s.nodes) != 0 {
+				t.Fatalf("nodes = %+v, want none after rejected hand-edited registry", s.nodes)
+			}
+		})
+	}
+}
+
 func TestStartNodeLocked_FunnelLogsWarningBeforeListenFunnel(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	if err := config.EnsureDir(); err != nil {

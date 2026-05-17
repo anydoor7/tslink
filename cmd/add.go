@@ -87,26 +87,30 @@ func buildService(p AddParams) (registry.Service, error) {
 	}
 
 	modes := 0
+	svcType := ""
 	if p.Proxy != "" {
 		modes++
+		svcType = registry.TypeProxy
 	}
 	if p.Dir != "" {
 		modes++
+		svcType = registry.TypeFile
 	}
 	if p.TCP != "" {
 		modes++
+		svcType = registry.TypeTCP
 	}
 	if modes != 1 {
 		return registry.Service{}, fmt.Errorf("exactly one of --proxy, --dir, or --tcp must be provided")
 	}
 
-	if p.Funnel && p.Proxy == "" {
+	if p.Funnel && svcType != registry.TypeProxy {
 		return registry.Service{}, fmt.Errorf("--funnel can only be used with --proxy")
 	}
 	if p.Public && !p.Funnel {
 		return registry.Service{}, fmt.Errorf("--public can only be used with --funnel")
 	}
-	if err := registry.ValidateFunnelGuardrails(p.Funnel, allowedUsers, p.ControlURL); err != nil {
+	if err := registry.ValidateFunnelGuardrails(svcType, p.Funnel, allowedUsers, p.ControlURL); err != nil {
 		return registry.Service{}, err
 	}
 	if p.Funnel && !p.Public {

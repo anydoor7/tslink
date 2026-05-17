@@ -9,6 +9,7 @@ const (
 	WarningCodeServiceTypeUnknown       = "service_type_unknown"
 	WarningCodeFunnelAllowConflict      = registry.CodeFunnelAllowConflict
 	WarningCodeFunnelControlURLConflict = registry.CodeFunnelControlURLConflict
+	WarningCodeFunnelTypeConflict       = registry.CodeFunnelTypeConflict
 )
 
 type WarningCodeMeta struct {
@@ -47,5 +48,10 @@ var WarningCodeRegistry = map[string]WarningCodeMeta{
 		Severity:    "error",
 		Source:      "service.control_url",
 		Description: "Public Funnel services cannot use per-service control_url.",
+	},
+	WarningCodeFunnelTypeConflict: {
+		Severity:    "error",
+		Source:      "service.type",
+		Description: "Public Funnel services can only be proxy services.",
 	},
 }
