@@ -36,7 +36,7 @@ TSLink implements zero-trust principles at every layer:
 |-----|-----|
 | **Never trust, always verify** | Tailnet HTTP proxy/file requests are authenticated via Tailscale WhoIs — identity headers (`X-Tailscale-User-Login`, `X-Tailscale-User-Name`, `X-Tailscale-User-Picture`, `X-Tailscale-Node`) are injected into proxied requests. Public Funnel exposure and raw TCP streams are not treated as TSLink-enforced Tailscale user authentication. |
 | **HTTP least-privilege access** | `--allow` restricts proxy and file services to specific users or tags. TCP services rely on Tailscale network ACLs and tags. |
-| **Assume breach** | End-to-end WireGuard encryption on every connection. Even if your local network is compromised, traffic between your devices remains encrypted. |
+| **Assume breach** | Tailnet device-to-device traffic uses WireGuard encryption. Even if your local network is compromised, traffic between your Tailscale devices remains encrypted; public Funnel paths follow Tailscale Funnel semantics. |
 | **Microsegmentation** | Each service runs as an isolated tsnet node with its own hostname, TLS certificate, and network identity. Compromising one service does not grant access to others. |
 | **No implicit trust** | No services are exposed to the public internet by default. Credentials are stored in the system keychain first, with restricted-permission file fallback for headless environments. API-token-derived startup auth keys are generated on demand and not persisted; legacy authkey files may still be read for compatibility and should be migrated. |
 
@@ -53,7 +53,7 @@ tslink serve --daemon
 ### Features
 
 - **Zero configuration** — no port forwarding, no DNS, no certificates to manage
-- **End-to-end encrypted** — WireGuard encryption via Tailscale, private to your tailnet by default; public exposure requires explicit Funnel opt-in
+- **WireGuard tailnet path** — Tailnet device-to-device traffic uses WireGuard via Tailscale; public exposure requires explicit Funnel opt-in
 - **Instant TLS** — automatic HTTPS with valid certificates, no setup required
 - **Per-service isolation** — each service gets its own tailnet hostname and identity (`https://<name>.<tailnet>.ts.net`)
 - **Live reload** — add or remove services while TSLink is running, changes take effect immediately
@@ -378,7 +378,7 @@ tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 │ Your Machine│         │   Tailscale Network  │         │  Your Phone  │
 │             │         │   (WireGuard mesh)    │         │              │
 │  localhost   │◄──────►│                      │◄──────►│  Browser     │
-│  :3000      │  tsnet  │  End-to-end encrypted │  HTTPS │              │
+│  :3000      │  tsnet  │  WireGuard encrypted  │  HTTPS │              │
 │  :5432      │  nodes  │  Encrypted tailnet path│  +TLS  │              │
 │  ~/Documents│  (1/svc)│                       │        │              │
 └─────────────┘         └──────────────────────┘         └──────────────┘

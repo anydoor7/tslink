@@ -26,7 +26,7 @@
 
 随着本地 AI 工作负载、自托管服务和个人基础设施的增长，个人开发者和小团队的安全需求与企业级工具之间的差距越来越大。美国联邦政府已认识到这一转变：[Executive Order 14028](https://www.whitehouse.gov/briefing-room/presidential-actions/2021/05/12/executive-order-on-improving-the-nations-cybersecurity/) 要求采用零信任架构，[NIST SP 800-207](https://csrc.nist.gov/publications/detail/sp/800-207/final) 定义了标准。但大多数零信任工具面向的是拥有专业安全团队的大型企业。
 
-**TSLink 让每个人都能用上零信任网络。** 一条命令将你的机器变成安全网关。每个服务在你的 [Tailscale](https://tailscale.com) 网络上获得独立的加密身份 — 经过认证、端到端加密，默认不对公网可达。
+**TSLink 让每个人都能用上零信任网络。** 一条命令将你的机器变成安全网关。每个服务在你的 [Tailscale](https://tailscale.com) 网络上获得独立的加密身份 — 加密、经过认证，默认不对公网可达。
 
 ## 安全模型
 
@@ -36,7 +36,7 @@ TSLink 在每一层实现零信任原则：
 |-----------|------------|
 | **永不信任，始终验证** | tailnet 内的 HTTP 代理/文件请求通过 Tailscale WhoIs 认证 — 身份头（`X-Tailscale-User-Login`、`X-Tailscale-User-Name`、`X-Tailscale-User-Picture`、`X-Tailscale-Node`）注入代理请求。公网 Funnel 和 raw TCP 不视为 TSLink 强制执行的 Tailscale 用户认证。 |
 | **HTTP 最小权限访问** | `--allow` 限制 proxy 和 file 服务的访问用户或标签。TCP 服务依赖 Tailscale 网络 ACL 和标签。 |
-| **假设已被攻破** | 每个连接都有端到端 WireGuard 加密。即使本地网络被攻破，设备间流量仍然加密。 |
+| **假设已被攻破** | tailnet 设备之间的流量使用 WireGuard 加密。即使本地网络被攻破，Tailscale 设备之间的流量仍然加密；公网 Funnel 路径遵循 Tailscale Funnel 语义。 |
 | **微分段** | 每个服务作为隔离的 tsnet 节点运行，拥有独立的主机名、TLS 证书和网络身份。攻破一个服务不会影响其他服务。 |
 | **消除隐式信任** | 默认不暴露任何服务到公网。凭证优先存储在系统钥匙串中；headless 环境可回退到受限权限文件。由 API token 派生的启动认证密钥按需生成且不持久化；旧版 authkey 文件仍可能因兼容性被读取，建议迁移。 |
 
@@ -53,7 +53,7 @@ tslink serve --daemon
 ### 功能特性
 
 - **零配置** — 无需端口转发、DNS 或证书管理
-- **端到端加密** — 通过 Tailscale 的 WireGuard 加密，默认仅在你的 tailnet 内私有可达；公网暴露必须显式启用 Funnel
+- **WireGuard tailnet 路径** — tailnet 设备间流量通过 Tailscale 使用 WireGuard；公网暴露必须显式启用 Funnel
 - **即时 TLS** — 自动 HTTPS，有效证书，无需设置
 - **Per-service 隔离** — 每个服务获得独立的 tailnet 主机名和身份（`https://<name>.<tailnet>.ts.net`）
 - **热重载** — 运行时添加或移除服务，更改立即生效
@@ -378,7 +378,7 @@ tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 │  你的机器   │         │   Tailscale 网络     │         │   你的手机   │
 │             │         │   (WireGuard 网状)    │         │              │
 │  localhost   │◄──────►│                      │◄──────►│  浏览器      │
-│  :3000      │  tsnet  │  端到端加密           │  HTTPS │              │
+│  :3000      │  tsnet  │  WireGuard 加密       │  HTTPS │              │
 │  :5432      │  节点   │  加密 tailnet 路径     │  +TLS  │              │
 │  ~/Documents│ (1/服务)│                       │        │              │
 └─────────────┘         └──────────────────────┘         └──────────────┘
