@@ -26,7 +26,7 @@
 
 随着本地 AI 工作负载、自托管服务和个人基础设施的增长，个人开发者和小团队的安全需求与企业级工具之间的差距越来越大。美国联邦政府已认识到这一转变：[Executive Order 14028](https://www.whitehouse.gov/briefing-room/presidential-actions/2021/05/12/executive-order-on-improving-the-nations-cybersecurity/) 要求采用零信任架构，[NIST SP 800-207](https://csrc.nist.gov/publications/detail/sp/800-207/final) 定义了标准。但大多数零信任工具面向的是拥有专业安全团队的大型企业。
 
-**TSLink 让每个人都能用上零信任网络。** 一条命令将你的机器变成安全网关。每个服务在你的 [Tailscale](https://tailscale.com) 网络上获得独立的加密身份 — 经过认证、端到端加密、对公网不可见。
+**TSLink 让每个人都能用上零信任网络。** 一条命令将你的机器变成安全网关。每个服务在你的 [Tailscale](https://tailscale.com) 网络上获得独立的加密身份 — 经过认证、端到端加密，默认不对公网可达。
 
 ## 安全模型
 
@@ -53,7 +53,7 @@ tslink serve --daemon
 ### 功能特性
 
 - **零配置** — 无需端口转发、DNS 或证书管理
-- **端到端加密** — 通过 Tailscale 的 WireGuard 加密，数据永远不经过公网
+- **端到端加密** — 通过 Tailscale 的 WireGuard 加密，默认仅在你的 tailnet 内私有可达；公网暴露必须显式启用 Funnel
 - **即时 TLS** — 自动 HTTPS，有效证书，无需设置
 - **Per-service 隔离** — 每个服务获得独立的 tailnet 主机名和身份（`https://<name>.<tailnet>.ts.net`）
 - **热重载** — 运行时添加或移除服务，更改立即生效

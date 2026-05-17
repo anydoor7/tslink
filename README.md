@@ -26,7 +26,7 @@ Traditional approaches to exposing local services — port forwarding, VPNs, ngr
 
 As local AI workloads, self-hosted services, and personal infrastructure grow, the gap between what individuals need and what enterprise security tools provide keeps widening. The federal government recognized this shift: [Executive Order 14028](https://www.whitehouse.gov/briefing-room/presidential-actions/2021/05/12/executive-order-on-improving-the-nations-cybersecurity/) mandates zero-trust adoption, and [NIST SP 800-207](https://csrc.nist.gov/publications/detail/sp/800-207/final) defines the architecture. But most zero-trust tooling targets large enterprises with dedicated security teams.
 
-**TSLink brings zero-trust networking to everyone.** One command turns your machine into a secure gateway. Each service gets its own isolated identity on your [Tailscale](https://tailscale.com) network — encrypted, authenticated, and invisible to the public internet.
+**TSLink brings zero-trust networking to everyone.** One command turns your machine into a secure gateway. Each service gets its own isolated identity on your [Tailscale](https://tailscale.com) network — encrypted, authenticated, and not publicly reachable by default.
 
 ## Security Model
 
@@ -53,7 +53,7 @@ tslink serve --daemon
 ### Features
 
 - **Zero configuration** — no port forwarding, no DNS, no certificates to manage
-- **End-to-end encrypted** — WireGuard encryption via Tailscale, your data never touches the public internet
+- **End-to-end encrypted** — WireGuard encryption via Tailscale, private to your tailnet by default; public exposure requires explicit Funnel opt-in
 - **Instant TLS** — automatic HTTPS with valid certificates, no setup required
 - **Per-service isolation** — each service gets its own tailnet hostname and identity (`https://<name>.<tailnet>.ts.net`)
 - **Live reload** — add or remove services while TSLink is running, changes take effect immediately
