@@ -54,6 +54,26 @@ func dataMap(t *testing.T, s string) map[string]any {
 	return data
 }
 
+func TestWasJSONRequestedReadsPersistentFlag(t *testing.T) {
+	t.Cleanup(func() {
+		_ = rootCmd.PersistentFlags().Set("json", "false")
+	})
+
+	if err := rootCmd.PersistentFlags().Set("json", "false"); err != nil {
+		t.Fatalf("set json false: %v", err)
+	}
+	if WasJSONRequested() {
+		t.Fatal("WasJSONRequested() = true, want false")
+	}
+
+	if err := rootCmd.PersistentFlags().Set("json", "true"); err != nil {
+		t.Fatalf("set json true: %v", err)
+	}
+	if !WasJSONRequested() {
+		t.Fatal("WasJSONRequested() = false, want true")
+	}
+}
+
 // --- Status JSON ---
 
 func TestStatusJSON(t *testing.T) {

@@ -504,6 +504,113 @@ func TestGetAuthKey_AuthKeyPathError(t *testing.T) {
 	}
 }
 
+func TestHasStoredCredentialModes(t *testing.T) {
+	cases := []struct {
+		name  string
+		setup func(t *testing.T)
+		want  bool
+	}{
+		{
+			name: "none",
+			want: false,
+		},
+		{
+			name: "client secret",
+			setup: func(t *testing.T) {
+				if err := SaveClientSecret("tskey-client-stored"); err != nil {
+					t.Fatalf("SaveClientSecret() error = %v", err)
+				}
+			},
+			want: true,
+		},
+		{
+			name: "api key",
+			setup: func(t *testing.T) {
+				if err := SetAPIKey("tskey-api-stored"); err != nil {
+					t.Fatalf("SetAPIKey() error = %v", err)
+				}
+			},
+			want: true,
+		},
+		{
+			name: "legacy auth key",
+			setup: func(t *testing.T) {
+				if err := os.WriteFile(authKeyPath(t), []byte("legacy-auth\n"), 0o600); err != nil {
+					t.Fatalf("WriteFile() error = %v", err)
+				}
+			},
+			want: true,
+		},
+		{
+			name: "empty legacy auth key",
+			setup: func(t *testing.T) {
+				if err := os.WriteFile(authKeyPath(t), []byte(" \n\t "), 0o600); err != nil {
+					t.Fatalf("WriteFile() error = %v", err)
+				}
+			},
+			want: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			setup(t)
+			if tc.setup != nil {
+				tc.setup(t)
+			}
+			got, err := HasStoredCredential()
+			if err != nil {
+				t.Fatalf("HasStoredCredential() error = %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("HasStoredCredential() = %v, want %v", got, tc.want)
+			}
+			err = RequireStoredCredential()
+			if tc.want && err != nil {
+				t.Fatalf("RequireStoredCredential() error = %v, want nil", err)
+			}
+			if !tc.want && (err == nil || !strings.Contains(err.Error(), "not authenticated")) {
+				t.Fatalf("RequireStoredCredential() error = %v, want not authenticated", err)
+			}
+		})
+	}
+}
+
+func TestHasStoredCredentialErrorPaths(t *testing.T) {
+	t.Run("client secret read error", func(t *testing.T) {
+		setup(t)
+		if err := os.Mkdir(clientSecretPath(t), 0o700); err != nil {
+			t.Fatalf("Mkdir() error = %v", err)
+		}
+		if _, err := HasStoredCredential(); err == nil {
+			t.Fatal("HasStoredCredential() error = nil, want client secret read error")
+		}
+	})
+
+	t.Run("auth key path error", func(t *testing.T) {
+		setup(t)
+		origAuthKeyPath := authKeyPathFunc
+		t.Cleanup(func() { authKeyPathFunc = origAuthKeyPath })
+		authKeyPathFunc = func() (string, error) {
+			return "", errors.New("auth key path unavailable")
+		}
+		_, err := HasStoredCredential()
+		if err == nil || !strings.Contains(err.Error(), "auth key path unavailable") {
+			t.Fatalf("HasStoredCredential() error = %v, want auth key path error", err)
+		}
+	})
+
+	t.Run("legacy auth key read error", func(t *testing.T) {
+		setup(t)
+		if err := os.Mkdir(authKeyPath(t), 0o700); err != nil {
+			t.Fatalf("Mkdir() error = %v", err)
+		}
+		if _, err := HasStoredCredential(); err == nil {
+			t.Fatal("HasStoredCredential() error = nil, want legacy auth key read error")
+		}
+	})
+}
+
 func TestMigrateFromLegacy_PathError(t *testing.T) {
 	// When config.APIKeyPath() itself fails
 	keyring.MockInit()

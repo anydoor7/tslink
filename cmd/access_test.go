@@ -473,6 +473,101 @@ func TestAccessExplainServiceNotFoundReturnsSemanticError(t *testing.T) {
 	}
 }
 
+func TestAccessAuthorityHasExplicitPort(t *testing.T) {
+	cases := []struct {
+		authority string
+		want      bool
+	}{
+		{"localhost:3000", true},
+		{"localhost", false},
+		{"[::1]:443", true},
+		{"[::1]", false},
+		{"2001:db8::1", false},
+		{"user:pass@localhost:5432", false},
+	}
+
+	for _, tc := range cases {
+		if got := accessAuthorityHasExplicitPort(tc.authority); got != tc.want {
+			t.Fatalf("accessAuthorityHasExplicitPort(%q) = %v, want %v", tc.authority, got, tc.want)
+		}
+	}
+}
+
+func TestAccessClassifyHostPortTargetBranches(t *testing.T) {
+	cases := []struct {
+		name        string
+		authority   string
+		defaultPort string
+		wantHost    string
+		wantPort    string
+		wantLoop    bool
+		wantErr     string
+	}{
+		{
+			name:        "default port local host",
+			authority:   "localhost",
+			defaultPort: "80",
+			wantHost:    "localhost",
+			wantPort:    "80",
+			wantLoop:    true,
+		},
+		{
+			name:        "bracketed ipv6 default port",
+			authority:   "[::1]",
+			defaultPort: "443",
+			wantHost:    "::1",
+			wantPort:    "443",
+			wantLoop:    true,
+		},
+		{
+			name:      "missing required port",
+			authority: "localhost",
+			wantErr:   "missing port in address",
+		},
+		{
+			name:        "explicit malformed port is not defaulted",
+			authority:   "localhost:http",
+			defaultPort: "80",
+			wantErr:     `invalid target port "http"`,
+		},
+		{
+			name:      "empty explicit port",
+			authority: "localhost:",
+			wantErr:   "missing target port",
+		},
+		{
+			name:      "port out of range",
+			authority: "localhost:70000",
+			wantErr:   `invalid target port "70000"`,
+		},
+		{
+			name:      "external target",
+			authority: "10.0.0.5:8080",
+			wantHost:  "10.0.0.5",
+			wantPort:  "8080",
+			wantLoop:  false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := accessClassifyHostPortTarget(tc.authority, tc.defaultPort)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("accessClassifyHostPortTarget() error = %v, want containing %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("accessClassifyHostPortTarget() error = %v", err)
+			}
+			if got.Host != tc.wantHost || got.Port != tc.wantPort || got.LoopbackOrLocal != tc.wantLoop {
+				t.Fatalf("access target = %+v, want host %q port %q loopback %v", got, tc.wantHost, tc.wantPort, tc.wantLoop)
+			}
+		})
+	}
+}
+
 func stringSliceContains(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {

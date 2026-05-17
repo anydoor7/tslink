@@ -76,6 +76,27 @@ func TestServiceViewForProxyFileAndTCP(t *testing.T) {
 	}
 }
 
+func TestServiceViewsPreservesOrderAndBuildsViews(t *testing.T) {
+	services := []registry.Service{
+		{Name: "web", Type: registry.TypeProxy, Target: "http://localhost:3000"},
+		{Name: "docs", Type: registry.TypeFile, Path: "/srv/docs"},
+	}
+
+	views := ServiceViews(services)
+	if len(views) != 2 {
+		t.Fatalf("ServiceViews() returned %d views, want 2", len(views))
+	}
+	if views[0].Name != "web" || views[0].Endpoint.Display != "https://web.<tailnet>.ts.net" {
+		t.Fatalf("first view = %+v, want web service view", views[0])
+	}
+	if views[1].Name != "docs" || views[1].Backend.Display != "/srv/docs" {
+		t.Fatalf("second view = %+v, want docs service view", views[1])
+	}
+	if empty := ServiceViews(nil); len(empty) != 0 {
+		t.Fatalf("ServiceViews(nil) = %d views, want 0", len(empty))
+	}
+}
+
 func TestServiceViewRedactsHTTPAuthCredentials(t *testing.T) {
 	view := ServiceViewFor(registry.Service{
 		Name:   "web",

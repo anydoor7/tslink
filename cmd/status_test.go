@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
@@ -357,6 +358,107 @@ func TestStatusURLsJSONIncludesSchemaWarningsAndRedactedAllow(t *testing.T) {
 	}
 	if !hasStatusWarningCode(web.Warnings, inspect.WarningCodeRuntimeSnapshotMissing) {
 		t.Fatalf("warnings = %+v, want runtime_snapshot_missing", web.Warnings)
+	}
+}
+
+func TestFormatStatusURLsHumanOutput(t *testing.T) {
+	var buf bytes.Buffer
+	formatStatusURLs(StatusURLsResult{
+		DaemonRunning: true,
+		DaemonPID:     4242,
+		Authenticated: true,
+		ServiceCount:  2,
+		RuntimeSnapshot: StatusRuntimeSnapshotResult{
+			Status: tsruntime.StatusStale,
+			Code:   inspect.WarningCodeRuntimeSnapshotStale,
+		},
+		Services: []StatusServiceView{
+			{
+				Name: "web",
+				Type: registry.TypeProxy,
+				Endpoint: inspect.EndpointView{
+					Display: "https://web.tailnet.ts.net",
+					State:   inspect.EndpointStateExact,
+				},
+				Exposure: inspect.ExposureView{Kind: inspect.ExposureTailnetAllow},
+				Allow:    inspect.SummaryView{Mode: "restricted", Count: 2, Redacted: true},
+				Tags:     inspect.SummaryView{Mode: "configured", Entries: []string{"tag:web"}},
+				Backend:  inspect.BackendView{Display: "http://localhost:3000"},
+				Warnings: []inspect.WarningView{{Code: inspect.WarningCodeRuntimeSnapshotStale}},
+			},
+			{
+				Name:     "docs",
+				Type:     registry.TypeFile,
+				Endpoint: inspect.EndpointView{},
+				Exposure: inspect.ExposureView{},
+				Allow:    inspect.SummaryView{Count: 0},
+				Tags:     inspect.SummaryView{Mode: "configured"},
+				Backend:  inspect.BackendView{},
+			},
+		},
+	}, &buf)
+
+	raw := buf.String()
+	for _, want := range []string{
+		"tslink: running (pid 4242)",
+		"tailnet: authenticated",
+		"services: 2 registered",
+		"runtime snapshot: stale (runtime_snapshot_stale)",
+		"NAME",
+		"web",
+		"restricted(2 redacted)",
+		"configured:tag:web",
+		inspect.WarningCodeRuntimeSnapshotStale,
+		"docs",
+	} {
+		if !strings.Contains(raw, want) {
+			t.Fatalf("formatStatusURLs output missing %q:\n%s", want, raw)
+		}
+	}
+}
+
+func TestFormatStatusURLsNoServices(t *testing.T) {
+	var buf bytes.Buffer
+	formatStatusURLs(StatusURLsResult{
+		RuntimeSnapshot: StatusRuntimeSnapshotResult{Status: tsruntime.StatusMissing},
+	}, &buf)
+
+	raw := buf.String()
+	if !strings.Contains(raw, "runtime snapshot: missing") || !strings.Contains(raw, "service urls: none") {
+		t.Fatalf("formatStatusURLs no-services output = %q, want runtime snapshot and none marker", raw)
+	}
+}
+
+func TestStatusSummaryLabelAndWarningCodes(t *testing.T) {
+	summaryCases := []struct {
+		name string
+		in   inspect.SummaryView
+		want string
+	}{
+		{name: "redacted without mode", in: inspect.SummaryView{Count: 2, Redacted: true}, want: "2 redacted"},
+		{name: "redacted with mode", in: inspect.SummaryView{Mode: "restricted", Count: 2, Redacted: true}, want: "restricted(2 redacted)"},
+		{name: "entries without mode", in: inspect.SummaryView{Entries: []string{"a", "b"}}, want: "configured:a,b"},
+		{name: "entries with mode", in: inspect.SummaryView{Mode: "tags", Entries: []string{"tag:a"}}, want: "tags:tag:a"},
+		{name: "mode only", in: inspect.SummaryView{Mode: "all_tailnet"}, want: "all_tailnet"},
+		{name: "count only", in: inspect.SummaryView{Count: 3}, want: "3"},
+	}
+	for _, tc := range summaryCases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := summaryLabel(tc.in); got != tc.want {
+				t.Fatalf("summaryLabel(%+v) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+
+	if got := warningCodes(nil); got != "-" {
+		t.Fatalf("warningCodes(nil) = %q, want -", got)
+	}
+	warnings := []inspect.WarningView{
+		{Code: inspect.WarningCodeRuntimeSnapshotMissing},
+		{Code: inspect.WarningCodeTCPHTTPACLNotApplicable},
+	}
+	if got := warningCodes(warnings); got != inspect.WarningCodeRuntimeSnapshotMissing+","+inspect.WarningCodeTCPHTTPACLNotApplicable {
+		t.Fatalf("warningCodes() = %q, want joined codes", got)
 	}
 }
 

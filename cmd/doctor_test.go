@@ -654,3 +654,153 @@ func TestClassifyProbeErrorWithNetOpError(t *testing.T) {
 		t.Fatalf("classifyProbeError = %s, want %s", code, inspect.WarningCodeTargetProbeRefused)
 	}
 }
+
+func TestDoctorAuthorityHasExplicitPort(t *testing.T) {
+	cases := []struct {
+		authority string
+		want      bool
+	}{
+		{"localhost:3000", true},
+		{"localhost", false},
+		{"[::1]:443", true},
+		{"[::1]", false},
+		{"2001:db8::1", false},
+		{"user:pass@localhost:5432", false},
+	}
+
+	for _, tc := range cases {
+		if got := authorityHasExplicitPort(tc.authority); got != tc.want {
+			t.Fatalf("authorityHasExplicitPort(%q) = %v, want %v", tc.authority, got, tc.want)
+		}
+	}
+}
+
+func TestDoctorClassifyHostPortTargetBranches(t *testing.T) {
+	cases := []struct {
+		name          string
+		authority     string
+		defaultPort   string
+		wantHost      string
+		wantPort      string
+		wantProbeAddr string
+		wantExternal  bool
+		wantErr       string
+	}{
+		{
+			name:          "default local host port",
+			authority:     "localhost",
+			defaultPort:   "80",
+			wantHost:      "localhost",
+			wantPort:      "80",
+			wantProbeAddr: "localhost:80",
+		},
+		{
+			name:          "unspecified address probes loopback",
+			authority:     "0.0.0.0:8080",
+			wantHost:      "0.0.0.0",
+			wantPort:      "8080",
+			wantProbeAddr: "127.0.0.1:8080",
+		},
+		{
+			name:          "bracketed ipv6 external",
+			authority:     "[2001:db8::1]:443",
+			wantHost:      "2001:db8::1",
+			wantPort:      "443",
+			wantProbeAddr: "[2001:db8::1]:443",
+			wantExternal:  true,
+		},
+		{
+			name:      "missing required port",
+			authority: "localhost",
+			wantErr:   "missing port in address",
+		},
+		{
+			name:        "explicit malformed port is not defaulted",
+			authority:   "localhost:http",
+			defaultPort: "80",
+			wantErr:     `invalid target port "http"`,
+		},
+		{
+			name:      "empty explicit port",
+			authority: "localhost:",
+			wantErr:   "missing target port",
+		},
+		{
+			name:      "port out of range",
+			authority: "localhost:70000",
+			wantErr:   `invalid target port "70000"`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := classifyHostPortTarget(tc.authority, tc.defaultPort)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("classifyHostPortTarget() error = %v, want containing %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("classifyHostPortTarget() error = %v", err)
+			}
+			if got.Host != tc.wantHost || got.Port != tc.wantPort || got.ProbeAddress != tc.wantProbeAddr || got.External != tc.wantExternal {
+				t.Fatalf("doctor target = %+v, want host %q port %q probe %q external %v", got, tc.wantHost, tc.wantPort, tc.wantProbeAddr, tc.wantExternal)
+			}
+		})
+	}
+}
+
+func TestDiagnoseFileTargetDirectPathFindings(t *testing.T) {
+	resetDoctorSeams(t)
+
+	dir := t.TempDir()
+	missing := filepath.Join(dir, "missing")
+	filePath := filepath.Join(dir, "not-dir")
+	if err := os.WriteFile(filePath, []byte("file"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	unreadableDir := filepath.Join(dir, "unreadable")
+	if err := os.Mkdir(unreadableDir, 0o700); err != nil {
+		t.Fatalf("Mkdir: %v", err)
+	}
+	doctorOpenPathFn = func(path string) (io.Closer, error) {
+		if path == unreadableDir {
+			return nil, errors.New("open blocked")
+		}
+		return os.Open(path)
+	}
+
+	cases := []struct {
+		name     string
+		path     string
+		wantCode string
+	}{
+		{name: "empty path", wantCode: inspect.WarningCodeFilePathMissing},
+		{name: "missing path", path: missing, wantCode: inspect.WarningCodeFilePathMissing},
+		{name: "path is file", path: filePath, wantCode: inspect.WarningCodeFilePathUnreadable},
+		{name: "directory open error", path: unreadableDir, wantCode: inspect.WarningCodeFilePathUnreadable},
+		{name: "readable directory", path: dir},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := DoctorResult{}
+			diagnoseFileTarget(&result, registry.Service{
+				Name: "docs",
+				Type: registry.TypeFile,
+				Path: tc.path,
+			})
+			if tc.wantCode == "" {
+				if len(result.Findings) != 0 {
+					t.Fatalf("findings = %+v, want none", result.Findings)
+				}
+				return
+			}
+			finding := assertDoctorFinding(t, result, tc.wantCode)
+			if finding.Service != "docs" || finding.Area != "file" {
+				t.Fatalf("finding = %+v, want service docs area file", finding)
+			}
+		})
+	}
+}
