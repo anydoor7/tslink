@@ -1,0 +1,656 @@
+package cmd
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"net"
+	"os"
+	"path/filepath"
+	"strings"
+	"syscall"
+	"testing"
+	"time"
+
+	"github.com/monody0007/tslink/internal/config"
+	"github.com/monody0007/tslink/internal/inspect"
+	"github.com/monody0007/tslink/internal/output"
+	"github.com/monody0007/tslink/internal/registry"
+	tsruntime "github.com/monody0007/tslink/internal/runtime"
+)
+
+type doctorTestEnv struct {
+	dir          string
+	regPath      string
+	snapshotPath string
+	pidPath      string
+	authKeyPath  string
+	startedAt    time.Time
+	pid          int
+}
+
+func newDoctorTestEnv(t *testing.T, services []registry.Service) doctorTestEnv {
+	t.Helper()
+	resetDoctorSeams(t)
+
+	dir := t.TempDir()
+	env := doctorTestEnv{
+		dir:          dir,
+		regPath:      filepath.Join(dir, "registry.json"),
+		snapshotPath: filepath.Join(dir, "runtime.json"),
+		pidPath:      filepath.Join(dir, "tslink.pid"),
+		authKeyPath:  filepath.Join(dir, "authkey"),
+		startedAt:    time.Date(2026, 5, 17, 12, 0, 0, 0, time.UTC),
+		pid:          4242,
+	}
+	writeDoctorRegistry(t, env.regPath, services)
+
+	doctorConfigDirFn = func() (string, error) { return dir, nil }
+	doctorRegistryPathFn = func() (string, error) { return env.regPath, nil }
+	doctorRuntimeSnapshotPathFn = func() (string, error) { return env.snapshotPath, nil }
+	doctorPIDPathFn = func() (string, error) { return env.pidPath, nil }
+	doctorAuthKeyPathFn = func() (string, error) { return env.authKeyPath, nil }
+	doctorLoadGlobalConfigFn = func() (config.GlobalConfig, error) { return config.GlobalConfig{}, nil }
+	doctorGetAPIKeyFn = func() (string, error) { return "tskey-api-secret-value", nil }
+	doctorGetClientSecretFn = func() (string, error) { return "", nil }
+	doctorReadFileFn = os.ReadFile
+	doctorStatFn = os.Stat
+	doctorOpenPathFn = func(path string) (io.Closer, error) { return os.Open(path) }
+	doctorProbeTargetFn = func(context.Context, string, time.Duration) error { return nil }
+
+	isRunningFn = func(string) bool { return true }
+	readPIDFn = func(string) (int, error) { return env.pid, nil }
+	pidFileModTimeFn = func(string) (time.Time, error) { return env.startedAt, nil }
+	runtimeLoadSnapshotFn = tsruntime.Load
+
+	return env
+}
+
+func resetDoctorSeams(t *testing.T) {
+	t.Helper()
+	oldConfigDir := doctorConfigDirFn
+	oldRegistryPath := doctorRegistryPathFn
+	oldRuntimeSnapshotPath := doctorRuntimeSnapshotPathFn
+	oldPIDPath := doctorPIDPathFn
+	oldAuthKeyPath := doctorAuthKeyPathFn
+	oldLoadGlobalConfig := doctorLoadGlobalConfigFn
+	oldGetAPIKey := doctorGetAPIKeyFn
+	oldGetClientSecret := doctorGetClientSecretFn
+	oldReadFile := doctorReadFileFn
+	oldStat := doctorStatFn
+	oldOpenPath := doctorOpenPathFn
+	oldProbe := doctorProbeTargetFn
+	oldIsRunning := isRunningFn
+	oldReadPID := readPIDFn
+	oldPIDFileModTime := pidFileModTimeFn
+	oldRuntimeLoad := runtimeLoadSnapshotFn
+	t.Cleanup(func() {
+		doctorConfigDirFn = oldConfigDir
+		doctorRegistryPathFn = oldRegistryPath
+		doctorRuntimeSnapshotPathFn = oldRuntimeSnapshotPath
+		doctorPIDPathFn = oldPIDPath
+		doctorAuthKeyPathFn = oldAuthKeyPath
+		doctorLoadGlobalConfigFn = oldLoadGlobalConfig
+		doctorGetAPIKeyFn = oldGetAPIKey
+		doctorGetClientSecretFn = oldGetClientSecret
+		doctorReadFileFn = oldReadFile
+		doctorStatFn = oldStat
+		doctorOpenPathFn = oldOpenPath
+		doctorProbeTargetFn = oldProbe
+		isRunningFn = oldIsRunning
+		readPIDFn = oldReadPID
+		pidFileModTimeFn = oldPIDFileModTime
+		runtimeLoadSnapshotFn = oldRuntimeLoad
+	})
+}
+
+func writeDoctorRegistry(t *testing.T, path string, services []registry.Service) {
+	t.Helper()
+	created := time.Date(2026, 5, 17, 11, 0, 0, 0, time.UTC)
+	copied := append([]registry.Service(nil), services...)
+	for i := range copied {
+		if copied[i].CreatedAt.IsZero() {
+			copied[i].CreatedAt = created.Add(time.Duration(i) * time.Second)
+		}
+	}
+	data, err := json.MarshalIndent(registry.Registry{Services: copied}, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal registry: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(path, append(data, '\n'), 0o600); err != nil {
+		t.Fatalf("WriteFile registry: %v", err)
+	}
+}
+
+func (env doctorTestEnv) writeExactSnapshot(t *testing.T) {
+	t.Helper()
+	reg, err := registry.Load(env.regPath)
+	if err != nil {
+		t.Fatalf("registry.Load: %v", err)
+	}
+	fingerprint, err := tsruntime.RegistryFingerprint(reg)
+	if err != nil {
+		t.Fatalf("RegistryFingerprint: %v", err)
+	}
+	states := make([]tsruntime.ServiceState, 0, len(reg.Services))
+	for _, svc := range reg.Services {
+		states = append(states, tsruntime.ServiceState{
+			Service:     svc,
+			RuntimeHost: svc.Name + ".tailnet.ts.net",
+		})
+	}
+	snapshot := tsruntime.NewSnapshot(env.pid, env.startedAt, fingerprint, env.startedAt.Add(time.Second), states)
+	if err := tsruntime.Save(env.snapshotPath, snapshot); err != nil {
+		t.Fatalf("runtime.Save: %v", err)
+	}
+}
+
+func assertDoctorFinding(t *testing.T, result DoctorResult, code string) DoctorFinding {
+	t.Helper()
+	for _, finding := range result.Findings {
+		if finding.Code == code {
+			return finding
+		}
+	}
+	t.Fatalf("finding %s not found in %+v", code, result.Findings)
+	return DoctorFinding{}
+}
+
+func assertDoctorNoFinding(t *testing.T, result DoctorResult, code string) {
+	t.Helper()
+	for _, finding := range result.Findings {
+		if finding.Code == code {
+			t.Fatalf("unexpected finding %s in %+v", code, result.Findings)
+		}
+	}
+}
+
+func assertDoctorCodesRegistered(t *testing.T, result DoctorResult) {
+	t.Helper()
+	for _, finding := range result.Findings {
+		meta, ok := inspect.WarningCodeRegistry[finding.Code]
+		if !ok {
+			t.Fatalf("doctor emitted unregistered code %s", finding.Code)
+		}
+		if finding.Severity != meta.Severity {
+			t.Fatalf("finding %s severity = %q, want registry severity %q", finding.Code, finding.Severity, meta.Severity)
+		}
+	}
+}
+
+func assertDoctorOutputOmits(t *testing.T, raw string, forbidden []string) {
+	t.Helper()
+	for _, value := range forbidden {
+		if strings.Contains(raw, value) {
+			t.Fatalf("doctor output leaked %q: %s", value, raw)
+		}
+	}
+}
+
+func TestDoctorExitCodes(t *testing.T) {
+	env := newDoctorTestEnv(t, nil)
+	env.writeExactSnapshot(t)
+	if err := runDoctor(io.Discard, doctorOptions{}, false); err != nil {
+		t.Fatalf("healthy runDoctor error = %v", err)
+	}
+
+	doctorGetAPIKeyFn = func() (string, error) { return "", nil }
+	if err := os.WriteFile(env.authKeyPath, []byte("tskey-auth-secret"), 0o600); err != nil {
+		t.Fatalf("write authkey: %v", err)
+	}
+	err := runDoctor(io.Discard, doctorOptions{}, false)
+	if output.ExitCode(err) != output.ExitWarning {
+		t.Fatalf("legacy authkey ExitCode = %d, want %d", output.ExitCode(err), output.ExitWarning)
+	}
+
+	doctorReadFileFn = func(string) ([]byte, error) { return nil, os.ErrNotExist }
+	err = runDoctor(io.Discard, doctorOptions{}, false)
+	if output.ExitCode(err) != output.ExitCritical {
+		t.Fatalf("missing credential ExitCode = %d, want %d", output.ExitCode(err), output.ExitCritical)
+	}
+}
+
+func TestDoctorMissingCredentialsFinding(t *testing.T) {
+	env := newDoctorTestEnv(t, nil)
+	env.writeExactSnapshot(t)
+	doctorGetAPIKeyFn = func() (string, error) { return "", nil }
+	doctorGetClientSecretFn = func() (string, error) { return "", nil }
+	doctorReadFileFn = func(string) ([]byte, error) { return nil, os.ErrNotExist }
+
+	var buf bytes.Buffer
+	err := runDoctor(&buf, doctorOptions{}, false)
+	if output.ExitCode(err) != output.ExitCritical {
+		t.Fatalf("ExitCode = %d, want %d", output.ExitCode(err), output.ExitCritical)
+	}
+	result := buildDoctorResult(doctorOptions{})
+	assertDoctorFinding(t, result, inspect.WarningCodeCredentialNone)
+	assertDoctorCodesRegistered(t, result)
+	if strings.Contains(buf.String(), "tskey-") {
+		t.Fatalf("human doctor output leaked credential-looking value: %s", buf.String())
+	}
+}
+
+func TestDoctorLegacyAuthKeyWarning(t *testing.T) {
+	env := newDoctorTestEnv(t, nil)
+	env.writeExactSnapshot(t)
+	doctorGetAPIKeyFn = func() (string, error) { return "", nil }
+	if err := os.WriteFile(env.authKeyPath, []byte("tskey-auth-secret"), 0o600); err != nil {
+		t.Fatalf("write authkey: %v", err)
+	}
+
+	result := buildDoctorResult(doctorOptions{})
+	if result.CredentialMode != doctorCredentialLegacyAuthKey {
+		t.Fatalf("credential mode = %q, want %q", result.CredentialMode, doctorCredentialLegacyAuthKey)
+	}
+	assertDoctorFinding(t, result, inspect.WarningCodeCredentialLegacyAuthKey)
+	assertDoctorNoFinding(t, result, inspect.WarningCodeCredentialNone)
+	assertDoctorCodesRegistered(t, result)
+	if err := doctorExit(result); output.ExitCode(err) != output.ExitWarning {
+		t.Fatalf("ExitCode = %d, want %d", output.ExitCode(err), output.ExitWarning)
+	}
+}
+
+func TestDoctorHealthyLoopbackCanExitZero(t *testing.T) {
+	env := newDoctorTestEnv(t, []registry.Service{{
+		Name:   "web",
+		Type:   registry.TypeProxy,
+		Target: "http://localhost:3000",
+	}})
+	env.writeExactSnapshot(t)
+
+	result := buildDoctorResult(doctorOptions{})
+	assertDoctorCodesRegistered(t, result)
+	if result.Status != doctorStatusOK || result.Counts.Warnings != 0 || result.Counts.Errors != 0 || result.Counts.Critical != 0 {
+		t.Fatalf("doctor result = %+v, want clean ok", result)
+	}
+	if err := doctorExit(result); err != nil {
+		t.Fatalf("doctorExit = %v, want nil", err)
+	}
+}
+
+func TestDoctorJSONSchemaCountsAndRedaction(t *testing.T) {
+	env := newDoctorTestEnv(t, []registry.Service{{
+		Name:         "web",
+		Type:         registry.TypeProxy,
+		Target:       "http://localhost:3000",
+		AllowedUsers: []string{"alice@example.com", "bob@example.com"},
+	}})
+	env.writeExactSnapshot(t)
+
+	var buf bytes.Buffer
+	if err := runDoctor(&buf, doctorOptions{}, true); err != nil {
+		t.Fatalf("runDoctor JSON returned %v, want nil for info-only findings", err)
+	}
+	raw := buf.String()
+	for _, secret := range []string{"tskey-api-secret-value", "alice@example.com", "bob@example.com"} {
+		if strings.Contains(raw, secret) {
+			t.Fatalf("doctor JSON leaked %q: %s", secret, raw)
+		}
+	}
+	var result DoctorResult
+	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
+		t.Fatalf("unmarshal doctor JSON: %v\nraw: %s", err, raw)
+	}
+	if result.SchemaVersion != inspect.SchemaVersion {
+		t.Fatalf("schema_version = %q, want %q", result.SchemaVersion, inspect.SchemaVersion)
+	}
+	if result.Counts.Findings != len(result.Findings) || result.Counts.Info == 0 {
+		t.Fatalf("counts = %+v findings=%d, want info finding counted", result.Counts, len(result.Findings))
+	}
+	assertDoctorFinding(t, result, inspect.WarningCodeIdentityResolutionUnknown)
+	assertDoctorCodesRegistered(t, result)
+}
+
+func TestDoctorEvidenceErrorRedactsSecretBearingValues(t *testing.T) {
+	evidence := evidenceError(errors.New(`invalid URL "https://user:pass@example.com?auth=tskey-api-secret": token tskey-other-secret`))
+	raw, err := json.Marshal(evidence)
+	if err != nil {
+		t.Fatalf("marshal evidence: %v", err)
+	}
+	assertDoctorOutputOmits(t, string(raw), []string{
+		"user",
+		"pass",
+		"https://user:pass@example.com",
+		"auth=",
+		"tskey-",
+	})
+	if evidence["error"] == "" {
+		t.Fatalf("sanitized evidence error is empty")
+	}
+}
+
+func TestDoctorRuntimeSnapshotWarnings(t *testing.T) {
+	cases := []struct {
+		name  string
+		setup func(t *testing.T, env doctorTestEnv)
+		code  string
+	}{
+		{
+			name: "missing",
+			code: inspect.WarningCodeRuntimeSnapshotMissing,
+		},
+		{
+			name: "stale",
+			setup: func(t *testing.T, env doctorTestEnv) {
+				reg, err := registry.Load(env.regPath)
+				if err != nil {
+					t.Fatalf("registry.Load: %v", err)
+				}
+				fingerprint, err := tsruntime.RegistryFingerprint(reg)
+				if err != nil {
+					t.Fatalf("RegistryFingerprint: %v", err)
+				}
+				oldStart := env.startedAt.Add(-time.Minute)
+				snapshot := tsruntime.NewSnapshot(env.pid, oldStart, fingerprint, oldStart.Add(time.Second), nil)
+				if err := tsruntime.Save(env.snapshotPath, snapshot); err != nil {
+					t.Fatalf("runtime.Save: %v", err)
+				}
+			},
+			code: inspect.WarningCodeRuntimeSnapshotStale,
+		},
+		{
+			name: "unreadable",
+			setup: func(t *testing.T, env doctorTestEnv) {
+				runtimeLoadSnapshotFn = func(string) (*tsruntime.Snapshot, error) {
+					return nil, &tsruntime.SnapshotError{
+						Status: tsruntime.StatusUnreadable,
+						Code:   inspect.WarningCodeRuntimeSnapshotUnreadable,
+						Err:    os.ErrPermission,
+					}
+				}
+			},
+			code: inspect.WarningCodeRuntimeSnapshotUnreadable,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env := newDoctorTestEnv(t, nil)
+			if tc.setup != nil {
+				tc.setup(t, env)
+			}
+			result := buildDoctorResult(doctorOptions{})
+			assertDoctorFinding(t, result, tc.code)
+			assertDoctorCodesRegistered(t, result)
+			if err := doctorExit(result); output.ExitCode(err) != output.ExitWarning {
+				t.Fatalf("ExitCode = %d, want %d", output.ExitCode(doctorExit(result)), output.ExitWarning)
+			}
+		})
+	}
+}
+
+func TestDoctorTCPBoundaryWarning(t *testing.T) {
+	env := newDoctorTestEnv(t, []registry.Service{{
+		Name:   "db",
+		Type:   registry.TypeTCP,
+		Target: "localhost:5432",
+		Port:   5432,
+	}})
+	env.writeExactSnapshot(t)
+
+	var buf bytes.Buffer
+	err := runDoctor(&buf, doctorOptions{}, false)
+	if output.ExitCode(err) != output.ExitWarning {
+		t.Fatalf("ExitCode = %d, want warning", output.ExitCode(err))
+	}
+	raw := buf.String()
+	if strings.Contains(raw, "HTTP ACL applies") {
+		t.Fatalf("doctor output overclaimed TCP ACL behavior: %s", raw)
+	}
+	result := buildDoctorResult(doctorOptions{})
+	assertDoctorFinding(t, result, inspect.WarningCodeTCPHTTPACLNotApplicable)
+	assertDoctorCodesRegistered(t, result)
+}
+
+func TestDoctorExternalTargetsSkipByDefaultAndProbeWhenRequested(t *testing.T) {
+	cases := []struct {
+		name            string
+		svc             registry.Service
+		nonLoopbackCode string
+	}{
+		{
+			name: "proxy",
+			svc: registry.Service{
+				Name:   "web",
+				Type:   registry.TypeProxy,
+				Target: "http://10.0.0.5:3000",
+			},
+			nonLoopbackCode: inspect.WarningCodeProxyNonLoopbackTarget,
+		},
+		{
+			name: "tcp",
+			svc: registry.Service{
+				Name:   "db",
+				Type:   registry.TypeTCP,
+				Target: "10.0.0.5:5432",
+				Port:   5432,
+			},
+			nonLoopbackCode: inspect.WarningCodeTCPNonLoopbackTarget,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env := newDoctorTestEnv(t, []registry.Service{tc.svc})
+			env.writeExactSnapshot(t)
+			called := 0
+			doctorProbeTargetFn = func(context.Context, string, time.Duration) error {
+				called++
+				return nil
+			}
+
+			result := buildDoctorResult(doctorOptions{})
+			if called != 0 {
+				t.Fatalf("probe called by default for external target")
+			}
+			assertDoctorFinding(t, result, tc.nonLoopbackCode)
+			assertDoctorFinding(t, result, inspect.WarningCodeTargetProbeSkippedExternal)
+			assertDoctorCodesRegistered(t, result)
+
+			called = 0
+			result = buildDoctorResult(doctorOptions{ProbeExternal: true})
+			if called != 1 {
+				t.Fatalf("probe calls with --probe-external = %d, want 1", called)
+			}
+			assertDoctorFinding(t, result, tc.nonLoopbackCode)
+			assertDoctorNoFinding(t, result, inspect.WarningCodeTargetProbeSkippedExternal)
+			assertDoctorCodesRegistered(t, result)
+		})
+	}
+}
+
+func TestDoctorProbeFailureCodes(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		code string
+	}{
+		{name: "timeout", err: context.DeadlineExceeded, code: inspect.WarningCodeTargetProbeTimeout},
+		{name: "refused", err: syscall.ECONNREFUSED, code: inspect.WarningCodeTargetProbeRefused},
+		{name: "failed", err: errors.New("boom"), code: inspect.WarningCodeTargetProbeFailed},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env := newDoctorTestEnv(t, []registry.Service{{
+				Name:   "web",
+				Type:   registry.TypeProxy,
+				Target: "http://localhost:3000",
+			}})
+			env.writeExactSnapshot(t)
+			doctorProbeTargetFn = func(context.Context, string, time.Duration) error {
+				return tc.err
+			}
+			result := buildDoctorResult(doctorOptions{})
+			assertDoctorFinding(t, result, tc.code)
+			assertDoctorCodesRegistered(t, result)
+			if err := doctorExit(result); output.ExitCode(err) != output.ExitCritical {
+				t.Fatalf("ExitCode = %d, want %d", output.ExitCode(err), output.ExitCritical)
+			}
+		})
+	}
+}
+
+func TestDoctorFunnelGlobalControlURLWarning(t *testing.T) {
+	env := newDoctorTestEnv(t, []registry.Service{{
+		Name:   "public-web",
+		Type:   registry.TypeProxy,
+		Target: "http://localhost:3000",
+		Funnel: true,
+	}})
+	env.writeExactSnapshot(t)
+	doctorLoadGlobalConfigFn = func() (config.GlobalConfig, error) {
+		return config.GlobalConfig{ControlURL: "https://headscale.example.com"}, nil
+	}
+
+	result := buildDoctorResult(doctorOptions{})
+	assertDoctorFinding(t, result, inspect.WarningCodeFunnelGlobalControlURLUnknownCompat)
+	assertDoctorCodesRegistered(t, result)
+	if err := doctorExit(result); output.ExitCode(err) != output.ExitWarning {
+		t.Fatalf("ExitCode = %d, want %d", output.ExitCode(err), output.ExitWarning)
+	}
+}
+
+func TestDoctorFunnelGuardrailValidationCodes(t *testing.T) {
+	cases := []struct {
+		name string
+		svc  registry.Service
+		code string
+	}{
+		{
+			name: "allow conflict",
+			svc: registry.Service{
+				Name:         "public-web",
+				Type:         registry.TypeProxy,
+				Target:       "http://localhost:3000",
+				Funnel:       true,
+				AllowedUsers: []string{"alice@example.com"},
+			},
+			code: inspect.WarningCodeFunnelAllowConflict,
+		},
+		{
+			name: "control url conflict",
+			svc: registry.Service{
+				Name:       "public-web",
+				Type:       registry.TypeProxy,
+				Target:     "http://localhost:3000",
+				Funnel:     true,
+				ControlURL: "https://headscale.example.com",
+			},
+			code: inspect.WarningCodeFunnelControlURLConflict,
+		},
+		{
+			name: "type conflict",
+			svc: registry.Service{
+				Name:   "public-db",
+				Type:   registry.TypeTCP,
+				Target: "localhost:5432",
+				Port:   5432,
+				Funnel: true,
+			},
+			code: inspect.WarningCodeFunnelTypeConflict,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env := newDoctorTestEnv(t, []registry.Service{tc.svc})
+			env.writeExactSnapshot(t)
+			result := buildDoctorResult(doctorOptions{})
+			assertDoctorFinding(t, result, tc.code)
+			assertDoctorCodesRegistered(t, result)
+			if err := doctorExit(result); output.ExitCode(err) != output.ExitCritical {
+				t.Fatalf("ExitCode = %d, want %d", output.ExitCode(err), output.ExitCritical)
+			}
+		})
+	}
+}
+
+func TestDoctorInvalidControlURLs(t *testing.T) {
+	env := newDoctorTestEnv(t, []registry.Service{{
+		Name:       "web",
+		Type:       registry.TypeProxy,
+		Target:     "http://localhost:3000",
+		ControlURL: "not-a-url",
+	}})
+	env.writeExactSnapshot(t)
+	doctorLoadGlobalConfigFn = func() (config.GlobalConfig, error) {
+		return config.GlobalConfig{ControlURL: "ftp://headscale.example.com"}, nil
+	}
+
+	result := buildDoctorResult(doctorOptions{})
+	assertDoctorFinding(t, result, inspect.WarningCodeControlURLInvalid)
+	assertDoctorCodesRegistered(t, result)
+	if err := doctorExit(result); output.ExitCode(err) != output.ExitCritical {
+		t.Fatalf("ExitCode = %d, want %d", output.ExitCode(err), output.ExitCritical)
+	}
+}
+
+func TestDoctorGlobalInvalidControlURLRedactsRawOutputs(t *testing.T) {
+	env := newDoctorTestEnv(t, nil)
+	env.writeExactSnapshot(t)
+	doctorLoadGlobalConfigFn = func() (config.GlobalConfig, error) {
+		return config.GlobalConfig{ControlURL: "ftp://user:pass@example.com?auth=tskey-api-secret"}, nil
+	}
+	forbidden := []string{
+		"user",
+		"pass",
+		"ftp://user:pass@example.com",
+		"auth=",
+		"tskey-",
+	}
+
+	var jsonBuf bytes.Buffer
+	err := runDoctor(&jsonBuf, doctorOptions{}, true)
+	if output.ExitCode(err) != output.ExitCritical {
+		t.Fatalf("JSON ExitCode = %d, want %d", output.ExitCode(err), output.ExitCritical)
+	}
+	assertDoctorOutputOmits(t, jsonBuf.String(), forbidden)
+
+	var result DoctorResult
+	if err := json.Unmarshal(jsonBuf.Bytes(), &result); err != nil {
+		t.Fatalf("unmarshal doctor JSON: %v\nraw: %s", err, jsonBuf.String())
+	}
+	finding := assertDoctorFinding(t, result, inspect.WarningCodeControlURLInvalid)
+	evidenceRaw, err := json.Marshal(finding.Evidence)
+	if err != nil {
+		t.Fatalf("marshal finding evidence: %v", err)
+	}
+	assertDoctorOutputOmits(t, string(evidenceRaw), forbidden)
+	assertDoctorCodesRegistered(t, result)
+
+	var humanBuf bytes.Buffer
+	err = runDoctor(&humanBuf, doctorOptions{}, false)
+	if output.ExitCode(err) != output.ExitCritical {
+		t.Fatalf("human ExitCode = %d, want %d", output.ExitCode(err), output.ExitCritical)
+	}
+	assertDoctorOutputOmits(t, humanBuf.String(), forbidden)
+}
+
+func TestDoctorFileServicePathChecks(t *testing.T) {
+	env := newDoctorTestEnv(t, []registry.Service{{
+		Name: "docs",
+		Type: registry.TypeFile,
+		Path: filepath.Join(t.TempDir(), "missing"),
+	}})
+	env.writeExactSnapshot(t)
+
+	result := buildDoctorResult(doctorOptions{})
+	assertDoctorFinding(t, result, inspect.WarningCodeFilePathMissing)
+	assertDoctorCodesRegistered(t, result)
+	if err := doctorExit(result); output.ExitCode(err) != output.ExitCritical {
+		t.Fatalf("ExitCode = %d, want %d", output.ExitCode(err), output.ExitCritical)
+	}
+}
+
+func TestClassifyProbeErrorWithNetOpError(t *testing.T) {
+	err := &net.OpError{Err: syscall.ECONNREFUSED}
+	if code := classifyProbeError(err); code != inspect.WarningCodeTargetProbeRefused {
+		t.Fatalf("classifyProbeError = %s, want %s", code, inspect.WarningCodeTargetProbeRefused)
+	}
+}
