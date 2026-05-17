@@ -34,6 +34,7 @@ type AccessExplainKnown struct {
 	Tags                         inspect.SummaryView               `json:"tags"`
 	Allow                        inspect.SummaryView               `json:"allow"`
 	Backend                      inspect.BackendView               `json:"backend"`
+	Warnings                     []inspect.WarningView             `json:"warnings,omitempty"`
 	TargetLoopbackClassification AccessExplainTargetClassification `json:"target_loopback_classification"`
 }
 
@@ -116,10 +117,11 @@ func buildAccessExplainResult(svc registry.Service) AccessExplainResult {
 		Tags:                         view.Tags,
 		Allow:                        view.Allow,
 		Backend:                      view.Backend,
+		Warnings:                     append([]inspect.WarningView(nil), view.Warnings...),
 		TargetLoopbackClassification: accessTargetClassificationFor(svc),
 	}
 	enforcement := accessLocalEnforcementFor(svc, view)
-	externalUnknown := accessExternalPolicyUnknown()
+	externalUnknown := accessExternalPolicyUnknown(view)
 	backendAuth := accessBackendAuthAssumption()
 
 	result := AccessExplainResult{
@@ -137,9 +139,10 @@ func buildAccessExplainResult(svc registry.Service) AccessExplainResult {
 func accessLocalEnforcementFor(svc registry.Service, view inspect.ServiceView) AccessExplainLocalEnforcement {
 	publicExposure := accessPublicExposureFor(view)
 	allow := view.Allow
+	var enforcement AccessExplainLocalEnforcement
 	switch svc.Type {
 	case registry.TypeTCP:
-		return AccessExplainLocalEnforcement{
+		enforcement = AccessExplainLocalEnforcement{
 			Kind:           "tcp_no_http_enforcement",
 			Applies:        false,
 			Summary:        "Raw TCP services do not receive TSLink HTTP identity or allow-list enforcement; TSLink provides a raw private route only.",
@@ -152,7 +155,7 @@ func accessLocalEnforcementFor(svc registry.Service, view inspect.ServiceView) A
 		}
 	case registry.TypeProxy, registry.TypeFile:
 		if len(svc.AllowedUsers) > 0 {
-			return AccessExplainLocalEnforcement{
+			enforcement = AccessExplainLocalEnforcement{
 				Kind:           "http_allow_list",
 				Applies:        true,
 				Summary:        fmt.Sprintf("TSLink HTTP allow-list enforcement applies to %d redacted principal(s).", len(svc.AllowedUsers)),
@@ -164,19 +167,20 @@ func accessLocalEnforcementFor(svc registry.Service, view inspect.ServiceView) A
 					"Requests are denied when Tailscale identity cannot be resolved.",
 				},
 			}
-		}
-		return AccessExplainLocalEnforcement{
-			Kind:           "no_local_allow_list",
-			Applies:        false,
-			Summary:        "No TSLink local user allow-list is configured for this HTTP service.",
-			AllowList:      allow,
-			PublicExposure: publicExposure,
-			Notes: []string{
-				"Tailnet policy, sharing, tag ownership, Funnel policy, and backend authentication still matter.",
-			},
+		} else {
+			enforcement = AccessExplainLocalEnforcement{
+				Kind:           "no_local_allow_list",
+				Applies:        false,
+				Summary:        "No TSLink local user allow-list is configured for this HTTP service.",
+				AllowList:      allow,
+				PublicExposure: publicExposure,
+				Notes: []string{
+					"Tailnet policy, sharing, tag ownership, Funnel policy, and backend authentication still matter.",
+				},
+			}
 		}
 	default:
-		return AccessExplainLocalEnforcement{
+		enforcement = AccessExplainLocalEnforcement{
 			Kind:           "unknown_service_type",
 			Applies:        false,
 			Summary:        "TSLink local enforcement cannot be classified for this unknown service type.",
@@ -187,6 +191,17 @@ func accessLocalEnforcementFor(svc registry.Service, view inspect.ServiceView) A
 			},
 		}
 	}
+	return accessAddContextNotes(enforcement, svc, view)
+}
+
+func accessAddContextNotes(enforcement AccessExplainLocalEnforcement, svc registry.Service, view inspect.ServiceView) AccessExplainLocalEnforcement {
+	if view.Exposure.Kind == inspect.ExposureCustomDomain {
+		enforcement.Notes = append(enforcement.Notes, "Custom domain reachability depends on external DNS and certificate posture, which this command does not evaluate.")
+	}
+	if svc.Type == registry.TypeTCP && svc.Funnel {
+		enforcement.Notes = append(enforcement.Notes, "Tailscale Funnel does not carry raw TCP; a hand-edited TCP Funnel registry mark is not proof of public reachability.")
+	}
+	return enforcement
 }
 
 func accessPublicExposureFor(view inspect.ServiceView) AccessExplainPublicExposure {
@@ -202,8 +217,8 @@ func accessPublicExposureFor(view inspect.ServiceView) AccessExplainPublicExposu
 	}
 }
 
-func accessExternalPolicyUnknown() AccessExplainExternalPolicyUnknown {
-	return AccessExplainExternalPolicyUnknown{
+func accessExternalPolicyUnknown(view inspect.ServiceView) AccessExplainExternalPolicyUnknown {
+	unknown := AccessExplainExternalPolicyUnknown{
 		Known:   false,
 		Summary: "This command reads the local TSLink registry only; it does not evaluate live Tailscale or Headscale policy.",
 		UnknownLayers: []string{
@@ -214,6 +229,11 @@ func accessExternalPolicyUnknown() AccessExplainExternalPolicyUnknown {
 			"Funnel policy",
 		},
 	}
+	if view.Exposure.Kind == inspect.ExposureCustomDomain {
+		unknown.Summary += " Custom domain DNS and certificate posture are also not evaluated."
+		unknown.UnknownLayers = append(unknown.UnknownLayers, "custom domain DNS", "custom domain certificate posture")
+	}
+	return unknown
 }
 
 func accessBackendAuthAssumption() AccessExplainBackendAuthAssumption {
@@ -385,15 +405,46 @@ func accessSafeBackendView(view inspect.BackendView) inspect.BackendView {
 
 func accessRedactPotentialSecretURL(raw string) string {
 	parsed, err := url.Parse(raw)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+	if err == nil && parsed.Scheme != "" && parsed.Host != "" {
+		if parsed.User != nil {
+			parsed.User = nil
+		}
+		parsed.RawQuery = ""
+		parsed.Fragment = ""
+		// Paths are preserved for diagnostics; users should avoid secret-bearing backend paths.
+		return parsed.String()
+	}
+	return accessRedactSchemelessTargetDisplay(raw)
+}
+
+func accessRedactSchemelessTargetDisplay(raw string) string {
+	display := raw
+	if cut := strings.IndexAny(display, "?#"); cut >= 0 {
+		display = display[:cut]
+	}
+
+	prefix := ""
+	rest := display
+	if schemeIndex := strings.Index(rest, "://"); schemeIndex >= 0 {
+		prefix = rest[:schemeIndex+len("://")]
+		rest = rest[schemeIndex+len("://"):]
+	}
+	return prefix + accessRedactSchemelessUserinfo(rest)
+}
+
+func accessRedactSchemelessUserinfo(raw string) string {
+	if raw == "" || strings.HasPrefix(raw, "/") {
 		return raw
 	}
-	if parsed.User != nil {
-		parsed.User = nil
+	authorityEnd := strings.Index(raw, "/")
+	if authorityEnd < 0 {
+		authorityEnd = len(raw)
 	}
-	parsed.RawQuery = ""
-	parsed.Fragment = ""
-	return parsed.String()
+	authority := raw[:authorityEnd]
+	if userinfoEnd := strings.LastIndex(authority, "@"); userinfoEnd >= 0 {
+		return raw[userinfoEnd+1:]
+	}
+	return raw
 }
 
 func formatAccessExplain(result AccessExplainResult, out io.Writer) {
@@ -410,7 +461,14 @@ func formatAccessExplain(result AccessExplainResult, out io.Writer) {
 	fmt.Fprintf(out, "  Tags: %s\n", summaryLabel(known.Tags))
 	fmt.Fprintf(out, "  Allow: %s\n", summaryLabel(known.Allow))
 	fmt.Fprintf(out, "  Backend: %s (%s)\n", emptyDash(known.Backend.Display), emptyDash(known.Backend.Kind))
-	fmt.Fprintf(out, "  Target classification: %s - %s\n\n", known.TargetLoopbackClassification.Classification, known.TargetLoopbackClassification.Summary)
+	fmt.Fprintf(out, "  Target classification: %s - %s\n", known.TargetLoopbackClassification.Classification, known.TargetLoopbackClassification.Summary)
+	if len(known.Warnings) > 0 {
+		fmt.Fprintln(out, "  Warnings:")
+		for _, warning := range known.Warnings {
+			fmt.Fprintf(out, "    %s: %s\n", warning.Code, warning.Message)
+		}
+	}
+	fmt.Fprintln(out)
 
 	fmt.Fprintln(out, "TSLink local enforcement:")
 	fmt.Fprintf(out, "  %s\n", enforcement.Summary)
@@ -431,6 +489,7 @@ func formatAccessExplain(result AccessExplainResult, out io.Writer) {
 	fmt.Fprintln(out, "\nBackend auth assumption:")
 	fmt.Fprintf(out, "  proven: %t\n", result.BackendAuthAssumption.Proven)
 	fmt.Fprintf(out, "  %s\n", result.BackendAuthAssumption.Summary)
+	fmt.Fprintf(out, "  Out-of-scope layers: %s\n", strings.Join(result.BackendAuthAssumption.OutOfScopeLayers, ", "))
 }
 
 var accessCmd = &cobra.Command{

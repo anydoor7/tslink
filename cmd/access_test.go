@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/monody0007/tslink/internal/inspect"
 	"github.com/monody0007/tslink/internal/output"
 	"github.com/monody0007/tslink/internal/registry"
 )
@@ -35,6 +37,36 @@ func runAccessExplainWithServices(t *testing.T, serviceName string, isJSON bool,
 	if err == nil && isJSON {
 		if decodeErr := json.Unmarshal(buf.Bytes(), &result); decodeErr != nil {
 			t.Fatalf("unmarshal access explain JSON: %v\nraw: %s", decodeErr, buf.String())
+		}
+	}
+	return buf.String(), result, err
+}
+
+func runAccessExplainWithRawServices(t *testing.T, serviceName string, isJSON bool, services ...registry.Service) (string, AccessExplainResult, error) {
+	t.Helper()
+
+	dir := t.TempDir()
+	regPath := filepath.Join(dir, "registry.json")
+	payload, err := json.Marshal(registry.Registry{Services: services})
+	if err != nil {
+		t.Fatalf("marshal raw registry: %v", err)
+	}
+	if err := os.WriteFile(regPath, payload, 0o600); err != nil {
+		t.Fatalf("write raw registry: %v", err)
+	}
+
+	oldRegPath := registryPathFn
+	t.Cleanup(func() {
+		registryPathFn = oldRegPath
+	})
+	registryPathFn = func() (string, error) { return regPath, nil }
+
+	var buf bytes.Buffer
+	err = runAccessExplain(serviceName, &buf, isJSON)
+	var result AccessExplainResult
+	if err == nil && isJSON {
+		if decodeErr := json.Unmarshal(buf.Bytes(), &result); decodeErr != nil {
+			t.Fatalf("unmarshal raw access explain JSON: %v\nraw: %s", decodeErr, buf.String())
 		}
 	}
 	return buf.String(), result, err
@@ -108,6 +140,7 @@ func TestAccessExplainHumanRedactsAllowAndIncludesCaveats(t *testing.T) {
 	for _, required := range []string{
 		"External policy unknown:",
 		"Backend auth assumption:",
+		"Out-of-scope layers: backend application authentication, database authentication, SSH authentication",
 		accessIdentityFailureModeDenyWhenUnresolved,
 	} {
 		if !strings.Contains(raw, required) {
@@ -116,6 +149,69 @@ func TestAccessExplainHumanRedactsAllowAndIncludesCaveats(t *testing.T) {
 	}
 	if strings.Contains(raw, "alice@example.com") {
 		t.Fatalf("human output leaked allow principal: %s", raw)
+	}
+}
+
+func TestAccessExplainBackendDisplayRedactsSchemelessSecrets(t *testing.T) {
+	cases := []struct {
+		name        string
+		svc         registry.Service
+		wantDisplay string
+		forbidden   []string
+	}{
+		{
+			name: "schemeless proxy target",
+			svc: registry.Service{
+				Name:   "web",
+				Type:   registry.TypeProxy,
+				Target: "localhost:3000?token=abc#frag",
+			},
+			wantDisplay: "localhost:3000",
+			forbidden:   []string{"token=abc", "#frag"},
+		},
+		{
+			name: "tcp userinfo target",
+			svc: registry.Service{
+				Name:   "db",
+				Type:   registry.TypeTCP,
+				Target: "user:pass@localhost:5432",
+				Port:   5432,
+			},
+			wantDisplay: "localhost:5432",
+			forbidden:   []string{"user:pass"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name+"/json", func(t *testing.T) {
+			raw, result, err := runAccessExplainWithServices(t, tc.svc.Name, true, tc.svc)
+			if err != nil {
+				t.Fatalf("runAccessExplain JSON: %v", err)
+			}
+			if result.TSLinkKnown.Backend.Display != tc.wantDisplay {
+				t.Fatalf("backend display = %q, want %q", result.TSLinkKnown.Backend.Display, tc.wantDisplay)
+			}
+			for _, forbidden := range tc.forbidden {
+				if strings.Contains(raw, forbidden) {
+					t.Fatalf("access explain JSON leaked %q: %s", forbidden, raw)
+				}
+			}
+		})
+
+		t.Run(tc.name+"/human", func(t *testing.T) {
+			raw, _, err := runAccessExplainWithServices(t, tc.svc.Name, false, tc.svc)
+			if err != nil {
+				t.Fatalf("runAccessExplain human: %v", err)
+			}
+			for _, forbidden := range tc.forbidden {
+				if strings.Contains(raw, forbidden) {
+					t.Fatalf("access explain human output leaked %q:\n%s", forbidden, raw)
+				}
+			}
+			if !strings.Contains(raw, "Backend: "+tc.wantDisplay) {
+				t.Fatalf("human output missing sanitized backend %q:\n%s", tc.wantDisplay, raw)
+			}
+		})
 	}
 }
 
@@ -145,6 +241,50 @@ func TestAccessExplainTCPStatesNoHTTPIdentityOrAllowEnforcement(t *testing.T) {
 	}
 }
 
+func TestAccessExplainTCPAllowedUsersSurfacesWarningsWithoutPrincipals(t *testing.T) {
+	rawJSON, result, err := runAccessExplainWithRawServices(t, "db", true, registry.Service{
+		Name:         "db",
+		Type:         registry.TypeTCP,
+		Target:       "localhost:5432",
+		Port:         5432,
+		AllowedUsers: []string{"alice@example.com"},
+	})
+	if err != nil {
+		t.Fatalf("runAccessExplain JSON: %v", err)
+	}
+	if strings.Contains(rawJSON, "alice@example.com") {
+		t.Fatalf("access explain JSON leaked allow principal: %s", rawJSON)
+	}
+	if !hasAccessWarningCode(result.TSLinkKnown.Warnings, inspect.WarningCodeTCPAllowedUsersInvalid) {
+		t.Fatalf("known warnings = %+v, want %s", result.TSLinkKnown.Warnings, inspect.WarningCodeTCPAllowedUsersInvalid)
+	}
+	if result.TSLinkKnown.Allow.Count != 1 || !result.TSLinkKnown.Allow.Redacted {
+		t.Fatalf("known allow = %+v, want redacted count", result.TSLinkKnown.Allow)
+	}
+
+	rawHuman, _, err := runAccessExplainWithRawServices(t, "db", false, registry.Service{
+		Name:         "db",
+		Type:         registry.TypeTCP,
+		Target:       "localhost:5432",
+		Port:         5432,
+		AllowedUsers: []string{"alice@example.com"},
+	})
+	if err != nil {
+		t.Fatalf("runAccessExplain human: %v", err)
+	}
+	if strings.Contains(rawHuman, "alice@example.com") {
+		t.Fatalf("access explain human output leaked allow principal:\n%s", rawHuman)
+	}
+	for _, required := range []string{
+		inspect.WarningCodeTCPAllowedUsersInvalid,
+		"Raw TCP services cannot enforce allowed_users",
+	} {
+		if !strings.Contains(rawHuman, required) {
+			t.Fatalf("human output missing %q:\n%s", required, rawHuman)
+		}
+	}
+}
+
 func TestAccessExplainFunnelMarksPublicAndPolicyUnknown(t *testing.T) {
 	_, result, err := runAccessExplainWithServices(t, "public-app", true, registry.Service{
 		Name:   "public-app",
@@ -164,6 +304,78 @@ func TestAccessExplainFunnelMarksPublicAndPolicyUnknown(t *testing.T) {
 	}
 	if result.ExternalPolicyUnknown.Known {
 		t.Fatalf("external_policy_unknown.known = true, want false")
+	}
+}
+
+func TestAccessExplainCustomDomainIncludesDNSAndCertificateCaveat(t *testing.T) {
+	_, result, err := runAccessExplainWithServices(t, "site", true, registry.Service{
+		Name:   "site",
+		Type:   registry.TypeProxy,
+		Target: "http://localhost:3000",
+		Domain: "site.example.com",
+	})
+	if err != nil {
+		t.Fatalf("runAccessExplain JSON: %v", err)
+	}
+	for _, layer := range []string{"custom domain DNS", "custom domain certificate posture"} {
+		if !stringSliceContains(result.ExternalPolicyUnknown.UnknownLayers, layer) {
+			t.Fatalf("unknown layers missing %q: %+v", layer, result.ExternalPolicyUnknown.UnknownLayers)
+		}
+	}
+	if !stringSliceContains(result.TSLinkLocalEnforcement.Notes, "Custom domain reachability depends on external DNS and certificate posture, which this command does not evaluate.") {
+		t.Fatalf("notes = %+v, want custom-domain caveat", result.TSLinkLocalEnforcement.Notes)
+	}
+
+	raw, _, err := runAccessExplainWithServices(t, "site", false, registry.Service{
+		Name:   "site",
+		Type:   registry.TypeProxy,
+		Target: "http://localhost:3000",
+		Domain: "site.example.com",
+	})
+	if err != nil {
+		t.Fatalf("runAccessExplain human: %v", err)
+	}
+	for _, required := range []string{
+		"Custom domain reachability depends on external DNS and certificate posture",
+		"custom domain DNS",
+		"custom domain certificate posture",
+	} {
+		if !strings.Contains(raw, required) {
+			t.Fatalf("human output missing %q:\n%s", required, raw)
+		}
+	}
+}
+
+func TestAccessExplainTCPFunnelIncludesRawTCPCaveat(t *testing.T) {
+	raw, result, err := runAccessExplainWithRawServices(t, "db", true, registry.Service{
+		Name:   "db",
+		Type:   registry.TypeTCP,
+		Target: "localhost:5432",
+		Port:   5432,
+		Funnel: true,
+	})
+	if err != nil {
+		t.Fatalf("runAccessExplain JSON: %v", err)
+	}
+	if !stringSliceContains(result.TSLinkLocalEnforcement.Notes, "Tailscale Funnel does not carry raw TCP; a hand-edited TCP Funnel registry mark is not proof of public reachability.") {
+		t.Fatalf("notes = %+v, want raw TCP Funnel caveat", result.TSLinkLocalEnforcement.Notes)
+	}
+	if !strings.Contains(raw, "Tailscale Funnel does not carry raw TCP") {
+		t.Fatalf("JSON missing raw TCP Funnel caveat: %s", raw)
+	}
+
+	raw, _, err = runAccessExplainWithRawServices(t, "db", false, registry.Service{
+		Name:   "db",
+		Type:   registry.TypeTCP,
+		Target: "localhost:5432",
+		Port:   5432,
+		Funnel: true,
+	})
+	if err != nil {
+		t.Fatalf("runAccessExplain human: %v", err)
+	}
+	if !strings.Contains(raw, "Tailscale Funnel does not carry raw TCP") {
+		t.Fatalf("human output missing raw TCP Funnel caveat:\n%s", raw)
 	}
 }
 
@@ -215,6 +427,58 @@ func TestAccessExplainExternalPolicyAndBackendAuthAlwaysPresent(t *testing.T) {
 	}
 }
 
+func TestAccessRedactPotentialSecretURL(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{
+			name: "full URL with userinfo query fragment",
+			raw:  "https://user:pass@example.com:8443/app?token=abc#frag",
+			want: "https://example.com:8443/app",
+		},
+		{
+			name: "schemeless host port with query fragment",
+			raw:  "localhost:3000?token=abc#frag",
+			want: "localhost:3000",
+		},
+		{
+			name: "userinfo-like schemeless authority",
+			raw:  "token@localhost:5432/private",
+			want: "localhost:5432/private",
+		},
+		{
+			name: "bare host port passthrough",
+			raw:  "localhost:5432",
+			want: "localhost:5432",
+		},
+		{
+			name: "path only passthrough",
+			raw:  "/srv/user:pass@docs",
+			want: "/srv/user:pass@docs",
+		},
+		{
+			name: "empty string passthrough",
+			raw:  "",
+			want: "",
+		},
+		{
+			name: "URL path preserved",
+			raw:  "http://localhost:3000/private/path",
+			want: "http://localhost:3000/private/path",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := accessRedactPotentialSecretURL(tc.raw); got != tc.want {
+				t.Fatalf("accessRedactPotentialSecretURL(%q) = %q, want %q", tc.raw, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestAccessExplainServiceNotFoundReturnsSemanticError(t *testing.T) {
 	_, _, err := runAccessExplainWithServices(t, "missing", false, registry.Service{
 		Name:   "web",
@@ -239,6 +503,15 @@ func TestAccessExplainServiceNotFoundReturnsSemanticError(t *testing.T) {
 func stringSliceContains(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func hasAccessWarningCode(warnings []inspect.WarningView, want string) bool {
+	for _, warning := range warnings {
+		if warning.Code == want {
 			return true
 		}
 	}
