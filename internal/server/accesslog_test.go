@@ -1,10 +1,14 @@
 package server
 
 import (
+	"bufio"
 	"context"
+	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -227,6 +231,58 @@ func TestResponseWriter_FlushSetsImplicitStatus(t *testing.T) {
 	}
 	if rw.status != http.StatusOK {
 		t.Fatalf("status after Flush then WriteHeader = %d, want 200", rw.status)
+	}
+}
+
+type accessLogHijackRecorder struct {
+	*httptest.ResponseRecorder
+	conn   net.Conn
+	called bool
+}
+
+func (r *accessLogHijackRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	r.called = true
+	if r.conn == nil {
+		return nil, nil, errors.New("no conn")
+	}
+	return r.conn, bufio.NewReadWriter(bufio.NewReader(r.conn), bufio.NewWriter(r.conn)), nil
+}
+
+func TestResponseWriter_HijackDelegates(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+
+	rec := &accessLogHijackRecorder{
+		ResponseRecorder: httptest.NewRecorder(),
+		conn:             server,
+	}
+	rw := &responseWriter{ResponseWriter: rec}
+
+	conn, _, err := rw.Hijack()
+	if err != nil {
+		t.Fatalf("Hijack() error = %v", err)
+	}
+	if conn != server {
+		t.Fatalf("Hijack() conn = %v, want delegated server conn", conn)
+	}
+	if !rec.called {
+		t.Fatal("underlying Hijack was not called")
+	}
+}
+
+func TestResponseWriter_HijackRequiresUnderlyingHijacker(t *testing.T) {
+	rw := &responseWriter{ResponseWriter: httptest.NewRecorder()}
+
+	conn, buf, err := rw.Hijack()
+	if err == nil {
+		t.Fatal("Hijack() error = nil, want unsupported error")
+	}
+	if conn != nil || buf != nil {
+		t.Fatalf("Hijack() = conn %v buf %v, want nils on error", conn, buf)
+	}
+	if !strings.Contains(err.Error(), "does not implement http.Hijacker") {
+		t.Fatalf("Hijack() error = %v, want unsupported hijacker message", err)
 	}
 }
 

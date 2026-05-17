@@ -269,6 +269,59 @@ func TestNew(t *testing.T) {
 	}
 }
 
+func TestSetAuthKeyProviderNilRestoresStaticProvider(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	s, err := New("static-key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	s.SetAuthKeyProvider(func(context.Context, registry.Service) (string, error) {
+		return "dynamic-key", nil
+	})
+	s.SetAuthKeyProvider(nil)
+
+	got, err := s.authKeyProvider(context.Background(), registry.Service{Name: "svc"})
+	if err != nil {
+		t.Fatalf("authKeyProvider() error = %v", err)
+	}
+	if got != "static-key" {
+		t.Fatalf("authKeyProvider() = %q, want static key", got)
+	}
+}
+
+func TestRemoveRuntimeSnapshotUsesConfiguredSeams(t *testing.T) {
+	oldPath := runtimeSnapshotPathFn
+	oldRemove := runtimeRemoveSnapshotFn
+	t.Cleanup(func() {
+		runtimeSnapshotPathFn = oldPath
+		runtimeRemoveSnapshotFn = oldRemove
+	})
+
+	var removedPath string
+	runtimeSnapshotPathFn = func() (string, error) {
+		return "/tmp/runtime.json", nil
+	}
+	runtimeRemoveSnapshotFn = func(path string) error {
+		removedPath = path
+		return nil
+	}
+
+	(&Server{}).removeRuntimeSnapshot()
+	if removedPath != "/tmp/runtime.json" {
+		t.Fatalf("removed path = %q, want seam path", removedPath)
+	}
+
+	removedPath = ""
+	runtimeSnapshotPathFn = func() (string, error) {
+		return "", errors.New("path unavailable")
+	}
+	(&Server{}).removeRuntimeSnapshot()
+	if removedPath != "" {
+		t.Fatalf("removed path = %q after path error, want no remove call", removedPath)
+	}
+}
+
 func TestStopNodeLocked_CAS(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 

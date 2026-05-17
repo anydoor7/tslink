@@ -402,6 +402,61 @@ func TestNewSnapshotCertDomainRewritesCustomDomainEndpoint(t *testing.T) {
 	}
 }
 
+func TestSnapshotErrorAccessors(t *testing.T) {
+	sentinel := errors.New("read failed")
+	err := &SnapshotError{
+		Status: StatusUnreadable,
+		Code:   inspect.WarningCodeRuntimeSnapshotUnreadable,
+		Err:    sentinel,
+	}
+
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("errors.Is(SnapshotError, sentinel) = false, want true")
+	}
+	if got := err.Unwrap(); got != sentinel {
+		t.Fatalf("Unwrap() = %v, want sentinel", got)
+	}
+	if got := err.StableCode(); got != inspect.WarningCodeRuntimeSnapshotUnreadable {
+		t.Fatalf("StableCode() = %q, want %q", got, inspect.WarningCodeRuntimeSnapshotUnreadable)
+	}
+	var nilErr *SnapshotError
+	if got := nilErr.Unwrap(); got != nil {
+		t.Fatalf("nil Unwrap() = %v, want nil", got)
+	}
+	if got := nilErr.StableCode(); got != "" {
+		t.Fatalf("nil StableCode() = %q, want empty", got)
+	}
+}
+
+func TestRemoveSnapshotFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "runtime.json")
+	if err := os.WriteFile(path, []byte("{}"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	if err := Remove(path); err != nil {
+		t.Fatalf("Remove(existing) error = %v", err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("Stat removed snapshot err = %v, want not exist", err)
+	}
+	if err := Remove(path); err != nil {
+		t.Fatalf("Remove(missing) error = %v, want nil", err)
+	}
+
+	nonEmptyDir := filepath.Join(dir, "not-a-file")
+	if err := os.Mkdir(nonEmptyDir, 0o700); err != nil {
+		t.Fatalf("Mkdir() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(nonEmptyDir, "child"), []byte("x"), 0o600); err != nil {
+		t.Fatalf("WriteFile(child) error = %v", err)
+	}
+	if err := Remove(nonEmptyDir); err == nil {
+		t.Fatal("Remove(non-empty dir) error = nil, want error")
+	}
+}
+
 func assertSnapshotError(t *testing.T, err error, status, code string) {
 	t.Helper()
 	var snapshotErr *SnapshotError

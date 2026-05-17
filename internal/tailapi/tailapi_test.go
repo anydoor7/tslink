@@ -11,6 +11,7 @@ import (
 
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/credentials"
+	"github.com/monody0007/tslink/internal/registry"
 	"github.com/zalando/go-keyring"
 )
 
@@ -55,6 +56,32 @@ func jsonResponse(status int, body string) *http.Response {
 
 func cleanupTarget(hostname string) CleanupTarget {
 	return CleanupTarget{Hostname: hostname, Tags: []string{"tag:tsmain"}}
+}
+
+func TestCleanupTargetConstructors(t *testing.T) {
+	services := []registry.Service{
+		{Name: "web", Tags: []string{"tag:web"}},
+		{Name: "docs", Tags: []string{"tag:docs", "tag:shared"}},
+	}
+
+	target := CleanupTargetForService(services[0])
+	if target.Hostname != "web" || strings.Join(target.Tags, ",") != "tag:web" || target.DeviceID != "" || target.NodeID != "" {
+		t.Fatalf("CleanupTargetForService() = %+v, want service hostname/tags only", target)
+	}
+
+	targets := CleanupTargetsForServices(services)
+	if len(targets) != 2 {
+		t.Fatalf("CleanupTargetsForServices() returned %d targets, want 2", len(targets))
+	}
+	if targets[0].Hostname != "web" || strings.Join(targets[0].Tags, ",") != "tag:web" {
+		t.Fatalf("first cleanup target = %+v, want web target", targets[0])
+	}
+	if targets[1].Hostname != "docs" || strings.Join(targets[1].Tags, ",") != "tag:docs,tag:shared" {
+		t.Fatalf("second cleanup target = %+v, want docs target", targets[1])
+	}
+	if empty := CleanupTargetsForServices(nil); len(empty) != 0 {
+		t.Fatalf("CleanupTargetsForServices(nil) = %d targets, want 0", len(empty))
+	}
 }
 
 func TestDeleteDevicesForService_NoClient(t *testing.T) {
