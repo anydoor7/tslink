@@ -34,11 +34,11 @@ TSLink implements zero-trust principles at every layer:
 
 | Zero-Trust Principle | TSLink Implementation |
 |-----|-----|
-| **Never trust, always verify** | TSLink-managed HTTP proxy/file requests are authenticated via Tailscale WhoIs — identity headers (`X-Tailscale-User-Login`, `X-Tailscale-User-Name`, `X-Tailscale-User-Picture`, `X-Tailscale-Node`) are injected into proxied requests. Inbound identity headers are stripped to prevent spoofing. |
+| **Never trust, always verify** | Tailnet HTTP proxy/file requests are authenticated via Tailscale WhoIs — identity headers (`X-Tailscale-User-Login`, `X-Tailscale-User-Name`, `X-Tailscale-User-Picture`, `X-Tailscale-Node`) are injected into proxied requests. Public Funnel exposure and raw TCP streams are not treated as TSLink-enforced Tailscale user authentication. |
 | **HTTP least-privilege access** | `--allow` restricts proxy and file services to specific users or tags. TCP services rely on Tailscale network ACLs and tags. |
 | **Assume breach** | End-to-end WireGuard encryption on every connection. Even if your local network is compromised, traffic between your devices remains encrypted. |
 | **Microsegmentation** | Each service runs as an isolated tsnet node with its own hostname, TLS certificate, and network identity. Compromising one service does not grant access to others. |
-| **No implicit trust** | No services are exposed to the public internet by default. Credentials are stored in the system keychain first, with restricted-permission file fallback for headless environments. Auth keys are derived dynamically and never persisted. |
+| **No implicit trust** | No services are exposed to the public internet by default. Credentials are stored in the system keychain first, with restricted-permission file fallback for headless environments. API-token-derived startup auth keys are generated on demand and not persisted; legacy authkey files may still be read for compatibility and should be migrated. |
 
 ## What TSLink Does
 
@@ -379,7 +379,7 @@ tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 │             │         │   (WireGuard mesh)    │         │              │
 │  localhost   │◄──────►│                      │◄──────►│  Browser     │
 │  :3000      │  tsnet  │  End-to-end encrypted │  HTTPS │              │
-│  :5432      │  nodes  │  No public internet   │  +TLS  │              │
+│  :5432      │  nodes  │  Encrypted tailnet path│  +TLS  │              │
 │  ~/Documents│  (1/svc)│                       │        │              │
 └─────────────┘         └──────────────────────┘         └──────────────┘
 ```
@@ -388,7 +388,7 @@ TSLink creates a dedicated [tsnet](https://tailscale.com/kb/1244/tsnet) node for
 
 **Key architectural decisions:**
 - **Per-service embedded nodes** — each service gets its own tailnet identity, hostname, and TLS certificate (microsegmentation)
-- **Identity-aware proxying** — WhoIs verification on TSLink-managed HTTP proxy/file requests, with identity headers injected and spoofing prevented
+- **Identity-aware proxying** — WhoIs verification on tailnet HTTP proxy/file requests, with identity headers injected and spoofing prevented; public Funnel and raw TCP do not get TSLink-enforced HTTP identity
 - **Secure credential management** — system keychain storage with restricted-permission file fallback for headless environments
 - **File-based registry** — services persist across restarts in `~/.config/tslink/registry.json`
 - **Hot reload** — file watcher on the registry means `tslink add` takes effect without restarting the server

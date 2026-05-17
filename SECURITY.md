@@ -9,7 +9,7 @@ TSLink is designed around zero-trust principles. Security is not an afterthought
 - **End-to-end WireGuard encryption** — all traffic is encrypted between devices
 - **HTTP identity verification for proxy/file requests** — Tailscale WhoIs authenticates TSLink-managed HTTP requests before identity headers are injected; raw TCP streams and public Funnel exposure are not treated as TSLink-enforced Tailscale user authentication
 - **Credential storage with restricted fallback** — API keys and OAuth client secrets are stored in macOS Keychain / Linux secret service when available, with restricted-permission file fallback for headless or unavailable-keychain environments
-- **Dynamic auth key derivation** — authentication keys are derived on demand and never persisted to disk
+- **Dynamic auth key derivation** — API-token-derived startup auth keys are generated on demand and not persisted; legacy authkey files may still be read for compatibility and should be migrated
 - **Per-service isolation** — each service runs as its own tsnet node with an independent identity
 - **Inbound header stripping** — identity headers from external sources are stripped to prevent spoofing
 

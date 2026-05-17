@@ -34,11 +34,11 @@ TSLink 在每一层实现零信任原则：
 
 | 零信任原则 | TSLink 实现 |
 |-----------|------------|
-| **永不信任，始终验证** | TSLink 管理的 HTTP 代理/文件请求通过 Tailscale WhoIs 认证 — 身份头（`X-Tailscale-User-Login`、`X-Tailscale-User-Name`、`X-Tailscale-User-Picture`、`X-Tailscale-Node`）注入代理请求。入站身份头被剥离以防伪造。 |
+| **永不信任，始终验证** | tailnet 内的 HTTP 代理/文件请求通过 Tailscale WhoIs 认证 — 身份头（`X-Tailscale-User-Login`、`X-Tailscale-User-Name`、`X-Tailscale-User-Picture`、`X-Tailscale-Node`）注入代理请求。公网 Funnel 和 raw TCP 不视为 TSLink 强制执行的 Tailscale 用户认证。 |
 | **HTTP 最小权限访问** | `--allow` 限制 proxy 和 file 服务的访问用户或标签。TCP 服务依赖 Tailscale 网络 ACL 和标签。 |
 | **假设已被攻破** | 每个连接都有端到端 WireGuard 加密。即使本地网络被攻破，设备间流量仍然加密。 |
 | **微分段** | 每个服务作为隔离的 tsnet 节点运行，拥有独立的主机名、TLS 证书和网络身份。攻破一个服务不会影响其他服务。 |
-| **消除隐式信任** | 默认不暴露任何服务到公网。凭证优先存储在系统钥匙串中；headless 环境可回退到受限权限文件。认证密钥动态派生，从不持久化。 |
+| **消除隐式信任** | 默认不暴露任何服务到公网。凭证优先存储在系统钥匙串中；headless 环境可回退到受限权限文件。由 API token 派生的启动认证密钥按需生成且不持久化；旧版 authkey 文件仍可能因兼容性被读取，建议迁移。 |
 
 ## TSLink 做什么
 
@@ -379,7 +379,7 @@ tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 │             │         │   (WireGuard 网状)    │         │              │
 │  localhost   │◄──────►│                      │◄──────►│  浏览器      │
 │  :3000      │  tsnet  │  端到端加密           │  HTTPS │              │
-│  :5432      │  节点   │  不经过公共互联网      │  +TLS  │              │
+│  :5432      │  节点   │  加密 tailnet 路径     │  +TLS  │              │
 │  ~/Documents│ (1/服务)│                       │        │              │
 └─────────────┘         └──────────────────────┘         └──────────────┘
 ```
@@ -388,7 +388,7 @@ TSLink 为每个注册的服务创建一个专用的 [tsnet](https://tailscale.c
 
 **关键架构决策：**
 - **Per-service 嵌入式节点** — 每个服务获得独立的 tailnet 身份、主机名和 TLS 证书（微分段）
-- **身份感知代理** — TSLink 管理的 HTTP 代理/文件请求进行 WhoIs 验证，注入身份头并防止伪造
+- **身份感知代理** — tailnet 内的 HTTP 代理/文件请求进行 WhoIs 验证，注入身份头并防止伪造；公网 Funnel 和 raw TCP 不获得 TSLink 强制执行的 HTTP 身份认证
 - **安全凭证管理** — 系统钥匙串存储，headless 环境支持受限权限文件后备
 - **基于文件的注册表** — 服务在 `~/.config/tslink/registry.json` 中持久化，跨重启保存
 - **热重载** — 注册表文件监听意味着 `tslink add` 无需重启服务即可生效
