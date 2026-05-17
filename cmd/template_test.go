@@ -300,18 +300,190 @@ func TestTemplateApplyDryRunWinsOverYes(t *testing.T) {
 }
 
 func TestTemplatePublicJSONOmitsForbiddenFields(t *testing.T) {
-	for _, args := range [][]string{
-		{"template", "list", "--json"},
-		{"template", "show", "personal-harness", "--json"},
-		{"template", "apply", "personal-harness", "--json"},
-	} {
-		dir := t.TempDir()
-		withTemplateRegistryPath(t, filepath.Join(dir, "registry.json"))
-		raw, err := runTemplateRootCommand(t, args...)
-		if err != nil {
-			t.Fatalf("%v: %v", args, err)
+	cases := [][]string{{"template", "list", "--json"}}
+	for _, tmpl := range templateSummaries() {
+		cases = append(cases,
+			[]string{"template", "show", tmpl.Name, "--json"},
+			[]string{"template", "apply", tmpl.Name, "--json"},
+		)
+	}
+
+	for _, args := range cases {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			dir := t.TempDir()
+			withTemplateRegistryPath(t, filepath.Join(dir, "registry.json"))
+			raw, err := runTemplateRootCommand(t, args...)
+			if err != nil {
+				t.Fatalf("%v: %v", args, err)
+			}
+			assertTemplateRawJSONHasNoForbiddenFields(t, raw)
+		})
+	}
+}
+
+func TestTemplateBuiltInServicesAvoidPublicExposureFields(t *testing.T) {
+	for _, tmpl := range builtinTemplates() {
+		t.Run(tmpl.Name, func(t *testing.T) {
+			services, err := buildTemplateServices(tmpl)
+			if err != nil {
+				t.Fatalf("buildTemplateServices: %v", err)
+			}
+			for _, svc := range services {
+				if svc.Funnel {
+					t.Fatalf("%s has Funnel enabled", svc.Name)
+				}
+				if svc.Domain != "" {
+					t.Fatalf("%s domain = %q, want empty", svc.Name, svc.Domain)
+				}
+				if svc.AcmeEmail != "" {
+					t.Fatalf("%s acme_email = %q, want empty", svc.Name, svc.AcmeEmail)
+				}
+				if svc.ControlURL != "" {
+					t.Fatalf("%s control_url = %q, want empty", svc.Name, svc.ControlURL)
+				}
+				if svc.Middleware != nil {
+					t.Fatalf("%s middleware = %+v, want nil", svc.Name, svc.Middleware)
+				}
+				if len(svc.AllowedUsers) != 0 {
+					t.Fatalf("%s allowed_users = %v, want none", svc.Name, svc.AllowedUsers)
+				}
+				if svc.Type == registry.TypeFile || svc.Path != "" {
+					t.Fatalf("%s has file path assumptions: type=%q path=%q", svc.Name, svc.Type, svc.Path)
+				}
+				if !strings.Contains(svc.Target, "localhost:") {
+					t.Fatalf("%s target = %q, want localhost target", svc.Name, svc.Target)
+				}
+				if len(svc.Tags) != 1 || svc.Tags[0] != "tag:tslink" {
+					t.Fatalf("%s tags = %v, want uniform [tag:tslink]", svc.Name, svc.Tags)
+				}
+			}
+		})
+	}
+}
+
+func TestTemplateListHumanIncludesAllTemplateNames(t *testing.T) {
+	out, err := runTemplateRootCommand(t, "template", "list")
+	if err != nil {
+		t.Fatalf("template list: %v", err)
+	}
+	for _, tmpl := range templateSummaries() {
+		if !strings.Contains(out, tmpl.Name) {
+			t.Fatalf("template list output missing %q:\n%s", tmpl.Name, out)
 		}
-		assertTemplateRawJSONHasNoForbiddenFields(t, raw)
+	}
+}
+
+func TestTemplateShowHumanIncludesServicesAndLocalhostBackends(t *testing.T) {
+	out, err := runTemplateRootCommand(t, "template", "show", "personal-harness")
+	if err != nil {
+		t.Fatalf("template show personal-harness: %v", err)
+	}
+	for _, want := range []string{
+		"harness-web",
+		"harness-api",
+		"http://localhost:8787",
+		"http://localhost:8788",
+		"tag:tslink",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("template show output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestTemplateApplyHumanDryRunIncludesReminder(t *testing.T) {
+	dir := t.TempDir()
+	withTemplateRegistryPath(t, filepath.Join(dir, "registry.json"))
+
+	out, err := runTemplateRootCommand(t, "template", "apply", "personal-harness")
+	if err != nil {
+		t.Fatalf("template apply personal-harness: %v", err)
+	}
+	for _, want := range []string{
+		"No registry changes written",
+		"Re-run with --yes",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("template apply dry-run output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestTemplateApplyHumanYesIncludesCreatedSummary(t *testing.T) {
+	dir := t.TempDir()
+	withTemplateRegistryPath(t, filepath.Join(dir, "registry.json"))
+
+	out, err := runTemplateRootCommand(t, "template", "apply", "personal-harness", "--yes")
+	if err != nil {
+		t.Fatalf("template apply personal-harness --yes: %v", err)
+	}
+	for _, want := range []string{
+		`Template "personal-harness" applied`,
+		"created harness-web",
+		"created harness-api",
+		"Created 2, skipped 0.",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("template apply --yes output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestTemplateApplyConvertsRaceCreatedServiceToSkipped(t *testing.T) {
+	dir := t.TempDir()
+	regPath := filepath.Join(dir, "registry.json")
+
+	reg, err := registry.Load(regPath)
+	if err != nil {
+		t.Fatalf("load empty registry: %v", err)
+	}
+	plan, _, err := planTemplateApply("personal-harness", reg, false)
+	if err != nil {
+		t.Fatalf("planTemplateApply: %v", err)
+	}
+	if plan.Created != 2 || plan.Skipped != 0 {
+		t.Fatalf("plan created/skipped = %d/%d, want 2/0", plan.Created, plan.Skipped)
+	}
+
+	oldAddIfMissing := templateAddIfMissingFn
+	raced := false
+	templateAddIfMissingFn = func(path string, svc registry.Service) (bool, error) {
+		if svc.Name == "harness-web" && !raced {
+			raced = true
+			if _, err := registry.Add(path, svc); err != nil {
+				return false, err
+			}
+			return false, nil
+		}
+		return registry.AddIfMissing(path, svc)
+	}
+	t.Cleanup(func() {
+		templateAddIfMissingFn = oldAddIfMissing
+	})
+
+	result, err := applyTemplate("personal-harness", regPath, false)
+	if err != nil {
+		t.Fatalf("applyTemplate: %v", err)
+	}
+	if !result.Applied || result.DryRun {
+		t.Fatalf("apply result = %+v, want applied write", result)
+	}
+	if result.Created != 1 || result.Skipped != 1 {
+		t.Fatalf("created/skipped = %d/%d, want 1/1", result.Created, result.Skipped)
+	}
+	if result.Services[0].Action != templateActionSkipExisting {
+		t.Fatalf("first action = %q, want %q", result.Services[0].Action, templateActionSkipExisting)
+	}
+	if result.Services[1].Action != templateActionCreated {
+		t.Fatalf("second action = %q, want %q", result.Services[1].Action, templateActionCreated)
+	}
+
+	loaded, err := registry.Load(regPath)
+	if err != nil {
+		t.Fatalf("load registry: %v", err)
+	}
+	if len(loaded.Services) != 2 {
+		t.Fatalf("services = %+v, want two persisted services", loaded.Services)
 	}
 }
 

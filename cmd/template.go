@@ -15,7 +15,10 @@ const (
 	templateActionCreate       = "create"
 	templateActionCreated      = "created"
 	templateActionSkipExisting = "skip_existing"
+	templateTagPolicy          = "Built-ins intentionally use the uniform tag tag:tslink for private template services."
 )
+
+var templateAddIfMissingFn = registry.AddIfMissing
 
 type templateServiceSpec struct {
 	Summary string
@@ -73,7 +76,7 @@ func builtinTemplates() []serviceTemplate {
 		{
 			Name:        "personal-harness",
 			Summary:     "Local personal harness web and API endpoints",
-			Description: "Small private harness services on localhost ports in the 8787 range.",
+			Description: "Small private harness services on localhost ports in the 8787 range. " + templateTagPolicy,
 			Services: []templateServiceSpec{
 				{
 					Summary: "Harness web interface",
@@ -88,7 +91,7 @@ func builtinTemplates() []serviceTemplate {
 		{
 			Name:        "dev-suite",
 			Summary:     "Local development web, API, and database endpoints",
-			Description: "Common private development stack with HTTP app endpoints and raw TCP database routing.",
+			Description: "Common private development stack with HTTP app endpoints and raw TCP database routing. " + templateTagPolicy,
 			Services: []templateServiceSpec{
 				{
 					Summary: "Development web frontend",
@@ -107,7 +110,7 @@ func builtinTemplates() []serviceTemplate {
 		{
 			Name:        "local-ai-suite",
 			Summary:     "Local AI model and chat endpoints",
-			Description: "Private localhost AI endpoints such as Ollama and Open WebUI.",
+			Description: "Private localhost AI endpoints such as Ollama and Open WebUI. " + templateTagPolicy,
 			Services: []templateServiceSpec{
 				{
 					Summary: "Ollama HTTP API",
@@ -253,7 +256,7 @@ func applyTemplate(name, regPath string, dryRun bool) (TemplateApplyResult, erro
 		if result.Services[i].Action == templateActionSkipExisting {
 			continue
 		}
-		created, err := registry.AddIfMissing(regPath, svc)
+		created, err := templateAddIfMissingFn(regPath, svc)
 		if err != nil {
 			return TemplateApplyResult{}, err
 		}
@@ -312,7 +315,10 @@ func init() {
 		Long: strings.TrimSpace(`Preview and apply built-in personal service templates.
 
 Templates only write TSLink registry entries. They do not install, start,
-probe, or manage third-party applications.`),
+probe, or manage third-party applications.
+
+Built-ins intentionally use the uniform tag tag:tslink for private template
+services; change tags after apply if your tailnet policy uses another tag.`),
 	}
 
 	listCmd := &cobra.Command{

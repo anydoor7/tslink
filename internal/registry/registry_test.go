@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func testRegistryPath(t *testing.T) string {
@@ -98,6 +99,181 @@ func TestAddIdempotent(t *testing.T) {
 	}
 	if !svc.CreatedAt.Equal(firstCreatedAt) {
 		t.Fatalf("expected created_at to be preserved, got %v want %v", svc.CreatedAt, firstCreatedAt)
+	}
+}
+
+func TestAddIfMissingCreatesWhenAbsent(t *testing.T) {
+	path := testRegistryPath(t)
+
+	created, err := AddIfMissing(path, Service{
+		Name:   "report",
+		Type:   TypeProxy,
+		Target: "http://localhost:3000",
+		Tags:   []string{"tag:tslink"},
+	})
+	if err != nil {
+		t.Fatalf("AddIfMissing returned error: %v", err)
+	}
+	if !created {
+		t.Fatal("AddIfMissing created = false, want true")
+	}
+
+	reg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if len(reg.Services) != 1 {
+		t.Fatalf("expected 1 service, got %d", len(reg.Services))
+	}
+	svc := reg.Services[0]
+	if svc.Name != "report" || svc.Target != "http://localhost:3000" {
+		t.Fatalf("service = %+v, want report target http://localhost:3000", svc)
+	}
+	if len(svc.Tags) != 1 || svc.Tags[0] != "tag:tslink" {
+		t.Fatalf("tags = %v, want [tag:tslink]", svc.Tags)
+	}
+	if svc.CreatedAt.IsZero() {
+		t.Fatal("expected created_at to be set")
+	}
+}
+
+func TestAddIfMissingNoopWhenPresentPreservesExistingService(t *testing.T) {
+	path := testRegistryPath(t)
+	createdAt := time.Date(2026, 5, 17, 12, 0, 0, 0, time.UTC)
+
+	if _, err := Add(path, Service{
+		Name:      "report",
+		Type:      TypeProxy,
+		Target:    "http://localhost:3000",
+		Tags:      []string{"tag:custom"},
+		CreatedAt: createdAt,
+	}); err != nil {
+		t.Fatalf("initial Add returned error: %v", err)
+	}
+
+	created, err := AddIfMissing(path, Service{
+		Name:      "report",
+		Type:      TypeProxy,
+		Target:    "http://localhost:4000",
+		Tags:      []string{"tag:tslink"},
+		CreatedAt: time.Date(2026, 5, 17, 13, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("AddIfMissing returned error: %v", err)
+	}
+	if created {
+		t.Fatal("AddIfMissing created = true, want false")
+	}
+
+	reg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if len(reg.Services) != 1 {
+		t.Fatalf("expected 1 service, got %d", len(reg.Services))
+	}
+	svc := reg.Services[0]
+	if svc.Target != "http://localhost:3000" {
+		t.Fatalf("target = %q, want original target", svc.Target)
+	}
+	if len(svc.Tags) != 1 || svc.Tags[0] != "tag:custom" {
+		t.Fatalf("tags = %v, want original tags [tag:custom]", svc.Tags)
+	}
+	if !svc.CreatedAt.Equal(createdAt) {
+		t.Fatalf("created_at = %v, want original %v", svc.CreatedAt, createdAt)
+	}
+}
+
+func TestAddIfMissingRejectsInvalidNameAndTag(t *testing.T) {
+	path := testRegistryPath(t)
+
+	cases := []struct {
+		name string
+		svc  Service
+	}{
+		{
+			name: "invalid name",
+			svc:  Service{Name: "INVALID", Type: TypeProxy, Target: "http://localhost:3000"},
+		},
+		{
+			name: "invalid tag",
+			svc:  Service{Name: "tagged", Type: TypeProxy, Target: "http://localhost:3000", Tags: []string{"tag:"}},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			created, err := AddIfMissing(path, tc.svc)
+			if err == nil {
+				t.Fatal("AddIfMissing error = nil, want validation error")
+			}
+			if created {
+				t.Fatal("AddIfMissing created = true, want false")
+			}
+		})
+	}
+
+	reg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if len(reg.Services) != 0 {
+		t.Fatalf("services = %+v, want none after rejected inputs", reg.Services)
+	}
+}
+
+func TestAddIfMissingPreservesOtherExistingServices(t *testing.T) {
+	path := testRegistryPath(t)
+	if _, err := Add(path, Service{Name: "first", Type: TypeProxy, Target: "http://localhost:1000", Tags: []string{"tag:first"}}); err != nil {
+		t.Fatalf("Add(first) error = %v", err)
+	}
+	if _, err := Add(path, Service{Name: "second", Type: TypeProxy, Target: "http://localhost:2000", Tags: []string{"tag:second"}}); err != nil {
+		t.Fatalf("Add(second) error = %v", err)
+	}
+
+	created, err := AddIfMissing(path, Service{Name: "third", Type: TypeProxy, Target: "http://localhost:3000", Tags: []string{"tag:third"}})
+	if err != nil {
+		t.Fatalf("AddIfMissing(third) error = %v", err)
+	}
+	if !created {
+		t.Fatal("AddIfMissing(third) created = false, want true")
+	}
+
+	reg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if len(reg.Services) != 3 {
+		t.Fatalf("expected 3 services, got %d", len(reg.Services))
+	}
+	wantTargets := map[string]string{
+		"first":  "http://localhost:1000",
+		"second": "http://localhost:2000",
+		"third":  "http://localhost:3000",
+	}
+	for _, svc := range reg.Services {
+		if wantTargets[svc.Name] != svc.Target {
+			t.Fatalf("%s target = %q, want %q", svc.Name, svc.Target, wantTargets[svc.Name])
+		}
+	}
+}
+
+func TestAddIfMissing_LockError(t *testing.T) {
+	origLock := lockFn
+	lockFn = func(_ *os.File) error {
+		return errors.New("injected lock error")
+	}
+	defer func() { lockFn = origLock }()
+
+	path := testRegistryPath(t)
+	created, err := AddIfMissing(path, Service{Name: "svc", Type: TypeProxy, Target: "http://localhost:3000"})
+	if err == nil {
+		t.Fatal("AddIfMissing error = nil, want error from lock failure")
+	}
+	if created {
+		t.Fatal("AddIfMissing created = true, want false")
+	}
+	if err.Error() != "injected lock error" {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
