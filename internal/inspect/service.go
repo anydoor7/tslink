@@ -40,10 +40,10 @@ type ExposureView struct {
 }
 
 type SummaryView struct {
-	Mode    string   `json:"mode,omitempty"`
-	Count   int      `json:"count"`
-	Entries []string `json:"entries,omitempty"`
-	Redacted bool    `json:"redacted,omitempty"`
+	Mode     string   `json:"mode,omitempty"`
+	Count    int      `json:"count"`
+	Entries  []string `json:"entries,omitempty"`
+	Redacted bool     `json:"redacted,omitempty"`
 }
 
 type BackendView struct {

@@ -152,8 +152,75 @@ func TestAPIList_UsesPublicServiceViewsWithUsefulFields(t *testing.T) {
 	if got.Tags.Count != 1 || got.Tags.Entries[0] != "tag:docs" {
 		t.Fatalf("tags = %+v, want useful tag summary", got.Tags)
 	}
-	if got.Allow.Count != 1 || got.Allow.Entries[0] != "alice@example.com" {
-		t.Fatalf("allow = %+v, want useful allow summary", got.Allow)
+	if got.Allow.Mode != "restricted" || got.Allow.Count != 1 || !got.Allow.Redacted || len(got.Allow.Entries) != 0 {
+		t.Fatalf("allow = %+v, want redacted allow summary", got.Allow)
+	}
+}
+
+func TestAPIList_RedactsAllowPrincipals(t *testing.T) {
+	h, _ := newTestHandler(t)
+	if _, err := registry.Add(h.regPath, registry.Service{
+		Name:         "docs",
+		Type:         registry.TypeFile,
+		Path:         "/tmp/docs",
+		AllowedUsers: []string{"alice@example.com", "tag:admin"},
+	}); err != nil {
+		t.Fatalf("registry.Add: %v", err)
+	}
+
+	var buf bytes.Buffer
+	h.handle(APIRequest{Action: "list"}, &buf)
+	raw := buf.String()
+	for _, principal := range []string{"alice@example.com", "tag:admin"} {
+		if strings.Contains(raw, principal) {
+			t.Fatalf("api list leaked allow principal %q: %s", principal, raw)
+		}
+	}
+
+	resp := parseResponse(t, &buf)
+	if !resp.OK {
+		t.Fatalf("expected ok, got error: %s", resp.Error)
+	}
+	if len(resp.Services) != 1 {
+		t.Fatalf("expected 1 service, got %d", len(resp.Services))
+	}
+	allow := resp.Services[0].Allow
+	if allow.Mode != "restricted" || allow.Count != 2 || !allow.Redacted || len(allow.Entries) != 0 {
+		t.Fatalf("allow = %+v, want redacted restricted summary", allow)
+	}
+}
+
+func TestAPIList_TCPUsesTypedEndpoint(t *testing.T) {
+	h, _ := newTestHandler(t)
+	if _, err := registry.Add(h.regPath, registry.Service{
+		Name:   "db",
+		Type:   registry.TypeTCP,
+		Target: "localhost:5432",
+		Port:   5432,
+	}); err != nil {
+		t.Fatalf("registry.Add: %v", err)
+	}
+
+	var buf bytes.Buffer
+	h.handle(APIRequest{Action: "list"}, &buf)
+	raw := buf.String()
+	if strings.Contains(raw, "https://db.<tailnet>.ts.net") {
+		t.Fatalf("api list rendered TCP service as HTTPS: %s", raw)
+	}
+
+	resp := parseResponse(t, &buf)
+	if !resp.OK {
+		t.Fatalf("expected ok, got error: %s", resp.Error)
+	}
+	if len(resp.Services) != 1 {
+		t.Fatalf("expected 1 service, got %d", len(resp.Services))
+	}
+	endpoint := resp.Services[0].Endpoint
+	if endpoint.Kind != inspect.EndpointKindTCP {
+		t.Fatalf("endpoint kind = %q, want tcp", endpoint.Kind)
+	}
+	if endpoint.Display != "db.<tailnet>.ts.net:5432" || endpoint.Port != 5432 {
+		t.Fatalf("endpoint = %+v, want typed TCP display and port", endpoint)
 	}
 }
 
