@@ -403,20 +403,6 @@ func accessSafeBackendView(view inspect.BackendView) inspect.BackendView {
 	return view
 }
 
-func accessRedactPotentialSecretURL(raw string) string {
-	parsed, err := url.Parse(raw)
-	if err == nil && parsed.Scheme != "" && parsed.Host != "" {
-		if parsed.User != nil {
-			parsed.User = nil
-		}
-		parsed.RawQuery = ""
-		parsed.Fragment = ""
-		// Paths are preserved for diagnostics; users should avoid secret-bearing backend paths.
-		return parsed.String()
-	}
-	return accessRedactSchemelessTargetDisplay(raw)
-}
-
 func accessRedactSchemelessTargetDisplay(raw string) string {
 	display := raw
 	if cut := strings.IndexAny(display, "?#"); cut >= 0 {
