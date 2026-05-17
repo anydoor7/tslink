@@ -285,6 +285,35 @@ func Add(path string, svc Service) (created bool, err error) {
 	return created, err
 }
 
+func AddIfMissing(path string, svc Service) (created bool, err error) {
+	if err := ValidateService(svc); err != nil {
+		return false, err
+	}
+
+	err = withLock(path, func() error {
+		reg, err := Load(path)
+		if err != nil {
+			return err
+		}
+
+		for _, existing := range reg.Services {
+			if existing.Name == svc.Name {
+				created = false
+				return nil
+			}
+		}
+
+		if svc.CreatedAt.IsZero() {
+			svc.CreatedAt = time.Now().UTC()
+		}
+
+		reg.Services = append(reg.Services, svc)
+		created = true
+		return save(path, reg)
+	})
+	return created, err
+}
+
 func Remove(path, name string) (removed bool, err error) {
 	_, removed, err = RemoveAndReturn(path, name)
 	return removed, err
