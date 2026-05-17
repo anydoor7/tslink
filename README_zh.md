@@ -61,9 +61,11 @@ tslink serve --daemon
 - **守护进程运行** — 启动一次，后台运行，支持开机自启
 - **TCP 代理** — 暴露数据库、SSH、Redis 等非 HTTP 服务
 - **HTTP 访问控制** — proxy 和 file 服务支持 `--allow user@example.com,tag:admin`
-- **最小 API 模式** — JSON-over-stdin/stdout，支持 list/add/remove/status 自动化
-- **Headscale 兼容** — 通过 `--control-url` 支持自托管控制服务器
-- **Funnel** — 可选通过 Tailscale Funnel 暴露到公网
+- **安全诊断** — `tslink doctor`、`tslink status --urls` 和 `tslink access explain` 明确展示本地证据和未知的外部策略层
+- **本地 API 模式** — JSON-over-stdin/stdout，覆盖 list/add/remove/status、诊断、访问解释和模板自动化
+- **个人模板** — 预览并添加小型私有服务套件，不覆盖已有服务
+- **Headscale 兼容路径** — 通过 `--control-url` 支持高级/自托管控制服务器场景
+- **Funnel 护栏** — 公网暴露必须显式选择，并要求 `--public` 确认
 
 ### 发布状态
 
@@ -71,11 +73,13 @@ tslink serve --daemon
 |---|---|
 | Proxy、file、原始 TCP 服务 | Roadmap/experimental 中间件管道（限流、Basic Auth、IP 白名单、CORS） |
 | 每服务一个嵌入式 `tsnet` 节点 | Roadmap/experimental Docker 标签自动发现 |
-| 身份感知 HTTP 代理头 | Roadmap/experimental 管理面板和 REST API |
+| 身份感知 HTTP 代理头 | Roadmap/experimental 管理面板或 REST surface |
 | proxy/file 的 HTTP `--allow` | Roadmap/experimental Prometheus `/metrics` 端点 |
 | 注册表热重载 | Roadmap/experimental 自定义域名 / ACME 运行时 TLS |
 | 守护进程和开机自启 | Roadmap/experimental Cluster / 多节点注册表同步 |
-| 最小本地 `tslink api` | Roadmap/experimental 与 `tslink add` 全量标志对齐的 API |
+| owner-only `status --urls`、`doctor` 和 `access explain` | Roadmap/experimental 成员可见 portal 或服务目录 |
+| 已交付 owner 工作流的本地 JSON `tslink api` parity | Roadmap/experimental 远程 API、dashboard 或多用户管理面 |
+| 内置个人模板 | Roadmap/experimental marketplace 或第三方模板注册表 |
 
 ## 快速开始
 
@@ -311,8 +315,8 @@ tslink add demo --proxy localhost:8080 --ephemeral
 # 基于身份的 HTTP 访问控制（仅 proxy/file）
 tslink add internal --proxy localhost:9090 --allow user@example.com,tag:admin
 
-# 通过 Tailscale Funnel 公开暴露
-tslink add public --proxy localhost:3000 --funnel
+# 通过 Tailscale Funnel 公开暴露（必须显式确认）
+tslink add public --proxy localhost:3000 --funnel --public
 
 # ACL 标签
 tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
@@ -333,7 +337,13 @@ tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 | `tslink serve --daemon` | 启动网关（后台） |
 | `tslink stop` | 停止网关 |
 | `tslink status` | 显示网关状态 |
+| `tslink status --urls` | 显示 owner-only 服务 URL、暴露模式、allow 摘要、后端和 warning code |
+| `tslink doctor` | 只读诊断凭证、daemon、注册表、runtime snapshot、暴露模式和目标安全性 |
+| `tslink access explain <service>` | 解释某个服务的本地访问模型，以及仍属于外部策略/后端认证的部分 |
 | `tslink logs` | 查看最近的网关日志 |
+| `tslink template list` | 列出内置个人服务模板 |
+| `tslink template show <name>` | 预览内置模板 |
+| `tslink template apply <name> --yes` | 只添加缺失的模板服务，不覆盖已有服务；不加 `--yes` 或传 `--dry-run` 只预览 |
 | `tslink tags list` | 列出所有服务及其标签 |
 | `tslink tags pull` | 使用 API 访问令牌从 Tailscale ACL 拉取远端标签；OAuth-only 模式会跳过 |
 | `tslink tags add <service> <tag>` | 为服务追加一个标签 |
@@ -356,7 +366,8 @@ tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 | `--tags tag:a,tag:b` | ACL 标签，用于 Tailscale 网络策略 |
 | `--allow user@,tag:x` | proxy/file 服务的 HTTP 访问控制；TCP 会拒绝该标志，因为原始 TCP 使用 Tailscale ACL 标签和目标服务自身认证 |
 | `--control-url URL` | 服务级控制服务器覆盖，例如 Headscale |
-| `--funnel` | 通过 Tailscale Funnel 暴露到公网（仅限 proxy） |
+| `--funnel` | 通过 Tailscale Funnel 暴露到公网（仅限 proxy，必须同时传 `--public`） |
+| `--public` | 显式确认 `--funnel` 的公网暴露；没有 `--funnel` 时无效 |
 | `--domain example.com` | Roadmap/experimental：可写入服务配置，但自定义域名运行时 TLS 尚未接入 |
 | `--acme-email user@example.com` | Roadmap/experimental：随 `--domain` 存储；尚无已交付 ACME listener |
 
@@ -387,7 +398,7 @@ TSLink 为每个注册的服务创建一个专用的 [tsnet](https://tailscale.c
 
 ## API 模式
 
-TSLink 提供最小 JSON-over-stdin/stdout API 模式，用于本地自动化。当前支持基础 `list`、`add`、`remove`、`status` 动作；尚未与每个 `tslink add` 标志完全对齐。
+TSLink 提供本地 JSON-over-stdin/stdout API 模式，用于 owner 侧自动化。它不是 REST server、dashboard 或成员可见的服务目录。未知 JSON 字段会被拒绝，公开 API 响应使用脱敏视图，不直接输出原始注册表记录。
 
 ```bash
 # 列出服务
@@ -401,7 +412,23 @@ echo '{"action":"remove","name":"myapp"}' | tslink api
 
 # 查看状态
 echo '{"action":"status"}' | tslink api
+
+# 查看 owner-only endpoint / exposure 概览
+echo '{"action":"status","urls":true}' | tslink api
+
+# 运行只读诊断
+echo '{"action":"doctor","probe_external":false}' | tslink api
+
+# 解释一个服务的本地访问模型
+echo '{"action":"access_explain","name":"myapp"}' | tslink api
+
+# 预览/应用内置模板
+echo '{"action":"template_list"}' | tslink api
+echo '{"action":"template_plan","name":"personal-harness"}' | tslink api
+echo '{"action":"template_apply","name":"personal-harness"}' | tslink api
 ```
+
+API `add` 和 CLI 使用同一套安全护栏。Funnel 服务必须传 `public_ack:true`；TCP 服务会拒绝 `allow`，因为 TSLink 不会对原始 TCP 字节流应用 HTTP 身份检查。
 
 ## Roadmap / Experimental 包
 
@@ -439,7 +466,8 @@ macOS LaunchAgent 安装会使用 launchd `KeepAlive` 和 `ThrottleInterval=30`�
 - [ ] 可从 tailnet 访问的 Web 管理面板
 - [ ] Docker 镜像和 Docker 标签发现
 - [ ] Headscale 端到端测试
-- [ ] 完整 API parity 和经过集成测试的 Layer 2 模块
+- [x] 已交付 owner 工作流的本地 API parity
+- [ ] 经过集成测试的 Layer 2 模块和可选远程/管理面
 
 ## 贡献
 

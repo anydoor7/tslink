@@ -61,9 +61,11 @@ tslink serve --daemon
 - **Runs as a daemon** — start once, runs in the background, auto-starts on login
 - **TCP proxy** — expose databases, SSH, Redis, and other non-HTTP services
 - **HTTP access control** — `--allow user@example.com,tag:admin` for proxy and file services
-- **Minimal API mode** — JSON-over-stdin/stdout for list/add/remove/status automation
-- **Headscale compatible** — works with self-hosted control servers via `--control-url`
-- **Funnel** — optionally expose services to the public internet via Tailscale Funnel
+- **Safety diagnostics** — `tslink doctor`, `tslink status --urls`, and `tslink access explain` make local evidence and unknown external policy layers explicit
+- **Local API mode** — JSON-over-stdin/stdout for local automation across list/add/remove/status, diagnostics, access explanation, and templates
+- **Personal templates** — preview and apply small private service suites without overwriting existing services
+- **Headscale compatibility path** — advanced/self-hosted control-server use via `--control-url`
+- **Funnel guardrails** — public internet exposure is opt-in and requires explicit `--public` acknowledgement
 
 ### Launch status
 
@@ -71,11 +73,13 @@ tslink serve --daemon
 |---|---|
 | Proxy, file, and raw TCP services | Roadmap/experimental middleware pipeline (rate limit, Basic Auth, IP allow list, CORS) |
 | One embedded `tsnet` node per service | Roadmap/experimental Docker label auto-discovery |
-| Identity-aware HTTP proxy headers | Roadmap/experimental admin dashboard and REST API |
+| Identity-aware HTTP proxy headers | Roadmap/experimental admin dashboard or REST surface |
 | HTTP `--allow` for proxy/file services | Roadmap/experimental Prometheus `/metrics` endpoint |
 | Registry-backed hot reload | Roadmap/experimental custom domain / ACME runtime TLS |
 | Daemon lifecycle and autostart | Roadmap/experimental cluster / multi-node registry sync |
-| Minimal local `tslink api` | Roadmap/experimental full API parity with `tslink add` flags |
+| Owner-only `status --urls`, `doctor`, and `access explain` | Roadmap/experimental member-facing portal or service directory |
+| Local JSON `tslink api` parity for shipped owner workflows | Roadmap/experimental remote API, dashboard, or multi-user admin plane |
+| Built-in personal templates | Roadmap/experimental marketplace or third-party template registry |
 
 ## Quick Start
 
@@ -311,8 +315,8 @@ tslink add demo --proxy localhost:8080 --ephemeral
 # Identity-aware HTTP access control (proxy/file only)
 tslink add internal --proxy localhost:9090 --allow user@example.com,tag:admin
 
-# Public exposure via Tailscale Funnel
-tslink add public --proxy localhost:3000 --funnel
+# Public exposure via Tailscale Funnel (requires explicit acknowledgement)
+tslink add public --proxy localhost:3000 --funnel --public
 
 # ACL tags for Tailscale network policy
 tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
@@ -333,7 +337,13 @@ tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 | `tslink serve --daemon` | Start the gateway (background) |
 | `tslink stop` | Stop the gateway |
 | `tslink status` | Show gateway status |
+| `tslink status --urls` | Show owner-only service URLs, exposure mode, allow summary, backend, and warning codes |
+| `tslink doctor` | Diagnose credentials, daemon, registry, runtime snapshot, exposure, and target safety without mutating state |
+| `tslink access explain <service>` | Explain what TSLink knows locally about one service's access path and what remains external policy/backend auth |
 | `tslink logs` | Show recent gateway logs |
+| `tslink template list` | List built-in personal service templates |
+| `tslink template show <name>` | Preview a built-in template |
+| `tslink template apply <name> --yes` | Add missing template services without overwriting existing services; omit `--yes` or pass `--dry-run` to preview |
 | `tslink tags list` | List services and their assigned tags |
 | `tslink tags pull` | Fetch remote tags from Tailscale ACL with an API access token; skipped in OAuth-only mode |
 | `tslink tags add <service> <tag>` | Append a tag to a service |
@@ -356,7 +366,8 @@ tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 | `--tags tag:a,tag:b` | ACL tags for Tailscale network policy |
 | `--allow user@,tag:x` | HTTP access control for proxy/file services; rejected for TCP because raw TCP uses Tailscale ACL tags and target-service auth |
 | `--control-url URL` | Per-service control server override, e.g. Headscale |
-| `--funnel` | Expose via Tailscale Funnel (public internet, proxy only) |
+| `--funnel` | Expose via Tailscale Funnel (public internet, proxy only, requires `--public`) |
+| `--public` | Explicitly acknowledge public internet exposure for `--funnel`; invalid without `--funnel` |
 | `--domain example.com` | Roadmap/experimental: accepted in service config, but custom-domain runtime TLS is not wired |
 | `--acme-email user@example.com` | Roadmap/experimental: stored with `--domain`; no shipped ACME listener |
 
@@ -387,7 +398,7 @@ TSLink creates a dedicated [tsnet](https://tailscale.com/kb/1244/tsnet) node for
 
 ## API Mode
 
-TSLink includes a minimal JSON-over-stdin/stdout API mode for local automation. It currently supports basic `list`, `add`, `remove`, and `status` actions; it is not yet full parity with every `tslink add` flag.
+TSLink includes a local JSON-over-stdin/stdout API mode for owner-side automation. It is not a REST server, dashboard, or member-facing service directory. Unknown JSON fields are rejected, and public API responses use redacted views rather than raw registry records.
 
 ```bash
 # List services
@@ -401,7 +412,23 @@ echo '{"action":"remove","name":"myapp"}' | tslink api
 
 # Check status
 echo '{"action":"status"}' | tslink api
+
+# Show owner-only endpoint/exposure overview
+echo '{"action":"status","urls":true}' | tslink api
+
+# Run read-only diagnostics
+echo '{"action":"doctor","probe_external":false}' | tslink api
+
+# Explain one service's local access model
+echo '{"action":"access_explain","name":"myapp"}' | tslink api
+
+# Preview/apply built-in templates
+echo '{"action":"template_list"}' | tslink api
+echo '{"action":"template_plan","name":"personal-harness"}' | tslink api
+echo '{"action":"template_apply","name":"personal-harness"}' | tslink api
 ```
+
+API `add` follows the same safety guardrails as the CLI. Funnel services require `public_ack:true`; TCP services reject `allow` because TSLink does not apply HTTP identity checks to raw TCP streams.
 
 ## Roadmap / Experimental Packages
 
@@ -439,7 +466,8 @@ macOS LaunchAgent installs use launchd `KeepAlive` with `ThrottleInterval=30`. I
 - [ ] Web dashboard accessible from tailnet
 - [ ] Docker image and Docker label discovery
 - [ ] Headscale end-to-end testing
-- [ ] Full API parity and integration-tested Layer 2 modules
+- [x] Local API parity for shipped owner workflows
+- [ ] Integration-tested Layer 2 modules and optional remote/admin surfaces
 
 ## Contributing
 
