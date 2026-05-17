@@ -1,10 +1,14 @@
 package inspect
 
+import "github.com/monody0007/tslink/internal/registry"
+
 const (
-	WarningCodeTCPHTTPACLNotApplicable = "tcp_http_acl_not_applicable"
-	WarningCodeTCPAllowedUsersInvalid  = "tcp_allowed_users_invalid"
-	WarningCodeHTTPAuthConfigured      = "http_auth_configured"
-	WarningCodeServiceTypeUnknown      = "service_type_unknown"
+	WarningCodeTCPHTTPACLNotApplicable  = "tcp_http_acl_not_applicable"
+	WarningCodeTCPAllowedUsersInvalid   = "tcp_allowed_users_invalid"
+	WarningCodeHTTPAuthConfigured       = "http_auth_configured"
+	WarningCodeServiceTypeUnknown       = "service_type_unknown"
+	WarningCodeFunnelAllowConflict      = registry.CodeFunnelAllowConflict
+	WarningCodeFunnelControlURLConflict = registry.CodeFunnelControlURLConflict
 )
 
 type WarningCodeMeta struct {
@@ -33,5 +37,15 @@ var WarningCodeRegistry = map[string]WarningCodeMeta{
 		Severity:    "warning",
 		Source:      "service.type",
 		Description: "The registry contains a service type unknown to this TSLink version.",
+	},
+	WarningCodeFunnelAllowConflict: {
+		Severity:    "error",
+		Source:      "service.allowed_users",
+		Description: "Public Funnel services cannot be combined with TSLink allow lists.",
+	},
+	WarningCodeFunnelControlURLConflict: {
+		Severity:    "error",
+		Source:      "service.control_url",
+		Description: "Public Funnel services cannot use per-service control_url.",
 	},
 }

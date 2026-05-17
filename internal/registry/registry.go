@@ -25,12 +25,62 @@ const (
 	// TagGrammar describes the strict Tailscale ACL tag syntax accepted by TSLink.
 	TagGrammar = "tag:<lowercase-hyphen-name> using lowercase letters, numbers, and hyphens"
 
+	CodeFunnelAllowConflict      = "funnel_allow_conflict"
+	CodeFunnelControlURLConflict = "funnel_control_url_conflict"
+
 	ErrFunnelAllowedUsers = "funnel services do not support allowed_users; public Funnel cannot be combined with TSLink allow lists"
 	ErrFunnelControlURL   = "funnel services do not support per-service control_url; use the default Tailscale control server or disable funnel"
 )
 
 var nameRegexp = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
 var tagRegexp = regexp.MustCompile(`^tag:[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
+
+type CodedError struct {
+	Code    string
+	Message string
+}
+
+func (e CodedError) Error() string {
+	if e.Message == "" {
+		return e.Code
+	}
+	return e.Code + ": " + e.Message
+}
+
+func (e CodedError) StableCode() string {
+	return e.Code
+}
+
+func ErrorCode(err error) (string, bool) {
+	var coded interface {
+		StableCode() string
+	}
+	if errors.As(err, &coded) {
+		return coded.StableCode(), true
+	}
+	return "", false
+}
+
+func FunnelAllowedUsersError() error {
+	return CodedError{Code: CodeFunnelAllowConflict, Message: ErrFunnelAllowedUsers}
+}
+
+func FunnelControlURLError() error {
+	return CodedError{Code: CodeFunnelControlURLConflict, Message: ErrFunnelControlURL}
+}
+
+func ValidateFunnelGuardrails(funnel bool, allowedUsers []string, controlURL string) error {
+	if !funnel {
+		return nil
+	}
+	if len(allowedUsers) > 0 {
+		return FunnelAllowedUsersError()
+	}
+	if controlURL != "" {
+		return FunnelControlURLError()
+	}
+	return nil
+}
 
 // lockFn, unlockFn, and marshalFn are test hooks.
 var (
@@ -109,11 +159,8 @@ func ValidateService(svc Service) error {
 	if svc.Type == TypeTCP && len(svc.AllowedUsers) > 0 {
 		return fmt.Errorf("tcp services do not support allowed_users; TSLink cannot enforce user ACLs on raw TCP services")
 	}
-	if svc.Funnel && len(svc.AllowedUsers) > 0 {
-		return errors.New(ErrFunnelAllowedUsers)
-	}
-	if svc.Funnel && svc.ControlURL != "" {
-		return errors.New(ErrFunnelControlURL)
+	if err := ValidateFunnelGuardrails(svc.Funnel, svc.AllowedUsers, svc.ControlURL); err != nil {
+		return err
 	}
 	if err := ValidateControlURL(svc.ControlURL); err != nil {
 		return err

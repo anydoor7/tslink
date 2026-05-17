@@ -226,3 +226,19 @@ func TestServiceViewWarningCodesAreRegistered(t *testing.T) {
 		}
 	}
 }
+
+func TestFunnelConflictCodesAreRegistered(t *testing.T) {
+	required := []string{
+		WarningCodeFunnelAllowConflict,
+		WarningCodeFunnelControlURLConflict,
+	}
+	for _, code := range required {
+		meta, ok := WarningCodeRegistry[code]
+		if !ok {
+			t.Fatalf("funnel conflict code %s is not registered", code)
+		}
+		if meta.Severity != "error" || meta.Source == "" || meta.Description == "" {
+			t.Fatalf("funnel conflict code %s has incomplete metadata: %+v", code, meta)
+		}
+	}
+}

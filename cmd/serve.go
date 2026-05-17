@@ -105,14 +105,16 @@ Examples:
 			if serveIsRunningFn(pidPath) {
 				return output.ErrConflict("tslink is already running (see: tslink status)")
 			}
+
+			reg, err := loadValidatedRegistryForServe()
+			if err != nil {
+				return err
+			}
+
 			// Clear stale state so daemon readiness waits for the child PID write.
 			serveRemovePIDFn(pidPath)
 
 			if serveDaemon {
-				if _, err := loadValidatedRegistryForServe(); err != nil {
-					return err
-				}
-
 				logDir, err := serveLogDirFn()
 				if err != nil {
 					return err
@@ -136,12 +138,6 @@ Examples:
 					fmt.Fprintf(cmd.OutOrStdout(), "tslink started as daemon (pid %d)\n", pid)
 				}
 				return nil
-			}
-
-			// Load registry to collect tags and ephemeral flags
-			reg, err := loadValidatedRegistryForServe()
-			if err != nil {
-				return err
 			}
 
 			// Collect unique tags for startup ACL preflight. Auth keys are resolved per service.
@@ -250,11 +246,8 @@ func validateServiceForServe(svc registry.Service) error {
 	if svc.Type == registry.TypeTCP && len(svc.AllowedUsers) > 0 {
 		return fmt.Errorf("service %q: tcp services do not support allowed_users; remove allowed_users from registry.json", svc.Name)
 	}
-	if svc.Funnel && len(svc.AllowedUsers) > 0 {
-		return fmt.Errorf("service %q: %s; edit registry.json", svc.Name, registry.ErrFunnelAllowedUsers)
-	}
-	if svc.Funnel && svc.ControlURL != "" {
-		return fmt.Errorf("service %q: %s; edit registry.json", svc.Name, registry.ErrFunnelControlURL)
+	if err := registry.ValidateFunnelGuardrails(svc.Funnel, svc.AllowedUsers, svc.ControlURL); err != nil {
+		return fmt.Errorf("service %q: %w; edit registry.json", svc.Name, err)
 	}
 	if err := registry.ValidateControlURL(svc.ControlURL); err != nil {
 		return fmt.Errorf("service %q has invalid control_url: %w; edit registry.json", svc.Name, err)

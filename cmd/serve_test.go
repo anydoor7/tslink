@@ -754,6 +754,10 @@ func TestServeCmd_DaemonModeValidatesRegistryBeforeDaemonize(t *testing.T) {
 		daemonizeCalled = true
 		return 0, fmt.Errorf("daemonize should not be called")
 	}
+	removePIDCalled := false
+	serveRemovePIDFn = func(path string) {
+		removePIDCalled = true
+	}
 
 	cmd := findServeCmd(t)
 	err := cmd.RunE(cmd, nil)
@@ -763,8 +767,54 @@ func TestServeCmd_DaemonModeValidatesRegistryBeforeDaemonize(t *testing.T) {
 	if !strings.Contains(err.Error(), registry.ErrFunnelAllowedUsers) {
 		t.Fatalf("RunE() error = %v, want funnel allowed_users error", err)
 	}
+	if !strings.Contains(err.Error(), registry.CodeFunnelAllowConflict) {
+		t.Fatalf("RunE() error = %v, want stable code %s", err, registry.CodeFunnelAllowConflict)
+	}
+	if code, ok := registry.ErrorCode(err); !ok || code != registry.CodeFunnelAllowConflict {
+		t.Fatalf("ErrorCode() = %q, %v; want %s, true", code, ok, registry.CodeFunnelAllowConflict)
+	}
 	if daemonizeCalled {
 		t.Fatal("daemonize was called after invalid registry")
+	}
+	if removePIDCalled {
+		t.Fatal("stale PID was removed before hard-fail registry validation")
+	}
+}
+
+func TestServeCmd_DaemonModeFunnelControlURLIncludesStableCode(t *testing.T) {
+	dir := t.TempDir()
+	mockServeDefaults(t, dir)
+	serveDaemon = true
+
+	reg := &registry.Registry{
+		Services: []registry.Service{
+			{
+				Name:       "public-app",
+				Type:       registry.TypeProxy,
+				Target:     "http://localhost:3000",
+				Funnel:     true,
+				ControlURL: "https://headscale.example.com",
+			},
+		},
+	}
+	data, _ := json.Marshal(reg)
+	if err := os.WriteFile(filepath.Join(dir, "registry.json"), data, 0o600); err != nil {
+		t.Fatalf("write registry: %v", err)
+	}
+
+	cmd := findServeCmd(t)
+	err := cmd.RunE(cmd, nil)
+	if err == nil {
+		t.Fatal("RunE() error = nil, want funnel control_url error")
+	}
+	if !strings.Contains(err.Error(), registry.ErrFunnelControlURL) {
+		t.Fatalf("RunE() error = %v, want funnel control_url error", err)
+	}
+	if !strings.Contains(err.Error(), registry.CodeFunnelControlURLConflict) {
+		t.Fatalf("RunE() error = %v, want stable code %s", err, registry.CodeFunnelControlURLConflict)
+	}
+	if code, ok := registry.ErrorCode(err); !ok || code != registry.CodeFunnelControlURLConflict {
+		t.Fatalf("ErrorCode() = %q, %v; want %s, true", code, ok, registry.CodeFunnelControlURLConflict)
 	}
 }
 

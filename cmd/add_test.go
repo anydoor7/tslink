@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/monody0007/tslink/internal/inspect"
 	"github.com/monody0007/tslink/internal/registry"
 )
 
@@ -166,6 +167,27 @@ func TestBuildService_FunnelRejectsMissingPublicAck(t *testing.T) {
 	}
 }
 
+func TestBuildService_FunnelRejectsAllowBeforeMissingPublicAck(t *testing.T) {
+	_, err := buildService(AddParams{
+		Name:   "app",
+		Proxy:  "localhost:3000",
+		Allow:  "alice@example.com",
+		Funnel: true,
+	})
+	if err == nil {
+		t.Fatal("expected funnel allowed_users error")
+	}
+	if code, ok := registry.ErrorCode(err); !ok || code != registry.CodeFunnelAllowConflict {
+		t.Fatalf("ErrorCode() = %q, %v; want %s, true", code, ok, registry.CodeFunnelAllowConflict)
+	}
+	if !strings.Contains(err.Error(), registry.CodeFunnelAllowConflict) {
+		t.Fatalf("error = %q, want stable code", err.Error())
+	}
+	if strings.Contains(err.Error(), publicAckRequiredError) {
+		t.Fatalf("error = %q, want allow conflict before public ack", err.Error())
+	}
+}
+
 func TestBuildService_FunnelAcceptsPublicAckWithoutAllow(t *testing.T) {
 	svc, err := buildService(AddParams{
 		Name:   "app",
@@ -198,6 +220,9 @@ func TestBuildService_FunnelRejectsAllowEvenWithPublicAck(t *testing.T) {
 	if !strings.Contains(err.Error(), registry.ErrFunnelAllowedUsers) {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	if code, ok := registry.ErrorCode(err); !ok || code != registry.CodeFunnelAllowConflict {
+		t.Fatalf("ErrorCode() = %q, %v; want %s, true", code, ok, registry.CodeFunnelAllowConflict)
+	}
 }
 
 func TestBuildService_RejectsPublicAckWithoutFunnel(t *testing.T) {
@@ -227,6 +252,9 @@ func TestBuildService_FunnelRejectsControlURL(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), registry.ErrFunnelControlURL) {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if code, ok := registry.ErrorCode(err); !ok || code != registry.CodeFunnelControlURLConflict {
+		t.Fatalf("ErrorCode() = %q, %v; want %s, true", code, ok, registry.CodeFunnelControlURLConflict)
 	}
 }
 
@@ -317,5 +345,82 @@ func TestAddJSON_TCPUsesTypedEndpoint(t *testing.T) {
 	}
 	if endpoint["kind"] != "tcp" || endpoint["display"] != "db.<tailnet>.ts.net:5432" {
 		t.Fatalf("endpoint = %+v, want typed TCP endpoint", endpoint)
+	}
+}
+
+func TestAddJSON_FunnelIncludesPublicExposure(t *testing.T) {
+	dir := t.TempDir()
+	regPath := dir + "/registry.json"
+
+	oldRegPath := registryPathFn
+	oldEnsureDir := ensureDirFn
+	t.Cleanup(func() {
+		registryPathFn = oldRegPath
+		ensureDirFn = oldEnsureDir
+	})
+	registryPathFn = func() (string, error) { return regPath, nil }
+	ensureDirFn = func() error { return nil }
+	t.Cleanup(func() {
+		rootCmd.SetArgs(nil)
+		_ = rootCmd.PersistentFlags().Set("json", "false")
+	})
+
+	_ = rootCmd.PersistentFlags().Set("json", "true")
+	got := captureStdout(t, func() {
+		_, err := runAddCmdOutput(t, []string{"public-app"}, map[string]string{
+			"proxy":  "localhost:3000",
+			"funnel": "true",
+			"public": "true",
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+	data := dataMap(t, got)
+	exposure, ok := data["exposure"].(map[string]any)
+	if !ok {
+		t.Fatalf("exposure = %T, want object", data["exposure"])
+	}
+	if exposure["kind"] != inspect.ExposurePublicFunnel || exposure["public"] != true {
+		t.Fatalf("exposure = %+v, want public_funnel public exposure", exposure)
+	}
+}
+
+func TestAddHumanFunnelOutputIncludesPublicMarker(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	if err := os.MkdirAll(dir+"/.config/tslink", 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	out, err := runAddCmdOutput(t, []string{"public-app"}, map[string]string{
+		"proxy":  "localhost:3000",
+		"funnel": "true",
+		"public": "true",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "PUBLIC") {
+		t.Fatalf("output = %q, want uppercase PUBLIC marker", out)
+	}
+}
+
+func TestAddHumanTCPOutputIncludesBoundaryNote(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	if err := os.MkdirAll(dir+"/.config/tslink", 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	out, err := runAddCmdOutput(t, []string{"db"}, map[string]string{"tcp": "localhost:5432"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "TSLink HTTP allow and identity headers do not apply to raw TCP") {
+		t.Fatalf("output = %q, want raw-TCP boundary note", out)
+	}
+	if !strings.Contains(out, "Tailscale policy plus backend auth") {
+		t.Fatalf("output = %q, want protection boundary", out)
 	}
 }

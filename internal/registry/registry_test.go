@@ -880,6 +880,12 @@ func TestValidateServiceRejectsFunnelAllowedUsers(t *testing.T) {
 	if !strings.Contains(err.Error(), ErrFunnelAllowedUsers) {
 		t.Fatalf("ValidateService() error = %v, want funnel allowed_users error", err)
 	}
+	if !strings.Contains(err.Error(), CodeFunnelAllowConflict) {
+		t.Fatalf("ValidateService() error = %v, want stable code %s", err, CodeFunnelAllowConflict)
+	}
+	if code, ok := ErrorCode(err); !ok || code != CodeFunnelAllowConflict {
+		t.Fatalf("ErrorCode() = %q, %v; want %s, true", code, ok, CodeFunnelAllowConflict)
+	}
 }
 
 func TestValidateServiceRejectsFunnelControlURL(t *testing.T) {
@@ -895,6 +901,12 @@ func TestValidateServiceRejectsFunnelControlURL(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), ErrFunnelControlURL) {
 		t.Fatalf("ValidateService() error = %v, want funnel control_url error", err)
+	}
+	if !strings.Contains(err.Error(), CodeFunnelControlURLConflict) {
+		t.Fatalf("ValidateService() error = %v, want stable code %s", err, CodeFunnelControlURLConflict)
+	}
+	if code, ok := ErrorCode(err); !ok || code != CodeFunnelControlURLConflict {
+		t.Fatalf("ErrorCode() = %q, %v; want %s, true", code, ok, CodeFunnelControlURLConflict)
 	}
 }
 

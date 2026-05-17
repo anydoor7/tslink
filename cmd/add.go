@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -26,6 +25,7 @@ type AddResult struct {
 	Created  bool                 `json:"created"`
 	URL      string               `json:"url"`
 	Endpoint inspect.EndpointView `json:"endpoint"`
+	Exposure inspect.ExposureView `json:"exposure"`
 }
 
 func hasScheme(target string) bool {
@@ -106,14 +106,11 @@ func buildService(p AddParams) (registry.Service, error) {
 	if p.Public && !p.Funnel {
 		return registry.Service{}, fmt.Errorf("--public can only be used with --funnel")
 	}
+	if err := registry.ValidateFunnelGuardrails(p.Funnel, allowedUsers, p.ControlURL); err != nil {
+		return registry.Service{}, err
+	}
 	if p.Funnel && !p.Public {
 		return registry.Service{}, fmt.Errorf(publicAckRequiredError)
-	}
-	if p.Funnel && len(allowedUsers) > 0 {
-		return registry.Service{}, errors.New(registry.ErrFunnelAllowedUsers)
-	}
-	if p.Funnel && p.ControlURL != "" {
-		return registry.Service{}, errors.New(registry.ErrFunnelControlURL)
 	}
 	if p.Domain != "" && p.Proxy == "" {
 		return registry.Service{}, fmt.Errorf("--domain can only be used with --proxy")
@@ -259,7 +256,8 @@ Examples:
 				return err
 			}
 
-			endpoint := inspect.ServiceViewFor(svc).Endpoint
+			view := inspect.ServiceViewFor(svc)
+			endpoint := view.Endpoint
 			url := endpoint.Display
 
 			if jsonOutput(cmd) {
@@ -269,16 +267,18 @@ Examples:
 					Created:  created,
 					URL:      url,
 					Endpoint: endpoint,
+					Exposure: view.Exposure,
 				})
 				return nil
 			}
 
 			if svc.Type == registry.TypeTCP {
 				fmt.Fprintf(cmd.OutOrStdout(), "→ ✓ TCP service %q registered (target %s, port %d)\n", svc.Name, svc.Target, svc.Port)
+				fmt.Fprintln(cmd.OutOrStdout(), "TSLink HTTP allow and identity headers do not apply to raw TCP; protection is Tailscale policy plus backend auth.")
 			} else {
 				fmt.Fprintf(cmd.OutOrStdout(), "→ ✓ Service %q registered\n", svc.Name)
 				if svc.Funnel {
-					fmt.Fprintf(cmd.OutOrStdout(), "URL: %s (public via Funnel, available after tslink serve)\n", url)
+					fmt.Fprintf(cmd.OutOrStdout(), "URL: %s (PUBLIC via Tailscale Funnel, available after tslink serve)\n", url)
 				} else {
 					fmt.Fprintf(cmd.OutOrStdout(), "URL: %s (available after tslink serve)\n", url)
 				}
@@ -292,8 +292,8 @@ Examples:
 	addCmd.Flags().String("tcp", "", "TCP proxy target in host:port form")
 	addCmd.Flags().Bool("ephemeral", false, "Register as ephemeral node (removed on disconnect)")
 	addCmd.Flags().String("tags", "", "Comma-separated ACL tags (e.g., tag:web,tag:internal)")
-	addCmd.Flags().Bool("funnel", false, "Expose publicly via Tailscale Funnel (proxy only)")
-	addCmd.Flags().Bool("public", false, "Acknowledge public internet exposure for --funnel")
+	addCmd.Flags().Bool("funnel", false, "Expose publicly via Tailscale Funnel (proxy only, requires --public)")
+	addCmd.Flags().Bool("public", false, "Acknowledge public internet exposure for --funnel (only valid with --funnel)")
 	addCmd.Flags().String("domain", "", "Custom domain name for the service (proxy only, e.g., app.example.com)")
 	addCmd.Flags().String("allow", "", "Comma-separated allowed identities (e.g., user@example.com,tag:admin)")
 	addCmd.Flags().String("acme-email", "", "Email for Let's Encrypt ACME certificates (requires --domain)")

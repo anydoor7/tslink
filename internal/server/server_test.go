@@ -863,6 +863,12 @@ func TestSyncNodes_RejectsHandEditedFunnelAllowedUsersBeforeListenFunnel(t *test
 	if !strings.Contains(err.Error(), registry.ErrFunnelAllowedUsers) {
 		t.Fatalf("syncNodes() error = %v, want funnel allowed_users error", err)
 	}
+	if !strings.Contains(err.Error(), registry.CodeFunnelAllowConflict) {
+		t.Fatalf("syncNodes() error = %v, want stable code %s", err, registry.CodeFunnelAllowConflict)
+	}
+	if code, ok := registry.ErrorCode(err); !ok || code != registry.CodeFunnelAllowConflict {
+		t.Fatalf("ErrorCode() = %q, %v; want %s, true", code, ok, registry.CodeFunnelAllowConflict)
+	}
 	if len(s.nodes) != 0 {
 		t.Fatalf("nodes = %+v, want none after rejected hand-edited registry", s.nodes)
 	}
@@ -900,6 +906,12 @@ func TestSyncNodes_RejectsHandEditedFunnelControlURLBeforeListenFunnel(t *testin
 	}
 	if !strings.Contains(err.Error(), registry.ErrFunnelControlURL) {
 		t.Fatalf("syncNodes() error = %v, want funnel control_url error", err)
+	}
+	if !strings.Contains(err.Error(), registry.CodeFunnelControlURLConflict) {
+		t.Fatalf("syncNodes() error = %v, want stable code %s", err, registry.CodeFunnelControlURLConflict)
+	}
+	if code, ok := registry.ErrorCode(err); !ok || code != registry.CodeFunnelControlURLConflict {
+		t.Fatalf("ErrorCode() = %q, %v; want %s, true", code, ok, registry.CodeFunnelControlURLConflict)
 	}
 	if len(s.nodes) != 0 {
 		t.Fatalf("nodes = %+v, want none after rejected hand-edited registry", s.nodes)

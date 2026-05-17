@@ -39,6 +39,7 @@ type APIResponse struct {
 	Message  string                `json:"message,omitempty"`
 	URL      string                `json:"url,omitempty"`
 	Endpoint *inspect.EndpointView `json:"endpoint,omitempty"`
+	Exposure *inspect.ExposureView `json:"exposure,omitempty"`
 	Services []inspect.ServiceView `json:"services,omitempty"`
 	Running  bool                  `json:"running,omitempty"`
 	Count    int                   `json:"count,omitempty"`
@@ -141,12 +142,14 @@ func (h *apiHandler) handleAdd(req APIRequest, out io.Writer) {
 		writeResponse(out, APIResponse{OK: false, Error: err.Error()})
 		return
 	}
-	endpoint := inspect.ServiceViewFor(svc).Endpoint
+	view := inspect.ServiceViewFor(svc)
+	endpoint := view.Endpoint
 	writeResponse(out, APIResponse{
 		OK:       true,
 		Message:  "service added",
 		URL:      endpoint.Display,
 		Endpoint: &endpoint,
+		Exposure: &view.Exposure,
 	})
 }
 
@@ -161,7 +164,7 @@ func addParamsFromAPIRequest(req APIRequest) (AddParams, error) {
 		return AddParams{}, fmt.Errorf("public_ack is supported only when funnel is true")
 	}
 	if req.Funnel && !req.PublicAck {
-		return AddParams{}, fmt.Errorf("public_ack must be true when funnel is true; %s", publicAckRequiredError)
+		return AddParams{}, fmt.Errorf("public_ack must be true when funnel is true")
 	}
 	if len(req.Allow) > 0 && req.Type == registry.TypeTCP {
 		return AddParams{}, fmt.Errorf("allow is not supported for tcp type")

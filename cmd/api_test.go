@@ -320,11 +320,8 @@ func TestAPIAdd_FunnelRejectsMissingPublicAck(t *testing.T) {
 	if resp.OK {
 		t.Fatal("expected missing public_ack error")
 	}
-	if !strings.Contains(resp.Error, "public_ack must be true when funnel is true") {
-		t.Fatalf("unexpected error: %s", resp.Error)
-	}
-	if !strings.Contains(resp.Error, publicAckRequiredError) {
-		t.Fatalf("error = %q, want shared public acknowledgement guidance", resp.Error)
+	if resp.Error != "public_ack must be true when funnel is true" {
+		t.Fatalf("error = %q, want exact API public_ack error", resp.Error)
 	}
 }
 
@@ -345,6 +342,9 @@ func TestAPIAdd_FunnelRejectsAllowWithPublicAck(t *testing.T) {
 	if !strings.Contains(resp.Error, registry.ErrFunnelAllowedUsers) {
 		t.Fatalf("unexpected error: %s", resp.Error)
 	}
+	if !strings.Contains(resp.Error, registry.CodeFunnelAllowConflict) {
+		t.Fatalf("error = %q, want stable code %s", resp.Error, registry.CodeFunnelAllowConflict)
+	}
 }
 
 func TestAPIAdd_FunnelAcceptsPublicAck(t *testing.T) {
@@ -362,6 +362,9 @@ func TestAPIAdd_FunnelAcceptsPublicAck(t *testing.T) {
 	}
 	if resp.Endpoint == nil || resp.Endpoint.Kind != inspect.EndpointKindPublicHTTPS {
 		t.Fatalf("endpoint = %+v, want public https endpoint", resp.Endpoint)
+	}
+	if resp.Exposure == nil || resp.Exposure.Kind != inspect.ExposurePublicFunnel || !resp.Exposure.Public {
+		t.Fatalf("exposure = %+v, want public_funnel public exposure", resp.Exposure)
 	}
 
 	reg, err := registry.Load(h.regPath)
