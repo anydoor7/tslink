@@ -101,6 +101,66 @@ func TestServiceViewRedactsHTTPAuthCredentials(t *testing.T) {
 	}
 }
 
+func TestServiceViewRedactsBackendURLSecrets(t *testing.T) {
+	cases := []struct {
+		name        string
+		svc         registry.Service
+		wantBackend string
+		forbidden   []string
+	}{
+		{
+			name: "proxy URL userinfo query fragment",
+			svc: registry.Service{
+				Name:   "web",
+				Type:   registry.TypeProxy,
+				Target: "http://user:pass@localhost:3000/private?token=abc#frag-secret",
+			},
+			wantBackend: "http://localhost:3000/private",
+			forbidden:   []string{"user:pass", "token=abc", "frag-secret"},
+		},
+		{
+			name: "tcp schemeless userinfo query fragment",
+			svc: registry.Service{
+				Name:   "db",
+				Type:   registry.TypeTCP,
+				Target: "user:pass@localhost:5432?token=abc#frag-secret",
+				Port:   5432,
+			},
+			wantBackend: "localhost:5432",
+			forbidden:   []string{"user:pass", "token=abc", "frag-secret"},
+		},
+		{
+			name: "proxy URL keeps diagnostic path",
+			svc: registry.Service{
+				Name:   "api",
+				Type:   registry.TypeProxy,
+				Target: "https://user:pass@example.com:8443/app/v1?token=abc#frag-secret",
+			},
+			wantBackend: "https://example.com:8443/app/v1",
+			forbidden:   []string{"user:pass", "token=abc", "frag-secret"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			view := ServiceViewFor(tc.svc)
+			if view.Backend.Display != tc.wantBackend {
+				t.Fatalf("backend display = %q, want %q", view.Backend.Display, tc.wantBackend)
+			}
+			data, err := json.Marshal(view)
+			if err != nil {
+				t.Fatalf("marshal view: %v", err)
+			}
+			raw := string(data)
+			for _, forbidden := range tc.forbidden {
+				if strings.Contains(raw, forbidden) {
+					t.Fatalf("public service view leaked %q: %s", forbidden, raw)
+				}
+			}
+		})
+	}
+}
+
 func TestServiceViewRedactsAllowPrincipals(t *testing.T) {
 	view := ServiceViewFor(registry.Service{
 		Name:         "web",

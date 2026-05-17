@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/inspect"
 	"github.com/monody0007/tslink/internal/registry"
 )
@@ -140,6 +141,48 @@ func TestAPIList_RedactsMiddlewareAuth(t *testing.T) {
 	}
 }
 
+func TestAPIList_RedactsBackendURLSecrets(t *testing.T) {
+	h, _ := newTestHandler(t)
+	if _, err := registry.Add(h.regPath, registry.Service{
+		Name:   "web",
+		Type:   registry.TypeProxy,
+		Target: "http://user:pass@localhost:3000/private?token=abc#frag-secret",
+	}); err != nil {
+		t.Fatalf("registry.Add web: %v", err)
+	}
+	if _, err := registry.Add(h.regPath, registry.Service{
+		Name:   "db",
+		Type:   registry.TypeTCP,
+		Target: "user:pass@localhost:5432?token=abc#frag-secret",
+		Port:   5432,
+	}); err != nil {
+		t.Fatalf("registry.Add db: %v", err)
+	}
+
+	var buf bytes.Buffer
+	h.handle(APIRequest{Action: "list"}, &buf)
+	raw := buf.String()
+	assertAPIRawJSONHasNoPrivateRegistryFields(t, raw, "user:pass", "token=abc", "frag-secret")
+
+	resp := parseResponse(t, &buf)
+	if !resp.OK {
+		t.Fatalf("expected ok, got error: %s", resp.Error)
+	}
+	if len(resp.Services) != 2 {
+		t.Fatalf("services = %d, want 2", len(resp.Services))
+	}
+	byName := map[string]inspect.ServiceView{}
+	for _, svc := range resp.Services {
+		byName[svc.Name] = svc
+	}
+	if byName["web"].Backend.Display != "http://localhost:3000/private" {
+		t.Fatalf("web backend = %q, want sanitized URL with path", byName["web"].Backend.Display)
+	}
+	if byName["db"].Backend.Display != "localhost:5432" {
+		t.Fatalf("db backend = %q, want sanitized schemeless TCP target", byName["db"].Backend.Display)
+	}
+}
+
 func TestAPIList_UsesPublicServiceViewsWithUsefulFields(t *testing.T) {
 	h, _ := newTestHandler(t)
 	if _, err := registry.Add(h.regPath, registry.Service{
@@ -218,7 +261,7 @@ func TestAPIList_TCPUsesTypedEndpoint(t *testing.T) {
 	if _, err := registry.Add(h.regPath, registry.Service{
 		Name:   "db",
 		Type:   registry.TypeTCP,
-		Target: "localhost:5432",
+		Target: "user:pass@localhost:5432?token=abc#frag-secret",
 		Port:   5432,
 	}); err != nil {
 		t.Fatalf("registry.Add: %v", err)
@@ -525,6 +568,9 @@ func TestAPIAdd_TCP(t *testing.T) {
 	if resp.Endpoint == nil || resp.Endpoint.Kind != inspect.EndpointKindTCP || resp.Endpoint.Display != "mydb.<tailnet>.ts.net:5432" || resp.Endpoint.Port != 5432 {
 		t.Fatalf("endpoint = %+v, want typed TCP endpoint", resp.Endpoint)
 	}
+	if !hasStatusWarningCode(resp.Warnings, inspect.WarningCodeTCPHTTPACLNotApplicable) {
+		t.Fatalf("warnings = %+v, want tcp_http_acl_not_applicable", resp.Warnings)
+	}
 
 	reg, _ := registry.Load(h.regPath)
 	if len(reg.Services) != 1 {
@@ -658,7 +704,7 @@ func TestAPIStatusURLsReturnsVNextPayload(t *testing.T) {
 	if _, err := registry.Add(h.regPath, registry.Service{
 		Name:         "web",
 		Type:         registry.TypeProxy,
-		Target:       "http://localhost:3000",
+		Target:       "http://user:pass@localhost:3000/private?token=abc#frag-secret",
 		AllowedUsers: []string{"alice@example.com", "tag:admin"},
 		Middleware: &registry.MiddlewareConfig{
 			BasicAuth: "user:pass",
@@ -679,7 +725,7 @@ func TestAPIStatusURLsReturnsVNextPayload(t *testing.T) {
 	var buf bytes.Buffer
 	h.handle(APIRequest{Action: "status", URLs: true}, &buf)
 	raw := buf.String()
-	assertAPIRawJSONHasNoPrivateRegistryFields(t, raw, "alice@example.com", "tag:admin", "user:pass")
+	assertAPIRawJSONHasNoPrivateRegistryFields(t, raw, "alice@example.com", "tag:admin", "user:pass", "token=abc", "frag-secret")
 
 	resp := parseResponse(t, &buf)
 	if !resp.OK {
@@ -703,6 +749,9 @@ func TestAPIStatusURLsReturnsVNextPayload(t *testing.T) {
 	if web.Endpoint.Kind != inspect.EndpointKindHTTPS || web.Endpoint.Display != "https://web.<tailnet>.ts.net" {
 		t.Fatalf("web endpoint = %+v, want typed private HTTPS endpoint", web.Endpoint)
 	}
+	if web.Backend.Display != "http://localhost:3000/private" {
+		t.Fatalf("web backend = %q, want sanitized URL with diagnostic path", web.Backend.Display)
+	}
 	if web.Allow.Mode != "restricted" || web.Allow.Count != 2 || !web.Allow.Redacted || len(web.Allow.Entries) != 0 {
 		t.Fatalf("web allow = %+v, want redacted allow summary", web.Allow)
 	}
@@ -716,6 +765,9 @@ func TestAPIStatusURLsReturnsVNextPayload(t *testing.T) {
 	db := findStatusService(t, result, "db")
 	if db.Endpoint.Kind != inspect.EndpointKindTCP || db.Endpoint.Port != 5432 || db.Endpoint.Display != "db.<tailnet>.ts.net:5432" {
 		t.Fatalf("db endpoint = %+v, want typed TCP endpoint", db.Endpoint)
+	}
+	if db.Backend.Display != "localhost:5432" {
+		t.Fatalf("db backend = %q, want sanitized schemeless TCP target", db.Backend.Display)
 	}
 	if !hasStatusWarningCode(db.Warnings, inspect.WarningCodeTCPHTTPACLNotApplicable) {
 		t.Fatalf("db warnings = %+v, want tcp_http_acl_not_applicable", db.Warnings)
@@ -791,6 +843,82 @@ func TestAPIDoctorProbeExternalOption(t *testing.T) {
 	}
 	assertDoctorFinding(t, *resp.Doctor, inspect.WarningCodeProxyNonLoopbackTarget)
 	assertDoctorNoFinding(t, *resp.Doctor, inspect.WarningCodeTargetProbeSkippedExternal)
+}
+
+func TestAPIDoctorUsesHandlerPaths(t *testing.T) {
+	resetDoctorSeams(t)
+	dir := t.TempDir()
+	regPath := filepath.Join(dir, "handler-registry.json")
+	pidPath := filepath.Join(dir, "handler.pid")
+	snapshotPath := filepath.Join(dir, "handler-runtime.json")
+	writeDoctorRegistry(t, regPath, []registry.Service{{
+		Name:   "web",
+		Type:   registry.TypeProxy,
+		Target: "http://localhost:3000",
+	}})
+
+	doctorConfigDirFn = func() (string, error) { return dir, nil }
+	doctorRegistryPathFn = func() (string, error) {
+		t.Fatalf("doctorRegistryPathFn should not be used when API handler has a registry path")
+		return "", nil
+	}
+	doctorRuntimeSnapshotPathFn = func() (string, error) {
+		t.Fatalf("doctorRuntimeSnapshotPathFn should not be used when API handler has a runtime snapshot path")
+		return "", nil
+	}
+	doctorPIDPathFn = func() (string, error) {
+		t.Fatalf("doctorPIDPathFn should not be used when API handler has a PID path")
+		return "", nil
+	}
+	doctorAuthKeyPathFn = func() (string, error) { return filepath.Join(dir, "authkey"), nil }
+	doctorLoadGlobalConfigFn = func() (config.GlobalConfig, error) { return config.GlobalConfig{}, nil }
+	doctorGetAPIKeyFn = func() (string, error) { return "", nil }
+	doctorGetClientSecretFn = func() (string, error) { return "", nil }
+	isRunningFn = func(path string) bool {
+		if path != pidPath {
+			t.Fatalf("isRunningFn path = %q, want handler PID path %q", path, pidPath)
+		}
+		return false
+	}
+
+	h := &apiHandler{regPath: regPath, pidPath: pidPath, runtimeSnapshotPath: snapshotPath}
+	resp := sendRequest(t, h, APIRequest{Action: "doctor"})
+	if !resp.OK {
+		t.Fatalf("expected request processed, got error: %s", resp.Error)
+	}
+	if resp.Doctor == nil {
+		t.Fatalf("doctor missing in response: %+v", resp)
+	}
+	result := *resp.Doctor
+	if result.Paths.Registry != regPath || result.Paths.PID != pidPath || result.Paths.RuntimeSnapshot != snapshotPath {
+		t.Fatalf("doctor paths = %+v, want handler paths", result.Paths)
+	}
+	if result.Counts.Services != 1 {
+		t.Fatalf("services = %d, want handler registry service count", result.Counts.Services)
+	}
+}
+
+func TestAPIDoctorTopLevelOKMeansRequestProcessed(t *testing.T) {
+	env := newDoctorTestEnv(t, []registry.Service{{
+		Name:         "db",
+		Type:         registry.TypeTCP,
+		Target:       "localhost:5432",
+		Port:         5432,
+		AllowedUsers: []string{"alice@example.com"},
+	}})
+	h := &apiHandler{regPath: env.regPath, pidPath: env.pidPath, runtimeSnapshotPath: env.snapshotPath}
+
+	resp := sendRequest(t, h, APIRequest{Action: "doctor"})
+	if !resp.OK {
+		t.Fatalf("top-level ok = false, want true because doctor request was processed: %s", resp.Error)
+	}
+	if resp.Doctor == nil {
+		t.Fatalf("doctor missing in response: %+v", resp)
+	}
+	if resp.Doctor.Status != doctorStatusError {
+		t.Fatalf("doctor status = %q, want nested health error", resp.Doctor.Status)
+	}
+	assertDoctorFinding(t, *resp.Doctor, inspect.WarningCodeTCPAllowedUsersInvalid)
 }
 
 func TestAPIAccessExplainReturnsRedactedVNextPayload(t *testing.T) {
