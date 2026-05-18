@@ -168,14 +168,53 @@ func TestIPAllowList_PlainIPv6Entry(t *testing.T) {
 	}
 }
 
-func TestIPAllowList_InvalidCIDRPanics(t *testing.T) {
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("expected panic for invalid CIDR/IP entry")
-		}
-	}()
+func TestIPAllowList_InvalidCIDRSkipped(t *testing.T) {
+	// Invalid entries should be skipped (logged), not cause a panic.
+	// The resulting middleware should allow all traffic since no valid networks remain.
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
 
-	IPAllowList([]string{"not-a-valid-ip-or-cidr"})
+	mw := IPAllowList([]string{"not-a-valid-ip-or-cidr"})
+	wrapped := mw(handler)
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "1.2.3.4:5678"
+	rec := httptest.NewRecorder()
+	wrapped.ServeHTTP(rec, req)
+
+	// With no valid networks parsed, allow-all behavior applies.
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200 (allow all when no valid CIDRs), got %d", rec.Code)
+	}
+}
+
+func TestIPAllowList_MixedValidAndInvalidCIDR(t *testing.T) {
+	// Valid entries should still work even when mixed with invalid ones.
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	mw := IPAllowList([]string{"192.168.1.0/24", "not-valid", "10.0.0.0/8"})
+	wrapped := mw(handler)
+
+	// Allowed by first CIDR.
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "192.168.1.5:1234"
+	rec := httptest.NewRecorder()
+	wrapped.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200 for allowed IP, got %d", rec.Code)
+	}
+
+	// Blocked (not in any valid CIDR).
+	req = httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "172.16.0.1:1234"
+	rec = httptest.NewRecorder()
+	wrapped.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("expected 403 for blocked IP, got %d", rec.Code)
+	}
 }
 
 func TestIPAllowList_InvalidRemoteAddr(t *testing.T) {

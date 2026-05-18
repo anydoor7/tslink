@@ -140,7 +140,7 @@ func TestLoginCredentialFlow_APIToken_WrongPrefix(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for wrong prefix")
 	}
-	if !strings.Contains(err.Error(), "expected access token prefix tskey-api-") {
+	if !strings.Contains(err.Error(), "tskey-api-") {
 		t.Fatalf("expected prefix error, got: %v", err)
 	}
 }
@@ -153,7 +153,7 @@ func TestLoginCredentialFlow_APIToken_AuthKeyRejected(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for auth key")
 	}
-	if !strings.Contains(err.Error(), "expected access token prefix tskey-api-") {
+	if !strings.Contains(err.Error(), "tskey-api-") {
 		t.Fatalf("expected prefix error, got: %v", err)
 	}
 }
@@ -179,7 +179,7 @@ func TestLoginCredentialFlow_ClientSecret_WrongPrefix(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for wrong prefix")
 	}
-	if !strings.Contains(err.Error(), "expected client secret prefix tskey-client-") {
+	if !strings.Contains(err.Error(), "tskey-client-") {
 		t.Fatalf("expected prefix error, got: %v", err)
 	}
 }
@@ -193,7 +193,7 @@ func TestLoginCredentialFlow_ClientSecret_ClientIDRejected(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for client ID")
 	}
-	if !strings.Contains(err.Error(), "expected client secret prefix tskey-client-") {
+	if !strings.Contains(err.Error(), "tskey-client-") {
 		t.Fatalf("expected prefix error, got: %v", err)
 	}
 }
@@ -332,6 +332,60 @@ func TestLoginWithAPIKeyClearsStaleClientSecret(t *testing.T) {
 	}
 	if gotAPIKey != "tskey-api-new" {
 		t.Fatalf("api key = %q, want newly selected API key", gotAPIKey)
+	}
+}
+
+func TestLoginWithAPIKey_ErrorDoesNotLeakKeyMaterial(t *testing.T) {
+	setupLoginTest(t)
+
+	// Provide an invalid key that does not start with "tskey-api-".
+	badKey := "sk-live-SUPERSECRETKEY1234567890abcdef"
+	err := loginWithAPIKey(loginCmd, badKey)
+	if err == nil {
+		t.Fatal("expected error for wrong prefix")
+	}
+
+	errMsg := err.Error()
+	// The error message must not contain any part of the actual key.
+	if strings.Contains(errMsg, "SUPERSECRET") {
+		t.Fatalf("error message leaks key material: %q", errMsg)
+	}
+	if strings.Contains(errMsg, "sk-live") {
+		t.Fatalf("error message leaks key prefix: %q", errMsg)
+	}
+	if strings.Contains(errMsg, badKey[:10]) {
+		t.Fatalf("error message leaks key content: %q", errMsg)
+	}
+	// Should mention the expected prefix format.
+	if !strings.Contains(errMsg, "tskey-api-") {
+		t.Fatalf("error message should mention expected prefix, got: %q", errMsg)
+	}
+}
+
+func TestLoginWithClientSecret_ErrorDoesNotLeakSecretMaterial(t *testing.T) {
+	setupLoginTest(t)
+
+	// Provide an invalid secret that does not start with "tskey-client-".
+	badSecret := "sk-live-ANOTHERSUPERSECRETVALUE123456"
+	err := loginWithClientSecret(loginCmd, badSecret)
+	if err == nil {
+		t.Fatal("expected error for wrong prefix")
+	}
+
+	errMsg := err.Error()
+	// The error message must not contain any part of the actual secret.
+	if strings.Contains(errMsg, "ANOTHERSUPERSECRET") {
+		t.Fatalf("error message leaks secret material: %q", errMsg)
+	}
+	if strings.Contains(errMsg, "sk-live") {
+		t.Fatalf("error message leaks secret prefix: %q", errMsg)
+	}
+	if strings.Contains(errMsg, badSecret[:10]) {
+		t.Fatalf("error message leaks secret content: %q", errMsg)
+	}
+	// Should mention the expected prefix format.
+	if !strings.Contains(errMsg, "tskey-client-") {
+		t.Fatalf("error message should mention expected prefix, got: %q", errMsg)
 	}
 }
 

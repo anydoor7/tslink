@@ -1,8 +1,10 @@
 package middleware
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 )
@@ -124,5 +126,56 @@ func TestRateLimit_RemoteAddrWithoutPort(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d", rec.Code)
+	}
+}
+
+func TestEvictStaleLimiters(t *testing.T) {
+	var limiters sync.Map
+
+	// Create a limiter that is "old" (last seen 15 minutes ago).
+	oldLim := newLimiter(10)
+	oldLim.mu.Lock()
+	oldLim.lastSeen = time.Now().Add(-15 * time.Minute)
+	oldLim.mu.Unlock()
+	limiters.Store("10.0.0.1", oldLim)
+
+	// Create a limiter that is "fresh" (last seen just now).
+	freshLim := newLimiter(10)
+	limiters.Store("10.0.0.2", freshLim)
+
+	// Evict entries older than 10 minutes.
+	evictStaleLimiters(&limiters, 10*time.Minute)
+
+	// Old entry should be gone.
+	if _, ok := limiters.Load("10.0.0.1"); ok {
+		t.Error("expected stale limiter to be evicted")
+	}
+
+	// Fresh entry should remain.
+	if _, ok := limiters.Load("10.0.0.2"); !ok {
+		t.Error("expected fresh limiter to be retained")
+	}
+}
+
+func TestEvictStaleLimiters_AllStale(t *testing.T) {
+	var limiters sync.Map
+
+	for i := 0; i < 5; i++ {
+		lim := newLimiter(10)
+		lim.mu.Lock()
+		lim.lastSeen = time.Now().Add(-20 * time.Minute)
+		lim.mu.Unlock()
+		limiters.Store(fmt.Sprintf("10.0.0.%d", i), lim)
+	}
+
+	evictStaleLimiters(&limiters, 10*time.Minute)
+
+	count := 0
+	limiters.Range(func(_, _ any) bool {
+		count++
+		return true
+	})
+	if count != 0 {
+		t.Errorf("expected all stale limiters evicted, got %d remaining", count)
 	}
 }

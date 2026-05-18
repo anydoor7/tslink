@@ -427,6 +427,34 @@ func TestValidateNameEdgeCases(t *testing.T) {
 	}
 }
 
+func TestValidateName_DNSLabelLength(t *testing.T) {
+	// Exactly 63 characters should be valid (if it matches the regex).
+	name63 := strings.Repeat("a", 63)
+	if err := ValidateName(name63); err != nil {
+		t.Errorf("ValidateName(63 chars) = error %v, want valid", err)
+	}
+
+	// 64 characters should be rejected.
+	name64 := strings.Repeat("a", 64)
+	err := ValidateName(name64)
+	if err == nil {
+		t.Fatal("ValidateName(64 chars) = nil, want error")
+	}
+	if !strings.Contains(err.Error(), "DNS label") {
+		t.Errorf("expected DNS label error, got: %v", err)
+	}
+
+	// Very long name should also be rejected.
+	name200 := strings.Repeat("b", 200)
+	err = ValidateName(name200)
+	if err == nil {
+		t.Fatal("ValidateName(200 chars) = nil, want error")
+	}
+	if !strings.Contains(err.Error(), "63-character") {
+		t.Errorf("expected 63-character limit error, got: %v", err)
+	}
+}
+
 func TestValidateTag(t *testing.T) {
 	valid := []string{"tag:web", "tag:a", "tag:web-1", "tag:internal-api", "tag:" + strings.Repeat("a", 59)}
 	for _, tag := range valid {
