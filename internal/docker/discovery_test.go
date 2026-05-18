@@ -150,7 +150,25 @@ func TestParseContainerLabels_ProxyType_DefaultTarget(t *testing.T) {
 	}
 }
 
-func TestParseContainerLabels_ProxyType_PreserveScheme(t *testing.T) {
+func TestParseContainerLabels_ProxyType_PreserveSchemeLoopback(t *testing.T) {
+	// Scheme is preserved for loopback targets
+	c := containerWith("abc123", "api", map[string]string{
+		"tslink.enable": "true",
+		"tslink.name":   "api",
+		"tslink.target": "https://localhost:8443",
+	}, nil)
+
+	svc := parseContainerLabels(c)
+	if svc == nil {
+		t.Fatal("expected non-nil service")
+	}
+	if svc.Target != "https://localhost:8443" {
+		t.Errorf("expected target to preserve https scheme, got %q", svc.Target)
+	}
+}
+
+func TestParseContainerLabels_ProxyType_RejectsNonLoopbackScheme(t *testing.T) {
+	// Non-loopback targets are rejected even with https scheme preserved
 	c := containerWith("abc123", "api", map[string]string{
 		"tslink.enable": "true",
 		"tslink.name":   "api",
@@ -158,11 +176,8 @@ func TestParseContainerLabels_ProxyType_PreserveScheme(t *testing.T) {
 	}, nil)
 
 	svc := parseContainerLabels(c)
-	if svc == nil {
-		t.Fatal("expected non-nil service")
-	}
-	if svc.Target != "https://internal.svc:8443" {
-		t.Errorf("expected target to preserve https scheme, got %q", svc.Target)
+	if svc != nil {
+		t.Fatalf("expected nil for non-loopback target, got %+v", svc)
 	}
 }
 
@@ -925,6 +940,162 @@ func TestDiscovery_Run_RemoveError_Logs(t *testing.T) {
 
 	<-done
 	// We don't assert the error here - we just ensure the code path is exercised
+}
+
+// --- Security: validation and loopback enforcement tests ---
+
+func TestParseContainerLabels_RejectsInvalidServiceName(t *testing.T) {
+	c := containerWith("abc123", "bad-container", map[string]string{
+		"tslink.enable": "true",
+		"tslink.name":   "-invalid-name-", // leading/trailing hyphen fails ValidateName
+		"tslink.target": "localhost:3000",
+	}, nil)
+
+	svc := parseContainerLabels(c)
+	if svc != nil {
+		t.Fatalf("expected nil for invalid service name, got %+v", svc)
+	}
+}
+
+func TestParseContainerLabels_RejectsNonLoopbackProxyTarget(t *testing.T) {
+	cases := []struct {
+		name   string
+		target string
+	}{
+		{"remote host", "http://evil.example.com:8080"},
+		{"remote IP", "http://192.168.1.100:8080"},
+		{"public IP", "http://8.8.8.8:53"},
+		{"bare remote via label", "evil.example.com:9000"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := containerWith("abc123", "ssrf-container", map[string]string{
+				"tslink.enable": "true",
+				"tslink.name":   "ssrf",
+				"tslink.type":   "proxy",
+				"tslink.target": tc.target,
+			}, nil)
+
+			svc := parseContainerLabels(c)
+			if svc != nil {
+				t.Fatalf("expected nil for non-loopback proxy target %q, got %+v", tc.target, svc)
+			}
+		})
+	}
+}
+
+func TestParseContainerLabels_RejectsNonLoopbackTCPTarget(t *testing.T) {
+	cases := []struct {
+		name   string
+		target string
+	}{
+		{"remote host", "evil.example.com:5432"},
+		{"remote IP", "10.0.0.5:5432"},
+		{"public IP", "8.8.4.4:53"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := containerWith("abc123", "ssrf-container", map[string]string{
+				"tslink.enable": "true",
+				"tslink.name":   "ssrf",
+				"tslink.type":   "tcp",
+				"tslink.target": tc.target,
+				"tslink.port":   "5432",
+			}, nil)
+
+			svc := parseContainerLabels(c)
+			if svc != nil {
+				t.Fatalf("expected nil for non-loopback TCP target %q, got %+v", tc.target, svc)
+			}
+		})
+	}
+}
+
+func TestParseContainerLabels_AcceptsLoopbackTargets(t *testing.T) {
+	cases := []struct {
+		name   string
+		target string
+		stype  string
+		port   string
+	}{
+		{"localhost proxy", "localhost:3000", "proxy", ""},
+		{"127.0.0.1 proxy", "127.0.0.1:3000", "proxy", ""},
+		{"[::1] proxy", "[::1]:3000", "proxy", ""},
+		{"0.0.0.0 proxy", "0.0.0.0:3000", "proxy", ""},
+		{"localhost tcp", "localhost:5432", "tcp", "5432"},
+		{"127.0.0.1 tcp", "127.0.0.1:5432", "tcp", "5432"},
+		{"[::1] tcp", "[::1]:5432", "tcp", "5432"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			labels := map[string]string{
+				"tslink.enable": "true",
+				"tslink.name":   "safe",
+				"tslink.type":   tc.stype,
+				"tslink.target": tc.target,
+			}
+			if tc.port != "" {
+				labels["tslink.port"] = tc.port
+			}
+
+			c := containerWith("abc123", "safe-container", labels, nil)
+			svc := parseContainerLabels(c)
+			if svc == nil {
+				t.Fatalf("expected non-nil service for loopback target %q, got nil", tc.target)
+			}
+		})
+	}
+}
+
+func TestParseContainerLabels_RejectsInvalidTags(t *testing.T) {
+	c := containerWith("abc123", "tagtest", map[string]string{
+		"tslink.enable": "true",
+		"tslink.name":   "tagtest",
+		"tslink.target": "localhost:3000",
+		"tslink.tags":   "INVALID_TAG", // tags must be tag:<lowercase>
+	}, nil)
+
+	svc := parseContainerLabels(c)
+	if svc != nil {
+		t.Fatalf("expected nil for invalid tags, got %+v", svc)
+	}
+}
+
+func TestDiscovery_InitialSync_RejectsNonLoopback(t *testing.T) {
+	client := newMockClient()
+	client.containers["c1"] = containerWith("c1", "malicious", map[string]string{
+		"tslink.enable": "true",
+		"tslink.name":   "malicious",
+		"tslink.target": "http://169.254.169.254:80", // AWS metadata SSRF target
+	}, nil)
+
+	regPath := testRegistryPath(t)
+	d := New(client, regPath)
+
+	ctx := context.Background()
+	if err := d.initialSync(ctx); err != nil {
+		t.Fatalf("initialSync error: %v", err)
+	}
+
+	reg, err := registry.Load(regPath)
+	if err != nil {
+		t.Fatalf("Load error: %v", err)
+	}
+
+	if len(reg.Services) != 0 {
+		t.Fatalf("expected 0 services (non-loopback should be rejected), got %d: %+v", len(reg.Services), reg.Services)
+	}
+
+	// Should not be in the container mapping either
+	d.mu.Lock()
+	_, ok := d.containerToSvc["c1"]
+	d.mu.Unlock()
+	if ok {
+		t.Error("expected containerToSvc[c1] to not be set for rejected container")
+	}
 }
 
 func TestDiscovery_Run_UnknownEventAction(t *testing.T) {

@@ -1,9 +1,12 @@
+// Package cluster provides experimental multi-instance registry synchronization.
+// It has no authentication mechanism and should not be used in untrusted environments.
 package cluster
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -84,6 +87,7 @@ type Cluster struct {
 
 // NewCluster creates a new cluster manager.
 func NewCluster(nodeID string, transport Transport, regPath string) *Cluster {
+	slog.Warn("cluster.experimental: cluster sync has no authentication; do not use in untrusted environments")
 	return &Cluster{
 		nodeID:    nodeID,
 		transport: transport,
@@ -180,6 +184,14 @@ func (c *Cluster) handleServiceAdd(msg Message) error {
 		return fmt.Errorf("cluster: failed to unmarshal service_add: %w", err)
 	}
 
+	if err := registry.ValidateService(payload.Service); err != nil {
+		slog.Warn("cluster: rejected invalid service from peer",
+			"node_id", msg.NodeID,
+			"service", payload.Service.Name,
+			"error", err)
+		return nil
+	}
+
 	_, addErr := registry.Add(c.regPath, payload.Service)
 	return addErr
 }
@@ -236,6 +248,13 @@ func (c *Cluster) handleFullSync(msg Message) error {
 
 	// Add/update all services from the sync.
 	for _, svc := range payload.Services {
+		if err := registry.ValidateService(svc); err != nil {
+			slog.Warn("cluster: skipping invalid service during full_sync",
+				"node_id", msg.NodeID,
+				"service", svc.Name,
+				"error", err)
+			continue
+		}
 		if _, err := registry.Add(c.regPath, svc); err != nil {
 			return fmt.Errorf("cluster: failed to add service %q during full_sync: %w", svc.Name, err)
 		}

@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -135,7 +137,67 @@ func parseContainerLabels(c ContainerInfo) *registry.Service {
 		Tags:      tags,
 	}
 
+	// Validate the constructed service against registry rules (name, tags, etc.)
+	if err := registry.ValidateService(*svc); err != nil {
+		slog.Warn("docker discovery: container labels failed validation",
+			"container_id", c.ID,
+			"container_name", c.Name,
+			"service", name,
+			"error", err,
+		)
+		return nil
+	}
+
+	// Reject non-loopback targets from container labels. Docker containers should
+	// only expose localhost ports to the host; allowing arbitrary remote targets
+	// from labels enables SSRF via crafted container images.
+	if (svcType == registry.TypeProxy || svcType == registry.TypeTCP) && !isLoopbackTarget(target, svcType) {
+		slog.Warn("docker discovery: rejecting non-loopback target from container labels",
+			"container_id", c.ID,
+			"container_name", c.Name,
+			"service", name,
+			"target", target,
+		)
+		return nil
+	}
+
 	return svc
+}
+
+// isLoopbackTarget checks whether the target address resolves to a loopback or
+// local address. For proxy type, target is a URL (http://host:port). For TCP
+// type, target is host:port. Returns true for localhost, 127.x.x.x, [::1], and
+// unspecified addresses (0.0.0.0, [::]). Returns false for empty targets.
+func isLoopbackTarget(target, svcType string) bool {
+	if target == "" {
+		return true // empty target (e.g., proxy with no ports) is safe
+	}
+
+	var host string
+	if svcType == registry.TypeProxy {
+		// target is a URL like "http://localhost:3000"
+		u, err := url.Parse(target)
+		if err != nil {
+			return false
+		}
+		host = u.Hostname()
+	} else {
+		// target is host:port like "localhost:5432"
+		h, _, err := net.SplitHostPort(target)
+		if err != nil {
+			// Maybe just a bare host
+			host = target
+		} else {
+			host = h
+		}
+	}
+
+	host = strings.TrimSpace(strings.Trim(host, "[]"))
+	if host == "" || strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && (ip.IsLoopback() || ip.IsUnspecified())
 }
 
 // firstExposedPort returns the lowest host port from the container's port map.
