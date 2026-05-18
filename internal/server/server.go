@@ -202,7 +202,7 @@ func (s *Server) syncNodes(ctx context.Context) error {
 	desired := make(map[string]registry.Service, len(reg.Services))
 	desiredOrder := make([]string, 0, len(reg.Services))
 	for _, svc := range reg.Services {
-		if err := validateServiceForStartup(svc); err != nil {
+		if err := ValidateServiceForStartup(svc); err != nil {
 			return err
 		}
 		if _, seen := desired[svc.Name]; !seen {
@@ -464,7 +464,9 @@ func (s *Server) removeRuntimeSnapshot() {
 	}
 }
 
-func validateServiceForStartup(svc registry.Service) error {
+// ValidateServiceForStartup validates a service definition before starting its node.
+// It checks name, funnel guardrails, TCP/allowed_users conflict, control URL, and tag grammar.
+func ValidateServiceForStartup(svc registry.Service) error {
 	if err := registry.ValidateName(svc.Name); err != nil {
 		return fmt.Errorf("service %q: %w", svc.Name, err)
 	}
@@ -489,7 +491,7 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service) erro
 	if err := s.ensureRunning(ctx); err != nil {
 		return err
 	}
-	if err := validateServiceForStartup(svc); err != nil {
+	if err := ValidateServiceForStartup(svc); err != nil {
 		return err
 	}
 
@@ -735,6 +737,13 @@ func (s *Server) watchRegistry(ctx context.Context) {
 
 	regPath = filepath.Clean(regPath)
 
+	var debounce *time.Timer
+	defer func() {
+		if debounce != nil {
+			debounce.Stop()
+		}
+	}()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -750,12 +759,17 @@ func (s *Server) watchRegistry(ctx context.Context) {
 				continue
 			}
 			if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) {
-				if err := s.syncNodes(ctx); err != nil {
-					if errors.Is(err, context.Canceled) || errors.Is(err, errServerShuttingDown) {
-						return
-					}
-					slog.Warn("reload registry failed", "error", err)
+				if debounce != nil {
+					debounce.Stop()
 				}
+				debounce = time.AfterFunc(200*time.Millisecond, func() {
+					if err := s.syncNodes(ctx); err != nil {
+						if errors.Is(err, context.Canceled) || errors.Is(err, errServerShuttingDown) {
+							return
+						}
+						slog.Warn("reload registry failed", "error", err)
+					}
+				})
 			}
 		case err, ok := <-watcher.Errors:
 			if !ok {

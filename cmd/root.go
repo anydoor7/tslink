@@ -4,6 +4,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// Version is set by main before Execute() is called.
+var Version string
+
 var rootCmd = &cobra.Command{
 	Use:   "tslink",
 	Short: "Expose local services to your Tailscale network",
@@ -42,5 +45,6 @@ func WasJSONRequested() bool {
 }
 
 func Execute() error {
+	rootCmd.Version = Version
 	return rootCmd.Execute()
 }

@@ -19,6 +19,9 @@ type LogsResult struct {
 	File  string   `json:"file"`
 }
 
+// Testable function variable for logs command
+var logsLogDirFn = config.LogDir
+
 // tailFile reads the last N lines from a file, optionally filtering by log level.
 func tailFile(path string, last int, level string) ([]string, error) {
 	f, err := os.Open(path)
@@ -111,7 +114,7 @@ Examples:
 			level, _ := cmd.Flags().GetString("level")
 			source, _ := cmd.Flags().GetString("source")
 
-			logDir, err := config.LogDir()
+			logDir, err := logsLogDirFn()
 			if err != nil {
 				return err
 			}

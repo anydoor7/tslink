@@ -200,7 +200,7 @@ func loadValidatedRegistryForServe() (*registry.Registry, error) {
 		return nil, fmt.Errorf("load registry: %w", err)
 	}
 	for _, svc := range reg.Services {
-		if err := validateServiceForServe(svc); err != nil {
+		if err := server.ValidateServiceForStartup(svc); err != nil {
 			return nil, err
 		}
 	}
@@ -239,26 +239,6 @@ func waitForDaemonReady(pidPath string, expectedPID int, timeout, pollInterval t
 	}
 }
 
-func validateServiceForServe(svc registry.Service) error {
-	if err := registry.ValidateName(svc.Name); err != nil {
-		return fmt.Errorf("service %q: %w", svc.Name, err)
-	}
-	if err := registry.ValidateFunnelGuardrails(svc.Type, svc.Funnel, svc.AllowedUsers, svc.ControlURL); err != nil {
-		return fmt.Errorf("service %q: %w; edit registry.json", svc.Name, err)
-	}
-	if svc.Type == registry.TypeTCP && len(svc.AllowedUsers) > 0 {
-		return fmt.Errorf("service %q: tcp services do not support allowed_users; remove allowed_users from registry.json", svc.Name)
-	}
-	if err := registry.ValidateControlURL(svc.ControlURL); err != nil {
-		return fmt.Errorf("service %q has invalid control_url: %w; edit registry.json", svc.Name, err)
-	}
-	for _, tag := range svc.Tags {
-		if err := registry.ValidateTag(tag); err != nil {
-			return fmt.Errorf("service %q has invalid tag %q: %w; fix with `tslink tags set %s tag:<lowercase-hyphen-name>` or edit registry.json", svc.Name, tag, err, svc.Name)
-		}
-	}
-	return nil
-}
 
 func runForeground(pidPath, authKey, controlURL string) error {
 	if err := serveWritePIDFn(pidPath); err != nil {
