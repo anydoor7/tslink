@@ -11,6 +11,7 @@ import (
 	"net/http/httputil"
 	"strings"
 	"testing"
+	"time"
 
 	"tailscale.com/client/tailscale/apitype"
 	"tailscale.com/tailcfg"
@@ -363,5 +364,143 @@ func TestProxyRewrite_NilLocalClient(t *testing.T) {
 	// No identity headers without localClient
 	if got := out.Header.Get("X-Tailscale-User-Login"); got != "" {
 		t.Fatalf("X-Tailscale-User-Login = %q, want empty with nil localClient", got)
+	}
+}
+
+func TestWhoisCache_BasicTTL(t *testing.T) {
+	cache := newWhoisCache(50 * time.Millisecond)
+
+	resp := &apitype.WhoIsResponse{
+		UserProfile: &tailcfg.UserProfile{LoginName: "cached@example.com"},
+	}
+
+	// Initially empty
+	if got := cache.get("100.64.0.1"); got != nil {
+		t.Fatal("expected nil from empty cache")
+	}
+
+	// Store and retrieve
+	cache.set("100.64.0.1", resp)
+	if got := cache.get("100.64.0.1"); got == nil {
+		t.Fatal("expected cached response")
+	} else if got.UserProfile.LoginName != "cached@example.com" {
+		t.Fatalf("LoginName = %q, want %q", got.UserProfile.LoginName, "cached@example.com")
+	}
+
+	// After TTL expires, entry should be gone
+	time.Sleep(60 * time.Millisecond)
+	if got := cache.get("100.64.0.1"); got != nil {
+		t.Fatal("expected nil after TTL expiry")
+	}
+}
+
+func TestWhoisCache_DifferentIPsIndependent(t *testing.T) {
+	cache := newWhoisCache(1 * time.Second)
+
+	resp1 := &apitype.WhoIsResponse{
+		UserProfile: &tailcfg.UserProfile{LoginName: "user1@example.com"},
+	}
+	resp2 := &apitype.WhoIsResponse{
+		UserProfile: &tailcfg.UserProfile{LoginName: "user2@example.com"},
+	}
+
+	cache.set("100.64.0.1", resp1)
+	cache.set("100.64.0.2", resp2)
+
+	got1 := cache.get("100.64.0.1")
+	got2 := cache.get("100.64.0.2")
+
+	if got1 == nil || got1.UserProfile.LoginName != "user1@example.com" {
+		t.Fatalf("IP 100.64.0.1: got %v, want user1@example.com", got1)
+	}
+	if got2 == nil || got2.UserProfile.LoginName != "user2@example.com" {
+		t.Fatalf("IP 100.64.0.2: got %v, want user2@example.com", got2)
+	}
+}
+
+func TestProxyRewrite_CachesWhoIsResult(t *testing.T) {
+	var whoisCalls int
+	body, err := json.Marshal(&apitype.WhoIsResponse{
+		UserProfile: &tailcfg.UserProfile{
+			LoginName:   "cached@example.com",
+			DisplayName: "Cached User",
+		},
+		Node: &tailcfg.Node{ComputedName: "cached-node"},
+	})
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+
+	localClient := &LocalClient{
+		OmitAuth: true,
+		Transport: roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+			whoisCalls++
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(string(body))),
+			}, nil
+		}),
+	}
+
+	rp := mustReverseProxy(t, "http://localhost:8080", localClient)
+
+	// Make 3 requests from the same IP — WhoIs should only be called once (cached)
+	for i := 0; i < 3; i++ {
+		in := httptest.NewRequest(http.MethodGet, "http://incoming.example/path", nil)
+		in.RemoteAddr = "100.64.0.1:1234"
+		out := in.Clone(context.Background())
+		out.Header = in.Header.Clone()
+
+		rp.Rewrite(&httputil.ProxyRequest{In: in, Out: out})
+
+		if got := out.Header.Get("X-Tailscale-User-Login"); got != "cached@example.com" {
+			t.Fatalf("request %d: X-Tailscale-User-Login = %q, want %q", i, got, "cached@example.com")
+		}
+	}
+
+	if whoisCalls != 1 {
+		t.Fatalf("WhoIs called %d times, want 1 (should be cached after first call)", whoisCalls)
+	}
+}
+
+func TestProxyRewrite_CacheKeyIsIPNotPort(t *testing.T) {
+	var whoisCalls int
+	body, err := json.Marshal(&apitype.WhoIsResponse{
+		UserProfile: &tailcfg.UserProfile{
+			LoginName:   "porttest@example.com",
+			DisplayName: "Port Test User",
+		},
+	})
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+
+	localClient := &LocalClient{
+		OmitAuth: true,
+		Transport: roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+			whoisCalls++
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(string(body))),
+			}, nil
+		}),
+	}
+
+	rp := mustReverseProxy(t, "http://localhost:8080", localClient)
+
+	// Same IP, different ports — should still only call WhoIs once
+	ports := []string{"1234", "5678", "9999"}
+	for _, port := range ports {
+		in := httptest.NewRequest(http.MethodGet, "http://incoming.example/path", nil)
+		in.RemoteAddr = "100.64.0.1:" + port
+		out := in.Clone(context.Background())
+		out.Header = in.Header.Clone()
+		rp.Rewrite(&httputil.ProxyRequest{In: in, Out: out})
+	}
+
+	if whoisCalls != 1 {
+		t.Fatalf("WhoIs called %d times for same IP with different ports, want 1", whoisCalls)
 	}
 }
