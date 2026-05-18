@@ -598,14 +598,19 @@ func TestDiscovery_InitialSync_ListError(t *testing.T) {
 
 func TestDiscovery_InitialSync_RegisterError(t *testing.T) {
 	client := newMockClient()
-	// Use an invalid service name to trigger registry.Add error
-	client.containers["c1"] = containerWith("c1", "bad", map[string]string{
+	// Use a valid service that will pass parseContainerLabels but fail at registry.Add
+	// due to an unwritable registry path
+	client.containers["c1"] = containerWith("c1", "goodsvc", map[string]string{
 		"tslink.enable": "true",
-		"tslink.name":   "-invalid-name-",
+		"tslink.name":   "goodsvc",
 		"tslink.target": "localhost:3000",
 	}, nil)
 
-	regPath := testRegistryPath(t)
+	// Use a path under a file (not directory) so MkdirAll fails
+	dir := t.TempDir()
+	blocker := filepath.Join(dir, "blocker")
+	os.WriteFile(blocker, []byte("not a dir"), 0o600)
+	regPath := filepath.Join(blocker, "sub", "registry.json")
 	d := New(client, regPath)
 
 	// Should not return error (it logs warning and continues)
@@ -641,13 +646,17 @@ func TestDiscovery_SyncContainer_InspectError(t *testing.T) {
 
 func TestDiscovery_SyncContainer_RegisterError(t *testing.T) {
 	client := newMockClient()
-	client.containers["c1"] = containerWith("c1", "bad", map[string]string{
+	client.containers["c1"] = containerWith("c1", "goodsvc", map[string]string{
 		"tslink.enable": "true",
-		"tslink.name":   "-invalid-name-",
+		"tslink.name":   "goodsvc",
 		"tslink.target": "localhost:3000",
 	}, nil)
 
-	regPath := testRegistryPath(t)
+	// Use a path under a non-existent directory that cannot be created (file as parent)
+	dir := t.TempDir()
+	blocker := filepath.Join(dir, "blocker")
+	os.WriteFile(blocker, []byte("not a dir"), 0o600)
+	regPath := filepath.Join(blocker, "sub", "registry.json")
 	d := New(client, regPath)
 
 	err := d.syncContainer(context.Background(), "c1")
