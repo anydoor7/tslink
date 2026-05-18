@@ -53,5 +53,5 @@ func (s *safeFS) Open(name string) (fs.File, error) {
 		return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrNotExist}
 	}
 
-	return os.Open(fullPath)
+	return os.Open(realPath)
 }
