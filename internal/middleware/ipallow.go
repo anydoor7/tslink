@@ -1,7 +1,7 @@
 package middleware
 
 import (
-	"fmt"
+	"log"
 	"net"
 	"net/http"
 )
@@ -9,6 +9,7 @@ import (
 // IPAllowList returns a Middleware that restricts access to the given CIDR ranges.
 // If cidrs is empty, all requests are allowed (no restriction).
 // Returns 403 Forbidden if the remote IP is not in any allowed CIDR.
+// Invalid CIDR or IP entries are logged and skipped (they do not cause a panic).
 func IPAllowList(cidrs []string) Middleware {
 	var networks []*net.IPNet
 	for _, cidr := range cidrs {
@@ -17,7 +18,8 @@ func IPAllowList(cidrs []string) Middleware {
 			// Try parsing as a plain IP and convert to /32 or /128.
 			ip := net.ParseIP(cidr)
 			if ip == nil {
-				panic(fmt.Sprintf("middleware: invalid CIDR or IP %q: %v", cidr, err))
+				log.Printf("middleware: skipping invalid CIDR or IP %q: %v", cidr, err)
+				continue
 			}
 			if ip.To4() != nil {
 				_, ipNet, _ = net.ParseCIDR(ip.String() + "/32")

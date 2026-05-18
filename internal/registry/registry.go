@@ -132,6 +132,9 @@ type Registry struct {
 }
 
 func ValidateName(name string) error {
+	if len(name) > 63 {
+		return fmt.Errorf("invalid service name: %q exceeds 63-character DNS label limit", name)
+	}
 	if !nameRegexp.MatchString(name) {
 		return fmt.Errorf("invalid service name: %q", name)
 	}
