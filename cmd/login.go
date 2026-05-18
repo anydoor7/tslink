@@ -160,7 +160,7 @@ Examples:
 
 func loginWithAPIKey(cmd *cobra.Command, key string) error {
 	if !strings.HasPrefix(key, "tskey-api-") {
-		return fmt.Errorf("expected access token prefix tskey-api-, got redacted prefix %q", key[:min(20, len(key))])
+		return fmt.Errorf("API key must start with \"tskey-api-\" prefix")
 	}
 
 	if err := loginSetAPIKeyFn(key); err != nil {
@@ -209,7 +209,7 @@ func loginWithAPIKey(cmd *cobra.Command, key string) error {
 
 func loginWithClientSecret(cmd *cobra.Command, secret string) error {
 	if !strings.HasPrefix(secret, "tskey-client-") {
-		return fmt.Errorf("expected client secret prefix tskey-client-, got redacted prefix %q", secret[:min(20, len(secret))])
+		return fmt.Errorf("client secret must start with \"tskey-client-\" prefix")
 	}
 
 	if err := loginSaveClientSecretFn(secret); err != nil {
