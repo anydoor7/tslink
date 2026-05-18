@@ -2646,3 +2646,72 @@ func TestSyncNodes_EnsureTagsErrorLogged(t *testing.T) {
 		t.Fatalf("syncNodes() error = %v, want ACL write denied", err)
 	}
 }
+
+func TestWatchRegistry_DebouncesRapidWrites(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+
+	// Write initial registry
+	writeRegistry(t, []registry.Service{
+		{Name: "debounce-test", Type: registry.TypeFile, Path: t.TempDir()},
+	})
+
+	var syncCount atomic.Int32
+	oldNew := newTSNetServerFn
+	newTSNetServerFn = func(svc registry.Service, stateDir, authKey, controlURL string) tsnetServer {
+		syncCount.Add(1)
+		return &fakeTSNetServer{}
+	}
+	t.Cleanup(func() { newTSNetServerFn = oldNew })
+
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Start watching in background
+	watchDone := make(chan struct{})
+	go func() {
+		defer close(watchDone)
+		s.watchRegistry(ctx)
+	}()
+
+	// Give the watcher time to initialize
+	time.Sleep(50 * time.Millisecond)
+
+	// Write to registry rapidly 5 times within the debounce window (200ms)
+	regPath, err := config.RegistryPath()
+	if err != nil {
+		t.Fatalf("RegistryPath() error = %v", err)
+	}
+	for i := 0; i < 5; i++ {
+		data, _ := json.Marshal(registry.Registry{Services: []registry.Service{
+			{Name: fmt.Sprintf("svc-%d", i), Type: registry.TypeFile, Path: t.TempDir()},
+		}})
+		if err := os.WriteFile(regPath, append(data, '\n'), 0o600); err != nil {
+			t.Fatalf("WriteFile() error = %v", err)
+		}
+		time.Sleep(20 * time.Millisecond) // 20ms apart, well within 200ms debounce
+	}
+
+	// Wait for debounce to fire (200ms) plus some margin
+	time.Sleep(400 * time.Millisecond)
+
+	cancel()
+	<-watchDone
+
+	// With debounce, only the last write should trigger syncNodes (1 sync, not 5).
+	// The sync creates one tsnet server per service in registry.
+	count := syncCount.Load()
+	if count > 2 {
+		t.Fatalf("syncNodes called too many times: got %d tsnet constructions, want <= 2 (debounce should coalesce rapid writes)", count)
+	}
+	if count == 0 {
+		t.Fatal("syncNodes was never called; debounce timer should have fired at least once")
+	}
+}
