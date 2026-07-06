@@ -213,12 +213,33 @@ func loadValidatedRegistryForServe() (*registry.Registry, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load registry: %w", err)
 	}
+	validServices := make([]registry.Service, 0, len(reg.Services))
 	for _, svc := range reg.Services {
 		if err := server.ValidateServiceForStartup(svc); err != nil {
+			if shouldSkipServiceForServeStartup(err) {
+				warnSkippedServiceForServeStartup(svc, err)
+				continue
+			}
 			return nil, err
 		}
+		validServices = append(validServices, svc)
 	}
+	reg.Services = validServices
 	return reg, nil
+}
+
+func shouldSkipServiceForServeStartup(err error) bool {
+	code, ok := registry.ErrorCode(err)
+	return ok && code == registry.CodeFunnelPublicAckRequired
+}
+
+func warnSkippedServiceForServeStartup(svc registry.Service, err error) {
+	slog.Warn("skipping service with invalid startup config",
+		"name", svc.Name,
+		"code", registry.CodeFunnelPublicAckRequired,
+		"error", err,
+		"remediation", fmt.Sprintf("re-run `tslink add %s --funnel --public` or set public_ack:true after confirming public internet exposure", svc.Name),
+	)
 }
 
 func waitForDaemonReady(pidPath string, expectedPID int, timeout, pollInterval time.Duration) error {

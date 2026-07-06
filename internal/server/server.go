@@ -203,6 +203,10 @@ func (s *Server) syncNodes(ctx context.Context) error {
 	desiredOrder := make([]string, 0, len(reg.Services))
 	for _, svc := range reg.Services {
 		if err := ValidateServiceForStartup(svc); err != nil {
+			if shouldSkipServiceForStartup(err) {
+				warnSkippedStartupService(svc, err)
+				continue
+			}
 			return err
 		}
 		if _, seen := desired[svc.Name]; !seen {
@@ -485,6 +489,20 @@ func ValidateServiceForStartup(svc registry.Service) error {
 		}
 	}
 	return nil
+}
+
+func shouldSkipServiceForStartup(err error) bool {
+	code, ok := registry.ErrorCode(err)
+	return ok && code == registry.CodeFunnelPublicAckRequired
+}
+
+func warnSkippedStartupService(svc registry.Service, err error) {
+	slog.Warn("skipping service with invalid startup config",
+		"name", svc.Name,
+		"code", registry.CodeFunnelPublicAckRequired,
+		"error", err,
+		"remediation", fmt.Sprintf("re-run `tslink add %s --funnel --public` or set public_ack:true after confirming public internet exposure", svc.Name),
+	)
 }
 
 func middlewareConfigured(mw *registry.MiddlewareConfig) bool {

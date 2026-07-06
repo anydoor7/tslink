@@ -949,23 +949,37 @@ func TestSyncNodes_RejectsHandEditedFunnelAllowedUsersBeforeListenFunnel(t *test
 	}
 }
 
-func TestSyncNodes_RejectsHandEditedFunnelWithoutPublicAckBeforeListenFunnel(t *testing.T) {
+func TestSyncNodes_SkipsHandEditedFunnelWithoutPublicAckAndStartsValidProxy(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
 
-	writeRegistry(t, []registry.Service{{
-		Name:   "public-app",
-		Type:   registry.TypeProxy,
-		Target: "http://localhost:3000",
-		Funnel: true,
-	}})
+	writeRegistry(t, []registry.Service{
+		{
+			Name:   "public-app",
+			Type:   registry.TypeProxy,
+			Target: "http://localhost:3000",
+			Funnel: true,
+		},
+		{
+			Name:   "valid-app",
+			Type:   registry.TypeProxy,
+			Target: "http://localhost:3001",
+		},
+	})
+
+	var logBuf bytes.Buffer
+	oldLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, nil)))
+	t.Cleanup(func() { slog.SetDefault(oldLogger) })
 
 	oldNew := newTSNetServerFn
 	newTSNetServerFn = func(svc registry.Service, stateDir, authKey, controlURL string) tsnetServer {
-		t.Fatalf("syncNodes should reject missing public_ack before constructing tsnet server")
-		return &fakeTSNetServer{}
+		if svc.Name == "public-app" {
+			t.Fatalf("syncNodes should skip missing public_ack before constructing tsnet server")
+		}
+		return &funnelWarningTSNetServer{t: t, logBuf: &logBuf}
 	}
 	t.Cleanup(func() { newTSNetServerFn = oldNew })
 
@@ -974,21 +988,20 @@ func TestSyncNodes_RejectsHandEditedFunnelWithoutPublicAckBeforeListenFunnel(t *
 		t.Fatalf("New() error = %v", err)
 	}
 
-	err = s.syncNodes(context.Background())
-	if err == nil {
-		t.Fatal("syncNodes() error = nil, want public_ack error")
+	if err := s.syncNodes(context.Background()); err != nil {
+		t.Fatalf("syncNodes() error = %v", err)
 	}
-	if !strings.Contains(err.Error(), registry.ErrFunnelPublicAck) {
-		t.Fatalf("syncNodes() error = %v, want public_ack error", err)
+	if _, exists := s.nodes["public-app"]; exists {
+		t.Fatal("missing-public_ack funnel service should not start")
 	}
-	if !strings.Contains(err.Error(), registry.CodeFunnelPublicAckRequired) {
-		t.Fatalf("syncNodes() error = %v, want stable code %s", err, registry.CodeFunnelPublicAckRequired)
+	if _, exists := s.nodes["valid-app"]; !exists {
+		t.Fatal("valid proxy service should start despite skipped legacy funnel service")
 	}
-	if code, ok := registry.ErrorCode(err); !ok || code != registry.CodeFunnelPublicAckRequired {
-		t.Fatalf("ErrorCode() = %q, %v; want %s, true", code, ok, registry.CodeFunnelPublicAckRequired)
-	}
-	if len(s.nodes) != 0 {
-		t.Fatalf("nodes = %+v, want none after rejected hand-edited registry", s.nodes)
+	logs := logBuf.String()
+	if !strings.Contains(logs, "skipping service with invalid startup config") ||
+		!strings.Contains(logs, "public-app") ||
+		!strings.Contains(logs, "tslink add public-app --funnel --public") {
+		t.Fatalf("logs = %s, want skip warning with service name and remediation", logs)
 	}
 }
 

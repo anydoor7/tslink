@@ -310,7 +310,21 @@ func TestLoginCmd_ReadsAPIKeyFromStdin(t *testing.T) {
 	t.Cleanup(func() {
 		resetLoginFlags(t)
 	})
-	mockAPIKeySuccess(t)
+	var savedKey string
+	oldSet := loginSetAPIKeyFn
+	oldVerify := loginVerifyAPIKeyFn
+	oldEnsure := loginEnsureTagsFn
+	t.Cleanup(func() {
+		loginSetAPIKeyFn = oldSet
+		loginVerifyAPIKeyFn = oldVerify
+		loginEnsureTagsFn = oldEnsure
+	})
+	loginSetAPIKeyFn = func(key string) error {
+		savedKey = key
+		return nil
+	}
+	loginVerifyAPIKeyFn = func(ctx context.Context) error { return nil }
+	loginEnsureTagsFn = func(ctx context.Context, tags []string) error { return nil }
 	loginCmd.SetIn(strings.NewReader("tskey-api-from-stdin\n"))
 	if err := loginCmd.Flags().Set("api-key-stdin", "true"); err != nil {
 		t.Fatalf("set api-key-stdin flag: %v", err)
@@ -318,6 +332,9 @@ func TestLoginCmd_ReadsAPIKeyFromStdin(t *testing.T) {
 
 	if err := loginCmd.RunE(loginCmd, nil); err != nil {
 		t.Fatalf("RunE() error = %v", err)
+	}
+	if savedKey != "tskey-api-from-stdin" {
+		t.Fatalf("saved API key = %q, want trimmed stdin key", savedKey)
 	}
 }
 
@@ -412,6 +429,45 @@ func TestLoginWithClientSecret_EnsureTagsFailureReportsDegraded(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "Degraded login") || !strings.Contains(buf.String(), "tslink serve") {
 		t.Fatalf("stderr = %q, want degraded serve warning", buf.String())
+	}
+}
+
+func TestLoginWithAPIKeyJSONReportsDegradedEnsureTags(t *testing.T) {
+	setupLoginTest(t)
+	resetLoginFlags(t)
+	t.Cleanup(func() {
+		resetLoginFlags(t)
+		_ = rootCmd.PersistentFlags().Set("json", "false")
+	})
+	if err := rootCmd.PersistentFlags().Set("json", "true"); err != nil {
+		t.Fatalf("set json flag: %v", err)
+	}
+
+	oldSet := loginSetAPIKeyFn
+	oldVerify := loginVerifyAPIKeyFn
+	oldEnsure := loginEnsureTagsFn
+	t.Cleanup(func() {
+		loginSetAPIKeyFn = oldSet
+		loginVerifyAPIKeyFn = oldVerify
+		loginEnsureTagsFn = oldEnsure
+	})
+	loginSetAPIKeyFn = func(key string) error { return nil }
+	loginVerifyAPIKeyFn = func(ctx context.Context) error { return nil }
+	loginEnsureTagsFn = func(ctx context.Context, tags []string) error {
+		return fmt.Errorf("ACL write denied")
+	}
+
+	got := captureStdout(t, func() {
+		if err := loginWithAPIKey(loginCmd, "tskey-api-new"); err != nil {
+			t.Fatalf("loginWithAPIKey() error = %v", err)
+		}
+	})
+	data := dataMap(t, got)
+	if data["degraded"] != true {
+		t.Fatalf("degraded = %v, want true", data["degraded"])
+	}
+	if gotErr, ok := data["tag_ensure_error"].(string); !ok || !strings.Contains(gotErr, "ACL write denied") {
+		t.Fatalf("tag_ensure_error = %v, want ACL write denied", data["tag_ensure_error"])
 	}
 }
 

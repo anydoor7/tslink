@@ -150,6 +150,38 @@ func TestGetAPIKey_FileFallbackRepairsInsecurePermissions(t *testing.T) {
 	}
 }
 
+func TestGetAPIKey_FileFallbackSkipsPermissionRepairWhenDisabled(t *testing.T) {
+	setup(t)
+
+	oldEnforce := enforceCredentialFilePermissionsFunc
+	t.Cleanup(func() { enforceCredentialFilePermissionsFunc = oldEnforce })
+	enforceCredentialFilePermissionsFunc = func() bool { return false }
+
+	path := apiKeyPath(t)
+	if err := os.WriteFile(path, []byte("from-file\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	infoBefore, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat() before read error = %v", err)
+	}
+
+	got, err := GetAPIKey()
+	if err != nil {
+		t.Fatalf("GetAPIKey() error = %v", err)
+	}
+	if got != "from-file" {
+		t.Fatalf("GetAPIKey() = %q, want %q", got, "from-file")
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat() error = %v", err)
+	}
+	if got, want := info.Mode().Perm(), infoBefore.Mode().Perm(); got != want {
+		t.Fatalf("file perms = %o, want unchanged %o", got, want)
+	}
+}
+
 func TestGetAPIKey_NoKey(t *testing.T) {
 	setup(t)
 

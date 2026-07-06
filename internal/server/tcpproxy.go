@@ -10,21 +10,11 @@ import (
 )
 
 const tcpBackendDialTimeout = 10 * time.Second
-const tcpIdleTimeout = 5 * time.Minute
+const tcpKeepAlivePeriod = 2 * time.Minute
 
 var tcpDialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
 	var dialer net.Dialer
 	return dialer.DialContext(ctx, network, address)
-}
-
-type idleDeadlineConn struct {
-	net.Conn
-	timeout time.Duration
-}
-
-func (c idleDeadlineConn) Read(p []byte) (int, error) {
-	_ = c.Conn.SetReadDeadline(time.Now().Add(c.timeout))
-	return c.Conn.Read(p)
 }
 
 // serveTCP accepts connections on ln and forwards them to target via bidirectional io.Copy.
@@ -49,6 +39,7 @@ func serveTCP(ctx context.Context, ln net.Listener, target, name string) {
 
 func handleTCPConn(ctx context.Context, clientConn net.Conn, target, name string) {
 	defer clientConn.Close()
+	enableTCPKeepAlive(clientConn)
 
 	dialCtx, cancel := context.WithTimeout(ctx, tcpBackendDialTimeout)
 	defer cancel()
@@ -59,6 +50,7 @@ func handleTCPConn(ctx context.Context, clientConn net.Conn, target, name string
 		return
 	}
 	defer backendConn.Close()
+	enableTCPKeepAlive(backendConn)
 
 	done := make(chan struct{})
 	go func() {
@@ -77,7 +69,7 @@ func handleTCPConn(ctx context.Context, clientConn net.Conn, target, name string
 	// client → backend
 	go func() {
 		defer wg.Done()
-		_, _ = io.Copy(backendConn, idleDeadlineConn{Conn: clientConn, timeout: tcpIdleTimeout})
+		_, _ = io.Copy(backendConn, clientConn)
 		// Signal backend that client is done writing
 		if tc, ok := backendConn.(*net.TCPConn); ok {
 			tc.CloseWrite()
@@ -87,7 +79,7 @@ func handleTCPConn(ctx context.Context, clientConn net.Conn, target, name string
 	// backend → client
 	go func() {
 		defer wg.Done()
-		_, _ = io.Copy(clientConn, idleDeadlineConn{Conn: backendConn, timeout: tcpIdleTimeout})
+		_, _ = io.Copy(clientConn, backendConn)
 		// Signal client that backend is done writing
 		if tc, ok := clientConn.(*net.TCPConn); ok {
 			tc.CloseWrite()
@@ -95,4 +87,13 @@ func handleTCPConn(ctx context.Context, clientConn net.Conn, target, name string
 	}()
 
 	wg.Wait()
+}
+
+func enableTCPKeepAlive(conn net.Conn) {
+	tc, ok := conn.(*net.TCPConn)
+	if !ok {
+		return
+	}
+	_ = tc.SetKeepAlive(true)
+	_ = tc.SetKeepAlivePeriod(tcpKeepAlivePeriod)
 }

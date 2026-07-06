@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -213,6 +214,11 @@ func TestStopNodeLocked_ClosesInFlightTCPConnection(t *testing.T) {
 	}
 	if _, err := clientConn.Read(make([]byte, 1)); err == nil {
 		t.Fatal("client connection remained open after node stop")
+	} else {
+		var netErr net.Error
+		if errors.As(err, &netErr) && netErr.Timeout() {
+			t.Fatalf("client connection read timed out after node stop; connection remained open: %v", err)
+		}
 	}
 
 	select {
@@ -304,6 +310,42 @@ func TestServeTCP_AcceptError_NonClosed(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("serveTCP did not return after closing errorListener")
+	}
+}
+
+type deadlineRecordingConn struct {
+	readDeadlineCalls atomic.Int32
+}
+
+func (c *deadlineRecordingConn) Read([]byte) (int, error)         { return 0, io.EOF }
+func (c *deadlineRecordingConn) Write(p []byte) (int, error)      { return len(p), nil }
+func (c *deadlineRecordingConn) Close() error                     { return nil }
+func (c *deadlineRecordingConn) LocalAddr() net.Addr              { return &net.TCPAddr{} }
+func (c *deadlineRecordingConn) RemoteAddr() net.Addr             { return &net.TCPAddr{} }
+func (c *deadlineRecordingConn) SetDeadline(time.Time) error      { return nil }
+func (c *deadlineRecordingConn) SetWriteDeadline(time.Time) error { return nil }
+func (c *deadlineRecordingConn) SetReadDeadline(time.Time) error {
+	c.readDeadlineCalls.Add(1)
+	return nil
+}
+
+func TestHandleTCPConn_DoesNotSetHardIdleReadDeadline(t *testing.T) {
+	clientConn := &deadlineRecordingConn{}
+	backendConn := &deadlineRecordingConn{}
+
+	oldDial := tcpDialContext
+	t.Cleanup(func() { tcpDialContext = oldDial })
+	tcpDialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+		return backendConn, nil
+	}
+
+	handleTCPConn(context.Background(), clientConn, "127.0.0.1:1", "test")
+
+	if got := clientConn.readDeadlineCalls.Load(); got != 0 {
+		t.Fatalf("client read deadline calls = %d, want 0", got)
+	}
+	if got := backendConn.readDeadlineCalls.Load(); got != 0 {
+		t.Fatalf("backend read deadline calls = %d, want 0", got)
 	}
 }
 

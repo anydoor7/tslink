@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -814,6 +815,54 @@ func TestServeCmd_DaemonModeValidatesRegistryBeforeDaemonize(t *testing.T) {
 	}
 	if removePIDCalled {
 		t.Fatal("stale PID was removed before hard-fail registry validation")
+	}
+}
+
+func TestLoadValidatedRegistryForServeSkipsLegacyFunnelMissingPublicAck(t *testing.T) {
+	dir := t.TempDir()
+	mockServeDefaults(t, dir)
+
+	regPath, err := serveRegistryPathFn()
+	if err != nil {
+		t.Fatalf("serveRegistryPathFn() error = %v", err)
+	}
+	reg := &registry.Registry{
+		Services: []registry.Service{
+			{
+				Name:   "public-app",
+				Type:   registry.TypeProxy,
+				Target: "http://localhost:3000",
+				Funnel: true,
+			},
+			{
+				Name:   "valid-app",
+				Type:   registry.TypeProxy,
+				Target: "http://localhost:3001",
+			},
+		},
+	}
+	data, _ := json.Marshal(reg)
+	if err := os.WriteFile(regPath, data, 0o600); err != nil {
+		t.Fatalf("write registry: %v", err)
+	}
+
+	var logBuf bytes.Buffer
+	oldLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, nil)))
+	t.Cleanup(func() { slog.SetDefault(oldLogger) })
+
+	got, err := loadValidatedRegistryForServe()
+	if err != nil {
+		t.Fatalf("loadValidatedRegistryForServe() error = %v", err)
+	}
+	if len(got.Services) != 1 || got.Services[0].Name != "valid-app" {
+		t.Fatalf("services = %+v, want only valid-app", got.Services)
+	}
+	logs := logBuf.String()
+	if !strings.Contains(logs, "skipping service with invalid startup config") ||
+		!strings.Contains(logs, "public-app") ||
+		!strings.Contains(logs, "tslink add public-app --funnel --public") {
+		t.Fatalf("logs = %s, want skip warning with service name and remediation", logs)
 	}
 }
 

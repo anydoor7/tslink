@@ -329,6 +329,9 @@ tslink add internal --proxy localhost:9090 --allow user@example.com,tag:admin
 # Public exposure via Tailscale Funnel (requires explicit acknowledgement)
 tslink add public --proxy localhost:3000 --funnel --public
 
+# Migration note: existing Funnel entries created before public_ack was added
+# must be re-added with --public or edited to include "public_ack": true.
+
 # ACL tags for Tailscale network policy
 tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 ```

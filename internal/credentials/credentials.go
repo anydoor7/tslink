@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/url"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -28,7 +29,8 @@ var (
 	createKeyFunc          = func(client *tailscale.Client, ctx context.Context, req tailscale.CreateKeyRequest) (*tailscale.Key, error) {
 		return client.Keys().CreateAuthKey(ctx, req)
 	}
-	authKeyPathFunc = config.AuthKeyPath
+	authKeyPathFunc                      = config.AuthKeyPath
+	enforceCredentialFilePermissionsFunc = func() bool { return runtime.GOOS != "windows" }
 )
 
 func readCredentialFile(path string) ([]byte, error) {
@@ -36,7 +38,7 @@ func readCredentialFile(path string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if info.Mode().Perm()&0o077 != 0 {
+	if enforceCredentialFilePermissionsFunc() && info.Mode().Perm()&0o077 != 0 {
 		if err := os.Chmod(path, 0o600); err != nil {
 			return nil, fmt.Errorf("insecure credential file permissions on %s (%o); run `chmod 600 %s`: %w", path, info.Mode().Perm(), path, err)
 		}

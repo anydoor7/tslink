@@ -20,9 +20,11 @@ import (
 
 // LoginResult represents the JSON output of a successful login.
 type LoginResult struct {
-	Method     string `json:"method"`
-	LoginName  string `json:"login_name,omitempty"`
-	TagCreated string `json:"tag_created,omitempty"`
+	Method         string `json:"method"`
+	LoginName      string `json:"login_name,omitempty"`
+	TagCreated     string `json:"tag_created,omitempty"`
+	Degraded       bool   `json:"degraded"`
+	TagEnsureError string `json:"tag_ensure_error,omitempty"`
 }
 
 // Testable function variables for login credential flow
@@ -243,8 +245,12 @@ func loginWithAPIKey(cmd *cobra.Command, key string) error {
 
 	// Ensure default tag
 	tagCreated := ""
+	degraded := false
+	tagEnsureError := ""
 	defaultTag := config.GetDefaultTag()
 	if err := loginEnsureTagsFn(context.Background(), []string{defaultTag}); err != nil {
+		degraded = true
+		tagEnsureError = err.Error()
 		if errors.Is(err, tailapi.ErrNoAPIClient) {
 			if !jsonOutput(cmd) {
 				fmt.Fprintf(os.Stderr, "→ Degraded login: skipped ACL tag management: %v. Services using tags may fail until tag automation is available.\n", err)
@@ -257,7 +263,7 @@ func loginWithAPIKey(cmd *cobra.Command, key string) error {
 	}
 
 	if jsonOutput(cmd) {
-		output.Success("login", LoginResult{Method: "api-key", TagCreated: tagCreated})
+		output.Success("login", LoginResult{Method: "api-key", TagCreated: tagCreated, Degraded: degraded, TagEnsureError: tagEnsureError})
 	} else {
 		fmt.Println("→ API key saved (system keychain)")
 		fmt.Println("→ Auth keys will be derived automatically on 'tslink serve'")
@@ -288,8 +294,12 @@ func loginWithClientSecret(cmd *cobra.Command, secret string) error {
 
 	// Ensure default tag
 	tagCreated := ""
+	degraded := false
+	tagEnsureError := ""
 	defaultTag := config.GetDefaultTag()
 	if err := loginEnsureTagsFn(context.Background(), []string{defaultTag}); err != nil {
+		degraded = true
+		tagEnsureError = err.Error()
 		if errors.Is(err, tailapi.ErrNoAPIClient) {
 			if !jsonOutput(cmd) {
 				fmt.Fprintf(os.Stderr, "→ Degraded login: skipped ACL tag management: %v. OAuth client-secret mode may start nodes, but tag/device API automation requires an API access token.\n", err)
@@ -302,7 +312,7 @@ func loginWithClientSecret(cmd *cobra.Command, secret string) error {
 	}
 
 	if jsonOutput(cmd) {
-		output.Success("login", LoginResult{Method: "client-secret", TagCreated: tagCreated})
+		output.Success("login", LoginResult{Method: "client-secret", TagCreated: tagCreated, Degraded: degraded, TagEnsureError: tagEnsureError})
 	} else {
 		fmt.Println("→ Client secret saved (system keychain)")
 		fmt.Println("→ Long-lived node auth saved")
