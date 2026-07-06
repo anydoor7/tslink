@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"os/signal"
 	"path/filepath"
 	"syscall"
@@ -30,23 +31,25 @@ var serveDaemon bool
 
 // Testable function variables for serve
 var (
-	serveWritePIDFn     = daemon.WritePID
-	serveRemovePIDFn    = daemon.RemovePID
-	serveNewServerFn    = func(authKey, controlURL string) (serverRunner, error) { return server.New(authKey, controlURL) }
-	serveEnsureDirFn    = config.EnsureDir
-	serveMigrateFn      = credentials.MigrateFromLegacy
-	serveRegistryPathFn = config.RegistryPath
-	serveLoadRegistryFn = registry.Load
-	serveGetAuthKeyFn   = credentials.GetAuthKey
-	serveCheckAuthFn    = credentials.RequireStoredCredential
-	servePIDPathFn      = config.PIDPath
-	serveIsRunningFn    = daemon.IsRunning
-	serveEnsureTagsFn   = tailapi.EnsureTags
-	serveCleanupFn      = tailapi.CleanupStaleNodesResult
-	serveLoadGlobalFn   = config.LoadGlobalConfig
-	serveLogDirFn       = config.LogDir
-	serveDaemonizeFn    = daemon.Daemonize
-	serveReadPIDFn      = daemon.ReadPID
+	serveWritePIDFn           = daemon.WritePID
+	serveWritePIDForProcessFn = daemon.WritePIDForProcess
+	serveRemovePIDFn          = daemon.RemovePID
+	serveWithPIDLockFn        = daemon.WithPIDLock
+	serveNewServerFn          = func(authKey, controlURL string) (serverRunner, error) { return server.New(authKey, controlURL) }
+	serveEnsureDirFn          = config.EnsureDir
+	serveMigrateFn            = credentials.MigrateFromLegacy
+	serveRegistryPathFn       = config.RegistryPath
+	serveLoadRegistryFn       = registry.Load
+	serveGetAuthKeyFn         = credentials.GetAuthKey
+	serveCheckAuthFn          = credentials.RequireStoredCredential
+	servePIDPathFn            = config.PIDPath
+	serveIsRunningFn          = daemon.IsRunning
+	serveEnsureTagsFn         = tailapi.EnsureTags
+	serveCleanupFn            = tailapi.CleanupStaleNodesResult
+	serveLoadGlobalFn         = config.LoadGlobalConfig
+	serveLogDirFn             = config.LogDir
+	serveDaemonizeFn          = daemon.Daemonize
+	serveReadPIDFn            = daemon.ReadPID
 
 	serveDaemonReadyTimeout      = 10 * time.Second
 	serveDaemonReadyPollInterval = 50 * time.Millisecond
@@ -102,7 +105,7 @@ Examples:
 				return err
 			}
 
-			if serveIsRunningFn(pidPath) {
+			if !serveDaemon && serveIsRunningFn(pidPath) {
 				return output.ErrConflict("tslink is already running (see: tslink status)")
 			}
 
@@ -110,9 +113,6 @@ Examples:
 			if err != nil {
 				return err
 			}
-
-			// Clear stale state so daemon readiness waits for the child PID write.
-			serveRemovePIDFn(pidPath)
 
 			if serveDaemon {
 				logDir, err := serveLogDirFn()
@@ -123,8 +123,22 @@ Examples:
 				outLog := filepath.Join(logDir, "tslink.out.log")
 				errLog := filepath.Join(logDir, "tslink.err.log")
 
-				pid, err := serveDaemonizeFn(outLog, errLog, controlURL)
-				if err != nil {
+				var pid int
+				if err := serveWithPIDLockFn(pidPath, func() error {
+					if serveIsRunningFn(pidPath) {
+						return output.ErrConflict("tslink is already running (see: tslink status)")
+					}
+					serveRemovePIDFn(pidPath)
+					var err error
+					pid, err = serveDaemonizeFn(outLog, errLog, controlURL)
+					if err != nil {
+						return err
+					}
+					if err := serveWritePIDForProcessFn(pidPath, pid); err != nil {
+						return fmt.Errorf("write daemon PID: %w", err)
+					}
+					return nil
+				}); err != nil {
 					return err
 				}
 
@@ -239,10 +253,20 @@ func waitForDaemonReady(pidPath string, expectedPID int, timeout, pollInterval t
 	}
 }
 
-
 func runForeground(pidPath, authKey, controlURL string) error {
-	if err := serveWritePIDFn(pidPath); err != nil {
-		return fmt.Errorf("write PID: %w", err)
+	if err := serveWithPIDLockFn(pidPath, func() error {
+		if serveIsRunningFn(pidPath) {
+			pid, err := serveReadPIDFn(pidPath)
+			if err != nil || pid != os.Getpid() {
+				return output.ErrConflict("tslink is already running (see: tslink status)")
+			}
+		}
+		if err := serveWritePIDFn(pidPath); err != nil {
+			return fmt.Errorf("write PID: %w", err)
+		}
+		return nil
+	}); err != nil {
+		return err
 	}
 	defer serveRemovePIDFn(pidPath)
 

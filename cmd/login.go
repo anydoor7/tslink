@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -99,10 +100,12 @@ service, Windows Credential Manager). On systems without keychain support,
 they fall back to files in ~/.config/tslink/ with restricted permissions (0600).
 
 Non-interactive mode:
-  tslink login --api-key "tskey-api-..."
-  tslink login --client-secret "tskey-client-..."
   TSLINK_API_KEY="tskey-api-..." tslink login
   TSLINK_CLIENT_SECRET="tskey-client-..." tslink login
+  printf %s "$TSLINK_API_KEY" | tslink login --api-key-stdin
+  printf %s "$TSLINK_CLIENT_SECRET" | tslink login --client-secret-stdin
+  tslink login --api-key "tskey-api-..."              # compatible but visible in process lists
+  tslink login --client-secret "tskey-client-..."     # compatible but visible in process lists
 
 Examples:
   tslink login                  Interactive login with browser + credential prompt
@@ -114,14 +117,9 @@ Examples:
 			return err
 		}
 
-		// Non-interactive: flag > env var
-		apiKey, _ := cmd.Flags().GetString("api-key")
-		if apiKey == "" {
-			apiKey = os.Getenv("TSLINK_API_KEY")
-		}
-		clientSecret, _ := cmd.Flags().GetString("client-secret")
-		if clientSecret == "" {
-			clientSecret = os.Getenv("TSLINK_CLIENT_SECRET")
+		apiKey, clientSecret, err := resolveLoginCredentials(cmd)
+		if err != nil {
+			return err
 		}
 
 		if apiKey != "" {
@@ -158,6 +156,69 @@ Examples:
 	},
 }
 
+func readLoginCredentialStdin(cmd *cobra.Command, name string) (string, error) {
+	data, err := io.ReadAll(cmd.InOrStdin())
+	if err != nil {
+		return "", fmt.Errorf("read %s from stdin: %w", name, err)
+	}
+	value := strings.TrimSpace(string(data))
+	if value == "" {
+		return "", fmt.Errorf("%s stdin was empty", name)
+	}
+	return value, nil
+}
+
+func resolveLoginCredentials(cmd *cobra.Command) (apiKey, clientSecret string, err error) {
+	apiKeyFlag, _ := cmd.Flags().GetString("api-key")
+	clientSecretFlag, _ := cmd.Flags().GetString("client-secret")
+	apiKeyStdin, _ := cmd.Flags().GetBool("api-key-stdin")
+	clientSecretStdin, _ := cmd.Flags().GetBool("client-secret-stdin")
+
+	explicit := 0
+	if apiKeyFlag != "" {
+		explicit++
+	}
+	if clientSecretFlag != "" {
+		explicit++
+	}
+	if apiKeyStdin {
+		explicit++
+	}
+	if clientSecretStdin {
+		explicit++
+	}
+	if explicit > 1 {
+		return "", "", fmt.Errorf("provide only one explicit credential source")
+	}
+
+	switch {
+	case apiKeyFlag != "":
+		return apiKeyFlag, "", nil
+	case clientSecretFlag != "":
+		return "", clientSecretFlag, nil
+	case apiKeyStdin:
+		value, err := readLoginCredentialStdin(cmd, "api key")
+		if err != nil {
+			return "", "", err
+		}
+		return value, "", nil
+	case clientSecretStdin:
+		value, err := readLoginCredentialStdin(cmd, "client secret")
+		if err != nil {
+			return "", "", err
+		}
+		return "", value, nil
+	}
+
+	if value := os.Getenv("TSLINK_API_KEY"); value != "" {
+		return value, "", nil
+	}
+	if value := os.Getenv("TSLINK_CLIENT_SECRET"); value != "" {
+		return "", value, nil
+	}
+	return "", "", nil
+}
+
 func loginWithAPIKey(cmd *cobra.Command, key string) error {
 	if !strings.HasPrefix(key, "tskey-api-") {
 		return fmt.Errorf("API key must start with \"tskey-api-\" prefix")
@@ -186,10 +247,10 @@ func loginWithAPIKey(cmd *cobra.Command, key string) error {
 	if err := loginEnsureTagsFn(context.Background(), []string{defaultTag}); err != nil {
 		if errors.Is(err, tailapi.ErrNoAPIClient) {
 			if !jsonOutput(cmd) {
-				fmt.Fprintf(os.Stderr, "→ Skipped ACL tag management: %v\n", err)
+				fmt.Fprintf(os.Stderr, "→ Degraded login: skipped ACL tag management: %v. Services using tags may fail until tag automation is available.\n", err)
 			}
 		} else if !jsonOutput(cmd) {
-			fmt.Fprintf(os.Stderr, "⚠ Could not create default tag in ACL: %v\n", err)
+			fmt.Fprintf(os.Stderr, "⚠ Degraded login: could not ensure default ACL tag: %v. `tslink serve` may fail for tag-restricted services; verify API token permissions for tag automation.\n", err)
 		}
 	} else {
 		tagCreated = defaultTag
@@ -231,10 +292,10 @@ func loginWithClientSecret(cmd *cobra.Command, secret string) error {
 	if err := loginEnsureTagsFn(context.Background(), []string{defaultTag}); err != nil {
 		if errors.Is(err, tailapi.ErrNoAPIClient) {
 			if !jsonOutput(cmd) {
-				fmt.Fprintf(os.Stderr, "→ Skipped ACL tag management: %v\n", err)
+				fmt.Fprintf(os.Stderr, "→ Degraded login: skipped ACL tag management: %v. OAuth client-secret mode may start nodes, but tag/device API automation requires an API access token.\n", err)
 			}
 		} else if !jsonOutput(cmd) {
-			fmt.Fprintf(os.Stderr, "⚠ Could not create default tag in ACL: %v\n", err)
+			fmt.Fprintf(os.Stderr, "⚠ Degraded login: could not ensure default ACL tag: %v. `tslink serve` may fail for tag-restricted services; API access token mode is recommended for tag automation.\n", err)
 		}
 	} else {
 		tagCreated = defaultTag
@@ -311,6 +372,8 @@ func loginCredentialFlow(cmd *cobra.Command, cfgDir string) error {
 
 func init() {
 	rootCmd.AddCommand(loginCmd)
-	loginCmd.Flags().String("api-key", "", "API access token (tskey-api-*) for non-interactive login")
-	loginCmd.Flags().String("client-secret", "", "OAuth client secret (tskey-client-*) for non-interactive login")
+	loginCmd.Flags().String("api-key", "", "API access token (tskey-api-*) for non-interactive login; visible in process lists, prefer env or --api-key-stdin")
+	loginCmd.Flags().String("client-secret", "", "OAuth client secret (tskey-client-*) for non-interactive login; visible in process lists, prefer env or --client-secret-stdin")
+	loginCmd.Flags().Bool("api-key-stdin", false, "Read API access token from stdin")
+	loginCmd.Flags().Bool("client-secret-stdin", false, "Read OAuth client secret from stdin")
 }

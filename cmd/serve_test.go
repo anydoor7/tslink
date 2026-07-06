@@ -68,30 +68,32 @@ func (m *mockServerWithAuthProvider) Run(ctx context.Context) error {
 func saveServeState(t *testing.T) {
 	t.Helper()
 	old := struct {
-		ensureDir    func() error
-		migrate      func() bool
-		registryPath func() (string, error)
-		loadRegistry func(string) (*registry.Registry, error)
-		getAuthKey   func(context.Context, credentials.AuthKeyOptions) (string, error)
-		checkAuth    func() error
-		pidPath      func() (string, error)
-		isRunning    func(string) bool
-		ensureTags   func(context.Context, []string) error
-		cleanup      func(context.Context, []tailapi.CleanupTarget) (tailapi.CleanupResult, error)
-		loadGlobal   func() (config.GlobalConfig, error)
-		logDir       func() (string, error)
-		daemonize    func(string, string, string) (int, error)
-		readPID      func(string) (int, error)
-		writePID     func(string) error
-		removePID    func(string)
-		newServer    func(string, string) (serverRunner, error)
-		readyTimeout time.Duration
-		readyPoll    time.Duration
+		ensureDir          func() error
+		migrate            func() bool
+		registryPath       func() (string, error)
+		loadRegistry       func(string) (*registry.Registry, error)
+		getAuthKey         func(context.Context, credentials.AuthKeyOptions) (string, error)
+		checkAuth          func() error
+		pidPath            func() (string, error)
+		isRunning          func(string) bool
+		ensureTags         func(context.Context, []string) error
+		cleanup            func(context.Context, []tailapi.CleanupTarget) (tailapi.CleanupResult, error)
+		loadGlobal         func() (config.GlobalConfig, error)
+		logDir             func() (string, error)
+		daemonize          func(string, string, string) (int, error)
+		readPID            func(string) (int, error)
+		writePID           func(string) error
+		writePIDForProcess func(string, int) error
+		removePID          func(string)
+		withPIDLock        func(string, func() error) error
+		newServer          func(string, string) (serverRunner, error)
+		readyTimeout       time.Duration
+		readyPoll          time.Duration
 	}{
 		serveEnsureDirFn, serveMigrateFn, serveRegistryPathFn, serveLoadRegistryFn,
 		serveGetAuthKeyFn, serveCheckAuthFn, servePIDPathFn, serveIsRunningFn, serveEnsureTagsFn, serveCleanupFn,
 		serveLoadGlobalFn, serveLogDirFn, serveDaemonizeFn, serveReadPIDFn,
-		serveWritePIDFn, serveRemovePIDFn, serveNewServerFn,
+		serveWritePIDFn, serveWritePIDForProcessFn, serveRemovePIDFn, serveWithPIDLockFn, serveNewServerFn,
 		serveDaemonReadyTimeout, serveDaemonReadyPollInterval,
 	}
 	t.Cleanup(func() {
@@ -110,7 +112,9 @@ func saveServeState(t *testing.T) {
 		serveDaemonizeFn = old.daemonize
 		serveReadPIDFn = old.readPID
 		serveWritePIDFn = old.writePID
+		serveWritePIDForProcessFn = old.writePIDForProcess
 		serveRemovePIDFn = old.removePID
+		serveWithPIDLockFn = old.withPIDLock
 		serveNewServerFn = old.newServer
 		serveDaemonReadyTimeout = old.readyTimeout
 		serveDaemonReadyPollInterval = old.readyPoll
@@ -152,7 +156,11 @@ func mockServeDefaults(t *testing.T, dir string) {
 	serveDaemonizeFn = func(out, err, controlURL string) (int, error) { return 99999, nil }
 	serveReadPIDFn = func(path string) (int, error) { return 99999, nil }
 	serveWritePIDFn = func(path string) error { return os.WriteFile(path, []byte("12345"), 0600) }
+	serveWritePIDForProcessFn = func(path string, pid int) error {
+		return os.WriteFile(path, []byte(fmt.Sprintf("%d", pid)), 0600)
+	}
 	serveRemovePIDFn = func(path string) { os.Remove(path) }
+	serveWithPIDLockFn = func(path string, fn func() error) error { return fn() }
 	serveNewServerFn = func(authKey, controlURL string) (serverRunner, error) {
 		return &mockServer{}, nil
 	}
@@ -215,6 +223,34 @@ func TestRunForeground_ServerRunError(t *testing.T) {
 	err := runForeground(filepath.Join(dir, "test.pid"), "fake-key", "")
 	if err == nil || err.Error() != "runtime error" {
 		t.Fatalf("expected 'runtime error', got: %v", err)
+	}
+}
+
+func TestRunForeground_AllowsPIDFileForCurrentProcess(t *testing.T) {
+	dir := t.TempDir()
+	saveServeState(t)
+	pidPath := filepath.Join(dir, "test.pid")
+	if err := os.WriteFile(pidPath, []byte(fmt.Sprintf("%d\n", os.Getpid())), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	serveIsRunningFn = func(path string) bool { return true }
+	serveReadPIDFn = func(path string) (int, error) { return os.Getpid(), nil }
+	wrote := false
+	serveWritePIDFn = func(path string) error {
+		wrote = true
+		return os.WriteFile(path, []byte(fmt.Sprintf("%d\n", os.Getpid())), 0o600)
+	}
+	serveRemovePIDFn = func(path string) { os.Remove(path) }
+	serveWithPIDLockFn = func(path string, fn func() error) error { return fn() }
+	serveNewServerFn = func(authKey, controlURL string) (serverRunner, error) {
+		return &mockServer{}, nil
+	}
+
+	if err := runForeground(pidPath, "fake-key", ""); err != nil {
+		t.Fatalf("runForeground() error = %v", err)
+	}
+	if !wrote {
+		t.Fatal("runForeground did not refresh current-process PID file")
 	}
 }
 

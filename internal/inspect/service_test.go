@@ -120,6 +120,12 @@ func TestServiceViewRedactsHTTPAuthCredentials(t *testing.T) {
 	if view.Middleware == nil || !view.Middleware.HTTPAuth {
 		t.Fatalf("middleware summary = %+v, want redacted auth presence", view.Middleware)
 	}
+	if len(view.Warnings) != 1 || view.Warnings[0].Code != WarningCodeMiddlewareNotEnforced {
+		t.Fatalf("warnings = %+v, want middleware_not_enforced", view.Warnings)
+	}
+	if !strings.Contains(view.Warnings[0].Message, "NOT enforced") {
+		t.Fatalf("warning message = %q, want explicit unenforced wording", view.Warnings[0].Message)
+	}
 }
 
 func TestServiceViewRedactsBackendURLSecrets(t *testing.T) {
@@ -254,7 +260,7 @@ func TestServiceViewWarningCodesAreRegistered(t *testing.T) {
 	required := []string{
 		WarningCodeTCPHTTPACLNotApplicable,
 		WarningCodeTCPAllowedUsersInvalid,
-		WarningCodeHTTPAuthConfigured,
+		WarningCodeMiddlewareNotEnforced,
 		WarningCodeServiceTypeUnknown,
 	}
 	for _, code := range required {
@@ -311,6 +317,7 @@ func TestServiceViewWarningCodesAreRegistered(t *testing.T) {
 func TestFunnelConflictCodesAreRegistered(t *testing.T) {
 	required := []string{
 		WarningCodeFunnelAllowConflict,
+		WarningCodeFunnelPublicAckRequired,
 		WarningCodeFunnelControlURLConflict,
 		WarningCodeFunnelTypeConflict,
 	}

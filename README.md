@@ -269,6 +269,17 @@ TSLink accepts two credential types (you only need one):
 
 `tslink login` guides you through either path interactively. Credentials are stored in the system keychain first (macOS Keychain / Linux secret service / Windows Credential Manager), with restricted-permission file fallback for headless environments.
 
+For non-interactive setup, prefer environment variables or stdin so secrets do not land in shell history or process listings:
+
+```bash
+TSLINK_API_KEY="tskey-api-..." tslink login
+printf %s "$TSLINK_API_KEY" | tslink login --api-key-stdin
+TSLINK_CLIENT_SECRET="tskey-client-..." tslink login
+printf %s "$TSLINK_CLIENT_SECRET" | tslink login --client-secret-stdin
+```
+
+The compatible `--api-key` and `--client-secret` flags remain available, but command-line arguments can be visible to other local processes.
+
 ### Tag Auto-Management
 
 TSLink automatically manages Tailscale ACL tags for your services:
@@ -354,6 +365,19 @@ tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 | `tslink config` | Manage global configuration (set/get/list) |
 | `tslink install` | Auto-start on login (macOS LaunchAgent / Linux systemd / Windows Startup) |
 | `tslink uninstall` | Remove auto-start |
+
+### Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | Success |
+| `1` | General runtime error |
+| `2` | Usage, argument, or flag error |
+| `3` | Authentication error |
+| `4` | Conflict, such as an already-running daemon |
+| `5` | Requested resource not found |
+| `64` | Diagnostic warning threshold |
+| `65` | Diagnostic critical threshold |
 
 ### Add Command Flags
 

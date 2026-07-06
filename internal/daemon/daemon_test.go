@@ -58,6 +58,78 @@ func TestWriteAndReadPID(t *testing.T) {
 	}
 }
 
+func TestWritePIDForProcess(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tslink.pid")
+
+	if err := WritePIDForProcess(path, 4242); err != nil {
+		t.Fatalf("WritePIDForProcess() error = %v", err)
+	}
+
+	pid, err := ReadPID(path)
+	if err != nil {
+		t.Fatalf("ReadPID() error = %v", err)
+	}
+	if pid != 4242 {
+		t.Fatalf("ReadPID() = %d, want 4242", pid)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat() error = %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("PID perms = %o, want 600", got)
+	}
+}
+
+func TestWithPIDLockSerializes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tslink.pid")
+
+	firstEntered := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	firstDone := make(chan error, 1)
+	go func() {
+		firstDone <- WithPIDLock(path, func() error {
+			close(firstEntered)
+			<-releaseFirst
+			return nil
+		})
+	}()
+
+	select {
+	case <-firstEntered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first lock holder did not enter")
+	}
+
+	secondEntered := make(chan struct{})
+	secondDone := make(chan error, 1)
+	go func() {
+		secondDone <- WithPIDLock(path, func() error {
+			close(secondEntered)
+			return nil
+		})
+	}()
+
+	select {
+	case <-secondEntered:
+		t.Fatal("second lock holder entered before first released")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(releaseFirst)
+	if err := <-firstDone; err != nil {
+		t.Fatalf("first WithPIDLock() error = %v", err)
+	}
+	select {
+	case <-secondEntered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("second lock holder did not enter after release")
+	}
+	if err := <-secondDone; err != nil {
+		t.Fatalf("second WithPIDLock() error = %v", err)
+	}
+}
+
 func TestReadPIDNotExist(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "missing.pid")
 

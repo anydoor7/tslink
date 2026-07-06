@@ -6,18 +6,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"go/parser"
+	"go/token"
 	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
-	"unsafe"
 
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/registry"
@@ -53,12 +53,26 @@ func newNode(t *testing.T, svc registry.Service) *ServiceNode {
 	}
 }
 
-func markTSNetServerClosed(t *testing.T, srv *tsnet.Server) {
-	t.Helper()
-
-	field := reflect.ValueOf(srv).Elem().FieldByName("closed")
-	ptr := unsafe.Pointer(field.UnsafeAddr())
-	reflect.NewAt(field.Type(), ptr).Elem().SetBool(true)
+func TestInternalServerTestsDoNotImportReflectOrUnsafe(t *testing.T) {
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("ReadDir() error = %v", err)
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(token.NewFileSet(), name, nil, parser.ImportsOnly)
+		if err != nil {
+			t.Fatalf("ParseFile(%s) error = %v", name, err)
+		}
+		for _, imp := range file.Imports {
+			if imp.Path.Value == `"reflect"` || imp.Path.Value == `"unsafe"` {
+				t.Fatalf("%s imports %s; internal/server tests must not mutate third-party private fields", name, imp.Path.Value)
+			}
+		}
+	}
 }
 
 type fakeListener struct {
@@ -401,9 +415,7 @@ func TestStopNodeLocked_ClosesListenerAndServer(t *testing.T) {
 	}
 
 	ln := &fakeListener{}
-
-	ts := &tsnet.Server{}
-	markTSNetServerClosed(t, ts)
+	ts := &fakeTSNetServer{}
 
 	s.nodes["test"] = &ServiceNode{
 		service:  registry.Service{Name: "test"},
@@ -416,6 +428,9 @@ func TestStopNodeLocked_ClosesListenerAndServer(t *testing.T) {
 
 	if !ln.closed.Load() {
 		t.Fatal("listener should be closed")
+	}
+	if !ts.closed {
+		t.Fatal("tsnet server should be closed")
 	}
 }
 
@@ -934,6 +949,49 @@ func TestSyncNodes_RejectsHandEditedFunnelAllowedUsersBeforeListenFunnel(t *test
 	}
 }
 
+func TestSyncNodes_RejectsHandEditedFunnelWithoutPublicAckBeforeListenFunnel(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+
+	writeRegistry(t, []registry.Service{{
+		Name:   "public-app",
+		Type:   registry.TypeProxy,
+		Target: "http://localhost:3000",
+		Funnel: true,
+	}})
+
+	oldNew := newTSNetServerFn
+	newTSNetServerFn = func(svc registry.Service, stateDir, authKey, controlURL string) tsnetServer {
+		t.Fatalf("syncNodes should reject missing public_ack before constructing tsnet server")
+		return &fakeTSNetServer{}
+	}
+	t.Cleanup(func() { newTSNetServerFn = oldNew })
+
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	err = s.syncNodes(context.Background())
+	if err == nil {
+		t.Fatal("syncNodes() error = nil, want public_ack error")
+	}
+	if !strings.Contains(err.Error(), registry.ErrFunnelPublicAck) {
+		t.Fatalf("syncNodes() error = %v, want public_ack error", err)
+	}
+	if !strings.Contains(err.Error(), registry.CodeFunnelPublicAckRequired) {
+		t.Fatalf("syncNodes() error = %v, want stable code %s", err, registry.CodeFunnelPublicAckRequired)
+	}
+	if code, ok := registry.ErrorCode(err); !ok || code != registry.CodeFunnelPublicAckRequired {
+		t.Fatalf("ErrorCode() = %q, %v; want %s, true", code, ok, registry.CodeFunnelPublicAckRequired)
+	}
+	if len(s.nodes) != 0 {
+		t.Fatalf("nodes = %+v, want none after rejected hand-edited registry", s.nodes)
+	}
+}
+
 func TestSyncNodes_RejectsHandEditedFunnelControlURLBeforeListenFunnel(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	if err := config.EnsureDir(); err != nil {
@@ -1060,10 +1118,11 @@ func TestStartNodeLocked_FunnelLogsWarningBeforeListenFunnel(t *testing.T) {
 	t.Cleanup(s.closeAllNodes)
 
 	err = s.startNodeLocked(context.Background(), registry.Service{
-		Name:   "public-app",
-		Type:   registry.TypeProxy,
-		Target: "http://localhost:3000",
-		Funnel: true,
+		Name:      "public-app",
+		Type:      registry.TypeProxy,
+		Target:    "http://localhost:3000",
+		Funnel:    true,
+		PublicAck: true,
 	})
 	if err != nil {
 		t.Fatalf("startNodeLocked() error = %v", err)
@@ -1073,6 +1132,85 @@ func TestStartNodeLocked_FunnelLogsWarningBeforeListenFunnel(t *testing.T) {
 	}
 	if !strings.Contains(logBuf.String(), "Tailscale Funnel listener exposes this service to the public internet") {
 		t.Fatalf("logs = %s, want public Funnel warning message", logBuf.String())
+	}
+}
+
+func TestStartNodeLocked_MiddlewareConfigLogsNotEnforcedWarning(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+
+	var logBuf bytes.Buffer
+	oldLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, nil)))
+	t.Cleanup(func() { slog.SetDefault(oldLogger) })
+
+	oldNew := newTSNetServerFn
+	newTSNetServerFn = func(svc registry.Service, stateDir, authKey, controlURL string) tsnetServer {
+		return &fakeTSNetServer{}
+	}
+	t.Cleanup(func() { newTSNetServerFn = oldNew })
+
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(s.closeAllNodes)
+
+	err = s.startNodeLocked(context.Background(), registry.Service{
+		Name: "docs",
+		Type: registry.TypeFile,
+		Path: t.TempDir(),
+		Middleware: &registry.MiddlewareConfig{
+			BasicAuth: "user:pass",
+		},
+	})
+	if err != nil {
+		t.Fatalf("startNodeLocked() error = %v", err)
+	}
+	logs := logBuf.String()
+	if !strings.Contains(logs, "middleware configured but not enforced") || !strings.Contains(logs, "NOT enforced") {
+		t.Fatalf("logs = %s, want middleware not-enforced warning", logs)
+	}
+}
+
+func TestStartNodeLocked_CustomDomainLogsTLSNotWiredWarning(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+
+	var logBuf bytes.Buffer
+	oldLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, nil)))
+	t.Cleanup(func() { slog.SetDefault(oldLogger) })
+
+	oldNew := newTSNetServerFn
+	newTSNetServerFn = func(svc registry.Service, stateDir, authKey, controlURL string) tsnetServer {
+		return &funnelWarningTSNetServer{t: t, logBuf: &logBuf}
+	}
+	t.Cleanup(func() { newTSNetServerFn = oldNew })
+
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(s.closeAllNodes)
+
+	err = s.startNodeLocked(context.Background(), registry.Service{
+		Name:      "web",
+		Type:      registry.TypeProxy,
+		Target:    "http://localhost:3000",
+		Domain:    "app.example.com",
+		AcmeEmail: "admin@example.com",
+	})
+	if err != nil {
+		t.Fatalf("startNodeLocked() error = %v", err)
+	}
+	logs := logBuf.String()
+	if !strings.Contains(logs, "custom domain configured but runtime TLS is not wired") || !strings.Contains(logs, "roadmap") {
+		t.Fatalf("logs = %s, want custom-domain TLS warning", logs)
 	}
 }
 
@@ -2382,6 +2520,7 @@ func TestSyncNodes_FunnelChange_TriggersRestart(t *testing.T) {
 	}
 	newSvc := oldSvc
 	newSvc.Funnel = true
+	newSvc.PublicAck = true
 	writeRegistry(t, []registry.Service{newSvc})
 
 	// Block NodesDir so startNodeLocked fails (we just want to verify the old node gets stopped)

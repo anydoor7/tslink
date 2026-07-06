@@ -126,6 +126,30 @@ func TestGetAPIKey_FileFallback(t *testing.T) {
 	}
 }
 
+func TestGetAPIKey_FileFallbackRepairsInsecurePermissions(t *testing.T) {
+	setup(t)
+
+	path := apiKeyPath(t)
+	if err := os.WriteFile(path, []byte("from-file\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	got, err := GetAPIKey()
+	if err != nil {
+		t.Fatalf("GetAPIKey() error = %v", err)
+	}
+	if got != "from-file" {
+		t.Fatalf("GetAPIKey() = %q, want %q", got, "from-file")
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat() error = %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("file perms = %o, want repaired 600", got)
+	}
+}
+
 func TestGetAPIKey_NoKey(t *testing.T) {
 	setup(t)
 

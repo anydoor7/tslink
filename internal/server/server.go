@@ -329,7 +329,7 @@ func serviceChangedWithFallback(old, new registry.Service, fallbackControlURL st
 	if old.Type != new.Type || old.Target != new.Target || old.Path != new.Path {
 		return true
 	}
-	if old.Port != new.Port || old.Ephemeral != new.Ephemeral || old.Funnel != new.Funnel || old.Domain != new.Domain {
+	if old.Port != new.Port || old.Ephemeral != new.Ephemeral || old.Funnel != new.Funnel || old.PublicAck != new.PublicAck || old.Domain != new.Domain {
 		return true
 	}
 	if effectiveControlURL(old, fallbackControlURL) != effectiveControlURL(new, fallbackControlURL) {
@@ -470,7 +470,7 @@ func ValidateServiceForStartup(svc registry.Service) error {
 	if err := registry.ValidateName(svc.Name); err != nil {
 		return fmt.Errorf("service %q: %w", svc.Name, err)
 	}
-	if err := registry.ValidateFunnelGuardrails(svc.Type, svc.Funnel, svc.AllowedUsers, svc.ControlURL); err != nil {
+	if err := registry.ValidateFunnelGuardrails(svc.Type, svc.Funnel, svc.AllowedUsers, svc.ControlURL, svc.PublicAck); err != nil {
 		return fmt.Errorf("service %q: %w; edit registry.json", svc.Name, err)
 	}
 	if svc.Type == registry.TypeTCP && len(svc.AllowedUsers) > 0 {
@@ -485,6 +485,13 @@ func ValidateServiceForStartup(svc registry.Service) error {
 		}
 	}
 	return nil
+}
+
+func middlewareConfigured(mw *registry.MiddlewareConfig) bool {
+	if mw == nil {
+		return false
+	}
+	return mw.BasicAuth != "" || mw.RateLimit != 0 || len(mw.IPAllowList) > 0 || len(mw.CORSOrigins) > 0
 }
 
 func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service) error {
@@ -555,7 +562,7 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service) erro
 		}
 
 		go func() {
-			serveTCP(ln, svc.Target, svc.Name)
+			serveTCP(nodeCtx, ln, svc.Target, svc.Name)
 		}()
 
 		slog.Info("tcp node ready", "name", svc.Name, "target", svc.Target, "port", port)
@@ -604,6 +611,10 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service) erro
 		handler = ACLMiddleware(svc.AllowedUsers, lc)(handler)
 	}
 
+	if middlewareConfigured(svc.Middleware) {
+		slog.Warn("middleware configured but not enforced", "code", "middleware.not_enforced", "name", svc.Name, "message", "service middleware is configured but NOT enforced; middleware pipeline is roadmap/experimental and is not wired into serve")
+	}
+
 	handler = AccessLogMiddleware(svc.Name, handler)
 	handler = s.metrics.Middleware(svc.Name, handler)
 
@@ -649,7 +660,7 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service) erro
 	}
 
 	if svc.Domain != "" {
-		slog.Info("custom domain configured", "name", svc.Name, "domain", svc.Domain)
+		slog.Warn("custom domain configured but runtime TLS is not wired", "code", "custom_domain.tls_not_wired", "name", svc.Name, "domain", svc.Domain, "acme_email_configured", svc.AcmeEmail != "", "message", "custom-domain/ACME runtime TLS is roadmap and is not wired into serve")
 	}
 
 	s.nodes[svc.Name] = node

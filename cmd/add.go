@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"net"
+	"net/mail"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -47,6 +48,22 @@ func parseTags(tagsStr string) ([]string, error) {
 	return tags, nil
 }
 
+func isValidAllowEmail(entry string) bool {
+	addr, err := mail.ParseAddress(entry)
+	return err == nil && addr.Address == entry && strings.Contains(entry, "@")
+}
+
+func invalidAllowEntries(allowedUsers []string) []string {
+	var invalid []string
+	for _, entry := range allowedUsers {
+		if strings.HasPrefix(entry, "tag:") || isValidAllowEmail(entry) {
+			continue
+		}
+		invalid = append(invalid, entry)
+	}
+	return invalid
+}
+
 // AddParams holds parsed flags for the add command.
 type AddParams struct {
 	Name       string
@@ -76,6 +93,9 @@ func buildService(p AddParams) (registry.Service, error) {
 		for _, a := range strings.Split(p.Allow, ",") {
 			a = strings.TrimSpace(a)
 			if a != "" {
+				if !strings.HasPrefix(a, "tag:") {
+					a = strings.ToLower(a)
+				}
 				allowedUsers = append(allowedUsers, a)
 			}
 			if strings.HasPrefix(a, "tag:") {
@@ -110,7 +130,7 @@ func buildService(p AddParams) (registry.Service, error) {
 	if p.Public && !p.Funnel {
 		return registry.Service{}, fmt.Errorf("--public can only be used with --funnel")
 	}
-	if err := registry.ValidateFunnelGuardrails(svcType, p.Funnel, allowedUsers, p.ControlURL); err != nil {
+	if err := registry.ValidateFunnelGuardrails(svcType, p.Funnel, allowedUsers, p.ControlURL, p.Public); err != nil {
 		return registry.Service{}, err
 	}
 	if p.Funnel && !p.Public {
@@ -172,7 +192,7 @@ func buildService(p AddParams) (registry.Service, error) {
 		return registry.Service{
 			Name: p.Name, Type: registry.TypeProxy, Target: target,
 			Ephemeral: p.Ephemeral, Tags: tags, AllowedUsers: allowedUsers,
-			Funnel: p.Funnel, Domain: p.Domain, AcmeEmail: p.AcmeEmail,
+			Funnel: p.Funnel, PublicAck: p.Public, Domain: p.Domain, AcmeEmail: p.AcmeEmail,
 			ControlURL: p.ControlURL,
 		}, nil
 	}
@@ -228,6 +248,10 @@ Examples:
 			})
 			if err != nil {
 				return err
+			}
+
+			if invalid := invalidAllowEntries(svc.AllowedUsers); len(invalid) > 0 && !jsonOutput(cmd) {
+				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: --allow entry %q is neither a valid email address nor tag:<name>; it will likely deny rather than allow access.\n", invalid[0])
 			}
 
 			// For dir type, resolve and validate filesystem path

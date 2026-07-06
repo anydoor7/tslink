@@ -257,10 +257,10 @@ func warningsFor(svc registry.Service, mw *MiddlewareView) []WarningView {
 			fmt.Sprintf("Unknown service type %q.", svc.Type),
 		))
 	}
-	if mw != nil && mw.HTTPAuth {
+	if mw != nil {
 		warnings = append(warnings, warningView(
-			WarningCodeHTTPAuthConfigured,
-			"HTTP authentication is configured; credentials are redacted.",
+			WarningCodeMiddlewareNotEnforced,
+			"Middleware is configured but NOT enforced; Basic Auth, rate limiting, IP allow list, and CORS are roadmap/experimental because the middleware pipeline is not wired into serve.",
 		))
 	}
 	return warnings

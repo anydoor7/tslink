@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"github.com/monody0007/tslink/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -33,6 +34,9 @@ Use "tslink <command> --help" for detailed information about each command.`,
 
 func init() {
 	rootCmd.PersistentFlags().Bool("json", false, "Output as JSON")
+	rootCmd.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
+		return output.ErrUsage(err.Error())
+	})
 	rootCmd.SilenceErrors = true
 	rootCmd.SilenceUsage = true
 }

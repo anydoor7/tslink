@@ -3,6 +3,7 @@ package credentials
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"os"
 	"strconv"
@@ -29,6 +30,20 @@ var (
 	}
 	authKeyPathFunc = config.AuthKeyPath
 )
+
+func readCredentialFile(path string) ([]byte, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		if err := os.Chmod(path, 0o600); err != nil {
+			return nil, fmt.Errorf("insecure credential file permissions on %s (%o); run `chmod 600 %s`: %w", path, info.Mode().Perm(), path, err)
+		}
+		slog.Warn("repaired insecure credential file permissions", "path", path, "old_mode", info.Mode().Perm(), "new_mode", os.FileMode(0o600))
+	}
+	return os.ReadFile(path)
+}
 
 // SetAPIKey stores the API key. Prefers macOS Keychain; falls back to file (0600).
 func SetAPIKey(key string) error {
@@ -59,7 +74,7 @@ func GetAPIKey() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	b, err := os.ReadFile(path)
+	b, err := readCredentialFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return "", nil
@@ -111,7 +126,7 @@ func GetClientSecret() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	b, err := os.ReadFile(path)
+	b, err := readCredentialFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return "", nil
@@ -212,7 +227,7 @@ func HasStoredCredential() (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	b, err := os.ReadFile(authKeyPath)
+	b, err := readCredentialFile(authKeyPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return false, nil
@@ -282,7 +297,7 @@ func GetAuthKey(ctx context.Context, opts AuthKeyOptions) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	b, err := os.ReadFile(authKeyPath)
+	b, err := readCredentialFile(authKeyPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return "", fmt.Errorf("not authenticated — run 'tslink login' first")
@@ -303,7 +318,7 @@ func MigrateFromLegacy() (migrated bool) {
 	if err != nil {
 		return false
 	}
-	b, err := os.ReadFile(path)
+	b, err := readCredentialFile(path)
 	if err != nil {
 		return false
 	}

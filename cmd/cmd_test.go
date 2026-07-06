@@ -392,6 +392,9 @@ func TestAddCmd_WithFunnel(t *testing.T) {
 			if !svc.Funnel {
 				t.Error("expected funnel=true")
 			}
+			if !svc.PublicAck {
+				t.Error("expected public_ack=true")
+			}
 			return
 		}
 	}

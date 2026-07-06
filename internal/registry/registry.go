@@ -26,10 +26,12 @@ const (
 	TagGrammar = "tag:<lowercase-hyphen-name> using lowercase letters, numbers, and hyphens"
 
 	CodeFunnelAllowConflict      = "funnel_allow_conflict"
+	CodeFunnelPublicAckRequired  = "funnel_public_ack_required"
 	CodeFunnelControlURLConflict = "funnel_control_url_conflict"
 	CodeFunnelTypeConflict       = "funnel_type_conflict"
 
 	ErrFunnelAllowedUsers = "funnel services do not support allowed_users; public Funnel cannot be combined with TSLink allow lists"
+	ErrFunnelPublicAck    = "funnel services require recorded public acknowledgement; re-run `tslink add ... --funnel --public` or set public_ack:true after confirming public internet exposure"
 	ErrFunnelControlURL   = "funnel services do not support per-service control_url; use the default Tailscale control server or disable funnel"
 	ErrFunnelTypeConflict = "funnel can only be used with proxy services; public Funnel is not supported for file or tcp services"
 )
@@ -67,6 +69,10 @@ func FunnelAllowedUsersError() error {
 	return CodedError{Code: CodeFunnelAllowConflict, Message: ErrFunnelAllowedUsers}
 }
 
+func FunnelPublicAckError() error {
+	return CodedError{Code: CodeFunnelPublicAckRequired, Message: ErrFunnelPublicAck}
+}
+
 func FunnelControlURLError() error {
 	return CodedError{Code: CodeFunnelControlURLConflict, Message: ErrFunnelControlURL}
 }
@@ -79,7 +85,7 @@ func FunnelTypeConflictError(serviceType string) error {
 	return CodedError{Code: CodeFunnelTypeConflict, Message: message}
 }
 
-func ValidateFunnelGuardrails(serviceType string, funnel bool, allowedUsers []string, controlURL string) error {
+func ValidateFunnelGuardrails(serviceType string, funnel bool, allowedUsers []string, controlURL string, publicAck bool) error {
 	if !funnel {
 		return nil
 	}
@@ -91,6 +97,9 @@ func ValidateFunnelGuardrails(serviceType string, funnel bool, allowedUsers []st
 	}
 	if controlURL != "" {
 		return FunnelControlURLError()
+	}
+	if !publicAck {
+		return FunnelPublicAckError()
 	}
 	return nil
 }
@@ -121,6 +130,7 @@ type Service struct {
 	AllowedUsers []string          `json:"allowed_users,omitempty"`
 	ControlURL   string            `json:"control_url,omitempty"`
 	Funnel       bool              `json:"funnel,omitempty"`
+	PublicAck    bool              `json:"public_ack,omitempty"`
 	Domain       string            `json:"domain,omitempty"`
 	AcmeEmail    string            `json:"acme_email,omitempty"`
 	Middleware   *MiddlewareConfig `json:"middleware,omitempty"`
@@ -172,7 +182,7 @@ func ValidateService(svc Service) error {
 	if err := ValidateName(svc.Name); err != nil {
 		return err
 	}
-	if err := ValidateFunnelGuardrails(svc.Type, svc.Funnel, svc.AllowedUsers, svc.ControlURL); err != nil {
+	if err := ValidateFunnelGuardrails(svc.Type, svc.Funnel, svc.AllowedUsers, svc.ControlURL, svc.PublicAck); err != nil {
 		return err
 	}
 	if svc.Type == TypeTCP && len(svc.AllowedUsers) > 0 {

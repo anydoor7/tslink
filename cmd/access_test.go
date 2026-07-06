@@ -316,6 +316,7 @@ func TestAccessExplainFunnelMarksPublicAndPolicyUnknown(t *testing.T) {
 		Type:   registry.TypeProxy,
 		Target: "http://localhost:3000",
 		Funnel: true,
+		PublicAck: true,
 	})
 	if err != nil {
 		t.Fatalf("runAccessExplain: %v", err)
@@ -431,7 +432,7 @@ func TestAccessExplainExternalPolicyAndBackendAuthAlwaysPresent(t *testing.T) {
 		{Name: "web", Type: registry.TypeProxy, Target: "http://localhost:3000"},
 		{Name: "docs", Type: registry.TypeFile, Path: "/srv/docs"},
 		{Name: "db", Type: registry.TypeTCP, Target: "localhost:5432", Port: 5432},
-		{Name: "public-app", Type: registry.TypeProxy, Target: "http://localhost:3000", Funnel: true},
+		{Name: "public-app", Type: registry.TypeProxy, Target: "http://localhost:3000", Funnel: true, PublicAck: true},
 	}
 	for _, svc := range cases {
 		_, result, err := runAccessExplainWithServices(t, svc.Name, true, svc)

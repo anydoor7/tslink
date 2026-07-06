@@ -502,6 +502,7 @@ func TestDoctorFunnelGlobalControlURLWarning(t *testing.T) {
 		Type:   registry.TypeProxy,
 		Target: "http://localhost:3000",
 		Funnel: true,
+		PublicAck: true,
 	}})
 	env.writeExactSnapshot(t)
 	doctorLoadGlobalConfigFn = func() (config.GlobalConfig, error) {

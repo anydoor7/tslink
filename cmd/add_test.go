@@ -15,10 +15,11 @@ func TestAddFunnel_WithProxy_Persisted(t *testing.T) {
 
 	// Directly add a service with funnel=true to registry
 	svc := registry.Service{
-		Name:   "funnel-test",
-		Type:   registry.TypeProxy,
-		Target: "http://localhost:3000",
-		Funnel: true,
+		Name:      "funnel-test",
+		Type:      registry.TypeProxy,
+		Target:    "http://localhost:3000",
+		Funnel:    true,
+		PublicAck: true,
 	}
 	if _, err := registry.Add(regPath, svc); err != nil {
 		t.Fatalf("registry.Add: %v", err)
@@ -162,8 +163,11 @@ func TestBuildService_FunnelRejectsMissingPublicAck(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected missing public acknowledgement error")
 	}
-	if !strings.Contains(err.Error(), publicAckRequiredError) {
+	if !strings.Contains(err.Error(), registry.ErrFunnelPublicAck) {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if code, ok := registry.ErrorCode(err); !ok || code != registry.CodeFunnelPublicAckRequired {
+		t.Fatalf("ErrorCode() = %q, %v; want %s, true", code, ok, registry.CodeFunnelPublicAckRequired)
 	}
 }
 
@@ -200,6 +204,9 @@ func TestBuildService_FunnelAcceptsPublicAckWithoutAllow(t *testing.T) {
 	}
 	if !svc.Funnel {
 		t.Fatal("expected funnel=true")
+	}
+	if !svc.PublicAck {
+		t.Fatal("expected public_ack=true")
 	}
 	if len(svc.AllowedUsers) != 0 {
 		t.Fatalf("allowed_users = %v, want none", svc.AllowedUsers)
@@ -308,6 +315,60 @@ func TestBuildService_RejectsInvalidAllowTag(t *testing.T) {
 	}
 }
 
+func TestBuildService_NormalizesAllowEmailCase(t *testing.T) {
+	svc, err := buildService(AddParams{
+		Name:  "app",
+		Proxy: "localhost:3000",
+		Allow: "User@Example.com,tag:admin",
+	})
+	if err != nil {
+		t.Fatalf("buildService() error = %v", err)
+	}
+	got := strings.Join(svc.AllowedUsers, ",")
+	if got != "user@example.com,tag:admin" {
+		t.Fatalf("allowed_users = %q, want normalized email and preserved tag", got)
+	}
+}
+
+func TestAddCmd_InvalidAllowEntryWarns(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	if err := os.MkdirAll(dir+"/.config/tslink", 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	addCmd, _, err := rootCmd.Find([]string{"add"})
+	if err != nil {
+		t.Fatalf("find add command: %v", err)
+	}
+	_ = addCmd.Flags().Set("proxy", "")
+	_ = addCmd.Flags().Set("dir", "")
+	_ = addCmd.Flags().Set("tcp", "")
+	_ = addCmd.Flags().Set("ephemeral", "false")
+	_ = addCmd.Flags().Set("tags", "")
+	_ = addCmd.Flags().Set("allow", "")
+	_ = addCmd.Flags().Set("funnel", "false")
+	_ = addCmd.Flags().Set("public", "false")
+	_ = addCmd.Flags().Set("domain", "")
+	_ = addCmd.Flags().Set("acme-email", "")
+	_ = addCmd.Flags().Set("control-url", "")
+	t.Cleanup(func() {
+		addCmd.SetErr(os.Stderr)
+	})
+
+	var errBuf strings.Builder
+	addCmd.SetErr(&errBuf)
+	if _, err := runAddCmdOutput(t, []string{"app"}, map[string]string{
+		"proxy": "localhost:3000",
+		"allow": "not-an-email",
+	}); err != nil {
+		t.Fatalf("run add: %v", err)
+	}
+	if !strings.Contains(errBuf.String(), "Warning: --allow entry") {
+		t.Fatalf("stderr = %q, want invalid allow warning", errBuf.String())
+	}
+}
+
 func TestAddJSON_TCPUsesTypedEndpoint(t *testing.T) {
 	dir := t.TempDir()
 	regPath := dir + "/registry.json"
@@ -325,9 +386,10 @@ func TestAddJSON_TCPUsesTypedEndpoint(t *testing.T) {
 		_ = rootCmd.PersistentFlags().Set("json", "false")
 	})
 
-	rootCmd.SetArgs([]string{"add", "db", "--tcp", "localhost:5432", "--json"})
+	_ = rootCmd.PersistentFlags().Set("json", "true")
 	got := captureStdout(t, func() {
-		if err := rootCmd.Execute(); err != nil {
+		_, err := runAddCmdOutput(t, []string{"db"}, map[string]string{"tcp": "localhost:5432"})
+		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	})

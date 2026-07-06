@@ -7,16 +7,64 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+
+	"github.com/monody0007/tslink/internal/filelock"
 )
 
 // WritePID writes the current process PID to path.
 func WritePID(path string) error {
+	return WritePIDForProcess(path, os.Getpid())
+}
+
+// WritePIDForProcess writes pid to path.
+func WritePIDForProcess(path string, pid int) error {
+	if pid <= 0 {
+		return fmt.Errorf("invalid PID %d", pid)
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
 
-	data := []byte(strconv.Itoa(os.Getpid()) + "\n")
-	return os.WriteFile(path, data, 0o600)
+	data := []byte(strconv.Itoa(pid) + "\n")
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
+}
+
+// WithPIDLock holds the PID-file lock while fn runs.
+func WithPIDLock(path string, fn func() error) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	lockFile, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return err
+	}
+	defer lockFile.Close()
+
+	if err := filelock.Lock(lockFile); err != nil {
+		return err
+	}
+	defer filelock.Unlock(lockFile)
+
+	return fn()
 }
 
 // ReadPID reads and parses a PID file.

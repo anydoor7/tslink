@@ -72,6 +72,7 @@ func TestCodeError(t *testing.T) {
 		msg  string
 	}{
 		{"auth", ErrAuth("bad key"), ExitAuth, "bad key"},
+		{"usage", ErrUsage("bad args"), ExitUsage, "bad args"},
 		{"conflict", ErrConflict("exists"), ExitConflict, "exists"},
 		{"not found", ErrNotFound("missing"), ExitNotFound, "missing"},
 	}
@@ -165,6 +166,15 @@ func TestExitCode(t *testing.T) {
 	}
 	if ExitCode(errors.New("generic")) != ExitError {
 		t.Error("generic error should return ExitError")
+	}
+	if ExitCode(errors.New("accepts 1 arg(s), received 0")) != ExitUsage {
+		t.Error("cobra arg error should return ExitUsage")
+	}
+	if ExitCode(errors.New(`unknown command "bogus" for "tslink"`)) != ExitUsage {
+		t.Error("cobra unknown command error should return ExitUsage")
+	}
+	if ExitCode(ErrUsage("bad args")) != ExitUsage {
+		t.Error("ErrUsage should return ExitUsage")
 	}
 	if ExitCode(ErrNotFound("x")) != ExitNotFound {
 		t.Error("ErrNotFound should return ExitNotFound")

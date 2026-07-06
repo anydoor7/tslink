@@ -6,11 +6,13 @@ const (
 	WarningCodeTCPHTTPACLNotApplicable   = "tcp_http_acl_not_applicable"
 	WarningCodeTCPAllowedUsersInvalid    = "tcp_allowed_users_invalid"
 	WarningCodeHTTPAuthConfigured        = "http_auth_configured"
+	WarningCodeMiddlewareNotEnforced     = "middleware_not_enforced"
 	WarningCodeServiceTypeUnknown        = "service_type_unknown"
 	WarningCodeRuntimeSnapshotMissing    = "runtime_snapshot_missing"
 	WarningCodeRuntimeSnapshotStale      = "runtime_snapshot_stale"
 	WarningCodeRuntimeSnapshotUnreadable = "runtime_snapshot_unreadable"
 	WarningCodeFunnelAllowConflict       = registry.CodeFunnelAllowConflict
+	WarningCodeFunnelPublicAckRequired   = registry.CodeFunnelPublicAckRequired
 	WarningCodeFunnelControlURLConflict  = registry.CodeFunnelControlURLConflict
 	WarningCodeFunnelTypeConflict        = registry.CodeFunnelTypeConflict
 
@@ -60,6 +62,11 @@ var WarningCodeRegistry = map[string]WarningCodeMeta{
 		Source:      "service.middleware",
 		Description: "HTTP authentication is configured and credential values are redacted from public service views.",
 	},
+	WarningCodeMiddlewareNotEnforced: {
+		Severity:    "warning",
+		Source:      "service.middleware",
+		Description: "Middleware configuration is present but the serve runtime does not enforce it yet.",
+	},
 	WarningCodeServiceTypeUnknown: {
 		Severity:    "warning",
 		Source:      "service.type",
@@ -84,6 +91,11 @@ var WarningCodeRegistry = map[string]WarningCodeMeta{
 		Severity:    "error",
 		Source:      "service.allowed_users",
 		Description: "Public Funnel services cannot be combined with TSLink allow lists.",
+	},
+	WarningCodeFunnelPublicAckRequired: {
+		Severity:    "error",
+		Source:      "service.public_ack",
+		Description: "Public Funnel services require recorded public acknowledgement.",
 	},
 	WarningCodeFunnelControlURLConflict: {
 		Severity:    "error",

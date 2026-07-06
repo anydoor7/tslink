@@ -2,8 +2,10 @@ package cmd
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"testing"
@@ -69,6 +71,15 @@ func mockClientSecretSuccess(t *testing.T) {
 	old := loginSaveClientSecretFn
 	t.Cleanup(func() { loginSaveClientSecretFn = old })
 	loginSaveClientSecretFn = func(secret string) error { return nil }
+}
+
+func resetLoginFlags(t *testing.T) {
+	t.Helper()
+	_ = loginCmd.Flags().Set("api-key", "")
+	_ = loginCmd.Flags().Set("client-secret", "")
+	_ = loginCmd.Flags().Set("api-key-stdin", "false")
+	_ = loginCmd.Flags().Set("client-secret-stdin", "false")
+	loginCmd.SetIn(nil)
 }
 
 func TestLoginCredentialFlow_APIToken_Success(t *testing.T) {
@@ -259,6 +270,79 @@ func TestLoginCmd_FullFlow_WithMocks(t *testing.T) {
 	}
 }
 
+func TestLoginCmd_ExplicitClientSecretBeatsEnvAPIKey(t *testing.T) {
+	setupLoginTest(t)
+	resetLoginFlags(t)
+	t.Cleanup(func() {
+		resetLoginFlags(t)
+	})
+	t.Setenv("TSLINK_API_KEY", "tskey-api-from-env")
+
+	var savedSecret string
+	oldSave := loginSaveClientSecretFn
+	oldEnsure := loginEnsureTagsFn
+	t.Cleanup(func() {
+		loginSaveClientSecretFn = oldSave
+		loginEnsureTagsFn = oldEnsure
+	})
+	loginSaveClientSecretFn = func(secret string) error {
+		savedSecret = secret
+		return nil
+	}
+	loginEnsureTagsFn = func(ctx context.Context, tags []string) error {
+		return tailapi.ErrNoAPIClient
+	}
+	if err := loginCmd.Flags().Set("client-secret", "tskey-client-explicit"); err != nil {
+		t.Fatalf("set client-secret flag: %v", err)
+	}
+
+	if err := loginCmd.RunE(loginCmd, nil); err != nil {
+		t.Fatalf("RunE() error = %v", err)
+	}
+	if savedSecret != "tskey-client-explicit" {
+		t.Fatalf("saved client secret = %q, want explicit flag value", savedSecret)
+	}
+}
+
+func TestLoginCmd_ReadsAPIKeyFromStdin(t *testing.T) {
+	setupLoginTest(t)
+	resetLoginFlags(t)
+	t.Cleanup(func() {
+		resetLoginFlags(t)
+	})
+	mockAPIKeySuccess(t)
+	loginCmd.SetIn(strings.NewReader("tskey-api-from-stdin\n"))
+	if err := loginCmd.Flags().Set("api-key-stdin", "true"); err != nil {
+		t.Fatalf("set api-key-stdin flag: %v", err)
+	}
+
+	if err := loginCmd.RunE(loginCmd, nil); err != nil {
+		t.Fatalf("RunE() error = %v", err)
+	}
+}
+
+func TestLoginCmd_RejectsMixedExplicitCredentials(t *testing.T) {
+	setupLoginTest(t)
+	resetLoginFlags(t)
+	t.Cleanup(func() {
+		resetLoginFlags(t)
+	})
+	if err := loginCmd.Flags().Set("api-key", "tskey-api-explicit"); err != nil {
+		t.Fatalf("set api-key flag: %v", err)
+	}
+	if err := loginCmd.Flags().Set("client-secret", "tskey-client-explicit"); err != nil {
+		t.Fatalf("set client-secret flag: %v", err)
+	}
+
+	err := loginCmd.RunE(loginCmd, nil)
+	if err == nil {
+		t.Fatal("RunE() error = nil, want mixed explicit credential error")
+	}
+	if !strings.Contains(err.Error(), "only one explicit credential source") {
+		t.Fatalf("RunE() error = %v, want mixed source error", err)
+	}
+}
+
 func TestLoginCredentialFlow_CreatesDefaultTag(t *testing.T) {
 	dir := setupLoginTest(t)
 	mockStdin(t, "1", "tskey-api-test-12345")
@@ -296,6 +380,38 @@ func TestLoginCredentialFlow_EnsureTagsFailureNonFatal(t *testing.T) {
 	err := loginCredentialFlow(loginCmd, dir)
 	if err != nil {
 		t.Fatalf("expected success (non-fatal), got: %v", err)
+	}
+}
+
+func TestLoginWithClientSecret_EnsureTagsFailureReportsDegraded(t *testing.T) {
+	setupLoginTest(t)
+	mockClientSecretSuccess(t)
+
+	oldEnsure := loginEnsureTagsFn
+	oldStderr := os.Stderr
+	t.Cleanup(func() {
+		loginEnsureTagsFn = oldEnsure
+		os.Stderr = oldStderr
+	})
+	loginEnsureTagsFn = func(ctx context.Context, tags []string) error {
+		return fmt.Errorf("Status: 400 requested tags invalid or not permitted")
+	}
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("Pipe() error = %v", err)
+	}
+	os.Stderr = w
+
+	if err := loginWithClientSecret(loginCmd, "tskey-client-new"); err != nil {
+		t.Fatalf("loginWithClientSecret() error = %v", err)
+	}
+	w.Close()
+	var buf bytes.Buffer
+	if _, err := io.Copy(&buf, r); err != nil {
+		t.Fatalf("copy stderr: %v", err)
+	}
+	if !strings.Contains(buf.String(), "Degraded login") || !strings.Contains(buf.String(), "tslink serve") {
+		t.Fatalf("stderr = %q, want degraded serve warning", buf.String())
 	}
 }
 

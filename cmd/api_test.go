@@ -444,6 +444,9 @@ func TestAPIAdd_FunnelAcceptsPublicAck(t *testing.T) {
 	if !svc.Funnel {
 		t.Fatal("expected funnel=true")
 	}
+	if !svc.PublicAck {
+		t.Fatal("expected public_ack=true")
+	}
 	if len(svc.AllowedUsers) != 0 || svc.ControlURL != "" {
 		t.Fatalf("service = %+v, want no allow/control_url", svc)
 	}
@@ -755,8 +758,8 @@ func TestAPIStatusURLsReturnsVNextPayload(t *testing.T) {
 	if web.Allow.Mode != "restricted" || web.Allow.Count != 2 || !web.Allow.Redacted || len(web.Allow.Entries) != 0 {
 		t.Fatalf("web allow = %+v, want redacted allow summary", web.Allow)
 	}
-	if !hasStatusWarningCode(web.Warnings, inspect.WarningCodeHTTPAuthConfigured) {
-		t.Fatalf("web warnings = %+v, want http_auth_configured", web.Warnings)
+	if !hasStatusWarningCode(web.Warnings, inspect.WarningCodeMiddlewareNotEnforced) {
+		t.Fatalf("web warnings = %+v, want middleware_not_enforced", web.Warnings)
 	}
 	if !hasStatusWarningCode(web.Warnings, inspect.WarningCodeRuntimeSnapshotMissing) {
 		t.Fatalf("web warnings = %+v, want runtime_snapshot_missing", web.Warnings)

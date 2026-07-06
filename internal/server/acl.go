@@ -15,7 +15,9 @@ func isAllowed(login string, nodeTags []string, allowedUsers []string) bool {
 		return true
 	}
 
+	normalizedLogin := strings.ToLower(strings.TrimSpace(login))
 	for _, entry := range allowedUsers {
+		entry = strings.TrimSpace(entry)
 		// Check tag match: entry is "tag:xxx" and caller's node has that tag
 		if strings.HasPrefix(entry, "tag:") {
 			for _, t := range nodeTags {
@@ -27,7 +29,7 @@ func isAllowed(login string, nodeTags []string, allowedUsers []string) bool {
 		}
 
 		// Check email/login match
-		if login == entry {
+		if normalizedLogin == strings.ToLower(entry) {
 			return true
 		}
 	}

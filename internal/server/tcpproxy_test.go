@@ -7,6 +7,8 @@ import (
 	"net"
 	"testing"
 	"time"
+
+	"github.com/monody0007/tslink/internal/registry"
 )
 
 // startEchoServer starts a TCP server that echoes back everything it receives.
@@ -66,7 +68,7 @@ func TestHandleTCPConn_Bidirectional(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		handleTCPConn(proxyConn, echo.Addr().String(), "test")
+		handleTCPConn(context.Background(), proxyConn, echo.Addr().String(), "test")
 		close(done)
 	}()
 
@@ -105,7 +107,7 @@ func TestServeTCP_ClosedListener(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		serveTCP(ln, "127.0.0.1:1", "test")
+		serveTCP(context.Background(), ln, "127.0.0.1:1", "test")
 		close(done)
 	}()
 
@@ -125,7 +127,7 @@ func TestServeTCP_ForwardsToBackend(t *testing.T) {
 		t.Fatalf("Listen() error = %v", err)
 	}
 
-	go serveTCP(proxyLn, echo.Addr().String(), "test-fwd")
+	go serveTCP(context.Background(), proxyLn, echo.Addr().String(), "test-fwd")
 
 	// Connect to proxy and send data
 	conn, err := net.Dial("tcp", proxyLn.Addr().String())
@@ -151,6 +153,75 @@ func TestServeTCP_ForwardsToBackend(t *testing.T) {
 	proxyLn.Close()
 }
 
+func TestStopNodeLocked_ClosesInFlightTCPConnection(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	backendLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("backend Listen() error = %v", err)
+	}
+	defer backendLn.Close()
+
+	backendAccepted := make(chan net.Conn, 1)
+	go func() {
+		conn, err := backendLn.Accept()
+		if err == nil {
+			backendAccepted <- conn
+		}
+	}()
+
+	proxyLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("proxy Listen() error = %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	s.nodes["db"] = &ServiceNode{
+		service:  registry.Service{Name: "db", Type: registry.TypeTCP, Target: backendLn.Addr().String()},
+		listener: proxyLn,
+		tsnetSrv: &fakeTSNetServer{},
+		cancel:   cancel,
+	}
+
+	serveDone := make(chan struct{})
+	go func() {
+		serveTCP(ctx, proxyLn, backendLn.Addr().String(), "db")
+		close(serveDone)
+	}()
+
+	clientConn, err := net.Dial("tcp", proxyLn.Addr().String())
+	if err != nil {
+		t.Fatalf("client Dial() error = %v", err)
+	}
+	defer clientConn.Close()
+
+	select {
+	case backendConn := <-backendAccepted:
+		defer backendConn.Close()
+	case <-time.After(2 * time.Second):
+		t.Fatal("backend did not receive in-flight proxy connection")
+	}
+
+	s.stopNodeLocked("db", false)
+
+	if err := clientConn.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatalf("SetReadDeadline() error = %v", err)
+	}
+	if _, err := clientConn.Read(make([]byte, 1)); err == nil {
+		t.Fatal("client connection remained open after node stop")
+	}
+
+	select {
+	case <-serveDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("serveTCP did not return after node stop")
+	}
+}
+
 func TestServeTCP_NonFatalAcceptError(t *testing.T) {
 	// Use a listener that returns a temporary error then closes.
 	// We use a real listener, accept one connection, then close the listener.
@@ -171,7 +242,7 @@ func TestServeTCP_NonFatalAcceptError(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		serveTCP(ln, "127.0.0.1:1", "test") // target doesn't matter, handleTCPConn will fail
+		serveTCP(context.Background(), ln, "127.0.0.1:1", "test") // target doesn't matter, handleTCPConn will fail
 		close(done)
 	}()
 
@@ -219,7 +290,7 @@ func TestServeTCP_AcceptError_NonClosed(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		serveTCP(el, "127.0.0.1:1", "test-err")
+		serveTCP(context.Background(), el, "127.0.0.1:1", "test-err")
 		close(done)
 	}()
 
@@ -243,7 +314,7 @@ func TestHandleTCPConn_UnreachableBackend(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		handleTCPConn(proxyConn, "127.0.0.1:1", "test")
+		handleTCPConn(context.Background(), proxyConn, "127.0.0.1:1", "test")
 		close(done)
 	}()
 
@@ -283,7 +354,7 @@ func TestHandleTCPConn_DialsBackendWithTimeoutContext(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		handleTCPConn(proxyConn, "127.0.0.1:1", "test")
+		handleTCPConn(context.Background(), proxyConn, "127.0.0.1:1", "test")
 		close(done)
 	}()
 

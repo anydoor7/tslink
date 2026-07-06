@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 )
 
 // Semantic exit codes for programmatic consumers.
@@ -49,6 +50,11 @@ func IsSilent(err error) bool {
 // ErrAuth returns an authentication error (exit code 3).
 func ErrAuth(msg string) *CodeError {
 	return &CodeError{Code: ExitAuth, Message: msg}
+}
+
+// ErrUsage returns a usage error (exit code 2).
+func ErrUsage(msg string) *CodeError {
+	return &CodeError{Code: ExitUsage, Message: msg}
 }
 
 // ErrConflict returns a conflict error (exit code 4).
@@ -108,5 +114,18 @@ func ExitCode(err error) int {
 	if se, ok := err.(*SilentCodeError); ok {
 		return se.Code
 	}
+	if isUsageErrorMessage(err.Error()) {
+		return ExitUsage
+	}
 	return ExitError
+}
+
+func isUsageErrorMessage(msg string) bool {
+	return strings.HasPrefix(msg, "unknown command ") ||
+		strings.HasPrefix(msg, "unknown flag: ") ||
+		strings.HasPrefix(msg, "unknown shorthand flag: ") ||
+		strings.Contains(msg, "required flag(s)") ||
+		(strings.Contains(msg, "accepts ") && strings.Contains(msg, " arg(s)")) ||
+		(strings.Contains(msg, "requires ") && strings.Contains(msg, " arg(s)")) ||
+		(strings.Contains(msg, "requires ") && strings.Contains(msg, " argument"))
 }

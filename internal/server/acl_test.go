@@ -32,6 +32,13 @@ func TestIsAllowed_MatchEmail(t *testing.T) {
 	}
 }
 
+func TestIsAllowed_EmailMatchIsCaseInsensitive(t *testing.T) {
+	allowed := []string{"User@Example.com"}
+	if !isAllowed("user@example.com", nil, allowed) {
+		t.Error("email login match should be case-insensitive")
+	}
+}
+
 func TestIsAllowed_NoMatchEmail(t *testing.T) {
 	allowed := []string{"alice@example.com"}
 	if isAllowed("eve@example.com", nil, allowed) {

@@ -1092,6 +1092,40 @@ func TestValidateServiceRejectsFunnelAllowedUsers(t *testing.T) {
 	}
 }
 
+func TestValidateServiceRejectsFunnelWithoutPublicAck(t *testing.T) {
+	err := ValidateService(Service{
+		Name:   "public-app",
+		Type:   TypeProxy,
+		Target: "http://localhost:3000",
+		Funnel: true,
+	})
+	if err == nil {
+		t.Fatal("ValidateService() error = nil, want public_ack error")
+	}
+	if !strings.Contains(err.Error(), ErrFunnelPublicAck) {
+		t.Fatalf("ValidateService() error = %v, want public_ack error", err)
+	}
+	if !strings.Contains(err.Error(), CodeFunnelPublicAckRequired) {
+		t.Fatalf("ValidateService() error = %v, want stable code %s", err, CodeFunnelPublicAckRequired)
+	}
+	if code, ok := ErrorCode(err); !ok || code != CodeFunnelPublicAckRequired {
+		t.Fatalf("ErrorCode() = %q, %v; want %s, true", code, ok, CodeFunnelPublicAckRequired)
+	}
+}
+
+func TestValidateServiceAcceptsFunnelWithPublicAck(t *testing.T) {
+	err := ValidateService(Service{
+		Name:      "public-app",
+		Type:      TypeProxy,
+		Target:    "http://localhost:3000",
+		Funnel:    true,
+		PublicAck: true,
+	})
+	if err != nil {
+		t.Fatalf("ValidateService() error = %v, want nil", err)
+	}
+}
+
 func TestValidateServiceRejectsFunnelControlURL(t *testing.T) {
 	err := ValidateService(Service{
 		Name:       "public-app",
