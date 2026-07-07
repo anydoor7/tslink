@@ -20,6 +20,8 @@ const (
 	TypeFile  = "file"
 	TypeTCP   = "tcp"
 
+	CurrentRegistrySchemaVersion = 1
+
 	maxTagLength = 63
 
 	// TagGrammar describes the strict Tailscale ACL tag syntax accepted by TSLink.
@@ -138,7 +140,8 @@ type Service struct {
 }
 
 type Registry struct {
-	Services []Service `json:"services"`
+	SchemaVersion int       `json:"schema_version"`
+	Services      []Service `json:"services"`
 }
 
 func ValidateName(name string) error {
@@ -203,17 +206,20 @@ func Load(path string) (*Registry, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return &Registry{Services: []Service{}}, nil
+			return &Registry{SchemaVersion: CurrentRegistrySchemaVersion, Services: []Service{}}, nil
 		}
 		return nil, err
 	}
 
 	if len(bytes.TrimSpace(data)) == 0 {
-		return &Registry{Services: []Service{}}, nil
+		return &Registry{SchemaVersion: CurrentRegistrySchemaVersion, Services: []Service{}}, nil
 	}
 
 	var reg Registry
 	if err := json.Unmarshal(data, &reg); err != nil {
+		return nil, err
+	}
+	if err := migrate(&reg); err != nil {
 		return nil, err
 	}
 
@@ -222,6 +228,21 @@ func Load(path string) (*Registry, error) {
 	}
 
 	return &reg, nil
+}
+
+func migrate(reg *Registry) error {
+	version := reg.SchemaVersion
+	if version == 0 {
+		version = CurrentRegistrySchemaVersion
+	}
+
+	switch version {
+	case CurrentRegistrySchemaVersion:
+		reg.SchemaVersion = CurrentRegistrySchemaVersion
+		return nil
+	default:
+		return fmt.Errorf("unsupported registry schema_version: %d", reg.SchemaVersion)
+	}
 }
 
 func withLock(regPath string, fn func() error) error {
@@ -250,6 +271,7 @@ func save(path string, reg *Registry) error {
 	if reg.Services == nil {
 		reg.Services = []Service{}
 	}
+	reg.SchemaVersion = CurrentRegistrySchemaVersion
 
 	data, err := marshalFn(reg, "", "  ")
 	if err != nil {
