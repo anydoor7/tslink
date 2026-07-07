@@ -1,6 +1,7 @@
 package registry
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -23,6 +24,77 @@ func TestLoadEmpty(t *testing.T) {
 	}
 	if len(reg.Services) != 0 {
 		t.Fatalf("expected empty registry, got %d services", len(reg.Services))
+	}
+	if reg.SchemaVersion != CurrentRegistrySchemaVersion {
+		t.Fatalf("schema_version = %d, want %d", reg.SchemaVersion, CurrentRegistrySchemaVersion)
+	}
+}
+
+func TestLoadLegacyRegistryWithoutSchemaVersionThenSaveAddsCurrentVersion(t *testing.T) {
+	path := testRegistryPath(t)
+	legacy := `{
+  "services": [
+    {
+      "name": "web",
+      "type": "proxy",
+      "target": "http://localhost:3000",
+      "tags": ["tag:web"],
+      "created_at": "2026-07-06T12:00:00Z"
+    },
+    {
+      "name": "db",
+      "type": "tcp",
+      "target": "localhost:5432",
+      "port": 5432,
+      "created_at": "2026-07-06T12:01:00Z"
+    }
+  ]
+}`
+	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	reg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() legacy registry error = %v", err)
+	}
+	if reg.SchemaVersion != CurrentRegistrySchemaVersion {
+		t.Fatalf("schema_version = %d, want %d", reg.SchemaVersion, CurrentRegistrySchemaVersion)
+	}
+	if len(reg.Services) != 2 {
+		t.Fatalf("services = %+v, want 2 legacy services intact", reg.Services)
+	}
+	if reg.Services[0].Name != "web" || reg.Services[0].Target != "http://localhost:3000" || reg.Services[0].Tags[0] != "tag:web" {
+		t.Fatalf("web service did not round-trip intact: %+v", reg.Services[0])
+	}
+	if reg.Services[1].Name != "db" || reg.Services[1].Type != TypeTCP || reg.Services[1].Port != 5432 {
+		t.Fatalf("db service did not round-trip intact: %+v", reg.Services[1])
+	}
+
+	if err := save(path, reg); err != nil {
+		t.Fatalf("save() migrated registry error = %v", err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() migrated registry error = %v", err)
+	}
+	var saved map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &saved); err != nil {
+		t.Fatalf("unmarshal saved registry: %v\nraw: %s", err, raw)
+	}
+	var version int
+	if err := json.Unmarshal(saved["schema_version"], &version); err != nil {
+		t.Fatalf("schema_version missing or invalid after save: %v\nraw: %s", err, raw)
+	}
+	if version != CurrentRegistrySchemaVersion {
+		t.Fatalf("saved schema_version = %d, want %d", version, CurrentRegistrySchemaVersion)
+	}
+	var services []Service
+	if err := json.Unmarshal(saved["services"], &services); err != nil {
+		t.Fatalf("services missing or invalid after save: %v\nraw: %s", err, raw)
+	}
+	if len(services) != 2 || services[0].Name != "web" || services[1].Name != "db" {
+		t.Fatalf("saved services = %+v, want legacy services intact", services)
 	}
 }
 

@@ -455,6 +455,34 @@ echo '{"action":"template_plan","name":"personal-harness"}' | tslink api
 echo '{"action":"template_apply","name":"personal-harness"}' | tslink api
 ```
 
+Both `tslink api` and CLI `--json` output use the same versioned envelope:
+
+```json
+{
+  "ok": true,
+  "schema_version": 1,
+  "code": 0,
+  "data": {
+    "running": false,
+    "count": 0
+  }
+}
+```
+
+Failures include a stable machine error code plus human text:
+
+```json
+{
+  "ok": false,
+  "schema_version": 1,
+  "code": 2,
+  "error": {
+    "code": "usage_error",
+    "message": "unknown action: explode"
+  }
+}
+```
+
 API `add` follows the same safety guardrails as the CLI. Funnel services require `public_ack:true`; TCP services reject `allow` because TSLink does not apply HTTP identity checks to raw TCP streams.
 
 ## Roadmap / Experimental Packages

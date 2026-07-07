@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -127,11 +126,7 @@ type doctorTarget struct {
 func runDoctor(out io.Writer, opts doctorOptions, isJSON bool) error {
 	result := buildDoctorResult(opts)
 	if isJSON {
-		encoder := json.NewEncoder(out)
-		encoder.SetEscapeHTML(false)
-		if err := encoder.Encode(result); err != nil {
-			return err
-		}
+		output.WriteJSON(out, output.NewSuccess("doctor", apiDoctorData{Doctor: result}))
 	} else {
 		formatDoctor(result, out)
 	}

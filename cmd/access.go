@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -96,9 +95,8 @@ func runAccessExplain(serviceName string, out io.Writer, isJSON bool) error {
 		}
 		result := buildAccessExplainResult(svc)
 		if isJSON {
-			encoder := json.NewEncoder(out)
-			encoder.SetEscapeHTML(false)
-			return encoder.Encode(result)
+			output.WriteJSON(out, output.NewSuccess("access explain", apiAccessExplainData{AccessExplain: result}))
+			return nil
 		}
 		formatAccessExplain(result, out)
 		return nil

@@ -187,12 +187,12 @@ func (h *apiHandler) handleAdd(req APIRequest, out io.Writer) {
 	if svc.Type == registry.TypeFile {
 		absPath, err := filepath.Abs(params.Dir)
 		if err != nil {
-			writeAPIError(out, err)
+			writeAPICommandError(out, err)
 			return
 		}
 		info, err := os.Stat(absPath)
 		if err != nil {
-			writeAPIError(out, err)
+			writeAPICommandError(out, err)
 			return
 		}
 		if !info.IsDir() {

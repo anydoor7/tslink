@@ -35,9 +35,7 @@ func runAccessExplainWithServices(t *testing.T, serviceName string, isJSON bool,
 	err := runAccessExplain(serviceName, &buf, isJSON)
 	var result AccessExplainResult
 	if err == nil && isJSON {
-		if decodeErr := json.Unmarshal(buf.Bytes(), &result); decodeErr != nil {
-			t.Fatalf("unmarshal access explain JSON: %v\nraw: %s", decodeErr, buf.String())
-		}
+		result = decodeAccessExplainJSON(t, buf.String())
 	}
 	return buf.String(), result, err
 }
@@ -65,11 +63,47 @@ func runAccessExplainWithRawServices(t *testing.T, serviceName string, isJSON bo
 	err = runAccessExplain(serviceName, &buf, isJSON)
 	var result AccessExplainResult
 	if err == nil && isJSON {
-		if decodeErr := json.Unmarshal(buf.Bytes(), &result); decodeErr != nil {
-			t.Fatalf("unmarshal raw access explain JSON: %v\nraw: %s", decodeErr, buf.String())
-		}
+		result = decodeAccessExplainJSON(t, buf.String())
 	}
 	return buf.String(), result, err
+}
+
+func decodeAccessExplainJSON(t *testing.T, raw string) AccessExplainResult {
+	t.Helper()
+
+	assertExactTopLevelJSONKeys(t, raw, "ok", "schema_version", "command", "code", "data")
+	var envelope output.Result
+	if err := json.Unmarshal([]byte(raw), &envelope); err != nil {
+		t.Fatalf("unmarshal access explain envelope: %v\nraw: %s", err, raw)
+	}
+	if !envelope.OK {
+		t.Fatalf("ok = false, want true\nraw: %s", raw)
+	}
+	if envelope.SchemaVersion != output.SchemaVersion {
+		t.Fatalf("top-level schema_version = %d, want %d\nraw: %s", envelope.SchemaVersion, output.SchemaVersion, raw)
+	}
+	if envelope.Command != "access explain" {
+		t.Fatalf("command = %q, want %q", envelope.Command, "access explain")
+	}
+	if envelope.Code != output.ExitSuccess {
+		t.Fatalf("code = %d, want %d", envelope.Code, output.ExitSuccess)
+	}
+
+	dataBytes, err := json.Marshal(envelope.Data)
+	if err != nil {
+		t.Fatalf("marshal access explain data: %v", err)
+	}
+	assertExactJSONKeys(t, string(dataBytes), "access_explain")
+	var data struct {
+		AccessExplain *AccessExplainResult `json:"access_explain"`
+	}
+	if err := json.Unmarshal(dataBytes, &data); err != nil {
+		t.Fatalf("unmarshal access explain data: %v\nraw data: %s", err, dataBytes)
+	}
+	if data.AccessExplain == nil {
+		t.Fatalf("data.access_explain missing\nraw data: %s", dataBytes)
+	}
+	return *data.AccessExplain
 }
 
 func TestAccessExplainCommandTree(t *testing.T) {
@@ -312,10 +346,10 @@ func TestAccessExplainTCPAllowedUsersSurfacesWarningsWithoutPrincipals(t *testin
 
 func TestAccessExplainFunnelMarksPublicAndPolicyUnknown(t *testing.T) {
 	_, result, err := runAccessExplainWithServices(t, "public-app", true, registry.Service{
-		Name:   "public-app",
-		Type:   registry.TypeProxy,
-		Target: "http://localhost:3000",
-		Funnel: true,
+		Name:      "public-app",
+		Type:      registry.TypeProxy,
+		Target:    "http://localhost:3000",
+		Funnel:    true,
 		PublicAck: true,
 	})
 	if err != nil {

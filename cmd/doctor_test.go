@@ -192,6 +192,44 @@ func assertDoctorOutputOmits(t *testing.T, raw string, forbidden []string) {
 	}
 }
 
+func decodeDoctorJSON(t *testing.T, raw string) DoctorResult {
+	t.Helper()
+
+	assertExactTopLevelJSONKeys(t, raw, "ok", "schema_version", "command", "code", "data")
+	var envelope output.Result
+	if err := json.Unmarshal([]byte(raw), &envelope); err != nil {
+		t.Fatalf("unmarshal doctor envelope: %v\nraw: %s", err, raw)
+	}
+	if !envelope.OK {
+		t.Fatalf("ok = false, want true\nraw: %s", raw)
+	}
+	if envelope.SchemaVersion != output.SchemaVersion {
+		t.Fatalf("top-level schema_version = %d, want %d\nraw: %s", envelope.SchemaVersion, output.SchemaVersion, raw)
+	}
+	if envelope.Command != "doctor" {
+		t.Fatalf("command = %q, want %q", envelope.Command, "doctor")
+	}
+	if envelope.Code != output.ExitSuccess {
+		t.Fatalf("code = %d, want %d", envelope.Code, output.ExitSuccess)
+	}
+
+	dataBytes, err := json.Marshal(envelope.Data)
+	if err != nil {
+		t.Fatalf("marshal doctor data: %v", err)
+	}
+	assertExactJSONKeys(t, string(dataBytes), "doctor")
+	var data struct {
+		Doctor *DoctorResult `json:"doctor"`
+	}
+	if err := json.Unmarshal(dataBytes, &data); err != nil {
+		t.Fatalf("unmarshal doctor data: %v\nraw data: %s", err, dataBytes)
+	}
+	if data.Doctor == nil {
+		t.Fatalf("data.doctor missing\nraw data: %s", dataBytes)
+	}
+	return *data.Doctor
+}
+
 func TestDoctorExitCodes(t *testing.T) {
 	env := newDoctorTestEnv(t, nil)
 	env.writeExactSnapshot(t)
@@ -203,15 +241,31 @@ func TestDoctorExitCodes(t *testing.T) {
 	if err := os.WriteFile(env.authKeyPath, []byte("tskey-auth-secret"), 0o600); err != nil {
 		t.Fatalf("write authkey: %v", err)
 	}
-	err := runDoctor(io.Discard, doctorOptions{}, false)
+	var warningBuf bytes.Buffer
+	err := runDoctor(&warningBuf, doctorOptions{}, true)
 	if output.ExitCode(err) != output.ExitWarning {
 		t.Fatalf("legacy authkey ExitCode = %d, want %d", output.ExitCode(err), output.ExitWarning)
 	}
+	if !output.IsSilent(err) {
+		t.Fatalf("legacy authkey err = %T, want silent exit", err)
+	}
+	warningResult := decodeDoctorJSON(t, warningBuf.String())
+	if warningResult.Status != doctorStatusWarning {
+		t.Fatalf("legacy authkey status = %q, want %q", warningResult.Status, doctorStatusWarning)
+	}
 
 	doctorReadFileFn = func(string) ([]byte, error) { return nil, os.ErrNotExist }
-	err = runDoctor(io.Discard, doctorOptions{}, false)
+	var criticalBuf bytes.Buffer
+	err = runDoctor(&criticalBuf, doctorOptions{}, true)
 	if output.ExitCode(err) != output.ExitCritical {
 		t.Fatalf("missing credential ExitCode = %d, want %d", output.ExitCode(err), output.ExitCritical)
+	}
+	if !output.IsSilent(err) {
+		t.Fatalf("missing credential err = %T, want silent exit", err)
+	}
+	criticalResult := decodeDoctorJSON(t, criticalBuf.String())
+	if criticalResult.Status != doctorStatusError {
+		t.Fatalf("missing credential status = %q, want %q", criticalResult.Status, doctorStatusError)
 	}
 }
 
@@ -292,10 +346,7 @@ func TestDoctorJSONSchemaCountsAndRedaction(t *testing.T) {
 			t.Fatalf("doctor JSON leaked %q: %s", secret, raw)
 		}
 	}
-	var result DoctorResult
-	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
-		t.Fatalf("unmarshal doctor JSON: %v\nraw: %s", err, raw)
-	}
+	result := decodeDoctorJSON(t, raw)
 	if result.SchemaVersion != inspect.SchemaVersion {
 		t.Fatalf("schema_version = %q, want %q", result.SchemaVersion, inspect.SchemaVersion)
 	}
@@ -498,10 +549,10 @@ func TestDoctorProbeFailureCodes(t *testing.T) {
 
 func TestDoctorFunnelGlobalControlURLWarning(t *testing.T) {
 	env := newDoctorTestEnv(t, []registry.Service{{
-		Name:   "public-web",
-		Type:   registry.TypeProxy,
-		Target: "http://localhost:3000",
-		Funnel: true,
+		Name:      "public-web",
+		Type:      registry.TypeProxy,
+		Target:    "http://localhost:3000",
+		Funnel:    true,
 		PublicAck: true,
 	}})
 	env.writeExactSnapshot(t)
@@ -613,10 +664,7 @@ func TestDoctorGlobalInvalidControlURLRedactsRawOutputs(t *testing.T) {
 	}
 	assertDoctorOutputOmits(t, jsonBuf.String(), forbidden)
 
-	var result DoctorResult
-	if err := json.Unmarshal(jsonBuf.Bytes(), &result); err != nil {
-		t.Fatalf("unmarshal doctor JSON: %v\nraw: %s", err, jsonBuf.String())
-	}
+	result := decodeDoctorJSON(t, jsonBuf.String())
 	finding := assertDoctorFinding(t, result, inspect.WarningCodeControlURLInvalid)
 	evidenceRaw, err := json.Marshal(finding.Evidence)
 	if err != nil {
