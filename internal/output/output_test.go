@@ -7,53 +7,66 @@ import (
 	"io"
 	"os"
 	"testing"
+
+	"github.com/monody0007/tslink/internal/registry"
 )
 
-func TestResult_JSON(t *testing.T) {
-	r := Result{
-		OK:      true,
-		Command: "test",
-		Code:    ExitSuccess,
-		Data:    map[string]string{"key": "value"},
+func assertJSONKeys(t *testing.T, data []byte, want ...string) {
+	t.Helper()
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("unmarshal raw object: %v", err)
 	}
+	if len(raw) != len(want) {
+		t.Fatalf("keys = %v, want exactly %v", raw, want)
+	}
+	for _, key := range want {
+		if _, ok := raw[key]; !ok {
+			t.Fatalf("missing key %q in %v", key, raw)
+		}
+	}
+}
+
+func TestResult_SuccessJSONEnvelope(t *testing.T) {
+	r := NewSuccess("", map[string]string{"key": "value"})
 	data, err := json.Marshal(r)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
+	assertJSONKeys(t, data, "ok", "schema_version", "code", "data")
 
 	var got Result
 	if err := json.Unmarshal(data, &got); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if !got.OK || got.Command != "test" || got.Code != ExitSuccess {
+	if !got.OK || got.SchemaVersion != SchemaVersion || got.Code != ExitSuccess || got.Error != nil {
 		t.Fatalf("unexpected result: %+v", got)
 	}
 }
 
-func TestResult_FailureJSON(t *testing.T) {
-	r := Result{
-		OK:      false,
-		Command: "fail",
-		Code:    ExitNotFound,
-		Error:   "not found",
-	}
+func TestResult_FailureJSONEnvelope(t *testing.T) {
+	r := NewFailureForError("", registry.FunnelAllowedUsersError())
 	data, err := json.Marshal(r)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
+	assertJSONKeys(t, data, "ok", "schema_version", "code", "error")
 
 	var got Result
 	if err := json.Unmarshal(data, &got); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if got.OK || got.Code != ExitNotFound || got.Error != "not found" {
+	if got.OK || got.SchemaVersion != SchemaVersion || got.Code != ExitConflict {
 		t.Fatalf("unexpected result: %+v", got)
+	}
+	if got.Error == nil || got.Error.Code != registry.CodeFunnelAllowConflict || got.Error.Message != registry.ErrFunnelAllowedUsers {
+		t.Fatalf("error = %+v, want stable code/message", got.Error)
 	}
 }
 
 func TestWriteJSON(t *testing.T) {
 	var buf bytes.Buffer
-	WriteJSON(&buf, Result{OK: true, Command: "test", Code: 0})
+	WriteJSON(&buf, NewSuccess("test", nil))
 
 	var got Result
 	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
@@ -155,8 +168,8 @@ func TestFailure(t *testing.T) {
 	if got.Code != ExitNotFound {
 		t.Errorf("code: got %d, want %d", got.Code, ExitNotFound)
 	}
-	if got.Error != "not found" {
-		t.Errorf("error: got %q, want %q", got.Error, "not found")
+	if got.Error == nil || got.Error.Code != "not_found" || got.Error.Message != "not found" {
+		t.Errorf("error: got %+v, want not_found/not found", got.Error)
 	}
 }
 

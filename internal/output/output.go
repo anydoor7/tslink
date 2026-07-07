@@ -2,11 +2,16 @@ package output
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"strings"
+
+	"github.com/monody0007/tslink/internal/registry"
 )
+
+const SchemaVersion = 1
 
 // Semantic exit codes for programmatic consumers.
 const (
@@ -67,13 +72,107 @@ func ErrNotFound(msg string) *CodeError {
 	return &CodeError{Code: ExitNotFound, Message: msg}
 }
 
-// Result is the JSON envelope for structured output.
+// ErrorObject is the stable machine/human error payload in the JSON envelope.
+type ErrorObject struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+// Result is the versioned JSON envelope for structured output.
 type Result struct {
-	OK      bool   `json:"ok"`
-	Command string `json:"command,omitempty"`
-	Error   string `json:"error,omitempty"`
-	Code    int    `json:"code"`
-	Data    any    `json:"data,omitempty"`
+	OK            bool         `json:"ok"`
+	SchemaVersion int          `json:"schema_version"`
+	Command       string       `json:"command,omitempty"`
+	Code          int          `json:"code"`
+	Data          any          `json:"data,omitempty"`
+	Error         *ErrorObject `json:"error,omitempty"`
+}
+
+func (r Result) MarshalJSON() ([]byte, error) {
+	type resultAlias Result
+	if r.SchemaVersion == 0 {
+		r.SchemaVersion = SchemaVersion
+	}
+	return json.Marshal(resultAlias(r))
+}
+
+// NewSuccess returns a successful JSON result.
+func NewSuccess(command string, data any) Result {
+	return Result{
+		OK:            true,
+		SchemaVersion: SchemaVersion,
+		Command:       command,
+		Code:          ExitSuccess,
+		Data:          data,
+	}
+}
+
+// NewFailure returns a failed JSON result with a generic stable error code
+// derived from the numeric exit code.
+func NewFailure(command string, code int, message string) Result {
+	return Result{
+		OK:            false,
+		SchemaVersion: SchemaVersion,
+		Command:       command,
+		Code:          code,
+		Error:         NewErrorObject(code, message),
+	}
+}
+
+// NewFailureForError returns a failed JSON result using any stable error code
+// carried by err, falling back to the generic numeric-code mapping.
+func NewFailureForError(command string, err error) Result {
+	code := ExitCode(err)
+	return Result{
+		OK:            false,
+		SchemaVersion: SchemaVersion,
+		Command:       command,
+		Code:          code,
+		Error:         ErrorObjectForError(code, err),
+	}
+}
+
+// NewErrorObject returns a generic stable error object for code/message.
+func NewErrorObject(code int, message string) *ErrorObject {
+	return &ErrorObject{Code: StableErrorCode(code), Message: message}
+}
+
+// ErrorObjectForError returns the structured error object for err.
+func ErrorObjectForError(code int, err error) *ErrorObject {
+	if err == nil {
+		return nil
+	}
+	if stable, ok := registry.ErrorCode(err); ok {
+		return &ErrorObject{Code: stable, Message: errorMessage(err)}
+	}
+	return NewErrorObject(code, err.Error())
+}
+
+func errorMessage(err error) string {
+	var coded registry.CodedError
+	if errors.As(err, &coded) {
+		if coded.Message != "" {
+			return coded.Message
+		}
+		return coded.Code
+	}
+	return err.Error()
+}
+
+// StableErrorCode maps numeric semantic exit codes to stable machine strings.
+func StableErrorCode(code int) string {
+	switch code {
+	case ExitUsage:
+		return "usage_error"
+	case ExitAuth:
+		return "auth_error"
+	case ExitConflict:
+		return "conflict"
+	case ExitNotFound:
+		return "not_found"
+	default:
+		return "internal_error"
+	}
 }
 
 // WriteJSON writes a Result as JSON to the given writer.
@@ -84,22 +183,17 @@ func WriteJSON(w io.Writer, r Result) {
 
 // Success writes a successful JSON result to stdout.
 func Success(command string, data any) {
-	WriteJSON(os.Stdout, Result{
-		OK:      true,
-		Command: command,
-		Code:    ExitSuccess,
-		Data:    data,
-	})
+	WriteJSON(os.Stdout, NewSuccess(command, data))
 }
 
 // Failure writes a failed JSON result to stdout with the given exit code.
 func Failure(command string, code int, message string) {
-	WriteJSON(os.Stdout, Result{
-		OK:      false,
-		Command: command,
-		Code:    code,
-		Error:   message,
-	})
+	WriteJSON(os.Stdout, NewFailure(command, code, message))
+}
+
+// FailureForError writes a failed JSON result to stdout for err.
+func FailureForError(command string, err error) {
+	WriteJSON(os.Stdout, NewFailureForError(command, err))
 }
 
 // ExitCode extracts the exit code from an error.
@@ -108,16 +202,34 @@ func ExitCode(err error) int {
 	if err == nil {
 		return ExitSuccess
 	}
-	if ce, ok := err.(*CodeError); ok {
+	var ce *CodeError
+	if errors.As(err, &ce) {
 		return ce.Code
 	}
-	if se, ok := err.(*SilentCodeError); ok {
+	var se *SilentCodeError
+	if errors.As(err, &se) {
 		return se.Code
+	}
+	if stable, ok := registry.ErrorCode(err); ok {
+		return exitCodeForStableError(stable)
 	}
 	if isUsageErrorMessage(err.Error()) {
 		return ExitUsage
 	}
 	return ExitError
+}
+
+func exitCodeForStableError(stable string) int {
+	switch stable {
+	case registry.CodeFunnelPublicAckRequired:
+		return ExitUsage
+	case registry.CodeFunnelAllowConflict,
+		registry.CodeFunnelControlURLConflict,
+		registry.CodeFunnelTypeConflict:
+		return ExitConflict
+	default:
+		return ExitError
+	}
 }
 
 func isUsageErrorMessage(msg string) bool {
