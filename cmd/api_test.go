@@ -12,6 +12,7 @@ import (
 
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/inspect"
+	"github.com/monody0007/tslink/internal/output"
 	"github.com/monody0007/tslink/internal/registry"
 )
 
@@ -25,18 +26,93 @@ func newTestHandler(t *testing.T) (*apiHandler, string) {
 	return &apiHandler{regPath: regPath, pidPath: pidPath, runtimeSnapshotPath: snapshotPath}, dir
 }
 
+type apiTestResponse struct {
+	OK            bool
+	SchemaVersion int
+	Code          int
+	Error         string
+	ErrorCode     string
+
+	Message  string
+	URL      string
+	Endpoint *inspect.EndpointView
+	Exposure *inspect.ExposureView
+	Warnings []inspect.WarningView
+	Services []inspect.ServiceView
+	Running  bool
+	Count    int
+
+	StatusURLs    *StatusURLsResult
+	Doctor        *DoctorResult
+	AccessExplain *AccessExplainResult
+	TemplateList  *TemplateListResult
+	TemplatePlan  *TemplateApplyResult
+	TemplateApply *TemplateApplyResult
+}
+
 // parseResponse decodes the first JSON line written to buf.
-func parseResponse(t *testing.T, buf *bytes.Buffer) APIResponse {
+func parseResponse(t *testing.T, buf *bytes.Buffer) apiTestResponse {
 	t.Helper()
-	var resp APIResponse
-	if err := json.NewDecoder(buf).Decode(&resp); err != nil {
+	var envelope output.Result
+	if err := json.NewDecoder(buf).Decode(&envelope); err != nil {
 		t.Fatalf("decode response: %v (raw: %q)", err, buf.String())
 	}
+
+	resp := apiTestResponse{
+		OK:            envelope.OK,
+		SchemaVersion: envelope.SchemaVersion,
+		Code:          envelope.Code,
+	}
+	if envelope.Error != nil {
+		resp.Error = envelope.Error.Message
+		resp.ErrorCode = envelope.Error.Code
+	}
+	if envelope.Data == nil {
+		return resp
+	}
+
+	dataBytes, err := json.Marshal(envelope.Data)
+	if err != nil {
+		t.Fatalf("marshal response data: %v", err)
+	}
+	var data struct {
+		Message       string                `json:"message,omitempty"`
+		URL           string                `json:"url,omitempty"`
+		Endpoint      *inspect.EndpointView `json:"endpoint,omitempty"`
+		Exposure      *inspect.ExposureView `json:"exposure,omitempty"`
+		Warnings      []inspect.WarningView `json:"warnings,omitempty"`
+		Services      []inspect.ServiceView `json:"services,omitempty"`
+		Running       bool                  `json:"running"`
+		Count         int                   `json:"count"`
+		StatusURLs    *StatusURLsResult     `json:"status_urls,omitempty"`
+		Doctor        *DoctorResult         `json:"doctor,omitempty"`
+		AccessExplain *AccessExplainResult  `json:"access_explain,omitempty"`
+		TemplateList  *TemplateListResult   `json:"template_list,omitempty"`
+		TemplatePlan  *TemplateApplyResult  `json:"template_plan,omitempty"`
+		TemplateApply *TemplateApplyResult  `json:"template_apply,omitempty"`
+	}
+	if err := json.Unmarshal(dataBytes, &data); err != nil {
+		t.Fatalf("decode response data: %v (raw: %s)", err, dataBytes)
+	}
+	resp.Message = data.Message
+	resp.URL = data.URL
+	resp.Endpoint = data.Endpoint
+	resp.Exposure = data.Exposure
+	resp.Warnings = data.Warnings
+	resp.Services = data.Services
+	resp.Running = data.Running
+	resp.Count = data.Count
+	resp.StatusURLs = data.StatusURLs
+	resp.Doctor = data.Doctor
+	resp.AccessExplain = data.AccessExplain
+	resp.TemplateList = data.TemplateList
+	resp.TemplatePlan = data.TemplatePlan
+	resp.TemplateApply = data.TemplateApply
 	return resp
 }
 
 // sendRequest sends a single APIRequest to the handler and returns the response.
-func sendRequest(t *testing.T, h *apiHandler, req APIRequest) APIResponse {
+func sendRequest(t *testing.T, h *apiHandler, req APIRequest) apiTestResponse {
 	t.Helper()
 	var buf bytes.Buffer
 	h.handle(req, &buf)
@@ -386,8 +462,11 @@ func TestAPIAdd_FunnelRejectsMissingPublicAck(t *testing.T) {
 	if resp.OK {
 		t.Fatal("expected missing public_ack error")
 	}
-	if resp.Error != "public_ack must be true when funnel is true" {
-		t.Fatalf("error = %q, want exact API public_ack error", resp.Error)
+	if resp.ErrorCode != registry.CodeFunnelPublicAckRequired {
+		t.Fatalf("error code = %q, want %s", resp.ErrorCode, registry.CodeFunnelPublicAckRequired)
+	}
+	if resp.Error != registry.ErrFunnelPublicAck {
+		t.Fatalf("error = %q, want public_ack guidance", resp.Error)
 	}
 }
 
@@ -408,8 +487,8 @@ func TestAPIAdd_FunnelRejectsAllowWithPublicAck(t *testing.T) {
 	if !strings.Contains(resp.Error, registry.ErrFunnelAllowedUsers) {
 		t.Fatalf("unexpected error: %s", resp.Error)
 	}
-	if !strings.Contains(resp.Error, registry.CodeFunnelAllowConflict) {
-		t.Fatalf("error = %q, want stable code %s", resp.Error, registry.CodeFunnelAllowConflict)
+	if resp.ErrorCode != registry.CodeFunnelAllowConflict {
+		t.Fatalf("error code = %q, want %s", resp.ErrorCode, registry.CodeFunnelAllowConflict)
 	}
 }
 
@@ -676,6 +755,30 @@ func TestAPIRemove_NotFound(t *testing.T) {
 func TestAPIStatus(t *testing.T) {
 	h, _ := newTestHandler(t)
 	// PID file does not exist, so running = false.
+	var buf bytes.Buffer
+	h.handle(APIRequest{Action: "status"}, &buf)
+	raw := buf.String()
+	if !strings.Contains(raw, `"running":false`) {
+		t.Fatalf("status response omitted running:false: %s", raw)
+	}
+	if !strings.Contains(raw, `"count":0`) {
+		t.Fatalf("status response omitted count:0: %s", raw)
+	}
+
+	resp := parseResponse(t, &buf)
+	if !resp.OK {
+		t.Fatalf("expected ok, got error: %s", resp.Error)
+	}
+	if resp.Running {
+		t.Error("expected running=false when no PID file")
+	}
+	if resp.Count != 0 {
+		t.Errorf("expected count=0, got %d", resp.Count)
+	}
+}
+
+func TestAPIStatusDataKeepsFalseAndZero(t *testing.T) {
+	h, _ := newTestHandler(t)
 	resp := sendRequest(t, h, APIRequest{Action: "status"})
 	if !resp.OK {
 		t.Fatalf("expected ok, got error: %s", resp.Error)
@@ -1013,8 +1116,8 @@ func TestAPITemplatePlanDryRunDoesNotCreateRegistry(t *testing.T) {
 	if !strings.Contains(raw, `"template_plan"`) {
 		t.Fatalf("template_plan response key missing: %s", raw)
 	}
-	if !strings.Contains(raw, `"template_apply"`) {
-		t.Fatalf("template_apply compatibility key missing: %s", raw)
+	if strings.Contains(raw, `"template_apply"`) {
+		t.Fatalf("template_plan response should not include template_apply: %s", raw)
 	}
 
 	resp := parseResponse(t, &buf)
@@ -1024,8 +1127,8 @@ func TestAPITemplatePlanDryRunDoesNotCreateRegistry(t *testing.T) {
 	if resp.TemplatePlan == nil {
 		t.Fatalf("template_plan missing in response: %+v", resp)
 	}
-	if resp.TemplateApply == nil {
-		t.Fatalf("template_apply missing in response: %+v", resp)
+	if resp.TemplateApply != nil {
+		t.Fatalf("template_apply = %+v, want nil for template_plan action", resp.TemplateApply)
 	}
 	if _, err := os.Stat(h.regPath); !os.IsNotExist(err) {
 		t.Fatalf("dry-run registry stat err = %v, want not exist", err)
@@ -1033,14 +1136,6 @@ func TestAPITemplatePlanDryRunDoesNotCreateRegistry(t *testing.T) {
 	result := *resp.TemplatePlan
 	if result.SchemaVersion != inspect.SchemaVersion || !result.DryRun || result.Applied {
 		t.Fatalf("template plan = %+v, want vNext dry-run not applied", result)
-	}
-	if resp.TemplateApply.Name != result.Name ||
-		resp.TemplateApply.DryRun != result.DryRun ||
-		resp.TemplateApply.Applied != result.Applied ||
-		resp.TemplateApply.Created != result.Created ||
-		resp.TemplateApply.Skipped != result.Skipped ||
-		len(resp.TemplateApply.Services) != len(result.Services) {
-		t.Fatalf("template_plan = %+v, template_apply = %+v, want compatibility alias", resp.TemplatePlan, resp.TemplateApply)
 	}
 	if result.Created != 2 || result.Skipped != 0 {
 		t.Fatalf("created/skipped = %d/%d, want 2/0", result.Created, result.Skipped)
