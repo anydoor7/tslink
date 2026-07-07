@@ -24,7 +24,7 @@ func main() {
 	}
 
 	if cmd.WasJSONRequested() {
-		output.Failure("", code, err.Error())
+		output.FailureForError("", err)
 	} else {
 		// Print error in human-readable format (Cobra's SilenceErrors is on)
 		os.Stderr.WriteString("Error: " + err.Error() + "\n")
