@@ -1,0 +1,26 @@
+version: 2
+updates:
+  # Go module dependencies. Security updates feed the same candidate gate as
+  # any other change; grouping keeps noise low while keeping the
+  # vulnerability surface current between manual audits.
+  - package-ecosystem: gomod
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      go-dependencies:
+        patterns:
+          - "*"
+
+  # GitHub Actions are pinned to commit SHAs; Dependabot proposes the SHA bump
+  # plus a human-readable version comment so pins stay current and reviewable.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      github-actions:
+        patterns:
+          - "*"

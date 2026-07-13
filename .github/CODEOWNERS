@@ -1,0 +1,18 @@
+# Code ownership for review routing and branch-protection required reviews.
+# Until additional maintainers are added, the repository owner owns everything.
+# Security- and release-critical paths are listed explicitly so they always
+# require owner review even if finer-grained ownership is added later.
+
+* @monody0007
+
+# Release, CI, and supply-chain surfaces.
+/.github/ @monody0007
+/.goreleaser.yml @monody0007
+/tools/ @monody0007
+
+# Security-relevant runtime code.
+/internal/security/ @monody0007
+/internal/credentials/ @monody0007
+/internal/tailapi/ @monody0007
+/internal/server/ @monody0007
+/SECURITY.md @monody0007

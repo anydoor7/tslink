@@ -8,6 +8,7 @@ const (
 	WarningCodeHTTPAuthConfigured        = "http_auth_configured"
 	WarningCodeMiddlewareNotEnforced     = "middleware_not_enforced"
 	WarningCodeServiceTypeUnknown        = "service_type_unknown"
+	WarningCodeCustomDomainNotWired      = "custom_domain_not_wired"
 	WarningCodeRuntimeSnapshotMissing    = "runtime_snapshot_missing"
 	WarningCodeRuntimeSnapshotStale      = "runtime_snapshot_stale"
 	WarningCodeRuntimeSnapshotUnreadable = "runtime_snapshot_unreadable"
@@ -72,6 +73,11 @@ var WarningCodeRegistry = map[string]WarningCodeMeta{
 		Source:      "service.type",
 		Description: "The registry contains a service type unknown to this TSLink version.",
 	},
+	WarningCodeCustomDomainNotWired: {
+		Severity:    "error",
+		Source:      "service.domain",
+		Description: "Custom-domain/ACME fields are present but the serve runtime does not wire them.",
+	},
 	WarningCodeRuntimeSnapshotMissing: {
 		Severity:    "warning",
 		Source:      "runtime.snapshot",
@@ -118,7 +124,7 @@ var WarningCodeRegistry = map[string]WarningCodeMeta{
 		Description: "TSLink global config could not be loaded.",
 	},
 	WarningCodeRegistryLoadFailed: {
-		Severity:    "error",
+		Severity:    "critical",
 		Source:      "registry.load",
 		Description: "TSLink registry could not be loaded.",
 	},

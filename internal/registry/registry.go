@@ -5,13 +5,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/monody0007/tslink/internal/atomicfile"
 	"github.com/monody0007/tslink/internal/filelock"
 )
 
@@ -31,6 +34,7 @@ const (
 	CodeFunnelPublicAckRequired  = "funnel_public_ack_required"
 	CodeFunnelControlURLConflict = "funnel_control_url_conflict"
 	CodeFunnelTypeConflict       = "funnel_type_conflict"
+	CodeFeatureUnavailable       = "feature_unavailable"
 
 	ErrFunnelAllowedUsers = "funnel services do not support allowed_users; public Funnel cannot be combined with TSLink allow lists"
 	ErrFunnelPublicAck    = "funnel services require recorded public acknowledgement; re-run `tslink add ... --funnel --public` or set public_ack:true after confirming public internet exposure"
@@ -85,6 +89,10 @@ func FunnelTypeConflictError(serviceType string) error {
 		message = fmt.Sprintf("%s (got %q)", message, serviceType)
 	}
 	return CodedError{Code: CodeFunnelTypeConflict, Message: message}
+}
+
+func FeatureUnavailableError(message string) error {
+	return CodedError{Code: CodeFeatureUnavailable, Message: message}
 }
 
 func ValidateFunnelGuardrails(serviceType string, funnel bool, allowedUsers []string, controlURL string, publicAck bool) error {
@@ -188,9 +196,6 @@ func ValidateService(svc Service) error {
 	if err := ValidateFunnelGuardrails(svc.Type, svc.Funnel, svc.AllowedUsers, svc.ControlURL, svc.PublicAck); err != nil {
 		return err
 	}
-	if svc.Type == TypeTCP && len(svc.AllowedUsers) > 0 {
-		return fmt.Errorf("tcp services do not support allowed_users; TSLink cannot enforce user ACLs on raw TCP services")
-	}
 	if err := ValidateControlURL(svc.ControlURL); err != nil {
 		return err
 	}
@@ -199,10 +204,133 @@ func ValidateService(svc Service) error {
 			return err
 		}
 	}
+	if err := validateServiceShape(svc); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateServiceShape(svc Service) error {
+	if err := ValidateUnavailableFeatures(svc); err != nil {
+		return err
+	}
+
+	switch svc.Type {
+	case TypeProxy:
+		if svc.Target == "" {
+			return fmt.Errorf("proxy services require target")
+		}
+		if svc.Path != "" {
+			return fmt.Errorf("proxy services do not support path")
+		}
+		if svc.Port != 0 {
+			return fmt.Errorf("proxy services do not support port")
+		}
+		if err := ValidateProxyTarget(svc.Target); err != nil {
+			return err
+		}
+	case TypeFile:
+		if svc.Path == "" {
+			return fmt.Errorf("file services require path")
+		}
+		if svc.Target != "" {
+			return fmt.Errorf("file services do not support target")
+		}
+		if svc.Port != 0 {
+			return fmt.Errorf("file services do not support port")
+		}
+		if err := ValidateFileRoot(svc.Path); err != nil {
+			return err
+		}
+	case TypeTCP:
+		if svc.Target == "" {
+			return fmt.Errorf("tcp services require target")
+		}
+		if svc.Path != "" {
+			return fmt.Errorf("tcp services do not support path")
+		}
+		if svc.Funnel {
+			return FunnelTypeConflictError(svc.Type)
+		}
+		if len(svc.AllowedUsers) > 0 {
+			return fmt.Errorf("tcp services do not support allowed_users; TSLink cannot enforce user ACLs on raw TCP services")
+		}
+		if err := ValidateTCPTarget(svc.Target); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("unsupported service type %q; must be one of: %s, %s, %s", svc.Type, TypeProxy, TypeFile, TypeTCP)
+	}
+	return nil
+}
+
+func ValidateUnavailableFeatures(svc Service) error {
+	if svc.Domain != "" || svc.AcmeEmail != "" {
+		return FeatureUnavailableError(fmt.Sprintf("custom-domain/ACME runtime is not wired; remove domain/acme_email from service %q", svc.Name))
+	}
+	if MiddlewareConfigured(svc.Middleware) {
+		return FeatureUnavailableError(fmt.Sprintf("middleware runtime is not wired; remove middleware from service %q", svc.Name))
+	}
+	return nil
+}
+
+func MiddlewareConfigured(mw *MiddlewareConfig) bool {
+	if mw == nil {
+		return false
+	}
+	return mw.BasicAuth != "" || mw.RateLimit != 0 || len(mw.IPAllowList) > 0 || len(mw.CORSOrigins) > 0
+}
+
+func ValidateProxyTarget(target string) error {
+	parsed, err := url.Parse(target)
+	if err != nil {
+		return fmt.Errorf("invalid proxy target %q: %w", target, err)
+	}
+	if !strings.EqualFold(parsed.Scheme, "http") && !strings.EqualFold(parsed.Scheme, "https") {
+		return fmt.Errorf("invalid proxy target %q: scheme must be http or https", target)
+	}
+	if parsed.Host == "" {
+		return fmt.Errorf("invalid proxy target %q: host is required", target)
+	}
+	return nil
+}
+
+func ValidateFileRoot(path string) error {
+	if path == "" {
+		return fmt.Errorf("file services require non-empty absolute path")
+	}
+	if !filepath.IsAbs(path) {
+		return fmt.Errorf("file service path %q must be absolute", path)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("file service path %q is not accessible: %w", path, err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("file service path %q is not a directory", path)
+	}
+	return nil
+}
+
+func ValidateTCPTarget(target string) error {
+	host, portText, err := net.SplitHostPort(target)
+	if err != nil {
+		return fmt.Errorf("tcp target %q must be host:port: %w", target, err)
+	}
+	if strings.TrimSpace(host) == "" {
+		return fmt.Errorf("tcp target %q must include a host", target)
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil || port <= 0 || port > 65535 {
+		return fmt.Errorf("tcp target %q has invalid port %q", target, portText)
+	}
 	return nil
 }
 
 func Load(path string) (*Registry, error) {
+	if err := atomicfile.ConvergePrivateFile(path); err != nil {
+		return nil, err
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -226,6 +354,11 @@ func Load(path string) (*Registry, error) {
 	if reg.Services == nil {
 		reg.Services = []Service{}
 	}
+	for _, svc := range reg.Services {
+		if err := ValidateUnavailableFeatures(svc); err != nil {
+			return nil, fmt.Errorf("service %q: %w; edit registry.json", svc.Name, err)
+		}
+	}
 
 	return &reg, nil
 }
@@ -246,7 +379,10 @@ func migrate(reg *Registry) error {
 }
 
 func withLock(regPath string, fn func() error) error {
-	if err := os.MkdirAll(filepath.Dir(regPath), 0o700); err != nil {
+	if err := atomicfile.EnsurePrivateDir(filepath.Dir(regPath)); err != nil {
+		return err
+	}
+	if err := atomicfile.ConvergePrivateFile(regPath + ".lock"); err != nil {
 		return err
 	}
 
@@ -265,9 +401,6 @@ func withLock(regPath string, fn func() error) error {
 }
 
 func save(path string, reg *Registry) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
 	if reg.Services == nil {
 		reg.Services = []Service{}
 	}
@@ -279,12 +412,7 @@ func save(path string, reg *Registry) error {
 	}
 	data = append(data, '\n')
 
-	tmpPath := path + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0o600); err != nil {
-		return err
-	}
-
-	return os.Rename(tmpPath, path)
+	return atomicfile.WriteFile(path, data)
 }
 
 func Add(path string, svc Service) (created bool, err error) {
@@ -375,4 +503,40 @@ func RemoveAndReturn(path, name string) (removedService Service, removed bool, e
 		return nil
 	})
 	return removedService, removed, err
+}
+
+func MutateService(path, name string, mutate func(Service) (Service, error)) (Service, error) {
+	var updated Service
+	err := withLock(path, func() error {
+		reg, err := Load(path)
+		if err != nil {
+			return err
+		}
+		for i, existing := range reg.Services {
+			if existing.Name != name {
+				continue
+			}
+			next, err := mutate(existing)
+			if err != nil {
+				return err
+			}
+			if next.Name == "" {
+				next.Name = existing.Name
+			}
+			if next.Name != existing.Name {
+				return fmt.Errorf("service name mutation is not supported: %q to %q", existing.Name, next.Name)
+			}
+			if next.CreatedAt.IsZero() {
+				next.CreatedAt = existing.CreatedAt
+			}
+			if err := ValidateService(next); err != nil {
+				return err
+			}
+			reg.Services[i] = next
+			updated = next
+			return save(path, reg)
+		}
+		return fmt.Errorf("service not found: %s", name)
+	})
+	return updated, err
 }

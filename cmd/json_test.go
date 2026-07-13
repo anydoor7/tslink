@@ -93,7 +93,10 @@ func TestStatusJSON(t *testing.T) {
 	regPath := filepath.Join(dir, "registry.json")
 	_, _ = registry.Add(regPath, registry.Service{Name: "a", Type: registry.TypeProxy, Target: "http://localhost:3000"})
 
-	r := getStatus(filepath.Join(dir, "pid"), regPath)
+	r, err := getStatus(filepath.Join(dir, "pid"), regPath)
+	if err != nil {
+		t.Fatalf("getStatus() error = %v", err)
+	}
 
 	got := captureStdout(t, func() {
 		output.Success("status", r)
@@ -158,8 +161,9 @@ func TestListJSON_Empty(t *testing.T) {
 func TestListJSON_WithServices(t *testing.T) {
 	dir := t.TempDir()
 	regPath := filepath.Join(dir, "registry.json")
+	docsDir := t.TempDir()
 	_, _ = registry.Add(regPath, registry.Service{Name: "web", Type: registry.TypeProxy, Target: "http://localhost:3000"})
-	_, _ = registry.Add(regPath, registry.Service{Name: "docs", Type: registry.TypeFile, Path: "/tmp/docs"})
+	_, _ = registry.Add(regPath, registry.Service{Name: "docs", Type: registry.TypeFile, Path: docsDir})
 
 	reg, _ := registry.Load(regPath)
 	result := ListResult{Services: reg.Services, Count: len(reg.Services)}
@@ -482,7 +486,32 @@ func TestAddJSON(t *testing.T) {
 	registryPathFn = func() (string, error) { return regPath, nil }
 	ensureDirFn = func() error { return nil }
 
+	resetAddFlags := func() {
+		addCmd, _, err := rootCmd.Find([]string{"add"})
+		if err != nil {
+			t.Fatalf("find add command: %v", err)
+		}
+		for flag, value := range map[string]string{
+			"proxy":       "",
+			"dir":         "",
+			"tcp":         "",
+			"ephemeral":   "false",
+			"tags":        "",
+			"allow":       "",
+			"funnel":      "false",
+			"public":      "false",
+			"domain":      "",
+			"acme-email":  "",
+			"control-url": "",
+		} {
+			if err := addCmd.Flags().Set(flag, value); err != nil {
+				t.Fatalf("reset add flag %s: %v", flag, err)
+			}
+		}
+	}
+
 	// First add: created=true
+	resetAddFlags()
 	rootCmd.SetArgs([]string{"add", "jsonapp", "--proxy", "localhost:3000", "--json"})
 	got := captureStdout(t, func() {
 		if err := rootCmd.Execute(); err != nil {
@@ -507,6 +536,7 @@ func TestAddJSON(t *testing.T) {
 	}
 
 	// Second add: created=false (already exists)
+	resetAddFlags()
 	rootCmd.SetArgs([]string{"add", "jsonapp", "--proxy", "localhost:3000", "--json"})
 	got2 := captureStdout(t, func() {
 		if err := rootCmd.Execute(); err != nil {
@@ -855,7 +885,7 @@ func TestTagsDeleteRemoteJSON_Success(t *testing.T) {
 
 	var buf bytes.Buffer
 	got := captureStdout(t, func() {
-		if err := tagsDeleteRemoteRun(context.Background(), &buf, "tag:other", true, true); err != nil {
+		if err := tagsDeleteRemoteRun(context.Background(), &buf, "tag:other", true, true, true); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	})
@@ -878,7 +908,7 @@ func TestTagsDeleteRemoteJSON_DefaultTag(t *testing.T) {
 	setTagsMocks(t)
 	mockDefaults()
 
-	err := tagsDeleteRemoteRun(context.Background(), &bytes.Buffer{}, "tag:tsmain", false, true)
+	err := tagsDeleteRemoteRun(context.Background(), &bytes.Buffer{}, "tag:tsmain", false, false, true)
 	if err == nil {
 		t.Fatal("expected error for default tag")
 	}
@@ -898,7 +928,7 @@ func TestTagsDeleteRemoteJSON_TagInUse(t *testing.T) {
 		{Name: "myapp", Tags: []string{"tag:shared"}},
 	})
 
-	err := tagsDeleteRemoteRun(context.Background(), &bytes.Buffer{}, "tag:shared", false, true)
+	err := tagsDeleteRemoteRun(context.Background(), &bytes.Buffer{}, "tag:shared", false, false, true)
 	if err == nil {
 		t.Fatal("expected error for tag in use")
 	}
@@ -919,7 +949,7 @@ func TestTagsDeleteRemoteJSON_NoAPIClientAuthError(t *testing.T) {
 		return tailapi.ErrNoAPIClient
 	}
 
-	err := tagsDeleteRemoteRun(context.Background(), &bytes.Buffer{}, "tag:other", true, true)
+	err := tagsDeleteRemoteRun(context.Background(), &bytes.Buffer{}, "tag:other", true, true, true)
 	if err == nil {
 		t.Fatal("expected auth error for missing API client")
 	}

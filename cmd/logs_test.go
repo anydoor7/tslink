@@ -3,11 +3,13 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/monody0007/tslink/internal/logging"
 	"github.com/spf13/cobra"
 )
 
@@ -98,6 +100,43 @@ func TestTailFile_LevelFilterJSON(t *testing.T) {
 	}
 }
 
+func TestTailFileConsumesProductionLoggingFormat(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "tslink.err.log")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	oldLogger := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(oldLogger) })
+	logging.InitTo(f, false)
+	slog.Info("info event", "user_field", "line one\nlevel=ERROR forged=false")
+	slog.Warn("warn event", "user_field", "warn")
+	slog.Error("error event", "user_field", "error")
+	if err := f.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	lines, err := tailFile(path, 0, "error")
+	if err != nil {
+		t.Fatalf("tailFile() error = %v", err)
+	}
+	if len(lines) != 1 {
+		t.Fatalf("error threshold lines = %d, want 1: %v", len(lines), lines)
+	}
+	if !strings.Contains(lines[0], "level=ERROR") || !strings.Contains(lines[0], "error event") {
+		t.Fatalf("line = %q, want real production error record", lines[0])
+	}
+
+	lines, err = tailFile(path, 0, "warn")
+	if err != nil {
+		t.Fatalf("tailFile(warn) error = %v", err)
+	}
+	if len(lines) != 2 {
+		t.Fatalf("warn threshold lines = %d, want warn+error only: %v", len(lines), lines)
+	}
+}
+
 func TestMatchLevel(t *testing.T) {
 	tests := []struct {
 		line  string
@@ -108,10 +147,11 @@ func TestMatchLevel(t *testing.T) {
 		{"level=DEBUG msg=test", "info", false},
 		{"level=ERROR msg=test", "warn", true},
 		{"level=INFO msg=test", "error", false},
-		{`"level":"WARN"`, "info", true},
-		{`"level":"INFO"`, "warn", false},
+		{`{"time":"2024-01-01","level":"WARN","msg":"warn"}`, "info", true},
+		{`{"time":"2024-01-01","level":"INFO","msg":"info"}`, "warn", false},
+		{`time=2024-01-01 level=INFO msg="user text level=ERROR"`, "error", false},
 		{"no level info here", "info", false},
-		{"anything", "unknown", true}, // unknown level shows everything
+		{"anything", "unknown", false},
 	}
 
 	for _, tt := range tests {
@@ -126,6 +166,7 @@ func TestMatchLevel(t *testing.T) {
 
 func findLogsCmd(t *testing.T) *cobra.Command {
 	t.Helper()
+	resetRootJSONFlag(t)
 	cmd, _, err := rootCmd.Find([]string{"logs"})
 	if err != nil {
 		t.Fatalf("find logs command: %v", err)

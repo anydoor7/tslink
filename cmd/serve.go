@@ -16,6 +16,7 @@ import (
 	"github.com/monody0007/tslink/internal/daemon"
 	"github.com/monody0007/tslink/internal/output"
 	"github.com/monody0007/tslink/internal/registry"
+	"github.com/monody0007/tslink/internal/security"
 	"github.com/monody0007/tslink/internal/server"
 	"github.com/monody0007/tslink/internal/tailapi"
 	"github.com/spf13/cobra"
@@ -44,12 +45,17 @@ var (
 	serveCheckAuthFn          = credentials.RequireStoredCredential
 	servePIDPathFn            = config.PIDPath
 	serveIsRunningFn          = daemon.IsRunning
+	serveIsPIDRunningFn       = daemon.IsProcessRunning
 	serveEnsureTagsFn         = tailapi.EnsureTags
 	serveCleanupFn            = tailapi.CleanupStaleNodesResult
 	serveLoadGlobalFn         = config.LoadGlobalConfig
 	serveLogDirFn             = config.LogDir
 	serveDaemonizeFn          = daemon.Daemonize
 	serveReadPIDFn            = daemon.ReadPID
+	serveReadyPathFn          = daemonReadyPath
+	serveWriteReadyFn         = daemon.WritePIDForProcess
+	serveReadReadyFn          = daemon.ReadPID
+	serveRemoveReadyFn        = daemon.RemovePID
 
 	serveDaemonReadyTimeout      = 10 * time.Second
 	serveDaemonReadyPollInterval = 50 * time.Millisecond
@@ -68,6 +74,10 @@ type authKeyProviderSetter interface {
 	SetAuthKeyProvider(server.AuthKeyProvider)
 }
 
+type readySetter interface {
+	SetReadyFunc(func() error)
+}
+
 func init() {
 	serveCmd := &cobra.Command{
 		Use:   "serve",
@@ -83,6 +93,7 @@ Examples:
 			if err := serveEnsureDirFn(); err != nil {
 				return err
 			}
+			manageACL, _ := cmd.Flags().GetBool("manage-acl")
 
 			// Migrate file-based API key to keychain if possible
 			if serveMigrateFn() {
@@ -122,6 +133,11 @@ Examples:
 
 				outLog := filepath.Join(logDir, "tslink.out.log")
 				errLog := filepath.Join(logDir, "tslink.err.log")
+				readyPath, err := serveReadyPathFn()
+				if err != nil {
+					return err
+				}
+				serveRemoveReadyFn(readyPath)
 
 				var pid int
 				if err := serveWithPIDLockFn(pidPath, func() error {
@@ -129,20 +145,22 @@ Examples:
 						return output.ErrConflict("tslink is already running (see: tslink status)")
 					}
 					serveRemovePIDFn(pidPath)
+					restoreReadyEnv := setDaemonReadyEnv(readyPath)
+					defer restoreReadyEnv()
 					var err error
-					pid, err = serveDaemonizeFn(outLog, errLog, controlURL)
+					// Propagate --manage-acl to the daemon child. The child
+					// re-execs foreground `serve`, where the ACL ensure runs;
+					// dropping the flag here would silently ignore the opt-in.
+					pid, err = serveDaemonizeFn(outLog, errLog, controlURL, manageACL)
 					if err != nil {
 						return err
-					}
-					if err := serveWritePIDForProcessFn(pidPath, pid); err != nil {
-						return fmt.Errorf("write daemon PID: %w", err)
 					}
 					return nil
 				}); err != nil {
 					return err
 				}
 
-				if err := waitForDaemonReady(pidPath, pid, serveDaemonReadyTimeout, serveDaemonReadyPollInterval); err != nil {
+				if err := waitForDaemonReady(pidPath, readyPath, pid, serveDaemonReadyTimeout, serveDaemonReadyPollInterval); err != nil {
 					return fmt.Errorf("daemon startup did not complete: %w; check logs: %s and %s", err, outLog, errLog)
 				}
 
@@ -166,8 +184,13 @@ Examples:
 				allTags = append(allTags, tag)
 			}
 
-			// Ensure all required tags exist in tailnet ACL
-			if err := serveEnsureTagsFn(context.Background(), allTags); err != nil {
+			effectiveEnsureTagsFn := serveEnsureTagsFn
+			if !manageACL {
+				effectiveEnsureTagsFn = serveRemoteACLMutationDisabledFn("serve_ensure_tags")
+			}
+
+			// Ensure all required tags exist in tailnet ACL only after explicit opt-in.
+			if err := effectiveEnsureTagsFn(context.Background(), allTags); err != nil {
 				if errors.Is(err, tailapi.ErrNoAPIClient) {
 					slog.Warn("degraded mode: skipped ACL tag ensure", "reason", err.Error(), "tags", allTags, "degraded_mode", true)
 				} else {
@@ -195,13 +218,54 @@ Examples:
 				slog.Info("removed stale tailnet nodes", "matched", cleanup.Matched, "deleted", cleanup.Deleted)
 			}
 
-			return runForeground(pidPath, "", controlURL)
+			restoreEnsureTags := temporarilySetServeEnsureTags(effectiveEnsureTagsFn)
+			defer restoreEnsureTags()
+			return runForeground(pidPath, os.Getenv("TSLINK_DAEMON_READY_PATH"), "", controlURL)
 		},
 	}
 
 	serveCmd.Flags().BoolVar(&serveDaemon, "daemon", false, "Run as background daemon")
 	serveCmd.Flags().String("control-url", "", "Custom control server URL (e.g., Headscale)")
+	serveCmd.Flags().Bool("manage-acl", false, "Opt in to remote Tailscale ACL tag-owner mutation using a machine-readable side-effect plan")
 	rootCmd.AddCommand(serveCmd)
+}
+
+func temporarilySetServeEnsureTags(fn server.EnsureTagsFunc) func() {
+	old := serveEnsureTagsFn
+	serveEnsureTagsFn = fn
+	return func() { serveEnsureTagsFn = old }
+}
+
+func serveRemoteACLMutationDisabledFn(operation string) server.EnsureTagsFunc {
+	return func(ctx context.Context, tags []string) error {
+		if len(tags) == 0 {
+			return nil
+		}
+		plan := security.ACLMutationPlan(operation, tags, false)
+		slog.Warn("remote ACL mutation disabled by default", "plan_id", plan.ID, "opt_in_flag", plan.OptInFlag, "tags", tags)
+		return nil
+	}
+}
+
+func daemonReadyPath() (string, error) {
+	dir, err := config.Dir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "tslink.ready"), nil
+}
+
+func setDaemonReadyEnv(path string) func() {
+	const key = "TSLINK_DAEMON_READY_PATH"
+	old, hadOld := os.LookupEnv(key)
+	_ = os.Setenv(key, path)
+	return func() {
+		if hadOld {
+			_ = os.Setenv(key, old)
+			return
+		}
+		_ = os.Unsetenv(key)
+	}
 }
 
 func loadValidatedRegistryForServe() (*registry.Registry, error) {
@@ -242,7 +306,7 @@ func warnSkippedServiceForServeStartup(svc registry.Service, err error) {
 	)
 }
 
-func waitForDaemonReady(pidPath string, expectedPID int, timeout, pollInterval time.Duration) error {
+func waitForDaemonReady(pidPath, readyPath string, expectedPID int, timeout, pollInterval time.Duration) error {
 	if pollInterval <= 0 {
 		pollInterval = 50 * time.Millisecond
 	}
@@ -250,31 +314,41 @@ func waitForDaemonReady(pidPath string, expectedPID int, timeout, pollInterval t
 	deadline := time.Now().Add(timeout)
 	var lastErr error
 	for {
-		pid, err := serveReadPIDFn(pidPath)
+		readyPID, err := serveReadReadyFn(readyPath)
 		if err == nil {
-			if pid == expectedPID {
-				if serveIsRunningFn(pidPath) {
+			if readyPID == expectedPID {
+				pid, pidErr := serveReadPIDFn(pidPath)
+				if pidErr != nil {
+					lastErr = fmt.Errorf("read daemon PID file %s after ready signal: %w", pidPath, pidErr)
+				} else if pid != expectedPID {
+					lastErr = fmt.Errorf("PID file %s contains pid %d, expected %d", pidPath, pid, expectedPID)
+				} else if serveIsPIDRunningFn(expectedPID) {
 					return nil
+				} else {
+					lastErr = fmt.Errorf("daemon process %d emitted ready signal but is not running", expectedPID)
 				}
-				lastErr = fmt.Errorf("PID file %s contains expected pid %d, but daemon is not running", pidPath, expectedPID)
 			} else {
-				lastErr = fmt.Errorf("PID file %s contains pid %d, expected %d", pidPath, pid, expectedPID)
+				lastErr = fmt.Errorf("ready file %s contains pid %d, expected %d", readyPath, readyPID, expectedPID)
 			}
 		} else {
 			lastErr = err
 		}
 
+		if !serveIsPIDRunningFn(expectedPID) {
+			return fmt.Errorf("daemon process %d exited before readiness: %w", expectedPID, lastErr)
+		}
+
 		if !time.Now().Before(deadline) {
 			if lastErr != nil {
-				return fmt.Errorf("expected daemon PID file %s was not ready before timeout: %w", pidPath, lastErr)
+				return fmt.Errorf("expected daemon ready file %s was not ready before timeout: %w", readyPath, lastErr)
 			}
-			return fmt.Errorf("expected daemon PID file %s was not ready before timeout", pidPath)
+			return fmt.Errorf("expected daemon ready file %s was not ready before timeout", readyPath)
 		}
 		time.Sleep(pollInterval)
 	}
 }
 
-func runForeground(pidPath, authKey, controlURL string) error {
+func runForeground(pidPath, readyPath, authKey, controlURL string) error {
 	if err := serveWithPIDLockFn(pidPath, func() error {
 		if serveIsRunningFn(pidPath) {
 			pid, err := serveReadPIDFn(pidPath)
@@ -290,6 +364,9 @@ func runForeground(pidPath, authKey, controlURL string) error {
 		return err
 	}
 	defer serveRemovePIDFn(pidPath)
+	if readyPath != "" {
+		defer serveRemoveReadyFn(readyPath)
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -308,6 +385,15 @@ func runForeground(pidPath, authKey, controlURL string) error {
 				Ephemeral:   svc.Ephemeral,
 				Description: fmt.Sprintf("TSLink service %q startup auth key", svc.Name),
 			})
+		})
+	}
+	if readyPath != "" {
+		setter, ok := srv.(readySetter)
+		if !ok {
+			return fmt.Errorf("server does not support daemon readiness")
+		}
+		setter.SetReadyFunc(func() error {
+			return serveWriteReadyFn(readyPath, os.Getpid())
 		})
 	}
 

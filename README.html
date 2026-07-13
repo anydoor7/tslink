@@ -1,0 +1,1069 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>→ https://myapp.&lt;your-tailnet&gt;.ts.net — accessible from any device on your tailnet</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@300;400;500;600;700&family=Noto+Sans+SC:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+
+/* ── 古风暖白配色（参照 SBTI） ── */
+:root {
+  --bg:       #f7f3eb;  /* 暖米白，主背景 */
+  --bg2:      #f0ead8;  /* 次背景：卡片、代码、blockquote */
+  --bg3:      #e8dfc8;  /* 再深一层：表头、hr */
+  --gold:     #8b6914;  /* 金棕，主强调色 */
+  --gold-lt:  #c9a84c;
+  --gold-dim: #b89a50;
+  --ink:      #2c2417;  /* 主文字，深咖啡 */
+  --ink2:     #4a3f2f;
+  --ink3:     #7a6a52;
+  --border:   #c9b882;  /* 金色边框 */
+  --shadow:   rgba(139,105,20,0.12);
+  --hover:    rgba(139,105,20,0.06);
+  --stripe:   rgba(201,184,130,0.12);
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  font-family: 'Noto Serif SC', 'Songti SC', 'STSong', 'SimSun', Georgia, serif;
+  font-size: 15px;
+  line-height: 1.85;
+  color: var(--ink);
+  background: var(--bg);
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 32px 44px 120px;
+  word-wrap: break-word;
+}
+@media (max-width: 700px) {
+  body { padding: 20px 18px 80px; font-size: 14px; }
+}
+
+/* ── 顶部装饰：金色渐变细线 ── */
+.ornament-top {
+  height: 3px;
+  background: linear-gradient(90deg, transparent, var(--gold-lt), var(--gold), var(--gold-lt), transparent);
+  margin: 0 0 28px;
+  border-radius: 2px;
+}
+
+/* ── meta 行（源文件链接）── */
+.meta {
+  font-size: 11px; color: var(--gold-dim);
+  letter-spacing: 1.5px;
+  text-align: center;
+  padding-bottom: 14px;
+  margin-bottom: 24px;
+  border-bottom: 1px dashed var(--border);
+  font-family: 'Noto Sans SC', -apple-system, sans-serif;
+}
+.meta a { color: var(--gold); }
+
+/* ── 标题 ── */
+h1, h2, h3, h4, h5, h6 {
+  font-family: 'Noto Serif SC', 'Songti SC', 'STSong', serif;
+  font-weight: 600;
+  color: var(--gold);
+  line-height: 1.4;
+  margin: 1.8em 0 0.6em;
+  letter-spacing: 2px;
+}
+h1 {
+  font-size: 1.9em; text-align: center; letter-spacing: 4px;
+  margin: 0.5em 0 0.8em;
+  padding-bottom: 0.4em;
+  border-bottom: 2px solid var(--border);
+  position: relative;
+}
+h1::after {
+  content: ''; display: block; width: 60px; height: 2px;
+  background: var(--gold); margin: 0.3em auto 0;
+}
+h2 {
+  font-size: 1.4em; letter-spacing: 3px;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 12px;
+}
+h2::before {
+  content: ''; width: 6px; height: 1em; background: var(--gold);
+  border-radius: 2px; flex-shrink: 0;
+}
+h3 { font-size: 1.18em; letter-spacing: 2px; }
+h4 { font-size: 1.05em; letter-spacing: 1.5px; color: var(--ink2); }
+h5, h6 { font-size: 1em; letter-spacing: 1px; color: var(--ink2); }
+
+p { margin: 0.9em 0; color: var(--ink); }
+a { color: var(--gold); text-decoration: none; border-bottom: 1px dotted var(--gold-dim); }
+a:hover { color: var(--gold-lt); border-bottom-style: solid; }
+strong { color: var(--ink); font-weight: 700; }
+em { color: var(--ink2); }
+
+/* ── 表格：宽表格水平滚动 + 古风金棕 ── */
+.table-wrap {
+  overflow-x: auto;
+  margin: 1.2em 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg2);
+  box-shadow: 0 1px 3px var(--shadow);
+}
+table { border-collapse: collapse; width: 100%; min-width: max-content; }
+table th, table td {
+  padding: 10px 16px;
+  border-bottom: 1px solid rgba(201,184,130,0.4);
+  text-align: left;
+  vertical-align: top;
+  white-space: nowrap;
+}
+table th {
+  background: var(--bg3);
+  font-weight: 600;
+  color: var(--gold);
+  letter-spacing: 1.5px;
+  font-size: 0.92em;
+  border-bottom: 2px solid var(--border);
+  position: sticky; top: 0;
+}
+table tbody tr:hover td { background: var(--hover); }
+table tbody tr:last-child td { border-bottom: none; }
+table td.wrap, table th.wrap { white-space: normal; }
+
+/* ── 代码 ── */
+code, pre, kbd, .codehilite {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, "Courier New", monospace;
+  font-size: 0.88em;
+}
+:not(pre) > code {
+  background: var(--bg2);
+  padding: 2px 7px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  color: var(--ink);
+}
+pre, .codehilite pre {
+  background: var(--bg2);
+  padding: 16px 18px;
+  border-radius: 6px;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  line-height: 1.55;
+  box-shadow: inset 0 1px 2px rgba(0,0,0,0.03);
+}
+pre code { background: transparent; padding: 0; border: 0; color: var(--ink); }
+.codehilite { background: var(--bg2); border-radius: 6px; margin: 1em 0; }
+.codehilite pre { margin: 0; }
+
+/* ── blockquote ── */
+blockquote {
+  margin: 1.2em 0;
+  padding: 0.6em 1.2em;
+  border-left: 4px solid var(--gold-dim);
+  color: var(--ink2);
+  background: var(--bg2);
+  border-radius: 0 6px 6px 0;
+  box-shadow: 0 1px 3px var(--shadow);
+}
+blockquote > :first-child { margin-top: 0; }
+blockquote > :last-child { margin-bottom: 0; }
+
+/* ── list ── */
+ul, ol { padding-left: 1.8em; margin: 0.8em 0; }
+li { margin: 0.3em 0; }
+li > ul, li > ol { margin: 0.3em 0; }
+ul li::marker { color: var(--gold-dim); }
+ol li::marker { color: var(--gold-dim); font-weight: 500; }
+
+hr {
+  height: 2px; border: 0; margin: 2.4em 0;
+  background: linear-gradient(90deg, transparent, var(--gold-lt), transparent);
+}
+
+img { max-width: 100%; height: auto; border-radius: 4px; }
+
+/* ── admonition ── */
+.admonition {
+  margin: 1.2em 0; padding: 14px 18px; border-radius: 6px;
+  border-left: 4px solid var(--gold); background: var(--bg2);
+  box-shadow: 0 1px 3px var(--shadow);
+}
+.admonition .admonition-title {
+  font-weight: 600; margin: 0 0 0.5em;
+  color: var(--gold); letter-spacing: 1.5px;
+}
+
+/* ── footer ── */
+.footer {
+  text-align: center; margin-top: 60px; padding-top: 20px;
+  border-top: 1px solid var(--border);
+  color: var(--gold-dim); font-size: 11px; letter-spacing: 2px;
+  font-family: 'Noto Sans SC', sans-serif;
+}
+
+/* ── 打印 ── */
+@media print {
+  body { max-width: none; padding: 20px; }
+  .ornament-top, .footer { display: none; }
+  table th { position: static; }
+}
+
+/* ── Pygments 代码高亮（friendly 主题 + 古风适配）── */
+pre { line-height: 125%; }
+td.linenos .normal { color: #666666; background-color: transparent; padding-left: 5px; padding-right: 5px; }
+span.linenos { color: #666666; background-color: transparent; padding-left: 5px; padding-right: 5px; }
+td.linenos .special { color: #000000; background-color: #ffffc0; padding-left: 5px; padding-right: 5px; }
+span.linenos.special { color: #000000; background-color: #ffffc0; padding-left: 5px; padding-right: 5px; }
+.codehilite .hll { background-color: #ffffcc }
+.codehilite { background: #f0f0f0; }
+.codehilite .c { color: #60A0B0; font-style: italic } /* Comment */
+.codehilite .err { border: 1px solid #F00 } /* Error */
+.codehilite .k { color: #007020; font-weight: bold } /* Keyword */
+.codehilite .o { color: #666 } /* Operator */
+.codehilite .ch { color: #60A0B0; font-style: italic } /* Comment.Hashbang */
+.codehilite .cm { color: #60A0B0; font-style: italic } /* Comment.Multiline */
+.codehilite .cp { color: #007020 } /* Comment.Preproc */
+.codehilite .cpf { color: #60A0B0; font-style: italic } /* Comment.PreprocFile */
+.codehilite .c1 { color: #60A0B0; font-style: italic } /* Comment.Single */
+.codehilite .cs { color: #60A0B0; background-color: #FFF0F0 } /* Comment.Special */
+.codehilite .gd { color: #A00000 } /* Generic.Deleted */
+.codehilite .ge { font-style: italic } /* Generic.Emph */
+.codehilite .ges { font-weight: bold; font-style: italic } /* Generic.EmphStrong */
+.codehilite .gr { color: #F00 } /* Generic.Error */
+.codehilite .gh { color: #000080; font-weight: bold } /* Generic.Heading */
+.codehilite .gi { color: #00A000 } /* Generic.Inserted */
+.codehilite .go { color: #888 } /* Generic.Output */
+.codehilite .gp { color: #C65D09; font-weight: bold } /* Generic.Prompt */
+.codehilite .gs { font-weight: bold } /* Generic.Strong */
+.codehilite .gu { color: #800080; font-weight: bold } /* Generic.Subheading */
+.codehilite .gt { color: #04D } /* Generic.Traceback */
+.codehilite .kc { color: #007020; font-weight: bold } /* Keyword.Constant */
+.codehilite .kd { color: #007020; font-weight: bold } /* Keyword.Declaration */
+.codehilite .kn { color: #007020; font-weight: bold } /* Keyword.Namespace */
+.codehilite .kp { color: #007020 } /* Keyword.Pseudo */
+.codehilite .kr { color: #007020; font-weight: bold } /* Keyword.Reserved */
+.codehilite .kt { color: #902000 } /* Keyword.Type */
+.codehilite .m { color: #40A070 } /* Literal.Number */
+.codehilite .s { color: #4070A0 } /* Literal.String */
+.codehilite .na { color: #4070A0 } /* Name.Attribute */
+.codehilite .nb { color: #007020 } /* Name.Builtin */
+.codehilite .nc { color: #0E84B5; font-weight: bold } /* Name.Class */
+.codehilite .no { color: #60ADD5 } /* Name.Constant */
+.codehilite .nd { color: #555; font-weight: bold } /* Name.Decorator */
+.codehilite .ni { color: #D55537; font-weight: bold } /* Name.Entity */
+.codehilite .ne { color: #007020 } /* Name.Exception */
+.codehilite .nf { color: #06287E } /* Name.Function */
+.codehilite .nl { color: #002070; font-weight: bold } /* Name.Label */
+.codehilite .nn { color: #0E84B5; font-weight: bold } /* Name.Namespace */
+.codehilite .nt { color: #062873; font-weight: bold } /* Name.Tag */
+.codehilite .nv { color: #BB60D5 } /* Name.Variable */
+.codehilite .ow { color: #007020; font-weight: bold } /* Operator.Word */
+.codehilite .w { color: #BBB } /* Text.Whitespace */
+.codehilite .mb { color: #40A070 } /* Literal.Number.Bin */
+.codehilite .mf { color: #40A070 } /* Literal.Number.Float */
+.codehilite .mh { color: #40A070 } /* Literal.Number.Hex */
+.codehilite .mi { color: #40A070 } /* Literal.Number.Integer */
+.codehilite .mo { color: #40A070 } /* Literal.Number.Oct */
+.codehilite .sa { color: #4070A0 } /* Literal.String.Affix */
+.codehilite .sb { color: #4070A0 } /* Literal.String.Backtick */
+.codehilite .sc { color: #4070A0 } /* Literal.String.Char */
+.codehilite .dl { color: #4070A0 } /* Literal.String.Delimiter */
+.codehilite .sd { color: #4070A0; font-style: italic } /* Literal.String.Doc */
+.codehilite .s2 { color: #4070A0 } /* Literal.String.Double */
+.codehilite .se { color: #4070A0; font-weight: bold } /* Literal.String.Escape */
+.codehilite .sh { color: #4070A0 } /* Literal.String.Heredoc */
+.codehilite .si { color: #70A0D0; font-style: italic } /* Literal.String.Interpol */
+.codehilite .sx { color: #C65D09 } /* Literal.String.Other */
+.codehilite .sr { color: #235388 } /* Literal.String.Regex */
+.codehilite .s1 { color: #4070A0 } /* Literal.String.Single */
+.codehilite .ss { color: #517918 } /* Literal.String.Symbol */
+.codehilite .bp { color: #007020 } /* Name.Builtin.Pseudo */
+.codehilite .fm { color: #06287E } /* Name.Function.Magic */
+.codehilite .vc { color: #BB60D5 } /* Name.Variable.Class */
+.codehilite .vg { color: #BB60D5 } /* Name.Variable.Global */
+.codehilite .vi { color: #BB60D5 } /* Name.Variable.Instance */
+.codehilite .vm { color: #BB60D5 } /* Name.Variable.Magic */
+.codehilite .il { color: #40A070 } /* Literal.Number.Integer.Long */
+.codehilite .hll { background-color: #fff7d6; }
+
+</style>
+</head>
+<body>
+<div class="ornament-top"></div>
+<div class="meta">
+  &#x22B9; &#x22B9; &#x22B9; &ensp; 源自 <a href="README.md">README.md</a> &ensp; &#x22B9; &#x22B9; &#x22B9;
+</div>
+<p align="center">
+  <h1 align="center">TSLink</h1>
+  <p align="center">Private Tailscale gateway for local services.<br>Give each HTTP, file, or TCP service its own tailnet identity with one command.</p>
+</p>
+
+<p align="center">
+  <a href="https://github.com/monody0007/tslink/actions"><img src="https://img.shields.io/github/actions/workflow/status/monody0007/tslink/ci.yml?branch=main&label=CI" alt="Build Status"></a>
+  <a href="https://github.com/monody0007/tslink/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License"></a>
+  <a href="https://github.com/monody0007/tslink"><img src="https://img.shields.io/badge/Go-1.26.3%2B-00ADD8.svg" alt="Go"></a>
+  <a href="https://github.com/monody0007/tslink"><img src="https://img.shields.io/github/stars/monody0007/tslink?style=social" alt="Stars"></a>
+</p>
+
+<p align="center">
+  <a href="./README_zh.md">中文文档</a> ·
+  <a href="https://github.com/monody0007/tslink">GitHub</a>
+</p>
+
+<!-- TODO: Add terminal recording / GIF demo here -->
+<!-- <p align="center"><img src="docs/demo.gif" alt="TSLink Demo" width="700"></p> -->
+
+<hr />
+<h2 id="why-tslink">Why TSLink?</h2>
+<p>Traditional approaches to exposing local services — port forwarding, VPNs, ngrok, Cloudflare Tunnel — were not designed for a zero-trust world. They either expose your services to the public internet, route private data through third-party servers, or require significant operational overhead.</p>
+<p>As local AI workloads, self-hosted services, and personal infrastructure grow, the gap between what individuals need and what enterprise security tools provide keeps widening. The federal government recognized this shift: <a href="https://www.whitehouse.gov/briefing-room/presidential-actions/2021/05/12/executive-order-on-improving-the-nations-cybersecurity/">Executive Order 14028</a> mandates zero-trust adoption, and <a href="https://csrc.nist.gov/publications/detail/sp/800-207/final">NIST SP 800-207</a> defines the architecture. But most zero-trust tooling targets large enterprises with dedicated security teams. TSLink aligns with several of these zero-trust <em>principles</em>. It carries no formal NIST SP 800-207 or EO 14028 attestation, claims no compliance status, and makes no federal-grade guarantee; treat the standards discussion here as an educational mapping rather than a compliance determination.</p>
+<p><strong>TSLink gives local services per-service tailnet identities.</strong> One command turns your machine into a Tailscale-backed gateway. Tailnet transport uses Tailscale/WireGuard semantics; proxy/file services can add HTTP identity and <code>--allow</code> checks, while raw TCP stays a private byte stream without TSLink HTTP middleware.</p>
+<h2 id="security-model">Security Model</h2>
+<p>TSLink implements zero-trust principles at every layer:</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Zero-Trust Principle</th>
+<th>TSLink Implementation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>HTTP caller verification</strong></td>
+<td>Tailnet HTTP proxy/file requests can be authenticated via Tailscale WhoIs. Identity headers (<code>X-Tailscale-User-Login</code>, <code>X-Tailscale-User-Name</code>, <code>X-Tailscale-User-Picture</code>, <code>X-Tailscale-Node</code>) are injected only when WhoIs succeeds. Public Funnel exposure and raw TCP streams are not treated as TSLink-enforced Tailscale user authentication.</td>
+</tr>
+<tr>
+<td><strong>HTTP least-privilege access</strong></td>
+<td><code>--allow</code> restricts proxy and file services to specific users or tags. TCP services rely on Tailscale network ACLs and tags.</td>
+</tr>
+<tr>
+<td><strong>Assume breach</strong></td>
+<td>Tailnet device-to-device traffic uses WireGuard encryption. Even if your local network is compromised, traffic between your Tailscale devices remains encrypted; public Funnel paths follow Tailscale Funnel semantics.</td>
+</tr>
+<tr>
+<td><strong>Per-service network identity</strong></td>
+<td>Each service runs as a separate tsnet node with its own hostname and network identity. This is network segmentation, not host process isolation or a compliance attestation.</td>
+</tr>
+<tr>
+<td><strong>No implicit trust</strong></td>
+<td>No services are exposed to the public internet by default. Credentials are stored in the system keychain first, with restricted-permission file fallback for headless environments. API-token-derived startup auth keys are generated on demand and not persisted; legacy authkey files may still be read for compatibility and should be migrated.</td>
+</tr>
+</tbody>
+</table></div>
+<h2 id="what-tslink-does">What TSLink Does</h2>
+<p>One command exposes any local service — a web app, an API, a file directory, a database — to your private Tailscale network. Proxy/file services use Tailscale HTTPS listeners; raw TCP services use private tailnet transport without TSLink TLS termination.</p>
+<div class="codehilite"><pre><span></span><code>tslink<span class="w"> </span>add<span class="w"> </span>myapp<span class="w"> </span>--proxy<span class="w"> </span>localhost:3000
+tslink<span class="w"> </span>serve<span class="w"> </span>--daemon
+<span class="c1"># → https://myapp.&lt;your-tailnet&gt;.ts.net — accessible from any device on your tailnet</span>
+</code></pre></div>
+
+<h3 id="features">Features</h3>
+<ul>
+<li><strong>Zero configuration</strong> — no port forwarding, no DNS, no certificates to manage</li>
+<li><strong>WireGuard tailnet path</strong> — Tailnet device-to-device traffic uses WireGuard via Tailscale; public exposure requires explicit Funnel opt-in</li>
+<li><strong>Proxy/file HTTPS</strong> — Tailscale HTTPS listeners for HTTP proxy and file services; raw TCP remains a private tailnet byte stream</li>
+<li><strong>Per-service isolation</strong> — each service gets its own tailnet hostname and identity (<code>https://&lt;name&gt;.&lt;tailnet&gt;.ts.net</code>)</li>
+<li><strong>Live reload</strong> — add or remove services while TSLink is running, changes take effect immediately</li>
+<li><strong>Cross-platform</strong> — runs on macOS, Linux, and Windows</li>
+<li><strong>Runs as a daemon</strong> — start once, runs in the background, auto-starts on login</li>
+<li><strong>TCP proxy</strong> — expose databases, SSH, Redis, and other non-HTTP services</li>
+<li><strong>HTTP access control</strong> — <code>--allow user@example.com,tag:admin</code> for proxy and file services</li>
+<li><strong>Safety diagnostics</strong> — <code>tslink doctor</code>, <code>tslink status --urls</code>, and <code>tslink access explain</code> make local evidence and unknown external policy layers explicit</li>
+<li><strong>Local API mode</strong> — JSON-over-stdin/stdout for local automation across list/add/remove/status, diagnostics, access explanation, and templates</li>
+<li><strong>Personal templates</strong> — preview and apply small private service suites without overwriting existing services</li>
+<li><strong>Headscale compatibility path</strong> — advanced/self-hosted control-server use via <code>--control-url</code></li>
+<li><strong>Funnel guardrails</strong> — public internet exposure is opt-in and requires explicit <code>--public</code> acknowledgement</li>
+</ul>
+<h3 id="launch-status">Launch status</h3>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Shipped now</th>
+<th>Roadmap / experimental</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Proxy, file, and raw TCP services</td>
+<td>Roadmap/experimental middleware pipeline (rate limit, Basic Auth, IP allow list, CORS)</td>
+</tr>
+<tr>
+<td>One embedded <code>tsnet</code> node per service</td>
+<td>Roadmap/experimental Docker label auto-discovery</td>
+</tr>
+<tr>
+<td>Identity-aware HTTP proxy headers</td>
+<td>Roadmap/experimental admin dashboard or REST surface</td>
+</tr>
+<tr>
+<td>HTTP <code>--allow</code> for proxy/file services</td>
+<td>Roadmap/experimental Prometheus <code>/metrics</code> endpoint</td>
+</tr>
+<tr>
+<td>Registry-backed hot reload</td>
+<td>Roadmap/experimental custom domain / ACME runtime TLS</td>
+</tr>
+<tr>
+<td>Daemon lifecycle and autostart</td>
+<td>Roadmap/experimental cluster / multi-node registry sync</td>
+</tr>
+<tr>
+<td>Owner-only <code>status --urls</code>, <code>doctor</code>, and <code>access explain</code></td>
+<td>Roadmap/experimental member-facing portal or service directory</td>
+</tr>
+<tr>
+<td>Local JSON <code>tslink api</code> parity for shipped owner workflows</td>
+<td>Roadmap/experimental remote API, dashboard, or multi-user admin plane</td>
+</tr>
+<tr>
+<td>Built-in personal templates</td>
+<td>Roadmap/experimental marketplace or third-party template registry</td>
+</tr>
+</tbody>
+</table></div>
+<h2 id="quick-start">Quick Start</h2>
+<h3 id="install">Install</h3>
+<div class="codehilite"><pre><span></span><code><span class="c1"># Homebrew (macOS)</span>
+brew<span class="w"> </span>install<span class="w"> </span>monody0007/tap/tslink
+
+<span class="c1"># From source (any platform)</span>
+go<span class="w"> </span>install<span class="w"> </span>github.com/monody0007/tslink@latest
+</code></pre></div>
+
+<h3 id="release-artifacts">Release Artifacts</h3>
+<p>GitHub Releases publish these installable artifacts:</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Platform</th>
+<th>Artifacts</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>macOS</td>
+<td>Homebrew formula and <code>tar.gz</code> archives</td>
+<td>The Homebrew formula uses GoReleaser <code>skip_upload: auto</code>, so pre-release tags can skip tap upload without failing the release. Use the archives for pre-release validation.</td>
+</tr>
+<tr>
+<td>Linux</td>
+<td><code>.deb</code>, <code>.rpm</code>, and <code>tar.gz</code> archives</td>
+<td>Packages contain the native <code>tslink</code> binary. Use <code>tslink install</code> after installation to register the user service.</td>
+</tr>
+<tr>
+<td>Windows</td>
+<td><code>.zip</code> archives</td>
+<td>Windows support is archive-only today. There is no MSI/MSIX/Winget package or Windows code-signed installer yet. Use <code>tslink install</code> from the extracted binary to register Startup autostart.</td>
+</tr>
+</tbody>
+</table></div>
+<p>Release assets are side-by-side files, not files embedded inside the archives. GoReleaser uploads installable archives/packages, <code>checksums.txt</code>, CycloneDX SBOM sidecars for archives, and keyless Sigstore bundle signatures for <code>checksums.txt</code> and SBOM sidecars. The signed <code>checksums.txt</code> covers both installable artifacts and SBOM sidecars. The release workflow also publishes GitHub artifact attestations for the installable artifacts and supply-chain sidecars.</p>
+<h3 id="verify-release-integrity">Verify Release Integrity</h3>
+<p>These commands require <code>gh</code> 2.49 or newer with <code>gh attestation verify</code>, <code>cosign</code> with <code>verify-blob --bundle</code> support, and either <code>sha256sum</code> or <code>shasum</code>. Use a tag such as <code>&lt;version&gt;</code> and an asset name such as <code>&lt;artifact&gt;</code> from the GitHub Release.</p>
+<p>The Sigstore certificate trust root is the GitHub Actions OIDC issuer <code>https://token.actions.githubusercontent.com</code>. Verification pins the exact release workflow identity <code>https://github.com/monody0007/tslink/.github/workflows/release.yml@refs/tags/&lt;version&gt;</code> and the GitHub attestation signer workflow <code>github.com/monody0007/tslink/.github/workflows/release.yml</code>. The tag ref binding means a matching signature or attestation must come from this repository's release workflow for the requested tag.</p>
+<div class="codehilite"><pre><span></span><code><span class="nb">set</span><span class="w"> </span>-euo<span class="w"> </span>pipefail
+
+<span class="nv">repo</span><span class="o">=</span><span class="s2">&quot;monody0007/tslink&quot;</span>
+<span class="nv">version</span><span class="o">=</span><span class="s2">&quot;&lt;version&gt;&quot;</span>
+<span class="nv">artifact</span><span class="o">=</span><span class="s2">&quot;&lt;artifact&gt;&quot;</span>
+
+sha256_file<span class="o">()</span><span class="w"> </span><span class="o">{</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="nb">command</span><span class="w"> </span>-v<span class="w"> </span>sha256sum<span class="w"> </span>&gt;/dev/null<span class="w"> </span><span class="m">2</span>&gt;<span class="p">&amp;</span><span class="m">1</span><span class="p">;</span><span class="w"> </span><span class="k">then</span>
+<span class="w">    </span>sha256sum<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$1</span><span class="s2">&quot;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>awk<span class="w"> </span><span class="s1">&#39;{print $1}&#39;</span>
+<span class="w">  </span><span class="k">elif</span><span class="w"> </span><span class="nb">command</span><span class="w"> </span>-v<span class="w"> </span>shasum<span class="w"> </span>&gt;/dev/null<span class="w"> </span><span class="m">2</span>&gt;<span class="p">&amp;</span><span class="m">1</span><span class="p">;</span><span class="w"> </span><span class="k">then</span>
+<span class="w">    </span>shasum<span class="w"> </span>-a<span class="w"> </span><span class="m">256</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$1</span><span class="s2">&quot;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>awk<span class="w"> </span><span class="s1">&#39;{print $1}&#39;</span>
+<span class="w">  </span><span class="k">else</span>
+<span class="w">    </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;missing checksum tool: install sha256sum or shasum&quot;</span><span class="w"> </span>&gt;<span class="p">&amp;</span><span class="m">2</span>
+<span class="w">    </span><span class="nb">exit</span><span class="w"> </span><span class="m">1</span>
+<span class="w">  </span><span class="k">fi</span>
+<span class="o">}</span>
+
+require_file<span class="o">()</span><span class="w"> </span><span class="o">{</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="o">[</span><span class="w"> </span>!<span class="w"> </span>-f<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$1</span><span class="s2">&quot;</span><span class="w"> </span><span class="o">]</span><span class="p">;</span><span class="w"> </span><span class="k">then</span>
+<span class="w">    </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;missing downloaded release asset: </span><span class="nv">$1</span><span class="s2">&quot;</span><span class="w"> </span>&gt;<span class="p">&amp;</span><span class="m">2</span>
+<span class="w">    </span><span class="nb">exit</span><span class="w"> </span><span class="m">1</span>
+<span class="w">  </span><span class="k">fi</span>
+<span class="o">}</span>
+
+verify_checksum<span class="o">()</span><span class="w"> </span><span class="o">{</span>
+<span class="w">  </span><span class="nv">file</span><span class="o">=</span><span class="s2">&quot;</span><span class="nv">$1</span><span class="s2">&quot;</span>
+<span class="w">  </span>require_file<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$file</span><span class="s2">&quot;</span>
+<span class="w">  </span>require_file<span class="w"> </span><span class="s2">&quot;checksums.txt&quot;</span>
+
+<span class="w">  </span><span class="nv">expected</span><span class="o">=</span><span class="s2">&quot;</span><span class="k">$(</span>awk<span class="w"> </span>-v<span class="w"> </span><span class="nv">file</span><span class="o">=</span><span class="s2">&quot;</span><span class="nv">$file</span><span class="s2">&quot;</span><span class="w"> </span><span class="s1">&#39;$2 == file {print $1}&#39;</span><span class="w"> </span>checksums.txt<span class="k">)</span><span class="s2">&quot;</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="o">[</span><span class="w"> </span>-z<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$expected</span><span class="s2">&quot;</span><span class="w"> </span><span class="o">]</span><span class="p">;</span><span class="w"> </span><span class="k">then</span>
+<span class="w">    </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;missing checksum entry for </span><span class="nv">$file</span><span class="s2"> in checksums.txt&quot;</span><span class="w"> </span>&gt;<span class="p">&amp;</span><span class="m">2</span>
+<span class="w">    </span><span class="nb">exit</span><span class="w"> </span><span class="m">1</span>
+<span class="w">  </span><span class="k">fi</span>
+
+<span class="w">  </span><span class="nv">actual</span><span class="o">=</span><span class="s2">&quot;</span><span class="k">$(</span>sha256_file<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$file</span><span class="s2">&quot;</span><span class="k">)</span><span class="s2">&quot;</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="o">[</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$actual</span><span class="s2">&quot;</span><span class="w"> </span>!<span class="o">=</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$expected</span><span class="s2">&quot;</span><span class="w"> </span><span class="o">]</span><span class="p">;</span><span class="w"> </span><span class="k">then</span>
+<span class="w">    </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;checksum mismatch for </span><span class="nv">$file</span><span class="s2">&quot;</span><span class="w"> </span>&gt;<span class="p">&amp;</span><span class="m">2</span>
+<span class="w">    </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;expected: </span><span class="nv">$expected</span><span class="s2">&quot;</span><span class="w"> </span>&gt;<span class="p">&amp;</span><span class="m">2</span>
+<span class="w">    </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;actual:   </span><span class="nv">$actual</span><span class="s2">&quot;</span><span class="w"> </span>&gt;<span class="p">&amp;</span><span class="m">2</span>
+<span class="w">    </span><span class="nb">exit</span><span class="w"> </span><span class="m">1</span>
+<span class="w">  </span><span class="k">fi</span>
+<span class="o">}</span>
+
+mkdir<span class="w"> </span>-p<span class="w"> </span><span class="s2">&quot;tslink-</span><span class="nv">$version</span><span class="s2">-verify&quot;</span>
+<span class="nb">cd</span><span class="w"> </span><span class="s2">&quot;tslink-</span><span class="nv">$version</span><span class="s2">-verify&quot;</span>
+
+gh<span class="w"> </span>release<span class="w"> </span>download<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$version</span><span class="s2">&quot;</span><span class="w"> </span>--repo<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$repo</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--pattern<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$artifact</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--pattern<span class="w"> </span><span class="s2">&quot;checksums.txt&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--pattern<span class="w"> </span><span class="s2">&quot;checksums.txt.sigstore.json&quot;</span>
+
+require_file<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$artifact</span><span class="s2">&quot;</span>
+require_file<span class="w"> </span><span class="s2">&quot;checksums.txt&quot;</span>
+require_file<span class="w"> </span><span class="s2">&quot;checksums.txt.sigstore.json&quot;</span>
+verify_checksum<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$artifact</span><span class="s2">&quot;</span>
+
+cosign<span class="w"> </span>verify-blob<span class="w"> </span>checksums.txt<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--bundle<span class="w"> </span>checksums.txt.sigstore.json<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--certificate-oidc-issuer<span class="w"> </span><span class="s2">&quot;https://token.actions.githubusercontent.com&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--certificate-identity<span class="w"> </span><span class="s2">&quot;https://github.com/</span><span class="nv">$repo</span><span class="s2">/.github/workflows/release.yml@refs/tags/</span><span class="nv">$version</span><span class="s2">&quot;</span>
+
+gh<span class="w"> </span>attestation<span class="w"> </span>verify<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$artifact</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--repo<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$repo</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--source-ref<span class="w"> </span><span class="s2">&quot;refs/tags/</span><span class="nv">$version</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--signer-workflow<span class="w"> </span><span class="s2">&quot;github.com/</span><span class="nv">$repo</span><span class="s2">/.github/workflows/release.yml&quot;</span>
+</code></pre></div>
+
+<p>Archive SBOM sidecars are verified separately because they are independent release assets. Run this from the same verification directory after the archive check, using the same <code>version</code> and <code>artifact</code>.</p>
+<div class="codehilite"><pre><span></span><code><span class="nb">set</span><span class="w"> </span>-euo<span class="w"> </span>pipefail
+
+<span class="nv">repo</span><span class="o">=</span><span class="s2">&quot;monody0007/tslink&quot;</span>
+<span class="nv">version</span><span class="o">=</span><span class="s2">&quot;&lt;version&gt;&quot;</span>
+<span class="nv">artifact</span><span class="o">=</span><span class="s2">&quot;&lt;artifact&gt;&quot;</span>
+<span class="nv">sbom</span><span class="o">=</span><span class="s2">&quot;</span><span class="nv">$artifact</span><span class="s2">.sbom.json&quot;</span>
+
+sha256_file<span class="o">()</span><span class="w"> </span><span class="o">{</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="nb">command</span><span class="w"> </span>-v<span class="w"> </span>sha256sum<span class="w"> </span>&gt;/dev/null<span class="w"> </span><span class="m">2</span>&gt;<span class="p">&amp;</span><span class="m">1</span><span class="p">;</span><span class="w"> </span><span class="k">then</span>
+<span class="w">    </span>sha256sum<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$1</span><span class="s2">&quot;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>awk<span class="w"> </span><span class="s1">&#39;{print $1}&#39;</span>
+<span class="w">  </span><span class="k">elif</span><span class="w"> </span><span class="nb">command</span><span class="w"> </span>-v<span class="w"> </span>shasum<span class="w"> </span>&gt;/dev/null<span class="w"> </span><span class="m">2</span>&gt;<span class="p">&amp;</span><span class="m">1</span><span class="p">;</span><span class="w"> </span><span class="k">then</span>
+<span class="w">    </span>shasum<span class="w"> </span>-a<span class="w"> </span><span class="m">256</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$1</span><span class="s2">&quot;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>awk<span class="w"> </span><span class="s1">&#39;{print $1}&#39;</span>
+<span class="w">  </span><span class="k">else</span>
+<span class="w">    </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;missing checksum tool: install sha256sum or shasum&quot;</span><span class="w"> </span>&gt;<span class="p">&amp;</span><span class="m">2</span>
+<span class="w">    </span><span class="nb">exit</span><span class="w"> </span><span class="m">1</span>
+<span class="w">  </span><span class="k">fi</span>
+<span class="o">}</span>
+
+require_file<span class="o">()</span><span class="w"> </span><span class="o">{</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="o">[</span><span class="w"> </span>!<span class="w"> </span>-f<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$1</span><span class="s2">&quot;</span><span class="w"> </span><span class="o">]</span><span class="p">;</span><span class="w"> </span><span class="k">then</span>
+<span class="w">    </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;missing downloaded release asset: </span><span class="nv">$1</span><span class="s2">&quot;</span><span class="w"> </span>&gt;<span class="p">&amp;</span><span class="m">2</span>
+<span class="w">    </span><span class="nb">exit</span><span class="w"> </span><span class="m">1</span>
+<span class="w">  </span><span class="k">fi</span>
+<span class="o">}</span>
+
+verify_checksum<span class="o">()</span><span class="w"> </span><span class="o">{</span>
+<span class="w">  </span><span class="nv">file</span><span class="o">=</span><span class="s2">&quot;</span><span class="nv">$1</span><span class="s2">&quot;</span>
+<span class="w">  </span>require_file<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$file</span><span class="s2">&quot;</span>
+<span class="w">  </span>require_file<span class="w"> </span><span class="s2">&quot;checksums.txt&quot;</span>
+
+<span class="w">  </span><span class="nv">expected</span><span class="o">=</span><span class="s2">&quot;</span><span class="k">$(</span>awk<span class="w"> </span>-v<span class="w"> </span><span class="nv">file</span><span class="o">=</span><span class="s2">&quot;</span><span class="nv">$file</span><span class="s2">&quot;</span><span class="w"> </span><span class="s1">&#39;$2 == file {print $1}&#39;</span><span class="w"> </span>checksums.txt<span class="k">)</span><span class="s2">&quot;</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="o">[</span><span class="w"> </span>-z<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$expected</span><span class="s2">&quot;</span><span class="w"> </span><span class="o">]</span><span class="p">;</span><span class="w"> </span><span class="k">then</span>
+<span class="w">    </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;missing checksum entry for </span><span class="nv">$file</span><span class="s2"> in checksums.txt&quot;</span><span class="w"> </span>&gt;<span class="p">&amp;</span><span class="m">2</span>
+<span class="w">    </span><span class="nb">exit</span><span class="w"> </span><span class="m">1</span>
+<span class="w">  </span><span class="k">fi</span>
+
+<span class="w">  </span><span class="nv">actual</span><span class="o">=</span><span class="s2">&quot;</span><span class="k">$(</span>sha256_file<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$file</span><span class="s2">&quot;</span><span class="k">)</span><span class="s2">&quot;</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="o">[</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$actual</span><span class="s2">&quot;</span><span class="w"> </span>!<span class="o">=</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$expected</span><span class="s2">&quot;</span><span class="w"> </span><span class="o">]</span><span class="p">;</span><span class="w"> </span><span class="k">then</span>
+<span class="w">    </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;checksum mismatch for </span><span class="nv">$file</span><span class="s2">&quot;</span><span class="w"> </span>&gt;<span class="p">&amp;</span><span class="m">2</span>
+<span class="w">    </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;expected: </span><span class="nv">$expected</span><span class="s2">&quot;</span><span class="w"> </span>&gt;<span class="p">&amp;</span><span class="m">2</span>
+<span class="w">    </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;actual:   </span><span class="nv">$actual</span><span class="s2">&quot;</span><span class="w"> </span>&gt;<span class="p">&amp;</span><span class="m">2</span>
+<span class="w">    </span><span class="nb">exit</span><span class="w"> </span><span class="m">1</span>
+<span class="w">  </span><span class="k">fi</span>
+<span class="o">}</span>
+
+gh<span class="w"> </span>release<span class="w"> </span>download<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$version</span><span class="s2">&quot;</span><span class="w"> </span>--repo<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$repo</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--pattern<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$sbom</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--pattern<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$sbom</span><span class="s2">.sigstore.json&quot;</span>
+
+require_file<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$sbom</span><span class="s2">&quot;</span>
+require_file<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$sbom</span><span class="s2">.sigstore.json&quot;</span>
+verify_checksum<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$sbom</span><span class="s2">&quot;</span>
+
+cosign<span class="w"> </span>verify-blob<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$sbom</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--bundle<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$sbom</span><span class="s2">.sigstore.json&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--certificate-oidc-issuer<span class="w"> </span><span class="s2">&quot;https://token.actions.githubusercontent.com&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--certificate-identity<span class="w"> </span><span class="s2">&quot;https://github.com/</span><span class="nv">$repo</span><span class="s2">/.github/workflows/release.yml@refs/tags/</span><span class="nv">$version</span><span class="s2">&quot;</span>
+
+gh<span class="w"> </span>attestation<span class="w"> </span>verify<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$sbom</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--repo<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$repo</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--source-ref<span class="w"> </span><span class="s2">&quot;refs/tags/</span><span class="nv">$version</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--signer-workflow<span class="w"> </span><span class="s2">&quot;github.com/</span><span class="nv">$repo</span><span class="s2">/.github/workflows/release.yml&quot;</span>
+</code></pre></div>
+
+<h3 id="get-started-in-30-seconds">Get Started in 30 Seconds</h3>
+<div class="codehilite"><pre><span></span><code><span class="c1"># 1. Authenticate with Tailscale (choose API access token or OAuth client secret)</span>
+tslink<span class="w"> </span>login
+
+<span class="c1"># 2. Expose a local web service</span>
+tslink<span class="w"> </span>add<span class="w"> </span>myapp<span class="w"> </span>--proxy<span class="w"> </span>localhost:3000
+
+<span class="c1"># 3. Start the gateway</span>
+tslink<span class="w"> </span>serve<span class="w"> </span>--daemon
+
+<span class="c1"># Access https://myapp.&lt;your-tailnet&gt;.ts.net from any device</span>
+</code></pre></div>
+
+<p>TSLink accepts two credential types (you only need one):</p>
+<ul>
+<li><strong>API access token</strong> (<code>tskey-api-*</code>) — generate at <a href="https://login.tailscale.com/admin/settings/keys">Admin → Keys</a>. Use this for the most complete automation today, including tag and device management through the Tailscale API. It expires periodically.</li>
+<li><strong>OAuth client secret</strong> (<code>tskey-client-*</code>) — generate at <a href="https://login.tailscale.com/admin/settings/oauth">Admin → OAuth</a>. It does not expire, but TSLink's current Tailscale tag/device automation is narrower in this mode because those operations use the Tailscale REST API. Use it only after validating your required tag/device operations.</li>
+</ul>
+<p><code>tslink login</code> guides you through either path interactively. Credentials are stored in the system keychain first (macOS Keychain / Linux secret service / Windows Credential Manager), with restricted-permission file fallback for headless environments.</p>
+<p>For non-interactive setup, prefer environment variables or stdin so secrets do not land in shell history or process listings:</p>
+<div class="codehilite"><pre><span></span><code><span class="nv">TSLINK_API_KEY</span><span class="o">=</span><span class="s2">&quot;tskey-api-...&quot;</span><span class="w"> </span>tslink<span class="w"> </span>login
+<span class="nb">printf</span><span class="w"> </span>%s<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$TSLINK_API_KEY</span><span class="s2">&quot;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>tslink<span class="w"> </span>login<span class="w"> </span>--api-key-stdin
+<span class="nv">TSLINK_CLIENT_SECRET</span><span class="o">=</span><span class="s2">&quot;tskey-client-...&quot;</span><span class="w"> </span>tslink<span class="w"> </span>login
+<span class="nb">printf</span><span class="w"> </span>%s<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$TSLINK_CLIENT_SECRET</span><span class="s2">&quot;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>tslink<span class="w"> </span>login<span class="w"> </span>--client-secret-stdin
+</code></pre></div>
+
+<p>The compatible <code>--api-key</code> and <code>--client-secret</code> flags remain available, but command-line arguments can be visible to other local processes.</p>
+<h3 id="tag-management">Tag Management</h3>
+<p>TSLink manages local service tags by default. Remote Tailscale ACL mutation is disabled by default because TSLink does not yet prove lossless HuJSON policy preservation.</p>
+<ul>
+<li><strong>Default tag</strong> — every service gets <code>tag:tsmain</code> applied automatically when <code>--tags</code> is not specified.</li>
+<li><strong>Remote ACL reads</strong> — <code>tslink tags pull</code> fetches remote ACL tags only in API access token mode; OAuth-only mode skips the remote read and reports that an API access token is required.</li>
+<li><strong>Remote ACL writes</strong> — <code>tslink login --manage-acl</code>, <code>tslink serve --manage-acl</code>, and <code>tslink tags delete-remote --manage-acl</code> opt in to typed whole-policy ACL writes with a machine-readable side-effect plan. Default login, serve, and tag flows do not rewrite shared ACL policy.</li>
+<li><strong>Strict tag grammar</strong> — tags must match <code>tag:&lt;lowercase-hyphen-name&gt;</code> with lowercase letters, numbers, and hyphens. Migrate legacy tags such as <code>tag:Web</code>, <code>tag:db_main</code>, or <code>web</code> with <code>tslink tags set &lt;service&gt; tag:&lt;lowercase-hyphen-name&gt;</code> or by editing <code>registry.json</code>. Invalid legacy tags fail <code>tslink serve</code> validation and must be fixed before the gateway starts.</li>
+<li><strong>Runtime auth refresh</strong> — tag, ephemeral, and effective control-server URL changes restart affected nodes with fresh per-service auth material. Restart <code>tslink serve</code> after credential mode swaps or legacy <code>authkey</code> file changes.</li>
+</ul>
+<p>Use <code>tslink tags</code> to inspect and customize tag assignments:</p>
+<div class="codehilite"><pre><span></span><code><span class="c1"># See all services and their tags</span>
+tslink<span class="w"> </span>tags<span class="w"> </span>list
+
+<span class="c1"># Fetch tags currently defined in your Tailscale ACL (requires API access token; skipped in OAuth-only mode)</span>
+tslink<span class="w"> </span>tags<span class="w"> </span>pull
+
+<span class="c1"># Add a tag to a specific service (node restarts automatically)</span>
+tslink<span class="w"> </span>tags<span class="w"> </span>add<span class="w"> </span>myapp<span class="w"> </span>tag:production
+
+<span class="c1"># Replace all tags on a service</span>
+tslink<span class="w"> </span>tags<span class="w"> </span><span class="nb">set</span><span class="w"> </span>myapp<span class="w"> </span>tag:webserver
+
+<span class="c1"># Change the default tag applied to new services</span>
+tslink<span class="w"> </span>tags<span class="w"> </span>set-default<span class="w"> </span>tag:myteam
+
+<span class="c1"># Remove an ACL tag owner rule globally after local safety checks and explicit ACL-management opt-in</span>
+tslink<span class="w"> </span>tags<span class="w"> </span>delete-remote<span class="w"> </span>tag:old-tag<span class="w"> </span>--force<span class="w"> </span>--manage-acl
+</code></pre></div>
+
+<h3 id="more-examples">More Examples</h3>
+<div class="codehilite"><pre><span></span><code><span class="c1"># Expose a file directory</span>
+tslink<span class="w"> </span>add<span class="w"> </span>documents<span class="w"> </span>--dir<span class="w"> </span>~/Documents
+
+<span class="c1"># Expose a database via TCP proxy</span>
+tslink<span class="w"> </span>add<span class="w"> </span>mydb<span class="w"> </span>--tcp<span class="w"> </span>localhost:5432
+
+<span class="c1"># Ephemeral node (auto-removed from tailnet when stopped)</span>
+tslink<span class="w"> </span>add<span class="w"> </span>demo<span class="w"> </span>--proxy<span class="w"> </span>localhost:8080<span class="w"> </span>--ephemeral
+
+<span class="c1"># Identity-aware HTTP access control (proxy/file only)</span>
+tslink<span class="w"> </span>add<span class="w"> </span>internal<span class="w"> </span>--proxy<span class="w"> </span>localhost:9090<span class="w"> </span>--allow<span class="w"> </span>user@example.com,tag:admin
+
+<span class="c1"># Public exposure via Tailscale Funnel (requires explicit acknowledgement)</span>
+tslink<span class="w"> </span>add<span class="w"> </span>public<span class="w"> </span>--proxy<span class="w"> </span>localhost:3000<span class="w"> </span>--funnel<span class="w"> </span>--public
+
+<span class="c1"># Migration note: existing Funnel entries created before public_ack was added</span>
+<span class="c1"># must be re-added with --public or edited to include &quot;public_ack&quot;: true.</span>
+
+<span class="c1"># ACL tags for Tailscale network policy</span>
+tslink<span class="w"> </span>add<span class="w"> </span>api<span class="w"> </span>--proxy<span class="w"> </span>localhost:8000<span class="w"> </span>--tags<span class="w"> </span>tag:webserver,tag:production
+</code></pre></div>
+
+<h2 id="commands">Commands</h2>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>tslink login</code></td>
+<td>Authenticate with Tailscale using either an API access token or an OAuth client secret</td>
+</tr>
+<tr>
+<td><code>tslink logout</code></td>
+<td>Clear credentials from keychain and files</td>
+</tr>
+<tr>
+<td><code>tslink add &lt;name&gt; --proxy host:port</code></td>
+<td>Expose a local web service</td>
+</tr>
+<tr>
+<td><code>tslink add &lt;name&gt; --dir /path</code></td>
+<td>Expose a file directory</td>
+</tr>
+<tr>
+<td><code>tslink add &lt;name&gt; --tcp host:port</code></td>
+<td>Expose a raw TCP service (databases, SSH, etc.)</td>
+</tr>
+<tr>
+<td><code>tslink remove &lt;name&gt;</code></td>
+<td>Remove a service and report protected/manual remote cleanup guidance</td>
+</tr>
+<tr>
+<td><code>tslink list</code></td>
+<td>List all registered services</td>
+</tr>
+<tr>
+<td><code>tslink serve</code></td>
+<td>Start the gateway (foreground)</td>
+</tr>
+<tr>
+<td><code>tslink serve --daemon</code></td>
+<td>Start the gateway (background)</td>
+</tr>
+<tr>
+<td><code>tslink stop</code></td>
+<td>Stop the gateway</td>
+</tr>
+<tr>
+<td><code>tslink status</code></td>
+<td>Show gateway status</td>
+</tr>
+<tr>
+<td><code>tslink status --urls</code></td>
+<td>Show owner-only service URLs, exposure mode, allow summary, backend, and warning codes</td>
+</tr>
+<tr>
+<td><code>tslink doctor</code></td>
+<td>Diagnose credentials, daemon, registry, runtime snapshot, exposure, and target safety without mutating state</td>
+</tr>
+<tr>
+<td><code>tslink access explain &lt;service&gt;</code></td>
+<td>Explain what TSLink knows locally about one service's access path and what remains external policy/backend auth</td>
+</tr>
+<tr>
+<td><code>tslink logs</code></td>
+<td>Show recent gateway logs</td>
+</tr>
+<tr>
+<td><code>tslink template list</code></td>
+<td>List built-in personal service templates</td>
+</tr>
+<tr>
+<td><code>tslink template show &lt;name&gt;</code></td>
+<td>Preview a built-in template</td>
+</tr>
+<tr>
+<td><code>tslink template apply &lt;name&gt; --yes</code></td>
+<td>Add missing template services without overwriting existing services; omit <code>--yes</code> or pass <code>--dry-run</code> to preview</td>
+</tr>
+<tr>
+<td><code>tslink tags list</code></td>
+<td>List services and their assigned tags</td>
+</tr>
+<tr>
+<td><code>tslink tags pull</code></td>
+<td>Fetch remote tags from Tailscale ACL with an API access token; skipped in OAuth-only mode</td>
+</tr>
+<tr>
+<td><code>tslink tags add &lt;service&gt; &lt;tag&gt;</code></td>
+<td>Append a tag to a service</td>
+</tr>
+<tr>
+<td><code>tslink tags set &lt;service&gt; &lt;tag&gt;</code></td>
+<td>Replace a service's tags</td>
+</tr>
+<tr>
+<td><code>tslink tags set-default &lt;tag&gt;</code></td>
+<td>Change the default tag applied to new services</td>
+</tr>
+<tr>
+<td><code>tslink tags delete-remote &lt;tag&gt; --force --manage-acl</code></td>
+<td>Remove an ACL tag owner rule globally from Tailscale ACL after local safety checks and explicit remote-write opt-in</td>
+</tr>
+<tr>
+<td><code>tslink api</code></td>
+<td>JSON-over-stdin/stdout mode for programmatic control</td>
+</tr>
+<tr>
+<td><code>tslink config</code></td>
+<td>Manage global configuration (set/get/list)</td>
+</tr>
+<tr>
+<td><code>tslink install</code></td>
+<td>Auto-start on login (macOS LaunchAgent / Linux systemd / Windows Startup)</td>
+</tr>
+<tr>
+<td><code>tslink uninstall</code></td>
+<td>Remove auto-start</td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="exit-codes">Exit Codes</h3>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Code</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>0</code></td>
+<td>Success</td>
+</tr>
+<tr>
+<td><code>1</code></td>
+<td>General runtime error</td>
+</tr>
+<tr>
+<td><code>2</code></td>
+<td>Usage, argument, or flag error</td>
+</tr>
+<tr>
+<td><code>3</code></td>
+<td>Authentication error</td>
+</tr>
+<tr>
+<td><code>4</code></td>
+<td>Conflict, such as an already-running daemon</td>
+</tr>
+<tr>
+<td><code>5</code></td>
+<td>Requested resource not found</td>
+</tr>
+<tr>
+<td><code>64</code></td>
+<td>Diagnostic warning threshold</td>
+</tr>
+<tr>
+<td><code>65</code></td>
+<td>Diagnostic critical threshold</td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="add-command-flags">Add Command Flags</h3>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--proxy host:port</code></td>
+<td>Reverse proxy to a local HTTP service</td>
+</tr>
+<tr>
+<td><code>--dir /path</code></td>
+<td>Serve a local file directory</td>
+</tr>
+<tr>
+<td><code>--tcp host:port</code></td>
+<td>Raw TCP forwarding</td>
+</tr>
+<tr>
+<td><code>--ephemeral</code></td>
+<td>Ephemeral node, auto-removed from tailnet when stopped</td>
+</tr>
+<tr>
+<td><code>--tags tag:a,tag:b</code></td>
+<td>ACL tags for Tailscale network policy</td>
+</tr>
+<tr>
+<td><code>--allow user@,tag:x</code></td>
+<td>HTTP access control for proxy/file services; rejected for TCP because raw TCP uses Tailscale ACL tags and target-service auth</td>
+</tr>
+<tr>
+<td><code>--control-url URL</code></td>
+<td>Per-service control server override, e.g. Headscale</td>
+</tr>
+<tr>
+<td><code>--funnel</code></td>
+<td>Expose via Tailscale Funnel (public internet, proxy only, requires <code>--public</code>)</td>
+</tr>
+<tr>
+<td><code>--public</code></td>
+<td>Explicitly acknowledge public internet exposure for <code>--funnel</code>; invalid without <code>--funnel</code></td>
+</tr>
+<tr>
+<td><code>--domain example.com</code></td>
+<td>Roadmap/experimental: accepted in service config, but custom-domain runtime TLS is not wired</td>
+</tr>
+<tr>
+<td><code>--acme-email user@example.com</code></td>
+<td>Roadmap/experimental: stored with <code>--domain</code>; no shipped ACME listener</td>
+</tr>
+</tbody>
+</table></div>
+<h2 id="how-it-works">How It Works</h2>
+<div class="codehilite"><pre><span></span><code>┌─────────────┐         ┌──────────────────────┐         ┌──────────────┐
+│ Your Machine│         │   Tailscale Network  │         │  Your Phone  │
+│             │         │   (WireGuard mesh)    │         │              │
+│  localhost   │◄──────►│                      │◄──────►│  Browser     │
+│  :3000      │  tsnet  │  WireGuard encrypted  │  HTTPS │              │
+│  :5432      │  nodes  │  Encrypted tailnet path│  +TLS  │              │
+│  ~/Documents│  (1/svc)│                       │        │              │
+└─────────────┘         └──────────────────────┘         └──────────────┘
+</code></pre></div>
+
+<p>TSLink creates a dedicated <a href="https://tailscale.com/kb/1244/tsnet">tsnet</a> node for each registered service — no Tailscale client installation required on the server side. Each service joins your tailnet as its own device (e.g., <code>myapp</code>, <code>docs</code>, <code>mydb</code>). Proxy/file services use Tailscale HTTPS listeners; raw TCP services use private tailnet transport and proxy bytes to the configured target.</p>
+<p><strong>Key architectural decisions:</strong>
+- <strong>Per-service embedded nodes</strong> — each service gets its own tailnet identity and hostname; proxy/file services also get Tailscale HTTPS listener semantics
+- <strong>Identity-aware proxying</strong> — WhoIs verification on tailnet HTTP proxy/file requests, with identity headers injected and spoofing prevented; public Funnel and raw TCP do not get TSLink-enforced HTTP identity
+- <strong>Secure credential management</strong> — system keychain storage with restricted-permission file fallback for headless environments
+- <strong>File-based registry</strong> — services persist across restarts in <code>~/.config/tslink/registry.json</code>
+- <strong>Hot reload</strong> — file watcher on the registry means <code>tslink add</code> takes effect without restarting the server
+- <strong>PID-based lifecycle</strong> — daemon management with process identity checks and platform-specific stop behavior
+- <strong>Structured logging</strong> — slog-based structured logging with access logs
+- <strong>Metrics instrumentation</strong> — request metrics are collected internally; a public <code>/metrics</code> endpoint is roadmap</p>
+<h2 id="api-mode">API Mode</h2>
+<p>TSLink includes a local JSON-over-stdin/stdout API mode for owner-side automation. It is not a REST server, dashboard, or member-facing service directory. Unknown JSON fields are rejected, and public API responses use redacted views rather than raw registry records.</p>
+<div class="codehilite"><pre><span></span><code><span class="c1"># List services</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s1">&#39;{&quot;action&quot;:&quot;list&quot;}&#39;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>tslink<span class="w"> </span>api
+
+<span class="c1"># Add a service</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s1">&#39;{&quot;action&quot;:&quot;add&quot;,&quot;name&quot;:&quot;myapp&quot;,&quot;type&quot;:&quot;proxy&quot;,&quot;target&quot;:&quot;localhost:3000&quot;}&#39;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>tslink<span class="w"> </span>api
+
+<span class="c1"># Remove a service</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s1">&#39;{&quot;action&quot;:&quot;remove&quot;,&quot;name&quot;:&quot;myapp&quot;}&#39;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>tslink<span class="w"> </span>api
+
+<span class="c1"># Check status</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s1">&#39;{&quot;action&quot;:&quot;status&quot;}&#39;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>tslink<span class="w"> </span>api
+
+<span class="c1"># Show owner-only endpoint/exposure overview</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s1">&#39;{&quot;action&quot;:&quot;status&quot;,&quot;urls&quot;:true}&#39;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>tslink<span class="w"> </span>api
+
+<span class="c1"># Run read-only diagnostics</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s1">&#39;{&quot;action&quot;:&quot;doctor&quot;,&quot;probe_external&quot;:false}&#39;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>tslink<span class="w"> </span>api
+
+<span class="c1"># Explain one service&#39;s local access model</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s1">&#39;{&quot;action&quot;:&quot;access_explain&quot;,&quot;name&quot;:&quot;myapp&quot;}&#39;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>tslink<span class="w"> </span>api
+
+<span class="c1"># Preview/apply built-in templates</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s1">&#39;{&quot;action&quot;:&quot;template_list&quot;}&#39;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>tslink<span class="w"> </span>api
+<span class="nb">echo</span><span class="w"> </span><span class="s1">&#39;{&quot;action&quot;:&quot;template_plan&quot;,&quot;name&quot;:&quot;personal-harness&quot;}&#39;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>tslink<span class="w"> </span>api
+<span class="nb">echo</span><span class="w"> </span><span class="s1">&#39;{&quot;action&quot;:&quot;template_apply&quot;,&quot;name&quot;:&quot;personal-harness&quot;}&#39;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>tslink<span class="w"> </span>api
+</code></pre></div>
+
+<p>Both <code>tslink api</code> and CLI <code>--json</code> output use the same versioned envelope:</p>
+<div class="codehilite"><pre><span></span><code><span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;ok&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;schema_version&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;code&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;data&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">&quot;running&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;count&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p>Failures include a stable machine error code plus human text:</p>
+<div class="codehilite"><pre><span></span><code><span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;ok&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;schema_version&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;code&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;error&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">&quot;code&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;usage_error&quot;</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;message&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;unknown action: explode&quot;</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p>API <code>add</code> follows the same safety guardrails as the CLI. Funnel services require <code>public_ack:true</code>; TCP services reject <code>allow</code> because TSLink does not apply HTTP identity checks to raw TCP streams.</p>
+<h2 id="roadmap-experimental-packages">Roadmap / Experimental Packages</h2>
+<p>The repository contains packages and registry fields for features that are not wired into the shipped <code>tslink serve</code> runtime yet. Treat these as roadmap or experimental until end-to-end integration tests are added:</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Area</th>
+<th>Current status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Docker labels</td>
+<td>Package exists, but <code>serve</code> does not start Docker discovery.</td>
+</tr>
+<tr>
+<td>Middleware</td>
+<td>Package and schema exist, but runtime does not apply rate limit, Basic Auth, IP allow list, or CORS.</td>
+</tr>
+<tr>
+<td>Admin dashboard / REST API</td>
+<td>No default-build package, REST handler, or admin node is shipped. Future work must be explicitly experimental and tested end to end.</td>
+</tr>
+<tr>
+<td>Prometheus <code>/metrics</code></td>
+<td>Instrumentation exists, but no scrape endpoint is mounted.</td>
+</tr>
+<tr>
+<td>Custom domain / ACME</td>
+<td>Fields are accepted, but runtime TLS/ACME listener is not wired.</td>
+</tr>
+<tr>
+<td>Cluster sync</td>
+<td>Package exists without production transport or <code>serve</code> integration.</td>
+</tr>
+</tbody>
+</table></div>
+<h2 id="prerequisites">Prerequisites</h2>
+<ul>
+<li><a href="https://tailscale.com">Tailscale account</a> (free for personal use)</li>
+<li>Tailscale installed on the devices you want to access from (phone, tablet, etc.)</li>
+<li>Go 1.26.3+ (if building from source)</li>
+</ul>
+<h2 id="platform-support">Platform Support</h2>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Platform</th>
+<th>Daemon</th>
+<th>Auto-start</th>
+<th>Stop behavior</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>macOS</td>
+<td><code>--daemon</code></td>
+<td>LaunchAgent</td>
+<td>Graceful SIGTERM</td>
+</tr>
+<tr>
+<td>Linux</td>
+<td><code>--daemon</code></td>
+<td>systemd user service</td>
+<td>Graceful SIGTERM</td>
+</tr>
+<tr>
+<td>Windows</td>
+<td><code>--daemon</code></td>
+<td>Startup folder</td>
+<td>Forced process termination</td>
+</tr>
+</tbody>
+</table></div>
+<p>macOS LaunchAgent installs use launchd <code>KeepAlive</code> with <code>ThrottleInterval=30</code>. If <code>tslink stop</code> is run while the LaunchAgent remains installed, launchd will restart TSLink. Run <code>tslink uninstall</code> before <code>tslink stop</code> when the intent is to disable autostart. During SSH/headless macOS installs, <code>tslink install</code> first tries <code>gui/$(id -u)</code> and falls back to <code>user/$(id -u)</code> if the GUI launchd domain is unavailable. Linux headless user services may need <code>loginctl enable-linger "$USER"</code> to keep running after logout; if lingering was enabled only for TSLink, run <code>loginctl disable-linger "$USER"</code> after uninstall.</p>
+<h2 id="roadmap">Roadmap</h2>
+<ul>
+<li>[x] OAuth client secret accepted by login and tsnet auth paths; validate tag/device automation before unattended use</li>
+<li>[ ] Runtime custom-domain / ACME TLS</li>
+<li>[ ] Web dashboard accessible from tailnet</li>
+<li>[ ] Docker image and Docker label discovery</li>
+<li>[ ] Headscale end-to-end testing</li>
+<li>[x] Local API parity for shipped owner workflows</li>
+<li>[ ] Integration-tested Layer 2 modules and optional remote/admin surfaces</li>
+</ul>
+<h2 id="contributing">Contributing</h2>
+<p>Contributions are welcome! Please see <a href="./CONTRIBUTING.md">CONTRIBUTING.md</a> for guidelines.</p>
+<h2 id="security">Security</h2>
+<p>For security concerns, please see <a href="./SECURITY.md">SECURITY.md</a>.</p>
+<h2 id="license">License</h2>
+<p>This project is licensed under the <a href="./LICENSE">Apache License 2.0</a>.</p>
+<div class="codehilite"><pre><span></span><code>Copyright 2026 Maintainer (monody0007)
+</code></pre></div>
+<div class="footer">&#x22B9; &ensp; md2html &middot; 自动生成 &ensp; &#x22B9;</div>
+</body>
+</html>

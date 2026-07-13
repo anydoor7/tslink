@@ -1,88 +1,89 @@
 name: Release
 
+# A v* tag runs the SAME reusable release-candidate gate as PR/main and only
+# then publishes. The publish job `needs: candidate`, so a tag cannot publish
+# signed/attested artifacts from a commit that failed Windows compilation,
+# staticcheck, either govulncheck, cross-build, or artifact verification
+# is a release blocker. Elevated write/id-token/attestations permissions are granted only
+# to the publish job, inside the protected `release` environment.
+
 on:
   push:
     tags: ["v*"]
 
+# Default to read-only for the whole workflow. Elevated scopes live on the
+# publish job alone.
 permissions:
-  contents: write
-  id-token: write
-  attestations: write
+  contents: read
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      # actions/checkout v6.0.2
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
-      # actions/setup-go v6.4.0
-      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c
-        with:
-          go-version-file: go.mod
-      - name: Build
-        run: go build ./...
-      - name: Vet
-        run: go vet ./...
-      - name: Test
-        run: go test -count=1 ./...
+  candidate:
+    name: Release candidate gate
+    permissions:
+      contents: read
+    uses: ./.github/workflows/release-candidate.yml
+    with:
+      ref: ${{ github.sha }}
 
-  goreleaser:
-    needs: test
+  publish:
+    name: Publish (protected release environment)
+    needs: candidate
     runs-on: ubuntu-latest
+    # Require a protected environment. Configure required reviewers and the
+    # `refs/tags/v*` deployment branch/tag policy on this environment so a tag
+    # push cannot auto-publish without the configured approval gate.
+    environment:
+      name: release
+      url: https://github.com/monody0007/tslink/releases/tag/${{ github.ref_name }}
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     steps:
-      # actions/checkout v6.0.2
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
-      # actions/setup-go v6.4.0
-      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
-      - name: Check GoReleaser config
-        # goreleaser/goreleaser-action v6.4.0
-        uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a
-        with:
-          version: v2.9.0
-          args: check
-      - name: Check Homebrew tap token
+          check-latest: true
+      - name: Require Homebrew tap token for stable tags
         if: ${{ !contains(github.ref_name, '-') }}
         env:
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          if [ -z "$HOMEBREW_TAP_GITHUB_TOKEN" ]; then
+          if [ -z "${HOMEBREW_TAP_GITHUB_TOKEN}" ]; then
             echo "::error::Stable releases require HOMEBREW_TAP_GITHUB_TOKEN with write access to monody0007/homebrew-tap"
             exit 1
           fi
       - name: Install cosign
-        # sigstore/cosign-installer v4.1.2
-        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
         with:
           cosign-release: v3.0.6
       - name: Install syft
-        # anchore/sbom-action v0.24.0
-        uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610
+        uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
         with:
           syft-version: v1.44.0
       - name: Release
-        # goreleaser/goreleaser-action v6.4.0
-        uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
-          version: v2.9.0
+          # Must be >= 2.11 for the `homebrew_casks` config key and match the
+          # version validated by the release-config gate. Kept identical to the
+          # release-candidate `release-config` pin and the .goreleaser.yml comment.
+          version: v2.17.0
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Pre-release tags may leave this empty because skip_upload: auto skips
-          # tap upload; stable tags are checked before installing release tools.
+          # tap upload; stable tags are checked above before installing tools.
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
       - name: Attest release artifacts
-        # actions/attest-build-provenance v4.1.0
-        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:
-          # Keep this in sync with .goreleaser.yml release assets: installable
+          # Keep in sync with .goreleaser.yml release assets: installable
           # artifacts, checksums, SBOM sidecars, and Sigstore bundle sidecars.
-          # Sigstore bundle sidecars are attested so every release-page
-          # integrity sidecar carries GitHub provenance.
           subject-path: |
             dist/checksums.txt
             dist/*.sigstore.json

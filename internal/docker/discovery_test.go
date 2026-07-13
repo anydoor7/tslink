@@ -14,11 +14,11 @@ import (
 
 // mockDockerClient is a test double for DockerClient.
 type mockDockerClient struct {
-	containers    map[string]ContainerInfo
-	events        chan ContainerEvent
-	errors        chan error
-	listErr       error // if set, ListContainers returns this error
-	inspectErr    error // if set, InspectContainer returns this error for any ID
+	containers map[string]ContainerInfo
+	events     chan ContainerEvent
+	errors     chan error
+	listErr    error // if set, ListContainers returns this error
+	inspectErr error // if set, InspectContainer returns this error for any ID
 }
 
 func newMockClient() *mockDockerClient {
@@ -535,12 +535,8 @@ func TestParseContainerLabels_ProxyNoTargetNoPorts(t *testing.T) {
 	}, nil) // no ports, no target
 
 	svc := parseContainerLabels(c)
-	if svc == nil {
-		t.Fatal("expected non-nil service")
-	}
-	// Target should be empty since there are no ports and no explicit target
-	if svc.Target != "" {
-		t.Errorf("expected empty target, got %q", svc.Target)
+	if svc != nil {
+		t.Fatalf("expected nil for proxy without target or exposed ports, got %+v", svc)
 	}
 }
 

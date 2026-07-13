@@ -24,9 +24,9 @@
 
 Traditional approaches to exposing local services — port forwarding, VPNs, ngrok, Cloudflare Tunnel — were not designed for a zero-trust world. They either expose your services to the public internet, route private data through third-party servers, or require significant operational overhead.
 
-As local AI workloads, self-hosted services, and personal infrastructure grow, the gap between what individuals need and what enterprise security tools provide keeps widening. The federal government recognized this shift: [Executive Order 14028](https://www.whitehouse.gov/briefing-room/presidential-actions/2021/05/12/executive-order-on-improving-the-nations-cybersecurity/) mandates zero-trust adoption, and [NIST SP 800-207](https://csrc.nist.gov/publications/detail/sp/800-207/final) defines the architecture. But most zero-trust tooling targets large enterprises with dedicated security teams.
+As local AI workloads, self-hosted services, and personal infrastructure grow, the gap between what individuals need and what enterprise security tools provide keeps widening. The federal government recognized this shift: [Executive Order 14028](https://www.whitehouse.gov/briefing-room/presidential-actions/2021/05/12/executive-order-on-improving-the-nations-cybersecurity/) mandates zero-trust adoption, and [NIST SP 800-207](https://csrc.nist.gov/publications/detail/sp/800-207/final) defines the architecture. But most zero-trust tooling targets large enterprises with dedicated security teams. TSLink aligns with several of these zero-trust *principles*. It carries no formal NIST SP 800-207 or EO 14028 attestation, claims no compliance status, and makes no federal-grade guarantee; treat the standards discussion here as an educational mapping rather than a compliance determination.
 
-**TSLink brings zero-trust networking to everyone.** One command turns your machine into a secure gateway. Each service gets its own isolated identity on your [Tailscale](https://tailscale.com) network — encrypted, authenticated, and not publicly reachable by default.
+**TSLink gives local services per-service tailnet identities.** One command turns your machine into a Tailscale-backed gateway. Tailnet transport uses Tailscale/WireGuard semantics; proxy/file services can add HTTP identity and `--allow` checks, while raw TCP stays a private byte stream without TSLink HTTP middleware.
 
 ## Security Model
 
@@ -34,15 +34,15 @@ TSLink implements zero-trust principles at every layer:
 
 | Zero-Trust Principle | TSLink Implementation |
 |-----|-----|
-| **Never trust, always verify** | Tailnet HTTP proxy/file requests are authenticated via Tailscale WhoIs — identity headers (`X-Tailscale-User-Login`, `X-Tailscale-User-Name`, `X-Tailscale-User-Picture`, `X-Tailscale-Node`) are injected into proxied requests. Public Funnel exposure and raw TCP streams are not treated as TSLink-enforced Tailscale user authentication. |
+| **HTTP caller verification** | Tailnet HTTP proxy/file requests can be authenticated via Tailscale WhoIs. Identity headers (`X-Tailscale-User-Login`, `X-Tailscale-User-Name`, `X-Tailscale-User-Picture`, `X-Tailscale-Node`) are injected only when WhoIs succeeds. Public Funnel exposure and raw TCP streams are not treated as TSLink-enforced Tailscale user authentication. |
 | **HTTP least-privilege access** | `--allow` restricts proxy and file services to specific users or tags. TCP services rely on Tailscale network ACLs and tags. |
 | **Assume breach** | Tailnet device-to-device traffic uses WireGuard encryption. Even if your local network is compromised, traffic between your Tailscale devices remains encrypted; public Funnel paths follow Tailscale Funnel semantics. |
-| **Microsegmentation** | Each service runs as an isolated tsnet node with its own hostname, TLS certificate, and network identity. Compromising one service does not grant access to others. |
+| **Per-service network identity** | Each service runs as a separate tsnet node with its own hostname and network identity. This is network segmentation, not host process isolation or a compliance attestation. |
 | **No implicit trust** | No services are exposed to the public internet by default. Credentials are stored in the system keychain first, with restricted-permission file fallback for headless environments. API-token-derived startup auth keys are generated on demand and not persisted; legacy authkey files may still be read for compatibility and should be migrated. |
 
 ## What TSLink Does
 
-One command exposes any local service — a web app, an API, a file directory, a database — to your private Tailscale network with automatic TLS.
+One command exposes any local service — a web app, an API, a file directory, a database — to your private Tailscale network. Proxy/file services use Tailscale HTTPS listeners; raw TCP services use private tailnet transport without TSLink TLS termination.
 
 ```bash
 tslink add myapp --proxy localhost:3000
@@ -54,7 +54,7 @@ tslink serve --daemon
 
 - **Zero configuration** — no port forwarding, no DNS, no certificates to manage
 - **WireGuard tailnet path** — Tailnet device-to-device traffic uses WireGuard via Tailscale; public exposure requires explicit Funnel opt-in
-- **Instant TLS** — automatic HTTPS with valid certificates, no setup required
+- **Proxy/file HTTPS** — Tailscale HTTPS listeners for HTTP proxy and file services; raw TCP remains a private tailnet byte stream
 - **Per-service isolation** — each service gets its own tailnet hostname and identity (`https://<name>.<tailnet>.ts.net`)
 - **Live reload** — add or remove services while TSLink is running, changes take effect immediately
 - **Cross-platform** — runs on macOS, Linux, and Windows
@@ -280,12 +280,13 @@ printf %s "$TSLINK_CLIENT_SECRET" | tslink login --client-secret-stdin
 
 The compatible `--api-key` and `--client-secret` flags remain available, but command-line arguments can be visible to other local processes.
 
-### Tag Auto-Management
+### Tag Management
 
-TSLink automatically manages Tailscale ACL tags for your services:
+TSLink manages local service tags by default. Remote Tailscale ACL mutation is disabled by default because TSLink does not yet prove lossless HuJSON policy preservation.
 
 - **Default tag** — every service gets `tag:tsmain` applied automatically when `--tags` is not specified.
-- **API access token tag automation** — with an API access token, startup can ensure registry tags exist before nodes start. `tslink tags pull` also fetches remote ACL tags only in API access token mode; OAuth-only mode skips the remote read and reports that an API access token is required.
+- **Remote ACL reads** — `tslink tags pull` fetches remote ACL tags only in API access token mode; OAuth-only mode skips the remote read and reports that an API access token is required.
+- **Remote ACL writes** — `tslink login --manage-acl`, `tslink serve --manage-acl`, and `tslink tags delete-remote --manage-acl` opt in to typed whole-policy ACL writes with a machine-readable side-effect plan. Default login, serve, and tag flows do not rewrite shared ACL policy.
 - **Strict tag grammar** — tags must match `tag:<lowercase-hyphen-name>` with lowercase letters, numbers, and hyphens. Migrate legacy tags such as `tag:Web`, `tag:db_main`, or `web` with `tslink tags set <service> tag:<lowercase-hyphen-name>` or by editing `registry.json`. Invalid legacy tags fail `tslink serve` validation and must be fixed before the gateway starts.
 - **Runtime auth refresh** — tag, ephemeral, and effective control-server URL changes restart affected nodes with fresh per-service auth material. Restart `tslink serve` after credential mode swaps or legacy `authkey` file changes.
 
@@ -307,8 +308,8 @@ tslink tags set myapp tag:webserver
 # Change the default tag applied to new services
 tslink tags set-default tag:myteam
 
-# Remove an ACL tag owner rule globally after local safety checks
-tslink tags delete-remote tag:old-tag --force
+# Remove an ACL tag owner rule globally after local safety checks and explicit ACL-management opt-in
+tslink tags delete-remote tag:old-tag --force --manage-acl
 ```
 
 ### More Examples
@@ -345,7 +346,7 @@ tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 | `tslink add <name> --proxy host:port` | Expose a local web service |
 | `tslink add <name> --dir /path` | Expose a file directory |
 | `tslink add <name> --tcp host:port` | Expose a raw TCP service (databases, SSH, etc.) |
-| `tslink remove <name>` | Remove a service (+ ownership-safe remote cleanup attempt) |
+| `tslink remove <name>` | Remove a service and report protected/manual remote cleanup guidance |
 | `tslink list` | List all registered services |
 | `tslink serve` | Start the gateway (foreground) |
 | `tslink serve --daemon` | Start the gateway (background) |
@@ -363,7 +364,7 @@ tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 | `tslink tags add <service> <tag>` | Append a tag to a service |
 | `tslink tags set <service> <tag>` | Replace a service's tags |
 | `tslink tags set-default <tag>` | Change the default tag applied to new services |
-| `tslink tags delete-remote <tag> --force` | Remove an ACL tag owner rule globally from Tailscale ACL after local safety checks |
+| `tslink tags delete-remote <tag> --force --manage-acl` | Remove an ACL tag owner rule globally from Tailscale ACL after local safety checks and explicit remote-write opt-in |
 | `tslink api` | JSON-over-stdin/stdout mode for programmatic control |
 | `tslink config` | Manage global configuration (set/get/list) |
 | `tslink install` | Auto-start on login (macOS LaunchAgent / Linux systemd / Windows Startup) |
@@ -411,10 +412,10 @@ tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 └─────────────┘         └──────────────────────┘         └──────────────┘
 ```
 
-TSLink creates a dedicated [tsnet](https://tailscale.com/kb/1244/tsnet) node for each registered service — no Tailscale client installation required on the server side. Each service joins your tailnet as its own device (e.g., `myapp`, `docs`, `mydb`), obtains automatic TLS certificates, and proxies requests to your local services.
+TSLink creates a dedicated [tsnet](https://tailscale.com/kb/1244/tsnet) node for each registered service — no Tailscale client installation required on the server side. Each service joins your tailnet as its own device (e.g., `myapp`, `docs`, `mydb`). Proxy/file services use Tailscale HTTPS listeners; raw TCP services use private tailnet transport and proxy bytes to the configured target.
 
 **Key architectural decisions:**
-- **Per-service embedded nodes** — each service gets its own tailnet identity, hostname, and TLS certificate (microsegmentation)
+- **Per-service embedded nodes** — each service gets its own tailnet identity and hostname; proxy/file services also get Tailscale HTTPS listener semantics
 - **Identity-aware proxying** — WhoIs verification on tailnet HTTP proxy/file requests, with identity headers injected and spoofing prevented; public Funnel and raw TCP do not get TSLink-enforced HTTP identity
 - **Secure credential management** — system keychain storage with restricted-permission file fallback for headless environments
 - **File-based registry** — services persist across restarts in `~/.config/tslink/registry.json`

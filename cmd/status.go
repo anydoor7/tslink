@@ -79,7 +79,7 @@ type StatusServiceView struct {
 	Warnings []inspect.WarningView `json:"warnings,omitempty"`
 }
 
-func getStatus(pidPath, regPath string) StatusResult {
+func getStatus(pidPath, regPath string) (StatusResult, error) {
 	var r StatusResult
 	if isRunningFn(pidPath) {
 		r.DaemonRunning = true
@@ -90,10 +90,12 @@ func getStatus(pidPath, regPath string) StatusResult {
 	} else if hasClientSecretFn() {
 		r.Authenticated = true
 	}
-	if reg, err := registry.Load(regPath); err == nil {
-		r.ServiceCount = len(reg.Services)
+	reg, err := registry.Load(regPath)
+	if err != nil {
+		return StatusResult{}, err
 	}
-	return r
+	r.ServiceCount = len(reg.Services)
+	return r, nil
 }
 
 func formatStatus(r StatusResult, out io.Writer) {
@@ -111,7 +113,10 @@ func formatStatus(r StatusResult, out io.Writer) {
 }
 
 func getStatusURLs(pidPath, regPath, snapshotPath string) (StatusURLsResult, error) {
-	status := getStatus(pidPath, regPath)
+	status, err := getStatus(pidPath, regPath)
+	if err != nil {
+		return StatusURLsResult{}, err
+	}
 	reg, err := registry.Load(regPath)
 	if err != nil {
 		return StatusURLsResult{}, err
@@ -332,9 +337,10 @@ Output lines:
   → tailnet: not authenticated      No credentials — run 'tslink login'
   → services: 3 registered          Number of services in the registry
 
-Examples:
-  tslink status                     Show current status
-  tslink status --urls              Show owner-only service endpoint overview`,
+	Examples:
+	  tslink status                     Show current status
+	  tslink status --urls              Show owner-only service endpoint overview`,
+	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		pidPath, err := statusPIDPathFn()
 		if err != nil {
@@ -365,7 +371,10 @@ Examples:
 			return nil
 		}
 
-		r := getStatus(pidPath, regPath)
+		r, err := getStatus(pidPath, regPath)
+		if err != nil {
+			return err
+		}
 		if jsonOutput(cmd) {
 			output.Success("status", r)
 			return nil

@@ -26,9 +26,10 @@ use 'tslink stop' first to stop the daemon.
 To verify the script was removed:
   dir "%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\tslink.vbs"
 
-Examples:
-  tslink uninstall              Remove the Startup script
-  tslink stop && tslink uninstall   Stop daemon then remove autostart`,
+	Examples:
+	  tslink uninstall              Remove the Startup script
+	  tslink stop && tslink uninstall   Stop daemon then remove autostart`,
+	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		startupPath, err := windowsStartupScriptPath()
 		if err != nil {

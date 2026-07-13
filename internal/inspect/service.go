@@ -127,14 +127,6 @@ func endpointFor(svc registry.Service) EndpointView {
 		if svc.Funnel {
 			kind = EndpointKindPublicHTTPS
 		}
-		if svc.Domain != "" {
-			return EndpointView{
-				Kind:    kind,
-				Display: "https://" + svc.Domain,
-				State:   EndpointStateExpected,
-				Host:    svc.Domain,
-			}
-		}
 		return EndpointView{
 			Kind:    kind,
 			Display: "https://" + host,
@@ -157,13 +149,6 @@ func exposureFor(svc registry.Service) ExposureView {
 			Kind:    ExposurePublicFunnel,
 			Display: "public via Tailscale Funnel",
 			Public:  true,
-		}
-	}
-	if svc.Domain != "" {
-		return ExposureView{
-			Kind:    ExposureCustomDomain,
-			Display: "custom domain",
-			Public:  false,
 		}
 	}
 	switch svc.Type {
@@ -255,6 +240,12 @@ func warningsFor(svc registry.Service, mw *MiddlewareView) []WarningView {
 		warnings = append(warnings, warningView(
 			WarningCodeServiceTypeUnknown,
 			fmt.Sprintf("Unknown service type %q.", svc.Type),
+		))
+	}
+	if svc.Domain != "" || svc.AcmeEmail != "" {
+		warnings = append(warnings, warningView(
+			WarningCodeCustomDomainNotWired,
+			"Custom-domain/ACME fields are configured but unavailable; serve rejects them and no custom-domain endpoint is exposed.",
 		))
 	}
 	if mw != nil {

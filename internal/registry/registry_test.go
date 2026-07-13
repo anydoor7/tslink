@@ -98,6 +98,40 @@ func TestLoadLegacyRegistryWithoutSchemaVersionThenSaveAddsCurrentVersion(t *tes
 	}
 }
 
+func TestLoadRejectsUnavailableFeatureFields(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+	}{
+		{
+			name: "custom domain",
+			raw:  `{"schema_version":1,"services":[{"name":"web","type":"proxy","target":"http://localhost:3000","domain":"app.example.com"}]}`,
+		},
+		{
+			name: "middleware",
+			raw:  `{"schema_version":1,"services":[{"name":"web","type":"proxy","target":"http://localhost:3000","middleware":{"basic_auth":"user:pass"}}]}`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := testRegistryPath(t)
+			if err := os.WriteFile(path, []byte(tc.raw), 0o600); err != nil {
+				t.Fatalf("WriteFile() error = %v", err)
+			}
+			_, err := Load(path)
+			if err == nil {
+				t.Fatal("Load() error = nil, want feature_unavailable")
+			}
+			if code, ok := ErrorCode(err); !ok || code != CodeFeatureUnavailable {
+				t.Fatalf("ErrorCode() = %q,%v; want %s,true; err=%v", code, ok, CodeFeatureUnavailable, err)
+			}
+			if strings.Contains(err.Error(), "user:pass") {
+				t.Fatalf("Load() error leaked middleware secret: %v", err)
+			}
+		})
+	}
+}
+
 func TestAddAndLoad(t *testing.T) {
 	path := testRegistryPath(t)
 
@@ -351,11 +385,12 @@ func TestAddIfMissing_LockError(t *testing.T) {
 
 func TestRemove(t *testing.T) {
 	path := testRegistryPath(t)
+	docsDir := t.TempDir()
 
 	if _, err := Add(path, Service{Name: "report", Type: TypeProxy, Target: "http://localhost:3000"}); err != nil {
 		t.Fatalf("Add report returned error: %v", err)
 	}
-	if _, err := Add(path, Service{Name: "docs", Type: TypeFile, Path: "/tmp/docs"}); err != nil {
+	if _, err := Add(path, Service{Name: "docs", Type: TypeFile, Path: docsDir}); err != nil {
 		t.Fatalf("Add docs returned error: %v", err)
 	}
 
@@ -379,12 +414,13 @@ func TestRemove(t *testing.T) {
 
 func TestRemoveAndReturn(t *testing.T) {
 	path := testRegistryPath(t)
+	docsDir := t.TempDir()
 
 	original := Service{Name: "report", Type: TypeProxy, Target: "http://localhost:3000", Tags: []string{"tag:tsmain"}}
 	if _, err := Add(path, original); err != nil {
 		t.Fatalf("Add report returned error: %v", err)
 	}
-	if _, err := Add(path, Service{Name: "docs", Type: TypeFile, Path: "/tmp/docs"}); err != nil {
+	if _, err := Add(path, Service{Name: "docs", Type: TypeFile, Path: docsDir}); err != nil {
 		t.Fatalf("Add docs returned error: %v", err)
 	}
 
@@ -797,10 +833,10 @@ func TestAdd_LockFileOpenError(t *testing.T) {
 	if err := os.Mkdir(dir, 0o700); err != nil {
 		t.Fatalf("Mkdir() error = %v", err)
 	}
-	if err := os.Chmod(dir, 0o500); err != nil {
-		t.Fatalf("Chmod() error = %v", err)
+	lockPath := filepath.Join(dir, "registry.json.lock")
+	if err := os.Mkdir(lockPath, 0o700); err != nil {
+		t.Fatalf("Mkdir(lock) error = %v", err)
 	}
-	defer os.Chmod(dir, 0o700)
 
 	_, err := Add(filepath.Join(dir, "registry.json"), Service{Name: "svc", Type: TypeProxy, Target: "http://localhost:3000"})
 	if err == nil {
@@ -836,15 +872,29 @@ func TestSave_PathError(t *testing.T) {
 	}
 }
 
-func TestSave_TempWriteError(t *testing.T) {
+func TestSave_IgnoresMaliciousFixedTempPath(t *testing.T) {
 	path := testRegistryPath(t)
+	old := &Registry{Services: []Service{{Name: "old", Type: TypeProxy, Target: "http://localhost:3000"}}}
+	if err := save(path, old); err != nil {
+		t.Fatalf("save(old) error = %v", err)
+	}
 	if err := os.Mkdir(path+".tmp", 0o700); err != nil {
 		t.Fatalf("Mkdir() error = %v", err)
 	}
 
-	err := save(path, &Registry{Services: []Service{{Name: "svc"}}})
-	if err == nil {
-		t.Fatal("save() error = nil, want error")
+	err := save(path, &Registry{Services: []Service{{Name: "new", Type: TypeProxy, Target: "http://localhost:4000"}}})
+	if err != nil {
+		t.Fatalf("save() error = %v", err)
+	}
+	if info, err := os.Stat(path + ".tmp"); err != nil || !info.IsDir() {
+		t.Fatalf("fixed temp path should remain untouched directory, info=%v err=%v", info, err)
+	}
+	reg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(reg.Services) != 1 || reg.Services[0].Name != "new" {
+		t.Fatalf("registry = %+v, want new service despite malicious fixed temp", reg.Services)
 	}
 }
 
@@ -880,13 +930,53 @@ func TestAdd_UpdateSaveError(t *testing.T) {
 	if _, err := Add(path, Service{Name: "svc", Type: TypeProxy, Target: "http://localhost:3000"}); err != nil {
 		t.Fatalf("Add() error = %v", err)
 	}
-	if err := os.Mkdir(path+".tmp", 0o700); err != nil {
-		t.Fatalf("Mkdir() error = %v", err)
+	lockPath := path + ".lock"
+	if err := os.Remove(lockPath); err != nil && !os.IsNotExist(err) {
+		t.Fatalf("Remove(lock) error = %v", err)
+	}
+	if err := os.Mkdir(lockPath, 0o700); err != nil {
+		t.Fatalf("Mkdir(lock) error = %v", err)
 	}
 
 	_, err := Add(path, Service{Name: "svc", Type: TypeProxy, Target: "http://localhost:4000"})
 	if err == nil {
 		t.Fatal("Add() error = nil, want error")
+	}
+}
+
+func TestMutateServiceMergesWithLatestRegistryState(t *testing.T) {
+	path := testRegistryPath(t)
+	if _, err := Add(path, Service{Name: "web", Type: TypeProxy, Target: "http://localhost:3000", Tags: []string{"tag:old"}}); err != nil {
+		t.Fatalf("Add(initial) error = %v", err)
+	}
+	stale, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load(stale) error = %v", err)
+	}
+	if _, err := Add(path, Service{Name: "web", Type: TypeProxy, Target: "http://localhost:4000", Tags: []string{"tag:old"}}); err != nil {
+		t.Fatalf("Add(concurrent target edit) error = %v", err)
+	}
+
+	if _, err := MutateService(path, "web", func(svc Service) (Service, error) {
+		if svc.Target == stale.Services[0].Target {
+			t.Fatalf("MutateService saw stale target %q, want latest registry state", svc.Target)
+		}
+		svc.Tags = append(svc.Tags, "tag:new")
+		return svc, nil
+	}); err != nil {
+		t.Fatalf("MutateService() error = %v", err)
+	}
+
+	reg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load(final) error = %v", err)
+	}
+	got := reg.Services[0]
+	if got.Target != "http://localhost:4000" {
+		t.Fatalf("target = %q, want concurrent target edit preserved", got.Target)
+	}
+	if len(got.Tags) != 2 || got.Tags[0] != "tag:old" || got.Tags[1] != "tag:new" {
+		t.Fatalf("tags = %v, want merged tag update", got.Tags)
 	}
 }
 
@@ -906,9 +996,10 @@ func TestAddTCPService(t *testing.T) {
 	path := testRegistryPath(t)
 
 	if _, err := Add(path, Service{
-		Name: "db",
-		Type: TypeTCP,
-		Port: 5432,
+		Name:   "db",
+		Type:   TypeTCP,
+		Target: "localhost:5432",
+		Port:   5432,
 	}); err != nil {
 		t.Fatalf("Add returned error: %v", err)
 	}
@@ -1066,6 +1157,62 @@ func TestValidateServiceRejectsInvalidControlURL(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "invalid URL") {
 		t.Fatalf("ValidateService() error = %v, want invalid URL error", err)
+	}
+}
+
+func TestValidateServiceDiscriminatedShape(t *testing.T) {
+	fileRoot := t.TempDir()
+	fileAsPath := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(fileAsPath, []byte("not a dir"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	missingPath := filepath.Join(t.TempDir(), "missing")
+
+	valid := []Service{
+		{Name: "proxy-http", Type: TypeProxy, Target: "http://localhost:3000"},
+		{Name: "proxy-https", Type: TypeProxy, Target: "https://example.com"},
+		{Name: "files", Type: TypeFile, Path: fileRoot},
+		{Name: "tcp", Type: TypeTCP, Target: "localhost:5432", Port: 5432},
+	}
+	for _, svc := range valid {
+		t.Run("valid_"+svc.Name, func(t *testing.T) {
+			if err := ValidateService(svc); err != nil {
+				t.Fatalf("ValidateService(%+v) error = %v", svc, err)
+			}
+		})
+	}
+
+	invalid := []Service{
+		{Name: "unknown", Type: "websocket", Target: "http://localhost:3000"},
+		{Name: "proxy-empty", Type: TypeProxy},
+		{Name: "proxy-relative", Type: TypeProxy, Target: "localhost:3000"},
+		{Name: "proxy-hostless", Type: TypeProxy, Target: "https:///app"},
+		{Name: "proxy-unsupported", Type: TypeProxy, Target: "ftp://example.com"},
+		{Name: "proxy-path", Type: TypeProxy, Target: "http://localhost:3000", Path: fileRoot},
+		{Name: "proxy-port", Type: TypeProxy, Target: "http://localhost:3000", Port: 443},
+		{Name: "file-empty", Type: TypeFile},
+		{Name: "file-relative", Type: TypeFile, Path: "relative"},
+		{Name: "file-missing", Type: TypeFile, Path: missingPath},
+		{Name: "file-notdir", Type: TypeFile, Path: fileAsPath},
+		{Name: "file-target", Type: TypeFile, Path: fileRoot, Target: "http://localhost:3000"},
+		{Name: "file-port", Type: TypeFile, Path: fileRoot, Port: 443},
+		{Name: "tcp-empty", Type: TypeTCP},
+		{Name: "tcp-hostless", Type: TypeTCP, Target: ":5432", Port: 5432},
+		{Name: "tcp-relative", Type: TypeTCP, Target: "localhost", Port: 5432},
+		{Name: "tcp-nonnum", Type: TypeTCP, Target: "localhost:abc"},
+		{Name: "tcp-zero", Type: TypeTCP, Target: "localhost:0", Port: 0},
+		{Name: "tcp-overflow", Type: TypeTCP, Target: "localhost:70000", Port: 70000},
+		{Name: "tcp-path", Type: TypeTCP, Target: "localhost:5432", Port: 5432, Path: fileRoot},
+		{Name: "tcp-allow", Type: TypeTCP, Target: "localhost:5432", Port: 5432, AllowedUsers: []string{"alice@example.com"}},
+		{Name: "domain", Type: TypeProxy, Target: "http://localhost:3000", Domain: "app.example.com"},
+		{Name: "acme", Type: TypeProxy, Target: "http://localhost:3000", AcmeEmail: "admin@example.com"},
+	}
+	for _, svc := range invalid {
+		t.Run("invalid_"+svc.Name, func(t *testing.T) {
+			if err := ValidateService(svc); err == nil {
+				t.Fatalf("ValidateService(%+v) error = nil, want error", svc)
+			}
+		})
 	}
 }
 
@@ -1261,6 +1408,7 @@ func TestAddServiceAllFields(t *testing.T) {
 	if _, err := Add(path, Service{
 		Name:       "full",
 		Type:       TypeTCP,
+		Target:     "localhost:3306",
 		Port:       3306,
 		Ephemeral:  true,
 		Tags:       []string{"tag:db", "tag:internal"},
@@ -1307,7 +1455,7 @@ func TestUpdateServicePreservesNewFields(t *testing.T) {
 	if _, err := Add(path, Service{
 		Name:       "updatable",
 		Type:       TypeTCP,
-		Target:     "http://localhost:3000",
+		Target:     "localhost:5432",
 		Port:       5432,
 		Ephemeral:  true,
 		Tags:       []string{"tag:v1", "tag:staging"},
@@ -1325,7 +1473,7 @@ func TestUpdateServicePreservesNewFields(t *testing.T) {
 	if _, err := Add(path, Service{
 		Name:       "updatable",
 		Type:       TypeTCP,
-		Target:     "http://localhost:4000",
+		Target:     "localhost:3306",
 		Port:       3306,
 		Ephemeral:  false,
 		Tags:       []string{"tag:v2", "tag:production"},
@@ -1343,7 +1491,7 @@ func TestUpdateServicePreservesNewFields(t *testing.T) {
 	}
 
 	svc := reg.Services[0]
-	if svc.Target != "http://localhost:4000" {
+	if svc.Target != "localhost:3306" {
 		t.Fatalf("expected target to be updated, got %q", svc.Target)
 	}
 	if svc.Port != 3306 {
@@ -1397,58 +1545,26 @@ func TestWithLock_LockError(t *testing.T) {
 	}
 }
 
-func TestAddServiceWithAcmeEmail(t *testing.T) {
+func TestAddRejectsDomainAndAcmeEmail(t *testing.T) {
 	path := testRegistryPath(t)
 
-	if _, err := Add(path, Service{
-		Name:      "acme-svc",
-		Type:      TypeProxy,
-		Target:    "http://localhost:3000",
-		Domain:    "app.example.com",
-		AcmeEmail: "admin@example.com",
-	}); err != nil {
-		t.Fatalf("Add returned error: %v", err)
+	cases := []Service{
+		{Name: "domain-svc", Type: TypeProxy, Target: "http://localhost:3000", Domain: "app.example.com"},
+		{Name: "acme-svc", Type: TypeProxy, Target: "http://localhost:3000", AcmeEmail: "admin@example.com"},
 	}
-
-	reg, err := Load(path)
-	if err != nil {
-		t.Fatalf("Load returned error: %v", err)
-	}
-	if len(reg.Services) != 1 {
-		t.Fatalf("expected 1 service, got %d", len(reg.Services))
-	}
-
-	svc := reg.Services[0]
-	if svc.AcmeEmail != "admin@example.com" {
-		t.Fatalf("expected acme_email %q, got %q", "admin@example.com", svc.AcmeEmail)
-	}
-	if svc.Domain != "app.example.com" {
-		t.Fatalf("expected domain %q, got %q", "app.example.com", svc.Domain)
-	}
-}
-
-func TestAcmeEmailJSONRoundTrip(t *testing.T) {
-	path := testRegistryPath(t)
-
-	original := Service{
-		Name:      "roundtrip-acme",
-		Type:      TypeProxy,
-		Target:    "http://localhost:8080",
-		Domain:    "test.example.com",
-		AcmeEmail: "certs@example.com",
-	}
-	if _, err := Add(path, original); err != nil {
-		t.Fatalf("Add() error = %v", err)
-	}
-
-	reg, err := Load(path)
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
-
-	loaded := reg.Services[0]
-	if loaded.AcmeEmail != original.AcmeEmail {
-		t.Fatalf("AcmeEmail round-trip: got %q, want %q", loaded.AcmeEmail, original.AcmeEmail)
+	for _, svc := range cases {
+		t.Run(svc.Name, func(t *testing.T) {
+			created, err := Add(path, svc)
+			if err == nil {
+				t.Fatal("Add() error = nil, want custom-domain/ACME unavailable error")
+			}
+			if created {
+				t.Fatal("Add() created = true, want false")
+			}
+			if !strings.Contains(err.Error(), "custom-domain/ACME runtime is not wired") {
+				t.Fatalf("Add() error = %v, want custom-domain/ACME unavailable error", err)
+			}
+		})
 	}
 }
 

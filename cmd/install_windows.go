@@ -38,8 +38,9 @@ To verify the script exists:
 To remove the autostart:
   tslink uninstall
 
-Examples:
-  tslink install                Register the Startup script`,
+	Examples:
+	  tslink install                Register the Startup script`,
+	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		exe, err := windowsExecutablePathFn()
 		if err != nil {

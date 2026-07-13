@@ -55,6 +55,16 @@ func (h *captureHandler) attrMap(t *testing.T, idx int) map[string]any {
 	return m
 }
 
+func (h *captureHandler) message(t *testing.T, idx int) string {
+	t.Helper()
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if idx >= len(h.records) {
+		t.Fatalf("no log record at index %d (have %d)", idx, len(h.records))
+	}
+	return h.records[idx].Message
+}
+
 func installCaptureLogger() *captureHandler {
 	h := &captureHandler{}
 	slog.SetDefault(slog.New(h))
@@ -91,6 +101,39 @@ func TestAccessLogMiddleware_BasicRequest(t *testing.T) {
 	}
 	if attrs["path"] != "/hello" {
 		t.Errorf("path=%v, want /hello", attrs["path"])
+	}
+}
+
+func TestSecuritySemantics_AccessLogRecordSchemaHasNoInventedIdentityFields(t *testing.T) {
+	ch := installCaptureLogger()
+
+	handler := AccessLogMiddleware("svc", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte("ok"))
+	}))
+	req := httptest.NewRequest(http.MethodPost, "/submit?ignored=true", strings.NewReader("body"))
+	req.RemoteAddr = "100.64.0.1:1234"
+	req.Header.Set("User-Agent", "tslink-test")
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if msg := ch.message(t, 0); msg != "access" {
+		t.Fatalf("log message = %q, want access", msg)
+	}
+	attrs := ch.attrMap(t, 0)
+	for _, key := range []string{"service", "method", "path", "status", "duration_ms", "bytes", "remote_addr", "user_agent"} {
+		if _, ok := attrs[key]; !ok {
+			t.Fatalf("access log missing %q in %+v", key, attrs)
+		}
+	}
+	for _, key := range []string{"login", "user", "user_login", "tailscale_user", "node", "tailscale_node"} {
+		if _, ok := attrs[key]; ok {
+			t.Fatalf("access log invented identity field %q in %+v", key, attrs)
+		}
+	}
+	if attrs["service"] != "svc" || attrs["method"] != http.MethodPost || attrs["path"] != "/submit" || attrs["remote_addr"] != "100.64.0.1:1234" || attrs["user_agent"] != "tslink-test" {
+		t.Fatalf("access log attrs = %+v, want documented schema values", attrs)
 	}
 }
 

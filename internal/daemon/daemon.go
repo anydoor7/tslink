@@ -11,6 +11,23 @@ import (
 	"github.com/monody0007/tslink/internal/filelock"
 )
 
+// daemonServeArgs builds the child argv for the re-executed foreground serve
+// process. controlURL and manageACL opt-ins observed by the parent must be
+// forwarded to the child exactly once, otherwise the documented
+// `serve --daemon --manage-acl` opt-in is silently dropped in daemon mode. It
+// is shared by the Unix and Windows Daemonize implementations so both platforms
+// forward identical flags.
+func daemonServeArgs(controlURL string, manageACL bool) []string {
+	args := []string{"serve"}
+	if controlURL != "" {
+		args = append(args, "--control-url", controlURL)
+	}
+	if manageACL {
+		args = append(args, "--manage-acl")
+	}
+	return args
+}
+
 // WritePID writes the current process PID to path.
 func WritePID(path string) error {
 	return WritePIDForProcess(path, os.Getpid())

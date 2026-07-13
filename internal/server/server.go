@@ -50,12 +50,19 @@ var (
 	runtimeSnapshotPathFn   = config.RuntimeSnapshotPath
 	runtimeSaveSnapshotFn   = runtimesnapshot.Save
 	runtimeRemoveSnapshotFn = runtimesnapshot.Remove
+	beforeInitialSyncFn     = func(context.Context) error { return nil }
+	registryLoadFn          = registry.Load
+	afterDesiredLoadedFn    = func(context.Context, uint64) error { return nil }
 )
 
 const (
 	httpReadHeaderTimeout = 10 * time.Second
+	httpReadTimeout       = 30 * time.Second
 	httpIdleTimeout       = 60 * time.Second
 	httpShutdownTimeout   = 5 * time.Second
+	httpMaxHeaderBytes    = 64 << 10
+	httpMaxRequestBytes   = 32 << 20
+	httpMaxActiveConns    = 256
 )
 
 var errServerShuttingDown = errors.New("server shutting down")
@@ -64,7 +71,9 @@ var newHTTPServerFn = func(handler http.Handler) *http.Server {
 	return &http.Server{
 		Handler:           handler,
 		ReadHeaderTimeout: httpReadHeaderTimeout,
+		ReadTimeout:       httpReadTimeout,
 		IdleTimeout:       httpIdleTimeout,
+		MaxHeaderBytes:    httpMaxHeaderBytes,
 	}
 }
 
@@ -74,6 +83,93 @@ var shutdownHTTPServerFn = func(ctx context.Context, srv *http.Server) error {
 
 var closeHTTPServerFn = func(srv *http.Server) error {
 	return srv.Close()
+}
+
+type limitedListener struct {
+	net.Listener
+	sem     chan struct{}
+	kind    string
+	service string
+}
+
+func newLimitedListener(ln net.Listener, limit int, kind, service string) net.Listener {
+	if limit <= 0 {
+		return ln
+	}
+	return &limitedListener{
+		Listener: ln,
+		sem:      make(chan struct{}, limit),
+		kind:     kind,
+		service:  service,
+	}
+}
+
+func (l *limitedListener) Accept() (net.Conn, error) {
+	for {
+		conn, err := l.Listener.Accept()
+		if err != nil {
+			return nil, err
+		}
+		select {
+		case l.sem <- struct{}{}:
+			return &limitedConn{Conn: conn, release: func() { <-l.sem }}, nil
+		default:
+			slog.Warn("connection limit exceeded; closing accepted connection", "kind", l.kind, "name", l.service)
+			_ = conn.Close()
+		}
+	}
+}
+
+type limitedConn struct {
+	net.Conn
+	once    sync.Once
+	release func()
+}
+
+func (c *limitedConn) Close() error {
+	err := c.Conn.Close()
+	c.once.Do(c.release)
+	return err
+}
+
+func ResourceBudgetMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.ContentLength > httpMaxRequestBytes {
+			http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+			return
+		}
+		if r.Body != nil {
+			r.Body = http.MaxBytesReader(w, r.Body, httpMaxRequestBytes)
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+type registryWatcher interface {
+	Add(string) error
+	Close() error
+	Events() <-chan fsnotify.Event
+	Errors() <-chan error
+}
+
+type fsNotifyRegistryWatcher struct {
+	*fsnotify.Watcher
+}
+
+func (w *fsNotifyRegistryWatcher) Events() <-chan fsnotify.Event {
+	return w.Watcher.Events
+}
+
+func (w *fsNotifyRegistryWatcher) Errors() <-chan error {
+	return w.Watcher.Errors
+}
+
+var newRegistryWatcherFn = func() (registryWatcher, error) {
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return nil, err
+	}
+	return &fsNotifyRegistryWatcher{Watcher: watcher}, nil
 }
 
 // ServiceNode represents a single tsnet node serving one service.
@@ -108,8 +204,10 @@ type Server struct {
 	ensureTagsFn    EnsureTagsFunc
 	cleanupNodesFn  CleanupStaleNodesFunc
 	shuttingDown    atomic.Bool
+	syncGeneration  atomic.Uint64
 	daemonPID       int
 	daemonStartedAt time.Time
+	readyFn         func() error
 }
 
 // New creates a new multi-node server.
@@ -150,6 +248,11 @@ func (s *Server) SetCleanupStaleNodesFn(fn CleanupStaleNodesFunc) {
 	s.cleanupNodesFn = fn
 }
 
+// SetReadyFunc sets a callback invoked after watcher setup and initial sync succeed.
+func (s *Server) SetReadyFunc(fn func() error) {
+	s.readyFn = fn
+}
+
 func staticAuthKeyProvider(authKey string) AuthKeyProvider {
 	return func(context.Context, registry.Service) (string, error) {
 		return authKey, nil
@@ -159,20 +262,44 @@ func staticAuthKeyProvider(authKey string) AuthKeyProvider {
 // Run starts all registered service nodes and watches for registry changes.
 func (s *Server) Run(ctx context.Context) error {
 	s.shuttingDown.Store(false)
+	watchCtx, cancelWatch := context.WithCancel(ctx)
+	defer cancelWatch()
+
+	watchDone, err := s.startRegistryWatcher(watchCtx)
+	if err != nil {
+		s.beginShutdown()
+		s.closeAllNodes()
+		return fmt.Errorf("registry watcher setup failed: %w", err)
+	}
+
+	if err := beforeInitialSyncFn(ctx); err != nil {
+		s.beginShutdown()
+		cancelWatch()
+		<-watchDone
+		s.closeAllNodes()
+		return fmt.Errorf("before initial sync: %w", err)
+	}
+
 	if err := s.syncNodes(ctx); err != nil {
 		s.beginShutdown()
+		cancelWatch()
+		<-watchDone
 		s.closeAllNodes()
 		return fmt.Errorf("initial sync failed: %w", err)
 	}
-
-	watchDone := make(chan struct{})
-	go func() {
-		defer close(watchDone)
-		s.watchRegistry(ctx)
-	}()
+	if s.readyFn != nil {
+		if err := s.readyFn(); err != nil {
+			s.beginShutdown()
+			cancelWatch()
+			<-watchDone
+			s.closeAllNodes()
+			return fmt.Errorf("mark ready: %w", err)
+		}
+	}
 
 	<-ctx.Done()
 	s.beginShutdown()
+	cancelWatch()
 	<-watchDone
 	s.closeAllNodes()
 	return nil
@@ -180,6 +307,8 @@ func (s *Server) Run(ctx context.Context) error {
 
 // syncNodes compares registry to running nodes and starts/stops as needed.
 func (s *Server) syncNodes(ctx context.Context) error {
+	generation := s.syncGeneration.Add(1)
+
 	if err := s.ensureRunning(ctx); err != nil {
 		return err
 	}
@@ -189,7 +318,7 @@ func (s *Server) syncNodes(ctx context.Context) error {
 		return err
 	}
 
-	reg, err := registry.Load(regPath)
+	reg, err := registryLoadFn(regPath)
 	if err != nil {
 		return err
 	}
@@ -214,12 +343,19 @@ func (s *Server) syncNodes(ctx context.Context) error {
 		}
 		desired[svc.Name] = svc
 	}
+	if err := afterDesiredLoadedFn(ctx, generation); err != nil {
+		return err
+	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if err := s.ensureRunning(ctx); err != nil {
 		return err
+	}
+	if generation != s.syncGeneration.Load() {
+		slog.Info("skipping stale registry sync generation", "generation", generation)
+		return nil
 	}
 
 	// Stop nodes for removed or changed services
@@ -469,24 +605,10 @@ func (s *Server) removeRuntimeSnapshot() {
 }
 
 // ValidateServiceForStartup validates a service definition before starting its node.
-// It checks name, funnel guardrails, TCP/allowed_users conflict, control URL, and tag grammar.
+// It delegates to the canonical registry validator and adds startup context.
 func ValidateServiceForStartup(svc registry.Service) error {
-	if err := registry.ValidateName(svc.Name); err != nil {
-		return fmt.Errorf("service %q: %w", svc.Name, err)
-	}
-	if err := registry.ValidateFunnelGuardrails(svc.Type, svc.Funnel, svc.AllowedUsers, svc.ControlURL, svc.PublicAck); err != nil {
+	if err := registry.ValidateService(svc); err != nil {
 		return fmt.Errorf("service %q: %w; edit registry.json", svc.Name, err)
-	}
-	if svc.Type == registry.TypeTCP && len(svc.AllowedUsers) > 0 {
-		return fmt.Errorf("service %q: tcp services do not support allowed_users; remove allowed_users from registry.json", svc.Name)
-	}
-	if err := registry.ValidateControlURL(svc.ControlURL); err != nil {
-		return fmt.Errorf("service %q has invalid control_url: %w; edit registry.json", svc.Name, err)
-	}
-	for _, tag := range svc.Tags {
-		if err := registry.ValidateTag(tag); err != nil {
-			return fmt.Errorf("service %q has invalid tag %q: %w; fix with `tslink tags set %s tag:<lowercase-hyphen-name>` or edit registry.json", svc.Name, tag, err, svc.Name)
-		}
 	}
 	return nil
 }
@@ -608,7 +730,13 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service) erro
 		}
 		handler = h
 	case registry.TypeFile:
-		handler = NewFileHandler(svc.Path)
+		h, err2 := NewFileHandler(svc.Path)
+		if err2 != nil {
+			cancel()
+			tsnetSrv.Close()
+			return fmt.Errorf("file handler for %q: %w", svc.Name, err2)
+		}
+		handler = h
 	default:
 		cancel()
 		tsnetSrv.Close()
@@ -633,6 +761,7 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service) erro
 		slog.Warn("middleware configured but not enforced", "code", "middleware.not_enforced", "name", svc.Name, "message", "service middleware is configured but NOT enforced; middleware pipeline is roadmap/experimental and is not wired into serve")
 	}
 
+	handler = ResourceBudgetMiddleware(handler)
 	handler = AccessLogMiddleware(svc.Name, handler)
 	handler = s.metrics.Middleware(svc.Name, handler)
 
@@ -654,6 +783,7 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service) erro
 		tsnetSrv.Close()
 		return err
 	}
+	ln = newLimitedListener(ln, httpMaxActiveConns, "http", svc.Name)
 
 	httpSrv := newHTTPServerFn(handler)
 
@@ -746,26 +876,40 @@ func (s *Server) closeAllNodes() {
 }
 
 func (s *Server) watchRegistry(ctx context.Context) {
+	done, err := s.startRegistryWatcher(ctx)
+	if err != nil {
+		slog.Error("registry watch setup failed", "error", err)
+		return
+	}
+	<-done
+}
+
+func (s *Server) startRegistryWatcher(ctx context.Context) (<-chan struct{}, error) {
 	regPath, err := config.RegistryPath()
 	if err != nil {
-		slog.Warn("registry watch disabled", "error", err)
-		return
+		return nil, err
 	}
 
-	watcher, err := fsnotify.NewWatcher()
+	watcher, err := newRegistryWatcherFn()
 	if err != nil {
-		slog.Error("fsnotify setup failed", "error", err)
-		return
+		return nil, fmt.Errorf("fsnotify setup: %w", err)
 	}
-	defer watcher.Close()
 
 	if err := watcher.Add(s.cfgDir); err != nil {
-		slog.Error("watch directory failed", "dir", s.cfgDir, "error", err)
-		return
+		_ = watcher.Close()
+		return nil, fmt.Errorf("watch directory %s: %w", s.cfgDir, err)
 	}
 
-	regPath = filepath.Clean(regPath)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer watcher.Close()
+		s.runRegistryWatcher(ctx, watcher, filepath.Clean(regPath))
+	}()
+	return done, nil
+}
 
+func (s *Server) runRegistryWatcher(ctx context.Context, watcher registryWatcher, regPath string) {
 	var debounce *time.Timer
 	defer func() {
 		if debounce != nil {
@@ -777,7 +921,7 @@ func (s *Server) watchRegistry(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case event, ok := <-watcher.Events:
+		case event, ok := <-watcher.Events():
 			if !ok {
 				return
 			}
@@ -800,7 +944,7 @@ func (s *Server) watchRegistry(ctx context.Context) {
 					}
 				})
 			}
-		case err, ok := <-watcher.Errors:
+		case err, ok := <-watcher.Errors():
 			if !ok {
 				return
 			}

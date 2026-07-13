@@ -1,6 +1,9 @@
 package server
 
 import (
+	"errors"
+	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,7 +17,10 @@ func TestNewFileHandler(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	handler := NewFileHandler(dir)
+	handler, err := NewFileHandler(dir)
+	if err != nil {
+		t.Fatalf("NewFileHandler(%q) error = %v", dir, err)
+	}
 
 	req := httptest.NewRequest(http.MethodGet, "/hello.txt", nil)
 	w := httptest.NewRecorder()
@@ -28,8 +34,91 @@ func TestNewFileHandler(t *testing.T) {
 	}
 }
 
+func TestSafeFSAllowsContainedDotDotNames(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "..config"), []byte("config"), 0o600); err != nil {
+		t.Fatalf("WriteFile(..config) error = %v", err)
+	}
+	if err := os.Mkdir(filepath.Join(root, "..foo"), 0o700); err != nil {
+		t.Fatalf("Mkdir(..foo) error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "..foo", "bar"), []byte("bar"), 0o600); err != nil {
+		t.Fatalf("WriteFile(..foo/bar) error = %v", err)
+	}
+
+	fsys := &safeFS{root: root}
+	for _, name := range []string{"..config", "..foo/bar"} {
+		t.Run(name, func(t *testing.T) {
+			f, err := fsys.Open(name)
+			if err != nil {
+				t.Fatalf("Open(%q) error = %v", name, err)
+			}
+			defer f.Close()
+			if _, err := io.ReadAll(f); err != nil {
+				t.Fatalf("ReadAll(%q) error = %v", name, err)
+			}
+		})
+	}
+}
+
+func TestSafeFSRejectsCanonicalTraversalAndSymlinkEscape(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "public")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatalf("Mkdir(root) error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(parent, "secret"), []byte("secret"), 0o600); err != nil {
+		t.Fatalf("WriteFile(secret) error = %v", err)
+	}
+	if err := os.Symlink(parent, filepath.Join(root, "escape")); err != nil {
+		t.Fatalf("Symlink() error = %v", err)
+	}
+
+	fsys := &safeFS{root: root}
+	for _, name := range []string{"../secret", "escape/secret"} {
+		t.Run(name, func(t *testing.T) {
+			f, err := fsys.Open(name)
+			if err == nil {
+				f.Close()
+				t.Fatalf("Open(%q) error = nil, want rejection", name)
+			}
+			if !errors.Is(err, fs.ErrInvalid) && !errors.Is(err, fs.ErrNotExist) {
+				t.Fatalf("Open(%q) error = %v, want invalid/not-exist", name, err)
+			}
+		})
+	}
+}
+
+func TestNewFileHandlerRejectsUnsafeRoot(t *testing.T) {
+	// Defense-in-depth: direct construction with an empty or relative root must
+	// return an error instead of silently serving the process working directory.
+	cases := []struct {
+		name string
+		dir  string
+	}{
+		{"empty", ""},
+		{"whitespace", "   "},
+		{"relative", "relative/path"},
+		{"dot", "."},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			handler, err := NewFileHandler(tc.dir)
+			if err == nil {
+				t.Fatalf("NewFileHandler(%q) error = nil, want rejection", tc.dir)
+			}
+			if handler != nil {
+				t.Fatalf("NewFileHandler(%q) returned a non-nil handler on error", tc.dir)
+			}
+		})
+	}
+}
+
 func TestNewFileHandler_NotFound(t *testing.T) {
-	handler := NewFileHandler(t.TempDir())
+	handler, err := NewFileHandler(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewFileHandler() error = %v", err)
+	}
 
 	req := httptest.NewRequest(http.MethodGet, "/nonexistent.txt", nil)
 	w := httptest.NewRecorder()
@@ -55,7 +144,10 @@ func TestNewFileHandler_SymlinkTraversalBlocked(t *testing.T) {
 		t.Fatalf("Symlink() error = %v", err)
 	}
 
-	handler := NewFileHandler(servedDir)
+	handler, err := NewFileHandler(servedDir)
+	if err != nil {
+		t.Fatalf("NewFileHandler() error = %v", err)
+	}
 
 	// Attempt to read the secret file through the symlink.
 	req := httptest.NewRequest(http.MethodGet, "/escape/secret.txt", nil)
@@ -83,7 +175,10 @@ func TestNewFileHandler_DotDotTraversalBlocked(t *testing.T) {
 		t.Fatalf("MkdirAll() error = %v", err)
 	}
 
-	handler := NewFileHandler(servedDir)
+	handler, err := NewFileHandler(servedDir)
+	if err != nil {
+		t.Fatalf("NewFileHandler() error = %v", err)
+	}
 
 	// Attempt directory traversal with ../
 	req := httptest.NewRequest(http.MethodGet, "/../passwd", nil)

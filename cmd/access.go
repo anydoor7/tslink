@@ -193,8 +193,8 @@ func accessLocalEnforcementFor(svc registry.Service, view inspect.ServiceView) A
 }
 
 func accessAddContextNotes(enforcement AccessExplainLocalEnforcement, svc registry.Service, view inspect.ServiceView) AccessExplainLocalEnforcement {
-	if view.Exposure.Kind == inspect.ExposureCustomDomain {
-		enforcement.Notes = append(enforcement.Notes, "Custom domain reachability depends on external DNS and certificate posture, which this command does not evaluate.")
+	if svc.Domain != "" || svc.AcmeEmail != "" {
+		enforcement.Notes = append(enforcement.Notes, "Custom-domain/ACME fields are present but the serve runtime does not wire them; no custom-domain endpoint is exposed.")
 	}
 	if svc.Type == registry.TypeTCP && svc.Funnel {
 		enforcement.Notes = append(enforcement.Notes, "Tailscale Funnel does not carry raw TCP; a hand-edited TCP Funnel registry mark is not proof of public reachability.")
@@ -226,10 +226,6 @@ func accessExternalPolicyUnknown(view inspect.ServiceView) AccessExplainExternal
 			"tag ownership",
 			"Funnel policy",
 		},
-	}
-	if view.Exposure.Kind == inspect.ExposureCustomDomain {
-		unknown.Summary += " Custom domain DNS and certificate posture are also not evaluated."
-		unknown.UnknownLayers = append(unknown.UnknownLayers, "custom domain DNS", "custom domain certificate posture")
 	}
 	return unknown
 }

@@ -1,0 +1,341 @@
+name: Release Candidate
+
+# Single source of truth for the exact-SHA quality gate. PR, main, and tag
+# workflows all call this reusable workflow so no path can publish artifacts
+# from a commit that has not passed every required job. Any change to the set
+# of required jobs here changes the gate for all three trigger paths at once.
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Immutable commit SHA to gate. Defaults to the caller's SHA.
+        required: false
+        type: string
+        default: ${{ github.sha }}
+
+permissions:
+  contents: read
+
+env:
+  # Recorded deterministic shuffle seeds. The first seed is the
+  # historically failing seed kept as a regression anchor. Changing this list
+  # is an intentional re-recording, not an incidental edit.
+  TSLINK_SHUFFLE_SEEDS: "1783794398036981000 20260712 424242"
+  # Pinned analysis tool versions. CI stays deterministic; the vulnerability
+  # database itself is still fetched fresh at run time (see the govulncheck
+  # jobs) because the advisory set is time-dependent.
+  STATICCHECK_VERSION: v0.7.0
+  GOVULNCHECK_VERSION: v1.6.0
+
+jobs:
+  native:
+    name: Native build/vet/test/race (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - name: Build
+        run: go build ./...
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        run: go test -count=1 ./...
+      - name: Race
+        run: go test -race -count=1 ./...
+      - name: Recorded deterministic shuffle
+        shell: bash
+        run: |
+          set -euo pipefail
+          for seed in ${TSLINK_SHUFFLE_SEEDS}; do
+            echo "::group::shuffle seed ${seed}"
+            go test -count=1 -shuffle="${seed}" ./...
+            echo "::endgroup::"
+          done
+      - name: Native CLI smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin="dist/native/tslink"
+          if [ "${RUNNER_OS}" = "Windows" ]; then
+            bin="${bin}.exe"
+          fi
+          mkdir -p dist/native
+          go build -trimpath -o "${bin}" .
+          commands=(
+            "--help" "version" "login --help" "logout --help" "add --help"
+            "remove --help" "list --help" "serve --help" "stop --help"
+            "status --help" "logs --help" "api --help" "config --help"
+            "config set --help" "config get --help" "config list --help"
+            "tags --help" "tags list --help" "tags pull --help" "tags add --help"
+            "tags set --help" "tags set-default --help" "tags delete-remote --help"
+            "install --help" "uninstall --help"
+          )
+          for command in "${commands[@]}"; do
+            read -r -a args <<< "${command}"
+            "${bin}" "${args[@]}" >/dev/null
+          done
+      - name: Coverage (ubuntu)
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test ./... -race -coverprofile=coverage.out
+          go tool cover -func=coverage.out
+          total="$(go tool cover -func=coverage.out | awk '/^total:/ {gsub(/%/, "", $3); print $3}')"
+          threshold="85.0"
+          awk -v total="${total}" -v threshold="${threshold}" 'BEGIN {
+            if (total + 0 < threshold + 0) {
+              printf "coverage %.1f%% is below %.1f%%\n", total, threshold
+              exit 1
+            }
+            printf "coverage %.1f%% meets %.1f%%\n", total, threshold
+          }'
+
+  machine-contract:
+    name: Compiled-binary machine contracts
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      # These tests build the real binary and assert stdout/exit-code contracts
+      # (aggregate exit, api/doctor/machine JSON envelopes). They compile
+      # and run on every native OS so shell/exit differences are caught.
+      # Anchored to ^TestCompiled so EVERY compiled contract runs; a narrower
+      # substring selector previously skipped 5 of 7 TestCompiled* tests.
+      # TestCompiledSelectorCoversAllCompiledTests enforces this selector.
+      - name: Machine-contract binary tests
+        run: go test -count=1 -run '^TestCompiled' ./cmd/...
+
+  staticcheck:
+    name: Staticcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - name: Staticcheck
+        run: |
+          set -euo pipefail
+          go install "honnef.co/go/tools/cmd/staticcheck@${STATICCHECK_VERSION}"
+          "$(go env GOPATH)/bin/staticcheck" ./...
+
+  # Independent main and repo vulnerability jobs. They intentionally do NOT
+  # depend on staticcheck or on each other so one failure cannot suppress the
+  # other. Each archives its full report as an artifact.
+  govulncheck-main:
+    name: govulncheck (main module)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - name: govulncheck .
+        run: |
+          set -euo pipefail
+          go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"
+          "$(go env GOPATH)/bin/govulncheck" -show verbose . | tee govulncheck-main.txt
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: govulncheck-main
+          path: govulncheck-main.txt
+          if-no-files-found: warn
+
+  govulncheck-repo:
+    name: govulncheck (repo)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - name: govulncheck ./...
+        run: |
+          set -euo pipefail
+          go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"
+          "$(go env GOPATH)/bin/govulncheck" -show verbose ./... | tee govulncheck-repo.txt
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: govulncheck-repo
+          path: govulncheck-repo.txt
+          if-no-files-found: warn
+
+  reproducible-source:
+    name: gofmt + tidy-diff (read-only source proof)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - name: gofmt
+        run: |
+          set -euo pipefail
+          unformatted="$(gofmt -l .)"
+          if [ -n "${unformatted}" ]; then
+            echo "::error::gofmt needs to be run on:"; echo "${unformatted}"
+            exit 1
+          fi
+      # Prove `go mod tidy` is a no-op on the tagged tree BEFORE any packaging.
+      # This replaces the removed GoReleaser `go mod tidy` before-hook:
+      # the release must never mutate source; it only verifies it is already tidy.
+      - name: go mod tidy diff
+        run: |
+          set -euo pipefail
+          cp go.mod go.mod.orig
+          cp go.sum go.sum.orig
+          go mod tidy
+          if ! git diff --quiet -- go.mod go.sum; then
+            echo "::error::go mod tidy changed go.mod/go.sum; commit the tidy result"
+            git --no-pager diff -- go.mod go.sum
+            exit 1
+          fi
+          rm -f go.mod.orig go.sum.orig
+      - name: Working tree is clean after tidy
+        run: git diff --exit-code
+
+  cross-build:
+    name: Cross build (${{ matrix.goos }}/${{ matrix.goarch }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        goos: [darwin, linux, windows]
+        goarch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - name: Build + stage license payload
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          set -euo pipefail
+          ext=""
+          if [ "${GOOS}" = "windows" ]; then ext=".exe"; fi
+          out="dist/cross/tslink-${GOOS}-${GOARCH}"
+          mkdir -p "${out}"
+          go build -trimpath -ldflags "-s -w -X main.commit=${GITHUB_SHA}" \
+            -o "${out}/tslink${ext}" .
+          # Every published payload carries the legal set.
+          cp LICENSE NOTICE THIRD_PARTY_NOTICES.md "${out}/"
+      - name: Smoke native artifact
+        if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
+        run: ./dist/cross/tslink-linux-amd64/tslink --help >/dev/null
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: tslink-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/cross/tslink-${{ matrix.goos }}-${{ matrix.goarch }}/*
+          if-no-files-found: error
+
+  artifact-verify:
+    name: Artifact download + hash + content verify
+    runs-on: ubuntu-latest
+    needs: cross-build
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: downloaded
+      - name: Verify content, license payload, and hashes
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected=(darwin-amd64 darwin-arm64 linux-amd64 linux-arm64 windows-amd64 windows-arm64)
+          for t in "${expected[@]}"; do
+            dir="downloaded/tslink-${t}"
+            [ -d "${dir}" ] || { echo "::error::missing artifact ${t}"; exit 1; }
+            bin="${dir}/tslink"; [ "${t%-*}" = "windows" ] && bin="${dir}/tslink.exe"
+            [ -s "${bin}" ] || { echo "::error::empty binary ${t}"; exit 1; }
+            for legal in LICENSE NOTICE THIRD_PARTY_NOTICES.md; do
+              [ -s "${dir}/${legal}" ] || { echo "::error::missing ${legal} in ${t}"; exit 1; }
+            done
+          done
+          ( cd downloaded && find . -type f -exec sha256sum {} + | sort -k2 ) | tee candidate-artifacts.sha256
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: candidate-artifacts-sha256
+          path: candidate-artifacts.sha256
+          if-no-files-found: error
+
+  release-config:
+    name: GoReleaser config + license/notice presence
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - name: Required legal files present
+        shell: bash
+        run: |
+          set -euo pipefail
+          for f in LICENSE NOTICE THIRD_PARTY_NOTICES.md; do
+            [ -s "${f}" ] || { echo "::error::missing ${f}"; exit 1; }
+          done
+      - name: Third-party notice inventory is current
+        run: go run ./tools/gen-notices -check
+      - name: CLI manifest fixture is current
+        run: go run ./tools/gen-manifest -check
+      - name: Workflow pin + graph validator
+        run: go test -count=1 ./internal/release/...
+      - name: GoReleaser config check
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        with:
+          # Must be >= 2.11 to parse the `homebrew_casks` config key. v2.9.0
+          # hard-fails on that key (`field homebrew_casks not found`), which made
+          # this exact-SHA gate deterministically red. Kept identical to the
+          # publish pin in release.yml and asserted by TestGoReleaserVersionPins.
+          version: v2.17.0
+          args: check

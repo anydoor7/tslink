@@ -311,6 +311,35 @@ func TestEnsureTags_SetACLError(t *testing.T) {
 	}
 }
 
+func TestEnsureTags_ETagConflictDoesNotRetryWithStalePolicy(t *testing.T) {
+	aclSetup(t)
+	if err := credentials.SetAPIKey("tskey-api-test"); err != nil {
+		t.Fatalf("SetAPIKey() error = %v", err)
+	}
+
+	var posts int
+	aclWithTransport(t, func(req *http.Request) (*http.Response, error) {
+		switch {
+		case req.Method == http.MethodGet && strings.HasSuffix(req.URL.Path, "/acl"):
+			return aclJSONResponse(http.StatusOK, `{"tagowners":{"tag:existing":["user@example.com"]}}`), nil
+		case req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, "/acl"):
+			posts++
+			return aclJSONResponse(http.StatusPreconditionFailed, `{"message":"etag conflict"}`), nil
+		default:
+			t.Fatalf("unexpected request: %s %s", req.Method, req.URL.Path)
+			return nil, nil
+		}
+	})
+
+	err := EnsureTags(context.Background(), []string{"tag:new"})
+	if err == nil {
+		t.Fatal("EnsureTags() error = nil, want ETag conflict error")
+	}
+	if posts != 1 {
+		t.Fatalf("ACL POST count = %d, want exactly one failed write and no retry", posts)
+	}
+}
+
 // ---------- DeleteTag ----------
 
 func TestDeleteTag_NoClient(t *testing.T) {
@@ -444,5 +473,34 @@ func TestDeleteTag_SetACLError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "update ACL") {
 		t.Fatalf("DeleteTag() error = %v, want 'update ACL' error", err)
+	}
+}
+
+func TestDeleteTag_ETagConflictDoesNotRetryWithStalePolicy(t *testing.T) {
+	aclSetup(t)
+	if err := credentials.SetAPIKey("tskey-api-test"); err != nil {
+		t.Fatalf("SetAPIKey() error = %v", err)
+	}
+
+	var posts int
+	aclWithTransport(t, func(req *http.Request) (*http.Response, error) {
+		switch {
+		case req.Method == http.MethodGet && strings.HasSuffix(req.URL.Path, "/acl"):
+			return aclJSONResponse(http.StatusOK, `{"tagowners":{"tag:web":["autogroup:admin"]}}`), nil
+		case req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, "/acl"):
+			posts++
+			return aclJSONResponse(http.StatusPreconditionFailed, `{"message":"etag conflict"}`), nil
+		default:
+			t.Fatalf("unexpected request: %s %s", req.Method, req.URL.Path)
+			return nil, nil
+		}
+	})
+
+	err := DeleteTag(context.Background(), "tag:web")
+	if err == nil {
+		t.Fatal("DeleteTag() error = nil, want ETag conflict error")
+	}
+	if posts != 1 {
+		t.Fatalf("ACL POST count = %d, want exactly one failed write and no retry", posts)
 	}
 }

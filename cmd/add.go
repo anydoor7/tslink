@@ -1,16 +1,15 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"net/mail"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 
 	"github.com/monody0007/tslink/internal/config"
-	"github.com/monody0007/tslink/internal/domain"
 	"github.com/monody0007/tslink/internal/inspect"
 	"github.com/monody0007/tslink/internal/output"
 	"github.com/monody0007/tslink/internal/registry"
@@ -30,7 +29,7 @@ type AddResult struct {
 }
 
 func hasScheme(target string) bool {
-	return strings.HasPrefix(target, "http://") || strings.HasPrefix(target, "https://")
+	return strings.Contains(target, "://")
 }
 
 func parseTags(tagsStr string) ([]string, error) {
@@ -134,24 +133,16 @@ func buildService(p AddParams) (registry.Service, error) {
 		return registry.Service{}, err
 	}
 	if p.Funnel && !p.Public {
-		return registry.Service{}, fmt.Errorf(publicAckRequiredError)
+		return registry.Service{}, errors.New(publicAckRequiredError)
 	}
-	if p.Domain != "" && p.Proxy == "" {
-		return registry.Service{}, fmt.Errorf("--domain can only be used with --proxy")
-	}
-	if p.AcmeEmail != "" && p.Domain == "" {
-		return registry.Service{}, fmt.Errorf("--acme-email requires --domain to be set")
+	if p.Domain != "" || p.AcmeEmail != "" {
+		return registry.Service{}, registry.FeatureUnavailableError("custom-domain/ACME runtime is not wired; --domain and --acme-email are unavailable")
 	}
 	if err := registry.ValidateControlURL(p.ControlURL); err != nil {
 		return registry.Service{}, err
 	}
 	if p.TCP != "" && len(allowedUsers) > 0 {
 		return registry.Service{}, fmt.Errorf("--allow is not supported for --tcp services")
-	}
-	if p.Domain != "" {
-		if err := domain.ValidateDomain(p.Domain); err != nil {
-			return registry.Service{}, err
-		}
 	}
 
 	var tags []string
@@ -168,6 +159,9 @@ func buildService(p AddParams) (registry.Service, error) {
 	}
 
 	if p.TCP != "" {
+		if err := registry.ValidateTCPTarget(p.TCP); err != nil {
+			return registry.Service{}, err
+		}
 		host, portStr, err := net.SplitHostPort(p.TCP)
 		if err != nil {
 			return registry.Service{}, fmt.Errorf("--tcp requires host:port format: %w", err)
@@ -192,7 +186,7 @@ func buildService(p AddParams) (registry.Service, error) {
 		return registry.Service{
 			Name: p.Name, Type: registry.TypeProxy, Target: target,
 			Ephemeral: p.Ephemeral, Tags: tags, AllowedUsers: allowedUsers,
-			Funnel: p.Funnel, PublicAck: p.Public, Domain: p.Domain, AcmeEmail: p.AcmeEmail,
+			Funnel: p.Funnel, PublicAck: p.Public,
 			ControlURL: p.ControlURL,
 		}, nil
 	}
@@ -256,18 +250,13 @@ Examples:
 
 			// For dir type, resolve and validate filesystem path
 			if svc.Type == registry.TypeFile {
-				absPath, err := filepath.Abs(dirPath)
-				if err != nil {
+				if !filepath.IsAbs(dirPath) {
+					return fmt.Errorf("file service path %q must be absolute", dirPath)
+				}
+				if err := registry.ValidateFileRoot(dirPath); err != nil {
 					return err
 				}
-				info, err := os.Stat(absPath)
-				if err != nil {
-					return err
-				}
-				if !info.IsDir() {
-					return fmt.Errorf("not a directory: %s", absPath)
-				}
-				svc.Path = absPath
+				svc.Path = filepath.Clean(dirPath)
 			}
 
 			if err := ensureDirFn(); err != nil {

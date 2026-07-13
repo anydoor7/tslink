@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/monody0007/tslink/internal/output"
 )
 
 // --- stop command: pidPathFn error ---
@@ -164,8 +166,12 @@ func TestAPICmd_EnsureDirError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error from ensureDirFn")
 	}
-	if !strings.Contains(err.Error(), "injected ensuredir error") {
+	if !output.IsSilent(err) || output.ExitCode(err) != output.ExitError {
 		t.Errorf("unexpected error: %v", err)
+	}
+	result := parseResult(t, buf.String())
+	if result.OK || result.Error == nil || !strings.Contains(result.Error.Message, "injected ensuredir error") {
+		t.Fatalf("api failure envelope = %+v", result)
 	}
 }
 
@@ -192,8 +198,12 @@ func TestAPICmd_RegistryPathError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error from registryPathFn")
 	}
-	if !strings.Contains(err.Error(), "injected regpath error") {
+	if !output.IsSilent(err) || output.ExitCode(err) != output.ExitError {
 		t.Errorf("unexpected error: %v", err)
+	}
+	result := parseResult(t, buf.String())
+	if result.OK || result.Error == nil || !strings.Contains(result.Error.Message, "injected regpath error") {
+		t.Fatalf("api failure envelope = %+v", result)
 	}
 }
 
@@ -224,8 +234,11 @@ func TestAPICmd_PIDPathError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error from pidPathFn")
 	}
-	if !strings.Contains(err.Error(), "injected pidpath error") {
+	if !output.IsSilent(err) || output.ExitCode(err) != output.ExitError {
 		t.Errorf("unexpected error: %v", err)
 	}
+	result := parseResult(t, buf.String())
+	if result.OK || result.Error == nil || !strings.Contains(result.Error.Message, "injected pidpath error") {
+		t.Fatalf("api failure envelope = %+v", result)
+	}
 }
-

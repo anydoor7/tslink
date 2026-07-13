@@ -107,8 +107,9 @@ Headless/SSH caveat:
   tslink install tries launchctl bootstrap user/$(id -u) and prints the domain
   it used. Re-run tslink install from a desktop login to move back to gui/$(id -u).
 
-Examples:
-  tslink install                Register and start the LaunchAgent`,
+	Examples:
+	  tslink install                Register and start the LaunchAgent`,
+	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := config.EnsureDir(); err != nil {
 			return err

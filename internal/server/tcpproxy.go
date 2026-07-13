@@ -11,6 +11,7 @@ import (
 
 const tcpBackendDialTimeout = 10 * time.Second
 const tcpKeepAlivePeriod = 2 * time.Minute
+const tcpMaxActiveConnections = 128
 
 var tcpDialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
 	var dialer net.Dialer
@@ -19,6 +20,8 @@ var tcpDialContext = func(ctx context.Context, network, address string) (net.Con
 
 // serveTCP accepts connections on ln and forwards them to target via bidirectional io.Copy.
 func serveTCP(ctx context.Context, ln net.Listener, target, name string) {
+	sem := make(chan struct{}, tcpMaxActiveConnections)
+
 	go func() {
 		<-ctx.Done()
 		_ = ln.Close()
@@ -33,7 +36,16 @@ func serveTCP(ctx context.Context, ln net.Listener, target, name string) {
 			slog.Error("tcp accept error", "name", name, "error", err)
 			continue
 		}
-		go handleTCPConn(ctx, conn, target, name)
+		select {
+		case sem <- struct{}{}:
+			go func() {
+				defer func() { <-sem }()
+				handleTCPConn(ctx, conn, target, name)
+			}()
+		default:
+			slog.Warn("tcp connection limit exceeded; closing accepted connection", "name", name, "limit", tcpMaxActiveConnections)
+			_ = conn.Close()
+		}
 	}
 }
 

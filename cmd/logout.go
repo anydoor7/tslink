@@ -72,9 +72,10 @@ service definitions are preserved. Run 'tslink login' to re-authenticate.
 The daemon must be stopped before logging out. If it is running, you will be
 prompted to run 'tslink stop' first.
 
-Examples:
-  tslink logout                 Clear credentials and node state
-  tslink stop && tslink logout  Stop daemon then logout`,
+	Examples:
+	  tslink logout                 Clear credentials and node state
+	  tslink stop && tslink logout  Stop daemon then logout`,
+	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		pidPath, err := config.PIDPath()
 		if err != nil {

@@ -51,10 +51,10 @@ type DockerClient interface {
 
 // Discovery watches Docker containers and auto-registers/unregisters services.
 type Discovery struct {
-	client           DockerClient
-	regPath          string
-	mu               sync.Mutex
-	containerToSvc   map[string]string // containerID -> service name
+	client         DockerClient
+	regPath        string
+	mu             sync.Mutex
+	containerToSvc map[string]string // containerID -> service name
 }
 
 // New creates a new Discovery instance.

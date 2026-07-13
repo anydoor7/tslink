@@ -1,6 +1,9 @@
 package cmd
 
 import (
+	"os"
+	"strings"
+
 	"github.com/monody0007/tslink/internal/output"
 	"github.com/spf13/cobra"
 )
@@ -8,14 +11,30 @@ import (
 // Version is set by main before Execute() is called.
 var Version string
 
+// Commit is the VCS commit SHA, set by main before Execute() is called. It is
+// empty for `go build`/dev builds and embedded via -ldflags on release builds.
+var Commit string
+var lastCommandName string
+
+type VersionResult struct {
+	Version string `json:"version"`
+	Commit  string `json:"commit,omitempty"`
+}
+
 var rootCmd = &cobra.Command{
 	Use:   "tslink",
 	Short: "Expose local services to your Tailscale network",
 	Long: `TSLink is a local service gateway that exposes web services, file
 directories, and TCP endpoints to your private Tailscale network.
 
-Each registered service gets its own tailnet hostname with automatic TLS.
-No port forwarding, no public exposure, no external Tailscale daemon required.
+Each registered service gets its own tailnet hostname and tailnet transport
+identity. Proxy and file services use Tailscale HTTPS listeners; raw TCP
+services are private tailnet TCP routes without TSLink HTTP identity
+middleware or TLS termination.
+
+WhoIs identity headers are best-effort for proxy requests and are enforced
+only when HTTP --allow is configured for proxy/file services. Public Funnel
+exposure is off by default and requires explicit acknowledgement.
 
 Supported on macOS, Linux, and Windows.
 
@@ -45,10 +64,72 @@ func init() {
 // Safe to call after rootCmd.Execute() returns.
 func WasJSONRequested() bool {
 	v, _ := rootCmd.PersistentFlags().GetBool("json")
-	return v
+	return v || argsContainJSON(os.Args[1:])
 }
 
 func Execute() error {
 	rootCmd.Version = Version
-	return rootCmd.Execute()
+	if Commit != "" {
+		rootCmd.Version = Version + " (" + Commit + ")"
+	}
+	if rootVersionJSONRequested(os.Args[1:]) {
+		lastCommandName = "version"
+		output.Success("version", VersionResult{Version: Version, Commit: Commit})
+		return nil
+	}
+	executed, err := rootCmd.ExecuteC()
+	if executed != nil {
+		lastCommandName = commandName(executed)
+	}
+	return err
+}
+
+func LastCommandName() string {
+	return lastCommandName
+}
+
+func commandName(cmd *cobra.Command) string {
+	if cmd == nil {
+		return ""
+	}
+	path := strings.Fields(cmd.CommandPath())
+	if len(path) <= 1 {
+		return ""
+	}
+	return strings.Join(path[1:], " ")
+}
+
+func argsContainJSON(args []string) bool {
+	for _, arg := range args {
+		switch {
+		case arg == "--":
+			return false
+		case arg == "--json":
+			return true
+		case strings.HasPrefix(arg, "--json="):
+			return strings.TrimPrefix(arg, "--json=") == "true"
+		}
+	}
+	return false
+}
+
+func rootVersionJSONRequested(args []string) bool {
+	if !argsContainJSON(args) {
+		return false
+	}
+	hasVersion := false
+	for _, arg := range args {
+		if arg == "--" {
+			break
+		}
+		if arg == "--version" {
+			hasVersion = true
+			continue
+		}
+		if strings.HasPrefix(arg, "-") {
+			continue
+		}
+		return false
+	}
+	return hasVersion
 }

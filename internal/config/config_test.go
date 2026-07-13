@@ -337,7 +337,7 @@ func TestSaveGlobalConfig_WriteFileError(t *testing.T) {
 	}
 }
 
-func TestLoadGlobalConfig_ReadPermissionError(t *testing.T) {
+func TestLoadGlobalConfig_ConvergesFilePermissions(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -349,17 +349,23 @@ func TestLoadGlobalConfig_ReadPermissionError(t *testing.T) {
 		t.Fatalf("MkdirAll() error = %v", err)
 	}
 
-	// Write a valid config file then remove read permission.
-	if err := os.WriteFile(path, []byte(`{"control_url":"x"}`), 0o000); err != nil {
+	if err := os.WriteFile(path, []byte(`{"control_url":"x"}`), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	_, err = LoadGlobalConfig()
-	if err == nil {
-		t.Fatal("LoadGlobalConfig() error = nil, want permission error")
+	cfg, err := LoadGlobalConfig()
+	if err != nil {
+		t.Fatalf("LoadGlobalConfig() error = %v", err)
 	}
-	if os.IsNotExist(err) {
-		t.Fatal("LoadGlobalConfig() returned IsNotExist, want permission error")
+	if cfg.ControlURL != "x" {
+		t.Fatalf("ControlURL = %q, want x", cfg.ControlURL)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat() error = %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("mode = %o, want 600", got)
 	}
 }
 

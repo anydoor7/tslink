@@ -91,6 +91,38 @@ func TestSetAPIKey_FileFallback(t *testing.T) {
 	}
 }
 
+func TestFileCredentialFallbackDisabledFailsClosed(t *testing.T) {
+	setup(t)
+	keyring.MockInitWithError(errors.New("no keychain"))
+	oldFallback := fileCredentialFallbackEnabledFunc
+	fileCredentialFallbackEnabledFunc = func() bool { return false }
+	t.Cleanup(func() { fileCredentialFallbackEnabledFunc = oldFallback })
+
+	err := SetAPIKey("tskey-api-fake")
+	if err == nil {
+		t.Fatal("SetAPIKey() error = nil, want fallback disabled error")
+	}
+	if !strings.Contains(err.Error(), "file credential fallback is disabled on Windows") ||
+		!strings.Contains(err.Error(), "Credential Manager") {
+		t.Fatalf("SetAPIKey() error = %v, want precise Windows remediation", err)
+	}
+	if _, statErr := os.Stat(apiKeyPath(t)); !os.IsNotExist(statErr) {
+		t.Fatalf("apikey fallback file exists despite fail-closed fallback, stat err = %v", statErr)
+	}
+
+	err = SaveClientSecret("tskey-client-fake")
+	if err == nil {
+		t.Fatal("SaveClientSecret() error = nil, want fallback disabled error")
+	}
+	if !strings.Contains(err.Error(), "file credential fallback is disabled on Windows") ||
+		!strings.Contains(err.Error(), "Credential Manager") {
+		t.Fatalf("SaveClientSecret() error = %v, want precise Windows remediation", err)
+	}
+	if _, statErr := os.Stat(clientSecretPath(t)); !os.IsNotExist(statErr) {
+		t.Fatalf("clientsecret fallback file exists despite fail-closed fallback, stat err = %v", statErr)
+	}
+}
+
 func TestGetAPIKey_KeychainFirst(t *testing.T) {
 	setup(t)
 

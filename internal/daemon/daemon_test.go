@@ -21,8 +21,8 @@ func TestMain(m *testing.M) {
 			select {}
 		case "crash":
 			// Self-kill to trigger "daemon exited during startup"
-			syscall.Kill(os.Getpid(), syscall.SIGKILL)
-			select {} // fallback, should not reach
+			selfKill() // platform-split; Windows lacks syscall.Kill/SIGKILL
+			select {}  // fallback, should not reach
 		default:
 			os.Exit(0)
 		}
@@ -326,7 +326,7 @@ func TestDaemonize_CreateStdoutLogDirError(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	_, err := Daemonize(filepath.Join(parent, "stdout.log"), filepath.Join(t.TempDir(), "stderr.log"), "")
+	_, err := Daemonize(filepath.Join(parent, "stdout.log"), filepath.Join(t.TempDir(), "stderr.log"), "", false)
 	if err == nil {
 		t.Fatal("Daemonize() error = nil, want error")
 	}
@@ -342,7 +342,7 @@ func TestDaemonize_OpenStdoutLogError(t *testing.T) {
 		t.Fatalf("Mkdir() error = %v", err)
 	}
 
-	_, err := Daemonize(outLog, filepath.Join(dir, "stderr.log"), "")
+	_, err := Daemonize(outLog, filepath.Join(dir, "stderr.log"), "", false)
 	if err == nil {
 		t.Fatal("Daemonize() error = nil, want error")
 	}
@@ -358,7 +358,7 @@ func TestDaemonize_OpenStderrLogError(t *testing.T) {
 		t.Fatalf("Mkdir() error = %v", err)
 	}
 
-	_, err := Daemonize(filepath.Join(dir, "stdout.log"), errLog, "")
+	_, err := Daemonize(filepath.Join(dir, "stdout.log"), errLog, "", false)
 	if err == nil {
 		t.Fatal("Daemonize() error = nil, want error")
 	}
@@ -374,7 +374,7 @@ func TestDaemonize_CreateStderrLogDirError(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	_, err := Daemonize(filepath.Join(dir, "stdout.log"), filepath.Join(errParent, "stderr.log"), "")
+	_, err := Daemonize(filepath.Join(dir, "stdout.log"), filepath.Join(errParent, "stderr.log"), "", false)
 	if err == nil {
 		t.Fatal("Daemonize() error = nil, want error")
 	}
@@ -401,7 +401,7 @@ func TestDaemonize_Success(t *testing.T) {
 	outLog := filepath.Join(dir, "stdout.log")
 	errLog := filepath.Join(dir, "stderr.log")
 
-	pid, err := Daemonize(outLog, errLog, "")
+	pid, err := Daemonize(outLog, errLog, "", false)
 	if err != nil {
 		t.Fatalf("Daemonize() error = %v", err)
 	}
@@ -441,7 +441,7 @@ func TestDaemonize_ForwardsControlURL(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	pid, err := Daemonize(filepath.Join(dir, "stdout.log"), filepath.Join(dir, "stderr.log"), "https://headscale.example.com")
+	pid, err := Daemonize(filepath.Join(dir, "stdout.log"), filepath.Join(dir, "stderr.log"), "https://headscale.example.com", false)
 	if err != nil {
 		t.Fatalf("Daemonize() error = %v", err)
 	}
@@ -463,6 +463,63 @@ func TestDaemonize_ForwardsControlURL(t *testing.T) {
 	}
 }
 
+// TestDaemonizeManageACLPropagation is the manage-acl propagation guard: the daemon
+// child argv must carry --manage-acl exactly once when opted in, and never when
+// default-off. Kills the old implementation that hardcoded the child argv to
+// `serve [--control-url ...]` and silently dropped the opt-in in daemon mode.
+func TestDaemonizeManageACLPropagation(t *testing.T) {
+	t.Setenv("TSLINK_DAEMON_TEST_MODE", "success")
+
+	cases := []struct {
+		name       string
+		controlURL string
+		manageACL  bool
+		want       []string
+	}{
+		{"default off carries no flag", "", false, []string{"serve"}},
+		{"opt-in carries flag once", "", true, []string{"serve", "--manage-acl"}},
+		{"opt-in with control url", "https://headscale.example.com", true, []string{"serve", "--control-url", "https://headscale.example.com", "--manage-acl"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			orig := execCommand
+			t.Cleanup(func() { execCommand = orig })
+			var gotArgs []string
+			execCommand = func(name string, args ...string) *exec.Cmd {
+				gotArgs = append([]string(nil), args...)
+				return exec.Command(name, args...)
+			}
+
+			dir := t.TempDir()
+			pid, err := Daemonize(filepath.Join(dir, "stdout.log"), filepath.Join(dir, "stderr.log"), tc.controlURL, tc.manageACL)
+			if err != nil {
+				t.Fatalf("Daemonize() error = %v", err)
+			}
+			if proc, ferr := os.FindProcess(pid); ferr == nil {
+				t.Cleanup(func() { _ = proc.Kill() })
+			}
+
+			if strings.Join(gotArgs, "\x00") != strings.Join(tc.want, "\x00") {
+				t.Fatalf("daemon argv = %q, want %q", gotArgs, tc.want)
+			}
+			// --manage-acl must appear at most once.
+			count := 0
+			for _, a := range gotArgs {
+				if a == "--manage-acl" {
+					count++
+				}
+			}
+			wantCount := 0
+			if tc.manageACL {
+				wantCount = 1
+			}
+			if count != wantCount {
+				t.Fatalf("--manage-acl appeared %d times, want %d; argv=%q", count, wantCount, gotArgs)
+			}
+		})
+	}
+}
+
 func TestStopDaemon_ReadPIDError(t *testing.T) {
 	err := StopDaemon(filepath.Join(t.TempDir(), "missing.pid"))
 	if err == nil {
@@ -479,6 +536,7 @@ func TestStopDaemon_Success(t *testing.T) {
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("Start() error = %v", err)
 	}
+	stubProcessExecutableForPID(t, cmd.Process.Pid)
 	t.Cleanup(func() {
 		_ = cmd.Process.Kill()
 	})
@@ -574,6 +632,7 @@ func TestStopDaemon_Timeout(t *testing.T) {
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("Start() error = %v", err)
 	}
+	stubProcessExecutableForPID(t, cmd.Process.Pid)
 	t.Cleanup(func() {
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
@@ -590,6 +649,23 @@ func TestStopDaemon_Timeout(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "did not exit after SIGTERM") {
 		t.Fatalf("StopDaemon() error = %v, want SIGTERM timeout error", err)
+	}
+}
+
+func stubProcessExecutableForPID(t *testing.T, pid int) {
+	t.Helper()
+
+	exe, err := executable()
+	if err != nil {
+		t.Fatalf("executable() error = %v", err)
+	}
+	orig := processExecutable
+	t.Cleanup(func() { processExecutable = orig })
+	processExecutable = func(gotPID int) (string, error) {
+		if gotPID == pid {
+			return exe, nil
+		}
+		return orig(gotPID)
 	}
 }
 
@@ -751,7 +827,7 @@ func TestDaemonize_ExecutableError(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	_, err := Daemonize(filepath.Join(dir, "stdout.log"), filepath.Join(dir, "stderr.log"), "")
+	_, err := Daemonize(filepath.Join(dir, "stdout.log"), filepath.Join(dir, "stderr.log"), "", false)
 	if err == nil {
 		t.Fatal("Daemonize() error = nil, want error")
 	}
@@ -768,7 +844,7 @@ func TestDaemonize_StartError(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	_, err := Daemonize(filepath.Join(dir, "stdout.log"), filepath.Join(dir, "stderr.log"), "")
+	_, err := Daemonize(filepath.Join(dir, "stdout.log"), filepath.Join(dir, "stderr.log"), "", false)
 	if err == nil {
 		t.Fatal("Daemonize() error = nil, want error")
 	}

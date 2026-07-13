@@ -23,6 +23,7 @@ func setTagsMocks(t *testing.T) {
 	origRegPath := tagsRegistryPathFn
 	origLoadReg := tagsLoadRegistryFn
 	origAddReg := tagsAddRegistryFn
+	origMutateService := tagsMutateServiceFn
 	origEnsureDir := tagsEnsureDirFn
 	origLoadGlobal := tagsLoadGlobalFn
 	origSaveGlobal := tagsSaveGlobalFn
@@ -33,6 +34,7 @@ func setTagsMocks(t *testing.T) {
 		tagsRegistryPathFn = origRegPath
 		tagsLoadRegistryFn = origLoadReg
 		tagsAddRegistryFn = origAddReg
+		tagsMutateServiceFn = origMutateService
 		tagsEnsureDirFn = origEnsureDir
 		tagsLoadGlobalFn = origLoadGlobal
 		tagsSaveGlobalFn = origSaveGlobal
@@ -41,8 +43,39 @@ func setTagsMocks(t *testing.T) {
 }
 
 func mockRegistryWithServices(services []registry.Service) {
+	stored := append([]registry.Service(nil), services...)
 	tagsLoadRegistryFn = func(path string) (*registry.Registry, error) {
-		return &registry.Registry{Services: services}, nil
+		return &registry.Registry{Services: append([]registry.Service(nil), stored...)}, nil
+	}
+	tagsAddRegistryFn = func(path string, svc registry.Service) (bool, error) {
+		for i, existing := range stored {
+			if existing.Name == svc.Name {
+				stored[i] = svc
+				return false, nil
+			}
+		}
+		stored = append(stored, svc)
+		return true, nil
+	}
+	tagsMutateServiceFn = func(path, name string, mutate func(registry.Service) (registry.Service, error)) (registry.Service, error) {
+		reg, err := tagsLoadRegistryFn(path)
+		if err != nil {
+			return registry.Service{}, err
+		}
+		for _, svc := range reg.Services {
+			if svc.Name != name {
+				continue
+			}
+			next, err := mutate(svc)
+			if err != nil {
+				return registry.Service{}, err
+			}
+			if _, err := tagsAddRegistryFn(path, next); err != nil {
+				return registry.Service{}, err
+			}
+			return next, nil
+		}
+		return registry.Service{}, fmt.Errorf("service not found: %s", name)
 	}
 }
 
@@ -50,6 +83,26 @@ func mockDefaults() {
 	tagsRegistryPathFn = func() (string, error) { return "/tmp/test-reg.json", nil }
 	tagsEnsureDirFn = func() error { return nil }
 	tagsGetDefaultFn = func() string { return "tag:tsmain" }
+	tagsMutateServiceFn = func(path, name string, mutate func(registry.Service) (registry.Service, error)) (registry.Service, error) {
+		reg, err := tagsLoadRegistryFn(path)
+		if err != nil {
+			return registry.Service{}, err
+		}
+		for _, svc := range reg.Services {
+			if svc.Name != name {
+				continue
+			}
+			next, err := mutate(svc)
+			if err != nil {
+				return registry.Service{}, err
+			}
+			if _, err := tagsAddRegistryFn(path, next); err != nil {
+				return registry.Service{}, err
+			}
+			return next, nil
+		}
+		return registry.Service{}, fmt.Errorf("service not found: %s", name)
+	}
 }
 
 // --- tags list ---
@@ -494,7 +547,7 @@ func TestTagsDeleteRemote_Success(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	err := tagsDeleteRemoteRun(context.Background(), &buf, "tag:shared", true, false)
+	err := tagsDeleteRemoteRun(context.Background(), &buf, "tag:shared", true, true, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -515,12 +568,30 @@ func TestTagsDeleteRemote_RefusesWithoutForce(t *testing.T) {
 		return nil
 	}
 
-	err := tagsDeleteRemoteRun(context.Background(), &bytes.Buffer{}, "tag:shared", false, false)
+	err := tagsDeleteRemoteRun(context.Background(), &bytes.Buffer{}, "tag:shared", false, false, false)
 	if err == nil {
 		t.Fatal("expected force error")
 	}
 	if !strings.Contains(err.Error(), "--force") || !strings.Contains(err.Error(), "ACL tag owner rule globally") {
 		t.Fatalf("error = %v, want force/global ACL warning", err)
+	}
+}
+
+func TestTagsDeleteRemote_RefusesWithoutManageACL(t *testing.T) {
+	setTagsMocks(t)
+	mockDefaults()
+	mockRegistryWithServices(nil)
+	tagsDeleteTagFn = func(ctx context.Context, tag string) error {
+		t.Fatal("DeleteTag should not be called without --manage-acl")
+		return nil
+	}
+
+	err := tagsDeleteRemoteRun(context.Background(), &bytes.Buffer{}, "tag:shared", true, false, false)
+	if err == nil {
+		t.Fatal("expected manage-acl error")
+	}
+	if !strings.Contains(err.Error(), "--manage-acl") || !strings.Contains(err.Error(), "remote_side_effect_plan=") {
+		t.Fatalf("error = %v, want manage-acl and side-effect plan", err)
 	}
 }
 
@@ -532,7 +603,7 @@ func TestTagsDeleteRemote_TagInUse(t *testing.T) {
 		{Name: "dashboard", Tags: []string{"tag:shared", "tag:tsmain"}},
 	})
 
-	err := tagsDeleteRemoteRun(context.Background(), &bytes.Buffer{}, "tag:shared", false, false)
+	err := tagsDeleteRemoteRun(context.Background(), &bytes.Buffer{}, "tag:shared", false, false, false)
 	if err == nil {
 		t.Fatal("expected error for tag in use")
 	}
@@ -548,7 +619,7 @@ func TestTagsDeleteRemote_DefaultTag(t *testing.T) {
 	setTagsMocks(t)
 	mockDefaults()
 
-	err := tagsDeleteRemoteRun(context.Background(), &bytes.Buffer{}, "tag:tsmain", false, false)
+	err := tagsDeleteRemoteRun(context.Background(), &bytes.Buffer{}, "tag:tsmain", false, false, false)
 	if err == nil {
 		t.Fatal("expected error for default tag")
 	}
@@ -560,7 +631,7 @@ func TestTagsDeleteRemote_DefaultTag(t *testing.T) {
 func TestTagsDeleteRemote_InvalidPrefix(t *testing.T) {
 	setTagsMocks(t)
 
-	err := tagsDeleteRemoteRun(context.Background(), &bytes.Buffer{}, "notag", false, false)
+	err := tagsDeleteRemoteRun(context.Background(), &bytes.Buffer{}, "notag", false, false, false)
 	if err == nil || !strings.Contains(err.Error(), "invalid tag") {
 		t.Errorf("expected prefix error, got: %v", err)
 	}
@@ -574,7 +645,7 @@ func TestTagsDeleteRemote_DeleteError(t *testing.T) {
 		return fmt.Errorf("tag %q not found in tailnet ACL", tag)
 	}
 
-	err := tagsDeleteRemoteRun(context.Background(), &bytes.Buffer{}, "tag:gone", true, false)
+	err := tagsDeleteRemoteRun(context.Background(), &bytes.Buffer{}, "tag:gone", true, true, false)
 	if err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Errorf("expected not-found error, got: %v", err)
 	}
@@ -588,7 +659,7 @@ func TestTagsDeleteRemote_NoAPIClientGuidance(t *testing.T) {
 		return fmt.Errorf("wrapped auth failure: %w", tailapi.ErrNoAPIClient)
 	}
 
-	err := tagsDeleteRemoteRun(context.Background(), &bytes.Buffer{}, "tag:gone", true, false)
+	err := tagsDeleteRemoteRun(context.Background(), &bytes.Buffer{}, "tag:gone", true, true, false)
 	if err == nil {
 		t.Fatal("expected no-client auth guidance error")
 	}
@@ -605,7 +676,7 @@ func TestTagsDeleteRemote_RegistryPathError(t *testing.T) {
 	tagsGetDefaultFn = func() string { return "tag:tsmain" }
 	tagsRegistryPathFn = func() (string, error) { return "", fmt.Errorf("path error") }
 
-	err := tagsDeleteRemoteRun(context.Background(), &bytes.Buffer{}, "tag:other", false, false)
+	err := tagsDeleteRemoteRun(context.Background(), &bytes.Buffer{}, "tag:other", false, false, false)
 	if err == nil || !strings.Contains(err.Error(), "path error") {
 		t.Errorf("expected path error, got: %v", err)
 	}
@@ -618,7 +689,7 @@ func TestTagsDeleteRemote_LoadRegistryError(t *testing.T) {
 		return nil, fmt.Errorf("load error")
 	}
 
-	err := tagsDeleteRemoteRun(context.Background(), &bytes.Buffer{}, "tag:other", false, false)
+	err := tagsDeleteRemoteRun(context.Background(), &bytes.Buffer{}, "tag:other", false, false, false)
 	if err == nil || !strings.Contains(err.Error(), "load error") {
 		t.Errorf("expected load error, got: %v", err)
 	}

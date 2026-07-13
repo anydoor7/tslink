@@ -3,12 +3,12 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/monody0007/tslink/internal/inspect"
-	"github.com/monody0007/tslink/internal/output"
 	"github.com/monody0007/tslink/internal/registry"
 )
 
@@ -74,34 +74,27 @@ func TestListServices_TCPTextUsesTypedEndpoint(t *testing.T) {
 	}
 }
 
-func TestListJSONRedactsMiddlewareAuth(t *testing.T) {
+func TestListRejectsMiddlewareConfig(t *testing.T) {
 	dir := t.TempDir()
 	regPath := filepath.Join(dir, "registry.json")
-	if _, err := registry.Add(regPath, registry.Service{
-		Name:   "web",
-		Type:   registry.TypeProxy,
-		Target: "http://localhost:3000",
-		Middleware: &registry.MiddlewareConfig{
-			BasicAuth: "user:pass",
-		},
-	}); err != nil {
-		t.Fatalf("registry.Add: %v", err)
+	rawRegistry := `{"schema_version":1,"services":[{"name":"web","type":"proxy","target":"http://localhost:3000","middleware":{"basic_auth":"user:pass"}}]}`
+	if err := os.WriteFile(regPath, []byte(rawRegistry), 0o600); err != nil {
+		t.Fatalf("WriteFile registry: %v", err)
 	}
 
-	got := runListJSONWithRegistry(t, regPath)
-	if strings.Contains(got, "user:pass") {
-		t.Fatalf("list --json leaked credential: %s", got)
+	var buf bytes.Buffer
+	err := listServices(regPath, &buf)
+	if err == nil {
+		t.Fatal("listServices() error = nil, want feature_unavailable")
 	}
-	if strings.Contains(got, "basic_auth") {
-		t.Fatalf("list --json leaked private field name: %s", got)
+	if !strings.Contains(err.Error(), registry.CodeFeatureUnavailable) {
+		t.Fatalf("listServices() error = %v, want feature_unavailable", err)
 	}
-
-	var result output.Result
-	if err := json.Unmarshal([]byte(got), &result); err != nil {
-		t.Fatalf("unmarshal result: %v\nraw: %s", err, got)
+	if strings.Contains(err.Error(), "user:pass") {
+		t.Fatalf("listServices() error leaked credential: %v", err)
 	}
-	if !result.OK || result.Command != "list" {
-		t.Fatalf("result = %+v, want ok list response", result)
+	if strings.Contains(buf.String(), "user:pass") {
+		t.Fatalf("listServices() output leaked credential: %s", buf.String())
 	}
 }
 

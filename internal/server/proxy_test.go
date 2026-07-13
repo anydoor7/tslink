@@ -351,6 +351,68 @@ func TestProxyRewrite_WhoIsError(t *testing.T) {
 	}
 }
 
+func TestSecuritySemantics_ProxyNoAllowWhoIsFailureStripsSpoofedAndStaleIdentityHeadersAndForwards(t *testing.T) {
+	var backendHeaders http.Header
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		backendHeaders = r.Header.Clone()
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(backend.Close)
+
+	lc := fakeWhoIsClient(t, nil, errors.New("whois unavailable"))
+	handler, err := NewProxyHandler(backend.URL, lc)
+	if err != nil {
+		t.Fatalf("NewProxyHandler() error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "http://incoming.example/path", nil)
+	req.RemoteAddr = "100.64.0.1:1234"
+	req.Header.Set("X-Tailscale-Node", "spoofed-node")
+	req.Header.Set("X-Tailscale-User-Login", "stale-verified-login")
+	req.Header.Set("X-Tailscale-User-Name", "stale-verified-name")
+	req.Header.Set("X-Tailscale-User-Picture", "https://example.com/stale.png")
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want backend 204", rec.Code)
+	}
+	for _, header := range []string{"X-Tailscale-Node", "X-Tailscale-User-Login", "X-Tailscale-User-Name", "X-Tailscale-User-Picture"} {
+		if got := backendHeaders.Get(header); got != "" {
+			t.Fatalf("%s forwarded as %q, want stripped on WhoIs failure", header, got)
+		}
+	}
+}
+
+func TestSecuritySemantics_ProxyAllowWhoIsFailureReturnsForbiddenBeforeBackend(t *testing.T) {
+	backendCalled := false
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		backendCalled = true
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(backend.Close)
+
+	lc := fakeWhoIsClient(t, nil, errors.New("whois unavailable"))
+	proxy, err := NewProxyHandler(backend.URL, lc)
+	if err != nil {
+		t.Fatalf("NewProxyHandler() error = %v", err)
+	}
+	handler := ACLMiddleware([]string{"alice@example.com"}, lc)(proxy)
+
+	req := httptest.NewRequest(http.MethodGet, "http://incoming.example/path", nil)
+	req.RemoteAddr = "100.64.0.1:1234"
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", rec.Code)
+	}
+	if backendCalled {
+		t.Fatal("backend was called after allow-list WhoIs failure")
+	}
+}
+
 func TestProxyRewrite_NilLocalClient(t *testing.T) {
 	rp := mustReverseProxy(t, "http://localhost:8080", nil)
 

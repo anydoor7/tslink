@@ -2,6 +2,7 @@ package credentials
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -10,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/monody0007/tslink/internal/atomicfile"
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/zalando/go-keyring"
 	tailscale "tailscale.com/client/tailscale/v2"
@@ -31,45 +33,57 @@ var (
 	}
 	authKeyPathFunc                      = config.AuthKeyPath
 	enforceCredentialFilePermissionsFunc = func() bool { return runtime.GOOS != "windows" }
+	fileCredentialFallbackEnabledFunc    = func() bool { return runtime.GOOS != "windows" }
+	keyringEnabledFunc                   = func() bool { return os.Getenv("TSLINK_DISABLE_KEYRING") != "1" }
 )
 
 func readCredentialFile(path string) ([]byte, error) {
-	info, err := os.Stat(path)
-	if err != nil {
-		return nil, err
-	}
-	if enforceCredentialFilePermissionsFunc() && info.Mode().Perm()&0o077 != 0 {
-		if err := os.Chmod(path, 0o600); err != nil {
-			return nil, fmt.Errorf("insecure credential file permissions on %s (%o); run `chmod 600 %s`: %w", path, info.Mode().Perm(), path, err)
+	if enforceCredentialFilePermissionsFunc() {
+		info, err := os.Lstat(path)
+		if err != nil {
+			return nil, err
 		}
-		slog.Warn("repaired insecure credential file permissions", "path", path, "old_mode", info.Mode().Perm(), "new_mode", os.FileMode(0o600))
+		oldMode := info.Mode().Perm()
+		if err := atomicfile.ConvergePrivateFile(path); err != nil {
+			return nil, err
+		}
+		if oldMode != atomicfile.PrivateFileMode {
+			slog.Warn("repaired insecure credential file permissions", "path", path, "old_mode", oldMode, "new_mode", atomicfile.PrivateFileMode)
+		}
 	}
 	return os.ReadFile(path)
 }
 
 // SetAPIKey stores the API key. Prefers macOS Keychain; falls back to file (0600).
 func SetAPIKey(key string) error {
-	if err := keyring.Set(keychainService, keychainAPIKey, key); err == nil {
-		// Keychain succeeded — remove file copy if it exists
-		if path, e := config.APIKeyPath(); e == nil {
-			os.Remove(path)
+	if keyringEnabledFunc() {
+		if err := keyring.Set(keychainService, keychainAPIKey, key); err == nil {
+			// Keychain succeeded — remove file copy if it exists
+			if path, e := config.APIKeyPath(); e == nil {
+				os.Remove(path)
+			}
+			return nil
 		}
-		return nil
 	}
 	// Fallback: write to file
 	path, err := config.APIKeyPath()
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, []byte(key), 0o600)
+	if !fileCredentialFallbackEnabledFunc() {
+		return fmt.Errorf("file credential fallback is disabled on Windows because TSLink cannot prove a user-only DACL locally; enable Windows Credential Manager/keyring access and retry")
+	}
+	return atomicfile.WriteFile(path, []byte(key))
 }
 
 // GetAPIKey retrieves the API key from keychain or file.
 // Returns ("", nil) if no key is stored.
 func GetAPIKey() (string, error) {
 	// Keychain first
-	if key, err := keyring.Get(keychainService, keychainAPIKey); err == nil && key != "" {
-		return key, nil
+	if keyringEnabledFunc() {
+		if key, err := keyring.Get(keychainService, keychainAPIKey); err == nil && key != "" {
+			return key, nil
+		}
 	}
 	// File fallback
 	path, err := config.APIKeyPath()
@@ -89,10 +103,26 @@ func GetAPIKey() (string, error) {
 
 // DeleteAPIKey removes the API key from all storage locations.
 func DeleteAPIKey() {
-	_ = keyring.Delete(keychainService, keychainAPIKey)
-	if path, err := config.APIKeyPath(); err == nil {
-		os.Remove(path)
+	_ = DeleteAPIKeyChecked()
+}
+
+// DeleteAPIKeyChecked removes the API key from all storage locations and
+// surfaces cleanup failures for callers that need transactional semantics.
+func DeleteAPIKeyChecked() error {
+	var errs []error
+	if keyringEnabledFunc() {
+		if err := keyring.Delete(keychainService, keychainAPIKey); err != nil && !errors.Is(err, keyring.ErrNotFound) {
+			errs = append(errs, err)
+		}
 	}
+	if path, err := config.APIKeyPath(); err == nil {
+		if removeErr := os.Remove(path); removeErr != nil && !os.IsNotExist(removeErr) {
+			errs = append(errs, removeErr)
+		}
+	} else {
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
 }
 
 // SaveClientSecret stores an OAuth client secret. The key must start with "tskey-client-".
@@ -101,27 +131,34 @@ func SaveClientSecret(secret string) error {
 	if !strings.HasPrefix(secret, "tskey-client-") {
 		return fmt.Errorf("invalid client secret: must start with 'tskey-client-'")
 	}
-	if err := keyring.Set(keychainService, keychainClientSecret, secret); err == nil {
-		// Keychain succeeded — remove file copy if it exists
-		if path, e := config.ClientSecretPath(); e == nil {
-			os.Remove(path)
+	if keyringEnabledFunc() {
+		if err := keyring.Set(keychainService, keychainClientSecret, secret); err == nil {
+			// Keychain succeeded — remove file copy if it exists
+			if path, e := config.ClientSecretPath(); e == nil {
+				os.Remove(path)
+			}
+			return nil
 		}
-		return nil
 	}
 	// Fallback: write to file
 	path, err := config.ClientSecretPath()
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, []byte(secret), 0o600)
+	if !fileCredentialFallbackEnabledFunc() {
+		return fmt.Errorf("file credential fallback is disabled on Windows because TSLink cannot prove a user-only DACL locally; enable Windows Credential Manager/keyring access and retry")
+	}
+	return atomicfile.WriteFile(path, []byte(secret))
 }
 
 // GetClientSecret retrieves the client secret from keychain or file.
 // Returns ("", nil) if no client secret is stored.
 func GetClientSecret() (string, error) {
 	// Keychain first
-	if secret, err := keyring.Get(keychainService, keychainClientSecret); err == nil && secret != "" {
-		return secret, nil
+	if keyringEnabledFunc() {
+		if secret, err := keyring.Get(keychainService, keychainClientSecret); err == nil && secret != "" {
+			return secret, nil
+		}
 	}
 	// File fallback
 	path, err := config.ClientSecretPath()
@@ -147,10 +184,26 @@ func HasClientSecret() bool {
 
 // DeleteClientSecret removes the client secret from all storage locations.
 func DeleteClientSecret() {
-	_ = keyring.Delete(keychainService, keychainClientSecret)
-	if path, err := config.ClientSecretPath(); err == nil {
-		os.Remove(path)
+	_ = DeleteClientSecretChecked()
+}
+
+// DeleteClientSecretChecked removes the OAuth client secret from all storage
+// locations and surfaces cleanup failures for transactional credential swaps.
+func DeleteClientSecretChecked() error {
+	var errs []error
+	if keyringEnabledFunc() {
+		if err := keyring.Delete(keychainService, keychainClientSecret); err != nil && !errors.Is(err, keyring.ErrNotFound) {
+			errs = append(errs, err)
+		}
 	}
+	if path, err := config.ClientSecretPath(); err == nil {
+		if removeErr := os.Remove(path); removeErr != nil && !os.IsNotExist(removeErr) {
+			errs = append(errs, removeErr)
+		}
+	} else {
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
 }
 
 // NewTailscaleClient creates a Tailscale API client from stored API key.
@@ -160,6 +213,13 @@ func NewTailscaleClient() (*tailscale.Client, error) {
 	if err != nil {
 		return nil, err
 	}
+	return NewTailscaleClientWithAPIKey(key)
+}
+
+// NewTailscaleClientWithAPIKey creates a Tailscale API client from an explicit
+// candidate key without reading or mutating persisted credentials.
+func NewTailscaleClientWithAPIKey(key string) (*tailscale.Client, error) {
+	key = strings.TrimSpace(key)
 	if key == "" {
 		return nil, nil
 	}
@@ -251,6 +311,14 @@ func RequireStoredCredential() error {
 	return nil
 }
 
+// ClientSecretAuthKey builds a tsnet auth key from a candidate OAuth client
+// secret without reading or mutating any persisted credential. It is used to
+// semantically validate a client secret via a disposable, ephemeral Up before
+// the login transaction commits and retires the previous credential.
+func ClientSecretAuthKey(clientSecret string, opts AuthKeyOptions) (string, error) {
+	return clientSecretAuthKey(clientSecret, opts)
+}
+
 func clientSecretAuthKey(clientSecret string, opts AuthKeyOptions) (string, error) {
 	if len(opts.Tags) == 0 {
 		return "", fmt.Errorf("client secret auth requires service tags — configure at least one tag for this service")
@@ -330,8 +398,12 @@ func MigrateFromLegacy() (migrated bool) {
 	}
 
 	// Attempt keychain migration
-	if err := keyring.Set(keychainService, keychainAPIKey, key); err != nil {
-		return false // keychain not available, keep the file
+	if keyringEnabledFunc() {
+		if err := keyring.Set(keychainService, keychainAPIKey, key); err != nil {
+			return false // keychain not available, keep the file
+		}
+	} else {
+		return false
 	}
 	os.Remove(path)
 	return true

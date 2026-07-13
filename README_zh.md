@@ -26,7 +26,7 @@
 
 随着本地 AI 工作负载、自托管服务和个人基础设施的增长，个人开发者和小团队的安全需求与企业级工具之间的差距越来越大。美国联邦政府已认识到这一转变：[Executive Order 14028](https://www.whitehouse.gov/briefing-room/presidential-actions/2021/05/12/executive-order-on-improving-the-nations-cybersecurity/) 要求采用零信任架构，[NIST SP 800-207](https://csrc.nist.gov/publications/detail/sp/800-207/final) 定义了标准。但大多数零信任工具面向的是拥有专业安全团队的大型企业。
 
-**TSLink 让每个人都能用上零信任网络。** 一条命令将你的机器变成安全网关。每个服务在你的 [Tailscale](https://tailscale.com) 网络上获得独立的加密身份 — 加密、经过认证，默认不对公网可达。
+**TSLink 为本地服务提供 per-service tailnet 身份。** 一条命令将你的机器变成 Tailscale-backed 网关。tailnet transport 遵循 Tailscale/WireGuard 语义；proxy/file 服务可以增加 HTTP identity 和 `--allow` 检查，raw TCP 保持私有字节流，不经过 TSLink HTTP middleware。
 
 ## 安全模型
 
@@ -34,15 +34,15 @@ TSLink 在每一层实现零信任原则：
 
 | 零信任原则 | TSLink 实现 |
 |-----------|------------|
-| **永不信任，始终验证** | tailnet 内的 HTTP 代理/文件请求通过 Tailscale WhoIs 认证 — 身份头（`X-Tailscale-User-Login`、`X-Tailscale-User-Name`、`X-Tailscale-User-Picture`、`X-Tailscale-Node`）注入代理请求。公网 Funnel 和 raw TCP 不视为 TSLink 强制执行的 Tailscale 用户认证。 |
+| **HTTP 调用方验证** | tailnet 内的 HTTP 代理/文件请求可以通过 Tailscale WhoIs 认证。身份头（`X-Tailscale-User-Login`、`X-Tailscale-User-Name`、`X-Tailscale-User-Picture`、`X-Tailscale-Node`）只在 WhoIs 成功时注入代理请求。公网 Funnel 和 raw TCP 不视为 TSLink 强制执行的 Tailscale 用户认证。 |
 | **HTTP 最小权限访问** | `--allow` 限制 proxy 和 file 服务的访问用户或标签。TCP 服务依赖 Tailscale 网络 ACL 和标签。 |
 | **假设已被攻破** | tailnet 设备之间的流量使用 WireGuard 加密。即使本地网络被攻破，Tailscale 设备之间的流量仍然加密；公网 Funnel 路径遵循 Tailscale Funnel 语义。 |
-| **微分段** | 每个服务作为隔离的 tsnet 节点运行，拥有独立的主机名、TLS 证书和网络身份。攻破一个服务不会影响其他服务。 |
+| **Per-service 网络身份** | 每个服务作为独立 tsnet 节点运行，拥有自己的主机名和网络身份。这是网络分段，不是 host process isolation 或合规背书。 |
 | **消除隐式信任** | 默认不暴露任何服务到公网。凭证优先存储在系统钥匙串中；headless 环境可回退到受限权限文件。由 API token 派生的启动认证密钥按需生成且不持久化；旧版 authkey 文件仍可能因兼容性被读取，建议迁移。 |
 
 ## TSLink 做什么
 
-一条命令将任何本地服务 — Web 应用、API、文件目录、数据库 — 暴露到你的私有 Tailscale 网络，自动配置 TLS。
+一条命令将任何本地服务 — Web 应用、API、文件目录、数据库 — 暴露到你的私有 Tailscale 网络。proxy/file 服务使用 Tailscale HTTPS listener；raw TCP 服务使用私有 tailnet transport，不由 TSLink 终止 TLS。
 
 ```bash
 tslink add myapp --proxy localhost:3000
@@ -54,8 +54,8 @@ tslink serve --daemon
 
 - **零配置** — 无需端口转发、DNS 或证书管理
 - **WireGuard tailnet 路径** — tailnet 设备间流量通过 Tailscale 使用 WireGuard；公网暴露必须显式启用 Funnel
-- **即时 TLS** — 自动 HTTPS，有效证书，无需设置
-- **Per-service 隔离** — 每个服务获得独立的 tailnet 主机名和身份（`https://<name>.<tailnet>.ts.net`）
+- **Proxy/file HTTPS** — HTTP proxy 和 file 服务使用 Tailscale HTTPS listener；raw TCP 保持私有 tailnet 字节流
+- **Per-service 身份** — 每个服务获得独立的 tailnet 主机名和网络身份（proxy/file URL 形如 `https://<name>.<tailnet>.ts.net`）
 - **热重载** — 运行时添加或移除服务，更改立即生效
 - **全平台支持** — 支持 macOS、Linux 和 Windows
 - **守护进程运行** — 启动一次，后台运行，支持开机自启
@@ -269,12 +269,13 @@ TSLink 支持两种凭证（只需选一种）：
 
 `tslink login` 会交互式引导你完成任一路径。凭证优先存储在系统钥匙串（macOS Keychain / Linux secret service / Windows 凭据管理器）中；headless 环境可回退到受限权限文件。
 
-### 标签自动管理
+### 标签管理
 
-TSLink 会自动为你的服务管理 Tailscale ACL 标签：
+TSLink 默认管理本地服务标签。远端 Tailscale ACL mutation 默认关闭，因为 TSLink 还没有本地证明对 HuJSON policy 的无损保留。
 
 - **默认标签** — 当 `tslink add` 未指定 `--tags` 时，每个服务自动应用 `tag:tsmain`。
-- **API 访问令牌标签自动化** — 使用 API 访问令牌时，启动阶段可以在节点启动前确保注册表中的标签存在。`tslink tags pull` 也只在 API 访问令牌模式下拉取远端 ACL 标签；OAuth-only 模式会跳过远端读取并提示需要 API 访问令牌。
+- **远端 ACL 读取** — `tslink tags pull` 只在 API 访问令牌模式下拉取远端 ACL 标签；OAuth-only 模式会跳过远端读取并提示需要 API 访问令牌。
+- **远端 ACL 写入** — `tslink login --manage-acl`、`tslink serve --manage-acl` 和 `tslink tags delete-remote --manage-acl` 才会 opt in typed whole-policy ACL writes，并输出 machine-readable side-effect plan。默认 login、serve 和 tag flows 不会改写共享 ACL policy。
 - **严格标签语法** — 标签必须匹配 `tag:<lowercase-hyphen-name>`，只使用小写字母、数字和连字符。将 `tag:Web`、`tag:db_main` 或 `web` 这类旧值迁移为 `tslink tags set <service> tag:<lowercase-hyphen-name>`，也可以直接编辑 `registry.json`。无效旧标签会让 `tslink serve` 验证失败，必须先修复才能启动网关。
 - **运行时认证刷新** — 标签、临时节点设置和有效控制服务器 URL 变化时，受影响节点会删除本地状态并用新的每服务认证材料重启。切换凭证模式或修改旧版 `authkey` 文件后仍需重启 `tslink serve` 进程。
 
@@ -296,8 +297,8 @@ tslink tags set myapp tag:webserver
 # 修改新服务的默认标签
 tslink tags set-default tag:myteam
 
-# 通过本地安全检查后全局移除 ACL 标签所有者规则
-tslink tags delete-remote tag:old-tag --force
+# 通过本地安全检查和显式 ACL 管理 opt-in 后全局移除 ACL 标签所有者规则
+tslink tags delete-remote tag:old-tag --force --manage-acl
 ```
 
 ### 更多示例
@@ -331,7 +332,7 @@ tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 | `tslink add <name> --proxy host:port` | 暴露本地 Web 服务 |
 | `tslink add <name> --dir /path` | 暴露文件目录 |
 | `tslink add <name> --tcp host:port` | 暴露 TCP 服务（数据库、SSH 等） |
-| `tslink remove <name>` | 移除已注册的服务（+ 所有权安全的远端清理尝试） |
+| `tslink remove <name>` | 移除已注册的服务，并报告 protected/manual 远端清理指引 |
 | `tslink list` | 列出所有已注册的服务 |
 | `tslink serve` | 启动网关（前台） |
 | `tslink serve --daemon` | 启动网关（后台） |
@@ -349,7 +350,7 @@ tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 | `tslink tags add <service> <tag>` | 为服务追加一个标签 |
 | `tslink tags set <service> <tag>` | 替换服务的全部标签 |
 | `tslink tags set-default <tag>` | 修改新服务的默认标签 |
-| `tslink tags delete-remote <tag> --force` | 通过本地安全检查后从 Tailscale ACL 全局移除 ACL 标签所有者规则 |
+| `tslink tags delete-remote <tag> --force --manage-acl` | 通过本地安全检查和显式远端写入 opt-in 后从 Tailscale ACL 全局移除 ACL 标签所有者规则 |
 | `tslink api` | JSON-over-stdin/stdout 模式，用于程序化控制 |
 | `tslink config` | 管理全局配置（set/get/list） |
 | `tslink install` | 开机自启（macOS LaunchAgent / Linux systemd / Windows 启动文件夹） |
@@ -384,10 +385,10 @@ tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 └─────────────┘         └──────────────────────┘         └──────────────┘
 ```
 
-TSLink 为每个注册的服务创建一个专用的 [tsnet](https://tailscale.com/kb/1244/tsnet) 节点 — 服务端无需安装 Tailscale 客户端。每个服务作为独立设备加入 tailnet（如 `myapp`、`docs`、`mydb`），自动获取 TLS 证书，并将请求代理到你的本地服务。
+TSLink 为每个注册的服务创建一个专用的 [tsnet](https://tailscale.com/kb/1244/tsnet) 节点 — 服务端无需安装 Tailscale 客户端。每个服务作为独立设备加入 tailnet（如 `myapp`、`docs`、`mydb`）。proxy/file 服务使用 Tailscale HTTPS listener；raw TCP 服务使用私有 tailnet transport，并把字节代理到配置的目标。
 
 **关键架构决策：**
-- **Per-service 嵌入式节点** — 每个服务获得独立的 tailnet 身份、主机名和 TLS 证书（微分段）
+- **Per-service 嵌入式节点** — 每个服务获得独立的 tailnet 身份和主机名；proxy/file 服务还获得 Tailscale HTTPS listener 语义
 - **身份感知代理** — tailnet 内的 HTTP 代理/文件请求进行 WhoIs 验证，注入身份头并防止伪造；公网 Funnel 和 raw TCP 不获得 TSLink 强制执行的 HTTP 身份认证
 - **安全凭证管理** — 系统钥匙串存储，headless 环境支持受限权限文件后备
 - **基于文件的注册表** — 服务在 `~/.config/tslink/registry.json` 中持久化，跨重启保存

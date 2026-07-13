@@ -3,6 +3,7 @@ package cmd
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -15,6 +16,8 @@ import (
 	"github.com/monody0007/tslink/internal/registry"
 	"github.com/spf13/cobra"
 )
+
+const apiMaxRecordBytes = 1024 * 1024
 
 // APIRequest is a single JSON command read from stdin.
 type APIRequest struct {
@@ -48,10 +51,6 @@ type apiAddData struct {
 	Warnings []inspect.WarningView `json:"warnings,omitempty"`
 }
 
-type apiMessageData struct {
-	Message string `json:"message"`
-}
-
 type apiStatusData struct {
 	Running bool `json:"running"`
 	Count   int  `json:"count"`
@@ -81,28 +80,31 @@ type apiTemplateApplyData struct {
 	TemplateApply TemplateApplyResult `json:"template_apply"`
 }
 
-func writeAPISuccess(out io.Writer, data any) {
-	output.WriteJSON(out, output.NewSuccess("", data))
+func writeAPISuccess(out io.Writer, data any) output.Result {
+	result := output.NewSuccess("", data)
+	output.WriteJSON(out, result)
+	return result
 }
 
-func writeAPIError(out io.Writer, err error) {
-	output.WriteJSON(out, output.NewFailureForError("", err))
+func writeAPIError(out io.Writer, err error) output.Result {
+	result := output.NewFailureForError("", err)
+	output.WriteJSON(out, result)
+	return result
 }
 
-func writeAPIUsageError(out io.Writer, msg string) {
-	writeAPIError(out, output.ErrUsage(msg))
+func writeAPIUsageError(out io.Writer, msg string) output.Result {
+	return writeAPIError(out, output.ErrUsage(msg))
 }
 
-func writeAPINotFoundError(out io.Writer, msg string) {
-	writeAPIError(out, output.ErrNotFound(msg))
+func writeAPINotFoundError(out io.Writer, msg string) output.Result {
+	return writeAPIError(out, output.ErrNotFound(msg))
 }
 
-func writeAPICommandError(out io.Writer, err error) {
+func writeAPICommandError(out io.Writer, err error) output.Result {
 	if _, ok := registry.ErrorCode(err); ok {
-		writeAPIError(out, err)
-		return
+		return writeAPIError(out, err)
 	}
-	writeAPIError(out, output.ErrUsage(err.Error()))
+	return writeAPIError(out, output.ErrUsage(err.Error()))
 }
 
 func decodeAPIRequest(line string) (APIRequest, error) {
@@ -125,89 +127,75 @@ type apiHandler struct {
 	runtimeSnapshotPath string
 }
 
-func (h *apiHandler) handleLine(line string, out io.Writer) {
+func (h *apiHandler) handleLine(line string, out io.Writer) output.Result {
 	req, err := decodeAPIRequest(line)
 	if err != nil {
-		writeAPIUsageError(out, fmt.Sprintf("invalid JSON: %v", err))
-		return
+		return writeAPIUsageError(out, fmt.Sprintf("invalid JSON: %v", err))
 	}
-	h.handle(req, out)
+	return h.handle(req, out)
 }
 
-func (h *apiHandler) handle(req APIRequest, out io.Writer) {
+func (h *apiHandler) handle(req APIRequest, out io.Writer) output.Result {
 	switch req.Action {
 	case "list":
-		h.handleList(out)
+		return h.handleList(out)
 	case "add":
-		h.handleAdd(req, out)
+		return h.handleAdd(req, out)
 	case "remove":
-		h.handleRemove(req, out)
+		return h.handleRemove(req, out)
 	case "status":
-		h.handleStatus(req, out)
+		return h.handleStatus(req, out)
 	case "doctor":
-		h.handleDoctor(req, out)
+		return h.handleDoctor(req, out)
 	case "access_explain":
-		h.handleAccessExplain(req, out)
+		return h.handleAccessExplain(req, out)
 	case "template_list":
-		h.handleTemplateList(out)
+		return h.handleTemplateList(out)
 	case "template_plan":
-		h.handleTemplatePlan(req, out)
+		return h.handleTemplatePlan(req, out)
 	case "template_apply":
-		h.handleTemplateApply(req, out)
+		return h.handleTemplateApply(req, out)
 	default:
-		writeAPIUsageError(out, fmt.Sprintf("unknown action: %s", req.Action))
+		return writeAPIUsageError(out, fmt.Sprintf("unknown action: %s", req.Action))
 	}
 }
 
-func (h *apiHandler) handleList(out io.Writer) {
+func (h *apiHandler) handleList(out io.Writer) output.Result {
 	reg, err := registry.Load(h.regPath)
 	if err != nil {
-		writeAPIError(out, err)
-		return
+		return writeAPIError(out, err)
 	}
-	writeAPISuccess(out, apiListData{Services: inspect.ServiceViews(reg.Services), Count: len(reg.Services)})
+	return writeAPISuccess(out, apiListData{Services: inspect.ServiceViews(reg.Services), Count: len(reg.Services)})
 }
 
-func (h *apiHandler) handleAdd(req APIRequest, out io.Writer) {
+func (h *apiHandler) handleAdd(req APIRequest, out io.Writer) output.Result {
 	if req.Name == "" {
-		writeAPIUsageError(out, "name is required")
-		return
+		return writeAPIUsageError(out, "name is required")
 	}
 	params, err := addParamsFromAPIRequest(req)
 	if err != nil {
-		writeAPICommandError(out, err)
-		return
+		return writeAPICommandError(out, err)
 	}
 
 	svc, err := buildService(params)
 	if err != nil {
-		writeAPICommandError(out, err)
-		return
+		return writeAPICommandError(out, err)
 	}
 	if svc.Type == registry.TypeFile {
-		absPath, err := filepath.Abs(params.Dir)
-		if err != nil {
-			writeAPICommandError(out, err)
-			return
+		if !filepath.IsAbs(params.Dir) {
+			return writeAPICommandError(out, fmt.Errorf("file service path %q must be absolute", params.Dir))
 		}
-		info, err := os.Stat(absPath)
-		if err != nil {
-			writeAPICommandError(out, err)
-			return
+		if err := registry.ValidateFileRoot(params.Dir); err != nil {
+			return writeAPICommandError(out, err)
 		}
-		if !info.IsDir() {
-			writeAPIUsageError(out, fmt.Sprintf("not a directory: %s", absPath))
-			return
-		}
-		svc.Path = absPath
+		svc.Path = filepath.Clean(params.Dir)
 	}
 	if _, err := registry.Add(h.regPath, svc); err != nil {
-		writeAPICommandError(out, err)
-		return
+		return writeAPICommandError(out, err)
 	}
 	view := inspect.ServiceViewFor(svc)
 	endpoint := view.Endpoint
-	writeAPISuccess(out, apiAddData{
+	return writeAPISuccess(out, apiAddData{
 		Message:  "service added",
 		URL:      endpoint.Display,
 		Endpoint: endpoint,
@@ -277,109 +265,98 @@ func addParamsFromAPIRequest(req APIRequest) (AddParams, error) {
 	return params, nil
 }
 
-func (h *apiHandler) handleRemove(req APIRequest, out io.Writer) {
+func (h *apiHandler) handleRemove(req APIRequest, out io.Writer) output.Result {
 	if req.Name == "" {
-		writeAPIUsageError(out, "name is required")
-		return
+		return writeAPIUsageError(out, "name is required")
 	}
-	if _, err := registry.Remove(h.regPath, req.Name); err != nil {
-		writeAPIError(out, err)
-		return
+	removed, err := registry.Remove(h.regPath, req.Name)
+	if err != nil {
+		return writeAPIError(out, err)
 	}
-	writeAPISuccess(out, apiMessageData{Message: "service removed"})
+	return writeAPISuccess(out, RemoveResult{Name: req.Name, Removed: removed})
 }
 
-func (h *apiHandler) handleStatus(req APIRequest, out io.Writer) {
+func (h *apiHandler) handleStatus(req APIRequest, out io.Writer) output.Result {
 	if req.URLs {
-		h.handleStatusURLs(out)
-		return
+		return h.handleStatusURLs(out)
 	}
 	running := daemon.IsRunning(h.pidPath)
-	count := 0
-	if reg, err := registry.Load(h.regPath); err == nil {
-		count = len(reg.Services)
+	reg, err := registry.Load(h.regPath)
+	if err != nil {
+		return writeAPIError(out, err)
 	}
-	writeAPISuccess(out, apiStatusData{Running: running, Count: count})
+	return writeAPISuccess(out, apiStatusData{Running: running, Count: len(reg.Services)})
 }
 
-func (h *apiHandler) handleStatusURLs(out io.Writer) {
+func (h *apiHandler) handleStatusURLs(out io.Writer) output.Result {
 	snapshotPath := h.runtimeSnapshotPath
 	if snapshotPath == "" {
 		var err error
 		snapshotPath, err = statusRuntimeSnapshotPathFn()
 		if err != nil {
-			writeAPIError(out, err)
-			return
+			return writeAPIError(out, err)
 		}
 	}
 	result, err := getStatusURLs(h.pidPath, h.regPath, snapshotPath)
 	if err != nil {
-		writeAPIError(out, err)
-		return
+		return writeAPIError(out, err)
 	}
-	writeAPISuccess(out, apiStatusURLsData{StatusURLs: result})
+	return writeAPISuccess(out, apiStatusURLsData{StatusURLs: result})
 }
 
-func (h *apiHandler) handleDoctor(req APIRequest, out io.Writer) {
+func (h *apiHandler) handleDoctor(req APIRequest, out io.Writer) output.Result {
 	result := buildDoctorResult(doctorOptions{
 		ProbeExternal:       req.ProbeExternal,
 		RegistryPath:        h.regPath,
 		PIDPath:             h.pidPath,
 		RuntimeSnapshotPath: h.runtimeSnapshotPath,
 	})
-	writeAPISuccess(out, apiDoctorData{Doctor: result})
+	return writeAPISuccess(out, apiDoctorData{Doctor: result})
 }
 
-func (h *apiHandler) handleAccessExplain(req APIRequest, out io.Writer) {
+func (h *apiHandler) handleAccessExplain(req APIRequest, out io.Writer) output.Result {
 	if req.Name == "" {
-		writeAPIUsageError(out, "name is required")
-		return
+		return writeAPIUsageError(out, "name is required")
 	}
 	reg, err := registry.Load(h.regPath)
 	if err != nil {
-		writeAPIError(out, err)
-		return
+		return writeAPIError(out, err)
 	}
 	for _, svc := range reg.Services {
 		if svc.Name != req.Name {
 			continue
 		}
 		result := buildAccessExplainResult(svc)
-		writeAPISuccess(out, apiAccessExplainData{AccessExplain: result})
-		return
+		return writeAPISuccess(out, apiAccessExplainData{AccessExplain: result})
 	}
-	writeAPINotFoundError(out, fmt.Sprintf("service not found: %s", req.Name))
+	return writeAPINotFoundError(out, fmt.Sprintf("service not found: %s", req.Name))
 }
 
-func (h *apiHandler) handleTemplateList(out io.Writer) {
+func (h *apiHandler) handleTemplateList(out io.Writer) output.Result {
 	result := listTemplatesResult()
-	writeAPISuccess(out, apiTemplateListData{TemplateList: result})
+	return writeAPISuccess(out, apiTemplateListData{TemplateList: result})
 }
 
-func (h *apiHandler) handleTemplatePlan(req APIRequest, out io.Writer) {
+func (h *apiHandler) handleTemplatePlan(req APIRequest, out io.Writer) output.Result {
 	if req.Name == "" {
-		writeAPIUsageError(out, "name is required")
-		return
+		return writeAPIUsageError(out, "name is required")
 	}
 	result, err := applyTemplate(req.Name, h.regPath, true)
 	if err != nil {
-		writeAPICommandError(out, err)
-		return
+		return writeAPICommandError(out, err)
 	}
-	writeAPISuccess(out, apiTemplatePlanData{TemplatePlan: result})
+	return writeAPISuccess(out, apiTemplatePlanData{TemplatePlan: result})
 }
 
-func (h *apiHandler) handleTemplateApply(req APIRequest, out io.Writer) {
+func (h *apiHandler) handleTemplateApply(req APIRequest, out io.Writer) output.Result {
 	if req.Name == "" {
-		writeAPIUsageError(out, "name is required")
-		return
+		return writeAPIUsageError(out, "name is required")
 	}
 	result, err := applyTemplate(req.Name, h.regPath, false)
 	if err != nil {
-		writeAPICommandError(out, err)
-		return
+		return writeAPICommandError(out, err)
 	}
-	writeAPISuccess(out, apiTemplateApplyData{TemplateApply: result})
+	return writeAPISuccess(out, apiTemplateApplyData{TemplateApply: result})
 }
 
 func init() {
@@ -387,6 +364,10 @@ func init() {
 		Use:   "api",
 		Short: "JSON-over-stdin/stdout interface for programmatic service management",
 		Long: `Read JSON commands from stdin (one per line) and write JSON responses to stdout.
+Blank lines are ignored. Each record is limited to 1048576 bytes. Recoverable
+record failures still emit one JSON response in input order; after EOF the
+process exits nonzero if any response failed. Fatal scanner/framing errors emit
+one failure envelope and terminate the stream.
 
 Supported actions:
   {"action":"list"}
@@ -401,32 +382,63 @@ Supported actions:
   {"action":"template_list"}
   {"action":"template_plan","name":"personal-harness"}
   {"action":"template_apply","name":"personal-harness"}`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			out := cmd.OutOrStdout()
 			if err := ensureDirFn(); err != nil {
-				return err
+				result := writeAPIError(out, err)
+				return output.SilentExit(result.Code)
 			}
 			regPath, err := registryPathFn()
 			if err != nil {
-				return err
+				result := writeAPIError(out, err)
+				return output.SilentExit(result.Code)
 			}
 			pidPath, err := pidPathFn()
 			if err != nil {
-				return err
+				result := writeAPIError(out, err)
+				return output.SilentExit(result.Code)
 			}
 
 			h := &apiHandler{regPath: regPath, pidPath: pidPath}
-			out := cmd.OutOrStdout()
 			scanner := bufio.NewScanner(os.Stdin)
+			scanner.Buffer(make([]byte, 0, 64*1024), apiMaxRecordBytes+1)
 
+			firstFailureCode := output.ExitSuccess
 			for scanner.Scan() {
-				line := strings.TrimSpace(scanner.Text())
+				rawLine := scanner.Text()
+				if len(rawLine) > apiMaxRecordBytes {
+					result := output.NewFailure("", output.ExitUsage, fmt.Sprintf("record exceeds maximum size of %d bytes", apiMaxRecordBytes))
+					output.WriteJSON(out, result)
+					if firstFailureCode == output.ExitSuccess {
+						firstFailureCode = result.Code
+					}
+					continue
+				}
+				line := strings.TrimSpace(rawLine)
 				if line == "" {
 					continue
 				}
-				h.handleLine(line, out)
+				result := h.handleLine(line, out)
+				if !result.OK && firstFailureCode == output.ExitSuccess {
+					firstFailureCode = result.Code
+				}
 			}
 
-			return scanner.Err()
+			if err := scanner.Err(); err != nil {
+				code := output.ExitError
+				msg := fmt.Sprintf("read JSONL input: %v", err)
+				if errors.Is(err, bufio.ErrTooLong) {
+					code = output.ExitUsage
+					msg = fmt.Sprintf("record exceeds maximum size of %d bytes", apiMaxRecordBytes)
+				}
+				output.WriteJSON(out, output.NewFailure("", code, msg))
+				return output.SilentExit(code)
+			}
+			if firstFailureCode != output.ExitSuccess {
+				return output.SilentExit(firstFailureCode)
+			}
+			return nil
 		},
 	}
 

@@ -57,9 +57,6 @@ func TestRemoveService_ProtectedCleanupSkipIsReported(t *testing.T) {
 		if target.Hostname != "web" || len(target.Tags) != 1 || target.Tags[0] != "tag:tsmain" {
 			t.Fatalf("cleanup target = %+v, want service hostname and tags", target)
 		}
-		if target.DeviceID != "" || target.NodeID != "" {
-			t.Fatalf("cleanup target exact proof = DeviceID %q NodeID %q, want none", target.DeviceID, target.NodeID)
-		}
 		return tailapi.CleanupResult{
 			Matched:    []string{"web"},
 			Protected:  []string{"web"},

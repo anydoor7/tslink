@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/output"
 	"github.com/monody0007/tslink/internal/registry"
+	"github.com/monody0007/tslink/internal/security"
 	"github.com/monody0007/tslink/internal/tailapi"
 	"github.com/spf13/cobra"
 )
@@ -49,24 +51,26 @@ type TagsSetDefaultResult struct {
 }
 
 type TagsDeleteResult struct {
-	Tag                          string `json:"tag"`
-	RemoteACLTagOwnerRuleRemoved bool   `json:"remote_acl_tag_owner_rule_removed"`
-	Message                      string `json:"message"`
+	Tag                          string                        `json:"tag"`
+	RemoteACLTagOwnerRuleRemoved bool                          `json:"remote_acl_tag_owner_rule_removed"`
+	Message                      string                        `json:"message"`
+	RemoteSideEffectPlan         security.RemoteSideEffectPlan `json:"remote_side_effect_plan"`
 }
 
 const tagsRemoteAPITokenMessage = "remote tag deletion requires a Tailscale API access token; configure one with `tslink login --api-key ...`"
 
 // Testable function variables for tags commands.
 var (
-	tagsReadTagsFn                                                  = tailapi.ReadTags
-	tagsDeleteTagFn                                                 = tailapi.DeleteTag
-	tagsRegistryPathFn                                              = config.RegistryPath
-	tagsLoadRegistryFn                                              = registry.Load
-	tagsAddRegistryFn  func(string, registry.Service) (bool, error) = registry.Add
-	tagsEnsureDirFn                                                 = config.EnsureDir
-	tagsLoadGlobalFn                                                = config.LoadGlobalConfig
-	tagsSaveGlobalFn                                                = config.SaveGlobalConfig
-	tagsGetDefaultFn                                                = config.GetDefaultTag
+	tagsReadTagsFn                                                   = tailapi.ReadTags
+	tagsDeleteTagFn                                                  = tailapi.DeleteTag
+	tagsRegistryPathFn                                               = config.RegistryPath
+	tagsLoadRegistryFn                                               = registry.Load
+	tagsAddRegistryFn   func(string, registry.Service) (bool, error) = registry.Add
+	tagsMutateServiceFn                                              = registry.MutateService
+	tagsEnsureDirFn                                                  = config.EnsureDir
+	tagsLoadGlobalFn                                                 = config.LoadGlobalConfig
+	tagsSaveGlobalFn                                                 = config.SaveGlobalConfig
+	tagsGetDefaultFn                                                 = config.GetDefaultTag
 )
 
 func validateTagPrefix(tag string) error {
@@ -80,6 +84,10 @@ func findService(reg *registry.Registry, name string) (int, error) {
 		}
 	}
 	return -1, fmt.Errorf("service not found: %s", name)
+}
+
+func isServiceNotFound(err error) bool {
+	return err != nil && strings.HasPrefix(err.Error(), "service not found:")
 }
 
 // tagsListRun lists all services and their tags.
@@ -168,31 +176,29 @@ func tagsAddRun(out io.Writer, serviceName, tag string, isJSON bool) error {
 	if err != nil {
 		return err
 	}
-	reg, err := tagsLoadRegistryFn(regPath)
-	if err != nil {
-		return err
-	}
-	idx, err := findService(reg, serviceName)
-	if err != nil {
-		if isJSON {
+	alreadyExisted := false
+	if _, err := tagsMutateServiceFn(regPath, serviceName, func(svc registry.Service) (registry.Service, error) {
+		for _, t := range svc.Tags {
+			if t == tag {
+				alreadyExisted = true
+				return svc, nil
+			}
+		}
+		svc.Tags = append(svc.Tags, tag)
+		return svc, nil
+	}); err != nil {
+		if isJSON && isServiceNotFound(err) {
 			return output.ErrNotFound(err.Error())
 		}
 		return err
 	}
-	svc := reg.Services[idx]
-	for _, t := range svc.Tags {
-		if t == tag {
-			if isJSON {
-				output.Success("tags add", TagsAddResult{Service: serviceName, Tag: tag, AlreadyExisted: true})
-				return nil
-			}
-			fmt.Fprintf(out, "→ %s already on %s\n", tag, serviceName)
+	if alreadyExisted {
+		if isJSON {
+			output.Success("tags add", TagsAddResult{Service: serviceName, Tag: tag, AlreadyExisted: true})
 			return nil
 		}
-	}
-	svc.Tags = append(svc.Tags, tag)
-	if _, err := tagsAddRegistryFn(regPath, svc); err != nil {
-		return err
+		fmt.Fprintf(out, "→ %s already on %s\n", tag, serviceName)
+		return nil
 	}
 	if isJSON {
 		output.Success("tags add", TagsAddResult{Service: serviceName, Tag: tag, AlreadyExisted: false})
@@ -214,20 +220,13 @@ func tagsSetRun(out io.Writer, serviceName, tag string, isJSON bool) error {
 	if err != nil {
 		return err
 	}
-	reg, err := tagsLoadRegistryFn(regPath)
-	if err != nil {
-		return err
-	}
-	idx, err := findService(reg, serviceName)
-	if err != nil {
-		if isJSON {
+	if _, err := tagsMutateServiceFn(regPath, serviceName, func(svc registry.Service) (registry.Service, error) {
+		svc.Tags = []string{tag}
+		return svc, nil
+	}); err != nil {
+		if isJSON && isServiceNotFound(err) {
 			return output.ErrNotFound(err.Error())
 		}
-		return err
-	}
-	svc := reg.Services[idx]
-	svc.Tags = []string{tag}
-	if _, err := tagsAddRegistryFn(regPath, svc); err != nil {
 		return err
 	}
 	if isJSON {
@@ -260,10 +259,11 @@ func tagsSetDefaultRun(out io.Writer, tag string, isJSON bool) error {
 }
 
 // tagsDeleteRemoteRun deletes a tag from the tailnet ACL after safety checks.
-func tagsDeleteRemoteRun(ctx context.Context, out io.Writer, tag string, force bool, isJSON bool) error {
+func tagsDeleteRemoteRun(ctx context.Context, out io.Writer, tag string, force, manageACL bool, isJSON bool) error {
 	if err := validateTagPrefix(tag); err != nil {
 		return err
 	}
+	plan := security.ACLMutationPlan("delete_tag_owner", []string{tag}, manageACL)
 	// Check if tag is the current default
 	defaultTag := tagsGetDefaultFn()
 	if tag == defaultTag {
@@ -305,6 +305,13 @@ func tagsDeleteRemoteRun(ctx context.Context, out io.Writer, tag string, force b
 		}
 		return fmt.Errorf("%s", forceMsg)
 	}
+	if !manageACL {
+		msg := fmt.Sprintf("refusing to delete %q from the tailnet ACL without --manage-acl; remote ACL mutation is disabled by default; remote_side_effect_plan=%s", tag, compactJSON(plan))
+		if isJSON {
+			return output.ErrConflict(msg)
+		}
+		return fmt.Errorf("%s", msg)
+	}
 	if err := tagsDeleteTagFn(ctx, tag); err != nil {
 		if errors.Is(err, tailapi.ErrNoAPIClient) {
 			if isJSON {
@@ -320,6 +327,7 @@ func tagsDeleteRemoteRun(ctx context.Context, out io.Writer, tag string, force b
 			Tag:                          tag,
 			RemoteACLTagOwnerRuleRemoved: true,
 			Message:                      message,
+			RemoteSideEffectPlan:         plan,
 		})
 		return nil
 	}
@@ -339,7 +347,7 @@ Subcommands:
   add             Add a tag to a service
   set             Replace a service's tags
   set-default     Change the default tag for new services
-  delete-remote   Remove an ACL tag owner rule globally after local safety checks
+  delete-remote   Remove an ACL tag owner rule globally after local safety checks and --manage-acl
 
 Examples:
   tslink tags list
@@ -347,7 +355,7 @@ Examples:
   tslink tags add myapp tag:shared
   tslink tags set myapp tag:web
   tslink tags set-default tag:myteam
-  tslink tags delete-remote tag:old --force`,
+  tslink tags delete-remote tag:old --force --manage-acl`,
 	}
 
 	tagsListCmd := &cobra.Command{
@@ -396,16 +404,26 @@ Examples:
 	}
 
 	tagsDeleteRemoteCmd := &cobra.Command{
-		Use:   "delete-remote <tag> --force",
+		Use:   "delete-remote <tag> --force --manage-acl",
 		Short: "Remove an ACL tag owner rule globally after local safety checks",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			force, _ := cmd.Flags().GetBool("force")
-			return tagsDeleteRemoteRun(cmd.Context(), cmd.OutOrStdout(), args[0], force, jsonOutput(cmd))
+			manageACL, _ := cmd.Flags().GetBool("manage-acl")
+			return tagsDeleteRemoteRun(cmd.Context(), cmd.OutOrStdout(), args[0], force, manageACL, jsonOutput(cmd))
 		},
 	}
 	tagsDeleteRemoteCmd.Flags().Bool("force", false, "Delete the ACL tag owner rule globally after local safety checks")
+	tagsDeleteRemoteCmd.Flags().Bool("manage-acl", false, "Opt in to remote Tailscale ACL tag-owner mutation using a machine-readable side-effect plan")
 
 	tagsCmd.AddCommand(tagsListCmd, tagsPullCmd, tagsAddCmd, tagsSetCmd, tagsSetDefaultCmd, tagsDeleteRemoteCmd)
 	rootCmd.AddCommand(tagsCmd)
+}
+
+func compactJSON(v any) string {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return "{}"
+	}
+	return string(data)
 }

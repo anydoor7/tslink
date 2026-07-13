@@ -13,6 +13,8 @@ import (
 	"github.com/monody0007/tslink/internal/credentials"
 	"github.com/monody0007/tslink/internal/tailapi"
 	"github.com/zalando/go-keyring"
+	"tailscale.com/client/local"
+	"tailscale.com/ipn/ipnstate"
 )
 
 // setupLoginTest sets up a temp HOME, mock keyring, and config dir for login tests.
@@ -54,23 +56,26 @@ func skipTsnetLogin(t *testing.T) {
 func mockAPIKeySuccess(t *testing.T) {
 	t.Helper()
 
-	oldSet := loginSetAPIKeyFn
 	oldVerify := loginVerifyAPIKeyFn
+	oldEnsureTags := loginEnsureTagsFn
 	t.Cleanup(func() {
-		loginSetAPIKeyFn = oldSet
 		loginVerifyAPIKeyFn = oldVerify
+		loginEnsureTagsFn = oldEnsureTags
 	})
 
-	loginSetAPIKeyFn = func(key string) error { return nil }
-	loginVerifyAPIKeyFn = func(ctx context.Context) error { return nil }
+	loginVerifyAPIKeyFn = func(ctx context.Context, key string) error { return nil }
+	loginEnsureTagsFn = func(ctx context.Context, tags []string) error { return nil }
 }
 
-// mockClientSecretSuccess makes client secret save succeed.
+// mockClientSecretSuccess makes client secret save succeed, including the
+// semantic activation (disposable Up) that now guards client-secret adoption.
+// Tests that exercise a usable client secret inject a passing activator here so
+// they never attempt a real tailnet Up.
 func mockClientSecretSuccess(t *testing.T) {
 	t.Helper()
-	old := loginSaveClientSecretFn
-	t.Cleanup(func() { loginSaveClientSecretFn = old })
-	loginSaveClientSecretFn = func(secret string) error { return nil }
+	oldActivate := loginActivateClientSecretFn
+	t.Cleanup(func() { loginActivateClientSecretFn = oldActivate })
+	loginActivateClientSecretFn = func(context.Context, string) error { return nil }
 }
 
 func resetLoginFlags(t *testing.T) {
@@ -79,7 +84,27 @@ func resetLoginFlags(t *testing.T) {
 	_ = loginCmd.Flags().Set("client-secret", "")
 	_ = loginCmd.Flags().Set("api-key-stdin", "false")
 	_ = loginCmd.Flags().Set("client-secret-stdin", "false")
+	_ = loginCmd.Flags().Set("manage-acl", "false")
 	loginCmd.SetIn(nil)
+}
+
+type fakeLoginTSNetServer struct {
+	upCalled    bool
+	closeCalled bool
+}
+
+func (s *fakeLoginTSNetServer) Up(context.Context) (*ipnstate.Status, error) {
+	s.upCalled = true
+	return &ipnstate.Status{}, nil
+}
+
+func (s *fakeLoginTSNetServer) LocalClient() (*local.Client, error) {
+	return nil, fmt.Errorf("local client unavailable")
+}
+
+func (s *fakeLoginTSNetServer) Close() error {
+	s.closeCalled = true
+	return nil
 }
 
 func TestLoginCredentialFlow_APIToken_Success(t *testing.T) {
@@ -213,15 +238,12 @@ func TestLoginCredentialFlow_APIToken_VerifyFails(t *testing.T) {
 	dir := setupLoginTest(t)
 	mockStdin(t, "1", "tskey-api-test-token-12345")
 
-	oldSet := loginSetAPIKeyFn
 	oldVerify := loginVerifyAPIKeyFn
 	t.Cleanup(func() {
-		loginSetAPIKeyFn = oldSet
 		loginVerifyAPIKeyFn = oldVerify
 	})
 
-	loginSetAPIKeyFn = func(key string) error { return nil }
-	loginVerifyAPIKeyFn = func(ctx context.Context) error {
+	loginVerifyAPIKeyFn = func(ctx context.Context, key string) error {
 		return fmt.Errorf("API key verification failed: Status: 401")
 	}
 
@@ -237,6 +259,7 @@ func TestLoginCredentialFlow_APIToken_VerifyFails(t *testing.T) {
 func TestLoginCredentialFlow_ClientSecret_SaveFails(t *testing.T) {
 	dir := setupLoginTest(t)
 	mockStdin(t, "2", "tskey-client-test-secret-12345")
+	mockClientSecretSuccess(t) // activation succeeds so the save failure is what surfaces
 
 	old := loginSaveClientSecretFn
 	t.Cleanup(func() { loginSaveClientSecretFn = old })
@@ -277,18 +300,12 @@ func TestLoginCmd_ExplicitClientSecretBeatsEnvAPIKey(t *testing.T) {
 		resetLoginFlags(t)
 	})
 	t.Setenv("TSLINK_API_KEY", "tskey-api-from-env")
+	mockClientSecretSuccess(t) // client secret is usable; activation succeeds
 
-	var savedSecret string
-	oldSave := loginSaveClientSecretFn
 	oldEnsure := loginEnsureTagsFn
 	t.Cleanup(func() {
-		loginSaveClientSecretFn = oldSave
 		loginEnsureTagsFn = oldEnsure
 	})
-	loginSaveClientSecretFn = func(secret string) error {
-		savedSecret = secret
-		return nil
-	}
 	loginEnsureTagsFn = func(ctx context.Context, tags []string) error {
 		return tailapi.ErrNoAPIClient
 	}
@@ -298,6 +315,10 @@ func TestLoginCmd_ExplicitClientSecretBeatsEnvAPIKey(t *testing.T) {
 
 	if err := loginCmd.RunE(loginCmd, nil); err != nil {
 		t.Fatalf("RunE() error = %v", err)
+	}
+	savedSecret, err := credentials.GetClientSecret()
+	if err != nil {
+		t.Fatalf("GetClientSecret() error = %v", err)
 	}
 	if savedSecret != "tskey-client-explicit" {
 		t.Fatalf("saved client secret = %q, want explicit flag value", savedSecret)
@@ -310,20 +331,13 @@ func TestLoginCmd_ReadsAPIKeyFromStdin(t *testing.T) {
 	t.Cleanup(func() {
 		resetLoginFlags(t)
 	})
-	var savedKey string
-	oldSet := loginSetAPIKeyFn
 	oldVerify := loginVerifyAPIKeyFn
 	oldEnsure := loginEnsureTagsFn
 	t.Cleanup(func() {
-		loginSetAPIKeyFn = oldSet
 		loginVerifyAPIKeyFn = oldVerify
 		loginEnsureTagsFn = oldEnsure
 	})
-	loginSetAPIKeyFn = func(key string) error {
-		savedKey = key
-		return nil
-	}
-	loginVerifyAPIKeyFn = func(ctx context.Context) error { return nil }
+	loginVerifyAPIKeyFn = func(ctx context.Context, key string) error { return nil }
 	loginEnsureTagsFn = func(ctx context.Context, tags []string) error { return nil }
 	loginCmd.SetIn(strings.NewReader("tskey-api-from-stdin\n"))
 	if err := loginCmd.Flags().Set("api-key-stdin", "true"); err != nil {
@@ -332,6 +346,10 @@ func TestLoginCmd_ReadsAPIKeyFromStdin(t *testing.T) {
 
 	if err := loginCmd.RunE(loginCmd, nil); err != nil {
 		t.Fatalf("RunE() error = %v", err)
+	}
+	savedKey, err := credentials.GetAPIKey()
+	if err != nil {
+		t.Fatalf("GetAPIKey() error = %v", err)
 	}
 	if savedKey != "tskey-api-from-stdin" {
 		t.Fatalf("saved API key = %q, want trimmed stdin key", savedKey)
@@ -360,8 +378,33 @@ func TestLoginCmd_RejectsMixedExplicitCredentials(t *testing.T) {
 	}
 }
 
-func TestLoginCredentialFlow_CreatesDefaultTag(t *testing.T) {
+func TestLoginCredentialFlow_DoesNotMutateACLByDefault(t *testing.T) {
 	dir := setupLoginTest(t)
+	resetLoginFlags(t)
+	t.Cleanup(func() { resetLoginFlags(t) })
+	mockStdin(t, "1", "tskey-api-test-12345")
+	mockAPIKeySuccess(t)
+
+	old := loginEnsureTagsFn
+	t.Cleanup(func() { loginEnsureTagsFn = old })
+	loginEnsureTagsFn = func(ctx context.Context, tags []string) error {
+		t.Fatalf("EnsureTags called by default with %v", tags)
+		return nil
+	}
+
+	err := loginCredentialFlow(loginCmd, dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoginCredentialFlow_ManageACLCreatesDefaultTag(t *testing.T) {
+	dir := setupLoginTest(t)
+	resetLoginFlags(t)
+	t.Cleanup(func() { resetLoginFlags(t) })
+	if err := loginCmd.Flags().Set("manage-acl", "true"); err != nil {
+		t.Fatalf("set manage-acl: %v", err)
+	}
 	mockStdin(t, "1", "tskey-api-test-12345")
 	mockAPIKeySuccess(t)
 
@@ -384,6 +427,11 @@ func TestLoginCredentialFlow_CreatesDefaultTag(t *testing.T) {
 
 func TestLoginCredentialFlow_EnsureTagsFailureNonFatal(t *testing.T) {
 	dir := setupLoginTest(t)
+	resetLoginFlags(t)
+	t.Cleanup(func() { resetLoginFlags(t) })
+	if err := loginCmd.Flags().Set("manage-acl", "true"); err != nil {
+		t.Fatalf("set manage-acl: %v", err)
+	}
 	mockStdin(t, "2", "tskey-client-test-secret-12345")
 	mockClientSecretSuccess(t)
 
@@ -402,6 +450,11 @@ func TestLoginCredentialFlow_EnsureTagsFailureNonFatal(t *testing.T) {
 
 func TestLoginWithClientSecret_EnsureTagsFailureReportsDegraded(t *testing.T) {
 	setupLoginTest(t)
+	resetLoginFlags(t)
+	t.Cleanup(func() { resetLoginFlags(t) })
+	if err := loginCmd.Flags().Set("manage-acl", "true"); err != nil {
+		t.Fatalf("set manage-acl: %v", err)
+	}
 	mockClientSecretSuccess(t)
 
 	oldEnsure := loginEnsureTagsFn
@@ -427,8 +480,10 @@ func TestLoginWithClientSecret_EnsureTagsFailureReportsDegraded(t *testing.T) {
 	if _, err := io.Copy(&buf, r); err != nil {
 		t.Fatalf("copy stderr: %v", err)
 	}
-	if !strings.Contains(buf.String(), "Degraded login") || !strings.Contains(buf.String(), "tslink serve") {
-		t.Fatalf("stderr = %q, want degraded serve warning", buf.String())
+	if !strings.Contains(buf.String(), "Degraded login") ||
+		!strings.Contains(buf.String(), "--manage-acl") ||
+		!strings.Contains(buf.String(), "Verify API token permissions") {
+		t.Fatalf("stderr = %q, want degraded manage-acl permission warning", buf.String())
 	}
 }
 
@@ -442,17 +497,17 @@ func TestLoginWithAPIKeyJSONReportsDegradedEnsureTags(t *testing.T) {
 	if err := rootCmd.PersistentFlags().Set("json", "true"); err != nil {
 		t.Fatalf("set json flag: %v", err)
 	}
+	if err := loginCmd.Flags().Set("manage-acl", "true"); err != nil {
+		t.Fatalf("set manage-acl: %v", err)
+	}
 
-	oldSet := loginSetAPIKeyFn
 	oldVerify := loginVerifyAPIKeyFn
 	oldEnsure := loginEnsureTagsFn
 	t.Cleanup(func() {
-		loginSetAPIKeyFn = oldSet
 		loginVerifyAPIKeyFn = oldVerify
 		loginEnsureTagsFn = oldEnsure
 	})
-	loginSetAPIKeyFn = func(key string) error { return nil }
-	loginVerifyAPIKeyFn = func(ctx context.Context) error { return nil }
+	loginVerifyAPIKeyFn = func(ctx context.Context, key string) error { return nil }
 	loginEnsureTagsFn = func(ctx context.Context, tags []string) error {
 		return fmt.Errorf("ACL write denied")
 	}
@@ -469,6 +524,50 @@ func TestLoginWithAPIKeyJSONReportsDegradedEnsureTags(t *testing.T) {
 	if gotErr, ok := data["tag_ensure_error"].(string); !ok || !strings.Contains(gotErr, "ACL write denied") {
 		t.Fatalf("tag_ensure_error = %v, want ACL write denied", data["tag_ensure_error"])
 	}
+	if data["acl_mutation_skipped"] == true {
+		t.Fatalf("acl_mutation_skipped = true, want false with --manage-acl")
+	}
+}
+
+func TestLoginWithAPIKeyJSONDefaultReturnsSideEffectPlanWithoutACLWrite(t *testing.T) {
+	setupLoginTest(t)
+	resetLoginFlags(t)
+	t.Cleanup(func() {
+		resetLoginFlags(t)
+		_ = rootCmd.PersistentFlags().Set("json", "false")
+	})
+	if err := rootCmd.PersistentFlags().Set("json", "true"); err != nil {
+		t.Fatalf("set json flag: %v", err)
+	}
+
+	oldVerify := loginVerifyAPIKeyFn
+	oldEnsure := loginEnsureTagsFn
+	t.Cleanup(func() {
+		loginVerifyAPIKeyFn = oldVerify
+		loginEnsureTagsFn = oldEnsure
+	})
+	loginVerifyAPIKeyFn = func(ctx context.Context, key string) error { return nil }
+	loginEnsureTagsFn = func(ctx context.Context, tags []string) error {
+		t.Fatalf("EnsureTags called by default with %v", tags)
+		return nil
+	}
+
+	got := captureStdout(t, func() {
+		if err := loginWithAPIKey(loginCmd, "tskey-api-new"); err != nil {
+			t.Fatalf("loginWithAPIKey() error = %v", err)
+		}
+	})
+	data := dataMap(t, got)
+	if data["acl_mutation_skipped"] != true {
+		t.Fatalf("acl_mutation_skipped = %v, want true", data["acl_mutation_skipped"])
+	}
+	plan, ok := data["remote_side_effect_plan"].(map[string]any)
+	if !ok {
+		t.Fatalf("remote_side_effect_plan = %T, want object", data["remote_side_effect_plan"])
+	}
+	if plan["opt_in_flag"] != "--manage-acl" || plan["mutates"] != false {
+		t.Fatalf("remote_side_effect_plan = %+v, want disabled --manage-acl plan", plan)
+	}
 }
 
 func TestLoginWithAPIKeyClearsStaleClientSecret(t *testing.T) {
@@ -484,7 +583,7 @@ func TestLoginWithAPIKeyClearsStaleClientSecret(t *testing.T) {
 		loginVerifyAPIKeyFn = oldVerify
 		loginEnsureTagsFn = oldEnsure
 	})
-	loginVerifyAPIKeyFn = func(ctx context.Context) error { return nil }
+	loginVerifyAPIKeyFn = func(ctx context.Context, key string) error { return nil }
 	loginEnsureTagsFn = func(ctx context.Context, tags []string) error { return nil }
 
 	if err := loginWithAPIKey(loginCmd, "tskey-api-new"); err != nil {
@@ -563,6 +662,8 @@ func TestLoginWithClientSecret_ErrorDoesNotLeakSecretMaterial(t *testing.T) {
 
 func TestLoginWithClientSecretClearsStaleAPIKey(t *testing.T) {
 	setupLoginTest(t)
+	resetLoginFlags(t)
+	mockClientSecretSuccess(t) // usable secret: activation succeeds, so the stale API key is retired
 
 	if err := credentials.SetAPIKey("tskey-api-stale"); err != nil {
 		t.Fatalf("SetAPIKey() error = %v", err)
@@ -571,7 +672,8 @@ func TestLoginWithClientSecretClearsStaleAPIKey(t *testing.T) {
 	oldEnsure := loginEnsureTagsFn
 	t.Cleanup(func() { loginEnsureTagsFn = oldEnsure })
 	loginEnsureTagsFn = func(ctx context.Context, tags []string) error {
-		return tailapi.ErrNoAPIClient
+		t.Fatalf("EnsureTags called by default with %v", tags)
+		return nil
 	}
 
 	if err := loginWithClientSecret(loginCmd, "tskey-client-new"); err != nil {
@@ -591,5 +693,57 @@ func TestLoginWithClientSecretClearsStaleAPIKey(t *testing.T) {
 	}
 	if !strings.HasPrefix(gotAuth, "tskey-client-new?") {
 		t.Fatalf("GetAuthKey() = %q, want newly selected client secret", gotAuth)
+	}
+}
+
+func TestInteractiveLoginServerConstructorIsEphemeral(t *testing.T) {
+	dir := t.TempDir()
+	srv := newInteractiveLoginServer(dir)
+	if srv.Hostname != "tslink-auth" {
+		t.Fatalf("Hostname = %q, want tslink-auth", srv.Hostname)
+	}
+	if srv.Dir != dir {
+		t.Fatalf("Dir = %q, want %q", srv.Dir, dir)
+	}
+	if !srv.Ephemeral {
+		t.Fatal("Ephemeral = false, want true for interactive auth helper")
+	}
+}
+
+func TestInteractiveLoginCleansTemporaryState(t *testing.T) {
+	setupLoginTest(t)
+	cfgDir := t.TempDir()
+	fake := &fakeLoginTSNetServer{}
+
+	oldNew := loginNewTSNetServerFn
+	oldRemove := loginRemoveAllFn
+	t.Cleanup(func() {
+		loginNewTSNetServerFn = oldNew
+		loginRemoveAllFn = oldRemove
+	})
+
+	var constructedDir string
+	var removedDir string
+	loginNewTSNetServerFn = func(tmpStateDir string) loginTSNetServer {
+		constructedDir = tmpStateDir
+		return fake
+	}
+	loginRemoveAllFn = func(path string) error {
+		removedDir = path
+		return nil
+	}
+
+	if _, err := loginTsnetLoginFn(cfgDir); err != nil {
+		t.Fatalf("loginTsnetLoginFn() error = %v", err)
+	}
+	want := cfgDir + string(os.PathSeparator) + "tsnet-login-tmp"
+	if constructedDir != want {
+		t.Fatalf("constructed dir = %q, want %q", constructedDir, want)
+	}
+	if removedDir != want {
+		t.Fatalf("removed dir = %q, want %q", removedDir, want)
+	}
+	if !fake.upCalled || !fake.closeCalled {
+		t.Fatalf("fake server up=%v close=%v, want both true", fake.upCalled, fake.closeCalled)
 	}
 }

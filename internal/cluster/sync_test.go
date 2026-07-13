@@ -77,8 +77,9 @@ func TestCluster_SendHeartbeat(t *testing.T) {
 	rp := regPath(t)
 	// Add a service so the heartbeat includes it.
 	if _, err := registry.Add(rp, registry.Service{
-		Name: "web",
-		Type: registry.TypeProxy,
+		Name:   "web",
+		Type:   registry.TypeProxy,
+		Target: "http://localhost:3000",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +166,7 @@ func TestCluster_HandleServiceAdd(t *testing.T) {
 	svc := registry.Service{
 		Name:   "remote-api",
 		Type:   registry.TypeProxy,
-		Target: "localhost:8080",
+		Target: "http://localhost:8080",
 	}
 	payload, _ := json.Marshal(ServicePayload{Service: svc})
 
@@ -191,8 +192,8 @@ func TestCluster_HandleServiceAdd(t *testing.T) {
 	if reg.Services[0].Name != "remote-api" {
 		t.Fatalf("expected remote-api, got %s", reg.Services[0].Name)
 	}
-	if reg.Services[0].Target != "localhost:8080" {
-		t.Fatalf("expected localhost:8080, got %s", reg.Services[0].Target)
+	if reg.Services[0].Target != "http://localhost:8080" {
+		t.Fatalf("expected http://localhost:8080, got %s", reg.Services[0].Target)
 	}
 }
 
@@ -200,8 +201,9 @@ func TestCluster_HandleServiceRemove(t *testing.T) {
 	rp := regPath(t)
 	// Pre-populate the registry.
 	if _, err := registry.Add(rp, registry.Service{
-		Name: "to-remove",
-		Type: registry.TypeProxy,
+		Name:   "to-remove",
+		Type:   registry.TypeProxy,
+		Target: "http://localhost:3000",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -249,15 +251,16 @@ func TestCluster_HandleFullSync(t *testing.T) {
 
 	// Add the old service to registry so it can be removed.
 	if _, err := registry.Add(rp, registry.Service{
-		Name: "old-svc",
-		Type: registry.TypeProxy,
+		Name:   "old-svc",
+		Type:   registry.TypeProxy,
+		Target: "http://localhost:3000",
 	}); err != nil {
 		t.Fatal(err)
 	}
 
 	services := []registry.Service{
-		{Name: "svc-a", Type: registry.TypeProxy, Target: "localhost:3000"},
-		{Name: "svc-b", Type: registry.TypeFile, Path: "/data"},
+		{Name: "svc-a", Type: registry.TypeProxy, Target: "http://localhost:3000"},
+		{Name: "svc-b", Type: registry.TypeFile, Path: t.TempDir()},
 	}
 	payload, _ := json.Marshal(FullSyncPayload{Services: services})
 
@@ -589,7 +592,7 @@ func TestCluster_FullSync_NoPriorPeer(t *testing.T) {
 
 	// Full sync from an unknown peer (no prior state).
 	services := []registry.Service{
-		{Name: "new-svc", Type: registry.TypeProxy, Target: "localhost:9000"},
+		{Name: "new-svc", Type: registry.TypeProxy, Target: "http://localhost:9000"},
 	}
 	payload, _ := json.Marshal(FullSyncPayload{Services: services})
 
@@ -727,7 +730,7 @@ func TestCluster_ProcessMessage_ServiceAdd(t *testing.T) {
 	c := NewCluster("node-1", tr, rp)
 
 	payload, _ := json.Marshal(ServicePayload{
-		Service: registry.Service{Name: "via-process", Type: registry.TypeProxy},
+		Service: registry.Service{Name: "via-process", Type: registry.TypeProxy, Target: "http://localhost:3000"},
 	})
 	msg := Message{
 		Type:      MsgTypeServiceAdd,
@@ -755,7 +758,7 @@ func TestCluster_ProcessMessage_ServiceRemove(t *testing.T) {
 	c := NewCluster("node-1", tr, rp)
 
 	// Add a service first.
-	_, _ = registry.Add(rp, registry.Service{Name: "to-del", Type: registry.TypeProxy})
+	_, _ = registry.Add(rp, registry.Service{Name: "to-del", Type: registry.TypeProxy, Target: "http://localhost:3000"})
 
 	payload, _ := json.Marshal(ServicePayload{
 		Service: registry.Service{Name: "to-del"},
@@ -787,7 +790,7 @@ func TestCluster_ProcessMessage_FullSync(t *testing.T) {
 
 	payload, _ := json.Marshal(FullSyncPayload{
 		Services: []registry.Service{
-			{Name: "synced", Type: registry.TypeProxy},
+			{Name: "synced", Type: registry.TypeProxy, Target: "http://localhost:3000"},
 		},
 	})
 	msg := Message{
@@ -845,7 +848,7 @@ func TestCluster_Run_ProcessesServiceMessages(t *testing.T) {
 
 		// Send service_add via the Run loop.
 		payload, _ := json.Marshal(ServicePayload{
-			Service: registry.Service{Name: "run-svc", Type: registry.TypeProxy},
+			Service: registry.Service{Name: "run-svc", Type: registry.TypeProxy, Target: "http://localhost:3000"},
 		})
 		tr.incoming <- Message{
 			Type:      MsgTypeServiceAdd,
@@ -901,7 +904,7 @@ func TestCluster_HandleFullSync_BadRegistryPath(t *testing.T) {
 	c := NewCluster("node-1", tr, badPath)
 
 	payload, _ := json.Marshal(FullSyncPayload{
-		Services: []registry.Service{{Name: "svc", Type: registry.TypeProxy}},
+		Services: []registry.Service{{Name: "svc", Type: registry.TypeProxy, Target: "http://localhost:3000"}},
 	})
 	msg := Message{
 		Type:    MsgTypeFullSync,
@@ -1057,13 +1060,13 @@ func TestCluster_HandleFullSync_ServiceRemoval(t *testing.T) {
 	c.mu.Unlock()
 
 	// Add both services to registry (simulating prior sync).
-	_, _ = registry.Add(rp, registry.Service{Name: "svc-a", Type: registry.TypeProxy, Target: "localhost:3000"})
-	_, _ = registry.Add(rp, registry.Service{Name: "svc-b", Type: registry.TypeProxy, Target: "localhost:3001"})
+	_, _ = registry.Add(rp, registry.Service{Name: "svc-a", Type: registry.TypeProxy, Target: "http://localhost:3000"})
+	_, _ = registry.Add(rp, registry.Service{Name: "svc-b", Type: registry.TypeProxy, Target: "http://localhost:3001"})
 
 	// Now peer only has svc-a (svc-b was removed).
 	payload, _ := json.Marshal(FullSyncPayload{
 		Services: []registry.Service{
-			{Name: "svc-a", Type: registry.TypeProxy, Target: "localhost:3000"},
+			{Name: "svc-a", Type: registry.TypeProxy, Target: "http://localhost:3000"},
 		},
 	})
 	msg := Message{
@@ -1111,21 +1114,20 @@ func TestCluster_HandleFullSync_AddError(t *testing.T) {
 	// Use a path where the registry file exists but is a directory for the Add call.
 	// A simpler approach: use a read-only file that Load can read but Add can't write.
 	goodPath := filepath.Join(dir, "registry.json")
-	_, _ = registry.Add(goodPath, registry.Service{Name: "existing", Type: registry.TypeProxy})
-	// Make the file read-only so Add fails.
-	_ = os.Chmod(goodPath, 0o444)
-	// Also make the directory read-only to prevent temp file creation.
-	_ = os.Chmod(dir, 0o555)
-	defer func() {
-		_ = os.Chmod(dir, 0o755)
-	}()
+	_, _ = registry.Add(goodPath, registry.Service{Name: "existing", Type: registry.TypeProxy, Target: "http://localhost:3000"})
+	if err := os.Remove(goodPath + ".lock"); err != nil && !os.IsNotExist(err) {
+		t.Fatalf("Remove(lock) error = %v", err)
+	}
+	if err := os.Mkdir(goodPath+".lock", 0o700); err != nil {
+		t.Fatalf("Mkdir(lock) error = %v", err)
+	}
 
 	tr := newMockTransport()
 	c := NewCluster("node-1", tr, goodPath)
 
 	payload, _ := json.Marshal(FullSyncPayload{
 		Services: []registry.Service{
-			{Name: "new-svc", Type: registry.TypeProxy, Target: "localhost:9000"},
+			{Name: "new-svc", Type: registry.TypeProxy, Target: "http://localhost:9000"},
 		},
 	})
 	msg := Message{

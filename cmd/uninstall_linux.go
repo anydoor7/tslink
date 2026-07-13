@@ -30,8 +30,9 @@ To check if the service is still active after removal:
 If you enabled lingering only for TSLink, disable it after uninstall:
   loginctl disable-linger "$USER"
 
-Examples:
-  tslink uninstall              Remove the systemd user service`,
+	Examples:
+	  tslink uninstall              Remove the systemd user service`,
+	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		servicePath, err := systemdServicePath()
 		if err != nil {

@@ -26,9 +26,11 @@ import (
 )
 
 const (
-	doctorStatusOK      = "ok"
-	doctorStatusWarning = "warning"
-	doctorStatusError   = "error"
+	doctorStatusOK           = "healthy"
+	doctorStatusWarning      = "warning"
+	doctorStatusError        = "error"
+	doctorStatusCritical     = "critical"
+	doctorExecutionCompleted = "completed"
 
 	doctorSeverityInfo     = "info"
 	doctorSeverityWarning  = "warning"
@@ -77,7 +79,10 @@ type doctorOptions struct {
 
 type DoctorResult struct {
 	SchemaVersion   string                      `json:"schema_version"`
+	ExecutionStatus string                      `json:"execution_status"`
 	Status          string                      `json:"status"`
+	HealthStatus    string                      `json:"health_status"`
+	HealthExitCode  int                         `json:"health_exit_code"`
 	Counts          DoctorCounts                `json:"counts"`
 	Paths           DoctorPaths                 `json:"paths"`
 	CredentialMode  string                      `json:"credential_mode"`
@@ -135,10 +140,13 @@ func runDoctor(out io.Writer, opts doctorOptions, isJSON bool) error {
 
 func buildDoctorResult(opts doctorOptions) DoctorResult {
 	result := DoctorResult{
-		SchemaVersion:  inspect.SchemaVersion,
-		Status:         doctorStatusOK,
-		CredentialMode: doctorCredentialNone,
-		Findings:       []DoctorFinding{},
+		SchemaVersion:   inspect.SchemaVersion,
+		ExecutionStatus: doctorExecutionCompleted,
+		Status:          doctorStatusOK,
+		HealthStatus:    doctorStatusOK,
+		HealthExitCode:  output.ExitSuccess,
+		CredentialMode:  doctorCredentialNone,
+		Findings:        []DoctorFinding{},
 		RuntimeSnapshot: StatusRuntimeSnapshotResult{
 			Status: "unknown",
 		},
@@ -161,8 +169,6 @@ func buildDoctorResult(opts doctorOptions) DoctorResult {
 			}
 		}
 	}
-
-	diagnoseDaemon(&result)
 
 	var reg *registry.Registry
 	var fingerprint string
@@ -200,7 +206,13 @@ func buildDoctorResult(opts doctorOptions) DoctorResult {
 		)
 	}
 
-	if result.Paths.RuntimeSnapshot != "" && fingerprint != "" {
+	serviceCount := 0
+	if reg != nil {
+		serviceCount = len(reg.Services)
+	}
+	diagnoseDaemon(&result, serviceCount)
+
+	if reg != nil && (serviceCount > 0 || result.Daemon.Running) && result.Paths.RuntimeSnapshot != "" && fingerprint != "" {
 		diagnoseRuntimeSnapshot(&result, fingerprint)
 	}
 
@@ -305,11 +317,14 @@ func doctorLegacyAuthKeyConfigured() (bool, error) {
 	return strings.TrimSpace(string(data)) != "", nil
 }
 
-func diagnoseDaemon(result *DoctorResult) {
+func diagnoseDaemon(result *DoctorResult, serviceCount int) {
 	if result.Paths.PID == "" {
 		return
 	}
 	if !isRunningFn(result.Paths.PID) {
+		if serviceCount == 0 {
+			return
+		}
 		result.addFinding(inspect.WarningCodeDaemonNotRunning, "", "daemon", "TSLink daemon is not running.", nil)
 		return
 	}
@@ -605,12 +620,22 @@ func (r *DoctorResult) finalize() {
 		}
 	}
 	switch {
-	case r.Counts.Errors > 0 || r.Counts.Critical > 0:
+	case r.Counts.Critical > 0:
+		r.Status = doctorStatusCritical
+		r.HealthStatus = doctorStatusCritical
+		r.HealthExitCode = output.ExitCritical
+	case r.Counts.Errors > 0:
 		r.Status = doctorStatusError
+		r.HealthStatus = doctorStatusError
+		r.HealthExitCode = output.ExitCritical
 	case r.Counts.Warnings > 0:
 		r.Status = doctorStatusWarning
+		r.HealthStatus = doctorStatusWarning
+		r.HealthExitCode = output.ExitWarning
 	default:
 		r.Status = doctorStatusOK
+		r.HealthStatus = doctorStatusOK
+		r.HealthExitCode = output.ExitSuccess
 	}
 }
 

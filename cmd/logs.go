@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -21,6 +22,15 @@ type LogsResult struct {
 
 // Testable function variable for logs command
 var logsLogDirFn = config.LogDir
+
+func validLogLevel(level string) bool {
+	switch strings.ToUpper(strings.TrimSpace(level)) {
+	case "", "DEBUG", "INFO", "WARN", "ERROR":
+		return true
+	default:
+		return false
+	}
+}
 
 // tailFile reads the last N lines from a file, optionally filtering by log level.
 func tailFile(path string, last int, level string) ([]string, error) {
@@ -56,41 +66,82 @@ func tailFile(path string, last int, level string) ([]string, error) {
 	return allLines, nil
 }
 
-// matchLevel checks if a log line contains the given level or higher.
-// Supports slog text format (level=WARN) and JSON format ("level":"WARN").
+// matchLevel checks the structured producer level field against a threshold.
+// It accepts slog text format (level=WARN) and slog JSON format
+// ("level":"WARN") while ignoring user-controlled message fields.
 func matchLevel(line, level string) bool {
 	level = strings.ToUpper(level)
 
-	levels := map[string]int{
-		"DEBUG": 0,
-		"INFO":  1,
-		"WARN":  2,
-		"ERROR": 3,
-	}
-
-	threshold, ok := levels[level]
+	threshold, ok := logLevelValue(level)
 	if !ok {
-		return true // unknown level, show everything
+		return false
 	}
 
-	// Check for slog text format: level=WARN or level=ERROR etc.
-	// Check for JSON format: "level":"WARN"
-	upper := strings.ToUpper(line)
-	for lvl, val := range levels {
-		if val < threshold {
-			continue
-		}
-		// slog text: level=INFO or level=WARN
-		if strings.Contains(upper, "LEVEL="+lvl) {
-			return true
-		}
-		// JSON: "level":"INFO"
-		if strings.Contains(upper, `"LEVEL":"`+lvl+`"`) {
-			return true
+	actual, ok := extractLogLevel(line)
+	if !ok {
+		return false
+	}
+	actualValue, ok := logLevelValue(actual)
+	return ok && actualValue >= threshold
+}
+
+func logLevelValue(level string) (int, bool) {
+	switch strings.ToUpper(strings.TrimSpace(level)) {
+	case "DEBUG":
+		return 0, true
+	case "INFO":
+		return 1, true
+	case "WARN":
+		return 2, true
+	case "ERROR":
+		return 3, true
+	default:
+		return 0, false
+	}
+}
+
+func extractLogLevel(line string) (string, bool) {
+	trimmed := strings.TrimSpace(line)
+	if strings.HasPrefix(trimmed, "{") {
+		var fields map[string]any
+		if err := json.Unmarshal([]byte(trimmed), &fields); err == nil {
+			if level, ok := fields["level"].(string); ok {
+				return strings.ToUpper(strings.TrimSpace(level)), true
+			}
 		}
 	}
+	return extractTextLogLevel(line)
+}
 
-	return false
+func extractTextLogLevel(line string) (string, bool) {
+	inQuote := false
+	escaped := false
+	tokenStart := 0
+	for i := 0; i <= len(line); i++ {
+		end := i == len(line)
+		if !end {
+			ch := line[i]
+			if inQuote && escaped {
+				escaped = false
+			} else if inQuote && ch == '\\' {
+				escaped = true
+			} else if ch == '"' {
+				inQuote = !inQuote
+			}
+			if !end && (inQuote || ch != ' ' && ch != '\t') {
+				continue
+			}
+		}
+		if tokenStart < i {
+			token := line[tokenStart:i]
+			if strings.HasPrefix(token, "level=") {
+				level := strings.Trim(strings.TrimPrefix(token, "level="), `"`)
+				return strings.ToUpper(level), true
+			}
+		}
+		tokenStart = i + 1
+	}
+	return "", false
 }
 
 func init() {
@@ -113,6 +164,9 @@ Examples:
 			last, _ := cmd.Flags().GetInt("last")
 			level, _ := cmd.Flags().GetString("level")
 			source, _ := cmd.Flags().GetString("source")
+			if !validLogLevel(level) {
+				return output.ErrUsage(fmt.Sprintf("invalid --level: %q (must be debug, info, warn, or error)", level))
+			}
 
 			logDir, err := logsLogDirFn()
 			if err != nil {

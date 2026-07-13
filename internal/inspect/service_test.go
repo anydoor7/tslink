@@ -97,6 +97,27 @@ func TestServiceViewsPreservesOrderAndBuildsViews(t *testing.T) {
 	}
 }
 
+func TestServiceViewForCustomDomainDoesNotPresentDomainEndpoint(t *testing.T) {
+	view := ServiceViewFor(registry.Service{
+		Name:   "web",
+		Type:   registry.TypeProxy,
+		Target: "http://localhost:3000",
+		Domain: "app.example.com",
+	})
+	if view.Endpoint.Display == "https://app.example.com" || view.Endpoint.Host == "app.example.com" {
+		t.Fatalf("endpoint = %+v, must not present custom domain as reachable", view.Endpoint)
+	}
+	if view.Endpoint.Display != "https://web.<tailnet>.ts.net" {
+		t.Fatalf("endpoint = %+v, want tailnet endpoint only", view.Endpoint)
+	}
+	if view.Exposure.Kind == ExposureCustomDomain {
+		t.Fatalf("exposure = %+v, must not present custom domain exposure", view.Exposure)
+	}
+	if len(view.Warnings) != 1 || view.Warnings[0].Code != WarningCodeCustomDomainNotWired {
+		t.Fatalf("warnings = %+v, want custom-domain unavailable warning", view.Warnings)
+	}
+}
+
 func TestServiceViewRedactsHTTPAuthCredentials(t *testing.T) {
 	view := ServiceViewFor(registry.Service{
 		Name:   "web",
@@ -262,6 +283,7 @@ func TestServiceViewWarningCodesAreRegistered(t *testing.T) {
 		WarningCodeTCPAllowedUsersInvalid,
 		WarningCodeMiddlewareNotEnforced,
 		WarningCodeServiceTypeUnknown,
+		WarningCodeCustomDomainNotWired,
 	}
 	for _, code := range required {
 		meta, ok := WarningCodeRegistry[code]
@@ -291,6 +313,12 @@ func TestServiceViewWarningCodesAreRegistered(t *testing.T) {
 		{
 			Name: "mystery",
 			Type: "udp",
+		},
+		{
+			Name:   "domain",
+			Type:   registry.TypeProxy,
+			Target: "http://localhost:3000",
+			Domain: "app.example.com",
 		},
 	}
 

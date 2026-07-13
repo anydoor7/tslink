@@ -2,11 +2,11 @@
 
 ## TSLink's Security Model
 
-TSLink is designed around zero-trust principles. Security is not an afterthought — it is a core architectural decision:
+TSLink is designed around explicit capability boundaries. The machine-readable product SSOT is `internal/security/capabilities.v1.json`; public docs and help text must stay within that manifest.
 
 - **No public internet exposure by default** — services are private to your Tailscale network unless proxy-only Funnel exposure is explicitly acknowledged
 - **Explicit public exposure guardrail** — Tailscale Funnel is proxy-only and requires an explicit `--public` / `public_ack:true` acknowledgement
-- **Tailnet WireGuard encryption** — traffic between Tailscale devices uses WireGuard; public Funnel paths follow Tailscale Funnel semantics
+- **Tailnet transport encryption** — traffic between Tailscale devices uses WireGuard; public Funnel paths follow Tailscale Funnel semantics
 - **HTTP identity verification for proxy/file requests** — Tailscale WhoIs authenticates TSLink-managed HTTP requests before identity headers are injected; raw TCP streams and public Funnel exposure are not treated as TSLink-enforced Tailscale user authentication
 - **Credential storage with restricted fallback** — API keys and OAuth client secrets are stored in macOS Keychain / Linux secret service when available, with restricted-permission file fallback for headless or unavailable-keychain environments
 - **Dynamic auth key derivation** — API-token-derived startup auth keys are generated on demand and not persisted; legacy authkey files may still be read for compatibility and should be migrated
@@ -18,6 +18,8 @@ Important boundaries:
 - `--allow` is HTTP access control for proxy and file services. Raw TCP services do not receive TSLink HTTP identity filtering; protect them with Tailscale/Headscale policy, tags, tailnet membership, and the target service's own authentication.
 - `tslink doctor`, `tslink status --urls`, and `tslink access explain` are local evidence tools. They do not prove live remote Tailscale ACL/grants, Funnel reachability, or backend application authentication unless those checks are explicitly added in the future.
 - `tslink api` is a local JSON-over-stdin/stdout interface. It is not a REST/admin server and does not create a member-facing service directory.
+- Remote Tailscale ACL mutation is disabled by default. `tslink login --manage-acl`, `tslink serve --manage-acl`, and `tslink tags delete-remote --manage-acl` opt in to typed whole-policy ACL writes with a machine-readable side-effect plan. Default login, serve, and tag flows do not rewrite shared ACL policy.
+- Per-service tsnet nodes provide network identity and routing separation. TSLink does not provide host process isolation or a compliance attestation.
 
 ## Reporting a Vulnerability
 

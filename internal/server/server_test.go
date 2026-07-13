@@ -44,6 +44,139 @@ func writeRegistry(t *testing.T, services []registry.Service) string {
 	return path
 }
 
+func TestHTTPResourceBudgetsConfigured(t *testing.T) {
+	srv := newHTTPServerFn(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	if srv.ReadHeaderTimeout != httpReadHeaderTimeout {
+		t.Fatalf("ReadHeaderTimeout = %s, want %s", srv.ReadHeaderTimeout, httpReadHeaderTimeout)
+	}
+	if srv.ReadTimeout != httpReadTimeout {
+		t.Fatalf("ReadTimeout = %s, want %s", srv.ReadTimeout, httpReadTimeout)
+	}
+	if srv.IdleTimeout != httpIdleTimeout {
+		t.Fatalf("IdleTimeout = %s, want %s", srv.IdleTimeout, httpIdleTimeout)
+	}
+	if srv.MaxHeaderBytes != httpMaxHeaderBytes {
+		t.Fatalf("MaxHeaderBytes = %d, want %d", srv.MaxHeaderBytes, httpMaxHeaderBytes)
+	}
+	if srv.WriteTimeout != 0 {
+		t.Fatalf("WriteTimeout = %s, want 0 to preserve streaming responses", srv.WriteTimeout)
+	}
+}
+
+func TestResourceBudgetMiddlewareRejectsOversizedBody(t *testing.T) {
+	called := false
+	handler := ResourceBudgetMiddleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		called = true
+	}))
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(""))
+	req.ContentLength = httpMaxRequestBytes + 1
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if called {
+		t.Fatal("inner handler called for oversized body")
+	}
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusRequestEntityTooLarge)
+	}
+}
+
+func TestResourceBudgetMiddlewarePreservesFlusher(t *testing.T) {
+	handler := ResourceBudgetMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := w.(http.Flusher); !ok {
+			t.Fatal("ResponseWriter lost http.Flusher support")
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNoContent)
+	}
+}
+
+func TestLimitedListenerClosesConnectionsOverLimit(t *testing.T) {
+	raw, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen() error = %v", err)
+	}
+	defer raw.Close()
+	limited := newLimitedListener(raw, 1, "test", "svc")
+
+	accepted := make(chan net.Conn, 1)
+	acceptErr := make(chan error, 1)
+	go func() {
+		conn, err := limited.Accept()
+		if err != nil {
+			acceptErr <- err
+			return
+		}
+		accepted <- conn
+	}()
+	firstClient, err := net.Dial("tcp", raw.Addr().String())
+	if err != nil {
+		t.Fatalf("first Dial() error = %v", err)
+	}
+	defer firstClient.Close()
+	var firstServer net.Conn
+	select {
+	case firstServer = <-accepted:
+		defer firstServer.Close()
+	case err := <-acceptErr:
+		t.Fatalf("first Accept() error = %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("first Accept() timed out")
+	}
+
+	secondAccepted := make(chan net.Conn, 1)
+	secondAcceptErr := make(chan error, 1)
+	go func() {
+		conn, err := limited.Accept()
+		if err != nil {
+			secondAcceptErr <- err
+			return
+		}
+		secondAccepted <- conn
+	}()
+
+	secondClient, err := net.Dial("tcp", raw.Addr().String())
+	if err != nil {
+		t.Fatalf("second Dial() error = %v", err)
+	}
+	defer secondClient.Close()
+	if err := secondClient.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatalf("SetReadDeadline() error = %v", err)
+	}
+	buf := make([]byte, 1)
+	if _, err := secondClient.Read(buf); err == nil {
+		t.Fatal("second connection remained open over listener limit")
+	} else {
+		var netErr net.Error
+		if errors.As(err, &netErr) && netErr.Timeout() {
+			t.Fatalf("second connection read timed out; connection was not closed over limit: %v", err)
+		}
+	}
+	select {
+	case conn := <-secondAccepted:
+		conn.Close()
+		t.Fatal("second Accept returned a connection despite full limit")
+	default:
+	}
+	_ = raw.Close()
+	select {
+	case <-secondAcceptErr:
+	case conn := <-secondAccepted:
+		conn.Close()
+		t.Fatal("second Accept returned a connection after listener close")
+	case <-time.After(2 * time.Second):
+		t.Fatal("second Accept did not unblock after listener close")
+	}
+}
+
 func newNode(t *testing.T, svc registry.Service) *ServiceNode {
 	t.Helper()
 
@@ -87,10 +220,15 @@ func (l *fakeListener) Close() error {
 }
 
 type fakeTSNetServer struct {
-	upErr       error
-	closed      bool
-	certDomains []string
-	dnsName     string
+	upErr             error
+	listenErr         error
+	listenTLSErr      error
+	closed            bool
+	certDomains       []string
+	dnsName           string
+	listenCalled      int
+	listenTLSCalled   int
+	localClientCalled int
 }
 
 func (s *fakeTSNetServer) Up(context.Context) (*ipnstate.Status, error) {
@@ -105,10 +243,18 @@ func (s *fakeTSNetServer) Up(context.Context) (*ipnstate.Status, error) {
 }
 
 func (s *fakeTSNetServer) Listen(network, addr string) (net.Listener, error) {
+	s.listenCalled++
+	if s.listenErr != nil {
+		return nil, s.listenErr
+	}
 	return &fakeListener{}, nil
 }
 
 func (s *fakeTSNetServer) ListenTLS(network, addr string) (net.Listener, error) {
+	s.listenTLSCalled++
+	if s.listenTLSErr != nil {
+		return nil, s.listenTLSErr
+	}
 	return &fakeListener{}, nil
 }
 
@@ -117,6 +263,7 @@ func (s *fakeTSNetServer) ListenFunnel(network, addr string, opts ...tsnet.Funne
 }
 
 func (s *fakeTSNetServer) LocalClient() (*LocalClient, error) {
+	s.localClientCalled++
 	return nil, errors.New("local client unavailable")
 }
 
@@ -622,6 +769,99 @@ func TestStartNodeLocked_UsesPerServiceAuthKeyProvider(t *testing.T) {
 	}
 }
 
+func TestSecuritySemantics_FileNoAllowStartsWithoutWhoIsDependency(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	fake := &fakeTSNetServer{}
+	oldNew := newTSNetServerFn
+	newTSNetServerFn = func(svc registry.Service, stateDir, authKey, controlURL string) tsnetServer {
+		return fake
+	}
+	t.Cleanup(func() { newTSNetServerFn = oldNew })
+
+	err = s.startNodeLocked(context.Background(), registry.Service{
+		Name: "files", Type: registry.TypeFile, Path: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("startNodeLocked() error = %v", err)
+	}
+	if fake.localClientCalled != 0 {
+		t.Fatalf("LocalClient called %d times, want none for file/no-allow", fake.localClientCalled)
+	}
+	if fake.listenTLSCalled != 1 {
+		t.Fatalf("ListenTLS called %d times, want one HTTPS file listener", fake.listenTLSCalled)
+	}
+}
+
+func TestSecuritySemantics_FileAllowFailsClosedWhenWhoIsUnavailable(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	fake := &fakeTSNetServer{}
+	oldNew := newTSNetServerFn
+	newTSNetServerFn = func(svc registry.Service, stateDir, authKey, controlURL string) tsnetServer {
+		return fake
+	}
+	t.Cleanup(func() { newTSNetServerFn = oldNew })
+
+	err = s.startNodeLocked(context.Background(), registry.Service{
+		Name: "files", Type: registry.TypeFile, Path: t.TempDir(), AllowedUsers: []string{"alice@example.com"},
+	})
+	if err == nil {
+		t.Fatal("startNodeLocked() error = nil, want LocalClient failure before listener")
+	}
+	if !strings.Contains(err.Error(), "local client") {
+		t.Fatalf("error = %v, want local client context", err)
+	}
+	if fake.listenTLSCalled != 0 {
+		t.Fatalf("ListenTLS called %d times, want no listener on file/allow identity failure", fake.listenTLSCalled)
+	}
+}
+
+func TestSecuritySemantics_RawTCPBypassesHTTPIdentityAndTLSMiddleware(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	fake := &fakeTSNetServer{}
+	oldNew := newTSNetServerFn
+	newTSNetServerFn = func(svc registry.Service, stateDir, authKey, controlURL string) tsnetServer {
+		return fake
+	}
+	t.Cleanup(func() { newTSNetServerFn = oldNew })
+
+	err = s.startNodeLocked(context.Background(), registry.Service{
+		Name: "db", Type: registry.TypeTCP, Target: "localhost:5432", Port: 5432,
+	})
+	if err != nil {
+		t.Fatalf("startNodeLocked() error = %v", err)
+	}
+	if fake.listenCalled != 1 || fake.listenTLSCalled != 0 || fake.localClientCalled != 0 {
+		t.Fatalf("raw tcp calls: Listen=%d ListenTLS=%d LocalClient=%d, want raw Listen only", fake.listenCalled, fake.listenTLSCalled, fake.localClientCalled)
+	}
+}
+
 func TestStartNodeLocked_UsesEffectiveControlURL(t *testing.T) {
 	tests := []struct {
 		name              string
@@ -833,11 +1073,11 @@ func TestStartNodeLocked_InvalidTagIncludesServiceContext(t *testing.T) {
 	if err == nil {
 		t.Fatal("startNodeLocked() error = nil, want invalid tag error")
 	}
-	if !strings.Contains(err.Error(), `service "legacy" has invalid tag "tag:Bad"`) {
+	if !strings.Contains(err.Error(), `service "legacy": invalid tag "tag:Bad"`) {
 		t.Fatalf("error = %v, want service/tag context", err)
 	}
-	if !strings.Contains(err.Error(), "tag:<lowercase-hyphen-name>") || !strings.Contains(err.Error(), "tslink tags set legacy") {
-		t.Fatalf("error = %v, want grammar and migration action", err)
+	if !strings.Contains(err.Error(), "tag:<lowercase-hyphen-name>") || !strings.Contains(err.Error(), "edit registry.json") {
+		t.Fatalf("error = %v, want grammar and registry remediation", err)
 	}
 }
 
@@ -1148,19 +1388,16 @@ func TestStartNodeLocked_FunnelLogsWarningBeforeListenFunnel(t *testing.T) {
 	}
 }
 
-func TestStartNodeLocked_MiddlewareConfigLogsNotEnforcedWarning(t *testing.T) {
+func TestStartNodeLocked_MiddlewareConfigFailsBeforeTSNet(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
 
-	var logBuf bytes.Buffer
-	oldLogger := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, nil)))
-	t.Cleanup(func() { slog.SetDefault(oldLogger) })
-
+	var constructed atomic.Int32
 	oldNew := newTSNetServerFn
 	newTSNetServerFn = func(svc registry.Service, stateDir, authKey, controlURL string) tsnetServer {
+		constructed.Add(1)
 		return &fakeTSNetServer{}
 	}
 	t.Cleanup(func() { newTSNetServerFn = oldNew })
@@ -1179,29 +1416,28 @@ func TestStartNodeLocked_MiddlewareConfigLogsNotEnforcedWarning(t *testing.T) {
 			BasicAuth: "user:pass",
 		},
 	})
-	if err != nil {
-		t.Fatalf("startNodeLocked() error = %v", err)
+	if err == nil {
+		t.Fatal("startNodeLocked() error = nil, want middleware unavailable error")
 	}
-	logs := logBuf.String()
-	if !strings.Contains(logs, "middleware configured but not enforced") || !strings.Contains(logs, "NOT enforced") {
-		t.Fatalf("logs = %s, want middleware not-enforced warning", logs)
+	if !strings.Contains(err.Error(), "middleware runtime is not wired") {
+		t.Fatalf("startNodeLocked() error = %v, want middleware unavailable error", err)
+	}
+	if got := constructed.Load(); got != 0 {
+		t.Fatalf("tsnet constructions = %d, want 0", got)
 	}
 }
 
-func TestStartNodeLocked_CustomDomainLogsTLSNotWiredWarning(t *testing.T) {
+func TestStartNodeLocked_CustomDomainFailsBeforeTSNet(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
 
-	var logBuf bytes.Buffer
-	oldLogger := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, nil)))
-	t.Cleanup(func() { slog.SetDefault(oldLogger) })
-
+	var constructed atomic.Int32
 	oldNew := newTSNetServerFn
 	newTSNetServerFn = func(svc registry.Service, stateDir, authKey, controlURL string) tsnetServer {
-		return &funnelWarningTSNetServer{t: t, logBuf: &logBuf}
+		constructed.Add(1)
+		return &fakeTSNetServer{}
 	}
 	t.Cleanup(func() { newTSNetServerFn = oldNew })
 
@@ -1218,12 +1454,14 @@ func TestStartNodeLocked_CustomDomainLogsTLSNotWiredWarning(t *testing.T) {
 		Domain:    "app.example.com",
 		AcmeEmail: "admin@example.com",
 	})
-	if err != nil {
-		t.Fatalf("startNodeLocked() error = %v", err)
+	if err == nil {
+		t.Fatal("startNodeLocked() error = nil, want custom-domain/ACME unavailable error")
 	}
-	logs := logBuf.String()
-	if !strings.Contains(logs, "custom domain configured but runtime TLS is not wired") || !strings.Contains(logs, "roadmap") {
-		t.Fatalf("logs = %s, want custom-domain TLS warning", logs)
+	if !strings.Contains(err.Error(), "custom-domain/ACME runtime is not wired") {
+		t.Fatalf("startNodeLocked() error = %v, want custom-domain/ACME unavailable error", err)
+	}
+	if got := constructed.Load(); got != 0 {
+		t.Fatalf("tsnet constructions = %d, want 0", got)
 	}
 }
 
@@ -1262,6 +1500,87 @@ func TestSyncNodes_ContextCancelledPreventsStartingNode(t *testing.T) {
 	}
 	if len(s.nodes) != 0 {
 		t.Fatalf("nodes = %d, want 0", len(s.nodes))
+	}
+}
+
+func TestSyncNodesRejectsStaleGenerationCommit(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+	oldRoot := t.TempDir()
+	newRoot := t.TempDir()
+	oldReg := &registry.Registry{SchemaVersion: registry.CurrentRegistrySchemaVersion, Services: []registry.Service{{
+		Name: "old", Type: registry.TypeFile, Path: oldRoot,
+	}}}
+	newReg := &registry.Registry{SchemaVersion: registry.CurrentRegistrySchemaVersion, Services: []registry.Service{{
+		Name: "new", Type: registry.TypeFile, Path: newRoot,
+	}}}
+
+	var loadCount atomic.Int32
+	oldLoad := registryLoadFn
+	registryLoadFn = func(string) (*registry.Registry, error) {
+		if loadCount.Add(1) == 1 {
+			return oldReg, nil
+		}
+		return newReg, nil
+	}
+	t.Cleanup(func() { registryLoadFn = oldLoad })
+
+	firstDesiredLoaded := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	oldAfterDesired := afterDesiredLoadedFn
+	afterDesiredLoadedFn = func(ctx context.Context, generation uint64) error {
+		if generation == 1 {
+			close(firstDesiredLoaded)
+			select {
+			case <-releaseFirst:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+		return nil
+	}
+	t.Cleanup(func() { afterDesiredLoadedFn = oldAfterDesired })
+
+	oldNew := newTSNetServerFn
+	newTSNetServerFn = func(svc registry.Service, stateDir, authKey, controlURL string) tsnetServer {
+		return &fakeTSNetServer{certDomains: []string{svc.Name + ".tailnet.ts.net"}}
+	}
+	t.Cleanup(func() { newTSNetServerFn = oldNew })
+
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(s.closeAllNodes)
+
+	firstDone := make(chan error, 1)
+	go func() { firstDone <- s.syncNodes(context.Background()) }()
+	select {
+	case <-firstDesiredLoaded:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first generation did not reach desired-state barrier")
+	}
+
+	if err := s.syncNodes(context.Background()); err != nil {
+		t.Fatalf("second syncNodes() error = %v", err)
+	}
+	close(releaseFirst)
+	select {
+	case err := <-firstDone:
+		if err != nil {
+			t.Fatalf("first syncNodes() error = %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("first syncNodes() did not finish")
+	}
+
+	if _, ok := s.nodes["new"]; !ok {
+		t.Fatalf("nodes = %+v, want newer generation service", s.nodes)
+	}
+	if _, ok := s.nodes["old"]; ok {
+		t.Fatalf("nodes = %+v, stale generation committed old service", s.nodes)
 	}
 }
 
@@ -1533,7 +1852,7 @@ func TestSyncNodes_UpdatesRuntimeSnapshotFingerprintAfterSuccessfulReload(t *tes
 	}
 	t.Cleanup(func() { newTSNetServerFn = oldNew })
 
-	regPath := writeRegistry(t, []registry.Service{
+	writeRegistry(t, []registry.Service{
 		{Name: "files", Type: registry.TypeFile, Path: t.TempDir()},
 	})
 	s, err := New("key", "")
@@ -1552,7 +1871,7 @@ func TestSyncNodes_UpdatesRuntimeSnapshotFingerprintAfterSuccessfulReload(t *tes
 		t.Fatalf("initial runtime Load() error = %v", err)
 	}
 
-	regPath = writeRegistry(t, []registry.Service{
+	regPath := writeRegistry(t, []registry.Service{
 		{Name: "files", Type: registry.TypeFile, Path: t.TempDir()},
 	})
 	if err := s.syncNodes(context.Background()); err != nil {
@@ -2016,6 +2335,9 @@ func TestWatchRegistry_ReactsToCreate(t *testing.T) {
 
 func TestRun(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
 
 	s, err := New("key", "")
 	if err != nil {
@@ -2054,6 +2376,281 @@ func TestRun_InitialSyncFailureReturnsError(t *testing.T) {
 
 	if err := s.Run(context.Background()); err == nil || !strings.Contains(err.Error(), "initial sync failed") {
 		t.Fatalf("Run() error = %v, want initial sync failure", err)
+	}
+}
+
+func TestSyncNodesRejectsMalformedPersistedServicesBeforeTSNetSideEffects(t *testing.T) {
+	fileAsPath := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(fileAsPath, []byte("not a directory"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	missingPath := filepath.Join(t.TempDir(), "missing")
+
+	cases := []registry.Service{
+		{Name: "unknown", Type: "websocket", Target: "http://localhost:3000"},
+		{Name: "file-empty", Type: registry.TypeFile},
+		{Name: "file-relative", Type: registry.TypeFile, Path: "relative"},
+		{Name: "file-missing", Type: registry.TypeFile, Path: missingPath},
+		{Name: "file-notdir", Type: registry.TypeFile, Path: fileAsPath},
+		{Name: "proxy-hostless", Type: registry.TypeProxy, Target: "https:///app"},
+		{Name: "proxy-relative", Type: registry.TypeProxy, Target: "localhost:3000"},
+		{Name: "proxy-unsupported", Type: registry.TypeProxy, Target: "ftp://example.com"},
+		{Name: "tcp-hostless", Type: registry.TypeTCP, Target: ":5432", Port: 5432},
+		{Name: "tcp-nonnum", Type: registry.TypeTCP, Target: "localhost:abc"},
+		{Name: "domain", Type: registry.TypeProxy, Target: "http://localhost:3000", Domain: "app.example.com"},
+	}
+
+	for _, svc := range cases {
+		t.Run(svc.Name, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			if err := config.EnsureDir(); err != nil {
+				t.Fatalf("EnsureDir() error = %v", err)
+			}
+			writeRegistry(t, []registry.Service{svc})
+
+			var constructed atomic.Int32
+			oldNew := newTSNetServerFn
+			newTSNetServerFn = func(svc registry.Service, stateDir, authKey, controlURL string) tsnetServer {
+				constructed.Add(1)
+				return &fakeTSNetServer{}
+			}
+			t.Cleanup(func() { newTSNetServerFn = oldNew })
+
+			s, err := New("key", "")
+			if err != nil {
+				t.Fatalf("New() error = %v", err)
+			}
+			if err := s.syncNodes(context.Background()); err == nil {
+				t.Fatal("syncNodes() error = nil, want validation error")
+			}
+			if got := constructed.Load(); got != 0 {
+				t.Fatalf("tsnet constructions = %d, want 0", got)
+			}
+			if len(s.nodes) != 0 {
+				t.Fatalf("running nodes = %d, want 0", len(s.nodes))
+			}
+		})
+	}
+}
+
+func TestRunWatcherReadyBeforeInitialSyncAddConvergesWithoutLaterEvent(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+	regPath, err := config.RegistryPath()
+	if err != nil {
+		t.Fatalf("RegistryPath() error = %v", err)
+	}
+
+	svc := registry.Service{Name: "added", Type: registry.TypeFile, Path: t.TempDir()}
+	oldBefore := beforeInitialSyncFn
+	beforeInitialSyncFn = func(context.Context) error {
+		_, err := registry.Add(regPath, svc)
+		return err
+	}
+	t.Cleanup(func() { beforeInitialSyncFn = oldBefore })
+
+	var constructed atomic.Int32
+	oldNew := newTSNetServerFn
+	newTSNetServerFn = func(svc registry.Service, stateDir, authKey, controlURL string) tsnetServer {
+		constructed.Add(1)
+		return &fakeTSNetServer{certDomains: []string{svc.Name + ".tailnet.ts.net"}}
+	}
+	t.Cleanup(func() { newTSNetServerFn = oldNew })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	var snapshotServices []runtimesnapshot.ServiceSnapshot
+	s.SetReadyFunc(func() error {
+		snapshotPath, err := runtimeSnapshotPathFn()
+		if err != nil {
+			return err
+		}
+		snapshot, err := runtimesnapshot.Load(snapshotPath)
+		if err != nil {
+			return err
+		}
+		snapshotServices = append([]runtimesnapshot.ServiceSnapshot(nil), snapshot.Services...)
+		cancel()
+		return nil
+	})
+
+	if err := s.Run(ctx); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got := constructed.Load(); got != 1 {
+		t.Fatalf("tsnet constructions = %d, want 1", got)
+	}
+
+	if len(snapshotServices) != 1 || snapshotServices[0].Name != "added" {
+		t.Fatalf("snapshot services = %+v, want only added", snapshotServices)
+	}
+}
+
+func TestRunMarksReadyWithZeroServicesAfterAuthoritativeSync(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+
+	var constructed atomic.Int32
+	oldNew := newTSNetServerFn
+	newTSNetServerFn = func(svc registry.Service, stateDir, authKey, controlURL string) tsnetServer {
+		constructed.Add(1)
+		return &fakeTSNetServer{}
+	}
+	t.Cleanup(func() { newTSNetServerFn = oldNew })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	readyCalled := false
+	s.SetReadyFunc(func() error {
+		readyCalled = true
+		snapshotPath, err := runtimeSnapshotPathFn()
+		if err != nil {
+			return err
+		}
+		snapshot, err := runtimesnapshot.Load(snapshotPath)
+		if err != nil {
+			return err
+		}
+		if len(snapshot.Services) != 0 {
+			return fmt.Errorf("snapshot services = %+v, want empty", snapshot.Services)
+		}
+		cancel()
+		return nil
+	})
+
+	if err := s.Run(ctx); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !readyCalled {
+		t.Fatal("ready callback was not called")
+	}
+	if got := constructed.Load(); got != 0 {
+		t.Fatalf("tsnet constructions = %d, want 0", got)
+	}
+}
+
+func TestRunWatcherReadyBeforeInitialSyncRemoveConvergesWithoutLaterEvent(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+	regPath, err := config.RegistryPath()
+	if err != nil {
+		t.Fatalf("RegistryPath() error = %v", err)
+	}
+	if _, err := registry.Add(regPath, registry.Service{Name: "removed", Type: registry.TypeFile, Path: t.TempDir()}); err != nil {
+		t.Fatalf("registry.Add() error = %v", err)
+	}
+
+	oldBefore := beforeInitialSyncFn
+	beforeInitialSyncFn = func(context.Context) error {
+		_, err := registry.Remove(regPath, "removed")
+		return err
+	}
+	t.Cleanup(func() { beforeInitialSyncFn = oldBefore })
+
+	var constructed atomic.Int32
+	oldNew := newTSNetServerFn
+	newTSNetServerFn = func(svc registry.Service, stateDir, authKey, controlURL string) tsnetServer {
+		constructed.Add(1)
+		return &fakeTSNetServer{}
+	}
+	t.Cleanup(func() { newTSNetServerFn = oldNew })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	var snapshotServices []runtimesnapshot.ServiceSnapshot
+	s.SetReadyFunc(func() error {
+		snapshotPath, err := runtimeSnapshotPathFn()
+		if err != nil {
+			return err
+		}
+		snapshot, err := runtimesnapshot.Load(snapshotPath)
+		if err != nil {
+			return err
+		}
+		snapshotServices = append([]runtimesnapshot.ServiceSnapshot(nil), snapshot.Services...)
+		cancel()
+		return nil
+	})
+
+	if err := s.Run(ctx); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got := constructed.Load(); got != 0 {
+		t.Fatalf("tsnet constructions = %d, want 0", got)
+	}
+
+	if len(snapshotServices) != 0 {
+		t.Fatalf("snapshot services = %+v, want empty", snapshotServices)
+	}
+}
+
+func TestRunWatcherAddFailureReturnsStartupError(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	s.cfgDir = filepath.Join(t.TempDir(), "missing")
+
+	err = s.Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "registry watcher setup failed") {
+		t.Fatalf("Run() error = %v, want watcher setup failure", err)
+	}
+}
+
+func TestRunDoesNotMarkReadyOnListenerFailure(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+	writeRegistry(t, []registry.Service{{
+		Name:   "db",
+		Type:   registry.TypeTCP,
+		Target: "localhost:5432",
+		Port:   5432,
+	}})
+
+	oldNew := newTSNetServerFn
+	newTSNetServerFn = func(svc registry.Service, stateDir, authKey, controlURL string) tsnetServer {
+		return &fakeTSNetServer{listenErr: errors.New("listen denied")}
+	}
+	t.Cleanup(func() { newTSNetServerFn = oldNew })
+
+	readyCalled := false
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	s.SetReadyFunc(func() error {
+		readyCalled = true
+		return nil
+	})
+
+	err = s.Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), `start service "db"`) {
+		t.Fatalf("Run() error = %v, want listener startup failure", err)
+	}
+	if readyCalled {
+		t.Fatal("ready callback was called despite listener failure")
 	}
 }
 
@@ -2734,7 +3331,7 @@ func TestSyncNodes_EnsureTagsCalledOnNewService(t *testing.T) {
 	}
 
 	writeRegistry(t, []registry.Service{
-		{Name: "newapp", Type: "proxy", Target: "localhost:3000", Tags: []string{"tag:tsmain", "tag:shared"}},
+		{Name: "newapp", Type: "proxy", Target: "http://localhost:3000", Tags: []string{"tag:tsmain", "tag:shared"}},
 	})
 
 	s, err := New("key", "")
@@ -2763,7 +3360,7 @@ func TestSyncNodes_EnsureTagsNotCalledWhenNil(t *testing.T) {
 	}
 
 	writeRegistry(t, []registry.Service{
-		{Name: "app", Type: "proxy", Target: "localhost:3000", Tags: []string{"tag:tsmain"}},
+		{Name: "app", Type: "proxy", Target: "http://localhost:3000", Tags: []string{"tag:tsmain"}},
 	})
 
 	s, err := New("key", "")
@@ -2782,7 +3379,7 @@ func TestSyncNodes_EnsureTagsErrorLogged(t *testing.T) {
 	}
 
 	writeRegistry(t, []registry.Service{
-		{Name: "app", Type: "proxy", Target: "localhost:3000", Tags: []string{"tag:tsmain"}},
+		{Name: "app", Type: "proxy", Target: "http://localhost:3000", Tags: []string{"tag:tsmain"}},
 	})
 
 	s, err := New("key", "")

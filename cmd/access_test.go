@@ -71,7 +71,7 @@ func runAccessExplainWithRawServices(t *testing.T, serviceName string, isJSON bo
 func decodeAccessExplainJSON(t *testing.T, raw string) AccessExplainResult {
 	t.Helper()
 
-	assertExactTopLevelJSONKeys(t, raw, "ok", "schema_version", "command", "code", "data")
+	assertExactTopLevelJSONKeys(t, raw, "type", "ok", "schema_version", "command", "code", "data")
 	var envelope output.Result
 	if err := json.Unmarshal([]byte(raw), &envelope); err != nil {
 		t.Fatalf("unmarshal access explain envelope: %v\nraw: %s", err, raw)
@@ -197,41 +197,30 @@ func TestAccessExplainBackendDisplayRedactsSchemelessSecrets(t *testing.T) {
 		wantPort           string
 	}{
 		{
-			name: "schemeless proxy target",
+			name: "proxy target with query secret",
 			svc: registry.Service{
 				Name:   "web",
 				Type:   registry.TypeProxy,
-				Target: "localhost:3000?token=abc#frag",
+				Target: "http://localhost:3000?token=abc#frag",
 			},
-			wantDisplay:        "localhost:3000",
+			wantDisplay:        "http://localhost:3000",
 			forbidden:          []string{"token=abc", "#frag"},
 			wantClassification: "loopback_or_local",
 			wantHost:           "localhost",
 			wantPort:           "3000",
 		},
 		{
-			name: "schemeless proxy userinfo target",
+			name: "proxy userinfo target",
 			svc: registry.Service{
 				Name:   "web",
 				Type:   registry.TypeProxy,
-				Target: "user:pass@localhost:5432",
+				Target: "http://user:pass@localhost:5432",
 			},
-			wantDisplay:        "localhost:5432",
+			wantDisplay:        "http://localhost:5432",
 			forbidden:          []string{"user:pass"},
 			wantClassification: "loopback_or_local",
 			wantHost:           "localhost",
 			wantPort:           "5432",
-		},
-		{
-			name: "tcp userinfo target",
-			svc: registry.Service{
-				Name:   "db",
-				Type:   registry.TypeTCP,
-				Target: "user:pass@localhost:5432",
-				Port:   5432,
-			},
-			wantDisplay: "localhost:5432",
-			forbidden:   []string{"user:pass"},
 		},
 	}
 
@@ -368,41 +357,36 @@ func TestAccessExplainFunnelMarksPublicAndPolicyUnknown(t *testing.T) {
 }
 
 func TestAccessExplainCustomDomainIncludesDNSAndCertificateCaveat(t *testing.T) {
-	_, result, err := runAccessExplainWithServices(t, "site", true, registry.Service{
+	raw, _, err := runAccessExplainWithRawServices(t, "site", true, registry.Service{
 		Name:   "site",
 		Type:   registry.TypeProxy,
 		Target: "http://localhost:3000",
 		Domain: "site.example.com",
 	})
-	if err != nil {
-		t.Fatalf("runAccessExplain JSON: %v", err)
+	if err == nil {
+		t.Fatal("runAccessExplain JSON error = nil, want feature_unavailable")
 	}
-	for _, layer := range []string{"custom domain DNS", "custom domain certificate posture"} {
-		if !stringSliceContains(result.ExternalPolicyUnknown.UnknownLayers, layer) {
-			t.Fatalf("unknown layers missing %q: %+v", layer, result.ExternalPolicyUnknown.UnknownLayers)
-		}
+	if !strings.Contains(err.Error(), registry.CodeFeatureUnavailable) {
+		t.Fatalf("runAccessExplain JSON error = %v, want feature_unavailable", err)
 	}
-	if !stringSliceContains(result.TSLinkLocalEnforcement.Notes, "Custom domain reachability depends on external DNS and certificate posture, which this command does not evaluate.") {
-		t.Fatalf("notes = %+v, want custom-domain caveat", result.TSLinkLocalEnforcement.Notes)
+	if strings.Contains(raw, "site.example.com") {
+		t.Fatalf("custom-domain failure wrote endpoint/domain output: %s", raw)
 	}
 
-	raw, _, err := runAccessExplainWithServices(t, "site", false, registry.Service{
+	raw, _, err = runAccessExplainWithRawServices(t, "site", false, registry.Service{
 		Name:   "site",
 		Type:   registry.TypeProxy,
 		Target: "http://localhost:3000",
 		Domain: "site.example.com",
 	})
-	if err != nil {
-		t.Fatalf("runAccessExplain human: %v", err)
+	if err == nil {
+		t.Fatal("runAccessExplain human error = nil, want feature_unavailable")
 	}
-	for _, required := range []string{
-		"Custom domain reachability depends on external DNS and certificate posture",
-		"custom domain DNS",
-		"custom domain certificate posture",
-	} {
-		if !strings.Contains(raw, required) {
-			t.Fatalf("human output missing %q:\n%s", required, raw)
-		}
+	if !strings.Contains(err.Error(), registry.CodeFeatureUnavailable) {
+		t.Fatalf("runAccessExplain human error = %v, want feature_unavailable", err)
+	}
+	if strings.Contains(raw, "site.example.com") {
+		t.Fatalf("custom-domain failure wrote endpoint/domain output: %s", raw)
 	}
 }
 
@@ -440,10 +424,11 @@ func TestAccessExplainTCPFunnelIncludesRawTCPCaveat(t *testing.T) {
 }
 
 func TestAccessExplainServiceWithoutAllowListSaysNoLocalAllowList(t *testing.T) {
+	dir := t.TempDir()
 	_, result, err := runAccessExplainWithServices(t, "docs", true, registry.Service{
 		Name: "docs",
 		Type: registry.TypeFile,
-		Path: "/srv/docs",
+		Path: dir,
 	})
 	if err != nil {
 		t.Fatalf("runAccessExplain: %v", err)
@@ -462,9 +447,10 @@ func TestAccessExplainServiceWithoutAllowListSaysNoLocalAllowList(t *testing.T) 
 }
 
 func TestAccessExplainExternalPolicyAndBackendAuthAlwaysPresent(t *testing.T) {
+	docsDir := t.TempDir()
 	cases := []registry.Service{
 		{Name: "web", Type: registry.TypeProxy, Target: "http://localhost:3000"},
-		{Name: "docs", Type: registry.TypeFile, Path: "/srv/docs"},
+		{Name: "docs", Type: registry.TypeFile, Path: docsDir},
 		{Name: "db", Type: registry.TypeTCP, Target: "localhost:5432", Port: 5432},
 		{Name: "public-app", Type: registry.TypeProxy, Target: "http://localhost:3000", Funnel: true, PublicAck: true},
 	}

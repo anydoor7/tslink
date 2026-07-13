@@ -30,7 +30,14 @@ func IsRunning(path string) bool {
 	if err != nil || pid <= 0 {
 		return false
 	}
+	return IsProcessRunning(pid)
+}
 
+// IsProcessRunning reports whether pid is alive and matches the current executable.
+func IsProcessRunning(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
 	handle, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
 	if err != nil {
 		return false
@@ -39,8 +46,12 @@ func IsRunning(path string) bool {
 	return verifyProcessIdentity(pid) == nil
 }
 
-// Daemonize re-launches the current binary in the background with the serve command.
-func Daemonize(outLog, errLog, controlURL string) (int, error) {
+// Daemonize re-launches the current binary in the background with the serve
+// command. controlURL and manageACL are propagated to the child so the
+// re-executed foreground `serve` observes the same opt-ins as the parent; a
+// dropped --manage-acl would silently disable the documented opt-in in daemon
+// mode.
+func Daemonize(outLog, errLog, controlURL string, manageACL bool) (int, error) {
 	exe, err := executable()
 	if err != nil {
 		return 0, fmt.Errorf("find executable: %w", err)
@@ -67,10 +78,7 @@ func Daemonize(outLog, errLog, controlURL string) (int, error) {
 	const createNewProcessGroup = 0x00000200
 	const createNoWindow = 0x08000000
 
-	args := []string{"serve"}
-	if controlURL != "" {
-		args = append(args, "--control-url", controlURL)
-	}
+	args := daemonServeArgs(controlURL, manageACL)
 
 	cmd := execCommand(exe, args...)
 	cmd.Stdout = stdout

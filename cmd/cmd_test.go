@@ -13,6 +13,18 @@ import (
 	"github.com/monody0007/tslink/internal/tailapi"
 )
 
+func resetRootJSONFlag(t *testing.T) {
+	t.Helper()
+	if err := rootCmd.PersistentFlags().Set("json", "false"); err != nil {
+		t.Fatalf("reset json flag: %v", err)
+	}
+	rootCmd.SetArgs(nil)
+	t.Cleanup(func() {
+		_ = rootCmd.PersistentFlags().Set("json", "false")
+		rootCmd.SetArgs(nil)
+	})
+}
+
 // runAddCmd finds the add command, resets all flags, sets the given flags, and runs it.
 func runAddCmd(t *testing.T, args []string, flags map[string]string) error {
 	t.Helper()
@@ -429,7 +441,7 @@ func TestAddCmd_DomainWithoutProxy(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when using --domain with --dir")
 	}
-	if !strings.Contains(err.Error(), "--domain can only be used with --proxy") {
+	if !strings.Contains(err.Error(), "custom-domain/ACME runtime is not wired") {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
@@ -437,6 +449,8 @@ func TestAddCmd_DomainWithoutProxy(t *testing.T) {
 // --- list command tests ---
 
 func TestListCmd_Empty(t *testing.T) {
+	resetRootJSONFlag(t)
+
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 
@@ -456,6 +470,8 @@ func TestListCmd_Empty(t *testing.T) {
 }
 
 func TestListCmd_WithServices(t *testing.T) {
+	resetRootJSONFlag(t)
+
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 
@@ -485,15 +501,18 @@ func TestListCmd_WithServices(t *testing.T) {
 }
 
 func TestListCmd_FileService(t *testing.T) {
+	resetRootJSONFlag(t)
+
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 
 	os.MkdirAll(filepath.Join(dir, ".config", "tslink"), 0o700)
 	regPath := filepath.Join(dir, ".config", "tslink", "registry.json")
+	shareDir := t.TempDir()
 	_, _ = registry.Add(regPath, registry.Service{
 		Name: "docs",
 		Type: registry.TypeFile,
-		Path: "/tmp/docs",
+		Path: shareDir,
 	})
 
 	listCmd, _, _ := rootCmd.Find([]string{"list"})
@@ -508,7 +527,7 @@ func TestListCmd_FileService(t *testing.T) {
 	if !strings.Contains(out, "docs") {
 		t.Errorf("expected output to contain docs, got: %s", out)
 	}
-	if !strings.Contains(out, "/tmp/docs") {
+	if !strings.Contains(out, shareDir) {
 		t.Errorf("expected output to contain path, got: %s", out)
 	}
 }
@@ -516,6 +535,8 @@ func TestListCmd_FileService(t *testing.T) {
 // --- stop command tests ---
 
 func TestStopCmd_NotRunning(t *testing.T) {
+	resetRootJSONFlag(t)
+
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 
@@ -544,7 +565,7 @@ func TestHasScheme(t *testing.T) {
 		{"http://localhost:3000", true},
 		{"https://localhost:8443", true},
 		{"localhost:3000", false},
-		{"ftp://example.com", false},
+		{"ftp://example.com", true},
 		{"", false},
 	}
 
@@ -682,8 +703,9 @@ func TestListServices_Empty(t *testing.T) {
 func TestListServices_WithServices(t *testing.T) {
 	dir := t.TempDir()
 	regPath := filepath.Join(dir, "registry.json")
+	docsDir := t.TempDir()
 	_, _ = registry.Add(regPath, registry.Service{Name: "web", Type: registry.TypeProxy, Target: "http://localhost:3000"})
-	_, _ = registry.Add(regPath, registry.Service{Name: "docs", Type: registry.TypeFile, Path: "/tmp/docs"})
+	_, _ = registry.Add(regPath, registry.Service{Name: "docs", Type: registry.TypeFile, Path: docsDir})
 
 	var buf bytes.Buffer
 	if err := listServices(regPath, &buf); err != nil {
@@ -693,7 +715,7 @@ func TestListServices_WithServices(t *testing.T) {
 	if !strings.Contains(out, "web") || !strings.Contains(out, "docs") {
 		t.Errorf("missing service names in output: %s", out)
 	}
-	if !strings.Contains(out, "/tmp/docs") {
+	if !strings.Contains(out, docsDir) {
 		t.Errorf("file service should show path: %s", out)
 	}
 }
@@ -714,7 +736,10 @@ func TestGetStatus_NotRunning(t *testing.T) {
 	dir := t.TempDir()
 	pidPath := filepath.Join(dir, "tslink.pid")
 	regPath := filepath.Join(dir, "registry.json")
-	r := getStatus(pidPath, regPath)
+	r, err := getStatus(pidPath, regPath)
+	if err != nil {
+		t.Fatalf("getStatus() error = %v", err)
+	}
 	if r.DaemonRunning {
 		t.Error("expected not running")
 	}
@@ -728,7 +753,10 @@ func TestGetStatus_WithServices(t *testing.T) {
 	pidPath := filepath.Join(dir, "tslink.pid")
 	regPath := filepath.Join(dir, "registry.json")
 	_, _ = registry.Add(regPath, registry.Service{Name: "a", Type: registry.TypeProxy, Target: "http://localhost:3000"})
-	r := getStatus(pidPath, regPath)
+	r, err := getStatus(pidPath, regPath)
+	if err != nil {
+		t.Fatalf("getStatus() error = %v", err)
+	}
 	if r.ServiceCount != 1 {
 		t.Errorf("expected 1 service, got %d", r.ServiceCount)
 	}
@@ -1049,24 +1077,21 @@ func TestBuildService_AcmeEmailWithoutDomain(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if !strings.Contains(err.Error(), "--acme-email requires --domain") {
+	if !strings.Contains(err.Error(), "custom-domain/ACME runtime is not wired") {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
 
 func TestBuildService_AcmeEmailWithDomain(t *testing.T) {
-	svc, err := buildService(AddParams{
+	_, err := buildService(AddParams{
 		Name: "acme-app", Proxy: "localhost:3000",
 		Domain: "app.example.com", AcmeEmail: "admin@example.com",
 	})
-	if err != nil {
-		t.Fatal(err)
+	if err == nil {
+		t.Fatal("expected custom-domain/ACME unavailable error")
 	}
-	if svc.AcmeEmail != "admin@example.com" {
-		t.Errorf("expected AcmeEmail %q, got %q", "admin@example.com", svc.AcmeEmail)
-	}
-	if svc.Domain != "app.example.com" {
-		t.Errorf("expected Domain %q, got %q", "app.example.com", svc.Domain)
+	if !strings.Contains(err.Error(), "custom-domain/ACME runtime is not wired") {
+		t.Errorf("unexpected error: %v", err)
 	}
 }
 
@@ -1083,7 +1108,7 @@ func TestAddCmd_AcmeEmailWithoutDomain(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when --acme-email used without --domain")
 	}
-	if !strings.Contains(err.Error(), "--acme-email requires --domain") {
+	if !strings.Contains(err.Error(), "custom-domain/ACME runtime is not wired") {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
@@ -1099,24 +1124,12 @@ func TestAddCmd_AcmeEmailWithDomain(t *testing.T) {
 		"domain":     "app.example.com",
 		"acme-email": "admin@example.com",
 	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if err == nil {
+		t.Fatal("expected custom-domain/ACME unavailable error")
 	}
-
-	regPath := filepath.Join(dir, ".config", "tslink", "registry.json")
-	reg, _ := registry.Load(regPath)
-	for _, svc := range reg.Services {
-		if svc.Name == "acmeapp" {
-			if svc.AcmeEmail != "admin@example.com" {
-				t.Errorf("expected acme_email %q, got %q", "admin@example.com", svc.AcmeEmail)
-			}
-			if svc.Domain != "app.example.com" {
-				t.Errorf("expected domain %q, got %q", "app.example.com", svc.Domain)
-			}
-			return
-		}
+	if !strings.Contains(err.Error(), "custom-domain/ACME runtime is not wired") {
+		t.Errorf("unexpected error: %v", err)
 	}
-	t.Error("acmeapp not found in registry")
 }
 
 func TestBuildService_InvalidName(t *testing.T) {
@@ -1130,8 +1143,7 @@ func TestBuildService_WithAllOptions(t *testing.T) {
 	svc, err := buildService(AddParams{
 		Name: "full", Proxy: "localhost:3000",
 		Ephemeral: true, Tags: "tag:web,tag:prod",
-		Allow:  "alice@example.com,bob@example.com",
-		Domain: "app.example.com",
+		Allow: "alice@example.com,bob@example.com",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1147,9 +1159,6 @@ func TestBuildService_WithAllOptions(t *testing.T) {
 	}
 	if svc.Funnel {
 		t.Error("expected funnel=false when allow list is configured")
-	}
-	if svc.Domain != "app.example.com" {
-		t.Error("expected domain")
 	}
 }
 
@@ -1223,7 +1232,10 @@ func TestGetStatus_Running_Authenticated(t *testing.T) {
 	regPath := filepath.Join(dir, "registry.json")
 	_, _ = registry.Add(regPath, registry.Service{Name: "a", Type: registry.TypeProxy, Target: "http://localhost:3000"})
 
-	r := getStatus(filepath.Join(dir, "pid"), regPath)
+	r, err := getStatus(filepath.Join(dir, "pid"), regPath)
+	if err != nil {
+		t.Fatalf("getStatus() error = %v", err)
+	}
 	if !r.DaemonRunning {
 		t.Error("expected running")
 	}
@@ -1248,7 +1260,10 @@ func TestGetStatus_AuthenticatedViaClientSecret(t *testing.T) {
 	hasClientSecretFn = func() bool { return true }
 
 	dir := t.TempDir()
-	r := getStatus(filepath.Join(dir, "pid"), filepath.Join(dir, "registry.json"))
+	r, err := getStatus(filepath.Join(dir, "pid"), filepath.Join(dir, "registry.json"))
+	if err != nil {
+		t.Fatalf("getStatus() error = %v", err)
+	}
 	if !r.Authenticated {
 		t.Error("expected authenticated via client secret")
 	}
@@ -1418,6 +1433,8 @@ func TestConfigCmd_SetThenGet(t *testing.T) {
 }
 
 func TestConfigCmd_SetClearWithOneArg(t *testing.T) {
+	resetRootJSONFlag(t)
+
 	t.Setenv("HOME", t.TempDir())
 
 	// set with only 1 arg (key) should clear the value
@@ -1435,6 +1452,8 @@ func TestConfigCmd_SetClearWithOneArg(t *testing.T) {
 }
 
 func TestConfigCmd_ListAlias(t *testing.T) {
+	resetRootJSONFlag(t)
+
 	t.Setenv("HOME", t.TempDir())
 
 	// "ls" should resolve to list command

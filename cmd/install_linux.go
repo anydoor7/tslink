@@ -54,8 +54,9 @@ For headless Linux hosts where the service must survive logout:
 If lingering was enabled only for TSLink, disable it after uninstall:
   loginctl disable-linger "$USER"
 
-Examples:
-  tslink install                Register and restart the systemd service`,
+	Examples:
+	  tslink install                Register and restart the systemd service`,
+	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		exe, err := linuxExecutablePathFn()
 		if err != nil {

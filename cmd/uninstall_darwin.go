@@ -38,8 +38,9 @@ This command:
 If the LaunchAgent is not installed, prints a message and exits cleanly.
 Log files in ~/.config/tslink/logs/ are NOT removed.
 
-Examples:
-  tslink uninstall              Remove the LaunchAgent`,
+	Examples:
+	  tslink uninstall              Remove the LaunchAgent`,
+	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		path, err := plistPath()
 		if err != nil {

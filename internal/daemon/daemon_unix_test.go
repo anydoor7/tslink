@@ -22,7 +22,7 @@ func TestDaemonizeConfiguresUnixChildSessionAndRootDir(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	_, err := Daemonize(filepath.Join(dir, "stdout.log"), filepath.Join(dir, "stderr.log"), "")
+	_, err := Daemonize(filepath.Join(dir, "stdout.log"), filepath.Join(dir, "stderr.log"), "", false)
 	if err == nil {
 		t.Fatal("Daemonize() error = nil, want injected start error")
 	}
@@ -58,7 +58,7 @@ func TestDaemonizeAppliesRestrictiveChildUmaskAndRestoresParent(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	_, err := Daemonize(filepath.Join(dir, "stdout.log"), filepath.Join(dir, "stderr.log"), "")
+	_, err := Daemonize(filepath.Join(dir, "stdout.log"), filepath.Join(dir, "stderr.log"), "", false)
 	if err == nil {
 		t.Fatal("Daemonize() error = nil, want injected start error")
 	}

@@ -41,6 +41,7 @@ type apiTestResponse struct {
 	Services []inspect.ServiceView
 	Running  bool
 	Count    int
+	Removed  bool
 
 	StatusURLs    *StatusURLsResult
 	Doctor        *DoctorResult
@@ -84,6 +85,7 @@ func parseResponse(t *testing.T, buf *bytes.Buffer) apiTestResponse {
 		Services      []inspect.ServiceView `json:"services,omitempty"`
 		Running       bool                  `json:"running"`
 		Count         int                   `json:"count"`
+		Removed       bool                  `json:"removed"`
 		StatusURLs    *StatusURLsResult     `json:"status_urls,omitempty"`
 		Doctor        *DoctorResult         `json:"doctor,omitempty"`
 		AccessExplain *AccessExplainResult  `json:"access_explain,omitempty"`
@@ -102,6 +104,7 @@ func parseResponse(t *testing.T, buf *bytes.Buffer) apiTestResponse {
 	resp.Services = data.Services
 	resp.Running = data.Running
 	resp.Count = data.Count
+	resp.Removed = data.Removed
 	resp.StatusURLs = data.StatusURLs
 	resp.Doctor = data.Doctor
 	resp.AccessExplain = data.AccessExplain
@@ -182,17 +185,11 @@ func TestAPIList_WithServices(t *testing.T) {
 	}
 }
 
-func TestAPIList_RedactsMiddlewareAuth(t *testing.T) {
+func TestAPIListRejectsMiddlewareConfig(t *testing.T) {
 	h, _ := newTestHandler(t)
-	if _, err := registry.Add(h.regPath, registry.Service{
-		Name:   "myapp",
-		Type:   registry.TypeProxy,
-		Target: "http://localhost:3000",
-		Middleware: &registry.MiddlewareConfig{
-			BasicAuth: "user:pass",
-		},
-	}); err != nil {
-		t.Fatalf("registry.Add: %v", err)
+	rawRegistry := `{"schema_version":1,"services":[{"name":"myapp","type":"proxy","target":"http://localhost:3000","middleware":{"basic_auth":"user:pass"}}]}`
+	if err := os.WriteFile(h.regPath, []byte(rawRegistry), 0o600); err != nil {
+		t.Fatalf("WriteFile registry: %v", err)
 	}
 
 	var buf bytes.Buffer
@@ -206,14 +203,11 @@ func TestAPIList_RedactsMiddlewareAuth(t *testing.T) {
 	}
 
 	resp := parseResponse(t, &buf)
-	if !resp.OK {
-		t.Fatalf("expected ok, got error: %s", resp.Error)
+	if resp.OK {
+		t.Fatalf("expected feature_unavailable error, got ok response: %s", raw)
 	}
-	if len(resp.Services) != 1 {
-		t.Fatalf("expected 1 service, got %d", len(resp.Services))
-	}
-	if resp.Services[0].Middleware == nil || !resp.Services[0].Middleware.HTTPAuth {
-		t.Fatalf("middleware summary = %+v, want redacted auth presence", resp.Services[0].Middleware)
+	if resp.ErrorCode != registry.CodeFeatureUnavailable {
+		t.Fatalf("error code = %q, want %s; raw=%s", resp.ErrorCode, registry.CodeFeatureUnavailable, raw)
 	}
 }
 
@@ -229,7 +223,7 @@ func TestAPIList_RedactsBackendURLSecrets(t *testing.T) {
 	if _, err := registry.Add(h.regPath, registry.Service{
 		Name:   "db",
 		Type:   registry.TypeTCP,
-		Target: "user:pass@localhost:5432?token=abc#frag-secret",
+		Target: "localhost:5432",
 		Port:   5432,
 	}); err != nil {
 		t.Fatalf("registry.Add db: %v", err)
@@ -261,10 +255,11 @@ func TestAPIList_RedactsBackendURLSecrets(t *testing.T) {
 
 func TestAPIList_UsesPublicServiceViewsWithUsefulFields(t *testing.T) {
 	h, _ := newTestHandler(t)
+	docsDir := t.TempDir()
 	if _, err := registry.Add(h.regPath, registry.Service{
 		Name:         "docs",
 		Type:         registry.TypeFile,
-		Path:         "/tmp/docs",
+		Path:         docsDir,
 		Tags:         []string{"tag:docs"},
 		AllowedUsers: []string{"alice@example.com"},
 	}); err != nil {
@@ -288,7 +283,7 @@ func TestAPIList_UsesPublicServiceViewsWithUsefulFields(t *testing.T) {
 	if got.Exposure.Kind != inspect.ExposureTailnetAllow {
 		t.Fatalf("exposure = %+v, want tailnet_allow", got.Exposure)
 	}
-	if got.Backend.Kind != "directory" || got.Backend.Display != "/tmp/docs" {
+	if got.Backend.Kind != "directory" || got.Backend.Display != docsDir {
 		t.Fatalf("backend = %+v, want directory backend", got.Backend)
 	}
 	if got.Tags.Count != 1 || got.Tags.Entries[0] != "tag:docs" {
@@ -304,7 +299,7 @@ func TestAPIList_RedactsAllowPrincipals(t *testing.T) {
 	if _, err := registry.Add(h.regPath, registry.Service{
 		Name:         "docs",
 		Type:         registry.TypeFile,
-		Path:         "/tmp/docs",
+		Path:         t.TempDir(),
 		AllowedUsers: []string{"alice@example.com", "tag:admin"},
 	}); err != nil {
 		t.Fatalf("registry.Add: %v", err)
@@ -337,7 +332,7 @@ func TestAPIList_TCPUsesTypedEndpoint(t *testing.T) {
 	if _, err := registry.Add(h.regPath, registry.Service{
 		Name:   "db",
 		Type:   registry.TypeTCP,
-		Target: "user:pass@localhost:5432?token=abc#frag-secret",
+		Target: "localhost:5432",
 		Port:   5432,
 	}); err != nil {
 		t.Fatalf("registry.Add: %v", err)
@@ -732,8 +727,8 @@ func TestAPIRemove(t *testing.T) {
 	if !resp.OK {
 		t.Fatalf("expected ok, got error: %s", resp.Error)
 	}
-	if resp.Message != "service removed" {
-		t.Errorf("unexpected message: %s", resp.Message)
+	if !resp.Removed {
+		t.Errorf("removed = false, want true")
 	}
 
 	reg, _ := registry.Load(h.regPath)
@@ -747,6 +742,9 @@ func TestAPIRemove_NotFound(t *testing.T) {
 	resp := sendRequest(t, h, APIRequest{Action: "remove", Name: "xyz"})
 	if !resp.OK {
 		t.Fatalf("expected ok=true for idempotent remove, got error: %s", resp.Error)
+	}
+	if resp.Removed {
+		t.Fatalf("removed = true, want false for idempotent not-found remove")
 	}
 }
 
@@ -812,9 +810,6 @@ func TestAPIStatusURLsReturnsVNextPayload(t *testing.T) {
 		Type:         registry.TypeProxy,
 		Target:       "http://user:pass@localhost:3000/private?token=abc#frag-secret",
 		AllowedUsers: []string{"alice@example.com", "tag:admin"},
-		Middleware: &registry.MiddlewareConfig{
-			BasicAuth: "user:pass",
-		},
 	}); err != nil {
 		t.Fatalf("registry.Add web: %v", err)
 	}
@@ -861,9 +856,6 @@ func TestAPIStatusURLsReturnsVNextPayload(t *testing.T) {
 	if web.Allow.Mode != "restricted" || web.Allow.Count != 2 || !web.Allow.Redacted || len(web.Allow.Entries) != 0 {
 		t.Fatalf("web allow = %+v, want redacted allow summary", web.Allow)
 	}
-	if !hasStatusWarningCode(web.Warnings, inspect.WarningCodeMiddlewareNotEnforced) {
-		t.Fatalf("web warnings = %+v, want middleware_not_enforced", web.Warnings)
-	}
 	if !hasStatusWarningCode(web.Warnings, inspect.WarningCodeRuntimeSnapshotMissing) {
 		t.Fatalf("web warnings = %+v, want runtime_snapshot_missing", web.Warnings)
 	}
@@ -909,6 +901,9 @@ func TestAPIDoctorReturnsVNextPayloadReadOnly(t *testing.T) {
 	}
 	if result.Counts.Services != 0 || result.CredentialMode != doctorCredentialAPIToken || !result.Daemon.Running {
 		t.Fatalf("doctor result = %+v, want local read-only status with API token and running daemon", result)
+	}
+	if result.HealthStatus != doctorStatusWarning || result.HealthExitCode != output.ExitWarning {
+		t.Fatalf("doctor health = %q/%d, want warning/%d", result.HealthStatus, result.HealthExitCode, output.ExitWarning)
 	}
 	assertDoctorFinding(t, result, inspect.WarningCodeRuntimeSnapshotMissing)
 
@@ -1024,6 +1019,9 @@ func TestAPIDoctorTopLevelOKMeansRequestProcessed(t *testing.T) {
 	if resp.Doctor.Status != doctorStatusError {
 		t.Fatalf("doctor status = %q, want nested health error", resp.Doctor.Status)
 	}
+	if resp.Doctor.HealthStatus != doctorStatusError || resp.Doctor.HealthExitCode != output.ExitCritical {
+		t.Fatalf("doctor health = %q/%d, want error/%d", resp.Doctor.HealthStatus, resp.Doctor.HealthExitCode, output.ExitCritical)
+	}
 	assertDoctorFinding(t, *resp.Doctor, inspect.WarningCodeTCPAllowedUsersInvalid)
 }
 
@@ -1032,7 +1030,7 @@ func TestAPIAccessExplainReturnsRedactedVNextPayload(t *testing.T) {
 	if _, err := registry.Add(h.regPath, registry.Service{
 		Name:         "web",
 		Type:         registry.TypeProxy,
-		Target:       "user:pass@localhost:3000?token=abc",
+		Target:       "http://user:pass@localhost:3000?token=abc",
 		AllowedUsers: []string{"alice@example.com", "tag:admin"},
 	}); err != nil {
 		t.Fatalf("registry.Add: %v", err)
@@ -1060,8 +1058,8 @@ func TestAPIAccessExplainReturnsRedactedVNextPayload(t *testing.T) {
 	if result.TSLinkLocalEnforcement.FailureMode != accessIdentityFailureModeDenyWhenUnresolved {
 		t.Fatalf("failure_mode = %q, want %q", result.TSLinkLocalEnforcement.FailureMode, accessIdentityFailureModeDenyWhenUnresolved)
 	}
-	if result.TSLinkKnown.Backend.Display != "localhost:3000" {
-		t.Fatalf("backend display = %q, want schemeless secret redaction", result.TSLinkKnown.Backend.Display)
+	if result.TSLinkKnown.Backend.Display != "http://localhost:3000" {
+		t.Fatalf("backend display = %q, want URL secret redaction", result.TSLinkKnown.Backend.Display)
 	}
 	classification := result.TSLinkKnown.TargetLoopbackClassification
 	if classification.Classification != "loopback_or_local" || classification.Host != "localhost" || classification.Port != "3000" {

@@ -11,7 +11,10 @@ import (
 	"github.com/monody0007/tslink/internal/registry"
 )
 
-const SchemaVersion = 1
+const (
+	SchemaVersion = 1
+	SchemaType    = "tslink.result"
+)
 
 // Semantic exit codes for programmatic consumers.
 const (
@@ -80,6 +83,7 @@ type ErrorObject struct {
 
 // Result is the versioned JSON envelope for structured output.
 type Result struct {
+	Type          string       `json:"type"`
 	OK            bool         `json:"ok"`
 	SchemaVersion int          `json:"schema_version"`
 	Command       string       `json:"command,omitempty"`
@@ -93,6 +97,9 @@ func (r Result) MarshalJSON() ([]byte, error) {
 	if r.SchemaVersion == 0 {
 		r.SchemaVersion = SchemaVersion
 	}
+	if r.Type == "" {
+		r.Type = SchemaType
+	}
 	return json.Marshal(resultAlias(r))
 }
 
@@ -100,6 +107,7 @@ func (r Result) MarshalJSON() ([]byte, error) {
 func NewSuccess(command string, data any) Result {
 	return Result{
 		OK:            true,
+		Type:          SchemaType,
 		SchemaVersion: SchemaVersion,
 		Command:       command,
 		Code:          ExitSuccess,
@@ -112,6 +120,7 @@ func NewSuccess(command string, data any) Result {
 func NewFailure(command string, code int, message string) Result {
 	return Result{
 		OK:            false,
+		Type:          SchemaType,
 		SchemaVersion: SchemaVersion,
 		Command:       command,
 		Code:          code,
@@ -125,6 +134,7 @@ func NewFailureForError(command string, err error) Result {
 	code := ExitCode(err)
 	return Result{
 		OK:            false,
+		Type:          SchemaType,
 		SchemaVersion: SchemaVersion,
 		Command:       command,
 		Code:          code,
@@ -221,6 +231,8 @@ func ExitCode(err error) int {
 
 func exitCodeForStableError(stable string) int {
 	switch stable {
+	case registry.CodeFeatureUnavailable:
+		return ExitUsage
 	case registry.CodeFunnelPublicAckRequired:
 		return ExitUsage
 	case registry.CodeFunnelAllowConflict,

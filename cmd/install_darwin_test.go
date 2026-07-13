@@ -98,6 +98,9 @@ func TestPlistTemplateEscapesXMLPaths(t *testing.T) {
 }
 
 func TestInstallCommandBootoutThenBootstrapsLaunchAgentOnSuccess(t *testing.T) {
+	resetRootJSONFlag(t)
+	t.Cleanup(func() { installCmd.SetOut(nil) })
+
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -147,6 +150,9 @@ func TestInstallCommandBootoutThenBootstrapsLaunchAgentOnSuccess(t *testing.T) {
 }
 
 func TestInstallCommandBootstrapsLaunchAgentAndSurfacesOutput(t *testing.T) {
+	resetRootJSONFlag(t)
+	t.Cleanup(func() { installCmd.SetOut(nil) })
+
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -203,6 +209,9 @@ func TestInstallCommandBootstrapsLaunchAgentAndSurfacesOutput(t *testing.T) {
 }
 
 func TestInstallCommandFallsBackToUserDomainWhenGUIDomainMissing(t *testing.T) {
+	resetRootJSONFlag(t)
+	t.Cleanup(func() { installCmd.SetOut(nil) })
+
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -264,6 +273,9 @@ func TestLaunchctlDomainNotFoundMatchesRealCouldNotFindDomainWording(t *testing.
 }
 
 func TestUninstallCommandBootoutsLaunchAgentOnSuccess(t *testing.T) {
+	resetRootJSONFlag(t)
+	t.Cleanup(func() { uninstallCmd.SetOut(nil) })
+
 	home := t.TempDir()
 
 	oldHome := userHomeDirFn
@@ -312,6 +324,9 @@ func TestUninstallCommandBootoutsLaunchAgentOnSuccess(t *testing.T) {
 }
 
 func TestUninstallCommandBootoutsLaunchAgentAndSurfacesOutput(t *testing.T) {
+	resetRootJSONFlag(t)
+	t.Cleanup(func() { uninstallCmd.SetOut(nil) })
+
 	home := t.TempDir()
 
 	oldHome := userHomeDirFn

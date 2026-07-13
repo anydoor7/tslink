@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strconv"
 	"strings"
 
@@ -28,8 +27,6 @@ type CleanupResult struct {
 type CleanupTarget struct {
 	Hostname string
 	Tags     []string
-	DeviceID string
-	NodeID   string
 }
 
 const cleanupOwnershipSkipReason = "matched tailnet devices require exact TSLink ownership proof before deletion"
@@ -72,29 +69,7 @@ func validateCleanupTarget(target CleanupTarget) error {
 	return nil
 }
 
-func cleanupTargetMatchesExactDevice(target CleanupTarget, deviceID, nodeID string) bool {
-	if target.NodeID != "" && nodeID != "" && target.NodeID == nodeID {
-		return true
-	}
-	if target.DeviceID != "" && deviceID != "" && target.DeviceID == deviceID {
-		return true
-	}
-	return false
-}
-
-func deviceDeleteID(deviceID, nodeID string) string {
-	if nodeID != "" {
-		return nodeID
-	}
-	return deviceID
-}
-
-func matchingCleanupTarget(hostname, deviceID, nodeID string, targets []CleanupTarget) (CleanupTarget, bool) {
-	for _, target := range targets {
-		if cleanupTargetMatchesExactDevice(target, deviceID, nodeID) {
-			return target, true
-		}
-	}
+func matchingCleanupTarget(hostname string, targets []CleanupTarget) (CleanupTarget, bool) {
 	for _, target := range targets {
 		if hostname == target.Hostname {
 			return target, true
@@ -108,18 +83,19 @@ func matchingCleanupTarget(hostname, deviceID, nodeID string, targets []CleanupT
 	return CleanupTarget{}, false
 }
 
-// DeleteDevicesForService deletes matching devices only when TSLink ownership can be proven.
+// DeleteDevicesForService reports matching devices as protected/manual cleanup.
+// Automatic remote deletion is retired until TSLink persists exact ownership IDs.
 func DeleteDevicesForService(ctx context.Context, target CleanupTarget) (CleanupResult, error) {
 	return CleanupStaleNodesResult(ctx, []CleanupTarget{target})
 }
 
-// CleanupStaleNodes removes stale nodes that conflict with the given service targets.
+// CleanupStaleNodes reports stale nodes that conflict with the given service targets.
 func CleanupStaleNodes(ctx context.Context, targets []CleanupTarget) error {
 	_, err := CleanupStaleNodesResult(ctx, targets)
 	return err
 }
 
-// CleanupStaleNodesResult removes stale nodes and returns explicit cleanup status.
+// CleanupStaleNodesResult returns explicit protected/manual cleanup status without DELETE.
 func CleanupStaleNodesResult(ctx context.Context, targets []CleanupTarget) (CleanupResult, error) {
 	for _, target := range targets {
 		if err := validateCleanupTarget(target); err != nil {
@@ -145,25 +121,12 @@ func CleanupStaleNodesResult(ctx context.Context, targets []CleanupTarget) (Clea
 
 	var result CleanupResult
 	for _, d := range devices {
-		target, ok := matchingCleanupTarget(d.Hostname, d.ID, d.NodeID, targets)
+		_, ok := matchingCleanupTarget(d.Hostname, targets)
 		if !ok {
 			continue
 		}
 		result.Matched = append(result.Matched, d.Hostname)
-		if !cleanupTargetMatchesExactDevice(target, d.ID, d.NodeID) {
-			result.Protected = append(result.Protected, d.Hostname)
-			continue
-		}
-		deleteID := deviceDeleteID(d.ID, d.NodeID)
-		if deleteID == "" {
-			result.Protected = append(result.Protected, d.Hostname)
-			continue
-		}
-		if err := client.Devices().Delete(ctx, deleteID); err != nil {
-			return result, fmt.Errorf("delete device %s: %w", d.Hostname, err)
-		}
-		result.Deleted = append(result.Deleted, d.Hostname)
-		slog.Info("removed tailnet node", "hostname", d.Hostname)
+		result.Protected = append(result.Protected, d.Hostname)
 	}
 	if len(result.Protected) > 0 {
 		result.Skipped = true

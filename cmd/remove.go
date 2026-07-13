@@ -79,9 +79,9 @@ func init() {
 
 This command:
   1. Removes the service entry from ~/.config/tslink/registry.json
-  2. Attempts ownership-safe remote cleanup via the Tailscale API. Remote
-     devices are deleted only when TSLink has exact device ownership proof;
-     hostname/tag matches without that proof are reported as protected.
+  2. Reports protected/manual remote cleanup status. TSLink does not delete
+     tailnet devices automatically unless exact ownership persistence is added
+     in a future version.
 
 If the gateway is running, it will detect the registry change via hot-reload
 and stop the removed service's tsnet node automatically.

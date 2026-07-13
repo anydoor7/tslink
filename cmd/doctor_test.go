@@ -195,10 +195,13 @@ func assertDoctorOutputOmits(t *testing.T, raw string, forbidden []string) {
 func decodeDoctorJSON(t *testing.T, raw string) DoctorResult {
 	t.Helper()
 
-	assertExactTopLevelJSONKeys(t, raw, "ok", "schema_version", "command", "code", "data")
+	assertExactTopLevelJSONKeys(t, raw, "type", "ok", "schema_version", "command", "code", "data")
 	var envelope output.Result
 	if err := json.Unmarshal([]byte(raw), &envelope); err != nil {
 		t.Fatalf("unmarshal doctor envelope: %v\nraw: %s", err, raw)
+	}
+	if envelope.Type != output.SchemaType {
+		t.Fatalf("type = %q, want %q\nraw: %s", envelope.Type, output.SchemaType, raw)
 	}
 	if !envelope.OK {
 		t.Fatalf("ok = false, want true\nraw: %s", raw)
@@ -253,6 +256,9 @@ func TestDoctorExitCodes(t *testing.T) {
 	if warningResult.Status != doctorStatusWarning {
 		t.Fatalf("legacy authkey status = %q, want %q", warningResult.Status, doctorStatusWarning)
 	}
+	if warningResult.HealthStatus != doctorStatusWarning || warningResult.HealthExitCode != output.ExitWarning {
+		t.Fatalf("legacy authkey health = %q/%d, want warning/%d", warningResult.HealthStatus, warningResult.HealthExitCode, output.ExitWarning)
+	}
 
 	doctorReadFileFn = func(string) ([]byte, error) { return nil, os.ErrNotExist }
 	var criticalBuf bytes.Buffer
@@ -266,6 +272,9 @@ func TestDoctorExitCodes(t *testing.T) {
 	criticalResult := decodeDoctorJSON(t, criticalBuf.String())
 	if criticalResult.Status != doctorStatusError {
 		t.Fatalf("missing credential status = %q, want %q", criticalResult.Status, doctorStatusError)
+	}
+	if criticalResult.HealthStatus != doctorStatusError || criticalResult.HealthExitCode != output.ExitCritical {
+		t.Fatalf("missing credential health = %q/%d, want error/%d", criticalResult.HealthStatus, criticalResult.HealthExitCode, output.ExitCritical)
 	}
 }
 

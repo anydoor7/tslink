@@ -33,13 +33,13 @@ func TestResult_SuccessJSONEnvelope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	assertJSONKeys(t, data, "ok", "schema_version", "code", "data")
+	assertJSONKeys(t, data, "type", "ok", "schema_version", "code", "data")
 
 	var got Result
 	if err := json.Unmarshal(data, &got); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if !got.OK || got.SchemaVersion != SchemaVersion || got.Code != ExitSuccess || got.Error != nil {
+	if got.Type != SchemaType || !got.OK || got.SchemaVersion != SchemaVersion || got.Code != ExitSuccess || got.Error != nil {
 		t.Fatalf("unexpected result: %+v", got)
 	}
 }
@@ -50,13 +50,13 @@ func TestResult_FailureJSONEnvelope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	assertJSONKeys(t, data, "ok", "schema_version", "code", "error")
+	assertJSONKeys(t, data, "type", "ok", "schema_version", "code", "error")
 
 	var got Result
 	if err := json.Unmarshal(data, &got); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if got.OK || got.SchemaVersion != SchemaVersion || got.Code != ExitConflict {
+	if got.Type != SchemaType || got.OK || got.SchemaVersion != SchemaVersion || got.Code != ExitConflict {
 		t.Fatalf("unexpected result: %+v", got)
 	}
 	if got.Error == nil || got.Error.Code != registry.CodeFunnelAllowConflict || got.Error.Message != registry.ErrFunnelAllowedUsers {

@@ -2,9 +2,12 @@ version: 2
 
 project_name: tslink
 
+# Release construction is read-only. `go mod tidy` is intentionally NOT
+# a before-hook: it can mutate the tagged worktree. The release-candidate
+# workflow proves the tree is already tidy before packaging; only read-only
+# checks run here.
 before:
   hooks:
-    - go mod tidy
     - go vet ./...
 
 builds:
@@ -20,8 +23,12 @@ builds:
     goarch:
       - amd64
       - arm64
+    # Embed version and the exact VCS commit so provenance ties an artifact to
+    # the tagged source. mod_timestamp pins the build epoch to the
+    # commit for reproducible archives.
     ldflags:
-      - -s -w -X main.version={{.Version}}
+      - -s -w -X main.version={{.Version}} -X main.commit={{.FullCommit}}
+    mod_timestamp: "{{ .CommitTimestamp }}"
 
 archives:
   - id: archive
@@ -32,6 +39,11 @@ archives:
       - goos: windows
         formats:
           - zip
+    # The legal payload travels inside every tar/zip.
+    files:
+      - LICENSE
+      - NOTICE
+      - THIRD_PARTY_NOTICES.md
 
 checksum:
   name_template: "checksums.txt"
@@ -75,26 +87,38 @@ nfpms:
     formats:
       - deb
       - rpm
+    # The conventional deb/rpm documentation path carries the legal set.
+    contents:
+      - src: LICENSE
+        dst: /usr/share/doc/tslink/LICENSE
+        file_info:
+          mode: 0644
+      - src: NOTICE
+        dst: /usr/share/doc/tslink/NOTICE
+        file_info:
+          mode: 0644
+      - src: THIRD_PARTY_NOTICES.md
+        dst: /usr/share/doc/tslink/THIRD_PARTY_NOTICES.md
+        file_info:
+          mode: 0644
 
-brews:
+# Homebrew publishing via cask. GoReleaser deprecated the `brews` formula key;
+# `homebrew_casks` is the supported replacement (requires GoReleaser >= 2.11,
+# pinned to v2.17.0 in the workflows). `skip_upload: auto` skips pre-release
+# tags and snapshots never upload. The tap must be initialized/protected before
+# a stable release after external verification.
+homebrew_casks:
   - name: tslink
-    ids:
-      - archive
     repository:
       owner: monody0007
       name: homebrew-tap
       branch: main
-      # Pre-release tags may have an empty token because skip_upload: auto
-      # skips tap upload; stable tags are checked by the release workflow.
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
-    directory: Formula
+    directory: Casks
     homepage: "https://github.com/monody0007/tslink"
     description: "Private Tailscale gateway for local services"
-    license: "Apache-2.0"
     skip_upload: auto
-    install: |
-      bin.install "tslink"
-    commit_msg_template: "Brew formula update for {{ .ProjectName }} version {{ .Tag }}"
+    commit_msg_template: "Brew cask update for {{ .ProjectName }} version {{ .Tag }}"
 
 changelog:
   sort: asc

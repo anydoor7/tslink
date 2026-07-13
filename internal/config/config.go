@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+
+	"github.com/monody0007/tslink/internal/atomicfile"
 )
 
 // jsonMarshalIndent is a package-level variable to allow test injection.
@@ -39,6 +41,9 @@ func LoadGlobalConfig() (GlobalConfig, error) {
 	if err != nil {
 		return GlobalConfig{}, err
 	}
+	if err := atomicfile.ConvergePrivateFile(path); err != nil {
+		return GlobalConfig{}, err
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -59,15 +64,12 @@ func SaveGlobalConfig(cfg GlobalConfig) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
 	data, err := jsonMarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return err
 	}
 	data = append(data, '\n')
-	return os.WriteFile(path, data, 0o600)
+	return atomicfile.WriteFile(path, data)
 }
 
 func Dir() (string, error) {
@@ -159,7 +161,7 @@ func EnsureDir() error {
 	nodesDir := filepath.Join(dir, "nodes")
 	certsDir := filepath.Join(dir, "certs")
 	for _, d := range []string{dir, logDir, nodesDir, certsDir} {
-		if err := os.MkdirAll(d, 0o700); err != nil {
+		if err := atomicfile.EnsurePrivateDir(d); err != nil {
 			return err
 		}
 	}
