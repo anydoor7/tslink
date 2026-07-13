@@ -11,6 +11,8 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+
+	"github.com/monody0007/tslink/internal/output"
 )
 
 const systemdServiceName = "tslink.service"
@@ -25,6 +27,14 @@ var (
 	systemctlCombinedOutput  = func(args ...string) ([]byte, error) { return exec.Command("systemctl", args...).CombinedOutput() }
 	loginctlCombinedOutputFn = func(args ...string) ([]byte, error) { return exec.Command("loginctl", args...).CombinedOutput() }
 )
+
+type InstallResult struct {
+	Path           string `json:"path"`
+	Installed      bool   `json:"installed"`
+	Started        bool   `json:"started"`
+	ServiceManager string `json:"service_manager"`
+	Warning        string `json:"warning,omitempty"`
+}
 
 var installCmd = &cobra.Command{
 	Use:   "install",
@@ -90,7 +100,19 @@ If lingering was enabled only for TSLink, disable it after uninstall:
 			return fmt.Errorf("restart systemd user service: %w: %s", err, output)
 		}
 
-		if warning := linuxLingerWarning(); warning != "" {
+		warning := linuxLingerWarning()
+		if jsonOutput(cmd) {
+			output.Success("install", InstallResult{
+				Path:           servicePath,
+				Installed:      true,
+				Started:        true,
+				ServiceManager: systemdServiceName,
+				Warning:        warning,
+			})
+			return nil
+		}
+
+		if warning != "" {
 			fmt.Fprintf(cmd.ErrOrStderr(), "→ ⚠ %s\n", warning)
 		}
 

@@ -73,7 +73,7 @@ jobs:
           mkdir -p dist/native
           go build -trimpath -o "${bin}" .
           commands=(
-            "--help" "version" "login --help" "logout --help" "add --help"
+            "--help" "--version" "--version --json" "login --help" "logout --help" "add --help"
             "remove --help" "list --help" "serve --help" "stop --help"
             "status --help" "logs --help" "api --help" "config --help"
             "config set --help" "config get --help" "config list --help"

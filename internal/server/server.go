@@ -280,7 +280,7 @@ func (s *Server) Run(ctx context.Context) error {
 		return fmt.Errorf("before initial sync: %w", err)
 	}
 
-	if err := s.syncNodes(ctx); err != nil {
+	if err := s.syncNodesAuthoritative(ctx); err != nil {
 		s.beginShutdown()
 		cancelWatch()
 		<-watchDone
@@ -305,26 +305,53 @@ func (s *Server) Run(ctx context.Context) error {
 	return nil
 }
 
+type syncOutcome struct {
+	generation uint64
+	committed  bool
+}
+
 // syncNodes compares registry to running nodes and starts/stops as needed.
 func (s *Server) syncNodes(ctx context.Context) error {
+	_, err := s.syncNodesWithOutcome(ctx)
+	return err
+}
+
+func (s *Server) syncNodesAuthoritative(ctx context.Context) error {
+	for {
+		outcome, err := s.syncNodesWithOutcome(ctx)
+		if err != nil {
+			return err
+		}
+		if outcome.committed {
+			return nil
+		}
+		if err := s.ensureRunning(ctx); err != nil {
+			return err
+		}
+		slog.Info("retrying initial registry sync after stale generation", "generation", outcome.generation)
+	}
+}
+
+func (s *Server) syncNodesWithOutcome(ctx context.Context) (syncOutcome, error) {
 	generation := s.syncGeneration.Add(1)
+	outcome := syncOutcome{generation: generation}
 
 	if err := s.ensureRunning(ctx); err != nil {
-		return err
+		return outcome, err
 	}
 
 	regPath, err := config.RegistryPath()
 	if err != nil {
-		return err
+		return outcome, err
 	}
 
 	reg, err := registryLoadFn(regPath)
 	if err != nil {
-		return err
+		return outcome, err
 	}
 	registryFingerprint, err := runtimesnapshot.RegistryFingerprint(reg)
 	if err != nil {
-		return fmt.Errorf("runtime snapshot registry fingerprint: %w", err)
+		return outcome, fmt.Errorf("runtime snapshot registry fingerprint: %w", err)
 	}
 
 	// Build desired state
@@ -336,7 +363,7 @@ func (s *Server) syncNodes(ctx context.Context) error {
 				warnSkippedStartupService(svc, err)
 				continue
 			}
-			return err
+			return outcome, err
 		}
 		if _, seen := desired[svc.Name]; !seen {
 			desiredOrder = append(desiredOrder, svc.Name)
@@ -344,18 +371,18 @@ func (s *Server) syncNodes(ctx context.Context) error {
 		desired[svc.Name] = svc
 	}
 	if err := afterDesiredLoadedFn(ctx, generation); err != nil {
-		return err
+		return outcome, err
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if err := s.ensureRunning(ctx); err != nil {
-		return err
+		return outcome, err
 	}
 	if generation != s.syncGeneration.Load() {
 		slog.Info("skipping stale registry sync generation", "generation", generation)
-		return nil
+		return outcome, nil
 	}
 
 	// Stop nodes for removed or changed services
@@ -407,7 +434,7 @@ func (s *Server) syncNodes(ctx context.Context) error {
 					slog.Warn("degraded mode: skipped ACL tag ensure", "reason", err.Error(), "tags", tagsToEnsure, "degraded_mode", true)
 				} else {
 					slog.Error("failed to ensure ACL tags", "error", err)
-					return fmt.Errorf("ensure ACL tags before start: %w", err)
+					return outcome, fmt.Errorf("ensure ACL tags before start: %w", err)
 				}
 			}
 		}
@@ -420,7 +447,7 @@ func (s *Server) syncNodes(ctx context.Context) error {
 		if syncErr != nil {
 			s.removeRuntimeSnapshot()
 		}
-		return syncErr
+		return outcome, syncErr
 	}
 	for _, name := range desiredOrder {
 		svc := desired[name]
@@ -440,11 +467,12 @@ func (s *Server) syncNodes(ctx context.Context) error {
 	syncErr := errors.Join(append(reloadErrs, startErrs...)...)
 	if syncErr != nil {
 		s.removeRuntimeSnapshot()
-		return syncErr
+		return outcome, syncErr
 	}
 
 	s.writeRuntimeSnapshotLocked(registryFingerprint)
-	return nil
+	outcome.committed = true
+	return outcome, nil
 }
 
 func (s *Server) beginShutdown() {

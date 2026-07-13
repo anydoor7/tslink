@@ -6,7 +6,7 @@
 <p align="center">
   <a href="https://github.com/monody0007/tslink/actions"><img src="https://img.shields.io/github/actions/workflow/status/monody0007/tslink/ci.yml?branch=main&label=CI" alt="Build Status"></a>
   <a href="https://github.com/monody0007/tslink/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License"></a>
-  <a href="https://github.com/monody0007/tslink"><img src="https://img.shields.io/badge/Go-1.26.3%2B-00ADD8.svg" alt="Go"></a>
+  <a href="https://github.com/monody0007/tslink"><img src="https://img.shields.io/badge/Go-1.26.5%2B-00ADD8.svg" alt="Go"></a>
   <a href="https://github.com/monody0007/tslink"><img src="https://img.shields.io/github/stars/monody0007/tslink?style=social" alt="Stars"></a>
 </p>
 
@@ -86,20 +86,24 @@ tslink serve --daemon
 ### Install
 
 ```bash
-# Homebrew (macOS)
-brew install monody0007/tap/tslink
+# Pre-release source install (any platform)
+git clone https://github.com/monody0007/tslink.git
+cd tslink
+go install .
 
-# From source (any platform)
-go install github.com/monody0007/tslink@latest
+# Homebrew cask and prebuilt archives are available only after the first
+# public release and artifact/tap readback.
 ```
 
 ### Release Artifacts
 
-GitHub Releases publish these installable artifacts:
+There is no public tag/release or populated Homebrew tap yet. Before the first
+published release/readback, install from source. After that external gate
+passes, GitHub Releases are expected to publish these installable artifacts:
 
 | Platform | Artifacts | Notes |
 |---|---|---|
-| macOS | Homebrew formula and `tar.gz` archives | The Homebrew formula uses GoReleaser `skip_upload: auto`, so pre-release tags can skip tap upload without failing the release. Use the archives for pre-release validation. |
+| macOS | Homebrew cask and `tar.gz` archives | The Homebrew cask uses GoReleaser `skip_upload: auto`, so pre-release tags can skip tap upload without failing the release. Use the archives for pre-release validation. |
 | Linux | `.deb`, `.rpm`, and `tar.gz` archives | Packages contain the native `tslink` binary. Use `tslink install` after installation to register the user service. |
 | Windows | `.zip` archives | Windows support is archive-only today. There is no MSI/MSIX/Winget package or Windows code-signed installer yet. Use `tslink install` from the extracted binary to register Startup autostart. |
 
@@ -269,12 +273,10 @@ TSLink accepts two credential types (you only need one):
 
 `tslink login` guides you through either path interactively. Credentials are stored in the system keychain first (macOS Keychain / Linux secret service / Windows Credential Manager), with restricted-permission file fallback for headless environments.
 
-For non-interactive setup, prefer environment variables or stdin so secrets do not land in shell history or process listings:
+For non-interactive setup, prefer stdin. Environment variables are acceptable only when they are pre-injected by a secret manager before the command starts; do not inline secret values in the shell command because they can land in shell history:
 
 ```bash
-TSLINK_API_KEY="tskey-api-..." tslink login
 printf %s "$TSLINK_API_KEY" | tslink login --api-key-stdin
-TSLINK_CLIENT_SECRET="tskey-client-..." tslink login
 printf %s "$TSLINK_CLIENT_SECRET" | tslink login --client-secret-stdin
 ```
 
@@ -396,8 +398,8 @@ tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 | `--control-url URL` | Per-service control server override, e.g. Headscale |
 | `--funnel` | Expose via Tailscale Funnel (public internet, proxy only, requires `--public`) |
 | `--public` | Explicitly acknowledge public internet exposure for `--funnel`; invalid without `--funnel` |
-| `--domain example.com` | Roadmap/experimental: accepted in service config, but custom-domain runtime TLS is not wired |
-| `--acme-email user@example.com` | Roadmap/experimental: stored with `--domain`; no shipped ACME listener |
+| `--domain example.com` | Reserved roadmap flag: rejected with `feature_unavailable`; custom-domain runtime TLS is not wired |
+| `--acme-email user@example.com` | Reserved roadmap flag: rejected with `feature_unavailable`; no shipped ACME listener |
 
 ## How It Works
 
@@ -496,14 +498,14 @@ The repository contains packages and registry fields for features that are not w
 | Middleware | Package and schema exist, but runtime does not apply rate limit, Basic Auth, IP allow list, or CORS. |
 | Admin dashboard / REST API | No default-build package, REST handler, or admin node is shipped. Future work must be explicitly experimental and tested end to end. |
 | Prometheus `/metrics` | Instrumentation exists, but no scrape endpoint is mounted. |
-| Custom domain / ACME | Fields are accepted, but runtime TLS/ACME listener is not wired. |
+| Custom domain / ACME | Fields are reserved and rejected with `feature_unavailable`; runtime TLS/ACME listener is not wired. |
 | Cluster sync | Package exists without production transport or `serve` integration. |
 
 ## Prerequisites
 
 - [Tailscale account](https://tailscale.com) (free for personal use)
 - Tailscale installed on the devices you want to access from (phone, tablet, etc.)
-- Go 1.26.3+ (if building from source)
+- Go 1.26.5+ (if building from source)
 
 ## Platform Support
 

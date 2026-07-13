@@ -1,6 +1,11 @@
 {
   "schema_version": 1,
   "registry_schema_version": 1,
+  "toolchain": {
+    "minimum_go_version": "1.26.5",
+    "goreleaser_version": "v2.17.0",
+    "homebrew_artifact": "cask"
+  },
   "exit_codes": {
     "auth": 3,
     "conflict": 4,
@@ -11,6 +16,135 @@
     "usage": 2,
     "warning": 64
   },
+  "registry_schema": {
+    "version": 1,
+    "service_types": [
+      "proxy",
+      "file",
+      "tcp"
+    ],
+    "required_fields": [
+      "schema_version",
+      "services[].name",
+      "services[].type"
+    ],
+    "unavailable_features": [
+      "custom-domain/ACME fields are reserved and rejected with feature_unavailable",
+      "middleware schema is reserved and rejected with feature_unavailable"
+    ]
+  },
+  "api_actions": [
+    "list",
+    "add",
+    "remove",
+    "status",
+    "doctor",
+    "access_explain",
+    "template_list",
+    "template_plan",
+    "template_apply"
+  ],
+  "credential_sources": {
+    "recommended": [
+      {
+        "id": "interactive_login",
+        "command": "tslink login",
+        "boundary": "normal path; prompts avoid putting secrets in argv or shell history"
+      }
+    ],
+    "automation": [
+      {
+        "id": "api_key_stdin",
+        "command": "tslink login --api-key-stdin",
+        "flags": [
+          "--api-key-stdin"
+        ],
+        "boundary": "read API token from stdin; keep secret out of argv"
+      },
+      {
+        "id": "client_secret_stdin",
+        "command": "tslink login --client-secret-stdin",
+        "flags": [
+          "--client-secret-stdin"
+        ],
+        "boundary": "read OAuth client secret from stdin; keep secret out of argv"
+      },
+      {
+        "id": "environment",
+        "environment": [
+          "TSLINK_API_KEY",
+          "TSLINK_CLIENT_SECRET"
+        ],
+        "boundary": "acceptable for secret-manager injected automation; do not hard-code in shell history or source"
+      }
+    ],
+    "avoid": [
+      {
+        "id": "argv_flags",
+        "flags": [
+          "--api-key",
+          "--client-secret"
+        ],
+        "boundary": "accepted for compatibility, but secrets in argv can be exposed through shell history or local process inspection"
+      },
+      {
+        "id": "manual_secret_file_write",
+        "boundary": "direct echo/printf writes can leak through shell history and create files before permissions converge; prefer tslink login stdin paths"
+      }
+    ],
+    "storage": [
+      {
+        "id": "system_keychain",
+        "boundary": "preferred storage: macOS Keychain, Linux Secret Service, or Windows Credential Manager"
+      },
+      {
+        "id": "restricted_file_fallback",
+        "boundary": "headless fallback uses user-only restricted files when keychain storage is unavailable"
+      }
+    ]
+  },
+  "high_risk_operations": [
+    {
+      "command": "tslink login",
+      "operation": "remote ACL tag-owner mutation",
+      "default": "disabled",
+      "required_flags": [
+        "--manage-acl"
+      ],
+      "boundary": "default login does not rewrite shared tailnet ACL policy"
+    },
+    {
+      "command": "tslink serve",
+      "operation": "startup remote ACL tag ensure",
+      "default": "disabled",
+      "required_flags": [
+        "--manage-acl"
+      ],
+      "boundary": "default serve does not rewrite shared tailnet ACL policy"
+    },
+    {
+      "command": "tslink tags delete-remote",
+      "operation": "remote ACL tag-owner deletion",
+      "default": "disabled",
+      "required_flags": [
+        "--force",
+        "--manage-acl"
+      ],
+      "boundary": "requires destructive confirmation and explicit remote ACL opt-in"
+    }
+  ],
+  "release": {
+    "public_release_available": false,
+    "prebuilt_available": false,
+    "homebrew_tap_available": false,
+    "local_source_install": "go install . from a checked-out source tree before the first public release",
+    "external_gates": [
+      "hosted exact-SHA CI readback",
+      "GitHub release environment reviewer/ruleset readback",
+      "first tag/release artifact readback",
+      "Homebrew tap readback"
+    ]
+  },
   "commands": [
     {
       "path": "tslink",
@@ -19,17 +153,34 @@
         {
           "name": "json",
           "type": "bool",
-          "default": "false"
+          "default": "false",
+          "scope": "local"
         }
       ]
     },
     {
       "path": "tslink access",
-      "short": "Explain local access knowledge for registered services"
+      "short": "Explain local access knowledge for registered services",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited"
+        }
+      ]
     },
     {
       "path": "tslink access explain",
-      "short": "Explain local access knowledge for one service"
+      "short": "Explain local access knowledge for one service",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited"
+        }
+      ]
     },
     {
       "path": "tslink add",
@@ -37,91 +188,171 @@
       "flags": [
         {
           "name": "acme-email",
-          "type": "string"
+          "type": "string",
+          "scope": "local"
         },
         {
           "name": "allow",
-          "type": "string"
+          "type": "string",
+          "scope": "local"
         },
         {
           "name": "control-url",
-          "type": "string"
+          "type": "string",
+          "scope": "local"
         },
         {
           "name": "dir",
-          "type": "string"
+          "type": "string",
+          "scope": "local"
         },
         {
           "name": "domain",
-          "type": "string"
+          "type": "string",
+          "scope": "local"
         },
         {
           "name": "ephemeral",
           "type": "bool",
-          "default": "false"
+          "default": "false",
+          "scope": "local"
         },
         {
           "name": "funnel",
           "type": "bool",
-          "default": "false"
+          "default": "false",
+          "scope": "local"
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited"
         },
         {
           "name": "proxy",
-          "type": "string"
+          "type": "string",
+          "scope": "local"
         },
         {
           "name": "public",
           "type": "bool",
-          "default": "false"
+          "default": "false",
+          "scope": "local"
         },
         {
           "name": "tags",
-          "type": "string"
+          "type": "string",
+          "scope": "local"
         },
         {
           "name": "tcp",
-          "type": "string"
+          "type": "string",
+          "scope": "local"
         }
       ]
     },
     {
       "path": "tslink api",
-      "short": "JSON-over-stdin/stdout interface for programmatic service management"
+      "short": "JSON-over-stdin/stdout interface for programmatic service management",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited"
+        }
+      ]
     },
     {
       "path": "tslink config",
-      "short": "Manage global TSLink configuration"
+      "short": "Manage global TSLink configuration",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited"
+        }
+      ]
     },
     {
       "path": "tslink config get",
-      "short": "Get a global config value"
+      "short": "Get a global config value",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited"
+        }
+      ]
     },
     {
       "path": "tslink config list",
-      "short": "List all global config values"
+      "short": "List all global config values",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited"
+        }
+      ]
     },
     {
       "path": "tslink config set",
-      "short": "Set a global config value"
+      "short": "Set a global config value",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited"
+        }
+      ]
     },
     {
       "path": "tslink doctor",
       "short": "Diagnose TSLink safety and runtime evidence",
       "flags": [
         {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited"
+        },
+        {
           "name": "probe-external",
           "type": "bool",
-          "default": "false"
+          "default": "false",
+          "scope": "local"
         }
       ]
     },
     {
       "path": "tslink install",
-      "short": "Install as macOS LaunchAgent"
+      "short": "Install as macOS LaunchAgent",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited"
+        }
+      ]
     },
     {
       "path": "tslink list",
-      "short": "List registered services"
+      "short": "List registered services",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited"
+        }
+      ]
     },
     {
       "path": "tslink login",
@@ -129,56 +360,92 @@
       "flags": [
         {
           "name": "api-key",
-          "type": "string"
+          "type": "string",
+          "scope": "local"
         },
         {
           "name": "api-key-stdin",
           "type": "bool",
-          "default": "false"
+          "default": "false",
+          "scope": "local"
         },
         {
           "name": "client-secret",
-          "type": "string"
+          "type": "string",
+          "scope": "local"
         },
         {
           "name": "client-secret-stdin",
           "type": "bool",
-          "default": "false"
+          "default": "false",
+          "scope": "local"
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited"
         },
         {
           "name": "manage-acl",
           "type": "bool",
-          "default": "false"
+          "default": "false",
+          "scope": "local"
         }
       ]
     },
     {
       "path": "tslink logout",
-      "short": "Logout from Tailscale"
+      "short": "Logout from Tailscale",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited"
+        }
+      ]
     },
     {
       "path": "tslink logs",
       "short": "View TSLink daemon logs",
       "flags": [
         {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited"
+        },
+        {
           "name": "last",
           "type": "int",
-          "default": "50"
+          "default": "50",
+          "scope": "local"
         },
         {
           "name": "level",
-          "type": "string"
+          "type": "string",
+          "scope": "local"
         },
         {
           "name": "source",
           "type": "string",
-          "default": "err"
+          "default": "err",
+          "scope": "local"
         }
       ]
     },
     {
       "path": "tslink remove",
-      "short": "Unregister a service"
+      "short": "Unregister a service",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited"
+        }
+      ]
     },
     {
       "path": "tslink serve",
@@ -186,17 +453,26 @@
       "flags": [
         {
           "name": "control-url",
-          "type": "string"
+          "type": "string",
+          "scope": "local"
         },
         {
           "name": "daemon",
           "type": "bool",
-          "default": "false"
+          "default": "false",
+          "scope": "local"
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited"
         },
         {
           "name": "manage-acl",
           "type": "bool",
-          "default": "false"
+          "default": "false",
+          "scope": "local"
         }
       ]
     },
@@ -205,23 +481,54 @@
       "short": "Show TSLink status",
       "flags": [
         {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited"
+        },
+        {
           "name": "urls",
           "type": "bool",
-          "default": "false"
+          "default": "false",
+          "scope": "local"
         }
       ]
     },
     {
       "path": "tslink stop",
-      "short": "Stop the TSLink daemon"
+      "short": "Stop the TSLink daemon",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited"
+        }
+      ]
     },
     {
       "path": "tslink tags",
-      "short": "Manage service ACL tags"
+      "short": "Manage service ACL tags",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited"
+        }
+      ]
     },
     {
       "path": "tslink tags add",
-      "short": "Add a tag to a service"
+      "short": "Add a tag to a service",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited"
+        }
+      ]
     },
     {
       "path": "tslink tags delete-remote",
@@ -230,34 +537,82 @@
         {
           "name": "force",
           "type": "bool",
-          "default": "false"
+          "default": "false",
+          "scope": "local"
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited"
         },
         {
           "name": "manage-acl",
           "type": "bool",
-          "default": "false"
+          "default": "false",
+          "scope": "local"
         }
       ]
     },
     {
       "path": "tslink tags list",
-      "short": "Show tags for all registered services"
+      "short": "Show tags for all registered services",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited"
+        }
+      ]
     },
     {
       "path": "tslink tags pull",
-      "short": "Fetch remote tags from tailnet ACL"
+      "short": "Fetch remote tags from tailnet ACL",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited"
+        }
+      ]
     },
     {
       "path": "tslink tags set",
-      "short": "Replace a service's tags with a single tag"
+      "short": "Replace a service's tags with a single tag",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited"
+        }
+      ]
     },
     {
       "path": "tslink tags set-default",
-      "short": "Set the default tag for new services"
+      "short": "Set the default tag for new services",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited"
+        }
+      ]
     },
     {
       "path": "tslink template",
-      "short": "Preview and apply built-in personal service templates"
+      "short": "Preview and apply built-in personal service templates",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited"
+        }
+      ]
     },
     {
       "path": "tslink template apply",
@@ -266,26 +621,58 @@
         {
           "name": "dry-run",
           "type": "bool",
-          "default": "false"
+          "default": "false",
+          "scope": "local"
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited"
         },
         {
           "name": "yes",
           "type": "bool",
-          "default": "false"
+          "default": "false",
+          "scope": "local"
         }
       ]
     },
     {
       "path": "tslink template list",
-      "short": "List built-in templates"
+      "short": "List built-in templates",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited"
+        }
+      ]
     },
     {
       "path": "tslink template show",
-      "short": "Show a built-in template"
+      "short": "Show a built-in template",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited"
+        }
+      ]
     },
     {
       "path": "tslink uninstall",
-      "short": "Remove as macOS LaunchAgent"
+      "short": "Remove as macOS LaunchAgent",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited"
+        }
+      ]
     }
   ],
   "capabilities": {

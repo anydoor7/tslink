@@ -2539,6 +2539,94 @@ func TestRunMarksReadyWithZeroServicesAfterAuthoritativeSync(t *testing.T) {
 	}
 }
 
+func TestRunDoesNotMarkReadyWhenSupersededInitialSyncFails(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+
+	oldReg := &registry.Registry{SchemaVersion: registry.CurrentRegistrySchemaVersion, Services: []registry.Service{{
+		Name: "old", Type: registry.TypeFile, Path: t.TempDir(),
+	}}}
+	newReg := &registry.Registry{SchemaVersion: registry.CurrentRegistrySchemaVersion, Services: []registry.Service{{
+		Name: "new", Type: registry.TypeFile, Path: t.TempDir(),
+	}}}
+
+	var loadCount atomic.Int32
+	oldLoad := registryLoadFn
+	registryLoadFn = func(string) (*registry.Registry, error) {
+		if loadCount.Add(1) == 1 {
+			return oldReg, nil
+		}
+		return newReg, nil
+	}
+	t.Cleanup(func() { registryLoadFn = oldLoad })
+
+	firstDesiredLoaded := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	newerFailure := errors.New("newer authoritative sync failed")
+	oldAfterDesired := afterDesiredLoadedFn
+	afterDesiredLoadedFn = func(ctx context.Context, generation uint64) error {
+		if generation == 1 {
+			close(firstDesiredLoaded)
+			select {
+			case <-releaseFirst:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+			return nil
+		}
+		return newerFailure
+	}
+	t.Cleanup(func() { afterDesiredLoadedFn = oldAfterDesired })
+
+	oldNew := newTSNetServerFn
+	newTSNetServerFn = func(svc registry.Service, stateDir, authKey, controlURL string) tsnetServer {
+		return &fakeTSNetServer{certDomains: []string{svc.Name + ".tailnet.ts.net"}}
+	}
+	t.Cleanup(func() { newTSNetServerFn = oldNew })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	readyCalled := false
+	s.SetReadyFunc(func() error {
+		readyCalled = true
+		cancel()
+		return nil
+	})
+
+	runDone := make(chan error, 1)
+	go func() { runDone <- s.Run(ctx) }()
+	select {
+	case <-firstDesiredLoaded:
+	case err := <-runDone:
+		t.Fatalf("Run() returned before initial generation was superseded: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("initial generation did not reach desired-state barrier")
+	}
+
+	if err := s.syncNodes(context.Background()); !errors.Is(err, newerFailure) {
+		t.Fatalf("superseding syncNodes() error = %v, want newer failure", err)
+	}
+	close(releaseFirst)
+
+	select {
+	case err := <-runDone:
+		if err == nil || !strings.Contains(err.Error(), "initial sync failed") || !strings.Contains(err.Error(), newerFailure.Error()) {
+			t.Fatalf("Run() error = %v, want failing authoritative sync", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run() did not fail closed after superseded initial sync")
+	}
+	if readyCalled {
+		t.Fatal("ready callback was called while a newer authoritative sync failed")
+	}
+}
+
 func TestRunWatcherReadyBeforeInitialSyncRemoveConvergesWithoutLaterEvent(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	if err := config.EnsureDir(); err != nil {

@@ -24,8 +24,8 @@ builds:
       - amd64
       - arm64
     # Embed version and the exact VCS commit so provenance ties an artifact to
-    # the tagged source. mod_timestamp pins the build epoch to the
-    # commit for reproducible archives.
+    # the tagged source. mod_timestamp pins the build epoch to the commit for
+    # reproducible archives.
     ldflags:
       - -s -w -X main.version={{.Version}} -X main.commit={{.FullCommit}}
     mod_timestamp: "{{ .CommitTimestamp }}"
@@ -87,7 +87,7 @@ nfpms:
     formats:
       - deb
       - rpm
-    # The conventional deb/rpm documentation path carries the legal set.
+    # Conventional deb/rpm documentation paths carry the legal set.
     contents:
       - src: LICENSE
         dst: /usr/share/doc/tslink/LICENSE
@@ -106,7 +106,7 @@ nfpms:
 # `homebrew_casks` is the supported replacement (requires GoReleaser >= 2.11,
 # pinned to v2.17.0 in the workflows). `skip_upload: auto` skips pre-release
 # tags and snapshots never upload. The tap must be initialized/protected before
-# a stable release after external verification.
+# a stable release; that readback remains an external gate.
 homebrew_casks:
   - name: tslink
     repository:

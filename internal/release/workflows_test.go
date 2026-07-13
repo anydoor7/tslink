@@ -7,15 +7,18 @@
 //   - the invalid upload-artifact pin is gone;
 //   - the tag Release workflow can only publish AFTER the reusable
 //     release-candidate gate succeeds, and elevated write/id-token permission
-//     is confined to the publish job inside the protected `release` environment;
+//     is confined to the publish job behind a repository-variable release
+//     authorization guard;
 //   - PR/main CI and the tag path consume the SAME reusable candidate gate;
 //   - the candidate gate still declares every required job.
 //
-// Hosted runner behavior, action resolution, and environment enforcement remain
-// external; this test only proves the checked-in graph is safe.
+// Hosted runner behavior, action resolution, environment reviewer/ruleset
+// readback, and branch protection remain external; this test only proves the
+// checked-in graph is fail-closed.
 package release_test
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -178,7 +181,7 @@ func parse(t *testing.T, name string, body []byte) workflowFile {
 	return wf
 }
 
-// TestTagPublishCannotBypassCandidate proves the required gate graph.
+// TestTagPublishCannotBypassCandidate is the core tag-publish graph proof.
 func TestTagPublishCannotBypassCandidate(t *testing.T) {
 	all := readWorkflows(t)
 	body, ok := all["release.yml"]
@@ -203,7 +206,19 @@ func TestTagPublishCannotBypassCandidate(t *testing.T) {
 		t.Errorf("release.yml publish job must `needs: candidate`, got %v", publish.Needs)
 	}
 	if publish.Environment.Name != "release" {
-		t.Errorf("release.yml publish job must run in the protected `release` environment, got %q", publish.Environment.Name)
+		t.Errorf("release.yml publish job must bind environment %q, got %q", "release", publish.Environment.Name)
+	}
+	text := string(body)
+	for _, want := range []string{
+		"TSLINK_RELEASE_PUBLISH_ENABLED",
+		"vars.TSLINK_RELEASE_PUBLISH_ENABLED",
+		"Release publishing is disabled",
+		"external readback proves the release environment",
+		"refs/tags/v* ruleset",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("release.yml missing release authorization guard text %q", want)
+		}
 	}
 
 	// Elevated write/id-token permission must exist ONLY on the publish job.
@@ -334,7 +349,7 @@ func semverLess(a, b [3]int) bool {
 	return false
 }
 
-// TestGoReleaserVersionPinsSatisfyConfigFeatures is the release version compatibility guard.
+// TestGoReleaserVersionPinsSatisfyConfigFeatures guards GoReleaser parser compatibility.
 //
 // It fails on the exact skew that made the release-candidate gate red: both the
 // `release-config` check job and the tag `publish` job pinned goreleaser v2.9.0,
@@ -388,6 +403,34 @@ func TestGoReleaserVersionPinsSatisfyConfigFeatures(t *testing.T) {
 		if p.version != canonical {
 			t.Errorf("GoReleaser version skew: %s pins %s but %s pins %s; all pins must match",
 				p.file, p.version, pins[0].file, canonical)
+		}
+	}
+}
+
+func TestReleaseVerifyScriptIsReadOnly(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join(repoRoot(t), "scripts", "release-verify.sh"))
+	if err != nil {
+		t.Fatalf("read scripts/release-verify.sh: %v", err)
+	}
+	text := string(body)
+	for _, forbidden := range []string{
+		"--execute",
+		"SCRATCH_REPO",
+		"SCRATCH_TAP",
+		"execute-mode external steps are disabled",
+	} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("release-verify.sh still advertises or contains fake execute mode text %q", forbidden)
+		}
+	}
+	for _, want := range []string{
+		"READ-ONLY mode",
+		"no external mutation",
+		"external publish/sign/attest/install gates",
+		"Unknown external gates make the script exit nonzero",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("release-verify.sh missing read-only/fail-closed text %q", want)
 		}
 	}
 }
@@ -460,5 +503,103 @@ func TestCompiledSelectorCoversAllCompiledTests(t *testing.T) {
 	}
 	if covered == len(names) {
 		t.Errorf("the historical narrow selector already covers all %d TestCompiled* tests; guard is vacuous", len(names))
+	}
+}
+
+var (
+	nativeSmokeCommandsBlockRE = regexp.MustCompile(`(?s)commands=\(\s*(.*?)\s*\)`)
+	doubleQuotedCommandRE      = regexp.MustCompile(`"([^"]+)"`)
+)
+
+func nativeSmokeCommands(t *testing.T) []string {
+	t.Helper()
+	body, ok := readWorkflows(t)[candidateWorkflow]
+	if !ok {
+		t.Fatalf("%s is missing", candidateWorkflow)
+	}
+	match := nativeSmokeCommandsBlockRE.FindSubmatch(body)
+	if match == nil {
+		t.Fatalf("%s does not define the native smoke commands array", candidateWorkflow)
+	}
+	var commands []string
+	for _, m := range doubleQuotedCommandRE.FindAllStringSubmatch(string(match[1]), -1) {
+		commands = append(commands, m[1])
+	}
+	if len(commands) == 0 {
+		t.Fatalf("%s native smoke commands array is empty", candidateWorkflow)
+	}
+	return commands
+}
+
+func manifestCommandPaths(t *testing.T) map[string]struct{} {
+	t.Helper()
+	body, err := os.ReadFile(filepath.Join(repoRoot(t), "docs", "cli-manifest.json"))
+	if err != nil {
+		t.Fatalf("read docs/cli-manifest.json: %v", err)
+	}
+	var manifest struct {
+		Commands []struct {
+			Path string `json:"path"`
+		} `json:"commands"`
+	}
+	if err := json.Unmarshal(body, &manifest); err != nil {
+		t.Fatalf("parse docs/cli-manifest.json: %v", err)
+	}
+	paths := make(map[string]struct{}, len(manifest.Commands))
+	for _, cmd := range manifest.Commands {
+		paths[cmd.Path] = struct{}{}
+	}
+	if len(paths) == 0 {
+		t.Fatal("manifest contains no command paths")
+	}
+	return paths
+}
+
+func smokeCommandPath(command string) string {
+	var path []string
+	for _, field := range strings.Fields(command) {
+		if strings.HasPrefix(field, "-") {
+			break
+		}
+		path = append(path, field)
+	}
+	if len(path) == 0 {
+		return "tslink"
+	}
+	return "tslink " + strings.Join(path, " ")
+}
+
+func TestNativeSmokeCommandsAreManifestBacked(t *testing.T) {
+	paths := manifestCommandPaths(t)
+	rootOnly := map[string]struct{}{
+		"--help":           {},
+		"--version":        {},
+		"--version --json": {},
+	}
+	commands := nativeSmokeCommands(t)
+	var hasHumanVersion, hasJSONVersion bool
+	for _, command := range commands {
+		if command == "version" {
+			t.Fatalf("native smoke uses nonexistent `tslink version`; root --version is the supported contract")
+		}
+		if _, ok := rootOnly[command]; ok {
+			if command == "--version" {
+				hasHumanVersion = true
+			}
+			if command == "--version --json" {
+				hasJSONVersion = true
+			}
+			continue
+		}
+		path := smokeCommandPath(command)
+		if _, ok := paths[path]; !ok {
+			t.Fatalf("native smoke command %q maps to unknown manifest path %q", command, path)
+		}
+	}
+	if !hasHumanVersion {
+		t.Fatal("native smoke must exercise root --version")
+	}
+	if !hasJSONVersion {
+		t.Fatal("native smoke must preserve the root --version --json machine contract")
 	}
 }

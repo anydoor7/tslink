@@ -7,8 +7,16 @@ import (
 	"os"
 	"strings"
 
+	"github.com/monody0007/tslink/internal/output"
 	"github.com/spf13/cobra"
 )
+
+type UninstallResult struct {
+	Path           string `json:"path"`
+	Removed        bool   `json:"removed"`
+	ServiceManager string `json:"service_manager"`
+	Warning        string `json:"warning,omitempty"`
+}
 
 var uninstallCmd = &cobra.Command{
 	Use:   "uninstall",
@@ -40,6 +48,10 @@ If you enabled lingering only for TSLink, disable it after uninstall:
 		}
 
 		if _, err := os.Stat(servicePath); os.IsNotExist(err) {
+			if jsonOutput(cmd) {
+				output.Success("uninstall", UninstallResult{Path: servicePath, Removed: false, ServiceManager: systemdServiceName})
+				return nil
+			}
 			fmt.Fprintln(cmd.OutOrStdout(), "→ systemd user service not installed")
 			return nil
 		} else if err != nil {
@@ -61,8 +73,19 @@ If you enabled lingering only for TSLink, disable it after uninstall:
 			return fmt.Errorf("reload systemd user daemon: %w: %s", err, output)
 		}
 
+		warning := strings.Join(warnings, "; ")
+		if jsonOutput(cmd) {
+			output.Success("uninstall", UninstallResult{
+				Path:           servicePath,
+				Removed:        true,
+				ServiceManager: systemdServiceName,
+				Warning:        warning,
+			})
+			return nil
+		}
+
 		if len(warnings) > 0 {
-			fmt.Fprintf(cmd.ErrOrStderr(), "→ ⚠ %s\n", strings.Join(warnings, "; "))
+			fmt.Fprintf(cmd.ErrOrStderr(), "→ ⚠ %s\n", warning)
 		}
 		fmt.Fprintln(cmd.OutOrStdout(), "→ ✓ systemd user service removed")
 		return nil

@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -158,6 +159,86 @@ func TestNewFileHandler_SymlinkTraversalBlocked(t *testing.T) {
 	// The handler must NOT serve the file content.
 	if w.Code == http.StatusOK && w.Body.String() == "sensitive-data" {
 		t.Fatalf("symlink traversal was not blocked: got status %d with body %q", w.Code, w.Body.String())
+	}
+}
+
+func TestSafeFSRejectsConcurrentSymlinkSwapEscape(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows symlink creation requires privileges not guaranteed in CI")
+	}
+
+	parent := t.TempDir()
+	root := filepath.Join(parent, "public")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatalf("Mkdir(root) error = %v", err)
+	}
+	inside := filepath.Join(root, "inside.txt")
+	if err := os.WriteFile(inside, []byte("inside"), 0o600); err != nil {
+		t.Fatalf("WriteFile(inside) error = %v", err)
+	}
+	outside := filepath.Join(parent, "secret.txt")
+	if err := os.WriteFile(outside, []byte("secret"), 0o600); err != nil {
+		t.Fatalf("WriteFile(outside) error = %v", err)
+	}
+
+	link := filepath.Join(root, "flip")
+	if err := os.Symlink(inside, link); err != nil {
+		t.Skipf("Symlink() unavailable on this platform/user: %v", err)
+	}
+
+	stop := make(chan struct{})
+	errCh := make(chan error, 1)
+	go func() {
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			for _, target := range []string{inside, outside} {
+				next := link + ".next"
+				_ = os.Remove(next)
+				if err := os.Symlink(target, next); err != nil {
+					select {
+					case errCh <- err:
+					default:
+					}
+					return
+				}
+				if err := os.Rename(next, link); err != nil {
+					select {
+					case errCh <- err:
+					default:
+					}
+					return
+				}
+			}
+		}
+	}()
+	defer close(stop)
+
+	fsys := &safeFS{root: root}
+	for i := 0; i < 5000; i++ {
+		select {
+		case err := <-errCh:
+			t.Fatalf("symlink swap worker failed: %v", err)
+		default:
+		}
+		f, err := fsys.Open("flip")
+		if err != nil {
+			continue
+		}
+		body, readErr := io.ReadAll(f)
+		closeErr := f.Close()
+		if readErr != nil {
+			t.Fatalf("ReadAll(flip) error = %v", readErr)
+		}
+		if closeErr != nil {
+			t.Fatalf("Close(flip) error = %v", closeErr)
+		}
+		if string(body) == "secret" {
+			t.Fatalf("safeFS opened root-external file during concurrent symlink swap")
+		}
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/monody0007/tslink/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -17,6 +18,14 @@ var (
 	windowsExecutablePathFn = os.Executable
 	windowsEvalSymlinksFn   = filepath.EvalSymlinks
 )
+
+type InstallResult struct {
+	Path           string `json:"path"`
+	Installed      bool   `json:"installed"`
+	Started        bool   `json:"started"`
+	ServiceManager string `json:"service_manager"`
+	Warning        string `json:"warning,omitempty"`
+}
 
 var installCmd = &cobra.Command{
 	Use:   "install",
@@ -62,6 +71,17 @@ To remove the autostart:
 		script := windowsStartupScript(exe)
 		if err := os.WriteFile(startupPath, []byte(script), 0o644); err != nil {
 			return fmt.Errorf("write Startup script: %w", err)
+		}
+
+		if jsonOutput(cmd) {
+			output.Success("install", InstallResult{
+				Path:           startupPath,
+				Installed:      true,
+				Started:        false,
+				ServiceManager: "windows-startup",
+				Warning:        "Windows Startup launches TSLink only at next sign-in and does not auto-restart on crash",
+			})
+			return nil
 		}
 
 		fmt.Fprintf(cmd.OutOrStdout(), "→ ✓ Startup script installed: %s\n", startupPath)

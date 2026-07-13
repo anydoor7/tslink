@@ -10,8 +10,9 @@ import (
 )
 
 // NewFileHandler returns an HTTP handler that serves files from dir,
-// confined to the directory subtree. Symlinks that resolve outside dir
-// are rejected to prevent directory traversal escapes.
+// confined to the directory subtree. Path opens are anchored at the OS root
+// handle for dir, so a concurrent symlink swap cannot turn a prior path check
+// into an open outside the served tree.
 //
 // dir must be a non-empty absolute path. Empty or relative roots are rejected
 // with an error rather than silently resolving to the process working directory
@@ -33,8 +34,9 @@ func NewFileHandler(dir string) (http.Handler, error) {
 	return http.FileServer(http.FS(&safeFS{root: absDir})), nil
 }
 
-// safeFS is an fs.FS that serves files from root while rejecting any
-// path component that is a symlink resolving outside the root tree.
+// safeFS is an fs.FS that serves files from root using os.Root. Unlike
+// check-then-open confinement, Root.Open resolves and opens relative to the
+// anchored root handle in one operation.
 type safeFS struct {
 	root string
 }
@@ -45,28 +47,15 @@ func (s *safeFS) Open(name string) (fs.File, error) {
 		return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrInvalid}
 	}
 
-	fullPath := filepath.Join(s.root, filepath.FromSlash(name))
-
-	// Resolve the real path after following all symlinks and verify it
-	// stays within the root.
-	realPath, err := filepath.EvalSymlinks(fullPath)
+	root, err := os.OpenRoot(s.root)
 	if err != nil {
 		return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrNotExist}
 	}
+	defer root.Close()
 
-	// Also resolve root in case root itself has symlinks in its path.
-	realRoot, err := filepath.EvalSymlinks(s.root)
+	f, err := root.Open(filepath.FromSlash(name))
 	if err != nil {
 		return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrNotExist}
 	}
-
-	// Ensure the resolved path is within the resolved root.
-	// filepath.Rel returns a clean relative path; if it starts with ".."
-	// the target is outside the root.
-	rel, err := filepath.Rel(realRoot, realPath)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrNotExist}
-	}
-
-	return os.Open(realPath)
+	return f, nil
 }

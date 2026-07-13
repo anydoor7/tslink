@@ -24,6 +24,29 @@ import (
 	"time"
 )
 
+const releaseCandidateAggregateContext = "Release candidate gate"
+
+var mandatoryReleaseCandidateLeafContexts = []string{
+	"Native build/vet/test/race (ubuntu-latest)",
+	"Native build/vet/test/race (macos-latest)",
+	"Native build/vet/test/race (windows-latest)",
+	"Compiled-binary machine contracts (ubuntu-latest)",
+	"Compiled-binary machine contracts (macos-latest)",
+	"Compiled-binary machine contracts (windows-latest)",
+	"Staticcheck",
+	"govulncheck (main module)",
+	"govulncheck (repo)",
+	"gofmt + tidy-diff (read-only source proof)",
+	"Cross build (darwin/amd64)",
+	"Cross build (darwin/arm64)",
+	"Cross build (linux/amd64)",
+	"Cross build (linux/arm64)",
+	"Cross build (windows/amd64)",
+	"Cross build (windows/arm64)",
+	"Artifact download + hash + content verify",
+	"GoReleaser config + license/notice presence",
+}
+
 // Status is the classification of one control.
 type Status string
 
@@ -167,6 +190,9 @@ func checkBranchProtection(f Fetcher, repo string) Result {
 	var p struct {
 		RequiredStatusChecks struct {
 			Contexts []string `json:"contexts"`
+			Checks   []struct {
+				Context string `json:"context"`
+			} `json:"checks"`
 		} `json:"required_status_checks"`
 		RequiredPullRequestReviews *struct{} `json:"required_pull_request_reviews"`
 	}
@@ -174,10 +200,35 @@ func checkBranchProtection(f Fetcher, repo string) Result {
 	if p.RequiredPullRequestReviews == nil {
 		return Result{"branch-protection:main", NotReady, "no required pull-request reviews"}
 	}
-	if len(p.RequiredStatusChecks.Contexts) == 0 {
-		return Result{"branch-protection:main", NotReady, "no required status-check contexts (candidate gate not required)"}
+	contexts := append([]string(nil), p.RequiredStatusChecks.Contexts...)
+	for _, check := range p.RequiredStatusChecks.Checks {
+		if check.Context != "" {
+			contexts = append(contexts, check.Context)
+		}
 	}
-	return Result{"branch-protection:main", Ready, fmt.Sprintf("reviews required; %d required contexts", len(p.RequiredStatusChecks.Contexts))}
+	if len(contexts) == 0 {
+		return Result{"branch-protection:main", NotReady, "no required status-check contexts (release-candidate gate not required)"}
+	}
+	if !hasReleaseCandidateContext(contexts) {
+		return Result{"branch-protection:main", NotReady, "required contexts do not include the release-candidate gate; unrelated contexts are insufficient"}
+	}
+	return Result{"branch-protection:main", Ready, fmt.Sprintf("reviews required; complete release-candidate gate present among %d required contexts", len(contexts))}
+}
+
+func hasReleaseCandidateContext(contexts []string) bool {
+	seen := make(map[string]struct{}, len(contexts))
+	for _, context := range contexts {
+		seen[context] = struct{}{}
+		if context == releaseCandidateAggregateContext {
+			return true
+		}
+	}
+	for _, required := range mandatoryReleaseCandidateLeafContexts {
+		if _, ok := seen[required]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func checkRulesets(f Fetcher, repo string) Result {
@@ -191,18 +242,38 @@ func checkRulesets(f Fetcher, repo string) Result {
 	var rs []struct {
 		Name        string `json:"name"`
 		Enforcement string `json:"enforcement"`
+		Target      string `json:"target"`
+		Conditions  struct {
+			RefName struct {
+				Include []string `json:"include"`
+			} `json:"ref_name"`
+		} `json:"conditions"`
 	}
 	_ = json.Unmarshal(body, &rs)
-	active := 0
+	activeTagV := 0
 	for _, r := range rs {
-		if r.Enforcement == "active" {
-			active++
+		if r.Enforcement == "active" && rulesetTargetsReleaseTags(r.Target, r.Conditions.RefName.Include) {
+			activeTagV++
 		}
 	}
-	if active == 0 {
-		return Result{"rulesets", NotReady, "no active rulesets (tag/branch protection not enforced)"}
+	if activeTagV == 0 {
+		return Result{"rulesets", NotReady, "no active ruleset targets refs/tags/v*; unrelated rulesets are insufficient"}
 	}
-	return Result{"rulesets", Ready, fmt.Sprintf("%d active ruleset(s); verify v* tag target and required contexts at transition", active)}
+	return Result{"rulesets", Ready, fmt.Sprintf("%d active release-tag ruleset(s)", activeTagV)}
+}
+
+func rulesetTargetsReleaseTags(target string, includes []string) bool {
+	target = strings.ToLower(strings.TrimSpace(target))
+	if target != "" && target != "tag" {
+		return false
+	}
+	for _, include := range includes {
+		include = strings.TrimSpace(include)
+		if include == "refs/tags/v*" || include == "refs/tags/v[0-9]*" || include == "v*" {
+			return true
+		}
+	}
+	return false
 }
 
 func checkReleaseEnvironment(f Fetcher, repo string) Result {
@@ -221,10 +292,50 @@ func checkReleaseEnvironment(f Fetcher, repo string) Result {
 	_ = json.Unmarshal(body, &envs)
 	for _, e := range envs.Environments {
 		if e.Name == "release" {
-			return Result{"release-environment", Ready, "release environment exists; verify required reviewers at transition"}
+			return checkReleaseEnvironmentDetail(f, repo)
 		}
 	}
 	return Result{"release-environment", NotReady, "no protected `release` environment"}
+}
+
+func checkReleaseEnvironmentDetail(f Fetcher, repo string) Result {
+	code, body, err := f.Get("/repos/" + repo + "/environments/release")
+	if s, d, cont := unreadable(code, err); !cont {
+		return Result{"release-environment", s, d}
+	}
+	if code == 404 {
+		return Result{"release-environment", NotReady, "release environment exists in list but detail readback returned 404"}
+	}
+	if code/100 != 2 {
+		return Result{"release-environment", Unknown, fmt.Sprintf("unexpected HTTP %d reading release environment detail", code)}
+	}
+	var env struct {
+		ProtectionRules []struct {
+			Type      string `json:"type"`
+			Reviewers []any  `json:"reviewers"`
+		} `json:"protection_rules"`
+		DeploymentBranchPolicy *struct {
+			ProtectedBranches    bool `json:"protected_branches"`
+			CustomBranchPolicies bool `json:"custom_branch_policies"`
+		} `json:"deployment_branch_policy"`
+	}
+	if err := json.Unmarshal(body, &env); err != nil {
+		return Result{"release-environment", Unknown, "could not parse release environment detail: " + err.Error()}
+	}
+	hasReviewerProtection := false
+	for _, rule := range env.ProtectionRules {
+		if rule.Type == "required_reviewers" && len(rule.Reviewers) > 0 {
+			hasReviewerProtection = true
+			break
+		}
+	}
+	if !hasReviewerProtection {
+		return Result{"release-environment", NotReady, "release environment has no required reviewer protection"}
+	}
+	if env.DeploymentBranchPolicy == nil || (!env.DeploymentBranchPolicy.ProtectedBranches && !env.DeploymentBranchPolicy.CustomBranchPolicies) {
+		return Result{"release-environment", NotReady, "release environment has no deployment branch/tag policy"}
+	}
+	return Result{"release-environment", Ready, "required reviewers and deployment branch/tag policy read back"}
 }
 
 func checkVulnerabilityAlerts(f Fetcher, repo string) Result {

@@ -6,8 +6,16 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/monody0007/tslink/internal/output"
 	"github.com/spf13/cobra"
 )
+
+type UninstallResult struct {
+	Path           string `json:"path"`
+	Removed        bool   `json:"removed"`
+	ServiceManager string `json:"service_manager"`
+	Warning        string `json:"warning,omitempty"`
+}
 
 var uninstallCmd = &cobra.Command{
 	Use:   "uninstall",
@@ -37,6 +45,10 @@ To verify the script was removed:
 		}
 
 		if _, err := os.Stat(startupPath); os.IsNotExist(err) {
+			if jsonOutput(cmd) {
+				output.Success("uninstall", UninstallResult{Path: startupPath, Removed: false, ServiceManager: "windows-startup"})
+				return nil
+			}
 			fmt.Fprintln(cmd.OutOrStdout(), "→ Startup script not installed")
 			return nil
 		} else if err != nil {
@@ -45,6 +57,11 @@ To verify the script was removed:
 
 		if err := os.Remove(startupPath); err != nil {
 			return fmt.Errorf("remove Startup script: %w", err)
+		}
+
+		if jsonOutput(cmd) {
+			output.Success("uninstall", UninstallResult{Path: startupPath, Removed: true, ServiceManager: "windows-startup"})
+			return nil
 		}
 
 		fmt.Fprintln(cmd.OutOrStdout(), "→ ✓ Startup script removed")

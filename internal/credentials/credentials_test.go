@@ -278,6 +278,92 @@ func TestDeleteAPIKey_Both(t *testing.T) {
 	}
 }
 
+func TestInspectStoredCredentialsStrictNotFoundIsClean(t *testing.T) {
+	setup(t)
+
+	status, err := InspectStoredCredentialsStrict()
+	if err != nil {
+		t.Fatalf("InspectStoredCredentialsStrict() error = %v", err)
+	}
+	if status.AnyPresent() {
+		t.Fatalf("InspectStoredCredentialsStrict().AnyPresent() = true, want false")
+	}
+}
+
+func TestInspectStoredCredentialsStrictKeyringReadFailure(t *testing.T) {
+	setup(t)
+	keyring.MockInitWithError(errors.New("keyring locked"))
+
+	status, err := InspectStoredCredentialsStrict()
+	if err == nil {
+		t.Fatal("InspectStoredCredentialsStrict() error = nil, want keyring read failure")
+	}
+	if status.AnyPresent() {
+		t.Fatalf("status.AnyPresent() = true despite unreadable keyring")
+	}
+	if strings.Contains(err.Error(), "tskey-") {
+		t.Fatalf("strict inspect leaked credential-looking material: %v", err)
+	}
+	if !strings.Contains(err.Error(), "keyring unreadable") {
+		t.Fatalf("InspectStoredCredentialsStrict() error = %v, want keyring unreadable context", err)
+	}
+}
+
+func TestDeleteStoredCredentialsStrictKeyringDeleteFailureStillRemovesFiles(t *testing.T) {
+	setup(t)
+	if err := os.WriteFile(apiKeyPath(t), []byte("tskey-api-file\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile(api key) error = %v", err)
+	}
+	if err := os.WriteFile(clientSecretPath(t), []byte("tskey-client-file\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile(client secret) error = %v", err)
+	}
+	keyring.MockInitWithError(errors.New("keyring locked"))
+
+	err := DeleteStoredCredentialsStrict()
+	if err == nil {
+		t.Fatal("DeleteStoredCredentialsStrict() error = nil, want keyring delete/readback failure")
+	}
+	if strings.Contains(err.Error(), "tskey-") {
+		t.Fatalf("strict delete leaked credential-looking material: %v", err)
+	}
+	for _, path := range []string{apiKeyPath(t), clientSecretPath(t)} {
+		if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+			t.Fatalf("%s still exists after strict delete with keyring failure, stat err = %v", path, statErr)
+		}
+	}
+}
+
+func TestDeleteStoredCredentialsStrictDisabledKeyringLeavesResidualRisk(t *testing.T) {
+	setup(t)
+	if err := keyring.Set(keychainService, keychainAPIKey, "tskey-api-keyring"); err != nil {
+		t.Fatalf("keyring.Set(api) error = %v", err)
+	}
+	if err := os.WriteFile(apiKeyPath(t), []byte("tskey-api-file\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile(api key) error = %v", err)
+	}
+
+	oldKeyringEnabled := keyringEnabledFunc
+	defer func() { keyringEnabledFunc = oldKeyringEnabled }()
+	keyringEnabledFunc = func() bool { return false }
+	err := DeleteStoredCredentialsStrict()
+	keyringEnabledFunc = oldKeyringEnabled
+	if err == nil {
+		t.Fatal("DeleteStoredCredentialsStrict() error = nil, want disabled-keyring residual risk")
+	}
+	if !strings.Contains(err.Error(), "keyring disabled") {
+		t.Fatalf("DeleteStoredCredentialsStrict() error = %v, want disabled keyring context", err)
+	}
+	if strings.Contains(err.Error(), "tskey-") {
+		t.Fatalf("strict delete leaked credential-looking material: %v", err)
+	}
+	if _, statErr := os.Stat(apiKeyPath(t)); !os.IsNotExist(statErr) {
+		t.Fatalf("file fallback not removed while keyring disabled, stat err = %v", statErr)
+	}
+	if _, keyringErr := keyring.Get(keychainService, keychainAPIKey); keyringErr != nil {
+		t.Fatalf("keyring residual fixture was unexpectedly removed/read failed: %v", keyringErr)
+	}
+}
+
 func TestMigrateFromLegacy_Success(t *testing.T) {
 	setup(t)
 

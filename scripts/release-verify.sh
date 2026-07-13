@@ -1,32 +1,23 @@
 #!/usr/bin/env bash
 #
-# release-verify.sh — scratch/draft release verification playbook.
+# release-verify.sh — local release readiness checklist.
 #
-# This script proves the publish/tap/sign/attest/download/native-install path in
-# a DISPOSABLE GitHub repo/tap BEFORE any public release. It defaults to
-# dry-run/read-only and fails closed: any missing precondition (token, tap,
-# signing identity, attestation, downloaded-artifact verification, native
-# install) is reported as a BLOCKING gap and the script exits nonzero. It never
-# performs external mutation unless invoked with --execute AND a scratch target,
-# and it refuses to run --execute against the production repo/tap.
+# This script is intentionally read-only. It verifies local toolchain,
+# configuration, and generated snapshot assets, then names the external gates
+# that still require hosted/scratch readback before the first public release.
+# Unknown external gates make the script exit nonzero, so it cannot be used as a
+# fake publish proof.
 #
 # Usage:
 #   scripts/release-verify.sh                       # dry-run gate report (default)
 #   scripts/release-verify.sh --dist dist           # verify a local snapshot's assets
 #   scripts/release-verify.sh --cleanup --tag vX     # plan partial-publication cleanup (dry-run)
-#   SCRATCH_REPO=owner/scratch SCRATCH_TAP=owner/scratch-tap \
-#     scripts/release-verify.sh --execute --tag vX   # scratch-only, opt-in mutation
-#
-# Use dry-run mode for local validation.
 
 set -euo pipefail
 
-DRY_RUN=1
 CLEANUP=0
 DIST_DIR="dist"
 TAG=""
-PROD_REPO="monody0007/tslink"
-PROD_TAP="monody0007/homebrew-tap"
 
 log()   { printf '%s\n' "$*"; }
 gate_pass=(); gate_fail=(); gate_unknown=()
@@ -36,7 +27,6 @@ unknown() { gate_unknown+=("$1"); log "  [UNKNOWN] $1 (external readback require
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --execute) DRY_RUN=0 ;;
     --cleanup) CLEANUP=1 ;;
     --dist) DIST_DIR="${2:-dist}"; shift ;;
     --tag) TAG="${2:-}"; shift ;;
@@ -46,22 +36,7 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-# --- Refuse external mutation against production (fail closed) ---------------
-if [ "$DRY_RUN" -eq 0 ]; then
-  scratch_repo="${SCRATCH_REPO:-}"
-  scratch_tap="${SCRATCH_TAP:-}"
-  if [ -z "$scratch_repo" ] || [ -z "$scratch_tap" ]; then
-    log "FATAL: --execute requires SCRATCH_REPO and SCRATCH_TAP (disposable targets)."
-    exit 3
-  fi
-  if [ "$scratch_repo" = "$PROD_REPO" ] || [ "$scratch_tap" = "$PROD_TAP" ]; then
-    log "FATAL: refusing to --execute against the production repo/tap."
-    exit 3
-  fi
-  log "EXECUTE mode against scratch: repo=$scratch_repo tap=$scratch_tap"
-else
-  log "DRY-RUN mode: read-only gate report; no external mutation will occur."
-fi
+log "READ-ONLY mode: local gate report; no external mutation will occur."
 log ""
 
 # --- Phase 1: local toolchain + config gates --------------------------------
@@ -103,28 +78,22 @@ log ""
 
 # --- Phase 3: external gates (never satisfiable in dry-run) ------------------
 log "Phase 3 — external publish/sign/attest/install gates"
-if [ "$DRY_RUN" -eq 1 ]; then
-  unknown "publish to scratch repo (needs --execute + SCRATCH_REPO)"
-  unknown "homebrew tap initialized + protected"
-  unknown "cosign signing identity + signature verification"
-  unknown "GitHub build-provenance attestation verifies for every digest"
-  unknown "download released assets + checksum/SBOM + tamper-negative"
-  unknown "native install/uninstall on macOS/Linux/Windows (Gatekeeper/quarantine)"
-  unknown "partial-publication cleanup verified on injected mid-publish failure"
-else
-  # Execute-mode steps would run here against the SCRATCH targets only. They are
-  # intentionally not implemented here; external mutation requires a separate target.
-  fail "execute-mode external steps are unavailable in this build"
-fi
+unknown "scratch publish readback in a disposable repo"
+unknown "Homebrew tap initialized, protected, and writable by release token"
+unknown "cosign signing identity + signature verification"
+unknown "GitHub build-provenance attestation verifies for every digest"
+unknown "download released assets + checksum/SBOM + tamper-negative"
+unknown "native install/uninstall on macOS/Linux/Windows (Gatekeeper/quarantine)"
+unknown "partial-publication cleanup verified on injected mid-publish failure"
 log ""
 
 # --- Phase 4: cleanup planning (dry-run) ------------------------------------
 if [ "$CLEANUP" -eq 1 ]; then
   log "Phase 4 — partial-publication cleanup plan for tag '${TAG:-<unset>}'"
   if [ -z "$TAG" ]; then fail "cleanup requires --tag"; else
-    log "  would (scratch-only, on --execute): delete draft release, remove uploaded assets,"
+    log "  would (external scratch run): delete draft release, remove uploaded assets,"
     log "  revert tap commit, and confirm no orphaned signatures/attestations for $TAG"
-    unknown "cleanup execution (scratch-only, requires --execute)"
+    unknown "cleanup execution in an external disposable repository"
   fi
   log ""
 fi

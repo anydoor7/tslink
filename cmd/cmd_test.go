@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/monody0007/tslink/internal/credentials"
 	"github.com/monody0007/tslink/internal/registry"
 	"github.com/monody0007/tslink/internal/tailapi"
 )
@@ -878,13 +879,32 @@ func TestRemoveService_TailapiWarning(t *testing.T) {
 
 // --- logoutUser handler tests ---
 
+func logoutCredentialStatus(apiKey, clientSecret bool) credentials.StoredCredentialStatus {
+	status := credentials.StoredCredentialStatus{}
+	if apiKey {
+		status.APIKey.File = credentials.CredentialLocationStatus{Enabled: true, Present: true}
+	}
+	if clientSecret {
+		status.ClientSecret.File = credentials.CredentialLocationStatus{Enabled: true, Present: true}
+	}
+	return status
+}
+
 func TestLogoutUser_NotLoggedIn(t *testing.T) {
 	dir := t.TempDir()
-	old := getAPIKeyFn
-	oldCS := hasClientSecretFn
-	getAPIKeyFn = func() (string, error) { return "", nil }
-	hasClientSecretFn = func() bool { return false }
-	defer func() { getAPIKeyFn = old; hasClientSecretFn = oldCS }()
+	oldInspect := inspectStoredCredentialsFn
+	oldDelete := deleteStoredCredentialsFn
+	inspectStoredCredentialsFn = func() (credentials.StoredCredentialStatus, error) {
+		return credentials.StoredCredentialStatus{}, nil
+	}
+	deleteStoredCredentialsFn = func() error {
+		t.Fatal("deleteStoredCredentialsFn must not run for a proved empty logout")
+		return nil
+	}
+	defer func() {
+		inspectStoredCredentialsFn = oldInspect
+		deleteStoredCredentialsFn = oldDelete
+	}()
 
 	var buf bytes.Buffer
 	err := logoutUser(
@@ -925,21 +945,23 @@ func TestLogoutUser_CleansUp(t *testing.T) {
 	os.WriteFile(authKeyPath, []byte("key"), 0o600)
 	os.MkdirAll(nodesDir, 0o700)
 
-	oldGet := getAPIKeyFn
-	oldDel := deleteAPIKeyFn
-	oldCS := hasClientSecretFn
-	oldDelCS := deleteClientSecretFn
-	getAPIKeyFn = func() (string, error) { return "tskey-api-xxx", nil }
+	oldInspect := inspectStoredCredentialsFn
+	oldDelete := deleteStoredCredentialsFn
+	apiKey := "tskey-api-xxx"
+	clientSecret := ""
 	deleted := false
-	deleteAPIKeyFn = func() { deleted = true }
-	csDeleted := false
-	hasClientSecretFn = func() bool { return false }
-	deleteClientSecretFn = func() { csDeleted = true }
+	inspectStoredCredentialsFn = func() (credentials.StoredCredentialStatus, error) {
+		return logoutCredentialStatus(apiKey != "", clientSecret != ""), nil
+	}
+	deleteStoredCredentialsFn = func() error {
+		deleted = true
+		apiKey = ""
+		clientSecret = ""
+		return nil
+	}
 	defer func() {
-		getAPIKeyFn = oldGet
-		deleteAPIKeyFn = oldDel
-		hasClientSecretFn = oldCS
-		deleteClientSecretFn = oldDelCS
+		inspectStoredCredentialsFn = oldInspect
+		deleteStoredCredentialsFn = oldDelete
 	}()
 
 	var buf bytes.Buffer
@@ -953,9 +975,6 @@ func TestLogoutUser_CleansUp(t *testing.T) {
 	if !deleted {
 		t.Error("expected deleteAPIKeyFn to be called")
 	}
-	if !csDeleted {
-		t.Error("expected deleteClientSecretFn to be called")
-	}
 	if _, err := os.Stat(authKeyPath); !os.IsNotExist(err) {
 		t.Error("authkey should be removed")
 	}
@@ -967,20 +986,21 @@ func TestLogoutUser_CleansUp(t *testing.T) {
 func TestLogoutUser_WithClientSecret(t *testing.T) {
 	dir := t.TempDir()
 
-	oldGet := getAPIKeyFn
-	oldDel := deleteAPIKeyFn
-	oldCS := hasClientSecretFn
-	oldDelCS := deleteClientSecretFn
-	getAPIKeyFn = func() (string, error) { return "", nil }
-	deleteAPIKeyFn = func() {}
-	hasClientSecretFn = func() bool { return true }
+	oldInspect := inspectStoredCredentialsFn
+	oldDelete := deleteStoredCredentialsFn
+	clientSecret := "tskey-client-secret"
 	csDeleted := false
-	deleteClientSecretFn = func() { csDeleted = true }
+	inspectStoredCredentialsFn = func() (credentials.StoredCredentialStatus, error) {
+		return logoutCredentialStatus(false, clientSecret != ""), nil
+	}
+	deleteStoredCredentialsFn = func() error {
+		csDeleted = true
+		clientSecret = ""
+		return nil
+	}
 	defer func() {
-		getAPIKeyFn = oldGet
-		deleteAPIKeyFn = oldDel
-		hasClientSecretFn = oldCS
-		deleteClientSecretFn = oldDelCS
+		inspectStoredCredentialsFn = oldInspect
+		deleteStoredCredentialsFn = oldDelete
 	}()
 
 	var buf bytes.Buffer
@@ -993,6 +1013,110 @@ func TestLogoutUser_WithClientSecret(t *testing.T) {
 	}
 	if !csDeleted {
 		t.Error("expected deleteClientSecretFn to be called")
+	}
+}
+
+func TestLogoutUserFailsClosedOnCredentialReadFailure(t *testing.T) {
+	dir := t.TempDir()
+	authKeyPath := filepath.Join(dir, "authkey")
+	if err := os.WriteFile(authKeyPath, []byte("key"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	oldInspect := inspectStoredCredentialsFn
+	oldDelete := deleteStoredCredentialsFn
+	t.Cleanup(func() {
+		inspectStoredCredentialsFn = oldInspect
+		deleteStoredCredentialsFn = oldDelete
+	})
+
+	deleteCalled := false
+	inspectStoredCredentialsFn = func() (credentials.StoredCredentialStatus, error) {
+		return credentials.StoredCredentialStatus{}, fmt.Errorf("keychain unavailable")
+	}
+	deleteStoredCredentialsFn = func() error {
+		deleteCalled = true
+		return nil
+	}
+
+	var buf bytes.Buffer
+	err := logoutUser(filepath.Join(dir, "pid"), authKeyPath, filepath.Join(dir, "nodes"), dir, false, &buf)
+	if err == nil {
+		t.Fatal("logoutUser() error = nil, want read failure")
+	}
+	if strings.Contains(buf.String(), "Logged out") {
+		t.Fatalf("logout printed success after read failure: %q", buf.String())
+	}
+	if !deleteCalled {
+		t.Fatal("deleteStoredCredentialsFn was not called after inspect failure")
+	}
+	if _, statErr := os.Stat(authKeyPath); !os.IsNotExist(statErr) {
+		t.Fatalf("legacy auth key was not cleaned after inspect failure, stat err = %v", statErr)
+	}
+}
+
+func TestLogoutUserFailsClosedOnCredentialDeleteFailure(t *testing.T) {
+	dir := t.TempDir()
+	authKeyPath := filepath.Join(dir, "authkey")
+	if err := os.WriteFile(authKeyPath, []byte("key"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	oldInspect := inspectStoredCredentialsFn
+	oldDelete := deleteStoredCredentialsFn
+	t.Cleanup(func() {
+		inspectStoredCredentialsFn = oldInspect
+		deleteStoredCredentialsFn = oldDelete
+	})
+
+	apiKey := "tskey-api-xxx"
+	inspectStoredCredentialsFn = func() (credentials.StoredCredentialStatus, error) {
+		return logoutCredentialStatus(apiKey != "", false), nil
+	}
+	deleteStoredCredentialsFn = func() error { return fmt.Errorf("delete denied") }
+
+	var buf bytes.Buffer
+	err := logoutUser(filepath.Join(dir, "pid"), authKeyPath, filepath.Join(dir, "nodes"), dir, false, &buf)
+	if err == nil {
+		t.Fatal("logoutUser() error = nil, want delete failure")
+	}
+	if !strings.Contains(err.Error(), "delete credential stores") {
+		t.Fatalf("logoutUser() error = %v, want credential-store delete context", err)
+	}
+	if strings.Contains(buf.String(), "Logged out") {
+		t.Fatalf("logout printed success after delete failure: %q", buf.String())
+	}
+}
+
+func TestLogoutUserFailsClosedWhenCredentialReadbackStillPresent(t *testing.T) {
+	dir := t.TempDir()
+	authKeyPath := filepath.Join(dir, "authkey")
+	if err := os.WriteFile(authKeyPath, []byte("key"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	oldInspect := inspectStoredCredentialsFn
+	oldDelete := deleteStoredCredentialsFn
+	t.Cleanup(func() {
+		inspectStoredCredentialsFn = oldInspect
+		deleteStoredCredentialsFn = oldDelete
+	})
+
+	inspectStoredCredentialsFn = func() (credentials.StoredCredentialStatus, error) {
+		return logoutCredentialStatus(true, false), nil
+	}
+	deleteStoredCredentialsFn = func() error { return nil }
+
+	var buf bytes.Buffer
+	err := logoutUser(filepath.Join(dir, "pid"), authKeyPath, filepath.Join(dir, "nodes"), dir, false, &buf)
+	if err == nil {
+		t.Fatal("logoutUser() error = nil, want readback failure")
+	}
+	if !strings.Contains(err.Error(), "still present") {
+		t.Fatalf("logoutUser() error = %v, want readback context", err)
+	}
+	if strings.Contains(buf.String(), "Logged out") {
+		t.Fatalf("logout printed success after readback failure: %q", buf.String())
 	}
 }
 

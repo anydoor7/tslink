@@ -37,6 +37,35 @@ var (
 	keyringEnabledFunc                   = func() bool { return os.Getenv("TSLINK_DISABLE_KEYRING") != "1" }
 )
 
+// CredentialLocationStatus is a value-free presence report for one credential
+// storage location. It deliberately never carries credential material.
+type CredentialLocationStatus struct {
+	Enabled bool
+	Present bool
+}
+
+// CredentialKindStatus is a value-free presence report for all storage
+// locations of one credential kind.
+type CredentialKindStatus struct {
+	Keyring CredentialLocationStatus
+	File    CredentialLocationStatus
+}
+
+func (s CredentialKindStatus) Present() bool {
+	return s.Keyring.Present || s.File.Present
+}
+
+// StoredCredentialStatus is the strict credential inventory used by destructive
+// cleanup paths. It distinguishes not-found from unreadable/disabled stores.
+type StoredCredentialStatus struct {
+	APIKey       CredentialKindStatus
+	ClientSecret CredentialKindStatus
+}
+
+func (s StoredCredentialStatus) AnyPresent() bool {
+	return s.APIKey.Present() || s.ClientSecret.Present()
+}
+
 func readCredentialFile(path string) ([]byte, error) {
 	if enforceCredentialFilePermissionsFunc() {
 		info, err := os.Lstat(path)
@@ -52,6 +81,95 @@ func readCredentialFile(path string) ([]byte, error) {
 		}
 	}
 	return os.ReadFile(path)
+}
+
+// InspectStoredCredentialsStrict reports whether API-key/client-secret
+// credentials are present in every supported store. It fails closed when the
+// keyring is disabled or unreadable because an old credential may remain there.
+func InspectStoredCredentialsStrict() (StoredCredentialStatus, error) {
+	api, apiErr := inspectCredentialStrict("API key", keychainAPIKey, config.APIKeyPath)
+	secret, secretErr := inspectCredentialStrict("OAuth client secret", keychainClientSecret, config.ClientSecretPath)
+	return StoredCredentialStatus{APIKey: api, ClientSecret: secret}, errors.Join(apiErr, secretErr)
+}
+
+func inspectCredentialStrict(label, keychainKey string, pathFunc func() (string, error)) (CredentialKindStatus, error) {
+	var status CredentialKindStatus
+	var errs []error
+	if keyringEnabledFunc() {
+		status.Keyring.Enabled = true
+		value, err := keyring.Get(keychainService, keychainKey)
+		switch {
+		case err == nil:
+			status.Keyring.Present = strings.TrimSpace(value) != ""
+		case errors.Is(err, keyring.ErrNotFound):
+		default:
+			errs = append(errs, fmt.Errorf("%s keyring unreadable: %w", label, err))
+		}
+	} else {
+		errs = append(errs, fmt.Errorf("%s keyring disabled; cannot prove no residual keyring credential remains", label))
+	}
+
+	status.File.Enabled = true
+	path, err := pathFunc()
+	if err != nil {
+		errs = append(errs, fmt.Errorf("%s file path: %w", label, err))
+		return status, errors.Join(errs...)
+	}
+	b, err := readCredentialFile(path)
+	switch {
+	case err == nil:
+		status.File.Present = strings.TrimSpace(string(b)) != ""
+	case os.IsNotExist(err):
+	default:
+		errs = append(errs, fmt.Errorf("%s file unreadable: %w", label, err))
+	}
+	return status, errors.Join(errs...)
+}
+
+// DeleteStoredCredentialsStrict removes API-key/client-secret credentials from
+// every supported store and reads back each store. It keeps going after errors
+// and returns their join so callers never report success while residual
+// credential risk remains.
+func DeleteStoredCredentialsStrict() error {
+	return errors.Join(
+		deleteCredentialStrict("API key", keychainAPIKey, config.APIKeyPath),
+		deleteCredentialStrict("OAuth client secret", keychainClientSecret, config.ClientSecretPath),
+	)
+}
+
+func deleteCredentialStrict(label, keychainKey string, pathFunc func() (string, error)) error {
+	var errs []error
+	if keyringEnabledFunc() {
+		if err := keyring.Delete(keychainService, keychainKey); err != nil && !errors.Is(err, keyring.ErrNotFound) {
+			errs = append(errs, fmt.Errorf("%s keyring delete: %w", label, err))
+		}
+		value, err := keyring.Get(keychainService, keychainKey)
+		switch {
+		case err == nil && strings.TrimSpace(value) != "":
+			errs = append(errs, fmt.Errorf("%s keyring credential still present after cleanup", label))
+		case err == nil:
+		case errors.Is(err, keyring.ErrNotFound):
+		default:
+			errs = append(errs, fmt.Errorf("%s keyring readback: %w", label, err))
+		}
+	} else {
+		errs = append(errs, fmt.Errorf("%s keyring disabled; cannot delete or prove absence of residual keyring credential", label))
+	}
+
+	path, err := pathFunc()
+	if err != nil {
+		errs = append(errs, fmt.Errorf("%s file path: %w", label, err))
+		return errors.Join(errs...)
+	}
+	if removeErr := os.Remove(path); removeErr != nil && !os.IsNotExist(removeErr) {
+		errs = append(errs, fmt.Errorf("%s file delete: %w", label, removeErr))
+	}
+	if _, statErr := os.Stat(path); statErr == nil {
+		errs = append(errs, fmt.Errorf("%s file credential still present after cleanup", label))
+	} else if !os.IsNotExist(statErr) {
+		errs = append(errs, fmt.Errorf("%s file readback: %w", label, statErr))
+	}
+	return errors.Join(errs...)
 }
 
 // SetAPIKey stores the API key. Prefers macOS Keychain; falls back to file (0600).

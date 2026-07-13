@@ -130,19 +130,20 @@ Credentials are stored in the system keychain (macOS Keychain, Linux secret
 service, Windows Credential Manager). On systems without keychain support,
 they fall back to files in ~/.config/tslink/ with restricted permissions (0600).
 
-Non-interactive mode:
-  TSLINK_API_KEY="tskey-api-..." tslink login
-  TSLINK_CLIENT_SECRET="tskey-client-..." tslink login
-  printf %s "$TSLINK_API_KEY" | tslink login --api-key-stdin
-  printf %s "$TSLINK_CLIENT_SECRET" | tslink login --client-secret-stdin
-  tslink login --api-key "tskey-api-..."              # compatible but visible in process lists
-  tslink login --client-secret "tskey-client-..."     # compatible but visible in process lists
+	Non-interactive mode:
+	  printf %s "$TSLINK_API_KEY" | tslink login --api-key-stdin
+	  printf %s "$TSLINK_CLIENT_SECRET" | tslink login --client-secret-stdin
+	  # TSLINK_API_KEY / TSLINK_CLIENT_SECRET may also be pre-injected by a
+	  # secret manager before this process starts. Do not inline secret values in
+	  # shell commands because they can land in shell history.
+	  tslink login --api-key <token>              # compatible but visible in process lists
+	  tslink login --client-secret <secret>       # compatible but visible in process lists
 
-	Examples:
-	  tslink login                  Interactive login with browser + credential prompt
+		Examples:
+		  tslink login                  Interactive login with browser + credential prompt
 
-	  # Or store a key directly (skip interactive login):
-	  echo -n "tskey-api-..." > ~/.config/tslink/apikey && chmod 600 ~/.config/tslink/apikey`,
+		  # Automation path with a secret manager:
+		  op read op://vault/tslink/api-key | tslink login --api-key-stdin`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := config.EnsureDir(); err != nil {
@@ -358,9 +359,9 @@ func validateLoginCredentialCandidate(ctx context.Context, mode loginCredentialM
 		// Semantically prove the candidate secret with a disposable, ephemeral
 		// Up BEFORE any persisted write. A prefix-only check let a well-formed
 		// but invalid/revoked/wrong-scope secret be committed and delete a
-		// working API key, dropping the install into an unauthenticated outage
-		// (credential activation regression). Activation runs before commit, so a failed
-		// candidate never retires the last-known-good credential.
+		// working API key, dropping the install into an unauthenticated outage.
+		// Activation runs before commit, so a failed candidate never retires the
+		// last-known-good credential.
 		if err := loginActivateClientSecretFn(ctx, value); err != nil {
 			return err
 		}

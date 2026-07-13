@@ -4,8 +4,9 @@ name: Release
 # then publishes. The publish job `needs: candidate`, so a tag cannot publish
 # signed/attested artifacts from a commit that failed Windows compilation,
 # staticcheck, either govulncheck, cross-build, or artifact verification
-# is a release blocker. Elevated write/id-token/attestations permissions are granted only
-# to the publish job, inside the protected `release` environment.
+# locally. Elevated write/id-token/attestations permissions are granted only
+# to the publish job, and the job fails closed unless a repository variable is
+# explicitly enabled after external environment/ruleset/reviewer readback.
 
 on:
   push:
@@ -26,20 +27,24 @@ jobs:
       ref: ${{ github.sha }}
 
   publish:
-    name: Publish (protected release environment)
+    name: Publish (disabled until repository release authorization is enabled)
     needs: candidate
     runs-on: ubuntu-latest
-    # Require a protected environment. Configure required reviewers and the
-    # `refs/tags/v*` deployment branch/tag policy on this environment so a tag
-    # push cannot auto-publish without the configured approval gate.
-    environment:
-      name: release
-      url: https://github.com/monody0007/tslink/releases/tag/${{ github.ref_name }}
+    environment: release
     permissions:
       contents: write
       id-token: write
       attestations: write
     steps:
+      - name: Require repository release authorization
+        env:
+          TSLINK_RELEASE_PUBLISH_ENABLED: ${{ vars.TSLINK_RELEASE_PUBLISH_ENABLED }}
+        run: |
+          set -euo pipefail
+          if [ "${TSLINK_RELEASE_PUBLISH_ENABLED}" != "true" ]; then
+            echo "::error::Release publishing is disabled. Enable repository variable TSLINK_RELEASE_PUBLISH_ENABLED=true only after external readback proves the release environment, required reviewers, refs/tags/v* ruleset, branch protection, and Homebrew tap are configured."
+            exit 1
+          fi
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0

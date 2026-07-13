@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"strconv"
+	"testing"
+)
 
 // fakeFetcher returns canned responses keyed by path.
 type fakeFetcher struct {
@@ -42,7 +45,7 @@ func TestNoTokenIsAllUnknown(t *testing.T) {
 
 func TestForbiddenIsUnknownNotNotReady(t *testing.T) {
 	// A private-plan 403 must be UNKNOWN (cannot verify), not NOT_READY and not
-	// READY. This is the core fail-closed contract for readiness.
+	// READY. This is the core fail-closed repository-readiness contract.
 	mk := func(code int) fakeFetcher {
 		return fakeFetcher{resp: map[string]struct {
 			code int
@@ -76,10 +79,11 @@ func TestFullyConfiguredIsReady(t *testing.T) {
 		"/repos/o/r": {200, `{"visibility":"public","private":false,
 			"security_and_analysis":{"secret_scanning":{"status":"enabled"}}}`, nil},
 		"/repos/o/r/branches/main/protection": {200, `{
-			"required_status_checks":{"contexts":["candidate"]},
+			"required_status_checks":{"contexts":["Release candidate gate"]},
 			"required_pull_request_reviews":{}}`, nil},
-		"/repos/o/r/rulesets":             {200, `[{"name":"tags","enforcement":"active"}]`, nil},
+		"/repos/o/r/rulesets":             {200, `[{"name":"tags","enforcement":"active","target":"tag","conditions":{"ref_name":{"include":["refs/tags/v*"]}}}]`, nil},
 		"/repos/o/r/environments":         {200, `{"environments":[{"name":"release"}]}`, nil},
+		"/repos/o/r/environments/release": {200, `{"protection_rules":[{"type":"required_reviewers","reviewers":[{"type":"User","reviewer":{"login":"owner"}}]}],"deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}`, nil},
 		"/repos/o/r/vulnerability-alerts": {204, ``, nil},
 	}}
 	rs := Evaluate(f, "o/r", true)
@@ -88,6 +92,112 @@ func TestFullyConfiguredIsReady(t *testing.T) {
 			t.Logf("%s = %s (%s)", r.Control, r.Status, r.Detail)
 		}
 		t.Fatal("fully configured repo should be READY on every control")
+	}
+}
+
+func TestUnrelatedBranchContextIsNotReady(t *testing.T) {
+	f := fakeFetcher{resp: map[string]struct {
+		code int
+		body string
+		err  error
+	}{
+		"/repos/o/r/branches/main/protection": {200, `{
+			"required_status_checks":{"contexts":["lint"]},
+			"required_pull_request_reviews":{}}`, nil},
+	}}
+	if got := checkBranchProtection(f, "o/r").Status; got != NotReady {
+		t.Fatalf("unrelated status context = %s, want NOT_READY", got)
+	}
+}
+
+func TestLoneReleaseCandidateLeafContextIsNotReady(t *testing.T) {
+	for _, leaf := range mandatoryReleaseCandidateLeafContexts {
+		f := fakeFetcher{resp: map[string]struct {
+			code int
+			body string
+			err  error
+		}{
+			"/repos/o/r/branches/main/protection": {200, `{
+				"required_status_checks":{"contexts":[` + quoteJSON(leaf) + `]},
+				"required_pull_request_reviews":{}}`, nil},
+		}}
+		if got := checkBranchProtection(f, "o/r").Status; got != NotReady {
+			t.Fatalf("lone release-candidate leaf %q = %s, want NOT_READY", leaf, got)
+		}
+	}
+}
+
+func TestPartialReleaseCandidateLeafSetIsNotReady(t *testing.T) {
+	partial := append([]string(nil), mandatoryReleaseCandidateLeafContexts...)
+	partial = partial[:len(partial)-1]
+	f := fakeFetcher{resp: map[string]struct {
+		code int
+		body string
+		err  error
+	}{
+		"/repos/o/r/branches/main/protection": {200, `{
+			"required_status_checks":{"contexts":` + jsonStringArray(partial) + `},
+			"required_pull_request_reviews":{}}`, nil},
+	}}
+	if got := checkBranchProtection(f, "o/r").Status; got != NotReady {
+		t.Fatalf("partial release-candidate leaf set = %s, want NOT_READY", got)
+	}
+}
+
+func TestCompleteReleaseCandidateLeafSetIsReady(t *testing.T) {
+	f := fakeFetcher{resp: map[string]struct {
+		code int
+		body string
+		err  error
+	}{
+		"/repos/o/r/branches/main/protection": {200, `{
+			"required_status_checks":{"contexts":` + jsonStringArray(mandatoryReleaseCandidateLeafContexts) + `},
+			"required_pull_request_reviews":{}}`, nil},
+	}}
+	if got := checkBranchProtection(f, "o/r").Status; got != Ready {
+		t.Fatalf("complete release-candidate leaf set = %s, want READY", got)
+	}
+}
+
+func TestUnrelatedRulesetTargetIsNotReady(t *testing.T) {
+	f := fakeFetcher{resp: map[string]struct {
+		code int
+		body string
+		err  error
+	}{
+		"/repos/o/r/rulesets": {200, `[{"name":"main branch","enforcement":"active","target":"branch","conditions":{"ref_name":{"include":["refs/heads/main"]}}}]`, nil},
+	}}
+	if got := checkRulesets(f, "o/r").Status; got != NotReady {
+		t.Fatalf("unrelated ruleset = %s, want NOT_READY", got)
+	}
+}
+
+func quoteJSON(s string) string {
+	return strconv.Quote(s)
+}
+
+func jsonStringArray(values []string) string {
+	out := "["
+	for i, value := range values {
+		if i > 0 {
+			out += ","
+		}
+		out += quoteJSON(value)
+	}
+	return out + "]"
+}
+
+func TestReleaseEnvironmentWithoutProtectionIsNotReady(t *testing.T) {
+	f := fakeFetcher{resp: map[string]struct {
+		code int
+		body string
+		err  error
+	}{
+		"/repos/o/r/environments":         {200, `{"environments":[{"name":"release"}]}`, nil},
+		"/repos/o/r/environments/release": {200, `{"protection_rules":[],"deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":false}}`, nil},
+	}}
+	if got := checkReleaseEnvironment(f, "o/r").Status; got != NotReady {
+		t.Fatalf("unprotected release environment = %s, want NOT_READY", got)
 	}
 }
 

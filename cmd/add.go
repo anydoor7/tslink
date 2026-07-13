@@ -311,9 +311,9 @@ Examples:
 	addCmd.Flags().String("tags", "", "Comma-separated ACL tags (e.g., tag:web,tag:internal)")
 	addCmd.Flags().Bool("funnel", false, "Expose publicly via Tailscale Funnel (proxy only, requires --public)")
 	addCmd.Flags().Bool("public", false, "Acknowledge public internet exposure for --funnel (only valid with --funnel)")
-	addCmd.Flags().String("domain", "", "Custom domain name for the service (proxy only, e.g., app.example.com)")
+	addCmd.Flags().String("domain", "", "Reserved: custom-domain runtime TLS is unavailable and this flag is rejected with feature_unavailable")
 	addCmd.Flags().String("allow", "", "Comma-separated allowed identities (e.g., user@example.com,tag:admin)")
-	addCmd.Flags().String("acme-email", "", "Email for Let's Encrypt ACME certificates (requires --domain)")
+	addCmd.Flags().String("acme-email", "", "Reserved: ACME runtime TLS is unavailable and this flag is rejected with feature_unavailable")
 	addCmd.Flags().String("control-url", "", "Per-service custom control server URL (e.g., Headscale)")
 	rootCmd.AddCommand(addCmd)
 }

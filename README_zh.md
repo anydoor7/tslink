@@ -6,7 +6,7 @@
 <p align="center">
   <a href="https://github.com/monody0007/tslink/actions"><img src="https://img.shields.io/github/actions/workflow/status/monody0007/tslink/ci.yml?branch=main&label=CI" alt="Build Status"></a>
   <a href="https://github.com/monody0007/tslink/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License"></a>
-  <a href="https://github.com/monody0007/tslink"><img src="https://img.shields.io/badge/Go-1.26.3%2B-00ADD8.svg" alt="Go"></a>
+  <a href="https://github.com/monody0007/tslink"><img src="https://img.shields.io/badge/Go-1.26.5%2B-00ADD8.svg" alt="Go"></a>
   <a href="https://github.com/monody0007/tslink"><img src="https://img.shields.io/github/stars/monody0007/tslink?style=social" alt="Stars"></a>
 </p>
 
@@ -86,20 +86,22 @@ tslink serve --daemon
 ### 安装
 
 ```bash
-# Homebrew (macOS)
-brew install monody0007/tap/tslink
+# 首个公开 release 前的源码安装（任何平台）
+git clone https://github.com/monody0007/tslink.git
+cd tslink
+go install .
 
-# 从源码构建（任何平台）
-go install github.com/monody0007/tslink@latest
+# Homebrew cask 和预构建归档只在首个公开 release 与产物/tap readback 后可用。
 ```
 
 ### 发布产物
 
-GitHub Releases 发布以下可安装产物：
+当前还没有公开 tag/release，Homebrew tap 也尚未发布可安装产物。首个公开
+release/readback 前请从源码安装。该外部 gate 通过后，GitHub Releases 预计发布以下可安装产物：
 
 | 平台 | 产物 | 说明 |
 |---|---|---|
-| macOS | Homebrew formula 和 `tar.gz` 归档 | Homebrew formula 使用 GoReleaser `skip_upload: auto`，pre-release tag 可以跳过 tap upload 且不让发布失败。预发布验证优先使用归档产物。 |
+| macOS | Homebrew cask 和 `tar.gz` 归档 | Homebrew cask 使用 GoReleaser `skip_upload: auto`，pre-release tag 可以跳过 tap upload 且不让发布失败。预发布验证优先使用归档产物。 |
 | Linux | `.deb`、`.rpm` 和 `tar.gz` 归档 | 包内包含原生 `tslink` 二进制。安装后用 `tslink install` 注册 user service。 |
 | Windows | `.zip` 归档 | Windows 当前是 archive-only 支持。尚未提供 MSI/MSIX/Winget 包或 Windows 代码签名安装器。解压后用 `tslink install` 注册 Startup 自启动。 |
 
@@ -269,6 +271,15 @@ TSLink 支持两种凭证（只需选一种）：
 
 `tslink login` 会交互式引导你完成任一路径。凭证优先存储在系统钥匙串（macOS Keychain / Linux secret service / Windows 凭据管理器）中；headless 环境可回退到受限权限文件。
 
+非交互式自动化优先使用 stdin。环境变量只适合由 secret manager 在进程启动前预注入；不要在 shell 命令里 inline secret 值，否则可能进入 shell history：
+
+```bash
+printf %s "$TSLINK_API_KEY" | tslink login --api-key-stdin
+printf %s "$TSLINK_CLIENT_SECRET" | tslink login --client-secret-stdin
+```
+
+兼容性保留的 `--api-key` 和 `--client-secret` flags 仍可用，但命令行参数可能被其它本机进程看到，不作为推荐路径。
+
 ### 标签管理
 
 TSLink 默认管理本地服务标签。远端 Tailscale ACL mutation 默认关闭，因为 TSLink 还没有本地证明对 HuJSON policy 的无损保留。
@@ -369,8 +380,8 @@ tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 | `--control-url URL` | 服务级控制服务器覆盖，例如 Headscale |
 | `--funnel` | 通过 Tailscale Funnel 暴露到公网（仅限 proxy，必须同时传 `--public`） |
 | `--public` | 显式确认 `--funnel` 的公网暴露；没有 `--funnel` 时无效 |
-| `--domain example.com` | Roadmap/experimental：可写入服务配置，但自定义域名运行时 TLS 尚未接入 |
-| `--acme-email user@example.com` | Roadmap/experimental：随 `--domain` 存储；尚无已交付 ACME listener |
+| `--domain example.com` | Reserved roadmap flag：会以 `feature_unavailable` 拒绝；自定义域名运行时 TLS 尚未接入 |
+| `--acme-email user@example.com` | Reserved roadmap flag：会以 `feature_unavailable` 拒绝；尚无已交付 ACME listener |
 
 ## 工作原理
 
@@ -441,14 +452,14 @@ API `add` 和 CLI 使用同一套安全护栏。Funnel 服务必须传 `public_a
 | Middleware | 包和 schema 存在，但 runtime 不应用限流、Basic Auth、IP 白名单或 CORS。 |
 | Admin dashboard / REST API | 默认构建不包含 package、REST handler 或 admin 节点。未来恢复必须显式标为 experimental，并补端到端测试。 |
 | Prometheus `/metrics` | 内部 instrumentation 存在，但没有挂载 scrape endpoint。 |
-| Custom domain / ACME | 字段可写入，但 runtime TLS/ACME listener 尚未接入。 |
+| Custom domain / ACME | 字段保留但会以 `feature_unavailable` 拒绝；runtime TLS/ACME listener 尚未接入。 |
 | Cluster sync | 包存在，但没有 production transport 或 `serve` 集成。 |
 
 ## 前置条件
 
 - [Tailscale 账户](https://tailscale.com)（个人使用免费）
 - 你要访问的设备上安装 Tailscale（手机、平板等）
-- Go 1.26.3+（如果从源码构建）
+- Go 1.26.5+（如果从源码构建）
 
 ## 平台支持
 

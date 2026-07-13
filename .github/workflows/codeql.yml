@@ -1,8 +1,8 @@
 name: CodeQL
 
 # Static security analysis for the Go product. Runs on PR, main, and a weekly
-# schedule so the code-scanning alert surface required at public transition
-# is populated and current.
+# schedule so the code-scanning alert surface required at public transition is
+# populated and current.
 
 on:
   push:

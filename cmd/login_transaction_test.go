@@ -182,7 +182,7 @@ func TestReplaceLoginCredentialRollbackFailurePoints(t *testing.T) {
 }
 
 // TestReplaceLoginCredentialClientSecretActivationPreservesLastKnownGood is the
-// credential activation regression test. Before the fix, a
+// old-implementation-killing test. Before the fix, a
 // syntactically valid but unusable client secret (typo/revoked/wrong-scope) was
 // written and the working API key was deleted BEFORE any semantic proof, so the
 // next `serve` failed auth with no fallback. The transaction must now run the

@@ -463,7 +463,7 @@ func TestDaemonize_ForwardsControlURL(t *testing.T) {
 	}
 }
 
-// TestDaemonizeManageACLPropagation is the manage-acl propagation guard: the daemon
+// TestDaemonizeManageACLPropagation is the daemon-mode guard: the daemon
 // child argv must carry --manage-acl exactly once when opted in, and never when
 // default-off. Kills the old implementation that hardcoded the child argv to
 // `serve [--control-url ...]` and silently dropped the opt-in in daemon mode.

@@ -731,8 +731,8 @@ func TestServeCmd_DaemonModeForwardsControlURL(t *testing.T) {
 	}
 }
 
-// TestServeCmd_DaemonModePropagatesManageACL is the serve-level manage-acl propagation
-// guard: `serve --daemon` must pass its --manage-acl opt-in through to the
+// TestServeCmd_DaemonModePropagatesManageACL is the serve-level guard:
+// `serve --daemon` must pass its --manage-acl opt-in through to the
 // daemonize child, and default daemon mode must NOT opt in. The old daemon
 // branch never forwarded the flag, so `serve --daemon --manage-acl` was a silent
 // no-op.

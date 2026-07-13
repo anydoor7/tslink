@@ -108,6 +108,53 @@ func TestLinuxInstallCommandRunsSystemctlAndWarnsAboutLinger(t *testing.T) {
 	}
 }
 
+func TestLinuxInstallJSONEnvelope(t *testing.T) {
+	home := t.TempDir()
+
+	oldHome := linuxUserHomeDirFn
+	oldExe := linuxExecutablePathFn
+	oldEval := linuxEvalSymlinksFn
+	oldUser := linuxUserNameFn
+	oldSystemctl := systemctlCombinedOutput
+	oldLoginctl := loginctlCombinedOutputFn
+	t.Cleanup(func() {
+		linuxUserHomeDirFn = oldHome
+		linuxExecutablePathFn = oldExe
+		linuxEvalSymlinksFn = oldEval
+		linuxUserNameFn = oldUser
+		systemctlCombinedOutput = oldSystemctl
+		loginctlCombinedOutputFn = oldLoginctl
+		_ = rootCmd.PersistentFlags().Set("json", "false")
+	})
+
+	linuxUserHomeDirFn = func() (string, error) { return home, nil }
+	linuxExecutablePathFn = func() (string, error) { return "/opt/tslink", nil }
+	linuxEvalSymlinksFn = func(path string) (string, error) { return path, nil }
+	linuxUserNameFn = func() string { return "alice" }
+	loginctlCombinedOutputFn = func(args ...string) ([]byte, error) { return []byte("yes\n"), nil }
+	systemctlCombinedOutput = func(args ...string) ([]byte, error) { return nil, nil }
+	if err := rootCmd.PersistentFlags().Set("json", "true"); err != nil {
+		t.Fatalf("set json true: %v", err)
+	}
+
+	got := captureStdout(t, func() {
+		if err := installCmd.RunE(installCmd, nil); err != nil {
+			t.Fatalf("install RunE() error = %v", err)
+		}
+	})
+	res := parseResult(t, got)
+	if !res.OK || res.Command != "install" {
+		t.Fatalf("install JSON result = %#v", res)
+	}
+	data := dataMap(t, got)
+	if data["installed"] != true || data["started"] != true || data["service_manager"] != systemdServiceName {
+		t.Fatalf("install data = %#v, want installed/started/systemd service manager", data)
+	}
+	if _, ok := data["warning"]; ok {
+		t.Fatalf("install data unexpectedly included warning: %#v", data)
+	}
+}
+
 func TestLinuxInstallSurfacesSystemctlOutput(t *testing.T) {
 	home := t.TempDir()
 
@@ -187,6 +234,45 @@ func TestLinuxUninstallRunsSystemctlPathsAndSurfacesWarnings(t *testing.T) {
 	}
 	if _, err := os.Stat(servicePath); !os.IsNotExist(err) {
 		t.Fatalf("service file should be removed, stat error = %v", err)
+	}
+}
+
+func TestLinuxUninstallJSONEnvelope(t *testing.T) {
+	home := t.TempDir()
+
+	oldHome := linuxUserHomeDirFn
+	oldSystemctl := systemctlCombinedOutput
+	t.Cleanup(func() {
+		linuxUserHomeDirFn = oldHome
+		systemctlCombinedOutput = oldSystemctl
+		_ = rootCmd.PersistentFlags().Set("json", "false")
+	})
+
+	linuxUserHomeDirFn = func() (string, error) { return home, nil }
+	servicePath := filepath.Join(home, ".config", "systemd", "user", systemdServiceName)
+	if err := os.MkdirAll(filepath.Dir(servicePath), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(servicePath, []byte("unit"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	systemctlCombinedOutput = func(args ...string) ([]byte, error) { return nil, nil }
+	if err := rootCmd.PersistentFlags().Set("json", "true"); err != nil {
+		t.Fatalf("set json true: %v", err)
+	}
+
+	got := captureStdout(t, func() {
+		if err := uninstallCmd.RunE(uninstallCmd, nil); err != nil {
+			t.Fatalf("uninstall RunE() error = %v", err)
+		}
+	})
+	res := parseResult(t, got)
+	if !res.OK || res.Command != "uninstall" {
+		t.Fatalf("uninstall JSON result = %#v", res)
+	}
+	data := dataMap(t, got)
+	if data["removed"] != true || data["service_manager"] != systemdServiceName {
+		t.Fatalf("uninstall data = %#v, want removed/systemd service manager", data)
 	}
 }
 

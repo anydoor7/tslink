@@ -9,6 +9,29 @@ import (
 	"github.com/monody0007/tslink/internal/registry"
 )
 
+func TestAddDomainACMEFlagsAdvertiseRejectedReservedState(t *testing.T) {
+	addCmd, _, err := rootCmd.Find([]string{"add"})
+	if err != nil {
+		t.Fatalf("find add command: %v", err)
+	}
+	for _, name := range []string{"domain", "acme-email"} {
+		flag := addCmd.Flags().Lookup(name)
+		if flag == nil {
+			t.Fatalf("add flag %q missing", name)
+		}
+		for _, want := range []string{"Reserved", "unavailable", "feature_unavailable"} {
+			if !strings.Contains(flag.Usage, want) {
+				t.Fatalf("flag %s usage = %q, want %q", name, flag.Usage, want)
+			}
+		}
+		for _, forbidden := range []string{"accepted", "stored"} {
+			if strings.Contains(strings.ToLower(flag.Usage), forbidden) {
+				t.Fatalf("flag %s usage = %q, must not claim %s", name, flag.Usage, forbidden)
+			}
+		}
+	}
+}
+
 func TestAddFunnel_WithProxy_Persisted(t *testing.T) {
 	dir := t.TempDir()
 	regPath := dir + "/registry.json"

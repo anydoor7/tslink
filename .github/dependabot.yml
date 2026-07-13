@@ -1,8 +1,8 @@
 version: 2
 updates:
   # Go module dependencies. Security updates feed the same candidate gate as
-  # any other change; grouping keeps noise low while keeping the
-  # vulnerability surface current between manual audits.
+  # any other change; grouping keeps noise low while keeping the vulnerability
+  # surface current between manual audits.
   - package-ecosystem: gomod
     directory: "/"
     schedule:

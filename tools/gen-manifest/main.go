@@ -13,6 +13,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/monody0007/tslink/cmd"
 )
@@ -23,7 +24,15 @@ func main() {
 	check := flag.Bool("check", false, "verify the committed fixture is up to date instead of writing it")
 	flag.Parse()
 
-	data, err := json.MarshalIndent(cmd.Manifest(), "", "  ")
+	manifest := cmd.Manifest()
+	goVersion, err := minimumGoVersionFromGoMod("go.mod")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "gen-manifest:", err)
+		os.Exit(1)
+	}
+	manifest.Toolchain.MinimumGoVersion = goVersion
+
+	data, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "gen-manifest:", err)
 		os.Exit(1)
@@ -53,4 +62,18 @@ func main() {
 		os.Exit(1)
 	}
 	fmt.Printf("gen-manifest: wrote %s\n", outputFile)
+}
+
+func minimumGoVersionFromGoMod(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", path, err)
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 2 && fields[0] == "go" {
+			return fields[1], nil
+		}
+	}
+	return "", fmt.Errorf("%s does not declare a go version", path)
 }

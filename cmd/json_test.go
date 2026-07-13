@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/monody0007/tslink/internal/config"
+	"github.com/monody0007/tslink/internal/credentials"
 	"github.com/monody0007/tslink/internal/output"
 	"github.com/monody0007/tslink/internal/registry"
 	"github.com/monody0007/tslink/internal/tailapi"
@@ -249,12 +250,20 @@ func TestStopJSON_Running(t *testing.T) {
 
 func TestLogoutJSON_NotLoggedIn(t *testing.T) {
 	dir := t.TempDir()
-	oldGet := getAPIKeyFn
-	oldCS := hasClientSecretFn
-	t.Cleanup(func() { getAPIKeyFn = oldGet; hasClientSecretFn = oldCS })
+	oldInspect := inspectStoredCredentialsFn
+	oldDelete := deleteStoredCredentialsFn
+	t.Cleanup(func() {
+		inspectStoredCredentialsFn = oldInspect
+		deleteStoredCredentialsFn = oldDelete
+	})
 
-	getAPIKeyFn = func() (string, error) { return "", nil }
-	hasClientSecretFn = func() bool { return false }
+	inspectStoredCredentialsFn = func() (credentials.StoredCredentialStatus, error) {
+		return credentials.StoredCredentialStatus{}, nil
+	}
+	deleteStoredCredentialsFn = func() error {
+		t.Fatal("deleteStoredCredentialsFn must not run for a proved empty logout")
+		return nil
+	}
 
 	// isRunningFn needs to return false so logout doesn't error
 	oldIsRunning := isRunningFn
@@ -297,23 +306,25 @@ func TestLogoutJSON_LoggedIn(t *testing.T) {
 	os.WriteFile(authKeyPath, []byte("key"), 0o600)
 	os.MkdirAll(nodesDir, 0o700)
 
-	oldGet := getAPIKeyFn
-	oldDel := deleteAPIKeyFn
-	oldCS := hasClientSecretFn
-	oldDelCS := deleteClientSecretFn
+	oldInspect := inspectStoredCredentialsFn
+	oldDelete := deleteStoredCredentialsFn
 	oldIsRunning := isRunningFn
 	t.Cleanup(func() {
-		getAPIKeyFn = oldGet
-		deleteAPIKeyFn = oldDel
-		hasClientSecretFn = oldCS
-		deleteClientSecretFn = oldDelCS
+		inspectStoredCredentialsFn = oldInspect
+		deleteStoredCredentialsFn = oldDelete
 		isRunningFn = oldIsRunning
 	})
 
-	getAPIKeyFn = func() (string, error) { return "tskey-api-xxx", nil }
-	deleteAPIKeyFn = func() {}
-	hasClientSecretFn = func() bool { return false }
-	deleteClientSecretFn = func() {}
+	apiKey := "tskey-api-xxx"
+	clientSecret := ""
+	inspectStoredCredentialsFn = func() (credentials.StoredCredentialStatus, error) {
+		return logoutCredentialStatus(apiKey != "", clientSecret != ""), nil
+	}
+	deleteStoredCredentialsFn = func() error {
+		apiKey = ""
+		clientSecret = ""
+		return nil
+	}
 	isRunningFn = func(string) bool { return false }
 
 	var buf bytes.Buffer
@@ -334,6 +345,44 @@ func TestLogoutJSON_LoggedIn(t *testing.T) {
 	data := dataMap(t, got)
 	if data["was_logged_in"] != true {
 		t.Errorf("expected was_logged_in=true, got %v", data["was_logged_in"])
+	}
+}
+
+func TestLogoutJSONCredentialResidualRiskReturnsNoSuccessEnvelope(t *testing.T) {
+	dir := t.TempDir()
+	oldInspect := inspectStoredCredentialsFn
+	oldDelete := deleteStoredCredentialsFn
+	oldIsRunning := isRunningFn
+	t.Cleanup(func() {
+		inspectStoredCredentialsFn = oldInspect
+		deleteStoredCredentialsFn = oldDelete
+		isRunningFn = oldIsRunning
+	})
+	inspectStoredCredentialsFn = func() (credentials.StoredCredentialStatus, error) {
+		return credentials.StoredCredentialStatus{}, os.ErrPermission
+	}
+	deleteStoredCredentialsFn = func() error { return os.ErrPermission }
+	isRunningFn = func(string) bool { return false }
+
+	var buf bytes.Buffer
+	got := captureStdout(t, func() {
+		err := logoutUser(
+			filepath.Join(dir, "pid"),
+			filepath.Join(dir, "authkey"),
+			filepath.Join(dir, "nodes"),
+			dir,
+			true,
+			&buf,
+		)
+		if err == nil {
+			t.Fatal("logoutUser() error = nil, want residual credential risk")
+		}
+		if output.ExitCode(err) == output.ExitSuccess {
+			t.Fatalf("ExitCode() = success for residual credential risk: %v", err)
+		}
+	})
+	if got != "" {
+		t.Fatalf("logoutUser emitted success JSON despite residual credential risk: %s", got)
 	}
 }
 

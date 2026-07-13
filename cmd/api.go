@@ -19,6 +19,34 @@ import (
 
 const apiMaxRecordBytes = 1024 * 1024
 
+const (
+	apiActionList          = "list"
+	apiActionAdd           = "add"
+	apiActionRemove        = "remove"
+	apiActionStatus        = "status"
+	apiActionDoctor        = "doctor"
+	apiActionAccessExplain = "access_explain"
+	apiActionTemplateList  = "template_list"
+	apiActionTemplatePlan  = "template_plan"
+	apiActionTemplateApply = "template_apply"
+)
+
+var apiActions = []string{
+	apiActionList,
+	apiActionAdd,
+	apiActionRemove,
+	apiActionStatus,
+	apiActionDoctor,
+	apiActionAccessExplain,
+	apiActionTemplateList,
+	apiActionTemplatePlan,
+	apiActionTemplateApply,
+}
+
+func apiActionNames() []string {
+	return append([]string(nil), apiActions...)
+}
+
 // APIRequest is a single JSON command read from stdin.
 type APIRequest struct {
 	Action string `json:"action"`
@@ -137,23 +165,23 @@ func (h *apiHandler) handleLine(line string, out io.Writer) output.Result {
 
 func (h *apiHandler) handle(req APIRequest, out io.Writer) output.Result {
 	switch req.Action {
-	case "list":
+	case apiActionList:
 		return h.handleList(out)
-	case "add":
+	case apiActionAdd:
 		return h.handleAdd(req, out)
-	case "remove":
+	case apiActionRemove:
 		return h.handleRemove(req, out)
-	case "status":
+	case apiActionStatus:
 		return h.handleStatus(req, out)
-	case "doctor":
+	case apiActionDoctor:
 		return h.handleDoctor(req, out)
-	case "access_explain":
+	case apiActionAccessExplain:
 		return h.handleAccessExplain(req, out)
-	case "template_list":
+	case apiActionTemplateList:
 		return h.handleTemplateList(out)
-	case "template_plan":
+	case apiActionTemplatePlan:
 		return h.handleTemplatePlan(req, out)
-	case "template_apply":
+	case apiActionTemplateApply:
 		return h.handleTemplateApply(req, out)
 	default:
 		return writeAPIUsageError(out, fmt.Sprintf("unknown action: %s", req.Action))
