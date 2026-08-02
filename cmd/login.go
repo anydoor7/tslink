@@ -30,6 +30,7 @@ const clientSecretActivationTimeout = 60 * time.Second
 // LoginResult represents the JSON output of a successful login.
 type LoginResult struct {
 	Method               string                         `json:"method"`
+	CredentialBackend    credentials.CredentialBackend  `json:"credential_backend"`
 	LoginName            string                         `json:"login_name,omitempty"`
 	TagCreated           string                         `json:"tag_created,omitempty"`
 	Degraded             bool                           `json:"degraded"`
@@ -47,7 +48,7 @@ type loginTSNetServer interface {
 // Testable function variables for login credential flow.
 var (
 	loginStdinReaderFn  = func() *bufio.Reader { return bufio.NewReader(os.Stdin) }
-	loginSetAPIKeyFn    = credentials.SetAPIKey
+	loginSetAPIKeyFn    = credentials.SetAPIKeyWithBackend
 	loginGetAPIKeyFn    = credentials.GetAPIKey
 	loginDeleteAPIKeyFn = credentials.DeleteAPIKeyChecked
 	loginVerifyAPIKeyFn = func(ctx context.Context, key string) error {
@@ -60,7 +61,7 @@ var (
 		}
 		return nil
 	}
-	loginSaveClientSecretFn   = credentials.SaveClientSecret
+	loginSaveClientSecretFn   = credentials.SaveClientSecretWithBackend
 	loginGetClientSecretFn    = credentials.GetClientSecret
 	loginDeleteClientSecretFn = credentials.DeleteClientSecretChecked
 	// loginActivateClientSecretFn semantically proves a candidate OAuth client
@@ -274,7 +275,7 @@ type loginCredentialSnapshot struct {
 
 type loginCredentialStore interface {
 	Read(loginCredentialMode) (string, error)
-	Write(loginCredentialMode, string) error
+	Write(loginCredentialMode, string) (credentials.CredentialBackend, error)
 	Delete(loginCredentialMode) error
 }
 
@@ -291,14 +292,14 @@ func (defaultLoginCredentialStore) Read(mode loginCredentialMode) (string, error
 	}
 }
 
-func (defaultLoginCredentialStore) Write(mode loginCredentialMode, value string) error {
+func (defaultLoginCredentialStore) Write(mode loginCredentialMode, value string) (credentials.CredentialBackend, error) {
 	switch mode {
 	case loginCredentialModeAPIKey:
 		return loginSetAPIKeyFn(value)
 	case loginCredentialModeClientSecret:
 		return loginSaveClientSecretFn(value)
 	default:
-		return fmt.Errorf("unsupported credential mode")
+		return "", fmt.Errorf("unsupported credential mode")
 	}
 }
 
@@ -423,30 +424,31 @@ func activateClientSecretViaUp(ctx context.Context, secret string) error {
 // Same-mode swaps verify the candidate before overwriting the old value.
 // Cross-mode swaps keep the previous mode active until the candidate is
 // validated and committed, then remove the alternate mode as part of commit.
-func replaceLoginCredential(ctx context.Context, store loginCredentialStore, mode loginCredentialMode, value string) error {
+func replaceLoginCredential(ctx context.Context, store loginCredentialStore, mode loginCredentialMode, value string) (credentials.CredentialBackend, error) {
 	previous, err := readLoginCredentialSnapshot(store)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if err := validateLoginCredentialCandidate(ctx, mode, value); err != nil {
-		return err
+		return "", err
 	}
 
-	if err := store.Write(mode, value); err != nil {
-		return fmt.Errorf("commit %s credential: %w", loginCredentialModeLabel(mode), err)
+	backend, err := store.Write(mode, value)
+	if err != nil {
+		return "", fmt.Errorf("commit %s credential: %w", loginCredentialModeLabel(mode), err)
 	}
 	if err := verifyLoginCredentialValue(store, mode, value); err != nil {
-		return rollbackLoginCredential(store, previous, fmt.Errorf("verify committed %s credential: %w", loginCredentialModeLabel(mode), err))
+		return "", rollbackLoginCredential(store, previous, fmt.Errorf("verify committed %s credential: %w", loginCredentialModeLabel(mode), err))
 	}
 
 	other := loginCredentialOtherMode(mode)
 	if err := store.Delete(other); err != nil {
-		return rollbackLoginCredential(store, previous, fmt.Errorf("remove previous %s credential: %w", loginCredentialModeLabel(other), err))
+		return "", rollbackLoginCredential(store, previous, fmt.Errorf("remove previous %s credential: %w", loginCredentialModeLabel(other), err))
 	}
 	if err := verifyLoginCredentialInactive(store, other); err != nil {
-		return rollbackLoginCredential(store, previous, fmt.Errorf("verify previous %s credential inactive: %w", loginCredentialModeLabel(other), err))
+		return "", rollbackLoginCredential(store, previous, fmt.Errorf("verify previous %s credential inactive: %w", loginCredentialModeLabel(other), err))
 	}
-	return nil
+	return backend, nil
 }
 
 func verifyLoginCredentialValue(store loginCredentialStore, mode loginCredentialMode, want string) error {
@@ -480,14 +482,14 @@ func rollbackLoginCredential(store loginCredentialStore, previous loginCredentia
 
 func restoreLoginCredentialSnapshot(store loginCredentialStore, snapshot loginCredentialSnapshot) error {
 	if snapshot.APIKey != "" {
-		if err := store.Write(loginCredentialModeAPIKey, snapshot.APIKey); err != nil {
+		if _, err := store.Write(loginCredentialModeAPIKey, snapshot.APIKey); err != nil {
 			return fmt.Errorf("restore API credential: %w", err)
 		}
 	} else if err := store.Delete(loginCredentialModeAPIKey); err != nil {
 		return fmt.Errorf("clear API credential: %w", err)
 	}
 	if snapshot.ClientSecret != "" {
-		if err := store.Write(loginCredentialModeClientSecret, snapshot.ClientSecret); err != nil {
+		if _, err := store.Write(loginCredentialModeClientSecret, snapshot.ClientSecret); err != nil {
 			return fmt.Errorf("restore client-secret credential: %w", err)
 		}
 	} else if err := store.Delete(loginCredentialModeClientSecret); err != nil {
@@ -556,7 +558,8 @@ func loginMaybeEnsureDefaultACLTag(cmd *cobra.Command, operation string) (tagCre
 }
 
 func loginWithAPIKey(cmd *cobra.Command, key string) error {
-	if err := replaceLoginCredential(context.Background(), defaultLoginCredentialStore{}, loginCredentialModeAPIKey, key); err != nil {
+	backend, err := replaceLoginCredential(context.Background(), defaultLoginCredentialStore{}, loginCredentialModeAPIKey, key)
+	if err != nil {
 		return err
 	}
 	if err := loginCleanupLegacyStateFn(); err != nil {
@@ -564,10 +567,12 @@ func loginWithAPIKey(cmd *cobra.Command, key string) error {
 	}
 
 	tagCreated, degraded, tagEnsureError, aclMutationSkipped, sideEffectPlan := loginMaybeEnsureDefaultACLTag(cmd, "ensure_default_tag")
+	warnCredentialBackendDowngrade(cmd, "API key", backend)
 
 	if jsonOutput(cmd) {
 		output.Success("login", LoginResult{
 			Method:               "api-key",
+			CredentialBackend:    backend,
 			TagCreated:           tagCreated,
 			Degraded:             degraded,
 			TagEnsureError:       tagEnsureError,
@@ -575,7 +580,7 @@ func loginWithAPIKey(cmd *cobra.Command, key string) error {
 			RemoteSideEffectPlan: sideEffectPlan,
 		})
 	} else {
-		fmt.Println("→ API key saved (system keychain)")
+		printCredentialBackend("API key", backend)
 		fmt.Println("→ Auth keys will be derived automatically on 'tslink serve'")
 		if tagCreated != "" {
 			fmt.Printf("→ Ensured %s exists in tailnet ACL\n", tagCreated)
@@ -585,7 +590,8 @@ func loginWithAPIKey(cmd *cobra.Command, key string) error {
 }
 
 func loginWithClientSecret(cmd *cobra.Command, secret string) error {
-	if err := replaceLoginCredential(context.Background(), defaultLoginCredentialStore{}, loginCredentialModeClientSecret, secret); err != nil {
+	backend, err := replaceLoginCredential(context.Background(), defaultLoginCredentialStore{}, loginCredentialModeClientSecret, secret)
+	if err != nil {
 		return err
 	}
 	if err := loginCleanupLegacyStateFn(); err != nil {
@@ -593,10 +599,12 @@ func loginWithClientSecret(cmd *cobra.Command, secret string) error {
 	}
 
 	tagCreated, degraded, tagEnsureError, aclMutationSkipped, sideEffectPlan := loginMaybeEnsureDefaultACLTag(cmd, "ensure_default_tag")
+	warnCredentialBackendDowngrade(cmd, "Client secret", backend)
 
 	if jsonOutput(cmd) {
 		output.Success("login", LoginResult{
 			Method:               "client-secret",
+			CredentialBackend:    backend,
 			TagCreated:           tagCreated,
 			Degraded:             degraded,
 			TagEnsureError:       tagEnsureError,
@@ -604,7 +612,7 @@ func loginWithClientSecret(cmd *cobra.Command, secret string) error {
 			RemoteSideEffectPlan: sideEffectPlan,
 		})
 	} else {
-		fmt.Println("→ Client secret saved (system keychain)")
+		printCredentialBackend("Client secret", backend)
 		fmt.Println("→ Long-lived node auth saved")
 		fmt.Println("→ Remote ACL writes require --manage-acl; remote device cleanup is protected/manual")
 		fmt.Println("→ Validate OAuth scopes and service tags before unattended use")
@@ -613,6 +621,23 @@ func loginWithClientSecret(cmd *cobra.Command, secret string) error {
 		}
 	}
 	return nil
+}
+
+func printCredentialBackend(label string, backend credentials.CredentialBackend) {
+	switch backend {
+	case credentials.CredentialBackendKeyring:
+		fmt.Printf("→ %s saved (system keychain)\n", label)
+	case credentials.CredentialBackendFile:
+		fmt.Printf("→ %s saved (restricted local file, 0600)\n", label)
+	default:
+		fmt.Printf("→ %s saved (credential backend: %s)\n", label, backend)
+	}
+}
+
+func warnCredentialBackendDowngrade(cmd *cobra.Command, label string, backend credentials.CredentialBackend) {
+	if backend == credentials.CredentialBackendFile {
+		fmt.Fprintf(cmd.ErrOrStderr(), "⚠ Credential storage downgrade: system keyring unavailable; %s saved to a restricted local file (0600).\n", label)
+	}
 }
 
 func loginCredentialFlow(cmd *cobra.Command, cfgDir string) error {

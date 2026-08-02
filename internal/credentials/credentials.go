@@ -35,6 +35,21 @@ var (
 	enforceCredentialFilePermissionsFunc = func() bool { return runtime.GOOS != "windows" }
 	fileCredentialFallbackEnabledFunc    = func() bool { return runtime.GOOS != "windows" }
 	keyringEnabledFunc                   = func() bool { return os.Getenv("TSLINK_DISABLE_KEYRING") != "1" }
+	keyringGetFunc                       = keyring.Get
+	keyringSetFunc                       = keyring.Set
+	keyringDeleteFunc                    = keyring.Delete
+	apiKeyPathFunc                       = config.APIKeyPath
+	clientSecretPathFunc                 = config.ClientSecretPath
+	credentialFileWriteFunc              = atomicfile.WriteFile
+)
+
+// CredentialBackend identifies the storage location that accepted a
+// credential. It contains no credential material and is safe to report.
+type CredentialBackend string
+
+const (
+	CredentialBackendKeyring CredentialBackend = "keyring"
+	CredentialBackendFile    CredentialBackend = "file"
 )
 
 // CredentialLocationStatus is a value-free presence report for one credential
@@ -87,8 +102,8 @@ func readCredentialFile(path string) ([]byte, error) {
 // credentials are present in every supported store. It fails closed when the
 // keyring is disabled or unreadable because an old credential may remain there.
 func InspectStoredCredentialsStrict() (StoredCredentialStatus, error) {
-	api, apiErr := inspectCredentialStrict("API key", keychainAPIKey, config.APIKeyPath)
-	secret, secretErr := inspectCredentialStrict("OAuth client secret", keychainClientSecret, config.ClientSecretPath)
+	api, apiErr := inspectCredentialStrict("API key", keychainAPIKey, apiKeyPathFunc)
+	secret, secretErr := inspectCredentialStrict("OAuth client secret", keychainClientSecret, clientSecretPathFunc)
 	return StoredCredentialStatus{APIKey: api, ClientSecret: secret}, errors.Join(apiErr, secretErr)
 }
 
@@ -97,7 +112,7 @@ func inspectCredentialStrict(label, keychainKey string, pathFunc func() (string,
 	var errs []error
 	if keyringEnabledFunc() {
 		status.Keyring.Enabled = true
-		value, err := keyring.Get(keychainService, keychainKey)
+		value, err := keyringGetFunc(keychainService, keychainKey)
 		switch {
 		case err == nil:
 			status.Keyring.Present = strings.TrimSpace(value) != ""
@@ -132,18 +147,35 @@ func inspectCredentialStrict(label, keychainKey string, pathFunc func() (string,
 // credential risk remains.
 func DeleteStoredCredentialsStrict() error {
 	return errors.Join(
-		deleteCredentialStrict("API key", keychainAPIKey, config.APIKeyPath),
-		deleteCredentialStrict("OAuth client secret", keychainClientSecret, config.ClientSecretPath),
+		deleteCredentialStrict("API key", keychainAPIKey, apiKeyPathFunc),
+		deleteCredentialStrict("OAuth client secret", keychainClientSecret, clientSecretPathFunc),
 	)
 }
 
 func deleteCredentialStrict(label, keychainKey string, pathFunc func() (string, error)) error {
 	var errs []error
+	if err := deleteKeyringCredentialStrict(label, keychainKey); err != nil {
+		errs = append(errs, err)
+	}
+
+	path, err := pathFunc()
+	if err != nil {
+		errs = append(errs, fmt.Errorf("%s file path: %w", label, err))
+		return errors.Join(errs...)
+	}
+	if err := deleteCredentialFilePathStrict(label, path); err != nil {
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
+}
+
+func deleteKeyringCredentialStrict(label, keychainKey string) error {
+	var errs []error
 	if keyringEnabledFunc() {
-		if err := keyring.Delete(keychainService, keychainKey); err != nil && !errors.Is(err, keyring.ErrNotFound) {
+		if err := keyringDeleteFunc(keychainService, keychainKey); err != nil && !errors.Is(err, keyring.ErrNotFound) {
 			errs = append(errs, fmt.Errorf("%s keyring delete: %w", label, err))
 		}
-		value, err := keyring.Get(keychainService, keychainKey)
+		value, err := keyringGetFunc(keychainService, keychainKey)
 		switch {
 		case err == nil && strings.TrimSpace(value) != "":
 			errs = append(errs, fmt.Errorf("%s keyring credential still present after cleanup", label))
@@ -155,12 +187,11 @@ func deleteCredentialStrict(label, keychainKey string, pathFunc func() (string, 
 	} else {
 		errs = append(errs, fmt.Errorf("%s keyring disabled; cannot delete or prove absence of residual keyring credential", label))
 	}
+	return errors.Join(errs...)
+}
 
-	path, err := pathFunc()
-	if err != nil {
-		errs = append(errs, fmt.Errorf("%s file path: %w", label, err))
-		return errors.Join(errs...)
-	}
+func deleteCredentialFilePathStrict(label, path string) error {
+	var errs []error
 	if removeErr := os.Remove(path); removeErr != nil && !os.IsNotExist(removeErr) {
 		errs = append(errs, fmt.Errorf("%s file delete: %w", label, removeErr))
 	}
@@ -172,26 +203,60 @@ func deleteCredentialStrict(label, keychainKey string, pathFunc func() (string, 
 	return errors.Join(errs...)
 }
 
-// SetAPIKey stores the API key. Prefers macOS Keychain; falls back to file (0600).
-func SetAPIKey(key string) error {
+func storeCredentialWithBackend(
+	label, keychainKey, value string,
+	pathFunc func() (string, error),
+) (CredentialBackend, error) {
 	if keyringEnabledFunc() {
-		if err := keyring.Set(keychainService, keychainAPIKey, key); err == nil {
-			// Keychain succeeded — remove file copy if it exists
-			if path, e := config.APIKeyPath(); e == nil {
-				os.Remove(path)
+		if err := keyringSetFunc(keychainService, keychainKey, value); err == nil {
+			// Keyring succeeded, so the file copy must no longer be authoritative.
+			if path, pathErr := pathFunc(); pathErr == nil {
+				_ = os.Remove(path)
 			}
-			return nil
+			return CredentialBackendKeyring, nil
 		}
 	}
-	// Fallback: write to file
-	path, err := config.APIKeyPath()
-	if err != nil {
-		return err
-	}
+
+	// Complete every fall-back precondition before changing either store.
 	if !fileCredentialFallbackEnabledFunc() {
-		return fmt.Errorf("file credential fallback is disabled on Windows because TSLink cannot prove a user-only DACL locally; enable Windows Credential Manager/keyring access and retry")
+		return "", fmt.Errorf("file credential fallback is disabled on Windows because TSLink cannot prove a user-only DACL locally; enable Windows Credential Manager/keyring access and retry")
 	}
-	return atomicfile.WriteFile(path, []byte(key))
+	path, err := pathFunc()
+	if err != nil {
+		return "", err
+	}
+	if err := credentialFileWriteFunc(path, []byte(value)); err != nil {
+		return "", err
+	}
+
+	// Keyring-first readers can use the file only after stale keyring state is
+	// both deleted and proven absent. If cleanup fails, remove the new file so
+	// the last-known-good keyring credential remains the sole authority.
+	if keyringEnabledFunc() {
+		if err := deleteKeyringCredentialStrict(label, keychainKey); err != nil {
+			rollbackErr := deleteCredentialFilePathStrict(label, path)
+			return "", errors.Join(
+				fmt.Errorf("%s keyring write failed and stale keyring cleanup failed; refusing file fallback: %w", label, err),
+				rollbackErr,
+			)
+		}
+	}
+	return CredentialBackendFile, nil
+}
+
+// SetAPIKey stores the API key. It is the source-compatible wrapper for callers
+// that do not need to report the selected backend.
+func SetAPIKey(key string) error {
+	_, err := SetAPIKeyWithBackend(key)
+	return err
+}
+
+// SetAPIKeyWithBackend stores the API key and reports the backend that actually
+// accepted it. A failed keyring write may fall back to a private file only after
+// every file precondition is satisfied. It reports file success only after any
+// stale keyring value has been removed and readback proves it absent.
+func SetAPIKeyWithBackend(key string) (CredentialBackend, error) {
+	return storeCredentialWithBackend("API key", keychainAPIKey, key, apiKeyPathFunc)
 }
 
 // GetAPIKey retrieves the API key from keychain or file.
@@ -199,12 +264,12 @@ func SetAPIKey(key string) error {
 func GetAPIKey() (string, error) {
 	// Keychain first
 	if keyringEnabledFunc() {
-		if key, err := keyring.Get(keychainService, keychainAPIKey); err == nil && key != "" {
+		if key, err := keyringGetFunc(keychainService, keychainAPIKey); err == nil && key != "" {
 			return key, nil
 		}
 	}
 	// File fallback
-	path, err := config.APIKeyPath()
+	path, err := apiKeyPathFunc()
 	if err != nil {
 		return "", err
 	}
@@ -229,11 +294,11 @@ func DeleteAPIKey() {
 func DeleteAPIKeyChecked() error {
 	var errs []error
 	if keyringEnabledFunc() {
-		if err := keyring.Delete(keychainService, keychainAPIKey); err != nil && !errors.Is(err, keyring.ErrNotFound) {
+		if err := keyringDeleteFunc(keychainService, keychainAPIKey); err != nil && !errors.Is(err, keyring.ErrNotFound) {
 			errs = append(errs, err)
 		}
 	}
-	if path, err := config.APIKeyPath(); err == nil {
+	if path, err := apiKeyPathFunc(); err == nil {
 		if removeErr := os.Remove(path); removeErr != nil && !os.IsNotExist(removeErr) {
 			errs = append(errs, removeErr)
 		}
@@ -243,30 +308,22 @@ func DeleteAPIKeyChecked() error {
 	return errors.Join(errs...)
 }
 
-// SaveClientSecret stores an OAuth client secret. The key must start with "tskey-client-".
-// Prefers macOS Keychain; falls back to file (0600).
+// SaveClientSecret stores an OAuth client secret. It is the source-compatible
+// wrapper for callers that do not need to report the selected backend.
 func SaveClientSecret(secret string) error {
+	_, err := SaveClientSecretWithBackend(secret)
+	return err
+}
+
+// SaveClientSecretWithBackend stores an OAuth client secret and reports the
+// backend that actually accepted it. The key must start with "tskey-client-".
+// File fallback follows the same write-new, strictly-delete-old transaction as
+// API keys.
+func SaveClientSecretWithBackend(secret string) (CredentialBackend, error) {
 	if !strings.HasPrefix(secret, "tskey-client-") {
-		return fmt.Errorf("invalid client secret: must start with 'tskey-client-'")
+		return "", fmt.Errorf("invalid client secret: must start with 'tskey-client-'")
 	}
-	if keyringEnabledFunc() {
-		if err := keyring.Set(keychainService, keychainClientSecret, secret); err == nil {
-			// Keychain succeeded — remove file copy if it exists
-			if path, e := config.ClientSecretPath(); e == nil {
-				os.Remove(path)
-			}
-			return nil
-		}
-	}
-	// Fallback: write to file
-	path, err := config.ClientSecretPath()
-	if err != nil {
-		return err
-	}
-	if !fileCredentialFallbackEnabledFunc() {
-		return fmt.Errorf("file credential fallback is disabled on Windows because TSLink cannot prove a user-only DACL locally; enable Windows Credential Manager/keyring access and retry")
-	}
-	return atomicfile.WriteFile(path, []byte(secret))
+	return storeCredentialWithBackend("OAuth client secret", keychainClientSecret, secret, clientSecretPathFunc)
 }
 
 // GetClientSecret retrieves the client secret from keychain or file.
@@ -274,12 +331,12 @@ func SaveClientSecret(secret string) error {
 func GetClientSecret() (string, error) {
 	// Keychain first
 	if keyringEnabledFunc() {
-		if secret, err := keyring.Get(keychainService, keychainClientSecret); err == nil && secret != "" {
+		if secret, err := keyringGetFunc(keychainService, keychainClientSecret); err == nil && secret != "" {
 			return secret, nil
 		}
 	}
 	// File fallback
-	path, err := config.ClientSecretPath()
+	path, err := clientSecretPathFunc()
 	if err != nil {
 		return "", err
 	}
@@ -310,11 +367,11 @@ func DeleteClientSecret() {
 func DeleteClientSecretChecked() error {
 	var errs []error
 	if keyringEnabledFunc() {
-		if err := keyring.Delete(keychainService, keychainClientSecret); err != nil && !errors.Is(err, keyring.ErrNotFound) {
+		if err := keyringDeleteFunc(keychainService, keychainClientSecret); err != nil && !errors.Is(err, keyring.ErrNotFound) {
 			errs = append(errs, err)
 		}
 	}
-	if path, err := config.ClientSecretPath(); err == nil {
+	if path, err := clientSecretPathFunc(); err == nil {
 		if removeErr := os.Remove(path); removeErr != nil && !os.IsNotExist(removeErr) {
 			errs = append(errs, removeErr)
 		}
@@ -502,7 +559,7 @@ func GetAuthKey(ctx context.Context, opts AuthKeyOptions) (string, error) {
 // MigrateFromLegacy moves a file-based API key into the system keychain.
 // Safe to call even if there's nothing to migrate.
 func MigrateFromLegacy() (migrated bool) {
-	path, err := config.APIKeyPath()
+	path, err := apiKeyPathFunc()
 	if err != nil {
 		return false
 	}
@@ -517,7 +574,7 @@ func MigrateFromLegacy() (migrated bool) {
 
 	// Attempt keychain migration
 	if keyringEnabledFunc() {
-		if err := keyring.Set(keychainService, keychainAPIKey, key); err != nil {
+		if err := keyringSetFunc(keychainService, keychainAPIKey, key); err != nil {
 			return false // keychain not available, keep the file
 		}
 	} else {

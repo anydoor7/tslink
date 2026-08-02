@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/monody0007/tslink/internal/credentials"
 )
 
 type recordingCredentialStore struct {
@@ -42,14 +44,14 @@ func (s *recordingCredentialStore) Read(mode loginCredentialMode) (string, error
 	return s.values[mode], nil
 }
 
-func (s *recordingCredentialStore) Write(mode loginCredentialMode, value string) error {
+func (s *recordingCredentialStore) Write(mode loginCredentialMode, value string) (credentials.CredentialBackend, error) {
 	op := "write:" + string(mode)
 	s.ops = append(s.ops, op)
 	if err := s.fail(op); err != nil {
-		return err
+		return "", err
 	}
 	s.values[mode] = value
-	return nil
+	return credentials.CredentialBackendKeyring, nil
 }
 
 func (s *recordingCredentialStore) Delete(mode loginCredentialMode) error {
@@ -117,7 +119,7 @@ func TestReplaceLoginCredentialTransactionalSuccessModes(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			store := newRecordingCredentialStore(tc.apiBefore, tc.csBefore)
-			if err := replaceLoginCredential(context.Background(), store, tc.mode, tc.candidate); err != nil {
+			if _, err := replaceLoginCredential(context.Background(), store, tc.mode, tc.candidate); err != nil {
 				t.Fatalf("replaceLoginCredential() error = %v", err)
 			}
 			store.assertState(t, tc.apiAfter, tc.csAfter)
@@ -166,7 +168,7 @@ func TestReplaceLoginCredentialRollbackFailurePoints(t *testing.T) {
 				return nil
 			})
 
-			err := replaceLoginCredential(context.Background(), store, tc.mode, tc.candidate)
+			_, err := replaceLoginCredential(context.Background(), store, tc.mode, tc.candidate)
 			if err == nil {
 				t.Fatal("replaceLoginCredential() error = nil, want failure")
 			}
@@ -207,7 +209,7 @@ func TestReplaceLoginCredentialClientSecretActivationPreservesLastKnownGood(t *t
 			withLoginClientSecretActivator(t, func(context.Context, string) error { return ae.err })
 
 			store := newRecordingCredentialStore("tskey-api-old", "")
-			err := replaceLoginCredential(context.Background(), store, loginCredentialModeClientSecret, "tskey-client-unusable")
+			_, err := replaceLoginCredential(context.Background(), store, loginCredentialModeClientSecret, "tskey-client-unusable")
 			if err == nil {
 				t.Fatal("replaceLoginCredential() error = nil, want activation failure")
 			}
@@ -233,7 +235,7 @@ func TestReplaceLoginCredentialClientSecretActivationPreservesLastKnownGood(t *t
 			return nil
 		})
 		store := newRecordingCredentialStore("", "tskey-client-old")
-		if err := replaceLoginCredential(context.Background(), store, loginCredentialModeAPIKey, "tskey-api-new"); err != nil {
+		if _, err := replaceLoginCredential(context.Background(), store, loginCredentialModeAPIKey, "tskey-api-new"); err != nil {
 			t.Fatalf("replaceLoginCredential() error = %v", err)
 		}
 		if activatorCalled {
@@ -249,7 +251,7 @@ func TestReplaceLoginCredentialClientSecretActivationPreservesLastKnownGood(t *t
 			return nil
 		})
 		store := newRecordingCredentialStore("tskey-api-old", "")
-		if err := replaceLoginCredential(context.Background(), store, loginCredentialModeClientSecret, "tskey-client-good"); err != nil {
+		if _, err := replaceLoginCredential(context.Background(), store, loginCredentialModeClientSecret, "tskey-client-good"); err != nil {
 			t.Fatalf("replaceLoginCredential() error = %v", err)
 		}
 		if !activatorCalled {

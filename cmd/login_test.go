@@ -263,8 +263,8 @@ func TestLoginCredentialFlow_ClientSecret_SaveFails(t *testing.T) {
 
 	old := loginSaveClientSecretFn
 	t.Cleanup(func() { loginSaveClientSecretFn = old })
-	loginSaveClientSecretFn = func(secret string) error {
-		return fmt.Errorf("keychain locked")
+	loginSaveClientSecretFn = func(secret string) (credentials.CredentialBackend, error) {
+		return "", fmt.Errorf("keychain locked")
 	}
 
 	err := loginCredentialFlow(loginCmd, dir)
@@ -518,6 +518,9 @@ func TestLoginWithAPIKeyJSONReportsDegradedEnsureTags(t *testing.T) {
 		}
 	})
 	data := dataMap(t, got)
+	if data["credential_backend"] != "keyring" {
+		t.Fatalf("credential_backend = %v, want keyring", data["credential_backend"])
+	}
 	if data["degraded"] != true {
 		t.Fatalf("degraded = %v, want true", data["degraded"])
 	}
@@ -558,6 +561,9 @@ func TestLoginWithAPIKeyJSONDefaultReturnsSideEffectPlanWithoutACLWrite(t *testi
 		}
 	})
 	data := dataMap(t, got)
+	if data["credential_backend"] != "keyring" {
+		t.Fatalf("credential_backend = %v, want keyring", data["credential_backend"])
+	}
 	if data["acl_mutation_skipped"] != true {
 		t.Fatalf("acl_mutation_skipped = %v, want true", data["acl_mutation_skipped"])
 	}
@@ -567,6 +573,122 @@ func TestLoginWithAPIKeyJSONDefaultReturnsSideEffectPlanWithoutACLWrite(t *testi
 	}
 	if plan["opt_in_flag"] != "--manage-acl" || plan["mutates"] != false {
 		t.Fatalf("remote_side_effect_plan = %+v, want disabled --manage-acl plan", plan)
+	}
+}
+
+func TestLoginWithAPIKeyJSONReportsFileBackendAndDowngrade(t *testing.T) {
+	setupLoginTest(t)
+	resetLoginFlags(t)
+	oldSet := loginSetAPIKeyFn
+	oldGetAPI := loginGetAPIKeyFn
+	oldGetSecret := loginGetClientSecretFn
+	oldDeleteSecret := loginDeleteClientSecretFn
+	oldVerify := loginVerifyAPIKeyFn
+	oldErr := loginCmd.ErrOrStderr()
+	t.Cleanup(func() {
+		loginSetAPIKeyFn = oldSet
+		loginGetAPIKeyFn = oldGetAPI
+		loginGetClientSecretFn = oldGetSecret
+		loginDeleteClientSecretFn = oldDeleteSecret
+		loginVerifyAPIKeyFn = oldVerify
+		loginCmd.SetErr(oldErr)
+		resetLoginFlags(t)
+		_ = rootCmd.PersistentFlags().Set("json", "false")
+	})
+	if err := rootCmd.PersistentFlags().Set("json", "true"); err != nil {
+		t.Fatalf("set json flag: %v", err)
+	}
+
+	var stored string
+	loginGetAPIKeyFn = func() (string, error) { return stored, nil }
+	loginGetClientSecretFn = func() (string, error) { return "", nil }
+	loginSetAPIKeyFn = func(value string) (credentials.CredentialBackend, error) {
+		stored = value
+		return credentials.CredentialBackendFile, nil
+	}
+	loginDeleteClientSecretFn = func() error { return nil }
+	loginVerifyAPIKeyFn = func(context.Context, string) error { return nil }
+
+	var stderr bytes.Buffer
+	loginCmd.SetErr(&stderr)
+	got := captureStdout(t, func() {
+		if err := loginWithAPIKey(loginCmd, "tskey-api-synthetic"); err != nil {
+			t.Fatalf("loginWithAPIKey() error = %v", err)
+		}
+	})
+	data := dataMap(t, got)
+	if data["credential_backend"] != "file" {
+		t.Fatalf("credential_backend = %v, want file", data["credential_backend"])
+	}
+	if !strings.Contains(stderr.String(), "Credential storage downgrade") ||
+		!strings.Contains(stderr.String(), "restricted local file") {
+		t.Fatalf("stderr did not report explicit file-backend downgrade: %q", stderr.String())
+	}
+}
+
+func TestLoginWithClientSecretJSONReportsFileBackendAndDowngrade(t *testing.T) {
+	setupLoginTest(t)
+	resetLoginFlags(t)
+	oldSave := loginSaveClientSecretFn
+	oldGetAPI := loginGetAPIKeyFn
+	oldGetSecret := loginGetClientSecretFn
+	oldDeleteAPI := loginDeleteAPIKeyFn
+	oldActivate := loginActivateClientSecretFn
+	oldErr := loginCmd.ErrOrStderr()
+	t.Cleanup(func() {
+		loginSaveClientSecretFn = oldSave
+		loginGetAPIKeyFn = oldGetAPI
+		loginGetClientSecretFn = oldGetSecret
+		loginDeleteAPIKeyFn = oldDeleteAPI
+		loginActivateClientSecretFn = oldActivate
+		loginCmd.SetErr(oldErr)
+		resetLoginFlags(t)
+		_ = rootCmd.PersistentFlags().Set("json", "false")
+	})
+	if err := rootCmd.PersistentFlags().Set("json", "true"); err != nil {
+		t.Fatalf("set json flag: %v", err)
+	}
+
+	var stored string
+	loginGetAPIKeyFn = func() (string, error) { return "", nil }
+	loginGetClientSecretFn = func() (string, error) { return stored, nil }
+	loginSaveClientSecretFn = func(value string) (credentials.CredentialBackend, error) {
+		stored = value
+		return credentials.CredentialBackendFile, nil
+	}
+	loginDeleteAPIKeyFn = func() error { return nil }
+	loginActivateClientSecretFn = func(context.Context, string) error { return nil }
+
+	var stderr bytes.Buffer
+	loginCmd.SetErr(&stderr)
+	got := captureStdout(t, func() {
+		if err := loginWithClientSecret(loginCmd, "tskey-client-synthetic"); err != nil {
+			t.Fatalf("loginWithClientSecret() error = %v", err)
+		}
+	})
+	data := dataMap(t, got)
+	if data["credential_backend"] != "file" {
+		t.Fatalf("credential_backend = %v, want file", data["credential_backend"])
+	}
+	if !strings.Contains(stderr.String(), "Credential storage downgrade") ||
+		!strings.Contains(stderr.String(), "restricted local file") {
+		t.Fatalf("stderr did not report explicit file-backend downgrade: %q", stderr.String())
+	}
+}
+
+func TestPrintCredentialBackendReflectsActualBackend(t *testing.T) {
+	keyringOutput := captureStdout(t, func() {
+		printCredentialBackend("API key", credentials.CredentialBackendKeyring)
+	})
+	if !strings.Contains(keyringOutput, "system keychain") {
+		t.Fatalf("keyring text output = %q, want system keychain", keyringOutput)
+	}
+
+	fileOutput := captureStdout(t, func() {
+		printCredentialBackend("API key", credentials.CredentialBackendFile)
+	})
+	if !strings.Contains(fileOutput, "restricted local file") || strings.Contains(fileOutput, "system keychain") {
+		t.Fatalf("file text output = %q, want restricted file without keychain claim", fileOutput)
 	}
 }
 
