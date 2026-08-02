@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,8 +11,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/monody0007/tslink/internal/daemon"
-	"github.com/monody0007/tslink/internal/inspect"
 	"github.com/monody0007/tslink/internal/output"
 	"github.com/monody0007/tslink/internal/registry"
 	"github.com/spf13/cobra"
@@ -64,75 +63,49 @@ type APIRequest struct {
 	ControlURL    string   `json:"control_url,omitempty"`
 	URLs          bool     `json:"urls,omitempty"`
 	ProbeExternal bool     `json:"probe_external,omitempty"`
+	IfMissing     bool     `json:"if_missing,omitempty"`
 }
 
-type apiListData struct {
-	Services []inspect.ServiceView `json:"services"`
-	Count    int                   `json:"count"`
-}
-
-type apiAddData struct {
-	Message  string                `json:"message"`
-	URL      string                `json:"url"`
-	Endpoint inspect.EndpointView  `json:"endpoint"`
-	Exposure inspect.ExposureView  `json:"exposure"`
-	Warnings []inspect.WarningView `json:"warnings,omitempty"`
-}
-
-type apiStatusData struct {
-	Running bool `json:"running"`
-	Count   int  `json:"count"`
-}
-
-type apiStatusURLsData struct {
-	StatusURLs StatusURLsResult `json:"status_urls"`
-}
-
+// These compatibility shims are still instantiated by the standalone
+// doctor/access command implementations. Custom marshaling keeps their wire
+// data flat without changing files owned by another parallel lane.
 type apiDoctorData struct {
-	Doctor DoctorResult `json:"doctor"`
+	Doctor DoctorResult
 }
+
+func (d apiDoctorData) MarshalJSON() ([]byte, error) { return json.Marshal(d.Doctor) }
 
 type apiAccessExplainData struct {
-	AccessExplain AccessExplainResult `json:"access_explain"`
+	AccessExplain AccessExplainResult
 }
 
-type apiTemplateListData struct {
-	TemplateList TemplateListResult `json:"template_list"`
-}
+func (d apiAccessExplainData) MarshalJSON() ([]byte, error) { return json.Marshal(d.AccessExplain) }
 
-type apiTemplatePlanData struct {
-	TemplatePlan TemplateApplyResult `json:"template_plan"`
-}
-
-type apiTemplateApplyData struct {
-	TemplateApply TemplateApplyResult `json:"template_apply"`
-}
-
-func writeAPISuccess(out io.Writer, data any) output.Result {
-	result := output.NewSuccess("", data)
+func writeAPISuccess(out io.Writer, command string, data any) output.Result {
+	result := output.NewSuccess(command, data)
 	output.WriteJSON(out, result)
 	return result
 }
 
-func writeAPIError(out io.Writer, err error) output.Result {
-	result := output.NewFailureForError("", err)
+func writeAPIError(out io.Writer, command string, err error) output.Result {
+	result := output.NewFailureForError(command, err)
 	output.WriteJSON(out, result)
 	return result
 }
 
 func writeAPIUsageError(out io.Writer, msg string) output.Result {
-	return writeAPIError(out, output.ErrUsage(msg))
+	return writeAPIError(out, "api", output.ErrUsage(msg))
 }
 
 func writeAPINotFoundError(out io.Writer, msg string) output.Result {
-	return writeAPIError(out, output.ErrNotFound(msg))
+	return writeAPIError(out, "api", output.ErrNotFound(msg))
 }
 
-func writeAPICommandError(out io.Writer, err error) output.Result {
+func writeAPICommandError(out io.Writer, command string, err error) output.Result {
 	if _, ok := registry.ErrorCode(err); ok {
-		return writeAPIError(out, err)
+		return writeAPIError(out, command, err)
 	}
-	return writeAPIError(out, output.ErrUsage(err.Error()))
+	return writeAPIError(out, command, output.ErrUsage(err.Error()))
 }
 
 func decodeAPIRequest(line string) (APIRequest, error) {
@@ -189,11 +162,11 @@ func (h *apiHandler) handle(req APIRequest, out io.Writer) output.Result {
 }
 
 func (h *apiHandler) handleList(out io.Writer) output.Result {
-	reg, err := registry.Load(h.regPath)
+	result, err := loadListResultForPaths(h.regPath, h.pidPath, h.runtimeSnapshotPath, listOptions{})
 	if err != nil {
-		return writeAPIError(out, err)
+		return writeAPIError(out, apiActionList, err)
 	}
-	return writeAPISuccess(out, apiListData{Services: inspect.ServiceViews(reg.Services), Count: len(reg.Services)})
+	return writeAPISuccess(out, apiActionList, result)
 }
 
 func (h *apiHandler) handleAdd(req APIRequest, out io.Writer) output.Result {
@@ -202,34 +175,48 @@ func (h *apiHandler) handleAdd(req APIRequest, out io.Writer) output.Result {
 	}
 	params, err := addParamsFromAPIRequest(req)
 	if err != nil {
-		return writeAPICommandError(out, err)
+		return writeAPICommandError(out, apiActionAdd, err)
 	}
 
 	svc, err := buildService(params)
 	if err != nil {
-		return writeAPICommandError(out, err)
+		return writeAPICommandError(out, apiActionAdd, err)
 	}
 	if svc.Type == registry.TypeFile {
 		if !filepath.IsAbs(params.Dir) {
-			return writeAPICommandError(out, fmt.Errorf("file service path %q must be absolute", params.Dir))
+			return writeAPICommandError(out, apiActionAdd, registry.PathMustBeAbsoluteError(params.Dir))
 		}
 		if err := registry.ValidateFileRoot(params.Dir); err != nil {
-			return writeAPICommandError(out, err)
+			return writeAPICommandError(out, apiActionAdd, err)
 		}
 		svc.Path = filepath.Clean(params.Dir)
 	}
-	if _, err := registry.Add(h.regPath, svc); err != nil {
-		return writeAPICommandError(out, err)
+	var created bool
+	if req.IfMissing {
+		created, err = registry.AddIfMissing(h.regPath, svc)
+	} else {
+		created, err = registry.Add(h.regPath, svc)
 	}
-	view := inspect.ServiceViewFor(svc)
-	endpoint := view.Endpoint
-	return writeAPISuccess(out, apiAddData{
-		Message:  "service added",
-		URL:      endpoint.Display,
-		Endpoint: endpoint,
-		Exposure: view.Exposure,
-		Warnings: view.Warnings,
-	})
+	if err != nil {
+		return writeAPICommandError(out, apiActionAdd, err)
+	}
+	if req.IfMissing && !created {
+		reg, loadErr := registry.Load(h.regPath)
+		if loadErr != nil {
+			return writeAPIError(out, apiActionAdd, loadErr)
+		}
+		for _, existing := range reg.Services {
+			if existing.Name == req.Name {
+				svc = existing
+				break
+			}
+		}
+	}
+	result, err := buildAddResult(context.Background(), svc, created, h.pidPath, h.regPath, h.runtimeSnapshotPath, 0)
+	if err != nil {
+		return writeAPIError(out, apiActionAdd, err)
+	}
+	return writeAPISuccess(out, apiActionAdd, result)
 }
 
 func addParamsFromAPIRequest(req APIRequest) (AddParams, error) {
@@ -246,7 +233,7 @@ func addParamsFromAPIRequest(req APIRequest) (AddParams, error) {
 		return AddParams{}, registry.FunnelPublicAckError()
 	}
 	if len(req.Allow) > 0 && req.Type == registry.TypeTCP {
-		return AddParams{}, fmt.Errorf("allow is not supported for tcp type")
+		return AddParams{}, registry.AllowUnsupportedTCPError()
 	}
 
 	params := AddParams{
@@ -285,7 +272,7 @@ func addParamsFromAPIRequest(req APIRequest) (AddParams, error) {
 		}
 		params.TCP = req.Target
 	case "":
-		return AddParams{}, fmt.Errorf("type is required")
+		return AddParams{}, registry.ServiceTypeAmbiguousError()
 	default:
 		return AddParams{}, fmt.Errorf("type must be one of: proxy, file, tcp")
 	}
@@ -299,37 +286,45 @@ func (h *apiHandler) handleRemove(req APIRequest, out io.Writer) output.Result {
 	}
 	removed, err := registry.Remove(h.regPath, req.Name)
 	if err != nil {
-		return writeAPIError(out, err)
+		return writeAPIError(out, apiActionRemove, err)
 	}
-	return writeAPISuccess(out, RemoveResult{Name: req.Name, Removed: removed})
+	return writeAPISuccess(out, apiActionRemove, RemoveResult{Name: req.Name, Removed: removed})
 }
 
 func (h *apiHandler) handleStatus(req APIRequest, out io.Writer) output.Result {
 	if req.URLs {
-		return h.handleStatusURLs(out)
+		return h.handleStatusURLs(req, out)
 	}
-	running := daemon.IsRunning(h.pidPath)
-	reg, err := registry.Load(h.regPath)
+	if req.Name != "" {
+		return writeAPICommandError(out, apiActionStatus, output.ErrUsage("name is supported only when urls is true"))
+	}
+	result, err := getStatus(h.pidPath, h.regPath)
 	if err != nil {
-		return writeAPIError(out, err)
+		return writeAPIError(out, apiActionStatus, err)
 	}
-	return writeAPISuccess(out, apiStatusData{Running: running, Count: len(reg.Services)})
+	return writeAPISuccess(out, apiActionStatus, result)
 }
 
-func (h *apiHandler) handleStatusURLs(out io.Writer) output.Result {
+func (h *apiHandler) handleStatusURLs(req APIRequest, out io.Writer) output.Result {
 	snapshotPath := h.runtimeSnapshotPath
 	if snapshotPath == "" {
 		var err error
 		snapshotPath, err = statusRuntimeSnapshotPathFn()
 		if err != nil {
-			return writeAPIError(out, err)
+			return writeAPIError(out, apiActionStatus, err)
 		}
 	}
 	result, err := getStatusURLs(h.pidPath, h.regPath, snapshotPath)
 	if err != nil {
-		return writeAPIError(out, err)
+		return writeAPIError(out, apiActionStatus, err)
 	}
-	return writeAPISuccess(out, apiStatusURLsData{StatusURLs: result})
+	if req.Name != "" {
+		result, err = filterStatusURLsResult(result, req.Name)
+		if err != nil {
+			return writeAPIError(out, apiActionStatus, err)
+		}
+	}
+	return writeAPISuccess(out, apiActionStatus, result)
 }
 
 func (h *apiHandler) handleDoctor(req APIRequest, out io.Writer) output.Result {
@@ -339,7 +334,7 @@ func (h *apiHandler) handleDoctor(req APIRequest, out io.Writer) output.Result {
 		PIDPath:             h.pidPath,
 		RuntimeSnapshotPath: h.runtimeSnapshotPath,
 	})
-	return writeAPISuccess(out, apiDoctorData{Doctor: result})
+	return writeAPISuccess(out, apiActionDoctor, result)
 }
 
 func (h *apiHandler) handleAccessExplain(req APIRequest, out io.Writer) output.Result {
@@ -348,21 +343,21 @@ func (h *apiHandler) handleAccessExplain(req APIRequest, out io.Writer) output.R
 	}
 	reg, err := registry.Load(h.regPath)
 	if err != nil {
-		return writeAPIError(out, err)
+		return writeAPIError(out, apiActionAccessExplain, err)
 	}
 	for _, svc := range reg.Services {
 		if svc.Name != req.Name {
 			continue
 		}
 		result := buildAccessExplainResult(svc)
-		return writeAPISuccess(out, apiAccessExplainData{AccessExplain: result})
+		return writeAPISuccess(out, apiActionAccessExplain, result)
 	}
 	return writeAPINotFoundError(out, fmt.Sprintf("service not found: %s", req.Name))
 }
 
 func (h *apiHandler) handleTemplateList(out io.Writer) output.Result {
 	result := listTemplatesResult()
-	return writeAPISuccess(out, apiTemplateListData{TemplateList: result})
+	return writeAPISuccess(out, apiActionTemplateList, result)
 }
 
 func (h *apiHandler) handleTemplatePlan(req APIRequest, out io.Writer) output.Result {
@@ -371,9 +366,9 @@ func (h *apiHandler) handleTemplatePlan(req APIRequest, out io.Writer) output.Re
 	}
 	result, err := applyTemplate(req.Name, h.regPath, true)
 	if err != nil {
-		return writeAPICommandError(out, err)
+		return writeAPICommandError(out, apiActionTemplatePlan, err)
 	}
-	return writeAPISuccess(out, apiTemplatePlanData{TemplatePlan: result})
+	return writeAPISuccess(out, apiActionTemplatePlan, result)
 }
 
 func (h *apiHandler) handleTemplateApply(req APIRequest, out io.Writer) output.Result {
@@ -382,9 +377,9 @@ func (h *apiHandler) handleTemplateApply(req APIRequest, out io.Writer) output.R
 	}
 	result, err := applyTemplate(req.Name, h.regPath, false)
 	if err != nil {
-		return writeAPICommandError(out, err)
+		return writeAPICommandError(out, apiActionTemplateApply, err)
 	}
-	return writeAPISuccess(out, apiTemplateApplyData{TemplateApply: result})
+	return writeAPISuccess(out, apiActionTemplateApply, result)
 }
 
 func init() {
@@ -414,17 +409,17 @@ Supported actions:
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := cmd.OutOrStdout()
 			if err := ensureDirFn(); err != nil {
-				result := writeAPIError(out, err)
+				result := writeAPIError(out, "api", err)
 				return output.SilentExit(result.Code)
 			}
 			regPath, err := registryPathFn()
 			if err != nil {
-				result := writeAPIError(out, err)
+				result := writeAPIError(out, "api", err)
 				return output.SilentExit(result.Code)
 			}
 			pidPath, err := pidPathFn()
 			if err != nil {
-				result := writeAPIError(out, err)
+				result := writeAPIError(out, "api", err)
 				return output.SilentExit(result.Code)
 			}
 

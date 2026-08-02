@@ -77,8 +77,9 @@ func ErrNotFound(msg string) *CodeError {
 
 // ErrorObject is the stable machine/human error payload in the JSON envelope.
 type ErrorObject struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
+	Code    string   `json:"code"`
+	Message string   `json:"message"`
+	Next    []string `json:"next,omitempty"`
 }
 
 // Result is the versioned JSON envelope for structured output.
@@ -152,10 +153,24 @@ func ErrorObjectForError(code int, err error) *ErrorObject {
 	if err == nil {
 		return nil
 	}
-	if stable, ok := registry.ErrorCode(err); ok {
-		return &ErrorObject{Code: stable, Message: errorMessage(err)}
+	if stable, next, ok := stableErrorMetadata(err); ok {
+		return &ErrorObject{Code: stable, Message: errorMessage(err), Next: next}
 	}
 	return NewErrorObject(code, err.Error())
+}
+
+func stableErrorMetadata(err error) (string, []string, bool) {
+	if stable, ok := registry.ErrorCode(err); ok {
+		var recovery interface{ NextCommands() []string }
+		if errors.As(err, &recovery) {
+			return stable, recovery.NextCommands(), true
+		}
+		return stable, nil, true
+	}
+	if err != nil && strings.HasPrefix(err.Error(), "unknown config key:") {
+		return registry.CodeUnknownConfigKey, []string{"tslink config list"}, true
+	}
+	return "", nil, false
 }
 
 func errorMessage(err error) string {
@@ -220,7 +235,7 @@ func ExitCode(err error) int {
 	if errors.As(err, &se) {
 		return se.Code
 	}
-	if stable, ok := registry.ErrorCode(err); ok {
+	if stable, _, ok := stableErrorMetadata(err); ok {
 		return exitCodeForStableError(stable)
 	}
 	if isUsageErrorMessage(err.Error()) {
@@ -235,6 +250,15 @@ func exitCodeForStableError(stable string) int {
 		return ExitUsage
 	case registry.CodeFunnelPublicAckRequired:
 		return ExitUsage
+	case registry.CodeServiceTypeAmbiguous,
+		registry.CodeInvalidServiceName,
+		registry.CodeInvalidTag,
+		registry.CodeAllowUnsupportedTCP,
+		registry.CodePathMustBeAbsolute,
+		registry.CodeUnknownConfigKey:
+		return ExitUsage
+	case registry.CodeURLNotReady:
+		return ExitNotFound
 	case registry.CodeFunnelAllowConflict,
 		registry.CodeFunnelControlURLConflict,
 		registry.CodeFunnelTypeConflict:

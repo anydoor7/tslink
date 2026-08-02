@@ -151,8 +151,8 @@ func TestStatusURLsMissingSnapshotFallsBackToExpectedEndpoint(t *testing.T) {
 		t.Fatalf("runtime snapshot = %+v, want missing code", result.RuntimeSnapshot)
 	}
 	web := findStatusService(t, result, "web")
-	if web.Endpoint.Display != "https://web.<tailnet>.ts.net" || web.Endpoint.State != statusEndpointStateMissing {
-		t.Fatalf("endpoint = %+v, want expected missing fallback", web.Endpoint)
+	if web.Endpoint.Display != "" || web.Endpoint.Host != "" || web.Endpoint.State != statusEndpointStateMissing {
+		t.Fatalf("endpoint = %+v, want missing state without placeholder", web.Endpoint)
 	}
 	if !hasStatusWarningCode(web.Warnings, inspect.WarningCodeRuntimeSnapshotMissing) {
 		t.Fatalf("warnings = %+v, want runtime_snapshot_missing", web.Warnings)
@@ -222,8 +222,8 @@ func TestStatusURLsStaleEvidenceFallsBackToExpectedEndpoint(t *testing.T) {
 				t.Fatalf("runtime snapshot = %+v, want status %s stale code", result.RuntimeSnapshot, tc.wantStatus)
 			}
 			web := findStatusService(t, result, "web")
-			if web.Endpoint.Display != "https://web.<tailnet>.ts.net" || web.Endpoint.State != statusEndpointStateStale {
-				t.Fatalf("endpoint = %+v, want expected stale fallback", web.Endpoint)
+			if web.Endpoint.Display != "" || web.Endpoint.Host != "" || web.Endpoint.State != statusEndpointStateStale {
+				t.Fatalf("endpoint = %+v, want stale state without placeholder", web.Endpoint)
 			}
 			if !hasStatusWarningCode(web.Warnings, inspect.WarningCodeRuntimeSnapshotStale) {
 				t.Fatalf("warnings = %+v, want runtime_snapshot_stale", web.Warnings)
@@ -479,5 +479,28 @@ func TestStatusURLsReturnsRegistryLoadError(t *testing.T) {
 	var syntaxErr *json.SyntaxError
 	if !errors.As(err, &syntaxErr) {
 		t.Fatalf("getStatusURLs error = %T %[1]v, want JSON syntax error", err)
+	}
+}
+
+func TestFilterStatusURLsResultByName(t *testing.T) {
+	input := StatusURLsResult{
+		ServiceCount: 2,
+		Services: []StatusServiceView{
+			{Name: "web", Type: registry.TypeProxy},
+			{Name: "db", Type: registry.TypeTCP},
+		},
+	}
+	got, err := filterStatusURLsResult(input, "db")
+	if err != nil {
+		t.Fatalf("filterStatusURLsResult: %v", err)
+	}
+	if got.ServiceCount != 1 || len(got.Services) != 1 || got.Services[0].Name != "db" {
+		t.Fatalf("filtered result = %+v, want db only", got)
+	}
+	if _, err := filterStatusURLsResult(input, "missing"); err == nil {
+		t.Fatal("missing name error = nil")
+	}
+	if _, err := filterStatusURLsResult(input, "BAD_NAME"); err == nil {
+		t.Fatal("invalid name error = nil")
 	}
 }

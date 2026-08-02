@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
-	"github.com/monody0007/tslink/internal/inspect"
 	"github.com/monody0007/tslink/internal/registry"
 )
 
@@ -16,9 +16,9 @@ type listJSONResponse struct {
 	OK      bool   `json:"ok"`
 	Command string `json:"command"`
 	Data    struct {
-		SchemaVersion string                `json:"schema_version"`
-		Services      []inspect.ServiceView `json:"services"`
-		Count         int                   `json:"count"`
+		SchemaVersion string               `json:"schema_version"`
+		Services      []ListServiceSummary `json:"services"`
+		Count         int                  `json:"count"`
 	} `json:"data"`
 }
 
@@ -66,11 +66,11 @@ func TestListServices_TCPTextUsesTypedEndpoint(t *testing.T) {
 		t.Fatalf("listServices: %v", err)
 	}
 	out := buf.String()
-	if !strings.Contains(out, "db.<tailnet>.ts.net:5432") {
-		t.Fatalf("list output missing typed TCP endpoint: %s", out)
+	if !strings.Contains(out, "db") || !strings.Contains(out, "tcp") || !strings.Contains(out, "pending") {
+		t.Fatalf("list output missing pending typed TCP service: %s", out)
 	}
-	if strings.Contains(out, "https://db.<tailnet>.ts.net") {
-		t.Fatalf("list output rendered TCP service as HTTPS: %s", out)
+	if strings.Contains(out, "<tailnet>") || strings.Contains(out, "https://") {
+		t.Fatalf("list output rendered an unverified placeholder URL: %s", out)
 	}
 }
 
@@ -124,9 +124,9 @@ func TestListJSONRedactsAllowPrincipals(t *testing.T) {
 	if len(resp.Data.Services) != 1 {
 		t.Fatalf("services = %d, want 1", len(resp.Data.Services))
 	}
-	allow := resp.Data.Services[0].Allow
-	if allow.Mode != "restricted" || allow.Count != 2 || !allow.Redacted || len(allow.Entries) != 0 {
-		t.Fatalf("allow = %+v, want redacted restricted summary", allow)
+	service := resp.Data.Services[0]
+	if service.Name != "web" || service.URL != nil || !service.URLPending || service.State != "pending" {
+		t.Fatalf("service = %+v, want slim pending service without private allow data", service)
 	}
 }
 
@@ -151,11 +151,57 @@ func TestListJSON_TCPUsesTypedEndpoint(t *testing.T) {
 	if len(resp.Data.Services) != 1 {
 		t.Fatalf("services = %d, want 1", len(resp.Data.Services))
 	}
-	endpoint := resp.Data.Services[0].Endpoint
-	if endpoint.Kind != inspect.EndpointKindTCP {
-		t.Fatalf("endpoint kind = %q, want tcp", endpoint.Kind)
+	service := resp.Data.Services[0]
+	if service.Type != registry.TypeTCP || service.URL != nil || !service.URLPending {
+		t.Fatalf("service = %+v, want pending typed TCP summary", service)
 	}
-	if endpoint.Display != "db.<tailnet>.ts.net:5432" || endpoint.Port != 5432 {
-		t.Fatalf("endpoint = %+v, want typed TCP display and port", endpoint)
+}
+
+func TestListFiltersAndFieldProjection(t *testing.T) {
+	dir := t.TempDir()
+	regPath := filepath.Join(dir, "registry.json")
+	pidPath := filepath.Join(dir, "tslink.pid")
+	snapshotPath := filepath.Join(dir, "runtime.json")
+	for _, service := range []registry.Service{
+		{Name: "web", Type: registry.TypeProxy, Target: "http://localhost:3000"},
+		{Name: "db", Type: registry.TypeTCP, Target: "localhost:5432", Port: 5432},
+	} {
+		if _, err := registry.Add(regPath, service); err != nil {
+			t.Fatalf("registry.Add(%s): %v", service.Name, err)
+		}
+	}
+	withStatusURLSeams(t, false, 0, time.Time{})
+
+	result, err := loadListResultForPaths(regPath, pidPath, snapshotPath, listOptions{
+		Name:   "web",
+		Fields: []string{"name", "url"},
+	})
+	if err != nil {
+		t.Fatalf("loadListResultForPaths: %v", err)
+	}
+	rows, ok := result.Services.([]map[string]any)
+	if !ok || result.Count != 1 || len(rows) != 1 {
+		t.Fatalf("result = %#v, want one projected row", result)
+	}
+	if rows[0]["name"] != "web" || rows[0]["url"] != (*string)(nil) || len(rows[0]) != 2 {
+		t.Fatalf("projected row = %#v, want only pending name/url", rows[0])
+	}
+
+	tcp, err := loadListResultForPaths(regPath, pidPath, snapshotPath, listOptions{Type: registry.TypeTCP})
+	if err != nil {
+		t.Fatalf("type filter: %v", err)
+	}
+	services, ok := tcp.Services.([]ListServiceSummary)
+	if !ok || tcp.Count != 1 || len(services) != 1 || services[0].Name != "db" {
+		t.Fatalf("TCP result = %#v, want db only", tcp)
+	}
+}
+
+func TestListRejectsConflictingOrUnknownProjection(t *testing.T) {
+	if err := validateListOptions(listOptions{Verbose: true, Fields: []string{"name"}}); err == nil {
+		t.Fatal("--verbose with --fields error = nil")
+	}
+	if err := validateListOptions(listOptions{Fields: []string{"backend"}}); err == nil {
+		t.Fatal("unknown --fields value error = nil")
 	}
 }

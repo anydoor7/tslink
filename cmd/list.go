@@ -1,9 +1,9 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/monody0007/tslink/internal/config"
@@ -13,80 +13,204 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var registryPathFn = config.RegistryPath
+var (
+	registryPathFn            = config.RegistryPath
+	listPIDPathFn             = config.PIDPath
+	listRuntimeSnapshotPathFn = config.RuntimeSnapshotPath
+)
+
+type listOptions struct {
+	Name    string
+	Type    string
+	Fields  []string
+	Verbose bool
+}
+
+// ListServiceSummary is the token-efficient default service representation.
+// URL is null until runtime.json contains exact evidence for the current daemon
+// and registry fingerprint.
+type ListServiceSummary struct {
+	Name       string  `json:"name"`
+	Type       string  `json:"type"`
+	URL        *string `json:"url"`
+	URLPending bool    `json:"url_pending"`
+	State      string  `json:"state"`
+}
 
 // ListResult holds the result for JSON output.
 type ListResult struct {
-	SchemaVersion string `json:"schema_version,omitempty"`
+	SchemaVersion string `json:"schema_version"`
 	Services      any    `json:"services"`
 	Count         int    `json:"count"`
 }
 
-func (r ListResult) MarshalJSON() ([]byte, error) {
-	schemaVersion := r.SchemaVersion
-	if schemaVersion == "" {
-		schemaVersion = inspect.SchemaVersion
+func validateListOptions(opts listOptions) error {
+	if opts.Name != "" {
+		if err := registry.ValidateName(opts.Name); err != nil {
+			return err
+		}
 	}
-	type publicListResult struct {
-		SchemaVersion string                `json:"schema_version"`
-		Services      []inspect.ServiceView `json:"services"`
-		Count         int                   `json:"count"`
+	if opts.Type != "" && opts.Type != registry.TypeProxy && opts.Type != registry.TypeFile && opts.Type != registry.TypeTCP {
+		return output.ErrUsage("--type must be one of: proxy, file, tcp")
 	}
-	return json.Marshal(publicListResult{
-		SchemaVersion: schemaVersion,
-		Services:      r.serviceViews(),
-		Count:         r.Count,
-	})
+	if opts.Verbose && len(opts.Fields) > 0 {
+		return output.ErrUsage("--verbose conflicts with --fields")
+	}
+	allowed := map[string]bool{"name": true, "type": true, "url": true, "url_pending": true, "state": true}
+	for _, field := range opts.Fields {
+		if !allowed[field] {
+			return output.ErrUsage(fmt.Sprintf("unknown --fields value %q; supported: name,type,url,url_pending,state", field))
+		}
+	}
+	return nil
 }
 
-func (r ListResult) serviceViews() []inspect.ServiceView {
-	switch services := r.Services.(type) {
-	case []inspect.ServiceView:
-		return services
-	case []registry.Service:
-		return inspect.ServiceViews(services)
-	case nil:
-		return nil
-	default:
-		return nil
+func parseListFields(raw string) []string {
+	var fields []string
+	seen := map[string]bool{}
+	for _, field := range strings.Split(raw, ",") {
+		field = strings.TrimSpace(field)
+		if field != "" && !seen[field] {
+			seen[field] = true
+			fields = append(fields, field)
+		}
 	}
+	return fields
 }
 
-func buildListResult(services []registry.Service) ListResult {
-	return ListResult{
-		SchemaVersion: inspect.SchemaVersion,
-		Services:      inspect.ServiceViews(services),
-		Count:         len(services),
+func filterStatusServices(result StatusURLsResult, opts listOptions) ([]StatusServiceView, error) {
+	filtered := make([]StatusServiceView, 0, len(result.Services))
+	for _, svc := range result.Services {
+		if opts.Name != "" && svc.Name != opts.Name {
+			continue
+		}
+		if opts.Type != "" && svc.Type != opts.Type {
+			continue
+		}
+		filtered = append(filtered, svc)
 	}
+	if opts.Name != "" && len(filtered) == 0 {
+		return nil, output.ErrNotFound(fmt.Sprintf("service not found: %s", opts.Name))
+	}
+	return filtered, nil
 }
 
-func loadListResult(regPath string) (ListResult, error) {
-	reg, err := registry.Load(regPath)
+func listSummary(svc StatusServiceView) ListServiceSummary {
+	summary := ListServiceSummary{Name: svc.Name, Type: svc.Type, URLPending: true, State: "pending"}
+	if svc.Endpoint.State == inspect.EndpointStateExact && svc.Endpoint.Display != "" && !strings.Contains(svc.Endpoint.Display, "<tailnet>") {
+		url := svc.Endpoint.Display
+		summary.URL = &url
+		summary.URLPending = false
+		summary.State = inspect.EndpointStateExact
+	}
+	return summary
+}
+
+func selectListFields(summary ListServiceSummary, fields []string) map[string]any {
+	selected := make(map[string]any, len(fields))
+	for _, field := range fields {
+		switch field {
+		case "name":
+			selected[field] = summary.Name
+		case "type":
+			selected[field] = summary.Type
+		case "url":
+			selected[field] = summary.URL
+		case "url_pending":
+			selected[field] = summary.URLPending
+		case "state":
+			selected[field] = summary.State
+		}
+	}
+	return selected
+}
+
+func loadListResultForPaths(regPath, pidPath, snapshotPath string, opts listOptions) (ListResult, error) {
+	if err := validateListOptions(opts); err != nil {
+		return ListResult{}, err
+	}
+	status, err := getStatusURLs(pidPath, regPath, snapshotPath)
 	if err != nil {
 		return ListResult{}, err
 	}
-	return buildListResult(reg.Services), nil
+	services, err := filterStatusServices(status, opts)
+	if err != nil {
+		return ListResult{}, err
+	}
+	result := ListResult{SchemaVersion: inspect.SchemaVersion, Count: len(services)}
+	if opts.Verbose {
+		result.Services = services
+		return result, nil
+	}
+	if len(opts.Fields) > 0 {
+		selected := make([]map[string]any, 0, len(services))
+		for _, svc := range services {
+			selected = append(selected, selectListFields(listSummary(svc), opts.Fields))
+		}
+		result.Services = selected
+		return result, nil
+	}
+	summaries := make([]ListServiceSummary, 0, len(services))
+	for _, svc := range services {
+		summaries = append(summaries, listSummary(svc))
+	}
+	result.Services = summaries
+	return result, nil
 }
 
-func listServices(regPath string, out io.Writer) error {
-	result, err := loadListResult(regPath)
+func loadListResult(regPath string) (ListResult, error) {
+	pidPath, err := listPIDPathFn()
+	if err != nil {
+		return ListResult{}, err
+	}
+	snapshotPath, err := listRuntimeSnapshotPathFn()
+	if err != nil {
+		return ListResult{}, err
+	}
+	return loadListResultForPaths(regPath, pidPath, snapshotPath, listOptions{})
+}
+
+func listServicesWithOptions(regPath string, out io.Writer, opts listOptions) error {
+	pidPath, err := listPIDPathFn()
 	if err != nil {
 		return err
 	}
-
-	services := result.serviceViews()
-	if len(services) == 0 {
+	snapshotPath, err := listRuntimeSnapshotPathFn()
+	if err != nil {
+		return err
+	}
+	result, err := loadListResultForPaths(regPath, pidPath, snapshotPath, opts)
+	if err != nil {
+		return err
+	}
+	if result.Count == 0 {
 		fmt.Fprintln(out, "No services registered.")
 		return nil
 	}
 
-	writer := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(writer, "NAME\tTYPE\tBACKEND\tENDPOINT\tEXPOSURE")
-	for _, svc := range services {
-		fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\n", svc.Name, svc.Type, svc.Backend.Display, svc.Endpoint.Display, svc.Exposure.Kind)
+	status, err := getStatusURLs(pidPath, regPath, snapshotPath)
+	if err != nil {
+		return err
 	}
-
+	services, err := filterStatusServices(status, opts)
+	if err != nil {
+		return err
+	}
+	writer := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(writer, "NAME\tTYPE\tBACKEND\tURL\tSTATE")
+	for _, svc := range services {
+		summary := listSummary(svc)
+		url := "-"
+		if summary.URL != nil {
+			url = *summary.URL
+		}
+		fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\n", summary.Name, summary.Type, svc.Backend.Display, url, summary.State)
+	}
 	return writer.Flush()
+}
+
+func listServices(regPath string, out io.Writer) error {
+	return listServicesWithOptions(regPath, out, listOptions{})
 }
 
 func init() {
@@ -94,43 +218,50 @@ func init() {
 		Use:   "list",
 		Args:  cobra.NoArgs,
 		Short: "List registered services",
-		Long: `List all services registered in the TSLink registry.
+		Long: `List registered services with token-efficient filtering.
 
-Displays a table with columns:
-
-  NAME     Service hostname on your tailnet
-  TYPE     Service type: proxy, file, or tcp
-  BACKEND  Local target (host:port for proxy/tcp, path for file)
-  ENDPOINT Expected typed tailnet endpoint
-  EXPOSURE Tailnet, allow-list, custom-domain, or Funnel exposure
-
-The list reflects the contents of ~/.config/tslink/registry.json. Services
-are shown whether or not the gateway is currently running.
-
-Example output:
-  NAME      TYPE   BACKEND                ENDPOINT                      EXPOSURE
-  myapp     proxy  http://localhost:3000  https://myapp.<tailnet>.ts.net  tailnet
-  docs      file   /Users/testuser/Documents   https://docs.<tailnet>.ts.net   tailnet
-  mydb      tcp    localhost:5432         mydb.<tailnet>.ts.net:5432      tailnet
+JSON defaults to name, type, exact runtime URL (or null), url_pending, and
+state. Use --verbose for the complete owner-only diagnostic view.
 
 Examples:
-  tslink list              Show all registered services`,
+  tslink list --json
+  tslink list --name myapp --fields name,url --json
+  tslink list --type proxy --verbose --json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			regPath, err := registryPathFn()
 			if err != nil {
 				return err
 			}
+			name, _ := cmd.Flags().GetString("name")
+			serviceType, _ := cmd.Flags().GetString("type")
+			fieldsRaw, _ := cmd.Flags().GetString("fields")
+			verbose, _ := cmd.Flags().GetBool("verbose")
+			opts := listOptions{Name: name, Type: serviceType, Fields: parseListFields(fieldsRaw), Verbose: verbose}
+			if err := validateListOptions(opts); err != nil {
+				return err
+			}
 			if jsonOutput(cmd) {
-				result, err := loadListResult(regPath)
+				pidPath, err := listPIDPathFn()
+				if err != nil {
+					return err
+				}
+				snapshotPath, err := listRuntimeSnapshotPathFn()
+				if err != nil {
+					return err
+				}
+				result, err := loadListResultForPaths(regPath, pidPath, snapshotPath, opts)
 				if err != nil {
 					return err
 				}
 				output.Success("list", result)
 				return nil
 			}
-			return listServices(regPath, cmd.OutOrStdout())
+			return listServicesWithOptions(regPath, cmd.OutOrStdout(), opts)
 		},
 	}
-
+	listCmd.Flags().String("name", "", "Return only the exact service name")
+	listCmd.Flags().String("type", "", "Filter by service type: proxy, file, or tcp")
+	listCmd.Flags().String("fields", "", "Comma-separated slim fields: name,type,url,url_pending,state")
+	listCmd.Flags().Bool("verbose", false, "Return the complete owner-only diagnostic service view")
 	rootCmd.AddCommand(listCmd)
 }

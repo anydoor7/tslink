@@ -93,17 +93,14 @@ func decodeAccessExplainJSON(t *testing.T, raw string) AccessExplainResult {
 	if err != nil {
 		t.Fatalf("marshal access explain data: %v", err)
 	}
-	assertExactJSONKeys(t, string(dataBytes), "access_explain")
-	var data struct {
-		AccessExplain *AccessExplainResult `json:"access_explain"`
-	}
+	var data AccessExplainResult
 	if err := json.Unmarshal(dataBytes, &data); err != nil {
 		t.Fatalf("unmarshal access explain data: %v\nraw data: %s", err, dataBytes)
 	}
-	if data.AccessExplain == nil {
-		t.Fatalf("data.access_explain missing\nraw data: %s", dataBytes)
+	if data.SchemaVersion == "" || data.Service == "" {
+		t.Fatalf("flat access explain data incomplete\nraw data: %s", dataBytes)
 	}
-	return *data.AccessExplain
+	return data
 }
 
 func TestAccessExplainCommandTree(t *testing.T) {

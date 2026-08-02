@@ -154,7 +154,8 @@
           "name": "json",
           "type": "bool",
           "default": "false",
-          "scope": "local"
+          "scope": "local",
+          "usage": "Output as JSON"
         }
       ]
     },
@@ -166,7 +167,8 @@
           "name": "json",
           "type": "bool",
           "default": "false",
-          "scope": "inherited"
+          "scope": "inherited",
+          "usage": "Output as JSON"
         }
       ]
     },
@@ -178,7 +180,8 @@
           "name": "json",
           "type": "bool",
           "default": "false",
-          "scope": "inherited"
+          "scope": "inherited",
+          "usage": "Output as JSON"
         }
       ]
     },
@@ -189,66 +192,128 @@
         {
           "name": "acme-email",
           "type": "string",
-          "scope": "local"
+          "scope": "local",
+          "usage": "[UNAVAILABLE] Reserved: ACME runtime TLS is unavailable; rejected with feature_unavailable",
+          "conflicts": [
+            "feature_unavailable"
+          ]
         },
         {
           "name": "allow",
           "type": "string",
-          "scope": "local"
+          "scope": "local",
+          "usage": "Comma-separated allowed identities (e.g., user@example.com,tag:admin)",
+          "conflicts": [
+            "--tcp",
+            "--funnel"
+          ]
         },
         {
           "name": "control-url",
           "type": "string",
-          "scope": "local"
+          "scope": "local",
+          "usage": "Per-service custom control server URL (e.g., Headscale)"
         },
         {
           "name": "dir",
           "type": "string",
-          "scope": "local"
+          "scope": "local",
+          "usage": "Directory to expose",
+          "one_of": [
+            "--proxy",
+            "--dir",
+            "--tcp"
+          ]
         },
         {
           "name": "domain",
           "type": "string",
-          "scope": "local"
+          "scope": "local",
+          "usage": "[UNAVAILABLE] Reserved: custom-domain runtime TLS is unavailable; rejected with feature_unavailable",
+          "conflicts": [
+            "feature_unavailable"
+          ]
+        },
+        {
+          "name": "dry-run",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Validate and print the service JSON without writing registry.json"
         },
         {
           "name": "ephemeral",
           "type": "bool",
           "default": "false",
-          "scope": "local"
+          "scope": "local",
+          "usage": "Register as ephemeral node (removed on disconnect)"
         },
         {
           "name": "funnel",
           "type": "bool",
           "default": "false",
-          "scope": "local"
+          "scope": "local",
+          "usage": "Expose publicly via Tailscale Funnel (proxy only, requires --public)",
+          "requires": [
+            "--proxy",
+            "--public"
+          ],
+          "conflicts": [
+            "--allow",
+            "--control-url"
+          ]
         },
         {
           "name": "json",
           "type": "bool",
           "default": "false",
-          "scope": "inherited"
+          "scope": "inherited",
+          "usage": "Output as JSON"
         },
         {
           "name": "proxy",
           "type": "string",
-          "scope": "local"
+          "scope": "local",
+          "usage": "Proxy target in host:port or URL form",
+          "one_of": [
+            "--proxy",
+            "--dir",
+            "--tcp"
+          ]
         },
         {
           "name": "public",
           "type": "bool",
           "default": "false",
-          "scope": "local"
+          "scope": "local",
+          "usage": "Acknowledge public internet exposure for --funnel (only valid with --funnel)",
+          "requires": [
+            "--funnel"
+          ]
         },
         {
           "name": "tags",
           "type": "string",
-          "scope": "local"
+          "scope": "local",
+          "usage": "Comma-separated ACL tags (e.g., tag:web,tag:internal)"
         },
         {
           "name": "tcp",
           "type": "string",
-          "scope": "local"
+          "scope": "local",
+          "usage": "TCP proxy target in host:port form",
+          "one_of": [
+            "--proxy",
+            "--dir",
+            "--tcp"
+          ]
+        },
+        {
+          "name": "wait",
+          "type": "duration",
+          "default": "0s",
+          "scope": "local",
+          "usage": "Wait for an exact runtime URL (optional value; default 30s)"
         }
       ]
     },
@@ -260,7 +325,8 @@
           "name": "json",
           "type": "bool",
           "default": "false",
-          "scope": "inherited"
+          "scope": "inherited",
+          "usage": "Output as JSON"
         }
       ]
     },
@@ -272,7 +338,8 @@
           "name": "json",
           "type": "bool",
           "default": "false",
-          "scope": "inherited"
+          "scope": "inherited",
+          "usage": "Output as JSON"
         }
       ]
     },
@@ -284,7 +351,8 @@
           "name": "json",
           "type": "bool",
           "default": "false",
-          "scope": "inherited"
+          "scope": "inherited",
+          "usage": "Output as JSON"
         }
       ]
     },
@@ -296,7 +364,8 @@
           "name": "json",
           "type": "bool",
           "default": "false",
-          "scope": "inherited"
+          "scope": "inherited",
+          "usage": "Output as JSON"
         }
       ]
     },
@@ -308,7 +377,8 @@
           "name": "json",
           "type": "bool",
           "default": "false",
-          "scope": "inherited"
+          "scope": "inherited",
+          "usage": "Output as JSON"
         }
       ]
     },
@@ -320,25 +390,28 @@
           "name": "json",
           "type": "bool",
           "default": "false",
-          "scope": "inherited"
+          "scope": "inherited",
+          "usage": "Output as JSON"
         },
         {
           "name": "probe-external",
           "type": "bool",
           "default": "false",
-          "scope": "local"
+          "scope": "local",
+          "usage": "Probe non-loopback service targets"
         }
       ]
     },
     {
       "path": "tslink install",
-      "short": "Install as macOS LaunchAgent",
+      "short": "Install TSLink as the current platform's user startup service",
       "flags": [
         {
           "name": "json",
           "type": "bool",
           "default": "false",
-          "scope": "inherited"
+          "scope": "inherited",
+          "usage": "Output as JSON"
         }
       ]
     },
@@ -347,10 +420,42 @@
       "short": "List registered services",
       "flags": [
         {
+          "name": "fields",
+          "type": "string",
+          "scope": "local",
+          "usage": "Comma-separated slim fields: name,type,url,url_pending,state",
+          "conflicts": [
+            "--verbose"
+          ]
+        },
+        {
           "name": "json",
           "type": "bool",
           "default": "false",
-          "scope": "inherited"
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "scope": "local",
+          "usage": "Return only the exact service name"
+        },
+        {
+          "name": "type",
+          "type": "string",
+          "scope": "local",
+          "usage": "Filter by service type: proxy, file, or tcp"
+        },
+        {
+          "name": "verbose",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Return the complete owner-only diagnostic service view",
+          "conflicts": [
+            "--fields"
+          ]
         }
       ]
     },
@@ -361,36 +466,42 @@
         {
           "name": "api-key",
           "type": "string",
-          "scope": "local"
+          "scope": "local",
+          "usage": "API access token (tskey-api-*) for non-interactive login; visible in process lists, prefer env or --api-key-stdin"
         },
         {
           "name": "api-key-stdin",
           "type": "bool",
           "default": "false",
-          "scope": "local"
+          "scope": "local",
+          "usage": "Read API access token from stdin"
         },
         {
           "name": "client-secret",
           "type": "string",
-          "scope": "local"
+          "scope": "local",
+          "usage": "OAuth client secret (tskey-client-*) for non-interactive login; visible in process lists, prefer env or --client-secret-stdin"
         },
         {
           "name": "client-secret-stdin",
           "type": "bool",
           "default": "false",
-          "scope": "local"
+          "scope": "local",
+          "usage": "Read OAuth client secret from stdin"
         },
         {
           "name": "json",
           "type": "bool",
           "default": "false",
-          "scope": "inherited"
+          "scope": "inherited",
+          "usage": "Output as JSON"
         },
         {
           "name": "manage-acl",
           "type": "bool",
           "default": "false",
-          "scope": "local"
+          "scope": "local",
+          "usage": "Opt in to remote Tailscale ACL tag-owner mutation using a machine-readable side-effect plan"
         }
       ]
     },
@@ -402,7 +513,8 @@
           "name": "json",
           "type": "bool",
           "default": "false",
-          "scope": "inherited"
+          "scope": "inherited",
+          "usage": "Output as JSON"
         }
       ]
     },
@@ -414,24 +526,48 @@
           "name": "json",
           "type": "bool",
           "default": "false",
-          "scope": "inherited"
+          "scope": "inherited",
+          "usage": "Output as JSON"
         },
         {
           "name": "last",
           "type": "int",
           "default": "50",
-          "scope": "local"
+          "scope": "local",
+          "usage": "Number of lines to show"
         },
         {
           "name": "level",
           "type": "string",
-          "scope": "local"
+          "scope": "local",
+          "usage": "Filter by minimum log level (debug, info, warn, error)"
         },
         {
           "name": "source",
           "type": "string",
           "default": "err",
-          "scope": "local"
+          "scope": "local",
+          "usage": "Log source: out (stdout) or err (stderr)"
+        }
+      ]
+    },
+    {
+      "path": "tslink manifest",
+      "short": "Print the installed binary's agent-readable CLI manifest",
+      "flags": [
+        {
+          "name": "compact",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Print only commands, flags, and stable error codes"
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
         }
       ]
     },
@@ -443,7 +579,8 @@
           "name": "json",
           "type": "bool",
           "default": "false",
-          "scope": "inherited"
+          "scope": "inherited",
+          "usage": "Output as JSON"
         }
       ]
     },
@@ -454,25 +591,29 @@
         {
           "name": "control-url",
           "type": "string",
-          "scope": "local"
+          "scope": "local",
+          "usage": "Custom control server URL (e.g., Headscale)"
         },
         {
           "name": "daemon",
           "type": "bool",
           "default": "false",
-          "scope": "local"
+          "scope": "local",
+          "usage": "Run as background daemon"
         },
         {
           "name": "json",
           "type": "bool",
           "default": "false",
-          "scope": "inherited"
+          "scope": "inherited",
+          "usage": "Output as JSON"
         },
         {
           "name": "manage-acl",
           "type": "bool",
           "default": "false",
-          "scope": "local"
+          "scope": "local",
+          "usage": "Opt in to remote Tailscale ACL tag-owner mutation using a machine-readable side-effect plan"
         }
       ]
     },
@@ -484,13 +625,24 @@
           "name": "json",
           "type": "bool",
           "default": "false",
-          "scope": "inherited"
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "scope": "local",
+          "usage": "Filter --urls output by exact service name",
+          "requires": [
+            "--urls"
+          ]
         },
         {
           "name": "urls",
           "type": "bool",
           "default": "false",
-          "scope": "local"
+          "scope": "local",
+          "usage": "Show owner-only service endpoint overview"
         }
       ]
     },
@@ -502,7 +654,8 @@
           "name": "json",
           "type": "bool",
           "default": "false",
-          "scope": "inherited"
+          "scope": "inherited",
+          "usage": "Output as JSON"
         }
       ]
     },
@@ -514,7 +667,8 @@
           "name": "json",
           "type": "bool",
           "default": "false",
-          "scope": "inherited"
+          "scope": "inherited",
+          "usage": "Output as JSON"
         }
       ]
     },
@@ -526,7 +680,8 @@
           "name": "json",
           "type": "bool",
           "default": "false",
-          "scope": "inherited"
+          "scope": "inherited",
+          "usage": "Output as JSON"
         }
       ]
     },
@@ -538,19 +693,22 @@
           "name": "force",
           "type": "bool",
           "default": "false",
-          "scope": "local"
+          "scope": "local",
+          "usage": "Delete the ACL tag owner rule globally after local safety checks"
         },
         {
           "name": "json",
           "type": "bool",
           "default": "false",
-          "scope": "inherited"
+          "scope": "inherited",
+          "usage": "Output as JSON"
         },
         {
           "name": "manage-acl",
           "type": "bool",
           "default": "false",
-          "scope": "local"
+          "scope": "local",
+          "usage": "Opt in to remote Tailscale ACL tag-owner mutation using a machine-readable side-effect plan"
         }
       ]
     },
@@ -562,7 +720,8 @@
           "name": "json",
           "type": "bool",
           "default": "false",
-          "scope": "inherited"
+          "scope": "inherited",
+          "usage": "Output as JSON"
         }
       ]
     },
@@ -574,7 +733,8 @@
           "name": "json",
           "type": "bool",
           "default": "false",
-          "scope": "inherited"
+          "scope": "inherited",
+          "usage": "Output as JSON"
         }
       ]
     },
@@ -586,7 +746,8 @@
           "name": "json",
           "type": "bool",
           "default": "false",
-          "scope": "inherited"
+          "scope": "inherited",
+          "usage": "Output as JSON"
         }
       ]
     },
@@ -598,7 +759,8 @@
           "name": "json",
           "type": "bool",
           "default": "false",
-          "scope": "inherited"
+          "scope": "inherited",
+          "usage": "Output as JSON"
         }
       ]
     },
@@ -610,7 +772,8 @@
           "name": "json",
           "type": "bool",
           "default": "false",
-          "scope": "inherited"
+          "scope": "inherited",
+          "usage": "Output as JSON"
         }
       ]
     },
@@ -622,19 +785,22 @@
           "name": "dry-run",
           "type": "bool",
           "default": "false",
-          "scope": "local"
+          "scope": "local",
+          "usage": "Preview the template plan without writing the registry"
         },
         {
           "name": "json",
           "type": "bool",
           "default": "false",
-          "scope": "inherited"
+          "scope": "inherited",
+          "usage": "Output as JSON"
         },
         {
           "name": "yes",
           "type": "bool",
           "default": "false",
-          "scope": "local"
+          "scope": "local",
+          "usage": "Write missing template services to the registry"
         }
       ]
     },
@@ -646,7 +812,8 @@
           "name": "json",
           "type": "bool",
           "default": "false",
-          "scope": "inherited"
+          "scope": "inherited",
+          "usage": "Output as JSON"
         }
       ]
     },
@@ -658,19 +825,51 @@
           "name": "json",
           "type": "bool",
           "default": "false",
-          "scope": "inherited"
+          "scope": "inherited",
+          "usage": "Output as JSON"
         }
       ]
     },
     {
       "path": "tslink uninstall",
-      "short": "Remove as macOS LaunchAgent",
+      "short": "Remove TSLink from the current platform's user startup service",
       "flags": [
         {
           "name": "json",
           "type": "bool",
           "default": "false",
-          "scope": "inherited"
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        }
+      ]
+    },
+    {
+      "path": "tslink url",
+      "short": "Print one service's exact runtime URL",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        },
+        {
+          "name": "raw",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Print only the URL and one trailing newline",
+          "conflicts": [
+            "--json"
+          ]
+        },
+        {
+          "name": "wait",
+          "type": "duration",
+          "default": "0s",
+          "scope": "local",
+          "usage": "Wait for an exact runtime URL (optional value; default 30s)"
         }
       ]
     }
@@ -740,5 +939,75 @@
         "compliance_status": "not_certified"
       }
     ]
+  },
+  "error_codes": {
+    "allow_unsupported_for_tcp": {
+      "exit_code": 2,
+      "description": "HTTP allow lists do not apply to raw TCP"
+    },
+    "auth_error": {
+      "exit_code": 3,
+      "description": "authentication required or rejected"
+    },
+    "conflict": {
+      "exit_code": 4,
+      "description": "requested state conflicts with existing state"
+    },
+    "feature_unavailable": {
+      "exit_code": 2,
+      "description": "reserved feature is not available"
+    },
+    "funnel_allow_conflict": {
+      "exit_code": 4,
+      "description": "Funnel conflicts with an allow list"
+    },
+    "funnel_control_url_conflict": {
+      "exit_code": 4,
+      "description": "Funnel conflicts with control_url"
+    },
+    "funnel_public_ack_required": {
+      "exit_code": 2,
+      "description": "public Funnel acknowledgement is required"
+    },
+    "funnel_type_conflict": {
+      "exit_code": 4,
+      "description": "Funnel requires a proxy service"
+    },
+    "internal_error": {
+      "exit_code": 1,
+      "description": "unexpected internal failure"
+    },
+    "invalid_service_name": {
+      "exit_code": 2,
+      "description": "service name is not a valid DNS label"
+    },
+    "invalid_tag": {
+      "exit_code": 2,
+      "description": "ACL tag is invalid"
+    },
+    "not_found": {
+      "exit_code": 5,
+      "description": "requested object was not found"
+    },
+    "path_must_be_absolute": {
+      "exit_code": 2,
+      "description": "file service path must be absolute"
+    },
+    "service_type_ambiguous": {
+      "exit_code": 2,
+      "description": "exactly one service type is required"
+    },
+    "unknown_config_key": {
+      "exit_code": 2,
+      "description": "configuration key is not supported"
+    },
+    "url_not_ready": {
+      "exit_code": 5,
+      "description": "runtime has not reported an exact tailnet hostname"
+    },
+    "usage_error": {
+      "exit_code": 2,
+      "description": "invalid command syntax or value"
+    }
   }
 }

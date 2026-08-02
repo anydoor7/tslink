@@ -189,11 +189,31 @@ func getStatusURLs(pidPath, regPath, snapshotPath string) (StatusURLsResult, err
 			service.Endpoint.State = endpointStateForFreshness(freshness)
 			service.Warnings = appendRuntimeFreshnessWarning(service.Warnings, freshness)
 		}
+		if service.Endpoint.State != inspect.EndpointStateExact {
+			// Expected endpoint templates are internal planning data. Never expose a
+			// syntactically valid-looking hostname without exact runtime evidence.
+			service.Endpoint.Display = ""
+			service.Endpoint.Host = ""
+		}
 
 		result.Services = append(result.Services, service)
 	}
 
 	return result, nil
+}
+
+func filterStatusURLsResult(result StatusURLsResult, name string) (StatusURLsResult, error) {
+	if err := registry.ValidateName(name); err != nil {
+		return StatusURLsResult{}, err
+	}
+	for _, svc := range result.Services {
+		if svc.Name == name {
+			result.Services = []StatusServiceView{svc}
+			result.ServiceCount = 1
+			return result, nil
+		}
+	}
+	return StatusURLsResult{}, output.ErrNotFound(fmt.Sprintf("service not found: %s", name))
 }
 
 func runtimeSnapshotResult(snapshot *tsruntime.Snapshot, freshness tsruntime.Freshness) StatusRuntimeSnapshotResult {
@@ -355,6 +375,10 @@ Output lines:
 			return err
 		}
 		if showURLs {
+			name, err := cmd.Flags().GetString("name")
+			if err != nil {
+				return err
+			}
 			snapshotPath, err := statusRuntimeSnapshotPathFn()
 			if err != nil {
 				return err
@@ -363,12 +387,25 @@ Output lines:
 			if err != nil {
 				return err
 			}
+			if name != "" {
+				r, err = filterStatusURLsResult(r, name)
+				if err != nil {
+					return err
+				}
+			}
 			if jsonOutput(cmd) {
 				output.Success("status", r)
 				return nil
 			}
 			formatStatusURLs(r, cmd.OutOrStdout())
 			return nil
+		}
+		name, err := cmd.Flags().GetString("name")
+		if err != nil {
+			return err
+		}
+		if name != "" {
+			return output.ErrUsage("--name requires --urls")
 		}
 
 		r, err := getStatus(pidPath, regPath)
@@ -386,5 +423,6 @@ Output lines:
 
 func init() {
 	statusCmd.Flags().Bool("urls", false, "Show owner-only service endpoint overview")
+	statusCmd.Flags().String("name", "", "Filter --urls output by exact service name")
 	rootCmd.AddCommand(statusCmd)
 }

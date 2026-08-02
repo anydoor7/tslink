@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"encoding/json"
+	"fmt"
 	"sort"
 	"strings"
 
@@ -29,6 +31,7 @@ type CLIManifest struct {
 	Release               ReleaseInfo                 `json:"release"`
 	Commands              []CommandInfo               `json:"commands"`
 	Capabilities          security.CapabilityManifest `json:"capabilities"`
+	ErrorCodes            map[string]ErrorCodeInfo    `json:"error_codes"`
 }
 
 type ToolchainInfo struct {
@@ -75,6 +78,11 @@ type ReleaseInfo struct {
 	ExternalGates          []string `json:"external_gates"`
 }
 
+type ErrorCodeInfo struct {
+	ExitCode    int    `json:"exit_code"`
+	Description string `json:"description"`
+}
+
 // CommandInfo describes one command in the tree.
 type CommandInfo struct {
 	Path  string     `json:"path"`
@@ -84,11 +92,22 @@ type CommandInfo struct {
 
 // FlagInfo describes one command-local flag.
 type FlagInfo struct {
-	Name      string `json:"name"`
-	Shorthand string `json:"shorthand,omitempty"`
-	Type      string `json:"type"`
-	Default   string `json:"default,omitempty"`
-	Scope     string `json:"scope,omitempty"`
+	Name      string   `json:"name"`
+	Shorthand string   `json:"shorthand,omitempty"`
+	Type      string   `json:"type"`
+	Default   string   `json:"default,omitempty"`
+	Scope     string   `json:"scope,omitempty"`
+	Usage     string   `json:"usage"`
+	OneOf     []string `json:"one_of,omitempty"`
+	Requires  []string `json:"requires,omitempty"`
+	Conflicts []string `json:"conflicts,omitempty"`
+}
+
+type CompactCLIManifest struct {
+	SchemaVersion int                 `json:"schema_version"`
+	Flags         []string            `json:"flags"`
+	Commands      map[string][]string `json:"commands"`
+	ErrorCodes    map[string]int      `json:"error_codes"`
 }
 
 // Manifest walks the root command and assembles the CLI manifest. It is pure
@@ -98,6 +117,7 @@ func Manifest() CLIManifest {
 		SchemaVersion:         1,
 		RegistrySchemaVersion: registry.CurrentRegistrySchemaVersion,
 		Toolchain: ToolchainInfo{
+			MinimumGoVersion:  "1.26.5",
 			GoReleaserVersion: "v2.17.0",
 			HomebrewArtifact:  "cask",
 		},
@@ -160,6 +180,7 @@ func Manifest() CLIManifest {
 				"Homebrew tap readback",
 			},
 		},
+		ErrorCodes: errorCodeManifest(),
 	}
 	if cm, err := security.LoadCapabilityManifest(); err == nil {
 		m.Capabilities = cm
@@ -168,14 +189,14 @@ func Manifest() CLIManifest {
 	var walk func(c *cobra.Command, prefix string)
 	walk = func(c *cobra.Command, prefix string) {
 		path := strings.TrimSpace(prefix + " " + c.Name())
-		info := CommandInfo{Path: path, Short: c.Short}
-		info.Flags = commandFlags(c)
+		info := CommandInfo{Path: path, Short: platformNeutralCommandShort(path, c.Short)}
+		info.Flags = commandFlags(c, path)
 		sort.Slice(info.Flags, func(i, j int) bool { return info.Flags[i].Name < info.Flags[j].Name })
 		m.Commands = append(m.Commands, info)
 		children := c.Commands()
 		sort.Slice(children, func(i, j int) bool { return children[i].Name() < children[j].Name() })
 		for _, sub := range children {
-			if sub.Hidden || sub.Name() == "help" || sub.Name() == "completion" {
+			if (sub.Hidden && sub.Name() != "manifest") || sub.Name() == "help" || sub.Name() == "completion" {
 				continue
 			}
 			walk(sub, path)
@@ -186,7 +207,7 @@ func Manifest() CLIManifest {
 	return m
 }
 
-func commandFlags(c *cobra.Command) []FlagInfo {
+func commandFlags(c *cobra.Command, commandPath string) []FlagInfo {
 	seen := map[string]struct{}{}
 	var flags []FlagInfo
 	add := func(f *pflag.Flag, scope string) {
@@ -194,13 +215,16 @@ func commandFlags(c *cobra.Command) []FlagInfo {
 			return
 		}
 		seen[f.Name] = struct{}{}
-		flags = append(flags, FlagInfo{
+		info := FlagInfo{
 			Name:      f.Name,
 			Shorthand: f.Shorthand,
 			Type:      f.Value.Type(),
 			Default:   f.DefValue,
 			Scope:     scope,
-		})
+			Usage:     f.Usage,
+		}
+		info.OneOf, info.Requires, info.Conflicts = flagRelationships(commandPath, f.Name)
+		flags = append(flags, info)
 	}
 	c.LocalFlags().VisitAll(func(f *pflag.Flag) { add(f, "local") })
 	c.InheritedFlags().VisitAll(func(f *pflag.Flag) { add(f, "inherited") })
@@ -208,4 +232,127 @@ func commandFlags(c *cobra.Command) []FlagInfo {
 		c.PersistentFlags().VisitAll(func(f *pflag.Flag) { add(f, "persistent") })
 	}
 	return flags
+}
+
+func platformNeutralCommandShort(path, current string) string {
+	switch path {
+	case "tslink install":
+		return "Install TSLink as the current platform's user startup service"
+	case "tslink uninstall":
+		return "Remove TSLink from the current platform's user startup service"
+	default:
+		return current
+	}
+}
+
+func flagRelationships(commandPath, name string) (oneOf, requires, conflicts []string) {
+	if commandPath == "tslink add" {
+		switch name {
+		case "proxy", "dir", "tcp":
+			oneOf = []string{"--proxy", "--dir", "--tcp"}
+		case "funnel":
+			requires = []string{"--proxy", "--public"}
+			conflicts = []string{"--allow", "--control-url"}
+		case "public":
+			requires = []string{"--funnel"}
+		case "allow":
+			conflicts = []string{"--tcp", "--funnel"}
+		case "domain", "acme-email":
+			conflicts = []string{"feature_unavailable"}
+		}
+	}
+	if commandPath == "tslink url" && name == "raw" {
+		conflicts = []string{"--json"}
+	}
+	if commandPath == "tslink list" {
+		switch name {
+		case "fields":
+			conflicts = []string{"--verbose"}
+		case "verbose":
+			conflicts = []string{"--fields"}
+		}
+	}
+	if commandPath == "tslink status" && name == "name" {
+		requires = []string{"--urls"}
+	}
+	return oneOf, requires, conflicts
+}
+
+func errorCodeManifest() map[string]ErrorCodeInfo {
+	return map[string]ErrorCodeInfo{
+		"internal_error":                      {ExitCode: output.ExitError, Description: "unexpected internal failure"},
+		"usage_error":                         {ExitCode: output.ExitUsage, Description: "invalid command syntax or value"},
+		"auth_error":                          {ExitCode: output.ExitAuth, Description: "authentication required or rejected"},
+		"conflict":                            {ExitCode: output.ExitConflict, Description: "requested state conflicts with existing state"},
+		"not_found":                           {ExitCode: output.ExitNotFound, Description: "requested object was not found"},
+		registry.CodeServiceTypeAmbiguous:     {ExitCode: output.ExitUsage, Description: "exactly one service type is required"},
+		registry.CodeInvalidServiceName:       {ExitCode: output.ExitUsage, Description: "service name is not a valid DNS label"},
+		registry.CodeInvalidTag:               {ExitCode: output.ExitUsage, Description: "ACL tag is invalid"},
+		registry.CodeAllowUnsupportedTCP:      {ExitCode: output.ExitUsage, Description: "HTTP allow lists do not apply to raw TCP"},
+		registry.CodePathMustBeAbsolute:       {ExitCode: output.ExitUsage, Description: "file service path must be absolute"},
+		registry.CodeUnknownConfigKey:         {ExitCode: output.ExitUsage, Description: "configuration key is not supported"},
+		registry.CodeURLNotReady:              {ExitCode: output.ExitNotFound, Description: "runtime has not reported an exact tailnet hostname"},
+		registry.CodeFeatureUnavailable:       {ExitCode: output.ExitUsage, Description: "reserved feature is not available"},
+		registry.CodeFunnelPublicAckRequired:  {ExitCode: output.ExitUsage, Description: "public Funnel acknowledgement is required"},
+		registry.CodeFunnelAllowConflict:      {ExitCode: output.ExitConflict, Description: "Funnel conflicts with an allow list"},
+		registry.CodeFunnelControlURLConflict: {ExitCode: output.ExitConflict, Description: "Funnel conflicts with control_url"},
+		registry.CodeFunnelTypeConflict:       {ExitCode: output.ExitConflict, Description: "Funnel requires a proxy service"},
+	}
+}
+
+func CompactManifest() CompactCLIManifest {
+	manifest := Manifest()
+	compact := CompactCLIManifest{
+		SchemaVersion: manifest.SchemaVersion,
+		Flags:         []string{"json"},
+		Commands:      map[string][]string{},
+		ErrorCodes:    map[string]int{},
+	}
+	for _, command := range manifest.Commands {
+		if command.Path == "tslink" {
+			continue
+		}
+		path := strings.TrimPrefix(command.Path, "tslink ")
+		flags := make([]string, 0, len(command.Flags))
+		for _, flag := range command.Flags {
+			if flag.Scope != "inherited" && flag.Name != "json" {
+				flags = append(flags, flag.Name)
+			}
+		}
+		compact.Commands[path] = flags
+	}
+	for code, info := range manifest.ErrorCodes {
+		compact.ErrorCodes[code] = info.ExitCode
+	}
+	return compact
+}
+
+func init() {
+	manifestCmd := &cobra.Command{
+		Use:    "manifest",
+		Short:  "Print the installed binary's agent-readable CLI manifest",
+		Args:   cobra.NoArgs,
+		Hidden: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			compact, _ := cmd.Flags().GetBool("compact")
+			var value any = Manifest()
+			if compact {
+				value = CompactManifest()
+			}
+			if jsonOutput(cmd) {
+				output.Success("manifest", value)
+				return nil
+			}
+			encoder := json.NewEncoder(cmd.OutOrStdout())
+			if !compact {
+				encoder.SetIndent("", "  ")
+			}
+			if err := encoder.Encode(value); err != nil {
+				return fmt.Errorf("encode manifest: %w", err)
+			}
+			return nil
+		},
+	}
+	manifestCmd.Flags().Bool("compact", false, "Print only commands, flags, and stable error codes")
+	rootCmd.AddCommand(manifestCmd)
 }

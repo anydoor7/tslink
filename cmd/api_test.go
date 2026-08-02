@@ -33,15 +33,17 @@ type apiTestResponse struct {
 	Error         string
 	ErrorCode     string
 
-	Message  string
-	URL      string
-	Endpoint *inspect.EndpointView
-	Exposure *inspect.ExposureView
-	Warnings []inspect.WarningView
-	Services []inspect.ServiceView
-	Running  bool
-	Count    int
-	Removed  bool
+	Message    string
+	URL        string
+	URLPending bool
+	Created    bool
+	Endpoint   *inspect.EndpointView
+	Exposure   *inspect.ExposureView
+	Warnings   []inspect.WarningView
+	Services   []ListServiceSummary
+	Running    bool
+	Count      int
+	Removed    bool
 
 	StatusURLs    *StatusURLsResult
 	Doctor        *DoctorResult
@@ -76,41 +78,83 @@ func parseResponse(t *testing.T, buf *bytes.Buffer) apiTestResponse {
 	if err != nil {
 		t.Fatalf("marshal response data: %v", err)
 	}
-	var data struct {
-		Message       string                `json:"message,omitempty"`
-		URL           string                `json:"url,omitempty"`
-		Endpoint      *inspect.EndpointView `json:"endpoint,omitempty"`
-		Exposure      *inspect.ExposureView `json:"exposure,omitempty"`
-		Warnings      []inspect.WarningView `json:"warnings,omitempty"`
-		Services      []inspect.ServiceView `json:"services,omitempty"`
-		Running       bool                  `json:"running"`
-		Count         int                   `json:"count"`
-		Removed       bool                  `json:"removed"`
-		StatusURLs    *StatusURLsResult     `json:"status_urls,omitempty"`
-		Doctor        *DoctorResult         `json:"doctor,omitempty"`
-		AccessExplain *AccessExplainResult  `json:"access_explain,omitempty"`
-		TemplateList  *TemplateListResult   `json:"template_list,omitempty"`
-		TemplatePlan  *TemplateApplyResult  `json:"template_plan,omitempty"`
-		TemplateApply *TemplateApplyResult  `json:"template_apply,omitempty"`
+	switch envelope.Command {
+	case apiActionList:
+		var result struct {
+			Services []ListServiceSummary `json:"services"`
+			Count    int                  `json:"count"`
+		}
+		if err := json.Unmarshal(dataBytes, &result); err != nil {
+			t.Fatalf("decode list response data: %v (raw: %s)", err, dataBytes)
+		}
+		resp.Services, resp.Count = result.Services, result.Count
+	case apiActionAdd:
+		var result AddResult
+		if err := json.Unmarshal(dataBytes, &result); err != nil {
+			t.Fatalf("decode add response data: %v (raw: %s)", err, dataBytes)
+		}
+		if result.URL != nil {
+			resp.URL = *result.URL
+		}
+		resp.URLPending = result.URLPending
+		resp.Created = result.Created
+		resp.Endpoint = &result.Endpoint
+		resp.Exposure = &result.Exposure
+		resp.Warnings = result.Warnings
+	case apiActionRemove:
+		var result RemoveResult
+		if err := json.Unmarshal(dataBytes, &result); err != nil {
+			t.Fatalf("decode remove response data: %v", err)
+		}
+		resp.Removed = result.Removed
+	case apiActionStatus:
+		var keys map[string]json.RawMessage
+		_ = json.Unmarshal(dataBytes, &keys)
+		if _, ok := keys["runtime_snapshot"]; ok {
+			var result StatusURLsResult
+			if err := json.Unmarshal(dataBytes, &result); err != nil {
+				t.Fatalf("decode status urls response data: %v", err)
+			}
+			resp.StatusURLs = &result
+			resp.Running, resp.Count = result.DaemonRunning, result.ServiceCount
+		} else {
+			var result StatusResult
+			if err := json.Unmarshal(dataBytes, &result); err != nil {
+				t.Fatalf("decode status response data: %v", err)
+			}
+			resp.Running, resp.Count = result.DaemonRunning, result.ServiceCount
+		}
+	case apiActionDoctor:
+		var result DoctorResult
+		if err := json.Unmarshal(dataBytes, &result); err != nil {
+			t.Fatalf("decode doctor response data: %v", err)
+		}
+		resp.Doctor = &result
+	case apiActionAccessExplain:
+		var result AccessExplainResult
+		if err := json.Unmarshal(dataBytes, &result); err != nil {
+			t.Fatalf("decode access response data: %v", err)
+		}
+		resp.AccessExplain = &result
+	case apiActionTemplateList:
+		var result TemplateListResult
+		if err := json.Unmarshal(dataBytes, &result); err != nil {
+			t.Fatalf("decode template list response data: %v", err)
+		}
+		resp.TemplateList = &result
+	case apiActionTemplatePlan:
+		var result TemplateApplyResult
+		if err := json.Unmarshal(dataBytes, &result); err != nil {
+			t.Fatalf("decode template plan response data: %v", err)
+		}
+		resp.TemplatePlan = &result
+	case apiActionTemplateApply:
+		var result TemplateApplyResult
+		if err := json.Unmarshal(dataBytes, &result); err != nil {
+			t.Fatalf("decode template apply response data: %v", err)
+		}
+		resp.TemplateApply = &result
 	}
-	if err := json.Unmarshal(dataBytes, &data); err != nil {
-		t.Fatalf("decode response data: %v (raw: %s)", err, dataBytes)
-	}
-	resp.Message = data.Message
-	resp.URL = data.URL
-	resp.Endpoint = data.Endpoint
-	resp.Exposure = data.Exposure
-	resp.Warnings = data.Warnings
-	resp.Services = data.Services
-	resp.Running = data.Running
-	resp.Count = data.Count
-	resp.Removed = data.Removed
-	resp.StatusURLs = data.StatusURLs
-	resp.Doctor = data.Doctor
-	resp.AccessExplain = data.AccessExplain
-	resp.TemplateList = data.TemplateList
-	resp.TemplatePlan = data.TemplatePlan
-	resp.TemplateApply = data.TemplateApply
 	return resp
 }
 
@@ -177,11 +221,8 @@ func TestAPIList_WithServices(t *testing.T) {
 	if resp.Services[0].Name != "myapp" {
 		t.Errorf("expected name myapp, got %s", resp.Services[0].Name)
 	}
-	if resp.Services[0].Endpoint.Kind != inspect.EndpointKindHTTPS {
-		t.Errorf("endpoint kind = %s, want https", resp.Services[0].Endpoint.Kind)
-	}
-	if resp.Services[0].Exposure.Kind != inspect.ExposureTailnet {
-		t.Errorf("exposure = %s, want tailnet", resp.Services[0].Exposure.Kind)
+	if resp.Services[0].Type != registry.TypeProxy || resp.Services[0].URL != nil || !resp.Services[0].URLPending {
+		t.Errorf("service = %+v, want slim pending proxy", resp.Services[0])
 	}
 }
 
@@ -241,15 +282,12 @@ func TestAPIList_RedactsBackendURLSecrets(t *testing.T) {
 	if len(resp.Services) != 2 {
 		t.Fatalf("services = %d, want 2", len(resp.Services))
 	}
-	byName := map[string]inspect.ServiceView{}
+	byName := map[string]ListServiceSummary{}
 	for _, svc := range resp.Services {
 		byName[svc.Name] = svc
 	}
-	if byName["web"].Backend.Display != "http://localhost:3000/private" {
-		t.Fatalf("web backend = %q, want sanitized URL with path", byName["web"].Backend.Display)
-	}
-	if byName["db"].Backend.Display != "localhost:5432" {
-		t.Fatalf("db backend = %q, want sanitized schemeless TCP target", byName["db"].Backend.Display)
+	if !byName["web"].URLPending || !byName["db"].URLPending || byName["web"].URL != nil || byName["db"].URL != nil {
+		t.Fatalf("services = %+v, want slim pending URLs with no backend data", byName)
 	}
 }
 
@@ -274,23 +312,8 @@ func TestAPIList_UsesPublicServiceViewsWithUsefulFields(t *testing.T) {
 		t.Fatalf("count = %d, want 1", resp.Count)
 	}
 	got := resp.Services[0]
-	if got.SchemaVersion != inspect.SchemaVersion {
-		t.Fatalf("schema_version = %q, want %q", got.SchemaVersion, inspect.SchemaVersion)
-	}
-	if got.Endpoint.Kind != inspect.EndpointKindHTTPS || got.Endpoint.Display != "https://docs.<tailnet>.ts.net" {
-		t.Fatalf("endpoint = %+v, want https typed endpoint", got.Endpoint)
-	}
-	if got.Exposure.Kind != inspect.ExposureTailnetAllow {
-		t.Fatalf("exposure = %+v, want tailnet_allow", got.Exposure)
-	}
-	if got.Backend.Kind != "directory" || got.Backend.Display != docsDir {
-		t.Fatalf("backend = %+v, want directory backend", got.Backend)
-	}
-	if got.Tags.Count != 1 || got.Tags.Entries[0] != "tag:docs" {
-		t.Fatalf("tags = %+v, want useful tag summary", got.Tags)
-	}
-	if got.Allow.Mode != "restricted" || got.Allow.Count != 1 || !got.Allow.Redacted || len(got.Allow.Entries) != 0 {
-		t.Fatalf("allow = %+v, want redacted allow summary", got.Allow)
+	if got.Name != "docs" || got.Type != registry.TypeFile || got.URL != nil || !got.URLPending || got.State != "pending" {
+		t.Fatalf("service = %+v, want token-efficient pending file summary", got)
 	}
 }
 
@@ -321,9 +344,8 @@ func TestAPIList_RedactsAllowPrincipals(t *testing.T) {
 	if len(resp.Services) != 1 {
 		t.Fatalf("expected 1 service, got %d", len(resp.Services))
 	}
-	allow := resp.Services[0].Allow
-	if allow.Mode != "restricted" || allow.Count != 2 || !allow.Redacted || len(allow.Entries) != 0 {
-		t.Fatalf("allow = %+v, want redacted restricted summary", allow)
+	if resp.Services[0].URL != nil || !resp.Services[0].URLPending {
+		t.Fatalf("service = %+v, want slim response without allow principals", resp.Services[0])
 	}
 }
 
@@ -352,12 +374,9 @@ func TestAPIList_TCPUsesTypedEndpoint(t *testing.T) {
 	if len(resp.Services) != 1 {
 		t.Fatalf("expected 1 service, got %d", len(resp.Services))
 	}
-	endpoint := resp.Services[0].Endpoint
-	if endpoint.Kind != inspect.EndpointKindTCP {
-		t.Fatalf("endpoint kind = %q, want tcp", endpoint.Kind)
-	}
-	if endpoint.Display != "db.<tailnet>.ts.net:5432" || endpoint.Port != 5432 {
-		t.Fatalf("endpoint = %+v, want typed TCP display and port", endpoint)
+	service := resp.Services[0]
+	if service.Type != registry.TypeTCP || service.URL != nil || !service.URLPending {
+		t.Fatalf("service = %+v, want pending typed TCP summary", service)
 	}
 }
 
@@ -374,14 +393,11 @@ func TestAPIAdd_Proxy(t *testing.T) {
 	if !resp.OK {
 		t.Fatalf("expected ok, got error: %s", resp.Error)
 	}
-	if resp.Message != "service added" {
-		t.Errorf("unexpected message: %s", resp.Message)
+	if !resp.Created || resp.URL != "" || !resp.URLPending {
+		t.Fatalf("add response = %+v, want created with null/pending URL", resp)
 	}
-	if !strings.Contains(resp.URL, "myapp") {
-		t.Errorf("URL should contain service name, got: %s", resp.URL)
-	}
-	if resp.Endpoint == nil || resp.Endpoint.Kind != inspect.EndpointKindHTTPS || resp.Endpoint.Display != "https://myapp.<tailnet>.ts.net" {
-		t.Fatalf("endpoint = %+v, want https add endpoint", resp.Endpoint)
+	if resp.Endpoint == nil || resp.Endpoint.Kind != inspect.EndpointKindHTTPS || resp.Endpoint.Display != "" {
+		t.Fatalf("endpoint = %+v, want pending https endpoint without placeholder", resp.Endpoint)
 	}
 
 	// Verify the scheme was prepended.
@@ -442,6 +458,33 @@ func TestAPIAdd_Proxy_WithProvidedTags(t *testing.T) {
 	}
 	if svc.Funnel {
 		t.Fatal("expected funnel=false when allow list is configured")
+	}
+}
+
+func TestAPIAddIfMissingPreservesExistingServiceAndReportsCreated(t *testing.T) {
+	h, _ := newTestHandler(t)
+	first := sendRequest(t, h, APIRequest{Action: apiActionAdd, Name: "app", Type: registry.TypeProxy, Target: "localhost:3000"})
+	if !first.OK || !first.Created {
+		t.Fatalf("first add = %+v, want created=true", first)
+	}
+	second := sendRequest(t, h, APIRequest{Action: apiActionAdd, Name: "app", Type: registry.TypeProxy, Target: "localhost:9999", IfMissing: true})
+	if !second.OK || second.Created {
+		t.Fatalf("second add = %+v, want created=false", second)
+	}
+	reg, err := registry.Load(h.regPath)
+	if err != nil {
+		t.Fatalf("registry.Load: %v", err)
+	}
+	if len(reg.Services) != 1 || reg.Services[0].Target != "http://localhost:3000" {
+		t.Fatalf("services = %+v, want existing target preserved", reg.Services)
+	}
+}
+
+func TestAPIAddReturnsInvalidAllowWarning(t *testing.T) {
+	h, _ := newTestHandler(t)
+	resp := sendRequest(t, h, APIRequest{Action: apiActionAdd, Name: "app", Type: registry.TypeProxy, Target: "localhost:3000", Allow: []string{"not-an-email"}})
+	if !resp.OK || len(resp.Warnings) != 1 || resp.Warnings[0].Code != "invalid_allow_entry" {
+		t.Fatalf("response warnings = %+v (ok=%v)", resp.Warnings, resp.OK)
 	}
 }
 
@@ -636,14 +679,11 @@ func TestAPIAdd_TCP(t *testing.T) {
 	if !resp.OK {
 		t.Fatalf("expected ok, got error: %s", resp.Error)
 	}
-	if strings.Contains(resp.URL, "https://mydb.<tailnet>.ts.net") {
-		t.Fatalf("api add rendered TCP URL as HTTPS: %+v", resp)
+	if resp.URL != "" || !resp.URLPending {
+		t.Fatalf("url = %q pending=%v, want null/pending", resp.URL, resp.URLPending)
 	}
-	if resp.URL != "mydb.<tailnet>.ts.net:5432" {
-		t.Fatalf("url = %q, want typed TCP display", resp.URL)
-	}
-	if resp.Endpoint == nil || resp.Endpoint.Kind != inspect.EndpointKindTCP || resp.Endpoint.Display != "mydb.<tailnet>.ts.net:5432" || resp.Endpoint.Port != 5432 {
-		t.Fatalf("endpoint = %+v, want typed TCP endpoint", resp.Endpoint)
+	if resp.Endpoint == nil || resp.Endpoint.Kind != inspect.EndpointKindTCP || resp.Endpoint.Display != "" || resp.Endpoint.Port != 5432 {
+		t.Fatalf("endpoint = %+v, want pending typed TCP endpoint", resp.Endpoint)
 	}
 	if !hasStatusWarningCode(resp.Warnings, inspect.WarningCodeTCPHTTPACLNotApplicable) {
 		t.Fatalf("warnings = %+v, want tcp_http_acl_not_applicable", resp.Warnings)
@@ -756,11 +796,11 @@ func TestAPIStatus(t *testing.T) {
 	var buf bytes.Buffer
 	h.handle(APIRequest{Action: "status"}, &buf)
 	raw := buf.String()
-	if !strings.Contains(raw, `"running":false`) {
-		t.Fatalf("status response omitted running:false: %s", raw)
+	if !strings.Contains(raw, `"daemon_running":false`) {
+		t.Fatalf("status response omitted daemon_running:false: %s", raw)
 	}
-	if !strings.Contains(raw, `"count":0`) {
-		t.Fatalf("status response omitted count:0: %s", raw)
+	if !strings.Contains(raw, `"service_count":0`) {
+		t.Fatalf("status response omitted service_count:0: %s", raw)
 	}
 
 	resp := parseResponse(t, &buf)
@@ -847,8 +887,8 @@ func TestAPIStatusURLsReturnsVNextPayload(t *testing.T) {
 	}
 
 	web := findStatusService(t, result, "web")
-	if web.Endpoint.Kind != inspect.EndpointKindHTTPS || web.Endpoint.Display != "https://web.<tailnet>.ts.net" {
-		t.Fatalf("web endpoint = %+v, want typed private HTTPS endpoint", web.Endpoint)
+	if web.Endpoint.Kind != inspect.EndpointKindHTTPS || web.Endpoint.Display != "" || web.Endpoint.State != statusEndpointStateMissing {
+		t.Fatalf("web endpoint = %+v, want missing endpoint without placeholder", web.Endpoint)
 	}
 	if web.Backend.Display != "http://localhost:3000/private" {
 		t.Fatalf("web backend = %q, want sanitized URL with diagnostic path", web.Backend.Display)
@@ -861,8 +901,8 @@ func TestAPIStatusURLsReturnsVNextPayload(t *testing.T) {
 	}
 
 	db := findStatusService(t, result, "db")
-	if db.Endpoint.Kind != inspect.EndpointKindTCP || db.Endpoint.Port != 5432 || db.Endpoint.Display != "db.<tailnet>.ts.net:5432" {
-		t.Fatalf("db endpoint = %+v, want typed TCP endpoint", db.Endpoint)
+	if db.Endpoint.Kind != inspect.EndpointKindTCP || db.Endpoint.Port != 5432 || db.Endpoint.Display != "" || db.Endpoint.State != statusEndpointStateMissing {
+		t.Fatalf("db endpoint = %+v, want pending typed TCP endpoint without placeholder", db.Endpoint)
 	}
 	if db.Backend.Display != "localhost:5432" {
 		t.Fatalf("db backend = %q, want sanitized schemeless TCP target", db.Backend.Display)
@@ -1111,11 +1151,8 @@ func TestAPITemplatePlanDryRunDoesNotCreateRegistry(t *testing.T) {
 	h.handle(APIRequest{Action: "template_plan", Name: "personal-harness"}, &buf)
 	raw := buf.String()
 	assertAPIRawJSONHasNoPrivateRegistryFields(t, raw)
-	if !strings.Contains(raw, `"template_plan"`) {
-		t.Fatalf("template_plan response key missing: %s", raw)
-	}
-	if strings.Contains(raw, `"template_apply"`) {
-		t.Fatalf("template_plan response should not include template_apply: %s", raw)
+	if !strings.Contains(raw, `"dry_run":true`) || strings.Contains(raw, `"template_plan":`) {
+		t.Fatalf("template_plan response must be flat dry-run data: %s", raw)
 	}
 
 	resp := parseResponse(t, &buf)
@@ -1262,7 +1299,7 @@ func TestAPIAdd_MissingType(t *testing.T) {
 	if resp.OK {
 		t.Fatal("expected error when type is missing")
 	}
-	if !strings.Contains(resp.Error, "type is required") {
+	if !strings.Contains(resp.Error, "exactly one of --proxy") {
 		t.Errorf("unexpected error: %s", resp.Error)
 	}
 }
