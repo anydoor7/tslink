@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -56,6 +57,13 @@ func TestWriteAndReadPID(t *testing.T) {
 	if want := os.Getpid(); pid != want {
 		t.Fatalf("ReadPID() = %d, want %d", pid, want)
 	}
+	record, err := readProcessIdentity(path)
+	if err != nil {
+		t.Fatalf("readProcessIdentity() error = %v", err)
+	}
+	if record.Version != processIdentityVersion || record.Product != processProductID || record.PID != os.Getpid() || record.StartUnixNano == 0 {
+		t.Fatalf("process identity = %+v, want version/product/current PID/start time", record)
+	}
 }
 
 func TestWritePIDForProcess(t *testing.T) {
@@ -78,6 +86,9 @@ func TestWritePIDForProcess(t *testing.T) {
 	}
 	if got := info.Mode().Perm(); got != 0o600 {
 		t.Fatalf("PID perms = %o, want 600", got)
+	}
+	if _, err := os.Stat(processIdentityPath(path)); !os.IsNotExist(err) {
+		t.Fatalf("WritePIDForProcess created identity sidecar, stat error = %v", err)
 	}
 }
 
@@ -150,6 +161,9 @@ func TestRemovePID(t *testing.T) {
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("os.Stat() error = %v, want not exists", err)
 	}
+	if _, err := os.Stat(processIdentityPath(path)); !os.IsNotExist(err) {
+		t.Fatalf("identity sidecar still exists, stat error = %v", err)
+	}
 }
 
 func TestIsRunningCurrentProcess(t *testing.T) {
@@ -172,12 +186,226 @@ func TestIsRunningRejectsMismatchedProcessIdentity(t *testing.T) {
 	}
 
 	path := filepath.Join(t.TempDir(), "tslink.pid")
-	if err := WritePID(path); err != nil {
-		t.Fatalf("WritePID() error = %v", err)
+	if err := os.WriteFile(path, []byte(strconv.Itoa(os.Getpid())+"\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
 	}
 
 	if IsRunning(path) {
 		t.Fatal("IsRunning() = true for mismatched process identity, want false")
+	}
+}
+
+func TestIsRunningAllowsSameProductAtDifferentPath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("different-path helper uses Unix executable semantics")
+	}
+	dir := t.TempDir()
+	daemonPath := filepath.Join(dir, "old-go-install", "tslink")
+	copyTestExecutable(t, daemonPath)
+	cmd := startCopiedHelperProcess(t, daemonPath)
+
+	currentPath, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable() error = %v", err)
+	}
+	actualPath, err := processExecutable(cmd.Process.Pid)
+	if err != nil {
+		t.Fatalf("processExecutable() error = %v", err)
+	}
+	if filepath.Clean(actualPath) == filepath.Clean(currentPath) {
+		t.Fatalf("test setup did not create distinct CLI/daemon paths: %q", actualPath)
+	}
+
+	pidPath := filepath.Join(dir, "tslink.pid")
+	writeLegacyPIDFile(t, pidPath, cmd.Process.Pid)
+	if !IsRunning(pidPath) {
+		t.Fatal("IsRunning() = false for same-product daemon at a different install path")
+	}
+}
+
+func TestIsRunningRejectsReusedPIDOwnedByUnrelatedProcess(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("sleep helper is Unix-only")
+	}
+	cmd := exec.Command("sleep", "30")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start sleep helper: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	})
+
+	pidPath := filepath.Join(t.TempDir(), "tslink.pid")
+	writeLegacyPIDFile(t, pidPath, cmd.Process.Pid)
+	if IsRunning(pidPath) {
+		t.Fatal("IsRunning() = true for a live unrelated process that reused the recorded PID")
+	}
+}
+
+func TestIsRunningRejectsStalePIDForDeadProcess(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("sleep helper is Unix-only")
+	}
+	cmd := exec.Command("sleep", "30")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start sleep helper: %v", err)
+	}
+	pid := cmd.Process.Pid
+	if err := cmd.Process.Kill(); err != nil {
+		t.Fatalf("kill sleep helper: %v", err)
+	}
+	if err := cmd.Wait(); err == nil {
+		t.Fatal("sleep helper unexpectedly exited successfully after Kill")
+	}
+
+	pidPath := filepath.Join(t.TempDir(), "tslink.pid")
+	writeLegacyPIDFile(t, pidPath, pid)
+	if IsRunning(pidPath) {
+		t.Fatal("IsRunning() = true for stale PID file after process exit")
+	}
+}
+
+func TestIsRunningSurvivesHomebrewSymlinkTargetChange(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Homebrew symlink simulation is Unix-only")
+	}
+	dir := t.TempDir()
+	oldKeg := filepath.Join(dir, "Cellar", "tslink", "old", "bin", "tslink")
+	newKeg := filepath.Join(dir, "Cellar", "tslink", "new", "bin", "tslink")
+	link := filepath.Join(dir, "opt", "homebrew", "bin", "tslink")
+	copyTestExecutable(t, oldKeg)
+	copyTestExecutable(t, newKeg)
+	if err := os.MkdirAll(filepath.Dir(link), 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.Symlink(oldKeg, link); err != nil {
+		t.Fatalf("Symlink(old) error = %v", err)
+	}
+	oldResolved, err := filepath.EvalSymlinks(link)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(old) error = %v", err)
+	}
+
+	cmd := startCopiedHelperProcess(t, link)
+	pidPath := filepath.Join(dir, "tslink.pid")
+	writeLegacyPIDFile(t, pidPath, cmd.Process.Pid)
+
+	if err := os.Remove(link); err != nil {
+		t.Fatalf("Remove(old symlink) error = %v", err)
+	}
+	if err := os.Symlink(newKeg, link); err != nil {
+		t.Fatalf("Symlink(new) error = %v", err)
+	}
+	if err := os.Remove(oldKeg); err != nil {
+		t.Fatalf("Remove(old Cellar binary) error = %v", err)
+	}
+	newResolved, err := filepath.EvalSymlinks(link)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(new) error = %v", err)
+	}
+	if oldResolved == newResolved {
+		t.Fatalf("test setup did not change resolved Cellar target: %q", oldResolved)
+	}
+	if !IsRunning(pidPath) {
+		t.Fatal("IsRunning() = false after Homebrew symlink target changed")
+	}
+}
+
+func TestIsRunningRejectsRecordedStartTimeMismatch(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tslink.pid")
+	if err := WritePID(path); err != nil {
+		t.Fatalf("WritePID() error = %v", err)
+	}
+	record, err := readProcessIdentity(path)
+	if err != nil {
+		t.Fatalf("readProcessIdentity() error = %v", err)
+	}
+	record.StartUnixNano--
+	data, err := json.Marshal(record)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+	if err := os.WriteFile(processIdentityPath(path), data, 0o600); err != nil {
+		t.Fatalf("WriteFile(identity) error = %v", err)
+	}
+	if IsRunning(path) {
+		t.Fatal("IsRunning() = true when PID matches but process start time does not")
+	}
+}
+
+func TestIsRunningRejectsUnrelatedProcessEvenWithMatchingRecordedStart(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("sleep helper is Unix-only")
+	}
+	cmd := exec.Command("sleep", "30")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start sleep helper: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	})
+	started, err := processStartTime(cmd.Process.Pid)
+	if err != nil {
+		t.Fatalf("processStartTime() error = %v", err)
+	}
+	pidPath := filepath.Join(t.TempDir(), "tslink.pid")
+	writeLegacyPIDFile(t, pidPath, cmd.Process.Pid)
+	record := processIdentityRecord{
+		Version:       processIdentityVersion,
+		Product:       processProductID,
+		PID:           cmd.Process.Pid,
+		StartUnixNano: started.UnixNano(),
+	}
+	data, err := json.Marshal(record)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+	if err := os.WriteFile(processIdentityPath(pidPath), data, 0o600); err != nil {
+		t.Fatalf("WriteFile(identity) error = %v", err)
+	}
+	if IsRunning(pidPath) {
+		t.Fatal("IsRunning() = true for unrelated process despite matching PID/start sidecar")
+	}
+}
+
+func copyTestExecutable(t *testing.T, destination string) {
+	t.Helper()
+	source, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable() error = %v", err)
+	}
+	data, err := os.ReadFile(source)
+	if err != nil {
+		t.Fatalf("ReadFile(%q) error = %v", source, err)
+	}
+	if err := os.MkdirAll(filepath.Dir(destination), 0o700); err != nil {
+		t.Fatalf("MkdirAll(%q) error = %v", filepath.Dir(destination), err)
+	}
+	if err := os.WriteFile(destination, data, 0o700); err != nil {
+		t.Fatalf("WriteFile(%q) error = %v", destination, err)
+	}
+}
+
+func startCopiedHelperProcess(t *testing.T, executablePath string) *exec.Cmd {
+	t.Helper()
+	cmd := exec.Command(executablePath, "serve")
+	cmd.Env = append(os.Environ(), "TSLINK_DAEMON_TEST_MODE=success")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start copied helper %q: %v", executablePath, err)
+	}
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	})
+	return cmd
+}
+
+func writeLegacyPIDFile(t *testing.T, path string, pid int) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(strconv.Itoa(pid)+"\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile(%q) error = %v", path, err)
 	}
 }
 

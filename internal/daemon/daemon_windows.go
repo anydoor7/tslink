@@ -22,6 +22,7 @@ var (
 	startCmd    = func(cmd *exec.Cmd) error { return cmd.Start() }
 
 	processExecutable = defaultProcessExecutable
+	processStartTime  = defaultProcessStartTime
 )
 
 // IsRunning reports whether the process referenced by path is alive.
@@ -30,11 +31,23 @@ func IsRunning(path string) bool {
 	if err != nil || pid <= 0 {
 		return false
 	}
-	return IsProcessRunning(pid)
+	if !isProcessAlive(pid) {
+		return false
+	}
+	return verifyProcessIdentity(path, pid) == nil
 }
 
-// IsProcessRunning reports whether pid is alive and matches the current executable.
+// IsProcessRunning reports whether pid is alive and belongs to the TSLink
+// product. Callers with a PID-file path should use IsRunning so the recorded
+// process-instance identity is also checked.
 func IsProcessRunning(pid int) bool {
+	if !isProcessAlive(pid) {
+		return false
+	}
+	return verifyProcessProduct(pid) == nil
+}
+
+func isProcessAlive(pid int) bool {
 	if pid <= 0 {
 		return false
 	}
@@ -43,7 +56,7 @@ func IsProcessRunning(pid int) bool {
 		return false
 	}
 	_ = windows.CloseHandle(handle)
-	return verifyProcessIdentity(pid) == nil
+	return true
 }
 
 // Daemonize re-launches the current binary in the background with the serve
@@ -124,7 +137,7 @@ func StopDaemon(pidPath string) error {
 	}
 	_ = windows.CloseHandle(handle)
 
-	if err := verifyProcessIdentity(pid); err != nil {
+	if err := verifyProcessIdentity(pidPath, pid); err != nil {
 		return fmt.Errorf("refusing to stop process from PID file: %w", err)
 	}
 
@@ -165,4 +178,22 @@ func defaultProcessExecutable(pid int) (string, error) {
 		return "", err
 	}
 	return windows.UTF16ToString(buffer[:size]), nil
+}
+
+func defaultProcessStartTime(pid int) (time.Time, error) {
+	handle, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
+	if err != nil {
+		return time.Time{}, err
+	}
+	defer windows.CloseHandle(handle)
+
+	var creation, exit, kernel, user windows.Filetime
+	if err := windows.GetProcessTimes(handle, &creation, &exit, &kernel, &user); err != nil {
+		return time.Time{}, err
+	}
+	return time.Unix(0, creation.Nanoseconds()), nil
+}
+
+func legacyProcessProductFallback(pid int, executablePath string) bool {
+	return false
 }

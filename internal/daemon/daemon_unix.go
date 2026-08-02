@@ -23,6 +23,7 @@ var (
 	setUmask    = syscall.Umask
 
 	processExecutable = defaultProcessExecutable
+	processStartTime  = defaultProcessStartTime
 )
 
 // IsRunning reports whether the process referenced by path is alive.
@@ -31,11 +32,23 @@ func IsRunning(path string) bool {
 	if err != nil || pid <= 0 {
 		return false
 	}
-	return IsProcessRunning(pid)
+	if !isProcessAlive(pid) {
+		return false
+	}
+	return verifyProcessIdentity(path, pid) == nil
 }
 
-// IsProcessRunning reports whether pid is alive and matches the current executable.
+// IsProcessRunning reports whether pid is alive and belongs to the TSLink
+// product. Callers with a PID-file path should use IsRunning so the recorded
+// process-instance identity is also checked.
 func IsProcessRunning(pid int) bool {
+	if !isProcessAlive(pid) {
+		return false
+	}
+	return verifyProcessProduct(pid) == nil
+}
+
+func isProcessAlive(pid int) bool {
 	if pid <= 0 {
 		return false
 	}
@@ -48,7 +61,7 @@ func IsProcessRunning(pid int) bool {
 		return false
 	}
 
-	return verifyProcessIdentity(pid) == nil
+	return true
 }
 
 // Daemonize re-launches the current binary in the background with the serve
@@ -128,7 +141,7 @@ func StopDaemon(pidPath string) error {
 		}
 	}
 
-	if err := verifyProcessIdentity(pid); err != nil {
+	if err := verifyProcessIdentity(pidPath, pid); err != nil {
 		return fmt.Errorf("refusing to stop process from PID file: %w", err)
 	}
 
@@ -167,4 +180,34 @@ func defaultProcessExecutable(pid int) (string, error) {
 		return "", fmt.Errorf("empty process identity")
 	}
 	return identity, nil
+}
+
+func defaultProcessStartTime(pid int) (time.Time, error) {
+	cmd := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "lstart=")
+	cmd.Env = append(os.Environ(), "LC_ALL=C", "TZ=UTC0")
+	out, err := cmd.Output()
+	if err != nil {
+		return time.Time{}, err
+	}
+	value := strings.Join(strings.Fields(string(out)), " ")
+	if value == "" {
+		return time.Time{}, fmt.Errorf("empty process start time")
+	}
+	started, err := time.ParseInLocation("Mon Jan 2 15:04:05 2006", value, time.UTC)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("parse process start time %q: %w", value, err)
+	}
+	return started, nil
+}
+
+func legacyProcessProductFallback(pid int, executablePath string) bool {
+	if filepath.Base(executablePath) != "tslink" {
+		return false
+	}
+	out, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "command=").Output()
+	if err != nil {
+		return false
+	}
+	fields := strings.Fields(string(out))
+	return len(fields) >= 2 && fields[1] == "serve"
 }
