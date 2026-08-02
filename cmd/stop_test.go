@@ -1,6 +1,10 @@
 package cmd
 
 import (
+	"bytes"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -31,5 +35,47 @@ func TestStopHelpDocumentsMacOSLaunchAgentRestart(t *testing.T) {
 		if !strings.Contains(help, want) {
 			t.Fatalf("stop help = %q, want macOS autostart restart caveat containing %q", help, want)
 		}
+	}
+}
+
+func TestStopNotRunningDoesNotDeletePIDIdentityEvidence(t *testing.T) {
+	oldIsRunning, oldStop, oldRemove, oldAbsent := isRunningFn, stopDaemonFn, removePIDFn, isProcessAbsentFromPIDFileFn
+	t.Cleanup(func() {
+		isRunningFn, stopDaemonFn, removePIDFn = oldIsRunning, oldStop, oldRemove
+		isProcessAbsentFromPIDFileFn = oldAbsent
+	})
+
+	dir := t.TempDir()
+	pidPath := filepath.Join(dir, "tslink.pid")
+	identityPath := pidPath + ".identity"
+	if err := os.WriteFile(pidPath, []byte(fmt.Sprintf("%d\n", os.Getpid())), 0o600); err != nil {
+		t.Fatalf("WriteFile(pid) error = %v", err)
+	}
+	if err := os.WriteFile(identityPath, []byte("live-daemon-evidence\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile(identity) error = %v", err)
+	}
+
+	isRunningFn = func(string) bool { return false }
+	isProcessAbsentFromPIDFileFn = func(string) bool { return false }
+	stopDaemonFn = func(string) error {
+		t.Fatal("stopDaemonFn called after not-running result")
+		return nil
+	}
+	removeCalls := 0
+	removePIDFn = func(string) { removeCalls++ }
+	var out bytes.Buffer
+	if err := stopService(pidPath, false, &out); err != nil {
+		t.Fatalf("stopService() error = %v", err)
+	}
+	if removeCalls != 0 {
+		t.Fatalf("removePIDFn calls = %d, want 0 after an inconclusive not-running result", removeCalls)
+	}
+	for _, path := range []string{pidPath, identityPath} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("live-daemon evidence %q was not preserved: %v", path, err)
+		}
+	}
+	if !strings.Contains(out.String(), "not running") {
+		t.Fatalf("stop output = %q, want not-running message", out.String())
 	}
 }

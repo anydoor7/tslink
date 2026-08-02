@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"syscall"
 	"time"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
@@ -23,6 +24,7 @@ var (
 
 	processExecutable = defaultProcessExecutable
 	processStartTime  = defaultProcessStartTime
+	processArguments  = defaultProcessArguments
 )
 
 // IsRunning reports whether the process referenced by path is alive.
@@ -31,32 +33,43 @@ func IsRunning(path string) bool {
 	if err != nil || pid <= 0 {
 		return false
 	}
-	if !isProcessAlive(pid) {
+	switch inspectProcessLiveness(pid) {
+	case processLivenessAbsent:
 		return false
+	case processLivenessUnknown:
+		return true
 	}
-	return verifyProcessIdentity(path, pid) == nil
+	return identityVerifiedOrUnavailable(verifyProcessIdentity(path, pid))
 }
 
 // IsProcessRunning reports whether pid is alive and belongs to the TSLink
 // product. Callers with a PID-file path should use IsRunning so the recorded
 // process-instance identity is also checked.
 func IsProcessRunning(pid int) bool {
-	if !isProcessAlive(pid) {
+	switch inspectProcessLiveness(pid) {
+	case processLivenessAbsent:
 		return false
+	case processLivenessUnknown:
+		return true
 	}
-	return verifyProcessProduct(pid) == nil
+	return identityVerifiedOrUnavailable(verifyProcessProduct(pid))
 }
 
-func isProcessAlive(pid int) bool {
+func inspectProcessLiveness(pid int) processLiveness {
 	if pid <= 0 {
-		return false
+		return processLivenessAbsent
 	}
 	handle, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
 	if err != nil {
-		return false
+		if errors.Is(err, windows.ERROR_INVALID_PARAMETER) {
+			return processLivenessAbsent
+		}
+		// ERROR_ACCESS_DENIED (and other inconclusive inspection failures) means
+		// the process may be alive; callers must fail closed.
+		return processLivenessUnknown
 	}
 	_ = windows.CloseHandle(handle)
-	return true
+	return processLivenessAlive
 }
 
 // Daemonize re-launches the current binary in the background with the serve
@@ -154,9 +167,12 @@ func StopDaemon(pidPath string) error {
 	for time.Now().Before(deadline) {
 		handle, openErr := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
 		if openErr != nil {
-			// Process no longer exists.
-			RemovePID(pidPath)
-			return nil
+			if errors.Is(openErr, windows.ERROR_INVALID_PARAMETER) {
+				// Process no longer exists.
+				RemovePID(pidPath)
+				return nil
+			}
+			return fmt.Errorf("confirm process %d exit: %w", pid, openErr)
 		}
 		_ = windows.CloseHandle(handle)
 		time.Sleep(100 * time.Millisecond)
@@ -194,6 +210,26 @@ func defaultProcessStartTime(pid int) (time.Time, error) {
 	return time.Unix(0, creation.Nanoseconds()), nil
 }
 
-func legacyProcessProductFallback(pid int, executablePath string) bool {
-	return false
+func defaultProcessArguments(pid int) ([]string, error) {
+	handle, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
+	if err != nil {
+		return nil, err
+	}
+	defer windows.CloseHandle(handle)
+
+	var size uint32
+	_ = windows.NtQueryInformationProcess(handle, windows.ProcessCommandLineInformation, nil, 0, &size)
+	if size < uint32(unsafe.Sizeof(windows.NTUnicodeString{})) {
+		return nil, fmt.Errorf("query process %d command line size returned %d bytes", pid, size)
+	}
+	buffer := make([]byte, size)
+	if err := windows.NtQueryInformationProcess(handle, windows.ProcessCommandLineInformation, unsafe.Pointer(&buffer[0]), size, &size); err != nil {
+		return nil, err
+	}
+	commandLine := (*windows.NTUnicodeString)(unsafe.Pointer(&buffer[0]))
+	if commandLine.Buffer == nil || commandLine.Length == 0 || commandLine.Length%2 != 0 {
+		return nil, fmt.Errorf("process %d returned an invalid command line", pid)
+	}
+	units := unsafe.Slice(commandLine.Buffer, int(commandLine.Length/2))
+	return windows.DecomposeCommandLine(windows.UTF16ToString(units))
 }

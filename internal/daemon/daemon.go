@@ -34,6 +34,19 @@ type processIdentityRecord struct {
 
 var readExecutableBuildInfo = buildinfo.ReadFile
 
+var (
+	readProcessIdentityData = os.ReadFile
+	errIdentityMismatch     = errors.New("process does not match the TSLink serve daemon")
+)
+
+type processLiveness uint8
+
+const (
+	processLivenessUnknown processLiveness = iota
+	processLivenessAbsent
+	processLivenessAlive
+)
+
 // daemonServeArgs builds the child argv for the re-executed foreground serve
 // process. controlURL and manageACL opt-ins observed by the parent must be
 // forwarded to the child exactly once, otherwise the documented
@@ -157,23 +170,52 @@ func RemovePID(path string) {
 	_ = os.Remove(processIdentityPath(path))
 }
 
+// IsProcessAbsentFromPIDFile reports true only when a readable positive PID is
+// conclusively absent. Callers must preserve PID artifacts for unknown or
+// permission-denied liveness results.
+func IsProcessAbsentFromPIDFile(path string) bool {
+	pid, err := ReadPID(path)
+	if err != nil || pid <= 0 {
+		return false
+	}
+	return inspectProcessLiveness(pid) == processLivenessAbsent
+}
+
 func processIdentityPath(pidPath string) string {
 	return pidPath + ".identity"
 }
 
+// verifyProcessIdentity treats the sidecar as a consistency mechanism, not an
+// authentication boundary. A same-user process can rewrite both PID artifacts.
+// A missing, damaged, future-version, or stale sidecar therefore falls through
+// to the legacy evidence bridge instead of making a live daemon invisible.
 func verifyProcessIdentity(pidPath string, pid int) error {
+	var sidecarErr error
 	record, err := readProcessIdentity(pidPath)
 	if err == nil {
-		return verifyRecordedProcessIdentity(pid, record)
-	}
-	if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("read process identity: %w", err)
+		sidecarErr = verifyRecordedProcessIdentity(pid, record)
+		if sidecarErr == nil {
+			return nil
+		}
+	} else {
+		sidecarErr = fmt.Errorf("read process identity: %w", err)
 	}
 
-	// Upgrade compatibility: daemons started before identity sidecars existed
-	// have only a numeric PID file. Identify the product from the daemon binary,
-	// not from the current CLI path, then bind the PID file to the process start
-	// window to retain PID-reuse protection during this one-generation fallback.
+	legacyErr := verifyLegacyProcessIdentity(pidPath, pid)
+	if legacyErr == nil {
+		return nil
+	}
+	if errors.Is(legacyErr, errIdentityMismatch) {
+		return legacyErr
+	}
+	return fmt.Errorf("sidecar unavailable or stale (%v); legacy identity evidence unavailable: %w", sidecarErr, legacyErr)
+}
+
+func verifyLegacyProcessIdentity(pidPath string, pid int) error {
+	// Compatibility bridge: any daemon without a usable sidecar is checked from
+	// its running binary, serve argv, and the PID-file/start-time window. This is
+	// intentionally available for as long as mixed-version installations exist;
+	// it is not limited to one generation and is weaker than a valid sidecar.
 	if err := verifyProcessProduct(pid); err != nil {
 		return err
 	}
@@ -186,13 +228,13 @@ func verifyProcessIdentity(pidPath string, pid int) error {
 		return fmt.Errorf("stat legacy PID file: %w", err)
 	}
 	if delta := absoluteDuration(info.ModTime().Sub(started)); delta > legacyPIDStartTolerance {
-		return fmt.Errorf("legacy PID file timestamp differs from process %d start by %s", pid, delta)
+		return identityMismatchf("legacy PID file timestamp differs from process %d start by %s", pid, delta)
 	}
 	return nil
 }
 
 func readProcessIdentity(pidPath string) (processIdentityRecord, error) {
-	data, err := os.ReadFile(processIdentityPath(pidPath))
+	data, err := readProcessIdentityData(processIdentityPath(pidPath))
 	if err != nil {
 		return processIdentityRecord{}, err
 	}
@@ -205,20 +247,20 @@ func readProcessIdentity(pidPath string) (processIdentityRecord, error) {
 
 func verifyRecordedProcessIdentity(pid int, record processIdentityRecord) error {
 	if record.Version != processIdentityVersion {
-		return fmt.Errorf("unsupported process identity version %d", record.Version)
+		return identityMismatchf("unsupported process identity version %d", record.Version)
 	}
 	if record.Product != processProductID {
-		return fmt.Errorf("process identity product is %q, not %q", record.Product, processProductID)
+		return identityMismatchf("process identity product is %q, not %q", record.Product, processProductID)
 	}
 	if record.PID != pid {
-		return fmt.Errorf("process identity PID is %d, not %d", record.PID, pid)
+		return identityMismatchf("process identity PID is %d, not %d", record.PID, pid)
 	}
 	started, err := processStartTime(pid)
 	if err != nil {
 		return fmt.Errorf("inspect process %d start time: %w", pid, err)
 	}
 	if started.UnixNano() != record.StartUnixNano {
-		return fmt.Errorf("process %d start time does not match PID identity", pid)
+		return identityMismatchf("process %d start time does not match PID identity", pid)
 	}
 	return verifyProcessProduct(pid)
 }
@@ -230,19 +272,57 @@ func verifyProcessProduct(pid int) error {
 	}
 	actual = strings.TrimSpace(strings.TrimSuffix(actual, " (deleted)"))
 	info, buildErr := readExecutableBuildInfo(actual)
-	if buildErr == nil && info.Main.Path == processProductID {
-		return nil
-	}
-	if buildErr != nil {
-		// A running executable can outlive its unlinked Homebrew Cellar file.
-		// Only that unreadable-path case may use the weaker argv fallback; an
-		// existing non-Go or differently built same-name binary is rejected.
-		if _, statErr := os.Stat(actual); statErr != nil && legacyProcessProductFallback(pid, actual) {
-			return nil
+	if buildErr == nil {
+		if info.Main.Path != processProductID {
+			return identityMismatchf("process %d executable %q belongs to Go module %q, not %q", pid, actual, info.Main.Path, processProductID)
 		}
-		return fmt.Errorf("process %d executable %q has no verifiable TSLink build identity: %w", pid, actual, buildErr)
+		return verifyProcessServeCommand(pid)
 	}
-	return fmt.Errorf("process %d executable %q belongs to Go module %q, not %q", pid, actual, info.Main.Path, processProductID)
+
+	// A running executable can outlive its unlinked Homebrew Cellar file. Only
+	// that absent-on-disk case may use the weaker basename+argv fallback.
+	if _, statErr := os.Stat(actual); errors.Is(statErr, os.ErrNotExist) {
+		return legacyProcessProductFallback(pid, actual)
+	} else if statErr != nil {
+		return fmt.Errorf("stat process %d executable %q: %w", pid, actual, statErr)
+	}
+	if isDefinitiveNonGoExecutable(buildErr) {
+		return identityMismatchf("process %d executable %q is not a TSLink Go executable: %v", pid, actual, buildErr)
+	}
+	return fmt.Errorf("process %d executable %q has unavailable TSLink build metadata: %w", pid, actual, buildErr)
+}
+
+func verifyProcessServeCommand(pid int) error {
+	args, err := processArguments(pid)
+	if err != nil {
+		return fmt.Errorf("inspect process %d arguments: %w", pid, err)
+	}
+	if len(args) < 2 || args[1] != "serve" {
+		return identityMismatchf("process %d argv %q does not identify a serve daemon", pid, args)
+	}
+	return nil
+}
+
+func legacyProcessProductFallback(pid int, executablePath string) error {
+	if filepath.Base(executablePath) != "tslink" {
+		return identityMismatchf("process %d unlinked executable basename %q is not tslink", pid, filepath.Base(executablePath))
+	}
+	return verifyProcessServeCommand(pid)
+}
+
+func isDefinitiveNonGoExecutable(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "not a Go executable")
+}
+
+func identityMismatchf(format string, args ...any) error {
+	return fmt.Errorf("%w: %s", errIdentityMismatch, fmt.Sprintf(format, args...))
+}
+
+func identityVerifiedOrUnavailable(err error) bool {
+	return err == nil || !errors.Is(err, errIdentityMismatch)
 }
 
 func absoluteDuration(d time.Duration) time.Duration {

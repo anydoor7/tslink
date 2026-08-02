@@ -144,7 +144,6 @@ Examples:
 					if serveIsRunningFn(pidPath) {
 						return output.ErrConflict("tslink is already running (see: tslink status)")
 					}
-					serveRemovePIDFn(pidPath)
 					restoreReadyEnv := setDaemonReadyEnv(readyPath)
 					defer restoreReadyEnv()
 					var err error

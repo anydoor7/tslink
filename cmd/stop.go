@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"io"
+	"os"
 
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/daemon"
@@ -10,10 +11,22 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var isRunningFn = daemon.IsRunning
+var isRunningFn = commandIsDaemonRunning
 var stopDaemonFn = daemon.StopDaemon
-var removePIDFn = daemon.RemovePID
+var removePIDFn = daemon.RemovePID // retained as a compatibility test seam; not called on an inconclusive stop path
+var isProcessAbsentFromPIDFileFn = daemon.IsProcessAbsentFromPIDFile
 var pidPathFn = config.PIDPath
+
+func commandIsDaemonRunning(pidPath string) bool {
+	if daemon.IsRunning(pidPath) {
+		return true
+	}
+	// A command whose own PID appears in the daemon PID file must not destructively
+	// clean up that file. Keep the command layer conservative while the daemon
+	// identity layer still requires an explicit `serve` argv.
+	pid, err := daemon.ReadPID(pidPath)
+	return err == nil && pid == os.Getpid()
+}
 
 // StopResult holds the result for JSON output.
 type StopResult struct {
@@ -23,7 +36,9 @@ type StopResult struct {
 
 func stopService(pidPath string, isJSON bool, out io.Writer) error {
 	if !isRunningFn(pidPath) {
-		removePIDFn(pidPath)
+		if isProcessAbsentFromPIDFileFn(pidPath) {
+			removePIDFn(pidPath)
+		}
 		if isJSON {
 			output.Success("stop", StopResult{WasRunning: false, Stopped: false})
 			return nil
@@ -61,8 +76,9 @@ the daemon after 'tslink stop', throttled by ThrottleInterval=30. Run
 'tslink uninstall' first when you want to disable macOS autostart instead of
 restarting.
 
-If the daemon is not running, the stale PID file (if any) is cleaned up and
-a "not running" message is displayed.
+If the daemon is not running, a "not running" message is displayed. Stale PID
+identity files are cleaned up only after process absence is confirmed; an
+inconclusive check leaves them in place so it cannot orphan a live daemon.
 
 Examples:
   tslink stop                  Stop the background daemon

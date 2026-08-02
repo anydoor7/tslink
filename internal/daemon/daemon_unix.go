@@ -8,8 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
-	"strings"
 	"syscall"
 	"time"
 )
@@ -24,6 +22,7 @@ var (
 
 	processExecutable = defaultProcessExecutable
 	processStartTime  = defaultProcessStartTime
+	processArguments  = defaultProcessArguments
 )
 
 // IsRunning reports whether the process referenced by path is alive.
@@ -32,36 +31,48 @@ func IsRunning(path string) bool {
 	if err != nil || pid <= 0 {
 		return false
 	}
-	if !isProcessAlive(pid) {
+	switch inspectProcessLiveness(pid) {
+	case processLivenessAbsent:
 		return false
+	case processLivenessUnknown:
+		return true
 	}
-	return verifyProcessIdentity(path, pid) == nil
+	return identityVerifiedOrUnavailable(verifyProcessIdentity(path, pid))
 }
 
 // IsProcessRunning reports whether pid is alive and belongs to the TSLink
 // product. Callers with a PID-file path should use IsRunning so the recorded
 // process-instance identity is also checked.
 func IsProcessRunning(pid int) bool {
-	if !isProcessAlive(pid) {
+	switch inspectProcessLiveness(pid) {
+	case processLivenessAbsent:
 		return false
+	case processLivenessUnknown:
+		return true
 	}
-	return verifyProcessProduct(pid) == nil
+	return identityVerifiedOrUnavailable(verifyProcessProduct(pid))
 }
 
-func isProcessAlive(pid int) bool {
+func inspectProcessLiveness(pid int) processLiveness {
 	if pid <= 0 {
-		return false
+		return processLivenessAbsent
 	}
 	proc, err := findProcess(pid)
 	if err != nil {
-		return false
+		return processLivenessUnknown
 	}
 
-	if err := proc.Signal(syscall.Signal(0)); err != nil && !errors.Is(err, syscall.EPERM) {
-		return false
+	if err := proc.Signal(syscall.Signal(0)); err != nil {
+		if errors.Is(err, syscall.ESRCH) || errors.Is(err, os.ErrProcessDone) {
+			return processLivenessAbsent
+		}
+		if errors.Is(err, syscall.EPERM) {
+			return processLivenessAlive
+		}
+		return processLivenessUnknown
 	}
 
-	return true
+	return processLivenessAlive
 }
 
 // Daemonize re-launches the current binary in the background with the serve
@@ -164,50 +175,4 @@ func StopDaemon(pidPath string) error {
 	}
 
 	return fmt.Errorf("process %d did not exit after SIGTERM", pid)
-}
-
-func defaultProcessExecutable(pid int) (string, error) {
-	if path, err := os.Readlink(fmt.Sprintf("/proc/%d/exe", pid)); err == nil {
-		return path, nil
-	}
-
-	out, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "comm=").Output()
-	if err != nil {
-		return "", err
-	}
-	identity := strings.TrimSpace(string(out))
-	if identity == "" {
-		return "", fmt.Errorf("empty process identity")
-	}
-	return identity, nil
-}
-
-func defaultProcessStartTime(pid int) (time.Time, error) {
-	cmd := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "lstart=")
-	cmd.Env = append(os.Environ(), "LC_ALL=C", "TZ=UTC0")
-	out, err := cmd.Output()
-	if err != nil {
-		return time.Time{}, err
-	}
-	value := strings.Join(strings.Fields(string(out)), " ")
-	if value == "" {
-		return time.Time{}, fmt.Errorf("empty process start time")
-	}
-	started, err := time.ParseInLocation("Mon Jan 2 15:04:05 2006", value, time.UTC)
-	if err != nil {
-		return time.Time{}, fmt.Errorf("parse process start time %q: %w", value, err)
-	}
-	return started, nil
-}
-
-func legacyProcessProductFallback(pid int, executablePath string) bool {
-	if filepath.Base(executablePath) != "tslink" {
-		return false
-	}
-	out, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "command=").Output()
-	if err != nil {
-		return false
-	}
-	fields := strings.Fields(string(out))
-	return len(fields) >= 2 && fields[1] == "serve"
 }

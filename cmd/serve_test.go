@@ -703,6 +703,49 @@ func TestServeCmd_DaemonMode(t *testing.T) {
 	}
 }
 
+func TestServeCmd_DaemonModeDoesNotDeletePIDAfterGuardAllows(t *testing.T) {
+	dir := t.TempDir()
+	mockServeDefaults(t, dir)
+	serveDaemon = true
+	mockServeDaemonReadyAfterInitialCheck(t)
+
+	pidPath, err := servePIDPathFn()
+	if err != nil {
+		t.Fatalf("servePIDPathFn() error = %v", err)
+	}
+	identityPath := pidPath + ".identity"
+	if err := os.WriteFile(pidPath, []byte(fmt.Sprintf("%d\n", os.Getpid())), 0o600); err != nil {
+		t.Fatalf("WriteFile(pid) error = %v", err)
+	}
+	if err := os.WriteFile(identityPath, []byte("live-daemon-evidence\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile(identity) error = %v", err)
+	}
+
+	removeCalls := 0
+	serveRemovePIDFn = func(string) { removeCalls++ }
+	serveDaemonizeFn = func(out, errLog, controlURL string, manageACL bool) (int, error) {
+		for _, path := range []string{pidPath, identityPath} {
+			if _, err := os.Stat(path); err != nil {
+				t.Fatalf("daemonize observed deleted live-daemon evidence %q: %v", path, err)
+			}
+		}
+		return 99999, nil
+	}
+
+	cmd := findServeCmd(t)
+	if err := cmd.RunE(cmd, nil); err != nil {
+		t.Fatalf("RunE() error = %v", err)
+	}
+	if removeCalls != 0 {
+		t.Fatalf("serveRemovePIDFn calls = %d, want 0 after an inconclusive guard result", removeCalls)
+	}
+	for _, path := range []string{pidPath, identityPath} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("live-daemon evidence %q was not preserved: %v", path, err)
+		}
+	}
+}
+
 func TestServeCmd_DaemonModeForwardsControlURL(t *testing.T) {
 	dir := t.TempDir()
 	mockServeDefaults(t, dir)
