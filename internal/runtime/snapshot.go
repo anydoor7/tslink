@@ -27,6 +27,7 @@ const (
 	StatusMalformed        = "malformed"
 	StatusUnreadable       = "unreadable"
 	StatusStale            = "stale"
+	StatusPartial          = "partial"
 	StatusPIDMismatch      = "pid_mismatch"
 	StatusRegistryMismatch = "registry_mismatch"
 )
@@ -43,6 +44,7 @@ type Snapshot struct {
 	DaemonStartedAt     time.Time         `json:"daemon_started_at"`
 	RegistryFingerprint string            `json:"registry_fingerprint"`
 	UpdatedAt           time.Time         `json:"updated_at"`
+	Partial             bool              `json:"partial,omitempty"`
 	Services            []ServiceSnapshot `json:"services"`
 }
 
@@ -104,6 +106,18 @@ type Freshness struct {
 }
 
 func NewSnapshot(daemonPID int, daemonStartedAt time.Time, registryFingerprint string, updatedAt time.Time, states []ServiceState) Snapshot {
+	return newSnapshot(daemonPID, daemonStartedAt, registryFingerprint, updatedAt, states, false)
+}
+
+// NewPartialSnapshot returns non-authoritative progress evidence produced while
+// a registry synchronization is still starting services. Consumers may use
+// services present in it as positive evidence, but absence is not evidence that
+// any other registered service is down or missing.
+func NewPartialSnapshot(daemonPID int, daemonStartedAt time.Time, registryFingerprint string, updatedAt time.Time, states []ServiceState) Snapshot {
+	return newSnapshot(daemonPID, daemonStartedAt, registryFingerprint, updatedAt, states, true)
+}
+
+func newSnapshot(daemonPID int, daemonStartedAt time.Time, registryFingerprint string, updatedAt time.Time, states []ServiceState, partial bool) Snapshot {
 	sorted := append([]ServiceState(nil), states...)
 	sort.Slice(sorted, func(i, j int) bool {
 		return sorted[i].Service.Name < sorted[j].Service.Name
@@ -135,6 +149,7 @@ func NewSnapshot(daemonPID int, daemonStartedAt time.Time, registryFingerprint s
 		DaemonStartedAt:     daemonStartedAt.UTC(),
 		RegistryFingerprint: registryFingerprint,
 		UpdatedAt:           updatedAt.UTC(),
+		Partial:             partial,
 		Services:            services,
 	}
 }
@@ -280,6 +295,14 @@ func Classify(snapshot *Snapshot, loadErr error, expected ExpectedRuntime) Fresh
 			Code:    inspect.WarningCodeRuntimeSnapshotStale,
 			Exact:   false,
 			Message: "runtime snapshot registry fingerprint does not match current registry",
+		}
+	}
+	if snapshot.Partial {
+		return Freshness{
+			Status:  StatusPartial,
+			Code:    inspect.WarningCodeRuntimeSnapshotStale,
+			Exact:   false,
+			Message: "runtime snapshot is partial while registry synchronization is in progress",
 		}
 	}
 	return Freshness{

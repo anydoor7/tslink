@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/monody0007/tslink/internal/authmode"
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/registry"
 	runtimesnapshot "github.com/monody0007/tslink/internal/runtime"
@@ -1804,6 +1805,71 @@ func TestSyncNodes_RemovesDeletedService(t *testing.T) {
 	}
 }
 
+func TestSyncNodes_CredentialUpgradeRemovesTierOneStateBeforeAuthKey(t *testing.T) {
+	t.Setenv(config.ConfigDirEnv, t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+	writeRegistry(t, []registry.Service{
+		{Name: "web", Type: registry.TypeFile, Path: t.TempDir(), Tags: []string{"tag:tsmain"}},
+	})
+
+	nodesDir, err := config.NodesDir()
+	if err != nil {
+		t.Fatalf("NodesDir() error = %v", err)
+	}
+	stateDir := filepath.Join(nodesDir, "web")
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll(state) error = %v", err)
+	}
+	statePath := filepath.Join(stateDir, "tailscaled.state")
+	if err := os.WriteFile(statePath, []byte(`{"tier":"interactive"}`), 0o600); err != nil {
+		t.Fatalf("WriteFile(state) error = %v", err)
+	}
+	if err := authmode.MarkCredentialUpgradePending(); err != nil {
+		t.Fatalf("MarkCredentialUpgradePending() error = %v", err)
+	}
+
+	oldNew := newTSNetServerFn
+	constructorCalled := false
+	newTSNetServerFn = func(svc registry.Service, gotStateDir, authKey, controlURL string) tsnetServer {
+		constructorCalled = true
+		if authKey != "derived-tier-2-key" {
+			t.Fatalf("auth key = %q, want derived Tier 2 key", authKey)
+		}
+		if gotStateDir != stateDir {
+			t.Fatalf("state dir = %q, want %q", gotStateDir, stateDir)
+		}
+		if _, err := os.Stat(statePath); !os.IsNotExist(err) {
+			t.Fatalf("Tier 1 state still exists when credentialed tsnet server is constructed: %v", err)
+		}
+		return &fakeTSNetServer{certDomains: []string{"web.tailnet.ts.net"}}
+	}
+	t.Cleanup(func() { newTSNetServerFn = oldNew })
+
+	s, err := New("", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	s.SetCredentialed(true)
+	s.SetAuthKeyProvider(func(context.Context, registry.Service) (string, error) {
+		return "derived-tier-2-key", nil
+	})
+	if err := s.syncNodes(context.Background()); err != nil {
+		t.Fatalf("syncNodes() error = %v", err)
+	}
+	if !constructorCalled {
+		t.Fatal("credentialed tsnet server constructor was not called")
+	}
+	pending, err := authmode.CredentialUpgradePending()
+	if err != nil {
+		t.Fatalf("CredentialUpgradePending() error = %v", err)
+	}
+	if pending {
+		t.Fatal("credential upgrade marker remains after Tier 1 state removal")
+	}
+}
+
 func TestSyncNodes_WritesRuntimeSnapshotAfterServiceStarts(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	if err := config.EnsureDir(); err != nil {
@@ -1892,9 +1958,9 @@ func TestSyncNodes_PublishesPartialSnapshotBeforeStartingNextService(t *testing.
 	t.Cleanup(func() { newTSNetServerFn = oldNew })
 
 	oldSave := runtimeSaveSnapshotFn
-	var serviceCounts []int
+	var snapshots []runtimesnapshot.Snapshot
 	runtimeSaveSnapshotFn = func(path string, snapshot runtimesnapshot.Snapshot) error {
-		serviceCounts = append(serviceCounts, len(snapshot.Services))
+		snapshots = append(snapshots, snapshot)
 		return nil
 	}
 	t.Cleanup(func() { runtimeSaveSnapshotFn = oldSave })
@@ -1906,8 +1972,23 @@ func TestSyncNodes_PublishesPartialSnapshotBeforeStartingNextService(t *testing.
 	if err := s.syncNodes(context.Background()); err != nil {
 		t.Fatalf("syncNodes() error = %v", err)
 	}
-	if len(serviceCounts) < 3 || serviceCounts[0] != 1 || serviceCounts[len(serviceCounts)-1] != 2 {
-		t.Fatalf("snapshot service counts = %v, want partial 1 before complete 2", serviceCounts)
+	if len(snapshots) < 3 || len(snapshots[0].Services) != 1 || len(snapshots[len(snapshots)-1].Services) != 2 {
+		t.Fatalf("snapshots = %+v, want partial 1 before complete 2", snapshots)
+	}
+	if !snapshots[0].Partial {
+		t.Fatal("first incremental snapshot is not marked partial")
+	}
+	if snapshots[len(snapshots)-1].Partial {
+		t.Fatal("final successful snapshot is still marked partial")
+	}
+	first := snapshots[0]
+	freshness := runtimesnapshot.Classify(&first, nil, runtimesnapshot.ExpectedRuntime{
+		DaemonPID:                  first.DaemonPID,
+		DaemonStartedAtLowerBound:  first.DaemonStartedAt,
+		CurrentRegistryFingerprint: first.RegistryFingerprint,
+	})
+	if freshness.Exact || freshness.Status != runtimesnapshot.StatusPartial {
+		t.Fatalf("partial snapshot freshness = %+v, want non-authoritative partial", freshness)
 	}
 }
 

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/monody0007/tslink/internal/authmode"
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/logging"
 	"github.com/monody0007/tslink/internal/metrics"
@@ -57,6 +58,11 @@ func newTSNetServer(svc registry.Service, stateDir, authKey, controlURL string) 
 }
 
 var newTSNetServerFn = newTSNetServer
+
+var (
+	credentialUpgradePendingFn = authmode.CredentialUpgradePending
+	clearCredentialUpgradeFn   = authmode.ClearCredentialUpgradePending
+)
 
 type tsnetStarter interface {
 	Start() error
@@ -235,6 +241,7 @@ type Server struct {
 	nodes           map[string]*ServiceNode
 	authKey         string
 	authKeyProvider AuthKeyProvider
+	credentialed    bool
 	controlURL      string
 	mu              sync.RWMutex
 	cfgDir          string
@@ -259,6 +266,7 @@ func New(authKey, controlURL string) (*Server, error) {
 		nodes:           make(map[string]*ServiceNode),
 		authKey:         authKey,
 		authKeyProvider: staticAuthKeyProvider(authKey),
+		credentialed:    authKey != "",
 		controlURL:      controlURL,
 		cfgDir:          cfgDir,
 		metrics:         metrics.New(),
@@ -280,6 +288,13 @@ func (s *Server) SetAuthKeyProvider(fn AuthKeyProvider) {
 		return
 	}
 	s.authKeyProvider = fn
+}
+
+// SetCredentialed records whether this process is running the stored-
+// credential tier. The command layer resolves this independently from the
+// per-service auth keys supplied by AuthKeyProvider.
+func (s *Server) SetCredentialed(credentialed bool) {
+	s.credentialed = credentialed
 }
 
 // SetAuthHandoffFunc sets the callback used to publish interactive login URLs.
@@ -428,6 +443,9 @@ func (s *Server) syncNodesWithOutcome(ctx context.Context) (syncOutcome, error) 
 		slog.Info("skipping stale registry sync generation", "generation", generation)
 		return outcome, nil
 	}
+	if err := s.prepareCredentialUpgradeLocked(reg.Services); err != nil {
+		return outcome, err
+	}
 
 	// Stop nodes for removed or changed services
 	var authIdentityRestartTargets []tailapi.CleanupTarget
@@ -510,7 +528,7 @@ func (s *Server) syncNodesWithOutcome(ctx context.Context) (syncOutcome, error) 
 		// Persist each successfully running node before starting the next one.
 		// Interactive enrollment is sequential, so this lets status pollers see
 		// earlier services as up while the next service is awaiting its login.
-		s.writeRuntimeSnapshotLocked(registryFingerprint)
+		s.writeRuntimeSnapshotLocked(registryFingerprint, false)
 	}
 
 	syncErr := errors.Join(append(reloadErrs, startErrs...)...)
@@ -521,7 +539,7 @@ func (s *Server) syncNodesWithOutcome(ctx context.Context) (syncOutcome, error) 
 
 	// Re-write after a fully successful sync so an empty registry and a sync
 	// that required no starts still publish authoritative runtime evidence.
-	s.writeRuntimeSnapshotLocked(registryFingerprint)
+	s.writeRuntimeSnapshotLocked(registryFingerprint, true)
 	outcome.committed = true
 	return outcome, nil
 }
@@ -593,6 +611,48 @@ func (s *Server) authIdentityChanged(old, new registry.Service) bool {
 	return effectiveControlURL(old, s.controlURL) != effectiveControlURL(new, s.controlURL)
 }
 
+// prepareCredentialUpgradeLocked applies the cross-process identity change
+// recorded by login. tsnet deliberately ignores an auth key when enrolled
+// state already exists, so a Tier 1 node must lose that state before the Tier 2
+// auth key can create its tagged identity. The marker is cleared only after all
+// target state directories are gone, and before any replacement node starts.
+func (s *Server) prepareCredentialUpgradeLocked(services []registry.Service) error {
+	if !s.credentialed {
+		return nil
+	}
+	pending, err := credentialUpgradePendingFn()
+	if err != nil {
+		return fmt.Errorf("check credential-mode transition: %w", err)
+	}
+	if !pending {
+		return nil
+	}
+	if len(s.nodes) != 0 {
+		return fmt.Errorf("apply credential-mode transition: restart tslink serve before re-enrolling running services")
+	}
+	seen := make(map[string]struct{}, len(services))
+	removed := 0
+	for _, service := range services {
+		name := service.Name
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		if err := registry.ValidateName(name); err != nil {
+			return fmt.Errorf("validate service for credential upgrade: %w", err)
+		}
+		if err := removeServiceStateDirFn(name); err != nil {
+			return fmt.Errorf("remove Tier 1 state for credential upgrade %q: %w", name, err)
+		}
+		removed++
+	}
+	if err := clearCredentialUpgradeFn(); err != nil {
+		return fmt.Errorf("complete credential-mode transition: %w", err)
+	}
+	slog.Info("prepared Tier 1 services for credentialed re-enrollment", "services", removed)
+	return nil
+}
+
 func effectiveControlURL(svc registry.Service, fallback string) string {
 	if svc.ControlURL != "" {
 		return svc.ControlURL
@@ -641,7 +701,7 @@ func (s *Server) cleanupAuthIdentityNodes(ctx context.Context, targets []tailapi
 	return nil
 }
 
-func (s *Server) writeRuntimeSnapshotLocked(registryFingerprint string) {
+func (s *Server) writeRuntimeSnapshotLocked(registryFingerprint string, complete bool) {
 	path, err := runtimeSnapshotPathFn()
 	if err != nil {
 		slog.Warn("runtime snapshot path unavailable", "error", err)
@@ -666,7 +726,12 @@ func (s *Server) writeRuntimeSnapshotLocked(registryFingerprint string) {
 			CertDomains: certDomains,
 		})
 	}
-	snapshot := runtimesnapshot.NewSnapshot(s.daemonPID, s.daemonStartedAt, registryFingerprint, time.Now().UTC(), states)
+	var snapshot runtimesnapshot.Snapshot
+	if complete {
+		snapshot = runtimesnapshot.NewSnapshot(s.daemonPID, s.daemonStartedAt, registryFingerprint, time.Now().UTC(), states)
+	} else {
+		snapshot = runtimesnapshot.NewPartialSnapshot(s.daemonPID, s.daemonStartedAt, registryFingerprint, time.Now().UTC(), states)
+	}
 	if err := runtimeSaveSnapshotFn(path, snapshot); err != nil {
 		slog.Warn("runtime snapshot write failed; continuing with running services", "path", path, "error", err)
 	}

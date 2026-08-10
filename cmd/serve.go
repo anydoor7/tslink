@@ -81,6 +81,10 @@ type authKeyProviderSetter interface {
 	SetAuthKeyProvider(server.AuthKeyProvider)
 }
 
+type credentialModeSetter interface {
+	SetCredentialed(bool)
+}
+
 type authHandoffSetter interface {
 	SetAuthHandoffFunc(server.AuthHandoffFunc)
 }
@@ -104,7 +108,9 @@ Authentication tiers:
 
   Tier 2 (opt-in): run "tslink login" with an API access token or OAuth client
   secret. TSLink keeps the existing tagged, per-service behavior intended for
-  durable multi-service installations.
+  durable multi-service installations. After upgrading an already-enrolled
+  Tier 1 install, restart serve so TSLink can replace its user-owned node state
+  with tagged Tier 2 identities.
 
 In --json mode, a zero-credential launch runs as a background daemon and
 returns a needs_login record immediately. --json, --no-browser, CI, and
@@ -526,6 +532,9 @@ func runForegroundWithOptions(pidPath, authKey, controlURL string, options foreg
 	srv, err := serveNewServerFn(authKey, controlURL)
 	if err != nil {
 		return err
+	}
+	if setter, ok := srv.(credentialModeSetter); ok {
+		setter.SetCredentialed(options.Credentialed)
 	}
 	if setter, ok := srv.(ensureTagsSetter); ok {
 		setter.SetEnsureTagsFn(serveEnsureTagsFn)

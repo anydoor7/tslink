@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -23,11 +24,20 @@ import (
 )
 
 type mockServer struct {
-	runErr error
+	runErr            error
+	runCalled         bool
+	credentialed      bool
+	credentialModeSet bool
 }
 
 func (m *mockServer) Run(ctx context.Context) error {
+	m.runCalled = true
 	return m.runErr
+}
+
+func (m *mockServer) SetCredentialed(credentialed bool) {
+	m.credentialed = credentialed
+	m.credentialModeSet = true
 }
 
 type mockReadyServer struct {
@@ -78,6 +88,25 @@ type mockInteractiveServer struct {
 	authHandoff  server.AuthHandoffFunc
 	service      registry.Service
 	authURL      string
+}
+
+type mockInteractiveEnsureTagsServer struct {
+	*mockInteractiveServer
+	ensureTagsFn server.EnsureTagsFunc
+}
+
+func (m *mockInteractiveEnsureTagsServer) SetEnsureTagsFn(fn server.EnsureTagsFunc) {
+	m.ensureTagsFn = fn
+}
+
+func (m *mockInteractiveEnsureTagsServer) Run(ctx context.Context) error {
+	if m.ensureTagsFn == nil {
+		return fmt.Errorf("ensure tags function was not set")
+	}
+	if err := m.ensureTagsFn(ctx, m.service.Tags); err != nil {
+		return err
+	}
+	return m.mockInteractiveServer.Run(ctx)
 }
 
 func (m *mockInteractiveServer) SetAuthKeyProvider(fn server.AuthKeyProvider) {
@@ -528,6 +557,46 @@ func TestServeCmd_ZeroCredentialSkipsAdminPathAndPresentsStableAuthURL(t *testin
 	}
 }
 
+func TestServeCmd_ZeroCredentialServerEnsureTagsCallbackIsNoOp(t *testing.T) {
+	dir := t.TempDir()
+	mockServeDefaults(t, dir)
+	ensureTagsCalled := false
+	serveEnsureTagsFn = func(context.Context, []string) error {
+		ensureTagsCalled = true
+		return errors.New("ACL trap invoked for zero-credential serve")
+	}
+	regPath := filepath.Join(dir, "registry.json")
+	if _, err := registry.Add(regPath, registry.Service{
+		Name:   "web",
+		Type:   registry.TypeProxy,
+		Target: "http://localhost:3000",
+		Tags:   []string{"tag:tsmain"},
+	}); err != nil {
+		t.Fatalf("registry.Add() error = %v", err)
+	}
+
+	serveHasStoredCredentialFn = func() (bool, error) { return false, nil }
+	interactive := &mockInteractiveEnsureTagsServer{mockInteractiveServer: &mockInteractiveServer{
+		service: registry.Service{Name: "web", Tags: []string{"tag:tsmain"}},
+		authURL: "https://login.tailscale.com/a/no-acl-trap",
+	}}
+	serveNewServerFn = func(authKey, controlURL string) (serverRunner, error) {
+		return interactive, nil
+	}
+	serveIsTerminalFn = func() bool { return false }
+
+	cmd := findServeCmd(t)
+	if err := cmd.Flags().Set("manage-acl", "true"); err != nil {
+		t.Fatalf("set manage-acl: %v", err)
+	}
+	if err := cmd.RunE(cmd, nil); err != nil {
+		t.Fatalf("RunE() error = %v, zero-credential server callback must ignore registry tags", err)
+	}
+	if ensureTagsCalled {
+		t.Fatal("administrative EnsureTags callback ran for zero-credential serve")
+	}
+}
+
 func TestPresentAuthHandoffNonInteractivePoliciesNeverOpenBrowser(t *testing.T) {
 	dir := t.TempDir()
 	mockServeDefaults(t, dir)
@@ -944,6 +1013,35 @@ func TestServeCmd_JSONZeroCredentialReturnsImmediateAuthHandoff(t *testing.T) {
 	}
 	if !response.Data.ExpiresAt.Equal(fixedNow.Add(authHandoffConservativeLifetime)) {
 		t.Fatalf("expires_at = %s, want conservative expiry", response.Data.ExpiresAt)
+	}
+}
+
+func TestServeCmd_JSONCredentialedStaysForeground(t *testing.T) {
+	dir := t.TempDir()
+	mockServeDefaults(t, dir)
+	serveHasStoredCredentialFn = func() (bool, error) { return true, nil }
+	serveDaemonizeFn = func(string, string, string, bool) (int, error) {
+		t.Fatal("credentialed JSON serve was daemonized")
+		return 0, nil
+	}
+	foreground := &mockServer{}
+	serveNewServerFn = func(authKey, controlURL string) (serverRunner, error) {
+		return foreground, nil
+	}
+
+	if err := rootCmd.PersistentFlags().Set("json", "true"); err != nil {
+		t.Fatalf("set json: %v", err)
+	}
+	t.Cleanup(func() { _ = rootCmd.PersistentFlags().Set("json", "false") })
+	cmd := findServeCmd(t)
+	if err := cmd.RunE(cmd, nil); err != nil {
+		t.Fatalf("RunE() error = %v", err)
+	}
+	if !foreground.runCalled {
+		t.Fatal("credentialed JSON serve did not run the foreground server")
+	}
+	if !foreground.credentialModeSet || !foreground.credentialed {
+		t.Fatalf("credential mode set=%v credentialed=%v, want stored-credential tier", foreground.credentialModeSet, foreground.credentialed)
 	}
 }
 

@@ -211,7 +211,7 @@ func TestPollableStatusShowsEarlierServicesWhileNextNeedsLogin(t *testing.T) {
 	withStatusURLSeams(t, true, 4242, startedAt)
 
 	fingerprint := statusRegistryFingerprint(t, regPath)
-	snapshot := tsruntime.NewSnapshot(4242, startedAt, fingerprint, startedAt.Add(time.Second), []tsruntime.ServiceState{
+	snapshot := tsruntime.NewPartialSnapshot(4242, startedAt, fingerprint, startedAt.Add(time.Second), []tsruntime.ServiceState{
 		{Service: first, RuntimeHost: "first.tailnet.ts.net"},
 	})
 	if err := tsruntime.Save(snapshotPath, snapshot); err != nil {
@@ -244,6 +244,82 @@ func TestPollableStatusShowsEarlierServicesWhileNextNeedsLogin(t *testing.T) {
 		if service.Status != want[service.Name] {
 			t.Fatalf("service %q status = %q, want %q (all=%+v)", service.Name, service.Status, want[service.Name], result.Services)
 		}
+	}
+}
+
+func TestStatusURLsPartialSnapshotUsesReportedServicesWithoutAuthoritativeOmissions(t *testing.T) {
+	dir := t.TempDir()
+	regPath := filepath.Join(dir, "registry.json")
+	pidPath := filepath.Join(dir, "tslink.pid")
+	snapshotPath := filepath.Join(dir, "runtime.json")
+	startedAt := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	first := addStatusTestService(t, regPath, registry.Service{
+		Name: "first", Type: registry.TypeFile, Path: t.TempDir(),
+	})
+	addStatusTestService(t, regPath, registry.Service{
+		Name: "second", Type: registry.TypeFile, Path: t.TempDir(),
+	})
+	fingerprint := statusRegistryFingerprint(t, regPath)
+	partial := tsruntime.NewPartialSnapshot(4242, startedAt, fingerprint, startedAt.Add(time.Second), []tsruntime.ServiceState{
+		{Service: first, RuntimeHost: "first.tailnet.ts.net"},
+	})
+	if err := tsruntime.Save(snapshotPath, partial); err != nil {
+		t.Fatalf("runtime.Save: %v", err)
+	}
+	withStatusURLSeams(t, true, 4242, startedAt)
+
+	result, err := getStatusURLs(pidPath, regPath, snapshotPath)
+	if err != nil {
+		t.Fatalf("getStatusURLs: %v", err)
+	}
+	if result.RuntimeSnapshot.Exact || result.RuntimeSnapshot.Status != tsruntime.StatusPartial {
+		t.Fatalf("runtime freshness = %+v, want non-authoritative partial", result.RuntimeSnapshot)
+	}
+	firstView := findStatusService(t, result, "first")
+	if firstView.Endpoint.Display != "https://first.tailnet.ts.net" || firstView.Endpoint.State != inspect.EndpointStateExact {
+		t.Fatalf("first endpoint = %+v, want positive partial-snapshot evidence", firstView.Endpoint)
+	}
+	secondView := findStatusService(t, result, "second")
+	if secondView.Endpoint.Display != "" || secondView.Endpoint.Host != "" || secondView.Endpoint.State != statusEndpointStateMissing {
+		t.Fatalf("second endpoint = %+v, want not-yet-reported state without placeholder", secondView.Endpoint)
+	}
+}
+
+func TestPollableStatusRejectsAuthHandoffFromDifferentDaemonPID(t *testing.T) {
+	dir := t.TempDir()
+	regPath := filepath.Join(dir, "registry.json")
+	pidPath := filepath.Join(dir, "tslink.pid")
+	snapshotPath := filepath.Join(dir, "runtime.json")
+	handoffPath := filepath.Join(dir, "auth-handoff.json")
+	startedAt := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	addStatusTestService(t, regPath, registry.Service{
+		Name: "web", Type: registry.TypeProxy, Target: "http://localhost:3000",
+	})
+	withStatusURLSeams(t, true, 4242, startedAt)
+
+	oldLoadHandoff := statusLoadAuthHandoffFn
+	statusLoadAuthHandoffFn = func(string) (authHandoffRecord, error) {
+		return authHandoffRecord{
+			SchemaVersion: authHandoffSchemaVersion,
+			Status:        authStatusNeedsLogin,
+			Service:       "web",
+			AuthURL:       "https://login.tailscale.com/a/stale-daemon",
+			ExpiresAt:     startedAt.Add(authHandoffConservativeLifetime),
+			Poll:          "tslink status --json",
+			DaemonPID:     31337,
+		}, nil
+	}
+	t.Cleanup(func() { statusLoadAuthHandoffFn = oldLoadHandoff })
+
+	result, err := getPollableStatus(pidPath, regPath, snapshotPath, handoffPath)
+	if err != nil {
+		t.Fatalf("getPollableStatus: %v", err)
+	}
+	if result.Authenticated || result.AuthStatus != authStatusNotAuthenticated {
+		t.Fatalf("auth state = authenticated:%v status:%q, want stale handoff ignored", result.Authenticated, result.AuthStatus)
+	}
+	if result.AuthURL != "" || result.ExpiresAt != nil {
+		t.Fatalf("stale daemon handoff leaked: url=%q expires_at=%v", result.AuthURL, result.ExpiresAt)
 	}
 }
 

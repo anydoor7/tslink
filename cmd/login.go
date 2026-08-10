@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/monody0007/tslink/internal/authmode"
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/credentials"
 	"github.com/monody0007/tslink/internal/logging"
@@ -70,11 +71,12 @@ var (
 	// prefix check alone cannot prove a client secret is usable, so this is the
 	// semantic gate that keeps a syntactically-valid-but-unusable secret from
 	// retiring a working credential.
-	loginActivateClientSecretFn = activateClientSecretViaUp
-	loginEnsureTagsFn           = tailapi.EnsureTags
-	loginCleanupLegacyStateFn   = cleanupLoginLegacyState
-	loginRemoveAllFn            = os.RemoveAll
-	loginNewValidationServerFn  = func(tmpStateDir, authKey string, tags []string) loginValidationServer {
+	loginActivateClientSecretFn  = activateClientSecretViaUp
+	loginEnsureTagsFn            = tailapi.EnsureTags
+	loginCleanupLegacyStateFn    = cleanupLoginLegacyState
+	loginMarkCredentialUpgradeFn = authmode.MarkCredentialUpgradePending
+	loginRemoveAllFn             = os.RemoveAll
+	loginNewValidationServerFn   = func(tmpStateDir, authKey string, tags []string) loginValidationServer {
 		return newClientSecretValidationServer(tmpStateDir, authKey, tags)
 	}
 )
@@ -92,6 +94,11 @@ eventually need re-authentication.
 
 Use this command only for the tagged, durable multi-service tier. Choose a
 credential type:
+
+When upgrading services that already enrolled through Tier 1, restart the
+running TSLink server after login. A successful zero-to-credential transition
+is recorded atomically; the next credentialed start removes the old per-service
+tsnet state before enrollment so the auth key creates the tagged Tier 2 nodes.
 
   [1] API access token (tskey-api-*)
       Generate at: https://login.tailscale.com/admin/settings/keys
@@ -418,6 +425,11 @@ func replaceLoginCredential(ctx context.Context, store loginCredentialStore, mod
 	}
 	if err := verifyLoginCredentialInactive(store, other); err != nil {
 		return "", rollbackLoginCredential(store, previous, fmt.Errorf("verify previous %s credential inactive: %w", loginCredentialModeLabel(other), err))
+	}
+	if previous.APIKey == "" && previous.ClientSecret == "" {
+		if err := loginMarkCredentialUpgradeFn(); err != nil {
+			return "", rollbackLoginCredential(store, previous, fmt.Errorf("record Tier 1 to Tier 2 transition: %w", err))
+		}
 	}
 	return backend, nil
 }

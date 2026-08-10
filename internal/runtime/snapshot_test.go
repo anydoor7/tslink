@@ -35,6 +35,13 @@ func TestSaveLoadSnapshotAtomicPrivateFile(t *testing.T) {
 	if err := Save(path, want); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile(snapshot) error = %v", err)
+	}
+	if strings.Contains(string(raw), `"partial"`) {
+		t.Fatalf("authoritative snapshot changed wire shape with partial marker: %s", raw)
+	}
 
 	dirInfo, err := os.Stat(filepath.Dir(path))
 	if err != nil {
@@ -63,6 +70,9 @@ func TestSaveLoadSnapshotAtomicPrivateFile(t *testing.T) {
 	}
 	if got.RegistryFingerprint != want.RegistryFingerprint || !got.UpdatedAt.Equal(want.UpdatedAt) {
 		t.Fatalf("snapshot metadata = %+v, want %+v", got, want)
+	}
+	if got.Partial {
+		t.Fatal("Partial = true after saving an authoritative snapshot")
 	}
 	if len(got.Services) != 1 {
 		t.Fatalf("services = %d, want 1", len(got.Services))
@@ -271,6 +281,27 @@ func TestClassifyFreshness(t *testing.T) {
 	unreadableErr := &SnapshotError{Status: StatusUnreadable, Code: inspect.WarningCodeRuntimeSnapshotUnreadable, Err: os.ErrPermission}
 	if got := Classify(nil, unreadableErr, expected); got.Status != StatusUnreadable || got.Code != inspect.WarningCodeRuntimeSnapshotUnreadable || got.Exact {
 		t.Fatalf("Classify(unreadable) = %+v", got)
+	}
+}
+
+func TestClassifyPartialSnapshotIsNeverAuthoritative(t *testing.T) {
+	complete := testSnapshot()
+	partial := NewPartialSnapshot(
+		complete.DaemonPID,
+		complete.DaemonStartedAt,
+		complete.RegistryFingerprint,
+		complete.UpdatedAt,
+		[]ServiceState{{Service: registry.Service{Name: "first", Type: registry.TypeFile, Path: "/tmp/first"}}},
+	)
+	expected := ExpectedRuntime{
+		DaemonPID:                  partial.DaemonPID,
+		DaemonStartedAtLowerBound:  partial.DaemonStartedAt,
+		CurrentRegistryFingerprint: partial.RegistryFingerprint,
+	}
+
+	got := Classify(&partial, nil, expected)
+	if got.Status != StatusPartial || got.Exact || got.Code != inspect.WarningCodeRuntimeSnapshotStale {
+		t.Fatalf("Classify(partial) = %+v, want explicit non-authoritative partial freshness", got)
 	}
 }
 

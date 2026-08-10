@@ -143,7 +143,7 @@ func getPollableStatus(pidPath, regPath, snapshotPath, authHandoffPath string) (
 	}
 	freshness := tsruntime.Classify(snapshot, loadErr, expected)
 	up := make(map[string]struct{})
-	if freshness.Exact && snapshot != nil {
+	if snapshotReportsServices(freshness) && snapshot != nil {
 		up = make(map[string]struct{}, len(snapshot.Services))
 		for _, svc := range snapshot.Services {
 			up[svc.Name] = struct{}{}
@@ -245,7 +245,7 @@ func getStatusURLsWithAuth(pidPath, regPath, snapshotPath, authHandoffPath strin
 	}
 
 	snapshotServices := map[string]tsruntime.ServiceSnapshot{}
-	if freshness.Exact && snapshot != nil {
+	if snapshotReportsServices(freshness) && snapshot != nil {
 		for _, svc := range snapshot.Services {
 			snapshotServices[svc.Name] = svc
 		}
@@ -264,7 +264,8 @@ func getStatusURLsWithAuth(pidPath, regPath, snapshotPath, authHandoffPath strin
 			Warnings: append([]inspect.WarningView(nil), view.Warnings...),
 		}
 
-		if freshness.Exact {
+		switch {
+		case freshness.Exact:
 			snapshotService, ok := snapshotServices[svc.Name]
 			switch {
 			case ok && snapshotService.Endpoint.State == inspect.EndpointStateExact:
@@ -281,7 +282,23 @@ func getStatusURLsWithAuth(pidPath, regPath, snapshotPath, authHandoffPath strin
 					"Runtime snapshot is exact but does not include this registered service.",
 				)
 			}
-		} else {
+		case freshness.Status == tsruntime.StatusPartial:
+			snapshotService, ok := snapshotServices[svc.Name]
+			switch {
+			case ok && snapshotService.Endpoint.State == inspect.EndpointStateExact:
+				// A partial snapshot is not authoritative for omissions, but an
+				// included service is positive runtime evidence and keeps sequential
+				// interactive-enrollment progress visible.
+				service.Endpoint = snapshotService.Endpoint
+				service.Endpoint.State = inspect.EndpointStateExact
+				service.Exposure = snapshotService.Exposure
+			case ok:
+				service.Endpoint.State = statusEndpointStateExpectedUnverified
+			default:
+				service.Endpoint.State = statusEndpointStateMissing
+			}
+			service.Warnings = appendRuntimeFreshnessWarning(service.Warnings, freshness)
+		default:
 			service.Endpoint.State = endpointStateForFreshness(freshness)
 			service.Warnings = appendRuntimeFreshnessWarning(service.Warnings, freshness)
 		}
@@ -328,9 +345,15 @@ func runtimeSnapshotResult(snapshot *tsruntime.Snapshot, freshness tsruntime.Fre
 	return result
 }
 
+func snapshotReportsServices(freshness tsruntime.Freshness) bool {
+	return freshness.Exact || freshness.Status == tsruntime.StatusPartial
+}
+
 func endpointStateForFreshness(freshness tsruntime.Freshness) string {
 	switch freshness.Status {
 	case tsruntime.StatusMissing:
+		return statusEndpointStateMissing
+	case tsruntime.StatusPartial:
 		return statusEndpointStateMissing
 	case tsruntime.StatusMalformed, tsruntime.StatusStale, tsruntime.StatusPIDMismatch, tsruntime.StatusRegistryMismatch:
 		return statusEndpointStateStale

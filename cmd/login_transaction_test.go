@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/monody0007/tslink/internal/authmode"
+	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/credentials"
 )
 
@@ -125,6 +127,38 @@ func TestReplaceLoginCredentialTransactionalSuccessModes(t *testing.T) {
 			store.assertState(t, tc.apiAfter, tc.csAfter)
 		})
 	}
+}
+
+func TestReplaceLoginCredentialFromZeroTierRecordsUpgrade(t *testing.T) {
+	t.Setenv(config.ConfigDirEnv, t.TempDir())
+	withLoginVerifier(t, func(context.Context, string) error { return nil })
+
+	store := newRecordingCredentialStore("", "")
+	if _, err := replaceLoginCredential(context.Background(), store, loginCredentialModeAPIKey, "tskey-api-new"); err != nil {
+		t.Fatalf("replaceLoginCredential() error = %v", err)
+	}
+	store.assertState(t, "tskey-api-new", "")
+	pending, err := authmode.CredentialUpgradePending()
+	if err != nil {
+		t.Fatalf("CredentialUpgradePending() error = %v", err)
+	}
+	if !pending {
+		t.Fatal("credential upgrade marker is absent after zero-to-credential commit")
+	}
+}
+
+func TestReplaceLoginCredentialUpgradeMarkerFailureRollsBack(t *testing.T) {
+	withLoginVerifier(t, func(context.Context, string) error { return nil })
+	oldMark := loginMarkCredentialUpgradeFn
+	loginMarkCredentialUpgradeFn = func() error { return fmt.Errorf("marker unavailable") }
+	t.Cleanup(func() { loginMarkCredentialUpgradeFn = oldMark })
+
+	store := newRecordingCredentialStore("", "")
+	_, err := replaceLoginCredential(context.Background(), store, loginCredentialModeAPIKey, "tskey-api-new")
+	if err == nil || !strings.Contains(err.Error(), "record Tier 1 to Tier 2 transition") {
+		t.Fatalf("replaceLoginCredential() error = %v, want transition marker failure", err)
+	}
+	store.assertState(t, "", "")
 }
 
 func TestReplaceLoginCredentialRollbackFailurePoints(t *testing.T) {
