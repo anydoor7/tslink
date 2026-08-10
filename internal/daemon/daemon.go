@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -304,10 +305,18 @@ func verifyProcessServeCommand(pid int) error {
 }
 
 func legacyProcessProductFallback(pid int, executablePath string) error {
-	if filepath.Base(executablePath) != "tslink" {
-		return identityMismatchf("process %d unlinked executable basename %q is not tslink", pid, filepath.Base(executablePath))
+	wantBase := processExecutableBaseName()
+	if filepath.Base(executablePath) != wantBase {
+		return identityMismatchf("process %d unlinked executable basename %q is not %s", pid, filepath.Base(executablePath), wantBase)
 	}
 	return verifyProcessServeCommand(pid)
+}
+
+func processExecutableBaseName() string {
+	if runtime.GOOS == "windows" {
+		return "tslink.exe"
+	}
+	return "tslink"
 }
 
 func isDefinitiveNonGoExecutable(err error) bool {

@@ -171,6 +171,7 @@ func saveServeState(t *testing.T) {
 		loadAuthHandoff    func(string) (authHandoffRecord, error)
 		removeAuthHandoff  func(string) error
 		openBrowser        func(string) error
+		ciEnvironmentSet   func() bool
 		isTerminal         func() bool
 		writePID           func(string) error
 		writePIDForProcess func(string, int) error
@@ -184,7 +185,7 @@ func saveServeState(t *testing.T) {
 		serveGetAuthKeyFn, serveHasStoredCredentialFn, servePIDPathFn, serveIsRunningFn, serveIsPIDRunningFn, serveEnsureTagsFn, serveCleanupFn,
 		serveLoadGlobalFn, serveLogDirFn, serveDaemonizeFn, serveReadPIDFn,
 		serveReadyPathFn, serveAuthHandoffPathFn, serveWriteReadyFn, serveReadReadyFn, serveRemoveReadyFn,
-		serveSaveAuthHandoffFn, serveLoadAuthHandoffFn, serveRemoveAuthHandoffFn, serveOpenBrowserFn, serveIsTerminalFn,
+		serveSaveAuthHandoffFn, serveLoadAuthHandoffFn, serveRemoveAuthHandoffFn, serveOpenBrowserFn, serveCIEnvironmentSetFn, serveIsTerminalFn,
 		serveWritePIDFn, serveWritePIDForProcessFn, serveRemovePIDFn, serveWithPIDLockFn, serveNewServerFn,
 		serveDaemonReadyTimeout, serveDaemonReadyPollInterval,
 	}
@@ -213,6 +214,7 @@ func saveServeState(t *testing.T) {
 		serveLoadAuthHandoffFn = old.loadAuthHandoff
 		serveRemoveAuthHandoffFn = old.removeAuthHandoff
 		serveOpenBrowserFn = old.openBrowser
+		serveCIEnvironmentSetFn = old.ciEnvironmentSet
 		serveIsTerminalFn = old.isTerminal
 		serveWritePIDFn = old.writePID
 		serveWritePIDForProcessFn = old.writePIDForProcess
@@ -267,6 +269,7 @@ func mockServeDefaults(t *testing.T, dir string) {
 	}
 	serveReadReadyFn = func(path string) (int, error) { return 99999, nil }
 	serveRemoveReadyFn = func(path string) { os.Remove(path) }
+	serveCIEnvironmentSetFn = func() bool { return false }
 	serveWritePIDFn = func(path string) error { return os.WriteFile(path, []byte("12345"), 0600) }
 	serveWritePIDForProcessFn = func(path string, pid int) error {
 		return os.WriteFile(path, []byte(fmt.Sprintf("%d", pid)), 0600)
@@ -622,7 +625,7 @@ func TestPresentAuthHandoffNonInteractivePoliciesNeverOpenBrowser(t *testing.T) 
 		{
 			name: "CI set",
 			configure: func(cmd *cobra.Command) {
-				t.Setenv("CI", "1")
+				serveCIEnvironmentSetFn = func() bool { return true }
 				serveIsTerminalFn = func() bool { return true }
 			},
 		},
@@ -648,6 +651,34 @@ func TestPresentAuthHandoffNonInteractivePoliciesNeverOpenBrowser(t *testing.T) 
 				t.Fatalf("stdout = %q, want printed auth URL", stdout.String())
 			}
 		})
+	}
+}
+
+func TestPresentAuthHandoffCIEnvironmentSuppressesBrowser(t *testing.T) {
+	dir := t.TempDir()
+	mockServeDefaults(t, dir)
+	serveCIEnvironmentSetFn = func() bool { return true }
+	serveIsTerminalFn = func() bool { return true }
+	opened := false
+	serveOpenBrowserFn = func(string) error {
+		opened = true
+		return nil
+	}
+	record := newAuthHandoffRecord("web", "https://login.tailscale.com/a/test-auth", 4242)
+	cmd := findServeCmd(t)
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	presentAuthHandoff(cmd, record)
+	if opened {
+		t.Fatal("browser opener called after CI detection")
+	}
+	if !strings.Contains(stdout.String(), record.AuthURL) {
+		t.Fatalf("stdout = %q, want printed auth URL", stdout.String())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want no browser warning when opening was intentionally suppressed", stderr.String())
 	}
 }
 

@@ -590,6 +590,25 @@ func TestLegacyPIDStartToleranceBoundaries(t *testing.T) {
 	}
 }
 
+func TestLegacyProcessProductFallbackRequiresPlatformExecutableName(t *testing.T) {
+	orig := processArguments
+	t.Cleanup(func() { processArguments = orig })
+	processArguments = func(int) ([]string, error) {
+		return []string{processExecutableBaseName(), "serve"}, nil
+	}
+
+	if err := legacyProcessProductFallback(4242, filepath.Join(t.TempDir(), processExecutableBaseName())); err != nil {
+		t.Fatalf("legacyProcessProductFallback() rejected platform executable name %q: %v", processExecutableBaseName(), err)
+	}
+	wrongBase := "tslink.exe"
+	if runtime.GOOS == "windows" {
+		wrongBase = "tslink"
+	}
+	if err := legacyProcessProductFallback(4242, filepath.Join(t.TempDir(), wrongBase)); !errors.Is(err, errIdentityMismatch) {
+		t.Fatalf("legacyProcessProductFallback() error = %v, want identity mismatch for basename %q", err, wrongBase)
+	}
+}
+
 func copyTestExecutable(t *testing.T, destination string) {
 	t.Helper()
 	source, err := os.Executable()
@@ -614,6 +633,9 @@ func startCopiedHelperProcess(t *testing.T, executablePath string) *exec.Cmd {
 
 func startCopiedHelperProcessWithArgs(t *testing.T, executablePath string, args ...string) *exec.Cmd {
 	t.Helper()
+	if runtime.GOOS == "windows" && !strings.EqualFold(filepath.Ext(executablePath), ".exe") {
+		executablePath += ".exe"
+	}
 	if _, err := os.Stat(executablePath); errors.Is(err, os.ErrNotExist) {
 		copyTestExecutable(t, executablePath)
 	} else if err != nil {

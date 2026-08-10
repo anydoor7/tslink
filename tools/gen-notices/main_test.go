@@ -92,6 +92,13 @@ func TestLinkedModulesIncludesSupportedTargetSpecificModules(t *testing.T) {
 	}
 }
 
+func TestParseGoListModulesRejectsMalformedRecord(t *testing.T) {
+	_, err := parseGoListModules([]byte("example.com/module\tv1.0.0\n"))
+	if err == nil || !strings.Contains(err.Error(), "unexpected go list module line") {
+		t.Fatalf("parseGoListModules() error = %v, want malformed-record error", err)
+	}
+}
+
 func TestClassifyLicenseKnownFamilies(t *testing.T) {
 	cases := []struct {
 		name string

@@ -144,12 +144,10 @@ jobs:
           go-version-file: go.mod
           check-latest: true
       - name: Staticcheck
-        env:
-          GOOS: ${{ matrix.goos }}
         run: |
           set -euo pipefail
           go install "honnef.co/go/tools/cmd/staticcheck@${STATICCHECK_VERSION}"
-          "$(go env GOPATH)/bin/staticcheck" ./...
+          GOOS="${{ matrix.goos }}" "$(go env GOPATH)/bin/staticcheck" ./...
 
   # Independent main and repo vulnerability jobs. They intentionally do NOT
   # depend on staticcheck or on each other so one failure cannot suppress the

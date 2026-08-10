@@ -144,9 +144,11 @@ func goListModulesForTarget(target releaseTarget) ([]module, error) {
 		"GOARCH":      target.goarch,
 		"CGO_ENABLED": "0",
 	})
-	out, err := cmd.CombinedOutput()
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
 	if err != nil {
-		return nil, fmt.Errorf("go list -deps for %s/%s CGO_ENABLED=0: %w\n%s", target.goos, target.goarch, err, strings.TrimSpace(string(out)))
+		return nil, fmt.Errorf("go list -deps for %s/%s CGO_ENABLED=0: %w\n%s", target.goos, target.goarch, err, strings.TrimSpace(stderr.String()))
 	}
 	return parseGoListModules(out)
 }

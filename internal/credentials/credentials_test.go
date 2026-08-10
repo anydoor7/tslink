@@ -5,6 +5,8 @@ import (
 	"errors"
 	"net/url"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -16,6 +18,7 @@ import (
 func setup(t *testing.T) {
 	t.Helper()
 	keyring.MockInit()
+	t.Setenv(config.ConfigDirEnv, t.TempDir())
 	t.Setenv("HOME", t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
@@ -272,16 +275,37 @@ func TestCredentialFallbackAvailabilityMatrix(t *testing.T) {
 		},
 	}
 
-	scenarios := []struct {
+	type credentialScenario struct {
 		name         string
 		keyringWrite bool
 		configure    func(*testing.T, credentialVariant)
 		wantError    bool
+		wantErrorHas []string
 		wantValue    string
 		wantBackend  CredentialBackend
 		wantKeyring  bool
 		wantFile     bool
-	}{
+	}
+
+	fileFallbackExpectation := credentialScenario{
+		name:        "keyring_write_fails_file_write_succeeds",
+		wantValue:   "new",
+		wantBackend: CredentialBackendFile,
+		wantFile:    true,
+	}
+	if runtime.GOOS == "windows" {
+		fileFallbackExpectation.wantError = true
+		fileFallbackExpectation.wantErrorHas = []string{
+			"file credential fallback is disabled on Windows",
+			"Credential Manager",
+		}
+		fileFallbackExpectation.wantValue = "old"
+		fileFallbackExpectation.wantBackend = ""
+		fileFallbackExpectation.wantKeyring = true
+		fileFallbackExpectation.wantFile = false
+	}
+
+	scenarios := []credentialScenario{
 		{
 			name:        "keyring_write_fails_fallback_disabled",
 			wantError:   true,
@@ -317,12 +341,7 @@ func TestCredentialFallbackAvailabilityMatrix(t *testing.T) {
 				t.Cleanup(func() { credentialFileWriteFunc = old })
 			},
 		},
-		{
-			name:        "keyring_write_fails_file_write_succeeds",
-			wantValue:   "new",
-			wantBackend: CredentialBackendFile,
-			wantFile:    true,
-		},
+		fileFallbackExpectation,
 		{
 			name:         "keyring_write_succeeds",
 			keyringWrite: true,
@@ -377,6 +396,11 @@ func TestCredentialFallbackAvailabilityMatrix(t *testing.T) {
 				}
 				if !scenario.wantError && err != nil {
 					t.Fatalf("credential write failed: %v", err)
+				}
+				for _, want := range scenario.wantErrorHas {
+					if err == nil || !strings.Contains(err.Error(), want) {
+						t.Fatalf("credential write error = %v, want substring %q", err, want)
+					}
 				}
 				if variant.reportsBackend && backend != scenario.wantBackend {
 					t.Fatalf("backend = %q, want %q", backend, scenario.wantBackend)
@@ -1076,36 +1100,54 @@ func TestHasStoredCredentialModes(t *testing.T) {
 func TestHasStoredCredentialErrorPaths(t *testing.T) {
 	t.Run("client secret read error", func(t *testing.T) {
 		setup(t)
-		if err := os.Mkdir(clientSecretPath(t), 0o700); err != nil {
+		path := clientSecretPath(t)
+		if err := os.Mkdir(path, 0o700); err != nil {
 			t.Fatalf("Mkdir() error = %v", err)
 		}
-		if _, err := HasStoredCredential(); err == nil {
-			t.Fatal("HasStoredCredential() error = nil, want client secret read error")
-		}
+		_, err := HasStoredCredential()
+		assertCredentialPathError(t, err, path)
 	})
 
 	t.Run("auth key path error", func(t *testing.T) {
 		setup(t)
 		origAuthKeyPath := authKeyPathFunc
 		t.Cleanup(func() { authKeyPathFunc = origAuthKeyPath })
+		wantErr := errors.New("auth key path unavailable")
 		authKeyPathFunc = func() (string, error) {
-			return "", errors.New("auth key path unavailable")
+			return "", wantErr
 		}
 		_, err := HasStoredCredential()
-		if err == nil || !strings.Contains(err.Error(), "auth key path unavailable") {
-			t.Fatalf("HasStoredCredential() error = %v, want auth key path error", err)
+		if !errors.Is(err, wantErr) {
+			t.Fatalf("HasStoredCredential() error = %v, want injected auth key path error", err)
 		}
 	})
 
 	t.Run("legacy auth key read error", func(t *testing.T) {
 		setup(t)
-		if err := os.Mkdir(authKeyPath(t), 0o700); err != nil {
+		path := authKeyPath(t)
+		if err := os.Mkdir(path, 0o700); err != nil {
 			t.Fatalf("Mkdir() error = %v", err)
 		}
-		if _, err := HasStoredCredential(); err == nil {
-			t.Fatal("HasStoredCredential() error = nil, want legacy auth key read error")
-		}
+		_, err := HasStoredCredential()
+		assertCredentialPathError(t, err, path)
 	})
+}
+
+func assertCredentialPathError(t *testing.T, err error, wantPath string) {
+	t.Helper()
+	if err == nil {
+		t.Fatalf("credential read error = nil, want path-attributed failure for %q", wantPath)
+	}
+	var pathErr *os.PathError
+	if errors.As(err, &pathErr) {
+		if filepath.Clean(pathErr.Path) != filepath.Clean(wantPath) {
+			t.Fatalf("credential read error path = %q, want %q", pathErr.Path, wantPath)
+		}
+		return
+	}
+	if !strings.Contains(err.Error(), wantPath) || !strings.Contains(err.Error(), "not a regular file") {
+		t.Fatalf("credential read error = %v, want unsafe-file classification for %q", err, wantPath)
+	}
 }
 
 func TestMigrateFromLegacy_PathError(t *testing.T) {

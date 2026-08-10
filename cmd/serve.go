@@ -62,6 +62,7 @@ var (
 	serveLoadAuthHandoffFn     = loadAuthHandoff
 	serveRemoveAuthHandoffFn   = removeAuthHandoff
 	serveOpenBrowserFn         = openBrowser
+	serveCIEnvironmentSetFn    = ciEnvironmentSet
 	serveIsTerminalFn          = func() bool { return term.IsTerminal(int(os.Stdin.Fd())) }
 
 	serveDaemonReadyTimeout      = 10 * time.Second
@@ -471,7 +472,7 @@ func presentAuthHandoff(cmd *cobra.Command, record authHandoffRecord) {
 		return
 	}
 	noBrowser, _ := cmd.Flags().GetBool("no-browser")
-	allowBrowser := !noBrowser && !ciEnvironmentSet() && serveIsTerminalFn()
+	allowBrowser := !noBrowser && !serveCIEnvironmentSetFn() && serveIsTerminalFn()
 	if allowBrowser {
 		if err := serveOpenBrowserFn(record.AuthURL); err != nil {
 			fmt.Fprintf(cmd.ErrOrStderr(), "→ Could not open a browser automatically: %v\n", err)
