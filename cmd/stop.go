@@ -76,6 +76,10 @@ the daemon after 'tslink stop', throttled by ThrottleInterval=30. Run
 'tslink uninstall' first when you want to disable macOS autostart instead of
 restarting.
 
+If TSLink was installed as a Linux systemd user service, a graceful stop exits
+successfully, so Restart=on-failure leaves it stopped. Run 'tslink install' or
+'systemctl --user start tslink.service' to start the installed service again.
+
 If the daemon is not running, a "not running" message is displayed. Stale PID
 identity files are cleaned up only after process absence is confirmed; an
 inconclusive check leaves them in place so it cannot orphan a live daemon.

@@ -71,6 +71,9 @@ var (
 	serveOpenBrowserFn         = openBrowser
 	serveCIEnvironmentSetFn    = ciEnvironmentSet
 	serveIsTerminalFn          = func() bool { return term.IsTerminal(int(os.Stdin.Fd())) }
+	serveSignalContextFn       = func() (context.Context, context.CancelFunc) {
+		return signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	}
 
 	serveDaemonReadyTimeout      = 10 * time.Second
 	serveDaemonReadyPollInterval = 50 * time.Millisecond
@@ -542,7 +545,7 @@ func runForegroundWithOptions(pidPath, authKey, controlURL string, options foreg
 		}()
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	ctx, stop := serveSignalContextFn()
 	defer stop()
 	ctx, stopTestParent, err := withTestDaemonParentLifetime(ctx)
 	if err != nil {
@@ -608,7 +611,16 @@ func runForegroundWithOptions(pidPath, authKey, controlURL string, options foreg
 		})
 	}
 
-	return srv.Run(ctx)
+	runErr := srv.Run(ctx)
+	// A signal-driven shutdown can cancel the initial sync before it has
+	// committed. Only suppress that cancellation when both sides agree on the
+	// cause: the command context was canceled and the returned error wraps
+	// context.Canceled. A live context or any non-cancellation startup failure
+	// remains an error so Restart=on-failure continues to supervise crashes.
+	if errors.Is(ctx.Err(), context.Canceled) && errors.Is(runErr, context.Canceled) {
+		return nil
+	}
+	return runErr
 }
 
 func withTestDaemonParentLifetime(parent context.Context) (context.Context, context.CancelFunc, error) {

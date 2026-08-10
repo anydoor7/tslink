@@ -48,9 +48,13 @@ If you enabled lingering only for TSLink, disable it after uninstall:
 		}
 
 		if _, err := os.Stat(servicePath); os.IsNotExist(err) {
+			warning := resetFailedSystemdServiceWarning()
 			if jsonOutput(cmd) {
-				output.Success("uninstall", UninstallResult{Path: servicePath, Removed: false, ServiceManager: systemdServiceName})
+				output.Success("uninstall", UninstallResult{Path: servicePath, Removed: false, ServiceManager: systemdServiceName, Warning: warning})
 				return nil
+			}
+			if warning != "" {
+				fmt.Fprintf(cmd.ErrOrStderr(), "→ ⚠ %s\n", warning)
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), "→ systemd user service not installed")
 			return nil
@@ -69,8 +73,14 @@ If you enabled lingering only for TSLink, disable it after uninstall:
 		if err := os.Remove(servicePath); err != nil {
 			return fmt.Errorf("remove systemd service: %w", err)
 		}
+		// Reset while systemd still has the just-removed unit loaded. After
+		// daemon-reload a clean unit may already be forgotten, turning this
+		// best-effort cleanup into a noisy "unit not loaded" failure.
+		if warning := resetFailedSystemdServiceWarning(); warning != "" {
+			warnings = append(warnings, warning)
+		}
 		if output, err := systemctlCombinedOutput("--user", "daemon-reload"); err != nil {
-			return fmt.Errorf("reload systemd user daemon: %w: %s", err, output)
+			return fmt.Errorf("reload systemd user daemon: %w%s", err, commandOutputSuffix(output))
 		}
 
 		warning := strings.Join(warnings, "; ")
@@ -90,6 +100,24 @@ If you enabled lingering only for TSLink, disable it after uninstall:
 		fmt.Fprintln(cmd.OutOrStdout(), "→ ✓ systemd user service removed")
 		return nil
 	},
+}
+
+func resetFailedSystemdServiceWarning() string {
+	output, err := systemctlCombinedOutput("--user", "reset-failed", systemdServiceName)
+	if err == nil {
+		return ""
+	}
+	stateOutput, stateErr := systemctlCombinedOutput(
+		"--user", "show", systemdServiceName,
+		"--property=LoadState", "--property=ActiveState", "--no-pager",
+	)
+	if stateErr == nil {
+		properties := parseSystemdProperties(stateOutput)
+		if properties["LoadState"] == "not-found" && properties["ActiveState"] == "inactive" {
+			return ""
+		}
+	}
+	return fmt.Sprintf("reset failed systemd user service state: %v%s", err, commandOutputSuffix(output))
 }
 
 func init() {

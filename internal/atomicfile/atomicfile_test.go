@@ -166,6 +166,9 @@ func TestWriteFileRejectsTargetSymlinkAndPreservesReferent(t *testing.T) {
 	}
 	target := filepath.Join(dir, "state.json")
 	if err := os.Symlink(referent, target); err != nil {
+		if runtime.GOOS == "windows" {
+			t.Skipf("symlink unavailable on this Windows runner: %v", err)
+		}
 		t.Fatalf("Symlink() error = %v", err)
 	}
 
@@ -186,6 +189,9 @@ func TestWriteFileDoesNotUsePredictableFixedTempSymlink(t *testing.T) {
 		t.Fatalf("WriteFile(secret) error = %v", err)
 	}
 	if err := os.Symlink(secret, target+".tmp"); err != nil {
+		if runtime.GOOS == "windows" {
+			t.Skipf("symlink unavailable on this Windows runner: %v", err)
+		}
 		t.Fatalf("Symlink(fixed tmp) error = %v", err)
 	}
 

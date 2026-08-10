@@ -767,6 +767,7 @@ func TestLinuxUninstallRunsSystemctlPathsAndSurfacesWarnings(t *testing.T) {
 	wantCalls := []string{
 		strings.Join([]string{"--user", "stop", systemdServiceName}, "\x00"),
 		strings.Join([]string{"--user", "disable", systemdServiceName}, "\x00"),
+		strings.Join([]string{"--user", "reset-failed", systemdServiceName}, "\x00"),
 		strings.Join([]string{"--user", "daemon-reload"}, "\x00"),
 	}
 	if strings.Join(systemctlCalls, "\n") != strings.Join(wantCalls, "\n") {
@@ -813,6 +814,115 @@ func TestLinuxUninstallJSONEnvelope(t *testing.T) {
 	data := dataMap(t, got)
 	if data["removed"] != true || data["service_manager"] != systemdServiceName {
 		t.Fatalf("uninstall data = %#v, want removed/systemd service manager", data)
+	}
+}
+
+func TestLinuxUninstallAbsentUnitStillResetsFailedStateBestEffort(t *testing.T) {
+	home := t.TempDir()
+	oldHome := linuxUserHomeDirFn
+	oldSystemctl := systemctlCombinedOutput
+	t.Cleanup(func() {
+		linuxUserHomeDirFn = oldHome
+		systemctlCombinedOutput = oldSystemctl
+		uninstallCmd.SetOut(nil)
+		uninstallCmd.SetErr(nil)
+	})
+
+	linuxUserHomeDirFn = func() (string, error) { return home, nil }
+	var calls []string
+	systemctlCombinedOutput = func(args ...string) ([]byte, error) {
+		calls = append(calls, strings.Join(args, "\x00"))
+		if len(args) > 1 && args[1] == "show" {
+			return []byte("LoadState=not-found\nActiveState=inactive\n"), nil
+		}
+		return []byte("unit not loaded"), errors.New("reset failed")
+	}
+
+	var out, errOut bytes.Buffer
+	uninstallCmd.SetOut(&out)
+	uninstallCmd.SetErr(&errOut)
+	if err := uninstallCmd.RunE(uninstallCmd, nil); err != nil {
+		t.Fatalf("uninstall RunE() error = %v, want absent unit and reset failure tolerated", err)
+	}
+	wantCalls := []string{
+		strings.Join([]string{"--user", "reset-failed", systemdServiceName}, "\x00"),
+		strings.Join([]string{"--user", "show", systemdServiceName, "--property=LoadState", "--property=ActiveState", "--no-pager"}, "\x00"),
+	}
+	if strings.Join(calls, "\n") != strings.Join(wantCalls, "\n") {
+		t.Fatalf("systemctl calls = %q, want reset-failed plus absent-state confirmation", calls)
+	}
+	if !strings.Contains(out.String(), "not installed") || errOut.Len() != 0 {
+		t.Fatalf("stdout = %q stderr = %q, want clean not-installed success after absent-state confirmation", out.String(), errOut.String())
+	}
+}
+
+func TestLinuxUninstallResetFailedFailureIsNonFatal(t *testing.T) {
+	home := t.TempDir()
+	oldHome := linuxUserHomeDirFn
+	oldSystemctl := systemctlCombinedOutput
+	t.Cleanup(func() {
+		linuxUserHomeDirFn = oldHome
+		systemctlCombinedOutput = oldSystemctl
+		uninstallCmd.SetOut(nil)
+		uninstallCmd.SetErr(nil)
+	})
+
+	linuxUserHomeDirFn = func() (string, error) { return home, nil }
+	servicePath := filepath.Join(home, ".config", "systemd", "user", systemdServiceName)
+	if err := os.MkdirAll(filepath.Dir(servicePath), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(servicePath, []byte("unit"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	systemctlCombinedOutput = func(args ...string) ([]byte, error) {
+		if len(args) > 1 && args[1] == "reset-failed" {
+			return []byte("reset stderr"), errors.New("reset failed")
+		}
+		return nil, nil
+	}
+
+	var errOut bytes.Buffer
+	uninstallCmd.SetErr(&errOut)
+	if err := uninstallCmd.RunE(uninstallCmd, nil); err != nil {
+		t.Fatalf("uninstall RunE() error = %v, want reset-failed failure downgraded to warning", err)
+	}
+	if !strings.Contains(errOut.String(), "reset failed") || !strings.Contains(errOut.String(), "reset stderr") {
+		t.Fatalf("stderr = %q, want reset-failed warning with command output", errOut.String())
+	}
+}
+
+func TestLinuxUninstallDaemonReloadEmptyOutputHasNoTrailingSeparator(t *testing.T) {
+	home := t.TempDir()
+	oldHome := linuxUserHomeDirFn
+	oldSystemctl := systemctlCombinedOutput
+	t.Cleanup(func() {
+		linuxUserHomeDirFn = oldHome
+		systemctlCombinedOutput = oldSystemctl
+	})
+
+	linuxUserHomeDirFn = func() (string, error) { return home, nil }
+	servicePath := filepath.Join(home, ".config", "systemd", "user", systemdServiceName)
+	if err := os.MkdirAll(filepath.Dir(servicePath), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(servicePath, []byte("unit"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	systemctlCombinedOutput = func(args ...string) ([]byte, error) {
+		if len(args) > 1 && args[1] == "daemon-reload" {
+			return nil, errors.New("reload failed")
+		}
+		return nil, nil
+	}
+
+	err := uninstallCmd.RunE(uninstallCmd, nil)
+	if err == nil {
+		t.Fatal("uninstall RunE() error = nil, want daemon-reload failure")
+	}
+	want := "reload systemd user daemon: reload failed"
+	if err.Error() != want {
+		t.Fatalf("uninstall error = %q, want exact %q without stray separator", err, want)
 	}
 }
 

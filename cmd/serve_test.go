@@ -174,6 +174,7 @@ func saveServeState(t *testing.T) {
 		openBrowser        func(string) error
 		ciEnvironmentSet   func() bool
 		isTerminal         func() bool
+		signalContext      func() (context.Context, context.CancelFunc)
 		writePID           func(string) error
 		writePIDForProcess func(string, int) error
 		removePID          func(string)
@@ -186,7 +187,7 @@ func saveServeState(t *testing.T) {
 		serveGetAuthKeyFn, serveHasStoredCredentialFn, servePIDPathFn, serveIsRunningFn, serveIsPIDRunningFn, serveEnsureTagsFn, serveCleanupFn,
 		serveLoadGlobalFn, serveLogDirFn, serveDaemonizeFn, serveReadPIDFn,
 		serveReadyPathFn, serveAuthHandoffPathFn, serveWriteReadyFn, serveReadReadyFn, serveRemoveReadyFn,
-		serveSaveAuthHandoffFn, serveLoadAuthHandoffFn, serveRemoveAuthHandoffFn, serveOpenBrowserFn, serveCIEnvironmentSetFn, serveIsTerminalFn,
+		serveSaveAuthHandoffFn, serveLoadAuthHandoffFn, serveRemoveAuthHandoffFn, serveOpenBrowserFn, serveCIEnvironmentSetFn, serveIsTerminalFn, serveSignalContextFn,
 		serveWritePIDFn, serveWritePIDForProcessFn, serveRemovePIDFn, serveWithPIDLockFn, serveNewServerFn,
 		serveDaemonReadyTimeout, serveDaemonReadyPollInterval,
 	}
@@ -217,6 +218,7 @@ func saveServeState(t *testing.T) {
 		serveOpenBrowserFn = old.openBrowser
 		serveCIEnvironmentSetFn = old.ciEnvironmentSet
 		serveIsTerminalFn = old.isTerminal
+		serveSignalContextFn = old.signalContext
 		serveWritePIDFn = old.writePID
 		serveWritePIDForProcessFn = old.writePIDForProcess
 		serveRemovePIDFn = old.removePID
@@ -350,6 +352,45 @@ func TestRunForeground_ServerRunError(t *testing.T) {
 	err := runForeground(filepath.Join(dir, "test.pid"), "", "fake-key", "")
 	if err == nil || err.Error() != "runtime error" {
 		t.Fatalf("expected 'runtime error', got: %v", err)
+	}
+}
+
+func runForegroundWithInjectedContext(t *testing.T, ctx context.Context, runErr error) error {
+	t.Helper()
+	dir := t.TempDir()
+	saveServeState(t)
+	serveWritePIDFn = func(path string) error { return os.WriteFile(path, []byte("1"), 0o600) }
+	serveRemovePIDFn = func(path string) { _ = os.Remove(path) }
+	serveWithPIDLockFn = func(path string, fn func() error) error { return fn() }
+	serveSignalContextFn = func() (context.Context, context.CancelFunc) { return ctx, func() {} }
+	serveNewServerFn = func(authKey, controlURL string) (serverRunner, error) {
+		return &mockServer{runErr: runErr}, nil
+	}
+	return runForeground(filepath.Join(dir, "test.pid"), "", "fake-key", "")
+}
+
+func TestRunForegroundTreatsShutdownCancellationAsSuccess(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	runErr := fmt.Errorf("initial sync failed: %w", context.Canceled)
+	if err := runForegroundWithInjectedContext(t, ctx, runErr); err != nil {
+		t.Fatalf("runForeground() error = %v, want clean shutdown", err)
+	}
+}
+
+func TestRunForegroundPreservesGenuineStartupFailureAfterShutdownRace(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	wantErr := errors.New("bind tcp 127.0.0.1:1: address unavailable")
+	if err := runForegroundWithInjectedContext(t, ctx, wantErr); !errors.Is(err, wantErr) {
+		t.Fatalf("runForeground() error = %v, want genuine startup failure %v", err, wantErr)
+	}
+}
+
+func TestRunForegroundPreservesInternalCancellationWithoutShutdown(t *testing.T) {
+	runErr := fmt.Errorf("initial sync failed: %w", context.Canceled)
+	if err := runForegroundWithInjectedContext(t, context.Background(), runErr); !errors.Is(err, context.Canceled) {
+		t.Fatalf("runForeground() error = %v, want internal cancellation failure", err)
 	}
 }
 

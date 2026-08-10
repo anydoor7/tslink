@@ -38,6 +38,20 @@ func TestStopHelpDocumentsMacOSLaunchAgentRestart(t *testing.T) {
 	}
 }
 
+func TestStopHelpDocumentsLinuxSystemdStopSemantics(t *testing.T) {
+	stopCmd, _, err := rootCmd.Find([]string{"stop"})
+	if err != nil {
+		t.Fatalf("find stop command: %v", err)
+	}
+
+	help := stopCmd.Long
+	for _, want := range []string{"Linux systemd", "Restart=on-failure", "leaves it stopped", "systemctl --user start tslink.service"} {
+		if !strings.Contains(help, want) {
+			t.Fatalf("stop help = %q, want Linux systemd behavior containing %q", help, want)
+		}
+	}
+}
+
 func TestStopNotRunningDoesNotDeletePIDIdentityEvidence(t *testing.T) {
 	oldIsRunning, oldStop, oldRemove, oldAbsent := isRunningFn, stopDaemonFn, removePIDFn, isProcessAbsentFromPIDFileFn
 	t.Cleanup(func() {
