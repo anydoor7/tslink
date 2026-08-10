@@ -569,6 +569,10 @@ func launchctlOperationInProgress(output []byte, err error) bool {
 }
 
 func launchctlTargetNotFound(output []byte, err error) bool {
+	return launchctlServiceNotFound(output, err) || launchctlDomainNotFound(output, err)
+}
+
+func launchctlServiceNotFound(output []byte, err error) bool {
 	if err == nil {
 		return false
 	}
@@ -576,8 +580,7 @@ func launchctlTargetNotFound(output []byte, err error) bool {
 	return strings.Contains(text, "no such process") ||
 		strings.Contains(text, "could not find service") ||
 		strings.Contains(text, "service not found") ||
-		strings.Contains(text, "could not find specified service") ||
-		launchctlDomainNotFound(output, err)
+		strings.Contains(text, "could not find specified service")
 }
 
 func launchctlDomainNotFound(output []byte, err error) bool {

@@ -33,11 +33,13 @@ var uninstallCmd = &cobra.Command{
 
 This command:
   1. Unloads the agent from gui/$(id -u), or user/$(id -u) for headless installs
-  2. Deletes ~/Library/LaunchAgents/com.tslink.daemon.plist only after unload succeeds
+  2. Deletes ~/Library/LaunchAgents/com.tslink.daemon.plist only after each
+     launchd domain reports the job unloaded or already absent
 
 If the LaunchAgent is not installed, prints a message and exits cleanly.
-If launchctl bootout fails, the plist is kept, the command exits non-zero, and
-you can fix the reported launchctl failure before retrying this command.
+If launchctl cannot confirm that the job was unloaded or already absent in
+either domain, the plist is kept, the command exits non-zero, and you can fix
+the reported launchctl failure before retrying this command.
 Log files in ~/.config/tslink/logs/ are NOT removed.
 
 	Examples:
@@ -104,7 +106,7 @@ func bootoutLaunchAgent() launchctlBootoutResult {
 		launchctlServiceTargetForDomain(launchctlUserDomain()),
 	}
 	var outputs []string
-	var last launchctlBootoutResult
+	var firstSuccess *launchctlBootoutResult
 	var firstRealError *launchctlBootoutResult
 	for _, target := range targets {
 		output, err := launchctlCombinedOutput("bootout", target)
@@ -112,9 +114,13 @@ func bootoutLaunchAgent() launchctlBootoutResult {
 		if text != "" {
 			outputs = append(outputs, text)
 		}
-		last = launchctlBootoutResult{Target: target, Output: strings.Join(outputs, "\n"), Err: err}
-		if err != nil && !launchctlTargetNotFound(output, err) && firstRealError == nil {
-			failure := last
+		attempt := launchctlBootoutResult{Target: target, Output: text, Err: err}
+		if err == nil && firstSuccess == nil {
+			success := attempt
+			firstSuccess = &success
+		}
+		if err != nil && !launchctlServiceNotFound(output, err) && firstRealError == nil {
+			failure := attempt
 			firstRealError = &failure
 		}
 	}
@@ -123,9 +129,10 @@ func bootoutLaunchAgent() launchctlBootoutResult {
 		firstRealError.Output = combinedOutput
 		return *firstRealError
 	}
-	last.Output = combinedOutput
-	last.Err = nil
-	return last
+	if firstSuccess != nil {
+		return *firstSuccess
+	}
+	return launchctlBootoutResult{Output: "LaunchAgent was already absent from all launchd domains"}
 }
 
 func init() {

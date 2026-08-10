@@ -14,6 +14,7 @@ func restoreAtomicFileHooks(t *testing.T) {
 	t.Helper()
 	origMkdirAll := mkdirAllFn
 	origLstat := lstatFn
+	origStat := statFn
 	origChmod := chmodFn
 	origOpenFile := openFileFn
 	origRename := renameFn
@@ -26,6 +27,7 @@ func restoreAtomicFileHooks(t *testing.T) {
 	t.Cleanup(func() {
 		mkdirAllFn = origMkdirAll
 		lstatFn = origLstat
+		statFn = origStat
 		chmodFn = origChmod
 		openFileFn = origOpenFile
 		renameFn = origRename
@@ -280,6 +282,79 @@ func TestWriteFileInExistingDirPreRenameFailurePreservesOldFile(t *testing.T) {
 	}
 	assertJSONVersion(t, target, "old")
 	assertNoOwnedTemps(t, dir, filepath.Base(target))
+}
+
+func TestWriteFileInExistingDirCreatesTempWithRequestedMode(t *testing.T) {
+	restoreAtomicFileHooks(t)
+	dir := t.TempDir()
+	target := filepath.Join(dir, "state.json")
+	wantMode := os.FileMode(0o640)
+	var createMode os.FileMode
+	origOpenFile := openFileFn
+	openFileFn = func(name string, flag int, mode os.FileMode) (*os.File, error) {
+		if flag&os.O_CREATE != 0 && strings.HasPrefix(filepath.Base(name), ".state.json.") {
+			createMode = mode
+		}
+		return origOpenFile(name, flag, mode)
+	}
+
+	if err := WriteFileInExistingDir(target, []byte("state\n"), wantMode); err != nil {
+		t.Fatalf("WriteFileInExistingDir() error = %v", err)
+	}
+	if createMode != wantMode {
+		t.Fatalf("temp create mode = %04o, want requested %04o", createMode, wantMode)
+	}
+}
+
+func TestWriteFileInExistingDirHonorsCallerMode(t *testing.T) {
+	restoreAtomicFileHooks(t)
+	dir := t.TempDir()
+	target := filepath.Join(dir, "state.json")
+	wantMode := os.FileMode(0o644)
+	var chmodMode os.FileMode
+	origChmod := chmodFn
+	chmodFn = func(name string, mode os.FileMode) error {
+		if strings.HasPrefix(filepath.Base(name), ".state.json.") {
+			chmodMode = mode
+		}
+		return origChmod(name, mode)
+	}
+
+	if err := WriteFileInExistingDir(target, []byte("state\n"), wantMode); err != nil {
+		t.Fatalf("WriteFileInExistingDir() error = %v", err)
+	}
+	if chmodMode != wantMode {
+		t.Fatalf("temp chmod mode = %04o, want caller mode %04o", chmodMode, wantMode)
+	}
+}
+
+func TestWriteFileInExistingDirMissingParentErrorNamesTarget(t *testing.T) {
+	restoreAtomicFileHooks(t)
+	root := t.TempDir()
+	info, err := os.Lstat(root)
+	if err != nil {
+		t.Fatalf("Lstat(root) error = %v", err)
+	}
+	dir := filepath.Join(root, "removed-parent")
+	target := filepath.Join(dir, "state.json")
+	origLstat := lstatFn
+	lstatFn = func(path string) (os.FileInfo, error) {
+		if path == dir {
+			return info, nil
+		}
+		return origLstat(path)
+	}
+
+	err = WriteFileInExistingDir(target, []byte("state\n"), PrivateFileMode)
+	if err == nil {
+		t.Fatal("WriteFileInExistingDir() error = nil, want missing-parent failure")
+	}
+	if !strings.Contains(err.Error(), target) {
+		t.Fatalf("missing-parent error = %q, want real target %q", err, target)
+	}
+	if strings.Contains(err.Error(), ".state.json.") || strings.Contains(err.Error(), ".tmp") {
+		t.Fatalf("missing-parent error exposes random temp path: %q", err)
+	}
 }
 
 func TestConvergePrivateFileMissingIsNoOp(t *testing.T) {
