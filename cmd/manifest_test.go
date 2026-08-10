@@ -124,6 +124,21 @@ func TestManifestDocumentsDarwinUninstallJSONContract(t *testing.T) {
 	if uninstall.Path == "" {
 		t.Fatal("manifest missing tslink uninstall")
 	}
+	for _, field := range []string{
+		"plist_path",
+		"path",
+		"removed",
+		"service_manager",
+		"warning",
+		"launchctl_outcome",
+		"launchctl_target",
+		"launchctl_output",
+		"detail",
+	} {
+		if _, ok := uninstall.JSONResultFields[field]; !ok {
+			t.Fatalf("uninstall manifest missing emitted field %q", field)
+		}
+	}
 
 	outcome, ok := uninstall.JSONResultFields["launchctl_outcome"]
 	if !ok {
@@ -139,7 +154,7 @@ func TestManifestDocumentsDarwinUninstallJSONContract(t *testing.T) {
 		t.Fatalf("launchctl_target contract = %q", target)
 	}
 	rawOutput := uninstall.JSONResultFields["launchctl_output"].Description
-	if !strings.Contains(rawOutput, "Verbatim trimmed launchctl output") || !strings.Contains(rawOutput, "omitted") {
+	if !strings.Contains(rawOutput, "Verbatim trimmed launchctl output") || !strings.Contains(rawOutput, "already_absent") || !strings.Contains(rawOutput, "omitted") {
 		t.Fatalf("launchctl_output contract = %q", rawOutput)
 	}
 	detail := uninstall.JSONResultFields["detail"].Description

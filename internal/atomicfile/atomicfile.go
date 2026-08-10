@@ -130,7 +130,7 @@ func validateExistingParent(path string) error {
 		return err
 	}
 	if info.Mode().Perm()&0o022 != 0 {
-		return fmt.Errorf("unsafe parent for %s: %s is group- or world-writable (%04o)", path, dir, info.Mode().Perm())
+		return fmt.Errorf("unsafe parent for %s: %s is group- or world-writable (%04o); run 'chmod g-w,o-w %s' and retry", path, dir, info.Mode().Perm(), dir)
 	}
 	return nil
 }

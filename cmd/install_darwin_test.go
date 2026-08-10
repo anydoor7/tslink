@@ -489,6 +489,71 @@ func TestInstallCommandFallsBackToUserDomainWhenGUIDomainMissing(t *testing.T) {
 	}
 }
 
+func TestInstallUpgradeDoesNotBootstrapFallbackWhenGUIDomainBootoutIsUnavailable(t *testing.T) {
+	resetRootJSONFlag(t)
+	home := t.TempDir()
+	testenv.SetHome(t, home)
+
+	oldHome := userHomeDirFn
+	oldExe := executablePathFn
+	oldEval := evalSymlinksFn
+	oldUID := userUIDFn
+	oldArtifactConflict := installDaemonArtifactConflictFn
+	oldLaunchctl := launchctlCombinedOutput
+	t.Cleanup(func() {
+		userHomeDirFn = oldHome
+		executablePathFn = oldExe
+		evalSymlinksFn = oldEval
+		userUIDFn = oldUID
+		installDaemonArtifactConflictFn = oldArtifactConflict
+		launchctlCombinedOutput = oldLaunchctl
+	})
+
+	userHomeDirFn = func() (string, error) { return home, nil }
+	executablePathFn = func() (string, error) { return "/Applications/TSLink App/tslink", nil }
+	evalSymlinksFn = func(path string) (string, error) { return path, nil }
+	userUIDFn = func() int { return 501 }
+	installDaemonArtifactConflictFn = func() error { return nil }
+
+	plistPath := filepath.Join(home, "Library", "LaunchAgents", plistLabel+".plist")
+	if err := os.MkdirAll(filepath.Dir(plistPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	oldPlist := []byte("<plist>old</plist>")
+	if err := os.WriteFile(plistPath, oldPlist, 0o600); err != nil {
+		t.Fatalf("WriteFile(old plist) error = %v", err)
+	}
+
+	var calls []string
+	launchctlCombinedOutput = func(args ...string) ([]byte, error) {
+		call := strings.Join(args, "\x00")
+		calls = append(calls, call)
+		if len(args) != 2 || args[0] != "bootout" {
+			t.Fatalf("unsafe launchctl call after unconfirmed upgrade handoff: %q", args)
+		}
+		if strings.HasPrefix(args[1], "gui/") {
+			return []byte("Could not find domain for: " + args[1]), errors.New("exit status 112")
+		}
+		return []byte("Boot-out failed: 3: No such process"), errors.New("exit status 3")
+	}
+
+	err := installCmd.RunE(installCmd, nil)
+	if err == nil || !strings.Contains(err.Error(), "could not confirm the prior job was unloaded") || !strings.Contains(err.Error(), "previous LaunchAgent plist was restored") {
+		t.Fatalf("install upgrade error = %v, want unavailable-domain handoff failure with restored plist", err)
+	}
+	wantCalls := []string{
+		strings.Join([]string{"bootout", "gui/501/" + plistLabel}, "\x00"),
+		strings.Join([]string{"bootout", "user/501/" + plistLabel}, "\x00"),
+	}
+	if strings.Join(calls, "\n") != strings.Join(wantCalls, "\n") {
+		t.Fatalf("launchctl calls = %q, want only both bootout probes %q", calls, wantCalls)
+	}
+	gotPlist, readErr := os.ReadFile(plistPath)
+	if readErr != nil || !bytes.Equal(gotPlist, oldPlist) {
+		t.Fatalf("restored plist = %q, %v; want %q", gotPlist, readErr, oldPlist)
+	}
+}
+
 func TestInstallCommandRefusesRunningDaemonBeforeWritingPlist(t *testing.T) {
 	resetRootJSONFlag(t)
 	home := t.TempDir()
@@ -795,6 +860,47 @@ func TestInstallCommandSupportsSymlinkedLaunchAgentsDirectoryWithoutChangingMode
 	plistPath := filepath.Join(realDir, plistLabel+".plist")
 	if info, err := os.Stat(plistPath); err != nil || info.Mode().Perm() != 0o600 {
 		t.Fatalf("installed plist mode = %v, %v; want 0600", info, err)
+	}
+}
+
+func TestInstallCommandGroupWritableLaunchAgentsErrorIncludesRemedy(t *testing.T) {
+	stubDarwinInstallDaemonStopped(t)
+	resetRootJSONFlag(t)
+	home := t.TempDir()
+	testenv.SetHome(t, home)
+
+	oldHome := userHomeDirFn
+	oldExe := executablePathFn
+	oldEval := evalSymlinksFn
+	oldLaunchctl := launchctlCombinedOutput
+	t.Cleanup(func() {
+		userHomeDirFn = oldHome
+		executablePathFn = oldExe
+		evalSymlinksFn = oldEval
+		launchctlCombinedOutput = oldLaunchctl
+	})
+	userHomeDirFn = func() (string, error) { return home, nil }
+	executablePathFn = func() (string, error) { return "/Applications/TSLink App/tslink", nil }
+	evalSymlinksFn = func(path string) (string, error) { return path, nil }
+	launchctlCombinedOutput = func(args ...string) ([]byte, error) {
+		t.Fatalf("launchctl called after unsafe parent rejection: %q", args)
+		return nil, nil
+	}
+
+	launchAgentsDir := filepath.Join(home, "Library", "LaunchAgents")
+	if err := os.MkdirAll(launchAgentsDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(LaunchAgents) error = %v", err)
+	}
+	if err := os.Chmod(launchAgentsDir, 0o775); err != nil {
+		t.Fatalf("Chmod(LaunchAgents) error = %v", err)
+	}
+
+	err := installCmd.RunE(installCmd, nil)
+	if err == nil || !strings.Contains(err.Error(), "group- or world-writable (0775)") || !strings.Contains(err.Error(), "chmod g-w,o-w "+launchAgentsDir) {
+		t.Fatalf("install error = %v, want exact chmod remedy for %s", err, launchAgentsDir)
+	}
+	if _, statErr := os.Stat(filepath.Join(launchAgentsDir, plistLabel+".plist")); !os.IsNotExist(statErr) {
+		t.Fatalf("plist exists after unsafe parent rejection: %v", statErr)
 	}
 }
 
@@ -1143,6 +1249,38 @@ func TestLaunchctlTargetNotFoundRequiresErrorForEveryClassifierPhrase(t *testing
 	}
 }
 
+func TestLaunchctlDomainNotFoundRequiresErrorForEveryPhrase(t *testing.T) {
+	phrases := []string{
+		"Could not find domain for: gui/503",
+		"Domain does not exist",
+		"domain is not found",
+		"no such domain",
+	}
+	for _, phrase := range phrases {
+		t.Run(phrase, func(t *testing.T) {
+			if launchctlDomainNotFound([]byte(phrase), nil) {
+				t.Fatalf("launchctlDomainNotFound(%q, nil) = true, want false", phrase)
+			}
+			if !launchctlDomainNotFound([]byte(phrase), errors.New("launchctl failed")) {
+				t.Fatalf("launchctlDomainNotFound(%q, err) = false, want true", phrase)
+			}
+		})
+	}
+}
+
+func TestDarwinUninstallManifestOutcomeValuesMatchWireConstants(t *testing.T) {
+	field := commandJSONResultFields("tslink uninstall")["launchctl_outcome"]
+	want := []string{
+		launchctlOutcomeNotInstalled,
+		launchctlOutcomeUnloaded,
+		launchctlOutcomeAlreadyAbsent,
+		launchctlOutcomeUnconfirmed,
+	}
+	if strings.Join(field.Values, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("manifest launchctl_outcome values = %q, wire constants = %q", field.Values, want)
+	}
+}
+
 func TestUninstallDocumentationMatchesConfirmedRemovalPolicy(t *testing.T) {
 	for _, want := range []string{"successful bootout", "unavailable domain does not block", "no domain succeeds", "real error", "plist is kept"} {
 		if !strings.Contains(uninstallCmd.Long, want) {
@@ -1221,6 +1359,8 @@ func TestUninstallCommandJSONCoversLaunchctlOutcomeMatrix(t *testing.T) {
 	guiUnavailable := "Could not find domain for: " + guiTarget
 	userUnavailable := "Could not find domain for: " + userTarget
 	alreadyAbsentDetail := "LaunchAgent was already absent from all launchd domains"
+	guiUnavailableWarning := "launchctl " + guiTarget + " could not be addressed from this session; a job may still be loaded there; from a GUI session run 'launchctl print " + guiTarget + "' to confirm"
+	userUnavailableWarning := "launchctl " + userTarget + " could not be addressed from this session; a job may still be loaded there; from a GUI session run 'launchctl print " + userTarget + "' to confirm"
 	tests := []struct {
 		name        string
 		gui         outcome
@@ -1231,18 +1371,19 @@ func TestUninstallCommandJSONCoversLaunchctlOutcomeMatrix(t *testing.T) {
 		wantTarget  string
 		wantOutput  string
 		wantDetail  string
+		wantWarning string
 	}{
 		{name: "ok-ok", gui: okOutcome, user: okOutcome, wantCode: output.ExitSuccess, wantRemoved: true, wantOutcome: launchctlOutcomeUnloaded, wantTarget: guiTarget, wantOutput: guiOK},
 		{name: "ok-absent", gui: okOutcome, user: absentOutcome, wantCode: output.ExitSuccess, wantRemoved: true, wantOutcome: launchctlOutcomeUnloaded, wantTarget: guiTarget, wantOutput: guiOK},
 		{name: "absent-ok", gui: absentOutcome, user: okOutcome, wantCode: output.ExitSuccess, wantRemoved: true, wantOutcome: launchctlOutcomeUnloaded, wantTarget: userTarget, wantOutput: userOK},
-		{name: "absent-absent", gui: absentOutcome, user: absentOutcome, wantCode: output.ExitSuccess, wantRemoved: true, wantOutcome: launchctlOutcomeAlreadyAbsent, wantDetail: alreadyAbsentDetail},
+		{name: "absent-absent", gui: absentOutcome, user: absentOutcome, wantCode: output.ExitSuccess, wantRemoved: true, wantOutcome: launchctlOutcomeAlreadyAbsent, wantOutput: absent + "\n" + absent, wantDetail: alreadyAbsentDetail},
 		{name: "real-error-ok", gui: realErrOutcome, user: okOutcome, wantCode: output.ExitError, wantRemoved: false, wantOutcome: launchctlOutcomeUnconfirmed, wantTarget: guiTarget, wantOutput: guiRealErr + "\n" + userOK},
 		{name: "ok-real-error", gui: okOutcome, user: realErrOutcome, wantCode: output.ExitError, wantRemoved: false, wantOutcome: launchctlOutcomeUnconfirmed, wantTarget: userTarget, wantOutput: guiOK + "\n" + userRealErr},
 		{name: "real-error-absent", gui: realErrOutcome, user: absentOutcome, wantCode: output.ExitError, wantRemoved: false, wantOutcome: launchctlOutcomeUnconfirmed, wantTarget: guiTarget, wantOutput: guiRealErr + "\n" + absent},
 		{name: "absent-real-error", gui: absentOutcome, user: realErrOutcome, wantCode: output.ExitError, wantRemoved: false, wantOutcome: launchctlOutcomeUnconfirmed, wantTarget: userTarget, wantOutput: absent + "\n" + userRealErr},
 		{name: "real-error-real-error", gui: realErrOutcome, user: realErrOutcome, wantCode: output.ExitError, wantRemoved: false, wantOutcome: launchctlOutcomeUnconfirmed, wantTarget: guiTarget, wantOutput: guiRealErr + "\n" + userRealErr},
-		{name: "domain-unavailable-ok", gui: unavailableOutcome, user: okOutcome, wantCode: output.ExitSuccess, wantRemoved: true, wantOutcome: launchctlOutcomeUnloaded, wantTarget: userTarget, wantOutput: userOK},
-		{name: "ok-domain-unavailable", gui: okOutcome, user: unavailableOutcome, wantCode: output.ExitSuccess, wantRemoved: true, wantOutcome: launchctlOutcomeUnloaded, wantTarget: guiTarget, wantOutput: guiOK},
+		{name: "domain-unavailable-ok", gui: unavailableOutcome, user: okOutcome, wantCode: output.ExitSuccess, wantRemoved: true, wantOutcome: launchctlOutcomeUnloaded, wantTarget: userTarget, wantOutput: userOK, wantWarning: guiUnavailableWarning},
+		{name: "ok-domain-unavailable", gui: okOutcome, user: unavailableOutcome, wantCode: output.ExitSuccess, wantRemoved: true, wantOutcome: launchctlOutcomeUnloaded, wantTarget: guiTarget, wantOutput: guiOK, wantWarning: userUnavailableWarning},
 		{name: "domain-unavailable-absent", gui: unavailableOutcome, user: absentOutcome, wantCode: output.ExitError, wantRemoved: false, wantOutcome: launchctlOutcomeUnconfirmed, wantTarget: guiTarget, wantOutput: guiUnavailable + "\n" + absent},
 		{name: "absent-domain-unavailable", gui: absentOutcome, user: unavailableOutcome, wantCode: output.ExitError, wantRemoved: false, wantOutcome: launchctlOutcomeUnconfirmed, wantTarget: userTarget, wantOutput: absent + "\n" + userUnavailable},
 		{name: "domain-unavailable-domain-unavailable", gui: unavailableOutcome, user: unavailableOutcome, wantCode: output.ExitError, wantRemoved: false, wantOutcome: launchctlOutcomeUnconfirmed, wantTarget: guiTarget, wantOutput: guiUnavailable + "\n" + userUnavailable},
@@ -1339,7 +1480,14 @@ func TestUninstallCommandJSONCoversLaunchctlOutcomeMatrix(t *testing.T) {
 			if detail != tc.wantDetail || detailPresent != (tc.wantDetail != "") {
 				t.Fatalf("uninstall JSON detail = %q (present=%v), want %q (present=%v); data=%#v", detail, detailPresent, tc.wantDetail, tc.wantDetail != "", data)
 			}
-			if tc.wantCode == output.ExitSuccess && strings.Contains(strings.ToLower(launchctlOutput), "failed") {
+			warning, warningPresent := data["warning"].(string)
+			if tc.wantCode == output.ExitSuccess && (warning != tc.wantWarning || warningPresent != (tc.wantWarning != "")) {
+				t.Fatalf("uninstall JSON warning = %q (present=%v), want %q (present=%v); data=%#v", warning, warningPresent, tc.wantWarning, tc.wantWarning != "", data)
+			}
+			if tc.wantCode != output.ExitSuccess && !warningPresent {
+				t.Fatalf("failed uninstall JSON omitted warning: data=%#v", data)
+			}
+			if tc.wantOutcome == launchctlOutcomeUnloaded && strings.Contains(strings.ToLower(launchctlOutput), "failed") {
 				t.Fatalf("successful JSON contains launchctl failure text: %q", launchctlOutput)
 			}
 		})
@@ -1347,43 +1495,44 @@ func TestUninstallCommandJSONCoversLaunchctlOutcomeMatrix(t *testing.T) {
 }
 
 func TestUninstallCommandKeepsPlistWhenLaunchctlDomainIsUnavailable(t *testing.T) {
-	t.Run("other-domain-absent", func(t *testing.T) {
-		resetRootJSONFlag(t)
-		home := t.TempDir()
-		oldHome := userHomeDirFn
-		oldUID := userUIDFn
-		oldLaunchctl := launchctlCombinedOutput
-		t.Cleanup(func() {
-			userHomeDirFn = oldHome
-			userUIDFn = oldUID
-			launchctlCombinedOutput = oldLaunchctl
-		})
-		userHomeDirFn = func() (string, error) { return home, nil }
-		userUIDFn = func() int { return 506 }
-		plistPath := filepath.Join(home, "Library", "LaunchAgents", plistLabel+".plist")
-		if err := os.MkdirAll(filepath.Dir(plistPath), 0o755); err != nil {
-			t.Fatalf("MkdirAll() error = %v", err)
-		}
-		if err := os.WriteFile(plistPath, []byte("plist"), 0o600); err != nil {
-			t.Fatalf("WriteFile() error = %v", err)
-		}
-		callIndex := 0
-		launchctlCombinedOutput = func(args ...string) ([]byte, error) {
-			callIndex++
-			if callIndex == 1 {
-				return []byte("Could not find domain for: " + args[1]), errors.New("exit status 112")
-			}
-			return []byte("Boot-out failed: 3: No such process"), errors.New("exit status 3")
-		}
-
-		err := uninstallCmd.RunE(uninstallCmd, nil)
-		if err == nil || output.ExitCode(err) != output.ExitError || !strings.Contains(err.Error(), "Could not find domain") {
-			t.Fatalf("uninstall error = %v, want domain-unavailable failure", err)
-		}
-		if _, statErr := os.Stat(plistPath); statErr != nil {
-			t.Fatalf("plist should remain after unavailable domain: %v", statErr)
-		}
+	if got, want := t.Name(), "TestUninstallCommandKeepsPlistWhenLaunchctlDomainIsUnavailable"; got != want {
+		t.Fatalf("test unexpectedly wrapped in a hard-coded subtest: name=%q, want %q", got, want)
+	}
+	resetRootJSONFlag(t)
+	home := t.TempDir()
+	oldHome := userHomeDirFn
+	oldUID := userUIDFn
+	oldLaunchctl := launchctlCombinedOutput
+	t.Cleanup(func() {
+		userHomeDirFn = oldHome
+		userUIDFn = oldUID
+		launchctlCombinedOutput = oldLaunchctl
 	})
+	userHomeDirFn = func() (string, error) { return home, nil }
+	userUIDFn = func() int { return 506 }
+	plistPath := filepath.Join(home, "Library", "LaunchAgents", plistLabel+".plist")
+	if err := os.MkdirAll(filepath.Dir(plistPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(plistPath, []byte("plist"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	callIndex := 0
+	launchctlCombinedOutput = func(args ...string) ([]byte, error) {
+		callIndex++
+		if callIndex == 1 {
+			return []byte("Could not find domain for: " + args[1]), errors.New("exit status 112")
+		}
+		return []byte("Boot-out failed: 3: No such process"), errors.New("exit status 3")
+	}
+
+	err := uninstallCmd.RunE(uninstallCmd, nil)
+	if err == nil || output.ExitCode(err) != output.ExitError || !strings.Contains(err.Error(), "Could not find domain") {
+		t.Fatalf("uninstall error = %v, want domain-unavailable failure", err)
+	}
+	if _, statErr := os.Stat(plistPath); statErr != nil {
+		t.Fatalf("plist should remain after unavailable domain: %v", statErr)
+	}
 }
 
 func TestUninstallCommandRemovesPlistWhenOtherDomainBootoutSucceeds(t *testing.T) {

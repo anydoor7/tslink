@@ -40,6 +40,7 @@ var (
 	installDaemonArtifactConflictFn = func() error {
 		return detectInstallDaemonConflict("a LaunchAgent plist is installed, but TSLink could not confirm that launchd owns the running daemon; stop the manual daemon with 'tslink stop' and retry 'tslink install'; keep the existing plist installed")
 	}
+	errLaunchctlDomainUnavailable  = errors.New("launchctl domain unavailable")
 	launchAgentVerifyTimeout       = launchAgentStartupTimeout
 	launchAgentVerifyPollInterval  = launchAgentStartupPollInterval
 	launchAgentBootoutTimeout      = launchAgentShutdownTimeout
@@ -197,7 +198,12 @@ Headless/SSH caveat:
 			return fmt.Errorf("write plist: %w", err)
 		}
 
-		loadResult := reinstallLaunchAgent(plistPath)
+		var loadResult launchctlLoadResult
+		if previousState.Existed {
+			loadResult = reinstallLaunchAgent(plistPath)
+		} else {
+			loadResult = loadLaunchAgent(plistPath, false)
+		}
 		if loadResult.Err != nil {
 			warning := loadResult.Warning
 			if warning == "" && loadResult.BootoutFailed {
@@ -326,22 +332,28 @@ func launchctlUserDomain() string {
 	return fmt.Sprintf("user/%d", userUIDFn())
 }
 
-func launchctlServiceTarget() string {
-	return launchctlServiceTargetForDomain(launchctlDomain())
-}
-
 func launchctlServiceTargetForDomain(domain string) string {
 	return domain + "/" + plistLabel
 }
 
 func reinstallLaunchAgent(plistPath string) launchctlLoadResult {
+	return loadLaunchAgent(plistPath, true)
+}
+
+func loadLaunchAgent(plistPath string, replacingExisting bool) launchctlLoadResult {
 	guiDomain := launchctlDomain()
 	userDomain := launchctlUserDomain()
-	if err := bootoutLaunchAgentTargets(guiDomain, userDomain); err != nil {
+	var bootoutErr error
+	if replacingExisting {
+		bootoutErr = bootoutLaunchAgentTargetsForUpgrade(guiDomain, userDomain)
+	} else {
+		bootoutErr = bootoutLaunchAgentTargets(guiDomain, userDomain)
+	}
+	if bootoutErr != nil {
 		return launchctlLoadResult{
 			Domain:        guiDomain,
 			Target:        launchctlServiceTargetForDomain(guiDomain),
-			Err:           err,
+			Err:           bootoutErr,
 			BootoutFailed: true,
 		}
 	}
@@ -480,10 +492,42 @@ func bootoutLaunchAgentTargets(domains ...string) error {
 	return nil
 }
 
+func bootoutLaunchAgentTargetsForUpgrade(domains ...string) error {
+	var firstUnavailable error
+	for _, domain := range domains {
+		err := bootoutLaunchAgentTargetForUpgrade(launchctlServiceTargetForDomain(domain))
+		if err == nil {
+			continue
+		}
+		if errors.Is(err, errLaunchctlDomainUnavailable) {
+			if firstUnavailable == nil {
+				firstUnavailable = err
+			}
+			continue
+		}
+		return err
+	}
+	return firstUnavailable
+}
+
 func bootoutLaunchAgentTarget(target string) error {
+	return bootoutLaunchAgentTargetWithPolicy(target, true)
+}
+
+func bootoutLaunchAgentTargetForUpgrade(target string) error {
+	return bootoutLaunchAgentTargetWithPolicy(target, false)
+}
+
+func bootoutLaunchAgentTargetWithPolicy(target string, allowUnavailableDomain bool) error {
 	output, err := launchctlCombinedOutput("bootout", target)
-	if err == nil || launchctlTargetNotFound(output, err) {
+	if err == nil || launchctlServiceNotFound(output, err) {
 		return nil
+	}
+	if launchctlDomainNotFound(output, err) {
+		if allowUnavailableDomain {
+			return nil
+		}
+		return fmt.Errorf("%w: %s", errLaunchctlDomainUnavailable, launchctlWarning("bootout "+target+" could not confirm the prior job was unloaded", err, output))
 	}
 	if !launchctlOperationInProgress(output, err) {
 		return errors.New(launchctlWarning("bootout "+target, err, output))
@@ -494,7 +538,7 @@ func bootoutLaunchAgentTarget(target string) error {
 		launchAgentBootoutTimeout,
 		launchAgentBootoutPollInterval,
 		func(output []byte, err error) bool {
-			return launchctlTargetNotFound(output, err)
+			return launchctlServiceNotFound(output, err) || (allowUnavailableDomain && launchctlDomainNotFound(output, err))
 		},
 	)
 	if gone {
@@ -587,10 +631,11 @@ func launchctlServiceNotFound(output []byte, err error) bool {
 }
 
 func launchctlDomainNotFound(output []byte, err error) bool {
-	text := strings.ToLower(string(output))
-	if err != nil {
-		text += "\n" + strings.ToLower(err.Error())
+	if err == nil {
+		return false
 	}
+	text := strings.ToLower(string(output))
+	text += "\n" + strings.ToLower(err.Error())
 	return strings.Contains(text, "domain does not exist") ||
 		strings.Contains(text, "could not find domain for:") ||
 		strings.Contains(text, "domain is not found") ||

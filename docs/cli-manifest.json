@@ -912,15 +912,31 @@
         },
         "launchctl_output": {
           "type": "string",
-          "description": "macOS only. Verbatim trimmed launchctl output from the successful target for unloaded, or combined attempted output for unconfirmed; omitted when no launchctl output applies."
+          "description": "macOS only. Verbatim trimmed launchctl output from the successful target for unloaded, or combined attempted output for already_absent and unconfirmed; omitted when launchctl emitted no text."
         },
         "launchctl_target": {
           "type": "string",
           "description": "macOS only. The domain target that confirmed bootout or caused the reported unconfirmed failure; empty for not_installed and already_absent."
         },
+        "path": {
+          "type": "string",
+          "description": "Linux and Windows only. Path to the platform startup artifact inspected or removed by this invocation."
+        },
+        "plist_path": {
+          "type": "string",
+          "description": "macOS only. Path to the LaunchAgent plist inspected or removed by this invocation."
+        },
         "removed": {
           "type": "boolean",
           "description": "Whether the platform startup artifact was removed by this invocation."
+        },
+        "service_manager": {
+          "type": "string",
+          "description": "Linux and Windows only. Platform startup mechanism responsible for the artifact."
+        },
+        "warning": {
+          "type": "string",
+          "description": "Actionable non-fatal warning; omitted when no warning applies."
         }
       }
     },

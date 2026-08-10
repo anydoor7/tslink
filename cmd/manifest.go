@@ -225,9 +225,25 @@ func commandJSONResultFields(commandPath string) map[string]JSONResultFieldInfo 
 		return nil
 	}
 	return map[string]JSONResultFieldInfo{
+		"plist_path": {
+			Type:        "string",
+			Description: "macOS only. Path to the LaunchAgent plist inspected or removed by this invocation.",
+		},
+		"path": {
+			Type:        "string",
+			Description: "Linux and Windows only. Path to the platform startup artifact inspected or removed by this invocation.",
+		},
 		"removed": {
 			Type:        "boolean",
 			Description: "Whether the platform startup artifact was removed by this invocation.",
+		},
+		"service_manager": {
+			Type:        "string",
+			Description: "Linux and Windows only. Platform startup mechanism responsible for the artifact.",
+		},
+		"warning": {
+			Type:        "string",
+			Description: "Actionable non-fatal warning; omitted when no warning applies.",
 		},
 		"launchctl_outcome": {
 			Type:        "string",
@@ -240,7 +256,7 @@ func commandJSONResultFields(commandPath string) map[string]JSONResultFieldInfo 
 		},
 		"launchctl_output": {
 			Type:        "string",
-			Description: "macOS only. Verbatim trimmed launchctl output from the successful target for unloaded, or combined attempted output for unconfirmed; omitted when no launchctl output applies.",
+			Description: "macOS only. Verbatim trimmed launchctl output from the successful target for unloaded, or combined attempted output for already_absent and unconfirmed; omitted when launchctl emitted no text.",
 		},
 		"detail": {
 			Type:        "string",

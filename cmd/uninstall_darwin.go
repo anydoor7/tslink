@@ -27,6 +27,7 @@ type launchctlBootoutResult struct {
 	Target  string
 	Output  string
 	Detail  string
+	Warning string
 	Err     error
 }
 
@@ -111,10 +112,14 @@ Log files in ~/.config/tslink/logs/ are NOT removed.
 				LaunchctlTarget:  bootout.Target,
 				LaunchctlOutput:  bootout.Output,
 				Detail:           bootout.Detail,
+				Warning:          bootout.Warning,
 			})
 			return nil
 		}
 
+		if bootout.Warning != "" {
+			fmt.Fprintf(cmd.ErrOrStderr(), "→ ⚠ %s\n", bootout.Warning)
+		}
 		fmt.Fprintln(cmd.OutOrStdout(), "→ ✓ LaunchAgent removed")
 		return nil
 	},
@@ -158,6 +163,13 @@ func bootoutLaunchAgent() launchctlBootoutResult {
 		return *firstRealError
 	}
 	if firstSuccess != nil {
+		if firstUnavailable != nil {
+			firstSuccess.Warning = fmt.Sprintf(
+				"launchctl %s could not be addressed from this session; a job may still be loaded there; from a GUI session run 'launchctl print %s' to confirm",
+				firstUnavailable.Target,
+				firstUnavailable.Target,
+			)
+		}
 		return *firstSuccess
 	}
 	if firstUnavailable != nil {
@@ -166,6 +178,7 @@ func bootoutLaunchAgent() launchctlBootoutResult {
 	}
 	return launchctlBootoutResult{
 		Outcome: launchctlOutcomeAlreadyAbsent,
+		Output:  combinedOutput,
 		Detail:  "LaunchAgent was already absent from all launchd domains",
 	}
 }

@@ -43,8 +43,8 @@ func TestWriteFileInExistingDirRejectsGroupWritableParentWithoutMutation(t *test
 	target := filepath.Join(dir, "state.json")
 
 	err := WriteFileInExistingDir(target, []byte("state\n"), PrivateFileMode)
-	if err == nil || !strings.Contains(err.Error(), "group- or world-writable") {
-		t.Fatalf("WriteFileInExistingDir() error = %v, want group-writable rejection", err)
+	if err == nil || !strings.Contains(err.Error(), "group- or world-writable") || !strings.Contains(err.Error(), "chmod g-w,o-w "+dir) {
+		t.Fatalf("WriteFileInExistingDir() error = %v, want group-writable rejection with exact chmod remedy", err)
 	}
 	assertMode(t, dir, 0o775)
 	if _, statErr := os.Lstat(target); !os.IsNotExist(statErr) {
