@@ -68,6 +68,10 @@ If lingering was enabled only for TSLink, disable it after uninstall:
 	  tslink install                Register and restart the systemd service`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if err := installDaemonConflictFn(); err != nil {
+			return err
+		}
+
 		exe, err := linuxExecutablePathFn()
 		if err != nil {
 			return fmt.Errorf("find executable: %w", err)
@@ -99,6 +103,9 @@ If lingering was enabled only for TSLink, disable it after uninstall:
 		if output, err := systemctlCombinedOutput("--user", "restart", systemdServiceName); err != nil {
 			return fmt.Errorf("restart systemd user service: %w: %s", err, output)
 		}
+		if err := verifySystemdServiceRunning(); err != nil {
+			return err
+		}
 
 		warning := linuxLingerWarning()
 		if jsonOutput(cmd) {
@@ -119,6 +126,49 @@ If lingering was enabled only for TSLink, disable it after uninstall:
 		fmt.Fprintf(cmd.OutOrStdout(), "→ ✓ systemd user service installed and restarted: %s\n", servicePath)
 		return nil
 	},
+}
+
+func verifySystemdServiceRunning() error {
+	output, err := systemctlCombinedOutput(
+		"--user",
+		"show",
+		systemdServiceName,
+		"--property=ActiveState",
+		"--property=SubState",
+		"--property=MainPID",
+		"--no-pager",
+	)
+	if err != nil {
+		return fmt.Errorf("verify systemd user service state: %w%s", err, commandOutputSuffix(output))
+	}
+
+	properties := parseSystemdProperties(output)
+	activeState := properties["ActiveState"]
+	subState := properties["SubState"]
+	mainPID, pidErr := strconv.Atoi(properties["MainPID"])
+	if activeState == "active" && subState == "running" && pidErr == nil && mainPID > 0 {
+		return nil
+	}
+	return fmt.Errorf(
+		"systemd user service did not reach active/running after restart (ActiveState=%q, SubState=%q, MainPID=%q); run 'systemctl --user status %s' and 'journalctl --user -u %s'",
+		activeState,
+		subState,
+		properties["MainPID"],
+		systemdServiceName,
+		systemdServiceName,
+	)
+}
+
+func parseSystemdProperties(output []byte) map[string]string {
+	properties := make(map[string]string)
+	for _, line := range strings.Split(string(output), "\n") {
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		properties[strings.TrimSpace(key)] = strings.TrimSpace(value)
+	}
+	return properties
 }
 
 func systemdServiceContents(exe string) string {

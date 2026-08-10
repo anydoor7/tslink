@@ -23,6 +23,7 @@ const (
 	WarningCodeRegistryServiceInvalid              = "registry_service_invalid"
 	WarningCodeControlURLInvalid                   = "control_url_invalid"
 	WarningCodeCredentialNone                      = "credential_none"
+	WarningCodeCredentialTier1                     = "credential_tier1"
 	WarningCodeCredentialLegacyAuthKey             = "credential_legacy_authkey"
 	WarningCodeCredentialNoAPIClient               = "credential_no_api_client"
 	WarningCodeCredentialReadFailed                = "credential_read_failed"
@@ -139,9 +140,14 @@ var WarningCodeRegistry = map[string]WarningCodeMeta{
 		Description: "A configured control_url is not a valid HTTP or HTTPS URL.",
 	},
 	WarningCodeCredentialNone: {
-		Severity:    "error",
+		Severity:    "warning",
 		Source:      "credentials",
-		Description: "No supported TSLink credential is configured.",
+		Description: "Tier 1 interactive enrollment has not started; run tslink serve, or use tslink login only for optional Tier 2.",
+	},
+	WarningCodeCredentialTier1: {
+		Severity:    "info",
+		Source:      "credentials",
+		Description: "TSLink is using the default Tier 1 interactive-enrollment path without a stored administrative credential.",
 	},
 	WarningCodeCredentialLegacyAuthKey: {
 		Severity:    "warning",

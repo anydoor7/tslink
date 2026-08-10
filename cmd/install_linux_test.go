@@ -9,7 +9,20 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/monody0007/tslink/internal/output"
 )
+
+func stubLinuxInstallDaemonStopped(t *testing.T) {
+	t.Helper()
+	oldConflict := installDaemonConflictFn
+	installDaemonConflictFn = func() error { return nil }
+	t.Cleanup(func() { installDaemonConflictFn = oldConflict })
+}
+
+func runningSystemdState() []byte {
+	return []byte("ActiveState=active\nSubState=running\nMainPID=1775\n")
+}
 
 func TestSystemdServiceContentsThrottlesRestart(t *testing.T) {
 	unit := systemdServiceContents("/usr/local/bin/tslink")
@@ -41,6 +54,7 @@ func TestSystemdServiceContentsEscapesSystemdSpecials(t *testing.T) {
 }
 
 func TestLinuxInstallCommandRunsSystemctlAndWarnsAboutLinger(t *testing.T) {
+	stubLinuxInstallDaemonStopped(t)
 	home := t.TempDir()
 
 	oldHome := linuxUserHomeDirFn
@@ -69,6 +83,9 @@ func TestLinuxInstallCommandRunsSystemctlAndWarnsAboutLinger(t *testing.T) {
 	var systemctlCalls []string
 	systemctlCombinedOutput = func(args ...string) ([]byte, error) {
 		systemctlCalls = append(systemctlCalls, strings.Join(args, "\x00"))
+		if len(args) > 1 && args[1] == "show" {
+			return runningSystemdState(), nil
+		}
 		return nil, nil
 	}
 
@@ -84,6 +101,7 @@ func TestLinuxInstallCommandRunsSystemctlAndWarnsAboutLinger(t *testing.T) {
 		strings.Join([]string{"--user", "daemon-reload"}, "\x00"),
 		strings.Join([]string{"--user", "enable", systemdServiceName}, "\x00"),
 		strings.Join([]string{"--user", "restart", systemdServiceName}, "\x00"),
+		strings.Join([]string{"--user", "show", systemdServiceName, "--property=ActiveState", "--property=SubState", "--property=MainPID", "--no-pager"}, "\x00"),
 	}
 	if strings.Join(systemctlCalls, "\n") != strings.Join(wantCalls, "\n") {
 		t.Fatalf("systemctl calls = %q, want %q", systemctlCalls, wantCalls)
@@ -109,6 +127,7 @@ func TestLinuxInstallCommandRunsSystemctlAndWarnsAboutLinger(t *testing.T) {
 }
 
 func TestLinuxInstallJSONEnvelope(t *testing.T) {
+	stubLinuxInstallDaemonStopped(t)
 	home := t.TempDir()
 
 	oldHome := linuxUserHomeDirFn
@@ -132,7 +151,12 @@ func TestLinuxInstallJSONEnvelope(t *testing.T) {
 	linuxEvalSymlinksFn = func(path string) (string, error) { return path, nil }
 	linuxUserNameFn = func() string { return "alice" }
 	loginctlCombinedOutputFn = func(args ...string) ([]byte, error) { return []byte("yes\n"), nil }
-	systemctlCombinedOutput = func(args ...string) ([]byte, error) { return nil, nil }
+	systemctlCombinedOutput = func(args ...string) ([]byte, error) {
+		if len(args) > 1 && args[1] == "show" {
+			return runningSystemdState(), nil
+		}
+		return nil, nil
+	}
 	if err := rootCmd.PersistentFlags().Set("json", "true"); err != nil {
 		t.Fatalf("set json true: %v", err)
 	}
@@ -156,6 +180,7 @@ func TestLinuxInstallJSONEnvelope(t *testing.T) {
 }
 
 func TestLinuxInstallSurfacesSystemctlOutput(t *testing.T) {
+	stubLinuxInstallDaemonStopped(t)
 	home := t.TempDir()
 
 	oldHome := linuxUserHomeDirFn
@@ -182,6 +207,71 @@ func TestLinuxInstallSurfacesSystemctlOutput(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "systemctl stderr") {
 		t.Fatalf("systemctl output not surfaced: %v", err)
+	}
+}
+
+func TestLinuxInstallRefusesRunningDaemonBeforeWritingUnit(t *testing.T) {
+	home := t.TempDir()
+	oldHome := linuxUserHomeDirFn
+	oldConflict := installDaemonConflictFn
+	oldSystemctl := systemctlCombinedOutput
+	t.Cleanup(func() {
+		linuxUserHomeDirFn = oldHome
+		installDaemonConflictFn = oldConflict
+		systemctlCombinedOutput = oldSystemctl
+	})
+
+	linuxUserHomeDirFn = func() (string, error) { return home, nil }
+	installDaemonConflictFn = func() error {
+		return output.ErrConflict("TSLink daemon is already running (pid 1676); run 'tslink stop' and retry 'tslink install'")
+	}
+	systemctlCombinedOutput = func(args ...string) ([]byte, error) {
+		t.Fatalf("systemctl called during daemon conflict: %v", args)
+		return nil, nil
+	}
+
+	err := installCmd.RunE(installCmd, nil)
+	if output.ExitCode(err) != output.ExitConflict || !strings.Contains(err.Error(), "pid 1676") || !strings.Contains(err.Error(), "tslink stop") {
+		t.Fatalf("install conflict = %v (exit %d)", err, output.ExitCode(err))
+	}
+	servicePath := filepath.Join(home, ".config", "systemd", "user", systemdServiceName)
+	if _, statErr := os.Stat(servicePath); !os.IsNotExist(statErr) {
+		t.Fatalf("service file exists after conflict: %v", statErr)
+	}
+}
+
+func TestLinuxInstallDoesNotClaimSuccessWhenServiceIsAutoRestarting(t *testing.T) {
+	stubLinuxInstallDaemonStopped(t)
+	home := t.TempDir()
+	oldHome := linuxUserHomeDirFn
+	oldExe := linuxExecutablePathFn
+	oldEval := linuxEvalSymlinksFn
+	oldSystemctl := systemctlCombinedOutput
+	t.Cleanup(func() {
+		linuxUserHomeDirFn = oldHome
+		linuxExecutablePathFn = oldExe
+		linuxEvalSymlinksFn = oldEval
+		systemctlCombinedOutput = oldSystemctl
+	})
+
+	linuxUserHomeDirFn = func() (string, error) { return home, nil }
+	linuxExecutablePathFn = func() (string, error) { return "/opt/tslink", nil }
+	linuxEvalSymlinksFn = func(path string) (string, error) { return path, nil }
+	systemctlCombinedOutput = func(args ...string) ([]byte, error) {
+		if len(args) > 1 && args[1] == "show" {
+			return []byte("ActiveState=activating\nSubState=auto-restart\nMainPID=0\n"), nil
+		}
+		return nil, nil
+	}
+
+	var out bytes.Buffer
+	installCmd.SetOut(&out)
+	err := installCmd.RunE(installCmd, nil)
+	if err == nil || !strings.Contains(err.Error(), "auto-restart") || !strings.Contains(err.Error(), "journalctl") {
+		t.Fatalf("install RunE() error = %v, want actionable post-install state failure", err)
+	}
+	if strings.Contains(out.String(), "✓") {
+		t.Fatalf("install printed success for auto-restart state: %s", out.String())
 	}
 }
 

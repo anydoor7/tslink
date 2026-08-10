@@ -42,6 +42,9 @@ const (
 	doctorCredentialOAuthClientSecret = "oauth_client_secret"
 	doctorCredentialLegacyAuthKey     = "legacy_authkey"
 	doctorCredentialMixed             = "mixed"
+	doctorCredentialTier1             = "tier1"
+	doctorCredentialTier2             = "tier2"
+	doctorCredentialTierUnknown       = "unknown"
 
 	doctorProbeTimeout = 250 * time.Millisecond
 
@@ -53,6 +56,7 @@ var (
 	doctorConfigDirFn           = config.Dir
 	doctorRegistryPathFn        = config.RegistryPath
 	doctorRuntimeSnapshotPathFn = config.RuntimeSnapshotPath
+	doctorAuthHandoffPathFn     = config.AuthHandoffPath
 	doctorPIDPathFn             = config.PIDPath
 	doctorAuthKeyPathFn         = config.AuthKeyPath
 	doctorLoadGlobalConfigFn    = config.LoadGlobalConfig
@@ -62,6 +66,7 @@ var (
 	doctorStatFn                = os.Stat
 	doctorOpenPathFn            = func(path string) (io.Closer, error) { return os.Open(path) }
 	doctorProbeTargetFn         = defaultDoctorProbeTarget
+	doctorLoadAuthHandoffFn     = loadAuthHandoff
 )
 
 var (
@@ -75,6 +80,7 @@ type doctorOptions struct {
 	RegistryPath        string
 	PIDPath             string
 	RuntimeSnapshotPath string
+	AuthHandoffPath     string
 }
 
 type DoctorResult struct {
@@ -86,6 +92,7 @@ type DoctorResult struct {
 	Counts          DoctorCounts                `json:"counts"`
 	Paths           DoctorPaths                 `json:"paths"`
 	CredentialMode  string                      `json:"credential_mode"`
+	CredentialTier  string                      `json:"credential_tier"`
 	Daemon          DoctorDaemon                `json:"daemon"`
 	RuntimeSnapshot StatusRuntimeSnapshotResult `json:"runtime_snapshot"`
 	Findings        []DoctorFinding             `json:"findings"`
@@ -104,6 +111,7 @@ type DoctorPaths struct {
 	ConfigDir       string `json:"config_dir,omitempty"`
 	Registry        string `json:"registry,omitempty"`
 	RuntimeSnapshot string `json:"runtime_snapshot,omitempty"`
+	AuthHandoff     string `json:"auth_handoff,omitempty"`
 	PID             string `json:"pid,omitempty"`
 }
 
@@ -128,6 +136,10 @@ type doctorTarget struct {
 	External     bool
 }
 
+type doctorCredentialState struct {
+	CredentialFree bool
+}
+
 func runDoctor(out io.Writer, opts doctorOptions, isJSON bool) error {
 	result := buildDoctorResult(opts)
 	if isJSON {
@@ -146,6 +158,7 @@ func buildDoctorResult(opts doctorOptions) DoctorResult {
 		HealthStatus:    doctorStatusOK,
 		HealthExitCode:  output.ExitSuccess,
 		CredentialMode:  doctorCredentialNone,
+		CredentialTier:  doctorCredentialTierUnknown,
 		Findings:        []DoctorFinding{},
 		RuntimeSnapshot: StatusRuntimeSnapshotResult{
 			Status: "unknown",
@@ -153,7 +166,7 @@ func buildDoctorResult(opts doctorOptions) DoctorResult {
 	}
 
 	pathsOK := discoverDoctorPaths(&result, opts)
-	diagnoseCredentials(&result)
+	credentialState := diagnoseCredentials(&result)
 
 	var cfg config.GlobalConfig
 	cfgOK := false
@@ -211,10 +224,14 @@ func buildDoctorResult(opts doctorOptions) DoctorResult {
 		serviceCount = len(reg.Services)
 	}
 	diagnoseDaemon(&result, serviceCount)
+	pendingEnrollment := diagnosePendingEnrollment(&result)
 
+	completedEnrollment := false
 	if reg != nil && (serviceCount > 0 || result.Daemon.Running) && result.Paths.RuntimeSnapshot != "" && fingerprint != "" {
-		diagnoseRuntimeSnapshot(&result, fingerprint)
+		suppressExpectedMissing := credentialState.CredentialFree && (pendingEnrollment || !result.Daemon.Running)
+		completedEnrollment = diagnoseRuntimeSnapshot(&result, fingerprint, suppressExpectedMissing)
 	}
+	diagnoseCredentialTier1(&result, credentialState, pendingEnrollment, completedEnrollment)
 
 	result.finalize()
 	return result
@@ -244,6 +261,14 @@ func discoverDoctorPaths(result *DoctorResult, opts doctorOptions) bool {
 	} else {
 		result.Paths.RuntimeSnapshot = path
 	}
+	if opts.AuthHandoffPath != "" {
+		result.Paths.AuthHandoff = opts.AuthHandoffPath
+	} else if path, err := doctorAuthHandoffPathFn(); err != nil {
+		ok = false
+		result.addFinding(inspect.WarningCodeConfigPathUnavailable, "", "config", "Auth handoff path could not be discovered.", evidenceError(err))
+	} else {
+		result.Paths.AuthHandoff = path
+	}
 	if opts.PIDPath != "" {
 		result.Paths.PID = opts.PIDPath
 	} else if path, err := doctorPIDPathFn(); err != nil {
@@ -255,7 +280,7 @@ func discoverDoctorPaths(result *DoctorResult, opts doctorOptions) bool {
 	return ok
 }
 
-func diagnoseCredentials(result *DoctorResult) {
+func diagnoseCredentials(result *DoctorResult) doctorCredentialState {
 	apiToken, apiErr := doctorGetAPIKeyFn()
 	clientSecret, clientSecretErr := doctorGetClientSecretFn()
 	legacyAuthKey, legacyErr := doctorLegacyAuthKeyConfigured()
@@ -281,17 +306,19 @@ func diagnoseCredentials(result *DoctorResult) {
 	switch {
 	case count == 0:
 		result.CredentialMode = doctorCredentialNone
-		if apiErr == nil && clientSecretErr == nil && legacyErr == nil {
-			result.addFinding(inspect.WarningCodeCredentialNone, "", "credentials", "No TSLink credential is configured; run tslink login.", nil)
-		}
+		result.CredentialTier = doctorCredentialTier1
 	case count > 1:
 		result.CredentialMode = doctorCredentialMixed
+		result.CredentialTier = doctorCredentialTier2
 	case hasAPI:
 		result.CredentialMode = doctorCredentialAPIToken
+		result.CredentialTier = doctorCredentialTier2
 	case hasOAuth:
 		result.CredentialMode = doctorCredentialOAuthClientSecret
+		result.CredentialTier = doctorCredentialTier2
 	case legacyAuthKey:
 		result.CredentialMode = doctorCredentialLegacyAuthKey
+		result.CredentialTier = doctorCredentialTier2
 	}
 
 	if legacyAuthKey {
@@ -300,6 +327,12 @@ func diagnoseCredentials(result *DoctorResult) {
 	if !hasAPI && (hasOAuth || legacyAuthKey) {
 		result.addFinding(inspect.WarningCodeCredentialNoAPIClient, "", "credentials", "No API token is configured; remote Tailscale API permissions cannot be proven locally.", nil)
 	}
+
+	credentialFree := count == 0 && apiErr == nil && clientSecretErr == nil && legacyErr == nil
+	if count == 0 && !credentialFree {
+		result.CredentialTier = doctorCredentialTierUnknown
+	}
+	return doctorCredentialState{CredentialFree: credentialFree}
 }
 
 func doctorLegacyAuthKeyConfigured() (bool, error) {
@@ -337,7 +370,18 @@ func diagnoseDaemon(result *DoctorResult, serviceCount int) {
 	result.Daemon.PID = pid
 }
 
-func diagnoseRuntimeSnapshot(result *DoctorResult, fingerprint string) {
+func diagnosePendingEnrollment(result *DoctorResult) bool {
+	if result.Paths.AuthHandoff == "" {
+		return false
+	}
+	handoff, err := doctorLoadAuthHandoffFn(result.Paths.AuthHandoff)
+	if err != nil {
+		return false
+	}
+	return !result.Daemon.Running || handoff.DaemonPID == result.Daemon.PID
+}
+
+func diagnoseRuntimeSnapshot(result *DoctorResult, fingerprint string, suppressMissing bool) bool {
 	snapshot, loadErr := runtimeLoadSnapshotFn(result.Paths.RuntimeSnapshot)
 	expected := tsruntime.ExpectedRuntime{
 		CurrentRegistryFingerprint: fingerprint,
@@ -350,12 +394,34 @@ func diagnoseRuntimeSnapshot(result *DoctorResult, fingerprint string) {
 	}
 	freshness := tsruntime.Classify(snapshot, loadErr, expected)
 	result.RuntimeSnapshot = runtimeSnapshotResult(snapshot, freshness)
+	completedEnrollment := snapshotReportsServices(freshness) && snapshot != nil && len(snapshot.Services) > 0
 	if freshness.Code != "" {
+		if suppressMissing && freshness.Code == inspect.WarningCodeRuntimeSnapshotMissing {
+			return completedEnrollment
+		}
 		message := freshness.Message
 		if message == "" {
 			message = inspect.WarningCodeRegistry[freshness.Code].Description
 		}
 		result.addFinding(freshness.Code, "", "runtime_snapshot", message, nil)
+	}
+	return completedEnrollment
+}
+
+func diagnoseCredentialTier1(result *DoctorResult, state doctorCredentialState, pendingEnrollment, completedEnrollment bool) {
+	if !state.CredentialFree {
+		return
+	}
+
+	switch {
+	case pendingEnrollment:
+		result.addFinding(inspect.WarningCodeCredentialTier1, "", "credentials", "Tier 1 is active without a stored credential; interactive enrollment is pending. Open the authorization URL reported by 'tslink status'.", nil)
+	case completedEnrollment:
+		result.addFinding(inspect.WarningCodeCredentialTier1, "", "credentials", "Tier 1 is active without a stored credential; interactive enrollment has produced authorized runtime state.", nil)
+	case result.Daemon.Running:
+		result.addFinding(inspect.WarningCodeCredentialTier1, "", "credentials", "Tier 1 is active without a stored credential; the daemon is running and waiting for interactive enrollment evidence.", nil)
+	default:
+		result.addFinding(inspect.WarningCodeCredentialNone, "", "credentials", "Tier 1 uses interactive enrollment and no stored credential is required. Run 'tslink serve' to enroll, or run 'tslink login' only for optional Tier 2 durable installs.", nil)
 	}
 }
 
@@ -660,7 +726,7 @@ func formatDoctor(result DoctorResult, out io.Writer) {
 	)
 	fmt.Fprintf(out, "Config: %s\n", emptyDash(result.Paths.ConfigDir))
 	fmt.Fprintf(out, "Registry: %s (%d services)\n", emptyDash(result.Paths.Registry), result.Counts.Services)
-	fmt.Fprintf(out, "Credentials: %s\n", result.CredentialMode)
+	fmt.Fprintf(out, "Credential tier: %s\n", formatDoctorCredentialTier(result))
 	if result.Daemon.Running {
 		fmt.Fprintf(out, "Daemon: running (pid %d)\n", result.Daemon.PID)
 	} else {
@@ -687,6 +753,17 @@ func formatDoctor(result DoctorResult, out io.Writer) {
 			fmt.Fprintf(out, " (%s)", formatEvidence(finding.Evidence))
 		}
 		fmt.Fprintln(out)
+	}
+}
+
+func formatDoctorCredentialTier(result DoctorResult) string {
+	switch result.CredentialTier {
+	case doctorCredentialTier1:
+		return "Tier 1 (interactive enrollment; no stored administrative credential)"
+	case doctorCredentialTier2:
+		return fmt.Sprintf("Tier 2 (stored credential mode: %s)", result.CredentialMode)
+	default:
+		return fmt.Sprintf("unknown (credential mode: %s)", result.CredentialMode)
 	}
 }
 

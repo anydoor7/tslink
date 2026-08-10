@@ -25,6 +25,7 @@ type doctorTestEnv struct {
 	dir          string
 	regPath      string
 	snapshotPath string
+	authHandoff  string
 	pidPath      string
 	authKeyPath  string
 	startedAt    time.Time
@@ -40,6 +41,7 @@ func newDoctorTestEnv(t *testing.T, services []registry.Service) doctorTestEnv {
 		dir:          dir,
 		regPath:      filepath.Join(dir, "registry.json"),
 		snapshotPath: filepath.Join(dir, "runtime.json"),
+		authHandoff:  filepath.Join(dir, "auth-handoff.json"),
 		pidPath:      filepath.Join(dir, "tslink.pid"),
 		authKeyPath:  filepath.Join(dir, "authkey"),
 		startedAt:    time.Date(2026, 5, 17, 12, 0, 0, 0, time.UTC),
@@ -50,6 +52,7 @@ func newDoctorTestEnv(t *testing.T, services []registry.Service) doctorTestEnv {
 	doctorConfigDirFn = func() (string, error) { return dir, nil }
 	doctorRegistryPathFn = func() (string, error) { return env.regPath, nil }
 	doctorRuntimeSnapshotPathFn = func() (string, error) { return env.snapshotPath, nil }
+	doctorAuthHandoffPathFn = func() (string, error) { return env.authHandoff, nil }
 	doctorPIDPathFn = func() (string, error) { return env.pidPath, nil }
 	doctorAuthKeyPathFn = func() (string, error) { return env.authKeyPath, nil }
 	doctorLoadGlobalConfigFn = func() (config.GlobalConfig, error) { return config.GlobalConfig{}, nil }
@@ -59,6 +62,7 @@ func newDoctorTestEnv(t *testing.T, services []registry.Service) doctorTestEnv {
 	doctorStatFn = os.Stat
 	doctorOpenPathFn = func(path string) (io.Closer, error) { return os.Open(path) }
 	doctorProbeTargetFn = func(context.Context, string, time.Duration) error { return nil }
+	doctorLoadAuthHandoffFn = loadAuthHandoff
 
 	isRunningFn = func(string) bool { return true }
 	readPIDFn = func(string) (int, error) { return env.pid, nil }
@@ -73,6 +77,7 @@ func resetDoctorSeams(t *testing.T) {
 	oldConfigDir := doctorConfigDirFn
 	oldRegistryPath := doctorRegistryPathFn
 	oldRuntimeSnapshotPath := doctorRuntimeSnapshotPathFn
+	oldAuthHandoffPath := doctorAuthHandoffPathFn
 	oldPIDPath := doctorPIDPathFn
 	oldAuthKeyPath := doctorAuthKeyPathFn
 	oldLoadGlobalConfig := doctorLoadGlobalConfigFn
@@ -82,6 +87,7 @@ func resetDoctorSeams(t *testing.T) {
 	oldStat := doctorStatFn
 	oldOpenPath := doctorOpenPathFn
 	oldProbe := doctorProbeTargetFn
+	oldLoadAuthHandoff := doctorLoadAuthHandoffFn
 	oldIsRunning := isRunningFn
 	oldReadPID := readPIDFn
 	oldPIDFileModTime := pidFileModTimeFn
@@ -90,6 +96,7 @@ func resetDoctorSeams(t *testing.T) {
 		doctorConfigDirFn = oldConfigDir
 		doctorRegistryPathFn = oldRegistryPath
 		doctorRuntimeSnapshotPathFn = oldRuntimeSnapshotPath
+		doctorAuthHandoffPathFn = oldAuthHandoffPath
 		doctorPIDPathFn = oldPIDPath
 		doctorAuthKeyPathFn = oldAuthKeyPath
 		doctorLoadGlobalConfigFn = oldLoadGlobalConfig
@@ -99,6 +106,7 @@ func resetDoctorSeams(t *testing.T) {
 		doctorStatFn = oldStat
 		doctorOpenPathFn = oldOpenPath
 		doctorProbeTargetFn = oldProbe
+		doctorLoadAuthHandoffFn = oldLoadAuthHandoff
 		isRunningFn = oldIsRunning
 		readPIDFn = oldReadPID
 		pidFileModTimeFn = oldPIDFileModTime
@@ -257,41 +265,127 @@ func TestDoctorExitCodes(t *testing.T) {
 		t.Fatalf("legacy authkey health = %q/%d, want warning/%d", warningResult.HealthStatus, warningResult.HealthExitCode, output.ExitWarning)
 	}
 
+	doctorGetAPIKeyFn = func() (string, error) { return "", errors.New("credential backend unavailable") }
 	doctorReadFileFn = func(string) ([]byte, error) { return nil, os.ErrNotExist }
 	var criticalBuf bytes.Buffer
 	err = runDoctor(&criticalBuf, doctorOptions{}, true)
 	if output.ExitCode(err) != output.ExitCritical {
-		t.Fatalf("missing credential ExitCode = %d, want %d", output.ExitCode(err), output.ExitCritical)
+		t.Fatalf("credential read failure ExitCode = %d, want %d", output.ExitCode(err), output.ExitCritical)
 	}
 	if !output.IsSilent(err) {
-		t.Fatalf("missing credential err = %T, want silent exit", err)
+		t.Fatalf("credential read failure err = %T, want silent exit", err)
 	}
 	criticalResult := decodeDoctorJSON(t, criticalBuf.String())
 	if criticalResult.Status != doctorStatusError {
-		t.Fatalf("missing credential status = %q, want %q", criticalResult.Status, doctorStatusError)
+		t.Fatalf("credential read failure status = %q, want %q", criticalResult.Status, doctorStatusError)
 	}
 	if criticalResult.HealthStatus != doctorStatusError || criticalResult.HealthExitCode != output.ExitCritical {
-		t.Fatalf("missing credential health = %q/%d, want error/%d", criticalResult.HealthStatus, criticalResult.HealthExitCode, output.ExitCritical)
+		t.Fatalf("credential read failure health = %q/%d, want error/%d", criticalResult.HealthStatus, criticalResult.HealthExitCode, output.ExitCritical)
 	}
 }
 
 func TestDoctorMissingCredentialsFinding(t *testing.T) {
-	env := newDoctorTestEnv(t, nil)
-	env.writeExactSnapshot(t)
+	newDoctorTestEnv(t, nil)
 	doctorGetAPIKeyFn = func() (string, error) { return "", nil }
 	doctorGetClientSecretFn = func() (string, error) { return "", nil }
 	doctorReadFileFn = func(string) ([]byte, error) { return nil, os.ErrNotExist }
+	isRunningFn = func(string) bool { return false }
 
 	var buf bytes.Buffer
 	err := runDoctor(&buf, doctorOptions{}, false)
-	if output.ExitCode(err) != output.ExitCritical {
-		t.Fatalf("ExitCode = %d, want %d", output.ExitCode(err), output.ExitCritical)
+	if output.ExitCode(err) != output.ExitWarning {
+		t.Fatalf("ExitCode = %d, want %d", output.ExitCode(err), output.ExitWarning)
 	}
 	result := buildDoctorResult(doctorOptions{})
-	assertDoctorFinding(t, result, inspect.WarningCodeCredentialNone)
+	finding := assertDoctorFinding(t, result, inspect.WarningCodeCredentialNone)
+	if finding.Severity != doctorSeverityWarning {
+		t.Fatalf("credential_none severity = %q, want warning", finding.Severity)
+	}
+	assertDoctorNoFinding(t, result, inspect.WarningCodeRuntimeSnapshotMissing)
 	assertDoctorCodesRegistered(t, result)
 	if strings.Contains(buf.String(), "tskey-") {
 		t.Fatalf("human doctor output leaked credential-looking value: %s", buf.String())
+	}
+	for _, want := range []string{"Credential tier: Tier 1", "tslink serve", "optional Tier 2"} {
+		if !strings.Contains(buf.String(), want) {
+			t.Fatalf("human doctor output = %q, want %q", buf.String(), want)
+		}
+	}
+}
+
+func TestDoctorTier1StateMatrix(t *testing.T) {
+	service := registry.Service{Name: "web", Type: registry.TypeProxy, Target: "http://localhost:3000"}
+	cases := []struct {
+		name             string
+		services         []registry.Service
+		setup            func(t *testing.T, env doctorTestEnv)
+		wantCode         string
+		wantSeverity     string
+		wantExit         int
+		wantSnapshotMiss bool
+	}{
+		{
+			name:         "no enrollment and no daemon",
+			wantCode:     inspect.WarningCodeCredentialNone,
+			wantSeverity: doctorSeverityWarning,
+			wantExit:     output.ExitWarning,
+			setup: func(t *testing.T, env doctorTestEnv) {
+				isRunningFn = func(string) bool { return false }
+			},
+		},
+		{
+			name:         "interactive enrollment pending",
+			services:     []registry.Service{service},
+			wantCode:     inspect.WarningCodeCredentialTier1,
+			wantSeverity: doctorSeverityInfo,
+			wantExit:     output.ExitSuccess,
+			setup: func(t *testing.T, env doctorTestEnv) {
+				record := newAuthHandoffRecord("web", "https://login.tailscale.com/a/doctor-test", env.pid)
+				if err := saveAuthHandoff(env.authHandoff, record); err != nil {
+					t.Fatalf("saveAuthHandoff: %v", err)
+				}
+			},
+		},
+		{
+			name:         "interactive enrollment completed",
+			services:     []registry.Service{service},
+			wantCode:     inspect.WarningCodeCredentialTier1,
+			wantSeverity: doctorSeverityInfo,
+			wantExit:     output.ExitSuccess,
+			setup: func(t *testing.T, env doctorTestEnv) {
+				env.writeExactSnapshot(t)
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env := newDoctorTestEnv(t, tc.services)
+			doctorGetAPIKeyFn = func() (string, error) { return "", nil }
+			doctorGetClientSecretFn = func() (string, error) { return "", nil }
+			doctorReadFileFn = func(string) ([]byte, error) { return nil, os.ErrNotExist }
+			if tc.setup != nil {
+				tc.setup(t, env)
+			}
+
+			result := buildDoctorResult(doctorOptions{})
+			if result.CredentialTier != doctorCredentialTier1 || result.CredentialMode != doctorCredentialNone {
+				t.Fatalf("credential state = %s/%s, want tier1/none", result.CredentialTier, result.CredentialMode)
+			}
+			finding := assertDoctorFinding(t, result, tc.wantCode)
+			if finding.Severity != tc.wantSeverity {
+				t.Fatalf("%s severity = %q, want %q", tc.wantCode, finding.Severity, tc.wantSeverity)
+			}
+			if tc.wantSnapshotMiss {
+				assertDoctorFinding(t, result, inspect.WarningCodeRuntimeSnapshotMissing)
+			} else {
+				assertDoctorNoFinding(t, result, inspect.WarningCodeRuntimeSnapshotMissing)
+			}
+			if got := output.ExitCode(doctorExit(result)); got != tc.wantExit {
+				t.Fatalf("ExitCode = %d, want %d; findings=%+v", got, tc.wantExit, result.Findings)
+			}
+			assertDoctorCodesRegistered(t, result)
+		})
 	}
 }
 

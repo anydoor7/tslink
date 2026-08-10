@@ -352,6 +352,7 @@ func (h *apiHandler) handleDoctor(req APIRequest, out io.Writer) output.Result {
 		RegistryPath:        h.regPath,
 		PIDPath:             h.pidPath,
 		RuntimeSnapshotPath: h.runtimeSnapshotPath,
+		AuthHandoffPath:     h.authHandoffPath,
 	})
 	return writeAPISuccess(out, apiActionDoctor, result)
 }

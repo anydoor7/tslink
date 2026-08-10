@@ -11,7 +11,20 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/monody0007/tslink/internal/output"
 )
+
+func stubDarwinInstallDaemonStopped(t *testing.T) {
+	t.Helper()
+	oldConflict := installDaemonConflictFn
+	installDaemonConflictFn = func() error { return nil }
+	t.Cleanup(func() { installDaemonConflictFn = oldConflict })
+}
+
+func runningLaunchAgentState() []byte {
+	return []byte("state = running\npid = 1775\n")
+}
 
 func TestPlistPath(t *testing.T) {
 	old := userHomeDirFn
@@ -98,6 +111,7 @@ func TestPlistTemplateEscapesXMLPaths(t *testing.T) {
 }
 
 func TestInstallCommandBootoutThenBootstrapsLaunchAgentOnSuccess(t *testing.T) {
+	stubDarwinInstallDaemonStopped(t)
 	resetRootJSONFlag(t)
 	t.Cleanup(func() { installCmd.SetOut(nil) })
 
@@ -125,6 +139,9 @@ func TestInstallCommandBootoutThenBootstrapsLaunchAgentOnSuccess(t *testing.T) {
 	var gotCalls []string
 	launchctlCombinedOutput = func(args ...string) ([]byte, error) {
 		gotCalls = append(gotCalls, strings.Join(args, "\x00"))
+		if len(args) > 0 && args[0] == "print" {
+			return runningLaunchAgentState(), nil
+		}
 		return []byte("bootstrap ok"), nil
 	}
 
@@ -140,6 +157,7 @@ func TestInstallCommandBootoutThenBootstrapsLaunchAgentOnSuccess(t *testing.T) {
 		strings.Join([]string{"bootout", "gui/501/" + plistLabel}, "\x00"),
 		strings.Join([]string{"bootout", "user/501/" + plistLabel}, "\x00"),
 		strings.Join([]string{"bootstrap", "gui/501", plistPath}, "\x00"),
+		strings.Join([]string{"print", "gui/501/" + plistLabel}, "\x00"),
 	}
 	if strings.Join(gotCalls, "\n") != strings.Join(wantCalls, "\n") {
 		t.Fatalf("launchctl calls = %q, want %q", gotCalls, wantCalls)
@@ -150,6 +168,7 @@ func TestInstallCommandBootoutThenBootstrapsLaunchAgentOnSuccess(t *testing.T) {
 }
 
 func TestInstallCommandBootstrapsLaunchAgentAndSurfacesOutput(t *testing.T) {
+	stubDarwinInstallDaemonStopped(t)
 	resetRootJSONFlag(t)
 	t.Cleanup(func() { installCmd.SetOut(nil) })
 
@@ -183,8 +202,8 @@ func TestInstallCommandBootstrapsLaunchAgentAndSurfacesOutput(t *testing.T) {
 	var out bytes.Buffer
 	installCmd.SetOut(&out)
 	err := installCmd.RunE(installCmd, nil)
-	if err != nil {
-		t.Fatalf("install RunE() error = %v", err)
+	if err == nil {
+		t.Fatal("install RunE() error = nil, want bootstrap failure")
 	}
 
 	plistPath := filepath.Join(home, "Library", "LaunchAgents", plistLabel+".plist")
@@ -196,8 +215,11 @@ func TestInstallCommandBootstrapsLaunchAgentAndSurfacesOutput(t *testing.T) {
 	if strings.Join(gotCalls, "\n") != strings.Join(wantCalls, "\n") {
 		t.Fatalf("launchctl calls = %q, want %q", gotCalls, wantCalls)
 	}
-	if !strings.Contains(out.String(), "bootstrap stderr") {
-		t.Fatalf("install output did not surface launchctl output: %s", out.String())
+	if !strings.Contains(err.Error(), "bootstrap stderr") {
+		t.Fatalf("install error did not surface launchctl output: %v", err)
+	}
+	if strings.Contains(out.String(), "✓") {
+		t.Fatalf("install printed success after bootstrap failure: %s", out.String())
 	}
 	plist, err := os.ReadFile(plistPath)
 	if err != nil {
@@ -209,6 +231,7 @@ func TestInstallCommandBootstrapsLaunchAgentAndSurfacesOutput(t *testing.T) {
 }
 
 func TestInstallCommandFallsBackToUserDomainWhenGUIDomainMissing(t *testing.T) {
+	stubDarwinInstallDaemonStopped(t)
 	resetRootJSONFlag(t)
 	t.Cleanup(func() { installCmd.SetOut(nil) })
 
@@ -239,6 +262,9 @@ func TestInstallCommandFallsBackToUserDomainWhenGUIDomainMissing(t *testing.T) {
 		if len(args) >= 2 && args[0] == "bootstrap" && args[1] == "gui/503" {
 			return []byte("Bootstrap failed: 113: Domain does not exist"), errors.New("bootstrap failed")
 		}
+		if len(args) > 0 && args[0] == "print" {
+			return runningLaunchAgentState(), nil
+		}
 		return []byte("user bootstrap ok"), nil
 	}
 
@@ -255,6 +281,7 @@ func TestInstallCommandFallsBackToUserDomainWhenGUIDomainMissing(t *testing.T) {
 		strings.Join([]string{"bootout", "user/503/" + plistLabel}, "\x00"),
 		strings.Join([]string{"bootstrap", "gui/503", plistPath}, "\x00"),
 		strings.Join([]string{"bootstrap", "user/503", plistPath}, "\x00"),
+		strings.Join([]string{"print", "user/503/" + plistLabel}, "\x00"),
 	}
 	if strings.Join(gotCalls, "\n") != strings.Join(wantCalls, "\n") {
 		t.Fatalf("launchctl calls = %q, want %q", gotCalls, wantCalls)
@@ -263,6 +290,82 @@ func TestInstallCommandFallsBackToUserDomainWhenGUIDomainMissing(t *testing.T) {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("install output = %q, want %q", out.String(), want)
 		}
+	}
+}
+
+func TestInstallCommandRefusesRunningDaemonBeforeWritingPlist(t *testing.T) {
+	resetRootJSONFlag(t)
+	home := t.TempDir()
+	oldHome := userHomeDirFn
+	oldConflict := installDaemonConflictFn
+	oldLaunchctl := launchctlCombinedOutput
+	t.Cleanup(func() {
+		userHomeDirFn = oldHome
+		installDaemonConflictFn = oldConflict
+		launchctlCombinedOutput = oldLaunchctl
+	})
+
+	userHomeDirFn = func() (string, error) { return home, nil }
+	installDaemonConflictFn = func() error {
+		return output.ErrConflict("TSLink daemon is already running (pid 1676); run 'tslink stop' and retry 'tslink install'")
+	}
+	launchctlCombinedOutput = func(args ...string) ([]byte, error) {
+		t.Fatalf("launchctl called during daemon conflict: %v", args)
+		return nil, nil
+	}
+
+	err := installCmd.RunE(installCmd, nil)
+	if output.ExitCode(err) != output.ExitConflict || !strings.Contains(err.Error(), "pid 1676") || !strings.Contains(err.Error(), "tslink stop") {
+		t.Fatalf("install conflict = %v (exit %d)", err, output.ExitCode(err))
+	}
+	plistPath := filepath.Join(home, "Library", "LaunchAgents", plistLabel+".plist")
+	if _, statErr := os.Stat(plistPath); !os.IsNotExist(statErr) {
+		t.Fatalf("plist exists after conflict: %v", statErr)
+	}
+}
+
+func TestInstallCommandDoesNotClaimLoadedWhenLaunchAgentIsWaiting(t *testing.T) {
+	stubDarwinInstallDaemonStopped(t)
+	resetRootJSONFlag(t)
+	t.Cleanup(func() { installCmd.SetOut(nil) })
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	oldHome := userHomeDirFn
+	oldExe := executablePathFn
+	oldEval := evalSymlinksFn
+	oldUID := userUIDFn
+	oldLaunchctl := launchctlCombinedOutput
+	t.Cleanup(func() {
+		userHomeDirFn = oldHome
+		executablePathFn = oldExe
+		evalSymlinksFn = oldEval
+		userUIDFn = oldUID
+		launchctlCombinedOutput = oldLaunchctl
+	})
+
+	userHomeDirFn = func() (string, error) { return home, nil }
+	executablePathFn = func() (string, error) { return "/Applications/TSLink.app/tslink", nil }
+	evalSymlinksFn = func(path string) (string, error) { return path, nil }
+	userUIDFn = func() int { return 501 }
+	launchctlCombinedOutput = func(args ...string) ([]byte, error) {
+		if len(args) > 0 && args[0] == "print" {
+			return []byte("state = waiting\npid = 0\n"), nil
+		}
+		return nil, nil
+	}
+
+	var out bytes.Buffer
+	installCmd.SetOut(&out)
+	err := installCmd.RunE(installCmd, nil)
+	if err == nil {
+		t.Fatal("install RunE() error = nil, want waiting-state failure")
+	}
+	if strings.Contains(out.String(), "✓") || strings.Contains(out.String(), "installed and loaded") {
+		t.Fatalf("install claimed loaded for waiting LaunchAgent: %s", out.String())
+	}
+	if !strings.Contains(err.Error(), "did not reach running state") || !strings.Contains(err.Error(), "launchctl print") {
+		t.Fatalf("install error = %q, want actionable post-install state", err)
 	}
 }
 

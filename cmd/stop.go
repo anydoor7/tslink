@@ -16,6 +16,7 @@ var stopDaemonFn = daemon.StopDaemon
 var removePIDFn = daemon.RemovePID // retained as a compatibility test seam; not called on an inconclusive stop path
 var isProcessAbsentFromPIDFileFn = daemon.IsProcessAbsentFromPIDFile
 var pidPathFn = config.PIDPath
+var installDaemonConflictFn = detectInstallDaemonConflict
 
 func commandIsDaemonRunning(pidPath string) bool {
 	if daemon.IsRunning(pidPath) {
@@ -26,6 +27,25 @@ func commandIsDaemonRunning(pidPath string) bool {
 	// identity layer still requires an explicit `serve` argv.
 	pid, err := daemon.ReadPID(pidPath)
 	return err == nil && pid == os.Getpid()
+}
+
+func detectInstallDaemonConflict() error {
+	pidPath, err := pidPathFn()
+	if err != nil {
+		return fmt.Errorf("find daemon PID file before install: %w", err)
+	}
+	if !isRunningFn(pidPath) {
+		return nil
+	}
+
+	pid, err := readPIDFn(pidPath)
+	if err != nil {
+		return output.ErrConflict("a verified TSLink daemon is already running, but its PID could not be read; run 'tslink stop' and retry 'tslink install'")
+	}
+	return output.ErrConflict(fmt.Sprintf(
+		"TSLink daemon is already running (pid %d); run 'tslink stop' and retry 'tslink install' so the service manager can take ownership (exit 4 means an existing-state conflict)",
+		pid,
+	))
 }
 
 // StopResult holds the result for JSON output.

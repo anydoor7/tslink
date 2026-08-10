@@ -23,7 +23,8 @@ func newTestHandler(t *testing.T) (*apiHandler, string) {
 	regPath := filepath.Join(dir, "registry.json")
 	pidPath := filepath.Join(dir, "tslink.pid")
 	snapshotPath := filepath.Join(dir, "runtime.json")
-	return &apiHandler{regPath: regPath, pidPath: pidPath, runtimeSnapshotPath: snapshotPath}, dir
+	authHandoffPath := filepath.Join(dir, "auth-handoff.json")
+	return &apiHandler{regPath: regPath, pidPath: pidPath, runtimeSnapshotPath: snapshotPath, authHandoffPath: authHandoffPath}, dir
 }
 
 type apiTestResponse struct {
@@ -918,7 +919,7 @@ func TestAPIDoctorReturnsVNextPayloadReadOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read registry before doctor: %v", err)
 	}
-	h := &apiHandler{regPath: env.regPath, pidPath: env.pidPath, runtimeSnapshotPath: env.snapshotPath}
+	h := &apiHandler{regPath: env.regPath, pidPath: env.pidPath, runtimeSnapshotPath: env.snapshotPath, authHandoffPath: env.authHandoff}
 
 	var buf bytes.Buffer
 	h.handle(APIRequest{Action: "doctor"}, &buf)
@@ -970,7 +971,7 @@ func TestAPIDoctorProbeExternalOption(t *testing.T) {
 		}
 		return nil
 	}
-	h := &apiHandler{regPath: env.regPath, pidPath: env.pidPath, runtimeSnapshotPath: env.snapshotPath}
+	h := &apiHandler{regPath: env.regPath, pidPath: env.pidPath, runtimeSnapshotPath: env.snapshotPath, authHandoffPath: env.authHandoff}
 
 	resp := sendRequest(t, h, APIRequest{Action: "doctor", ProbeExternal: true})
 	if !resp.OK {
@@ -992,6 +993,7 @@ func TestAPIDoctorUsesHandlerPaths(t *testing.T) {
 	regPath := filepath.Join(dir, "handler-registry.json")
 	pidPath := filepath.Join(dir, "handler.pid")
 	snapshotPath := filepath.Join(dir, "handler-runtime.json")
+	authHandoffPath := filepath.Join(dir, "handler-auth-handoff.json")
 	writeDoctorRegistry(t, regPath, []registry.Service{{
 		Name:   "web",
 		Type:   registry.TypeProxy,
@@ -1005,6 +1007,10 @@ func TestAPIDoctorUsesHandlerPaths(t *testing.T) {
 	}
 	doctorRuntimeSnapshotPathFn = func() (string, error) {
 		t.Fatalf("doctorRuntimeSnapshotPathFn should not be used when API handler has a runtime snapshot path")
+		return "", nil
+	}
+	doctorAuthHandoffPathFn = func() (string, error) {
+		t.Fatalf("doctorAuthHandoffPathFn should not be used when API handler has an auth handoff path")
 		return "", nil
 	}
 	doctorPIDPathFn = func() (string, error) {
@@ -1022,7 +1028,7 @@ func TestAPIDoctorUsesHandlerPaths(t *testing.T) {
 		return false
 	}
 
-	h := &apiHandler{regPath: regPath, pidPath: pidPath, runtimeSnapshotPath: snapshotPath}
+	h := &apiHandler{regPath: regPath, pidPath: pidPath, runtimeSnapshotPath: snapshotPath, authHandoffPath: authHandoffPath}
 	resp := sendRequest(t, h, APIRequest{Action: "doctor"})
 	if !resp.OK {
 		t.Fatalf("expected request processed, got error: %s", resp.Error)
@@ -1031,7 +1037,7 @@ func TestAPIDoctorUsesHandlerPaths(t *testing.T) {
 		t.Fatalf("doctor missing in response: %+v", resp)
 	}
 	result := *resp.Doctor
-	if result.Paths.Registry != regPath || result.Paths.PID != pidPath || result.Paths.RuntimeSnapshot != snapshotPath {
+	if result.Paths.Registry != regPath || result.Paths.PID != pidPath || result.Paths.RuntimeSnapshot != snapshotPath || result.Paths.AuthHandoff != authHandoffPath {
 		t.Fatalf("doctor paths = %+v, want handler paths", result.Paths)
 	}
 	if result.Counts.Services != 1 {
@@ -1047,7 +1053,7 @@ func TestAPIDoctorTopLevelOKMeansRequestProcessed(t *testing.T) {
 		Port:         5432,
 		AllowedUsers: []string{"alice@example.com"},
 	}})
-	h := &apiHandler{regPath: env.regPath, pidPath: env.pidPath, runtimeSnapshotPath: env.snapshotPath}
+	h := &apiHandler{regPath: env.regPath, pidPath: env.pidPath, runtimeSnapshotPath: env.snapshotPath, authHandoffPath: env.authHandoff}
 
 	resp := sendRequest(t, h, APIRequest{Action: "doctor"})
 	if !resp.OK {

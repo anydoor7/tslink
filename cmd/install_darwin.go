@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/monody0007/tslink/internal/config"
@@ -111,6 +112,10 @@ Headless/SSH caveat:
 	  tslink install                Register and start the LaunchAgent`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if err := installDaemonConflictFn(); err != nil {
+			return err
+		}
+
 		if err := config.EnsureDir(); err != nil {
 			return err
 		}
@@ -152,38 +157,33 @@ Headless/SSH caveat:
 		}
 
 		loadResult := reinstallLaunchAgent(plistPath)
+		if loadResult.Err != nil {
+			warning := loadResult.Warning
+			if warning == "" {
+				warning = launchctlWarning("LaunchAgent plist installed but the service did not reach running state", loadResult.Err, []byte(loadResult.Output))
+			}
+			return fmt.Errorf("%s; plist remains installed at %s", warning, plistPath)
+		}
 
 		if jsonOutput(cmd) {
 			result := InstallResult{
 				PlistPath:       plistPath,
-				Loaded:          loadResult.Err == nil,
+				Loaded:          true,
 				LaunchctlTarget: loadResult.Target,
 				LaunchctlOutput: loadResult.Output,
 				Warning:         loadResult.Warning,
-			}
-			if loadResult.Err != nil && result.Warning == "" {
-				result.Warning = launchctlWarning("LaunchAgent plist installed but launchctl bootstrap failed", loadResult.Err, []byte(loadResult.Output))
 			}
 			output.Success("install", result)
 			return nil
 		}
 
-		if loadResult.Err != nil {
-			warning := loadResult.Warning
-			if warning == "" {
-				warning = launchctlWarning("LaunchAgent installed but could not auto-load", loadResult.Err, []byte(loadResult.Output))
-			}
-			fmt.Fprintf(cmd.OutOrStdout(), "→ ⚠ %s\n", warning)
-			fmt.Fprintf(cmd.OutOrStdout(), "  Run 'launchctl bootstrap %s %s' manually\n", loadResult.Domain, plistPath)
-		} else {
-			if loadResult.Warning != "" {
-				fmt.Fprintf(cmd.OutOrStdout(), "→ ⚠ %s\n", loadResult.Warning)
-			}
-			if loadResult.Output != "" {
-				fmt.Fprintf(cmd.OutOrStdout(), "→ launchctl output: %s\n", loadResult.Output)
-			}
-			fmt.Fprintf(cmd.OutOrStdout(), "→ ✓ LaunchAgent installed and loaded in %s: %s\n", loadResult.Domain, plistPath)
+		if loadResult.Warning != "" {
+			fmt.Fprintf(cmd.OutOrStdout(), "→ ⚠ %s\n", loadResult.Warning)
 		}
+		if loadResult.Output != "" {
+			fmt.Fprintf(cmd.OutOrStdout(), "→ launchctl output: %s\n", loadResult.Output)
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "→ ✓ LaunchAgent installed and loaded in %s: %s\n", loadResult.Domain, plistPath)
 		return nil
 	},
 }
@@ -219,10 +219,17 @@ func reinstallLaunchAgent(plistPath string) launchctlLoadResult {
 
 	output, err := launchctlCombinedOutput("bootstrap", guiDomain, plistPath)
 	if err == nil {
+		target := launchctlServiceTargetForDomain(guiDomain)
+		verificationOutput, verifyErr := verifyLaunchAgentRunning(target)
+		combinedOutput := strings.TrimSpace(string(output))
+		if verifyErr != nil {
+			combinedOutput = combineLaunchctlOutput(output, verificationOutput)
+		}
 		return launchctlLoadResult{
 			Domain: guiDomain,
-			Target: launchctlServiceTargetForDomain(guiDomain),
-			Output: strings.TrimSpace(string(output)),
+			Target: target,
+			Output: combinedOutput,
+			Err:    verifyErr,
 		}
 	}
 	if !launchctlDomainNotFound(output, err) {
@@ -246,12 +253,58 @@ func reinstallLaunchAgent(plistPath string) launchctlLoadResult {
 			Warning: launchctlWarning(warning, fallbackErr, []byte(combinedOutput)),
 		}
 	}
+	target := launchctlServiceTargetForDomain(userDomain)
+	verificationOutput, verifyErr := verifyLaunchAgentRunning(target)
+	if verifyErr != nil {
+		combinedOutput = combineLaunchctlOutput([]byte(combinedOutput), verificationOutput)
+	}
 	return launchctlLoadResult{
 		Domain:  userDomain,
-		Target:  launchctlServiceTargetForDomain(userDomain),
+		Target:  target,
 		Output:  combinedOutput,
+		Err:     verifyErr,
 		Warning: warning,
 	}
+}
+
+func verifyLaunchAgentRunning(target string) ([]byte, error) {
+	output, err := launchctlCombinedOutput("print", target)
+	if err != nil {
+		detail := strings.TrimSpace(string(output))
+		if detail != "" {
+			detail = ": " + detail
+		}
+		return output, fmt.Errorf("verify LaunchAgent state with 'launchctl print %s': %w%s", target, err, detail)
+	}
+	state, pid := parseLaunchAgentState(output)
+	if state == "running" && pid > 0 {
+		return output, nil
+	}
+	return output, fmt.Errorf(
+		"LaunchAgent did not reach running state after bootstrap (target=%s, state=%q, pid=%d); run 'launchctl print %s' and inspect the TSLink error log",
+		target,
+		state,
+		pid,
+		target,
+	)
+}
+
+func parseLaunchAgentState(output []byte) (string, int) {
+	var state string
+	var pid int
+	for _, line := range strings.Split(string(output), "\n") {
+		key, value, ok := strings.Cut(strings.TrimSpace(line), "=")
+		if !ok {
+			continue
+		}
+		switch strings.TrimSpace(key) {
+		case "state":
+			state = strings.TrimSpace(value)
+		case "pid":
+			pid, _ = strconv.Atoi(strings.TrimSpace(value))
+		}
+	}
+	return state, pid
 }
 
 func bootoutLaunchAgentTargets(domains ...string) {
