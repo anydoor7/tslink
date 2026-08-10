@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -32,6 +33,27 @@ func TestManifestCarriesMachineConsumerFacts(t *testing.T) {
 	}
 	if m.Release.PublicReleaseAvailable || m.Release.PrebuiltAvailable || m.Release.HomebrewTapAvailable {
 		t.Fatalf("release availability must stay false before first public readback: %#v", m.Release)
+	}
+}
+
+func TestManifestDocumentsInstallJSONWireFields(t *testing.T) {
+	fields := commandJSONResultFields("tslink install")
+	wire := reflect.TypeOf(InstallResult{})
+	for i := 0; i < wire.NumField(); i++ {
+		tag := strings.Split(wire.Field(i).Tag.Get("json"), ",")[0]
+		if tag == "" || tag == "-" {
+			continue
+		}
+		info, ok := fields[tag]
+		if !ok {
+			t.Fatalf("install manifest missing emitted wire field %q from InstallResult.%s", tag, wire.Field(i).Name)
+		}
+		if strings.TrimSpace(info.Type) == "" || strings.TrimSpace(info.Description) == "" {
+			t.Fatalf("install manifest field %q is incomplete: %+v", tag, info)
+		}
+	}
+	if warning := fields["warning"].Description; !strings.Contains(warning, "non-fatal") || !strings.Contains(warning, "successful install") {
+		t.Fatalf("install warning contract = %q, want success-only non-fatal semantics", warning)
 	}
 }
 
@@ -160,6 +182,10 @@ func TestManifestDocumentsDarwinUninstallJSONContract(t *testing.T) {
 	detail := uninstall.JSONResultFields["detail"].Description
 	if !strings.Contains(detail, "TSLink-authored") || !strings.Contains(detail, "separate") {
 		t.Fatalf("detail contract = %q", detail)
+	}
+	warning := uninstall.JSONResultFields["warning"].Description
+	if !strings.Contains(warning, "non-fatal") || !strings.Contains(warning, "successful") || !strings.Contains(warning, "omitted on failures") {
+		t.Fatalf("uninstall warning contract = %q, want success-only non-fatal semantics", warning)
 	}
 }
 

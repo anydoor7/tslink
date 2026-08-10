@@ -221,9 +221,54 @@ func Manifest() CLIManifest {
 }
 
 func commandJSONResultFields(commandPath string) map[string]JSONResultFieldInfo {
-	if commandPath != "tslink uninstall" {
+	switch commandPath {
+	case "tslink install":
+		return map[string]JSONResultFieldInfo{
+			"plist_path": {
+				Type:        "string",
+				Description: "macOS only. Path to the LaunchAgent plist written by this invocation.",
+			},
+			"loaded": {
+				Type:        "boolean",
+				Description: "macOS only. Whether launchctl confirmed the LaunchAgent reached running state with a positive PID.",
+			},
+			"launchctl_target": {
+				Type:        "string",
+				Description: "macOS only. The launchd service target confirmed running after bootstrap.",
+			},
+			"launchctl_output": {
+				Type:        "string",
+				Description: "macOS only. Trimmed launchctl output from bootstrap, fallback, or verification; omitted when launchctl emitted no text.",
+			},
+			"path": {
+				Type:        "string",
+				Description: "Linux and Windows only. Path to the platform startup artifact written by this invocation.",
+			},
+			"installed": {
+				Type:        "boolean",
+				Description: "Linux and Windows only. Whether the platform startup artifact was installed.",
+			},
+			"started": {
+				Type:        "boolean",
+				Description: "Linux and Windows only. Whether the installed service was started by this invocation.",
+			},
+			"service_manager": {
+				Type:        "string",
+				Description: "Linux and Windows only. Platform startup mechanism responsible for the artifact.",
+			},
+			"warning": {
+				Type:        "string",
+				Description: "Actionable non-fatal warning on a successful install; omitted when no warning applies.",
+			},
+		}
+	case "tslink uninstall":
+		return uninstallJSONResultFields()
+	default:
 		return nil
 	}
+}
+
+func uninstallJSONResultFields() map[string]JSONResultFieldInfo {
 	return map[string]JSONResultFieldInfo{
 		"plist_path": {
 			Type:        "string",
@@ -243,16 +288,16 @@ func commandJSONResultFields(commandPath string) map[string]JSONResultFieldInfo 
 		},
 		"warning": {
 			Type:        "string",
-			Description: "Actionable non-fatal warning; omitted when no warning applies.",
+			Description: "Actionable non-fatal warning on a successful forced removal; omitted on failures and when no warning applies.",
 		},
 		"launchctl_outcome": {
 			Type:        "string",
-			Description: "macOS only. Discriminates no installed plist, a confirmed bootout, confirmed absence from every domain, and an unconfirmed failure.",
+			Description: "macOS only. Discriminates no installed plist, a confirmed bootout, confirmed absence from every domain, and an unconfirmed domain state. Unconfirmed may be returned with removed=true only after explicit --force.",
 			Values:      []string{"not_installed", "unloaded", "already_absent", "unconfirmed"},
 		},
 		"launchctl_target": {
 			Type:        "string",
-			Description: "macOS only. The domain target that confirmed bootout or caused the reported unconfirmed failure; empty for not_installed and already_absent.",
+			Description: "macOS only. The domain target that confirmed bootout or remained unavailable for the reported unconfirmed state; empty for not_installed and already_absent.",
 		},
 		"launchctl_output": {
 			Type:        "string",
@@ -260,7 +305,7 @@ func commandJSONResultFields(commandPath string) map[string]JSONResultFieldInfo 
 		},
 		"detail": {
 			Type:        "string",
-			Description: "macOS only. TSLink-authored explanation kept separate from launchctl_output; present for already_absent.",
+			Description: "macOS only. TSLink-authored explanation kept separate from launchctl_output; present for already_absent and unconfirmed domain-state remedies.",
 		},
 	}
 }

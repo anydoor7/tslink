@@ -125,7 +125,7 @@ This command:
   4. Logs stderr to ~/.config/tslink/logs/tslink.err.log
   5. Uses launchd ThrottleInterval=30 to avoid tight restart loops on failures
   6. Reloads the agent immediately with bootout-then-bootstrap
-  7. Falls back from gui/$(id -u) to user/$(id -u) in SSH/headless sessions
+  7. Falls back from gui/$(id -u) to user/$(id -u) when no desktop session exists for this user
 
 Re-running 'tslink install' is the supported upgrade path. Before replacing an
 existing plist, TSLink saves it and verifies whether launchd owns the running
@@ -144,15 +144,23 @@ To check if the agent is loaded:
 To remove the autostart:
   tslink uninstall
 
-Headless/SSH caveat:
+Desktop-session caveat:
   macOS may not expose gui/$(id -u) until a desktop login exists. In that case
   tslink install tries launchctl bootstrap user/$(id -u) and prints the domain
-  it used. Re-run tslink install from a desktop login to move back to gui/$(id -u).
+  it used. An upgrade keeps the existing plist and refuses the handoff if any
+  prior launchd domain cannot be checked. Re-run from a desktop login, or use
+  'tslink install --force' only after confirming no job remains in the unavailable
+  domain; otherwise --force may start a second daemon. Re-run tslink install from
+  a desktop login to move back to gui/$(id -u).
 
 	Examples:
 	  tslink install                Register and start the LaunchAgent`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		force, err := cmd.Flags().GetBool("force")
+		if err != nil {
+			return fmt.Errorf("read --force: %w", err)
+		}
 		plistPath, err := plistPath()
 		if err != nil {
 			return err
@@ -200,11 +208,19 @@ Headless/SSH caveat:
 
 		var loadResult launchctlLoadResult
 		if previousState.Existed {
-			loadResult = reinstallLaunchAgent(plistPath)
+			if force {
+				loadResult = loadLaunchAgent(plistPath, false)
+				if loadResult.Err == nil && loadResult.Warning != "" {
+					loadResult.Warning += "; --force proceeded without confirming that every prior launchd job was unloaded; a second daemon may still be running in the unavailable domain"
+				}
+			} else {
+				loadResult = reinstallLaunchAgent(plistPath)
+			}
 		} else {
 			loadResult = loadLaunchAgent(plistPath, false)
 		}
 		if loadResult.Err != nil {
+			retryAdvice := installRetryAdvice(loadResult.Err)
 			warning := loadResult.Warning
 			if warning == "" && loadResult.BootoutFailed {
 				warning = launchctlWarning("LaunchAgent plist was written, but the existing launchd job could not be booted out", loadResult.Err, []byte(loadResult.Output))
@@ -219,20 +235,20 @@ Headless/SSH caveat:
 					if restoreResult.PlistRestored {
 						status = "the previous plist bytes were restored, but the prior managed job is not confirmed running"
 					}
-					return fmt.Errorf("%s; upgrade failed and automatic restoration was incomplete: %v; %s; fix the reported cause and re-run 'tslink install'", warning, restoreErr, status)
+					return fmt.Errorf("%s; upgrade failed and automatic restoration was incomplete: %v; %s; %s", warning, restoreErr, status, retryAdvice)
 				}
 				if restoreResult.Reloaded {
-					return fmt.Errorf("%s; upgrade failed, so the previous LaunchAgent plist was restored and reloaded in %s; fix the reported cause and re-run 'tslink install'", warning, previousState.Domain)
+					return fmt.Errorf("%s; upgrade failed, so the previous LaunchAgent plist was restored and reloaded in %s; %s", warning, previousState.Domain, retryAdvice)
 				}
-				return fmt.Errorf("%s; upgrade failed, so the previous LaunchAgent plist was restored; the install handoff checked and booted out both launchd service targets, but no prior launchd-owned running daemon was identified, so no job was reloaded; fix the reported cause and re-run 'tslink install'", warning)
+				return fmt.Errorf("%s; upgrade failed, so the previous LaunchAgent plist was restored; the install handoff checked and booted out both launchd service targets, but no prior launchd-owned running daemon was identified, so no job was reloaded; %s", warning, retryAdvice)
 			}
 			if loadResult.Bootstrapped {
 				if rollbackErr := rollbackNewLaunchAgent(loadResult.Target, plistPath); rollbackErr != nil {
-					return fmt.Errorf("%s; automatic rollback was incomplete: %v; the plist was kept at %s so 'tslink uninstall' can retry bootout; then re-run 'tslink install'", warning, rollbackErr, plistPath)
+					return fmt.Errorf("%s; automatic rollback was incomplete: %v; the plist was kept at %s so 'tslink uninstall' can retry bootout; %s", warning, rollbackErr, plistPath, retryAdvice)
 				}
-				return fmt.Errorf("%s; the new installation was rolled back by booting out %s and removing %s; fix the reported cause and re-run 'tslink install'", warning, loadResult.Target, plistPath)
+				return fmt.Errorf("%s; the new installation was rolled back by booting out %s and removing %s; %s", warning, loadResult.Target, plistPath, retryAdvice)
 			}
-			return fmt.Errorf("%s; plist remains installed at %s but no job was bootstrapped; fix the reported cause and re-run 'tslink install'", warning, plistPath)
+			return fmt.Errorf("%s; plist remains installed at %s but no job was bootstrapped; %s", warning, plistPath, retryAdvice)
 		}
 
 		if jsonOutput(cmd) {
@@ -248,7 +264,7 @@ Headless/SSH caveat:
 		}
 
 		if loadResult.Warning != "" {
-			fmt.Fprintf(cmd.OutOrStdout(), "→ ⚠ %s\n", loadResult.Warning)
+			fmt.Fprintf(cmd.ErrOrStderr(), "→ ⚠ %s\n", loadResult.Warning)
 		}
 		if loadResult.Output != "" {
 			fmt.Fprintf(cmd.OutOrStdout(), "→ launchctl output: %s\n", loadResult.Output)
@@ -385,7 +401,7 @@ func loadLaunchAgent(plistPath string, replacingExisting bool) launchctlLoadResu
 
 	fallbackOutput, fallbackErr := launchctlCombinedOutput("bootstrap", userDomain, plistPath)
 	combinedOutput := combineLaunchctlOutput(output, fallbackOutput)
-	warning := fmt.Sprintf("launchctl %s is unavailable in this SSH/headless session; tried %s fallback", guiDomain, userDomain)
+	warning := fmt.Sprintf("launchctl %s is unavailable because no desktop session exists for this user; tried %s fallback", guiDomain, userDomain)
 	if fallbackErr != nil {
 		return launchctlLoadResult{
 			Domain:  userDomain,
@@ -661,6 +677,14 @@ func launchctlWarning(message string, err error, combinedOutput []byte) string {
 	return fmt.Sprintf("%s: %v; output: %s", message, err, detail)
 }
 
+func installRetryAdvice(err error) string {
+	if errors.Is(err, errLaunchctlDomainUnavailable) {
+		return "retry from a desktop session for this user, or run 'tslink install --force' only after confirming no job is loaded in the unavailable launchd domain; --force may otherwise start a second daemon"
+	}
+	return "fix the reported cause and re-run 'tslink install'"
+}
+
 func init() {
+	installCmd.Flags().Bool("force", false, "Proceed with an upgrade despite an unavailable launchd domain (may start a second daemon)")
 	rootCmd.AddCommand(installCmd)
 }

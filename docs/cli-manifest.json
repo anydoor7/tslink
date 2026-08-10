@@ -407,13 +407,58 @@
       "short": "Install TSLink as the current platform's user startup service",
       "flags": [
         {
+          "name": "force",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Proceed with an upgrade despite an unavailable launchd domain (may start a second daemon)"
+        },
+        {
           "name": "json",
           "type": "bool",
           "default": "false",
           "scope": "inherited",
           "usage": "Output as JSON"
         }
-      ]
+      ],
+      "json_result_fields": {
+        "installed": {
+          "type": "boolean",
+          "description": "Linux and Windows only. Whether the platform startup artifact was installed."
+        },
+        "launchctl_output": {
+          "type": "string",
+          "description": "macOS only. Trimmed launchctl output from bootstrap, fallback, or verification; omitted when launchctl emitted no text."
+        },
+        "launchctl_target": {
+          "type": "string",
+          "description": "macOS only. The launchd service target confirmed running after bootstrap."
+        },
+        "loaded": {
+          "type": "boolean",
+          "description": "macOS only. Whether launchctl confirmed the LaunchAgent reached running state with a positive PID."
+        },
+        "path": {
+          "type": "string",
+          "description": "Linux and Windows only. Path to the platform startup artifact written by this invocation."
+        },
+        "plist_path": {
+          "type": "string",
+          "description": "macOS only. Path to the LaunchAgent plist written by this invocation."
+        },
+        "service_manager": {
+          "type": "string",
+          "description": "Linux and Windows only. Platform startup mechanism responsible for the artifact."
+        },
+        "started": {
+          "type": "boolean",
+          "description": "Linux and Windows only. Whether the installed service was started by this invocation."
+        },
+        "warning": {
+          "type": "string",
+          "description": "Actionable non-fatal warning on a successful install; omitted when no warning applies."
+        }
+      }
     },
     {
       "path": "tslink list",
@@ -888,6 +933,13 @@
       "short": "Remove TSLink from the current platform's user startup service",
       "flags": [
         {
+          "name": "force",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Remove the plist despite an unavailable launchd domain (may leave a daemon running)"
+        },
+        {
           "name": "json",
           "type": "bool",
           "default": "false",
@@ -898,11 +950,11 @@
       "json_result_fields": {
         "detail": {
           "type": "string",
-          "description": "macOS only. TSLink-authored explanation kept separate from launchctl_output; present for already_absent."
+          "description": "macOS only. TSLink-authored explanation kept separate from launchctl_output; present for already_absent and unconfirmed domain-state remedies."
         },
         "launchctl_outcome": {
           "type": "string",
-          "description": "macOS only. Discriminates no installed plist, a confirmed bootout, confirmed absence from every domain, and an unconfirmed failure.",
+          "description": "macOS only. Discriminates no installed plist, a confirmed bootout, confirmed absence from every domain, and an unconfirmed domain state. Unconfirmed may be returned with removed=true only after explicit --force.",
           "values": [
             "not_installed",
             "unloaded",
@@ -916,7 +968,7 @@
         },
         "launchctl_target": {
           "type": "string",
-          "description": "macOS only. The domain target that confirmed bootout or caused the reported unconfirmed failure; empty for not_installed and already_absent."
+          "description": "macOS only. The domain target that confirmed bootout or remained unavailable for the reported unconfirmed state; empty for not_installed and already_absent."
         },
         "path": {
           "type": "string",
@@ -936,7 +988,7 @@
         },
         "warning": {
           "type": "string",
-          "description": "Actionable non-fatal warning; omitted when no warning applies."
+          "description": "Actionable non-fatal warning on a successful forced removal; omitted on failures and when no warning applies."
         }
       }
     },

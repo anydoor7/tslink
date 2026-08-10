@@ -52,6 +52,33 @@ func TestWriteFileInExistingDirRejectsGroupWritableParentWithoutMutation(t *test
 	}
 }
 
+func TestWriteFileInExistingDirReportsSpecialParentModeBits(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		mode os.FileMode
+		want string
+	}{
+		{name: "setgid", mode: 0o775 | os.ModeSetgid, want: "(2775)"},
+		{name: "sticky", mode: 0o777 | os.ModeSticky, want: "(1777)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			restoreAtomicFileHooks(t)
+			dir := filepath.Join(t.TempDir(), "unsafe")
+			if err := os.Mkdir(dir, 0o755); err != nil {
+				t.Fatalf("Mkdir(unsafe) error = %v", err)
+			}
+			if err := os.Chmod(dir, tc.mode); err != nil {
+				t.Fatalf("Chmod(unsafe, %04o) error = %v", tc.mode, err)
+			}
+
+			err := WriteFileInExistingDir(filepath.Join(dir, "state.json"), []byte("state\n"), PrivateFileMode)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("WriteFileInExistingDir() error = %v, want full mode %s", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestWriteFileInExistingDirRejectsWorldWritableSymlinkReferentWithoutMutation(t *testing.T) {
 	restoreAtomicFileHooks(t)
 	root := t.TempDir()
