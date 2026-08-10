@@ -35,6 +35,20 @@ go run github.com/goreleaser/goreleaser/v2@v2.17.0 check
 go install .
 ```
 
+### Compiled-binary test isolation
+
+Tests that execute a freshly compiled TSLink binary must set all three of
+`TSLINK_CONFIG_DIR`, `TSLINK_DISABLE_KEYRING=1`, and
+`TSLINK_TEST_DAEMON_PARENT_LIFETIME=1`. The shared helpers in
+`cmd/api_binary_contract_test.go` already do this. The last variable is an
+internal, test-only lifetime seam: a daemon launched by that process watches
+the short-lived `serve --daemon` launcher and exits when the launcher exits,
+including when a context cancellation kills it. The launcher supplies the
+internal parent PID automatically; tests must not set it themselves.
+
+Real `tslink share` and `tslink serve --daemon` commands do not set this seam,
+so their detached daemon continues to outlive the command as designed.
+
 ### Maintainer Release Notes
 
 Stable releases are disabled until external readback proves the release environment, required reviewers, `refs/tags/v*` ruleset, branch protection, and Homebrew tap are configured. After that gate is enabled, stable releases publish a Homebrew cask to `monody0007/homebrew-tap`. The release workflow requires a repository secret named `HOMEBREW_TAP_GITHUB_TOKEN` with write access to that tap; the default repository-scoped `GITHUB_TOKEN` cannot write to the separate tap repository. Prefer a fine-grained personal access token or GitHub App installation token scoped only to `monody0007/homebrew-tap` with Contents read/write access. Use a broad classic `repo` token only as a fallback when fine-grained tokens or GitHub App credentials are not available.

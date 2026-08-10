@@ -27,6 +27,8 @@ var (
 	tslinkBinaryErr  error
 )
 
+const testDaemonParentLifetimeEnv = "TSLINK_TEST_DAEMON_PARENT_LIFETIME"
+
 func compiledTSLinkBinary(t *testing.T) string {
 	t.Helper()
 	tslinkBinaryOnce.Do(func() {
@@ -130,7 +132,12 @@ func runCompiledTSLink(t *testing.T, home, stdin string, args ...string) (stdout
 	t.Helper()
 	configDir := testenv.ConfigDir(home)
 	cmd := exec.Command(compiledTSLinkBinary(t), args...)
-	cmd.Env = append(os.Environ(), "HOME="+home, config.ConfigDirEnv+"="+configDir, "TSLINK_DISABLE_KEYRING=1")
+	cmd.Env = append(os.Environ(),
+		"HOME="+home,
+		config.ConfigDirEnv+"="+configDir,
+		"TSLINK_DISABLE_KEYRING=1",
+		testDaemonParentLifetimeEnv+"=1",
+	)
 	cmd.Stdin = strings.NewReader(stdin)
 	var outBuf, errBuf bytes.Buffer
 	cmd.Stdout = &outBuf
@@ -156,7 +163,11 @@ func runCompiledTSLinkWithConfigDir(t *testing.T, configDir, stdin string, args 
 func runTSLinkBinaryWithConfigDir(t *testing.T, binary, configDir, stdin string, args ...string) (stdout, stderr string, exitCode int) {
 	t.Helper()
 	cmd := exec.Command(binary, args...)
-	cmd.Env = append(os.Environ(), "TSLINK_CONFIG_DIR="+configDir, "TSLINK_DISABLE_KEYRING=1")
+	cmd.Env = append(os.Environ(),
+		"TSLINK_CONFIG_DIR="+configDir,
+		"TSLINK_DISABLE_KEYRING=1",
+		testDaemonParentLifetimeEnv+"=1",
+	)
 	cmd.Stdin = strings.NewReader(stdin)
 	var outBuf, errBuf bytes.Buffer
 	cmd.Stdout = &outBuf

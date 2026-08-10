@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -28,6 +29,12 @@ type ServeResult struct {
 	Daemon bool `json:"daemon"`
 	PID    int  `json:"pid"`
 }
+
+const (
+	daemonParentLifetimeEnv = "TSLINK_TEST_DAEMON_PARENT_LIFETIME"
+	daemonParentPIDEnv      = "TSLINK_TEST_DAEMON_PARENT_PID"
+	daemonParentPoll        = 10 * time.Millisecond
+)
 
 var serveDaemon bool
 
@@ -345,7 +352,15 @@ func daemonReadyPath() (string, error) {
 func setDaemonStartupEnv(readyPath, authHandoffPath string) func() {
 	restoreReady := setTemporaryEnv("TSLINK_DAEMON_READY_PATH", readyPath)
 	restoreAuth := setTemporaryEnv("TSLINK_DAEMON_AUTH_HANDOFF_PATH", authHandoffPath)
+	restoreTestParent := func() {}
+	if os.Getenv(daemonParentLifetimeEnv) == "1" {
+		// Compiled-binary tests explicitly opt in to launcher-owned daemon
+		// lifetime. The foreground child inherits this PID before Daemonize
+		// releases it; production launches do not set the opt-in variable.
+		restoreTestParent = setTemporaryEnv(daemonParentPIDEnv, strconv.Itoa(os.Getpid()))
+	}
 	return func() {
+		restoreTestParent()
 		restoreAuth()
 		restoreReady()
 	}
@@ -529,6 +544,11 @@ func runForegroundWithOptions(pidPath, authKey, controlURL string, options foreg
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	ctx, stopTestParent, err := withTestDaemonParentLifetime(ctx)
+	if err != nil {
+		return err
+	}
+	defer stopTestParent()
 
 	srv, err := serveNewServerFn(authKey, controlURL)
 	if err != nil {
@@ -589,4 +609,39 @@ func runForegroundWithOptions(pidPath, authKey, controlURL string, options foreg
 	}
 
 	return srv.Run(ctx)
+}
+
+func withTestDaemonParentLifetime(parent context.Context) (context.Context, context.CancelFunc, error) {
+	noop := func() {}
+	if os.Getenv(daemonParentLifetimeEnv) != "1" {
+		return parent, noop, nil
+	}
+	encodedPID := os.Getenv(daemonParentPIDEnv)
+	if encodedPID == "" {
+		// A test may execute foreground `serve` directly. Only daemon children
+		// receive the launcher PID from setDaemonStartupEnv.
+		return parent, noop, nil
+	}
+	parentPID, err := strconv.Atoi(encodedPID)
+	if err != nil || parentPID <= 0 || parentPID == os.Getpid() {
+		return nil, nil, fmt.Errorf("invalid %s %q", daemonParentPIDEnv, encodedPID)
+	}
+
+	ctx, cancel := context.WithCancel(parent)
+	go func() {
+		ticker := time.NewTicker(daemonParentPoll)
+		defer ticker.Stop()
+		for {
+			if !daemon.IsProcessRunning(parentPID) {
+				cancel()
+				return
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+	return ctx, cancel, nil
 }
