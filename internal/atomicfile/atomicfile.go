@@ -19,6 +19,7 @@ const (
 var (
 	mkdirAllFn   = os.MkdirAll
 	lstatFn      = os.Lstat
+	statFn       = os.Stat
 	chmodFn      = os.Chmod
 	openFileFn   = os.OpenFile
 	renameFn     = os.Rename
@@ -97,13 +98,55 @@ func WriteFile(path string, data []byte) error {
 	return writeFile(path, data, PrivateFileMode)
 }
 
-// WriteFileInExistingDir atomically writes a file without creating, validating,
-// or changing the parent directory. It is for shared directories that the
-// caller does not own, such as LaunchAgents or systemd user-unit directories.
-// Parent-directory symlinks are followed, while a symlink at path itself is
-// still rejected by validateReplaceTarget.
+// WriteFileInExistingDir atomically writes a file without creating or changing
+// the parent directory. It validates that the existing parent is a directory,
+// is owned by the current user where ownership is available, and is not
+// group- or world-writable. Parent-directory symlinks are followed and their
+// referent is validated, while a symlink at path itself is rejected. The mode
+// is caller policy and is applied exactly; callers choose any privacy floor.
 func WriteFileInExistingDir(path string, data []byte, mode os.FileMode) error {
+	if err := validateExistingParent(path); err != nil {
+		return err
+	}
 	return writeFile(path, data, mode.Perm())
+}
+
+func validateExistingParent(path string) error {
+	dir := filepath.Dir(path)
+	info, err := lstatFn(dir)
+	if err != nil {
+		return fmt.Errorf("validate parent for %s: %w", path, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		info, err = statFn(dir)
+		if err != nil {
+			return fmt.Errorf("validate parent for %s: %w", path, err)
+		}
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("unsafe parent for %s: %s is not a directory", path, dir)
+	}
+	if err := checkOwner(dir, info); err != nil {
+		return err
+	}
+	if info.Mode().Perm()&0o022 != 0 {
+		return fmt.Errorf("unsafe parent for %s: %s is group- or world-writable (%04o); run 'chmod g-w,o-w %s' and retry", path, dir, numericFileMode(info.Mode()), dir)
+	}
+	return nil
+}
+
+func numericFileMode(mode os.FileMode) uint32 {
+	numeric := uint32(mode.Perm())
+	if mode&os.ModeSetuid != 0 {
+		numeric |= 0o4000
+	}
+	if mode&os.ModeSetgid != 0 {
+		numeric |= 0o2000
+	}
+	if mode&os.ModeSticky != 0 {
+		numeric |= 0o1000
+	}
+	return numeric
 }
 
 func writeFile(path string, data []byte, mode os.FileMode) error {
@@ -175,7 +218,12 @@ func createTemp(dir, base string, mode os.FileMode) (string, *os.File, error) {
 			return path, f, nil
 		}
 		if !os.IsExist(err) {
-			return "", nil, err
+			cause := err
+			var pathErr *os.PathError
+			if errors.As(err, &pathErr) {
+				cause = pathErr.Err
+			}
+			return "", nil, fmt.Errorf("create temp for %s: %w", filepath.Join(dir, base), cause)
 		}
 		lastErr = err
 	}

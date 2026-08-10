@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -32,6 +33,41 @@ func TestManifestCarriesMachineConsumerFacts(t *testing.T) {
 	}
 	if m.Release.PublicReleaseAvailable || m.Release.PrebuiltAvailable || m.Release.HomebrewTapAvailable {
 		t.Fatalf("release availability must stay false before first public readback: %#v", m.Release)
+	}
+}
+
+func TestManifestDocumentsInstallJSONWireFields(t *testing.T) {
+	fields := commandJSONResultFields("tslink install")
+	wire := reflect.TypeOf(InstallResult{})
+	for i := 0; i < wire.NumField(); i++ {
+		tag := strings.Split(wire.Field(i).Tag.Get("json"), ",")[0]
+		if tag == "" || tag == "-" {
+			continue
+		}
+		info, ok := fields[tag]
+		if !ok {
+			t.Fatalf("install manifest missing emitted wire field %q from InstallResult.%s", tag, wire.Field(i).Name)
+		}
+		if strings.TrimSpace(info.Type) == "" || strings.TrimSpace(info.Description) == "" {
+			t.Fatalf("install manifest field %q is incomplete: %+v", tag, info)
+		}
+	}
+	if warning := fields["warning"].Description; !strings.Contains(warning, "non-fatal") || !strings.Contains(warning, "successful install") {
+		t.Fatalf("install warning contract = %q, want success-only non-fatal semantics", warning)
+	}
+}
+
+func TestLaunchctlDomainUnavailableErrorCodeMatchesPinnedManifestWireValue(t *testing.T) {
+	const wireValue = "launchctl_domain_unavailable"
+	if registry.CodeLaunchctlDomainUnavailable != wireValue {
+		t.Fatalf("CodeLaunchctlDomainUnavailable = %q, want pinned wire value %q", registry.CodeLaunchctlDomainUnavailable, wireValue)
+	}
+	info, ok := errorCodeManifest()[wireValue]
+	if !ok {
+		t.Fatalf("error-code manifest missing pinned wire value %q", wireValue)
+	}
+	if info.ExitCode != 1 || !strings.Contains(info.Description, "--force") {
+		t.Fatalf("%s manifest entry = %+v, want exit 1 and explicit recovery semantics", wireValue, info)
 	}
 }
 
@@ -110,6 +146,65 @@ func TestManifestCommandsCarryInheritedFlags(t *testing.T) {
 	assertFlag("tslink tags delete-remote", "force")
 	assertFlag("tslink tags delete-remote", "manage-acl")
 	assertFlag("tslink status", "json")
+}
+
+func TestManifestDocumentsDarwinUninstallJSONContract(t *testing.T) {
+	m := Manifest()
+	var uninstall CommandInfo
+	for _, command := range m.Commands {
+		if command.Path == "tslink uninstall" {
+			uninstall = command
+			break
+		}
+	}
+	if uninstall.Path == "" {
+		t.Fatal("manifest missing tslink uninstall")
+	}
+	for _, field := range []string{
+		"plist_path",
+		"path",
+		"removed",
+		"service_manager",
+		"warning",
+		"launchctl_outcome",
+		"launchctl_target",
+		"launchctl_output",
+		"detail",
+		"unavailable_domain",
+		"force_available",
+		"force_command",
+		"force_risk",
+	} {
+		if _, ok := uninstall.JSONResultFields[field]; !ok {
+			t.Fatalf("uninstall manifest missing emitted field %q", field)
+		}
+	}
+
+	outcome, ok := uninstall.JSONResultFields["launchctl_outcome"]
+	if !ok {
+		t.Fatal("uninstall manifest missing launchctl_outcome")
+	}
+	for _, want := range []string{"not_installed", "unloaded", "already_absent", "unconfirmed"} {
+		if !containsString(outcome.Values, want) {
+			t.Fatalf("launchctl_outcome values = %v, want %q", outcome.Values, want)
+		}
+	}
+	target := uninstall.JSONResultFields["launchctl_target"].Description
+	if !strings.Contains(target, "empty for not_installed and already_absent") {
+		t.Fatalf("launchctl_target contract = %q", target)
+	}
+	rawOutput := uninstall.JSONResultFields["launchctl_output"].Description
+	if !strings.Contains(rawOutput, "Verbatim trimmed launchctl output") || !strings.Contains(rawOutput, "already_absent") || !strings.Contains(rawOutput, "omitted") {
+		t.Fatalf("launchctl_output contract = %q", rawOutput)
+	}
+	detail := uninstall.JSONResultFields["detail"].Description
+	if !strings.Contains(detail, "TSLink-authored") || !strings.Contains(detail, "separate") {
+		t.Fatalf("detail contract = %q", detail)
+	}
+	warning := uninstall.JSONResultFields["warning"].Description
+	if !strings.Contains(warning, "non-fatal") || !strings.Contains(warning, "successful") || !strings.Contains(warning, "omitted on failures") {
+		t.Fatalf("uninstall warning contract = %q, want success-only non-fatal semantics", warning)
+	}
 }
 
 func TestManifestFlagsAreSelfDescribingAndRelationshipsAreExplicit(t *testing.T) {

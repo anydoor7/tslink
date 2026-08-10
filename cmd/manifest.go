@@ -85,9 +85,18 @@ type ErrorCodeInfo struct {
 
 // CommandInfo describes one command in the tree.
 type CommandInfo struct {
-	Path  string     `json:"path"`
-	Short string     `json:"short"`
-	Flags []FlagInfo `json:"flags,omitempty"`
+	Path             string                         `json:"path"`
+	Short            string                         `json:"short"`
+	Flags            []FlagInfo                     `json:"flags,omitempty"`
+	JSONResultFields map[string]JSONResultFieldInfo `json:"json_result_fields,omitempty"`
+}
+
+// JSONResultFieldInfo documents command-specific fields inside the shared
+// --json result envelope's data object.
+type JSONResultFieldInfo struct {
+	Type        string   `json:"type"`
+	Description string   `json:"description"`
+	Values      []string `json:"values,omitempty"`
 }
 
 // FlagInfo describes one command-local flag.
@@ -189,7 +198,11 @@ func Manifest() CLIManifest {
 	var walk func(c *cobra.Command, prefix string)
 	walk = func(c *cobra.Command, prefix string) {
 		path := strings.TrimSpace(prefix + " " + c.Name())
-		info := CommandInfo{Path: path, Short: platformNeutralCommandShort(path, c.Short)}
+		info := CommandInfo{
+			Path:             path,
+			Short:            platformNeutralCommandShort(path, c.Short),
+			JSONResultFields: commandJSONResultFields(path),
+		}
 		info.Flags = commandFlags(c, path)
 		sort.Slice(info.Flags, func(i, j int) bool { return info.Flags[i].Name < info.Flags[j].Name })
 		m.Commands = append(m.Commands, info)
@@ -205,6 +218,128 @@ func Manifest() CLIManifest {
 	walk(rootCmd, "")
 	sort.Slice(m.Commands, func(i, j int) bool { return m.Commands[i].Path < m.Commands[j].Path })
 	return m
+}
+
+func commandJSONResultFields(commandPath string) map[string]JSONResultFieldInfo {
+	switch commandPath {
+	case "tslink install":
+		return map[string]JSONResultFieldInfo{
+			"plist_path": {
+				Type:        "string",
+				Description: "macOS only. Path to the LaunchAgent plist written on success or preserved/restored on failure.",
+			},
+			"loaded": {
+				Type:        "boolean",
+				Description: "macOS only. Whether launchctl confirmed the LaunchAgent reached running state with a positive PID.",
+			},
+			"launchctl_target": {
+				Type:        "string",
+				Description: "macOS only. The launchd service target confirmed running on success or unavailable on a launchctl_domain_unavailable failure.",
+			},
+			"launchctl_output": {
+				Type:        "string",
+				Description: "macOS only. Trimmed launchctl output from bootstrap, fallback, or verification; omitted when launchctl emitted no text.",
+			},
+			"unavailable_domain": {
+				Type:        "string",
+				Description: "macOS failure only. The unavailable launchd domain, such as gui/501, when error.code is launchctl_domain_unavailable.",
+			},
+			"force_available": {
+				Type:        "boolean",
+				Description: "macOS failure only. True when an explicit --force recovery path exists for launchctl_domain_unavailable.",
+			},
+			"force_command": {
+				Type:        "string",
+				Description: "macOS failure only. Exact command that invokes the explicit --force recovery path.",
+			},
+			"force_risk": {
+				Type:        "string",
+				Description: "macOS failure only. Residual daemon risk accepted by running force_command.",
+			},
+			"path": {
+				Type:        "string",
+				Description: "Linux and Windows only. Path to the platform startup artifact written by this invocation.",
+			},
+			"installed": {
+				Type:        "boolean",
+				Description: "Linux and Windows only. Whether the platform startup artifact was installed.",
+			},
+			"started": {
+				Type:        "boolean",
+				Description: "Linux and Windows only. Whether the installed service was started by this invocation.",
+			},
+			"service_manager": {
+				Type:        "string",
+				Description: "Linux and Windows only. Platform startup mechanism responsible for the artifact.",
+			},
+			"warning": {
+				Type:        "string",
+				Description: "Actionable non-fatal warning on a successful install; omitted when no warning applies.",
+			},
+		}
+	case "tslink uninstall":
+		return uninstallJSONResultFields()
+	default:
+		return nil
+	}
+}
+
+func uninstallJSONResultFields() map[string]JSONResultFieldInfo {
+	return map[string]JSONResultFieldInfo{
+		"plist_path": {
+			Type:        "string",
+			Description: "macOS only. Path to the LaunchAgent plist inspected or removed by this invocation.",
+		},
+		"path": {
+			Type:        "string",
+			Description: "Linux and Windows only. Path to the platform startup artifact inspected or removed by this invocation.",
+		},
+		"removed": {
+			Type:        "boolean",
+			Description: "Whether the platform startup artifact was removed by this invocation.",
+		},
+		"service_manager": {
+			Type:        "string",
+			Description: "Linux and Windows only. Platform startup mechanism responsible for the artifact.",
+		},
+		"warning": {
+			Type:        "string",
+			Description: "Actionable non-fatal warning on a successful forced removal; omitted on failures and when no warning applies.",
+		},
+		"launchctl_outcome": {
+			Type:        "string",
+			Description: "macOS only. Discriminates no installed plist, a confirmed bootout, confirmed absence from every domain, and an unconfirmed domain state. Unconfirmed may be returned with removed=true only after explicit --force.",
+			Values:      []string{"not_installed", "unloaded", "already_absent", "unconfirmed"},
+		},
+		"launchctl_target": {
+			Type:        "string",
+			Description: "macOS only. The domain target that confirmed bootout or remained unavailable for the reported unconfirmed state; empty for not_installed and already_absent.",
+		},
+		"launchctl_output": {
+			Type:        "string",
+			Description: "macOS only. Verbatim trimmed launchctl output from the successful target for unloaded, or combined attempted output for already_absent and unconfirmed; omitted when launchctl emitted no text.",
+		},
+		"unavailable_domain": {
+			Type:        "string",
+			Description: "macOS failure only. The unavailable launchd domain, such as gui/501, when error.code is launchctl_domain_unavailable.",
+		},
+		"force_available": {
+			Type:        "boolean",
+			Description: "macOS failure only. True when an explicit --force recovery path exists for launchctl_domain_unavailable.",
+		},
+		"force_command": {
+			Type:        "string",
+			Description: "macOS failure only. Exact command that invokes the explicit --force recovery path.",
+		},
+		"force_risk": {
+			Type:        "string",
+			Description: "macOS failure only. Residual daemon risk accepted by running force_command.",
+		},
+		"detail": {
+			Type:        "string",
+			Description: "macOS only. TSLink-authored explanation kept separate from launchctl_output; present for already_absent and unconfirmed domain-state remedies.",
+		},
+	}
 }
 
 func commandFlags(c *cobra.Command, commandPath string) []FlagInfo {
@@ -280,23 +415,24 @@ func flagRelationships(commandPath, name string) (oneOf, requires, conflicts []s
 
 func errorCodeManifest() map[string]ErrorCodeInfo {
 	return map[string]ErrorCodeInfo{
-		"internal_error":                      {ExitCode: output.ExitError, Description: "unexpected internal failure"},
-		"usage_error":                         {ExitCode: output.ExitUsage, Description: "invalid command syntax or value"},
-		"auth_error":                          {ExitCode: output.ExitAuth, Description: "authentication required or rejected"},
-		"conflict":                            {ExitCode: output.ExitConflict, Description: "requested state conflicts with existing state"},
-		"not_found":                           {ExitCode: output.ExitNotFound, Description: "requested object was not found"},
-		registry.CodeServiceTypeAmbiguous:     {ExitCode: output.ExitUsage, Description: "exactly one service type is required"},
-		registry.CodeInvalidServiceName:       {ExitCode: output.ExitUsage, Description: "service name is not a valid DNS label"},
-		registry.CodeInvalidTag:               {ExitCode: output.ExitUsage, Description: "ACL tag is invalid"},
-		registry.CodeAllowUnsupportedTCP:      {ExitCode: output.ExitUsage, Description: "HTTP allow lists do not apply to raw TCP"},
-		registry.CodePathMustBeAbsolute:       {ExitCode: output.ExitUsage, Description: "file service path must be absolute"},
-		registry.CodeUnknownConfigKey:         {ExitCode: output.ExitUsage, Description: "configuration key is not supported"},
-		registry.CodeURLNotReady:              {ExitCode: output.ExitNotFound, Description: "runtime has not reported an exact tailnet hostname"},
-		registry.CodeFeatureUnavailable:       {ExitCode: output.ExitUsage, Description: "reserved feature is not available"},
-		registry.CodeFunnelPublicAckRequired:  {ExitCode: output.ExitUsage, Description: "public Funnel acknowledgement is required"},
-		registry.CodeFunnelAllowConflict:      {ExitCode: output.ExitConflict, Description: "Funnel conflicts with an allow list"},
-		registry.CodeFunnelControlURLConflict: {ExitCode: output.ExitConflict, Description: "Funnel conflicts with control_url"},
-		registry.CodeFunnelTypeConflict:       {ExitCode: output.ExitConflict, Description: "Funnel requires a proxy service"},
+		"internal_error":                        {ExitCode: output.ExitError, Description: "unexpected internal failure"},
+		"usage_error":                           {ExitCode: output.ExitUsage, Description: "invalid command syntax or value"},
+		"auth_error":                            {ExitCode: output.ExitAuth, Description: "authentication required or rejected"},
+		"conflict":                              {ExitCode: output.ExitConflict, Description: "requested state conflicts with existing state"},
+		"not_found":                             {ExitCode: output.ExitNotFound, Description: "requested object was not found"},
+		registry.CodeServiceTypeAmbiguous:       {ExitCode: output.ExitUsage, Description: "exactly one service type is required"},
+		registry.CodeInvalidServiceName:         {ExitCode: output.ExitUsage, Description: "service name is not a valid DNS label"},
+		registry.CodeInvalidTag:                 {ExitCode: output.ExitUsage, Description: "ACL tag is invalid"},
+		registry.CodeAllowUnsupportedTCP:        {ExitCode: output.ExitUsage, Description: "HTTP allow lists do not apply to raw TCP"},
+		registry.CodePathMustBeAbsolute:         {ExitCode: output.ExitUsage, Description: "file service path must be absolute"},
+		registry.CodeUnknownConfigKey:           {ExitCode: output.ExitUsage, Description: "configuration key is not supported"},
+		registry.CodeURLNotReady:                {ExitCode: output.ExitNotFound, Description: "runtime has not reported an exact tailnet hostname"},
+		registry.CodeLaunchctlDomainUnavailable: {ExitCode: output.ExitError, Description: "a launchd domain could not be checked; failure data names the domain, explicit --force command, and residual risk"},
+		registry.CodeFeatureUnavailable:         {ExitCode: output.ExitUsage, Description: "reserved feature is not available"},
+		registry.CodeFunnelPublicAckRequired:    {ExitCode: output.ExitUsage, Description: "public Funnel acknowledgement is required"},
+		registry.CodeFunnelAllowConflict:        {ExitCode: output.ExitConflict, Description: "Funnel conflicts with an allow list"},
+		registry.CodeFunnelControlURLConflict:   {ExitCode: output.ExitConflict, Description: "Funnel conflicts with control_url"},
+		registry.CodeFunnelTypeConflict:         {ExitCode: output.ExitConflict, Description: "Funnel requires a proxy service"},
 	}
 }
 

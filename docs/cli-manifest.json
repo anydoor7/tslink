@@ -407,13 +407,74 @@
       "short": "Install TSLink as the current platform's user startup service",
       "flags": [
         {
+          "name": "force",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Proceed with an upgrade despite an unavailable launchd domain (may start a second daemon)"
+        },
+        {
           "name": "json",
           "type": "bool",
           "default": "false",
           "scope": "inherited",
           "usage": "Output as JSON"
         }
-      ]
+      ],
+      "json_result_fields": {
+        "force_available": {
+          "type": "boolean",
+          "description": "macOS failure only. True when an explicit --force recovery path exists for launchctl_domain_unavailable."
+        },
+        "force_command": {
+          "type": "string",
+          "description": "macOS failure only. Exact command that invokes the explicit --force recovery path."
+        },
+        "force_risk": {
+          "type": "string",
+          "description": "macOS failure only. Residual daemon risk accepted by running force_command."
+        },
+        "installed": {
+          "type": "boolean",
+          "description": "Linux and Windows only. Whether the platform startup artifact was installed."
+        },
+        "launchctl_output": {
+          "type": "string",
+          "description": "macOS only. Trimmed launchctl output from bootstrap, fallback, or verification; omitted when launchctl emitted no text."
+        },
+        "launchctl_target": {
+          "type": "string",
+          "description": "macOS only. The launchd service target confirmed running on success or unavailable on a launchctl_domain_unavailable failure."
+        },
+        "loaded": {
+          "type": "boolean",
+          "description": "macOS only. Whether launchctl confirmed the LaunchAgent reached running state with a positive PID."
+        },
+        "path": {
+          "type": "string",
+          "description": "Linux and Windows only. Path to the platform startup artifact written by this invocation."
+        },
+        "plist_path": {
+          "type": "string",
+          "description": "macOS only. Path to the LaunchAgent plist written on success or preserved/restored on failure."
+        },
+        "service_manager": {
+          "type": "string",
+          "description": "Linux and Windows only. Platform startup mechanism responsible for the artifact."
+        },
+        "started": {
+          "type": "boolean",
+          "description": "Linux and Windows only. Whether the installed service was started by this invocation."
+        },
+        "unavailable_domain": {
+          "type": "string",
+          "description": "macOS failure only. The unavailable launchd domain, such as gui/501, when error.code is launchctl_domain_unavailable."
+        },
+        "warning": {
+          "type": "string",
+          "description": "Actionable non-fatal warning on a successful install; omitted when no warning applies."
+        }
+      }
     },
     {
       "path": "tslink list",
@@ -888,13 +949,80 @@
       "short": "Remove TSLink from the current platform's user startup service",
       "flags": [
         {
+          "name": "force",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Remove the plist despite an unavailable launchd domain (may leave a daemon running)"
+        },
+        {
           "name": "json",
           "type": "bool",
           "default": "false",
           "scope": "inherited",
           "usage": "Output as JSON"
         }
-      ]
+      ],
+      "json_result_fields": {
+        "detail": {
+          "type": "string",
+          "description": "macOS only. TSLink-authored explanation kept separate from launchctl_output; present for already_absent and unconfirmed domain-state remedies."
+        },
+        "force_available": {
+          "type": "boolean",
+          "description": "macOS failure only. True when an explicit --force recovery path exists for launchctl_domain_unavailable."
+        },
+        "force_command": {
+          "type": "string",
+          "description": "macOS failure only. Exact command that invokes the explicit --force recovery path."
+        },
+        "force_risk": {
+          "type": "string",
+          "description": "macOS failure only. Residual daemon risk accepted by running force_command."
+        },
+        "launchctl_outcome": {
+          "type": "string",
+          "description": "macOS only. Discriminates no installed plist, a confirmed bootout, confirmed absence from every domain, and an unconfirmed domain state. Unconfirmed may be returned with removed=true only after explicit --force.",
+          "values": [
+            "not_installed",
+            "unloaded",
+            "already_absent",
+            "unconfirmed"
+          ]
+        },
+        "launchctl_output": {
+          "type": "string",
+          "description": "macOS only. Verbatim trimmed launchctl output from the successful target for unloaded, or combined attempted output for already_absent and unconfirmed; omitted when launchctl emitted no text."
+        },
+        "launchctl_target": {
+          "type": "string",
+          "description": "macOS only. The domain target that confirmed bootout or remained unavailable for the reported unconfirmed state; empty for not_installed and already_absent."
+        },
+        "path": {
+          "type": "string",
+          "description": "Linux and Windows only. Path to the platform startup artifact inspected or removed by this invocation."
+        },
+        "plist_path": {
+          "type": "string",
+          "description": "macOS only. Path to the LaunchAgent plist inspected or removed by this invocation."
+        },
+        "removed": {
+          "type": "boolean",
+          "description": "Whether the platform startup artifact was removed by this invocation."
+        },
+        "service_manager": {
+          "type": "string",
+          "description": "Linux and Windows only. Platform startup mechanism responsible for the artifact."
+        },
+        "unavailable_domain": {
+          "type": "string",
+          "description": "macOS failure only. The unavailable launchd domain, such as gui/501, when error.code is launchctl_domain_unavailable."
+        },
+        "warning": {
+          "type": "string",
+          "description": "Actionable non-fatal warning on a successful forced removal; omitted on failures and when no warning applies."
+        }
+      }
     },
     {
       "path": "tslink url",
@@ -1037,6 +1165,10 @@
     "invalid_tag": {
       "exit_code": 2,
       "description": "ACL tag is invalid"
+    },
+    "launchctl_domain_unavailable": {
+      "exit_code": 1,
+      "description": "a launchd domain could not be checked; failure data names the domain, explicit --force command, and residual risk"
     },
     "not_found": {
       "exit_code": 5,
