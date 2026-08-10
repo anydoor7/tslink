@@ -6,7 +6,7 @@ Thank you for your interest in contributing to TSLink! This document provides gu
 
 ### Prerequisites
 
-- Go 1.26.5 or newer. The `go` directive in [`go.mod`](./go.mod) is the source of truth for the supported minimum toolchain, and CI uses that file through `actions/setup-go`.
+- Go 1.26.3 or newer. The `go` directive in [`go.mod`](./go.mod) is the source of truth for the supported minimum toolchain, and CI uses that file through `actions/setup-go`.
 - A [Tailscale account](https://tailscale.com) (free for personal use) for integration testing
 - Git
 

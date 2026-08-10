@@ -32,9 +32,6 @@ type templateApplyJSONResponse struct {
 
 func resetTemplateCommandFlags(t *testing.T) {
 	t.Helper()
-	if err := rootCmd.PersistentFlags().Set("json", "false"); err != nil {
-		t.Fatalf("reset json flag: %v", err)
-	}
 	applyCmd, _, err := rootCmd.Find([]string{"template", "apply"})
 	if err != nil {
 		t.Fatalf("find template apply: %v", err)
@@ -50,6 +47,7 @@ func resetTemplateCommandFlags(t *testing.T) {
 
 func runTemplateRootCommand(t *testing.T, args ...string) (string, error) {
 	t.Helper()
+	resetRootJSONFlag(t)
 	resetTemplateCommandFlags(t)
 	t.Cleanup(func() {
 		resetTemplateCommandFlags(t)

@@ -6,7 +6,7 @@
 <p align="center">
   <a href="https://github.com/monody0007/tslink/actions"><img src="https://img.shields.io/github/actions/workflow/status/monody0007/tslink/ci.yml?branch=main&label=CI" alt="Build Status"></a>
   <a href="https://github.com/monody0007/tslink/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License"></a>
-  <a href="https://github.com/monody0007/tslink"><img src="https://img.shields.io/badge/Go-1.26.5%2B-00ADD8.svg" alt="Go"></a>
+  <a href="https://github.com/monody0007/tslink"><img src="https://img.shields.io/badge/Go-1.26.3%2B-00ADD8.svg" alt="Go"></a>
   <a href="https://github.com/monody0007/tslink"><img src="https://img.shields.io/github/stars/monody0007/tslink?style=social" alt="Stars"></a>
 </p>
 
@@ -85,7 +85,7 @@ tslink serve --daemon
 
 ### 安装
 
-需要 Go 1.26.5 或更高版本。
+需要 Go 1.26.3 或更高版本。
 
 ```bash
 go install github.com/monody0007/tslink@latest
@@ -367,7 +367,7 @@ API `add` 和 CLI 使用同一套安全护栏。Funnel 服务必须传 `public_a
 
 - [Tailscale 账户](https://tailscale.com)（个人使用免费）
 - 你要访问的设备上安装 Tailscale（手机、平板等）
-- Go 1.26.5+（如果从源码构建）
+- Go 1.26.3+（如果从源码构建）
 
 ## 平台支持
 

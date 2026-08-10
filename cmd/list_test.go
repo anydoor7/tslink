@@ -24,10 +24,10 @@ type listJSONResponse struct {
 
 func runListJSONWithRegistry(t *testing.T, regPath string) string {
 	t.Helper()
+	resetRootJSONFlag(t)
 	oldRegPath := registryPathFn
 	t.Cleanup(func() {
 		registryPathFn = oldRegPath
-		_ = rootCmd.PersistentFlags().Set("json", "false")
 		rootCmd.SetArgs(nil)
 	})
 	registryPathFn = func() (string, error) { return regPath, nil }

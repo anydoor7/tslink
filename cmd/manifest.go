@@ -117,7 +117,7 @@ func Manifest() CLIManifest {
 		SchemaVersion:         1,
 		RegistrySchemaVersion: registry.CurrentRegistrySchemaVersion,
 		Toolchain: ToolchainInfo{
-			MinimumGoVersion:  "1.26.5",
+			MinimumGoVersion:  "1.26.3",
 			GoReleaserVersion: "v2.17.0",
 			HomebrewArtifact:  "cask",
 		},

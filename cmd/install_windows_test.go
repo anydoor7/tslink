@@ -106,14 +106,11 @@ func TestWindowsInstallJSONEnvelope(t *testing.T) {
 	t.Cleanup(func() {
 		windowsExecutablePathFn = oldExe
 		windowsEvalSymlinksFn = oldEval
-		_ = rootCmd.PersistentFlags().Set("json", "false")
 	})
 
 	windowsExecutablePathFn = func() (string, error) { return `C:\Program Files\TSLink\tslink.exe`, nil }
 	windowsEvalSymlinksFn = func(path string) (string, error) { return path, nil }
-	if err := rootCmd.PersistentFlags().Set("json", "true"); err != nil {
-		t.Fatalf("set json true: %v", err)
-	}
+	setRootJSONFlag(t, true)
 
 	got := captureStdout(t, func() {
 		if err := installCmd.RunE(installCmd, nil); err != nil {
@@ -159,7 +156,6 @@ func TestWindowsUninstallCommandRemovesStartupScript(t *testing.T) {
 func TestWindowsUninstallJSONEnvelope(t *testing.T) {
 	appData := t.TempDir()
 	t.Setenv("APPDATA", appData)
-	t.Cleanup(func() { _ = rootCmd.PersistentFlags().Set("json", "false") })
 
 	startupPath, err := windowsStartupScriptPath()
 	if err != nil {
@@ -171,9 +167,7 @@ func TestWindowsUninstallJSONEnvelope(t *testing.T) {
 	if err := os.WriteFile(startupPath, []byte("script"), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
-	if err := rootCmd.PersistentFlags().Set("json", "true"); err != nil {
-		t.Fatalf("set json true: %v", err)
-	}
+	setRootJSONFlag(t, true)
 
 	got := captureStdout(t, func() {
 		if err := uninstallCmd.RunE(uninstallCmd, nil); err != nil {

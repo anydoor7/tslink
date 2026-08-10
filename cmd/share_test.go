@@ -492,7 +492,7 @@ func TestResolveSharePathsAndCommandOutput(t *testing.T) {
 	if stdout.String() != "https://one-shot.tail.ts.net\n" || stderr.Len() != 0 {
 		t.Fatalf("stdout=%q stderr=%q", stdout.String(), stderr.String())
 	}
-	_ = rootCmd.PersistentFlags().Set("json", "true")
+	setRootJSONFlag(t, true)
 	_ = shareCmd.Flags().Set("name", "json-share")
 	encoded := captureStdout(t, func() {
 		if err := shareCmd.RunE(shareCmd, []string{"8081"}); err != nil {
@@ -503,7 +503,7 @@ func TestResolveSharePathsAndCommandOutput(t *testing.T) {
 	if err := json.Unmarshal([]byte(encoded), &envelope); err != nil || !envelope.OK || envelope.Command != "share" {
 		t.Fatalf("JSON = %q envelope=%+v err=%v", encoded, envelope, err)
 	}
-	_ = rootCmd.PersistentFlags().Set("json", "false")
+	setRootJSONFlag(t, false)
 	shareIsRunningFn = func(string) bool { return false }
 	shareStartDaemonFn = func(context.Context, io.Writer) (shareDaemonStart, error) {
 		return shareDaemonStart{Status: authStatusNeedsLogin, AuthURL: "https://login.tailscale.com/a/command"}, nil

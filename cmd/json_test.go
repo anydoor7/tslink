@@ -56,20 +56,12 @@ func dataMap(t *testing.T, s string) map[string]any {
 }
 
 func TestWasJSONRequestedReadsPersistentFlag(t *testing.T) {
-	t.Cleanup(func() {
-		_ = rootCmd.PersistentFlags().Set("json", "false")
-	})
-
-	if err := rootCmd.PersistentFlags().Set("json", "false"); err != nil {
-		t.Fatalf("set json false: %v", err)
-	}
+	setRootJSONFlag(t, false)
 	if WasJSONRequested() {
 		t.Fatal("WasJSONRequested() = true, want false")
 	}
 
-	if err := rootCmd.PersistentFlags().Set("json", "true"); err != nil {
-		t.Fatalf("set json true: %v", err)
-	}
+	setRootJSONFlag(t, true)
 	if !WasJSONRequested() {
 		t.Fatal("WasJSONRequested() = false, want true")
 	}
@@ -526,6 +518,7 @@ func TestRemoveJSON_NoAPIClientCleanupSkipped(t *testing.T) {
 // --- Add JSON ---
 
 func TestAddJSON(t *testing.T) {
+	resetRootJSONFlag(t)
 	dir := t.TempDir()
 	regPath := filepath.Join(dir, "registry.json")
 
@@ -535,32 +528,13 @@ func TestAddJSON(t *testing.T) {
 	registryPathFn = func() (string, error) { return regPath, nil }
 	ensureDirFn = func() error { return nil }
 
-	resetAddFlags := func() {
-		addCmd, _, err := rootCmd.Find([]string{"add"})
-		if err != nil {
-			t.Fatalf("find add command: %v", err)
-		}
-		for flag, value := range map[string]string{
-			"proxy":       "",
-			"dir":         "",
-			"tcp":         "",
-			"ephemeral":   "false",
-			"tags":        "",
-			"allow":       "",
-			"funnel":      "false",
-			"public":      "false",
-			"domain":      "",
-			"acme-email":  "",
-			"control-url": "",
-		} {
-			if err := addCmd.Flags().Set(flag, value); err != nil {
-				t.Fatalf("reset add flag %s: %v", flag, err)
-			}
-		}
+	addCmd, _, err := rootCmd.Find([]string{"add"})
+	if err != nil {
+		t.Fatalf("find add command: %v", err)
 	}
 
 	// First add: created=true
-	resetAddFlags()
+	resetCommandLocalFlags(t, addCmd)
 	rootCmd.SetArgs([]string{"add", "jsonapp", "--proxy", "localhost:3000", "--json"})
 	got := captureStdout(t, func() {
 		if err := rootCmd.Execute(); err != nil {
@@ -585,7 +559,7 @@ func TestAddJSON(t *testing.T) {
 	}
 
 	// Second add: created=false (already exists)
-	resetAddFlags()
+	resetCommandLocalFlags(t, addCmd)
 	rootCmd.SetArgs([]string{"add", "jsonapp", "--proxy", "localhost:3000", "--json"})
 	got2 := captureStdout(t, func() {
 		if err := rootCmd.Execute(); err != nil {

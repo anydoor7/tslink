@@ -291,7 +291,6 @@ func TestLinuxInstallJSONEnvelope(t *testing.T) {
 		linuxUserNameFn = oldUser
 		systemctlCombinedOutput = oldSystemctl
 		loginctlCombinedOutputFn = oldLoginctl
-		_ = rootCmd.PersistentFlags().Set("json", "false")
 	})
 
 	linuxUserHomeDirFn = func() (string, error) { return home, nil }
@@ -305,9 +304,7 @@ func TestLinuxInstallJSONEnvelope(t *testing.T) {
 		}
 		return nil, nil
 	}
-	if err := rootCmd.PersistentFlags().Set("json", "true"); err != nil {
-		t.Fatalf("set json true: %v", err)
-	}
+	setRootJSONFlag(t, true)
 
 	got := captureStdout(t, func() {
 		if err := installCmd.RunE(installCmd, nil); err != nil {
@@ -487,7 +484,6 @@ func TestLinuxUninstallJSONEnvelope(t *testing.T) {
 	t.Cleanup(func() {
 		linuxUserHomeDirFn = oldHome
 		systemctlCombinedOutput = oldSystemctl
-		_ = rootCmd.PersistentFlags().Set("json", "false")
 	})
 
 	linuxUserHomeDirFn = func() (string, error) { return home, nil }
@@ -499,9 +495,7 @@ func TestLinuxUninstallJSONEnvelope(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 	systemctlCombinedOutput = func(args ...string) ([]byte, error) { return nil, nil }
-	if err := rootCmd.PersistentFlags().Set("json", "true"); err != nil {
-		t.Fatalf("set json true: %v", err)
-	}
+	setRootJSONFlag(t, true)
 
 	got := captureStdout(t, func() {
 		if err := uninstallCmd.RunE(uninstallCmd, nil); err != nil {

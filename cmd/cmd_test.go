@@ -12,17 +12,61 @@ import (
 	"github.com/monody0007/tslink/internal/credentials"
 	"github.com/monody0007/tslink/internal/registry"
 	"github.com/monody0007/tslink/internal/tailapi"
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 func resetRootJSONFlag(t *testing.T) {
 	t.Helper()
-	if err := rootCmd.PersistentFlags().Set("json", "false"); err != nil {
+	flag := rootCmd.PersistentFlags().Lookup("json")
+	if flag == nil {
+		t.Fatal("root --json flag not found")
+	}
+	restore := func() error {
+		if err := flag.Value.Set(flag.DefValue); err != nil {
+			return err
+		}
+		flag.Changed = false
+		rootCmd.SetArgs(nil)
+		return nil
+	}
+	if err := restore(); err != nil {
 		t.Fatalf("reset json flag: %v", err)
 	}
-	rootCmd.SetArgs(nil)
 	t.Cleanup(func() {
-		_ = rootCmd.PersistentFlags().Set("json", "false")
-		rootCmd.SetArgs(nil)
+		if err := restore(); err != nil {
+			t.Errorf("restore json flag: %v", err)
+		}
+	})
+}
+
+func setRootJSONFlag(t *testing.T, value bool) {
+	t.Helper()
+	resetRootJSONFlag(t)
+	if err := rootCmd.PersistentFlags().Set("json", fmt.Sprintf("%t", value)); err != nil {
+		t.Fatalf("set json flag: %v", err)
+	}
+}
+
+func resetCommandLocalFlags(t *testing.T, cmd *cobra.Command) {
+	t.Helper()
+	restore := func() error {
+		var restoreErr error
+		cmd.LocalNonPersistentFlags().VisitAll(func(flag *pflag.Flag) {
+			if err := flag.Value.Set(flag.DefValue); err != nil && restoreErr == nil {
+				restoreErr = fmt.Errorf("reset --%s: %w", flag.Name, err)
+			}
+			flag.Changed = false
+		})
+		return restoreErr
+	}
+	if err := restore(); err != nil {
+		t.Fatalf("reset %s flags: %v", cmd.CommandPath(), err)
+	}
+	t.Cleanup(func() {
+		if err := restore(); err != nil {
+			t.Errorf("restore %s flags: %v", cmd.CommandPath(), err)
+		}
 	})
 }
 
@@ -35,20 +79,7 @@ func runAddCmd(t *testing.T, args []string, flags map[string]string) error {
 		t.Fatalf("find add command: %v", err)
 	}
 
-	// Reset all flags to defaults
-	addCmd.Flags().Set("proxy", "")
-	addCmd.Flags().Set("dir", "")
-	addCmd.Flags().Set("tcp", "")
-	addCmd.Flags().Set("ephemeral", "false")
-	addCmd.Flags().Set("tags", "")
-	addCmd.Flags().Set("allow", "")
-	addCmd.Flags().Set("funnel", "false")
-	addCmd.Flags().Set("public", "false")
-	addCmd.Flags().Set("domain", "")
-	addCmd.Flags().Set("acme-email", "")
-	addCmd.Flags().Set("control-url", "")
-	addCmd.Flags().Set("wait", "0s")
-	addCmd.Flags().Set("dry-run", "false")
+	resetCommandLocalFlags(t, addCmd)
 
 	for k, v := range flags {
 		addCmd.Flags().Set(k, v)
@@ -69,20 +100,7 @@ func runAddCmdOutput(t *testing.T, args []string, flags map[string]string) (stri
 		t.Fatalf("find add command: %v", err)
 	}
 
-	// Reset all flags to defaults
-	addCmd.Flags().Set("proxy", "")
-	addCmd.Flags().Set("dir", "")
-	addCmd.Flags().Set("tcp", "")
-	addCmd.Flags().Set("ephemeral", "false")
-	addCmd.Flags().Set("tags", "")
-	addCmd.Flags().Set("allow", "")
-	addCmd.Flags().Set("funnel", "false")
-	addCmd.Flags().Set("public", "false")
-	addCmd.Flags().Set("domain", "")
-	addCmd.Flags().Set("acme-email", "")
-	addCmd.Flags().Set("control-url", "")
-	addCmd.Flags().Set("wait", "0s")
-	addCmd.Flags().Set("dry-run", "false")
+	resetCommandLocalFlags(t, addCmd)
 
 	for k, v := range flags {
 		addCmd.Flags().Set(k, v)

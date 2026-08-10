@@ -535,6 +535,7 @@ func TestStatusURLsTCPRendersRawHostPort(t *testing.T) {
 }
 
 func TestStatusURLsJSONIncludesSchemaWarningsAndRedactedAllow(t *testing.T) {
+	resetRootJSONFlag(t)
 	dir := t.TempDir()
 	regPath := filepath.Join(dir, "registry.json")
 	pidPath := filepath.Join(dir, "tslink.pid")
@@ -556,7 +557,6 @@ func TestStatusURLsJSONIncludesSchemaWarningsAndRedactedAllow(t *testing.T) {
 		statusRegistryPathFn = oldRegistryPath
 		statusRuntimeSnapshotPathFn = oldSnapshotPath
 		rootCmd.SetArgs(nil)
-		_ = rootCmd.PersistentFlags().Set("json", "false")
 		_ = statusCmd.Flags().Set("urls", "false")
 	})
 	statusPIDPathFn = func() (string, error) { return pidPath, nil }

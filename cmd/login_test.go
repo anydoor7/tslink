@@ -29,12 +29,11 @@ func setupLoginTest(t *testing.T) string {
 	loginCmd.SetIn(nil)
 	loginCmd.SetOut(nil)
 	loginCmd.SetErr(nil)
-	_ = rootCmd.PersistentFlags().Set("json", "false")
+	resetRootJSONFlag(t)
 	t.Cleanup(func() {
 		loginCmd.SetIn(nil)
 		loginCmd.SetOut(nil)
 		loginCmd.SetErr(nil)
-		_ = rootCmd.PersistentFlags().Set("json", "false")
 	})
 
 	if err := os.MkdirAll(dir+"/.config/tslink", 0755); err != nil {
@@ -91,7 +90,6 @@ func resetLoginFlags(t *testing.T) {
 	loginCmd.SetIn(nil)
 	loginCmd.SetOut(nil)
 	loginCmd.SetErr(nil)
-	_ = rootCmd.PersistentFlags().Set("json", "false")
 }
 
 type fakeLoginTSNetServer struct {
@@ -504,11 +502,8 @@ func TestLoginWithAPIKeyJSONReportsDegradedEnsureTags(t *testing.T) {
 	resetLoginFlags(t)
 	t.Cleanup(func() {
 		resetLoginFlags(t)
-		_ = rootCmd.PersistentFlags().Set("json", "false")
 	})
-	if err := rootCmd.PersistentFlags().Set("json", "true"); err != nil {
-		t.Fatalf("set json flag: %v", err)
-	}
+	setRootJSONFlag(t, true)
 	if err := loginCmd.Flags().Set("manage-acl", "true"); err != nil {
 		t.Fatalf("set manage-acl: %v", err)
 	}
@@ -549,11 +544,8 @@ func TestLoginWithAPIKeyJSONDefaultReturnsSideEffectPlanWithoutACLWrite(t *testi
 	resetLoginFlags(t)
 	t.Cleanup(func() {
 		resetLoginFlags(t)
-		_ = rootCmd.PersistentFlags().Set("json", "false")
 	})
-	if err := rootCmd.PersistentFlags().Set("json", "true"); err != nil {
-		t.Fatalf("set json flag: %v", err)
-	}
+	setRootJSONFlag(t, true)
 
 	oldVerify := loginVerifyAPIKeyFn
 	oldEnsure := loginEnsureTagsFn
@@ -605,11 +597,8 @@ func TestLoginWithAPIKeyJSONReportsFileBackendAndDowngrade(t *testing.T) {
 		loginVerifyAPIKeyFn = oldVerify
 		loginCmd.SetErr(oldErr)
 		resetLoginFlags(t)
-		_ = rootCmd.PersistentFlags().Set("json", "false")
 	})
-	if err := rootCmd.PersistentFlags().Set("json", "true"); err != nil {
-		t.Fatalf("set json flag: %v", err)
-	}
+	setRootJSONFlag(t, true)
 
 	var stored string
 	loginGetAPIKeyFn = func() (string, error) { return stored, nil }
@@ -655,11 +644,8 @@ func TestLoginWithClientSecretJSONReportsFileBackendAndDowngrade(t *testing.T) {
 		loginActivateClientSecretFn = oldActivate
 		loginCmd.SetErr(oldErr)
 		resetLoginFlags(t)
-		_ = rootCmd.PersistentFlags().Set("json", "false")
 	})
-	if err := rootCmd.PersistentFlags().Set("json", "true"); err != nil {
-		t.Fatalf("set json flag: %v", err)
-	}
+	setRootJSONFlag(t, true)
 
 	var stored string
 	loginGetAPIKeyFn = func() (string, error) { return "", nil }

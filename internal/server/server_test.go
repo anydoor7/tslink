@@ -46,6 +46,28 @@ func writeRegistry(t *testing.T, services []registry.Service) string {
 	return path
 }
 
+func startRegistryWatcherTest(t *testing.T, s *Server) func() {
+	t.Helper()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.watchRegistry(ctx)
+	}()
+
+	stop := func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Errorf("watchRegistry() did not return after context cancellation")
+		}
+	}
+	t.Cleanup(stop)
+	return stop
+}
+
 func TestHTTPResourceBudgetsConfigured(t *testing.T) {
 	srv := newHTTPServerFn(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	if srv.ReadHeaderTimeout != httpReadHeaderTimeout {
@@ -2575,9 +2597,7 @@ func TestWatchRegistry_ReactsToCreate(t *testing.T) {
 		t.Fatalf("MkdirAll() error = %v", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go s.watchRegistry(ctx)
+	startRegistryWatcherTest(t, s)
 
 	time.Sleep(150 * time.Millisecond)
 	writeRegistry(t, []registry.Service{})
@@ -3585,9 +3605,7 @@ func TestWatchRegistry_IgnoresNonRegistryFile(t *testing.T) {
 	// Write a valid registry that includes the service
 	writeRegistry(t, []registry.Service{svc})
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go s.watchRegistry(ctx)
+	startRegistryWatcherTest(t, s)
 
 	// Give the watcher time to start
 	time.Sleep(150 * time.Millisecond)
@@ -3625,9 +3643,7 @@ func TestWatchRegistry_SyncErrorOnReload(t *testing.T) {
 		t.Fatalf("New() error = %v", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go s.watchRegistry(ctx)
+	stopWatcher := startRegistryWatcherTest(t, s)
 
 	// Give the watcher time to start
 	time.Sleep(150 * time.Millisecond)
@@ -3645,7 +3661,7 @@ func TestWatchRegistry_SyncErrorOnReload(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 
 	// The watcher should still be running (not crashed) — cancel and verify it exits
-	cancel()
+	stopWatcher()
 
 	// If we reach here without panic, the error path was handled gracefully
 }
@@ -3774,15 +3790,7 @@ func TestWatchRegistry_DebouncesRapidWrites(t *testing.T) {
 		t.Fatalf("New() error = %v", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	// Start watching in background
-	watchDone := make(chan struct{})
-	go func() {
-		defer close(watchDone)
-		s.watchRegistry(ctx)
-	}()
+	stopWatcher := startRegistryWatcherTest(t, s)
 
 	// Give the watcher time to initialize
 	time.Sleep(50 * time.Millisecond)
@@ -3805,8 +3813,7 @@ func TestWatchRegistry_DebouncesRapidWrites(t *testing.T) {
 	// Wait for debounce to fire (200ms) plus some margin
 	time.Sleep(400 * time.Millisecond)
 
-	cancel()
-	<-watchDone
+	stopWatcher()
 
 	// With debounce, only the last write should trigger syncNodes (1 sync, not 5).
 	// The sync creates one tsnet server per service in registry.

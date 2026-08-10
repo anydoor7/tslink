@@ -231,6 +231,12 @@ func saveServeState(t *testing.T) {
 func mockServeDefaults(t *testing.T, dir string) {
 	t.Helper()
 	saveServeState(t)
+	resetRootJSONFlag(t)
+	cmd, _, err := rootCmd.Find([]string{"serve"})
+	if err != nil {
+		t.Fatalf("find serve command: %v", err)
+	}
+	resetCommandLocalFlags(t, cmd)
 
 	regPath := filepath.Join(dir, "registry.json")
 	pidPath := filepath.Join(dir, "tslink.pid")
@@ -301,8 +307,6 @@ func findServeCmd(t *testing.T) *cobra.Command {
 	if err != nil {
 		t.Fatalf("find serve command: %v", err)
 	}
-	_ = cmd.Flags().Set("manage-acl", "false")
-	_ = cmd.Flags().Set("no-browser", "false")
 	return cmd
 }
 
@@ -1008,11 +1012,8 @@ func TestServeCmd_JSONZeroCredentialReturnsImmediateAuthHandoff(t *testing.T) {
 		return nil
 	}
 
-	if err := rootCmd.PersistentFlags().Set("json", "true"); err != nil {
-		t.Fatalf("set json: %v", err)
-	}
-	t.Cleanup(func() { _ = rootCmd.PersistentFlags().Set("json", "false") })
 	cmd := findServeCmd(t)
+	setRootJSONFlag(t, true)
 	raw := captureStdout(t, func() {
 		if err := cmd.RunE(cmd, nil); err != nil {
 			t.Fatalf("RunE() error = %v", err)
@@ -1060,11 +1061,8 @@ func TestServeCmd_JSONCredentialedStaysForeground(t *testing.T) {
 		return foreground, nil
 	}
 
-	if err := rootCmd.PersistentFlags().Set("json", "true"); err != nil {
-		t.Fatalf("set json: %v", err)
-	}
-	t.Cleanup(func() { _ = rootCmd.PersistentFlags().Set("json", "false") })
 	cmd := findServeCmd(t)
+	setRootJSONFlag(t, true)
 	if err := cmd.RunE(cmd, nil); err != nil {
 		t.Fatalf("RunE() error = %v", err)
 	}

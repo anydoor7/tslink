@@ -187,8 +187,10 @@ func TestSafeFSRejectsConcurrentSymlinkSwapEscape(t *testing.T) {
 	}
 
 	stop := make(chan struct{})
+	done := make(chan struct{})
 	errCh := make(chan error, 1)
 	go func() {
+		defer close(done)
 		for {
 			select {
 			case <-stop:
@@ -215,7 +217,10 @@ func TestSafeFSRejectsConcurrentSymlinkSwapEscape(t *testing.T) {
 			}
 		}
 	}()
-	defer close(stop)
+	t.Cleanup(func() {
+		close(stop)
+		<-done
+	})
 
 	fsys := &safeFS{root: root}
 	for i := 0; i < 5000; i++ {

@@ -401,11 +401,10 @@ func TestAddJSONIncludesInvalidAllowWarning(t *testing.T) {
 	t.Cleanup(func() {
 		registryPathFn = oldRegPath
 		ensureDirFn = oldEnsureDir
-		_ = rootCmd.PersistentFlags().Set("json", "false")
 	})
 	registryPathFn = func() (string, error) { return regPath, nil }
 	ensureDirFn = func() error { return nil }
-	_ = rootCmd.PersistentFlags().Set("json", "true")
+	setRootJSONFlag(t, true)
 
 	got := captureStdout(t, func() {
 		if _, err := runAddCmdOutput(t, []string{"app"}, map[string]string{"proxy": "localhost:3000", "allow": "not-an-email"}); err != nil {
@@ -426,8 +425,7 @@ func TestAddJSONIncludesInvalidAllowWarning(t *testing.T) {
 func TestAddDryRunPrintsServiceWithoutWriting(t *testing.T) {
 	configDir := t.TempDir()
 	t.Setenv(config.ConfigDirEnv, configDir)
-	t.Cleanup(func() { _ = rootCmd.PersistentFlags().Set("json", "false") })
-	_ = rootCmd.PersistentFlags().Set("json", "true")
+	setRootJSONFlag(t, true)
 
 	got := captureStdout(t, func() {
 		if _, err := runAddCmdOutput(t, []string{"preview"}, map[string]string{"proxy": "localhost:3000", "dry-run": "true"}); err != nil {
@@ -508,10 +506,9 @@ func TestAddJSON_TCPUsesTypedEndpoint(t *testing.T) {
 	ensureDirFn = func() error { return nil }
 	t.Cleanup(func() {
 		rootCmd.SetArgs(nil)
-		_ = rootCmd.PersistentFlags().Set("json", "false")
 	})
 
-	_ = rootCmd.PersistentFlags().Set("json", "true")
+	setRootJSONFlag(t, true)
 	got := captureStdout(t, func() {
 		_, err := runAddCmdOutput(t, []string{"db"}, map[string]string{"tcp": "localhost:5432"})
 		if err != nil {
@@ -549,10 +546,9 @@ func TestAddJSON_FunnelIncludesPublicExposure(t *testing.T) {
 	ensureDirFn = func() error { return nil }
 	t.Cleanup(func() {
 		rootCmd.SetArgs(nil)
-		_ = rootCmd.PersistentFlags().Set("json", "false")
 	})
 
-	_ = rootCmd.PersistentFlags().Set("json", "true")
+	setRootJSONFlag(t, true)
 	got := captureStdout(t, func() {
 		_, err := runAddCmdOutput(t, []string{"public-app"}, map[string]string{
 			"proxy":  "localhost:3000",

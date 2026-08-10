@@ -62,13 +62,13 @@ func TestResolveServiceURLExactAndPending(t *testing.T) {
 }
 
 func TestURLCommandRawAndJSON(t *testing.T) {
+	resetRootJSONFlag(t)
 	pidPath, regPath, snapshotPath := writeExactURLFixture(t, "sample-service")
 	oldPID, oldReg, oldSnapshot := urlPIDPathFn, urlRegistryPathFn, urlRuntimeSnapshotPathFn
 	t.Cleanup(func() {
 		urlPIDPathFn, urlRegistryPathFn, urlRuntimeSnapshotPathFn = oldPID, oldReg, oldSnapshot
 		rootCmd.SetArgs(nil)
 		rootCmd.SetOut(nil)
-		_ = rootCmd.PersistentFlags().Set("json", "false")
 		_ = urlCmdFlag(t, "raw", "false")
 		_ = urlCmdFlag(t, "wait", "0s")
 	})
@@ -86,7 +86,7 @@ func TestURLCommandRawAndJSON(t *testing.T) {
 		t.Fatalf("raw = %q (%d bytes)", raw.String(), len(raw.String()))
 	}
 
-	_ = rootCmd.PersistentFlags().Set("json", "false")
+	resetRootJSONFlag(t)
 	_ = urlCmdFlag(t, "raw", "false")
 	rootCmd.SetArgs([]string{"url", "sample-service", "--json"})
 	encoded := captureStdout(t, func() {

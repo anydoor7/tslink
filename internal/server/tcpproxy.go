@@ -21,10 +21,22 @@ var tcpDialContext = func(ctx context.Context, network, address string) (net.Con
 // serveTCP accepts connections on ln and forwards them to target via bidirectional io.Copy.
 func serveTCP(ctx context.Context, ln net.Listener, target, name string) {
 	sem := make(chan struct{}, tcpMaxActiveConnections)
+	var handlers sync.WaitGroup
+	defer handlers.Wait()
 
+	stopListenerCloser := make(chan struct{})
+	listenerCloserDone := make(chan struct{})
 	go func() {
-		<-ctx.Done()
-		_ = ln.Close()
+		defer close(listenerCloserDone)
+		select {
+		case <-ctx.Done():
+			_ = ln.Close()
+		case <-stopListenerCloser:
+		}
+	}()
+	defer func() {
+		close(stopListenerCloser)
+		<-listenerCloserDone
 	}()
 
 	for {
@@ -38,7 +50,9 @@ func serveTCP(ctx context.Context, ln net.Listener, target, name string) {
 		}
 		select {
 		case sem <- struct{}{}:
+			handlers.Add(1)
 			go func() {
+				defer handlers.Done()
 				defer func() { <-sem }()
 				handleTCPConn(ctx, conn, target, name)
 			}()

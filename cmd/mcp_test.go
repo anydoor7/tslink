@@ -535,9 +535,7 @@ func TestMCPCommandRejectsJSONWithoutWritingStdout(t *testing.T) {
 		mcpCmd.SetOut(nil)
 		mcpCmd.SetErr(nil)
 	})
-	if err := rootCmd.PersistentFlags().Set("json", "true"); err != nil {
-		t.Fatal(err)
-	}
+	setRootJSONFlag(t, true)
 	var stdout, stderr bytes.Buffer
 	mcpCmd.SetOut(&stdout)
 	mcpCmd.SetErr(&stderr)

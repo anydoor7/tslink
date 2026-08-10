@@ -1111,10 +1111,18 @@ func (s *Server) startRegistryWatcher(ctx context.Context) (<-chan struct{}, err
 
 func (s *Server) runRegistryWatcher(ctx context.Context, watcher registryWatcher, regPath string) {
 	var debounce *time.Timer
-	defer func() {
+	var debounceCallbacks sync.WaitGroup
+	stopDebounce := func() {
 		if debounce != nil {
-			debounce.Stop()
+			if debounce.Stop() {
+				debounceCallbacks.Done()
+			}
+			debounce = nil
 		}
+	}
+	defer func() {
+		stopDebounce()
+		debounceCallbacks.Wait()
 	}()
 
 	for {
@@ -1132,10 +1140,10 @@ func (s *Server) runRegistryWatcher(ctx context.Context, watcher registryWatcher
 				continue
 			}
 			if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) {
-				if debounce != nil {
-					debounce.Stop()
-				}
+				stopDebounce()
+				debounceCallbacks.Add(1)
 				debounce = time.AfterFunc(200*time.Millisecond, func() {
+					defer debounceCallbacks.Done()
 					if err := s.syncNodes(ctx); err != nil {
 						if errors.Is(err, context.Canceled) || errors.Is(err, errServerShuttingDown) {
 							return

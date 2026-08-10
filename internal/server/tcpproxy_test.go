@@ -128,7 +128,21 @@ func TestServeTCP_ForwardsToBackend(t *testing.T) {
 		t.Fatalf("Listen() error = %v", err)
 	}
 
-	go serveTCP(context.Background(), proxyLn, echo.Addr().String(), "test-fwd")
+	ctx, cancel := context.WithCancel(context.Background())
+	serveDone := make(chan struct{})
+	go func() {
+		serveTCP(ctx, proxyLn, echo.Addr().String(), "test-fwd")
+		close(serveDone)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		_ = proxyLn.Close()
+		select {
+		case <-serveDone:
+		case <-time.After(2 * time.Second):
+			t.Error("serveTCP did not stop during cleanup")
+		}
+	})
 
 	// Connect to proxy and send data
 	conn, err := net.Dial("tcp", proxyLn.Addr().String())
@@ -150,8 +164,18 @@ func TestServeTCP_ForwardsToBackend(t *testing.T) {
 		t.Fatalf("got %q, want %q", buf, msg)
 	}
 
-	conn.Close()
-	proxyLn.Close()
+	if err := conn.Close(); err != nil {
+		t.Fatalf("client Close() error = %v", err)
+	}
+	cancel()
+	if err := proxyLn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+		t.Fatalf("proxy listener Close() error = %v", err)
+	}
+	select {
+	case <-serveDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("serveTCP did not wait for its connection handler")
+	}
 }
 
 func TestStopNodeLocked_ClosesInFlightTCPConnection(t *testing.T) {
