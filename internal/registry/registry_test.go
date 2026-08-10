@@ -568,6 +568,38 @@ func TestRemoveAndReturn(t *testing.T) {
 	}
 }
 
+func TestRemoveIfUnchangedProtectsConcurrentEdits(t *testing.T) {
+	path := testRegistryPath(t)
+	if _, err := Add(path, Service{Name: "report", Type: TypeProxy, Target: "http://localhost:3000"}); err != nil {
+		t.Fatalf("Add(initial) error = %v", err)
+	}
+	initial, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load(initial) error = %v", err)
+	}
+	stale := initial.Services[0]
+	if _, err := Add(path, Service{Name: "report", Type: TypeProxy, Target: "http://localhost:4000"}); err != nil {
+		t.Fatalf("Add(update) error = %v", err)
+	}
+
+	removed, err := RemoveIfUnchanged(path, stale)
+	if err != nil || removed {
+		t.Fatalf("RemoveIfUnchanged(stale) removed=%v err=%v", removed, err)
+	}
+	current, err := Load(path)
+	if err != nil || len(current.Services) != 1 || current.Services[0].Target != "http://localhost:4000" {
+		t.Fatalf("current registry = %+v err=%v", current, err)
+	}
+	removed, err = RemoveIfUnchanged(path, current.Services[0])
+	if err != nil || !removed {
+		t.Fatalf("RemoveIfUnchanged(current) removed=%v err=%v", removed, err)
+	}
+	removed, err = RemoveIfUnchanged(path, current.Services[0])
+	if err != nil || removed {
+		t.Fatalf("RemoveIfUnchanged(missing) removed=%v err=%v", removed, err)
+	}
+}
+
 func TestRemoveNotFound(t *testing.T) {
 	path := testRegistryPath(t)
 

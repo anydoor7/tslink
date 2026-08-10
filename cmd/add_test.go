@@ -469,7 +469,7 @@ func TestAddWaitResolvesURLWhenRuntimeSnapshotArrives(t *testing.T) {
 	go func() {
 		time.Sleep(20 * time.Millisecond)
 		snapshot := tsruntime.NewSnapshot(4242, startedAt, fingerprint, startedAt.Add(time.Second), []tsruntime.ServiceState{{
-			Service: svc, RuntimeHost: "node.example.ts.net",
+			Service: svc, RuntimeHost: "waiting.tailnet-example.ts.net",
 		}})
 		saved <- tsruntime.Save(snapshotPath, snapshot)
 	}()
@@ -481,7 +481,7 @@ func TestAddWaitResolvesURLWhenRuntimeSnapshotArrives(t *testing.T) {
 	if err := <-saved; err != nil {
 		t.Fatalf("runtime.Save: %v", err)
 	}
-	if result.URL == nil || *result.URL != "https://node.example.ts.net" || result.URLPending {
+	if result.URL == nil || *result.URL != "https://waiting.tailnet-example.ts.net" || result.URLPending {
 		t.Fatalf("result = %+v, want exact waited URL", result)
 	}
 

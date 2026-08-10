@@ -3,7 +3,9 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -22,7 +24,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const shareStatusReady = "ready"
+const (
+	shareStatusReady       = "ready"
+	maxShareNameCandidates = 100
+)
 
 type ShareResult struct {
 	URL         string `json:"url,omitempty"`
@@ -121,6 +126,9 @@ func inferShareTarget(target string, ephemeral bool) (shareTargetSpec, error) {
 			return shareTargetSpec{}, output.ErrUsage("proxy share target must be a port or host:port")
 		}
 	}
+	if strings.HasPrefix(portText, "+") || strings.HasPrefix(portText, "-") {
+		return shareTargetSpec{}, output.ErrUsage("share target must be an existing path, a port from 1 to 65535, or host:port")
+	}
 	port, err := strconv.Atoi(portText)
 	if err != nil || port < 1 || port > 65535 {
 		return shareTargetSpec{}, output.ErrUsage("share target must be an existing path, a port from 1 to 65535, or host:port")
@@ -149,12 +157,22 @@ func sanitizeShareName(value string) string {
 	}
 	name := strings.Trim(b.String(), "-")
 	if name == "" {
-		name = "share"
+		name = fallbackShareName(value)
 	}
 	if len(name) > 63 {
 		name = strings.TrimRight(name[:63], "-")
 	}
 	return name
+}
+
+func fallbackShareName(value string) string {
+	for _, r := range value {
+		if r > 127 {
+			sum := sha256.Sum256([]byte(value))
+			return fmt.Sprintf("share-%x", sum[:4])
+		}
+	}
+	return "share"
 }
 
 func suffixedShareName(base string, attempt int) string {
@@ -170,28 +188,61 @@ func suffixedShareName(base string, attempt int) string {
 	return trimmed + suffix
 }
 
-func registerShare(regPath string, spec shareTargetSpec, requestedName string) (registry.Service, error) {
+func sameShareTarget(existing, candidate registry.Service) bool {
+	return existing.Type == candidate.Type &&
+		existing.Path == candidate.Path &&
+		existing.Target == candidate.Target &&
+		existing.Ephemeral == candidate.Ephemeral
+}
+
+func registerShare(regPath string, spec shareTargetSpec, requestedName string) (registry.Service, bool, error) {
 	base := sanitizeShareName(spec.NameBase)
 	if requestedName != "" {
 		if err := registry.ValidateName(requestedName); err != nil {
-			return registry.Service{}, err
+			return registry.Service{}, false, err
 		}
 		base = requestedName
 	}
-	for attempt := 1; ; attempt++ {
+	for retry := 0; retry < maxShareNameCandidates; retry++ {
+		reg, err := registry.Load(regPath)
+		if err != nil {
+			return registry.Service{}, false, err
+		}
+		usedNames := make(map[string]struct{}, len(reg.Services))
+		for _, existing := range reg.Services {
+			if sameShareTarget(existing, spec.Service) {
+				return existing, false, nil
+			}
+			usedNames[existing.Name] = struct{}{}
+		}
+
+		name := ""
+		for attempt := 1; attempt <= maxShareNameCandidates; attempt++ {
+			candidate := suffixedShareName(base, attempt)
+			if _, exists := usedNames[candidate]; !exists {
+				name = candidate
+				break
+			}
+		}
+		if name == "" {
+			return registry.Service{}, false, fmt.Errorf("could not allocate share name %q after %d candidates", base, maxShareNameCandidates)
+		}
+
 		svc := spec.Service
-		svc.Name = suffixedShareName(base, attempt)
+		svc.Name = name
 		if len(svc.Tags) == 0 {
 			svc.Tags = []string{config.GetDefaultTag()}
 		}
+		svc.CreatedAt = time.Now().UTC()
 		created, err := shareAddIfMissingFn(regPath, svc)
 		if err != nil {
-			return registry.Service{}, err
+			return registry.Service{}, false, err
 		}
 		if created {
-			return svc, nil
+			return svc, true, nil
 		}
 	}
+	return registry.Service{}, false, fmt.Errorf("could not register share %q after concurrent registry updates", base)
 }
 
 func directFileURL(base, fileName string) (string, error) {
@@ -290,15 +341,23 @@ func startShareDaemon(ctx context.Context, errOut io.Writer) (shareDaemonStart, 
 	return parseShareDaemonResult(stdout.Bytes(), runErr)
 }
 
-func executeShare(ctx context.Context, paths sharePaths, target, requestedName string, ephemeral bool, wait time.Duration, errOut io.Writer) (ShareResult, error) {
+func executeShare(ctx context.Context, paths sharePaths, target, requestedName string, ephemeral bool, wait time.Duration, errOut io.Writer) (result ShareResult, err error) {
 	spec, err := inferShareTarget(target, ephemeral)
 	if err != nil {
 		return ShareResult{}, err
 	}
-	svc, err := registerShare(paths.Registry, spec, requestedName)
+	svc, created, err := registerShare(paths.Registry, spec, requestedName)
 	if err != nil {
 		return ShareResult{}, err
 	}
+	defer func() {
+		if err == nil || !created {
+			return
+		}
+		if _, rollbackErr := registry.RemoveIfUnchanged(paths.Registry, svc); rollbackErr != nil {
+			err = errors.Join(err, fmt.Errorf("roll back share %q: %w", svc.Name, rollbackErr))
+		}
+	}()
 	if !shareIsRunningFn(paths.PID) {
 		startup, err := shareStartDaemonFn(ctx, errOut)
 		if err != nil {
@@ -360,7 +419,7 @@ Examples:
 	}
 	shareCmd.Flags().String("name", "", "Service name override (DNS label; collisions receive a numeric suffix)")
 	shareCmd.Flags().Bool("ephemeral", true, "Use an ephemeral tailnet node (set --ephemeral=false for durable state)")
-	shareCmd.Flags().Duration("wait", defaultURLWait, "Wait for an exact runtime URL (optional value; default 30s)")
+	shareCmd.Flags().Duration("wait", defaultURLWait, "Wait for an exact runtime URL (share waits 30s by default; unlike url, no flag is required)")
 	shareCmd.Flags().Lookup("wait").NoOptDefVal = defaultURLWait.String()
 	rootCmd.AddCommand(shareCmd)
 }

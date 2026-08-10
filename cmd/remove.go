@@ -26,15 +26,15 @@ type RemoveResult struct {
 var deleteDevicesFn = tailapi.DeleteDevicesForService
 var ensureDirFn = config.EnsureDir
 
-func removeService(regPath, name string, out, errOut io.Writer, isJSON bool) error {
+func removeServiceResult(regPath, name string) (RemoveResult, error) {
 	svc, removed, err := registry.RemoveAndReturn(regPath, name)
 	if err != nil {
-		return err
+		return RemoveResult{}, err
 	}
 
 	result := RemoveResult{Name: name, Removed: removed}
 
-	if removed {
+	if result.Removed {
 		cleanup, err := deleteDevicesFn(context.Background(), tailapi.CleanupTargetForService(svc))
 		if err != nil {
 			if errors.Is(err, tailapi.ErrNoAPIClient) {
@@ -42,9 +42,6 @@ func removeService(regPath, name string, out, errOut io.Writer, isJSON bool) err
 				result.DeviceSkipReason = err.Error()
 			} else {
 				result.DeviceWarning = fmt.Sprintf("could not remove tailnet node: %v", err)
-				if !isJSON {
-					fmt.Fprintf(errOut, "→ warning: could not remove tailnet node: %v\n", err)
-				}
 			}
 		} else {
 			result.DeviceCleaned = len(cleanup.Deleted) > 0
@@ -54,13 +51,24 @@ func removeService(regPath, name string, out, errOut io.Writer, isJSON bool) err
 			}
 		}
 	}
+	return result, nil
+}
+
+func removeService(regPath, name string, out, errOut io.Writer, isJSON bool) error {
+	result, err := removeServiceResult(regPath, name)
+	if err != nil {
+		return err
+	}
+	if result.DeviceWarning != "" && !isJSON {
+		fmt.Fprintf(errOut, "→ warning: %s\n", result.DeviceWarning)
+	}
 
 	if isJSON {
 		output.Success("remove", result)
 		return nil
 	}
 
-	if removed {
+	if result.Removed {
 		fmt.Fprintf(out, "→ ✓ removed: %s\n", name)
 		if result.DeviceCleanupSkipped {
 			fmt.Fprintf(out, "→ remote tailnet node cleanup skipped: %s\n", result.DeviceSkipReason)

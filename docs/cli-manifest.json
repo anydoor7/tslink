@@ -666,7 +666,7 @@
           "type": "duration",
           "default": "30s",
           "scope": "local",
-          "usage": "Wait for an exact runtime URL (optional value; default 30s)"
+          "usage": "Wait for an exact runtime URL (share waits 30s by default; unlike url, no flag is required)"
         }
       ]
     },
@@ -922,7 +922,7 @@
           "type": "duration",
           "default": "0s",
           "scope": "local",
-          "usage": "Wait for an exact runtime URL (optional value; default 30s)"
+          "usage": "Wait for an exact runtime URL only when supplied (bare --wait means 30s)"
         }
       ]
     }

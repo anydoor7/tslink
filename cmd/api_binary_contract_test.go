@@ -474,20 +474,20 @@ func TestCompiledAgentE2EAddURLListRemove(t *testing.T) {
 		t.Fatalf("fingerprint: %v", err)
 	}
 	snapshot := tsruntime.NewSnapshot(daemonFixture.Process.Pid, pidInfo.ModTime(), fingerprint, pidInfo.ModTime().Add(time.Second), []tsruntime.ServiceState{{
-		Service: reg.Services[0], RuntimeHost: "node.example.ts.net",
+		Service: reg.Services[0], RuntimeHost: "e2e-app.tailnet-example.ts.net",
 	}})
 	if err := tsruntime.Save(filepath.Join(configDir, "runtime.json"), snapshot); err != nil {
 		t.Fatalf("save runtime fixture: %v", err)
 	}
 
 	urlOut, urlErr, urlExit := runTSLinkBinaryWithConfigDir(t, binary, configDir, "", "url", "e2e-app", "--raw")
-	if urlExit != 0 || urlErr != "" || urlOut != "https://node.example.ts.net\n" || len(urlOut) >= 60 {
+	if urlExit != 0 || urlErr != "" || urlOut != "https://e2e-app.tailnet-example.ts.net\n" || len(urlOut) >= 60 {
 		t.Fatalf("url exit=%d stderr=%q stdout=%q bytes=%d", urlExit, urlErr, urlOut, len(urlOut))
 	}
 	t.Logf("url stdout: %s", strings.TrimSpace(urlOut))
 
 	listOut, listErr, listExit := runTSLinkBinaryWithConfigDir(t, binary, configDir, "", "list", "--name", "e2e-app", "--fields", "name,url", "--json")
-	if listExit != 0 || listErr != "" || !strings.Contains(listOut, `"url":"https://node.example.ts.net"`) {
+	if listExit != 0 || listErr != "" || !strings.Contains(listOut, `"url":"https://e2e-app.tailnet-example.ts.net"`) {
 		t.Fatalf("list exit=%d stderr=%q stdout=%s", listExit, listErr, listOut)
 	}
 	t.Logf("list stdout: %s", strings.TrimSpace(listOut))

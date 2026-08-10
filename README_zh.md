@@ -278,12 +278,14 @@ tslink share ./build --ephemeral=false
 
 零凭证首次运行时，stdout 的唯一一行是 Tailscale 授权 URL；stderr 会给出
 精确的 `tslink url <name> --wait` 后续命令。使用 `--json` 时，这是包含
-`auth_url` 的成功 `status:"needs_login"` 结果，不是认证错误。
+`auth_url` 的成功 `status:"needs_login"` 结果，不是认证错误。对同一 target
+重试会复用已有 service，不会持续创建带数字后缀的孤儿 node。
 
 ### 面向 agent 的 MCP server
 
-`tslink mcp` 通过 stdio 运行本地 MCP server，不打开网络 listener，只暴露
-`share`、`list`、`unshare` 和 `status` 四个 tools。可让 MCP client 启动已安装
+`tslink mcp` 通过 stdio 运行本地 MCP server。MCP 进程本身不打开网络
+listener；调用其中的 `share` tool 可能启动独立的 TSLink daemon 及所请求的
+tsnet service。它只暴露 `share`、`list`、`unshare` 和 `status` 四个 tools。可让 MCP client 启动已安装
 的 `tslink` 命令，并传入唯一参数 `mcp`：
 
 ```json

@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -558,6 +559,28 @@ func RemoveAndReturn(path, name string) (removedService Service, removed bool, e
 		return nil
 	})
 	return removedService, removed, err
+}
+
+// RemoveIfUnchanged removes expected only when the currently stored service is
+// byte-for-byte equivalent. It is intended for compensating transactions that
+// must not delete a service another process changed after creation.
+func RemoveIfUnchanged(path string, expected Service) (removed bool, err error) {
+	err = withLock(path, func() error {
+		reg, err := Load(path)
+		if err != nil {
+			return err
+		}
+		for i, svc := range reg.Services {
+			if svc.Name != expected.Name || !reflect.DeepEqual(svc, expected) {
+				continue
+			}
+			reg.Services = append(reg.Services[:i], reg.Services[i+1:]...)
+			removed = true
+			return save(path, reg)
+		}
+		return nil
+	})
+	return removed, err
 }
 
 func MutateService(path, name string, mutate func(Service) (Service, error)) (Service, error) {

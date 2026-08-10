@@ -26,9 +26,10 @@ var mcpSupportedProtocolVersions = map[string]bool{
 }
 
 type mcpToolDefinition struct {
-	Name        string         `json:"name"`
-	Description string         `json:"description"`
-	InputSchema map[string]any `json:"inputSchema"`
+	Name         string         `json:"name"`
+	Description  string         `json:"description"`
+	InputSchema  map[string]any `json:"inputSchema"`
+	OutputSchema map[string]any `json:"outputSchema"`
 }
 
 func objectSchema(properties map[string]any, required ...string) map[string]any {
@@ -43,6 +44,46 @@ func objectSchema(properties map[string]any, required ...string) map[string]any 
 	return schema
 }
 
+var (
+	mcpShareOutputSchema = objectSchema(map[string]any{
+		"url":      map[string]any{"type": "string"},
+		"name":     map[string]any{"type": "string"},
+		"status":   map[string]any{"type": "string", "enum": []string{shareStatusReady, authStatusNeedsLogin}},
+		"auth_url": map[string]any{"type": "string"},
+	}, "status")
+	mcpListOutputSchema = objectSchema(map[string]any{
+		"services": map[string]any{
+			"type": "array",
+			"items": objectSchema(map[string]any{
+				"name":        map[string]any{"type": "string"},
+				"type":        map[string]any{"type": "string"},
+				"url":         map[string]any{"type": []string{"string", "null"}},
+				"url_pending": map[string]any{"type": "boolean"},
+				"state":       map[string]any{"type": "string"},
+			}, "name", "type", "url", "url_pending", "state"),
+		},
+	}, "services")
+	mcpUnshareOutputSchema = objectSchema(map[string]any{
+		"ok":                     map[string]any{"type": "boolean"},
+		"name":                   map[string]any{"type": "string"},
+		"removed":                map[string]any{"type": "boolean"},
+		"device_cleaned":         map[string]any{"type": "boolean"},
+		"device_cleanup_skipped": map[string]any{"type": "boolean"},
+		"device_skip_reason":     map[string]any{"type": "string"},
+		"device_warning":         map[string]any{"type": "string"},
+	}, "ok", "name", "removed", "device_cleaned", "device_cleanup_skipped")
+	mcpStatusOutputSchema = objectSchema(map[string]any{
+		"authenticated":            map[string]any{"type": "boolean", "description": "Legacy alias for node_authorized; it is not a stored-credential indicator."},
+		"credential_stored":        map[string]any{"type": "boolean"},
+		"node_authorized":          map[string]any{"type": "boolean"},
+		"authorized_service_count": map[string]any{"type": "integer", "minimum": 0},
+		"daemon_running":           map[string]any{"type": "boolean"},
+		"service_count":            map[string]any{"type": "integer", "minimum": 0},
+		"status":                   map[string]any{"type": "string"},
+		"auth_url":                 map[string]any{"type": "string"},
+	}, "authenticated", "credential_stored", "node_authorized", "authorized_service_count", "daemon_running", "service_count")
+)
+
 var mcpToolDefinitions = []mcpToolDefinition{
 	{
 		Name:        "share",
@@ -52,11 +93,13 @@ var mcpToolDefinitions = []mcpToolDefinition{
 			"name":      map[string]any{"type": "string", "pattern": `^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`, "maxLength": 63, "description": "Optional DNS-label service name. A numeric suffix is added instead of overwriting an existing service."},
 			"ephemeral": map[string]any{"type": "boolean", "default": true, "description": "Keep true for temporary shares; set false only when the user wants durable tailnet node state."},
 		}, "target"),
+		OutputSchema: mcpShareOutputSchema,
 	},
 	{
-		Name:        "list",
-		Description: "List locally registered TSLink services with exact runtime URLs when available. Use this to discover current shares or check whether a service URL is ready.",
-		InputSchema: objectSchema(map[string]any{}),
+		Name:         "list",
+		Description:  "List locally registered TSLink services with exact runtime URLs when available. Use this to discover current shares or check whether a service URL is ready.",
+		InputSchema:  objectSchema(map[string]any{}),
+		OutputSchema: mcpListOutputSchema,
 	},
 	{
 		Name:        "unshare",
@@ -64,11 +107,13 @@ var mcpToolDefinitions = []mcpToolDefinition{
 		InputSchema: objectSchema(map[string]any{
 			"name": map[string]any{"type": "string", "pattern": `^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`, "maxLength": 63, "description": "Exact registered service name to remove."},
 		}, "name"),
+		OutputSchema: mcpUnshareOutputSchema,
 	},
 	{
-		Name:        "status",
-		Description: "Report local TSLink daemon, authentication, and service-count state. Use this before retrying a share or when diagnosing why a URL is not ready; needs_login includes an auth_url that can be opened and retried normally.",
-		InputSchema: objectSchema(map[string]any{}),
+		Name:         "status",
+		Description:  "Report local TSLink daemon, stored-credential, node-authorization, and service-count state. Use this before retrying a share or when diagnosing why a URL is not ready; a pending needs_login handoff includes auth_url even if the daemon stopped.",
+		InputSchema:  objectSchema(map[string]any{}),
+		OutputSchema: mcpStatusOutputSchema,
 	},
 }
 
@@ -80,18 +125,32 @@ type mcpActions struct {
 }
 
 type mcpServiceSummary struct {
-	Name  string  `json:"name"`
-	Type  string  `json:"type"`
-	URL   *string `json:"url"`
-	State string  `json:"state"`
+	Name       string  `json:"name"`
+	Type       string  `json:"type"`
+	URL        *string `json:"url"`
+	URLPending bool    `json:"url_pending"`
+	State      string  `json:"state"`
 }
 
 type mcpStatusSummary struct {
-	Authenticated bool   `json:"authenticated"`
-	DaemonRunning bool   `json:"daemon_running"`
-	ServiceCount  int    `json:"service_count"`
-	Status        string `json:"status,omitempty"`
-	AuthURL       string `json:"auth_url,omitempty"`
+	Authenticated          bool   `json:"authenticated"`
+	CredentialStored       bool   `json:"credential_stored"`
+	NodeAuthorized         bool   `json:"node_authorized"`
+	AuthorizedServiceCount int    `json:"authorized_service_count"`
+	DaemonRunning          bool   `json:"daemon_running"`
+	ServiceCount           int    `json:"service_count"`
+	Status                 string `json:"status,omitempty"`
+	AuthURL                string `json:"auth_url,omitempty"`
+}
+
+type mcpUnshareSummary struct {
+	OK                   bool   `json:"ok"`
+	Name                 string `json:"name"`
+	Removed              bool   `json:"removed"`
+	DeviceCleaned        bool   `json:"device_cleaned"`
+	DeviceCleanupSkipped bool   `json:"device_cleanup_skipped"`
+	DeviceSkipReason     string `json:"device_skip_reason,omitempty"`
+	DeviceWarning        string `json:"device_warning,omitempty"`
 }
 
 func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
@@ -110,7 +169,7 @@ func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 			}
 			services := make([]mcpServiceSummary, 0, len(summaries))
 			for _, service := range summaries {
-				services = append(services, mcpServiceSummary{Name: service.Name, Type: service.Type, URL: service.URL, State: service.State})
+				services = append(services, mcpServiceSummary(service))
 			}
 			return map[string]any{"services": services}, nil
 		},
@@ -118,11 +177,19 @@ func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 			if err := registry.ValidateName(name); err != nil {
 				return nil, err
 			}
-			removed, err := registry.Remove(paths.Registry, name)
+			removed, err := removeServiceResult(paths.Registry, name)
 			if err != nil {
 				return nil, err
 			}
-			return map[string]any{"ok": removed}, nil
+			return mcpUnshareSummary{
+				OK:                   removed.Removed && !removed.DeviceCleanupSkipped && removed.DeviceWarning == "",
+				Name:                 removed.Name,
+				Removed:              removed.Removed,
+				DeviceCleaned:        removed.DeviceCleaned,
+				DeviceCleanupSkipped: removed.DeviceCleanupSkipped,
+				DeviceSkipReason:     removed.DeviceSkipReason,
+				DeviceWarning:        removed.DeviceWarning,
+			}, nil
 		},
 		status: func() (any, error) {
 			status, err := sharePollableStatusFn(paths.PID, paths.Registry, paths.Snapshot, paths.AuthHandoff)
@@ -130,9 +197,12 @@ func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 				return nil, err
 			}
 			result := mcpStatusSummary{
-				Authenticated: status.Authenticated,
-				DaemonRunning: status.DaemonRunning,
-				ServiceCount:  status.ServiceCount,
+				Authenticated:          status.NodeAuthorized,
+				CredentialStored:       status.CredentialStored,
+				NodeAuthorized:         status.NodeAuthorized,
+				AuthorizedServiceCount: status.AuthorizedServiceCount,
+				DaemonRunning:          status.DaemonRunning,
+				ServiceCount:           status.ServiceCount,
 			}
 			if status.AuthStatus == authStatusNeedsLogin && status.AuthURL != "" {
 				result.Status = authStatusNeedsLogin
@@ -213,31 +283,52 @@ func (s *mcpServer) writeError(id json.RawMessage, code int, message string) err
 }
 
 func (s *mcpServer) serve(ctx context.Context) error {
-	scanner := bufio.NewScanner(s.in)
-	scanner.Buffer(make([]byte, 0, 64*1024), mcpMaxRecordBytes+1)
-	for scanner.Scan() {
-		line := bytes.TrimSpace(scanner.Bytes())
-		if len(line) == 0 {
+	reader := bufio.NewReaderSize(s.in, 64*1024)
+	record := make([]byte, 0, 64*1024)
+	discardingOversize := false
+	for {
+		fragment, continued, readErr := reader.ReadLine()
+		if readErr != nil {
+			if readErr == io.EOF {
+				return nil
+			}
+			_ = s.writeError(nil, -32600, "Failed to read JSON-RPC message")
+			return readErr
+		}
+		if !discardingOversize {
+			if len(fragment) > mcpMaxRecordBytes-len(record) {
+				discardingOversize = true
+				record = record[:0]
+			} else {
+				record = append(record, fragment...)
+			}
+		}
+		if continued {
 			continue
 		}
-		if len(line) > mcpMaxRecordBytes {
+		if discardingOversize {
 			if err := s.writeError(nil, -32600, "JSON-RPC message exceeds maximum size"); err != nil {
 				return err
 			}
+			discardingOversize = false
+			continue
+		}
+
+		line := bytes.TrimSpace(record)
+		record = record[:0]
+		if len(line) == 0 {
 			continue
 		}
 		if err := s.handleLine(ctx, line); err != nil {
 			return err
 		}
 	}
-	if err := scanner.Err(); err != nil {
-		_ = s.writeError(nil, -32600, "Failed to read JSON-RPC message")
-		return err
-	}
-	return nil
 }
 
 func (s *mcpServer) handleLine(ctx context.Context, line []byte) error {
+	if trimmed := bytes.TrimSpace(line); len(trimmed) > 0 && trimmed[0] == '[' {
+		return s.writeError(nil, -32600, "Batch requests are not supported")
+	}
 	var request mcpRequest
 	if err := json.Unmarshal(line, &request); err != nil {
 		return s.writeError(nil, -32700, "Parse error")
@@ -316,11 +407,21 @@ func (s *mcpServer) initialize(request mcpRequest) error {
 }
 
 func decodeMCPParams(raw json.RawMessage, target any) error {
+	return decodeMCPObject(raw, target, false)
+}
+
+func decodeMCPArguments(raw json.RawMessage, target any) error {
+	return decodeMCPObject(raw, target, true)
+}
+
+func decodeMCPObject(raw json.RawMessage, target any, strict bool) error {
 	if len(bytes.TrimSpace(raw)) == 0 {
 		raw = json.RawMessage("{}")
 	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
+	if strict {
+		decoder.DisallowUnknownFields()
+	}
 	if err := decoder.Decode(target); err != nil {
 		return err
 	}
@@ -347,7 +448,7 @@ func (s *mcpServer) callTool(ctx context.Context, request mcpRequest) error {
 			Name      string `json:"name,omitempty"`
 			Ephemeral *bool  `json:"ephemeral,omitempty"`
 		}
-		if err := decodeMCPParams(call.Arguments, &args); err != nil || args.Target == "" {
+		if err := decodeMCPArguments(call.Arguments, &args); err != nil || args.Target == "" {
 			return s.writeError(request.ID, -32602, "Invalid share arguments")
 		}
 		ephemeral := true
@@ -357,7 +458,7 @@ func (s *mcpServer) callTool(ctx context.Context, request mcpRequest) error {
 		data, err = s.actions.share(ctx, args.Target, args.Name, ephemeral)
 	case "list":
 		var args struct{}
-		if err := decodeMCPParams(call.Arguments, &args); err != nil {
+		if err := decodeMCPArguments(call.Arguments, &args); err != nil {
 			return s.writeError(request.ID, -32602, "Invalid list arguments")
 		}
 		data, err = s.actions.list()
@@ -365,13 +466,13 @@ func (s *mcpServer) callTool(ctx context.Context, request mcpRequest) error {
 		var args struct {
 			Name string `json:"name"`
 		}
-		if err := decodeMCPParams(call.Arguments, &args); err != nil || args.Name == "" {
+		if err := decodeMCPArguments(call.Arguments, &args); err != nil || args.Name == "" {
 			return s.writeError(request.ID, -32602, "Invalid unshare arguments")
 		}
 		data, err = s.actions.unshare(args.Name)
 	case "status":
 		var args struct{}
-		if err := decodeMCPParams(call.Arguments, &args); err != nil {
+		if err := decodeMCPArguments(call.Arguments, &args); err != nil {
 			return s.writeError(request.ID, -32602, "Invalid status arguments")
 		}
 		data, err = s.actions.status()
@@ -406,8 +507,9 @@ func init() {
 		Short: "Run the TSLink MCP server over stdio",
 		Long: `Run a local Model Context Protocol server using newline-delimited JSON-RPC
 over stdin/stdout. The server exposes four tools: share, list, unshare, and
-status. It opens no network listener. Protocol frames are written only to
-stdout; diagnostics and logs are written only to stderr.`,
+status. The MCP process itself opens no network listener; invoking share may
+start the separate TSLink daemon and its requested tsnet service. Protocol
+frames are written only to stdout; diagnostics and logs are written only to stderr.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if jsonOutput(cmd) {

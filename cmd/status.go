@@ -45,14 +45,17 @@ const (
 
 // StatusResult holds the status information for display.
 type StatusResult struct {
-	DaemonRunning bool                 `json:"daemon_running"`
-	DaemonPID     int                  `json:"daemon_pid"`
-	Authenticated bool                 `json:"authenticated"`
-	AuthStatus    string               `json:"auth_status"`
-	AuthURL       string               `json:"auth_url,omitempty"`
-	ExpiresAt     *time.Time           `json:"expires_at,omitempty"`
-	ServiceCount  int                  `json:"service_count"`
-	Services      []StatusServiceState `json:"services"`
+	DaemonRunning          bool                 `json:"daemon_running"`
+	DaemonPID              int                  `json:"daemon_pid"`
+	Authenticated          bool                 `json:"authenticated"`
+	CredentialStored       bool                 `json:"credential_stored"`
+	NodeAuthorized         bool                 `json:"node_authorized"`
+	AuthorizedServiceCount int                  `json:"authorized_service_count"`
+	AuthStatus             string               `json:"auth_status"`
+	AuthURL                string               `json:"auth_url,omitempty"`
+	ExpiresAt              *time.Time           `json:"expires_at,omitempty"`
+	ServiceCount           int                  `json:"service_count"`
+	Services               []StatusServiceState `json:"services"`
 }
 
 type StatusServiceState struct {
@@ -61,16 +64,19 @@ type StatusServiceState struct {
 }
 
 type StatusURLsResult struct {
-	SchemaVersion   string                      `json:"schema_version"`
-	DaemonRunning   bool                        `json:"daemon_running"`
-	DaemonPID       int                         `json:"daemon_pid"`
-	Authenticated   bool                        `json:"authenticated"`
-	AuthStatus      string                      `json:"auth_status"`
-	AuthURL         string                      `json:"auth_url,omitempty"`
-	ExpiresAt       *time.Time                  `json:"expires_at,omitempty"`
-	ServiceCount    int                         `json:"service_count"`
-	RuntimeSnapshot StatusRuntimeSnapshotResult `json:"runtime_snapshot"`
-	Services        []StatusServiceView         `json:"services"`
+	SchemaVersion          string                      `json:"schema_version"`
+	DaemonRunning          bool                        `json:"daemon_running"`
+	DaemonPID              int                         `json:"daemon_pid"`
+	Authenticated          bool                        `json:"authenticated"`
+	CredentialStored       bool                        `json:"credential_stored"`
+	NodeAuthorized         bool                        `json:"node_authorized"`
+	AuthorizedServiceCount int                         `json:"authorized_service_count"`
+	AuthStatus             string                      `json:"auth_status"`
+	AuthURL                string                      `json:"auth_url,omitempty"`
+	ExpiresAt              *time.Time                  `json:"expires_at,omitempty"`
+	ServiceCount           int                         `json:"service_count"`
+	RuntimeSnapshot        StatusRuntimeSnapshotResult `json:"runtime_snapshot"`
+	Services               []StatusServiceView         `json:"services"`
 }
 
 type StatusRuntimeSnapshotResult struct {
@@ -101,9 +107,11 @@ func getStatus(pidPath, regPath string) (StatusResult, error) {
 		r.DaemonPID, _ = readPIDFn(pidPath)
 	}
 	if apiKey, _ := getAPIKeyFn(); apiKey != "" {
+		r.CredentialStored = true
 		r.Authenticated = true
 		r.AuthStatus = authStatusAuthenticated
 	} else if hasClientSecretFn() {
+		r.CredentialStored = true
 		r.Authenticated = true
 		r.AuthStatus = authStatusAuthenticated
 	}
@@ -154,13 +162,16 @@ func getPollableStatus(pidPath, regPath, snapshotPath, authHandoffPath string) (
 			}
 		}
 		if len(up) > 0 {
+			r.NodeAuthorized = true
+			r.AuthorizedServiceCount = len(up)
 			r.Authenticated = true
 			r.AuthStatus = authStatusAuthenticated
 		}
 	}
 
-	if r.DaemonRunning {
-		if handoff, err := statusLoadAuthHandoffFn(authHandoffPath); err == nil && handoff.DaemonPID == r.DaemonPID {
+	if handoff, err := statusLoadAuthHandoffFn(authHandoffPath); err == nil {
+		currentHandoff := !r.DaemonRunning || handoff.DaemonPID == r.DaemonPID
+		if currentHandoff {
 			_, handoffServiceUp := up[handoff.Service]
 			if handoffServiceUp {
 				// The snapshot can briefly win the race with removal of the
@@ -168,6 +179,7 @@ func getPollableStatus(pidPath, regPath, snapshotPath, authHandoffPath string) (
 				return r, nil
 			}
 			r.Authenticated = false
+			r.NodeAuthorized = false
 			r.AuthStatus = authStatusNeedsLogin
 			r.AuthURL = handoff.AuthURL
 			expiresAt := handoff.ExpiresAt.UTC()
@@ -232,16 +244,19 @@ func getStatusURLsWithAuth(pidPath, regPath, snapshotPath, authHandoffPath strin
 	freshness := tsruntime.Classify(snapshot, loadErr, expected)
 
 	result := StatusURLsResult{
-		SchemaVersion:   inspect.SchemaVersion,
-		DaemonRunning:   status.DaemonRunning,
-		DaemonPID:       status.DaemonPID,
-		Authenticated:   status.Authenticated,
-		AuthStatus:      status.AuthStatus,
-		AuthURL:         status.AuthURL,
-		ExpiresAt:       status.ExpiresAt,
-		ServiceCount:    len(reg.Services),
-		RuntimeSnapshot: runtimeSnapshotResult(snapshot, freshness),
-		Services:        make([]StatusServiceView, 0, len(reg.Services)),
+		SchemaVersion:          inspect.SchemaVersion,
+		DaemonRunning:          status.DaemonRunning,
+		DaemonPID:              status.DaemonPID,
+		Authenticated:          status.Authenticated,
+		CredentialStored:       status.CredentialStored,
+		NodeAuthorized:         status.NodeAuthorized,
+		AuthorizedServiceCount: status.AuthorizedServiceCount,
+		AuthStatus:             status.AuthStatus,
+		AuthURL:                status.AuthURL,
+		ExpiresAt:              status.ExpiresAt,
+		ServiceCount:           len(reg.Services),
+		RuntimeSnapshot:        runtimeSnapshotResult(snapshot, freshness),
+		Services:               make([]StatusServiceView, 0, len(reg.Services)),
 	}
 
 	snapshotServices := map[string]tsruntime.ServiceSnapshot{}
@@ -388,13 +403,16 @@ func appendStatusWarning(warnings []inspect.WarningView, code, message string) [
 
 func formatStatusURLs(r StatusURLsResult, out io.Writer) {
 	formatStatus(StatusResult{
-		DaemonRunning: r.DaemonRunning,
-		DaemonPID:     r.DaemonPID,
-		Authenticated: r.Authenticated,
-		AuthStatus:    r.AuthStatus,
-		AuthURL:       r.AuthURL,
-		ExpiresAt:     r.ExpiresAt,
-		ServiceCount:  r.ServiceCount,
+		DaemonRunning:          r.DaemonRunning,
+		DaemonPID:              r.DaemonPID,
+		Authenticated:          r.Authenticated,
+		CredentialStored:       r.CredentialStored,
+		NodeAuthorized:         r.NodeAuthorized,
+		AuthorizedServiceCount: r.AuthorizedServiceCount,
+		AuthStatus:             r.AuthStatus,
+		AuthURL:                r.AuthURL,
+		ExpiresAt:              r.ExpiresAt,
+		ServiceCount:           r.ServiceCount,
 	}, out)
 	fmt.Fprintf(out, "→ runtime snapshot: %s", r.RuntimeSnapshot.Status)
 	if r.RuntimeSnapshot.Code != "" {
@@ -470,9 +488,10 @@ var statusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show TSLink status",
 	Long: `Show the current status of TSLink: whether the daemon is running,
-Tailscale authentication state, and registered/running services. JSON output
-includes auth_status, any pending auth_url, and a per-service up/down state so
-an agent can poll a zero-credential launch to completion.
+	Tailscale authentication state, and registered/running services. JSON output
+	distinguishes credential_stored from node_authorized, includes any pending
+	auth_url even after the daemon stops, and reports per-service state so an agent
+	can poll a zero-credential launch to completion.
 
 Output lines:
   → tslink: running (pid 12345)     Daemon is active with its process ID

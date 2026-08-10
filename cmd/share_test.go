@@ -87,7 +87,7 @@ func TestInferShareTarget(t *testing.T) {
 		t.Fatalf("ipv6 = %+v err=%v", ipv6, err)
 	}
 
-	for _, invalid := range []string{"", "0", "65536", "localhost", ":3000", "https://localhost:3000"} {
+	for _, invalid := range []string{"", "0", "+3000", "65536", "localhost", ":3000", "https://localhost:3000"} {
 		if _, err := inferShareTarget(invalid, true); err == nil {
 			t.Errorf("inferShareTarget(%q) error = nil", invalid)
 		}
@@ -98,8 +98,9 @@ func TestShareNamesAndCollisionNeverUpsert(t *testing.T) {
 	if got := sanitizeShareName(" Report FINAL.html "); got != "report-final-html" {
 		t.Fatalf("sanitize = %q", got)
 	}
-	if got := sanitizeShareName("中文"); got != "share" {
-		t.Fatalf("unicode sanitize = %q", got)
+	unicodeName := sanitizeShareName("中文")
+	if unicodeName == "share" || unicodeName != sanitizeShareName("中文") || !strings.HasPrefix(unicodeName, "share-") {
+		t.Fatalf("unicode sanitize = %q, want stable hashed fallback", unicodeName)
 	}
 	long := sanitizeShareName(strings.Repeat("a", 80))
 	if len(long) != 63 {
@@ -112,22 +113,28 @@ func TestShareNamesAndCollisionNeverUpsert(t *testing.T) {
 	restoreShareSeams(t)
 	regPath := filepath.Join(t.TempDir(), "registry.json")
 	spec := shareTargetSpec{Service: registry.Service{Type: registry.TypeProxy, Target: "http://localhost:3000", Ephemeral: true}, NameBase: "Demo App"}
-	first, err := registerShare(regPath, spec, "")
-	if err != nil {
+	first, firstCreated, err := registerShare(regPath, spec, "")
+	if err != nil || !firstCreated {
 		t.Fatal(err)
 	}
-	second, err := registerShare(regPath, spec, "")
-	if err != nil {
+	differentTarget := spec
+	differentTarget.Service.Target = "http://localhost:3001"
+	second, secondCreated, err := registerShare(regPath, differentTarget, "")
+	if err != nil || !secondCreated {
 		t.Fatal(err)
 	}
 	if first.Name != "demo-app" || second.Name != "demo-app-2" {
 		t.Fatalf("names = %q, %q", first.Name, second.Name)
 	}
+	reused, reusedCreated, err := registerShare(regPath, spec, "another-name")
+	if err != nil || reusedCreated || reused.Name != first.Name {
+		t.Fatalf("reused = %+v created=%v err=%v", reused, reusedCreated, err)
+	}
 	reg, err := registry.Load(regPath)
 	if err != nil || len(reg.Services) != 2 || !reg.Services[0].Ephemeral {
 		t.Fatalf("registry = %+v err=%v", reg, err)
 	}
-	if _, err := registerShare(regPath, spec, "Bad_Name"); err == nil {
+	if _, _, err := registerShare(regPath, spec, "Bad_Name"); err == nil {
 		t.Fatal("invalid explicit name accepted")
 	}
 }
@@ -166,6 +173,78 @@ func TestExecuteShareStartsDaemonAndSurfacesNeedsLogin(t *testing.T) {
 	if err != nil || len(reg.Services) != 1 || reg.Services[0].Name != "port-3000" || !reg.Services[0].Ephemeral {
 		t.Fatalf("registry = %+v err=%v", reg, err)
 	}
+}
+
+func TestExecuteShareNeedsLoginRetriesReuseSingleService(t *testing.T) {
+	restoreShareSeams(t)
+	dir := t.TempDir()
+	paths := sharePaths{
+		Registry:    filepath.Join(dir, "registry.json"),
+		PID:         filepath.Join(dir, "tslink.pid"),
+		Snapshot:    filepath.Join(dir, "runtime.json"),
+		AuthHandoff: filepath.Join(dir, "auth-handoff.json"),
+	}
+	daemonUp := false
+	shareIsRunningFn = func(string) bool { return daemonUp }
+	shareStartDaemonFn = func(context.Context, io.Writer) (shareDaemonStart, error) {
+		daemonUp = true
+		return shareDaemonStart{Status: authStatusNeedsLogin, AuthURL: "https://login.tailscale.com/a/retry"}, nil
+	}
+	shareResolveEndpointOnceFn = func(_, _, _, name string) (serviceURLResolution, error) {
+		return serviceURLResolution{}, registry.URLNotReadyError(name)
+	}
+	sharePollableStatusFn = func(_, _, _, _ string) (StatusResult, error) {
+		return StatusResult{AuthStatus: authStatusNeedsLogin, AuthURL: "https://login.tailscale.com/a/retry"}, nil
+	}
+
+	for attempt := 1; attempt <= 5; attempt++ {
+		result, err := executeShare(context.Background(), paths, "3000", "", true, time.Second, io.Discard)
+		if err != nil || result.Status != authStatusNeedsLogin || result.serviceName != "port-3000" {
+			t.Fatalf("attempt %d result=%+v err=%v", attempt, result, err)
+		}
+		reg, loadErr := registry.Load(paths.Registry)
+		if loadErr != nil || len(reg.Services) != 1 || reg.Services[0].Name != "port-3000" {
+			t.Fatalf("attempt %d registry=%+v err=%v", attempt, reg, loadErr)
+		}
+		t.Logf("attempt %d: status=%s service=%s registry_services=%d", attempt, result.Status, result.serviceName, len(reg.Services))
+	}
+}
+
+func TestExecuteShareFailuresRollBackNewRegistration(t *testing.T) {
+	t.Run("daemon start failure", func(t *testing.T) {
+		restoreShareSeams(t)
+		dir := t.TempDir()
+		paths := sharePaths{Registry: filepath.Join(dir, "registry.json"), PID: filepath.Join(dir, "pid")}
+		shareIsRunningFn = func(string) bool { return false }
+		shareStartDaemonFn = func(context.Context, io.Writer) (shareDaemonStart, error) {
+			return shareDaemonStart{}, errors.New("daemon failed")
+		}
+		if _, err := executeShare(context.Background(), paths, "3000", "", true, time.Second, io.Discard); err == nil {
+			t.Fatal("daemon failure error = nil")
+		}
+		reg, err := registry.Load(paths.Registry)
+		if err != nil || len(reg.Services) != 0 {
+			t.Fatalf("registry after daemon failure = %+v err=%v", reg, err)
+		}
+	})
+
+	t.Run("URL timeout", func(t *testing.T) {
+		restoreShareSeams(t)
+		dir := t.TempDir()
+		paths := sharePaths{Registry: filepath.Join(dir, "registry.json"), PID: filepath.Join(dir, "pid")}
+		shareIsRunningFn = func(string) bool { return true }
+		shareResolveEndpointOnceFn = func(_, _, _, name string) (serviceURLResolution, error) {
+			return serviceURLResolution{}, registry.URLNotReadyError(name)
+		}
+		sharePollableStatusFn = func(_, _, _, _ string) (StatusResult, error) { return StatusResult{}, nil }
+		if _, err := executeShare(context.Background(), paths, "3000", "", true, 0, io.Discard); codeOf(err) != registry.CodeURLNotReady {
+			t.Fatalf("URL timeout err = %v", err)
+		}
+		reg, err := registry.Load(paths.Registry)
+		if err != nil || len(reg.Services) != 0 {
+			t.Fatalf("registry after URL timeout = %+v err=%v", reg, err)
+		}
+	})
 }
 
 func TestExecuteShareRunningReturnsExactFileURL(t *testing.T) {

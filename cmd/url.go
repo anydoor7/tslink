@@ -150,7 +150,7 @@ func init() {
 			return nil
 		},
 	}
-	urlCmd.Flags().Duration("wait", 0, "Wait for an exact runtime URL (optional value; default 30s)")
+	urlCmd.Flags().Duration("wait", 0, "Wait for an exact runtime URL only when supplied (bare --wait means 30s)")
 	urlCmd.Flags().Lookup("wait").NoOptDefVal = defaultURLWait.String()
 	urlCmd.Flags().Bool("raw", false, "Print only the URL and one trailing newline")
 	rootCmd.AddCommand(urlCmd)

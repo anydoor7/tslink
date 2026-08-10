@@ -282,12 +282,15 @@ tslink share ./build --ephemeral=false
 On a credential-free first run, the one stdout line is the Tailscale
 authorization URL and stderr gives the exact `tslink url <name> --wait`
 continuation. With `--json`, this is a successful `status:"needs_login"`
-result containing `auth_url`, not an authentication error.
+result containing `auth_url`, not an authentication error. Retrying the same
+target reuses its existing service instead of creating suffixed orphan nodes.
 
 ### MCP server for agents
 
-`tslink mcp` runs a local MCP server over stdio. It opens no network listener
-and exposes four tools: `share`, `list`, `unshare`, and `status`. Configure an
+`tslink mcp` runs a local MCP server over stdio. The MCP process itself opens no
+network listener; invoking its `share` tool may start the separate TSLink daemon
+and the requested tsnet service. It exposes four tools: `share`, `list`,
+`unshare`, and `status`. Configure an
 MCP client to launch the installed `tslink` command with the single argument
 `mcp`:
 

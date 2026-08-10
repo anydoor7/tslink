@@ -23,7 +23,7 @@ func writeExactURLFixture(t *testing.T, name string) (string, string, string) {
 	startedAt := time.Date(2026, 8, 2, 12, 0, 0, 0, time.UTC)
 	svc := addStatusTestService(t, regPath, registry.Service{Name: name, Type: registry.TypeProxy, Target: "http://localhost:3000"})
 	snapshot := tsruntime.NewSnapshot(4242, startedAt, statusRegistryFingerprint(t, regPath), startedAt.Add(time.Second), []tsruntime.ServiceState{
-		{Service: svc, RuntimeHost: name + ".example.ts.net"},
+		{Service: svc, RuntimeHost: name + ".tailnet-example.ts.net"},
 	})
 	if err := tsruntime.Save(snapshotPath, snapshot); err != nil {
 		t.Fatalf("runtime.Save: %v", err)
@@ -33,12 +33,12 @@ func writeExactURLFixture(t *testing.T, name string) (string, string, string) {
 }
 
 func TestResolveServiceURLExactAndPending(t *testing.T) {
-	pidPath, regPath, snapshotPath := writeExactURLFixture(t, "anydoor7")
-	got, err := resolveServiceURL(context.Background(), pidPath, regPath, snapshotPath, "anydoor7", 0)
+	pidPath, regPath, snapshotPath := writeExactURLFixture(t, "sample-service")
+	got, err := resolveServiceURL(context.Background(), pidPath, regPath, snapshotPath, "sample-service", 0)
 	if err != nil {
 		t.Fatalf("resolveServiceURL: %v", err)
 	}
-	if got.URL != "https://node.example.ts.net" || got.State != inspect.EndpointStateExact {
+	if got.URL != "https://sample-service.tailnet-example.ts.net" || got.State != inspect.EndpointStateExact {
 		t.Fatalf("result = %+v, want exact URL", got)
 	}
 
@@ -62,7 +62,7 @@ func TestResolveServiceURLExactAndPending(t *testing.T) {
 }
 
 func TestURLCommandRawAndJSON(t *testing.T) {
-	pidPath, regPath, snapshotPath := writeExactURLFixture(t, "anydoor7")
+	pidPath, regPath, snapshotPath := writeExactURLFixture(t, "sample-service")
 	oldPID, oldReg, oldSnapshot := urlPIDPathFn, urlRegistryPathFn, urlRuntimeSnapshotPathFn
 	t.Cleanup(func() {
 		urlPIDPathFn, urlRegistryPathFn, urlRuntimeSnapshotPathFn = oldPID, oldReg, oldSnapshot
@@ -76,19 +76,19 @@ func TestURLCommandRawAndJSON(t *testing.T) {
 	urlRegistryPathFn = func() (string, error) { return regPath, nil }
 	urlRuntimeSnapshotPathFn = func() (string, error) { return snapshotPath, nil }
 
-	rootCmd.SetArgs([]string{"url", "anydoor7", "--raw"})
+	rootCmd.SetArgs([]string{"url", "sample-service", "--raw"})
 	var raw strings.Builder
 	rootCmd.SetOut(&raw)
 	if err := rootCmd.Execute(); err != nil {
 		t.Fatalf("url --raw: %v", err)
 	}
-	if raw.String() != "https://node.example.ts.net\n" || len(raw.String()) >= 60 {
+	if raw.String() != "https://sample-service.tailnet-example.ts.net\n" || len(raw.String()) >= 60 {
 		t.Fatalf("raw = %q (%d bytes)", raw.String(), len(raw.String()))
 	}
 
 	_ = rootCmd.PersistentFlags().Set("json", "false")
 	_ = urlCmdFlag(t, "raw", "false")
-	rootCmd.SetArgs([]string{"url", "anydoor7", "--json"})
+	rootCmd.SetArgs([]string{"url", "sample-service", "--json"})
 	encoded := captureStdout(t, func() {
 		if err := rootCmd.Execute(); err != nil {
 			t.Fatalf("url --json: %v", err)
@@ -100,7 +100,7 @@ func TestURLCommandRawAndJSON(t *testing.T) {
 	}
 	data, _ := json.Marshal(envelope.Data)
 	var result URLResult
-	if err := json.Unmarshal(data, &result); err != nil || result.URL != "https://node.example.ts.net" {
+	if err := json.Unmarshal(data, &result); err != nil || result.URL != "https://sample-service.tailnet-example.ts.net" {
 		t.Fatalf("result = %+v err=%v", result, err)
 	}
 }

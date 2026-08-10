@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/monody0007/tslink/internal/registry"
+	"github.com/monody0007/tslink/internal/tailapi"
 )
 
 func fakeMCPActions() mcpActions {
@@ -99,6 +100,9 @@ func TestMCPToolSchemasAreClosedAndModelFocused(t *testing.T) {
 		if tool.InputSchema["type"] != "object" || tool.InputSchema["additionalProperties"] != false {
 			t.Fatalf("schema %s = %+v", tool.Name, tool.InputSchema)
 		}
+		if tool.OutputSchema["type"] != "object" || tool.OutputSchema["additionalProperties"] != false {
+			t.Fatalf("output schema %s = %+v", tool.Name, tool.OutputSchema)
+		}
 	}
 	shareSchema := mcpToolDefinitions[0].InputSchema
 	required := shareSchema["required"].([]string)
@@ -121,6 +125,7 @@ func TestMCPProtocolErrorsAndLifecycle(t *testing.T) {
 		{"parse", "{\n", -32700, 1},
 		{"invalid request", `{"jsonrpc":"1.0","id":1,"method":"initialize"}` + "\n", -32600, 1},
 		{"invalid null id", `{"jsonrpc":"2.0","id":null,"method":"initialize","params":{}}` + "\n", -32600, 1},
+		{"batch", `[{"jsonrpc":"2.0","id":1,"method":"ping"}]` + "\n", -32600, 1},
 		{"before initialize", `{"jsonrpc":"2.0","id":1,"method":"tools/list"}` + "\n", -32002, 1},
 		{"unknown notification", `{"jsonrpc":"2.0","method":"notifications/unknown"}` + "\n", 0, 0},
 	}
@@ -161,6 +166,29 @@ func TestMCPProtocolErrorsAndLifecycle(t *testing.T) {
 	}
 	if frames[1]["error"].(map[string]any)["code"] != float64(-32600) || frames[2]["error"].(map[string]any)["code"] != float64(-32601) {
 		t.Fatalf("errors = %+v", frames)
+	}
+}
+
+func TestMCPRequestParamsAcceptMetadataAndExtensions(t *testing.T) {
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"metadata-test","version":"1"},"_meta":{"progressToken":0},"client_extension":true}}`,
+		`{"jsonrpc":"2.0","method":"notifications/initialized","params":{"_meta":{"source":"test"}}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"ping","params":{"_meta":{"progressToken":"ping"},"extension":"accepted"}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"tools/list","params":{"_meta":{"progressToken":"list"},"cursor":"ignored-by-this-server"}}`,
+		`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"status","arguments":{},"_meta":{"progressToken":0},"client_extension":{"trace":"accepted"}}}`,
+	}, "\n") + "\n"
+	var stdout bytes.Buffer
+	if err := newMCPServer(strings.NewReader(input), &stdout, fakeMCPActions()).serve(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	frames := decodeMCPResponses(t, stdout.String())
+	if len(frames) != 4 {
+		t.Fatalf("frames=%d output=%s", len(frames), stdout.String())
+	}
+	for _, frame := range frames {
+		if frame["error"] != nil {
+			t.Fatalf("metadata-bearing request rejected: %+v", frame)
+		}
 	}
 }
 
@@ -253,7 +281,12 @@ func TestDefaultMCPActionsUseLocalRegistryAndRedactedStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	sharePollableStatusFn = func(_, _, _, _ string) (StatusResult, error) {
-		return StatusResult{DaemonRunning: true, AuthStatus: authStatusNeedsLogin, AuthURL: "https://login.tailscale.com/a/status", ServiceCount: 1}, nil
+		return StatusResult{DaemonRunning: true, CredentialStored: true, AuthStatus: authStatusNeedsLogin, AuthURL: "https://login.tailscale.com/a/status", ServiceCount: 1}, nil
+	}
+	oldDelete := deleteDevicesFn
+	t.Cleanup(func() { deleteDevicesFn = oldDelete })
+	deleteDevicesFn = func(_ context.Context, target tailapi.CleanupTarget) (tailapi.CleanupResult, error) {
+		return tailapi.CleanupResult{Deleted: []string{target.Hostname}}, nil
 	}
 	shareIsRunningFn = func(string) bool { return true }
 	shareResolveEndpointOnceFn = func(_, _, _, name string) (serviceURLResolution, error) {
@@ -277,12 +310,28 @@ func TestDefaultMCPActionsUseLocalRegistryAndRedactedStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	status := statusValue.(mcpStatusSummary)
-	if status.Status != authStatusNeedsLogin || status.AuthURL == "" || status.Authenticated {
+	if status.Status != authStatusNeedsLogin || status.AuthURL == "" || status.Authenticated || !status.CredentialStored || status.NodeAuthorized {
 		t.Fatalf("status = %+v", status)
 	}
+	statusJSON, err := json.Marshal(status)
+	if err != nil || bytes.Contains(statusJSON, []byte("tskey-")) {
+		t.Fatalf("status serialization exposed credential material: %s err=%v", statusJSON, err)
+	}
 	removed, err := actions.unshare("demo")
-	if err != nil || removed.(map[string]any)["ok"] != true {
+	removedSummary, ok := removed.(mcpUnshareSummary)
+	if err != nil || !ok || !removedSummary.OK || !removedSummary.Removed || !removedSummary.DeviceCleaned || removedSummary.DeviceCleanupSkipped {
 		t.Fatalf("unshare = %+v err=%v", removed, err)
+	}
+	if _, err := registry.Add(paths.Registry, registry.Service{Name: "partial", Type: registry.TypeProxy, Target: "http://localhost:4000"}); err != nil {
+		t.Fatal(err)
+	}
+	deleteDevicesFn = func(_ context.Context, target tailapi.CleanupTarget) (tailapi.CleanupResult, error) {
+		return tailapi.CleanupResult{Matched: []string{target.Hostname}, Protected: []string{target.Hostname}, Skipped: true, SkipReason: "ownership could not be proven"}, nil
+	}
+	partialValue, err := actions.unshare("partial")
+	partial := partialValue.(mcpUnshareSummary)
+	if err != nil || partial.OK || !partial.Removed || !partial.DeviceCleanupSkipped || partial.DeviceSkipReason != "ownership could not be proven" {
+		t.Fatalf("partial unshare = %+v err=%v", partial, err)
 	}
 	if _, err := actions.unshare("Bad_Name"); err == nil {
 		t.Fatal("invalid name accepted")
@@ -310,14 +359,14 @@ func TestMCPToolResultMarshalFailureAndOversizeInput(t *testing.T) {
 		t.Fatalf("scalar result = %+v", result)
 	}
 
-	oversize := strings.Repeat("x", mcpMaxRecordBytes+2)
+	oversize := strings.Repeat("x", mcpMaxRecordBytes+2) + "\n" + `{"jsonrpc":"2.0","id":99,"method":"ping"}` + "\n"
 	var stdout bytes.Buffer
 	server := newMCPServer(strings.NewReader(oversize), &stdout, fakeMCPActions())
-	if err := server.serve(context.Background()); err == nil {
-		t.Fatal("oversize input error = nil")
+	if err := server.serve(context.Background()); err != nil {
+		t.Fatalf("oversize input terminated session: %v", err)
 	}
 	frames := decodeMCPResponses(t, stdout.String())
-	if len(frames) != 1 || frames[0]["error"].(map[string]any)["code"] != float64(-32600) {
+	if len(frames) != 2 || frames[0]["error"].(map[string]any)["code"] != float64(-32600) || frames[1]["id"] != float64(99) || frames[1]["error"] != nil {
 		t.Fatalf("frames = %+v", frames)
 	}
 }
@@ -334,7 +383,7 @@ func TestMCPInitializeAndDecodeValidation(t *testing.T) {
 	}
 	input := strings.Join([]string{
 		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`,
-		`{"jsonrpc":"2.0","id":2,"method":"initialize","params":{"protocolVersion":"2025-11-25","extra":true}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"initialize","params":{"protocolVersion":7}}`,
 	}, "\n") + "\n"
 	var stdout bytes.Buffer
 	if err := newMCPServer(strings.NewReader(input), &stdout, fakeMCPActions()).serve(context.Background()); err != nil {
@@ -402,6 +451,55 @@ func TestCompiledMCPStdioStdoutContainsOnlyJSONRPCFrames(t *testing.T) {
 			t.Fatalf("non-JSON-RPC stdout frame: %+v", frame)
 		}
 	}
+}
+
+func TestCompiledMCPStdoutPurityProbeMatrix(t *testing.T) {
+	initialized := func(request string) string { return initializedMCPInput(request) }
+	cases := []struct {
+		name  string
+		input string
+		args  []string
+	}{
+		{"initialize", `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}` + "\n", []string{"mcp"}},
+		{"initialize metadata", `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","_meta":{"progressToken":0}}}` + "\n", []string{"mcp"}},
+		{"malformed then ping", "{\n" + `{"jsonrpc":"2.0","id":2,"method":"ping"}` + "\n", []string{"mcp"}},
+		{"invalid JSON-RPC version", `{"jsonrpc":"1.0","id":1,"method":"initialize"}` + "\n", []string{"mcp"}},
+		{"null id", `{"jsonrpc":"2.0","id":null,"method":"initialize","params":{}}` + "\n", []string{"mcp"}},
+		{"before initialize", `{"jsonrpc":"2.0","id":1,"method":"tools/list"}` + "\n", []string{"mcp"}},
+		{"unknown notification", `{"jsonrpc":"2.0","method":"notifications/unknown"}` + "\n", []string{"mcp"}},
+		{"unsupported version", `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"future"}}` + "\n", []string{"mcp"}},
+		{"double initialize", `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}` + "\n" + `{"jsonrpc":"2.0","id":2,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}` + "\n", []string{"mcp"}},
+		{"unknown method", initialized(`{"jsonrpc":"2.0","id":2,"method":"unknown"}`), []string{"mcp"}},
+		{"ping", `{"jsonrpc":"2.0","id":1,"method":"ping"}` + "\n", []string{"mcp"}},
+		{"tools list", initialized(`{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{"_meta":{"progressToken":"list"}}}`), []string{"mcp"}},
+		{"status", initialized(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"status","arguments":{}}}`), []string{"mcp"}},
+		{"status metadata", initialized(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"status","arguments":{},"_meta":{"progressToken":0}}}`), []string{"mcp"}},
+		{"unknown tool", initialized(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"unknown","arguments":{}}}`), []string{"mcp"}},
+		{"invalid share argument", initialized(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"share","arguments":{"target":"3000","extra":true}}}`), []string{"mcp"}},
+		{"oversize then ping", strings.Repeat("x", mcpMaxRecordBytes+2) + "\n" + `{"jsonrpc":"2.0","id":99,"method":"ping"}` + "\n", []string{"mcp"}},
+		{"batch", `[{"jsonrpc":"2.0","id":1,"method":"ping"}]` + "\n", []string{"mcp"}},
+		{"bad flag", "", []string{"mcp", "--badflag"}},
+		{"extra argument", "", []string{"mcp", "extra"}},
+		{"JSON flag", "", []string{"mcp", "--json"}},
+	}
+	if len(cases) != 21 {
+		t.Fatalf("probe scenarios = %d, want 21", len(cases))
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			stdout, _, _ := runCompiledTSLinkWithConfigDir(t, t.TempDir(), tc.input, tc.args...)
+			for _, line := range strings.Split(strings.TrimSuffix(stdout, "\n"), "\n") {
+				if line == "" {
+					continue
+				}
+				var frame map[string]any
+				if err := json.Unmarshal([]byte(line), &frame); err != nil || frame["jsonrpc"] != "2.0" {
+					t.Fatalf("stray stdout bytes: %q err=%v", stdout, err)
+				}
+			}
+		})
+	}
+	t.Logf("stdout_purity_probe=%d/%d clean", len(cases), len(cases))
 }
 
 func TestMCPCommandRejectsJSONWithoutWritingStdout(t *testing.T) {

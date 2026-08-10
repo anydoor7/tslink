@@ -163,7 +163,7 @@ func TestPollableStatusZeroCredentialTransitionsFromNeedsLoginToAuthenticated(t 
 	if err != nil {
 		t.Fatalf("getPollableStatus(needs_login): %v", err)
 	}
-	if needsLogin.Authenticated || needsLogin.AuthStatus != authStatusNeedsLogin {
+	if needsLogin.Authenticated || needsLogin.NodeAuthorized || needsLogin.AuthorizedServiceCount != 0 || needsLogin.AuthStatus != authStatusNeedsLogin {
 		t.Fatalf("auth state = authenticated:%v status:%q, want needs_login", needsLogin.Authenticated, needsLogin.AuthStatus)
 	}
 	if needsLogin.AuthURL != "https://login.tailscale.com/a/status-auth" || needsLogin.ExpiresAt == nil {
@@ -184,7 +184,7 @@ func TestPollableStatusZeroCredentialTransitionsFromNeedsLoginToAuthenticated(t 
 	if err != nil {
 		t.Fatalf("getPollableStatus(authenticated): %v", err)
 	}
-	if !authenticated.Authenticated || authenticated.AuthStatus != authStatusAuthenticated {
+	if !authenticated.Authenticated || !authenticated.NodeAuthorized || authenticated.AuthorizedServiceCount != 1 || authenticated.AuthStatus != authStatusAuthenticated {
 		t.Fatalf("auth state = authenticated:%v status:%q, want authenticated", authenticated.Authenticated, authenticated.AuthStatus)
 	}
 	if authenticated.AuthURL != "" || authenticated.ExpiresAt != nil {
@@ -192,6 +192,43 @@ func TestPollableStatusZeroCredentialTransitionsFromNeedsLoginToAuthenticated(t 
 	}
 	if len(authenticated.Services) != 1 || authenticated.Services[0].Status != "up" {
 		t.Fatalf("services = %+v, want web up", authenticated.Services)
+	}
+}
+
+func TestPollableStatusSurfacesPendingHandoffWithoutRunningDaemon(t *testing.T) {
+	dir := t.TempDir()
+	regPath := filepath.Join(dir, "registry.json")
+	pidPath := filepath.Join(dir, "tslink.pid")
+	snapshotPath := filepath.Join(dir, "runtime.json")
+	handoffPath := filepath.Join(dir, "auth-handoff.json")
+	startedAt := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	addStatusTestService(t, regPath, registry.Service{Name: "web", Type: registry.TypeProxy, Target: "http://localhost:3000"})
+	withStatusURLSeams(t, false, 0, startedAt)
+	getAPIKeyFn = func() (string, error) { return "stored-credential-present", nil }
+
+	oldLoadHandoff := statusLoadAuthHandoffFn
+	statusLoadAuthHandoffFn = func(string) (authHandoffRecord, error) {
+		return authHandoffRecord{
+			SchemaVersion: authHandoffSchemaVersion,
+			Status:        authStatusNeedsLogin,
+			Service:       "web",
+			AuthURL:       "https://login.tailscale.com/a/daemon-stopped",
+			ExpiresAt:     startedAt.Add(authHandoffConservativeLifetime),
+			Poll:          "tslink status --json",
+			DaemonPID:     4242,
+		}, nil
+	}
+	t.Cleanup(func() { statusLoadAuthHandoffFn = oldLoadHandoff })
+
+	result, err := getPollableStatus(pidPath, regPath, snapshotPath, handoffPath)
+	if err != nil {
+		t.Fatalf("getPollableStatus: %v", err)
+	}
+	if result.DaemonRunning || result.Authenticated || !result.CredentialStored || result.NodeAuthorized || result.AuthorizedServiceCount != 0 {
+		t.Fatalf("status distinctions = %+v", result)
+	}
+	if result.AuthStatus != authStatusNeedsLogin || result.AuthURL != "https://login.tailscale.com/a/daemon-stopped" || result.ExpiresAt == nil {
+		t.Fatalf("pending handoff = %+v", result)
 	}
 }
 
@@ -236,7 +273,7 @@ func TestPollableStatusShowsEarlierServicesWhileNextNeedsLogin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("getPollableStatus: %v", err)
 	}
-	if result.Authenticated || result.AuthStatus != authStatusNeedsLogin || result.AuthURL == "" {
+	if result.Authenticated || result.NodeAuthorized || result.AuthorizedServiceCount != 1 || result.AuthStatus != authStatusNeedsLogin || result.AuthURL == "" {
 		t.Fatalf("auth state = authenticated:%v status:%q url:%q, want second service handoff", result.Authenticated, result.AuthStatus, result.AuthURL)
 	}
 	want := map[string]string{"first": "up", "second": authStatusNeedsLogin}
