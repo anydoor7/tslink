@@ -572,6 +572,19 @@
       ]
     },
     {
+      "path": "tslink mcp",
+      "short": "Run the TSLink MCP server over stdio",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        }
+      ]
+    },
+    {
       "path": "tslink remove",
       "short": "Unregister a service",
       "flags": [
@@ -621,6 +634,39 @@
           "default": "false",
           "scope": "local",
           "usage": "Print the Tailscale login URL without opening a browser"
+        }
+      ]
+    },
+    {
+      "path": "tslink share",
+      "short": "Share a local path or web port and print its tailnet URL",
+      "flags": [
+        {
+          "name": "ephemeral",
+          "type": "bool",
+          "default": "true",
+          "scope": "local",
+          "usage": "Use an ephemeral tailnet node (set --ephemeral=false for durable state)"
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "scope": "local",
+          "usage": "Service name override (DNS label; collisions receive a numeric suffix)"
+        },
+        {
+          "name": "wait",
+          "type": "duration",
+          "default": "30s",
+          "scope": "local",
+          "usage": "Wait for an exact runtime URL (optional value; default 30s)"
         }
       ]
     },

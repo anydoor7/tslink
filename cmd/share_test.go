@@ -1,0 +1,413 @@
+package cmd
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/monody0007/tslink/internal/output"
+	"github.com/monody0007/tslink/internal/registry"
+)
+
+func TestMain(m *testing.M) {
+	if mode := os.Getenv("TSLINK_SHARE_DAEMON_HELPER"); mode != "" {
+		fmt.Fprintln(os.Stderr, "helper diagnostic")
+		switch mode {
+		case "login":
+			fmt.Print(`{"type":"tslink.result","ok":true,"schema_version":1,"command":"serve","code":0,"data":{"status":"needs_login","auth_url":"https://login.tailscale.com/a/helper"}}`)
+		case "ready":
+			fmt.Print(`{"type":"tslink.result","ok":true,"schema_version":1,"command":"serve","code":0,"data":{"daemon":true,"pid":42}}`)
+		default:
+			fmt.Print(`not-json`)
+		}
+		os.Exit(0)
+	}
+	os.Exit(m.Run())
+}
+
+func restoreShareSeams(t *testing.T) {
+	t.Helper()
+	oldEnsure := shareEnsureDirFn
+	oldRegistryPath := shareRegistryPathFn
+	oldPIDPath := sharePIDPathFn
+	oldSnapshotPath := shareSnapshotPathFn
+	oldAuthPath := shareAuthHandoffPathFn
+	oldRunning := shareIsRunningFn
+	oldStart := shareStartDaemonFn
+	oldResolve := shareResolveEndpointOnceFn
+	oldStatus := sharePollableStatusFn
+	oldAdd := shareAddIfMissingFn
+	t.Cleanup(func() {
+		shareEnsureDirFn = oldEnsure
+		shareRegistryPathFn = oldRegistryPath
+		sharePIDPathFn = oldPIDPath
+		shareSnapshotPathFn = oldSnapshotPath
+		shareAuthHandoffPathFn = oldAuthPath
+		shareIsRunningFn = oldRunning
+		shareStartDaemonFn = oldStart
+		shareResolveEndpointOnceFn = oldResolve
+		sharePollableStatusFn = oldStatus
+		shareAddIfMissingFn = oldAdd
+	})
+}
+
+func TestInferShareTarget(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "Report Final.html")
+	if err := os.WriteFile(file, []byte("ok"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	directory, err := inferShareTarget(dir, true)
+	if err != nil || directory.Service.Type != registry.TypeFile || directory.Service.Path != dir || !directory.Service.Ephemeral || directory.FileName != "" {
+		t.Fatalf("directory = %+v err=%v", directory, err)
+	}
+	regular, err := inferShareTarget(file, false)
+	if err != nil || regular.Service.Path != dir || regular.FileName != "Report Final.html" || regular.Service.Ephemeral {
+		t.Fatalf("file = %+v err=%v", regular, err)
+	}
+	port, err := inferShareTarget("3000", true)
+	if err != nil || port.Service.Target != "http://localhost:3000" || port.NameBase != "port-3000" {
+		t.Fatalf("port = %+v err=%v", port, err)
+	}
+	hostPort, err := inferShareTarget("127.0.0.1:8080", true)
+	if err != nil || hostPort.Service.Target != "http://127.0.0.1:8080" {
+		t.Fatalf("hostPort = %+v err=%v", hostPort, err)
+	}
+	ipv6, err := inferShareTarget("[::1]:8443", true)
+	if err != nil || ipv6.Service.Target != "http://[::1]:8443" {
+		t.Fatalf("ipv6 = %+v err=%v", ipv6, err)
+	}
+
+	for _, invalid := range []string{"", "0", "65536", "localhost", ":3000", "https://localhost:3000"} {
+		if _, err := inferShareTarget(invalid, true); err == nil {
+			t.Errorf("inferShareTarget(%q) error = nil", invalid)
+		}
+	}
+}
+
+func TestShareNamesAndCollisionNeverUpsert(t *testing.T) {
+	if got := sanitizeShareName(" Report FINAL.html "); got != "report-final-html" {
+		t.Fatalf("sanitize = %q", got)
+	}
+	if got := sanitizeShareName("中文"); got != "share" {
+		t.Fatalf("unicode sanitize = %q", got)
+	}
+	long := sanitizeShareName(strings.Repeat("a", 80))
+	if len(long) != 63 {
+		t.Fatalf("long name len = %d", len(long))
+	}
+	if got := suffixedShareName(long, 12); len(got) != 63 || !strings.HasSuffix(got, "-12") {
+		t.Fatalf("suffixed = %q len=%d", got, len(got))
+	}
+
+	restoreShareSeams(t)
+	regPath := filepath.Join(t.TempDir(), "registry.json")
+	spec := shareTargetSpec{Service: registry.Service{Type: registry.TypeProxy, Target: "http://localhost:3000", Ephemeral: true}, NameBase: "Demo App"}
+	first, err := registerShare(regPath, spec, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := registerShare(regPath, spec, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Name != "demo-app" || second.Name != "demo-app-2" {
+		t.Fatalf("names = %q, %q", first.Name, second.Name)
+	}
+	reg, err := registry.Load(regPath)
+	if err != nil || len(reg.Services) != 2 || !reg.Services[0].Ephemeral {
+		t.Fatalf("registry = %+v err=%v", reg, err)
+	}
+	if _, err := registerShare(regPath, spec, "Bad_Name"); err == nil {
+		t.Fatal("invalid explicit name accepted")
+	}
+}
+
+func TestDirectFileURL(t *testing.T) {
+	got, err := directFileURL("https://files.tail.ts.net", "Report #1.html")
+	if err != nil || got != "https://files.tail.ts.net/Report%20%231.html" {
+		t.Fatalf("directFileURL = %q err=%v", got, err)
+	}
+	got, err = directFileURL("https://files.tail.ts.net", "")
+	if err != nil || got != "https://files.tail.ts.net" {
+		t.Fatalf("base = %q err=%v", got, err)
+	}
+}
+
+func TestExecuteShareStartsDaemonAndSurfacesNeedsLogin(t *testing.T) {
+	restoreShareSeams(t)
+	dir := t.TempDir()
+	paths := sharePaths{
+		Registry:    filepath.Join(dir, "registry.json"),
+		PID:         filepath.Join(dir, "tslink.pid"),
+		Snapshot:    filepath.Join(dir, "runtime.json"),
+		AuthHandoff: filepath.Join(dir, "auth-handoff.json"),
+	}
+	shareIsRunningFn = func(string) bool { return false }
+	started := false
+	shareStartDaemonFn = func(context.Context, io.Writer) (shareDaemonStart, error) {
+		started = true
+		return shareDaemonStart{Status: authStatusNeedsLogin, AuthURL: "https://login.tailscale.com/a/unit"}, nil
+	}
+	result, err := executeShare(context.Background(), paths, "3000", "", true, time.Second, io.Discard)
+	if err != nil || !started || result.Status != authStatusNeedsLogin || result.AuthURL == "" {
+		t.Fatalf("result = %+v started=%v err=%v", result, started, err)
+	}
+	reg, err := registry.Load(paths.Registry)
+	if err != nil || len(reg.Services) != 1 || reg.Services[0].Name != "port-3000" || !reg.Services[0].Ephemeral {
+		t.Fatalf("registry = %+v err=%v", reg, err)
+	}
+}
+
+func TestExecuteShareRunningReturnsExactFileURL(t *testing.T) {
+	restoreShareSeams(t)
+	dir := t.TempDir()
+	file := filepath.Join(dir, "report final.html")
+	if err := os.WriteFile(file, []byte("report"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	paths := sharePaths{Registry: filepath.Join(dir, "registry.json")}
+	shareIsRunningFn = func(string) bool { return true }
+	shareResolveEndpointOnceFn = func(_, _, _, name string) (serviceURLResolution, error) {
+		return serviceURLResolution{Result: URLResult{Name: name, URL: "https://" + name + ".tail.ts.net", State: "exact"}}, nil
+	}
+	result, err := executeShare(context.Background(), paths, file, "preview", false, time.Second, io.Discard)
+	if err != nil || result.Name != "preview" || result.Status != shareStatusReady || result.URL != "https://preview.tail.ts.net/report%20final.html" {
+		t.Fatalf("result = %+v err=%v", result, err)
+	}
+	reg, err := registry.Load(paths.Registry)
+	if err != nil || reg.Services[0].Ephemeral {
+		t.Fatalf("registry = %+v err=%v", reg, err)
+	}
+}
+
+func TestWaitForShareOutcomePollsAndHandlesLoginTimeoutAndContext(t *testing.T) {
+	restoreShareSeams(t)
+	paths := sharePaths{}
+	calls := 0
+	shareResolveEndpointOnceFn = func(_, _, _, name string) (serviceURLResolution, error) {
+		calls++
+		if calls < 2 {
+			return serviceURLResolution{}, registry.URLNotReadyError(name)
+		}
+		return serviceURLResolution{Result: URLResult{Name: name, URL: "https://ready.tail.ts.net"}}, nil
+	}
+	sharePollableStatusFn = func(_, _, _, _ string) (StatusResult, error) { return StatusResult{}, nil }
+	result, err := waitForShareOutcome(context.Background(), paths, "ready", "", 500*time.Millisecond)
+	if err != nil || result.URL != "https://ready.tail.ts.net" || calls < 2 {
+		t.Fatalf("result = %+v calls=%d err=%v", result, calls, err)
+	}
+
+	shareResolveEndpointOnceFn = func(_, _, _, name string) (serviceURLResolution, error) {
+		return serviceURLResolution{}, registry.URLNotReadyError(name)
+	}
+	sharePollableStatusFn = func(_, _, _, _ string) (StatusResult, error) {
+		return StatusResult{AuthStatus: authStatusNeedsLogin, AuthURL: "https://login.tailscale.com/a/poll"}, nil
+	}
+	result, err = waitForShareOutcome(context.Background(), paths, "login", "", time.Second)
+	if err != nil || result.Status != authStatusNeedsLogin {
+		t.Fatalf("login result = %+v err=%v", result, err)
+	}
+
+	sharePollableStatusFn = func(_, _, _, _ string) (StatusResult, error) { return StatusResult{}, nil }
+	if _, err := waitForShareOutcome(context.Background(), paths, "timeout", "", 0); codeOf(err) != registry.CodeURLNotReady {
+		t.Fatalf("zero wait err = %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := waitForShareOutcome(ctx, paths, "cancel", "", time.Second); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancel err = %v", err)
+	}
+}
+
+func codeOf(err error) string {
+	code, _ := registry.ErrorCode(err)
+	return code
+}
+
+func TestParseAndRunShareDaemon(t *testing.T) {
+	login := output.NewSuccess("serve", map[string]any{"status": authStatusNeedsLogin, "auth_url": "https://login.tailscale.com/a/parse"})
+	encoded, _ := json.Marshal(login)
+	result, err := parseShareDaemonResult(encoded, nil)
+	if err != nil || result.Status != authStatusNeedsLogin || result.AuthURL == "" {
+		t.Fatalf("result = %+v err=%v", result, err)
+	}
+	failure, _ := json.Marshal(output.NewFailure("serve", output.ExitConflict, "already running"))
+	if _, err := parseShareDaemonResult(failure, nil); err == nil || !strings.Contains(err.Error(), "already running") {
+		t.Fatalf("failure err = %v", err)
+	}
+	failureWithoutObject := []byte(`{"ok":false,"code":1}`)
+	if _, err := parseShareDaemonResult(failureWithoutObject, nil); err == nil || !strings.Contains(err.Error(), "exit code 1") {
+		t.Fatalf("failure without object err = %v", err)
+	}
+	if _, err := parseShareDaemonResult([]byte("bad"), errors.New("exit 1")); err == nil || !strings.Contains(err.Error(), "exit 1") {
+		t.Fatalf("invalid err = %v", err)
+	}
+	if _, err := parseShareDaemonResult([]byte("bad"), nil); err == nil || !strings.Contains(err.Error(), "invalid JSON") {
+		t.Fatalf("invalid JSON err = %v", err)
+	}
+
+	t.Setenv("TSLINK_SHARE_DAEMON_HELPER", "login")
+	var stderr bytes.Buffer
+	result, err = startShareDaemon(context.Background(), &stderr)
+	if err != nil || result.AuthURL != "https://login.tailscale.com/a/helper" || !strings.Contains(stderr.String(), "helper diagnostic") {
+		t.Fatalf("helper result = %+v stderr=%q err=%v", result, stderr.String(), err)
+	}
+	t.Setenv("TSLINK_SHARE_DAEMON_HELPER", "ready")
+	result, err = startShareDaemon(context.Background(), io.Discard)
+	if err != nil || result.Status != "" {
+		t.Fatalf("ready helper = %+v err=%v", result, err)
+	}
+}
+
+func TestResolveSharePathsAndCommandOutput(t *testing.T) {
+	restoreShareSeams(t)
+	resetRootJSONFlag(t)
+	dir := t.TempDir()
+	paths := sharePaths{
+		Registry:    filepath.Join(dir, "registry.json"),
+		PID:         filepath.Join(dir, "pid"),
+		Snapshot:    filepath.Join(dir, "runtime.json"),
+		AuthHandoff: filepath.Join(dir, "auth.json"),
+	}
+	shareEnsureDirFn = func() error { return nil }
+	shareRegistryPathFn = func() (string, error) { return paths.Registry, nil }
+	sharePIDPathFn = func() (string, error) { return paths.PID, nil }
+	shareSnapshotPathFn = func() (string, error) { return paths.Snapshot, nil }
+	shareAuthHandoffPathFn = func() (string, error) { return paths.AuthHandoff, nil }
+	shareIsRunningFn = func(string) bool { return true }
+	shareResolveEndpointOnceFn = func(_, _, _, name string) (serviceURLResolution, error) {
+		return serviceURLResolution{Result: URLResult{Name: name, URL: "https://" + name + ".tail.ts.net"}}, nil
+	}
+
+	resolved, err := resolveSharePaths()
+	if err != nil || resolved != paths {
+		t.Fatalf("paths = %+v err=%v", resolved, err)
+	}
+	shareCmd, _, err := rootCmd.Find([]string{"share"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		shareCmd.SetOut(nil)
+		shareCmd.SetErr(nil)
+		_ = shareCmd.Flags().Set("name", "")
+		_ = shareCmd.Flags().Set("ephemeral", "true")
+		_ = shareCmd.Flags().Set("wait", "30s")
+	})
+	_ = shareCmd.Flags().Set("name", "one-shot")
+	_ = shareCmd.Flags().Set("ephemeral", "true")
+	_ = shareCmd.Flags().Set("wait", "30s")
+	var stdout, stderr bytes.Buffer
+	shareCmd.SetOut(&stdout)
+	shareCmd.SetErr(&stderr)
+	if err := shareCmd.RunE(shareCmd, []string{"8080"}); err != nil {
+		t.Fatal(err)
+	}
+	if stdout.String() != "https://one-shot.tail.ts.net\n" || stderr.Len() != 0 {
+		t.Fatalf("stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+	_ = rootCmd.PersistentFlags().Set("json", "true")
+	_ = shareCmd.Flags().Set("name", "json-share")
+	encoded := captureStdout(t, func() {
+		if err := shareCmd.RunE(shareCmd, []string{"8081"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	var envelope output.Result
+	if err := json.Unmarshal([]byte(encoded), &envelope); err != nil || !envelope.OK || envelope.Command != "share" {
+		t.Fatalf("JSON = %q envelope=%+v err=%v", encoded, envelope, err)
+	}
+	_ = rootCmd.PersistentFlags().Set("json", "false")
+	shareIsRunningFn = func(string) bool { return false }
+	shareStartDaemonFn = func(context.Context, io.Writer) (shareDaemonStart, error) {
+		return shareDaemonStart{Status: authStatusNeedsLogin, AuthURL: "https://login.tailscale.com/a/command"}, nil
+	}
+	_ = shareCmd.Flags().Set("name", "login-share")
+	stdout.Reset()
+	stderr.Reset()
+	if err := shareCmd.RunE(shareCmd, []string{"8082"}); err != nil {
+		t.Fatal(err)
+	}
+	if stdout.String() != "https://login.tailscale.com/a/command\n" || !strings.Contains(stderr.String(), "authorization is required") {
+		t.Fatalf("login stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+	flag := shareCmd.Flags().Lookup("wait")
+	if flag == nil || flag.NoOptDefVal != "30s" || flag.DefValue != "30s" {
+		t.Fatalf("wait flag = %+v", flag)
+	}
+}
+
+func TestShareErrorPaths(t *testing.T) {
+	restoreShareSeams(t)
+	paths := sharePaths{Registry: filepath.Join(t.TempDir(), "registry.json")}
+	if _, err := executeShare(context.Background(), paths, "not-a-target", "", true, time.Second, io.Discard); err == nil {
+		t.Fatal("invalid target error = nil")
+	}
+	shareAddIfMissingFn = func(string, registry.Service) (bool, error) { return false, errors.New("registry failed") }
+	if _, err := executeShare(context.Background(), paths, "3000", "", true, time.Second, io.Discard); err == nil || !strings.Contains(err.Error(), "registry failed") {
+		t.Fatalf("registry err = %v", err)
+	}
+	shareAddIfMissingFn = registry.AddIfMissing
+	shareIsRunningFn = func(string) bool { return false }
+	shareStartDaemonFn = func(context.Context, io.Writer) (shareDaemonStart, error) {
+		return shareDaemonStart{}, errors.New("daemon failed")
+	}
+	if _, err := executeShare(context.Background(), paths, "3001", "", true, time.Second, io.Discard); err == nil || !strings.Contains(err.Error(), "daemon failed") {
+		t.Fatalf("daemon err = %v", err)
+	}
+
+	shareResolveEndpointOnceFn = func(_, _, _, _ string) (serviceURLResolution, error) {
+		return serviceURLResolution{}, errors.New("resolve failed")
+	}
+	if _, _, err := shareOutcomeOnce(paths, "demo", ""); err == nil || !strings.Contains(err.Error(), "resolve failed") {
+		t.Fatalf("resolve err = %v", err)
+	}
+	shareResolveEndpointOnceFn = func(_, _, _, name string) (serviceURLResolution, error) {
+		return serviceURLResolution{}, registry.URLNotReadyError(name)
+	}
+	sharePollableStatusFn = func(_, _, _, _ string) (StatusResult, error) { return StatusResult{}, errors.New("status failed") }
+	if _, _, err := shareOutcomeOnce(paths, "demo", ""); err == nil || !strings.Contains(err.Error(), "status failed") {
+		t.Fatalf("status err = %v", err)
+	}
+
+	if got := suffixedShareName("-", 2); got != "share-2" {
+		t.Fatalf("empty suffix base = %q", got)
+	}
+	if _, err := directFileURL(":\x00", "file"); err == nil {
+		t.Fatal("invalid base URL accepted")
+	}
+}
+
+func TestResolveSharePathsErrors(t *testing.T) {
+	restoreShareSeams(t)
+	want := errors.New("path failed")
+	shareRegistryPathFn = func() (string, error) { return "", want }
+	if _, err := resolveSharePaths(); !errors.Is(err, want) {
+		t.Fatalf("registry err = %v", err)
+	}
+	shareRegistryPathFn = func() (string, error) { return "registry", nil }
+	sharePIDPathFn = func() (string, error) { return "", want }
+	if _, err := resolveSharePaths(); !errors.Is(err, want) {
+		t.Fatalf("pid err = %v", err)
+	}
+	sharePIDPathFn = func() (string, error) { return "pid", nil }
+	shareSnapshotPathFn = func() (string, error) { return "", want }
+	if _, err := resolveSharePaths(); !errors.Is(err, want) {
+		t.Fatalf("snapshot err = %v", err)
+	}
+	shareSnapshotPathFn = func() (string, error) { return "snapshot", nil }
+	shareAuthHandoffPathFn = func() (string, error) { return "", want }
+	if _, err := resolveSharePaths(); !errors.Is(err, want) {
+		t.Fatalf("auth err = %v", err)
+	}
+}

@@ -264,6 +264,45 @@ tslink serve --daemon
 # Access https://myapp.<your-tailnet>.ts.net from any device
 ```
 
+### Share in one command
+
+`tslink share` infers whether its argument is a directory, a regular file, a
+bare port, or `host:port`. It registers the service without overwriting an
+existing name, starts the daemon when needed, waits for an exact runtime URL,
+and prints only that URL to stdout. Shares use ephemeral nodes by default.
+
+```bash
+tslink share ./build
+tslink share ./report.html          # URL points directly to report.html
+tslink share 3000
+tslink share localhost:8080 --name preview
+tslink share ./build --ephemeral=false
+```
+
+On a credential-free first run, the one stdout line is the Tailscale
+authorization URL and stderr gives the exact `tslink url <name> --wait`
+continuation. With `--json`, this is a successful `status:"needs_login"`
+result containing `auth_url`, not an authentication error.
+
+### MCP server for agents
+
+`tslink mcp` runs a local MCP server over stdio. It opens no network listener
+and exposes four tools: `share`, `list`, `unshare`, and `status`. Configure an
+MCP client to launch the installed `tslink` command with the single argument
+`mcp`:
+
+```json
+{
+  "command": "tslink",
+  "args": ["mcp"]
+}
+```
+
+The `share` tool accepts the same path/port/host:port targets as the CLI. When
+authorization is pending it returns `{"status":"needs_login","auth_url":"..."}`
+as a normal tool result so an agent can open the URL and retry. Credential
+values are never returned through MCP.
+
 TSLink has two authentication tiers:
 
 - **Tier 1 — zero credential (default)**: a user-owned node with no advertised tags and no remote ACL edits. This is the least-privilege path for a quick page or ephemeral share. Each fresh service node has its own enrollment URL; a one-service quick share takes one browser click. User-owned Tailscale node keys expire, so a node left running for months can eventually require re-authentication.

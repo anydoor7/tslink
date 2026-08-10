@@ -262,6 +262,41 @@ tslink serve --daemon
 # 从任何设备访问 https://myapp.<your-tailnet>.ts.net
 ```
 
+### 一条命令分享
+
+`tslink share` 会判断参数是目录、普通文件、裸端口还是 `host:port`。它会
+注册服务且不覆盖已有同名项，在需要时启动 daemon，等待精确 runtime URL，
+最后只向 stdout 打印该 URL。share 默认使用 ephemeral node。
+
+```bash
+tslink share ./build
+tslink share ./report.html          # URL 直接指向 report.html
+tslink share 3000
+tslink share localhost:8080 --name preview
+tslink share ./build --ephemeral=false
+```
+
+零凭证首次运行时，stdout 的唯一一行是 Tailscale 授权 URL；stderr 会给出
+精确的 `tslink url <name> --wait` 后续命令。使用 `--json` 时，这是包含
+`auth_url` 的成功 `status:"needs_login"` 结果，不是认证错误。
+
+### 面向 agent 的 MCP server
+
+`tslink mcp` 通过 stdio 运行本地 MCP server，不打开网络 listener，只暴露
+`share`、`list`、`unshare` 和 `status` 四个 tools。可让 MCP client 启动已安装
+的 `tslink` 命令，并传入唯一参数 `mcp`：
+
+```json
+{
+  "command": "tslink",
+  "args": ["mcp"]
+}
+```
+
+`share` tool 接受与 CLI 相同的 path/port/host:port target。需要授权时，它会
+把 `{"status":"needs_login","auth_url":"..."}` 作为正常 tool result 返回，agent
+可以打开该 URL 后重试。MCP 永远不会返回 credential 值。
+
 TSLink 有两层认证模式：
 
 - **Tier 1 — 零凭证（默认）**：user-owned node，不 advertise tags，也不调用远端 ACL API。适合临时展示页面或 ephemeral share。每个新的 service node 都有自己的 enrollment URL；单服务 quick share 只需一次 browser click。Tailscale 的 user-owned node key 会过期，因此持续运行数月的节点最终可能需要重新认证。

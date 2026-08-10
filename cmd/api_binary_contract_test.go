@@ -405,29 +405,7 @@ func TestCompiledCLIAndAPIStatusDataAreByteIsomorphic(t *testing.T) {
 
 func TestCompiledAgentE2EAddURLListRemove(t *testing.T) {
 	configDir := t.TempDir()
-	if requested := os.Getenv("TSLINK_E2E_CONFIG_DIR"); requested != "" {
-		if filepath.Clean(requested) != "/tmp/tslink-verify-A" {
-			t.Fatalf("TSLINK_E2E_CONFIG_DIR = %q, only /tmp/tslink-verify-A is accepted", requested)
-		}
-		if err := os.MkdirAll(requested, 0o700); err != nil {
-			t.Fatalf("create requested E2E config dir: %v", err)
-		}
-		entries, err := os.ReadDir(requested)
-		if err != nil {
-			t.Fatalf("read requested E2E config dir: %v", err)
-		}
-		if len(entries) != 0 {
-			t.Fatalf("requested E2E config dir must start empty: %s", requested)
-		}
-		configDir = requested
-	}
 	binary := compiledTSLinkBinary(t)
-	if requested := os.Getenv("TSLINK_E2E_BINARY"); requested != "" {
-		if !filepath.IsAbs(requested) {
-			t.Fatalf("TSLINK_E2E_BINARY must be absolute: %q", requested)
-		}
-		binary = requested
-	}
 	addOut, addErr, addExit := runTSLinkBinaryWithConfigDir(t, binary, configDir, "", "add", "e2e-app", "--proxy", "localhost:3000", "--json")
 	if addExit != 0 || addErr != "" {
 		t.Fatalf("add exit=%d stderr=%q stdout=%s", addExit, addErr, addOut)
