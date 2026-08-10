@@ -3,12 +3,35 @@ package registry
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
+
+const registryAddHelperEnv = "TSLINK_REGISTRY_ADD_HELPER"
+
+func TestMain(m *testing.M) {
+	if os.Getenv(registryAddHelperEnv) == "1" {
+		path := os.Getenv("TSLINK_REGISTRY_ADD_PATH")
+		name := os.Getenv("TSLINK_REGISTRY_ADD_NAME")
+		target := os.Getenv("TSLINK_REGISTRY_ADD_TARGET")
+		if path == "" || name == "" || target == "" {
+			fmt.Fprintln(os.Stderr, "registry add helper: incomplete synthetic fixture")
+			os.Exit(2)
+		}
+		if _, err := Add(path, Service{Name: name, Type: TypeProxy, Target: target}); err != nil {
+			fmt.Fprintf(os.Stderr, "registry add helper failed: %v\n", err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+	os.Exit(m.Run())
+}
 
 func testRegistryPath(t *testing.T) string {
 	t.Helper()
@@ -27,6 +50,101 @@ func TestLoadEmpty(t *testing.T) {
 	}
 	if reg.SchemaVersion != CurrentRegistrySchemaVersion {
 		t.Fatalf("schema_version = %d, want %d", reg.SchemaVersion, CurrentRegistrySchemaVersion)
+	}
+}
+
+func TestAddConcurrentGoroutinesPreservesExactRegistry(t *testing.T) {
+	const additions = 32
+	path := testRegistryPath(t)
+
+	var wg sync.WaitGroup
+	errs := make(chan error, additions)
+	for i := 0; i < additions; i++ {
+		name := fmt.Sprintf("goroutine-%02d", i)
+		target := fmt.Sprintf("http://127.0.0.1:%d", 3000+i)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			created, err := Add(path, Service{Name: name, Type: TypeProxy, Target: target})
+			if err != nil {
+				errs <- err
+				return
+			}
+			if !created {
+				errs <- fmt.Errorf("distinct service was unexpectedly updated")
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatalf("concurrent Add() error = %v", err)
+	}
+
+	assertExactConcurrentServices(t, path, "goroutine", additions, 3000)
+}
+
+func TestAddConcurrentProcessesPreservesExactRegistry(t *testing.T) {
+	const additions = 12
+	path := testRegistryPath(t)
+
+	type processResult struct {
+		index  int
+		output []byte
+		err    error
+	}
+	results := make(chan processResult, additions)
+	for i := 0; i < additions; i++ {
+		name := fmt.Sprintf("process-%02d", i)
+		target := fmt.Sprintf("http://127.0.0.1:%d", 4000+i)
+		cmd := exec.Command(os.Args[0])
+		cmd.Env = append(os.Environ(),
+			registryAddHelperEnv+"=1",
+			"TSLINK_REGISTRY_ADD_PATH="+path,
+			"TSLINK_REGISTRY_ADD_NAME="+name,
+			"TSLINK_REGISTRY_ADD_TARGET="+target,
+		)
+		go func(index int) {
+			output, err := cmd.CombinedOutput()
+			results <- processResult{index: index, output: output, err: err}
+		}(i)
+	}
+	for i := 0; i < additions; i++ {
+		result := <-results
+		if result.err != nil {
+			t.Fatalf("helper process %d failed: %v; output=%s", result.index, result.err, result.output)
+		}
+	}
+
+	assertExactConcurrentServices(t, path, "process", additions, 4000)
+}
+
+func assertExactConcurrentServices(t *testing.T, path, prefix string, count, firstPort int) {
+	t.Helper()
+	reg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load(final) error = %v", err)
+	}
+	if len(reg.Services) != count {
+		t.Fatalf("final service count = %d, want %d", len(reg.Services), count)
+	}
+
+	want := make(map[string]string, count)
+	for i := 0; i < count; i++ {
+		want[fmt.Sprintf("%s-%02d", prefix, i)] = fmt.Sprintf("http://127.0.0.1:%d", firstPort+i)
+	}
+	for _, svc := range reg.Services {
+		target, ok := want[svc.Name]
+		if !ok {
+			t.Fatalf("unexpected or duplicate service in final registry: %q", svc.Name)
+		}
+		if svc.Type != TypeProxy || svc.Target != target {
+			t.Fatalf("service %q has incorrect final contents", svc.Name)
+		}
+		delete(want, svc.Name)
+	}
+	if len(want) != 0 {
+		t.Fatalf("final registry is missing %d expected services", len(want))
 	}
 }
 

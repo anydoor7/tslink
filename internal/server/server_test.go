@@ -223,6 +223,7 @@ type fakeTSNetServer struct {
 	upErr             error
 	listenErr         error
 	listenTLSErr      error
+	localClient       *LocalClient
 	closed            bool
 	certDomains       []string
 	dnsName           string
@@ -264,6 +265,9 @@ func (s *fakeTSNetServer) ListenFunnel(network, addr string, opts ...tsnet.Funne
 
 func (s *fakeTSNetServer) LocalClient() (*LocalClient, error) {
 	s.localClientCalled++
+	if s.localClient != nil {
+		return s.localClient, nil
+	}
 	return nil, errors.New("local client unavailable")
 }
 

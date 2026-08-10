@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -9,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/monody0007/tslink/internal/config"
+	"github.com/monody0007/tslink/internal/registry"
 	"tailscale.com/client/tailscale/apitype"
 	"tailscale.com/tailcfg"
 )
@@ -170,6 +173,61 @@ func fakeWhoIsClient(t *testing.T, resp *apitype.WhoIsResponse, respErr error) *
 				Body:       io.NopCloser(strings.NewReader(string(body))),
 			}, nil
 		}),
+	}
+}
+
+func TestStartNodeLocked_AssemblesAllowedUsersACL(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+
+	who := &apitype.WhoIsResponse{
+		UserProfile: &tailcfg.UserProfile{LoginName: "unauthorized@example.com"},
+		Node:        &tailcfg.Node{},
+	}
+	fake := &fakeTSNetServer{localClient: fakeWhoIsClient(t, who, nil)}
+	oldNew := newTSNetServerFn
+	newTSNetServerFn = func(registry.Service, string, string, string) tsnetServer {
+		return fake
+	}
+	t.Cleanup(func() { newTSNetServerFn = oldNew })
+
+	s, err := New("synthetic-auth", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	if err := s.startNodeLocked(context.Background(), registry.Service{
+		Name:         "x",
+		Type:         registry.TypeFile,
+		Path:         t.TempDir(),
+		AllowedUsers: []string{"authorized@example.com"},
+	}); err != nil {
+		t.Fatalf("startNodeLocked() error = %v", err)
+	}
+	t.Cleanup(func() { s.stopNodeLocked("x", false) })
+
+	node, ok := s.nodes["x"]
+	if !ok || node.httpSrv == nil || node.httpSrv.Handler == nil {
+		t.Fatal("started node x did not retain its assembled HTTP handler")
+	}
+	handler := node.httpSrv.Handler
+
+	deniedReq := httptest.NewRequest(http.MethodGet, "/", nil)
+	deniedReq.RemoteAddr = "100.64.0.10:1234"
+	denied := httptest.NewRecorder()
+	handler.ServeHTTP(denied, deniedReq)
+	if denied.Code != http.StatusForbidden {
+		t.Fatalf("unauthorized status = %d, want %d", denied.Code, http.StatusForbidden)
+	}
+
+	who.UserProfile.LoginName = "authorized@example.com"
+	allowedReq := httptest.NewRequest(http.MethodGet, "/", nil)
+	allowedReq.RemoteAddr = "100.64.0.11:1234"
+	allowed := httptest.NewRecorder()
+	handler.ServeHTTP(allowed, allowedReq)
+	if allowed.Code != http.StatusOK {
+		t.Fatalf("authorized status = %d, want %d", allowed.Code, http.StatusOK)
 	}
 }
 

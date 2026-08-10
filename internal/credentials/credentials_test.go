@@ -22,6 +22,41 @@ func setup(t *testing.T) {
 	}
 }
 
+func stubKeyring(t *testing.T,
+	get func(string, string) (string, error),
+	set func(string, string, string) error,
+	delete func(string, string) error,
+) {
+	t.Helper()
+	oldGet, oldSet, oldDelete := keyringGetFunc, keyringSetFunc, keyringDeleteFunc
+	t.Cleanup(func() {
+		keyringGetFunc, keyringSetFunc, keyringDeleteFunc = oldGet, oldSet, oldDelete
+	})
+	if get != nil {
+		keyringGetFunc = get
+	}
+	if set != nil {
+		keyringSetFunc = set
+	}
+	if delete != nil {
+		keyringDeleteFunc = delete
+	}
+}
+
+func stubUnavailableKeyringWrites(t *testing.T) {
+	t.Helper()
+	stubKeyring(t, nil,
+		func(string, string, string) error { return errors.New("keyring write unavailable") },
+		func(string, string) error { return keyring.ErrNotFound },
+	)
+}
+
+func mockKeyringWithError(t *testing.T, err error) {
+	t.Helper()
+	keyring.MockInitWithError(err)
+	t.Cleanup(keyring.MockInit)
+}
+
 func apiKeyPath(t *testing.T) string {
 	t.Helper()
 	path, err := config.APIKeyPath()
@@ -48,8 +83,12 @@ func TestSetAPIKey_Keychain(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	if err := SetAPIKey("keychain-key"); err != nil {
-		t.Fatalf("SetAPIKey() error = %v", err)
+	backend, err := SetAPIKeyWithBackend("keychain-key")
+	if err != nil {
+		t.Fatalf("SetAPIKeyWithBackend() error = %v", err)
+	}
+	if backend != CredentialBackendKeyring {
+		t.Fatalf("backend = %q, want %q", backend, CredentialBackendKeyring)
 	}
 
 	got, err := GetAPIKey()
@@ -67,11 +106,15 @@ func TestSetAPIKey_Keychain(t *testing.T) {
 
 func TestSetAPIKey_FileFallback(t *testing.T) {
 	setup(t)
-	keyring.MockInitWithError(errors.New("no keychain"))
+	stubUnavailableKeyringWrites(t)
 
 	path := apiKeyPath(t)
-	if err := SetAPIKey("file-key"); err != nil {
-		t.Fatalf("SetAPIKey() error = %v", err)
+	backend, err := SetAPIKeyWithBackend("file-key")
+	if err != nil {
+		t.Fatalf("SetAPIKeyWithBackend() error = %v", err)
+	}
+	if backend != CredentialBackendFile {
+		t.Fatalf("backend = %q, want %q", backend, CredentialBackendFile)
 	}
 
 	data, err := os.ReadFile(path)
@@ -91,9 +134,288 @@ func TestSetAPIKey_FileFallback(t *testing.T) {
 	}
 }
 
+func TestSetAPIKey_FileFallbackDeletesStaleReadableKeyringValue(t *testing.T) {
+	setup(t)
+
+	deleted := false
+	stubKeyring(t,
+		func(string, string) (string, error) {
+			if deleted {
+				return "", keyring.ErrNotFound
+			}
+			return "tskey-api-stale-synthetic", nil
+		},
+		func(string, string, string) error { return errors.New("keyring write failed") },
+		func(string, string) error {
+			deleted = true
+			return nil
+		},
+	)
+
+	backend, err := SetAPIKeyWithBackend("tskey-api-replacement-synthetic")
+	if err != nil {
+		t.Fatalf("SetAPIKeyWithBackend() error = %v", err)
+	}
+	if backend != CredentialBackendFile {
+		t.Fatalf("backend = %q, want %q", backend, CredentialBackendFile)
+	}
+	if !deleted {
+		t.Fatal("stale keyring value was not deleted before file fallback")
+	}
+	got, err := GetAPIKey()
+	if err != nil {
+		t.Fatalf("GetAPIKey() error = %v", err)
+	}
+	if got != "tskey-api-replacement-synthetic" {
+		t.Fatal("GetAPIKey() returned stale keyring material after file fallback")
+	}
+}
+
+func TestSetAPIKey_FileFallbackRefusesWhenStaleKeyringDeleteFails(t *testing.T) {
+	setup(t)
+	stubKeyring(t,
+		func(string, string) (string, error) { return "tskey-api-stale-synthetic", nil },
+		func(string, string, string) error { return errors.New("keyring write failed") },
+		func(string, string) error { return errors.New("keyring delete failed") },
+	)
+
+	backend, err := SetAPIKeyWithBackend("tskey-api-replacement-synthetic")
+	if err == nil {
+		t.Fatal("SetAPIKeyWithBackend() error = nil, want fail-closed delete error")
+	}
+	if backend != "" {
+		t.Fatalf("backend = %q, want empty on failure", backend)
+	}
+	if !strings.Contains(err.Error(), "refusing file fallback") {
+		t.Fatalf("error = %v, want explicit fallback refusal", err)
+	}
+	if _, statErr := os.Stat(apiKeyPath(t)); !os.IsNotExist(statErr) {
+		t.Fatalf("file fallback exists despite stale keyring delete failure: %v", statErr)
+	}
+}
+
+func TestCredentialFallbackAvailabilityMatrix(t *testing.T) {
+	type credentialVariant struct {
+		name           string
+		keyringKey     string
+		oldValue       string
+		newValue       string
+		reportsBackend bool
+		set            func(string) (CredentialBackend, error)
+		get            func() (string, error)
+		path           func() (string, error)
+		stubPath       func(*testing.T, func() (string, error))
+	}
+
+	variants := []credentialVariant{
+		{
+			name:           "SetAPIKeyWithBackend",
+			keyringKey:     keychainAPIKey,
+			oldValue:       "tskey-api-matrix-old",
+			newValue:       "tskey-api-matrix-new",
+			reportsBackend: true,
+			set:            SetAPIKeyWithBackend,
+			get:            GetAPIKey,
+			path:           func() (string, error) { return apiKeyPathFunc() },
+			stubPath: func(t *testing.T, fn func() (string, error)) {
+				old := apiKeyPathFunc
+				apiKeyPathFunc = fn
+				t.Cleanup(func() { apiKeyPathFunc = old })
+			},
+		},
+		{
+			name:       "SetAPIKey",
+			keyringKey: keychainAPIKey,
+			oldValue:   "tskey-api-wrapper-matrix-old",
+			newValue:   "tskey-api-wrapper-matrix-new",
+			set: func(value string) (CredentialBackend, error) {
+				return "", SetAPIKey(value)
+			},
+			get:  GetAPIKey,
+			path: func() (string, error) { return apiKeyPathFunc() },
+			stubPath: func(t *testing.T, fn func() (string, error)) {
+				old := apiKeyPathFunc
+				apiKeyPathFunc = fn
+				t.Cleanup(func() { apiKeyPathFunc = old })
+			},
+		},
+		{
+			name:           "SaveClientSecretWithBackend",
+			keyringKey:     keychainClientSecret,
+			oldValue:       "tskey-client-matrix-old",
+			newValue:       "tskey-client-matrix-new",
+			reportsBackend: true,
+			set:            SaveClientSecretWithBackend,
+			get:            GetClientSecret,
+			path:           func() (string, error) { return clientSecretPathFunc() },
+			stubPath: func(t *testing.T, fn func() (string, error)) {
+				old := clientSecretPathFunc
+				clientSecretPathFunc = fn
+				t.Cleanup(func() { clientSecretPathFunc = old })
+			},
+		},
+		{
+			name:       "SaveClientSecret",
+			keyringKey: keychainClientSecret,
+			oldValue:   "tskey-client-wrapper-matrix-old",
+			newValue:   "tskey-client-wrapper-matrix-new",
+			set: func(value string) (CredentialBackend, error) {
+				return "", SaveClientSecret(value)
+			},
+			get:  GetClientSecret,
+			path: func() (string, error) { return clientSecretPathFunc() },
+			stubPath: func(t *testing.T, fn func() (string, error)) {
+				old := clientSecretPathFunc
+				clientSecretPathFunc = fn
+				t.Cleanup(func() { clientSecretPathFunc = old })
+			},
+		},
+	}
+
+	scenarios := []struct {
+		name         string
+		keyringWrite bool
+		configure    func(*testing.T, credentialVariant)
+		wantError    bool
+		wantValue    string
+		wantBackend  CredentialBackend
+		wantKeyring  bool
+		wantFile     bool
+	}{
+		{
+			name:        "keyring_write_fails_fallback_disabled",
+			wantError:   true,
+			wantValue:   "old",
+			wantKeyring: true,
+			configure: func(t *testing.T, _ credentialVariant) {
+				old := fileCredentialFallbackEnabledFunc
+				fileCredentialFallbackEnabledFunc = func() bool { return false }
+				t.Cleanup(func() { fileCredentialFallbackEnabledFunc = old })
+			},
+		},
+		{
+			name:        "keyring_write_fails_path_unresolvable",
+			wantError:   true,
+			wantValue:   "old",
+			wantKeyring: true,
+			configure: func(t *testing.T, variant credentialVariant) {
+				variant.stubPath(t, func() (string, error) {
+					return "", errors.New("synthetic credential path failure")
+				})
+			},
+		},
+		{
+			name:        "keyring_write_fails_file_write_fails",
+			wantError:   true,
+			wantValue:   "old",
+			wantKeyring: true,
+			configure: func(t *testing.T, _ credentialVariant) {
+				old := credentialFileWriteFunc
+				credentialFileWriteFunc = func(string, []byte) error {
+					return errors.New("synthetic credential file write failure")
+				}
+				t.Cleanup(func() { credentialFileWriteFunc = old })
+			},
+		},
+		{
+			name:        "keyring_write_fails_file_write_succeeds",
+			wantValue:   "new",
+			wantBackend: CredentialBackendFile,
+			wantFile:    true,
+		},
+		{
+			name:         "keyring_write_succeeds",
+			keyringWrite: true,
+			wantValue:    "new",
+			wantBackend:  CredentialBackendKeyring,
+			wantKeyring:  true,
+		},
+		{
+			name:        "keyring_delete_reports_success_but_readback_finds_old",
+			wantError:   true,
+			wantValue:   "old",
+			wantKeyring: true,
+			configure: func(t *testing.T, _ credentialVariant) {
+				old := keyringDeleteFunc
+				keyringDeleteFunc = func(string, string) error { return nil }
+				t.Cleanup(func() { keyringDeleteFunc = old })
+			},
+		},
+	}
+
+	for _, variant := range variants {
+		variant := variant
+		for _, scenario := range scenarios {
+			scenario := scenario
+			t.Run(variant.name+"/"+scenario.name, func(t *testing.T) {
+				setup(t)
+
+				path, err := variant.path()
+				if err != nil {
+					t.Fatalf("resolve fixture path: %v", err)
+				}
+				if err := keyring.Set(keychainService, variant.keyringKey, variant.oldValue); err != nil {
+					t.Fatalf("seed in-memory keyring: %v", err)
+				}
+				if scenario.keyringWrite {
+					if err := os.WriteFile(path, []byte("synthetic stale file copy"), 0o600); err != nil {
+						t.Fatalf("seed stale file copy: %v", err)
+					}
+				} else {
+					stubKeyring(t, nil,
+						func(string, string, string) error { return errors.New("synthetic keyring write failure") },
+						nil,
+					)
+				}
+				if scenario.configure != nil {
+					scenario.configure(t, variant)
+				}
+
+				backend, err := variant.set(variant.newValue)
+				if scenario.wantError && err == nil {
+					t.Fatal("credential write error = nil, want failure")
+				}
+				if !scenario.wantError && err != nil {
+					t.Fatalf("credential write failed: %v", err)
+				}
+				if variant.reportsBackend && backend != scenario.wantBackend {
+					t.Fatalf("backend = %q, want %q", backend, scenario.wantBackend)
+				}
+
+				got, readErr := variant.get()
+				if readErr != nil {
+					t.Fatalf("no credential remained readable: %v", readErr)
+				}
+				want := variant.oldValue
+				if scenario.wantValue == "new" {
+					want = variant.newValue
+				}
+				if got != want {
+					t.Fatal("readback did not preserve the expected old-or-new credential invariant")
+				}
+
+				_, keyringErr := keyring.Get(keychainService, variant.keyringKey)
+				if scenario.wantKeyring && keyringErr != nil {
+					t.Fatalf("expected in-memory keyring credential to remain readable: %v", keyringErr)
+				}
+				if !scenario.wantKeyring && !errors.Is(keyringErr, keyring.ErrNotFound) {
+					t.Fatalf("expected stale in-memory keyring credential to be absent, got: %v", keyringErr)
+				}
+				_, fileErr := os.Stat(path)
+				if scenario.wantFile && fileErr != nil {
+					t.Fatalf("expected credential file to remain readable: %v", fileErr)
+				}
+				if !scenario.wantFile && !os.IsNotExist(fileErr) {
+					t.Fatalf("expected credential file to be absent, stat error: %v", fileErr)
+				}
+			})
+		}
+	}
+}
+
 func TestFileCredentialFallbackDisabledFailsClosed(t *testing.T) {
 	setup(t)
-	keyring.MockInitWithError(errors.New("no keychain"))
+	stubUnavailableKeyringWrites(t)
 	oldFallback := fileCredentialFallbackEnabledFunc
 	fileCredentialFallbackEnabledFunc = func() bool { return false }
 	t.Cleanup(func() { fileCredentialFallbackEnabledFunc = oldFallback })
@@ -292,7 +614,7 @@ func TestInspectStoredCredentialsStrictNotFoundIsClean(t *testing.T) {
 
 func TestInspectStoredCredentialsStrictKeyringReadFailure(t *testing.T) {
 	setup(t)
-	keyring.MockInitWithError(errors.New("keyring locked"))
+	mockKeyringWithError(t, errors.New("keyring locked"))
 
 	status, err := InspectStoredCredentialsStrict()
 	if err == nil {
@@ -317,7 +639,7 @@ func TestDeleteStoredCredentialsStrictKeyringDeleteFailureStillRemovesFiles(t *t
 	if err := os.WriteFile(clientSecretPath(t), []byte("tskey-client-file\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile(client secret) error = %v", err)
 	}
-	keyring.MockInitWithError(errors.New("keyring locked"))
+	mockKeyringWithError(t, errors.New("keyring locked"))
 
 	err := DeleteStoredCredentialsStrict()
 	if err == nil {
@@ -416,7 +738,7 @@ func TestMigrateFromLegacy_KeychainFail(t *testing.T) {
 	if err := os.WriteFile(path, []byte("legacy-key\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
-	keyring.MockInitWithError(errors.New("no keychain"))
+	mockKeyringWithError(t, errors.New("no keychain"))
 
 	if migrated := MigrateFromLegacy(); migrated {
 		t.Fatal("MigrateFromLegacy() = true, want false")
@@ -595,7 +917,8 @@ func TestGetAuthKey_WithAPIKey_DeriveError(t *testing.T) {
 
 func TestSetAPIKey_FileFallback_PathError(t *testing.T) {
 	// When keychain fails AND config.APIKeyPath() fails, SetAPIKey returns error
-	keyring.MockInitWithError(errors.New("no keychain"))
+	keyring.MockInit()
+	stubUnavailableKeyringWrites(t)
 	t.Setenv("HOME", "")
 
 	err := SetAPIKey("some-key")
@@ -815,8 +1138,12 @@ func TestSaveClientSecret_Keychain(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	if err := SaveClientSecret("tskey-client-my-secret"); err != nil {
-		t.Fatalf("SaveClientSecret() error = %v", err)
+	backend, err := SaveClientSecretWithBackend("tskey-client-my-secret")
+	if err != nil {
+		t.Fatalf("SaveClientSecretWithBackend() error = %v", err)
+	}
+	if backend != CredentialBackendKeyring {
+		t.Fatalf("backend = %q, want %q", backend, CredentialBackendKeyring)
 	}
 
 	got, err := GetClientSecret()
@@ -847,11 +1174,15 @@ func TestSaveClientSecret_InvalidPrefix(t *testing.T) {
 
 func TestSaveClientSecret_FileFallback(t *testing.T) {
 	setup(t)
-	keyring.MockInitWithError(errors.New("no keychain"))
+	stubUnavailableKeyringWrites(t)
 
 	path := clientSecretPath(t)
-	if err := SaveClientSecret("tskey-client-file-secret"); err != nil {
-		t.Fatalf("SaveClientSecret() error = %v", err)
+	backend, err := SaveClientSecretWithBackend("tskey-client-file-secret")
+	if err != nil {
+		t.Fatalf("SaveClientSecretWithBackend() error = %v", err)
+	}
+	if backend != CredentialBackendFile {
+		t.Fatalf("backend = %q, want %q", backend, CredentialBackendFile)
 	}
 
 	data, err := os.ReadFile(path)
@@ -871,8 +1202,69 @@ func TestSaveClientSecret_FileFallback(t *testing.T) {
 	}
 }
 
+func TestSaveClientSecret_FileFallbackDeletesStaleReadableKeyringValue(t *testing.T) {
+	setup(t)
+
+	deleted := false
+	stubKeyring(t,
+		func(string, string) (string, error) {
+			if deleted {
+				return "", keyring.ErrNotFound
+			}
+			return "tskey-client-stale-synthetic", nil
+		},
+		func(string, string, string) error { return errors.New("keyring write failed") },
+		func(string, string) error {
+			deleted = true
+			return nil
+		},
+	)
+
+	backend, err := SaveClientSecretWithBackend("tskey-client-replacement-synthetic")
+	if err != nil {
+		t.Fatalf("SaveClientSecretWithBackend() error = %v", err)
+	}
+	if backend != CredentialBackendFile {
+		t.Fatalf("backend = %q, want %q", backend, CredentialBackendFile)
+	}
+	if !deleted {
+		t.Fatal("stale keyring value was not deleted before file fallback")
+	}
+	got, err := GetClientSecret()
+	if err != nil {
+		t.Fatalf("GetClientSecret() error = %v", err)
+	}
+	if got != "tskey-client-replacement-synthetic" {
+		t.Fatal("GetClientSecret() returned stale keyring material after file fallback")
+	}
+}
+
+func TestSaveClientSecret_FileFallbackRefusesWhenStaleKeyringDeleteFails(t *testing.T) {
+	setup(t)
+	stubKeyring(t,
+		func(string, string) (string, error) { return "tskey-client-stale-synthetic", nil },
+		func(string, string, string) error { return errors.New("keyring write failed") },
+		func(string, string) error { return errors.New("keyring delete failed") },
+	)
+
+	backend, err := SaveClientSecretWithBackend("tskey-client-replacement-synthetic")
+	if err == nil {
+		t.Fatal("SaveClientSecretWithBackend() error = nil, want fail-closed delete error")
+	}
+	if backend != "" {
+		t.Fatalf("backend = %q, want empty on failure", backend)
+	}
+	if !strings.Contains(err.Error(), "refusing file fallback") {
+		t.Fatalf("error = %v, want explicit fallback refusal", err)
+	}
+	if _, statErr := os.Stat(clientSecretPath(t)); !os.IsNotExist(statErr) {
+		t.Fatalf("file fallback exists despite stale keyring delete failure: %v", statErr)
+	}
+}
+
 func TestSaveClientSecret_FileFallback_PathError(t *testing.T) {
-	keyring.MockInitWithError(errors.New("no keychain"))
+	keyring.MockInit()
+	stubUnavailableKeyringWrites(t)
 	t.Setenv("HOME", "")
 
 	err := SaveClientSecret("tskey-client-some-key")
