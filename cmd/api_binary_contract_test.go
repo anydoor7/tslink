@@ -1,18 +1,19 @@
 package cmd
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/monody0007/tslink/internal/daemon"
 	"github.com/monody0007/tslink/internal/output"
 	"github.com/monody0007/tslink/internal/registry"
 	tsruntime "github.com/monody0007/tslink/internal/runtime"
@@ -57,6 +58,70 @@ func compiledTSLinkBinary(t *testing.T) string {
 		t.Fatalf("build compiled tslink binary: %v", tslinkBinaryErr)
 	}
 	return tslinkBinaryPath
+}
+
+func compiledDaemonIdentityFixture(t *testing.T) string {
+	t.Helper()
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate repository root for daemon identity fixture")
+	}
+	repoRoot := filepath.Dir(filepath.Dir(file))
+	fixtureDir := t.TempDir()
+	fixtureSourcePath := filepath.Join(fixtureDir, "main.go")
+	fixtureSource := `package main
+
+import (
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+
+	"github.com/monody0007/tslink/internal/daemon"
+)
+
+func main() {
+	configDir := os.Getenv("TSLINK_CONFIG_DIR")
+	if configDir == "" {
+		fmt.Fprintln(os.Stderr, "TSLINK_CONFIG_DIR is required")
+		os.Exit(1)
+	}
+	if err := daemon.WritePID(filepath.Join(configDir, "tslink.pid")); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	if _, err := fmt.Fprintln(os.Stdout, "ready"); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	_, _ = io.Copy(io.Discard, os.Stdin)
+}
+`
+	if err := os.WriteFile(fixtureSourcePath, []byte(fixtureSource), 0o600); err != nil {
+		t.Fatalf("write daemon identity fixture source: %v", err)
+	}
+	overlayPath := filepath.Join(fixtureDir, "overlay.json")
+	overlay, err := json.Marshal(struct {
+		Replace map[string]string `json:"Replace"`
+	}{Replace: map[string]string{
+		filepath.ToSlash(filepath.Join(repoRoot, "main.go")): filepath.ToSlash(fixtureSourcePath),
+	}})
+	if err != nil {
+		t.Fatalf("encode daemon identity fixture overlay: %v", err)
+	}
+	if err := os.WriteFile(overlayPath, overlay, 0o600); err != nil {
+		t.Fatalf("write daemon identity fixture overlay: %v", err)
+	}
+	fixtureBinary := filepath.Join(fixtureDir, "tslink-daemon-fixture")
+	if runtime.GOOS == "windows" {
+		fixtureBinary += ".exe"
+	}
+	build := exec.Command("go", "build", "-overlay", overlayPath, "-o", fixtureBinary, ".")
+	build.Dir = repoRoot
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build daemon identity fixture: %v\n%s", err, output)
+	}
+	return fixtureBinary
 }
 
 func runCompiledTSLink(t *testing.T, home, stdin string, args ...string) (stdout, stderr string, exitCode int) {
@@ -377,23 +442,50 @@ func TestCompiledAgentE2EAddURLListRemove(t *testing.T) {
 	if len(reg.Services) != 1 {
 		t.Fatalf("load registry: services=%d, want 1", len(reg.Services))
 	}
-	daemonFixture := exec.Command(binary, "api")
+	// Build the fixture as the real module main package so E's product check sees
+	// the same Go module identity as a released tslink executable. The overlay
+	// replaces only main() with a test process that writes its own PID identity
+	// sidecar and blocks; argv still identifies the process as a serve daemon.
+	daemonFixture := exec.Command(compiledDaemonIdentityFixture(t), "serve")
 	daemonFixture.Env = append(os.Environ(), "TSLINK_CONFIG_DIR="+configDir, "TSLINK_DISABLE_KEYRING=1")
 	daemonInput, err := daemonFixture.StdinPipe()
 	if err != nil {
 		t.Fatalf("create daemon fixture input: %v", err)
 	}
+	daemonOutput, err := daemonFixture.StdoutPipe()
+	if err != nil {
+		t.Fatalf("create daemon fixture output: %v", err)
+	}
+	var daemonStderr bytes.Buffer
+	daemonFixture.Stderr = &daemonStderr
 	if err := daemonFixture.Start(); err != nil {
 		t.Fatalf("start daemon identity fixture: %v", err)
 	}
+	daemonWaited := false
 	t.Cleanup(func() {
 		_ = daemonInput.Close()
-		_ = daemonFixture.Wait()
+		if !daemonWaited {
+			_ = daemonFixture.Wait()
+		}
 	})
 
 	pidPath := filepath.Join(configDir, "tslink.pid")
-	if err := os.WriteFile(pidPath, []byte(strconv.Itoa(daemonFixture.Process.Pid)), 0o600); err != nil {
-		t.Fatalf("write pid fixture: %v", err)
+	ready, readyErr := bufio.NewReader(daemonOutput).ReadString('\n')
+	if readyErr != nil || ready != "ready\n" {
+		_ = daemonInput.Close()
+		waitErr := daemonFixture.Wait()
+		daemonWaited = true
+		t.Fatalf("daemon identity fixture ready=%q read_error=%v wait_error=%v stderr=%q", ready, readyErr, waitErr, daemonStderr.String())
+	}
+	fixturePID, err := daemon.ReadPID(pidPath)
+	if err != nil {
+		t.Fatalf("read daemon identity fixture PID: %v", err)
+	}
+	if fixturePID != daemonFixture.Process.Pid {
+		t.Fatalf("daemon identity fixture PID = %d, want %d", fixturePID, daemonFixture.Process.Pid)
+	}
+	if !daemon.IsRunning(pidPath) {
+		t.Fatal("daemon identity fixture was not accepted as a running TSLink serve daemon")
 	}
 	pidInfo, err := os.Stat(pidPath)
 	if err != nil {

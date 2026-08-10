@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -119,6 +121,69 @@ func TestClassifyLicenseFailsClosed(t *testing.T) {
 	if got, err := classifyLicense([]noticeFile{{name: "LICENSE", text: "custom terms"}}); err == nil {
 		t.Fatalf("classifyLicense() = %q, want unknown-license error", got)
 	}
+}
+
+func TestNoticeFilesCollectsPayloadsDeterministically(t *testing.T) {
+	dir := t.TempDir()
+	for name, body := range map[string]string{
+		"LICENSE":         "license body\n\n",
+		"NOTICE.txt":      "notice body\n",
+		"LICENSE_test.go": "ignored test source\n",
+		"README.md":       "ignored documentation\n",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
+			t.Fatalf("WriteFile(%s) error = %v", name, err)
+		}
+	}
+	if err := os.Mkdir(filepath.Join(dir, "COPYING"), 0o700); err != nil {
+		t.Fatalf("Mkdir(COPYING) error = %v", err)
+	}
+
+	got, err := noticeFiles(dir)
+	if err != nil {
+		t.Fatalf("noticeFiles() error = %v", err)
+	}
+	want := []noticeFile{
+		{name: "LICENSE", text: "license body"},
+		{name: "NOTICE.txt", text: "notice body"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("noticeFiles() = %+v, want %+v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("noticeFiles()[%d] = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+}
+
+func TestNoticeFilesFailsClosed(t *testing.T) {
+	t.Run("missing module directory", func(t *testing.T) {
+		_, err := noticeFiles(filepath.Join(t.TempDir(), "missing"))
+		if err == nil || !strings.Contains(err.Error(), "read module dir") {
+			t.Fatalf("noticeFiles(missing) error = %v, want read-module-dir error", err)
+		}
+	})
+	t.Run("no notice payload", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("docs\n"), 0o600); err != nil {
+			t.Fatalf("WriteFile(README.md) error = %v", err)
+		}
+		_, err := noticeFiles(dir)
+		if err == nil || !strings.Contains(err.Error(), "no LICENSE/COPYING/NOTICE file found") {
+			t.Fatalf("noticeFiles(no notice) error = %v, want no-notice error", err)
+		}
+	})
+	t.Run("empty notice payload", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "LICENSE"), []byte(" \n\t\n"), 0o600); err != nil {
+			t.Fatalf("WriteFile(LICENSE) error = %v", err)
+		}
+		_, err := noticeFiles(dir)
+		if err == nil || !strings.Contains(err.Error(), "LICENSE is empty") {
+			t.Fatalf("noticeFiles(empty) error = %v, want empty-payload error", err)
+		}
+	})
 }
 
 func TestRenderContainsNoticePayloadAndNoPendingMarker(t *testing.T) {

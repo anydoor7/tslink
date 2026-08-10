@@ -60,10 +60,10 @@ Linked third-party modules: 59
 | `golang.org/x/exp` | v0.0.0-20250620022241-b7579e27df2b | BSD-3-Clause | `LICENSE` |
 | `golang.org/x/net` | v0.55.0 | BSD-3-Clause | `LICENSE` |
 | `golang.org/x/oauth2` | v0.36.0 | BSD-3-Clause | `LICENSE` |
-| `golang.org/x/sync` | v0.20.0 | BSD-3-Clause | `LICENSE` |
+| `golang.org/x/sync` | v0.21.0 | BSD-3-Clause | `LICENSE` |
 | `golang.org/x/sys` | v0.45.0 | BSD-3-Clause | `LICENSE` |
 | `golang.org/x/term` | v0.43.0 | BSD-3-Clause | `LICENSE` |
-| `golang.org/x/text` | v0.37.0 | BSD-3-Clause | `LICENSE` |
+| `golang.org/x/text` | v0.39.0 | BSD-3-Clause | `LICENSE` |
 | `golang.org/x/time` | v0.12.0 | BSD-3-Clause | `LICENSE` |
 | `golang.zx2c4.com/wintun` | v0.0.0-20230126152724-0fa3db229ce2 | MIT | `LICENSE` |
 | `golang.zx2c4.com/wireguard/windows` | v0.5.3 | MIT | `COPYING` |
@@ -4195,10 +4195,10 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ~~~~
 
-### `golang.org/x/sync` v0.20.0
+### `golang.org/x/sync` v0.21.0
 
 - License: BSD-3-Clause
-- Evidence source: `golang.org/x/sync@v0.20.0` from the resolved Go module graph
+- Evidence source: `golang.org/x/sync@v0.21.0` from the resolved Go module graph
 - Included files: `LICENSE`
 
 #### LICENSE
@@ -4309,10 +4309,10 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ~~~~
 
-### `golang.org/x/text` v0.37.0
+### `golang.org/x/text` v0.39.0
 
 - License: BSD-3-Clause
-- Evidence source: `golang.org/x/text@v0.37.0` from the resolved Go module graph
+- Evidence source: `golang.org/x/text@v0.39.0` from the resolved Go module graph
 - Included files: `LICENSE`
 
 #### LICENSE

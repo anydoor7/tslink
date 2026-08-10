@@ -195,6 +195,98 @@ func TestWriteFileDoesNotUsePredictableFixedTempSymlink(t *testing.T) {
 	assertNoOwnedTemps(t, dir, filepath.Base(target))
 }
 
+func TestConvergePrivateFileMissingIsNoOp(t *testing.T) {
+	restoreAtomicFileHooks(t)
+	target := filepath.Join(t.TempDir(), "missing.json")
+
+	if err := ConvergePrivateFile(target); err != nil {
+		t.Fatalf("ConvergePrivateFile(missing) error = %v", err)
+	}
+	if _, err := os.Lstat(target); !os.IsNotExist(err) {
+		t.Fatalf("Lstat(missing) error = %v, want not-exist", err)
+	}
+}
+
+func TestConvergePrivateFileConvergesModeWithoutChangingContents(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX mode convergence is not a Windows DACL proof")
+	}
+	restoreAtomicFileHooks(t)
+	target := filepath.Join(t.TempDir(), "state.json")
+	want := []byte(`{"version":"preserved"}` + "\n")
+	if err := os.WriteFile(target, want, 0o644); err != nil {
+		t.Fatalf("WriteFile(target) error = %v", err)
+	}
+
+	if err := ConvergePrivateFile(target); err != nil {
+		t.Fatalf("ConvergePrivateFile() error = %v", err)
+	}
+	assertMode(t, target, PrivateFileMode)
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("ReadFile(target) error = %v", err)
+	}
+	if string(got) != string(want) {
+		t.Fatalf("ConvergePrivateFile() content = %q, want unchanged %q", got, want)
+	}
+}
+
+func TestConvergePrivateFileRejectsUnsafeTypes(t *testing.T) {
+	restoreAtomicFileHooks(t)
+	dir := t.TempDir()
+	t.Run("directory", func(t *testing.T) {
+		err := ConvergePrivateFile(dir)
+		if err == nil || !strings.Contains(err.Error(), "not a regular file") {
+			t.Fatalf("ConvergePrivateFile(directory) error = %v, want not-regular rejection", err)
+		}
+	})
+	t.Run("symlink", func(t *testing.T) {
+		referent := filepath.Join(dir, "referent.json")
+		want := []byte(`{"version":"preserved"}` + "\n")
+		if err := os.WriteFile(referent, want, 0o600); err != nil {
+			t.Fatalf("WriteFile(referent) error = %v", err)
+		}
+		target := filepath.Join(dir, "state.json")
+		if err := os.Symlink(referent, target); err != nil {
+			if runtime.GOOS == "windows" {
+				t.Skipf("symlink unavailable on this Windows runner: %v", err)
+			}
+			t.Fatalf("Symlink() error = %v", err)
+		}
+
+		err := ConvergePrivateFile(target)
+		if err == nil || !strings.Contains(err.Error(), "symlink") {
+			t.Fatalf("ConvergePrivateFile(symlink) error = %v, want symlink rejection", err)
+		}
+		got, err := os.ReadFile(referent)
+		if err != nil {
+			t.Fatalf("ReadFile(referent) error = %v", err)
+		}
+		if string(got) != string(want) {
+			t.Fatalf("referent content = %q, want unchanged %q", got, want)
+		}
+	})
+}
+
+func TestConvergePrivateFileReportsChmodFailure(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX mode convergence is not a Windows DACL proof")
+	}
+	restoreAtomicFileHooks(t)
+	target := filepath.Join(t.TempDir(), "state.json")
+	if err := os.WriteFile(target, []byte("private\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(target) error = %v", err)
+	}
+	wantErr := errors.New("injected chmod failure")
+	chmodFn = func(string, os.FileMode) error { return wantErr }
+
+	err := ConvergePrivateFile(target)
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("ConvergePrivateFile() error = %v, want %v", err, wantErr)
+	}
+	assertMode(t, target, 0o644)
+}
+
 func assertJSONVersion(t *testing.T, path, want string) {
 	t.Helper()
 	data, err := os.ReadFile(path)

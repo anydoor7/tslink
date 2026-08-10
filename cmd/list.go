@@ -158,18 +158,6 @@ func loadListResultForPaths(regPath, pidPath, snapshotPath string, opts listOpti
 	return result, nil
 }
 
-func loadListResult(regPath string) (ListResult, error) {
-	pidPath, err := listPIDPathFn()
-	if err != nil {
-		return ListResult{}, err
-	}
-	snapshotPath, err := listRuntimeSnapshotPathFn()
-	if err != nil {
-		return ListResult{}, err
-	}
-	return loadListResultForPaths(regPath, pidPath, snapshotPath, listOptions{})
-}
-
 func listServicesWithOptions(regPath string, out io.Writer, opts listOptions) error {
 	pidPath, err := listPIDPathFn()
 	if err != nil {
