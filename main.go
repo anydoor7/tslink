@@ -2,21 +2,32 @@ package main
 
 import (
 	"os"
+	"runtime/debug"
+	"strings"
 
 	"github.com/monody0007/tslink/cmd"
 	"github.com/monody0007/tslink/internal/logging"
 	"github.com/monody0007/tslink/internal/output"
 )
 
+const (
+	developmentVersion = "dev"
+	developmentSemver  = "0.0.0-dev"
+	shortCommitLength  = 12
+)
+
 // version and commit are set via ldflags at build time
 // (e.g., -X main.version=v1.2.3 -X main.commit=<sha>). commit is empty for
-// plain `go build`; release builds embed the exact VCS SHA.
+// source builds; release builds embed the exact VCS SHA.
 var (
-	version = "dev"
+	version = developmentVersion
 	commit  = ""
 )
 
 func main() {
+	buildInfo, ok := debug.ReadBuildInfo()
+	version, commit = resolveBuildVersion(version, commit, buildInfo, ok)
+
 	logging.Init(false)
 	cmd.Version = version
 	cmd.Commit = commit
@@ -39,4 +50,62 @@ func main() {
 	}
 
 	os.Exit(code)
+}
+
+// resolveBuildVersion preserves linker-injected release metadata, then falls
+// back to the VCS metadata embedded by the Go toolchain. Build-info metadata is
+// folded into the version string so cmd's existing release rendering remains
+// unchanged and source builds still produce one self-contained line.
+func resolveBuildVersion(linkedVersion, linkedCommit string, info *debug.BuildInfo, ok bool) (string, string) {
+	if linkedVersion != developmentVersion || linkedCommit != "" {
+		return linkedVersion, linkedCommit
+	}
+	if !ok || info == nil {
+		return developmentVersion, ""
+	}
+
+	resolvedVersion := info.Main.Version
+	if resolvedVersion == "" || resolvedVersion == "(devel)" {
+		resolvedVersion = developmentVersion
+	}
+
+	var revision, buildTime string
+	modified := false
+	for _, setting := range info.Settings {
+		switch setting.Key {
+		case "vcs.revision":
+			revision = shortCommit(setting.Value)
+		case "vcs.time":
+			buildTime = setting.Value
+		case "vcs.modified":
+			modified = setting.Value == "true"
+		}
+	}
+
+	details := make([]string, 0, 3)
+	if revision != "" {
+		if resolvedVersion == developmentVersion {
+			resolvedVersion = developmentSemver + "+" + revision
+		} else if !strings.Contains(resolvedVersion, revision) {
+			details = append(details, revision)
+		}
+	}
+	if buildTime != "" {
+		details = append(details, buildTime)
+	}
+	if modified && !strings.HasSuffix(resolvedVersion, "+dirty") {
+		details = append(details, "dirty")
+	}
+	if len(details) > 0 {
+		resolvedVersion += " (" + strings.Join(details, ", ") + ")"
+	}
+
+	return resolvedVersion, ""
+}
+
+func shortCommit(revision string) string {
+	if len(revision) <= shortCommitLength {
+		return revision
+	}
+	return revision[:shortCommitLength]
 }

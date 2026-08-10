@@ -84,6 +84,15 @@ func TestCompiledMachineContractRootAndCommandFailures(t *testing.T) {
 }
 
 func TestCompiledMachineContractVersionJSON(t *testing.T) {
+	humanStdout, humanStderr, humanCode := runCompiledTSLink(t, t.TempDir(), "", "--version")
+	if humanCode != output.ExitSuccess || humanStderr != "" {
+		t.Fatalf("human version exit=%d stderr=%q stdout=%s", humanCode, humanStderr, humanStdout)
+	}
+	wantVersion, ok := strings.CutPrefix(strings.TrimSpace(humanStdout), "tslink version ")
+	if !ok || wantVersion == "" {
+		t.Fatalf("human version output = %q, want tslink version <non-empty>", humanStdout)
+	}
+
 	for _, args := range [][]string{
 		{"--version", "--json"},
 		{"--json", "--version"},
@@ -101,8 +110,9 @@ func TestCompiledMachineContractVersionJSON(t *testing.T) {
 				t.Fatalf("version result = %+v", results)
 			}
 			data := resultDataAsMap(t, results[0])
-			if data["version"] != "dev" {
-				t.Fatalf("version data = %+v, want dev", data)
+			version, ok := data["version"].(string)
+			if !ok || version != wantVersion {
+				t.Fatalf("version data = %+v, want human version %q", data, wantVersion)
 			}
 		})
 	}
