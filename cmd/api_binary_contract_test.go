@@ -13,10 +13,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/daemon"
 	"github.com/monody0007/tslink/internal/output"
 	"github.com/monody0007/tslink/internal/registry"
 	tsruntime "github.com/monody0007/tslink/internal/runtime"
+	"github.com/monody0007/tslink/internal/testenv"
 )
 
 var (
@@ -126,8 +128,9 @@ func main() {
 
 func runCompiledTSLink(t *testing.T, home, stdin string, args ...string) (stdout, stderr string, exitCode int) {
 	t.Helper()
+	configDir := testenv.ConfigDir(home)
 	cmd := exec.Command(compiledTSLinkBinary(t), args...)
-	cmd.Env = append(os.Environ(), "HOME="+home, "TSLINK_CONFIG_DIR=", "TSLINK_DISABLE_KEYRING=1")
+	cmd.Env = append(os.Environ(), "HOME="+home, config.ConfigDirEnv+"="+configDir, "TSLINK_DISABLE_KEYRING=1")
 	cmd.Stdin = strings.NewReader(stdin)
 	var outBuf, errBuf bytes.Buffer
 	cmd.Stdout = &outBuf
@@ -193,7 +196,7 @@ func parseCompiledJSONLines(t *testing.T, stdout string) []output.Result {
 
 func registryServiceCount(t *testing.T, home string) int {
 	t.Helper()
-	regPath := filepath.Join(home, ".config", "tslink", "registry.json")
+	regPath := filepath.Join(testenv.ConfigDir(home), "registry.json")
 	reg, err := registry.Load(regPath)
 	if err != nil {
 		t.Fatalf("load registry: %v", err)

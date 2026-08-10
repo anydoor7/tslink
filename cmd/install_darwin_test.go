@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/monody0007/tslink/internal/output"
+	"github.com/monody0007/tslink/internal/testenv"
 )
 
 func stubDarwinInstallDaemonStopped(t *testing.T) {
@@ -43,7 +44,7 @@ func runDarwinInstallGuardTruthCase(t *testing.T, plistPresent, daemonRunning bo
 	t.Helper()
 	resetRootJSONFlag(t)
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	testenv.SetHome(t, home)
 
 	oldHome := userHomeDirFn
 	oldExe := executablePathFn
@@ -307,7 +308,7 @@ func TestInstallCommandBootoutThenBootstrapsLaunchAgentOnSuccess(t *testing.T) {
 	t.Cleanup(func() { installCmd.SetOut(nil) })
 
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	testenv.SetHome(t, home)
 
 	oldHome := userHomeDirFn
 	oldExe := executablePathFn
@@ -364,7 +365,7 @@ func TestInstallCommandBootstrapsLaunchAgentAndSurfacesOutput(t *testing.T) {
 	t.Cleanup(func() { installCmd.SetOut(nil) })
 
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	testenv.SetHome(t, home)
 
 	oldHome := userHomeDirFn
 	oldExe := executablePathFn
@@ -430,7 +431,7 @@ func TestInstallCommandFallsBackToUserDomainWhenGUIDomainMissing(t *testing.T) {
 	t.Cleanup(func() { installCmd.SetOut(nil) })
 
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	testenv.SetHome(t, home)
 
 	oldHome := userHomeDirFn
 	oldExe := executablePathFn
@@ -527,7 +528,7 @@ func TestInstallCommandDoesNotClaimLoadedWhenLaunchAgentIsWaiting(t *testing.T) 
 	resetRootJSONFlag(t)
 	t.Cleanup(func() { installCmd.SetOut(nil) })
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	testenv.SetHome(t, home)
 
 	oldHome := userHomeDirFn
 	oldExe := executablePathFn
@@ -697,7 +698,7 @@ func TestRestorePreviousLaunchAgentDoesNotClaimReloadedWhenBootstrapFails(t *tes
 func TestInstallCommandAtomicWriteRejectsExistingPlistSymlink(t *testing.T) {
 	resetRootJSONFlag(t)
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	testenv.SetHome(t, home)
 	oldHome := userHomeDirFn
 	oldArtifactConflict := installDaemonArtifactConflictFn
 	oldLaunchctl := launchctlCombinedOutput
@@ -773,7 +774,7 @@ func TestInstallCommandRemovesNewPlistWhenLaunchAgentVerificationFails(t *testin
 	stubDarwinLaunchAgentVerificationNoWait(t)
 	resetRootJSONFlag(t)
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	testenv.SetHome(t, home)
 
 	oldHome := userHomeDirFn
 	oldExe := executablePathFn
@@ -814,7 +815,7 @@ func TestInstallCommandKeepsNewPlistWhenRollbackBootoutFails(t *testing.T) {
 	stubDarwinLaunchAgentVerificationNoWait(t)
 	resetRootJSONFlag(t)
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	testenv.SetHome(t, home)
 
 	oldHome := userHomeDirFn
 	oldExe := executablePathFn

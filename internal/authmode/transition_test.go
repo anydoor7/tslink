@@ -2,6 +2,7 @@ package authmode
 
 import (
 	"os"
+	"runtime"
 	"testing"
 
 	"github.com/monody0007/tslink/internal/atomicfile"
@@ -38,8 +39,12 @@ func TestCredentialUpgradeMarkerRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Stat(marker) error = %v", err)
 	}
-	if got := info.Mode().Perm(); got != atomicfile.PrivateFileMode {
-		t.Fatalf("marker mode = %o, want %o", got, atomicfile.PrivateFileMode)
+	if runtime.GOOS != "windows" {
+		if got := info.Mode().Perm(); got != atomicfile.PrivateFileMode {
+			t.Fatalf("marker mode = %o, want %o", got, atomicfile.PrivateFileMode)
+		}
+	} else if !info.Mode().IsRegular() {
+		t.Fatalf("marker mode = %v, want regular file on Windows", info.Mode())
 	}
 
 	if err := ClearCredentialUpgradePending(); err != nil {

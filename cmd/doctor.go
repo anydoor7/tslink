@@ -50,6 +50,12 @@ const (
 
 	doctorRedactedEvidenceValue = "[redacted]"
 	doctorRedactedURL           = "[redacted-url]"
+
+	// Go's syscall.ECONN* values are synthetic on Windows and do not equal the
+	// Winsock errors returned by net.Dial. Keep the native codes explicit so the
+	// same classifier handles real Windows refused and reset connections.
+	windowsWSAECONNRESET   syscall.Errno = 10054
+	windowsWSAECONNREFUSED syscall.Errno = 10061
 )
 
 var (
@@ -606,7 +612,8 @@ func classifyProbeError(err error) string {
 	if errors.As(err, &netErr) && netErr.Timeout() {
 		return inspect.WarningCodeTargetProbeTimeout
 	}
-	if errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ECONNRESET) {
+	if errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ECONNRESET) ||
+		errors.Is(err, windowsWSAECONNREFUSED) || errors.Is(err, windowsWSAECONNRESET) {
 		return inspect.WarningCodeTargetProbeRefused
 	}
 	return inspect.WarningCodeTargetProbeFailed

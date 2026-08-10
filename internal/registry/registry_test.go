@@ -796,7 +796,7 @@ func TestAddMultipleServices(t *testing.T) {
 	services := []Service{
 		{Name: "alpha", Type: TypeProxy, Target: "http://localhost:1000"},
 		{Name: "beta", Type: TypeProxy, Target: "http://localhost:2000"},
-		{Name: "gamma", Type: TypeFile, Path: "/tmp"},
+		{Name: "gamma", Type: TypeFile, Path: t.TempDir()},
 	}
 
 	for _, svc := range services {
@@ -949,7 +949,7 @@ func TestAddPreservesOtherServices(t *testing.T) {
 	if _, err := Add(path, Service{Name: "first", Type: TypeProxy, Target: "http://localhost:1000"}); err != nil {
 		t.Fatalf("Add(first) error = %v", err)
 	}
-	if _, err := Add(path, Service{Name: "second", Type: TypeFile, Path: "/tmp"}); err != nil {
+	if _, err := Add(path, Service{Name: "second", Type: TypeFile, Path: t.TempDir()}); err != nil {
 		t.Fatalf("Add(second) error = %v", err)
 	}
 

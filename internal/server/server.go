@@ -80,6 +80,8 @@ var (
 )
 
 var (
+	configDirFn             = config.Dir
+	registryPathFn          = config.RegistryPath
 	runtimeSnapshotPathFn   = config.RuntimeSnapshotPath
 	runtimeSaveSnapshotFn   = runtimesnapshot.Save
 	runtimeRemoveSnapshotFn = runtimesnapshot.Remove
@@ -258,7 +260,7 @@ type Server struct {
 
 // New creates a new multi-node server.
 func New(authKey, controlURL string) (*Server, error) {
-	cfgDir, err := config.Dir()
+	cfgDir, err := configDirFn()
 	if err != nil {
 		return nil, err
 	}
@@ -399,7 +401,7 @@ func (s *Server) syncNodesWithOutcome(ctx context.Context) (syncOutcome, error) 
 		return outcome, err
 	}
 
-	regPath, err := config.RegistryPath()
+	regPath, err := registryPathFn()
 	if err != nil {
 		return outcome, err
 	}
@@ -1085,7 +1087,7 @@ func (s *Server) watchRegistry(ctx context.Context) {
 }
 
 func (s *Server) startRegistryWatcher(ctx context.Context) (<-chan struct{}, error) {
-	regPath, err := config.RegistryPath()
+	regPath, err := registryPathFn()
 	if err != nil {
 		return nil, err
 	}

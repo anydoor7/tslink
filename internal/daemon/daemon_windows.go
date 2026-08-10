@@ -27,6 +27,10 @@ var (
 	processArguments  = defaultProcessArguments
 )
 
+const windowsStopTimeout = 5 * time.Second
+
+var errProcessWaitTimeout = errors.New("process wait timed out")
+
 // IsRunning reports whether the process referenced by path is alive.
 func IsRunning(path string) bool {
 	pid, err := ReadPID(path)
@@ -137,8 +141,13 @@ func StopDaemon(pidPath string) error {
 
 	proc, err := os.FindProcess(pid)
 	if err != nil {
+		if errors.Is(err, windows.ERROR_INVALID_PARAMETER) {
+			RemovePID(pidPath)
+			return nil
+		}
 		return fmt.Errorf("find process: %w", err)
 	}
+	defer proc.Release()
 
 	handle, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
 	if err != nil {
@@ -163,22 +172,38 @@ func StopDaemon(pidPath string) error {
 		return fmt.Errorf("terminate process %d: %w", pid, err)
 	}
 
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		handle, openErr := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
-		if openErr != nil {
-			if errors.Is(openErr, windows.ERROR_INVALID_PARAMETER) {
-				// Process no longer exists.
-				RemovePID(pidPath)
-				return nil
-			}
-			return fmt.Errorf("confirm process %d exit: %w", pid, openErr)
+	if err := waitForProcessExit(proc, windowsStopTimeout); err != nil {
+		if errors.Is(err, errProcessWaitTimeout) {
+			return fmt.Errorf("process %d did not exit after termination", pid)
 		}
-		_ = windows.CloseHandle(handle)
-		time.Sleep(100 * time.Millisecond)
+		return fmt.Errorf("confirm process %d exit: %w", pid, err)
 	}
 
-	return fmt.Errorf("process %d did not exit after termination", pid)
+	RemovePID(pidPath)
+	return nil
+}
+
+func waitForProcessExit(proc *os.Process, timeout time.Duration) error {
+	var (
+		result  uint32
+		waitErr error
+	)
+	if err := proc.WithHandle(func(handle uintptr) {
+		result, waitErr = windows.WaitForSingleObject(windows.Handle(handle), uint32(timeout/time.Millisecond))
+	}); err != nil {
+		return err
+	}
+	if waitErr != nil {
+		return waitErr
+	}
+	switch result {
+	case windows.WAIT_OBJECT_0:
+		return nil
+	case uint32(windows.WAIT_TIMEOUT):
+		return errProcessWaitTimeout
+	default:
+		return fmt.Errorf("WaitForSingleObject returned unexpected result %d", result)
+	}
 }
 
 func defaultProcessExecutable(pid int) (string, error) {

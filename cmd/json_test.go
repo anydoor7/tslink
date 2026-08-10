@@ -15,6 +15,7 @@ import (
 	"github.com/monody0007/tslink/internal/output"
 	"github.com/monody0007/tslink/internal/registry"
 	"github.com/monody0007/tslink/internal/tailapi"
+	"github.com/monody0007/tslink/internal/testenv"
 )
 
 // captureStdout captures output written to os.Stdout during fn execution.
@@ -576,7 +577,7 @@ func TestAddJSON(t *testing.T) {
 // --- Config JSON ---
 
 func TestConfigSetJSON(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 
 	var buf bytes.Buffer
 	got := captureStdout(t, func() {
@@ -606,7 +607,7 @@ func TestConfigSetJSON(t *testing.T) {
 }
 
 func TestConfigGetJSON(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 
 	var buf bytes.Buffer
 	got := captureStdout(t, func() {
@@ -633,7 +634,7 @@ func TestConfigGetJSON(t *testing.T) {
 }
 
 func TestConfigListJSON(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 
 	var buf bytes.Buffer
 	got := captureStdout(t, func() {
@@ -816,7 +817,7 @@ func TestTagsSetJSON_NotFound(t *testing.T) {
 
 func TestTagsSetDefaultJSON(t *testing.T) {
 	setTagsMocks(t)
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 
 	tagsLoadGlobalFn = func() (config.GlobalConfig, error) {
 		return config.GlobalConfig{}, nil

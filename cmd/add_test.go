@@ -12,6 +12,7 @@ import (
 	"github.com/monody0007/tslink/internal/inspect"
 	"github.com/monody0007/tslink/internal/registry"
 	tsruntime "github.com/monody0007/tslink/internal/runtime"
+	"github.com/monody0007/tslink/internal/testenv"
 )
 
 func TestAddDomainACMEFlagsAdvertiseRejectedReservedState(t *testing.T) {
@@ -89,7 +90,7 @@ func TestAddFunnel_WithProxy_NotSet(t *testing.T) {
 
 func TestAddFunnel_WithDir_Error(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("HOME", dir)
+	testenv.SetHome(t, dir)
 
 	configDir := dir + "/.config/tslink"
 	if err := os.MkdirAll(configDir, 0o700); err != nil {
@@ -130,7 +131,7 @@ func TestAddFunnel_WithDir_Error(t *testing.T) {
 
 func TestAddFunnel_WithTCP_Error(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("HOME", dir)
+	testenv.SetHome(t, dir)
 
 	configDir := dir + "/.config/tslink"
 	if err := os.MkdirAll(configDir, 0o700); err != nil {
@@ -356,7 +357,7 @@ func TestBuildService_NormalizesAllowEmailCase(t *testing.T) {
 
 func TestAddCmd_InvalidAllowEntryWarns(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("HOME", dir)
+	testenv.SetHome(t, dir)
 	if err := os.MkdirAll(dir+"/.config/tslink", 0o700); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
@@ -571,7 +572,7 @@ func TestAddJSON_FunnelIncludesPublicExposure(t *testing.T) {
 
 func TestAddHumanFunnelOutputIncludesPublicMarker(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("HOME", dir)
+	testenv.SetHome(t, dir)
 	if err := os.MkdirAll(dir+"/.config/tslink", 0o700); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
@@ -591,7 +592,7 @@ func TestAddHumanFunnelOutputIncludesPublicMarker(t *testing.T) {
 
 func TestAddHumanTCPOutputIncludesBoundaryNote(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("HOME", dir)
+	testenv.SetHome(t, dir)
 	if err := os.MkdirAll(dir+"/.config/tslink", 0o700); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}

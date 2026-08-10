@@ -25,6 +25,7 @@ import (
 	"github.com/monody0007/tslink/internal/registry"
 	runtimesnapshot "github.com/monody0007/tslink/internal/runtime"
 	"github.com/monody0007/tslink/internal/tailapi"
+	"github.com/monody0007/tslink/internal/testenv"
 	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/tsnet"
 )
@@ -44,6 +45,20 @@ func writeRegistry(t *testing.T, services []registry.Service) string {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 	return path
+}
+
+func stubConfigDirError(t *testing.T) {
+	t.Helper()
+	orig := configDirFn
+	configDirFn = func() (string, error) { return "", errors.New("synthetic config directory failure") }
+	t.Cleanup(func() { configDirFn = orig })
+}
+
+func stubRegistryPathError(t *testing.T) {
+	t.Helper()
+	orig := registryPathFn
+	registryPathFn = func() (string, error) { return "", errors.New("synthetic registry path failure") }
+	t.Cleanup(func() { registryPathFn = orig })
 }
 
 func startRegistryWatcherTest(t *testing.T, s *Server) func() {
@@ -472,7 +487,7 @@ func TestIsClosedListenerError(t *testing.T) {
 }
 
 func TestNew(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 
 	s, err := New("test-auth-key", "https://headscale.example.com")
 	if err != nil {
@@ -493,7 +508,7 @@ func TestNew(t *testing.T) {
 }
 
 func TestSetAuthKeyProviderNilRestoresStaticProvider(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 
 	s, err := New("static-key", "")
 	if err != nil {
@@ -546,7 +561,7 @@ func TestRemoveRuntimeSnapshotUsesConfiguredSeams(t *testing.T) {
 }
 
 func TestStopNodeLocked_CAS(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 
 	s, err := New("key", "")
 	if err != nil {
@@ -567,7 +582,7 @@ func TestStopNodeLocked_CAS(t *testing.T) {
 }
 
 func TestStopNodeLocked_AlreadyClosed(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 
 	s, err := New("key", "")
 	if err != nil {
@@ -586,7 +601,7 @@ func TestStopNodeLocked_AlreadyClosed(t *testing.T) {
 }
 
 func TestStopNodeLocked_RemoveState(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
@@ -616,7 +631,7 @@ func TestStopNodeLocked_RemoveState(t *testing.T) {
 }
 
 func TestStopNodeLocked_ClosesListenerAndServer(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 
 	s, err := New("key", "")
 	if err != nil {
@@ -644,7 +659,7 @@ func TestStopNodeLocked_ClosesListenerAndServer(t *testing.T) {
 }
 
 func TestStopNodeLocked_HTTPServerShutdownFallsBackToClose(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 
 	s, err := New("key", "")
 	if err != nil {
@@ -703,7 +718,7 @@ func TestStopNodeLocked_HTTPServerShutdownFallsBackToClose(t *testing.T) {
 }
 
 func TestCloseAllNodes(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 
 	s, err := New("key", "")
 	if err != nil {
@@ -721,7 +736,7 @@ func TestCloseAllNodes(t *testing.T) {
 }
 
 func TestStartNodeLocked_NodesDirError(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
@@ -749,7 +764,7 @@ func TestStartNodeLocked_NodesDirError(t *testing.T) {
 }
 
 func TestStartNodeLocked_ClosesTSNetServerOnUpError(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
@@ -825,7 +840,7 @@ func TestNewTSNetServerCredentialTiersPreserveTaggedCompatibility(t *testing.T) 
 }
 
 func TestStartNodeLocked_ZeroCredentialUsesStableStatusWithoutUp(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
@@ -893,7 +908,7 @@ func TestStartNodeLocked_ZeroCredentialUsesStableStatusWithoutUp(t *testing.T) {
 }
 
 func TestStartNodeLocked_UsesPerServiceAuthKeyProvider(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
@@ -942,7 +957,7 @@ func TestStartNodeLocked_UsesPerServiceAuthKeyProvider(t *testing.T) {
 }
 
 func TestSecuritySemantics_FileNoAllowStartsWithoutWhoIsDependency(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
@@ -974,7 +989,7 @@ func TestSecuritySemantics_FileNoAllowStartsWithoutWhoIsDependency(t *testing.T)
 }
 
 func TestSecuritySemantics_FileAllowFailsClosedWhenWhoIsUnavailable(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
@@ -1006,7 +1021,7 @@ func TestSecuritySemantics_FileAllowFailsClosedWhenWhoIsUnavailable(t *testing.T
 }
 
 func TestSecuritySemantics_RawTCPBypassesHTTPIdentityAndTLSMiddleware(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
@@ -1056,7 +1071,7 @@ func TestStartNodeLocked_UsesEffectiveControlURL(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("HOME", t.TempDir())
+			testenv.SetHome(t, t.TempDir())
 			if err := config.EnsureDir(); err != nil {
 				t.Fatalf("EnsureDir() error = %v", err)
 			}
@@ -1091,7 +1106,7 @@ func TestStartNodeLocked_UsesEffectiveControlURL(t *testing.T) {
 }
 
 func TestStartNodeLocked_HTTPServerHasTimeouts(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
@@ -1135,7 +1150,7 @@ func TestStartNodeLocked_HTTPServerHasTimeouts(t *testing.T) {
 }
 
 func TestStartNodeLocked_HTTPServerReadHeaderTimeoutClosesSlowClient(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
@@ -1204,7 +1219,7 @@ func TestStartNodeLocked_HTTPServerReadHeaderTimeoutClosesSlowClient(t *testing.
 }
 
 func TestStartNodeLocked_AuthKeyProviderErrorIncludesService(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
@@ -1229,7 +1244,7 @@ func TestStartNodeLocked_AuthKeyProviderErrorIncludesService(t *testing.T) {
 }
 
 func TestStartNodeLocked_InvalidTagIncludesServiceContext(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
@@ -1254,7 +1269,7 @@ func TestStartNodeLocked_InvalidTagIncludesServiceContext(t *testing.T) {
 }
 
 func TestStartNodeLocked_RejectsTCPAllowedUsers(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
@@ -1280,7 +1295,7 @@ func TestStartNodeLocked_RejectsTCPAllowedUsers(t *testing.T) {
 }
 
 func TestSyncNodes_RejectsHandEditedTCPAllowedUsers(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
@@ -1318,7 +1333,7 @@ func TestSyncNodes_RejectsHandEditedTCPAllowedUsers(t *testing.T) {
 }
 
 func TestSyncNodes_RejectsHandEditedFunnelAllowedUsersBeforeListenFunnel(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
@@ -1362,7 +1377,7 @@ func TestSyncNodes_RejectsHandEditedFunnelAllowedUsersBeforeListenFunnel(t *test
 }
 
 func TestSyncNodes_SkipsHandEditedFunnelWithoutPublicAckAndStartsValidProxy(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
@@ -1418,7 +1433,7 @@ func TestSyncNodes_SkipsHandEditedFunnelWithoutPublicAckAndStartsValidProxy(t *t
 }
 
 func TestSyncNodes_RejectsHandEditedFunnelControlURLBeforeListenFunnel(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
@@ -1479,7 +1494,7 @@ func TestSyncNodes_RejectsHandEditedFunnelNonProxyTypesBeforeTSNet(t *testing.T)
 	}
 	for _, svc := range cases {
 		t.Run(svc.Type, func(t *testing.T) {
-			t.Setenv("HOME", t.TempDir())
+			testenv.SetHome(t, t.TempDir())
 			if err := config.EnsureDir(); err != nil {
 				t.Fatalf("EnsureDir() error = %v", err)
 			}
@@ -1519,7 +1534,7 @@ func TestSyncNodes_RejectsHandEditedFunnelNonProxyTypesBeforeTSNet(t *testing.T)
 }
 
 func TestStartNodeLocked_FunnelLogsWarningBeforeListenFunnel(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
@@ -1561,7 +1576,7 @@ func TestStartNodeLocked_FunnelLogsWarningBeforeListenFunnel(t *testing.T) {
 }
 
 func TestStartNodeLocked_MiddlewareConfigFailsBeforeTSNet(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
@@ -1600,7 +1615,7 @@ func TestStartNodeLocked_MiddlewareConfigFailsBeforeTSNet(t *testing.T) {
 }
 
 func TestStartNodeLocked_CustomDomainFailsBeforeTSNet(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
@@ -1638,7 +1653,7 @@ func TestStartNodeLocked_CustomDomainFailsBeforeTSNet(t *testing.T) {
 }
 
 func TestSyncNodes_ContextCancelledPreventsStartingNode(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
@@ -1676,7 +1691,7 @@ func TestSyncNodes_ContextCancelledPreventsStartingNode(t *testing.T) {
 }
 
 func TestSyncNodesRejectsStaleGenerationCommit(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
@@ -1757,7 +1772,7 @@ func TestSyncNodesRejectsStaleGenerationCommit(t *testing.T) {
 }
 
 func TestSyncNodes_ShutdownStatePreventsStartingNode(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
@@ -1793,7 +1808,7 @@ func TestSyncNodes_ShutdownStatePreventsStartingNode(t *testing.T) {
 }
 
 func TestSyncNodes_RemovesDeletedService(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
@@ -1893,7 +1908,7 @@ func TestSyncNodes_CredentialUpgradeRemovesTierOneStateBeforeAuthKey(t *testing.
 }
 
 func TestSyncNodes_WritesRuntimeSnapshotAfterServiceStarts(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
@@ -1964,7 +1979,7 @@ func TestSyncNodes_WritesRuntimeSnapshotAfterServiceStarts(t *testing.T) {
 }
 
 func TestSyncNodes_PublishesPartialSnapshotBeforeStartingNextService(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
@@ -2015,7 +2030,7 @@ func TestSyncNodes_PublishesPartialSnapshotBeforeStartingNextService(t *testing.
 }
 
 func TestSyncNodes_WritesConcreteTCPRuntimeHostFromStatus(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
@@ -2059,7 +2074,7 @@ func TestSyncNodes_WritesConcreteTCPRuntimeHostFromStatus(t *testing.T) {
 }
 
 func TestSyncNodes_PartialStartFailureRemovesRuntimeSnapshot(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
@@ -2129,7 +2144,7 @@ func TestSyncNodes_PartialStartFailureRemovesRuntimeSnapshot(t *testing.T) {
 }
 
 func TestSyncNodes_UpdatesRuntimeSnapshotFingerprintAfterSuccessfulReload(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
@@ -2186,7 +2201,7 @@ func TestSyncNodes_UpdatesRuntimeSnapshotFingerprintAfterSuccessfulReload(t *tes
 }
 
 func TestSyncNodes_UpdatesRuntimeSnapshotAfterServiceStops(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
@@ -2219,7 +2234,7 @@ func TestSyncNodes_UpdatesRuntimeSnapshotAfterServiceStops(t *testing.T) {
 }
 
 func TestCloseAllNodes_RemovesRuntimeSnapshot(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
@@ -2243,7 +2258,7 @@ func TestCloseAllNodes_RemovesRuntimeSnapshot(t *testing.T) {
 }
 
 func TestSyncNodes_RuntimeSnapshotWriteFailureLoggedNonFatal(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
@@ -2285,7 +2300,7 @@ func TestSyncNodes_RuntimeSnapshotWriteFailureLoggedNonFatal(t *testing.T) {
 }
 
 func TestSyncNodes_HotReloadUsesFreshPerServiceAuthMaterial(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
@@ -2365,7 +2380,7 @@ func TestSyncNodes_HotReloadUsesFreshPerServiceAuthMaterial(t *testing.T) {
 }
 
 func TestSyncNodes_CleanupFailureStillRestartsChangedService(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
@@ -2408,7 +2423,7 @@ func TestSyncNodes_CleanupFailureStillRestartsChangedService(t *testing.T) {
 }
 
 func TestSyncNodes_StateRemovalFailureStillRestartsChangedService(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
@@ -2454,7 +2469,7 @@ func TestSyncNodes_StateRemovalFailureStillRestartsChangedService(t *testing.T) 
 }
 
 func TestSyncNodes_UnchangedService(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
@@ -2487,7 +2502,7 @@ func TestSyncNodes_UnchangedService(t *testing.T) {
 }
 
 func TestSyncNodes_ChangedService_RemovesOldNodeWhenRestartFails(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
@@ -2532,7 +2547,7 @@ func TestSyncNodes_ChangedService_RemovesOldNodeWhenRestartFails(t *testing.T) {
 }
 
 func TestSyncNodes_LoadError(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
@@ -2556,7 +2571,7 @@ func TestSyncNodes_LoadError(t *testing.T) {
 }
 
 func TestWatchRegistry_MissingConfigDirReturns(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 
 	s, err := New("key", "")
 	if err != nil {
@@ -2577,7 +2592,7 @@ func TestWatchRegistry_MissingConfigDirReturns(t *testing.T) {
 }
 
 func TestWatchRegistry_ReactsToCreate(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
@@ -2620,7 +2635,7 @@ func TestWatchRegistry_ReactsToCreate(t *testing.T) {
 }
 
 func TestRun(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
@@ -2642,7 +2657,7 @@ func TestRun(t *testing.T) {
 }
 
 func TestRun_InitialSyncFailureReturnsError(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
@@ -2688,7 +2703,7 @@ func TestSyncNodesRejectsMalformedPersistedServicesBeforeTSNetSideEffects(t *tes
 
 	for _, svc := range cases {
 		t.Run(svc.Name, func(t *testing.T) {
-			t.Setenv("HOME", t.TempDir())
+			testenv.SetHome(t, t.TempDir())
 			if err := config.EnsureDir(); err != nil {
 				t.Fatalf("EnsureDir() error = %v", err)
 			}
@@ -2720,7 +2735,7 @@ func TestSyncNodesRejectsMalformedPersistedServicesBeforeTSNetSideEffects(t *tes
 }
 
 func TestRunWatcherReadyBeforeInitialSyncAddConvergesWithoutLaterEvent(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
@@ -2778,7 +2793,7 @@ func TestRunWatcherReadyBeforeInitialSyncAddConvergesWithoutLaterEvent(t *testin
 }
 
 func TestRunMarksReadyWithZeroServicesAfterAuthoritativeSync(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
@@ -2826,7 +2841,7 @@ func TestRunMarksReadyWithZeroServicesAfterAuthoritativeSync(t *testing.T) {
 }
 
 func TestRunDoesNotMarkReadyWhenSupersededInitialSyncFails(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
@@ -2914,7 +2929,7 @@ func TestRunDoesNotMarkReadyWhenSupersededInitialSyncFails(t *testing.T) {
 }
 
 func TestRunWatcherReadyBeforeInitialSyncRemoveConvergesWithoutLaterEvent(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
@@ -2974,7 +2989,7 @@ func TestRunWatcherReadyBeforeInitialSyncRemoveConvergesWithoutLaterEvent(t *tes
 }
 
 func TestRunWatcherAddFailureReturnsStartupError(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
@@ -2992,7 +3007,7 @@ func TestRunWatcherAddFailureReturnsStartupError(t *testing.T) {
 }
 
 func TestRunDoesNotMarkReadyOnListenerFailure(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
@@ -3029,7 +3044,7 @@ func TestRunDoesNotMarkReadyOnListenerFailure(t *testing.T) {
 }
 
 func TestRun_InitialStartFailureClosesStartedNodes(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
@@ -3074,7 +3089,7 @@ func TestRun_InitialStartFailureClosesStartedNodes(t *testing.T) {
 }
 
 func TestStopNodeLocked_NonexistentNode(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 
 	s, err := New("key", "")
 	if err != nil {
@@ -3087,7 +3102,7 @@ func TestStopNodeLocked_NonexistentNode(t *testing.T) {
 }
 
 func TestStopNodeLocked_NilListenerAndServer(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 
 	s, err := New("key", "")
 	if err != nil {
@@ -3109,7 +3124,7 @@ func TestStopNodeLocked_NilListenerAndServer(t *testing.T) {
 }
 
 func TestSyncNodes_NewServiceStartFailure(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
@@ -3145,7 +3160,7 @@ func TestSyncNodes_NewServiceStartFailure(t *testing.T) {
 }
 
 func TestSyncNodes_AuthKeyProviderFailureReturnsError(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
@@ -3172,7 +3187,7 @@ func TestSyncNodes_AuthKeyProviderFailureReturnsError(t *testing.T) {
 }
 
 func TestCloseAllNodes_Empty(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 
 	s, err := New("key", "")
 	if err != nil {
@@ -3251,7 +3266,7 @@ func TestServiceChangedWithFallback_ControlURL(t *testing.T) {
 }
 
 func TestAuthIdentityChanged_EffectiveControlURL(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 
 	s, err := New("key", "https://control.example.com")
 	if err != nil {
@@ -3411,7 +3426,7 @@ func TestServiceChanged_Domain(t *testing.T) {
 }
 
 func TestMetricsHandler(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 
 	s, err := New("key", "")
 	if err != nil {
@@ -3434,7 +3449,7 @@ func TestMetricsHandler(t *testing.T) {
 }
 
 func TestWatchRegistry_ContextCancelled(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
@@ -3464,7 +3479,7 @@ func TestWatchRegistry_ContextCancelled(t *testing.T) {
 }
 
 func TestWatchRegistry_BadCfgDir(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
@@ -3491,7 +3506,7 @@ func TestWatchRegistry_BadCfgDir(t *testing.T) {
 }
 
 func TestSyncNodes_FunnelChange_TriggersRestart(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
@@ -3536,7 +3551,7 @@ func TestSyncNodes_FunnelChange_TriggersRestart(t *testing.T) {
 }
 
 func TestNew_ConfigDirError(t *testing.T) {
-	t.Setenv("HOME", "")
+	stubConfigDirError(t)
 
 	_, err := New("dummy-authkey", "")
 	if err == nil {
@@ -3545,16 +3560,15 @@ func TestNew_ConfigDirError(t *testing.T) {
 }
 
 func TestSyncNodes_RegistryPathError(t *testing.T) {
-	// Create a valid server first, then break HOME
-	t.Setenv("HOME", t.TempDir())
+	// Create a valid server first, then break its isolated config path.
+	testenv.SetHome(t, t.TempDir())
 
 	s, err := New("key", "")
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
 
-	// Now break HOME so config.RegistryPath() fails
-	t.Setenv("HOME", "")
+	stubRegistryPathError(t)
 
 	if err := s.syncNodes(context.Background()); err == nil {
 		t.Fatal("expected error from syncNodes when RegistryPath fails")
@@ -3562,17 +3576,16 @@ func TestSyncNodes_RegistryPathError(t *testing.T) {
 }
 
 func TestWatchRegistry_RegistryPathError(t *testing.T) {
-	// Create server with valid HOME, then break it
+	// Create a server with a valid isolated config path, then break it.
 	tmpHome := t.TempDir()
-	t.Setenv("HOME", tmpHome)
+	testenv.SetHome(t, tmpHome)
 
 	s, err := New("key", "")
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
 
-	// Break HOME so config.RegistryPath() fails inside watchRegistry
-	t.Setenv("HOME", "")
+	stubRegistryPathError(t)
 
 	done := make(chan struct{})
 	go func() {
@@ -3588,7 +3601,7 @@ func TestWatchRegistry_RegistryPathError(t *testing.T) {
 }
 
 func TestWatchRegistry_IgnoresNonRegistryFile(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
@@ -3633,7 +3646,7 @@ func TestWatchRegistry_IgnoresNonRegistryFile(t *testing.T) {
 }
 
 func TestWatchRegistry_SyncErrorOnReload(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
@@ -3667,7 +3680,7 @@ func TestWatchRegistry_SyncErrorOnReload(t *testing.T) {
 }
 
 func TestSetEnsureTagsFn(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
@@ -3695,7 +3708,7 @@ func TestSetEnsureTagsFn(t *testing.T) {
 }
 
 func TestSyncNodes_EnsureTagsCalledOnNewService(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
@@ -3724,7 +3737,7 @@ func TestSyncNodes_EnsureTagsCalledOnNewService(t *testing.T) {
 }
 
 func TestSyncNodes_EnsureTagsNotCalledWhenNil(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
@@ -3743,7 +3756,7 @@ func TestSyncNodes_EnsureTagsNotCalledWhenNil(t *testing.T) {
 }
 
 func TestSyncNodes_EnsureTagsErrorLogged(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
@@ -3767,7 +3780,7 @@ func TestSyncNodes_EnsureTagsErrorLogged(t *testing.T) {
 }
 
 func TestWatchRegistry_DebouncesRapidWrites(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}

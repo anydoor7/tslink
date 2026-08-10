@@ -12,6 +12,7 @@ import (
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/registry"
 	"github.com/monody0007/tslink/internal/tailapi"
+	"github.com/monody0007/tslink/internal/testenv"
 )
 
 // helpers to save/restore function variables
@@ -475,7 +476,7 @@ func TestTagsSet_SaveError(t *testing.T) {
 
 func TestTagsSetDefault_Success(t *testing.T) {
 	setTagsMocks(t)
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 
 	var savedCfg config.GlobalConfig
 	tagsLoadGlobalFn = func() (config.GlobalConfig, error) {
@@ -705,7 +706,7 @@ func TestTagsCmd_ListIntegration(t *testing.T) {
 	setTagsMocks(t)
 
 	tmpDir := t.TempDir()
-	t.Setenv("HOME", tmpDir)
+	testenv.SetHome(t, tmpDir)
 
 	regPath := filepath.Join(tmpDir, ".config", "tslink", "registry.json")
 	os.MkdirAll(filepath.Dir(regPath), 0o700)

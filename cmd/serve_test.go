@@ -19,6 +19,7 @@ import (
 	"github.com/monody0007/tslink/internal/registry"
 	"github.com/monody0007/tslink/internal/server"
 	"github.com/monody0007/tslink/internal/tailapi"
+	"github.com/monody0007/tslink/internal/testenv"
 	"github.com/spf13/cobra"
 	"github.com/zalando/go-keyring"
 )
@@ -247,7 +248,7 @@ func mockServeDefaults(t *testing.T, dir string) {
 	os.WriteFile(regPath, data, 0600)
 
 	keyring.MockInit()
-	t.Setenv("HOME", dir)
+	testenv.SetHome(t, dir)
 
 	serveEnsureDirFn = func() error { return nil }
 	serveMigrateFn = func() bool { return false }

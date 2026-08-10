@@ -12,6 +12,7 @@ import (
 
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/registry"
+	"github.com/monody0007/tslink/internal/testenv"
 	"tailscale.com/client/tailscale/apitype"
 	"tailscale.com/tailcfg"
 )
@@ -177,7 +178,7 @@ func fakeWhoIsClient(t *testing.T, resp *apitype.WhoIsResponse, respErr error) *
 }
 
 func TestStartNodeLocked_AssemblesAllowedUsersACL(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}

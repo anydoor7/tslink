@@ -12,8 +12,11 @@ import (
 // primarily intended for automation and isolated agent verification.
 const ConfigDirEnv = "TSLINK_CONFIG_DIR"
 
-// jsonMarshalIndent is a package-level variable to allow test injection.
-var jsonMarshalIndent = json.MarshalIndent
+// Package-level variables allow deterministic error-path injection in tests.
+var (
+	jsonMarshalIndent = json.MarshalIndent
+	defaultConfigDir  = platformDefaultConfigDir
+)
 
 // GlobalConfig holds tslink-wide settings persisted in config.json.
 type GlobalConfig struct {
@@ -80,11 +83,7 @@ func Dir() (string, error) {
 	if dir := os.Getenv(ConfigDirEnv); dir != "" {
 		return filepath.Clean(dir), nil
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, ".config", "tslink"), nil
+	return defaultConfigDir()
 }
 
 func RegistryPath() (string, error) {

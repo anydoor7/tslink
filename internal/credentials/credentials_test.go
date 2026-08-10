@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/monody0007/tslink/internal/config"
+	"github.com/monody0007/tslink/internal/testenv"
 	"github.com/zalando/go-keyring"
 	tailscale "tailscale.com/client/tailscale/v2"
 )
@@ -18,11 +19,40 @@ import (
 func setup(t *testing.T) {
 	t.Helper()
 	keyring.MockInit()
-	t.Setenv(config.ConfigDirEnv, t.TempDir())
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
+}
+
+func setInvalidConfigHome(t *testing.T) {
+	t.Helper()
+	home := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(home, []byte("block config directory creation"), 0o600); err != nil {
+		t.Fatalf("WriteFile(invalid home) error = %v", err)
+	}
+	testenv.SetHome(t, home)
+}
+
+func assertWindowsFileFallbackDisabled(t *testing.T, backend CredentialBackend, err error, path string) bool {
+	t.Helper()
+	if runtime.GOOS != "windows" {
+		return false
+	}
+	if err == nil {
+		t.Fatal("credential write error = nil, want Windows file-fallback refusal")
+	}
+	if backend != "" {
+		t.Fatalf("credential backend = %q, want empty after Windows file-fallback refusal", backend)
+	}
+	if !strings.Contains(err.Error(), "file credential fallback is disabled on Windows") ||
+		!strings.Contains(err.Error(), "Credential Manager") {
+		t.Fatalf("credential write error = %v, want Windows Credential Manager remediation", err)
+	}
+	if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+		t.Fatalf("file fallback exists despite Windows policy: %v", statErr)
+	}
+	return true
 }
 
 func stubKeyring(t *testing.T,
@@ -113,6 +143,9 @@ func TestSetAPIKey_FileFallback(t *testing.T) {
 
 	path := apiKeyPath(t)
 	backend, err := SetAPIKeyWithBackend("file-key")
+	if assertWindowsFileFallbackDisabled(t, backend, err, path) {
+		return
+	}
 	if err != nil {
 		t.Fatalf("SetAPIKeyWithBackend() error = %v", err)
 	}
@@ -156,6 +189,12 @@ func TestSetAPIKey_FileFallbackDeletesStaleReadableKeyringValue(t *testing.T) {
 	)
 
 	backend, err := SetAPIKeyWithBackend("tskey-api-replacement-synthetic")
+	if assertWindowsFileFallbackDisabled(t, backend, err, apiKeyPath(t)) {
+		if deleted {
+			t.Fatal("Windows policy deleted stale keyring material before refusing file fallback")
+		}
+		return
+	}
 	if err != nil {
 		t.Fatalf("SetAPIKeyWithBackend() error = %v", err)
 	}
@@ -183,6 +222,9 @@ func TestSetAPIKey_FileFallbackRefusesWhenStaleKeyringDeleteFails(t *testing.T) 
 	)
 
 	backend, err := SetAPIKeyWithBackend("tskey-api-replacement-synthetic")
+	if assertWindowsFileFallbackDisabled(t, backend, err, apiKeyPath(t)) {
+		return
+	}
 	if err == nil {
 		t.Fatal("SetAPIKeyWithBackend() error = nil, want fail-closed delete error")
 	}
@@ -523,8 +565,12 @@ func TestGetAPIKey_FileFallbackRepairsInsecurePermissions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Stat() error = %v", err)
 	}
-	if got := info.Mode().Perm(); got != 0o600 {
-		t.Fatalf("file perms = %o, want repaired 600", got)
+	if runtime.GOOS != "windows" {
+		if got := info.Mode().Perm(); got != 0o600 {
+			t.Fatalf("file perms = %o, want repaired 600", got)
+		}
+	} else if !info.Mode().IsRegular() {
+		t.Fatalf("file mode = %v, want regular legacy credential file on Windows", info.Mode())
 	}
 }
 
@@ -943,29 +989,29 @@ func TestSetAPIKey_FileFallback_PathError(t *testing.T) {
 	// When keychain fails AND config.APIKeyPath() fails, SetAPIKey returns error
 	keyring.MockInit()
 	stubUnavailableKeyringWrites(t)
-	t.Setenv("HOME", "")
+	setInvalidConfigHome(t)
 
 	err := SetAPIKey("some-key")
 	if err == nil {
-		t.Fatal("SetAPIKey() error = nil, want error when HOME is unset")
+		t.Fatal("SetAPIKey() error = nil, want invalid config path error")
 	}
 }
 
 func TestGetAPIKey_PathError(t *testing.T) {
 	// When keychain has no key AND config.APIKeyPath() fails
 	keyring.MockInit()
-	t.Setenv("HOME", "")
+	setInvalidConfigHome(t)
 
 	_, err := GetAPIKey()
 	if err == nil {
-		t.Fatal("GetAPIKey() error = nil, want error when HOME is unset")
+		t.Fatal("GetAPIKey() error = nil, want invalid config path error")
 	}
 }
 
 func TestDeriveAuthKey_ClientError(t *testing.T) {
 	// When NewTailscaleClient returns an error (GetAPIKey fails)
 	keyring.MockInit()
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
@@ -988,7 +1034,7 @@ func TestDeriveAuthKey_ClientError(t *testing.T) {
 func TestGetAuthKey_GetAPIKeyError(t *testing.T) {
 	// When GetAPIKey itself returns an error
 	keyring.MockInit()
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
@@ -1153,10 +1199,10 @@ func assertCredentialPathError(t *testing.T, err error, wantPath string) {
 func TestMigrateFromLegacy_PathError(t *testing.T) {
 	// When config.APIKeyPath() itself fails
 	keyring.MockInit()
-	t.Setenv("HOME", "")
+	setInvalidConfigHome(t)
 
 	if migrated := MigrateFromLegacy(); migrated {
-		t.Fatal("MigrateFromLegacy() = true, want false when HOME is unset")
+		t.Fatal("MigrateFromLegacy() = true, want false for invalid config path")
 	}
 }
 
@@ -1220,6 +1266,9 @@ func TestSaveClientSecret_FileFallback(t *testing.T) {
 
 	path := clientSecretPath(t)
 	backend, err := SaveClientSecretWithBackend("tskey-client-file-secret")
+	if assertWindowsFileFallbackDisabled(t, backend, err, path) {
+		return
+	}
 	if err != nil {
 		t.Fatalf("SaveClientSecretWithBackend() error = %v", err)
 	}
@@ -1263,6 +1312,12 @@ func TestSaveClientSecret_FileFallbackDeletesStaleReadableKeyringValue(t *testin
 	)
 
 	backend, err := SaveClientSecretWithBackend("tskey-client-replacement-synthetic")
+	if assertWindowsFileFallbackDisabled(t, backend, err, clientSecretPath(t)) {
+		if deleted {
+			t.Fatal("Windows policy deleted stale keyring material before refusing file fallback")
+		}
+		return
+	}
 	if err != nil {
 		t.Fatalf("SaveClientSecretWithBackend() error = %v", err)
 	}
@@ -1290,6 +1345,9 @@ func TestSaveClientSecret_FileFallbackRefusesWhenStaleKeyringDeleteFails(t *test
 	)
 
 	backend, err := SaveClientSecretWithBackend("tskey-client-replacement-synthetic")
+	if assertWindowsFileFallbackDisabled(t, backend, err, clientSecretPath(t)) {
+		return
+	}
 	if err == nil {
 		t.Fatal("SaveClientSecretWithBackend() error = nil, want fail-closed delete error")
 	}
@@ -1307,11 +1365,11 @@ func TestSaveClientSecret_FileFallbackRefusesWhenStaleKeyringDeleteFails(t *test
 func TestSaveClientSecret_FileFallback_PathError(t *testing.T) {
 	keyring.MockInit()
 	stubUnavailableKeyringWrites(t)
-	t.Setenv("HOME", "")
+	setInvalidConfigHome(t)
 
 	err := SaveClientSecret("tskey-client-some-key")
 	if err == nil {
-		t.Fatal("SaveClientSecret() error = nil, want error when HOME is unset")
+		t.Fatal("SaveClientSecret() error = nil, want invalid config path error")
 	}
 }
 
@@ -1378,11 +1436,11 @@ func TestGetClientSecret_FileReadError(t *testing.T) {
 
 func TestGetClientSecret_PathError(t *testing.T) {
 	keyring.MockInit()
-	t.Setenv("HOME", "")
+	setInvalidConfigHome(t)
 
 	_, err := GetClientSecret()
 	if err == nil {
-		t.Fatal("GetClientSecret() error = nil, want error when HOME is unset")
+		t.Fatal("GetClientSecret() error = nil, want invalid config path error")
 	}
 }
 

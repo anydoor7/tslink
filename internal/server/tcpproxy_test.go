@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/monody0007/tslink/internal/registry"
+	"github.com/monody0007/tslink/internal/testenv"
 )
 
 // startEchoServer starts a TCP server that echoes back everything it receives.
@@ -179,7 +180,7 @@ func TestServeTCP_ForwardsToBackend(t *testing.T) {
 }
 
 func TestStopNodeLocked_ClosesInFlightTCPConnection(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 
 	backendLn, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

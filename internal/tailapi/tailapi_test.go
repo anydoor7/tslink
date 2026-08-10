@@ -12,6 +12,7 @@ import (
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/credentials"
 	"github.com/monody0007/tslink/internal/registry"
+	"github.com/monody0007/tslink/internal/testenv"
 	"github.com/zalando/go-keyring"
 )
 
@@ -24,7 +25,7 @@ func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 func setup(t *testing.T) {
 	t.Helper()
 	keyring.MockInit()
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}

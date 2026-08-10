@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
 	"strings"
 	"testing"
 	"time"
@@ -47,15 +48,23 @@ func TestSaveLoadSnapshotAtomicPrivateFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Stat(dir) error = %v", err)
 	}
-	if got := dirInfo.Mode().Perm(); got != 0o700 {
-		t.Fatalf("dir mode = %o, want 0700", got)
+	if goruntime.GOOS != "windows" {
+		if got := dirInfo.Mode().Perm(); got != 0o700 {
+			t.Fatalf("dir mode = %o, want 0700", got)
+		}
+	} else if !dirInfo.IsDir() {
+		t.Fatalf("snapshot parent mode = %v, want directory on Windows", dirInfo.Mode())
 	}
 	info, err := os.Stat(path)
 	if err != nil {
 		t.Fatalf("Stat(snapshot) error = %v", err)
 	}
-	if got := info.Mode().Perm(); got != 0o600 {
-		t.Fatalf("snapshot mode = %o, want 0600", got)
+	if goruntime.GOOS != "windows" {
+		if got := info.Mode().Perm(); got != 0o600 {
+			t.Fatalf("snapshot mode = %o, want 0600", got)
+		}
+	} else if !info.Mode().IsRegular() {
+		t.Fatalf("snapshot mode = %v, want regular file on Windows", info.Mode())
 	}
 
 	got, err := Load(path)

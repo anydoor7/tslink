@@ -680,6 +680,8 @@ func TestDoctorProbeFailureCodes(t *testing.T) {
 	}{
 		{name: "timeout", err: context.DeadlineExceeded, code: inspect.WarningCodeTargetProbeTimeout},
 		{name: "refused", err: syscall.ECONNREFUSED, code: inspect.WarningCodeTargetProbeRefused},
+		{name: "windows refused", err: &net.OpError{Err: windowsWSAECONNREFUSED}, code: inspect.WarningCodeTargetProbeRefused},
+		{name: "windows reset", err: &net.OpError{Err: windowsWSAECONNRESET}, code: inspect.WarningCodeTargetProbeRefused},
 		{name: "failed", err: errors.New("boom"), code: inspect.WarningCodeTargetProbeFailed},
 	}
 

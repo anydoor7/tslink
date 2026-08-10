@@ -13,6 +13,7 @@ import (
 
 	"github.com/monody0007/tslink/internal/credentials"
 	"github.com/monody0007/tslink/internal/tailapi"
+	"github.com/monody0007/tslink/internal/testenv"
 	"github.com/zalando/go-keyring"
 	"tailscale.com/ipn/ipnstate"
 )
@@ -21,7 +22,7 @@ import (
 func setupLoginTest(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	t.Setenv("HOME", dir)
+	testenv.SetHome(t, dir)
 	keyring.MockInit()
 	// Cobra resolves nil writers dynamically from the current os.Stdout/Stderr.
 	// Reset all three so a shuffled test cannot retain another test's buffer (or

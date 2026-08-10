@@ -12,6 +12,7 @@ import (
 	"github.com/monody0007/tslink/internal/credentials"
 	"github.com/monody0007/tslink/internal/registry"
 	"github.com/monody0007/tslink/internal/tailapi"
+	"github.com/monody0007/tslink/internal/testenv"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
@@ -116,7 +117,7 @@ func runAddCmdOutput(t *testing.T, args []string, flags map[string]string) (stri
 // --- add command tests ---
 
 func TestAddCmd_NoFlags(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 
 	err := runAddCmd(t, []string{"myapp"}, nil)
 	if err == nil {
@@ -167,7 +168,7 @@ func TestAddCmd_ControlURLPersisted(t *testing.T) {
 
 func TestAddCmd_MultipleFlags(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("HOME", dir)
+	testenv.SetHome(t, dir)
 
 	shareDir := filepath.Join(dir, "share")
 	os.MkdirAll(shareDir, 0o700)
@@ -183,7 +184,7 @@ func TestAddCmd_MultipleFlags(t *testing.T) {
 
 func TestAddCmd_Proxy(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("HOME", dir)
+	testenv.SetHome(t, dir)
 
 	os.MkdirAll(filepath.Join(dir, ".config", "tslink"), 0o700)
 
@@ -198,7 +199,7 @@ func TestAddCmd_Proxy(t *testing.T) {
 
 func TestAddCmd_Proxy_WithScheme(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("HOME", dir)
+	testenv.SetHome(t, dir)
 
 	os.MkdirAll(filepath.Join(dir, ".config", "tslink"), 0o700)
 
@@ -228,7 +229,7 @@ func TestAddCmd_Proxy_WithScheme(t *testing.T) {
 
 func TestAddCmd_Dir(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("HOME", dir)
+	testenv.SetHome(t, dir)
 
 	os.MkdirAll(filepath.Join(dir, ".config", "tslink"), 0o700)
 
@@ -246,7 +247,7 @@ func TestAddCmd_Dir(t *testing.T) {
 
 func TestAddCmd_Dir_NotADirectory(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("HOME", dir)
+	testenv.SetHome(t, dir)
 
 	os.MkdirAll(filepath.Join(dir, ".config", "tslink"), 0o700)
 
@@ -264,7 +265,7 @@ func TestAddCmd_Dir_NotADirectory(t *testing.T) {
 
 func TestAddCmd_Dir_NonExistent(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("HOME", dir)
+	testenv.SetHome(t, dir)
 
 	os.MkdirAll(filepath.Join(dir, ".config", "tslink"), 0o700)
 
@@ -276,7 +277,7 @@ func TestAddCmd_Dir_NonExistent(t *testing.T) {
 
 func TestAddCmd_TCP(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("HOME", dir)
+	testenv.SetHome(t, dir)
 
 	os.MkdirAll(filepath.Join(dir, ".config", "tslink"), 0o700)
 
@@ -294,7 +295,7 @@ func TestAddCmd_TCP(t *testing.T) {
 
 func TestAddCmd_TCP_BadFormat(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("HOME", dir)
+	testenv.SetHome(t, dir)
 
 	os.MkdirAll(filepath.Join(dir, ".config", "tslink"), 0o700)
 
@@ -309,7 +310,7 @@ func TestAddCmd_TCP_BadFormat(t *testing.T) {
 
 func TestAddCmd_TCP_InvalidPort(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("HOME", dir)
+	testenv.SetHome(t, dir)
 
 	os.MkdirAll(filepath.Join(dir, ".config", "tslink"), 0o700)
 
@@ -324,7 +325,7 @@ func TestAddCmd_TCP_InvalidPort(t *testing.T) {
 
 func TestAddCmd_InvalidName(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("HOME", dir)
+	testenv.SetHome(t, dir)
 
 	os.MkdirAll(filepath.Join(dir, ".config", "tslink"), 0o700)
 
@@ -336,7 +337,7 @@ func TestAddCmd_InvalidName(t *testing.T) {
 
 func TestAddCmd_WithEphemeral(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("HOME", dir)
+	testenv.SetHome(t, dir)
 
 	os.MkdirAll(filepath.Join(dir, ".config", "tslink"), 0o700)
 
@@ -360,7 +361,7 @@ func TestAddCmd_WithEphemeral(t *testing.T) {
 
 func TestAddCmd_WithTags(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("HOME", dir)
+	testenv.SetHome(t, dir)
 
 	os.MkdirAll(filepath.Join(dir, ".config", "tslink"), 0o700)
 
@@ -384,7 +385,7 @@ func TestAddCmd_WithTags(t *testing.T) {
 
 func TestAddCmd_WithAllow(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("HOME", dir)
+	testenv.SetHome(t, dir)
 
 	os.MkdirAll(filepath.Join(dir, ".config", "tslink"), 0o700)
 
@@ -408,7 +409,7 @@ func TestAddCmd_WithAllow(t *testing.T) {
 
 func TestAddCmd_WithFunnel(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("HOME", dir)
+	testenv.SetHome(t, dir)
 
 	os.MkdirAll(filepath.Join(dir, ".config", "tslink"), 0o700)
 
@@ -438,7 +439,7 @@ func TestAddCmd_WithFunnel(t *testing.T) {
 
 func TestAddCmd_FunnelWithoutProxy(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("HOME", dir)
+	testenv.SetHome(t, dir)
 
 	os.MkdirAll(filepath.Join(dir, ".config", "tslink"), 0o700)
 
@@ -453,7 +454,7 @@ func TestAddCmd_FunnelWithoutProxy(t *testing.T) {
 
 func TestAddCmd_DomainWithoutProxy(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("HOME", dir)
+	testenv.SetHome(t, dir)
 
 	os.MkdirAll(filepath.Join(dir, ".config", "tslink"), 0o700)
 
@@ -475,7 +476,7 @@ func TestListCmd_Empty(t *testing.T) {
 	resetRootJSONFlag(t)
 
 	dir := t.TempDir()
-	t.Setenv("HOME", dir)
+	testenv.SetHome(t, dir)
 
 	os.MkdirAll(filepath.Join(dir, ".config", "tslink"), 0o700)
 
@@ -496,7 +497,7 @@ func TestListCmd_WithServices(t *testing.T) {
 	resetRootJSONFlag(t)
 
 	dir := t.TempDir()
-	t.Setenv("HOME", dir)
+	testenv.SetHome(t, dir)
 
 	os.MkdirAll(filepath.Join(dir, ".config", "tslink"), 0o700)
 	regPath := filepath.Join(dir, ".config", "tslink", "registry.json")
@@ -527,7 +528,7 @@ func TestListCmd_FileService(t *testing.T) {
 	resetRootJSONFlag(t)
 
 	dir := t.TempDir()
-	t.Setenv("HOME", dir)
+	testenv.SetHome(t, dir)
 
 	os.MkdirAll(filepath.Join(dir, ".config", "tslink"), 0o700)
 	regPath := filepath.Join(dir, ".config", "tslink", "registry.json")
@@ -561,7 +562,7 @@ func TestStopCmd_NotRunning(t *testing.T) {
 	resetRootJSONFlag(t)
 
 	dir := t.TempDir()
-	t.Setenv("HOME", dir)
+	testenv.SetHome(t, dir)
 
 	os.MkdirAll(filepath.Join(dir, ".config", "tslink"), 0o700)
 
@@ -1243,7 +1244,7 @@ func TestBuildService_AcmeEmailWithDomain(t *testing.T) {
 
 func TestAddCmd_AcmeEmailWithoutDomain(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("HOME", dir)
+	testenv.SetHome(t, dir)
 
 	os.MkdirAll(filepath.Join(dir, ".config", "tslink"), 0o700)
 
@@ -1261,7 +1262,7 @@ func TestAddCmd_AcmeEmailWithoutDomain(t *testing.T) {
 
 func TestAddCmd_AcmeEmailWithDomain(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("HOME", dir)
+	testenv.SetHome(t, dir)
 
 	os.MkdirAll(filepath.Join(dir, ".config", "tslink"), 0o700)
 
@@ -1420,7 +1421,7 @@ func TestGetStatus_AuthenticatedViaClientSecret(t *testing.T) {
 // --- config command tests ---
 
 func TestConfigSet_ValidURL(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 
 	var buf bytes.Buffer
 	err := configSet("control-url", "https://headscale.example.com", &buf, false)
@@ -1433,7 +1434,7 @@ func TestConfigSet_ValidURL(t *testing.T) {
 }
 
 func TestConfigSet_ClearValue(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 
 	var buf bytes.Buffer
 	// Set a value first
@@ -1454,7 +1455,7 @@ func TestConfigSet_ClearValue(t *testing.T) {
 func TestConfigSet_InvalidURL(t *testing.T) {
 	for _, value := range []string{"/control", "https://", "ftp://example.com", "not-a-url"} {
 		t.Run(value, func(t *testing.T) {
-			t.Setenv("HOME", t.TempDir())
+			testenv.SetHome(t, t.TempDir())
 
 			var buf bytes.Buffer
 			err := configSet("control-url", value, &buf, false)
@@ -1469,7 +1470,7 @@ func TestConfigSet_InvalidURL(t *testing.T) {
 }
 
 func TestConfigSet_UnknownKey(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 
 	var buf bytes.Buffer
 	err := configSet("nonexistent", "value", &buf, false)
@@ -1482,7 +1483,7 @@ func TestConfigSet_UnknownKey(t *testing.T) {
 }
 
 func TestConfigGet_WithValue(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 
 	var buf bytes.Buffer
 	if err := configSet("control-url", "https://headscale.example.com", &buf, false); err != nil {
@@ -1499,7 +1500,7 @@ func TestConfigGet_WithValue(t *testing.T) {
 }
 
 func TestConfigGet_NotSet(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 
 	var buf bytes.Buffer
 	if err := configGet("control-url", &buf, false); err != nil {
@@ -1511,7 +1512,7 @@ func TestConfigGet_NotSet(t *testing.T) {
 }
 
 func TestConfigGet_UnknownKey(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 
 	var buf bytes.Buffer
 	err := configGet("nonexistent", &buf, false)
@@ -1524,7 +1525,7 @@ func TestConfigGet_UnknownKey(t *testing.T) {
 }
 
 func TestConfigList_WithValue(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 
 	var buf bytes.Buffer
 	if err := configSet("control-url", "https://headscale.example.com", &buf, false); err != nil {
@@ -1541,7 +1542,7 @@ func TestConfigList_WithValue(t *testing.T) {
 }
 
 func TestConfigList_Empty(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 
 	var buf bytes.Buffer
 	if err := configList(&buf, false); err != nil {
@@ -1553,7 +1554,7 @@ func TestConfigList_Empty(t *testing.T) {
 }
 
 func TestConfigCmd_SetThenGet(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 
 	// Use Cobra commands for integration test
 	setCmd, _, _ := rootCmd.Find([]string{"config", "set"})
@@ -1581,7 +1582,7 @@ func TestConfigCmd_SetThenGet(t *testing.T) {
 func TestConfigCmd_SetClearWithOneArg(t *testing.T) {
 	resetRootJSONFlag(t)
 
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 
 	// set with only 1 arg (key) should clear the value
 	setCmd, _, _ := rootCmd.Find([]string{"config", "set"})
@@ -1600,7 +1601,7 @@ func TestConfigCmd_SetClearWithOneArg(t *testing.T) {
 func TestConfigCmd_ListAlias(t *testing.T) {
 	resetRootJSONFlag(t)
 
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 
 	// "ls" should resolve to list command
 	listCmd, _, err := rootCmd.Find([]string{"config", "ls"})
@@ -1620,16 +1621,16 @@ func TestConfigCmd_ListAlias(t *testing.T) {
 }
 
 func TestConfigSet_LoadError(t *testing.T) {
-	// HOME points to a file, not a directory — Dir() will fail
+	// The shared helper maps this file path to an uncreatable config directory.
 	tmp := t.TempDir()
 	fakePath := filepath.Join(tmp, "not-a-dir")
 	os.WriteFile(fakePath, []byte("x"), 0o600)
-	t.Setenv("HOME", fakePath)
+	testenv.SetHome(t, fakePath)
 
 	var buf bytes.Buffer
 	err := configSet("control-url", "https://example.com", &buf, false)
 	if err == nil {
-		t.Fatal("expected error when HOME is invalid")
+		t.Fatal("expected error when config isolation path is invalid")
 	}
 	if !strings.Contains(err.Error(), "load config") {
 		t.Errorf("expected 'load config' error, got: %v", err)
@@ -1638,7 +1639,7 @@ func TestConfigSet_LoadError(t *testing.T) {
 
 func TestConfigSet_SaveError(t *testing.T) {
 	tmp := t.TempDir()
-	t.Setenv("HOME", tmp)
+	testenv.SetHome(t, tmp)
 
 	// Create config dir (Load will succeed with IsNotExist),
 	// then make it read-only so WriteFile fails.
@@ -1663,12 +1664,12 @@ func TestConfigGet_LoadError(t *testing.T) {
 	tmp := t.TempDir()
 	fakePath := filepath.Join(tmp, "not-a-dir")
 	os.WriteFile(fakePath, []byte("x"), 0o600)
-	t.Setenv("HOME", fakePath)
+	testenv.SetHome(t, fakePath)
 
 	var buf bytes.Buffer
 	err := configGet("control-url", &buf, false)
 	if err == nil {
-		t.Fatal("expected error when HOME is invalid")
+		t.Fatal("expected error when config isolation path is invalid")
 	}
 	if !strings.Contains(err.Error(), "load config") {
 		t.Errorf("expected 'load config' error, got: %v", err)
@@ -1679,12 +1680,12 @@ func TestConfigList_LoadError(t *testing.T) {
 	tmp := t.TempDir()
 	fakePath := filepath.Join(tmp, "not-a-dir")
 	os.WriteFile(fakePath, []byte("x"), 0o600)
-	t.Setenv("HOME", fakePath)
+	testenv.SetHome(t, fakePath)
 
 	var buf bytes.Buffer
 	err := configList(&buf, false)
 	if err == nil {
-		t.Fatal("expected error when HOME is invalid")
+		t.Fatal("expected error when config isolation path is invalid")
 	}
 	if !strings.Contains(err.Error(), "load config") {
 		t.Errorf("expected 'load config' error, got: %v", err)
@@ -1695,7 +1696,7 @@ func TestConfigList_LoadError(t *testing.T) {
 
 func TestRemoveCmd_Success(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("HOME", dir)
+	testenv.SetHome(t, dir)
 
 	cfgDir := filepath.Join(dir, ".config", "tslink")
 	os.MkdirAll(cfgDir, 0o700)
@@ -1749,7 +1750,7 @@ func TestBuildService_InvalidDomain(t *testing.T) {
 
 func TestAddCmd_DefaultTag(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("HOME", dir)
+	testenv.SetHome(t, dir)
 	os.MkdirAll(filepath.Join(dir, ".config", "tslink"), 0o700)
 
 	err := runAddCmd(t, []string{"myapp"}, map[string]string{"proxy": "localhost:3000"})
@@ -1767,7 +1768,7 @@ func TestAddCmd_DefaultTag(t *testing.T) {
 
 func TestAddCmd_ExplicitTagOverridesDefault(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("HOME", dir)
+	testenv.SetHome(t, dir)
 	os.MkdirAll(filepath.Join(dir, ".config", "tslink"), 0o700)
 
 	err := runAddCmd(t, []string{"myapp"}, map[string]string{

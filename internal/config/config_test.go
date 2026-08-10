@@ -7,17 +7,30 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/monody0007/tslink/internal/testenv"
 )
+
+func stubDefaultConfigDirError(t *testing.T) {
+	t.Helper()
+	t.Setenv(ConfigDirEnv, "")
+	orig := defaultConfigDir
+	defaultConfigDir = func() (string, error) {
+		return "", errors.New("synthetic default config directory failure")
+	}
+	t.Cleanup(func() { defaultConfigDir = orig })
+}
 
 func TestDir(t *testing.T) {
 	t.Setenv(ConfigDirEnv, "")
+	want := filepath.Join(t.TempDir(), "default", "tslink")
+	orig := defaultConfigDir
+	defaultConfigDir = func() (string, error) { return want, nil }
+	t.Cleanup(func() { defaultConfigDir = orig })
 	dir, err := Dir()
 	if err != nil {
 		t.Fatalf("Dir() error = %v", err)
 	}
-
-	home, _ := os.UserHomeDir()
-	want := filepath.Join(home, ".config", "tslink")
 	if dir != want {
 		t.Fatalf("Dir() = %q, want %q", dir, want)
 	}
@@ -25,8 +38,8 @@ func TestDir(t *testing.T) {
 
 func TestDirPrefersTSLinkConfigDir(t *testing.T) {
 	override := filepath.Join(t.TempDir(), "isolated", "tslink")
+	testenv.SetHome(t, filepath.Join(t.TempDir(), "must-not-be-used"))
 	t.Setenv(ConfigDirEnv, override)
-	t.Setenv("HOME", filepath.Join(t.TempDir(), "must-not-be-used"))
 
 	dir, err := Dir()
 	if err != nil {
@@ -62,7 +75,7 @@ func TestAuthHandoffPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AuthHandoffPath() error = %v", err)
 	}
-	if !strings.HasSuffix(path, filepath.Join(".config", "tslink", "auth-handoff.json")) {
+	if !strings.HasSuffix(path, filepath.Join("tslink", "auth-handoff.json")) {
 		t.Fatalf("AuthHandoffPath() = %q, want suffix auth-handoff.json", path)
 	}
 }
@@ -123,7 +136,7 @@ func TestAllPathsSharePrefix(t *testing.T) {
 }
 
 func TestEnsureDir(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 
 	if err := EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
@@ -168,7 +181,7 @@ func TestAPIKeyPath(t *testing.T) {
 }
 
 func TestEnsureDir_Idempotent(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 
 	if err := EnsureDir(); err != nil {
 		t.Fatalf("first EnsureDir() error = %v", err)
@@ -180,7 +193,7 @@ func TestEnsureDir_Idempotent(t *testing.T) {
 
 func TestEnsureDir_Error(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	testenv.SetHome(t, home)
 
 	if err := os.MkdirAll(filepath.Join(home, ".config"), 0o700); err != nil {
 		t.Fatalf("MkdirAll() error = %v", err)
@@ -208,7 +221,7 @@ func TestConfigPath(t *testing.T) {
 }
 
 func TestLoadGlobalConfig_MissingFile(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 
 	cfg, err := LoadGlobalConfig()
 	if err != nil {
@@ -221,7 +234,7 @@ func TestLoadGlobalConfig_MissingFile(t *testing.T) {
 
 func TestLoadGlobalConfig_ValidJSON(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	testenv.SetHome(t, home)
 
 	path, err := ConfigPath()
 	if err != nil {
@@ -248,7 +261,7 @@ func TestLoadGlobalConfig_ValidJSON(t *testing.T) {
 
 func TestLoadGlobalConfig_InvalidJSON(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	testenv.SetHome(t, home)
 
 	path, err := ConfigPath()
 	if err != nil {
@@ -268,7 +281,7 @@ func TestLoadGlobalConfig_InvalidJSON(t *testing.T) {
 }
 
 func TestSaveGlobalConfig_WritesToDisk(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 
 	want := GlobalConfig{ControlURL: "https://control.example.com"}
 	if err := SaveGlobalConfig(want); err != nil {
@@ -291,7 +304,7 @@ func TestSaveGlobalConfig_WritesToDisk(t *testing.T) {
 }
 
 func TestSaveGlobalConfig_RoundTrip(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 
 	want := GlobalConfig{ControlURL: "https://headscale.example.com"}
 	if err := SaveGlobalConfig(want); err != nil {
@@ -308,7 +321,7 @@ func TestSaveGlobalConfig_RoundTrip(t *testing.T) {
 }
 
 func TestSaveGlobalConfig_CreatesParentDir(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 
 	// Parent dir does not exist yet; SaveGlobalConfig should create it.
 	if err := SaveGlobalConfig(GlobalConfig{ControlURL: "https://test.example.com"}); err != nil {
@@ -323,7 +336,7 @@ func TestSaveGlobalConfig_CreatesParentDir(t *testing.T) {
 
 func TestSaveGlobalConfig_MkdirAllError(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	testenv.SetHome(t, home)
 
 	// Place a regular file where the config directory should be, so MkdirAll fails.
 	configParent := filepath.Join(home, ".config")
@@ -339,7 +352,7 @@ func TestSaveGlobalConfig_MkdirAllError(t *testing.T) {
 
 func TestSaveGlobalConfig_WriteFileError(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	testenv.SetHome(t, home)
 
 	// Create the config dir but make it read-only so WriteFile fails.
 	path, err := ConfigPath()
@@ -364,7 +377,7 @@ func TestSaveGlobalConfig_WriteFileError(t *testing.T) {
 
 func TestLoadGlobalConfig_ConvergesFilePermissions(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	testenv.SetHome(t, home)
 
 	path, err := ConfigPath()
 	if err != nil {
@@ -395,7 +408,7 @@ func TestLoadGlobalConfig_ConvergesFilePermissions(t *testing.T) {
 }
 
 func TestSaveGlobalConfig_EmptyConfig(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 
 	// Save a zero-value config (omitempty should produce minimal JSON).
 	if err := SaveGlobalConfig(GlobalConfig{}); err != nil {
@@ -424,7 +437,7 @@ func TestSaveGlobalConfig_EmptyConfig(t *testing.T) {
 }
 
 func TestSaveGlobalConfig_OverwriteExisting(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 
 	// Write initial config.
 	initial := GlobalConfig{ControlURL: "https://first.example.com"}
@@ -449,7 +462,7 @@ func TestSaveGlobalConfig_OverwriteExisting(t *testing.T) {
 
 func TestEnsureDir_LogDirError(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	testenv.SetHome(t, home)
 
 	// Create the base config dir but place a file where logs dir should go.
 	dir, _ := Dir()
@@ -469,7 +482,7 @@ func TestEnsureDir_LogDirError(t *testing.T) {
 
 func TestEnsureDir_NodesDirError(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	testenv.SetHome(t, home)
 
 	// Create the base config dir and logs dir, but block nodes dir.
 	dir, _ := Dir()
@@ -493,7 +506,7 @@ func TestEnsureDir_NodesDirError(t *testing.T) {
 
 func TestLoadGlobalConfig_EmptyFile(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	testenv.SetHome(t, home)
 
 	path, err := ConfigPath()
 	if err != nil {
@@ -540,7 +553,7 @@ func TestAllPathsSharePrefix_IncludesConfigAndAPIKey(t *testing.T) {
 }
 
 func TestSaveGlobalConfig_FilePermissions(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 
 	if err := SaveGlobalConfig(GlobalConfig{ControlURL: "https://test.example.com"}); err != nil {
 		t.Fatalf("SaveGlobalConfig() error = %v", err)
@@ -558,7 +571,7 @@ func TestSaveGlobalConfig_FilePermissions(t *testing.T) {
 }
 
 func TestSaveGlobalConfig_IndentedJSON(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 
 	cfg := GlobalConfig{ControlURL: "https://test.example.com"}
 	if err := SaveGlobalConfig(cfg); err != nil {
@@ -577,139 +590,98 @@ func TestSaveGlobalConfig_IndentedJSON(t *testing.T) {
 	}
 }
 
-// dirErrorTests exercises the error branches of all functions that depend on Dir().
-// On macOS with cgo enabled, os.UserHomeDir() never fails (system call fallback),
-// so these tests are skipped when HOME="" still returns a valid home directory.
+// These tests inject the platform default resolver failure directly. That keeps
+// the error branches deterministic without escaping through a real user profile.
 func TestDir_EmptyHomeError(t *testing.T) {
-	t.Setenv("HOME", "")
+	stubDefaultConfigDirError(t)
 	_, err := Dir()
 	if err == nil {
-		t.Skip("os.UserHomeDir() does not fail with empty HOME on this platform (cgo fallback)")
+		t.Fatal("Dir() error = nil, want default resolver error")
 	}
 }
 
 func TestConfigPath_DirError(t *testing.T) {
-	t.Setenv("HOME", "")
-	_, err := Dir()
-	if err == nil {
-		t.Skip("os.UserHomeDir() does not fail with empty HOME on this platform")
-	}
-	_, err = ConfigPath()
+	stubDefaultConfigDirError(t)
+	_, err := ConfigPath()
 	if err == nil {
 		t.Fatal("ConfigPath() error = nil, want error when Dir() fails")
 	}
 }
 
 func TestRegistryPath_DirError(t *testing.T) {
-	t.Setenv("HOME", "")
-	_, err := Dir()
-	if err == nil {
-		t.Skip("os.UserHomeDir() does not fail with empty HOME on this platform")
-	}
-	_, err = RegistryPath()
+	stubDefaultConfigDirError(t)
+	_, err := RegistryPath()
 	if err == nil {
 		t.Fatal("RegistryPath() error = nil, want error when Dir() fails")
 	}
 }
 
 func TestPIDPath_DirError(t *testing.T) {
-	t.Setenv("HOME", "")
-	_, err := Dir()
-	if err == nil {
-		t.Skip("os.UserHomeDir() does not fail with empty HOME on this platform")
-	}
-	_, err = PIDPath()
+	stubDefaultConfigDirError(t)
+	_, err := PIDPath()
 	if err == nil {
 		t.Fatal("PIDPath() error = nil, want error when Dir() fails")
 	}
 }
 
 func TestNodesDir_DirError(t *testing.T) {
-	t.Setenv("HOME", "")
-	_, err := Dir()
-	if err == nil {
-		t.Skip("os.UserHomeDir() does not fail with empty HOME on this platform")
-	}
-	_, err = NodesDir()
+	stubDefaultConfigDirError(t)
+	_, err := NodesDir()
 	if err == nil {
 		t.Fatal("NodesDir() error = nil, want error when Dir() fails")
 	}
 }
 
 func TestAuthKeyPath_DirError(t *testing.T) {
-	t.Setenv("HOME", "")
-	_, err := Dir()
-	if err == nil {
-		t.Skip("os.UserHomeDir() does not fail with empty HOME on this platform")
-	}
-	_, err = AuthKeyPath()
+	stubDefaultConfigDirError(t)
+	_, err := AuthKeyPath()
 	if err == nil {
 		t.Fatal("AuthKeyPath() error = nil, want error when Dir() fails")
 	}
 }
 
 func TestAPIKeyPath_DirError(t *testing.T) {
-	t.Setenv("HOME", "")
-	_, err := Dir()
-	if err == nil {
-		t.Skip("os.UserHomeDir() does not fail with empty HOME on this platform")
-	}
-	_, err = APIKeyPath()
+	stubDefaultConfigDirError(t)
+	_, err := APIKeyPath()
 	if err == nil {
 		t.Fatal("APIKeyPath() error = nil, want error when Dir() fails")
 	}
 }
 
 func TestLogDir_DirError(t *testing.T) {
-	t.Setenv("HOME", "")
-	_, err := Dir()
-	if err == nil {
-		t.Skip("os.UserHomeDir() does not fail with empty HOME on this platform")
-	}
-	_, err = LogDir()
+	stubDefaultConfigDirError(t)
+	_, err := LogDir()
 	if err == nil {
 		t.Fatal("LogDir() error = nil, want error when Dir() fails")
 	}
 }
 
 func TestEnsureDir_DirError(t *testing.T) {
-	t.Setenv("HOME", "")
-	_, err := Dir()
-	if err == nil {
-		t.Skip("os.UserHomeDir() does not fail with empty HOME on this platform")
-	}
-	err = EnsureDir()
+	stubDefaultConfigDirError(t)
+	err := EnsureDir()
 	if err == nil {
 		t.Fatal("EnsureDir() error = nil, want error when Dir() fails")
 	}
 }
 
 func TestLoadGlobalConfig_DirError(t *testing.T) {
-	t.Setenv("HOME", "")
-	_, err := Dir()
-	if err == nil {
-		t.Skip("os.UserHomeDir() does not fail with empty HOME on this platform")
-	}
-	_, err = LoadGlobalConfig()
+	stubDefaultConfigDirError(t)
+	_, err := LoadGlobalConfig()
 	if err == nil {
 		t.Fatal("LoadGlobalConfig() error = nil, want error when Dir() fails")
 	}
 }
 
 func TestSaveGlobalConfig_DirError(t *testing.T) {
-	t.Setenv("HOME", "")
-	_, err := Dir()
-	if err == nil {
-		t.Skip("os.UserHomeDir() does not fail with empty HOME on this platform")
-	}
-	err = SaveGlobalConfig(GlobalConfig{ControlURL: "https://test.example.com"})
+	stubDefaultConfigDirError(t)
+	err := SaveGlobalConfig(GlobalConfig{ControlURL: "https://test.example.com"})
 	if err == nil {
 		t.Fatal("SaveGlobalConfig() error = nil, want error when Dir() fails")
 	}
 }
 
 func TestEnsureDir_DirPermissions(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 
 	if err := EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
@@ -737,12 +709,8 @@ func TestCertsDir(t *testing.T) {
 }
 
 func TestCertsDir_DirError(t *testing.T) {
-	t.Setenv("HOME", "")
-	_, err := Dir()
-	if err == nil {
-		t.Skip("os.UserHomeDir() does not fail with empty HOME on this platform")
-	}
-	_, err = CertsDir()
+	stubDefaultConfigDirError(t)
+	_, err := CertsDir()
 	if err == nil {
 		t.Fatal("CertsDir() error = nil, want error when Dir() fails")
 	}
@@ -757,7 +725,7 @@ func TestCertsDir_SharesPrefix(t *testing.T) {
 }
 
 func TestEnsureDir_CreatesCertsDir(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 
 	if err := EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
@@ -775,7 +743,7 @@ func TestEnsureDir_CreatesCertsDir(t *testing.T) {
 
 func TestEnsureDir_CertsDirError(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	testenv.SetHome(t, home)
 
 	// Create the base config dir, logs dir, and nodes dir, but block certs dir.
 	dir, _ := Dir()
@@ -812,19 +780,15 @@ func TestClientSecretPath(t *testing.T) {
 }
 
 func TestClientSecretPath_DirError(t *testing.T) {
-	t.Setenv("HOME", "")
-	_, err := Dir()
-	if err == nil {
-		t.Skip("os.UserHomeDir() does not fail with empty HOME on this platform")
-	}
-	_, err = ClientSecretPath()
+	stubDefaultConfigDirError(t)
+	_, err := ClientSecretPath()
 	if err == nil {
 		t.Fatal("ClientSecretPath() error = nil, want error when Dir() fails")
 	}
 }
 
 func TestSaveGlobalConfig_MarshalError(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 
 	// Inject a failing marshal function.
 	orig := jsonMarshalIndent
@@ -843,7 +807,7 @@ func TestSaveGlobalConfig_MarshalError(t *testing.T) {
 }
 
 func TestGlobalConfig_DefaultTag(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	os.MkdirAll(filepath.Join(os.Getenv("HOME"), ".config", "tslink"), 0o700)
 
 	want := GlobalConfig{DefaultTag: "tag:myteam"}
@@ -860,7 +824,7 @@ func TestGlobalConfig_DefaultTag(t *testing.T) {
 }
 
 func TestGetDefaultTag_Unset(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	os.MkdirAll(filepath.Join(os.Getenv("HOME"), ".config", "tslink"), 0o700)
 
 	tag := GetDefaultTag()
@@ -870,7 +834,7 @@ func TestGetDefaultTag_Unset(t *testing.T) {
 }
 
 func TestGetDefaultTag_Custom(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	os.MkdirAll(filepath.Join(os.Getenv("HOME"), ".config", "tslink"), 0o700)
 
 	SaveGlobalConfig(GlobalConfig{DefaultTag: "tag:myteam"})
