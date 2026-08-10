@@ -1,12 +1,17 @@
 package cmd
 
 import (
+	"context"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/inspect"
 	"github.com/monody0007/tslink/internal/registry"
+	tsruntime "github.com/monody0007/tslink/internal/runtime"
 )
 
 func TestAddDomainACMEFlagsAdvertiseRejectedReservedState(t *testing.T) {
@@ -48,16 +53,13 @@ func TestAddFunnel_WithProxy_Persisted(t *testing.T) {
 		t.Fatalf("registry.Add: %v", err)
 	}
 
-	// Verify funnel field is persisted via API handler
-	h := &apiHandler{regPath: regPath, pidPath: dir + "/tslink.pid"}
-	resp := sendRequest(t, h, APIRequest{Action: "list"})
-	if !resp.OK {
-		t.Fatalf("expected ok, got error: %s", resp.Error)
+	// Verify the registry persisted the public exposure bit. The default list
+	// schema is intentionally slim and does not duplicate this verbose field.
+	reg, err := registry.Load(regPath)
+	if err != nil {
+		t.Fatalf("registry.Load: %v", err)
 	}
-	if len(resp.Services) != 1 {
-		t.Fatalf("expected 1 service, got %d", len(resp.Services))
-	}
-	if !resp.Services[0].Funnel {
+	if len(reg.Services) != 1 || !reg.Services[0].Funnel {
 		t.Error("expected funnel=true in listed service")
 	}
 }
@@ -76,12 +78,11 @@ func TestAddFunnel_WithProxy_NotSet(t *testing.T) {
 		t.Fatalf("registry.Add: %v", err)
 	}
 
-	h := &apiHandler{regPath: regPath, pidPath: dir + "/tslink.pid"}
-	resp := sendRequest(t, h, APIRequest{Action: "list"})
-	if !resp.OK {
-		t.Fatalf("expected ok, got error: %s", resp.Error)
+	reg, err := registry.Load(regPath)
+	if err != nil {
+		t.Fatalf("registry.Load: %v", err)
 	}
-	if resp.Services[0].Funnel {
+	if reg.Services[0].Funnel {
 		t.Error("expected funnel=false when not set")
 	}
 }
@@ -392,6 +393,107 @@ func TestAddCmd_InvalidAllowEntryWarns(t *testing.T) {
 	}
 }
 
+func TestAddJSONIncludesInvalidAllowWarning(t *testing.T) {
+	dir := t.TempDir()
+	regPath := filepath.Join(dir, "registry.json")
+	oldRegPath := registryPathFn
+	oldEnsureDir := ensureDirFn
+	t.Cleanup(func() {
+		registryPathFn = oldRegPath
+		ensureDirFn = oldEnsureDir
+		_ = rootCmd.PersistentFlags().Set("json", "false")
+	})
+	registryPathFn = func() (string, error) { return regPath, nil }
+	ensureDirFn = func() error { return nil }
+	_ = rootCmd.PersistentFlags().Set("json", "true")
+
+	got := captureStdout(t, func() {
+		if _, err := runAddCmdOutput(t, []string{"app"}, map[string]string{"proxy": "localhost:3000", "allow": "not-an-email"}); err != nil {
+			t.Fatalf("run add: %v", err)
+		}
+	})
+	data := dataMap(t, got)
+	warnings, ok := data["warnings"].([]any)
+	if !ok || len(warnings) != 1 {
+		t.Fatalf("warnings = %#v, want one JSON warning", data["warnings"])
+	}
+	warning, _ := warnings[0].(map[string]any)
+	if warning["code"] != "invalid_allow_entry" {
+		t.Fatalf("warning = %#v, want invalid_allow_entry", warning)
+	}
+}
+
+func TestAddDryRunPrintsServiceWithoutWriting(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv(config.ConfigDirEnv, configDir)
+	t.Cleanup(func() { _ = rootCmd.PersistentFlags().Set("json", "false") })
+	_ = rootCmd.PersistentFlags().Set("json", "true")
+
+	got := captureStdout(t, func() {
+		if _, err := runAddCmdOutput(t, []string{"preview"}, map[string]string{"proxy": "localhost:3000", "dry-run": "true"}); err != nil {
+			t.Fatalf("run dry-run: %v", err)
+		}
+	})
+	data := dataMap(t, got)
+	if data["dry_run"] != true {
+		t.Fatalf("data = %#v, want dry_run=true", data)
+	}
+	service, ok := data["service"].(map[string]any)
+	if !ok || service["name"] != "preview" || service["type"] != registry.TypeProxy {
+		t.Fatalf("service = %#v, want validated preview", data["service"])
+	}
+	if _, err := os.Stat(filepath.Join(configDir, "registry.json")); !os.IsNotExist(err) {
+		t.Fatalf("registry stat err = %v, want not exist after dry-run", err)
+	}
+}
+
+func TestAddWaitResolvesURLWhenRuntimeSnapshotArrives(t *testing.T) {
+	dir := t.TempDir()
+	regPath := filepath.Join(dir, "registry.json")
+	pidPath := filepath.Join(dir, "tslink.pid")
+	snapshotPath := filepath.Join(dir, "runtime.json")
+	startedAt := time.Date(2026, 8, 2, 12, 0, 0, 0, time.UTC)
+	svc := registry.Service{Name: "waiting", Type: registry.TypeProxy, Target: "http://localhost:3000"}
+	if _, err := registry.Add(regPath, svc); err != nil {
+		t.Fatalf("registry.Add: %v", err)
+	}
+	reg, err := registry.Load(regPath)
+	if err != nil {
+		t.Fatalf("registry.Load: %v", err)
+	}
+	svc = reg.Services[0]
+	fingerprint := statusRegistryFingerprint(t, regPath)
+	withStatusURLSeams(t, true, 4242, startedAt)
+
+	saved := make(chan error, 1)
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		snapshot := tsruntime.NewSnapshot(4242, startedAt, fingerprint, startedAt.Add(time.Second), []tsruntime.ServiceState{{
+			Service: svc, RuntimeHost: "node.example.ts.net",
+		}})
+		saved <- tsruntime.Save(snapshotPath, snapshot)
+	}()
+
+	result, err := buildAddResult(context.Background(), svc, true, pidPath, regPath, snapshotPath, 500*time.Millisecond)
+	if err != nil {
+		t.Fatalf("buildAddResult: %v", err)
+	}
+	if err := <-saved; err != nil {
+		t.Fatalf("runtime.Save: %v", err)
+	}
+	if result.URL == nil || *result.URL != "https://node.example.ts.net" || result.URLPending {
+		t.Fatalf("result = %+v, want exact waited URL", result)
+	}
+
+	add, _, err := rootCmd.Find([]string{"add"})
+	if err != nil {
+		t.Fatalf("find add: %v", err)
+	}
+	if flag := add.Flags().Lookup("wait"); flag == nil || flag.NoOptDefVal != "30s" {
+		t.Fatalf("wait flag = %+v, want optional 30s value", flag)
+	}
+}
+
 func TestAddJSON_TCPUsesTypedEndpoint(t *testing.T) {
 	dir := t.TempDir()
 	regPath := dir + "/registry.json"
@@ -421,15 +523,15 @@ func TestAddJSON_TCPUsesTypedEndpoint(t *testing.T) {
 	}
 
 	data := dataMap(t, got)
-	if data["url"] != "db.<tailnet>.ts.net:5432" {
-		t.Fatalf("url = %v, want typed TCP display", data["url"])
+	if data["url"] != nil || data["url_pending"] != true {
+		t.Fatalf("url = %v pending=%v, want null/pending until runtime evidence", data["url"], data["url_pending"])
 	}
 	endpoint, ok := data["endpoint"].(map[string]any)
 	if !ok {
 		t.Fatalf("endpoint = %T, want object", data["endpoint"])
 	}
-	if endpoint["kind"] != "tcp" || endpoint["display"] != "db.<tailnet>.ts.net:5432" {
-		t.Fatalf("endpoint = %+v, want typed TCP endpoint", endpoint)
+	if endpoint["kind"] != "tcp" || endpoint["display"] != "" || endpoint["state"] != "expected" {
+		t.Fatalf("endpoint = %+v, want pending typed TCP endpoint without placeholder", endpoint)
 	}
 }
 

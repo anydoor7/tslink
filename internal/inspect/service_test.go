@@ -19,8 +19,8 @@ func TestServiceViewForProxyFileAndTCP(t *testing.T) {
 	if proxy.SchemaVersion != SchemaVersion {
 		t.Fatalf("proxy schema_version = %q, want %q", proxy.SchemaVersion, SchemaVersion)
 	}
-	if proxy.Endpoint.Kind != EndpointKindHTTPS || proxy.Endpoint.Display != "https://web.<tailnet>.ts.net" {
-		t.Fatalf("proxy endpoint = %+v, want https tailnet endpoint", proxy.Endpoint)
+	if proxy.Endpoint.Kind != EndpointKindHTTPS || proxy.Endpoint.Display != "" || proxy.Endpoint.Host != "" || proxy.Endpoint.State != EndpointStateExpected {
+		t.Fatalf("proxy endpoint = %+v, want pending https endpoint without placeholder", proxy.Endpoint)
 	}
 	if proxy.Exposure.Kind != ExposureTailnetAllow || proxy.Exposure.Public {
 		t.Fatalf("proxy exposure = %+v, want tailnet_allow private exposure", proxy.Exposure)
@@ -40,8 +40,8 @@ func TestServiceViewForProxyFileAndTCP(t *testing.T) {
 		Type: registry.TypeFile,
 		Path: "/srv/docs",
 	})
-	if file.Endpoint.Kind != EndpointKindHTTPS || file.Endpoint.Display != "https://docs.<tailnet>.ts.net" {
-		t.Fatalf("file endpoint = %+v, want https tailnet endpoint", file.Endpoint)
+	if file.Endpoint.Kind != EndpointKindHTTPS || file.Endpoint.Display != "" || file.Endpoint.Host != "" || file.Endpoint.State != EndpointStateExpected {
+		t.Fatalf("file endpoint = %+v, want pending https endpoint without placeholder", file.Endpoint)
 	}
 	if file.Exposure.Kind != ExposureTailnet {
 		t.Fatalf("file exposure = %+v, want tailnet", file.Exposure)
@@ -56,8 +56,8 @@ func TestServiceViewForProxyFileAndTCP(t *testing.T) {
 		Target: "localhost:5432",
 		Port:   5432,
 	})
-	if tcp.Endpoint.Kind != EndpointKindTCP || tcp.Endpoint.Display != "db.<tailnet>.ts.net:5432" {
-		t.Fatalf("tcp endpoint = %+v, want typed tcp host:port", tcp.Endpoint)
+	if tcp.Endpoint.Kind != EndpointKindTCP || tcp.Endpoint.Display != "db.<tailnet>.ts.net:5432" || tcp.Endpoint.Host != "db.<tailnet>.ts.net" || tcp.Endpoint.Port != 5432 {
+		t.Fatalf("tcp endpoint = %+v, want internal expected TCP placeholder", tcp.Endpoint)
 	}
 	if strings.HasPrefix(tcp.Endpoint.Display, "https://") {
 		t.Fatalf("tcp endpoint must not be rendered as HTTPS: %s", tcp.Endpoint.Display)
@@ -86,7 +86,7 @@ func TestServiceViewsPreservesOrderAndBuildsViews(t *testing.T) {
 	if len(views) != 2 {
 		t.Fatalf("ServiceViews() returned %d views, want 2", len(views))
 	}
-	if views[0].Name != "web" || views[0].Endpoint.Display != "https://web.<tailnet>.ts.net" {
+	if views[0].Name != "web" || views[0].Endpoint.Display != "" || views[0].Endpoint.State != EndpointStateExpected {
 		t.Fatalf("first view = %+v, want web service view", views[0])
 	}
 	if views[1].Name != "docs" || views[1].Backend.Display != "/srv/docs" {
@@ -107,8 +107,8 @@ func TestServiceViewForCustomDomainDoesNotPresentDomainEndpoint(t *testing.T) {
 	if view.Endpoint.Display == "https://app.example.com" || view.Endpoint.Host == "app.example.com" {
 		t.Fatalf("endpoint = %+v, must not present custom domain as reachable", view.Endpoint)
 	}
-	if view.Endpoint.Display != "https://web.<tailnet>.ts.net" {
-		t.Fatalf("endpoint = %+v, want tailnet endpoint only", view.Endpoint)
+	if view.Endpoint.Display != "" || view.Endpoint.Host != "" {
+		t.Fatalf("endpoint = %+v, want pending endpoint without custom-domain or placeholder host", view.Endpoint)
 	}
 	if view.Exposure.Kind == ExposureCustomDomain {
 		t.Fatalf("exposure = %+v, must not present custom domain exposure", view.Exposure)

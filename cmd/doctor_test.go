@@ -220,17 +220,14 @@ func decodeDoctorJSON(t *testing.T, raw string) DoctorResult {
 	if err != nil {
 		t.Fatalf("marshal doctor data: %v", err)
 	}
-	assertExactJSONKeys(t, string(dataBytes), "doctor")
-	var data struct {
-		Doctor *DoctorResult `json:"doctor"`
-	}
+	var data DoctorResult
 	if err := json.Unmarshal(dataBytes, &data); err != nil {
 		t.Fatalf("unmarshal doctor data: %v\nraw data: %s", err, dataBytes)
 	}
-	if data.Doctor == nil {
-		t.Fatalf("data.doctor missing\nraw data: %s", dataBytes)
+	if data.SchemaVersion == "" || data.ExecutionStatus == "" {
+		t.Fatalf("flat doctor data incomplete\nraw data: %s", dataBytes)
 	}
-	return *data.Doctor
+	return data
 }
 
 func TestDoctorExitCodes(t *testing.T) {

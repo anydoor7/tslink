@@ -64,6 +64,23 @@ func TestResult_FailureJSONEnvelope(t *testing.T) {
 	}
 }
 
+func TestCodedValidationErrorCarriesStableCodeExitAndNext(t *testing.T) {
+	err := registry.URLNotReadyError("newapp")
+	result := NewFailureForError("url", err)
+	if result.Code != ExitNotFound || result.Error == nil || result.Error.Code != registry.CodeURLNotReady {
+		t.Fatalf("result = %+v, want url_not_ready exit %d", result, ExitNotFound)
+	}
+	if len(result.Error.Next) != 2 || result.Error.Next[1] != "tslink url newapp --wait=30s" {
+		t.Fatalf("next = %v, want deterministic recovery", result.Error.Next)
+	}
+
+	unknown := errors.New(`unknown config key: "bogus" (valid keys: control-url)`)
+	unknownResult := NewFailureForError("config set", unknown)
+	if unknownResult.Code != ExitUsage || unknownResult.Error == nil || unknownResult.Error.Code != registry.CodeUnknownConfigKey {
+		t.Fatalf("unknown config result = %+v", unknownResult)
+	}
+}
+
 func TestWriteJSON(t *testing.T) {
 	var buf bytes.Buffer
 	WriteJSON(&buf, NewSuccess("test", nil))

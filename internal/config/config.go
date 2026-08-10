@@ -8,6 +8,10 @@ import (
 	"github.com/monody0007/tslink/internal/atomicfile"
 )
 
+// ConfigDirEnv overrides the default per-user configuration directory. It is
+// primarily intended for automation and isolated agent verification.
+const ConfigDirEnv = "TSLINK_CONFIG_DIR"
+
 // jsonMarshalIndent is a package-level variable to allow test injection.
 var jsonMarshalIndent = json.MarshalIndent
 
@@ -73,6 +77,9 @@ func SaveGlobalConfig(cfg GlobalConfig) error {
 }
 
 func Dir() (string, error) {
+	if dir := os.Getenv(ConfigDirEnv); dir != "" {
+		return filepath.Clean(dir), nil
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err

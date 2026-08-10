@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -8,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/inspect"
@@ -20,12 +23,19 @@ const publicAckRequiredError = "funnel requires explicit public acknowledgement 
 
 // AddResult is the JSON data for the add command.
 type AddResult struct {
-	Name     string               `json:"name"`
-	Type     string               `json:"type"`
-	Created  bool                 `json:"created"`
-	URL      string               `json:"url"`
-	Endpoint inspect.EndpointView `json:"endpoint"`
-	Exposure inspect.ExposureView `json:"exposure"`
+	Name       string                `json:"name"`
+	Type       string                `json:"type"`
+	Created    bool                  `json:"created"`
+	URL        *string               `json:"url"`
+	URLPending bool                  `json:"url_pending"`
+	Endpoint   inspect.EndpointView  `json:"endpoint"`
+	Exposure   inspect.ExposureView  `json:"exposure"`
+	Warnings   []inspect.WarningView `json:"warnings,omitempty"`
+}
+
+type AddDryRunResult struct {
+	DryRun  bool             `json:"dry_run"`
+	Service registry.Service `json:"service"`
 }
 
 func hasScheme(target string) bool {
@@ -120,7 +130,7 @@ func buildService(p AddParams) (registry.Service, error) {
 		svcType = registry.TypeTCP
 	}
 	if modes != 1 {
-		return registry.Service{}, fmt.Errorf("exactly one of --proxy, --dir, or --tcp must be provided")
+		return registry.Service{}, registry.ServiceTypeAmbiguousError()
 	}
 
 	if p.Funnel && svcType != registry.TypeProxy {
@@ -142,7 +152,7 @@ func buildService(p AddParams) (registry.Service, error) {
 		return registry.Service{}, err
 	}
 	if p.TCP != "" && len(allowedUsers) > 0 {
-		return registry.Service{}, fmt.Errorf("--allow is not supported for --tcp services")
+		return registry.Service{}, registry.AllowUnsupportedTCPError()
 	}
 
 	var tags []string
@@ -199,6 +209,45 @@ func buildService(p AddParams) (registry.Service, error) {
 	}, nil
 }
 
+func addWarnings(svc registry.Service, base []inspect.WarningView) []inspect.WarningView {
+	warnings := append([]inspect.WarningView(nil), base...)
+	for _, invalid := range invalidAllowEntries(svc.AllowedUsers) {
+		warnings = append(warnings, inspect.WarningView{
+			Code:     "invalid_allow_entry",
+			Severity: "warning",
+			Message:  fmt.Sprintf("--allow entry %q is neither a valid email address nor tag:<name>; it will likely deny rather than allow access.", invalid),
+			Source:   "cmd.add",
+		})
+	}
+	return warnings
+}
+
+func buildAddResult(ctx context.Context, svc registry.Service, created bool, pidPath, regPath, snapshotPath string, wait time.Duration) (AddResult, error) {
+	view := inspect.ServiceViewFor(svc)
+	result := AddResult{
+		Name:       svc.Name,
+		Type:       svc.Type,
+		Created:    created,
+		URLPending: true,
+		Endpoint:   view.Endpoint,
+		Exposure:   view.Exposure,
+		Warnings:   addWarnings(svc, view.Warnings),
+	}
+	result.Endpoint.Display = ""
+	result.Endpoint.Host = ""
+	resolution, err := resolveServiceEndpoint(ctx, pidPath, regPath, snapshotPath, svc.Name, wait)
+	if err != nil {
+		if code, ok := registry.ErrorCode(err); ok && code == registry.CodeURLNotReady && wait <= 0 {
+			return result, nil
+		}
+		return AddResult{}, err
+	}
+	result.URL = &resolution.Result.URL
+	result.URLPending = false
+	result.Endpoint = resolution.Endpoint
+	return result, nil
+}
+
 func init() {
 	addCmd := &cobra.Command{
 		Use:   "add <name>",
@@ -225,6 +274,8 @@ Examples:
 			domainName, _ := cmd.Flags().GetString("domain")
 			acmeEmail, _ := cmd.Flags().GetString("acme-email")
 			controlURL, _ := cmd.Flags().GetString("control-url")
+			wait, _ := cmd.Flags().GetDuration("wait")
+			dryRun, _ := cmd.Flags().GetBool("dry-run")
 
 			svc, err := buildService(AddParams{
 				Name:       args[0],
@@ -244,19 +295,35 @@ Examples:
 				return err
 			}
 
-			if invalid := invalidAllowEntries(svc.AllowedUsers); len(invalid) > 0 && !jsonOutput(cmd) {
-				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: --allow entry %q is neither a valid email address nor tag:<name>; it will likely deny rather than allow access.\n", invalid[0])
+			warnings := addWarnings(svc, nil)
+			if !jsonOutput(cmd) {
+				for _, warning := range warnings {
+					fmt.Fprintf(cmd.ErrOrStderr(), "Warning: %s\n", warning.Message)
+				}
 			}
 
 			// For dir type, resolve and validate filesystem path
 			if svc.Type == registry.TypeFile {
 				if !filepath.IsAbs(dirPath) {
-					return fmt.Errorf("file service path %q must be absolute", dirPath)
+					return registry.PathMustBeAbsoluteError(dirPath)
 				}
 				if err := registry.ValidateFileRoot(dirPath); err != nil {
 					return err
 				}
 				svc.Path = filepath.Clean(dirPath)
+			}
+
+			if dryRun {
+				if jsonOutput(cmd) {
+					output.Success("add", AddDryRunResult{DryRun: true, Service: svc})
+					return nil
+				}
+				encoded, err := json.MarshalIndent(svc, "", "  ")
+				if err != nil {
+					return err
+				}
+				fmt.Fprintln(cmd.OutOrStdout(), string(encoded))
+				return nil
 			}
 
 			if err := ensureDirFn(); err != nil {
@@ -273,19 +340,21 @@ Examples:
 				return err
 			}
 
-			view := inspect.ServiceViewFor(svc)
-			endpoint := view.Endpoint
-			url := endpoint.Display
+			pidPath, err := config.PIDPath()
+			if err != nil {
+				return err
+			}
+			snapshotPath, err := config.RuntimeSnapshotPath()
+			if err != nil {
+				return err
+			}
+			result, err := buildAddResult(cmd.Context(), svc, created, pidPath, regPath, snapshotPath, wait)
+			if err != nil {
+				return err
+			}
 
 			if jsonOutput(cmd) {
-				output.Success("add", AddResult{
-					Name:     svc.Name,
-					Type:     svc.Type,
-					Created:  created,
-					URL:      url,
-					Endpoint: endpoint,
-					Exposure: view.Exposure,
-				})
+				output.Success("add", result)
 				return nil
 			}
 
@@ -294,10 +363,16 @@ Examples:
 				fmt.Fprintln(cmd.OutOrStdout(), "TSLink HTTP allow and identity headers do not apply to raw TCP; protection is Tailscale policy plus backend auth.")
 			} else {
 				fmt.Fprintf(cmd.OutOrStdout(), "→ ✓ Service %q registered\n", svc.Name)
-				if svc.Funnel {
-					fmt.Fprintf(cmd.OutOrStdout(), "URL: %s (PUBLIC via Tailscale Funnel, available after tslink serve)\n", url)
+				if result.URLPending {
+					if svc.Funnel {
+						fmt.Fprintf(cmd.OutOrStdout(), "URL: pending (PUBLIC via Tailscale Funnel; run: tslink url %s --wait=30s)\n", svc.Name)
+					} else {
+						fmt.Fprintf(cmd.OutOrStdout(), "URL: pending (run: tslink url %s --wait=30s)\n", svc.Name)
+					}
+				} else if svc.Funnel {
+					fmt.Fprintf(cmd.OutOrStdout(), "URL: %s (PUBLIC via Tailscale Funnel)\n", *result.URL)
 				} else {
-					fmt.Fprintf(cmd.OutOrStdout(), "URL: %s (available after tslink serve)\n", url)
+					fmt.Fprintf(cmd.OutOrStdout(), "URL: %s\n", *result.URL)
 				}
 			}
 			return nil
@@ -311,9 +386,12 @@ Examples:
 	addCmd.Flags().String("tags", "", "Comma-separated ACL tags (e.g., tag:web,tag:internal)")
 	addCmd.Flags().Bool("funnel", false, "Expose publicly via Tailscale Funnel (proxy only, requires --public)")
 	addCmd.Flags().Bool("public", false, "Acknowledge public internet exposure for --funnel (only valid with --funnel)")
-	addCmd.Flags().String("domain", "", "Reserved: custom-domain runtime TLS is unavailable and this flag is rejected with feature_unavailable")
+	addCmd.Flags().String("domain", "", "[UNAVAILABLE] Reserved: custom-domain runtime TLS is unavailable; rejected with feature_unavailable")
 	addCmd.Flags().String("allow", "", "Comma-separated allowed identities (e.g., user@example.com,tag:admin)")
-	addCmd.Flags().String("acme-email", "", "Reserved: ACME runtime TLS is unavailable and this flag is rejected with feature_unavailable")
+	addCmd.Flags().String("acme-email", "", "[UNAVAILABLE] Reserved: ACME runtime TLS is unavailable; rejected with feature_unavailable")
 	addCmd.Flags().String("control-url", "", "Per-service custom control server URL (e.g., Headscale)")
+	addCmd.Flags().Duration("wait", 0, "Wait for an exact runtime URL (optional value; default 30s)")
+	addCmd.Flags().Lookup("wait").NoOptDefVal = defaultURLWait.String()
+	addCmd.Flags().Bool("dry-run", false, "Validate and print the service JSON without writing registry.json")
 	rootCmd.AddCommand(addCmd)
 }

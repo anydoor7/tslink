@@ -35,6 +35,13 @@ const (
 	CodeFunnelControlURLConflict = "funnel_control_url_conflict"
 	CodeFunnelTypeConflict       = "funnel_type_conflict"
 	CodeFeatureUnavailable       = "feature_unavailable"
+	CodeServiceTypeAmbiguous     = "service_type_ambiguous"
+	CodeInvalidServiceName       = "invalid_service_name"
+	CodeInvalidTag               = "invalid_tag"
+	CodeAllowUnsupportedTCP      = "allow_unsupported_for_tcp"
+	CodePathMustBeAbsolute       = "path_must_be_absolute"
+	CodeUnknownConfigKey         = "unknown_config_key"
+	CodeURLNotReady              = "url_not_ready"
 
 	ErrFunnelAllowedUsers = "funnel services do not support allowed_users; public Funnel cannot be combined with TSLink allow lists"
 	ErrFunnelPublicAck    = "funnel services require recorded public acknowledgement; re-run `tslink add ... --funnel --public` or set public_ack:true after confirming public internet exposure"
@@ -48,17 +55,29 @@ var tagRegexp = regexp.MustCompile(`^tag:[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
 type CodedError struct {
 	Code    string
 	Message string
+	Next    []string
+	// MessageOnly keeps wrapped human errors readable while StableCode still
+	// exposes the machine discriminator.
+	MessageOnly bool
 }
 
 func (e CodedError) Error() string {
 	if e.Message == "" {
 		return e.Code
 	}
+	if e.MessageOnly {
+		return e.Message
+	}
 	return e.Code + ": " + e.Message
 }
 
 func (e CodedError) StableCode() string {
 	return e.Code
+}
+
+// NextCommands returns deterministic recovery commands for machine consumers.
+func (e CodedError) NextCommands() []string {
+	return append([]string(nil), e.Next...)
 }
 
 func ErrorCode(err error) (string, bool) {
@@ -72,15 +91,15 @@ func ErrorCode(err error) (string, bool) {
 }
 
 func FunnelAllowedUsersError() error {
-	return CodedError{Code: CodeFunnelAllowConflict, Message: ErrFunnelAllowedUsers}
+	return CodedError{Code: CodeFunnelAllowConflict, Message: ErrFunnelAllowedUsers, Next: []string{"tslink add --help"}}
 }
 
 func FunnelPublicAckError() error {
-	return CodedError{Code: CodeFunnelPublicAckRequired, Message: ErrFunnelPublicAck}
+	return CodedError{Code: CodeFunnelPublicAckRequired, Message: ErrFunnelPublicAck, Next: []string{"tslink add ... --funnel --public"}}
 }
 
 func FunnelControlURLError() error {
-	return CodedError{Code: CodeFunnelControlURLConflict, Message: ErrFunnelControlURL}
+	return CodedError{Code: CodeFunnelControlURLConflict, Message: ErrFunnelControlURL, Next: []string{"tslink add --help"}}
 }
 
 func FunnelTypeConflictError(serviceType string) error {
@@ -88,11 +107,47 @@ func FunnelTypeConflictError(serviceType string) error {
 	if serviceType != "" {
 		message = fmt.Sprintf("%s (got %q)", message, serviceType)
 	}
-	return CodedError{Code: CodeFunnelTypeConflict, Message: message}
+	return CodedError{Code: CodeFunnelTypeConflict, Message: message, Next: []string{"tslink add --help"}}
 }
 
 func FeatureUnavailableError(message string) error {
-	return CodedError{Code: CodeFeatureUnavailable, Message: message}
+	return CodedError{Code: CodeFeatureUnavailable, Message: message, Next: []string{"tslink add --help"}}
+}
+
+func ServiceTypeAmbiguousError() error {
+	return CodedError{
+		Code:        CodeServiceTypeAmbiguous,
+		Message:     "exactly one of --proxy, --dir, or --tcp must be provided",
+		Next:        []string{"tslink add --help"},
+		MessageOnly: true,
+	}
+}
+
+func AllowUnsupportedTCPError() error {
+	return CodedError{
+		Code:        CodeAllowUnsupportedTCP,
+		Message:     "tcp services do not support allowed_users; --allow is not supported for --tcp services",
+		Next:        []string{"tslink add --help"},
+		MessageOnly: true,
+	}
+}
+
+func PathMustBeAbsoluteError(path string) error {
+	return CodedError{
+		Code:        CodePathMustBeAbsolute,
+		Message:     fmt.Sprintf("file service path %q must be absolute", path),
+		Next:        []string{"tslink add --help"},
+		MessageOnly: true,
+	}
+}
+
+func URLNotReadyError(name string) error {
+	return CodedError{
+		Code:        CodeURLNotReady,
+		Message:     fmt.Sprintf("node %q has not reported a tailnet hostname yet", name),
+		Next:        []string{"tslink status --json", fmt.Sprintf("tslink url %s --wait=30s", name)},
+		MessageOnly: true,
+	}
 }
 
 func ValidateFunnelGuardrails(serviceType string, funnel bool, allowedUsers []string, controlURL string, publicAck bool) error {
@@ -154,20 +209,20 @@ type Registry struct {
 
 func ValidateName(name string) error {
 	if len(name) > 63 {
-		return fmt.Errorf("invalid service name: %q exceeds 63-character DNS label limit", name)
+		return CodedError{Code: CodeInvalidServiceName, Message: fmt.Sprintf("invalid service name: %q exceeds 63-character DNS label limit", name), Next: []string{"tslink add --help"}, MessageOnly: true}
 	}
 	if !nameRegexp.MatchString(name) {
-		return fmt.Errorf("invalid service name: %q", name)
+		return CodedError{Code: CodeInvalidServiceName, Message: fmt.Sprintf("invalid service name: %q", name), Next: []string{"tslink add --help"}, MessageOnly: true}
 	}
 	return nil
 }
 
 func ValidateTag(tag string) error {
 	if len(tag) > maxTagLength {
-		return fmt.Errorf("invalid tag %q: exceeds %d characters; must match %s", tag, maxTagLength, TagGrammar)
+		return CodedError{Code: CodeInvalidTag, Message: fmt.Sprintf("invalid tag %q: exceeds %d characters; must match %s", tag, maxTagLength, TagGrammar), Next: []string{"tslink add --help"}, MessageOnly: true}
 	}
 	if !tagRegexp.MatchString(tag) {
-		return fmt.Errorf("invalid tag %q: must match %s", tag, TagGrammar)
+		return CodedError{Code: CodeInvalidTag, Message: fmt.Sprintf("invalid tag %q: must match %s", tag, TagGrammar), Next: []string{"tslink add --help"}, MessageOnly: true}
 	}
 	return nil
 }
@@ -253,7 +308,7 @@ func validateServiceShape(svc Service) error {
 			return FunnelTypeConflictError(svc.Type)
 		}
 		if len(svc.AllowedUsers) > 0 {
-			return fmt.Errorf("tcp services do not support allowed_users; TSLink cannot enforce user ACLs on raw TCP services")
+			return AllowUnsupportedTCPError()
 		}
 		if err := ValidateTCPTarget(svc.Target); err != nil {
 			return err
@@ -300,7 +355,7 @@ func ValidateFileRoot(path string) error {
 		return fmt.Errorf("file services require non-empty absolute path")
 	}
 	if !filepath.IsAbs(path) {
-		return fmt.Errorf("file service path %q must be absolute", path)
+		return PathMustBeAbsoluteError(path)
 	}
 	info, err := os.Stat(path)
 	if err != nil {

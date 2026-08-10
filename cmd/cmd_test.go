@@ -47,6 +47,8 @@ func runAddCmd(t *testing.T, args []string, flags map[string]string) error {
 	addCmd.Flags().Set("domain", "")
 	addCmd.Flags().Set("acme-email", "")
 	addCmd.Flags().Set("control-url", "")
+	addCmd.Flags().Set("wait", "0s")
+	addCmd.Flags().Set("dry-run", "false")
 
 	for k, v := range flags {
 		addCmd.Flags().Set(k, v)
@@ -79,6 +81,8 @@ func runAddCmdOutput(t *testing.T, args []string, flags map[string]string) (stri
 	addCmd.Flags().Set("domain", "")
 	addCmd.Flags().Set("acme-email", "")
 	addCmd.Flags().Set("control-url", "")
+	addCmd.Flags().Set("wait", "0s")
+	addCmd.Flags().Set("dry-run", "false")
 
 	for k, v := range flags {
 		addCmd.Flags().Set(k, v)

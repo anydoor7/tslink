@@ -7,12 +7,15 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/monody0007/tslink/internal/output"
 	"github.com/monody0007/tslink/internal/registry"
+	tsruntime "github.com/monody0007/tslink/internal/runtime"
 )
 
 var (
@@ -59,7 +62,7 @@ func compiledTSLinkBinary(t *testing.T) string {
 func runCompiledTSLink(t *testing.T, home, stdin string, args ...string) (stdout, stderr string, exitCode int) {
 	t.Helper()
 	cmd := exec.Command(compiledTSLinkBinary(t), args...)
-	cmd.Env = append(os.Environ(), "HOME="+home, "TSLINK_DISABLE_KEYRING=1")
+	cmd.Env = append(os.Environ(), "HOME="+home, "TSLINK_CONFIG_DIR=", "TSLINK_DISABLE_KEYRING=1")
 	cmd.Stdin = strings.NewReader(stdin)
 	var outBuf, errBuf bytes.Buffer
 	cmd.Stdout = &outBuf
@@ -68,6 +71,31 @@ func runCompiledTSLink(t *testing.T, home, stdin string, args ...string) (stdout
 	exitCode = 0
 	if err != nil {
 		exitCode = 1
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
+		} else {
+			t.Fatalf("run tslink %v: %v", args, err)
+		}
+	}
+	return outBuf.String(), errBuf.String(), exitCode
+}
+
+func runCompiledTSLinkWithConfigDir(t *testing.T, configDir, stdin string, args ...string) (stdout, stderr string, exitCode int) {
+	t.Helper()
+	return runTSLinkBinaryWithConfigDir(t, compiledTSLinkBinary(t), configDir, stdin, args...)
+}
+
+func runTSLinkBinaryWithConfigDir(t *testing.T, binary, configDir, stdin string, args ...string) (stdout, stderr string, exitCode int) {
+	t.Helper()
+	cmd := exec.Command(binary, args...)
+	cmd.Env = append(os.Environ(), "TSLINK_CONFIG_DIR="+configDir, "TSLINK_DISABLE_KEYRING=1")
+	cmd.Stdin = strings.NewReader(stdin)
+	var outBuf, errBuf bytes.Buffer
+	cmd.Stdout = &outBuf
+	cmd.Stderr = &errBuf
+	err := cmd.Run()
+	exitCode = output.ExitSuccess
+	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			exitCode = exitErr.ExitCode()
 		} else {
@@ -225,4 +253,187 @@ func TestCompiledAPIRuntimePersistenceErrorEnvelope(t *testing.T) {
 	if len(results) != 1 || results[0].OK || results[0].Error == nil || results[0].Error.Code != "internal_error" {
 		t.Fatalf("runtime failure result = %+v", results)
 	}
+}
+
+func TestCompiledCLIAndAPIValidationErrorsMatch(t *testing.T) {
+	tests := []struct {
+		name     string
+		cliArgs  []string
+		apiInput string
+		wantCode string
+	}{
+		{"missing service type", []string{"add", "web", "--json"}, `{"action":"add","name":"web"}` + "\n", registry.CodeServiceTypeAmbiguous},
+		{"invalid service name", []string{"add", "BAD_NAME", "--proxy", "localhost:3000", "--json"}, `{"action":"add","name":"BAD_NAME","type":"proxy","target":"localhost:3000"}` + "\n", registry.CodeInvalidServiceName},
+		{"invalid tag", []string{"add", "web", "--proxy", "localhost:3000", "--tags", "tag:Web", "--json"}, `{"action":"add","name":"web","type":"proxy","target":"localhost:3000","tags":["tag:Web"]}` + "\n", registry.CodeInvalidTag},
+		{"tcp allow unsupported", []string{"add", "db", "--tcp", "localhost:5432", "--allow", "alice@example.com", "--json"}, `{"action":"add","name":"db","type":"tcp","target":"localhost:5432","allow":["alice@example.com"]}` + "\n", registry.CodeAllowUnsupportedTCP},
+		{"relative path", []string{"add", "docs", "--dir", "relative", "--json"}, `{"action":"add","name":"docs","type":"file","path":"relative"}` + "\n", registry.CodePathMustBeAbsolute},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cliOut, cliErr, cliExit := runCompiledTSLink(t, t.TempDir(), "", tc.cliArgs...)
+			apiOut, apiErr, apiExit := runCompiledTSLink(t, t.TempDir(), tc.apiInput, "api")
+			if cliErr != "" || apiErr != "" {
+				t.Fatalf("stderr cli=%q api=%q", cliErr, apiErr)
+			}
+			if cliExit != output.ExitUsage || apiExit != output.ExitUsage || cliExit != apiExit {
+				t.Fatalf("exit cli=%d api=%d, want %d", cliExit, apiExit, output.ExitUsage)
+			}
+			cliResults := parseCompiledJSONLines(t, cliOut)
+			apiResults := parseCompiledJSONLines(t, apiOut)
+			if len(cliResults) != 1 || len(apiResults) != 1 || cliResults[0].Error == nil || apiResults[0].Error == nil {
+				t.Fatalf("results cli=%+v api=%+v", cliResults, apiResults)
+			}
+			if cliResults[0].Error.Code != tc.wantCode || apiResults[0].Error.Code != tc.wantCode {
+				t.Fatalf("error.code cli=%q api=%q, want %q", cliResults[0].Error.Code, apiResults[0].Error.Code, tc.wantCode)
+			}
+			if len(cliResults[0].Error.Next) == 0 || len(apiResults[0].Error.Next) == 0 {
+				t.Fatalf("next missing cli=%+v api=%+v", cliResults[0].Error, apiResults[0].Error)
+			}
+		})
+	}
+}
+
+func compiledResultDataJSON(t *testing.T, stdout string) []byte {
+	t.Helper()
+	var envelope struct {
+		OK   bool            `json:"ok"`
+		Data json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &envelope); err != nil {
+		t.Fatalf("decode result: %v\nstdout=%s", err, stdout)
+	}
+	if !envelope.OK || len(envelope.Data) == 0 {
+		t.Fatalf("result = %s, want one success with data", stdout)
+	}
+	return append([]byte(nil), envelope.Data...)
+}
+
+func TestCompiledCLIAndAPIStatusDataAreByteIsomorphic(t *testing.T) {
+	configDir := t.TempDir()
+	regPath := filepath.Join(configDir, "registry.json")
+	if _, err := registry.Add(regPath, registry.Service{Name: "web", Type: registry.TypeProxy, Target: "http://localhost:3000"}); err != nil {
+		t.Fatalf("registry.Add: %v", err)
+	}
+	for _, tc := range []struct {
+		name     string
+		cliArgs  []string
+		apiInput string
+	}{
+		{"status", []string{"status", "--json"}, `{"action":"status"}` + "\n"},
+		{"status urls", []string{"status", "--urls", "--json"}, `{"action":"status","urls":true}` + "\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cliOut, cliErr, cliExit := runCompiledTSLinkWithConfigDir(t, configDir, "", tc.cliArgs...)
+			apiOut, apiErr, apiExit := runCompiledTSLinkWithConfigDir(t, configDir, tc.apiInput, "api")
+			if cliExit != 0 || apiExit != 0 || cliErr != "" || apiErr != "" {
+				t.Fatalf("cli exit=%d err=%q; api exit=%d err=%q", cliExit, cliErr, apiExit, apiErr)
+			}
+			cliData := compiledResultDataJSON(t, cliOut)
+			apiData := compiledResultDataJSON(t, apiOut)
+			if !bytes.Equal(cliData, apiData) {
+				t.Fatalf("data mismatch\ncli=%s\napi=%s", cliData, apiData)
+			}
+		})
+	}
+}
+
+func TestCompiledAgentE2EAddURLListRemove(t *testing.T) {
+	configDir := t.TempDir()
+	if requested := os.Getenv("TSLINK_E2E_CONFIG_DIR"); requested != "" {
+		if filepath.Clean(requested) != "/tmp/tslink-verify-A" {
+			t.Fatalf("TSLINK_E2E_CONFIG_DIR = %q, only /tmp/tslink-verify-A is accepted", requested)
+		}
+		if err := os.MkdirAll(requested, 0o700); err != nil {
+			t.Fatalf("create requested E2E config dir: %v", err)
+		}
+		entries, err := os.ReadDir(requested)
+		if err != nil {
+			t.Fatalf("read requested E2E config dir: %v", err)
+		}
+		if len(entries) != 0 {
+			t.Fatalf("requested E2E config dir must start empty: %s", requested)
+		}
+		configDir = requested
+	}
+	binary := compiledTSLinkBinary(t)
+	if requested := os.Getenv("TSLINK_E2E_BINARY"); requested != "" {
+		if !filepath.IsAbs(requested) {
+			t.Fatalf("TSLINK_E2E_BINARY must be absolute: %q", requested)
+		}
+		binary = requested
+	}
+	addOut, addErr, addExit := runTSLinkBinaryWithConfigDir(t, binary, configDir, "", "add", "e2e-app", "--proxy", "localhost:3000", "--json")
+	if addExit != 0 || addErr != "" {
+		t.Fatalf("add exit=%d stderr=%q stdout=%s", addExit, addErr, addOut)
+	}
+	t.Logf("add stdout: %s", strings.TrimSpace(addOut))
+
+	regPath := filepath.Join(configDir, "registry.json")
+	reg, err := registry.Load(regPath)
+	if err != nil {
+		t.Fatalf("load registry: %v", err)
+	}
+	if len(reg.Services) != 1 {
+		t.Fatalf("load registry: services=%d, want 1", len(reg.Services))
+	}
+	daemonFixture := exec.Command(binary, "api")
+	daemonFixture.Env = append(os.Environ(), "TSLINK_CONFIG_DIR="+configDir, "TSLINK_DISABLE_KEYRING=1")
+	daemonInput, err := daemonFixture.StdinPipe()
+	if err != nil {
+		t.Fatalf("create daemon fixture input: %v", err)
+	}
+	if err := daemonFixture.Start(); err != nil {
+		t.Fatalf("start daemon identity fixture: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = daemonInput.Close()
+		_ = daemonFixture.Wait()
+	})
+
+	pidPath := filepath.Join(configDir, "tslink.pid")
+	if err := os.WriteFile(pidPath, []byte(strconv.Itoa(daemonFixture.Process.Pid)), 0o600); err != nil {
+		t.Fatalf("write pid fixture: %v", err)
+	}
+	pidInfo, err := os.Stat(pidPath)
+	if err != nil {
+		t.Fatalf("stat pid fixture: %v", err)
+	}
+	fingerprint, err := tsruntime.RegistryFingerprint(reg)
+	if err != nil {
+		t.Fatalf("fingerprint: %v", err)
+	}
+	snapshot := tsruntime.NewSnapshot(daemonFixture.Process.Pid, pidInfo.ModTime(), fingerprint, pidInfo.ModTime().Add(time.Second), []tsruntime.ServiceState{{
+		Service: reg.Services[0], RuntimeHost: "node.example.ts.net",
+	}})
+	if err := tsruntime.Save(filepath.Join(configDir, "runtime.json"), snapshot); err != nil {
+		t.Fatalf("save runtime fixture: %v", err)
+	}
+
+	urlOut, urlErr, urlExit := runTSLinkBinaryWithConfigDir(t, binary, configDir, "", "url", "e2e-app", "--raw")
+	if urlExit != 0 || urlErr != "" || urlOut != "https://node.example.ts.net\n" || len(urlOut) >= 60 {
+		t.Fatalf("url exit=%d stderr=%q stdout=%q bytes=%d", urlExit, urlErr, urlOut, len(urlOut))
+	}
+	t.Logf("url stdout: %s", strings.TrimSpace(urlOut))
+
+	listOut, listErr, listExit := runTSLinkBinaryWithConfigDir(t, binary, configDir, "", "list", "--name", "e2e-app", "--fields", "name,url", "--json")
+	if listExit != 0 || listErr != "" || !strings.Contains(listOut, `"url":"https://node.example.ts.net"`) {
+		t.Fatalf("list exit=%d stderr=%q stdout=%s", listExit, listErr, listOut)
+	}
+	t.Logf("list stdout: %s", strings.TrimSpace(listOut))
+
+	removeOut, removeErr, removeExit := runTSLinkBinaryWithConfigDir(t, binary, configDir, "", "remove", "e2e-app", "--json")
+	if removeExit != 0 || removeErr != "" || registryServiceCountAtPath(t, regPath) != 0 {
+		t.Fatalf("remove exit=%d stderr=%q stdout=%s", removeExit, removeErr, removeOut)
+	}
+	t.Logf("remove stdout: %s", strings.TrimSpace(removeOut))
+}
+
+func registryServiceCountAtPath(t *testing.T, regPath string) int {
+	t.Helper()
+	reg, err := registry.Load(regPath)
+	if err != nil {
+		t.Fatalf("load registry: %v", err)
+	}
+	return len(reg.Services)
 }

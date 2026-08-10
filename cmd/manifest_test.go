@@ -1,6 +1,12 @@
 package cmd
 
-import "testing"
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+
+	"github.com/monody0007/tslink/internal/registry"
+)
 
 func TestManifestCarriesMachineConsumerFacts(t *testing.T) {
 	m := Manifest()
@@ -104,6 +110,70 @@ func TestManifestCommandsCarryInheritedFlags(t *testing.T) {
 	assertFlag("tslink tags delete-remote", "force")
 	assertFlag("tslink tags delete-remote", "manage-acl")
 	assertFlag("tslink status", "json")
+}
+
+func TestManifestFlagsAreSelfDescribingAndRelationshipsAreExplicit(t *testing.T) {
+	m := Manifest()
+	commands := map[string]CommandInfo{}
+	for _, command := range m.Commands {
+		commands[command.Path] = command
+		for _, flag := range command.Flags {
+			if strings.TrimSpace(flag.Usage) == "" {
+				t.Fatalf("%s --%s has empty usage", command.Path, flag.Name)
+			}
+		}
+	}
+
+	flag := func(command, name string) FlagInfo {
+		t.Helper()
+		for _, candidate := range commands[command].Flags {
+			if candidate.Name == name {
+				return candidate
+			}
+		}
+		t.Fatalf("%s missing --%s", command, name)
+		return FlagInfo{}
+	}
+	proxy := flag("tslink add", "proxy")
+	if !containsString(proxy.OneOf, "--dir") || !containsString(proxy.OneOf, "--tcp") {
+		t.Fatalf("add --proxy one_of = %v", proxy.OneOf)
+	}
+	funnel := flag("tslink add", "funnel")
+	if !containsString(funnel.Requires, "--public") || !containsString(funnel.Conflicts, "--allow") {
+		t.Fatalf("add --funnel relationships = %+v", funnel)
+	}
+	for _, name := range []string{"domain", "acme-email"} {
+		reserved := flag("tslink add", name)
+		if !strings.HasPrefix(reserved.Usage, "[UNAVAILABLE]") {
+			t.Fatalf("add --%s usage = %q, want [UNAVAILABLE] prefix", name, reserved.Usage)
+		}
+	}
+}
+
+func TestCompactManifestStaysBelowAgentTokenBudget(t *testing.T) {
+	data, err := json.Marshal(CompactManifest())
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	if len(data) >= 2000 {
+		t.Fatalf("compact manifest = %d bytes, want < 2000", len(data))
+	}
+	compact := CompactManifest()
+	if compact.ErrorCodes[registry.CodeURLNotReady] != 5 {
+		t.Fatalf("url_not_ready exit = %d, want 5", compact.ErrorCodes[registry.CodeURLNotReady])
+	}
+	if _, ok := compact.Commands["url"]; !ok {
+		t.Fatal("compact manifest missing url command")
+	}
+}
+
+func TestManifestPlatformDescriptionsAreStable(t *testing.T) {
+	if got := platformNeutralCommandShort("tslink install", "Install as macOS LaunchAgent"); strings.Contains(got, "macOS") {
+		t.Fatalf("install short = %q, want platform-neutral description", got)
+	}
+	if got := platformNeutralCommandShort("tslink uninstall", "Remove systemd unit"); strings.Contains(got, "systemd") {
+		t.Fatalf("uninstall short = %q, want platform-neutral description", got)
+	}
 }
 
 func containsString(values []string, want string) bool {

@@ -106,11 +106,10 @@ func ServiceViewFor(svc registry.Service) ServiceView {
 }
 
 func endpointFor(svc registry.Service) EndpointView {
-	host := tailnetHost(svc.Name)
-
 	switch svc.Type {
 	case registry.TypeTCP:
 		port := tcpPort(svc)
+		host := fmt.Sprintf("%s.<tailnet>.ts.net", svc.Name)
 		display := host
 		if port > 0 {
 			display = net.JoinHostPort(host, strconv.Itoa(port))
@@ -128,17 +127,13 @@ func endpointFor(svc registry.Service) EndpointView {
 			kind = EndpointKindPublicHTTPS
 		}
 		return EndpointView{
-			Kind:    kind,
-			Display: "https://" + host,
-			State:   EndpointStateExpected,
-			Host:    host,
+			Kind:  kind,
+			State: EndpointStateExpected,
 		}
 	default:
 		return EndpointView{
-			Kind:    EndpointKindUnknown,
-			Display: host,
-			State:   EndpointStateExpected,
-			Host:    host,
+			Kind:  EndpointKindUnknown,
+			State: EndpointStateExpected,
 		}
 	}
 }
@@ -282,10 +277,6 @@ func redactedEntriesSummary(mode string, entries []string) SummaryView {
 		Count:    len(entries),
 		Redacted: true,
 	}
-}
-
-func tailnetHost(name string) string {
-	return fmt.Sprintf("%s.<tailnet>.ts.net", name)
 }
 
 func tcpPort(svc registry.Service) int {

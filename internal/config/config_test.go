@@ -10,6 +10,7 @@ import (
 )
 
 func TestDir(t *testing.T) {
+	t.Setenv(ConfigDirEnv, "")
 	dir, err := Dir()
 	if err != nil {
 		t.Fatalf("Dir() error = %v", err)
@@ -19,6 +20,20 @@ func TestDir(t *testing.T) {
 	want := filepath.Join(home, ".config", "tslink")
 	if dir != want {
 		t.Fatalf("Dir() = %q, want %q", dir, want)
+	}
+}
+
+func TestDirPrefersTSLinkConfigDir(t *testing.T) {
+	override := filepath.Join(t.TempDir(), "isolated", "tslink")
+	t.Setenv(ConfigDirEnv, override)
+	t.Setenv("HOME", filepath.Join(t.TempDir(), "must-not-be-used"))
+
+	dir, err := Dir()
+	if err != nil {
+		t.Fatalf("Dir() error = %v", err)
+	}
+	if dir != override {
+		t.Fatalf("Dir() = %q, want TSLINK_CONFIG_DIR %q", dir, override)
 	}
 }
 

@@ -82,13 +82,11 @@ func decodeCompiledDoctor(t *testing.T, stdout string) DoctorResult {
 	if err != nil {
 		t.Fatalf("marshal doctor data: %v", err)
 	}
-	var data struct {
-		Doctor DoctorResult `json:"doctor"`
-	}
+	var data DoctorResult
 	if err := json.Unmarshal(dataBytes, &data); err != nil {
 		t.Fatalf("decode doctor payload: %v", err)
 	}
-	return data.Doctor
+	return data
 }
 
 func TestCompiledDoctorJSONHealthFixtures(t *testing.T) {
