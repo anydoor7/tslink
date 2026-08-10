@@ -5,3 +5,7 @@ coverage*.out
 coverage*.html
 dist/
 RELEASE.md
+
+# Generated HTML previews of the READMEs (not source)
+README.html
+README_zh.html

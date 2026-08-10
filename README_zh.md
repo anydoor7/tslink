@@ -85,171 +85,37 @@ tslink serve --daemon
 
 ### 安装
 
-```bash
-# 首个公开 release 前的源码安装（任何平台）
-git clone https://github.com/monody0007/tslink.git
-cd tslink
-go install .
-
-# Homebrew cask 和预构建归档只在首个公开 release 与产物/tap readback 后可用。
-```
-
-### 发布产物
-
-当前还没有公开 tag/release，Homebrew tap 也尚未发布可安装产物。首个公开
-release/readback 前请从源码安装。该外部 gate 通过后，GitHub Releases 预计发布以下可安装产物：
-
-| 平台 | 产物 | 说明 |
-|---|---|---|
-| macOS | Homebrew cask 和 `tar.gz` 归档 | Homebrew cask 使用 GoReleaser `skip_upload: auto`，pre-release tag 可以跳过 tap upload 且不让发布失败。预发布验证优先使用归档产物。 |
-| Linux | `.deb`、`.rpm` 和 `tar.gz` 归档 | 包内包含原生 `tslink` 二进制。安装后用 `tslink install` 注册 user service。 |
-| Windows | `.zip` 归档 | Windows 当前是 archive-only 支持。尚未提供 MSI/MSIX/Winget 包或 Windows 代码签名安装器。解压后用 `tslink install` 注册 Startup 自启动。 |
-
-发布产物是并列的 release assets，不是嵌入归档内部的文件。GoReleaser 会上传可安装归档/包、`checksums.txt`、归档对应的 CycloneDX SBOM sidecar，以及 `checksums.txt` 和 SBOM sidecar 的 keyless Sigstore bundle 签名。签名后的 `checksums.txt` 覆盖可安装产物和 SBOM sidecar。release workflow 还会为可安装产物和供应链 sidecar 发布 GitHub artifact attestations。
-
-### 验证发布完整性
-
-下面命令需要 `gh` 2.49 或更新版本并支持 `gh attestation verify`，`cosign` 支持 `verify-blob --bundle`，以及 `sha256sum` 或 `shasum`。将 `<version>` 替换为 GitHub Release tag，将 `<artifact>` 替换为该 release 里的产物文件名。
-
-Sigstore 证书的信任根是 GitHub Actions OIDC issuer `https://token.actions.githubusercontent.com`。验证会钉住精确的 release workflow 身份 `https://github.com/monody0007/tslink/.github/workflows/release.yml@refs/tags/<version>`，以及 GitHub attestation signer workflow `github.com/monody0007/tslink/.github/workflows/release.yml`。tag ref 绑定意味着匹配的签名或 attestation 必须来自本仓库对该 tag 运行的 release workflow。
+需要 Go 1.26.5 或更高版本。
 
 ```bash
-set -euo pipefail
+go install github.com/monody0007/tslink@latest
 
-repo="monody0007/tslink"
-version="<version>"
-artifact="<artifact>"
-
-sha256_file() {
-  if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$1" | awk '{print $1}'
-  elif command -v shasum >/dev/null 2>&1; then
-    shasum -a 256 "$1" | awk '{print $1}'
-  else
-    echo "missing checksum tool: install sha256sum or shasum" >&2
-    exit 1
-  fi
-}
-
-require_file() {
-  if [ ! -f "$1" ]; then
-    echo "missing downloaded release asset: $1" >&2
-    exit 1
-  fi
-}
-
-verify_checksum() {
-  file="$1"
-  require_file "$file"
-  require_file "checksums.txt"
-
-  expected="$(awk -v file="$file" '$2 == file {print $1}' checksums.txt)"
-  if [ -z "$expected" ]; then
-    echo "missing checksum entry for $file in checksums.txt" >&2
-    exit 1
-  fi
-
-  actual="$(sha256_file "$file")"
-  if [ "$actual" != "$expected" ]; then
-    echo "checksum mismatch for $file" >&2
-    echo "expected: $expected" >&2
-    echo "actual:   $actual" >&2
-    exit 1
-  fi
-}
-
-mkdir -p "tslink-$version-verify"
-cd "tslink-$version-verify"
-
-gh release download "$version" --repo "$repo" \
-  --pattern "$artifact" \
-  --pattern "checksums.txt" \
-  --pattern "checksums.txt.sigstore.json"
-
-require_file "$artifact"
-require_file "checksums.txt"
-require_file "checksums.txt.sigstore.json"
-verify_checksum "$artifact"
-
-cosign verify-blob checksums.txt \
-  --bundle checksums.txt.sigstore.json \
-  --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-  --certificate-identity "https://github.com/$repo/.github/workflows/release.yml@refs/tags/$version"
-
-gh attestation verify "$artifact" \
-  --repo "$repo" \
-  --source-ref "refs/tags/$version" \
-  --signer-workflow "github.com/$repo/.github/workflows/release.yml"
+# 二进制装到 $(go env GOPATH)/bin，该目录默认不在 PATH 中：
+export PATH="$PATH:$(go env GOPATH)/bin"
 ```
 
-归档 SBOM sidecar 是独立 release asset，需要单独验证。请在归档验证后的同一个验证目录中运行，使用相同的 `version` 和 `artifact`。
+Homebrew 与预构建归档随首个 tagged release 提供。在那之前，源码安装是受支持的路径。
+从 clone 构建同样可行：
 
 ```bash
-set -euo pipefail
-
-repo="monody0007/tslink"
-version="<version>"
-artifact="<artifact>"
-sbom="$artifact.sbom.json"
-
-sha256_file() {
-  if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$1" | awk '{print $1}'
-  elif command -v shasum >/dev/null 2>&1; then
-    shasum -a 256 "$1" | awk '{print $1}'
-  else
-    echo "missing checksum tool: install sha256sum or shasum" >&2
-    exit 1
-  fi
-}
-
-require_file() {
-  if [ ! -f "$1" ]; then
-    echo "missing downloaded release asset: $1" >&2
-    exit 1
-  fi
-}
-
-verify_checksum() {
-  file="$1"
-  require_file "$file"
-  require_file "checksums.txt"
-
-  expected="$(awk -v file="$file" '$2 == file {print $1}' checksums.txt)"
-  if [ -z "$expected" ]; then
-    echo "missing checksum entry for $file in checksums.txt" >&2
-    exit 1
-  fi
-
-  actual="$(sha256_file "$file")"
-  if [ "$actual" != "$expected" ]; then
-    echo "checksum mismatch for $file" >&2
-    echo "expected: $expected" >&2
-    echo "actual:   $actual" >&2
-    exit 1
-  fi
-}
-
-gh release download "$version" --repo "$repo" \
-  --pattern "$sbom" \
-  --pattern "$sbom.sigstore.json"
-
-require_file "$sbom"
-require_file "$sbom.sigstore.json"
-verify_checksum "$sbom"
-
-cosign verify-blob "$sbom" \
-  --bundle "$sbom.sigstore.json" \
-  --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-  --certificate-identity "https://github.com/$repo/.github/workflows/release.yml@refs/tags/$version"
-
-gh attestation verify "$sbom" \
-  --repo "$repo" \
-  --source-ref "refs/tags/$version" \
-  --signer-workflow "github.com/$repo/.github/workflows/release.yml"
+git clone https://github.com/monody0007/tslink.git && cd tslink && go install .
 ```
 
-### 30 秒上手
+### 从零到一个 URL
+
+一条命令，不用注册账号，不用复制任何 token：
+
+```bash
+tslink share ./build
+```
+
+TSLink 会注册这个目录，daemon 没在跑就顺手启动，然后打印一个 Tailscale 授权 URL。
+打开它、批准这个节点，命令就返回真实 URL。用手机、平板或 tailnet 上任何其它设备打开即可。
+
+不需要 API token，不需要 OAuth client，不用去 admin console。节点以你的身份入网，
+因此它自己不需要任何 ACL 策略。
+
+如果你更想显式注册服务并长期保留：
 
 ```bash
 # 1. 暴露本地 Web 服务
@@ -522,6 +388,162 @@ macOS LaunchAgent 安装会使用 launchd `KeepAlive` 和 `ThrottleInterval=30`�
 - [ ] Headscale 端到端测试
 - [x] 已交付 owner 工作流的本地 API parity
 - [ ] 经过集成测试的 Layer 2 模块和可选远程/管理面
+
+#### 发布产物
+
+当前还没有公开 tag/release，Homebrew tap 也尚未发布可安装产物。首个公开
+release/readback 前请从源码安装。该外部 gate 通过后，GitHub Releases 预计发布以下可安装产物：
+
+| 平台 | 产物 | 说明 |
+|---|---|---|
+| macOS | Homebrew cask 和 `tar.gz` 归档 | Homebrew cask 使用 GoReleaser `skip_upload: auto`，pre-release tag 可以跳过 tap upload 且不让发布失败。预发布验证优先使用归档产物。 |
+| Linux | `.deb`、`.rpm` 和 `tar.gz` 归档 | 包内包含原生 `tslink` 二进制。安装后用 `tslink install` 注册 user service。 |
+| Windows | `.zip` 归档 | Windows 当前是 archive-only 支持。尚未提供 MSI/MSIX/Winget 包或 Windows 代码签名安装器。解压后用 `tslink install` 注册 Startup 自启动。 |
+
+发布产物是并列的 release assets，不是嵌入归档内部的文件。GoReleaser 会上传可安装归档/包、`checksums.txt`、归档对应的 CycloneDX SBOM sidecar，以及 `checksums.txt` 和 SBOM sidecar 的 keyless Sigstore bundle 签名。签名后的 `checksums.txt` 覆盖可安装产物和 SBOM sidecar。release workflow 还会为可安装产物和供应链 sidecar 发布 GitHub artifact attestations。
+
+#### 验证发布完整性
+
+下面命令需要 `gh` 2.49 或更新版本并支持 `gh attestation verify`，`cosign` 支持 `verify-blob --bundle`，以及 `sha256sum` 或 `shasum`。将 `<version>` 替换为 GitHub Release tag，将 `<artifact>` 替换为该 release 里的产物文件名。
+
+Sigstore 证书的信任根是 GitHub Actions OIDC issuer `https://token.actions.githubusercontent.com`。验证会钉住精确的 release workflow 身份 `https://github.com/monody0007/tslink/.github/workflows/release.yml@refs/tags/<version>`，以及 GitHub attestation signer workflow `github.com/monody0007/tslink/.github/workflows/release.yml`。tag ref 绑定意味着匹配的签名或 attestation 必须来自本仓库对该 tag 运行的 release workflow。
+
+```bash
+set -euo pipefail
+
+repo="monody0007/tslink"
+version="<version>"
+artifact="<artifact>"
+
+sha256_file() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | awk '{print $1}'
+  else
+    echo "missing checksum tool: install sha256sum or shasum" >&2
+    exit 1
+  fi
+}
+
+require_file() {
+  if [ ! -f "$1" ]; then
+    echo "missing downloaded release asset: $1" >&2
+    exit 1
+  fi
+}
+
+verify_checksum() {
+  file="$1"
+  require_file "$file"
+  require_file "checksums.txt"
+
+  expected="$(awk -v file="$file" '$2 == file {print $1}' checksums.txt)"
+  if [ -z "$expected" ]; then
+    echo "missing checksum entry for $file in checksums.txt" >&2
+    exit 1
+  fi
+
+  actual="$(sha256_file "$file")"
+  if [ "$actual" != "$expected" ]; then
+    echo "checksum mismatch for $file" >&2
+    echo "expected: $expected" >&2
+    echo "actual:   $actual" >&2
+    exit 1
+  fi
+}
+
+mkdir -p "tslink-$version-verify"
+cd "tslink-$version-verify"
+
+gh release download "$version" --repo "$repo" \
+  --pattern "$artifact" \
+  --pattern "checksums.txt" \
+  --pattern "checksums.txt.sigstore.json"
+
+require_file "$artifact"
+require_file "checksums.txt"
+require_file "checksums.txt.sigstore.json"
+verify_checksum "$artifact"
+
+cosign verify-blob checksums.txt \
+  --bundle checksums.txt.sigstore.json \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+  --certificate-identity "https://github.com/$repo/.github/workflows/release.yml@refs/tags/$version"
+
+gh attestation verify "$artifact" \
+  --repo "$repo" \
+  --source-ref "refs/tags/$version" \
+  --signer-workflow "github.com/$repo/.github/workflows/release.yml"
+```
+
+归档 SBOM sidecar 是独立 release asset，需要单独验证。请在归档验证后的同一个验证目录中运行，使用相同的 `version` 和 `artifact`。
+
+```bash
+set -euo pipefail
+
+repo="monody0007/tslink"
+version="<version>"
+artifact="<artifact>"
+sbom="$artifact.sbom.json"
+
+sha256_file() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | awk '{print $1}'
+  else
+    echo "missing checksum tool: install sha256sum or shasum" >&2
+    exit 1
+  fi
+}
+
+require_file() {
+  if [ ! -f "$1" ]; then
+    echo "missing downloaded release asset: $1" >&2
+    exit 1
+  fi
+}
+
+verify_checksum() {
+  file="$1"
+  require_file "$file"
+  require_file "checksums.txt"
+
+  expected="$(awk -v file="$file" '$2 == file {print $1}' checksums.txt)"
+  if [ -z "$expected" ]; then
+    echo "missing checksum entry for $file in checksums.txt" >&2
+    exit 1
+  fi
+
+  actual="$(sha256_file "$file")"
+  if [ "$actual" != "$expected" ]; then
+    echo "checksum mismatch for $file" >&2
+    echo "expected: $expected" >&2
+    echo "actual:   $actual" >&2
+    exit 1
+  fi
+}
+
+gh release download "$version" --repo "$repo" \
+  --pattern "$sbom" \
+  --pattern "$sbom.sigstore.json"
+
+require_file "$sbom"
+require_file "$sbom.sigstore.json"
+verify_checksum "$sbom"
+
+cosign verify-blob "$sbom" \
+  --bundle "$sbom.sigstore.json" \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+  --certificate-identity "https://github.com/$repo/.github/workflows/release.yml@refs/tags/$version"
+
+gh attestation verify "$sbom" \
+  --repo "$repo" \
+  --source-ref "refs/tags/$version" \
+  --signer-workflow "github.com/$repo/.github/workflows/release.yml"
+```
+
 
 ## 贡献
 
