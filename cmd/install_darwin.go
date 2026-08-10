@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/monody0007/tslink/internal/atomicfile"
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/output"
 	"github.com/spf13/cobra"
@@ -36,6 +37,9 @@ var (
 	installDaemonConflictFn = func() error {
 		return detectInstallDaemonConflict("no LaunchAgent plist is installed, so stop the manual daemon with 'tslink stop' and retry 'tslink install'; if launchd owns it, run 'tslink uninstall' first so KeepAlive cannot restart it")
 	}
+	installDaemonArtifactConflictFn = func() error {
+		return detectInstallDaemonConflict("a LaunchAgent plist is installed, but TSLink could not confirm that launchd owns the running daemon; stop the manual daemon with 'tslink stop' and retry 'tslink install'; keep the existing plist installed")
+	}
 	launchAgentVerifyTimeout       = launchAgentStartupTimeout
 	launchAgentVerifyPollInterval  = launchAgentStartupPollInterval
 	launchAgentBootoutTimeout      = launchAgentShutdownTimeout
@@ -52,12 +56,13 @@ const launchAgentStartupPollInterval = 50 * time.Millisecond
 const launchAgentShutdownTimeout = 3 * time.Minute
 
 type launchctlLoadResult struct {
-	Domain       string
-	Target       string
-	Output       string
-	Err          error
-	Warning      string
-	Bootstrapped bool
+	Domain        string
+	Target        string
+	Output        string
+	Err           error
+	Warning       string
+	Bootstrapped  bool
+	BootoutFailed bool
 }
 
 type launchAgentPreviousState struct {
@@ -188,13 +193,16 @@ Headless/SSH caveat:
 		if err := plistTemplate.Execute(&plist, data); err != nil {
 			return fmt.Errorf("write plist: %w", err)
 		}
-		if err := os.WriteFile(plistPath, plist.Bytes(), 0o644); err != nil {
+		if err := atomicfile.WriteFile(plistPath, plist.Bytes()); err != nil {
 			return fmt.Errorf("write plist: %w", err)
 		}
 
 		loadResult := reinstallLaunchAgent(plistPath)
 		if loadResult.Err != nil {
 			warning := loadResult.Warning
+			if warning == "" && loadResult.BootoutFailed {
+				warning = launchctlWarning("LaunchAgent plist was written, but the existing launchd job could not be booted out", loadResult.Err, []byte(loadResult.Output))
+			}
 			if warning == "" {
 				warning = launchctlWarning("LaunchAgent plist installed but the service did not reach running state", loadResult.Err, []byte(loadResult.Output))
 			}
@@ -210,7 +218,7 @@ Headless/SSH caveat:
 				if restoreResult.Reloaded {
 					return fmt.Errorf("%s; upgrade failed, so the previous LaunchAgent plist was restored and reloaded in %s; fix the reported cause and re-run 'tslink install'", warning, previousState.Domain)
 				}
-				return fmt.Errorf("%s; upgrade failed, so the previous LaunchAgent plist was restored; no prior launchd-owned running daemon was identified, so no job was reloaded; fix the reported cause and re-run 'tslink install'", warning)
+				return fmt.Errorf("%s; upgrade failed, so the previous LaunchAgent plist was restored; the install handoff checked and booted out both launchd service targets, but no prior launchd-owned running daemon was identified, so no job was reloaded; fix the reported cause and re-run 'tslink install'", warning)
 			}
 			if loadResult.Bootstrapped {
 				if rollbackErr := rollbackNewLaunchAgent(loadResult.Target, plistPath); rollbackErr != nil {
@@ -263,7 +271,7 @@ func captureLaunchAgentPreviousState(plistPath string) (launchAgentPreviousState
 	state := launchAgentPreviousState{
 		Existed: true,
 		Plist:   plist,
-		Mode:    info.Mode().Perm(),
+		Mode:    secureLaunchAgentMode(info.Mode().Perm()),
 	}
 
 	domain, target, owned := launchAgentTargetForRunningDaemon()
@@ -272,7 +280,7 @@ func captureLaunchAgentPreviousState(plistPath string) (launchAgentPreviousState
 		state.Target = target
 		return state, nil
 	}
-	if err := installDaemonConflictFn(); err != nil {
+	if err := installDaemonArtifactConflictFn(); err != nil {
 		return launchAgentPreviousState{}, err
 	}
 	return state, nil
@@ -331,9 +339,10 @@ func reinstallLaunchAgent(plistPath string) launchctlLoadResult {
 	userDomain := launchctlUserDomain()
 	if err := bootoutLaunchAgentTargets(guiDomain, userDomain); err != nil {
 		return launchctlLoadResult{
-			Domain: guiDomain,
-			Target: launchctlServiceTargetForDomain(guiDomain),
-			Err:    err,
+			Domain:        guiDomain,
+			Target:        launchctlServiceTargetForDomain(guiDomain),
+			Err:           err,
+			BootoutFailed: true,
 		}
 	}
 
@@ -519,8 +528,12 @@ func restorePreviousLaunchAgent(previous launchAgentPreviousState, loadResult la
 		}
 	}
 
-	if err := os.WriteFile(plistPath, previous.Plist, previous.Mode); err != nil {
+	if err := atomicfile.WriteFile(plistPath, previous.Plist); err != nil {
 		restoreErrs = append(restoreErrs, fmt.Errorf("restore previous plist %s: %w", plistPath, err))
+		return result, errors.Join(restoreErrs...)
+	}
+	if err := os.Chmod(plistPath, previous.Mode); err != nil {
+		restoreErrs = append(restoreErrs, fmt.Errorf("restore previous plist mode %s: %w", plistPath, err))
 		return result, errors.Join(restoreErrs...)
 	}
 	result.PlistRestored = true
@@ -542,6 +555,13 @@ func restorePreviousLaunchAgent(previous launchAgentPreviousState, loadResult la
 	}
 	result.Reloaded = true
 	return result, nil
+}
+
+func secureLaunchAgentMode(mode os.FileMode) os.FileMode {
+	if mode.Perm() != atomicfile.PrivateFileMode {
+		return atomicfile.PrivateFileMode
+	}
+	return mode.Perm()
 }
 
 func launchctlOperationInProgress(output []byte, err error) bool {

@@ -87,6 +87,7 @@ func runLinuxInstallGuardTruthCase(t *testing.T, unitPresent, daemonRunning bool
 	}
 	systemctlCalls := 0
 	restartCalls := 0
+	mutatingSystemctlCalls := 0
 	systemctlCombinedOutput = func(args ...string) ([]byte, error) {
 		systemctlCalls++
 		if len(args) > 1 && args[1] == "show" {
@@ -98,6 +99,9 @@ func runLinuxInstallGuardTruthCase(t *testing.T, unitPresent, daemonRunning bool
 		}
 		if len(args) > 1 && args[1] == "restart" {
 			restartCalls++
+		}
+		if len(args) > 1 && args[1] != "show" {
+			mutatingSystemctlCalls++
 		}
 		return nil, nil
 	}
@@ -115,7 +119,18 @@ func runLinuxInstallGuardTruthCase(t *testing.T, unitPresent, daemonRunning bool
 		if restartCalls != 0 {
 			t.Fatalf("restart calls = %d, want 0 before daemon conflict", restartCalls)
 		}
+		if mutatingSystemctlCalls != 0 {
+			t.Fatalf("mutating systemctl calls = %d, want 0 before daemon conflict", mutatingSystemctlCalls)
+		}
 		if unitPresent {
+			for _, want := range []string{"a systemd user unit is installed", "could not confirm that systemd owns", "tslink stop", "keep the existing unit installed"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("artifact-present conflict = %q, want %q", err, want)
+				}
+			}
+			if strings.Contains(err.Error(), "no systemd user unit is installed") {
+				t.Fatalf("artifact-present conflict falsely claims no unit: %q", err)
+			}
 			unit, readErr := os.ReadFile(path)
 			if readErr != nil || string(unit) != "old unit" {
 				t.Fatalf("existing unit changed during conflict: %q, %v", unit, readErr)
@@ -138,6 +153,9 @@ func runLinuxInstallGuardTruthCase(t *testing.T, unitPresent, daemonRunning bool
 	}
 	if !strings.Contains(string(unit), "/new/tslink") {
 		t.Fatalf("unit was not refreshed to new executable: %s", unit)
+	}
+	if info, statErr := os.Stat(path); statErr != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("installed unit mode = %v, %v; want 0600", info, statErr)
 	}
 	return observedDaemonRunning
 }
@@ -422,6 +440,131 @@ func TestLinuxInstallDoesNotClaimSuccessWhenServiceIsAutoRestarting(t *testing.T
 	if strings.Contains(out.String(), "✓") {
 		t.Fatalf("install printed success for auto-restart state: %s", out.String())
 	}
+}
+
+func TestLinuxInstallRestoresPreviousUnitAfterUpgradeFailures(t *testing.T) {
+	for _, failStage := range []string{"daemon-reload", "enable", "restart", "verify"} {
+		t.Run(failStage, func(t *testing.T) {
+			resetRootJSONFlag(t)
+			home := t.TempDir()
+			oldHome := linuxUserHomeDirFn
+			oldExe := linuxExecutablePathFn
+			oldEval := linuxEvalSymlinksFn
+			oldPIDPath := pidPathFn
+			oldRunning := isRunningFn
+			oldReadPID := readPIDFn
+			oldSystemctl := systemctlCombinedOutput
+			t.Cleanup(func() {
+				linuxUserHomeDirFn = oldHome
+				linuxExecutablePathFn = oldExe
+				linuxEvalSymlinksFn = oldEval
+				pidPathFn = oldPIDPath
+				isRunningFn = oldRunning
+				readPIDFn = oldReadPID
+				systemctlCombinedOutput = oldSystemctl
+			})
+
+			linuxUserHomeDirFn = func() (string, error) { return home, nil }
+			linuxExecutablePathFn = func() (string, error) { return "/new/tslink", nil }
+			linuxEvalSymlinksFn = func(path string) (string, error) { return path, nil }
+			pidPathFn = func() (string, error) { return filepath.Join(home, "tslink.pid"), nil }
+			isRunningFn = func(string) bool { return true }
+			readPIDFn = func(string) (int, error) { return 1775, nil }
+
+			servicePath := filepath.Join(home, ".config", "systemd", "user", systemdServiceName)
+			if err := os.MkdirAll(filepath.Dir(servicePath), 0o755); err != nil {
+				t.Fatalf("MkdirAll() error = %v", err)
+			}
+			oldUnit := []byte("[Service]\nExecStart=/old/tslink serve\n")
+			if err := os.WriteFile(servicePath, oldUnit, 0o600); err != nil {
+				t.Fatalf("WriteFile(old unit) error = %v", err)
+			}
+
+			failed := false
+			var calls []string
+			systemctlCombinedOutput = func(args ...string) ([]byte, error) {
+				call := strings.Join(args, "\x00")
+				calls = append(calls, call)
+				if len(args) < 2 {
+					t.Fatalf("malformed systemctl call: %q", call)
+				}
+				op := args[1]
+				if op == "show" {
+					if len(args) == 5 {
+						return []byte("MainPID=1775\n"), nil
+					}
+					if failStage == "verify" && !failed {
+						failed = true
+						return []byte("ActiveState=activating\nSubState=auto-restart\nMainPID=0\n"), nil
+					}
+					return runningSystemdState(), nil
+				}
+				if op == failStage && !failed {
+					failed = true
+					return []byte(failStage + " stderr"), errors.New("injected " + failStage + " failure")
+				}
+				return nil, nil
+			}
+
+			err := installCmd.RunE(installCmd, nil)
+			if err == nil || !failed || !strings.Contains(err.Error(), "previous systemd user unit was restored and restarted") {
+				t.Fatalf("install RunE() error = %v, want %s failure plus restored/restarted policy", err, failStage)
+			}
+			gotUnit, readErr := os.ReadFile(servicePath)
+			if readErr != nil || !bytes.Equal(gotUnit, oldUnit) {
+				t.Fatalf("restored unit = %q, %v; want %q", gotUnit, readErr, oldUnit)
+			}
+			if info, statErr := os.Stat(servicePath); statErr != nil || info.Mode().Perm() != 0o600 {
+				t.Fatalf("restored unit mode = %v, %v; want 0600", info, statErr)
+			}
+			joined := strings.Join(calls, "\n")
+			for _, want := range []string{
+				strings.Join([]string{"--user", "stop", systemdServiceName}, "\x00"),
+				strings.Join([]string{"--user", "daemon-reload"}, "\x00"),
+				strings.Join([]string{"--user", "restart", systemdServiceName}, "\x00"),
+			} {
+				if !strings.Contains(joined, want) {
+					t.Fatalf("systemctl calls = %q, missing restore step %q", calls, want)
+				}
+			}
+		})
+	}
+}
+
+func TestSystemdOwnsRunningDaemonRequiresPositivePIDAndMatchingMainPID(t *testing.T) {
+	oldPIDPath := pidPathFn
+	oldRunning := isRunningFn
+	oldReadPID := readPIDFn
+	oldSystemctl := systemctlCombinedOutput
+	t.Cleanup(func() {
+		pidPathFn = oldPIDPath
+		isRunningFn = oldRunning
+		readPIDFn = oldReadPID
+		systemctlCombinedOutput = oldSystemctl
+	})
+	pidPathFn = func() (string, error) { return "/tmp/tslink-test.pid", nil }
+	isRunningFn = func(string) bool { return true }
+
+	t.Run("non-positive daemon pid", func(t *testing.T) {
+		readPIDFn = func(string) (int, error) { return 0, nil }
+		systemctlCombinedOutput = func(args ...string) ([]byte, error) {
+			t.Fatalf("systemctl called with non-positive daemon PID: %v", args)
+			return nil, nil
+		}
+		if systemdOwnsRunningDaemon() {
+			t.Fatal("systemdOwnsRunningDaemon() = true for PID 0")
+		}
+	})
+
+	t.Run("mismatched main pid", func(t *testing.T) {
+		readPIDFn = func(string) (int, error) { return 1775, nil }
+		systemctlCombinedOutput = func(args ...string) ([]byte, error) {
+			return []byte("MainPID=1888\n"), nil
+		}
+		if systemdOwnsRunningDaemon() {
+			t.Fatal("systemdOwnsRunningDaemon() = true for mismatched MainPID")
+		}
+	})
 }
 
 func TestLinuxUninstallRunsSystemctlPathsAndSurfacesWarnings(t *testing.T) {

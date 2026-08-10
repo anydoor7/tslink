@@ -3,6 +3,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -10,9 +11,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/spf13/cobra"
-
+	"github.com/monody0007/tslink/internal/atomicfile"
 	"github.com/monody0007/tslink/internal/output"
+	"github.com/spf13/cobra"
 )
 
 const systemdServiceName = "tslink.service"
@@ -27,6 +28,9 @@ var (
 	installDaemonConflictFn = func() error {
 		return detectInstallDaemonConflict("no systemd user unit is installed, so stop the manual daemon with 'tslink stop' and retry 'tslink install'")
 	}
+	installDaemonArtifactConflictFn = func() error {
+		return detectInstallDaemonConflict("a systemd user unit is installed, but TSLink could not confirm that systemd owns the running daemon; stop the manual daemon with 'tslink stop' and retry 'tslink install'; keep the existing unit installed")
+	}
 	systemctlCombinedOutput  = func(args ...string) ([]byte, error) { return exec.Command("systemctl", args...).CombinedOutput() }
 	loginctlCombinedOutputFn = func(args ...string) ([]byte, error) { return exec.Command("loginctl", args...).CombinedOutput() }
 )
@@ -37,6 +41,18 @@ type InstallResult struct {
 	Started        bool   `json:"started"`
 	ServiceManager string `json:"service_manager"`
 	Warning        string `json:"warning,omitempty"`
+}
+
+type systemdPreviousState struct {
+	Existed      bool
+	Unit         []byte
+	Mode         os.FileMode
+	OwnedRunning bool
+}
+
+type systemdRestoreResult struct {
+	UnitRestored bool
+	Restarted    bool
 }
 
 var installCmd = &cobra.Command{
@@ -55,6 +71,12 @@ This command:
 Re-running 'tslink install' is the supported upgrade path. When a unit already
 exists, TSLink only treats a running daemon as a systemd handoff when the pidfile
 PID matches systemd's MainPID; otherwise the manual-daemon conflict guard applies.
+Before replacing an existing unit, TSLink saves it. If daemon-reload, enable,
+restart, or post-restart verification fails, TSLink stops the failed service,
+restores the previous unit, reloads systemd, and restarts a previously identified
+systemd-owned service. This does not restore an executable binary that was
+replaced before this command ran. Fix the reported cause and re-run
+'tslink install'.
 
 To check the service status:
   systemctl --user status tslink
@@ -79,18 +101,9 @@ If lingering was enabled only for TSLink, disable it after uninstall:
 		if err != nil {
 			return err
 		}
-		unitExists := false
-		if _, statErr := os.Stat(servicePath); statErr != nil {
-			if !os.IsNotExist(statErr) {
-				return fmt.Errorf("inspect existing systemd user unit: %w", statErr)
-			}
-		} else {
-			unitExists = true
-		}
-		if !unitExists || !systemdOwnsRunningDaemon() {
-			if err := installDaemonConflictFn(); err != nil {
-				return err
-			}
+		previousState, err := captureSystemdPreviousState(servicePath)
+		if err != nil {
+			return err
 		}
 
 		exe, err := linuxExecutablePathFn()
@@ -107,21 +120,26 @@ If lingering was enabled only for TSLink, disable it after uninstall:
 		}
 
 		service := systemdServiceContents(exe)
-		if err := os.WriteFile(servicePath, []byte(service), 0o644); err != nil {
+		if err := atomicfile.WriteFile(servicePath, []byte(service)); err != nil {
 			return fmt.Errorf("write systemd service: %w", err)
 		}
 
-		if output, err := systemctlCombinedOutput("--user", "daemon-reload"); err != nil {
-			return fmt.Errorf("reload systemd user daemon: %w: %s", err, output)
-		}
-		if output, err := systemctlCombinedOutput("--user", "enable", systemdServiceName); err != nil {
-			return fmt.Errorf("enable systemd user service: %w: %s", err, output)
-		}
-		if output, err := systemctlCombinedOutput("--user", "restart", systemdServiceName); err != nil {
-			return fmt.Errorf("restart systemd user service: %w: %s", err, output)
-		}
-		if err := verifySystemdServiceRunning(); err != nil {
-			return err
+		if installErr := activateSystemdService(); installErr != nil {
+			if !previousState.Existed {
+				return installErr
+			}
+			restoreResult, restoreErr := restorePreviousSystemdUnit(previousState, servicePath)
+			if restoreErr != nil {
+				status := "the previous systemd user unit could not be restored"
+				if restoreResult.UnitRestored {
+					status = "the previous systemd user unit was restored, but the prior managed service is not confirmed running"
+				}
+				return fmt.Errorf("%v; upgrade failed and automatic restoration was incomplete: %v; %s; fix the reported cause and re-run 'tslink install'", installErr, restoreErr, status)
+			}
+			if restoreResult.Restarted {
+				return fmt.Errorf("%v; upgrade failed, so the previous systemd user unit was restored and restarted; fix the reported cause and re-run 'tslink install'", installErr)
+			}
+			return fmt.Errorf("%v; upgrade failed, so the previous systemd user unit was restored; no prior systemd-owned running daemon was identified, so no service was restarted; fix the reported cause and re-run 'tslink install'", installErr)
 		}
 
 		warning := linuxLingerWarning()
@@ -143,6 +161,87 @@ If lingering was enabled only for TSLink, disable it after uninstall:
 		fmt.Fprintf(cmd.OutOrStdout(), "→ ✓ systemd user service installed and restarted: %s\n", servicePath)
 		return nil
 	},
+}
+
+func captureSystemdPreviousState(servicePath string) (systemdPreviousState, error) {
+	info, err := os.Stat(servicePath)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return systemdPreviousState{}, fmt.Errorf("inspect existing systemd user unit: %w", err)
+		}
+		if err := installDaemonConflictFn(); err != nil {
+			return systemdPreviousState{}, err
+		}
+		return systemdPreviousState{}, nil
+	}
+
+	unit, err := os.ReadFile(servicePath)
+	if err != nil {
+		return systemdPreviousState{}, fmt.Errorf("read existing systemd user unit before upgrade: %w", err)
+	}
+	state := systemdPreviousState{
+		Existed:      true,
+		Unit:         unit,
+		Mode:         secureSystemdUnitMode(info.Mode().Perm()),
+		OwnedRunning: systemdOwnsRunningDaemon(),
+	}
+	if !state.OwnedRunning {
+		if err := installDaemonArtifactConflictFn(); err != nil {
+			return systemdPreviousState{}, err
+		}
+	}
+	return state, nil
+}
+
+func activateSystemdService() error {
+	if commandOutput, err := systemctlCombinedOutput("--user", "daemon-reload"); err != nil {
+		return fmt.Errorf("reload systemd user daemon: %w%s", err, commandOutputSuffix(commandOutput))
+	}
+	if commandOutput, err := systemctlCombinedOutput("--user", "enable", systemdServiceName); err != nil {
+		return fmt.Errorf("enable systemd user service: %w%s", err, commandOutputSuffix(commandOutput))
+	}
+	if commandOutput, err := systemctlCombinedOutput("--user", "restart", systemdServiceName); err != nil {
+		return fmt.Errorf("restart systemd user service: %w%s", err, commandOutputSuffix(commandOutput))
+	}
+	return verifySystemdServiceRunning()
+}
+
+func restorePreviousSystemdUnit(previous systemdPreviousState, servicePath string) (systemdRestoreResult, error) {
+	result := systemdRestoreResult{}
+	var restoreErrs []error
+	if commandOutput, err := systemctlCombinedOutput("--user", "stop", systemdServiceName); err != nil {
+		restoreErrs = append(restoreErrs, fmt.Errorf("stop failed upgraded systemd user service: %w%s", err, commandOutputSuffix(commandOutput)))
+	}
+	if err := atomicfile.WriteFile(servicePath, previous.Unit); err != nil {
+		restoreErrs = append(restoreErrs, fmt.Errorf("restore previous systemd user unit %s: %w", servicePath, err))
+		return result, errors.Join(restoreErrs...)
+	}
+	if err := os.Chmod(servicePath, previous.Mode); err != nil {
+		restoreErrs = append(restoreErrs, fmt.Errorf("restore previous systemd user unit mode %s: %w", servicePath, err))
+		return result, errors.Join(restoreErrs...)
+	}
+	result.UnitRestored = true
+	if commandOutput, err := systemctlCombinedOutput("--user", "daemon-reload"); err != nil {
+		restoreErrs = append(restoreErrs, fmt.Errorf("reload restored systemd user unit: %w%s", err, commandOutputSuffix(commandOutput)))
+	}
+	if len(restoreErrs) > 0 || !previous.OwnedRunning {
+		return result, errors.Join(restoreErrs...)
+	}
+	if commandOutput, err := systemctlCombinedOutput("--user", "restart", systemdServiceName); err != nil {
+		return result, fmt.Errorf("restart restored systemd user service: %w%s", err, commandOutputSuffix(commandOutput))
+	}
+	if err := verifySystemdServiceRunning(); err != nil {
+		return result, fmt.Errorf("verify restored systemd user service: %w", err)
+	}
+	result.Restarted = true
+	return result, nil
+}
+
+func secureSystemdUnitMode(mode os.FileMode) os.FileMode {
+	if mode.Perm() != atomicfile.PrivateFileMode {
+		return atomicfile.PrivateFileMode
+	}
+	return mode.Perm()
 }
 
 func systemdOwnsRunningDaemon() bool {

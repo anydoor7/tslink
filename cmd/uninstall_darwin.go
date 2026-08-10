@@ -33,9 +33,11 @@ var uninstallCmd = &cobra.Command{
 
 This command:
   1. Unloads the agent from gui/$(id -u), or user/$(id -u) for headless installs
-  2. Deletes ~/Library/LaunchAgents/com.tslink.daemon.plist
+  2. Deletes ~/Library/LaunchAgents/com.tslink.daemon.plist only after unload succeeds
 
 If the LaunchAgent is not installed, prints a message and exits cleanly.
+If launchctl bootout fails, the plist is kept, the command exits non-zero, and
+you can fix the reported launchctl failure before retrying this command.
 Log files in ~/.config/tslink/logs/ are NOT removed.
 
 	Examples:
@@ -59,9 +61,22 @@ Log files in ~/.config/tslink/logs/ are NOT removed.
 		}
 
 		bootout := bootoutLaunchAgent()
-		warning := ""
 		if bootout.Err != nil {
-			warning = launchctlWarning("LaunchAgent plist removed but launchctl bootout failed", bootout.Err, []byte(bootout.Output))
+			warning := launchctlWarning("LaunchAgent plist was kept because launchctl bootout failed", bootout.Err, []byte(bootout.Output))
+			uninstallErr := fmt.Errorf("%s; the LaunchAgent is still installed at %s, so fix the launchctl failure and retry 'tslink uninstall'", warning, path)
+			if jsonOutput(cmd) {
+				result := output.NewFailureForError("uninstall", uninstallErr)
+				result.Data = UninstallResult{
+					PlistPath:       path,
+					Removed:         false,
+					LaunchctlTarget: bootout.Target,
+					LaunchctlOutput: bootout.Output,
+					Warning:         warning,
+				}
+				output.WriteJSON(os.Stdout, result)
+				return output.SilentExit(output.ExitError)
+			}
+			return uninstallErr
 		}
 
 		if err := os.Remove(path); err != nil {
@@ -74,14 +89,10 @@ Log files in ~/.config/tslink/logs/ are NOT removed.
 				Removed:         true,
 				LaunchctlTarget: bootout.Target,
 				LaunchctlOutput: bootout.Output,
-				Warning:         warning,
 			})
 			return nil
 		}
 
-		if warning != "" {
-			fmt.Fprintf(cmd.OutOrStdout(), "→ ⚠ %s\n", warning)
-		}
 		fmt.Fprintln(cmd.OutOrStdout(), "→ ✓ LaunchAgent removed")
 		return nil
 	},
