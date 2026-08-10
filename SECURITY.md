@@ -20,6 +20,7 @@ Important boundaries:
 - `tslink api` is a local JSON-over-stdin/stdout interface. It is not a REST/admin server and does not create a member-facing service directory.
 - Remote Tailscale ACL mutation is disabled by default. `tslink login --manage-acl`, `tslink serve --manage-acl`, and `tslink tags delete-remote --manage-acl` opt in to typed whole-policy ACL writes with a machine-readable side-effect plan. Default login, serve, and tag flows do not rewrite shared ACL policy.
 - Per-service tsnet nodes provide network identity and routing separation. TSLink does not provide host process isolation or a compliance attestation.
+- Atomic writes into existing directories reject foreign-owned and group- or world-writable parents on Unix. On Windows, TSLink does not validate the parent directory's DACL: Go's `os.FileMode` exposes only synthesized bits that do not represent Windows access control. Windows callers must provision an appropriately restricted DACL when the parent directory is security-sensitive.
 
 ## Reporting a Vulnerability
 

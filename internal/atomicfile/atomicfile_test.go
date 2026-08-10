@@ -282,11 +282,12 @@ func TestWriteFileInExistingDirPreRenameFailurePreservesOldFile(t *testing.T) {
 	if err := os.WriteFile(target, []byte(`{"version":"old"}`+"\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile(old) error = %v", err)
 	}
-	renameFn = func(string, string) error { return errors.New("injected rename failure") }
+	wantErr := errors.New("injected rename failure")
+	renameFn = func(string, string) error { return wantErr }
 
 	err := WriteFileInExistingDir(target, []byte(`{"version":"new"}`+"\n"), PrivateFileMode)
-	if err == nil {
-		t.Fatal("WriteFileInExistingDir() error = nil, want injected rename failure")
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("WriteFileInExistingDir() error = %v, want injected rename failure", err)
 	}
 	assertJSONVersion(t, target, "old")
 	assertNoOwnedTemps(t, dir, filepath.Base(target))
@@ -357,8 +358,9 @@ func TestWriteFileInExistingDirMissingParentErrorNamesTarget(t *testing.T) {
 	if err == nil {
 		t.Fatal("WriteFileInExistingDir() error = nil, want missing-parent failure")
 	}
-	if !strings.Contains(err.Error(), target) {
-		t.Fatalf("missing-parent error = %q, want real target %q", err, target)
+	wantPrefix := "create temp for " + target + ":"
+	if !strings.HasPrefix(err.Error(), wantPrefix) {
+		t.Fatalf("missing-parent error = %q, want prefix %q", err, wantPrefix)
 	}
 	if strings.Contains(err.Error(), ".state.json.") || strings.Contains(err.Error(), ".tmp") {
 		t.Fatalf("missing-parent error exposes random temp path: %q", err)

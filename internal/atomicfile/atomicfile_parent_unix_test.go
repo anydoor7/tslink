@@ -3,12 +3,32 @@
 package atomicfile
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
 )
+
+func TestWriteFileInExistingDirAcceptsMkdirAll0755AcrossUmasks(t *testing.T) {
+	for _, umask := range []int{0o022, 0o002, 0o000, 0o077, 0o007} {
+		t.Run(fmt.Sprintf("umask-%04o", umask), func(t *testing.T) {
+			restoreAtomicFileHooks(t)
+			oldUmask := syscall.Umask(umask)
+			defer syscall.Umask(oldUmask)
+
+			dir := filepath.Join(t.TempDir(), "shared")
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatalf("MkdirAll(shared) error = %v", err)
+			}
+			target := filepath.Join(dir, "state.json")
+			if err := WriteFileInExistingDir(target, []byte("state\n"), PrivateFileMode); err != nil {
+				t.Fatalf("WriteFileInExistingDir() error = %v for umask %04o", err, umask)
+			}
+		})
+	}
+}
 
 func TestWriteFileInExistingDirRejectsWorldWritableParentWithoutMutation(t *testing.T) {
 	restoreAtomicFileHooks(t)
