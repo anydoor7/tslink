@@ -195,6 +195,93 @@ func TestWriteFileDoesNotUsePredictableFixedTempSymlink(t *testing.T) {
 	assertNoOwnedTemps(t, dir, filepath.Base(target))
 }
 
+func TestWriteFileInExistingDirPreservesSharedDirectoryMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX mode preservation is not a Windows DACL proof")
+	}
+	restoreAtomicFileHooks(t)
+	dir := filepath.Join(t.TempDir(), "shared")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(shared) error = %v", err)
+	}
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatalf("Chmod(shared) error = %v", err)
+	}
+	target := filepath.Join(dir, "state.json")
+	if err := os.WriteFile(target, []byte(`{"version":"old"}`+"\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(old) error = %v", err)
+	}
+
+	if err := WriteFileInExistingDir(target, []byte(`{"version":"new"}`+"\n"), PrivateFileMode); err != nil {
+		t.Fatalf("WriteFileInExistingDir() error = %v", err)
+	}
+	assertMode(t, dir, 0o755)
+	assertMode(t, target, PrivateFileMode)
+	assertJSONVersion(t, target, "new")
+}
+
+func TestWriteFileInExistingDirSupportsSymlinkedParent(t *testing.T) {
+	restoreAtomicFileHooks(t)
+	root := t.TempDir()
+	realDir := filepath.Join(root, "real")
+	if err := os.MkdirAll(realDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(real) error = %v", err)
+	}
+	linkedDir := filepath.Join(root, "linked")
+	if err := os.Symlink(realDir, linkedDir); err != nil {
+		if runtime.GOOS == "windows" {
+			t.Skipf("symlink unavailable on this Windows runner: %v", err)
+		}
+		t.Fatalf("Symlink(parent) error = %v", err)
+	}
+	target := filepath.Join(linkedDir, "state.json")
+
+	if err := WriteFileInExistingDir(target, []byte(`{"version":"new"}`+"\n"), PrivateFileMode); err != nil {
+		t.Fatalf("WriteFileInExistingDir() error = %v", err)
+	}
+	assertJSONVersion(t, filepath.Join(realDir, "state.json"), "new")
+	assertMode(t, filepath.Join(realDir, "state.json"), PrivateFileMode)
+}
+
+func TestWriteFileInExistingDirRejectsTargetSymlink(t *testing.T) {
+	restoreAtomicFileHooks(t)
+	dir := t.TempDir()
+	referent := filepath.Join(dir, "referent.json")
+	if err := os.WriteFile(referent, []byte(`{"version":"old"}`+"\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile(referent) error = %v", err)
+	}
+	target := filepath.Join(dir, "state.json")
+	if err := os.Symlink(referent, target); err != nil {
+		if runtime.GOOS == "windows" {
+			t.Skipf("symlink unavailable on this Windows runner: %v", err)
+		}
+		t.Fatalf("Symlink(target) error = %v", err)
+	}
+
+	err := WriteFileInExistingDir(target, []byte(`{"version":"new"}`+"\n"), PrivateFileMode)
+	if err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("WriteFileInExistingDir(symlink) error = %v, want symlink rejection", err)
+	}
+	assertJSONVersion(t, referent, "old")
+}
+
+func TestWriteFileInExistingDirPreRenameFailurePreservesOldFile(t *testing.T) {
+	restoreAtomicFileHooks(t)
+	dir := t.TempDir()
+	target := filepath.Join(dir, "state.json")
+	if err := os.WriteFile(target, []byte(`{"version":"old"}`+"\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile(old) error = %v", err)
+	}
+	renameFn = func(string, string) error { return errors.New("injected rename failure") }
+
+	err := WriteFileInExistingDir(target, []byte(`{"version":"new"}`+"\n"), PrivateFileMode)
+	if err == nil {
+		t.Fatal("WriteFileInExistingDir() error = nil, want injected rename failure")
+	}
+	assertJSONVersion(t, target, "old")
+	assertNoOwnedTemps(t, dir, filepath.Base(target))
+}
+
 func TestConvergePrivateFileMissingIsNoOp(t *testing.T) {
 	restoreAtomicFileHooks(t)
 	target := filepath.Join(t.TempDir(), "missing.json")

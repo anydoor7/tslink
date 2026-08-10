@@ -120,7 +120,7 @@ If lingering was enabled only for TSLink, disable it after uninstall:
 		}
 
 		service := systemdServiceContents(exe)
-		if err := atomicfile.WriteFile(servicePath, []byte(service)); err != nil {
+		if err := atomicfile.WriteFileInExistingDir(servicePath, []byte(service), atomicfile.PrivateFileMode); err != nil {
 			return fmt.Errorf("write systemd service: %w", err)
 		}
 
@@ -182,7 +182,7 @@ func captureSystemdPreviousState(servicePath string) (systemdPreviousState, erro
 	state := systemdPreviousState{
 		Existed:      true,
 		Unit:         unit,
-		Mode:         secureSystemdUnitMode(info.Mode().Perm()),
+		Mode:         info.Mode().Perm(),
 		OwnedRunning: systemdOwnsRunningDaemon(),
 	}
 	if !state.OwnedRunning {
@@ -212,12 +212,8 @@ func restorePreviousSystemdUnit(previous systemdPreviousState, servicePath strin
 	if commandOutput, err := systemctlCombinedOutput("--user", "stop", systemdServiceName); err != nil {
 		restoreErrs = append(restoreErrs, fmt.Errorf("stop failed upgraded systemd user service: %w%s", err, commandOutputSuffix(commandOutput)))
 	}
-	if err := atomicfile.WriteFile(servicePath, previous.Unit); err != nil {
+	if err := atomicfile.WriteFileInExistingDir(servicePath, previous.Unit, secureSystemdUnitMode(previous.Mode)); err != nil {
 		restoreErrs = append(restoreErrs, fmt.Errorf("restore previous systemd user unit %s: %w", servicePath, err))
-		return result, errors.Join(restoreErrs...)
-	}
-	if err := os.Chmod(servicePath, previous.Mode); err != nil {
-		restoreErrs = append(restoreErrs, fmt.Errorf("restore previous systemd user unit mode %s: %w", servicePath, err))
 		return result, errors.Join(restoreErrs...)
 	}
 	result.UnitRestored = true

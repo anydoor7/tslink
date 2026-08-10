@@ -476,7 +476,7 @@ func TestLinuxInstallRestoresPreviousUnitAfterUpgradeFailures(t *testing.T) {
 				t.Fatalf("MkdirAll() error = %v", err)
 			}
 			oldUnit := []byte("[Service]\nExecStart=/old/tslink serve\n")
-			if err := os.WriteFile(servicePath, oldUnit, 0o600); err != nil {
+			if err := os.WriteFile(servicePath, oldUnit, 0o644); err != nil {
 				t.Fatalf("WriteFile(old unit) error = %v", err)
 			}
 
@@ -517,17 +517,178 @@ func TestLinuxInstallRestoresPreviousUnitAfterUpgradeFailures(t *testing.T) {
 			if info, statErr := os.Stat(servicePath); statErr != nil || info.Mode().Perm() != 0o600 {
 				t.Fatalf("restored unit mode = %v, %v; want 0600", info, statErr)
 			}
-			joined := strings.Join(calls, "\n")
-			for _, want := range []string{
+			ownershipShow := strings.Join([]string{"--user", "show", systemdServiceName, "--property=MainPID", "--no-pager"}, "\x00")
+			verifyShow := strings.Join([]string{"--user", "show", systemdServiceName, "--property=ActiveState", "--property=SubState", "--property=MainPID", "--no-pager"}, "\x00")
+			daemonReload := strings.Join([]string{"--user", "daemon-reload"}, "\x00")
+			enable := strings.Join([]string{"--user", "enable", systemdServiceName}, "\x00")
+			restart := strings.Join([]string{"--user", "restart", systemdServiceName}, "\x00")
+			stop := strings.Join([]string{"--user", "stop", systemdServiceName}, "\x00")
+			wantCalls := []string{ownershipShow, daemonReload}
+			switch failStage {
+			case "enable":
+				wantCalls = append(wantCalls, enable)
+			case "restart":
+				wantCalls = append(wantCalls, enable, restart)
+			case "verify":
+				wantCalls = append(wantCalls, enable, restart, verifyShow)
+			}
+			wantCalls = append(wantCalls, stop, daemonReload, restart, verifyShow)
+			if strings.Join(calls, "\n") != strings.Join(wantCalls, "\n") {
+				t.Fatalf("systemctl calls = %q, want exact forward/failure/restore sequence %q", calls, wantCalls)
+			}
+		})
+	}
+}
+
+func TestRestorePreviousSystemdUnitReportsAccurateProgress(t *testing.T) {
+	t.Run("write failure", func(t *testing.T) {
+		home := t.TempDir()
+		servicePath := filepath.Join(home, systemdServiceName)
+		referent := filepath.Join(home, "protected.service")
+		if err := os.WriteFile(referent, []byte("protected"), 0o600); err != nil {
+			t.Fatalf("WriteFile(referent) error = %v", err)
+		}
+		if err := os.Symlink(referent, servicePath); err != nil {
+			t.Fatalf("Symlink(service) error = %v", err)
+		}
+		oldSystemctl := systemctlCombinedOutput
+		t.Cleanup(func() { systemctlCombinedOutput = oldSystemctl })
+		var calls []string
+		systemctlCombinedOutput = func(args ...string) ([]byte, error) {
+			calls = append(calls, strings.Join(args, "\x00"))
+			return nil, nil
+		}
+
+		result, err := restorePreviousSystemdUnit(
+			systemdPreviousState{Existed: true, Unit: []byte("old unit"), Mode: 0o644, OwnedRunning: true},
+			servicePath,
+		)
+		if err == nil || result.UnitRestored || result.Restarted {
+			t.Fatalf("restore result = %+v, error = %v; want write failure with no success claims", result, err)
+		}
+		wantCalls := []string{strings.Join([]string{"--user", "stop", systemdServiceName}, "\x00")}
+		if strings.Join(calls, "\n") != strings.Join(wantCalls, "\n") {
+			t.Fatalf("systemctl calls = %q, want stop only before write failure", calls)
+		}
+	})
+
+	for _, tc := range []struct {
+		name      string
+		failOp    string
+		wantCalls []string
+	}{
+		{
+			name:   "daemon reload failure",
+			failOp: "daemon-reload",
+			wantCalls: []string{
+				strings.Join([]string{"--user", "stop", systemdServiceName}, "\x00"),
+				strings.Join([]string{"--user", "daemon-reload"}, "\x00"),
+			},
+		},
+		{
+			name:   "restart failure",
+			failOp: "restart",
+			wantCalls: []string{
 				strings.Join([]string{"--user", "stop", systemdServiceName}, "\x00"),
 				strings.Join([]string{"--user", "daemon-reload"}, "\x00"),
 				strings.Join([]string{"--user", "restart", systemdServiceName}, "\x00"),
-			} {
-				if !strings.Contains(joined, want) {
-					t.Fatalf("systemctl calls = %q, missing restore step %q", calls, want)
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			servicePath := filepath.Join(t.TempDir(), systemdServiceName)
+			if err := os.WriteFile(servicePath, []byte("new unit"), 0o600); err != nil {
+				t.Fatalf("WriteFile(new unit) error = %v", err)
+			}
+			oldSystemctl := systemctlCombinedOutput
+			t.Cleanup(func() { systemctlCombinedOutput = oldSystemctl })
+			var calls []string
+			systemctlCombinedOutput = func(args ...string) ([]byte, error) {
+				call := strings.Join(args, "\x00")
+				calls = append(calls, call)
+				if len(args) > 1 && args[1] == tc.failOp {
+					return []byte(tc.failOp + " stderr"), errors.New("injected " + tc.failOp + " failure")
 				}
+				return nil, nil
+			}
+
+			result, err := restorePreviousSystemdUnit(
+				systemdPreviousState{Existed: true, Unit: []byte("old unit"), Mode: 0o644, OwnedRunning: true},
+				servicePath,
+			)
+			if err == nil || !result.UnitRestored || result.Restarted {
+				t.Fatalf("restore result = %+v, error = %v; want restored bytes, Restarted=false, and surfaced %s failure", result, err, tc.failOp)
+			}
+			if strings.Join(calls, "\n") != strings.Join(tc.wantCalls, "\n") {
+				t.Fatalf("systemctl calls = %q, want %q", calls, tc.wantCalls)
+			}
+			got, readErr := os.ReadFile(servicePath)
+			if readErr != nil || string(got) != "old unit" {
+				t.Fatalf("restored unit = %q, %v; want old unit", got, readErr)
+			}
+			if info, statErr := os.Stat(servicePath); statErr != nil || info.Mode().Perm() != 0o600 {
+				t.Fatalf("restored unit mode = %v, %v; want unsafe prior mode converged to 0600", info, statErr)
 			}
 		})
+	}
+}
+
+func TestLinuxInstallSupportsSymlinkedSystemdUserDirectoryWithoutChangingMode(t *testing.T) {
+	stubLinuxInstallDaemonStopped(t)
+	resetRootJSONFlag(t)
+	home := t.TempDir()
+	oldHome := linuxUserHomeDirFn
+	oldExe := linuxExecutablePathFn
+	oldEval := linuxEvalSymlinksFn
+	oldUser := linuxUserNameFn
+	oldSystemctl := systemctlCombinedOutput
+	oldLoginctl := loginctlCombinedOutputFn
+	t.Cleanup(func() {
+		linuxUserHomeDirFn = oldHome
+		linuxExecutablePathFn = oldExe
+		linuxEvalSymlinksFn = oldEval
+		linuxUserNameFn = oldUser
+		systemctlCombinedOutput = oldSystemctl
+		loginctlCombinedOutputFn = oldLoginctl
+		installCmd.SetOut(nil)
+		installCmd.SetErr(nil)
+	})
+	linuxUserHomeDirFn = func() (string, error) { return home, nil }
+	linuxExecutablePathFn = func() (string, error) { return "/opt/tslink", nil }
+	linuxEvalSymlinksFn = func(path string) (string, error) { return path, nil }
+	linuxUserNameFn = func() string { return "alice" }
+	loginctlCombinedOutputFn = func(args ...string) ([]byte, error) { return []byte("yes\n"), nil }
+	systemctlCombinedOutput = func(args ...string) ([]byte, error) {
+		if len(args) > 1 && args[1] == "show" {
+			return runningSystemdState(), nil
+		}
+		return nil, nil
+	}
+
+	systemdDir := filepath.Join(home, ".config", "systemd")
+	realDir := filepath.Join(home, "RelocatedSystemdUser")
+	if err := os.MkdirAll(systemdDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(systemd) error = %v", err)
+	}
+	if err := os.MkdirAll(realDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(real systemd user) error = %v", err)
+	}
+	if err := os.Chmod(realDir, 0o755); err != nil {
+		t.Fatalf("Chmod(real systemd user) error = %v", err)
+	}
+	if err := os.Symlink(realDir, filepath.Join(systemdDir, "user")); err != nil {
+		t.Fatalf("Symlink(systemd user) error = %v", err)
+	}
+
+	if err := installCmd.RunE(installCmd, nil); err != nil {
+		t.Fatalf("install RunE() error = %v, want symlinked systemd user directory support", err)
+	}
+	if info, err := os.Stat(realDir); err != nil || info.Mode().Perm() != 0o755 {
+		t.Fatalf("shared systemd user dir mode = %v, %v; want unchanged 0755", info, err)
+	}
+	servicePath := filepath.Join(realDir, systemdServiceName)
+	if info, err := os.Stat(servicePath); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("installed systemd unit mode = %v, %v; want 0600", info, err)
 	}
 }
 

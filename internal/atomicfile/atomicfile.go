@@ -94,11 +94,25 @@ func WriteFile(path string, data []byte) error {
 	if err := EnsurePrivateDir(dir); err != nil {
 		return err
 	}
+	return writeFile(path, data, PrivateFileMode)
+}
+
+// WriteFileInExistingDir atomically writes a file without creating, validating,
+// or changing the parent directory. It is for shared directories that the
+// caller does not own, such as LaunchAgents or systemd user-unit directories.
+// Parent-directory symlinks are followed, while a symlink at path itself is
+// still rejected by validateReplaceTarget.
+func WriteFileInExistingDir(path string, data []byte, mode os.FileMode) error {
+	return writeFile(path, data, mode.Perm())
+}
+
+func writeFile(path string, data []byte, mode os.FileMode) error {
+	dir := filepath.Dir(path)
 	if err := validateReplaceTarget(path); err != nil {
 		return err
 	}
 
-	tmpPath, f, err := createTemp(dir, filepath.Base(path))
+	tmpPath, f, err := createTemp(dir, filepath.Base(path), mode)
 	if err != nil {
 		return err
 	}
@@ -109,7 +123,7 @@ func WriteFile(path string, data []byte) error {
 		}
 	}()
 
-	if err := chmodFn(tmpPath, PrivateFileMode); err != nil {
+	if err := chmodFn(tmpPath, mode); err != nil {
 		_ = closeFileFn(f)
 		return err
 	}
@@ -148,7 +162,7 @@ func validateReplaceTarget(path string) error {
 	return checkOwner(path, info)
 }
 
-func createTemp(dir, base string) (string, *os.File, error) {
+func createTemp(dir, base string, mode os.FileMode) (string, *os.File, error) {
 	var lastErr error
 	for range 128 {
 		name, err := randomTempName(base)
@@ -156,7 +170,7 @@ func createTemp(dir, base string) (string, *os.File, error) {
 			return "", nil, err
 		}
 		path := filepath.Join(dir, name)
-		f, err := openFileFn(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, PrivateFileMode)
+		f, err := openFileFn(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
 		if err == nil {
 			return path, f, nil
 		}

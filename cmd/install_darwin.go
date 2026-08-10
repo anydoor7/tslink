@@ -193,7 +193,7 @@ Headless/SSH caveat:
 		if err := plistTemplate.Execute(&plist, data); err != nil {
 			return fmt.Errorf("write plist: %w", err)
 		}
-		if err := atomicfile.WriteFile(plistPath, plist.Bytes()); err != nil {
+		if err := atomicfile.WriteFileInExistingDir(plistPath, plist.Bytes(), atomicfile.PrivateFileMode); err != nil {
 			return fmt.Errorf("write plist: %w", err)
 		}
 
@@ -271,7 +271,7 @@ func captureLaunchAgentPreviousState(plistPath string) (launchAgentPreviousState
 	state := launchAgentPreviousState{
 		Existed: true,
 		Plist:   plist,
-		Mode:    secureLaunchAgentMode(info.Mode().Perm()),
+		Mode:    info.Mode().Perm(),
 	}
 
 	domain, target, owned := launchAgentTargetForRunningDaemon()
@@ -528,12 +528,8 @@ func restorePreviousLaunchAgent(previous launchAgentPreviousState, loadResult la
 		}
 	}
 
-	if err := atomicfile.WriteFile(plistPath, previous.Plist); err != nil {
+	if err := atomicfile.WriteFileInExistingDir(plistPath, previous.Plist, secureLaunchAgentMode(previous.Mode)); err != nil {
 		restoreErrs = append(restoreErrs, fmt.Errorf("restore previous plist %s: %w", plistPath, err))
-		return result, errors.Join(restoreErrs...)
-	}
-	if err := os.Chmod(plistPath, previous.Mode); err != nil {
-		restoreErrs = append(restoreErrs, fmt.Errorf("restore previous plist mode %s: %w", plistPath, err))
 		return result, errors.Join(restoreErrs...)
 	}
 	result.PlistRestored = true

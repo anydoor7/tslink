@@ -105,6 +105,7 @@ func bootoutLaunchAgent() launchctlBootoutResult {
 	}
 	var outputs []string
 	var last launchctlBootoutResult
+	var firstRealError *launchctlBootoutResult
 	for _, target := range targets {
 		output, err := launchctlCombinedOutput("bootout", target)
 		text := strings.TrimSpace(string(output))
@@ -112,11 +113,18 @@ func bootoutLaunchAgent() launchctlBootoutResult {
 			outputs = append(outputs, text)
 		}
 		last = launchctlBootoutResult{Target: target, Output: strings.Join(outputs, "\n"), Err: err}
-		if err == nil {
-			last.Output = strings.Join(outputs, "\n")
-			return last
+		if err != nil && !launchctlTargetNotFound(output, err) && firstRealError == nil {
+			failure := last
+			firstRealError = &failure
 		}
 	}
+	combinedOutput := strings.Join(outputs, "\n")
+	if firstRealError != nil {
+		firstRealError.Output = combinedOutput
+		return *firstRealError
+	}
+	last.Output = combinedOutput
+	last.Err = nil
 	return last
 }
 
