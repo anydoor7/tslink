@@ -38,7 +38,7 @@ TSLink 在每一层实现零信任原则：
 | **HTTP 最小权限访问** | `--allow` 限制 proxy 和 file 服务的访问用户或标签。TCP 服务依赖 Tailscale 网络 ACL 和标签。 |
 | **假设已被攻破** | tailnet 设备之间的流量使用 WireGuard 加密。即使本地网络被攻破，Tailscale 设备之间的流量仍然加密；公网 Funnel 路径遵循 Tailscale Funnel 语义。 |
 | **Per-service 网络身份** | 每个服务作为独立 tsnet 节点运行，拥有自己的主机名和网络身份。这是网络分段，不是 host process isolation 或合规背书。 |
-| **消除隐式信任** | 默认不暴露任何服务到公网。凭证优先存储在系统钥匙串中；headless 环境可回退到受限权限文件。由 API token 派生的启动认证密钥按需生成且不持久化；旧版 authkey 文件仍可能因兼容性被读取，建议迁移。 |
+| **消除隐式信任** | 默认不暴露任何服务到公网。首次运行默认走 Tailscale interactive enrollment：不存储管理员凭证、不 advertise tags、也不修改 ACL。可选的 durable-install 凭证优先存入系统钥匙串；headless 环境可回退到受限权限文件。 |
 
 ## TSLink 做什么
 
@@ -252,24 +252,27 @@ gh attestation verify "$sbom" \
 ### 30 秒上手
 
 ```bash
-# 1. 认证 Tailscale（选择 API 访问令牌或 OAuth 客户端密钥）
-tslink login
-
-# 2. 暴露本地 Web 服务
+# 1. 暴露本地 Web 服务
 tslink add myapp --proxy localhost:3000
 
-# 3. 启动网关
+# 2. 启动网关——无需 API token 或 OAuth secret。
+# TSLink 会为 user-owned node 打开/打印一个 Tailscale 授权 URL。
 tslink serve --daemon
 
 # 从任何设备访问 https://myapp.<your-tailnet>.ts.net
 ```
 
-TSLink 支持两种凭证（只需选一种）：
+TSLink 有两层认证模式：
+
+- **Tier 1 — 零凭证（默认）**：user-owned node，不 advertise tags，也不调用远端 ACL API。适合临时展示页面或 ephemeral share。每个新的 service node 都有自己的 enrollment URL；单服务 quick share 只需一次 browser click。Tailscale 的 user-owned node key 会过期，因此持续运行数月的节点最终可能需要重新认证。
+- **Tier 2 — 存储凭证（opt-in）**：保留 tagged、per-service 的启动行为，适合 durable multi-service 安装。只有需要这一层时才运行 `tslink login`。
+
+Tier 2 接受以下任一种管理员凭证：
 
 - **API 访问令牌** (`tskey-api-*`) — 在 [管理后台 → Keys](https://login.tailscale.com/admin/settings/keys) 生成。当前自动化能力最完整，包括通过 Tailscale API 管理标签和设备。它会周期性过期。
 - **OAuth 客户端密钥** (`tskey-client-*`) — 在 [管理后台 → OAuth](https://login.tailscale.com/admin/settings/oauth) 生成。它不会过期，但 TSLink 当前的 Tailscale 标签/设备自动化在该模式下更窄，因为这些操作依赖 Tailscale REST API。用于无人值守前请先验证所需的标签/设备操作。
 
-`tslink login` 会交互式引导你完成任一路径。凭证优先存储在系统钥匙串（macOS Keychain / Linux secret service / Windows 凭据管理器）中；headless 环境可回退到受限权限文件。
+`tslink login` 会交互式引导你完成任一 Tier 2 凭证路径；它不会先做一次无实际作用的临时 browser login。凭证优先存储在系统钥匙串（macOS Keychain / Linux secret service / Windows 凭据管理器）中；headless 环境可回退到受限权限文件。
 
 非交互式自动化优先使用 stdin。环境变量只适合由 secret manager 在进程启动前预注入；不要在 shell 命令里 inline secret 值，否则可能进入 shell history：
 
@@ -283,6 +286,8 @@ printf %s "$TSLINK_CLIENT_SECRET" | tslink login --client-secret-stdin
 ### 标签管理
 
 TSLink 默认管理本地服务标签。远端 Tailscale ACL mutation 默认关闭，因为 TSLink 还没有本地证明对 HuJSON policy 的无损保留。
+
+零凭证 Tier 1 会保留 registry 中的 tags 配置，但 user-owned node 不 advertise 这些 tags，也不会调用远端 tag/ACL API。下面的标签行为适用于存储凭证的 Tier 2。
 
 - **默认标签** — 当 `tslink add` 未指定 `--tags` 时，每个服务自动应用 `tag:tsmain`。
 - **远端 ACL 读取** — `tslink tags pull` 只在 API 访问令牌模式下拉取远端 ACL 标签；OAuth-only 模式会跳过远端读取并提示需要 API 访问令牌。
@@ -338,7 +343,7 @@ tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 
 | 命令 | 描述 |
 |------|------|
-| `tslink login` | 使用 API 访问令牌或 OAuth 客户端密钥认证 Tailscale |
+| `tslink login` | 存储可选的 Tier 2 API 访问令牌或 OAuth 客户端密钥 |
 | `tslink logout` | 清除认证状态 |
 | `tslink add <name> --proxy host:port` | 暴露本地 Web 服务 |
 | `tslink add <name> --dir /path` | 暴露文件目录 |

@@ -17,10 +17,12 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/monody0007/tslink/internal/config"
+	"github.com/monody0007/tslink/internal/logging"
 	"github.com/monody0007/tslink/internal/metrics"
 	"github.com/monody0007/tslink/internal/registry"
 	runtimesnapshot "github.com/monody0007/tslink/internal/runtime"
 	"github.com/monody0007/tslink/internal/tailapi"
+	"tailscale.com/ipn"
 	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/tsnet"
 )
@@ -35,16 +37,41 @@ type tsnetServer interface {
 	Close() error
 }
 
-var newTSNetServerFn = func(svc registry.Service, stateDir, authKey, controlURL string) tsnetServer {
+func newTSNetServer(svc registry.Service, stateDir, authKey, controlURL string) tsnetServer {
+	advertiseTags := append([]string(nil), svc.Tags...)
+	if authKey == "" {
+		// Interactive enrollment creates a user-owned node. Advertising tags on
+		// that path would require pre-existing ACL tag ownership and turns a fresh
+		// tailnet into a self-imposed first-run failure.
+		advertiseTags = nil
+	}
 	return &tsnet.Server{
 		Hostname:      svc.Name,
 		Dir:           stateDir,
 		AuthKey:       authKey,
 		Ephemeral:     svc.Ephemeral,
 		ControlURL:    controlURL,
-		AdvertiseTags: svc.Tags,
+		AdvertiseTags: advertiseTags,
+		UserLogf:      logging.TSNetUserLogf,
 	}
 }
+
+var newTSNetServerFn = newTSNetServer
+
+type tsnetStarter interface {
+	Start() error
+}
+
+type tsnetStatusClient interface {
+	Status(context.Context) (*ipnstate.Status, error)
+}
+
+var (
+	tsnetStatusClientFn = func(srv tsnetServer) (tsnetStatusClient, error) {
+		return srv.LocalClient()
+	}
+	interactiveStatusPollInterval = 100 * time.Millisecond
+)
 
 var (
 	runtimeSnapshotPathFn   = config.RuntimeSnapshotPath
@@ -189,6 +216,17 @@ type EnsureTagsFunc func(ctx context.Context, tags []string) error
 // AuthKeyProvider resolves auth material for a service immediately before its tsnet node starts.
 type AuthKeyProvider func(ctx context.Context, svc registry.Service) (string, error)
 
+// AuthHandoff is emitted when a credential-free tsnet node needs the user to
+// authorize it. AuthURL comes from local.Client.Status, the documented stable
+// status API.
+type AuthHandoff struct {
+	Service string
+	AuthURL string
+}
+
+// AuthHandoffFunc receives credential-free interactive enrollment events.
+type AuthHandoffFunc func(context.Context, AuthHandoff) error
+
 // CleanupStaleNodesFunc removes stale tailnet nodes for service targets before forced reauth.
 type CleanupStaleNodesFunc func(ctx context.Context, targets []tailapi.CleanupTarget) (tailapi.CleanupResult, error)
 
@@ -202,6 +240,7 @@ type Server struct {
 	cfgDir          string
 	metrics         *metrics.Metrics
 	ensureTagsFn    EnsureTagsFunc
+	authHandoffFn   AuthHandoffFunc
 	cleanupNodesFn  CleanupStaleNodesFunc
 	shuttingDown    atomic.Bool
 	syncGeneration  atomic.Uint64
@@ -241,6 +280,11 @@ func (s *Server) SetAuthKeyProvider(fn AuthKeyProvider) {
 		return
 	}
 	s.authKeyProvider = fn
+}
+
+// SetAuthHandoffFunc sets the callback used to publish interactive login URLs.
+func (s *Server) SetAuthHandoffFunc(fn AuthHandoffFunc) {
+	s.authHandoffFn = fn
 }
 
 // SetCleanupStaleNodesFn sets the function used to remove stale tailnet nodes before forced reauth.
@@ -461,7 +505,12 @@ func (s *Server) syncNodesWithOutcome(ctx context.Context) (syncOutcome, error) 
 		if err := s.startNodeLocked(ctx, svc); err != nil {
 			slog.Error("failed to start node", "name", name, "error", err)
 			startErrs = append(startErrs, fmt.Errorf("start service %q: %w", name, err))
+			continue
 		}
+		// Persist each successfully running node before starting the next one.
+		// Interactive enrollment is sequential, so this lets status pollers see
+		// earlier services as up while the next service is awaiting its login.
+		s.writeRuntimeSnapshotLocked(registryFingerprint)
 	}
 
 	syncErr := errors.Join(append(reloadErrs, startErrs...)...)
@@ -470,6 +519,8 @@ func (s *Server) syncNodesWithOutcome(ctx context.Context) (syncOutcome, error) 
 		return outcome, syncErr
 	}
 
+	// Re-write after a fully successful sync so an empty registry and a sync
+	// that required no starts still publish authoritative runtime evidence.
 	s.writeRuntimeSnapshotLocked(registryFingerprint)
 	outcome.committed = true
 	return outcome, nil
@@ -694,7 +745,12 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service) erro
 
 	nodeCtx, cancel := context.WithCancel(ctx)
 
-	status, err := tsnetSrv.Up(nodeCtx)
+	var status *ipnstate.Status
+	if authKey == "" {
+		status, err = s.waitForInteractiveNode(nodeCtx, tsnetSrv, svc.Name)
+	} else {
+		status, err = tsnetSrv.Up(nodeCtx)
+	}
 	if err != nil {
 		cancel()
 		tsnetSrv.Close()
@@ -841,6 +897,57 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service) erro
 
 	s.nodes[svc.Name] = node
 	return nil
+}
+
+func (s *Server) waitForInteractiveNode(ctx context.Context, srv tsnetServer, service string) (*ipnstate.Status, error) {
+	starter, ok := srv.(tsnetStarter)
+	if !ok {
+		return nil, fmt.Errorf("tsnet interactive start for %q is unavailable", service)
+	}
+	if err := starter.Start(); err != nil {
+		return nil, fmt.Errorf("tsnet start for %q: %w", service, err)
+	}
+
+	lc, err := tsnetStatusClientFn(srv)
+	if err != nil {
+		return nil, fmt.Errorf("local client for %q interactive login: %w", service, err)
+	}
+
+	var publishedURL string
+	for {
+		status, err := lc.Status(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("status for %q interactive login: %w", service, err)
+		}
+		if status != nil {
+			if status.BackendState == ipn.Running.String() && len(status.TailscaleIPs) > 0 {
+				return status, nil
+			}
+			authURL := strings.TrimSpace(status.AuthURL)
+			if authURL != "" && authURL != publishedURL {
+				if s.authHandoffFn != nil {
+					if err := s.authHandoffFn(ctx, AuthHandoff{Service: service, AuthURL: authURL}); err != nil {
+						return nil, fmt.Errorf("publish interactive login for %q: %w", service, err)
+					}
+				}
+				publishedURL = authURL
+			}
+		}
+
+		pollInterval := interactiveStatusPollInterval
+		if pollInterval <= 0 {
+			pollInterval = time.Millisecond
+		}
+		timer := time.NewTimer(pollInterval)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+	}
 }
 
 func runtimeHostFromStatus(status *ipnstate.Status) string {

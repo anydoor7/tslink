@@ -1,6 +1,7 @@
 package logging
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -80,5 +81,25 @@ func TestInitJSONHandler(t *testing.T) {
 	}
 	if _, ok := got["time"]; !ok {
 		t.Fatalf("time field missing from JSON output: %v", got)
+	}
+}
+
+func TestTSNetUserLogfRoutesThroughTSLinkLogger(t *testing.T) {
+	oldDefault := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(oldDefault) })
+	var buf bytes.Buffer
+	InitTo(&buf, true)
+
+	TSNetUserLogf("Tailscale auth URL: %s", "https://login.tailscale.com/a/test")
+
+	var got map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v; output = %q", err, buf.String())
+	}
+	if got["source"] != "tsnet" {
+		t.Fatalf("source = %v, want tsnet", got["source"])
+	}
+	if !strings.Contains(got["msg"].(string), "https://login.tailscale.com/a/test") {
+		t.Fatalf("msg = %v, want formatted user-facing URL", got["msg"])
 	}
 }

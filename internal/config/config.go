@@ -103,6 +103,16 @@ func RuntimeSnapshotPath() (string, error) {
 	return filepath.Join(dir, "runtime.json"), nil
 }
 
+// AuthHandoffPath returns the path used to publish a pending interactive
+// tsnet enrollment from a daemon child to CLI/status consumers.
+func AuthHandoffPath() (string, error) {
+	dir, err := Dir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "auth-handoff.json"), nil
+}
+
 func PIDPath() (string, error) {
 	dir, err := Dir()
 	if err != nil {

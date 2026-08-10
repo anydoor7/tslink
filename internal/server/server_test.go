@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -230,6 +231,40 @@ type fakeTSNetServer struct {
 	listenCalled      int
 	listenTLSCalled   int
 	localClientCalled int
+}
+
+type fakeInteractiveTSNetServer struct {
+	fakeTSNetServer
+	startCalled bool
+	upCalled    bool
+	startErr    error
+}
+
+func (s *fakeInteractiveTSNetServer) Start() error {
+	s.startCalled = true
+	return s.startErr
+}
+
+func (s *fakeInteractiveTSNetServer) Up(context.Context) (*ipnstate.Status, error) {
+	s.upCalled = true
+	return nil, errors.New("interactive path must not call Up")
+}
+
+type sequenceTSNetStatusClient struct {
+	statuses []*ipnstate.Status
+	calls    int
+}
+
+func (c *sequenceTSNetStatusClient) Status(context.Context) (*ipnstate.Status, error) {
+	if len(c.statuses) == 0 {
+		return nil, errors.New("no status configured")
+	}
+	index := c.calls
+	if index >= len(c.statuses) {
+		index = len(c.statuses) - 1
+	}
+	c.calls++
+	return c.statuses[index], nil
 }
 
 func (s *fakeTSNetServer) Up(context.Context) (*ipnstate.Status, error) {
@@ -721,6 +756,116 @@ func TestStartNodeLocked_ClosesTSNetServerOnUpError(t *testing.T) {
 	}
 	if _, ok := s.nodes["svc"]; ok {
 		t.Fatal("failed node should not be registered")
+	}
+}
+
+func TestNewTSNetServerCredentialTiersPreserveTaggedCompatibility(t *testing.T) {
+	svc := registry.Service{
+		Name:      "svc",
+		Tags:      []string{"tag:tsmain", "tag:shared"},
+		Ephemeral: true,
+	}
+
+	credentialed, ok := newTSNetServer(svc, t.TempDir(), "tskey-auth-test", "https://control.example.com").(*tsnet.Server)
+	if !ok {
+		t.Fatal("credentialed constructor did not return *tsnet.Server")
+	}
+	if credentialed.AuthKey != "tskey-auth-test" {
+		t.Fatalf("credentialed AuthKey = %q, want supplied auth key", credentialed.AuthKey)
+	}
+	if got := strings.Join(credentialed.AdvertiseTags, ","); got != "tag:tsmain,tag:shared" {
+		t.Fatalf("credentialed AdvertiseTags = %q, want original service tags", got)
+	}
+	if !credentialed.Ephemeral || credentialed.ControlURL != "https://control.example.com" {
+		t.Fatalf("credentialed constructor changed service options: %+v", credentialed)
+	}
+	if credentialed.UserLogf == nil {
+		t.Fatal("credentialed UserLogf = nil")
+	}
+
+	interactive, ok := newTSNetServer(svc, t.TempDir(), "", "").(*tsnet.Server)
+	if !ok {
+		t.Fatal("interactive constructor did not return *tsnet.Server")
+	}
+	if interactive.AuthKey != "" {
+		t.Fatalf("interactive AuthKey = %q, want empty", interactive.AuthKey)
+	}
+	if len(interactive.AdvertiseTags) != 0 {
+		t.Fatalf("interactive AdvertiseTags = %v, want no tags", interactive.AdvertiseTags)
+	}
+	if !interactive.Ephemeral {
+		t.Fatal("interactive constructor changed Ephemeral=false")
+	}
+	if interactive.UserLogf == nil {
+		t.Fatal("interactive UserLogf = nil")
+	}
+}
+
+func TestStartNodeLocked_ZeroCredentialUsesStableStatusWithoutUp(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+
+	s, err := New("", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	s.SetAuthKeyProvider(func(context.Context, registry.Service) (string, error) { return "", nil })
+
+	fake := &fakeInteractiveTSNetServer{}
+	statusClient := &sequenceTSNetStatusClient{statuses: []*ipnstate.Status{
+		{BackendState: "NeedsLogin", AuthURL: "https://login.tailscale.com/a/test-auth"},
+		{
+			BackendState: "Running",
+			TailscaleIPs: []netip.Addr{netip.MustParseAddr("100.64.0.1")},
+			Self:         &ipnstate.PeerStatus{DNSName: "svc.example.ts.net."},
+		},
+	}}
+
+	oldNew := newTSNetServerFn
+	oldStatusClient := tsnetStatusClientFn
+	oldPoll := interactiveStatusPollInterval
+	newTSNetServerFn = func(svc registry.Service, stateDir, authKey, controlURL string) tsnetServer {
+		if authKey != "" {
+			t.Fatalf("interactive auth key = %q, want empty", authKey)
+		}
+		return fake
+	}
+	tsnetStatusClientFn = func(tsnetServer) (tsnetStatusClient, error) { return statusClient, nil }
+	interactiveStatusPollInterval = time.Millisecond
+	t.Cleanup(func() {
+		newTSNetServerFn = oldNew
+		tsnetStatusClientFn = oldStatusClient
+		interactiveStatusPollInterval = oldPoll
+	})
+
+	var handoffs []AuthHandoff
+	s.SetAuthHandoffFunc(func(_ context.Context, handoff AuthHandoff) error {
+		handoffs = append(handoffs, handoff)
+		return nil
+	})
+
+	err = s.startNodeLocked(context.Background(), registry.Service{
+		Name: "svc",
+		Type: registry.TypeFile,
+		Path: t.TempDir(),
+		Tags: []string{"tag:tsmain"},
+	})
+	if err != nil {
+		t.Fatalf("startNodeLocked() error = %v", err)
+	}
+	if !fake.startCalled || fake.upCalled {
+		t.Fatalf("interactive calls: Start=%v Up=%v, want Start only", fake.startCalled, fake.upCalled)
+	}
+	if statusClient.calls < 2 {
+		t.Fatalf("Status() calls = %d, want needs-login then running", statusClient.calls)
+	}
+	if len(handoffs) != 1 || handoffs[0].Service != "svc" || handoffs[0].AuthURL != "https://login.tailscale.com/a/test-auth" {
+		t.Fatalf("auth handoffs = %+v, want one stable Status AuthURL", handoffs)
+	}
+	if node := s.nodes["svc"]; node == nil || node.runtimeHost != "svc.example.ts.net" {
+		t.Fatalf("running node = %+v, want authenticated runtime host", node)
 	}
 }
 
@@ -1727,6 +1872,42 @@ func TestSyncNodes_WritesRuntimeSnapshotAfterServiceStarts(t *testing.T) {
 	}
 	if strings.Join(entry.CertDomains, ",") != "files.tailnet.ts.net" {
 		t.Fatalf("cert domains = %v, want files.tailnet.ts.net", entry.CertDomains)
+	}
+}
+
+func TestSyncNodes_PublishesPartialSnapshotBeforeStartingNextService(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+	writeRegistry(t, []registry.Service{
+		{Name: "first", Type: registry.TypeFile, Path: t.TempDir()},
+		{Name: "second", Type: registry.TypeFile, Path: t.TempDir()},
+	})
+
+	oldNew := newTSNetServerFn
+	newTSNetServerFn = func(svc registry.Service, stateDir, authKey, controlURL string) tsnetServer {
+		return &fakeTSNetServer{certDomains: []string{svc.Name + ".tailnet.ts.net"}}
+	}
+	t.Cleanup(func() { newTSNetServerFn = oldNew })
+
+	oldSave := runtimeSaveSnapshotFn
+	var serviceCounts []int
+	runtimeSaveSnapshotFn = func(path string, snapshot runtimesnapshot.Snapshot) error {
+		serviceCounts = append(serviceCounts, len(snapshot.Services))
+		return nil
+	}
+	t.Cleanup(func() { runtimeSaveSnapshotFn = oldSave })
+
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	if err := s.syncNodes(context.Background()); err != nil {
+		t.Fatalf("syncNodes() error = %v", err)
+	}
+	if len(serviceCounts) < 3 || serviceCounts[0] != 1 || serviceCounts[len(serviceCounts)-1] != 2 {
+		t.Fatalf("snapshot service counts = %v, want partial 1 before complete 2", serviceCounts)
 	}
 }
 

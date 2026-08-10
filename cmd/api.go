@@ -126,6 +126,7 @@ type apiHandler struct {
 	regPath             string
 	pidPath             string
 	runtimeSnapshotPath string
+	authHandoffPath     string
 }
 
 func (h *apiHandler) handleLine(line string, out io.Writer) output.Result {
@@ -298,7 +299,11 @@ func (h *apiHandler) handleStatus(req APIRequest, out io.Writer) output.Result {
 	if req.Name != "" {
 		return writeAPICommandError(out, apiActionStatus, output.ErrUsage("name is supported only when urls is true"))
 	}
-	result, err := getStatus(h.pidPath, h.regPath)
+	snapshotPath, authHandoffPath, err := h.statusPaths()
+	if err != nil {
+		return writeAPIError(out, apiActionStatus, err)
+	}
+	result, err := getPollableStatus(h.pidPath, h.regPath, snapshotPath, authHandoffPath)
 	if err != nil {
 		return writeAPIError(out, apiActionStatus, err)
 	}
@@ -306,15 +311,11 @@ func (h *apiHandler) handleStatus(req APIRequest, out io.Writer) output.Result {
 }
 
 func (h *apiHandler) handleStatusURLs(req APIRequest, out io.Writer) output.Result {
-	snapshotPath := h.runtimeSnapshotPath
-	if snapshotPath == "" {
-		var err error
-		snapshotPath, err = statusRuntimeSnapshotPathFn()
-		if err != nil {
-			return writeAPIError(out, apiActionStatus, err)
-		}
+	snapshotPath, authHandoffPath, err := h.statusPaths()
+	if err != nil {
+		return writeAPIError(out, apiActionStatus, err)
 	}
-	result, err := getStatusURLs(h.pidPath, h.regPath, snapshotPath)
+	result, err := getStatusURLsWithAuth(h.pidPath, h.regPath, snapshotPath, authHandoffPath)
 	if err != nil {
 		return writeAPIError(out, apiActionStatus, err)
 	}
@@ -325,6 +326,24 @@ func (h *apiHandler) handleStatusURLs(req APIRequest, out io.Writer) output.Resu
 		}
 	}
 	return writeAPISuccess(out, apiActionStatus, result)
+}
+
+func (h *apiHandler) statusPaths() (snapshotPath, authHandoffPath string, err error) {
+	snapshotPath = h.runtimeSnapshotPath
+	if snapshotPath == "" {
+		snapshotPath, err = statusRuntimeSnapshotPathFn()
+		if err != nil {
+			return "", "", err
+		}
+	}
+	authHandoffPath = h.authHandoffPath
+	if authHandoffPath == "" {
+		authHandoffPath, err = statusAuthHandoffPathFn()
+		if err != nil {
+			return "", "", err
+		}
+	}
+	return snapshotPath, authHandoffPath, nil
 }
 
 func (h *apiHandler) handleDoctor(req APIRequest, out io.Writer) output.Result {

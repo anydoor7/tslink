@@ -57,6 +57,16 @@ func TestRuntimeSnapshotPath(t *testing.T) {
 	}
 }
 
+func TestAuthHandoffPath(t *testing.T) {
+	path, err := AuthHandoffPath()
+	if err != nil {
+		t.Fatalf("AuthHandoffPath() error = %v", err)
+	}
+	if !strings.HasSuffix(path, filepath.Join(".config", "tslink", "auth-handoff.json")) {
+		t.Fatalf("AuthHandoffPath() = %q, want suffix auth-handoff.json", path)
+	}
+}
+
 func TestPIDPath(t *testing.T) {
 	path, err := PIDPath()
 	if err != nil {

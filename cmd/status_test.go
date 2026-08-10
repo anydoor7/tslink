@@ -130,6 +130,123 @@ func TestStatusURLsExactSnapshotUsesRuntimeEndpoint(t *testing.T) {
 	}
 }
 
+func TestPollableStatusZeroCredentialTransitionsFromNeedsLoginToAuthenticated(t *testing.T) {
+	dir := t.TempDir()
+	regPath := filepath.Join(dir, "registry.json")
+	pidPath := filepath.Join(dir, "tslink.pid")
+	snapshotPath := filepath.Join(dir, "runtime.json")
+	handoffPath := filepath.Join(dir, "auth-handoff.json")
+	startedAt := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	svc := addStatusTestService(t, regPath, registry.Service{
+		Name:   "web",
+		Type:   registry.TypeProxy,
+		Target: "http://localhost:3000",
+		Tags:   []string{"tag:tsmain"},
+	})
+	withStatusURLSeams(t, true, 4242, startedAt)
+
+	oldLoadHandoff := statusLoadAuthHandoffFn
+	statusLoadAuthHandoffFn = func(string) (authHandoffRecord, error) {
+		return authHandoffRecord{
+			SchemaVersion: authHandoffSchemaVersion,
+			Status:        authStatusNeedsLogin,
+			Service:       "web",
+			AuthURL:       "https://login.tailscale.com/a/status-auth",
+			ExpiresAt:     startedAt.Add(authHandoffConservativeLifetime),
+			Poll:          "tslink status --json",
+			DaemonPID:     4242,
+		}, nil
+	}
+	t.Cleanup(func() { statusLoadAuthHandoffFn = oldLoadHandoff })
+
+	needsLogin, err := getPollableStatus(pidPath, regPath, snapshotPath, handoffPath)
+	if err != nil {
+		t.Fatalf("getPollableStatus(needs_login): %v", err)
+	}
+	if needsLogin.Authenticated || needsLogin.AuthStatus != authStatusNeedsLogin {
+		t.Fatalf("auth state = authenticated:%v status:%q, want needs_login", needsLogin.Authenticated, needsLogin.AuthStatus)
+	}
+	if needsLogin.AuthURL != "https://login.tailscale.com/a/status-auth" || needsLogin.ExpiresAt == nil {
+		t.Fatalf("auth handoff = url:%q expiry:%v, want pollable URL and expiry", needsLogin.AuthURL, needsLogin.ExpiresAt)
+	}
+	if len(needsLogin.Services) != 1 || needsLogin.Services[0].Name != "web" || needsLogin.Services[0].Status != authStatusNeedsLogin {
+		t.Fatalf("services = %+v, want web needs_login", needsLogin.Services)
+	}
+
+	fingerprint := statusRegistryFingerprint(t, regPath)
+	snapshot := tsruntime.NewSnapshot(4242, startedAt, fingerprint, startedAt.Add(time.Second), []tsruntime.ServiceState{
+		{Service: svc, RuntimeHost: "web.tailnet.ts.net"},
+	})
+	if err := tsruntime.Save(snapshotPath, snapshot); err != nil {
+		t.Fatalf("runtime.Save: %v", err)
+	}
+	authenticated, err := getPollableStatus(pidPath, regPath, snapshotPath, handoffPath)
+	if err != nil {
+		t.Fatalf("getPollableStatus(authenticated): %v", err)
+	}
+	if !authenticated.Authenticated || authenticated.AuthStatus != authStatusAuthenticated {
+		t.Fatalf("auth state = authenticated:%v status:%q, want authenticated", authenticated.Authenticated, authenticated.AuthStatus)
+	}
+	if authenticated.AuthURL != "" || authenticated.ExpiresAt != nil {
+		t.Fatalf("completed auth leaked stale handoff: url:%q expiry:%v", authenticated.AuthURL, authenticated.ExpiresAt)
+	}
+	if len(authenticated.Services) != 1 || authenticated.Services[0].Status != "up" {
+		t.Fatalf("services = %+v, want web up", authenticated.Services)
+	}
+}
+
+func TestPollableStatusShowsEarlierServicesWhileNextNeedsLogin(t *testing.T) {
+	dir := t.TempDir()
+	regPath := filepath.Join(dir, "registry.json")
+	pidPath := filepath.Join(dir, "tslink.pid")
+	snapshotPath := filepath.Join(dir, "runtime.json")
+	handoffPath := filepath.Join(dir, "auth-handoff.json")
+	startedAt := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	first := addStatusTestService(t, regPath, registry.Service{
+		Name: "first", Type: registry.TypeFile, Path: t.TempDir(),
+	})
+	addStatusTestService(t, regPath, registry.Service{
+		Name: "second", Type: registry.TypeFile, Path: t.TempDir(),
+	})
+	withStatusURLSeams(t, true, 4242, startedAt)
+
+	fingerprint := statusRegistryFingerprint(t, regPath)
+	snapshot := tsruntime.NewSnapshot(4242, startedAt, fingerprint, startedAt.Add(time.Second), []tsruntime.ServiceState{
+		{Service: first, RuntimeHost: "first.tailnet.ts.net"},
+	})
+	if err := tsruntime.Save(snapshotPath, snapshot); err != nil {
+		t.Fatalf("runtime.Save: %v", err)
+	}
+
+	oldLoadHandoff := statusLoadAuthHandoffFn
+	statusLoadAuthHandoffFn = func(string) (authHandoffRecord, error) {
+		return authHandoffRecord{
+			SchemaVersion: authHandoffSchemaVersion,
+			Status:        authStatusNeedsLogin,
+			Service:       "second",
+			AuthURL:       "https://login.tailscale.com/a/second-auth",
+			ExpiresAt:     startedAt.Add(authHandoffConservativeLifetime),
+			Poll:          "tslink status --json",
+			DaemonPID:     4242,
+		}, nil
+	}
+	t.Cleanup(func() { statusLoadAuthHandoffFn = oldLoadHandoff })
+
+	result, err := getPollableStatus(pidPath, regPath, snapshotPath, handoffPath)
+	if err != nil {
+		t.Fatalf("getPollableStatus: %v", err)
+	}
+	if result.Authenticated || result.AuthStatus != authStatusNeedsLogin || result.AuthURL == "" {
+		t.Fatalf("auth state = authenticated:%v status:%q url:%q, want second service handoff", result.Authenticated, result.AuthStatus, result.AuthURL)
+	}
+	want := map[string]string{"first": "up", "second": authStatusNeedsLogin}
+	for _, service := range result.Services {
+		if service.Status != want[service.Name] {
+			t.Fatalf("service %q status = %q, want %q (all=%+v)", service.Name, service.Status, want[service.Name], result.Services)
+		}
+	}
+}
+
 func TestStatusURLsMissingSnapshotFallsBackToExpectedEndpoint(t *testing.T) {
 	dir := t.TempDir()
 	regPath := filepath.Join(dir, "registry.json")

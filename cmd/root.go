@@ -39,8 +39,9 @@ exposure is off by default and requires explicit acknowledgement.
 Supported on macOS, Linux, and Windows.
 
 Examples:
-  tslink login                                  Authenticate with Tailscale
   tslink add myapp --proxy localhost:3000        Expose a web service
+  tslink serve                                   Enroll without an admin credential
+  tslink login                                   Store an optional durable-install credential
   tslink add docs --dir ~/Documents              Expose a file directory
   tslink add mydb --tcp localhost:5432            Expose a TCP endpoint
   tslink serve --daemon                          Start as background daemon

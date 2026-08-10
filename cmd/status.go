@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -23,7 +24,9 @@ var (
 	statusPIDPathFn             = config.PIDPath
 	statusRegistryPathFn        = config.RegistryPath
 	statusRuntimeSnapshotPathFn = config.RuntimeSnapshotPath
+	statusAuthHandoffPathFn     = config.AuthHandoffPath
 	runtimeLoadSnapshotFn       = tsruntime.Load
+	statusLoadAuthHandoffFn     = loadAuthHandoff
 	pidFileModTimeFn            = func(path string) (time.Time, error) {
 		info, err := os.Stat(path)
 		if err != nil {
@@ -42,10 +45,19 @@ const (
 
 // StatusResult holds the status information for display.
 type StatusResult struct {
-	DaemonRunning bool `json:"daemon_running"`
-	DaemonPID     int  `json:"daemon_pid"`
-	Authenticated bool `json:"authenticated"`
-	ServiceCount  int  `json:"service_count"`
+	DaemonRunning bool                 `json:"daemon_running"`
+	DaemonPID     int                  `json:"daemon_pid"`
+	Authenticated bool                 `json:"authenticated"`
+	AuthStatus    string               `json:"auth_status"`
+	AuthURL       string               `json:"auth_url,omitempty"`
+	ExpiresAt     *time.Time           `json:"expires_at,omitempty"`
+	ServiceCount  int                  `json:"service_count"`
+	Services      []StatusServiceState `json:"services"`
+}
+
+type StatusServiceState struct {
+	Name   string `json:"name"`
+	Status string `json:"status"`
 }
 
 type StatusURLsResult struct {
@@ -53,6 +65,9 @@ type StatusURLsResult struct {
 	DaemonRunning   bool                        `json:"daemon_running"`
 	DaemonPID       int                         `json:"daemon_pid"`
 	Authenticated   bool                        `json:"authenticated"`
+	AuthStatus      string                      `json:"auth_status"`
+	AuthURL         string                      `json:"auth_url,omitempty"`
+	ExpiresAt       *time.Time                  `json:"expires_at,omitempty"`
 	ServiceCount    int                         `json:"service_count"`
 	RuntimeSnapshot StatusRuntimeSnapshotResult `json:"runtime_snapshot"`
 	Services        []StatusServiceView         `json:"services"`
@@ -80,21 +95,90 @@ type StatusServiceView struct {
 }
 
 func getStatus(pidPath, regPath string) (StatusResult, error) {
-	var r StatusResult
+	r := StatusResult{AuthStatus: authStatusNotAuthenticated}
 	if isRunningFn(pidPath) {
 		r.DaemonRunning = true
 		r.DaemonPID, _ = readPIDFn(pidPath)
 	}
 	if apiKey, _ := getAPIKeyFn(); apiKey != "" {
 		r.Authenticated = true
+		r.AuthStatus = authStatusAuthenticated
 	} else if hasClientSecretFn() {
 		r.Authenticated = true
+		r.AuthStatus = authStatusAuthenticated
 	}
 	reg, err := registry.Load(regPath)
 	if err != nil {
 		return StatusResult{}, err
 	}
 	r.ServiceCount = len(reg.Services)
+	r.Services = make([]StatusServiceState, 0, len(reg.Services))
+	for _, svc := range reg.Services {
+		r.Services = append(r.Services, StatusServiceState{Name: svc.Name, Status: "down"})
+	}
+	return r, nil
+}
+
+func getPollableStatus(pidPath, regPath, snapshotPath, authHandoffPath string) (StatusResult, error) {
+	r, err := getStatus(pidPath, regPath)
+	if err != nil {
+		return StatusResult{}, err
+	}
+	reg, err := registry.Load(regPath)
+	if err != nil {
+		return StatusResult{}, err
+	}
+	fingerprint, err := tsruntime.RegistryFingerprint(reg)
+	if err != nil {
+		return StatusResult{}, err
+	}
+
+	snapshot, loadErr := runtimeLoadSnapshotFn(snapshotPath)
+	expected := tsruntime.ExpectedRuntime{CurrentRegistryFingerprint: fingerprint}
+	if r.DaemonRunning {
+		expected.DaemonPID = r.DaemonPID
+		if lowerBound, err := pidFileModTimeFn(pidPath); err == nil {
+			expected.DaemonStartedAtLowerBound = lowerBound
+		}
+	}
+	freshness := tsruntime.Classify(snapshot, loadErr, expected)
+	up := make(map[string]struct{})
+	if freshness.Exact && snapshot != nil {
+		up = make(map[string]struct{}, len(snapshot.Services))
+		for _, svc := range snapshot.Services {
+			up[svc.Name] = struct{}{}
+		}
+		for i := range r.Services {
+			if _, ok := up[r.Services[i].Name]; ok {
+				r.Services[i].Status = "up"
+			}
+		}
+		if len(up) > 0 {
+			r.Authenticated = true
+			r.AuthStatus = authStatusAuthenticated
+		}
+	}
+
+	if r.DaemonRunning {
+		if handoff, err := statusLoadAuthHandoffFn(authHandoffPath); err == nil && handoff.DaemonPID == r.DaemonPID {
+			_, handoffServiceUp := up[handoff.Service]
+			if handoffServiceUp {
+				// The snapshot can briefly win the race with removal of the
+				// completed handoff. Do not regress an already-up service.
+				return r, nil
+			}
+			r.Authenticated = false
+			r.AuthStatus = authStatusNeedsLogin
+			r.AuthURL = handoff.AuthURL
+			expiresAt := handoff.ExpiresAt.UTC()
+			r.ExpiresAt = &expiresAt
+			for i := range r.Services {
+				if r.Services[i].Name == handoff.Service {
+					r.Services[i].Status = authStatusNeedsLogin
+				}
+			}
+		}
+	}
 	return r, nil
 }
 
@@ -106,14 +190,23 @@ func formatStatus(r StatusResult, out io.Writer) {
 	}
 	if r.Authenticated {
 		fmt.Fprintln(out, "→ tailnet: authenticated")
+	} else if r.AuthStatus == authStatusNeedsLogin {
+		fmt.Fprintln(out, "→ tailnet: needs login")
+		if r.AuthURL != "" {
+			fmt.Fprintf(out, "→ login URL: %s\n", r.AuthURL)
+		}
 	} else {
-		fmt.Fprintln(out, "→ tailnet: not authenticated (run: tslink login)")
+		fmt.Fprintln(out, "→ tailnet: not authenticated (run: tslink serve)")
 	}
 	fmt.Fprintf(out, "→ services: %d registered\n", r.ServiceCount)
 }
 
 func getStatusURLs(pidPath, regPath, snapshotPath string) (StatusURLsResult, error) {
-	status, err := getStatus(pidPath, regPath)
+	return getStatusURLsWithAuth(pidPath, regPath, snapshotPath, filepath.Join(filepath.Dir(snapshotPath), "auth-handoff.json"))
+}
+
+func getStatusURLsWithAuth(pidPath, regPath, snapshotPath, authHandoffPath string) (StatusURLsResult, error) {
+	status, err := getPollableStatus(pidPath, regPath, snapshotPath, authHandoffPath)
 	if err != nil {
 		return StatusURLsResult{}, err
 	}
@@ -143,6 +236,9 @@ func getStatusURLs(pidPath, regPath, snapshotPath string) (StatusURLsResult, err
 		DaemonRunning:   status.DaemonRunning,
 		DaemonPID:       status.DaemonPID,
 		Authenticated:   status.Authenticated,
+		AuthStatus:      status.AuthStatus,
+		AuthURL:         status.AuthURL,
+		ExpiresAt:       status.ExpiresAt,
 		ServiceCount:    len(reg.Services),
 		RuntimeSnapshot: runtimeSnapshotResult(snapshot, freshness),
 		Services:        make([]StatusServiceView, 0, len(reg.Services)),
@@ -272,6 +368,9 @@ func formatStatusURLs(r StatusURLsResult, out io.Writer) {
 		DaemonRunning: r.DaemonRunning,
 		DaemonPID:     r.DaemonPID,
 		Authenticated: r.Authenticated,
+		AuthStatus:    r.AuthStatus,
+		AuthURL:       r.AuthURL,
+		ExpiresAt:     r.ExpiresAt,
 		ServiceCount:  r.ServiceCount,
 	}, out)
 	fmt.Fprintf(out, "→ runtime snapshot: %s", r.RuntimeSnapshot.Status)
@@ -348,13 +447,16 @@ var statusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show TSLink status",
 	Long: `Show the current status of TSLink: whether the daemon is running,
-Tailscale authentication state, and number of registered services.
+Tailscale authentication state, and registered/running services. JSON output
+includes auth_status, any pending auth_url, and a per-service up/down state so
+an agent can poll a zero-credential launch to completion.
 
 Output lines:
   → tslink: running (pid 12345)     Daemon is active with its process ID
   → tslink: not running             Daemon is not active
-  → tailnet: authenticated          Valid API key or OAuth client secret found
-  → tailnet: not authenticated      No credentials — run 'tslink login'
+  → tailnet: authenticated          Stored credential or running user-owned node
+  → tailnet: needs login            Open the emitted URL, then poll status again
+  → tailnet: not authenticated      Run 'tslink serve' to enroll without a credential
   → services: 3 registered          Number of services in the registry
 
 	Examples:
@@ -383,7 +485,11 @@ Output lines:
 			if err != nil {
 				return err
 			}
-			r, err := getStatusURLs(pidPath, regPath, snapshotPath)
+			authHandoffPath, err := statusAuthHandoffPathFn()
+			if err != nil {
+				return err
+			}
+			r, err := getStatusURLsWithAuth(pidPath, regPath, snapshotPath, authHandoffPath)
 			if err != nil {
 				return err
 			}
@@ -408,7 +514,15 @@ Output lines:
 			return output.ErrUsage("--name requires --urls")
 		}
 
-		r, err := getStatus(pidPath, regPath)
+		snapshotPath, err := statusRuntimeSnapshotPathFn()
+		if err != nil {
+			return err
+		}
+		authHandoffPath, err := statusAuthHandoffPathFn()
+		if err != nil {
+			return err
+		}
+		r, err := getPollableStatus(pidPath, regPath, snapshotPath, authHandoffPath)
 		if err != nil {
 			return err
 		}

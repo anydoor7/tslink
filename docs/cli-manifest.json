@@ -461,7 +461,7 @@
     },
     {
       "path": "tslink login",
-      "short": "Login to Tailscale",
+      "short": "Store an optional credential for durable installs",
       "flags": [
         {
           "name": "api-key",
@@ -614,6 +614,13 @@
           "default": "false",
           "scope": "local",
           "usage": "Opt in to remote Tailscale ACL tag-owner mutation using a machine-readable side-effect plan"
+        },
+        {
+          "name": "no-browser",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Print the Tailscale login URL without opening a browser"
         }
       ]
     },

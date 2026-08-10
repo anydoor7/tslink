@@ -14,6 +14,7 @@ import (
 
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/credentials"
+	"github.com/monody0007/tslink/internal/output"
 	"github.com/monody0007/tslink/internal/registry"
 	"github.com/monody0007/tslink/internal/server"
 	"github.com/monody0007/tslink/internal/tailapi"
@@ -72,6 +73,35 @@ type mockServerWithAuthProvider struct {
 	service      registry.Service
 }
 
+type mockInteractiveServer struct {
+	authProvider server.AuthKeyProvider
+	authHandoff  server.AuthHandoffFunc
+	service      registry.Service
+	authURL      string
+}
+
+func (m *mockInteractiveServer) SetAuthKeyProvider(fn server.AuthKeyProvider) {
+	m.authProvider = fn
+}
+
+func (m *mockInteractiveServer) SetAuthHandoffFunc(fn server.AuthHandoffFunc) {
+	m.authHandoff = fn
+}
+
+func (m *mockInteractiveServer) Run(ctx context.Context) error {
+	if m.authProvider == nil || m.authHandoff == nil {
+		return fmt.Errorf("interactive seams were not set")
+	}
+	authKey, err := m.authProvider(ctx, m.service)
+	if err != nil {
+		return err
+	}
+	if authKey != "" {
+		return fmt.Errorf("interactive auth key = %q, want empty", authKey)
+	}
+	return m.authHandoff(ctx, server.AuthHandoff{Service: m.service.Name, AuthURL: m.authURL})
+}
+
 func (m *mockServerWithAuthProvider) SetAuthKeyProvider(fn server.AuthKeyProvider) {
 	m.authProvider = fn
 }
@@ -93,7 +123,7 @@ func saveServeState(t *testing.T) {
 		registryPath       func() (string, error)
 		loadRegistry       func(string) (*registry.Registry, error)
 		getAuthKey         func(context.Context, credentials.AuthKeyOptions) (string, error)
-		checkAuth          func() error
+		hasCredential      func() (bool, error)
 		pidPath            func() (string, error)
 		isRunning          func(string) bool
 		isPIDRunning       func(int) bool
@@ -104,9 +134,15 @@ func saveServeState(t *testing.T) {
 		daemonize          func(string, string, string, bool) (int, error)
 		readPID            func(string) (int, error)
 		readyPath          func() (string, error)
+		authHandoffPath    func() (string, error)
 		writeReady         func(string, int) error
 		readReady          func(string) (int, error)
 		removeReady        func(string)
+		saveAuthHandoff    func(string, authHandoffRecord) error
+		loadAuthHandoff    func(string) (authHandoffRecord, error)
+		removeAuthHandoff  func(string) error
+		openBrowser        func(string) error
+		isTerminal         func() bool
 		writePID           func(string) error
 		writePIDForProcess func(string, int) error
 		removePID          func(string)
@@ -116,9 +152,10 @@ func saveServeState(t *testing.T) {
 		readyPoll          time.Duration
 	}{
 		serveEnsureDirFn, serveMigrateFn, serveRegistryPathFn, serveLoadRegistryFn,
-		serveGetAuthKeyFn, serveCheckAuthFn, servePIDPathFn, serveIsRunningFn, serveIsPIDRunningFn, serveEnsureTagsFn, serveCleanupFn,
+		serveGetAuthKeyFn, serveHasStoredCredentialFn, servePIDPathFn, serveIsRunningFn, serveIsPIDRunningFn, serveEnsureTagsFn, serveCleanupFn,
 		serveLoadGlobalFn, serveLogDirFn, serveDaemonizeFn, serveReadPIDFn,
-		serveReadyPathFn, serveWriteReadyFn, serveReadReadyFn, serveRemoveReadyFn,
+		serveReadyPathFn, serveAuthHandoffPathFn, serveWriteReadyFn, serveReadReadyFn, serveRemoveReadyFn,
+		serveSaveAuthHandoffFn, serveLoadAuthHandoffFn, serveRemoveAuthHandoffFn, serveOpenBrowserFn, serveIsTerminalFn,
 		serveWritePIDFn, serveWritePIDForProcessFn, serveRemovePIDFn, serveWithPIDLockFn, serveNewServerFn,
 		serveDaemonReadyTimeout, serveDaemonReadyPollInterval,
 	}
@@ -128,7 +165,7 @@ func saveServeState(t *testing.T) {
 		serveRegistryPathFn = old.registryPath
 		serveLoadRegistryFn = old.loadRegistry
 		serveGetAuthKeyFn = old.getAuthKey
-		serveCheckAuthFn = old.checkAuth
+		serveHasStoredCredentialFn = old.hasCredential
 		servePIDPathFn = old.pidPath
 		serveIsRunningFn = old.isRunning
 		serveIsPIDRunningFn = old.isPIDRunning
@@ -139,9 +176,15 @@ func saveServeState(t *testing.T) {
 		serveDaemonizeFn = old.daemonize
 		serveReadPIDFn = old.readPID
 		serveReadyPathFn = old.readyPath
+		serveAuthHandoffPathFn = old.authHandoffPath
 		serveWriteReadyFn = old.writeReady
 		serveReadReadyFn = old.readReady
 		serveRemoveReadyFn = old.removeReady
+		serveSaveAuthHandoffFn = old.saveAuthHandoff
+		serveLoadAuthHandoffFn = old.loadAuthHandoff
+		serveRemoveAuthHandoffFn = old.removeAuthHandoff
+		serveOpenBrowserFn = old.openBrowser
+		serveIsTerminalFn = old.isTerminal
 		serveWritePIDFn = old.writePID
 		serveWritePIDForProcessFn = old.writePIDForProcess
 		serveRemovePIDFn = old.removePID
@@ -176,7 +219,7 @@ func mockServeDefaults(t *testing.T, dir string) {
 	serveGetAuthKeyFn = func(ctx context.Context, opts credentials.AuthKeyOptions) (string, error) {
 		return "fake-auth-key", nil
 	}
-	serveCheckAuthFn = func() error { return nil }
+	serveHasStoredCredentialFn = func() (bool, error) { return true, nil }
 	servePIDPathFn = func() (string, error) { return pidPath, nil }
 	serveIsRunningFn = func(string) bool { return false }
 	serveIsPIDRunningFn = func(int) bool { return true }
@@ -189,6 +232,7 @@ func mockServeDefaults(t *testing.T, dir string) {
 	serveDaemonizeFn = func(out, err, controlURL string, manageACL bool) (int, error) { return 99999, nil }
 	serveReadPIDFn = func(path string) (int, error) { return 99999, nil }
 	serveReadyPathFn = func() (string, error) { return readyPath, nil }
+	serveAuthHandoffPathFn = func() (string, error) { return filepath.Join(dir, "auth-handoff.json"), nil }
 	serveWriteReadyFn = func(path string, pid int) error {
 		return os.WriteFile(path, []byte(fmt.Sprintf("%d", pid)), 0600)
 	}
@@ -226,6 +270,7 @@ func findServeCmd(t *testing.T) *cobra.Command {
 		t.Fatalf("find serve command: %v", err)
 	}
 	_ = cmd.Flags().Set("manage-acl", "false")
+	_ = cmd.Flags().Set("no-browser", "false")
 	return cmd
 }
 
@@ -411,14 +456,149 @@ func TestServeCmd_LoadRegistryError(t *testing.T) {
 func TestServeCmd_AuthPreflightError(t *testing.T) {
 	dir := t.TempDir()
 	mockServeDefaults(t, dir)
-	serveCheckAuthFn = func() error {
-		return fmt.Errorf("not authenticated")
+	serveHasStoredCredentialFn = func() (bool, error) {
+		return false, fmt.Errorf("credential inventory failed")
 	}
 
 	cmd := findServeCmd(t)
 	err := cmd.RunE(cmd, nil)
-	if err == nil || !strings.Contains(err.Error(), "not authenticated") {
+	if err == nil || !strings.Contains(err.Error(), "credential inventory failed") {
 		t.Fatalf("expected auth key error, got: %v", err)
+	}
+}
+
+func TestServeCmd_ZeroCredentialSkipsAdminPathAndPresentsStableAuthURL(t *testing.T) {
+	dir := t.TempDir()
+	mockServeDefaults(t, dir)
+	regPath := filepath.Join(dir, "registry.json")
+	if _, err := registry.Add(regPath, registry.Service{
+		Name:   "web",
+		Type:   registry.TypeProxy,
+		Target: "http://localhost:3000",
+		Tags:   []string{"tag:tsmain"},
+	}); err != nil {
+		t.Fatalf("registry.Add() error = %v", err)
+	}
+
+	serveHasStoredCredentialFn = func() (bool, error) { return false, nil }
+	serveGetAuthKeyFn = func(context.Context, credentials.AuthKeyOptions) (string, error) {
+		t.Fatal("GetAuthKey called for zero-credential tier")
+		return "", nil
+	}
+	serveEnsureTagsFn = func(context.Context, []string) error {
+		t.Fatal("EnsureTags called for zero-credential tier")
+		return nil
+	}
+	serveCleanupFn = func(context.Context, []tailapi.CleanupTarget) (tailapi.CleanupResult, error) {
+		t.Fatal("administrative cleanup called for zero-credential tier")
+		return tailapi.CleanupResult{}, nil
+	}
+	interactive := &mockInteractiveServer{
+		service: registry.Service{Name: "web", Tags: []string{"tag:tsmain"}},
+		authURL: "https://login.tailscale.com/a/test-auth",
+	}
+	serveNewServerFn = func(authKey, controlURL string) (serverRunner, error) {
+		if authKey != "" {
+			t.Fatalf("process auth key = %q, want empty", authKey)
+		}
+		return interactive, nil
+	}
+	serveIsTerminalFn = func() bool { return true }
+	openedURL := ""
+	serveOpenBrowserFn = func(authURL string) error {
+		openedURL = authURL
+		return nil
+	}
+
+	cmd := findServeCmd(t)
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	if err := cmd.RunE(cmd, nil); err != nil {
+		t.Fatalf("RunE() error = %v", err)
+	}
+	if openedURL != interactive.authURL {
+		t.Fatalf("opened URL = %q, want %q", openedURL, interactive.authURL)
+	}
+	if !strings.Contains(stdout.String(), "Opened browser for Tailscale login") || !strings.Contains(stdout.String(), interactive.authURL) {
+		t.Fatalf("stdout = %q, want truthful open confirmation and auth URL", stdout.String())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+}
+
+func TestPresentAuthHandoffNonInteractivePoliciesNeverOpenBrowser(t *testing.T) {
+	dir := t.TempDir()
+	mockServeDefaults(t, dir)
+	record := newAuthHandoffRecord("web", "https://login.tailscale.com/a/test-auth", 4242)
+
+	tests := []struct {
+		name      string
+		configure func(*cobra.Command)
+	}{
+		{
+			name: "explicit no-browser",
+			configure: func(cmd *cobra.Command) {
+				_ = cmd.Flags().Set("no-browser", "true")
+				serveIsTerminalFn = func() bool { return true }
+			},
+		},
+		{
+			name: "no tty",
+			configure: func(cmd *cobra.Command) {
+				serveIsTerminalFn = func() bool { return false }
+			},
+		},
+		{
+			name: "CI set",
+			configure: func(cmd *cobra.Command) {
+				t.Setenv("CI", "1")
+				serveIsTerminalFn = func() bool { return true }
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := findServeCmd(t)
+			t.Cleanup(func() { _ = cmd.Flags().Set("no-browser", "false") })
+			var stdout bytes.Buffer
+			cmd.SetOut(&stdout)
+			opened := false
+			serveOpenBrowserFn = func(string) error {
+				opened = true
+				return nil
+			}
+			tc.configure(cmd)
+			presentAuthHandoff(cmd, record)
+			if opened {
+				t.Fatal("browser opener called in non-interactive policy")
+			}
+			if !strings.Contains(stdout.String(), record.AuthURL) {
+				t.Fatalf("stdout = %q, want printed auth URL", stdout.String())
+			}
+		})
+	}
+}
+
+func TestPresentAuthHandoffBrowserFailureFallsBackToURL(t *testing.T) {
+	dir := t.TempDir()
+	mockServeDefaults(t, dir)
+	serveIsTerminalFn = func() bool { return true }
+	serveOpenBrowserFn = func(string) error { return fmt.Errorf("opener unavailable") }
+	record := newAuthHandoffRecord("web", "https://login.tailscale.com/a/test-auth", 4242)
+	cmd := findServeCmd(t)
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	presentAuthHandoff(cmd, record)
+	if !strings.Contains(stdout.String(), record.AuthURL) {
+		t.Fatalf("stdout = %q, want fallback auth URL", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "Could not open a browser automatically") {
+		t.Fatalf("stderr = %q, want best-effort browser warning", stderr.String())
 	}
 }
 
@@ -703,6 +883,141 @@ func TestServeCmd_DaemonMode(t *testing.T) {
 	}
 }
 
+func TestServeCmd_JSONZeroCredentialReturnsImmediateAuthHandoff(t *testing.T) {
+	dir := t.TempDir()
+	mockServeDefaults(t, dir)
+	serveHasStoredCredentialFn = func() (bool, error) { return false, nil }
+	serveReadReadyFn = func(string) (int, error) { return 0, os.ErrNotExist }
+	serveReadPIDFn = func(string) (int, error) { return 99999, nil }
+	serveIsPIDRunningFn = func(int) bool { return true }
+	spawned := false
+	serveDaemonizeFn = func(out, errLog, controlURL string, manageACL bool) (int, error) {
+		spawned = true
+		return 99999, nil
+	}
+	fixedNow := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	oldNow := authHandoffNowFn
+	authHandoffNowFn = func() time.Time { return fixedNow }
+	t.Cleanup(func() { authHandoffNowFn = oldNow })
+	record := newAuthHandoffRecord("web", "https://login.tailscale.com/a/json-auth", 99999)
+	serveLoadAuthHandoffFn = func(string) (authHandoffRecord, error) { return record, nil }
+	opened := false
+	serveIsTerminalFn = func() bool { return true }
+	serveOpenBrowserFn = func(string) error {
+		opened = true
+		return nil
+	}
+
+	if err := rootCmd.PersistentFlags().Set("json", "true"); err != nil {
+		t.Fatalf("set json: %v", err)
+	}
+	t.Cleanup(func() { _ = rootCmd.PersistentFlags().Set("json", "false") })
+	cmd := findServeCmd(t)
+	raw := captureStdout(t, func() {
+		if err := cmd.RunE(cmd, nil); err != nil {
+			t.Fatalf("RunE() error = %v", err)
+		}
+	})
+
+	var response struct {
+		Type          string          `json:"type"`
+		OK            bool            `json:"ok"`
+		SchemaVersion int             `json:"schema_version"`
+		Command       string          `json:"command"`
+		Code          int             `json:"code"`
+		Data          serveAuthResult `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(raw), &response); err != nil {
+		t.Fatalf("unmarshal response: %v\nraw: %s", err, raw)
+	}
+	if !spawned {
+		t.Fatal("zero-credential JSON serve did not keep a daemon child alive")
+	}
+	if opened {
+		t.Fatal("JSON mode attempted to open a browser")
+	}
+	if response.Type != output.SchemaType || !response.OK || response.SchemaVersion != 1 || response.Command != "serve" || response.Code != 0 {
+		t.Fatalf("envelope = %+v, want successful serve schema v1", response)
+	}
+	if response.Data.Status != authStatusNeedsLogin || response.Data.AuthURL != record.AuthURL || response.Data.Poll != "tslink status --json" {
+		t.Fatalf("data = %+v, want stable needs_login handoff", response.Data)
+	}
+	if !response.Data.ExpiresAt.Equal(fixedNow.Add(authHandoffConservativeLifetime)) {
+		t.Fatalf("expires_at = %s, want conservative expiry", response.Data.ExpiresAt)
+	}
+}
+
+func TestServeCmd_DaemonConflictPreservesLiveAuthHandoff(t *testing.T) {
+	dir := t.TempDir()
+	mockServeDefaults(t, dir)
+	serveDaemon = true
+	serveIsRunningFn = func(string) bool { return true }
+
+	readyRemoved := false
+	handoffRemoved := false
+	serveRemoveReadyFn = func(string) { readyRemoved = true }
+	serveRemoveAuthHandoffFn = func(string) error {
+		handoffRemoved = true
+		return nil
+	}
+	serveDaemonizeFn = func(string, string, string, bool) (int, error) {
+		t.Fatal("daemonize called despite live daemon conflict")
+		return 0, nil
+	}
+
+	cmd := findServeCmd(t)
+	err := cmd.RunE(cmd, nil)
+	if err == nil || !strings.Contains(err.Error(), "already running") {
+		t.Fatalf("RunE() error = %v, want live daemon conflict", err)
+	}
+	if readyRemoved || handoffRemoved {
+		t.Fatalf("startup signal removal = ready:%v handoff:%v, want live daemon evidence preserved", readyRemoved, handoffRemoved)
+	}
+}
+
+func TestRunForegroundZeroCredentialPublishesAuthHandoff(t *testing.T) {
+	dir := t.TempDir()
+	mockServeDefaults(t, dir)
+	interactive := &mockInteractiveServer{
+		service: registry.Service{Name: "web", Tags: []string{"tag:tsmain"}},
+		authURL: "https://login.tailscale.com/a/child-auth",
+	}
+	serveNewServerFn = func(authKey, controlURL string) (serverRunner, error) {
+		if authKey != "" {
+			t.Fatalf("process auth key = %q, want empty", authKey)
+		}
+		return interactive, nil
+	}
+	serveGetAuthKeyFn = func(context.Context, credentials.AuthKeyOptions) (string, error) {
+		t.Fatal("GetAuthKey called for zero-credential foreground child")
+		return "", nil
+	}
+	var saved authHandoffRecord
+	serveSaveAuthHandoffFn = func(path string, record authHandoffRecord) error {
+		if path != filepath.Join(dir, "auth-handoff.json") {
+			t.Fatalf("auth handoff path = %q", path)
+		}
+		saved = record
+		return nil
+	}
+	var presented authHandoffRecord
+
+	err := runForegroundWithOptions(filepath.Join(dir, "tslink.pid"), "", "", foregroundOptions{
+		AuthHandoffPath: filepath.Join(dir, "auth-handoff.json"),
+		Credentialed:    false,
+		PresentAuth:     func(record authHandoffRecord) { presented = record },
+	})
+	if err != nil {
+		t.Fatalf("runForegroundWithOptions() error = %v", err)
+	}
+	if saved.Status != authStatusNeedsLogin || saved.Service != "web" || saved.AuthURL != interactive.authURL || saved.DaemonPID != os.Getpid() {
+		t.Fatalf("saved handoff = %+v, want child-owned needs_login record", saved)
+	}
+	if presented.AuthURL != saved.AuthURL || presented.Service != saved.Service {
+		t.Fatalf("presented handoff = %+v, want saved handoff %+v", presented, saved)
+	}
+}
+
 func TestServeCmd_DaemonModeDoesNotDeletePIDAfterGuardAllows(t *testing.T) {
 	dir := t.TempDir()
 	mockServeDefaults(t, dir)
@@ -963,9 +1278,9 @@ func TestServeCmd_DaemonModeSkipsHeavyweightParentPreflight(t *testing.T) {
 		calls++
 		return fmt.Errorf("ensure tags should not be called in daemon parent")
 	}
-	serveCheckAuthFn = func() error {
+	serveHasStoredCredentialFn = func() (bool, error) {
 		calls++
-		return fmt.Errorf("auth check should not be called in daemon parent")
+		return false, fmt.Errorf("auth check should not be called in daemon parent")
 	}
 	serveCleanupFn = func(ctx context.Context, targets []tailapi.CleanupTarget) (tailapi.CleanupResult, error) {
 		calls++

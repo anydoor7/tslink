@@ -13,11 +13,11 @@ import (
 
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/credentials"
+	"github.com/monody0007/tslink/internal/logging"
 	"github.com/monody0007/tslink/internal/output"
 	"github.com/monody0007/tslink/internal/security"
 	"github.com/monody0007/tslink/internal/tailapi"
 	"github.com/spf13/cobra"
-	"tailscale.com/client/local"
 	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/tsnet"
 )
@@ -39,9 +39,8 @@ type LoginResult struct {
 	RemoteSideEffectPlan *security.RemoteSideEffectPlan `json:"remote_side_effect_plan,omitempty"`
 }
 
-type loginTSNetServer interface {
+type loginValidationServer interface {
 	Up(context.Context) (*ipnstate.Status, error)
-	LocalClient() (*local.Client, error)
 	Close() error
 }
 
@@ -75,45 +74,29 @@ var (
 	loginEnsureTagsFn           = tailapi.EnsureTags
 	loginCleanupLegacyStateFn   = cleanupLoginLegacyState
 	loginRemoveAllFn            = os.RemoveAll
-	loginNewTSNetServerFn       = func(tmpStateDir string) loginTSNetServer {
-		return newInteractiveLoginServer(tmpStateDir)
-	}
-	loginTsnetLoginFn = func(cfgDir string) (string, error) {
-		tmpStateDir := filepath.Join(cfgDir, "tsnet-login-tmp")
-		defer loginRemoveAllFn(tmpStateDir)
-
-		fmt.Println("→ Opening browser for Tailscale login...")
-
-		srv := loginNewTSNetServerFn(tmpStateDir)
-
-		if _, err := srv.Up(context.Background()); err != nil {
-			srv.Close()
-			return "", fmt.Errorf("login failed: %w", err)
-		}
-
-		loginName := ""
-		if lc, lcErr := srv.LocalClient(); lcErr == nil {
-			if st, stErr := lc.Status(context.Background()); stErr == nil && st.Self != nil {
-				if u, ok := st.User[st.Self.UserID]; ok {
-					loginName = u.LoginName
-				}
-			}
-		}
-
-		srv.Close()
-		return loginName, nil
+	loginNewValidationServerFn  = func(tmpStateDir, authKey string, tags []string) loginValidationServer {
+		return newClientSecretValidationServer(tmpStateDir, authKey, tags)
 	}
 )
 
 var loginCmd = &cobra.Command{
 	Use:   "login",
-	Short: "Login to Tailscale",
-	Long: `Authenticate with your Tailscale account.
+	Short: "Store an optional credential for durable installs",
+	Long: `Store an optional administrative credential for durable TSLink installs.
 
-Opens a browser for OAuth login, then guides you to choose a credential type:
+You do not need this command for the default first run. A one-service quick
+share via "tslink serve" enrolls a user-owned, untagged node with one browser
+click, no ACL edits, and no administrative credential. Each additional fresh
+service has its own node and login URL. User-owned node keys expire and may
+eventually need re-authentication.
+
+Use this command only for the tagged, durable multi-service tier. Choose a
+credential type:
 
   [1] API access token (tskey-api-*)
       Generate at: https://login.tailscale.com/admin/settings/keys
+      This is a broad tailnet-admin token, not a scoped API key, and expires
+      within 90 days. It is unnecessary for a quick share.
       → Click "Generate access token..."
       Expires periodically — quick setup for API-backed TSLink automation.
       Supports API verification, auth-key derivation, and read-only remote
@@ -141,7 +124,7 @@ they fall back to files in ~/.config/tslink/ with restricted permissions (0600).
 	  tslink login --client-secret <secret>       # compatible but visible in process lists
 
 		Examples:
-		  tslink login                  Interactive login with browser + credential prompt
+		  tslink login                  Interactive administrative credential prompt
 
 		  # Automation path with a secret manager:
 		  op read op://vault/tslink/api-key | tslink login --api-key-stdin`,
@@ -163,39 +146,22 @@ they fall back to files in ~/.config/tslink/ with restricted permissions (0600).
 			return loginWithClientSecret(cmd, clientSecret)
 		}
 
-		// JSON mode requires non-interactive credentials
+		// JSON mode requires non-interactive credentials. Interactive tsnet
+		// enrollment belongs to `serve --json`, which can keep a daemon child
+		// alive while returning its auth URL immediately.
 		if jsonOutput(cmd) {
 			return fmt.Errorf("--json requires --api-key or --client-secret (interactive login not available in JSON mode)")
 		}
 
-		// Interactive flow
+		// Interactive Tier 2 credential flow. Do not perform a disposable tsnet
+		// login here: it neither validates the administrative credential nor
+		// contributes state to a service node.
 		cfgDir, err := config.Dir()
 		if err != nil {
 			return err
 		}
-
-		// Browser-based OAuth login
-		loginName, err := loginTsnetLoginFn(cfgDir)
-		if err != nil {
-			return err
-		}
-
-		if loginName != "" {
-			fmt.Printf("→ Logged in: %s\n", loginName)
-		} else {
-			fmt.Println("→ Logged in to Tailscale")
-		}
-
 		return loginCredentialFlow(cmd, cfgDir)
 	},
-}
-
-func newInteractiveLoginServer(tmpStateDir string) *tsnet.Server {
-	return &tsnet.Server{
-		Hostname:  "tslink-auth",
-		Dir:       tmpStateDir,
-		Ephemeral: true,
-	}
 }
 
 func readLoginCredentialStdin(cmd *cobra.Command, name string) (string, error) {
@@ -403,13 +369,7 @@ func activateClientSecretViaUp(ctx context.Context, secret string) error {
 	// Match the production serve node exactly (server.go newTSNetServerFn):
 	// OAuth authkeys require the tags to be advertised on the node, otherwise
 	// tsnet rejects the Up with "oauth authkeys require --advertise-tags".
-	srv := &tsnet.Server{
-		Hostname:      "tslink-auth",
-		Dir:           tmpStateDir,
-		Ephemeral:     true,
-		AuthKey:       authKey,
-		AdvertiseTags: tags,
-	}
+	srv := loginNewValidationServerFn(tmpStateDir, authKey, tags)
 	defer srv.Close()
 
 	upCtx, cancel := context.WithTimeout(ctx, clientSecretActivationTimeout)
@@ -418,6 +378,17 @@ func activateClientSecretViaUp(ctx context.Context, secret string) error {
 		return fmt.Errorf("client secret failed activation; keeping previous credential: %w", err)
 	}
 	return nil
+}
+
+func newClientSecretValidationServer(tmpStateDir, authKey string, tags []string) *tsnet.Server {
+	return &tsnet.Server{
+		Hostname:      "tslink-auth",
+		Dir:           tmpStateDir,
+		Ephemeral:     true,
+		AuthKey:       authKey,
+		AdvertiseTags: append([]string(nil), tags...),
+		UserLogf:      logging.TSNetUserLogf,
+	}
 }
 
 // replaceLoginCredential implements stage -> validate -> commit semantics.

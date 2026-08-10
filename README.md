@@ -38,7 +38,7 @@ TSLink implements zero-trust principles at every layer:
 | **HTTP least-privilege access** | `--allow` restricts proxy and file services to specific users or tags. TCP services rely on Tailscale network ACLs and tags. |
 | **Assume breach** | Tailnet device-to-device traffic uses WireGuard encryption. Even if your local network is compromised, traffic between your Tailscale devices remains encrypted; public Funnel paths follow Tailscale Funnel semantics. |
 | **Per-service network identity** | Each service runs as a separate tsnet node with its own hostname and network identity. This is network segmentation, not host process isolation or a compliance attestation. |
-| **No implicit trust** | No services are exposed to the public internet by default. Credentials are stored in the system keychain first, with restricted-permission file fallback for headless environments. API-token-derived startup auth keys are generated on demand and not persisted; legacy authkey files may still be read for compatibility and should be migrated. |
+| **No implicit trust** | No services are exposed to the public internet by default. The default first run uses Tailscale interactive enrollment with no stored administrative credential, no advertised tags, and no ACL edits. Optional durable-install credentials are stored in the system keychain first, with restricted-permission file fallback for headless environments. |
 
 ## What TSLink Does
 
@@ -254,24 +254,27 @@ gh attestation verify "$sbom" \
 ### Get Started in 30 Seconds
 
 ```bash
-# 1. Authenticate with Tailscale (choose API access token or OAuth client secret)
-tslink login
-
-# 2. Expose a local web service
+# 1. Expose a local web service
 tslink add myapp --proxy localhost:3000
 
-# 3. Start the gateway
+# 2. Start the gateway — no API token or OAuth secret required.
+# TSLink opens/prints one Tailscale authorization URL for the user-owned node.
 tslink serve --daemon
 
 # Access https://myapp.<your-tailnet>.ts.net from any device
 ```
 
-TSLink accepts two credential types (you only need one):
+TSLink has two authentication tiers:
+
+- **Tier 1 — zero credential (default)**: a user-owned node with no advertised tags and no remote ACL edits. This is the least-privilege path for a quick page or ephemeral share. Each fresh service node has its own enrollment URL; a one-service quick share takes one browser click. User-owned Tailscale node keys expire, so a node left running for months can eventually require re-authentication.
+- **Tier 2 — stored credential (opt-in)**: preserves tagged, per-service startup for durable multi-service installations. Run `tslink login` only when you need this tier.
+
+Tier 2 accepts one of these administrative credential types:
 
 - **API access token** (`tskey-api-*`) — generate at [Admin → Keys](https://login.tailscale.com/admin/settings/keys). Use this for the most complete automation today, including tag and device management through the Tailscale API. It expires periodically.
 - **OAuth client secret** (`tskey-client-*`) — generate at [Admin → OAuth](https://login.tailscale.com/admin/settings/oauth). It does not expire, but TSLink's current Tailscale tag/device automation is narrower in this mode because those operations use the Tailscale REST API. Use it only after validating your required tag/device operations.
 
-`tslink login` guides you through either path interactively. Credentials are stored in the system keychain first (macOS Keychain / Linux secret service / Windows Credential Manager), with restricted-permission file fallback for headless environments.
+`tslink login` guides you through either Tier 2 credential path. It does not perform a disposable browser login first. Credentials are stored in the system keychain first (macOS Keychain / Linux secret service / Windows Credential Manager), with restricted-permission file fallback for headless environments.
 
 For non-interactive setup, prefer stdin. Environment variables are acceptable only when they are pre-injected by a secret manager before the command starts; do not inline secret values in the shell command because they can land in shell history:
 
@@ -285,6 +288,8 @@ The compatible `--api-key` and `--client-secret` flags remain available, but com
 ### Tag Management
 
 TSLink manages local service tags by default. Remote Tailscale ACL mutation is disabled by default because TSLink does not yet prove lossless HuJSON policy preservation.
+
+On the zero-credential Tier 1 path, registry tags remain configured but are not advertised by the user-owned node, and no remote tag/ACL API is called. The following tag behavior applies to the stored-credential Tier 2 path.
 
 - **Default tag** — every service gets `tag:tsmain` applied automatically when `--tags` is not specified.
 - **Remote ACL reads** — `tslink tags pull` fetches remote ACL tags only in API access token mode; OAuth-only mode skips the remote read and reports that an API access token is required.
@@ -343,7 +348,7 @@ tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 
 | Command | Description |
 |---------|-------------|
-| `tslink login` | Authenticate with Tailscale using either an API access token or an OAuth client secret |
+| `tslink login` | Store an optional Tier 2 API access token or OAuth client secret |
 | `tslink logout` | Clear credentials from keychain and files |
 | `tslink add <name> --proxy host:port` | Expose a local web service |
 | `tslink add <name> --dir /path` | Expose a file directory |

@@ -1,6 +1,7 @@
 package logging
 
 import (
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -22,4 +23,12 @@ func InitTo(w io.Writer, jsonOutput bool) {
 		handler = slog.NewTextHandler(w, &slog.HandlerOptions{})
 	}
 	slog.SetDefault(slog.New(handler))
+}
+
+// TSNetUserLogf routes tsnet's user-facing messages through TSLink's logger.
+// In particular, this keeps interactive authentication URLs out of the
+// timestamped stdlib logger that tsnet falls back to when Server.UserLogf is
+// nil.
+func TSNetUserLogf(format string, args ...any) {
+	slog.Info(fmt.Sprintf(format, args...), "source", "tsnet")
 }

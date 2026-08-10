@@ -7,13 +7,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/monody0007/tslink/internal/credentials"
 	"github.com/monody0007/tslink/internal/tailapi"
 	"github.com/zalando/go-keyring"
-	"tailscale.com/client/local"
 	"tailscale.com/ipn/ipnstate"
 )
 
@@ -23,6 +23,19 @@ func setupLoginTest(t *testing.T) string {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	keyring.MockInit()
+	// Cobra resolves nil writers dynamically from the current os.Stdout/Stderr.
+	// Reset all three so a shuffled test cannot retain another test's buffer (or
+	// a concrete pre-redirection os.Stderr pointer).
+	loginCmd.SetIn(nil)
+	loginCmd.SetOut(nil)
+	loginCmd.SetErr(nil)
+	_ = rootCmd.PersistentFlags().Set("json", "false")
+	t.Cleanup(func() {
+		loginCmd.SetIn(nil)
+		loginCmd.SetOut(nil)
+		loginCmd.SetErr(nil)
+		_ = rootCmd.PersistentFlags().Set("json", "false")
+	})
 
 	if err := os.MkdirAll(dir+"/.config/tslink", 0755); err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -39,16 +52,6 @@ func mockStdin(t *testing.T, lines ...string) {
 	input := strings.Join(lines, "\n") + "\n"
 	loginStdinReaderFn = func() *bufio.Reader {
 		return bufio.NewReader(strings.NewReader(input))
-	}
-}
-
-// skipTsnetLogin replaces the tsnet login step with a no-op.
-func skipTsnetLogin(t *testing.T) {
-	t.Helper()
-	old := loginTsnetLoginFn
-	t.Cleanup(func() { loginTsnetLoginFn = old })
-	loginTsnetLoginFn = func(cfgDir string) (string, error) {
-		return "test@example.com", nil
 	}
 }
 
@@ -86,6 +89,9 @@ func resetLoginFlags(t *testing.T) {
 	_ = loginCmd.Flags().Set("client-secret-stdin", "false")
 	_ = loginCmd.Flags().Set("manage-acl", "false")
 	loginCmd.SetIn(nil)
+	loginCmd.SetOut(nil)
+	loginCmd.SetErr(nil)
+	_ = rootCmd.PersistentFlags().Set("json", "false")
 }
 
 type fakeLoginTSNetServer struct {
@@ -96,10 +102,6 @@ type fakeLoginTSNetServer struct {
 func (s *fakeLoginTSNetServer) Up(context.Context) (*ipnstate.Status, error) {
 	s.upCalled = true
 	return &ipnstate.Status{}, nil
-}
-
-func (s *fakeLoginTSNetServer) LocalClient() (*local.Client, error) {
-	return nil, fmt.Errorf("local client unavailable")
 }
 
 func (s *fakeLoginTSNetServer) Close() error {
@@ -278,7 +280,6 @@ func TestLoginCredentialFlow_ClientSecret_SaveFails(t *testing.T) {
 
 func TestLoginCmd_FullFlow_WithMocks(t *testing.T) {
 	setupLoginTest(t)
-	skipTsnetLogin(t)
 	mockStdin(t, "2", "tskey-client-full-flow-test")
 	mockClientSecretSuccess(t)
 
@@ -290,6 +291,17 @@ func TestLoginCmd_FullFlow_WithMocks(t *testing.T) {
 	err = loginCmd.RunE(loginCmd, nil)
 	if err != nil {
 		t.Fatalf("expected success, got: %v", err)
+	}
+}
+
+func TestLoginHelpDescribesCredentialAsOptionalWithoutFalseBrowserClaim(t *testing.T) {
+	if strings.Contains(loginCmd.Long, "Opens a browser") || strings.Contains(loginCmd.Long, "Opening browser") {
+		t.Fatalf("login help still claims a browser action it does not perform:\n%s", loginCmd.Long)
+	}
+	for _, want := range []string{"do not need this command", "tslink serve", "durable multi-service"} {
+		if !strings.Contains(loginCmd.Long, want) {
+			t.Fatalf("login help missing %q:\n%s", want, loginCmd.Long)
+		}
 	}
 }
 
@@ -820,7 +832,7 @@ func TestLoginWithClientSecretClearsStaleAPIKey(t *testing.T) {
 
 func TestInteractiveLoginServerConstructorIsEphemeral(t *testing.T) {
 	dir := t.TempDir()
-	srv := newInteractiveLoginServer(dir)
+	srv := newClientSecretValidationServer(dir, "test-auth-key", []string{"tag:test"})
 	if srv.Hostname != "tslink-auth" {
 		t.Fatalf("Hostname = %q, want tslink-auth", srv.Hostname)
 	}
@@ -830,23 +842,29 @@ func TestInteractiveLoginServerConstructorIsEphemeral(t *testing.T) {
 	if !srv.Ephemeral {
 		t.Fatal("Ephemeral = false, want true for interactive auth helper")
 	}
+	if srv.AuthKey != "test-auth-key" || len(srv.AdvertiseTags) != 1 || srv.AdvertiseTags[0] != "tag:test" {
+		t.Fatalf("validation auth config = key:%q tags:%v, want supplied credentialed config", srv.AuthKey, srv.AdvertiseTags)
+	}
+	if srv.UserLogf == nil {
+		t.Fatal("UserLogf = nil, want TSLink logger routing")
+	}
 }
 
 func TestInteractiveLoginCleansTemporaryState(t *testing.T) {
-	setupLoginTest(t)
-	cfgDir := t.TempDir()
+	home := setupLoginTest(t)
+	cfgDir := filepath.Join(home, ".config", "tslink")
 	fake := &fakeLoginTSNetServer{}
 
-	oldNew := loginNewTSNetServerFn
+	oldNew := loginNewValidationServerFn
 	oldRemove := loginRemoveAllFn
 	t.Cleanup(func() {
-		loginNewTSNetServerFn = oldNew
+		loginNewValidationServerFn = oldNew
 		loginRemoveAllFn = oldRemove
 	})
 
 	var constructedDir string
 	var removedDir string
-	loginNewTSNetServerFn = func(tmpStateDir string) loginTSNetServer {
+	loginNewValidationServerFn = func(tmpStateDir, authKey string, tags []string) loginValidationServer {
 		constructedDir = tmpStateDir
 		return fake
 	}
@@ -855,15 +873,14 @@ func TestInteractiveLoginCleansTemporaryState(t *testing.T) {
 		return nil
 	}
 
-	if _, err := loginTsnetLoginFn(cfgDir); err != nil {
-		t.Fatalf("loginTsnetLoginFn() error = %v", err)
+	if err := activateClientSecretViaUp(context.Background(), "tskey-client-test"); err != nil {
+		t.Fatalf("activateClientSecretViaUp() error = %v", err)
 	}
-	want := cfgDir + string(os.PathSeparator) + "tsnet-login-tmp"
-	if constructedDir != want {
-		t.Fatalf("constructed dir = %q, want %q", constructedDir, want)
+	if !strings.HasPrefix(constructedDir, filepath.Join(cfgDir, "clientsecret-validate-")) {
+		t.Fatalf("constructed dir = %q, want clientsecret validation temp dir under %q", constructedDir, cfgDir)
 	}
-	if removedDir != want {
-		t.Fatalf("removed dir = %q, want %q", removedDir, want)
+	if removedDir != constructedDir {
+		t.Fatalf("removed dir = %q, want constructed dir %q", removedDir, constructedDir)
 	}
 	if !fake.upCalled || !fake.closeCalled {
 		t.Fatalf("fake server up=%v close=%v, want both true", fake.upCalled, fake.closeCalled)

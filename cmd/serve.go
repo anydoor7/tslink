@@ -20,6 +20,7 @@ import (
 	"github.com/monody0007/tslink/internal/server"
 	"github.com/monody0007/tslink/internal/tailapi"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 // ServeResult is the JSON payload for the serve command.
@@ -32,30 +33,36 @@ var serveDaemon bool
 
 // Testable function variables for serve
 var (
-	serveWritePIDFn           = daemon.WritePID
-	serveWritePIDForProcessFn = daemon.WritePIDForProcess
-	serveRemovePIDFn          = daemon.RemovePID
-	serveWithPIDLockFn        = daemon.WithPIDLock
-	serveNewServerFn          = func(authKey, controlURL string) (serverRunner, error) { return server.New(authKey, controlURL) }
-	serveEnsureDirFn          = config.EnsureDir
-	serveMigrateFn            = credentials.MigrateFromLegacy
-	serveRegistryPathFn       = config.RegistryPath
-	serveLoadRegistryFn       = registry.Load
-	serveGetAuthKeyFn         = credentials.GetAuthKey
-	serveCheckAuthFn          = credentials.RequireStoredCredential
-	servePIDPathFn            = config.PIDPath
-	serveIsRunningFn          = daemon.IsRunning
-	serveIsPIDRunningFn       = daemon.IsProcessRunning
-	serveEnsureTagsFn         = tailapi.EnsureTags
-	serveCleanupFn            = tailapi.CleanupStaleNodesResult
-	serveLoadGlobalFn         = config.LoadGlobalConfig
-	serveLogDirFn             = config.LogDir
-	serveDaemonizeFn          = daemon.Daemonize
-	serveReadPIDFn            = daemon.ReadPID
-	serveReadyPathFn          = daemonReadyPath
-	serveWriteReadyFn         = daemon.WritePIDForProcess
-	serveReadReadyFn          = daemon.ReadPID
-	serveRemoveReadyFn        = daemon.RemovePID
+	serveWritePIDFn            = daemon.WritePID
+	serveWritePIDForProcessFn  = daemon.WritePIDForProcess
+	serveRemovePIDFn           = daemon.RemovePID
+	serveWithPIDLockFn         = daemon.WithPIDLock
+	serveNewServerFn           = func(authKey, controlURL string) (serverRunner, error) { return server.New(authKey, controlURL) }
+	serveEnsureDirFn           = config.EnsureDir
+	serveMigrateFn             = credentials.MigrateFromLegacy
+	serveRegistryPathFn        = config.RegistryPath
+	serveLoadRegistryFn        = registry.Load
+	serveGetAuthKeyFn          = credentials.GetAuthKey
+	serveHasStoredCredentialFn = credentials.HasStoredCredential
+	servePIDPathFn             = config.PIDPath
+	serveIsRunningFn           = daemon.IsRunning
+	serveIsPIDRunningFn        = daemon.IsProcessRunning
+	serveEnsureTagsFn          = tailapi.EnsureTags
+	serveCleanupFn             = tailapi.CleanupStaleNodesResult
+	serveLoadGlobalFn          = config.LoadGlobalConfig
+	serveLogDirFn              = config.LogDir
+	serveDaemonizeFn           = daemon.Daemonize
+	serveReadPIDFn             = daemon.ReadPID
+	serveReadyPathFn           = daemonReadyPath
+	serveAuthHandoffPathFn     = config.AuthHandoffPath
+	serveWriteReadyFn          = daemon.WritePIDForProcess
+	serveReadReadyFn           = daemon.ReadPID
+	serveRemoveReadyFn         = daemon.RemovePID
+	serveSaveAuthHandoffFn     = saveAuthHandoff
+	serveLoadAuthHandoffFn     = loadAuthHandoff
+	serveRemoveAuthHandoffFn   = removeAuthHandoff
+	serveOpenBrowserFn         = openBrowser
+	serveIsTerminalFn          = func() bool { return term.IsTerminal(int(os.Stdin.Fd())) }
 
 	serveDaemonReadyTimeout      = 10 * time.Second
 	serveDaemonReadyPollInterval = 50 * time.Millisecond
@@ -74,6 +81,10 @@ type authKeyProviderSetter interface {
 	SetAuthKeyProvider(server.AuthKeyProvider)
 }
 
+type authHandoffSetter interface {
+	SetAuthHandoffFunc(server.AuthHandoffFunc)
+}
+
 type readySetter interface {
 	SetReadyFunc(func() error)
 }
@@ -85,8 +96,23 @@ func init() {
 		Short: "Start the TSLink server",
 		Long: `Start the TSLink server to expose registered services on your Tailscale network.
 
+Authentication tiers:
+  Tier 1 (default): no stored credential. TSLink enrolls a user-owned node
+  with no tags or ACL edits and opens one Tailscale login URL. This is the
+  least-privilege path for a quick or ephemeral share. User-owned node keys
+  expire, so a node left running for months may eventually require re-auth.
+
+  Tier 2 (opt-in): run "tslink login" with an API access token or OAuth client
+  secret. TSLink keeps the existing tagged, per-service behavior intended for
+  durable multi-service installations.
+
+In --json mode, a zero-credential launch runs as a background daemon and
+returns a needs_login record immediately. --json, --no-browser, CI, and
+non-terminal sessions never try to open a browser.
+
 Examples:
   tslink serve
+  tslink serve --no-browser
   tslink serve --daemon
   tslink serve --control-url https://headscale.example.com`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -116,7 +142,18 @@ Examples:
 				return err
 			}
 
-			if !serveDaemon && serveIsRunningFn(pidPath) {
+			daemonMode := serveDaemon
+			if jsonOutput(cmd) && !daemonMode {
+				hasCredential, err := serveHasStoredCredentialFn()
+				if err != nil {
+					return err
+				}
+				// A machine-readable login handoff must outlive this parent
+				// process so an agent can open the URL and poll status.
+				daemonMode = !hasCredential
+			}
+
+			if !daemonMode && serveIsRunningFn(pidPath) {
 				return output.ErrConflict("tslink is already running (see: tslink status)")
 			}
 
@@ -125,7 +162,7 @@ Examples:
 				return err
 			}
 
-			if serveDaemon {
+			if daemonMode {
 				logDir, err := serveLogDirFn()
 				if err != nil {
 					return err
@@ -137,15 +174,26 @@ Examples:
 				if err != nil {
 					return err
 				}
-				serveRemoveReadyFn(readyPath)
+				authHandoffPath, err := serveAuthHandoffPathFn()
+				if err != nil {
+					return err
+				}
 
 				var pid int
 				if err := serveWithPIDLockFn(pidPath, func() error {
 					if serveIsRunningFn(pidPath) {
 						return output.ErrConflict("tslink is already running (see: tslink status)")
 					}
-					restoreReadyEnv := setDaemonReadyEnv(readyPath)
-					defer restoreReadyEnv()
+					// Startup signals belong to the daemon identified by pidPath.
+					// Clear them only after the PID lock proves that no live daemon
+					// owns them; otherwise a second launch could erase a pollable
+					// login URL from the already-running process.
+					serveRemoveReadyFn(readyPath)
+					if err := serveRemoveAuthHandoffFn(authHandoffPath); err != nil {
+						return fmt.Errorf("clear stale auth handoff: %w", err)
+					}
+					restoreStartupEnv := setDaemonStartupEnv(readyPath, authHandoffPath)
+					defer restoreStartupEnv()
 					var err error
 					// Propagate --manage-acl to the daemon child. The child
 					// re-execs foreground `serve`, where the ACL ensure runs;
@@ -159,8 +207,18 @@ Examples:
 					return err
 				}
 
-				if err := waitForDaemonReady(pidPath, readyPath, pid, serveDaemonReadyTimeout, serveDaemonReadyPollInterval); err != nil {
+				startup, err := waitForDaemonStartup(pidPath, readyPath, authHandoffPath, pid, serveDaemonReadyTimeout, serveDaemonReadyPollInterval)
+				if err != nil {
 					return fmt.Errorf("daemon startup did not complete: %w; check logs: %s and %s", err, outLog, errLog)
+				}
+				if startup.AuthHandoff != nil {
+					presentAuthHandoff(cmd, *startup.AuthHandoff)
+					if jsonOutput(cmd) {
+						output.Success("serve", startup.AuthHandoff.serveResult())
+					} else {
+						fmt.Fprintf(cmd.OutOrStdout(), "tslink is waiting for Tailscale login as daemon (pid %d)\n", pid)
+					}
+					return nil
 				}
 
 				if jsonOutput(cmd) {
@@ -169,6 +227,11 @@ Examples:
 					fmt.Fprintf(cmd.OutOrStdout(), "tslink started as daemon (pid %d)\n", pid)
 				}
 				return nil
+			}
+
+			credentialed, err := serveHasStoredCredentialFn()
+			if err != nil {
+				return err
 			}
 
 			// Collect unique tags for startup ACL preflight. Auth keys are resolved per service.
@@ -184,46 +247,64 @@ Examples:
 			}
 
 			effectiveEnsureTagsFn := serveEnsureTagsFn
-			if !manageACL {
+			if !credentialed {
+				effectiveEnsureTagsFn = func(context.Context, []string) error { return nil }
+			} else if !manageACL {
 				effectiveEnsureTagsFn = serveRemoteACLMutationDisabledFn("serve_ensure_tags")
 			}
 
-			// Ensure all required tags exist in tailnet ACL only after explicit opt-in.
-			if err := effectiveEnsureTagsFn(context.Background(), allTags); err != nil {
-				if errors.Is(err, tailapi.ErrNoAPIClient) {
-					slog.Warn("degraded mode: skipped ACL tag ensure", "reason", err.Error(), "tags", allTags, "degraded_mode", true)
-				} else {
-					return fmt.Errorf("ensure tags in ACL: %w", err)
+			// Ensure all required tags exist in tailnet ACL only after explicit opt-in
+			// on the credentialed tier. Interactive nodes advertise no tags.
+			if credentialed {
+				if err := effectiveEnsureTagsFn(context.Background(), allTags); err != nil {
+					if errors.Is(err, tailapi.ErrNoAPIClient) {
+						slog.Warn("degraded mode: skipped ACL tag ensure", "reason", err.Error(), "tags", allTags, "degraded_mode", true)
+					} else {
+						return fmt.Errorf("ensure tags in ACL: %w", err)
+					}
 				}
 			}
 
-			// Verify that some credential exists without deriving or consuming a one-shot auth key.
-			if err := serveCheckAuthFn(); err != nil {
-				return output.ErrAuth(err.Error())
-			}
-
-			// Clean up stale tailnet nodes before starting
-			cleanupTargets := tailapi.CleanupTargetsForServices(reg.Services)
-			cleanup, err := serveCleanupFn(context.Background(), cleanupTargets)
-			if err != nil {
-				if !errors.Is(err, tailapi.ErrNoAPIClient) {
-					return fmt.Errorf("cleanup stale nodes: %w", err)
+			if credentialed {
+				// Clean up stale tailnet nodes before starting. User-owned nodes do
+				// not require an administrative device API.
+				cleanupTargets := tailapi.CleanupTargetsForServices(reg.Services)
+				cleanup, err := serveCleanupFn(context.Background(), cleanupTargets)
+				if err != nil {
+					if !errors.Is(err, tailapi.ErrNoAPIClient) {
+						return fmt.Errorf("cleanup stale nodes: %w", err)
+					}
+					cleanup = tailapi.CleanupResult{Skipped: true, SkipReason: err.Error()}
 				}
-				cleanup = tailapi.CleanupResult{Skipped: true, SkipReason: err.Error()}
-			}
-			if cleanup.Skipped {
-				slog.Warn("degraded mode: skipped stale tailnet node cleanup", "reason", cleanup.SkipReason, "degraded_mode", true)
-			} else if len(cleanup.Deleted) > 0 {
-				slog.Info("removed stale tailnet nodes", "matched", cleanup.Matched, "deleted", cleanup.Deleted)
+				if cleanup.Skipped {
+					slog.Warn("degraded mode: skipped stale tailnet node cleanup", "reason", cleanup.SkipReason, "degraded_mode", true)
+				} else if len(cleanup.Deleted) > 0 {
+					slog.Info("removed stale tailnet nodes", "matched", cleanup.Matched, "deleted", cleanup.Deleted)
+				}
 			}
 
+			authHandoffPath := os.Getenv("TSLINK_DAEMON_AUTH_HANDOFF_PATH")
+			if !credentialed && authHandoffPath == "" {
+				authHandoffPath, err = serveAuthHandoffPathFn()
+				if err != nil {
+					return err
+				}
+			}
 			restoreEnsureTags := temporarilySetServeEnsureTags(effectiveEnsureTagsFn)
 			defer restoreEnsureTags()
-			return runForeground(pidPath, os.Getenv("TSLINK_DAEMON_READY_PATH"), "", controlURL)
+			return runForegroundWithOptions(pidPath, "", controlURL, foregroundOptions{
+				ReadyPath:       os.Getenv("TSLINK_DAEMON_READY_PATH"),
+				AuthHandoffPath: authHandoffPath,
+				Credentialed:    credentialed,
+				PresentAuth: func(record authHandoffRecord) {
+					presentAuthHandoff(cmd, record)
+				},
+			})
 		},
 	}
 
 	serveCmd.Flags().BoolVar(&serveDaemon, "daemon", false, "Run as background daemon")
+	serveCmd.Flags().Bool("no-browser", false, "Print the Tailscale login URL without opening a browser")
 	serveCmd.Flags().String("control-url", "", "Custom control server URL (e.g., Headscale)")
 	serveCmd.Flags().Bool("manage-acl", false, "Opt in to remote Tailscale ACL tag-owner mutation using a machine-readable side-effect plan")
 	rootCmd.AddCommand(serveCmd)
@@ -254,10 +335,18 @@ func daemonReadyPath() (string, error) {
 	return filepath.Join(dir, "tslink.ready"), nil
 }
 
-func setDaemonReadyEnv(path string) func() {
-	const key = "TSLINK_DAEMON_READY_PATH"
+func setDaemonStartupEnv(readyPath, authHandoffPath string) func() {
+	restoreReady := setTemporaryEnv("TSLINK_DAEMON_READY_PATH", readyPath)
+	restoreAuth := setTemporaryEnv("TSLINK_DAEMON_AUTH_HANDOFF_PATH", authHandoffPath)
+	return func() {
+		restoreAuth()
+		restoreReady()
+	}
+}
+
+func setTemporaryEnv(key, value string) func() {
 	old, hadOld := os.LookupEnv(key)
-	_ = os.Setenv(key, path)
+	_ = os.Setenv(key, value)
 	return func() {
 		if hadOld {
 			_ = os.Setenv(key, old)
@@ -305,7 +394,11 @@ func warnSkippedServiceForServeStartup(svc registry.Service, err error) {
 	)
 }
 
-func waitForDaemonReady(pidPath, readyPath string, expectedPID int, timeout, pollInterval time.Duration) error {
+type daemonStartupResult struct {
+	AuthHandoff *authHandoffRecord
+}
+
+func waitForDaemonStartup(pidPath, readyPath, authHandoffPath string, expectedPID int, timeout, pollInterval time.Duration) (daemonStartupResult, error) {
 	if pollInterval <= 0 {
 		pollInterval = 50 * time.Millisecond
 	}
@@ -316,15 +409,10 @@ func waitForDaemonReady(pidPath, readyPath string, expectedPID int, timeout, pol
 		readyPID, err := serveReadReadyFn(readyPath)
 		if err == nil {
 			if readyPID == expectedPID {
-				pid, pidErr := serveReadPIDFn(pidPath)
-				if pidErr != nil {
-					lastErr = fmt.Errorf("read daemon PID file %s after ready signal: %w", pidPath, pidErr)
-				} else if pid != expectedPID {
-					lastErr = fmt.Errorf("PID file %s contains pid %d, expected %d", pidPath, pid, expectedPID)
-				} else if serveIsPIDRunningFn(expectedPID) {
-					return nil
+				if evidenceErr := validateDaemonStartupEvidence(pidPath, expectedPID, "ready"); evidenceErr == nil {
+					return daemonStartupResult{}, nil
 				} else {
-					lastErr = fmt.Errorf("daemon process %d emitted ready signal but is not running", expectedPID)
+					lastErr = evidenceErr
 				}
 			} else {
 				lastErr = fmt.Errorf("ready file %s contains pid %d, expected %d", readyPath, readyPID, expectedPID)
@@ -333,21 +421,76 @@ func waitForDaemonReady(pidPath, readyPath string, expectedPID int, timeout, pol
 			lastErr = err
 		}
 
+		handoff, handoffErr := serveLoadAuthHandoffFn(authHandoffPath)
+		if handoffErr == nil {
+			if handoff.DaemonPID != expectedPID {
+				lastErr = fmt.Errorf("auth handoff daemon pid %d, expected %d", handoff.DaemonPID, expectedPID)
+			} else if evidenceErr := validateDaemonStartupEvidence(pidPath, expectedPID, "auth handoff"); evidenceErr != nil {
+				lastErr = evidenceErr
+			} else {
+				return daemonStartupResult{AuthHandoff: &handoff}, nil
+			}
+		}
+
 		if !serveIsPIDRunningFn(expectedPID) {
-			return fmt.Errorf("daemon process %d exited before readiness: %w", expectedPID, lastErr)
+			return daemonStartupResult{}, fmt.Errorf("daemon process %d exited before readiness: %w", expectedPID, lastErr)
 		}
 
 		if !time.Now().Before(deadline) {
 			if lastErr != nil {
-				return fmt.Errorf("expected daemon ready file %s was not ready before timeout: %w", readyPath, lastErr)
+				return daemonStartupResult{}, fmt.Errorf("expected daemon ready or auth handoff before timeout: %w", lastErr)
 			}
-			return fmt.Errorf("expected daemon ready file %s was not ready before timeout", readyPath)
+			return daemonStartupResult{}, fmt.Errorf("expected daemon ready or auth handoff before timeout")
 		}
 		time.Sleep(pollInterval)
 	}
 }
 
+func validateDaemonStartupEvidence(pidPath string, expectedPID int, kind string) error {
+	pid, err := serveReadPIDFn(pidPath)
+	if err != nil {
+		return fmt.Errorf("read daemon PID file %s after %s signal: %w", pidPath, kind, err)
+	}
+	if pid != expectedPID {
+		return fmt.Errorf("PID file %s contains pid %d, expected %d", pidPath, pid, expectedPID)
+	}
+	if !serveIsPIDRunningFn(expectedPID) {
+		return fmt.Errorf("daemon process %d emitted %s signal but is not running", expectedPID, kind)
+	}
+	return nil
+}
+
+func presentAuthHandoff(cmd *cobra.Command, record authHandoffRecord) {
+	if jsonOutput(cmd) {
+		return
+	}
+	noBrowser, _ := cmd.Flags().GetBool("no-browser")
+	allowBrowser := !noBrowser && !ciEnvironmentSet() && serveIsTerminalFn()
+	if allowBrowser {
+		if err := serveOpenBrowserFn(record.AuthURL); err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "→ Could not open a browser automatically: %v\n", err)
+		} else {
+			fmt.Fprintln(cmd.OutOrStdout(), "→ Opened browser for Tailscale login")
+		}
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "→ Complete Tailscale login: %s\n", record.AuthURL)
+}
+
+type foregroundOptions struct {
+	ReadyPath       string
+	AuthHandoffPath string
+	Credentialed    bool
+	PresentAuth     func(authHandoffRecord)
+}
+
 func runForeground(pidPath, readyPath, authKey, controlURL string) error {
+	return runForegroundWithOptions(pidPath, authKey, controlURL, foregroundOptions{
+		ReadyPath:    readyPath,
+		Credentialed: true,
+	})
+}
+
+func runForegroundWithOptions(pidPath, authKey, controlURL string, options foregroundOptions) error {
 	if err := serveWithPIDLockFn(pidPath, func() error {
 		if serveIsRunningFn(pidPath) {
 			pid, err := serveReadPIDFn(pidPath)
@@ -363,8 +506,18 @@ func runForeground(pidPath, readyPath, authKey, controlURL string) error {
 		return err
 	}
 	defer serveRemovePIDFn(pidPath)
-	if readyPath != "" {
-		defer serveRemoveReadyFn(readyPath)
+	if options.ReadyPath != "" {
+		defer serveRemoveReadyFn(options.ReadyPath)
+	}
+	if options.AuthHandoffPath != "" {
+		if err := serveRemoveAuthHandoffFn(options.AuthHandoffPath); err != nil {
+			return fmt.Errorf("clear stale auth handoff: %w", err)
+		}
+		defer func() {
+			if err := serveRemoveAuthHandoffFn(options.AuthHandoffPath); err != nil {
+				slog.Warn("failed to remove auth handoff during shutdown", "error", err)
+			}
+		}()
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -379,6 +532,9 @@ func runForeground(pidPath, readyPath, authKey, controlURL string) error {
 	}
 	if setter, ok := srv.(authKeyProviderSetter); ok {
 		setter.SetAuthKeyProvider(func(ctx context.Context, svc registry.Service) (string, error) {
+			if !options.Credentialed {
+				return "", nil
+			}
 			return serveGetAuthKeyFn(ctx, credentials.AuthKeyOptions{
 				Tags:        svc.Tags,
 				Ephemeral:   svc.Ephemeral,
@@ -386,13 +542,39 @@ func runForeground(pidPath, readyPath, authKey, controlURL string) error {
 			})
 		})
 	}
-	if readyPath != "" {
+	if !options.Credentialed {
+		setter, ok := srv.(authHandoffSetter)
+		if !ok {
+			return fmt.Errorf("server does not support interactive auth handoff")
+		}
+		setter.SetAuthHandoffFunc(func(ctx context.Context, handoff server.AuthHandoff) error {
+			record := newAuthHandoffRecord(handoff.Service, handoff.AuthURL, os.Getpid())
+			if options.AuthHandoffPath != "" {
+				if err := serveSaveAuthHandoffFn(options.AuthHandoffPath, record); err != nil {
+					return err
+				}
+			}
+			if options.PresentAuth != nil {
+				options.PresentAuth(record)
+			}
+			return nil
+		})
+	}
+	if options.ReadyPath != "" {
 		setter, ok := srv.(readySetter)
 		if !ok {
 			return fmt.Errorf("server does not support daemon readiness")
 		}
 		setter.SetReadyFunc(func() error {
-			return serveWriteReadyFn(readyPath, os.Getpid())
+			if err := serveWriteReadyFn(options.ReadyPath, os.Getpid()); err != nil {
+				return err
+			}
+			if options.AuthHandoffPath != "" {
+				if err := serveRemoveAuthHandoffFn(options.AuthHandoffPath); err != nil {
+					slog.Warn("failed to remove completed auth handoff", "error", err)
+				}
+			}
+			return nil
 		})
 	}
 
