@@ -226,7 +226,7 @@ func commandJSONResultFields(commandPath string) map[string]JSONResultFieldInfo 
 		return map[string]JSONResultFieldInfo{
 			"plist_path": {
 				Type:        "string",
-				Description: "macOS only. Path to the LaunchAgent plist written by this invocation.",
+				Description: "macOS only. Path to the LaunchAgent plist written on success or preserved/restored on failure.",
 			},
 			"loaded": {
 				Type:        "boolean",
@@ -234,11 +234,27 @@ func commandJSONResultFields(commandPath string) map[string]JSONResultFieldInfo 
 			},
 			"launchctl_target": {
 				Type:        "string",
-				Description: "macOS only. The launchd service target confirmed running after bootstrap.",
+				Description: "macOS only. The launchd service target confirmed running on success or unavailable on a launchctl_domain_unavailable failure.",
 			},
 			"launchctl_output": {
 				Type:        "string",
 				Description: "macOS only. Trimmed launchctl output from bootstrap, fallback, or verification; omitted when launchctl emitted no text.",
+			},
+			"unavailable_domain": {
+				Type:        "string",
+				Description: "macOS failure only. The unavailable launchd domain, such as gui/501, when error.code is launchctl_domain_unavailable.",
+			},
+			"force_available": {
+				Type:        "boolean",
+				Description: "macOS failure only. True when an explicit --force recovery path exists for launchctl_domain_unavailable.",
+			},
+			"force_command": {
+				Type:        "string",
+				Description: "macOS failure only. Exact command that invokes the explicit --force recovery path.",
+			},
+			"force_risk": {
+				Type:        "string",
+				Description: "macOS failure only. Residual daemon risk accepted by running force_command.",
 			},
 			"path": {
 				Type:        "string",
@@ -302,6 +318,22 @@ func uninstallJSONResultFields() map[string]JSONResultFieldInfo {
 		"launchctl_output": {
 			Type:        "string",
 			Description: "macOS only. Verbatim trimmed launchctl output from the successful target for unloaded, or combined attempted output for already_absent and unconfirmed; omitted when launchctl emitted no text.",
+		},
+		"unavailable_domain": {
+			Type:        "string",
+			Description: "macOS failure only. The unavailable launchd domain, such as gui/501, when error.code is launchctl_domain_unavailable.",
+		},
+		"force_available": {
+			Type:        "boolean",
+			Description: "macOS failure only. True when an explicit --force recovery path exists for launchctl_domain_unavailable.",
+		},
+		"force_command": {
+			Type:        "string",
+			Description: "macOS failure only. Exact command that invokes the explicit --force recovery path.",
+		},
+		"force_risk": {
+			Type:        "string",
+			Description: "macOS failure only. Residual daemon risk accepted by running force_command.",
 		},
 		"detail": {
 			Type:        "string",
@@ -383,23 +415,24 @@ func flagRelationships(commandPath, name string) (oneOf, requires, conflicts []s
 
 func errorCodeManifest() map[string]ErrorCodeInfo {
 	return map[string]ErrorCodeInfo{
-		"internal_error":                      {ExitCode: output.ExitError, Description: "unexpected internal failure"},
-		"usage_error":                         {ExitCode: output.ExitUsage, Description: "invalid command syntax or value"},
-		"auth_error":                          {ExitCode: output.ExitAuth, Description: "authentication required or rejected"},
-		"conflict":                            {ExitCode: output.ExitConflict, Description: "requested state conflicts with existing state"},
-		"not_found":                           {ExitCode: output.ExitNotFound, Description: "requested object was not found"},
-		registry.CodeServiceTypeAmbiguous:     {ExitCode: output.ExitUsage, Description: "exactly one service type is required"},
-		registry.CodeInvalidServiceName:       {ExitCode: output.ExitUsage, Description: "service name is not a valid DNS label"},
-		registry.CodeInvalidTag:               {ExitCode: output.ExitUsage, Description: "ACL tag is invalid"},
-		registry.CodeAllowUnsupportedTCP:      {ExitCode: output.ExitUsage, Description: "HTTP allow lists do not apply to raw TCP"},
-		registry.CodePathMustBeAbsolute:       {ExitCode: output.ExitUsage, Description: "file service path must be absolute"},
-		registry.CodeUnknownConfigKey:         {ExitCode: output.ExitUsage, Description: "configuration key is not supported"},
-		registry.CodeURLNotReady:              {ExitCode: output.ExitNotFound, Description: "runtime has not reported an exact tailnet hostname"},
-		registry.CodeFeatureUnavailable:       {ExitCode: output.ExitUsage, Description: "reserved feature is not available"},
-		registry.CodeFunnelPublicAckRequired:  {ExitCode: output.ExitUsage, Description: "public Funnel acknowledgement is required"},
-		registry.CodeFunnelAllowConflict:      {ExitCode: output.ExitConflict, Description: "Funnel conflicts with an allow list"},
-		registry.CodeFunnelControlURLConflict: {ExitCode: output.ExitConflict, Description: "Funnel conflicts with control_url"},
-		registry.CodeFunnelTypeConflict:       {ExitCode: output.ExitConflict, Description: "Funnel requires a proxy service"},
+		"internal_error":                        {ExitCode: output.ExitError, Description: "unexpected internal failure"},
+		"usage_error":                           {ExitCode: output.ExitUsage, Description: "invalid command syntax or value"},
+		"auth_error":                            {ExitCode: output.ExitAuth, Description: "authentication required or rejected"},
+		"conflict":                              {ExitCode: output.ExitConflict, Description: "requested state conflicts with existing state"},
+		"not_found":                             {ExitCode: output.ExitNotFound, Description: "requested object was not found"},
+		registry.CodeServiceTypeAmbiguous:       {ExitCode: output.ExitUsage, Description: "exactly one service type is required"},
+		registry.CodeInvalidServiceName:         {ExitCode: output.ExitUsage, Description: "service name is not a valid DNS label"},
+		registry.CodeInvalidTag:                 {ExitCode: output.ExitUsage, Description: "ACL tag is invalid"},
+		registry.CodeAllowUnsupportedTCP:        {ExitCode: output.ExitUsage, Description: "HTTP allow lists do not apply to raw TCP"},
+		registry.CodePathMustBeAbsolute:         {ExitCode: output.ExitUsage, Description: "file service path must be absolute"},
+		registry.CodeUnknownConfigKey:           {ExitCode: output.ExitUsage, Description: "configuration key is not supported"},
+		registry.CodeURLNotReady:                {ExitCode: output.ExitNotFound, Description: "runtime has not reported an exact tailnet hostname"},
+		registry.CodeLaunchctlDomainUnavailable: {ExitCode: output.ExitError, Description: "a launchd domain could not be checked; failure data names the domain, explicit --force command, and residual risk"},
+		registry.CodeFeatureUnavailable:         {ExitCode: output.ExitUsage, Description: "reserved feature is not available"},
+		registry.CodeFunnelPublicAckRequired:    {ExitCode: output.ExitUsage, Description: "public Funnel acknowledgement is required"},
+		registry.CodeFunnelAllowConflict:        {ExitCode: output.ExitConflict, Description: "Funnel conflicts with an allow list"},
+		registry.CodeFunnelControlURLConflict:   {ExitCode: output.ExitConflict, Description: "Funnel conflicts with control_url"},
+		registry.CodeFunnelTypeConflict:         {ExitCode: output.ExitConflict, Description: "Funnel requires a proxy service"},
 	}
 }
 

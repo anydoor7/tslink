@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/monody0007/tslink/internal/output"
+	"github.com/monody0007/tslink/internal/registry"
 	"github.com/monody0007/tslink/internal/testenv"
 )
 
@@ -575,6 +576,28 @@ func TestInstallUpgradeDoesNotBootstrapFallbackWhenGUIDomainBootoutIsUnavailable
 	gotPlist, readErr := os.ReadFile(plistPath)
 	if readErr != nil || !bytes.Equal(gotPlist, oldPlist) {
 		t.Fatalf("restored plist = %q, %v; want %q", gotPlist, readErr, oldPlist)
+	}
+
+	calls = nil
+	setRootJSONFlag(t, true)
+	var jsonErr error
+	gotJSON := captureStdout(t, func() {
+		jsonErr = installCmd.RunE(installCmd, nil)
+	})
+	if !output.IsSilent(jsonErr) || output.ExitCode(jsonErr) != output.ExitError {
+		t.Fatalf("install JSON error = %v (exit %d), want silent exit 1", jsonErr, output.ExitCode(jsonErr))
+	}
+	result := parseResult(t, gotJSON)
+	if result.Error == nil || result.Error.Code != registry.CodeLaunchctlDomainUnavailable {
+		t.Fatalf("install JSON error = %+v, want %q", result.Error, registry.CodeLaunchctlDomainUnavailable)
+	}
+	data := dataMap(t, gotJSON)
+	if data["unavailable_domain"] != "gui/501" || data["force_available"] != true || data["force_command"] != "tslink install --force" {
+		t.Fatalf("install JSON recovery data = %#v, want gui domain and exact force command", data)
+	}
+	risk, _ := data["force_risk"].(string)
+	if !strings.Contains(risk, "second daemon") {
+		t.Fatalf("install JSON force_risk = %q, want second-daemon risk", risk)
 	}
 }
 
@@ -1500,8 +1523,8 @@ func TestUninstallCommandJSONCoversLaunchctlOutcomeMatrix(t *testing.T) {
 	userUnavailableDetailWithGUISuccess := "launchctl " + userTarget + " could not be addressed from the current launchd context; " + guiTarget + " confirmed a successful bootout, but the plist was kept because a job may still be loaded there; retry when the domain is addressable, or run 'tslink uninstall --force' to remove the plist while accepting that risk"
 	guiUnavailableDetailNoSuccess := "launchctl " + guiTarget + " was unavailable because no desktop session exists for this user; no other domain confirmed a successful bootout, but the plist was kept because a job may still be loaded there; retry when the domain is addressable, or run 'tslink uninstall --force' to remove the plist while accepting that risk"
 	userUnavailableDetailNoSuccess := "launchctl " + userTarget + " could not be addressed from the current launchd context; no other domain confirmed a successful bootout, but the plist was kept because a job may still be loaded there; retry when the domain is addressable, or run 'tslink uninstall --force' to remove the plist while accepting that risk"
-	forcedGUIWarning := "--force removed the plist even though launchctl " + guiTarget + " was unavailable because no desktop session exists for this user; a job may still be loaded there; run 'launchctl print " + guiTarget + "' when the domain is addressable to confirm"
-	forcedUserWarning := "--force removed the plist even though launchctl " + userTarget + " could not be addressed from the current launchd context; a job may still be loaded there; run 'launchctl print " + userTarget + "' when the domain is addressable to confirm"
+	forcedGUIWarning := "--force removed the plist even though launchctl " + guiTarget + " was unavailable because no desktop session exists for this user; a job may still be loaded there; when the domain is addressable, run 'launchctl print " + guiTarget + "' to confirm, then run 'launchctl bootout " + guiTarget + "' to remove the job if it is loaded"
+	forcedUserWarning := "--force removed the plist even though launchctl " + userTarget + " could not be addressed from the current launchd context; a job may still be loaded there; when the domain is addressable, run 'launchctl print " + userTarget + "' to confirm, then run 'launchctl bootout " + userTarget + "' to remove the job if it is loaded"
 	forcedDetail := "The plist was removed by explicit --force without confirming every launchd domain"
 	tests := []struct {
 		name        string
@@ -1605,6 +1628,19 @@ func TestUninstallCommandJSONCoversLaunchctlOutcomeMatrix(t *testing.T) {
 				t.Fatalf("uninstall JSON ok = %v, want %v", result.OK, tc.wantCode == output.ExitSuccess)
 			}
 			data := dataMap(t, gotJSON)
+			domainUnavailableRefusal := !tc.force && strings.Contains(tc.name, "domain-unavailable") && !strings.Contains(tc.name, "real-error")
+			if domainUnavailableRefusal {
+				if result.Error == nil || result.Error.Code != registry.CodeLaunchctlDomainUnavailable {
+					t.Fatalf("uninstall JSON error = %+v, want %q", result.Error, registry.CodeLaunchctlDomainUnavailable)
+				}
+				if data["unavailable_domain"] != launchctlDomainForTarget(tc.wantTarget) || data["force_available"] != true || data["force_command"] != "tslink uninstall --force" {
+					t.Fatalf("uninstall JSON recovery data = %#v, want unavailable domain and exact force command", data)
+				}
+				risk, _ := data["force_risk"].(string)
+				if !strings.Contains(risk, "job remains running") {
+					t.Fatalf("uninstall JSON force_risk = %q, want residual running-job risk", risk)
+				}
+			}
 			if data["removed"] != tc.wantRemoved {
 				t.Fatalf("uninstall JSON removed = %#v, want %v; data=%#v", data["removed"], tc.wantRemoved, data)
 			}
@@ -1644,6 +1680,39 @@ func TestUninstallCommandJSONCoversLaunchctlOutcomeMatrix(t *testing.T) {
 				t.Fatalf("successful JSON contains launchctl failure text: %q", launchctlOutput)
 			}
 		})
+	}
+}
+
+func TestForcedUninstallWarningIncludesRemovalCommand(t *testing.T) {
+	target := "gui/501/" + plistLabel
+	warning := forcedUninstallWarning(target)
+	for _, command := range []string{"launchctl print " + target, "launchctl bootout " + target} {
+		if !strings.Contains(warning, command) {
+			t.Fatalf("forced-uninstall warning = %q, want actionable command %q", warning, command)
+		}
+	}
+}
+
+func TestDocumentationDoesNotConflateSSHWithLaunchdGUIDomain(t *testing.T) {
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller() did not return this test file")
+	}
+	repoRoot := filepath.Join(filepath.Dir(filename), "..")
+	for _, name := range []string{"README_zh.md", "CLAUDE.md"} {
+		contents, err := os.ReadFile(filepath.Join(repoRoot, name))
+		if err != nil {
+			t.Fatalf("ReadFile(%s): %v", name, err)
+		}
+		text := string(contents)
+		for _, stale := range []string{"SSH/headless macOS", "fails over SSH/headless macOS"} {
+			if strings.Contains(text, stale) {
+				t.Fatalf("%s retains launchd gui-domain conflation %q", name, stale)
+			}
+		}
+		if !strings.Contains(text, "Aqua") {
+			t.Fatalf("%s does not name the desktop (Aqua) session boundary", name)
+		}
 	}
 }
 

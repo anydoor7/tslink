@@ -17,16 +17,34 @@ import (
 	"github.com/monody0007/tslink/internal/atomicfile"
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/output"
+	"github.com/monody0007/tslink/internal/registry"
 	"github.com/spf13/cobra"
 )
 
 // InstallResult is the JSON payload for the install command.
 type InstallResult struct {
-	PlistPath       string `json:"plist_path"`
-	Loaded          bool   `json:"loaded"`
-	LaunchctlTarget string `json:"launchctl_target"`
-	LaunchctlOutput string `json:"launchctl_output,omitempty"`
-	Warning         string `json:"warning,omitempty"`
+	PlistPath         string `json:"plist_path"`
+	Loaded            bool   `json:"loaded"`
+	LaunchctlTarget   string `json:"launchctl_target"`
+	LaunchctlOutput   string `json:"launchctl_output,omitempty"`
+	UnavailableDomain string `json:"unavailable_domain,omitempty"`
+	ForceAvailable    bool   `json:"force_available,omitempty"`
+	ForceCommand      string `json:"force_command,omitempty"`
+	ForceRisk         string `json:"force_risk,omitempty"`
+	Warning           string `json:"warning,omitempty"`
+}
+
+type launchctlDomainUnavailableTargetError struct {
+	Target string
+	Detail string
+}
+
+func (e *launchctlDomainUnavailableTargetError) Error() string {
+	return fmt.Sprintf("%s: %s", errLaunchctlDomainUnavailable, e.Detail)
+}
+
+func (e *launchctlDomainUnavailableTargetError) Unwrap() error {
+	return errLaunchctlDomainUnavailable
 }
 
 var (
@@ -238,9 +256,11 @@ Desktop-session caveat:
 					return fmt.Errorf("%s; upgrade failed and automatic restoration was incomplete: %v; %s; %s", warning, restoreErr, status, retryAdvice)
 				}
 				if restoreResult.Reloaded {
-					return fmt.Errorf("%s; upgrade failed, so the previous LaunchAgent plist was restored and reloaded in %s; %s", warning, previousState.Domain, retryAdvice)
+					failure := fmt.Errorf("%s; upgrade failed, so the previous LaunchAgent plist was restored and reloaded in %s; %s", warning, previousState.Domain, retryAdvice)
+					return installCommandFailure(cmd, loadResult, plistPath, failure)
 				}
-				return fmt.Errorf("%s; upgrade failed, so the previous LaunchAgent plist was restored; the install handoff checked and booted out both launchd service targets, but no prior launchd-owned running daemon was identified, so no job was reloaded; %s", warning, retryAdvice)
+				failure := fmt.Errorf("%s; upgrade failed, so the previous LaunchAgent plist was restored; the install handoff checked and booted out both launchd service targets, but no prior launchd-owned running daemon was identified, so no job was reloaded; %s", warning, retryAdvice)
+				return installCommandFailure(cmd, loadResult, plistPath, failure)
 			}
 			if loadResult.Bootstrapped {
 				if rollbackErr := rollbackNewLaunchAgent(loadResult.Target, plistPath); rollbackErr != nil {
@@ -272,6 +292,34 @@ Desktop-session caveat:
 		fmt.Fprintf(cmd.OutOrStdout(), "→ ✓ LaunchAgent installed and loaded in %s: %s\n", loadResult.Domain, plistPath)
 		return nil
 	},
+}
+
+func installCommandFailure(cmd *cobra.Command, loadResult launchctlLoadResult, plistPath string, failure error) error {
+	if !errors.Is(loadResult.Err, errLaunchctlDomainUnavailable) {
+		return failure
+	}
+	coded := registry.CodedError{
+		Code:        registry.CodeLaunchctlDomainUnavailable,
+		Message:     failure.Error(),
+		Next:        []string{"tslink install --force"},
+		MessageOnly: true,
+	}
+	if !jsonOutput(cmd) {
+		return coded
+	}
+	result := output.NewFailureForError("install", coded)
+	result.Data = InstallResult{
+		PlistPath:         plistPath,
+		Loaded:            false,
+		LaunchctlTarget:   loadResult.Target,
+		LaunchctlOutput:   loadResult.Output,
+		UnavailableDomain: loadResult.Domain,
+		ForceAvailable:    true,
+		ForceCommand:      "tslink install --force",
+		ForceRisk:         "may start a second daemon because a prior job may still be running in the unavailable launchd domain",
+	}
+	output.WriteJSON(os.Stdout, result)
+	return output.SilentExit(output.ExitError)
 }
 
 func captureLaunchAgentPreviousState(plistPath string) (launchAgentPreviousState, error) {
@@ -366,9 +414,16 @@ func loadLaunchAgent(plistPath string, replacingExisting bool) launchctlLoadResu
 		bootoutErr = bootoutLaunchAgentTargets(guiDomain, userDomain)
 	}
 	if bootoutErr != nil {
+		domain := guiDomain
+		target := launchctlServiceTargetForDomain(guiDomain)
+		var unavailable *launchctlDomainUnavailableTargetError
+		if errors.As(bootoutErr, &unavailable) {
+			target = unavailable.Target
+			domain = launchctlDomainForTarget(target)
+		}
 		return launchctlLoadResult{
-			Domain:        guiDomain,
-			Target:        launchctlServiceTargetForDomain(guiDomain),
+			Domain:        domain,
+			Target:        target,
 			Err:           bootoutErr,
 			BootoutFailed: true,
 		}
@@ -543,7 +598,10 @@ func bootoutLaunchAgentTargetWithPolicy(target string, allowUnavailableDomain bo
 		if allowUnavailableDomain {
 			return nil
 		}
-		return fmt.Errorf("%w: %s", errLaunchctlDomainUnavailable, launchctlWarning("bootout "+target+" could not confirm the prior job was unloaded", err, output))
+		return &launchctlDomainUnavailableTargetError{
+			Target: target,
+			Detail: launchctlWarning("bootout "+target+" could not confirm the prior job was unloaded", err, output),
+		}
 	}
 	if !launchctlOperationInProgress(output, err) {
 		return errors.New(launchctlWarning("bootout "+target, err, output))
@@ -682,6 +740,10 @@ func installRetryAdvice(err error) string {
 		return "retry from a desktop session for this user, or run 'tslink install --force' only after confirming no job is loaded in the unavailable launchd domain; --force may otherwise start a second daemon"
 	}
 	return "fix the reported cause and re-run 'tslink install'"
+}
+
+func launchctlDomainForTarget(target string) string {
+	return strings.TrimSuffix(target, "/"+plistLabel)
 }
 
 func init() {

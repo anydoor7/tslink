@@ -57,6 +57,20 @@ func TestManifestDocumentsInstallJSONWireFields(t *testing.T) {
 	}
 }
 
+func TestLaunchctlDomainUnavailableErrorCodeMatchesPinnedManifestWireValue(t *testing.T) {
+	const wireValue = "launchctl_domain_unavailable"
+	if registry.CodeLaunchctlDomainUnavailable != wireValue {
+		t.Fatalf("CodeLaunchctlDomainUnavailable = %q, want pinned wire value %q", registry.CodeLaunchctlDomainUnavailable, wireValue)
+	}
+	info, ok := errorCodeManifest()[wireValue]
+	if !ok {
+		t.Fatalf("error-code manifest missing pinned wire value %q", wireValue)
+	}
+	if info.ExitCode != 1 || !strings.Contains(info.Description, "--force") {
+		t.Fatalf("%s manifest entry = %+v, want exit 1 and explicit recovery semantics", wireValue, info)
+	}
+}
+
 func TestManifestHighRiskFlagsAndCredentialBoundaries(t *testing.T) {
 	m := Manifest()
 
@@ -156,6 +170,10 @@ func TestManifestDocumentsDarwinUninstallJSONContract(t *testing.T) {
 		"launchctl_target",
 		"launchctl_output",
 		"detail",
+		"unavailable_domain",
+		"force_available",
+		"force_command",
+		"force_risk",
 	} {
 		if _, ok := uninstall.JSONResultFields[field]; !ok {
 			t.Fatalf("uninstall manifest missing emitted field %q", field)

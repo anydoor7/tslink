@@ -8,27 +8,33 @@ import (
 	"strings"
 
 	"github.com/monody0007/tslink/internal/output"
+	"github.com/monody0007/tslink/internal/registry"
 	"github.com/spf13/cobra"
 )
 
 // UninstallResult is the JSON payload for the uninstall command.
 type UninstallResult struct {
-	PlistPath        string `json:"plist_path"`
-	Removed          bool   `json:"removed"`
-	LaunchctlOutcome string `json:"launchctl_outcome"`
-	LaunchctlTarget  string `json:"launchctl_target"`
-	LaunchctlOutput  string `json:"launchctl_output,omitempty"`
-	Detail           string `json:"detail,omitempty"`
-	Warning          string `json:"warning,omitempty"`
+	PlistPath         string `json:"plist_path"`
+	Removed           bool   `json:"removed"`
+	LaunchctlOutcome  string `json:"launchctl_outcome"`
+	LaunchctlTarget   string `json:"launchctl_target"`
+	LaunchctlOutput   string `json:"launchctl_output,omitempty"`
+	UnavailableDomain string `json:"unavailable_domain,omitempty"`
+	ForceAvailable    bool   `json:"force_available,omitempty"`
+	ForceCommand      string `json:"force_command,omitempty"`
+	ForceRisk         string `json:"force_risk,omitempty"`
+	Detail            string `json:"detail,omitempty"`
+	Warning           string `json:"warning,omitempty"`
 }
 
 type launchctlBootoutResult struct {
-	Outcome string
-	Target  string
-	Output  string
-	Detail  string
-	Warning string
-	Err     error
+	Outcome           string
+	Target            string
+	Output            string
+	Detail            string
+	Warning           string
+	Err               error
+	UnavailableDomain string
 }
 
 const (
@@ -56,6 +62,10 @@ that domain is addressable. As an explicit recovery escape hatch,
 'tslink uninstall --force' removes the plist after all addressable domains are
 unloaded or absent, but it may leave a job running in an unavailable domain.
 A real launchctl error is always fatal, including with --force.
+After a forced removal, when an unavailable domain becomes addressable, use
+'launchctl print gui/<uid>/com.tslink.daemon' or the corresponding user/<uid>
+target to inspect it. If the job is still loaded, use 'launchctl bootout
+gui/<uid>/com.tslink.daemon' or the corresponding user/<uid> target to remove it.
 Log files in ~/.config/tslink/logs/ are NOT removed.
 
 	Examples:
@@ -94,20 +104,36 @@ Log files in ~/.config/tslink/logs/ are NOT removed.
 				remedy = bootout.Detail
 			}
 			uninstallErr := fmt.Errorf("%s; the LaunchAgent is still installed at %s; %s", warning, path, remedy)
-			if jsonOutput(cmd) {
-				result := output.NewFailureForError("uninstall", uninstallErr)
-				result.Data = UninstallResult{
-					PlistPath:        path,
-					Removed:          false,
-					LaunchctlOutcome: bootout.Outcome,
-					LaunchctlTarget:  bootout.Target,
-					LaunchctlOutput:  bootout.Output,
-					Detail:           bootout.Detail,
+			failure := error(uninstallErr)
+			if bootout.UnavailableDomain != "" {
+				failure = registry.CodedError{
+					Code:        registry.CodeLaunchctlDomainUnavailable,
+					Message:     uninstallErr.Error(),
+					Next:        []string{"tslink uninstall --force"},
+					MessageOnly: true,
 				}
+			}
+			if jsonOutput(cmd) {
+				result := output.NewFailureForError("uninstall", failure)
+				data := UninstallResult{
+					PlistPath:         path,
+					Removed:           false,
+					LaunchctlOutcome:  bootout.Outcome,
+					LaunchctlTarget:   bootout.Target,
+					LaunchctlOutput:   bootout.Output,
+					UnavailableDomain: bootout.UnavailableDomain,
+					Detail:            bootout.Detail,
+				}
+				if bootout.UnavailableDomain != "" {
+					data.ForceAvailable = true
+					data.ForceCommand = "tslink uninstall --force"
+					data.ForceRisk = "may remove the plist while a job remains running in the unavailable launchd domain"
+				}
+				result.Data = data
 				output.WriteJSON(os.Stdout, result)
 				return output.SilentExit(output.ExitError)
 			}
-			return uninstallErr
+			return failure
 		}
 
 		if err := os.Remove(path); err != nil {
@@ -159,6 +185,7 @@ func bootoutLaunchAgent(force bool) launchctlBootoutResult {
 		if err != nil && launchctlDomainNotFound(output, err) && firstUnavailable == nil {
 			unavailable := attempt
 			unavailable.Outcome = launchctlOutcomeUnconfirmed
+			unavailable.UnavailableDomain = launchctlDomainForTarget(target)
 			firstUnavailable = &unavailable
 		}
 		if err != nil && !launchctlServiceNotFound(output, err) && !launchctlDomainNotFound(output, err) && firstRealError == nil {
@@ -212,9 +239,10 @@ func unavailableDomainRemedy(target string, successful *launchctlBootoutResult) 
 
 func forcedUninstallWarning(target string) string {
 	return fmt.Sprintf(
-		"--force removed the plist even though launchctl %s %s; a job may still be loaded there; run 'launchctl print %s' when the domain is addressable to confirm",
+		"--force removed the plist even though launchctl %s %s; a job may still be loaded there; when the domain is addressable, run 'launchctl print %s' to confirm, then run 'launchctl bootout %s' to remove the job if it is loaded",
 		target,
 		launchctlUnavailableReason(target),
+		target,
 		target,
 	)
 }
