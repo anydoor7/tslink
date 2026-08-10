@@ -240,7 +240,15 @@ func TestWriteFileInExistingDirSupportsSymlinkedParent(t *testing.T) {
 		t.Fatalf("WriteFileInExistingDir() error = %v", err)
 	}
 	assertJSONVersion(t, filepath.Join(realDir, "state.json"), "new")
-	assertMode(t, filepath.Join(realDir, "state.json"), PrivateFileMode)
+	// Writing through the symlinked parent is the property this test is named
+	// for, and it holds on every platform, so the test keeps running on Windows.
+	// The mode assertion does not: Windows synthesizes 0666 from the read-only
+	// attribute, so it proves nothing about privacy there. Every other
+	// assertMode caller in this file skips the whole test on Windows; this one
+	// drops only the POSIX claim and keeps the traversal coverage.
+	if runtime.GOOS != "windows" {
+		assertMode(t, filepath.Join(realDir, "state.json"), PrivateFileMode)
+	}
 }
 
 func TestWriteFileInExistingDirRejectsTargetSymlink(t *testing.T) {
