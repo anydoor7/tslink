@@ -10,7 +10,27 @@ import (
 	"strconv"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/windows"
 )
+
+func stubProcessLivenessError(t *testing.T) {
+	t.Helper()
+	orig := openProcessForLiveness
+	openProcessForLiveness = func(uint32, bool, uint32) (windows.Handle, error) {
+		return 0, errors.New("injected OpenProcess error")
+	}
+	t.Cleanup(func() { openProcessForLiveness = orig })
+}
+
+func stubStopProcessLookupError(t *testing.T) {
+	t.Helper()
+	orig := findProcessForStop
+	findProcessForStop = func(int) (*os.Process, error) {
+		return nil, errors.New("injected FindProcess error")
+	}
+	t.Cleanup(func() { findProcessForStop = orig })
+}
 
 func TestStopDaemonWindowsReportsSuccessAfterTermination(t *testing.T) {
 	cmd := exec.Command(os.Args[0])

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -402,8 +403,12 @@ func TestLoadGlobalConfig_ConvergesFilePermissions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Stat() error = %v", err)
 	}
-	if got := info.Mode().Perm(); got != 0o600 {
-		t.Fatalf("mode = %o, want 600", got)
+	if runtime.GOOS != "windows" {
+		if got := info.Mode().Perm(); got != 0o600 {
+			t.Fatalf("mode = %o, want 600", got)
+		}
+	} else if !info.Mode().IsRegular() {
+		t.Fatalf("config mode = %v, want regular file on Windows", info.Mode())
 	}
 }
 
@@ -564,9 +569,12 @@ func TestSaveGlobalConfig_FilePermissions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Stat() error = %v", err)
 	}
-	perm := info.Mode().Perm()
-	if perm != 0o600 {
-		t.Fatalf("config file permissions = %o, want 0600", perm)
+	if runtime.GOOS != "windows" {
+		if perm := info.Mode().Perm(); perm != 0o600 {
+			t.Fatalf("config file permissions = %o, want 0600", perm)
+		}
+	} else if !info.Mode().IsRegular() {
+		t.Fatalf("config mode = %v, want regular file on Windows", info.Mode())
 	}
 }
 
@@ -692,9 +700,12 @@ func TestEnsureDir_DirPermissions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Stat() error = %v", err)
 	}
-	perm := info.Mode().Perm()
-	if perm != 0o700 {
-		t.Fatalf("config dir permissions = %o, want 0700", perm)
+	if runtime.GOOS != "windows" {
+		if perm := info.Mode().Perm(); perm != 0o700 {
+			t.Fatalf("config dir permissions = %o, want 0700", perm)
+		}
+	} else if !info.IsDir() {
+		t.Fatalf("config mode = %v, want directory on Windows", info.Mode())
 	}
 }
 

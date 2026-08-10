@@ -90,8 +90,12 @@ func TestWritePIDForProcess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Stat() error = %v", err)
 	}
-	if got := info.Mode().Perm(); got != 0o600 {
-		t.Fatalf("PID perms = %o, want 600", got)
+	if runtime.GOOS != "windows" {
+		if got := info.Mode().Perm(); got != 0o600 {
+			t.Fatalf("PID perms = %o, want 600", got)
+		}
+	} else if !info.Mode().IsRegular() {
+		t.Fatalf("PID mode = %v, want regular file on Windows", info.Mode())
 	}
 	if _, err := os.Stat(processIdentityPath(path)); !os.IsNotExist(err) {
 		t.Fatalf("WritePIDForProcess created identity sidecar, stat error = %v", err)
@@ -1295,12 +1299,8 @@ func TestStopDaemon_InvalidPIDContent(t *testing.T) {
 	}
 }
 
-func TestIsRunningFailsClosedOnFindProcessError(t *testing.T) {
-	orig := findProcess
-	t.Cleanup(func() { findProcess = orig })
-	findProcess = func(pid int) (*os.Process, error) {
-		return nil, errors.New("injected findProcess error")
-	}
+func TestIsRunningFailsClosedOnProcessLivenessError(t *testing.T) {
+	stubProcessLivenessError(t)
 
 	path := filepath.Join(t.TempDir(), "tslink.pid")
 	if err := WritePID(path); err != nil {
@@ -1313,11 +1313,7 @@ func TestIsRunningFailsClosedOnFindProcessError(t *testing.T) {
 }
 
 func TestStopDaemon_FindProcessError(t *testing.T) {
-	orig := findProcess
-	t.Cleanup(func() { findProcess = orig })
-	findProcess = func(pid int) (*os.Process, error) {
-		return nil, errors.New("injected findProcess error")
-	}
+	stubStopProcessLookupError(t)
 
 	path := filepath.Join(t.TempDir(), "tslink.pid")
 	if err := os.WriteFile(path, []byte("12345\n"), 0o600); err != nil {

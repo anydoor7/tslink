@@ -4,10 +4,25 @@ package daemon
 
 import (
 	"errors"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
 )
+
+func stubProcessLivenessError(t *testing.T) {
+	t.Helper()
+	orig := findProcess
+	findProcess = func(int) (*os.Process, error) {
+		return nil, errors.New("injected findProcess error")
+	}
+	t.Cleanup(func() { findProcess = orig })
+}
+
+func stubStopProcessLookupError(t *testing.T) {
+	t.Helper()
+	stubProcessLivenessError(t)
+}
 
 func TestDaemonizeConfiguresUnixChildSessionAndRootDir(t *testing.T) {
 	origStart := startCmd

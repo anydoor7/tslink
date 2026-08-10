@@ -1621,11 +1621,12 @@ func TestConfigCmd_ListAlias(t *testing.T) {
 }
 
 func TestConfigSet_LoadError(t *testing.T) {
-	// The shared helper maps this file path to an uncreatable config directory.
-	tmp := t.TempDir()
-	fakePath := filepath.Join(tmp, "not-a-dir")
-	os.WriteFile(fakePath, []byte("x"), 0o600)
-	testenv.SetHome(t, fakePath)
+	configDir := testenv.SetHome(t, t.TempDir())
+	// A directory at the file path makes ReadFile fail with a non-NotExist
+	// error on both Unix and Windows.
+	if err := os.MkdirAll(filepath.Join(configDir, "config.json"), 0o700); err != nil {
+		t.Fatalf("MkdirAll(config file path) error = %v", err)
+	}
 
 	var buf bytes.Buffer
 	err := configSet("control-url", "https://example.com", &buf, false)
@@ -1661,10 +1662,10 @@ func TestConfigSet_SaveError(t *testing.T) {
 }
 
 func TestConfigGet_LoadError(t *testing.T) {
-	tmp := t.TempDir()
-	fakePath := filepath.Join(tmp, "not-a-dir")
-	os.WriteFile(fakePath, []byte("x"), 0o600)
-	testenv.SetHome(t, fakePath)
+	configDir := testenv.SetHome(t, t.TempDir())
+	if err := os.MkdirAll(filepath.Join(configDir, "config.json"), 0o700); err != nil {
+		t.Fatalf("MkdirAll(config file path) error = %v", err)
+	}
 
 	var buf bytes.Buffer
 	err := configGet("control-url", &buf, false)
@@ -1677,10 +1678,10 @@ func TestConfigGet_LoadError(t *testing.T) {
 }
 
 func TestConfigList_LoadError(t *testing.T) {
-	tmp := t.TempDir()
-	fakePath := filepath.Join(tmp, "not-a-dir")
-	os.WriteFile(fakePath, []byte("x"), 0o600)
-	testenv.SetHome(t, fakePath)
+	configDir := testenv.SetHome(t, t.TempDir())
+	if err := os.MkdirAll(filepath.Join(configDir, "config.json"), 0o700); err != nil {
+		t.Fatalf("MkdirAll(config file path) error = %v", err)
+	}
 
 	var buf bytes.Buffer
 	err := configList(&buf, false)

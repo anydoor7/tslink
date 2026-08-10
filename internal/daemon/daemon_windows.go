@@ -17,10 +17,11 @@ import (
 
 // Seams for testing – overridden in tests to inject errors.
 var (
-	findProcess = os.FindProcess
-	executable  = os.Executable
-	execCommand = exec.Command
-	startCmd    = func(cmd *exec.Cmd) error { return cmd.Start() }
+	executable             = os.Executable
+	execCommand            = exec.Command
+	startCmd               = func(cmd *exec.Cmd) error { return cmd.Start() }
+	openProcessForLiveness = windows.OpenProcess
+	findProcessForStop     = os.FindProcess
 
 	processExecutable = defaultProcessExecutable
 	processStartTime  = defaultProcessStartTime
@@ -63,7 +64,7 @@ func inspectProcessLiveness(pid int) processLiveness {
 	if pid <= 0 {
 		return processLivenessAbsent
 	}
-	handle, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
+	handle, err := openProcessForLiveness(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
 	if err != nil {
 		if errors.Is(err, windows.ERROR_INVALID_PARAMETER) {
 			return processLivenessAbsent
@@ -139,7 +140,7 @@ func StopDaemon(pidPath string) error {
 		return fmt.Errorf("read PID: %w", err)
 	}
 
-	proc, err := os.FindProcess(pid)
+	proc, err := findProcessForStop(pid)
 	if err != nil {
 		if errors.Is(err, windows.ERROR_INVALID_PARAMETER) {
 			RemovePID(pidPath)

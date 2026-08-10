@@ -3,6 +3,7 @@ package cmd
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -24,8 +25,12 @@ func TestAuthHandoffRoundTripUsesPrivateVersionedRecord(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Stat() error = %v", err)
 	}
-	if got := info.Mode().Perm(); got != 0o600 {
-		t.Fatalf("auth handoff mode = %#o, want 0600", got)
+	if runtime.GOOS != "windows" {
+		if got := info.Mode().Perm(); got != 0o600 {
+			t.Fatalf("auth handoff mode = %#o, want 0600", got)
+		}
+	} else if !info.Mode().IsRegular() {
+		t.Fatalf("auth handoff mode = %v, want regular file on Windows", info.Mode())
 	}
 
 	got, err := loadAuthHandoff(path)

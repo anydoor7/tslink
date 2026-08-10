@@ -4,6 +4,7 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -99,7 +100,7 @@ func TestWindowsDefaultConfigDirRejectsConflictingDirectories(t *testing.T) {
 	if err == nil {
 		t.Fatal("Dir() error = nil, want conflict error")
 	}
-	if !strings.Contains(err.Error(), current) || !strings.Contains(err.Error(), legacy) {
+	if !strings.Contains(err.Error(), fmt.Sprintf("%q", current)) || !strings.Contains(err.Error(), fmt.Sprintf("%q", legacy)) {
 		t.Fatalf("Dir() error = %v, want both conflicting paths", err)
 	}
 	for _, dir := range []string{current, legacy} {

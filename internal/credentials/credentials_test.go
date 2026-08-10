@@ -1000,11 +1000,14 @@ func TestSetAPIKey_FileFallback_PathError(t *testing.T) {
 func TestGetAPIKey_PathError(t *testing.T) {
 	// When keychain has no key AND config.APIKeyPath() fails
 	keyring.MockInit()
-	setInvalidConfigHome(t)
+	wantErr := errors.New("synthetic API key path failure")
+	orig := apiKeyPathFunc
+	apiKeyPathFunc = func() (string, error) { return "", wantErr }
+	t.Cleanup(func() { apiKeyPathFunc = orig })
 
 	_, err := GetAPIKey()
-	if err == nil {
-		t.Fatal("GetAPIKey() error = nil, want invalid config path error")
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("GetAPIKey() error = %v, want %v", err, wantErr)
 	}
 }
 
@@ -1436,11 +1439,14 @@ func TestGetClientSecret_FileReadError(t *testing.T) {
 
 func TestGetClientSecret_PathError(t *testing.T) {
 	keyring.MockInit()
-	setInvalidConfigHome(t)
+	wantErr := errors.New("synthetic client secret path failure")
+	orig := clientSecretPathFunc
+	clientSecretPathFunc = func() (string, error) { return "", wantErr }
+	t.Cleanup(func() { clientSecretPathFunc = orig })
 
 	_, err := GetClientSecret()
-	if err == nil {
-		t.Fatal("GetClientSecret() error = nil, want invalid config path error")
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("GetClientSecret() error = %v, want %v", err, wantErr)
 	}
 }
 
