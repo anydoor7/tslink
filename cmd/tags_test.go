@@ -237,8 +237,11 @@ func TestTagsPull_NoAPIClientSkipped(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
-	if !strings.Contains(out, "Skipped remote tag read") || !strings.Contains(out, "tslink login --api-key") {
+	if !strings.Contains(out, "Skipped remote tag read") || !strings.Contains(out, "tslink login --api-key-stdin") {
 		t.Fatalf("expected skipped no-API-client guidance, got: %s", out)
+	}
+	if strings.Contains(out, "tslink login --api-key ") {
+		t.Fatalf("no-API-client guidance recommends argv credential form: %s", out)
 	}
 	if strings.Contains(out, "No tags found") {
 		t.Fatalf("no-API-client should not be rendered as empty ACL state, got: %s", out)
@@ -666,8 +669,11 @@ func TestTagsDeleteRemote_NoAPIClientGuidance(t *testing.T) {
 	if !strings.Contains(err.Error(), "remote tag deletion requires a Tailscale API access token") {
 		t.Fatalf("error = %v, want API access token guidance", err)
 	}
-	if !strings.Contains(err.Error(), "tslink login --api-key") {
+	if !strings.Contains(err.Error(), "tslink login --api-key-stdin") {
 		t.Fatalf("error = %v, want login command guidance", err)
+	}
+	if strings.Contains(err.Error(), "tslink login --api-key ") {
+		t.Fatalf("error recommends argv credential form: %v", err)
 	}
 }
 

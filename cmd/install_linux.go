@@ -52,6 +52,10 @@ This command:
   4. Enables and restarts the service immediately so the new unit takes effect
   5. Checks systemd lingering and prints guidance for headless/logout survival
 
+Re-running 'tslink install' is the supported upgrade path. When a unit already
+exists, TSLink only treats a running daemon as a systemd handoff when the pidfile
+PID matches systemd's MainPID; otherwise the manual-daemon conflict guard applies.
+
 To check the service status:
   systemctl --user status tslink
 
@@ -75,10 +79,15 @@ If lingering was enabled only for TSLink, disable it after uninstall:
 		if err != nil {
 			return err
 		}
+		unitExists := false
 		if _, statErr := os.Stat(servicePath); statErr != nil {
 			if !os.IsNotExist(statErr) {
 				return fmt.Errorf("inspect existing systemd user unit: %w", statErr)
 			}
+		} else {
+			unitExists = true
+		}
+		if !unitExists || !systemdOwnsRunningDaemon() {
 			if err := installDaemonConflictFn(); err != nil {
 				return err
 			}
@@ -134,6 +143,30 @@ If lingering was enabled only for TSLink, disable it after uninstall:
 		fmt.Fprintf(cmd.OutOrStdout(), "→ ✓ systemd user service installed and restarted: %s\n", servicePath)
 		return nil
 	},
+}
+
+func systemdOwnsRunningDaemon() bool {
+	pidPath, err := pidPathFn()
+	if err != nil || !isRunningFn(pidPath) {
+		return false
+	}
+	daemonPID, err := readPIDFn(pidPath)
+	if err != nil || daemonPID <= 0 {
+		return false
+	}
+
+	stateOutput, err := systemctlCombinedOutput(
+		"--user",
+		"show",
+		systemdServiceName,
+		"--property=MainPID",
+		"--no-pager",
+	)
+	if err != nil {
+		return false
+	}
+	mainPID, err := strconv.Atoi(parseSystemdProperties(stateOutput)["MainPID"])
+	return err == nil && mainPID == daemonPID
 }
 
 func verifySystemdServiceRunning() error {

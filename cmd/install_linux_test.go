@@ -5,6 +5,7 @@ package cmd
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,7 +25,7 @@ func runningSystemdState() []byte {
 	return []byte("ActiveState=active\nSubState=running\nMainPID=1775\n")
 }
 
-func runLinuxInstallGuardTruthCase(t *testing.T, unitPresent, daemonRunning bool) {
+func runLinuxInstallGuardTruthCase(t *testing.T, unitPresent, daemonRunning bool, systemdPID int) bool {
 	t.Helper()
 	resetRootJSONFlag(t)
 	home := t.TempDir()
@@ -33,7 +34,9 @@ func runLinuxInstallGuardTruthCase(t *testing.T, unitPresent, daemonRunning bool
 	oldExe := linuxExecutablePathFn
 	oldEval := linuxEvalSymlinksFn
 	oldUser := linuxUserNameFn
-	oldConflict := installDaemonConflictFn
+	oldPIDPath := pidPathFn
+	oldRunning := isRunningFn
+	oldReadPID := readPIDFn
 	oldSystemctl := systemctlCombinedOutput
 	oldLoginctl := loginctlCombinedOutputFn
 	t.Cleanup(func() {
@@ -41,7 +44,9 @@ func runLinuxInstallGuardTruthCase(t *testing.T, unitPresent, daemonRunning bool
 		linuxExecutablePathFn = oldExe
 		linuxEvalSymlinksFn = oldEval
 		linuxUserNameFn = oldUser
-		installDaemonConflictFn = oldConflict
+		pidPathFn = oldPIDPath
+		isRunningFn = oldRunning
+		readPIDFn = oldReadPID
 		systemctlCombinedOutput = oldSystemctl
 		loginctlCombinedOutputFn = oldLoginctl
 		installCmd.SetOut(nil)
@@ -64,19 +69,35 @@ func runLinuxInstallGuardTruthCase(t *testing.T, unitPresent, daemonRunning bool
 		}
 	}
 
-	conflictCalls := 0
-	installDaemonConflictFn = func() error {
-		conflictCalls++
-		if daemonRunning {
-			return output.ErrConflict("manual TSLink daemon is running")
+	pidPath := filepath.Join(home, "tslink.pid")
+	observedDaemonRunning := false
+	pidPathFn = func() (string, error) { return pidPath, nil }
+	isRunningFn = func(path string) bool {
+		if path != pidPath {
+			t.Fatalf("isRunningFn path = %q, want %q", path, pidPath)
 		}
-		return nil
+		observedDaemonRunning = daemonRunning
+		return daemonRunning
+	}
+	readPIDFn = func(path string) (int, error) {
+		if path != pidPath {
+			t.Fatalf("readPIDFn path = %q, want %q", path, pidPath)
+		}
+		return 1775, nil
 	}
 	systemctlCalls := 0
+	restartCalls := 0
 	systemctlCombinedOutput = func(args ...string) ([]byte, error) {
 		systemctlCalls++
 		if len(args) > 1 && args[1] == "show" {
-			return runningSystemdState(), nil
+			pid := systemdPID
+			if pid <= 0 {
+				pid = 1775
+			}
+			return []byte(fmt.Sprintf("ActiveState=active\nSubState=running\nMainPID=%d\n", pid)), nil
+		}
+		if len(args) > 1 && args[1] == "restart" {
+			restartCalls++
 		}
 		return nil, nil
 	}
@@ -86,28 +107,27 @@ func runLinuxInstallGuardTruthCase(t *testing.T, unitPresent, daemonRunning bool
 	installCmd.SetOut(&out)
 	installCmd.SetErr(&errOut)
 	err := installCmd.RunE(installCmd, nil)
-	if !unitPresent && daemonRunning {
+	expectConflict := daemonRunning && (!unitPresent || systemdPID != 1775)
+	if expectConflict {
 		if output.ExitCode(err) != output.ExitConflict {
 			t.Fatalf("ExitCode = %d, want %d: %v", output.ExitCode(err), output.ExitConflict, err)
 		}
-		if conflictCalls != 1 || systemctlCalls != 0 {
-			t.Fatalf("conflict/systemctl calls = %d/%d, want 1/0", conflictCalls, systemctlCalls)
+		if restartCalls != 0 {
+			t.Fatalf("restart calls = %d, want 0 before daemon conflict", restartCalls)
 		}
-		if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+		if unitPresent {
+			unit, readErr := os.ReadFile(path)
+			if readErr != nil || string(unit) != "old unit" {
+				t.Fatalf("existing unit changed during conflict: %q, %v", unit, readErr)
+			}
+		} else if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
 			t.Fatalf("unit exists after conflict: %v", statErr)
 		}
-		return
+		return observedDaemonRunning
 	}
 
 	if err != nil {
 		t.Fatalf("install RunE() error = %v", err)
-	}
-	wantConflictCalls := 1
-	if unitPresent {
-		wantConflictCalls = 0
-	}
-	if conflictCalls != wantConflictCalls {
-		t.Fatalf("conflict calls = %d, want %d", conflictCalls, wantConflictCalls)
 	}
 	if systemctlCalls == 0 {
 		t.Fatal("systemctl was not called for successful install")
@@ -119,22 +139,37 @@ func runLinuxInstallGuardTruthCase(t *testing.T, unitPresent, daemonRunning bool
 	if !strings.Contains(string(unit), "/new/tslink") {
 		t.Fatalf("unit was not refreshed to new executable: %s", unit)
 	}
+	return observedDaemonRunning
 }
 
 func TestLinuxInstallNoUnitDaemonStoppedProceeds(t *testing.T) {
-	runLinuxInstallGuardTruthCase(t, false, false)
+	if got := runLinuxInstallGuardTruthCase(t, false, false, 0); got {
+		t.Fatal("daemon-running seam observed true, want false")
+	}
 }
 
 func TestLinuxInstallNoUnitDaemonRunningConflicts(t *testing.T) {
-	runLinuxInstallGuardTruthCase(t, false, true)
+	if got := runLinuxInstallGuardTruthCase(t, false, true, 0); !got {
+		t.Fatal("daemon-running seam observed false, want true")
+	}
 }
 
 func TestLinuxInstallExistingUnitDaemonStoppedReinstalls(t *testing.T) {
-	runLinuxInstallGuardTruthCase(t, true, false)
+	if got := runLinuxInstallGuardTruthCase(t, true, false, 0); got {
+		t.Fatal("daemon-running seam observed true, want false")
+	}
 }
 
 func TestLinuxInstallExistingUnitDaemonRunningReinstalls(t *testing.T) {
-	runLinuxInstallGuardTruthCase(t, true, true)
+	if got := runLinuxInstallGuardTruthCase(t, true, true, 1775); !got {
+		t.Fatal("daemon-running seam observed false, want true")
+	}
+}
+
+func TestLinuxInstallExistingUnitManualDaemonPIDMismatchConflicts(t *testing.T) {
+	if got := runLinuxInstallGuardTruthCase(t, true, true, 1888); !got {
+		t.Fatal("daemon-running seam observed false, want true")
+	}
 }
 
 func TestSystemdServiceContentsThrottlesRestart(t *testing.T) {

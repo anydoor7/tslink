@@ -1009,8 +1009,11 @@ func TestTagsDeleteRemoteJSON_NoAPIClientAuthError(t *testing.T) {
 	if ce.Code != output.ExitAuth {
 		t.Fatalf("code = %d, want %d", ce.Code, output.ExitAuth)
 	}
-	if !strings.Contains(ce.Message, "API access token") || !strings.Contains(ce.Message, "tslink login --api-key") {
+	if !strings.Contains(ce.Message, "API access token") || !strings.Contains(ce.Message, "tslink login --api-key-stdin") {
 		t.Fatalf("message = %q, want auth-specific guidance", ce.Message)
+	}
+	if strings.Contains(ce.Message, "tslink login --api-key ") {
+		t.Fatalf("message recommends argv credential form: %q", ce.Message)
 	}
 }
 

@@ -430,6 +430,8 @@ The repository contains packages and registry fields for features that are not w
 
 macOS LaunchAgent installs use launchd `KeepAlive` with `ThrottleInterval=30`. If `tslink stop` is run while the LaunchAgent remains installed, launchd will restart TSLink. Run `tslink uninstall` before `tslink stop` when the intent is to disable autostart. During SSH/headless macOS installs, `tslink install` first tries `gui/$(id -u)` and falls back to `user/$(id -u)` if the GUI launchd domain is unavailable. Linux headless user services may need `loginctl enable-linger "$USER"` to keep running after logout; if lingering was enabled only for TSLink, run `loginctl disable-linger "$USER"` after uninstall.
 
+Re-running `tslink install` is the supported upgrade path on every platform. On macOS, TSLink saves an existing plist before the launchd handoff and only treats a running daemon as launchd-owned when its pidfile PID matches `launchctl print`. If post-bootstrap verification fails during an upgrade, TSLink restores the previous plist and reloads a previously identified launchd-owned job; it cannot restore an executable binary that was replaced before the command ran. If the same verification fails during a first install, TSLink boots out the new job and removes the new plist only after bootout succeeds. If cleanup cannot finish, the plist is kept so `tslink uninstall` can retry. Fix the reported cause and re-run `tslink install`.
+
 ## Roadmap
 
 - [x] OAuth client secret accepted by login and tsnet auth paths; validate tag/device automation before unattended use

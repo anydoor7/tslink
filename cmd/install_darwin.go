@@ -36,9 +36,11 @@ var (
 	installDaemonConflictFn = func() error {
 		return detectInstallDaemonConflict("no LaunchAgent plist is installed, so stop the manual daemon with 'tslink stop' and retry 'tslink install'; if launchd owns it, run 'tslink uninstall' first so KeepAlive cannot restart it")
 	}
-	launchAgentVerifyTimeout      = launchAgentStartupTimeout
-	launchAgentVerifyPollInterval = launchAgentStartupPollInterval
-	launchctlCombinedOutput       = func(args ...string) ([]byte, error) {
+	launchAgentVerifyTimeout       = launchAgentStartupTimeout
+	launchAgentVerifyPollInterval  = launchAgentStartupPollInterval
+	launchAgentBootoutTimeout      = launchAgentShutdownTimeout
+	launchAgentBootoutPollInterval = launchAgentStartupPollInterval
+	launchctlCombinedOutput        = func(args ...string) ([]byte, error) {
 		return exec.Command("launchctl", args...).CombinedOutput()
 	}
 )
@@ -47,6 +49,7 @@ const plistLabel = "com.tslink.daemon"
 const launchdThrottleInterval = 30
 const launchAgentStartupTimeout = 10 * time.Second
 const launchAgentStartupPollInterval = 50 * time.Millisecond
+const launchAgentShutdownTimeout = 3 * time.Minute
 
 type launchctlLoadResult struct {
 	Domain       string
@@ -55,6 +58,19 @@ type launchctlLoadResult struct {
 	Err          error
 	Warning      string
 	Bootstrapped bool
+}
+
+type launchAgentPreviousState struct {
+	Existed bool
+	Plist   []byte
+	Mode    os.FileMode
+	Domain  string
+	Target  string
+}
+
+type launchAgentRestoreResult struct {
+	PlistRestored bool
+	Reloaded      bool
 }
 
 var plistTemplate = template.Must(template.New("plist").Parse(`<?xml version="1.0" encoding="UTF-8"?>
@@ -105,6 +121,15 @@ This command:
   6. Reloads the agent immediately with bootout-then-bootstrap
   7. Falls back from gui/$(id -u) to user/$(id -u) in SSH/headless sessions
 
+Re-running 'tslink install' is the supported upgrade path. Before replacing an
+existing plist, TSLink saves it and verifies whether launchd owns the running
+daemon by matching the pidfile PID to 'launchctl print'. If the upgrade fails,
+the previous plist is restored and a previously managed job is reloaded. This
+does not restore an executable binary that was replaced before this command ran.
+For a new install, failed post-bootstrap verification boots out the new job and
+removes the new plist only after bootout succeeds. Fix the reported cause and
+re-run 'tslink install'.
+
 To check if the agent is loaded:
   launchctl list | grep tslink
   launchctl print gui/$(id -u)/com.tslink.daemon
@@ -126,13 +151,9 @@ Headless/SSH caveat:
 		if err != nil {
 			return err
 		}
-		if _, statErr := os.Stat(plistPath); statErr != nil {
-			if !os.IsNotExist(statErr) {
-				return fmt.Errorf("inspect existing LaunchAgent plist: %w", statErr)
-			}
-			if err := installDaemonConflictFn(); err != nil {
-				return err
-			}
+		previousState, err := captureLaunchAgentPreviousState(plistPath)
+		if err != nil {
+			return err
 		}
 
 		if err := config.EnsureDir(); err != nil {
@@ -177,13 +198,27 @@ Headless/SSH caveat:
 			if warning == "" {
 				warning = launchctlWarning("LaunchAgent plist installed but the service did not reach running state", loadResult.Err, []byte(loadResult.Output))
 			}
-			if loadResult.Bootstrapped {
-				if rollbackErr := rollbackLaunchAgent(loadResult.Target, plistPath); rollbackErr != nil {
-					return fmt.Errorf("%s; automatic rollback was incomplete: %v; launchd may keep retrying, so run 'tslink uninstall' to finish cleanup", warning, rollbackErr)
+			if previousState.Existed {
+				restoreResult, restoreErr := restorePreviousLaunchAgent(previousState, loadResult, plistPath)
+				if restoreErr != nil {
+					status := "the previous plist could not be restored"
+					if restoreResult.PlistRestored {
+						status = "the previous plist bytes were restored, but the prior managed job is not confirmed running"
+					}
+					return fmt.Errorf("%s; upgrade failed and automatic restoration was incomplete: %v; %s; fix the reported cause and re-run 'tslink install'", warning, restoreErr, status)
 				}
-				return fmt.Errorf("%s; installation was rolled back by booting out %s and removing %s", warning, loadResult.Target, plistPath)
+				if restoreResult.Reloaded {
+					return fmt.Errorf("%s; upgrade failed, so the previous LaunchAgent plist was restored and reloaded in %s; fix the reported cause and re-run 'tslink install'", warning, previousState.Domain)
+				}
+				return fmt.Errorf("%s; upgrade failed, so the previous LaunchAgent plist was restored; no prior launchd-owned running daemon was identified, so no job was reloaded; fix the reported cause and re-run 'tslink install'", warning)
 			}
-			return fmt.Errorf("%s; plist remains installed at %s but no job was bootstrapped; run 'tslink uninstall' to remove it", warning, plistPath)
+			if loadResult.Bootstrapped {
+				if rollbackErr := rollbackNewLaunchAgent(loadResult.Target, plistPath); rollbackErr != nil {
+					return fmt.Errorf("%s; automatic rollback was incomplete: %v; the plist was kept at %s so 'tslink uninstall' can retry bootout; then re-run 'tslink install'", warning, rollbackErr, plistPath)
+				}
+				return fmt.Errorf("%s; the new installation was rolled back by booting out %s and removing %s; fix the reported cause and re-run 'tslink install'", warning, loadResult.Target, plistPath)
+			}
+			return fmt.Errorf("%s; plist remains installed at %s but no job was bootstrapped; fix the reported cause and re-run 'tslink install'", warning, plistPath)
 		}
 
 		if jsonOutput(cmd) {
@@ -207,6 +242,64 @@ Headless/SSH caveat:
 		fmt.Fprintf(cmd.OutOrStdout(), "→ ✓ LaunchAgent installed and loaded in %s: %s\n", loadResult.Domain, plistPath)
 		return nil
 	},
+}
+
+func captureLaunchAgentPreviousState(plistPath string) (launchAgentPreviousState, error) {
+	info, err := os.Stat(plistPath)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return launchAgentPreviousState{}, fmt.Errorf("inspect existing LaunchAgent plist: %w", err)
+		}
+		if err := installDaemonConflictFn(); err != nil {
+			return launchAgentPreviousState{}, err
+		}
+		return launchAgentPreviousState{}, nil
+	}
+
+	plist, err := os.ReadFile(plistPath)
+	if err != nil {
+		return launchAgentPreviousState{}, fmt.Errorf("read existing LaunchAgent plist before upgrade: %w", err)
+	}
+	state := launchAgentPreviousState{
+		Existed: true,
+		Plist:   plist,
+		Mode:    info.Mode().Perm(),
+	}
+
+	domain, target, owned := launchAgentTargetForRunningDaemon()
+	if owned {
+		state.Domain = domain
+		state.Target = target
+		return state, nil
+	}
+	if err := installDaemonConflictFn(); err != nil {
+		return launchAgentPreviousState{}, err
+	}
+	return state, nil
+}
+
+func launchAgentTargetForRunningDaemon() (string, string, bool) {
+	pidPath, err := pidPathFn()
+	if err != nil || !isRunningFn(pidPath) {
+		return "", "", false
+	}
+	daemonPID, err := readPIDFn(pidPath)
+	if err != nil || daemonPID <= 0 {
+		return "", "", false
+	}
+
+	for _, domain := range []string{launchctlDomain(), launchctlUserDomain()} {
+		target := launchctlServiceTargetForDomain(domain)
+		stateOutput, printErr := launchctlCombinedOutput("print", target)
+		if printErr != nil {
+			continue
+		}
+		state, launchdPID := parseLaunchAgentState(stateOutput)
+		if state == "running" && launchdPID == daemonPID {
+			return domain, target, true
+		}
+	}
+	return "", "", false
 }
 
 func plistPath() (string, error) {
@@ -236,7 +329,13 @@ func launchctlServiceTargetForDomain(domain string) string {
 func reinstallLaunchAgent(plistPath string) launchctlLoadResult {
 	guiDomain := launchctlDomain()
 	userDomain := launchctlUserDomain()
-	bootoutLaunchAgentTargets(guiDomain, userDomain)
+	if err := bootoutLaunchAgentTargets(guiDomain, userDomain); err != nil {
+		return launchctlLoadResult{
+			Domain: guiDomain,
+			Target: launchctlServiceTargetForDomain(guiDomain),
+			Err:    err,
+		}
+	}
 
 	output, err := launchctlCombinedOutput("bootstrap", guiDomain, plistPath)
 	if err == nil {
@@ -295,25 +394,21 @@ func verifyLaunchAgentRunning(target string) ([]byte, error) {
 }
 
 func waitForLaunchAgentRunning(target string, timeout, pollInterval time.Duration) ([]byte, error) {
-	deadline := time.Now().Add(timeout)
-	var lastOutput []byte
-	var lastErr error
-	var lastState string
-	var lastPID int
-	for {
-		lastOutput, lastErr = launchctlCombinedOutput("print", target)
-		if lastErr == nil {
-			lastState, lastPID = parseLaunchAgentState(lastOutput)
-			if lastState == "running" && lastPID > 0 {
-				return lastOutput, nil
+	lastOutput, lastErr, _ := pollLaunchAgent(
+		target,
+		timeout,
+		pollInterval,
+		func(output []byte, err error) bool {
+			if err != nil {
+				return false
 			}
-		}
-		if !time.Now().Before(deadline) {
-			break
-		}
-		if pollInterval > 0 {
-			time.Sleep(pollInterval)
-		}
+			state, pid := parseLaunchAgentState(output)
+			return state == "running" && pid > 0
+		},
+	)
+	lastState, lastPID := parseLaunchAgentState(lastOutput)
+	if lastErr == nil && lastState == "running" && lastPID > 0 {
+		return lastOutput, nil
 	}
 
 	if lastErr != nil {
@@ -331,6 +426,22 @@ func waitForLaunchAgentRunning(target string, timeout, pollInterval time.Duratio
 		lastPID,
 		target,
 	)
+}
+
+func pollLaunchAgent(target string, timeout, pollInterval time.Duration, done func([]byte, error) bool) ([]byte, error, bool) {
+	deadline := time.Now().Add(timeout)
+	for {
+		output, err := launchctlCombinedOutput("print", target)
+		if done(output, err) {
+			return output, err, true
+		}
+		if !time.Now().Before(deadline) {
+			return output, err, false
+		}
+		if pollInterval > 0 {
+			time.Sleep(pollInterval)
+		}
+	}
 }
 
 func parseLaunchAgentState(output []byte) (string, int) {
@@ -351,21 +462,106 @@ func parseLaunchAgentState(output []byte) (string, int) {
 	return state, pid
 }
 
-func bootoutLaunchAgentTargets(domains ...string) {
+func bootoutLaunchAgentTargets(domains ...string) error {
 	for _, domain := range domains {
-		_, _ = launchctlCombinedOutput("bootout", launchctlServiceTargetForDomain(domain))
+		if err := bootoutLaunchAgentTarget(launchctlServiceTargetForDomain(domain)); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
-func rollbackLaunchAgent(target, plistPath string) error {
-	var rollbackErrs []error
-	if output, err := launchctlCombinedOutput("bootout", target); err != nil {
-		rollbackErrs = append(rollbackErrs, errors.New(launchctlWarning("bootout "+target, err, output)))
+func bootoutLaunchAgentTarget(target string) error {
+	output, err := launchctlCombinedOutput("bootout", target)
+	if err == nil || launchctlTargetNotFound(output, err) {
+		return nil
+	}
+	if !launchctlOperationInProgress(output, err) {
+		return errors.New(launchctlWarning("bootout "+target, err, output))
+	}
+
+	lastOutput, lastErr, gone := pollLaunchAgent(
+		target,
+		launchAgentBootoutTimeout,
+		launchAgentBootoutPollInterval,
+		func(output []byte, err error) bool {
+			return launchctlTargetNotFound(output, err)
+		},
+	)
+	if gone {
+		return nil
+	}
+	detail := strings.TrimSpace(string(lastOutput))
+	if lastErr != nil {
+		detail = launchctlWarning("wait for bootout "+target, lastErr, lastOutput)
+	} else if detail == "" {
+		detail = "launchctl print still reports the job"
+	}
+	return fmt.Errorf("launchctl bootout remained in progress after %s: %s", launchAgentBootoutTimeout, detail)
+}
+
+func rollbackNewLaunchAgent(target, plistPath string) error {
+	if err := bootoutLaunchAgentTarget(target); err != nil {
+		return err
 	}
 	if err := os.Remove(plistPath); err != nil && !os.IsNotExist(err) {
-		rollbackErrs = append(rollbackErrs, fmt.Errorf("remove plist %s: %w", plistPath, err))
+		return fmt.Errorf("remove plist %s: %w", plistPath, err)
 	}
-	return errors.Join(rollbackErrs...)
+	return nil
+}
+
+func restorePreviousLaunchAgent(previous launchAgentPreviousState, loadResult launchctlLoadResult, plistPath string) (launchAgentRestoreResult, error) {
+	result := launchAgentRestoreResult{}
+	var restoreErrs []error
+	if loadResult.Bootstrapped {
+		if err := bootoutLaunchAgentTarget(loadResult.Target); err != nil {
+			restoreErrs = append(restoreErrs, err)
+		}
+	}
+
+	if err := os.WriteFile(plistPath, previous.Plist, previous.Mode); err != nil {
+		restoreErrs = append(restoreErrs, fmt.Errorf("restore previous plist %s: %w", plistPath, err))
+		return result, errors.Join(restoreErrs...)
+	}
+	result.PlistRestored = true
+	if len(restoreErrs) > 0 || previous.Target == "" {
+		return result, errors.Join(restoreErrs...)
+	}
+
+	bootstrapOutput, err := launchctlCombinedOutput("bootstrap", previous.Domain, plistPath)
+	if err != nil {
+		return result, errors.New(launchctlWarning("restore previous LaunchAgent with bootstrap "+previous.Domain, err, bootstrapOutput))
+	}
+	verificationOutput, err := verifyLaunchAgentRunning(previous.Target)
+	if err != nil {
+		detail := strings.TrimSpace(string(verificationOutput))
+		if detail != "" {
+			detail = ": " + detail
+		}
+		return result, fmt.Errorf("restored previous plist but could not verify the prior managed job: %w%s", err, detail)
+	}
+	result.Reloaded = true
+	return result, nil
+}
+
+func launchctlOperationInProgress(output []byte, err error) bool {
+	text := strings.ToLower(string(output))
+	if err != nil {
+		text += "\n" + strings.ToLower(err.Error())
+	}
+	return strings.Contains(text, "operation now in progress")
+}
+
+func launchctlTargetNotFound(output []byte, err error) bool {
+	if err == nil {
+		return false
+	}
+	text := strings.ToLower(string(output)) + "\n" + strings.ToLower(err.Error())
+	return strings.Contains(text, "no such process") ||
+		strings.Contains(text, "could not find service") ||
+		strings.Contains(text, "service not found") ||
+		strings.Contains(text, "could not find specified service") ||
+		launchctlDomainNotFound(output, err)
 }
 
 func launchctlDomainNotFound(output []byte, err error) bool {

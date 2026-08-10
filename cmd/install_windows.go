@@ -37,6 +37,9 @@ This command:
   1. Creates a VBScript at %APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\tslink.vbs
   2. The script runs 'tslink serve' silently (no console window) at login
 
+Re-running 'tslink install' is the supported upgrade path; it rewrites the
+Startup script to point at the current executable.
+
 The installer intentionally does not inspect or stop a daemon that is running
 now: writing the Startup script does not start another process in this session.
 The command reports Started=false; the script takes effect only at next sign-in.

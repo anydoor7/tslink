@@ -127,8 +127,8 @@ they fall back to files in ~/.config/tslink/ with restricted permissions (0600).
 	  # TSLINK_API_KEY / TSLINK_CLIENT_SECRET may also be pre-injected by a
 	  # secret manager before this process starts. Do not inline secret values in
 	  # shell commands because they can land in shell history.
-	  tslink login --api-key <token>              # compatible but visible in process lists
-	  tslink login --client-secret <secret>       # compatible but visible in process lists
+	  # The compatibility flags --api-key and --client-secret expose values in
+	  # process lists; prefer the stdin variants above.
 
 		Examples:
 		  tslink login                  Interactive administrative credential prompt

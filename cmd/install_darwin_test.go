@@ -39,7 +39,7 @@ func stubDarwinLaunchAgentVerificationNoWait(t *testing.T) {
 	})
 }
 
-func runDarwinInstallGuardTruthCase(t *testing.T, plistPresent, daemonRunning bool) {
+func runDarwinInstallGuardTruthCase(t *testing.T, plistPresent, daemonRunning bool, launchdPID int) bool {
 	t.Helper()
 	resetRootJSONFlag(t)
 	home := t.TempDir()
@@ -49,14 +49,18 @@ func runDarwinInstallGuardTruthCase(t *testing.T, plistPresent, daemonRunning bo
 	oldExe := executablePathFn
 	oldEval := evalSymlinksFn
 	oldUID := userUIDFn
-	oldConflict := installDaemonConflictFn
+	oldPIDPath := pidPathFn
+	oldRunning := isRunningFn
+	oldReadPID := readPIDFn
 	oldLaunchctl := launchctlCombinedOutput
 	t.Cleanup(func() {
 		userHomeDirFn = oldHome
 		executablePathFn = oldExe
 		evalSymlinksFn = oldEval
 		userUIDFn = oldUID
-		installDaemonConflictFn = oldConflict
+		pidPathFn = oldPIDPath
+		isRunningFn = oldRunning
+		readPIDFn = oldReadPID
 		launchctlCombinedOutput = oldLaunchctl
 		installCmd.SetOut(nil)
 	})
@@ -76,19 +80,35 @@ func runDarwinInstallGuardTruthCase(t *testing.T, plistPresent, daemonRunning bo
 		}
 	}
 
-	conflictCalls := 0
-	installDaemonConflictFn = func() error {
-		conflictCalls++
-		if daemonRunning {
-			return output.ErrConflict("manual TSLink daemon is running")
+	pidPath := filepath.Join(home, "tslink.pid")
+	observedDaemonRunning := false
+	pidPathFn = func() (string, error) { return pidPath, nil }
+	isRunningFn = func(path string) bool {
+		if path != pidPath {
+			t.Fatalf("isRunningFn path = %q, want %q", path, pidPath)
 		}
-		return nil
+		observedDaemonRunning = daemonRunning
+		return daemonRunning
+	}
+	readPIDFn = func(path string) (int, error) {
+		if path != pidPath {
+			t.Fatalf("readPIDFn path = %q, want %q", path, pidPath)
+		}
+		return 1775, nil
 	}
 	launchctlCalls := 0
+	bootstrapCalls := 0
 	launchctlCombinedOutput = func(args ...string) ([]byte, error) {
 		launchctlCalls++
 		if len(args) > 0 && args[0] == "print" {
-			return runningLaunchAgentState(), nil
+			pid := launchdPID
+			if pid <= 0 {
+				pid = 1775
+			}
+			return []byte(fmt.Sprintf("state = running\npid = %d\n", pid)), nil
+		}
+		if len(args) > 0 && args[0] == "bootstrap" {
+			bootstrapCalls++
 		}
 		return nil, nil
 	}
@@ -96,28 +116,27 @@ func runDarwinInstallGuardTruthCase(t *testing.T, plistPresent, daemonRunning bo
 	var out bytes.Buffer
 	installCmd.SetOut(&out)
 	err := installCmd.RunE(installCmd, nil)
-	if !plistPresent && daemonRunning {
+	expectConflict := daemonRunning && (!plistPresent || launchdPID != 1775)
+	if expectConflict {
 		if output.ExitCode(err) != output.ExitConflict {
 			t.Fatalf("ExitCode = %d, want %d: %v", output.ExitCode(err), output.ExitConflict, err)
 		}
-		if conflictCalls != 1 || launchctlCalls != 0 {
-			t.Fatalf("conflict/launchctl calls = %d/%d, want 1/0", conflictCalls, launchctlCalls)
+		if bootstrapCalls != 0 {
+			t.Fatalf("bootstrap calls = %d, want 0 before daemon conflict", bootstrapCalls)
 		}
-		if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+		if plistPresent {
+			plist, readErr := os.ReadFile(path)
+			if readErr != nil || string(plist) != "old plist" {
+				t.Fatalf("existing plist changed during conflict: %q, %v", plist, readErr)
+			}
+		} else if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
 			t.Fatalf("plist exists after conflict: %v", statErr)
 		}
-		return
+		return observedDaemonRunning
 	}
 
 	if err != nil {
 		t.Fatalf("install RunE() error = %v", err)
-	}
-	wantConflictCalls := 1
-	if plistPresent {
-		wantConflictCalls = 0
-	}
-	if conflictCalls != wantConflictCalls {
-		t.Fatalf("conflict calls = %d, want %d", conflictCalls, wantConflictCalls)
 	}
 	if launchctlCalls == 0 {
 		t.Fatal("launchctl was not called for successful install")
@@ -129,22 +148,53 @@ func runDarwinInstallGuardTruthCase(t *testing.T, plistPresent, daemonRunning bo
 	if !strings.Contains(string(plist), "/new/tslink") {
 		t.Fatalf("plist was not refreshed to new executable: %s", plist)
 	}
+	return observedDaemonRunning
 }
 
 func TestDarwinInstallNoPlistDaemonStoppedProceeds(t *testing.T) {
-	runDarwinInstallGuardTruthCase(t, false, false)
+	if got := runDarwinInstallGuardTruthCase(t, false, false, 0); got {
+		t.Fatal("daemon-running seam observed true, want false")
+	}
 }
 
 func TestDarwinInstallNoPlistDaemonRunningConflicts(t *testing.T) {
-	runDarwinInstallGuardTruthCase(t, false, true)
+	if got := runDarwinInstallGuardTruthCase(t, false, true, 0); !got {
+		t.Fatal("daemon-running seam observed false, want true")
+	}
 }
 
 func TestDarwinInstallExistingPlistDaemonStoppedReinstalls(t *testing.T) {
-	runDarwinInstallGuardTruthCase(t, true, false)
+	if got := runDarwinInstallGuardTruthCase(t, true, false, 0); got {
+		t.Fatal("daemon-running seam observed true, want false")
+	}
 }
 
 func TestDarwinInstallExistingPlistDaemonRunningReinstalls(t *testing.T) {
-	runDarwinInstallGuardTruthCase(t, true, true)
+	if got := runDarwinInstallGuardTruthCase(t, true, true, 1775); !got {
+		t.Fatal("daemon-running seam observed false, want true")
+	}
+}
+
+func TestDarwinInstallExistingPlistManualDaemonPIDMismatchConflicts(t *testing.T) {
+	if got := runDarwinInstallGuardTruthCase(t, true, true, 1888); !got {
+		t.Fatal("daemon-running seam observed false, want true")
+	}
+}
+
+func TestDarwinInstallHelpDocumentsUpgradeAndFailurePolicy(t *testing.T) {
+	for _, want := range []string{
+		"supported upgrade path",
+		"saves it",
+		"previous plist is restored",
+		"does not restore an executable binary",
+		"new install",
+		"only after bootout succeeds",
+		"re-run 'tslink install'",
+	} {
+		if !strings.Contains(installCmd.Long, want) {
+			t.Fatalf("install help missing %q:\n%s", want, installCmd.Long)
+		}
+	}
 }
 
 func TestPlistPath(t *testing.T) {
@@ -317,6 +367,9 @@ func TestInstallCommandBootstrapsLaunchAgentAndSurfacesOutput(t *testing.T) {
 	var gotCalls []string
 	launchctlCombinedOutput = func(args ...string) ([]byte, error) {
 		gotCalls = append(gotCalls, strings.Join(args, "\x00"))
+		if len(args) > 0 && args[0] == "bootout" {
+			return []byte("Boot-out failed: 3: No such process"), errors.New("bootout failed")
+		}
 		return []byte("bootstrap stderr"), errors.New("launchctl failed")
 	}
 
@@ -450,10 +503,96 @@ func TestInstallCommandRefusesRunningDaemonBeforeWritingPlist(t *testing.T) {
 }
 
 func TestInstallCommandDoesNotClaimLoadedWhenLaunchAgentIsWaiting(t *testing.T) {
-	stubDarwinInstallDaemonStopped(t)
 	stubDarwinLaunchAgentVerificationNoWait(t)
 	resetRootJSONFlag(t)
 	t.Cleanup(func() { installCmd.SetOut(nil) })
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	oldHome := userHomeDirFn
+	oldExe := executablePathFn
+	oldEval := evalSymlinksFn
+	oldUID := userUIDFn
+	oldPIDPath := pidPathFn
+	oldRunning := isRunningFn
+	oldReadPID := readPIDFn
+	oldLaunchctl := launchctlCombinedOutput
+	t.Cleanup(func() {
+		userHomeDirFn = oldHome
+		executablePathFn = oldExe
+		evalSymlinksFn = oldEval
+		userUIDFn = oldUID
+		pidPathFn = oldPIDPath
+		isRunningFn = oldRunning
+		readPIDFn = oldReadPID
+		launchctlCombinedOutput = oldLaunchctl
+	})
+
+	userHomeDirFn = func() (string, error) { return home, nil }
+	executablePathFn = func() (string, error) { return "/Applications/TSLink.app/tslink", nil }
+	evalSymlinksFn = func(path string) (string, error) { return path, nil }
+	userUIDFn = func() int { return 501 }
+	pidPath := filepath.Join(home, "tslink.pid")
+	pidPathFn = func() (string, error) { return pidPath, nil }
+	isRunningFn = func(path string) bool { return path == pidPath }
+	readPIDFn = func(path string) (int, error) { return 1775, nil }
+
+	plistPath := filepath.Join(home, "Library", "LaunchAgents", plistLabel+".plist")
+	if err := os.MkdirAll(filepath.Dir(plistPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(plistPath, []byte("old plist"), 0o600); err != nil {
+		t.Fatalf("WriteFile(old plist) error = %v", err)
+	}
+
+	bootstrapCalls := 0
+	launchctlCombinedOutput = func(args ...string) ([]byte, error) {
+		if len(args) > 0 && args[0] == "print" {
+			if bootstrapCalls == 1 {
+				return []byte("state = waiting\npid = 0\n"), nil
+			}
+			return runningLaunchAgentState(), nil
+		}
+		if len(args) > 0 && args[0] == "bootstrap" {
+			bootstrapCalls++
+		}
+		return nil, nil
+	}
+
+	var out bytes.Buffer
+	installCmd.SetOut(&out)
+	err := installCmd.RunE(installCmd, nil)
+	if err == nil {
+		t.Fatal("install RunE() error = nil, want waiting-state failure")
+	}
+	if strings.Contains(out.String(), "✓") || strings.Contains(out.String(), "installed and loaded") {
+		t.Fatalf("install claimed loaded for waiting LaunchAgent: %s", out.String())
+	}
+	if !strings.Contains(err.Error(), "did not reach running state") || !strings.Contains(err.Error(), "launchctl print") {
+		t.Fatalf("install error = %q, want actionable post-install state", err)
+	}
+	plist, readErr := os.ReadFile(plistPath)
+	if readErr != nil || string(plist) != "old plist" {
+		t.Fatalf("previous plist was not restored: %q, %v", plist, readErr)
+	}
+	if info, statErr := os.Stat(plistPath); statErr != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("previous plist mode was not restored: %v, %v", info, statErr)
+	}
+	if !strings.Contains(err.Error(), "previous LaunchAgent plist was restored and reloaded") || !strings.Contains(err.Error(), "re-run 'tslink install'") {
+		t.Fatalf("install error = %q, want honest upgrade restoration guidance", err)
+	}
+	if strings.Contains(err.Error(), "installation was rolled back") {
+		t.Fatalf("install error falsely uses generic rollback wording: %q", err)
+	}
+	if bootstrapCalls != 2 {
+		t.Fatalf("bootstrap calls = %d, want new install plus previous-job restore", bootstrapCalls)
+	}
+}
+
+func TestInstallCommandRemovesNewPlistWhenLaunchAgentVerificationFails(t *testing.T) {
+	stubDarwinInstallDaemonStopped(t)
+	stubDarwinLaunchAgentVerificationNoWait(t)
+	resetRootJSONFlag(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -481,24 +620,66 @@ func TestInstallCommandDoesNotClaimLoadedWhenLaunchAgentIsWaiting(t *testing.T) 
 		return nil, nil
 	}
 
-	var out bytes.Buffer
-	installCmd.SetOut(&out)
 	err := installCmd.RunE(installCmd, nil)
-	if err == nil {
-		t.Fatal("install RunE() error = nil, want waiting-state failure")
-	}
-	if strings.Contains(out.String(), "✓") || strings.Contains(out.String(), "installed and loaded") {
-		t.Fatalf("install claimed loaded for waiting LaunchAgent: %s", out.String())
-	}
-	if !strings.Contains(err.Error(), "did not reach running state") || !strings.Contains(err.Error(), "launchctl print") {
-		t.Fatalf("install error = %q, want actionable post-install state", err)
+	if err == nil || !strings.Contains(err.Error(), "new installation was rolled back") || !strings.Contains(err.Error(), "re-run 'tslink install'") {
+		t.Fatalf("install RunE() error = %v, want fresh-install rollback guidance", err)
 	}
 	plistPath := filepath.Join(home, "Library", "LaunchAgents", plistLabel+".plist")
 	if _, statErr := os.Stat(plistPath); !os.IsNotExist(statErr) {
-		t.Fatalf("plist remains after verification rollback: %v", statErr)
+		t.Fatalf("new plist remains after successful verification rollback: %v", statErr)
 	}
-	if !strings.Contains(err.Error(), "rolled back") {
-		t.Fatalf("install error = %q, want rollback confirmation", err)
+}
+
+func TestInstallCommandKeepsNewPlistWhenRollbackBootoutFails(t *testing.T) {
+	stubDarwinInstallDaemonStopped(t)
+	stubDarwinLaunchAgentVerificationNoWait(t)
+	resetRootJSONFlag(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	oldHome := userHomeDirFn
+	oldExe := executablePathFn
+	oldEval := evalSymlinksFn
+	oldUID := userUIDFn
+	oldLaunchctl := launchctlCombinedOutput
+	t.Cleanup(func() {
+		userHomeDirFn = oldHome
+		executablePathFn = oldExe
+		evalSymlinksFn = oldEval
+		userUIDFn = oldUID
+		launchctlCombinedOutput = oldLaunchctl
+	})
+
+	userHomeDirFn = func() (string, error) { return home, nil }
+	executablePathFn = func() (string, error) { return "/Applications/TSLink.app/tslink", nil }
+	evalSymlinksFn = func(path string) (string, error) { return path, nil }
+	userUIDFn = func() int { return 501 }
+	bootstrapped := false
+	launchctlCombinedOutput = func(args ...string) ([]byte, error) {
+		if len(args) == 0 {
+			return nil, nil
+		}
+		switch args[0] {
+		case "bootstrap":
+			bootstrapped = true
+			return nil, nil
+		case "print":
+			return []byte("state = waiting\npid = 0\n"), nil
+		case "bootout":
+			if bootstrapped {
+				return []byte("permission denied"), errors.New("bootout failed")
+			}
+		}
+		return nil, nil
+	}
+
+	err := installCmd.RunE(installCmd, nil)
+	if err == nil || !strings.Contains(err.Error(), "automatic rollback was incomplete") || !strings.Contains(err.Error(), "plist was kept") || !strings.Contains(err.Error(), "tslink uninstall") {
+		t.Fatalf("install RunE() error = %v, want retained-plist recovery guidance", err)
+	}
+	plistPath := filepath.Join(home, "Library", "LaunchAgents", plistLabel+".plist")
+	if _, statErr := os.Stat(plistPath); statErr != nil {
+		t.Fatalf("new plist was removed after failed bootout: %v", statErr)
 	}
 }
 
@@ -525,6 +706,102 @@ func TestWaitForLaunchAgentRunningSettlesAfterTransientWaiting(t *testing.T) {
 	state, pid := parseLaunchAgentState(output)
 	if state != "running" || pid != 1775 {
 		t.Fatalf("settled state = %q/%d, want running/1775", state, pid)
+	}
+}
+
+func TestReinstallLaunchAgentWaitsForInProgressBootout(t *testing.T) {
+	oldUID := userUIDFn
+	oldLaunchctl := launchctlCombinedOutput
+	oldTimeout := launchAgentBootoutTimeout
+	oldPollInterval := launchAgentBootoutPollInterval
+	t.Cleanup(func() {
+		userUIDFn = oldUID
+		launchctlCombinedOutput = oldLaunchctl
+		launchAgentBootoutTimeout = oldTimeout
+		launchAgentBootoutPollInterval = oldPollInterval
+	})
+	userUIDFn = func() int { return 501 }
+	launchAgentBootoutTimeout = time.Second
+	launchAgentBootoutPollInterval = 0
+
+	guiTarget := "gui/501/" + plistLabel
+	bootoutPrintCalls := 0
+	bootstrapCalls := 0
+	launchctlCombinedOutput = func(args ...string) ([]byte, error) {
+		if len(args) == 0 {
+			return nil, nil
+		}
+		switch args[0] {
+		case "bootout":
+			if args[1] == guiTarget {
+				return []byte("Boot-out failed: 36: Operation now in progress"), errors.New("bootout failed")
+			}
+			return []byte("Boot-out failed: 3: No such process"), errors.New("bootout failed")
+		case "print":
+			if bootstrapCalls == 0 {
+				bootoutPrintCalls++
+				if bootoutPrintCalls < 3 {
+					return runningLaunchAgentState(), nil
+				}
+				return []byte("Could not find service"), errors.New("print failed")
+			}
+			return runningLaunchAgentState(), nil
+		case "bootstrap":
+			if bootoutPrintCalls != 3 {
+				t.Fatalf("bootstrap began after %d bootout polls, want 3", bootoutPrintCalls)
+			}
+			bootstrapCalls++
+			return nil, nil
+		}
+		return nil, nil
+	}
+
+	result := reinstallLaunchAgent("/tmp/com.tslink.daemon.plist")
+	if result.Err != nil || !result.Bootstrapped {
+		t.Fatalf("reinstallLaunchAgent() = %+v", result)
+	}
+	if bootstrapCalls != 1 || bootoutPrintCalls != 3 {
+		t.Fatalf("bootstrap/poll calls = %d/%d, want 1/3", bootstrapCalls, bootoutPrintCalls)
+	}
+}
+
+func TestReinstallLaunchAgentDoesNotBootstrapWhenInProgressBootoutTimesOut(t *testing.T) {
+	oldUID := userUIDFn
+	oldLaunchctl := launchctlCombinedOutput
+	oldTimeout := launchAgentBootoutTimeout
+	oldPollInterval := launchAgentBootoutPollInterval
+	t.Cleanup(func() {
+		userUIDFn = oldUID
+		launchctlCombinedOutput = oldLaunchctl
+		launchAgentBootoutTimeout = oldTimeout
+		launchAgentBootoutPollInterval = oldPollInterval
+	})
+	userUIDFn = func() int { return 501 }
+	launchAgentBootoutTimeout = 0
+	launchAgentBootoutPollInterval = 0
+
+	bootstrapCalls := 0
+	launchctlCombinedOutput = func(args ...string) ([]byte, error) {
+		if len(args) == 0 {
+			return nil, nil
+		}
+		switch args[0] {
+		case "bootout":
+			return []byte("Boot-out failed: 36: Operation now in progress"), errors.New("bootout failed")
+		case "print":
+			return runningLaunchAgentState(), nil
+		case "bootstrap":
+			bootstrapCalls++
+		}
+		return nil, nil
+	}
+
+	result := reinstallLaunchAgent("/tmp/com.tslink.daemon.plist")
+	if result.Err == nil || !strings.Contains(result.Err.Error(), "remained in progress") {
+		t.Fatalf("reinstallLaunchAgent() error = %v, want bounded bootout timeout", result.Err)
+	}
+	if result.Bootstrapped || bootstrapCalls != 0 {
+		t.Fatalf("reinstallLaunchAgent() bootstrapped = %v, calls = %d", result.Bootstrapped, bootstrapCalls)
 	}
 }
 

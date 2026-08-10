@@ -57,7 +57,7 @@ type TagsDeleteResult struct {
 	RemoteSideEffectPlan         security.RemoteSideEffectPlan `json:"remote_side_effect_plan"`
 }
 
-const tagsRemoteAPITokenMessage = "remote tag deletion requires a Tailscale API access token; configure one with `tslink login --api-key ...`"
+const tagsRemoteAPITokenMessage = "remote tag deletion requires a Tailscale API access token; pipe it to `tslink login --api-key-stdin`"
 
 // Testable function variables for tags commands.
 var (
@@ -139,7 +139,7 @@ func tagsPullRun(ctx context.Context, out io.Writer, isJSON bool) error {
 				})
 				return nil
 			}
-			fmt.Fprintf(out, "Skipped remote tag read: %s. Configure an API access token with `tslink login --api-key ...` to read tailnet ACL tags.\n", err)
+			fmt.Fprintf(out, "Skipped remote tag read: %s. Pipe an API access token to `tslink login --api-key-stdin` to read tailnet ACL tags.\n", err)
 			return nil
 		}
 		return err

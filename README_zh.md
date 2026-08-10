@@ -379,6 +379,8 @@ API `add` 和 CLI 使用同一套安全护栏。Funnel 服务必须传 `public_a
 
 macOS LaunchAgent 安装会使用 launchd `KeepAlive` 和 `ThrottleInterval=30`。如果 LaunchAgent 仍在安装状态，运行 `tslink stop` 后 launchd 会重启 TSLink。想禁用自启动时，先运行 `tslink uninstall`，再运行 `tslink stop`。SSH/headless macOS 安装时，`tslink install` 会先尝试 `gui/$(id -u)`，如果 GUI launchd domain 不可用，会回退到 `user/$(id -u)`。Linux headless user service 如需登出后继续运行，可能需要执行 `loginctl enable-linger "$USER"`；如果 lingering 只为 TSLink 启用，卸载后运行 `loginctl disable-linger "$USER"`。
 
+所有平台都支持通过重新运行 `tslink install` 来升级。macOS 上，TSLink 会在 launchd handoff 前保存已有 plist，并且只有 pidfile PID 与 `launchctl print` 报告的 PID 一致时，才把运行中的 daemon 视为 launchd 所有。升级中的 post-bootstrap verification 失败时，TSLink 会恢复旧 plist，并重新加载此前确认由 launchd 管理的 job；但它无法恢复在命令运行前已经被替换的可执行二进制。首次安装发生同类 verification 失败时，TSLink 会 bootout 新 job，并且只在 bootout 成功后删除新 plist。如果清理未完成，plist 会保留，使 `tslink uninstall` 能再次尝试。修复报出的原因后，重新运行 `tslink install`。
+
 ## 路线图
 
 - [x] OAuth client secret 可由 login 和 tsnet auth 路径接受；无人值守前需验证标签/设备自动化
