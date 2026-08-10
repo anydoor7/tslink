@@ -90,7 +90,7 @@ var mcpToolDefinitions = []mcpToolDefinition{
 		Description: "Expose a local directory, one file, or an HTTP port to the user's private Tailscale network. Use this after creating a local page or report that the user wants to open on another tailnet device. If status is needs_login, open auth_url in a browser and retry after authorization.",
 		InputSchema: objectSchema(map[string]any{
 			"target":    map[string]any{"type": "string", "minLength": 1, "description": "Existing file or directory path, bare port from 1 to 65535, or host:port HTTP target."},
-			"name":      map[string]any{"type": "string", "pattern": `^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`, "maxLength": 63, "description": "Optional DNS-label service name. A numeric suffix is added instead of overwriting an existing service."},
+			"name":      map[string]any{"type": "string", "pattern": `^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`, "maxLength": 63, "description": "Optional requested DNS-label service name. A matching target is reused only if it already has this name; unrelated name collisions receive a numeric suffix."},
 			"ephemeral": map[string]any{"type": "boolean", "default": true, "description": "Keep true for temporary shares; set false only when the user wants durable tailnet node state."},
 		}, "target"),
 		OutputSchema: mcpShareOutputSchema,

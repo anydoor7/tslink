@@ -659,7 +659,7 @@
           "name": "name",
           "type": "string",
           "scope": "local",
-          "usage": "Service name override (DNS label; collisions receive a numeric suffix)"
+          "usage": "Requested service name (DNS label); a matching target must already use it, while unrelated name collisions receive a numeric suffix"
         },
         {
           "name": "wait",

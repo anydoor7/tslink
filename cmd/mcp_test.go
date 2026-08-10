@@ -110,6 +110,10 @@ func TestMCPToolSchemasAreClosedAndModelFocused(t *testing.T) {
 	if len(required) != 1 || required[0] != "target" || len(properties) != 3 {
 		t.Fatalf("share schema = %+v", shareSchema)
 	}
+	nameDescription := properties["name"].(map[string]any)["description"].(string)
+	if !strings.Contains(nameDescription, "reused only if it already has this name") || !strings.Contains(nameDescription, "numeric suffix") {
+		t.Fatalf("share name description = %q", nameDescription)
+	}
 	if mcpToolDefinitions[1].InputSchema["required"] != nil || mcpToolDefinitions[3].InputSchema["required"] != nil {
 		t.Fatal("no-argument tools unexpectedly require fields")
 	}
@@ -476,18 +480,37 @@ func TestCompiledMCPStdoutPurityProbeMatrix(t *testing.T) {
 		{"status metadata", initialized(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"status","arguments":{},"_meta":{"progressToken":0}}}`), []string{"mcp"}},
 		{"unknown tool", initialized(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"unknown","arguments":{}}}`), []string{"mcp"}},
 		{"invalid share argument", initialized(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"share","arguments":{"target":"3000","extra":true}}}`), []string{"mcp"}},
+		{"missing share target", initialized(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"share","arguments":{}}}`), []string{"mcp"}},
+		{"wrong share target type", initialized(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"share","arguments":{"target":3000}}}`), []string{"mcp"}},
+		{"missing unshare name", initialized(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"unshare","arguments":{}}}`), []string{"mcp"}},
 		{"oversize then ping", strings.Repeat("x", mcpMaxRecordBytes+2) + "\n" + `{"jsonrpc":"2.0","id":99,"method":"ping"}` + "\n", []string{"mcp"}},
+		{"two oversize then ping", strings.Repeat("x", mcpMaxRecordBytes+2) + "\n" + strings.Repeat("y", mcpMaxRecordBytes+2) + "\n" + `{"jsonrpc":"2.0","id":99,"method":"ping"}` + "\n", []string{"mcp"}},
+		{"share exposure conflict", initialized(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"share","arguments":{"target":"3000"}}}`), []string{"mcp"}},
+		{"share requested-name conflict", initialized(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"share","arguments":{"target":"3000","name":"requested-name"}}}`), []string{"mcp"}},
 		{"batch", `[{"jsonrpc":"2.0","id":1,"method":"ping"}]` + "\n", []string{"mcp"}},
 		{"bad flag", "", []string{"mcp", "--badflag"}},
 		{"extra argument", "", []string{"mcp", "extra"}},
 		{"JSON flag", "", []string{"mcp", "--json"}},
 	}
-	if len(cases) != 21 {
-		t.Fatalf("probe scenarios = %d, want 21", len(cases))
+	if len(cases) != 27 {
+		t.Fatalf("probe scenarios = %d, want 27", len(cases))
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			stdout, _, _ := runCompiledTSLinkWithConfigDir(t, t.TempDir(), tc.input, tc.args...)
+			configDir := t.TempDir()
+			var seed *registry.Service
+			switch tc.name {
+			case "share exposure conflict":
+				seed = &registry.Service{Name: "public-demo", Type: registry.TypeProxy, Target: "http://localhost:3000", Ephemeral: true, Funnel: true, PublicAck: true}
+			case "share requested-name conflict":
+				seed = &registry.Service{Name: "existing-name", Type: registry.TypeProxy, Target: "http://localhost:3000", Ephemeral: true}
+			}
+			if seed != nil {
+				if _, err := registry.Add(filepath.Join(configDir, "registry.json"), *seed); err != nil {
+					t.Fatal(err)
+				}
+			}
+			stdout, _, _ := runCompiledTSLinkWithConfigDir(t, configDir, tc.input, tc.args...)
 			for _, line := range strings.Split(strings.TrimSuffix(stdout, "\n"), "\n") {
 				if line == "" {
 					continue
@@ -499,7 +522,7 @@ func TestCompiledMCPStdoutPurityProbeMatrix(t *testing.T) {
 			}
 		})
 	}
-	t.Logf("stdout_purity_probe=%d/%d clean", len(cases), len(cases))
+	t.Logf("stdout_purity_probe=%d/%d clean (including exposure and requested-name conflicts)", len(cases), len(cases))
 }
 
 func TestMCPCommandRejectsJSONWithoutWritingStdout(t *testing.T) {

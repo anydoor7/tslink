@@ -60,18 +60,23 @@ func restoreShareSeams(t *testing.T) {
 }
 
 func TestInferShareTarget(t *testing.T) {
-	dir := t.TempDir()
+	root := t.TempDir()
+	dir := filepath.Join(root, "actual")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	file := filepath.Join(dir, "Report Final.html")
 	if err := os.WriteFile(file, []byte("ok"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
 	directory, err := inferShareTarget(dir, true)
-	if err != nil || directory.Service.Type != registry.TypeFile || directory.Service.Path != dir || !directory.Service.Ephemeral || directory.FileName != "" {
+	canonicalDir, canonicalErr := filepath.EvalSymlinks(dir)
+	if err != nil || canonicalErr != nil || directory.Service.Type != registry.TypeFile || directory.Service.Path != canonicalDir || !directory.Service.Ephemeral || directory.FileName != "" {
 		t.Fatalf("directory = %+v err=%v", directory, err)
 	}
 	regular, err := inferShareTarget(file, false)
-	if err != nil || regular.Service.Path != dir || regular.FileName != "Report Final.html" || regular.Service.Ephemeral {
+	if err != nil || regular.Service.Path != canonicalDir || regular.FileName != "Report Final.html" || regular.Service.Ephemeral {
 		t.Fatalf("file = %+v err=%v", regular, err)
 	}
 	port, err := inferShareTarget("3000", true)
@@ -82,9 +87,22 @@ func TestInferShareTarget(t *testing.T) {
 	if err != nil || hostPort.Service.Target != "http://127.0.0.1:8080" {
 		t.Fatalf("hostPort = %+v err=%v", hostPort, err)
 	}
+	uppercaseHost, err := inferShareTarget("LOCALHOST:3000", true)
+	if err != nil || uppercaseHost.Service.Target != "http://localhost:3000" || uppercaseHost.Service.Target != port.Service.Target {
+		t.Fatalf("uppercaseHost = %+v port=%+v err=%v", uppercaseHost, port, err)
+	}
 	ipv6, err := inferShareTarget("[::1]:8443", true)
 	if err != nil || ipv6.Service.Target != "http://[::1]:8443" {
 		t.Fatalf("ipv6 = %+v err=%v", ipv6, err)
+	}
+	link := filepath.Join(root, "alias")
+	if err := os.Symlink(dir, link); err != nil {
+		t.Logf("symlink normalization not available: %v", err)
+	} else {
+		linked, linkErr := inferShareTarget(link, true)
+		if linkErr != nil || linked.Service.Path != directory.Service.Path || !sameShareTarget(linked.Service, directory.Service) {
+			t.Fatalf("linked = %+v directory=%+v err=%v", linked, directory, linkErr)
+		}
 	}
 
 	for _, invalid := range []string{"", "0", "+3000", "65536", "localhost", ":3000", "https://localhost:3000"} {
@@ -126,9 +144,12 @@ func TestShareNamesAndCollisionNeverUpsert(t *testing.T) {
 	if first.Name != "demo-app" || second.Name != "demo-app-2" {
 		t.Fatalf("names = %q, %q", first.Name, second.Name)
 	}
-	reused, reusedCreated, err := registerShare(regPath, spec, "another-name")
+	if _, created, err := registerShare(regPath, spec, "requested-renamed-share"); err == nil || created || output.ExitCode(err) != output.ExitConflict || !strings.Contains(err.Error(), first.Name) {
+		t.Fatalf("mismatched requested name created=%v err=%v", created, err)
+	}
+	reused, reusedCreated, err := registerShare(regPath, spec, first.Name)
 	if err != nil || reusedCreated || reused.Name != first.Name {
-		t.Fatalf("reused = %+v created=%v err=%v", reused, reusedCreated, err)
+		t.Fatalf("matching requested name reuse = %+v created=%v err=%v", reused, reusedCreated, err)
 	}
 	reg, err := registry.Load(regPath)
 	if err != nil || len(reg.Services) != 2 || !reg.Services[0].Ephemeral {
@@ -136,6 +157,82 @@ func TestShareNamesAndCollisionNeverUpsert(t *testing.T) {
 	}
 	if _, _, err := registerShare(regPath, spec, "Bad_Name"); err == nil {
 		t.Fatal("invalid explicit name accepted")
+	}
+}
+
+func TestSameShareTargetRequiresMatchingExposurePosture(t *testing.T) {
+	plain := registry.Service{Type: registry.TypeProxy, Target: "http://localhost:3000", Ephemeral: true}
+	if !sameShareTarget(plain, plain) {
+		t.Fatal("identical plain share target did not match")
+	}
+	cases := []struct {
+		name   string
+		mutate func(*registry.Service)
+	}{
+		{"funnel", func(svc *registry.Service) { svc.Funnel = true }},
+		{"public acknowledgement", func(svc *registry.Service) { svc.PublicAck = true }},
+		{"allow list", func(svc *registry.Service) { svc.AllowedUsers = []string{"nobody@example.com"} }},
+		{"custom domain", func(svc *registry.Service) { svc.Domain = "preview.example.com" }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			existing := plain
+			tc.mutate(&existing)
+			if sameShareTarget(existing, plain) {
+				t.Fatalf("%s posture was silently reusable: %s", tc.name, shareExposurePosture(existing))
+			}
+			t.Logf("posture=%s same_share_target=false (%s)", tc.name, shareExposurePosture(existing))
+		})
+	}
+}
+
+func TestExecuteShareRejectsConflictingExposurePosture(t *testing.T) {
+	cases := []struct {
+		name         string
+		service      registry.Service
+		wantFragment string
+	}{
+		{
+			name: "public funnel",
+			service: registry.Service{
+				Name: "public-demo", Type: registry.TypeProxy, Target: "http://localhost:3000", Ephemeral: true,
+				Funnel: true, PublicAck: true,
+			},
+			wantFragment: "funnel=true",
+		},
+		{
+			name: "allow list",
+			service: registry.Service{
+				Name: "restricted-demo", Type: registry.TypeProxy, Target: "http://localhost:3000", Ephemeral: true,
+				AllowedUsers: []string{"nobody@example.com"},
+			},
+			wantFragment: "allowed_users=1",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			restoreShareSeams(t)
+			regPath := filepath.Join(t.TempDir(), "registry.json")
+			tc.service.CreatedAt = time.Unix(1, 0).UTC()
+			fixture := registry.Registry{SchemaVersion: registry.CurrentRegistrySchemaVersion, Services: []registry.Service{tc.service}}
+			data, err := json.Marshal(fixture)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(regPath, data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			_, err = executeShare(context.Background(), sharePaths{Registry: regPath}, "3000", "", true, time.Second, io.Discard)
+			if err == nil || output.ExitCode(err) != output.ExitConflict || !strings.Contains(err.Error(), tc.service.Name) || !strings.Contains(err.Error(), tc.wantFragment) {
+				t.Fatalf("conflict err = %v", err)
+			}
+			reg, loadErr := registry.Load(regPath)
+			if loadErr != nil || len(reg.Services) != 1 || reg.Services[0].Name != tc.service.Name {
+				t.Fatalf("registry = %+v err=%v", reg, loadErr)
+			}
+			t.Logf("posture=%s result=ERROR %q registry_services=%d retained=%q", tc.name, err, len(reg.Services), reg.Services[0].Name)
+		})
 	}
 }
 

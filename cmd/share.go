@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -97,6 +98,10 @@ func inferShareTarget(target string, ephemeral bool) (shareTargetSpec, error) {
 		if err != nil {
 			return shareTargetSpec{}, err
 		}
+		absolute, err = filepath.EvalSymlinks(absolute)
+		if err != nil {
+			return shareTargetSpec{}, err
+		}
 		absolute = filepath.Clean(absolute)
 		switch {
 		case info.IsDir():
@@ -125,6 +130,7 @@ func inferShareTarget(target string, ephemeral bool) (shareTargetSpec, error) {
 		if err != nil || strings.TrimSpace(host) == "" {
 			return shareTargetSpec{}, output.ErrUsage("proxy share target must be a port or host:port")
 		}
+		host = strings.ToLower(host)
 	}
 	if strings.HasPrefix(portText, "+") || strings.HasPrefix(portText, "-") {
 		return shareTargetSpec{}, output.ErrUsage("share target must be an existing path, a port from 1 to 65535, or host:port")
@@ -188,11 +194,24 @@ func suffixedShareName(base string, attempt int) string {
 	return trimmed + suffix
 }
 
-func sameShareTarget(existing, candidate registry.Service) bool {
+func sameShareBackend(existing, candidate registry.Service) bool {
 	return existing.Type == candidate.Type &&
 		existing.Path == candidate.Path &&
 		existing.Target == candidate.Target &&
 		existing.Ephemeral == candidate.Ephemeral
+}
+
+func sameShareTarget(existing, candidate registry.Service) bool {
+	return sameShareBackend(existing, candidate) &&
+		existing.Funnel == candidate.Funnel &&
+		existing.PublicAck == candidate.PublicAck &&
+		slices.Equal(existing.AllowedUsers, candidate.AllowedUsers) &&
+		existing.Domain == candidate.Domain
+}
+
+func shareExposurePosture(svc registry.Service) string {
+	return fmt.Sprintf("funnel=%t, public_ack=%t, allowed_users=%d, domain=%q",
+		svc.Funnel, svc.PublicAck, len(svc.AllowedUsers), svc.Domain)
 }
 
 func registerShare(regPath string, spec shareTargetSpec, requestedName string) (registry.Service, bool, error) {
@@ -211,7 +230,17 @@ func registerShare(regPath string, spec shareTargetSpec, requestedName string) (
 		usedNames := make(map[string]struct{}, len(reg.Services))
 		for _, existing := range reg.Services {
 			if sameShareTarget(existing, spec.Service) {
+				if requestedName != "" && existing.Name != requestedName {
+					return registry.Service{}, false, output.ErrConflict(fmt.Sprintf(
+						"cannot apply requested name %q: target is already shared as %q; re-run without an explicit name to reuse it, or remove the existing service before retrying with the requested name",
+						requestedName, existing.Name))
+				}
 				return existing, false, nil
+			}
+			if sameShareBackend(existing, spec.Service) {
+				return registry.Service{}, false, output.ErrConflict(fmt.Sprintf(
+					"cannot reuse service %q for this share target: its exposure posture is %s, but plain share requires %s; remove or reconfigure the existing service, or share a different target",
+					existing.Name, shareExposurePosture(existing), shareExposurePosture(spec.Service)))
 			}
 			usedNames[existing.Name] = struct{}{}
 		}
@@ -417,7 +446,7 @@ Examples:
 			return nil
 		},
 	}
-	shareCmd.Flags().String("name", "", "Service name override (DNS label; collisions receive a numeric suffix)")
+	shareCmd.Flags().String("name", "", "Requested service name (DNS label); a matching target must already use it, while unrelated name collisions receive a numeric suffix")
 	shareCmd.Flags().Bool("ephemeral", true, "Use an ephemeral tailnet node (set --ephemeral=false for durable state)")
 	shareCmd.Flags().Duration("wait", defaultURLWait, "Wait for an exact runtime URL (share waits 30s by default; unlike url, no flag is required)")
 	shareCmd.Flags().Lookup("wait").NoOptDefVal = defaultURLWait.String()
