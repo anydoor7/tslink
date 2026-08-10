@@ -4,6 +4,7 @@ package cmd
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"html/template"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/output"
@@ -31,20 +33,28 @@ var (
 	executablePathFn        = os.Executable
 	evalSymlinksFn          = filepath.EvalSymlinks
 	userUIDFn               = os.Getuid
-	launchctlCombinedOutput = func(args ...string) ([]byte, error) {
+	installDaemonConflictFn = func() error {
+		return detectInstallDaemonConflict("no LaunchAgent plist is installed, so stop the manual daemon with 'tslink stop' and retry 'tslink install'; if launchd owns it, run 'tslink uninstall' first so KeepAlive cannot restart it")
+	}
+	launchAgentVerifyTimeout      = launchAgentStartupTimeout
+	launchAgentVerifyPollInterval = launchAgentStartupPollInterval
+	launchctlCombinedOutput       = func(args ...string) ([]byte, error) {
 		return exec.Command("launchctl", args...).CombinedOutput()
 	}
 )
 
 const plistLabel = "com.tslink.daemon"
 const launchdThrottleInterval = 30
+const launchAgentStartupTimeout = 10 * time.Second
+const launchAgentStartupPollInterval = 50 * time.Millisecond
 
 type launchctlLoadResult struct {
-	Domain  string
-	Target  string
-	Output  string
-	Err     error
-	Warning string
+	Domain       string
+	Target       string
+	Output       string
+	Err          error
+	Warning      string
+	Bootstrapped bool
 }
 
 var plistTemplate = template.Must(template.New("plist").Parse(`<?xml version="1.0" encoding="UTF-8"?>
@@ -112,8 +122,17 @@ Headless/SSH caveat:
 	  tslink install                Register and start the LaunchAgent`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if err := installDaemonConflictFn(); err != nil {
+		plistPath, err := plistPath()
+		if err != nil {
 			return err
+		}
+		if _, statErr := os.Stat(plistPath); statErr != nil {
+			if !os.IsNotExist(statErr) {
+				return fmt.Errorf("inspect existing LaunchAgent plist: %w", statErr)
+			}
+			if err := installDaemonConflictFn(); err != nil {
+				return err
+			}
 		}
 
 		if err := config.EnsureDir(); err != nil {
@@ -133,10 +152,6 @@ Headless/SSH caveat:
 		outLog := filepath.Join(logDir, "tslink.out.log")
 		errLog := filepath.Join(logDir, "tslink.err.log")
 
-		plistPath, err := plistPath()
-		if err != nil {
-			return err
-		}
 		if err := os.MkdirAll(filepath.Dir(plistPath), 0o755); err != nil {
 			return fmt.Errorf("create LaunchAgents directory: %w", err)
 		}
@@ -162,7 +177,13 @@ Headless/SSH caveat:
 			if warning == "" {
 				warning = launchctlWarning("LaunchAgent plist installed but the service did not reach running state", loadResult.Err, []byte(loadResult.Output))
 			}
-			return fmt.Errorf("%s; plist remains installed at %s", warning, plistPath)
+			if loadResult.Bootstrapped {
+				if rollbackErr := rollbackLaunchAgent(loadResult.Target, plistPath); rollbackErr != nil {
+					return fmt.Errorf("%s; automatic rollback was incomplete: %v; launchd may keep retrying, so run 'tslink uninstall' to finish cleanup", warning, rollbackErr)
+				}
+				return fmt.Errorf("%s; installation was rolled back by booting out %s and removing %s", warning, loadResult.Target, plistPath)
+			}
+			return fmt.Errorf("%s; plist remains installed at %s but no job was bootstrapped; run 'tslink uninstall' to remove it", warning, plistPath)
 		}
 
 		if jsonOutput(cmd) {
@@ -226,10 +247,11 @@ func reinstallLaunchAgent(plistPath string) launchctlLoadResult {
 			combinedOutput = combineLaunchctlOutput(output, verificationOutput)
 		}
 		return launchctlLoadResult{
-			Domain: guiDomain,
-			Target: target,
-			Output: combinedOutput,
-			Err:    verifyErr,
+			Domain:       guiDomain,
+			Target:       target,
+			Output:       combinedOutput,
+			Err:          verifyErr,
+			Bootstrapped: true,
 		}
 	}
 	if !launchctlDomainNotFound(output, err) {
@@ -259,32 +281,54 @@ func reinstallLaunchAgent(plistPath string) launchctlLoadResult {
 		combinedOutput = combineLaunchctlOutput([]byte(combinedOutput), verificationOutput)
 	}
 	return launchctlLoadResult{
-		Domain:  userDomain,
-		Target:  target,
-		Output:  combinedOutput,
-		Err:     verifyErr,
-		Warning: warning,
+		Domain:       userDomain,
+		Target:       target,
+		Output:       combinedOutput,
+		Err:          verifyErr,
+		Warning:      warning,
+		Bootstrapped: true,
 	}
 }
 
 func verifyLaunchAgentRunning(target string) ([]byte, error) {
-	output, err := launchctlCombinedOutput("print", target)
-	if err != nil {
-		detail := strings.TrimSpace(string(output))
+	return waitForLaunchAgentRunning(target, launchAgentVerifyTimeout, launchAgentVerifyPollInterval)
+}
+
+func waitForLaunchAgentRunning(target string, timeout, pollInterval time.Duration) ([]byte, error) {
+	deadline := time.Now().Add(timeout)
+	var lastOutput []byte
+	var lastErr error
+	var lastState string
+	var lastPID int
+	for {
+		lastOutput, lastErr = launchctlCombinedOutput("print", target)
+		if lastErr == nil {
+			lastState, lastPID = parseLaunchAgentState(lastOutput)
+			if lastState == "running" && lastPID > 0 {
+				return lastOutput, nil
+			}
+		}
+		if !time.Now().Before(deadline) {
+			break
+		}
+		if pollInterval > 0 {
+			time.Sleep(pollInterval)
+		}
+	}
+
+	if lastErr != nil {
+		detail := strings.TrimSpace(string(lastOutput))
 		if detail != "" {
 			detail = ": " + detail
 		}
-		return output, fmt.Errorf("verify LaunchAgent state with 'launchctl print %s': %w%s", target, err, detail)
+		return lastOutput, fmt.Errorf("verify LaunchAgent state with 'launchctl print %s' for %s: %w%s", target, timeout, lastErr, detail)
 	}
-	state, pid := parseLaunchAgentState(output)
-	if state == "running" && pid > 0 {
-		return output, nil
-	}
-	return output, fmt.Errorf(
-		"LaunchAgent did not reach running state after bootstrap (target=%s, state=%q, pid=%d); run 'launchctl print %s' and inspect the TSLink error log",
+	return lastOutput, fmt.Errorf(
+		"LaunchAgent did not reach running state within %s after bootstrap (target=%s, state=%q, pid=%d); run 'launchctl print %s' and inspect the TSLink error log",
+		timeout,
 		target,
-		state,
-		pid,
+		lastState,
+		lastPID,
 		target,
 	)
 }
@@ -311,6 +355,17 @@ func bootoutLaunchAgentTargets(domains ...string) {
 	for _, domain := range domains {
 		_, _ = launchctlCombinedOutput("bootout", launchctlServiceTargetForDomain(domain))
 	}
+}
+
+func rollbackLaunchAgent(target, plistPath string) error {
+	var rollbackErrs []error
+	if output, err := launchctlCombinedOutput("bootout", target); err != nil {
+		rollbackErrs = append(rollbackErrs, errors.New(launchctlWarning("bootout "+target, err, output)))
+	}
+	if err := os.Remove(plistPath); err != nil && !os.IsNotExist(err) {
+		rollbackErrs = append(rollbackErrs, fmt.Errorf("remove plist %s: %w", plistPath, err))
+	}
+	return errors.Join(rollbackErrs...)
 }
 
 func launchctlDomainNotFound(output []byte, err error) bool {

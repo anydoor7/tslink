@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/monody0007/tslink/internal/output"
 )
@@ -24,6 +25,126 @@ func stubDarwinInstallDaemonStopped(t *testing.T) {
 
 func runningLaunchAgentState() []byte {
 	return []byte("state = running\npid = 1775\n")
+}
+
+func stubDarwinLaunchAgentVerificationNoWait(t *testing.T) {
+	t.Helper()
+	oldTimeout := launchAgentVerifyTimeout
+	oldPollInterval := launchAgentVerifyPollInterval
+	launchAgentVerifyTimeout = 0
+	launchAgentVerifyPollInterval = 0
+	t.Cleanup(func() {
+		launchAgentVerifyTimeout = oldTimeout
+		launchAgentVerifyPollInterval = oldPollInterval
+	})
+}
+
+func runDarwinInstallGuardTruthCase(t *testing.T, plistPresent, daemonRunning bool) {
+	t.Helper()
+	resetRootJSONFlag(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	oldHome := userHomeDirFn
+	oldExe := executablePathFn
+	oldEval := evalSymlinksFn
+	oldUID := userUIDFn
+	oldConflict := installDaemonConflictFn
+	oldLaunchctl := launchctlCombinedOutput
+	t.Cleanup(func() {
+		userHomeDirFn = oldHome
+		executablePathFn = oldExe
+		evalSymlinksFn = oldEval
+		userUIDFn = oldUID
+		installDaemonConflictFn = oldConflict
+		launchctlCombinedOutput = oldLaunchctl
+		installCmd.SetOut(nil)
+	})
+
+	userHomeDirFn = func() (string, error) { return home, nil }
+	executablePathFn = func() (string, error) { return "/new/tslink", nil }
+	evalSymlinksFn = func(path string) (string, error) { return path, nil }
+	userUIDFn = func() int { return 501 }
+
+	path := filepath.Join(home, "Library", "LaunchAgents", plistLabel+".plist")
+	if plistPresent {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("MkdirAll() error = %v", err)
+		}
+		if err := os.WriteFile(path, []byte("old plist"), 0o644); err != nil {
+			t.Fatalf("WriteFile() error = %v", err)
+		}
+	}
+
+	conflictCalls := 0
+	installDaemonConflictFn = func() error {
+		conflictCalls++
+		if daemonRunning {
+			return output.ErrConflict("manual TSLink daemon is running")
+		}
+		return nil
+	}
+	launchctlCalls := 0
+	launchctlCombinedOutput = func(args ...string) ([]byte, error) {
+		launchctlCalls++
+		if len(args) > 0 && args[0] == "print" {
+			return runningLaunchAgentState(), nil
+		}
+		return nil, nil
+	}
+
+	var out bytes.Buffer
+	installCmd.SetOut(&out)
+	err := installCmd.RunE(installCmd, nil)
+	if !plistPresent && daemonRunning {
+		if output.ExitCode(err) != output.ExitConflict {
+			t.Fatalf("ExitCode = %d, want %d: %v", output.ExitCode(err), output.ExitConflict, err)
+		}
+		if conflictCalls != 1 || launchctlCalls != 0 {
+			t.Fatalf("conflict/launchctl calls = %d/%d, want 1/0", conflictCalls, launchctlCalls)
+		}
+		if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+			t.Fatalf("plist exists after conflict: %v", statErr)
+		}
+		return
+	}
+
+	if err != nil {
+		t.Fatalf("install RunE() error = %v", err)
+	}
+	wantConflictCalls := 1
+	if plistPresent {
+		wantConflictCalls = 0
+	}
+	if conflictCalls != wantConflictCalls {
+		t.Fatalf("conflict calls = %d, want %d", conflictCalls, wantConflictCalls)
+	}
+	if launchctlCalls == 0 {
+		t.Fatal("launchctl was not called for successful install")
+	}
+	plist, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatalf("ReadFile(plist) error = %v", readErr)
+	}
+	if !strings.Contains(string(plist), "/new/tslink") {
+		t.Fatalf("plist was not refreshed to new executable: %s", plist)
+	}
+}
+
+func TestDarwinInstallNoPlistDaemonStoppedProceeds(t *testing.T) {
+	runDarwinInstallGuardTruthCase(t, false, false)
+}
+
+func TestDarwinInstallNoPlistDaemonRunningConflicts(t *testing.T) {
+	runDarwinInstallGuardTruthCase(t, false, true)
+}
+
+func TestDarwinInstallExistingPlistDaemonStoppedReinstalls(t *testing.T) {
+	runDarwinInstallGuardTruthCase(t, true, false)
+}
+
+func TestDarwinInstallExistingPlistDaemonRunningReinstalls(t *testing.T) {
+	runDarwinInstallGuardTruthCase(t, true, true)
 }
 
 func TestPlistPath(t *testing.T) {
@@ -297,25 +418,29 @@ func TestInstallCommandRefusesRunningDaemonBeforeWritingPlist(t *testing.T) {
 	resetRootJSONFlag(t)
 	home := t.TempDir()
 	oldHome := userHomeDirFn
-	oldConflict := installDaemonConflictFn
 	oldLaunchctl := launchctlCombinedOutput
+	oldPIDPath := pidPathFn
+	oldRunning := isRunningFn
+	oldReadPID := readPIDFn
 	t.Cleanup(func() {
 		userHomeDirFn = oldHome
-		installDaemonConflictFn = oldConflict
 		launchctlCombinedOutput = oldLaunchctl
+		pidPathFn = oldPIDPath
+		isRunningFn = oldRunning
+		readPIDFn = oldReadPID
 	})
 
 	userHomeDirFn = func() (string, error) { return home, nil }
-	installDaemonConflictFn = func() error {
-		return output.ErrConflict("TSLink daemon is already running (pid 1676); run 'tslink stop' and retry 'tslink install'")
-	}
+	pidPathFn = func() (string, error) { return filepath.Join(home, "tslink.pid"), nil }
+	isRunningFn = func(string) bool { return true }
+	readPIDFn = func(string) (int, error) { return 1676, nil }
 	launchctlCombinedOutput = func(args ...string) ([]byte, error) {
 		t.Fatalf("launchctl called during daemon conflict: %v", args)
 		return nil, nil
 	}
 
 	err := installCmd.RunE(installCmd, nil)
-	if output.ExitCode(err) != output.ExitConflict || !strings.Contains(err.Error(), "pid 1676") || !strings.Contains(err.Error(), "tslink stop") {
+	if output.ExitCode(err) != output.ExitConflict || !strings.Contains(err.Error(), "pid 1676") || !strings.Contains(err.Error(), "tslink stop") || !strings.Contains(err.Error(), "tslink uninstall") || !strings.Contains(err.Error(), "KeepAlive") {
 		t.Fatalf("install conflict = %v (exit %d)", err, output.ExitCode(err))
 	}
 	plistPath := filepath.Join(home, "Library", "LaunchAgents", plistLabel+".plist")
@@ -326,6 +451,7 @@ func TestInstallCommandRefusesRunningDaemonBeforeWritingPlist(t *testing.T) {
 
 func TestInstallCommandDoesNotClaimLoadedWhenLaunchAgentIsWaiting(t *testing.T) {
 	stubDarwinInstallDaemonStopped(t)
+	stubDarwinLaunchAgentVerificationNoWait(t)
 	resetRootJSONFlag(t)
 	t.Cleanup(func() { installCmd.SetOut(nil) })
 	home := t.TempDir()
@@ -366,6 +492,65 @@ func TestInstallCommandDoesNotClaimLoadedWhenLaunchAgentIsWaiting(t *testing.T) 
 	}
 	if !strings.Contains(err.Error(), "did not reach running state") || !strings.Contains(err.Error(), "launchctl print") {
 		t.Fatalf("install error = %q, want actionable post-install state", err)
+	}
+	plistPath := filepath.Join(home, "Library", "LaunchAgents", plistLabel+".plist")
+	if _, statErr := os.Stat(plistPath); !os.IsNotExist(statErr) {
+		t.Fatalf("plist remains after verification rollback: %v", statErr)
+	}
+	if !strings.Contains(err.Error(), "rolled back") {
+		t.Fatalf("install error = %q, want rollback confirmation", err)
+	}
+}
+
+func TestWaitForLaunchAgentRunningSettlesAfterTransientWaiting(t *testing.T) {
+	oldLaunchctl := launchctlCombinedOutput
+	t.Cleanup(func() { launchctlCombinedOutput = oldLaunchctl })
+
+	printCalls := 0
+	launchctlCombinedOutput = func(args ...string) ([]byte, error) {
+		printCalls++
+		if printCalls < 3 {
+			return []byte("state = waiting\npid = 0\n"), nil
+		}
+		return runningLaunchAgentState(), nil
+	}
+
+	output, err := waitForLaunchAgentRunning("gui/501/"+plistLabel, time.Second, 0)
+	if err != nil {
+		t.Fatalf("waitForLaunchAgentRunning() error = %v", err)
+	}
+	if printCalls != 3 {
+		t.Fatalf("launchctl print calls = %d, want 3", printCalls)
+	}
+	state, pid := parseLaunchAgentState(output)
+	if state != "running" || pid != 1775 {
+		t.Fatalf("settled state = %q/%d, want running/1775", state, pid)
+	}
+}
+
+func TestWaitForLaunchAgentRunningRejectsRunningWithoutPID(t *testing.T) {
+	oldLaunchctl := launchctlCombinedOutput
+	t.Cleanup(func() { launchctlCombinedOutput = oldLaunchctl })
+	launchctlCombinedOutput = func(args ...string) ([]byte, error) {
+		return []byte("state = running\n"), nil
+	}
+
+	_, err := waitForLaunchAgentRunning("gui/501/"+plistLabel, 0, 0)
+	if err == nil || !strings.Contains(err.Error(), `state="running"`) || !strings.Contains(err.Error(), "pid=0") {
+		t.Fatalf("waitForLaunchAgentRunning() error = %v, want running-without-pid failure", err)
+	}
+}
+
+func TestWaitForLaunchAgentRunningRejectsWaitingWithStalePID(t *testing.T) {
+	oldLaunchctl := launchctlCombinedOutput
+	t.Cleanup(func() { launchctlCombinedOutput = oldLaunchctl })
+	launchctlCombinedOutput = func(args ...string) ([]byte, error) {
+		return []byte("state = waiting\npid = 1775\n"), nil
+	}
+
+	_, err := waitForLaunchAgentRunning("gui/501/"+plistLabel, 0, 0)
+	if err == nil || !strings.Contains(err.Error(), `state="waiting"`) || !strings.Contains(err.Error(), "pid=1775") {
+		t.Fatalf("waitForLaunchAgentRunning() error = %v, want waiting-with-stale-pid failure", err)
 	}
 }
 

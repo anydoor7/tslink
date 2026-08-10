@@ -24,6 +24,119 @@ func runningSystemdState() []byte {
 	return []byte("ActiveState=active\nSubState=running\nMainPID=1775\n")
 }
 
+func runLinuxInstallGuardTruthCase(t *testing.T, unitPresent, daemonRunning bool) {
+	t.Helper()
+	resetRootJSONFlag(t)
+	home := t.TempDir()
+
+	oldHome := linuxUserHomeDirFn
+	oldExe := linuxExecutablePathFn
+	oldEval := linuxEvalSymlinksFn
+	oldUser := linuxUserNameFn
+	oldConflict := installDaemonConflictFn
+	oldSystemctl := systemctlCombinedOutput
+	oldLoginctl := loginctlCombinedOutputFn
+	t.Cleanup(func() {
+		linuxUserHomeDirFn = oldHome
+		linuxExecutablePathFn = oldExe
+		linuxEvalSymlinksFn = oldEval
+		linuxUserNameFn = oldUser
+		installDaemonConflictFn = oldConflict
+		systemctlCombinedOutput = oldSystemctl
+		loginctlCombinedOutputFn = oldLoginctl
+		installCmd.SetOut(nil)
+		installCmd.SetErr(nil)
+	})
+
+	linuxUserHomeDirFn = func() (string, error) { return home, nil }
+	linuxExecutablePathFn = func() (string, error) { return "/new/tslink", nil }
+	linuxEvalSymlinksFn = func(path string) (string, error) { return path, nil }
+	linuxUserNameFn = func() string { return "alice" }
+	loginctlCombinedOutputFn = func(args ...string) ([]byte, error) { return []byte("yes\n"), nil }
+
+	path := filepath.Join(home, ".config", "systemd", "user", systemdServiceName)
+	if unitPresent {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("MkdirAll() error = %v", err)
+		}
+		if err := os.WriteFile(path, []byte("old unit"), 0o644); err != nil {
+			t.Fatalf("WriteFile() error = %v", err)
+		}
+	}
+
+	conflictCalls := 0
+	installDaemonConflictFn = func() error {
+		conflictCalls++
+		if daemonRunning {
+			return output.ErrConflict("manual TSLink daemon is running")
+		}
+		return nil
+	}
+	systemctlCalls := 0
+	systemctlCombinedOutput = func(args ...string) ([]byte, error) {
+		systemctlCalls++
+		if len(args) > 1 && args[1] == "show" {
+			return runningSystemdState(), nil
+		}
+		return nil, nil
+	}
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	installCmd.SetOut(&out)
+	installCmd.SetErr(&errOut)
+	err := installCmd.RunE(installCmd, nil)
+	if !unitPresent && daemonRunning {
+		if output.ExitCode(err) != output.ExitConflict {
+			t.Fatalf("ExitCode = %d, want %d: %v", output.ExitCode(err), output.ExitConflict, err)
+		}
+		if conflictCalls != 1 || systemctlCalls != 0 {
+			t.Fatalf("conflict/systemctl calls = %d/%d, want 1/0", conflictCalls, systemctlCalls)
+		}
+		if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+			t.Fatalf("unit exists after conflict: %v", statErr)
+		}
+		return
+	}
+
+	if err != nil {
+		t.Fatalf("install RunE() error = %v", err)
+	}
+	wantConflictCalls := 1
+	if unitPresent {
+		wantConflictCalls = 0
+	}
+	if conflictCalls != wantConflictCalls {
+		t.Fatalf("conflict calls = %d, want %d", conflictCalls, wantConflictCalls)
+	}
+	if systemctlCalls == 0 {
+		t.Fatal("systemctl was not called for successful install")
+	}
+	unit, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatalf("ReadFile(unit) error = %v", readErr)
+	}
+	if !strings.Contains(string(unit), "/new/tslink") {
+		t.Fatalf("unit was not refreshed to new executable: %s", unit)
+	}
+}
+
+func TestLinuxInstallNoUnitDaemonStoppedProceeds(t *testing.T) {
+	runLinuxInstallGuardTruthCase(t, false, false)
+}
+
+func TestLinuxInstallNoUnitDaemonRunningConflicts(t *testing.T) {
+	runLinuxInstallGuardTruthCase(t, false, true)
+}
+
+func TestLinuxInstallExistingUnitDaemonStoppedReinstalls(t *testing.T) {
+	runLinuxInstallGuardTruthCase(t, true, false)
+}
+
+func TestLinuxInstallExistingUnitDaemonRunningReinstalls(t *testing.T) {
+	runLinuxInstallGuardTruthCase(t, true, true)
+}
+
 func TestSystemdServiceContentsThrottlesRestart(t *testing.T) {
 	unit := systemdServiceContents("/usr/local/bin/tslink")
 	for _, want := range []string{
@@ -213,25 +326,29 @@ func TestLinuxInstallSurfacesSystemctlOutput(t *testing.T) {
 func TestLinuxInstallRefusesRunningDaemonBeforeWritingUnit(t *testing.T) {
 	home := t.TempDir()
 	oldHome := linuxUserHomeDirFn
-	oldConflict := installDaemonConflictFn
 	oldSystemctl := systemctlCombinedOutput
+	oldPIDPath := pidPathFn
+	oldRunning := isRunningFn
+	oldReadPID := readPIDFn
 	t.Cleanup(func() {
 		linuxUserHomeDirFn = oldHome
-		installDaemonConflictFn = oldConflict
 		systemctlCombinedOutput = oldSystemctl
+		pidPathFn = oldPIDPath
+		isRunningFn = oldRunning
+		readPIDFn = oldReadPID
 	})
 
 	linuxUserHomeDirFn = func() (string, error) { return home, nil }
-	installDaemonConflictFn = func() error {
-		return output.ErrConflict("TSLink daemon is already running (pid 1676); run 'tslink stop' and retry 'tslink install'")
-	}
+	pidPathFn = func() (string, error) { return filepath.Join(home, "tslink.pid"), nil }
+	isRunningFn = func(string) bool { return true }
+	readPIDFn = func(string) (int, error) { return 1676, nil }
 	systemctlCombinedOutput = func(args ...string) ([]byte, error) {
 		t.Fatalf("systemctl called during daemon conflict: %v", args)
 		return nil, nil
 	}
 
 	err := installCmd.RunE(installCmd, nil)
-	if output.ExitCode(err) != output.ExitConflict || !strings.Contains(err.Error(), "pid 1676") || !strings.Contains(err.Error(), "tslink stop") {
+	if output.ExitCode(err) != output.ExitConflict || !strings.Contains(err.Error(), "pid 1676") || !strings.Contains(err.Error(), "tslink stop") || !strings.Contains(err.Error(), "no systemd user unit") {
 		t.Fatalf("install conflict = %v (exit %d)", err, output.ExitCode(err))
 	}
 	servicePath := filepath.Join(home, ".config", "systemd", "user", systemdServiceName)

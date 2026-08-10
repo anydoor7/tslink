@@ -389,6 +389,63 @@ func TestDoctorTier1StateMatrix(t *testing.T) {
 	}
 }
 
+func TestDoctorTier1RunningWithoutEnrollmentWarns(t *testing.T) {
+	service := registry.Service{Name: "web", Type: registry.TypeProxy, Target: "http://localhost:3000"}
+	newDoctorTestEnv(t, []registry.Service{service})
+	doctorGetAPIKeyFn = func() (string, error) { return "", nil }
+	doctorGetClientSecretFn = func() (string, error) { return "", nil }
+	doctorReadFileFn = func(string) ([]byte, error) { return nil, os.ErrNotExist }
+
+	result := buildDoctorResult(doctorOptions{})
+	tierFinding := assertDoctorFinding(t, result, inspect.WarningCodeCredentialTier1)
+	if tierFinding.Severity != doctorSeverityInfo {
+		t.Fatalf("credential_tier1 severity = %q, want %q", tierFinding.Severity, doctorSeverityInfo)
+	}
+	snapshotFinding := assertDoctorFinding(t, result, inspect.WarningCodeRuntimeSnapshotMissing)
+	if snapshotFinding.Severity != doctorSeverityWarning {
+		t.Fatalf("runtime_snapshot_missing severity = %q, want %q", snapshotFinding.Severity, doctorSeverityWarning)
+	}
+	if got := output.ExitCode(doctorExit(result)); got != output.ExitWarning {
+		t.Fatalf("ExitCode = %d, want %d; findings=%+v", got, output.ExitWarning, result.Findings)
+	}
+}
+
+func TestDoctorTier1CompletedEnrollmentMessage(t *testing.T) {
+	service := registry.Service{Name: "web", Type: registry.TypeProxy, Target: "http://localhost:3000"}
+	env := newDoctorTestEnv(t, []registry.Service{service})
+	doctorGetAPIKeyFn = func() (string, error) { return "", nil }
+	doctorGetClientSecretFn = func() (string, error) { return "", nil }
+	doctorReadFileFn = func(string) ([]byte, error) { return nil, os.ErrNotExist }
+	env.writeExactSnapshot(t)
+
+	result := buildDoctorResult(doctorOptions{})
+	finding := assertDoctorFinding(t, result, inspect.WarningCodeCredentialTier1)
+	if !strings.Contains(finding.Message, "has produced authorized runtime state") {
+		t.Fatalf("credential_tier1 message = %q, want completed-enrollment evidence", finding.Message)
+	}
+	if got := output.ExitCode(doctorExit(result)); got != output.ExitSuccess {
+		t.Fatalf("ExitCode = %d, want %d; findings=%+v", got, output.ExitSuccess, result.Findings)
+	}
+}
+
+func TestDoctorCredentialBackendFailureClassifiesTierUnknown(t *testing.T) {
+	newDoctorTestEnv(t, nil)
+	doctorGetAPIKeyFn = func() (string, error) { return "", errors.New("credential backend unavailable") }
+	doctorGetClientSecretFn = func() (string, error) { return "", nil }
+	doctorReadFileFn = func(string) ([]byte, error) { return nil, os.ErrNotExist }
+
+	result := buildDoctorResult(doctorOptions{})
+	if result.CredentialTier != doctorCredentialTierUnknown {
+		t.Fatalf("credential tier = %q, want %q", result.CredentialTier, doctorCredentialTierUnknown)
+	}
+	assertDoctorFinding(t, result, inspect.WarningCodeCredentialReadFailed)
+	assertDoctorNoFinding(t, result, inspect.WarningCodeCredentialTier1)
+	assertDoctorNoFinding(t, result, inspect.WarningCodeCredentialNone)
+	if got := output.ExitCode(doctorExit(result)); got != output.ExitCritical {
+		t.Fatalf("ExitCode = %d, want %d; findings=%+v", got, output.ExitCritical, result.Findings)
+	}
+}
+
 func TestDoctorLegacyAuthKeyWarning(t *testing.T) {
 	env := newDoctorTestEnv(t, nil)
 	env.writeExactSnapshot(t)

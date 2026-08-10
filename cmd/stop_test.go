@@ -40,7 +40,7 @@ func TestDetectInstallDaemonConflictNamesPIDAndResolution(t *testing.T) {
 	isRunningFn = func(path string) bool { return path == "/tmp/tslink-test.pid" }
 	readPIDFn = func(path string) (int, error) { return 1676, nil }
 
-	err := detectInstallDaemonConflict()
+	err := detectInstallDaemonConflict("run 'tslink stop' and retry 'tslink install'")
 	if output.ExitCode(err) != output.ExitConflict {
 		t.Fatalf("ExitCode = %d, want %d: %v", output.ExitCode(err), output.ExitConflict, err)
 	}

@@ -16,7 +16,6 @@ var stopDaemonFn = daemon.StopDaemon
 var removePIDFn = daemon.RemovePID // retained as a compatibility test seam; not called on an inconclusive stop path
 var isProcessAbsentFromPIDFileFn = daemon.IsProcessAbsentFromPIDFile
 var pidPathFn = config.PIDPath
-var installDaemonConflictFn = detectInstallDaemonConflict
 
 func commandIsDaemonRunning(pidPath string) bool {
 	if daemon.IsRunning(pidPath) {
@@ -29,7 +28,7 @@ func commandIsDaemonRunning(pidPath string) bool {
 	return err == nil && pid == os.Getpid()
 }
 
-func detectInstallDaemonConflict() error {
+func detectInstallDaemonConflict(recovery string) error {
 	pidPath, err := pidPathFn()
 	if err != nil {
 		return fmt.Errorf("find daemon PID file before install: %w", err)
@@ -40,11 +39,12 @@ func detectInstallDaemonConflict() error {
 
 	pid, err := readPIDFn(pidPath)
 	if err != nil {
-		return output.ErrConflict("a verified TSLink daemon is already running, but its PID could not be read; run 'tslink stop' and retry 'tslink install'")
+		return output.ErrConflict(fmt.Sprintf("a verified TSLink daemon is already running, but its PID could not be read; %s", recovery))
 	}
 	return output.ErrConflict(fmt.Sprintf(
-		"TSLink daemon is already running (pid %d); run 'tslink stop' and retry 'tslink install' so the service manager can take ownership (exit 4 means an existing-state conflict)",
+		"TSLink daemon is already running (pid %d); %s (exit 4 means an existing-state conflict)",
 		pid,
+		recovery,
 	))
 }
 

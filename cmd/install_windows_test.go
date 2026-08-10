@@ -66,6 +66,37 @@ func TestWindowsInstallCommandWritesStartupScript(t *testing.T) {
 	}
 }
 
+func TestWindowsInstallIntentionallyDoesNotInspectCurrentDaemon(t *testing.T) {
+	appData := t.TempDir()
+	t.Setenv("APPDATA", appData)
+
+	oldExe := windowsExecutablePathFn
+	oldEval := windowsEvalSymlinksFn
+	oldPIDPath := pidPathFn
+	t.Cleanup(func() {
+		windowsExecutablePathFn = oldExe
+		windowsEvalSymlinksFn = oldEval
+		pidPathFn = oldPIDPath
+		installCmd.SetOut(nil)
+	})
+
+	windowsExecutablePathFn = func() (string, error) { return `C:\Program Files\TSLink\tslink.exe`, nil }
+	windowsEvalSymlinksFn = func(path string) (string, error) { return path, nil }
+	pidPathFn = func() (string, error) {
+		t.Fatal("Windows install inspected the current daemon PID path")
+		return "", nil
+	}
+
+	var out bytes.Buffer
+	installCmd.SetOut(&out)
+	if err := installCmd.RunE(installCmd, nil); err != nil {
+		t.Fatalf("install RunE() error = %v", err)
+	}
+	if !strings.Contains(out.String(), "Startup script installed") {
+		t.Fatalf("install output = %q, want Startup script success", out.String())
+	}
+}
+
 func TestWindowsInstallJSONEnvelope(t *testing.T) {
 	appData := t.TempDir()
 	t.Setenv("APPDATA", appData)

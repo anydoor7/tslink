@@ -37,6 +37,10 @@ This command:
   1. Creates a VBScript at %APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\tslink.vbs
   2. The script runs 'tslink serve' silently (no console window) at login
 
+The installer intentionally does not inspect or stop a daemon that is running
+now: writing the Startup script does not start another process in this session.
+The command reports Started=false; the script takes effect only at next sign-in.
+
 Note: Unlike macOS LaunchAgent and Linux systemd, the Windows Startup script
 does not auto-restart on crash. If the process exits, it will only restart on
 the next login.
@@ -51,6 +55,8 @@ To remove the autostart:
 	  tslink install                Register the Startup script`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// No daemon-conflict guard is needed here. Unlike launchd/systemd, the
+		// Startup folder does not take ownership or start a process during install.
 		exe, err := windowsExecutablePathFn()
 		if err != nil {
 			return fmt.Errorf("find executable: %w", err)

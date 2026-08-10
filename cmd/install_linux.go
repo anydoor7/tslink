@@ -19,11 +19,14 @@ const systemdServiceName = "tslink.service"
 const systemdRestartSec = 30
 
 var (
-	linuxUserHomeDirFn       = os.UserHomeDir
-	linuxExecutablePathFn    = os.Executable
-	linuxEvalSymlinksFn      = filepath.EvalSymlinks
-	linuxUserNameFn          = defaultLinuxUserName
-	linuxUserIDFn            = os.Getuid
+	linuxUserHomeDirFn      = os.UserHomeDir
+	linuxExecutablePathFn   = os.Executable
+	linuxEvalSymlinksFn     = filepath.EvalSymlinks
+	linuxUserNameFn         = defaultLinuxUserName
+	linuxUserIDFn           = os.Getuid
+	installDaemonConflictFn = func() error {
+		return detectInstallDaemonConflict("no systemd user unit is installed, so stop the manual daemon with 'tslink stop' and retry 'tslink install'")
+	}
 	systemctlCombinedOutput  = func(args ...string) ([]byte, error) { return exec.Command("systemctl", args...).CombinedOutput() }
 	loginctlCombinedOutputFn = func(args ...string) ([]byte, error) { return exec.Command("loginctl", args...).CombinedOutput() }
 )
@@ -68,8 +71,17 @@ If lingering was enabled only for TSLink, disable it after uninstall:
 	  tslink install                Register and restart the systemd service`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if err := installDaemonConflictFn(); err != nil {
+		servicePath, err := systemdServicePath()
+		if err != nil {
 			return err
+		}
+		if _, statErr := os.Stat(servicePath); statErr != nil {
+			if !os.IsNotExist(statErr) {
+				return fmt.Errorf("inspect existing systemd user unit: %w", statErr)
+			}
+			if err := installDaemonConflictFn(); err != nil {
+				return err
+			}
 		}
 
 		exe, err := linuxExecutablePathFn()
@@ -81,10 +93,6 @@ If lingering was enabled only for TSLink, disable it after uninstall:
 			return fmt.Errorf("resolve executable path: %w", err)
 		}
 
-		servicePath, err := systemdServicePath()
-		if err != nil {
-			return err
-		}
 		if err := os.MkdirAll(filepath.Dir(servicePath), 0o755); err != nil {
 			return fmt.Errorf("create systemd user dir: %w", err)
 		}
