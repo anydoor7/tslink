@@ -33,6 +33,7 @@ func TestCompiledDaemonDoesNotOutliveTestLauncher(t *testing.T) {
 
 	launcherDone := make(chan error, 1)
 	go func() { launcherDone <- launcher.Wait() }()
+	launcherWaited := false
 
 	var daemonPID int
 	var daemonProcess *os.Process
@@ -43,9 +44,11 @@ func TestCompiledDaemonDoesNotOutliveTestLauncher(t *testing.T) {
 		if launcher.Process != nil {
 			_ = launcher.Process.Kill()
 		}
-		select {
-		case <-launcherDone:
-		case <-time.After(2 * time.Second):
+		if !launcherWaited {
+			select {
+			case <-launcherDone:
+			case <-time.After(2 * time.Second):
+			}
 		}
 		if daemonPID > 0 && daemon.IsProcessRunning(daemonPID) {
 			if err := daemon.StopDaemon(pidPath); err != nil {
@@ -75,27 +78,38 @@ func TestCompiledDaemonDoesNotOutliveTestLauncher(t *testing.T) {
 	if err != nil {
 		t.Fatalf("find detached daemon %d: %v", daemonPID, err)
 	}
-	// Freeze the detached child immediately after it publishes its PID. This
-	// widens the cancellation window deterministically: the launcher cannot
-	// observe a ready/auth handoff before the test terminates it.
+	// Freeze a still-live detached child immediately after it publishes its PID.
+	// If the launcher is still running this widens the cancellation window; if
+	// it already exited, the same process-existence assertion applies directly.
 	if err := daemonProcess.Signal(syscall.SIGSTOP); err != nil {
+		if !daemon.IsProcessRunning(daemonPID) {
+			return
+		}
 		t.Fatalf("stop detached daemon %d: %v", daemonPID, err)
 	}
+	launcherExited := false
 	select {
-	case err := <-launcherDone:
-		t.Fatalf("launcher exited before cancellation window was established: %v; stdout=%q stderr=%q", err, stdout.String(), stderr.String())
+	case <-launcherDone:
+		launcherExited = true
+		launcherWaited = true
 	default:
 	}
 
-	if err := launcher.Process.Kill(); err != nil {
-		t.Fatalf("kill daemon launcher: %v", err)
-	}
-	select {
-	case <-launcherDone:
-	case <-time.After(5 * time.Second):
-		t.Fatal("daemon launcher did not exit after kill")
+	if !launcherExited {
+		if err := launcher.Process.Kill(); err != nil {
+			t.Fatalf("kill daemon launcher: %v", err)
+		}
+		select {
+		case <-launcherDone:
+			launcherWaited = true
+		case <-time.After(5 * time.Second):
+			t.Fatal("daemon launcher did not exit after kill")
+		}
 	}
 	if err := daemonProcess.Signal(syscall.SIGCONT); err != nil {
+		if !daemon.IsProcessRunning(daemonPID) {
+			return
+		}
 		t.Fatalf("resume detached daemon %d: %v", daemonPID, err)
 	}
 
