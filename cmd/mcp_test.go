@@ -334,7 +334,7 @@ func TestDefaultMCPActionsUseLocalRegistryAndRedactedStatus(t *testing.T) {
 	}
 	partialValue, err := actions.unshare("partial")
 	partial := partialValue.(mcpUnshareSummary)
-	if err != nil || partial.OK || !partial.Removed || !partial.DeviceCleanupSkipped || partial.DeviceSkipReason != "ownership could not be proven" {
+	if err != nil || !partial.OK || !partial.Removed || !partial.DeviceCleanupSkipped || partial.DeviceSkipReason != "ownership could not be proven" {
 		t.Fatalf("partial unshare = %+v err=%v", partial, err)
 	}
 	if _, err := actions.unshare("Bad_Name"); err == nil {
@@ -346,6 +346,29 @@ func TestDefaultMCPActionsUseLocalRegistryAndRedactedStatus(t *testing.T) {
 	}
 	if remaining := listValue.(map[string]any)["services"].([]mcpServiceSummary); len(remaining) != 1 || remaining[0].Name != "port-3000" {
 		t.Fatalf("list = %+v", listValue)
+	}
+}
+
+func TestDefaultMCPActionsUnshareReportsSuccessWithoutAPIClient(t *testing.T) {
+	restoreShareSeams(t)
+	dir := t.TempDir()
+	paths := sharePaths{Registry: filepath.Join(dir, "registry.json")}
+	if _, err := registry.Add(paths.Registry, registry.Service{Name: "zero-credential", Type: registry.TypeProxy, Target: "http://localhost:3000"}); err != nil {
+		t.Fatal(err)
+	}
+	oldDelete := deleteDevicesFn
+	t.Cleanup(func() { deleteDevicesFn = oldDelete })
+	deleteDevicesFn = func(context.Context, tailapi.CleanupTarget) (tailapi.CleanupResult, error) {
+		return tailapi.CleanupResult{Skipped: true, SkipReason: tailapi.ErrNoAPIClient.Error()}, nil
+	}
+
+	value, err := defaultMCPActions(paths, os.Stderr).unshare("zero-credential")
+	summary, ok := value.(mcpUnshareSummary)
+	if err != nil || !ok {
+		t.Fatalf("unshare = %T(%+v) err=%v", value, value, err)
+	}
+	if !summary.OK || !summary.Removed || !summary.DeviceCleanupSkipped || summary.DeviceSkipReason != tailapi.ErrNoAPIClient.Error() {
+		t.Fatalf("unshare summary = %+v", summary)
 	}
 }
 
