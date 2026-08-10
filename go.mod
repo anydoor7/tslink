@@ -2,6 +2,8 @@ module github.com/monody0007/tslink
 
 go 1.26.3
 
+toolchain go1.26.5
+
 require (
 	github.com/prometheus/client_golang v1.23.2
 	github.com/prometheus/client_model v0.6.2
