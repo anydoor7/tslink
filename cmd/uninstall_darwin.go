@@ -13,18 +13,29 @@ import (
 
 // UninstallResult is the JSON payload for the uninstall command.
 type UninstallResult struct {
-	PlistPath       string `json:"plist_path"`
-	Removed         bool   `json:"removed"`
-	LaunchctlTarget string `json:"launchctl_target"`
-	LaunchctlOutput string `json:"launchctl_output,omitempty"`
-	Warning         string `json:"warning,omitempty"`
+	PlistPath        string `json:"plist_path"`
+	Removed          bool   `json:"removed"`
+	LaunchctlOutcome string `json:"launchctl_outcome"`
+	LaunchctlTarget  string `json:"launchctl_target"`
+	LaunchctlOutput  string `json:"launchctl_output,omitempty"`
+	Detail           string `json:"detail,omitempty"`
+	Warning          string `json:"warning,omitempty"`
 }
 
 type launchctlBootoutResult struct {
-	Target string
-	Output string
-	Err    error
+	Outcome string
+	Target  string
+	Output  string
+	Detail  string
+	Err     error
 }
+
+const (
+	launchctlOutcomeNotInstalled  = "not_installed"
+	launchctlOutcomeUnloaded      = "unloaded"
+	launchctlOutcomeAlreadyAbsent = "already_absent"
+	launchctlOutcomeUnconfirmed   = "unconfirmed"
+)
 
 var uninstallCmd = &cobra.Command{
 	Use:   "uninstall",
@@ -33,13 +44,14 @@ var uninstallCmd = &cobra.Command{
 
 This command:
   1. Unloads the agent from gui/$(id -u), or user/$(id -u) for headless installs
-  2. Deletes ~/Library/LaunchAgents/com.tslink.daemon.plist only after each
-     launchd domain reports the job unloaded or already absent
+  2. Deletes ~/Library/LaunchAgents/com.tslink.daemon.plist after launchctl
+     reports no real error and either confirms a successful bootout in an
+     addressable domain or confirms the job absent from every domain
 
 If the LaunchAgent is not installed, prints a message and exits cleanly.
-If launchctl cannot confirm that the job was unloaded or already absent in
-either domain, the plist is kept, the command exits non-zero, and you can fix
-the reported launchctl failure before retrying this command.
+An unavailable domain does not block removal when the other domain confirms a
+successful bootout. If no domain succeeds and any domain is unavailable, or if
+launchctl reports a real error, the plist is kept and the command exits non-zero.
 Log files in ~/.config/tslink/logs/ are NOT removed.
 
 	Examples:
@@ -53,7 +65,11 @@ Log files in ~/.config/tslink/logs/ are NOT removed.
 
 		if _, err := os.Stat(path); os.IsNotExist(err) {
 			if jsonOutput(cmd) {
-				output.Success("uninstall", UninstallResult{PlistPath: path, Removed: false, LaunchctlTarget: launchctlServiceTarget()})
+				output.Success("uninstall", UninstallResult{
+					PlistPath:        path,
+					Removed:          false,
+					LaunchctlOutcome: launchctlOutcomeNotInstalled,
+				})
 				return nil
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), "→ LaunchAgent not installed")
@@ -69,11 +85,13 @@ Log files in ~/.config/tslink/logs/ are NOT removed.
 			if jsonOutput(cmd) {
 				result := output.NewFailureForError("uninstall", uninstallErr)
 				result.Data = UninstallResult{
-					PlistPath:       path,
-					Removed:         false,
-					LaunchctlTarget: bootout.Target,
-					LaunchctlOutput: bootout.Output,
-					Warning:         warning,
+					PlistPath:        path,
+					Removed:          false,
+					LaunchctlOutcome: bootout.Outcome,
+					LaunchctlTarget:  bootout.Target,
+					LaunchctlOutput:  bootout.Output,
+					Detail:           bootout.Detail,
+					Warning:          warning,
 				}
 				output.WriteJSON(os.Stdout, result)
 				return output.SilentExit(output.ExitError)
@@ -87,10 +105,12 @@ Log files in ~/.config/tslink/logs/ are NOT removed.
 
 		if jsonOutput(cmd) {
 			output.Success("uninstall", UninstallResult{
-				PlistPath:       path,
-				Removed:         true,
-				LaunchctlTarget: bootout.Target,
-				LaunchctlOutput: bootout.Output,
+				PlistPath:        path,
+				Removed:          true,
+				LaunchctlOutcome: bootout.Outcome,
+				LaunchctlTarget:  bootout.Target,
+				LaunchctlOutput:  bootout.Output,
+				Detail:           bootout.Detail,
 			})
 			return nil
 		}
@@ -108,6 +128,7 @@ func bootoutLaunchAgent() launchctlBootoutResult {
 	var outputs []string
 	var firstSuccess *launchctlBootoutResult
 	var firstRealError *launchctlBootoutResult
+	var firstUnavailable *launchctlBootoutResult
 	for _, target := range targets {
 		output, err := launchctlCombinedOutput("bootout", target)
 		text := strings.TrimSpace(string(output))
@@ -117,10 +138,17 @@ func bootoutLaunchAgent() launchctlBootoutResult {
 		attempt := launchctlBootoutResult{Target: target, Output: text, Err: err}
 		if err == nil && firstSuccess == nil {
 			success := attempt
+			success.Outcome = launchctlOutcomeUnloaded
 			firstSuccess = &success
 		}
-		if err != nil && !launchctlServiceNotFound(output, err) && firstRealError == nil {
+		if err != nil && launchctlDomainNotFound(output, err) && firstUnavailable == nil {
+			unavailable := attempt
+			unavailable.Outcome = launchctlOutcomeUnconfirmed
+			firstUnavailable = &unavailable
+		}
+		if err != nil && !launchctlServiceNotFound(output, err) && !launchctlDomainNotFound(output, err) && firstRealError == nil {
 			failure := attempt
+			failure.Outcome = launchctlOutcomeUnconfirmed
 			firstRealError = &failure
 		}
 	}
@@ -132,7 +160,14 @@ func bootoutLaunchAgent() launchctlBootoutResult {
 	if firstSuccess != nil {
 		return *firstSuccess
 	}
-	return launchctlBootoutResult{Output: "LaunchAgent was already absent from all launchd domains"}
+	if firstUnavailable != nil {
+		firstUnavailable.Output = combinedOutput
+		return *firstUnavailable
+	}
+	return launchctlBootoutResult{
+		Outcome: launchctlOutcomeAlreadyAbsent,
+		Detail:  "LaunchAgent was already absent from all launchd domains",
+	}
 }
 
 func init() {

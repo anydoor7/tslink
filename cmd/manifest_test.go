@@ -112,6 +112,42 @@ func TestManifestCommandsCarryInheritedFlags(t *testing.T) {
 	assertFlag("tslink status", "json")
 }
 
+func TestManifestDocumentsDarwinUninstallJSONContract(t *testing.T) {
+	m := Manifest()
+	var uninstall CommandInfo
+	for _, command := range m.Commands {
+		if command.Path == "tslink uninstall" {
+			uninstall = command
+			break
+		}
+	}
+	if uninstall.Path == "" {
+		t.Fatal("manifest missing tslink uninstall")
+	}
+
+	outcome, ok := uninstall.JSONResultFields["launchctl_outcome"]
+	if !ok {
+		t.Fatal("uninstall manifest missing launchctl_outcome")
+	}
+	for _, want := range []string{"not_installed", "unloaded", "already_absent", "unconfirmed"} {
+		if !containsString(outcome.Values, want) {
+			t.Fatalf("launchctl_outcome values = %v, want %q", outcome.Values, want)
+		}
+	}
+	target := uninstall.JSONResultFields["launchctl_target"].Description
+	if !strings.Contains(target, "empty for not_installed and already_absent") {
+		t.Fatalf("launchctl_target contract = %q", target)
+	}
+	rawOutput := uninstall.JSONResultFields["launchctl_output"].Description
+	if !strings.Contains(rawOutput, "Verbatim trimmed launchctl output") || !strings.Contains(rawOutput, "omitted") {
+		t.Fatalf("launchctl_output contract = %q", rawOutput)
+	}
+	detail := uninstall.JSONResultFields["detail"].Description
+	if !strings.Contains(detail, "TSLink-authored") || !strings.Contains(detail, "separate") {
+		t.Fatalf("detail contract = %q", detail)
+	}
+}
+
 func TestManifestFlagsAreSelfDescribingAndRelationshipsAreExplicit(t *testing.T) {
 	m := Manifest()
 	commands := map[string]CommandInfo{}

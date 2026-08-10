@@ -31,6 +31,27 @@ func TestWriteFileInExistingDirRejectsWorldWritableParentWithoutMutation(t *test
 	}
 }
 
+func TestWriteFileInExistingDirRejectsGroupWritableParentWithoutMutation(t *testing.T) {
+	restoreAtomicFileHooks(t)
+	dir := filepath.Join(t.TempDir(), "staff-shared")
+	if err := os.Mkdir(dir, 0o775); err != nil {
+		t.Fatalf("Mkdir(staff-shared) error = %v", err)
+	}
+	if err := os.Chmod(dir, 0o775); err != nil {
+		t.Fatalf("Chmod(staff-shared) error = %v", err)
+	}
+	target := filepath.Join(dir, "state.json")
+
+	err := WriteFileInExistingDir(target, []byte("state\n"), PrivateFileMode)
+	if err == nil || !strings.Contains(err.Error(), "group- or world-writable") {
+		t.Fatalf("WriteFileInExistingDir() error = %v, want group-writable rejection", err)
+	}
+	assertMode(t, dir, 0o775)
+	if _, statErr := os.Lstat(target); !os.IsNotExist(statErr) {
+		t.Fatalf("target exists after unsafe-parent rejection: %v", statErr)
+	}
+}
+
 func TestWriteFileInExistingDirRejectsWorldWritableSymlinkReferentWithoutMutation(t *testing.T) {
 	restoreAtomicFileHooks(t)
 	root := t.TempDir()

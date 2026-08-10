@@ -85,9 +85,18 @@ type ErrorCodeInfo struct {
 
 // CommandInfo describes one command in the tree.
 type CommandInfo struct {
-	Path  string     `json:"path"`
-	Short string     `json:"short"`
-	Flags []FlagInfo `json:"flags,omitempty"`
+	Path             string                         `json:"path"`
+	Short            string                         `json:"short"`
+	Flags            []FlagInfo                     `json:"flags,omitempty"`
+	JSONResultFields map[string]JSONResultFieldInfo `json:"json_result_fields,omitempty"`
+}
+
+// JSONResultFieldInfo documents command-specific fields inside the shared
+// --json result envelope's data object.
+type JSONResultFieldInfo struct {
+	Type        string   `json:"type"`
+	Description string   `json:"description"`
+	Values      []string `json:"values,omitempty"`
 }
 
 // FlagInfo describes one command-local flag.
@@ -189,7 +198,11 @@ func Manifest() CLIManifest {
 	var walk func(c *cobra.Command, prefix string)
 	walk = func(c *cobra.Command, prefix string) {
 		path := strings.TrimSpace(prefix + " " + c.Name())
-		info := CommandInfo{Path: path, Short: platformNeutralCommandShort(path, c.Short)}
+		info := CommandInfo{
+			Path:             path,
+			Short:            platformNeutralCommandShort(path, c.Short),
+			JSONResultFields: commandJSONResultFields(path),
+		}
 		info.Flags = commandFlags(c, path)
 		sort.Slice(info.Flags, func(i, j int) bool { return info.Flags[i].Name < info.Flags[j].Name })
 		m.Commands = append(m.Commands, info)
@@ -205,6 +218,35 @@ func Manifest() CLIManifest {
 	walk(rootCmd, "")
 	sort.Slice(m.Commands, func(i, j int) bool { return m.Commands[i].Path < m.Commands[j].Path })
 	return m
+}
+
+func commandJSONResultFields(commandPath string) map[string]JSONResultFieldInfo {
+	if commandPath != "tslink uninstall" {
+		return nil
+	}
+	return map[string]JSONResultFieldInfo{
+		"removed": {
+			Type:        "boolean",
+			Description: "Whether the platform startup artifact was removed by this invocation.",
+		},
+		"launchctl_outcome": {
+			Type:        "string",
+			Description: "macOS only. Discriminates no installed plist, a confirmed bootout, confirmed absence from every domain, and an unconfirmed failure.",
+			Values:      []string{"not_installed", "unloaded", "already_absent", "unconfirmed"},
+		},
+		"launchctl_target": {
+			Type:        "string",
+			Description: "macOS only. The domain target that confirmed bootout or caused the reported unconfirmed failure; empty for not_installed and already_absent.",
+		},
+		"launchctl_output": {
+			Type:        "string",
+			Description: "macOS only. Verbatim trimmed launchctl output from the successful target for unloaded, or combined attempted output for unconfirmed; omitted when no launchctl output applies.",
+		},
+		"detail": {
+			Type:        "string",
+			Description: "macOS only. TSLink-authored explanation kept separate from launchctl_output; present for already_absent.",
+		},
+	}
 }
 
 func commandFlags(c *cobra.Command, commandPath string) []FlagInfo {

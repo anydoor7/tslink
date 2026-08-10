@@ -569,6 +569,9 @@ func launchctlOperationInProgress(output []byte, err error) bool {
 }
 
 func launchctlTargetNotFound(output []byte, err error) bool {
+	if err == nil {
+		return false
+	}
 	return launchctlServiceNotFound(output, err) || launchctlDomainNotFound(output, err)
 }
 
