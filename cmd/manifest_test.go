@@ -28,8 +28,12 @@ func TestManifestCarriesMachineConsumerFacts(t *testing.T) {
 	}
 	if !containsString(m.APIActions, apiActionDoctor) ||
 		!containsString(m.APIActions, apiActionAccessExplain) ||
-		!containsString(m.APIActions, apiActionTemplateApply) {
+		!containsString(m.APIActions, apiActionTemplateApply) ||
+		!containsString(m.APIActions, apiActionManifest) {
 		t.Fatalf("api actions missing shipped actions: %v", m.APIActions)
+	}
+	if len(m.APIActions) != 10 {
+		t.Fatalf("api actions = %v, want the 9 existing actions plus manifest", m.APIActions)
 	}
 	if m.Release.PublicReleaseAvailable || m.Release.PrebuiltAvailable || m.Release.HomebrewTapAvailable {
 		t.Fatalf("release availability must stay false before first public readback: %#v", m.Release)

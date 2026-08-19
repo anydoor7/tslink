@@ -34,6 +34,7 @@
     ]
   },
   "api_actions": [
+    "manifest",
     "list",
     "add",
     "remove",
@@ -655,6 +656,13 @@
           "default": "false",
           "scope": "inherited",
           "usage": "Output as JSON"
+        },
+        {
+          "name": "strict",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Return not_found (exit 5) when absent; default is idempotent"
         }
       ]
     },

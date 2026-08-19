@@ -19,6 +19,7 @@ import (
 const apiMaxRecordBytes = 1024 * 1024
 
 const (
+	apiActionManifest      = "manifest"
 	apiActionList          = "list"
 	apiActionAdd           = "add"
 	apiActionRemove        = "remove"
@@ -31,6 +32,7 @@ const (
 )
 
 var apiActions = []string{
+	apiActionManifest,
 	apiActionList,
 	apiActionAdd,
 	apiActionRemove,
@@ -97,6 +99,17 @@ func writeAPIUsageError(out io.Writer, msg string) output.Result {
 	return writeAPIError(out, "api", output.ErrUsage(msg))
 }
 
+type apiUnknownActionErrorData struct {
+	ValidActions []string `json:"valid_actions"`
+}
+
+func writeAPIUnknownActionError(out io.Writer, action string) output.Result {
+	result := output.NewFailureForError("api", output.ErrUsage(fmt.Sprintf("unknown action: %s", action)))
+	result.Error.Data = apiUnknownActionErrorData{ValidActions: apiActionNames()}
+	output.WriteJSON(out, result)
+	return result
+}
+
 func writeAPINotFoundError(out io.Writer, msg string) output.Result {
 	return writeAPIError(out, "api", output.ErrNotFound(msg))
 }
@@ -139,6 +152,8 @@ func (h *apiHandler) handleLine(line string, out io.Writer) output.Result {
 
 func (h *apiHandler) handle(req APIRequest, out io.Writer) output.Result {
 	switch req.Action {
+	case apiActionManifest:
+		return writeAPISuccess(out, apiActionManifest, Manifest())
 	case apiActionList:
 		return h.handleList(out)
 	case apiActionAdd:
@@ -158,7 +173,7 @@ func (h *apiHandler) handle(req APIRequest, out io.Writer) output.Result {
 	case apiActionTemplateApply:
 		return h.handleTemplateApply(req, out)
 	default:
-		return writeAPIUsageError(out, fmt.Sprintf("unknown action: %s", req.Action))
+		return writeAPIUnknownActionError(out, req.Action)
 	}
 }
 
@@ -413,6 +428,7 @@ process exits nonzero if any response failed. Fatal scanner/framing errors emit
 one failure envelope and terminate the stream.
 
 Supported actions:
+  {"action":"manifest"}
   {"action":"list"}
   {"action":"add","name":"myapp","type":"proxy","target":"localhost:3000","tags":["tag:tsmain"],"allow":["user@example.com"],"ephemeral":false,"funnel":false,"public_ack":false,"control_url":"https://headscale.example.com"}
   {"action":"add","name":"docs","type":"file","path":"/path/to/dir","tags":["tag:docs"]}

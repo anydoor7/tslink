@@ -2,10 +2,14 @@ package cmd
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/monody0007/tslink/internal/output"
+	"github.com/monody0007/tslink/internal/registry"
 )
 
 func resultDataAsMap(t *testing.T, result output.Result) map[string]any {
@@ -167,5 +171,113 @@ func TestCompiledRemoveCLIApiSharedResultShape(t *testing.T) {
 	data = resultDataAsMap(t, results[0])
 	if data["name"] != "web" || data["removed"] != false {
 		t.Fatalf("api idempotent remove data = %+v, want removed=false", data)
+	}
+}
+
+func TestCompiledRemoveDefaultMissingRemainsIdempotent(t *testing.T) {
+	stdout, stderr, code := runCompiledTSLink(t, t.TempDir(), "", "remove", "missing", "--json")
+	if code != output.ExitSuccess || stderr != "" {
+		t.Fatalf("default remove exit=%d stderr=%q stdout=%s", code, stderr, stdout)
+	}
+	results := parseCompiledJSONLines(t, stdout)
+	if len(results) != 1 || !results[0].OK || results[0].Code != output.ExitSuccess {
+		t.Fatalf("default remove result = %+v, want ok=true code=0", results)
+	}
+	data := resultDataAsMap(t, results[0])
+	if data["name"] != "missing" || data["removed"] != false {
+		t.Fatalf("default remove data = %+v, want name=missing removed=false", data)
+	}
+
+	humanOut, humanErr, humanCode := runCompiledTSLink(t, t.TempDir(), "", "remove", "missing")
+	if humanCode != output.ExitSuccess || humanErr != "" || humanOut != "→ missing not registered, nothing to remove\n" {
+		t.Fatalf("human default remove exit=%d stdout=%q stderr=%q", humanCode, humanOut, humanErr)
+	}
+}
+
+func TestCompiledRemoveStrictMissingReturnsNotFound(t *testing.T) {
+	stdout, stderr, code := runCompiledTSLink(t, t.TempDir(), "", "remove", "missing", "--strict", "--json")
+	if code != output.ExitNotFound || stderr != "" {
+		t.Fatalf("strict remove exit=%d stderr=%q stdout=%s", code, stderr, stdout)
+	}
+	results := parseCompiledJSONLines(t, stdout)
+	if len(results) != 1 || results[0].OK || results[0].Code != output.ExitNotFound || results[0].Error == nil || results[0].Error.Code != "not_found" {
+		t.Fatalf("strict remove result = %+v, want ok=false code=5 error.code=not_found", results)
+	}
+	if results[0].Error.Message != "service not found: missing" {
+		t.Fatalf("strict remove message = %q, want exact missing-service message", results[0].Error.Message)
+	}
+
+	humanOut, humanErr, humanCode := runCompiledTSLink(t, t.TempDir(), "", "remove", "missing", "--strict")
+	if humanCode != output.ExitNotFound || humanOut != "" || humanErr != "Error: service not found: missing\n" {
+		t.Fatalf("human strict remove exit=%d stdout=%q stderr=%q", humanCode, humanOut, humanErr)
+	}
+}
+
+func TestCompiledRemoveStrictExistingPreservesSuccess(t *testing.T) {
+	configDir := t.TempDir()
+	regPath := filepath.Join(configDir, "registry.json")
+	if _, err := registry.Add(regPath, registry.Service{Name: "web", Type: registry.TypeProxy, Target: "http://localhost:3000"}); err != nil {
+		t.Fatalf("add service fixture: %v", err)
+	}
+	stdout, stderr, code := runCompiledTSLinkWithConfigDir(t, configDir, "", "remove", "web", "--strict", "--json")
+	if code != output.ExitSuccess || stderr != "" {
+		t.Fatalf("strict existing remove exit=%d stderr=%q stdout=%s", code, stderr, stdout)
+	}
+	results := parseCompiledJSONLines(t, stdout)
+	if len(results) != 1 || !results[0].OK || results[0].Code != output.ExitSuccess {
+		t.Fatalf("strict existing result = %+v, want unchanged success", results)
+	}
+	data := resultDataAsMap(t, results[0])
+	if data["name"] != "web" || data["removed"] != true {
+		t.Fatalf("strict existing data = %+v, want name=web removed=true", data)
+	}
+}
+
+func TestCompiledRemoveHelpDocumentsStrictAndIdempotentDefault(t *testing.T) {
+	stdout, stderr, code := runCompiledTSLink(t, t.TempDir(), "", "remove", "--help")
+	if code != output.ExitSuccess || stderr != "" {
+		t.Fatalf("remove help exit=%d stderr=%q stdout=%s", code, stderr, stdout)
+	}
+	for _, want := range []string{"--strict", "default is idempotent"} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("remove help missing %q:\n%s", want, stdout)
+		}
+	}
+}
+
+func TestCompiledAPIManifestSelfDescriptionWithoutDaemon(t *testing.T) {
+	configDir := t.TempDir()
+	pidPath := filepath.Join(configDir, "tslink.pid")
+	if _, err := os.Stat(pidPath); !os.IsNotExist(err) {
+		t.Fatalf("daemon pid fixture unexpectedly exists before manifest action: %v", err)
+	}
+	stdout, stderr, code := runCompiledTSLinkWithConfigDir(t, configDir, `{"action":"manifest"}`+"\n", "api")
+	if code != output.ExitSuccess || stderr != "" {
+		t.Fatalf("api manifest exit=%d stderr=%q stdout=%s", code, stderr, stdout)
+	}
+	results := parseCompiledJSONLines(t, stdout)
+	if len(results) != 1 || !results[0].OK || results[0].Command != apiActionManifest {
+		t.Fatalf("api manifest result = %+v, want one successful manifest record", results)
+	}
+	data := resultDataAsMap(t, results[0])
+	if data["capabilities"] == nil || data["commands"] == nil {
+		t.Fatalf("api manifest data lacks generated commands or capabilities: %+v", data)
+	}
+	dataBytes, err := json.Marshal(results[0].Data)
+	if err != nil {
+		t.Fatalf("marshal manifest data: %v", err)
+	}
+	var manifest CLIManifest
+	if err := json.Unmarshal(dataBytes, &manifest); err != nil {
+		t.Fatalf("decode manifest data: %v", err)
+	}
+	if manifest.SchemaVersion != 1 || len(manifest.Commands) == 0 {
+		t.Fatalf("api manifest content is incomplete: schema=%d commands=%d", manifest.SchemaVersion, len(manifest.Commands))
+	}
+	if !slices.Equal(manifest.APIActions, apiActionNames()) || len(manifest.APIActions) != 10 || !containsString(manifest.APIActions, apiActionManifest) {
+		t.Fatalf("api manifest actions = %v, want generated actions %v", manifest.APIActions, apiActionNames())
+	}
+	if _, err := os.Stat(pidPath); !os.IsNotExist(err) {
+		t.Fatalf("manifest action created or required a daemon pid: %v", err)
 	}
 }

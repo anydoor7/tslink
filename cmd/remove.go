@@ -55,9 +55,16 @@ func removeServiceResult(regPath, name string) (RemoveResult, error) {
 }
 
 func removeService(regPath, name string, out, errOut io.Writer, isJSON bool) error {
+	return removeServiceWithOptions(regPath, name, out, errOut, isJSON, false)
+}
+
+func removeServiceWithOptions(regPath, name string, out, errOut io.Writer, isJSON, strict bool) error {
 	result, err := removeServiceResult(regPath, name)
 	if err != nil {
 		return err
+	}
+	if strict && !result.Removed {
+		return output.ErrNotFound(fmt.Sprintf("service not found: %s", name))
 	}
 	if result.DeviceWarning != "" && !isJSON {
 		fmt.Fprintf(errOut, "→ warning: %s\n", result.DeviceWarning)
@@ -98,12 +105,20 @@ The service's node state in ~/.config/tslink/nodes/<name>/ is NOT removed by
 this command. It will be cleaned up on the next 'tslink serve' or can be
 removed manually.
 
+By default, removal is idempotent: an absent service is reported as unchanged
+and the command exits successfully. Use --strict to return not_found (exit 5)
+when the service is absent.
+
 Examples:
   tslink remove myapp          Remove a proxy service
   tslink remove docs           Remove a file-sharing service
   tslink remove mydb           Remove a TCP service`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			strict, err := cmd.Flags().GetBool("strict")
+			if err != nil {
+				return err
+			}
 			if err := ensureDirFn(); err != nil {
 				return err
 			}
@@ -113,9 +128,10 @@ Examples:
 				return err
 			}
 
-			return removeService(regPath, args[0], cmd.OutOrStdout(), cmd.ErrOrStderr(), jsonOutput(cmd))
+			return removeServiceWithOptions(regPath, args[0], cmd.OutOrStdout(), cmd.ErrOrStderr(), jsonOutput(cmd), strict)
 		},
 	}
 
+	removeCmd.Flags().Bool("strict", false, "Return not_found (exit 5) when absent; default is idempotent")
 	rootCmd.AddCommand(removeCmd)
 }

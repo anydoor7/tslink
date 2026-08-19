@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -33,6 +34,7 @@ type apiTestResponse struct {
 	Code          int
 	Error         string
 	ErrorCode     string
+	ValidActions  []string
 
 	Message    string
 	URL        string
@@ -70,6 +72,17 @@ func parseResponse(t *testing.T, buf *bytes.Buffer) apiTestResponse {
 	if envelope.Error != nil {
 		resp.Error = envelope.Error.Message
 		resp.ErrorCode = envelope.Error.Code
+		if envelope.Error.Data != nil {
+			dataBytes, err := json.Marshal(envelope.Error.Data)
+			if err != nil {
+				t.Fatalf("marshal error data: %v", err)
+			}
+			var data apiUnknownActionErrorData
+			if err := json.Unmarshal(dataBytes, &data); err != nil {
+				t.Fatalf("decode error data: %v", err)
+			}
+			resp.ValidActions = data.ValidActions
+		}
 	}
 	if envelope.Data == nil {
 		return resp
@@ -1231,6 +1244,34 @@ func TestAPIUnknownAction(t *testing.T) {
 	}
 	if !strings.Contains(resp.Error, "unknown action") {
 		t.Errorf("unexpected error message: %s", resp.Error)
+	}
+	if resp.Code != output.ExitUsage || resp.ErrorCode != "usage_error" {
+		t.Fatalf("unknown action code = %d/%q, want stable usage_error/%d", resp.Code, resp.ErrorCode, output.ExitUsage)
+	}
+	if !slices.Equal(resp.ValidActions, apiActionNames()) {
+		t.Fatalf("valid_actions = %v, want %v", resp.ValidActions, apiActionNames())
+	}
+	if len(resp.ValidActions) != 10 || !containsString(resp.ValidActions, apiActionManifest) {
+		t.Fatalf("valid_actions = %v, want the 9 existing actions plus manifest", resp.ValidActions)
+	}
+}
+
+func TestAPIManifestActionReturnsGeneratedManifest(t *testing.T) {
+	h, _ := newTestHandler(t)
+	var buf bytes.Buffer
+	result := h.handle(APIRequest{Action: apiActionManifest}, &buf)
+	if !result.OK || result.Command != apiActionManifest || result.Code != output.ExitSuccess {
+		t.Fatalf("manifest result = %+v, want successful manifest action", result)
+	}
+
+	var envelope struct {
+		Data CLIManifest `json:"data"`
+	}
+	if err := json.NewDecoder(&buf).Decode(&envelope); err != nil {
+		t.Fatalf("decode manifest response: %v", err)
+	}
+	if !slices.Equal(envelope.Data.APIActions, apiActionNames()) || !containsString(envelope.Data.APIActions, apiActionManifest) {
+		t.Fatalf("manifest api_actions = %v, want generated list %v", envelope.Data.APIActions, apiActionNames())
 	}
 }
 

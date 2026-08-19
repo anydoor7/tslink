@@ -80,6 +80,7 @@ type ErrorObject struct {
 	Code    string   `json:"code"`
 	Message string   `json:"message"`
 	Next    []string `json:"next,omitempty"`
+	Data    any      `json:"data,omitempty"`
 }
 
 // Result is the versioned JSON envelope for structured output.
