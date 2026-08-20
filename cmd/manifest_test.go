@@ -122,7 +122,11 @@ func TestManifestPlatformMarksAreExactAndProseDerived(t *testing.T) {
 			}
 		}
 	}
-	platformWords := []string{"macOS", "Windows", "Linux", "launchd", "launchctl", "systemd", "plist", "LaunchAgent"}
+	// The production slice, not a hand copy of it: a second literal here would
+	// drift silently, and this loop is a backstop rather than a second opinion --
+	// Manifest() above already panics on any field the production tripwire
+	// rejects, so reaching this point means every field passed it.
+	platformWords := resultFieldPlatformTripwires
 	for _, command := range m.Commands {
 		for name, field := range command.JSONResultFields {
 			if len(field.Platforms) > 0 {
@@ -136,8 +140,9 @@ func TestManifestPlatformMarksAreExactAndProseDerived(t *testing.T) {
 				markedFieldCount++
 				continue
 			}
+			lowered := strings.ToLower(field.Description)
 			for _, word := range platformWords {
-				if strings.Contains(field.Description, word) {
+				if strings.Contains(lowered, strings.ToLower(word)) {
 					t.Fatalf("%s %s description contains platform word %q without a mark: %+v", command.Path, name, word, field)
 				}
 			}
@@ -168,6 +173,68 @@ func TestResultFieldPlatformWordTripwireRejectsUnmarkedScopePhrase(t *testing.T)
 		},
 	})
 	mustValidateJSONResultFieldPlatformMarks("tslink uninstall", fields)
+}
+
+// TestResultFieldPlatformWordTripwireCoverage pins what the prose tripwire does
+// and does not catch. The escape column is the point of the test: the tripwire
+// matches a word list, so platform-scoped prose that names no listed word is
+// published as available everywhere. Writing the escapes down keeps that surface
+// visible instead of leaving it as a property nobody has measured.
+//
+// Shrinking the escape column is an improvement; growing it is a regression.
+// Removing it entirely means deriving the marks from the per-GOOS structs
+// instead of from prose -- see resultFieldPlatformTripwires.
+func TestResultFieldPlatformWordTripwireCoverage(t *testing.T) {
+	cases := []struct {
+		description string
+		wantPanic   bool
+	}{
+		// Recognized leading clauses produce a mark, so the tripwire skips them.
+		{"macOS only. control", false},
+		{"macOS failure only. control", false},
+		{"Linux and Windows only. control", false},
+
+		// Caught: a listed word with no recognized clause, in any casing.
+		{"Only populated on darwin.", true},
+		{"Darwin only. Path to the launch agent property list.", true},
+		{"linux and windows only. Path to the startup artifact.", true},
+		{"macos only. Whether the agent was loaded.", true},
+		{"Set on WINDOWS only.", true},
+		{"The plist path.", true},
+
+		// Escapes: platform-scoped prose naming no listed word. Each of these is
+		// published as available on every supported platform.
+		{"Only set when the Startup folder shortcut is written.", false},
+		{"Present only when Task Scheduler owns the service.", false},
+		{"Populated when the Apple property list is loaded by the user domain agent.", false},
+		{"Only meaningful under XDG autostart.", false},
+		{"Set only on Unix-like hosts.", false},
+		{"Only present when Homebrew installed the binary.", false},
+		{"Populated only on POSIX platforms.", false},
+		{"Set when sc.exe reports the service state.", false},
+		{"Only on non-Apple platforms.", false},
+		{"Emitted by the user service manager only.", false},
+	}
+
+	for _, tc := range cases {
+		panicked := func() (panicked bool) {
+			defer func() {
+				panicked = recover() != nil
+			}()
+			fields := markProseScopedJSONResultFields(map[string]JSONResultFieldInfo{
+				"probe": {Type: "string", Description: tc.description},
+			})
+			mustValidateJSONResultFieldPlatformMarks("tslink probe", fields)
+			return false
+		}()
+		if panicked != tc.wantPanic {
+			verb := "escaped"
+			if panicked {
+				verb = "was rejected"
+			}
+			t.Errorf("description %q %s; wantPanic=%v", tc.description, verb, tc.wantPanic)
+		}
+	}
 }
 
 func TestPlatformMarkPropagatesToEveryInheritedPersistentFlagEntry(t *testing.T) {

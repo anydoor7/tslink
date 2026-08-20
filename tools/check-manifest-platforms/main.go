@@ -11,6 +11,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"reflect"
 	"sort"
 	"strings"
 
@@ -42,7 +43,15 @@ func main() {
 	}
 	manifests := make(map[string]cmd.CLIManifest, len(paths))
 	for _, goos := range comparedGOOS {
-		path := paths[goos]
+		path, declared := paths[goos]
+		if !declared {
+			// The loop runs over the Product's platform authority while the flag
+			// set above is fixed, so widening supportedManifestPlatforms lands
+			// here. Saying "-freebsd is required" would name a flag that does not
+			// exist and cannot be supplied.
+			fmt.Fprintf(os.Stderr, "check-manifest-platforms: %s is in supportedManifestPlatforms but this tool has no -%s flag; add the flag here and a matching artifact to the manifest-platform-diff CI job\n", goos, goos)
+			os.Exit(1)
+		}
 		if path == "" {
 			fmt.Fprintf(os.Stderr, "check-manifest-platforms: -%s is required\n", goos)
 			os.Exit(1)
@@ -81,6 +90,12 @@ func verifyPlatformFlagMarks(manifests map[string]cmd.CLIManifest) (int, error) 
 		}
 		if manifest.Platform.GOOS != goos {
 			return 0, fmt.Errorf("%s artifact declares platform.goos %q", goos, manifest.Platform.GOOS)
+		}
+		// This loop quantifies over supported_platforms, so a manifest that
+		// disagrees about the set would silently change what "all platforms"
+		// means for every stale-mark verdict below.
+		if !reflect.DeepEqual(manifest.SupportedPlatforms, comparedGOOS) {
+			return 0, fmt.Errorf("%s manifest supported_platforms = %v, want %v", goos, manifest.SupportedPlatforms, comparedGOOS)
 		}
 
 		commandSeen := map[string]bool{}

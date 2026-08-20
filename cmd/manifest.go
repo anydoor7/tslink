@@ -387,8 +387,21 @@ func uninstallJSONResultFields() map[string]JSONResultFieldInfo {
 	})
 }
 
+// resultFieldPlatformTripwires are matched case-insensitively against the
+// description of any field that carries no platform qualifier. "darwin" is in
+// the list because that is the token this codebase uses everywhere the mark
+// itself appears -- in Platforms, in supportedManifestPlatforms, in
+// check-manifest-platforms' flags -- so a contributor who reads the mark on the
+// line above and writes "Only populated on darwin." is doing the natural thing.
+//
+// This list is a stopgap. The ground truth for which platform a result field
+// exists on is the per-GOOS struct (InstallResult in install_darwin.go versus
+// install_linux.go / install_windows.go), not the sentence documenting it;
+// deriving the marks from those under three go/build contexts would stop prose
+// from being load-bearing at all. Until then, prose that names no listed word
+// still fails open.
 var resultFieldPlatformTripwires = []string{
-	"macOS", "Windows", "Linux", "launchd", "launchctl", "systemd", "plist", "LaunchAgent",
+	"macOS", "darwin", "Windows", "Linux", "launchd", "launchctl", "systemd", "plist", "LaunchAgent",
 }
 
 // markProseScopedJSONResultFields derives the structured qualifier from the
@@ -413,8 +426,9 @@ func mustValidateJSONResultFieldPlatformMarks(commandPath string, fields map[str
 		if len(field.Platforms) > 0 {
 			continue
 		}
+		lowered := strings.ToLower(field.Description)
 		for _, word := range resultFieldPlatformTripwires {
-			if strings.Contains(field.Description, word) {
+			if strings.Contains(lowered, strings.ToLower(word)) {
 				panic(fmt.Sprintf("mark %s JSON result field %s: description contains platform word %q without a recognized scope clause", commandPath, name, word))
 			}
 		}

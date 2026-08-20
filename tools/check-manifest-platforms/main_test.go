@@ -18,9 +18,10 @@ func syntheticManifests(flags ...syntheticFlag) map[string]cmd.CLIManifest {
 	manifests := map[string]cmd.CLIManifest{}
 	for _, goos := range comparedGOOS {
 		manifest := cmd.CLIManifest{
-			SchemaVersion: 2,
-			Platform:      cmd.PlatformInfo{GOOS: goos, GOARCH: "arm64"},
-			Commands:      []cmd.CommandInfo{{Path: "tslink"}, {Path: "tslink doctor"}, {Path: "tslink tags delete-remote"}},
+			SchemaVersion:      2,
+			SupportedPlatforms: append([]string(nil), comparedGOOS...),
+			Platform:           cmd.PlatformInfo{GOOS: goos, GOARCH: "arm64"},
+			Commands:           []cmd.CommandInfo{{Path: "tslink"}, {Path: "tslink doctor"}, {Path: "tslink tags delete-remote"}},
 		}
 		for _, spec := range flags {
 			if !contains(spec.presentOn, goos) {
@@ -99,4 +100,25 @@ func contains(values []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func TestVerifyPlatformFlagMarksRejectsDisagreementAboutSupportedPlatforms(t *testing.T) {
+	// This loop quantifies over supported_platforms. A manifest that disagrees
+	// about the set silently changes what "exists on all platforms" means, so
+	// every stale-mark verdict below it would be computed against a different
+	// universe than the other two artifacts.
+	manifests := syntheticManifests(syntheticFlag{
+		path: "tslink doctor", name: "darwin-probe", presentOn: []string{"darwin"}, mark: []string{"darwin"},
+	})
+	linux := manifests["linux"]
+	linux.SupportedPlatforms = []string{"linux"}
+	manifests["linux"] = linux
+
+	_, err := verifyPlatformFlagMarks(manifests)
+	if err == nil {
+		t.Fatal("accepted manifests that disagree about supported_platforms")
+	}
+	if !strings.Contains(err.Error(), "supported_platforms") {
+		t.Fatalf("error = %v, want a supported_platforms diagnosis", err)
+	}
 }
