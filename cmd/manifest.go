@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -21,6 +22,7 @@ import (
 // hand-maintaining a second copy of these facts.
 type CLIManifest struct {
 	SchemaVersion         int                         `json:"schema_version"`
+	Platform              PlatformInfo                `json:"platform"`
 	RegistrySchemaVersion int                         `json:"registry_schema_version"`
 	Toolchain             ToolchainInfo               `json:"toolchain"`
 	ExitCodes             map[string]int              `json:"exit_codes"`
@@ -32,6 +34,14 @@ type CLIManifest struct {
 	Commands              []CommandInfo               `json:"commands"`
 	Capabilities          security.CapabilityManifest `json:"capabilities"`
 	ErrorCodes            map[string]ErrorCodeInfo    `json:"error_codes"`
+}
+
+// PlatformInfo identifies the build target whose live Cobra tree was walked.
+// Platform-specific command registrations mean a manifest is only authoritative
+// for this exact GOOS/GOARCH pair.
+type PlatformInfo struct {
+	GOOS   string `json:"goos"`
+	GOARCH string `json:"goarch"`
 }
 
 type ToolchainInfo struct {
@@ -114,6 +124,7 @@ type FlagInfo struct {
 
 type CompactCLIManifest struct {
 	SchemaVersion int                 `json:"schema_version"`
+	Platform      PlatformInfo        `json:"platform"`
 	Flags         []string            `json:"flags"`
 	Commands      map[string][]string `json:"commands"`
 	ErrorCodes    map[string]int      `json:"error_codes"`
@@ -124,6 +135,7 @@ type CompactCLIManifest struct {
 func Manifest() CLIManifest {
 	m := CLIManifest{
 		SchemaVersion:         1,
+		Platform:              PlatformInfo{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH},
 		RegistrySchemaVersion: registry.CurrentRegistrySchemaVersion,
 		Toolchain: ToolchainInfo{
 			MinimumGoVersion:  "1.26.3",
@@ -440,6 +452,7 @@ func CompactManifest() CompactCLIManifest {
 	manifest := Manifest()
 	compact := CompactCLIManifest{
 		SchemaVersion: manifest.SchemaVersion,
+		Platform:      manifest.Platform,
 		Flags:         []string{"json"},
 		Commands:      map[string][]string{},
 		ErrorCodes:    map[string]int{},

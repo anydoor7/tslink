@@ -64,7 +64,7 @@ var (
 		},
 	}, "services")
 	mcpUnshareOutputSchema = objectSchema(map[string]any{
-		"ok":                     map[string]any{"type": "boolean", "description": "Whether the named service was removed from the local registry."},
+		"ok":                     map[string]any{"type": "boolean", "description": "Whether the idempotent unshare request completed successfully; an absent service is successful with removed false."},
 		"name":                   map[string]any{"type": "string"},
 		"removed":                map[string]any{"type": "boolean"},
 		"device_cleaned":         map[string]any{"type": "boolean"},
@@ -182,7 +182,7 @@ func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 				return nil, err
 			}
 			return mcpUnshareSummary{
-				OK:                   removed.Removed,
+				OK:                   true,
 				Name:                 removed.Name,
 				Removed:              removed.Removed,
 				DeviceCleaned:        removed.DeviceCleaned,

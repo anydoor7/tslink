@@ -49,6 +49,13 @@ jobs:
         run: go build ./...
       - name: Vet
         run: go vet ./...
+      - name: CLI manifest fixture is current (Darwin strict)
+        if: matrix.os == 'macos-latest'
+        shell: bash
+        run: |
+          output="$(go run ./tools/gen-manifest -check)"
+          printf '%s\n' "${output}"
+          test "${output}" = "gen-manifest: docs/cli-manifest.json is up to date"
       - name: Test
         run: go test -count=1 ./...
       - name: Race

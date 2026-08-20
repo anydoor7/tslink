@@ -1,5 +1,9 @@
 {
   "schema_version": 1,
+  "platform": {
+    "goos": "darwin",
+    "goarch": "arm64"
+  },
   "registry_schema_version": 1,
   "toolchain": {
     "minimum_go_version": "1.26.3",

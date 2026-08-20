@@ -114,6 +114,11 @@ func TestMCPToolSchemasAreClosedAndModelFocused(t *testing.T) {
 	if !strings.Contains(nameDescription, "reused only if it already has this name") || !strings.Contains(nameDescription, "numeric suffix") {
 		t.Fatalf("share name description = %q", nameDescription)
 	}
+	unshareProperties := mcpToolDefinitions[2].OutputSchema["properties"].(map[string]any)
+	unshareOKDescription := unshareProperties["ok"].(map[string]any)["description"].(string)
+	if !strings.Contains(unshareOKDescription, "idempotent") || !strings.Contains(unshareOKDescription, "absent service is successful") || !strings.Contains(unshareOKDescription, "removed false") {
+		t.Fatalf("unshare ok description = %q, want idempotent missing-service semantics", unshareOKDescription)
+	}
 	if mcpToolDefinitions[1].InputSchema["required"] != nil || mcpToolDefinitions[3].InputSchema["required"] != nil {
 		t.Fatal("no-argument tools unexpectedly require fields")
 	}
@@ -369,6 +374,37 @@ func TestDefaultMCPActionsUnshareReportsSuccessWithoutAPIClient(t *testing.T) {
 	}
 	if !summary.OK || !summary.Removed || !summary.DeviceCleanupSkipped || summary.DeviceSkipReason != tailapi.ErrNoAPIClient.Error() {
 		t.Fatalf("unshare summary = %+v", summary)
+	}
+}
+
+func TestMCPUnshareMissingAgreesWithCLIDefaultIdempotency(t *testing.T) {
+	restoreShareSeams(t)
+	dir := t.TempDir()
+	regPath := filepath.Join(dir, "registry.json")
+	const name = "missing"
+
+	var cliOut, cliErrOut bytes.Buffer
+	cliErr := removeServiceWithOptions(regPath, name, &cliOut, &cliErrOut, false, false)
+	if cliErr != nil {
+		t.Fatalf("CLI default remove returned error for missing service: %v", cliErr)
+	}
+	if got := cliOut.String(); got != "→ missing not registered, nothing to remove\n" {
+		t.Fatalf("CLI default remove output = %q", got)
+	}
+	if cliErrOut.Len() != 0 {
+		t.Fatalf("CLI default remove stderr = %q", cliErrOut.String())
+	}
+
+	value, mcpErr := defaultMCPActions(sharePaths{Registry: regPath}, os.Stderr).unshare(name)
+	summary, ok := value.(mcpUnshareSummary)
+	if mcpErr != nil || !ok {
+		t.Fatalf("MCP unshare = %T(%+v) err=%v", value, value, mcpErr)
+	}
+	if summary.OK != (cliErr == nil) {
+		t.Fatalf("MCP ok=%v disagrees with CLI default success=%v", summary.OK, cliErr == nil)
+	}
+	if !summary.OK || summary.Name != name || summary.Removed || summary.DeviceCleaned || summary.DeviceCleanupSkipped || summary.DeviceSkipReason != "" || summary.DeviceWarning != "" {
+		t.Fatalf("MCP missing-service detail = %+v, want success with removed=false and preserved detail fields", summary)
 	}
 }
 

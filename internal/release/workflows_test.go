@@ -284,6 +284,26 @@ func TestCandidateDeclaresRequiredGates(t *testing.T) {
 	}
 }
 
+func TestDarwinManifestStrictCheckRunsInExistingNativeJob(t *testing.T) {
+	body, ok := readWorkflows(t)[candidateWorkflow]
+	if !ok {
+		t.Fatalf("%s is missing", candidateWorkflow)
+	}
+	text := string(body)
+	want := strings.Join([]string{
+		"- name: CLI manifest fixture is current (Darwin strict)",
+		"        if: matrix.os == 'macos-latest'",
+		"        shell: bash",
+		"        run: |",
+		"          output=\"$(go run ./tools/gen-manifest -check)\"",
+		"          printf '%s\\n' \"${output}\"",
+		"          test \"${output}\" = \"gen-manifest: docs/cli-manifest.json is up to date\"",
+	}, "\n")
+	if !strings.Contains(text, want) {
+		t.Fatalf("%s must run the strict manifest check inside its existing macOS native matrix job", candidateWorkflow)
+	}
+}
+
 // goreleaserFeatureFloors maps a GoReleaser config key to the minimum GoReleaser
 // version that can PARSE it. When one of these keys appears in .goreleaser.yml,
 // every workflow pin that runs `goreleaser check`/`release` must be at least the

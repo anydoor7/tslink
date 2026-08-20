@@ -3,11 +3,37 @@ package cmd
 import (
 	"encoding/json"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/monody0007/tslink/internal/registry"
 )
+
+func TestManifestCarriesGeneratingBinaryPlatform(t *testing.T) {
+	m := Manifest()
+	if m.Platform.GOOS != runtime.GOOS || m.Platform.GOARCH != runtime.GOARCH {
+		t.Fatalf("manifest platform = %s/%s, want generating binary %s/%s", m.Platform.GOOS, m.Platform.GOARCH, runtime.GOOS, runtime.GOARCH)
+	}
+	data, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire struct {
+		Platform PlatformInfo `json:"platform"`
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
+		t.Fatal(err)
+	}
+	if wire.Platform != m.Platform {
+		t.Fatalf("serialized manifest platform = %+v, want %+v", wire.Platform, m.Platform)
+	}
+
+	compact := CompactManifest()
+	if compact.Platform != m.Platform {
+		t.Fatalf("compact manifest platform = %+v, want %+v", compact.Platform, m.Platform)
+	}
+}
 
 func TestManifestCarriesMachineConsumerFacts(t *testing.T) {
 	m := Manifest()
