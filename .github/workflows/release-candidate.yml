@@ -337,7 +337,7 @@ jobs:
           done
       - name: Third-party notice inventory is current
         run: go run ./tools/gen-notices -check
-      - name: CLI manifest fixture is current
+      - name: CLI manifest platform-independent fields are current (Linux)
         run: go run ./tools/gen-manifest -check
       - name: Workflow pin + graph validator
         run: go test -count=1 ./internal/release/...

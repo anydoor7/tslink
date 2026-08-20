@@ -26,6 +26,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/monody0007/tslink/internal/manifestcheck"
 	yaml "go.yaml.in/yaml/v2"
 )
 
@@ -297,10 +298,20 @@ func TestDarwinManifestStrictCheckRunsInExistingNativeJob(t *testing.T) {
 		"        run: |",
 		"          output=\"$(go run ./tools/gen-manifest -check)\"",
 		"          printf '%s\\n' \"${output}\"",
-		"          test \"${output}\" = \"gen-manifest: docs/cli-manifest.json is up to date\"",
+		"          test \"${output}\" = \"" + manifestcheck.StrictUpToDateMessage + "\"",
 	}, "\n")
 	if !strings.Contains(text, want) {
 		t.Fatalf("%s must run the strict manifest check inside its existing macOS native matrix job", candidateWorkflow)
+	}
+}
+
+func TestLinuxManifestCheckStepNamesReducedCoverage(t *testing.T) {
+	body, ok := readWorkflows(t)[candidateWorkflow]
+	if !ok {
+		t.Fatalf("%s is missing", candidateWorkflow)
+	}
+	if !strings.Contains(string(body), "- name: CLI manifest platform-independent fields are current (Linux)") {
+		t.Fatalf("%s must disclose the Linux manifest check's reduced coverage in the step name", candidateWorkflow)
 	}
 }
 

@@ -64,7 +64,7 @@ var (
 		},
 	}, "services")
 	mcpUnshareOutputSchema = objectSchema(map[string]any{
-		"ok":                     map[string]any{"type": "boolean", "description": "Whether the idempotent unshare request completed successfully; an absent service is successful with removed false."},
+		"ok":                     map[string]any{"type": "boolean", "description": "Whether the idempotent unshare request removed the local registry entry or found the service absent (removed false); ok true does not guarantee tailnet device cleanup, so check device_cleaned and device_warning."},
 		"name":                   map[string]any{"type": "string"},
 		"removed":                map[string]any{"type": "boolean"},
 		"device_cleaned":         map[string]any{"type": "boolean"},

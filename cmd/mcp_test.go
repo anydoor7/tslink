@@ -116,8 +116,10 @@ func TestMCPToolSchemasAreClosedAndModelFocused(t *testing.T) {
 	}
 	unshareProperties := mcpToolDefinitions[2].OutputSchema["properties"].(map[string]any)
 	unshareOKDescription := unshareProperties["ok"].(map[string]any)["description"].(string)
-	if !strings.Contains(unshareOKDescription, "idempotent") || !strings.Contains(unshareOKDescription, "absent service is successful") || !strings.Contains(unshareOKDescription, "removed false") {
-		t.Fatalf("unshare ok description = %q, want idempotent missing-service semantics", unshareOKDescription)
+	for _, want := range []string{"idempotent", "service absent", "removed false", "does not guarantee tailnet device cleanup", "device_cleaned", "device_warning"} {
+		if !strings.Contains(unshareOKDescription, want) {
+			t.Fatalf("unshare ok description = %q, want %q", unshareOKDescription, want)
+		}
 	}
 	if mcpToolDefinitions[1].InputSchema["required"] != nil || mcpToolDefinitions[3].InputSchema["required"] != nil {
 		t.Fatal("no-argument tools unexpectedly require fields")

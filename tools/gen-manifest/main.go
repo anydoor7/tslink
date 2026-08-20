@@ -16,15 +16,22 @@ import (
 	"strings"
 
 	"github.com/monody0007/tslink/cmd"
+	"github.com/monody0007/tslink/internal/manifestcheck"
 )
 
-const outputFile = "docs/cli-manifest.json"
+const outputFile = manifestcheck.OutputFile
 
 type manifestCheckResult struct {
 	ManifestPlatform cmd.PlatformInfo
 	RunningPlatform  cmd.PlatformInfo
 	SamePlatform     bool
 	Equal            bool
+}
+
+type manifestCheckOutput struct {
+	Stdout []string
+	Stderr string
+	OK     bool
 }
 
 func main() {
@@ -57,20 +64,14 @@ func main() {
 			fmt.Fprintln(os.Stderr, "gen-manifest:", err)
 			os.Exit(1)
 		}
-		if !result.SamePlatform {
-			compared, skipped := crossPlatformCoverageMessages(result)
-			fmt.Println(compared)
-			fmt.Println(skipped)
+		output := outputForManifestCheck(result)
+		for _, line := range output.Stdout {
+			fmt.Println(line)
 		}
-		if !result.Equal {
-			fmt.Fprintf(os.Stderr, "gen-manifest: %s is stale; run `go run ./tools/gen-manifest`\n", outputFile)
+		if !output.OK {
+			fmt.Fprintln(os.Stderr, output.Stderr)
 			os.Exit(1)
 		}
-		if !result.SamePlatform {
-			fmt.Printf("gen-manifest: %s platform-independent fields are up to date\n", outputFile)
-			return
-		}
-		fmt.Printf("gen-manifest: %s is up to date\n", outputFile)
 		return
 	}
 
@@ -98,10 +99,19 @@ func compareManifest(existing, generated []byte) (manifestCheckResult, error) {
 	result := manifestCheckResult{
 		ManifestPlatform: existingPlatform,
 		RunningPlatform:  generatedPlatform,
-		SamePlatform:     existingPlatform == generatedPlatform,
+		SamePlatform:     existingPlatform.GOOS == generatedPlatform.GOOS,
 	}
 	if result.SamePlatform {
-		result.Equal = bytes.Equal(bytes.TrimRight(existing, "\n"), bytes.TrimRight(generated, "\n"))
+		generatedForComparison, err := normalizeGeneratedArchitecture(
+			generated,
+			generatedObject["platform"],
+			generatedPlatform.GOARCH,
+			existingPlatform.GOARCH,
+		)
+		if err != nil {
+			return manifestCheckResult{}, err
+		}
+		result.Equal = bytes.Equal(bytes.TrimRight(existing, "\n"), bytes.TrimRight(generatedForComparison, "\n"))
 		return result, nil
 	}
 
@@ -122,6 +132,62 @@ func compareManifest(existing, generated []byte) (manifestCheckResult, error) {
 	}
 	result.Equal = bytes.Equal(existingIndependent, generatedIndependent)
 	return result, nil
+}
+
+func normalizeGeneratedArchitecture(data, platformJSON []byte, generatedGOARCH, manifestGOARCH string) ([]byte, error) {
+	if generatedGOARCH == manifestGOARCH {
+		return data, nil
+	}
+	generatedJSON, err := json.Marshal(generatedGOARCH)
+	if err != nil {
+		return nil, fmt.Errorf("encode running goarch: %w", err)
+	}
+	manifestJSON, err := json.Marshal(manifestGOARCH)
+	if err != nil {
+		return nil, fmt.Errorf("encode manifest goarch: %w", err)
+	}
+	oldField := append([]byte(`"goarch": `), generatedJSON...)
+	newField := append([]byte(`"goarch": `), manifestJSON...)
+	if bytes.Count(platformJSON, oldField) != 1 {
+		return nil, fmt.Errorf("generated platform does not contain exactly one goarch field")
+	}
+	normalizedPlatform := bytes.Replace(platformJSON, oldField, newField, 1)
+	if bytes.Count(data, platformJSON) != 1 {
+		return nil, fmt.Errorf("generated manifest does not contain exactly one platform object")
+	}
+	return bytes.Replace(data, platformJSON, normalizedPlatform, 1), nil
+}
+
+func outputForManifestCheck(result manifestCheckResult) manifestCheckOutput {
+	if !result.Equal {
+		if result.SamePlatform {
+			return manifestCheckOutput{
+				Stderr: fmt.Sprintf("gen-manifest: %s is stale; run `go run ./tools/gen-manifest`", outputFile),
+			}
+		}
+		return manifestCheckOutput{
+			Stderr: fmt.Sprintf(
+				"gen-manifest: %s is stale; the committed manifest is authoritative for GOOS=%s and must be regenerated on that GOOS",
+				outputFile,
+				result.ManifestPlatform.GOOS,
+			),
+		}
+	}
+	if result.SamePlatform {
+		return manifestCheckOutput{
+			Stdout: []string{manifestcheck.StrictUpToDateMessage},
+			OK:     true,
+		}
+	}
+	compared, skipped := crossPlatformCoverageMessages(result)
+	return manifestCheckOutput{
+		Stdout: []string{
+			compared,
+			skipped,
+			fmt.Sprintf("gen-manifest: %s platform-independent fields are up to date", outputFile),
+		},
+		OK: true,
+	}
 }
 
 func decodeManifest(data []byte) (cmd.PlatformInfo, map[string]json.RawMessage, error) {
