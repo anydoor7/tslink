@@ -37,8 +37,9 @@ type CLIManifest struct {
 }
 
 // PlatformInfo identifies the build target whose live Cobra tree was walked.
-// Platform-specific command registrations mean a manifest is only authoritative
-// for this exact GOOS/GOARCH pair.
+// Platform-specific command registrations make the manifest authoritative for
+// its GOOS. GOARCH records validated generation provenance but does not identify
+// authority within that GOOS because the command tree must be architecture-neutral.
 type PlatformInfo struct {
 	GOOS   string `json:"goos"`
 	GOARCH string `json:"goarch"`

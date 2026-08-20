@@ -18,6 +18,7 @@
 package release_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -85,12 +86,33 @@ func readWorkflows(t *testing.T) map[string][]byte {
 		if err != nil {
 			t.Fatalf("read %s: %v", e.Name(), err)
 		}
-		out[e.Name()] = b
+		out[e.Name()] = normalizeWorkflowNewlines(b)
 	}
 	if len(out) == 0 {
 		t.Fatalf("no workflow files found in %s", dir)
 	}
 	return out
+}
+
+func normalizeWorkflowNewlines(body []byte) []byte {
+	return bytes.ReplaceAll(body, []byte("\r\n"), []byte("\n"))
+}
+
+func TestNormalizeWorkflowNewlines(t *testing.T) {
+	got := normalizeWorkflowNewlines([]byte("first\r\nsecond\r\n"))
+	if string(got) != "first\nsecond\n" {
+		t.Fatalf("normalized workflow = %q, want LF line endings", got)
+	}
+}
+
+func TestRepositoryPinsLFLineEndings(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join(repoRoot(t), ".gitattributes"))
+	if err != nil {
+		t.Fatalf("read .gitattributes: %v", err)
+	}
+	if string(body) != "* text=auto eol=lf\n" {
+		t.Fatalf(".gitattributes = %q, want repository-wide LF policy", body)
+	}
 }
 
 // TestEveryActionPinnedToSHA proves no workflow references a mutable action tag.

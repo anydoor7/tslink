@@ -17,6 +17,7 @@ import (
 	"testing"
 
 	"github.com/monody0007/tslink/cmd"
+	"github.com/monody0007/tslink/internal/manifestcheck"
 )
 
 func testManifestBytes(t *testing.T, platform cmd.PlatformInfo, mutate func(*cmd.CLIManifest)) []byte {
@@ -133,6 +134,16 @@ func TestCheckManifestRequiresDeclaredPlatform(t *testing.T) {
 	}
 }
 
+func TestCheckManifestRejectsFabricatedGOARCH(t *testing.T) {
+	generated := testManifestBytes(t, cmd.PlatformInfo{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH}, nil)
+	existing := testManifestBytes(t, cmd.PlatformInfo{GOOS: runtime.GOOS, GOARCH: "TOTALLY-FAKE-ARCH"}, nil)
+
+	_, err := compareManifest(existing, generated)
+	if err == nil || !strings.Contains(err.Error(), `decode committed manifest: platform goarch "TOTALLY-FAKE-ARCH" is not a recognized Go architecture`) {
+		t.Fatalf("fabricated GOARCH error = %v", err)
+	}
+}
+
 func TestCheckManifestCrossPlatformReportsComparedAndSkippedCoverage(t *testing.T) {
 	result := manifestCheckResult{
 		ManifestPlatform: cmd.PlatformInfo{GOOS: "darwin", GOARCH: "arm64"},
@@ -161,9 +172,29 @@ func TestCheckManifestCrossPlatformFailureNamesConstraintWithoutSuccessOutput(t 
 	if len(output.Stdout) != 0 {
 		t.Fatalf("cross-platform stale stdout = %q, want no success-shaped coverage lines", output.Stdout)
 	}
-	want := "gen-manifest: docs/cli-manifest.json is stale; the committed manifest is authoritative for GOOS=darwin and must be regenerated on that GOOS"
+	want := "gen-manifest: docs/cli-manifest.json is stale; the committed manifest is authoritative for GOOS=darwin and must be regenerated on that GOOS, or add the differing field to the platform-dependent exclusion list in compareManifest"
 	if output.Stderr != want {
 		t.Fatalf("cross-platform stale stderr = %q, want %q", output.Stderr, want)
+	}
+}
+
+func TestCheckManifestSameGOOSArchitectureDivergenceIsDiagnostic(t *testing.T) {
+	output := outputForManifestCheck(manifestCheckResult{
+		ManifestPlatform: cmd.PlatformInfo{GOOS: "darwin", GOARCH: "arm64"},
+		RunningPlatform:  cmd.PlatformInfo{GOOS: "darwin", GOARCH: "amd64"},
+		SamePlatform:     true,
+		Equal:            false,
+	})
+	want := "gen-manifest: docs/cli-manifest.json differs across architectures on GOOS=darwin (manifest GOARCH=arm64, running GOARCH=amd64); manifest generation must remain architecture-independent"
+	if output.OK || len(output.Stdout) != 0 || output.Stderr != want {
+		t.Fatalf("same-GOOS architecture-divergent output = %+v, want stderr %q only", output, want)
+	}
+}
+
+func TestStrictSuccessOutputIsTheAssertedConstant(t *testing.T) {
+	output := outputForManifestCheck(manifestCheckResult{SamePlatform: true, Equal: true})
+	if !output.OK || output.Stderr != "" || len(output.Stdout) != 1 || output.Stdout[0] != manifestcheck.StrictUpToDateMessage {
+		t.Fatalf("strict success output = %+v, want stdout exactly %q", output, manifestcheck.StrictUpToDateMessage)
 	}
 }
 
@@ -175,16 +206,80 @@ func TestCheckManifestSamePlatformStaleMessageRemainsActionable(t *testing.T) {
 	}
 }
 
-var knownGOARCH = map[string]struct{}{
-	"386": {}, "amd64": {}, "arm": {}, "arm64": {}, "loong64": {},
-	"mips": {}, "mips64": {}, "mips64le": {}, "mipsle": {},
-	"ppc64": {}, "ppc64le": {}, "riscv64": {}, "s390x": {}, "wasm": {},
-}
-
 var packageSourceExtensions = map[string]struct{}{
 	".c": {}, ".cc": {}, ".cpp": {}, ".cxx": {}, ".f": {}, ".F": {},
 	".for": {}, ".f90": {}, ".go": {}, ".h": {}, ".m": {}, ".s": {},
 	".S": {}, ".swig": {}, ".swigcxx": {}, ".syso": {},
+}
+
+func isSafeManifestGOARCHProvenance(parents []ast.Node) bool {
+	if len(parents) < 2 {
+		return false
+	}
+	keyValue, ok := parents[len(parents)-1].(*ast.KeyValueExpr)
+	if !ok {
+		return false
+	}
+	key, ok := keyValue.Key.(*ast.Ident)
+	if !ok || key.Name != "GOARCH" {
+		return false
+	}
+	composite, ok := parents[len(parents)-2].(*ast.CompositeLit)
+	if !ok {
+		return false
+	}
+	typeName, ok := composite.Type.(*ast.Ident)
+	return ok && typeName.Name == "PlatformInfo"
+}
+
+func architectureSensitiveCommandExpressions(path string, data []byte) ([]string, error) {
+	files := token.NewFileSet()
+	file, err := parser.ParseFile(files, path, data, 0)
+	if err != nil {
+		return nil, err
+	}
+	found := map[string]struct{}{}
+	var parents []ast.Node
+	ast.Inspect(file, func(node ast.Node) bool {
+		if node == nil {
+			parents = parents[:len(parents)-1]
+			return true
+		}
+		position := files.Position(node.Pos())
+		marker := fmt.Sprintf("%s:%d", filepath.ToSlash(path), position.Line)
+		switch expression := node.(type) {
+		case *ast.SelectorExpr:
+			if expression.Sel.Name == "GOARCH" && !isSafeManifestGOARCHProvenance(parents) {
+				found[marker+" (GOARCH expression)"] = struct{}{}
+			}
+			if qualifier, ok := expression.X.(*ast.Ident); ok {
+				if qualifier.Name == "strconv" && expression.Sel.Name == "IntSize" {
+					found[marker+" (strconv.IntSize)"] = struct{}{}
+				}
+				if qualifier.Name == "math" && (expression.Sel.Name == "MaxInt" || expression.Sel.Name == "MinInt") {
+					found[marker+" (word-size integer bound)"] = struct{}{}
+				}
+				if qualifier.Name == "unsafe" && expression.Sel.Name == "Sizeof" {
+					found[marker+" (unsafe.Sizeof)"] = struct{}{}
+				}
+			}
+		case *ast.BasicLit:
+			if expression.Kind == token.STRING {
+				value, err := strconv.Unquote(expression.Value)
+				if err == nil && value == "GOARCH" {
+					found[marker+" (GOARCH string)"] = struct{}{}
+				}
+			}
+		}
+		parents = append(parents, node)
+		return true
+	})
+	result := make([]string, 0, len(found))
+	for marker := range found {
+		result = append(result, marker)
+	}
+	sort.Strings(result)
+	return result, nil
 }
 
 func repoRoot(t *testing.T) string {
@@ -267,6 +362,20 @@ func architectureScopedPackageSources(root string) ([]string, error) {
 				found = append(found, filepath.ToSlash(path)+" (build tag "+tag+")")
 			}
 		}
+		if ext == ".go" && !strings.HasSuffix(entry.Name(), "_test.go") {
+			relative, err := filepath.Rel(root, path)
+			if err != nil {
+				return err
+			}
+			parts := strings.Split(filepath.ToSlash(relative), "/")
+			if len(parts) > 1 && parts[0] == "cmd" {
+				expressions, err := architectureSensitiveCommandExpressions(path, data)
+				if err != nil {
+					return fmt.Errorf("parse architecture expressions in %s: %w", path, err)
+				}
+				found = append(found, expressions...)
+			}
+		}
 		return nil
 	})
 	sort.Strings(found)
@@ -283,25 +392,159 @@ func TestSameGOOSComparisonAssumesNoArchitectureScopedPackageSources(t *testing.
 	}
 }
 
-func platformSpecificFlagRegistrations(t *testing.T) []string {
+var knownGOOS = map[string]struct{}{
+	"aix": {}, "android": {}, "darwin": {}, "dragonfly": {}, "freebsd": {},
+	"illumos": {}, "ios": {}, "js": {}, "linux": {}, "netbsd": {},
+	"openbsd": {}, "plan9": {}, "solaris": {}, "wasip1": {}, "windows": {},
+}
+
+func constraintTags(expr constraint.Expr, found map[string]struct{}) {
+	switch expr := expr.(type) {
+	case *constraint.TagExpr:
+		found[expr.Tag] = struct{}{}
+	case *constraint.NotExpr:
+		constraintTags(expr.X, found)
+	case *constraint.AndExpr:
+		constraintTags(expr.X, found)
+		constraintTags(expr.Y, found)
+	case *constraint.OrExpr:
+		constraintTags(expr.X, found)
+		constraintTags(expr.Y, found)
+	}
+}
+
+func isPlatformScopedCommandSource(name string, data []byte) (bool, error) {
+	stem := strings.TrimSuffix(name, filepath.Ext(name))
+	for goos := range knownGOOS {
+		if strings.HasSuffix(stem, "_"+goos) || strings.Contains(stem, "_"+goos+"_") {
+			return true, nil
+		}
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "//go:build ") {
+			continue
+		}
+		expr, err := constraint.Parse(line)
+		if err != nil {
+			return false, err
+		}
+		tags := map[string]struct{}{}
+		constraintTags(expr, tags)
+		for tag := range tags {
+			if _, ok := knownGOOS[tag]; ok {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
+func TestPlatformScopedCommandSourceRecognizesBuildConstraintWithoutFilenameSuffix(t *testing.T) {
+	got, err := isPlatformScopedCommandSource("macextra.go", []byte("//go:build darwin\n\npackage cmd\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got {
+		t.Fatal("darwin build constraint in non-platform filename was not classified as platform-scoped")
+	}
+}
+
+type platformFlagKey struct {
+	CommandPath string
+	FlagName    string
+}
+
+type platformFlagRegistration struct {
+	Source string
+	Key    platformFlagKey
+	Usage  string
+}
+
+var platformCommandPaths = map[string]string{
+	"installCmd":   "tslink install",
+	"uninstallCmd": "tslink uninstall",
+}
+
+func flagSetCommand(expression ast.Expr) (string, bool, bool) {
+	call, ok := expression.(*ast.CallExpr)
+	if !ok {
+		return "", false, false
+	}
+	method, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok || (method.Sel.Name != "Flags" && method.Sel.Name != "PersistentFlags") {
+		return "", false, false
+	}
+	command, ok := method.X.(*ast.Ident)
+	if !ok {
+		return "", true, false
+	}
+	return command.Name, true, true
+}
+
+func platformSpecificFlagRegistrations(t *testing.T) []platformFlagRegistration {
 	t.Helper()
 	dir := filepath.Join(repoRoot(t), "cmd")
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var registrations []string
+	var registrations []platformFlagRegistration
 	for _, entry := range entries {
 		name := entry.Name()
-		if entry.IsDir() || strings.HasSuffix(name, "_test.go") ||
-			(!strings.HasSuffix(name, "_darwin.go") && !strings.HasSuffix(name, "_linux.go") && !strings.HasSuffix(name, "_windows.go")) {
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
 			continue
 		}
 		path := filepath.Join(dir, name)
-		file, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		platformScoped, err := isPlatformScopedCommandSource(name, data)
+		if err != nil {
+			t.Fatalf("parse platform constraint in %s: %v", path, err)
+		}
+		if !platformScoped {
+			continue
+		}
+		files := token.NewFileSet()
+		file, err := parser.ParseFile(files, path, data, 0)
 		if err != nil {
 			t.Fatalf("parse %s: %v", path, err)
 		}
+		flagSets := map[string]string{}
+		ast.Inspect(file, func(node ast.Node) bool {
+			bind := func(left ast.Expr, right ast.Expr) {
+				variable, ok := left.(*ast.Ident)
+				if !ok {
+					return
+				}
+				command, isFlagSet, valid := flagSetCommand(right)
+				if !isFlagSet {
+					return
+				}
+				if !valid {
+					t.Errorf("%s:%d: flag-set receiver is not a command identifier", name, files.Position(right.Pos()).Line)
+					return
+				}
+				flagSets[variable.Name] = command
+			}
+			switch declaration := node.(type) {
+			case *ast.AssignStmt:
+				if len(declaration.Lhs) == len(declaration.Rhs) {
+					for i := range declaration.Lhs {
+						bind(declaration.Lhs[i], declaration.Rhs[i])
+					}
+				}
+			case *ast.ValueSpec:
+				if len(declaration.Names) == len(declaration.Values) {
+					for i := range declaration.Names {
+						bind(declaration.Names[i], declaration.Values[i])
+					}
+				}
+			}
+			return true
+		})
 		ast.Inspect(file, func(node ast.Node) bool {
 			call, ok := node.(*ast.CallExpr)
 			if !ok {
@@ -314,54 +557,92 @@ func platformSpecificFlagRegistrations(t *testing.T) []string {
 			if strings.HasPrefix(method.Sel.Name, "Get") {
 				return true
 			}
-			flagSetCall, ok := method.X.(*ast.CallExpr)
-			if !ok {
+			var commandName string
+			switch receiver := method.X.(type) {
+			case *ast.CallExpr:
+				var isFlagSet, valid bool
+				commandName, isFlagSet, valid = flagSetCommand(receiver)
+				if !isFlagSet {
+					return true
+				}
+				if !valid {
+					t.Errorf("%s:%d: flag-set receiver is not a command identifier", name, files.Position(receiver.Pos()).Line)
+					return true
+				}
+			case *ast.Ident:
+				var ok bool
+				commandName, ok = flagSets[receiver.Name]
+				if !ok {
+					return true
+				}
+			default:
 				return true
 			}
-			flagSetMethod, ok := flagSetCall.Fun.(*ast.SelectorExpr)
-			if !ok || (flagSetMethod.Sel.Name != "Flags" && flagSetMethod.Sel.Name != "PersistentFlags") {
-				return true
-			}
-			command, ok := flagSetMethod.X.(*ast.Ident)
-			if !ok || len(call.Args) < 2 {
-				registrations = append(registrations, name+":unrecognized-registration")
+			if method.Sel.Name != "Bool" || len(call.Args) < 2 {
+				t.Errorf("%s:%d: unrecognized flag registration method %s", name, files.Position(call.Pos()).Line, method.Sel.Name)
 				return true
 			}
 			flagNameLiteral, ok := call.Args[0].(*ast.BasicLit)
 			if !ok {
-				registrations = append(registrations, name+":"+command.Name+":unrecognized-flag-name")
+				t.Errorf("%s:%d: unrecognized flag name for %s", name, files.Position(call.Pos()).Line, commandName)
 				return true
 			}
 			flagName, err := strconv.Unquote(flagNameLiteral.Value)
 			if err != nil {
-				registrations = append(registrations, name+":unrecognized-flag-name")
+				t.Errorf("%s:%d: decode flag name: %v", name, files.Position(call.Pos()).Line, err)
 				return true
 			}
 			usageLiteral, ok := call.Args[len(call.Args)-1].(*ast.BasicLit)
 			if !ok {
-				registrations = append(registrations, name+":"+command.Name+":"+flagName+":unrecognized-usage")
+				t.Errorf("%s:%d: unrecognized usage for %s --%s", name, files.Position(call.Pos()).Line, commandName, flagName)
 				return true
 			}
 			usage, err := strconv.Unquote(usageLiteral.Value)
 			if err != nil {
 				t.Fatalf("decode %s flag usage in %s: %v", flagName, name, err)
 			}
-			registrations = append(registrations, strings.Join([]string{name, command.Name, flagName, usage}, ":"))
+			commandPath, ok := platformCommandPaths[commandName]
+			if !ok {
+				t.Errorf("%s:%d: no command path registered for %s --%s", name, files.Position(call.Pos()).Line, commandName, flagName)
+				commandPath = "<unrecognized:" + commandName + ">"
+			}
+			registrations = append(registrations, platformFlagRegistration{
+				Source: name,
+				Key:    platformFlagKey{CommandPath: commandPath, FlagName: flagName},
+				Usage:  usage,
+			})
 			return true
 		})
 	}
-	sort.Strings(registrations)
+	sort.Slice(registrations, func(i, j int) bool {
+		left := registrations[i].Source + "\x00" + registrations[i].Key.CommandPath + "\x00" + registrations[i].Key.FlagName
+		right := registrations[j].Source + "\x00" + registrations[j].Key.CommandPath + "\x00" + registrations[j].Key.FlagName
+		return left < right
+	})
 	return registrations
 }
 
 func TestPlatformSpecificFlagRegistrationsAreExactlyTheTwoDarwinForceFlags(t *testing.T) {
 	got := platformSpecificFlagRegistrations(t)
-	want := []string{
-		"install_darwin.go:installCmd:force:Proceed with an upgrade despite an unavailable launchd domain (may start a second daemon)",
-		"uninstall_darwin.go:uninstallCmd:force:Remove the plist despite an unavailable launchd domain (may leave a daemon running)",
+	want := []platformFlagRegistration{
+		{
+			Source: "install_darwin.go",
+			Key:    platformFlagKey{CommandPath: "tslink install", FlagName: "force"},
+			Usage:  "Proceed with an upgrade despite an unavailable launchd domain (may start a second daemon)",
+		},
+		{
+			Source: "uninstall_darwin.go",
+			Key:    platformFlagKey{CommandPath: "tslink uninstall", FlagName: "force"},
+			Usage:  "Remove the plist despite an unavailable launchd domain (may leave a daemon running)",
+		},
 	}
-	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+	if len(got) != len(want) {
 		t.Fatalf("platform-specific flag registrations = %q, want exactly %q", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("platform-specific flag registrations = %q, want exactly %q", got, want)
+		}
 	}
 }
 

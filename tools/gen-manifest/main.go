@@ -21,6 +21,12 @@ import (
 
 const outputFile = manifestcheck.OutputFile
 
+var knownGOARCH = map[string]struct{}{
+	"386": {}, "amd64": {}, "arm": {}, "arm64": {}, "loong64": {},
+	"mips": {}, "mips64": {}, "mips64le": {}, "mipsle": {},
+	"ppc64": {}, "ppc64le": {}, "riscv64": {}, "s390x": {}, "wasm": {},
+}
+
 type manifestCheckResult struct {
 	ManifestPlatform cmd.PlatformInfo
 	RunningPlatform  cmd.PlatformInfo
@@ -161,13 +167,24 @@ func normalizeGeneratedArchitecture(data, platformJSON []byte, generatedGOARCH, 
 func outputForManifestCheck(result manifestCheckResult) manifestCheckOutput {
 	if !result.Equal {
 		if result.SamePlatform {
+			if result.ManifestPlatform.GOARCH != result.RunningPlatform.GOARCH {
+				return manifestCheckOutput{
+					Stderr: fmt.Sprintf(
+						"gen-manifest: %s differs across architectures on GOOS=%s (manifest GOARCH=%s, running GOARCH=%s); manifest generation must remain architecture-independent",
+						outputFile,
+						result.ManifestPlatform.GOOS,
+						result.ManifestPlatform.GOARCH,
+						result.RunningPlatform.GOARCH,
+					),
+				}
+			}
 			return manifestCheckOutput{
 				Stderr: fmt.Sprintf("gen-manifest: %s is stale; run `go run ./tools/gen-manifest`", outputFile),
 			}
 		}
 		return manifestCheckOutput{
 			Stderr: fmt.Sprintf(
-				"gen-manifest: %s is stale; the committed manifest is authoritative for GOOS=%s and must be regenerated on that GOOS",
+				"gen-manifest: %s is stale; the committed manifest is authoritative for GOOS=%s and must be regenerated on that GOOS, or add the differing field to the platform-dependent exclusion list in compareManifest",
 				outputFile,
 				result.ManifestPlatform.GOOS,
 			),
@@ -205,6 +222,9 @@ func decodeManifest(data []byte) (cmd.PlatformInfo, map[string]json.RawMessage, 
 	}
 	if platform.GOOS == "" || platform.GOARCH == "" {
 		return cmd.PlatformInfo{}, nil, fmt.Errorf("platform requires non-empty goos and goarch")
+	}
+	if _, ok := knownGOARCH[platform.GOARCH]; !ok {
+		return cmd.PlatformInfo{}, nil, fmt.Errorf("platform goarch %q is not a recognized Go architecture", platform.GOARCH)
 	}
 	return platform, object, nil
 }
