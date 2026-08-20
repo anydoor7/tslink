@@ -748,5 +748,6 @@ func launchctlDomainForTarget(target string) string {
 
 func init() {
 	installCmd.Flags().Bool("force", false, "Proceed with an upgrade despite an unavailable launchd domain (may start a second daemon)")
+	mustMarkFlagPlatforms(installCmd, "force", "darwin")
 	rootCmd.AddCommand(installCmd)
 }

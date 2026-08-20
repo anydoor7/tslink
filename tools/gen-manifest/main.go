@@ -13,6 +13,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/monody0007/tslink/cmd"
@@ -32,6 +33,16 @@ type manifestCheckResult struct {
 	RunningPlatform  cmd.PlatformInfo
 	SamePlatform     bool
 	Equal            bool
+	ManifestCoverage manifestCoverage
+	RunningCoverage  manifestCoverage
+}
+
+type manifestCoverage struct {
+	Commands               int
+	Flags                  int
+	MarkedFlags            int
+	JSONResultFields       int
+	MarkedJSONResultFields int
 }
 
 type manifestCheckOutput struct {
@@ -42,7 +53,12 @@ type manifestCheckOutput struct {
 
 func main() {
 	check := flag.Bool("check", false, "verify the committed fixture is up to date instead of writing it")
+	outputPath := flag.String("output", outputFile, "write the generated manifest to this path")
 	flag.Parse()
+	if *check && *outputPath != outputFile {
+		fmt.Fprintln(os.Stderr, "gen-manifest: -check cannot be combined with a non-default -output path")
+		os.Exit(1)
+	}
 
 	manifest := cmd.Manifest()
 	goVersion, err := minimumGoVersionFromGoMod("go.mod")
@@ -81,15 +97,15 @@ func main() {
 		return
 	}
 
-	if err := os.MkdirAll("docs", 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(*outputPath), 0o755); err != nil {
 		fmt.Fprintln(os.Stderr, "gen-manifest:", err)
 		os.Exit(1)
 	}
-	if err := os.WriteFile(outputFile, data, 0o644); err != nil {
+	if err := os.WriteFile(*outputPath, data, 0o644); err != nil {
 		fmt.Fprintln(os.Stderr, "gen-manifest: write failed:", err)
 		os.Exit(1)
 	}
-	fmt.Printf("gen-manifest: wrote %s\n", outputFile)
+	fmt.Printf("gen-manifest: wrote %s\n", *outputPath)
 }
 
 func compareManifest(existing, generated []byte) (manifestCheckResult, error) {
@@ -121,13 +137,20 @@ func compareManifest(existing, generated []byte) (manifestCheckResult, error) {
 		return result, nil
 	}
 
-	// Exclude only the fields proven platform-dependent. Comparing the remaining
-	// JSON object means future top-level fields are checked by default rather than
-	// silently omitted from the cross-platform gate.
+	// Platform provenance itself is expected to differ. Inside commands, remove
+	// only entries carrying an explicit platforms qualifier. Command identities,
+	// unmarked flags/result fields, and unknown future command fields remain in
+	// the comparison by default.
 	delete(existingObject, "platform")
-	delete(existingObject, "commands")
 	delete(generatedObject, "platform")
-	delete(generatedObject, "commands")
+	result.ManifestCoverage, err = excludeMarkedCommandEntries(existingObject)
+	if err != nil {
+		return manifestCheckResult{}, fmt.Errorf("normalize committed commands: %w", err)
+	}
+	result.RunningCoverage, err = excludeMarkedCommandEntries(generatedObject)
+	if err != nil {
+		return manifestCheckResult{}, fmt.Errorf("normalize generated commands: %w", err)
+	}
 	existingIndependent, err := json.Marshal(existingObject)
 	if err != nil {
 		return manifestCheckResult{}, fmt.Errorf("normalize committed manifest: %w", err)
@@ -138,6 +161,111 @@ func compareManifest(existing, generated []byte) (manifestCheckResult, error) {
 	}
 	result.Equal = bytes.Equal(existingIndependent, generatedIndependent)
 	return result, nil
+}
+
+func excludeMarkedCommandEntries(object map[string]json.RawMessage) (manifestCoverage, error) {
+	var coverage manifestCoverage
+	commandsJSON, ok := object["commands"]
+	if !ok {
+		return coverage, fmt.Errorf("required top-level field commands is missing")
+	}
+	var commands []map[string]json.RawMessage
+	if err := json.Unmarshal(commandsJSON, &commands); err != nil {
+		return coverage, fmt.Errorf("decode commands: %w", err)
+	}
+	coverage.Commands = len(commands)
+	for _, command := range commands {
+		if flagsJSON, ok := command["flags"]; ok {
+			var flags []map[string]json.RawMessage
+			if err := json.Unmarshal(flagsJSON, &flags); err != nil {
+				return coverage, fmt.Errorf("decode command flags: %w", err)
+			}
+			coverage.Flags += len(flags)
+			unmarked := flags[:0]
+			for _, flagInfo := range flags {
+				marked, err := hasPlatformMark(flagInfo)
+				if err != nil {
+					return coverage, fmt.Errorf("decode flag platforms: %w", err)
+				}
+				if marked {
+					coverage.MarkedFlags++
+					continue
+				}
+				unmarked = append(unmarked, flagInfo)
+			}
+			if len(unmarked) == 0 {
+				delete(command, "flags")
+			} else {
+				encoded, err := json.Marshal(unmarked)
+				if err != nil {
+					return coverage, fmt.Errorf("encode unmarked flags: %w", err)
+				}
+				command["flags"] = encoded
+			}
+		}
+
+		if fieldsJSON, ok := command["json_result_fields"]; ok {
+			var fields map[string]map[string]json.RawMessage
+			if err := json.Unmarshal(fieldsJSON, &fields); err != nil {
+				return coverage, fmt.Errorf("decode JSON result fields: %w", err)
+			}
+			coverage.JSONResultFields += len(fields)
+			for name, fieldInfo := range fields {
+				marked, err := hasPlatformMark(fieldInfo)
+				if err != nil {
+					return coverage, fmt.Errorf("decode JSON result field %q platforms: %w", name, err)
+				}
+				if marked {
+					coverage.MarkedJSONResultFields++
+					delete(fields, name)
+				}
+			}
+			if len(fields) == 0 {
+				delete(command, "json_result_fields")
+			} else {
+				encoded, err := json.Marshal(fields)
+				if err != nil {
+					return coverage, fmt.Errorf("encode unmarked JSON result fields: %w", err)
+				}
+				command["json_result_fields"] = encoded
+			}
+		}
+	}
+	encoded, err := json.Marshal(commands)
+	if err != nil {
+		return coverage, fmt.Errorf("encode normalized commands: %w", err)
+	}
+	object["commands"] = encoded
+	return coverage, nil
+}
+
+func hasPlatformMark(entry map[string]json.RawMessage) (bool, error) {
+	platformsJSON, ok := entry["platforms"]
+	if !ok {
+		return false, nil
+	}
+	var platforms []string
+	if err := json.Unmarshal(platformsJSON, &platforms); err != nil {
+		return false, err
+	}
+	if len(platforms) == 0 {
+		return false, fmt.Errorf("platforms must be a non-empty GOOS set when present")
+	}
+	known := map[string]struct{}{"darwin": {}, "linux": {}, "windows": {}}
+	seen := make(map[string]struct{}, len(platforms))
+	for _, platform := range platforms {
+		if _, ok := known[platform]; !ok {
+			return false, fmt.Errorf("unsupported GOOS %q", platform)
+		}
+		if _, ok := seen[platform]; ok {
+			return false, fmt.Errorf("duplicate GOOS %q", platform)
+		}
+		seen[platform] = struct{}{}
+	}
+	if len(platforms) == len(known) {
+		return false, fmt.Errorf("platforms names every supported GOOS; omit it instead")
+	}
+	return true, nil
 }
 
 func normalizeGeneratedArchitecture(data, platformJSON []byte, generatedGOARCH, manifestGOARCH string) ([]byte, error) {
@@ -184,7 +312,7 @@ func outputForManifestCheck(result manifestCheckResult) manifestCheckOutput {
 		}
 		return manifestCheckOutput{
 			Stderr: fmt.Sprintf(
-				"gen-manifest: %s is stale; the committed manifest is authoritative for GOOS=%s and must be regenerated on that GOOS, or add the differing field to the platform-dependent exclusion list in compareManifest",
+				"gen-manifest: %s is stale; the committed manifest is authoritative for GOOS=%s and must be regenerated on that GOOS, or mark a proven platform-scoped command entry with platforms",
 				outputFile,
 				result.ManifestPlatform.GOOS,
 			),
@@ -201,7 +329,7 @@ func outputForManifestCheck(result manifestCheckResult) manifestCheckOutput {
 		Stdout: []string{
 			compared,
 			skipped,
-			fmt.Sprintf("gen-manifest: %s platform-independent fields are up to date", outputFile),
+			fmt.Sprintf("gen-manifest: %s unmarked fields are up to date", outputFile),
 		},
 		OK: true,
 	}
@@ -237,11 +365,16 @@ func crossPlatformCoverageMessages(result manifestCheckResult) (string, string) 
 	manifestPlatform := formatPlatform(result.ManifestPlatform)
 	runningPlatform := formatPlatform(result.RunningPlatform)
 	return fmt.Sprintf(
-			"gen-manifest: compared platform-independent top-level fields (all except platform and commands) for manifest %s and running %s",
+			"gen-manifest: compared all top-level fields except platform for manifest %s and running %s",
 			manifestPlatform, runningPlatform,
 		), fmt.Sprintf(
-			"gen-manifest: skipped platform-specific commands and flags for manifest %s on running %s",
-			manifestPlatform, runningPlatform,
+			"gen-manifest: compared %d/%d command identities and %d/%d committed flag entries; excluded %d platform-marked flags and %d platform-marked JSON result fields",
+			result.ManifestCoverage.Commands,
+			result.ManifestCoverage.Commands,
+			result.ManifestCoverage.Flags-result.ManifestCoverage.MarkedFlags,
+			result.ManifestCoverage.Flags,
+			result.ManifestCoverage.MarkedFlags,
+			result.ManifestCoverage.MarkedJSONResultFields,
 		)
 }
 

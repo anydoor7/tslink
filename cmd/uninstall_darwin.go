@@ -256,5 +256,6 @@ func launchctlUnavailableReason(target string) string {
 
 func init() {
 	uninstallCmd.Flags().Bool("force", false, "Remove the plist despite an unavailable launchd domain (may leave a daemon running)")
+	mustMarkFlagPlatforms(uninstallCmd, "force", "darwin")
 	rootCmd.AddCommand(uninstallCmd)
 }

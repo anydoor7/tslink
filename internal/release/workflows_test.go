@@ -290,19 +290,49 @@ func TestCandidateDeclaresRequiredGates(t *testing.T) {
 	}
 	wf := parse(t, candidateWorkflow, body)
 	required := []string{
-		"native",              // 3-OS build/vet/test/race/shuffle/smoke
-		"machine-contract",    // compiled-binary contracts
-		"staticcheck",         // static analysis
-		"govulncheck-main",    // independent main vuln scan
-		"govulncheck-repo",    // independent repo vuln scan
-		"reproducible-source", // gofmt + tidy-diff
-		"cross-build",         // six cross-builds
-		"artifact-verify",     // download/hash/content verification
-		"release-config",      // goreleaser check + license/notice + this validator
+		"native",                 // 3-OS build/vet/test/race/shuffle/smoke
+		"manifest-platform-diff", // downloaded native manifests prove mark completeness
+		"machine-contract",       // compiled-binary contracts
+		"staticcheck",            // static analysis
+		"govulncheck-main",       // independent main vuln scan
+		"govulncheck-repo",       // independent repo vuln scan
+		"reproducible-source",    // gofmt + tidy-diff
+		"cross-build",            // six cross-builds
+		"artifact-verify",        // download/hash/content verification
+		"release-config",         // goreleaser check + license/notice + this validator
 	}
 	for _, job := range required {
 		if _, ok := wf.Jobs[job]; !ok {
 			t.Errorf("%s is missing required gate job %q", candidateWorkflow, job)
+		}
+	}
+}
+
+func TestManifestPlatformDiffNeedsEveryNativeArtifact(t *testing.T) {
+	body, ok := readWorkflows(t)[candidateWorkflow]
+	if !ok {
+		t.Fatalf("%s is missing", candidateWorkflow)
+	}
+	wf := parse(t, candidateWorkflow, body)
+	job, ok := wf.Jobs["manifest-platform-diff"]
+	if !ok {
+		t.Fatalf("%s has no manifest-platform-diff job", candidateWorkflow)
+	}
+	if !job.Needs.contains("native") {
+		t.Fatalf("manifest-platform-diff must need the full native matrix, got %v", job.Needs)
+	}
+	text := string(body)
+	for _, want := range []string{
+		"go run ./tools/gen-manifest -output \"${RUNNER_TEMP}/cli-manifest.json\"",
+		"name: cli-manifest-${{ matrix.os }}",
+		"pattern: cli-manifest-*",
+		"go run ./tools/check-manifest-platforms",
+		"-darwin downloaded-manifests/cli-manifest-macos-latest/cli-manifest.json",
+		"-linux downloaded-manifests/cli-manifest-ubuntu-latest/cli-manifest.json",
+		"-windows downloaded-manifests/cli-manifest-windows-latest/cli-manifest.json",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("%s missing manifest diff wiring %q", candidateWorkflow, want)
 		}
 	}
 }

@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "platform": {
     "goos": "darwin",
     "goarch": "arm64"
@@ -416,7 +416,10 @@
           "type": "bool",
           "default": "false",
           "scope": "local",
-          "usage": "Proceed with an upgrade despite an unavailable launchd domain (may start a second daemon)"
+          "usage": "Proceed with an upgrade despite an unavailable launchd domain (may start a second daemon)",
+          "platforms": [
+            "darwin"
+          ]
         },
         {
           "name": "json",
@@ -429,15 +432,24 @@
       "json_result_fields": {
         "force_available": {
           "type": "boolean",
-          "description": "macOS failure only. True when an explicit --force recovery path exists for launchctl_domain_unavailable."
+          "description": "macOS failure only. True when an explicit --force recovery path exists for launchctl_domain_unavailable.",
+          "platforms": [
+            "darwin"
+          ]
         },
         "force_command": {
           "type": "string",
-          "description": "macOS failure only. Exact command that invokes the explicit --force recovery path."
+          "description": "macOS failure only. Exact command that invokes the explicit --force recovery path.",
+          "platforms": [
+            "darwin"
+          ]
         },
         "force_risk": {
           "type": "string",
-          "description": "macOS failure only. Residual daemon risk accepted by running force_command."
+          "description": "macOS failure only. Residual daemon risk accepted by running force_command.",
+          "platforms": [
+            "darwin"
+          ]
         },
         "installed": {
           "type": "boolean",
@@ -445,15 +457,24 @@
         },
         "launchctl_output": {
           "type": "string",
-          "description": "macOS only. Trimmed launchctl output from bootstrap, fallback, or verification; omitted when launchctl emitted no text."
+          "description": "macOS only. Trimmed launchctl output from bootstrap, fallback, or verification; omitted when launchctl emitted no text.",
+          "platforms": [
+            "darwin"
+          ]
         },
         "launchctl_target": {
           "type": "string",
-          "description": "macOS only. The launchd service target confirmed running on success or unavailable on a launchctl_domain_unavailable failure."
+          "description": "macOS only. The launchd service target confirmed running on success or unavailable on a launchctl_domain_unavailable failure.",
+          "platforms": [
+            "darwin"
+          ]
         },
         "loaded": {
           "type": "boolean",
-          "description": "macOS only. Whether launchctl confirmed the LaunchAgent reached running state with a positive PID."
+          "description": "macOS only. Whether launchctl confirmed the LaunchAgent reached running state with a positive PID.",
+          "platforms": [
+            "darwin"
+          ]
         },
         "path": {
           "type": "string",
@@ -461,7 +482,10 @@
         },
         "plist_path": {
           "type": "string",
-          "description": "macOS only. Path to the LaunchAgent plist written on success or preserved/restored on failure."
+          "description": "macOS only. Path to the LaunchAgent plist written on success or preserved/restored on failure.",
+          "platforms": [
+            "darwin"
+          ]
         },
         "service_manager": {
           "type": "string",
@@ -473,7 +497,10 @@
         },
         "unavailable_domain": {
           "type": "string",
-          "description": "macOS failure only. The unavailable launchd domain, such as gui/501, when error.code is launchctl_domain_unavailable."
+          "description": "macOS failure only. The unavailable launchd domain, such as gui/501, when error.code is launchctl_domain_unavailable.",
+          "platforms": [
+            "darwin"
+          ]
         },
         "warning": {
           "type": "string",
@@ -965,7 +992,10 @@
           "type": "bool",
           "default": "false",
           "scope": "local",
-          "usage": "Remove the plist despite an unavailable launchd domain (may leave a daemon running)"
+          "usage": "Remove the plist despite an unavailable launchd domain (may leave a daemon running)",
+          "platforms": [
+            "darwin"
+          ]
         },
         {
           "name": "json",
@@ -978,19 +1008,31 @@
       "json_result_fields": {
         "detail": {
           "type": "string",
-          "description": "macOS only. TSLink-authored explanation kept separate from launchctl_output; present for already_absent and unconfirmed domain-state remedies."
+          "description": "macOS only. TSLink-authored explanation kept separate from launchctl_output; present for already_absent and unconfirmed domain-state remedies.",
+          "platforms": [
+            "darwin"
+          ]
         },
         "force_available": {
           "type": "boolean",
-          "description": "macOS failure only. True when an explicit --force recovery path exists for launchctl_domain_unavailable."
+          "description": "macOS failure only. True when an explicit --force recovery path exists for launchctl_domain_unavailable.",
+          "platforms": [
+            "darwin"
+          ]
         },
         "force_command": {
           "type": "string",
-          "description": "macOS failure only. Exact command that invokes the explicit --force recovery path."
+          "description": "macOS failure only. Exact command that invokes the explicit --force recovery path.",
+          "platforms": [
+            "darwin"
+          ]
         },
         "force_risk": {
           "type": "string",
-          "description": "macOS failure only. Residual daemon risk accepted by running force_command."
+          "description": "macOS failure only. Residual daemon risk accepted by running force_command.",
+          "platforms": [
+            "darwin"
+          ]
         },
         "launchctl_outcome": {
           "type": "string",
@@ -1000,15 +1042,24 @@
             "unloaded",
             "already_absent",
             "unconfirmed"
+          ],
+          "platforms": [
+            "darwin"
           ]
         },
         "launchctl_output": {
           "type": "string",
-          "description": "macOS only. Verbatim trimmed launchctl output from the successful target for unloaded, or combined attempted output for already_absent and unconfirmed; omitted when launchctl emitted no text."
+          "description": "macOS only. Verbatim trimmed launchctl output from the successful target for unloaded, or combined attempted output for already_absent and unconfirmed; omitted when launchctl emitted no text.",
+          "platforms": [
+            "darwin"
+          ]
         },
         "launchctl_target": {
           "type": "string",
-          "description": "macOS only. The domain target that confirmed bootout or remained unavailable for the reported unconfirmed state; empty for not_installed and already_absent."
+          "description": "macOS only. The domain target that confirmed bootout or remained unavailable for the reported unconfirmed state; empty for not_installed and already_absent.",
+          "platforms": [
+            "darwin"
+          ]
         },
         "path": {
           "type": "string",
@@ -1016,7 +1067,10 @@
         },
         "plist_path": {
           "type": "string",
-          "description": "macOS only. Path to the LaunchAgent plist inspected or removed by this invocation."
+          "description": "macOS only. Path to the LaunchAgent plist inspected or removed by this invocation.",
+          "platforms": [
+            "darwin"
+          ]
         },
         "removed": {
           "type": "boolean",
@@ -1028,7 +1082,10 @@
         },
         "unavailable_domain": {
           "type": "string",
-          "description": "macOS failure only. The unavailable launchd domain, such as gui/501, when error.code is launchctl_domain_unavailable."
+          "description": "macOS failure only. The unavailable launchd domain, such as gui/501, when error.code is launchctl_domain_unavailable.",
+          "platforms": [
+            "darwin"
+          ]
         },
         "warning": {
           "type": "string",

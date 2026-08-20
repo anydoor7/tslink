@@ -8,10 +8,14 @@ import (
 	"testing"
 
 	"github.com/monody0007/tslink/internal/registry"
+	"github.com/spf13/cobra"
 )
 
 func TestManifestCarriesGeneratingBinaryPlatform(t *testing.T) {
 	m := Manifest()
+	if m.SchemaVersion != 2 {
+		t.Fatalf("manifest schema version = %d, want 2 for required platform provenance plus entry qualifiers", m.SchemaVersion)
+	}
 	if m.Platform.GOOS != runtime.GOOS || m.Platform.GOARCH != runtime.GOARCH {
 		t.Fatalf("manifest platform = %s/%s, want generating binary %s/%s", m.Platform.GOOS, m.Platform.GOARCH, runtime.GOOS, runtime.GOARCH)
 	}
@@ -32,6 +36,114 @@ func TestManifestCarriesGeneratingBinaryPlatform(t *testing.T) {
 	compact := CompactManifest()
 	if compact.Platform != m.Platform {
 		t.Fatalf("compact manifest platform = %+v, want %+v", compact.Platform, m.Platform)
+	}
+}
+
+func TestManifestPlatformMarksAreExactAndProseDerived(t *testing.T) {
+	m := Manifest()
+	commands := make(map[string]CommandInfo, len(m.Commands))
+	var markedFlags []string
+	for _, command := range m.Commands {
+		commands[command.Path] = command
+		for _, flag := range command.Flags {
+			if len(flag.Platforms) > 0 {
+				markedFlags = append(markedFlags, command.Path+" --"+flag.Name)
+			}
+		}
+	}
+	if runtime.GOOS == "darwin" {
+		want := []string{"tslink install --force", "tslink uninstall --force"}
+		if !reflect.DeepEqual(markedFlags, want) {
+			t.Fatalf("marked flags = %v, want exactly %v", markedFlags, want)
+		}
+		for _, key := range want {
+			parts := strings.Split(key, " --")
+			var got FlagInfo
+			for _, flag := range commands[parts[0]].Flags {
+				if flag.Name == parts[1] {
+					got = flag
+				}
+			}
+			if !reflect.DeepEqual(got.Platforms, []string{"darwin"}) {
+				t.Fatalf("%s platforms = %v, want [darwin]", key, got.Platforms)
+			}
+		}
+	} else if len(markedFlags) != 0 {
+		t.Fatalf("%s manifest unexpectedly carries platform-marked live flags: %v", runtime.GOOS, markedFlags)
+	}
+
+	for _, flag := range commands["tslink tags delete-remote"].Flags {
+		if flag.Name == "force" && len(flag.Platforms) != 0 {
+			t.Fatalf("tslink tags delete-remote --force platforms = %v, want unmarked", flag.Platforms)
+		}
+	}
+
+	wantFields := map[string][]string{
+		"tslink install": {
+			"force_available", "force_command", "force_risk", "launchctl_output",
+			"launchctl_target", "loaded", "plist_path", "unavailable_domain",
+		},
+		"tslink uninstall": {
+			"detail", "force_available", "force_command", "force_risk", "launchctl_outcome",
+			"launchctl_output", "launchctl_target", "plist_path", "unavailable_domain",
+		},
+	}
+	markedFieldCount := 0
+	for commandPath, wantNames := range wantFields {
+		fields := commands[commandPath].JSONResultFields
+		for _, name := range wantNames {
+			field, ok := fields[name]
+			if !ok {
+				t.Fatalf("%s missing marked JSON result field %q", commandPath, name)
+			}
+			if !strings.HasPrefix(field.Description, "macOS only.") && !strings.HasPrefix(field.Description, "macOS failure only.") {
+				t.Fatalf("%s %s platforms were not derived from macOS prose: %+v", commandPath, name, field)
+			}
+			if !reflect.DeepEqual(field.Platforms, []string{"darwin"}) {
+				t.Fatalf("%s %s platforms = %v, want [darwin]", commandPath, name, field.Platforms)
+			}
+			markedFieldCount++
+		}
+	}
+	if markedFieldCount != 17 {
+		t.Fatalf("marked JSON result fields = %d, want 17", markedFieldCount)
+	}
+	for _, command := range m.Commands {
+		for name, field := range command.JSONResultFields {
+			proseScoped := strings.HasPrefix(field.Description, "macOS only.") || strings.HasPrefix(field.Description, "macOS failure only.")
+			if proseScoped != (len(field.Platforms) > 0) {
+				t.Fatalf("%s %s prose/mark disagreement: %+v", command.Path, name, field)
+			}
+		}
+	}
+}
+
+func TestPlatformMarkPropagatesToEveryInheritedPersistentFlagEntry(t *testing.T) {
+	root := &cobra.Command{Use: "tslink"}
+	child := &cobra.Command{Use: "child"}
+	grandchild := &cobra.Command{Use: "grandchild"}
+	root.PersistentFlags().Bool("platform-probe", false, "synthetic persistent flag")
+	mustMarkFlagPlatforms(root, "platform-probe", "darwin", "linux")
+	root.AddCommand(child)
+	child.AddCommand(grandchild)
+
+	for _, test := range []struct {
+		command *cobra.Command
+		path    string
+	}{{root, "tslink"}, {child, "tslink child"}, {grandchild, "tslink child grandchild"}} {
+		var found bool
+		for _, flag := range commandFlags(test.command, test.path) {
+			if flag.Name != "platform-probe" {
+				continue
+			}
+			found = true
+			if !reflect.DeepEqual(flag.Platforms, []string{"darwin", "linux"}) {
+				t.Fatalf("%s inherited platforms = %v, want [darwin linux]", test.path, flag.Platforms)
+			}
+		}
+		if !found {
+			t.Fatalf("%s missing inherited platform-probe", test.path)
+		}
 	}
 }
 

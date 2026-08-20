@@ -108,6 +108,7 @@ type JSONResultFieldInfo struct {
 	Type        string   `json:"type"`
 	Description string   `json:"description"`
 	Values      []string `json:"values,omitempty"`
+	Platforms   []string `json:"platforms,omitempty"`
 }
 
 // FlagInfo describes one command-local flag.
@@ -121,6 +122,15 @@ type FlagInfo struct {
 	OneOf     []string `json:"one_of,omitempty"`
 	Requires  []string `json:"requires,omitempty"`
 	Conflicts []string `json:"conflicts,omitempty"`
+	Platforms []string `json:"platforms,omitempty"`
+}
+
+const manifestPlatformsAnnotation = "tslink.io/manifest-platforms"
+
+var supportedManifestPlatforms = map[string]struct{}{
+	"darwin":  {},
+	"linux":   {},
+	"windows": {},
 }
 
 type CompactCLIManifest struct {
@@ -135,7 +145,7 @@ type CompactCLIManifest struct {
 // and side-effect free; it never executes a command.
 func Manifest() CLIManifest {
 	m := CLIManifest{
-		SchemaVersion:         1,
+		SchemaVersion:         2,
 		Platform:              PlatformInfo{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH},
 		RegistrySchemaVersion: registry.CurrentRegistrySchemaVersion,
 		Toolchain: ToolchainInfo{
@@ -236,7 +246,7 @@ func Manifest() CLIManifest {
 func commandJSONResultFields(commandPath string) map[string]JSONResultFieldInfo {
 	switch commandPath {
 	case "tslink install":
-		return map[string]JSONResultFieldInfo{
+		return markProseScopedJSONResultFields(map[string]JSONResultFieldInfo{
 			"plist_path": {
 				Type:        "string",
 				Description: "macOS only. Path to the LaunchAgent plist written on success or preserved/restored on failure.",
@@ -289,7 +299,7 @@ func commandJSONResultFields(commandPath string) map[string]JSONResultFieldInfo 
 				Type:        "string",
 				Description: "Actionable non-fatal warning on a successful install; omitted when no warning applies.",
 			},
-		}
+		})
 	case "tslink uninstall":
 		return uninstallJSONResultFields()
 	default:
@@ -298,7 +308,7 @@ func commandJSONResultFields(commandPath string) map[string]JSONResultFieldInfo 
 }
 
 func uninstallJSONResultFields() map[string]JSONResultFieldInfo {
-	return map[string]JSONResultFieldInfo{
+	return markProseScopedJSONResultFields(map[string]JSONResultFieldInfo{
 		"plist_path": {
 			Type:        "string",
 			Description: "macOS only. Path to the LaunchAgent plist inspected or removed by this invocation.",
@@ -352,7 +362,67 @@ func uninstallJSONResultFields() map[string]JSONResultFieldInfo {
 			Type:        "string",
 			Description: "macOS only. TSLink-authored explanation kept separate from launchctl_output; present for already_absent and unconfirmed domain-state remedies.",
 		},
+	})
+}
+
+// markProseScopedJSONResultFields derives the structured qualifier from the
+// same sentence that documents the field. The two representations therefore
+// cannot drift without changing this one source value. Linux/Windows prose is
+// intentionally outside the JSON result field mark set.
+func markProseScopedJSONResultFields(fields map[string]JSONResultFieldInfo) map[string]JSONResultFieldInfo {
+	for name, field := range fields {
+		if strings.HasPrefix(field.Description, "macOS only.") || strings.HasPrefix(field.Description, "macOS failure only.") {
+			field.Platforms = []string{"darwin"}
+			fields[name] = field
+		}
 	}
+	return fields
+}
+
+// mustMarkFlagPlatforms records platform scope on the concrete flag
+// registration. An annotation belongs to that command's pflag.Flag object, so
+// identically named flags on other commands remain independent. Persistent
+// annotations are retained by Cobra when the flag is inherited, causing every
+// emitted (command path, flag name) entry to carry the qualifier.
+func mustMarkFlagPlatforms(command *cobra.Command, name string, platforms ...string) {
+	normalized := normalizeManifestPlatforms(platforms)
+	flagSet := command.PersistentFlags()
+	if flagSet.Lookup(name) == nil {
+		flagSet = command.Flags()
+	}
+	if err := flagSet.SetAnnotation(name, manifestPlatformsAnnotation, normalized); err != nil {
+		panic(fmt.Sprintf("mark %s --%s platforms: %v", command.CommandPath(), name, err))
+	}
+}
+
+func normalizeManifestPlatforms(platforms []string) []string {
+	if len(platforms) == 0 {
+		panic("manifest platform mark must contain at least one GOOS")
+	}
+	seen := make(map[string]struct{}, len(platforms))
+	normalized := append([]string(nil), platforms...)
+	for _, platform := range normalized {
+		if _, ok := supportedManifestPlatforms[platform]; !ok {
+			panic(fmt.Sprintf("manifest platform mark contains unsupported GOOS %q", platform))
+		}
+		if _, ok := seen[platform]; ok {
+			panic(fmt.Sprintf("manifest platform mark repeats GOOS %q", platform))
+		}
+		seen[platform] = struct{}{}
+	}
+	if len(normalized) == len(supportedManifestPlatforms) {
+		panic("manifest platform mark names every supported GOOS; omit the mark instead")
+	}
+	sort.Strings(normalized)
+	return normalized
+}
+
+func flagManifestPlatforms(flag *pflag.Flag) []string {
+	platforms := flag.Annotations[manifestPlatformsAnnotation]
+	if len(platforms) == 0 {
+		return nil
+	}
+	return normalizeManifestPlatforms(platforms)
 }
 
 func commandFlags(c *cobra.Command, commandPath string) []FlagInfo {
@@ -370,6 +440,7 @@ func commandFlags(c *cobra.Command, commandPath string) []FlagInfo {
 			Default:   f.DefValue,
 			Scope:     scope,
 			Usage:     f.Usage,
+			Platforms: flagManifestPlatforms(f),
 		}
 		info.OneOf, info.Requires, info.Conflicts = flagRelationships(commandPath, f.Name)
 		flags = append(flags, info)
