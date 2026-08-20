@@ -286,13 +286,13 @@ func TestCheckManifestCrossPlatformReportsComparedAndSkippedCoverage(t *testing.
 	result := manifestCheckResult{
 		ManifestPlatform: cmd.PlatformInfo{GOOS: "darwin", GOARCH: "arm64"},
 		RunningPlatform:  cmd.PlatformInfo{GOOS: "linux", GOARCH: "arm64"},
-		ManifestCoverage: manifestCoverage{Commands: 35, Flags: 80, MarkedFlags: 2, MarkedJSONResultFields: 17},
+		ManifestCoverage: manifestCoverage{Commands: 35, Flags: 80, MarkedFlags: 2, MarkedJSONResultFields: 23},
 	}
 	compared, skipped := crossPlatformCoverageMessages(result)
 	if want := "gen-manifest: compared all top-level fields except platform for manifest darwin/arm64 and running linux/arm64"; compared != want {
 		t.Fatalf("compared message = %q, want %q", compared, want)
 	}
-	if want := "gen-manifest: compared 35/35 command identities and 78/80 committed flag entries; excluded 2 platform-marked flags and 17 platform-marked JSON result fields"; skipped != want {
+	if want := "gen-manifest: compared 35/35 command identities and 78/80 committed flag entries; excluded 2 platform-marked flags and 23 platform-marked JSON result fields"; skipped != want {
 		t.Fatalf("skipped message = %q, want %q", skipped, want)
 	}
 }

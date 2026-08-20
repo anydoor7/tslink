@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"reflect"
 	"runtime"
+	"sort"
 	"strings"
 	"testing"
 
@@ -19,18 +20,33 @@ func TestManifestCarriesGeneratingBinaryPlatform(t *testing.T) {
 	if m.Platform.GOOS != runtime.GOOS || m.Platform.GOARCH != runtime.GOARCH {
 		t.Fatalf("manifest platform = %s/%s, want generating binary %s/%s", m.Platform.GOOS, m.Platform.GOARCH, runtime.GOOS, runtime.GOARCH)
 	}
+	wantPlatforms := make([]string, 0, len(supportedManifestPlatforms))
+	for platform := range supportedManifestPlatforms {
+		wantPlatforms = append(wantPlatforms, platform)
+	}
+	sort.Strings(wantPlatforms)
+	if !reflect.DeepEqual(m.SupportedPlatforms, wantPlatforms) {
+		t.Fatalf("manifest supported_platforms = %v, want sorted authority keys %v", m.SupportedPlatforms, wantPlatforms)
+	}
+	if !reflect.DeepEqual(SupportedManifestPlatforms(), wantPlatforms) {
+		t.Fatalf("SupportedManifestPlatforms() = %v, want %v", SupportedManifestPlatforms(), wantPlatforms)
+	}
 	data, err := json.Marshal(m)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var wire struct {
-		Platform PlatformInfo `json:"platform"`
+		Platform           PlatformInfo `json:"platform"`
+		SupportedPlatforms []string     `json:"supported_platforms"`
 	}
 	if err := json.Unmarshal(data, &wire); err != nil {
 		t.Fatal(err)
 	}
 	if wire.Platform != m.Platform {
 		t.Fatalf("serialized manifest platform = %+v, want %+v", wire.Platform, m.Platform)
+	}
+	if !reflect.DeepEqual(wire.SupportedPlatforms, wantPlatforms) {
+		t.Fatalf("serialized supported_platforms = %v, want %v", wire.SupportedPlatforms, wantPlatforms)
 	}
 
 	compact := CompactManifest()
@@ -78,44 +94,80 @@ func TestManifestPlatformMarksAreExactAndProseDerived(t *testing.T) {
 		}
 	}
 
-	wantFields := map[string][]string{
+	wantFields := map[string]map[string][]string{
 		"tslink install": {
-			"force_available", "force_command", "force_risk", "launchctl_output",
-			"launchctl_target", "loaded", "plist_path", "unavailable_domain",
+			"force_available": {"darwin"}, "force_command": {"darwin"}, "force_risk": {"darwin"},
+			"launchctl_output": {"darwin"}, "launchctl_target": {"darwin"}, "loaded": {"darwin"},
+			"plist_path": {"darwin"}, "unavailable_domain": {"darwin"},
+			"installed": {"linux", "windows"}, "path": {"linux", "windows"},
+			"service_manager": {"linux", "windows"}, "started": {"linux", "windows"},
 		},
 		"tslink uninstall": {
-			"detail", "force_available", "force_command", "force_risk", "launchctl_outcome",
-			"launchctl_output", "launchctl_target", "plist_path", "unavailable_domain",
+			"detail": {"darwin"}, "force_available": {"darwin"}, "force_command": {"darwin"},
+			"force_risk": {"darwin"}, "launchctl_outcome": {"darwin"}, "launchctl_output": {"darwin"},
+			"launchctl_target": {"darwin"}, "plist_path": {"darwin"}, "unavailable_domain": {"darwin"},
+			"path": {"linux", "windows"}, "service_manager": {"linux", "windows"},
 		},
 	}
 	markedFieldCount := 0
-	for commandPath, wantNames := range wantFields {
+	for commandPath, wantMarks := range wantFields {
 		fields := commands[commandPath].JSONResultFields
-		for _, name := range wantNames {
+		for name, wantPlatforms := range wantMarks {
 			field, ok := fields[name]
 			if !ok {
 				t.Fatalf("%s missing marked JSON result field %q", commandPath, name)
 			}
-			if !strings.HasPrefix(field.Description, "macOS only.") && !strings.HasPrefix(field.Description, "macOS failure only.") {
-				t.Fatalf("%s %s platforms were not derived from macOS prose: %+v", commandPath, name, field)
+			if !reflect.DeepEqual(field.Platforms, wantPlatforms) {
+				t.Fatalf("%s %s platforms = %v, want %v", commandPath, name, field.Platforms, wantPlatforms)
 			}
-			if !reflect.DeepEqual(field.Platforms, []string{"darwin"}) {
-				t.Fatalf("%s %s platforms = %v, want [darwin]", commandPath, name, field.Platforms)
-			}
-			markedFieldCount++
 		}
 	}
-	if markedFieldCount != 17 {
-		t.Fatalf("marked JSON result fields = %d, want 17", markedFieldCount)
-	}
+	platformWords := []string{"macOS", "Windows", "Linux", "launchd", "launchctl", "systemd", "plist", "LaunchAgent"}
 	for _, command := range m.Commands {
 		for name, field := range command.JSONResultFields {
-			proseScoped := strings.HasPrefix(field.Description, "macOS only.") || strings.HasPrefix(field.Description, "macOS failure only.")
-			if proseScoped != (len(field.Platforms) > 0) {
-				t.Fatalf("%s %s prose/mark disagreement: %+v", command.Path, name, field)
+			if len(field.Platforms) > 0 {
+				wantPlatforms, ok := wantFields[command.Path][name]
+				if !ok {
+					t.Fatalf("unexpected marked JSON result field %s %s: %+v", command.Path, name, field)
+				}
+				if !reflect.DeepEqual(field.Platforms, wantPlatforms) {
+					t.Fatalf("%s %s platforms = %v, want %v", command.Path, name, field.Platforms, wantPlatforms)
+				}
+				markedFieldCount++
+				continue
+			}
+			for _, word := range platformWords {
+				if strings.Contains(field.Description, word) {
+					t.Fatalf("%s %s description contains platform word %q without a mark: %+v", command.Path, name, word, field)
+				}
 			}
 		}
 	}
+	if markedFieldCount != 23 {
+		t.Fatalf("marked JSON result fields = %d, want 23", markedFieldCount)
+	}
+	if runtime.GOOS == "darwin" && markedFieldCount+len(markedFlags) != 25 {
+		t.Fatalf("Darwin total marked entries = %d, want 25 (2 flags + 23 result fields)", markedFieldCount+len(markedFlags))
+	}
+}
+
+func TestResultFieldPlatformWordTripwireRejectsUnmarkedScopePhrase(t *testing.T) {
+	defer func() {
+		value := recover()
+		if value == nil {
+			t.Fatal("platform-word tripwire accepted an unmarked result field")
+		}
+		if !strings.Contains(value.(string), `description contains platform word "macOS"`) {
+			t.Fatalf("tripwire panic = %v, want unmarked macOS diagnosis", value)
+		}
+	}()
+	fields := markProseScopedJSONResultFields(map[string]JSONResultFieldInfo{
+		"launchd_session": {
+			Type:        "string",
+			Description: "Only available on macOS. Synthetic probe field added by review-21 to test predicate blindness.",
+		},
+	})
+	mustValidateJSONResultFieldPlatformMarks("tslink uninstall", fields)
 }
 
 func TestPlatformMarkPropagatesToEveryInheritedPersistentFlagEntry(t *testing.T) {
@@ -144,6 +196,53 @@ func TestPlatformMarkPropagatesToEveryInheritedPersistentFlagEntry(t *testing.T)
 		if !found {
 			t.Fatalf("%s missing inherited platform-probe", test.path)
 		}
+	}
+}
+
+func TestMustMarkFlagPlatformsRejectsInheritedParentFlag(t *testing.T) {
+	root := &cobra.Command{Use: "tslink"}
+	child := &cobra.Command{Use: "child"}
+	sibling := &cobra.Command{Use: "sibling"}
+	root.PersistentFlags().Bool("force", false, "root persistent force")
+	root.AddCommand(child, sibling)
+	_ = commandFlags(child, "tslink child")
+
+	defer func() {
+		value := recover()
+		if value == nil {
+			t.Fatal("marking an inherited parent flag did not panic")
+		}
+		if !strings.Contains(value.(string), "mark tslink child --force: not registered on this command") {
+			t.Fatalf("panic = %v, want command-ownership diagnosis", value)
+		}
+		if got := flagManifestPlatforms(root.PersistentFlags().Lookup("force")); len(got) != 0 {
+			t.Fatalf("parent --force leaked platforms after rejected mark: %v", got)
+		}
+		for _, flag := range commandFlags(sibling, "tslink sibling") {
+			if flag.Name == "force" && len(flag.Platforms) != 0 {
+				t.Fatalf("sibling inherited --force leaked platforms after rejected mark: %v", flag.Platforms)
+			}
+		}
+	}()
+	mustMarkFlagPlatforms(child, "force", "darwin")
+}
+
+func TestMustMarkFlagPlatformsKeepsIndependentlyRegisteredSameNameFlagsIsolated(t *testing.T) {
+	root := &cobra.Command{Use: "tslink"}
+	a := &cobra.Command{Use: "a"}
+	b := &cobra.Command{Use: "b"}
+	a.Flags().Bool("force", false, "a force")
+	b.Flags().Bool("force", false, "b force")
+	root.AddCommand(a, b)
+	_ = commandFlags(a, "tslink a")
+	_ = commandFlags(b, "tslink b")
+
+	mustMarkFlagPlatforms(a, "force", "darwin")
+	if got := flagManifestPlatforms(a.Flags().Lookup("force")); !reflect.DeepEqual(got, []string{"darwin"}) {
+		t.Fatalf("a --force platforms = %v, want [darwin]", got)
+	}
+	if got := flagManifestPlatforms(b.Flags().Lookup("force")); len(got) != 0 {
+		t.Fatalf("b --force platforms = %v, want independent unmarked flag", got)
 	}
 }
 
@@ -401,6 +500,35 @@ func TestCompactManifestStaysBelowAgentTokenBudget(t *testing.T) {
 	}
 	if _, ok := compact.Commands["url"]; !ok {
 		t.Fatal("compact manifest missing url command")
+	}
+}
+
+func TestCompactManifestContractIsLivePlatformSpecificAndQualifierFree(t *testing.T) {
+	full := Manifest()
+	compact := CompactManifest()
+	if compact.SchemaVersion != full.SchemaVersion || compact.Platform != full.Platform {
+		t.Fatalf("compact provenance = schema %d platform %+v, want full schema %d platform %+v", compact.SchemaVersion, compact.Platform, full.SchemaVersion, full.Platform)
+	}
+	commandsType := reflect.TypeOf(compact.Commands)
+	if commandsType != reflect.TypeOf(map[string][]string{}) || commandsType.Elem().Elem().Kind() != reflect.String {
+		t.Fatalf("compact Commands type = %v, want map[string][]string with no qualifier-bearing entry shape", commandsType)
+	}
+	if _, ok := reflect.TypeOf(compact).FieldByName("SupportedPlatforms"); ok {
+		t.Fatal("compact manifest unexpectedly acquired full-manifest supported-platform qualifier context")
+	}
+	data, err := json.Marshal(compact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(data, &object); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := object["supported_platforms"]; ok {
+		t.Fatal("compact wire unexpectedly contains supported_platforms")
+	}
+	if _, ok := object["platform"]; !ok {
+		t.Fatal("compact wire is missing its live binary platform")
 	}
 }
 

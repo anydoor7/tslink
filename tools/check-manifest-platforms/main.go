@@ -17,7 +17,7 @@ import (
 	"github.com/monody0007/tslink/cmd"
 )
 
-var comparedGOOS = []string{"darwin", "linux", "windows"}
+var comparedGOOS = cmd.SupportedManifestPlatforms()
 
 type flagKey struct {
 	CommandPath string
@@ -65,7 +65,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "check-manifest-platforms:", err)
 		os.Exit(1)
 	}
-	fmt.Printf("check-manifest-platforms: verified %d platform-scoped flag entries across darwin, linux, windows\n", count)
+	fmt.Printf("check-manifest-platforms: verified %d platform-scoped flag entries across %s\n", count, strings.Join(comparedGOOS, ", "))
 }
 
 func verifyPlatformFlagMarks(manifests map[string]cmd.CLIManifest) (int, error) {
@@ -160,7 +160,10 @@ func normalizePlatformSet(platforms []string) ([]string, error) {
 	if len(platforms) == 0 {
 		return nil, fmt.Errorf("platforms must be non-empty when present")
 	}
-	known := map[string]bool{"darwin": true, "linux": true, "windows": true}
+	known := make(map[string]bool, len(cmd.SupportedManifestPlatforms()))
+	for _, goos := range cmd.SupportedManifestPlatforms() {
+		known[goos] = true
+	}
 	seen := map[string]bool{}
 	normalized := append([]string(nil), platforms...)
 	for _, goos := range normalized {

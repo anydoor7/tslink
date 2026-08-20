@@ -23,6 +23,7 @@ import (
 type CLIManifest struct {
 	SchemaVersion         int                         `json:"schema_version"`
 	Platform              PlatformInfo                `json:"platform"`
+	SupportedPlatforms    []string                    `json:"supported_platforms"`
 	RegistrySchemaVersion int                         `json:"registry_schema_version"`
 	Toolchain             ToolchainInfo               `json:"toolchain"`
 	ExitCodes             map[string]int              `json:"exit_codes"`
@@ -133,6 +134,24 @@ var supportedManifestPlatforms = map[string]struct{}{
 	"windows": {},
 }
 
+// SupportedManifestPlatforms returns a sorted copy of the GOOS set accepted by
+// manifest platform qualifiers. The full manifest and in-repository validators
+// derive from this authority so widening Product support cannot leave a silent
+// stale platform list behind.
+func SupportedManifestPlatforms() []string {
+	platforms := make([]string, 0, len(supportedManifestPlatforms))
+	for platform := range supportedManifestPlatforms {
+		platforms = append(platforms, platform)
+	}
+	sort.Strings(platforms)
+	return platforms
+}
+
+// CompactCLIManifest is a live, platform-specific command summary. It carries
+// the full manifest's schema version for envelope evolution, but Commands holds
+// flag names only and deliberately has no entry-qualifier shape. Because the
+// running binary supplies Platform and only its live command tree, absence of a
+// platforms qualifier in this compact form has no full-manifest semantics.
 type CompactCLIManifest struct {
 	SchemaVersion int                 `json:"schema_version"`
 	Platform      PlatformInfo        `json:"platform"`
@@ -147,6 +166,7 @@ func Manifest() CLIManifest {
 	m := CLIManifest{
 		SchemaVersion:         2,
 		Platform:              PlatformInfo{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH},
+		SupportedPlatforms:    SupportedManifestPlatforms(),
 		RegistrySchemaVersion: registry.CurrentRegistrySchemaVersion,
 		Toolchain: ToolchainInfo{
 			MinimumGoVersion:  "1.26.3",
@@ -221,10 +241,12 @@ func Manifest() CLIManifest {
 	var walk func(c *cobra.Command, prefix string)
 	walk = func(c *cobra.Command, prefix string) {
 		path := strings.TrimSpace(prefix + " " + c.Name())
+		resultFields := commandJSONResultFields(path)
+		mustValidateJSONResultFieldPlatformMarks(path, resultFields)
 		info := CommandInfo{
 			Path:             path,
 			Short:            platformNeutralCommandShort(path, c.Short),
-			JSONResultFields: commandJSONResultFields(path),
+			JSONResultFields: resultFields,
 		}
 		info.Flags = commandFlags(c, path)
 		sort.Slice(info.Flags, func(i, j int) bool { return info.Flags[i].Name < info.Flags[j].Name })
@@ -365,29 +387,54 @@ func uninstallJSONResultFields() map[string]JSONResultFieldInfo {
 	})
 }
 
+var resultFieldPlatformTripwires = []string{
+	"macOS", "Windows", "Linux", "launchd", "launchctl", "systemd", "plist", "LaunchAgent",
+}
+
 // markProseScopedJSONResultFields derives the structured qualifier from the
-// same sentence that documents the field. The two representations therefore
-// cannot drift without changing this one source value. Linux/Windows prose is
-// intentionally outside the JSON result field mark set.
+// leading sentence that documents the field. Any other platform-bearing prose
+// fails closed: an unmarked field would otherwise over-claim availability on
+// every supported platform.
 func markProseScopedJSONResultFields(fields map[string]JSONResultFieldInfo) map[string]JSONResultFieldInfo {
 	for name, field := range fields {
-		if strings.HasPrefix(field.Description, "macOS only.") || strings.HasPrefix(field.Description, "macOS failure only.") {
-			field.Platforms = []string{"darwin"}
-			fields[name] = field
+		switch {
+		case strings.HasPrefix(field.Description, "macOS only."), strings.HasPrefix(field.Description, "macOS failure only."):
+			field.Platforms = normalizeManifestPlatforms([]string{"darwin"})
+		case strings.HasPrefix(field.Description, "Linux and Windows only."):
+			field.Platforms = normalizeManifestPlatforms([]string{"linux", "windows"})
 		}
+		fields[name] = field
 	}
 	return fields
 }
 
+func mustValidateJSONResultFieldPlatformMarks(commandPath string, fields map[string]JSONResultFieldInfo) {
+	for name, field := range fields {
+		if len(field.Platforms) > 0 {
+			continue
+		}
+		for _, word := range resultFieldPlatformTripwires {
+			if strings.Contains(field.Description, word) {
+				panic(fmt.Sprintf("mark %s JSON result field %s: description contains platform word %q without a recognized scope clause", commandPath, name, word))
+			}
+		}
+	}
+}
+
 // mustMarkFlagPlatforms records platform scope on the concrete flag
-// registration. An annotation belongs to that command's pflag.Flag object, so
-// identically named flags on other commands remain independent. Persistent
-// annotations are retained by Cobra when the flag is inherited, causing every
-// emitted (command path, flag name) entry to carry the qualifier.
+// registration and rejects inherited parent flags that the named command does
+// not own. Independently registered same-name flags remain isolated. pflag
+// intentionally shares *Flag pointers when callers share a FlagSet, so that
+// pattern also shares annotations; check-manifest-platforms is the backstop for
+// a resulting stale mark. Persistent annotations are retained by Cobra when a
+// locally owned flag is inherited by descendants.
 func mustMarkFlagPlatforms(command *cobra.Command, name string, platforms ...string) {
 	normalized := normalizeManifestPlatforms(platforms)
 	flagSet := command.PersistentFlags()
 	if flagSet.Lookup(name) == nil {
+		if command.LocalFlags().Lookup(name) == nil {
+			panic(fmt.Sprintf("mark %s --%s: not registered on this command", command.CommandPath(), name))
+		}
 		flagSet = command.Flags()
 	}
 	if err := flagSet.SetAnnotation(name, manifestPlatformsAnnotation, normalized); err != nil {

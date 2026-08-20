@@ -251,7 +251,10 @@ func hasPlatformMark(entry map[string]json.RawMessage) (bool, error) {
 	if len(platforms) == 0 {
 		return false, fmt.Errorf("platforms must be a non-empty GOOS set when present")
 	}
-	known := map[string]struct{}{"darwin": {}, "linux": {}, "windows": {}}
+	known := make(map[string]struct{}, len(cmd.SupportedManifestPlatforms()))
+	for _, platform := range cmd.SupportedManifestPlatforms() {
+		known[platform] = struct{}{}
+	}
 	seen := make(map[string]struct{}, len(platforms))
 	for _, platform := range platforms {
 		if _, ok := known[platform]; !ok {

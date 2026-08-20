@@ -4,6 +4,11 @@
     "goos": "darwin",
     "goarch": "arm64"
   },
+  "supported_platforms": [
+    "darwin",
+    "linux",
+    "windows"
+  ],
   "registry_schema_version": 1,
   "toolchain": {
     "minimum_go_version": "1.26.3",
@@ -453,7 +458,11 @@
         },
         "installed": {
           "type": "boolean",
-          "description": "Linux and Windows only. Whether the platform startup artifact was installed."
+          "description": "Linux and Windows only. Whether the platform startup artifact was installed.",
+          "platforms": [
+            "linux",
+            "windows"
+          ]
         },
         "launchctl_output": {
           "type": "string",
@@ -478,7 +487,11 @@
         },
         "path": {
           "type": "string",
-          "description": "Linux and Windows only. Path to the platform startup artifact written by this invocation."
+          "description": "Linux and Windows only. Path to the platform startup artifact written by this invocation.",
+          "platforms": [
+            "linux",
+            "windows"
+          ]
         },
         "plist_path": {
           "type": "string",
@@ -489,11 +502,19 @@
         },
         "service_manager": {
           "type": "string",
-          "description": "Linux and Windows only. Platform startup mechanism responsible for the artifact."
+          "description": "Linux and Windows only. Platform startup mechanism responsible for the artifact.",
+          "platforms": [
+            "linux",
+            "windows"
+          ]
         },
         "started": {
           "type": "boolean",
-          "description": "Linux and Windows only. Whether the installed service was started by this invocation."
+          "description": "Linux and Windows only. Whether the installed service was started by this invocation.",
+          "platforms": [
+            "linux",
+            "windows"
+          ]
         },
         "unavailable_domain": {
           "type": "string",
@@ -1063,7 +1084,11 @@
         },
         "path": {
           "type": "string",
-          "description": "Linux and Windows only. Path to the platform startup artifact inspected or removed by this invocation."
+          "description": "Linux and Windows only. Path to the platform startup artifact inspected or removed by this invocation.",
+          "platforms": [
+            "linux",
+            "windows"
+          ]
         },
         "plist_path": {
           "type": "string",
@@ -1078,7 +1103,11 @@
         },
         "service_manager": {
           "type": "string",
-          "description": "Linux and Windows only. Platform startup mechanism responsible for the artifact."
+          "description": "Linux and Windows only. Platform startup mechanism responsible for the artifact.",
+          "platforms": [
+            "linux",
+            "windows"
+          ]
         },
         "unavailable_domain": {
           "type": "string",
