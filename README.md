@@ -1,6 +1,6 @@
 <p align="center">
   <h1 align="center">TSLink</h1>
-  <p align="center">Private Tailscale gateway for local services.<br>Give each HTTP, file, or TCP service its own tailnet identity with one command.</p>
+  <p align="center">Give any local service its own tailnet hostname with one command.<br>No admin console, no tags, no host approval, no Go program to write.</p>
 </p>
 
 <p align="center">
@@ -21,6 +21,24 @@
 ---
 
 ## Why TSLink?
+
+### What you skip
+
+Per-service hostnames are a first-class Tailscale feature. [Tailscale Services](https://tailscale.com/docs/features/tailscale-services) has been generally available since February 2026, and `tailscale serve --service=svc:web-server --https=443 127.0.0.1:8080` gives you `https://web-server.<tailnet>.ts.net` on a plain `tailscaled`. TSLink is built on [tsnet](https://tailscale.com/docs/features/tsnet), which Tailscale documents for exactly this purpose. The architecture here is the vendor's own recommended pattern.
+
+What TSLink changes is who can set it up and how long it takes. The native path asks for:
+
+- **Admin reach.** Defining a Service requires "Owner, Admin, or Network admin account permissions."
+- **A tagged host.** "You cannot use a device authenticated with a user account as a Service host."
+- **An approval step.** "An Admin, Network admin, or Owner must approve the host before it becomes active."
+- **A tailnet-wide policy edit** to scope access, through the admin console, GitOps, or the API. There is no `tailscale` command for editing ACLs.
+- **A Go program**, if you go the tsnet route directly. tsnet is a library, so each service is something you write and compile.
+
+TSLink asks for none of them. `tslink add ollama --proxy localhost:11434` points at a process that is already running, from an unprivileged account, and `--allow you@example.com` is a flag on that same command rather than a change to a shared policy file.
+
+That access list is enforced at the HTTP layer, so it complements tailnet ACLs rather than replacing them. Anything on your tailnet that can reach the port directly is still governed by your ACLs.
+
+### The broader landscape
 
 Traditional approaches to exposing local services — port forwarding, VPNs, ngrok, Cloudflare Tunnel — were not designed for a zero-trust world. They either expose your services to the public internet, route private data through third-party servers, or require significant operational overhead.
 

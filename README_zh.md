@@ -1,6 +1,6 @@
 <p align="center">
   <h1 align="center">TSLink</h1>
-  <p align="center">面向本地服务的私有 Tailscale 网关。<br>一条命令让每个 HTTP、文件或 TCP 服务获得独立 tailnet 身份。</p>
+  <p align="center">一条命令，给任何本地服务一个自己的 tailnet 主机名。<br>不用进管理后台，不用打标签，不用等审批，不用写 Go。</p>
 </p>
 
 <p align="center">
@@ -21,6 +21,24 @@
 ---
 
 ## 为什么需要 TSLink？
+
+### 你省掉的那些步骤
+
+给服务单独的主机名是 Tailscale 的原生能力。[Tailscale Services](https://tailscale.com/docs/features/tailscale-services) 自 2026 年 2 月起正式可用，`tailscale serve --service=svc:web-server --https=443 127.0.0.1:8080` 在普通 `tailscaled` 上就能得到 `https://web-server.<tailnet>.ts.net`。TSLink 建立在 [tsnet](https://tailscale.com/docs/features/tsnet) 之上，而 Tailscale 的文档正是为这个用途写的，所以这里的架构是官方推荐的模式本身。
+
+TSLink 改变的是谁能配、配多久。原生路径要求：
+
+- **管理员权限**。定义一个 Service 需要 Owner、Admin 或 Network admin 账号权限。
+- **宿主设备是 tag 身份**。官方原文：用户账号认证的设备不能作为 Service host。
+- **一次审批**。宿主生效前需要 Admin、Network admin 或 Owner 批准。
+- **一次 tailnet 全局策略修改**才能收窄访问范围，只能走管理后台、GitOps 或 API。编辑 ACL 没有 CLI 命令。
+- **一个 Go 程序**，如果直接用 tsnet。它是个库，每个服务都要自己写、自己编译。
+
+TSLink 这些都不要。`tslink add ollama --proxy localhost:11434` 指向的是一个已经在跑的进程，普通账号即可执行，`--allow you@example.com` 是同一条命令上的一个 flag，而不是对共享策略文件的一次改动。
+
+这份访问名单在 HTTP 层生效，所以它与 tailnet ACL 是互补关系。tailnet 上任何能直接连到该端口的东西，仍然由你的 ACL 管辖。
+
+### 更大的背景
 
 端口转发、VPN、ngrok、Cloudflare Tunnel — 这些传统方案不是为零信任时代设计的。它们要么把服务暴露到公网，要么让数据经过第三方，要么需要大量运维开销。
 
