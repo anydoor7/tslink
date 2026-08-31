@@ -1,6 +1,7 @@
 package security
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -46,6 +47,58 @@ func TestACLSideEffectPlanIsHighFrictionOptIn(t *testing.T) {
 	enabled := ACLMutationPlan("ensure_tags", []string{"tag:tsmain"}, true)
 	if !enabled.Mutates || enabled.Default != "explicitly_enabled" {
 		t.Fatalf("enabled plan = %+v, want mutating explicit opt-in", enabled)
+	}
+}
+
+func TestFunnelAutoProvisionPlanIsDefaultOnAuditableAndDisableable(t *testing.T) {
+	plan := FunnelAutoProvisionPlan("tag:tslink-funnel", []string{"tag:tsmain"}, true)
+	if plan.SchemaVersion != 1 || plan.ID != "remote.acl.funnel_auto_provision" || !plan.Mutates || plan.Default != "enabled" {
+		t.Fatalf("plan identity/default = %+v", plan)
+	}
+	if plan.OptInFlag != "" || plan.DisableFlag != "--no-auto-provision" {
+		t.Fatalf("plan gates = %+v, want default-on kill switch", plan)
+	}
+	encoded, err := json.Marshal(plan)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(encoded, &fields); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	if _, present := fields["opt_in_flag"]; present {
+		t.Fatalf("serialized default-on plan contains opt_in_flag: %s", encoded)
+	}
+	if fields["disable_flag"] != "--no-auto-provision" {
+		t.Fatalf("serialized disable_flag = %v, want --no-auto-provision", fields["disable_flag"])
+	}
+	if got := strings.Join(plan.Resources, ","); got != "tag:tslink-funnel,tag:tsmain" {
+		t.Fatalf("plan resources = %q, want shared tag and derived owner", got)
+	}
+	boundaries := strings.Join(plan.Boundaries, "\n")
+	for _, want := range []string{"httpsEnabled", "one Raw HuJSON read", "exact single target", "LosslessHuJSONFusedPatch", "DaemonKillSwitchWins"} {
+		if !strings.Contains(boundaries, want) {
+			t.Fatalf("plan boundaries = %q, want %q", boundaries, want)
+		}
+	}
+}
+
+func TestInviteMutationPlanAuditsExplicitCommandWithoutLeakingURL(t *testing.T) {
+	plan := InviteMutationPlan("device", "create", "82001", "app", 11055)
+	if plan.SchemaVersion != 1 || plan.ID != "remote.invite.device.create" || plan.Operation != "create_device_invite" || plan.RemoteSystem != "tailscale_device_invites" || !plan.Mutates || plan.Default != "explicit_command" {
+		t.Fatalf("plan identity = %+v", plan)
+	}
+	if plan.OptInFlag != "" || plan.DisableFlag != "" {
+		t.Fatalf("invite plan = %+v, want no redundant confirmation flag", plan)
+	}
+	joined := strings.Join(plan.Boundaries, "\n")
+	for _, want := range []string{"user-owned tskey-api-", "OAuth client secrets are rejected", "--print-link", "never constructed", "stable nodeId"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("boundaries = %q, want %q", joined, want)
+		}
+	}
+	if got := strings.Join(plan.Resources, ","); got != "82001,app,device:11055" || strings.Contains(got, "@") || strings.Contains(got, "login.tailscale.com") {
+		t.Fatalf("resources = %q, want invite/device identifiers without recipient PII or bearer URL", got)
 	}
 }
 

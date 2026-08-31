@@ -52,7 +52,12 @@
     "access_explain",
     "template_list",
     "template_plan",
-    "template_apply"
+    "template_apply",
+    "invite_user",
+    "invite_device",
+    "invite_list",
+    "invite_revoke",
+    "invite_resend"
   ],
   "credential_sources": {
     "recommended": [
@@ -125,12 +130,19 @@
     },
     {
       "command": "tslink serve",
-      "operation": "startup remote ACL tag ensure",
+      "operation": "startup ordinary remote ACL tag ensure",
       "default": "disabled",
       "required_flags": [
         "--manage-acl"
       ],
-      "boundary": "default serve does not rewrite shared tailnet ACL policy"
+      "boundary": "ordinary tagOwners creation remains disabled without --manage-acl; acknowledged Funnel services use the separately audited plan"
+    },
+    {
+      "command": "tslink serve",
+      "operation": "Funnel shared tag owner and exact nodeAttrs auto-provisioning",
+      "default": "enabled",
+      "required_flags": [],
+      "boundary": "default-on only for acknowledged Funnel services; disable process-wide with --no-auto-provision or per service with no_auto_provision"
     },
     {
       "command": "tslink tags delete-remote",
@@ -141,6 +153,184 @@
         "--manage-acl"
       ],
       "boundary": "requires destructive confirmation and explicit remote ACL opt-in"
+    },
+    {
+      "command": "tslink invite user",
+      "operation": "tailnet user invitation",
+      "default": "explicit named recipient",
+      "required_flags": null,
+      "boundary": "requires a user-owned tskey-api- token; --print-link selects self-delivery"
+    },
+    {
+      "command": "tslink invite device",
+      "operation": "external device sharing",
+      "default": "explicit named recipient and service",
+      "required_flags": null,
+      "boundary": "requires a user-owned tskey-api- token and exact TSLink nodeId ownership proof"
+    },
+    {
+      "command": "tslink invite revoke",
+      "operation": "invite revocation",
+      "default": "explicit invite kind and numeric ID",
+      "required_flags": [
+        "--kind"
+      ],
+      "boundary": "explicit user/device namespace selection; device invite revocation also requires exact TSLink nodeId ownership proof"
+    },
+    {
+      "command": "tslink invite resend",
+      "operation": "invite email resend",
+      "default": "explicit invite kind and numeric ID",
+      "required_flags": [
+        "--kind"
+      ],
+      "boundary": "explicit user/device namespace selection; requires a user-owned tskey-api- token and an invite originally created with email"
+    }
+  ],
+  "remote_side_effect_plans": [
+    {
+      "schema_version": 1,
+      "id": "remote.acl.mutation",
+      "operation": "ensure_tags",
+      "remote_system": "tailscale_policy_file",
+      "mutates": false,
+      "default": "disabled",
+      "opt_in_flag": "--manage-acl",
+      "resources": [
+        "tag:tsmain"
+      ],
+      "boundaries": [
+        "disabled by default; --manage-acl is required for ordinary tagOwners mutations",
+        "Raw HuJSON surgical AST patch preserves comments, formatting, and unknown keys byte-for-byte outside the requested edit",
+        "lossless preservation is covered by internal/tailapi TestEnsureFunnelAttr_LosslessHuJSONFusedPatch",
+        "uses the policy ETag returned by PolicyFile.Raw for If-Match"
+      ]
+    },
+    {
+      "schema_version": 1,
+      "id": "remote.acl.funnel_auto_provision",
+      "operation": "ensure_funnel_tag_owner_and_node_attr",
+      "remote_system": "tailscale_policy_file",
+      "mutates": true,
+      "default": "enabled",
+      "disable_flag": "--no-auto-provision",
+      "resources": [
+        "tag:tslink-funnel"
+      ],
+      "boundaries": [
+        "default-on only for services that recorded public_ack; the shared Funnel tag is derived at node construction and need not be persisted",
+        "tailnet settings httpsEnabled is read before any ACL write; disabled HTTPS returns the networking_settings remedy without a policy POST",
+        "one Raw HuJSON read and at most one ETag-guarded Set per reconcile transaction",
+        "tag owner identities are derived from existing service tags held by the OAuth client",
+        "nodeAttrs grants are created or modified only for an exact single target; broader existing Funnel coverage is read-only",
+        "lossless preservation is covered by internal/tailapi TestEnsureFunnelAttr_LosslessHuJSONFusedPatch",
+        "daemon and service kill switches are covered by cmd TestServeCmd_WiresFunnelProvisioningScopeAndKillSwitch and internal/server TestEnsureFunnelPolicyBeforeRestart_DaemonKillSwitchWins"
+      ]
+    },
+    {
+      "schema_version": 1,
+      "id": "remote.invite.user.create",
+      "operation": "create_user_invite",
+      "remote_system": "tailscale_user_invites",
+      "mutates": true,
+      "default": "explicit_command",
+      "resources": [
+        "\u003cinvite-id\u003e"
+      ],
+      "boundaries": [
+        "requires a stored user-owned tskey-api- access token; OAuth client secrets are rejected before any request",
+        "creation names a recipient in the command, but recipient PII is excluded from remote_side_effect_plan resources; --print-link omits email from the API body and returns the API-provided URL for self-delivery",
+        "invite URLs are returned verbatim and are never constructed or written to logs",
+        "device invite mutations require an exact stable nodeId recorded by the running TSLink service; hostname matching alone is not ownership proof"
+      ]
+    },
+    {
+      "schema_version": 1,
+      "id": "remote.invite.device.create",
+      "operation": "create_device_invite",
+      "remote_system": "tailscale_device_invites",
+      "mutates": true,
+      "default": "explicit_command",
+      "resources": [
+        "\u003cinvite-id\u003e",
+        "\u003cservice\u003e"
+      ],
+      "boundaries": [
+        "requires a stored user-owned tskey-api- access token; OAuth client secrets are rejected before any request",
+        "creation names a recipient in the command, but recipient PII is excluded from remote_side_effect_plan resources; --print-link omits email from the API body and returns the API-provided URL for self-delivery",
+        "invite URLs are returned verbatim and are never constructed or written to logs",
+        "device invite mutations require an exact stable nodeId recorded by the running TSLink service; hostname matching alone is not ownership proof"
+      ]
+    },
+    {
+      "schema_version": 1,
+      "id": "remote.invite.user.revoke",
+      "operation": "revoke_user_invite",
+      "remote_system": "tailscale_user_invites",
+      "mutates": true,
+      "default": "explicit_command",
+      "resources": [
+        "\u003cinvite-id\u003e"
+      ],
+      "boundaries": [
+        "requires a stored user-owned tskey-api- access token; OAuth client secrets are rejected before any request",
+        "creation names a recipient in the command, but recipient PII is excluded from remote_side_effect_plan resources; --print-link omits email from the API body and returns the API-provided URL for self-delivery",
+        "invite URLs are returned verbatim and are never constructed or written to logs",
+        "device invite mutations require an exact stable nodeId recorded by the running TSLink service; hostname matching alone is not ownership proof"
+      ]
+    },
+    {
+      "schema_version": 1,
+      "id": "remote.invite.device.revoke",
+      "operation": "revoke_device_invite",
+      "remote_system": "tailscale_device_invites",
+      "mutates": true,
+      "default": "explicit_command",
+      "resources": [
+        "\u003cinvite-id\u003e",
+        "\u003cservice\u003e"
+      ],
+      "boundaries": [
+        "requires a stored user-owned tskey-api- access token; OAuth client secrets are rejected before any request",
+        "creation names a recipient in the command, but recipient PII is excluded from remote_side_effect_plan resources; --print-link omits email from the API body and returns the API-provided URL for self-delivery",
+        "invite URLs are returned verbatim and are never constructed or written to logs",
+        "device invite mutations require an exact stable nodeId recorded by the running TSLink service; hostname matching alone is not ownership proof"
+      ]
+    },
+    {
+      "schema_version": 1,
+      "id": "remote.invite.user.resend",
+      "operation": "resend_user_invite",
+      "remote_system": "tailscale_user_invites",
+      "mutates": true,
+      "default": "explicit_command",
+      "resources": [
+        "\u003cinvite-id\u003e"
+      ],
+      "boundaries": [
+        "requires a stored user-owned tskey-api- access token; OAuth client secrets are rejected before any request",
+        "creation names a recipient in the command, but recipient PII is excluded from remote_side_effect_plan resources; --print-link omits email from the API body and returns the API-provided URL for self-delivery",
+        "invite URLs are returned verbatim and are never constructed or written to logs",
+        "device invite mutations require an exact stable nodeId recorded by the running TSLink service; hostname matching alone is not ownership proof"
+      ]
+    },
+    {
+      "schema_version": 1,
+      "id": "remote.invite.device.resend",
+      "operation": "resend_device_invite",
+      "remote_system": "tailscale_device_invites",
+      "mutates": true,
+      "default": "explicit_command",
+      "resources": [
+        "\u003cinvite-id\u003e",
+        "\u003cservice\u003e"
+      ],
+      "boundaries": [
+        "requires a stored user-owned tskey-api- access token; OAuth client secrets are rejected before any request",
+        "creation names a recipient in the command, but recipient PII is excluded from remote_side_effect_plan resources; --print-link omits email from the API body and returns the API-provided URL for self-delivery",
+        "invite URLs are returned verbatim and are never constructed or written to logs",
+        "device invite mutations require an exact stable nodeId recorded by the running TSLink service; hostname matching alone is not ownership proof"
+      ]
     }
   ],
   "release": {
@@ -279,6 +469,16 @@
           "default": "false",
           "scope": "inherited",
           "usage": "Output as JSON"
+        },
+        {
+          "name": "no-auto-provision",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Disable automatic Funnel policy provisioning (only valid with --funnel)",
+          "requires": [
+            "--funnel"
+          ]
         },
         {
           "name": "proxy",
@@ -432,6 +632,16 @@
           "default": "false",
           "scope": "inherited",
           "usage": "Output as JSON"
+        },
+        {
+          "name": "no-auto-provision",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Install the managed daemon with Funnel policy auto-provisioning disabled",
+          "platforms": [
+            "darwin"
+          ]
         }
       ],
       "json_result_fields": {
@@ -526,6 +736,208 @@
         "warning": {
           "type": "string",
           "description": "Actionable non-fatal warning on a successful install; omitted when no warning applies."
+        }
+      }
+    },
+    {
+      "path": "tslink invite",
+      "short": "Invite users to the tailnet or share TSLink-owned devices",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        }
+      ]
+    },
+    {
+      "path": "tslink invite device",
+      "short": "Share a TSLink-owned service device with an external user",
+      "flags": [
+        {
+          "name": "allow-exit-node",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Allow the recipient to use the shared device as an exit node"
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        },
+        {
+          "name": "multi-use",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Allow the device invite to be accepted more than once"
+        },
+        {
+          "name": "print-link",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Do not send email; return the API-provided invite URL for self-delivery"
+        }
+      ],
+      "json_result_fields": {
+        "emailed": {
+          "type": "boolean",
+          "description": "Explicit delivery fact: true when Tailscale sent or resent email, false for --print-link self-delivery."
+        },
+        "invite_url": {
+          "type": "string",
+          "description": "Invite acceptance URL returned verbatim by the Tailscale API; TSLink never constructs it."
+        },
+        "remote_side_effect_plan": {
+          "type": "object",
+          "description": "Auditable plan for the outward-facing invite mutation."
+        }
+      }
+    },
+    {
+      "path": "tslink invite list",
+      "short": "List open user and TSLink-owned device invites",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        },
+        {
+          "name": "show-urls",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Include bearer invite URLs in human and JSON output"
+        }
+      ],
+      "json_result_fields": {
+        "complete": {
+          "type": "boolean",
+          "description": "True only when every requested device target was checked without error; false means device results are partial."
+        },
+        "count": {
+          "type": "integer",
+          "description": "Total number of returned user and device invites."
+        },
+        "device_invites": {
+          "type": "array",
+          "description": "Invites for devices with exact TSLink nodeId ownership proof."
+        },
+        "device_targets": {
+          "type": "array",
+          "description": "Per-service device-invite check result; checked with invite_count distinguishes an empty result from a structured error."
+        },
+        "user_invites": {
+          "type": "array",
+          "description": "Open tailnet user invites."
+        }
+      }
+    },
+    {
+      "path": "tslink invite resend",
+      "short": "Resend an emailed user or TSLink-owned device invite",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        },
+        {
+          "name": "kind",
+          "type": "string",
+          "scope": "local",
+          "usage": "Required invite namespace: user or device"
+        }
+      ],
+      "json_result_fields": {
+        "emailed": {
+          "type": "boolean",
+          "description": "True after Tailscale accepted the email resend; resend output never repeats the bearer invite URL."
+        },
+        "remote_side_effect_plan": {
+          "type": "object",
+          "description": "Auditable plan for the outward-facing invite resend."
+        }
+      }
+    },
+    {
+      "path": "tslink invite revoke",
+      "short": "Revoke a user or TSLink-owned device invite",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        },
+        {
+          "name": "kind",
+          "type": "string",
+          "scope": "local",
+          "usage": "Required invite namespace: user or device"
+        }
+      ],
+      "json_result_fields": {
+        "remote_side_effect_plan": {
+          "type": "object",
+          "description": "Auditable plan for the outward-facing invite revocation."
+        },
+        "revoked": {
+          "type": "boolean",
+          "description": "True only after the Tailscale API accepted the revocation."
+        }
+      }
+    },
+    {
+      "path": "tslink invite user",
+      "short": "Invite a user to join the tailnet",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        },
+        {
+          "name": "print-link",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Do not send email; return the API-provided invite URL for self-delivery"
+        },
+        {
+          "name": "role",
+          "type": "string",
+          "default": "member",
+          "scope": "local",
+          "usage": "Role assigned on acceptance: member, admin, it-admin, network-admin, billing-admin, auditor"
+        }
+      ],
+      "json_result_fields": {
+        "emailed": {
+          "type": "boolean",
+          "description": "Explicit delivery fact: true when Tailscale sent or resent email, false for --print-link self-delivery."
+        },
+        "invite_url": {
+          "type": "string",
+          "description": "Invite acceptance URL returned verbatim by the Tailscale API; TSLink never constructs it."
+        },
+        "remote_side_effect_plan": {
+          "type": "object",
+          "description": "Auditable plan for the outward-facing invite mutation."
         }
       }
     },
@@ -800,6 +1212,13 @@
           "default": "false",
           "scope": "local",
           "usage": "Opt in to remote Tailscale ACL tag-owner mutation using a machine-readable side-effect plan"
+        },
+        {
+          "name": "no-auto-provision",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Disable automatic Funnel policy provisioning for every service in this serve process"
         },
         {
           "name": "no-browser",
@@ -1376,6 +1795,62 @@
     "invalid_tag": {
       "exit_code": 2,
       "description": "ACL tag is invalid"
+    },
+    "invite_api_forbidden": {
+      "exit_code": 3,
+      "description": "Tailscale rejected the user-owned token or its user permissions with HTTP 401 or 403"
+    },
+    "invite_api_key_required": {
+      "exit_code": 3,
+      "description": "a user-owned tskey-api- token is required and OAuth is not eligible"
+    },
+    "invite_device_ambiguous": {
+      "exit_code": 4,
+      "description": "multiple hostname candidates remain after ownership resolution"
+    },
+    "invite_device_ownership_unproven": {
+      "exit_code": 4,
+      "description": "TSLink lacks exact stable nodeId proof for the device"
+    },
+    "invite_id_invalid": {
+      "exit_code": 2,
+      "description": "invite ID is not a bare ASCII decimal string"
+    },
+    "invite_kind_invalid": {
+      "exit_code": 2,
+      "description": "invite namespace is not explicitly user or device"
+    },
+    "invite_not_found": {
+      "exit_code": 5,
+      "description": "invite or matching service device was not found"
+    },
+    "invite_rate_limited": {
+      "exit_code": 1,
+      "description": "Tailscale rate limited the invite operation"
+    },
+    "invite_recipient_invalid": {
+      "exit_code": 2,
+      "description": "invite recipient is missing"
+    },
+    "invite_request_invalid": {
+      "exit_code": 2,
+      "description": "Tailscale rejected the invite request as another 4xx input error"
+    },
+    "invite_resend_email_missing": {
+      "exit_code": 4,
+      "description": "an invite created without email cannot be resent"
+    },
+    "invite_response_invalid": {
+      "exit_code": 1,
+      "description": "Tailscale returned an invalid invite wire response"
+    },
+    "invite_role_invalid": {
+      "exit_code": 2,
+      "description": "invite role is outside the first-party enum"
+    },
+    "invite_state_conflict": {
+      "exit_code": 4,
+      "description": "Tailscale rejected the invite operation because current remote state conflicts with it (HTTP 409)"
     },
     "launchctl_domain_unavailable": {
       "exit_code": 1,

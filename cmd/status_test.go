@@ -154,6 +154,10 @@ func TestStatusAndListExposeFunnelFailureState(t *testing.T) {
 			Code:    registry.CodeFunnelCapabilityMissing,
 			Message: "nodeAttr funnel is missing",
 			Next:    []string{"fix Access controls Funnel policy"},
+			Provision: &registry.ProvisionOutcome{
+				Attempted: true, Target: registry.FunnelTag, Changed: false,
+				Reason: registry.ProvisionReasonNetmapTimeout, WriteOutcome: "unchanged",
+			},
 		},
 	}})
 	if err := tsruntime.Save(snapshotPath, snapshot); err != nil {
@@ -171,6 +175,9 @@ func TestStatusAndListExposeFunnelFailureState(t *testing.T) {
 	statusService := status.Services[0]
 	if statusService.Status != tsruntime.ServiceRuntimeFailed || !statusService.FunnelRequested || statusService.FunnelActive || statusService.FunnelState != tsruntime.FunnelStateCapabilityMissing || statusService.Error == nil || len(statusService.Error.Next) == 0 {
 		t.Fatalf("status service = %+v, want actionable Funnel failure", statusService)
+	}
+	if statusService.Error.Provision == nil || statusService.Error.Provision.Reason != registry.ProvisionReasonNetmapTimeout || statusService.Error.Provision.Target != registry.FunnelTag {
+		t.Fatalf("status provisioning = %+v, want machine-readable netmap timeout", statusService.Error.Provision)
 	}
 
 	urls, err := getStatusURLs(pidPath, regPath, snapshotPath)
@@ -198,7 +205,7 @@ func TestStatusAndListExposeFunnelFailureState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("json.Marshal(list service): %v", err)
 	}
-	for _, field := range []string{"funnel_requested", "funnel_active", "funnel_state", "error"} {
+	for _, field := range []string{"funnel_requested", "funnel_active", "funnel_state", "error", "provision", "attempted", "target", "changed", "reason", "write_outcome"} {
 		if !strings.Contains(string(wire), `"`+field+`"`) {
 			t.Fatalf("list JSON = %s, missing %s", wire, field)
 		}

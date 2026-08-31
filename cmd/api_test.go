@@ -585,6 +585,37 @@ func TestAPIAdd_FunnelAcceptsPublicAck(t *testing.T) {
 	}
 }
 
+func TestAPIAdd_FunnelPersistsNoAutoProvision(t *testing.T) {
+	h, _ := newTestHandler(t)
+	resp := sendRequest(t, h, APIRequest{
+		Action: "add", Name: "public-opt-out", Type: "proxy", Target: "localhost:3000",
+		Funnel: true, PublicAck: true, NoAutoProvision: true,
+	})
+	if !resp.OK {
+		t.Fatalf("expected ok, got error: %s", resp.Error)
+	}
+	reg, err := registry.Load(h.regPath)
+	if err != nil {
+		t.Fatalf("registry.Load() error = %v", err)
+	}
+	if len(reg.Services) != 1 || !reg.Services[0].NoAutoProvision {
+		t.Fatalf("registry services = %+v, want persisted no_auto_provision=true", reg.Services)
+	}
+	if got := strings.Join(reg.Services[0].Tags, ","); got != "tag:tsmain" {
+		t.Fatalf("persisted Funnel tags = %q, want only user/default tags", got)
+	}
+}
+
+func TestAPIAdd_RejectsNoAutoProvisionWithoutFunnel(t *testing.T) {
+	h, _ := newTestHandler(t)
+	resp := sendRequest(t, h, APIRequest{
+		Action: "add", Name: "private", Type: "proxy", Target: "localhost:3000", NoAutoProvision: true,
+	})
+	if resp.OK || !strings.Contains(resp.Error, "no_auto_provision is supported only when funnel is true") {
+		t.Fatalf("response = %+v, want Funnel-only field error", resp)
+	}
+}
+
 func TestAPIAdd_Proxy_WithControlURL(t *testing.T) {
 	h, _ := newTestHandler(t)
 
@@ -1253,8 +1284,8 @@ func TestAPIUnknownAction(t *testing.T) {
 	if !slices.Equal(resp.ValidActions, apiActionNames()) {
 		t.Fatalf("valid_actions = %v, want %v", resp.ValidActions, apiActionNames())
 	}
-	if len(resp.ValidActions) != 10 || !containsString(resp.ValidActions, apiActionManifest) {
-		t.Fatalf("valid_actions = %v, want the 9 existing actions plus manifest", resp.ValidActions)
+	if len(resp.ValidActions) != 15 || !containsString(resp.ValidActions, apiActionInviteResend) || !containsString(resp.ValidActions, apiActionManifest) {
+		t.Fatalf("valid_actions = %v, want the existing actions plus all five invite actions", resp.ValidActions)
 	}
 }
 

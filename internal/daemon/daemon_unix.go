@@ -80,7 +80,7 @@ func inspectProcessLiveness(pid int) processLiveness {
 // re-executed foreground `serve` observes the same opt-ins as the parent; a
 // dropped --manage-acl would silently disable the documented opt-in in daemon
 // mode.
-func Daemonize(outLog, errLog, controlURL string, manageACL bool) (int, error) {
+func Daemonize(outLog, errLog, controlURL string, manageACL, noAutoProvision bool) (int, error) {
 	exe, err := executable()
 	if err != nil {
 		return 0, fmt.Errorf("find executable: %w", err)
@@ -104,7 +104,7 @@ func Daemonize(outLog, errLog, controlURL string, manageACL bool) (int, error) {
 		return 0, fmt.Errorf("open stderr log: %w", err)
 	}
 
-	args := daemonServeArgs(controlURL, manageACL)
+	args := daemonServeArgs(controlURL, manageACL, noAutoProvision)
 
 	cmd := execCommand(exe, args...)
 	cmd.Stdout = stdout

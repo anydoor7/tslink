@@ -58,6 +58,10 @@ To remove the autostart:
 	  tslink install                Register the Startup script`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		noAutoProvision, err := cmd.Flags().GetBool("no-auto-provision")
+		if err != nil {
+			return fmt.Errorf("read --no-auto-provision: %w", err)
+		}
 		// No daemon-conflict guard is needed here. Unlike launchd/systemd, the
 		// Startup folder does not take ownership or start a process during install.
 		exe, err := windowsExecutablePathFn()
@@ -77,7 +81,7 @@ To remove the autostart:
 			return fmt.Errorf("create Startup directory: %w", err)
 		}
 
-		script := windowsStartupScript(exe)
+		script := windowsStartupScript(exe, noAutoProvision)
 		if err := os.WriteFile(startupPath, []byte(script), 0o644); err != nil {
 			return fmt.Errorf("write Startup script: %w", err)
 		}
@@ -106,8 +110,12 @@ func windowsStartupScriptPath() (string, error) {
 	return filepath.Join(appData, "Microsoft", "Windows", "Start Menu", "Programs", "Startup", windowsStartupScriptName), nil
 }
 
-func windowsStartupScript(exe string) string {
-	return fmt.Sprintf("CreateObject(\"Wscript.Shell\").Run \"\"\"\" & %s & \"\"\" serve\", 0, False\r\n", vbsStringLiteral(exe))
+func windowsStartupScript(exe string, noAutoProvision bool) string {
+	serveArgs := " serve"
+	if noAutoProvision {
+		serveArgs += " --no-auto-provision"
+	}
+	return fmt.Sprintf("CreateObject(\"Wscript.Shell\").Run \"\"\"\" & %s & \"\"\"%s\", 0, False\r\n", vbsStringLiteral(exe), serveArgs)
 }
 
 func vbsStringLiteral(value string) string {
@@ -115,5 +123,7 @@ func vbsStringLiteral(value string) string {
 }
 
 func init() {
+	installCmd.Flags().Bool("no-auto-provision", false, "Install the managed daemon with Funnel policy auto-provisioning disabled")
+	mustMarkFlagPlatforms(installCmd, "no-auto-provision", "windows")
 	rootCmd.AddCommand(installCmd)
 }

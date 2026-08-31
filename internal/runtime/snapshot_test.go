@@ -24,6 +24,7 @@ func testSnapshot() Snapshot {
 				Type: registry.TypeFile,
 				Path: "/tmp/app",
 			},
+			NodeID:      "n-runtime-owned",
 			CertDomains: []string{"app.tailnet.ts.net"},
 		},
 	})
@@ -87,6 +88,9 @@ func TestSaveLoadSnapshotAtomicPrivateFile(t *testing.T) {
 		t.Fatalf("services = %d, want 1", len(got.Services))
 	}
 	entry := got.Services[0]
+	if entry.NodeID != "n-runtime-owned" {
+		t.Fatalf("node_id = %q, want exact stable node ID", entry.NodeID)
+	}
 	if entry.Endpoint.Kind != inspect.EndpointKindHTTPS || entry.Endpoint.State != inspect.EndpointStateExact {
 		t.Fatalf("endpoint = %+v, want https exact", entry.Endpoint)
 	}

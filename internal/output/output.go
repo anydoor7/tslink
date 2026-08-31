@@ -267,6 +267,25 @@ func exitCodeForStableError(stable string) int {
 	switch stable {
 	case registry.CodeFeatureUnavailable:
 		return ExitUsage
+	case registry.CodeInviteRoleInvalid,
+		registry.CodeInviteRecipientInvalid,
+		registry.CodeInviteIDInvalid,
+		registry.CodeInviteKindInvalid,
+		registry.CodeInviteRequestInvalid:
+		return ExitUsage
+	case registry.CodeInviteAPIKeyRequired,
+		registry.CodeInviteAPIForbidden:
+		return ExitAuth
+	case registry.CodeInviteNotFound:
+		return ExitNotFound
+	case registry.CodeInviteDeviceAmbiguous,
+		registry.CodeInviteOwnershipUnproven,
+		registry.CodeInviteResendEmailMissing,
+		registry.CodeInviteStateConflict:
+		return ExitConflict
+	case registry.CodeInviteRateLimited,
+		registry.CodeInviteResponseInvalid:
+		return ExitError
 	case registry.CodeFunnelPublicAckRequired:
 		return ExitUsage
 	case registry.CodeServiceTypeAmbiguous,

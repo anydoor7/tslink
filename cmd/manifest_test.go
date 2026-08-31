@@ -15,6 +15,7 @@ import (
 	"github.com/monody0007/tslink/internal/output"
 	"github.com/monody0007/tslink/internal/registry"
 	tsruntime "github.com/monody0007/tslink/internal/runtime"
+	"github.com/monody0007/tslink/internal/security"
 	"github.com/spf13/cobra"
 )
 
@@ -74,7 +75,7 @@ func TestManifestPlatformMarksAreExactAndProseDerived(t *testing.T) {
 		}
 	}
 	if runtime.GOOS == "darwin" {
-		want := []string{"tslink install --force", "tslink uninstall --force"}
+		want := []string{"tslink install --force", "tslink install --no-auto-provision", "tslink uninstall --force"}
 		if !reflect.DeepEqual(markedFlags, want) {
 			t.Fatalf("marked flags = %v, want exactly %v", markedFlags, want)
 		}
@@ -157,8 +158,8 @@ func TestManifestPlatformMarksAreExactAndProseDerived(t *testing.T) {
 	if markedFieldCount != 23 {
 		t.Fatalf("marked JSON result fields = %d, want 23", markedFieldCount)
 	}
-	if runtime.GOOS == "darwin" && markedFieldCount+len(markedFlags) != 25 {
-		t.Fatalf("Darwin total marked entries = %d, want 25 (2 flags + 23 result fields)", markedFieldCount+len(markedFlags))
+	if runtime.GOOS == "darwin" && markedFieldCount+len(markedFlags) != 26 {
+		t.Fatalf("Darwin total marked entries = %d, want 26 (3 flags + 23 result fields)", markedFieldCount+len(markedFlags))
 	}
 }
 
@@ -346,11 +347,16 @@ func TestManifestCarriesMachineConsumerFacts(t *testing.T) {
 	if !containsString(m.APIActions, apiActionDoctor) ||
 		!containsString(m.APIActions, apiActionAccessExplain) ||
 		!containsString(m.APIActions, apiActionTemplateApply) ||
+		!containsString(m.APIActions, apiActionInviteUser) ||
+		!containsString(m.APIActions, apiActionInviteDevice) ||
+		!containsString(m.APIActions, apiActionInviteList) ||
+		!containsString(m.APIActions, apiActionInviteRevoke) ||
+		!containsString(m.APIActions, apiActionInviteResend) ||
 		!containsString(m.APIActions, apiActionManifest) {
 		t.Fatalf("api actions missing shipped actions: %v", m.APIActions)
 	}
-	if len(m.APIActions) != 10 {
-		t.Fatalf("api actions = %v, want the 9 existing actions plus manifest", m.APIActions)
+	if len(m.APIActions) != 15 {
+		t.Fatalf("api actions = %v, want the existing actions plus all five invite actions", m.APIActions)
 	}
 	if m.Release.PublicReleaseAvailable || m.Release.PrebuiltAvailable || m.Release.HomebrewTapAvailable {
 		t.Fatalf("release availability must stay false before first public readback: %#v", m.Release)
@@ -538,6 +544,20 @@ func TestManifestErrorExitTaxonomyMatchesRuntime(t *testing.T) {
 		registry.CodeFunnelCapabilityMissing:    registry.FunnelCapabilityMissingError("svc", errors.New("missing")),
 		registry.CodeFunnelListenFailed:         registry.FunnelListenFailedError("svc", errors.New("listen")),
 		registry.CodeServiceStartTimeout:        registry.ServiceStartTimeoutError("svc", time.Second),
+		registry.CodeInviteAPIKeyRequired:       registry.CodedError{Code: registry.CodeInviteAPIKeyRequired, Message: "API key required"},
+		registry.CodeInviteRoleInvalid:          registry.CodedError{Code: registry.CodeInviteRoleInvalid, Message: "role invalid"},
+		registry.CodeInviteRecipientInvalid:     registry.CodedError{Code: registry.CodeInviteRecipientInvalid, Message: "recipient invalid"},
+		registry.CodeInviteNotFound:             registry.CodedError{Code: registry.CodeInviteNotFound, Message: "invite missing"},
+		registry.CodeInviteDeviceAmbiguous:      registry.CodedError{Code: registry.CodeInviteDeviceAmbiguous, Message: "device ambiguous"},
+		registry.CodeInviteOwnershipUnproven:    registry.CodedError{Code: registry.CodeInviteOwnershipUnproven, Message: "ownership unproven"},
+		registry.CodeInviteAPIForbidden:         registry.CodedError{Code: registry.CodeInviteAPIForbidden, Message: "forbidden"},
+		registry.CodeInviteResendEmailMissing:   registry.CodedError{Code: registry.CodeInviteResendEmailMissing, Message: "email missing"},
+		registry.CodeInviteIDInvalid:            registry.CodedError{Code: registry.CodeInviteIDInvalid, Message: "ID invalid"},
+		registry.CodeInviteKindInvalid:          registry.CodedError{Code: registry.CodeInviteKindInvalid, Message: "kind invalid"},
+		registry.CodeInviteRateLimited:          registry.CodedError{Code: registry.CodeInviteRateLimited, Message: "rate limited"},
+		registry.CodeInviteStateConflict:        registry.CodedError{Code: registry.CodeInviteStateConflict, Message: "state conflict"},
+		registry.CodeInviteRequestInvalid:       registry.CodedError{Code: registry.CodeInviteRequestInvalid, Message: "request invalid"},
+		registry.CodeInviteResponseInvalid:      registry.CodedError{Code: registry.CodeInviteResponseInvalid, Message: "response invalid"},
 	}
 	manifest := errorCodeManifest()
 	if len(manifest) != len(tests) {
@@ -552,6 +572,16 @@ func TestManifestErrorExitTaxonomyMatchesRuntime(t *testing.T) {
 		if failure.Error == nil || failure.Error.Code != stable || failure.Code != info.ExitCode || output.ExitCode(err) != info.ExitCode {
 			t.Fatalf("%s manifest=%+v runtime envelope=%+v runtime exit=%d", stable, info, failure, output.ExitCode(err))
 		}
+	}
+	if got := manifest[registry.CodeInviteRateLimited].ExitCode; got != output.ExitError {
+		t.Fatalf("invite_rate_limited exit = %d, want general error %d rather than conflict", got, output.ExitError)
+	}
+	if got := manifest[registry.CodeInviteStateConflict].ExitCode; got != output.ExitConflict {
+		t.Fatalf("invite_state_conflict exit = %d, want conflict %d", got, output.ExitConflict)
+	}
+	authDescription := manifest[registry.CodeInviteAPIForbidden].Description
+	if !strings.Contains(authDescription, "401") || !strings.Contains(authDescription, "403") {
+		t.Fatalf("invite_api_forbidden description = %q, want both runtime auth statuses", authDescription)
 	}
 }
 
@@ -605,6 +635,51 @@ func TestManifestHighRiskFlagsAndCredentialBoundaries(t *testing.T) {
 	assertHighRisk("tslink login", "--manage-acl")
 	assertHighRisk("tslink serve", "--manage-acl")
 	assertHighRisk("tslink tags delete-remote", "--force", "--manage-acl")
+	assertHighRisk("tslink invite user")
+	assertHighRisk("tslink invite device")
+	assertHighRisk("tslink invite revoke", "--kind")
+	assertHighRisk("tslink invite resend", "--kind")
+
+	var funnelPlan *HighRiskOperation
+	for i := range m.HighRiskOperations {
+		operation := &m.HighRiskOperations[i]
+		if strings.Contains(operation.Operation, "Funnel shared tag owner") {
+			funnelPlan = operation
+			break
+		}
+	}
+	if funnelPlan == nil || funnelPlan.Command != "tslink serve" || funnelPlan.Default != "enabled" || len(funnelPlan.RequiredFlags) != 0 || !strings.Contains(funnelPlan.Boundary, "--no-auto-provision") {
+		t.Fatalf("Funnel high-risk operation = %+v, want default-on operation with kill switch", funnelPlan)
+	}
+	var remotePlan *security.RemoteSideEffectPlan
+	for i := range m.RemoteSideEffectPlans {
+		plan := &m.RemoteSideEffectPlans[i]
+		if plan.ID == "remote.acl.funnel_auto_provision" {
+			remotePlan = plan
+			break
+		}
+	}
+	if remotePlan == nil || !remotePlan.Mutates || remotePlan.Default != "enabled" || remotePlan.DisableFlag != "--no-auto-provision" || !containsString(remotePlan.Resources, registry.FunnelTag) {
+		t.Fatalf("Funnel remote side-effect plan = %+v, want auditable default-on mutation", remotePlan)
+	}
+	invitePlanIDs := map[string]bool{
+		"remote.invite.user.create":   false,
+		"remote.invite.device.create": false,
+		"remote.invite.user.revoke":   false,
+		"remote.invite.device.revoke": false,
+		"remote.invite.user.resend":   false,
+		"remote.invite.device.resend": false,
+	}
+	for _, plan := range m.RemoteSideEffectPlans {
+		if _, ok := invitePlanIDs[plan.ID]; ok {
+			invitePlanIDs[plan.ID] = plan.Mutates && plan.Default == "explicit_command" && plan.OptInFlag == ""
+		}
+	}
+	for id, valid := range invitePlanIDs {
+		if !valid {
+			t.Fatalf("manifest invite side-effect plan %s missing or invalid: %+v", id, m.RemoteSideEffectPlans)
+		}
+	}
 
 	var sawStdin, sawArgvAvoid bool
 	for _, src := range m.CredentialSources.Automation {
@@ -656,6 +731,8 @@ func TestManifestCommandsCarryInheritedFlags(t *testing.T) {
 	assertFlag("tslink login", "client-secret-stdin")
 	assertFlag("tslink login", "manage-acl")
 	assertFlag("tslink serve", "manage-acl")
+	assertFlag("tslink serve", "no-auto-provision")
+	assertFlag("tslink install", "no-auto-provision")
 	assertFlag("tslink tags delete-remote", "force")
 	assertFlag("tslink tags delete-remote", "manage-acl")
 	assertFlag("tslink status", "json")
@@ -750,11 +827,36 @@ func TestManifestFlagsAreSelfDescribingAndRelationshipsAreExplicit(t *testing.T)
 	if !containsString(funnel.Requires, "--public") || !containsString(funnel.Conflicts, "--allow") {
 		t.Fatalf("add --funnel relationships = %+v", funnel)
 	}
+	noAutoProvision := flag("tslink add", "no-auto-provision")
+	if !containsString(noAutoProvision.Requires, "--funnel") {
+		t.Fatalf("add --no-auto-provision relationships = %+v", noAutoProvision)
+	}
 	for _, name := range []string{"domain", "acme-email"} {
 		reserved := flag("tslink add", name)
 		if !strings.HasPrefix(reserved.Usage, "[UNAVAILABLE]") {
 			t.Fatalf("add --%s usage = %q, want [UNAVAILABLE] prefix", name, reserved.Usage)
 		}
+	}
+	showURLs := flag("tslink invite list", "show-urls")
+	if showURLs.Default != "false" || !strings.Contains(showURLs.Usage, "bearer invite URLs") {
+		t.Fatalf("invite list --show-urls = %+v, want explicit default-off bearer disclosure", showURLs)
+	}
+	for _, command := range []string{"tslink invite revoke", "tslink invite resend"} {
+		kind := flag(command, "kind")
+		if kind.Default != "" || !strings.Contains(kind.Usage, "Required invite namespace") {
+			t.Fatalf("%s --kind = %+v, want explicit required namespace", command, kind)
+		}
+	}
+	listFields := commands["tslink invite list"].JSONResultFields
+	if complete, ok := listFields["complete"]; !ok || complete.Type != "boolean" || !strings.Contains(complete.Description, "partial") {
+		t.Fatalf("invite list manifest complete field = %+v present=%t, want explicit partial-result signal", complete, ok)
+	}
+	if _, ok := listFields["device_targets"]; !ok {
+		t.Fatal("invite list manifest missing per-target device check results")
+	}
+	resendFields := commands["tslink invite resend"].JSONResultFields
+	if _, ok := resendFields["invite_url"]; ok {
+		t.Fatal("invite resend manifest still advertises invite_url")
 	}
 }
 
@@ -763,8 +865,10 @@ func TestCompactManifestStaysBelowAgentTokenBudget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("json.Marshal: %v", err)
 	}
-	if len(data) >= 2000 {
-		t.Fatalf("compact manifest = %d bytes, want < 2000", len(data))
+	// The explicit invite namespace flag and five stable invite error codes add
+	// machine contract surface; keep a fixed ceiling while accounting for it.
+	if len(data) >= 2200 {
+		t.Fatalf("compact manifest = %d bytes, want < 2200", len(data))
 	}
 	compact := CompactManifest()
 	if compact.ErrorCodes[registry.CodeURLNotReady] != 5 {
@@ -772,6 +876,11 @@ func TestCompactManifestStaysBelowAgentTokenBudget(t *testing.T) {
 	}
 	if _, ok := compact.Commands["url"]; !ok {
 		t.Fatal("compact manifest missing url command")
+	}
+	for _, command := range []string{"invite user", "invite device", "invite list", "invite revoke", "invite resend"} {
+		if _, ok := compact.Commands[command]; !ok {
+			t.Fatalf("compact manifest missing %s command", command)
+		}
 	}
 }
 

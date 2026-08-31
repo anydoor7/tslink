@@ -23,9 +23,11 @@ import (
 	"github.com/monody0007/tslink/internal/metrics"
 	"github.com/monody0007/tslink/internal/registry"
 	runtimesnapshot "github.com/monody0007/tslink/internal/runtime"
+	"github.com/monody0007/tslink/internal/security"
 	"github.com/monody0007/tslink/internal/tailapi"
 	"tailscale.com/ipn"
 	"tailscale.com/ipn/ipnstate"
+	"tailscale.com/tailcfg"
 	"tailscale.com/tsnet"
 )
 
@@ -40,6 +42,7 @@ type tsnetServer interface {
 }
 
 func newTSNetServer(svc registry.Service, stateDir, authKey, controlURL string) tsnetServer {
+	svc = serviceForNodeConstruction(svc)
 	advertiseTags := append([]string(nil), svc.Tags...)
 	if authKey == "" {
 		// Interactive enrollment creates a user-owned node. Advertising tags on
@@ -79,6 +82,8 @@ var (
 	}
 	interactiveStatusPollInterval = 100 * time.Millisecond
 	nodeStartupTimeout            = 30 * time.Second
+	funnelCapabilityWaitTimeout   = 10 * time.Second
+	funnelCapabilityPollInterval  = 250 * time.Millisecond
 )
 
 var (
@@ -215,6 +220,7 @@ var newRegistryWatcherFn = func() (registryWatcher, error) {
 type ServiceNode struct {
 	tsnetSrv             tsnetServer
 	service              registry.Service
+	nodeID               string
 	runtimeHost          string
 	funnelListenerActive bool
 	listener             net.Listener
@@ -226,6 +232,11 @@ type ServiceNode struct {
 
 // EnsureTagsFunc is the signature for ensuring ACL tags exist.
 type EnsureTagsFunc func(ctx context.Context, tags []string) error
+
+// EnsureFunnelAttrFunc is the signature for the fused, lossless Funnel policy
+// transaction. The request includes ordinary tags only when --manage-acl is
+// enabled; the shared Funnel owner and nodeAttrs edits remain default-on.
+type EnsureFunnelAttrFunc func(ctx context.Context, request tailapi.FunnelPolicyRequest) (tailapi.PolicyMutationResult, error)
 
 // AuthKeyProvider resolves auth material for a service immediately before its tsnet node starts.
 type AuthKeyProvider func(ctx context.Context, svc registry.Service) (string, error)
@@ -257,6 +268,8 @@ type Server struct {
 	cfgDir                  string
 	metrics                 *metrics.Metrics
 	ensureTagsFn            EnsureTagsFunc
+	ensureFunnelAttrFn      EnsureFunnelAttrFunc
+	autoProvisionFunnel     bool
 	authHandoffFn           AuthHandoffFunc
 	cleanupNodesFn          CleanupStaleNodesFunc
 	shuttingDown            atomic.Bool
@@ -281,25 +294,43 @@ func New(authKey, controlURL string) (*Server, error) {
 		return nil, err
 	}
 	return &Server{
-		nodes:             make(map[string]*ServiceNode),
-		serviceFailures:   make(map[string]runtimesnapshot.ServiceState),
-		reconcileGate:     make(chan struct{}, 1),
-		syncResultChanged: make(chan struct{}),
-		authKey:           authKey,
-		authKeyProvider:   staticAuthKeyProvider(authKey),
-		credentialed:      authKey != "",
-		controlURL:        controlURL,
-		cfgDir:            cfgDir,
-		metrics:           metrics.New(),
-		cleanupNodesFn:    tailapi.CleanupStaleNodesResult,
-		daemonPID:         os.Getpid(),
-		daemonStartedAt:   time.Now().UTC(),
+		nodes:               make(map[string]*ServiceNode),
+		serviceFailures:     make(map[string]runtimesnapshot.ServiceState),
+		reconcileGate:       make(chan struct{}, 1),
+		syncResultChanged:   make(chan struct{}),
+		authKey:             authKey,
+		authKeyProvider:     staticAuthKeyProvider(authKey),
+		credentialed:        authKey != "",
+		controlURL:          controlURL,
+		cfgDir:              cfgDir,
+		metrics:             metrics.New(),
+		cleanupNodesFn:      tailapi.CleanupStaleNodesResult,
+		ensureFunnelAttrFn:  tailapi.EnsureFunnelAttr,
+		autoProvisionFunnel: true,
+		daemonPID:           os.Getpid(),
+		daemonStartedAt:     time.Now().UTC(),
 	}, nil
 }
 
 // SetEnsureTagsFn sets the function called to ensure ACL tags before starting nodes.
 func (s *Server) SetEnsureTagsFn(fn EnsureTagsFunc) {
 	s.ensureTagsFn = fn
+}
+
+// SetEnsureFunnelAttrFn sets the function used for automatic Funnel policy
+// provisioning.
+func (s *Server) SetEnsureFunnelAttrFn(fn EnsureFunnelAttrFunc) {
+	if fn == nil {
+		s.ensureFunnelAttrFn = tailapi.EnsureFunnelAttr
+		return
+	}
+	s.ensureFunnelAttrFn = fn
+}
+
+// SetAutoProvisionFunnel applies the daemon-wide kill switch. False wins over
+// every service's default-on setting without mutating registry.json.
+func (s *Server) SetAutoProvisionFunnel(enabled bool) {
+	s.autoProvisionFunnel = enabled
 }
 
 // SetAuthKeyProvider sets the function used to resolve auth material per service.
@@ -506,6 +537,35 @@ func (s *Server) syncNodesWithOutcome(ctx context.Context) (outcome syncOutcome,
 		return outcome, generationCtx.Err()
 	}
 
+	// Complete every policy read-modify-write before stopping a running node or
+	// deleting its enrolled state. A failed Funnel preflight is isolated to the
+	// affected services, so an existing private listener and node identity stay
+	// intact while unrelated services continue reconciling.
+	tagsToEnsure := uniqueDesiredTags(desired, validationFailures)
+	policyFailures, provisionOutcomes, fusedTagsEnsured := s.ensureFunnelPolicyBeforeRestart(generationCtx, desired, validationFailures, tagsToEnsure)
+	if !fusedTagsEnsured && s.ensureTagsFn != nil && len(tagsToEnsure) > 0 {
+		if err := ensureTagsBeforeRestart(generationCtx, s.ensureTagsFn, tagsToEnsure); err != nil {
+			switch {
+			case errors.Is(err, tailapi.ErrNoAPIClient):
+				slog.Warn("degraded mode: skipped ACL tag ensure", "reason", err.Error(), "tags", tagsToEnsure, "degraded_mode", true)
+			case errors.Is(err, tailapi.ErrPolicyConflict):
+				// A concurrent editor won both fresh ETag races. Do not turn an
+				// opportunistic, explicitly enabled tag ensure into an all-service
+				// startup outage; per-service auth/start errors remain isolated.
+				slog.Warn("degraded mode: skipped ACL tag ensure after fresh ETag retry", "reason", err.Error(), "tags", tagsToEnsure, "degraded_mode", true)
+			case errors.Is(err, tailapi.ErrPolicyAccessDenied):
+				// A stored OAuth client can authenticate tsnet successfully while
+				// lacking ACL write scope. Keep startup available and let per-service
+				// key/start errors identify any tag that truly cannot be used.
+				slog.Warn("degraded mode: skipped ACL tag ensure because policy access was forbidden", "reason", err.Error(), "tags", tagsToEnsure, "degraded_mode", true)
+			default:
+				// This return is intentionally before the stop phase: even a
+				// persistent policy failure cannot destroy a working identity.
+				return outcome, fmt.Errorf("ensure ACL tags before restart: %w", err)
+			}
+		}
+	}
+
 	s.mu.Lock()
 	if err := s.ensureRunning(generationCtx); err != nil {
 		s.mu.Unlock()
@@ -535,6 +595,9 @@ func (s *Server) syncNodesWithOutcome(ctx context.Context) (outcome syncOutcome,
 			slog.Warn("stopping node whose service no longer validates", "name", name, "code", failure.Error.Code)
 			s.stopNodeLocked(name, false)
 			s.serviceFailures[name] = failure
+		} else if failure, blocked := policyFailures[name]; blocked {
+			slog.Warn("keeping existing node identity because Funnel policy preflight failed", "name", name, "reason", failure.Error.Provision.Reason)
+			s.serviceFailures[name] = failure
 		} else if serviceChangedWithFallback(node.service, svc, s.controlURL) {
 			authIdentityChanged := s.authIdentityChanged(node.service, svc)
 			slog.Info("restarting node", "name", name, "auth_identity_changed", authIdentityChanged)
@@ -549,9 +612,14 @@ func (s *Server) syncNodesWithOutcome(ctx context.Context) (outcome syncOutcome,
 			}
 		}
 	}
+	for name, failure := range policyFailures {
+		s.serviceFailures[name] = failure
+	}
 	for name, failure := range s.serviceFailures {
 		svc, exists := desired[name]
-		if !exists || serviceChangedWithFallback(failure.Service, svc, s.controlURL) {
+		_, stillPolicyBlocked := policyFailures[name]
+		resolvedPolicyFailure := failure.Error != nil && failure.Error.Provision != nil && !stillPolicyBlocked
+		if !exists || resolvedPolicyFailure || serviceChangedWithFallback(failure.Service, svc, s.controlURL) {
 			delete(s.serviceFailures, name)
 		}
 	}
@@ -560,36 +628,6 @@ func (s *Server) syncNodesWithOutcome(ctx context.Context) (outcome syncOutcome,
 	if err := s.cleanupAuthIdentityNodes(generationCtx, authIdentityRestartTargets); err != nil {
 		slog.Warn("failed to cleanup stale tailnet nodes before auth identity restart; continuing restart", "error", err)
 		reloadErrs = append(reloadErrs, err)
-	}
-
-	// Ensure ACL tags exist before starting new/changed nodes
-	if s.ensureTagsFn != nil {
-		var tagsToEnsure []string
-		tagSet := make(map[string]struct{})
-		for name, svc := range desired {
-			if s.nodeRunning(name) {
-				continue
-			}
-			if _, invalid := validationFailures[name]; invalid {
-				continue
-			}
-			for _, tag := range svc.Tags {
-				if _, seen := tagSet[tag]; !seen {
-					tagSet[tag] = struct{}{}
-					tagsToEnsure = append(tagsToEnsure, tag)
-				}
-			}
-		}
-		if len(tagsToEnsure) > 0 {
-			if err := s.ensureTagsFn(generationCtx, tagsToEnsure); err != nil {
-				if errors.Is(err, tailapi.ErrNoAPIClient) {
-					slog.Warn("degraded mode: skipped ACL tag ensure", "reason", err.Error(), "tags", tagsToEnsure, "degraded_mode", true)
-				} else {
-					slog.Error("failed to ensure ACL tags", "error", err)
-					return outcome, fmt.Errorf("ensure ACL tags before start: %w", err)
-				}
-			}
-		}
 	}
 
 	// Start nodes for new or changed services
@@ -613,11 +651,18 @@ func (s *Server) syncNodesWithOutcome(ctx context.Context) (outcome syncOutcome,
 			s.mu.Unlock()
 			continue
 		}
+		if _, blocked := policyFailures[name]; blocked {
+			s.mu.Lock()
+			s.writeRuntimeSnapshotLocked(registryFingerprint, false)
+			s.mu.Unlock()
+			continue
+		}
 		if err := s.ensureRunning(generationCtx); err != nil {
 			startErrs = append(startErrs, err)
 			break
 		}
-		if err := s.startNodeLocked(generationCtx, svc); err != nil {
+		provision := provisionOutcomes[name]
+		if err := s.startNodeLocked(generationCtx, svc, provision); err != nil {
 			if generation != s.syncGeneration.Load() {
 				return outcome, nil
 			}
@@ -654,6 +699,290 @@ func (s *Server) syncNodesWithOutcome(ctx context.Context) (outcome syncOutcome,
 	s.mu.Unlock()
 	outcome.committed = true
 	return outcome, nil
+}
+
+func uniqueDesiredTags(desired map[string]registry.Service, validationFailures map[string]runtimesnapshot.ServiceState) []string {
+	names := make([]string, 0, len(desired))
+	for name := range desired {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	seen := make(map[string]struct{})
+	var tags []string
+	for _, name := range names {
+		if _, invalid := validationFailures[name]; invalid {
+			continue
+		}
+		for _, tag := range desired[name].Tags {
+			if tag == registry.FunnelTag {
+				continue
+			}
+			if _, ok := seen[tag]; ok {
+				continue
+			}
+			seen[tag] = struct{}{}
+			tags = append(tags, tag)
+		}
+	}
+	return tags
+}
+
+func ensureTagsBeforeRestart(ctx context.Context, ensure EnsureTagsFunc, tags []string) error {
+	err := ensure(ctx, tags)
+	if !errors.Is(err, tailapi.ErrPolicyConflict) || ctx.Err() != nil {
+		return err
+	}
+	slog.Warn("ACL tag ensure conflicted with a concurrent editor; retrying one fresh read-modify-write", "tags", tags)
+	return ensure(ctx, tags)
+}
+
+func (s *Server) ensureFunnelPolicyBeforeRestart(
+	ctx context.Context,
+	desired map[string]registry.Service,
+	validationFailures map[string]runtimesnapshot.ServiceState,
+	tagsToEnsure []string,
+) (map[string]runtimesnapshot.ServiceState, map[string]registry.ProvisionOutcome, bool) {
+	failures := make(map[string]runtimesnapshot.ServiceState)
+	outcomes := make(map[string]registry.ProvisionOutcome)
+	names := make([]string, 0, len(desired))
+	for name := range desired {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	var candidates []registry.Service
+	var owners []string
+	for _, name := range names {
+		svc := desired[name]
+		if !svc.Funnel {
+			continue
+		}
+		base := registry.ProvisionOutcome{Target: registry.FunnelTag, WriteOutcome: tailapi.PolicyWriteNotAttempted}
+		if !s.autoProvisionFunnel {
+			base.Reason = registry.ProvisionReasonDaemonDisabled
+			outcomes[name] = base
+			continue
+		}
+		if svc.NoAutoProvision {
+			base.Reason = registry.ProvisionReasonServiceDisabled
+			outcomes[name] = base
+			continue
+		}
+		if _, invalid := validationFailures[name]; invalid {
+			continue
+		}
+		owner, reason, err := deriveFunnelTagOwner(svc)
+		if err != nil {
+			base.Reason = reason
+			outcomes[name] = base
+			failures[name] = funnelProvisionFailure(svc, err, base, funnelOwnerRecovery(svc))
+			continue
+		}
+		candidates = append(candidates, svc)
+		if !containsString(owners, owner) {
+			owners = append(owners, owner)
+		}
+	}
+	if len(candidates) == 0 {
+		return failures, outcomes, false
+	}
+
+	request := tailapi.FunnelPolicyRequest{
+		Tags:   stringsExcept(tagsToEnsure, registry.FunnelTag),
+		Target: registry.FunnelTag,
+		Owners: owners,
+	}
+	provisionCtx, cancel, provisionBudget := boundedProvisionContext(ctx, funnelCapabilityWaitTimeout)
+	defer cancel()
+	ensure := s.ensureFunnelAttrFn
+	if ensure == nil {
+		ensure = tailapi.EnsureFunnelAttr
+	}
+	result, err := ensure(provisionCtx, request)
+	tagsEnsured := policyTagEnsurePerformed(result)
+	mutationAttempted := policyMutationAttempted(result)
+	if errors.Is(err, tailapi.ErrPolicyConflict) && provisionCtx.Err() == nil {
+		slog.Warn("Funnel policy provisioning conflicted with a concurrent editor; retrying one fresh read-modify-write", "target", request.Target)
+		result, err = ensure(provisionCtx, request)
+		tagsEnsured = tagsEnsured || policyTagEnsurePerformed(result)
+		mutationAttempted = mutationAttempted || policyMutationAttempted(result)
+	}
+	if mutationAttempted {
+		plan := security.FunnelAutoProvisionPlan(request.Target, request.Owners, true)
+		slog.Info("remote ACL mutation plan",
+			"plan_id", plan.ID,
+			"operation", plan.Operation,
+			"default", plan.Default,
+			"disable_flag", plan.DisableFlag,
+			"resources", plan.Resources,
+		)
+	}
+	for _, svc := range candidates {
+		provision := registry.ProvisionOutcome{
+			Attempted:    true,
+			Target:       request.Target,
+			Changed:      result.Changed,
+			WriteOutcome: result.WriteOutcome,
+		}
+		if err == nil {
+			if result.Changed {
+				provision.Reason = registry.ProvisionReasonPolicyUpdated
+			} else {
+				provision.Reason = registry.ProvisionReasonPolicySatisfied
+			}
+			outcomes[svc.Name] = provision
+			continue
+		}
+		failureCause := err
+		if errors.Is(provisionCtx.Err(), context.DeadlineExceeded) {
+			failureCause = fmt.Errorf("Funnel policy provisioning exceeded the actual %s request budget: %w", provisionBudget, err)
+		}
+		if result.WriteOutcome == tailapi.PolicyWriteUnknown {
+			provision.Reason = registry.ProvisionReasonWriteUnknown
+		} else if errors.Is(err, tailapi.ErrTailnetHTTPSDisabled) {
+			provision.Reason = registry.ProvisionReasonHTTPSDisabled
+		} else if errors.Is(err, tailapi.ErrTailnetSettingsUnavailable) {
+			provision.Reason = registry.ProvisionReasonSettingsUnavailable
+		} else {
+			provision.Reason = registry.ProvisionReasonEnsureFailed
+		}
+		outcomes[svc.Name] = provision
+		failures[svc.Name] = funnelProvisionFailure(svc, failureCause, provision, funnelPolicyFailureRecovery(svc, provision))
+	}
+	return failures, outcomes, tagsEnsured
+}
+
+func policyTagEnsurePerformed(result tailapi.PolicyMutationResult) bool {
+	return result.WriteOutcome != "" && result.WriteOutcome != tailapi.PolicyWriteNotAttempted
+}
+
+func policyMutationAttempted(result tailapi.PolicyMutationResult) bool {
+	switch result.WriteOutcome {
+	case tailapi.PolicyWriteChanged, tailapi.PolicyWriteRejected, tailapi.PolicyWriteUnknown:
+		return true
+	default:
+		return false
+	}
+}
+
+func boundedProvisionContext(ctx context.Context, configured time.Duration) (context.Context, context.CancelFunc, time.Duration) {
+	if configured <= 0 {
+		return ctx, func() {}, 0
+	}
+	provisionCtx, cancel := context.WithTimeout(ctx, configured)
+	budget := configured
+	if deadline, ok := provisionCtx.Deadline(); ok {
+		budget = time.Until(deadline)
+		if budget < 0 {
+			budget = 0
+		}
+	}
+	return provisionCtx, cancel, budget.Truncate(time.Millisecond)
+}
+
+func deriveFunnelTagOwner(svc registry.Service) (string, string, error) {
+	for _, tag := range svc.Tags {
+		if tag == registry.FunnelTag {
+			continue
+		}
+		if err := registry.ValidateTag(tag); err == nil {
+			return tag, "", nil
+		}
+	}
+	return "", registry.ProvisionReasonNoUsableOwner, fmt.Errorf("service %q has no existing non-Funnel tag that its OAuth client can use to own %q", svc.Name, registry.FunnelTag)
+}
+
+func serviceForNodeConstruction(svc registry.Service) registry.Service {
+	if !svc.Funnel || containsString(svc.Tags, registry.FunnelTag) {
+		return svc
+	}
+	effective := svc
+	effective.Tags = append(append([]string(nil), svc.Tags...), registry.FunnelTag)
+	return effective
+}
+
+func stringsExcept(values []string, excluded string) []string {
+	filtered := make([]string, 0, len(values))
+	for _, value := range values {
+		if value != excluded {
+			filtered = append(filtered, value)
+		}
+	}
+	return filtered
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func funnelProvisionFailure(svc registry.Service, cause error, provision registry.ProvisionOutcome, next []string) runtimesnapshot.ServiceState {
+	err := registry.FunnelCapabilityMissingProvisionError(svc.Name, cause, provision, next)
+	failure, ok := recoverableServiceFailure(svc, err)
+	if ok {
+		return failure
+	}
+	return runtimesnapshot.ServiceState{
+		Service:      svc,
+		RuntimeState: runtimesnapshot.ServiceRuntimeFailed,
+		FunnelState:  runtimesnapshot.FunnelStateCapabilityMissing,
+		Error: &runtimesnapshot.ServiceError{
+			Code:      registry.CodeFunnelCapabilityMissing,
+			Message:   err.Error(),
+			Next:      append([]string(nil), next...),
+			Provision: copyProvisionOutcome(&provision),
+		},
+	}
+}
+
+// funnelOwnerRecovery returns the actions that resolve a missing Funnel tag
+// owner, which is the only owner-derivation failure deriveFunnelTagOwner can
+// report. The Funnel tag itself is derived at node construction and is skipped
+// when hunting for an owner, so adding it by hand cannot fix this and is
+// deliberately not suggested here.
+func funnelOwnerRecovery(svc registry.Service) []string {
+	return []string{
+		fmt.Sprintf("tslink tags add %s <tag-held-by-the-oauth-client>", svc.Name),
+		"Restart the managed daemon with `tslink install` or restart the foreground `tslink serve` process",
+		fmt.Sprintf("tslink status --urls --name %s --json", svc.Name),
+	}
+}
+
+func funnelPolicyFailureRecovery(svc registry.Service, provision registry.ProvisionOutcome) []string {
+	if provision.Reason == registry.ProvisionReasonHTTPSDisabled {
+		return funnelHTTPSRecovery(svc)
+	}
+	if provision.Reason == registry.ProvisionReasonSettingsUnavailable {
+		return []string{
+			"Grant the OAuth client networking_settings scope so TSLink can read httpsEnabled before any ACL mutation",
+			"Inspect PATCH /api/v2/tailnet/{tailnet}/settings with {\"httpsEnabled\":true}; do not retry policy provisioning until the setting is known",
+			fmt.Sprintf("tslink status --urls --name %s --json", svc.Name),
+		}
+	}
+	if provision.Reason == registry.ProvisionReasonWriteUnknown {
+		return []string{
+			"Wait for policy propagation, then retry the reconcile or restart the daemon; the policy POST may already have committed",
+			fmt.Sprintf("tslink status --urls --name %s --json", svc.Name),
+			"tslink logs --level error --json",
+		}
+	}
+	var coded registry.CodedError
+	if errors.As(registry.FunnelCapabilityMissingError(svc.Name, errors.New("Funnel policy provisioning failed")), &coded) {
+		return coded.NextCommands()
+	}
+	return []string{fmt.Sprintf("tslink status --urls --name %s --json", svc.Name), "tslink logs --level error --json"}
+}
+
+func copyProvisionOutcome(source *registry.ProvisionOutcome) *registry.ProvisionOutcome {
+	if source == nil {
+		return nil
+	}
+	copied := *source
+	return &copied
 }
 
 func (s *Server) installStartupGeneration(generation uint64, cancel context.CancelFunc) {
@@ -786,7 +1115,7 @@ func serviceChangedWithFallback(old, new registry.Service, fallbackControlURL st
 	if old.Type != new.Type || old.Target != new.Target || old.Path != new.Path {
 		return true
 	}
-	if old.Port != new.Port || old.Ephemeral != new.Ephemeral || old.Funnel != new.Funnel || old.PublicAck != new.PublicAck || old.Domain != new.Domain {
+	if old.Port != new.Port || old.Ephemeral != new.Ephemeral || old.Funnel != new.Funnel || old.PublicAck != new.PublicAck || old.NoAutoProvision != new.NoAutoProvision || old.Domain != new.Domain {
 		return true
 	}
 	if effectiveControlURL(old, fallbackControlURL) != effectiveControlURL(new, fallbackControlURL) {
@@ -951,6 +1280,7 @@ func (s *Server) writeRuntimeSnapshotLocked(registryFingerprint string, complete
 		}
 		states = append(states, runtimesnapshot.ServiceState{
 			Service:      node.service,
+			NodeID:       node.nodeID,
 			RuntimeHost:  node.runtimeHost,
 			RuntimeState: runtimesnapshot.ServiceRuntimeRunning,
 			FunnelState:  funnelStateForRunning(node),
@@ -966,6 +1296,7 @@ func (s *Server) writeRuntimeSnapshotLocked(registryFingerprint string, complete
 	if s.globalFailure != nil {
 		globalFailure := *s.globalFailure
 		globalFailure.Next = append([]string(nil), s.globalFailure.Next...)
+		globalFailure.Provision = copyProvisionOutcome(s.globalFailure.Provision)
 		snapshot.GlobalError = &globalFailure
 	}
 	if err := runtimeSaveSnapshotFn(path, snapshot); err != nil {
@@ -1007,14 +1338,20 @@ func recoverableServiceFailure(svc registry.Service, err error) (runtimesnapshot
 	if errors.As(err, &recovery) {
 		next = recovery.NextCommands()
 	}
+	var coded registry.CodedError
+	var provision *registry.ProvisionOutcome
+	if errors.As(err, &coded) {
+		provision = copyProvisionOutcome(coded.Provision)
+	}
 	return runtimesnapshot.ServiceState{
 		Service:      svc,
 		RuntimeState: runtimesnapshot.ServiceRuntimeFailed,
 		FunnelState:  funnelState,
 		Error: &runtimesnapshot.ServiceError{
-			Code:    code,
-			Message: err.Error(),
-			Next:    next,
+			Code:      code,
+			Message:   err.Error(),
+			Next:      next,
+			Provision: provision,
 		},
 	}, true
 }
@@ -1056,7 +1393,7 @@ func ValidateServiceForStartup(svc registry.Service) error {
 	return nil
 }
 
-func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service) error {
+func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service, provisionOutcomes ...registry.ProvisionOutcome) error {
 	if err := s.ensureRunning(ctx); err != nil {
 		return err
 	}
@@ -1080,11 +1417,12 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service) erro
 		controlURL = svc.ControlURL
 	}
 
-	authKey, err := s.authKeyProvider(ctx, svc)
+	nodeService := serviceForNodeConstruction(svc)
+	authKey, err := s.authKeyProvider(ctx, nodeService)
 	if err != nil {
 		return fmt.Errorf("auth key for service %q: %w", svc.Name, err)
 	}
-	tsnetSrv := newTSNetServerFn(svc, stateDir, authKey, controlURL)
+	tsnetSrv := newTSNetServerFn(nodeService, stateDir, authKey, controlURL)
 
 	nodeCtx, cancel := context.WithCancel(ctx)
 	observeNodeContextFn(svc.Name, nodeCtx)
@@ -1130,12 +1468,19 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service) erro
 		return fmt.Errorf("tsnet up for %q: %w", svc.Name, err)
 	}
 	runtimeHost := runtimeHostFromStatus(status)
+	nodeID := runtimeNodeIDFromStatus(status)
 	if svc.Funnel {
-		if status == nil || status.Self == nil {
-			return registry.FunnelCapabilityMissingError(svc.Name, errors.New("tsnet status did not include the service node"))
+		provision := registry.ProvisionOutcome{
+			Target:       registry.FunnelTag,
+			Reason:       registry.ProvisionReasonNotAttempted,
+			WriteOutcome: tailapi.PolicyWriteNotAttempted,
 		}
-		if err := ipn.CheckFunnelAccess(443, status.Self); err != nil {
-			return registry.FunnelCapabilityMissingError(svc.Name, err)
+		if len(provisionOutcomes) > 0 {
+			provision = provisionOutcomes[0]
+		}
+		status, err = s.verifyFunnelAccess(technicalCtx, tsnetSrv, svc, status, provision)
+		if err != nil {
+			return err
 		}
 	}
 	listenerCtx := technicalCtx
@@ -1168,6 +1513,7 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service) erro
 		node := &ServiceNode{
 			tsnetSrv:    tsnetSrv,
 			service:     svc,
+			nodeID:      nodeID,
 			runtimeHost: runtimeHost,
 			listener:    ln,
 			cancel:      cancel,
@@ -1270,6 +1616,7 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service) erro
 	node := &ServiceNode{
 		tsnetSrv:             tsnetSrv,
 		service:              svc,
+		nodeID:               nodeID,
 		runtimeHost:          runtimeHost,
 		funnelListenerActive: funnelListenerActive,
 		listener:             ln,
@@ -1303,6 +1650,146 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service) erro
 	s.mu.Unlock()
 	committed = true
 	return nil
+}
+
+func (s *Server) verifyFunnelAccess(
+	ctx context.Context,
+	tsnetSrv tsnetServer,
+	svc registry.Service,
+	status *ipnstate.Status,
+	provision registry.ProvisionOutcome,
+) (*ipnstate.Status, error) {
+	reason, accessErr := funnelAccessCause(status)
+	switch reason {
+	case "":
+		return status, nil
+	case registry.ProvisionReasonHTTPSDisabled:
+		provision.Reason = reason
+		return nil, registry.FunnelCapabilityMissingProvisionError(svc.Name, accessErr, provision, funnelHTTPSRecovery(svc))
+	case registry.ProvisionReasonPortUnsupported:
+		provision.Reason = reason
+		return nil, registry.FunnelCapabilityMissingProvisionError(svc.Name, accessErr, provision, funnelPortRecovery(svc))
+	}
+
+	if provision.Reason == registry.ProvisionReasonDaemonDisabled || provision.Reason == registry.ProvisionReasonServiceDisabled || provision.Reason == registry.ProvisionReasonNotAttempted {
+		return nil, registry.FunnelCapabilityMissingProvisionError(svc.Name, accessErr, provision, funnelProvisionDisabledRecovery(svc))
+	}
+
+	statusClient, err := tsnetStatusClientFn(tsnetSrv)
+	if err != nil {
+		provision.Reason = registry.ProvisionReasonNetmapPollFailed
+		return nil, registry.FunnelCapabilityMissingProvisionError(
+			svc.Name,
+			fmt.Errorf("Funnel policy is prepared but netmap status cannot be polled: %w", err),
+			provision,
+			funnelNetmapRecovery(svc),
+		)
+	}
+
+	waitCtx, cancel, budget := boundedFunnelWait(ctx, funnelCapabilityWaitTimeout)
+	defer cancel()
+	lastErr := accessErr
+	pollInterval := funnelCapabilityPollInterval
+	if pollInterval <= 0 {
+		pollInterval = 250 * time.Millisecond
+	}
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-waitCtx.Done():
+			provision.Reason = registry.ProvisionReasonNetmapTimeout
+			return nil, registry.FunnelCapabilityMissingProvisionError(
+				svc.Name,
+				fmt.Errorf("Funnel policy is prepared for %q, but the node capability did not propagate within the actual %s wait budget: %v", provision.Target, budget, lastErr),
+				provision,
+				funnelNetmapRecovery(svc),
+			)
+		case <-ticker.C:
+			polled, statusErr := statusClient.Status(waitCtx)
+			if statusErr != nil {
+				lastErr = fmt.Errorf("poll tsnet status: %w", statusErr)
+				continue
+			}
+			reason, checkErr := funnelAccessCause(polled)
+			switch reason {
+			case "":
+				return polled, nil
+			case registry.ProvisionReasonHTTPSDisabled:
+				provision.Reason = reason
+				return nil, registry.FunnelCapabilityMissingProvisionError(svc.Name, checkErr, provision, funnelHTTPSRecovery(svc))
+			case registry.ProvisionReasonPortUnsupported:
+				provision.Reason = reason
+				return nil, registry.FunnelCapabilityMissingProvisionError(svc.Name, checkErr, provision, funnelPortRecovery(svc))
+			default:
+				lastErr = checkErr
+			}
+		}
+	}
+}
+
+func boundedFunnelWait(ctx context.Context, configured time.Duration) (context.Context, context.CancelFunc, time.Duration) {
+	if configured < 0 {
+		configured = 0
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, configured)
+	budget := configured
+	if deadline, ok := waitCtx.Deadline(); ok {
+		budget = time.Until(deadline)
+		if budget < 0 {
+			budget = 0
+		}
+	}
+	return waitCtx, cancel, budget.Truncate(time.Millisecond)
+}
+
+func funnelAccessCause(status *ipnstate.Status) (string, error) {
+	if status == nil || status.Self == nil {
+		return registry.ProvisionReasonNetmapTimeout, errors.New("tsnet status did not include the service node")
+	}
+	if !status.Self.HasCap(tailcfg.CapabilityHTTPS) {
+		return registry.ProvisionReasonHTTPSDisabled, errors.New("Funnel is unavailable because HTTPS is disabled for the tailnet")
+	}
+	if !status.Self.HasCap(tailcfg.NodeAttrFunnel) {
+		return registry.ProvisionReasonNetmapTimeout, errors.New("Funnel node attribute is not present in the service node netmap")
+	}
+	if err := ipn.CheckFunnelPort(443, status.Self); err != nil {
+		return registry.ProvisionReasonPortUnsupported, err
+	}
+	return "", nil
+}
+
+func funnelHTTPSRecovery(svc registry.Service) []string {
+	return []string{
+		"PATCH /api/v2/tailnet/{tailnet}/settings with {\"httpsEnabled\":true} using OAuth scope networking_settings",
+		"Retry or restart the daemon after the tailnet HTTPS setting propagates",
+		fmt.Sprintf("tslink status --urls --name %s --json", svc.Name),
+	}
+}
+
+func funnelPortRecovery(svc registry.Service) []string {
+	return []string{
+		"Tailscale Funnel supports ports 443, 8443, and 10000 per node DNS name; use one of those supported ports",
+		"Retry or restart the daemon after the Funnel port capability propagates",
+		fmt.Sprintf("tslink status --urls --name %s --json", svc.Name),
+	}
+}
+
+func funnelNetmapRecovery(svc registry.Service) []string {
+	return []string{
+		"Wait for netmap propagation and retry; the tailnet policy is already prepared",
+		"Restart the managed daemon with `tslink install` or restart the foreground `tslink serve` process",
+		fmt.Sprintf("tslink status --urls --name %s --json", svc.Name),
+	}
+}
+
+func funnelProvisionDisabledRecovery(svc registry.Service) []string {
+	var coded registry.CodedError
+	if errors.As(registry.FunnelCapabilityMissingError(svc.Name, errors.New("Funnel node attribute is missing")), &coded) {
+		return coded.NextCommands()
+	}
+	return []string{fmt.Sprintf("tslink status --urls --name %s --json", svc.Name)}
 }
 
 type listenerActivationResult struct {
@@ -1389,6 +1876,13 @@ func runtimeHostFromStatus(status *ipnstate.Status) string {
 		return ""
 	}
 	return strings.TrimSuffix(strings.TrimSpace(status.Self.DNSName), ".")
+}
+
+func runtimeNodeIDFromStatus(status *ipnstate.Status) string {
+	if status == nil || status.Self == nil {
+		return ""
+	}
+	return string(status.Self.ID)
 }
 
 // stopNodeLocked stops a node. If removeState is true, its tsnet state dir is deleted.

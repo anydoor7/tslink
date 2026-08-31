@@ -15,6 +15,7 @@ import (
 	"github.com/monody0007/tslink/internal/registry"
 	tsruntime "github.com/monody0007/tslink/internal/runtime"
 	"github.com/monody0007/tslink/internal/security"
+	"github.com/monody0007/tslink/internal/tailapi"
 )
 
 // CLIManifest is the single machine-readable source of truth for the shipped
@@ -23,20 +24,21 @@ import (
 // documentation site can parity-check the exported fixture instead of
 // hand-maintaining a second copy of these facts.
 type CLIManifest struct {
-	SchemaVersion         int                         `json:"schema_version"`
-	Platform              PlatformInfo                `json:"platform"`
-	SupportedPlatforms    []string                    `json:"supported_platforms"`
-	RegistrySchemaVersion int                         `json:"registry_schema_version"`
-	Toolchain             ToolchainInfo               `json:"toolchain"`
-	ExitCodes             map[string]int              `json:"exit_codes"`
-	RegistrySchema        RegistrySchemaInfo          `json:"registry_schema"`
-	APIActions            []string                    `json:"api_actions"`
-	CredentialSources     CredentialSources           `json:"credential_sources"`
-	HighRiskOperations    []HighRiskOperation         `json:"high_risk_operations"`
-	Release               ReleaseInfo                 `json:"release"`
-	Commands              []CommandInfo               `json:"commands"`
-	Capabilities          security.CapabilityManifest `json:"capabilities"`
-	ErrorCodes            map[string]ErrorCodeInfo    `json:"error_codes"`
+	SchemaVersion         int                             `json:"schema_version"`
+	Platform              PlatformInfo                    `json:"platform"`
+	SupportedPlatforms    []string                        `json:"supported_platforms"`
+	RegistrySchemaVersion int                             `json:"registry_schema_version"`
+	Toolchain             ToolchainInfo                   `json:"toolchain"`
+	ExitCodes             map[string]int                  `json:"exit_codes"`
+	RegistrySchema        RegistrySchemaInfo              `json:"registry_schema"`
+	APIActions            []string                        `json:"api_actions"`
+	CredentialSources     CredentialSources               `json:"credential_sources"`
+	HighRiskOperations    []HighRiskOperation             `json:"high_risk_operations"`
+	RemoteSideEffectPlans []security.RemoteSideEffectPlan `json:"remote_side_effect_plans"`
+	Release               ReleaseInfo                     `json:"release"`
+	Commands              []CommandInfo                   `json:"commands"`
+	Capabilities          security.CapabilityManifest     `json:"capabilities"`
+	ErrorCodes            map[string]ErrorCodeInfo        `json:"error_codes"`
 }
 
 // PlatformInfo identifies the build target whose live Cobra tree was walked.
@@ -215,8 +217,23 @@ func Manifest() CLIManifest {
 		},
 		HighRiskOperations: []HighRiskOperation{
 			{Command: "tslink login", Operation: "remote ACL tag-owner mutation", Default: "disabled", RequiredFlags: []string{"--manage-acl"}, Boundary: "default login does not rewrite shared tailnet ACL policy"},
-			{Command: "tslink serve", Operation: "startup remote ACL tag ensure", Default: "disabled", RequiredFlags: []string{"--manage-acl"}, Boundary: "default serve does not rewrite shared tailnet ACL policy"},
+			{Command: "tslink serve", Operation: "startup ordinary remote ACL tag ensure", Default: "disabled", RequiredFlags: []string{"--manage-acl"}, Boundary: "ordinary tagOwners creation remains disabled without --manage-acl; acknowledged Funnel services use the separately audited plan"},
+			{Command: "tslink serve", Operation: "Funnel shared tag owner and exact nodeAttrs auto-provisioning", Default: "enabled", RequiredFlags: []string{}, Boundary: "default-on only for acknowledged Funnel services; disable process-wide with --no-auto-provision or per service with no_auto_provision"},
 			{Command: "tslink tags delete-remote", Operation: "remote ACL tag-owner deletion", Default: "disabled", RequiredFlags: []string{"--force", "--manage-acl"}, Boundary: "requires destructive confirmation and explicit remote ACL opt-in"},
+			{Command: "tslink invite user", Operation: "tailnet user invitation", Default: "explicit named recipient", Boundary: "requires a user-owned tskey-api- token; --print-link selects self-delivery"},
+			{Command: "tslink invite device", Operation: "external device sharing", Default: "explicit named recipient and service", Boundary: "requires a user-owned tskey-api- token and exact TSLink nodeId ownership proof"},
+			{Command: "tslink invite revoke", Operation: "invite revocation", Default: "explicit invite kind and numeric ID", RequiredFlags: []string{"--kind"}, Boundary: "explicit user/device namespace selection; device invite revocation also requires exact TSLink nodeId ownership proof"},
+			{Command: "tslink invite resend", Operation: "invite email resend", Default: "explicit invite kind and numeric ID", RequiredFlags: []string{"--kind"}, Boundary: "explicit user/device namespace selection; requires a user-owned tskey-api- token and an invite originally created with email"},
+		},
+		RemoteSideEffectPlans: []security.RemoteSideEffectPlan{
+			security.ACLMutationPlan("ensure_tags", []string{tailapi.DefaultTag}, false),
+			security.FunnelAutoProvisionPlan(registry.FunnelTag, nil, true),
+			security.InviteMutationPlan(tailapi.InviteKindUser, "create", "<invite-id>", "", 0),
+			security.InviteMutationPlan(tailapi.InviteKindDevice, "create", "<invite-id>", "<service>", 0),
+			security.InviteMutationPlan(tailapi.InviteKindUser, "revoke", "<invite-id>", "", 0),
+			security.InviteMutationPlan(tailapi.InviteKindDevice, "revoke", "<invite-id>", "<service>", 0),
+			security.InviteMutationPlan(tailapi.InviteKindUser, "resend", "<invite-id>", "", 0),
+			security.InviteMutationPlan(tailapi.InviteKindDevice, "resend", "<invite-id>", "<service>", 0),
 		},
 		Release: ReleaseInfo{
 			PublicReleaseAvailable: false,
@@ -357,6 +374,45 @@ func commandJSONResultFields(commandPath string) map[string]JSONResultFieldInfo 
 		})
 	case "tslink uninstall":
 		return uninstallJSONResultFields()
+	case "tslink invite user", "tslink invite device":
+		return map[string]JSONResultFieldInfo{
+			"invite_url": {
+				Type:        "string",
+				Description: "Invite acceptance URL returned verbatim by the Tailscale API; TSLink never constructs it.",
+			},
+			"emailed": {
+				Type:        "boolean",
+				Description: "Explicit delivery fact: true when Tailscale sent or resent email, false for --print-link self-delivery.",
+			},
+			"remote_side_effect_plan": {
+				Type:        "object",
+				Description: "Auditable plan for the outward-facing invite mutation.",
+			},
+		}
+	case "tslink invite resend":
+		return map[string]JSONResultFieldInfo{
+			"emailed": {
+				Type:        "boolean",
+				Description: "True after Tailscale accepted the email resend; resend output never repeats the bearer invite URL.",
+			},
+			"remote_side_effect_plan": {
+				Type:        "object",
+				Description: "Auditable plan for the outward-facing invite resend.",
+			},
+		}
+	case "tslink invite list":
+		return map[string]JSONResultFieldInfo{
+			"complete":       {Type: "boolean", Description: "True only when every requested device target was checked without error; false means device results are partial."},
+			"user_invites":   {Type: "array", Description: "Open tailnet user invites."},
+			"device_invites": {Type: "array", Description: "Invites for devices with exact TSLink nodeId ownership proof."},
+			"device_targets": {Type: "array", Description: "Per-service device-invite check result; checked with invite_count distinguishes an empty result from a structured error."},
+			"count":          {Type: "integer", Description: "Total number of returned user and device invites."},
+		}
+	case "tslink invite revoke":
+		return map[string]JSONResultFieldInfo{
+			"revoked":                 {Type: "boolean", Description: "True only after the Tailscale API accepted the revocation."},
+			"remote_side_effect_plan": {Type: "object", Description: "Auditable plan for the outward-facing invite revocation."},
+		}
 	default:
 		return nil
 	}
@@ -632,6 +688,8 @@ func flagRelationships(commandPath, name string) (oneOf, requires, conflicts []s
 			conflicts = []string{"--allow", "--control-url"}
 		case "public":
 			requires = []string{"--funnel"}
+		case "no-auto-provision":
+			requires = []string{"--funnel"}
 		case "allow":
 			conflicts = []string{"--tcp", "--funnel"}
 		case "domain", "acme-email":
@@ -681,6 +739,20 @@ func errorCodeManifest() map[string]ErrorCodeInfo {
 		registry.CodeFunnelCapabilityMissing:    {ExitCode: output.ExitError, Description: "service tsnet node lacks Funnel capability, HTTPS, or allowed port"},
 		registry.CodeFunnelListenFailed:         {ExitCode: output.ExitError, Description: "Funnel capability preflight passed but listener activation failed"},
 		registry.CodeServiceStartTimeout:        {ExitCode: output.ExitError, Description: "service node did not reach running state before its startup deadline"},
+		registry.CodeInviteAPIKeyRequired:       {ExitCode: output.ExitAuth, Description: "a user-owned tskey-api- token is required and OAuth is not eligible"},
+		registry.CodeInviteRoleInvalid:          {ExitCode: output.ExitUsage, Description: "invite role is outside the first-party enum"},
+		registry.CodeInviteRecipientInvalid:     {ExitCode: output.ExitUsage, Description: "invite recipient is missing"},
+		registry.CodeInviteNotFound:             {ExitCode: output.ExitNotFound, Description: "invite or matching service device was not found"},
+		registry.CodeInviteDeviceAmbiguous:      {ExitCode: output.ExitConflict, Description: "multiple hostname candidates remain after ownership resolution"},
+		registry.CodeInviteOwnershipUnproven:    {ExitCode: output.ExitConflict, Description: "TSLink lacks exact stable nodeId proof for the device"},
+		registry.CodeInviteAPIForbidden:         {ExitCode: output.ExitAuth, Description: "Tailscale rejected the user-owned token or its user permissions with HTTP 401 or 403"},
+		registry.CodeInviteResendEmailMissing:   {ExitCode: output.ExitConflict, Description: "an invite created without email cannot be resent"},
+		registry.CodeInviteIDInvalid:            {ExitCode: output.ExitUsage, Description: "invite ID is not a bare ASCII decimal string"},
+		registry.CodeInviteKindInvalid:          {ExitCode: output.ExitUsage, Description: "invite namespace is not explicitly user or device"},
+		registry.CodeInviteRateLimited:          {ExitCode: output.ExitError, Description: "Tailscale rate limited the invite operation"},
+		registry.CodeInviteStateConflict:        {ExitCode: output.ExitConflict, Description: "Tailscale rejected the invite operation because current remote state conflicts with it (HTTP 409)"},
+		registry.CodeInviteRequestInvalid:       {ExitCode: output.ExitUsage, Description: "Tailscale rejected the invite request as another 4xx input error"},
+		registry.CodeInviteResponseInvalid:      {ExitCode: output.ExitError, Description: "Tailscale returned an invalid invite wire response"},
 	}
 }
 
@@ -693,6 +765,15 @@ func CompactManifest() CompactCLIManifest {
 		Commands:      map[string][]string{},
 		ErrorCodes:    map[string]int{},
 	}
+	hasChildren := make(map[string]bool)
+	for _, parent := range manifest.Commands {
+		for _, candidate := range manifest.Commands {
+			if strings.HasPrefix(candidate.Path, parent.Path+" ") {
+				hasChildren[parent.Path] = true
+				break
+			}
+		}
+	}
 	for _, command := range manifest.Commands {
 		if command.Path == "tslink" {
 			continue
@@ -703,6 +784,9 @@ func CompactManifest() CompactCLIManifest {
 			if flag.Scope != "inherited" && flag.Name != "json" {
 				flags = append(flags, flag.Name)
 			}
+		}
+		if len(flags) == 0 && hasChildren[command.Path] {
+			continue
 		}
 		compact.Commands[path] = flags
 	}

@@ -29,6 +29,11 @@ const (
 	apiActionTemplateList  = "template_list"
 	apiActionTemplatePlan  = "template_plan"
 	apiActionTemplateApply = "template_apply"
+	apiActionInviteUser    = "invite_user"
+	apiActionInviteDevice  = "invite_device"
+	apiActionInviteList    = "invite_list"
+	apiActionInviteRevoke  = "invite_revoke"
+	apiActionInviteResend  = "invite_resend"
 )
 
 var apiActions = []string{
@@ -42,6 +47,11 @@ var apiActions = []string{
 	apiActionTemplateList,
 	apiActionTemplatePlan,
 	apiActionTemplateApply,
+	apiActionInviteUser,
+	apiActionInviteDevice,
+	apiActionInviteList,
+	apiActionInviteRevoke,
+	apiActionInviteResend,
 }
 
 func apiActionNames() []string {
@@ -52,20 +62,31 @@ func apiActionNames() []string {
 type APIRequest struct {
 	Action string `json:"action"`
 	// add fields
-	Name          string   `json:"name,omitempty"`
-	Type          string   `json:"type,omitempty"`
-	Target        string   `json:"target,omitempty"`
-	Path          string   `json:"path,omitempty"`
-	Port          int      `json:"port,omitempty"`
-	Tags          []string `json:"tags,omitempty"`
-	Allow         []string `json:"allow,omitempty"`
-	Ephemeral     bool     `json:"ephemeral,omitempty"`
-	Funnel        bool     `json:"funnel,omitempty"`
-	PublicAck     bool     `json:"public_ack,omitempty"`
-	ControlURL    string   `json:"control_url,omitempty"`
-	URLs          bool     `json:"urls,omitempty"`
-	ProbeExternal bool     `json:"probe_external,omitempty"`
-	IfMissing     bool     `json:"if_missing,omitempty"`
+	Name            string   `json:"name,omitempty"`
+	Type            string   `json:"type,omitempty"`
+	Target          string   `json:"target,omitempty"`
+	Path            string   `json:"path,omitempty"`
+	Port            int      `json:"port,omitempty"`
+	Tags            []string `json:"tags,omitempty"`
+	Allow           []string `json:"allow,omitempty"`
+	Ephemeral       bool     `json:"ephemeral,omitempty"`
+	Funnel          bool     `json:"funnel,omitempty"`
+	PublicAck       bool     `json:"public_ack,omitempty"`
+	NoAutoProvision bool     `json:"no_auto_provision,omitempty"`
+	ControlURL      string   `json:"control_url,omitempty"`
+	URLs            bool     `json:"urls,omitempty"`
+	ProbeExternal   bool     `json:"probe_external,omitempty"`
+	IfMissing       bool     `json:"if_missing,omitempty"`
+	// invite fields
+	Email         string `json:"email,omitempty"`
+	Role          string `json:"role,omitempty"`
+	Service       string `json:"service,omitempty"`
+	Kind          string `json:"kind,omitempty"`
+	InviteID      string `json:"invite_id,omitempty"`
+	PrintLink     bool   `json:"print_link,omitempty"`
+	ShowURLs      bool   `json:"show_urls,omitempty"`
+	MultiUse      bool   `json:"multi_use,omitempty"`
+	AllowExitNode bool   `json:"allow_exit_node,omitempty"`
 }
 
 // These compatibility shims are still instantiated by the standalone
@@ -172,6 +193,16 @@ func (h *apiHandler) handle(req APIRequest, out io.Writer) output.Result {
 		return h.handleTemplatePlan(req, out)
 	case apiActionTemplateApply:
 		return h.handleTemplateApply(req, out)
+	case apiActionInviteUser:
+		return h.handleInviteUser(req, out)
+	case apiActionInviteDevice:
+		return h.handleInviteDevice(req, out)
+	case apiActionInviteList:
+		return h.handleInviteList(req, out)
+	case apiActionInviteRevoke:
+		return h.handleInviteRevoke(req, out)
+	case apiActionInviteResend:
+		return h.handleInviteResend(req, out)
 	default:
 		return writeAPIUnknownActionError(out, req.Action)
 	}
@@ -248,18 +279,22 @@ func addParamsFromAPIRequest(req APIRequest) (AddParams, error) {
 	if req.Funnel && !req.PublicAck {
 		return AddParams{}, registry.FunnelPublicAckError()
 	}
+	if req.NoAutoProvision && !req.Funnel {
+		return AddParams{}, fmt.Errorf("no_auto_provision is supported only when funnel is true")
+	}
 	if len(req.Allow) > 0 && req.Type == registry.TypeTCP {
 		return AddParams{}, registry.AllowUnsupportedTCPError()
 	}
 
 	params := AddParams{
-		Name:       req.Name,
-		Ephemeral:  req.Ephemeral,
-		Tags:       strings.Join(req.Tags, ","),
-		Allow:      strings.Join(req.Allow, ","),
-		Funnel:     req.Funnel,
-		Public:     req.PublicAck,
-		ControlURL: req.ControlURL,
+		Name:            req.Name,
+		Ephemeral:       req.Ephemeral,
+		Tags:            strings.Join(req.Tags, ","),
+		Allow:           strings.Join(req.Allow, ","),
+		Funnel:          req.Funnel,
+		Public:          req.PublicAck,
+		NoAutoProvision: req.NoAutoProvision,
+		ControlURL:      req.ControlURL,
 	}
 
 	switch req.Type {
@@ -440,7 +475,15 @@ Supported actions:
   {"action":"access_explain","name":"myapp"}
   {"action":"template_list"}
   {"action":"template_plan","name":"personal-harness"}
-  {"action":"template_apply","name":"personal-harness"}`,
+  {"action":"template_apply","name":"personal-harness"}
+
+Invite actions use the same user-owned tskey-api- credential boundary as the
+invite command group:
+  {"action":"invite_user","email":"alice@example.com","role":"member","print_link":false}
+  {"action":"invite_device","service":"myapp","email":"alice@example.com","print_link":false,"multi_use":false,"allow_exit_node":false}
+  {"action":"invite_list","show_urls":false}
+  {"action":"invite_revoke","kind":"user","invite_id":"12345"}
+  {"action":"invite_resend","kind":"device","invite_id":"12345"}`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := cmd.OutOrStdout()

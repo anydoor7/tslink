@@ -295,6 +295,10 @@ func TestCompiledUserInputErrorsNeverBecomeInternalError(t *testing.T) {
 		{name: "control url", args: []string{"add", "demo", "--proxy", "localhost:3000", "--control-url", "not-a-url", "--dry-run", "--json"}, wantExit: output.ExitUsage, wantCode: "usage_error", wantNext: "tslink --help"},
 		{name: "serve control url", args: []string{"serve", "--control-url", "not-a-url", "--json"}, wantExit: output.ExitUsage, wantCode: "usage_error", wantNext: "tslink --help"},
 		{name: "config control url", args: []string{"config", "set", "control-url", "not-a-url", "--json"}, wantExit: output.ExitUsage, wantCode: "usage_error", wantNext: "tslink --help"},
+		{name: "invite role enum", args: []string{"invite", "user", "alice@example.com", "--role", "owner", "--json"}, wantExit: output.ExitUsage, wantCode: registry.CodeInviteRoleInvalid, wantNext: "tslink invite user --help"},
+		{name: "invite traversal id", args: []string{"invite", "revoke", "../device/nodeid-VICTIM", "--kind", "user", "--json"}, wantExit: output.ExitUsage, wantCode: registry.CodeInviteIDInvalid, wantNext: "tslink invite list --json"},
+		{name: "invite missing kind", args: []string{"invite", "revoke", "12346", "--json"}, wantExit: output.ExitUsage, wantCode: registry.CodeInviteKindInvalid, wantNext: "tslink invite --help"},
+		{name: "invite service missing", args: []string{"invite", "device", "missing", "alice@example.com", "--json"}, wantExit: output.ExitNotFound, wantCode: "not_found", wantNext: "tslink list --json"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

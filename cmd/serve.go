@@ -56,6 +56,7 @@ var (
 	serveIsRunningFn           = daemon.IsRunning
 	serveIsPIDRunningFn        = daemon.IsProcessRunning
 	serveEnsureTagsFn          = tailapi.EnsureTags
+	serveEnsureFunnelAttrFn    = tailapi.EnsureFunnelAttr
 	serveCleanupFn             = tailapi.CleanupStaleNodesResult
 	serveLoadGlobalFn          = config.LoadGlobalConfig
 	serveLogDirFn              = config.LogDir
@@ -87,6 +88,14 @@ type serverRunner interface {
 
 type ensureTagsSetter interface {
 	SetEnsureTagsFn(server.EnsureTagsFunc)
+}
+
+type ensureFunnelAttrSetter interface {
+	SetEnsureFunnelAttrFn(server.EnsureFunnelAttrFunc)
+}
+
+type autoProvisionFunnelSetter interface {
+	SetAutoProvisionFunnel(bool)
 }
 
 type authKeyProviderSetter interface {
@@ -138,6 +147,7 @@ Examples:
 				return err
 			}
 			manageACL, _ := cmd.Flags().GetBool("manage-acl")
+			noAutoProvision, _ := cmd.Flags().GetBool("no-auto-provision")
 
 			// Migrate file-based API key to keychain if possible. In JSON mode the
 			// fact belongs in the result data; stdout must remain one envelope.
@@ -218,7 +228,7 @@ Examples:
 					// Propagate --manage-acl to the daemon child. The child
 					// re-execs foreground `serve`, where the ACL ensure runs;
 					// dropping the flag here would silently ignore the opt-in.
-					pid, err = serveDaemonizeFn(outLog, errLog, controlURL, manageACL)
+					pid, err = serveDaemonizeFn(outLog, errLog, controlURL, manageACL, noAutoProvision)
 					if err != nil {
 						return err
 					}
@@ -256,34 +266,22 @@ Examples:
 				return err
 			}
 
-			// Collect unique tags for startup ACL preflight. Auth keys are resolved per service.
-			tagSet := make(map[string]struct{})
-			for _, svc := range reg.Services {
-				for _, tag := range svc.Tags {
-					tagSet[tag] = struct{}{}
-				}
-			}
-			var allTags []string
-			for tag := range tagSet {
-				allTags = append(allTags, tag)
-			}
-
 			effectiveEnsureTagsFn := serveEnsureTagsFn
 			if !credentialed {
 				effectiveEnsureTagsFn = func(context.Context, []string) error { return nil }
 			} else if !manageACL {
 				effectiveEnsureTagsFn = serveRemoteACLMutationDisabledFn("serve_ensure_tags")
 			}
-
-			// Ensure all required tags exist in tailnet ACL only after explicit opt-in
-			// on the credentialed tier. Interactive nodes advertise no tags.
-			if credentialed {
-				if err := effectiveEnsureTagsFn(context.Background(), allTags); err != nil {
-					if errors.Is(err, tailapi.ErrNoAPIClient) {
-						slog.Warn("degraded mode: skipped ACL tag ensure", "reason", err.Error(), "tags", allTags, "degraded_mode", true)
-					} else {
-						return fmt.Errorf("ensure tags in ACL: %w", err)
-					}
+			baseEnsureFunnelAttrFn := serveEnsureFunnelAttrFn
+			effectiveEnsureFunnelAttrFn := baseEnsureFunnelAttrFn
+			if !manageACL {
+				// Funnel auto-provisioning is independently default-on. Preserve the
+				// --manage-acl boundary for ordinary tag creation while still allowing
+				// the fused raw-policy transaction to add the shared Funnel tag owner and
+				// exact nodeAttrs grant.
+				effectiveEnsureFunnelAttrFn = func(ctx context.Context, request tailapi.FunnelPolicyRequest) (tailapi.PolicyMutationResult, error) {
+					request.Tags = nil
+					return baseEnsureFunnelAttrFn(ctx, request)
 				}
 			}
 
@@ -293,9 +291,6 @@ Examples:
 				cleanupTargets := tailapi.CleanupTargetsForServices(reg.Services)
 				cleanup, err := serveCleanupFn(context.Background(), cleanupTargets)
 				if err != nil {
-					if !errors.Is(err, tailapi.ErrNoAPIClient) {
-						return fmt.Errorf("cleanup stale nodes: %w", err)
-					}
 					cleanup = tailapi.CleanupResult{Skipped: true, SkipReason: err.Error()}
 				}
 				if cleanup.Skipped {
@@ -315,9 +310,11 @@ Examples:
 			restoreEnsureTags := temporarilySetServeEnsureTags(effectiveEnsureTagsFn)
 			defer restoreEnsureTags()
 			return runForegroundWithOptions(pidPath, "", controlURL, foregroundOptions{
-				ReadyPath:       os.Getenv("TSLINK_DAEMON_READY_PATH"),
-				AuthHandoffPath: authHandoffPath,
-				Credentialed:    credentialed,
+				ReadyPath:          os.Getenv("TSLINK_DAEMON_READY_PATH"),
+				AuthHandoffPath:    authHandoffPath,
+				Credentialed:       credentialed,
+				NoAutoProvision:    noAutoProvision,
+				EnsureFunnelAttrFn: effectiveEnsureFunnelAttrFn,
 				PresentAuth: func(record authHandoffRecord) {
 					presentAuthHandoff(cmd, record)
 				},
@@ -329,6 +326,7 @@ Examples:
 	serveCmd.Flags().Bool("no-browser", false, "Print the Tailscale login URL without opening a browser")
 	serveCmd.Flags().String("control-url", "", "Custom control server URL (e.g., Headscale)")
 	serveCmd.Flags().Bool("manage-acl", false, "Opt in to remote Tailscale ACL tag-owner mutation using a machine-readable side-effect plan")
+	serveCmd.Flags().Bool("no-auto-provision", false, "Disable automatic Funnel policy provisioning for every service in this serve process")
 	rootCmd.AddCommand(serveCmd)
 }
 
@@ -507,10 +505,12 @@ func presentAuthHandoff(cmd *cobra.Command, record authHandoffRecord) {
 }
 
 type foregroundOptions struct {
-	ReadyPath       string
-	AuthHandoffPath string
-	Credentialed    bool
-	PresentAuth     func(authHandoffRecord)
+	ReadyPath          string
+	AuthHandoffPath    string
+	Credentialed       bool
+	NoAutoProvision    bool
+	EnsureFunnelAttrFn server.EnsureFunnelAttrFunc
+	PresentAuth        func(authHandoffRecord)
 }
 
 func runForeground(pidPath, readyPath, authKey, controlURL string) error {
@@ -567,6 +567,16 @@ func runForegroundWithOptions(pidPath, authKey, controlURL string, options foreg
 	}
 	if setter, ok := srv.(ensureTagsSetter); ok {
 		setter.SetEnsureTagsFn(serveEnsureTagsFn)
+	}
+	if setter, ok := srv.(ensureFunnelAttrSetter); ok {
+		ensure := options.EnsureFunnelAttrFn
+		if ensure == nil {
+			ensure = serveEnsureFunnelAttrFn
+		}
+		setter.SetEnsureFunnelAttrFn(ensure)
+	}
+	if setter, ok := srv.(autoProvisionFunnelSetter); ok {
+		setter.SetAutoProvisionFunnel(!options.NoAutoProvision)
 	}
 	if setter, ok := srv.(authKeyProviderSetter); ok {
 		setter.SetAuthKeyProvider(func(ctx context.Context, svc registry.Service) (string, error) {

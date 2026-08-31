@@ -16,6 +16,11 @@ import (
 	"time"
 )
 
+var (
+	_ func(string, string, string, bool, bool) (int, error) = Daemonize
+	_ func(string, bool, bool) []string                     = daemonServeArgs
+)
+
 func TestMain(m *testing.M) {
 	if len(os.Args) > 1 && os.Args[1] == "serve" {
 		switch os.Getenv("TSLINK_DAEMON_TEST_MODE") {
@@ -834,7 +839,7 @@ func TestDaemonize_CreateStdoutLogDirError(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	_, err := Daemonize(filepath.Join(parent, "stdout.log"), filepath.Join(t.TempDir(), "stderr.log"), "", false)
+	_, err := Daemonize(filepath.Join(parent, "stdout.log"), filepath.Join(t.TempDir(), "stderr.log"), "", false, false)
 	if err == nil {
 		t.Fatal("Daemonize() error = nil, want error")
 	}
@@ -850,7 +855,7 @@ func TestDaemonize_OpenStdoutLogError(t *testing.T) {
 		t.Fatalf("Mkdir() error = %v", err)
 	}
 
-	_, err := Daemonize(outLog, filepath.Join(dir, "stderr.log"), "", false)
+	_, err := Daemonize(outLog, filepath.Join(dir, "stderr.log"), "", false, false)
 	if err == nil {
 		t.Fatal("Daemonize() error = nil, want error")
 	}
@@ -866,7 +871,7 @@ func TestDaemonize_OpenStderrLogError(t *testing.T) {
 		t.Fatalf("Mkdir() error = %v", err)
 	}
 
-	_, err := Daemonize(filepath.Join(dir, "stdout.log"), errLog, "", false)
+	_, err := Daemonize(filepath.Join(dir, "stdout.log"), errLog, "", false, false)
 	if err == nil {
 		t.Fatal("Daemonize() error = nil, want error")
 	}
@@ -882,7 +887,7 @@ func TestDaemonize_CreateStderrLogDirError(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	_, err := Daemonize(filepath.Join(dir, "stdout.log"), filepath.Join(errParent, "stderr.log"), "", false)
+	_, err := Daemonize(filepath.Join(dir, "stdout.log"), filepath.Join(errParent, "stderr.log"), "", false, false)
 	if err == nil {
 		t.Fatal("Daemonize() error = nil, want error")
 	}
@@ -909,7 +914,7 @@ func TestDaemonize_Success(t *testing.T) {
 	outLog := filepath.Join(dir, "stdout.log")
 	errLog := filepath.Join(dir, "stderr.log")
 
-	pid, err := Daemonize(outLog, errLog, "", false)
+	pid, err := Daemonize(outLog, errLog, "", false, false)
 	if err != nil {
 		t.Fatalf("Daemonize() error = %v", err)
 	}
@@ -949,7 +954,7 @@ func TestDaemonize_ForwardsControlURL(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	pid, err := Daemonize(filepath.Join(dir, "stdout.log"), filepath.Join(dir, "stderr.log"), "https://headscale.example.com", false)
+	pid, err := Daemonize(filepath.Join(dir, "stdout.log"), filepath.Join(dir, "stderr.log"), "https://headscale.example.com", false, false)
 	if err != nil {
 		t.Fatalf("Daemonize() error = %v", err)
 	}
@@ -975,18 +980,20 @@ func TestDaemonize_ForwardsControlURL(t *testing.T) {
 // child argv must carry --manage-acl exactly once when opted in, and never when
 // default-off. Kills the old implementation that hardcoded the child argv to
 // `serve [--control-url ...]` and silently dropped the opt-in in daemon mode.
-func TestDaemonizeManageACLPropagation(t *testing.T) {
+func TestDaemonizeServeFlagPropagation(t *testing.T) {
 	t.Setenv("TSLINK_DAEMON_TEST_MODE", "success")
 
 	cases := []struct {
 		name       string
 		controlURL string
 		manageACL  bool
+		noAuto     bool
 		want       []string
 	}{
-		{"default off carries no flag", "", false, []string{"serve"}},
-		{"opt-in carries flag once", "", true, []string{"serve", "--manage-acl"}},
-		{"opt-in with control url", "https://headscale.example.com", true, []string{"serve", "--control-url", "https://headscale.example.com", "--manage-acl"}},
+		{"defaults carry no flag", "", false, false, []string{"serve"}},
+		{"manage ACL carries flag once", "", true, false, []string{"serve", "--manage-acl"}},
+		{"kill switch carries flag once", "", false, true, []string{"serve", "--no-auto-provision"}},
+		{"both choices with control url", "https://headscale.example.com", true, true, []string{"serve", "--control-url", "https://headscale.example.com", "--manage-acl", "--no-auto-provision"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -999,7 +1006,7 @@ func TestDaemonizeManageACLPropagation(t *testing.T) {
 			}
 
 			dir := t.TempDir()
-			pid, err := Daemonize(filepath.Join(dir, "stdout.log"), filepath.Join(dir, "stderr.log"), tc.controlURL, tc.manageACL)
+			pid, err := Daemonize(filepath.Join(dir, "stdout.log"), filepath.Join(dir, "stderr.log"), tc.controlURL, tc.manageACL, tc.noAuto)
 			if err != nil {
 				t.Fatalf("Daemonize() error = %v", err)
 			}
@@ -1023,6 +1030,19 @@ func TestDaemonizeManageACLPropagation(t *testing.T) {
 			}
 			if count != wantCount {
 				t.Fatalf("--manage-acl appeared %d times, want %d; argv=%q", count, wantCount, gotArgs)
+			}
+			noAutoCount := 0
+			for _, a := range gotArgs {
+				if a == "--no-auto-provision" {
+					noAutoCount++
+				}
+			}
+			wantNoAutoCount := 0
+			if tc.noAuto {
+				wantNoAutoCount = 1
+			}
+			if noAutoCount != wantNoAutoCount {
+				t.Fatalf("--no-auto-provision appeared %d times, want %d; argv=%q", noAutoCount, wantNoAutoCount, gotArgs)
 			}
 		})
 	}
@@ -1337,7 +1357,7 @@ func TestDaemonize_ExecutableError(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	_, err := Daemonize(filepath.Join(dir, "stdout.log"), filepath.Join(dir, "stderr.log"), "", false)
+	_, err := Daemonize(filepath.Join(dir, "stdout.log"), filepath.Join(dir, "stderr.log"), "", false, false)
 	if err == nil {
 		t.Fatal("Daemonize() error = nil, want error")
 	}
@@ -1354,7 +1374,7 @@ func TestDaemonize_StartError(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	_, err := Daemonize(filepath.Join(dir, "stdout.log"), filepath.Join(dir, "stderr.log"), "", false)
+	_, err := Daemonize(filepath.Join(dir, "stdout.log"), filepath.Join(dir, "stderr.log"), "", false, false)
 	if err == nil {
 		t.Fatal("Daemonize() error = nil, want error")
 	}

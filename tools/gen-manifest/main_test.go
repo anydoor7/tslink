@@ -761,13 +761,28 @@ func platformSpecificFlagRegistrations(t *testing.T) []platformFlagRegistration 
 	return registrations
 }
 
-func TestPlatformSpecificFlagRegistrationsAreExactlyTheTwoDarwinForceFlags(t *testing.T) {
+func TestPlatformSpecificFlagRegistrationsMatchManagedDaemonSurface(t *testing.T) {
 	got := platformSpecificFlagRegistrations(t)
 	want := []platformFlagRegistration{
 		{
 			Source: "install_darwin.go",
 			Key:    platformFlagKey{CommandPath: "tslink install", FlagName: "force"},
 			Usage:  "Proceed with an upgrade despite an unavailable launchd domain (may start a second daemon)",
+		},
+		{
+			Source: "install_darwin.go",
+			Key:    platformFlagKey{CommandPath: "tslink install", FlagName: "no-auto-provision"},
+			Usage:  "Install the managed daemon with Funnel policy auto-provisioning disabled",
+		},
+		{
+			Source: "install_linux.go",
+			Key:    platformFlagKey{CommandPath: "tslink install", FlagName: "no-auto-provision"},
+			Usage:  "Install the managed daemon with Funnel policy auto-provisioning disabled",
+		},
+		{
+			Source: "install_windows.go",
+			Key:    platformFlagKey{CommandPath: "tslink install", FlagName: "no-auto-provision"},
+			Usage:  "Install the managed daemon with Funnel policy auto-provisioning disabled",
 		},
 		{
 			Source: "uninstall_darwin.go",

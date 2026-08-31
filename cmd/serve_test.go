@@ -65,6 +65,34 @@ type mockServerWithEnsureTags struct {
 	runErr       error
 }
 
+type mockServerWithFunnelProvisioning struct {
+	ensureFn  server.EnsureFunnelAttrFunc
+	auto      bool
+	autoSet   bool
+	request   tailapi.FunnelPolicyRequest
+	resultErr error
+}
+
+func (m *mockServerWithFunnelProvisioning) SetEnsureFunnelAttrFn(fn server.EnsureFunnelAttrFunc) {
+	m.ensureFn = fn
+}
+
+func (m *mockServerWithFunnelProvisioning) SetAutoProvisionFunnel(enabled bool) {
+	m.auto = enabled
+	m.autoSet = true
+}
+
+func (m *mockServerWithFunnelProvisioning) Run(ctx context.Context) error {
+	if m.ensureFn == nil {
+		return fmt.Errorf("ensure Funnel function was not set")
+	}
+	_, err := m.ensureFn(ctx, m.request)
+	if err != nil {
+		return err
+	}
+	return m.resultErr
+}
+
 func (m *mockServerWithEnsureTags) SetEnsureTagsFn(fn server.EnsureTagsFunc) {
 	m.ensureTagsFn = fn
 }
@@ -158,10 +186,11 @@ func saveServeState(t *testing.T) {
 		isRunning          func(string) bool
 		isPIDRunning       func(int) bool
 		ensureTags         func(context.Context, []string) error
+		ensureFunnelAttr   server.EnsureFunnelAttrFunc
 		cleanup            func(context.Context, []tailapi.CleanupTarget) (tailapi.CleanupResult, error)
 		loadGlobal         func() (config.GlobalConfig, error)
 		logDir             func() (string, error)
-		daemonize          func(string, string, string, bool) (int, error)
+		daemonize          func(string, string, string, bool, bool) (int, error)
 		readPID            func(string) (int, error)
 		readyPath          func() (string, error)
 		authHandoffPath    func() (string, error)
@@ -184,7 +213,7 @@ func saveServeState(t *testing.T) {
 		readyPoll          time.Duration
 	}{
 		serveEnsureDirFn, serveMigrateFn, serveRegistryPathFn, serveLoadRegistryFn,
-		serveGetAuthKeyFn, serveHasStoredCredentialFn, servePIDPathFn, serveIsRunningFn, serveIsPIDRunningFn, serveEnsureTagsFn, serveCleanupFn,
+		serveGetAuthKeyFn, serveHasStoredCredentialFn, servePIDPathFn, serveIsRunningFn, serveIsPIDRunningFn, serveEnsureTagsFn, serveEnsureFunnelAttrFn, serveCleanupFn,
 		serveLoadGlobalFn, serveLogDirFn, serveDaemonizeFn, serveReadPIDFn,
 		serveReadyPathFn, serveAuthHandoffPathFn, serveWriteReadyFn, serveReadReadyFn, serveRemoveReadyFn,
 		serveSaveAuthHandoffFn, serveLoadAuthHandoffFn, serveRemoveAuthHandoffFn, serveOpenBrowserFn, serveCIEnvironmentSetFn, serveIsTerminalFn, serveSignalContextFn,
@@ -202,6 +231,7 @@ func saveServeState(t *testing.T) {
 		serveIsRunningFn = old.isRunning
 		serveIsPIDRunningFn = old.isPIDRunning
 		serveEnsureTagsFn = old.ensureTags
+		serveEnsureFunnelAttrFn = old.ensureFunnelAttr
 		serveCleanupFn = old.cleanup
 		serveLoadGlobalFn = old.loadGlobal
 		serveLogDirFn = old.logDir
@@ -264,12 +294,17 @@ func mockServeDefaults(t *testing.T, dir string) {
 	serveIsRunningFn = func(string) bool { return false }
 	serveIsPIDRunningFn = func(int) bool { return true }
 	serveEnsureTagsFn = func(ctx context.Context, tags []string) error { return nil }
+	serveEnsureFunnelAttrFn = func(context.Context, tailapi.FunnelPolicyRequest) (tailapi.PolicyMutationResult, error) {
+		return tailapi.PolicyMutationResult{WriteOutcome: tailapi.PolicyWriteUnchanged}, nil
+	}
 	serveCleanupFn = func(ctx context.Context, targets []tailapi.CleanupTarget) (tailapi.CleanupResult, error) {
 		return tailapi.CleanupResult{}, nil
 	}
 	serveLoadGlobalFn = func() (config.GlobalConfig, error) { return config.GlobalConfig{}, nil }
 	serveLogDirFn = func() (string, error) { return dir, nil }
-	serveDaemonizeFn = func(out, err, controlURL string, manageACL bool) (int, error) { return 99999, nil }
+	serveDaemonizeFn = func(out, err, controlURL string, manageACL, noAutoProvision bool) (int, error) {
+		return 99999, nil
+	}
 	serveReadPIDFn = func(path string) (int, error) { return 99999, nil }
 	serveReadyPathFn = func() (string, error) { return readyPath, nil }
 	serveAuthHandoffPathFn = func() (string, error) { return filepath.Join(dir, "auth-handoff.json"), nil }
@@ -772,7 +807,7 @@ func TestServeCmd_AlreadyRunning(t *testing.T) {
 	}
 }
 
-func TestServeCmd_CleanupErrorStopsStartup(t *testing.T) {
+func TestServeCmd_CleanupErrorDegradesAndStarts(t *testing.T) {
 	dir := t.TempDir()
 	mockServeDefaults(t, dir)
 
@@ -787,11 +822,39 @@ func TestServeCmd_CleanupErrorStopsStartup(t *testing.T) {
 
 	cmd := findServeCmd(t)
 	err := cmd.RunE(cmd, nil)
-	if err == nil || !strings.Contains(err.Error(), "cleanup stale nodes") {
-		t.Fatalf("expected cleanup error, got: %v", err)
+	if err != nil {
+		t.Fatalf("RunE() error = %v, want cleanup degradation", err)
 	}
-	if serverStarted {
-		t.Fatal("server should not start after cleanup error")
+	if !serverStarted {
+		t.Fatal("server should start when opportunistic cleanup fails")
+	}
+}
+
+func TestServeCmd_CleanupCredentialAndScopeFailuresDoNotKillServing(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+	}{
+		{name: "OAuth secret format", err: errors.New("stored OAuth client secret has invalid format; expected tskey-client-<id>-<secret>")},
+		{name: "devices read scope", err: errors.New("list devices rejected with HTTP 403 Forbidden")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			mockServeDefaults(t, dir)
+			serveCleanupFn = func(context.Context, []tailapi.CleanupTarget) (tailapi.CleanupResult, error) {
+				return tailapi.CleanupResult{}, tc.err
+			}
+			mock := &mockServer{}
+			serveNewServerFn = func(string, string) (serverRunner, error) { return mock, nil }
+			cmd := findServeCmd(t)
+			if err := cmd.RunE(cmd, nil); err != nil {
+				t.Fatalf("RunE() error = %v, want degraded cleanup", err)
+			}
+			if !mock.runCalled {
+				t.Fatalf("server did not run after cleanup failure: %v", tc.err)
+			}
+		})
 	}
 }
 
@@ -995,7 +1058,7 @@ func TestServeCmd_InvalidFlagControlURLFailsBeforeDaemonize(t *testing.T) {
 	t.Cleanup(func() { _ = cmd.Flags().Set("control-url", "") })
 
 	daemonizeCalled := false
-	serveDaemonizeFn = func(out, errLog, controlURL string, manageACL bool) (int, error) {
+	serveDaemonizeFn = func(out, errLog, controlURL string, manageACL, noAutoProvision bool) (int, error) {
 		daemonizeCalled = true
 		return 0, fmt.Errorf("daemonize should not be called")
 	}
@@ -1060,6 +1123,29 @@ func TestServeCmd_DaemonMode(t *testing.T) {
 	}
 }
 
+func TestServeCmd_DaemonModePropagatesNoAutoProvision(t *testing.T) {
+	dir := t.TempDir()
+	mockServeDefaults(t, dir)
+	serveDaemon = true
+	mockServeDaemonReadyAfterInitialCheck(t)
+
+	var captured bool
+	serveDaemonizeFn = func(out, errLog, controlURL string, manageACL, noAutoProvision bool) (int, error) {
+		captured = noAutoProvision
+		return 99999, nil
+	}
+	cmd := findServeCmd(t)
+	if err := cmd.Flags().Set("no-auto-provision", "true"); err != nil {
+		t.Fatalf("set no-auto-provision: %v", err)
+	}
+	if err := cmd.RunE(cmd, nil); err != nil {
+		t.Fatalf("RunE() error = %v", err)
+	}
+	if !captured {
+		t.Fatal("daemon child did not receive --no-auto-provision")
+	}
+}
+
 func TestServeCmd_JSONZeroCredentialReturnsImmediateAuthHandoff(t *testing.T) {
 	dir := t.TempDir()
 	mockServeDefaults(t, dir)
@@ -1068,7 +1154,7 @@ func TestServeCmd_JSONZeroCredentialReturnsImmediateAuthHandoff(t *testing.T) {
 	serveReadPIDFn = func(string) (int, error) { return 99999, nil }
 	serveIsPIDRunningFn = func(int) bool { return true }
 	spawned := false
-	serveDaemonizeFn = func(out, errLog, controlURL string, manageACL bool) (int, error) {
+	serveDaemonizeFn = func(out, errLog, controlURL string, manageACL, noAutoProvision bool) (int, error) {
 		spawned = true
 		return 99999, nil
 	}
@@ -1125,7 +1211,7 @@ func TestServeCmd_JSONCredentialedStaysForeground(t *testing.T) {
 	dir := t.TempDir()
 	mockServeDefaults(t, dir)
 	serveHasStoredCredentialFn = func() (bool, error) { return true, nil }
-	serveDaemonizeFn = func(string, string, string, bool) (int, error) {
+	serveDaemonizeFn = func(string, string, string, bool, bool) (int, error) {
 		t.Fatal("credentialed JSON serve was daemonized")
 		return 0, nil
 	}
@@ -1160,7 +1246,7 @@ func TestServeCmd_DaemonConflictPreservesLiveAuthHandoff(t *testing.T) {
 		handoffRemoved = true
 		return nil
 	}
-	serveDaemonizeFn = func(string, string, string, bool) (int, error) {
+	serveDaemonizeFn = func(string, string, string, bool, bool) (int, error) {
 		t.Fatal("daemonize called despite live daemon conflict")
 		return 0, nil
 	}
@@ -1238,7 +1324,7 @@ func TestServeCmd_DaemonModeDoesNotDeletePIDAfterGuardAllows(t *testing.T) {
 
 	removeCalls := 0
 	serveRemovePIDFn = func(string) { removeCalls++ }
-	serveDaemonizeFn = func(out, errLog, controlURL string, manageACL bool) (int, error) {
+	serveDaemonizeFn = func(out, errLog, controlURL string, manageACL, noAutoProvision bool) (int, error) {
 		for _, path := range []string{pidPath, identityPath} {
 			if _, err := os.Stat(path); err != nil {
 				t.Fatalf("daemonize observed deleted live-daemon evidence %q: %v", path, err)
@@ -1274,7 +1360,7 @@ func TestServeCmd_DaemonModeForwardsControlURL(t *testing.T) {
 	t.Cleanup(func() { _ = cmd.Flags().Set("control-url", "") })
 
 	var capturedControlURL string
-	serveDaemonizeFn = func(out, errLog, controlURL string, manageACL bool) (int, error) {
+	serveDaemonizeFn = func(out, errLog, controlURL string, manageACL, noAutoProvision bool) (int, error) {
 		capturedControlURL = controlURL
 		return 99999, nil
 	}
@@ -1319,7 +1405,7 @@ func TestServeCmd_DaemonModePropagatesManageACL(t *testing.T) {
 			}
 
 			var captured bool
-			serveDaemonizeFn = func(out, errLog, controlURL string, manageACL bool) (int, error) {
+			serveDaemonizeFn = func(out, errLog, controlURL string, manageACL, noAutoProvision bool) (int, error) {
 				captured = manageACL
 				return 99999, nil
 			}
@@ -1520,7 +1606,7 @@ func TestServeCmd_DaemonModeValidatesRegistryBeforeDaemonize(t *testing.T) {
 	}
 
 	daemonizeCalled := false
-	serveDaemonizeFn = func(out, errLog, controlURL string, manageACL bool) (int, error) {
+	serveDaemonizeFn = func(out, errLog, controlURL string, manageACL, noAutoProvision bool) (int, error) {
 		daemonizeCalled = true
 		return 0, fmt.Errorf("daemonize should not be called")
 	}
@@ -1665,7 +1751,7 @@ func TestServeCmd_DaemonModeFunnelNonProxyTypesIncludeStableCode(t *testing.T) {
 			}
 
 			daemonizeCalled := false
-			serveDaemonizeFn = func(out, errLog, controlURL string, manageACL bool) (int, error) {
+			serveDaemonizeFn = func(out, errLog, controlURL string, manageACL, noAutoProvision bool) (int, error) {
 				daemonizeCalled = true
 				return 0, fmt.Errorf("daemonize should not be called")
 			}
@@ -1708,7 +1794,7 @@ func TestServeCmd_DaemonizeError(t *testing.T) {
 	dir := t.TempDir()
 	mockServeDefaults(t, dir)
 	serveDaemon = true
-	serveDaemonizeFn = func(out, errLog, controlURL string, manageACL bool) (int, error) {
+	serveDaemonizeFn = func(out, errLog, controlURL string, manageACL, noAutoProvision bool) (int, error) {
 		return 0, fmt.Errorf("fork failed")
 	}
 
@@ -1765,6 +1851,60 @@ func TestServeCmd_DefaultRuntimeEnsureTagsIsNoop(t *testing.T) {
 	}
 }
 
+func TestServeCmd_WiresFunnelProvisioningScopeAndKillSwitch(t *testing.T) {
+	cases := []struct {
+		name         string
+		manageACL    bool
+		noAuto       bool
+		wantAuto     bool
+		wantTagCount int
+	}{
+		{name: "default auto provisioning only", wantAuto: true},
+		{name: "manage ACL fuses ordinary tags", manageACL: true, wantAuto: true, wantTagCount: 2},
+		{name: "daemon kill switch wins", noAuto: true, wantAuto: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			mockServeDefaults(t, dir)
+			request := tailapi.FunnelPolicyRequest{
+				Tags: []string{"tag:tsmain", registry.FunnelTag}, Target: registry.FunnelTag, Owners: []string{"tag:tsmain"},
+			}
+			mock := &mockServerWithFunnelProvisioning{request: request}
+			var captured tailapi.FunnelPolicyRequest
+			serveEnsureFunnelAttrFn = func(ctx context.Context, got tailapi.FunnelPolicyRequest) (tailapi.PolicyMutationResult, error) {
+				captured = got
+				return tailapi.PolicyMutationResult{WriteOutcome: tailapi.PolicyWriteUnchanged}, nil
+			}
+			serveNewServerFn = func(authKey, controlURL string) (serverRunner, error) { return mock, nil }
+
+			cmd := findServeCmd(t)
+			if tc.manageACL {
+				if err := cmd.Flags().Set("manage-acl", "true"); err != nil {
+					t.Fatalf("set manage-acl: %v", err)
+				}
+			}
+			if tc.noAuto {
+				if err := cmd.Flags().Set("no-auto-provision", "true"); err != nil {
+					t.Fatalf("set no-auto-provision: %v", err)
+				}
+			}
+			if err := cmd.RunE(cmd, nil); err != nil {
+				t.Fatalf("RunE() error = %v", err)
+			}
+			if !mock.autoSet || mock.auto != tc.wantAuto {
+				t.Fatalf("auto provisioning setter = (%v,%v), want (true,%v)", mock.autoSet, mock.auto, tc.wantAuto)
+			}
+			if len(captured.Tags) != tc.wantTagCount {
+				t.Fatalf("underlying Funnel writer tags = %v, want count %d", captured.Tags, tc.wantTagCount)
+			}
+			if captured.Target != registry.FunnelTag || len(captured.Owners) != 1 || captured.Owners[0] != "tag:tsmain" {
+				t.Fatalf("underlying Funnel request = %+v, want target and caller-derived owner preserved", captured)
+			}
+		})
+	}
+}
+
 func TestServeCmd_ManageACLEnsuresTagsOnStartup(t *testing.T) {
 	dir := t.TempDir()
 	mockServeDefaults(t, dir)
@@ -1779,18 +1919,23 @@ func TestServeCmd_ManageACLEnsuresTagsOnStartup(t *testing.T) {
 
 	var ensuredTags []string
 	serveEnsureTagsFn = func(ctx context.Context, tags []string) error {
-		ensuredTags = tags
+		ensuredTags = append([]string(nil), tags...)
 		return nil
+	}
+	serveNewServerFn = func(authKey, controlURL string) (serverRunner, error) {
+		return &mockServerWithEnsureTags{}, nil
 	}
 
 	cmd := findServeCmd(t)
 	if err := cmd.Flags().Set("manage-acl", "true"); err != nil {
 		t.Fatalf("set manage-acl: %v", err)
 	}
-	_ = cmd.RunE(cmd, nil)
+	if err := cmd.RunE(cmd, nil); err != nil {
+		t.Fatalf("RunE() error = %v", err)
+	}
 
-	if len(ensuredTags) < 2 {
-		t.Fatalf("expected at least 2 tags ensured, got: %v", ensuredTags)
+	if len(ensuredTags) != 1 || ensuredTags[0] != "tag:hot" {
+		t.Fatalf("ensure phase tags = %v, want injected server callback", ensuredTags)
 	}
 }
 
@@ -1800,6 +1945,9 @@ func TestServeCmd_EnsureTagsError(t *testing.T) {
 
 	serveEnsureTagsFn = func(ctx context.Context, tags []string) error {
 		return fmt.Errorf("ACL write denied")
+	}
+	serveNewServerFn = func(authKey, controlURL string) (serverRunner, error) {
+		return &mockServerWithEnsureTags{}, nil
 	}
 
 	cmd := findServeCmd(t)

@@ -282,6 +282,21 @@ func TestPlistTemplateIncludesRestartThrottle(t *testing.T) {
 	}
 }
 
+func TestPlistTemplateCarriesNoAutoProvision(t *testing.T) {
+	var buf bytes.Buffer
+	err := plistTemplate.Execute(&buf, plistData{
+		Label: plistLabel, Executable: "/usr/local/bin/tslink",
+		OutLog: "/tmp/out", ErrLog: "/tmp/err", ThrottleInterval: launchdThrottleInterval,
+		NoAutoProvision: true,
+	})
+	if err != nil {
+		t.Fatalf("plistTemplate.Execute() error = %v", err)
+	}
+	if count := strings.Count(buf.String(), "<string>--no-auto-provision</string>"); count != 1 {
+		t.Fatalf("kill-switch arg count = %d, want 1:\n%s", count, buf.String())
+	}
+}
+
 func TestPlistTemplateEscapesXMLPaths(t *testing.T) {
 	var buf bytes.Buffer
 	err := plistTemplate.Execute(&buf, plistData{

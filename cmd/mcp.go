@@ -10,6 +10,7 @@ import (
 
 	"github.com/monody0007/tslink/internal/output"
 	"github.com/monody0007/tslink/internal/registry"
+	"github.com/monody0007/tslink/internal/tailapi"
 	"github.com/spf13/cobra"
 )
 
@@ -49,6 +50,13 @@ var (
 		"code":    map[string]any{"type": "string"},
 		"message": map[string]any{"type": "string"},
 		"next":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+		"provision": objectSchema(map[string]any{
+			"attempted":     map[string]any{"type": "boolean"},
+			"target":        map[string]any{"type": "string"},
+			"changed":       map[string]any{"type": "boolean"},
+			"reason":        map[string]any{"type": "string"},
+			"write_outcome": map[string]any{"type": "string", "enum": []string{tailapi.PolicyWriteNotAttempted, tailapi.PolicyWriteUnchanged, tailapi.PolicyWriteChanged, tailapi.PolicyWriteRejected, tailapi.PolicyWriteUnknown}},
+		}, "attempted", "changed", "reason"),
 	}, "code", "message")
 	mcpShareOutputSchema = objectSchema(map[string]any{
 		"url":      map[string]any{"type": "string"},

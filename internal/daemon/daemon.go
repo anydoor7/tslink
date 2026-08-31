@@ -49,18 +49,21 @@ const (
 )
 
 // daemonServeArgs builds the child argv for the re-executed foreground serve
-// process. controlURL and manageACL opt-ins observed by the parent must be
-// forwarded to the child exactly once, otherwise the documented
-// `serve --daemon --manage-acl` opt-in is silently dropped in daemon mode. It
+// process. controlURL, manageACL, and noAutoProvision choices observed by the
+// parent must be forwarded to the child exactly once, otherwise a documented
+// serve choice is silently dropped in daemon mode. It
 // is shared by the Unix and Windows Daemonize implementations so both platforms
 // forward identical flags.
-func daemonServeArgs(controlURL string, manageACL bool) []string {
+func daemonServeArgs(controlURL string, manageACL, noAutoProvision bool) []string {
 	args := []string{"serve"}
 	if controlURL != "" {
 		args = append(args, "--control-url", controlURL)
 	}
 	if manageACL {
 		args = append(args, "--manage-acl")
+	}
+	if noAutoProvision {
+		args = append(args, "--no-auto-provision")
 	}
 	return args
 }

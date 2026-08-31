@@ -196,6 +196,19 @@ func TestBuildService_FunnelRejectsMissingPublicAck(t *testing.T) {
 	}
 }
 
+func TestBuildService_FunnelRejectsNonProxyWithPublicAck(t *testing.T) {
+	tests := []AddParams{
+		{Name: "files", Dir: "/tmp/files", Funnel: true, Public: true},
+		{Name: "tcp", TCP: "localhost:5432", Funnel: true, Public: true},
+	}
+	for _, params := range tests {
+		_, err := buildService(params)
+		if code, ok := registry.ErrorCode(err); !ok || code != registry.CodeFunnelTypeConflict {
+			t.Fatalf("buildService(%+v) error=%v code=%q, want %s", params, err, code, registry.CodeFunnelTypeConflict)
+		}
+	}
+}
+
 func TestBuildService_FunnelRejectsAllowBeforeMissingPublicAck(t *testing.T) {
 	_, err := buildService(AddParams{
 		Name:   "app",
@@ -235,6 +248,55 @@ func TestBuildService_FunnelAcceptsPublicAckWithoutAllow(t *testing.T) {
 	}
 	if len(svc.AllowedUsers) != 0 {
 		t.Fatalf("allowed_users = %v, want none", svc.AllowedUsers)
+	}
+	if got := strings.Join(svc.Tags, ","); got != "tag:tsmain" {
+		t.Fatalf("persisted Funnel service tags = %q, want only user/default tags", got)
+	}
+}
+
+func TestBuildService_FunnelTagIsDerivedUnlessExplicitlySupplied(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		tags string
+		want string
+	}{
+		{name: "does not auto-persist shared tag", tags: "tag:custom", want: "tag:custom"},
+		{name: "preserves explicitly supplied shared tag", tags: "tag:custom," + registry.FunnelTag, want: "tag:custom," + registry.FunnelTag},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, err := buildService(AddParams{
+				Name:   "app",
+				Proxy:  "localhost:3000",
+				Funnel: true,
+				Public: true,
+				Tags:   tc.tags,
+			})
+			if err != nil {
+				t.Fatalf("buildService() error = %v", err)
+			}
+			if got := strings.Join(svc.Tags, ","); got != tc.want {
+				t.Fatalf("persisted Funnel service tags = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestBuildService_FunnelPersistsNoAutoProvision(t *testing.T) {
+	svc, err := buildService(AddParams{
+		Name: "app", Proxy: "localhost:3000", Funnel: true, Public: true, NoAutoProvision: true,
+	})
+	if err != nil {
+		t.Fatalf("buildService() error = %v", err)
+	}
+	if !svc.NoAutoProvision {
+		t.Fatal("service no_auto_provision = false, want explicit opt-out persisted")
+	}
+}
+
+func TestBuildService_RejectsNoAutoProvisionWithoutFunnel(t *testing.T) {
+	_, err := buildService(AddParams{Name: "app", Proxy: "localhost:3000", NoAutoProvision: true})
+	if err == nil || !strings.Contains(err.Error(), "--no-auto-provision can only be used with --funnel") {
+		t.Fatalf("buildService() error = %v, want Funnel-only flag error", err)
 	}
 }
 

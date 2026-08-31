@@ -29,6 +29,12 @@ const (
 
 	maxTagLength = 63
 
+	// FunnelTag is the shared plumbing identity derived for every Funnel node at
+	// construction time. It is intentionally stable so the tailnet policy needs
+	// a single tag-owner rule and a single nodeAttrs grant for all Funnel nodes;
+	// registry persistence is neither required nor relied upon.
+	FunnelTag = "tag:tslink-funnel"
+
 	// TagGrammar describes the strict Tailscale ACL tag syntax accepted by TSLink.
 	TagGrammar = "tag:<lowercase-hyphen-name> using lowercase letters, numbers, and hyphens"
 
@@ -53,6 +59,34 @@ const (
 	CodeRegistryReloadInvalid      = "registry_reload_invalid"
 	CodeURLNotReady                = "url_not_ready"
 	CodeLaunchctlDomainUnavailable = "launchctl_domain_unavailable"
+	CodeInviteAPIKeyRequired       = "invite_api_key_required"
+	CodeInviteRoleInvalid          = "invite_role_invalid"
+	CodeInviteNotFound             = "invite_not_found"
+	CodeInviteDeviceAmbiguous      = "invite_device_ambiguous"
+	CodeInviteOwnershipUnproven    = "invite_device_ownership_unproven"
+	CodeInviteAPIForbidden         = "invite_api_forbidden"
+	CodeInviteResendEmailMissing   = "invite_resend_email_missing"
+	CodeInviteRecipientInvalid     = "invite_recipient_invalid"
+	CodeInviteIDInvalid            = "invite_id_invalid"
+	CodeInviteKindInvalid          = "invite_kind_invalid"
+	CodeInviteRateLimited          = "invite_rate_limited"
+	CodeInviteStateConflict        = "invite_state_conflict"
+	CodeInviteRequestInvalid       = "invite_request_invalid"
+	CodeInviteResponseInvalid      = "invite_response_invalid"
+
+	ProvisionReasonDaemonDisabled      = "daemon_disabled"
+	ProvisionReasonServiceDisabled     = "service_disabled"
+	ProvisionReasonNoUsableOwner       = "no_usable_owner"
+	ProvisionReasonEnsureFailed        = "ensure_failed"
+	ProvisionReasonWriteUnknown        = "write_outcome_unknown"
+	ProvisionReasonPolicyUpdated       = "policy_updated"
+	ProvisionReasonPolicySatisfied     = "policy_already_satisfied"
+	ProvisionReasonNotAttempted        = "not_attempted"
+	ProvisionReasonNetmapTimeout       = "netmap_timeout"
+	ProvisionReasonNetmapPollFailed    = "netmap_poll_unavailable"
+	ProvisionReasonHTTPSDisabled       = "https_disabled"
+	ProvisionReasonSettingsUnavailable = "settings_unavailable"
+	ProvisionReasonPortUnsupported     = "port_unsupported"
 
 	ErrFunnelAllowedUsers = "funnel services do not support allowed_users; public Funnel cannot be combined with TSLink allow lists"
 	ErrFunnelPublicAck    = "funnel services require recorded public acknowledgement; re-run `tslink add ... --funnel --public` or set public_ack:true after confirming public internet exposure"
@@ -64,12 +98,24 @@ var nameRegexp = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
 var tagRegexp = regexp.MustCompile(`^tag:[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
 
 type CodedError struct {
-	Code    string
-	Message string
-	Next    []string
+	Code      string
+	Message   string
+	Next      []string
+	Provision *ProvisionOutcome
 	// MessageOnly keeps wrapped human errors readable while StableCode still
 	// exposes the machine discriminator.
 	MessageOnly bool
+}
+
+// ProvisionOutcome is stable machine-readable context for Funnel policy
+// provisioning failures. Reason is a code, not prose, so agents never need to
+// substring-match Message to distinguish opt-out, ensure failure, or timeout.
+type ProvisionOutcome struct {
+	Attempted    bool   `json:"attempted"`
+	Target       string `json:"target,omitempty"`
+	Changed      bool   `json:"changed"`
+	Reason       string `json:"reason"`
+	WriteOutcome string `json:"write_outcome,omitempty"`
 }
 
 func (e CodedError) Error() string {
@@ -131,6 +177,19 @@ func FunnelCapabilityMissingError(serviceName string, cause error) error {
 			fmt.Sprintf("Ensure nodeAttrs targets service node %q and includes attr [\"funnel\"], then restart the managed daemon with `tslink install` or restart the foreground `tslink serve` process", serviceName),
 			fmt.Sprintf("tslink status --urls --name %s --json", serviceName),
 		},
+		MessageOnly: true,
+	}
+}
+
+// FunnelCapabilityMissingProvisionError carries a structured provisioning
+// outcome and caller-selected recovery steps for the precise missing
+// capability cause.
+func FunnelCapabilityMissingProvisionError(serviceName string, cause error, provision ProvisionOutcome, next []string) error {
+	return CodedError{
+		Code:        CodeFunnelCapabilityMissing,
+		Message:     fmt.Sprintf("service %q cannot enable Funnel: %v", serviceName, cause),
+		Next:        append([]string(nil), next...),
+		Provision:   &provision,
 		MessageOnly: true,
 	}
 }
@@ -255,21 +314,22 @@ type MiddlewareConfig struct {
 }
 
 type Service struct {
-	Name         string            `json:"name"`
-	Type         string            `json:"type"`
-	Target       string            `json:"target,omitempty"`
-	Path         string            `json:"path,omitempty"`
-	Port         int               `json:"port,omitempty"`
-	Ephemeral    bool              `json:"ephemeral,omitempty"`
-	Tags         []string          `json:"tags,omitempty"`
-	AllowedUsers []string          `json:"allowed_users,omitempty"`
-	ControlURL   string            `json:"control_url,omitempty"`
-	Funnel       bool              `json:"funnel,omitempty"`
-	PublicAck    bool              `json:"public_ack,omitempty"`
-	Domain       string            `json:"domain,omitempty"`
-	AcmeEmail    string            `json:"acme_email,omitempty"`
-	Middleware   *MiddlewareConfig `json:"middleware,omitempty"`
-	CreatedAt    time.Time         `json:"created_at"`
+	Name            string            `json:"name"`
+	Type            string            `json:"type"`
+	Target          string            `json:"target,omitempty"`
+	Path            string            `json:"path,omitempty"`
+	Port            int               `json:"port,omitempty"`
+	Ephemeral       bool              `json:"ephemeral,omitempty"`
+	Tags            []string          `json:"tags,omitempty"`
+	AllowedUsers    []string          `json:"allowed_users,omitempty"`
+	ControlURL      string            `json:"control_url,omitempty"`
+	Funnel          bool              `json:"funnel,omitempty"`
+	PublicAck       bool              `json:"public_ack,omitempty"`
+	NoAutoProvision bool              `json:"no_auto_provision,omitempty"`
+	Domain          string            `json:"domain,omitempty"`
+	AcmeEmail       string            `json:"acme_email,omitempty"`
+	Middleware      *MiddlewareConfig `json:"middleware,omitempty"`
+	CreatedAt       time.Time         `json:"created_at"`
 }
 
 type Registry struct {

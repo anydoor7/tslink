@@ -72,18 +72,19 @@ func invalidAllowEntries(allowedUsers []string) []string {
 
 // AddParams holds parsed flags for the add command.
 type AddParams struct {
-	Name       string
-	Proxy      string
-	Dir        string
-	TCP        string
-	Ephemeral  bool
-	Tags       string
-	Allow      string
-	Funnel     bool
-	Public     bool
-	Domain     string
-	AcmeEmail  string
-	ControlURL string
+	Name            string
+	Proxy           string
+	Dir             string
+	TCP             string
+	Ephemeral       bool
+	Tags            string
+	Allow           string
+	Funnel          bool
+	Public          bool
+	NoAutoProvision bool
+	Domain          string
+	AcmeEmail       string
+	ControlURL      string
 }
 
 // buildService validates parameters and constructs a registry.Service.
@@ -133,6 +134,9 @@ func buildService(p AddParams) (registry.Service, error) {
 	if p.Public && !p.Funnel {
 		return registry.Service{}, output.ErrUsage("--public can only be used with --funnel")
 	}
+	if p.NoAutoProvision && !p.Funnel {
+		return registry.Service{}, output.ErrUsage("--no-auto-provision can only be used with --funnel")
+	}
 	if err := registry.ValidateFunnelGuardrails(svcType, p.Funnel, allowedUsers, p.ControlURL, p.Public); err != nil {
 		return registry.Service{}, err
 	}
@@ -158,7 +162,6 @@ func buildService(p AddParams) (registry.Service, error) {
 	if len(tags) == 0 {
 		tags = []string{config.GetDefaultTag()}
 	}
-
 	if p.TCP != "" {
 		if err := registry.ValidateTCPTarget(p.TCP); err != nil {
 			return registry.Service{}, output.ErrUsage(err.Error())
@@ -187,7 +190,7 @@ func buildService(p AddParams) (registry.Service, error) {
 		return registry.Service{
 			Name: p.Name, Type: registry.TypeProxy, Target: target,
 			Ephemeral: p.Ephemeral, Tags: tags, AllowedUsers: allowedUsers,
-			Funnel: p.Funnel, PublicAck: p.Public,
+			Funnel: p.Funnel, PublicAck: p.Public, NoAutoProvision: p.NoAutoProvision,
 			ControlURL: p.ControlURL,
 		}, nil
 	}
@@ -262,6 +265,7 @@ Examples:
 			allowStr, _ := cmd.Flags().GetString("allow")
 			funnel, _ := cmd.Flags().GetBool("funnel")
 			public, _ := cmd.Flags().GetBool("public")
+			noAutoProvision, _ := cmd.Flags().GetBool("no-auto-provision")
 			domainName, _ := cmd.Flags().GetString("domain")
 			acmeEmail, _ := cmd.Flags().GetString("acme-email")
 			controlURL, _ := cmd.Flags().GetString("control-url")
@@ -269,18 +273,19 @@ Examples:
 			dryRun, _ := cmd.Flags().GetBool("dry-run")
 
 			svc, err := buildService(AddParams{
-				Name:       args[0],
-				Proxy:      proxyTarget,
-				Dir:        dirPath,
-				TCP:        tcpTarget,
-				Ephemeral:  ephemeral,
-				Tags:       tagsStr,
-				Allow:      allowStr,
-				Funnel:     funnel,
-				Public:     public,
-				Domain:     domainName,
-				AcmeEmail:  acmeEmail,
-				ControlURL: controlURL,
+				Name:            args[0],
+				Proxy:           proxyTarget,
+				Dir:             dirPath,
+				TCP:             tcpTarget,
+				Ephemeral:       ephemeral,
+				Tags:            tagsStr,
+				Allow:           allowStr,
+				Funnel:          funnel,
+				Public:          public,
+				NoAutoProvision: noAutoProvision,
+				Domain:          domainName,
+				AcmeEmail:       acmeEmail,
+				ControlURL:      controlURL,
 			})
 			if err != nil {
 				return err
@@ -386,6 +391,7 @@ Examples:
 	addCmd.Flags().String("tags", "", "Comma-separated ACL tags (e.g., tag:web,tag:internal)")
 	addCmd.Flags().Bool("funnel", false, "Expose publicly via Tailscale Funnel (proxy only, requires --public)")
 	addCmd.Flags().Bool("public", false, "Acknowledge public internet exposure for --funnel (only valid with --funnel)")
+	addCmd.Flags().Bool("no-auto-provision", false, "Disable automatic Funnel policy provisioning (only valid with --funnel)")
 	addCmd.Flags().String("domain", "", "[UNAVAILABLE] Reserved: custom-domain runtime TLS is unavailable; rejected with feature_unavailable")
 	addCmd.Flags().String("allow", "", "Comma-separated allowed identities (e.g., user@example.com,tag:admin)")
 	addCmd.Flags().String("acme-email", "", "[UNAVAILABLE] Reserved: ACME runtime TLS is unavailable; rejected with feature_unavailable")

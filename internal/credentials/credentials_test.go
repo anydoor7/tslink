@@ -3,6 +3,8 @@ package credentials
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -842,6 +844,138 @@ func TestNewTailscaleClient_WithKey(t *testing.T) {
 	}
 }
 
+func TestNewTailscaleClient_WithOAuthSecretExchangesTokenWithoutScopes(t *testing.T) {
+	setup(t)
+
+	const (
+		clientID     = "clientid"
+		clientSecret = "tskey-client-clientid-secretvalue"
+	)
+	if err := SaveClientSecret(clientSecret + "?ephemeral=true&preauthorized=true"); err != nil {
+		t.Fatalf("SaveClientSecret() error = %v", err)
+	}
+
+	var tokenRequests, policyRequests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/oauth/token":
+			tokenRequests++
+			gotID, gotSecret, ok := r.BasicAuth()
+			if !ok || gotID != clientID || gotSecret != clientSecret {
+				t.Errorf("OAuth basic auth = (%q, redacted, %v), want derived client ID and stripped secret", gotID, ok)
+			}
+			if err := r.ParseForm(); err != nil {
+				t.Errorf("ParseForm() error = %v", err)
+			}
+			if _, requested := r.Form["scope"]; requested {
+				t.Errorf("OAuth token request unexpectedly included scope=%q", r.Form.Get("scope"))
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"access_token":"fake-access-token","token_type":"Bearer","expires_in":3600}`))
+		case "/api/v2/tailnet/-/acl":
+			policyRequests++
+			if got := r.Header.Get("Authorization"); got != "Bearer fake-access-token" {
+				t.Errorf("Authorization = %q, want OAuth bearer token", got)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{}`))
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client, err := NewTailscaleClient()
+	if err != nil {
+		t.Fatalf("NewTailscaleClient() error = %v", err)
+	}
+	baseURL, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatalf("url.Parse() error = %v", err)
+	}
+	client.BaseURL = baseURL
+	if _, err := client.PolicyFile().Get(context.Background()); err != nil {
+		t.Fatalf("PolicyFile().Get() error = %v", err)
+	}
+	if tokenRequests != 1 || policyRequests != 1 {
+		t.Fatalf("requests = token:%d policy:%d, want 1 each", tokenRequests, policyRequests)
+	}
+}
+
+func TestNewTailscaleClient_OAuthTakesPrecedenceWhenBothCredentialsStored(t *testing.T) {
+	setup(t)
+	if err := SetAPIKey("tskey-api-should-not-win"); err != nil {
+		t.Fatalf("SetAPIKey() error = %v", err)
+	}
+	if err := SaveClientSecret("tskey-client-preferred-clientsecret"); err != nil {
+		t.Fatalf("SaveClientSecret() error = %v", err)
+	}
+
+	client, err := NewTailscaleClient()
+	if err != nil {
+		t.Fatalf("NewTailscaleClient() error = %v", err)
+	}
+	if client == nil || client.Auth == nil {
+		t.Fatalf("client = %+v, want OAuth authentication", client)
+	}
+	if client.APIKey != "" {
+		t.Fatalf("client APIKey is populated, want OAuth precedence over stored API key")
+	}
+	oauth, ok := client.Auth.(*tailscale.OAuth)
+	if !ok || oauth.ClientID != "preferred" {
+		t.Fatalf("OAuth auth = %#v, want derived ClientID preferred", client.Auth)
+	}
+}
+
+func TestNewTailscaleClient_InvalidOAuthSecretFailsBeforeRequest(t *testing.T) {
+	setup(t)
+	if err := SaveClientSecret("tskey-client-malformed"); err != nil {
+		t.Fatalf("SaveClientSecret() error = %v", err)
+	}
+
+	client, err := NewTailscaleClient()
+	if err == nil {
+		t.Fatal("NewTailscaleClient() error = nil, want invalid-format error")
+	}
+	if client != nil {
+		t.Fatal("NewTailscaleClient() returned a client for malformed OAuth secret")
+	}
+	if !strings.Contains(err.Error(), "expected tskey-client-<id>-<secret>") {
+		t.Fatalf("NewTailscaleClient() error = %v, want format remediation", err)
+	}
+}
+
+func TestNewTailscaleClient_RejectedOAuthCredentialSurfacesError(t *testing.T) {
+	setup(t)
+	if err := SaveClientSecret("tskey-client-clientid-rejected"); err != nil {
+		t.Fatalf("SaveClientSecret() error = %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		http.Error(w, `{"error":"invalid_client"}`, http.StatusUnauthorized)
+	}))
+	t.Cleanup(server.Close)
+	client, err := NewTailscaleClient()
+	if err != nil {
+		t.Fatalf("NewTailscaleClient() error = %v", err)
+	}
+	baseURL, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatalf("url.Parse() error = %v", err)
+	}
+	client.BaseURL = baseURL
+
+	_, err = client.PolicyFile().Get(context.Background())
+	if err == nil {
+		t.Fatal("PolicyFile().Get() error = nil, want rejected-credential error")
+	}
+	if !strings.Contains(err.Error(), "401 Unauthorized") {
+		t.Fatalf("PolicyFile().Get() error = %v, want clear OAuth rejection status", err)
+	}
+}
+
 func TestNewTailscaleClient_NoKey(t *testing.T) {
 	setup(t)
 
@@ -851,6 +985,56 @@ func TestNewTailscaleClient_NoKey(t *testing.T) {
 	}
 	if client != nil {
 		t.Fatal("NewTailscaleClient() returned non-nil client")
+	}
+}
+
+func TestNewTailscaleClientWithUserOwnedAPIKey_UsesAPIKeyWhenOAuthAlsoExists(t *testing.T) {
+	setup(t)
+	if err := SetAPIKey("tskey-api-placeholder"); err != nil {
+		t.Fatalf("SetAPIKey() error = %v", err)
+	}
+	if err := SaveClientSecret("tskey-client-placeholder-placeholder"); err != nil {
+		t.Fatalf("SaveClientSecret() error = %v", err)
+	}
+
+	client, err := NewTailscaleClientWithUserOwnedAPIKey()
+	if err != nil {
+		t.Fatalf("NewTailscaleClientWithUserOwnedAPIKey() error = %v", err)
+	}
+	if client == nil || client.APIKey != "tskey-api-placeholder" || client.Auth != nil {
+		t.Fatalf("client = %+v, want API-key client even when OAuth is stored", client)
+	}
+}
+
+func TestNewTailscaleClientWithUserOwnedAPIKey_OAuthOnlyFailsActionably(t *testing.T) {
+	setup(t)
+	if err := SaveClientSecret("tskey-client-placeholder-placeholder"); err != nil {
+		t.Fatalf("SaveClientSecret() error = %v", err)
+	}
+
+	client, err := NewTailscaleClientWithUserOwnedAPIKey()
+	if client != nil || !errors.Is(err, ErrUserOwnedAPIKeyRequired) {
+		t.Fatalf("client = %+v error = %v, want ErrUserOwnedAPIKeyRequired", client, err)
+	}
+	for _, want := range []string{"OAuth client secret", "user-owned tskey-api- token", "tslink login --api-key-stdin"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error = %q, want %q", err, want)
+		}
+	}
+}
+
+func TestNewTailscaleClientWithUserOwnedAPIKey_RejectsWrongCredentialType(t *testing.T) {
+	setup(t)
+	if err := SetAPIKey("placeholder-without-api-prefix"); err != nil {
+		t.Fatalf("SetAPIKey() error = %v", err)
+	}
+
+	client, err := NewTailscaleClientWithUserOwnedAPIKey()
+	if client != nil || !errors.Is(err, ErrUserOwnedAPIKeyRequired) {
+		t.Fatalf("client = %+v error = %v, want ErrUserOwnedAPIKeyRequired", client, err)
+	}
+	if !strings.Contains(err.Error(), "not a tskey-api- token") {
+		t.Fatalf("error = %q, want credential-type remediation", err)
 	}
 }
 

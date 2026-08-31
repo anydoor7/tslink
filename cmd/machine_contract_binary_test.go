@@ -274,7 +274,7 @@ func TestCompiledAPIManifestSelfDescriptionWithoutDaemon(t *testing.T) {
 	if manifest.SchemaVersion != 2 || len(manifest.Commands) == 0 {
 		t.Fatalf("api manifest content is incomplete: schema=%d commands=%d", manifest.SchemaVersion, len(manifest.Commands))
 	}
-	if !slices.Equal(manifest.APIActions, apiActionNames()) || len(manifest.APIActions) != 10 || !containsString(manifest.APIActions, apiActionManifest) {
+	if !slices.Equal(manifest.APIActions, apiActionNames()) || len(manifest.APIActions) != 15 || !containsString(manifest.APIActions, apiActionManifest) {
 		t.Fatalf("api manifest actions = %v, want generated actions %v", manifest.APIActions, apiActionNames())
 	}
 	if _, err := os.Stat(pidPath); !os.IsNotExist(err) {

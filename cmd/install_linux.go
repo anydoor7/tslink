@@ -97,6 +97,10 @@ If lingering was enabled only for TSLink, disable it after uninstall:
 	  tslink install                Register and restart the systemd service`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		noAutoProvision, err := cmd.Flags().GetBool("no-auto-provision")
+		if err != nil {
+			return fmt.Errorf("read --no-auto-provision: %w", err)
+		}
 		servicePath, err := systemdServicePath()
 		if err != nil {
 			return err
@@ -119,7 +123,7 @@ If lingering was enabled only for TSLink, disable it after uninstall:
 			return fmt.Errorf("create systemd user dir: %w", err)
 		}
 
-		service := systemdServiceContents(exe)
+		service := systemdServiceContents(exe, noAutoProvision)
 		if err := atomicfile.WriteFileInExistingDir(servicePath, []byte(service), atomicfile.PrivateFileMode); err != nil {
 			return fmt.Errorf("write systemd service: %w", err)
 		}
@@ -307,7 +311,11 @@ func parseSystemdProperties(output []byte) map[string]string {
 	return properties
 }
 
-func systemdServiceContents(exe string) string {
+func systemdServiceContents(exe string, noAutoProvision bool) string {
+	serveArgs := "serve"
+	if noAutoProvision {
+		serveArgs += " --no-auto-provision"
+	}
 	return fmt.Sprintf(`[Unit]
 Description=TSLink - Tailscale Service Gateway
 After=network-online.target
@@ -316,13 +324,13 @@ StartLimitBurst=5
 
 [Service]
 Type=simple
-ExecStart=%s serve
+ExecStart=%s %s
 Restart=on-failure
 RestartSec=%d
 
 [Install]
 WantedBy=default.target
-`, systemdQuoteExecPath(exe), systemdRestartSec)
+`, systemdQuoteExecPath(exe), serveArgs, systemdRestartSec)
 }
 
 func systemdQuoteExecPath(path string) string {
@@ -396,5 +404,7 @@ func systemdServicePath() (string, error) {
 }
 
 func init() {
+	installCmd.Flags().Bool("no-auto-provision", false, "Install the managed daemon with Funnel policy auto-provisioning disabled")
+	mustMarkFlagPlatforms(installCmd, "no-auto-provision", "linux")
 	rootCmd.AddCommand(installCmd)
 }

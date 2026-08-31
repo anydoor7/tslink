@@ -107,6 +107,7 @@ var plistTemplate = template.Must(template.New("plist").Parse(`<?xml version="1.
     <array>
         <string>{{.Executable}}</string>
         <string>serve</string>
+        {{if .NoAutoProvision}}<string>--no-auto-provision</string>{{end}}
     </array>
     <key>RunAtLoad</key>
     <true/>
@@ -128,6 +129,7 @@ type plistData struct {
 	OutLog           string
 	ErrLog           string
 	ThrottleInterval int
+	NoAutoProvision  bool
 }
 
 var installCmd = &cobra.Command{
@@ -179,6 +181,10 @@ Desktop-session caveat:
 		if err != nil {
 			return fmt.Errorf("read --force: %w", err)
 		}
+		noAutoProvision, err := cmd.Flags().GetBool("no-auto-provision")
+		if err != nil {
+			return fmt.Errorf("read --no-auto-provision: %w", err)
+		}
 		plistPath, err := plistPath()
 		if err != nil {
 			return err
@@ -215,6 +221,7 @@ Desktop-session caveat:
 			OutLog:           outLog,
 			ErrLog:           errLog,
 			ThrottleInterval: launchdThrottleInterval,
+			NoAutoProvision:  noAutoProvision,
 		}
 		var plist bytes.Buffer
 		if err := plistTemplate.Execute(&plist, data); err != nil {
@@ -748,6 +755,8 @@ func launchctlDomainForTarget(target string) string {
 
 func init() {
 	installCmd.Flags().Bool("force", false, "Proceed with an upgrade despite an unavailable launchd domain (may start a second daemon)")
+	installCmd.Flags().Bool("no-auto-provision", false, "Install the managed daemon with Funnel policy auto-provisioning disabled")
 	mustMarkFlagPlatforms(installCmd, "force", "darwin")
+	mustMarkFlagPlatforms(installCmd, "no-auto-provision", "darwin")
 	rootCmd.AddCommand(installCmd)
 }

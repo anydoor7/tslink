@@ -25,6 +25,10 @@ const (
 	derivedAuthKeyExpirySeconds = 10 * 60
 )
 
+// ErrUserOwnedAPIKeyRequired means an operation cannot use a tailnet-owned
+// OAuth client and needs an API access token tied to an inviting user.
+var ErrUserOwnedAPIKeyRequired = errors.New("user-owned Tailscale API access token required")
+
 // Testable seams.
 var (
 	newTailscaleClientFunc = NewTailscaleClient
@@ -381,14 +385,69 @@ func DeleteClientSecretChecked() error {
 	return errors.Join(errs...)
 }
 
-// NewTailscaleClient creates a Tailscale API client from stored API key.
-// Returns (nil, nil) if no API key is configured.
+// NewTailscaleClient creates a Tailscale API client from stored credentials.
+// OAuth client secrets take precedence over API keys, matching GetAuthKey.
+// Returns (nil, nil) if no API credential is configured.
 func NewTailscaleClient() (*tailscale.Client, error) {
+	secret, err := GetClientSecret()
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(secret) != "" {
+		return newTailscaleClientWithOAuthSecret(secret)
+	}
+
 	key, err := GetAPIKey()
 	if err != nil {
 		return nil, err
 	}
 	return NewTailscaleClientWithAPIKey(key)
+}
+
+// NewTailscaleClientWithUserOwnedAPIKey creates a Tailscale API client from
+// the stored user-owned API access token only. It deliberately does not fall
+// back to an OAuth client secret: invite mutations require an inviting user,
+// while OAuth clients are tailnet-owned and have no user identity.
+func NewTailscaleClientWithUserOwnedAPIKey() (*tailscale.Client, error) {
+	key, err := GetAPIKey()
+	if err != nil {
+		return nil, fmt.Errorf("read user-owned Tailscale API access token: %w", err)
+	}
+	key = strings.TrimSpace(key)
+	if key != "" {
+		if !strings.HasPrefix(key, "tskey-api-") {
+			return nil, fmt.Errorf("%w; the stored API credential is not a tskey-api- token; pipe a user-owned token to `tslink login --api-key-stdin`", ErrUserOwnedAPIKeyRequired)
+		}
+		return NewTailscaleClientWithAPIKey(key)
+	}
+
+	secret, err := GetClientSecret()
+	if err != nil {
+		return nil, fmt.Errorf("check stored OAuth client secret after no API access token was found: %w", err)
+	}
+	if strings.TrimSpace(secret) != "" {
+		return nil, fmt.Errorf("%w; only an OAuth client secret is configured, but invites require a user-owned tskey-api- token tied to an inviting user; pipe one to `tslink login --api-key-stdin`", ErrUserOwnedAPIKeyRequired)
+	}
+	return nil, fmt.Errorf("%w; pipe a user-owned tskey-api- token to `tslink login --api-key-stdin`", ErrUserOwnedAPIKeyRequired)
+}
+
+// newTailscaleClientWithOAuthSecret constructs an API client from the
+// Tailscale-generated secret format tskey-client-<id>-<random>. Tailscale's
+// token endpoint requires the embedded client ID as a separate parameter.
+func newTailscaleClientWithOAuthSecret(secret string) (*tailscale.Client, error) {
+	credential, _, _ := strings.Cut(strings.TrimSpace(secret), "?")
+	parts := strings.Split(credential, "-")
+	if len(parts) != 4 || parts[0] != "tskey" || parts[1] != "client" || parts[2] == "" || parts[3] == "" {
+		return nil, fmt.Errorf("stored OAuth client secret has invalid format; expected tskey-client-<id>-<secret>")
+	}
+
+	return &tailscale.Client{
+		Tailnet: "-",
+		Auth: &tailscale.OAuth{
+			ClientID:     parts[2],
+			ClientSecret: credential,
+		},
+	}, nil
 }
 
 // NewTailscaleClientWithAPIKey creates a Tailscale API client from an explicit

@@ -402,6 +402,12 @@ func funnelEnabledStatus(dnsName string) *ipnstate.Status {
 	}}
 }
 
+func funnelMissingStatus(dnsName string) *ipnstate.Status {
+	status := funnelEnabledStatus(dnsName)
+	delete(status.Self.CapMap, tailcfg.NodeAttrFunnel)
+	return status
+}
+
 func (s *fakeTSNetServer) LocalClient() (*LocalClient, error) {
 	s.localClientCalled++
 	if s.localClient != nil {
@@ -953,6 +959,17 @@ func TestNewTSNetServerCredentialTiersPreserveTaggedCompatibility(t *testing.T) 
 	}
 	if credentialed.UserLogf == nil {
 		t.Fatal("credentialed UserLogf = nil")
+	}
+
+	funnelService := svc
+	funnelService.Funnel = true
+	funnelService.Tags = []string{"tag:tsmain"}
+	funnel, ok := newTSNetServer(funnelService, t.TempDir(), "tskey-auth-test", "").(*tsnet.Server)
+	if !ok {
+		t.Fatal("Funnel constructor did not return *tsnet.Server")
+	}
+	if got := strings.Join(funnel.AdvertiseTags, ","); got != "tag:tsmain,"+registry.FunnelTag {
+		t.Fatalf("Funnel AdvertiseTags = %q, want derived shared tag", got)
 	}
 
 	interactive, ok := newTSNetServer(svc, t.TempDir(), "", "").(*tsnet.Server)
@@ -2432,7 +2449,7 @@ func TestSyncNodes_WritesConcreteTCPRuntimeHostFromStatus(t *testing.T) {
 
 	oldNew := newTSNetServerFn
 	newTSNetServerFn = func(svc registry.Service, stateDir, authKey, controlURL string) tsnetServer {
-		return &fakeTSNetServer{dnsName: "db.tailnet.ts.net."}
+		return &fakeTSNetServer{status: &ipnstate.Status{Self: &ipnstate.PeerStatus{ID: tailcfg.StableNodeID("n-db-owned"), DNSName: "db.tailnet.ts.net."}}}
 	}
 	t.Cleanup(func() { newTSNetServerFn = oldNew })
 
@@ -2456,6 +2473,9 @@ func TestSyncNodes_WritesConcreteTCPRuntimeHostFromStatus(t *testing.T) {
 		t.Fatalf("snapshot services = %d, want 1", len(snapshot.Services))
 	}
 	endpoint := snapshot.Services[0].Endpoint
+	if snapshot.Services[0].NodeID != "n-db-owned" {
+		t.Fatalf("snapshot node_id = %q, want stable ID from status.Self.ID", snapshot.Services[0].NodeID)
+	}
 	if endpoint.Display != "db.tailnet.ts.net:5432" || endpoint.Host != "db.tailnet.ts.net" || endpoint.State != "exact" {
 		t.Fatalf("tcp endpoint = %+v, want concrete exact runtime DNS host", endpoint)
 	}
@@ -2470,8 +2490,8 @@ func TestSyncNodes_RecoverableAgentFailuresAreBoundedAndVisible(t *testing.T) {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
 	writeRegistry(t, []registry.Service{
-		{Name: "public-app", Type: registry.TypeProxy, Target: "http://localhost:3000", Funnel: true, PublicAck: true},
-		{Name: "listen-fail", Type: registry.TypeProxy, Target: "http://localhost:3001", Funnel: true, PublicAck: true},
+		{Name: "public-app", Type: registry.TypeProxy, Target: "http://localhost:3000", Tags: []string{"tag:tsmain", registry.FunnelTag}, Funnel: true, PublicAck: true},
+		{Name: "listen-fail", Type: registry.TypeProxy, Target: "http://localhost:3001", Tags: []string{"tag:tsmain", registry.FunnelTag}, Funnel: true, PublicAck: true},
 		{Name: "stuck", Type: registry.TypeFile, Path: t.TempDir()},
 		{Name: "healthy", Type: registry.TypeFile, Path: t.TempDir()},
 	})
@@ -2491,7 +2511,7 @@ func TestSyncNodes_RecoverableAgentFailuresAreBoundedAndVisible(t *testing.T) {
 		fake := &fakeTSNetServer{}
 		switch svc.Name {
 		case "public-app":
-			fake.status = &ipnstate.Status{Self: &ipnstate.PeerStatus{DNSName: "public-app.tailnet.ts.net."}}
+			fake.status = funnelMissingStatus("public-app.tailnet.ts.net.")
 			fake.requireCanceledOnClose = true
 		case "stuck":
 			fake.upWait = true
@@ -2516,6 +2536,9 @@ func TestSyncNodes_RecoverableAgentFailuresAreBoundedAndVisible(t *testing.T) {
 		t.Fatalf("New() error = %v", err)
 	}
 	t.Cleanup(s.closeAllNodes)
+	s.SetEnsureFunnelAttrFn(func(context.Context, tailapi.FunnelPolicyRequest) (tailapi.PolicyMutationResult, error) {
+		return tailapi.PolicyMutationResult{WriteOutcome: tailapi.PolicyWriteUnchanged}, nil
+	})
 
 	started := time.Now()
 	if err := s.syncNodes(context.Background()); err != nil {
@@ -2583,13 +2606,624 @@ func TestSyncNodes_RecoverableAgentFailuresAreBoundedAndVisible(t *testing.T) {
 	}
 }
 
+func TestStartNodeLocked_VerifiesPreparedFunnelPolicyAndWaitsForNetmap(t *testing.T) {
+	testenv.SetHome(t, t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	fake := &fakeTSNetServer{
+		status:      funnelMissingStatus("public-app.tailnet.ts.net."),
+		localClient: &LocalClient{},
+	}
+	statusClient := &sequenceTSNetStatusClient{statuses: []*ipnstate.Status{
+		funnelMissingStatus("public-app.tailnet.ts.net."),
+		funnelEnabledStatus("public-app.tailnet.ts.net."),
+	}}
+
+	oldNew := newTSNetServerFn
+	oldStatusClient := tsnetStatusClientFn
+	oldPoll := funnelCapabilityPollInterval
+	oldTimeout := funnelCapabilityWaitTimeout
+	newTSNetServerFn = func(registry.Service, string, string, string) tsnetServer { return fake }
+	tsnetStatusClientFn = func(tsnetServer) (tsnetStatusClient, error) { return statusClient, nil }
+	funnelCapabilityPollInterval = time.Millisecond
+	funnelCapabilityWaitTimeout = 100 * time.Millisecond
+	t.Cleanup(func() {
+		newTSNetServerFn = oldNew
+		tsnetStatusClientFn = oldStatusClient
+		funnelCapabilityPollInterval = oldPoll
+		funnelCapabilityWaitTimeout = oldTimeout
+		s.closeAllNodes()
+	})
+
+	s.SetEnsureFunnelAttrFn(func(context.Context, tailapi.FunnelPolicyRequest) (tailapi.PolicyMutationResult, error) {
+		t.Fatal("policy mutation must run in the ensure phase before startNodeLocked")
+		return tailapi.PolicyMutationResult{}, nil
+	})
+
+	svc := registry.Service{
+		Name: "public-app", Type: registry.TypeProxy, Target: "http://localhost:3000",
+		Tags: []string{"tag:public", registry.FunnelTag}, Funnel: true, PublicAck: true,
+	}
+	provision := registry.ProvisionOutcome{
+		Attempted: true, Target: registry.FunnelTag, Changed: true,
+		Reason: registry.ProvisionReasonPolicyUpdated, WriteOutcome: tailapi.PolicyWriteChanged,
+	}
+	if err := s.startNodeLocked(context.Background(), svc, provision); err != nil {
+		t.Fatalf("startNodeLocked() error = %v", err)
+	}
+	if statusClient.calls != 2 {
+		t.Fatalf("netmap Status() calls = %d, want missing then enabled", statusClient.calls)
+	}
+	if fake.listenFunnelCalled != 1 || !s.nodeRunning("public-app") {
+		t.Fatalf("Funnel activation = listen calls:%d running:%v, want active listener", fake.listenFunnelCalled, s.nodeRunning("public-app"))
+	}
+}
+
+func TestStartNodeLocked_AutoProvisionTimeoutIsBoundedAndActionable(t *testing.T) {
+	testenv.SetHome(t, t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	fake := &fakeTSNetServer{status: funnelMissingStatus("public-app.tailnet.ts.net.")}
+	statusClient := &sequenceTSNetStatusClient{statuses: []*ipnstate.Status{funnelMissingStatus("public-app.tailnet.ts.net.")}}
+
+	oldNew := newTSNetServerFn
+	oldStatusClient := tsnetStatusClientFn
+	oldPoll := funnelCapabilityPollInterval
+	oldTimeout := funnelCapabilityWaitTimeout
+	newTSNetServerFn = func(registry.Service, string, string, string) tsnetServer { return fake }
+	tsnetStatusClientFn = func(tsnetServer) (tsnetStatusClient, error) { return statusClient, nil }
+	funnelCapabilityPollInterval = 2 * time.Millisecond
+	funnelCapabilityWaitTimeout = 15 * time.Millisecond
+	t.Cleanup(func() {
+		newTSNetServerFn = oldNew
+		tsnetStatusClientFn = oldStatusClient
+		funnelCapabilityPollInterval = oldPoll
+		funnelCapabilityWaitTimeout = oldTimeout
+	})
+	started := time.Now()
+	err = s.startNodeLocked(context.Background(), registry.Service{
+		Name: "public-app", Type: registry.TypeProxy, Target: "http://localhost:3000",
+		Tags: []string{"tag:public", registry.FunnelTag}, Funnel: true, PublicAck: true,
+	}, registry.ProvisionOutcome{
+		Attempted: true, Target: registry.FunnelTag, Changed: true,
+		Reason: registry.ProvisionReasonPolicyUpdated, WriteOutcome: tailapi.PolicyWriteChanged,
+	})
+	if elapsed := time.Since(started); elapsed > 250*time.Millisecond {
+		t.Fatalf("Funnel capability wait took %s, want bounded 15ms wait", elapsed)
+	}
+	if code, ok := registry.ErrorCode(err); !ok || code != registry.CodeFunnelCapabilityMissing {
+		t.Fatalf("startNodeLocked() error = %v code=%q, want %s", err, code, registry.CodeFunnelCapabilityMissing)
+	}
+	var recovery interface{ NextCommands() []string }
+	if !errors.As(err, &recovery) {
+		t.Fatalf("error %T does not expose NextCommands", err)
+	}
+	next := strings.Join(recovery.NextCommands(), "\n")
+	if !strings.Contains(err.Error(), "policy is prepared for \"tag:tslink-funnel\"") || !strings.Contains(err.Error(), "actual") {
+		t.Fatalf("error = %q, want prepared-policy and actual-budget evidence", err)
+	}
+	if !strings.Contains(next, "policy is already prepared") || strings.Contains(next, "admin console") {
+		t.Fatalf("next = %q, want wait/restart remedy without an ACL rewrite instruction", next)
+	}
+}
+
+func TestStartNodeLocked_NoAutoProvisionSkipsMutationAndExplainsOptOut(t *testing.T) {
+	testenv.SetHome(t, t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	fake := &fakeTSNetServer{status: funnelMissingStatus("public-app.tailnet.ts.net.")}
+	oldNew := newTSNetServerFn
+	newTSNetServerFn = func(registry.Service, string, string, string) tsnetServer { return fake }
+	t.Cleanup(func() { newTSNetServerFn = oldNew })
+	err = s.startNodeLocked(context.Background(), registry.Service{
+		Name: "public-app", Type: registry.TypeProxy, Target: "http://localhost:3000",
+		Tags: []string{"tag:public", registry.FunnelTag}, Funnel: true, PublicAck: true, NoAutoProvision: true,
+	}, registry.ProvisionOutcome{Target: registry.FunnelTag, Reason: registry.ProvisionReasonServiceDisabled, WriteOutcome: tailapi.PolicyWriteUnchanged})
+	var recovery interface{ NextCommands() []string }
+	var coded registry.CodedError
+	if !errors.As(err, &recovery) || !errors.As(err, &coded) || coded.Provision == nil || coded.Provision.Reason != registry.ProvisionReasonServiceDisabled {
+		t.Fatalf("startNodeLocked() error = %v next=%v provision=%+v, want structured service opt-out evidence", err, recovery, coded.Provision)
+	}
+}
+
+func TestEnsureFunnelPolicyBeforeRestart_FailurePreservesRecoveryAndCause(t *testing.T) {
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	s.SetEnsureFunnelAttrFn(func(context.Context, tailapi.FunnelPolicyRequest) (tailapi.PolicyMutationResult, error) {
+		return tailapi.PolicyMutationResult{WriteOutcome: tailapi.PolicyWriteRejected}, tailapi.ErrNoAPIClient
+	})
+	svc := registry.Service{
+		Name: "public-app", Type: registry.TypeProxy, Target: "http://localhost:3000",
+		Tags: []string{"tag:public", registry.FunnelTag}, Funnel: true, PublicAck: true,
+	}
+	failures, outcomes, called := s.ensureFunnelPolicyBeforeRestart(
+		context.Background(), map[string]registry.Service{svc.Name: svc}, nil, svc.Tags,
+	)
+	if !called || len(failures) != 1 {
+		t.Fatalf("called=%v failures=%+v, want isolated pre-start failure", called, failures)
+	}
+	got := outcomes[svc.Name]
+	if !got.Attempted || got.Target != registry.FunnelTag || got.Reason != registry.ProvisionReasonEnsureFailed || got.WriteOutcome != tailapi.PolicyWriteRejected {
+		t.Fatalf("outcome = %+v, want rejected structured provisioning result", got)
+	}
+	failure := failures[svc.Name]
+	if failure.Error == nil || !strings.Contains(failure.Error.Message, tailapi.ErrNoAPIClient.Error()) || failure.Error.Provision == nil {
+		t.Fatalf("failure = %+v, want preserved cause and provisioning object", failure)
+	}
+}
+
+func TestEnsureFunnelPolicyBeforeRestart_FusesSharedTagAndDerivedOwners(t *testing.T) {
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	services := map[string]registry.Service{
+		"alpha": {
+			Name: "alpha", Type: registry.TypeProxy, Target: "http://localhost:3000",
+			Tags: []string{"tag:owner-a", registry.FunnelTag}, Funnel: true, PublicAck: true,
+		},
+		"beta": {
+			Name: "beta", Type: registry.TypeProxy, Target: "http://localhost:3001",
+			Tags: []string{"tag:owner-b", registry.FunnelTag}, Funnel: true, PublicAck: true,
+		},
+	}
+	var calls int
+	var captured tailapi.FunnelPolicyRequest
+	s.SetEnsureFunnelAttrFn(func(ctx context.Context, request tailapi.FunnelPolicyRequest) (tailapi.PolicyMutationResult, error) {
+		calls++
+		captured = request
+		return tailapi.PolicyMutationResult{WriteOutcome: tailapi.PolicyWriteUnchanged}, nil
+	})
+	failures, outcomes, fused := s.ensureFunnelPolicyBeforeRestart(
+		context.Background(), services, nil,
+		[]string{"tag:owner-a", registry.FunnelTag, "tag:owner-b"},
+	)
+	if !fused || calls != 1 || len(failures) != 0 {
+		t.Fatalf("fused=%v calls=%d failures=%+v, want one fused transaction", fused, calls, failures)
+	}
+	if captured.Target != registry.FunnelTag || strings.Join(captured.Owners, ",") != "tag:owner-a,tag:owner-b" {
+		t.Fatalf("request = %+v, want one shared target with service-derived owners", captured)
+	}
+	if strings.Join(captured.Tags, ",") != "tag:owner-a,tag:owner-b" {
+		t.Fatalf("fused ordinary tags = %v", captured.Tags)
+	}
+	for _, name := range []string{"alpha", "beta"} {
+		outcome := outcomes[name]
+		if !outcome.Attempted || outcome.Target != registry.FunnelTag || outcome.Changed || outcome.Reason != registry.ProvisionReasonPolicySatisfied {
+			t.Fatalf("%s outcome = %+v, want shared idempotent policy outcome", name, outcome)
+		}
+	}
+}
+
+func TestEnsureFunnelPolicyBeforeRestart_NoUsableOwnerIsStructuredAndDoesNotCallWriter(t *testing.T) {
+	cases := []struct {
+		name       string
+		tags       []string
+		wantReason string
+	}{
+		{name: "no existing owner tag", tags: []string{registry.FunnelTag}, wantReason: registry.ProvisionReasonNoUsableOwner},
+		{name: "tagless service", tags: nil, wantReason: registry.ProvisionReasonNoUsableOwner},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, err := New("key", "")
+			if err != nil {
+				t.Fatalf("New() error = %v", err)
+			}
+			s.SetEnsureFunnelAttrFn(func(context.Context, tailapi.FunnelPolicyRequest) (tailapi.PolicyMutationResult, error) {
+				t.Fatal("writer called without a usable caller-derived owner")
+				return tailapi.PolicyMutationResult{}, nil
+			})
+			svc := registry.Service{
+				Name: "public-app", Type: registry.TypeProxy, Target: "http://localhost:3000",
+				Tags: tc.tags, Funnel: true, PublicAck: true,
+			}
+			failures, outcomes, fused := s.ensureFunnelPolicyBeforeRestart(
+				context.Background(), map[string]registry.Service{svc.Name: svc}, nil, svc.Tags,
+			)
+			if fused || len(failures) != 1 {
+				t.Fatalf("fused=%v failures=%+v, want pre-start isolated owner failure", fused, failures)
+			}
+			outcome := outcomes[svc.Name]
+			if outcome.Attempted || outcome.Reason != tc.wantReason || outcome.WriteOutcome != tailapi.PolicyWriteNotAttempted {
+				t.Fatalf("outcome = %+v, want reason %s and no attempted write", outcome, tc.wantReason)
+			}
+			// deriveFunnelTagOwner skips the Funnel tag when hunting for an owner,
+			// so telling an agent to add that tag cannot resolve this failure. The
+			// recovery steps must name a tag the OAuth client already holds.
+			failure := failures[svc.Name].Error
+			if failure == nil || len(failure.Next) == 0 {
+				t.Fatalf("failure = %+v, want recovery steps an agent can act on", failures[svc.Name])
+			}
+			for _, step := range failure.Next {
+				if strings.Contains(step, registry.FunnelTag) {
+					t.Fatalf("recovery step %q tells the agent to add the derived Funnel tag, which cannot fix a missing owner", step)
+				}
+			}
+		})
+	}
+}
+
+func TestSyncNodes_FunnelPolicyFailurePrecedesStopAndStateWipe(t *testing.T) {
+	testenv.SetHome(t, t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+	oldSvc := registry.Service{
+		Name: "app", Type: registry.TypeProxy, Target: "http://localhost:3000", Tags: []string{"tag:tsmain"},
+	}
+	newSvc := oldSvc
+	newSvc.Funnel = true
+	newSvc.PublicAck = true
+	newSvc.Tags = []string{"tag:tsmain", registry.FunnelTag}
+	writeRegistry(t, []registry.Service{newSvc})
+
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	oldNode := newNode(t, oldSvc)
+	s.nodes[oldSvc.Name] = oldNode
+	wipes := 0
+	oldRemove := removeServiceStateDirFn
+	removeServiceStateDirFn = func(name string) error {
+		wipes++
+		return nil
+	}
+	t.Cleanup(func() { removeServiceStateDirFn = oldRemove })
+	oldNew := newTSNetServerFn
+	newTSNetServerFn = func(registry.Service, string, string, string) tsnetServer {
+		t.Fatal("replacement node started after failed policy preflight")
+		return nil
+	}
+	t.Cleanup(func() { newTSNetServerFn = oldNew })
+	s.SetEnsureFunnelAttrFn(func(context.Context, tailapi.FunnelPolicyRequest) (tailapi.PolicyMutationResult, error) {
+		if oldNode.closed.Load() {
+			t.Fatal("old node was stopped before policy preflight")
+		}
+		return tailapi.PolicyMutationResult{WriteOutcome: tailapi.PolicyWriteRejected}, errors.New("synthetic ACL rejection")
+	})
+
+	if err := s.syncNodes(context.Background()); err != nil {
+		t.Fatalf("syncNodes() error = %v, want isolated Funnel failure", err)
+	}
+	if oldNode.closed.Load() || s.nodes[oldSvc.Name] != oldNode {
+		t.Fatal("failed preflight did not preserve the existing node and identity")
+	}
+	if wipes != 0 {
+		t.Fatalf("state wipe count = %d, want 0 before successful policy preflight", wipes)
+	}
+	failure := s.serviceFailures[oldSvc.Name]
+	if failure.Error == nil || failure.Error.Provision == nil || failure.Error.Provision.Reason != registry.ProvisionReasonEnsureFailed {
+		t.Fatalf("service failure = %+v, want structured preflight failure", failure)
+	}
+}
+
+func TestEnsureFunnelPolicyBeforeRestart_DaemonKillSwitchWins(t *testing.T) {
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	s.SetAutoProvisionFunnel(false)
+	s.SetEnsureFunnelAttrFn(func(context.Context, tailapi.FunnelPolicyRequest) (tailapi.PolicyMutationResult, error) {
+		t.Fatal("writer called while daemon kill switch was disabled")
+		return tailapi.PolicyMutationResult{}, nil
+	})
+	svc := registry.Service{
+		Name: "public-app", Type: registry.TypeProxy, Target: "http://localhost:3000",
+		Tags: []string{"tag:tsmain", registry.FunnelTag}, Funnel: true, PublicAck: true,
+	}
+	failures, outcomes, fused := s.ensureFunnelPolicyBeforeRestart(
+		context.Background(), map[string]registry.Service{svc.Name: svc}, nil, svc.Tags,
+	)
+	if fused || len(failures) != 0 {
+		t.Fatalf("fused=%v failures=%+v, want disabled policy phase", fused, failures)
+	}
+	if outcome := outcomes[svc.Name]; outcome.Attempted || outcome.Reason != registry.ProvisionReasonDaemonDisabled {
+		t.Fatalf("outcome = %+v, want daemon-disabled reason", outcome)
+	}
+}
+
+func TestEnsureFunnelPolicyBeforeRestart_HTTPSDisabledIsStructuredWithoutPolicyWriteClaim(t *testing.T) {
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	s.SetEnsureFunnelAttrFn(func(context.Context, tailapi.FunnelPolicyRequest) (tailapi.PolicyMutationResult, error) {
+		return tailapi.PolicyMutationResult{WriteOutcome: tailapi.PolicyWriteNotAttempted}, tailapi.ErrTailnetHTTPSDisabled
+	})
+	svc := registry.Service{
+		Name: "public-app", Type: registry.TypeProxy, Target: "http://localhost:3000",
+		Tags: []string{"tag:tsmain", registry.FunnelTag}, Funnel: true, PublicAck: true,
+	}
+	failures, outcomes, tagsEnsured := s.ensureFunnelPolicyBeforeRestart(
+		context.Background(), map[string]registry.Service{svc.Name: svc}, nil, svc.Tags,
+	)
+	if tagsEnsured || len(failures) != 1 {
+		t.Fatalf("tagsEnsured=%v failures=%+v, want pre-policy HTTPS prerequisite failure", tagsEnsured, failures)
+	}
+	outcome := outcomes[svc.Name]
+	if outcome.Reason != registry.ProvisionReasonHTTPSDisabled || outcome.WriteOutcome != tailapi.PolicyWriteNotAttempted || outcome.Changed {
+		t.Fatalf("outcome = %+v, want HTTPS-disabled/no-policy-write", outcome)
+	}
+	next := strings.Join(failures[svc.Name].Error.Next, "\n")
+	for _, want := range []string{"PATCH /api/v2/tailnet/{tailnet}/settings", "httpsEnabled", "networking_settings"} {
+		if !strings.Contains(next, want) {
+			t.Fatalf("next = %q, want %q", next, want)
+		}
+	}
+}
+
+func TestEnsureFunnelPolicyBeforeRestart_LogsMutationPlanOnlyForActualSetAttempt(t *testing.T) {
+	cases := []struct {
+		name      string
+		result    tailapi.PolicyMutationResult
+		err       error
+		wantLog   bool
+		wantFused bool
+	}{
+		{
+			name: "HTTPS prerequisite stops before policy read", result: tailapi.PolicyMutationResult{WriteOutcome: tailapi.PolicyWriteNotAttempted},
+			err: tailapi.ErrTailnetHTTPSDisabled,
+		},
+		{
+			name: "idempotent policy is not a mutation attempt", result: tailapi.PolicyMutationResult{WriteOutcome: tailapi.PolicyWriteUnchanged},
+			wantFused: true,
+		},
+		{
+			name: "policy Set attempt is auditable", result: tailapi.PolicyMutationResult{Changed: true, WriteOutcome: tailapi.PolicyWriteChanged},
+			wantLog: true, wantFused: true,
+		},
+		{
+			name: "rejected policy Set attempt is auditable", result: tailapi.PolicyMutationResult{WriteOutcome: tailapi.PolicyWriteRejected},
+			err: errors.New("synthetic policy rejection"), wantLog: true, wantFused: true,
+		},
+		{
+			name: "unknown policy Set outcome is auditable", result: tailapi.PolicyMutationResult{WriteOutcome: tailapi.PolicyWriteUnknown},
+			err: errors.New("synthetic transport loss"), wantLog: true, wantFused: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var logBuf bytes.Buffer
+			oldLogger := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, nil)))
+			t.Cleanup(func() { slog.SetDefault(oldLogger) })
+
+			s, err := New("key", "")
+			if err != nil {
+				t.Fatalf("New() error = %v", err)
+			}
+			s.SetEnsureFunnelAttrFn(func(context.Context, tailapi.FunnelPolicyRequest) (tailapi.PolicyMutationResult, error) {
+				return tc.result, tc.err
+			})
+			svc := registry.Service{
+				Name: "public-app", Type: registry.TypeProxy, Target: "http://localhost:3000",
+				Tags: []string{"tag:tsmain"}, Funnel: true, PublicAck: true,
+			}
+			_, _, fused := s.ensureFunnelPolicyBeforeRestart(
+				context.Background(), map[string]registry.Service{svc.Name: svc}, nil, svc.Tags,
+			)
+			if fused != tc.wantFused {
+				t.Fatalf("fused tag ensure = %v, want %v", fused, tc.wantFused)
+			}
+			logged := strings.Contains(logBuf.String(), "remote ACL mutation plan")
+			if logged != tc.wantLog {
+				t.Fatalf("mutation-plan logged=%v want=%v; log=%q", logged, tc.wantLog, logBuf.String())
+			}
+		})
+	}
+}
+
+func TestEnsureFunnelPolicyBeforeRestart_SettingsUnavailableIsStructured(t *testing.T) {
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	s.SetEnsureFunnelAttrFn(func(context.Context, tailapi.FunnelPolicyRequest) (tailapi.PolicyMutationResult, error) {
+		return tailapi.PolicyMutationResult{WriteOutcome: tailapi.PolicyWriteNotAttempted}, tailapi.ErrTailnetSettingsUnavailable
+	})
+	svc := registry.Service{
+		Name: "public-app", Type: registry.TypeProxy, Target: "http://localhost:3000",
+		Tags: []string{"tag:tsmain", registry.FunnelTag}, Funnel: true, PublicAck: true,
+	}
+	failures, outcomes, _ := s.ensureFunnelPolicyBeforeRestart(
+		context.Background(), map[string]registry.Service{svc.Name: svc}, nil, svc.Tags,
+	)
+	if outcome := outcomes[svc.Name]; outcome.Reason != registry.ProvisionReasonSettingsUnavailable || outcome.WriteOutcome != tailapi.PolicyWriteNotAttempted {
+		t.Fatalf("outcome = %+v, want settings_unavailable without policy write", outcome)
+	}
+	next := strings.Join(failures[svc.Name].Error.Next, "\n")
+	if !strings.Contains(next, "networking_settings") || strings.Contains(next, "Access controls > Funnel") {
+		t.Fatalf("next = %q, want settings scope remedy without ACL-console advice", next)
+	}
+}
+
+func TestEnsureFunnelPolicyBeforeRestart_UnknownWriteOutcomeIsMachineReadable(t *testing.T) {
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	s.SetEnsureFunnelAttrFn(func(context.Context, tailapi.FunnelPolicyRequest) (tailapi.PolicyMutationResult, error) {
+		return tailapi.PolicyMutationResult{WriteOutcome: tailapi.PolicyWriteUnknown}, context.DeadlineExceeded
+	})
+	svc := registry.Service{
+		Name: "public-app", Type: registry.TypeProxy, Target: "http://localhost:3000",
+		Tags: []string{"tag:tsmain", registry.FunnelTag}, Funnel: true, PublicAck: true,
+	}
+	failures, outcomes, _ := s.ensureFunnelPolicyBeforeRestart(
+		context.Background(), map[string]registry.Service{svc.Name: svc}, nil, svc.Tags,
+	)
+	outcome := outcomes[svc.Name]
+	if outcome.Reason != registry.ProvisionReasonWriteUnknown || outcome.WriteOutcome != tailapi.PolicyWriteUnknown || outcome.Changed {
+		t.Fatalf("outcome = %+v, want unknown server-side write outcome", outcome)
+	}
+	provision := failures[svc.Name].Error.Provision
+	if provision == nil || *provision != outcome {
+		t.Fatalf("failure provision = %+v, want %+v", provision, outcome)
+	}
+	if strings.Contains(strings.Join(failures[svc.Name].Error.Next, "\n"), "admin console") {
+		t.Fatalf("unknown-write recovery incorrectly asks for another policy mutation: %+v", failures[svc.Name].Error.Next)
+	}
+}
+
+func TestEnsureFunnelPolicyBeforeRestart_ReportsActualParentLimitedRequestBudget(t *testing.T) {
+	oldTimeout := funnelCapabilityWaitTimeout
+	funnelCapabilityWaitTimeout = 2 * time.Second
+	t.Cleanup(func() { funnelCapabilityWaitTimeout = oldTimeout })
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	s.SetEnsureFunnelAttrFn(func(ctx context.Context, _ tailapi.FunnelPolicyRequest) (tailapi.PolicyMutationResult, error) {
+		<-ctx.Done()
+		return tailapi.PolicyMutationResult{WriteOutcome: tailapi.PolicyWriteUnknown}, ctx.Err()
+	})
+	svc := registry.Service{
+		Name: "public-app", Type: registry.TypeProxy, Target: "http://localhost:3000",
+		Tags: []string{"tag:tsmain", registry.FunnelTag}, Funnel: true, PublicAck: true,
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	failures, _, _ := s.ensureFunnelPolicyBeforeRestart(ctx, map[string]registry.Service{svc.Name: svc}, nil, svc.Tags)
+	if elapsed := time.Since(started); elapsed > 200*time.Millisecond {
+		t.Fatalf("policy preflight elapsed = %s, want parent-limited budget", elapsed)
+	}
+	message := failures[svc.Name].Error.Message
+	if !strings.Contains(message, "actual") || strings.Contains(message, "2s request budget") {
+		t.Fatalf("policy failure message = %q, want actual parent-limited budget", message)
+	}
+}
+
+func TestSetEnsureFunnelAttrFnNilRestoresDefault(t *testing.T) {
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	s.SetEnsureFunnelAttrFn(func(context.Context, tailapi.FunnelPolicyRequest) (tailapi.PolicyMutationResult, error) {
+		t.Fatal("stale injected writer called after nil reset")
+		return tailapi.PolicyMutationResult{}, nil
+	})
+	s.SetEnsureFunnelAttrFn(nil)
+	result, err := s.ensureFunnelAttrFn(context.Background(), tailapi.FunnelPolicyRequest{})
+	if err == nil || result.WriteOutcome != tailapi.PolicyWriteNotAttempted {
+		t.Fatalf("default writer result=%+v error=%v, want safe empty-target rejection", result, err)
+	}
+}
+
+func TestVerifyFunnelAccessClassifiesNonPolicyPrerequisitesWithoutPolling(t *testing.T) {
+	oldStatusClient := tsnetStatusClientFn
+	tsnetStatusClientFn = func(tsnetServer) (tsnetStatusClient, error) {
+		t.Fatal("status polling started for an immediately classified prerequisite")
+		return nil, nil
+	}
+	t.Cleanup(func() { tsnetStatusClientFn = oldStatusClient })
+
+	httpsMissing := funnelEnabledStatus("public-app.tailnet.ts.net.")
+	delete(httpsMissing.Self.CapMap, tailcfg.CapabilityHTTPS)
+	portMissing := funnelEnabledStatus("public-app.tailnet.ts.net.")
+	delete(portMissing.Self.CapMap, tailcfg.CapabilityFunnelPorts+"?ports=443")
+	cases := []struct {
+		name       string
+		status     *ipnstate.Status
+		wantReason string
+		wantNext   []string
+	}{
+		{
+			name: "HTTPS is checked before node attr", status: httpsMissing,
+			wantReason: registry.ProvisionReasonHTTPSDisabled,
+			wantNext:   []string{"PATCH /api/v2/tailnet/{tailnet}/settings", "httpsEnabled", "networking_settings"},
+		},
+		{
+			name: "unsupported port", status: portMissing,
+			wantReason: registry.ProvisionReasonPortUnsupported,
+			wantNext:   []string{"443, 8443, and 10000", "per node DNS name"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &Server{}
+			svc := registry.Service{Name: "public-app", Funnel: true}
+			provision := registry.ProvisionOutcome{
+				Attempted: true, Target: registry.FunnelTag, Changed: true,
+				Reason: registry.ProvisionReasonPolicyUpdated, WriteOutcome: tailapi.PolicyWriteChanged,
+			}
+			_, err := s.verifyFunnelAccess(context.Background(), &fakeTSNetServer{}, svc, tc.status, provision)
+			var coded registry.CodedError
+			if !errors.As(err, &coded) || coded.Provision == nil || coded.Provision.Reason != tc.wantReason {
+				t.Fatalf("verifyFunnelAccess() error=%v provision=%+v, want reason %s", err, coded.Provision, tc.wantReason)
+			}
+			next := strings.Join(coded.Next, "\n")
+			for _, want := range tc.wantNext {
+				if !strings.Contains(next, want) {
+					t.Fatalf("next = %q, want %q", next, want)
+				}
+			}
+		})
+	}
+}
+
+func TestVerifyFunnelAccessReportsActualParentLimitedBudget(t *testing.T) {
+	oldStatusClient := tsnetStatusClientFn
+	oldPoll := funnelCapabilityPollInterval
+	oldTimeout := funnelCapabilityWaitTimeout
+	tsnetStatusClientFn = func(tsnetServer) (tsnetStatusClient, error) {
+		return &sequenceTSNetStatusClient{statuses: []*ipnstate.Status{funnelMissingStatus("public-app.tailnet.ts.net.")}}, nil
+	}
+	funnelCapabilityPollInterval = time.Millisecond
+	funnelCapabilityWaitTimeout = 2 * time.Second
+	t.Cleanup(func() {
+		tsnetStatusClientFn = oldStatusClient
+		funnelCapabilityPollInterval = oldPoll
+		funnelCapabilityWaitTimeout = oldTimeout
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	_, err := (&Server{}).verifyFunnelAccess(ctx, &fakeTSNetServer{}, registry.Service{Name: "public-app", Funnel: true},
+		funnelMissingStatus("public-app.tailnet.ts.net."), registry.ProvisionOutcome{
+			Attempted: true, Target: registry.FunnelTag, Reason: registry.ProvisionReasonPolicyUpdated, WriteOutcome: tailapi.PolicyWriteChanged,
+		})
+	if elapsed := time.Since(started); elapsed > 200*time.Millisecond {
+		t.Fatalf("verifyFunnelAccess() elapsed = %s, want parent-limited wait", elapsed)
+	}
+	if err == nil || !strings.Contains(err.Error(), "actual") || strings.Contains(err.Error(), "2s wait budget") {
+		t.Fatalf("verifyFunnelAccess() error = %v, want actual parent-limited budget instead of configured 2s", err)
+	}
+	var coded registry.CodedError
+	if !errors.As(err, &coded) || coded.Provision == nil || coded.Provision.Reason != registry.ProvisionReasonNetmapTimeout {
+		t.Fatalf("verifyFunnelAccess() provision = %+v, want netmap_timeout", coded.Provision)
+	}
+}
+
 func TestSyncNodes_FunnelActiveRequiresSuccessfulFunnelListener(t *testing.T) {
 	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
 	writeRegistry(t, []registry.Service{{
-		Name: "public-ok", Type: registry.TypeProxy, Target: "http://localhost:3000", Funnel: true, PublicAck: true,
+		Name: "public-ok", Type: registry.TypeProxy, Target: "http://localhost:3000", Tags: []string{"tag:tsmain"}, Funnel: true, PublicAck: true,
 	}})
 
 	fake := &fakeTSNetServer{
@@ -2598,7 +3232,11 @@ func TestSyncNodes_FunnelActiveRequiresSuccessfulFunnelListener(t *testing.T) {
 		certDomains: []string{"public-ok.tailnet.ts.net"},
 	}
 	oldNew := newTSNetServerFn
-	newTSNetServerFn = func(registry.Service, string, string, string) tsnetServer { return fake }
+	var constructorTags []string
+	newTSNetServerFn = func(svc registry.Service, _ string, _ string, _ string) tsnetServer {
+		constructorTags = append([]string(nil), svc.Tags...)
+		return fake
+	}
 	t.Cleanup(func() { newTSNetServerFn = oldNew })
 
 	s, err := New("key", "")
@@ -2606,14 +3244,31 @@ func TestSyncNodes_FunnelActiveRequiresSuccessfulFunnelListener(t *testing.T) {
 		t.Fatalf("New() error = %v", err)
 	}
 	t.Cleanup(s.closeAllNodes)
+	var authProviderTags []string
+	s.SetAuthKeyProvider(func(_ context.Context, svc registry.Service) (string, error) {
+		authProviderTags = append([]string(nil), svc.Tags...)
+		return "key", nil
+	})
+	s.SetEnsureFunnelAttrFn(func(context.Context, tailapi.FunnelPolicyRequest) (tailapi.PolicyMutationResult, error) {
+		return tailapi.PolicyMutationResult{WriteOutcome: tailapi.PolicyWriteUnchanged}, nil
+	})
 	if err := s.syncNodes(context.Background()); err != nil {
 		t.Fatalf("syncNodes() error = %v", err)
 	}
 	if fake.listenFunnelCalled != 1 {
 		t.Fatalf("ListenFunnel calls = %d, want 1", fake.listenFunnelCalled)
 	}
-	if node := s.nodes["public-ok"]; node == nil || !node.funnelListenerActive {
-		t.Fatalf("running node = %+v, want recorded successful Funnel listener", node)
+	wantEffectiveTags := "tag:tsmain," + registry.FunnelTag
+	if got := strings.Join(authProviderTags, ","); got != wantEffectiveTags {
+		t.Fatalf("auth provider tags = %q, want runtime-derived %q", got, wantEffectiveTags)
+	}
+	if got := strings.Join(constructorTags, ","); got != wantEffectiveTags {
+		t.Fatalf("tsnet constructor tags = %q, want runtime-derived %q", got, wantEffectiveTags)
+	}
+	if node := s.nodes["public-ok"]; node == nil || !node.funnelListenerActive || node.runtimeHost != "public-ok.tailnet.ts.net" {
+		t.Fatalf("running node = %+v, want Funnel listener and runtime host from Up status", node)
+	} else if got := strings.Join(node.service.Tags, ","); got != "tag:tsmain" {
+		t.Fatalf("stored node service tags = %q, want original registry tags without derived state", got)
 	}
 
 	snapshotPath, err := config.RuntimeSnapshotPath()
@@ -2629,13 +3284,232 @@ func TestSyncNodes_FunnelActiveRequiresSuccessfulFunnelListener(t *testing.T) {
 	}
 }
 
+// A concurrent ACL editor makes the first fused write return 412 and the retry
+// commit. The retry's bookkeeping is what tells the caller that (a) the tag
+// ensure already happened, so the legacy path must not write again, and (b) a
+// tailnet-wide mutation really committed, so the audit line must be emitted.
+// Dropping either OR would leave a committed ACL mutation unlogged.
+func TestSyncNodes_FunnelPolicyConflictRetryRecordsEnsureAndAudit(t *testing.T) {
+	testenv.SetHome(t, t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+	writeRegistry(t, []registry.Service{{
+		Name: "public-retry", Type: registry.TypeProxy, Target: "http://localhost:3000", Tags: []string{"tag:tsmain"}, Funnel: true, PublicAck: true,
+	}})
+
+	fake := &fakeTSNetServer{
+		status:      funnelEnabledStatus("public-retry.tailnet.ts.net."),
+		localClient: &LocalClient{},
+		certDomains: []string{"public-retry.tailnet.ts.net"},
+	}
+	oldNew := newTSNetServerFn
+	newTSNetServerFn = func(registry.Service, string, string, string) tsnetServer { return fake }
+	t.Cleanup(func() { newTSNetServerFn = oldNew })
+
+	var logBuf bytes.Buffer
+	oldLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, nil)))
+	t.Cleanup(func() { slog.SetDefault(oldLogger) })
+
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(s.closeAllNodes)
+
+	var ensureCalls int
+	s.SetEnsureFunnelAttrFn(func(context.Context, tailapi.FunnelPolicyRequest) (tailapi.PolicyMutationResult, error) {
+		ensureCalls++
+		if ensureCalls == 1 {
+			// The shape tailapi actually produces: acl.go returns
+			// PolicyWriteRejected alongside ErrPolicyConflict, because a 412 means
+			// the POST was sent and refused. Both flags are therefore already true
+			// before the retry, which is what makes the accumulation load-bearing.
+			return tailapi.PolicyMutationResult{WriteOutcome: tailapi.PolicyWriteRejected}, tailapi.ErrPolicyConflict
+		}
+		// The retry does not reach the write: a fresh policy read fails. Only the
+		// first call's outcome records that a mutation reached the tailnet, so
+		// overwriting instead of accumulating would lose the audit record.
+		return tailapi.PolicyMutationResult{WriteOutcome: tailapi.PolicyWriteNotAttempted}, errors.New("fresh policy read failed")
+	})
+	var ensureTagsCalls int
+	s.SetEnsureTagsFn(func(context.Context, []string) error {
+		ensureTagsCalls++
+		return nil
+	})
+
+	if err := s.syncNodes(context.Background()); err != nil {
+		t.Fatalf("syncNodes() error = %v", err)
+	}
+	if ensureCalls != 2 {
+		t.Fatalf("fused policy calls = %d, want one conflict plus one retry", ensureCalls)
+	}
+	if ensureTagsCalls != 0 {
+		t.Fatalf("legacy EnsureTags calls = %d, want 0; the retry already ensured the tags", ensureTagsCalls)
+	}
+	if !strings.Contains(logBuf.String(), "remote ACL mutation plan") {
+		t.Fatalf("committed ACL mutation was not audited after the conflict retry:\n%s", logBuf.String())
+	}
+}
+
+func TestSyncNodes_HTTPSDisabledFallsBackToOrdinaryTagEnsureAndSkipsBlockedFunnelStart(t *testing.T) {
+	testenv.SetHome(t, t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+	writeRegistry(t, []registry.Service{
+		{Name: "public", Type: registry.TypeProxy, Target: "http://localhost:3000", Tags: []string{"tag:tsmain"}, Funnel: true, PublicAck: true},
+		{Name: "ordinary", Type: registry.TypeFile, Path: t.TempDir(), Tags: []string{"tag:brandnew"}},
+	})
+
+	ordinary := &fakeTSNetServer{certDomains: []string{"ordinary.tailnet.ts.net"}}
+	oldNew := newTSNetServerFn
+	newTSNetServerFn = func(svc registry.Service, _ string, _ string, _ string) tsnetServer {
+		if svc.Name == "public" {
+			t.Fatal("policy-blocked Funnel service reached node construction")
+		}
+		return ordinary
+	}
+	t.Cleanup(func() { newTSNetServerFn = oldNew })
+
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(s.closeAllNodes)
+	s.SetEnsureFunnelAttrFn(func(_ context.Context, request tailapi.FunnelPolicyRequest) (tailapi.PolicyMutationResult, error) {
+		if got := strings.Join(request.Tags, ","); got != "tag:brandnew,tag:tsmain" {
+			t.Fatalf("fused ordinary tags = %q, want both non-Funnel tags", got)
+		}
+		return tailapi.PolicyMutationResult{WriteOutcome: tailapi.PolicyWriteNotAttempted}, tailapi.ErrTailnetHTTPSDisabled
+	})
+	var ensureTagsCalls int
+	var ensuredTags []string
+	s.SetEnsureTagsFn(func(_ context.Context, tags []string) error {
+		ensureTagsCalls++
+		ensuredTags = append([]string(nil), tags...)
+		return nil
+	})
+
+	if err := s.syncNodes(context.Background()); err != nil {
+		t.Fatalf("syncNodes() error = %v, want isolated Funnel prerequisite failure", err)
+	}
+	if ensureTagsCalls != 1 || strings.Join(ensuredTags, ",") != "tag:brandnew,tag:tsmain" {
+		t.Fatalf("ordinary EnsureTags calls=%d tags=%v, want one fallback without shared Funnel tag", ensureTagsCalls, ensuredTags)
+	}
+	if !s.nodeRunning("ordinary") {
+		t.Fatal("ordinary service did not start after pre-policy Funnel failure")
+	}
+	if s.nodeRunning("public") {
+		t.Fatal("policy-blocked Funnel service unexpectedly started")
+	}
+	failure := s.serviceFailures["public"]
+	if failure.Error == nil || failure.Error.Provision == nil || failure.Error.Provision.Reason != registry.ProvisionReasonHTTPSDisabled {
+		t.Fatalf("Funnel failure = %+v, want structured HTTPS prerequisite failure", failure)
+	}
+}
+
+func TestSyncNodes_FunnelOptOutNeverSendsSharedTagToLegacyEnsureTags(t *testing.T) {
+	cases := []struct {
+		name          string
+		daemonEnabled bool
+		serviceOptOut bool
+	}{
+		{name: "daemon kill switch", daemonEnabled: false},
+		{name: "service kill switch", daemonEnabled: true, serviceOptOut: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			testenv.SetHome(t, t.TempDir())
+			if err := config.EnsureDir(); err != nil {
+				t.Fatalf("EnsureDir() error = %v", err)
+			}
+			writeRegistry(t, []registry.Service{{
+				Name: "public", Type: registry.TypeProxy, Target: "http://localhost:3000",
+				Tags: []string{"tag:tsmain", registry.FunnelTag}, Funnel: true, PublicAck: true, NoAutoProvision: tc.serviceOptOut,
+			}})
+
+			fake := &fakeTSNetServer{
+				status: funnelEnabledStatus("public.tailnet.ts.net."), localClient: &LocalClient{},
+				certDomains: []string{"public.tailnet.ts.net"},
+			}
+			oldNew := newTSNetServerFn
+			newTSNetServerFn = func(registry.Service, string, string, string) tsnetServer { return fake }
+			t.Cleanup(func() { newTSNetServerFn = oldNew })
+
+			s, err := New("key", "")
+			if err != nil {
+				t.Fatalf("New() error = %v", err)
+			}
+			t.Cleanup(s.closeAllNodes)
+			s.SetAutoProvisionFunnel(tc.daemonEnabled)
+			s.SetEnsureFunnelAttrFn(func(context.Context, tailapi.FunnelPolicyRequest) (tailapi.PolicyMutationResult, error) {
+				t.Fatal("Funnel policy writer called despite explicit opt-out")
+				return tailapi.PolicyMutationResult{}, nil
+			})
+			var ensuredTags []string
+			s.SetEnsureTagsFn(func(_ context.Context, tags []string) error {
+				ensuredTags = append([]string(nil), tags...)
+				return nil
+			})
+
+			if err := s.syncNodes(context.Background()); err != nil {
+				t.Fatalf("syncNodes() error = %v", err)
+			}
+			if got := strings.Join(ensuredTags, ","); got != "tag:tsmain" {
+				t.Fatalf("legacy EnsureTags input = %q, want only ordinary owner tag", got)
+			}
+			if !s.nodeRunning("public") {
+				t.Fatal("opted-out Funnel service did not start with pre-existing capability")
+			}
+		})
+	}
+}
+
+func TestSyncNodes_PolicyAccessDeniedDegradesWithoutBlockingServices(t *testing.T) {
+	testenv.SetHome(t, t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+	writeRegistry(t, []registry.Service{{Name: "app", Type: registry.TypeFile, Path: t.TempDir(), Tags: []string{"tag:tsmain"}}})
+
+	fake := &fakeTSNetServer{certDomains: []string{"app.tailnet.ts.net"}}
+	oldNew := newTSNetServerFn
+	newTSNetServerFn = func(registry.Service, string, string, string) tsnetServer { return fake }
+	t.Cleanup(func() { newTSNetServerFn = oldNew })
+	var logBuf bytes.Buffer
+	oldLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, nil)))
+	t.Cleanup(func() { slog.SetDefault(oldLogger) })
+
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(s.closeAllNodes)
+	s.SetEnsureTagsFn(func(context.Context, []string) error {
+		return fmt.Errorf("synthetic OAuth scope failure: %w", tailapi.ErrPolicyAccessDenied)
+	})
+
+	if err := s.syncNodes(context.Background()); err != nil {
+		t.Fatalf("syncNodes() error = %v, want forbidden policy access to degrade", err)
+	}
+	if !s.nodeRunning("app") {
+		t.Fatal("policy access denial blocked service startup")
+	}
+	if got := logBuf.String(); !strings.Contains(got, "policy access was forbidden") || !strings.Contains(got, "degraded_mode=true") {
+		t.Fatalf("degraded log = %q, want explicit forbidden policy classification", got)
+	}
+}
+
 func TestSyncNodes_ListenerActivationTimeoutClosesAndUnblocksLaterService(t *testing.T) {
 	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
 	writeRegistry(t, []registry.Service{
-		{Name: "blocked-funnel", Type: registry.TypeProxy, Target: "http://localhost:3000", Funnel: true, PublicAck: true},
+		{Name: "blocked-funnel", Type: registry.TypeProxy, Target: "http://localhost:3000", Tags: []string{"tag:tsmain", registry.FunnelTag}, Funnel: true, PublicAck: true},
 		{Name: "healthy", Type: registry.TypeFile, Path: t.TempDir()},
 	})
 
@@ -2662,6 +3536,9 @@ func TestSyncNodes_ListenerActivationTimeoutClosesAndUnblocksLaterService(t *tes
 		t.Fatalf("New() error = %v", err)
 	}
 	t.Cleanup(s.closeAllNodes)
+	s.SetEnsureFunnelAttrFn(func(context.Context, tailapi.FunnelPolicyRequest) (tailapi.PolicyMutationResult, error) {
+		return tailapi.PolicyMutationResult{WriteOutcome: tailapi.PolicyWriteUnchanged}, nil
+	})
 	started := time.Now()
 	if err := s.syncNodes(context.Background()); err != nil {
 		t.Fatalf("syncNodes() error = %v", err)
@@ -4603,6 +5480,15 @@ func TestServiceChanged_Domain(t *testing.T) {
 	}
 }
 
+func TestServiceChanged_NoAutoProvision(t *testing.T) {
+	base := registry.Service{Name: "a", Type: registry.TypeProxy, Target: "http://localhost:3000", Funnel: true, PublicAck: true}
+	changed := base
+	changed.NoAutoProvision = true
+	if !serviceChanged(base, changed) {
+		t.Error("different no_auto_provision should restart the service")
+	}
+}
+
 func TestWatchRegistry_ContextCancelled(t *testing.T) {
 	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
@@ -4670,11 +5556,13 @@ func TestSyncNodes_FunnelChange_TriggersRestart(t *testing.T) {
 		Name:   "svc",
 		Type:   registry.TypeProxy,
 		Target: "http://localhost:3000",
+		Tags:   []string{"tag:tsmain"},
 		Funnel: false,
 	}
 	newSvc := oldSvc
 	newSvc.Funnel = true
 	newSvc.PublicAck = true
+	newSvc.Tags = []string{"tag:tsmain", registry.FunnelTag}
 	writeRegistry(t, []registry.Service{newSvc})
 
 	// Block NodesDir so startNodeLocked fails (we just want to verify the old node gets stopped)
@@ -4695,6 +5583,9 @@ func TestSyncNodes_FunnelChange_TriggersRestart(t *testing.T) {
 	}
 	node := newNode(t, oldSvc)
 	s.nodes["svc"] = node
+	s.SetEnsureFunnelAttrFn(func(context.Context, tailapi.FunnelPolicyRequest) (tailapi.PolicyMutationResult, error) {
+		return tailapi.PolicyMutationResult{WriteOutcome: tailapi.PolicyWriteUnchanged}, nil
+	})
 
 	if err := s.syncNodes(context.Background()); err == nil {
 		t.Fatal("syncNodes() error = nil, want restart failure")
@@ -4931,6 +5822,40 @@ func TestSyncNodes_EnsureTagsErrorLogged(t *testing.T) {
 
 	if err := s.syncNodes(context.Background()); err == nil || !strings.Contains(err.Error(), "ACL write denied") {
 		t.Fatalf("syncNodes() error = %v, want ACL write denied", err)
+	}
+}
+
+func TestSyncNodes_PersistentEnsureTagsConflictDegradesWithoutBlockingServices(t *testing.T) {
+	testenv.SetHome(t, t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+	path := t.TempDir()
+	writeRegistry(t, []registry.Service{{Name: "app", Type: registry.TypeFile, Path: path, Tags: []string{"tag:tsmain"}}})
+
+	fake := &fakeTSNetServer{certDomains: []string{"app.tailnet.ts.net"}}
+	oldNew := newTSNetServerFn
+	newTSNetServerFn = func(registry.Service, string, string, string) tsnetServer { return fake }
+	t.Cleanup(func() { newTSNetServerFn = oldNew })
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(s.closeAllNodes)
+	calls := 0
+	s.SetEnsureTagsFn(func(context.Context, []string) error {
+		calls++
+		return tailapi.ErrPolicyConflict
+	})
+
+	if err := s.syncNodes(context.Background()); err != nil {
+		t.Fatalf("syncNodes() error = %v, want ETag-conflict degradation", err)
+	}
+	if calls != 2 {
+		t.Fatalf("EnsureTags calls = %d, want one fresh retry", calls)
+	}
+	if !s.nodeRunning("app") {
+		t.Fatal("persistent ordinary-tag ETag conflict blocked unrelated service startup")
 	}
 }
 

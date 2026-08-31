@@ -14,6 +14,8 @@ import (
 	"github.com/monody0007/tslink/internal/output"
 )
 
+var _ func(string, bool) string = systemdServiceContents
+
 func stubLinuxInstallDaemonStopped(t *testing.T) {
 	t.Helper()
 	oldConflict := installDaemonConflictFn
@@ -191,7 +193,7 @@ func TestLinuxInstallExistingUnitManualDaemonPIDMismatchConflicts(t *testing.T) 
 }
 
 func TestSystemdServiceContentsThrottlesRestart(t *testing.T) {
-	unit := systemdServiceContents("/usr/local/bin/tslink")
+	unit := systemdServiceContents("/usr/local/bin/tslink", false)
 	for _, want := range []string{
 		"StartLimitIntervalSec=300",
 		"StartLimitBurst=5",
@@ -205,15 +207,22 @@ func TestSystemdServiceContentsThrottlesRestart(t *testing.T) {
 	}
 }
 
+func TestSystemdServiceContentsCarriesNoAutoProvision(t *testing.T) {
+	unit := systemdServiceContents("/usr/local/bin/tslink", true)
+	if count := strings.Count(unit, " --no-auto-provision"); count != 1 {
+		t.Fatalf("kill-switch arg count = %d, want 1:\n%s", count, unit)
+	}
+}
+
 func TestSystemdServiceContentsQuotesExecutableWithSpaces(t *testing.T) {
-	unit := systemdServiceContents("/opt/My App/tslink")
+	unit := systemdServiceContents("/opt/My App/tslink", false)
 	if !strings.Contains(unit, `ExecStart="/opt/My App/tslink" serve`) {
 		t.Fatalf("unit did not quote executable path with spaces:\n%s", unit)
 	}
 }
 
 func TestSystemdServiceContentsEscapesSystemdSpecials(t *testing.T) {
-	unit := systemdServiceContents(`/opt/100%/$build "TSLink"\tslink`)
+	unit := systemdServiceContents(`/opt/100%/$build "TSLink"\tslink`, false)
 	if !strings.Contains(unit, `ExecStart="/opt/100%%/$$build \"TSLink\"\\tslink" serve`) {
 		t.Fatalf("unit did not escape systemd executable path:\n%s", unit)
 	}

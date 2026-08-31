@@ -62,6 +62,7 @@ type Snapshot struct {
 type ServiceSnapshot struct {
 	Name            string               `json:"name"`
 	Type            string               `json:"type"`
+	NodeID          string               `json:"node_id,omitempty"`
 	RuntimeState    string               `json:"runtime_state"`
 	Endpoint        inspect.EndpointView `json:"endpoint"`
 	Exposure        inspect.ExposureView `json:"exposure"`
@@ -74,6 +75,7 @@ type ServiceSnapshot struct {
 
 type ServiceState struct {
 	Service      registry.Service
+	NodeID       string
 	RuntimeHost  string
 	RuntimeState string
 	FunnelState  string
@@ -83,9 +85,10 @@ type ServiceState struct {
 
 // ServiceError is stable, actionable failure data persisted for agent consumers.
 type ServiceError struct {
-	Code    string   `json:"code"`
-	Message string   `json:"message"`
-	Next    []string `json:"next,omitempty"`
+	Code      string                     `json:"code"`
+	Message   string                     `json:"message"`
+	Next      []string                   `json:"next,omitempty"`
+	Provision *registry.ProvisionOutcome `json:"provision,omitempty"`
 }
 
 type ExpectedRuntime struct {
@@ -179,11 +182,16 @@ func newSnapshot(daemonPID int, daemonStartedAt time.Time, registryFingerprint s
 		if state.Error != nil {
 			copied := *state.Error
 			copied.Next = append([]string(nil), state.Error.Next...)
+			if state.Error.Provision != nil {
+				provision := *state.Error.Provision
+				copied.Provision = &provision
+			}
 			serviceError = &copied
 		}
 		services = append(services, ServiceSnapshot{
 			Name:            state.Service.Name,
 			Type:            state.Service.Type,
+			NodeID:          state.NodeID,
 			RuntimeState:    runtimeState,
 			Endpoint:        endpoint,
 			Exposure:        view.Exposure,

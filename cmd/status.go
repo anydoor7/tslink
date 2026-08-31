@@ -290,6 +290,10 @@ func cloneServiceError(source *tsruntime.ServiceError) *tsruntime.ServiceError {
 	}
 	cloned := *source
 	cloned.Next = append([]string(nil), source.Next...)
+	if source.Provision != nil {
+		provision := *source.Provision
+		cloned.Provision = &provision
+	}
 	return &cloned
 }
 

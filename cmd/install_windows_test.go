@@ -10,6 +10,11 @@ import (
 	"testing"
 )
 
+// windowsStartupScript must take the kill switch as a required argument. A
+// variadic parameter lets a call site drop it silently, which would write a
+// Startup script without --no-auto-provision for a user who asked for it.
+var _ func(string, bool) string = windowsStartupScript
+
 func TestWindowsStartupScriptPath(t *testing.T) {
 	appData := filepath.Join("C:\\Users", "Alice Example", "AppData", "Roaming")
 	t.Setenv("APPDATA", appData)
@@ -26,10 +31,17 @@ func TestWindowsStartupScriptPath(t *testing.T) {
 
 func TestWindowsStartupScriptEscapesSpacesAndQuotes(t *testing.T) {
 	exe := `C:\Program Files\TS "Link"\tslink.exe`
-	got := windowsStartupScript(exe)
+	got := windowsStartupScript(exe, false)
 	want := "CreateObject(\"Wscript.Shell\").Run \"\"\"\" & \"C:\\Program Files\\TS \"\"Link\"\"\\tslink.exe\" & \"\"\" serve\", 0, False\r\n"
 	if got != want {
 		t.Fatalf("script = %q, want %q", got, want)
+	}
+}
+
+func TestWindowsStartupScriptCarriesNoAutoProvision(t *testing.T) {
+	script := windowsStartupScript(`C:\Program Files\TSLink\tslink.exe`, true)
+	if count := strings.Count(script, " --no-auto-provision"); count != 1 {
+		t.Fatalf("kill-switch arg count = %d, want 1: %q", count, script)
 	}
 }
 
