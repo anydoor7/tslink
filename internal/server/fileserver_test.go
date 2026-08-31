@@ -22,6 +22,7 @@ func TestNewFileHandler(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewFileHandler(%q) error = %v", dir, err)
 	}
+	t.Cleanup(func() { _ = handler.Close() })
 
 	req := httptest.NewRequest(http.MethodGet, "/hello.txt", nil)
 	w := httptest.NewRecorder()
@@ -47,7 +48,7 @@ func TestSafeFSAllowsContainedDotDotNames(t *testing.T) {
 		t.Fatalf("WriteFile(..foo/bar) error = %v", err)
 	}
 
-	fsys := &safeFS{root: root}
+	fsys := openSafeFS(t, root)
 	for _, name := range []string{"..config", "..foo/bar"} {
 		t.Run(name, func(t *testing.T) {
 			f, err := fsys.Open(name)
@@ -75,7 +76,7 @@ func TestSafeFSRejectsCanonicalTraversalAndSymlinkEscape(t *testing.T) {
 		t.Fatalf("Symlink() error = %v", err)
 	}
 
-	fsys := &safeFS{root: root}
+	fsys := openSafeFS(t, root)
 	for _, name := range []string{"../secret", "escape/secret"} {
 		t.Run(name, func(t *testing.T) {
 			f, err := fsys.Open(name)
@@ -120,6 +121,7 @@ func TestNewFileHandler_NotFound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewFileHandler() error = %v", err)
 	}
+	t.Cleanup(func() { _ = handler.Close() })
 
 	req := httptest.NewRequest(http.MethodGet, "/nonexistent.txt", nil)
 	w := httptest.NewRecorder()
@@ -149,6 +151,7 @@ func TestNewFileHandler_SymlinkTraversalBlocked(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewFileHandler() error = %v", err)
 	}
+	t.Cleanup(func() { _ = handler.Close() })
 
 	// Attempt to read the secret file through the symlink.
 	req := httptest.NewRequest(http.MethodGet, "/escape/secret.txt", nil)
@@ -222,7 +225,7 @@ func TestSafeFSRejectsConcurrentSymlinkSwapEscape(t *testing.T) {
 		<-done
 	})
 
-	fsys := &safeFS{root: root}
+	fsys := openSafeFS(t, root)
 	for i := 0; i < 5000; i++ {
 		select {
 		case err := <-errCh:
@@ -265,6 +268,7 @@ func TestNewFileHandler_DotDotTraversalBlocked(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewFileHandler() error = %v", err)
 	}
+	t.Cleanup(func() { _ = handler.Close() })
 
 	// Attempt directory traversal with ../
 	req := httptest.NewRequest(http.MethodGet, "/../passwd", nil)
@@ -274,4 +278,66 @@ func TestNewFileHandler_DotDotTraversalBlocked(t *testing.T) {
 	if w.Code == http.StatusOK && w.Body.String() == "root:x:0:0" {
 		t.Fatalf("dot-dot traversal was not blocked: got status %d with body %q", w.Code, w.Body.String())
 	}
+}
+
+func TestNewFileHandlerPinsRootAcrossPathReplacement(t *testing.T) {
+	parent := t.TempDir()
+	rootPath := filepath.Join(parent, "public")
+	if err := os.Mkdir(rootPath, 0o700); err != nil {
+		t.Fatalf("Mkdir(root) error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(rootPath, "value.txt"), []byte("PINNED"), 0o600); err != nil {
+		t.Fatalf("WriteFile(pinned) error = %v", err)
+	}
+	external := t.TempDir()
+	if err := os.WriteFile(filepath.Join(external, "value.txt"), []byte("ROOT-EXTERNAL-SECRET"), 0o600); err != nil {
+		t.Fatalf("WriteFile(external) error = %v", err)
+	}
+
+	handler, err := NewFileHandler(rootPath)
+	if err != nil {
+		t.Fatalf("NewFileHandler() error = %v", err)
+	}
+	t.Cleanup(func() { _ = handler.Close() })
+	if err := os.Rename(rootPath, rootPath+".pinned"); err != nil {
+		t.Fatalf("Rename(root) error = %v", err)
+	}
+	if err := os.Symlink(external, rootPath); err != nil {
+		t.Fatalf("Symlink(replacement) error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/value.txt", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK || w.Body.String() != "PINNED" {
+		t.Fatalf("replacement request = status %d body %q, want pinned root content", w.Code, w.Body.String())
+	}
+}
+
+func TestFileHandlerCloseReleasesPinnedRoot(t *testing.T) {
+	dir := t.TempDir()
+	handler, err := NewFileHandler(dir)
+	if err != nil {
+		t.Fatalf("NewFileHandler() error = %v", err)
+	}
+	if err := handler.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if err := handler.Close(); err != nil {
+		t.Fatalf("second Close() error = %v", err)
+	}
+	if _, err := handler.fsys.root.Open("."); err == nil {
+		t.Fatal("pinned os.Root remained usable after handler Close")
+	}
+}
+
+func openSafeFS(t *testing.T, path string) *safeFS {
+	t.Helper()
+	root, err := os.OpenRoot(path)
+	if err != nil {
+		t.Fatalf("OpenRoot(%q) error = %v", path, err)
+	}
+	fsys := &safeFS{root: root}
+	t.Cleanup(func() { _ = fsys.Close() })
+	return fsys
 }

@@ -2,13 +2,19 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"reflect"
 	"runtime"
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/monody0007/tslink/internal/inspect"
+	"github.com/monody0007/tslink/internal/output"
 	"github.com/monody0007/tslink/internal/registry"
+	tsruntime "github.com/monody0007/tslink/internal/runtime"
 	"github.com/spf13/cobra"
 )
 
@@ -315,6 +321,13 @@ func TestMustMarkFlagPlatformsKeepsIndependentlyRegisteredSameNameFlagsIsolated(
 
 func TestManifestCarriesMachineConsumerFacts(t *testing.T) {
 	m := Manifest()
+	commandPaths := make(map[string]bool, len(m.Commands))
+	for _, command := range m.Commands {
+		commandPaths[command.Path] = true
+	}
+	if !commandPaths["tslink registry check"] {
+		t.Fatal("manifest missing executable tslink registry check recovery command")
+	}
 
 	if m.Toolchain.GoReleaserVersion != "v2.17.0" {
 		t.Fatalf("GoReleaserVersion = %q, want v2.17.0", m.Toolchain.GoReleaserVersion)
@@ -342,6 +355,35 @@ func TestManifestCarriesMachineConsumerFacts(t *testing.T) {
 	if m.Release.PublicReleaseAvailable || m.Release.PrebuiltAvailable || m.Release.HomebrewTapAvailable {
 		t.Fatalf("release availability must stay false before first public readback: %#v", m.Release)
 	}
+	for _, code := range []string{
+		registry.CodeFunnelCapabilityMissing,
+		registry.CodeFunnelListenFailed,
+		registry.CodeServiceStartTimeout,
+		registry.CodePathNotFound,
+		registry.CodePathNotDirectory,
+		registry.CodePathNotAccessible,
+	} {
+		if _, ok := m.ErrorCodes[code]; !ok {
+			t.Fatalf("manifest missing error code %q", code)
+		}
+	}
+	for _, command := range []string{"tslink list", "tslink status"} {
+		fields := commandJSONResultFields(command)
+		for _, field := range []string{"services[].funnel_requested", "services[].funnel_active", "services[].funnel_state", "services[].error"} {
+			if _, ok := fields[field]; !ok {
+				t.Fatalf("%s manifest missing %s", command, field)
+			}
+		}
+	}
+	if _, ok := commandJSONResultFields("tslink list")["services[].state"]; !ok {
+		t.Fatal("tslink list manifest missing services[].state")
+	}
+	if _, ok := commandJSONResultFields("tslink status")["services[].runtime_state"]; !ok {
+		t.Fatal("tslink status manifest missing services[].runtime_state")
+	}
+	if _, ok := commandJSONResultFields("tslink status")["global_error"]; !ok {
+		t.Fatal("tslink status manifest missing global_error")
+	}
 }
 
 func TestManifestDocumentsInstallJSONWireFields(t *testing.T) {
@@ -363,6 +405,169 @@ func TestManifestDocumentsInstallJSONWireFields(t *testing.T) {
 	if warning := fields["warning"].Description; !strings.Contains(warning, "non-fatal") || !strings.Contains(warning, "successful install") {
 		t.Fatalf("install warning contract = %q, want success-only non-fatal semantics", warning)
 	}
+}
+
+func TestListStateManifestValuesMatchProductionBranches(t *testing.T) {
+	field := commandJSONResultFields("tslink list")["services[].state"]
+	declared := append([]string(nil), field.Values...)
+	sort.Strings(declared)
+
+	actualSet := map[string]struct{}{}
+	for _, service := range []StatusServiceView{
+		{},
+		{RuntimeState: tsruntime.ServiceRuntimeFailed},
+		{Endpoint: inspect.EndpointView{State: inspect.EndpointStateExact, Display: "https://svc.tailnet.ts.net"}},
+	} {
+		actualSet[listSummary(service).State] = struct{}{}
+	}
+	actual := make([]string, 0, len(actualSet))
+	for state := range actualSet {
+		actual = append(actual, state)
+	}
+	sort.Strings(actual)
+	if !reflect.DeepEqual(declared, actual) {
+		t.Fatalf("list state manifest values = %v, production branches emit %v", declared, actual)
+	}
+}
+
+func TestAllManifestValuesMatchProductionOutputSets(t *testing.T) {
+	listStates := map[string]struct{}{}
+	for _, service := range []StatusServiceView{
+		{},
+		{RuntimeState: tsruntime.ServiceRuntimeFailed},
+		{Endpoint: inspect.EndpointView{State: inspect.EndpointStateExact, Display: "https://svc.tailnet.ts.net"}},
+	} {
+		listStates[listSummary(service).State] = struct{}{}
+	}
+
+	funnelStates := map[string]struct{}{}
+	for _, state := range []string{
+		tsruntime.FunnelStateNotRequested,
+		tsruntime.FunnelStateRequestedUnknown,
+		tsruntime.FunnelStateActive,
+		tsruntime.FunnelStateCapabilityMissing,
+		tsruntime.FunnelStateListenFailed,
+		tsruntime.FunnelStateStartTimeout,
+	} {
+		snapshot := tsruntime.NewSnapshot(1, time.Unix(1, 0), "fingerprint", time.Unix(2, 0), []tsruntime.ServiceState{{
+			Service:     registry.Service{Name: "svc", Type: registry.TypeProxy, Target: "http://localhost:3000", Funnel: state != tsruntime.FunnelStateNotRequested, PublicAck: state != tsruntime.FunnelStateNotRequested},
+			FunnelState: state,
+		}})
+		funnelStates[snapshot.Services[0].FunnelState] = struct{}{}
+	}
+
+	production := map[string]map[string]struct{}{
+		"tslink list/services[].state":          listStates,
+		"tslink list/services[].funnel_state":   funnelStates,
+		"tslink status/services[].funnel_state": funnelStates,
+		"tslink status/services[].runtime_state": sliceSet([]string{
+			statusEndpointStateUnknown,
+			normalizedRuntimeState(tsruntime.ServiceSnapshot{RuntimeState: tsruntime.ServiceRuntimeRunning}),
+			normalizedRuntimeState(tsruntime.ServiceSnapshot{RuntimeState: tsruntime.ServiceRuntimeFailed}),
+		}),
+		"tslink uninstall/launchctl_outcome": sliceSet([]string{
+			launchctlOutcomeNotInstalled,
+			launchctlOutcomeUnloaded,
+			launchctlOutcomeAlreadyAbsent,
+			launchctlOutcomeUnconfirmed,
+		}),
+	}
+
+	seen := map[string]bool{}
+	for _, command := range Manifest().Commands {
+		for field, info := range command.JSONResultFields {
+			if len(info.Values) == 0 {
+				continue
+			}
+			key := command.Path + "/" + field
+			actual, ok := production[key]
+			if !ok {
+				t.Fatalf("manifest Values field %q has no production output-set comparison", key)
+			}
+			if !reflect.DeepEqual(sliceSet(info.Values), actual) {
+				t.Fatalf("%s values=%v production=%v", key, info.Values, sortedSet(actual))
+			}
+			seen[key] = true
+		}
+	}
+	if len(seen) != len(production) {
+		t.Fatalf("compared=%v, want all production sets=%v", seen, production)
+	}
+}
+
+func sliceSet(values []string) map[string]struct{} {
+	result := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		result[value] = struct{}{}
+	}
+	return result
+}
+
+func sortedSet(values map[string]struct{}) []string {
+	result := make([]string, 0, len(values))
+	for value := range values {
+		result = append(result, value)
+	}
+	sort.Strings(result)
+	return result
+}
+
+func TestManifestErrorExitTaxonomyMatchesRuntime(t *testing.T) {
+	tests := map[string]error{
+		"internal_error":                        errors.New("boom"),
+		"usage_error":                           output.ErrUsage("bad usage"),
+		"auth_error":                            output.ErrAuth("bad auth"),
+		"conflict":                              output.ErrConflict("conflict"),
+		"not_found":                             output.ErrNotFound("missing"),
+		registry.CodeServiceTypeAmbiguous:       registry.ServiceTypeAmbiguousError(),
+		registry.CodeInvalidServiceName:         registry.ValidateName("Bad_Name"),
+		registry.CodeInvalidTag:                 registry.ValidateTag("tag:"),
+		registry.CodeAllowUnsupportedTCP:        registry.AllowUnsupportedTCPError(),
+		registry.CodePathMustBeAbsolute:         registry.PathMustBeAbsoluteError("relative"),
+		registry.CodePathNotFound:               registry.PathNotFoundError("/missing"),
+		registry.CodePathNotDirectory:           registry.PathNotDirectoryError("/file"),
+		registry.CodePathNotAccessible:          registry.PathNotAccessibleError("/denied", errors.New("denied")),
+		registry.CodeUnknownConfigKey:           fmt.Errorf("unknown config key: %q", "bad"),
+		registry.CodeURLNotReady:                registry.URLNotReadyError("pending"),
+		registry.CodeLaunchctlDomainUnavailable: registry.CodedError{Code: registry.CodeLaunchctlDomainUnavailable, Message: "unavailable"},
+		registry.CodeFeatureUnavailable:         registry.FeatureUnavailableError("unavailable"),
+		registry.CodeFunnelPublicAckRequired:    registry.FunnelPublicAckError(),
+		registry.CodeFunnelAllowConflict:        registry.FunnelAllowedUsersError(),
+		registry.CodeFunnelControlURLConflict:   registry.FunnelControlURLError(),
+		registry.CodeFunnelTypeConflict:         registry.FunnelTypeConflictError(registry.TypeTCP),
+		registry.CodeFunnelCapabilityMissing:    registry.FunnelCapabilityMissingError("svc", errors.New("missing")),
+		registry.CodeFunnelListenFailed:         registry.FunnelListenFailedError("svc", errors.New("listen")),
+		registry.CodeServiceStartTimeout:        registry.ServiceStartTimeoutError("svc", time.Second),
+	}
+	manifest := errorCodeManifest()
+	if len(manifest) != len(tests) {
+		t.Fatalf("manifest codes=%d runtime probes=%d", len(manifest), len(tests))
+	}
+	for stable, err := range tests {
+		info, ok := manifest[stable]
+		if !ok {
+			t.Fatalf("manifest missing runtime code %q", stable)
+		}
+		failure := output.NewFailureForError("probe", err)
+		if failure.Error == nil || failure.Error.Code != stable || failure.Code != info.ExitCode || output.ExitCode(err) != info.ExitCode {
+			t.Fatalf("%s manifest=%+v runtime envelope=%+v runtime exit=%d", stable, info, failure, output.ExitCode(err))
+		}
+	}
+}
+
+func TestManifestExcludesJSONFromMCPCommand(t *testing.T) {
+	for _, command := range Manifest().Commands {
+		if command.Path != "tslink mcp" {
+			continue
+		}
+		for _, flag := range command.Flags {
+			if flag.Name == "json" {
+				t.Fatalf("tslink mcp flags=%+v, stdout is reserved for JSON-RPC", command.Flags)
+			}
+		}
+		return
+	}
+	t.Fatal("manifest missing tslink mcp")
 }
 
 func TestLaunchctlDomainUnavailableErrorCodeMatchesPinnedManifestWireValue(t *testing.T) {

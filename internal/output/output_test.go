@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/monody0007/tslink/internal/registry"
 )
@@ -100,11 +101,12 @@ func TestCodeError(t *testing.T) {
 		err  *CodeError
 		code int
 		msg  string
+		next string
 	}{
-		{"auth", ErrAuth("bad key"), ExitAuth, "bad key"},
-		{"usage", ErrUsage("bad args"), ExitUsage, "bad args"},
-		{"conflict", ErrConflict("exists"), ExitConflict, "exists"},
-		{"not found", ErrNotFound("missing"), ExitNotFound, "missing"},
+		{"auth", ErrAuth("bad key"), ExitAuth, "bad key", "tslink login"},
+		{"usage", ErrUsage("bad args"), ExitUsage, "bad args", "tslink --help"},
+		{"conflict", ErrConflict("exists"), ExitConflict, "exists", "tslink status --json"},
+		{"not found", ErrNotFound("missing"), ExitNotFound, "missing", "tslink list --json"},
 	}
 
 	for _, tt := range tests {
@@ -114,6 +116,10 @@ func TestCodeError(t *testing.T) {
 			}
 			if tt.err.Error() != tt.msg {
 				t.Errorf("msg: got %q, want %q", tt.err.Error(), tt.msg)
+			}
+			result := NewFailureForError("test", tt.err)
+			if result.Error == nil || len(result.Error.Next) != 1 || result.Error.Next[0] != tt.next {
+				t.Fatalf("failure next = %v, want exact actionable command %q", result.Error, tt.next)
 			}
 		})
 	}
@@ -187,6 +193,39 @@ func TestFailure(t *testing.T) {
 	}
 	if got.Error == nil || got.Error.Code != "not_found" || got.Error.Message != "not found" {
 		t.Errorf("error: got %+v, want not_found/not found", got.Error)
+	}
+}
+
+func TestFailureForErrorWritesStableAgentRecoveryEnvelope(t *testing.T) {
+	raw := captureStdout(func() {
+		FailureForError("serve", registry.ServiceStartTimeoutError("stuck", 30*time.Second))
+	})
+	var got Result
+	if err := json.Unmarshal([]byte(raw), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.OK || got.Code != ExitError || got.Error == nil || got.Error.Code != registry.CodeServiceStartTimeout || len(got.Error.Next) != 2 {
+		t.Fatalf("failure envelope = %+v, want stable startup timeout recovery", got)
+	}
+}
+
+func TestStableAgentErrorsMapToSemanticExitCodes(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want int
+	}{
+		{name: "funnel public acknowledgement", err: registry.FunnelPublicAckError(), want: ExitUsage},
+		{name: "service type", err: registry.ServiceTypeAmbiguousError(), want: ExitUsage},
+		{name: "runtime timeout", err: registry.ServiceStartTimeoutError("stuck", time.Second), want: ExitError},
+		{name: "funnel capability", err: registry.FunnelCapabilityMissingError("public-app", errors.New("missing capability")), want: ExitError},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ExitCode(tc.err); got != tc.want {
+				t.Fatalf("ExitCode() = %d, want %d", got, tc.want)
+			}
+		})
 	}
 }
 

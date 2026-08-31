@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -77,6 +78,7 @@ var (
 		return srv.LocalClient()
 	}
 	interactiveStatusPollInterval = 100 * time.Millisecond
+	nodeStartupTimeout            = 30 * time.Second
 )
 
 var (
@@ -86,8 +88,10 @@ var (
 	runtimeSaveSnapshotFn   = runtimesnapshot.Save
 	runtimeRemoveSnapshotFn = runtimesnapshot.Remove
 	beforeInitialSyncFn     = func(context.Context) error { return nil }
-	registryLoadFn          = registry.Load
+	registryLoadRuntimeFn   = registry.LoadForRuntime
 	afterDesiredLoadedFn    = func(context.Context, uint64) error { return nil }
+	observeNodeContextFn    = func(string, context.Context) {}
+	registrySettleDelay     = 50 * time.Millisecond
 )
 
 const (
@@ -209,13 +213,15 @@ var newRegistryWatcherFn = func() (registryWatcher, error) {
 
 // ServiceNode represents a single tsnet node serving one service.
 type ServiceNode struct {
-	tsnetSrv    tsnetServer
-	service     registry.Service
-	runtimeHost string
-	listener    net.Listener
-	httpSrv     *http.Server
-	cancel      context.CancelFunc
-	closed      atomic.Bool
+	tsnetSrv             tsnetServer
+	service              registry.Service
+	runtimeHost          string
+	funnelListenerActive bool
+	listener             net.Listener
+	httpSrv              *http.Server
+	handlerCloser        io.Closer
+	cancel               context.CancelFunc
+	closed               atomic.Bool
 }
 
 // EnsureTagsFunc is the signature for ensuring ACL tags exist.
@@ -240,22 +246,32 @@ type CleanupStaleNodesFunc func(ctx context.Context, targets []tailapi.CleanupTa
 
 // Server manages multiple tsnet nodes, one per registered service.
 type Server struct {
-	nodes           map[string]*ServiceNode
-	authKey         string
-	authKeyProvider AuthKeyProvider
-	credentialed    bool
-	controlURL      string
-	mu              sync.RWMutex
-	cfgDir          string
-	metrics         *metrics.Metrics
-	ensureTagsFn    EnsureTagsFunc
-	authHandoffFn   AuthHandoffFunc
-	cleanupNodesFn  CleanupStaleNodesFunc
-	shuttingDown    atomic.Bool
-	syncGeneration  atomic.Uint64
-	daemonPID       int
-	daemonStartedAt time.Time
-	readyFn         func() error
+	nodes                   map[string]*ServiceNode
+	serviceFailures         map[string]runtimesnapshot.ServiceState
+	globalFailure           *runtimesnapshot.ServiceError
+	authKey                 string
+	authKeyProvider         AuthKeyProvider
+	credentialed            bool
+	controlURL              string
+	mu                      sync.RWMutex
+	cfgDir                  string
+	metrics                 *metrics.Metrics
+	ensureTagsFn            EnsureTagsFunc
+	authHandoffFn           AuthHandoffFunc
+	cleanupNodesFn          CleanupStaleNodesFunc
+	shuttingDown            atomic.Bool
+	syncGeneration          atomic.Uint64
+	reconcileGate           chan struct{}
+	startupCancelMu         sync.Mutex
+	startupCancel           context.CancelFunc
+	startupGeneration       uint64
+	lastRegistryFingerprint string
+	syncResultMu            sync.Mutex
+	latestSyncResult        syncResult
+	syncResultChanged       chan struct{}
+	daemonPID               int
+	daemonStartedAt         time.Time
+	readyFn                 func() error
 }
 
 // New creates a new multi-node server.
@@ -265,16 +281,19 @@ func New(authKey, controlURL string) (*Server, error) {
 		return nil, err
 	}
 	return &Server{
-		nodes:           make(map[string]*ServiceNode),
-		authKey:         authKey,
-		authKeyProvider: staticAuthKeyProvider(authKey),
-		credentialed:    authKey != "",
-		controlURL:      controlURL,
-		cfgDir:          cfgDir,
-		metrics:         metrics.New(),
-		cleanupNodesFn:  tailapi.CleanupStaleNodesResult,
-		daemonPID:       os.Getpid(),
-		daemonStartedAt: time.Now().UTC(),
+		nodes:             make(map[string]*ServiceNode),
+		serviceFailures:   make(map[string]runtimesnapshot.ServiceState),
+		reconcileGate:     make(chan struct{}, 1),
+		syncResultChanged: make(chan struct{}),
+		authKey:           authKey,
+		authKeyProvider:   staticAuthKeyProvider(authKey),
+		credentialed:      authKey != "",
+		controlURL:        controlURL,
+		cfgDir:            cfgDir,
+		metrics:           metrics.New(),
+		cleanupNodesFn:    tailapi.CleanupStaleNodesResult,
+		daemonPID:         os.Getpid(),
+		daemonStartedAt:   time.Now().UTC(),
 	}, nil
 }
 
@@ -371,6 +390,12 @@ type syncOutcome struct {
 	committed  bool
 }
 
+type syncResult struct {
+	generation uint64
+	committed  bool
+	err        error
+}
+
 // syncNodes compares registry to running nodes and starts/stops as needed.
 func (s *Server) syncNodes(ctx context.Context) error {
 	_, err := s.syncNodesWithOutcome(ctx)
@@ -386,6 +411,20 @@ func (s *Server) syncNodesAuthoritative(ctx context.Context) error {
 		if outcome.committed {
 			return nil
 		}
+		latest := s.syncGeneration.Load()
+		if latest > outcome.generation {
+			result, waitErr := s.waitForSyncResult(ctx, latest)
+			if waitErr != nil {
+				return waitErr
+			}
+			if result.err != nil {
+				return result.err
+			}
+			if result.committed {
+				return nil
+			}
+			continue
+		}
 		if err := s.ensureRunning(ctx); err != nil {
 			return err
 		}
@@ -393,11 +432,17 @@ func (s *Server) syncNodesAuthoritative(ctx context.Context) error {
 	}
 }
 
-func (s *Server) syncNodesWithOutcome(ctx context.Context) (syncOutcome, error) {
+func (s *Server) syncNodesWithOutcome(ctx context.Context) (outcome syncOutcome, resultErr error) {
 	generation := s.syncGeneration.Add(1)
-	outcome := syncOutcome{generation: generation}
+	outcome = syncOutcome{generation: generation}
+	defer func() {
+		s.publishSyncResult(syncResult{generation: generation, committed: outcome.committed, err: resultErr})
+	}()
+	generationCtx, cancelGeneration := context.WithCancel(ctx)
+	s.installStartupGeneration(generation, cancelGeneration)
+	defer s.finishStartupGeneration(generation, cancelGeneration)
 
-	if err := s.ensureRunning(ctx); err != nil {
+	if err := s.ensureRunning(generationCtx); err != nil {
 		return outcome, err
 	}
 
@@ -406,8 +451,9 @@ func (s *Server) syncNodesWithOutcome(ctx context.Context) (syncOutcome, error) 
 		return outcome, err
 	}
 
-	reg, err := registryLoadFn(regPath)
+	reg, registryIssues, err := loadRegistryForRuntimeSettled(generationCtx, regPath)
 	if err != nil {
+		s.failClosedGlobalRegistryError(generation, err)
 		return outcome, err
 	}
 	registryFingerprint, err := runtimesnapshot.RegistryFingerprint(reg)
@@ -418,10 +464,23 @@ func (s *Server) syncNodesWithOutcome(ctx context.Context) (syncOutcome, error) 
 	// Build desired state
 	desired := make(map[string]registry.Service, len(reg.Services))
 	desiredOrder := make([]string, 0, len(reg.Services))
+	validationFailures := make(map[string]runtimesnapshot.ServiceState)
+	for _, issue := range registryIssues {
+		failure := serviceIssueFailure(issue)
+		desiredOrder = append(desiredOrder, issue.Name)
+		desired[issue.Name] = issue.Service
+		validationFailures[issue.Name] = failure
+		slog.Warn("registry service failed strict load; isolating service and continuing sync", "name", issue.Name, "code", failure.Error.Code, "error", issue.Err)
+	}
 	for _, svc := range reg.Services {
 		if err := ValidateServiceForStartup(svc); err != nil {
-			if shouldSkipServiceForStartup(err) {
-				warnSkippedStartupService(svc, err)
+			if failure, recoverable := recoverableServiceFailure(svc, err); recoverable {
+				slog.Warn("service validation failed; isolating service and continuing sync", "name", svc.Name, "code", failure.Error.Code, "error", err)
+				if _, seen := desired[svc.Name]; !seen {
+					desiredOrder = append(desiredOrder, svc.Name)
+				}
+				desired[svc.Name] = svc
+				validationFailures[svc.Name] = failure
 				continue
 			}
 			return outcome, err
@@ -431,21 +490,36 @@ func (s *Server) syncNodesWithOutcome(ctx context.Context) (syncOutcome, error) 
 		}
 		desired[svc.Name] = svc
 	}
-	if err := afterDesiredLoadedFn(ctx, generation); err != nil {
+	if err := afterDesiredLoadedFn(generationCtx, generation); err != nil {
+		if generation != s.syncGeneration.Load() {
+			return outcome, nil
+		}
 		return outcome, err
+	}
+	select {
+	case s.reconcileGate <- struct{}{}:
+		defer func() { <-s.reconcileGate }()
+	case <-generationCtx.Done():
+		if generation != s.syncGeneration.Load() {
+			return outcome, nil
+		}
+		return outcome, generationCtx.Err()
 	}
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if err := s.ensureRunning(ctx); err != nil {
+	if err := s.ensureRunning(generationCtx); err != nil {
+		s.mu.Unlock()
 		return outcome, err
 	}
 	if generation != s.syncGeneration.Load() {
+		s.mu.Unlock()
 		slog.Info("skipping stale registry sync generation", "generation", generation)
 		return outcome, nil
 	}
+	s.globalFailure = nil
+	s.lastRegistryFingerprint = registryFingerprint
 	if err := s.prepareCredentialUpgradeLocked(reg.Services); err != nil {
+		s.mu.Unlock()
 		return outcome, err
 	}
 
@@ -457,6 +531,10 @@ func (s *Server) syncNodesWithOutcome(ctx context.Context) (syncOutcome, error) 
 		if !exists {
 			slog.Info("removing node", "name", name)
 			s.stopNodeLocked(name, true) // remove state for deleted services
+		} else if failure, invalid := validationFailures[name]; invalid {
+			slog.Warn("stopping node whose service no longer validates", "name", name, "code", failure.Error.Code)
+			s.stopNodeLocked(name, false)
+			s.serviceFailures[name] = failure
 		} else if serviceChangedWithFallback(node.service, svc, s.controlURL) {
 			authIdentityChanged := s.authIdentityChanged(node.service, svc)
 			slog.Info("restarting node", "name", name, "auth_identity_changed", authIdentityChanged)
@@ -471,8 +549,15 @@ func (s *Server) syncNodesWithOutcome(ctx context.Context) (syncOutcome, error) 
 			}
 		}
 	}
+	for name, failure := range s.serviceFailures {
+		svc, exists := desired[name]
+		if !exists || serviceChangedWithFallback(failure.Service, svc, s.controlURL) {
+			delete(s.serviceFailures, name)
+		}
+	}
+	s.mu.Unlock()
 
-	if err := s.cleanupAuthIdentityNodes(ctx, authIdentityRestartTargets); err != nil {
+	if err := s.cleanupAuthIdentityNodes(generationCtx, authIdentityRestartTargets); err != nil {
 		slog.Warn("failed to cleanup stale tailnet nodes before auth identity restart; continuing restart", "error", err)
 		reloadErrs = append(reloadErrs, err)
 	}
@@ -482,7 +567,10 @@ func (s *Server) syncNodesWithOutcome(ctx context.Context) (syncOutcome, error) 
 		var tagsToEnsure []string
 		tagSet := make(map[string]struct{})
 		for name, svc := range desired {
-			if _, running := s.nodes[name]; running {
+			if s.nodeRunning(name) {
+				continue
+			}
+			if _, invalid := validationFailures[name]; invalid {
 				continue
 			}
 			for _, tag := range svc.Tags {
@@ -493,7 +581,7 @@ func (s *Server) syncNodesWithOutcome(ctx context.Context) (syncOutcome, error) 
 			}
 		}
 		if len(tagsToEnsure) > 0 {
-			if err := s.ensureTagsFn(ctx, tagsToEnsure); err != nil {
+			if err := s.ensureTagsFn(generationCtx, tagsToEnsure); err != nil {
 				if errors.Is(err, tailapi.ErrNoAPIClient) {
 					slog.Warn("degraded mode: skipped ACL tag ensure", "reason", err.Error(), "tags", tagsToEnsure, "degraded_mode", true)
 				} else {
@@ -506,7 +594,7 @@ func (s *Server) syncNodesWithOutcome(ctx context.Context) (syncOutcome, error) 
 
 	// Start nodes for new or changed services
 	var startErrs []error
-	if err := s.ensureRunning(ctx); err != nil {
+	if err := s.ensureRunning(generationCtx); err != nil {
 		syncErr := errors.Join(append(reloadErrs, err)...)
 		if syncErr != nil {
 			s.removeRuntimeSnapshot()
@@ -515,22 +603,42 @@ func (s *Server) syncNodesWithOutcome(ctx context.Context) (syncOutcome, error) 
 	}
 	for _, name := range desiredOrder {
 		svc := desired[name]
-		if _, running := s.nodes[name]; running {
+		if s.nodeRunning(name) {
 			continue
 		}
-		if err := s.ensureRunning(ctx); err != nil {
+		if failure, invalid := validationFailures[name]; invalid {
+			s.mu.Lock()
+			s.serviceFailures[name] = failure
+			s.writeRuntimeSnapshotLocked(registryFingerprint, false)
+			s.mu.Unlock()
+			continue
+		}
+		if err := s.ensureRunning(generationCtx); err != nil {
 			startErrs = append(startErrs, err)
 			break
 		}
-		if err := s.startNodeLocked(ctx, svc); err != nil {
+		if err := s.startNodeLocked(generationCtx, svc); err != nil {
+			if generation != s.syncGeneration.Load() {
+				return outcome, nil
+			}
 			slog.Error("failed to start node", "name", name, "error", err)
+			if failure, recoverable := recoverableServiceFailure(svc, err); recoverable {
+				s.mu.Lock()
+				s.serviceFailures[name] = failure
+				s.writeRuntimeSnapshotLocked(registryFingerprint, false)
+				s.mu.Unlock()
+				continue
+			}
 			startErrs = append(startErrs, fmt.Errorf("start service %q: %w", name, err))
 			continue
 		}
+		s.mu.Lock()
+		delete(s.serviceFailures, name)
 		// Persist each successfully running node before starting the next one.
 		// Interactive enrollment is sequential, so this lets status pollers see
 		// earlier services as up while the next service is awaiting its login.
 		s.writeRuntimeSnapshotLocked(registryFingerprint, false)
+		s.mu.Unlock()
 	}
 
 	syncErr := errors.Join(append(reloadErrs, startErrs...)...)
@@ -541,9 +649,119 @@ func (s *Server) syncNodesWithOutcome(ctx context.Context) (syncOutcome, error) 
 
 	// Re-write after a fully successful sync so an empty registry and a sync
 	// that required no starts still publish authoritative runtime evidence.
+	s.mu.Lock()
 	s.writeRuntimeSnapshotLocked(registryFingerprint, true)
+	s.mu.Unlock()
 	outcome.committed = true
 	return outcome, nil
+}
+
+func (s *Server) installStartupGeneration(generation uint64, cancel context.CancelFunc) {
+	s.startupCancelMu.Lock()
+	if s.startupCancel != nil {
+		s.startupCancel()
+	}
+	s.startupCancel = cancel
+	s.startupGeneration = generation
+	s.startupCancelMu.Unlock()
+}
+
+func (s *Server) finishStartupGeneration(generation uint64, cancel context.CancelFunc) {
+	cancel()
+	s.startupCancelMu.Lock()
+	if s.startupGeneration == generation {
+		s.startupCancel = nil
+	}
+	s.startupCancelMu.Unlock()
+}
+
+func (s *Server) nodeRunning(name string) bool {
+	s.mu.RLock()
+	_, ok := s.nodes[name]
+	s.mu.RUnlock()
+	return ok
+}
+
+func (s *Server) publishSyncResult(result syncResult) {
+	s.syncResultMu.Lock()
+	if result.generation >= s.latestSyncResult.generation {
+		s.latestSyncResult = result
+		close(s.syncResultChanged)
+		s.syncResultChanged = make(chan struct{})
+	}
+	s.syncResultMu.Unlock()
+}
+
+func (s *Server) waitForSyncResult(ctx context.Context, generation uint64) (syncResult, error) {
+	for {
+		s.syncResultMu.Lock()
+		result := s.latestSyncResult
+		changed := s.syncResultChanged
+		s.syncResultMu.Unlock()
+		if result.generation >= generation {
+			return result, nil
+		}
+		select {
+		case <-ctx.Done():
+			return syncResult{}, ctx.Err()
+		case <-changed:
+		}
+	}
+}
+
+func loadRegistryForRuntimeSettled(ctx context.Context, path string) (*registry.Registry, []registry.ServiceIssue, error) {
+	reg, issues, err := registryLoadRuntimeFn(path)
+	if err == nil || registrySettleDelay <= 0 {
+		return reg, issues, err
+	}
+	timer := time.NewTimer(registrySettleDelay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return nil, nil, ctx.Err()
+	case <-timer.C:
+	}
+	return registryLoadRuntimeFn(path)
+}
+
+func serviceIssueFailure(issue registry.ServiceIssue) runtimesnapshot.ServiceState {
+	if failure, ok := recoverableServiceFailure(issue.Service, issue.Err); ok {
+		return failure
+	}
+	code, ok := registry.ErrorCode(issue.Err)
+	if !ok {
+		code = registry.CodeInvalidServiceConfig
+	}
+	return runtimesnapshot.ServiceState{
+		Service:      issue.Service,
+		RuntimeState: runtimesnapshot.ServiceRuntimeFailed,
+		FunnelState:  funnelFailureState(issue.Service, code),
+		Error: &runtimesnapshot.ServiceError{
+			Code:    code,
+			Message: issue.Error(),
+		},
+	}
+}
+
+func (s *Server) failClosedGlobalRegistryError(generation uint64, loadErr error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if generation != s.syncGeneration.Load() {
+		return
+	}
+	for name, node := range s.nodes {
+		if !node.funnelListenerActive {
+			continue
+		}
+		slog.Warn("closing active Funnel listener after invalid registry reload", "name", name, "code", registry.CodeRegistryReloadInvalid)
+		s.stopNodeLocked(name, false)
+	}
+	s.globalFailure = &runtimesnapshot.ServiceError{
+		Code:    registry.CodeRegistryReloadInvalid,
+		Message: fmt.Sprintf("registry reload remained invalid after bounded re-read: %v", loadErr),
+		Next:    []string{"tslink registry check --json"},
+	}
+	s.writeRuntimeSnapshotLocked(s.lastRegistryFingerprint, false)
 }
 
 func (s *Server) beginShutdown() {
@@ -709,23 +927,34 @@ func (s *Server) writeRuntimeSnapshotLocked(registryFingerprint string, complete
 		slog.Warn("runtime snapshot path unavailable", "error", err)
 		return
 	}
-	names := make([]string, 0, len(s.nodes))
+	names := make([]string, 0, len(s.nodes)+len(s.serviceFailures))
 	for name := range s.nodes {
 		names = append(names, name)
+	}
+	for name := range s.serviceFailures {
+		if _, running := s.nodes[name]; !running {
+			names = append(names, name)
+		}
 	}
 	sort.Strings(names)
 
 	states := make([]runtimesnapshot.ServiceState, 0, len(names))
 	for _, name := range names {
+		if failure, failed := s.serviceFailures[name]; failed {
+			states = append(states, failure)
+			continue
+		}
 		node := s.nodes[name]
 		var certDomains []string
 		if node.tsnetSrv != nil {
 			certDomains = node.tsnetSrv.CertDomains()
 		}
 		states = append(states, runtimesnapshot.ServiceState{
-			Service:     node.service,
-			RuntimeHost: node.runtimeHost,
-			CertDomains: certDomains,
+			Service:      node.service,
+			RuntimeHost:  node.runtimeHost,
+			RuntimeState: runtimesnapshot.ServiceRuntimeRunning,
+			FunnelState:  funnelStateForRunning(node),
+			CertDomains:  certDomains,
 		})
 	}
 	var snapshot runtimesnapshot.Snapshot
@@ -734,9 +963,77 @@ func (s *Server) writeRuntimeSnapshotLocked(registryFingerprint string, complete
 	} else {
 		snapshot = runtimesnapshot.NewPartialSnapshot(s.daemonPID, s.daemonStartedAt, registryFingerprint, time.Now().UTC(), states)
 	}
+	if s.globalFailure != nil {
+		globalFailure := *s.globalFailure
+		globalFailure.Next = append([]string(nil), s.globalFailure.Next...)
+		snapshot.GlobalError = &globalFailure
+	}
 	if err := runtimeSaveSnapshotFn(path, snapshot); err != nil {
 		slog.Warn("runtime snapshot write failed; continuing with running services", "path", path, "error", err)
 	}
+}
+
+func funnelStateForRunning(node *ServiceNode) string {
+	if node.funnelListenerActive {
+		return runtimesnapshot.FunnelStateActive
+	}
+	if node.service.Funnel {
+		return runtimesnapshot.FunnelStateRequestedUnknown
+	}
+	return runtimesnapshot.FunnelStateNotRequested
+}
+
+func recoverableServiceFailure(svc registry.Service, err error) (runtimesnapshot.ServiceState, bool) {
+	code, ok := registry.ErrorCode(err)
+	if !ok {
+		return runtimesnapshot.ServiceState{}, false
+	}
+	funnelState := funnelFailureState(svc, code)
+	switch code {
+	case registry.CodeFunnelCapabilityMissing:
+	case registry.CodeFunnelListenFailed:
+	case registry.CodeServiceStartTimeout:
+	case registry.CodePathNotFound, registry.CodePathNotDirectory, registry.CodePathNotAccessible,
+		registry.CodeFunnelAllowConflict, registry.CodeFunnelControlURLConflict,
+		registry.CodeFunnelTypeConflict, registry.CodeFunnelPublicAckRequired,
+		registry.CodeUnknownConfigKey, registry.CodeFeatureUnavailable,
+		registry.CodeInvalidServiceName, registry.CodeInvalidTag,
+		registry.CodeAllowUnsupportedTCP, registry.CodePathMustBeAbsolute:
+	default:
+		return runtimesnapshot.ServiceState{}, false
+	}
+	var recovery interface{ NextCommands() []string }
+	var next []string
+	if errors.As(err, &recovery) {
+		next = recovery.NextCommands()
+	}
+	return runtimesnapshot.ServiceState{
+		Service:      svc,
+		RuntimeState: runtimesnapshot.ServiceRuntimeFailed,
+		FunnelState:  funnelState,
+		Error: &runtimesnapshot.ServiceError{
+			Code:    code,
+			Message: err.Error(),
+			Next:    next,
+		},
+	}, true
+}
+
+func funnelFailureState(svc registry.Service, code string) string {
+	switch code {
+	case registry.CodeFunnelCapabilityMissing:
+		return runtimesnapshot.FunnelStateCapabilityMissing
+	case registry.CodeFunnelListenFailed:
+		return runtimesnapshot.FunnelStateListenFailed
+	case registry.CodeServiceStartTimeout:
+		if svc.Funnel {
+			return runtimesnapshot.FunnelStateStartTimeout
+		}
+	}
+	if svc.Funnel {
+		return runtimesnapshot.FunnelStateRequestedUnknown
+	}
+	return runtimesnapshot.FunnelStateNotRequested
 }
 
 func (s *Server) removeRuntimeSnapshot() {
@@ -757,27 +1054,6 @@ func ValidateServiceForStartup(svc registry.Service) error {
 		return fmt.Errorf("service %q: %w; edit registry.json", svc.Name, err)
 	}
 	return nil
-}
-
-func shouldSkipServiceForStartup(err error) bool {
-	code, ok := registry.ErrorCode(err)
-	return ok && code == registry.CodeFunnelPublicAckRequired
-}
-
-func warnSkippedStartupService(svc registry.Service, err error) {
-	slog.Warn("skipping service with invalid startup config",
-		"name", svc.Name,
-		"code", registry.CodeFunnelPublicAckRequired,
-		"error", err,
-		"remediation", fmt.Sprintf("re-run `tslink add %s --funnel --public` or set public_ack:true after confirming public internet exposure", svc.Name),
-	)
-}
-
-func middlewareConfigured(mw *registry.MiddlewareConfig) bool {
-	if mw == nil {
-		return false
-	}
-	return mw.BasicAuth != "" || mw.RateLimit != 0 || len(mw.IPAllowList) > 0 || len(mw.CORSOrigins) > 0
 }
 
 func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service) error {
@@ -811,19 +1087,63 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service) erro
 	tsnetSrv := newTSNetServerFn(svc, stateDir, authKey, controlURL)
 
 	nodeCtx, cancel := context.WithCancel(ctx)
+	observeNodeContextFn(svc.Name, nodeCtx)
+	var handlerCloser io.Closer
+	var closeResourcesOnce sync.Once
+	closeResources := func() {
+		closeResourcesOnce.Do(func() {
+			cancel()
+			if handlerCloser != nil {
+				_ = handlerCloser.Close()
+			}
+			_ = tsnetSrv.Close()
+		})
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			closeResources()
+		}
+	}()
 
 	var status *ipnstate.Status
+	technicalCtx := nodeCtx
+	cancelTechnical := func() {}
+	if authKey != "" && nodeStartupTimeout > 0 {
+		technicalCtx, cancelTechnical = context.WithTimeout(nodeCtx, nodeStartupTimeout)
+	}
+	defer cancelTechnical()
 	if authKey == "" {
+		// Human authorization is not a technical startup deadline. Keep the
+		// published auth URL and tsnet node alive until the daemon is stopped or
+		// the user completes enrollment.
 		status, err = s.waitForInteractiveNode(nodeCtx, tsnetSrv, svc.Name)
 	} else {
-		status, err = tsnetSrv.Up(nodeCtx)
+		status, err = tsnetSrv.Up(technicalCtx)
+		timedOut := ctx.Err() == nil && errors.Is(technicalCtx.Err(), context.DeadlineExceeded)
+		if err != nil && timedOut {
+			closeResources()
+			return registry.ServiceStartTimeoutError(svc.Name, nodeStartupTimeout)
+		}
 	}
 	if err != nil {
-		cancel()
-		tsnetSrv.Close()
 		return fmt.Errorf("tsnet up for %q: %w", svc.Name, err)
 	}
 	runtimeHost := runtimeHostFromStatus(status)
+	if svc.Funnel {
+		if status == nil || status.Self == nil {
+			return registry.FunnelCapabilityMissingError(svc.Name, errors.New("tsnet status did not include the service node"))
+		}
+		if err := ipn.CheckFunnelAccess(443, status.Self); err != nil {
+			return registry.FunnelCapabilityMissingError(svc.Name, err)
+		}
+	}
+	listenerCtx := technicalCtx
+	cancelListener := func() {}
+	if authKey == "" && nodeStartupTimeout > 0 {
+		listenerCtx, cancelListener = context.WithTimeout(nodeCtx, nodeStartupTimeout)
+	}
+	defer cancelListener()
 
 	// TCP proxy: raw TCP forwarding, no HTTP/TLS
 	if svc.Type == registry.TypeTCP {
@@ -831,16 +1151,17 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service) erro
 		if port == 0 {
 			port = 443
 		}
-		ln, err := tsnetSrv.Listen("tcp", fmt.Sprintf(":%d", port))
+		ln, timedOut, err := activateListener(listenerCtx, ctx, closeResources, func() (net.Listener, error) {
+			return tsnetSrv.Listen("tcp", fmt.Sprintf(":%d", port))
+		})
 		if err != nil {
-			cancel()
-			tsnetSrv.Close()
+			if timedOut {
+				return registry.ServiceStartTimeoutError(svc.Name, nodeStartupTimeout)
+			}
 			return fmt.Errorf("listen TCP for %q: %w", svc.Name, err)
 		}
 		if err := s.ensureRunning(ctx); err != nil {
 			ln.Close()
-			cancel()
-			tsnetSrv.Close()
 			return err
 		}
 
@@ -857,7 +1178,15 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service) erro
 		}()
 
 		slog.Info("tcp node ready", "name", svc.Name, "target", svc.Target, "port", port)
+		s.mu.Lock()
+		if err := s.ensureRunning(nodeCtx); err != nil {
+			s.mu.Unlock()
+			_ = ln.Close()
+			return err
+		}
 		s.nodes[svc.Name] = node
+		s.mu.Unlock()
+		committed = true
 		return nil
 	}
 
@@ -869,28 +1198,21 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service) erro
 		var err2 error
 		lc, err2 = tsnetSrv.LocalClient()
 		if err2 != nil {
-			cancel()
-			tsnetSrv.Close()
 			return fmt.Errorf("local client for %q: %w", svc.Name, err2)
 		}
 		h, err2 := NewProxyHandler(svc.Target, lc)
 		if err2 != nil {
-			cancel()
-			tsnetSrv.Close()
 			return fmt.Errorf("proxy handler for %q: %w", svc.Name, err2)
 		}
 		handler = h
 	case registry.TypeFile:
 		h, err2 := NewFileHandler(svc.Path)
 		if err2 != nil {
-			cancel()
-			tsnetSrv.Close()
 			return fmt.Errorf("file handler for %q: %w", svc.Name, err2)
 		}
 		handler = h
+		handlerCloser = h
 	default:
-		cancel()
-		tsnetSrv.Close()
 		return fmt.Errorf("unknown service type %q", svc.Type)
 	}
 
@@ -900,16 +1222,10 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service) erro
 			var err2 error
 			lc, err2 = tsnetSrv.LocalClient()
 			if err2 != nil {
-				cancel()
-				tsnetSrv.Close()
 				return fmt.Errorf("local client for %q (acl): %w", svc.Name, err2)
 			}
 		}
 		handler = ACLMiddleware(svc.AllowedUsers, lc)(handler)
-	}
-
-	if middlewareConfigured(svc.Middleware) {
-		slog.Warn("middleware configured but not enforced", "code", "middleware.not_enforced", "name", svc.Name, "message", "service middleware is configured but NOT enforced; middleware pipeline is roadmap/experimental and is not wired into serve")
 	}
 
 	handler = ResourceBudgetMiddleware(handler)
@@ -917,21 +1233,34 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service) erro
 	handler = s.metrics.Middleware(svc.Name, handler)
 
 	var ln net.Listener
+	funnelListenerActive := false
 	if svc.Funnel && svc.Type == registry.TypeProxy {
 		slog.Warn("funnel.listener.public", "code", "funnel.listener.public", "message", "Tailscale Funnel listener exposes this service to the public internet", "name", svc.Name)
-		ln, err = tsnetSrv.ListenFunnel("tcp", ":443")
+		var timedOut bool
+		ln, timedOut, err = activateListener(listenerCtx, ctx, closeResources, func() (net.Listener, error) {
+			return tsnetSrv.ListenFunnel("tcp", ":443")
+		})
+		if timedOut {
+			return registry.ServiceStartTimeoutError(svc.Name, nodeStartupTimeout)
+		}
+		funnelListenerActive = err == nil
 	} else {
-		ln, err = tsnetSrv.ListenTLS("tcp", ":443")
+		var timedOut bool
+		ln, timedOut, err = activateListener(listenerCtx, ctx, closeResources, func() (net.Listener, error) {
+			return tsnetSrv.ListenTLS("tcp", ":443")
+		})
+		if timedOut {
+			return registry.ServiceStartTimeoutError(svc.Name, nodeStartupTimeout)
+		}
 	}
 	if err != nil {
-		cancel()
-		tsnetSrv.Close()
+		if svc.Funnel && svc.Type == registry.TypeProxy {
+			return registry.FunnelListenFailedError(svc.Name, err)
+		}
 		return fmt.Errorf("listen TLS for %q: %w", svc.Name, err)
 	}
 	if err := s.ensureRunning(ctx); err != nil {
 		ln.Close()
-		cancel()
-		tsnetSrv.Close()
 		return err
 	}
 	ln = newLimitedListener(ln, httpMaxActiveConns, "http", svc.Name)
@@ -939,12 +1268,14 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service) erro
 	httpSrv := newHTTPServerFn(handler)
 
 	node := &ServiceNode{
-		tsnetSrv:    tsnetSrv,
-		service:     svc,
-		runtimeHost: runtimeHost,
-		listener:    ln,
-		httpSrv:     httpSrv,
-		cancel:      cancel,
+		tsnetSrv:             tsnetSrv,
+		service:              svc,
+		runtimeHost:          runtimeHost,
+		funnelListenerActive: funnelListenerActive,
+		listener:             ln,
+		httpSrv:              httpSrv,
+		handlerCloser:        handlerCloser,
+		cancel:               cancel,
 	}
 
 	// Serve in background
@@ -962,8 +1293,44 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service) erro
 		slog.Warn("custom domain configured but runtime TLS is not wired", "code", "custom_domain.tls_not_wired", "name", svc.Name, "domain", svc.Domain, "acme_email_configured", svc.AcmeEmail != "", "message", "custom-domain/ACME runtime TLS is roadmap and is not wired into serve")
 	}
 
+	s.mu.Lock()
+	if err := s.ensureRunning(nodeCtx); err != nil {
+		s.mu.Unlock()
+		_ = ln.Close()
+		return err
+	}
 	s.nodes[svc.Name] = node
+	s.mu.Unlock()
+	committed = true
 	return nil
+}
+
+type listenerActivationResult struct {
+	listener net.Listener
+	err      error
+}
+
+// activateListener bounds tsnet listener activation even though the pinned
+// tsnet API has no context parameter. On cancellation it cancels the node,
+// closes tsnet to unblock the call, and joins the worker before returning.
+func activateListener(listenerCtx, parentCtx context.Context, closeResources func(), listen func() (net.Listener, error)) (net.Listener, bool, error) {
+	result := make(chan listenerActivationResult, 1)
+	go func() {
+		ln, err := listen()
+		result <- listenerActivationResult{listener: ln, err: err}
+	}()
+	select {
+	case completed := <-result:
+		return completed.listener, false, completed.err
+	case <-listenerCtx.Done():
+		closeResources()
+		completed := <-result
+		if completed.listener != nil {
+			_ = completed.listener.Close()
+		}
+		timedOut := parentCtx.Err() == nil && errors.Is(listenerCtx.Err(), context.DeadlineExceeded)
+		return nil, timedOut, listenerCtx.Err()
+	}
 }
 
 func (s *Server) waitForInteractiveNode(ctx context.Context, srv tsnetServer, service string) (*ipnstate.Status, error) {
@@ -1056,6 +1423,9 @@ func (s *Server) stopNodeLocked(name string, removeState bool) {
 	}
 	if node.tsnetSrv != nil {
 		node.tsnetSrv.Close()
+	}
+	if node.handlerCloser != nil {
+		_ = node.handlerCloser.Close()
 	}
 
 	if removeState {
@@ -1161,11 +1531,6 @@ func (s *Server) runRegistryWatcher(ctx context.Context, watcher registryWatcher
 			slog.Error("fsnotify error", "error", err)
 		}
 	}
-}
-
-// MetricsHandler returns the Prometheus metrics HTTP handler.
-func (s *Server) MetricsHandler() http.Handler {
-	return s.metrics.Handler()
 }
 
 func isClosedListenerError(err error) bool {

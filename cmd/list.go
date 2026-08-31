@@ -10,6 +10,7 @@ import (
 	"github.com/monody0007/tslink/internal/inspect"
 	"github.com/monody0007/tslink/internal/output"
 	"github.com/monody0007/tslink/internal/registry"
+	tsruntime "github.com/monody0007/tslink/internal/runtime"
 	"github.com/spf13/cobra"
 )
 
@@ -26,15 +27,21 @@ type listOptions struct {
 	Verbose bool
 }
 
+const listStatePending = "pending"
+
 // ListServiceSummary is the token-efficient default service representation.
 // URL is null until runtime.json contains exact evidence for the current daemon
 // and registry fingerprint.
 type ListServiceSummary struct {
-	Name       string  `json:"name"`
-	Type       string  `json:"type"`
-	URL        *string `json:"url"`
-	URLPending bool    `json:"url_pending"`
-	State      string  `json:"state"`
+	Name            string                  `json:"name"`
+	Type            string                  `json:"type"`
+	URL             *string                 `json:"url"`
+	URLPending      bool                    `json:"url_pending"`
+	State           string                  `json:"state"`
+	FunnelRequested bool                    `json:"funnel_requested"`
+	FunnelActive    bool                    `json:"funnel_active"`
+	FunnelState     string                  `json:"funnel_state"`
+	Error           *tsruntime.ServiceError `json:"error,omitempty"`
 }
 
 // ListResult holds the result for JSON output.
@@ -56,10 +63,13 @@ func validateListOptions(opts listOptions) error {
 	if opts.Verbose && len(opts.Fields) > 0 {
 		return output.ErrUsage("--verbose conflicts with --fields")
 	}
-	allowed := map[string]bool{"name": true, "type": true, "url": true, "url_pending": true, "state": true}
+	allowed := map[string]bool{
+		"name": true, "type": true, "url": true, "url_pending": true, "state": true,
+		"funnel_requested": true, "funnel_active": true, "funnel_state": true, "error": true,
+	}
 	for _, field := range opts.Fields {
 		if !allowed[field] {
-			return output.ErrUsage(fmt.Sprintf("unknown --fields value %q; supported: name,type,url,url_pending,state", field))
+			return output.ErrUsage(fmt.Sprintf("unknown --fields value %q; supported: name,type,url,url_pending,state,funnel_requested,funnel_active,funnel_state,error", field))
 		}
 	}
 	return nil
@@ -96,7 +106,19 @@ func filterStatusServices(result StatusURLsResult, opts listOptions) ([]StatusSe
 }
 
 func listSummary(svc StatusServiceView) ListServiceSummary {
-	summary := ListServiceSummary{Name: svc.Name, Type: svc.Type, URLPending: true, State: "pending"}
+	summary := ListServiceSummary{
+		Name:            svc.Name,
+		Type:            svc.Type,
+		URLPending:      true,
+		State:           listStatePending,
+		FunnelRequested: svc.FunnelRequested,
+		FunnelActive:    svc.FunnelActive,
+		FunnelState:     svc.FunnelState,
+		Error:           svc.Error,
+	}
+	if svc.RuntimeState == tsruntime.ServiceRuntimeFailed {
+		summary.State = tsruntime.ServiceRuntimeFailed
+	}
 	if svc.Endpoint.State == inspect.EndpointStateExact && svc.Endpoint.Display != "" && !strings.Contains(svc.Endpoint.Display, "<tailnet>") {
 		url := svc.Endpoint.Display
 		summary.URL = &url
@@ -120,6 +142,16 @@ func selectListFields(summary ListServiceSummary, fields []string) map[string]an
 			selected[field] = summary.URLPending
 		case "state":
 			selected[field] = summary.State
+		case "funnel_requested":
+			selected[field] = summary.FunnelRequested
+		case "funnel_active":
+			selected[field] = summary.FunnelActive
+		case "funnel_state":
+			selected[field] = summary.FunnelState
+		case "error":
+			if summary.Error != nil {
+				selected[field] = summary.Error
+			}
 		}
 	}
 	return selected
@@ -208,8 +240,9 @@ func init() {
 		Short: "List registered services",
 		Long: `List registered services with token-efficient filtering.
 
-JSON defaults to name, type, exact runtime URL (or null), url_pending, and
-state. Use --verbose for the complete owner-only diagnostic view.
+JSON defaults to name, type, exact runtime URL (or null), url_pending, state,
+and Funnel intent/active/reason fields. Use --verbose for the complete
+owner-only diagnostic view.
 
 Examples:
   tslink list --json
@@ -249,7 +282,7 @@ Examples:
 	}
 	listCmd.Flags().String("name", "", "Return only the exact service name")
 	listCmd.Flags().String("type", "", "Filter by service type: proxy, file, or tcp")
-	listCmd.Flags().String("fields", "", "Comma-separated slim fields: name,type,url,url_pending,state")
+	listCmd.Flags().String("fields", "", "Comma-separated slim fields: name,type,url,url_pending,state,funnel_requested,funnel_active,funnel_state,error")
 	listCmd.Flags().Bool("verbose", false, "Return the complete owner-only diagnostic service view")
 	rootCmd.AddCommand(listCmd)
 }

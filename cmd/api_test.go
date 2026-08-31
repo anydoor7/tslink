@@ -34,6 +34,7 @@ type apiTestResponse struct {
 	Code          int
 	Error         string
 	ErrorCode     string
+	Next          []string
 	ValidActions  []string
 
 	Message    string
@@ -72,6 +73,7 @@ func parseResponse(t *testing.T, buf *bytes.Buffer) apiTestResponse {
 	if envelope.Error != nil {
 		resp.Error = envelope.Error.Message
 		resp.ErrorCode = envelope.Error.Code
+		resp.Next = append([]string(nil), envelope.Error.Next...)
 		if envelope.Error.Data != nil {
 			dataBytes, err := json.Marshal(envelope.Error.Data)
 			if err != nil {

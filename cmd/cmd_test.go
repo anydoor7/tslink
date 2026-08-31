@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -273,6 +274,13 @@ func TestAddCmd_Dir_NonExistent(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for nonexistent path")
 	}
+	if code, ok := registry.ErrorCode(err); !ok || code != registry.CodePathNotFound {
+		t.Fatalf("ErrorCode() = %q, %v; want %s, true", code, ok, registry.CodePathNotFound)
+	}
+	var recovery interface{ NextCommands() []string }
+	if !errors.As(err, &recovery) || len(recovery.NextCommands()) == 0 {
+		t.Fatalf("error = %v, want actionable next steps", err)
+	}
 }
 
 func TestAddCmd_TCP(t *testing.T) {
@@ -447,8 +455,8 @@ func TestAddCmd_FunnelWithoutProxy(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when using --funnel with --tcp")
 	}
-	if !strings.Contains(err.Error(), "--funnel can only be used with --proxy") {
-		t.Errorf("unexpected error: %v", err)
+	if code, ok := registry.ErrorCode(err); !ok || code != registry.CodeFunnelTypeConflict {
+		t.Errorf("ErrorCode() = %q, %v; want %s, true (err=%v)", code, ok, registry.CodeFunnelTypeConflict, err)
 	}
 }
 
@@ -629,6 +637,9 @@ func TestAPIAdd_File_NonExistentPath(t *testing.T) {
 	resp := sendRequest(t, h, APIRequest{Action: "add", Name: "docs", Type: "file", Path: "/nonexistent/path"})
 	if resp.OK {
 		t.Fatal("expected error for nonexistent path")
+	}
+	if resp.Code != 2 || resp.ErrorCode != registry.CodePathNotFound || len(resp.Next) == 0 {
+		t.Fatalf("response = %+v, want usage/path_not_found with next steps", resp)
 	}
 }
 

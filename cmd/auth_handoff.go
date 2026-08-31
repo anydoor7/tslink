@@ -39,10 +39,11 @@ type authHandoffRecord struct {
 }
 
 type serveAuthResult struct {
-	Status    string    `json:"status"`
-	AuthURL   string    `json:"auth_url"`
-	ExpiresAt time.Time `json:"expires_at"`
-	Poll      string    `json:"poll"`
+	Status             string    `json:"status"`
+	AuthURL            string    `json:"auth_url"`
+	ExpiresAt          time.Time `json:"expires_at"`
+	Poll               string    `json:"poll"`
+	CredentialMigrated bool      `json:"credential_migrated,omitempty"`
 }
 
 func newAuthHandoffRecord(service, authURL string, daemonPID int) authHandoffRecord {

@@ -1,7 +1,9 @@
 package cmd
 
 import (
+	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/monody0007/tslink/internal/output"
@@ -50,6 +52,48 @@ Examples:
   tslink config set control-url https://hs.example.com   Use Headscale
 
 Use "tslink <command> --help" for detailed information about each command.`,
+	Args: cobra.NoArgs,
+	RunE: runCommandGroup,
+}
+
+// commandGroupUsageError keeps a group invocation machine-readable while
+// preserving both the shared usage exit category and command-specific
+// navigation. Unwrap supplies the numeric usage exit; StableCode and
+// NextCommands supply the envelope's stable discriminator and recovery list.
+type commandGroupUsageError struct {
+	message string
+	next    []string
+}
+
+func (e commandGroupUsageError) Error() string { return e.message }
+
+func (e commandGroupUsageError) Unwrap() error { return output.ErrUsage(e.message) }
+
+func (e commandGroupUsageError) StableCode() string {
+	return output.StableErrorCode(output.ExitUsage)
+}
+
+func (e commandGroupUsageError) NextCommands() []string {
+	return append([]string(nil), e.next...)
+}
+
+func runCommandGroup(cmd *cobra.Command, _ []string) error {
+	if !jsonOutput(cmd) {
+		return cmd.Help()
+	}
+
+	next := make([]string, 0, len(cmd.Commands()))
+	for _, child := range cmd.Commands() {
+		if child.Hidden || child.Name() == "help" || child.Name() == "completion" {
+			continue
+		}
+		next = append(next, child.CommandPath()+" --help")
+	}
+	sort.Strings(next)
+	return commandGroupUsageError{
+		message: fmt.Sprintf("%s is a command group; choose a subcommand", cmd.CommandPath()),
+		next:    next,
+	}
 }
 
 func init() {

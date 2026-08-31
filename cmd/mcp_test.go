@@ -9,11 +9,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/monody0007/tslink/internal/output"
 	"github.com/monody0007/tslink/internal/registry"
+	tsruntime "github.com/monody0007/tslink/internal/runtime"
 	"github.com/monody0007/tslink/internal/tailapi"
 )
 
@@ -21,7 +24,7 @@ func fakeMCPActions() mcpActions {
 	return mcpActions{
 		share: func(_ context.Context, target, name string, ephemeral bool) (ShareResult, error) {
 			if target == "error" {
-				return ShareResult{}, errors.New("share failed")
+				return ShareResult{}, output.ErrUsage("share failed")
 			}
 			return ShareResult{Status: authStatusNeedsLogin, AuthURL: "https://login.tailscale.com/a/mcp"}, nil
 		},
@@ -124,6 +127,171 @@ func TestMCPToolSchemasAreClosedAndModelFocused(t *testing.T) {
 	if mcpToolDefinitions[1].InputSchema["required"] != nil || mcpToolDefinitions[3].InputSchema["required"] != nil {
 		t.Fatal("no-argument tools unexpectedly require fields")
 	}
+}
+
+func TestMCPListSchemaEnumsReuseManifestValues(t *testing.T) {
+	items := mcpListOutputSchema["properties"].(map[string]any)["services"].(map[string]any)["items"].(map[string]any)
+	properties := items["properties"].(map[string]any)
+	tests := []struct {
+		field string
+		want  []string
+	}{
+		{field: "type", want: serviceTypeValues()},
+		{field: "state", want: commandJSONResultFields("tslink list")["services[].state"].Values},
+		{field: "funnel_state", want: commandJSONResultFields("tslink list")["services[].funnel_state"].Values},
+	}
+	for _, tc := range tests {
+		got := properties[tc.field].(map[string]any)["enum"].([]string)
+		if !reflect.DeepEqual(sliceSet(got), sliceSet(tc.want)) {
+			t.Fatalf("%s enum=%v manifest=%v", tc.field, got, tc.want)
+		}
+	}
+}
+
+func TestMCPListHealthyAndFailedPayloadsValidateAgainstOutputSchema(t *testing.T) {
+	healthy := ListServiceSummary{
+		Name:            "healthy",
+		Type:            registry.TypeProxy,
+		URLPending:      true,
+		State:           listStatePending,
+		FunnelRequested: false,
+		FunnelActive:    false,
+		FunnelState:     tsruntime.FunnelStateNotRequested,
+	}
+	failed := ListServiceSummary{
+		Name:            "failed",
+		Type:            registry.TypeProxy,
+		URLPending:      true,
+		State:           tsruntime.ServiceRuntimeFailed,
+		FunnelRequested: true,
+		FunnelActive:    false,
+		FunnelState:     tsruntime.FunnelStateCapabilityMissing,
+		Error: &tsruntime.ServiceError{
+			Code:    registry.CodeFunnelCapabilityMissing,
+			Message: "capability missing",
+			Next:    []string{"tslink status --urls --name failed --json"},
+		},
+	}
+	for _, tc := range []struct {
+		name    string
+		service ListServiceSummary
+	}{
+		{name: "healthy omits error", service: healthy},
+		{name: "failed carries error", service: failed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			wire, err := json.Marshal(map[string]any{"services": []ListServiceSummary{tc.service}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var payload any
+			if err := json.Unmarshal(wire, &payload); err != nil {
+				t.Fatal(err)
+			}
+			if err := validateMCPJSONSchema(mcpListOutputSchema, payload, "$"); err != nil {
+				t.Fatalf("payload=%s schema error: %v", wire, err)
+			}
+		})
+	}
+}
+
+// validateMCPJSONSchema validates the closed JSON Schema subset emitted by the
+// MCP definitions: type, enum, minimum, object properties/required/
+// additionalProperties, and array items. Keeping the validator independent of
+// production serialization lets semantic schema mutations fail the tests.
+func validateMCPJSONSchema(schema map[string]any, value any, path string) error {
+	if rawType, ok := schema["type"]; ok && !mcpSchemaTypeAllows(rawType, value) {
+		return fmt.Errorf("%s type %T does not satisfy %v", path, value, rawType)
+	}
+	if enum, ok := schema["enum"].([]string); ok {
+		text, isString := value.(string)
+		if !isString || !containsString(enum, text) {
+			return fmt.Errorf("%s value %v is not in enum %v", path, value, enum)
+		}
+	}
+	if minimum, ok := schema["minimum"].(int); ok {
+		number, isNumber := value.(float64)
+		if !isNumber || number < float64(minimum) {
+			return fmt.Errorf("%s value %v is below minimum %d", path, value, minimum)
+		}
+	}
+	if object, ok := value.(map[string]any); ok {
+		properties, _ := schema["properties"].(map[string]any)
+		if required, ok := schema["required"].([]string); ok {
+			for _, name := range required {
+				if _, exists := object[name]; !exists {
+					return fmt.Errorf("%s missing required property %q", path, name)
+				}
+			}
+		}
+		for name, child := range object {
+			childSchema, known := properties[name]
+			if !known {
+				if schema["additionalProperties"] == false {
+					return fmt.Errorf("%s has unexpected property %q", path, name)
+				}
+				continue
+			}
+			if err := validateMCPJSONSchema(childSchema.(map[string]any), child, path+"."+name); err != nil {
+				return err
+			}
+		}
+	}
+	if array, ok := value.([]any); ok {
+		if items, ok := schema["items"].(map[string]any); ok {
+			for i, child := range array {
+				if err := validateMCPJSONSchema(items, child, fmt.Sprintf("%s[%d]", path, i)); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func mcpSchemaTypeAllows(raw any, value any) bool {
+	allowed := []string{}
+	switch typed := raw.(type) {
+	case string:
+		allowed = []string{typed}
+	case []string:
+		allowed = typed
+	case []any:
+		for _, item := range typed {
+			if name, ok := item.(string); ok {
+				allowed = append(allowed, name)
+			}
+		}
+	}
+	for _, name := range allowed {
+		switch name {
+		case "null":
+			if value == nil {
+				return true
+			}
+		case "object":
+			if _, ok := value.(map[string]any); ok {
+				return true
+			}
+		case "array":
+			if _, ok := value.([]any); ok {
+				return true
+			}
+		case "string":
+			if _, ok := value.(string); ok {
+				return true
+			}
+		case "boolean":
+			if _, ok := value.(bool); ok {
+				return true
+			}
+		case "integer":
+			if number, ok := value.(float64); ok && number == float64(int64(number)) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func TestMCPProtocolErrorsAndLifecycle(t *testing.T) {
@@ -243,6 +411,11 @@ func TestMCPToolCallsValidateArgumentsAndReturnExecutionErrors(t *testing.T) {
 				result := last["result"].(map[string]any)
 				if result["isError"] != true || !strings.Contains(result["content"].([]any)[0].(map[string]any)["text"].(string), "share failed") {
 					t.Fatalf("response = %+v", last)
+				}
+				structured := result["structuredContent"].(map[string]any)
+				errorObject := structured["error"].(map[string]any)
+				if structured["ok"] != false || structured["code"] != float64(output.ExitUsage) || errorObject["code"] != "usage_error" || len(errorObject["next"].([]any)) == 0 {
+					t.Fatalf("structured execution error = %+v", structured)
 				}
 			}
 		})
@@ -416,8 +589,13 @@ func TestMCPToolResultMarshalFailureAndOversizeInput(t *testing.T) {
 		t.Fatalf("result = %+v", result)
 	}
 	result = makeMCPToolResult(nil, errors.New("failed"))
-	if !result.IsError || result.Content[0].Text != "failed" {
+	if !result.IsError || result.Content[0].Text != "failed" || result.StructuredContent["code"] != output.ExitError {
 		t.Fatalf("error result = %+v", result)
+	}
+	coded := makeMCPToolResult(nil, registry.ValidateName("Bad_Name"))
+	errorObject, ok := coded.StructuredContent["error"].(*output.ErrorObject)
+	if !ok || errorObject.Code != registry.CodeInvalidServiceName || len(errorObject.Next) == 0 || coded.StructuredContent["ok"] != false || coded.StructuredContent["code"] != output.ExitUsage {
+		t.Fatalf("coded error result = %+v", coded)
 	}
 	result = makeMCPToolResult("scalar", nil)
 	if !result.IsError {

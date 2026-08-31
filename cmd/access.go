@@ -480,6 +480,8 @@ var accessCmd = &cobra.Command{
 These commands read the local TSLink registry. They do not evaluate live
 Tailscale or Headscale membership, ACL/grants, sharing, tag ownership, Funnel
 policy, or backend application authentication.`,
+	Args: cobra.NoArgs,
+	RunE: runCommandGroup,
 }
 
 var accessExplainCmd = &cobra.Command{

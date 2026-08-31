@@ -10,8 +10,10 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
+	"github.com/monody0007/tslink/internal/inspect"
 	"github.com/monody0007/tslink/internal/output"
 	"github.com/monody0007/tslink/internal/registry"
+	tsruntime "github.com/monody0007/tslink/internal/runtime"
 	"github.com/monody0007/tslink/internal/security"
 )
 
@@ -184,12 +186,8 @@ func Manifest() CLIManifest {
 			"critical":  output.ExitCritical,
 		},
 		RegistrySchema: RegistrySchemaInfo{
-			Version: registry.CurrentRegistrySchemaVersion,
-			ServiceTypes: []string{
-				registry.TypeProxy,
-				registry.TypeFile,
-				registry.TypeTCP,
-			},
+			Version:        registry.CurrentRegistrySchemaVersion,
+			ServiceTypes:   serviceTypeValues(),
 			RequiredFields: []string{"schema_version", "services[].name", "services[].type"},
 			UnavailableFeatures: []string{
 				"custom-domain/ACME fields are reserved and rejected with feature_unavailable",
@@ -267,6 +265,41 @@ func Manifest() CLIManifest {
 
 func commandJSONResultFields(commandPath string) map[string]JSONResultFieldInfo {
 	switch commandPath {
+	case "tslink serve":
+		return map[string]JSONResultFieldInfo{
+			"credential_migrated": {
+				Type:        "boolean",
+				Description: "True when this invocation migrated a legacy API credential to the system keychain; omitted otherwise.",
+			},
+		}
+	case "tslink list":
+		fields := agentServiceRuntimeJSONResultFields()
+		fields["services[].state"] = JSONResultFieldInfo{
+			Type:        "string",
+			Description: "Slim list runtime state: exact, pending, or failed.",
+			Values:      listStateValues(),
+		}
+		return fields
+	case "tslink status":
+		fields := agentServiceRuntimeJSONResultFields()
+		fields["global_error"] = JSONResultFieldInfo{
+			Type:        "object",
+			Description: "Stable daemon-wide runtime failure showing that the current registry control plane is non-authoritative; omitted when reconciliation is healthy.",
+		}
+		fields["next"] = JSONResultFieldInfo{
+			Type:        "array",
+			Description: "Machine continuation commands when the successful status still requires enrollment or polling.",
+		}
+		fields["services[].status"] = JSONResultFieldInfo{
+			Type:        "string",
+			Description: "Pollable service status in the default status result, including failed for a recorded bounded startup failure.",
+		}
+		fields["services[].runtime_state"] = JSONResultFieldInfo{
+			Type:        "string",
+			Description: "Detailed runtime state in status --urls output.",
+			Values:      statusRuntimeStateValues(),
+		}
+		return fields
 	case "tslink install":
 		return markProseScopedJSONResultFields(map[string]JSONResultFieldInfo{
 			"plist_path": {
@@ -329,6 +362,28 @@ func commandJSONResultFields(commandPath string) map[string]JSONResultFieldInfo 
 	}
 }
 
+func agentServiceRuntimeJSONResultFields() map[string]JSONResultFieldInfo {
+	return map[string]JSONResultFieldInfo{
+		"services[].funnel_requested": {
+			Type:        "boolean",
+			Description: "Configuration intent: whether this service requests public Tailscale Funnel exposure.",
+		},
+		"services[].funnel_active": {
+			Type:        "boolean",
+			Description: "Runtime fact: true only after the service node passes Funnel capability checks and ListenFunnel succeeds.",
+		},
+		"services[].funnel_state": {
+			Type:        "string",
+			Description: "Stable reason separating Funnel intent from runtime activation.",
+			Values:      funnelStateValues(),
+		},
+		"services[].error": {
+			Type:        "object",
+			Description: "Stable per-service runtime failure with code, message, and actionable next steps; omitted without a recorded failure.",
+		},
+	}
+}
+
 func uninstallJSONResultFields() map[string]JSONResultFieldInfo {
 	return markProseScopedJSONResultFields(map[string]JSONResultFieldInfo{
 		"plist_path": {
@@ -354,7 +409,7 @@ func uninstallJSONResultFields() map[string]JSONResultFieldInfo {
 		"launchctl_outcome": {
 			Type:        "string",
 			Description: "macOS only. Discriminates no installed plist, a confirmed bootout, confirmed absence from every domain, and an unconfirmed domain state. Unconfirmed may be returned with removed=true only after explicit --force.",
-			Values:      []string{"not_installed", "unloaded", "already_absent", "unconfirmed"},
+			Values:      uninstallLaunchctlOutcomeValues(),
 		},
 		"launchctl_target": {
 			Type:        "string",
@@ -385,6 +440,45 @@ func uninstallJSONResultFields() map[string]JSONResultFieldInfo {
 			Description: "macOS only. TSLink-authored explanation kept separate from launchctl_output; present for already_absent and unconfirmed domain-state remedies.",
 		},
 	})
+}
+
+func serviceTypeValues() []string {
+	return []string{registry.TypeProxy, registry.TypeFile, registry.TypeTCP}
+}
+
+func listStateValues() []string {
+	return []string{inspect.EndpointStateExact, listStatePending, tsruntime.ServiceRuntimeFailed}
+}
+
+func statusRuntimeStateValues() []string {
+	return []string{statusEndpointStateUnknown, tsruntime.ServiceRuntimeRunning, tsruntime.ServiceRuntimeFailed}
+}
+
+func funnelStateValues() []string {
+	return []string{
+		tsruntime.FunnelStateNotRequested,
+		tsruntime.FunnelStateRequestedUnknown,
+		tsruntime.FunnelStateActive,
+		tsruntime.FunnelStateCapabilityMissing,
+		tsruntime.FunnelStateListenFailed,
+		tsruntime.FunnelStateStartTimeout,
+	}
+}
+
+const (
+	launchctlOutcomeNotInstalled  = "not_installed"
+	launchctlOutcomeUnloaded      = "unloaded"
+	launchctlOutcomeAlreadyAbsent = "already_absent"
+	launchctlOutcomeUnconfirmed   = "unconfirmed"
+)
+
+func uninstallLaunchctlOutcomeValues() []string {
+	return []string{
+		launchctlOutcomeNotInstalled,
+		launchctlOutcomeUnloaded,
+		launchctlOutcomeAlreadyAbsent,
+		launchctlOutcomeUnconfirmed,
+	}
 }
 
 // resultFieldPlatformTripwires are matched case-insensitively against the
@@ -490,6 +584,9 @@ func commandFlags(c *cobra.Command, commandPath string) []FlagInfo {
 	seen := map[string]struct{}{}
 	var flags []FlagInfo
 	add := func(f *pflag.Flag, scope string) {
+		if commandPath == "tslink mcp" && f.Name == "json" {
+			return
+		}
 		if _, ok := seen[f.Name]; ok {
 			return
 		}
@@ -570,6 +667,9 @@ func errorCodeManifest() map[string]ErrorCodeInfo {
 		registry.CodeInvalidTag:                 {ExitCode: output.ExitUsage, Description: "ACL tag is invalid"},
 		registry.CodeAllowUnsupportedTCP:        {ExitCode: output.ExitUsage, Description: "HTTP allow lists do not apply to raw TCP"},
 		registry.CodePathMustBeAbsolute:         {ExitCode: output.ExitUsage, Description: "file service path must be absolute"},
+		registry.CodePathNotFound:               {ExitCode: output.ExitUsage, Description: "file service directory does not exist"},
+		registry.CodePathNotDirectory:           {ExitCode: output.ExitUsage, Description: "file service path is not a directory"},
+		registry.CodePathNotAccessible:          {ExitCode: output.ExitUsage, Description: "file service path is not accessible to the current user"},
 		registry.CodeUnknownConfigKey:           {ExitCode: output.ExitUsage, Description: "configuration key is not supported"},
 		registry.CodeURLNotReady:                {ExitCode: output.ExitNotFound, Description: "runtime has not reported an exact tailnet hostname"},
 		registry.CodeLaunchctlDomainUnavailable: {ExitCode: output.ExitError, Description: "a launchd domain could not be checked; failure data names the domain, explicit --force command, and residual risk"},
@@ -578,6 +678,9 @@ func errorCodeManifest() map[string]ErrorCodeInfo {
 		registry.CodeFunnelAllowConflict:        {ExitCode: output.ExitConflict, Description: "Funnel conflicts with an allow list"},
 		registry.CodeFunnelControlURLConflict:   {ExitCode: output.ExitConflict, Description: "Funnel conflicts with control_url"},
 		registry.CodeFunnelTypeConflict:         {ExitCode: output.ExitConflict, Description: "Funnel requires a proxy service"},
+		registry.CodeFunnelCapabilityMissing:    {ExitCode: output.ExitError, Description: "service tsnet node lacks Funnel capability, HTTPS, or allowed port"},
+		registry.CodeFunnelListenFailed:         {ExitCode: output.ExitError, Description: "Funnel capability preflight passed but listener activation failed"},
+		registry.CodeServiceStartTimeout:        {ExitCode: output.ExitError, Description: "service node did not reach running state before its startup deadline"},
 	}
 }
 

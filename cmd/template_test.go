@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -158,13 +159,25 @@ func TestTemplateShowPersonalHarnessJSONUsesPublicViews(t *testing.T) {
 }
 
 func TestTemplateUnknownReturnsNotFound(t *testing.T) {
-	if _, err := showTemplateResult("missing-template"); output.ExitCode(err) != output.ExitNotFound {
+	_, showErr := showTemplateResult("missing-template")
+	if output.ExitCode(showErr) != output.ExitNotFound {
+		err := showErr
 		t.Fatalf("show ExitCode = %d, want %d (err=%v)", output.ExitCode(err), output.ExitNotFound, err)
+	}
+	failure := output.NewFailureForError("template show", showErr)
+	if failure.Error == nil || failure.Error.Code != "not_found" || !reflect.DeepEqual(failure.Error.Next, []string{"tslink template list --json"}) {
+		t.Fatalf("show failure = %+v, want template-specific recovery", failure)
 	}
 
 	dir := t.TempDir()
 	if _, err := applyTemplate("missing-template", filepath.Join(dir, "registry.json"), true); output.ExitCode(err) != output.ExitNotFound {
 		t.Fatalf("apply ExitCode = %d, want %d (err=%v)", output.ExitCode(err), output.ExitNotFound, err)
+	}
+
+	stdout, stderr, exitCode := runCompiledTSLinkWithConfigDir(t, t.TempDir(), "", "template", "show", "missing-template", "--json")
+	results := parseCompiledJSONLines(t, stdout)
+	if stderr != "" || exitCode != output.ExitNotFound || len(results) != 1 || results[0].Error == nil || !reflect.DeepEqual(results[0].Error.Next, []string{"tslink template list --json"}) {
+		t.Fatalf("compiled exit=%d stderr=%q result=%+v", exitCode, stderr, results)
 	}
 }
 

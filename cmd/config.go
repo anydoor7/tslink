@@ -50,7 +50,7 @@ func configSet(key, value string, out io.Writer, isJSON bool) error {
 	switch key {
 	case "control-url":
 		if err := registry.ValidateControlURL(value); err != nil {
-			return err
+			return output.ErrUsage(err.Error())
 		}
 		cfg.ControlURL = value
 	default:
@@ -132,6 +132,8 @@ Examples:
   tslink config get control-url
   tslink config list
   tslink config set control-url ""   # clear (use default Tailscale)`,
+		Args: cobra.NoArgs,
+		RunE: runCommandGroup,
 	}
 
 	setCmd := &cobra.Command{

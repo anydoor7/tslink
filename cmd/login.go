@@ -157,7 +157,7 @@ they fall back to files in ~/.config/tslink/ with restricted permissions (0600).
 		// enrollment belongs to `serve --json`, which can keep a daemon child
 		// alive while returning its auth URL immediately.
 		if jsonOutput(cmd) {
-			return fmt.Errorf("--json requires --api-key or --client-secret (interactive login not available in JSON mode)")
+			return output.ErrUsage("--json requires --api-key or --client-secret (interactive login not available in JSON mode)")
 		}
 
 		// Interactive Tier 2 credential flow. Do not perform a disposable tsnet
@@ -178,7 +178,7 @@ func readLoginCredentialStdin(cmd *cobra.Command, name string) (string, error) {
 	}
 	value := strings.TrimSpace(string(data))
 	if value == "" {
-		return "", fmt.Errorf("%s stdin was empty", name)
+		return "", output.ErrUsage(fmt.Sprintf("%s stdin was empty", name))
 	}
 	return value, nil
 }
@@ -203,7 +203,7 @@ func resolveLoginCredentials(cmd *cobra.Command) (apiKey, clientSecret string, e
 		explicit++
 	}
 	if explicit > 1 {
-		return "", "", fmt.Errorf("provide only one explicit credential source")
+		return "", "", output.ErrUsage("provide only one explicit credential source")
 	}
 
 	switch {
@@ -321,14 +321,14 @@ func validateLoginCredentialCandidate(ctx context.Context, mode loginCredentialM
 	switch mode {
 	case loginCredentialModeAPIKey:
 		if !strings.HasPrefix(value, "tskey-api-") {
-			return fmt.Errorf("API key must start with \"tskey-api-\" prefix")
+			return output.ErrUsage("API key must start with \"tskey-api-\" prefix")
 		}
 		if err := loginVerifyAPIKeyFn(ctx, value); err != nil {
 			return err
 		}
 	case loginCredentialModeClientSecret:
 		if !strings.HasPrefix(value, "tskey-client-") {
-			return fmt.Errorf("client secret must start with \"tskey-client-\" prefix")
+			return output.ErrUsage("client secret must start with \"tskey-client-\" prefix")
 		}
 		// Semantically prove the candidate secret with a disposable, ephemeral
 		// Up BEFORE any persisted write. A prefix-only check let a well-formed
@@ -647,7 +647,7 @@ func loginCredentialFlow(cmd *cobra.Command, cfgDir string) error {
 		inputKey, _ := reader.ReadString('\n')
 		inputKey = strings.TrimSpace(inputKey)
 		if inputKey == "" {
-			return fmt.Errorf("no token provided")
+			return output.ErrUsage("no token provided")
 		}
 
 		fmt.Println("→ Verifying API key...")
@@ -667,14 +667,14 @@ func loginCredentialFlow(cmd *cobra.Command, cfgDir string) error {
 		inputKey, _ := reader.ReadString('\n')
 		inputKey = strings.TrimSpace(inputKey)
 		if inputKey == "" {
-			return fmt.Errorf("no secret provided")
+			return output.ErrUsage("no secret provided")
 		}
 
 		fmt.Println("→ Saving client secret...")
 		return loginWithClientSecret(cmd, inputKey)
 
 	default:
-		return fmt.Errorf("invalid choice: %q — enter 1 or 2", choiceStr)
+		return output.ErrUsage(fmt.Sprintf("invalid choice: %q — enter 1 or 2", choiceStr))
 	}
 }
 

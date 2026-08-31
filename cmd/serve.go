@@ -26,8 +26,9 @@ import (
 
 // ServeResult is the JSON payload for the serve command.
 type ServeResult struct {
-	Daemon bool `json:"daemon"`
-	PID    int  `json:"pid"`
+	Daemon             bool `json:"daemon"`
+	PID                int  `json:"pid"`
+	CredentialMigrated bool `json:"credential_migrated,omitempty"`
 }
 
 const (
@@ -138,8 +139,10 @@ Examples:
 			}
 			manageACL, _ := cmd.Flags().GetBool("manage-acl")
 
-			// Migrate file-based API key to keychain if possible
-			if serveMigrateFn() {
+			// Migrate file-based API key to keychain if possible. In JSON mode the
+			// fact belongs in the result data; stdout must remain one envelope.
+			credentialMigrated := serveMigrateFn()
+			if credentialMigrated && !jsonOutput(cmd) {
 				fmt.Fprintln(cmd.OutOrStdout(), "→ migrated API key to system keychain")
 			}
 
@@ -151,7 +154,7 @@ Examples:
 				}
 			}
 			if err := registry.ValidateControlURL(controlURL); err != nil {
-				return fmt.Errorf("invalid control-url: %w", err)
+				return output.ErrUsage(fmt.Sprintf("invalid control-url: %v", err))
 			}
 
 			pidPath, err := servePIDPathFn()
@@ -231,7 +234,9 @@ Examples:
 				if startup.AuthHandoff != nil {
 					presentAuthHandoff(cmd, *startup.AuthHandoff)
 					if jsonOutput(cmd) {
-						output.Success("serve", startup.AuthHandoff.serveResult())
+						result := startup.AuthHandoff.serveResult()
+						result.CredentialMigrated = credentialMigrated
+						output.Success("serve", result)
 					} else {
 						fmt.Fprintf(cmd.OutOrStdout(), "tslink is waiting for Tailscale login as daemon (pid %d)\n", pid)
 					}
@@ -239,7 +244,7 @@ Examples:
 				}
 
 				if jsonOutput(cmd) {
-					output.Success("serve", ServeResult{Daemon: true, PID: pid})
+					output.Success("serve", ServeResult{Daemon: true, PID: pid, CredentialMigrated: credentialMigrated})
 				} else {
 					fmt.Fprintf(cmd.OutOrStdout(), "tslink started as daemon (pid %d)\n", pid)
 				}

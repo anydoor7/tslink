@@ -37,13 +37,6 @@ type launchctlBootoutResult struct {
 	UnavailableDomain string
 }
 
-const (
-	launchctlOutcomeNotInstalled  = "not_installed"
-	launchctlOutcomeUnloaded      = "unloaded"
-	launchctlOutcomeAlreadyAbsent = "already_absent"
-	launchctlOutcomeUnconfirmed   = "unconfirmed"
-)
-
 var uninstallCmd = &cobra.Command{
 	Use:   "uninstall",
 	Short: "Remove as macOS LaunchAgent",

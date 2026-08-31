@@ -16,6 +16,9 @@ const (
 	WarningCodeFunnelPublicAckRequired   = registry.CodeFunnelPublicAckRequired
 	WarningCodeFunnelControlURLConflict  = registry.CodeFunnelControlURLConflict
 	WarningCodeFunnelTypeConflict        = registry.CodeFunnelTypeConflict
+	WarningCodePathNotFound              = registry.CodePathNotFound
+	WarningCodePathNotDirectory          = registry.CodePathNotDirectory
+	WarningCodePathNotAccessible         = registry.CodePathNotAccessible
 
 	WarningCodeConfigPathUnavailable               = "config_path_unavailable"
 	WarningCodeConfigLoadFailed                    = "config_load_failed"
@@ -113,6 +116,21 @@ var WarningCodeRegistry = map[string]WarningCodeMeta{
 		Severity:    "error",
 		Source:      "service.type",
 		Description: "Public Funnel services can only be proxy services.",
+	},
+	WarningCodePathNotFound: {
+		Severity:    "error",
+		Source:      "service.path",
+		Description: "A configured file service directory does not exist.",
+	},
+	WarningCodePathNotDirectory: {
+		Severity:    "error",
+		Source:      "service.path",
+		Description: "A configured file service path is not a directory.",
+	},
+	WarningCodePathNotAccessible: {
+		Severity:    "error",
+		Source:      "service.path",
+		Description: "A configured file service path is not accessible to the current user.",
 	},
 	WarningCodeConfigPathUnavailable: {
 		Severity:    "error",

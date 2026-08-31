@@ -166,6 +166,8 @@ func runTSLinkBinaryWithConfigDir(t *testing.T, binary, configDir, stdin string,
 	cmd.Env = append(os.Environ(),
 		"TSLINK_CONFIG_DIR="+configDir,
 		"TSLINK_DISABLE_KEYRING=1",
+		"TSLINK_API_KEY=",
+		"TSLINK_CLIENT_SECRET=",
 		testDaemonParentLifetimeEnv+"=1",
 	)
 	cmd.Stdin = strings.NewReader(stdin)
@@ -203,6 +205,154 @@ func parseCompiledJSONLines(t *testing.T, stdout string) []output.Result {
 		results = append(results, result)
 	}
 	return results
+}
+
+func TestCompiledJSONCommandGroupsReturnOneUsageEnvelope(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{name: "root"},
+		{name: "access", args: []string{"access"}},
+		{name: "config", args: []string{"config"}},
+		{name: "tags", args: []string{"tags"}},
+		{name: "template", args: []string{"template"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			args := append([]string{"--json"}, tc.args...)
+			stdout, stderr, exitCode := runCompiledTSLinkWithConfigDir(t, t.TempDir(), "", args...)
+			if exitCode != output.ExitUsage || stderr != "" {
+				t.Fatalf("exit=%d stderr=%q stdout=%q", exitCode, stderr, stdout)
+			}
+			results := parseCompiledJSONLines(t, stdout)
+			if len(results) != 1 || results[0].OK || results[0].Error == nil || results[0].Error.Code != "usage_error" || len(results[0].Error.Next) == 0 {
+				t.Fatalf("result=%+v, want one navigable usage envelope", results)
+			}
+		})
+	}
+}
+
+func TestCompiledAddDryRunAndActualShareAdmissionVerdicts(t *testing.T) {
+	existingDir := t.TempDir()
+	missingDir := filepath.Join(t.TempDir(), "missing")
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{name: "proxy valid", args: []string{"add", "proxy-ok", "--proxy", "localhost:3000"}},
+		{name: "proxy invalid", args: []string{"add", "proxy-bad", "--proxy", "://bad"}},
+		{name: "file valid", args: []string{"add", "file-ok", "--dir", existingDir}},
+		{name: "file invalid", args: []string{"add", "file-bad", "--dir", missingDir}},
+		{name: "tcp valid", args: []string{"add", "tcp-ok", "--tcp", "localhost:5432"}},
+		{name: "tcp invalid", args: []string{"add", "tcp-bad", "--tcp", "localhost:99999"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dryArgs := append(append([]string(nil), tc.args...), "--dry-run", "--json")
+			actualArgs := append(append([]string(nil), tc.args...), "--json")
+			dryOut, dryErr, dryExit := runCompiledTSLinkWithConfigDir(t, t.TempDir(), "", dryArgs...)
+			actualOut, actualErr, actualExit := runCompiledTSLinkWithConfigDir(t, t.TempDir(), "", actualArgs...)
+			if dryErr != "" || actualErr != "" {
+				t.Fatalf("dry stderr=%q actual stderr=%q", dryErr, actualErr)
+			}
+			dryResults := parseCompiledJSONLines(t, dryOut)
+			actualResults := parseCompiledJSONLines(t, actualOut)
+			if len(dryResults) != 1 || len(actualResults) != 1 {
+				t.Fatalf("dry=%q actual=%q", dryOut, actualOut)
+			}
+			dryResult, actualResult := dryResults[0], actualResults[0]
+			dryCode, actualCode := "", ""
+			if dryResult.Error != nil {
+				dryCode = dryResult.Error.Code
+			}
+			if actualResult.Error != nil {
+				actualCode = actualResult.Error.Code
+			}
+			if dryExit != actualExit || dryResult.OK != actualResult.OK || dryCode != actualCode {
+				t.Fatalf("dry=(exit=%d ok=%v code=%q) actual=(exit=%d ok=%v code=%q)\ndry=%s\nactual=%s", dryExit, dryResult.OK, dryCode, actualExit, actualResult.OK, actualCode, dryOut, actualOut)
+			}
+		})
+	}
+}
+
+func TestCompiledUserInputErrorsNeverBecomeInternalError(t *testing.T) {
+	tests := []struct {
+		name     string
+		args     []string
+		wantExit int
+		wantCode string
+		wantNext string
+	}{
+		{name: "logs level", args: []string{"logs", "--level", "verbose", "--json"}, wantExit: output.ExitUsage, wantCode: "usage_error", wantNext: "tslink --help"},
+		{name: "logs source", args: []string{"logs", "--source", "bogus", "--json"}, wantExit: output.ExitUsage, wantCode: "usage_error", wantNext: "tslink --help"},
+		{name: "login missing credential", args: []string{"login", "--json"}, wantExit: output.ExitUsage, wantCode: "usage_error", wantNext: "tslink --help"},
+		{name: "login invalid key prefix", args: []string{"login", "--api-key", "invalid", "--json"}, wantExit: output.ExitUsage, wantCode: "usage_error", wantNext: "tslink --help"},
+		{name: "funnel type conflict", args: []string{"add", "demo", "--dir", t.TempDir(), "--funnel", "--public", "--dry-run", "--json"}, wantExit: output.ExitConflict, wantCode: registry.CodeFunnelTypeConflict, wantNext: "tslink add --help"},
+		{name: "public without funnel", args: []string{"add", "demo", "--proxy", "localhost:3000", "--public", "--dry-run", "--json"}, wantExit: output.ExitUsage, wantCode: "usage_error", wantNext: "tslink --help"},
+		{name: "proxy target", args: []string{"add", "demo", "--proxy", "://bad", "--dry-run", "--json"}, wantExit: output.ExitUsage, wantCode: "usage_error", wantNext: "tslink --help"},
+		{name: "tcp port", args: []string{"add", "demo", "--tcp", "localhost:99999", "--dry-run", "--json"}, wantExit: output.ExitUsage, wantCode: "usage_error", wantNext: "tslink --help"},
+		{name: "control url", args: []string{"add", "demo", "--proxy", "localhost:3000", "--control-url", "not-a-url", "--dry-run", "--json"}, wantExit: output.ExitUsage, wantCode: "usage_error", wantNext: "tslink --help"},
+		{name: "serve control url", args: []string{"serve", "--control-url", "not-a-url", "--json"}, wantExit: output.ExitUsage, wantCode: "usage_error", wantNext: "tslink --help"},
+		{name: "config control url", args: []string{"config", "set", "control-url", "not-a-url", "--json"}, wantExit: output.ExitUsage, wantCode: "usage_error", wantNext: "tslink --help"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			stdout, stderr, exitCode := runCompiledTSLinkWithConfigDir(t, t.TempDir(), "", tc.args...)
+			if stderr != "" || exitCode != tc.wantExit {
+				t.Fatalf("exit=%d want=%d stderr=%q stdout=%s", exitCode, tc.wantExit, stderr, stdout)
+			}
+			results := parseCompiledJSONLines(t, stdout)
+			if len(results) != 1 || results[0].Error == nil || results[0].Error.Code != tc.wantCode || results[0].Error.Code == "internal_error" || len(results[0].Error.Next) != 1 || results[0].Error.Next[0] != tc.wantNext {
+				t.Fatalf("result=%+v, want code=%q exact next=%q", results, tc.wantCode, tc.wantNext)
+			}
+		})
+	}
+}
+
+func TestCompiledEveryManifestJSONCommandProducesParseableEnvelope(t *testing.T) {
+	groups := map[string]bool{
+		"tslink": true, "tslink access": true, "tslink config": true,
+		"tslink tags": true, "tslink template": true,
+	}
+	jsonCommands := 0
+	mcpChecked := false
+	for _, command := range Manifest().Commands {
+		hasJSON := false
+		for _, flag := range command.Flags {
+			if flag.Name == "json" {
+				hasJSON = true
+				break
+			}
+		}
+		if command.Path == "tslink mcp" {
+			mcpChecked = true
+			if hasJSON {
+				t.Fatal("tslink mcp must not advertise --json; stdout is JSON-RPC only")
+			}
+			continue
+		}
+		if !hasJSON {
+			t.Fatalf("manifest command %q neither supports --json nor declares the MCP exclusion", command.Path)
+		}
+
+		args := strings.Fields(strings.TrimPrefix(command.Path, "tslink"))
+		args = append(args, "--json")
+		if !groups[command.Path] {
+			// Force Cobra's non-mutating flag-validation path for commands whose
+			// normal execution could install, serve, or change local state.
+			args = append(args, "--tslink-contract-probe-invalid-flag")
+		}
+		stdout, _, _ := runCompiledTSLinkWithConfigDir(t, t.TempDir(), "", args...)
+		if results := parseCompiledJSONLines(t, stdout); len(results) != 1 {
+			t.Fatalf("%s stdout=%q, want exactly one JSON envelope", command.Path, stdout)
+		}
+		jsonCommands++
+	}
+	if !mcpChecked || jsonCommands == 0 {
+		t.Fatalf("traversal incomplete: json_commands=%d mcp_checked=%v", jsonCommands, mcpChecked)
+	}
+	t.Logf("manifest_json_commands=%d/%d parseable; tslink mcp explicitly excludes --json", jsonCommands, len(Manifest().Commands))
 }
 
 func registryServiceCount(t *testing.T, home string) int {

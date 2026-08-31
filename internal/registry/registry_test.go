@@ -33,6 +33,72 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
+func TestAgentRuntimeErrorsExposeStableActionableMetadata(t *testing.T) {
+	tests := []struct {
+		name         string
+		err          error
+		code         string
+		nextContains string
+	}{
+		{
+			name:         "funnel capability",
+			err:          FunnelCapabilityMissingError("public-app", errors.New("missing nodeAttr")),
+			code:         CodeFunnelCapabilityMissing,
+			nextContains: "tslink install",
+		},
+		{
+			name:         "funnel listener",
+			err:          FunnelListenFailedError("public-app", errors.New("bind failed")),
+			code:         CodeFunnelListenFailed,
+			nextContains: "tslink logs --level error --json",
+		},
+		{
+			name:         "technical startup timeout",
+			err:          ServiceStartTimeoutError("stuck", 30*time.Second),
+			code:         CodeServiceStartTimeout,
+			nextContains: "tslink status --urls --name stuck --json",
+		},
+		{
+			name:         "ambiguous service type",
+			err:          ServiceTypeAmbiguousError(),
+			code:         CodeServiceTypeAmbiguous,
+			nextContains: "tslink add --help",
+		},
+		{
+			name:         "path inaccessible",
+			err:          PathNotAccessibleError("/private/files", errors.New("permission denied")),
+			code:         CodePathNotAccessible,
+			nextContains: "read and traverse access",
+		},
+		{
+			name:         "URL not ready",
+			err:          URLNotReadyError("pending"),
+			code:         CodeURLNotReady,
+			nextContains: "tslink url pending --wait=30s",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			code, ok := ErrorCode(tc.err)
+			if !ok || code != tc.code {
+				t.Fatalf("ErrorCode() = %q, %v; want %q, true", code, ok, tc.code)
+			}
+			var recovery interface{ NextCommands() []string }
+			if !errors.As(tc.err, &recovery) {
+				t.Fatalf("error %T does not expose NextCommands", tc.err)
+			}
+			next := strings.Join(recovery.NextCommands(), "\n")
+			if !strings.Contains(next, tc.nextContains) {
+				t.Fatalf("next = %q, want content %q", next, tc.nextContains)
+			}
+			if strings.TrimSpace(tc.err.Error()) == "" {
+				t.Fatal("error message is empty")
+			}
+		})
+	}
+}
+
 func testRegistryPath(t *testing.T) string {
 	t.Helper()
 	return filepath.Join(t.TempDir(), "registry.json")
@@ -741,6 +807,152 @@ func TestLoadCorruptedJSON(t *testing.T) {
 	}
 }
 
+func TestLoadForRuntimeStrictlyIsolatesNamedServiceIssues(t *testing.T) {
+	path := testRegistryPath(t)
+	data := `{"schema_version":1,"services":[` +
+		`{"name":"healthy","type":"proxy","target":"http://localhost:3000"},` +
+		`{"name":"api-spelling","type":"proxy","target":"http://localhost:3001","funnel":true,"public_ack":true,"allow":["alice@example.com"]},` +
+		`{"name":"guardrail","type":"proxy","target":"http://localhost:3002","funnel":true,"public_ack":true,"allowed_users":["alice@example.com"]}` +
+		`]}`
+	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	reg, issues, err := LoadForRuntime(path)
+	if err != nil {
+		t.Fatalf("LoadForRuntime() global error = %v", err)
+	}
+	if len(reg.Services) != 1 || reg.Services[0].Name != "healthy" {
+		t.Fatalf("valid services = %+v, want only healthy", reg.Services)
+	}
+	if len(issues) != 2 {
+		t.Fatalf("issues = %+v, want two named failures", issues)
+	}
+	if issues[0].Name != "api-spelling" || !strings.Contains(issues[0].Err.Error(), "registry.json uses allowed_users; allow is API-only") {
+		t.Fatalf("allow issue = %+v, want directed registry/API hint", issues[0])
+	}
+	if code, ok := ErrorCode(issues[0].Err); !ok || code != CodeUnknownConfigKey {
+		t.Fatalf("allow issue code = %q, %v; want %s", code, ok, CodeUnknownConfigKey)
+	}
+	if code, ok := ErrorCode(issues[1].Err); !ok || code != CodeFunnelAllowConflict {
+		t.Fatalf("guardrail issue code = %q, %v; want %s", code, ok, CodeFunnelAllowConflict)
+	}
+}
+
+func TestLoadRejectsMutationWhenAnyRawServiceIsInvalid(t *testing.T) {
+	path := testRegistryPath(t)
+	original := []byte(`{"schema_version":1,"services":[{"name":"healthy","type":"proxy","target":"http://localhost:3000"},{"name":"unknown","type":"proxy","target":"http://localhost:3001","future_field":"preserve-me"}]}`)
+	if err := os.WriteFile(path, original, 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	if _, err := Add(path, Service{Name: "new", Type: TypeProxy, Target: "http://localhost:3002"}); err == nil {
+		t.Fatal("Add() error = nil, want fail-closed mutation rejection")
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if string(after) != string(original) {
+		t.Fatalf("rejected mutation changed registry:\n got %s\nwant %s", after, original)
+	}
+}
+
+func TestLoadForRuntimeTreatsUnaddressableServiceAsGlobalInvalid(t *testing.T) {
+	path := testRegistryPath(t)
+	if err := os.WriteFile(path, []byte(`{"schema_version":1,"services":[{"type":"proxy","target":"http://localhost:3000","typo":true}]}`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if _, _, err := LoadForRuntime(path); err == nil || !strings.Contains(err.Error(), "no usable string name") {
+		t.Fatalf("LoadForRuntime() error = %v, want global unaddressable failure", err)
+	}
+}
+
+func TestLoadForRuntimeRejectsUnavailableRegistryInputs(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		write *string
+		want  string
+	}{
+		{name: "missing", want: "no such file"},
+		{name: "zero-byte", write: ptrString(""), want: "registry.json is empty"},
+		{name: "whitespace", write: ptrString(" \n\t"), want: "registry.json is empty"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := testRegistryPath(t)
+			if tc.write != nil {
+				if err := os.WriteFile(path, []byte(*tc.write), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, _, err := LoadForRuntime(path); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("LoadForRuntime() error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func ptrString(value string) *string { return &value }
+
+func TestPreflightReadOnlyBranchesAndStrictDocumentErrors(t *testing.T) {
+	t.Run("canonical", func(t *testing.T) {
+		path := testRegistryPath(t)
+		if err := os.WriteFile(path, []byte(`{"schema_version":1,"services":[{"name":"web","type":"proxy","target":"http://localhost:3000"}]}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		reg, issues, err := Preflight(path)
+		if err != nil || len(issues) != 0 || len(reg.Services) != 1 {
+			t.Fatalf("Preflight() = reg:%+v issues:%+v err:%v", reg, issues, err)
+		}
+	})
+	t.Run("empty", func(t *testing.T) {
+		path := testRegistryPath(t)
+		if err := os.WriteFile(path, []byte(" \n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := Preflight(path); err == nil || !strings.Contains(err.Error(), "registry.json is empty") {
+			t.Fatalf("Preflight(empty) error = %v", err)
+		}
+	})
+	t.Run("missing", func(t *testing.T) {
+		if _, _, err := Preflight(filepath.Join(t.TempDir(), "missing.json")); err == nil {
+			t.Fatal("Preflight(missing) error = nil")
+		}
+	})
+	for name, data := range map[string]string{
+		"trailing":           `{"schema_version":1,"services":[]} {}`,
+		"unsupported-schema": `{"schema_version":99,"services":[]}`,
+		"duplicate-name":     `{"schema_version":1,"services":[{"name":"web","type":"proxy","target":"http://localhost:1"},{"name":"web","type":"proxy","target":"http://localhost:2"}]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := testRegistryPath(t)
+			if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := Preflight(path); err == nil {
+				t.Fatalf("Preflight(%s) error = nil", name)
+			}
+		})
+	}
+}
+
+func TestLoadKeepsRecognizedInvalidShapeForDiagnosticReaders(t *testing.T) {
+	path := testRegistryPath(t)
+	if err := os.WriteFile(path, []byte(`{"schema_version":1,"services":[{"name":"db","type":"tcp","target":"localhost:5432","allowed_users":["alice@example.com"]}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(reg.Services) != 1 || len(reg.Services[0].AllowedUsers) != 1 {
+		t.Fatalf("Load() services = %+v", reg.Services)
+	}
+	if _, err := Add(path, Service{Name: "other", Type: TypeProxy, Target: "http://localhost:3000"}); err == nil {
+		t.Fatal("mutation admitted recognized-invalid raw service")
+	}
+}
+
 func TestLoadEmptyFile(t *testing.T) {
 	path := testRegistryPath(t)
 	if err := os.WriteFile(path, []byte(""), 0o600); err != nil {
@@ -1317,6 +1529,17 @@ func TestValidateServiceDiscriminatedShape(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 	missingPath := filepath.Join(t.TempDir(), "missing")
+	missingErr := ValidateFileRoot(missingPath)
+	if code, ok := ErrorCode(missingErr); !ok || code != CodePathNotFound {
+		t.Fatalf("ValidateFileRoot(missing) code = %q, %v; want %s, true; err=%v", code, ok, CodePathNotFound, missingErr)
+	}
+	var recovery interface{ NextCommands() []string }
+	if !errors.As(missingErr, &recovery) || len(recovery.NextCommands()) == 0 {
+		t.Fatalf("ValidateFileRoot(missing) = %v, want actionable next steps", missingErr)
+	}
+	if code, ok := ErrorCode(ValidateFileRoot(fileAsPath)); !ok || code != CodePathNotDirectory {
+		t.Fatalf("ValidateFileRoot(file) code = %q, %v; want %s, true", code, ok, CodePathNotDirectory)
+	}
 
 	valid := []Service{
 		{Name: "proxy-http", Type: TypeProxy, Target: "http://localhost:3000"},

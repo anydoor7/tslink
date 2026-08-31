@@ -45,22 +45,28 @@ const (
 
 // StatusResult holds the status information for display.
 type StatusResult struct {
-	DaemonRunning          bool                 `json:"daemon_running"`
-	DaemonPID              int                  `json:"daemon_pid"`
-	Authenticated          bool                 `json:"authenticated"`
-	CredentialStored       bool                 `json:"credential_stored"`
-	NodeAuthorized         bool                 `json:"node_authorized"`
-	AuthorizedServiceCount int                  `json:"authorized_service_count"`
-	AuthStatus             string               `json:"auth_status"`
-	AuthURL                string               `json:"auth_url,omitempty"`
-	ExpiresAt              *time.Time           `json:"expires_at,omitempty"`
-	ServiceCount           int                  `json:"service_count"`
-	Services               []StatusServiceState `json:"services"`
+	DaemonRunning          bool                    `json:"daemon_running"`
+	DaemonPID              int                     `json:"daemon_pid"`
+	Authenticated          bool                    `json:"authenticated"`
+	CredentialStored       bool                    `json:"credential_stored"`
+	NodeAuthorized         bool                    `json:"node_authorized"`
+	AuthorizedServiceCount int                     `json:"authorized_service_count"`
+	AuthStatus             string                  `json:"auth_status"`
+	AuthURL                string                  `json:"auth_url,omitempty"`
+	ExpiresAt              *time.Time              `json:"expires_at,omitempty"`
+	Next                   []string                `json:"next,omitempty"`
+	GlobalError            *tsruntime.ServiceError `json:"global_error,omitempty"`
+	ServiceCount           int                     `json:"service_count"`
+	Services               []StatusServiceState    `json:"services"`
 }
 
 type StatusServiceState struct {
-	Name   string `json:"name"`
-	Status string `json:"status"`
+	Name            string                  `json:"name"`
+	Status          string                  `json:"status"`
+	FunnelRequested bool                    `json:"funnel_requested"`
+	FunnelActive    bool                    `json:"funnel_active"`
+	FunnelState     string                  `json:"funnel_state"`
+	Error           *tsruntime.ServiceError `json:"error,omitempty"`
 }
 
 type StatusURLsResult struct {
@@ -74,6 +80,8 @@ type StatusURLsResult struct {
 	AuthStatus             string                      `json:"auth_status"`
 	AuthURL                string                      `json:"auth_url,omitempty"`
 	ExpiresAt              *time.Time                  `json:"expires_at,omitempty"`
+	Next                   []string                    `json:"next,omitempty"`
+	GlobalError            *tsruntime.ServiceError     `json:"global_error,omitempty"`
 	ServiceCount           int                         `json:"service_count"`
 	RuntimeSnapshot        StatusRuntimeSnapshotResult `json:"runtime_snapshot"`
 	Services               []StatusServiceView         `json:"services"`
@@ -90,18 +98,43 @@ type StatusRuntimeSnapshotResult struct {
 }
 
 type StatusServiceView struct {
-	Name     string                `json:"name"`
-	Type     string                `json:"type"`
-	Endpoint inspect.EndpointView  `json:"endpoint"`
-	Exposure inspect.ExposureView  `json:"exposure"`
-	Allow    inspect.SummaryView   `json:"allow"`
-	Tags     inspect.SummaryView   `json:"tags"`
-	Backend  inspect.BackendView   `json:"backend"`
-	Warnings []inspect.WarningView `json:"warnings,omitempty"`
+	Name            string                  `json:"name"`
+	Type            string                  `json:"type"`
+	RuntimeState    string                  `json:"runtime_state"`
+	Endpoint        inspect.EndpointView    `json:"endpoint"`
+	Exposure        inspect.ExposureView    `json:"exposure"`
+	FunnelRequested bool                    `json:"funnel_requested"`
+	FunnelActive    bool                    `json:"funnel_active"`
+	FunnelState     string                  `json:"funnel_state"`
+	Error           *tsruntime.ServiceError `json:"error,omitempty"`
+	Allow           inspect.SummaryView     `json:"allow"`
+	Tags            inspect.SummaryView     `json:"tags"`
+	Backend         inspect.BackendView     `json:"backend"`
+	Warnings        []inspect.WarningView   `json:"warnings,omitempty"`
 }
 
 func getStatus(pidPath, regPath string) (StatusResult, error) {
-	r := StatusResult{AuthStatus: authStatusNotAuthenticated}
+	r := baseStatus(pidPath)
+	reg, err := registry.Load(regPath)
+	if err != nil {
+		return StatusResult{}, err
+	}
+	r.ServiceCount = len(reg.Services)
+	r.Services = make([]StatusServiceState, 0, len(reg.Services))
+	for _, svc := range reg.Services {
+		r.Services = append(r.Services, StatusServiceState{
+			Name:            svc.Name,
+			Status:          "down",
+			FunnelRequested: svc.Funnel,
+			FunnelState:     configuredFunnelState(svc.Funnel),
+		})
+	}
+	setStatusContinuation(&r)
+	return r, nil
+}
+
+func baseStatus(pidPath string) StatusResult {
+	r := StatusResult{AuthStatus: authStatusNotAuthenticated, Services: []StatusServiceState{}}
 	if isRunningFn(pidPath) {
 		r.DaemonRunning = true
 		r.DaemonPID, _ = readPIDFn(pidPath)
@@ -115,21 +148,27 @@ func getStatus(pidPath, regPath string) (StatusResult, error) {
 		r.Authenticated = true
 		r.AuthStatus = authStatusAuthenticated
 	}
-	reg, err := registry.Load(regPath)
-	if err != nil {
-		return StatusResult{}, err
+	return r
+}
+
+func setStatusContinuation(r *StatusResult) {
+	switch r.AuthStatus {
+	case authStatusNotAuthenticated:
+		r.Next = []string{"tslink serve --json"}
+	case authStatusNeedsLogin:
+		r.Next = []string{"tslink status --json"}
+	default:
+		r.Next = nil
 	}
-	r.ServiceCount = len(reg.Services)
-	r.Services = make([]StatusServiceState, 0, len(reg.Services))
-	for _, svc := range reg.Services {
-		r.Services = append(r.Services, StatusServiceState{Name: svc.Name, Status: "down"})
-	}
-	return r, nil
 }
 
 func getPollableStatus(pidPath, regPath, snapshotPath, authHandoffPath string) (StatusResult, error) {
 	r, err := getStatus(pidPath, regPath)
 	if err != nil {
+		snapshot, snapshotErr := runtimeLoadSnapshotFn(snapshotPath)
+		if snapshotErr == nil && snapshot != nil && snapshot.GlobalError != nil {
+			return statusFromGlobalFailure(pidPath, snapshot), nil
+		}
 		return StatusResult{}, err
 	}
 	reg, err := registry.Load(regPath)
@@ -142,6 +181,9 @@ func getPollableStatus(pidPath, regPath, snapshotPath, authHandoffPath string) (
 	}
 
 	snapshot, loadErr := runtimeLoadSnapshotFn(snapshotPath)
+	if snapshot != nil {
+		r.GlobalError = cloneServiceError(snapshot.GlobalError)
+	}
 	expected := tsruntime.ExpectedRuntime{CurrentRegistryFingerprint: fingerprint}
 	if r.DaemonRunning {
 		expected.DaemonPID = r.DaemonPID
@@ -153,10 +195,25 @@ func getPollableStatus(pidPath, regPath, snapshotPath, authHandoffPath string) (
 	up := make(map[string]struct{})
 	if snapshotReportsServices(freshness) && snapshot != nil {
 		up = make(map[string]struct{}, len(snapshot.Services))
+		snapshotServices := make(map[string]tsruntime.ServiceSnapshot, len(snapshot.Services))
 		for _, svc := range snapshot.Services {
-			up[svc.Name] = struct{}{}
+			snapshotServices[svc.Name] = svc
+			if runtimeServiceRunning(svc) {
+				up[svc.Name] = struct{}{}
+			}
 		}
 		for i := range r.Services {
+			if runtimeService, ok := snapshotServices[r.Services[i].Name]; ok {
+				if runtimeService.FunnelState != "" {
+					r.Services[i].FunnelRequested = runtimeService.FunnelRequested
+					r.Services[i].FunnelActive = runtimeService.FunnelActive
+					r.Services[i].FunnelState = runtimeService.FunnelState
+				}
+				r.Services[i].Error = runtimeService.Error
+				if runtimeService.RuntimeState == tsruntime.ServiceRuntimeFailed {
+					r.Services[i].Status = tsruntime.ServiceRuntimeFailed
+				}
+			}
 			if _, ok := up[r.Services[i].Name]; ok {
 				r.Services[i].Status = "up"
 			}
@@ -176,6 +233,7 @@ func getPollableStatus(pidPath, regPath, snapshotPath, authHandoffPath string) (
 			if handoffServiceUp {
 				// The snapshot can briefly win the race with removal of the
 				// completed handoff. Do not regress an already-up service.
+				setStatusContinuation(&r)
 				return r, nil
 			}
 			r.Authenticated = false
@@ -191,7 +249,48 @@ func getPollableStatus(pidPath, regPath, snapshotPath, authHandoffPath string) (
 			}
 		}
 	}
+	setStatusContinuation(&r)
 	return r, nil
+}
+
+func statusFromGlobalFailure(pidPath string, snapshot *tsruntime.Snapshot) StatusResult {
+	r := baseStatus(pidPath)
+	r.GlobalError = cloneServiceError(snapshot.GlobalError)
+	r.ServiceCount = len(snapshot.Services)
+	r.Services = make([]StatusServiceState, 0, len(snapshot.Services))
+	for _, service := range snapshot.Services {
+		status := service.RuntimeState
+		if status == "" {
+			status = tsruntime.ServiceRuntimeRunning
+		}
+		r.Services = append(r.Services, StatusServiceState{
+			Name:            service.Name,
+			Status:          status,
+			FunnelRequested: service.FunnelRequested,
+			FunnelActive:    service.FunnelActive,
+			FunnelState:     service.FunnelState,
+			Error:           cloneServiceError(service.Error),
+		})
+		if status == tsruntime.ServiceRuntimeRunning {
+			r.NodeAuthorized = true
+			r.AuthorizedServiceCount++
+		}
+	}
+	if r.NodeAuthorized {
+		r.Authenticated = true
+		r.AuthStatus = authStatusAuthenticated
+	}
+	setStatusContinuation(&r)
+	return r
+}
+
+func cloneServiceError(source *tsruntime.ServiceError) *tsruntime.ServiceError {
+	if source == nil {
+		return nil
+	}
+	cloned := *source
+	cloned.Next = append([]string(nil), source.Next...)
+	return &cloned
 }
 
 func formatStatus(r StatusResult, out io.Writer) {
@@ -254,6 +353,8 @@ func getStatusURLsWithAuth(pidPath, regPath, snapshotPath, authHandoffPath strin
 		AuthStatus:             status.AuthStatus,
 		AuthURL:                status.AuthURL,
 		ExpiresAt:              status.ExpiresAt,
+		Next:                   append([]string(nil), status.Next...),
+		GlobalError:            cloneServiceError(status.GlobalError),
 		ServiceCount:           len(reg.Services),
 		RuntimeSnapshot:        runtimeSnapshotResult(snapshot, freshness),
 		Services:               make([]StatusServiceView, 0, len(reg.Services)),
@@ -269,25 +370,40 @@ func getStatusURLsWithAuth(pidPath, regPath, snapshotPath, authHandoffPath strin
 	for _, svc := range reg.Services {
 		view := inspect.ServiceViewFor(svc)
 		service := StatusServiceView{
-			Name:     view.Name,
-			Type:     view.Type,
-			Endpoint: view.Endpoint,
-			Exposure: view.Exposure,
-			Allow:    view.Allow,
-			Tags:     view.Tags,
-			Backend:  view.Backend,
-			Warnings: append([]inspect.WarningView(nil), view.Warnings...),
+			Name:            view.Name,
+			Type:            view.Type,
+			RuntimeState:    "unknown",
+			Endpoint:        view.Endpoint,
+			Exposure:        view.Exposure,
+			FunnelRequested: svc.Funnel,
+			FunnelState:     configuredFunnelState(svc.Funnel),
+			Allow:           view.Allow,
+			Tags:            view.Tags,
+			Backend:         view.Backend,
+			Warnings:        append([]inspect.WarningView(nil), view.Warnings...),
+		}
+		snapshotService, snapshotServiceOK := snapshotServices[svc.Name]
+		if snapshotReportsServices(freshness) && snapshotServiceOK {
+			service.RuntimeState = normalizedRuntimeState(snapshotService)
+			if snapshotService.FunnelState != "" {
+				service.FunnelRequested = snapshotService.FunnelRequested
+				service.FunnelActive = snapshotService.FunnelActive
+				service.FunnelState = snapshotService.FunnelState
+			}
+			service.Error = snapshotService.Error
 		}
 
 		switch {
 		case freshness.Exact:
-			snapshotService, ok := snapshotServices[svc.Name]
 			switch {
-			case ok && snapshotService.Endpoint.State == inspect.EndpointStateExact:
+			case snapshotServiceOK && snapshotService.RuntimeState == tsruntime.ServiceRuntimeFailed:
+				service.Endpoint.State = statusEndpointStateMissing
+				service.Exposure = snapshotService.Exposure
+			case snapshotServiceOK && snapshotService.Endpoint.State == inspect.EndpointStateExact:
 				service.Endpoint = snapshotService.Endpoint
 				service.Endpoint.State = inspect.EndpointStateExact
 				service.Exposure = snapshotService.Exposure
-			case ok:
+			case snapshotServiceOK:
 				service.Endpoint.State = statusEndpointStateExpectedUnverified
 			default:
 				service.Endpoint.State = statusEndpointStateMissing
@@ -298,16 +414,18 @@ func getStatusURLsWithAuth(pidPath, regPath, snapshotPath, authHandoffPath strin
 				)
 			}
 		case freshness.Status == tsruntime.StatusPartial:
-			snapshotService, ok := snapshotServices[svc.Name]
 			switch {
-			case ok && snapshotService.Endpoint.State == inspect.EndpointStateExact:
+			case snapshotServiceOK && snapshotService.RuntimeState == tsruntime.ServiceRuntimeFailed:
+				service.Endpoint.State = statusEndpointStateMissing
+				service.Exposure = snapshotService.Exposure
+			case snapshotServiceOK && snapshotService.Endpoint.State == inspect.EndpointStateExact:
 				// A partial snapshot is not authoritative for omissions, but an
 				// included service is positive runtime evidence and keeps sequential
 				// interactive-enrollment progress visible.
 				service.Endpoint = snapshotService.Endpoint
 				service.Endpoint.State = inspect.EndpointStateExact
 				service.Exposure = snapshotService.Exposure
-			case ok:
+			case snapshotServiceOK:
 				service.Endpoint.State = statusEndpointStateExpectedUnverified
 			default:
 				service.Endpoint.State = statusEndpointStateMissing
@@ -328,6 +446,24 @@ func getStatusURLsWithAuth(pidPath, regPath, snapshotPath, authHandoffPath strin
 	}
 
 	return result, nil
+}
+
+func configuredFunnelState(requested bool) string {
+	if requested {
+		return tsruntime.FunnelStateRequestedUnknown
+	}
+	return tsruntime.FunnelStateNotRequested
+}
+
+func runtimeServiceRunning(service tsruntime.ServiceSnapshot) bool {
+	return service.RuntimeState == "" || service.RuntimeState == tsruntime.ServiceRuntimeRunning
+}
+
+func normalizedRuntimeState(service tsruntime.ServiceSnapshot) string {
+	if runtimeServiceRunning(service) {
+		return tsruntime.ServiceRuntimeRunning
+	}
+	return service.RuntimeState
 }
 
 func filterStatusURLsResult(result StatusURLsResult, name string) (StatusURLsResult, error) {

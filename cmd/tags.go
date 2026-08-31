@@ -356,6 +356,8 @@ Examples:
   tslink tags set myapp tag:web
   tslink tags set-default tag:myteam
   tslink tags delete-remote tag:old --force --manage-acl`,
+		Args: cobra.NoArgs,
+		RunE: runCommandGroup,
 	}
 
 	tagsListCmd := &cobra.Command{

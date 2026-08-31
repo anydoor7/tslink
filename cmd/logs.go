@@ -180,7 +180,7 @@ Examples:
 			case "err":
 				logFile = filepath.Join(logDir, "tslink.err.log")
 			default:
-				return fmt.Errorf("invalid --source: %q (must be \"out\" or \"err\")", source)
+				return output.ErrUsage(fmt.Sprintf("invalid --source: %q (must be \"out\" or \"err\")", source))
 			}
 
 			lines, err := tailFile(logFile, last, level)

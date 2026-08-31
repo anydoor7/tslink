@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"go/parser"
 	"go/token"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -26,7 +28,9 @@ import (
 	runtimesnapshot "github.com/monody0007/tslink/internal/runtime"
 	"github.com/monody0007/tslink/internal/tailapi"
 	"github.com/monody0007/tslink/internal/testenv"
+	"tailscale.com/ipn"
 	"tailscale.com/ipn/ipnstate"
+	"tailscale.com/tailcfg"
 	"tailscale.com/tsnet"
 )
 
@@ -258,17 +262,35 @@ func (l *fakeListener) Close() error {
 	return nil
 }
 
+type countingCloser struct {
+	closeCount atomic.Int32
+}
+
+func (c *countingCloser) Close() error {
+	c.closeCount.Add(1)
+	return nil
+}
+
 type fakeTSNetServer struct {
-	upErr             error
-	listenErr         error
-	listenTLSErr      error
-	localClient       *LocalClient
-	closed            bool
-	certDomains       []string
-	dnsName           string
-	listenCalled      int
-	listenTLSCalled   int
-	localClientCalled int
+	upErr                  error
+	upWait                 bool
+	status                 *ipnstate.Status
+	listenErr              error
+	listenTLSErr           error
+	listenFunnelErr        error
+	localClient            *LocalClient
+	closed                 bool
+	certDomains            []string
+	dnsName                string
+	listenCalled           int
+	listenTLSCalled        int
+	listenFunnelCalled     int
+	localClientCalled      int
+	closeCount             atomic.Int32
+	upContext              context.Context
+	nodeContext            context.Context
+	requireCanceledOnClose bool
+	closeSawActiveContext  atomic.Bool
 }
 
 type fakeInteractiveTSNetServer struct {
@@ -293,6 +315,27 @@ type sequenceTSNetStatusClient struct {
 	calls    int
 }
 
+type gatedInteractiveStatusClient struct {
+	ready chan struct{}
+	calls atomic.Int32
+}
+
+func (c *gatedInteractiveStatusClient) Status(ctx context.Context) (*ipnstate.Status, error) {
+	if c.calls.Add(1) == 1 {
+		return &ipnstate.Status{BackendState: "NeedsLogin", AuthURL: "https://login.tailscale.com/a/slow-human"}, nil
+	}
+	select {
+	case <-c.ready:
+		return &ipnstate.Status{
+			BackendState: ipn.Running.String(),
+			TailscaleIPs: []netip.Addr{netip.MustParseAddr("100.64.0.2")},
+			Self:         &ipnstate.PeerStatus{DNSName: "slow-human.example.ts.net."},
+		}, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
 func (c *sequenceTSNetStatusClient) Status(context.Context) (*ipnstate.Status, error) {
 	if len(c.statuses) == 0 {
 		return nil, errors.New("no status configured")
@@ -305,9 +348,17 @@ func (c *sequenceTSNetStatusClient) Status(context.Context) (*ipnstate.Status, e
 	return c.statuses[index], nil
 }
 
-func (s *fakeTSNetServer) Up(context.Context) (*ipnstate.Status, error) {
+func (s *fakeTSNetServer) Up(ctx context.Context) (*ipnstate.Status, error) {
+	s.upContext = ctx
+	if s.upWait {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
 	if s.upErr != nil {
 		return nil, s.upErr
+	}
+	if s.status != nil {
+		return s.status, nil
 	}
 	status := &ipnstate.Status{}
 	if s.dnsName != "" {
@@ -333,7 +384,22 @@ func (s *fakeTSNetServer) ListenTLS(network, addr string) (net.Listener, error) 
 }
 
 func (s *fakeTSNetServer) ListenFunnel(network, addr string, opts ...tsnet.FunnelOption) (net.Listener, error) {
+	s.listenFunnelCalled++
+	if s.listenFunnelErr != nil {
+		return nil, s.listenFunnelErr
+	}
 	return &fakeListener{}, nil
+}
+
+func funnelEnabledStatus(dnsName string) *ipnstate.Status {
+	return &ipnstate.Status{Self: &ipnstate.PeerStatus{
+		DNSName: dnsName,
+		CapMap: tailcfg.NodeCapMap{
+			tailcfg.CapabilityHTTPS:                      nil,
+			tailcfg.NodeAttrFunnel:                       nil,
+			tailcfg.CapabilityFunnelPorts + "?ports=443": nil,
+		},
+	}}
 }
 
 func (s *fakeTSNetServer) LocalClient() (*LocalClient, error) {
@@ -349,7 +415,55 @@ func (s *fakeTSNetServer) CertDomains() []string {
 }
 
 func (s *fakeTSNetServer) Close() error {
+	s.closeCount.Add(1)
+	if s.requireCanceledOnClose && s.nodeContext != nil {
+		select {
+		case <-s.nodeContext.Done():
+		default:
+			s.closeSawActiveContext.Store(true)
+		}
+	}
 	s.closed = true
+	return nil
+}
+
+type blockingListenerTSNetServer struct {
+	fakeTSNetServer
+	listenStarted chan struct{}
+	unblock       chan struct{}
+	unblockOnce   sync.Once
+}
+
+type blockingInteractiveListenerTSNetServer struct {
+	fakeInteractiveTSNetServer
+	listenStarted chan struct{}
+	unblock       chan struct{}
+	unblockOnce   sync.Once
+}
+
+func (s *blockingInteractiveListenerTSNetServer) ListenTLS(string, string) (net.Listener, error) {
+	close(s.listenStarted)
+	<-s.unblock
+	return &fakeListener{}, nil
+}
+
+func (s *blockingInteractiveListenerTSNetServer) Close() error {
+	s.closeCount.Add(1)
+	s.closed = true
+	s.unblockOnce.Do(func() { close(s.unblock) })
+	return nil
+}
+
+func (s *blockingListenerTSNetServer) ListenFunnel(string, string, ...tsnet.FunnelOption) (net.Listener, error) {
+	close(s.listenStarted)
+	<-s.unblock
+	return nil, net.ErrClosed
+}
+
+func (s *blockingListenerTSNetServer) Close() error {
+	s.closeCount.Add(1)
+	s.closed = true
+	s.unblockOnce.Do(func() { close(s.unblock) })
 	return nil
 }
 
@@ -398,7 +512,7 @@ type funnelWarningTSNetServer struct {
 }
 
 func (s *funnelWarningTSNetServer) Up(context.Context) (*ipnstate.Status, error) {
-	return &ipnstate.Status{}, nil
+	return funnelEnabledStatus("public-app.tailnet.ts.net."), nil
 }
 
 func (s *funnelWarningTSNetServer) Listen(network, addr string) (net.Listener, error) {
@@ -658,6 +772,26 @@ func TestStopNodeLocked_ClosesListenerAndServer(t *testing.T) {
 	}
 }
 
+func TestStopNodeLocked_ClosesPinnedFileHandler(t *testing.T) {
+	testenv.SetHome(t, t.TempDir())
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	closer := &countingCloser{}
+	s.nodes["files"] = &ServiceNode{
+		service:       registry.Service{Name: "files", Type: registry.TypeFile},
+		handlerCloser: closer,
+		cancel:        func() {},
+	}
+
+	s.stopNodeLocked("files", false)
+
+	if got := closer.closeCount.Load(); got != 1 {
+		t.Fatalf("pinned file handler Close calls = %d, want exactly 1", got)
+	}
+}
+
 func TestStopNodeLocked_HTTPServerShutdownFallsBackToClose(t *testing.T) {
 	testenv.SetHome(t, t.TempDir())
 
@@ -907,6 +1041,136 @@ func TestStartNodeLocked_ZeroCredentialUsesStableStatusWithoutUp(t *testing.T) {
 	}
 }
 
+func TestStartNodeLocked_InteractiveAuthorizationOutlivesTechnicalStartupDeadline(t *testing.T) {
+	testenv.SetHome(t, t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+
+	s, err := New("", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	s.SetAuthKeyProvider(func(context.Context, registry.Service) (string, error) { return "", nil })
+
+	fake := &fakeInteractiveTSNetServer{}
+	statusClient := &gatedInteractiveStatusClient{ready: make(chan struct{})}
+	oldNew := newTSNetServerFn
+	oldStatusClient := tsnetStatusClientFn
+	oldPoll := interactiveStatusPollInterval
+	oldTimeout := nodeStartupTimeout
+	newTSNetServerFn = func(registry.Service, string, string, string) tsnetServer { return fake }
+	tsnetStatusClientFn = func(tsnetServer) (tsnetStatusClient, error) { return statusClient, nil }
+	interactiveStatusPollInterval = time.Millisecond
+	nodeStartupTimeout = 10 * time.Millisecond
+	t.Cleanup(func() {
+		newTSNetServerFn = oldNew
+		tsnetStatusClientFn = oldStatusClient
+		interactiveStatusPollInterval = oldPoll
+		nodeStartupTimeout = oldTimeout
+		s.closeAllNodes()
+	})
+
+	handoffPublished := make(chan struct{})
+	s.SetAuthHandoffFunc(func(_ context.Context, handoff AuthHandoff) error {
+		if handoff.AuthURL != "https://login.tailscale.com/a/slow-human" {
+			t.Errorf("auth URL = %q", handoff.AuthURL)
+		}
+		select {
+		case <-handoffPublished:
+		default:
+			close(handoffPublished)
+		}
+		return nil
+	})
+
+	servicePath := t.TempDir()
+	result := make(chan error, 1)
+	go func() {
+		result <- s.startNodeLocked(context.Background(), registry.Service{Name: "slow-human", Type: registry.TypeFile, Path: servicePath})
+	}()
+
+	select {
+	case <-handoffPublished:
+	case <-time.After(time.Second):
+		t.Fatal("interactive auth URL was not published")
+	}
+	time.Sleep(4 * nodeStartupTimeout)
+	select {
+	case err := <-result:
+		t.Fatalf("interactive startup returned after technical deadline: %v", err)
+	default:
+	}
+
+	close(statusClient.ready)
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatalf("startNodeLocked() after authorization error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("interactive startup did not resume after authorization")
+	}
+	if node := s.nodes["slow-human"]; node == nil || node.runtimeHost != "slow-human.example.ts.net" {
+		t.Fatalf("running node = %+v, want authorized interactive node", node)
+	}
+}
+
+func TestStartNodeLocked_InteractiveListenerUsesIndependentTechnicalDeadline(t *testing.T) {
+	testenv.SetHome(t, t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+	s, err := New("", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	s.SetAuthKeyProvider(func(context.Context, registry.Service) (string, error) { return "", nil })
+
+	fake := &blockingInteractiveListenerTSNetServer{
+		listenStarted: make(chan struct{}),
+		unblock:       make(chan struct{}),
+	}
+	statusClient := &sequenceTSNetStatusClient{statuses: []*ipnstate.Status{{
+		BackendState: ipn.Running.String(),
+		TailscaleIPs: []netip.Addr{netip.MustParseAddr("100.64.0.3")},
+		Self:         &ipnstate.PeerStatus{DNSName: "interactive-listener.example.ts.net."},
+	}}}
+	oldNew := newTSNetServerFn
+	oldStatusClient := tsnetStatusClientFn
+	oldPoll := interactiveStatusPollInterval
+	oldTimeout := nodeStartupTimeout
+	newTSNetServerFn = func(registry.Service, string, string, string) tsnetServer { return fake }
+	tsnetStatusClientFn = func(tsnetServer) (tsnetStatusClient, error) { return statusClient, nil }
+	interactiveStatusPollInterval = time.Millisecond
+	nodeStartupTimeout = 20 * time.Millisecond
+	t.Cleanup(func() {
+		newTSNetServerFn = oldNew
+		tsnetStatusClientFn = oldStatusClient
+		interactiveStatusPollInterval = oldPoll
+		nodeStartupTimeout = oldTimeout
+		s.closeAllNodes()
+	})
+
+	parentCtx, cancelParent := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancelParent()
+	started := time.Now()
+	err = s.startNodeLocked(parentCtx, registry.Service{Name: "interactive-listener", Type: registry.TypeFile, Path: t.TempDir()})
+	elapsed := time.Since(started)
+	code, _ := registry.ErrorCode(err)
+	if code != registry.CodeServiceStartTimeout {
+		t.Fatalf("startNodeLocked() error = %v code=%q, want %s", err, code, registry.CodeServiceStartTimeout)
+	}
+	if elapsed >= 150*time.Millisecond {
+		t.Fatalf("interactive listener timeout took %s, want independent %s deadline", elapsed, nodeStartupTimeout)
+	}
+	select {
+	case <-fake.listenStarted:
+	default:
+		t.Fatal("interactive path did not reach listener activation")
+	}
+}
+
 func TestStartNodeLocked_UsesPerServiceAuthKeyProvider(t *testing.T) {
 	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
@@ -953,6 +1217,89 @@ func TestStartNodeLocked_UsesPerServiceAuthKeyProvider(t *testing.T) {
 	}
 	if capturedAuthKey != "per-service-key" {
 		t.Fatalf("authKey = %q, want per-service-key", capturedAuthKey)
+	}
+}
+
+func TestSyncNodes_NewerGenerationCancelsInteractiveStartupBeforeReconcile(t *testing.T) {
+	testenv.SetHome(t, t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+	writeRegistry(t, []registry.Service{{Name: "pending", Type: registry.TypeFile, Path: t.TempDir()}})
+
+	fake := &fakeInteractiveTSNetServer{}
+	statusClient := &gatedInteractiveStatusClient{ready: make(chan struct{})}
+	oldNew := newTSNetServerFn
+	oldStatusClient := tsnetStatusClientFn
+	oldPoll := interactiveStatusPollInterval
+	newTSNetServerFn = func(registry.Service, string, string, string) tsnetServer { return fake }
+	tsnetStatusClientFn = func(tsnetServer) (tsnetStatusClient, error) { return statusClient, nil }
+	interactiveStatusPollInterval = time.Millisecond
+	t.Cleanup(func() {
+		newTSNetServerFn = oldNew
+		tsnetStatusClientFn = oldStatusClient
+		interactiveStatusPollInterval = oldPoll
+	})
+
+	s, err := New("", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	s.SetAuthKeyProvider(func(context.Context, registry.Service) (string, error) { return "", nil })
+	handoff := make(chan struct{})
+	s.SetAuthHandoffFunc(func(context.Context, AuthHandoff) error {
+		select {
+		case <-handoff:
+		default:
+			close(handoff)
+		}
+		return nil
+	})
+
+	firstDone := make(chan error, 1)
+	go func() { firstDone <- s.syncNodes(context.Background()) }()
+	select {
+	case <-handoff:
+	case <-time.After(time.Second):
+		t.Fatal("interactive authorization URL was not published")
+	}
+
+	lockAvailable := make(chan struct{})
+	go func() {
+		s.mu.Lock()
+		s.mu.Unlock()
+		close(lockAvailable)
+	}()
+	select {
+	case <-lockAvailable:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("interactive authorization wait held s.mu")
+	}
+
+	writeRegistry(t, nil)
+	secondDone := make(chan error, 1)
+	go func() { secondDone <- s.syncNodes(context.Background()) }()
+	select {
+	case err := <-secondDone:
+		if err != nil {
+			t.Fatalf("superseding syncNodes() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("registry removal did not supersede interactive startup")
+	}
+	select {
+	case err := <-firstDone:
+		if err != nil {
+			t.Fatalf("superseded syncNodes() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("superseded interactive sync did not return")
+	}
+	if fake.closeCount.Load() != 1 {
+		t.Fatalf("superseded interactive node Close calls = %d, want 1", fake.closeCount.Load())
+	}
+	if s.nodeRunning("pending") {
+		t.Fatal("removed pending service committed after supersession")
 	}
 }
 
@@ -1321,11 +1668,11 @@ func TestSyncNodes_RejectsHandEditedTCPAllowedUsers(t *testing.T) {
 	}
 
 	err = s.syncNodes(context.Background())
-	if err == nil {
-		t.Fatal("syncNodes() error = nil, want tcp allowed_users error")
+	if err != nil {
+		t.Fatalf("syncNodes() error = %v, want isolated per-service failure", err)
 	}
-	if !strings.Contains(err.Error(), `service "db": tcp services do not support allowed_users`) {
-		t.Fatalf("syncNodes() error = %v, want tcp allowed_users service context", err)
+	if failure := s.serviceFailures["db"]; failure.Error == nil || failure.Error.Code != registry.CodeAllowUnsupportedTCP {
+		t.Fatalf("service failure = %+v, want %s", failure, registry.CodeAllowUnsupportedTCP)
 	}
 	if len(s.nodes) != 0 {
 		t.Fatalf("nodes = %+v, want none after rejected hand-edited registry", s.nodes)
@@ -1359,17 +1706,11 @@ func TestSyncNodes_RejectsHandEditedFunnelAllowedUsersBeforeListenFunnel(t *test
 	}
 
 	err = s.syncNodes(context.Background())
-	if err == nil {
-		t.Fatal("syncNodes() error = nil, want funnel allowed_users error")
+	if err != nil {
+		t.Fatalf("syncNodes() error = %v, want isolated per-service failure", err)
 	}
-	if !strings.Contains(err.Error(), registry.ErrFunnelAllowedUsers) {
-		t.Fatalf("syncNodes() error = %v, want funnel allowed_users error", err)
-	}
-	if !strings.Contains(err.Error(), registry.CodeFunnelAllowConflict) {
-		t.Fatalf("syncNodes() error = %v, want stable code %s", err, registry.CodeFunnelAllowConflict)
-	}
-	if code, ok := registry.ErrorCode(err); !ok || code != registry.CodeFunnelAllowConflict {
-		t.Fatalf("ErrorCode() = %q, %v; want %s, true", code, ok, registry.CodeFunnelAllowConflict)
+	if failure := s.serviceFailures["public-app"]; failure.Error == nil || failure.Error.Code != registry.CodeFunnelAllowConflict {
+		t.Fatalf("service failure = %+v, want %s", failure, registry.CodeFunnelAllowConflict)
 	}
 	if len(s.nodes) != 0 {
 		t.Fatalf("nodes = %+v, want none after rejected hand-edited registry", s.nodes)
@@ -1425,10 +1766,10 @@ func TestSyncNodes_SkipsHandEditedFunnelWithoutPublicAckAndStartsValidProxy(t *t
 		t.Fatal("valid proxy service should start despite skipped legacy funnel service")
 	}
 	logs := logBuf.String()
-	if !strings.Contains(logs, "skipping service with invalid startup config") ||
+	if !strings.Contains(logs, "registry service failed strict load; isolating service") ||
 		!strings.Contains(logs, "public-app") ||
-		!strings.Contains(logs, "tslink add public-app --funnel --public") {
-		t.Fatalf("logs = %s, want skip warning with service name and remediation", logs)
+		!strings.Contains(logs, registry.CodeFunnelPublicAckRequired) {
+		t.Fatalf("logs = %s, want isolated failure warning with service name and code", logs)
 	}
 }
 
@@ -1459,17 +1800,11 @@ func TestSyncNodes_RejectsHandEditedFunnelControlURLBeforeListenFunnel(t *testin
 	}
 
 	err = s.syncNodes(context.Background())
-	if err == nil {
-		t.Fatal("syncNodes() error = nil, want funnel control_url error")
+	if err != nil {
+		t.Fatalf("syncNodes() error = %v, want isolated per-service failure", err)
 	}
-	if !strings.Contains(err.Error(), registry.ErrFunnelControlURL) {
-		t.Fatalf("syncNodes() error = %v, want funnel control_url error", err)
-	}
-	if !strings.Contains(err.Error(), registry.CodeFunnelControlURLConflict) {
-		t.Fatalf("syncNodes() error = %v, want stable code %s", err, registry.CodeFunnelControlURLConflict)
-	}
-	if code, ok := registry.ErrorCode(err); !ok || code != registry.CodeFunnelControlURLConflict {
-		t.Fatalf("ErrorCode() = %q, %v; want %s, true", code, ok, registry.CodeFunnelControlURLConflict)
+	if failure := s.serviceFailures["public-app"]; failure.Error == nil || failure.Error.Code != registry.CodeFunnelControlURLConflict {
+		t.Fatalf("service failure = %+v, want %s", failure, registry.CodeFunnelControlURLConflict)
 	}
 	if len(s.nodes) != 0 {
 		t.Fatalf("nodes = %+v, want none after rejected hand-edited registry", s.nodes)
@@ -1514,17 +1849,11 @@ func TestSyncNodes_RejectsHandEditedFunnelNonProxyTypesBeforeTSNet(t *testing.T)
 			}
 
 			err = s.syncNodes(context.Background())
-			if err == nil {
-				t.Fatal("syncNodes() error = nil, want funnel type conflict error")
+			if err != nil {
+				t.Fatalf("syncNodes() error = %v, want isolated per-service failure", err)
 			}
-			if !strings.Contains(err.Error(), registry.ErrFunnelTypeConflict) {
-				t.Fatalf("syncNodes() error = %v, want funnel type conflict error", err)
-			}
-			if !strings.Contains(err.Error(), registry.CodeFunnelTypeConflict) {
-				t.Fatalf("syncNodes() error = %v, want stable code %s", err, registry.CodeFunnelTypeConflict)
-			}
-			if code, ok := registry.ErrorCode(err); !ok || code != registry.CodeFunnelTypeConflict {
-				t.Fatalf("ErrorCode() = %q, %v; want %s, true", code, ok, registry.CodeFunnelTypeConflict)
+			if failure := s.serviceFailures[svc.Name]; failure.Error == nil || failure.Error.Code != registry.CodeFunnelTypeConflict {
+				t.Fatalf("service failure = %+v, want %s", failure, registry.CodeFunnelTypeConflict)
 			}
 			if len(s.nodes) != 0 {
 				t.Fatalf("nodes = %+v, want none after rejected hand-edited registry", s.nodes)
@@ -1705,14 +2034,14 @@ func TestSyncNodesRejectsStaleGenerationCommit(t *testing.T) {
 	}}}
 
 	var loadCount atomic.Int32
-	oldLoad := registryLoadFn
-	registryLoadFn = func(string) (*registry.Registry, error) {
+	oldLoad := registryLoadRuntimeFn
+	registryLoadRuntimeFn = func(string) (*registry.Registry, []registry.ServiceIssue, error) {
 		if loadCount.Add(1) == 1 {
-			return oldReg, nil
+			return oldReg, nil, nil
 		}
-		return newReg, nil
+		return newReg, nil, nil
 	}
-	t.Cleanup(func() { registryLoadFn = oldLoad })
+	t.Cleanup(func() { registryLoadRuntimeFn = oldLoad })
 
 	firstDesiredLoaded := make(chan struct{})
 	releaseFirst := make(chan struct{})
@@ -1769,6 +2098,68 @@ func TestSyncNodesRejectsStaleGenerationCommit(t *testing.T) {
 	if _, ok := s.nodes["old"]; ok {
 		t.Fatalf("nodes = %+v, stale generation committed old service", s.nodes)
 	}
+}
+
+func TestSyncNodes_CurrentGenerationPreReconcileAndTagErrors(t *testing.T) {
+	t.Run("desired-state-hook", func(t *testing.T) {
+		testenv.SetHome(t, t.TempDir())
+		if err := config.EnsureDir(); err != nil {
+			t.Fatal(err)
+		}
+		writeRegistry(t, nil)
+		want := errors.New("desired hook failed")
+		oldAfter := afterDesiredLoadedFn
+		afterDesiredLoadedFn = func(context.Context, uint64) error { return want }
+		t.Cleanup(func() { afterDesiredLoadedFn = oldAfter })
+		s, err := New("key", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.syncNodes(context.Background()); !errors.Is(err, want) {
+			t.Fatalf("syncNodes() error = %v, want %v", err, want)
+		}
+	})
+
+	t.Run("context-cancels-while-waiting-for-reconcile", func(t *testing.T) {
+		testenv.SetHome(t, t.TempDir())
+		if err := config.EnsureDir(); err != nil {
+			t.Fatal(err)
+		}
+		writeRegistry(t, nil)
+		s, err := New("key", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		s.reconcileGate <- struct{}{}
+		t.Cleanup(func() { <-s.reconcileGate })
+		ctx, cancel := context.WithCancel(context.Background())
+		oldAfter := afterDesiredLoadedFn
+		afterDesiredLoadedFn = func(context.Context, uint64) error {
+			cancel()
+			return nil
+		}
+		t.Cleanup(func() { afterDesiredLoadedFn = oldAfter })
+		if err := s.syncNodes(ctx); !errors.Is(err, context.Canceled) {
+			t.Fatalf("syncNodes() error = %v, want context.Canceled", err)
+		}
+	})
+
+	t.Run("tag-ensure", func(t *testing.T) {
+		testenv.SetHome(t, t.TempDir())
+		if err := config.EnsureDir(); err != nil {
+			t.Fatal(err)
+		}
+		writeRegistry(t, []registry.Service{{Name: "tagged", Type: registry.TypeFile, Path: t.TempDir(), Tags: []string{"tag:svc"}}})
+		want := errors.New("tag ensure failed")
+		s, err := New("key", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		s.SetEnsureTagsFn(func(context.Context, []string) error { return want })
+		if err := s.syncNodes(context.Background()); !errors.Is(err, want) {
+			t.Fatalf("syncNodes() error = %v, want %v", err, want)
+		}
+	})
 }
 
 func TestSyncNodes_ShutdownStatePreventsStartingNode(t *testing.T) {
@@ -2070,6 +2461,742 @@ func TestSyncNodes_WritesConcreteTCPRuntimeHostFromStatus(t *testing.T) {
 	}
 	if strings.Contains(endpoint.Display, "<tailnet>") {
 		t.Fatalf("tcp endpoint = %+v, must not mark placeholder exact", endpoint)
+	}
+}
+
+func TestSyncNodes_RecoverableAgentFailuresAreBoundedAndVisible(t *testing.T) {
+	testenv.SetHome(t, t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+	writeRegistry(t, []registry.Service{
+		{Name: "public-app", Type: registry.TypeProxy, Target: "http://localhost:3000", Funnel: true, PublicAck: true},
+		{Name: "listen-fail", Type: registry.TypeProxy, Target: "http://localhost:3001", Funnel: true, PublicAck: true},
+		{Name: "stuck", Type: registry.TypeFile, Path: t.TempDir()},
+		{Name: "healthy", Type: registry.TypeFile, Path: t.TempDir()},
+	})
+
+	servers := map[string]*fakeTSNetServer{}
+	nodeContexts := map[string]context.Context{}
+	oldObserveNodeContext := observeNodeContextFn
+	observeNodeContextFn = func(name string, ctx context.Context) {
+		nodeContexts[name] = ctx
+		if fake := servers[name]; fake != nil {
+			fake.nodeContext = ctx
+		}
+	}
+	t.Cleanup(func() { observeNodeContextFn = oldObserveNodeContext })
+	oldNew := newTSNetServerFn
+	newTSNetServerFn = func(svc registry.Service, stateDir, authKey, controlURL string) tsnetServer {
+		fake := &fakeTSNetServer{}
+		switch svc.Name {
+		case "public-app":
+			fake.status = &ipnstate.Status{Self: &ipnstate.PeerStatus{DNSName: "public-app.tailnet.ts.net."}}
+			fake.requireCanceledOnClose = true
+		case "stuck":
+			fake.upWait = true
+		case "listen-fail":
+			fake.status = funnelEnabledStatus("listen-fail.tailnet.ts.net.")
+			fake.localClient = &LocalClient{}
+			fake.listenFunnelErr = errors.New("synthetic Funnel bind failure")
+		case "healthy":
+			fake.certDomains = []string{"healthy.tailnet.ts.net"}
+		}
+		servers[svc.Name] = fake
+		return fake
+	}
+	t.Cleanup(func() { newTSNetServerFn = oldNew })
+
+	oldTimeout := nodeStartupTimeout
+	nodeStartupTimeout = 20 * time.Millisecond
+	t.Cleanup(func() { nodeStartupTimeout = oldTimeout })
+
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(s.closeAllNodes)
+
+	started := time.Now()
+	if err := s.syncNodes(context.Background()); err != nil {
+		t.Fatalf("syncNodes() error = %v, want recoverable per-service failures", err)
+	}
+	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+		t.Fatalf("syncNodes() took %s, want bounded startup", elapsed)
+	}
+	if _, ok := s.nodes["healthy"]; !ok {
+		t.Fatal("healthy service did not start after prior service failures")
+	}
+	if _, ok := s.nodes["public-app"]; ok {
+		t.Fatal("Funnel service without capability unexpectedly started")
+	}
+	if servers["public-app"].listenFunnelCalled != 0 {
+		t.Fatal("ListenFunnel was called before the node-specific capability preflight passed")
+	}
+	for _, name := range []string{"public-app", "listen-fail", "stuck"} {
+		if got := servers[name].closeCount.Load(); got != 1 {
+			t.Fatalf("%s Close calls = %d, want exactly 1", name, got)
+		}
+	}
+	select {
+	case <-nodeContexts["public-app"].Done():
+	default:
+		t.Fatal("capability failure left its node context active")
+	}
+	if servers["public-app"].closeSawActiveContext.Load() {
+		t.Fatal("capability failure closed tsnet before canceling its context")
+	}
+
+	snapshotPath, err := config.RuntimeSnapshotPath()
+	if err != nil {
+		t.Fatalf("RuntimeSnapshotPath() error = %v", err)
+	}
+	snapshot, err := runtimesnapshot.Load(snapshotPath)
+	if err != nil {
+		t.Fatalf("runtime Load() error = %v", err)
+	}
+	if snapshot.Partial || len(snapshot.Services) != 4 {
+		t.Fatalf("snapshot = %+v, want exact state for all four services", snapshot)
+	}
+	byName := map[string]runtimesnapshot.ServiceSnapshot{}
+	for _, service := range snapshot.Services {
+		byName[service.Name] = service
+	}
+	publicApp := byName["public-app"]
+	if !publicApp.FunnelRequested || publicApp.FunnelActive || publicApp.FunnelState != runtimesnapshot.FunnelStateCapabilityMissing {
+		t.Fatalf("public-app Funnel state = %+v", publicApp)
+	}
+	if publicApp.RuntimeState != runtimesnapshot.ServiceRuntimeFailed || publicApp.Error == nil || publicApp.Error.Code != registry.CodeFunnelCapabilityMissing || len(publicApp.Error.Next) == 0 {
+		t.Fatalf("public-app failure = %+v, want actionable stable error", publicApp)
+	}
+	listenFail := byName["listen-fail"]
+	if !listenFail.FunnelRequested || listenFail.FunnelActive || listenFail.FunnelState != runtimesnapshot.FunnelStateListenFailed || listenFail.Error == nil || listenFail.Error.Code != registry.CodeFunnelListenFailed {
+		t.Fatalf("listen-fail Funnel state = %+v", listenFail)
+	}
+	stuck := byName["stuck"]
+	if stuck.RuntimeState != runtimesnapshot.ServiceRuntimeFailed || stuck.Error == nil || stuck.Error.Code != registry.CodeServiceStartTimeout {
+		t.Fatalf("stuck failure = %+v, want startup timeout", stuck)
+	}
+	healthy := byName["healthy"]
+	if healthy.RuntimeState != runtimesnapshot.ServiceRuntimeRunning || healthy.FunnelRequested || healthy.FunnelActive || healthy.FunnelState != runtimesnapshot.FunnelStateNotRequested {
+		t.Fatalf("healthy runtime state = %+v", healthy)
+	}
+}
+
+func TestSyncNodes_FunnelActiveRequiresSuccessfulFunnelListener(t *testing.T) {
+	testenv.SetHome(t, t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+	writeRegistry(t, []registry.Service{{
+		Name: "public-ok", Type: registry.TypeProxy, Target: "http://localhost:3000", Funnel: true, PublicAck: true,
+	}})
+
+	fake := &fakeTSNetServer{
+		status:      funnelEnabledStatus("public-ok.tailnet.ts.net."),
+		localClient: &LocalClient{},
+		certDomains: []string{"public-ok.tailnet.ts.net"},
+	}
+	oldNew := newTSNetServerFn
+	newTSNetServerFn = func(registry.Service, string, string, string) tsnetServer { return fake }
+	t.Cleanup(func() { newTSNetServerFn = oldNew })
+
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(s.closeAllNodes)
+	if err := s.syncNodes(context.Background()); err != nil {
+		t.Fatalf("syncNodes() error = %v", err)
+	}
+	if fake.listenFunnelCalled != 1 {
+		t.Fatalf("ListenFunnel calls = %d, want 1", fake.listenFunnelCalled)
+	}
+	if node := s.nodes["public-ok"]; node == nil || !node.funnelListenerActive {
+		t.Fatalf("running node = %+v, want recorded successful Funnel listener", node)
+	}
+
+	snapshotPath, err := config.RuntimeSnapshotPath()
+	if err != nil {
+		t.Fatalf("RuntimeSnapshotPath() error = %v", err)
+	}
+	snapshot, err := runtimesnapshot.Load(snapshotPath)
+	if err != nil {
+		t.Fatalf("runtime Load() error = %v", err)
+	}
+	if len(snapshot.Services) != 1 || !snapshot.Services[0].FunnelActive || snapshot.Services[0].FunnelState != runtimesnapshot.FunnelStateActive {
+		t.Fatalf("snapshot services = %+v, want active Funnel backed by successful listener", snapshot.Services)
+	}
+}
+
+func TestSyncNodes_ListenerActivationTimeoutClosesAndUnblocksLaterService(t *testing.T) {
+	testenv.SetHome(t, t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+	writeRegistry(t, []registry.Service{
+		{Name: "blocked-funnel", Type: registry.TypeProxy, Target: "http://localhost:3000", Funnel: true, PublicAck: true},
+		{Name: "healthy", Type: registry.TypeFile, Path: t.TempDir()},
+	})
+
+	blocked := &blockingListenerTSNetServer{
+		fakeTSNetServer: fakeTSNetServer{status: funnelEnabledStatus("blocked-funnel.tailnet.ts.net."), localClient: &LocalClient{}},
+		listenStarted:   make(chan struct{}),
+		unblock:         make(chan struct{}),
+	}
+	healthy := &fakeTSNetServer{certDomains: []string{"healthy.tailnet.ts.net"}}
+	oldNew := newTSNetServerFn
+	newTSNetServerFn = func(svc registry.Service, _ string, _ string, _ string) tsnetServer {
+		if svc.Name == "blocked-funnel" {
+			return blocked
+		}
+		return healthy
+	}
+	t.Cleanup(func() { newTSNetServerFn = oldNew })
+	oldTimeout := nodeStartupTimeout
+	nodeStartupTimeout = 20 * time.Millisecond
+	t.Cleanup(func() { nodeStartupTimeout = oldTimeout })
+
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(s.closeAllNodes)
+	started := time.Now()
+	if err := s.syncNodes(context.Background()); err != nil {
+		t.Fatalf("syncNodes() error = %v", err)
+	}
+	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+		t.Fatalf("listener-bounded sync took %s", elapsed)
+	}
+	select {
+	case <-blocked.listenStarted:
+	default:
+		t.Fatal("test did not block inside ListenFunnel")
+	}
+	if got := blocked.closeCount.Load(); got != 1 {
+		t.Fatalf("blocked listener Close calls = %d, want exactly 1", got)
+	}
+	if !s.nodeRunning("healthy") {
+		t.Fatal("healthy service did not start after listener-stage timeout")
+	}
+	failure := s.serviceFailures["blocked-funnel"]
+	if failure.Error == nil || failure.Error.Code != registry.CodeServiceStartTimeout {
+		t.Fatalf("blocked listener failure = %+v, want %s", failure, registry.CodeServiceStartTimeout)
+	}
+}
+
+func TestActivateListenerCancellationJoinsWorkerBeforeReturn(t *testing.T) {
+	listenerCtx, cancel := context.WithCancel(context.Background())
+	workerMayFinish := make(chan struct{})
+	workerDone := make(chan struct{})
+	closeResources := func() {
+		cancel()
+	}
+	returned := make(chan struct{})
+	go func() {
+		defer close(returned)
+		_, _, _ = activateListener(listenerCtx, context.Background(), closeResources, func() (net.Listener, error) {
+			<-workerMayFinish
+			close(workerDone)
+			return nil, net.ErrClosed
+		})
+	}()
+
+	cancel()
+	select {
+	case <-returned:
+		t.Fatal("activateListener returned before the listener worker completed")
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(workerMayFinish)
+	select {
+	case <-returned:
+	case <-time.After(time.Second):
+		t.Fatal("activateListener did not return after the listener worker completed")
+	}
+	select {
+	case <-workerDone:
+	default:
+		t.Fatal("listener worker was not joined before return")
+	}
+}
+
+func TestActivateListenerCancellationClosesLateListener(t *testing.T) {
+	listenerCtx, cancel := context.WithCancel(context.Background())
+	late := &fakeListener{}
+	listenerStarted := make(chan struct{})
+	listenerMayReturn := make(chan struct{})
+	result := make(chan error, 1)
+	go func() {
+		_, _, err := activateListener(listenerCtx, context.Background(), func() {
+			cancel()
+			close(listenerMayReturn)
+		}, func() (net.Listener, error) {
+			close(listenerStarted)
+			<-listenerMayReturn
+			return late, nil
+		})
+		result <- err
+	}()
+	<-listenerStarted
+	cancel()
+	select {
+	case <-result:
+	case <-time.After(time.Second):
+		t.Fatal("activateListener did not return after cancellation")
+	}
+	if !late.closed.Load() {
+		t.Fatal("listener returned after cancellation was not closed")
+	}
+}
+
+func TestLoadRegistryForRuntimeSettledRereadsAfterTransientFailure(t *testing.T) {
+	oldLoad := registryLoadRuntimeFn
+	oldDelay := registrySettleDelay
+	t.Cleanup(func() {
+		registryLoadRuntimeFn = oldLoad
+		registrySettleDelay = oldDelay
+	})
+	registrySettleDelay = time.Millisecond
+	calls := 0
+	registryLoadRuntimeFn = func(string) (*registry.Registry, []registry.ServiceIssue, error) {
+		calls++
+		if calls == 1 {
+			return nil, nil, io.ErrUnexpectedEOF
+		}
+		return &registry.Registry{SchemaVersion: registry.CurrentRegistrySchemaVersion, Services: []registry.Service{}}, nil, nil
+	}
+
+	reg, issues, err := loadRegistryForRuntimeSettled(context.Background(), "/isolated/registry.json")
+	if err != nil || reg == nil || len(reg.Services) != 0 || len(issues) != 0 || calls != 2 {
+		t.Fatalf("settled load = reg:%+v issues:%+v err:%v calls:%d, want successful second read", reg, issues, err, calls)
+	}
+}
+
+func TestSyncNodes_MissingFilePathIsIsolatedFromHealthyServices(t *testing.T) {
+	testenv.SetHome(t, t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+	missingPath := filepath.Join(t.TempDir(), "removed")
+	writeRegistry(t, []registry.Service{
+		{Name: "gone", Type: registry.TypeFile, Path: missingPath},
+		{Name: "healthy", Type: registry.TypeFile, Path: t.TempDir()},
+	})
+
+	var started []string
+	oldNew := newTSNetServerFn
+	newTSNetServerFn = func(svc registry.Service, stateDir, authKey, controlURL string) tsnetServer {
+		started = append(started, svc.Name)
+		return &fakeTSNetServer{certDomains: []string{svc.Name + ".tailnet.ts.net"}}
+	}
+	t.Cleanup(func() { newTSNetServerFn = oldNew })
+
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(s.closeAllNodes)
+	if err := s.syncNodes(context.Background()); err != nil {
+		t.Fatalf("syncNodes() error = %v, want per-service validation isolation", err)
+	}
+	if strings.Join(started, ",") != "healthy" {
+		t.Fatalf("started services = %v, want only healthy", started)
+	}
+	if _, ok := s.nodes["healthy"]; !ok {
+		t.Fatal("healthy service did not start")
+	}
+	if _, ok := s.nodes["gone"]; ok {
+		t.Fatal("missing-path service unexpectedly started")
+	}
+
+	snapshotPath, err := config.RuntimeSnapshotPath()
+	if err != nil {
+		t.Fatalf("RuntimeSnapshotPath() error = %v", err)
+	}
+	snapshot, err := runtimesnapshot.Load(snapshotPath)
+	if err != nil {
+		t.Fatalf("runtime Load() error = %v", err)
+	}
+	if snapshot.Partial || len(snapshot.Services) != 2 {
+		t.Fatalf("snapshot = %+v, want exact state for failed and healthy services", snapshot)
+	}
+	byName := map[string]runtimesnapshot.ServiceSnapshot{}
+	for _, service := range snapshot.Services {
+		byName[service.Name] = service
+	}
+	gone := byName["gone"]
+	if gone.RuntimeState != runtimesnapshot.ServiceRuntimeFailed || gone.Error == nil || gone.Error.Code != registry.CodePathNotFound || len(gone.Error.Next) == 0 {
+		t.Fatalf("gone service = %+v, want actionable path_not_found failure", gone)
+	}
+	if healthy := byName["healthy"]; healthy.RuntimeState != runtimesnapshot.ServiceRuntimeRunning {
+		t.Fatalf("healthy service = %+v, want running", healthy)
+	}
+}
+
+func TestRecoverableServiceFailureIncludesFilePathValidationCodes(t *testing.T) {
+	svc := registry.Service{Name: "files", Type: registry.TypeFile, Path: "/tmp/files"}
+	for _, tc := range []struct {
+		name string
+		err  error
+		code string
+	}{
+		{name: "missing", err: registry.PathNotFoundError(svc.Path), code: registry.CodePathNotFound},
+		{name: "not-directory", err: registry.PathNotDirectoryError(svc.Path), code: registry.CodePathNotDirectory},
+		{name: "not-accessible", err: registry.PathNotAccessibleError(svc.Path, errors.New("permission denied")), code: registry.CodePathNotAccessible},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			failure, ok := recoverableServiceFailure(svc, tc.err)
+			if !ok || failure.RuntimeState != runtimesnapshot.ServiceRuntimeFailed || failure.Error == nil || failure.Error.Code != tc.code || len(failure.Error.Next) == 0 {
+				t.Fatalf("recoverableServiceFailure() = %+v, %v; want actionable %s", failure, ok, tc.code)
+			}
+		})
+	}
+}
+
+func TestSyncNodes_InvalidFunnelGuardrailsCloseExistingPublicListener(t *testing.T) {
+	cases := []struct {
+		name string
+		svc  func(*testing.T) registry.Service
+		code string
+	}{
+		{name: "allow", code: registry.CodeFunnelAllowConflict, svc: func(*testing.T) registry.Service {
+			return registry.Service{Name: "public-app", Type: registry.TypeProxy, Target: "http://localhost:3000", Funnel: true, PublicAck: true, AllowedUsers: []string{"alice@example.com"}}
+		}},
+		{name: "control-url", code: registry.CodeFunnelControlURLConflict, svc: func(*testing.T) registry.Service {
+			return registry.Service{Name: "public-app", Type: registry.TypeProxy, Target: "http://localhost:3000", Funnel: true, PublicAck: true, ControlURL: "https://control.example.com"}
+		}},
+		{name: "type", code: registry.CodeFunnelTypeConflict, svc: func(t *testing.T) registry.Service {
+			return registry.Service{Name: "public-app", Type: registry.TypeFile, Path: t.TempDir(), Funnel: true, PublicAck: true}
+		}},
+		{name: "public-ack", code: registry.CodeFunnelPublicAckRequired, svc: func(*testing.T) registry.Service {
+			return registry.Service{Name: "public-app", Type: registry.TypeProxy, Target: "http://localhost:3000", Funnel: true}
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			testenv.SetHome(t, t.TempDir())
+			if err := config.EnsureDir(); err != nil {
+				t.Fatalf("EnsureDir() error = %v", err)
+			}
+			writeRegistry(t, []registry.Service{tc.svc(t)})
+			s, err := New("key", "")
+			if err != nil {
+				t.Fatalf("New() error = %v", err)
+			}
+			listener := &fakeListener{}
+			s.nodes["public-app"] = &ServiceNode{
+				service:              registry.Service{Name: "public-app", Type: registry.TypeProxy, Target: "http://localhost:3000", Funnel: true, PublicAck: true},
+				funnelListenerActive: true,
+				listener:             listener,
+				cancel:               func() {},
+			}
+			oldNew := newTSNetServerFn
+			newTSNetServerFn = func(registry.Service, string, string, string) tsnetServer {
+				t.Fatal("invalid service reached tsnet construction")
+				return nil
+			}
+			t.Cleanup(func() { newTSNetServerFn = oldNew })
+
+			if err := s.syncNodes(context.Background()); err != nil {
+				t.Fatalf("syncNodes() error = %v", err)
+			}
+			if !listener.closed.Load() || s.nodeRunning("public-app") {
+				t.Fatalf("invalid %s reload kept old public listener/node", tc.name)
+			}
+			failure := s.serviceFailures["public-app"]
+			if failure.Error == nil || failure.Error.Code != tc.code {
+				t.Fatalf("failure = %+v, want %s", failure, tc.code)
+			}
+		})
+	}
+}
+
+func TestSyncNodes_GlobalInvalidReloadClosesOnlyFunnelAndPreservesState(t *testing.T) {
+	testenv.SetHome(t, t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+	regPath := writeRegistry(t, nil)
+	nodesDir, err := config.NodesDir()
+	if err != nil {
+		t.Fatalf("NodesDir() error = %v", err)
+	}
+	stateDir := filepath.Join(nodesDir, "public-app")
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll(state) error = %v", err)
+	}
+	marker := filepath.Join(stateDir, "state-marker")
+	if err := os.WriteFile(marker, []byte("keep"), 0o600); err != nil {
+		t.Fatalf("WriteFile(marker) error = %v", err)
+	}
+
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	publicListener := &fakeListener{}
+	privateListener := &fakeListener{}
+	s.nodes["public-app"] = &ServiceNode{service: registry.Service{Name: "public-app", Type: registry.TypeProxy, Funnel: true}, funnelListenerActive: true, listener: publicListener, cancel: func() {}}
+	s.nodes["private-app"] = &ServiceNode{service: registry.Service{Name: "private-app", Type: registry.TypeProxy}, listener: privateListener, cancel: func() {}}
+	if err := os.WriteFile(regPath, []byte("{invalid"), 0o600); err != nil {
+		t.Fatalf("WriteFile(invalid) error = %v", err)
+	}
+	oldSettle := registrySettleDelay
+	registrySettleDelay = time.Millisecond
+	t.Cleanup(func() { registrySettleDelay = oldSettle })
+
+	if err := s.syncNodes(context.Background()); err == nil {
+		t.Fatal("syncNodes() error = nil, want global invalid reload error")
+	}
+	if !publicListener.closed.Load() || s.nodeRunning("public-app") {
+		t.Fatal("global invalid reload kept active Funnel node")
+	}
+	if privateListener.closed.Load() || !s.nodeRunning("private-app") {
+		t.Fatal("global invalid reload stopped private-only node")
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("global invalid reload removed tsnet state marker: %v", err)
+	}
+	snapshotPath, err := config.RuntimeSnapshotPath()
+	if err != nil {
+		t.Fatalf("RuntimeSnapshotPath() error = %v", err)
+	}
+	snapshot, err := runtimesnapshot.Load(snapshotPath)
+	if err != nil {
+		t.Fatalf("runtime Load() error = %v", err)
+	}
+	if snapshot.GlobalError == nil || snapshot.GlobalError.Code != registry.CodeRegistryReloadInvalid || !snapshot.Partial {
+		t.Fatalf("snapshot global evidence = %+v, partial=%v", snapshot.GlobalError, snapshot.Partial)
+	}
+	s.closeAllNodes()
+}
+
+func TestSyncNodes_RegistryAvailabilityDecisionMatrix(t *testing.T) {
+	tests := []struct {
+		name                 string
+		registryData         *string
+		wantError            bool
+		wantPublicStopped    bool
+		wantPrivateStopped   bool
+		wantPublicStateGone  bool
+		wantPrivateStateGone bool
+	}{
+		{name: "file-missing", wantError: true, wantPublicStopped: true},
+		{name: "zero-byte", registryData: ptrServerString(""), wantError: true, wantPublicStopped: true},
+		{name: "partial-json", registryData: ptrServerString(`{"schema_version":1,"services":[`), wantError: true, wantPublicStopped: true},
+		{name: "explicit-empty-services", registryData: ptrServerString(`{"schema_version":1,"services":[]}`), wantPublicStopped: true, wantPrivateStopped: true, wantPublicStateGone: true, wantPrivateStateGone: true},
+		{name: "delete-one-service", registryData: ptrServerString(`{"schema_version":1,"services":[{"name":"private-app","type":"proxy","target":"http://localhost:3001"}]}`), wantPublicStopped: true, wantPublicStateGone: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			testenv.SetHome(t, t.TempDir())
+			if err := config.EnsureDir(); err != nil {
+				t.Fatal(err)
+			}
+			regPath, err := config.RegistryPath()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.registryData != nil {
+				if err := os.WriteFile(regPath, []byte(*tc.registryData), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			nodesDir, err := config.NodesDir()
+			if err != nil {
+				t.Fatal(err)
+			}
+			markers := map[string]string{}
+			for _, name := range []string{"public-app", "private-app"} {
+				stateDir := filepath.Join(nodesDir, name)
+				if err := os.MkdirAll(stateDir, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				markers[name] = filepath.Join(stateDir, "state-marker")
+				if err := os.WriteFile(markers[name], []byte("keep"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			s, err := New("key", "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			publicListener := &fakeListener{}
+			privateListener := &fakeListener{}
+			s.nodes["public-app"] = &ServiceNode{
+				service:              registry.Service{Name: "public-app", Type: registry.TypeProxy, Target: "http://localhost:3000", Funnel: true, PublicAck: true},
+				funnelListenerActive: true,
+				listener:             publicListener,
+				cancel:               func() {},
+			}
+			s.nodes["private-app"] = &ServiceNode{
+				service:  registry.Service{Name: "private-app", Type: registry.TypeProxy, Target: "http://localhost:3001"},
+				listener: privateListener,
+				cancel:   func() {},
+			}
+			oldSettle := registrySettleDelay
+			registrySettleDelay = time.Millisecond
+			t.Cleanup(func() {
+				registrySettleDelay = oldSettle
+				s.closeAllNodes()
+			})
+
+			syncErr := s.syncNodes(context.Background())
+			if (syncErr != nil) != tc.wantError {
+				t.Fatalf("syncNodes() error = %v, wantError=%v", syncErr, tc.wantError)
+			}
+			publicStopped := !s.nodeRunning("public-app") && publicListener.closed.Load()
+			privateStopped := !s.nodeRunning("private-app") && privateListener.closed.Load()
+			publicStateGone := fileMissing(markers["public-app"])
+			privateStateGone := fileMissing(markers["private-app"])
+			if publicStopped != tc.wantPublicStopped || privateStopped != tc.wantPrivateStopped || publicStateGone != tc.wantPublicStateGone || privateStateGone != tc.wantPrivateStateGone {
+				t.Fatalf("node/state facts public_stopped=%v private_stopped=%v public_state_removed=%v private_state_removed=%v", publicStopped, privateStopped, publicStateGone, privateStateGone)
+			}
+			t.Logf("matrix input=%s node_stopped=public:%v,private:%v state_removed=public:%v,private:%v", tc.name, publicStopped, privateStopped, publicStateGone, privateStateGone)
+		})
+	}
+}
+
+func ptrServerString(value string) *string { return &value }
+
+func fileMissing(path string) bool {
+	_, err := os.Stat(path)
+	return os.IsNotExist(err)
+}
+
+func TestSyncNodes_ClearsGlobalFailureAfterValidRegistryRecovery(t *testing.T) {
+	testenv.SetHome(t, t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatal(err)
+	}
+	regPath := writeRegistry(t, nil)
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	privateService := registry.Service{Name: "private-app", Type: registry.TypeProxy, Target: "http://localhost:3001"}
+	s.nodes[privateService.Name] = &ServiceNode{service: privateService, listener: &fakeListener{}, cancel: func() {}}
+	oldSettle := registrySettleDelay
+	registrySettleDelay = time.Millisecond
+	t.Cleanup(func() {
+		registrySettleDelay = oldSettle
+		s.closeAllNodes()
+	})
+
+	if err := os.WriteFile(regPath, []byte("{invalid"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.syncNodes(context.Background()); err == nil || s.globalFailure == nil {
+		t.Fatalf("invalid sync error=%v globalFailure=%+v", err, s.globalFailure)
+	}
+	data, err := json.Marshal(registry.Registry{SchemaVersion: registry.CurrentRegistrySchemaVersion, Services: []registry.Service{privateService}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(regPath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.syncNodes(context.Background()); err != nil {
+		t.Fatalf("recovery syncNodes() error = %v", err)
+	}
+	if s.globalFailure != nil {
+		t.Fatalf("globalFailure after recovery = %+v", s.globalFailure)
+	}
+	snapshotPath, err := config.RuntimeSnapshotPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := runtimesnapshot.Load(snapshotPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.GlobalError != nil || snapshot.Partial {
+		t.Fatalf("recovery snapshot global_error=%+v partial=%v", snapshot.GlobalError, snapshot.Partial)
+	}
+}
+
+func TestSyncNodes_ClearsFailureAfterSameServiceRecovers(t *testing.T) {
+	testenv.SetHome(t, t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "later")
+	writeRegistry(t, []registry.Service{{Name: "files", Type: registry.TypeFile, Path: path}})
+	fake := &fakeTSNetServer{certDomains: []string{"files.tailnet.ts.net"}}
+	oldNew := newTSNetServerFn
+	newTSNetServerFn = func(registry.Service, string, string, string) tsnetServer { return fake }
+	t.Cleanup(func() { newTSNetServerFn = oldNew })
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(s.closeAllNodes)
+	if err := s.syncNodes(context.Background()); err != nil {
+		t.Fatalf("first syncNodes() error = %v", err)
+	}
+	if failure := s.serviceFailures["files"]; failure.Error == nil || failure.Error.Code != registry.CodePathNotFound {
+		t.Fatalf("first failure = %+v", failure)
+	}
+	if err := os.Mkdir(path, 0o700); err != nil {
+		t.Fatalf("Mkdir(recovery path) error = %v", err)
+	}
+	if err := s.syncNodes(context.Background()); err != nil {
+		t.Fatalf("recovery syncNodes() error = %v", err)
+	}
+	if _, exists := s.serviceFailures["files"]; exists {
+		t.Fatal("successful recovery retained stale service failure")
+	}
+	snapshotPath, _ := config.RuntimeSnapshotPath()
+	snapshot, err := runtimesnapshot.Load(snapshotPath)
+	if err != nil {
+		t.Fatalf("runtime Load() error = %v", err)
+	}
+	if len(snapshot.Services) != 1 || snapshot.Services[0].RuntimeState != runtimesnapshot.ServiceRuntimeRunning || snapshot.Services[0].Error != nil {
+		t.Fatalf("recovery snapshot = %+v", snapshot.Services)
+	}
+}
+
+func TestSyncNodes_ValidationProgressSnapshotsRemainPartial(t *testing.T) {
+	testenv.SetHome(t, t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+	writeRegistry(t, []registry.Service{
+		{Name: "invalid", Type: registry.TypeProxy},
+		{Name: "healthy", Type: registry.TypeFile, Path: t.TempDir()},
+	})
+	oldNew := newTSNetServerFn
+	newTSNetServerFn = func(registry.Service, string, string, string) tsnetServer { return &fakeTSNetServer{} }
+	t.Cleanup(func() { newTSNetServerFn = oldNew })
+	var snapshots []runtimesnapshot.Snapshot
+	oldSave := runtimeSaveSnapshotFn
+	runtimeSaveSnapshotFn = func(_ string, snapshot runtimesnapshot.Snapshot) error {
+		snapshots = append(snapshots, snapshot)
+		return nil
+	}
+	t.Cleanup(func() { runtimeSaveSnapshotFn = oldSave })
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(s.closeAllNodes)
+	if err := s.syncNodes(context.Background()); err != nil {
+		t.Fatalf("syncNodes() error = %v", err)
+	}
+	if len(snapshots) < 3 {
+		t.Fatalf("snapshots = %d, want validation partial, running partial, final complete", len(snapshots))
+	}
+	for i, snapshot := range snapshots[:len(snapshots)-1] {
+		if !snapshot.Partial {
+			t.Fatalf("snapshot[%d] Partial=false before authoritative final write", i)
+		}
+	}
+	if snapshots[len(snapshots)-1].Partial {
+		t.Fatal("final snapshot Partial=true, want authoritative complete")
 	}
 }
 
@@ -2639,6 +3766,7 @@ func TestRun(t *testing.T) {
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
+	writeRegistry(t, nil)
 
 	s, err := New("key", "")
 	if err != nil {
@@ -2680,34 +3808,37 @@ func TestRun_InitialSyncFailureReturnsError(t *testing.T) {
 	}
 }
 
-func TestSyncNodesRejectsMalformedPersistedServicesBeforeTSNetSideEffects(t *testing.T) {
+func TestSyncNodesHandlesMalformedPersistedServicesBeforeTSNetSideEffects(t *testing.T) {
 	fileAsPath := filepath.Join(t.TempDir(), "not-a-dir")
 	if err := os.WriteFile(fileAsPath, []byte("not a directory"), 0o600); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 	missingPath := filepath.Join(t.TempDir(), "missing")
 
-	cases := []registry.Service{
-		{Name: "unknown", Type: "websocket", Target: "http://localhost:3000"},
-		{Name: "file-empty", Type: registry.TypeFile},
-		{Name: "file-relative", Type: registry.TypeFile, Path: "relative"},
-		{Name: "file-missing", Type: registry.TypeFile, Path: missingPath},
-		{Name: "file-notdir", Type: registry.TypeFile, Path: fileAsPath},
-		{Name: "proxy-hostless", Type: registry.TypeProxy, Target: "https:///app"},
-		{Name: "proxy-relative", Type: registry.TypeProxy, Target: "localhost:3000"},
-		{Name: "proxy-unsupported", Type: registry.TypeProxy, Target: "ftp://example.com"},
-		{Name: "tcp-hostless", Type: registry.TypeTCP, Target: ":5432", Port: 5432},
-		{Name: "tcp-nonnum", Type: registry.TypeTCP, Target: "localhost:abc"},
-		{Name: "domain", Type: registry.TypeProxy, Target: "http://localhost:3000", Domain: "app.example.com"},
+	cases := []struct {
+		service         registry.Service
+		recoverableCode string
+	}{
+		{service: registry.Service{Name: "unknown", Type: "websocket", Target: "http://localhost:3000"}},
+		{service: registry.Service{Name: "file-empty", Type: registry.TypeFile}},
+		{service: registry.Service{Name: "file-relative", Type: registry.TypeFile, Path: "relative"}, recoverableCode: registry.CodePathMustBeAbsolute},
+		{service: registry.Service{Name: "file-missing", Type: registry.TypeFile, Path: missingPath}, recoverableCode: registry.CodePathNotFound},
+		{service: registry.Service{Name: "file-notdir", Type: registry.TypeFile, Path: fileAsPath}, recoverableCode: registry.CodePathNotDirectory},
+		{service: registry.Service{Name: "proxy-hostless", Type: registry.TypeProxy, Target: "https:///app"}},
+		{service: registry.Service{Name: "proxy-relative", Type: registry.TypeProxy, Target: "localhost:3000"}},
+		{service: registry.Service{Name: "proxy-unsupported", Type: registry.TypeProxy, Target: "ftp://example.com"}},
+		{service: registry.Service{Name: "tcp-hostless", Type: registry.TypeTCP, Target: ":5432", Port: 5432}},
+		{service: registry.Service{Name: "tcp-nonnum", Type: registry.TypeTCP, Target: "localhost:abc"}},
+		{service: registry.Service{Name: "domain", Type: registry.TypeProxy, Target: "http://localhost:3000", Domain: "app.example.com"}, recoverableCode: registry.CodeFeatureUnavailable},
 	}
 
-	for _, svc := range cases {
-		t.Run(svc.Name, func(t *testing.T) {
+	for _, tc := range cases {
+		t.Run(tc.service.Name, func(t *testing.T) {
 			testenv.SetHome(t, t.TempDir())
 			if err := config.EnsureDir(); err != nil {
 				t.Fatalf("EnsureDir() error = %v", err)
 			}
-			writeRegistry(t, []registry.Service{svc})
+			writeRegistry(t, []registry.Service{tc.service})
 
 			var constructed atomic.Int32
 			oldNew := newTSNetServerFn
@@ -2721,8 +3852,17 @@ func TestSyncNodesRejectsMalformedPersistedServicesBeforeTSNetSideEffects(t *tes
 			if err != nil {
 				t.Fatalf("New() error = %v", err)
 			}
-			if err := s.syncNodes(context.Background()); err == nil {
-				t.Fatal("syncNodes() error = nil, want validation error")
+			syncErr := s.syncNodes(context.Background())
+			if syncErr != nil {
+				t.Fatalf("syncNodes() error = %v, want isolated service failure", syncErr)
+			}
+			wantCode := tc.recoverableCode
+			if wantCode == "" {
+				wantCode = registry.CodeInvalidServiceConfig
+			}
+			failure, ok := s.serviceFailures[tc.service.Name]
+			if !ok || failure.Error == nil || failure.Error.Code != wantCode {
+				t.Fatalf("service failure = %+v, want code %q", failure, wantCode)
 			}
 			if got := constructed.Load(); got != 0 {
 				t.Fatalf("tsnet constructions = %d, want 0", got)
@@ -2797,6 +3937,7 @@ func TestRunMarksReadyWithZeroServicesAfterAuthoritativeSync(t *testing.T) {
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
+	writeRegistry(t, nil)
 
 	var constructed atomic.Int32
 	oldNew := newTSNetServerFn
@@ -2840,6 +3981,43 @@ func TestRunMarksReadyWithZeroServicesAfterAuthoritativeSync(t *testing.T) {
 	}
 }
 
+func TestRunFailsClosedOnPreSyncAndReadyErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		beforeErr  error
+		readyErr   error
+		wantPrefix string
+	}{
+		{name: "before-initial-sync", beforeErr: errors.New("before failed"), wantPrefix: "before initial sync"},
+		{name: "ready", readyErr: errors.New("ready failed"), wantPrefix: "mark ready"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			testenv.SetHome(t, t.TempDir())
+			if err := config.EnsureDir(); err != nil {
+				t.Fatalf("EnsureDir() error = %v", err)
+			}
+			writeRegistry(t, nil)
+			oldBefore := beforeInitialSyncFn
+			beforeInitialSyncFn = func(context.Context) error { return tc.beforeErr }
+			t.Cleanup(func() { beforeInitialSyncFn = oldBefore })
+			s, err := New("key", "")
+			if err != nil {
+				t.Fatalf("New() error = %v", err)
+			}
+			if tc.readyErr != nil {
+				s.SetReadyFunc(func() error { return tc.readyErr })
+			}
+			err = s.Run(context.Background())
+			if err == nil || !strings.Contains(err.Error(), tc.wantPrefix) {
+				t.Fatalf("Run() error = %v, want %q", err, tc.wantPrefix)
+			}
+			if !s.shuttingDown.Load() {
+				t.Fatal("Run() failure did not enter shutdown state")
+			}
+		})
+	}
+}
+
 func TestRunDoesNotMarkReadyWhenSupersededInitialSyncFails(t *testing.T) {
 	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
@@ -2854,14 +4032,14 @@ func TestRunDoesNotMarkReadyWhenSupersededInitialSyncFails(t *testing.T) {
 	}}}
 
 	var loadCount atomic.Int32
-	oldLoad := registryLoadFn
-	registryLoadFn = func(string) (*registry.Registry, error) {
+	oldLoad := registryLoadRuntimeFn
+	registryLoadRuntimeFn = func(string) (*registry.Registry, []registry.ServiceIssue, error) {
 		if loadCount.Add(1) == 1 {
-			return oldReg, nil
+			return oldReg, nil, nil
 		}
-		return newReg, nil
+		return newReg, nil, nil
 	}
-	t.Cleanup(func() { registryLoadFn = oldLoad })
+	t.Cleanup(func() { registryLoadRuntimeFn = oldLoad })
 
 	firstDesiredLoaded := make(chan struct{})
 	releaseFirst := make(chan struct{})
@@ -3422,29 +4600,6 @@ func TestServiceChanged_Domain(t *testing.T) {
 	changed.Domain = "app.example.com"
 	if !serviceChanged(base, changed) {
 		t.Error("different domain should be changed")
-	}
-}
-
-func TestMetricsHandler(t *testing.T) {
-	testenv.SetHome(t, t.TempDir())
-
-	s, err := New("key", "")
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-
-	handler := s.MetricsHandler()
-	if handler == nil {
-		t.Fatal("MetricsHandler() returned nil")
-	}
-
-	// The handler should respond to HTTP requests (Prometheus metrics endpoint)
-	req, _ := http.NewRequest(http.MethodGet, "/metrics", nil)
-	rr := httptest.NewRecorder()
-	handler.ServeHTTP(rr, req)
-
-	if rr.Code != http.StatusOK {
-		t.Errorf("expected 200, got %d", rr.Code)
 	}
 }
 

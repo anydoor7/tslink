@@ -3,7 +3,6 @@ package cmd
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net"
 	"net/mail"
@@ -18,8 +17,6 @@ import (
 	"github.com/monody0007/tslink/internal/registry"
 	"github.com/spf13/cobra"
 )
-
-const publicAckRequiredError = "funnel requires explicit public acknowledgement (--public on CLI, public_ack:true in API)"
 
 // AddResult is the JSON data for the add command.
 type AddResult struct {
@@ -133,23 +130,17 @@ func buildService(p AddParams) (registry.Service, error) {
 		return registry.Service{}, registry.ServiceTypeAmbiguousError()
 	}
 
-	if p.Funnel && svcType != registry.TypeProxy {
-		return registry.Service{}, fmt.Errorf("--funnel can only be used with --proxy")
-	}
 	if p.Public && !p.Funnel {
-		return registry.Service{}, fmt.Errorf("--public can only be used with --funnel")
+		return registry.Service{}, output.ErrUsage("--public can only be used with --funnel")
 	}
 	if err := registry.ValidateFunnelGuardrails(svcType, p.Funnel, allowedUsers, p.ControlURL, p.Public); err != nil {
 		return registry.Service{}, err
-	}
-	if p.Funnel && !p.Public {
-		return registry.Service{}, errors.New(publicAckRequiredError)
 	}
 	if p.Domain != "" || p.AcmeEmail != "" {
 		return registry.Service{}, registry.FeatureUnavailableError("custom-domain/ACME runtime is not wired; --domain and --acme-email are unavailable")
 	}
 	if err := registry.ValidateControlURL(p.ControlURL); err != nil {
-		return registry.Service{}, err
+		return registry.Service{}, output.ErrUsage(err.Error())
 	}
 	if p.TCP != "" && len(allowedUsers) > 0 {
 		return registry.Service{}, registry.AllowUnsupportedTCPError()
@@ -170,15 +161,15 @@ func buildService(p AddParams) (registry.Service, error) {
 
 	if p.TCP != "" {
 		if err := registry.ValidateTCPTarget(p.TCP); err != nil {
-			return registry.Service{}, err
+			return registry.Service{}, output.ErrUsage(err.Error())
 		}
 		host, portStr, err := net.SplitHostPort(p.TCP)
 		if err != nil {
-			return registry.Service{}, fmt.Errorf("--tcp requires host:port format: %w", err)
+			return registry.Service{}, output.ErrUsage(fmt.Sprintf("--tcp requires host:port format: %v", err))
 		}
 		port, err := strconv.Atoi(portStr)
 		if err != nil || port <= 0 || port > 65535 {
-			return registry.Service{}, fmt.Errorf("invalid port: %s", portStr)
+			return registry.Service{}, output.ErrUsage(fmt.Sprintf("invalid port: %s", portStr))
 		}
 		return registry.Service{
 			Name: p.Name, Type: registry.TypeTCP,
@@ -311,6 +302,15 @@ Examples:
 					return err
 				}
 				svc.Path = filepath.Clean(dirPath)
+			}
+
+			// Dry-run and actual registration share the canonical admission gate.
+			// Only the registry lock/write is skipped below for dry-run.
+			if err := registry.ValidateService(svc); err != nil {
+				if _, coded := registry.ErrorCode(err); coded {
+					return err
+				}
+				return output.ErrUsage(err.Error())
 			}
 
 			if dryRun {

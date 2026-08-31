@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/monody0007/tslink/internal/registry"
+	tsruntime "github.com/monody0007/tslink/internal/runtime"
 )
 
 type listJSONResponse struct {
@@ -194,6 +195,47 @@ func TestListFiltersAndFieldProjection(t *testing.T) {
 	services, ok := tcp.Services.([]ListServiceSummary)
 	if !ok || tcp.Count != 1 || len(services) != 1 || services[0].Name != "db" {
 		t.Fatalf("TCP result = %#v, want db only", tcp)
+	}
+}
+
+func TestSelectListFieldsProjectsEveryAgentRuntimeField(t *testing.T) {
+	url := "https://web.tailnet.ts.net"
+	errorValue := &tsruntime.ServiceError{Code: registry.CodeFunnelListenFailed, Message: "listener failed", Next: []string{"tslink logs --level error --json"}}
+	summary := ListServiceSummary{
+		Name:            "web",
+		Type:            registry.TypeProxy,
+		URL:             &url,
+		URLPending:      false,
+		State:           "exact",
+		FunnelRequested: true,
+		FunnelActive:    false,
+		FunnelState:     tsruntime.FunnelStateListenFailed,
+		Error:           errorValue,
+	}
+	fields := []string{"name", "type", "url", "url_pending", "state", "funnel_requested", "funnel_active", "funnel_state", "error"}
+	selected := selectListFields(summary, fields)
+	if len(selected) != len(fields) {
+		t.Fatalf("selected fields = %#v, want all %d", selected, len(fields))
+	}
+	if selected["name"] != summary.Name || selected["type"] != summary.Type || selected["url"] != summary.URL || selected["url_pending"] != summary.URLPending || selected["state"] != summary.State {
+		t.Fatalf("base projection = %#v, want summary fields", selected)
+	}
+	if selected["funnel_requested"] != summary.FunnelRequested || selected["funnel_active"] != summary.FunnelActive || selected["funnel_state"] != summary.FunnelState || selected["error"] != errorValue {
+		t.Fatalf("agent runtime projection = %#v, want Funnel/error fields", selected)
+	}
+}
+
+func TestSelectListFieldsOmitsHealthyErrorProjection(t *testing.T) {
+	selected := selectListFields(ListServiceSummary{Name: "healthy"}, []string{"error"})
+	if _, exists := selected["error"]; exists {
+		t.Fatalf("selected = %#v, healthy service must omit error rather than emit null", selected)
+	}
+	wire, err := json.Marshal(selected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(wire) != `{}` {
+		t.Fatalf("wire = %s, want {}", wire)
 	}
 }
 

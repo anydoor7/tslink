@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -127,6 +128,153 @@ func TestStatusURLsExactSnapshotUsesRuntimeEndpoint(t *testing.T) {
 	}
 	if web.Exposure.Kind != inspect.ExposureTailnet {
 		t.Fatalf("exposure = %+v, want tailnet", web.Exposure)
+	}
+}
+
+func TestStatusAndListExposeFunnelFailureState(t *testing.T) {
+	dir := t.TempDir()
+	regPath := filepath.Join(dir, "registry.json")
+	pidPath := filepath.Join(dir, "tslink.pid")
+	snapshotPath := filepath.Join(dir, "runtime.json")
+	handoffPath := filepath.Join(dir, "auth-handoff.json")
+	startedAt := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	svc := addStatusTestService(t, regPath, registry.Service{
+		Name:      "public-app",
+		Type:      registry.TypeProxy,
+		Target:    "http://localhost:3000",
+		Funnel:    true,
+		PublicAck: true,
+	})
+	fingerprint := statusRegistryFingerprint(t, regPath)
+	snapshot := tsruntime.NewSnapshot(4242, startedAt, fingerprint, startedAt.Add(time.Second), []tsruntime.ServiceState{{
+		Service:      svc,
+		RuntimeState: tsruntime.ServiceRuntimeFailed,
+		FunnelState:  tsruntime.FunnelStateCapabilityMissing,
+		Error: &tsruntime.ServiceError{
+			Code:    registry.CodeFunnelCapabilityMissing,
+			Message: "nodeAttr funnel is missing",
+			Next:    []string{"fix Access controls Funnel policy"},
+		},
+	}})
+	if err := tsruntime.Save(snapshotPath, snapshot); err != nil {
+		t.Fatalf("runtime.Save: %v", err)
+	}
+	withStatusURLSeams(t, true, 4242, startedAt)
+
+	status, err := getPollableStatus(pidPath, regPath, snapshotPath, handoffPath)
+	if err != nil {
+		t.Fatalf("getPollableStatus: %v", err)
+	}
+	if len(status.Services) != 1 {
+		t.Fatalf("status services = %+v", status.Services)
+	}
+	statusService := status.Services[0]
+	if statusService.Status != tsruntime.ServiceRuntimeFailed || !statusService.FunnelRequested || statusService.FunnelActive || statusService.FunnelState != tsruntime.FunnelStateCapabilityMissing || statusService.Error == nil || len(statusService.Error.Next) == 0 {
+		t.Fatalf("status service = %+v, want actionable Funnel failure", statusService)
+	}
+
+	urls, err := getStatusURLs(pidPath, regPath, snapshotPath)
+	if err != nil {
+		t.Fatalf("getStatusURLs: %v", err)
+	}
+	detailed := findStatusService(t, urls, svc.Name)
+	if detailed.RuntimeState != tsruntime.ServiceRuntimeFailed || detailed.Endpoint.State != statusEndpointStateMissing || detailed.FunnelActive || detailed.FunnelState != tsruntime.FunnelStateCapabilityMissing || detailed.Error == nil {
+		t.Fatalf("status --urls service = %+v", detailed)
+	}
+
+	listed, err := loadListResultForPaths(regPath, pidPath, snapshotPath, listOptions{})
+	if err != nil {
+		t.Fatalf("loadListResultForPaths: %v", err)
+	}
+	services, ok := listed.Services.([]ListServiceSummary)
+	if !ok || len(services) != 1 {
+		t.Fatalf("list services = %#v", listed.Services)
+	}
+	listedService := services[0]
+	if listedService.State != tsruntime.ServiceRuntimeFailed || !listedService.FunnelRequested || listedService.FunnelActive || listedService.FunnelState != tsruntime.FunnelStateCapabilityMissing || listedService.Error == nil || listedService.URL != nil || !listedService.URLPending {
+		t.Fatalf("list service = %+v, want no URL and actionable Funnel failure", listedService)
+	}
+	wire, err := json.Marshal(listedService)
+	if err != nil {
+		t.Fatalf("json.Marshal(list service): %v", err)
+	}
+	for _, field := range []string{"funnel_requested", "funnel_active", "funnel_state", "error"} {
+		if !strings.Contains(string(wire), `"`+field+`"`) {
+			t.Fatalf("list JSON = %s, missing %s", wire, field)
+		}
+	}
+}
+
+func TestPollableStatusExposesGlobalRuntimeErrorWhenRegistryIsInvalid(t *testing.T) {
+	dir := t.TempDir()
+	regPath := filepath.Join(dir, "registry.json")
+	pidPath := filepath.Join(dir, "tslink.pid")
+	snapshotPath := filepath.Join(dir, "runtime.json")
+	handoffPath := filepath.Join(dir, "auth-handoff.json")
+	if err := os.WriteFile(regPath, []byte("{invalid"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	startedAt := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	snapshot := tsruntime.NewPartialSnapshot(4242, startedAt, "sha256:last-good", startedAt.Add(time.Second), []tsruntime.ServiceState{{
+		Service:      registry.Service{Name: "private-app", Type: registry.TypeProxy, Target: "http://localhost:3000"},
+		RuntimeState: tsruntime.ServiceRuntimeRunning,
+	}})
+	snapshot.GlobalError = &tsruntime.ServiceError{
+		Code:    registry.CodeRegistryReloadInvalid,
+		Message: "registry reload remained invalid after bounded re-read",
+		Next:    []string{"tslink registry check --json"},
+	}
+	if err := tsruntime.Save(snapshotPath, snapshot); err != nil {
+		t.Fatal(err)
+	}
+	withStatusURLSeams(t, true, 4242, startedAt)
+
+	result, err := getPollableStatus(pidPath, regPath, snapshotPath, handoffPath)
+	if err != nil {
+		t.Fatalf("getPollableStatus() error = %v", err)
+	}
+	if result.GlobalError == nil || result.GlobalError.Code != registry.CodeRegistryReloadInvalid || len(result.GlobalError.Next) != 1 {
+		t.Fatalf("global_error = %+v", result.GlobalError)
+	}
+	if result.ServiceCount != 1 || len(result.Services) != 1 || result.Services[0].Name != "private-app" || result.Services[0].Status != tsruntime.ServiceRuntimeRunning {
+		t.Fatalf("fallback status = %+v", result)
+	}
+	result.GlobalError.Next[0] = "mutated"
+	loaded, err := tsruntime.Load(snapshotPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.GlobalError.Next[0] != "tslink registry check --json" {
+		t.Fatal("status result aliased persisted global_error recovery data")
+	}
+}
+
+func TestStatusNotAuthenticatedIncludesMachineContinuation(t *testing.T) {
+	dir := t.TempDir()
+	regPath := filepath.Join(dir, "registry.json")
+	pidPath := filepath.Join(dir, "tslink.pid")
+	snapshotPath := filepath.Join(dir, "runtime.json")
+	handoffPath := filepath.Join(dir, "auth-handoff.json")
+	addStatusTestService(t, regPath, registry.Service{Name: "web", Type: registry.TypeProxy, Target: "http://localhost:3000"})
+	withStatusURLSeams(t, false, 0, time.Time{})
+
+	status, err := getPollableStatus(pidPath, regPath, snapshotPath, handoffPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.AuthStatus != authStatusNotAuthenticated || !reflect.DeepEqual(status.Next, []string{"tslink serve --json"}) {
+		t.Fatalf("status = %+v, want not_authenticated with serve continuation", status)
+	}
+	urls, err := getStatusURLsWithAuth(pidPath, regPath, snapshotPath, handoffPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(urls.Next, status.Next) {
+		t.Fatalf("status --urls next = %v, want %v", urls.Next, status.Next)
+	}
+	wire, err := json.Marshal(status)
+	if err != nil || !bytes.Contains(wire, []byte(`"next":["tslink serve --json"]`)) {
+		t.Fatalf("wire=%s err=%v", wire, err)
 	}
 }
 

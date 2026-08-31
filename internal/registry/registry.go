@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/url"
 	"os"
@@ -35,13 +36,21 @@ const (
 	CodeFunnelPublicAckRequired    = "funnel_public_ack_required"
 	CodeFunnelControlURLConflict   = "funnel_control_url_conflict"
 	CodeFunnelTypeConflict         = "funnel_type_conflict"
+	CodeFunnelCapabilityMissing    = "funnel_capability_missing"
+	CodeFunnelListenFailed         = "funnel_listen_failed"
+	CodeServiceStartTimeout        = "service_start_timeout"
 	CodeFeatureUnavailable         = "feature_unavailable"
 	CodeServiceTypeAmbiguous       = "service_type_ambiguous"
 	CodeInvalidServiceName         = "invalid_service_name"
 	CodeInvalidTag                 = "invalid_tag"
 	CodeAllowUnsupportedTCP        = "allow_unsupported_for_tcp"
 	CodePathMustBeAbsolute         = "path_must_be_absolute"
+	CodePathNotFound               = "path_not_found"
+	CodePathNotDirectory           = "path_not_directory"
+	CodePathNotAccessible          = "path_not_accessible"
 	CodeUnknownConfigKey           = "unknown_config_key"
+	CodeInvalidServiceConfig       = "invalid_service_config"
+	CodeRegistryReloadInvalid      = "registry_reload_invalid"
 	CodeURLNotReady                = "url_not_ready"
 	CodeLaunchctlDomainUnavailable = "launchctl_domain_unavailable"
 
@@ -112,6 +121,38 @@ func FunnelTypeConflictError(serviceType string) error {
 	return CodedError{Code: CodeFunnelTypeConflict, Message: message, Next: []string{"tslink add --help"}}
 }
 
+func FunnelCapabilityMissingError(serviceName string, cause error) error {
+	message := fmt.Sprintf("service %q cannot enable Funnel because its tsnet node is not authorized: %v", serviceName, cause)
+	return CodedError{
+		Code:    CodeFunnelCapabilityMissing,
+		Message: message,
+		Next: []string{
+			"Open the Tailscale admin console > Access controls > Funnel, then select Add Funnel to policy",
+			fmt.Sprintf("Ensure nodeAttrs targets service node %q and includes attr [\"funnel\"], then restart the managed daemon with `tslink install` or restart the foreground `tslink serve` process", serviceName),
+			fmt.Sprintf("tslink status --urls --name %s --json", serviceName),
+		},
+		MessageOnly: true,
+	}
+}
+
+func FunnelListenFailedError(serviceName string, cause error) error {
+	return CodedError{
+		Code:        CodeFunnelListenFailed,
+		Message:     fmt.Sprintf("service %q passed Funnel capability preflight but its Funnel listener failed: %v", serviceName, cause),
+		Next:        []string{fmt.Sprintf("tslink status --urls --name %s --json", serviceName), "tslink logs --level error --json"},
+		MessageOnly: true,
+	}
+}
+
+func ServiceStartTimeoutError(serviceName string, timeout time.Duration) error {
+	return CodedError{
+		Code:        CodeServiceStartTimeout,
+		Message:     fmt.Sprintf("service %q did not reach a running tsnet state within %s", serviceName, timeout),
+		Next:        []string{fmt.Sprintf("tslink status --urls --name %s --json", serviceName), "tslink logs --level error --json"},
+		MessageOnly: true,
+	}
+}
+
 func FeatureUnavailableError(message string) error {
 	return CodedError{Code: CodeFeatureUnavailable, Message: message, Next: []string{"tslink add --help"}}
 }
@@ -139,6 +180,33 @@ func PathMustBeAbsoluteError(path string) error {
 		Code:        CodePathMustBeAbsolute,
 		Message:     fmt.Sprintf("file service path %q must be absolute", path),
 		Next:        []string{"tslink add --help"},
+		MessageOnly: true,
+	}
+}
+
+func PathNotFoundError(path string) error {
+	return CodedError{
+		Code:        CodePathNotFound,
+		Message:     fmt.Sprintf("file service path %q does not exist", path),
+		Next:        []string{fmt.Sprintf("Create the directory at %q", path), "Retry the original tslink add command"},
+		MessageOnly: true,
+	}
+}
+
+func PathNotDirectoryError(path string) error {
+	return CodedError{
+		Code:        CodePathNotDirectory,
+		Message:     fmt.Sprintf("file service path %q is not a directory", path),
+		Next:        []string{"Choose an existing directory", "Retry the original tslink add command with --dir <absolute-directory>"},
+		MessageOnly: true,
+	}
+}
+
+func PathNotAccessibleError(path string, cause error) error {
+	return CodedError{
+		Code:        CodePathNotAccessible,
+		Message:     fmt.Sprintf("file service path %q is not accessible: %v", path, cause),
+		Next:        []string{fmt.Sprintf("Grant the current user read and traverse access to %q", path), "Retry the original tslink add command"},
 		MessageOnly: true,
 	}
 }
@@ -208,6 +276,30 @@ type Registry struct {
 	SchemaVersion int       `json:"schema_version"`
 	Services      []Service `json:"services"`
 }
+
+// ServiceIssue is a recoverable, name-addressable registry error. Runtime
+// reconciliation can fail this one service closed while continuing to serve
+// other valid services. Mutating callers must reject every issue so a typed
+// rewrite never discards invalid or unknown raw fields.
+type ServiceIssue struct {
+	Index   int
+	Name    string
+	Service Service
+	Err     error
+}
+
+func (i ServiceIssue) Error() string {
+	return fmt.Sprintf("service %q: %v; edit registry.json", i.Name, i.Err)
+}
+
+func (i ServiceIssue) Unwrap() error { return i.Err }
+
+type registryWire struct {
+	SchemaVersion int               `json:"schema_version"`
+	Services      []json.RawMessage `json:"services"`
+}
+
+var unknownJSONFieldRegexp = regexp.MustCompile(`^json: unknown field "([^"]+)"$`)
 
 func ValidateName(name string) error {
 	if len(name) > 63 {
@@ -361,10 +453,13 @@ func ValidateFileRoot(path string) error {
 	}
 	info, err := os.Stat(path)
 	if err != nil {
-		return fmt.Errorf("file service path %q is not accessible: %w", path, err)
+		if os.IsNotExist(err) {
+			return PathNotFoundError(path)
+		}
+		return PathNotAccessibleError(path, err)
 	}
 	if !info.IsDir() {
-		return fmt.Errorf("file service path %q is not a directory", path)
+		return PathNotDirectoryError(path)
 	}
 	return nil
 }
@@ -384,6 +479,111 @@ func ValidateTCPTarget(target string) error {
 	return nil
 }
 
+// LoadForRuntime strictly decodes registry.json while isolating errors whose
+// service name remains trustworthy. A malformed top-level document or a
+// service without a usable name is global-invalid because runtime cannot know
+// which existing listener the raw entry was intended to replace.
+func LoadForRuntime(path string) (*Registry, []ServiceIssue, error) {
+	if err := atomicfile.ConvergePrivateFile(path); err != nil {
+		return nil, nil, err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(bytes.TrimSpace(data)) == 0 {
+		return nil, nil, fmt.Errorf("registry.json is empty: %s", path)
+	}
+	return decodeForRuntime(data)
+}
+
+// Preflight reads and strictly validates a registry copy without changing its
+// mode or contents. It is suitable for compatibility checks before upgrading.
+func Preflight(path string) (*Registry, []ServiceIssue, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(bytes.TrimSpace(data)) == 0 {
+		return nil, nil, fmt.Errorf("registry.json is empty: %s", path)
+	}
+	return decodeForRuntime(data)
+}
+
+func decodeForRuntime(data []byte) (*Registry, []ServiceIssue, error) {
+	var wire registryWire
+	if err := strictJSONDecode(data, &wire); err != nil {
+		return nil, nil, configDecodeError("registry", err)
+	}
+	reg := &Registry{SchemaVersion: wire.SchemaVersion, Services: make([]Service, 0, len(wire.Services))}
+	if err := migrate(reg); err != nil {
+		return nil, nil, err
+	}
+
+	issues := make([]ServiceIssue, 0)
+	seenNames := make(map[string]struct{}, len(wire.Services))
+	for index, raw := range wire.Services {
+		var identity struct {
+			Name json.RawMessage `json:"name"`
+		}
+		if err := json.Unmarshal(raw, &identity); err != nil {
+			return nil, nil, fmt.Errorf("registry service at index %d is malformed: %w", index, err)
+		}
+		var name string
+		if len(identity.Name) == 0 || json.Unmarshal(identity.Name, &name) != nil || strings.TrimSpace(name) == "" {
+			return nil, nil, fmt.Errorf("registry service at index %d has no usable string name", index)
+		}
+		if _, duplicate := seenNames[name]; duplicate {
+			return nil, nil, fmt.Errorf("registry contains duplicate service name %q", name)
+		}
+		seenNames[name] = struct{}{}
+
+		var svc Service
+		// Preserve all recognized fields for fail-closed runtime evidence even
+		// when strict decoding below finds an unknown key.
+		_ = json.Unmarshal(raw, &svc)
+		if err := strictJSONDecode(raw, &svc); err != nil {
+			svc.Name = name
+			issues = append(issues, ServiceIssue{Index: index, Name: name, Service: svc, Err: configDecodeError(name, err)})
+			continue
+		}
+		if err := ValidateService(svc); err != nil {
+			issues = append(issues, ServiceIssue{Index: index, Name: name, Service: svc, Err: err})
+			continue
+		}
+		reg.Services = append(reg.Services, svc)
+	}
+	return reg, issues, nil
+}
+
+func strictJSONDecode(data []byte, dst any) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(dst); err != nil {
+		return err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err == nil {
+		return fmt.Errorf("unexpected trailing JSON value")
+	} else if !errors.Is(err, io.EOF) {
+		return err
+	}
+	return nil
+}
+
+func configDecodeError(scope string, err error) error {
+	matches := unknownJSONFieldRegexp.FindStringSubmatch(err.Error())
+	if len(matches) != 2 {
+		return err
+	}
+	key := matches[1]
+	message := fmt.Sprintf("unknown registry.json key %q in %s", key, scope)
+	if key == "allow" {
+		message += "; registry.json uses allowed_users; allow is API-only"
+	}
+	return CodedError{Code: CodeUnknownConfigKey, Message: message, Next: []string{"tslink registry check --json"}, MessageOnly: true}
+}
+
 func Load(path string) (*Registry, error) {
 	if err := atomicfile.ConvergePrivateFile(path); err != nil {
 		return nil, err
@@ -391,33 +591,75 @@ func Load(path string) (*Registry, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return &Registry{SchemaVersion: CurrentRegistrySchemaVersion, Services: []Service{}}, nil
+			return emptyRegistry(), nil
 		}
 		return nil, err
 	}
-
 	if len(bytes.TrimSpace(data)) == 0 {
-		return &Registry{SchemaVersion: CurrentRegistrySchemaVersion, Services: []Service{}}, nil
+		return emptyRegistry(), nil
 	}
-
-	var reg Registry
-	if err := json.Unmarshal(data, &reg); err != nil {
+	reg, issues, err := decodeForRuntime(data)
+	if err != nil {
 		return nil, err
 	}
-	if err := migrate(&reg); err != nil {
+	var blocking []error
+	for _, issue := range issues {
+		code, _ := ErrorCode(issue.Err)
+		if code == CodeUnknownConfigKey || code == CodeFeatureUnavailable {
+			blocking = append(blocking, issue)
+		}
+	}
+	if len(blocking) > 0 {
+		return nil, errors.Join(blocking...)
+	}
+	if len(issues) == 0 {
+		return reg, nil
+	}
+	// Diagnostic readers historically inspect recognized-but-invalid service
+	// shapes (for example doctor/access warnings). Unknown keys are never
+	// admitted above. Mutations use loadForMutation and reject every issue.
+	if err := json.Unmarshal(data, reg); err != nil {
 		return nil, err
 	}
-
+	if err := migrate(reg); err != nil {
+		return nil, err
+	}
 	if reg.Services == nil {
 		reg.Services = []Service{}
 	}
-	for _, svc := range reg.Services {
-		if err := ValidateUnavailableFeatures(svc); err != nil {
-			return nil, fmt.Errorf("service %q: %w; edit registry.json", svc.Name, err)
-		}
-	}
+	return reg, nil
+}
 
-	return &reg, nil
+func loadForMutation(path string) (*Registry, error) {
+	if err := atomicfile.ConvergePrivateFile(path); err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return emptyRegistry(), nil
+		}
+		return nil, err
+	}
+	if len(bytes.TrimSpace(data)) == 0 {
+		return emptyRegistry(), nil
+	}
+	reg, issues, err := decodeForRuntime(data)
+	if err != nil {
+		return nil, err
+	}
+	if len(issues) == 0 {
+		return reg, nil
+	}
+	errs := make([]error, 0, len(issues))
+	for _, issue := range issues {
+		errs = append(errs, issue)
+	}
+	return nil, errors.Join(errs...)
+}
+
+func emptyRegistry() *Registry {
+	return &Registry{SchemaVersion: CurrentRegistrySchemaVersion, Services: []Service{}}
 }
 
 func migrate(reg *Registry) error {
@@ -478,7 +720,7 @@ func Add(path string, svc Service) (created bool, err error) {
 	}
 
 	err = withLock(path, func() error {
-		reg, err := Load(path)
+		reg, err := loadForMutation(path)
 		if err != nil {
 			return err
 		}
@@ -511,7 +753,7 @@ func AddIfMissing(path string, svc Service) (created bool, err error) {
 	}
 
 	err = withLock(path, func() error {
-		reg, err := Load(path)
+		reg, err := loadForMutation(path)
 		if err != nil {
 			return err
 		}
@@ -541,7 +783,7 @@ func Remove(path, name string) (removed bool, err error) {
 
 func RemoveAndReturn(path, name string) (removedService Service, removed bool, err error) {
 	err = withLock(path, func() error {
-		reg, err := Load(path)
+		reg, err := loadForMutation(path)
 		if err != nil {
 			return err
 		}
@@ -567,7 +809,7 @@ func RemoveAndReturn(path, name string) (removedService Service, removed bool, e
 // must not delete a service another process changed after creation.
 func RemoveIfUnchanged(path string, expected Service) (removed bool, err error) {
 	err = withLock(path, func() error {
-		reg, err := Load(path)
+		reg, err := loadForMutation(path)
 		if err != nil {
 			return err
 		}
@@ -587,7 +829,7 @@ func RemoveIfUnchanged(path string, expected Service) (removed bool, err error) 
 func MutateService(path, name string, mutate func(Service) (Service, error)) (Service, error) {
 	var updated Service
 	err := withLock(path, func() error {
-		reg, err := Load(path)
+		reg, err := loadForMutation(path)
 		if err != nil {
 			return err
 		}

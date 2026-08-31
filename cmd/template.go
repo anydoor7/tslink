@@ -134,8 +134,28 @@ func templateByName(name string) (serviceTemplate, bool) {
 	return serviceTemplate{}, false
 }
 
+type templateNotFoundError struct {
+	name string
+}
+
+func (e templateNotFoundError) Error() string {
+	return fmt.Sprintf("template %q not found", e.name)
+}
+
+func (e templateNotFoundError) Unwrap() error {
+	return output.ErrNotFound(e.Error())
+}
+
+func (e templateNotFoundError) StableCode() string {
+	return output.StableErrorCode(output.ExitNotFound)
+}
+
+func (e templateNotFoundError) NextCommands() []string {
+	return []string{"tslink template list --json"}
+}
+
 func templateNotFound(name string) error {
-	return output.ErrNotFound(fmt.Sprintf("template %q not found", name))
+	return templateNotFoundError{name: name}
 }
 
 func templateSummaries() []TemplateSummary {
@@ -319,6 +339,8 @@ probe, or manage third-party applications.
 
 Built-ins intentionally use the uniform tag tag:tslink for private template
 services; change tags after apply if your tailnet policy uses another tag.`),
+		Args: cobra.NoArgs,
+		RunE: runCommandGroup,
 	}
 
 	listCmd := &cobra.Command{

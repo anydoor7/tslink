@@ -124,8 +124,8 @@ func TestAddFunnel_WithDir_Error(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when using --funnel with --dir")
 	}
-	if !strings.Contains(err.Error(), "--funnel can only be used with --proxy") {
-		t.Errorf("unexpected error: %v", err)
+	if code, ok := registry.ErrorCode(err); !ok || code != registry.CodeFunnelTypeConflict {
+		t.Errorf("ErrorCode() = %q, %v; want %s, true (err=%v)", code, ok, registry.CodeFunnelTypeConflict, err)
 	}
 }
 
@@ -160,8 +160,8 @@ func TestAddFunnel_WithTCP_Error(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when using --funnel with --tcp")
 	}
-	if !strings.Contains(err.Error(), "--funnel can only be used with --proxy") {
-		t.Errorf("unexpected error: %v", err)
+	if code, ok := registry.ErrorCode(err); !ok || code != registry.CodeFunnelTypeConflict {
+		t.Errorf("ErrorCode() = %q, %v; want %s, true (err=%v)", code, ok, registry.CodeFunnelTypeConflict, err)
 	}
 }
 
@@ -212,7 +212,7 @@ func TestBuildService_FunnelRejectsAllowBeforeMissingPublicAck(t *testing.T) {
 	if !strings.Contains(err.Error(), registry.CodeFunnelAllowConflict) {
 		t.Fatalf("error = %q, want stable code", err.Error())
 	}
-	if strings.Contains(err.Error(), publicAckRequiredError) {
+	if strings.Contains(err.Error(), registry.ErrFunnelPublicAck) {
 		t.Fatalf("error = %q, want allow conflict before public ack", err.Error())
 	}
 }

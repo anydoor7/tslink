@@ -45,6 +45,11 @@ func objectSchema(properties map[string]any, required ...string) map[string]any 
 }
 
 var (
+	mcpServiceErrorSchema = objectSchema(map[string]any{
+		"code":    map[string]any{"type": "string"},
+		"message": map[string]any{"type": "string"},
+		"next":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+	}, "code", "message")
 	mcpShareOutputSchema = objectSchema(map[string]any{
 		"url":      map[string]any{"type": "string"},
 		"name":     map[string]any{"type": "string"},
@@ -55,12 +60,16 @@ var (
 		"services": map[string]any{
 			"type": "array",
 			"items": objectSchema(map[string]any{
-				"name":        map[string]any{"type": "string"},
-				"type":        map[string]any{"type": "string"},
-				"url":         map[string]any{"type": []string{"string", "null"}},
-				"url_pending": map[string]any{"type": "boolean"},
-				"state":       map[string]any{"type": "string"},
-			}, "name", "type", "url", "url_pending", "state"),
+				"name":             map[string]any{"type": "string"},
+				"type":             map[string]any{"type": "string", "enum": serviceTypeValues()},
+				"url":              map[string]any{"type": []string{"string", "null"}},
+				"url_pending":      map[string]any{"type": "boolean"},
+				"state":            map[string]any{"type": "string", "enum": listStateValues()},
+				"funnel_requested": map[string]any{"type": "boolean"},
+				"funnel_active":    map[string]any{"type": "boolean"},
+				"funnel_state":     map[string]any{"type": "string", "enum": funnelStateValues()},
+				"error":            mcpServiceErrorSchema,
+			}, "name", "type", "url", "url_pending", "state", "funnel_requested", "funnel_active", "funnel_state"),
 		},
 	}, "services")
 	mcpUnshareOutputSchema = objectSchema(map[string]any{
@@ -81,6 +90,7 @@ var (
 		"service_count":            map[string]any{"type": "integer", "minimum": 0},
 		"status":                   map[string]any{"type": "string"},
 		"auth_url":                 map[string]any{"type": "string"},
+		"next":                     map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 	}, "authenticated", "credential_stored", "node_authorized", "authorized_service_count", "daemon_running", "service_count")
 )
 
@@ -97,7 +107,7 @@ var mcpToolDefinitions = []mcpToolDefinition{
 	},
 	{
 		Name:         "list",
-		Description:  "List locally registered TSLink services with exact runtime URLs when available. Use this to discover current shares or check whether a service URL is ready.",
+		Description:  "List locally registered TSLink services with exact runtime URLs and explicit Funnel requested/active/reason state. Use this to discover current shares or check whether public exposure actually activated.",
 		InputSchema:  objectSchema(map[string]any{}),
 		OutputSchema: mcpListOutputSchema,
 	},
@@ -124,23 +134,18 @@ type mcpActions struct {
 	status  func() (any, error)
 }
 
-type mcpServiceSummary struct {
-	Name       string  `json:"name"`
-	Type       string  `json:"type"`
-	URL        *string `json:"url"`
-	URLPending bool    `json:"url_pending"`
-	State      string  `json:"state"`
-}
+type mcpServiceSummary = ListServiceSummary
 
 type mcpStatusSummary struct {
-	Authenticated          bool   `json:"authenticated"`
-	CredentialStored       bool   `json:"credential_stored"`
-	NodeAuthorized         bool   `json:"node_authorized"`
-	AuthorizedServiceCount int    `json:"authorized_service_count"`
-	DaemonRunning          bool   `json:"daemon_running"`
-	ServiceCount           int    `json:"service_count"`
-	Status                 string `json:"status,omitempty"`
-	AuthURL                string `json:"auth_url,omitempty"`
+	Authenticated          bool     `json:"authenticated"`
+	CredentialStored       bool     `json:"credential_stored"`
+	NodeAuthorized         bool     `json:"node_authorized"`
+	AuthorizedServiceCount int      `json:"authorized_service_count"`
+	DaemonRunning          bool     `json:"daemon_running"`
+	ServiceCount           int      `json:"service_count"`
+	Status                 string   `json:"status,omitempty"`
+	AuthURL                string   `json:"auth_url,omitempty"`
+	Next                   []string `json:"next,omitempty"`
 }
 
 type mcpUnshareSummary struct {
@@ -203,6 +208,7 @@ func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 				AuthorizedServiceCount: status.AuthorizedServiceCount,
 				DaemonRunning:          status.DaemonRunning,
 				ServiceCount:           status.ServiceCount,
+				Next:                   append([]string(nil), status.Next...),
 			}
 			if status.AuthStatus == authStatusNeedsLogin && status.AuthURL != "" {
 				result.Status = authStatusNeedsLogin
@@ -485,19 +491,32 @@ func (s *mcpServer) callTool(ctx context.Context, request mcpRequest) error {
 
 func makeMCPToolResult(data any, callErr error) mcpToolResult {
 	if callErr != nil {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: callErr.Error()}}, IsError: true}
+		return makeMCPToolErrorResult(callErr)
 	}
 	encoded, err := json.Marshal(data)
 	if err != nil {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: err.Error()}}, IsError: true}
+		return makeMCPToolErrorResult(err)
 	}
 	structured := map[string]any{}
 	if err := json.Unmarshal(encoded, &structured); err != nil {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: err.Error()}}, IsError: true}
+		return makeMCPToolErrorResult(err)
 	}
 	return mcpToolResult{
 		Content:           []mcpContent{{Type: "text", Text: string(encoded)}},
 		StructuredContent: structured,
+	}
+}
+
+func makeMCPToolErrorResult(err error) mcpToolResult {
+	failure := output.NewFailureForError("", err)
+	return mcpToolResult{
+		Content: []mcpContent{{Type: "text", Text: failure.Error.Message}},
+		StructuredContent: map[string]any{
+			"ok":    false,
+			"code":  failure.Code,
+			"error": failure.Error,
+		},
+		IsError: true,
 	}
 }
 

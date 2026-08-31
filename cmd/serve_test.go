@@ -889,6 +889,37 @@ func TestServeCmd_MigrationMessage(t *testing.T) {
 	}
 }
 
+func TestServeCmd_JSONMigrationWritesExactlyOneEnvelope(t *testing.T) {
+	dir := t.TempDir()
+	mockServeDefaults(t, dir)
+	serveMigrateFn = func() bool { return true }
+	serveDaemon = true
+	mockServeDaemonReadyAfterInitialCheck(t)
+
+	cmd := findServeCmd(t)
+	setRootJSONFlag(t, true)
+	var commandOut, commandErr bytes.Buffer
+	cmd.SetOut(&commandOut)
+	cmd.SetErr(&commandErr)
+	raw := captureStdout(t, func() {
+		if err := cmd.RunE(cmd, nil); err != nil {
+			t.Fatalf("RunE() error = %v", err)
+		}
+	})
+	wantBytes, err := json.Marshal(output.NewSuccess("serve", ServeResult{
+		Daemon:             true,
+		PID:                99999,
+		CredentialMigrated: true,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := string(wantBytes) + "\n"
+	if raw != want || commandOut.Len() != 0 || commandErr.Len() != 0 {
+		t.Fatalf("stdout=%q want=%q commandOut=%q commandErr=%q", raw, want, commandOut.String(), commandErr.String())
+	}
+}
+
 func TestServeCmd_WithTagsAndEphemeral(t *testing.T) {
 	dir := t.TempDir()
 	mockServeDefaults(t, dir)

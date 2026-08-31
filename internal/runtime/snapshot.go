@@ -30,6 +30,16 @@ const (
 	StatusPartial          = "partial"
 	StatusPIDMismatch      = "pid_mismatch"
 	StatusRegistryMismatch = "registry_mismatch"
+
+	ServiceRuntimeRunning = "running"
+	ServiceRuntimeFailed  = "failed"
+
+	FunnelStateNotRequested      = "not_requested"
+	FunnelStateRequestedUnknown  = "requested_unverified"
+	FunnelStateActive            = "active"
+	FunnelStateCapabilityMissing = "capability_missing"
+	FunnelStateListenFailed      = "listen_failed"
+	FunnelStateStartTimeout      = "startup_timeout"
 )
 
 var (
@@ -45,21 +55,37 @@ type Snapshot struct {
 	RegistryFingerprint string            `json:"registry_fingerprint"`
 	UpdatedAt           time.Time         `json:"updated_at"`
 	Partial             bool              `json:"partial,omitempty"`
+	GlobalError         *ServiceError     `json:"global_error,omitempty"`
 	Services            []ServiceSnapshot `json:"services"`
 }
 
 type ServiceSnapshot struct {
-	Name        string               `json:"name"`
-	Type        string               `json:"type"`
-	Endpoint    inspect.EndpointView `json:"endpoint"`
-	Exposure    inspect.ExposureView `json:"exposure"`
-	CertDomains []string             `json:"cert_domains,omitempty"`
+	Name            string               `json:"name"`
+	Type            string               `json:"type"`
+	RuntimeState    string               `json:"runtime_state"`
+	Endpoint        inspect.EndpointView `json:"endpoint"`
+	Exposure        inspect.ExposureView `json:"exposure"`
+	FunnelRequested bool                 `json:"funnel_requested"`
+	FunnelActive    bool                 `json:"funnel_active"`
+	FunnelState     string               `json:"funnel_state"`
+	Error           *ServiceError        `json:"error,omitempty"`
+	CertDomains     []string             `json:"cert_domains,omitempty"`
 }
 
 type ServiceState struct {
-	Service     registry.Service
-	RuntimeHost string
-	CertDomains []string
+	Service      registry.Service
+	RuntimeHost  string
+	RuntimeState string
+	FunnelState  string
+	Error        *ServiceError
+	CertDomains  []string
+}
+
+// ServiceError is stable, actionable failure data persisted for agent consumers.
+type ServiceError struct {
+	Code    string   `json:"code"`
+	Message string   `json:"message"`
+	Next    []string `json:"next,omitempty"`
 }
 
 type ExpectedRuntime struct {
@@ -133,13 +159,39 @@ func newSnapshot(daemonPID int, daemonStartedAt time.Time, registryFingerprint s
 			endpoint.Host = state.CertDomains[0]
 		}
 		endpoint.State = endpointState(endpoint)
+		runtimeState := state.RuntimeState
+		if runtimeState == "" {
+			runtimeState = ServiceRuntimeRunning
+		}
+		funnelState := state.FunnelState
+		if funnelState == "" {
+			switch {
+			case !state.Service.Funnel:
+				funnelState = FunnelStateNotRequested
+			case runtimeState == ServiceRuntimeRunning:
+				funnelState = FunnelStateActive
+			default:
+				funnelState = FunnelStateRequestedUnknown
+			}
+		}
 		certDomains := append([]string(nil), state.CertDomains...)
+		var serviceError *ServiceError
+		if state.Error != nil {
+			copied := *state.Error
+			copied.Next = append([]string(nil), state.Error.Next...)
+			serviceError = &copied
+		}
 		services = append(services, ServiceSnapshot{
-			Name:        state.Service.Name,
-			Type:        state.Service.Type,
-			Endpoint:    endpoint,
-			Exposure:    view.Exposure,
-			CertDomains: certDomains,
+			Name:            state.Service.Name,
+			Type:            state.Service.Type,
+			RuntimeState:    runtimeState,
+			Endpoint:        endpoint,
+			Exposure:        view.Exposure,
+			FunnelRequested: state.Service.Funnel,
+			FunnelActive:    funnelState == FunnelStateActive,
+			FunnelState:     funnelState,
+			Error:           serviceError,
+			CertDomains:     certDomains,
 		})
 	}
 

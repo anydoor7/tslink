@@ -537,7 +537,7 @@
           "name": "fields",
           "type": "string",
           "scope": "local",
-          "usage": "Comma-separated slim fields: name,type,url,url_pending,state",
+          "usage": "Comma-separated slim fields: name,type,url,url_pending,state,funnel_requested,funnel_active,funnel_state,error",
           "conflicts": [
             "--verbose"
           ]
@@ -571,7 +571,42 @@
             "--fields"
           ]
         }
-      ]
+      ],
+      "json_result_fields": {
+        "services[].error": {
+          "type": "object",
+          "description": "Stable per-service runtime failure with code, message, and actionable next steps; omitted without a recorded failure."
+        },
+        "services[].funnel_active": {
+          "type": "boolean",
+          "description": "Runtime fact: true only after the service node passes Funnel capability checks and ListenFunnel succeeds."
+        },
+        "services[].funnel_requested": {
+          "type": "boolean",
+          "description": "Configuration intent: whether this service requests public Tailscale Funnel exposure."
+        },
+        "services[].funnel_state": {
+          "type": "string",
+          "description": "Stable reason separating Funnel intent from runtime activation.",
+          "values": [
+            "not_requested",
+            "requested_unverified",
+            "active",
+            "capability_missing",
+            "listen_failed",
+            "startup_timeout"
+          ]
+        },
+        "services[].state": {
+          "type": "string",
+          "description": "Slim list runtime state: exact, pending, or failed.",
+          "values": [
+            "exact",
+            "pending",
+            "failed"
+          ]
+        }
+      }
     },
     {
       "path": "tslink login",
@@ -687,7 +722,24 @@
     },
     {
       "path": "tslink mcp",
-      "short": "Run the TSLink MCP server over stdio",
+      "short": "Run the TSLink MCP server over stdio"
+    },
+    {
+      "path": "tslink registry",
+      "short": "Inspect the local service registry",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        }
+      ]
+    },
+    {
+      "path": "tslink registry check",
+      "short": "Strictly validate a registry.json without modifying it",
       "flags": [
         {
           "name": "json",
@@ -756,7 +808,13 @@
           "scope": "local",
           "usage": "Print the Tailscale login URL without opening a browser"
         }
-      ]
+      ],
+      "json_result_fields": {
+        "credential_migrated": {
+          "type": "boolean",
+          "description": "True when this invocation migrated a legacy API credential to the system keychain; omitted otherwise."
+        }
+      }
     },
     {
       "path": "tslink share",
@@ -818,7 +876,54 @@
           "scope": "local",
           "usage": "Show owner-only service endpoint overview"
         }
-      ]
+      ],
+      "json_result_fields": {
+        "global_error": {
+          "type": "object",
+          "description": "Stable daemon-wide runtime failure showing that the current registry control plane is non-authoritative; omitted when reconciliation is healthy."
+        },
+        "next": {
+          "type": "array",
+          "description": "Machine continuation commands when the successful status still requires enrollment or polling."
+        },
+        "services[].error": {
+          "type": "object",
+          "description": "Stable per-service runtime failure with code, message, and actionable next steps; omitted without a recorded failure."
+        },
+        "services[].funnel_active": {
+          "type": "boolean",
+          "description": "Runtime fact: true only after the service node passes Funnel capability checks and ListenFunnel succeeds."
+        },
+        "services[].funnel_requested": {
+          "type": "boolean",
+          "description": "Configuration intent: whether this service requests public Tailscale Funnel exposure."
+        },
+        "services[].funnel_state": {
+          "type": "string",
+          "description": "Stable reason separating Funnel intent from runtime activation.",
+          "values": [
+            "not_requested",
+            "requested_unverified",
+            "active",
+            "capability_missing",
+            "listen_failed",
+            "startup_timeout"
+          ]
+        },
+        "services[].runtime_state": {
+          "type": "string",
+          "description": "Detailed runtime state in status --urls output.",
+          "values": [
+            "unknown",
+            "running",
+            "failed"
+          ]
+        },
+        "services[].status": {
+          "type": "string",
+          "description": "Pollable service status in the default status result, including failed for a recorded bounded startup failure."
+        }
+      }
     },
     {
       "path": "tslink stop",
@@ -1240,9 +1345,17 @@
       "exit_code": 4,
       "description": "Funnel conflicts with an allow list"
     },
+    "funnel_capability_missing": {
+      "exit_code": 1,
+      "description": "service tsnet node lacks Funnel capability, HTTPS, or allowed port"
+    },
     "funnel_control_url_conflict": {
       "exit_code": 4,
       "description": "Funnel conflicts with control_url"
+    },
+    "funnel_listen_failed": {
+      "exit_code": 1,
+      "description": "Funnel capability preflight passed but listener activation failed"
     },
     "funnel_public_ack_required": {
       "exit_code": 2,
@@ -1275,6 +1388,22 @@
     "path_must_be_absolute": {
       "exit_code": 2,
       "description": "file service path must be absolute"
+    },
+    "path_not_accessible": {
+      "exit_code": 2,
+      "description": "file service path is not accessible to the current user"
+    },
+    "path_not_directory": {
+      "exit_code": 2,
+      "description": "file service path is not a directory"
+    },
+    "path_not_found": {
+      "exit_code": 2,
+      "description": "file service directory does not exist"
+    },
+    "service_start_timeout": {
+      "exit_code": 1,
+      "description": "service node did not reach running state before its startup deadline"
     },
     "service_type_ambiguous": {
       "exit_code": 2,

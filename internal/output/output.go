@@ -146,7 +146,7 @@ func NewFailureForError(command string, err error) Result {
 
 // NewErrorObject returns a generic stable error object for code/message.
 func NewErrorObject(code int, message string) *ErrorObject {
-	return &ErrorObject{Code: StableErrorCode(code), Message: message}
+	return &ErrorObject{Code: StableErrorCode(code), Message: message, Next: defaultNextForExitCode(code)}
 }
 
 // ErrorObjectForError returns the structured error object for err.
@@ -155,9 +155,27 @@ func ErrorObjectForError(code int, err error) *ErrorObject {
 		return nil
 	}
 	if stable, next, ok := stableErrorMetadata(err); ok {
+		if len(next) == 0 {
+			next = defaultNextForExitCode(code)
+		}
 		return &ErrorObject{Code: stable, Message: errorMessage(err), Next: next}
 	}
 	return NewErrorObject(code, err.Error())
+}
+
+func defaultNextForExitCode(code int) []string {
+	switch code {
+	case ExitUsage:
+		return []string{"tslink --help"}
+	case ExitAuth:
+		return []string{"tslink login"}
+	case ExitConflict:
+		return []string{"tslink status --json"}
+	case ExitNotFound:
+		return []string{"tslink list --json"}
+	default:
+		return nil
+	}
 }
 
 func stableErrorMetadata(err error) (string, []string, bool) {
@@ -256,6 +274,9 @@ func exitCodeForStableError(stable string) int {
 		registry.CodeInvalidTag,
 		registry.CodeAllowUnsupportedTCP,
 		registry.CodePathMustBeAbsolute,
+		registry.CodePathNotFound,
+		registry.CodePathNotDirectory,
+		registry.CodePathNotAccessible,
 		registry.CodeUnknownConfigKey:
 		return ExitUsage
 	case registry.CodeURLNotReady:

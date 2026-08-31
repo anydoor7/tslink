@@ -404,6 +404,19 @@ func TestNewSnapshotFunnelExposure(t *testing.T) {
 	if entry.Exposure.Kind != inspect.ExposurePublicFunnel || !entry.Exposure.Public {
 		t.Fatalf("funnel exposure = %+v, want public funnel", entry.Exposure)
 	}
+	if entry.RuntimeState != ServiceRuntimeRunning || !entry.FunnelRequested || !entry.FunnelActive || entry.FunnelState != FunnelStateActive || entry.Error != nil {
+		t.Fatalf("funnel runtime state = %+v, want requested and active", entry)
+	}
+
+	failure := NewSnapshot(1234, startedAt, "sha256:test", updatedAt, []ServiceState{{
+		Service:      registry.Service{Name: "blocked", Type: registry.TypeProxy, Target: "http://localhost:3001", Funnel: true},
+		RuntimeState: ServiceRuntimeFailed,
+		FunnelState:  FunnelStateCapabilityMissing,
+		Error:        &ServiceError{Code: registry.CodeFunnelCapabilityMissing, Message: "missing capability", Next: []string{"fix policy"}},
+	}}).Services[0]
+	if failure.RuntimeState != ServiceRuntimeFailed || !failure.FunnelRequested || failure.FunnelActive || failure.FunnelState != FunnelStateCapabilityMissing || failure.Error == nil || len(failure.Error.Next) != 1 {
+		t.Fatalf("failed funnel runtime state = %+v", failure)
+	}
 }
 
 func TestNewSnapshotServicesAreSortedByName(t *testing.T) {
