@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/credentials"
 	"github.com/monody0007/tslink/internal/registry"
 )
@@ -69,10 +70,11 @@ func FindExactDeviceNodeID(ctx context.Context, hostname string) (string, int, e
 	}
 	matches := len(taggedNodeIDs)
 	if hostnameMatches > 0 && matches == 0 {
+		configuredDefaultTag := config.GetDefaultTag()
 		return "", 0, registry.CodedError{
 			Code:        "conflict",
 			Message:     fmt.Sprintf("matched %d devices, 0 of them TSLink-tagged", hostnameMatches),
-			Next:        []string{"verify the device carries tag:tsmain, tag:tslink-funnel, or another tag:tslink-* tag", "tslink cleanup --help"},
+			Next:        []string{fmt.Sprintf("verify the device carries %s, tag:tslink-funnel, or another tag:tslink-* tag", configuredDefaultTag), "tslink cleanup --help"},
 			MessageOnly: true,
 		}
 	}
@@ -87,8 +89,9 @@ func FindExactDeviceNodeID(ctx context.Context, hostname string) (string, int, e
 }
 
 func deviceHasTSLinkTag(tags []string) bool {
+	configuredDefaultTag := config.GetDefaultTag()
 	for _, tag := range tags {
-		if tag == DefaultTag || tag == registry.FunnelTag || strings.HasPrefix(tag, "tag:tslink-") {
+		if tag == DefaultTag || tag == configuredDefaultTag || tag == registry.FunnelTag || strings.HasPrefix(tag, "tag:tslink-") {
 			return true
 		}
 	}

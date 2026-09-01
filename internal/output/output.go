@@ -32,9 +32,13 @@ const (
 type CodeError struct {
 	Code    int
 	Message string
+	Data    any
 }
 
 func (e *CodeError) Error() string { return e.Message }
+
+// ErrorData returns optional stable machine-readable context for the failure.
+func (e *CodeError) ErrorData() any { return e.Data }
 
 // SilentCodeError carries an exit code for commands that have already printed
 // their complete result and should not receive the generic failure envelope.
@@ -68,6 +72,11 @@ func ErrUsage(msg string) *CodeError {
 // ErrConflict returns a conflict error (exit code 4).
 func ErrConflict(msg string) *CodeError {
 	return &CodeError{Code: ExitConflict, Message: msg}
+}
+
+// ErrConflictWithData returns a conflict with additive structured context.
+func ErrConflictWithData(msg string, data any) *CodeError {
+	return &CodeError{Code: ExitConflict, Message: msg, Data: data}
 }
 
 // ErrNotFound returns a not-found error (exit code 5).
@@ -154,13 +163,20 @@ func ErrorObjectForError(code int, err error) *ErrorObject {
 	if err == nil {
 		return nil
 	}
+	var result *ErrorObject
 	if stable, next, ok := stableErrorMetadata(err); ok {
 		if len(next) == 0 {
 			next = defaultNextForExitCode(code)
 		}
-		return &ErrorObject{Code: stable, Message: errorMessage(err), Next: next}
+		result = &ErrorObject{Code: stable, Message: errorMessage(err), Next: next}
+	} else {
+		result = NewErrorObject(code, err.Error())
 	}
-	return NewErrorObject(code, err.Error())
+	var carrier interface{ ErrorData() any }
+	if errors.As(err, &carrier) {
+		result.Data = carrier.ErrorData()
+	}
+	return result
 }
 
 func defaultNextForExitCode(code int) []string {

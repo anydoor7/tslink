@@ -164,6 +164,69 @@ func TestReadPIDNotExist(t *testing.T) {
 	}
 }
 
+func TestIsProcessAbsentFromPIDFileUsesConclusiveRealProcessLiveness(t *testing.T) {
+	cases := []struct {
+		name       string
+		prepare    func(*testing.T, string)
+		wantAbsent bool
+	}{
+		{name: "PID file missing", prepare: func(*testing.T, string) {}},
+		{name: "PID file unreadable", prepare: func(t *testing.T, path string) {
+			if err := os.Mkdir(path, 0o700); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "PID content is garbage", prepare: func(t *testing.T, path string) {
+			if err := os.WriteFile(path, []byte("not-a-pid\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "PID is negative", prepare: func(t *testing.T, path string) {
+			if err := os.WriteFile(path, []byte("-1\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "PID is zero", prepare: func(t *testing.T, path string) {
+			if err := os.WriteFile(path, []byte("0\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "process definitely exited", wantAbsent: true, prepare: func(t *testing.T, path string) {
+			cmd := exec.Command(os.Args[0], "-test.run=^$")
+			if err := cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			pid := cmd.Process.Pid
+			if err := cmd.Wait(); err != nil {
+				t.Fatalf("wait for exiting helper: %v", err)
+			}
+			writeLegacyPIDFile(t, path, pid)
+		}},
+		{name: "process is alive", prepare: func(t *testing.T, path string) {
+			cmd := exec.Command(os.Args[0], "-test.run=^$")
+			cmd.Env = append(os.Environ(), "TSLINK_HELPER_PROCESS=1")
+			if err := cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				_ = cmd.Process.Kill()
+				_ = cmd.Wait()
+			})
+			writeLegacyPIDFile(t, path, cmd.Process.Pid)
+		}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			pidPath := filepath.Join(t.TempDir(), "tslink.pid")
+			tc.prepare(t, pidPath)
+			if got := IsProcessAbsentFromPIDFile(pidPath); got != tc.wantAbsent {
+				t.Fatalf("IsProcessAbsentFromPIDFile() = %t, want %t", got, tc.wantAbsent)
+			}
+		})
+	}
+}
+
 func TestRemovePID(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "tslink.pid")
 

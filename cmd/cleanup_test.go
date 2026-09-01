@@ -11,6 +11,8 @@ import (
 
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/lifecycle"
+	"github.com/monody0007/tslink/internal/output"
+	"github.com/monody0007/tslink/internal/registry"
 	tsruntime "github.com/monody0007/tslink/internal/runtime"
 	"github.com/monody0007/tslink/internal/testenv"
 	"github.com/spf13/cobra"
@@ -66,10 +68,10 @@ func withCleanupAdoptionSeams(t *testing.T) *cobra.Command {
 		t.Fatal(err)
 	}
 	oldReconcile, oldNow := cleanupReconcileFn, cleanupNowFn
-	oldFind, oldAdopt := cleanupFindExactDeviceNodeIDFn, cleanupAdoptOwnedNodeFn
+	oldFind, oldAdopt, oldPreview := cleanupFindExactDeviceNodeIDFn, cleanupAdoptOwnedNodeFn, cleanupPreviewAdoptOwnedNodeFn
 	t.Cleanup(func() {
 		cleanupReconcileFn, cleanupNowFn = oldReconcile, oldNow
-		cleanupFindExactDeviceNodeIDFn, cleanupAdoptOwnedNodeFn = oldFind, oldAdopt
+		cleanupFindExactDeviceNodeIDFn, cleanupAdoptOwnedNodeFn, cleanupPreviewAdoptOwnedNodeFn = oldFind, oldAdopt, oldPreview
 		_ = command.Flags().Set("adopt", "")
 		_ = command.Flags().Set("force", "false")
 		_ = command.Flags().Set("dry-run", "true")
@@ -113,12 +115,24 @@ func TestCleanupAdoptRejectsZeroAndMultipleExactMatches(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("matched %d", matches)) {
 				t.Fatalf("error = %v, want exact match count %d", err, matches)
 			}
+			failure := output.NewFailureForError("cleanup", err)
+			data, ok := failure.Error.Data.(cleanupAdoptionErrorData)
+			if !ok || data.Matches != matches {
+				t.Fatalf("error data = %#v, want structured matches=%d", failure.Error.Data, matches)
+			}
 		})
 	}
 }
 
 func TestCleanupAdoptWritesLedgerBeforeNormalExactCleanup(t *testing.T) {
 	command := withCleanupAdoptionSeams(t)
+	regPath, err := config.RegistryPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(regPath, []byte(`{"schema_version":1,"services":[]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	now := time.Date(2030, 1, 1, 12, 0, 0, 0, time.UTC)
 	cleanupNowFn = func() time.Time { return now }
 	cleanupFindExactDeviceNodeIDFn = func(_ context.Context, hostname string) (string, int, error) {
@@ -132,7 +146,7 @@ func TestCleanupAdoptWritesLedgerBeforeNormalExactCleanup(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(ledger.Nodes) != 1 || ledger.Nodes[0].ServiceName != "legacy" || ledger.Nodes[0].NodeID != "node-adopted" {
+		if len(ledger.Nodes) != 1 || ledger.Nodes[0].ServiceName != "legacy" || ledger.Nodes[0].NodeID != "node-adopted" || ledger.Nodes[0].RetiredAt == nil || !ledger.Nodes[0].RetiredAt.Equal(now) {
 			t.Fatalf("ledger at normal cleanup = %+v", ledger)
 		}
 		return lifecycle.Result{DryRun: options.DryRun, DevicesDeleted: []string{"legacy"}, ACLAction: lifecycle.ACLNotRequested}, nil
@@ -160,8 +174,196 @@ func TestCleanupAdoptWritesLedgerBeforeNormalExactCleanup(t *testing.T) {
 	}
 }
 
+func TestCleanupAdoptRegisteredServiceRecordsActiveProof(t *testing.T) {
+	command := withCleanupAdoptionSeams(t)
+	now := time.Date(2030, 1, 1, 12, 0, 0, 0, time.UTC)
+	cleanupNowFn = func() time.Time { return now }
+	regPath, err := config.RegistryPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := registry.Add(regPath, registry.Service{Name: "repaired", Type: registry.TypeProxy, Target: "http://localhost:3000"}); err != nil {
+		t.Fatal(err)
+	}
+	cleanupFindExactDeviceNodeIDFn = func(context.Context, string) (string, int, error) {
+		return "node-repaired", 1, nil
+	}
+	cleanupReconcileFn = func(_ context.Context, options lifecycle.Options) (lifecycle.Result, error) {
+		ledger, err := tsruntime.LoadOwnership(options.OwnershipPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(ledger.Nodes) != 1 || ledger.Nodes[0].ServiceName != "repaired" || ledger.Nodes[0].RetiredAt != nil {
+			t.Fatalf("ledger = %+v, want active proof without retired_at", ledger)
+		}
+		return lifecycle.Result{ACLAction: lifecycle.ACLNotRequested}, nil
+	}
+	_ = command.Flags().Set("adopt", "repaired")
+	_ = command.Flags().Set("force", "true")
+	_ = command.Flags().Set("dry-run", "false")
+	if err := command.RunE(command, nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCleanupAdoptUntrustedRegistryRecordsActiveProofWithoutRetirement(t *testing.T) {
+	for _, state := range []string{"missing", "empty"} {
+		t.Run(state, func(t *testing.T) {
+			command := withCleanupAdoptionSeams(t)
+			now := time.Date(2030, 1, 1, 12, 0, 0, 0, time.UTC)
+			cleanupNowFn = func() time.Time { return now }
+			regPath, err := config.RegistryPath()
+			if err != nil {
+				t.Fatal(err)
+			}
+			ownershipPath, err := config.NodeOwnershipPath()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := registry.Add(regPath, registry.Service{Name: "repaired", Type: registry.TypeProxy, Target: "http://localhost:3000"}); err != nil {
+				t.Fatal(err)
+			}
+			if state == "missing" {
+				if err := os.Remove(regPath); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.WriteFile(regPath, []byte(" \n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			cleanupFindExactDeviceNodeIDFn = func(context.Context, string) (string, int, error) {
+				return "node-repaired", 1, nil
+			}
+			gotRetire := true
+			cleanupAdoptOwnedNodeFn = func(path, serviceName, nodeID string, recordedAt time.Time, retire bool) error {
+				gotRetire = retire
+				return tsruntime.AdoptOwnedNode(path, serviceName, nodeID, recordedAt, retire)
+			}
+			cleanupReconcileFn = func(_ context.Context, options lifecycle.Options) (lifecycle.Result, error) {
+				return lifecycle.Result{DryRun: options.DryRun, ACLAction: lifecycle.ACLNotRequested}, nil
+			}
+			_ = command.Flags().Set("adopt", "repaired")
+			_ = command.Flags().Set("force", "true")
+			_ = command.Flags().Set("dry-run", "false")
+			var stderr bytes.Buffer
+			command.SetErr(&stderr)
+			if err := command.RunE(command, nil); err != nil {
+				t.Fatal(err)
+			}
+			if gotRetire {
+				t.Fatal("untrusted registry authorized retired_at during adoption")
+			}
+			ledger, err := tsruntime.LoadOwnership(ownershipPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(ledger.Nodes) != 1 || ledger.Nodes[0].ServiceName != "repaired" || ledger.Nodes[0].RetiredAt != nil {
+				t.Fatalf("ledger = %+v, want active proof without retired_at", ledger)
+			}
+			warning := stderr.String()
+			if !strings.Contains(warning, "registry.json is "+state) || !strings.Contains(warning, "retired_at was not set") || !strings.Contains(warning, "repair registry.json") {
+				t.Fatalf("warning = %q, want state-specific repair guidance", warning)
+			}
+		})
+	}
+}
+
+func TestCleanupAdoptPreviewAndApplyUseSameRetireDecision(t *testing.T) {
+	command := withCleanupAdoptionSeams(t)
+	regPath, err := config.RegistryPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := registry.Add(regPath, registry.Service{Name: "registered", Type: registry.TypeProxy, Target: "http://localhost:3000"}); err != nil {
+		t.Fatal(err)
+	}
+	cleanupFindExactDeviceNodeIDFn = func(context.Context, string) (string, int, error) {
+		return "node-registered", 1, nil
+	}
+	var previewRetire, applyRetire bool
+	cleanupPreviewAdoptOwnedNodeFn = func(_, _, _ string, _ time.Time, boolRetire bool) (tsruntime.OwnershipLedger, error) {
+		previewRetire = boolRetire
+		return tsruntime.OwnershipLedger{SchemaVersion: tsruntime.OwnershipSchemaVersion, Nodes: []tsruntime.OwnedNode{}}, nil
+	}
+	cleanupAdoptOwnedNodeFn = func(_, _, _ string, _ time.Time, boolRetire bool) error {
+		applyRetire = boolRetire
+		return nil
+	}
+	cleanupReconcileFn = func(_ context.Context, options lifecycle.Options) (lifecycle.Result, error) {
+		return lifecycle.Result{DryRun: options.DryRun, ACLAction: lifecycle.ACLNotRequested}, nil
+	}
+	_ = command.Flags().Set("adopt", "registered")
+	_ = command.Flags().Set("force", "true")
+	if err := command.RunE(command, nil); err != nil {
+		t.Fatal(err)
+	}
+	_ = command.Flags().Set("dry-run", "false")
+	if err := command.RunE(command, nil); err != nil {
+		t.Fatal(err)
+	}
+	if previewRetire != applyRetire || previewRetire {
+		t.Fatalf("retire preview=%t apply=%t, want identical false decision for registered service", previewRetire, applyRetire)
+	}
+}
+
+func TestCleanupAdoptRegistryLookupIsExactAcrossMultipleServices(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		registry   string
+		wantRetire bool
+	}{
+		{
+			name:       "later_exact_match_among_similar_names",
+			registry:   `{"schema_version":1,"services":[{"name":"repair","type":"proxy","target":"http://localhost:3000"},{"name":"repaired-old","type":"proxy","target":"http://localhost:3001"},{"name":"repaired","type":"proxy","target":"http://localhost:3002"}]}`,
+			wantRetire: false,
+		},
+		{
+			name:       "case_variant_is_not_an_exact_match",
+			registry:   `{"schema_version":1,"services":[{"name":"Repaired","type":"proxy","target":"http://localhost:3000"},{"name":"repaired-old","type":"proxy","target":"http://localhost:3001"}]}`,
+			wantRetire: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			command := withCleanupAdoptionSeams(t)
+			regPath, err := config.RegistryPath()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(regPath, []byte(tc.registry), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cleanupFindExactDeviceNodeIDFn = func(context.Context, string) (string, int, error) {
+				return "node-repaired", 1, nil
+			}
+			gotRetire := !tc.wantRetire
+			cleanupPreviewAdoptOwnedNodeFn = func(_, _, _ string, _ time.Time, boolRetire bool) (tsruntime.OwnershipLedger, error) {
+				gotRetire = boolRetire
+				return tsruntime.OwnershipLedger{SchemaVersion: tsruntime.OwnershipSchemaVersion, Nodes: []tsruntime.OwnedNode{}}, nil
+			}
+			cleanupReconcileFn = func(_ context.Context, options lifecycle.Options) (lifecycle.Result, error) {
+				return lifecycle.Result{DryRun: options.DryRun, ACLAction: lifecycle.ACLNotRequested}, nil
+			}
+			_ = command.Flags().Set("adopt", "repaired")
+			_ = command.Flags().Set("force", "true")
+			if err := command.RunE(command, nil); err != nil {
+				t.Fatal(err)
+			}
+			if gotRetire != tc.wantRetire {
+				t.Fatalf("retire = %t, want %t", gotRetire, tc.wantRetire)
+			}
+		})
+	}
+}
+
 func TestCleanupAdoptDryRunPreviewsWithoutChangingLedgerBytes(t *testing.T) {
 	command := withCleanupAdoptionSeams(t)
+	regPath, err := config.RegistryPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(regPath, []byte(`{"schema_version":1,"services":[]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	ownershipPath, err := config.NodeOwnershipPath()
 	if err != nil {
 		t.Fatal(err)
@@ -177,7 +379,7 @@ func TestCleanupAdoptDryRunPreviewsWithoutChangingLedgerBytes(t *testing.T) {
 	cleanupFindExactDeviceNodeIDFn = func(context.Context, string) (string, int, error) {
 		return "node-preview", 1, nil
 	}
-	cleanupAdoptOwnedNodeFn = func(string, string, string, time.Time) error {
+	cleanupAdoptOwnedNodeFn = func(string, string, string, time.Time, bool) error {
 		t.Fatal("dry-run adoption must not write ownership proof")
 		return nil
 	}
@@ -185,7 +387,14 @@ func TestCleanupAdoptDryRunPreviewsWithoutChangingLedgerBytes(t *testing.T) {
 		if !options.DryRun {
 			t.Fatal("default cleanup must remain dry-run")
 		}
-		return lifecycle.Result{DryRun: true, ACLAction: lifecycle.ACLNotRequested}, nil
+		if options.OwnershipOverride == nil || len(options.OwnershipOverride.Nodes) != 2 {
+			t.Fatalf("ownership override = %+v, want existing plus in-memory adopted proof", options.OwnershipOverride)
+		}
+		preview := options.OwnershipOverride.Nodes[1]
+		if preview.ServiceName != "legacy" || preview.NodeID != "node-preview" || preview.RetiredAt == nil {
+			t.Fatalf("preview ownership = %+v, want reviewed retired adoption", preview)
+		}
+		return lifecycle.Result{DryRun: true, DevicesWouldDelete: []string{"legacy"}, ACLAction: lifecycle.ACLNotRequested}, nil
 	}
 	_ = command.Flags().Set("adopt", "legacy")
 	_ = command.Flags().Set("force", "true")
@@ -203,8 +412,8 @@ func TestCleanupAdoptDryRunPreviewsWithoutChangingLedgerBytes(t *testing.T) {
 		t.Fatalf("ledger bytes changed during dry-run:\nbefore=%s\nafter=%s", before, after)
 	}
 	wantPreview := "→ adoption preview (not written): service=legacy matches=1\n"
-	if !strings.Contains(out.String(), wantPreview) || strings.Index(out.String(), "adoption preview") > strings.Index(out.String(), "cleanup dry-run") {
-		t.Fatalf("stdout = %q, want explicit not-written preview before cleanup result", out.String())
+	if !strings.Contains(out.String(), wantPreview) || !strings.Contains(out.String(), "would delete owned devices: legacy") || strings.Index(out.String(), "adoption preview") > strings.Index(out.String(), "cleanup dry-run") {
+		t.Fatalf("stdout = %q, want explicit not-written preview and apply-equivalent deletion list", out.String())
 	}
 }
 
@@ -213,7 +422,7 @@ func TestCleanupAdoptDryRunJSONMarksProofNotWritten(t *testing.T) {
 	cleanupFindExactDeviceNodeIDFn = func(context.Context, string) (string, int, error) {
 		return "node-preview", 1, nil
 	}
-	cleanupAdoptOwnedNodeFn = func(string, string, string, time.Time) error {
+	cleanupAdoptOwnedNodeFn = func(string, string, string, time.Time, bool) error {
 		t.Fatal("dry-run adoption must not write ownership proof")
 		return nil
 	}

@@ -757,6 +757,5 @@ func init() {
 	installCmd.Flags().Bool("force", false, "Proceed with an upgrade despite an unavailable launchd domain (may start a second daemon)")
 	installCmd.Flags().Bool("no-auto-provision", false, "Install the managed daemon with Funnel policy auto-provisioning disabled")
 	mustMarkFlagPlatforms(installCmd, "force", "darwin")
-	mustMarkFlagPlatforms(installCmd, "no-auto-provision", "darwin")
 	rootCmd.AddCommand(installCmd)
 }

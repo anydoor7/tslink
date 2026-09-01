@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/monody0007/tslink/internal/registry"
@@ -18,19 +19,30 @@ const (
 	ACLDeleted      = "deleted"
 	ACLSkipped      = "skipped"
 
-	cleanupUnavailableReason   = "device cleanup could not be completed; see warnings"
-	ownershipUnavailableReason = "ownership ledger unavailable; device deletion disabled"
-	emptyRegistryReason        = "registry has zero services while ownership ledger contains records; device deletion disabled"
-	partialRegistryReason      = "registry appears incomplete: orphan ownership records exceed registered services and at least 3 remote deletions would result; device deletion disabled; restore registry.json or re-establish reviewed TSLink ownership with tslink cleanup --adopt <hostname> --force --dry-run=false"
+	cleanupUnavailableReason      = "device cleanup could not be completed; see warnings"
+	ownershipUnavailableReason    = "ownership ledger unavailable; device deletion disabled"
+	registryUnavailableReason     = "registry file is structurally untrusted; remote device deletion disabled"
+	unknownRetirementReasonPrefix = "orphan ownership records lack retired_at provenance (including legacy schema records)"
 )
 
+func unknownRetirementReason(serviceNames []string) string {
+	names := append([]string(nil), serviceNames...)
+	sort.Strings(names)
+	return fmt.Sprintf("%s for: %s; all remote device deletion is disabled; restore registry.json, or explicitly review every listed orphan hostname with tslink cleanup --adopt <hostname> --force --dry-run=false", unknownRetirementReasonPrefix, strings.Join(names, ", "))
+}
+
+func registryFileReason(state registry.RegistryFileState) string {
+	return fmt.Sprintf("%s: registry.json is %s", registryUnavailableReason, state)
+}
+
 type Options struct {
-	RegistryPath   string
-	OwnershipPath  string
-	Now            time.Time
-	DryRun         bool
-	ManageACL      bool
-	CheckUnusedACL bool
+	RegistryPath      string
+	OwnershipPath     string
+	OwnershipOverride *tsruntime.OwnershipLedger
+	Now               time.Time
+	DryRun            bool
+	ManageACL         bool
+	CheckUnusedACL    bool
 }
 
 type AdoptionResult struct {
@@ -41,24 +53,26 @@ type AdoptionResult struct {
 
 // Result intentionally contains service/hostname labels but never NodeIDs.
 type Result struct {
-	DryRun               bool            `json:"dry_run"`
-	RegistryChanged      bool            `json:"registry_changed"`
-	ExpiredFunnels       []string        `json:"expired_funnels"`
-	DevicesMatched       []string        `json:"devices_matched"`
-	DevicesWouldDelete   []string        `json:"devices_would_delete"`
-	DevicesDeleted       []string        `json:"devices_deleted"`
-	DevicesProtected     []string        `json:"devices_protected"`
-	DevicesAdopted       []string        `json:"devices_adopted,omitempty"`
-	Adoption             *AdoptionResult `json:"adoption,omitempty"`
-	DeviceCleanupSkipped bool            `json:"device_cleanup_skipped"`
-	DeviceSkipReason     string          `json:"device_skip_reason,omitempty"`
-	ACLAction            string          `json:"acl_action"`
-	Warnings             []string        `json:"warnings,omitempty"`
+	DryRun                      bool            `json:"dry_run"`
+	RegistryChanged             bool            `json:"registry_changed"`
+	ExpiredFunnels              []string        `json:"expired_funnels"`
+	DevicesMatched              []string        `json:"devices_matched"`
+	DevicesWouldDelete          []string        `json:"devices_would_delete"`
+	DevicesDeleted              []string        `json:"devices_deleted"`
+	DevicesProtected            []string        `json:"devices_protected"`
+	DevicesAdopted              []string        `json:"devices_adopted,omitempty"`
+	Adoption                    *AdoptionResult `json:"adoption,omitempty"`
+	DeviceCleanupSkipped        bool            `json:"device_cleanup_skipped"`
+	DeviceSkipReason            string          `json:"device_skip_reason,omitempty"`
+	DeviceSkipUnknownProvenance []string        `json:"device_skip_unknown_provenance,omitempty"`
+	ACLAction                   string          `json:"acl_action"`
+	Warnings                    []string        `json:"warnings,omitempty"`
 }
 
 var (
-	cleanupDevicesFn = tailapi.CleanupStaleNodesResultWithDryRun
-	deleteTagFn      = tailapi.DeleteTag
+	cleanupDevicesFn          = tailapi.CleanupStaleNodesResultWithDryRun
+	deleteTagFn               = tailapi.DeleteTag
+	downgradeExpiredFunnelsFn = registry.DowngradeExpiredFunnels
 )
 
 // Reconcile is the single lifecycle implementation used by cleanup, serve
@@ -77,19 +91,26 @@ func Reconcile(ctx context.Context, options Options) (Result, error) {
 		ACLAction:          ACLNotRequested,
 	}
 
-	expired, err := registry.DowngradeExpiredFunnels(options.RegistryPath, options.Now, options.DryRun)
+	reg, registryState, err := registry.LoadWithFileState(options.RegistryPath)
 	if err != nil {
-		return Result{}, fmt.Errorf("downgrade expired Funnel services: %w", err)
+		return Result{}, fmt.Errorf("%s: %w", registryUnavailableReason, err)
+	}
+	var expired []registry.Service
+	if registryState == registry.RegistryFileValid {
+		expired, err = downgradeExpiredFunnelsFn(options.RegistryPath, options.Now, options.DryRun)
+		if err != nil {
+			return Result{}, fmt.Errorf("downgrade expired Funnel services: %w", err)
+		}
+		reg, registryState, err = registry.LoadWithFileState(options.RegistryPath)
+		if err != nil {
+			return Result{}, fmt.Errorf("%s: %w", registryUnavailableReason, err)
+		}
 	}
 	for _, svc := range expired {
 		result.ExpiredFunnels = append(result.ExpiredFunnels, svc.Name)
 	}
 	result.RegistryChanged = !options.DryRun && len(expired) > 0
 
-	reg, err := registry.Load(options.RegistryPath)
-	if err != nil {
-		return Result{}, err
-	}
 	active := make(map[string]struct{}, len(reg.Services))
 	activeFunnels := 0
 	for _, svc := range reg.Services {
@@ -100,33 +121,51 @@ func Reconcile(ctx context.Context, options Options) (Result, error) {
 		}
 	}
 
-	ledger, err := tsruntime.LoadOwnership(options.OwnershipPath)
-	if err != nil {
+	var ledger tsruntime.OwnershipLedger
+	var ownershipErr error
+	if options.OwnershipOverride != nil {
+		ledger = *options.OwnershipOverride
+	} else {
+		ledger, ownershipErr = tsruntime.LoadOwnership(options.OwnershipPath)
+	}
+	if ownershipErr != nil {
 		result.DeviceCleanupSkipped = true
 		result.DeviceSkipReason = ownershipUnavailableReason
-		result.Warnings = append(result.Warnings, err.Error())
+		result.Warnings = append(result.Warnings, ownershipErr.Error())
+	}
+	registryTrusted := registryState == registry.RegistryFileValid
+	if !registryTrusted {
+		reason := registryFileReason(registryState)
+		result.DeviceCleanupSkipped = true
+		result.DeviceSkipReason = reason
+		result.Warnings = append(result.Warnings, reason)
 	}
 	orphanIDs := make(map[string][]string)
-	deletionEnabled := err == nil
+	unknownRetirementNames := make(map[string]struct{})
+	deletionEnabled := ownershipErr == nil && registryTrusted
 	if deletionEnabled {
 		for _, node := range ledger.Nodes {
 			if _, registered := active[node.ServiceName]; registered {
 				continue
 			}
 			orphanIDs[node.ServiceName] = append(orphanIDs[node.ServiceName], node.NodeID)
+			if node.RetiredAt == nil {
+				unknownRetirementNames[node.ServiceName] = struct{}{}
+			}
 		}
 	}
-	if deletionEnabled && len(reg.Services) == 0 && len(ledger.Nodes) > 0 {
+	if deletionEnabled && len(unknownRetirementNames) > 0 {
+		serviceNames := make([]string, 0, len(unknownRetirementNames))
+		for name := range unknownRetirementNames {
+			serviceNames = append(serviceNames, name)
+		}
+		sort.Strings(serviceNames)
+		reason := unknownRetirementReason(serviceNames)
 		deletionEnabled = false
 		result.DeviceCleanupSkipped = true
-		result.DeviceSkipReason = emptyRegistryReason
-		result.Warnings = append(result.Warnings, emptyRegistryReason)
-	}
-	if deletionEnabled && len(orphanIDs) > len(reg.Services) && len(orphanIDs) >= 3 {
-		deletionEnabled = false
-		result.DeviceCleanupSkipped = true
-		result.DeviceSkipReason = partialRegistryReason
-		result.Warnings = append(result.Warnings, partialRegistryReason)
+		result.DeviceSkipReason = reason
+		result.DeviceSkipUnknownProvenance = serviceNames
+		result.Warnings = append(result.Warnings, reason)
 	}
 	if !deletionEnabled {
 		orphanIDs = make(map[string][]string)

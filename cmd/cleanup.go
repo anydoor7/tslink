@@ -18,6 +18,11 @@ var cleanupReconcileFn = lifecycle.Reconcile
 var cleanupNowFn = time.Now
 var cleanupFindExactDeviceNodeIDFn = tailapi.FindExactDeviceNodeID
 var cleanupAdoptOwnedNodeFn = tsruntime.AdoptOwnedNode
+var cleanupPreviewAdoptOwnedNodeFn = tsruntime.PreviewAdoptOwnedNode
+
+type cleanupAdoptionErrorData struct {
+	Matches int `json:"matches"`
+}
 
 func init() {
 	cleanupCmd := &cobra.Command{
@@ -37,6 +42,7 @@ ETag guards of the normal tag deletion path.`,
 			adopt, _ := cmd.Flags().GetString("adopt")
 			force, _ := cmd.Flags().GetBool("force")
 			dryRun, _ := cmd.Flags().GetBool("dry-run")
+			now := cleanupNowFn()
 			if adopt != "" {
 				if err := registry.ValidateName(adopt); err != nil {
 					return err
@@ -59,32 +65,63 @@ ETag guards of the normal tag deletion path.`,
 				return err
 			}
 			adoptionMatches := 0
+			adoptionWarning := ""
+			var ownershipOverride *tsruntime.OwnershipLedger
 			if adopt != "" {
 				nodeID, matches, err := cleanupFindExactDeviceNodeIDFn(cmd.Context(), adopt)
 				if err != nil {
 					return err
 				}
 				if matches != 1 {
-					return output.ErrConflict(fmt.Sprintf("--adopt requires exactly one literal hostname match; matched %d", matches))
+					return output.ErrConflictWithData(
+						fmt.Sprintf("--adopt requires exactly one literal hostname match; matched %d", matches),
+						cleanupAdoptionErrorData{Matches: matches},
+					)
 				}
 				adoptionMatches = matches
-				if !dryRun {
-					if err := cleanupAdoptOwnedNodeFn(ownershipPath, adopt, nodeID, cleanupNowFn()); err != nil {
+				reg, registryState, err := registry.LoadWithFileState(regPath)
+				if err != nil {
+					return err
+				}
+				retireAdoption := false
+				if registryState == registry.RegistryFileValid {
+					retireAdoption = true
+					for _, svc := range reg.Services {
+						if svc.Name == adopt {
+							retireAdoption = false
+							break
+						}
+					}
+				} else {
+					adoptionWarning = fmt.Sprintf("registry.json is %s and cannot be trusted for service membership; retired_at was not set on the adopted ownership proof; repair registry.json before deciding whether the service is retired", registryState)
+				}
+				if dryRun {
+					preview, err := cleanupPreviewAdoptOwnedNodeFn(ownershipPath, adopt, nodeID, now, retireAdoption)
+					if err != nil {
+						return err
+					}
+					ownershipOverride = &preview
+				} else {
+					if err := cleanupAdoptOwnedNodeFn(ownershipPath, adopt, nodeID, now, retireAdoption); err != nil {
 						return err
 					}
 				}
 			}
 			manageACL, _ := cmd.Flags().GetBool("manage-acl")
 			result, err := cleanupReconcileFn(cmd.Context(), lifecycle.Options{
-				RegistryPath:   regPath,
-				OwnershipPath:  ownershipPath,
-				Now:            cleanupNowFn(),
-				DryRun:         dryRun,
-				ManageACL:      manageACL,
-				CheckUnusedACL: true,
+				RegistryPath:      regPath,
+				OwnershipPath:     ownershipPath,
+				OwnershipOverride: ownershipOverride,
+				Now:               now,
+				DryRun:            dryRun,
+				ManageACL:         manageACL,
+				CheckUnusedACL:    true,
 			})
 			if err != nil {
 				return err
+			}
+			if adoptionWarning != "" {
+				result.Warnings = append(result.Warnings, adoptionWarning)
 			}
 			if adopt != "" {
 				result.Adoption = &lifecycle.AdoptionResult{ServiceName: adopt, Matches: adoptionMatches, Written: !dryRun}

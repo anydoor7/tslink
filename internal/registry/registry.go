@@ -394,6 +394,14 @@ type Registry struct {
 	Services      []Service `json:"services"`
 }
 
+type RegistryFileState string
+
+const (
+	RegistryFileMissing RegistryFileState = "missing"
+	RegistryFileEmpty   RegistryFileState = "empty"
+	RegistryFileValid   RegistryFileState = "valid"
+)
+
 // ServiceIssue is a recoverable, name-addressable registry error. Runtime
 // reconciliation can fail this one service closed while continuing to serve
 // other valid services. Mutating callers must reject every issue so a typed
@@ -702,22 +710,31 @@ func configDecodeError(scope string, err error) error {
 }
 
 func Load(path string) (*Registry, error) {
+	reg, _, err := LoadWithFileState(path)
+	return reg, err
+}
+
+// LoadWithFileState preserves Load's compatibility behavior while exposing
+// whether its empty registry came from an absent file, blank contents, or a
+// successfully decoded registry. Deletion callers use this distinction to
+// fail closed without treating a valid zero-service registry as corruption.
+func LoadWithFileState(path string) (*Registry, RegistryFileState, error) {
 	if err := atomicfile.ConvergePrivateFile(path); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return emptyRegistry(), nil
+			return emptyRegistry(), RegistryFileMissing, nil
 		}
-		return nil, err
+		return nil, "", err
 	}
 	if len(bytes.TrimSpace(data)) == 0 {
-		return emptyRegistry(), nil
+		return emptyRegistry(), RegistryFileEmpty, nil
 	}
 	reg, issues, err := decodeForRuntime(data)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	var blocking []error
 	for _, issue := range issues {
@@ -727,24 +744,24 @@ func Load(path string) (*Registry, error) {
 		}
 	}
 	if len(blocking) > 0 {
-		return nil, errors.Join(blocking...)
+		return nil, "", errors.Join(blocking...)
 	}
 	if len(issues) == 0 {
-		return reg, nil
+		return reg, RegistryFileValid, nil
 	}
 	// Diagnostic readers historically inspect recognized-but-invalid service
 	// shapes (for example doctor/access warnings). Unknown keys are never
 	// admitted above. Mutations use loadForMutation and reject every issue.
 	if err := json.Unmarshal(data, reg); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if err := migrate(reg); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if reg.Services == nil {
 		reg.Services = []Service{}
 	}
-	return reg, nil
+	return reg, RegistryFileValid, nil
 }
 
 func loadForMutation(path string) (*Registry, error) {

@@ -2102,6 +2102,86 @@ func TestLifecycleTickerSkipsFullSyncWhenReconcileReportsNoChange(t *testing.T) 
 	}
 }
 
+func probeServer(t *testing.T) *Server {
+	t.Helper()
+	testenv.SetHome(t, t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatal(err)
+	}
+	writeRegistry(t, []registry.Service{{Name: "private", Type: registry.TypeProxy, Target: "http://localhost:3000"}})
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.closeAllNodes)
+	oldNew := newTSNetServerFn
+	newTSNetServerFn = func(registry.Service, string, string, string) tsnetServer {
+		return &fakeTSNetServer{localClient: &LocalClient{}, status: &ipnstate.Status{Self: &ipnstate.PeerStatus{ID: "nprobe1CNTRL", DNSName: "private.example.ts.net."}}}
+	}
+	t.Cleanup(func() { newTSNetServerFn = oldNew })
+	return s
+}
+
+func TestSyncNodesAuthoritativeTracksLatestFailureState(t *testing.T) {
+	s := probeServer(t)
+	oldAfter := afterDesiredLoadedFn
+	t.Cleanup(func() { afterDesiredLoadedFn = oldAfter })
+	afterDesiredLoadedFn = func(context.Context, uint64) error { return errors.New("synthetic initial failure") }
+	if err := s.syncNodesAuthoritative(context.Background()); err == nil {
+		t.Fatal("syncNodesAuthoritative() error = nil, want injected failure")
+	}
+	if !s.lastSyncFailed.Load() {
+		t.Fatal("authoritative failure did not set lastSyncFailed")
+	}
+	afterDesiredLoadedFn = func(context.Context, uint64) error { return nil }
+	if err := s.syncNodesAuthoritative(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if s.lastSyncFailed.Load() {
+		t.Fatal("authoritative success did not clear lastSyncFailed")
+	}
+}
+
+// A newer sync failure must not be cleared by an older superseded sync that
+// returns nil through the stale-generation early return.
+func TestSyncGenerationGuardIsLoadBearing(t *testing.T) {
+	s := probeServer(t)
+	oldAfter := afterDesiredLoadedFn
+	t.Cleanup(func() { afterDesiredLoadedFn = oldAfter })
+
+	release := make(chan struct{})
+	entered := make(chan struct{}, 1)
+	var calls atomic.Int32
+	afterDesiredLoadedFn = func(_ context.Context, gen uint64) error {
+		if calls.Add(1) == 1 {
+			entered <- struct{}{}
+			<-release
+			return errors.New("synthetic older-generation failure")
+		}
+		return errors.New("synthetic newer-generation failure")
+	}
+	slowDone := make(chan error, 1)
+	go func() { slowDone <- s.syncNodes(context.Background()) }()
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("older sync never reached the seam")
+	}
+	newerErr := s.syncNodes(context.Background())
+	bitAfterNewerFailure := s.lastSyncFailed.Load()
+	close(release)
+	olderErr := <-slowDone
+	bitFinal := s.lastSyncFailed.Load()
+	t.Logf("PROBE R3-25: newer err=%v bit=%t | older(superseded) err=%v | FINAL bit=%t",
+		newerErr, bitAfterNewerFailure, olderErr, bitFinal)
+	if !bitAfterNewerFailure {
+		t.Fatalf("newer failure did not record lastSyncFailed")
+	}
+	if !bitFinal {
+		t.Errorf("REGRESSION: superseded older sync cleared a genuine newer failure (retry lost)")
+	}
+}
+
 func TestLifecycleTickerRetriesFailedSyncThenReturnsToChangeOnly(t *testing.T) {
 	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {

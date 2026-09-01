@@ -220,7 +220,7 @@ func Manifest() CLIManifest {
 			{Command: "tslink serve", Operation: "startup ordinary remote ACL tag ensure", Default: "disabled", RequiredFlags: []string{"--manage-acl"}, Boundary: "ordinary tagOwners creation remains disabled without --manage-acl; acknowledged Funnel services use the separately audited plan"},
 			{Command: "tslink serve", Operation: "Funnel shared tag owner and exact nodeAttrs auto-provisioning", Default: "enabled", RequiredFlags: []string{}, Boundary: "default-on only for acknowledged Funnel services; disable process-wide with --no-auto-provision or per service with no_auto_provision"},
 			{Command: "tslink cleanup", Operation: "owned device deletion", Default: "dry-run", RequiredFlags: []string{"--dry-run=false"}, Boundary: "device deletion requires durable exact NodeID proof; hostname is discovery-only"},
-			{Command: "tslink cleanup", Operation: "legacy device ownership adoption", Default: "disabled", RequiredFlags: []string{"--adopt", "--force", "--dry-run=false"}, Boundary: "preview is read-only; writing requires one literal hostname with exactly one TSLink-tagged remote match and records only its exact NodeID proof"},
+			{Command: "tslink cleanup", Operation: "legacy device ownership adoption", Default: "disabled", RequiredFlags: []string{"--adopt", "--force", "--dry-run=false"}, Boundary: "preview is read-only and simulates reconciliation; writing requires one literal hostname with exactly one TSLink-tagged remote match; a service absent from registry.json records reviewed retired_at provenance for its exact NodeID proof, while a currently registered service records active proof without retired_at"},
 			{Command: "tslink cleanup", Operation: "unused Funnel ACL removal", Default: "disabled", RequiredFlags: []string{"--dry-run=false", "--manage-acl"}, Boundary: "reuses canonical grant refusal and ETag If-Match guards"},
 			{Command: "tslink tags delete-remote", Operation: "remote ACL tag-owner deletion", Default: "disabled", RequiredFlags: []string{"--force", "--manage-acl"}, Boundary: "requires destructive confirmation and explicit remote ACL opt-in"},
 			{Command: "tslink invite user", Operation: "tailnet user invitation", Default: "explicit named recipient", Boundary: "requires a user-owned tskey-api- token; --print-link selects self-delivery"},
@@ -328,24 +328,35 @@ func commandJSONResultFields(commandPath string) map[string]JSONResultFieldInfo 
 			Type:        "boolean",
 			Description: "True only when the durable ownership ledger contains exact StableNodeID cleanup proof for the service; NodeIDs are never emitted.",
 		}
+		fields["daemon_state"] = JSONResultFieldInfo{
+			Type:        "string",
+			Description: "Additive daemon liveness state: running, absent, or unknown; daemon_running retains its existing boolean semantics.",
+			Values:      []string{daemonStateRunning, daemonStateAbsent, daemonStateUnknown},
+		}
+		fields["ownership_proof_available"] = JSONResultFieldInfo{
+			Type:        "boolean",
+			Description: "True when the durable ownership ledger was read successfully, allowing false per-service ownership_proof values to mean proof is genuinely absent.",
+		}
 		return fields
 	case "tslink cleanup":
 		return map[string]JSONResultFieldInfo{
-			"dry_run":                {Type: "boolean", Description: "True when no registry, device, or ACL deletion was applied."},
-			"registry_changed":       {Type: "boolean", Description: "True when expired Funnel services were persisted as tailnet-only."},
-			"expired_funnels":        {Type: "array", Description: "Service names whose public Funnel deadline has elapsed."},
-			"devices_matched":        {Type: "array", Description: "Hostnames discovered by exact NodeID or protected hostname matching; NodeIDs are never emitted."},
-			"devices_would_delete":   {Type: "array", Description: "Hostnames selected by durable exact NodeID ownership proof during dry-run; NodeIDs are never emitted."},
-			"devices_deleted":        {Type: "array", Description: "Hostnames deleted by exact NodeID during apply; NodeIDs are never emitted."},
-			"devices_protected":      {Type: "array", Description: "Hostname matches lacking exact NodeID ownership proof; never deleted."},
-			"devices_adopted":        {Type: "array", Description: "Explicit literal hostnames whose single remote match was recorded as exact ownership proof; NodeIDs are never emitted."},
-			"adoption.service_name":  {Type: "string", Description: "Literal TSLink-tagged hostname selected for adoption preview or apply; omitted when --adopt is absent."},
-			"adoption.matches":       {Type: "integer", Description: "Full-list count of exact-hostname devices remaining after the TSLink tag filter."},
-			"adoption.written":       {Type: "boolean", Description: "True only when exact ownership proof was persisted; false for the default dry-run preview."},
-			"device_cleanup_skipped": {Type: "boolean", Description: "True when ownership proof was unavailable, registry state was suspiciously empty or incomplete, no API client was available, hostname-only matches were protected, or remote cleanup failed."},
-			"device_skip_reason":     {Type: "string", Description: "Stable non-secret reason for skipped device cleanup; omitted otherwise."},
-			"acl_action":             {Type: "string", Description: "Unused Funnel ACL reconciliation outcome."},
-			"warnings":               {Type: "array", Description: "Non-fatal remote cleanup failures without secret or NodeID values."},
+			"dry_run":                        {Type: "boolean", Description: "True when no registry, device, or ACL deletion was applied."},
+			"registry_changed":               {Type: "boolean", Description: "True when expired Funnel services were persisted as tailnet-only."},
+			"expired_funnels":                {Type: "array", Description: "Service names whose public Funnel deadline has elapsed."},
+			"devices_matched":                {Type: "array", Description: "Hostnames discovered by exact NodeID or protected hostname matching; NodeIDs are never emitted."},
+			"devices_would_delete":           {Type: "array", Description: "Hostnames selected by durable exact NodeID ownership proof during dry-run; NodeIDs are never emitted."},
+			"devices_deleted":                {Type: "array", Description: "Hostnames deleted by exact NodeID during apply; NodeIDs are never emitted."},
+			"devices_protected":              {Type: "array", Description: "Hostname matches lacking exact NodeID ownership proof; never deleted."},
+			"devices_adopted":                {Type: "array", Description: "Explicit literal hostnames whose single remote match was recorded as exact ownership proof; NodeIDs are never emitted."},
+			"adoption.service_name":          {Type: "string", Description: "Literal TSLink-tagged hostname selected for adoption preview or apply; omitted when --adopt is absent."},
+			"adoption.matches":               {Type: "integer", Description: "Full-list count of exact-hostname devices remaining after the TSLink tag filter."},
+			"adoption.written":               {Type: "boolean", Description: "True only when exact ownership proof was persisted; false for the default dry-run preview."},
+			"error.data.matches":             {Type: "integer", Description: "Structured filtered exact-hostname match count on an --adopt cardinality conflict."},
+			"device_cleanup_skipped":         {Type: "boolean", Description: "True when ownership proof was unavailable, registry.json was structurally untrusted, an orphan lacked retired_at provenance after possible registry rollback, no API client was available, hostname-only matches were protected, or remote cleanup failed."},
+			"device_skip_reason":             {Type: "string", Description: "Human-readable non-secret reason for skipped device cleanup; structural registry distrust takes priority over ownership-ledger unavailability when both apply; detail may vary with the sorted orphan set; omitted otherwise."},
+			"device_skip_unknown_provenance": {Type: "array", Description: "Sorted service names whose orphan ownership rows lack retired_at provenance; omitted for other skip classes."},
+			"acl_action":                     {Type: "string", Description: "Unused Funnel ACL reconciliation outcome."},
+			"warnings":                       {Type: "array", Description: "Non-fatal remote cleanup failures without secret or NodeID values."},
 		}
 	case "tslink install":
 		return markProseScopedJSONResultFields(map[string]JSONResultFieldInfo{

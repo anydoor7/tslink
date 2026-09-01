@@ -62,6 +62,47 @@ func TestManifestCarriesGeneratingBinaryPlatform(t *testing.T) {
 	}
 }
 
+func TestManifestInstallNoAutoProvisionFlagIsPlatformNeutral(t *testing.T) {
+	for _, command := range Manifest().Commands {
+		if command.Path != "tslink install" {
+			continue
+		}
+		for _, flag := range command.Flags {
+			if flag.Name == "no-auto-provision" {
+				if len(flag.Platforms) != 0 {
+					t.Fatalf("tslink install --no-auto-provision platforms = %v, want no platform mark", flag.Platforms)
+				}
+				return
+			}
+		}
+		t.Fatal("tslink install is missing --no-auto-provision")
+	}
+	t.Fatal("manifest is missing tslink install")
+}
+
+func TestManifestDescribesDaemonStateOwnershipAvailabilityAndAdoptionConflictCount(t *testing.T) {
+	commands := make(map[string]CommandInfo)
+	for _, command := range Manifest().Commands {
+		commands[command.Path] = command
+	}
+	statusFields := commands["tslink status"].JSONResultFields
+	if got := statusFields["daemon_state"]; !reflect.DeepEqual(got.Values, []string{daemonStateRunning, daemonStateAbsent, daemonStateUnknown}) {
+		t.Fatalf("daemon_state manifest = %+v", got)
+	}
+	if got := statusFields["ownership_proof_available"]; got.Type != "boolean" {
+		t.Fatalf("ownership_proof_available manifest = %+v", got)
+	}
+	if got := commands["tslink cleanup"].JSONResultFields["error.data.matches"]; got.Type != "integer" {
+		t.Fatalf("cleanup error.data.matches manifest = %+v", got)
+	}
+	if got := commands["tslink cleanup"].JSONResultFields["device_skip_unknown_provenance"]; got.Type != "array" {
+		t.Fatalf("cleanup device_skip_unknown_provenance manifest = %+v", got)
+	}
+	if got := commands["tslink cleanup"].JSONResultFields["device_skip_reason"].Description; !strings.Contains(got, "structural registry distrust takes priority over ownership-ledger unavailability") {
+		t.Fatalf("cleanup device_skip_reason priority contract = %q", got)
+	}
+}
+
 func TestManifestPlatformMarksAreExactAndProseDerived(t *testing.T) {
 	m := Manifest()
 	commands := make(map[string]CommandInfo, len(m.Commands))
@@ -75,7 +116,7 @@ func TestManifestPlatformMarksAreExactAndProseDerived(t *testing.T) {
 		}
 	}
 	if runtime.GOOS == "darwin" {
-		want := []string{"tslink install --force", "tslink install --no-auto-provision", "tslink uninstall --force"}
+		want := []string{"tslink install --force", "tslink uninstall --force"}
 		if !reflect.DeepEqual(markedFlags, want) {
 			t.Fatalf("marked flags = %v, want exactly %v", markedFlags, want)
 		}
@@ -158,8 +199,8 @@ func TestManifestPlatformMarksAreExactAndProseDerived(t *testing.T) {
 	if markedFieldCount != 23 {
 		t.Fatalf("marked JSON result fields = %d, want 23", markedFieldCount)
 	}
-	if runtime.GOOS == "darwin" && markedFieldCount+len(markedFlags) != 26 {
-		t.Fatalf("Darwin total marked entries = %d, want 26 (3 flags + 23 result fields)", markedFieldCount+len(markedFlags))
+	if runtime.GOOS == "darwin" && markedFieldCount+len(markedFlags) != 25 {
+		t.Fatalf("Darwin total marked entries = %d, want 25 (2 flags + 23 result fields)", markedFieldCount+len(markedFlags))
 	}
 }
 
@@ -463,6 +504,7 @@ func TestAllManifestValuesMatchProductionOutputSets(t *testing.T) {
 	}
 
 	production := map[string]map[string]struct{}{
+		"tslink status/daemon_state":            sliceSet([]string{daemonStateRunning, daemonStateAbsent, daemonStateUnknown}),
 		"tslink list/services[].state":          listStates,
 		"tslink list/services[].funnel_state":   funnelStates,
 		"tslink status/services[].funnel_state": funnelStates,
@@ -751,14 +793,20 @@ func TestCleanupManifestDescribesAdoptionApplyAndEverySkipClass(t *testing.T) {
 	if adoption == nil || !containsString(adoption.RequiredFlags, "--adopt") || !containsString(adoption.RequiredFlags, "--force") || !containsString(adoption.RequiredFlags, "--dry-run=false") {
 		t.Fatalf("adoption operation = %+v, want three explicit apply flags", adoption)
 	}
-	if !strings.Contains(adoption.Boundary, "preview is read-only") || !strings.Contains(adoption.Boundary, "TSLink-tagged") {
-		t.Fatalf("adoption boundary = %q, want read-only preview and tag gate", adoption.Boundary)
+	for _, want := range []string{"preview is read-only", "TSLink-tagged", "absent from registry.json", "currently registered", "without retired_at"} {
+		if !strings.Contains(adoption.Boundary, want) {
+			t.Fatalf("adoption boundary = %q, missing %q", adoption.Boundary, want)
+		}
 	}
 	description := commandJSONResultFields("tslink cleanup")["device_cleanup_skipped"].Description
 	for _, want := range []string{"ownership proof", "registry", "API client", "hostname-only", "remote cleanup"} {
 		if !strings.Contains(description, want) {
 			t.Fatalf("device_cleanup_skipped description = %q, missing %q", description, want)
 		}
+	}
+	reasonDescription := commandJSONResultFields("tslink cleanup")["device_skip_reason"].Description
+	if strings.Contains(reasonDescription, "Stable") || !strings.Contains(reasonDescription, "sorted orphan set") {
+		t.Fatalf("device_skip_reason description = %q, want data-dependent human-readable contract", reasonDescription)
 	}
 }
 

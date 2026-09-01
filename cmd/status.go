@@ -42,23 +42,28 @@ const (
 	statusEndpointStateStale              = "stale"
 	statusEndpointStateMissing            = "missing"
 	statusEndpointStateUnknown            = "unknown"
+	daemonStateRunning                    = "running"
+	daemonStateAbsent                     = "absent"
+	daemonStateUnknown                    = "unknown"
 )
 
 // StatusResult holds the status information for display.
 type StatusResult struct {
-	DaemonRunning          bool                    `json:"daemon_running"`
-	DaemonPID              int                     `json:"daemon_pid"`
-	Authenticated          bool                    `json:"authenticated"`
-	CredentialStored       bool                    `json:"credential_stored"`
-	NodeAuthorized         bool                    `json:"node_authorized"`
-	AuthorizedServiceCount int                     `json:"authorized_service_count"`
-	AuthStatus             string                  `json:"auth_status"`
-	AuthURL                string                  `json:"auth_url,omitempty"`
-	ExpiresAt              *time.Time              `json:"expires_at,omitempty"`
-	Next                   []string                `json:"next,omitempty"`
-	GlobalError            *tsruntime.ServiceError `json:"global_error,omitempty"`
-	ServiceCount           int                     `json:"service_count"`
-	Services               []StatusServiceState    `json:"services"`
+	DaemonRunning           bool                    `json:"daemon_running"`
+	DaemonState             string                  `json:"daemon_state"`
+	DaemonPID               int                     `json:"daemon_pid"`
+	OwnershipProofAvailable bool                    `json:"ownership_proof_available"`
+	Authenticated           bool                    `json:"authenticated"`
+	CredentialStored        bool                    `json:"credential_stored"`
+	NodeAuthorized          bool                    `json:"node_authorized"`
+	AuthorizedServiceCount  int                     `json:"authorized_service_count"`
+	AuthStatus              string                  `json:"auth_status"`
+	AuthURL                 string                  `json:"auth_url,omitempty"`
+	ExpiresAt               *time.Time              `json:"expires_at,omitempty"`
+	Next                    []string                `json:"next,omitempty"`
+	GlobalError             *tsruntime.ServiceError `json:"global_error,omitempty"`
+	ServiceCount            int                     `json:"service_count"`
+	Services                []StatusServiceState    `json:"services"`
 }
 
 type StatusServiceState struct {
@@ -74,21 +79,23 @@ type StatusServiceState struct {
 }
 
 type StatusURLsResult struct {
-	SchemaVersion          string                      `json:"schema_version"`
-	DaemonRunning          bool                        `json:"daemon_running"`
-	DaemonPID              int                         `json:"daemon_pid"`
-	Authenticated          bool                        `json:"authenticated"`
-	CredentialStored       bool                        `json:"credential_stored"`
-	NodeAuthorized         bool                        `json:"node_authorized"`
-	AuthorizedServiceCount int                         `json:"authorized_service_count"`
-	AuthStatus             string                      `json:"auth_status"`
-	AuthURL                string                      `json:"auth_url,omitempty"`
-	ExpiresAt              *time.Time                  `json:"expires_at,omitempty"`
-	Next                   []string                    `json:"next,omitempty"`
-	GlobalError            *tsruntime.ServiceError     `json:"global_error,omitempty"`
-	ServiceCount           int                         `json:"service_count"`
-	RuntimeSnapshot        StatusRuntimeSnapshotResult `json:"runtime_snapshot"`
-	Services               []StatusServiceView         `json:"services"`
+	SchemaVersion           string                      `json:"schema_version"`
+	DaemonRunning           bool                        `json:"daemon_running"`
+	DaemonState             string                      `json:"daemon_state"`
+	DaemonPID               int                         `json:"daemon_pid"`
+	OwnershipProofAvailable bool                        `json:"ownership_proof_available"`
+	Authenticated           bool                        `json:"authenticated"`
+	CredentialStored        bool                        `json:"credential_stored"`
+	NodeAuthorized          bool                        `json:"node_authorized"`
+	AuthorizedServiceCount  int                         `json:"authorized_service_count"`
+	AuthStatus              string                      `json:"auth_status"`
+	AuthURL                 string                      `json:"auth_url,omitempty"`
+	ExpiresAt               *time.Time                  `json:"expires_at,omitempty"`
+	Next                    []string                    `json:"next,omitempty"`
+	GlobalError             *tsruntime.ServiceError     `json:"global_error,omitempty"`
+	ServiceCount            int                         `json:"service_count"`
+	RuntimeSnapshot         StatusRuntimeSnapshotResult `json:"runtime_snapshot"`
+	Services                []StatusServiceView         `json:"services"`
 }
 
 type StatusRuntimeSnapshotResult struct {
@@ -128,7 +135,8 @@ func getStatus(pidPath, regPath string) (StatusResult, error) {
 	}
 	r.ServiceCount = len(reg.Services)
 	r.Services = make([]StatusServiceState, 0, len(reg.Services))
-	ownershipProofs := ownershipProofsForRegistry(regPath)
+	ownershipProofs, ownershipProofAvailable := ownershipProofsForRegistry(regPath)
+	r.OwnershipProofAvailable = ownershipProofAvailable
 	for _, svc := range reg.Services {
 		now := statusNowFn()
 		effective := registry.EffectiveServiceAt(svc, now)
@@ -146,24 +154,30 @@ func getStatus(pidPath, regPath string) (StatusResult, error) {
 	return r, nil
 }
 
-func ownershipProofsForRegistry(regPath string) map[string]bool {
+func ownershipProofsForRegistry(_ string) (map[string]bool, bool) {
 	proofs := make(map[string]bool)
-	ledgerPath := filepath.Join(filepath.Dir(regPath), "node-ownership.json")
+	ledgerPath, err := config.NodeOwnershipPath()
+	if err != nil {
+		return proofs, false
+	}
 	ledger, err := tsruntime.LoadOwnership(ledgerPath)
 	if err != nil {
-		return proofs
+		return proofs, false
 	}
 	for _, node := range ledger.Nodes {
 		proofs[node.ServiceName] = true
 	}
-	return proofs
+	return proofs, true
 }
 
 func baseStatus(pidPath string) StatusResult {
-	r := StatusResult{AuthStatus: authStatusNotAuthenticated, Services: []StatusServiceState{}}
+	r := StatusResult{DaemonState: daemonStateUnknown, AuthStatus: authStatusNotAuthenticated, Services: []StatusServiceState{}}
 	if isRunningFn(pidPath) {
 		r.DaemonRunning = true
+		r.DaemonState = daemonStateRunning
 		r.DaemonPID, _ = readPIDFn(pidPath)
+	} else if isProcessAbsentFromPIDFileFn(pidPath) {
+		r.DaemonState = daemonStateAbsent
 	}
 	if apiKey, _ := getAPIKeyFn(); apiKey != "" {
 		r.CredentialStored = true
@@ -193,7 +207,8 @@ func getPollableStatus(pidPath, regPath, snapshotPath, authHandoffPath string) (
 	if err != nil {
 		snapshot, snapshotErr := runtimeLoadSnapshotFn(snapshotPath)
 		if snapshotErr == nil && snapshot != nil && snapshot.GlobalError != nil {
-			return statusFromGlobalFailure(pidPath, snapshot, ownershipProofsForRegistry(regPath)), nil
+			ownershipProofs, ownershipProofAvailable := ownershipProofsForRegistry(regPath)
+			return statusFromGlobalFailure(pidPath, snapshot, ownershipProofs, ownershipProofAvailable), nil
 		}
 		return StatusResult{}, err
 	}
@@ -279,8 +294,9 @@ func getPollableStatus(pidPath, regPath, snapshotPath, authHandoffPath string) (
 	return r, nil
 }
 
-func statusFromGlobalFailure(pidPath string, snapshot *tsruntime.Snapshot, ownershipProofs map[string]bool) StatusResult {
+func statusFromGlobalFailure(pidPath string, snapshot *tsruntime.Snapshot, ownershipProofs map[string]bool, ownershipProofAvailable bool) StatusResult {
 	r := baseStatus(pidPath)
+	r.OwnershipProofAvailable = ownershipProofAvailable
 	r.GlobalError = cloneServiceError(snapshot.GlobalError)
 	r.ServiceCount = len(snapshot.Services)
 	r.Services = make([]StatusServiceState, 0, len(snapshot.Services))
@@ -374,21 +390,23 @@ func getStatusURLsWithAuth(pidPath, regPath, snapshotPath, authHandoffPath strin
 	freshness := tsruntime.Classify(snapshot, loadErr, expected)
 
 	result := StatusURLsResult{
-		SchemaVersion:          inspect.SchemaVersion,
-		DaemonRunning:          status.DaemonRunning,
-		DaemonPID:              status.DaemonPID,
-		Authenticated:          status.Authenticated,
-		CredentialStored:       status.CredentialStored,
-		NodeAuthorized:         status.NodeAuthorized,
-		AuthorizedServiceCount: status.AuthorizedServiceCount,
-		AuthStatus:             status.AuthStatus,
-		AuthURL:                status.AuthURL,
-		ExpiresAt:              status.ExpiresAt,
-		Next:                   append([]string(nil), status.Next...),
-		GlobalError:            cloneServiceError(status.GlobalError),
-		ServiceCount:           len(reg.Services),
-		RuntimeSnapshot:        runtimeSnapshotResult(snapshot, freshness),
-		Services:               make([]StatusServiceView, 0, len(reg.Services)),
+		SchemaVersion:           inspect.SchemaVersion,
+		DaemonRunning:           status.DaemonRunning,
+		DaemonState:             status.DaemonState,
+		DaemonPID:               status.DaemonPID,
+		OwnershipProofAvailable: status.OwnershipProofAvailable,
+		Authenticated:           status.Authenticated,
+		CredentialStored:        status.CredentialStored,
+		NodeAuthorized:          status.NodeAuthorized,
+		AuthorizedServiceCount:  status.AuthorizedServiceCount,
+		AuthStatus:              status.AuthStatus,
+		AuthURL:                 status.AuthURL,
+		ExpiresAt:               status.ExpiresAt,
+		Next:                    append([]string(nil), status.Next...),
+		GlobalError:             cloneServiceError(status.GlobalError),
+		ServiceCount:            len(reg.Services),
+		RuntimeSnapshot:         runtimeSnapshotResult(snapshot, freshness),
+		Services:                make([]StatusServiceView, 0, len(reg.Services)),
 	}
 
 	snapshotServices := map[string]tsruntime.ServiceSnapshot{}
@@ -399,7 +417,8 @@ func getStatusURLsWithAuth(pidPath, regPath, snapshotPath, authHandoffPath strin
 	}
 
 	now := statusNowFn()
-	ownershipProofs := ownershipProofsForRegistry(regPath)
+	ownershipProofs, ownershipProofAvailable := ownershipProofsForRegistry(regPath)
+	result.OwnershipProofAvailable = ownershipProofAvailable
 	for _, svc := range reg.Services {
 		expired := registry.FunnelExpiredAt(svc, now)
 		effective := registry.EffectiveServiceAt(svc, now)
@@ -607,16 +626,18 @@ func appendStatusWarning(warnings []inspect.WarningView, code, message string) [
 
 func formatStatusURLs(r StatusURLsResult, out io.Writer) {
 	formatStatus(StatusResult{
-		DaemonRunning:          r.DaemonRunning,
-		DaemonPID:              r.DaemonPID,
-		Authenticated:          r.Authenticated,
-		CredentialStored:       r.CredentialStored,
-		NodeAuthorized:         r.NodeAuthorized,
-		AuthorizedServiceCount: r.AuthorizedServiceCount,
-		AuthStatus:             r.AuthStatus,
-		AuthURL:                r.AuthURL,
-		ExpiresAt:              r.ExpiresAt,
-		ServiceCount:           r.ServiceCount,
+		DaemonRunning:           r.DaemonRunning,
+		DaemonState:             r.DaemonState,
+		DaemonPID:               r.DaemonPID,
+		OwnershipProofAvailable: r.OwnershipProofAvailable,
+		Authenticated:           r.Authenticated,
+		CredentialStored:        r.CredentialStored,
+		NodeAuthorized:          r.NodeAuthorized,
+		AuthorizedServiceCount:  r.AuthorizedServiceCount,
+		AuthStatus:              r.AuthStatus,
+		AuthURL:                 r.AuthURL,
+		ExpiresAt:               r.ExpiresAt,
+		ServiceCount:            r.ServiceCount,
 	}, out)
 	fmt.Fprintf(out, "→ runtime snapshot: %s", r.RuntimeSnapshot.Status)
 	if r.RuntimeSnapshot.Code != "" {

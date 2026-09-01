@@ -513,6 +513,9 @@ func (s *Server) syncNodes(ctx context.Context) error {
 func (s *Server) syncNodesAuthoritative(ctx context.Context) error {
 	for {
 		outcome, err := s.syncNodesWithOutcome(ctx)
+		if outcome.generation == s.syncGeneration.Load() {
+			s.lastSyncFailed.Store(err != nil)
+		}
 		if err != nil {
 			return err
 		}

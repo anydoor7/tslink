@@ -41,6 +41,39 @@ func TestRemoveService_NoAPIClientSkipIsReported(t *testing.T) {
 	}
 }
 
+func TestRemoveClockRollbackWritesReadableClampedLedger(t *testing.T) {
+	dir := t.TempDir()
+	regPath := filepath.Join(dir, "registry.json")
+	ownershipPath := filepath.Join(dir, "node-ownership.json")
+	recordedAt := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	if _, err := registry.Add(regPath, registry.Service{Name: "clocked", Type: registry.TypeProxy, Target: "http://localhost:3000"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := tsruntime.RecordOwnedNode(ownershipPath, "clocked", "node-clocked", recordedAt); err != nil {
+		t.Fatal(err)
+	}
+	oldDelete, oldNow := deleteDevicesFn, removeNowFn
+	t.Cleanup(func() { deleteDevicesFn, removeNowFn = oldDelete, oldNow })
+	removeNowFn = func() time.Time { return recordedAt.Add(-time.Hour) }
+	deleteDevicesFn = func(context.Context, tailapi.CleanupTarget) (tailapi.CleanupResult, error) {
+		return tailapi.CleanupResult{}, tailapi.ErrNoAPIClient
+	}
+	result, err := removeServiceResult(regPath, "clocked")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Removed || !result.DeviceCleanupSkipped {
+		t.Fatalf("result = %+v, want local removal with degraded remote cleanup", result)
+	}
+	ledger, err := tsruntime.LoadOwnership(ownershipPath)
+	if err != nil {
+		t.Fatalf("LoadOwnership() after clock rollback remove = %v", err)
+	}
+	if len(ledger.Nodes) != 1 || ledger.Nodes[0].RetiredAt == nil || !ledger.Nodes[0].RetiredAt.Equal(recordedAt) {
+		t.Fatalf("ledger = %+v, want readable retirement clamped to recorded_at", ledger)
+	}
+}
+
 func TestRemoveService_ProtectedCleanupSkipIsReported(t *testing.T) {
 	dir := t.TempDir()
 	regPath := filepath.Join(dir, "registry.json")
@@ -94,11 +127,32 @@ func TestRemoveServicePassesOnlyNamedServicesOwnershipProof(t *testing.T) {
 	if err := tsruntime.RecordOwnedNode(ownershipPath, "other", "node-other", time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	oldDelete := deleteDevicesFn
-	t.Cleanup(func() { deleteDevicesFn = oldDelete })
+	retiredAt := time.Date(2030, 8, 31, 12, 0, 0, 0, time.UTC)
+	oldDelete, oldNow := deleteDevicesFn, removeNowFn
+	t.Cleanup(func() {
+		deleteDevicesFn = oldDelete
+		removeNowFn = oldNow
+	})
+	removeNowFn = func() time.Time { return retiredAt }
 	deleteDevicesFn = func(_ context.Context, target tailapi.CleanupTarget) (tailapi.CleanupResult, error) {
 		if target.Hostname != "web" || strings.Join(target.NodeIDs, ",") != "node-web" {
 			t.Fatalf("cleanup target = %+v, want only named service proof", target)
+		}
+		ledger, err := tsruntime.LoadOwnership(ownershipPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, node := range ledger.Nodes {
+			switch node.ServiceName {
+			case "web":
+				if node.RetiredAt == nil || !node.RetiredAt.Equal(retiredAt) {
+					t.Fatalf("removed service proof = %+v, want retired_at before remote cleanup", node)
+				}
+			case "other":
+				if node.RetiredAt != nil {
+					t.Fatalf("unrelated service proof = %+v, must remain active", node)
+				}
+			}
 		}
 		return tailapi.CleanupResult{}, nil
 	}

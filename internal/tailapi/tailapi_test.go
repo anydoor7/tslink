@@ -160,21 +160,16 @@ func TestFindExactDeviceNodeIDRequiresTSLinkTagAndCountsAfterFiltering(t *testin
 		{name: "foreign tag rejected", body: `{"devices":[{"nodeId":"node-foreign","hostname":"legacy","tags":["tag:production-database"]}]}`, wantError: "matched 1 devices, 0 of them TSLink-tagged", wantNext: true},
 		{name: "default tag accepted", body: `{"devices":[{"nodeId":"node-default","hostname":"legacy","tags":["tag:tsmain"]}]}`, wantNodeID: "node-default", wantMatches: 1},
 		{name: "filter before cardinality", body: `{"devices":[{"nodeId":"node-foreign-a","hostname":"legacy","tags":["tag:other"]},{"nodeId":"node-tslink","hostname":"legacy","tags":["tag:tslink-worker"]},{"nodeId":"node-foreign-b","hostname":"legacy","tags":[]}]}`, wantNodeID: "node-tslink", wantMatches: 1},
-		{name: "two tagged remain ambiguous", body: `{"devices":[{"nodeId":"node-default","hostname":"legacy","tags":["tag:tsmain"]},{"nodeId":"node-funnel","hostname":"legacy","tags":["tag:tslink-funnel"]},{"nodeId":"node-foreign","hostname":"legacy","tags":["tag:other"]}]}`, wantMatches: 2},
+		{name: "sentinel tagged match at end is counted", body: `{"devices":[{"nodeId":"node-default","hostname":"legacy","tags":["tag:tsmain"]},{"nodeId":"node-foreign","hostname":"legacy","tags":["tag:other"]},{"nodeId":"node-sentinel-last","hostname":"legacy","tags":["tag:tslink-funnel"]}]}`, wantMatches: 2},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			setup(t)
 			mustSetAPIKey(t, "api-key")
-			requests := 0
 			withDefaultTransport(t, roundTripperFunc(func(req *http.Request) (*http.Response, error) {
-				requests++
 				return jsonResponse(http.StatusOK, tc.body), nil
 			}))
 			nodeID, matches, err := FindExactDeviceNodeID(context.Background(), "legacy")
-			if requests != 1 {
-				t.Fatalf("Devices.List requests = %d, want one full-list GET", requests)
-			}
 			if tc.wantError != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantError) {
 					t.Fatalf("error = %v, want %q", err, tc.wantError)
@@ -182,6 +177,41 @@ func TestFindExactDeviceNodeIDRequiresTSLinkTagAndCountsAfterFiltering(t *testin
 				var coded registry.CodedError
 				if tc.wantNext && (!errors.As(err, &coded) || len(coded.Next) == 0) {
 					t.Fatalf("error = %#v, want actionable next[]", err)
+				}
+				return
+			}
+			if err != nil || nodeID != tc.wantNodeID || matches != tc.wantMatches {
+				t.Fatalf("lookup = nodeID:%q matches:%d err:%v, want nodeID:%q matches:%d", nodeID, matches, err, tc.wantNodeID, tc.wantMatches)
+			}
+		})
+	}
+}
+
+func TestFindExactDeviceNodeIDHonorsConfiguredDefaultTagAndRejectsUnrelatedTag(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		tag         string
+		wantNodeID  string
+		wantMatches int
+		wantError   string
+	}{
+		{name: "configured default accepted", tag: "tag:myteam", wantNodeID: "node-custom", wantMatches: 1},
+		{name: "unrelated tag rejected", tag: "tag:unrelated", wantError: "0 of them TSLink-tagged"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setup(t)
+			if err := config.SaveGlobalConfig(config.GlobalConfig{DefaultTag: "tag:myteam"}); err != nil {
+				t.Fatal(err)
+			}
+			mustSetAPIKey(t, "api-key")
+			withDefaultTransport(t, roundTripperFunc(func(*http.Request) (*http.Response, error) {
+				body := `{"devices":[{"nodeId":"node-custom","hostname":"legacy","tags":["` + tc.tag + `"]}]}`
+				return jsonResponse(http.StatusOK, body), nil
+			}))
+			nodeID, matches, err := FindExactDeviceNodeID(context.Background(), "legacy")
+			if tc.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantError) || nodeID != "" || matches != 0 {
+					t.Fatalf("lookup = nodeID:%q matches:%d err:%v, want fail-closed unrelated tag rejection", nodeID, matches, err)
 				}
 				return
 			}

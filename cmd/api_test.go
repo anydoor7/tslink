@@ -661,6 +661,34 @@ func TestAPIAddRearmsExpiredFunnelAndReturnsPersistedDeadline(t *testing.T) {
 	}
 }
 
+func TestAPIAddIfMissingExpiredFunnelDoesNotReportPublicExposure(t *testing.T) {
+	h, _ := newTestHandler(t)
+	past := time.Now().UTC().Add(-time.Hour)
+	if _, err := registry.Add(h.regPath, registry.Service{
+		Name: "public-app", Type: registry.TypeProxy, Target: "http://localhost:3000",
+		Funnel: true, PublicAck: true, FunnelExpiresAt: &past,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	resp := sendRequest(t, h, APIRequest{
+		Action: apiActionAdd, Name: "public-app", Type: registry.TypeProxy,
+		Target: "localhost:4000", Funnel: true, PublicAck: true, IfMissing: true,
+	})
+	if !resp.OK || resp.Created || resp.Exposure == nil {
+		t.Fatalf("response = %+v, want successful if_missing hit", resp)
+	}
+	if resp.Exposure.Kind != inspect.ExposureTailnet || resp.Exposure.Public {
+		t.Fatalf("expired if_missing exposure = %+v, want effective tailnet-only exposure", resp.Exposure)
+	}
+	reg, err := registry.Load(h.regPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reg.Services) != 1 || !reg.Services[0].Funnel || reg.Services[0].FunnelExpiresAt == nil || !reg.Services[0].FunnelExpiresAt.Equal(past) {
+		t.Fatalf("persisted service = %+v, want unchanged expired Funnel record", reg.Services)
+	}
+}
+
 func TestAPIAddResultFunnelExpiryMatchesDiskAcrossWriteBranches(t *testing.T) {
 	for _, tc := range []struct {
 		name      string

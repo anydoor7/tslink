@@ -249,7 +249,7 @@ func addWarnings(svc registry.Service, base []inspect.WarningView) []inspect.War
 }
 
 func buildAddResult(ctx context.Context, svc registry.Service, created bool, pidPath, regPath, snapshotPath string, wait time.Duration) (AddResult, error) {
-	view := inspect.ServiceViewFor(svc)
+	view := inspect.ServiceViewFor(registry.EffectiveServiceAt(svc, time.Now()))
 	result := AddResult{
 		Name:            svc.Name,
 		Type:            svc.Type,

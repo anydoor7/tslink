@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"time"
 
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/output"
@@ -27,6 +28,7 @@ type RemoveResult struct {
 
 var deleteDevicesFn = tailapi.DeleteDevicesForService
 var ensureDirFn = config.EnsureDir
+var removeNowFn = time.Now
 
 func removeServiceResult(regPath, name string) (RemoveResult, error) {
 	ownershipPath := filepath.Join(filepath.Dir(regPath), "node-ownership.json")
@@ -50,6 +52,9 @@ func removeServiceResult(regPath, name string) (RemoveResult, error) {
 		if ownershipErr != nil {
 			result.DeviceWarning = fmt.Sprintf("could not read node ownership proof: %v", ownershipErr)
 			return result, nil
+		}
+		if err := tsruntime.MarkOwnedNodeIDsRetired(ownershipPath, ownedNodeIDs, removeNowFn()); err != nil {
+			result.DeviceWarning = fmt.Sprintf("service removed but ownership retirement provenance could not be recorded: %v", err)
 		}
 		cleanup, err := deleteDevicesFn(context.Background(), tailapi.CleanupTargetForOwnedService(svc, ownedNodeIDs))
 		if err != nil {

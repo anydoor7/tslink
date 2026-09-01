@@ -162,7 +162,7 @@
         "--force",
         "--dry-run=false"
       ],
-      "boundary": "preview is read-only; writing requires one literal hostname with exactly one TSLink-tagged remote match and records only its exact NodeID proof"
+      "boundary": "preview is read-only and simulates reconciliation; writing requires one literal hostname with exactly one TSLink-tagged remote match; a service absent from registry.json records reviewed retired_at provenance for its exact NodeID proof, while a currently registered service records active proof without retired_at"
     },
     {
       "command": "tslink cleanup",
@@ -645,11 +645,15 @@
         },
         "device_cleanup_skipped": {
           "type": "boolean",
-          "description": "True when ownership proof was unavailable, registry state was suspiciously empty or incomplete, no API client was available, hostname-only matches were protected, or remote cleanup failed."
+          "description": "True when ownership proof was unavailable, registry.json was structurally untrusted, an orphan lacked retired_at provenance after possible registry rollback, no API client was available, hostname-only matches were protected, or remote cleanup failed."
         },
         "device_skip_reason": {
           "type": "string",
-          "description": "Stable non-secret reason for skipped device cleanup; omitted otherwise."
+          "description": "Human-readable non-secret reason for skipped device cleanup; structural registry distrust takes priority over ownership-ledger unavailability when both apply; detail may vary with the sorted orphan set; omitted otherwise."
+        },
+        "device_skip_unknown_provenance": {
+          "type": "array",
+          "description": "Sorted service names whose orphan ownership rows lack retired_at provenance; omitted for other skip classes."
         },
         "devices_adopted": {
           "type": "array",
@@ -674,6 +678,10 @@
         "dry_run": {
           "type": "boolean",
           "description": "True when no registry, device, or ACL deletion was applied."
+        },
+        "error.data.matches": {
+          "type": "integer",
+          "description": "Structured filtered exact-hostname match count on an --adopt cardinality conflict."
         },
         "expired_funnels": {
           "type": "array",
@@ -787,10 +795,7 @@
           "type": "bool",
           "default": "false",
           "scope": "local",
-          "usage": "Install the managed daemon with Funnel policy auto-provisioning disabled",
-          "platforms": [
-            "darwin"
-          ]
+          "usage": "Install the managed daemon with Funnel policy auto-provisioning disabled"
         }
       ],
       "json_result_fields": {
@@ -1454,6 +1459,15 @@
         }
       ],
       "json_result_fields": {
+        "daemon_state": {
+          "type": "string",
+          "description": "Additive daemon liveness state: running, absent, or unknown; daemon_running retains its existing boolean semantics.",
+          "values": [
+            "running",
+            "absent",
+            "unknown"
+          ]
+        },
         "global_error": {
           "type": "object",
           "description": "Stable daemon-wide runtime failure showing that the current registry control plane is non-authoritative; omitted when reconciliation is healthy."
@@ -1461,6 +1475,10 @@
         "next": {
           "type": "array",
           "description": "Machine continuation commands when the successful status still requires enrollment or polling."
+        },
+        "ownership_proof_available": {
+          "type": "boolean",
+          "description": "True when the durable ownership ledger was read successfully, allowing false per-service ownership_proof values to mean proof is genuinely absent."
         },
         "services[].error": {
           "type": "object",

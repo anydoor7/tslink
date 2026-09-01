@@ -124,6 +124,5 @@ func vbsStringLiteral(value string) string {
 
 func init() {
 	installCmd.Flags().Bool("no-auto-provision", false, "Install the managed daemon with Funnel policy auto-provisioning disabled")
-	mustMarkFlagPlatforms(installCmd, "no-auto-provision", "windows")
 	rootCmd.AddCommand(installCmd)
 }

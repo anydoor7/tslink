@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/inspect"
 	"github.com/monody0007/tslink/internal/registry"
 	tsruntime "github.com/monody0007/tslink/internal/runtime"
@@ -42,6 +43,7 @@ func addStatusTestService(t *testing.T, regPath string, svc registry.Service) re
 
 func TestStatusJSONReportsOwnershipProofWithoutNodeID(t *testing.T) {
 	dir := t.TempDir()
+	t.Setenv(config.ConfigDirEnv, dir)
 	regPath := filepath.Join(dir, "registry.json")
 	pidPath := filepath.Join(dir, "tslink.pid")
 	addStatusTestService(t, regPath, registry.Service{Name: "private", Type: registry.TypeProxy, Target: "http://localhost:3000"})
@@ -75,6 +77,110 @@ func TestStatusJSONReportsOwnershipProofWithoutNodeID(t *testing.T) {
 	}
 	if !result.Services[0].OwnershipProof || !strings.Contains(string(withProof), `"ownership_proof":true`) || strings.Contains(string(withProof), "node-status-proof-fixture") {
 		t.Fatalf("status JSON = %s, want proof=true without NodeID", withProof)
+	}
+}
+
+func TestOwnershipProofsDoNotDependOnRegistryPath(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv(config.ConfigDirEnv, dir)
+	ledgerPath, err := config.NodeOwnershipPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tsruntime.RecordOwnedNode(ledgerPath, "private", "node-private", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	proofs, available := ownershipProofsForRegistry(filepath.Join(t.TempDir(), "noncanonical-registry.json"))
+	if !available || !proofs["private"] {
+		t.Fatalf("proofs = %v available=%t, want ownership path independent of registry path", proofs, available)
+	}
+}
+
+func TestStatusDaemonStateIsAdditiveAndKeepsDaemonRunningSemantics(t *testing.T) {
+	oldIsRunning, oldReadPID, oldAbsent := isRunningFn, readPIDFn, isProcessAbsentFromPIDFileFn
+	t.Cleanup(func() {
+		isRunningFn, readPIDFn, isProcessAbsentFromPIDFileFn = oldIsRunning, oldReadPID, oldAbsent
+	})
+	readPIDFn = func(string) (int, error) { return 4242, nil }
+
+	for _, tc := range []struct {
+		name        string
+		running     bool
+		absent      bool
+		wantState   string
+		wantRunning bool
+		wantPID     int
+	}{
+		{name: "running", running: true, wantState: daemonStateRunning, wantRunning: true, wantPID: 4242},
+		{name: "absent", absent: true, wantState: daemonStateAbsent},
+		{name: "unknown", wantState: daemonStateUnknown},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			isRunningFn = func(string) bool { return tc.running }
+			isProcessAbsentFromPIDFileFn = func(string) bool { return tc.absent }
+			result := baseStatus("isolated.pid")
+			if result.DaemonState != tc.wantState || result.DaemonRunning != tc.wantRunning || result.DaemonPID != tc.wantPID {
+				t.Fatalf("daemon status = state:%q running:%t pid:%d, want state:%q running:%t pid:%d", result.DaemonState, result.DaemonRunning, result.DaemonPID, tc.wantState, tc.wantRunning, tc.wantPID)
+			}
+			wire, err := json.Marshal(result)
+			if err != nil || !bytes.Contains(wire, []byte(`"daemon_state":"`+tc.wantState+`"`)) {
+				t.Fatalf("status JSON = %s, err=%v", wire, err)
+			}
+		})
+	}
+}
+
+func TestStatusOwnershipProofAvailabilityDistinguishesMissingProofFromUnreadableLedger(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv(config.ConfigDirEnv, dir)
+	regPath, err := config.RegistryPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pidPath, err := config.PIDPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	addStatusTestService(t, regPath, registry.Service{Name: "private", Type: registry.TypeProxy, Target: "http://localhost:3000"})
+
+	missing, err := getStatus(pidPath, regPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !missing.OwnershipProofAvailable || missing.Services[0].OwnershipProof {
+		t.Fatalf("missing proof status = available:%t services:%+v, want readable ledger with no proof", missing.OwnershipProofAvailable, missing.Services)
+	}
+
+	ledgerPath, err := config.NodeOwnershipPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ledgerPath, []byte(`{"schema_version":2,"nodes":[`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	unreadable, err := getStatus(pidPath, regPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unreadable.OwnershipProofAvailable || unreadable.Services[0].OwnershipProof {
+		t.Fatalf("unreadable proof status = available:%t services:%+v, want distinguishable unavailable ledger", unreadable.OwnershipProofAvailable, unreadable.Services)
+	}
+}
+
+func TestStatusOwnershipProofPathComesFromConfigNotRegistrySibling(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv(config.ConfigDirEnv, configDir)
+	foreignDir := t.TempDir()
+	foreignRegistryPath := filepath.Join(foreignDir, "registry.json")
+	foreignLedgerPath := filepath.Join(foreignDir, "node-ownership.json")
+	if err := tsruntime.RecordOwnedNode(foreignLedgerPath, "private", "node-foreign-sibling", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	proofs, available := ownershipProofsForRegistry(foreignRegistryPath)
+	if !available || proofs["private"] {
+		t.Fatalf("proof availability=%t proofs=%v, want readable canonical ledger without consuming foreign sibling", available, proofs)
 	}
 }
 

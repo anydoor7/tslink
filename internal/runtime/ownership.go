@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -17,14 +18,18 @@ import (
 	"github.com/monody0007/tslink/internal/registry"
 )
 
-const OwnershipSchemaVersion = 1
+const (
+	legacyOwnershipSchemaVersion = 1
+	OwnershipSchemaVersion       = 2
+)
 
 // OwnedNode is durable proof that a concrete Tailscale StableNodeID was
 // observed from a TSLink-managed tsnet node for ServiceName.
 type OwnedNode struct {
-	ServiceName string    `json:"service_name"`
-	NodeID      string    `json:"node_id"`
-	RecordedAt  time.Time `json:"recorded_at"`
+	ServiceName string     `json:"service_name"`
+	NodeID      string     `json:"node_id"`
+	RecordedAt  time.Time  `json:"recorded_at"`
+	RetiredAt   *time.Time `json:"retired_at,omitempty"`
 }
 
 type OwnershipLedger struct {
@@ -78,7 +83,7 @@ func LoadOwnership(path string) (OwnershipLedger, error) {
 	} else if !errors.Is(err, io.EOF) {
 		return OwnershipLedger{}, ownershipLoadError(path, fmt.Errorf("decode node ownership ledger: %w", err))
 	}
-	if ledger.SchemaVersion != OwnershipSchemaVersion {
+	if ledger.SchemaVersion != legacyOwnershipSchemaVersion && ledger.SchemaVersion != OwnershipSchemaVersion {
 		return OwnershipLedger{}, ownershipLoadError(path, fmt.Errorf("unsupported node ownership schema_version: %d", ledger.SchemaVersion))
 	}
 	if ledger.Nodes == nil {
@@ -94,6 +99,9 @@ func LoadOwnership(path string) (OwnershipLedger, error) {
 		}
 		if _, duplicate := seen[node.NodeID]; duplicate {
 			return OwnershipLedger{}, ownershipLoadError(path, fmt.Errorf("ownership ledger contains a duplicate node ID"))
+		}
+		if node.RetiredAt != nil && (node.RetiredAt.IsZero() || node.RetiredAt.Before(node.RecordedAt)) {
+			return OwnershipLedger{}, ownershipLoadError(path, fmt.Errorf("ownership ledger contains an invalid retired_at timestamp"))
 		}
 		seen[node.NodeID] = struct{}{}
 	}
@@ -125,6 +133,15 @@ func saveOwnership(path string, ledger OwnershipLedger) error {
 	if ledger.Nodes == nil {
 		ledger.Nodes = []OwnedNode{}
 	}
+	clockRollbackClamped := false
+	for i := range ledger.Nodes {
+		if ledger.Nodes[i].RetiredAt == nil || !ledger.Nodes[i].RetiredAt.Before(ledger.Nodes[i].RecordedAt) {
+			continue
+		}
+		retiredAt := ledger.Nodes[i].RecordedAt
+		ledger.Nodes[i].RetiredAt = &retiredAt
+		clockRollbackClamped = true
+	}
 	sort.Slice(ledger.Nodes, func(i, j int) bool {
 		if ledger.Nodes[i].ServiceName == ledger.Nodes[j].ServiceName {
 			return ledger.Nodes[i].NodeID < ledger.Nodes[j].NodeID
@@ -135,7 +152,13 @@ func saveOwnership(path string, ledger OwnershipLedger) error {
 	if err != nil {
 		return err
 	}
-	return atomicfile.WriteFile(path, append(data, '\n'))
+	if err := atomicfile.WriteFile(path, append(data, '\n')); err != nil {
+		return err
+	}
+	if clockRollbackClamped {
+		slog.Warn("clock rollback detected while saving ownership ledger; clamped retired_at to recorded_at")
+	}
+	return nil
 }
 
 // RecordOwnedNode idempotently records exact NodeID ownership for a service.
@@ -160,6 +183,7 @@ func RecordOwnedNode(path, serviceName, nodeID string, recordedAt time.Time) err
 				return fmt.Errorf("node ownership conflict across services")
 			}
 			ledger.Nodes[i].RecordedAt = recordedAt.UTC()
+			ledger.Nodes[i].RetiredAt = nil
 			return saveOwnership(path, ledger)
 		}
 		ledger.Nodes = append(ledger.Nodes, OwnedNode{ServiceName: serviceName, NodeID: nodeID, RecordedAt: recordedAt.UTC()})
@@ -167,34 +191,97 @@ func RecordOwnedNode(path, serviceName, nodeID string, recordedAt time.Time) err
 	})
 }
 
-// AdoptOwnedNode records a one-time migration proof for an exact device match.
-// Unlike normal startup recording, adoption refuses to attach a service name
-// that is already bound to any different NodeID.
-func AdoptOwnedNode(path, serviceName, nodeID string, recordedAt time.Time) error {
+func adoptOwnedNode(ledger OwnershipLedger, serviceName, nodeID string, recordedAt time.Time, retire bool) (OwnershipLedger, error) {
 	if err := registry.ValidateName(serviceName); err != nil {
-		return err
+		return OwnershipLedger{}, err
 	}
 	nodeID = strings.TrimSpace(nodeID)
 	if nodeID == "" || len(nodeID) > 256 {
-		return fmt.Errorf("cannot adopt an empty or invalid node ID")
+		return OwnershipLedger{}, fmt.Errorf("cannot adopt an empty or invalid node ID")
 	}
+	ledger.Nodes = append([]OwnedNode(nil), ledger.Nodes...)
+	recordedAt = recordedAt.UTC()
+	for i, node := range ledger.Nodes {
+		switch {
+		case node.ServiceName == serviceName && node.NodeID != nodeID:
+			return OwnershipLedger{}, fmt.Errorf("service ownership conflict: name is already bound to a different node ID")
+		case node.NodeID == nodeID && node.ServiceName != serviceName:
+			return OwnershipLedger{}, fmt.Errorf("node ownership conflict across services")
+		case node.NodeID == nodeID:
+			ledger.Nodes[i].RecordedAt = recordedAt
+			ledger.Nodes[i].RetiredAt = nil
+			if retire {
+				ledger.Nodes[i].RetiredAt = &recordedAt
+			}
+			return ledger, nil
+		}
+	}
+	adopted := OwnedNode{
+		ServiceName: serviceName,
+		NodeID:      nodeID,
+		RecordedAt:  recordedAt,
+	}
+	if retire {
+		adopted.RetiredAt = &recordedAt
+	}
+	ledger.Nodes = append(ledger.Nodes, adopted)
+	return ledger, nil
+}
+
+// PreviewAdoptOwnedNode returns the exact proof that adoption would persist,
+// without writing the ledger. retire is true only for a service absent from the
+// registry, allowing cleanup dry-run to preview the corresponding deletion.
+func PreviewAdoptOwnedNode(path, serviceName, nodeID string, recordedAt time.Time, retire bool) (OwnershipLedger, error) {
+	ledger, err := LoadOwnership(path)
+	if err != nil {
+		return OwnershipLedger{}, err
+	}
+	return adoptOwnedNode(ledger, serviceName, nodeID, recordedAt, retire)
+}
+
+// AdoptOwnedNode records a one-time reviewed proof for an exact device match.
+// Orphans are retired immediately as explicit cleanup authorization; services
+// still present in registry.json receive active proof without retired_at.
+func AdoptOwnedNode(path, serviceName, nodeID string, recordedAt time.Time, retire bool) error {
 	return withOwnershipLock(path, func() error {
 		ledger, err := LoadOwnership(path)
 		if err != nil {
 			return err
 		}
-		for i, node := range ledger.Nodes {
-			switch {
-			case node.ServiceName == serviceName && node.NodeID != nodeID:
-				return fmt.Errorf("service ownership conflict: name is already bound to a different node ID")
-			case node.NodeID == nodeID && node.ServiceName != serviceName:
-				return fmt.Errorf("node ownership conflict across services")
-			case node.NodeID == nodeID:
-				ledger.Nodes[i].RecordedAt = recordedAt.UTC()
-				return saveOwnership(path, ledger)
+		ledger, err = adoptOwnedNode(ledger, serviceName, nodeID, recordedAt, retire)
+		if err != nil {
+			return err
+		}
+		return saveOwnership(path, ledger)
+	})
+}
+
+// MarkOwnedNodeIDsRetired records that remove reviewed the exact ownership
+// rows before unregistering their service. Rows remain until remote deletion
+// succeeds or proves the device already absent.
+func MarkOwnedNodeIDsRetired(path string, nodeIDs []string, retiredAt time.Time) error {
+	if len(nodeIDs) == 0 {
+		return nil
+	}
+	retire := make(map[string]struct{}, len(nodeIDs))
+	for _, nodeID := range nodeIDs {
+		nodeID = strings.TrimSpace(nodeID)
+		if nodeID == "" || len(nodeID) > 256 {
+			return fmt.Errorf("cannot retire an empty or invalid node ID")
+		}
+		retire[nodeID] = struct{}{}
+	}
+	retiredAt = retiredAt.UTC()
+	return withOwnershipLock(path, func() error {
+		ledger, err := LoadOwnership(path)
+		if err != nil {
+			return err
+		}
+		for i := range ledger.Nodes {
+			if _, ok := retire[ledger.Nodes[i].NodeID]; ok {
+				ledger.Nodes[i].RetiredAt = &retiredAt
 			}
 		}
-		ledger.Nodes = append(ledger.Nodes, OwnedNode{ServiceName: serviceName, NodeID: nodeID, RecordedAt: recordedAt.UTC()})
 		return saveOwnership(path, ledger)
 	})
 }

@@ -17,7 +17,15 @@ import (
 	"github.com/monody0007/tslink/internal/registry"
 )
 
+const stopLivenessHelperReady = "tslink-stop-liveness-helper-ready"
+
 func TestMain(m *testing.M) {
+	if os.Getenv("TSLINK_STOP_LIVENESS_HELPER") == "1" {
+		fmt.Fprintln(os.Stdout, stopLivenessHelperReady)
+		for {
+			time.Sleep(time.Hour)
+		}
+	}
 	if mode := os.Getenv("TSLINK_SHARE_DAEMON_HELPER"); mode != "" {
 		fmt.Fprintln(os.Stderr, "helper diagnostic")
 		switch mode {

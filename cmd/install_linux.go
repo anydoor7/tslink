@@ -405,6 +405,5 @@ func systemdServicePath() (string, error) {
 
 func init() {
 	installCmd.Flags().Bool("no-auto-provision", false, "Install the managed daemon with Funnel policy auto-provisioning disabled")
-	mustMarkFlagPlatforms(installCmd, "no-auto-provision", "linux")
 	rootCmd.AddCommand(installCmd)
 }
