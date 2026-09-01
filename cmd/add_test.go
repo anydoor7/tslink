@@ -133,6 +133,87 @@ func TestAddExplicitFunnelTTLOverridesExistingDeadline(t *testing.T) {
 	}
 }
 
+func TestAddCommandRearmsExpiredFunnelAndReportsPersistedDeadline(t *testing.T) {
+	dir := t.TempDir()
+	regPath := filepath.Join(dir, "registry.json")
+	oldRegPath, oldEnsureDir := registryPathFn, ensureDirFn
+	t.Cleanup(func() {
+		registryPathFn, ensureDirFn = oldRegPath, oldEnsureDir
+	})
+	registryPathFn = func() (string, error) { return regPath, nil }
+	ensureDirFn = func() error { return nil }
+	past := time.Now().UTC().Add(-time.Hour)
+	if _, err := registry.Add(regPath, registry.Service{
+		Name: "public", Type: registry.TypeProxy, Target: "http://localhost:3000",
+		Funnel: false, PublicAck: true, FunnelExpiresAt: &past,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	before := time.Now().UTC()
+	out, err := runAddCmdOutput(t, []string{"public"}, map[string]string{
+		"proxy": "localhost:3000", "funnel": "true", "public": "true",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "→ re-armed expired Funnel (24h)\n") {
+		t.Fatalf("stdout = %q, want explicit re-arm line", out)
+	}
+	reg, err := registry.Load(regPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored := reg.Services[0].FunnelExpiresAt
+	if stored == nil || stored.Before(before.Add(23*time.Hour)) || stored.After(before.Add(25*time.Hour)) || !reg.Services[0].Funnel {
+		t.Fatalf("stored service = %+v, want active default-24h Funnel", reg.Services[0])
+	}
+}
+
+func TestAddJSONExpiredFunnelResultMatchesPersistedDeadline(t *testing.T) {
+	dir := t.TempDir()
+	regPath := filepath.Join(dir, "registry.json")
+	oldRegPath, oldEnsureDir := registryPathFn, ensureDirFn
+	t.Cleanup(func() {
+		registryPathFn, ensureDirFn = oldRegPath, oldEnsureDir
+	})
+	registryPathFn = func() (string, error) { return regPath, nil }
+	ensureDirFn = func() error { return nil }
+	past := time.Now().UTC().Add(-time.Hour)
+	if _, err := registry.Add(regPath, registry.Service{
+		Name: "public", Type: registry.TypeProxy, Target: "http://localhost:3000",
+		Funnel: false, PublicAck: true, FunnelExpiresAt: &past,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	setRootJSONFlag(t, true)
+	raw := captureStdout(t, func() {
+		if _, err := runAddCmdOutput(t, []string{"public"}, map[string]string{
+			"proxy": "localhost:3000", "funnel": "true", "public": "true",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	data := dataMap(t, raw)
+	if data["funnel_rearmed"] != true {
+		t.Fatalf("data = %#v, want funnel_rearmed=true", data)
+	}
+	returned, ok := data["funnel_expires_at"].(string)
+	if !ok {
+		t.Fatalf("funnel_expires_at = %#v, want RFC3339 string", data["funnel_expires_at"])
+	}
+	reg, err := registry.Load(regPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	returnedTime, err := time.Parse(time.RFC3339Nano, returned)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reg.Services[0].FunnelExpiresAt == nil || !returnedTime.Equal(*reg.Services[0].FunnelExpiresAt) {
+		t.Fatalf("returned expiry=%q stored=%v, want exact equality", returned, reg.Services[0].FunnelExpiresAt)
+	}
+}
+
 func TestBuildServiceRejectsExplicitEmptyFunnelTTL(t *testing.T) {
 	_, err := buildService(AddParams{
 		Name: "public", Proxy: ":3000", Funnel: true, Public: true,

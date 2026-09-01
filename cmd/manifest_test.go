@@ -738,6 +738,30 @@ func TestManifestCommandsCarryInheritedFlags(t *testing.T) {
 	assertFlag("tslink status", "json")
 }
 
+func TestCleanupManifestDescribesAdoptionApplyAndEverySkipClass(t *testing.T) {
+	manifest := Manifest()
+	var adoption *HighRiskOperation
+	for i := range manifest.HighRiskOperations {
+		operation := &manifest.HighRiskOperations[i]
+		if operation.Command == "tslink cleanup" && operation.Operation == "legacy device ownership adoption" {
+			adoption = operation
+			break
+		}
+	}
+	if adoption == nil || !containsString(adoption.RequiredFlags, "--adopt") || !containsString(adoption.RequiredFlags, "--force") || !containsString(adoption.RequiredFlags, "--dry-run=false") {
+		t.Fatalf("adoption operation = %+v, want three explicit apply flags", adoption)
+	}
+	if !strings.Contains(adoption.Boundary, "preview is read-only") || !strings.Contains(adoption.Boundary, "TSLink-tagged") {
+		t.Fatalf("adoption boundary = %q, want read-only preview and tag gate", adoption.Boundary)
+	}
+	description := commandJSONResultFields("tslink cleanup")["device_cleanup_skipped"].Description
+	for _, want := range []string{"ownership proof", "registry", "API client", "hostname-only", "remote cleanup"} {
+		if !strings.Contains(description, want) {
+			t.Fatalf("device_cleanup_skipped description = %q, missing %q", description, want)
+		}
+	}
+}
+
 func TestManifestDocumentsDarwinUninstallJSONContract(t *testing.T) {
 	m := Manifest()
 	var uninstall CommandInfo

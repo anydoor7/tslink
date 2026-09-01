@@ -64,6 +64,7 @@ type StatusResult struct {
 type StatusServiceState struct {
 	Name            string                  `json:"name"`
 	Status          string                  `json:"status"`
+	OwnershipProof  bool                    `json:"ownership_proof"`
 	FunnelRequested bool                    `json:"funnel_requested"`
 	FunnelActive    bool                    `json:"funnel_active"`
 	FunnelState     string                  `json:"funnel_state"`
@@ -104,6 +105,7 @@ type StatusServiceView struct {
 	Name            string                  `json:"name"`
 	Type            string                  `json:"type"`
 	RuntimeState    string                  `json:"runtime_state"`
+	OwnershipProof  bool                    `json:"ownership_proof"`
 	Endpoint        inspect.EndpointView    `json:"endpoint"`
 	Exposure        inspect.ExposureView    `json:"exposure"`
 	FunnelRequested bool                    `json:"funnel_requested"`
@@ -126,12 +128,14 @@ func getStatus(pidPath, regPath string) (StatusResult, error) {
 	}
 	r.ServiceCount = len(reg.Services)
 	r.Services = make([]StatusServiceState, 0, len(reg.Services))
+	ownershipProofs := ownershipProofsForRegistry(regPath)
 	for _, svc := range reg.Services {
 		now := statusNowFn()
 		effective := registry.EffectiveServiceAt(svc, now)
 		r.Services = append(r.Services, StatusServiceState{
 			Name:            svc.Name,
 			Status:          "down",
+			OwnershipProof:  ownershipProofs[svc.Name],
 			FunnelRequested: effective.Funnel,
 			FunnelState:     configuredFunnelState(effective.Funnel),
 			FunnelExpiresAt: cloneTimePointer(svc.FunnelExpiresAt),
@@ -140,6 +144,19 @@ func getStatus(pidPath, regPath string) (StatusResult, error) {
 	}
 	setStatusContinuation(&r)
 	return r, nil
+}
+
+func ownershipProofsForRegistry(regPath string) map[string]bool {
+	proofs := make(map[string]bool)
+	ledgerPath := filepath.Join(filepath.Dir(regPath), "node-ownership.json")
+	ledger, err := tsruntime.LoadOwnership(ledgerPath)
+	if err != nil {
+		return proofs
+	}
+	for _, node := range ledger.Nodes {
+		proofs[node.ServiceName] = true
+	}
+	return proofs
 }
 
 func baseStatus(pidPath string) StatusResult {
@@ -176,7 +193,7 @@ func getPollableStatus(pidPath, regPath, snapshotPath, authHandoffPath string) (
 	if err != nil {
 		snapshot, snapshotErr := runtimeLoadSnapshotFn(snapshotPath)
 		if snapshotErr == nil && snapshot != nil && snapshot.GlobalError != nil {
-			return statusFromGlobalFailure(pidPath, snapshot), nil
+			return statusFromGlobalFailure(pidPath, snapshot, ownershipProofsForRegistry(regPath)), nil
 		}
 		return StatusResult{}, err
 	}
@@ -262,7 +279,7 @@ func getPollableStatus(pidPath, regPath, snapshotPath, authHandoffPath string) (
 	return r, nil
 }
 
-func statusFromGlobalFailure(pidPath string, snapshot *tsruntime.Snapshot) StatusResult {
+func statusFromGlobalFailure(pidPath string, snapshot *tsruntime.Snapshot, ownershipProofs map[string]bool) StatusResult {
 	r := baseStatus(pidPath)
 	r.GlobalError = cloneServiceError(snapshot.GlobalError)
 	r.ServiceCount = len(snapshot.Services)
@@ -275,6 +292,7 @@ func statusFromGlobalFailure(pidPath string, snapshot *tsruntime.Snapshot) Statu
 		r.Services = append(r.Services, StatusServiceState{
 			Name:            service.Name,
 			Status:          status,
+			OwnershipProof:  ownershipProofs[service.Name],
 			FunnelRequested: service.FunnelRequested,
 			FunnelActive:    service.FunnelActive,
 			FunnelState:     service.FunnelState,
@@ -381,6 +399,7 @@ func getStatusURLsWithAuth(pidPath, regPath, snapshotPath, authHandoffPath strin
 	}
 
 	now := statusNowFn()
+	ownershipProofs := ownershipProofsForRegistry(regPath)
 	for _, svc := range reg.Services {
 		expired := registry.FunnelExpiredAt(svc, now)
 		effective := registry.EffectiveServiceAt(svc, now)
@@ -389,6 +408,7 @@ func getStatusURLsWithAuth(pidPath, regPath, snapshotPath, authHandoffPath strin
 			Name:            view.Name,
 			Type:            view.Type,
 			RuntimeState:    "unknown",
+			OwnershipProof:  ownershipProofs[svc.Name],
 			Endpoint:        view.Endpoint,
 			Exposure:        view.Exposure,
 			FunnelRequested: effective.Funnel,

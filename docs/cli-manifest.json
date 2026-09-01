@@ -159,9 +159,10 @@
       "default": "disabled",
       "required_flags": [
         "--adopt",
-        "--force"
+        "--force",
+        "--dry-run=false"
       ],
-      "boundary": "requires one literal hostname with exactly one remote match; adoption only records exact NodeID proof and does not weaken deletion authorization"
+      "boundary": "preview is read-only; writing requires one literal hostname with exactly one TSLink-tagged remote match and records only its exact NodeID proof"
     },
     {
       "command": "tslink cleanup",
@@ -561,7 +562,17 @@
           "scope": "local",
           "usage": "Wait for an exact runtime URL (optional value; default 30s)"
         }
-      ]
+      ],
+      "json_result_fields": {
+        "funnel_expires_at": {
+          "type": "string",
+          "description": "Persisted public Funnel deadline; omitted for tailnet-only services and explicit never."
+        },
+        "funnel_rearmed": {
+          "type": "boolean",
+          "description": "True when an expired preserved Funnel deadline was re-armed with the default 24h TTL."
+        }
+      }
     },
     {
       "path": "tslink api",
@@ -584,7 +595,7 @@
           "name": "adopt",
           "type": "string",
           "scope": "local",
-          "usage": "Record exact ownership for one literal legacy device hostname before reconciliation"
+          "usage": "Preview or record exact ownership for one literal TSLink-tagged legacy device hostname (writing requires --dry-run=false)"
         },
         {
           "name": "dry-run",
@@ -620,9 +631,21 @@
           "type": "string",
           "description": "Unused Funnel ACL reconciliation outcome."
         },
+        "adoption.matches": {
+          "type": "integer",
+          "description": "Full-list count of exact-hostname devices remaining after the TSLink tag filter."
+        },
+        "adoption.service_name": {
+          "type": "string",
+          "description": "Literal TSLink-tagged hostname selected for adoption preview or apply; omitted when --adopt is absent."
+        },
+        "adoption.written": {
+          "type": "boolean",
+          "description": "True only when exact ownership proof was persisted; false for the default dry-run preview."
+        },
         "device_cleanup_skipped": {
           "type": "boolean",
-          "description": "True when protected hostname matches or missing API credentials prevented deletion."
+          "description": "True when ownership proof was unavailable, registry state was suspiciously empty or incomplete, no API client was available, hostname-only matches were protected, or remote cleanup failed."
         },
         "device_skip_reason": {
           "type": "string",
@@ -1470,6 +1493,10 @@
             "listen_failed",
             "startup_timeout"
           ]
+        },
+        "services[].ownership_proof": {
+          "type": "boolean",
+          "description": "True only when the durable ownership ledger contains exact StableNodeID cleanup proof for the service; NodeIDs are never emitted."
         },
         "services[].runtime_state": {
           "type": "string",

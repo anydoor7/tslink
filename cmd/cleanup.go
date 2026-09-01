@@ -36,6 +36,7 @@ ETag guards of the normal tag deletion path.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			adopt, _ := cmd.Flags().GetString("adopt")
 			force, _ := cmd.Flags().GetBool("force")
+			dryRun, _ := cmd.Flags().GetBool("dry-run")
 			if adopt != "" {
 				if err := registry.ValidateName(adopt); err != nil {
 					return err
@@ -57,6 +58,7 @@ ETag guards of the normal tag deletion path.`,
 			if err != nil {
 				return err
 			}
+			adoptionMatches := 0
 			if adopt != "" {
 				nodeID, matches, err := cleanupFindExactDeviceNodeIDFn(cmd.Context(), adopt)
 				if err != nil {
@@ -65,11 +67,13 @@ ETag guards of the normal tag deletion path.`,
 				if matches != 1 {
 					return output.ErrConflict(fmt.Sprintf("--adopt requires exactly one literal hostname match; matched %d", matches))
 				}
-				if err := cleanupAdoptOwnedNodeFn(ownershipPath, adopt, nodeID, cleanupNowFn()); err != nil {
-					return err
+				adoptionMatches = matches
+				if !dryRun {
+					if err := cleanupAdoptOwnedNodeFn(ownershipPath, adopt, nodeID, cleanupNowFn()); err != nil {
+						return err
+					}
 				}
 			}
-			dryRun, _ := cmd.Flags().GetBool("dry-run")
 			manageACL, _ := cmd.Flags().GetBool("manage-acl")
 			result, err := cleanupReconcileFn(cmd.Context(), lifecycle.Options{
 				RegistryPath:   regPath,
@@ -83,7 +87,10 @@ ETag guards of the normal tag deletion path.`,
 				return err
 			}
 			if adopt != "" {
-				result.DevicesAdopted = []string{adopt}
+				result.Adoption = &lifecycle.AdoptionResult{ServiceName: adopt, Matches: adoptionMatches, Written: !dryRun}
+				if !dryRun {
+					result.DevicesAdopted = []string{adopt}
+				}
 			}
 			if jsonOutput(cmd) {
 				output.Success("cleanup", result)
@@ -93,11 +100,15 @@ ETag guards of the normal tag deletion path.`,
 			if !dryRun {
 				mode = "applied"
 			}
+			if result.Adoption != nil {
+				if result.Adoption.Written {
+					fmt.Fprintf(cmd.OutOrStdout(), "→ adopted exact TSLink-tagged hostname match into ownership ledger: %s (matches=%d)\n", result.Adoption.ServiceName, result.Adoption.Matches)
+				} else {
+					fmt.Fprintf(cmd.OutOrStdout(), "→ adoption preview (not written): service=%s matches=%d\n", result.Adoption.ServiceName, result.Adoption.Matches)
+				}
+			}
 			fmt.Fprintf(cmd.OutOrStdout(), "→ cleanup %s: expired_funnels=%d devices_deleted=%d devices_protected=%d acl=%s\n",
 				mode, len(result.ExpiredFunnels), len(result.DevicesDeleted), len(result.DevicesProtected), result.ACLAction)
-			if adopt != "" {
-				fmt.Fprintf(cmd.OutOrStdout(), "→ adopted exact hostname match into ownership ledger: %s\n", adopt)
-			}
 			if len(result.DevicesWouldDelete) > 0 {
 				fmt.Fprintf(cmd.OutOrStdout(), "→ would delete owned devices: %s\n", strings.Join(result.DevicesWouldDelete, ", "))
 			}
@@ -109,7 +120,7 @@ ETag guards of the normal tag deletion path.`,
 	}
 	cleanupCmd.Flags().Bool("dry-run", true, "Preview reconciliation without registry, device, or ACL deletion (set --dry-run=false to apply)")
 	cleanupCmd.Flags().Bool("manage-acl", false, "Opt in to removing the unused canonical Funnel tag owner and nodeAttrs grant")
-	cleanupCmd.Flags().String("adopt", "", "Record exact ownership for one literal legacy device hostname before reconciliation")
+	cleanupCmd.Flags().String("adopt", "", "Preview or record exact ownership for one literal TSLink-tagged legacy device hostname (writing requires --dry-run=false)")
 	cleanupCmd.Flags().Bool("force", false, "Confirm the explicitly named --adopt migration")
 	rootCmd.AddCommand(cleanupCmd)
 }

@@ -183,6 +183,66 @@ func TestReconcileEmptyRegistryWithOwnershipRefusesAllDeviceDeletion(t *testing.
 	}
 }
 
+func TestReconcilePartialRegistryLossRefusesMassDeviceDeletion(t *testing.T) {
+	dir := t.TempDir()
+	regPath := filepath.Join(dir, "registry.json")
+	ownershipPath := filepath.Join(dir, "node-ownership.json")
+	now := time.Date(2030, 8, 31, 12, 0, 0, 0, time.UTC)
+	if _, err := registry.Add(regPath, registry.Service{Name: "survivor", Type: registry.TypeProxy, Target: "http://localhost:3000"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"survivor", "alpha", "beta", "gamma"} {
+		if err := tsruntime.RecordOwnedNode(ownershipPath, name, "node-"+name, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	oldCleanup := cleanupDevicesFn
+	t.Cleanup(func() { cleanupDevicesFn = oldCleanup })
+	cleanupDevicesFn = func(context.Context, []tailapi.CleanupTarget, bool) (tailapi.CleanupResult, error) {
+		t.Fatal("partial registry safety guard must stop remote deletion")
+		return tailapi.CleanupResult{}, nil
+	}
+	result, err := Reconcile(context.Background(), Options{RegistryPath: regPath, OwnershipPath: ownershipPath, Now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.DeviceCleanupSkipped || result.DeviceSkipReason != partialRegistryReason || len(result.DevicesDeleted) != 0 {
+		t.Fatalf("result = %+v, want incomplete-registry mass-delete guard", result)
+	}
+	if len(result.Warnings) != 1 || !strings.Contains(result.Warnings[0], "restore registry.json") || !strings.Contains(result.Warnings[0], "--adopt") {
+		t.Fatalf("warnings = %#v, want actionable recovery", result.Warnings)
+	}
+}
+
+func TestReconcilePartialRegistryGuardAllowsOneOrTwoOrphans(t *testing.T) {
+	dir := t.TempDir()
+	regPath := filepath.Join(dir, "registry.json")
+	ownershipPath := filepath.Join(dir, "node-ownership.json")
+	now := time.Date(2030, 8, 31, 12, 0, 0, 0, time.UTC)
+	if _, err := registry.Add(regPath, registry.Service{Name: "survivor", Type: registry.TypeProxy, Target: "http://localhost:3000"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"orphan-a", "orphan-b"} {
+		if err := tsruntime.RecordOwnedNode(ownershipPath, name, "node-"+name, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	oldCleanup := cleanupDevicesFn
+	t.Cleanup(func() { cleanupDevicesFn = oldCleanup })
+	var gotTargets []tailapi.CleanupTarget
+	cleanupDevicesFn = func(_ context.Context, targets []tailapi.CleanupTarget, _ bool) (tailapi.CleanupResult, error) {
+		gotTargets = append([]tailapi.CleanupTarget(nil), targets...)
+		return tailapi.CleanupResult{}, nil
+	}
+	result, err := Reconcile(context.Background(), Options{RegistryPath: regPath, OwnershipPath: ownershipPath, Now: now, DryRun: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.DeviceCleanupSkipped || len(gotTargets) != 2 {
+		t.Fatalf("result=%+v targets=%+v, want two normal orphan previews", result, gotTargets)
+	}
+}
+
 func TestReconcileCleanupFailureSetsSkippedSemantics(t *testing.T) {
 	now := time.Date(2030, 8, 31, 12, 0, 0, 0, time.UTC)
 	regPath, ownershipPath := saveLifecycleFixture(t, now)

@@ -127,7 +127,7 @@ func TestFindExactDeviceNodeIDUsesLiteralHostnameAndReportsMultiplicity(t *testi
 		if req.Method != http.MethodGet || req.URL.Path != "/api/v2/tailnet/-/devices" {
 			t.Fatalf("unexpected request: %s %s", req.Method, req.URL.String())
 		}
-		return jsonResponse(http.StatusOK, `{"devices":[{"nodeId":"node-exact","hostname":"legacy"},{"nodeId":"node-suffix","hostname":"legacy-1"},{"nodeId":"node-prefix","hostname":"legacy-extra"}]}`), nil
+		return jsonResponse(http.StatusOK, `{"devices":[{"nodeId":"node-exact","hostname":"legacy","tags":["tag:tsmain"]},{"nodeId":"node-suffix","hostname":"legacy-1","tags":["tag:tsmain"]},{"nodeId":"node-prefix","hostname":"legacy-extra","tags":["tag:tsmain"]}]}`), nil
 	}))
 	nodeID, matches, err := FindExactDeviceNodeID(context.Background(), "legacy")
 	if err != nil || matches != 1 || nodeID != "node-exact" {
@@ -139,11 +139,56 @@ func TestFindExactDeviceNodeIDDoesNotSelectFirstDuplicate(t *testing.T) {
 	setup(t)
 	mustSetAPIKey(t, "api-key")
 	withDefaultTransport(t, roundTripperFunc(func(req *http.Request) (*http.Response, error) {
-		return jsonResponse(http.StatusOK, `{"devices":[{"nodeId":"node-one","hostname":"legacy"},{"nodeId":"node-two","hostname":"legacy"}]}`), nil
+		return jsonResponse(http.StatusOK, `{"devices":[{"nodeId":"node-one","hostname":"legacy","tags":["tag:tsmain"]},{"nodeId":"node-two","hostname":"legacy","tags":["tag:tslink-service"]}]}`), nil
 	}))
-	_, matches, err := FindExactDeviceNodeID(context.Background(), "legacy")
-	if err != nil || matches != 2 {
-		t.Fatalf("duplicate adoption lookup matches=%d err=%v, want 2", matches, err)
+	nodeID, matches, err := FindExactDeviceNodeID(context.Background(), "legacy")
+	if err != nil || matches != 2 || nodeID != "" {
+		t.Fatalf("duplicate adoption lookup nodeID-set=%t matches=%d err=%v, want empty ID and 2", nodeID != "", matches, err)
+	}
+}
+
+func TestFindExactDeviceNodeIDRequiresTSLinkTagAndCountsAfterFiltering(t *testing.T) {
+	cases := []struct {
+		name        string
+		body        string
+		wantNodeID  string
+		wantMatches int
+		wantError   string
+		wantNext    bool
+	}{
+		{name: "no tags rejected", body: `{"devices":[{"nodeId":"node-personal","hostname":"legacy","tags":[]}]}`, wantError: "matched 1 devices, 0 of them TSLink-tagged", wantNext: true},
+		{name: "foreign tag rejected", body: `{"devices":[{"nodeId":"node-foreign","hostname":"legacy","tags":["tag:production-database"]}]}`, wantError: "matched 1 devices, 0 of them TSLink-tagged", wantNext: true},
+		{name: "default tag accepted", body: `{"devices":[{"nodeId":"node-default","hostname":"legacy","tags":["tag:tsmain"]}]}`, wantNodeID: "node-default", wantMatches: 1},
+		{name: "filter before cardinality", body: `{"devices":[{"nodeId":"node-foreign-a","hostname":"legacy","tags":["tag:other"]},{"nodeId":"node-tslink","hostname":"legacy","tags":["tag:tslink-worker"]},{"nodeId":"node-foreign-b","hostname":"legacy","tags":[]}]}`, wantNodeID: "node-tslink", wantMatches: 1},
+		{name: "two tagged remain ambiguous", body: `{"devices":[{"nodeId":"node-default","hostname":"legacy","tags":["tag:tsmain"]},{"nodeId":"node-funnel","hostname":"legacy","tags":["tag:tslink-funnel"]},{"nodeId":"node-foreign","hostname":"legacy","tags":["tag:other"]}]}`, wantMatches: 2},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			setup(t)
+			mustSetAPIKey(t, "api-key")
+			requests := 0
+			withDefaultTransport(t, roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+				requests++
+				return jsonResponse(http.StatusOK, tc.body), nil
+			}))
+			nodeID, matches, err := FindExactDeviceNodeID(context.Background(), "legacy")
+			if requests != 1 {
+				t.Fatalf("Devices.List requests = %d, want one full-list GET", requests)
+			}
+			if tc.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantError) {
+					t.Fatalf("error = %v, want %q", err, tc.wantError)
+				}
+				var coded registry.CodedError
+				if tc.wantNext && (!errors.As(err, &coded) || len(coded.Next) == 0) {
+					t.Fatalf("error = %#v, want actionable next[]", err)
+				}
+				return
+			}
+			if err != nil || nodeID != tc.wantNodeID || matches != tc.wantMatches {
+				t.Fatalf("lookup = nodeID:%q matches:%d err:%v, want nodeID:%q matches:%d", nodeID, matches, err, tc.wantNodeID, tc.wantMatches)
+			}
+		})
 	}
 }
 

@@ -71,7 +71,7 @@ type APIRequest struct {
 	Allow           []string `json:"allow,omitempty"`
 	Ephemeral       bool     `json:"ephemeral,omitempty"`
 	Funnel          bool     `json:"funnel,omitempty"`
-	FunnelTTL       string   `json:"funnel_ttl,omitempty"`
+	FunnelTTL       *string  `json:"funnel_ttl,omitempty"`
 	PublicAck       bool     `json:"public_ack,omitempty"`
 	NoAutoProvision bool     `json:"no_auto_provision,omitempty"`
 	ControlURL      string   `json:"control_url,omitempty"`
@@ -239,33 +239,29 @@ func (h *apiHandler) handleAdd(req APIRequest, out io.Writer) output.Result {
 		}
 		svc.Path = filepath.Clean(params.Dir)
 	}
-	var created bool
+	var created, funnelRearmed bool
 	if req.IfMissing {
 		created, err = registry.AddIfMissing(h.regPath, svc)
 	} else {
-		created, err = registry.AddWithOptions(h.regPath, svc, registry.AddOptions{
-			PreserveFunnelExpiry: req.FunnelTTL == "",
+		var addOutcome registry.AddOutcome
+		addOutcome, err = registry.AddWithOutcome(h.regPath, svc, registry.AddOptions{
+			PreserveFunnelExpiry: req.FunnelTTL == nil,
 		})
+		created = addOutcome.Created
+		funnelRearmed = addOutcome.RearmedExpiredFunnel
 	}
 	if err != nil {
 		return writeAPICommandError(out, apiActionAdd, err)
 	}
-	if req.IfMissing && !created {
-		reg, loadErr := registry.Load(h.regPath)
-		if loadErr != nil {
-			return writeAPIError(out, apiActionAdd, loadErr)
-		}
-		for _, existing := range reg.Services {
-			if existing.Name == req.Name {
-				svc = existing
-				break
-			}
-		}
+	svc, err = loadPersistedService(h.regPath, req.Name)
+	if err != nil {
+		return writeAPIError(out, apiActionAdd, err)
 	}
 	result, err := buildAddResult(context.Background(), svc, created, h.pidPath, h.regPath, h.runtimeSnapshotPath, 0)
 	if err != nil {
 		return writeAPIError(out, apiActionAdd, err)
 	}
+	result.FunnelRearmed = funnelRearmed
 	return writeAPISuccess(out, apiActionAdd, result)
 }
 
@@ -285,21 +281,25 @@ func addParamsFromAPIRequest(req APIRequest) (AddParams, error) {
 	if req.NoAutoProvision && !req.Funnel {
 		return AddParams{}, fmt.Errorf("no_auto_provision is supported only when funnel is true")
 	}
-	if req.FunnelTTL != "" && !req.Funnel {
+	if req.FunnelTTL != nil && !req.Funnel {
 		return AddParams{}, fmt.Errorf("funnel_ttl is supported only when funnel is true")
 	}
 	if len(req.Allow) > 0 && req.Type == registry.TypeTCP {
 		return AddParams{}, registry.AllowUnsupportedTCPError()
 	}
 
+	funnelTTL := ""
+	if req.FunnelTTL != nil {
+		funnelTTL = *req.FunnelTTL
+	}
 	params := AddParams{
 		Name:            req.Name,
 		Ephemeral:       req.Ephemeral,
 		Tags:            strings.Join(req.Tags, ","),
 		Allow:           strings.Join(req.Allow, ","),
 		Funnel:          req.Funnel,
-		FunnelTTL:       req.FunnelTTL,
-		FunnelTTLSet:    req.FunnelTTL != "",
+		FunnelTTL:       funnelTTL,
+		FunnelTTLSet:    req.FunnelTTL != nil,
 		Public:          req.PublicAck,
 		NoAutoProvision: req.NoAutoProvision,
 		ControlURL:      req.ControlURL,

@@ -35,8 +35,9 @@ type CleanupTarget struct {
 const cleanupOwnershipSkipReason = "matched tailnet devices require exact TSLink ownership proof before deletion"
 
 // FindExactDeviceNodeID performs the read-only lookup used by cleanup adoption.
-// It deliberately uses literal hostname equality: suffix, prefix, wildcard,
-// regex, and first-match selection are never accepted for migration proof.
+// It deliberately uses literal hostname equality and requires a TSLink tag:
+// suffix, prefix, wildcard, regex, foreign-tagged, and first-match selection are
+// never accepted for migration proof.
 func FindExactDeviceNodeID(ctx context.Context, hostname string) (string, int, error) {
 	if err := registry.ValidateName(hostname); err != nil {
 		return "", 0, err
@@ -48,23 +49,50 @@ func FindExactDeviceNodeID(ctx context.Context, hostname string) (string, int, e
 	if client == nil {
 		return "", 0, ErrNoAPIClient
 	}
+	// The tailscale v2 Devices.List contract is one GET returning the complete
+	// devices array; it has no cursor, page, or limit parameter. The cardinality
+	// below therefore counts the full response, not one page.
 	devices, err := client.Devices().List(ctx)
 	if err != nil {
 		return "", 0, fmt.Errorf("list devices for adoption: %w", err)
 	}
-	var nodeID string
-	matches := 0
+	hostnameMatches := 0
+	var taggedNodeIDs []string
 	for _, device := range devices {
 		if device.Hostname != hostname {
 			continue
 		}
-		matches++
-		nodeID = device.NodeID
+		hostnameMatches++
+		if deviceHasTSLinkTag(device.Tags) {
+			taggedNodeIDs = append(taggedNodeIDs, device.NodeID)
+		}
 	}
-	if matches == 1 && (strings.TrimSpace(nodeID) == "" || len(nodeID) > 256) {
+	matches := len(taggedNodeIDs)
+	if hostnameMatches > 0 && matches == 0 {
+		return "", 0, registry.CodedError{
+			Code:        "conflict",
+			Message:     fmt.Sprintf("matched %d devices, 0 of them TSLink-tagged", hostnameMatches),
+			Next:        []string{"verify the device carries tag:tsmain, tag:tslink-funnel, or another tag:tslink-* tag", "tslink cleanup --help"},
+			MessageOnly: true,
+		}
+	}
+	if matches != 1 {
+		return "", matches, nil
+	}
+	nodeID := taggedNodeIDs[0]
+	if strings.TrimSpace(nodeID) == "" || len(nodeID) > 256 {
 		return "", matches, errors.New("matched device has an invalid node identity")
 	}
 	return nodeID, matches, nil
+}
+
+func deviceHasTSLinkTag(tags []string) bool {
+	for _, tag := range tags {
+		if tag == DefaultTag || tag == registry.FunnelTag || strings.HasPrefix(tag, "tag:tslink-") {
+			return true
+		}
+	}
+	return false
 }
 
 // CleanupTargetForService builds the remote cleanup ownership target for a service.

@@ -20,14 +20,16 @@ import (
 
 // AddResult is the JSON data for the add command.
 type AddResult struct {
-	Name       string                `json:"name"`
-	Type       string                `json:"type"`
-	Created    bool                  `json:"created"`
-	URL        *string               `json:"url"`
-	URLPending bool                  `json:"url_pending"`
-	Endpoint   inspect.EndpointView  `json:"endpoint"`
-	Exposure   inspect.ExposureView  `json:"exposure"`
-	Warnings   []inspect.WarningView `json:"warnings,omitempty"`
+	Name            string                `json:"name"`
+	Type            string                `json:"type"`
+	Created         bool                  `json:"created"`
+	FunnelExpiresAt *time.Time            `json:"funnel_expires_at,omitempty"`
+	FunnelRearmed   bool                  `json:"funnel_rearmed"`
+	URL             *string               `json:"url"`
+	URLPending      bool                  `json:"url_pending"`
+	Endpoint        inspect.EndpointView  `json:"endpoint"`
+	Exposure        inspect.ExposureView  `json:"exposure"`
+	Warnings        []inspect.WarningView `json:"warnings,omitempty"`
 }
 
 type AddDryRunResult struct {
@@ -249,13 +251,14 @@ func addWarnings(svc registry.Service, base []inspect.WarningView) []inspect.War
 func buildAddResult(ctx context.Context, svc registry.Service, created bool, pidPath, regPath, snapshotPath string, wait time.Duration) (AddResult, error) {
 	view := inspect.ServiceViewFor(svc)
 	result := AddResult{
-		Name:       svc.Name,
-		Type:       svc.Type,
-		Created:    created,
-		URLPending: true,
-		Endpoint:   view.Endpoint,
-		Exposure:   view.Exposure,
-		Warnings:   addWarnings(svc, view.Warnings),
+		Name:            svc.Name,
+		Type:            svc.Type,
+		Created:         created,
+		FunnelExpiresAt: cloneTimePointer(svc.FunnelExpiresAt),
+		URLPending:      true,
+		Endpoint:        view.Endpoint,
+		Exposure:        view.Exposure,
+		Warnings:        addWarnings(svc, view.Warnings),
 	}
 	result.Endpoint.Display = ""
 	result.Endpoint.Host = ""
@@ -270,6 +273,19 @@ func buildAddResult(ctx context.Context, svc registry.Service, created bool, pid
 	result.URLPending = false
 	result.Endpoint = resolution.Endpoint
 	return result, nil
+}
+
+func loadPersistedService(regPath, name string) (registry.Service, error) {
+	reg, err := registry.Load(regPath)
+	if err != nil {
+		return registry.Service{}, err
+	}
+	for _, svc := range reg.Services {
+		if svc.Name == name {
+			return svc, nil
+		}
+	}
+	return registry.Service{}, fmt.Errorf("persisted service not found after successful add: %s", name)
 }
 
 func init() {
@@ -366,7 +382,9 @@ Examples:
 					}
 					for _, existing := range reg.Services {
 						if existing.Name == svc.Name {
-							svc.FunnelExpiresAt = existing.FunnelExpiresAt
+							if !svc.Funnel || existing.FunnelExpiresAt == nil || existing.FunnelExpiresAt.After(time.Now()) {
+								svc.FunnelExpiresAt = existing.FunnelExpiresAt
+							}
 							break
 						}
 					}
@@ -392,9 +410,14 @@ Examples:
 				return err
 			}
 
-			created, err := registry.AddWithOptions(regPath, svc, registry.AddOptions{
+			addOutcome, err := registry.AddWithOutcome(regPath, svc, registry.AddOptions{
 				PreserveFunnelExpiry: !cmd.Flags().Changed("funnel-ttl"),
 			})
+			if err != nil {
+				return err
+			}
+
+			svc, err = loadPersistedService(regPath, svc.Name)
 			if err != nil {
 				return err
 			}
@@ -407,10 +430,11 @@ Examples:
 			if err != nil {
 				return err
 			}
-			result, err := buildAddResult(cmd.Context(), svc, created, pidPath, regPath, snapshotPath, wait)
+			result, err := buildAddResult(cmd.Context(), svc, addOutcome.Created, pidPath, regPath, snapshotPath, wait)
 			if err != nil {
 				return err
 			}
+			result.FunnelRearmed = addOutcome.RearmedExpiredFunnel
 
 			if jsonOutput(cmd) {
 				output.Success("add", result)
@@ -422,6 +446,9 @@ Examples:
 				fmt.Fprintln(cmd.OutOrStdout(), "TSLink HTTP allow and identity headers do not apply to raw TCP; protection is Tailscale policy plus backend auth.")
 			} else {
 				fmt.Fprintf(cmd.OutOrStdout(), "→ ✓ Service %q registered\n", svc.Name)
+				if result.FunnelRearmed {
+					fmt.Fprintln(cmd.OutOrStdout(), "→ re-armed expired Funnel (24h)")
+				}
 				if result.URLPending {
 					if svc.Funnel {
 						fmt.Fprintf(cmd.OutOrStdout(), "URL: pending (PUBLIC via Tailscale Funnel; run: tslink url %s --wait=30s)\n", svc.Name)

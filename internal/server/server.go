@@ -94,6 +94,7 @@ var (
 	runtimeSaveSnapshotFn   = runtimesnapshot.Save
 	runtimeRemoveSnapshotFn = runtimesnapshot.Remove
 	recordOwnedNodeFn       = runtimesnapshot.RecordOwnedNode
+	ownershipRetryWaitFn    = waitForOwnershipRetry
 	serverNowFn             = time.Now
 	beforeInitialSyncFn     = func(context.Context) error { return nil }
 	registryLoadRuntimeFn   = registry.LoadForRuntime
@@ -102,6 +103,19 @@ var (
 	registrySettleDelay     = 50 * time.Millisecond
 	lifecycleTickerInterval = 30 * time.Second
 )
+
+var ownershipRetryDelays = []time.Duration{time.Second, 5 * time.Second}
+
+func waitForOwnershipRetry(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
 
 const (
 	httpReadHeaderTimeout = 10 * time.Second
@@ -281,6 +295,7 @@ type Server struct {
 	authHandoffFn           AuthHandoffFunc
 	cleanupNodesFn          CleanupStaleNodesFunc
 	lifecycleReconcileFn    LifecycleReconcileFunc
+	lastSyncFailed          atomic.Bool
 	shuttingDown            atomic.Bool
 	syncGeneration          atomic.Uint64
 	reconcileGate           chan struct{}
@@ -454,18 +469,19 @@ func (s *Server) startLifecycleTicker(ctx context.Context) <-chan struct{} {
 				shouldSync := s.lifecycleReconcileFn == nil
 				if s.lifecycleReconcileFn != nil {
 					changed, err := s.lifecycleReconcileFn(ctx, now)
-					shouldSync = changed || err != nil
+					shouldSync = changed || err != nil || s.lastSyncFailed.Load()
 					if err != nil {
 						slog.Warn("lifecycle reconciliation failed; applying in-memory wall-clock guard", "error", err)
 					}
 				}
-				// Rebuild listeners only after desired state changed. Reconciliation
-				// still runs from the wall clock on every tick, so suspend/resume
-				// cannot preserve an expired public listener. Errors force an in-memory
-				// guard sync even when persistence was unavailable.
+				// Rebuild listeners after desired state changed, reconciliation failed,
+				// or the latest sync failed and needs retry. Reconciliation still runs
+				// from the wall clock on every tick, so suspend/resume cannot preserve
+				// an expired public listener without restoring unconditional sync traffic.
 				if shouldSync {
-					if err := s.syncNodes(ctx); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, errServerShuttingDown) {
-						slog.Warn("wall-clock lifecycle sync failed", "error", err)
+					syncErr := s.syncNodes(ctx)
+					if syncErr != nil && !errors.Is(syncErr, context.Canceled) && !errors.Is(syncErr, errServerShuttingDown) {
+						slog.Warn("wall-clock lifecycle sync failed", "error", syncErr)
 					}
 				}
 			}
@@ -487,7 +503,10 @@ type syncResult struct {
 
 // syncNodes compares registry to running nodes and starts/stops as needed.
 func (s *Server) syncNodes(ctx context.Context) error {
-	_, err := s.syncNodesWithOutcome(ctx)
+	outcome, err := s.syncNodesWithOutcome(ctx)
+	if outcome.generation == s.syncGeneration.Load() {
+		s.lastSyncFailed.Store(err != nil)
+	}
 	return err
 }
 
@@ -1455,6 +1474,26 @@ func ValidateServiceForStartup(svc registry.Service) error {
 	return nil
 }
 
+func recordOwnedNodeWithBackoff(ctx context.Context, ownershipPath, serviceName, nodeID string) bool {
+	err := recordOwnedNodeFn(ownershipPath, serviceName, nodeID, serverNowFn().UTC())
+	for _, delay := range ownershipRetryDelays {
+		if err == nil {
+			return true
+		}
+		slog.Warn("node ownership ledger write failed; retrying with backoff", "service", serviceName, "path", ownershipPath, "delay", delay, "error", err)
+		if waitErr := ownershipRetryWaitFn(ctx, delay); waitErr != nil {
+			slog.Warn("node ownership ledger retry canceled; continuing without durable cleanup proof", "service", serviceName, "path", ownershipPath, "error", waitErr)
+			return false
+		}
+		err = recordOwnedNodeFn(ownershipPath, serviceName, nodeID, serverNowFn().UTC())
+	}
+	if err != nil {
+		slog.Warn("node ownership ledger retries failed; continuing without durable cleanup proof", "service", serviceName, "path", ownershipPath, "error", err)
+		return false
+	}
+	return true
+}
+
 func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service, provisionOutcomes ...registry.ProvisionOutcome) error {
 	if err := s.ensureRunning(ctx); err != nil {
 		return err
@@ -1538,11 +1577,8 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service, prov
 		ownershipPath, err := nodeOwnershipPathFn()
 		if err != nil {
 			slog.Warn("node ownership path unavailable; continuing without durable cleanup proof", "service", svc.Name, "error", err)
-		} else if err := recordOwnedNodeFn(ownershipPath, svc.Name, nodeID, serverNowFn().UTC()); err != nil {
-			slog.Warn("node ownership ledger write failed; retrying", "service", svc.Name, "path", ownershipPath, "error", err)
-			if retryErr := recordOwnedNodeFn(ownershipPath, svc.Name, nodeID, serverNowFn().UTC()); retryErr != nil {
-				slog.Warn("node ownership ledger retry failed; continuing without durable cleanup proof", "service", svc.Name, "path", ownershipPath, "error", retryErr)
-			}
+		} else {
+			recordOwnedNodeWithBackoff(nodeCtx, ownershipPath, svc.Name, nodeID)
 		}
 	}
 	if svc.Funnel {

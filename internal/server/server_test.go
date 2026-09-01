@@ -2102,6 +2102,60 @@ func TestLifecycleTickerSkipsFullSyncWhenReconcileReportsNoChange(t *testing.T) 
 	}
 }
 
+func TestLifecycleTickerRetriesFailedSyncThenReturnsToChangeOnly(t *testing.T) {
+	testenv.SetHome(t, t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatal(err)
+	}
+	writeRegistry(t, []registry.Service{{Name: "private", Type: registry.TypeProxy, Target: "http://localhost:3000"}})
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.closeAllNodes)
+	oldNew := newTSNetServerFn
+	newTSNetServerFn = func(registry.Service, string, string, string) tsnetServer {
+		return &fakeTSNetServer{localClient: &LocalClient{}, status: &ipnstate.Status{Self: &ipnstate.PeerStatus{DNSName: "private.example.ts.net."}}}
+	}
+	oldAfter := afterDesiredLoadedFn
+	var syncAttempts atomic.Int32
+	afterDesiredLoadedFn = func(context.Context, uint64) error {
+		if syncAttempts.Add(1) == 1 {
+			return errors.New("synthetic transient sync failure")
+		}
+		return nil
+	}
+	oldInterval := lifecycleTickerInterval
+	lifecycleTickerInterval = 5 * time.Millisecond
+	t.Cleanup(func() {
+		newTSNetServerFn = oldNew
+		afterDesiredLoadedFn = oldAfter
+		lifecycleTickerInterval = oldInterval
+	})
+	var ticks atomic.Int32
+	s.SetLifecycleReconcileFn(func(context.Context, time.Time) (bool, error) {
+		return ticks.Add(1) == 1, nil
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := s.startLifecycleTicker(ctx)
+	deadline := time.After(2 * time.Second)
+	for ticks.Load() < 6 {
+		select {
+		case <-deadline:
+			t.Fatal("lifecycle ticker did not run")
+		case <-time.After(time.Millisecond):
+		}
+	}
+	cancel()
+	<-done
+	if got := syncAttempts.Load(); got != 2 {
+		t.Fatalf("sync attempts = %d, want initial failure plus one retry", got)
+	}
+	if s.lastSyncFailed.Load() {
+		t.Fatal("lastSyncFailed remained set after successful retry")
+	}
+}
+
 func TestRunningFunnelListenerIsTornDownAfterDeadline(t *testing.T) {
 	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
@@ -2186,10 +2240,16 @@ func TestOwnershipWriteFailureRetriesThenContinuesServiceStartup(t *testing.T) {
 	oldNew := newTSNetServerFn
 	newTSNetServerFn = func(registry.Service, string, string, string) tsnetServer { return fake }
 	oldRecord := recordOwnedNodeFn
+	oldWait := ownershipRetryWaitFn
 	recordCalls := 0
 	recordOwnedNodeFn = func(string, string, string, time.Time) error {
 		recordCalls++
 		return errors.New("synthetic ledger write failure")
+	}
+	var retryDelays []time.Duration
+	ownershipRetryWaitFn = func(_ context.Context, delay time.Duration) error {
+		retryDelays = append(retryDelays, delay)
+		return nil
 	}
 	var logBuf bytes.Buffer
 	oldLogger := slog.Default()
@@ -2197,6 +2257,7 @@ func TestOwnershipWriteFailureRetriesThenContinuesServiceStartup(t *testing.T) {
 	t.Cleanup(func() {
 		newTSNetServerFn = oldNew
 		recordOwnedNodeFn = oldRecord
+		ownershipRetryWaitFn = oldWait
 		slog.SetDefault(oldLogger)
 	})
 	s, err := New("key", "")
@@ -2207,12 +2268,55 @@ func TestOwnershipWriteFailureRetriesThenContinuesServiceStartup(t *testing.T) {
 	if err := s.startNodeLocked(context.Background(), registry.Service{Name: "private", Type: registry.TypeProxy, Target: "http://localhost:3000"}); err != nil {
 		t.Fatalf("startNodeLocked() error = %v, want service availability", err)
 	}
-	if recordCalls != 2 || fake.listenTLSCalled != 1 {
-		t.Fatalf("record calls=%d TLS=%d, want retry twice and continued listener", recordCalls, fake.listenTLSCalled)
+	if recordCalls != 3 || fake.listenTLSCalled != 1 {
+		t.Fatalf("record calls=%d TLS=%d, want initial attempt, two retries, and continued listener", recordCalls, fake.listenTLSCalled)
+	}
+	if len(retryDelays) != 2 || retryDelays[0] != time.Second || retryDelays[1] != 5*time.Second {
+		t.Fatalf("retry delays=%v, want [1s 5s]", retryDelays)
 	}
 	logs := logBuf.String()
 	if !strings.Contains(logs, "retrying") || !strings.Contains(logs, "continuing without durable cleanup proof") || strings.Contains(logs, "node-ledger-retry-fixture") {
 		t.Fatalf("logs = %q, want actionable warning without NodeID", logs)
+	}
+}
+
+func TestOwnershipRetryBackoffSuccessAndCancellation(t *testing.T) {
+	if err := waitForOwnershipRetry(context.Background(), time.Millisecond); err != nil {
+		t.Fatalf("timer wait error = %v", err)
+	}
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := waitForOwnershipRetry(canceled, time.Hour); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled wait error = %v, want context.Canceled", err)
+	}
+
+	oldRecord, oldWait := recordOwnedNodeFn, ownershipRetryWaitFn
+	t.Cleanup(func() {
+		recordOwnedNodeFn, ownershipRetryWaitFn = oldRecord, oldWait
+	})
+	recordCalls := 0
+	recordOwnedNodeFn = func(string, string, string, time.Time) error {
+		recordCalls++
+		if recordCalls == 1 {
+			return errors.New("synthetic first-write failure")
+		}
+		return nil
+	}
+	var delays []time.Duration
+	ownershipRetryWaitFn = func(_ context.Context, delay time.Duration) error {
+		delays = append(delays, delay)
+		return nil
+	}
+	if ok := recordOwnedNodeWithBackoff(context.Background(), "ledger", "private", "node-retry-success-fixture"); !ok || recordCalls != 2 || len(delays) != 1 || delays[0] != time.Second {
+		t.Fatalf("success retry ok=%t calls=%d delays=%v", ok, recordCalls, delays)
+	}
+
+	recordOwnedNodeFn = func(string, string, string, time.Time) error {
+		return errors.New("synthetic persistent failure")
+	}
+	ownershipRetryWaitFn = waitForOwnershipRetry
+	if ok := recordOwnedNodeWithBackoff(canceled, "ledger", "private", "node-retry-cancel-fixture"); ok {
+		t.Fatal("canceled retry reported durable proof")
 	}
 }
 

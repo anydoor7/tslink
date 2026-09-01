@@ -21,6 +21,7 @@ const (
 	cleanupUnavailableReason   = "device cleanup could not be completed; see warnings"
 	ownershipUnavailableReason = "ownership ledger unavailable; device deletion disabled"
 	emptyRegistryReason        = "registry has zero services while ownership ledger contains records; device deletion disabled"
+	partialRegistryReason      = "registry appears incomplete: orphan ownership records exceed registered services and at least 3 remote deletions would result; device deletion disabled; restore registry.json or re-establish reviewed TSLink ownership with tslink cleanup --adopt <hostname> --force --dry-run=false"
 )
 
 type Options struct {
@@ -32,20 +33,27 @@ type Options struct {
 	CheckUnusedACL bool
 }
 
+type AdoptionResult struct {
+	ServiceName string `json:"service_name"`
+	Matches     int    `json:"matches"`
+	Written     bool   `json:"written"`
+}
+
 // Result intentionally contains service/hostname labels but never NodeIDs.
 type Result struct {
-	DryRun               bool     `json:"dry_run"`
-	RegistryChanged      bool     `json:"registry_changed"`
-	ExpiredFunnels       []string `json:"expired_funnels"`
-	DevicesMatched       []string `json:"devices_matched"`
-	DevicesWouldDelete   []string `json:"devices_would_delete"`
-	DevicesDeleted       []string `json:"devices_deleted"`
-	DevicesProtected     []string `json:"devices_protected"`
-	DevicesAdopted       []string `json:"devices_adopted,omitempty"`
-	DeviceCleanupSkipped bool     `json:"device_cleanup_skipped"`
-	DeviceSkipReason     string   `json:"device_skip_reason,omitempty"`
-	ACLAction            string   `json:"acl_action"`
-	Warnings             []string `json:"warnings,omitempty"`
+	DryRun               bool            `json:"dry_run"`
+	RegistryChanged      bool            `json:"registry_changed"`
+	ExpiredFunnels       []string        `json:"expired_funnels"`
+	DevicesMatched       []string        `json:"devices_matched"`
+	DevicesWouldDelete   []string        `json:"devices_would_delete"`
+	DevicesDeleted       []string        `json:"devices_deleted"`
+	DevicesProtected     []string        `json:"devices_protected"`
+	DevicesAdopted       []string        `json:"devices_adopted,omitempty"`
+	Adoption             *AdoptionResult `json:"adoption,omitempty"`
+	DeviceCleanupSkipped bool            `json:"device_cleanup_skipped"`
+	DeviceSkipReason     string          `json:"device_skip_reason,omitempty"`
+	ACLAction            string          `json:"acl_action"`
+	Warnings             []string        `json:"warnings,omitempty"`
 }
 
 var (
@@ -100,12 +108,6 @@ func Reconcile(ctx context.Context, options Options) (Result, error) {
 	}
 	orphanIDs := make(map[string][]string)
 	deletionEnabled := err == nil
-	if deletionEnabled && len(reg.Services) == 0 && len(ledger.Nodes) > 0 {
-		deletionEnabled = false
-		result.DeviceCleanupSkipped = true
-		result.DeviceSkipReason = emptyRegistryReason
-		result.Warnings = append(result.Warnings, emptyRegistryReason)
-	}
 	if deletionEnabled {
 		for _, node := range ledger.Nodes {
 			if _, registered := active[node.ServiceName]; registered {
@@ -113,6 +115,21 @@ func Reconcile(ctx context.Context, options Options) (Result, error) {
 			}
 			orphanIDs[node.ServiceName] = append(orphanIDs[node.ServiceName], node.NodeID)
 		}
+	}
+	if deletionEnabled && len(reg.Services) == 0 && len(ledger.Nodes) > 0 {
+		deletionEnabled = false
+		result.DeviceCleanupSkipped = true
+		result.DeviceSkipReason = emptyRegistryReason
+		result.Warnings = append(result.Warnings, emptyRegistryReason)
+	}
+	if deletionEnabled && len(orphanIDs) > len(reg.Services) && len(orphanIDs) >= 3 {
+		deletionEnabled = false
+		result.DeviceCleanupSkipped = true
+		result.DeviceSkipReason = partialRegistryReason
+		result.Warnings = append(result.Warnings, partialRegistryReason)
+	}
+	if !deletionEnabled {
+		orphanIDs = make(map[string][]string)
 	}
 	serviceNames := make([]string, 0, len(orphanIDs))
 	for name := range orphanIDs {

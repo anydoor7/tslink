@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -97,6 +98,9 @@ func TestCleanupAdoptRejectsZeroAndMultipleExactMatches(t *testing.T) {
 		t.Run(fmt.Sprintf("matches_%d", matches), func(t *testing.T) {
 			command := withCleanupAdoptionSeams(t)
 			cleanupFindExactDeviceNodeIDFn = func(context.Context, string) (string, int, error) {
+				if matches > 1 {
+					return "node-last-duplicate", matches, nil
+				}
 				return "", matches, nil
 			}
 			if err := command.Flags().Set("adopt", "legacy"); err != nil {
@@ -131,12 +135,15 @@ func TestCleanupAdoptWritesLedgerBeforeNormalExactCleanup(t *testing.T) {
 		if len(ledger.Nodes) != 1 || ledger.Nodes[0].ServiceName != "legacy" || ledger.Nodes[0].NodeID != "node-adopted" {
 			t.Fatalf("ledger at normal cleanup = %+v", ledger)
 		}
-		return lifecycle.Result{DryRun: options.DryRun, DevicesWouldDelete: []string{"legacy"}}, nil
+		return lifecycle.Result{DryRun: options.DryRun, DevicesDeleted: []string{"legacy"}, ACLAction: lifecycle.ACLNotRequested}, nil
 	}
 	if err := command.Flags().Set("adopt", "legacy"); err != nil {
 		t.Fatal(err)
 	}
 	if err := command.Flags().Set("force", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := command.Flags().Set("dry-run", "false"); err != nil {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
@@ -145,8 +152,89 @@ func TestCleanupAdoptWritesLedgerBeforeNormalExactCleanup(t *testing.T) {
 	if err := command.RunE(command, nil); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "adopted exact hostname match") || !strings.Contains(out.String(), "would delete owned devices: legacy") {
+	if !strings.Contains(out.String(), "adopted exact TSLink-tagged hostname match") || !strings.Contains(out.String(), "devices_deleted=1") {
 		t.Fatalf("output = %q", out.String())
+	}
+	if strings.Index(out.String(), "adopted exact TSLink-tagged") > strings.Index(out.String(), "cleanup applied") {
+		t.Fatalf("output order = %q, want adoption before cleanup result", out.String())
+	}
+}
+
+func TestCleanupAdoptDryRunPreviewsWithoutChangingLedgerBytes(t *testing.T) {
+	command := withCleanupAdoptionSeams(t)
+	ownershipPath, err := config.NodeOwnershipPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedTime := time.Date(2029, 1, 1, 0, 0, 0, 0, time.UTC)
+	if err := tsruntime.RecordOwnedNode(ownershipPath, "existing", "node-existing", seedTime); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(ownershipPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleanupFindExactDeviceNodeIDFn = func(context.Context, string) (string, int, error) {
+		return "node-preview", 1, nil
+	}
+	cleanupAdoptOwnedNodeFn = func(string, string, string, time.Time) error {
+		t.Fatal("dry-run adoption must not write ownership proof")
+		return nil
+	}
+	cleanupReconcileFn = func(_ context.Context, options lifecycle.Options) (lifecycle.Result, error) {
+		if !options.DryRun {
+			t.Fatal("default cleanup must remain dry-run")
+		}
+		return lifecycle.Result{DryRun: true, ACLAction: lifecycle.ACLNotRequested}, nil
+	}
+	_ = command.Flags().Set("adopt", "legacy")
+	_ = command.Flags().Set("force", "true")
+	var out bytes.Buffer
+	command.SetOut(&out)
+	command.SetErr(&out)
+	if err := command.RunE(command, nil); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.ReadFile(ownershipPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatalf("ledger bytes changed during dry-run:\nbefore=%s\nafter=%s", before, after)
+	}
+	wantPreview := "→ adoption preview (not written): service=legacy matches=1\n"
+	if !strings.Contains(out.String(), wantPreview) || strings.Index(out.String(), "adoption preview") > strings.Index(out.String(), "cleanup dry-run") {
+		t.Fatalf("stdout = %q, want explicit not-written preview before cleanup result", out.String())
+	}
+}
+
+func TestCleanupAdoptDryRunJSONMarksProofNotWritten(t *testing.T) {
+	command := withCleanupAdoptionSeams(t)
+	cleanupFindExactDeviceNodeIDFn = func(context.Context, string) (string, int, error) {
+		return "node-preview", 1, nil
+	}
+	cleanupAdoptOwnedNodeFn = func(string, string, string, time.Time) error {
+		t.Fatal("dry-run adoption must not write ownership proof")
+		return nil
+	}
+	cleanupReconcileFn = func(_ context.Context, options lifecycle.Options) (lifecycle.Result, error) {
+		return lifecycle.Result{DryRun: options.DryRun, ACLAction: lifecycle.ACLNotRequested}, nil
+	}
+	_ = command.Flags().Set("adopt", "legacy")
+	_ = command.Flags().Set("force", "true")
+	setRootJSONFlag(t, true)
+	raw := captureStdout(t, func() {
+		if err := command.RunE(command, nil); err != nil {
+			t.Fatal(err)
+		}
+	})
+	data := dataMap(t, raw)
+	adoption, ok := data["adoption"].(map[string]any)
+	if !ok || adoption["service_name"] != "legacy" || adoption["matches"] != float64(1) || adoption["written"] != false {
+		t.Fatalf("adoption = %#v, want explicit not-written preview", data["adoption"])
+	}
+	if _, written := data["devices_adopted"]; written {
+		t.Fatalf("devices_adopted must be omitted in preview: %#v", data)
 	}
 }
 
@@ -166,6 +254,9 @@ func TestCleanupAdoptRejectsExistingNameBoundToDifferentNode(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := command.Flags().Set("force", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := command.Flags().Set("dry-run", "false"); err != nil {
 		t.Fatal(err)
 	}
 	err = command.RunE(command, nil)

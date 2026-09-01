@@ -839,11 +839,28 @@ type AddOptions struct {
 	// PreserveFunnelExpiry keeps an existing entry's deadline. It is used when
 	// --funnel-ttl was not explicitly supplied, including legacy nil=never.
 	PreserveFunnelExpiry bool
+	// Now is injectable for deterministic expiration decisions. Zero uses the
+	// current wall clock.
+	Now time.Time
 }
 
 func AddWithOptions(path string, svc Service, options AddOptions) (created bool, err error) {
+	outcome, err := AddWithOutcome(path, svc, options)
+	return outcome.Created, err
+}
+
+type AddOutcome struct {
+	Created              bool
+	RearmedExpiredFunnel bool
+}
+
+func AddWithOutcome(path string, svc Service, options AddOptions) (outcome AddOutcome, err error) {
 	if err := ValidateService(svc); err != nil {
-		return false, err
+		return AddOutcome{}, err
+	}
+	now := options.Now.UTC()
+	if options.Now.IsZero() {
+		now = time.Now().UTC()
 	}
 
 	err = withLock(path, func() error {
@@ -859,10 +876,16 @@ func AddWithOptions(path string, svc Service, options AddOptions) (created bool,
 
 			svc.CreatedAt = existing.CreatedAt
 			if options.PreserveFunnelExpiry {
-				svc.FunnelExpiresAt = existing.FunnelExpiresAt
+				if svc.Funnel && existing.FunnelExpiresAt != nil && !existing.FunnelExpiresAt.After(now) {
+					rearmed := now.Add(DefaultFunnelTTL).UTC()
+					svc.FunnelExpiresAt = &rearmed
+					outcome.RearmedExpiredFunnel = true
+				} else {
+					svc.FunnelExpiresAt = existing.FunnelExpiresAt
+				}
 			}
 			reg.Services[i] = svc
-			created = false
+			outcome.Created = false
 			return save(path, reg)
 		}
 
@@ -871,10 +894,10 @@ func AddWithOptions(path string, svc Service, options AddOptions) (created bool,
 		}
 
 		reg.Services = append(reg.Services, svc)
-		created = true
+		outcome.Created = true
 		return save(path, reg)
 	})
-	return created, err
+	return outcome, err
 }
 
 func AddIfMissing(path string, svc Service) (created bool, err error) {

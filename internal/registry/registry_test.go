@@ -2075,3 +2075,50 @@ func TestAddWithOptionsPreservesLegacyNeverOnlyWhenRequested(t *testing.T) {
 		t.Fatalf("explicit expiry = %v, want %v", reg.Services[0].FunnelExpiresAt, expires)
 	}
 }
+
+func TestAddWithOutcomeRearmsExpiredFunnelButPreservesFutureDeadline(t *testing.T) {
+	path := testRegistryPath(t)
+	now := time.Date(2030, 9, 1, 12, 0, 0, 0, time.UTC)
+	past := now.Add(-time.Hour)
+	base := Service{
+		Name: "public", Type: TypeProxy, Target: "http://localhost:3000",
+		Funnel: false, PublicAck: true, FunnelExpiresAt: &past,
+	}
+	if _, err := Add(path, base); err != nil {
+		t.Fatal(err)
+	}
+	requested := base
+	requested.Funnel = true
+	requested.FunnelExpiresAt = func() *time.Time { value := now.Add(DefaultFunnelTTL); return &value }()
+	outcome, err := AddWithOutcome(path, requested, AddOptions{PreserveFunnelExpiry: true, Now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := now.Add(DefaultFunnelTTL)
+	if outcome.Created || !outcome.RearmedExpiredFunnel || reg.Services[0].FunnelExpiresAt == nil || !reg.Services[0].FunnelExpiresAt.Equal(want) {
+		t.Fatalf("outcome=%+v stored=%+v, want re-armed deadline %v", outcome, reg.Services[0], want)
+	}
+
+	future := now.Add(72 * time.Hour)
+	stored := reg.Services[0]
+	stored.FunnelExpiresAt = &future
+	if _, err := AddWithOptions(path, stored, AddOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	requested.FunnelExpiresAt = func() *time.Time { value := now.Add(DefaultFunnelTTL); return &value }()
+	outcome, err = AddWithOutcome(path, requested, AddOptions{PreserveFunnelExpiry: true, Now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg, err = Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcome.RearmedExpiredFunnel || reg.Services[0].FunnelExpiresAt == nil || !reg.Services[0].FunnelExpiresAt.Equal(future) {
+		t.Fatalf("outcome=%+v stored expiry=%v, want preserved future %v", outcome, reg.Services[0].FunnelExpiresAt, future)
+	}
+}

@@ -40,6 +40,44 @@ func addStatusTestService(t *testing.T, regPath string, svc registry.Service) re
 	return registry.Service{}
 }
 
+func TestStatusJSONReportsOwnershipProofWithoutNodeID(t *testing.T) {
+	dir := t.TempDir()
+	regPath := filepath.Join(dir, "registry.json")
+	pidPath := filepath.Join(dir, "tslink.pid")
+	addStatusTestService(t, regPath, registry.Service{Name: "private", Type: registry.TypeProxy, Target: "http://localhost:3000"})
+
+	result, err := getStatus(pidPath, regPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Services) != 1 || result.Services[0].OwnershipProof {
+		t.Fatalf("services = %+v, want ownership_proof=false before ledger write", result.Services)
+	}
+	withoutProof, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(withoutProof), `"ownership_proof":false`) {
+		t.Fatalf("status JSON = %s, want explicit false", withoutProof)
+	}
+
+	ledgerPath := filepath.Join(dir, "node-ownership.json")
+	if err := tsruntime.RecordOwnedNode(ledgerPath, "private", "node-status-proof-fixture", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	result, err = getStatus(pidPath, regPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withProof, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Services[0].OwnershipProof || !strings.Contains(string(withProof), `"ownership_proof":true`) || strings.Contains(string(withProof), "node-status-proof-fixture") {
+		t.Fatalf("status JSON = %s, want proof=true without NodeID", withProof)
+	}
+}
+
 func statusRegistryFingerprint(t *testing.T, regPath string) string {
 	t.Helper()
 	reg, err := registry.Load(regPath)
