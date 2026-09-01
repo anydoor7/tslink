@@ -585,6 +585,72 @@ func TestAPIAdd_FunnelAcceptsPublicAck(t *testing.T) {
 	}
 }
 
+func TestAPIAdd_FunnelTTLPreservesLegacyNeverUnlessExplicit(t *testing.T) {
+	h, _ := newTestHandler(t)
+	legacy := `{"schema_version":1,"services":[{"name":"legacy-public","type":"proxy","target":"http://localhost:3000","funnel":true,"public_ack":true,"created_at":"2026-01-01T00:00:00Z"}]}`
+	if err := os.WriteFile(h.regPath, []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	resp := sendRequest(t, h, APIRequest{
+		Action: apiActionAdd, Name: "legacy-public", Type: registry.TypeProxy,
+		Target: "localhost:3000", Funnel: true, PublicAck: true,
+	})
+	if !resp.OK {
+		t.Fatalf("legacy API upsert failed: %s", resp.Error)
+	}
+	reg, err := registry.Load(h.regPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reg.Services[0].FunnelExpiresAt != nil {
+		t.Fatalf("legacy funnel expiry = %v, want preserved never", reg.Services[0].FunnelExpiresAt)
+	}
+
+	resp = sendRequest(t, h, APIRequest{
+		Action: apiActionAdd, Name: "legacy-public", Type: registry.TypeProxy,
+		Target: "localhost:3000", Funnel: true, FunnelTTL: "7d", PublicAck: true,
+	})
+	if !resp.OK {
+		t.Fatalf("explicit 7d API upsert failed: %s", resp.Error)
+	}
+	reg, err = registry.Load(h.regPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := reg.Services[0].FunnelExpiresAt; got == nil || time.Until(*got) < 6*24*time.Hour || time.Until(*got) > 8*24*time.Hour {
+		t.Fatalf("explicit 7d funnel expiry = %v", got)
+	}
+}
+
+func TestAPIAdd_FunnelTTLNeverAndStrictRejection(t *testing.T) {
+	h, _ := newTestHandler(t)
+	resp := sendRequest(t, h, APIRequest{
+		Action: apiActionAdd, Name: "permanent-public", Type: registry.TypeProxy,
+		Target: "localhost:3000", Funnel: true, FunnelTTL: "never", PublicAck: true,
+	})
+	if !resp.OK {
+		t.Fatalf("never API add failed: %s", resp.Error)
+	}
+	reg, err := registry.Load(h.regPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reg.Services[0].FunnelExpiresAt != nil {
+		t.Fatalf("never funnel expiry = %v, want nil", reg.Services[0].FunnelExpiresAt)
+	}
+
+	for _, ttl := range []string{"168h", "1w", "NEVER"} {
+		resp = sendRequest(t, h, APIRequest{
+			Action: apiActionAdd, Name: "rejected-public", Type: registry.TypeProxy,
+			Target: "localhost:4000", Funnel: true, FunnelTTL: ttl, PublicAck: true,
+		})
+		if resp.OK || !strings.Contains(resp.Error, "funnel TTL must be one of") {
+			t.Fatalf("funnel_ttl %q response = %+v, want strict rejection", ttl, resp)
+		}
+	}
+}
+
 func TestAPIAdd_FunnelPersistsNoAutoProvision(t *testing.T) {
 	h, _ := newTestHandler(t)
 	resp := sendRequest(t, h, APIRequest{

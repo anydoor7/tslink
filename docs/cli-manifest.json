@@ -145,6 +145,35 @@
       "boundary": "default-on only for acknowledged Funnel services; disable process-wide with --no-auto-provision or per service with no_auto_provision"
     },
     {
+      "command": "tslink cleanup",
+      "operation": "owned device deletion",
+      "default": "dry-run",
+      "required_flags": [
+        "--dry-run=false"
+      ],
+      "boundary": "device deletion requires durable exact NodeID proof; hostname is discovery-only"
+    },
+    {
+      "command": "tslink cleanup",
+      "operation": "legacy device ownership adoption",
+      "default": "disabled",
+      "required_flags": [
+        "--adopt",
+        "--force"
+      ],
+      "boundary": "requires one literal hostname with exactly one remote match; adoption only records exact NodeID proof and does not weaken deletion authorization"
+    },
+    {
+      "command": "tslink cleanup",
+      "operation": "unused Funnel ACL removal",
+      "default": "disabled",
+      "required_flags": [
+        "--dry-run=false",
+        "--manage-acl"
+      ],
+      "boundary": "reuses canonical grant refusal and ETag If-Match guards"
+    },
+    {
       "command": "tslink tags delete-remote",
       "operation": "remote ACL tag-owner deletion",
       "default": "disabled",
@@ -464,6 +493,13 @@
           ]
         },
         {
+          "name": "funnel-ttl",
+          "type": "string",
+          "default": "24h",
+          "scope": "local",
+          "usage": "Public Funnel lifetime: 1h, 8h, 24h, 72h, 7d, or never"
+        },
+        {
           "name": "json",
           "type": "bool",
           "default": "false",
@@ -539,6 +575,96 @@
           "usage": "Output as JSON"
         }
       ]
+    },
+    {
+      "path": "tslink cleanup",
+      "short": "Reconcile expired Funnel exposure and TSLink-owned resources",
+      "flags": [
+        {
+          "name": "adopt",
+          "type": "string",
+          "scope": "local",
+          "usage": "Record exact ownership for one literal legacy device hostname before reconciliation"
+        },
+        {
+          "name": "dry-run",
+          "type": "bool",
+          "default": "true",
+          "scope": "local",
+          "usage": "Preview reconciliation without registry, device, or ACL deletion (set --dry-run=false to apply)"
+        },
+        {
+          "name": "force",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Confirm the explicitly named --adopt migration"
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        },
+        {
+          "name": "manage-acl",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Opt in to removing the unused canonical Funnel tag owner and nodeAttrs grant"
+        }
+      ],
+      "json_result_fields": {
+        "acl_action": {
+          "type": "string",
+          "description": "Unused Funnel ACL reconciliation outcome."
+        },
+        "device_cleanup_skipped": {
+          "type": "boolean",
+          "description": "True when protected hostname matches or missing API credentials prevented deletion."
+        },
+        "device_skip_reason": {
+          "type": "string",
+          "description": "Stable non-secret reason for skipped device cleanup; omitted otherwise."
+        },
+        "devices_adopted": {
+          "type": "array",
+          "description": "Explicit literal hostnames whose single remote match was recorded as exact ownership proof; NodeIDs are never emitted."
+        },
+        "devices_deleted": {
+          "type": "array",
+          "description": "Hostnames deleted by exact NodeID during apply; NodeIDs are never emitted."
+        },
+        "devices_matched": {
+          "type": "array",
+          "description": "Hostnames discovered by exact NodeID or protected hostname matching; NodeIDs are never emitted."
+        },
+        "devices_protected": {
+          "type": "array",
+          "description": "Hostname matches lacking exact NodeID ownership proof; never deleted."
+        },
+        "devices_would_delete": {
+          "type": "array",
+          "description": "Hostnames selected by durable exact NodeID ownership proof during dry-run; NodeIDs are never emitted."
+        },
+        "dry_run": {
+          "type": "boolean",
+          "description": "True when no registry, device, or ACL deletion was applied."
+        },
+        "expired_funnels": {
+          "type": "array",
+          "description": "Service names whose public Funnel deadline has elapsed."
+        },
+        "registry_changed": {
+          "type": "boolean",
+          "description": "True when expired Funnel services were persisted as tailnet-only."
+        },
+        "warnings": {
+          "type": "array",
+          "description": "Non-fatal remote cleanup failures without secret or NodeID values."
+        }
+      }
     },
     {
       "path": "tslink config",
@@ -949,7 +1075,7 @@
           "name": "fields",
           "type": "string",
           "scope": "local",
-          "usage": "Comma-separated slim fields: name,type,url,url_pending,state,funnel_requested,funnel_active,funnel_state,error",
+          "usage": "Comma-separated slim fields: name,type,url,url_pending,state,funnel_requested,funnel_active,funnel_state,funnel_expires_at,funnel_remaining,error",
           "conflicts": [
             "--verbose"
           ]
@@ -992,6 +1118,14 @@
         "services[].funnel_active": {
           "type": "boolean",
           "description": "Runtime fact: true only after the service node passes Funnel capability checks and ListenFunnel succeeds."
+        },
+        "services[].funnel_expires_at": {
+          "type": "string",
+          "description": "RFC3339 public Funnel deadline; omitted for legacy/permanent never entries."
+        },
+        "services[].funnel_remaining": {
+          "type": "string",
+          "description": "Wall-clock duration remaining, never, or 0s after expiration."
         },
         "services[].funnel_requested": {
           "type": "boolean",
@@ -1312,6 +1446,14 @@
         "services[].funnel_active": {
           "type": "boolean",
           "description": "Runtime fact: true only after the service node passes Funnel capability checks and ListenFunnel succeeds."
+        },
+        "services[].funnel_expires_at": {
+          "type": "string",
+          "description": "RFC3339 public Funnel deadline; omitted for legacy/permanent never entries."
+        },
+        "services[].funnel_remaining": {
+          "type": "string",
+          "description": "Wall-clock duration remaining, never, or 0s after expiration."
         },
         "services[].funnel_requested": {
           "type": "boolean",

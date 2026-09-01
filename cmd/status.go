@@ -27,6 +27,7 @@ var (
 	statusAuthHandoffPathFn     = config.AuthHandoffPath
 	runtimeLoadSnapshotFn       = tsruntime.Load
 	statusLoadAuthHandoffFn     = loadAuthHandoff
+	statusNowFn                 = time.Now
 	pidFileModTimeFn            = func(path string) (time.Time, error) {
 		info, err := os.Stat(path)
 		if err != nil {
@@ -66,6 +67,8 @@ type StatusServiceState struct {
 	FunnelRequested bool                    `json:"funnel_requested"`
 	FunnelActive    bool                    `json:"funnel_active"`
 	FunnelState     string                  `json:"funnel_state"`
+	FunnelExpiresAt *time.Time              `json:"funnel_expires_at,omitempty"`
+	FunnelRemaining *string                 `json:"funnel_remaining,omitempty"`
 	Error           *tsruntime.ServiceError `json:"error,omitempty"`
 }
 
@@ -106,6 +109,8 @@ type StatusServiceView struct {
 	FunnelRequested bool                    `json:"funnel_requested"`
 	FunnelActive    bool                    `json:"funnel_active"`
 	FunnelState     string                  `json:"funnel_state"`
+	FunnelExpiresAt *time.Time              `json:"funnel_expires_at,omitempty"`
+	FunnelRemaining *string                 `json:"funnel_remaining,omitempty"`
 	Error           *tsruntime.ServiceError `json:"error,omitempty"`
 	Allow           inspect.SummaryView     `json:"allow"`
 	Tags            inspect.SummaryView     `json:"tags"`
@@ -122,11 +127,15 @@ func getStatus(pidPath, regPath string) (StatusResult, error) {
 	r.ServiceCount = len(reg.Services)
 	r.Services = make([]StatusServiceState, 0, len(reg.Services))
 	for _, svc := range reg.Services {
+		now := statusNowFn()
+		effective := registry.EffectiveServiceAt(svc, now)
 		r.Services = append(r.Services, StatusServiceState{
 			Name:            svc.Name,
 			Status:          "down",
-			FunnelRequested: svc.Funnel,
-			FunnelState:     configuredFunnelState(svc.Funnel),
+			FunnelRequested: effective.Funnel,
+			FunnelState:     configuredFunnelState(effective.Funnel),
+			FunnelExpiresAt: cloneTimePointer(svc.FunnelExpiresAt),
+			FunnelRemaining: registry.FunnelRemainingAt(svc, now),
 		})
 	}
 	setStatusContinuation(&r)
@@ -371,16 +380,21 @@ func getStatusURLsWithAuth(pidPath, regPath, snapshotPath, authHandoffPath strin
 		}
 	}
 
+	now := statusNowFn()
 	for _, svc := range reg.Services {
-		view := inspect.ServiceViewFor(svc)
+		expired := registry.FunnelExpiredAt(svc, now)
+		effective := registry.EffectiveServiceAt(svc, now)
+		view := inspect.ServiceViewFor(effective)
 		service := StatusServiceView{
 			Name:            view.Name,
 			Type:            view.Type,
 			RuntimeState:    "unknown",
 			Endpoint:        view.Endpoint,
 			Exposure:        view.Exposure,
-			FunnelRequested: svc.Funnel,
-			FunnelState:     configuredFunnelState(svc.Funnel),
+			FunnelRequested: effective.Funnel,
+			FunnelState:     configuredFunnelState(effective.Funnel),
+			FunnelExpiresAt: cloneTimePointer(svc.FunnelExpiresAt),
+			FunnelRemaining: registry.FunnelRemainingAt(svc, now),
 			Allow:           view.Allow,
 			Tags:            view.Tags,
 			Backend:         view.Backend,
@@ -389,7 +403,7 @@ func getStatusURLsWithAuth(pidPath, regPath, snapshotPath, authHandoffPath strin
 		snapshotService, snapshotServiceOK := snapshotServices[svc.Name]
 		if snapshotReportsServices(freshness) && snapshotServiceOK {
 			service.RuntimeState = normalizedRuntimeState(snapshotService)
-			if snapshotService.FunnelState != "" {
+			if snapshotService.FunnelState != "" && !expired {
 				service.FunnelRequested = snapshotService.FunnelRequested
 				service.FunnelActive = snapshotService.FunnelActive
 				service.FunnelState = snapshotService.FunnelState
@@ -439,6 +453,18 @@ func getStatusURLsWithAuth(pidPath, regPath, snapshotPath, authHandoffPath strin
 			service.Endpoint.State = endpointStateForFreshness(freshness)
 			service.Warnings = appendRuntimeFreshnessWarning(service.Warnings, freshness)
 		}
+		if expired {
+			// A pre-deadline snapshot cannot override the current wall clock.
+			// Report the contractual tailnet-only state even during the bounded
+			// interval before the lifecycle ticker closes/replaces the listener.
+			service.FunnelRequested = false
+			service.FunnelActive = false
+			service.FunnelState = tsruntime.FunnelStateNotRequested
+			service.Exposure = view.Exposure
+			if service.Endpoint.Kind == inspect.EndpointKindPublicHTTPS {
+				service.Endpoint.Kind = inspect.EndpointKindHTTPS
+			}
+		}
 		if service.Endpoint.State != inspect.EndpointStateExact {
 			// Expected endpoint templates are internal planning data. Never expose a
 			// syntactically valid-looking hostname without exact runtime evidence.
@@ -450,6 +476,24 @@ func getStatusURLsWithAuth(pidPath, regPath, snapshotPath, authHandoffPath strin
 	}
 
 	return result, nil
+}
+
+func cloneTimePointer(value *time.Time) *time.Time {
+	if value == nil {
+		return nil
+	}
+	copy := *value
+	return &copy
+}
+
+func funnelExpiresLabel(expiresAt *time.Time, remaining *string) string {
+	if expiresAt != nil {
+		return expiresAt.UTC().Format(time.RFC3339)
+	}
+	if remaining != nil && *remaining == "never" {
+		return "never"
+	}
+	return "-"
 }
 
 func configuredFunnelState(requested bool) string {
@@ -567,16 +611,22 @@ func formatStatusURLs(r StatusURLsResult, out io.Writer) {
 
 	fmt.Fprintln(out)
 	writer := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(writer, "NAME\tTYPE\tENDPOINT\tSTATE\tEXPOSURE\tALLOW\tTAGS\tBACKEND\tWARNINGS")
+	fmt.Fprintln(writer, "NAME\tTYPE\tENDPOINT\tSTATE\tEXPOSURE\tFUNNEL EXPIRES\tFUNNEL TTL\tALLOW\tTAGS\tBACKEND\tWARNINGS")
 	for _, svc := range r.Services {
+		remaining := "-"
+		if svc.FunnelRemaining != nil {
+			remaining = *svc.FunnelRemaining
+		}
 		fmt.Fprintf(
 			writer,
-			"%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			"%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			svc.Name,
 			svc.Type,
 			emptyDash(svc.Endpoint.Display),
 			emptyDash(svc.Endpoint.State),
 			emptyDash(svc.Exposure.Kind),
+			funnelExpiresLabel(svc.FunnelExpiresAt, svc.FunnelRemaining),
+			remaining,
 			summaryLabel(svc.Allow),
 			summaryLabel(svc.Tags),
 			emptyDash(svc.Backend.Display),

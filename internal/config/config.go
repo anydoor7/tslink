@@ -102,6 +102,17 @@ func RuntimeSnapshotPath() (string, error) {
 	return filepath.Join(dir, "runtime.json"), nil
 }
 
+// NodeOwnershipPath stores durable service-to-StableNodeID ownership proof.
+// Unlike runtime.json it survives daemon shutdown and service removal so a
+// later reconciliation can safely delete only TSLink-owned devices.
+func NodeOwnershipPath() (string, error) {
+	dir, err := Dir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "node-ownership.json"), nil
+}
+
 // AuthHandoffPath returns the path used to publish a pending interactive
 // tsnet enrollment from a daemon child to CLI/status consumers.
 func AuthHandoffPath() (string, error) {

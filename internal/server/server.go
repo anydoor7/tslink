@@ -90,13 +90,17 @@ var (
 	configDirFn             = config.Dir
 	registryPathFn          = config.RegistryPath
 	runtimeSnapshotPathFn   = config.RuntimeSnapshotPath
+	nodeOwnershipPathFn     = config.NodeOwnershipPath
 	runtimeSaveSnapshotFn   = runtimesnapshot.Save
 	runtimeRemoveSnapshotFn = runtimesnapshot.Remove
+	recordOwnedNodeFn       = runtimesnapshot.RecordOwnedNode
+	serverNowFn             = time.Now
 	beforeInitialSyncFn     = func(context.Context) error { return nil }
 	registryLoadRuntimeFn   = registry.LoadForRuntime
 	afterDesiredLoadedFn    = func(context.Context, uint64) error { return nil }
 	observeNodeContextFn    = func(string, context.Context) {}
 	registrySettleDelay     = 50 * time.Millisecond
+	lifecycleTickerInterval = 30 * time.Second
 )
 
 const (
@@ -255,6 +259,10 @@ type AuthHandoffFunc func(context.Context, AuthHandoff) error
 // CleanupStaleNodesFunc removes stale tailnet nodes for service targets before forced reauth.
 type CleanupStaleNodesFunc func(ctx context.Context, targets []tailapi.CleanupTarget) (tailapi.CleanupResult, error)
 
+// LifecycleReconcileFunc persists wall-clock expiration and reconciles remote
+// resources. The bool reports whether registry.json changed.
+type LifecycleReconcileFunc func(context.Context, time.Time) (bool, error)
+
 // Server manages multiple tsnet nodes, one per registered service.
 type Server struct {
 	nodes                   map[string]*ServiceNode
@@ -272,6 +280,7 @@ type Server struct {
 	autoProvisionFunnel     bool
 	authHandoffFn           AuthHandoffFunc
 	cleanupNodesFn          CleanupStaleNodesFunc
+	lifecycleReconcileFn    LifecycleReconcileFunc
 	shuttingDown            atomic.Bool
 	syncGeneration          atomic.Uint64
 	reconcileGate           chan struct{}
@@ -359,6 +368,11 @@ func (s *Server) SetCleanupStaleNodesFn(fn CleanupStaleNodesFunc) {
 	s.cleanupNodesFn = fn
 }
 
+// SetLifecycleReconcileFn configures the shared cleanup/expiration reconciler.
+func (s *Server) SetLifecycleReconcileFn(fn LifecycleReconcileFunc) {
+	s.lifecycleReconcileFn = fn
+}
+
 // SetReadyFunc sets a callback invoked after watcher setup and initial sync succeed.
 func (s *Server) SetReadyFunc(fn func() error) {
 	s.readyFn = fn
@@ -373,6 +387,13 @@ func staticAuthKeyProvider(authKey string) AuthKeyProvider {
 // Run starts all registered service nodes and watches for registry changes.
 func (s *Server) Run(ctx context.Context) error {
 	s.shuttingDown.Store(false)
+	if s.lifecycleReconcileFn != nil {
+		if _, err := s.lifecycleReconcileFn(ctx, serverNowFn()); err != nil {
+			s.beginShutdown()
+			s.closeAllNodes()
+			return fmt.Errorf("initial lifecycle reconciliation: %w", err)
+		}
+	}
 	watchCtx, cancelWatch := context.WithCancel(ctx)
 	defer cancelWatch()
 
@@ -407,13 +428,50 @@ func (s *Server) Run(ctx context.Context) error {
 			return fmt.Errorf("mark ready: %w", err)
 		}
 	}
+	lifecycleDone := s.startLifecycleTicker(watchCtx)
 
 	<-ctx.Done()
 	s.beginShutdown()
 	cancelWatch()
+	<-lifecycleDone
 	<-watchDone
 	s.closeAllNodes()
 	return nil
+}
+
+func (s *Server) startLifecycleTicker(ctx context.Context) <-chan struct{} {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(lifecycleTickerInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				now := serverNowFn()
+				shouldSync := s.lifecycleReconcileFn == nil
+				if s.lifecycleReconcileFn != nil {
+					changed, err := s.lifecycleReconcileFn(ctx, now)
+					shouldSync = changed || err != nil
+					if err != nil {
+						slog.Warn("lifecycle reconciliation failed; applying in-memory wall-clock guard", "error", err)
+					}
+				}
+				// Rebuild listeners only after desired state changed. Reconciliation
+				// still runs from the wall clock on every tick, so suspend/resume
+				// cannot preserve an expired public listener. Errors force an in-memory
+				// guard sync even when persistence was unavailable.
+				if shouldSync {
+					if err := s.syncNodes(ctx); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, errServerShuttingDown) {
+						slog.Warn("wall-clock lifecycle sync failed", "error", err)
+					}
+				}
+			}
+		}
+	}()
+	return done
 }
 
 type syncOutcome struct {
@@ -504,6 +562,10 @@ func (s *Server) syncNodesWithOutcome(ctx context.Context) (outcome syncOutcome,
 		slog.Warn("registry service failed strict load; isolating service and continuing sync", "name", issue.Name, "code", failure.Error.Code, "error", issue.Err)
 	}
 	for _, svc := range reg.Services {
+		// Re-read the wall clock for every reconciliation. Missing timestamps
+		// remain legacy-never; expired services are never allowed into Funnel
+		// policy or listener construction even if persisting the downgrade failed.
+		svc = registry.EffectiveServiceAt(svc, serverNowFn())
 		if err := ValidateServiceForStartup(svc); err != nil {
 			if failure, recoverable := recoverableServiceFailure(svc, err); recoverable {
 				slog.Warn("service validation failed; isolating service and continuing sync", "name", svc.Name, "code", failure.Error.Code, "error", err)
@@ -1397,6 +1459,9 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service, prov
 	if err := s.ensureRunning(ctx); err != nil {
 		return err
 	}
+	// Final wall-clock gate immediately before any tsnet/Funnel listener work.
+	// This closes the interval between desired-state loading and construction.
+	svc = registry.EffectiveServiceAt(svc, serverNowFn())
 	if err := ValidateServiceForStartup(svc); err != nil {
 		return err
 	}
@@ -1469,6 +1534,17 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service, prov
 	}
 	runtimeHost := runtimeHostFromStatus(status)
 	nodeID := runtimeNodeIDFromStatus(status)
+	if nodeID != "" {
+		ownershipPath, err := nodeOwnershipPathFn()
+		if err != nil {
+			slog.Warn("node ownership path unavailable; continuing without durable cleanup proof", "service", svc.Name, "error", err)
+		} else if err := recordOwnedNodeFn(ownershipPath, svc.Name, nodeID, serverNowFn().UTC()); err != nil {
+			slog.Warn("node ownership ledger write failed; retrying", "service", svc.Name, "path", ownershipPath, "error", err)
+			if retryErr := recordOwnedNodeFn(ownershipPath, svc.Name, nodeID, serverNowFn().UTC()); retryErr != nil {
+				slog.Warn("node ownership ledger retry failed; continuing without durable cleanup proof", "service", svc.Name, "path", ownershipPath, "error", retryErr)
+			}
+		}
+	}
 	if svc.Funnel {
 		provision := registry.ProvisionOutcome{
 			Target:       registry.FunnelTag,

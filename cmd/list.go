@@ -5,6 +5,7 @@ import (
 	"io"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/inspect"
@@ -41,6 +42,8 @@ type ListServiceSummary struct {
 	FunnelRequested bool                    `json:"funnel_requested"`
 	FunnelActive    bool                    `json:"funnel_active"`
 	FunnelState     string                  `json:"funnel_state"`
+	FunnelExpiresAt *time.Time              `json:"funnel_expires_at,omitempty"`
+	FunnelRemaining *string                 `json:"funnel_remaining,omitempty"`
 	Error           *tsruntime.ServiceError `json:"error,omitempty"`
 }
 
@@ -65,11 +68,12 @@ func validateListOptions(opts listOptions) error {
 	}
 	allowed := map[string]bool{
 		"name": true, "type": true, "url": true, "url_pending": true, "state": true,
-		"funnel_requested": true, "funnel_active": true, "funnel_state": true, "error": true,
+		"funnel_requested": true, "funnel_active": true, "funnel_state": true,
+		"funnel_expires_at": true, "funnel_remaining": true, "error": true,
 	}
 	for _, field := range opts.Fields {
 		if !allowed[field] {
-			return output.ErrUsage(fmt.Sprintf("unknown --fields value %q; supported: name,type,url,url_pending,state,funnel_requested,funnel_active,funnel_state,error", field))
+			return output.ErrUsage(fmt.Sprintf("unknown --fields value %q; supported: name,type,url,url_pending,state,funnel_requested,funnel_active,funnel_state,funnel_expires_at,funnel_remaining,error", field))
 		}
 	}
 	return nil
@@ -114,6 +118,8 @@ func listSummary(svc StatusServiceView) ListServiceSummary {
 		FunnelRequested: svc.FunnelRequested,
 		FunnelActive:    svc.FunnelActive,
 		FunnelState:     svc.FunnelState,
+		FunnelExpiresAt: cloneTimePointer(svc.FunnelExpiresAt),
+		FunnelRemaining: svc.FunnelRemaining,
 		Error:           svc.Error,
 	}
 	if svc.RuntimeState == tsruntime.ServiceRuntimeFailed {
@@ -148,6 +154,10 @@ func selectListFields(summary ListServiceSummary, fields []string) map[string]an
 			selected[field] = summary.FunnelActive
 		case "funnel_state":
 			selected[field] = summary.FunnelState
+		case "funnel_expires_at":
+			selected[field] = summary.FunnelExpiresAt
+		case "funnel_remaining":
+			selected[field] = summary.FunnelRemaining
 		case "error":
 			if summary.Error != nil {
 				selected[field] = summary.Error
@@ -217,14 +227,18 @@ func listServicesWithOptions(regPath string, out io.Writer, opts listOptions) er
 		return err
 	}
 	writer := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(writer, "NAME\tTYPE\tBACKEND\tURL\tSTATE")
+	fmt.Fprintln(writer, "NAME\tTYPE\tBACKEND\tURL\tSTATE\tFUNNEL EXPIRES\tFUNNEL TTL")
 	for _, svc := range services {
 		summary := listSummary(svc)
 		url := "-"
 		if summary.URL != nil {
 			url = *summary.URL
 		}
-		fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\n", summary.Name, summary.Type, svc.Backend.Display, url, summary.State)
+		remaining := "-"
+		if summary.FunnelRemaining != nil {
+			remaining = *summary.FunnelRemaining
+		}
+		fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", summary.Name, summary.Type, svc.Backend.Display, url, summary.State, funnelExpiresLabel(summary.FunnelExpiresAt, summary.FunnelRemaining), remaining)
 	}
 	return writer.Flush()
 }
@@ -282,7 +296,7 @@ Examples:
 	}
 	listCmd.Flags().String("name", "", "Return only the exact service name")
 	listCmd.Flags().String("type", "", "Filter by service type: proxy, file, or tcp")
-	listCmd.Flags().String("fields", "", "Comma-separated slim fields: name,type,url,url_pending,state,funnel_requested,funnel_active,funnel_state,error")
+	listCmd.Flags().String("fields", "", "Comma-separated slim fields: name,type,url,url_pending,state,funnel_requested,funnel_active,funnel_state,funnel_expires_at,funnel_remaining,error")
 	listCmd.Flags().Bool("verbose", false, "Return the complete owner-only diagnostic service view")
 	rootCmd.AddCommand(listCmd)
 }

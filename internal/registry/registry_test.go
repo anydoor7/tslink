@@ -1961,3 +1961,117 @@ func TestAcmeEmailOmittedWhenEmpty(t *testing.T) {
 		t.Fatal("acme_email should be omitted from JSON when empty")
 	}
 }
+
+func TestParseFunnelTTLStrictContractIncludesExplicitSevenDays(t *testing.T) {
+	duration, never, err := ParseFunnelTTL("7d")
+	if err != nil || never || duration != 168*time.Hour {
+		t.Fatalf("ParseFunnelTTL(7d) = %s, %t, %v; want 168h, false, nil", duration, never, err)
+	}
+	if duration, never, err := ParseFunnelTTL("never"); err != nil || !never || duration != 0 {
+		t.Fatalf("ParseFunnelTTL(never) = %s, %t, %v", duration, never, err)
+	}
+	for _, value := range []string{"2h", "168h", "7D", "1.5h", "0"} {
+		if _, _, err := ParseFunnelTTL(value); err == nil {
+			t.Errorf("ParseFunnelTTL(%q) error = nil, want strict whitelist rejection", value)
+		}
+	}
+}
+
+func TestLegacyFunnelWithoutExpiryMeansNever(t *testing.T) {
+	path := testRegistryPath(t)
+	legacy := `{"schema_version":1,"services":[{"name":"legacy-public","type":"proxy","target":"http://localhost:3000","funnel":true,"public_ack":true,"created_at":"2026-01-01T00:00:00Z"}]}`
+	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := reg.Services[0]
+	if svc.FunnelExpiresAt != nil || FunnelExpiredAt(svc, time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC)) {
+		t.Fatalf("legacy service = %+v, want nil expiry treated as never", svc)
+	}
+	remaining := FunnelRemainingAt(svc, time.Now())
+	if remaining == nil || *remaining != "never" {
+		t.Fatalf("legacy remaining = %v, want never", remaining)
+	}
+}
+
+func TestTailnetOnlyServiceNeverReportsFunnelRemaining(t *testing.T) {
+	now := time.Date(2030, 8, 31, 12, 0, 0, 0, time.UTC)
+	deadline := now.Add(12 * time.Hour)
+	svc := Service{Name: "downgraded", Type: TypeProxy, Target: "http://localhost:3000", FunnelExpiresAt: &deadline}
+	if remaining := FunnelRemainingAt(svc, now); remaining != nil {
+		t.Fatalf("tailnet-only remaining = %v, want nil", remaining)
+	}
+}
+
+func TestFunnelExpiryJSONIsRFC3339AndOmittedForNever(t *testing.T) {
+	path := testRegistryPath(t)
+	expires := time.Date(2026, 9, 7, 12, 34, 56, 0, time.UTC)
+	if _, err := Add(path, Service{Name: "timed", Type: TypeProxy, Target: "http://localhost:3000", Funnel: true, PublicAck: true, FunnelExpiresAt: &expires}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Add(path, Service{Name: "permanent", Type: TypeProxy, Target: "http://localhost:4000", Funnel: true, PublicAck: true}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"funnel_expires_at": "2026-09-07T12:34:56Z"`) {
+		t.Fatalf("registry JSON missing RFC3339 expiry: %s", data)
+	}
+	if strings.Count(string(data), "funnel_expires_at") != 1 {
+		t.Fatalf("registry JSON should omit never expiry: %s", data)
+	}
+}
+
+func TestDowngradeExpiredFunnelsDryRunThenApplyPreservesEntryAndDeadline(t *testing.T) {
+	path := testRegistryPath(t)
+	now := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
+	expires := now.Add(-time.Second)
+	if _, err := Add(path, Service{Name: "public", Type: TypeProxy, Target: "http://localhost:3000", Funnel: true, PublicAck: true, FunnelExpiresAt: &expires}); err != nil {
+		t.Fatal(err)
+	}
+	if expired, err := DowngradeExpiredFunnels(path, now, true); err != nil || len(expired) != 1 {
+		t.Fatalf("dry-run = %+v, %v", expired, err)
+	}
+	reg, _ := Load(path)
+	if !reg.Services[0].Funnel {
+		t.Fatal("dry-run changed registry")
+	}
+	if expired, err := DowngradeExpiredFunnels(path, now, false); err != nil || len(expired) != 1 {
+		t.Fatalf("apply = %+v, %v", expired, err)
+	}
+	reg, _ = Load(path)
+	if len(reg.Services) != 1 || reg.Services[0].Funnel || reg.Services[0].FunnelExpiresAt == nil || !reg.Services[0].FunnelExpiresAt.Equal(expires) {
+		t.Fatalf("applied service = %+v, want retained tailnet-only entry and deadline", reg.Services)
+	}
+}
+
+func TestAddWithOptionsPreservesLegacyNeverOnlyWhenRequested(t *testing.T) {
+	path := testRegistryPath(t)
+	legacy := Service{Name: "public", Type: TypeProxy, Target: "http://localhost:3000", Funnel: true, PublicAck: true}
+	if _, err := Add(path, legacy); err != nil {
+		t.Fatal(err)
+	}
+	expires := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	updated := legacy
+	updated.Target = "http://localhost:4000"
+	updated.FunnelExpiresAt = &expires
+	if _, err := AddWithOptions(path, updated, AddOptions{PreserveFunnelExpiry: true}); err != nil {
+		t.Fatal(err)
+	}
+	reg, _ := Load(path)
+	if reg.Services[0].FunnelExpiresAt != nil {
+		t.Fatalf("preserved legacy expiry = %v, want nil=never", reg.Services[0].FunnelExpiresAt)
+	}
+	if _, err := AddWithOptions(path, updated, AddOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	reg, _ = Load(path)
+	if reg.Services[0].FunnelExpiresAt == nil || !reg.Services[0].FunnelExpiresAt.Equal(expires) {
+		t.Fatalf("explicit expiry = %v, want %v", reg.Services[0].FunnelExpiresAt, expires)
+	}
+}

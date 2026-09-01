@@ -115,7 +115,7 @@ tsnet state before enrollment so the auth key creates the tagged Tier 2 nodes.
       → Validate scopes and tags for your services
       → Copy the "client secret" (NOT the shorter client ID above it)
       Long-lived node auth. Remote ACL writes require explicit --manage-acl;
-      remote device cleanup is protected/manual in this version.
+      remote device cleanup requires durable exact TSLink NodeID ownership proof.
 
 Credentials are stored in the system keychain (macOS Keychain, Linux secret
 service, Windows Credential Manager). On systems without keychain support,
@@ -597,7 +597,7 @@ func loginWithClientSecret(cmd *cobra.Command, secret string) error {
 	} else {
 		printCredentialBackend("Client secret", backend)
 		fmt.Println("→ Long-lived node auth saved")
-		fmt.Println("→ Remote ACL writes require --manage-acl; remote device cleanup is protected/manual")
+		fmt.Println("→ Remote ACL writes require --manage-acl; remote device cleanup requires exact recorded NodeID ownership")
 		fmt.Println("→ Validate OAuth scopes and service tags before unattended use")
 		if tagCreated != "" {
 			fmt.Printf("→ Ensured %s exists in tailnet ACL\n", tagCreated)

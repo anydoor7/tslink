@@ -6,8 +6,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/monody0007/tslink/internal/registry"
+	tsruntime "github.com/monody0007/tslink/internal/runtime"
 	"github.com/monody0007/tslink/internal/tailapi"
 )
 
@@ -71,5 +73,36 @@ func TestRemoveService_ProtectedCleanupSkipIsReported(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "ownership could not be proven") {
 		t.Fatalf("stdout = %q, want protected skip reason", out.String())
+	}
+}
+
+func TestRemoveServicePassesOnlyNamedServicesOwnershipProof(t *testing.T) {
+	dir := t.TempDir()
+	regPath := filepath.Join(dir, "registry.json")
+	for _, svc := range []registry.Service{
+		{Name: "web", Type: registry.TypeProxy, Target: "http://localhost:3000"},
+		{Name: "other", Type: registry.TypeProxy, Target: "http://localhost:4000"},
+	} {
+		if _, err := registry.Add(regPath, svc); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ownershipPath := filepath.Join(dir, "node-ownership.json")
+	if err := tsruntime.RecordOwnedNode(ownershipPath, "web", "node-web", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := tsruntime.RecordOwnedNode(ownershipPath, "other", "node-other", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	oldDelete := deleteDevicesFn
+	t.Cleanup(func() { deleteDevicesFn = oldDelete })
+	deleteDevicesFn = func(_ context.Context, target tailapi.CleanupTarget) (tailapi.CleanupResult, error) {
+		if target.Hostname != "web" || strings.Join(target.NodeIDs, ",") != "node-web" {
+			t.Fatalf("cleanup target = %+v, want only named service proof", target)
+		}
+		return tailapi.CleanupResult{}, nil
+	}
+	if _, err := removeServiceResult(regPath, "web"); err != nil {
+		t.Fatal(err)
 	}
 }

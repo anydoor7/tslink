@@ -877,6 +877,11 @@ func TestCompactManifestStaysBelowAgentTokenBudget(t *testing.T) {
 	if _, ok := compact.Commands["url"]; !ok {
 		t.Fatal("compact manifest missing url command")
 	}
+	for _, unavailable := range []string{"domain", "acme-email"} {
+		if containsString(compact.Commands["add"], unavailable) {
+			t.Fatalf("compact manifest advertises unavailable add flag %q", unavailable)
+		}
+	}
 	for _, command := range []string{"invite user", "invite device", "invite list", "invite revoke", "invite resend"} {
 		if _, ok := compact.Commands[command]; !ok {
 			t.Fatalf("compact manifest missing %s command", command)

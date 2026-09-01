@@ -71,6 +71,16 @@ func TestRuntimeSnapshotPath(t *testing.T) {
 	}
 }
 
+func TestNodeOwnershipPath(t *testing.T) {
+	path, err := NodeOwnershipPath()
+	if err != nil {
+		t.Fatalf("NodeOwnershipPath() error = %v", err)
+	}
+	if !strings.HasSuffix(path, "node-ownership.json") {
+		t.Fatalf("NodeOwnershipPath() = %q, want suffix node-ownership.json", path)
+	}
+}
+
 func TestAuthHandoffPath(t *testing.T) {
 	path, err := AuthHandoffPath()
 	if err != nil {

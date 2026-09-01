@@ -15,6 +15,7 @@ import (
 
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/credentials"
+	"github.com/monody0007/tslink/internal/lifecycle"
 	"github.com/monody0007/tslink/internal/output"
 	"github.com/monody0007/tslink/internal/registry"
 	"github.com/monody0007/tslink/internal/server"
@@ -71,6 +72,23 @@ type mockServerWithFunnelProvisioning struct {
 	autoSet   bool
 	request   tailapi.FunnelPolicyRequest
 	resultErr error
+}
+
+type mockServerWithLifecycle struct {
+	reconcile server.LifecycleReconcileFunc
+	runAt     time.Time
+}
+
+func (m *mockServerWithLifecycle) SetLifecycleReconcileFn(fn server.LifecycleReconcileFunc) {
+	m.reconcile = fn
+}
+
+func (m *mockServerWithLifecycle) Run(ctx context.Context) error {
+	if m.reconcile == nil {
+		return fmt.Errorf("lifecycle reconciler was not set")
+	}
+	_, err := m.reconcile(ctx, m.runAt)
+	return err
 }
 
 func (m *mockServerWithFunnelProvisioning) SetEnsureFunnelAttrFn(fn server.EnsureFunnelAttrFunc) {
@@ -188,6 +206,7 @@ func saveServeState(t *testing.T) {
 		ensureTags         func(context.Context, []string) error
 		ensureFunnelAttr   server.EnsureFunnelAttrFunc
 		cleanup            func(context.Context, []tailapi.CleanupTarget) (tailapi.CleanupResult, error)
+		lifecycleReconcile func(context.Context, lifecycle.Options) (lifecycle.Result, error)
 		loadGlobal         func() (config.GlobalConfig, error)
 		logDir             func() (string, error)
 		daemonize          func(string, string, string, bool, bool) (int, error)
@@ -213,7 +232,7 @@ func saveServeState(t *testing.T) {
 		readyPoll          time.Duration
 	}{
 		serveEnsureDirFn, serveMigrateFn, serveRegistryPathFn, serveLoadRegistryFn,
-		serveGetAuthKeyFn, serveHasStoredCredentialFn, servePIDPathFn, serveIsRunningFn, serveIsPIDRunningFn, serveEnsureTagsFn, serveEnsureFunnelAttrFn, serveCleanupFn,
+		serveGetAuthKeyFn, serveHasStoredCredentialFn, servePIDPathFn, serveIsRunningFn, serveIsPIDRunningFn, serveEnsureTagsFn, serveEnsureFunnelAttrFn, serveCleanupFn, serveLifecycleReconcileFn,
 		serveLoadGlobalFn, serveLogDirFn, serveDaemonizeFn, serveReadPIDFn,
 		serveReadyPathFn, serveAuthHandoffPathFn, serveWriteReadyFn, serveReadReadyFn, serveRemoveReadyFn,
 		serveSaveAuthHandoffFn, serveLoadAuthHandoffFn, serveRemoveAuthHandoffFn, serveOpenBrowserFn, serveCIEnvironmentSetFn, serveIsTerminalFn, serveSignalContextFn,
@@ -233,6 +252,7 @@ func saveServeState(t *testing.T) {
 		serveEnsureTagsFn = old.ensureTags
 		serveEnsureFunnelAttrFn = old.ensureFunnelAttr
 		serveCleanupFn = old.cleanup
+		serveLifecycleReconcileFn = old.lifecycleReconcile
 		serveLoadGlobalFn = old.loadGlobal
 		serveLogDirFn = old.logDir
 		serveDaemonizeFn = old.daemonize
@@ -480,6 +500,41 @@ func TestRunForeground_WiresEnsureTagsFn(t *testing.T) {
 	}
 	if !called {
 		t.Fatal("serveEnsureTagsFn was not wired into server")
+	}
+}
+
+func TestRunForegroundLifecycleWiringPreservesApplyAndManageACLOptIn(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		manageACL bool
+	}{
+		{name: "default does not manage ACL", manageACL: false},
+		{name: "explicit opt-in manages ACL", manageACL: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			mockServeDefaults(t, dir)
+			if err := config.EnsureDir(); err != nil {
+				t.Fatal(err)
+			}
+			now := time.Date(2030, 8, 31, 12, 0, 0, 0, time.UTC)
+			mock := &mockServerWithLifecycle{runAt: now}
+			serveNewServerFn = func(string, string) (serverRunner, error) { return mock, nil }
+			var got lifecycle.Options
+			serveLifecycleReconcileFn = func(_ context.Context, options lifecycle.Options) (lifecycle.Result, error) {
+				got = options
+				return lifecycle.Result{}, nil
+			}
+			if err := runForegroundWithOptions(filepath.Join(dir, "test.pid"), "fake-key", "", foregroundOptions{
+				Credentialed: true,
+				ManageACL:    tc.manageACL,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if got.DryRun || got.ManageACL != tc.manageACL || got.CheckUnusedACL != tc.manageACL || !got.Now.Equal(now) {
+				t.Fatalf("lifecycle options = %+v, manageACL=%t", got, tc.manageACL)
+			}
+		})
 	}
 }
 
@@ -2015,5 +2070,19 @@ func TestServeCmd_InvalidTagIncludesServiceContext(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "tag:<lowercase-hyphen-name>") || !strings.Contains(err.Error(), "edit registry.json") {
 		t.Fatalf("error = %v, want grammar and registry remediation", err)
+	}
+}
+
+func TestRegistryHasActiveFunnelAtUsesCurrentWallClock(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "registry.json")
+	deadline := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
+	if _, err := registry.Add(path, registry.Service{Name: "public", Type: registry.TypeProxy, Target: "http://localhost:3000", Funnel: true, PublicAck: true, FunnelExpiresAt: &deadline}); err != nil {
+		t.Fatal(err)
+	}
+	if active, err := registryHasActiveFunnelAt(path, deadline.Add(-time.Second)); err != nil || !active {
+		t.Fatalf("before deadline active=%t err=%v", active, err)
+	}
+	if active, err := registryHasActiveFunnelAt(path, deadline); err != nil || active {
+		t.Fatalf("at deadline active=%t err=%v", active, err)
 	}
 }

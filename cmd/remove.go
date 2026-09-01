@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/output"
 	"github.com/monody0007/tslink/internal/registry"
+	tsruntime "github.com/monody0007/tslink/internal/runtime"
 	"github.com/monody0007/tslink/internal/tailapi"
 	"github.com/spf13/cobra"
 )
@@ -27,6 +29,16 @@ var deleteDevicesFn = tailapi.DeleteDevicesForService
 var ensureDirFn = config.EnsureDir
 
 func removeServiceResult(regPath, name string) (RemoveResult, error) {
+	ownershipPath := filepath.Join(filepath.Dir(regPath), "node-ownership.json")
+	ledger, ownershipErr := tsruntime.LoadOwnership(ownershipPath)
+	var ownedNodeIDs []string
+	if ownershipErr == nil {
+		for _, node := range ledger.Nodes {
+			if node.ServiceName == name {
+				ownedNodeIDs = append(ownedNodeIDs, node.NodeID)
+			}
+		}
+	}
 	svc, removed, err := registry.RemoveAndReturn(regPath, name)
 	if err != nil {
 		return RemoveResult{}, err
@@ -35,7 +47,11 @@ func removeServiceResult(regPath, name string) (RemoveResult, error) {
 	result := RemoveResult{Name: name, Removed: removed}
 
 	if result.Removed {
-		cleanup, err := deleteDevicesFn(context.Background(), tailapi.CleanupTargetForService(svc))
+		if ownershipErr != nil {
+			result.DeviceWarning = fmt.Sprintf("could not read node ownership proof: %v", ownershipErr)
+			return result, nil
+		}
+		cleanup, err := deleteDevicesFn(context.Background(), tailapi.CleanupTargetForOwnedService(svc, ownedNodeIDs))
 		if err != nil {
 			if errors.Is(err, tailapi.ErrNoAPIClient) {
 				result.DeviceCleanupSkipped = true
@@ -45,6 +61,11 @@ func removeServiceResult(regPath, name string) (RemoveResult, error) {
 			}
 		} else {
 			result.DeviceCleaned = len(cleanup.Deleted) > 0
+			if len(cleanup.ResolvedOwnershipIDs) > 0 {
+				if err := tsruntime.RemoveOwnedNodeIDs(ownershipPath, cleanup.ResolvedOwnershipIDs); err != nil {
+					result.DeviceWarning = fmt.Sprintf("device cleanup succeeded but ownership ledger update failed: %v", err)
+				}
+			}
 			if cleanup.Skipped {
 				result.DeviceCleanupSkipped = true
 				result.DeviceSkipReason = cleanup.SkipReason
@@ -94,9 +115,8 @@ func init() {
 
 This command:
   1. Removes the service entry from ~/.config/tslink/registry.json
-  2. Reports protected/manual remote cleanup status. TSLink does not delete
-     tailnet devices automatically unless exact ownership persistence is added
-     in a future version.
+  2. Deletes a matching tailnet device only when TSLink has durable exact
+     NodeID ownership proof. Hostname-only matches remain protected.
 
 If the gateway is running, it will detect the registry change via hot-reload
 and stop the removed service's tsnet node automatically.

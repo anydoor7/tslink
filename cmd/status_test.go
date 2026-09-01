@@ -131,6 +131,84 @@ func TestStatusURLsExactSnapshotUsesRuntimeEndpoint(t *testing.T) {
 	}
 }
 
+func TestStatusAndListLifecycleFieldsExposeRFC3339DeadlineAndRemaining(t *testing.T) {
+	dir := t.TempDir()
+	regPath := filepath.Join(dir, "registry.json")
+	pidPath := filepath.Join(dir, "tslink.pid")
+	snapshotPath := filepath.Join(dir, "runtime.json")
+	now := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
+	expires := now.Add(2 * time.Hour)
+	addStatusTestService(t, regPath, registry.Service{Name: "public", Type: registry.TypeProxy, Target: "http://localhost:3000", Funnel: true, PublicAck: true, FunnelExpiresAt: &expires})
+	withStatusURLSeams(t, false, 0, time.Time{})
+	oldNow := statusNowFn
+	statusNowFn = func() time.Time { return now }
+	t.Cleanup(func() { statusNowFn = oldNow })
+
+	result, err := getStatusURLs(pidPath, regPath, snapshotPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := findStatusService(t, result, "public")
+	if svc.FunnelExpiresAt == nil || svc.FunnelExpiresAt.Format(time.RFC3339) != "2026-08-31T14:00:00Z" || svc.FunnelRemaining == nil || *svc.FunnelRemaining != "2h0m0s" {
+		t.Fatalf("status lifecycle = expires %v remaining %v", svc.FunnelExpiresAt, svc.FunnelRemaining)
+	}
+	summary := listSummary(svc)
+	if summary.FunnelExpiresAt == nil || summary.FunnelRemaining == nil || *summary.FunnelRemaining != "2h0m0s" {
+		t.Fatalf("list lifecycle = %+v", summary)
+	}
+}
+
+func TestExpiredFunnelWallClockOverridesPreDeadlineActiveSnapshot(t *testing.T) {
+	dir := t.TempDir()
+	regPath := filepath.Join(dir, "registry.json")
+	pidPath := filepath.Join(dir, "tslink.pid")
+	snapshotPath := filepath.Join(dir, "runtime.json")
+	deadline := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
+	svc := addStatusTestService(t, regPath, registry.Service{Name: "public", Type: registry.TypeProxy, Target: "http://localhost:3000", Funnel: true, PublicAck: true, FunnelExpiresAt: &deadline})
+	started := deadline.Add(-time.Hour)
+	fingerprint := statusRegistryFingerprint(t, regPath)
+	snapshot := tsruntime.NewSnapshot(4242, started, fingerprint, deadline.Add(-time.Second), []tsruntime.ServiceState{{Service: svc, RuntimeHost: "public.tailnet.ts.net."}})
+	if err := tsruntime.Save(snapshotPath, snapshot); err != nil {
+		t.Fatal(err)
+	}
+	withStatusURLSeams(t, true, 4242, started)
+	oldNow := statusNowFn
+	statusNowFn = func() time.Time { return deadline.Add(time.Second) }
+	t.Cleanup(func() { statusNowFn = oldNow })
+	result, err := getStatusURLs(pidPath, regPath, snapshotPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := findStatusService(t, result, "public")
+	if got.FunnelRequested || got.FunnelActive || got.FunnelState != tsruntime.FunnelStateNotRequested || got.Exposure.Public || got.Endpoint.Kind != inspect.EndpointKindHTTPS {
+		t.Fatalf("expired status = %+v, want wall-clock tailnet-only despite active snapshot", got)
+	}
+}
+
+func TestStatusWithoutRuntimeUsesEffectiveExpiredFunnelState(t *testing.T) {
+	dir := t.TempDir()
+	regPath := filepath.Join(dir, "registry.json")
+	pidPath := filepath.Join(dir, "tslink.pid")
+	now := time.Date(2030, 8, 31, 12, 0, 0, 0, time.UTC)
+	deadline := now.Add(-time.Minute)
+	if _, err := registry.Add(regPath, registry.Service{
+		Name: "expired", Type: registry.TypeProxy, Target: "http://localhost:3000",
+		Funnel: true, PublicAck: true, FunnelExpiresAt: &deadline,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	oldNow := statusNowFn
+	statusNowFn = func() time.Time { return now }
+	t.Cleanup(func() { statusNowFn = oldNow })
+	result, err := getStatus(pidPath, regPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Services) != 1 || result.Services[0].FunnelRequested || result.Services[0].FunnelState != tsruntime.FunnelStateNotRequested {
+		t.Fatalf("status = %+v, want effective tailnet-only state", result.Services)
+	}
+}
+
 func TestStatusAndListExposeFunnelFailureState(t *testing.T) {
 	dir := t.TempDir()
 	regPath := filepath.Join(dir, "registry.json")

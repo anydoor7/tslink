@@ -219,6 +219,9 @@ func Manifest() CLIManifest {
 			{Command: "tslink login", Operation: "remote ACL tag-owner mutation", Default: "disabled", RequiredFlags: []string{"--manage-acl"}, Boundary: "default login does not rewrite shared tailnet ACL policy"},
 			{Command: "tslink serve", Operation: "startup ordinary remote ACL tag ensure", Default: "disabled", RequiredFlags: []string{"--manage-acl"}, Boundary: "ordinary tagOwners creation remains disabled without --manage-acl; acknowledged Funnel services use the separately audited plan"},
 			{Command: "tslink serve", Operation: "Funnel shared tag owner and exact nodeAttrs auto-provisioning", Default: "enabled", RequiredFlags: []string{}, Boundary: "default-on only for acknowledged Funnel services; disable process-wide with --no-auto-provision or per service with no_auto_provision"},
+			{Command: "tslink cleanup", Operation: "owned device deletion", Default: "dry-run", RequiredFlags: []string{"--dry-run=false"}, Boundary: "device deletion requires durable exact NodeID proof; hostname is discovery-only"},
+			{Command: "tslink cleanup", Operation: "legacy device ownership adoption", Default: "disabled", RequiredFlags: []string{"--adopt", "--force"}, Boundary: "requires one literal hostname with exactly one remote match; adoption only records exact NodeID proof and does not weaken deletion authorization"},
+			{Command: "tslink cleanup", Operation: "unused Funnel ACL removal", Default: "disabled", RequiredFlags: []string{"--dry-run=false", "--manage-acl"}, Boundary: "reuses canonical grant refusal and ETag If-Match guards"},
 			{Command: "tslink tags delete-remote", Operation: "remote ACL tag-owner deletion", Default: "disabled", RequiredFlags: []string{"--force", "--manage-acl"}, Boundary: "requires destructive confirmation and explicit remote ACL opt-in"},
 			{Command: "tslink invite user", Operation: "tailnet user invitation", Default: "explicit named recipient", Boundary: "requires a user-owned tskey-api- token; --print-link selects self-delivery"},
 			{Command: "tslink invite device", Operation: "external device sharing", Default: "explicit named recipient and service", Boundary: "requires a user-owned tskey-api- token and exact TSLink nodeId ownership proof"},
@@ -317,6 +320,21 @@ func commandJSONResultFields(commandPath string) map[string]JSONResultFieldInfo 
 			Values:      statusRuntimeStateValues(),
 		}
 		return fields
+	case "tslink cleanup":
+		return map[string]JSONResultFieldInfo{
+			"dry_run":                {Type: "boolean", Description: "True when no registry, device, or ACL deletion was applied."},
+			"registry_changed":       {Type: "boolean", Description: "True when expired Funnel services were persisted as tailnet-only."},
+			"expired_funnels":        {Type: "array", Description: "Service names whose public Funnel deadline has elapsed."},
+			"devices_matched":        {Type: "array", Description: "Hostnames discovered by exact NodeID or protected hostname matching; NodeIDs are never emitted."},
+			"devices_would_delete":   {Type: "array", Description: "Hostnames selected by durable exact NodeID ownership proof during dry-run; NodeIDs are never emitted."},
+			"devices_deleted":        {Type: "array", Description: "Hostnames deleted by exact NodeID during apply; NodeIDs are never emitted."},
+			"devices_protected":      {Type: "array", Description: "Hostname matches lacking exact NodeID ownership proof; never deleted."},
+			"devices_adopted":        {Type: "array", Description: "Explicit literal hostnames whose single remote match was recorded as exact ownership proof; NodeIDs are never emitted."},
+			"device_cleanup_skipped": {Type: "boolean", Description: "True when protected hostname matches or missing API credentials prevented deletion."},
+			"device_skip_reason":     {Type: "string", Description: "Stable non-secret reason for skipped device cleanup; omitted otherwise."},
+			"acl_action":             {Type: "string", Description: "Unused Funnel ACL reconciliation outcome."},
+			"warnings":               {Type: "array", Description: "Non-fatal remote cleanup failures without secret or NodeID values."},
+		}
 	case "tslink install":
 		return markProseScopedJSONResultFields(map[string]JSONResultFieldInfo{
 			"plist_path": {
@@ -432,6 +450,14 @@ func agentServiceRuntimeJSONResultFields() map[string]JSONResultFieldInfo {
 			Type:        "string",
 			Description: "Stable reason separating Funnel intent from runtime activation.",
 			Values:      funnelStateValues(),
+		},
+		"services[].funnel_expires_at": {
+			Type:        "string",
+			Description: "RFC3339 public Funnel deadline; omitted for legacy/permanent never entries.",
+		},
+		"services[].funnel_remaining": {
+			Type:        "string",
+			Description: "Wall-clock duration remaining, never, or 0s after expiration.",
 		},
 		"services[].error": {
 			Type:        "object",
@@ -775,13 +801,25 @@ func CompactManifest() CompactCLIManifest {
 		}
 	}
 	for _, command := range manifest.Commands {
-		if command.Path == "tslink" {
+		if command.Path == "tslink" || command.Path == "tslink manifest" {
+			// The hidden manifest generator is transport metadata, not an
+			// executable product action an agent needs echoed inside itself.
 			continue
 		}
 		path := strings.TrimPrefix(command.Path, "tslink ")
 		flags := make([]string, 0, len(command.Flags))
 		for _, flag := range command.Flags {
-			if flag.Scope != "inherited" && flag.Name != "json" {
+			unavailable := false
+			for _, conflict := range flag.Conflicts {
+				if conflict == "feature_unavailable" {
+					unavailable = true
+					break
+				}
+			}
+			// The compact surface is executable guidance. Reserved flags that
+			// deterministically return feature_unavailable remain in the full
+			// manifest but do not consume the agent token budget here.
+			if flag.Scope != "inherited" && flag.Name != "json" && !unavailable {
 				flags = append(flags, flag.Name)
 			}
 		}

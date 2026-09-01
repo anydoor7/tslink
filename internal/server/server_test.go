@@ -1921,6 +1921,301 @@ func TestStartNodeLocked_FunnelLogsWarningBeforeListenFunnel(t *testing.T) {
 	}
 }
 
+func TestStartNodeLockedChecksExpiredFunnelBeforeArmingAnyFunnelListener(t *testing.T) {
+	testenv.SetHome(t, t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
+	expires := now.Add(-time.Second)
+	oldNow := serverNowFn
+	serverNowFn = func() time.Time { return now }
+	t.Cleanup(func() { serverNowFn = oldNow })
+
+	fake := &fakeTSNetServer{localClient: &LocalClient{}, status: &ipnstate.Status{Self: &ipnstate.PeerStatus{
+		ID:      tailcfg.StableNodeID("node-expired-fixture"),
+		DNSName: "public-app.example.ts.net.",
+	}}}
+	oldNew := newTSNetServerFn
+	newTSNetServerFn = func(svc registry.Service, _ string, _ string, _ string) tsnetServer {
+		if svc.Funnel || containsString(svc.Tags, registry.FunnelTag) {
+			t.Fatalf("expired service reached tsnet construction as Funnel: %+v", svc)
+		}
+		return fake
+	}
+	t.Cleanup(func() { newTSNetServerFn = oldNew })
+
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.closeAllNodes)
+	err = s.startNodeLocked(context.Background(), registry.Service{
+		Name: "public-app", Type: registry.TypeProxy, Target: "http://localhost:3000",
+		Funnel: true, PublicAck: true, FunnelExpiresAt: &expires,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fake.listenFunnelCalled != 0 || fake.listenTLSCalled != 1 {
+		t.Fatalf("listeners: Funnel=%d TLS=%d, want 0/1", fake.listenFunnelCalled, fake.listenTLSCalled)
+	}
+	ledgerPath, _ := config.NodeOwnershipPath()
+	ledger, err := runtimesnapshot.LoadOwnership(ledgerPath)
+	if err != nil || len(ledger.Nodes) != 1 || ledger.Nodes[0].ServiceName != "public-app" || ledger.Nodes[0].NodeID != "node-expired-fixture" {
+		t.Fatalf("ownership ledger = %+v, err=%v", ledger, err)
+	}
+}
+
+func TestRunPerformsStartupLifecycleCheckBeforeConstructingListeners(t *testing.T) {
+	testenv.SetHome(t, t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
+	expires := now.Add(-time.Second)
+	writeRegistry(t, []registry.Service{{
+		Name: "startup-expired", Type: registry.TypeProxy, Target: "http://localhost:3000",
+		Funnel: true, PublicAck: true, FunnelExpiresAt: &expires,
+	}})
+	oldNow := serverNowFn
+	serverNowFn = func() time.Time { return now }
+	t.Cleanup(func() { serverNowFn = oldNow })
+	lifecycleChecked := false
+	fake := &fakeTSNetServer{localClient: &LocalClient{}, status: &ipnstate.Status{Self: &ipnstate.PeerStatus{DNSName: "startup-expired.example.ts.net."}}}
+	oldNew := newTSNetServerFn
+	newTSNetServerFn = func(svc registry.Service, _ string, _ string, _ string) tsnetServer {
+		if !lifecycleChecked {
+			t.Fatal("tsnet construction occurred before startup lifecycle reconciliation")
+		}
+		if svc.Funnel {
+			t.Fatal("startup constructed an expired Funnel service")
+		}
+		return fake
+	}
+	t.Cleanup(func() { newTSNetServerFn = oldNew })
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.SetLifecycleReconcileFn(func(context.Context, time.Time) (bool, error) {
+		lifecycleChecked = true
+		return false, nil
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	s.SetReadyFunc(func() error { cancel(); return nil })
+	if err := s.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !lifecycleChecked || fake.listenFunnelCalled != 0 || fake.listenTLSCalled != 1 {
+		t.Fatalf("startup checked=%t Funnel=%d TLS=%d", lifecycleChecked, fake.listenFunnelCalled, fake.listenTLSCalled)
+	}
+}
+
+func TestLifecycleTickerRereadsWallClockAfterSimulatedSleep(t *testing.T) {
+	testenv.SetHome(t, t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatal(err)
+	}
+	writeRegistry(t, nil)
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeSleep := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
+	afterWake := beforeSleep.Add(8 * time.Hour)
+	var nowCalls atomic.Int32
+	oldNow, oldInterval := serverNowFn, lifecycleTickerInterval
+	serverNowFn = func() time.Time {
+		if nowCalls.Add(1) == 1 {
+			return beforeSleep
+		}
+		return afterWake
+	}
+	lifecycleTickerInterval = 5 * time.Millisecond
+	t.Cleanup(func() {
+		serverNowFn = oldNow
+		lifecycleTickerInterval = oldInterval
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var observed []time.Time
+	s.SetLifecycleReconcileFn(func(_ context.Context, now time.Time) (bool, error) {
+		observed = append(observed, now)
+		if len(observed) == 2 {
+			cancel()
+		}
+		return false, nil
+	})
+	done := s.startLifecycleTicker(ctx)
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("lifecycle ticker did not observe two wall-clock ticks")
+	}
+	if len(observed) != 2 || !observed[0].Equal(beforeSleep) || !observed[1].Equal(afterWake) {
+		t.Fatalf("observed wall clocks = %v, want pre-sleep then wake time", observed)
+	}
+}
+
+func TestLifecycleTickerSkipsFullSyncWhenReconcileReportsNoChange(t *testing.T) {
+	testenv.SetHome(t, t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatal(err)
+	}
+	writeRegistry(t, []registry.Service{{Name: "private", Type: registry.TypeProxy, Target: "http://localhost:3000"}})
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var constructed atomic.Int32
+	oldNew := newTSNetServerFn
+	newTSNetServerFn = func(registry.Service, string, string, string) tsnetServer {
+		constructed.Add(1)
+		return &fakeTSNetServer{localClient: &LocalClient{}, status: &ipnstate.Status{Self: &ipnstate.PeerStatus{DNSName: "private.example.ts.net."}}}
+	}
+	oldInterval := lifecycleTickerInterval
+	lifecycleTickerInterval = 5 * time.Millisecond
+	t.Cleanup(func() {
+		newTSNetServerFn = oldNew
+		lifecycleTickerInterval = oldInterval
+	})
+	var ticks atomic.Int32
+	s.SetLifecycleReconcileFn(func(context.Context, time.Time) (bool, error) {
+		ticks.Add(1)
+		return false, nil
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := s.startLifecycleTicker(ctx)
+	deadline := time.After(2 * time.Second)
+	for ticks.Load() < 3 {
+		select {
+		case <-deadline:
+			t.Fatal("lifecycle ticker did not run")
+		case <-time.After(time.Millisecond):
+		}
+	}
+	cancel()
+	<-done
+	if got := constructed.Load(); got != 0 {
+		t.Fatalf("tsnet constructions = %d, want no full sync for unchanged lifecycle", got)
+	}
+}
+
+func TestRunningFunnelListenerIsTornDownAfterDeadline(t *testing.T) {
+	testenv.SetHome(t, t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatal(err)
+	}
+	base := time.Date(2030, 8, 31, 12, 0, 0, 0, time.UTC)
+	expires := base.Add(time.Hour)
+	writeRegistry(t, []registry.Service{{
+		Name: "public-app", Type: registry.TypeProxy, Target: "http://localhost:3000",
+		Funnel: true, PublicAck: true, Tags: []string{"tag:tsmain"}, FunnelExpiresAt: &expires,
+	}})
+	var current atomic.Int64
+	current.Store(base.UnixNano())
+	oldNow := serverNowFn
+	serverNowFn = func() time.Time { return time.Unix(0, current.Load()).UTC() }
+	oldInterval := lifecycleTickerInterval
+	lifecycleTickerInterval = 5 * time.Millisecond
+	t.Cleanup(func() {
+		serverNowFn = oldNow
+		lifecycleTickerInterval = oldInterval
+	})
+
+	tailnetOnlyConstructed := make(chan struct{}, 1)
+	oldNew := newTSNetServerFn
+	newTSNetServerFn = func(svc registry.Service, _ string, _ string, _ string) tsnetServer {
+		if !svc.Funnel {
+			select {
+			case tailnetOnlyConstructed <- struct{}{}:
+			default:
+			}
+		}
+		return &fakeTSNetServer{
+			localClient: &LocalClient{},
+			status:      funnelEnabledStatus("public-app.tailnet.ts.net."),
+			certDomains: []string{"public-app.tailnet.ts.net"},
+		}
+	}
+	t.Cleanup(func() { newTSNetServerFn = oldNew })
+
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.closeAllNodes)
+	s.SetAutoProvisionFunnel(true)
+	s.SetEnsureFunnelAttrFn(func(context.Context, tailapi.FunnelPolicyRequest) (tailapi.PolicyMutationResult, error) {
+		return tailapi.PolicyMutationResult{WriteOutcome: tailapi.PolicyWriteUnchanged}, nil
+	})
+	if err := s.syncNodes(context.Background()); err != nil {
+		t.Fatalf("initial Funnel sync: %v", err)
+	}
+	regPath, err := config.RegistryPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.SetLifecycleReconcileFn(func(_ context.Context, now time.Time) (bool, error) {
+		downgraded, err := registry.DowngradeExpiredFunnels(regPath, now, false)
+		return len(downgraded) > 0, err
+	})
+	current.Store(expires.Add(time.Minute).UnixNano())
+	ctx, cancel := context.WithCancel(context.Background())
+	done := s.startLifecycleTicker(ctx)
+	select {
+	case <-tailnetOnlyConstructed:
+		cancel()
+	case <-time.After(2 * time.Second):
+		cancel()
+		<-done
+		t.Fatal("expired running Funnel was not rebuilt as tailnet-only TLS")
+	}
+	<-done
+}
+
+func TestOwnershipWriteFailureRetriesThenContinuesServiceStartup(t *testing.T) {
+	testenv.SetHome(t, t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatal(err)
+	}
+	fake := &fakeTSNetServer{localClient: &LocalClient{}, status: &ipnstate.Status{Self: &ipnstate.PeerStatus{
+		ID: tailcfg.StableNodeID("node-ledger-retry-fixture"), DNSName: "private.example.ts.net.",
+	}}}
+	oldNew := newTSNetServerFn
+	newTSNetServerFn = func(registry.Service, string, string, string) tsnetServer { return fake }
+	oldRecord := recordOwnedNodeFn
+	recordCalls := 0
+	recordOwnedNodeFn = func(string, string, string, time.Time) error {
+		recordCalls++
+		return errors.New("synthetic ledger write failure")
+	}
+	var logBuf bytes.Buffer
+	oldLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, nil)))
+	t.Cleanup(func() {
+		newTSNetServerFn = oldNew
+		recordOwnedNodeFn = oldRecord
+		slog.SetDefault(oldLogger)
+	})
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.closeAllNodes)
+	if err := s.startNodeLocked(context.Background(), registry.Service{Name: "private", Type: registry.TypeProxy, Target: "http://localhost:3000"}); err != nil {
+		t.Fatalf("startNodeLocked() error = %v, want service availability", err)
+	}
+	if recordCalls != 2 || fake.listenTLSCalled != 1 {
+		t.Fatalf("record calls=%d TLS=%d, want retry twice and continued listener", recordCalls, fake.listenTLSCalled)
+	}
+	logs := logBuf.String()
+	if !strings.Contains(logs, "retrying") || !strings.Contains(logs, "continuing without durable cleanup proof") || strings.Contains(logs, "node-ledger-retry-fixture") {
+		t.Fatalf("logs = %q, want actionable warning without NodeID", logs)
+	}
+}
+
 func TestStartNodeLocked_MiddlewareConfigFailsBeforeTSNet(t *testing.T) {
 	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {

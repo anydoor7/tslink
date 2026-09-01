@@ -120,6 +120,33 @@ func TestHostnameMatchesCleanupTarget_PositiveNumericSuffixesOnly(t *testing.T) 
 	}
 }
 
+func TestFindExactDeviceNodeIDUsesLiteralHostnameAndReportsMultiplicity(t *testing.T) {
+	setup(t)
+	mustSetAPIKey(t, "api-key")
+	withDefaultTransport(t, roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		if req.Method != http.MethodGet || req.URL.Path != "/api/v2/tailnet/-/devices" {
+			t.Fatalf("unexpected request: %s %s", req.Method, req.URL.String())
+		}
+		return jsonResponse(http.StatusOK, `{"devices":[{"nodeId":"node-exact","hostname":"legacy"},{"nodeId":"node-suffix","hostname":"legacy-1"},{"nodeId":"node-prefix","hostname":"legacy-extra"}]}`), nil
+	}))
+	nodeID, matches, err := FindExactDeviceNodeID(context.Background(), "legacy")
+	if err != nil || matches != 1 || nodeID != "node-exact" {
+		t.Fatalf("exact adoption lookup = nodeID-set:%t matches:%d err:%v", nodeID != "", matches, err)
+	}
+}
+
+func TestFindExactDeviceNodeIDDoesNotSelectFirstDuplicate(t *testing.T) {
+	setup(t)
+	mustSetAPIKey(t, "api-key")
+	withDefaultTransport(t, roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusOK, `{"devices":[{"nodeId":"node-one","hostname":"legacy"},{"nodeId":"node-two","hostname":"legacy"}]}`), nil
+	}))
+	_, matches, err := FindExactDeviceNodeID(context.Background(), "legacy")
+	if err != nil || matches != 2 {
+		t.Fatalf("duplicate adoption lookup matches=%d err=%v, want 2", matches, err)
+	}
+}
+
 func TestDeleteDevicesForService_ClientError(t *testing.T) {
 	setup(t)
 
@@ -177,6 +204,96 @@ func TestDeleteDevicesForService_ProtectsMatchingTaggedDevicesWithoutExactProof(
 	}
 	if !result.Skipped || !strings.Contains(result.SkipReason, "exact TSLink ownership proof") {
 		t.Fatalf("result = %+v, want protected skip", result)
+	}
+}
+
+func TestDeleteDevicesForServiceDeletesOnlyExactRecordedNodeID(t *testing.T) {
+	setup(t)
+	mustSetAPIKey(t, "api-key")
+
+	var deletePaths []string
+	withDefaultTransport(t, roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		switch {
+		case req.Method == http.MethodGet && req.URL.Path == "/api/v2/tailnet/-/devices":
+			return jsonResponse(http.StatusOK, `{"devices":[{"nodeId":"node-unowned","hostname":"app"},{"nodeId":"node-owned","hostname":"renamed-app"},{"nodeId":"node-suffix","hostname":"app-1"}]}`), nil
+		case req.Method == http.MethodDelete:
+			deletePaths = append(deletePaths, req.URL.Path)
+			return jsonResponse(http.StatusOK, `{}`), nil
+		default:
+			t.Fatalf("unexpected request: %s %s", req.Method, req.URL.String())
+			return nil, nil
+		}
+	}))
+
+	target := CleanupTarget{Hostname: "app", NodeIDs: []string{"node-owned"}}
+	result, err := DeleteDevicesForService(context.Background(), target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(deletePaths, ","); got != "/api/v2/device/node-owned" {
+		t.Fatalf("DELETE paths = %q, want exact recorded NodeID only", got)
+	}
+	if got := strings.Join(result.Deleted, ","); got != "renamed-app" {
+		t.Fatalf("Deleted hostnames = %q", got)
+	}
+	if got := strings.Join(result.Protected, ","); got != "app,app-1" {
+		t.Fatalf("Protected = %q, want colliding hostnames protected", got)
+	}
+	if len(result.ResolvedOwnershipIDs) != 1 || result.ResolvedOwnershipIDs[0] != "node-owned" {
+		t.Fatalf("resolved IDs = %v", result.ResolvedOwnershipIDs)
+	}
+}
+
+func TestCleanupExactNodeIDDryRunNeverDeletesOrConsumesProof(t *testing.T) {
+	setup(t)
+	mustSetAPIKey(t, "api-key")
+	deleteCalled := false
+	withDefaultTransport(t, roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		if req.Method == http.MethodGet {
+			return jsonResponse(http.StatusOK, `{"devices":[{"nodeId":"node-owned","hostname":"app"}]}`), nil
+		}
+		deleteCalled = true
+		return jsonResponse(http.StatusOK, `{}`), nil
+	}))
+	result, err := CleanupStaleNodesResultWithDryRun(context.Background(), []CleanupTarget{{Hostname: "app", NodeIDs: []string{"node-owned"}}}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleteCalled || len(result.Deleted) != 0 || len(result.ResolvedOwnershipIDs) != 0 || strings.Join(result.WouldDelete, ",") != "app" {
+		t.Fatalf("dry-run result = %+v deleteCalled=%t", result, deleteCalled)
+	}
+}
+
+func TestCleanupRejectsInvalidAndDuplicateNodeOwnershipProof(t *testing.T) {
+	setup(t)
+	if _, err := CleanupStaleNodesResultWithDryRun(context.Background(), []CleanupTarget{{Hostname: "app", NodeIDs: []string{""}}}, true); err == nil || !strings.Contains(err.Error(), "invalid node ID") {
+		t.Fatalf("invalid proof error = %v", err)
+	}
+	mustSetAPIKey(t, "api-key")
+	withDefaultTransport(t, roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusOK, `{"devices":[]}`), nil
+	}))
+	_, err := CleanupStaleNodesResultWithDryRun(context.Background(), []CleanupTarget{
+		{Hostname: "app", NodeIDs: []string{"node-dup"}},
+		{Hostname: "other", NodeIDs: []string{"node-dup"}},
+	}, true)
+	if err == nil || !strings.Contains(err.Error(), "duplicate node ownership proof") {
+		t.Fatalf("duplicate proof error = %v", err)
+	}
+}
+
+func TestCleanupMissingOwnedNodeResolvesLedgerWithoutDelete(t *testing.T) {
+	setup(t)
+	mustSetAPIKey(t, "api-key")
+	withDefaultTransport(t, roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		if req.Method != http.MethodGet {
+			t.Fatalf("unexpected mutation: %s", req.Method)
+		}
+		return jsonResponse(http.StatusOK, `{"devices":[]}`), nil
+	}))
+	result, err := CleanupStaleNodesResult(context.Background(), []CleanupTarget{{Hostname: "gone", NodeIDs: []string{"node-already-gone"}}})
+	if err != nil || len(result.ResolvedOwnershipIDs) != 1 || result.ResolvedOwnershipIDs[0] != "node-already-gone" {
+		t.Fatalf("result = %+v, err=%v", result, err)
 	}
 }
 

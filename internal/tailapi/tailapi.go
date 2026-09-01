@@ -16,24 +16,68 @@ var ErrNoAPIClient = errors.New("no API client available")
 
 // CleanupResult describes a stale-node cleanup attempt.
 type CleanupResult struct {
-	Matched    []string
-	Deleted    []string
-	Protected  []string
-	Skipped    bool
-	SkipReason string
+	Matched              []string
+	WouldDelete          []string
+	Deleted              []string
+	Protected            []string
+	Skipped              bool
+	SkipReason           string
+	ResolvedOwnershipIDs []string
 }
 
 // CleanupTarget identifies the expected TSLink-owned device identity.
 type CleanupTarget struct {
 	Hostname string
 	Tags     []string
+	NodeIDs  []string
 }
 
 const cleanupOwnershipSkipReason = "matched tailnet devices require exact TSLink ownership proof before deletion"
 
+// FindExactDeviceNodeID performs the read-only lookup used by cleanup adoption.
+// It deliberately uses literal hostname equality: suffix, prefix, wildcard,
+// regex, and first-match selection are never accepted for migration proof.
+func FindExactDeviceNodeID(ctx context.Context, hostname string) (string, int, error) {
+	if err := registry.ValidateName(hostname); err != nil {
+		return "", 0, err
+	}
+	client, err := credentials.NewTailscaleClient()
+	if err != nil {
+		return "", 0, err
+	}
+	if client == nil {
+		return "", 0, ErrNoAPIClient
+	}
+	devices, err := client.Devices().List(ctx)
+	if err != nil {
+		return "", 0, fmt.Errorf("list devices for adoption: %w", err)
+	}
+	var nodeID string
+	matches := 0
+	for _, device := range devices {
+		if device.Hostname != hostname {
+			continue
+		}
+		matches++
+		nodeID = device.NodeID
+	}
+	if matches == 1 && (strings.TrimSpace(nodeID) == "" || len(nodeID) > 256) {
+		return "", matches, errors.New("matched device has an invalid node identity")
+	}
+	return nodeID, matches, nil
+}
+
 // CleanupTargetForService builds the remote cleanup ownership target for a service.
 func CleanupTargetForService(svc registry.Service) CleanupTarget {
 	return CleanupTarget{Hostname: svc.Name, Tags: svc.Tags}
+}
+
+// CleanupTargetForOwnedService attaches durable exact NodeID proof. Hostname
+// remains discovery-only and can never authorize DELETE.
+func CleanupTargetForOwnedService(svc registry.Service, nodeIDs []string) CleanupTarget {
+	target := CleanupTargetForService(svc)
+	target.NodeIDs = append([]string(nil), nodeIDs...)
+	return target
 }
 
 // CleanupTargetsForServices builds remote cleanup ownership targets for services.
@@ -66,6 +110,11 @@ func validateCleanupTarget(target CleanupTarget) error {
 			return err
 		}
 	}
+	for _, nodeID := range target.NodeIDs {
+		if strings.TrimSpace(nodeID) == "" || len(nodeID) > 256 {
+			return errors.New("cleanup target contains an invalid node ID")
+		}
+	}
 	return nil
 }
 
@@ -83,8 +132,8 @@ func matchingCleanupTarget(hostname string, targets []CleanupTarget) (CleanupTar
 	return CleanupTarget{}, false
 }
 
-// DeleteDevicesForService reports matching devices as protected/manual cleanup.
-// Automatic remote deletion is retired until TSLink persists exact ownership IDs.
+// DeleteDevicesForService deletes exact recorded NodeIDs and reports every
+// hostname-only match as protected.
 func DeleteDevicesForService(ctx context.Context, target CleanupTarget) (CleanupResult, error) {
 	return CleanupStaleNodesResult(ctx, []CleanupTarget{target})
 }
@@ -95,8 +144,15 @@ func CleanupStaleNodes(ctx context.Context, targets []CleanupTarget) error {
 	return err
 }
 
-// CleanupStaleNodesResult returns explicit protected/manual cleanup status without DELETE.
+// CleanupStaleNodesResult reconciles exact ownership and may issue DELETE only
+// for a device whose NodeID appears in a CleanupTarget.
 func CleanupStaleNodesResult(ctx context.Context, targets []CleanupTarget) (CleanupResult, error) {
+	return CleanupStaleNodesResultWithDryRun(ctx, targets, false)
+}
+
+// CleanupStaleNodesResultWithDryRun reconciles devices using exact NodeID
+// ownership. Hostname matches without exact proof remain Protected.
+func CleanupStaleNodesResultWithDryRun(ctx context.Context, targets []CleanupTarget, dryRun bool) (CleanupResult, error) {
 	for _, target := range targets {
 		if err := validateCleanupTarget(target); err != nil {
 			return CleanupResult{}, err
@@ -119,14 +175,45 @@ func CleanupStaleNodesResult(ctx context.Context, targets []CleanupTarget) (Clea
 		return CleanupResult{}, fmt.Errorf("list devices: %w", err)
 	}
 
+	owned := make(map[string]CleanupTarget)
+	for _, target := range targets {
+		for _, nodeID := range target.NodeIDs {
+			if _, duplicate := owned[nodeID]; duplicate {
+				return CleanupResult{}, errors.New("duplicate node ownership proof")
+			}
+			owned[nodeID] = target
+		}
+	}
+	seenOwned := make(map[string]struct{}, len(owned))
 	var result CleanupResult
 	for _, d := range devices {
+		if _, exact := owned[d.NodeID]; exact {
+			seenOwned[d.NodeID] = struct{}{}
+			result.Matched = append(result.Matched, d.Hostname)
+			if dryRun {
+				result.WouldDelete = append(result.WouldDelete, d.Hostname)
+				continue
+			}
+			if err := client.Devices().Delete(ctx, d.NodeID); err != nil {
+				return result, errors.New("delete TSLink-owned device failed")
+			}
+			result.Deleted = append(result.Deleted, d.Hostname)
+			result.ResolvedOwnershipIDs = append(result.ResolvedOwnershipIDs, d.NodeID)
+			continue
+		}
 		_, ok := matchingCleanupTarget(d.Hostname, targets)
 		if !ok {
 			continue
 		}
 		result.Matched = append(result.Matched, d.Hostname)
 		result.Protected = append(result.Protected, d.Hostname)
+	}
+	if !dryRun {
+		for nodeID := range owned {
+			if _, found := seenOwned[nodeID]; !found {
+				result.ResolvedOwnershipIDs = append(result.ResolvedOwnershipIDs, nodeID)
+			}
+		}
 	}
 	if len(result.Protected) > 0 {
 		result.Skipped = true

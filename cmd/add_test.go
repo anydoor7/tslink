@@ -65,6 +65,92 @@ func TestAddFunnel_WithProxy_Persisted(t *testing.T) {
 	}
 }
 
+func TestBuildServiceFunnelTTLDefaultsTo24HoursAndSupportsNever(t *testing.T) {
+	testenv.SetHome(t, t.TempDir())
+	now := time.Date(2026, 8, 31, 10, 0, 0, 0, time.UTC)
+	base := AddParams{Name: "public", Proxy: ":3000", Funnel: true, Public: true, Now: now}
+	svc, err := buildService(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if svc.FunnelExpiresAt == nil || !svc.FunnelExpiresAt.Equal(now.Add(24*time.Hour)) {
+		t.Fatalf("default funnel_expires_at = %v, want now+24h", svc.FunnelExpiresAt)
+	}
+
+	base.FunnelTTL = "7d"
+	base.FunnelTTLSet = true
+	svc, err = buildService(base)
+	if err != nil || svc.FunnelExpiresAt == nil || !svc.FunnelExpiresAt.Equal(now.Add(168*time.Hour)) {
+		t.Fatalf("7d service = %+v, err=%v", svc, err)
+	}
+
+	base.FunnelTTL = "never"
+	svc, err = buildService(base)
+	if err != nil || svc.FunnelExpiresAt != nil {
+		t.Fatalf("never service expiry = %v, err=%v", svc.FunnelExpiresAt, err)
+	}
+}
+
+func TestAddFunnelTTLFlagDefaultsTo24Hours(t *testing.T) {
+	command, _, err := rootCmd.Find([]string{"add"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	flag := command.Flags().Lookup("funnel-ttl")
+	if flag == nil || flag.DefValue != "24h" {
+		t.Fatalf("funnel-ttl flag = %+v, want default 24h", flag)
+	}
+}
+
+func TestAddExplicitFunnelTTLOverridesExistingDeadline(t *testing.T) {
+	dir := t.TempDir()
+	regPath := filepath.Join(dir, "registry.json")
+	oldRegPath, oldEnsureDir := registryPathFn, ensureDirFn
+	t.Cleanup(func() {
+		registryPathFn, ensureDirFn = oldRegPath, oldEnsureDir
+	})
+	registryPathFn = func() (string, error) { return regPath, nil }
+	ensureDirFn = func() error { return nil }
+	oldDeadline := time.Now().UTC().Add(7 * 24 * time.Hour)
+	if _, err := registry.Add(regPath, registry.Service{
+		Name: "public", Type: registry.TypeProxy, Target: "http://localhost:3000",
+		Funnel: true, PublicAck: true, FunnelExpiresAt: &oldDeadline,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runAddCmdOutput(t, []string{"public"}, map[string]string{
+		"proxy": "localhost:3000", "funnel": "true", "public": "true", "funnel-ttl": "1h",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	reg, err := registry.Load(regPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := reg.Services[0].FunnelExpiresAt
+	if got == nil || got.Sub(time.Now().UTC()) < 50*time.Minute || got.Sub(time.Now().UTC()) > 70*time.Minute {
+		t.Fatalf("explicit 1h deadline = %v, want now+1h", got)
+	}
+}
+
+func TestBuildServiceRejectsExplicitEmptyFunnelTTL(t *testing.T) {
+	_, err := buildService(AddParams{
+		Name: "public", Proxy: ":3000", Funnel: true, Public: true,
+		FunnelTTL: "", FunnelTTLSet: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "funnel TTL must be one of") {
+		t.Fatalf("error = %v, want strict empty TTL rejection", err)
+	}
+}
+
+func TestBuildServiceRejectsFunnelTTLWithoutFunnel(t *testing.T) {
+	testenv.SetHome(t, t.TempDir())
+	_, err := buildService(AddParams{Name: "private", Proxy: ":3000", FunnelTTL: "1h", FunnelTTLSet: true})
+	if err == nil || !strings.Contains(err.Error(), "--funnel-ttl can only be used with --funnel") {
+		t.Fatalf("error = %v, want flag relationship rejection", err)
+	}
+}
+
 func TestAddFunnel_WithProxy_NotSet(t *testing.T) {
 	dir := t.TempDir()
 	regPath := dir + "/registry.json"

@@ -80,6 +80,9 @@ type AddParams struct {
 	Tags            string
 	Allow           string
 	Funnel          bool
+	FunnelTTL       string
+	FunnelTTLSet    bool
+	Now             time.Time
 	Public          bool
 	NoAutoProvision bool
 	Domain          string
@@ -137,6 +140,9 @@ func buildService(p AddParams) (registry.Service, error) {
 	if p.NoAutoProvision && !p.Funnel {
 		return registry.Service{}, output.ErrUsage("--no-auto-provision can only be used with --funnel")
 	}
+	if p.FunnelTTLSet && !p.Funnel {
+		return registry.Service{}, output.ErrUsage("--funnel-ttl can only be used with --funnel")
+	}
 	if err := registry.ValidateFunnelGuardrails(svcType, p.Funnel, allowedUsers, p.ControlURL, p.Public); err != nil {
 		return registry.Service{}, err
 	}
@@ -182,6 +188,29 @@ func buildService(p AddParams) (registry.Service, error) {
 		}, nil
 	}
 
+	var funnelExpiresAt *time.Time
+	if p.Funnel {
+		ttl := p.FunnelTTL
+		if ttl == "" {
+			if p.FunnelTTLSet {
+				return registry.Service{}, output.ErrUsage("funnel TTL must be one of: 1h, 8h, 24h, 72h, 7d, never")
+			}
+			ttl = "24h"
+		}
+		duration, never, err := registry.ParseFunnelTTL(ttl)
+		if err != nil {
+			return registry.Service{}, output.ErrUsage(err.Error())
+		}
+		if !never {
+			now := p.Now
+			if now.IsZero() {
+				now = time.Now()
+			}
+			expiresAt := now.UTC().Add(duration)
+			funnelExpiresAt = &expiresAt
+		}
+	}
+
 	if p.Proxy != "" {
 		target := p.Proxy
 		if !hasScheme(target) {
@@ -191,7 +220,8 @@ func buildService(p AddParams) (registry.Service, error) {
 			Name: p.Name, Type: registry.TypeProxy, Target: target,
 			Ephemeral: p.Ephemeral, Tags: tags, AllowedUsers: allowedUsers,
 			Funnel: p.Funnel, PublicAck: p.Public, NoAutoProvision: p.NoAutoProvision,
-			ControlURL: p.ControlURL,
+			FunnelExpiresAt: funnelExpiresAt,
+			ControlURL:      p.ControlURL,
 		}, nil
 	}
 
@@ -264,6 +294,7 @@ Examples:
 			tagsStr, _ := cmd.Flags().GetString("tags")
 			allowStr, _ := cmd.Flags().GetString("allow")
 			funnel, _ := cmd.Flags().GetBool("funnel")
+			funnelTTL, _ := cmd.Flags().GetString("funnel-ttl")
 			public, _ := cmd.Flags().GetBool("public")
 			noAutoProvision, _ := cmd.Flags().GetBool("no-auto-provision")
 			domainName, _ := cmd.Flags().GetString("domain")
@@ -281,6 +312,8 @@ Examples:
 				Tags:            tagsStr,
 				Allow:           allowStr,
 				Funnel:          funnel,
+				FunnelTTL:       funnelTTL,
+				FunnelTTLSet:    cmd.Flags().Changed("funnel-ttl"),
 				Public:          public,
 				NoAutoProvision: noAutoProvision,
 				Domain:          domainName,
@@ -319,6 +352,25 @@ Examples:
 			}
 
 			if dryRun {
+				// Preview the same compatibility rule as AddWithOptions: an
+				// existing entry without funnel_expires_at is legacy never unless
+				// the operator explicitly supplies --funnel-ttl.
+				if !cmd.Flags().Changed("funnel-ttl") {
+					regPath, err := registryPathFn()
+					if err != nil {
+						return err
+					}
+					reg, err := registry.Load(regPath)
+					if err != nil {
+						return err
+					}
+					for _, existing := range reg.Services {
+						if existing.Name == svc.Name {
+							svc.FunnelExpiresAt = existing.FunnelExpiresAt
+							break
+						}
+					}
+				}
 				if jsonOutput(cmd) {
 					output.Success("add", AddDryRunResult{DryRun: true, Service: svc})
 					return nil
@@ -340,7 +392,9 @@ Examples:
 				return err
 			}
 
-			created, err := registry.Add(regPath, svc)
+			created, err := registry.AddWithOptions(regPath, svc, registry.AddOptions{
+				PreserveFunnelExpiry: !cmd.Flags().Changed("funnel-ttl"),
+			})
 			if err != nil {
 				return err
 			}
@@ -390,6 +444,7 @@ Examples:
 	addCmd.Flags().Bool("ephemeral", false, "Register as ephemeral node (removed on disconnect)")
 	addCmd.Flags().String("tags", "", "Comma-separated ACL tags (e.g., tag:web,tag:internal)")
 	addCmd.Flags().Bool("funnel", false, "Expose publicly via Tailscale Funnel (proxy only, requires --public)")
+	addCmd.Flags().String("funnel-ttl", "24h", "Public Funnel lifetime: 1h, 8h, 24h, 72h, 7d, or never")
 	addCmd.Flags().Bool("public", false, "Acknowledge public internet exposure for --funnel (only valid with --funnel)")
 	addCmd.Flags().Bool("no-auto-provision", false, "Disable automatic Funnel policy provisioning (only valid with --funnel)")
 	addCmd.Flags().String("domain", "", "[UNAVAILABLE] Reserved: custom-domain runtime TLS is unavailable; rejected with feature_unavailable")

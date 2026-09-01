@@ -15,6 +15,7 @@ import (
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/credentials"
 	"github.com/monody0007/tslink/internal/daemon"
+	"github.com/monody0007/tslink/internal/lifecycle"
 	"github.com/monody0007/tslink/internal/output"
 	"github.com/monody0007/tslink/internal/registry"
 	"github.com/monody0007/tslink/internal/security"
@@ -58,6 +59,7 @@ var (
 	serveEnsureTagsFn          = tailapi.EnsureTags
 	serveEnsureFunnelAttrFn    = tailapi.EnsureFunnelAttr
 	serveCleanupFn             = tailapi.CleanupStaleNodesResult
+	serveLifecycleReconcileFn  = lifecycle.Reconcile
 	serveLoadGlobalFn          = config.LoadGlobalConfig
 	serveLogDirFn              = config.LogDir
 	serveDaemonizeFn           = daemon.Daemonize
@@ -112,6 +114,10 @@ type authHandoffSetter interface {
 
 type readySetter interface {
 	SetReadyFunc(func() error)
+}
+
+type lifecycleReconcileSetter interface {
+	SetLifecycleReconcileFn(server.LifecycleReconcileFunc)
 }
 
 func init() {
@@ -286,17 +292,16 @@ Examples:
 			}
 
 			if credentialed {
-				// Clean up stale tailnet nodes before starting. User-owned nodes do
-				// not require an administrative device API.
+				// Preserve the conservative active-service discovery pass. It has no
+				// NodeID proof and therefore can only report Protected; orphan DELETE
+				// is performed by the durable lifecycle reconciler below.
 				cleanupTargets := tailapi.CleanupTargetsForServices(reg.Services)
 				cleanup, err := serveCleanupFn(context.Background(), cleanupTargets)
 				if err != nil {
 					cleanup = tailapi.CleanupResult{Skipped: true, SkipReason: err.Error()}
 				}
 				if cleanup.Skipped {
-					slog.Warn("degraded mode: skipped stale tailnet node cleanup", "reason", cleanup.SkipReason, "degraded_mode", true)
-				} else if len(cleanup.Deleted) > 0 {
-					slog.Info("removed stale tailnet nodes", "matched", cleanup.Matched, "deleted", cleanup.Deleted)
+					slog.Warn("degraded mode: skipped active-service tailnet node discovery", "reason", cleanup.SkipReason, "degraded_mode", true)
 				}
 			}
 
@@ -313,6 +318,7 @@ Examples:
 				ReadyPath:          os.Getenv("TSLINK_DAEMON_READY_PATH"),
 				AuthHandoffPath:    authHandoffPath,
 				Credentialed:       credentialed,
+				ManageACL:          manageACL,
 				NoAutoProvision:    noAutoProvision,
 				EnsureFunnelAttrFn: effectiveEnsureFunnelAttrFn,
 				PresentAuth: func(record authHandoffRecord) {
@@ -508,6 +514,7 @@ type foregroundOptions struct {
 	ReadyPath          string
 	AuthHandoffPath    string
 	Credentialed       bool
+	ManageACL          bool
 	NoAutoProvision    bool
 	EnsureFunnelAttrFn server.EnsureFunnelAttrFunc
 	PresentAuth        func(authHandoffRecord)
@@ -578,6 +585,48 @@ func runForegroundWithOptions(pidPath, authKey, controlURL string, options foreg
 	if setter, ok := srv.(autoProvisionFunnelSetter); ok {
 		setter.SetAutoProvisionFunnel(!options.NoAutoProvision)
 	}
+	if setter, ok := srv.(lifecycleReconcileSetter); ok {
+		regPath, err := config.RegistryPath()
+		if err != nil {
+			return err
+		}
+		ownershipPath, err := config.NodeOwnershipPath()
+		if err != nil {
+			return err
+		}
+		firstLifecycleReconcile := true
+		hadActiveFunnel := false
+		setter.SetLifecycleReconcileFn(func(ctx context.Context, now time.Time) (bool, error) {
+			hasActiveFunnel, err := registryHasActiveFunnelAt(regPath, now)
+			if err != nil {
+				return false, err
+			}
+			checkUnusedACL := options.ManageACL && (firstLifecycleReconcile || (hadActiveFunnel && !hasActiveFunnel))
+			result, err := serveLifecycleReconcileFn(ctx, lifecycle.Options{
+				RegistryPath:   regPath,
+				OwnershipPath:  ownershipPath,
+				Now:            now,
+				DryRun:         false,
+				ManageACL:      options.ManageACL,
+				CheckUnusedACL: checkUnusedACL,
+			})
+			if err != nil {
+				return false, err
+			}
+			firstLifecycleReconcile = false
+			hadActiveFunnel = hasActiveFunnel
+			if len(result.ExpiredFunnels) > 0 || len(result.DevicesDeleted) > 0 || len(result.Warnings) > 0 {
+				slog.Info("lifecycle reconciliation completed",
+					"expired_funnels", result.ExpiredFunnels,
+					"devices_deleted", result.DevicesDeleted,
+					"devices_protected", result.DevicesProtected,
+					"acl_action", result.ACLAction,
+					"warnings", result.Warnings,
+				)
+			}
+			return result.RegistryChanged, nil
+		})
+	}
 	if setter, ok := srv.(authKeyProviderSetter); ok {
 		setter.SetAuthKeyProvider(func(ctx context.Context, svc registry.Service) (string, error) {
 			if !options.Credentialed {
@@ -636,6 +685,19 @@ func runForegroundWithOptions(pidPath, authKey, controlURL string, options foreg
 		return nil
 	}
 	return runErr
+}
+
+func registryHasActiveFunnelAt(regPath string, now time.Time) (bool, error) {
+	reg, err := registry.Load(regPath)
+	if err != nil {
+		return false, err
+	}
+	for _, svc := range reg.Services {
+		if registry.EffectiveServiceAt(svc, now).Funnel {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func withTestDaemonParentLifetime(parent context.Context) (context.Context, context.CancelFunc, error) {

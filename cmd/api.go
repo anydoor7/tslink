@@ -71,6 +71,7 @@ type APIRequest struct {
 	Allow           []string `json:"allow,omitempty"`
 	Ephemeral       bool     `json:"ephemeral,omitempty"`
 	Funnel          bool     `json:"funnel,omitempty"`
+	FunnelTTL       string   `json:"funnel_ttl,omitempty"`
 	PublicAck       bool     `json:"public_ack,omitempty"`
 	NoAutoProvision bool     `json:"no_auto_provision,omitempty"`
 	ControlURL      string   `json:"control_url,omitempty"`
@@ -242,7 +243,9 @@ func (h *apiHandler) handleAdd(req APIRequest, out io.Writer) output.Result {
 	if req.IfMissing {
 		created, err = registry.AddIfMissing(h.regPath, svc)
 	} else {
-		created, err = registry.Add(h.regPath, svc)
+		created, err = registry.AddWithOptions(h.regPath, svc, registry.AddOptions{
+			PreserveFunnelExpiry: req.FunnelTTL == "",
+		})
 	}
 	if err != nil {
 		return writeAPICommandError(out, apiActionAdd, err)
@@ -282,6 +285,9 @@ func addParamsFromAPIRequest(req APIRequest) (AddParams, error) {
 	if req.NoAutoProvision && !req.Funnel {
 		return AddParams{}, fmt.Errorf("no_auto_provision is supported only when funnel is true")
 	}
+	if req.FunnelTTL != "" && !req.Funnel {
+		return AddParams{}, fmt.Errorf("funnel_ttl is supported only when funnel is true")
+	}
 	if len(req.Allow) > 0 && req.Type == registry.TypeTCP {
 		return AddParams{}, registry.AllowUnsupportedTCPError()
 	}
@@ -292,6 +298,8 @@ func addParamsFromAPIRequest(req APIRequest) (AddParams, error) {
 		Tags:            strings.Join(req.Tags, ","),
 		Allow:           strings.Join(req.Allow, ","),
 		Funnel:          req.Funnel,
+		FunnelTTL:       req.FunnelTTL,
+		FunnelTTLSet:    req.FunnelTTL != "",
 		Public:          req.PublicAck,
 		NoAutoProvision: req.NoAutoProvision,
 		ControlURL:      req.ControlURL,
@@ -466,6 +474,7 @@ Supported actions:
   {"action":"manifest"}
   {"action":"list"}
   {"action":"add","name":"myapp","type":"proxy","target":"localhost:3000","tags":["tag:tsmain"],"allow":["user@example.com"],"ephemeral":false,"funnel":false,"public_ack":false,"control_url":"https://headscale.example.com"}
+  {"action":"add","name":"public-app","type":"proxy","target":"localhost:3000","funnel":true,"funnel_ttl":"7d","public_ack":true}
   {"action":"add","name":"docs","type":"file","path":"/path/to/dir","tags":["tag:docs"]}
   {"action":"add","name":"mydb","type":"tcp","target":"localhost:5432","tags":["tag:db"]}
   {"action":"remove","name":"myapp"}

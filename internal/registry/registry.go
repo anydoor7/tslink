@@ -35,6 +35,8 @@ const (
 	// registry persistence is neither required nor relied upon.
 	FunnelTag = "tag:tslink-funnel"
 
+	DefaultFunnelTTL = 24 * time.Hour
+
 	// TagGrammar describes the strict Tailscale ACL tag syntax accepted by TSLink.
 	TagGrammar = "tag:<lowercase-hyphen-name> using lowercase letters, numbers, and hyphens"
 
@@ -324,12 +326,67 @@ type Service struct {
 	AllowedUsers    []string          `json:"allowed_users,omitempty"`
 	ControlURL      string            `json:"control_url,omitempty"`
 	Funnel          bool              `json:"funnel,omitempty"`
+	FunnelExpiresAt *time.Time        `json:"funnel_expires_at,omitempty"`
 	PublicAck       bool              `json:"public_ack,omitempty"`
 	NoAutoProvision bool              `json:"no_auto_provision,omitempty"`
 	Domain          string            `json:"domain,omitempty"`
 	AcmeEmail       string            `json:"acme_email,omitempty"`
 	Middleware      *MiddlewareConfig `json:"middleware,omitempty"`
 	CreatedAt       time.Time         `json:"created_at"`
+}
+
+// ParseFunnelTTL accepts only the public CLI contract. In particular, Go's
+// time.ParseDuration does not understand days, so 7d is mapped explicitly.
+func ParseFunnelTTL(value string) (duration time.Duration, never bool, err error) {
+	switch value {
+	case "1h":
+		return time.Hour, false, nil
+	case "8h":
+		return 8 * time.Hour, false, nil
+	case "24h":
+		return DefaultFunnelTTL, false, nil
+	case "72h":
+		return 72 * time.Hour, false, nil
+	case "7d":
+		return 7 * 24 * time.Hour, false, nil
+	case "never":
+		return 0, true, nil
+	default:
+		return 0, false, fmt.Errorf("funnel TTL must be one of: 1h, 8h, 24h, 72h, 7d, never")
+	}
+}
+
+// FunnelExpiredAt reads wall-clock state. A missing timestamp is the legacy
+// compatibility representation of never, not an implicit 24-hour deadline.
+func FunnelExpiredAt(svc Service, now time.Time) bool {
+	return svc.Funnel && svc.FunnelExpiresAt != nil && !now.Before(*svc.FunnelExpiresAt)
+}
+
+// EffectiveServiceAt returns the tailnet-only form after a Funnel deadline.
+// It deliberately preserves FunnelExpiresAt for observability and audit.
+func EffectiveServiceAt(svc Service, now time.Time) Service {
+	if FunnelExpiredAt(svc, now) {
+		svc.Funnel = false
+	}
+	return svc
+}
+
+// FunnelRemainingAt returns a stable human/JSON duration. nil means never or
+// not configured; expired deadlines return exactly "0s".
+func FunnelRemainingAt(svc Service, now time.Time) *string {
+	if !svc.Funnel {
+		return nil
+	}
+	if svc.FunnelExpiresAt == nil {
+		value := "never"
+		return &value
+	}
+	remaining := svc.FunnelExpiresAt.Sub(now)
+	if remaining < 0 {
+		remaining = 0
+	}
+	value := remaining.Round(time.Second).String()
+	return &value
 }
 
 type Registry struct {
@@ -775,6 +832,16 @@ func save(path string, reg *Registry) error {
 }
 
 func Add(path string, svc Service) (created bool, err error) {
+	return AddWithOptions(path, svc, AddOptions{})
+}
+
+type AddOptions struct {
+	// PreserveFunnelExpiry keeps an existing entry's deadline. It is used when
+	// --funnel-ttl was not explicitly supplied, including legacy nil=never.
+	PreserveFunnelExpiry bool
+}
+
+func AddWithOptions(path string, svc Service, options AddOptions) (created bool, err error) {
 	if err := ValidateService(svc); err != nil {
 		return false, err
 	}
@@ -791,6 +858,9 @@ func Add(path string, svc Service) (created bool, err error) {
 			}
 
 			svc.CreatedAt = existing.CreatedAt
+			if options.PreserveFunnelExpiry {
+				svc.FunnelExpiresAt = existing.FunnelExpiresAt
+			}
 			reg.Services[i] = svc
 			created = false
 			return save(path, reg)
@@ -884,6 +954,30 @@ func RemoveIfUnchanged(path string, expected Service) (removed bool, err error) 
 		return nil
 	})
 	return removed, err
+}
+
+// DowngradeExpiredFunnels atomically converts every expired Funnel service to
+// tailnet-only while retaining the service and its deadline. dryRun computes
+// the same result without writing registry.json.
+func DowngradeExpiredFunnels(path string, now time.Time, dryRun bool) (expired []Service, err error) {
+	err = withLock(path, func() error {
+		reg, err := loadForMutation(path)
+		if err != nil {
+			return err
+		}
+		for i, svc := range reg.Services {
+			if !FunnelExpiredAt(svc, now) {
+				continue
+			}
+			expired = append(expired, svc)
+			reg.Services[i] = EffectiveServiceAt(svc, now)
+		}
+		if dryRun || len(expired) == 0 {
+			return nil
+		}
+		return save(path, reg)
+	})
+	return expired, err
 }
 
 func MutateService(path, name string, mutate func(Service) (Service, error)) (Service, error) {
