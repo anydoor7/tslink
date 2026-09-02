@@ -51,6 +51,19 @@ func TestE2EDualBinaryDoesNotProduceTwoDaemons(t *testing.T) {
 	e2eAssertProcessCount(t, daemonBinary, 1, "after daemon A start")
 	e2eAssertProcessCount(t, cliBinary, 0, "after daemon A start")
 
+	// ---- (0) recognition across executable paths ---------------------------
+	// The caller here is the test binary; the daemon lives at install-a/tslink.
+	// If identity is decided by comparing absolute executable paths rather than
+	// product identity, this is where it first shows up.
+	// Reported non-fatally on purpose: recognition failure is the root cause,
+	// but the consequences below (an assertive status negative, a second daemon
+	// getting past the conflict guard) are the damage, and a run should show
+	// all of them rather than stopping at the first.
+	if !daemon.IsRunning(pidPath) {
+		t.Errorf("a live daemon at %s (pid %d) is not recognised by a caller running from a different path; "+
+			"this is the binary identity drift behind the double-daemon incidents", daemonBinary, handle.PID)
+	}
+
 	// ---- (i) B must not assertively deny a daemon that is alive -------------
 	// The forbidden state is daemon_running=false AND daemon_state="absent".
 	// "unknown" is an acceptable, honest third state; "running" is the correct
@@ -101,9 +114,41 @@ func TestE2EDualBinaryDoesNotProduceTwoDaemons(t *testing.T) {
 	} {
 		t.Run("rejected "+attempt.name, func(t *testing.T) {
 			run := e2eRunBinary(t, cliBinary, configDir, "", e2eEnv(configDir), attempt.args...)
+			// Non-fatal: if the conflict guard stops refusing, the interesting
+			// question is what happened to the process table, and that is
+			// checked immediately below.
 			if run.ExitCode != output.ExitConflict {
-				t.Fatalf("%v exit = %d, want %d (conflict)\nstdout=%s\nstderr=%s",
+				t.Errorf("%v exit = %d, want %d (conflict)\nstdout=%s\nstderr=%s",
 					attempt.args, run.ExitCode, output.ExitConflict, run.Stdout, run.Stderr)
+			}
+
+			// Sampled once, without convergence: B has already exited, and a
+			// correctly refused serve never forks, so this is deterministic at
+			// zero.
+			//
+			// SCOPE OF THIS ASSERTION — read before treating it as coverage of
+			// "no second daemon is created".
+			//
+			// It evaluates only when a process forked from the second binary is
+			// still alive at this sampling point, immediately after the command
+			// returned. That is a real and reachable condition: injecting a
+			// long-lived process from install-b before the three attempts makes
+			// every attempt report the exact stray PID, so the check is not a
+			// tautology. But it is not the condition the conflict-guard
+			// regression produces on this host. Remove the guard and the second
+			// `serve` does fork a daemon, which then dies during tsnet startup
+			// for want of a reachable control plane — usually before this line
+			// runs. The regression is caught here by the exit-code assertion
+			// above, not by this count.
+			//
+			// So: this is a genuine check with a narrow trigger, and it must
+			// NOT be described as mutation-proven coverage of "the product does
+			// not create a second daemon". Making that claim testable needs a
+			// host with a reachable control plane, where the forked daemon
+			// survives long enough to be counted.
+			if strays := e2eLivePIDsForBinary(t, cliBinary); len(strays) != 0 {
+				t.Errorf("%v forked %d process(es) from the second binary despite a live daemon: %v",
+					attempt.args, len(strays), strays)
 			}
 
 			// No second process from B, and A's daemon untouched.

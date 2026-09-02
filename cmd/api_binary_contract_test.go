@@ -25,6 +25,30 @@ var (
 	tslinkBinaryOnce sync.Once
 	tslinkBinaryPath string
 	tslinkBinaryErr  error
+
+	// tslinkBinaryRoot is the single build root shared by every compiled-binary
+	// suite in this package. It is created lazily, here, on the first build,
+	// and removed by TestMain (cmd/share_test.go) after m.Run returns.
+	//
+	// It is deliberately NOT a t.TempDir(): tslinkBinaryOnce is package-scoped,
+	// so the root would be deleted when whichever test happened to trigger the
+	// build finished, and every later test in the package would be handed a
+	// dangling path. It is also no longer an unmanaged os.MkdirTemp with no
+	// owner: that is what leaked here before Round C-1's review, and Round C-1
+	// made the leak materially worse by adding a second real CLI copy
+	// (~45.9 MB), the overlay fake daemon (~3.0 MB) and its generated sources
+	// into the same never-removed tree — about 47 MiB per test process, six
+	// test processes per CI run.
+	//
+	// Creation stays lazy rather than moving into TestMain because several
+	// tests re-execute this test binary as a child process
+	// (TestServeSignalContextInstallsRealHandler, and stop_test.go's
+	// `-test.run=^$` helpers). Those children run TestMain too, and the signal
+	// child terminates itself with a real signal, so nothing after m.Run ever
+	// runs in it. Creating the root unconditionally in TestMain therefore
+	// leaked one empty directory per package run. Children that never build a
+	// binary now never create a root.
+	tslinkBinaryRoot string
 )
 
 const testDaemonParentLifetimeEnv = "TSLINK_TEST_DAEMON_PARENT_LIFETIME"
@@ -43,6 +67,10 @@ func compiledTSLinkBinary(t *testing.T) string {
 			tslinkBinaryErr = err
 			return
 		}
+		// Publish the root so TestMain can remove it. Ordering is safe: this
+		// write happens inside tslinkBinaryOnce during m.Run, and TestMain only
+		// reads it after m.Run has joined every test.
+		tslinkBinaryRoot = binDir
 		tslinkBinaryPath = filepath.Join(binDir, "tslink")
 		if runtime.GOOS == "windows" {
 			tslinkBinaryPath += ".exe"

@@ -39,7 +39,20 @@ func TestMain(m *testing.M) {
 		}
 		os.Exit(0)
 	}
-	os.Exit(testenv.RunWithNonLoopbackDialGuard(m.Run, "cmd"))
+
+	code := testenv.RunWithNonLoopbackDialGuard(m.Run, "cmd")
+
+	// Own the teardown of the package's single compiled-binary build root.
+	// compiledTSLinkBinary creates it lazily and publishes the path here; see
+	// the tslinkBinaryRoot comment in api_binary_contract_test.go for why the
+	// root cannot be a t.TempDir() and why creation stays lazy. Before this,
+	// the root was never removed at all and leaked ~47 MiB per test process.
+	if tslinkBinaryRoot != "" {
+		if err := os.RemoveAll(tslinkBinaryRoot); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: remove compiled binary root %s: %v\n", tslinkBinaryRoot, err)
+		}
+	}
+	os.Exit(code)
 }
 
 func restoreShareSeams(t *testing.T) {
@@ -316,6 +329,107 @@ func TestExecuteShareNeedsLoginRetriesReuseSingleService(t *testing.T) {
 		}
 		t.Logf("attempt %d: status=%s service=%s registry_services=%d", attempt, result.Status, result.serviceName, len(reg.Services))
 	}
+}
+
+// TestShareDaemonStartIsGatedOnTheRunningPredicate covers the `share` half of
+// the B16 incident shape: 83 orphaned `tslink serve` processes.
+//
+// `share` starts a daemon only when shareIsRunningFn (daemon.IsRunning) says
+// none is running, and its failure path rolls back the registry entry it
+// created without reclaiming any daemon it started. So if that predicate ever
+// false-negatives on a live daemon — which E1 shows happens on the
+// cross-binary-identity path — every `share` invocation starts another daemon
+// and nothing removes them. That is per-invocation and measurable, unlike the
+// "accumulation over hours" framing that Round C-1 filed as operational.
+//
+// Two things this test deliberately does NOT do, and why:
+//
+//  1. It does not run at process level. Making an accumulation assertion go red
+//     requires the running predicate to lie, and under that mutation the real
+//     `share` execs a real `tslink serve`, which contacts the Tailscale control
+//     plane. That is forbidden here, so a process-level version of this
+//     scenario could only ever be observed green. A green-only assertion is the
+//     same defect class Round C-1's review found in E5, and adding one would be
+//     worse than not adding it.
+//
+//  2. It does not assert that `share` ought to reclaim the daemon. It should
+//     not. The daemon is a shared resource: other registered services and other
+//     concurrent `share` invocations bind to it, so tearing it down on this
+//     invocation's failure would break them. Rolling back the registry entry
+//     `share` created while leaving the daemon it did not exclusively own is
+//     the right ownership boundary.
+//
+// What is falsifiable here, and is asserted: `share` must consult the predicate
+// before starting a daemon. Removing that gate is a realistic regression ("just
+// always make sure the daemon is up") and it leaks one daemon per invocation
+// even when the predicate is working correctly.
+//
+// TODO(daemon-mutual-exclusion): the invariant this file cannot express is "at
+// most one daemon per config dir".
+//
+// `share` enforces it through shareIsRunningFn (daemon.IsRunning), a process
+// *identity* predicate, and E1 shows that predicate false-negatives on the
+// cross-binary-identity path. Under that false negative every `share` invocation
+// starts another daemon and nothing reclaims them. The enforcement point is not
+// `share` — it asks the only question it can — but the daemon: an
+// identity-independent mutual exclusion held for the daemon's lifetime.
+// internal/filelock already exists in this repository; its only direct test file
+// is //go:build !windows, so its 100% statement coverage is the current Unix
+// target's, not a cross-platform guarantee — the Windows LockFileEx/UnlockFileEx
+// path is compiled and vetted but never executed. That is a production change,
+// outside this round's scope, and it is recorded here rather than in a test.
+//
+// A previous revision recorded it in a test instead, with a second subtest
+// asserting the current broken behaviour (five invocations under a false
+// negative produce five daemons) on the theory that it would go red the day
+// somebody adds the mutex, making that change deliberate. The review disproved
+// the theory rather than disagreeing with the trade-off: that subtest replaced
+// shareStartDaemonFn wholesale with a counting stub, so the real
+// startShareDaemon body — and therefore anything the daemon might do about
+// mutual exclusion — could not affect the count it asserted. Putting
+// panic("real daemon-start path reached") at the top of the real
+// startShareDaemon left both subtests green. A test that cannot observe the
+// event it claims to watch is not protection; it is a defect wearing the
+// costume of a contract, and the count it locks in is a number nobody should
+// have to preserve. It was deleted, and this comment is where the defect lives
+// now.
+func TestShareDaemonStartIsGatedOnTheRunningPredicate(t *testing.T) {
+	newPaths := func(t *testing.T) sharePaths {
+		t.Helper()
+		dir := t.TempDir()
+		return sharePaths{
+			Registry:    filepath.Join(dir, "registry.json"),
+			PID:         filepath.Join(dir, "tslink.pid"),
+			Snapshot:    filepath.Join(dir, "runtime.json"),
+			AuthHandoff: filepath.Join(dir, "auth-handoff.json"),
+		}
+	}
+
+	t.Run("a recognised live daemon is never given a second one", func(t *testing.T) {
+		restoreShareSeams(t)
+		paths := newPaths(t)
+		starts := 0
+		shareIsRunningFn = func(string) bool { return true }
+		shareStartDaemonFn = func(context.Context, io.Writer) (shareDaemonStart, error) {
+			starts++
+			return shareDaemonStart{}, nil
+		}
+		shareResolveEndpointOnceFn = func(_, _, _, name string) (serviceURLResolution, error) {
+			return serviceURLResolution{}, registry.URLNotReadyError(name)
+		}
+		sharePollableStatusFn = func(_, _, _, _ string) (StatusResult, error) { return StatusResult{}, nil }
+
+		const invocations = 5
+		for attempt := 1; attempt <= invocations; attempt++ {
+			if _, err := executeShare(context.Background(), paths, "3000", "", true, 0, io.Discard); codeOf(err) != registry.CodeURLNotReady {
+				t.Fatalf("attempt %d err = %v, want url_not_ready", attempt, err)
+			}
+		}
+		if starts != 0 {
+			t.Fatalf("share started %d daemon(s) across %d invocations while one was already running; want 0",
+				starts, invocations)
+		}
+	})
 }
 
 func TestExecuteShareFailuresRollBackNewRegistration(t *testing.T) {

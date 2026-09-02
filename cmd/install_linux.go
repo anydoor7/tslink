@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/monody0007/tslink/internal/atomicfile"
 	"github.com/monody0007/tslink/internal/output"
@@ -32,6 +33,8 @@ var (
 		return detectInstallDaemonConflict("a systemd user unit is installed, but TSLink could not confirm that systemd owns the running daemon; stop the manual daemon with 'tslink stop' and retry 'tslink install'; keep the existing unit installed")
 	}
 	systemctlCombinedOutput  = func(args ...string) ([]byte, error) { return exec.Command("systemctl", args...).CombinedOutput() }
+	systemdSettleTimeout     = 3 * time.Second
+	systemdSettleInterval    = 250 * time.Millisecond
 	loginctlCombinedOutputFn = func(args ...string) ([]byte, error) { return exec.Command("loginctl", args...).CombinedOutput() }
 )
 
@@ -128,7 +131,8 @@ If lingering was enabled only for TSLink, disable it after uninstall:
 			return fmt.Errorf("write systemd service: %w", err)
 		}
 
-		if installErr := activateSystemdService(); installErr != nil {
+		verifyDegraded, installErr := activateSystemdService()
+		if installErr != nil {
 			if !previousState.Existed {
 				return installErr
 			}
@@ -146,7 +150,7 @@ If lingering was enabled only for TSLink, disable it after uninstall:
 			return fmt.Errorf("%v; upgrade failed, so the previous systemd user unit was restored; no prior systemd-owned running daemon was identified, so no service was restarted; fix the reported cause and re-run 'tslink install'", installErr)
 		}
 
-		warning := linuxLingerWarning()
+		warning := joinInstallWarnings(linuxLingerWarning(), systemdVerifyDegradedWarning(verifyDegraded))
 		if jsonOutput(cmd) {
 			output.Success("install", InstallResult{
 				Path:           servicePath,
@@ -197,15 +201,17 @@ func captureSystemdPreviousState(servicePath string) (systemdPreviousState, erro
 	return state, nil
 }
 
-func activateSystemdService() error {
+// activateSystemdService returns the same degradation notice as
+// verifySystemdServiceRunning so the install command can surface it on success.
+func activateSystemdService() (bool, error) {
 	if commandOutput, err := systemctlCombinedOutput("--user", "daemon-reload"); err != nil {
-		return fmt.Errorf("reload systemd user daemon: %w%s", err, commandOutputSuffix(commandOutput))
+		return false, fmt.Errorf("reload systemd user daemon: %w%s", err, commandOutputSuffix(commandOutput))
 	}
 	if commandOutput, err := systemctlCombinedOutput("--user", "enable", systemdServiceName); err != nil {
-		return fmt.Errorf("enable systemd user service: %w%s", err, commandOutputSuffix(commandOutput))
+		return false, fmt.Errorf("enable systemd user service: %w%s", err, commandOutputSuffix(commandOutput))
 	}
 	if commandOutput, err := systemctlCombinedOutput("--user", "restart", systemdServiceName); err != nil {
-		return fmt.Errorf("restart systemd user service: %w%s", err, commandOutputSuffix(commandOutput))
+		return false, fmt.Errorf("restart systemd user service: %w%s", err, commandOutputSuffix(commandOutput))
 	}
 	return verifySystemdServiceRunning()
 }
@@ -230,7 +236,10 @@ func restorePreviousSystemdUnit(previous systemdPreviousState, servicePath strin
 	if commandOutput, err := systemctlCombinedOutput("--user", "restart", systemdServiceName); err != nil {
 		return result, fmt.Errorf("restart restored systemd user service: %w%s", err, commandOutputSuffix(commandOutput))
 	}
-	if err := verifySystemdServiceRunning(); err != nil {
+	// The restore path already returns an error the operator will read, and
+	// systemdSettleError folds the degradation notice into that text, so the
+	// notice is not propagated separately here.
+	if _, err := verifySystemdServiceRunning(); err != nil {
 		return result, fmt.Errorf("verify restored systemd user service: %w", err)
 	}
 	result.Restarted = true
@@ -268,35 +277,144 @@ func systemdOwnsRunningDaemon() bool {
 	return err == nil && mainPID == daemonPID
 }
 
-func verifySystemdServiceRunning() error {
-	output, err := systemctlCombinedOutput(
-		"--user",
-		"show",
-		systemdServiceName,
-		"--property=ActiveState",
-		"--property=SubState",
-		"--property=MainPID",
-		"--no-pager",
-	)
-	if err != nil {
-		return fmt.Errorf("verify systemd user service state: %w%s", err, commandOutputSuffix(output))
+// verifySystemdServiceRunning reports whether the unit settled, and whether it
+// had to reach that verdict without NRestarts. The bool is a degradation
+// notice, not a failure: systemd builds that do not expose NRestarts still get
+// verified on ActiveState, SubState and MainPID, but the caller is expected to
+// tell the operator that one of the four criteria was unavailable. Returning it
+// only inside the error text would leave the successful path silent, which is
+// the one path where nobody would otherwise find out.
+func verifySystemdServiceRunning() (bool, error) {
+	deadline := time.Now().Add(systemdSettleTimeout)
+	var lastProperties map[string]string
+	var previousGoodPID int
+	var havePreviousGood bool
+	var baselineNRestarts int
+	var nRestartsAvailable bool
+	var nRestartsUnavailable bool
+	var nRestartsIncreased bool
+	var pidDrifted bool
+	firstSample := true
+
+	for {
+		output, err := systemctlCombinedOutput(
+			"--user",
+			"show",
+			systemdServiceName,
+			"--property=ActiveState",
+			"--property=SubState",
+			"--property=MainPID",
+			"--property=NRestarts",
+			"--no-pager",
+		)
+		if err != nil {
+			return false, fmt.Errorf("verify systemd user service state: %w%s", err, commandOutputSuffix(output))
+		}
+
+		properties := parseSystemdProperties(output)
+		lastProperties = properties
+		activeState := properties["ActiveState"]
+		subState := properties["SubState"]
+		mainPID, pidErr := strconv.Atoi(properties["MainPID"])
+		nRestarts, nRestartsErr := strconv.Atoi(properties["NRestarts"])
+		if firstSample {
+			firstSample = false
+			if nRestartsErr == nil {
+				baselineNRestarts = nRestarts
+				nRestartsAvailable = true
+			} else {
+				nRestartsUnavailable = true
+			}
+		} else if nRestartsAvailable {
+			if nRestartsErr != nil {
+				nRestartsAvailable = false
+				nRestartsUnavailable = true
+			} else if nRestarts > baselineNRestarts {
+				nRestartsIncreased = true
+			}
+		}
+
+		if subState == "auto-restart" || activeState == "failed" {
+			// auto-restart belongs in the reset-failed set even though NRestarts
+			// has not incremented yet: it means a restart is in flight, and the
+			// factory template (RestartSec=30, StartLimitBurst=5) turns that into
+			// a permanent failed state after five attempts, at which point the
+			// operator cannot start the unit again without reset-failed. This is
+			// also the exact state observed on real systemd, so omitting it left
+			// the one reachable case without a recovery step.
+			return nRestartsUnavailable, systemdSettleError(properties, nRestartsUnavailable, activeState == "failed" || subState == "auto-restart" || nRestartsIncreased)
+		}
+
+		good := activeState == "active" && subState == "running" && pidErr == nil && mainPID > 0
+		if good {
+			if havePreviousGood && mainPID != previousGoodPID {
+				pidDrifted = true
+			}
+			if havePreviousGood && mainPID == previousGoodPID && !pidDrifted && !nRestartsIncreased {
+				return nRestartsUnavailable, nil
+			}
+			previousGoodPID = mainPID
+			havePreviousGood = true
+		} else {
+			havePreviousGood = false
+		}
+
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			break
+		}
+		wait := systemdSettleInterval
+		if wait > remaining {
+			wait = remaining
+		}
+		if wait > 0 {
+			time.Sleep(wait)
+		}
 	}
 
-	properties := parseSystemdProperties(output)
-	activeState := properties["ActiveState"]
-	subState := properties["SubState"]
-	mainPID, pidErr := strconv.Atoi(properties["MainPID"])
-	if activeState == "active" && subState == "running" && pidErr == nil && mainPID > 0 {
-		return nil
+	// pidDrifted joins nRestartsIncreased for the same reason auto-restart does
+	// above: a MainPID change inside the window means the unit restarted at
+	// least once, which is on the path to the start-limit lockout.
+	return nRestartsUnavailable, systemdSettleError(lastProperties, nRestartsUnavailable, nRestartsIncreased || pidDrifted)
+}
+
+// systemdVerifyDegradedWarning renders the success-path counterpart of the
+// clause systemdSettleError adds on failure.
+func systemdVerifyDegradedWarning(degraded bool) string {
+	if !degraded {
+		return ""
 	}
-	return fmt.Errorf(
-		"systemd user service did not reach active/running after restart (ActiveState=%q, SubState=%q, MainPID=%q); run 'systemctl --user status %s' and 'journalctl --user -u %s'",
-		activeState,
-		subState,
+	return "NRestarts was unavailable on this systemd, so post-restart verification used ActiveState, SubState, and MainPID only"
+}
+
+// joinInstallWarnings keeps InstallResult.Warning a single field while allowing
+// more than one thing to be worth saying.
+func joinInstallWarnings(warnings ...string) string {
+	present := make([]string, 0, len(warnings))
+	for _, warning := range warnings {
+		if warning != "" {
+			present = append(present, warning)
+		}
+	}
+	return strings.Join(present, "; ")
+}
+
+func systemdSettleError(properties map[string]string, nRestartsUnavailable, suggestResetFailed bool) error {
+	message := fmt.Sprintf(
+		"systemd user service did not settle after restart (ActiveState=%q, SubState=%q, MainPID=%q, NRestarts=%q)",
+		properties["ActiveState"],
+		properties["SubState"],
 		properties["MainPID"],
-		systemdServiceName,
-		systemdServiceName,
+		properties["NRestarts"],
 	)
+	if nRestartsUnavailable {
+		message += "; NRestarts was unavailable, so verification used ActiveState, SubState, and MainPID only"
+	}
+	message += fmt.Sprintf("; run 'systemctl --user status %s' and 'journalctl --user -u %s'", systemdServiceName, systemdServiceName)
+	if suggestResetFailed {
+		message += fmt.Sprintf("; after fixing the cause, run 'systemctl --user reset-failed %s' before retrying", systemdServiceName)
+	}
+	return errors.New(message)
 }
 
 func parseSystemdProperties(output []byte) map[string]string {

@@ -315,8 +315,16 @@ func e2eStartFakeDaemon(t *testing.T, configDir string) *e2eDaemonHandle {
 	if published != handle.PID {
 		t.Fatalf("published PID = %d, want the process this test started (%d)", published, handle.PID)
 	}
-	if !daemon.IsRunning(pidPath) {
-		t.Fatal("fake daemon was not accepted as a running TSLink serve daemon")
+
+	// Readiness is confirmed against the OS, not against daemon.IsRunning.
+	// Whether the product recognises this daemon is what several scenarios
+	// below are measuring; using that predicate as a precondition here would
+	// make the measurement self-referential and would convert a genuine
+	// recognition regression into a setup error, hiding which assertion
+	// actually caught it.
+	live := e2eLivePIDsForBinary(t, binary)
+	if len(live) != 1 || live[0] != handle.PID {
+		t.Fatalf("fake daemon liveness = %v, want exactly [%d]", live, handle.PID)
 	}
 	return handle
 }

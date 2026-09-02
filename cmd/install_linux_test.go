@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/monody0007/tslink/internal/output"
 )
@@ -18,17 +19,61 @@ var _ func(string, bool) string = systemdServiceContents
 
 func stubLinuxInstallDaemonStopped(t *testing.T) {
 	t.Helper()
+	stubFastSystemdSettle(t)
 	oldConflict := installDaemonConflictFn
 	installDaemonConflictFn = func() error { return nil }
 	t.Cleanup(func() { installDaemonConflictFn = oldConflict })
 }
 
+func stubFastSystemdSettle(t *testing.T) {
+	t.Helper()
+	oldTimeout := systemdSettleTimeout
+	oldInterval := systemdSettleInterval
+	systemdSettleTimeout = 10 * time.Millisecond
+	systemdSettleInterval = time.Millisecond
+	t.Cleanup(func() {
+		systemdSettleTimeout = oldTimeout
+		systemdSettleInterval = oldInterval
+	})
+}
+
 func runningSystemdState() []byte {
-	return []byte("ActiveState=active\nSubState=running\nMainPID=1775\n")
+	return []byte("ActiveState=active\nSubState=running\nMainPID=1775\nNRestarts=0\n")
+}
+
+func stubSystemdStateSequence(t *testing.T, states ...[]byte) *int {
+	t.Helper()
+	stubFastSystemdSettle(t)
+	oldSystemctl := systemctlCombinedOutput
+	calls := 0
+	systemctlCombinedOutput = func(args ...string) ([]byte, error) {
+		want := []string{
+			"--user",
+			"show",
+			systemdServiceName,
+			"--property=ActiveState",
+			"--property=SubState",
+			"--property=MainPID",
+			"--property=NRestarts",
+			"--no-pager",
+		}
+		if strings.Join(args, "\x00") != strings.Join(want, "\x00") {
+			t.Fatalf("systemctl args = %q, want %q", args, want)
+		}
+		index := calls
+		if index >= len(states) {
+			index = len(states) - 1
+		}
+		calls++
+		return states[index], nil
+	}
+	t.Cleanup(func() { systemctlCombinedOutput = oldSystemctl })
+	return &calls
 }
 
 func runLinuxInstallGuardTruthCase(t *testing.T, unitPresent, daemonRunning bool, systemdPID int) bool {
 	t.Helper()
+	stubFastSystemdSettle(t)
 	resetRootJSONFlag(t)
 	home := t.TempDir()
 
@@ -97,7 +142,7 @@ func runLinuxInstallGuardTruthCase(t *testing.T, unitPresent, daemonRunning bool
 			if pid <= 0 {
 				pid = 1775
 			}
-			return []byte(fmt.Sprintf("ActiveState=active\nSubState=running\nMainPID=%d\n", pid)), nil
+			return []byte(fmt.Sprintf("ActiveState=active\nSubState=running\nMainPID=%d\nNRestarts=0\n", pid)), nil
 		}
 		if len(args) > 1 && args[1] == "restart" {
 			restartCalls++
@@ -276,7 +321,8 @@ func TestLinuxInstallCommandRunsSystemctlAndWarnsAboutLinger(t *testing.T) {
 		strings.Join([]string{"--user", "daemon-reload"}, "\x00"),
 		strings.Join([]string{"--user", "enable", systemdServiceName}, "\x00"),
 		strings.Join([]string{"--user", "restart", systemdServiceName}, "\x00"),
-		strings.Join([]string{"--user", "show", systemdServiceName, "--property=ActiveState", "--property=SubState", "--property=MainPID", "--no-pager"}, "\x00"),
+		strings.Join([]string{"--user", "show", systemdServiceName, "--property=ActiveState", "--property=SubState", "--property=MainPID", "--property=NRestarts", "--no-pager"}, "\x00"),
+		strings.Join([]string{"--user", "show", systemdServiceName, "--property=ActiveState", "--property=SubState", "--property=MainPID", "--property=NRestarts", "--no-pager"}, "\x00"),
 	}
 	if strings.Join(systemctlCalls, "\n") != strings.Join(wantCalls, "\n") {
 		t.Fatalf("systemctl calls = %q, want %q", systemctlCalls, wantCalls)
@@ -451,9 +497,344 @@ func TestLinuxInstallDoesNotClaimSuccessWhenServiceIsAutoRestarting(t *testing.T
 	}
 }
 
+func TestLinuxInstallDoesNotClaimSuccessWhenServiceDiesDuringSettlement(t *testing.T) {
+	stubLinuxInstallDaemonStopped(t)
+	home := t.TempDir()
+	oldHome := linuxUserHomeDirFn
+	oldExe := linuxExecutablePathFn
+	oldEval := linuxEvalSymlinksFn
+	oldUser := linuxUserNameFn
+	oldSystemctl := systemctlCombinedOutput
+	oldLoginctl := loginctlCombinedOutputFn
+	t.Cleanup(func() {
+		linuxUserHomeDirFn = oldHome
+		linuxExecutablePathFn = oldExe
+		linuxEvalSymlinksFn = oldEval
+		linuxUserNameFn = oldUser
+		systemctlCombinedOutput = oldSystemctl
+		loginctlCombinedOutputFn = oldLoginctl
+	})
+
+	linuxUserHomeDirFn = func() (string, error) { return home, nil }
+	linuxExecutablePathFn = func() (string, error) { return "/opt/tslink", nil }
+	linuxEvalSymlinksFn = func(path string) (string, error) { return path, nil }
+	linuxUserNameFn = func() string { return "alice" }
+	loginctlCombinedOutputFn = func(args ...string) ([]byte, error) { return []byte("yes\n"), nil }
+	showCalls := 0
+	systemctlCombinedOutput = func(args ...string) ([]byte, error) {
+		if len(args) > 1 && args[1] == "show" {
+			showCalls++
+			if showCalls == 1 {
+				return []byte("ActiveState=active\nSubState=running\nMainPID=100\nNRestarts=0\n"), nil
+			}
+			return []byte("ActiveState=activating\nSubState=auto-restart\nMainPID=0\nNRestarts=1\n"), nil
+		}
+		return nil, nil
+	}
+
+	var out bytes.Buffer
+	installCmd.SetOut(&out)
+	err := installCmd.RunE(installCmd, nil)
+	if err == nil || !strings.Contains(err.Error(), "auto-restart") {
+		t.Fatalf("install RunE() error = %v, want active/running to auto-restart settlement failure", err)
+	}
+	if showCalls != 2 {
+		t.Fatalf("verify show calls = %d, want 2 sequential samples", showCalls)
+	}
+	if strings.Contains(out.String(), "✓") {
+		t.Fatalf("install printed success after service died during settlement: %s", out.String())
+	}
+}
+
+func TestVerifySystemdServiceRunningSettlement(t *testing.T) {
+	t.Run("main pid drift fails", func(t *testing.T) {
+		calls := stubSystemdStateSequence(t,
+			[]byte("ActiveState=active\nSubState=running\nMainPID=100\nNRestarts=0\n"),
+			[]byte("ActiveState=active\nSubState=running\nMainPID=200\nNRestarts=0\n"),
+		)
+		_, err := verifySystemdServiceRunning()
+		if err == nil || !strings.Contains(err.Error(), `MainPID="200"`) {
+			t.Fatalf("verify error = %v, want PID drift failure with last observation", err)
+		}
+		if *calls < 2 {
+			t.Fatalf("verify show calls = %d, want at least 2", *calls)
+		}
+	})
+
+	t.Run("nrestarts increase fails with reset guidance", func(t *testing.T) {
+		stubSystemdStateSequence(t,
+			[]byte("ActiveState=active\nSubState=running\nMainPID=100\nNRestarts=0\n"),
+			[]byte("ActiveState=active\nSubState=running\nMainPID=100\nNRestarts=1\n"),
+		)
+		_, err := verifySystemdServiceRunning()
+		if err == nil || !strings.Contains(err.Error(), `NRestarts="1"`) || !strings.Contains(err.Error(), "systemctl --user reset-failed tslink.service") {
+			t.Fatalf("verify error = %v, want restart growth failure with reset-failed guidance", err)
+		}
+	})
+
+	t.Run("two stable healthy samples succeed after one interval", func(t *testing.T) {
+		calls := stubSystemdStateSequence(t, runningSystemdState(), runningSystemdState())
+		started := time.Now()
+		degraded, err := verifySystemdServiceRunning()
+		if err != nil {
+			t.Fatalf("verify error = %v, want stable success", err)
+		}
+		if degraded {
+			t.Fatalf("verify reported degraded = true, want false when NRestarts is present")
+		}
+		elapsed := time.Since(started)
+		if *calls != 2 {
+			t.Fatalf("verify show calls = %d, want 2", *calls)
+		}
+		if elapsed < systemdSettleInterval || elapsed >= systemdSettleTimeout {
+			t.Fatalf("verify elapsed = %v, want one interval (%v) and less than timeout (%v)", elapsed, systemdSettleInterval, systemdSettleTimeout)
+		}
+	})
+
+	t.Run("initial auto-restart fails immediately", func(t *testing.T) {
+		calls := stubSystemdStateSequence(t, []byte("ActiveState=activating\nSubState=auto-restart\nMainPID=0\nNRestarts=1\n"))
+		_, err := verifySystemdServiceRunning()
+		if err == nil || !strings.Contains(err.Error(), "auto-restart") {
+			t.Fatalf("verify error = %v, want auto-restart failure", err)
+		}
+		if *calls != 1 {
+			t.Fatalf("verify show calls = %d, want immediate single-sample failure", *calls)
+		}
+	})
+
+	t.Run("initial failed state fails immediately", func(t *testing.T) {
+		calls := stubSystemdStateSequence(t, []byte("ActiveState=failed\nSubState=failed\nMainPID=0\nNRestarts=5\n"))
+		_, err := verifySystemdServiceRunning()
+		if err == nil || !strings.Contains(err.Error(), `ActiveState="failed"`) || !strings.Contains(err.Error(), "systemctl --user reset-failed tslink.service") {
+			t.Fatalf("verify error = %v, want failed-state error with reset-failed guidance", err)
+		}
+		if *calls != 1 {
+			t.Fatalf("verify show calls = %d, want immediate single-sample failure", *calls)
+		}
+	})
+
+	t.Run("activating throughout times out with last observation", func(t *testing.T) {
+		calls := stubSystemdStateSequence(t,
+			[]byte("ActiveState=activating\nSubState=start\nMainPID=0\nNRestarts=3\n"),
+			[]byte("ActiveState=activating\nSubState=start-post\nMainPID=321\nNRestarts=3\n"),
+		)
+		_, err := verifySystemdServiceRunning()
+		for _, want := range []string{`ActiveState="activating"`, `SubState="start-post"`, `MainPID="321"`, `NRestarts="3"`} {
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("verify error = %v, want timeout containing %s", err, want)
+			}
+		}
+		if *calls < 2 {
+			t.Fatalf("verify show calls = %d, want multiple samples through timeout", *calls)
+		}
+	})
+
+	t.Run("missing nrestarts degrades to healthy state checks", func(t *testing.T) {
+		calls := stubSystemdStateSequence(t,
+			[]byte("ActiveState=active\nSubState=running\nMainPID=100\n"),
+			[]byte("ActiveState=active\nSubState=running\nMainPID=100\n"),
+		)
+		degraded, err := verifySystemdServiceRunning()
+		if err != nil {
+			t.Fatalf("verify error = %v, want success without NRestarts", err)
+		}
+		// Degrading is correct; degrading silently is not. The success path is the
+		// only one where the operator would otherwise never learn that one of the
+		// four criteria was unavailable.
+		if !degraded {
+			t.Fatalf("verify reported degraded = false, want true so the caller can warn")
+		}
+		if systemdVerifyDegradedWarning(degraded) == "" {
+			t.Fatalf("degraded verification produced no operator-visible warning")
+		}
+		if *calls != 2 {
+			t.Fatalf("verify show calls = %d, want 2", *calls)
+		}
+	})
+
+	// The state real systemd was actually observed in during the crash loop that
+	// motivated this settle window: activating/auto-restart with MainPID=0 and
+	// NRestarts still at 0. The first revision of the reset-failed predicate was
+	// `failed || nRestartsIncreased`, so this exact state -- the only one that has
+	// ever occurred in practice -- was the one that got no recovery step.
+	t.Run("observed crash-loop shape carries reset-failed guidance", func(t *testing.T) {
+		stubSystemdStateSequence(t, []byte("ActiveState=activating\nSubState=auto-restart\nMainPID=0\nNRestarts=0\n"))
+		_, err := verifySystemdServiceRunning()
+		if err == nil {
+			t.Fatalf("verify error = nil, want auto-restart failure")
+		}
+		for _, want := range []string{`SubState="auto-restart"`, `NRestarts="0"`, "systemctl --user reset-failed tslink.service"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("verify error = %v, want it to contain %s", err, want)
+			}
+		}
+	})
+
+	// MainPID drift means the unit restarted inside the window, which is on the
+	// same path to the start-limit lockout as a rising NRestarts, so it earns the
+	// same guidance.
+	t.Run("pid drift timeout carries reset-failed guidance", func(t *testing.T) {
+		stubSystemdStateSequence(t,
+			[]byte("ActiveState=active\nSubState=running\nMainPID=100\nNRestarts=0\n"),
+			[]byte("ActiveState=active\nSubState=running\nMainPID=200\nNRestarts=0\n"),
+		)
+		_, err := verifySystemdServiceRunning()
+		if err == nil || !strings.Contains(err.Error(), "systemctl --user reset-failed tslink.service") {
+			t.Fatalf("verify error = %v, want PID drift failure with reset-failed guidance", err)
+		}
+	})
+}
+
+func TestJoinInstallWarningsKeepsOnlyPresentClauses(t *testing.T) {
+	if got := joinInstallWarnings("", ""); got != "" {
+		t.Fatalf("joinInstallWarnings(empty) = %q, want empty", got)
+	}
+	if got := joinInstallWarnings("", "only"); got != "only" {
+		t.Fatalf("joinInstallWarnings = %q, want %q", got, "only")
+	}
+	if got := joinInstallWarnings("first", "second"); got != "first; second" {
+		t.Fatalf("joinInstallWarnings = %q, want %q", got, "first; second")
+	}
+}
+
+// A degraded verification is still a success, so the only way the operator finds
+// out that one of the four criteria was unavailable is the warning field. This
+// asserts it survives the whole install path rather than only the helper.
+func TestLinuxInstallSurfacesDegradedVerificationInWarning(t *testing.T) {
+	stubFastSystemdSettle(t)
+	stubLinuxInstallDaemonStopped(t)
+	home := t.TempDir()
+
+	oldHome := linuxUserHomeDirFn
+	oldExe := linuxExecutablePathFn
+	oldEval := linuxEvalSymlinksFn
+	oldUser := linuxUserNameFn
+	oldSystemctl := systemctlCombinedOutput
+	oldLoginctl := loginctlCombinedOutputFn
+	t.Cleanup(func() {
+		linuxUserHomeDirFn = oldHome
+		linuxExecutablePathFn = oldExe
+		linuxEvalSymlinksFn = oldEval
+		linuxUserNameFn = oldUser
+		systemctlCombinedOutput = oldSystemctl
+		loginctlCombinedOutputFn = oldLoginctl
+	})
+
+	linuxUserHomeDirFn = func() (string, error) { return home, nil }
+	linuxExecutablePathFn = func() (string, error) { return "/opt/tslink", nil }
+	linuxEvalSymlinksFn = func(path string) (string, error) { return path, nil }
+	linuxUserNameFn = func() string { return "alice" }
+	// Linger enabled, so the only warning available is the degradation notice.
+	loginctlCombinedOutputFn = func(args ...string) ([]byte, error) { return []byte("yes\n"), nil }
+	systemctlCombinedOutput = func(args ...string) ([]byte, error) {
+		if len(args) > 1 && args[1] == "show" {
+			// Healthy, but this systemd does not expose NRestarts.
+			return []byte("ActiveState=active\nSubState=running\nMainPID=4242\n"), nil
+		}
+		return nil, nil
+	}
+	setRootJSONFlag(t, true)
+
+	got := captureStdout(t, func() {
+		if err := installCmd.RunE(installCmd, nil); err != nil {
+			t.Fatalf("install RunE() error = %v, want success on degraded verification", err)
+		}
+	})
+	res := parseResult(t, got)
+	if !res.OK {
+		t.Fatalf("install JSON result = %#v, want ok", res)
+	}
+	data := dataMap(t, got)
+	if data["installed"] != true || data["started"] != true {
+		t.Fatalf("install data = %#v, want installed/started", data)
+	}
+	warning, ok := data["warning"].(string)
+	if !ok || !strings.Contains(warning, "NRestarts was unavailable") {
+		t.Fatalf("install warning = %#v, want the degraded-verification notice", data["warning"])
+	}
+}
+
+func TestLinuxInstallDoesNotClaimRestoredServiceRestartedWhenItDiesDuringSettlement(t *testing.T) {
+	stubFastSystemdSettle(t)
+	resetRootJSONFlag(t)
+	home := t.TempDir()
+	oldHome := linuxUserHomeDirFn
+	oldExe := linuxExecutablePathFn
+	oldEval := linuxEvalSymlinksFn
+	oldPIDPath := pidPathFn
+	oldRunning := isRunningFn
+	oldReadPID := readPIDFn
+	oldSystemctl := systemctlCombinedOutput
+	t.Cleanup(func() {
+		linuxUserHomeDirFn = oldHome
+		linuxExecutablePathFn = oldExe
+		linuxEvalSymlinksFn = oldEval
+		pidPathFn = oldPIDPath
+		isRunningFn = oldRunning
+		readPIDFn = oldReadPID
+		systemctlCombinedOutput = oldSystemctl
+	})
+
+	linuxUserHomeDirFn = func() (string, error) { return home, nil }
+	linuxExecutablePathFn = func() (string, error) { return "/new/tslink", nil }
+	linuxEvalSymlinksFn = func(path string) (string, error) { return path, nil }
+	pidPathFn = func() (string, error) { return filepath.Join(home, "tslink.pid"), nil }
+	isRunningFn = func(string) bool { return true }
+	readPIDFn = func(string) (int, error) { return 1775, nil }
+	servicePath := filepath.Join(home, ".config", "systemd", "user", systemdServiceName)
+	if err := os.MkdirAll(filepath.Dir(servicePath), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	oldUnit := []byte("[Service]\nExecStart=/old/tslink serve\n")
+	if err := os.WriteFile(servicePath, oldUnit, 0o600); err != nil {
+		t.Fatalf("WriteFile(old unit) error = %v", err)
+	}
+
+	daemonReloadCalls := 0
+	verifyCalls := 0
+	systemctlCombinedOutput = func(args ...string) ([]byte, error) {
+		if len(args) < 2 {
+			t.Fatalf("malformed systemctl call: %q", args)
+		}
+		switch args[1] {
+		case "show":
+			if len(args) == 5 {
+				return []byte("MainPID=1775\n"), nil
+			}
+			verifyCalls++
+			if verifyCalls == 1 {
+				return []byte("ActiveState=active\nSubState=running\nMainPID=1775\nNRestarts=0\n"), nil
+			}
+			return []byte("ActiveState=activating\nSubState=auto-restart\nMainPID=0\nNRestarts=1\n"), nil
+		case "daemon-reload":
+			daemonReloadCalls++
+			if daemonReloadCalls == 1 {
+				return []byte("reload stderr"), errors.New("injected upgrade reload failure")
+			}
+		}
+		return nil, nil
+	}
+
+	err := installCmd.RunE(installCmd, nil)
+	if err == nil || !strings.Contains(err.Error(), "prior managed service is not confirmed running") || !strings.Contains(err.Error(), "auto-restart") {
+		t.Fatalf("install RunE() error = %v, want incomplete restoration after restored service dies", err)
+	}
+	if strings.Contains(err.Error(), "previous systemd user unit was restored and restarted") {
+		t.Fatalf("install falsely claimed restored service restarted: %v", err)
+	}
+	if verifyCalls != 2 {
+		t.Fatalf("restored-service verify calls = %d, want 2 sequential samples", verifyCalls)
+	}
+	gotUnit, readErr := os.ReadFile(servicePath)
+	if readErr != nil || !bytes.Equal(gotUnit, oldUnit) {
+		t.Fatalf("restored unit = %q, %v; want %q", gotUnit, readErr, oldUnit)
+	}
+}
+
 func TestLinuxInstallRestoresPreviousUnitAfterUpgradeFailures(t *testing.T) {
 	for _, failStage := range []string{"daemon-reload", "enable", "restart", "verify"} {
 		t.Run(failStage, func(t *testing.T) {
+			stubFastSystemdSettle(t)
 			resetRootJSONFlag(t)
 			home := t.TempDir()
 			oldHome := linuxUserHomeDirFn
@@ -527,7 +908,7 @@ func TestLinuxInstallRestoresPreviousUnitAfterUpgradeFailures(t *testing.T) {
 				t.Fatalf("restored unit mode = %v, %v; want 0600", info, statErr)
 			}
 			ownershipShow := strings.Join([]string{"--user", "show", systemdServiceName, "--property=MainPID", "--no-pager"}, "\x00")
-			verifyShow := strings.Join([]string{"--user", "show", systemdServiceName, "--property=ActiveState", "--property=SubState", "--property=MainPID", "--no-pager"}, "\x00")
+			verifyShow := strings.Join([]string{"--user", "show", systemdServiceName, "--property=ActiveState", "--property=SubState", "--property=MainPID", "--property=NRestarts", "--no-pager"}, "\x00")
 			daemonReload := strings.Join([]string{"--user", "daemon-reload"}, "\x00")
 			enable := strings.Join([]string{"--user", "enable", systemdServiceName}, "\x00")
 			restart := strings.Join([]string{"--user", "restart", systemdServiceName}, "\x00")
@@ -541,7 +922,7 @@ func TestLinuxInstallRestoresPreviousUnitAfterUpgradeFailures(t *testing.T) {
 			case "verify":
 				wantCalls = append(wantCalls, enable, restart, verifyShow)
 			}
-			wantCalls = append(wantCalls, stop, daemonReload, restart, verifyShow)
+			wantCalls = append(wantCalls, stop, daemonReload, restart, verifyShow, verifyShow)
 			if strings.Join(calls, "\n") != strings.Join(wantCalls, "\n") {
 				t.Fatalf("systemctl calls = %q, want exact forward/failure/restore sequence %q", calls, wantCalls)
 			}
