@@ -532,7 +532,7 @@ func TestDefaultMCPActionsUseLocalRegistryAndRedactedStatus(t *testing.T) {
 func TestDefaultMCPActionsUnshareReportsSuccessWithoutAPIClient(t *testing.T) {
 	restoreShareSeams(t)
 	dir := t.TempDir()
-	paths := sharePaths{Registry: filepath.Join(dir, "registry.json")}
+	paths := sharePaths{Registry: filepath.Join(dir, "registry.json"), Ownership: filepath.Join(dir, "node-ownership.json")}
 	if _, err := registry.Add(paths.Registry, registry.Service{Name: "zero-credential", Type: registry.TypeProxy, Target: "http://localhost:3000"}); err != nil {
 		t.Fatal(err)
 	}
@@ -559,7 +559,7 @@ func TestMCPUnshareMissingAgreesWithCLIDefaultIdempotency(t *testing.T) {
 	const name = "missing"
 
 	var cliOut, cliErrOut bytes.Buffer
-	cliErr := removeServiceWithOptions(regPath, name, &cliOut, &cliErrOut, false, false)
+	cliErr := removeServiceWithOptions(regPath, testOwnershipPath(regPath), name, &cliOut, &cliErrOut, false, false)
 	if cliErr != nil {
 		t.Fatalf("CLI default remove returned error for missing service: %v", cliErr)
 	}
@@ -570,7 +570,7 @@ func TestMCPUnshareMissingAgreesWithCLIDefaultIdempotency(t *testing.T) {
 		t.Fatalf("CLI default remove stderr = %q", cliErrOut.String())
 	}
 
-	value, mcpErr := defaultMCPActions(sharePaths{Registry: regPath}, os.Stderr).unshare(name)
+	value, mcpErr := defaultMCPActions(sharePaths{Registry: regPath, Ownership: testOwnershipPath(regPath)}, os.Stderr).unshare(name)
 	summary, ok := value.(mcpUnshareSummary)
 	if mcpErr != nil || !ok {
 		t.Fatalf("MCP unshare = %T(%+v) err=%v", value, value, mcpErr)
@@ -649,6 +649,7 @@ func TestMCPCommandRunsStdioWithoutNonFrames(t *testing.T) {
 	dir := t.TempDir()
 	shareEnsureDirFn = func() error { return nil }
 	shareRegistryPathFn = func() (string, error) { return filepath.Join(dir, "registry.json"), nil }
+	shareOwnershipPathFn = func() (string, error) { return filepath.Join(dir, "node-ownership.json"), nil }
 	sharePIDPathFn = func() (string, error) { return filepath.Join(dir, "pid"), nil }
 	shareSnapshotPathFn = func() (string, error) { return filepath.Join(dir, "runtime.json"), nil }
 	shareAuthHandoffPathFn = func() (string, error) { return filepath.Join(dir, "auth.json"), nil }

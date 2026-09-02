@@ -46,6 +46,7 @@ type shareTargetSpec struct {
 
 type sharePaths struct {
 	Registry    string
+	Ownership   string
 	PID         string
 	Snapshot    string
 	AuthHandoff string
@@ -59,6 +60,7 @@ type shareDaemonStart struct {
 var (
 	shareEnsureDirFn           = config.EnsureDir
 	shareRegistryPathFn        = config.RegistryPath
+	shareOwnershipPathFn       = config.NodeOwnershipPath
 	sharePIDPathFn             = config.PIDPath
 	shareSnapshotPathFn        = config.RuntimeSnapshotPath
 	shareAuthHandoffPathFn     = config.AuthHandoffPath
@@ -74,6 +76,10 @@ func resolveSharePaths() (sharePaths, error) {
 	if err != nil {
 		return sharePaths{}, err
 	}
+	ownershipPath, err := shareOwnershipPathFn()
+	if err != nil {
+		return sharePaths{}, err
+	}
 	pidPath, err := sharePIDPathFn()
 	if err != nil {
 		return sharePaths{}, err
@@ -86,7 +92,7 @@ func resolveSharePaths() (sharePaths, error) {
 	if err != nil {
 		return sharePaths{}, err
 	}
-	return sharePaths{Registry: regPath, PID: pidPath, Snapshot: snapshotPath, AuthHandoff: authPath}, nil
+	return sharePaths{Registry: regPath, Ownership: ownershipPath, PID: pidPath, Snapshot: snapshotPath, AuthHandoff: authPath}, nil
 }
 
 func inferShareTarget(target string, ephemeral bool) (shareTargetSpec, error) {

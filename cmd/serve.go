@@ -43,7 +43,6 @@ var serveDaemon bool
 // Testable function variables for serve
 var (
 	serveWritePIDFn            = daemon.WritePID
-	serveWritePIDForProcessFn  = daemon.WritePIDForProcess
 	serveRemovePIDFn           = daemon.RemovePID
 	serveWithPIDLockFn         = daemon.WithPIDLock
 	serveNewServerFn           = func(authKey, controlURL string) (serverRunner, error) { return server.New(authKey, controlURL) }
@@ -633,9 +632,10 @@ func runForegroundWithOptions(pidPath, authKey, controlURL string, options foreg
 				return "", nil
 			}
 			return serveGetAuthKeyFn(ctx, credentials.AuthKeyOptions{
-				Tags:        svc.Tags,
-				Ephemeral:   svc.Ephemeral,
-				Description: fmt.Sprintf("TSLink service %q startup auth key", svc.Name),
+				Tags:          svc.Tags,
+				Ephemeral:     svc.Ephemeral,
+				Description:   fmt.Sprintf("TSLink service %q startup auth key", svc.Name),
+				ClientFactory: tailapi.NewTailscaleClient,
 			})
 		})
 	}

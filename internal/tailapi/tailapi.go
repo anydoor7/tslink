@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/monody0007/tslink/internal/config"
-	"github.com/monody0007/tslink/internal/credentials"
 	"github.com/monody0007/tslink/internal/registry"
 )
 
@@ -43,7 +42,7 @@ func FindExactDeviceNodeID(ctx context.Context, hostname string) (string, int, e
 	if err := registry.ValidateName(hostname); err != nil {
 		return "", 0, err
 	}
-	client, err := credentials.NewTailscaleClient()
+	client, err := newTailscaleClient()
 	if err != nil {
 		return "", 0, err
 	}
@@ -193,7 +192,7 @@ func CleanupStaleNodesResultWithDryRun(ctx context.Context, targets []CleanupTar
 		return CleanupResult{}, nil
 	}
 
-	client, err := credentials.NewTailscaleClient()
+	client, err := newTailscaleClient()
 	if err != nil {
 		return CleanupResult{}, err
 	}

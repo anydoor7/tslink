@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"path/filepath"
 	"time"
 
 	"github.com/monody0007/tslink/internal/config"
@@ -30,8 +29,7 @@ var deleteDevicesFn = tailapi.DeleteDevicesForService
 var ensureDirFn = config.EnsureDir
 var removeNowFn = time.Now
 
-func removeServiceResult(regPath, name string) (RemoveResult, error) {
-	ownershipPath := filepath.Join(filepath.Dir(regPath), "node-ownership.json")
+func removeServiceResult(regPath, ownershipPath, name string) (RemoveResult, error) {
 	ledger, ownershipErr := tsruntime.LoadOwnership(ownershipPath)
 	var ownedNodeIDs []string
 	if ownershipErr == nil {
@@ -80,12 +78,12 @@ func removeServiceResult(regPath, name string) (RemoveResult, error) {
 	return result, nil
 }
 
-func removeService(regPath, name string, out, errOut io.Writer, isJSON bool) error {
-	return removeServiceWithOptions(regPath, name, out, errOut, isJSON, false)
+func removeService(regPath, ownershipPath, name string, out, errOut io.Writer, isJSON bool) error {
+	return removeServiceWithOptions(regPath, ownershipPath, name, out, errOut, isJSON, false)
 }
 
-func removeServiceWithOptions(regPath, name string, out, errOut io.Writer, isJSON, strict bool) error {
-	result, err := removeServiceResult(regPath, name)
+func removeServiceWithOptions(regPath, ownershipPath, name string, out, errOut io.Writer, isJSON, strict bool) error {
+	result, err := removeServiceResult(regPath, ownershipPath, name)
 	if err != nil {
 		return err
 	}
@@ -152,8 +150,12 @@ Examples:
 			if err != nil {
 				return err
 			}
+			ownershipPath, err := config.NodeOwnershipPath()
+			if err != nil {
+				return err
+			}
 
-			return removeServiceWithOptions(regPath, args[0], cmd.OutOrStdout(), cmd.ErrOrStderr(), jsonOutput(cmd), strict)
+			return removeServiceWithOptions(regPath, ownershipPath, args[0], cmd.OutOrStdout(), cmd.ErrOrStderr(), jsonOutput(cmd), strict)
 		},
 	}
 

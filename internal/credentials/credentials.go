@@ -460,16 +460,26 @@ func NewTailscaleClientWithAPIKey(key string) (*tailscale.Client, error) {
 	return &tailscale.Client{Tailnet: "-", APIKey: key}, nil
 }
 
+// TailscaleClientFactory constructs the REST client used to derive an auth key.
+// Command callers can supply the tailapi loopback-override gate without creating
+// an import cycle back from credentials to tailapi.
+type TailscaleClientFactory func() (*tailscale.Client, error)
+
 // AuthKeyOptions configures the derived auth key.
 type AuthKeyOptions struct {
-	Tags        []string
-	Ephemeral   bool
-	Description string
+	Tags          []string
+	Ephemeral     bool
+	Description   string
+	ClientFactory TailscaleClientFactory
 }
 
 // DeriveAuthKey creates a short-lived, single-use, pre-authorized auth key from the API key.
 func DeriveAuthKey(ctx context.Context, opts AuthKeyOptions) (string, error) {
-	client, err := newTailscaleClientFunc()
+	clientFactory := opts.ClientFactory
+	if clientFactory == nil {
+		clientFactory = newTailscaleClientFunc
+	}
+	client, err := clientFactory()
 	if err != nil {
 		return "", fmt.Errorf("create client: %w", err)
 	}

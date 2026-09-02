@@ -17,6 +17,7 @@ import (
 
 	"github.com/monody0007/tslink/internal/credentials"
 	"github.com/monody0007/tslink/internal/registry"
+	"github.com/monody0007/tslink/internal/testenv"
 	tailscale "tailscale.com/client/tailscale/v2"
 )
 
@@ -37,6 +38,39 @@ func withInviteServer(t *testing.T, handler http.HandlerFunc) {
 		}), nil
 	}
 	t.Cleanup(func() { inviteClientFn = old })
+}
+
+func TestInvitePathUsesLoopbackAPIBaseURLOverride(t *testing.T) {
+	testenv.SetHome(t, t.TempDir())
+	t.Setenv("TSLINK_DISABLE_KEYRING", "1")
+	requests := make(chan string, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests <- r.Method + " " + r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `[]`)
+	}))
+	t.Cleanup(server.Close)
+	t.Setenv(APIBaseURLEnv, server.URL)
+	t.Setenv("TSLINK_API_KEY", "test-placeholder")
+	oldInviteClient := inviteClientFn
+	inviteClientFn = newInviteClient
+	t.Cleanup(func() { inviteClientFn = oldInviteClient })
+
+	result, err := ListInvites(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("ListInvites() error = %v", err)
+	}
+	if !result.Complete || result.Count != 0 {
+		t.Fatalf("ListInvites() = %+v, want complete empty loopback response", result)
+	}
+	select {
+	case got := <-requests:
+		if want := "GET /api/v2/tailnet/-/user-invites"; got != want {
+			t.Fatalf("invite request = %q, want %q", got, want)
+		}
+	default:
+		t.Fatal("loopback invite fake received no request")
+	}
 }
 
 func assertInviteRequest(t *testing.T, req *http.Request, method, path, body string) {

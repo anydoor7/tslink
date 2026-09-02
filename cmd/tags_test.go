@@ -23,7 +23,6 @@ func setTagsMocks(t *testing.T) {
 	origDeleteTag := tagsDeleteTagFn
 	origRegPath := tagsRegistryPathFn
 	origLoadReg := tagsLoadRegistryFn
-	origAddReg := tagsAddRegistryFn
 	origMutateService := tagsMutateServiceFn
 	origEnsureDir := tagsEnsureDirFn
 	origLoadGlobal := tagsLoadGlobalFn
@@ -34,7 +33,6 @@ func setTagsMocks(t *testing.T) {
 		tagsDeleteTagFn = origDeleteTag
 		tagsRegistryPathFn = origRegPath
 		tagsLoadRegistryFn = origLoadReg
-		tagsAddRegistryFn = origAddReg
 		tagsMutateServiceFn = origMutateService
 		tagsEnsureDirFn = origEnsureDir
 		tagsLoadGlobalFn = origLoadGlobal
@@ -48,22 +46,12 @@ func mockRegistryWithServices(services []registry.Service) {
 	tagsLoadRegistryFn = func(path string) (*registry.Registry, error) {
 		return &registry.Registry{Services: append([]registry.Service(nil), stored...)}, nil
 	}
-	tagsAddRegistryFn = func(path string, svc registry.Service) (bool, error) {
-		for i, existing := range stored {
-			if existing.Name == svc.Name {
-				stored[i] = svc
-				return false, nil
-			}
-		}
-		stored = append(stored, svc)
-		return true, nil
-	}
 	tagsMutateServiceFn = func(path, name string, mutate func(registry.Service) (registry.Service, error)) (registry.Service, error) {
 		reg, err := tagsLoadRegistryFn(path)
 		if err != nil {
 			return registry.Service{}, err
 		}
-		for _, svc := range reg.Services {
+		for i, svc := range reg.Services {
 			if svc.Name != name {
 				continue
 			}
@@ -71,9 +59,7 @@ func mockRegistryWithServices(services []registry.Service) {
 			if err != nil {
 				return registry.Service{}, err
 			}
-			if _, err := tagsAddRegistryFn(path, next); err != nil {
-				return registry.Service{}, err
-			}
+			stored[i] = next
 			return next, nil
 		}
 		return registry.Service{}, fmt.Errorf("service not found: %s", name)
@@ -95,9 +81,6 @@ func mockDefaults() {
 			}
 			next, err := mutate(svc)
 			if err != nil {
-				return registry.Service{}, err
-			}
-			if _, err := tagsAddRegistryFn(path, next); err != nil {
 				return registry.Service{}, err
 			}
 			return next, nil
@@ -269,12 +252,6 @@ func TestTagsAdd_Success(t *testing.T) {
 	mockRegistryWithServices([]registry.Service{
 		{Name: "myapp", Tags: []string{"tag:tsmain"}},
 	})
-	var savedSvc registry.Service
-	tagsAddRegistryFn = func(path string, svc registry.Service) (bool, error) {
-		savedSvc = svc
-		return true, nil
-	}
-
 	var buf bytes.Buffer
 	err := tagsAddRun(&buf, "myapp", "tag:shared", false)
 	if err != nil {
@@ -283,8 +260,9 @@ func TestTagsAdd_Success(t *testing.T) {
 	if !strings.Contains(buf.String(), "Added tag:shared to myapp") {
 		t.Errorf("unexpected output: %s", buf.String())
 	}
-	if len(savedSvc.Tags) != 2 || savedSvc.Tags[1] != "tag:shared" {
-		t.Errorf("expected tags [tag:tsmain, tag:shared], got: %v", savedSvc.Tags)
+	stored, loadErr := tagsLoadRegistryFn("")
+	if loadErr != nil || len(stored.Services) != 1 || len(stored.Services[0].Tags) != 2 || stored.Services[0].Tags[1] != "tag:shared" {
+		t.Errorf("stored registry = %+v, err=%v; want tags [tag:tsmain, tag:shared]", stored, loadErr)
 	}
 }
 
@@ -365,8 +343,8 @@ func TestTagsAdd_SaveError(t *testing.T) {
 	mockRegistryWithServices([]registry.Service{
 		{Name: "myapp", Tags: []string{"tag:tsmain"}},
 	})
-	tagsAddRegistryFn = func(path string, svc registry.Service) (bool, error) {
-		return false, fmt.Errorf("save error")
+	tagsMutateServiceFn = func(string, string, func(registry.Service) (registry.Service, error)) (registry.Service, error) {
+		return registry.Service{}, fmt.Errorf("save error")
 	}
 
 	err := tagsAddRun(&bytes.Buffer{}, "myapp", "tag:new", false)
@@ -383,12 +361,6 @@ func TestTagsSet_Success(t *testing.T) {
 	mockRegistryWithServices([]registry.Service{
 		{Name: "myapp", Tags: []string{"tag:tsmain", "tag:old"}},
 	})
-	var savedSvc registry.Service
-	tagsAddRegistryFn = func(path string, svc registry.Service) (bool, error) {
-		savedSvc = svc
-		return true, nil
-	}
-
 	var buf bytes.Buffer
 	err := tagsSetRun(&buf, "myapp", "tag:shared", false)
 	if err != nil {
@@ -397,8 +369,9 @@ func TestTagsSet_Success(t *testing.T) {
 	if !strings.Contains(buf.String(), "Set myapp tags to [tag:shared]") {
 		t.Errorf("unexpected output: %s", buf.String())
 	}
-	if len(savedSvc.Tags) != 1 || savedSvc.Tags[0] != "tag:shared" {
-		t.Errorf("expected tags [tag:shared], got: %v", savedSvc.Tags)
+	stored, loadErr := tagsLoadRegistryFn("")
+	if loadErr != nil || len(stored.Services) != 1 || len(stored.Services[0].Tags) != 1 || stored.Services[0].Tags[0] != "tag:shared" {
+		t.Errorf("stored registry = %+v, err=%v; want tags [tag:shared]", stored, loadErr)
 	}
 }
 
@@ -462,8 +435,8 @@ func TestTagsSet_SaveError(t *testing.T) {
 	mockRegistryWithServices([]registry.Service{
 		{Name: "myapp", Tags: []string{"tag:tsmain"}},
 	})
-	tagsAddRegistryFn = func(path string, svc registry.Service) (bool, error) {
-		return false, fmt.Errorf("save error")
+	tagsMutateServiceFn = func(string, string, func(registry.Service) (registry.Service, error)) (registry.Service, error) {
+		return registry.Service{}, fmt.Errorf("save error")
 	}
 
 	err := tagsSetRun(&bytes.Buffer{}, "myapp", "tag:new", false)

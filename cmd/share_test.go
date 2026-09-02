@@ -15,6 +15,7 @@ import (
 
 	"github.com/monody0007/tslink/internal/output"
 	"github.com/monody0007/tslink/internal/registry"
+	"github.com/monody0007/tslink/internal/testenv"
 )
 
 const stopLivenessHelperReady = "tslink-stop-liveness-helper-ready"
@@ -38,13 +39,14 @@ func TestMain(m *testing.M) {
 		}
 		os.Exit(0)
 	}
-	os.Exit(m.Run())
+	os.Exit(testenv.RunWithNonLoopbackDialGuard(m.Run, "cmd"))
 }
 
 func restoreShareSeams(t *testing.T) {
 	t.Helper()
 	oldEnsure := shareEnsureDirFn
 	oldRegistryPath := shareRegistryPathFn
+	oldOwnershipPath := shareOwnershipPathFn
 	oldPIDPath := sharePIDPathFn
 	oldSnapshotPath := shareSnapshotPathFn
 	oldAuthPath := shareAuthHandoffPathFn
@@ -56,6 +58,7 @@ func restoreShareSeams(t *testing.T) {
 	t.Cleanup(func() {
 		shareEnsureDirFn = oldEnsure
 		shareRegistryPathFn = oldRegistryPath
+		shareOwnershipPathFn = oldOwnershipPath
 		sharePIDPathFn = oldPIDPath
 		shareSnapshotPathFn = oldSnapshotPath
 		shareAuthHandoffPathFn = oldAuthPath
@@ -459,12 +462,14 @@ func TestResolveSharePathsAndCommandOutput(t *testing.T) {
 	dir := t.TempDir()
 	paths := sharePaths{
 		Registry:    filepath.Join(dir, "registry.json"),
+		Ownership:   filepath.Join(dir, "node-ownership.json"),
 		PID:         filepath.Join(dir, "pid"),
 		Snapshot:    filepath.Join(dir, "runtime.json"),
 		AuthHandoff: filepath.Join(dir, "auth.json"),
 	}
 	shareEnsureDirFn = func() error { return nil }
 	shareRegistryPathFn = func() (string, error) { return paths.Registry, nil }
+	shareOwnershipPathFn = func() (string, error) { return paths.Ownership, nil }
 	sharePIDPathFn = func() (string, error) { return paths.PID, nil }
 	shareSnapshotPathFn = func() (string, error) { return paths.Snapshot, nil }
 	shareAuthHandoffPathFn = func() (string, error) { return paths.AuthHandoff, nil }
@@ -580,6 +585,11 @@ func TestResolveSharePathsErrors(t *testing.T) {
 		t.Fatalf("registry err = %v", err)
 	}
 	shareRegistryPathFn = func() (string, error) { return "registry", nil }
+	shareOwnershipPathFn = func() (string, error) { return "", want }
+	if _, err := resolveSharePaths(); !errors.Is(err, want) {
+		t.Fatalf("ownership err = %v", err)
+	}
+	shareOwnershipPathFn = func() (string, error) { return "ownership", nil }
 	sharePIDPathFn = func() (string, error) { return "", want }
 	if _, err := resolveSharePaths(); !errors.Is(err, want) {
 		t.Fatalf("pid err = %v", err)

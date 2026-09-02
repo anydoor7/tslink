@@ -190,7 +190,7 @@ func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 			if err := registry.ValidateName(name); err != nil {
 				return nil, err
 			}
-			removed, err := removeServiceResult(paths.Registry, name)
+			removed, err := removeServiceResult(paths.Registry, paths.Ownership, name)
 			if err != nil {
 				return nil, err
 			}

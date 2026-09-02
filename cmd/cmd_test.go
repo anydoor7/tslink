@@ -871,7 +871,7 @@ func TestRemoveService_Success(t *testing.T) {
 	defer func() { deleteDevicesFn = old }()
 
 	var out, errOut bytes.Buffer
-	if err := removeService(regPath, "web", &out, &errOut, false); err != nil {
+	if err := removeService(regPath, testOwnershipPath(regPath), "web", &out, &errOut, false); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !strings.Contains(out.String(), "removed") {
@@ -883,7 +883,7 @@ func TestRemoveService_NotFound(t *testing.T) {
 	dir := t.TempDir()
 	regPath := filepath.Join(dir, "registry.json")
 	var out, errOut bytes.Buffer
-	if err := removeService(regPath, "nonexistent", &out, &errOut, false); err != nil {
+	if err := removeService(regPath, testOwnershipPath(regPath), "nonexistent", &out, &errOut, false); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !strings.Contains(out.String(), "not registered") {
@@ -903,7 +903,7 @@ func TestRemoveService_TailapiWarning(t *testing.T) {
 	defer func() { deleteDevicesFn = old }()
 
 	var out, errOut bytes.Buffer
-	if err := removeService(regPath, "web", &out, &errOut, false); err != nil {
+	if err := removeService(regPath, testOwnershipPath(regPath), "web", &out, &errOut, false); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !strings.Contains(errOut.String(), "warning") {

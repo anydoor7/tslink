@@ -3,8 +3,10 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +19,67 @@ import (
 	"github.com/monody0007/tslink/internal/testenv"
 	"github.com/spf13/cobra"
 )
+
+type cleanupExactLookupFake struct {
+	nodeID  string
+	matches int
+	err     error
+}
+
+func (f cleanupExactLookupFake) Find(context.Context, string) (string, int, error) {
+	if f.matches != 1 {
+		return "", f.matches, f.err
+	}
+	return f.nodeID, f.matches, f.err
+}
+
+type adoptOwnedNodeContractFake struct {
+	ledger tsruntime.OwnershipLedger
+}
+
+func (f *adoptOwnedNodeContractFake) Adopt(_ string, serviceName, nodeID string, recordedAt time.Time, retire bool) error {
+	next, err := contractAdoptedLedger(f.ledger, serviceName, nodeID, recordedAt, retire, true)
+	if err != nil {
+		return err
+	}
+	f.ledger = next
+	return nil
+}
+
+type previewAdoptOwnedNodeContractFake struct {
+	ledger tsruntime.OwnershipLedger
+}
+
+func (f previewAdoptOwnedNodeContractFake) Preview(_ string, serviceName, nodeID string, recordedAt time.Time, retire bool) (tsruntime.OwnershipLedger, error) {
+	return contractAdoptedLedger(f.ledger, serviceName, nodeID, recordedAt, retire, false)
+}
+
+func contractAdoptedLedger(ledger tsruntime.OwnershipLedger, serviceName, nodeID string, recordedAt time.Time, retire, sortForWrite bool) (tsruntime.OwnershipLedger, error) {
+	if strings.TrimSpace(serviceName) == "" || strings.TrimSpace(nodeID) == "" {
+		return tsruntime.OwnershipLedger{}, errors.New("invalid contract adoption")
+	}
+	recordedAt = recordedAt.UTC()
+	var retiredAt *time.Time
+	if retire {
+		retiredAt = &recordedAt
+	}
+	ledger.SchemaVersion = tsruntime.OwnershipSchemaVersion
+	ledger.Nodes = append(append([]tsruntime.OwnedNode(nil), ledger.Nodes...), tsruntime.OwnedNode{
+		ServiceName: serviceName,
+		NodeID:      nodeID,
+		RecordedAt:  recordedAt,
+		RetiredAt:   retiredAt,
+	})
+	if sortForWrite {
+		sort.Slice(ledger.Nodes, func(i, j int) bool {
+			if ledger.Nodes[i].ServiceName == ledger.Nodes[j].ServiceName {
+				return ledger.Nodes[i].NodeID < ledger.Nodes[j].NodeID
+			}
+			return ledger.Nodes[i].ServiceName < ledger.Nodes[j].ServiceName
+		})
+	}
+	return ledger, nil
+}
 
 func TestCleanupCommandDefaultsToDryRunAndPassesManageACLOptIn(t *testing.T) {
 	testenv.SetHome(t, t.TempDir())
@@ -99,12 +162,8 @@ func TestCleanupAdoptRejectsZeroAndMultipleExactMatches(t *testing.T) {
 	for _, matches := range []int{0, 2} {
 		t.Run(fmt.Sprintf("matches_%d", matches), func(t *testing.T) {
 			command := withCleanupAdoptionSeams(t)
-			cleanupFindExactDeviceNodeIDFn = func(context.Context, string) (string, int, error) {
-				if matches > 1 {
-					return "node-last-duplicate", matches, nil
-				}
-				return "", matches, nil
-			}
+			fake := cleanupExactLookupFake{nodeID: "node-last-duplicate", matches: matches}
+			cleanupFindExactDeviceNodeIDFn = fake.Find
 			if err := command.Flags().Set("adopt", "legacy"); err != nil {
 				t.Fatal(err)
 			}
@@ -277,17 +336,18 @@ func TestCleanupAdoptPreviewAndApplyUseSameRetireDecision(t *testing.T) {
 	if _, err := registry.Add(regPath, registry.Service{Name: "registered", Type: registry.TypeProxy, Target: "http://localhost:3000"}); err != nil {
 		t.Fatal(err)
 	}
-	cleanupFindExactDeviceNodeIDFn = func(context.Context, string) (string, int, error) {
-		return "node-registered", 1, nil
-	}
+	lookupFake := cleanupExactLookupFake{nodeID: "node-registered", matches: 1}
+	cleanupFindExactDeviceNodeIDFn = lookupFake.Find
 	var previewRetire, applyRetire bool
+	previewFake := previewAdoptOwnedNodeContractFake{}
+	applyFake := &adoptOwnedNodeContractFake{}
 	cleanupPreviewAdoptOwnedNodeFn = func(_, _, _ string, _ time.Time, boolRetire bool) (tsruntime.OwnershipLedger, error) {
 		previewRetire = boolRetire
-		return tsruntime.OwnershipLedger{SchemaVersion: tsruntime.OwnershipSchemaVersion, Nodes: []tsruntime.OwnedNode{}}, nil
+		return previewFake.Preview("", "registered", "node-registered", time.Time{}, boolRetire)
 	}
 	cleanupAdoptOwnedNodeFn = func(_, _, _ string, _ time.Time, boolRetire bool) error {
 		applyRetire = boolRetire
-		return nil
+		return applyFake.Adopt("", "registered", "node-registered", time.Time{}, boolRetire)
 	}
 	cleanupReconcileFn = func(_ context.Context, options lifecycle.Options) (lifecycle.Result, error) {
 		return lifecycle.Result{DryRun: options.DryRun, ACLAction: lifecycle.ACLNotRequested}, nil

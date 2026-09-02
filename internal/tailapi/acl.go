@@ -10,7 +10,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/monody0007/tslink/internal/credentials"
 	"github.com/monody0007/tslink/internal/registry"
 	"github.com/tailscale/hujson"
 	tailscale "tailscale.com/client/tailscale/v2"
@@ -49,7 +48,7 @@ var ErrTailnetHTTPSDisabled = errors.New("tailnet HTTPS is disabled")
 var ErrTailnetSettingsUnavailable = errors.New("tailnet settings unavailable")
 
 // aclClientFn is a testable seam for creating the Tailscale API client.
-var aclClientFn = credentials.NewTailscaleClient
+var aclClientFn = newTailscaleClient
 
 // policyMutationMu serializes process-local policy read-modify-write cycles.
 // The ETag remains the cross-process concurrency guard.

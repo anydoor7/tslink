@@ -110,6 +110,42 @@ func authKeyPath(t *testing.T) string {
 	return path
 }
 
+func rejectingAPIClientFactory(t *testing.T) (TailscaleClientFactory, <-chan string) {
+	t.Helper()
+	requests := make(chan string, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests <- r.Method + " " + r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"status":503,"message":"synthetic API rejection"}`))
+	}))
+	t.Cleanup(server.Close)
+	baseURL, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatalf("parse httptest URL: %v", err)
+	}
+	return func() (*tailscale.Client, error) {
+		return &tailscale.Client{
+			Tailnet: "-",
+			APIKey:  "tskey-api-placeholder",
+			BaseURL: baseURL,
+			HTTP:    server.Client(),
+		}, nil
+	}, requests
+}
+
+func assertCreateAuthKeyRequest(t *testing.T, requests <-chan string) {
+	t.Helper()
+	select {
+	case got := <-requests:
+		if want := "POST /api/v2/tailnet/-/keys"; got != want {
+			t.Fatalf("auth-key request = %q, want %q", got, want)
+		}
+	default:
+		t.Fatal("httptest server received no auth-key request")
+	}
+}
+
 func TestSetAPIKey_Keychain(t *testing.T) {
 	setup(t)
 
@@ -1137,20 +1173,16 @@ func TestMigrateFromLegacy_ReadError(t *testing.T) {
 
 func TestDeriveAuthKey_APICallError(t *testing.T) {
 	setup(t)
+	clientFactory, requests := rejectingAPIClientFactory(t)
 
-	if err := SetAPIKey("tskey-api-fake-key"); err != nil {
-		t.Fatalf("SetAPIKey() error = %v", err)
-	}
-
-	// DeriveAuthKey will create a client (key is set) then call CreateKey()
-	// which will fail because no real Tailscale API is available
-	_, err := DeriveAuthKey(context.Background(), AuthKeyOptions{})
+	_, err := DeriveAuthKey(context.Background(), AuthKeyOptions{ClientFactory: clientFactory})
 	if err == nil {
-		t.Fatal("DeriveAuthKey() error = nil, want error (no real API)")
+		t.Fatal("DeriveAuthKey() error = nil, want synthetic API error")
 	}
 	if !strings.Contains(err.Error(), "derive auth key") {
 		t.Fatalf("DeriveAuthKey() error = %v, want 'derive auth key' error", err)
 	}
+	assertCreateAuthKeyRequest(t, requests)
 }
 
 func TestGetAuthKey_WithAPIKey_DeriveError(t *testing.T) {
@@ -1160,11 +1192,15 @@ func TestGetAuthKey_WithAPIKey_DeriveError(t *testing.T) {
 		t.Fatalf("SetAPIKey() error = %v", err)
 	}
 
-	// GetAuthKey with an API key will try DeriveAuthKey, which fails without real API
-	_, err := GetAuthKey(context.Background(), AuthKeyOptions{})
+	clientFactory, requests := rejectingAPIClientFactory(t)
+	_, err := GetAuthKey(context.Background(), AuthKeyOptions{ClientFactory: clientFactory})
 	if err == nil {
 		t.Fatal("GetAuthKey() error = nil, want error from DeriveAuthKey")
 	}
+	if !strings.Contains(err.Error(), "derive auth key") {
+		t.Fatalf("GetAuthKey() error = %v, want 'derive auth key' error", err)
+	}
+	assertCreateAuthKeyRequest(t, requests)
 }
 
 // --- Tests for uncovered error paths ---

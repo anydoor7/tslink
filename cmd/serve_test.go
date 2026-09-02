@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -24,6 +25,19 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/zalando/go-keyring"
 )
+
+type cleanupDevicesContractFake struct {
+	targets []tailapi.CleanupTarget
+	result  tailapi.CleanupResult
+	err     error
+}
+
+func (f cleanupDevicesContractFake) Cleanup(_ context.Context, targets []tailapi.CleanupTarget) (tailapi.CleanupResult, error) {
+	if !reflect.DeepEqual(targets, f.targets) {
+		return tailapi.CleanupResult{}, fmt.Errorf("targets = %+v, want %+v", targets, f.targets)
+	}
+	return f.result, f.err
+}
 
 type mockServer struct {
 	runErr            error
@@ -224,7 +238,6 @@ func saveServeState(t *testing.T) {
 		isTerminal         func() bool
 		signalContext      func() (context.Context, context.CancelFunc)
 		writePID           func(string) error
-		writePIDForProcess func(string, int) error
 		removePID          func(string)
 		withPIDLock        func(string, func() error) error
 		newServer          func(string, string) (serverRunner, error)
@@ -236,7 +249,7 @@ func saveServeState(t *testing.T) {
 		serveLoadGlobalFn, serveLogDirFn, serveDaemonizeFn, serveReadPIDFn,
 		serveReadyPathFn, serveAuthHandoffPathFn, serveWriteReadyFn, serveReadReadyFn, serveRemoveReadyFn,
 		serveSaveAuthHandoffFn, serveLoadAuthHandoffFn, serveRemoveAuthHandoffFn, serveOpenBrowserFn, serveCIEnvironmentSetFn, serveIsTerminalFn, serveSignalContextFn,
-		serveWritePIDFn, serveWritePIDForProcessFn, serveRemovePIDFn, serveWithPIDLockFn, serveNewServerFn,
+		serveWritePIDFn, serveRemovePIDFn, serveWithPIDLockFn, serveNewServerFn,
 		serveDaemonReadyTimeout, serveDaemonReadyPollInterval,
 	}
 	t.Cleanup(func() {
@@ -270,7 +283,6 @@ func saveServeState(t *testing.T) {
 		serveIsTerminalFn = old.isTerminal
 		serveSignalContextFn = old.signalContext
 		serveWritePIDFn = old.writePID
-		serveWritePIDForProcessFn = old.writePIDForProcess
 		serveRemovePIDFn = old.removePID
 		serveWithPIDLockFn = old.withPIDLock
 		serveNewServerFn = old.newServer
@@ -335,9 +347,6 @@ func mockServeDefaults(t *testing.T, dir string) {
 	serveRemoveReadyFn = func(path string) { os.Remove(path) }
 	serveCIEnvironmentSetFn = func() bool { return false }
 	serveWritePIDFn = func(path string) error { return os.WriteFile(path, []byte("12345"), 0600) }
-	serveWritePIDForProcessFn = func(path string, pid int) error {
-		return os.WriteFile(path, []byte(fmt.Sprintf("%d", pid)), 0600)
-	}
 	serveRemovePIDFn = func(path string) { os.Remove(path) }
 	serveWithPIDLockFn = func(path string, fn func() error) error { return fn() }
 	serveNewServerFn = func(authKey, controlURL string) (serverRunner, error) {
@@ -532,6 +541,44 @@ func TestRunForegroundLifecycleWiringPreservesApplyAndManageACLOptIn(t *testing.
 				t.Fatal(err)
 			}
 			if got.DryRun || got.ManageACL != tc.manageACL || got.CheckUnusedACL != tc.manageACL || !got.Now.Equal(now) {
+				t.Fatalf("lifecycle options = %+v, manageACL=%t", got, tc.manageACL)
+			}
+		})
+	}
+}
+
+func TestServeCmdPropagatesManageACLIntoLifecycleReconciler(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		manageACL bool
+	}{
+		{name: "default remains read only", manageACL: false},
+		{name: "explicit opt in reaches lifecycle", manageACL: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Setenv(config.ConfigDirEnv, dir)
+			mockServeDefaults(t, dir)
+
+			now := time.Date(2030, 9, 1, 12, 0, 0, 0, time.UTC)
+			mock := &mockServerWithLifecycle{runAt: now}
+			serveNewServerFn = func(string, string) (serverRunner, error) { return mock, nil }
+			var got lifecycle.Options
+			serveLifecycleReconcileFn = func(_ context.Context, options lifecycle.Options) (lifecycle.Result, error) {
+				got = options
+				return lifecycle.Result{}, nil
+			}
+
+			cmd := findServeCmd(t)
+			if tc.manageACL {
+				if err := cmd.Flags().Set("manage-acl", "true"); err != nil {
+					t.Fatalf("set manage-acl: %v", err)
+				}
+			}
+			if err := cmd.RunE(cmd, nil); err != nil {
+				t.Fatalf("RunE() error = %v", err)
+			}
+			if got.ManageACL != tc.manageACL || got.CheckUnusedACL != tc.manageACL {
 				t.Fatalf("lifecycle options = %+v, manageACL=%t", got, tc.manageACL)
 			}
 		})
@@ -867,9 +914,8 @@ func TestServeCmd_CleanupErrorDegradesAndStarts(t *testing.T) {
 	mockServeDefaults(t, dir)
 
 	serverStarted := false
-	serveCleanupFn = func(ctx context.Context, targets []tailapi.CleanupTarget) (tailapi.CleanupResult, error) {
-		return tailapi.CleanupResult{}, fmt.Errorf("list devices: network down")
-	}
+	cleanupFake := cleanupDevicesContractFake{targets: []tailapi.CleanupTarget{}, err: fmt.Errorf("list devices: network down")}
+	serveCleanupFn = cleanupFake.Cleanup
 	serveNewServerFn = func(authKey, controlURL string) (serverRunner, error) {
 		serverStarted = true
 		return &mockServer{}, nil
@@ -1077,6 +1123,21 @@ func TestServeCmd_WithTagsAndEphemeral(t *testing.T) {
 	}
 	if !strings.Contains(capturedOpts.Description, "svc1") {
 		t.Errorf("description = %q, want service name", capturedOpts.Description)
+	}
+	if capturedOpts.ClientFactory == nil {
+		t.Fatal("auth-key client factory = nil, want tailapi loopback override gate")
+	}
+	t.Setenv(tailapi.APIBaseURLEnv, "http://127.0.0.1:1")
+	t.Setenv("TSLINK_API_KEY", "test-placeholder")
+	client, err := capturedOpts.ClientFactory()
+	if err != nil {
+		t.Fatalf("auth-key client factory error = %v", err)
+	}
+	if client == nil || client.BaseURL == nil {
+		t.Fatal("auth-key client BaseURL = nil, want loopback override")
+	}
+	if got := client.BaseURL.String(); got != "http://127.0.0.1:1" {
+		t.Fatalf("auth-key client BaseURL = %q, want loopback override", got)
 	}
 }
 

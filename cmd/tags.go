@@ -61,16 +61,15 @@ const tagsRemoteAPITokenMessage = "remote tag deletion requires a Tailscale API 
 
 // Testable function variables for tags commands.
 var (
-	tagsReadTagsFn                                                   = tailapi.ReadTags
-	tagsDeleteTagFn                                                  = tailapi.DeleteTag
-	tagsRegistryPathFn                                               = config.RegistryPath
-	tagsLoadRegistryFn                                               = registry.Load
-	tagsAddRegistryFn   func(string, registry.Service) (bool, error) = registry.Add
-	tagsMutateServiceFn                                              = registry.MutateService
-	tagsEnsureDirFn                                                  = config.EnsureDir
-	tagsLoadGlobalFn                                                 = config.LoadGlobalConfig
-	tagsSaveGlobalFn                                                 = config.SaveGlobalConfig
-	tagsGetDefaultFn                                                 = config.GetDefaultTag
+	tagsReadTagsFn      = tailapi.ReadTags
+	tagsDeleteTagFn     = tailapi.DeleteTag
+	tagsRegistryPathFn  = config.RegistryPath
+	tagsLoadRegistryFn  = registry.Load
+	tagsMutateServiceFn = registry.MutateService
+	tagsEnsureDirFn     = config.EnsureDir
+	tagsLoadGlobalFn    = config.LoadGlobalConfig
+	tagsSaveGlobalFn    = config.SaveGlobalConfig
+	tagsGetDefaultFn    = config.GetDefaultTag
 )
 
 func validateTagPrefix(tag string) error {

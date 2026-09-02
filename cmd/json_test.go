@@ -394,7 +394,7 @@ func TestRemoveJSON_Success(t *testing.T) {
 
 	var out, errOut bytes.Buffer
 	got := captureStdout(t, func() {
-		if err := removeService(regPath, "web", &out, &errOut, true); err != nil {
+		if err := removeService(regPath, testOwnershipPath(regPath), "web", &out, &errOut, true); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	})
@@ -426,7 +426,7 @@ func TestRemoveJSON_NotFound(t *testing.T) {
 
 	var out, errOut bytes.Buffer
 	got := captureStdout(t, func() {
-		if err := removeService(regPath, "nonexistent", &out, &errOut, true); err != nil {
+		if err := removeService(regPath, testOwnershipPath(regPath), "nonexistent", &out, &errOut, true); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	})
@@ -467,7 +467,7 @@ func TestRemoveJSON_DeviceCleanupSkipped(t *testing.T) {
 
 	var out, errOut bytes.Buffer
 	got := captureStdout(t, func() {
-		if err := removeService(regPath, "web", &out, &errOut, true); err != nil {
+		if err := removeService(regPath, testOwnershipPath(regPath), "web", &out, &errOut, true); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	})
@@ -502,7 +502,7 @@ func TestRemoveJSON_NoAPIClientCleanupSkipped(t *testing.T) {
 
 	var out, errOut bytes.Buffer
 	got := captureStdout(t, func() {
-		if err := removeService(regPath, "web", &out, &errOut, true); err != nil {
+		if err := removeService(regPath, testOwnershipPath(regPath), "web", &out, &errOut, true); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	})
@@ -722,10 +722,6 @@ func TestTagsAddJSON_Success(t *testing.T) {
 	mockRegistryWithServices([]registry.Service{
 		{Name: "myapp", Tags: []string{"tag:tsmain"}},
 	})
-	tagsAddRegistryFn = func(path string, svc registry.Service) (bool, error) {
-		return true, nil
-	}
-
 	var buf bytes.Buffer
 	got := captureStdout(t, func() {
 		if err := tagsAddRun(&buf, "myapp", "tag:shared", true); err != nil {
@@ -771,10 +767,6 @@ func TestTagsSetJSON(t *testing.T) {
 	mockRegistryWithServices([]registry.Service{
 		{Name: "myapp", Tags: []string{"tag:tsmain", "tag:old"}},
 	})
-	tagsAddRegistryFn = func(path string, svc registry.Service) (bool, error) {
-		return true, nil
-	}
-
 	var buf bytes.Buffer
 	got := captureStdout(t, func() {
 		if err := tagsSetRun(&buf, "myapp", "tag:shared", true); err != nil {
@@ -1049,7 +1041,7 @@ func TestRemoveJSON_WithDeviceWarning(t *testing.T) {
 
 	var out, errOut bytes.Buffer
 	got := captureStdout(t, func() {
-		if err := removeService(regPath, "web", &out, &errOut, true); err != nil {
+		if err := removeService(regPath, testOwnershipPath(regPath), "web", &out, &errOut, true); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	})

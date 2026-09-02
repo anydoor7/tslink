@@ -3,7 +3,10 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"fmt"
+	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +15,71 @@ import (
 	tsruntime "github.com/monody0007/tslink/internal/runtime"
 	"github.com/monody0007/tslink/internal/tailapi"
 )
+
+type deleteDevicesContractFake struct {
+	target tailapi.CleanupTarget
+	result tailapi.CleanupResult
+	err    error
+}
+
+func (f deleteDevicesContractFake) Delete(_ context.Context, target tailapi.CleanupTarget) (tailapi.CleanupResult, error) {
+	if !reflect.DeepEqual(target, f.target) {
+		return tailapi.CleanupResult{}, fmt.Errorf("target = %+v, want %+v", target, f.target)
+	}
+	return f.result, f.err
+}
+
+func testOwnershipPath(regPath string) string {
+	return filepath.Join(filepath.Dir(regPath), "node-ownership.json")
+}
+
+func TestRemoveUsesExplicitOwnershipPathIndependentOfRegistryLocation(t *testing.T) {
+	registryDir := t.TempDir()
+	ownershipDir := t.TempDir()
+	regPath := filepath.Join(registryDir, "registry.json")
+	ownershipPath := filepath.Join(ownershipDir, "node-ownership.json")
+	siblingPath := testOwnershipPath(regPath)
+	if _, err := registry.Add(regPath, registry.Service{Name: "split-path", Type: registry.TypeProxy, Target: "http://localhost:3000"}); err != nil {
+		t.Fatal(err)
+	}
+	recordedAt := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	if err := tsruntime.RecordOwnedNode(ownershipPath, "split-path", "node-split", recordedAt); err != nil {
+		t.Fatal(err)
+	}
+	if err := tsruntime.RecordOwnedNode(siblingPath, "unrelated", "node-unrelated", recordedAt); err != nil {
+		t.Fatal(err)
+	}
+	siblingBefore, err := os.ReadFile(siblingPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	oldDelete, oldNow := deleteDevicesFn, removeNowFn
+	t.Cleanup(func() { deleteDevicesFn, removeNowFn = oldDelete, oldNow })
+	removeNowFn = func() time.Time { return recordedAt.Add(time.Hour) }
+	deleteDevicesFn = func(_ context.Context, target tailapi.CleanupTarget) (tailapi.CleanupResult, error) {
+		if strings.Join(target.NodeIDs, ",") != "node-split" {
+			t.Fatalf("cleanup NodeIDs = %v, want proof from explicit ownership path", target.NodeIDs)
+		}
+		return tailapi.CleanupResult{Skipped: true, SkipReason: tailapi.ErrNoAPIClient.Error()}, nil
+	}
+
+	result, err := removeServiceResult(regPath, ownershipPath, "split-path")
+	if err != nil || !result.Removed {
+		t.Fatalf("removeServiceResult() = %+v, err=%v", result, err)
+	}
+	ledger, err := tsruntime.LoadOwnership(ownershipPath)
+	if err != nil || len(ledger.Nodes) != 1 || ledger.Nodes[0].RetiredAt == nil {
+		t.Fatalf("explicit ownership ledger = %+v, err=%v, want retired proof", ledger, err)
+	}
+	siblingAfter, err := os.ReadFile(siblingPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(siblingAfter) != string(siblingBefore) {
+		t.Fatal("remove mutated the registry-sibling ledger instead of the explicit ownership path")
+	}
+}
 
 func TestRemoveService_NoAPIClientSkipIsReported(t *testing.T) {
 	dir := t.TempDir()
@@ -27,7 +95,7 @@ func TestRemoveService_NoAPIClientSkipIsReported(t *testing.T) {
 	}
 
 	var out, errOut bytes.Buffer
-	if err := removeService(regPath, "web", &out, &errOut, false); err != nil {
+	if err := removeService(regPath, testOwnershipPath(regPath), "web", &out, &errOut, false); err != nil {
 		t.Fatalf("removeService() error = %v", err)
 	}
 	if !strings.Contains(out.String(), "removed") {
@@ -58,7 +126,7 @@ func TestRemoveClockRollbackWritesReadableClampedLedger(t *testing.T) {
 	deleteDevicesFn = func(context.Context, tailapi.CleanupTarget) (tailapi.CleanupResult, error) {
 		return tailapi.CleanupResult{}, tailapi.ErrNoAPIClient
 	}
-	result, err := removeServiceResult(regPath, "clocked")
+	result, err := removeServiceResult(regPath, ownershipPath, "clocked")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,20 +156,20 @@ func TestRemoveService_ProtectedCleanupSkipIsReported(t *testing.T) {
 
 	oldDelete := deleteDevicesFn
 	t.Cleanup(func() { deleteDevicesFn = oldDelete })
-	deleteDevicesFn = func(ctx context.Context, target tailapi.CleanupTarget) (tailapi.CleanupResult, error) {
-		if target.Hostname != "web" || len(target.Tags) != 1 || target.Tags[0] != "tag:tsmain" {
-			t.Fatalf("cleanup target = %+v, want service hostname and tags", target)
-		}
-		return tailapi.CleanupResult{
+	target := tailapi.CleanupTarget{Hostname: "web", Tags: []string{"tag:tsmain"}}
+	fake := deleteDevicesContractFake{
+		target: target,
+		result: tailapi.CleanupResult{
 			Matched:    []string{"web"},
 			Protected:  []string{"web"},
 			Skipped:    true,
 			SkipReason: "ownership could not be proven",
-		}, nil
+		},
 	}
+	deleteDevicesFn = fake.Delete
 
 	var out, errOut bytes.Buffer
-	if err := removeService(regPath, "web", &out, &errOut, false); err != nil {
+	if err := removeService(regPath, testOwnershipPath(regPath), "web", &out, &errOut, false); err != nil {
 		t.Fatalf("removeService() error = %v", err)
 	}
 	if !strings.Contains(out.String(), "ownership could not be proven") {
@@ -156,7 +224,7 @@ func TestRemoveServicePassesOnlyNamedServicesOwnershipProof(t *testing.T) {
 		}
 		return tailapi.CleanupResult{}, nil
 	}
-	if _, err := removeServiceResult(regPath, "web"); err != nil {
+	if _, err := removeServiceResult(regPath, ownershipPath, "web"); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -213,7 +213,7 @@ type inviteAPI interface {
 var inviteClientFn = newInviteClient
 
 func newInviteClient() (inviteAPI, error) {
-	client, err := credentials.NewTailscaleClientWithUserOwnedAPIKey()
+	client, err := newUserOwnedTailscaleClient()
 	if err != nil {
 		if errors.Is(err, credentials.ErrUserOwnedAPIKeyRequired) {
 			return nil, registry.CodedError{
@@ -224,6 +224,9 @@ func newInviteClient() (inviteAPI, error) {
 			}
 		}
 		return nil, err
+	}
+	if rawBaseURL, set := lookupAPIClientEnvFn(APIBaseURLEnv); set && strings.TrimSpace(rawBaseURL) != "" && client.BaseURL == nil {
+		return nil, fmt.Errorf("%s override produced an invite client without a BaseURL; refusing to fall back to the public Tailscale API", APIBaseURLEnv)
 	}
 	return newInviteHTTPClient(client), nil
 }
