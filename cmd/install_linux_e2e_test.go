@@ -29,25 +29,33 @@ import (
 //	TSLINK_SYSTEMD_E2E_GOOD_BIN  absolute path; a build whose `serve` stays up
 //	TSLINK_SYSTEMD_E2E_BAD_BIN   absolute path; a build whose `serve` exits at once
 //
+// Before touching anything the test refuses to run when the host looks like a
+// real installation rather than a disposable one: a unit that is running, a
+// unit file that points at a binary this e2e did not supply, or a stored
+// Tailscale credential (the daemon starts from systemd's environment, so no
+// test-side variable can keep a credentialed serve off the tailnet).
+//
 // Every assertion about the unit is made by this test against systemd itself,
 // never by trusting the product's own verify: that verify is the thing under test.
+//
+// Known blind spot, by design of the product verify: the bad fixture dies at
+// exec time. A serve that dies after the two settle samples but before the
+// window closes is certified "settled" (the verify proves settling, not
+// survival) and this e2e does not probe that band.
 
 // systemdE2ESentinel is the one failure line scripts/systemd-e2e.sh keys on to
 // tell "the e2e observed the defect" apart from "the e2e failed for another
-// reason". Keep the text in sync with the script.
+// reason". The script checks at preflight that this text is still present here.
 const systemdE2ESentinel = "E2E_SENTINEL: install claimed success while the unit is crash-looping"
-
-const systemdE2EProbeService = "tslink-e2e-probe"
 
 func TestSystemdInstallE2E(t *testing.T) {
 	good, bad := systemdE2EBinaries(t)
 	systemdE2ERequireUserManager(t)
-	systemdE2ERefuseIfUnitActive(t)
+	systemdE2ERefuseForeignUnit(t, good, bad)
+	systemdE2ERefuseStoredCredential(t, good)
 
-	addedProbe := false
-	t.Cleanup(func() { systemdE2EReset(t, good, addedProbe) })
-	systemdE2EReset(t, good, false)
-	addedProbe = systemdE2EEnsureRegistryHasService(t, good)
+	t.Cleanup(func() { systemdE2EReset(t) })
+	systemdE2EReset(t)
 
 	t.Run("fresh install of a healthy serve settles and stays up", func(t *testing.T) {
 		run := systemdE2ERun(t, good, "install", "--json")
@@ -61,6 +69,10 @@ func TestSystemdInstallE2E(t *testing.T) {
 			t.Fatalf("MainPID drifted %d -> %d after a healthy install", pid, again)
 		}
 		systemdE2ERequireExecStart(t, good)
+		if props := systemdE2EShow(t, "UnitFileState"); props["UnitFileState"] != "enabled" {
+			t.Fatalf("after good install: UnitFileState = %q, want enabled", props["UnitFileState"])
+		}
+		systemdE2ERequireUnitFileMode(t, 0o600)
 	})
 
 	t.Run("upgrade to a crash-looping serve is rolled back to the previous unit", func(t *testing.T) {
@@ -79,8 +91,9 @@ func TestSystemdInstallE2E(t *testing.T) {
 		if !result.OK || run.ExitCode != 0 {
 			t.Fatalf("good uninstall: ok=%v exit=%d stdout=%s stderr=%q", result.OK, run.ExitCode, run.Stdout, run.Stderr)
 		}
-		if props := systemdE2EShow(t, "LoadState", "ActiveState"); props["ActiveState"] != "inactive" {
-			t.Fatalf("after uninstall: %v, want ActiveState=inactive", props)
+		props := systemdE2EShow(t, "LoadState", "ActiveState")
+		if props["LoadState"] != "not-found" || props["ActiveState"] != "inactive" {
+			t.Fatalf("after uninstall: %v, want LoadState=not-found ActiveState=inactive", props)
 		}
 	})
 
@@ -131,15 +144,44 @@ func systemdE2ERequireUserManager(t *testing.T) {
 	}
 }
 
-func systemdE2ERefuseIfUnitActive(t *testing.T) {
+// systemdE2ERefuseForeignUnit refuses a running unit, and a unit file whose
+// ExecStart points at a binary this e2e did not supply: that is a real
+// installation, and the reset below would delete its unit file.
+// Leftovers of an aborted e2e run point at the e2e's own binaries and pass.
+func systemdE2ERefuseForeignUnit(t *testing.T, good, bad string) {
 	t.Helper()
-	props := systemdE2EShow(t, "LoadState", "ActiveState", "SubState")
+	props := systemdE2EShow(t, "LoadState", "ActiveState", "SubState", "ExecStart")
 	switch props["ActiveState"] {
 	case "active", "activating", "reloading", "deactivating":
 		t.Fatalf("refusing: %s is %s/%s on this host; this e2e installs and removes the real unit", systemdServiceName, props["ActiveState"], props["SubState"])
 	}
+	if props["LoadState"] != "loaded" {
+		return
+	}
+	execPath := systemdE2EExecStartPath(props["ExecStart"])
+	execDir := filepath.Dir(execPath)
+	if execPath == "" || (execDir != filepath.Dir(good) && execDir != filepath.Dir(bad)) {
+		t.Fatalf("refusing: an existing %s runs %q, which this e2e did not install; stop, disable, and remove it yourself if that is intended", systemdServiceName, execPath)
+	}
 }
 
+// systemdE2ERefuseStoredCredential refuses hosts that hold a Tailscale
+// credential. The check runs with the bare host environment on purpose:
+// TSLINK_DISABLE_KEYRING=1 would blind it, and the daemon systemd starts never
+// sees that variable anyway.
+func systemdE2ERefuseStoredCredential(t *testing.T, good string) {
+	t.Helper()
+	run := e2eRunBinary(t, good, "", "", os.Environ(), "status", "--json")
+	_, data := e2eDecodeEnvelope(t, run, "status (credential check)")
+	if data["credential_stored"] == true {
+		t.Fatalf("refusing: a Tailscale credential is stored on this host; a healthy install would register a real node")
+	}
+}
+
+// systemdE2EEnv keeps the CLI processes off the keyring. Deliberately no
+// TSLINK_CONFIG_DIR: the unit file has no Environment= line, so the daemon
+// always uses the real ~/.config/tslink; giving the CLI a private config dir
+// would desync its pidfile view from MainPID and trip the ownership guard.
 func systemdE2EEnv() []string {
 	return append(os.Environ(),
 		"TSLINK_DISABLE_KEYRING=1",
@@ -175,6 +217,17 @@ func systemdE2EShow(t *testing.T, properties ...string) map[string]string {
 	return props
 }
 
+// systemdE2EExecStartPath extracts the executable from systemd's
+// "{ path=/x ; argv[]=/x serve ; ... }" ExecStart rendering.
+func systemdE2EExecStartPath(execStart string) string {
+	_, rest, ok := strings.Cut(execStart, "path=")
+	if !ok {
+		return ""
+	}
+	path, _, _ := strings.Cut(rest, " ;")
+	return strings.TrimSpace(path)
+}
+
 func systemdE2ERequireRunning(t *testing.T, context string) int {
 	t.Helper()
 	props := systemdE2EShow(t, "ActiveState", "SubState", "MainPID")
@@ -192,8 +245,23 @@ func systemdE2ERequireExecStart(t *testing.T, binary string) {
 		t.Fatalf("resolve %q: %v", binary, err)
 	}
 	props := systemdE2EShow(t, "ExecStart")
-	if !strings.Contains(props["ExecStart"], "path="+resolved+" ") {
-		t.Fatalf("ExecStart = %q, want the unit to run %q", props["ExecStart"], resolved)
+	if got := systemdE2EExecStartPath(props["ExecStart"]); got != resolved {
+		t.Fatalf("ExecStart = %q (path %q), want the unit to run %q", props["ExecStart"], got, resolved)
+	}
+}
+
+func systemdE2ERequireUnitFileMode(t *testing.T, want os.FileMode) {
+	t.Helper()
+	path, err := systemdServicePath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat unit file: %v", err)
+	}
+	if got := info.Mode().Perm(); got != want {
+		t.Fatalf("unit file %s mode = %04o, want %04o", path, got, want)
 	}
 }
 
@@ -220,29 +288,11 @@ func systemdE2ERequireFailedInstall(t *testing.T, run e2eRun, context string) st
 	return message
 }
 
-// systemdE2EEnsureRegistryHasService makes sure serve has something to run.
-// Returns true when it added the probe service (registry-only; no credentials
-// are present, so nothing reaches a tailnet).
-func systemdE2EEnsureRegistryHasService(t *testing.T, good string) bool {
-	t.Helper()
-	run := systemdE2ERun(t, good, "list", "--json")
-	result, data := e2eDecodeEnvelope(t, run, "list")
-	if !result.OK {
-		t.Fatalf("list: %s\nstderr=%q", run.Stdout, run.Stderr)
-	}
-	if services, _ := data["services"].([]any); len(services) > 0 {
-		return false
-	}
-	run = systemdE2ERun(t, good, "add", systemdE2EProbeService, "--proxy", "localhost:3000", "--json")
-	if result, _ := e2eDecodeEnvelope(t, run, "add probe service"); !result.OK {
-		t.Fatalf("add probe service: %s\nstderr=%q", run.Stdout, run.Stderr)
-	}
-	return true
-}
-
 // systemdE2EReset returns the host to "no tslink unit" regardless of the state
-// a previous (possibly aborted) run left behind, then checks that it did.
-func systemdE2EReset(t *testing.T, good string, removeProbe bool) {
+// a previous (possibly aborted) run left behind, then checks that it did. It
+// only ever runs after systemdE2ERefuseForeignUnit has passed, and it says
+// which file it removed.
+func systemdE2EReset(t *testing.T) {
 	t.Helper()
 	systemctl := func(args ...string) {
 		_ = exec.Command("systemctl", append([]string{"--user"}, args...)...).Run()
@@ -250,15 +300,12 @@ func systemdE2EReset(t *testing.T, good string, removeProbe bool) {
 	systemctl("stop", systemdServiceName)
 	systemctl("disable", systemdServiceName)
 	if path, err := systemdServicePath(); err == nil {
-		_ = os.Remove(path)
+		if err := os.Remove(path); err == nil {
+			t.Logf("reset: removed %s", path)
+		}
 	}
 	systemctl("daemon-reload")
 	systemctl("reset-failed", systemdServiceName)
-	if removeProbe {
-		remove := exec.Command(good, "remove", systemdE2EProbeService, "--json")
-		remove.Env = systemdE2EEnv()
-		_ = remove.Run()
-	}
 	props := systemdE2EShow(t, "LoadState", "ActiveState")
 	if props["ActiveState"] == "active" || props["ActiveState"] == "activating" {
 		t.Errorf("reset: %s is still %v", systemdServiceName, props)
