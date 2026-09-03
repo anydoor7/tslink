@@ -118,6 +118,12 @@ ETag guards of the normal tag deletion path.`,
 				CheckUnusedACL:    true,
 			})
 			if err != nil {
+				// The ownership proof was already written under an untrusted
+				// registry; that fact must not disappear just because the
+				// reconcile that followed it failed.
+				if adoptionWarning != "" {
+					return fmt.Errorf("%w; %s", err, adoptionWarning)
+				}
 				return err
 			}
 			if adoptionWarning != "" {

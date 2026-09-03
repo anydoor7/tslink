@@ -533,3 +533,44 @@ func TestCleanupAdoptRejectsExistingNameBoundToDifferentNode(t *testing.T) {
 		t.Fatalf("error = %v, want name conflict", err)
 	}
 }
+
+func TestCleanupReconcileFailureKeepsAdoptionWarningInError(t *testing.T) {
+	command := withCleanupAdoptionSeams(t)
+	now := time.Date(2030, 1, 1, 12, 0, 0, 0, time.UTC)
+	cleanupNowFn = func() time.Time { return now }
+	regPath, err := config.RegistryPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := registry.Add(regPath, registry.Service{Name: "repaired", Type: registry.TypeProxy, Target: "http://localhost:3000"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(regPath); err != nil {
+		t.Fatal(err)
+	}
+	cleanupFindExactDeviceNodeIDFn = func(context.Context, string) (string, int, error) {
+		return "node-repaired", 1, nil
+	}
+	cleanupAdoptOwnedNodeFn = func(path, serviceName, nodeID string, recordedAt time.Time, retire bool) error {
+		return tsruntime.AdoptOwnedNode(path, serviceName, nodeID, recordedAt, retire)
+	}
+	cleanupReconcileFn = func(context.Context, lifecycle.Options) (lifecycle.Result, error) {
+		return lifecycle.Result{}, errors.New("reconcile boom")
+	}
+	_ = command.Flags().Set("adopt", "repaired")
+	_ = command.Flags().Set("force", "true")
+	_ = command.Flags().Set("dry-run", "false")
+	var stderr bytes.Buffer
+	command.SetErr(&stderr)
+	err = command.RunE(command, nil)
+	if err == nil {
+		t.Fatal("cleanup returned nil error, want reconcile failure")
+	}
+	message := err.Error()
+	if !strings.Contains(message, "reconcile boom") {
+		t.Fatalf("error = %q, want the reconcile failure preserved", message)
+	}
+	if !strings.Contains(message, "registry.json is missing") || !strings.Contains(message, "retired_at was not set") {
+		t.Fatalf("error = %q, want the adoption warning carried alongside the reconcile failure", message)
+	}
+}

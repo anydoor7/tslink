@@ -135,8 +135,19 @@ func saveOwnership(path string, ledger OwnershipLedger) error {
 	}
 	clockRollbackClamped := false
 	for i := range ledger.Nodes {
-		if ledger.Nodes[i].RetiredAt == nil || !ledger.Nodes[i].RetiredAt.Before(ledger.Nodes[i].RecordedAt) {
+		if ledger.Nodes[i].RetiredAt == nil {
 			continue
+		}
+		// Mirror LoadOwnership's predicate exactly (IsZero || Before). A zero
+		// retired_at is already Before any real recorded_at, so the only case the
+		// clamp cannot repair is a node whose recorded_at is itself zero: clamping
+		// would write a zero retired_at that the reader still refuses. Refuse the
+		// write instead of producing a ledger this package cannot read back.
+		if !ledger.Nodes[i].RetiredAt.IsZero() && !ledger.Nodes[i].RetiredAt.Before(ledger.Nodes[i].RecordedAt) {
+			continue
+		}
+		if ledger.Nodes[i].RecordedAt.IsZero() {
+			return fmt.Errorf("ownership ledger node has a zero recorded_at, so retired_at cannot be clamped to a readable value")
 		}
 		retiredAt := ledger.Nodes[i].RecordedAt
 		ledger.Nodes[i].RetiredAt = &retiredAt

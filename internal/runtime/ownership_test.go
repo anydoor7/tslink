@@ -244,3 +244,84 @@ func TestAdoptOwnedNodeRetiresExistingExactRow(t *testing.T) {
 		t.Fatalf("ledger = %+v, want existing exact row retired at review time", ledger)
 	}
 }
+
+// Every earlier clamp test used a single-row ledger, which made "clamp every
+// row" and "clamp row 0" indistinguishable; a mutation that clamped only the
+// first row survived the suite while producing exactly the self-locking ledger
+// the clamp exists to prevent. Multi-row is production-reachable: RecordOwnedNode
+// appends one row per NodeID and NodeIDs rotate on tag or ephemeral changes.
+func TestOwnershipWriteClampsEveryRolledBackRowAndLeavesOthersAlone(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "node-ownership.json")
+	base := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	recorded := map[string]time.Time{
+		"node-a": base,
+		"node-b": base.Add(24 * time.Hour),
+		"node-c": base.Add(48 * time.Hour),
+		"node-d": base.Add(72 * time.Hour),
+	}
+	for id, at := range recorded {
+		if err := RecordOwnedNode(path, "multi", id, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A retirement stamp earlier than every recorded_at: three rows roll back,
+	// node-d is not retired at all and must be untouched.
+	if err := MarkOwnedNodeIDsRetired(path, []string{"node-a", "node-b", "node-c"}, base.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	ledger, err := LoadOwnership(path)
+	if err != nil {
+		t.Fatalf("LoadOwnership() after multi-row clamp = %v (a partial clamp writes a ledger this package refuses to read)", err)
+	}
+	if len(ledger.Nodes) != 4 {
+		t.Fatalf("ledger rows = %d, want 4", len(ledger.Nodes))
+	}
+	for _, node := range ledger.Nodes {
+		want, ok := recorded[node.NodeID]
+		if !ok {
+			t.Fatalf("unexpected node %q", node.NodeID)
+		}
+		if !node.RecordedAt.Equal(want) {
+			t.Fatalf("node %q recorded_at = %v, want %v (clamp must not touch recorded_at)", node.NodeID, node.RecordedAt, want)
+		}
+		if node.NodeID == "node-d" {
+			if node.RetiredAt != nil {
+				t.Fatalf("node-d retired_at = %v, want nil (row was not retired)", node.RetiredAt)
+			}
+			continue
+		}
+		if node.RetiredAt == nil || !node.RetiredAt.Equal(want) {
+			t.Fatalf("node %q retired_at = %v, want clamped to its own recorded_at %v", node.NodeID, node.RetiredAt, want)
+		}
+	}
+}
+
+// The reader rejects a zero retired_at outright. A zero retired_at is already
+// Before any real recorded_at and therefore already clamped; the one case the
+// clamp cannot repair is a zero recorded_at, and that must fail the write rather
+// than persist a ledger LoadOwnership refuses.
+func TestOwnershipWriteRefusesZeroRecordedAtRetirementInsteadOfWritingUnreadableLedger(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "node-ownership.json")
+	recordedAt := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	if err := RecordOwnedNode(path, "live", "node-live", recordedAt); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = AdoptOwnedNode(path, "zero", "node-adopted", time.Time{}, true)
+	if err == nil || !strings.Contains(err.Error(), "zero recorded_at") {
+		t.Fatalf("AdoptOwnedNode(zero now, retire) error = %v, want refusal naming zero recorded_at", err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatalf("ledger changed on refused write:\nbefore=%s\nafter=%s", before, after)
+	}
+	if _, err := LoadOwnership(path); err != nil {
+		t.Fatalf("LoadOwnership() after refused write = %v, want still readable", err)
+	}
+}
