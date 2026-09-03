@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/monody0007/tslink/internal/credentials"
 	"github.com/monody0007/tslink/internal/registry"
 )
 
@@ -184,7 +185,7 @@ func defaultNextForExitCode(code int) []string {
 	case ExitUsage:
 		return []string{"tslink --help"}
 	case ExitAuth:
-		return []string{"tslink login"}
+		return append([]string{"tslink login"}, credentials.NextAPIKeyBootstrap()...)
 	case ExitConflict:
 		return []string{"tslink status --json"}
 	case ExitNotFound:
@@ -217,6 +218,20 @@ func errorMessage(err error) string {
 		return coded.Code
 	}
 	return err.Error()
+}
+
+// NextCommandsForError returns the recovery commands a human-mode caller should
+// print after the error message: the error's own next list when it carries a
+// stable code, otherwise the default continuation for its exit category.
+func NextCommandsForError(err error) []string {
+	if err == nil {
+		return nil
+	}
+	code := ExitCode(err)
+	if _, next, ok := stableErrorMetadata(err); ok && len(next) > 0 {
+		return append([]string(nil), next...)
+	}
+	return defaultNextForExitCode(code)
 }
 
 // StableErrorCode maps numeric semantic exit codes to stable machine strings.
@@ -290,8 +305,13 @@ func exitCodeForStableError(stable string) int {
 		registry.CodeInviteRequestInvalid:
 		return ExitUsage
 	case registry.CodeInviteAPIKeyRequired,
-		registry.CodeInviteAPIForbidden:
+		registry.CodeInviteAPIForbidden,
+		registry.CodeInviteAPIUnauthorized,
+		registry.CodeAPITokenUnauthorized,
+		registry.CodeAPIForbidden:
 		return ExitAuth
+	case registry.CodeLoginVerifyFailed:
+		return ExitError
 	case registry.CodeInviteNotFound:
 		return ExitNotFound
 	case registry.CodeInviteDeviceAmbiguous,

@@ -600,6 +600,10 @@ func TestManifestErrorExitTaxonomyMatchesRuntime(t *testing.T) {
 		registry.CodeInviteStateConflict:        registry.CodedError{Code: registry.CodeInviteStateConflict, Message: "state conflict"},
 		registry.CodeInviteRequestInvalid:       registry.CodedError{Code: registry.CodeInviteRequestInvalid, Message: "request invalid"},
 		registry.CodeInviteResponseInvalid:      registry.CodedError{Code: registry.CodeInviteResponseInvalid, Message: "response invalid"},
+		registry.CodeInviteAPIUnauthorized:      registry.CodedError{Code: registry.CodeInviteAPIUnauthorized, Message: "unauthorized"},
+		registry.CodeAPITokenUnauthorized:       &registry.StableCodeError{Code: registry.CodeAPITokenUnauthorized, Err: errors.New("unauthorized")},
+		registry.CodeAPIForbidden:               &registry.StableCodeError{Code: registry.CodeAPIForbidden, Err: errors.New("forbidden")},
+		registry.CodeLoginVerifyFailed:          &registry.StableCodeError{Code: registry.CodeLoginVerifyFailed, Err: errors.New("verify failed")},
 	}
 	manifest := errorCodeManifest()
 	if len(manifest) != len(tests) {
@@ -624,6 +628,17 @@ func TestManifestErrorExitTaxonomyMatchesRuntime(t *testing.T) {
 	authDescription := manifest[registry.CodeInviteAPIForbidden].Description
 	if !strings.Contains(authDescription, "401") || !strings.Contains(authDescription, "403") {
 		t.Fatalf("invite_api_forbidden description = %q, want both runtime auth statuses", authDescription)
+	}
+	if !strings.Contains(authDescription, registry.CodeInviteAPIUnauthorized) {
+		t.Fatalf("invite_api_forbidden description = %q, want pointer to the split 401 code", authDescription)
+	}
+	for _, code := range []string{registry.CodeInviteAPIUnauthorized, registry.CodeAPITokenUnauthorized, registry.CodeAPIForbidden} {
+		if got := manifest[code].ExitCode; got != output.ExitAuth {
+			t.Fatalf("%s exit = %d, want auth %d", code, got, output.ExitAuth)
+		}
+	}
+	if got := manifest[registry.CodeLoginVerifyFailed].ExitCode; got != output.ExitError {
+		t.Fatalf("login_verify_failed exit = %d, want general error %d", got, output.ExitError)
 	}
 }
 

@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/output"
 	"github.com/monody0007/tslink/internal/registry"
 	"github.com/monody0007/tslink/internal/testenv"
@@ -40,6 +41,16 @@ func TestMain(m *testing.M) {
 		os.Exit(0)
 	}
 
+	// Tests that reach config.Dir() without their own isolation must never
+	// touch the operator's real ~/.config/tslink. Point the whole package at a
+	// throwaway config dir; individual tests still override it with t.Setenv.
+	if os.Getenv(config.ConfigDirEnv) == "" {
+		if isolated, err := os.MkdirTemp("", "tslink-cmd-test-config-"); err == nil {
+			os.Setenv(config.ConfigDirEnv, isolated)
+			defer os.RemoveAll(isolated)
+		}
+	}
+
 	code := testenv.RunWithNonLoopbackDialGuard(m.Run, "cmd")
 
 	// Own the teardown of the package's single compiled-binary build root.
@@ -52,7 +63,16 @@ func TestMain(m *testing.M) {
 			fmt.Fprintf(os.Stderr, "warning: remove compiled binary root %s: %v\n", tslinkBinaryRoot, err)
 		}
 	}
-	os.Exit(code)
+	exitTestMain(code)
+}
+
+// exitTestMain runs deferred cleanups (the isolated config dir) before exiting.
+func exitTestMain(code int) {
+	if code != 0 {
+		defer os.Exit(code)
+		return
+	}
+	defer os.Exit(0)
 }
 
 func restoreShareSeams(t *testing.T) {

@@ -42,12 +42,15 @@ var serveDaemon bool
 
 // Testable function variables for serve
 var (
-	serveWritePIDFn            = daemon.WritePID
-	serveRemovePIDFn           = daemon.RemovePID
-	serveWithPIDLockFn         = daemon.WithPIDLock
-	serveNewServerFn           = func(authKey, controlURL string) (serverRunner, error) { return server.New(authKey, controlURL) }
-	serveEnsureDirFn           = config.EnsureDir
-	serveMigrateFn             = credentials.MigrateFromLegacy
+	serveWritePIDFn               = daemon.WritePID
+	serveRemovePIDFn              = daemon.RemovePID
+	serveWithPIDLockFn            = daemon.WithPIDLock
+	serveNewServerFn              = func(authKey, controlURL string) (serverRunner, error) { return server.New(authKey, controlURL) }
+	serveEnsureDirFn              = config.EnsureDir
+	serveMigrateFn                = credentials.MigrateFromLegacy
+	serveBackfillCredentialMetaFn = func() ([]string, error) {
+		return credentials.BackfillMetadata(time.Now().UTC())
+	}
 	serveRegistryPathFn        = config.RegistryPath
 	serveLoadRegistryFn        = registry.Load
 	serveGetAuthKeyFn          = credentials.GetAuthKey
@@ -159,6 +162,13 @@ Examples:
 			credentialMigrated := serveMigrateFn()
 			if credentialMigrated && !jsonOutput(cmd) {
 				fmt.Fprintln(cmd.OutOrStdout(), "→ migrated API key to system keychain")
+			}
+			// Credentials stored before expiry tracking existed get value-free
+			// metadata on the next daemon start, like the legacy file migration.
+			if backfilled, err := serveBackfillCredentialMetaFn(); err != nil {
+				slog.Warn("credential metadata backfill failed; expiry state reports unknown", "error", err)
+			} else if len(backfilled) > 0 {
+				slog.Info("credential metadata backfilled", "slots", backfilled)
 			}
 
 			// Resolve control URL: flag > config > default

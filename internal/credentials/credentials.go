@@ -416,7 +416,7 @@ func NewTailscaleClientWithUserOwnedAPIKey() (*tailscale.Client, error) {
 	key = strings.TrimSpace(key)
 	if key != "" {
 		if !strings.HasPrefix(key, "tskey-api-") {
-			return nil, fmt.Errorf("%w; the stored API credential is not a tskey-api- token; pipe a user-owned token to `tslink login --api-key-stdin`", ErrUserOwnedAPIKeyRequired)
+			return nil, fmt.Errorf("%w; the stored API credential is not a tskey-api- token; generate one at %s and pipe it to `tslink login --api-key-stdin`", ErrUserOwnedAPIKeyRequired, KeysPageURL)
 		}
 		return NewTailscaleClientWithAPIKey(key)
 	}
@@ -426,9 +426,9 @@ func NewTailscaleClientWithUserOwnedAPIKey() (*tailscale.Client, error) {
 		return nil, fmt.Errorf("check stored OAuth client secret after no API access token was found: %w", err)
 	}
 	if strings.TrimSpace(secret) != "" {
-		return nil, fmt.Errorf("%w; only an OAuth client secret is configured, but invites require a user-owned tskey-api- token tied to an inviting user; pipe one to `tslink login --api-key-stdin`", ErrUserOwnedAPIKeyRequired)
+		return nil, fmt.Errorf("%w; only an OAuth client secret is configured, but invites require a user-owned tskey-api- token tied to an inviting user; generate one at %s and pipe it to `tslink login --api-key-stdin` (the OAuth client secret is kept)", ErrUserOwnedAPIKeyRequired, KeysPageURL)
 	}
-	return nil, fmt.Errorf("%w; pipe a user-owned tskey-api- token to `tslink login --api-key-stdin`", ErrUserOwnedAPIKeyRequired)
+	return nil, fmt.Errorf("%w; generate one at %s and pipe a user-owned tskey-api- token to `tslink login --api-key-stdin`", ErrUserOwnedAPIKeyRequired, KeysPageURL)
 }
 
 // newTailscaleClientWithOAuthSecret constructs an API client from the
@@ -505,7 +505,10 @@ func DeriveAuthKey(ctx context.Context, opts AuthKeyOptions) (string, error) {
 
 	key, err := createKeyFunc(client, ctx, req)
 	if err != nil {
-		return "", fmt.Errorf("derive auth key: %w", err)
+		// 401/403 become stable coded errors so the daemon can persist the
+		// failure into runtime.json with recovery steps instead of an opaque
+		// log line.
+		return "", ClassifyAPIError("derive auth key", err)
 	}
 	return key.Key, nil
 }

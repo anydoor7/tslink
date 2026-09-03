@@ -284,20 +284,60 @@ func TestCreateUserInvite_OAuthOnlyFailsBeforeNetwork(t *testing.T) {
 	}
 }
 
-func TestInviteHTTP401And403MapToAuthCode(t *testing.T) {
-	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
-		t.Run(http.StatusText(status), func(t *testing.T) {
+// TestInviteHTTP401And403MapToDistinctAuthCodes pins the split: 401 is the
+// token itself (expired/revoked/invalid) and carries the key-bootstrap steps,
+// 403 is the token's user permissions and must not tell the operator to mint a
+// new token from the same user.
+func TestInviteHTTP401And403MapToDistinctAuthCodes(t *testing.T) {
+	tests := []struct {
+		status   int
+		wantCode string
+		wantNext string
+		noNext   string
+	}{
+		{http.StatusUnauthorized, registry.CodeInviteAPIUnauthorized, credentials.KeysPageURL, "doctor --probe-remote"},
+		{http.StatusForbidden, registry.CodeInviteAPIForbidden, "role", credentials.KeysPageURL},
+	}
+	for _, tc := range tests {
+		t.Run(http.StatusText(tc.status), func(t *testing.T) {
 			withInviteServer(t, func(w http.ResponseWriter, req *http.Request) {
 				assertInviteRequest(t, req, http.MethodPost, "/api/v2/tailnet/-/user-invites", `[{"role":"member","email":"alice@example.com"}]`)
-				w.WriteHeader(status)
+				w.WriteHeader(tc.status)
 				io.WriteString(w, `{"message":"authentication detail must not define classification"}`)
 			})
 			_, err := CreateUserInvite(context.Background(), "alice@example.com", InviteRoleMember, false)
-			coded := codedError(t, err, registry.CodeInviteAPIForbidden)
-			if !strings.Contains(coded.Message, fmt.Sprintf("HTTP %d", status)) {
+			coded := codedError(t, err, tc.wantCode)
+			if !strings.Contains(coded.Message, fmt.Sprintf("HTTP %d", tc.status)) {
 				t.Fatalf("message = %q, want HTTP status", coded.Message)
 			}
+			joined := strings.Join(coded.Next, "\n")
+			if !strings.Contains(joined, tc.wantNext) {
+				t.Fatalf("next = %v, want %q", coded.Next, tc.wantNext)
+			}
+			if strings.Contains(joined, tc.noNext) {
+				t.Fatalf("next = %v, must not contain %q", coded.Next, tc.noNext)
+			}
+			if strings.Contains(coded.Message, "authentication detail must not define classification") {
+				t.Fatalf("message = %q, server text must not drive classification", coded.Message)
+			}
 		})
+	}
+}
+
+func TestInviteAPIKeyRequiredNextCarriesKeysPage(t *testing.T) {
+	testenv.SetHome(t, t.TempDir())
+	t.Setenv("TSLINK_DISABLE_KEYRING", "1")
+	old := inviteClientFn
+	inviteClientFn = newInviteClient
+	t.Cleanup(func() { inviteClientFn = old })
+	_, err := CreateUserInvite(context.Background(), "alice@example.com", InviteRoleMember, false)
+	coded := codedError(t, err, registry.CodeInviteAPIKeyRequired)
+	joined := strings.Join(coded.Next, "\n")
+	if !strings.Contains(joined, credentials.KeysPageURL) || !strings.Contains(joined, "tslink invite --help") {
+		t.Fatalf("next = %v, want Keys page bootstrap plus invite help", coded.Next)
+	}
+	if !strings.Contains(coded.Message, credentials.KeysPageURL) {
+		t.Fatalf("message = %q, want Keys page URL", coded.Message)
 	}
 }
 

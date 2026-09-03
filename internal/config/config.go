@@ -163,6 +163,17 @@ func ClientSecretPath() (string, error) {
 	return filepath.Join(dir, "clientsecret"), nil
 }
 
+// CredentialMetaPath stores value-free credential bookkeeping (fingerprint,
+// stored_at, expires_at, last verification) for each credential slot. It never
+// contains credential material.
+func CredentialMetaPath() (string, error) {
+	dir, err := Dir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "credential-meta.json"), nil
+}
+
 func LogDir() (string, error) {
 	dir, err := Dir()
 	if err != nil {

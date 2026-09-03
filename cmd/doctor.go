@@ -73,7 +73,17 @@ var (
 	doctorOpenPathFn            = func(path string) (io.Closer, error) { return os.Open(path) }
 	doctorProbeTargetFn         = defaultDoctorProbeTarget
 	doctorLoadAuthHandoffFn     = loadAuthHandoff
+	doctorNowFn                 = func() time.Time { return time.Now().UTC() }
+	// doctorCredentialInventoryFn classifies credential slots and backfills
+	// missing value-free metadata. Tests replace it to stay off the filesystem.
+	doctorCredentialInventoryFn = func(values credentials.SlotValues, now time.Time) credentials.Inventory {
+		return credentials.DescribeSlots(values, now, true)
+	}
+	doctorProbeCredentialFn = credentials.ProbeStoredCredential
 )
+
+// doctorRemoteProbeTimeout bounds each --probe-remote device-list read.
+const doctorRemoteProbeTimeout = 10 * time.Second
 
 var (
 	doctorCredentialTokenPattern = regexp.MustCompile(`(?i)\btskey-[A-Za-z0-9._~+/=-]+`)
@@ -83,6 +93,7 @@ var (
 
 type doctorOptions struct {
 	ProbeExternal       bool
+	ProbeRemote         bool
 	RegistryPath        string
 	PIDPath             string
 	RuntimeSnapshotPath string
@@ -172,7 +183,7 @@ func buildDoctorResult(opts doctorOptions) DoctorResult {
 	}
 
 	pathsOK := discoverDoctorPaths(&result, opts)
-	credentialState := diagnoseCredentials(&result)
+	credentialState := diagnoseCredentials(&result, opts)
 
 	var cfg config.GlobalConfig
 	cfgOK := false
@@ -286,7 +297,7 @@ func discoverDoctorPaths(result *DoctorResult, opts doctorOptions) bool {
 	return ok
 }
 
-func diagnoseCredentials(result *DoctorResult) doctorCredentialState {
+func diagnoseCredentials(result *DoctorResult, opts doctorOptions) doctorCredentialState {
 	apiToken, apiErr := doctorGetAPIKeyFn()
 	clientSecret, clientSecretErr := doctorGetClientSecretFn()
 	legacyAuthKey, legacyErr := doctorLegacyAuthKeyConfigured()
@@ -333,12 +344,111 @@ func diagnoseCredentials(result *DoctorResult) doctorCredentialState {
 	if !hasAPI && (hasOAuth || legacyAuthKey) {
 		result.addFinding(inspect.WarningCodeCredentialNoAPIClient, "", "credentials", "No API token is configured; remote Tailscale API permissions cannot be proven locally.", nil)
 	}
+	// Dual-slot posture. Both slots together is the recommended state: OAuth
+	// keeps daemon auth durable, the user-owned token keeps invites possible.
+	switch {
+	case hasAPI && hasOAuth:
+		result.addFinding(inspect.WarningCodeCredentialMixedRecommended, "", "credentials", "", nil)
+	case hasAPI && !legacyAuthKey:
+		result.addFinding(inspect.WarningCodeCredentialAPITokenOnly, "", "credentials", "", map[string]string{"add": "tslink login --client-secret-stdin"})
+	case hasOAuth && !legacyAuthKey:
+		result.addFinding(inspect.WarningCodeCredentialOAuthClientOnly, "", "credentials", "", map[string]string{"add": "tslink login --api-key-stdin"})
+	}
+	diagnoseCredentialExpiry(result, credentials.SlotValues{APIKey: apiToken, ClientSecret: clientSecret}, opts)
 
 	credentialFree := count == 0 && apiErr == nil && clientSecretErr == nil && legacyErr == nil
 	if count == 0 && !credentialFree {
 		result.CredentialTier = doctorCredentialTierUnknown
 	}
 	return doctorCredentialState{CredentialFree: credentialFree}
+}
+
+// diagnoseCredentialExpiry turns the value-free inventory into findings and,
+// with --probe-remote, verifies each present slot against the Tailscale API.
+func diagnoseCredentialExpiry(result *DoctorResult, values credentials.SlotValues, opts doctorOptions) {
+	if strings.TrimSpace(values.APIKey) == "" && strings.TrimSpace(values.ClientSecret) == "" {
+		return
+	}
+	now := doctorNowFn()
+	inventory := doctorCredentialInventoryFn(values, now)
+	if inventory.MetadataError != nil {
+		result.addFinding(inspect.WarningCodeCredentialExpiryUnknown, "", "credentials", "", evidenceError(inventory.MetadataError))
+	}
+	if inventory.BackfillError != nil {
+		result.addFinding(inspect.WarningCodeCredentialExpiryUnknown, "", "credentials", "Credential metadata could not be persisted; expiry will be re-evaluated from scratch on every run.", evidenceError(inventory.BackfillError))
+	}
+	if len(inventory.Backfilled) > 0 {
+		result.addFinding(inspect.WarningCodeCredentialMetaBackfilled, "", "credentials", "", map[string]string{"slots": strings.Join(inventory.Backfilled, ",")})
+	}
+
+	var unverified []string
+	for _, view := range []credentials.SlotView{inventory.APIKey, inventory.ClientSecret} {
+		if !view.Present {
+			continue
+		}
+		if view.Metadata != nil && view.Metadata.LastVerifiedAt == nil {
+			unverified = append(unverified, view.Slot)
+		}
+		if view.Slot != credentials.SlotAPIKey {
+			continue
+		}
+		evidence := map[string]string{"slot": view.Slot}
+		if view.Metadata != nil {
+			if view.Metadata.ExpiresAt != nil {
+				evidence["expires_at"] = view.Metadata.ExpiresAt.UTC().Format(time.RFC3339)
+			}
+			if view.Metadata.ExpiresAtSource != "" {
+				evidence["expires_at_source"] = view.Metadata.ExpiresAtSource
+			}
+		}
+		if view.DaysLeft != nil {
+			evidence["days_left"] = strconv.Itoa(*view.DaysLeft)
+		}
+		switch view.ExpiryState {
+		case credentials.ExpiryStateExpiring:
+			result.addFinding(inspect.WarningCodeCredentialAPITokenExpiring, "", "credentials", "", evidence)
+		case credentials.ExpiryStateExpired:
+			result.addFinding(inspect.WarningCodeCredentialAPITokenExpired, "", "credentials", "", evidence)
+		case credentials.ExpiryStateUnknown:
+			if inventory.MetadataError == nil && inventory.BackfillError == nil {
+				result.addFinding(inspect.WarningCodeCredentialExpiryUnknown, "", "credentials", "", evidence)
+			}
+		}
+	}
+
+	if !opts.ProbeRemote {
+		if len(unverified) > 0 {
+			result.addFinding(inspect.WarningCodeCredentialRemoteUnverified, "", "credentials", "", map[string]string{"slots": strings.Join(unverified, ",")})
+		}
+		return
+	}
+	for _, view := range []credentials.SlotView{inventory.APIKey, inventory.ClientSecret} {
+		if !view.Present {
+			continue
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), doctorRemoteProbeTimeout)
+		outcome, err := doctorProbeCredentialFn(ctx, view.Slot, now)
+		cancel()
+		if err != nil {
+			result.addFinding(inspect.WarningCodeCredentialReadFailed, "", "credentials", "Credential could not be read for the remote probe.", evidenceError(err))
+			continue
+		}
+		if !outcome.Present {
+			continue
+		}
+		evidence := map[string]string{"slot": view.Slot, "result": outcome.Result}
+		if outcome.Cause != nil {
+			evidence["error"] = sanitizeDoctorEvidenceValue(outcome.Cause.Error())
+		}
+		switch outcome.Result {
+		case credentials.VerifyResultUnauthorized:
+			result.addFinding(inspect.WarningCodeCredentialAPITokenRejected, "", "credentials", "", evidence)
+		case credentials.VerifyResultForbidden:
+			result.addFinding(inspect.WarningCodeCredentialRemoteForbidden, "", "credentials", "", evidence)
+		case credentials.VerifyResultUnreachable:
+			result.addFinding(inspect.WarningCodeCredentialRemoteUnreachable, "", "credentials", "", evidence)
+		}
+	}
 }
 
 func doctorLegacyAuthKeyConfigured() (bool, error) {
@@ -822,19 +932,33 @@ var doctorCmd = &cobra.Command{
 	Long: `Diagnose local TSLink configuration, credentials, daemon liveness,
 runtime snapshot freshness, service guardrails, and reachable local targets.
 
-Doctor is read-only. It does not mutate the registry, Tailscale policy, or
-service state.`,
+Doctor is read-only for the registry, Tailscale policy, and service state.
+The only file it may write is the value-free credential bookkeeping
+(~/.config/tslink/credential-meta.json): it backfills missing expiry metadata
+for credentials stored before tracking existed, and --probe-remote records the
+verification result. Credential findings: credential_mixed_recommended (both
+slots, recommended), credential_api_token_only (daemon auth depends on an
+expiring token), credential_oauth_client_only (invites need a user-owned token),
+credential_api_token_expiring (<= 14 days left), credential_api_token_expired,
+credential_expiry_unknown, credential_remote_unverified, and with
+--probe-remote credential_api_token_rejected (HTTP 401),
+credential_remote_forbidden (HTTP 403), credential_remote_unreachable.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		probeExternal, err := cmd.Flags().GetBool("probe-external")
 		if err != nil {
 			return err
 		}
-		return runDoctor(cmd.OutOrStdout(), doctorOptions{ProbeExternal: probeExternal}, jsonOutput(cmd))
+		probeRemote, err := cmd.Flags().GetBool("probe-remote")
+		if err != nil {
+			return err
+		}
+		return runDoctor(cmd.OutOrStdout(), doctorOptions{ProbeExternal: probeExternal, ProbeRemote: probeRemote}, jsonOutput(cmd))
 	},
 }
 
 func init() {
 	doctorCmd.Flags().Bool("probe-external", false, "Probe non-loopback service targets")
+	doctorCmd.Flags().Bool("probe-remote", false, "Verify each stored credential against the Tailscale API with one device-list read and record last_verified in credential-meta.json")
 	rootCmd.AddCommand(doctorCmd)
 }

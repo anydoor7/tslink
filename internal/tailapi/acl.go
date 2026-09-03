@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/monody0007/tslink/internal/credentials"
 	"github.com/monody0007/tslink/internal/registry"
 	"github.com/tailscale/hujson"
 	tailscale "tailscale.com/client/tailscale/v2"
@@ -86,7 +87,7 @@ func ReadTags(ctx context.Context) ([]string, error) {
 
 	acl, err := client.PolicyFile().Get(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("read ACL: %w", err)
+		return nil, classifyPolicyReadError(err)
 	}
 
 	var tags []string
@@ -122,10 +123,7 @@ func EnsureTags(ctx context.Context, tags []string) error {
 	}
 	raw, err := client.PolicyFile().Raw(ctx)
 	if err != nil {
-		if policyAccessDenied(err) {
-			return fmt.Errorf("%w: read ACL: %v", ErrPolicyAccessDenied, err)
-		}
-		return fmt.Errorf("read ACL: %w", err)
+		return classifyPolicyReadError(err)
 	}
 
 	doc, err := parsePolicyDocument(raw.HuJSON)
@@ -253,11 +251,19 @@ func setRawPolicy(ctx context.Context, client *tailscale.Client, policy, etag, o
 
 	var apiErr tailscale.APIError
 	if errors.As(err, &apiErr) {
-		if apiErr.Status == http.StatusPreconditionFailed {
+		switch apiErr.Status {
+		case http.StatusPreconditionFailed:
 			return PolicyMutationResult{WriteOutcome: PolicyWriteRejected}, fmt.Errorf("%w: policy update rejected with HTTP %d", ErrPolicyConflict, apiErr.Status)
-		}
-		if apiErr.Status == http.StatusForbidden {
-			return PolicyMutationResult{WriteOutcome: PolicyWriteRejected}, fmt.Errorf("%w: update ACL for %s rejected with HTTP %d: %v", ErrPolicyAccessDenied, operation, apiErr.Status, err)
+		case http.StatusForbidden:
+			// Keep ErrPolicyAccessDenied in the chain for existing errors.Is
+			// callers while exposing the stable api_forbidden code.
+			return PolicyMutationResult{WriteOutcome: PolicyWriteRejected}, &registry.StableCodeError{
+				Code: registry.CodeAPIForbidden,
+				Next: credentials.NextAPIForbidden(),
+				Err:  fmt.Errorf("%w: update ACL for %s rejected with HTTP %d: %v", ErrPolicyAccessDenied, operation, apiErr.Status, err),
+			}
+		case http.StatusUnauthorized:
+			return PolicyMutationResult{WriteOutcome: PolicyWriteRejected}, credentials.ClassifyAPIError("update ACL for "+operation, err)
 		}
 		return PolicyMutationResult{WriteOutcome: PolicyWriteRejected}, fmt.Errorf("update ACL for %s rejected with HTTP %d: %w", operation, apiErr.Status, err)
 	}
@@ -270,6 +276,20 @@ func setRawPolicy(ctx context.Context, client *tailscale.Client, policy, etag, o
 func policyAccessDenied(err error) bool {
 	var apiErr tailscale.APIError
 	return errors.As(err, &apiErr) && apiErr.Status == http.StatusForbidden
+}
+
+// classifyPolicyReadError keeps the ErrPolicyAccessDenied sentinel for HTTP 403
+// while attaching the stable api_forbidden / api_token_unauthorized codes and
+// recovery steps that agents consume from error.next.
+func classifyPolicyReadError(err error) error {
+	if policyAccessDenied(err) {
+		return &registry.StableCodeError{
+			Code: registry.CodeAPIForbidden,
+			Next: credentials.NextAPIForbidden(),
+			Err:  fmt.Errorf("%w: read ACL: %v", ErrPolicyAccessDenied, err),
+		}
+	}
+	return credentials.ClassifyAPIError("read ACL", err)
 }
 
 type policyDocument struct {

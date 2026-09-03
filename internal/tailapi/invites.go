@@ -219,7 +219,7 @@ func newInviteClient() (inviteAPI, error) {
 			return nil, registry.CodedError{
 				Code:        registry.CodeInviteAPIKeyRequired,
 				Message:     err.Error(),
-				Next:        []string{"tslink login --api-key-stdin", "tslink invite --help"},
+				Next:        append(credentials.NextAPIKeyBootstrap(), "tslink invite --help"),
 				MessageOnly: true,
 			}
 		}
@@ -401,11 +401,22 @@ func inviteAPIError(operation string, err error) error {
 	var apiErr tailscale.APIError
 	if errors.As(err, &apiErr) {
 		switch apiErr.Status {
-		case http.StatusUnauthorized, http.StatusForbidden:
+		case http.StatusUnauthorized:
+			// 401 is the credential itself: expired, revoked, or invalid. The
+			// fix is a new user-owned token, so next carries the bootstrap steps.
+			return registry.CodedError{
+				Code:        registry.CodeInviteAPIUnauthorized,
+				Message:     fmt.Sprintf("%s was rejected by Tailscale as unauthenticated (HTTP 401); the stored tskey-api- token is expired, revoked, or invalid", operation),
+				Next:        credentials.NextAPIKeyBootstrap(),
+				MessageOnly: true,
+			}
+		case http.StatusForbidden:
+			// 403 is the token's user: authenticated but not allowed. A new
+			// token from the same user would fail the same way.
 			return registry.CodedError{
 				Code:        registry.CodeInviteAPIForbidden,
-				Message:     fmt.Sprintf("%s was rejected by Tailscale as an authentication or authorization failure (HTTP %d); verify the tskey-api- token belongs to a user allowed to perform this invite operation", operation, apiErr.Status),
-				Next:        []string{"Verify the stored tskey-api- token belongs to an authorized tailnet user", "tslink login --api-key-stdin"},
+				Message:     fmt.Sprintf("%s was rejected by Tailscale as an authorization failure (HTTP 403); verify the tskey-api- token belongs to a tailnet owner/admin allowed to perform this invite operation", operation),
+				Next:        []string{"Verify the stored tskey-api- token belongs to a tailnet user whose role allows this invite operation", "tslink doctor --probe-remote --json"},
 				MessageOnly: true,
 			}
 		case http.StatusNotFound:

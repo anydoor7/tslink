@@ -1,8 +1,15 @@
 package main
 
 import (
+	"errors"
+	"reflect"
 	"runtime/debug"
+	"strings"
 	"testing"
+
+	"github.com/monody0007/tslink/internal/credentials"
+	"github.com/monody0007/tslink/internal/output"
+	"github.com/monody0007/tslink/internal/registry"
 )
 
 func TestResolveBuildVersion(t *testing.T) {
@@ -114,5 +121,36 @@ func TestShortCommit(t *testing.T) {
 	}
 	if got := shortCommit("0123456789abcdef"); got != "0123456789ab" {
 		t.Fatalf("shortCommit(long) = %q, want 0123456789ab", got)
+	}
+}
+
+func TestFormatHumanErrorPrintsNextLinesFromEnvelopeMetadata(t *testing.T) {
+	err := registry.CodedError{
+		Code:        registry.CodeInviteAPIUnauthorized,
+		Message:     "create user invite was rejected by Tailscale as unauthenticated (HTTP 401)",
+		Next:        credentials.NextAPIKeyBootstrap(),
+		MessageOnly: true,
+	}
+	got := formatHumanError(err)
+	lines := strings.Split(strings.TrimSuffix(got, "\n"), "\n")
+	if lines[0] != "Error: "+err.Message {
+		t.Fatalf("first line = %q, want Error: message", lines[0])
+	}
+	if len(lines) != 1+len(err.Next) {
+		t.Fatalf("lines = %d, want error line plus %d next lines:\n%s", len(lines), len(err.Next), got)
+	}
+	for i, step := range err.Next {
+		if lines[i+1] != "Next: "+step {
+			t.Fatalf("line %d = %q, want %q", i+1, lines[i+1], "Next: "+step)
+		}
+	}
+	if !strings.Contains(got, credentials.KeysPageURL) {
+		t.Fatalf("human error output lacks the Keys page URL:\n%s", got)
+	}
+	if !reflect.DeepEqual(output.NextCommandsForError(err), err.Next) {
+		t.Fatal("human next diverged from envelope next")
+	}
+	if plain := formatHumanError(errors.New("boom")); plain != "Error: boom\n" {
+		t.Fatalf("plain error output = %q, want only the Error line", plain)
 	}
 }

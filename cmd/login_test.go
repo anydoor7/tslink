@@ -88,6 +88,11 @@ func resetLoginFlags(t *testing.T) {
 	_ = loginCmd.Flags().Set("api-key-stdin", "false")
 	_ = loginCmd.Flags().Set("client-secret-stdin", "false")
 	_ = loginCmd.Flags().Set("manage-acl", "false")
+	_ = loginCmd.Flags().Set("retire-other", "false")
+	_ = loginCmd.Flags().Set("expires-in", "")
+	_ = loginCmd.Flags().Set("expires-at", "")
+	_ = loginCmd.Flags().Set("open-keys-page", "false")
+	_ = loginCmd.Flags().Set("open-oauth-page", "false")
 	loginCmd.SetIn(nil)
 	loginCmd.SetOut(nil)
 	loginCmd.SetErr(nil)
@@ -293,14 +298,25 @@ func TestLoginCmd_FullFlow_WithMocks(t *testing.T) {
 	}
 }
 
-func TestLoginHelpDescribesCredentialAsOptionalWithoutFalseBrowserClaim(t *testing.T) {
-	if strings.Contains(loginCmd.Long, "Opens a browser") || strings.Contains(loginCmd.Long, "Opening browser") {
-		t.Fatalf("login help still claims a browser action it does not perform:\n%s", loginCmd.Long)
+func TestLoginHelpDescribesCredentialAsOptionalAndBrowserOnlyWithExplicitFlag(t *testing.T) {
+	// The default login path never opens a browser. Every sentence that
+	// mentions one must be tied to the explicit --open-*-page helpers.
+	for _, sentence := range strings.Split(loginCmd.Long, ".") {
+		lowered := strings.ToLower(sentence)
+		if !strings.Contains(lowered, "browser") {
+			continue
+		}
+		if !strings.Contains(sentence, "--open-keys-page") && !strings.Contains(sentence, "--open-oauth-page") {
+			t.Fatalf("login help mentions a browser outside the explicit --open-*-page helpers: %q", strings.TrimSpace(sentence))
+		}
 	}
-	for _, want := range []string{"do not need this command", "tslink serve", "durable multi-service"} {
+	for _, want := range []string{"do not need this command", "tslink serve", "durable multi-service", "--open-keys-page", "--retire-other", "--expires-in", "assumed_max", credentials.KeysPageURL} {
 		if !strings.Contains(loginCmd.Long, want) {
 			t.Fatalf("login help missing %q:\n%s", want, loginCmd.Long)
 		}
+	}
+	if strings.Contains(loginCmd.Long, "Opens a browser") || strings.Contains(loginCmd.Long, "Opening browser") {
+		t.Fatalf("login help claims an unconditional browser action:\n%s", loginCmd.Long)
 	}
 }
 
@@ -691,10 +707,14 @@ func TestPrintCredentialBackendReflectsActualBackend(t *testing.T) {
 	}
 }
 
-func TestLoginWithAPIKeyClearsStaleClientSecret(t *testing.T) {
+// TestLoginWithAPIKeyKeepsClientSecretByDefault pins the dual-slot contract
+// that replaced the old cross-mode retirement: storing an API key must not
+// delete a working OAuth client secret. Only --retire-other does that.
+func TestLoginWithAPIKeyKeepsClientSecretByDefault(t *testing.T) {
 	setupLoginTest(t)
+	resetLoginFlags(t)
 
-	if err := credentials.SaveClientSecret("tskey-client-stale"); err != nil {
+	if err := credentials.SaveClientSecret("tskey-client-existing"); err != nil {
 		t.Fatalf("SaveClientSecret() error = %v", err)
 	}
 
@@ -715,8 +735,8 @@ func TestLoginWithAPIKeyClearsStaleClientSecret(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetClientSecret() error = %v", err)
 	}
-	if gotSecret != "" {
-		t.Fatalf("client secret = %q, want cleared", gotSecret)
+	if gotSecret != "tskey-client-existing" {
+		t.Fatalf("client secret = %q, want kept alongside the new API key", gotSecret)
 	}
 	gotAPIKey, err := credentials.GetAPIKey()
 	if err != nil {
@@ -724,6 +744,59 @@ func TestLoginWithAPIKeyClearsStaleClientSecret(t *testing.T) {
 	}
 	if gotAPIKey != "tskey-api-new" {
 		t.Fatalf("api key = %q, want newly selected API key", gotAPIKey)
+	}
+	meta, err := credentials.LoadMetadata()
+	if err != nil {
+		t.Fatalf("LoadMetadata() error = %v", err)
+	}
+	if _, ok := meta.Slots[credentials.SlotAPIKey]; !ok {
+		t.Fatalf("metadata slots = %v, want api-key recorded", meta.Slots)
+	}
+}
+
+func TestLoginWithAPIKeyRetireOtherClearsClientSecret(t *testing.T) {
+	setupLoginTest(t)
+	resetLoginFlags(t)
+
+	if err := credentials.SaveClientSecret("tskey-client-stale"); err != nil {
+		t.Fatalf("SaveClientSecret() error = %v", err)
+	}
+	if err := credentials.WriteSlotMetadata(credentials.SlotClientSecret, credentials.SlotMetadata{Kind: credentials.KindOAuthClientSecret, Fingerprint: credentials.Fingerprint("tskey-client-stale"), StoredAt: loginTestNow}); err != nil {
+		t.Fatalf("WriteSlotMetadata() error = %v", err)
+	}
+
+	oldVerify := loginVerifyAPIKeyFn
+	oldEnsure := loginEnsureTagsFn
+	t.Cleanup(func() {
+		loginVerifyAPIKeyFn = oldVerify
+		loginEnsureTagsFn = oldEnsure
+	})
+	loginVerifyAPIKeyFn = func(ctx context.Context, key string) error { return nil }
+	loginEnsureTagsFn = func(ctx context.Context, tags []string) error { return nil }
+	if err := loginCmd.Flags().Set("retire-other", "true"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := loginWithAPIKey(loginCmd, "tskey-api-new"); err != nil {
+		t.Fatalf("loginWithAPIKey() error = %v", err)
+	}
+
+	gotSecret, err := credentials.GetClientSecret()
+	if err != nil {
+		t.Fatalf("GetClientSecret() error = %v", err)
+	}
+	if gotSecret != "" {
+		t.Fatalf("client secret = %q, want cleared by --retire-other", gotSecret)
+	}
+	meta, err := credentials.LoadMetadata()
+	if err != nil {
+		t.Fatalf("LoadMetadata() error = %v", err)
+	}
+	if _, stale := meta.Slots[credentials.SlotClientSecret]; stale {
+		t.Fatalf("metadata still records the retired client-secret slot: %v", meta.Slots)
+	}
+	if _, ok := meta.Slots[credentials.SlotAPIKey]; !ok {
+		t.Fatalf("metadata slots = %v, want api-key recorded", meta.Slots)
 	}
 }
 
@@ -781,12 +854,12 @@ func TestLoginWithClientSecret_ErrorDoesNotLeakSecretMaterial(t *testing.T) {
 	}
 }
 
-func TestLoginWithClientSecretClearsStaleAPIKey(t *testing.T) {
+func TestLoginWithClientSecretKeepsAPIKeyByDefault(t *testing.T) {
 	setupLoginTest(t)
 	resetLoginFlags(t)
-	mockClientSecretSuccess(t) // usable secret: activation succeeds, so the stale API key is retired
+	mockClientSecretSuccess(t) // usable secret: activation succeeds and the API key is kept alongside it
 
-	if err := credentials.SetAPIKey("tskey-api-stale"); err != nil {
+	if err := credentials.SetAPIKey("tskey-api-existing"); err != nil {
 		t.Fatalf("SetAPIKey() error = %v", err)
 	}
 
@@ -805,15 +878,42 @@ func TestLoginWithClientSecretClearsStaleAPIKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetAPIKey() error = %v", err)
 	}
-	if gotAPIKey != "" {
-		t.Fatalf("api key = %q, want cleared", gotAPIKey)
+	if gotAPIKey != "tskey-api-existing" {
+		t.Fatalf("api key = %q, want kept alongside the new client secret", gotAPIKey)
 	}
-	gotAuth, err := credentials.GetAuthKey(context.Background(), credentials.AuthKeyOptions{Tags: []string{"tag:tsmain"}})
+	gotSecret, err := credentials.GetClientSecret()
 	if err != nil {
-		t.Fatalf("GetAuthKey() error = %v", err)
+		t.Fatalf("GetClientSecret() error = %v", err)
 	}
-	if !strings.HasPrefix(gotAuth, "tskey-client-new?") {
-		t.Fatalf("GetAuthKey() = %q, want newly selected client secret", gotAuth)
+	if gotSecret != "tskey-client-new" {
+		t.Fatalf("client secret = %q, want newly selected client secret", gotSecret)
+	}
+}
+
+func TestLoginWithClientSecretRetireOtherClearsAPIKey(t *testing.T) {
+	setupLoginTest(t)
+	resetLoginFlags(t)
+	mockClientSecretSuccess(t)
+
+	if err := credentials.SetAPIKey("tskey-api-stale"); err != nil {
+		t.Fatalf("SetAPIKey() error = %v", err)
+	}
+	oldEnsure := loginEnsureTagsFn
+	t.Cleanup(func() { loginEnsureTagsFn = oldEnsure })
+	loginEnsureTagsFn = func(ctx context.Context, tags []string) error { return nil }
+	if err := loginCmd.Flags().Set("retire-other", "true"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := loginWithClientSecret(loginCmd, "tskey-client-new"); err != nil {
+		t.Fatalf("loginWithClientSecret() error = %v", err)
+	}
+	gotAPIKey, err := credentials.GetAPIKey()
+	if err != nil {
+		t.Fatalf("GetAPIKey() error = %v", err)
+	}
+	if gotAPIKey != "" {
+		t.Fatalf("api key = %q, want cleared by --retire-other", gotAPIKey)
 	}
 }
 

@@ -75,6 +75,10 @@ const (
 	CodeInviteStateConflict        = "invite_state_conflict"
 	CodeInviteRequestInvalid       = "invite_request_invalid"
 	CodeInviteResponseInvalid      = "invite_response_invalid"
+	CodeInviteAPIUnauthorized      = "invite_api_unauthorized"
+	CodeAPITokenUnauthorized       = "api_token_unauthorized"
+	CodeAPIForbidden               = "api_forbidden"
+	CodeLoginVerifyFailed          = "login_verify_failed"
 
 	ProvisionReasonDaemonDisabled      = "daemon_disabled"
 	ProvisionReasonServiceDisabled     = "service_disabled"
@@ -136,6 +140,32 @@ func (e CodedError) StableCode() string {
 
 // NextCommands returns deterministic recovery commands for machine consumers.
 func (e CodedError) NextCommands() []string {
+	return append([]string(nil), e.Next...)
+}
+
+// StableCodeError attaches a stable machine code and recovery commands to an
+// error while preserving the wrapped chain, so callers that already classify
+// with errors.Is (for example ErrPolicyAccessDenied) keep working and JSON
+// consumers still receive error.code and error.next.
+type StableCodeError struct {
+	Code string
+	Next []string
+	Err  error
+}
+
+func (e *StableCodeError) Error() string {
+	if e.Err == nil {
+		return e.Code
+	}
+	return e.Err.Error()
+}
+
+func (e *StableCodeError) Unwrap() error { return e.Err }
+
+func (e *StableCodeError) StableCode() string { return e.Code }
+
+// NextCommands returns deterministic recovery commands for machine consumers.
+func (e *StableCodeError) NextCommands() []string {
 	return append([]string(nil), e.Next...)
 }
 

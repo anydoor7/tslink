@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/monody0007/tslink/internal/config"
+	"github.com/monody0007/tslink/internal/credentials"
 	"github.com/monody0007/tslink/internal/inspect"
 	"github.com/monody0007/tslink/internal/output"
 	"github.com/monody0007/tslink/internal/registry"
@@ -56,8 +57,17 @@ func newDoctorTestEnv(t *testing.T, services []registry.Service) doctorTestEnv {
 	doctorPIDPathFn = func() (string, error) { return env.pidPath, nil }
 	doctorAuthKeyPathFn = func() (string, error) { return env.authKeyPath, nil }
 	doctorLoadGlobalConfigFn = func() (config.GlobalConfig, error) { return config.GlobalConfig{}, nil }
-	doctorGetAPIKeyFn = func() (string, error) { return "tskey-api-secret-value", nil }
-	doctorGetClientSecretFn = func() (string, error) { return "", nil }
+	// The default fixture models the recommended dual-slot state (api-key for
+	// invites, client-secret for durable daemon auth) with fresh, verified
+	// metadata so a healthy environment produces no credential warnings.
+	doctorGetAPIKeyFn = func() (string, error) { return doctorFixtureAPIKey, nil }
+	doctorGetClientSecretFn = func() (string, error) { return doctorFixtureClientSecret, nil }
+	doctorNowFn = func() time.Time { return env.startedAt }
+	doctorCredentialInventoryFn = doctorFixtureInventory
+	doctorProbeCredentialFn = func(context.Context, string, time.Time) (credentials.ProbeOutcome, error) {
+		t.Fatal("remote credential probe ran without --probe-remote")
+		return credentials.ProbeOutcome{}, nil
+	}
 	doctorReadFileFn = os.ReadFile
 	doctorStatFn = os.Stat
 	doctorOpenPathFn = func(path string) (io.Closer, error) { return os.Open(path) }
@@ -92,7 +102,13 @@ func resetDoctorSeams(t *testing.T) {
 	oldReadPID := readPIDFn
 	oldPIDFileModTime := pidFileModTimeFn
 	oldRuntimeLoad := runtimeLoadSnapshotFn
+	oldNow := doctorNowFn
+	oldInventory := doctorCredentialInventoryFn
+	oldProbeCredential := doctorProbeCredentialFn
 	t.Cleanup(func() {
+		doctorNowFn = oldNow
+		doctorCredentialInventoryFn = oldInventory
+		doctorProbeCredentialFn = oldProbeCredential
 		doctorConfigDirFn = oldConfigDir
 		doctorRegistryPathFn = oldRegistryPath
 		doctorRuntimeSnapshotPathFn = oldRuntimeSnapshotPath
@@ -112,6 +128,30 @@ func resetDoctorSeams(t *testing.T) {
 		pidFileModTimeFn = oldPIDFileModTime
 		runtimeLoadSnapshotFn = oldRuntimeLoad
 	})
+}
+
+const (
+	doctorFixtureAPIKey       = "tskey-api-secret-value"
+	doctorFixtureClientSecret = "tskey-client-FAKE-fixture-secret"
+)
+
+// doctorFixtureInventory classifies the fixture values against an in-memory
+// metadata document (both slots stored a day ago and verified) so tests never
+// touch a credential-meta.json on disk and see no backfill noise.
+func doctorFixtureInventory(values credentials.SlotValues, now time.Time) credentials.Inventory {
+	doc := credentials.Metadata{SchemaVersion: credentials.MetadataSchemaVersion, Slots: map[string]credentials.SlotMetadata{}}
+	storedAt := now.Add(-24 * time.Hour)
+	for slot, value := range map[string]string{credentials.SlotAPIKey: values.APIKey, credentials.SlotClientSecret: values.ClientSecret} {
+		if strings.TrimSpace(value) == "" {
+			continue
+		}
+		meta, err := credentials.NewSlotMetadata(slot, value, credentials.StoredOptions{Now: storedAt, Verified: true})
+		if err != nil {
+			panic(err)
+		}
+		doc.Slots[slot] = meta
+	}
+	return credentials.DescribeSlotsWithMetadata(values, doc, nil, now)
 }
 
 func writeDoctorRegistry(t *testing.T, path string, services []registry.Service) {
@@ -450,6 +490,7 @@ func TestDoctorLegacyAuthKeyWarning(t *testing.T) {
 	env := newDoctorTestEnv(t, nil)
 	env.writeExactSnapshot(t)
 	doctorGetAPIKeyFn = func() (string, error) { return "", nil }
+	doctorGetClientSecretFn = func() (string, error) { return "", nil }
 	if err := os.WriteFile(env.authKeyPath, []byte("tskey-auth-secret"), 0o600); err != nil {
 		t.Fatalf("write authkey: %v", err)
 	}

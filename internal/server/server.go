@@ -1408,6 +1408,10 @@ func recoverableServiceFailure(svc registry.Service, err error) (runtimesnapshot
 	case registry.CodeFunnelCapabilityMissing:
 	case registry.CodeFunnelListenFailed:
 	case registry.CodeServiceStartTimeout:
+	case registry.CodeAPITokenUnauthorized, registry.CodeAPIForbidden:
+		// Auth-key derivation rejected by Tailscale: the credential is expired,
+		// revoked, or under-scoped. Persist the coded failure so status and
+		// doctor show the reason and recovery steps instead of a bare log line.
 	case registry.CodePathNotFound, registry.CodePathNotDirectory, registry.CodePathNotAccessible,
 		registry.CodeFunnelAllowConflict, registry.CodeFunnelControlURLConflict,
 		registry.CodeFunnelTypeConflict, registry.CodeFunnelPublicAckRequired,

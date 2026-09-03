@@ -316,6 +316,9 @@ func mockServeDefaults(t *testing.T, dir string) {
 
 	serveEnsureDirFn = func() error { return nil }
 	serveMigrateFn = func() bool { return false }
+	oldBackfill := serveBackfillCredentialMetaFn
+	t.Cleanup(func() { serveBackfillCredentialMetaFn = oldBackfill })
+	serveBackfillCredentialMetaFn = func() ([]string, error) { return nil, nil }
 	serveRegistryPathFn = func() (string, error) { return regPath, nil }
 	serveLoadRegistryFn = registry.Load
 	serveGetAuthKeyFn = func(ctx context.Context, opts credentials.AuthKeyOptions) (string, error) {

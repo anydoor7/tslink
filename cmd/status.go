@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/monody0007/tslink/internal/config"
+	"github.com/monody0007/tslink/internal/credentials"
 	"github.com/monody0007/tslink/internal/daemon"
 	"github.com/monody0007/tslink/internal/inspect"
 	"github.com/monody0007/tslink/internal/output"
@@ -28,7 +29,14 @@ var (
 	runtimeLoadSnapshotFn       = tsruntime.Load
 	statusLoadAuthHandoffFn     = loadAuthHandoff
 	statusNowFn                 = time.Now
-	pidFileModTimeFn            = func(path string) (time.Time, error) {
+	statusGetClientSecretFn     = credentials.GetClientSecret
+	// statusCredentialInventoryFn classifies the stored credential slots and
+	// persists any missing value-free metadata (backfill). Tests replace it to
+	// stay off the filesystem.
+	statusCredentialInventoryFn = func(values credentials.SlotValues, now time.Time) credentials.Inventory {
+		return credentials.DescribeSlots(values, now, true)
+	}
+	pidFileModTimeFn = func(path string) (time.Time, error) {
 		info, err := os.Stat(path)
 		if err != nil {
 			return time.Time{}, err
@@ -55,6 +63,8 @@ type StatusResult struct {
 	OwnershipProofAvailable bool                    `json:"ownership_proof_available"`
 	Authenticated           bool                    `json:"authenticated"`
 	CredentialStored        bool                    `json:"credential_stored"`
+	Credentials             StatusCredentials       `json:"credentials"`
+	CredentialExpiryState   string                  `json:"credential_expiry_state"`
 	NodeAuthorized          bool                    `json:"node_authorized"`
 	AuthorizedServiceCount  int                     `json:"authorized_service_count"`
 	AuthStatus              string                  `json:"auth_status"`
@@ -64,6 +74,29 @@ type StatusResult struct {
 	GlobalError             *tsruntime.ServiceError `json:"global_error,omitempty"`
 	ServiceCount            int                     `json:"service_count"`
 	Services                []StatusServiceState    `json:"services"`
+}
+
+// StatusCredentials is the value-free per-slot credential report. It carries
+// fingerprints and timestamps, never credential material.
+type StatusCredentials struct {
+	APIKey       StatusCredentialSlot `json:"api_key"`
+	ClientSecret StatusCredentialSlot `json:"client_secret"`
+	// MetadataError is set when credential-meta.json exists but is unreadable;
+	// present slots then report expiry_state=unknown.
+	MetadataError string `json:"metadata_error,omitempty"`
+}
+
+// StatusCredentialSlot describes one credential slot.
+type StatusCredentialSlot struct {
+	Present            bool       `json:"present"`
+	Fingerprint        string     `json:"fingerprint,omitempty"`
+	StoredAt           *time.Time `json:"stored_at,omitempty"`
+	ExpiresAt          *time.Time `json:"expires_at,omitempty"`
+	ExpiresAtSource    string     `json:"expires_at_source,omitempty"`
+	DaysLeft           *int       `json:"days_left,omitempty"`
+	ExpiryState        string     `json:"expiry_state"`
+	LastVerifiedAt     *time.Time `json:"last_verified_at,omitempty"`
+	LastVerifiedResult string     `json:"last_verified_result,omitempty"`
 }
 
 type StatusServiceState struct {
@@ -86,6 +119,8 @@ type StatusURLsResult struct {
 	OwnershipProofAvailable bool                        `json:"ownership_proof_available"`
 	Authenticated           bool                        `json:"authenticated"`
 	CredentialStored        bool                        `json:"credential_stored"`
+	Credentials             StatusCredentials           `json:"credentials"`
+	CredentialExpiryState   string                      `json:"credential_expiry_state"`
 	NodeAuthorized          bool                        `json:"node_authorized"`
 	AuthorizedServiceCount  int                         `json:"authorized_service_count"`
 	AuthStatus              string                      `json:"auth_status"`
@@ -179,16 +214,56 @@ func baseStatus(pidPath string) StatusResult {
 	} else if isProcessAbsentFromPIDFileFn(pidPath) {
 		r.DaemonState = daemonStateAbsent
 	}
-	if apiKey, _ := getAPIKeyFn(); apiKey != "" {
-		r.CredentialStored = true
-		r.Authenticated = true
-		r.AuthStatus = authStatusAuthenticated
-	} else if hasClientSecretFn() {
+	values := credentials.SlotValues{}
+	values.APIKey, _ = getAPIKeyFn()
+	hasClientSecret := hasClientSecretFn()
+	if hasClientSecret {
+		values.ClientSecret, _ = statusGetClientSecretFn()
+	}
+	if values.APIKey != "" || hasClientSecret {
 		r.CredentialStored = true
 		r.Authenticated = true
 		r.AuthStatus = authStatusAuthenticated
 	}
+	r.Credentials, r.CredentialExpiryState = statusCredentialsFromInventory(statusCredentialInventoryFn(values, statusNowFn()), hasClientSecret)
 	return r
+}
+
+func statusCredentialSlot(view credentials.SlotView) StatusCredentialSlot {
+	slot := StatusCredentialSlot{Present: view.Present, ExpiryState: view.ExpiryState}
+	if view.Metadata != nil {
+		slot.Fingerprint = view.Metadata.Fingerprint
+		storedAt := view.Metadata.StoredAt.UTC()
+		slot.StoredAt = &storedAt
+		slot.ExpiresAt = cloneTimePointer(view.Metadata.ExpiresAt)
+		slot.ExpiresAtSource = view.Metadata.ExpiresAtSource
+		slot.LastVerifiedAt = cloneTimePointer(view.Metadata.LastVerifiedAt)
+		slot.LastVerifiedResult = view.Metadata.LastVerifiedResult
+	}
+	if view.DaysLeft != nil {
+		days := *view.DaysLeft
+		slot.DaysLeft = &days
+	}
+	return slot
+}
+
+// statusCredentialsFromInventory maps the credentials inventory onto the wire
+// shape. clientSecretPresent covers the case where presence is known but the
+// value could not be re-read for fingerprinting: the slot stays present with an
+// unknown expiry instead of silently vanishing.
+func statusCredentialsFromInventory(inventory credentials.Inventory, clientSecretPresent bool) (StatusCredentials, string) {
+	result := StatusCredentials{
+		APIKey:       statusCredentialSlot(inventory.APIKey),
+		ClientSecret: statusCredentialSlot(inventory.ClientSecret),
+	}
+	if inventory.MetadataError != nil {
+		result.MetadataError = sanitizeDoctorEvidenceValue(inventory.MetadataError.Error())
+	}
+	if clientSecretPresent && !result.ClientSecret.Present {
+		result.ClientSecret = StatusCredentialSlot{Present: true, ExpiryState: credentials.ExpiryStateUnknown}
+	}
+	state := credentials.WorstExpiryState(result.APIKey.ExpiryState, result.ClientSecret.ExpiryState)
+	return result, state
 }
 
 func setStatusContinuation(r *StatusResult) {
@@ -199,7 +274,49 @@ func setStatusContinuation(r *StatusResult) {
 		r.Next = []string{"tslink status --json"}
 	default:
 		r.Next = nil
+		switch r.CredentialExpiryState {
+		case credentials.ExpiryStateExpiring, credentials.ExpiryStateExpired:
+			// The api-key slot is the only one that expires; renewing it is
+			// the same three-step bootstrap every auth error points to.
+			r.Next = credentials.NextAPIKeyBootstrap()
+		}
 	}
+}
+
+// formatCredentialSlotSummary renders one slot for the human status line.
+func formatCredentialSlotSummary(name string, slot StatusCredentialSlot) string {
+	if !slot.Present {
+		return ""
+	}
+	switch slot.ExpiryState {
+	case credentials.ExpiryStateExpired:
+		if slot.DaysLeft != nil {
+			return fmt.Sprintf("%s expired %dd ago (%s)", name, -*slot.DaysLeft, expirySourceLabel(slot.ExpiresAtSource))
+		}
+		return name + " expired"
+	case credentials.ExpiryStateExpiring, credentials.ExpiryStateOK:
+		if slot.ExpiresAt == nil {
+			return name + " ok (does not expire)"
+		}
+		days := 0
+		if slot.DaysLeft != nil {
+			days = *slot.DaysLeft
+		}
+		return fmt.Sprintf("%s expires in %dd (%s)", name, days, expirySourceLabel(slot.ExpiresAtSource))
+	default:
+		return name + " expiry unknown"
+	}
+}
+
+func formatCredentialSummary(c StatusCredentials) string {
+	parts := make([]string, 0, 2)
+	if summary := formatCredentialSlotSummary(credentials.SlotAPIKey, c.APIKey); summary != "" {
+		parts = append(parts, summary)
+	}
+	if summary := formatCredentialSlotSummary(credentials.SlotClientSecret, c.ClientSecret); summary != "" {
+		parts = append(parts, summary)
+	}
+	return strings.Join(parts, "; ")
 }
 
 func getPollableStatus(pidPath, regPath, snapshotPath, authHandoffPath string) (StatusResult, error) {
@@ -348,6 +465,15 @@ func formatStatus(r StatusResult, out io.Writer) {
 	}
 	if r.Authenticated {
 		fmt.Fprintln(out, "→ tailnet: authenticated")
+		if summary := formatCredentialSummary(r.Credentials); summary != "" {
+			fmt.Fprintf(out, "→ credentials: %s\n", summary)
+		}
+		switch r.CredentialExpiryState {
+		case credentials.ExpiryStateExpiring, credentials.ExpiryStateExpired:
+			for _, step := range r.Next {
+				fmt.Fprintf(out, "→ next: %s\n", step)
+			}
+		}
 	} else if r.AuthStatus == authStatusNeedsLogin {
 		fmt.Fprintln(out, "→ tailnet: needs login")
 		if r.AuthURL != "" {
@@ -397,6 +523,8 @@ func getStatusURLsWithAuth(pidPath, regPath, snapshotPath, authHandoffPath strin
 		OwnershipProofAvailable: status.OwnershipProofAvailable,
 		Authenticated:           status.Authenticated,
 		CredentialStored:        status.CredentialStored,
+		Credentials:             status.Credentials,
+		CredentialExpiryState:   status.CredentialExpiryState,
 		NodeAuthorized:          status.NodeAuthorized,
 		AuthorizedServiceCount:  status.AuthorizedServiceCount,
 		AuthStatus:              status.AuthStatus,
@@ -632,11 +760,14 @@ func formatStatusURLs(r StatusURLsResult, out io.Writer) {
 		OwnershipProofAvailable: r.OwnershipProofAvailable,
 		Authenticated:           r.Authenticated,
 		CredentialStored:        r.CredentialStored,
+		Credentials:             r.Credentials,
+		CredentialExpiryState:   r.CredentialExpiryState,
 		NodeAuthorized:          r.NodeAuthorized,
 		AuthorizedServiceCount:  r.AuthorizedServiceCount,
 		AuthStatus:              r.AuthStatus,
 		AuthURL:                 r.AuthURL,
 		ExpiresAt:               r.ExpiresAt,
+		Next:                    r.Next,
 		ServiceCount:            r.ServiceCount,
 	}, out)
 	fmt.Fprintf(out, "→ runtime snapshot: %s", r.RuntimeSnapshot.Status)
@@ -728,6 +859,10 @@ Output lines:
   → tslink: running (pid 12345)     Daemon is active with its process ID
   → tslink: not running             Daemon is not active
   → tailnet: authenticated          Stored credential or running user-owned node
+  → credentials: api-key expires in 12d (assumed max); client-secret ok (does not expire)
+                                    Per-slot expiry; JSON exposes credentials.* and
+                                    credential_expiry_state (none/ok/expiring/expired/unknown;
+                                    expiring means <= 14 days left). Fingerprints only, never values.
   → tailnet: needs login            Open the emitted URL, then poll status again
   → tailnet: not authenticated      Run 'tslink serve' to enroll without a credential
   → services: 3 registered          Number of services in the registry

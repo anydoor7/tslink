@@ -401,6 +401,17 @@ func TestDoctorCodesAreRegistered(t *testing.T) {
 		WarningCodeFilePathUnreadable,
 		WarningCodeFunnelGlobalControlURLUnknownCompat,
 		WarningCodeIdentityResolutionUnknown,
+		WarningCodeCredentialMixedRecommended,
+		WarningCodeCredentialAPITokenOnly,
+		WarningCodeCredentialOAuthClientOnly,
+		WarningCodeCredentialAPITokenExpiring,
+		WarningCodeCredentialAPITokenExpired,
+		WarningCodeCredentialExpiryUnknown,
+		WarningCodeCredentialRemoteUnverified,
+		WarningCodeCredentialMetaBackfilled,
+		WarningCodeCredentialAPITokenRejected,
+		WarningCodeCredentialRemoteForbidden,
+		WarningCodeCredentialRemoteUnreachable,
 	}
 	for _, code := range required {
 		meta, ok := WarningCodeRegistry[code]

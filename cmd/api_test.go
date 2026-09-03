@@ -1165,7 +1165,8 @@ func TestAPIDoctorReturnsVNextPayloadReadOnly(t *testing.T) {
 	var buf bytes.Buffer
 	h.handle(APIRequest{Action: "doctor"}, &buf)
 	raw := buf.String()
-	assertAPIRawJSONHasNoPrivateRegistryFields(t, raw, "tskey-api-secret-value")
+	assertAPIRawJSONHasNoPrivateRegistryFields(t, raw, doctorFixtureAPIKey)
+	assertAPIRawJSONHasNoPrivateRegistryFields(t, raw, doctorFixtureClientSecret)
 
 	resp := parseResponse(t, &buf)
 	if !resp.OK {
@@ -1181,8 +1182,9 @@ func TestAPIDoctorReturnsVNextPayloadReadOnly(t *testing.T) {
 	if result.Paths.Registry != env.regPath || result.Paths.RuntimeSnapshot != env.snapshotPath || result.Paths.PID != env.pidPath {
 		t.Fatalf("doctor paths = %+v, want test env paths", result.Paths)
 	}
-	if result.Counts.Services != 0 || result.CredentialMode != doctorCredentialAPIToken || !result.Daemon.Running {
-		t.Fatalf("doctor result = %+v, want local read-only status with API token and running daemon", result)
+	// The doctor fixture stores both slots, the recommended dual-slot state.
+	if result.Counts.Services != 0 || result.CredentialMode != doctorCredentialMixed || !result.Daemon.Running {
+		t.Fatalf("doctor result = %+v, want local read-only status with both credential slots and running daemon", result)
 	}
 	if result.HealthStatus != doctorStatusWarning || result.HealthExitCode != output.ExitWarning {
 		t.Fatalf("doctor health = %q/%d, want warning/%d", result.HealthStatus, result.HealthExitCode, output.ExitWarning)

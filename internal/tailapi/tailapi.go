@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/monody0007/tslink/internal/config"
+	"github.com/monody0007/tslink/internal/credentials"
 	"github.com/monody0007/tslink/internal/registry"
 )
 
@@ -54,7 +55,7 @@ func FindExactDeviceNodeID(ctx context.Context, hostname string) (string, int, e
 	// below therefore counts the full response, not one page.
 	devices, err := client.Devices().List(ctx)
 	if err != nil {
-		return "", 0, fmt.Errorf("list devices for adoption: %w", err)
+		return "", 0, credentials.ClassifyAPIError("list devices for adoption", err)
 	}
 	hostnameMatches := 0
 	var taggedNodeIDs []string
@@ -202,7 +203,7 @@ func CleanupStaleNodesResultWithDryRun(ctx context.Context, targets []CleanupTar
 
 	devices, err := client.Devices().List(ctx)
 	if err != nil {
-		return CleanupResult{}, fmt.Errorf("list devices: %w", err)
+		return CleanupResult{}, credentials.ClassifyAPIError("list devices", err)
 	}
 
 	owned := make(map[string]CleanupTarget)

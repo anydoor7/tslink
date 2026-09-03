@@ -46,10 +46,22 @@ func main() {
 		output.FailureForError(cmd.LastCommandName(), err)
 	} else {
 		// Print error in human-readable format (Cobra's SilenceErrors is on)
-		os.Stderr.WriteString("Error: " + err.Error() + "\n")
+		os.Stderr.WriteString(formatHumanError(err))
 	}
 
 	os.Exit(code)
+}
+
+// formatHumanError renders the same recovery list the JSON envelope carries in
+// error.next, one "Next:" line per step, so a human sees the Keys page URL and
+// bootstrap commands instead of only "Error: ...".
+func formatHumanError(err error) string {
+	var b strings.Builder
+	b.WriteString("Error: " + err.Error() + "\n")
+	for _, next := range output.NextCommandsForError(err) {
+		b.WriteString("Next: " + next + "\n")
+	}
+	return b.String()
 }
 
 // resolveBuildVersion preserves linker-injected release metadata, then falls

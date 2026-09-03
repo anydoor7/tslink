@@ -43,6 +43,18 @@ const (
 	WarningCodeFilePathUnreadable                  = "file_path_unreadable"
 	WarningCodeFunnelGlobalControlURLUnknownCompat = "funnel_global_control_url_unknown_compat"
 	WarningCodeIdentityResolutionUnknown           = "identity_resolution_unknown"
+
+	WarningCodeCredentialMixedRecommended  = "credential_mixed_recommended"
+	WarningCodeCredentialAPITokenOnly      = "credential_api_token_only"
+	WarningCodeCredentialOAuthClientOnly   = "credential_oauth_client_only"
+	WarningCodeCredentialAPITokenExpiring  = "credential_api_token_expiring"
+	WarningCodeCredentialAPITokenExpired   = "credential_api_token_expired"
+	WarningCodeCredentialExpiryUnknown     = "credential_expiry_unknown"
+	WarningCodeCredentialRemoteUnverified  = "credential_remote_unverified"
+	WarningCodeCredentialMetaBackfilled    = "credential_meta_backfilled"
+	WarningCodeCredentialAPITokenRejected  = "credential_api_token_rejected"
+	WarningCodeCredentialRemoteForbidden   = "credential_remote_forbidden"
+	WarningCodeCredentialRemoteUnreachable = "credential_remote_unreachable"
 )
 
 type WarningCodeMeta struct {
@@ -246,5 +258,60 @@ var WarningCodeRegistry = map[string]WarningCodeMeta{
 		Severity:    "info",
 		Source:      "identity",
 		Description: "Local diagnostics cannot prove real Tailscale identity resolution or remote ACL policy.",
+	},
+	WarningCodeCredentialMixedRecommended: {
+		Severity:    "info",
+		Source:      "credentials",
+		Description: "Both an OAuth client secret (durable daemon auth) and a user-owned API access token (invites) are stored; this is the recommended dual-slot configuration.",
+	},
+	WarningCodeCredentialAPITokenOnly: {
+		Severity:    "warning",
+		Source:      "credentials",
+		Description: "Only a user-owned API access token is stored: invites work, but daemon node authentication depends on a token that expires within 90 days; add an OAuth client secret for durable daemon auth.",
+	},
+	WarningCodeCredentialOAuthClientOnly: {
+		Severity:    "info",
+		Source:      "credentials",
+		Description: "Only an OAuth client secret is stored: daemon authentication is durable, but invite operations need a user-owned tskey-api- token.",
+	},
+	WarningCodeCredentialAPITokenExpiring: {
+		Severity:    "warning",
+		Source:      "credentials",
+		Description: "The stored API access token expires within 14 days; generate a new token and run tslink login --api-key-stdin before it lapses.",
+	},
+	WarningCodeCredentialAPITokenExpired: {
+		Severity:    "error",
+		Source:      "credentials",
+		Description: "The stored API access token has passed its recorded expiry; remote API calls that depend on it will fail with HTTP 401 until a new token is stored.",
+	},
+	WarningCodeCredentialExpiryUnknown: {
+		Severity:    "warning",
+		Source:      "credentials",
+		Description: "Credential metadata (credential-meta.json) is missing or unreadable, so token expiry cannot be evaluated locally.",
+	},
+	WarningCodeCredentialRemoteUnverified: {
+		Severity:    "info",
+		Source:      "credentials",
+		Description: "A stored credential has never been verified against the Tailscale API by this TSLink install; run tslink doctor --probe-remote to record a verification.",
+	},
+	WarningCodeCredentialMetaBackfilled: {
+		Severity:    "info",
+		Source:      "credentials",
+		Description: "Credential metadata was backfilled for a credential stored before expiry tracking existed; stored_at is the backfill time and expires_at is the assumed 90-day maximum.",
+	},
+	WarningCodeCredentialAPITokenRejected: {
+		Severity:    "error",
+		Source:      "credentials",
+		Description: "The remote probe was rejected with HTTP 401: the stored credential is expired, revoked, or invalid.",
+	},
+	WarningCodeCredentialRemoteForbidden: {
+		Severity:    "warning",
+		Source:      "credentials",
+		Description: "The remote probe was refused with HTTP 403: the credential is valid but its user role or OAuth scopes do not permit the probe operation.",
+	},
+	WarningCodeCredentialRemoteUnreachable: {
+		Severity:    "warning",
+		Source:      "credentials",
+		Description: "The remote probe could not reach the Tailscale API; the credential state remains unproven.",
 	},
 }

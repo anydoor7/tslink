@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
+	"github.com/monody0007/tslink/internal/credentials"
 	"github.com/monody0007/tslink/internal/inspect"
 	"github.com/monody0007/tslink/internal/output"
 	"github.com/monody0007/tslink/internal/registry"
@@ -200,10 +201,11 @@ func Manifest() CLIManifest {
 		CredentialSources: CredentialSources{
 			Recommended: []CredentialSource{
 				{ID: "interactive_login", Command: "tslink login", Boundary: "normal path; prompts avoid putting secrets in argv or shell history"},
+				{ID: "keys_page_bootstrap", Command: "tslink login --open-keys-page", Flags: []string{"--open-keys-page", "--open-oauth-page"}, Boundary: "standalone helper that opens " + credentials.KeysPageURL + " (or the OAuth page) only for an interactive terminal outside CI; otherwise prints the URL and the three bootstrap steps and exits 0 without storing anything"},
 			},
 			Automation: []CredentialSource{
-				{ID: "api_key_stdin", Command: "tslink login --api-key-stdin", Flags: []string{"--api-key-stdin"}, Boundary: "read API token from stdin; keep secret out of argv"},
-				{ID: "client_secret_stdin", Command: "tslink login --client-secret-stdin", Flags: []string{"--client-secret-stdin"}, Boundary: "read OAuth client secret from stdin; keep secret out of argv"},
+				{ID: "api_key_stdin", Command: "tslink login --api-key-stdin", Flags: []string{"--api-key-stdin", "--expires-in", "--expires-at"}, Boundary: "read API token from stdin; keep secret out of argv. The api-key slot expires within 90 days: pass --expires-in or --expires-at to record the real expiry, otherwise expires_at_source=assumed_max; status --json reports credential_expiry_state and renewing is another login to the same slot"},
+				{ID: "client_secret_stdin", Command: "tslink login --client-secret-stdin", Flags: []string{"--client-secret-stdin"}, Boundary: "read OAuth client secret from stdin; keep secret out of argv; the client-secret slot does not expire"},
 				{ID: "environment", Environment: []string{"TSLINK_API_KEY", "TSLINK_CLIENT_SECRET"}, Boundary: "acceptable for secret-manager injected automation; do not hard-code in shell history or source"},
 			},
 			Avoid: []CredentialSource{
@@ -213,6 +215,8 @@ func Manifest() CLIManifest {
 			Storage: []CredentialSource{
 				{ID: "system_keychain", Boundary: "preferred storage: macOS Keychain, Linux Secret Service, or Windows Credential Manager"},
 				{ID: "restricted_file_fallback", Boundary: "headless fallback uses user-only restricted files when keychain storage is unavailable"},
+				{ID: "dual_slot_coexistence", Command: "tslink login --retire-other", Flags: []string{"--retire-other"}, Boundary: "the api-key (invites, expires) and client-secret (durable daemon auth) slots coexist; login fills one slot and keeps the other unless --retire-other is passed; logout --kind removes one slot"},
+				{ID: "value_free_metadata", Boundary: "credential-meta.json (0600) stores only sha256 fingerprints, stored_at, expires_at, expires_at_source, and last verification per slot; never the credential value"},
 			},
 		},
 		HighRiskOperations: []HighRiskOperation{
@@ -305,8 +309,45 @@ func commandJSONResultFields(commandPath string) map[string]JSONResultFieldInfo 
 			Values:      listStateValues(),
 		}
 		return fields
+	case "tslink login":
+		return map[string]JSONResultFieldInfo{
+			"credential_kind":      {Type: "string", Description: "Kind of the committed credential slot.", Values: []string{credentials.KindAPIAccessToken, credentials.KindOAuthClientSecret}},
+			"fingerprint":          {Type: "string", Description: "First eight hex characters of sha256(credential); identifies the credential without revealing it."},
+			"stored_at":            {Type: "string", Description: "RFC3339 time the credential was committed."},
+			"expires_at":           {Type: "string", Description: "RFC3339 expiry recorded for the api-key slot; omitted for OAuth client secrets, which do not expire."},
+			"expires_at_source":    {Type: "string", Description: "Provenance of expires_at: user when given with --expires-in/--expires-at, assumed_max when TSLink assumed the 90-day maximum.", Values: []string{credentials.ExpirySourceUser, credentials.ExpirySourceAssumedMax}},
+			"rotated":              {Type: "boolean", Description: "True when the same slot previously held a different credential."},
+			"previous_fingerprint": {Type: "string", Description: "Fingerprint of the replaced credential; present only when rotated."},
+			"retired_credential":   {Type: "string", Description: "Other slot deleted as part of this commit; present only with --retire-other and a populated other slot.", Values: []string{credentials.SlotAPIKey, credentials.SlotClientSecret}},
+			"page":                 {Type: "string", Description: "Bootstrap helper only (--open-keys-page/--open-oauth-page): which admin page was presented.", Values: []string{loginBootstrapPageKeys, loginBootstrapPageOAuth}},
+			"url":                  {Type: "string", Description: "Bootstrap helper only: the admin page URL to open."},
+			"opened":               {Type: "boolean", Description: "Bootstrap helper only: true when a browser was opened; always false under --json."},
+			"next":                 {Type: "array", Description: "Bootstrap helper only: the three-step credential bootstrap sequence."},
+		}
+	case "tslink logout":
+		return map[string]JSONResultFieldInfo{
+			"kind":                {Type: "string", Description: "Selected credential slot for a selective logout; omitted for the full logout.", Values: []string{credentials.SlotAPIKey, credentials.SlotClientSecret}},
+			"deleted_credentials": {Type: "array", Description: "Credential slots removed by this invocation; empty when nothing was stored."},
+		}
 	case "tslink status":
 		fields := agentServiceRuntimeJSONResultFields()
+		fields["credential_expiry_state"] = JSONResultFieldInfo{
+			Type:        "string",
+			Description: "Worst per-slot credential expiry state; expiring means the api-key slot has 14 days or fewer left, and next then carries the key-bootstrap steps.",
+			Values:      credentialExpiryStateValues(),
+		}
+		fields["credentials.api_key"] = JSONResultFieldInfo{
+			Type:        "object",
+			Description: "Value-free api-key slot report: present, fingerprint, stored_at, expires_at, expires_at_source, days_left, expiry_state, last_verified_at, last_verified_result.",
+		}
+		fields["credentials.client_secret"] = JSONResultFieldInfo{
+			Type:        "object",
+			Description: "Value-free client-secret slot report with the same fields as credentials.api_key; expires_at is omitted because OAuth client secrets do not expire.",
+		}
+		fields["credentials.metadata_error"] = JSONResultFieldInfo{
+			Type:        "string",
+			Description: "Sanitized reason credential-meta.json could not be trusted; present slots then report expiry_state unknown.",
+		}
 		fields["global_error"] = JSONResultFieldInfo{
 			Type:        "object",
 			Description: "Stable daemon-wide runtime failure showing that the current registry control plane is non-authoritative; omitted when reconciliation is healthy.",
@@ -559,6 +600,16 @@ func statusRuntimeStateValues() []string {
 	return []string{statusEndpointStateUnknown, tsruntime.ServiceRuntimeRunning, tsruntime.ServiceRuntimeFailed}
 }
 
+func credentialExpiryStateValues() []string {
+	return []string{
+		credentials.ExpiryStateNone,
+		credentials.ExpiryStateOK,
+		credentials.ExpiryStateExpiring,
+		credentials.ExpiryStateExpired,
+		credentials.ExpiryStateUnknown,
+	}
+}
+
 func funnelStateValues() []string {
 	return []string{
 		tsruntime.FunnelStateNotRequested,
@@ -756,6 +807,18 @@ func flagRelationships(commandPath, name string) (oneOf, requires, conflicts []s
 			conflicts = []string{"--fields"}
 		}
 	}
+	if commandPath == "tslink login" {
+		switch name {
+		case "expires-in":
+			conflicts = []string{"--expires-at", "--client-secret", "--client-secret-stdin"}
+		case "expires-at":
+			conflicts = []string{"--expires-in", "--client-secret", "--client-secret-stdin"}
+		case "open-keys-page":
+			conflicts = []string{"--open-oauth-page", "--api-key", "--api-key-stdin", "--client-secret", "--client-secret-stdin"}
+		case "open-oauth-page":
+			conflicts = []string{"--open-keys-page", "--api-key", "--api-key-stdin", "--client-secret", "--client-secret-stdin"}
+		}
+	}
 	if commandPath == "tslink status" && name == "name" {
 		requires = []string{"--urls"}
 	}
@@ -794,7 +857,11 @@ func errorCodeManifest() map[string]ErrorCodeInfo {
 		registry.CodeInviteNotFound:             {ExitCode: output.ExitNotFound, Description: "invite or matching service device was not found"},
 		registry.CodeInviteDeviceAmbiguous:      {ExitCode: output.ExitConflict, Description: "multiple hostname candidates remain after ownership resolution"},
 		registry.CodeInviteOwnershipUnproven:    {ExitCode: output.ExitConflict, Description: "TSLink lacks exact stable nodeId proof for the device"},
-		registry.CodeInviteAPIForbidden:         {ExitCode: output.ExitAuth, Description: "Tailscale rejected the user-owned token or its user permissions with HTTP 401 or 403"},
+		registry.CodeInviteAPIForbidden:         {ExitCode: output.ExitAuth, Description: "Tailscale rejected the user-owned token's user permissions with HTTP 403; HTTP 401 (expired, revoked, or invalid token) is reported as invite_api_unauthorized"},
+		registry.CodeInviteAPIUnauthorized:      {ExitCode: output.ExitAuth, Description: "Tailscale rejected the user-owned tskey-api- token as unauthenticated (HTTP 401): expired, revoked, or invalid; next carries the key-bootstrap steps"},
+		registry.CodeAPITokenUnauthorized:       {ExitCode: output.ExitAuth, Description: "Tailscale rejected the stored API credential as unauthenticated (HTTP 401) during ACL, device, auth-key derivation, or login verification; next carries the key-bootstrap steps"},
+		registry.CodeAPIForbidden:               {ExitCode: output.ExitAuth, Description: "Tailscale refused the API credential (HTTP 403): its user role or OAuth scopes do not permit the operation"},
+		registry.CodeLoginVerifyFailed:          {ExitCode: output.ExitError, Description: "login could not verify the candidate credential against Tailscale for a reason other than HTTP 401/403; the previous credential was kept"},
 		registry.CodeInviteResendEmailMissing:   {ExitCode: output.ExitConflict, Description: "an invite created without email cannot be resent"},
 		registry.CodeInviteIDInvalid:            {ExitCode: output.ExitUsage, Description: "invite ID is not a bare ASCII decimal string"},
 		registry.CodeInviteKindInvalid:          {ExitCode: output.ExitUsage, Description: "invite namespace is not explicitly user or device"},
