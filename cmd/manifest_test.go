@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/monody0007/tslink/internal/credentials"
 	"github.com/monody0007/tslink/internal/inspect"
 	"github.com/monody0007/tslink/internal/output"
 	"github.com/monody0007/tslink/internal/registry"
@@ -519,6 +520,15 @@ func TestAllManifestValuesMatchProductionOutputSets(t *testing.T) {
 			launchctlOutcomeAlreadyAbsent,
 			launchctlOutcomeUnconfirmed,
 		}),
+		// Credential-lifecycle enum fields. Their production truth is the same
+		// first-party constant set the manifest advertises, compared here from an
+		// independent reference exactly like daemon_state above.
+		"tslink login/credential_kind":          sliceSet([]string{credentials.KindAPIAccessToken, credentials.KindOAuthClientSecret}),
+		"tslink login/expires_at_source":        sliceSet([]string{credentials.ExpirySourceUser, credentials.ExpirySourceAssumedMax}),
+		"tslink login/retired_credential":       sliceSet([]string{credentials.SlotAPIKey, credentials.SlotClientSecret}),
+		"tslink login/page":                     sliceSet([]string{loginBootstrapPageKeys, loginBootstrapPageOAuth}),
+		"tslink logout/kind":                    sliceSet([]string{credentials.SlotAPIKey, credentials.SlotClientSecret}),
+		"tslink status/credential_expiry_state": sliceSet(credentialExpiryStateValues()),
 	}
 
 	seen := map[string]bool{}
@@ -952,10 +962,13 @@ func TestCompactManifestStaysBelowAgentTokenBudget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("json.Marshal: %v", err)
 	}
-	// The explicit invite namespace flag and five stable invite error codes add
+	// The explicit invite namespace flag and stable invite error codes, plus the
+	// credential-lifecycle surface (login --expires-in/--expires-at/--retire-other/
+	// --open-keys-page/--open-oauth-page, logout --kind, and the api_token_unauthorized,
+	// api_forbidden, invite_api_unauthorized, login_verify_failed error codes) add
 	// machine contract surface; keep a fixed ceiling while accounting for it.
-	if len(data) >= 2200 {
-		t.Fatalf("compact manifest = %d bytes, want < 2200", len(data))
+	if len(data) >= 2500 {
+		t.Fatalf("compact manifest = %d bytes, want < 2500", len(data))
 	}
 	compact := CompactManifest()
 	if compact.ErrorCodes[registry.CodeURLNotReady] != 5 {

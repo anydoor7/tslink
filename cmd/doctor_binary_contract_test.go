@@ -110,7 +110,12 @@ func TestCompiledDoctorJSONHealthFixtures(t *testing.T) {
 			setup: func(t *testing.T, home string) {
 				writeCompiledDoctorRegistry(t, home, validReg)
 				writeDoctorExactRuntime(t, home, validReg)
+				// The recommended dual-slot state (api-key for invites plus a
+				// client-secret for durable daemon auth) is the only credential
+				// posture that stays info-level; an api-key-only store is now a
+				// warning by design, so a genuinely healthy fixture needs both.
 				writeDoctorCredential(t, home, "apikey", "present")
+				writeDoctorCredential(t, home, "clientsecret", "present")
 			},
 			wantExit:   output.ExitSuccess,
 			wantHealth: doctorStatusOK,

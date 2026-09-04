@@ -55,7 +55,17 @@ func withStatusCredentialSeams(t *testing.T, apiKey, clientSecret string, invent
 func statusInventoryAt(daysLeft int, verified bool) func(credentials.SlotValues, time.Time) credentials.Inventory {
 	return func(values credentials.SlotValues, now time.Time) credentials.Inventory {
 		doc := credentials.Metadata{SchemaVersion: credentials.MetadataSchemaVersion, Slots: map[string]credentials.SlotMetadata{}}
-		storedAt := now.Add(-credentials.APIKeyAssumedMaxLifetime + time.Duration(daysLeft)*24*time.Hour + time.Hour)
+		// A positive sub-day offset only matters at the zero boundary, where the
+		// slot must still read as "expiring today" (days_left 0, remaining > 0)
+		// rather than already expired. For any positive daysLeft the remaining
+		// duration must land exactly on daysLeft*24h so the raw-duration
+		// threshold classifies the 14-day boundary as expiring, matching
+		// ExpiryState's contract pinned in metadata_test.go (14d inclusive, 14d+1min ok).
+		subDayOffset := time.Hour
+		if daysLeft > 0 {
+			subDayOffset = 0
+		}
+		storedAt := now.Add(-credentials.APIKeyAssumedMaxLifetime + time.Duration(daysLeft)*24*time.Hour + subDayOffset)
 		for slot, value := range map[string]string{credentials.SlotAPIKey: values.APIKey, credentials.SlotClientSecret: values.ClientSecret} {
 			if strings.TrimSpace(value) == "" {
 				continue

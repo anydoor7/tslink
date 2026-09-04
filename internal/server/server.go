@@ -919,7 +919,7 @@ func (s *Server) ensureFunnelPolicyBeforeRestart(
 		}
 		failureCause := err
 		if errors.Is(provisionCtx.Err(), context.DeadlineExceeded) {
-			failureCause = fmt.Errorf("Funnel policy provisioning exceeded the actual %s request budget: %w", provisionBudget, err)
+			failureCause = fmt.Errorf("provisioning the Funnel policy exceeded the actual %s request budget: %w", provisionBudget, err)
 		}
 		if result.WriteOutcome == tailapi.PolicyWriteUnknown {
 			provision.Reason = registry.ProvisionReasonWriteUnknown
@@ -1055,7 +1055,7 @@ func funnelPolicyFailureRecovery(svc registry.Service, provision registry.Provis
 		}
 	}
 	var coded registry.CodedError
-	if errors.As(registry.FunnelCapabilityMissingError(svc.Name, errors.New("Funnel policy provisioning failed")), &coded) {
+	if errors.As(registry.FunnelCapabilityMissingError(svc.Name, errors.New("provisioning the Funnel policy failed")), &coded) {
 		return coded.NextCommands()
 	}
 	return []string{fmt.Sprintf("tslink status --urls --name %s --json", svc.Name), "tslink logs --level error --json"}
@@ -1597,9 +1597,17 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service, prov
 		if len(provisionOutcomes) > 0 {
 			provision = provisionOutcomes[0]
 		}
-		status, err = s.verifyFunnelAccess(technicalCtx, tsnetSrv, svc, status, provision)
+		verified, err := s.verifyFunnelAccess(technicalCtx, tsnetSrv, svc, status, provision)
 		if err != nil {
 			return err
+		}
+		// The capability wait can observe a netmap newer than the one tsnet.Up
+		// returned. A node's DNS name only appears once the netmap carries it,
+		// so a host derived from the Up status can still be empty here; every
+		// consumer then falls back to the "<tailnet>" placeholder. Re-derive
+		// from the newest status we hold, and never downgrade a known host.
+		if host := runtimeHostFromStatus(verified); host != "" {
+			runtimeHost = host
 		}
 	}
 	listenerCtx := technicalCtx
@@ -1799,7 +1807,7 @@ func (s *Server) verifyFunnelAccess(
 		provision.Reason = registry.ProvisionReasonNetmapPollFailed
 		return nil, registry.FunnelCapabilityMissingProvisionError(
 			svc.Name,
-			fmt.Errorf("Funnel policy is prepared but netmap status cannot be polled: %w", err),
+			fmt.Errorf("the Funnel policy is prepared but netmap status cannot be polled: %w", err),
 			provision,
 			funnelNetmapRecovery(svc),
 		)
@@ -1821,7 +1829,7 @@ func (s *Server) verifyFunnelAccess(
 			provision.Reason = registry.ProvisionReasonNetmapTimeout
 			return nil, registry.FunnelCapabilityMissingProvisionError(
 				svc.Name,
-				fmt.Errorf("Funnel policy is prepared for %q, but the node capability did not propagate within the actual %s wait budget: %v", provision.Target, budget, lastErr),
+				fmt.Errorf("the Funnel policy is prepared for %q, but the node capability did not propagate within the actual %s wait budget: %v", provision.Target, budget, lastErr),
 				provision,
 				funnelNetmapRecovery(svc),
 			)
@@ -1868,10 +1876,10 @@ func funnelAccessCause(status *ipnstate.Status) (string, error) {
 		return registry.ProvisionReasonNetmapTimeout, errors.New("tsnet status did not include the service node")
 	}
 	if !status.Self.HasCap(tailcfg.CapabilityHTTPS) {
-		return registry.ProvisionReasonHTTPSDisabled, errors.New("Funnel is unavailable because HTTPS is disabled for the tailnet")
+		return registry.ProvisionReasonHTTPSDisabled, errors.New("HTTPS is disabled for the tailnet, so Funnel is unavailable")
 	}
 	if !status.Self.HasCap(tailcfg.NodeAttrFunnel) {
-		return registry.ProvisionReasonNetmapTimeout, errors.New("Funnel node attribute is not present in the service node netmap")
+		return registry.ProvisionReasonNetmapTimeout, errors.New("the Funnel node attribute is not present in the service node netmap")
 	}
 	if err := ipn.CheckFunnelPort(443, status.Self); err != nil {
 		return registry.ProvisionReasonPortUnsupported, err
@@ -1905,7 +1913,7 @@ func funnelNetmapRecovery(svc registry.Service) []string {
 
 func funnelProvisionDisabledRecovery(svc registry.Service) []string {
 	var coded registry.CodedError
-	if errors.As(registry.FunnelCapabilityMissingError(svc.Name, errors.New("Funnel node attribute is missing")), &coded) {
+	if errors.As(registry.FunnelCapabilityMissingError(svc.Name, errors.New("the Funnel node attribute is missing")), &coded) {
 		return coded.NextCommands()
 	}
 	return []string{fmt.Sprintf("tslink status --urls --name %s --json", svc.Name)}

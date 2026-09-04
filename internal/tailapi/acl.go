@@ -150,7 +150,7 @@ func EnsureTags(ctx context.Context, tags []string) error {
 // as coverage and left byte-for-byte untouched.
 func EnsureFunnelAttr(ctx context.Context, request FunnelPolicyRequest) (PolicyMutationResult, error) {
 	if request.Target == "" {
-		return PolicyMutationResult{WriteOutcome: PolicyWriteNotAttempted}, fmt.Errorf("Funnel node attribute target is empty")
+		return PolicyMutationResult{WriteOutcome: PolicyWriteNotAttempted}, fmt.Errorf("the Funnel node attribute target is empty")
 	}
 	if err := registry.ValidateTag(request.Target); err != nil {
 		return PolicyMutationResult{WriteOutcome: PolicyWriteNotAttempted}, err
@@ -162,14 +162,14 @@ func EnsureFunnelAttr(ctx context.Context, request FunnelPolicyRequest) (PolicyM
 	}
 	owners := dedupeStrings(request.Owners)
 	if len(owners) == 0 {
-		return PolicyMutationResult{WriteOutcome: PolicyWriteNotAttempted}, fmt.Errorf("Funnel tag %q has no usable existing tag owner", request.Target)
+		return PolicyMutationResult{WriteOutcome: PolicyWriteNotAttempted}, fmt.Errorf("the Funnel tag %q has no usable existing tag owner", request.Target)
 	}
 	for _, owner := range owners {
 		if err := registry.ValidateTag(owner); err != nil {
 			return PolicyMutationResult{WriteOutcome: PolicyWriteNotAttempted}, fmt.Errorf("invalid Funnel tag owner %q: %w", owner, err)
 		}
 		if owner == request.Target {
-			return PolicyMutationResult{WriteOutcome: PolicyWriteNotAttempted}, fmt.Errorf("Funnel tag %q cannot own itself", request.Target)
+			return PolicyMutationResult{WriteOutcome: PolicyWriteNotAttempted}, fmt.Errorf("the Funnel tag %q cannot own itself", request.Target)
 		}
 	}
 

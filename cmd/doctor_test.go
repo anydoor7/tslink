@@ -850,7 +850,11 @@ func TestDoctorGlobalInvalidControlURLRedactsRawOutputs(t *testing.T) {
 		return config.GlobalConfig{ControlURL: "ftp://user:pass@example.com?auth=tskey-api-secret"}, nil
 	}
 	forbidden := []string{
-		"user",
+		// "user:pass" targets the leaked URL userinfo specifically. A bare "user"
+		// token would collide with benign credential-posture prose such as the
+		// mixed-recommended finding's "user-owned API access token"; the real
+		// secret material stays covered by pass, the full URL, auth=, and tskey-.
+		"user:pass",
 		"pass",
 		"ftp://user:pass@example.com",
 		"auth=",

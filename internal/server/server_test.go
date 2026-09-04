@@ -1283,7 +1283,11 @@ func TestSyncNodes_NewerGenerationCancelsInteractiveStartupBeforeReconcile(t *te
 
 	lockAvailable := make(chan struct{})
 	go func() {
+		// Taking the lock and immediately releasing it IS the assertion: it
+		// proves the interactive authorization wait does not hold s.mu while it
+		// blocks. The critical section is empty on purpose.
 		s.mu.Lock()
+		//lint:ignore SA2001 the empty critical section is the assertion, see above
 		s.mu.Unlock()
 		close(lockAvailable)
 	}()
@@ -3141,6 +3145,66 @@ func TestStartNodeLocked_VerifiesPreparedFunnelPolicyAndWaitsForNetmap(t *testin
 	}
 	if fake.listenFunnelCalled != 1 || !s.nodeRunning("public-app") {
 		t.Fatalf("Funnel activation = listen calls:%d running:%v, want active listener", fake.listenFunnelCalled, s.nodeRunning("public-app"))
+	}
+}
+
+func TestStartNodeLocked_RuntimeHostComesFromTheNetmapTheFunnelWaitObserved(t *testing.T) {
+	testenv.SetHome(t, t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	// tsnet.Up returns as soon as the backend is Running, which can be before
+	// the netmap carries this node's DNS name. The Funnel capability wait polls
+	// a later netmap; the host it observed is the one the node must publish.
+	upStatus := funnelMissingStatus("")
+	fake := &fakeTSNetServer{status: upStatus, localClient: &LocalClient{}}
+	statusClient := &sequenceTSNetStatusClient{statuses: []*ipnstate.Status{
+		funnelMissingStatus(""),
+		funnelEnabledStatus("public-late.tailnet.ts.net."),
+	}}
+
+	oldNew := newTSNetServerFn
+	oldStatusClient := tsnetStatusClientFn
+	oldPoll := funnelCapabilityPollInterval
+	oldTimeout := funnelCapabilityWaitTimeout
+	newTSNetServerFn = func(registry.Service, string, string, string) tsnetServer { return fake }
+	tsnetStatusClientFn = func(tsnetServer) (tsnetStatusClient, error) { return statusClient, nil }
+	funnelCapabilityPollInterval = time.Millisecond
+	funnelCapabilityWaitTimeout = 100 * time.Millisecond
+	t.Cleanup(func() {
+		newTSNetServerFn = oldNew
+		tsnetStatusClientFn = oldStatusClient
+		funnelCapabilityPollInterval = oldPoll
+		funnelCapabilityWaitTimeout = oldTimeout
+		s.closeAllNodes()
+	})
+
+	svc := registry.Service{
+		Name: "public-late", Type: registry.TypeProxy, Target: "http://localhost:3000",
+		Tags: []string{"tag:public", registry.FunnelTag}, Funnel: true, PublicAck: true,
+	}
+	provision := registry.ProvisionOutcome{
+		Attempted: true, Target: registry.FunnelTag, Changed: true,
+		Reason: registry.ProvisionReasonPolicyUpdated, WriteOutcome: tailapi.PolicyWriteChanged,
+	}
+	if err := s.startNodeLocked(context.Background(), svc, provision); err != nil {
+		t.Fatalf("startNodeLocked() error = %v", err)
+	}
+	node := s.nodes["public-late"]
+	if node == nil {
+		t.Fatal("node was not registered")
+	}
+	if node.runtimeHost != "public-late.tailnet.ts.net" {
+		t.Fatalf("runtimeHost = %q, want the host from the netmap the Funnel wait observed; deriving it from the tsnet.Up status leaves it empty and every consumer falls back to the <tailnet> placeholder", node.runtimeHost)
+	}
+	// A later netmap must never downgrade a host that was already known.
+	if upStatus.Self.DNSName != "" {
+		t.Fatalf("test setup drifted: the Up status must not carry a DNS name, got %q", upStatus.Self.DNSName)
 	}
 }
 

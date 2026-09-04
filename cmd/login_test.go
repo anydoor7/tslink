@@ -299,15 +299,17 @@ func TestLoginCmd_FullFlow_WithMocks(t *testing.T) {
 }
 
 func TestLoginHelpDescribesCredentialAsOptionalAndBrowserOnlyWithExplicitFlag(t *testing.T) {
-	// The default login path never opens a browser. Every sentence that
-	// mentions one must be tied to the explicit --open-*-page helpers.
+	// The default login path never opens a browser. Every sentence that mentions
+	// one must be tied to the explicit --open-*-page helpers, or to the separate
+	// tslink serve Tier 1 enrollment path (a different command that genuinely
+	// opens a browser); login itself only opens a browser under an explicit flag.
 	for _, sentence := range strings.Split(loginCmd.Long, ".") {
 		lowered := strings.ToLower(sentence)
 		if !strings.Contains(lowered, "browser") {
 			continue
 		}
-		if !strings.Contains(sentence, "--open-keys-page") && !strings.Contains(sentence, "--open-oauth-page") {
-			t.Fatalf("login help mentions a browser outside the explicit --open-*-page helpers: %q", strings.TrimSpace(sentence))
+		if !strings.Contains(sentence, "--open-keys-page") && !strings.Contains(sentence, "--open-oauth-page") && !strings.Contains(sentence, "tslink serve") {
+			t.Fatalf("login help mentions a browser outside the explicit --open-*-page helpers or the tslink serve Tier 1 path: %q", strings.TrimSpace(sentence))
 		}
 	}
 	for _, want := range []string{"do not need this command", "tslink serve", "durable multi-service", "--open-keys-page", "--retire-other", "--expires-in", "assumed_max", credentials.KeysPageURL} {
