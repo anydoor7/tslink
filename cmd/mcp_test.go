@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -14,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/monody0007/tslink/internal/inspect"
 	"github.com/monody0007/tslink/internal/output"
 	"github.com/monody0007/tslink/internal/registry"
@@ -102,10 +104,24 @@ func decodeMCPResponses(t *testing.T, output string) []map[string]any {
 	t.Helper()
 	var responses []map[string]any
 	scanner := bufio.NewScanner(strings.NewReader(output))
+	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
 	for scanner.Scan() {
+		line := bytes.TrimSpace(scanner.Bytes())
+		if len(line) == 0 {
+			continue
+		}
+		// A JSON-RPC batch response is one line carrying an array of frames.
+		if line[0] == '[' {
+			var batch []map[string]any
+			if err := json.Unmarshal(line, &batch); err != nil {
+				t.Fatalf("unmarshal batch frame: %v (%s)", err, line)
+			}
+			responses = append(responses, batch...)
+			continue
+		}
 		var response map[string]any
-		if err := json.Unmarshal(scanner.Bytes(), &response); err != nil {
-			t.Fatalf("unmarshal frame: %v (%s)", err, scanner.Text())
+		if err := json.Unmarshal(line, &response); err != nil {
+			t.Fatalf("unmarshal frame: %v (%s)", err, line)
 		}
 		responses = append(responses, response)
 	}
@@ -115,6 +131,49 @@ func decodeMCPResponses(t *testing.T, output string) []map[string]any {
 	return responses
 }
 
+// runMCPSession drives one stdio MCP session to completion and returns
+// everything the server wrote to stdout. The session runs over the same
+// transport the shipped `tslink mcp` command uses, so a test that asserts on
+// these frames is asserting on real wire output rather than on an in-process
+// shortcut.
+func runMCPSession(t *testing.T, input string, actions mcpActions) string {
+	t.Helper()
+	stdout, err := tryMCPSession(t, input, actions)
+	if err != nil {
+		t.Fatalf("mcp session: %v (stdout=%q)", err, stdout)
+	}
+	return stdout
+}
+
+// tryMCPSession is runMCPSession for inputs that are expected to end the
+// session, returning the transport error instead of failing the test.
+func tryMCPSession(t *testing.T, input string, actions mcpActions) (string, error) {
+	t.Helper()
+	var stdout bytes.Buffer
+	err := runMCPStdio(context.Background(), strings.NewReader(input), &stdout, actions)
+	return stdout.String(), err
+}
+
+// mcpFrameError returns the JSON-RPC error object of a frame, or nil.
+func mcpFrameError(frame map[string]any) map[string]any {
+	errorObject, _ := frame["error"].(map[string]any)
+	return errorObject
+}
+
+// mcpFrameByID finds the frame answering one request id. Tool calls are handled
+// concurrently by the SDK, so responses arrive in whatever order the handlers
+// finish; a positional lookup would pass or fail on scheduling.
+func mcpFrameByID(t *testing.T, frames []map[string]any, id any) map[string]any {
+	t.Helper()
+	for _, frame := range frames {
+		if frame["id"] == id {
+			return frame
+		}
+	}
+	t.Fatalf("no frame answering id %v in %+v", id, frames)
+	return nil
+}
+
 func TestMCPTranscriptInitializeListAndNeedsLoginShare(t *testing.T) {
 	input := strings.Join([]string{
 		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}`,
@@ -122,24 +181,17 @@ func TestMCPTranscriptInitializeListAndNeedsLoginShare(t *testing.T) {
 		`{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}`,
 		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"share","arguments":{"target":"./report.html"}}}`,
 	}, "\n") + "\n"
-	var stdout bytes.Buffer
-	server := newMCPServer(strings.NewReader(input), &stdout, fakeMCPActions())
-	if err := server.serve(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	frames := decodeMCPResponses(t, stdout.String())
+	stdout := runMCPSession(t, input, fakeMCPActions())
+	frames := decodeMCPResponses(t, stdout)
 	if len(frames) != 3 {
-		t.Fatalf("frames = %d, want 3: %s", len(frames), stdout.String())
+		t.Fatalf("frames = %d, want 3: %s", len(frames), stdout)
 	}
 	initialize := frames[0]["result"].(map[string]any)
-	if initialize["protocolVersion"] != mcpProtocolVersion {
+	if initialize["protocolVersion"] != mcpLegacyHandshakeVersion {
 		t.Fatalf("initialize = %+v", initialize)
 	}
-	listed := frames[1]["result"].(map[string]any)["tools"].([]any)
-	if len(listed) != len(mcpToolDefinitions) {
-		t.Fatalf("tools = %d, want %d", len(listed), len(mcpToolDefinitions))
-	}
-	call := frames[2]["result"].(map[string]any)
+	assertMCPToolNames(t, mcpFrameByID(t, frames, float64(2)))
+	call := mcpFrameByID(t, frames, float64(3))["result"].(map[string]any)
 	structured := call["structuredContent"].(map[string]any)
 	if structured["status"] != authStatusNeedsLogin || structured["auth_url"] != "https://login.tailscale.com/a/mcp" {
 		t.Fatalf("share result = %+v", structured)
@@ -148,7 +200,260 @@ func TestMCPTranscriptInitializeListAndNeedsLoginShare(t *testing.T) {
 		t.Fatalf("needs_login must be a successful tool result: %+v", call)
 	}
 	t.Logf("MCP client frames (one JSON-RPC frame per line):\n%s", input)
-	t.Logf("MCP server frames (one JSON-RPC frame per line):\n%s", stdout.String())
+	t.Logf("MCP server frames (one JSON-RPC frame per line):\n%s", stdout)
+}
+
+// assertMCPToolNames checks a tools/list frame against the declared tool set by
+// name, not by count. A count comparison passes while a tool is silently
+// renamed, which is the drift the whole MCP test file exists to catch.
+func assertMCPToolNames(t *testing.T, frame map[string]any) {
+	t.Helper()
+	result, ok := frame["result"].(map[string]any)
+	if !ok {
+		t.Fatalf("tools/list frame carries no result: %+v", frame)
+	}
+	listed, ok := result["tools"].([]any)
+	if !ok {
+		t.Fatalf("tools/list result carries no tools array: %+v", result)
+	}
+	got := map[string]bool{}
+	for _, raw := range listed {
+		tool, ok := raw.(map[string]any)
+		if !ok {
+			t.Fatalf("tools/list entry is %T, want an object", raw)
+		}
+		name, _ := tool["name"].(string)
+		if name == "" {
+			t.Fatalf("tools/list entry has no name: %+v", tool)
+		}
+		if got[name] {
+			t.Fatalf("tools/list repeated %q", name)
+		}
+		got[name] = true
+	}
+	if len(got) != len(mcpToolDefinitions) {
+		t.Fatalf("tools/list returned %d tools, want %d", len(got), len(mcpToolDefinitions))
+	}
+	for _, definition := range mcpToolDefinitions {
+		if !got[definition.Name] {
+			t.Fatalf("tools/list omitted %q", definition.Name)
+		}
+	}
+}
+
+// mcpCurrentRevisionMeta is the per-request _meta a client speaking the current
+// revision sends in place of the initialize handshake.
+const mcpCurrentRevisionMeta = `"_meta":{"io.modelcontextprotocol/protocolVersion":"` + mcpProtocolVersion + `","io.modelcontextprotocol/clientCapabilities":{},"io.modelcontextprotocol/clientInfo":{"name":"test","version":"1"}}`
+
+// TestMCPTranscriptCurrentRevisionNeedsNoHandshake is the capability the SDK
+// migration bought: the current MCP revision removed the initialize handshake
+// and moved the protocol version into each request's _meta. A client that
+// speaks it sends tools/list and tools/call straight away, and the same tool
+// surface answers.
+func TestMCPTranscriptCurrentRevisionNeedsNoHandshake(t *testing.T) {
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{` + mcpCurrentRevisionMeta + `}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"share","arguments":{"target":"./report.html"},` + mcpCurrentRevisionMeta + `}}`,
+	}, "\n") + "\n"
+	stdout := runMCPSession(t, input, fakeMCPActions())
+	frames := decodeMCPResponses(t, stdout)
+	if len(frames) != 2 {
+		t.Fatalf("frames = %d, want 2: %s", len(frames), stdout)
+	}
+	assertMCPToolNames(t, mcpFrameByID(t, frames, float64(1)))
+	call, ok := mcpFrameByID(t, frames, float64(2))["result"].(map[string]any)
+	if !ok {
+		t.Fatalf("tools/call frame carries no result: %+v", frames[1])
+	}
+	structured := call["structuredContent"].(map[string]any)
+	if structured["status"] != authStatusNeedsLogin || call["isError"] != nil {
+		t.Fatalf("share result = %+v", call)
+	}
+	t.Logf("MCP client frames (one JSON-RPC frame per line):\n%s", input)
+	t.Logf("MCP server frames (one JSON-RPC frame per line):\n%s", stdout)
+}
+
+// TestMCPInitializeAdvertisesOnlyWhatTheServerDoes pins the initialize result's
+// identity and capability block. The SDK's defaults would add a logging feature
+// this server has nothing to configure, and a tools.listChanged promise it can
+// never keep, since the tool set is fixed at build time.
+func TestMCPInitializeAdvertisesOnlyWhatTheServerDoes(t *testing.T) {
+	frames := decodeMCPResponses(t, runMCPSession(t, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}`+"\n", fakeMCPActions()))
+	result := frames[0]["result"].(map[string]any)
+	capabilities := result["capabilities"].(map[string]any)
+	tools, ok := capabilities["tools"].(map[string]any)
+	if !ok || len(tools) != 0 || len(capabilities) != 1 {
+		t.Fatalf("capabilities = %+v, want exactly an empty tools object", capabilities)
+	}
+	serverInfo := result["serverInfo"].(map[string]any)
+	if serverInfo["name"] != mcpServerName || serverInfo["version"] == "" {
+		t.Fatalf("serverInfo = %+v", serverInfo)
+	}
+	instructions, _ := result["instructions"].(string)
+	for _, want := range []string{"needs_login", "invite_user", "funnel true"} {
+		if !strings.Contains(instructions, want) {
+			t.Fatalf("instructions = %q, want it to mention %q", instructions, want)
+		}
+	}
+}
+
+// TestMCPStdioAnswersEveryRequestBeforeEndOfInput is the regression test for the
+// transport swap's sharpest edge.
+//
+// A client that writes its requests and closes stdin is the normal way to
+// script an MCP server, and it is how this repository's compiled-binary tests
+// drive one. Handing the SDK's session the reader's io.EOF makes it cancel
+// every request still in flight, so the last answers are lost — non-
+// deterministically, which is worse than losing them every time. runMCPStdio
+// therefore turns end-of-input into a drain. Without that, this test loses
+// frames within a handful of iterations.
+func TestMCPStdioAnswersEveryRequestBeforeEndOfInput(t *testing.T) {
+	calls := []string{
+		`{"jsonrpc":"2.0","id":2,"method":"tools/list"}`,
+		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"status","arguments":{}}}`,
+		`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"list","arguments":{}}}`,
+		`{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"template_list","arguments":{}}}`,
+		`{"jsonrpc":"2.0","id":6,"method":"ping"}`,
+	}
+	input := initializedMCPInput(strings.Join(calls, "\n"))
+	for attempt := 0; attempt < 50; attempt++ {
+		stdout := runMCPSession(t, input, fakeMCPActions())
+		frames := decodeMCPResponses(t, stdout)
+		for id := 1; id <= len(calls)+1; id++ {
+			frame := mcpFrameByID(t, frames, float64(id))
+			if mcpFrameError(frame) != nil {
+				t.Fatalf("attempt %d: id %d answered with an error: %+v", attempt, id, frame)
+			}
+		}
+		if len(frames) != len(calls)+1 {
+			t.Fatalf("attempt %d: frames = %d, want %d: %s", attempt, len(frames), len(calls)+1, stdout)
+		}
+	}
+}
+
+// TestMCPStdioWaitsForAToolThatOutlivesItsInput keeps a running tool from being
+// abandoned because the client finished writing. share can take the CLI's full
+// 30s URL wait, and a client that queued it and closed stdin is still entitled
+// to the answer.
+func TestMCPStdioWaitsForAToolThatOutlivesItsInput(t *testing.T) {
+	actions := fakeMCPActions()
+	actions.status = func() (any, error) {
+		time.Sleep(300 * time.Millisecond)
+		return mcpStatusSummary{DaemonRunning: true, ServiceCount: 7}, nil
+	}
+	call := `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"status","arguments":{}}}`
+	frames := decodeMCPResponses(t, runMCPSession(t, initializedMCPInput(call), actions))
+	result, ok := mcpFrameByID(t, frames, float64(2))["result"].(map[string]any)
+	if !ok {
+		t.Fatalf("slow tool was abandoned at end of input: %+v", frames)
+	}
+	structured := result["structuredContent"].(map[string]any)
+	if structured["service_count"] != float64(7) {
+		t.Fatalf("slow tool result = %+v", structured)
+	}
+}
+
+// TestMCPRecordLimitReaderCountsAndGuards covers the reader's two jobs directly:
+// the record accounting the drain depends on, and the two records it refuses.
+func TestMCPRecordLimitReaderCountsAndGuards(t *testing.T) {
+	t.Run("counts a final record with no trailing newline", func(t *testing.T) {
+		reader := newMCPRecordLimitReader(strings.NewReader("one\ntwo"), mcpMaxRecordBytes)
+		if _, err := io.ReadAll(io.LimitReader(reader, 7)); err != nil {
+			t.Fatal(err)
+		}
+		// The limit reader stops before EOF, so pull once more to reach it.
+		go reader.Release()
+		buffer := make([]byte, 8)
+		if _, err := reader.Read(buffer); err != io.EOF {
+			t.Fatalf("read after input = %v, want io.EOF", err)
+		}
+		if got := reader.Records(); got != 2 {
+			t.Fatalf("records = %d, want 2", got)
+		}
+	})
+	t.Run("blank lines are not records", func(t *testing.T) {
+		reader := newMCPRecordLimitReader(strings.NewReader("\n\n{}\n"), mcpMaxRecordBytes)
+		buffer := make([]byte, 16)
+		if _, err := reader.Read(buffer); err != nil {
+			t.Fatal(err)
+		}
+		if got := reader.Records(); got != 1 {
+			t.Fatalf("records = %d, want 1", got)
+		}
+	})
+	t.Run("a batch is refused", func(t *testing.T) {
+		reader := newMCPRecordLimitReader(strings.NewReader(" [1]\n"), mcpMaxRecordBytes)
+		buffer := make([]byte, 16)
+		if _, err := reader.Read(buffer); !errors.Is(err, errMCPBatchUnsupported) {
+			t.Fatalf("read = %v, want the batch refusal", err)
+		}
+	})
+	t.Run("an oversize record is refused", func(t *testing.T) {
+		reader := newMCPRecordLimitReader(strings.NewReader(strings.Repeat("a", 12)), 8)
+		buffer := make([]byte, 16)
+		if _, err := reader.Read(buffer); err == nil || !strings.Contains(err.Error(), "exceeds maximum size") {
+			t.Fatalf("read = %v, want the size refusal", err)
+		}
+	})
+}
+
+// TestMCPProtocolVersionSupportMatrix pins the revision set this server
+// advertises in `tslink mcp --help` against what it actually negotiates, so the
+// documented matrix cannot become a claim the server does not honour.
+func TestMCPProtocolVersionSupportMatrix(t *testing.T) {
+	if mcpSupportedProtocolVersions[0] != mcpProtocolVersion {
+		t.Fatalf("supported versions must list %q first, got %v", mcpProtocolVersion, mcpSupportedProtocolVersions)
+	}
+	for _, version := range mcpSupportedProtocolVersions {
+		t.Run(version, func(t *testing.T) {
+			input := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"` + version + `"}}` + "\n"
+			frames := decodeMCPResponses(t, runMCPSession(t, input, fakeMCPActions()))
+			if len(frames) != 1 || mcpFrameError(frames[0]) != nil {
+				t.Fatalf("initialize %s = %+v", version, frames)
+			}
+			negotiated := frames[0]["result"].(map[string]any)["protocolVersion"]
+			// The handshake itself is deprecated in the current revision, so a
+			// client that asks for it over initialize is answered with the last
+			// revision the handshake describes; it reaches the current one by
+			// sending _meta instead, which
+			// TestMCPTranscriptCurrentRevisionNeedsNoHandshake covers.
+			want := version
+			if version == mcpProtocolVersion {
+				want = mcpLegacyHandshakeVersion
+			}
+			if negotiated != want {
+				t.Fatalf("initialize %s negotiated %v, want %q", version, negotiated, want)
+			}
+		})
+	}
+
+	// An initialize that omits the version entirely, and one that names a
+	// revision outside the matrix, are both answered with a version this server
+	// actually speaks rather than with the client's own claim.
+	for _, params := range []string{`{}`, `{"protocolVersion":"1999-01-01"}`} {
+		answered := decodeMCPResponses(t, runMCPSession(t, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":`+params+`}`+"\n", fakeMCPActions()))
+		version, _ := answered[0]["result"].(map[string]any)["protocolVersion"].(string)
+		if !containsString(mcpSupportedProtocolVersions, version) {
+			t.Fatalf("initialize params %s negotiated %q, which is outside %v", params, version, mcpSupportedProtocolVersions)
+		}
+	}
+
+	// A revision outside the matrix is not silently accepted at its own
+	// version: the handshake answers with one this server actually speaks.
+	frames := decodeMCPResponses(t, runMCPSession(t, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"1999-01-01"}}`+"\n", fakeMCPActions()))
+	negotiated, _ := frames[0]["result"].(map[string]any)["protocolVersion"].(string)
+	if !containsString(mcpSupportedProtocolVersions, negotiated) {
+		t.Fatalf("unknown client version negotiated %q, which is outside %v", negotiated, mcpSupportedProtocolVersions)
+	}
+
+	// And a request that names an unsupported revision in _meta is refused
+	// rather than served at some other version.
+	unsupported := `{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2099-01-01","io.modelcontextprotocol/clientCapabilities":{}}}}` + "\n"
+	stdout, _ := tryMCPSession(t, unsupported, fakeMCPActions())
+	frames = decodeMCPResponses(t, stdout)
+	if len(frames) != 1 || mcpFrameError(frames[0]) == nil {
+		t.Fatalf("unsupported _meta version = %+v, want a protocol error", frames)
+	}
 }
 
 // mcpToolByName returns the definition a test names, failing loudly rather than
@@ -452,57 +757,85 @@ func mcpSchemaTypeAllows(raw any, value any) bool {
 	return false
 }
 
+// TestMCPProtocolErrorsAndLifecycle covers what happens to a frame that is not
+// a well-formed, in-sequence request.
+//
+// Before the SDK this package chose the JSON-RPC codes itself and could answer
+// a bad frame and carry on; the SDK owns framing now and treats a corrupt
+// stream as a reason to stop reading it, which is a stricter answer, not a
+// looser one. So the assertions moved off the specific codes and onto the two
+// properties that matter to a caller: a frame that is not a valid, in-sequence
+// request never produces a successful result, and it never reaches a tool.
 func TestMCPProtocolErrorsAndLifecycle(t *testing.T) {
 	cases := []struct {
-		name      string
-		input     string
-		wantCode  float64
-		wantCount int
+		name string
+		// input is fed to a fresh session.
+		input string
+		// wantErrorFrame requires an error response; without it the frame is
+		// only required not to be a result (a corrupt stream may be answered
+		// with nothing at all).
+		wantErrorFrame bool
+		// wantErrorCode, when non-zero, pins a code the protocol specifies
+		// rather than one the SDK is free to choose.
+		wantErrorCode float64
 	}{
-		{"parse", "{\n", -32700, 1},
-		{"invalid request", `{"jsonrpc":"1.0","id":1,"method":"initialize"}` + "\n", -32600, 1},
-		{"invalid null id", `{"jsonrpc":"2.0","id":null,"method":"initialize","params":{}}` + "\n", -32600, 1},
-		{"batch", `[{"jsonrpc":"2.0","id":1,"method":"ping"}]` + "\n", -32600, 1},
-		{"before initialize", `{"jsonrpc":"2.0","id":1,"method":"tools/list"}` + "\n", -32002, 1},
-		{"unknown notification", `{"jsonrpc":"2.0","method":"notifications/unknown"}` + "\n", 0, 0},
+		{name: "parse", input: "{\n"},
+		{name: "invalid jsonrpc version", input: `{"jsonrpc":"1.0","id":1,"method":"initialize"}` + "\n"},
+		{name: "null id", input: `{"jsonrpc":"2.0","id":null,"method":"initialize","params":{}}` + "\n"},
+		{name: "batch", input: `[{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"status","arguments":{}}}]` + "\n"},
+		{name: "batch after initialize", input: initializedMCPInput(`[{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"status","arguments":{}}}]`)},
+		{name: "batch behind leading whitespace", input: "  \t" + `[{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"status","arguments":{}}}]` + "\n"},
+		{name: "before initialize", input: `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"status","arguments":{}}}` + "\n", wantErrorFrame: true},
+		{name: "unknown notification", input: `{"jsonrpc":"2.0","method":"notifications/unknown"}` + "\n"},
+		{name: "unknown method", input: initializedMCPInput(`{"jsonrpc":"2.0","id":2,"method":"unknown"}`), wantErrorFrame: true, wantErrorCode: -32601},
+		{name: "duplicate initialize", input: `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}` + "\n" + `{"jsonrpc":"2.0","id":2,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}` + "\n", wantErrorFrame: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			var stdout bytes.Buffer
-			server := newMCPServer(strings.NewReader(tc.input), &stdout, fakeMCPActions())
-			if err := server.serve(context.Background()); err != nil {
-				t.Fatal(err)
+			called := false
+			actions := fakeMCPActions()
+			actions.status = func() (any, error) {
+				called = true
+				return mcpStatusSummary{}, nil
 			}
-			frames := decodeMCPResponses(t, stdout.String())
-			if len(frames) != tc.wantCount {
-				t.Fatalf("frames=%d output=%q", len(frames), stdout.String())
+			stdout, _ := tryMCPSession(t, tc.input, actions)
+			frames := decodeMCPResponses(t, stdout)
+			if called {
+				t.Fatalf("a tool ran for %q", tc.input)
 			}
-			if tc.wantCount > 0 {
-				errorObject := frames[0]["error"].(map[string]any)
-				if errorObject["code"] != tc.wantCode {
-					t.Fatalf("error = %+v", errorObject)
+			var errorFrame map[string]any
+			for _, frame := range frames {
+				if frame["jsonrpc"] != "2.0" {
+					t.Fatalf("non-JSON-RPC stdout frame: %+v", frame)
 				}
+				// initializedMCPInput's own handshake, which carries id 1, is
+				// allowed to succeed; the frame under test is the one after it.
+				if frame["id"] == float64(1) && mcpFrameError(frame) == nil {
+					continue
+				}
+				if mcpFrameError(frame) != nil {
+					errorFrame = frame
+					continue
+				}
+				t.Fatalf("malformed frame produced a result: %+v", frame)
+			}
+			if tc.wantErrorFrame && errorFrame == nil {
+				t.Fatalf("frames = %+v, want an error response", frames)
+			}
+			if tc.wantErrorCode != 0 && mcpFrameError(errorFrame)["code"] != tc.wantErrorCode {
+				t.Fatalf("error = %+v, want code %v", mcpFrameError(errorFrame), tc.wantErrorCode)
 			}
 		})
 	}
 
-	input := strings.Join([]string{
-		`{"jsonrpc":"2.0","id":"init","method":"initialize","params":{"protocolVersion":"future"}}`,
-		`{"jsonrpc":"2.0","id":2,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}`,
-		`{"jsonrpc":"2.0","method":"notifications/initialized"}`,
-		`{"jsonrpc":"2.0","id":3,"method":"unknown"}`,
-		`{"jsonrpc":"2.0","id":4,"method":"ping"}`,
-	}, "\n") + "\n"
-	var stdout bytes.Buffer
-	if err := newMCPServer(strings.NewReader(input), &stdout, fakeMCPActions()).serve(context.Background()); err != nil {
-		t.Fatal(err)
+	// ping is answered without a handshake, and a session that has been
+	// initialized keeps answering after a method it does not implement.
+	frames := decodeMCPResponses(t, runMCPSession(t, initializedMCPInput(`{"jsonrpc":"2.0","id":2,"method":"unknown"}`+"\n"+`{"jsonrpc":"2.0","id":3,"method":"ping"}`), fakeMCPActions()))
+	if mcpFrameError(mcpFrameByID(t, frames, float64(2))) == nil {
+		t.Fatalf("unknown method was not refused: %+v", frames)
 	}
-	frames := decodeMCPResponses(t, stdout.String())
-	if len(frames) != 4 || frames[0]["id"] != "init" || frames[0]["result"].(map[string]any)["protocolVersion"] != mcpProtocolVersion {
-		t.Fatalf("frames = %+v", frames)
-	}
-	if frames[1]["error"].(map[string]any)["code"] != float64(-32600) || frames[2]["error"].(map[string]any)["code"] != float64(-32601) {
-		t.Fatalf("errors = %+v", frames)
+	if pong := mcpFrameByID(t, frames, float64(3)); pong["result"] == nil {
+		t.Fatalf("ping after an unknown method = %+v", pong)
 	}
 }
 
@@ -511,16 +844,13 @@ func TestMCPRequestParamsAcceptMetadataAndExtensions(t *testing.T) {
 		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"metadata-test","version":"1"},"_meta":{"progressToken":0},"client_extension":true}}`,
 		`{"jsonrpc":"2.0","method":"notifications/initialized","params":{"_meta":{"source":"test"}}}`,
 		`{"jsonrpc":"2.0","id":2,"method":"ping","params":{"_meta":{"progressToken":"ping"},"extension":"accepted"}}`,
-		`{"jsonrpc":"2.0","id":3,"method":"tools/list","params":{"_meta":{"progressToken":"list"},"cursor":"ignored-by-this-server"}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"tools/list","params":{"_meta":{"progressToken":"list"},"client_extension":"accepted"}}`,
 		`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"status","arguments":{},"_meta":{"progressToken":0},"client_extension":{"trace":"accepted"}}}`,
 	}, "\n") + "\n"
-	var stdout bytes.Buffer
-	if err := newMCPServer(strings.NewReader(input), &stdout, fakeMCPActions()).serve(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	frames := decodeMCPResponses(t, stdout.String())
+	stdout := runMCPSession(t, input, fakeMCPActions())
+	frames := decodeMCPResponses(t, stdout)
 	if len(frames) != 4 {
-		t.Fatalf("frames=%d output=%s", len(frames), stdout.String())
+		t.Fatalf("frames=%d output=%s", len(frames), stdout)
 	}
 	for _, frame := range frames {
 		if frame["error"] != nil {
@@ -554,12 +884,7 @@ func TestMCPToolCallsValidateArgumentsAndReturnExecutionErrors(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			var stdout bytes.Buffer
-			server := newMCPServer(strings.NewReader(initializedMCPInput(tc.call)), &stdout, fakeMCPActions())
-			if err := server.serve(context.Background()); err != nil {
-				t.Fatal(err)
-			}
-			frames := decodeMCPResponses(t, stdout.String())
+			frames := decodeMCPResponses(t, runMCPSession(t, initializedMCPInput(tc.call), fakeMCPActions()))
 			last := frames[len(frames)-1]
 			if tc.wantProtocol {
 				if last["error"].(map[string]any)["code"] != float64(-32602) {
@@ -594,13 +919,10 @@ func TestMCPAllToolsAndOptionalEphemeral(t *testing.T) {
 		`{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"status","arguments":{}}}`,
 	}
 	input := initializedMCPInput(strings.Join(calls, "\n"))
-	var stdout bytes.Buffer
-	if err := newMCPServer(strings.NewReader(input), &stdout, actions).serve(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	frames := decodeMCPResponses(t, stdout.String())
+	stdout := runMCPSession(t, input, actions)
+	frames := decodeMCPResponses(t, stdout)
 	if len(frames) != 5 || ephemeral {
-		t.Fatalf("frames=%d ephemeral=%v output=%s", len(frames), ephemeral, stdout.String())
+		t.Fatalf("frames=%d ephemeral=%v output=%s", len(frames), ephemeral, stdout)
 	}
 	for _, frame := range frames[1:] {
 		if frame["error"] != nil {
@@ -741,63 +1063,149 @@ func TestMCPUnshareMissingAgreesWithCLIDefaultIdempotency(t *testing.T) {
 	}
 }
 
-func TestMCPToolResultMarshalFailureAndOversizeInput(t *testing.T) {
+// mcpResultText returns the single text content item of a tool result.
+func mcpResultText(t *testing.T, result *mcp.CallToolResult) string {
+	t.Helper()
+	if len(result.Content) != 1 {
+		t.Fatalf("result carries %d content items, want 1: %+v", len(result.Content), result)
+	}
+	text, ok := result.Content[0].(*mcp.TextContent)
+	if !ok {
+		t.Fatalf("result content is %T, want *mcp.TextContent", result.Content[0])
+	}
+	return text.Text
+}
+
+// mcpResultStructured returns the structured content of a tool result.
+func mcpResultStructured(t *testing.T, result *mcp.CallToolResult) map[string]any {
+	t.Helper()
+	structured, ok := result.StructuredContent.(map[string]any)
+	if !ok {
+		t.Fatalf("structuredContent is %T, want map[string]any", result.StructuredContent)
+	}
+	return structured
+}
+
+func TestMCPToolResultMarshalFailureAndCodedErrors(t *testing.T) {
 	result := makeMCPToolResult(make(chan int), nil)
 	if !result.IsError || len(result.Content) != 1 {
 		t.Fatalf("result = %+v", result)
 	}
 	result = makeMCPToolResult(nil, errors.New("failed"))
-	if !result.IsError || result.Content[0].Text != "failed" || result.StructuredContent["code"] != output.ExitError {
+	if !result.IsError || mcpResultText(t, result) != "failed" || mcpResultStructured(t, result)["code"] != output.ExitError {
 		t.Fatalf("error result = %+v", result)
 	}
 	coded := makeMCPToolResult(nil, registry.ValidateName("Bad_Name"))
-	errorObject, ok := coded.StructuredContent["error"].(*output.ErrorObject)
-	if !ok || errorObject.Code != registry.CodeInvalidServiceName || len(errorObject.Next) == 0 || coded.StructuredContent["ok"] != false || coded.StructuredContent["code"] != output.ExitUsage {
+	structured := mcpResultStructured(t, coded)
+	errorObject, ok := structured["error"].(*output.ErrorObject)
+	if !ok || errorObject.Code != registry.CodeInvalidServiceName || len(errorObject.Next) == 0 || structured["ok"] != false || structured["code"] != output.ExitUsage {
 		t.Fatalf("coded error result = %+v", coded)
 	}
 	result = makeMCPToolResult("scalar", nil)
 	if !result.IsError {
 		t.Fatalf("scalar result = %+v", result)
 	}
+}
 
-	oversize := strings.Repeat("x", mcpMaxRecordBytes+2) + "\n" + `{"jsonrpc":"2.0","id":99,"method":"ping"}` + "\n"
-	var stdout bytes.Buffer
-	server := newMCPServer(strings.NewReader(oversize), &stdout, fakeMCPActions())
-	if err := server.serve(context.Background()); err != nil {
-		t.Fatalf("oversize input terminated session: %v", err)
+// TestMCPOversizeRecordIsBounded pins the memory bound on one incoming record.
+//
+// The pre-SDK server framed the stream itself, so it could answer an oversize
+// line with -32600 and carry on. Framing now belongs to the SDK, which decodes
+// straight off the reader; what this package still owns is the bound, and the
+// property worth keeping is that an unbounded line cannot become an unbounded
+// allocation. So the assertion moved from "the server replies -32600 and keeps
+// going" to "the stream is abandoned at the limit, the tool behind it never
+// runs, and nothing but protocol frames reaches stdout".
+func TestMCPOversizeRecordIsBounded(t *testing.T) {
+	called := false
+	actions := fakeMCPActions()
+	actions.status = func() (any, error) {
+		called = true
+		return mcpStatusSummary{}, nil
 	}
-	frames := decodeMCPResponses(t, stdout.String())
-	if len(frames) != 2 || frames[0]["error"].(map[string]any)["code"] != float64(-32600) || frames[1]["id"] != float64(99) || frames[1]["error"] != nil {
-		t.Fatalf("frames = %+v", frames)
+	// The record has to stay syntactically plausible for the size guard to be
+	// what stops it; a line of garbage is rejected as invalid JSON long before
+	// it gets big, which proves nothing about the bound.
+	oversize := `{"jsonrpc":"2.0","id":98,"method":"ping","params":{"note":"` +
+		strings.Repeat("a", mcpMaxRecordBytes+2) + `"}}` + "\n" +
+		`{"jsonrpc":"2.0","id":99,"method":"tools/call","params":{"name":"status","arguments":{}}}` + "\n"
+	stdout, err := tryMCPSession(t, oversize, actions)
+	if err == nil || !strings.Contains(err.Error(), "exceeds maximum size") {
+		t.Fatalf("oversize record err = %v, want the size bound to end the session", err)
+	}
+	if called {
+		t.Fatal("a tool ran on a stream that had already exceeded the record limit")
+	}
+	for _, frame := range decodeMCPResponses(t, stdout) {
+		if frame["jsonrpc"] != "2.0" {
+			t.Fatalf("non-JSON-RPC stdout frame: %+v", frame)
+		}
+	}
+
+	// The bound is a limit, not a ceiling on ordinary traffic: a record just
+	// under it still round-trips.
+	large := strings.Repeat("a", mcpMaxRecordBytes/2)
+	stdout = runMCPSession(t, `{"jsonrpc":"2.0","id":1,"method":"ping","params":{"note":"`+large+`"}}`+"\n", fakeMCPActions())
+	frames := decodeMCPResponses(t, stdout)
+	if len(frames) != 1 || frames[0]["id"] != float64(1) || mcpFrameError(frames[0]) != nil {
+		t.Fatalf("under-limit record = %+v", frames)
 	}
 }
 
-func TestMCPInitializeAndDecodeValidation(t *testing.T) {
-	for _, id := range []json.RawMessage{json.RawMessage(`true`), json.RawMessage(`{}`), json.RawMessage(`"unterminated`)} {
-		if validMCPRequestID(id) {
-			t.Fatalf("validMCPRequestID(%s) = true", id)
-		}
-	}
+// TestMCPArgumentDecodingRejectsTrailingValues keeps the decoder assertion that
+// used to live on decodeMCPParams. The pre-SDK server decoded both the params
+// object and the arguments object; the SDK owns params now, so the assertion
+// follows the surviving decoder, which is the one that matters: a client that
+// appends a second JSON value after a tool's arguments must be rejected, not
+// silently truncated to the first.
+func TestMCPArgumentDecodingRejectsTrailingValues(t *testing.T) {
 	var target struct{}
-	if err := decodeMCPParams(json.RawMessage(`{} {}`), &target); err == nil {
-		t.Fatal("multiple values accepted")
+	if err := decodeMCPArguments(json.RawMessage(`{} {}`), &target); err == nil {
+		t.Fatal("multiple JSON values accepted")
 	}
-	input := strings.Join([]string{
-		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`,
-		`{"jsonrpc":"2.0","id":2,"method":"initialize","params":{"protocolVersion":7}}`,
-	}, "\n") + "\n"
-	var stdout bytes.Buffer
-	if err := newMCPServer(strings.NewReader(input), &stdout, fakeMCPActions()).serve(context.Background()); err != nil {
-		t.Fatal(err)
+	if err := decodeMCPArguments(json.RawMessage(``), &target); err != nil {
+		t.Fatalf("absent arguments rejected: %v", err)
 	}
-	frames := decodeMCPResponses(t, stdout.String())
-	if len(frames) != 2 {
-		t.Fatalf("frames = %+v", frames)
+}
+
+// TestMCPMalformedRequestsAreNeverAnsweredAsCalls covers what validMCPRequestID
+// covered before the SDK owned request parsing: a frame whose id is not a
+// string or number, and an initialize whose protocolVersion is missing or the
+// wrong type, must not be answered as a successful request. The pre-SDK server
+// proved that with specific JSON-RPC codes it chose itself; the property that
+// survives the transport swap is that no such frame produces a result, and that
+// a tool never runs behind one.
+func TestMCPMalformedRequestsAreNeverAnsweredAsCalls(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+	}{
+		{"boolean id", `{"jsonrpc":"2.0","id":true,"method":"tools/call","params":{"name":"status","arguments":{}}}`},
+		{"object id", `{"jsonrpc":"2.0","id":{},"method":"tools/call","params":{"name":"status","arguments":{}}}`},
+		{"unterminated id", `{"jsonrpc":"2.0","id":"unterminated,"method":"tools/call","params":{"name":"status","arguments":{}}}`},
+		{"initialize with a numeric version", `{"jsonrpc":"2.0","id":2,"method":"initialize","params":{"protocolVersion":7}}`},
 	}
-	for _, frame := range frames {
-		if frame["error"].(map[string]any)["code"] != float64(-32602) {
-			t.Fatalf("frame = %+v", frame)
-		}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			called := false
+			actions := fakeMCPActions()
+			actions.status = func() (any, error) {
+				called = true
+				return mcpStatusSummary{}, nil
+			}
+			stdout, _ := tryMCPSession(t, tc.input+"\n", actions)
+			if called {
+				t.Fatalf("a tool ran for %q", tc.input)
+			}
+			for _, frame := range decodeMCPResponses(t, stdout) {
+				if frame["jsonrpc"] != "2.0" {
+					t.Fatalf("non-JSON-RPC stdout frame: %+v", frame)
+				}
+				if frame["result"] != nil {
+					t.Fatalf("malformed request produced a result: %+v", frame)
+				}
+			}
+		})
 	}
 }
 
@@ -913,9 +1321,10 @@ func TestCompiledMCPStdoutPurityProbeMatrix(t *testing.T) {
 				if line == "" {
 					continue
 				}
-				var frame map[string]any
-				if err := json.Unmarshal([]byte(line), &frame); err != nil || frame["jsonrpc"] != "2.0" {
-					t.Fatalf("stray stdout bytes: %q err=%v", stdout, err)
+				for _, frame := range decodeMCPResponses(t, line) {
+					if frame["jsonrpc"] != "2.0" {
+						t.Fatalf("stray stdout bytes: %q", stdout)
+					}
 				}
 			}
 		})
@@ -947,14 +1356,26 @@ func outputSilent(err error) bool {
 	return err != nil && strings.TrimSpace(err.Error()) == ""
 }
 
-func TestMCPServeStopsOnWriterError(t *testing.T) {
-	w := errorWriter{}
-	server := newMCPServer(strings.NewReader("{\n"), w, fakeMCPActions())
-	if err := server.serve(context.Background()); err == nil || err.Error() != "write failed" {
-		t.Fatalf("err = %v", err)
+// TestMCPStdioStopsOnWriterError keeps the property that a dead stdout ends the
+// session instead of spinning: an MCP client that closed the pipe is gone, and
+// a server that keeps executing tools for it would be acting on nobody's
+// behalf. The pre-SDK server surfaced the writer's own error verbatim; the SDK
+// wraps it, so the assertion is that the session fails and the cause is still
+// reachable through errors.Is.
+func TestMCPStdioStopsOnWriterError(t *testing.T) {
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}`,
+		`{"jsonrpc":"2.0","method":"notifications/initialized"}`,
+		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"status","arguments":{}}}`,
+	}, "\n") + "\n"
+	err := runMCPStdio(context.Background(), strings.NewReader(input), errorWriter{}, fakeMCPActions())
+	if err == nil || !errors.Is(err, errMCPWriteFailed) {
+		t.Fatalf("err = %v, want the writer failure to end the session", err)
 	}
 }
 
+var errMCPWriteFailed = errors.New("write failed")
+
 type errorWriter struct{}
 
-func (errorWriter) Write([]byte) (int, error) { return 0, fmt.Errorf("write failed") }
+func (errorWriter) Write([]byte) (int, error) { return 0, errMCPWriteFailed }

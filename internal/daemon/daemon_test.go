@@ -17,8 +17,8 @@ import (
 )
 
 var (
-	_ func(string, string, string, bool, bool) (int, error) = Daemonize
-	_ func(string, bool, bool) []string                     = daemonServeArgs
+	_ func(string, string, string, bool, bool, bool) (int, error) = Daemonize
+	_ func(string, bool, bool, bool) []string                     = daemonServeArgs
 )
 
 func TestMain(m *testing.M) {
@@ -902,7 +902,7 @@ func TestDaemonize_CreateStdoutLogDirError(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	_, err := Daemonize(filepath.Join(parent, "stdout.log"), filepath.Join(t.TempDir(), "stderr.log"), "", false, false)
+	_, err := Daemonize(filepath.Join(parent, "stdout.log"), filepath.Join(t.TempDir(), "stderr.log"), "", false, false, false)
 	if err == nil {
 		t.Fatal("Daemonize() error = nil, want error")
 	}
@@ -918,7 +918,7 @@ func TestDaemonize_OpenStdoutLogError(t *testing.T) {
 		t.Fatalf("Mkdir() error = %v", err)
 	}
 
-	_, err := Daemonize(outLog, filepath.Join(dir, "stderr.log"), "", false, false)
+	_, err := Daemonize(outLog, filepath.Join(dir, "stderr.log"), "", false, false, false)
 	if err == nil {
 		t.Fatal("Daemonize() error = nil, want error")
 	}
@@ -934,7 +934,7 @@ func TestDaemonize_OpenStderrLogError(t *testing.T) {
 		t.Fatalf("Mkdir() error = %v", err)
 	}
 
-	_, err := Daemonize(filepath.Join(dir, "stdout.log"), errLog, "", false, false)
+	_, err := Daemonize(filepath.Join(dir, "stdout.log"), errLog, "", false, false, false)
 	if err == nil {
 		t.Fatal("Daemonize() error = nil, want error")
 	}
@@ -950,7 +950,7 @@ func TestDaemonize_CreateStderrLogDirError(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	_, err := Daemonize(filepath.Join(dir, "stdout.log"), filepath.Join(errParent, "stderr.log"), "", false, false)
+	_, err := Daemonize(filepath.Join(dir, "stdout.log"), filepath.Join(errParent, "stderr.log"), "", false, false, false)
 	if err == nil {
 		t.Fatal("Daemonize() error = nil, want error")
 	}
@@ -977,7 +977,7 @@ func TestDaemonize_Success(t *testing.T) {
 	outLog := filepath.Join(dir, "stdout.log")
 	errLog := filepath.Join(dir, "stderr.log")
 
-	pid, err := Daemonize(outLog, errLog, "", false, false)
+	pid, err := Daemonize(outLog, errLog, "", false, false, false)
 	if err != nil {
 		t.Fatalf("Daemonize() error = %v", err)
 	}
@@ -1017,7 +1017,7 @@ func TestDaemonize_ForwardsControlURL(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	pid, err := Daemonize(filepath.Join(dir, "stdout.log"), filepath.Join(dir, "stderr.log"), "https://headscale.example.com", false, false)
+	pid, err := Daemonize(filepath.Join(dir, "stdout.log"), filepath.Join(dir, "stderr.log"), "https://headscale.example.com", false, false, false)
 	if err != nil {
 		t.Fatalf("Daemonize() error = %v", err)
 	}
@@ -1051,12 +1051,15 @@ func TestDaemonizeServeFlagPropagation(t *testing.T) {
 		controlURL string
 		manageACL  bool
 		noAuto     bool
+		mcp        bool
 		want       []string
 	}{
-		{"defaults carry no flag", "", false, false, []string{"serve"}},
-		{"manage ACL carries flag once", "", true, false, []string{"serve", "--manage-acl"}},
-		{"kill switch carries flag once", "", false, true, []string{"serve", "--no-auto-provision"}},
-		{"both choices with control url", "https://headscale.example.com", true, true, []string{"serve", "--control-url", "https://headscale.example.com", "--manage-acl", "--no-auto-provision"}},
+		{"defaults carry no flag", "", false, false, false, []string{"serve"}},
+		{"manage ACL carries flag once", "", true, false, false, []string{"serve", "--manage-acl"}},
+		{"kill switch carries flag once", "", false, true, false, []string{"serve", "--no-auto-provision"}},
+		{"mcp control plane carries flag once", "", false, false, true, []string{"serve", "--mcp"}},
+		{"both choices with control url", "https://headscale.example.com", true, true, false, []string{"serve", "--control-url", "https://headscale.example.com", "--manage-acl", "--no-auto-provision"}},
+		{"every opt-in together", "https://headscale.example.com", true, true, true, []string{"serve", "--control-url", "https://headscale.example.com", "--manage-acl", "--no-auto-provision", "--mcp"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1069,7 +1072,7 @@ func TestDaemonizeServeFlagPropagation(t *testing.T) {
 			}
 
 			dir := t.TempDir()
-			pid, err := Daemonize(filepath.Join(dir, "stdout.log"), filepath.Join(dir, "stderr.log"), tc.controlURL, tc.manageACL, tc.noAuto)
+			pid, err := Daemonize(filepath.Join(dir, "stdout.log"), filepath.Join(dir, "stderr.log"), tc.controlURL, tc.manageACL, tc.noAuto, tc.mcp)
 			if err != nil {
 				t.Fatalf("Daemonize() error = %v", err)
 			}
@@ -1106,6 +1109,22 @@ func TestDaemonizeServeFlagPropagation(t *testing.T) {
 			}
 			if noAutoCount != wantNoAutoCount {
 				t.Fatalf("--no-auto-provision appeared %d times, want %d; argv=%q", noAutoCount, wantNoAutoCount, gotArgs)
+			}
+			// A dropped --mcp would leave the daemon child serving no control
+			// plane while the parent reported success; a duplicated one would
+			// be a cobra parse error at startup.
+			mcpCount := 0
+			for _, a := range gotArgs {
+				if a == "--mcp" {
+					mcpCount++
+				}
+			}
+			wantMCPCount := 0
+			if tc.mcp {
+				wantMCPCount = 1
+			}
+			if mcpCount != wantMCPCount {
+				t.Fatalf("--mcp appeared %d times, want %d; argv=%q", mcpCount, wantMCPCount, gotArgs)
 			}
 		})
 	}
@@ -1420,7 +1439,7 @@ func TestDaemonize_ExecutableError(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	_, err := Daemonize(filepath.Join(dir, "stdout.log"), filepath.Join(dir, "stderr.log"), "", false, false)
+	_, err := Daemonize(filepath.Join(dir, "stdout.log"), filepath.Join(dir, "stderr.log"), "", false, false, false)
 	if err == nil {
 		t.Fatal("Daemonize() error = nil, want error")
 	}
@@ -1437,7 +1456,7 @@ func TestDaemonize_StartError(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	_, err := Daemonize(filepath.Join(dir, "stdout.log"), filepath.Join(dir, "stderr.log"), "", false, false)
+	_, err := Daemonize(filepath.Join(dir, "stdout.log"), filepath.Join(dir, "stderr.log"), "", false, false, false)
 	if err == nil {
 		t.Fatal("Daemonize() error = nil, want error")
 	}

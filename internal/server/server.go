@@ -309,6 +309,8 @@ type Server struct {
 	daemonPID               int
 	daemonStartedAt         time.Time
 	readyFn                 func() error
+	mcpControlPlane         *MCPControlPlane
+	mcpNode                 *mcpControlPlaneNode
 }
 
 // New creates a new multi-node server.
@@ -425,6 +427,18 @@ func (s *Server) Run(ctx context.Context) error {
 		<-watchDone
 		s.closeAllNodes()
 		return fmt.Errorf("before initial sync: %w", err)
+	}
+
+	// The control plane is started before the registry is applied so that an
+	// enabled-but-unauthorized configuration refuses the whole daemon rather
+	// than coming up half-exposed. When no control plane is configured this
+	// returns without constructing anything.
+	if err := s.startMCPControlPlane(ctx); err != nil {
+		s.beginShutdown()
+		cancelWatch()
+		<-watchDone
+		s.closeAllNodes()
+		return fmt.Errorf("mcp control plane: %w", err)
 	}
 
 	if err := s.syncNodesAuthoritative(ctx); err != nil {
@@ -2060,6 +2074,7 @@ func (s *Server) stopNodeLocked(name string, removeState bool) {
 }
 
 func (s *Server) closeAllNodes() {
+	s.closeMCPControlPlane()
 	s.mu.Lock()
 	for name := range s.nodes {
 		s.stopNodeLocked(name, false) // keep state on graceful shutdown

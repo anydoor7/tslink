@@ -151,6 +151,15 @@
       "boundary": "default-on only for acknowledged Funnel services; disable process-wide with --no-auto-provision or per service with no_auto_provision"
     },
     {
+      "command": "tslink serve",
+      "operation": "remote MCP control plane on a dedicated tailnet-only node",
+      "default": "disabled",
+      "required_flags": [
+        "--mcp"
+      ],
+      "boundary": "off unless --mcp or config.json mcp.enabled; every authorized tailnet peer reaching https://\u003cnode\u003e.\u003ctailnet\u003e.ts.net/mcp can register and remove services, publish Funnel and send or revoke invitations; authorization against config.json mcp.allow is mandatory and an empty list refuses startup; never published through Funnel and never bound to a host interface"
+    },
+    {
       "command": "tslink cleanup",
       "operation": "owned device deletion",
       "default": "dry-run",
@@ -1598,6 +1607,13 @@
           "default": "false",
           "scope": "local",
           "usage": "Opt in to remote Tailscale ACL tag-owner mutation using a machine-readable side-effect plan"
+        },
+        {
+          "name": "mcp",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Serve the MCP control plane on a dedicated tailnet-only node; every authorized peer can then change services, publish Funnel and send invitations"
         },
         {
           "name": "no-auto-provision",

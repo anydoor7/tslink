@@ -1,15 +1,18 @@
 package cmd
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/monody0007/tslink/internal/output"
 	"github.com/monody0007/tslink/internal/registry"
 	"github.com/monody0007/tslink/internal/tailapi"
@@ -17,15 +20,32 @@ import (
 )
 
 const (
-	mcpProtocolVersion = "2025-11-25"
-	mcpMaxRecordBytes  = 1024 * 1024
+	// mcpProtocolVersion is the newest MCP revision this server speaks. It is
+	// the current spec revision, which replaced the session-oriented remote
+	// transport with a stateless one and moved version negotiation into each
+	// request's _meta; the initialize handshake it deprecates is still served
+	// for older clients.
+	mcpProtocolVersion = "2026-07-28"
+	// mcpLegacyHandshakeVersion is what the deprecated initialize handshake
+	// settles on when the client asks for a revision this server does not know.
+	// A client that already speaks mcpProtocolVersion does not send initialize
+	// at all, so the handshake never reports it.
+	mcpLegacyHandshakeVersion = "2025-11-25"
+	// mcpMaxRecordBytes bounds one newline-delimited record. See
+	// mcpRecordLimitReader for why the bound exists rather than what it frames.
+	mcpMaxRecordBytes = 1024 * 1024
 )
 
-var mcpSupportedProtocolVersions = map[string]bool{
-	"2024-11-05": true,
-	"2025-03-26": true,
-	"2025-06-18": true,
-	"2025-11-25": true,
+// mcpSupportedProtocolVersions is the revision set this server accepts, newest
+// first. It is documented in `tslink mcp --help` and asserted against the SDK's
+// own negotiation in TestMCPProtocolVersionSupportMatrix, so it cannot drift
+// into being a comment that says something the server does not do.
+var mcpSupportedProtocolVersions = []string{
+	"2026-07-28",
+	"2025-11-25",
+	"2025-06-18",
+	"2025-03-26",
+	"2024-11-05",
 }
 
 type mcpToolDefinition struct {
@@ -780,235 +800,379 @@ func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 	}
 }
 
-type mcpRequest struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      json.RawMessage `json:"id"`
-	Method  string          `json:"method"`
-	Params  json.RawMessage `json:"params,omitempty"`
+// --- Transport ------------------------------------------------------------
+//
+// Framing, session lifecycle and protocol-version negotiation belong to the
+// official Go SDK (github.com/modelcontextprotocol/go-sdk). Everything above
+// this line — the tool definitions, their schemas, and the mcpActions seam
+// onto the CLI's own functions — is transport-independent and is handed to the
+// SDK unchanged.
+
+// mcpServerName is the server identity reported in initialize results.
+const mcpServerName = "tslink"
+
+// mcpInstructions is the session-level guidance handed to a connecting client.
+// It names the tools whose descriptions carry a confirmation requirement, so a
+// client that reads instructions before tool descriptions still gets the
+// warning.
+const mcpInstructions = "Use share to expose a local page to the private tailnet. A needs_login tool result is successful: open auth_url and retry after authorization. Confirm with the user before any tool whose description says it publishes publicly or sends a real invitation: share/add with funnel true, and invite_user, invite_device, invite_revoke, invite_resend."
+
+// mcpServerVersion is the version reported in serverInfo. Unstamped
+// development builds report "dev" rather than an empty string, which some
+// clients render as a missing field.
+func mcpServerVersion() string {
+	if Version == "" {
+		return "dev"
+	}
+	return Version
 }
 
-type mcpResponse struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      json.RawMessage `json:"id"`
-	Result  any             `json:"result,omitempty"`
-	Error   *mcpError       `json:"error,omitempty"`
-}
-
-type mcpError struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-}
-
-type mcpContent struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
-}
-
-type mcpToolResult struct {
-	Content           []mcpContent   `json:"content"`
-	StructuredContent map[string]any `json:"structuredContent,omitempty"`
-	IsError           bool           `json:"isError,omitempty"`
-}
-
-type mcpServer struct {
-	in             io.Reader
-	out            io.Writer
-	actions        mcpActions
-	initializeSeen bool
-	initialized    bool
-}
-
-func newMCPServer(in io.Reader, out io.Writer, actions mcpActions) *mcpServer {
-	return &mcpServer{in: in, out: out, actions: actions}
-}
-
-func validMCPRequestID(id json.RawMessage) bool {
-	if len(id) == 0 || bytes.Equal(bytes.TrimSpace(id), []byte("null")) {
-		return false
-	}
-	var value any
-	if err := json.Unmarshal(id, &value); err != nil {
-		return false
-	}
-	switch value.(type) {
-	case string, float64:
-		return true
-	default:
-		return false
-	}
-}
-
-func (s *mcpServer) write(response mcpResponse) error {
-	return json.NewEncoder(s.out).Encode(response)
-}
-
-func (s *mcpServer) writeError(id json.RawMessage, code int, message string) error {
-	if len(id) == 0 {
-		id = json.RawMessage("null")
-	}
-	return s.write(mcpResponse{JSONRPC: "2.0", ID: id, Error: &mcpError{Code: code, Message: message}})
-}
-
-func (s *mcpServer) serve(ctx context.Context) error {
-	reader := bufio.NewReaderSize(s.in, 64*1024)
-	record := make([]byte, 0, 64*1024)
-	discardingOversize := false
-	for {
-		fragment, continued, readErr := reader.ReadLine()
-		if readErr != nil {
-			if readErr == io.EOF {
-				return nil
-			}
-			_ = s.writeError(nil, -32600, "Failed to read JSON-RPC message")
-			return readErr
-		}
-		if !discardingOversize {
-			if len(fragment) > mcpMaxRecordBytes-len(record) {
-				discardingOversize = true
-				record = record[:0]
-			} else {
-				record = append(record, fragment...)
-			}
-		}
-		if continued {
-			continue
-		}
-		if discardingOversize {
-			if err := s.writeError(nil, -32600, "JSON-RPC message exceeds maximum size"); err != nil {
-				return err
-			}
-			discardingOversize = false
-			continue
-		}
-
-		line := bytes.TrimSpace(record)
-		record = record[:0]
-		if len(line) == 0 {
-			continue
-		}
-		if err := s.handleLine(ctx, line); err != nil {
-			return err
-		}
-	}
-}
-
-func (s *mcpServer) handleLine(ctx context.Context, line []byte) error {
-	if trimmed := bytes.TrimSpace(line); len(trimmed) > 0 && trimmed[0] == '[' {
-		return s.writeError(nil, -32600, "Batch requests are not supported")
-	}
-	var request mcpRequest
-	if err := json.Unmarshal(line, &request); err != nil {
-		return s.writeError(nil, -32700, "Parse error")
-	}
-	if request.JSONRPC != "2.0" || request.Method == "" {
-		return s.writeError(request.ID, -32600, "Invalid Request")
-	}
-	if len(request.ID) == 0 {
-		s.handleNotification(request)
-		return nil
-	}
-	if !validMCPRequestID(request.ID) {
-		return s.writeError(nil, -32600, "Invalid Request")
-	}
-	return s.handleRequest(ctx, request)
-}
-
-func (s *mcpServer) handleNotification(request mcpRequest) {
-	if request.Method == "notifications/initialized" && s.initializeSeen {
-		s.initialized = true
-	}
-}
-
-func (s *mcpServer) handleRequest(ctx context.Context, request mcpRequest) error {
-	switch request.Method {
-	case "initialize":
-		return s.initialize(request)
-	case "ping":
-		return s.write(mcpResponse{JSONRPC: "2.0", ID: request.ID, Result: map[string]any{}})
-	}
-	if !s.initialized {
-		return s.writeError(request.ID, -32002, "Server not initialized")
-	}
-	switch request.Method {
-	case "tools/list":
-		return s.write(mcpResponse{JSONRPC: "2.0", ID: request.ID, Result: map[string]any{"tools": mcpToolDefinitions}})
-	case "tools/call":
-		return s.callTool(ctx, request)
-	default:
-		return s.writeError(request.ID, -32601, "Method not found")
-	}
-}
-
-func (s *mcpServer) initialize(request mcpRequest) error {
-	if s.initializeSeen {
-		return s.writeError(request.ID, -32600, "Server already initialized")
-	}
-	var params struct {
-		ProtocolVersion string `json:"protocolVersion"`
-		Capabilities    any    `json:"capabilities,omitempty"`
-		ClientInfo      any    `json:"clientInfo,omitempty"`
-		Meta            any    `json:"_meta,omitempty"`
-	}
-	if err := decodeMCPParams(request.Params, &params); err != nil || params.ProtocolVersion == "" {
-		return s.writeError(request.ID, -32602, "Invalid initialize parameters")
-	}
-	version := mcpProtocolVersion
-	if mcpSupportedProtocolVersions[params.ProtocolVersion] {
-		version = params.ProtocolVersion
-	}
-	serverVersion := Version
-	if serverVersion == "" {
-		serverVersion = "dev"
-	}
-	s.initializeSeen = true
-	result := map[string]any{
-		"protocolVersion": version,
-		"capabilities":    map[string]any{"tools": map[string]any{}},
-		"serverInfo": map[string]any{
-			"name":    "tslink",
-			"version": serverVersion,
+// newMCPServer builds the SDK server carrying the tool surface declared in
+// mcpToolDefinitions.
+//
+// Tools are registered with [mcp.Server.AddTool], the low-level entry point,
+// rather than the generic mcp.AddTool: the schemas in this file are
+// hand-written to say things to a model that Go struct inference cannot
+// express, and the generic path would replace them with reflected ones. The
+// cost is that argument decoding and result construction stay this package's
+// responsibility, which is what keeps them byte-identical to the pre-SDK
+// server.
+func newMCPServer(actions mcpActions) *mcp.Server {
+	server := mcp.NewServer(
+		&mcp.Implementation{Name: mcpServerName, Version: mcpServerVersion()},
+		&mcp.ServerOptions{
+			Instructions: mcpInstructions,
+			// The tool set is fixed at build time, so listChanged would promise
+			// a notification that never arrives, and there is no logging
+			// feature here for a client to configure. Declaring capabilities
+			// explicitly keeps the advertisement to what the server does.
+			Capabilities: &mcp.ServerCapabilities{Tools: &mcp.ToolCapabilities{}},
 		},
-		"instructions": "Use share to expose a local page to the private tailnet. A needs_login tool result is successful: open auth_url and retry after authorization. Confirm with the user before any tool whose description says it publishes publicly or sends a real invitation: share/add with funnel true, and invite_user, invite_device, invite_revoke, invite_resend.",
+	)
+	for _, definition := range mcpToolDefinitions {
+		server.AddTool(&mcp.Tool{
+			Name:         definition.Name,
+			Description:  definition.Description,
+			InputSchema:  definition.InputSchema,
+			OutputSchema: definition.OutputSchema,
+		}, mcpToolHandler(definition.Name, actions))
 	}
-	return s.write(mcpResponse{JSONRPC: "2.0", ID: request.ID, Result: result})
+	return server
 }
 
-func decodeMCPParams(raw json.RawMessage, target any) error {
-	return decodeMCPObject(raw, target, false)
-}
-
-func decodeMCPArguments(raw json.RawMessage, target any) error {
-	return decodeMCPObject(raw, target, true)
-}
-
-func decodeMCPObject(raw json.RawMessage, target any, strict bool) error {
-	if len(bytes.TrimSpace(raw)) == 0 {
-		raw = json.RawMessage("{}")
+// runMCPStdio serves one MCP session over newline-delimited JSON-RPC on in and
+// out. It returns when the peer closes the stream, when ctx is cancelled, or
+// when the transport fails.
+//
+// It drives the session with [mcp.Server.Connect] rather than
+// [mcp.Server.Run], because the two disagree about what end-of-input means.
+// Run lets the reader's io.EOF reach the JSON-RPC layer, which treats a dead
+// reader as a reason to cancel every request still in flight. That is right
+// for a socket that vanished and wrong for a pipe whose writer simply finished
+// sending: a client that writes its requests and closes stdin — which is how
+// `tslink mcp` is scripted, and how this repository's compiled-binary tests
+// drive it — would race the server for its own last answer, and usually win.
+// So end-of-input starts a drain instead, and the session is closed only once
+// every message that was read has been answered.
+func runMCPStdio(ctx context.Context, in io.Reader, out io.Writer, actions mcpActions) error {
+	if ctx == nil {
+		// cobra leaves Command.Context nil until the command tree is executed,
+		// and the SDK selects on Done.
+		ctx = context.Background()
 	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	if strict {
-		decoder.DisallowUnknownFields()
-	}
-	if err := decoder.Decode(target); err != nil {
+	reader := newMCPRecordLimitReader(in, mcpMaxRecordBytes)
+	writer := &mcpActivityWriter{inner: out}
+	drain := &mcpDrainTracker{}
+	server := newMCPServer(actions)
+	server.AddReceivingMiddleware(drain.middleware)
+	session, err := server.Connect(ctx, &mcp.IOTransport{Reader: reader, Writer: writer}, nil)
+	if err != nil {
 		return err
 	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		return fmt.Errorf("multiple JSON values")
+	settled := make(chan struct{})
+	go func() {
+		select {
+		case <-reader.EndOfInput():
+			drain.wait(reader.Records, writer.Writes)
+			_ = session.Close()
+		case <-ctx.Done():
+			_ = session.Close()
+		case <-settled:
+		}
+	}()
+	waitErr := session.Wait()
+	close(settled)
+	// Release the SDK's decoder goroutine, which is parked in a read that will
+	// never return on its own now that end-of-input no longer ends the stream.
+	reader.Release()
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
 	}
+	return waitErr
+}
+
+// mcpDrainSettle is how long the drain waits on a session that has gone
+// completely silent — no handler running, no byte written — before concluding
+// that whatever is unaccounted for was refused before it ever reached a
+// handler, and that there is nothing left to wait for.
+const mcpDrainSettle = 100 * time.Millisecond
+
+// mcpDrainPoll is the drain's observation interval.
+const mcpDrainPoll = 250 * time.Microsecond
+
+// mcpDrainTracker counts messages through the SDK's receiving middleware so
+// that end-of-input can be turned into "everything that was read has been
+// answered".
+type mcpDrainTracker struct {
+	mu       sync.Mutex
+	started  int
+	finished int
+	answers  int
+}
+
+func (d *mcpDrainTracker) middleware(next mcp.MethodHandler) mcp.MethodHandler {
+	return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+		d.mu.Lock()
+		d.started++
+		d.mu.Unlock()
+		result, err := next(ctx, method, req)
+		d.mu.Lock()
+		d.finished++
+		// Per the MethodHandler contract a notification returns nothing at all,
+		// and anything else — a result or an error — becomes a response frame.
+		// Counting those is what lets the drain wait for the frame rather than
+		// for the handler, which finishes one step earlier.
+		if result != nil || err != nil {
+			d.answers++
+		}
+		d.mu.Unlock()
+		return result, err
+	}
+}
+
+func (d *mcpDrainTracker) counts() (started, finished, answers int) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.started, d.finished, d.answers
+}
+
+// wait blocks until the session has answered every message the reader handed
+// over, or until it has been silent for mcpDrainSettle.
+//
+// records is final by the time wait is called, because the reader only reports
+// end of input once it has stopped producing. The settle branch exists because
+// a message can be refused before it reaches a handler — an unsupported
+// protocol version, a method sent before initialization — and would otherwise
+// leave the count permanently short; it re-arms on any sign of life, so a tool
+// that takes its time is never cut off.
+func (d *mcpDrainTracker) wait(records func() int, writes func() int) {
+	type observation struct{ started, finished, answers, records, writes int }
+	var last observation
+	quietSince := time.Now()
+	for {
+		started, finished, answers := d.counts()
+		current := observation{started, finished, answers, records(), writes()}
+		if current != last {
+			last = current
+			quietSince = time.Now()
+		}
+		inFlight := current.started > current.finished
+		if !inFlight &&
+			current.finished >= current.records &&
+			current.writes >= current.answers {
+			return
+		}
+		// The settle timeout only covers the short gap between a record being
+		// read and its handler being entered. A handler that is already running
+		// is waited for without a deadline, the same way the SDK's own Close
+		// drains in-flight calls: a tool that takes 30s to answer is entitled to
+		// answer even though the client has finished writing.
+		if !inFlight && time.Since(quietSince) >= mcpDrainSettle {
+			return
+		}
+		time.Sleep(mcpDrainPoll)
+	}
+}
+
+// mcpActivityWriter is the transport's output side. It counts writes so the
+// drain can tell a silent session from a busy one, and it deliberately does not
+// close the underlying writer, which the command owns.
+type mcpActivityWriter struct {
+	inner io.Writer
+	mu    sync.Mutex
+	count int
+}
+
+func (w *mcpActivityWriter) Write(p []byte) (int, error) {
+	n, err := w.inner.Write(p)
+	w.mu.Lock()
+	w.count++
+	w.mu.Unlock()
+	return n, err
+}
+
+func (w *mcpActivityWriter) Writes() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.count
+}
+
+func (w *mcpActivityWriter) Close() error { return nil }
+
+// mcpRecordLimitReader bounds the bytes a single newline-delimited record may
+// contribute before the stream is abandoned.
+//
+// The SDK decodes straight off the reader, so without this an unbounded line is
+// an unbounded allocation in a process the user did not intend to hand a memory
+// budget to. The limit is a stream guard, not a framer: it counts bytes since
+// the last newline and fails the read, leaving every JSON-level decision to the
+// SDK.
+//
+// It also holds end-of-input rather than reporting it, so that the reader
+// cannot end the session out from under a request that is still being answered,
+// and counts the records it handed over so the drain knows how many answers to
+// expect.
+type mcpRecordLimitReader struct {
+	inner io.Reader
+	limit int
+
+	mu       sync.Mutex
+	count    int
+	records  int
+	inRecord bool
+	err      error
+
+	eof      chan struct{}
+	eofOnce  sync.Once
+	release  chan struct{}
+	stopOnce sync.Once
+}
+
+// errMCPBatchUnsupported ends a session that sent a JSON-RPC batch.
+var errMCPBatchUnsupported = errors.New("JSON-RPC batch requests are not supported")
+
+func newMCPRecordLimitReader(inner io.Reader, limit int) *mcpRecordLimitReader {
+	return &mcpRecordLimitReader{
+		inner:   inner,
+		limit:   limit,
+		eof:     make(chan struct{}),
+		release: make(chan struct{}),
+	}
+}
+
+// EndOfInput is closed once the wrapped reader has reported io.EOF.
+func (r *mcpRecordLimitReader) EndOfInput() <-chan struct{} { return r.eof }
+
+// Records reports how many newline-delimited records have been handed over.
+func (r *mcpRecordLimitReader) Records() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.records
+}
+
+// Release unblocks a read that is parked on end-of-input.
+func (r *mcpRecordLimitReader) Release() {
+	r.stopOnce.Do(func() { close(r.release) })
+}
+
+// Close implements io.ReadCloser. It releases a parked read and leaves the
+// wrapped reader, which this type does not own, alone.
+func (r *mcpRecordLimitReader) Close() error {
+	r.Release()
 	return nil
 }
 
-func (s *mcpServer) callTool(ctx context.Context, request mcpRequest) error {
-	var call struct {
-		Name      string          `json:"name"`
-		Arguments json.RawMessage `json:"arguments"`
+func (r *mcpRecordLimitReader) Read(p []byte) (int, error) {
+	r.mu.Lock()
+	failed := r.err
+	r.mu.Unlock()
+	if failed != nil {
+		return 0, failed
 	}
-	if err := decodeMCPParams(request.Params, &call); err != nil || call.Name == "" {
-		return s.writeError(request.ID, -32602, "Invalid tools/call parameters")
+	n, err := r.inner.Read(p)
+	r.mu.Lock()
+	for _, b := range p[:n] {
+		if b == '\n' {
+			if r.count > 0 {
+				r.records++
+			}
+			r.count = 0
+			r.inRecord = false
+			continue
+		}
+		if !r.inRecord && b != ' ' && b != '\t' && b != '\r' {
+			r.inRecord = true
+			if b == '[' {
+				// A record that opens with an array is a JSON-RPC batch. This
+				// server has never supported batching, and the revisions it
+				// speaks from 2025-06-18 onward removed it from the protocol;
+				// refusing it here refuses it at every revision, rather than at
+				// whichever one the session happens to have negotiated by the
+				// time the line is read.
+				r.err = errMCPBatchUnsupported
+				r.mu.Unlock()
+				return n, r.err
+			}
+		}
+		r.count++
+		if r.count > r.limit {
+			r.err = fmt.Errorf("JSON-RPC message exceeds maximum size of %d bytes", r.limit)
+			r.mu.Unlock()
+			return n, r.err
+		}
 	}
+	if err == io.EOF && r.count > 0 {
+		// A final record without a trailing newline is still a record.
+		r.records++
+		r.count = 0
+	}
+	r.mu.Unlock()
+	if err == io.EOF {
+		r.eofOnce.Do(func() { close(r.eof) })
+		if n > 0 {
+			// Hand the trailing bytes over first; the next call parks.
+			return n, nil
+		}
+		<-r.release
+		r.mu.Lock()
+		r.err = io.EOF
+		r.mu.Unlock()
+		return 0, io.EOF
+	}
+	if err != nil {
+		r.mu.Lock()
+		r.err = err
+		r.mu.Unlock()
+	}
+	return n, err
+}
+
+// mcpToolHandler binds one declared tool to the action that executes it.
+func mcpToolHandler(name string, actions mcpActions) mcp.ToolHandler {
+	return func(ctx context.Context, request *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return callMCPTool(ctx, actions, name, request.Params.Arguments)
+	}
+}
+
+// mcpInvalidArgumentsError reports a malformed tools/call as a JSON-RPC
+// protocol error rather than a tool result. The distinction is deliberate and
+// predates the SDK: a tool result with isError means "the tool ran and
+// refused", which a model should read and act on, while arguments that do not
+// satisfy the declared schema never reached the tool at all.
+func mcpInvalidArgumentsError(tool string) error {
+	return &jsonrpc.Error{Code: jsonrpc.CodeInvalidParams, Message: "Invalid " + tool + " arguments"}
+}
+
+// callMCPTool decodes one tool's arguments and forwards to its action.
+//
+// Decoding is strict (DisallowUnknownFields) for every tool, so a client that
+// invents a parameter is told so instead of having it silently dropped — which
+// for a parameter like allow would mean a share exposed more widely than the
+// caller asked for.
+func callMCPTool(ctx context.Context, actions mcpActions, name string, arguments json.RawMessage) (*mcp.CallToolResult, error) {
 	var data any
 	var err error
-	switch call.Name {
+	switch name {
 	case "share":
 		var args struct {
 			Target    string   `json:"target"`
@@ -1020,8 +1184,8 @@ func (s *mcpServer) callTool(ctx context.Context, request mcpRequest) error {
 			PublicAck bool     `json:"public_ack,omitempty"`
 			FunnelTTL *string  `json:"funnel_ttl,omitempty"`
 		}
-		if err := decodeMCPArguments(call.Arguments, &args); err != nil || args.Target == "" {
-			return s.writeError(request.ID, -32602, "Invalid share arguments")
+		if decodeErr := decodeMCPArguments(arguments, &args); decodeErr != nil || args.Target == "" {
+			return nil, mcpInvalidArgumentsError("share")
 		}
 		req := shareRequest{
 			Target:    args.Target,
@@ -1039,155 +1203,176 @@ func (s *mcpServer) callTool(ctx context.Context, request mcpRequest) error {
 			req.FunnelTTL = *args.FunnelTTL
 			req.FunnelTTLSet = true
 		}
-		data, err = s.actions.share(ctx, req)
+		data, err = actions.share(ctx, req)
 	case "add":
 		var args mcpAddArguments
-		if err := decodeMCPArguments(call.Arguments, &args); err != nil || args.Name == "" || args.Type == "" {
-			return s.writeError(request.ID, -32602, "Invalid add arguments")
+		if decodeErr := decodeMCPArguments(arguments, &args); decodeErr != nil || args.Name == "" || args.Type == "" {
+			return nil, mcpInvalidArgumentsError("add")
 		}
 		params, preserveFunnelExpiry, paramsErr := addParamsFromMCPArguments(args)
 		if paramsErr != nil {
 			data, err = nil, paramsErr
 		} else {
-			data, err = s.actions.add(ctx, params, preserveFunnelExpiry)
+			data, err = actions.add(ctx, params, preserveFunnelExpiry)
 		}
 	case "list":
 		var args struct{}
-		if err := decodeMCPArguments(call.Arguments, &args); err != nil {
-			return s.writeError(request.ID, -32602, "Invalid list arguments")
+		if decodeErr := decodeMCPArguments(arguments, &args); decodeErr != nil {
+			return nil, mcpInvalidArgumentsError("list")
 		}
-		data, err = s.actions.list()
+		data, err = actions.list()
 	case "unshare":
 		var args struct {
 			Name string `json:"name"`
 		}
-		if err := decodeMCPArguments(call.Arguments, &args); err != nil || args.Name == "" {
-			return s.writeError(request.ID, -32602, "Invalid unshare arguments")
+		if decodeErr := decodeMCPArguments(arguments, &args); decodeErr != nil || args.Name == "" {
+			return nil, mcpInvalidArgumentsError("unshare")
 		}
-		data, err = s.actions.unshare(args.Name)
+		data, err = actions.unshare(args.Name)
 	case "status":
 		var args struct{}
-		if err := decodeMCPArguments(call.Arguments, &args); err != nil {
-			return s.writeError(request.ID, -32602, "Invalid status arguments")
+		if decodeErr := decodeMCPArguments(arguments, &args); decodeErr != nil {
+			return nil, mcpInvalidArgumentsError("status")
 		}
-		data, err = s.actions.status()
+		data, err = actions.status()
 	case "url":
 		var args struct {
 			Name string `json:"name"`
 			Wait string `json:"wait,omitempty"`
 		}
-		if err := decodeMCPArguments(call.Arguments, &args); err != nil || args.Name == "" {
-			return s.writeError(request.ID, -32602, "Invalid url arguments")
+		if decodeErr := decodeMCPArguments(arguments, &args); decodeErr != nil || args.Name == "" {
+			return nil, mcpInvalidArgumentsError("url")
 		}
 		wait, waitErr := parseMCPWait(args.Wait)
 		if waitErr != nil {
 			data, err = nil, waitErr
 		} else {
-			data, err = s.actions.url(ctx, args.Name, wait)
+			data, err = actions.url(ctx, args.Name, wait)
 		}
 	case "tags_list":
 		var args struct{}
-		if err := decodeMCPArguments(call.Arguments, &args); err != nil {
-			return s.writeError(request.ID, -32602, "Invalid tags_list arguments")
+		if decodeErr := decodeMCPArguments(arguments, &args); decodeErr != nil {
+			return nil, mcpInvalidArgumentsError("tags_list")
 		}
-		data, err = s.actions.tagsList()
+		data, err = actions.tagsList()
 	case "tags_set":
 		var args struct {
 			Service string `json:"service"`
 			Tag     string `json:"tag"`
 		}
-		if err := decodeMCPArguments(call.Arguments, &args); err != nil || args.Service == "" || args.Tag == "" {
-			return s.writeError(request.ID, -32602, "Invalid tags_set arguments")
+		if decodeErr := decodeMCPArguments(arguments, &args); decodeErr != nil || args.Service == "" || args.Tag == "" {
+			return nil, mcpInvalidArgumentsError("tags_set")
 		}
-		data, err = s.actions.tagsSet(args.Service, args.Tag)
+		data, err = actions.tagsSet(args.Service, args.Tag)
 	case "access_explain":
 		var args struct {
 			Service string `json:"service"`
 		}
-		if err := decodeMCPArguments(call.Arguments, &args); err != nil || args.Service == "" {
-			return s.writeError(request.ID, -32602, "Invalid access_explain arguments")
+		if decodeErr := decodeMCPArguments(arguments, &args); decodeErr != nil || args.Service == "" {
+			return nil, mcpInvalidArgumentsError("access_explain")
 		}
-		data, err = s.actions.accessExplain(args.Service)
+		data, err = actions.accessExplain(args.Service)
 	case "doctor":
 		var args struct {
 			ProbeExternal bool `json:"probe_external,omitempty"`
 		}
-		if err := decodeMCPArguments(call.Arguments, &args); err != nil {
-			return s.writeError(request.ID, -32602, "Invalid doctor arguments")
+		if decodeErr := decodeMCPArguments(arguments, &args); decodeErr != nil {
+			return nil, mcpInvalidArgumentsError("doctor")
 		}
-		data, err = s.actions.doctor(args.ProbeExternal)
+		data, err = actions.doctor(args.ProbeExternal)
 	case "invite_user":
 		var args struct {
 			Email     string `json:"email"`
 			Role      string `json:"role,omitempty"`
 			PrintLink bool   `json:"print_link,omitempty"`
 		}
-		if err := decodeMCPArguments(call.Arguments, &args); err != nil || args.Email == "" {
-			return s.writeError(request.ID, -32602, "Invalid invite_user arguments")
+		if decodeErr := decodeMCPArguments(arguments, &args); decodeErr != nil || args.Email == "" {
+			return nil, mcpInvalidArgumentsError("invite_user")
 		}
-		data, err = s.actions.inviteUser(ctx, args.Email, args.Role, args.PrintLink)
+		data, err = actions.inviteUser(ctx, args.Email, args.Role, args.PrintLink)
 	case "invite_device":
 		var args mcpInviteDeviceArguments
-		if err := decodeMCPArguments(call.Arguments, &args); err != nil || args.Service == "" || args.Email == "" {
-			return s.writeError(request.ID, -32602, "Invalid invite_device arguments")
+		if decodeErr := decodeMCPArguments(arguments, &args); decodeErr != nil || args.Service == "" || args.Email == "" {
+			return nil, mcpInvalidArgumentsError("invite_device")
 		}
-		data, err = s.actions.inviteDevice(ctx, args)
+		data, err = actions.inviteDevice(ctx, args)
 	case "invite_list":
 		var args struct {
 			ShowURLs bool `json:"show_urls,omitempty"`
 		}
-		if err := decodeMCPArguments(call.Arguments, &args); err != nil {
-			return s.writeError(request.ID, -32602, "Invalid invite_list arguments")
+		if decodeErr := decodeMCPArguments(arguments, &args); decodeErr != nil {
+			return nil, mcpInvalidArgumentsError("invite_list")
 		}
-		data, err = s.actions.inviteList(ctx, args.ShowURLs)
+		data, err = actions.inviteList(ctx, args.ShowURLs)
 	case "invite_revoke":
 		var args struct {
 			Kind     string `json:"kind"`
 			InviteID string `json:"invite_id"`
 		}
-		if err := decodeMCPArguments(call.Arguments, &args); err != nil || args.Kind == "" || args.InviteID == "" {
-			return s.writeError(request.ID, -32602, "Invalid invite_revoke arguments")
+		if decodeErr := decodeMCPArguments(arguments, &args); decodeErr != nil || args.Kind == "" || args.InviteID == "" {
+			return nil, mcpInvalidArgumentsError("invite_revoke")
 		}
-		data, err = s.actions.inviteRevoke(ctx, args.Kind, args.InviteID)
+		data, err = actions.inviteRevoke(ctx, args.Kind, args.InviteID)
 	case "invite_resend":
 		var args struct {
 			Kind     string `json:"kind"`
 			InviteID string `json:"invite_id"`
 		}
-		if err := decodeMCPArguments(call.Arguments, &args); err != nil || args.Kind == "" || args.InviteID == "" {
-			return s.writeError(request.ID, -32602, "Invalid invite_resend arguments")
+		if decodeErr := decodeMCPArguments(arguments, &args); decodeErr != nil || args.Kind == "" || args.InviteID == "" {
+			return nil, mcpInvalidArgumentsError("invite_resend")
 		}
-		data, err = s.actions.inviteResend(ctx, args.Kind, args.InviteID)
+		data, err = actions.inviteResend(ctx, args.Kind, args.InviteID)
 	case "template_list":
 		var args struct{}
-		if err := decodeMCPArguments(call.Arguments, &args); err != nil {
-			return s.writeError(request.ID, -32602, "Invalid template_list arguments")
+		if decodeErr := decodeMCPArguments(arguments, &args); decodeErr != nil {
+			return nil, mcpInvalidArgumentsError("template_list")
 		}
-		data, err = s.actions.templateList()
+		data, err = actions.templateList()
 	case "template_plan":
 		var args struct {
 			Name string `json:"name"`
 		}
-		if err := decodeMCPArguments(call.Arguments, &args); err != nil || args.Name == "" {
-			return s.writeError(request.ID, -32602, "Invalid template_plan arguments")
+		if decodeErr := decodeMCPArguments(arguments, &args); decodeErr != nil || args.Name == "" {
+			return nil, mcpInvalidArgumentsError("template_plan")
 		}
-		data, err = s.actions.templatePlan(args.Name)
+		data, err = actions.templatePlan(args.Name)
 	case "template_apply":
 		var args struct {
 			Name string `json:"name"`
 		}
-		if err := decodeMCPArguments(call.Arguments, &args); err != nil || args.Name == "" {
-			return s.writeError(request.ID, -32602, "Invalid template_apply arguments")
+		if decodeErr := decodeMCPArguments(arguments, &args); decodeErr != nil || args.Name == "" {
+			return nil, mcpInvalidArgumentsError("template_apply")
 		}
-		data, err = s.actions.templateApply(args.Name)
+		data, err = actions.templateApply(args.Name)
 	default:
-		return s.writeError(request.ID, -32602, "Unknown tool: "+call.Name)
+		// Unreachable through the SDK, which rejects an unregistered tool name
+		// with the same -32602 before any handler runs. Kept so a tool added to
+		// mcpToolDefinitions without a case here fails loudly instead of
+		// answering with a zero value.
+		return nil, mcpInvalidArgumentsError(name)
 	}
-	result := makeMCPToolResult(data, err)
-	return s.write(mcpResponse{JSONRPC: "2.0", ID: request.ID, Result: result})
+	return makeMCPToolResult(data, err), nil
 }
 
-func makeMCPToolResult(data any, callErr error) mcpToolResult {
+func decodeMCPArguments(raw json.RawMessage, target any) error {
+	if len(bytes.TrimSpace(raw)) == 0 {
+		raw = json.RawMessage("{}")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return fmt.Errorf("multiple JSON values")
+	}
+	return nil
+}
+
+// makeMCPToolResult renders one action's return value as a tool result. The
+// text content is the exact json.Marshal of the value, which is what makes an
+// MCP payload byte-comparable with the same struct inside a `--json` envelope.
+func makeMCPToolResult(data any, callErr error) *mcp.CallToolResult {
 	if callErr != nil {
 		return makeMCPToolErrorResult(callErr)
 	}
@@ -1199,16 +1384,20 @@ func makeMCPToolResult(data any, callErr error) mcpToolResult {
 	if err := json.Unmarshal(encoded, &structured); err != nil {
 		return makeMCPToolErrorResult(err)
 	}
-	return mcpToolResult{
-		Content:           []mcpContent{{Type: "text", Text: string(encoded)}},
+	return &mcp.CallToolResult{
+		Content:           []mcp.Content{&mcp.TextContent{Text: string(encoded)}},
 		StructuredContent: structured,
 	}
 }
 
-func makeMCPToolErrorResult(err error) mcpToolResult {
+// makeMCPToolErrorResult reports a refusal the way the CLI reports it: the same
+// output.Failure envelope, carrying the same error code and next steps. It is a
+// tool result rather than a protocol error so the model can read the refusal
+// and act on it.
+func makeMCPToolErrorResult(err error) *mcp.CallToolResult {
 	failure := output.NewFailureForError("", err)
-	return mcpToolResult{
-		Content: []mcpContent{{Type: "text", Text: failure.Error.Message}},
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{&mcp.TextContent{Text: failure.Error.Message}},
 		StructuredContent: map[string]any{
 			"ok":    false,
 			"code":  failure.Code,
@@ -1228,6 +1417,12 @@ share, add, list, unshare, status, url, tags_list, tags_set, access_explain,
 doctor, invite_user, invite_device, invite_list, invite_revoke, invite_resend,
 template_list, template_plan, and template_apply. Run "tslink mcp" and send a
 tools/list request to see the current set.
+
+Protocol handling comes from the official Go SDK, so this server speaks the
+current MCP revision ` + mcpProtocolVersion + ` and negotiates down to any of
+` + strings.Join(mcpSupportedProtocolVersions, ", ") + `. A ` + mcpProtocolVersion + ` client sends its version
+in each request's _meta and needs no handshake; an older client negotiates one
+with initialize.
 
 Daemon lifecycle, installation, login/logout, log reading and configuration are
 deliberately not exposed; use the CLI for those.
@@ -1251,8 +1446,7 @@ diagnostics and logs are written only to stderr.`,
 			if err != nil {
 				return err
 			}
-			server := newMCPServer(cmd.InOrStdin(), cmd.OutOrStdout(), defaultMCPActions(paths, cmd.ErrOrStderr()))
-			if err := server.serve(cmd.Context()); err != nil {
+			if err := runMCPStdio(cmd.Context(), cmd.InOrStdin(), cmd.OutOrStdout(), defaultMCPActions(paths, cmd.ErrOrStderr())); err != nil {
 				return fmt.Errorf("mcp stdio: %w", err)
 			}
 			return nil

@@ -414,7 +414,10 @@ func compiledMCPToolResult(t *testing.T, configDir, tool, arguments string) (tex
 			} `json:"content"`
 			IsError bool `json:"isError"`
 		} `json:"result"`
-		Error *mcpError `json:"error"`
+		Error *struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
 	}
 	scanner := bufio.NewScanner(strings.NewReader(stdout))
 	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
@@ -1354,14 +1357,10 @@ func TestMCPNewToolsAreReachableOverTheProtocol(t *testing.T) {
 		`{"jsonrpc":"2.0","id":15,"method":"tools/call","params":{"name":"template_apply","arguments":{"name":"personal-harness"}}}`,
 		`{"jsonrpc":"2.0","id":16,"method":"tools/call","params":{"name":"share","arguments":{"target":"3000","allow":["a@example.com"],"tags":["tag:web"],"funnel":false,"public_ack":false}}}`,
 	}
-	var stdout bytes.Buffer
-	server := newMCPServer(strings.NewReader(initializedMCPInput(strings.Join(calls, "\n"))), &stdout, fakeMCPActions())
-	if err := server.serve(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	frames := decodeMCPResponses(t, stdout.String())
+	stdout := runMCPSession(t, initializedMCPInput(strings.Join(calls, "\n")), fakeMCPActions())
+	frames := decodeMCPResponses(t, stdout)
 	if len(frames) != len(calls)+1 {
-		t.Fatalf("frames = %d, want %d: %s", len(frames), len(calls)+1, stdout.String())
+		t.Fatalf("frames = %d, want %d: %s", len(frames), len(calls)+1, stdout)
 	}
 	for _, frame := range frames[1:] {
 		if frame["error"] != nil {
@@ -1404,12 +1403,7 @@ func TestMCPNewToolsRejectMalformedArguments(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			var stdout bytes.Buffer
-			server := newMCPServer(strings.NewReader(initializedMCPInput(tc.call)), &stdout, fakeMCPActions())
-			if err := server.serve(context.Background()); err != nil {
-				t.Fatal(err)
-			}
-			frames := decodeMCPResponses(t, stdout.String())
+			frames := decodeMCPResponses(t, runMCPSession(t, initializedMCPInput(tc.call), fakeMCPActions()))
 			last := frames[len(frames)-1]
 			errorObject, ok := last["error"].(map[string]any)
 			if !ok || errorObject["code"] != float64(-32602) {
@@ -1434,12 +1428,7 @@ func TestMCPToolExecutionErrorsSurviveAsToolResults(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			var stdout bytes.Buffer
-			server := newMCPServer(strings.NewReader(initializedMCPInput(tc.call)), &stdout, fakeMCPActions())
-			if err := server.serve(context.Background()); err != nil {
-				t.Fatal(err)
-			}
-			frames := decodeMCPResponses(t, stdout.String())
+			frames := decodeMCPResponses(t, runMCPSession(t, initializedMCPInput(tc.call), fakeMCPActions()))
 			last := frames[len(frames)-1]
 			if last["error"] != nil {
 				t.Fatalf("execution failure became a protocol error: %+v", last)

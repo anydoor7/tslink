@@ -76,11 +76,11 @@ func inspectProcessLiveness(pid int) processLiveness {
 }
 
 // Daemonize re-launches the current binary in the background with the serve
-// command. controlURL and manageACL are propagated to the child so the
-// re-executed foreground `serve` observes the same opt-ins as the parent; a
-// dropped --manage-acl would silently disable the documented opt-in in daemon
-// mode.
-func Daemonize(outLog, errLog, controlURL string, manageACL, noAutoProvision bool) (int, error) {
+// command. controlURL, manageACL, noAutoProvision and mcp are propagated to the
+// child so the re-executed foreground `serve` observes the same opt-ins as the
+// parent; a dropped --manage-acl or --mcp would silently disable the documented
+// opt-in in daemon mode.
+func Daemonize(outLog, errLog, controlURL string, manageACL, noAutoProvision, mcp bool) (int, error) {
 	exe, err := executable()
 	if err != nil {
 		return 0, fmt.Errorf("find executable: %w", err)
@@ -104,7 +104,7 @@ func Daemonize(outLog, errLog, controlURL string, manageACL, noAutoProvision boo
 		return 0, fmt.Errorf("open stderr log: %w", err)
 	}
 
-	args := daemonServeArgs(controlURL, manageACL, noAutoProvision)
+	args := daemonServeArgs(controlURL, manageACL, noAutoProvision, mcp)
 
 	cmd := execCommand(exe, args...)
 	cmd.Stdout = stdout

@@ -223,7 +223,7 @@ func saveServeState(t *testing.T) {
 		lifecycleReconcile func(context.Context, lifecycle.Options) (lifecycle.Result, error)
 		loadGlobal         func() (config.GlobalConfig, error)
 		logDir             func() (string, error)
-		daemonize          func(string, string, string, bool, bool) (int, error)
+		daemonize          func(string, string, string, bool, bool, bool) (int, error)
 		readPID            func(string) (int, error)
 		readyPath          func() (string, error)
 		authHandoffPath    func() (string, error)
@@ -337,7 +337,7 @@ func mockServeDefaults(t *testing.T, dir string) {
 	}
 	serveLoadGlobalFn = func() (config.GlobalConfig, error) { return config.GlobalConfig{}, nil }
 	serveLogDirFn = func() (string, error) { return dir, nil }
-	serveDaemonizeFn = func(out, err, controlURL string, manageACL, noAutoProvision bool) (int, error) {
+	serveDaemonizeFn = func(out, err, controlURL string, manageACL, noAutoProvision, mcp bool) (int, error) {
 		return 99999, nil
 	}
 	serveReadPIDFn = func(path string) (int, error) { return 99999, nil }
@@ -1177,7 +1177,7 @@ func TestServeCmd_InvalidFlagControlURLFailsBeforeDaemonize(t *testing.T) {
 	t.Cleanup(func() { _ = cmd.Flags().Set("control-url", "") })
 
 	daemonizeCalled := false
-	serveDaemonizeFn = func(out, errLog, controlURL string, manageACL, noAutoProvision bool) (int, error) {
+	serveDaemonizeFn = func(out, errLog, controlURL string, manageACL, noAutoProvision, mcp bool) (int, error) {
 		daemonizeCalled = true
 		return 0, fmt.Errorf("daemonize should not be called")
 	}
@@ -1249,7 +1249,7 @@ func TestServeCmd_DaemonModePropagatesNoAutoProvision(t *testing.T) {
 	mockServeDaemonReadyAfterInitialCheck(t)
 
 	var captured bool
-	serveDaemonizeFn = func(out, errLog, controlURL string, manageACL, noAutoProvision bool) (int, error) {
+	serveDaemonizeFn = func(out, errLog, controlURL string, manageACL, noAutoProvision, mcp bool) (int, error) {
 		captured = noAutoProvision
 		return 99999, nil
 	}
@@ -1273,7 +1273,7 @@ func TestServeCmd_JSONZeroCredentialReturnsImmediateAuthHandoff(t *testing.T) {
 	serveReadPIDFn = func(string) (int, error) { return 99999, nil }
 	serveIsPIDRunningFn = func(int) bool { return true }
 	spawned := false
-	serveDaemonizeFn = func(out, errLog, controlURL string, manageACL, noAutoProvision bool) (int, error) {
+	serveDaemonizeFn = func(out, errLog, controlURL string, manageACL, noAutoProvision, mcp bool) (int, error) {
 		spawned = true
 		return 99999, nil
 	}
@@ -1330,7 +1330,7 @@ func TestServeCmd_JSONCredentialedStaysForeground(t *testing.T) {
 	dir := t.TempDir()
 	mockServeDefaults(t, dir)
 	serveHasStoredCredentialFn = func() (bool, error) { return true, nil }
-	serveDaemonizeFn = func(string, string, string, bool, bool) (int, error) {
+	serveDaemonizeFn = func(string, string, string, bool, bool, bool) (int, error) {
 		t.Fatal("credentialed JSON serve was daemonized")
 		return 0, nil
 	}
@@ -1365,7 +1365,7 @@ func TestServeCmd_DaemonConflictPreservesLiveAuthHandoff(t *testing.T) {
 		handoffRemoved = true
 		return nil
 	}
-	serveDaemonizeFn = func(string, string, string, bool, bool) (int, error) {
+	serveDaemonizeFn = func(string, string, string, bool, bool, bool) (int, error) {
 		t.Fatal("daemonize called despite live daemon conflict")
 		return 0, nil
 	}
@@ -1443,7 +1443,7 @@ func TestServeCmd_DaemonModeDoesNotDeletePIDAfterGuardAllows(t *testing.T) {
 
 	removeCalls := 0
 	serveRemovePIDFn = func(string) { removeCalls++ }
-	serveDaemonizeFn = func(out, errLog, controlURL string, manageACL, noAutoProvision bool) (int, error) {
+	serveDaemonizeFn = func(out, errLog, controlURL string, manageACL, noAutoProvision, mcp bool) (int, error) {
 		for _, path := range []string{pidPath, identityPath} {
 			if _, err := os.Stat(path); err != nil {
 				t.Fatalf("daemonize observed deleted live-daemon evidence %q: %v", path, err)
@@ -1479,7 +1479,7 @@ func TestServeCmd_DaemonModeForwardsControlURL(t *testing.T) {
 	t.Cleanup(func() { _ = cmd.Flags().Set("control-url", "") })
 
 	var capturedControlURL string
-	serveDaemonizeFn = func(out, errLog, controlURL string, manageACL, noAutoProvision bool) (int, error) {
+	serveDaemonizeFn = func(out, errLog, controlURL string, manageACL, noAutoProvision, mcp bool) (int, error) {
 		capturedControlURL = controlURL
 		return 99999, nil
 	}
@@ -1524,7 +1524,7 @@ func TestServeCmd_DaemonModePropagatesManageACL(t *testing.T) {
 			}
 
 			var captured bool
-			serveDaemonizeFn = func(out, errLog, controlURL string, manageACL, noAutoProvision bool) (int, error) {
+			serveDaemonizeFn = func(out, errLog, controlURL string, manageACL, noAutoProvision, mcp bool) (int, error) {
 				captured = manageACL
 				return 99999, nil
 			}
@@ -1725,7 +1725,7 @@ func TestServeCmd_DaemonModeValidatesRegistryBeforeDaemonize(t *testing.T) {
 	}
 
 	daemonizeCalled := false
-	serveDaemonizeFn = func(out, errLog, controlURL string, manageACL, noAutoProvision bool) (int, error) {
+	serveDaemonizeFn = func(out, errLog, controlURL string, manageACL, noAutoProvision, mcp bool) (int, error) {
 		daemonizeCalled = true
 		return 0, fmt.Errorf("daemonize should not be called")
 	}
@@ -1870,7 +1870,7 @@ func TestServeCmd_DaemonModeFunnelNonProxyTypesIncludeStableCode(t *testing.T) {
 			}
 
 			daemonizeCalled := false
-			serveDaemonizeFn = func(out, errLog, controlURL string, manageACL, noAutoProvision bool) (int, error) {
+			serveDaemonizeFn = func(out, errLog, controlURL string, manageACL, noAutoProvision, mcp bool) (int, error) {
 				daemonizeCalled = true
 				return 0, fmt.Errorf("daemonize should not be called")
 			}
@@ -1913,7 +1913,7 @@ func TestServeCmd_DaemonizeError(t *testing.T) {
 	dir := t.TempDir()
 	mockServeDefaults(t, dir)
 	serveDaemon = true
-	serveDaemonizeFn = func(out, errLog, controlURL string, manageACL, noAutoProvision bool) (int, error) {
+	serveDaemonizeFn = func(out, errLog, controlURL string, manageACL, noAutoProvision, mcp bool) (int, error) {
 		return 0, fmt.Errorf("fork failed")
 	}
 

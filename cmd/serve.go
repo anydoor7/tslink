@@ -118,6 +118,10 @@ type readySetter interface {
 	SetReadyFunc(func() error)
 }
 
+type mcpControlPlaneSetter interface {
+	SetMCPControlPlane(*server.MCPControlPlane)
+}
+
 type lifecycleReconcileSetter interface {
 	SetLifecycleReconcileFn(server.LifecycleReconcileFunc)
 }
@@ -145,6 +149,23 @@ In --json mode, a zero-credential launch runs as a background daemon and
 returns a needs_login record immediately. --json, --no-browser, CI, and
 non-terminal sessions never try to open a browser.
 
+MCP control plane (off by default):
+  --mcp, or "mcp": {"enabled": true} in config.json, serves the same 18 MCP
+  tools "tslink mcp" exposes over stdio on a dedicated tailnet-only node at
+  https://<node>.<tailnet>.ts.net/mcp. This is a control plane, not a page:
+  every authorized tailnet peer that reaches it can register and remove
+  services, publish a service to the public internet with Funnel, and send or
+  revoke real Tailscale invitations. It is never published through Funnel and
+  never binds a host interface or 0.0.0.0.
+
+  Authorization is mandatory. The endpoint answers only callers whose Tailscale
+  identity matches mcp.allow in config.json, a list of login emails and/or
+  "tag:..." entries. An empty list is not "everyone": serve refuses to start
+  and says so.
+
+  config.json:
+    {"mcp": {"enabled": true, "allow": ["you@example.com", "tag:ops"]}}
+
 Examples:
   tslink serve
   tslink serve --no-browser
@@ -156,6 +177,7 @@ Examples:
 			}
 			manageACL, _ := cmd.Flags().GetBool("manage-acl")
 			noAutoProvision, _ := cmd.Flags().GetBool("no-auto-provision")
+			mcpFlag, _ := cmd.Flags().GetBool("mcp")
 
 			// Migrate file-based API key to keychain if possible. In JSON mode the
 			// fact belongs in the result data; stdout must remain one envelope.
@@ -171,13 +193,18 @@ Examples:
 				slog.Info("credential metadata backfilled", "slots", backfilled)
 			}
 
-			// Resolve control URL: flag > config > default
-			controlURL, _ := cmd.Flags().GetString("control-url")
-			if controlURL == "" {
-				if globalCfg, err := serveLoadGlobalFn(); err == nil {
-					controlURL = globalCfg.ControlURL
-				}
+			// Resolve control URL: flag > config > default. The same load
+			// supplies the persisted mcp control-plane settings, which follow
+			// the identical flag-over-config precedence.
+			globalCfg, globalCfgErr := serveLoadGlobalFn()
+			if globalCfgErr != nil {
+				globalCfg = config.GlobalConfig{}
 			}
+			controlURL, _ := cmd.Flags().GetString("control-url")
+			if controlURL == "" && globalCfgErr == nil {
+				controlURL = globalCfg.ControlURL
+			}
+			mcpSettings := resolveMCPControlPlaneSettings(mcpFlag, globalCfg)
 			if err := registry.ValidateControlURL(controlURL); err != nil {
 				return output.ErrUsage(fmt.Sprintf("invalid control-url: %v", err))
 			}
@@ -243,7 +270,7 @@ Examples:
 					// Propagate --manage-acl to the daemon child. The child
 					// re-execs foreground `serve`, where the ACL ensure runs;
 					// dropping the flag here would silently ignore the opt-in.
-					pid, err = serveDaemonizeFn(outLog, errLog, controlURL, manageACL, noAutoProvision)
+					pid, err = serveDaemonizeFn(outLog, errLog, controlURL, manageACL, noAutoProvision, mcpSettings.Enabled)
 					if err != nil {
 						return err
 					}
@@ -329,6 +356,7 @@ Examples:
 				Credentialed:       credentialed,
 				ManageACL:          manageACL,
 				NoAutoProvision:    noAutoProvision,
+				MCP:                mcpSettings,
 				EnsureFunnelAttrFn: effectiveEnsureFunnelAttrFn,
 				PresentAuth: func(record authHandoffRecord) {
 					presentAuthHandoff(cmd, record)
@@ -342,6 +370,7 @@ Examples:
 	serveCmd.Flags().String("control-url", "", "Custom control server URL (e.g., Headscale)")
 	serveCmd.Flags().Bool("manage-acl", false, "Opt in to remote Tailscale ACL tag-owner mutation using a machine-readable side-effect plan")
 	serveCmd.Flags().Bool("no-auto-provision", false, "Disable automatic Funnel policy provisioning for every service in this serve process")
+	serveCmd.Flags().Bool("mcp", false, "Serve the MCP control plane on a dedicated tailnet-only node; every authorized peer can then change services, publish Funnel and send invitations")
 	rootCmd.AddCommand(serveCmd)
 }
 
@@ -525,6 +554,7 @@ type foregroundOptions struct {
 	Credentialed       bool
 	ManageACL          bool
 	NoAutoProvision    bool
+	MCP                mcpControlPlaneSettings
 	EnsureFunnelAttrFn server.EnsureFunnelAttrFunc
 	PresentAuth        func(authHandoffRecord)
 }
@@ -666,6 +696,20 @@ func runForegroundWithOptions(pidPath, authKey, controlURL string, options foreg
 			}
 			return nil
 		})
+	}
+	if options.MCP.Enabled {
+		setter, ok := srv.(mcpControlPlaneSetter)
+		if !ok {
+			return fmt.Errorf("server does not support the MCP control plane")
+		}
+		paths, err := resolveSharePaths()
+		if err != nil {
+			return err
+		}
+		// The control plane runs the same actions the stdio transport runs;
+		// tool diagnostics go to the daemon's stderr log, never to a client.
+		actions := defaultMCPActions(paths, os.Stderr)
+		setter.SetMCPControlPlane(buildMCPControlPlane(options.MCP, actions, []string{config.GetDefaultTag()}))
 	}
 	if options.ReadyPath != "" {
 		setter, ok := srv.(readySetter)

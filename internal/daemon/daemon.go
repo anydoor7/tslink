@@ -54,7 +54,7 @@ const (
 // serve choice is silently dropped in daemon mode. It
 // is shared by the Unix and Windows Daemonize implementations so both platforms
 // forward identical flags.
-func daemonServeArgs(controlURL string, manageACL, noAutoProvision bool) []string {
+func daemonServeArgs(controlURL string, manageACL, noAutoProvision, mcp bool) []string {
 	args := []string{"serve"}
 	if controlURL != "" {
 		args = append(args, "--control-url", controlURL)
@@ -64,6 +64,9 @@ func daemonServeArgs(controlURL string, manageACL, noAutoProvision bool) []strin
 	}
 	if noAutoProvision {
 		args = append(args, "--no-auto-provision")
+	}
+	if mcp {
+		args = append(args, "--mcp")
 	}
 	return args
 }

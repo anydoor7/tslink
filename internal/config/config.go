@@ -20,8 +20,23 @@ var (
 
 // GlobalConfig holds tslink-wide settings persisted in config.json.
 type GlobalConfig struct {
-	ControlURL string `json:"control_url,omitempty"`
-	DefaultTag string `json:"default_tag,omitempty"`
+	ControlURL string     `json:"control_url,omitempty"`
+	DefaultTag string     `json:"default_tag,omitempty"`
+	MCP        *MCPConfig `json:"mcp,omitempty"`
+}
+
+// MCPConfig configures the optional remote MCP control plane the daemon can
+// serve on its own tsnet node. A nil pointer, or Enabled false, means the
+// daemon opens no control-plane listener and creates no tsnet node for it.
+//
+// Allow is the principal list the endpoint authorizes against. It is kept in
+// durable configuration rather than on the daemon command line because it is
+// the security boundary of the whole control plane: an empty list is a refusal
+// to start, never an invitation to everyone.
+type MCPConfig struct {
+	Enabled  bool     `json:"enabled,omitempty"`
+	Allow    []string `json:"allow,omitempty"`
+	NodeName string   `json:"node_name,omitempty"`
 }
 
 // GetDefaultTag returns the configured default tag, falling back to "tag:tsmain".
@@ -137,6 +152,18 @@ func NodesDir() (string, error) {
 		return "", err
 	}
 	return filepath.Join(dir, "nodes"), nil
+}
+
+// MCPNodeDir returns the tsnet state directory for the remote MCP control
+// plane. It lives beside NodesDir rather than inside it so the control plane
+// can never collide with, or be mistaken for, a registered service's node
+// state: everything under NodesDir is named after a registry entry.
+func MCPNodeDir() (string, error) {
+	dir, err := Dir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "mcp-node"), nil
 }
 
 func AuthKeyPath() (string, error) {
