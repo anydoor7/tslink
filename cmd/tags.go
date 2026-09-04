@@ -89,23 +89,62 @@ func isServiceNotFound(err error) bool {
 	return err != nil && strings.HasPrefix(err.Error(), "service not found:")
 }
 
+// tagsServiceError maps the registry's "service not found" sentinel onto the
+// stable not_found error code. The CLI applies it on the --json path and the
+// MCP tags tools apply it always, so both machine surfaces report one code.
+func tagsServiceError(err error) error {
+	if isServiceNotFound(err) {
+		return output.ErrNotFound(err.Error())
+	}
+	return err
+}
+
+// tagsListResultForPath reads one registry and returns the tags report.
+// `tslink tags list` and the MCP tags_list tool share it.
+func tagsListResultForPath(regPath string) (TagsListResult, error) {
+	reg, err := tagsLoadRegistryFn(regPath)
+	if err != nil {
+		return TagsListResult{}, err
+	}
+	entries := make([]TagsServiceEntry, len(reg.Services))
+	for i, svc := range reg.Services {
+		entries[i] = TagsServiceEntry{Name: svc.Name, Tags: svc.Tags}
+	}
+	return TagsListResult{Services: entries}, nil
+}
+
+// tagsSetForPath replaces one service's tags in one registry.
+// `tslink tags set` and the MCP tags_set tool share it.
+func tagsSetForPath(regPath, serviceName, tag string) (TagsSetResult, error) {
+	if err := validateTagPrefix(tag); err != nil {
+		return TagsSetResult{}, err
+	}
+	if _, err := tagsMutateServiceFn(regPath, serviceName, func(svc registry.Service) (registry.Service, error) {
+		svc.Tags = []string{tag}
+		return svc, nil
+	}); err != nil {
+		return TagsSetResult{}, err
+	}
+	return TagsSetResult{Service: serviceName, Tags: []string{tag}}, nil
+}
+
 // tagsListRun lists all services and their tags.
 func tagsListRun(out io.Writer, isJSON bool) error {
 	regPath, err := tagsRegistryPathFn()
 	if err != nil {
 		return err
 	}
+	if isJSON {
+		result, err := tagsListResultForPath(regPath)
+		if err != nil {
+			return err
+		}
+		output.Success("tags list", result)
+		return nil
+	}
 	reg, err := tagsLoadRegistryFn(regPath)
 	if err != nil {
 		return err
-	}
-	if isJSON {
-		entries := make([]TagsServiceEntry, len(reg.Services))
-		for i, svc := range reg.Services {
-			entries[i] = TagsServiceEntry{Name: svc.Name, Tags: svc.Tags}
-		}
-		output.Success("tags list", TagsListResult{Services: entries})
-		return nil
 	}
 	if len(reg.Services) == 0 {
 		fmt.Fprintln(out, "No services registered")
@@ -219,20 +258,18 @@ func tagsSetRun(out io.Writer, serviceName, tag string, isJSON bool) error {
 	if err != nil {
 		return err
 	}
-	if _, err := tagsMutateServiceFn(regPath, serviceName, func(svc registry.Service) (registry.Service, error) {
-		svc.Tags = []string{tag}
-		return svc, nil
-	}); err != nil {
-		if isJSON && isServiceNotFound(err) {
-			return output.ErrNotFound(err.Error())
+	result, err := tagsSetForPath(regPath, serviceName, tag)
+	if err != nil {
+		if isJSON {
+			return tagsServiceError(err)
 		}
 		return err
 	}
 	if isJSON {
-		output.Success("tags set", TagsSetResult{Service: serviceName, Tags: []string{tag}})
+		output.Success("tags set", result)
 		return nil
 	}
-	fmt.Fprintf(out, "→ Set %s tags to [%s]\n", serviceName, tag)
+	fmt.Fprintf(out, "→ Set %s tags to [%s]\n", result.Service, tag)
 	return nil
 }
 

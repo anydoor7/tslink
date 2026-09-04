@@ -74,7 +74,7 @@ func TestE2EStopPreservesLiveDaemonPIDEvidence(t *testing.T) {
 		{
 			name: "PID of a live tslink process that is not a daemon is preserved",
 			prepare: func(t *testing.T, _, pidPath string) {
-				pid := startLongLivedTSLinkAPIProcess(t, binary)
+				pid := startLongLivedTSLinkStdioProcess(t, binary)
 				writePIDFile(t, pidPath, fmt.Sprintf("%d\n", pid))
 			},
 			expect: expectation{wantPIDFile: true, wantIdentityFile: true},
@@ -206,27 +206,33 @@ func startLongLivedForeignProcess(t *testing.T) int {
 	return cmd.Process.Pid
 }
 
-// startLongLivedTSLinkAPIProcess starts the real tslink binary in `api` mode
+// startLongLivedTSLinkStdioProcess starts the real tslink binary in `mcp` mode
 // with an open stdin so it blocks. The process shares the daemon's Go module
 // identity but its argv is not "serve", so identity verification must classify
 // it as "not the daemon" while liveness classifies it as alive.
-func startLongLivedTSLinkAPIProcess(t *testing.T, binary string) int {
+//
+// `mcp` is used because it is the remaining subcommand that reads stdin until
+// EOF; this helper drove `tslink api` until that command was removed. Any
+// long-lived non-serve invocation of the shipped binary satisfies the
+// scenario — what matters is the module identity and the argv, not the
+// protocol spoken on the pipe.
+func startLongLivedTSLinkStdioProcess(t *testing.T, binary string) int {
 	t.Helper()
 	ownConfigDir := t.TempDir()
-	cmd := exec.Command(binary, "api")
+	cmd := exec.Command(binary, "mcp")
 	cmd.Env = e2eEnv(ownConfigDir)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		t.Fatalf("api helper stdin: %v", err)
+		t.Fatalf("stdio helper stdin: %v", err)
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		t.Fatalf("api helper stdout: %v", err)
+		t.Fatalf("stdio helper stdout: %v", err)
 	}
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Start(); err != nil {
-		t.Fatalf("start api helper: %v", err)
+		t.Fatalf("start stdio helper: %v", err)
 	}
 	t.Cleanup(func() {
 		_ = stdin.Close()
@@ -236,12 +242,13 @@ func startLongLivedTSLinkAPIProcess(t *testing.T, binary string) int {
 
 	// Drive one record through so the process is provably past startup and
 	// blocked on stdin rather than racing us to exit.
-	if _, err := io.WriteString(stdin, `{"action":"list"}`+"\n"); err != nil {
-		t.Fatalf("write api helper record: %v", err)
+	initialize := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}`
+	if _, err := io.WriteString(stdin, initialize+"\n"); err != nil {
+		t.Fatalf("write stdio helper record: %v", err)
 	}
 	line, err := bufio.NewReader(stdout).ReadString('\n')
-	if err != nil || !strings.Contains(line, `"ok":true`) {
-		t.Fatalf("api helper first record = %q err=%v stderr=%q", line, err, stderr.String())
+	if err != nil || !strings.Contains(line, `"serverInfo"`) {
+		t.Fatalf("stdio helper first record = %q err=%v stderr=%q", line, err, stderr.String())
 	}
 	return cmd.Process.Pid
 }

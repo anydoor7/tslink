@@ -386,20 +386,6 @@ func TestManifestCarriesMachineConsumerFacts(t *testing.T) {
 			t.Fatalf("unavailable feature %q does not name feature_unavailable", feature)
 		}
 	}
-	if !containsString(m.APIActions, apiActionDoctor) ||
-		!containsString(m.APIActions, apiActionAccessExplain) ||
-		!containsString(m.APIActions, apiActionTemplateApply) ||
-		!containsString(m.APIActions, apiActionInviteUser) ||
-		!containsString(m.APIActions, apiActionInviteDevice) ||
-		!containsString(m.APIActions, apiActionInviteList) ||
-		!containsString(m.APIActions, apiActionInviteRevoke) ||
-		!containsString(m.APIActions, apiActionInviteResend) ||
-		!containsString(m.APIActions, apiActionManifest) {
-		t.Fatalf("api actions missing shipped actions: %v", m.APIActions)
-	}
-	if len(m.APIActions) != 15 {
-		t.Fatalf("api actions = %v, want the existing actions plus all five invite actions", m.APIActions)
-	}
 	if m.Release.PublicReleaseAvailable || m.Release.PrebuiltAvailable || m.Release.HomebrewTapAvailable {
 		t.Fatalf("release availability must stay false before first public readback: %#v", m.Release)
 	}
@@ -504,6 +490,25 @@ func TestAllManifestValuesMatchProductionOutputSets(t *testing.T) {
 		funnelStates[snapshot.Services[0].FunnelState] = struct{}{}
 	}
 
+	// Independent derivations for the two additive tailnet/SSH enums: drive the
+	// production classifiers rather than restating their constants.
+	tailnetOrigins := map[string]struct{}{}
+	for _, hostname := range []string{"web", "web-1", "someone-elses-service"} {
+		origin, _ := classifyTailnetDeviceOrigin(hostname, []registry.Service{{Name: "web"}})
+		tailnetOrigins[origin] = struct{}{}
+	}
+
+	tailscaleSSHStates := map[string]struct{}{}
+	for _, outcome := range []struct {
+		enabled bool
+		err     error
+	}{{enabled: true}, {}, {err: errors.New("local Tailscale client unreachable")}} {
+		stubDoctorTailscaleSSH(t, outcome.enabled, outcome.err)
+		var sshResult DoctorResult
+		diagnoseTailscaleSSH(&sshResult)
+		tailscaleSSHStates[sshResult.TailscaleSSH.State] = struct{}{}
+	}
+
 	production := map[string]map[string]struct{}{
 		"tslink status/daemon_state":            sliceSet([]string{daemonStateRunning, daemonStateAbsent, daemonStateUnknown}),
 		"tslink list/services[].state":          listStates,
@@ -529,6 +534,8 @@ func TestAllManifestValuesMatchProductionOutputSets(t *testing.T) {
 		"tslink login/page":                     sliceSet([]string{loginBootstrapPageKeys, loginBootstrapPageOAuth}),
 		"tslink logout/kind":                    sliceSet([]string{credentials.SlotAPIKey, credentials.SlotClientSecret}),
 		"tslink status/credential_expiry_state": sliceSet(credentialExpiryStateValues()),
+		"tslink list/devices[].origin":          tailnetOrigins,
+		"tslink doctor/tailscale_ssh.state":     tailscaleSSHStates,
 	}
 
 	seen := map[string]bool{}

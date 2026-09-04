@@ -42,23 +42,6 @@
       "middleware schema is reserved and rejected with feature_unavailable"
     ]
   },
-  "api_actions": [
-    "manifest",
-    "list",
-    "add",
-    "remove",
-    "status",
-    "doctor",
-    "access_explain",
-    "template_list",
-    "template_plan",
-    "template_apply",
-    "invite_user",
-    "invite_device",
-    "invite_list",
-    "invite_revoke",
-    "invite_resend"
-  ],
   "credential_sources": {
     "recommended": [
       {
@@ -598,19 +581,6 @@
       }
     },
     {
-      "path": "tslink api",
-      "short": "JSON-over-stdin/stdout interface for programmatic service management",
-      "flags": [
-        {
-          "name": "json",
-          "type": "bool",
-          "default": "false",
-          "scope": "inherited",
-          "usage": "Output as JSON"
-        }
-      ]
-    },
-    {
       "path": "tslink cleanup",
       "short": "Reconcile expired Funnel exposure and TSLink-owned resources",
       "flags": [
@@ -797,7 +767,22 @@
           "scope": "local",
           "usage": "Verify each stored credential against the Tailscale API with one device-list read and record last_verified in credential-meta.json"
         }
-      ]
+      ],
+      "json_result_fields": {
+        "tailscale_ssh.acl_rule_required": {
+          "type": "boolean",
+          "description": "Constant true: enabling Tailscale SSH on the node is not sufficient by itself; the tailnet ACL also needs an ssh rule admitting the caller, which no local check can observe."
+        },
+        "tailscale_ssh.state": {
+          "type": "string",
+          "description": "Tailscale SSH enablement for this node, read from the local Tailscale client. Informational: it never changes status, health_status, or health_exit_code.",
+          "values": [
+            "enabled",
+            "disabled",
+            "unknown"
+          ]
+        }
+      }
     },
     {
       "path": "tslink install",
@@ -1135,7 +1120,8 @@
           "scope": "local",
           "usage": "Comma-separated slim fields: name,type,url,url_pending,state,funnel_requested,funnel_active,funnel_state,funnel_expires_at,funnel_remaining,error",
           "conflicts": [
-            "--verbose"
+            "--verbose",
+            "--tailnet"
           ]
         },
         {
@@ -1149,13 +1135,32 @@
           "name": "name",
           "type": "string",
           "scope": "local",
-          "usage": "Return only the exact service name"
+          "usage": "Return only the exact service name",
+          "conflicts": [
+            "--tailnet"
+          ]
+        },
+        {
+          "name": "tailnet",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Read-only: list every TSLink-tagged device in the tailnet, including other machines' services and orphans, instead of this machine's registered services",
+          "conflicts": [
+            "--name",
+            "--type",
+            "--fields",
+            "--verbose"
+          ]
         },
         {
           "name": "type",
           "type": "string",
           "scope": "local",
-          "usage": "Filter by service type: proxy, file, or tcp"
+          "usage": "Filter by service type: proxy, file, or tcp",
+          "conflicts": [
+            "--tailnet"
+          ]
         },
         {
           "name": "verbose",
@@ -1164,11 +1169,53 @@
           "scope": "local",
           "usage": "Return the complete owner-only diagnostic service view",
           "conflicts": [
-            "--fields"
+            "--fields",
+            "--tailnet"
           ]
         }
       ],
       "json_result_fields": {
+        "cleanup_authority": {
+          "type": "string",
+          "description": "--tailnet only: constant statement that device deletion is authorized solely by an exact NodeID recorded in this machine's local node-ownership.json, so unregistered rows cannot be cleaned up from here."
+        },
+        "devices": {
+          "type": "array",
+          "description": "--tailnet only: every TSLink-tagged device in the shared tailnet, sorted by hostname. Read-only; node identity values are never emitted."
+        },
+        "devices[].created_at": {
+          "type": "string",
+          "description": "--tailnet only: RFC3339 node creation time reported by the Tailscale API; omitted when the API reports none."
+        },
+        "devices[].last_seen_at": {
+          "type": "string",
+          "description": "--tailnet only: RFC3339 last-seen time reported by the Tailscale API; omitted while connected_to_control is true, because the API then reports no last-seen value."
+        },
+        "devices[].local_service": {
+          "type": "string",
+          "description": "--tailnet only: the locally registered service this hostname belongs to, for both an exact match and a \u003cservice\u003e-N tsnet collision variant; omitted when this machine's registry knows nothing about it."
+        },
+        "devices[].locally_registered": {
+          "type": "boolean",
+          "description": "--tailnet only: true when this machine's registry.json holds a service whose name equals the device hostname exactly."
+        },
+        "devices[].origin": {
+          "type": "string",
+          "description": "--tailnet only: which side of the machine boundary the hostname came from.",
+          "values": [
+            "local_registry",
+            "local_name_variant",
+            "unregistered"
+          ]
+        },
+        "devices[].tags": {
+          "type": "array",
+          "description": "--tailnet only: the device's tailnet ACL tags, at least one of which matched the TSLink tag filter."
+        },
+        "registered_count": {
+          "type": "integer",
+          "description": "--tailnet only: devices whose hostname exactly matches a service in this machine's registry."
+        },
         "services[].error": {
           "type": "object",
           "description": "Stable per-service runtime failure with code, message, and actionable next steps; omitted without a recorded failure."
@@ -1209,6 +1256,10 @@
             "pending",
             "failed"
           ]
+        },
+        "unregistered_count": {
+          "type": "integer",
+          "description": "--tailnet only: devices this machine's registry does not name exactly; they are another machine's services or orphans."
         }
       }
     },

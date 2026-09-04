@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-
-	"github.com/monody0007/tslink/internal/output"
 )
 
 // --- stop command: pidPathFn error ---
@@ -144,101 +142,5 @@ func TestAddCmd_RegistryPathError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "injected regpath error") {
 		t.Errorf("unexpected error: %v", err)
-	}
-}
-
-// --- api command: ensureDirFn error ---
-
-func TestAPICmd_EnsureDirError(t *testing.T) {
-	old := ensureDirFn
-	ensureDirFn = func() error { return fmt.Errorf("injected ensuredir error") }
-	defer func() { ensureDirFn = old }()
-
-	apiCmd, _, err := rootCmd.Find([]string{"api"})
-	if err != nil {
-		t.Fatalf("find api command: %v", err)
-	}
-
-	var buf bytes.Buffer
-	apiCmd.SetOut(&buf)
-
-	err = apiCmd.RunE(apiCmd, nil)
-	if err == nil {
-		t.Fatal("expected error from ensureDirFn")
-	}
-	if !output.IsSilent(err) || output.ExitCode(err) != output.ExitError {
-		t.Errorf("unexpected error: %v", err)
-	}
-	result := parseResult(t, buf.String())
-	if result.OK || result.Error == nil || !strings.Contains(result.Error.Message, "injected ensuredir error") {
-		t.Fatalf("api failure envelope = %+v", result)
-	}
-}
-
-// --- api command: registryPathFn error ---
-
-func TestAPICmd_RegistryPathError(t *testing.T) {
-	oldEnsure := ensureDirFn
-	ensureDirFn = func() error { return nil }
-	defer func() { ensureDirFn = oldEnsure }()
-
-	oldReg := registryPathFn
-	registryPathFn = func() (string, error) { return "", fmt.Errorf("injected regpath error") }
-	defer func() { registryPathFn = oldReg }()
-
-	apiCmd, _, err := rootCmd.Find([]string{"api"})
-	if err != nil {
-		t.Fatalf("find api command: %v", err)
-	}
-
-	var buf bytes.Buffer
-	apiCmd.SetOut(&buf)
-
-	err = apiCmd.RunE(apiCmd, nil)
-	if err == nil {
-		t.Fatal("expected error from registryPathFn")
-	}
-	if !output.IsSilent(err) || output.ExitCode(err) != output.ExitError {
-		t.Errorf("unexpected error: %v", err)
-	}
-	result := parseResult(t, buf.String())
-	if result.OK || result.Error == nil || !strings.Contains(result.Error.Message, "injected regpath error") {
-		t.Fatalf("api failure envelope = %+v", result)
-	}
-}
-
-// --- api command: pidPathFn error ---
-
-func TestAPICmd_PIDPathError(t *testing.T) {
-	oldEnsure := ensureDirFn
-	ensureDirFn = func() error { return nil }
-	defer func() { ensureDirFn = oldEnsure }()
-
-	oldReg := registryPathFn
-	registryPathFn = func() (string, error) { return "/tmp/test-reg.json", nil }
-	defer func() { registryPathFn = oldReg }()
-
-	oldPid := pidPathFn
-	pidPathFn = func() (string, error) { return "", fmt.Errorf("injected pidpath error") }
-	defer func() { pidPathFn = oldPid }()
-
-	apiCmd, _, err := rootCmd.Find([]string{"api"})
-	if err != nil {
-		t.Fatalf("find api command: %v", err)
-	}
-
-	var buf bytes.Buffer
-	apiCmd.SetOut(&buf)
-
-	err = apiCmd.RunE(apiCmd, nil)
-	if err == nil {
-		t.Fatal("expected error from pidPathFn")
-	}
-	if !output.IsSilent(err) || output.ExitCode(err) != output.ExitError {
-		t.Errorf("unexpected error: %v", err)
-	}
-	result := parseResult(t, buf.String())
-	if result.OK || result.Error == nil || !strings.Contains(result.Error.Message, "injected pidpath error") {
-		t.Fatalf("api failure envelope = %+v", result)
 	}
 }

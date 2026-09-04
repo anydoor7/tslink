@@ -25,7 +25,7 @@ import (
 // Round C-1 process-level e2e scaffolding.
 //
 // These helpers extend the four existing compiled-binary contract suites
-// (api_binary_contract_test.go, machine_contract_binary_test.go,
+// (compiled_binary_contract_test.go, machine_contract_binary_test.go,
 // doctor_binary_contract_test.go, compiled_daemon_lifetime_unix_test.go)
 // rather than starting a parallel harness. Concretely they reuse:
 //

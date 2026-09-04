@@ -136,9 +136,9 @@ var e2eExecutableSafeCommands = map[string]struct{}{
 	// (c) Cobra accepts the bare invocation, so the body RUNS. Each entry
 	// records what its body does and the exit code observed under e2eEnv; a
 	// change in one of those codes is the cheapest available signal that a body
-	// started doing something else. Three of them (api, cleanup, login) create
-	// the nodes/, logs/ and certs/ subdirectories — inside TSLINK_CONFIG_DIR,
-	// which is what criterion 2 permits.
+	// started doing something else. Two of them (cleanup, login) create the
+	// nodes/, logs/ and certs/ subdirectories — inside TSLINK_CONFIG_DIR, which
+	// is what criterion 2 permits.
 	"tslink manifest":       {}, // exit 0. Builds the manifest in process; opens no file.
 	"tslink template list":  {}, // exit 0. Enumerates built-in templates in process.
 	"tslink config list":    {}, // exit 0. Reads the isolated config; keyring suppressed.
@@ -149,7 +149,6 @@ var e2eExecutableSafeCommands = map[string]struct{}{
 	"tslink registry check": {}, // exit 0. Reads, or on failure lstats, only the path it was given; creates nothing.
 	"tslink doctor":         {}, // exit 64 (warning). Local checks only; probes nothing external by default.
 	"tslink stop":           {}, // exit 0. Signals only a daemon recorded in the isolated config dir, of which there is none.
-	"tslink api":            {}, // exit 0. Reads stdin; this suite supplies an empty one, so zero records and zero actions.
 	"tslink logout":         {}, // exit 1. TSLINK_DISABLE_KEYRING=1, so it neither reads nor writes the keyring; it refuses rather than guess.
 	// exit 2 both bare and with --json, by two different routes, neither of
 	// which reaches loginWithAPIKey/loginWithClientSecret — the only paths that
@@ -510,17 +509,12 @@ func assertEnvelopeContract(
 			label, len(run.Stderr), run.Stderr)
 	}
 
-	trimmed := strings.TrimSpace(run.Stdout)
-	if trimmed == "" {
-		// `tslink api` with empty stdin legitimately produces no records. Any
-		// other empty --json stdout is a contract violation.
-		if commandPath != "tslink api" {
-			t.Fatalf("%s --json produced no envelope on stdout", label)
-		}
-		if run.ExitCode != output.ExitSuccess {
-			t.Fatalf("tslink api produced no records but exited %d, want %d", run.ExitCode, output.ExitSuccess)
-		}
-		return
+	// Every --json invocation must publish at least one envelope. The one
+	// command that could legitimately print nothing was `tslink api` with empty
+	// stdin; with that command removed, empty stdout is unconditionally a
+	// contract violation.
+	if strings.TrimSpace(run.Stdout) == "" {
+		t.Fatalf("%s --json produced no envelope on stdout", label)
 	}
 
 	results := parseCompiledJSONLines(t, run.Stdout)

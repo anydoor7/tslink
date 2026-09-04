@@ -4,12 +4,12 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 
 	"github.com/monody0007/tslink/internal/output"
 	"github.com/monody0007/tslink/internal/registry"
+	"github.com/monody0007/tslink/internal/testenv"
 )
 
 func resultDataAsMap(t *testing.T, result output.Result) map[string]any {
@@ -48,10 +48,10 @@ func TestCompiledMachineContractRootAndCommandFailures(t *testing.T) {
 			wantErrCode: "usage_error",
 		},
 		{
-			name:        "api rejects extra args with identity",
-			args:        []string{"--json", "api", "extra"},
+			name:        "manifest rejects extra args with identity",
+			args:        []string{"--json", "manifest", "extra"},
 			wantExit:    output.ExitUsage,
-			wantCommand: "api",
+			wantCommand: "manifest",
 			wantErrCode: "usage_error",
 		},
 		{
@@ -122,18 +122,27 @@ func TestCompiledMachineContractVersionJSON(t *testing.T) {
 	}
 }
 
-func TestCompiledRemoveCLIApiSharedResultShape(t *testing.T) {
+// TestCompiledRemoveMutatesRegistryThenStaysIdempotent covers the pair the
+// single-shot remove tests cannot: `remove` on a service that exists must both
+// report removed=true and actually shrink registry.json, and the immediately
+// following remove of the same name must report removed=false without
+// resurrecting or corrupting the file. This was a CLI-versus-api shared-shape
+// test seeded through `tslink api`; the api half is gone with the command and
+// the registry is now seeded directly.
+func TestCompiledRemoveMutatesRegistryThenStaysIdempotent(t *testing.T) {
 	home := t.TempDir()
-	add := `{"action":"add","name":"web","type":"proxy","target":"http://localhost:3000"}` + "\n"
-	stdout, stderr, code := runCompiledTSLink(t, home, add, "api")
-	if code != output.ExitSuccess || stderr != "" {
-		t.Fatalf("api add exit=%d stderr=%q stdout=%s", code, stderr, stdout)
+	regPath := filepath.Join(testenv.ConfigDir(home), "registry.json")
+	if err := os.MkdirAll(filepath.Dir(regPath), 0o700); err != nil {
+		t.Fatalf("create isolated config dir: %v", err)
+	}
+	if _, err := registry.Add(regPath, registry.Service{Name: "web", Type: registry.TypeProxy, Target: "http://localhost:3000"}); err != nil {
+		t.Fatalf("seed registry: %v", err)
 	}
 	if got := registryServiceCount(t, home); got != 1 {
-		t.Fatalf("registry count after add = %d, want 1", got)
+		t.Fatalf("registry count after seeding = %d, want 1", got)
 	}
 
-	stdout, stderr, code = runCompiledTSLink(t, home, "", "--json", "remove", "web")
+	stdout, stderr, code := runCompiledTSLink(t, home, "", "--json", "remove", "web")
 	if code != output.ExitSuccess || stderr != "" {
 		t.Fatalf("cli remove exit=%d stderr=%q stdout=%s", code, stderr, stdout)
 	}
@@ -154,23 +163,15 @@ func TestCompiledRemoveCLIApiSharedResultShape(t *testing.T) {
 		t.Fatalf("cli idempotent remove exit=%d stderr=%q stdout=%s", code, stderr, stdout)
 	}
 	results = parseCompiledJSONLines(t, stdout)
+	if len(results) != 1 || !results[0].OK {
+		t.Fatalf("cli idempotent remove result = %+v", results)
+	}
 	data = resultDataAsMap(t, results[0])
 	if data["name"] != "web" || data["removed"] != false {
 		t.Fatalf("cli idempotent remove data = %+v, want removed=false", data)
 	}
-
-	removeMissing := `{"action":"remove","name":"web"}` + "\n"
-	stdout, stderr, code = runCompiledTSLink(t, home, removeMissing, "api")
-	if code != output.ExitSuccess || stderr != "" {
-		t.Fatalf("api idempotent remove exit=%d stderr=%q stdout=%s", code, stderr, stdout)
-	}
-	results = parseCompiledJSONLines(t, stdout)
-	if len(results) != 1 || !results[0].OK {
-		t.Fatalf("api idempotent remove result = %+v", results)
-	}
-	data = resultDataAsMap(t, results[0])
-	if data["name"] != "web" || data["removed"] != false {
-		t.Fatalf("api idempotent remove data = %+v, want removed=false", data)
+	if got := registryServiceCount(t, home); got != 0 {
+		t.Fatalf("registry count after idempotent remove = %d, want 0", got)
 	}
 }
 
@@ -245,23 +246,28 @@ func TestCompiledRemoveHelpDocumentsStrictAndIdempotentDefault(t *testing.T) {
 	}
 }
 
-func TestCompiledAPIManifestSelfDescriptionWithoutDaemon(t *testing.T) {
+// TestCompiledManifestSelfDescriptionWithoutDaemon holds the line that made
+// the manifest usable for discovery: a caller can read the full command surface
+// out of the shipped binary without a daemon running, and the call must not
+// create one. It ran as {"action":"manifest"} through `tslink api`; `tslink
+// manifest --json` is the same self-description on the shipped CLI.
+func TestCompiledManifestSelfDescriptionWithoutDaemon(t *testing.T) {
 	configDir := t.TempDir()
 	pidPath := filepath.Join(configDir, "tslink.pid")
 	if _, err := os.Stat(pidPath); !os.IsNotExist(err) {
-		t.Fatalf("daemon pid fixture unexpectedly exists before manifest action: %v", err)
+		t.Fatalf("daemon pid fixture unexpectedly exists before manifest command: %v", err)
 	}
-	stdout, stderr, code := runCompiledTSLinkWithConfigDir(t, configDir, `{"action":"manifest"}`+"\n", "api")
+	stdout, stderr, code := runCompiledTSLinkWithConfigDir(t, configDir, "", "manifest", "--json")
 	if code != output.ExitSuccess || stderr != "" {
-		t.Fatalf("api manifest exit=%d stderr=%q stdout=%s", code, stderr, stdout)
+		t.Fatalf("manifest exit=%d stderr=%q stdout=%s", code, stderr, stdout)
 	}
 	results := parseCompiledJSONLines(t, stdout)
-	if len(results) != 1 || !results[0].OK || results[0].Command != apiActionManifest {
-		t.Fatalf("api manifest result = %+v, want one successful manifest record", results)
+	if len(results) != 1 || !results[0].OK || results[0].Command != "manifest" {
+		t.Fatalf("manifest result = %+v, want one successful manifest record", results)
 	}
 	data := resultDataAsMap(t, results[0])
 	if data["capabilities"] == nil || data["commands"] == nil {
-		t.Fatalf("api manifest data lacks generated commands or capabilities: %+v", data)
+		t.Fatalf("manifest data lacks generated commands or capabilities: %+v", data)
 	}
 	dataBytes, err := json.Marshal(results[0].Data)
 	if err != nil {
@@ -271,13 +277,11 @@ func TestCompiledAPIManifestSelfDescriptionWithoutDaemon(t *testing.T) {
 	if err := json.Unmarshal(dataBytes, &manifest); err != nil {
 		t.Fatalf("decode manifest data: %v", err)
 	}
-	if manifest.SchemaVersion != 2 || len(manifest.Commands) == 0 {
-		t.Fatalf("api manifest content is incomplete: schema=%d commands=%d", manifest.SchemaVersion, len(manifest.Commands))
-	}
-	if !slices.Equal(manifest.APIActions, apiActionNames()) || len(manifest.APIActions) != 15 || !containsString(manifest.APIActions, apiActionManifest) {
-		t.Fatalf("api manifest actions = %v, want generated actions %v", manifest.APIActions, apiActionNames())
+	if manifest.SchemaVersion != 2 || len(manifest.Commands) != len(Manifest().Commands) {
+		t.Fatalf("manifest content is incomplete: schema=%d commands=%d want commands=%d",
+			manifest.SchemaVersion, len(manifest.Commands), len(Manifest().Commands))
 	}
 	if _, err := os.Stat(pidPath); !os.IsNotExist(err) {
-		t.Fatalf("manifest action created or required a daemon pid: %v", err)
+		t.Fatalf("manifest command created or required a daemon pid: %v", err)
 	}
 }

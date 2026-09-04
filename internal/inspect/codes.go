@@ -55,6 +55,14 @@ const (
 	WarningCodeCredentialAPITokenRejected  = "credential_api_token_rejected"
 	WarningCodeCredentialRemoteForbidden   = "credential_remote_forbidden"
 	WarningCodeCredentialRemoteUnreachable = "credential_remote_unreachable"
+
+	// Tailscale SSH is a tailscaled feature, not a TSLink feature. These three
+	// codes are always informational: they report what the local Tailscale
+	// client says about this node so an operator discovers the zero-code remote
+	// path, and they never change doctor's health status or exit code.
+	WarningCodeTailscaleSSHEnabled  = "tailscale_ssh_enabled"
+	WarningCodeTailscaleSSHDisabled = "tailscale_ssh_disabled"
+	WarningCodeTailscaleSSHUnknown  = "tailscale_ssh_unknown"
 )
 
 type WarningCodeMeta struct {
@@ -313,5 +321,20 @@ var WarningCodeRegistry = map[string]WarningCodeMeta{
 		Severity:    "warning",
 		Source:      "credentials",
 		Description: "The remote probe could not reach the Tailscale API; the credential state remains unproven.",
+	},
+	WarningCodeTailscaleSSHEnabled: {
+		Severity:    "info",
+		Source:      "tailscale_ssh",
+		Description: "Tailscale SSH is enabled on this node, so `tailscale ssh <this-host> tslink <command>` can drive this install remotely once a tailnet ACL ssh rule permits the caller.",
+	},
+	WarningCodeTailscaleSSHDisabled: {
+		Severity:    "info",
+		Source:      "tailscale_ssh",
+		Description: "Tailscale SSH is disabled on this node. Run `tailscale set --ssh` here and add a tailnet ACL ssh rule to reach this install with `tailscale ssh <this-host> tslink <command>`; TSLink does not manage this tailscaled feature.",
+	},
+	WarningCodeTailscaleSSHUnknown: {
+		Severity:    "info",
+		Source:      "tailscale_ssh",
+		Description: "The local Tailscale client state could not be read, so Tailscale SSH enablement on this node is unknown. Check `tailscale status` on this machine.",
 	},
 }

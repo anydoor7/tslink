@@ -92,7 +92,7 @@ jobs:
           commands=(
             "--help" "--version" "--version --json" "login --help" "logout --help" "add --help"
             "remove --help" "list --help" "serve --help" "stop --help"
-            "status --help" "logs --help" "api --help" "config --help"
+            "status --help" "logs --help" "config --help"
             "config set --help" "config get --help" "config list --help"
             "tags --help" "tags list --help" "tags pull --help" "tags add --help"
             "tags set --help" "tags set-default --help" "tags delete-remote --help"
@@ -160,7 +160,7 @@ jobs:
           go-version-file: go.mod
           check-latest: true
       # These tests build the real binary and assert stdout/exit-code contracts
-      # (aggregate exit, api/doctor/machine JSON envelopes). They compile
+      # (aggregate exit, doctor/machine JSON envelopes). They compile
       # and run on every native OS so shell/exit differences are caught.
       # Anchored to ^TestCompiled so EVERY compiled contract runs; a narrower
       # substring selector previously skipped 5 of 7 TestCompiled* tests.

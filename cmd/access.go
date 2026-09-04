@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -15,6 +16,15 @@ import (
 )
 
 const accessIdentityFailureModeDenyWhenUnresolved = "deny_when_identity_unresolved"
+
+// accessExplainJSONData carries an AccessExplainResult into the result
+// envelope's data slot. Custom marshaling keeps the wire data flat, so the
+// envelope publishes the AccessExplainResult fields directly.
+type accessExplainJSONData struct {
+	AccessExplain AccessExplainResult
+}
+
+func (d accessExplainJSONData) MarshalJSON() ([]byte, error) { return json.Marshal(d.AccessExplain) }
 
 type AccessExplainResult struct {
 	SchemaVersion          string                             `json:"schema_version"`
@@ -80,28 +90,38 @@ type accessTarget struct {
 	LoopbackOrLocal bool
 }
 
-func runAccessExplain(serviceName string, out io.Writer, isJSON bool) error {
-	regPath, err := registryPathFn()
-	if err != nil {
-		return err
-	}
+// accessExplainResultForPath reads one registry and explains one service.
+// `tslink access explain` and the MCP access_explain tool share it, so the
+// two surfaces cannot disagree about what TSLink claims to know.
+func accessExplainResultForPath(regPath, serviceName string) (AccessExplainResult, error) {
 	reg, err := registry.Load(regPath)
 	if err != nil {
-		return err
+		return AccessExplainResult{}, err
 	}
 	for _, svc := range reg.Services {
 		if svc.Name != serviceName {
 			continue
 		}
-		result := buildAccessExplainResult(svc)
-		if isJSON {
-			output.WriteJSON(out, output.NewSuccess("access explain", apiAccessExplainData{AccessExplain: result}))
-			return nil
-		}
-		formatAccessExplain(result, out)
+		return buildAccessExplainResult(svc), nil
+	}
+	return AccessExplainResult{}, output.ErrNotFound(fmt.Sprintf("service not found: %s", serviceName))
+}
+
+func runAccessExplain(serviceName string, out io.Writer, isJSON bool) error {
+	regPath, err := registryPathFn()
+	if err != nil {
+		return err
+	}
+	result, err := accessExplainResultForPath(regPath, serviceName)
+	if err != nil {
+		return err
+	}
+	if isJSON {
+		output.WriteJSON(out, output.NewSuccess("access explain", accessExplainJSONData{AccessExplain: result}))
 		return nil
 	}
-	return output.ErrNotFound(fmt.Sprintf("service not found: %s", serviceName))
+	formatAccessExplain(result, out)
+	return nil
 }
 
 func buildAccessExplainResult(svc registry.Service) AccessExplainResult {

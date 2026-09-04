@@ -92,6 +92,70 @@ type AddParams struct {
 	ControlURL      string
 }
 
+// parseAllowedUsers normalizes a comma-separated allow list into the stored
+// AllowedUsers form. Email principals are lowercased; tag: principals keep
+// their case and are validated as ACL tags. It is the single implementation
+// behind `tslink add --allow` and the MCP add/share allow parameters, so the
+// two surfaces cannot drift in what they persist.
+func parseAllowedUsers(allow string) ([]string, error) {
+	if allow == "" {
+		return nil, nil
+	}
+	var allowedUsers []string
+	for _, a := range strings.Split(allow, ",") {
+		a = strings.TrimSpace(a)
+		if a != "" {
+			if !strings.HasPrefix(a, "tag:") {
+				a = strings.ToLower(a)
+			}
+			allowedUsers = append(allowedUsers, a)
+		}
+		if strings.HasPrefix(a, "tag:") {
+			if err := registry.ValidateTag(a); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return allowedUsers, nil
+}
+
+// funnelOptionRequiresFunnel rejects a Funnel-only option that was supplied
+// without Funnel itself. Both option names are passed in so the CLI keeps its
+// flag spelling while the MCP tools keep their JSON parameter spelling.
+func funnelOptionRequiresFunnel(option, funnelOption string, set, funnel bool) error {
+	if set && !funnel {
+		return output.ErrUsage(fmt.Sprintf("%s can only be used with %s", option, funnelOption))
+	}
+	return nil
+}
+
+// resolveFunnelExpiry turns a Funnel TTL selection into a stored deadline.
+// A nil deadline with a nil error means "never". Callers must have already
+// rejected a TTL supplied without Funnel; see funnelOptionRequiresFunnel.
+func resolveFunnelExpiry(funnel bool, ttl string, ttlSet bool, now time.Time) (*time.Time, error) {
+	if !funnel {
+		return nil, nil
+	}
+	if ttl == "" {
+		if ttlSet {
+			return nil, output.ErrUsage("funnel TTL must be one of: 1h, 8h, 24h, 72h, 7d, never")
+		}
+		ttl = "24h"
+	}
+	duration, never, err := registry.ParseFunnelTTL(ttl)
+	if err != nil {
+		return nil, output.ErrUsage(err.Error())
+	}
+	if never {
+		return nil, nil
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	expiresAt := now.UTC().Add(duration)
+	return &expiresAt, nil
+}
+
 // buildService validates parameters and constructs a registry.Service.
 // For Dir type, it returns the service with Type set but Path empty —
 // the caller must resolve and validate the filesystem path.
@@ -100,22 +164,9 @@ func buildService(p AddParams) (registry.Service, error) {
 		return registry.Service{}, err
 	}
 
-	var allowedUsers []string
-	if p.Allow != "" {
-		for _, a := range strings.Split(p.Allow, ",") {
-			a = strings.TrimSpace(a)
-			if a != "" {
-				if !strings.HasPrefix(a, "tag:") {
-					a = strings.ToLower(a)
-				}
-				allowedUsers = append(allowedUsers, a)
-			}
-			if strings.HasPrefix(a, "tag:") {
-				if err := registry.ValidateTag(a); err != nil {
-					return registry.Service{}, err
-				}
-			}
-		}
+	allowedUsers, err := parseAllowedUsers(p.Allow)
+	if err != nil {
+		return registry.Service{}, err
 	}
 
 	modes := 0
@@ -136,14 +187,14 @@ func buildService(p AddParams) (registry.Service, error) {
 		return registry.Service{}, registry.ServiceTypeAmbiguousError()
 	}
 
-	if p.Public && !p.Funnel {
-		return registry.Service{}, output.ErrUsage("--public can only be used with --funnel")
+	if err := funnelOptionRequiresFunnel("--public", "--funnel", p.Public, p.Funnel); err != nil {
+		return registry.Service{}, err
 	}
-	if p.NoAutoProvision && !p.Funnel {
-		return registry.Service{}, output.ErrUsage("--no-auto-provision can only be used with --funnel")
+	if err := funnelOptionRequiresFunnel("--no-auto-provision", "--funnel", p.NoAutoProvision, p.Funnel); err != nil {
+		return registry.Service{}, err
 	}
-	if p.FunnelTTLSet && !p.Funnel {
-		return registry.Service{}, output.ErrUsage("--funnel-ttl can only be used with --funnel")
+	if err := funnelOptionRequiresFunnel("--funnel-ttl", "--funnel", p.FunnelTTLSet, p.Funnel); err != nil {
+		return registry.Service{}, err
 	}
 	if err := registry.ValidateFunnelGuardrails(svcType, p.Funnel, allowedUsers, p.ControlURL, p.Public); err != nil {
 		return registry.Service{}, err
@@ -160,7 +211,6 @@ func buildService(p AddParams) (registry.Service, error) {
 
 	var tags []string
 	if p.Tags != "" {
-		var err error
 		tags, err = parseTags(p.Tags)
 		if err != nil {
 			return registry.Service{}, err
@@ -190,27 +240,9 @@ func buildService(p AddParams) (registry.Service, error) {
 		}, nil
 	}
 
-	var funnelExpiresAt *time.Time
-	if p.Funnel {
-		ttl := p.FunnelTTL
-		if ttl == "" {
-			if p.FunnelTTLSet {
-				return registry.Service{}, output.ErrUsage("funnel TTL must be one of: 1h, 8h, 24h, 72h, 7d, never")
-			}
-			ttl = "24h"
-		}
-		duration, never, err := registry.ParseFunnelTTL(ttl)
-		if err != nil {
-			return registry.Service{}, output.ErrUsage(err.Error())
-		}
-		if !never {
-			now := p.Now
-			if now.IsZero() {
-				now = time.Now()
-			}
-			expiresAt := now.UTC().Add(duration)
-			funnelExpiresAt = &expiresAt
-		}
+	funnelExpiresAt, err := resolveFunnelExpiry(p.Funnel, p.FunnelTTL, p.FunnelTTLSet, p.Now)
+	if err != nil {
+		return registry.Service{}, err
 	}
 
 	if p.Proxy != "" {
@@ -275,6 +307,55 @@ func buildAddResult(ctx context.Context, svc registry.Service, created bool, pid
 	return result, nil
 }
 
+// resolveAddService completes a service already built from p by buildService
+// and runs the canonical registry admission gate. Dir services get their root
+// resolved here because that step needs the filesystem, which buildService
+// deliberately does not touch. Both `tslink add` and the MCP add tool call it,
+// so neither can reach registry.AddWithOutcome on a service the other would
+// have rejected.
+func resolveAddService(svc registry.Service, p AddParams) (registry.Service, error) {
+	if svc.Type == registry.TypeFile {
+		if !filepath.IsAbs(p.Dir) {
+			return registry.Service{}, registry.PathMustBeAbsoluteError(p.Dir)
+		}
+		if err := registry.ValidateFileRoot(p.Dir); err != nil {
+			return registry.Service{}, err
+		}
+		svc.Path = filepath.Clean(p.Dir)
+	}
+	if err := registry.ValidateService(svc); err != nil {
+		if _, coded := registry.ErrorCode(err); coded {
+			return registry.Service{}, err
+		}
+		return registry.Service{}, output.ErrUsage(err.Error())
+	}
+	return svc, nil
+}
+
+// executeAdd writes an admitted service to the registry and builds the shared
+// AddResult. It is the single write path behind `tslink add` and the MCP add
+// tool. The persisted service is returned alongside the result because the
+// human CLI rendering reports fields (TCP target and port) the result does not
+// carry.
+func executeAdd(ctx context.Context, svc registry.Service, regPath, pidPath, snapshotPath string, preserveFunnelExpiry bool, wait time.Duration) (AddResult, registry.Service, error) {
+	outcome, err := registry.AddWithOutcome(regPath, svc, registry.AddOptions{
+		PreserveFunnelExpiry: preserveFunnelExpiry,
+	})
+	if err != nil {
+		return AddResult{}, registry.Service{}, err
+	}
+	persisted, err := loadPersistedService(regPath, svc.Name)
+	if err != nil {
+		return AddResult{}, registry.Service{}, err
+	}
+	result, err := buildAddResult(ctx, persisted, outcome.Created, pidPath, regPath, snapshotPath, wait)
+	if err != nil {
+		return AddResult{}, registry.Service{}, err
+	}
+	result.FunnelRearmed = outcome.RearmedExpiredFunnel
+	return result, persisted, nil
+}
+
 func loadPersistedService(regPath, name string) (registry.Service, error) {
 	reg, err := registry.Load(regPath)
 	if err != nil {
@@ -319,7 +400,7 @@ Examples:
 			wait, _ := cmd.Flags().GetDuration("wait")
 			dryRun, _ := cmd.Flags().GetBool("dry-run")
 
-			svc, err := buildService(AddParams{
+			params := AddParams{
 				Name:            args[0],
 				Proxy:           proxyTarget,
 				Dir:             dirPath,
@@ -335,7 +416,8 @@ Examples:
 				Domain:          domainName,
 				AcmeEmail:       acmeEmail,
 				ControlURL:      controlURL,
-			})
+			}
+			svc, err := buildService(params)
 			if err != nil {
 				return err
 			}
@@ -347,24 +429,12 @@ Examples:
 				}
 			}
 
-			// For dir type, resolve and validate filesystem path
-			if svc.Type == registry.TypeFile {
-				if !filepath.IsAbs(dirPath) {
-					return registry.PathMustBeAbsoluteError(dirPath)
-				}
-				if err := registry.ValidateFileRoot(dirPath); err != nil {
-					return err
-				}
-				svc.Path = filepath.Clean(dirPath)
-			}
-
-			// Dry-run and actual registration share the canonical admission gate.
+			// Dry-run and actual registration share the canonical admission
+			// gate in resolveAddService, which also resolves the dir root.
 			// Only the registry lock/write is skipped below for dry-run.
-			if err := registry.ValidateService(svc); err != nil {
-				if _, coded := registry.ErrorCode(err); coded {
-					return err
-				}
-				return output.ErrUsage(err.Error())
+			svc, err = resolveAddService(svc, params)
+			if err != nil {
+				return err
 			}
 
 			if dryRun {
@@ -410,18 +480,6 @@ Examples:
 				return err
 			}
 
-			addOutcome, err := registry.AddWithOutcome(regPath, svc, registry.AddOptions{
-				PreserveFunnelExpiry: !cmd.Flags().Changed("funnel-ttl"),
-			})
-			if err != nil {
-				return err
-			}
-
-			svc, err = loadPersistedService(regPath, svc.Name)
-			if err != nil {
-				return err
-			}
-
 			pidPath, err := config.PIDPath()
 			if err != nil {
 				return err
@@ -430,11 +488,11 @@ Examples:
 			if err != nil {
 				return err
 			}
-			result, err := buildAddResult(cmd.Context(), svc, addOutcome.Created, pidPath, regPath, snapshotPath, wait)
+			result, persisted, err := executeAdd(cmd.Context(), svc, regPath, pidPath, snapshotPath, !cmd.Flags().Changed("funnel-ttl"), wait)
 			if err != nil {
 				return err
 			}
-			result.FunnelRearmed = addOutcome.RearmedExpiredFunnel
+			svc = persisted
 
 			if jsonOutput(cmd) {
 				output.Success("add", result)

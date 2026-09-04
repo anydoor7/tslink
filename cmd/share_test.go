@@ -55,8 +55,8 @@ func TestMain(m *testing.M) {
 
 	// Own the teardown of the package's single compiled-binary build root.
 	// compiledTSLinkBinary creates it lazily and publishes the path here; see
-	// the tslinkBinaryRoot comment in api_binary_contract_test.go for why the
-	// root cannot be a t.TempDir() and why creation stays lazy. Before this,
+	// the tslinkBinaryRoot comment in compiled_binary_contract_test.go for why
+	// the root cannot be a t.TempDir() and why creation stays lazy. Before this,
 	// the root was never removed at all and leaked ~47 MiB per test process.
 	if tslinkBinaryRoot != "" {
 		if err := os.RemoveAll(tslinkBinaryRoot); err != nil {
@@ -267,7 +267,7 @@ func TestExecuteShareRejectsConflictingExposurePosture(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			_, err = executeShare(context.Background(), sharePaths{Registry: regPath}, "3000", "", true, time.Second, io.Discard)
+			_, err = executeShare(context.Background(), sharePaths{Registry: regPath}, shareRequest{Target: "3000", Ephemeral: true}, time.Second, io.Discard)
 			if err == nil || output.ExitCode(err) != output.ExitConflict || !strings.Contains(err.Error(), tc.service.Name) || !strings.Contains(err.Error(), tc.wantFragment) {
 				t.Fatalf("conflict err = %v", err)
 			}
@@ -306,7 +306,7 @@ func TestExecuteShareStartsDaemonAndSurfacesNeedsLogin(t *testing.T) {
 		started = true
 		return shareDaemonStart{Status: authStatusNeedsLogin, AuthURL: "https://login.tailscale.com/a/unit"}, nil
 	}
-	result, err := executeShare(context.Background(), paths, "3000", "", true, time.Second, io.Discard)
+	result, err := executeShare(context.Background(), paths, shareRequest{Target: "3000", Ephemeral: true}, time.Second, io.Discard)
 	if err != nil || !started || result.Status != authStatusNeedsLogin || result.AuthURL == "" {
 		t.Fatalf("result = %+v started=%v err=%v", result, started, err)
 	}
@@ -339,7 +339,7 @@ func TestExecuteShareNeedsLoginRetriesReuseSingleService(t *testing.T) {
 	}
 
 	for attempt := 1; attempt <= 5; attempt++ {
-		result, err := executeShare(context.Background(), paths, "3000", "", true, time.Second, io.Discard)
+		result, err := executeShare(context.Background(), paths, shareRequest{Target: "3000", Ephemeral: true}, time.Second, io.Discard)
 		if err != nil || result.Status != authStatusNeedsLogin || result.serviceName != "port-3000" {
 			t.Fatalf("attempt %d result=%+v err=%v", attempt, result, err)
 		}
@@ -441,7 +441,7 @@ func TestShareDaemonStartIsGatedOnTheRunningPredicate(t *testing.T) {
 
 		const invocations = 5
 		for attempt := 1; attempt <= invocations; attempt++ {
-			if _, err := executeShare(context.Background(), paths, "3000", "", true, 0, io.Discard); codeOf(err) != registry.CodeURLNotReady {
+			if _, err := executeShare(context.Background(), paths, shareRequest{Target: "3000", Ephemeral: true}, 0, io.Discard); codeOf(err) != registry.CodeURLNotReady {
 				t.Fatalf("attempt %d err = %v, want url_not_ready", attempt, err)
 			}
 		}
@@ -461,7 +461,7 @@ func TestExecuteShareFailuresRollBackNewRegistration(t *testing.T) {
 		shareStartDaemonFn = func(context.Context, io.Writer) (shareDaemonStart, error) {
 			return shareDaemonStart{}, errors.New("daemon failed")
 		}
-		if _, err := executeShare(context.Background(), paths, "3000", "", true, time.Second, io.Discard); err == nil {
+		if _, err := executeShare(context.Background(), paths, shareRequest{Target: "3000", Ephemeral: true}, time.Second, io.Discard); err == nil {
 			t.Fatal("daemon failure error = nil")
 		}
 		reg, err := registry.Load(paths.Registry)
@@ -479,7 +479,7 @@ func TestExecuteShareFailuresRollBackNewRegistration(t *testing.T) {
 			return serviceURLResolution{}, registry.URLNotReadyError(name)
 		}
 		sharePollableStatusFn = func(_, _, _, _ string) (StatusResult, error) { return StatusResult{}, nil }
-		if _, err := executeShare(context.Background(), paths, "3000", "", true, 0, io.Discard); codeOf(err) != registry.CodeURLNotReady {
+		if _, err := executeShare(context.Background(), paths, shareRequest{Target: "3000", Ephemeral: true}, 0, io.Discard); codeOf(err) != registry.CodeURLNotReady {
 			t.Fatalf("URL timeout err = %v", err)
 		}
 		reg, err := registry.Load(paths.Registry)
@@ -501,7 +501,7 @@ func TestExecuteShareRunningReturnsExactFileURL(t *testing.T) {
 	shareResolveEndpointOnceFn = func(_, _, _, name string) (serviceURLResolution, error) {
 		return serviceURLResolution{Result: URLResult{Name: name, URL: "https://" + name + ".tail.ts.net", State: "exact"}}, nil
 	}
-	result, err := executeShare(context.Background(), paths, file, "preview", false, time.Second, io.Discard)
+	result, err := executeShare(context.Background(), paths, shareRequest{Target: file, Name: "preview"}, time.Second, io.Discard)
 	if err != nil || result.Name != "preview" || result.Status != shareStatusReady || result.URL != "https://preview.tail.ts.net/report%20final.html" {
 		t.Fatalf("result = %+v err=%v", result, err)
 	}
@@ -673,11 +673,11 @@ func TestResolveSharePathsAndCommandOutput(t *testing.T) {
 func TestShareErrorPaths(t *testing.T) {
 	restoreShareSeams(t)
 	paths := sharePaths{Registry: filepath.Join(t.TempDir(), "registry.json")}
-	if _, err := executeShare(context.Background(), paths, "not-a-target", "", true, time.Second, io.Discard); err == nil {
+	if _, err := executeShare(context.Background(), paths, shareRequest{Target: "not-a-target", Ephemeral: true}, time.Second, io.Discard); err == nil {
 		t.Fatal("invalid target error = nil")
 	}
 	shareAddIfMissingFn = func(string, registry.Service) (bool, error) { return false, errors.New("registry failed") }
-	if _, err := executeShare(context.Background(), paths, "3000", "", true, time.Second, io.Discard); err == nil || !strings.Contains(err.Error(), "registry failed") {
+	if _, err := executeShare(context.Background(), paths, shareRequest{Target: "3000", Ephemeral: true}, time.Second, io.Discard); err == nil || !strings.Contains(err.Error(), "registry failed") {
 		t.Fatalf("registry err = %v", err)
 	}
 	shareAddIfMissingFn = registry.AddIfMissing
@@ -685,7 +685,7 @@ func TestShareErrorPaths(t *testing.T) {
 	shareStartDaemonFn = func(context.Context, io.Writer) (shareDaemonStart, error) {
 		return shareDaemonStart{}, errors.New("daemon failed")
 	}
-	if _, err := executeShare(context.Background(), paths, "3001", "", true, time.Second, io.Discard); err == nil || !strings.Contains(err.Error(), "daemon failed") {
+	if _, err := executeShare(context.Background(), paths, shareRequest{Target: "3001", Ephemeral: true}, time.Second, io.Discard); err == nil || !strings.Contains(err.Error(), "daemon failed") {
 		t.Fatalf("daemon err = %v", err)
 	}
 

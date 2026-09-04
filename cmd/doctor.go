@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -23,6 +24,7 @@ import (
 	"github.com/monody0007/tslink/internal/registry"
 	tsruntime "github.com/monody0007/tslink/internal/runtime"
 	"github.com/spf13/cobra"
+	"tailscale.com/client/local"
 )
 
 const (
@@ -47,6 +49,11 @@ const (
 	doctorCredentialTierUnknown       = "unknown"
 
 	doctorProbeTimeout = 250 * time.Millisecond
+
+	// Tailscale SSH states reported by the informational tailscale_ssh check.
+	doctorTailscaleSSHEnabled  = "enabled"
+	doctorTailscaleSSHDisabled = "disabled"
+	doctorTailscaleSSHUnknown  = "unknown"
 
 	doctorRedactedEvidenceValue = "[redacted]"
 	doctorRedactedURL           = "[redacted-url]"
@@ -80,10 +87,38 @@ var (
 		return credentials.DescribeSlots(values, now, true)
 	}
 	doctorProbeCredentialFn = credentials.ProbeStoredCredential
+	// doctorTailscaleSSHFn reads Tailscale SSH enablement from the local
+	// Tailscale client. Tests replace it so no test process talks to a real
+	// tailscaled.
+	doctorTailscaleSSHFn = defaultTailscaleSSHEnabled
 )
 
 // doctorRemoteProbeTimeout bounds each --probe-remote device-list read.
 const doctorRemoteProbeTimeout = 10 * time.Second
+
+// doctorTailscaleSSHTimeout bounds the local-API preferences read. The check is
+// informational, so an unreachable or slow tailscaled must degrade to unknown
+// quickly instead of stretching a doctor run.
+const doctorTailscaleSSHTimeout = time.Second
+
+// defaultTailscaleSSHEnabled reads RunSSH from the local tailscaled over its
+// loopback local API. It deliberately does not shell out to the `tailscale`
+// binary: the client library is already a dependency (internal/server uses the
+// same package), so a missing CLI on PATH cannot make this check wrong.
+//
+// This is a localhost IPC to the daemon on this machine, not a Tailscale
+// control-plane API call, and it only reads.
+func defaultTailscaleSSHEnabled(ctx context.Context) (bool, error) {
+	var client local.Client
+	prefs, err := client.GetPrefs(ctx)
+	if err != nil {
+		return false, err
+	}
+	if prefs == nil {
+		return false, errors.New("local Tailscale client returned no preferences")
+	}
+	return prefs.RunSSH, nil
+}
 
 var (
 	doctorCredentialTokenPattern = regexp.MustCompile(`(?i)\btskey-[A-Za-z0-9._~+/=-]+`)
@@ -112,7 +147,20 @@ type DoctorResult struct {
 	CredentialTier  string                      `json:"credential_tier"`
 	Daemon          DoctorDaemon                `json:"daemon"`
 	RuntimeSnapshot StatusRuntimeSnapshotResult `json:"runtime_snapshot"`
+	TailscaleSSH    DoctorTailscaleSSH          `json:"tailscale_ssh"`
 	Findings        []DoctorFinding             `json:"findings"`
+}
+
+// DoctorTailscaleSSH reports whether tailscaled on this node runs a Tailscale
+// SSH server. It is discoverability data for the zero-code remote path
+// (`tailscale ssh <host> tslink <command>`), not a TSLink capability: TSLink
+// neither enables nor requires it, and this report never affects health.
+type DoctorTailscaleSSH struct {
+	State string `json:"state"`
+	// ACLRuleRequired records the second half of the requirement, which no
+	// local read can observe. `tailscale set --ssh` alone is not enough; the
+	// tailnet policy file also needs an ssh rule admitting the caller.
+	ACLRuleRequired bool `json:"acl_rule_required"`
 }
 
 type DoctorCounts struct {
@@ -157,10 +205,19 @@ type doctorCredentialState struct {
 	CredentialFree bool
 }
 
+// doctorJSONData carries a DoctorResult into the result envelope's data slot.
+// Custom marshaling keeps the wire data flat, so the envelope publishes the
+// DoctorResult fields directly instead of nesting them under a wrapper key.
+type doctorJSONData struct {
+	Doctor DoctorResult
+}
+
+func (d doctorJSONData) MarshalJSON() ([]byte, error) { return json.Marshal(d.Doctor) }
+
 func runDoctor(out io.Writer, opts doctorOptions, isJSON bool) error {
 	result := buildDoctorResult(opts)
 	if isJSON {
-		output.WriteJSON(out, output.NewSuccess("doctor", apiDoctorData{Doctor: result}))
+		output.WriteJSON(out, output.NewSuccess("doctor", doctorJSONData{Doctor: result}))
 	} else {
 		formatDoctor(result, out)
 	}
@@ -249,9 +306,38 @@ func buildDoctorResult(opts doctorOptions) DoctorResult {
 		completedEnrollment = diagnoseRuntimeSnapshot(&result, fingerprint, suppressExpectedMissing)
 	}
 	diagnoseCredentialTier1(&result, credentialState, pendingEnrollment, completedEnrollment)
+	diagnoseTailscaleSSH(&result)
 
 	result.finalize()
 	return result
+}
+
+// diagnoseTailscaleSSH reports Tailscale SSH enablement on this node. All three
+// outcomes are info severity, so the check can never move doctor's status or
+// exit code; an unreachable local daemon is reported, not treated as a fault.
+func diagnoseTailscaleSSH(result *DoctorResult) {
+	result.TailscaleSSH = DoctorTailscaleSSH{State: doctorTailscaleSSHUnknown, ACLRuleRequired: true}
+
+	ctx, cancel := context.WithTimeout(context.Background(), doctorTailscaleSSHTimeout)
+	enabled, err := doctorTailscaleSSHFn(ctx)
+	cancel()
+	if err != nil {
+		result.addFinding(inspect.WarningCodeTailscaleSSHUnknown, "", "tailscale_ssh", "", evidenceError(err))
+		return
+	}
+	if enabled {
+		result.TailscaleSSH.State = doctorTailscaleSSHEnabled
+		result.addFinding(inspect.WarningCodeTailscaleSSHEnabled, "", "tailscale_ssh", "", map[string]string{
+			"remote_command": "tailscale ssh <this-host> tslink list --json",
+			"also_required":  "tailnet ACL ssh rule admitting the caller",
+		})
+		return
+	}
+	result.TailscaleSSH.State = doctorTailscaleSSHDisabled
+	result.addFinding(inspect.WarningCodeTailscaleSSHDisabled, "", "tailscale_ssh", "", map[string]string{
+		"enable":        "tailscale set --ssh",
+		"also_required": "tailnet ACL ssh rule admitting the caller",
+	})
 }
 
 func discoverDoctorPaths(result *DoctorResult, opts doctorOptions) bool {
@@ -854,6 +940,7 @@ func formatDoctor(result DoctorResult, out io.Writer) {
 		fmt.Fprintf(out, " (%s)", result.RuntimeSnapshot.Code)
 	}
 	fmt.Fprintln(out)
+	fmt.Fprintf(out, "Tailscale SSH (this node): %s\n", emptyDash(result.TailscaleSSH.State))
 	if len(result.Findings) == 0 {
 		fmt.Fprintln(out, "\nNo warnings or errors found.")
 		return
@@ -942,7 +1029,16 @@ expiring token), credential_oauth_client_only (invites need a user-owned token),
 credential_api_token_expiring (<= 14 days left), credential_api_token_expired,
 credential_expiry_unknown, credential_remote_unverified, and with
 --probe-remote credential_api_token_rejected (HTTP 401),
-credential_remote_forbidden (HTTP 403), credential_remote_unreachable.`,
+credential_remote_forbidden (HTTP 403), credential_remote_unreachable.
+
+Doctor also reports Tailscale SSH enablement for this node
+(tailscale_ssh_enabled / tailscale_ssh_disabled / tailscale_ssh_unknown), read
+from the local Tailscale client. Tailscale SSH is a tailscaled feature that
+TSLink neither installs nor requires; it is reported because
+'tailscale ssh <this-host> tslink <command>' is the zero-code way to drive this
+install from another machine, and it needs both 'tailscale set --ssh' here and
+a tailnet ACL ssh rule admitting the caller. All three outcomes are
+informational and never change doctor's status or exit code.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		probeExternal, err := cmd.Flags().GetBool("probe-external")

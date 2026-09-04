@@ -44,6 +44,26 @@ type shareTargetSpec struct {
 	FileName string
 }
 
+// shareRequest is the complete one-shot share intent. Target, Name and
+// Ephemeral are what `tslink share` itself accepts; the exposure fields below
+// carry the same meaning as the corresponding `tslink add` flags and exist so
+// an MCP client can create a share with an allow-list instead of one readable
+// by every tailnet member. Every exposure field is enforced by the domain
+// layer: the service this request builds goes through registry.AddIfMissing,
+// which runs registry.ValidateService and therefore
+// registry.ValidateFunnelGuardrails.
+type shareRequest struct {
+	Target       string
+	Name         string
+	Ephemeral    bool
+	Allow        []string
+	Tags         []string
+	Funnel       bool
+	PublicAck    bool
+	FunnelTTL    string
+	FunnelTTLSet bool
+}
+
 type sharePaths struct {
 	Registry    string
 	Ownership   string
@@ -155,6 +175,42 @@ func inferShareTarget(target string, ephemeral bool) (shareTargetSpec, error) {
 	}, nil
 }
 
+// applyShareExposure folds a share request's exposure fields onto the inferred
+// target spec. It reuses the exact `tslink add` helpers (parseAllowedUsers,
+// parseTags, resolveFunnelExpiry, funnelOptionRequiresFunnel), so allow-list
+// normalization, tag validation and Funnel TTL semantics cannot drift between
+// the two surfaces. It deliberately does not re-check the Funnel guardrails:
+// registry.ValidateService is the enforcement point and runs on the write.
+func applyShareExposure(spec shareTargetSpec, req shareRequest) (shareTargetSpec, error) {
+	if err := funnelOptionRequiresFunnel("public_ack", "funnel", req.PublicAck, req.Funnel); err != nil {
+		return shareTargetSpec{}, err
+	}
+	if err := funnelOptionRequiresFunnel("funnel_ttl", "funnel", req.FunnelTTLSet, req.Funnel); err != nil {
+		return shareTargetSpec{}, err
+	}
+	allowedUsers, err := parseAllowedUsers(strings.Join(req.Allow, ","))
+	if err != nil {
+		return shareTargetSpec{}, err
+	}
+	var tags []string
+	if len(req.Tags) > 0 {
+		tags, err = parseTags(strings.Join(req.Tags, ","))
+		if err != nil {
+			return shareTargetSpec{}, err
+		}
+	}
+	funnelExpiresAt, err := resolveFunnelExpiry(req.Funnel, req.FunnelTTL, req.FunnelTTLSet, time.Time{})
+	if err != nil {
+		return shareTargetSpec{}, err
+	}
+	spec.Service.AllowedUsers = allowedUsers
+	spec.Service.Tags = tags
+	spec.Service.Funnel = req.Funnel
+	spec.Service.PublicAck = req.PublicAck
+	spec.Service.FunnelExpiresAt = funnelExpiresAt
+	return spec, nil
+}
+
 func sanitizeShareName(value string) string {
 	var b strings.Builder
 	lastHyphen := false
@@ -245,7 +301,7 @@ func registerShare(regPath string, spec shareTargetSpec, requestedName string) (
 			}
 			if sameShareBackend(existing, spec.Service) {
 				return registry.Service{}, false, output.ErrConflict(fmt.Sprintf(
-					"cannot reuse service %q for this share target: its exposure posture is %s, but plain share requires %s; remove or reconfigure the existing service, or share a different target",
+					"cannot reuse service %q for this share target: its exposure posture is %s, but this share requires %s; remove or reconfigure the existing service, or share a different target",
 					existing.Name, shareExposurePosture(existing), shareExposurePosture(spec.Service)))
 			}
 			usedNames[existing.Name] = struct{}{}
@@ -376,12 +432,16 @@ func startShareDaemon(ctx context.Context, errOut io.Writer) (shareDaemonStart, 
 	return parseShareDaemonResult(stdout.Bytes(), runErr)
 }
 
-func executeShare(ctx context.Context, paths sharePaths, target, requestedName string, ephemeral bool, wait time.Duration, errOut io.Writer) (result ShareResult, err error) {
-	spec, err := inferShareTarget(target, ephemeral)
+func executeShare(ctx context.Context, paths sharePaths, req shareRequest, wait time.Duration, errOut io.Writer) (result ShareResult, err error) {
+	spec, err := inferShareTarget(req.Target, req.Ephemeral)
 	if err != nil {
 		return ShareResult{}, err
 	}
-	svc, created, err := registerShare(paths.Registry, spec, requestedName)
+	spec, err = applyShareExposure(spec, req)
+	if err != nil {
+		return ShareResult{}, err
+	}
+	svc, created, err := registerShare(paths.Registry, spec, req.Name)
 	if err != nil {
 		return ShareResult{}, err
 	}
@@ -435,7 +495,11 @@ Examples:
 			name, _ := cmd.Flags().GetString("name")
 			ephemeral, _ := cmd.Flags().GetBool("ephemeral")
 			wait, _ := cmd.Flags().GetDuration("wait")
-			result, err := executeShare(cmd.Context(), paths, args[0], name, ephemeral, wait, cmd.ErrOrStderr())
+			result, err := executeShare(cmd.Context(), paths, shareRequest{
+				Target:    args[0],
+				Name:      name,
+				Ephemeral: ephemeral,
+			}, wait, cmd.ErrOrStderr())
 			if err != nil {
 				return err
 			}

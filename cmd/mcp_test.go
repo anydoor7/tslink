@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/monody0007/tslink/internal/inspect"
 	"github.com/monody0007/tslink/internal/output"
 	"github.com/monody0007/tslink/internal/registry"
 	tsruntime "github.com/monody0007/tslink/internal/runtime"
@@ -22,11 +23,14 @@ import (
 
 func fakeMCPActions() mcpActions {
 	return mcpActions{
-		share: func(_ context.Context, target, name string, ephemeral bool) (ShareResult, error) {
-			if target == "error" {
+		share: func(_ context.Context, req shareRequest) (ShareResult, error) {
+			if req.Target == "error" {
 				return ShareResult{}, output.ErrUsage("share failed")
 			}
 			return ShareResult{Status: authStatusNeedsLogin, AuthURL: "https://login.tailscale.com/a/mcp"}, nil
+		},
+		add: func(_ context.Context, params AddParams, _ bool) (any, error) {
+			return AddResult{Name: params.Name, Type: registry.TypeProxy, Created: true, URLPending: true}, nil
 		},
 		list: func() (any, error) {
 			return map[string]any{"services": []mcpServiceSummary{{Name: "demo", Type: registry.TypeProxy, State: "pending"}}}, nil
@@ -34,6 +38,62 @@ func fakeMCPActions() mcpActions {
 		unshare: func(name string) (any, error) { return map[string]any{"ok": name == "demo"}, nil },
 		status: func() (any, error) {
 			return mcpStatusSummary{Authenticated: false, DaemonRunning: true, ServiceCount: 1, Status: authStatusNeedsLogin, AuthURL: "https://login.tailscale.com/a/mcp"}, nil
+		},
+		url: func(_ context.Context, name string, _ time.Duration) (any, error) {
+			return URLResult{Name: name, URL: "https://" + name + ".tail.ts.net", State: inspect.EndpointStateExact}, nil
+		},
+		tagsList: func() (any, error) {
+			return TagsListResult{Services: []TagsServiceEntry{{Name: "demo", Tags: []string{"tag:tslink"}}}}, nil
+		},
+		tagsSet: func(service, tag string) (any, error) {
+			return TagsSetResult{Service: service, Tags: []string{tag}}, nil
+		},
+		accessExplain: func(service string) (any, error) {
+			return buildAccessExplainResult(registry.Service{Name: service, Type: registry.TypeProxy, Target: "http://localhost:3000"}), nil
+		},
+		doctor: func(bool) (any, error) {
+			return DoctorResult{
+				SchemaVersion:   inspect.SchemaVersion,
+				ExecutionStatus: doctorExecutionCompleted,
+				Status:          doctorStatusOK,
+				HealthStatus:    doctorStatusOK,
+				CredentialMode:  doctorCredentialNone,
+				CredentialTier:  doctorCredentialTierUnknown,
+				Findings:        []DoctorFinding{},
+				RuntimeSnapshot: StatusRuntimeSnapshotResult{Status: "unknown"},
+			}, nil
+		},
+		inviteUser: func(_ context.Context, email, role string, printLink bool) (any, error) {
+			invite := tailapi.Invite{Kind: tailapi.InviteKindUser, ID: "1", Email: email, Role: role, Emailed: !printLink}
+			return InviteMutationResult{Invite: invite, RemoteSideEffectPlan: invitePlan(invite, "create")}, nil
+		},
+		inviteDevice: func(_ context.Context, args mcpInviteDeviceArguments) (any, error) {
+			invite := tailapi.Invite{Kind: tailapi.InviteKindDevice, ID: "2", Email: args.Email, Service: args.Service, Emailed: !args.PrintLink}
+			return InviteMutationResult{Invite: invite, RemoteSideEffectPlan: invitePlan(invite, "create")}, nil
+		},
+		inviteList: func(context.Context, bool) (any, error) {
+			return tailapi.InviteList{
+				Complete:      true,
+				UserInvites:   []tailapi.Invite{},
+				DeviceInvites: []tailapi.Invite{},
+				DeviceTargets: []tailapi.InviteTargetStatus{},
+			}, nil
+		},
+		inviteRevoke: func(_ context.Context, kind, id string) (any, error) {
+			invite := tailapi.Invite{Kind: kind, ID: id}
+			return InviteRevokeResult{Kind: kind, ID: id, Revoked: true, RemoteSideEffectPlan: invitePlan(invite, "revoke")}, nil
+		},
+		inviteResend: func(_ context.Context, kind, id string) (any, error) {
+			invite := tailapi.Invite{Kind: kind, ID: id, Email: "person@example.com", Emailed: true}
+			return inviteResendResult(invite), nil
+		},
+		templateList: func() (any, error) { return listTemplatesResult(), nil },
+		templatePlan: func(name string) (any, error) {
+			result, _, err := planTemplateApply(name, nil, true)
+			return result, err
+		},
+		templateApply: func(string) (any, error) {
+			return TemplateApplyResult{SchemaVersion: inspect.SchemaVersion, Name: "personal-harness", Summary: "fake", Applied: true, Services: []TemplatePlanItem{}}, nil
 		},
 	}
 }
@@ -76,8 +136,8 @@ func TestMCPTranscriptInitializeListAndNeedsLoginShare(t *testing.T) {
 		t.Fatalf("initialize = %+v", initialize)
 	}
 	listed := frames[1]["result"].(map[string]any)["tools"].([]any)
-	if len(listed) != 4 {
-		t.Fatalf("tools = %d", len(listed))
+	if len(listed) != len(mcpToolDefinitions) {
+		t.Fatalf("tools = %d, want %d", len(listed), len(mcpToolDefinitions))
 	}
 	call := frames[2]["result"].(map[string]any)
 	structured := call["structuredContent"].(map[string]any)
@@ -91,41 +151,124 @@ func TestMCPTranscriptInitializeListAndNeedsLoginShare(t *testing.T) {
 	t.Logf("MCP server frames (one JSON-RPC frame per line):\n%s", stdout.String())
 }
 
-func TestMCPToolSchemasAreClosedAndModelFocused(t *testing.T) {
-	if len(mcpToolDefinitions) != 4 {
-		t.Fatalf("tools = %d", len(mcpToolDefinitions))
+// mcpToolByName returns the definition a test names, failing loudly rather than
+// indexing into mcpToolDefinitions. Position-indexed assertions silently
+// re-target when a tool is inserted, which is exactly the drift these tests
+// exist to catch.
+func mcpToolByName(t *testing.T, name string) mcpToolDefinition {
+	t.Helper()
+	for _, tool := range mcpToolDefinitions {
+		if tool.Name == name {
+			return tool
+		}
 	}
-	wantNames := []string{"share", "list", "unshare", "status"}
+	t.Fatalf("MCP tool %q is not defined", name)
+	return mcpToolDefinition{}
+}
+
+func TestMCPToolSchemasAreClosedAndModelFocused(t *testing.T) {
+	wantNames := []string{
+		"share", "add", "list", "unshare", "status", "url",
+		"tags_list", "tags_set", "access_explain", "doctor",
+		"invite_user", "invite_device", "invite_list", "invite_revoke", "invite_resend",
+		"template_list", "template_plan", "template_apply",
+	}
+	if len(mcpToolDefinitions) != len(wantNames) {
+		t.Fatalf("tools = %d, want %d", len(mcpToolDefinitions), len(wantNames))
+	}
+	seen := map[string]bool{}
 	for i, tool := range mcpToolDefinitions {
 		if tool.Name != wantNames[i] || tool.Description == "" {
-			t.Fatalf("tool[%d] = %+v", i, tool)
+			t.Fatalf("tool[%d] = %q, want %q with a description", i, tool.Name, wantNames[i])
 		}
+		if seen[tool.Name] {
+			t.Fatalf("tool %q is defined twice", tool.Name)
+		}
+		seen[tool.Name] = true
 		if tool.InputSchema["type"] != "object" || tool.InputSchema["additionalProperties"] != false {
 			t.Fatalf("schema %s = %+v", tool.Name, tool.InputSchema)
 		}
 		if tool.OutputSchema["type"] != "object" || tool.OutputSchema["additionalProperties"] != false {
 			t.Fatalf("output schema %s = %+v", tool.Name, tool.OutputSchema)
 		}
+		for property, raw := range tool.InputSchema["properties"].(map[string]any) {
+			schema, ok := raw.(map[string]any)
+			if !ok || schema["type"] == nil {
+				t.Fatalf("%s input property %q has no declared type: %+v", tool.Name, property, raw)
+			}
+		}
 	}
-	shareSchema := mcpToolDefinitions[0].InputSchema
+
+	shareSchema := mcpToolByName(t, "share").InputSchema
 	required := shareSchema["required"].([]string)
 	properties := shareSchema["properties"].(map[string]any)
-	if len(required) != 1 || required[0] != "target" || len(properties) != 3 {
+	if len(required) != 1 || required[0] != "target" || len(properties) != 8 {
 		t.Fatalf("share schema = %+v", shareSchema)
 	}
 	nameDescription := properties["name"].(map[string]any)["description"].(string)
 	if !strings.Contains(nameDescription, "reused only if it already has this name") || !strings.Contains(nameDescription, "numeric suffix") {
 		t.Fatalf("share name description = %q", nameDescription)
 	}
-	unshareProperties := mcpToolDefinitions[2].OutputSchema["properties"].(map[string]any)
+	allowDescription := properties["allow"].(map[string]any)["description"].(string)
+	if !strings.Contains(allowDescription, "every member of the user's tailnet") {
+		t.Fatalf("share allow description = %q, want the no-allow-list consequence spelled out", allowDescription)
+	}
+
+	unshareProperties := mcpToolByName(t, "unshare").OutputSchema["properties"].(map[string]any)
 	unshareOKDescription := unshareProperties["ok"].(map[string]any)["description"].(string)
 	for _, want := range []string{"idempotent", "service absent", "removed false", "does not guarantee tailnet device cleanup", "device_cleaned", "device_warning"} {
 		if !strings.Contains(unshareOKDescription, want) {
 			t.Fatalf("unshare ok description = %q, want %q", unshareOKDescription, want)
 		}
 	}
-	if mcpToolDefinitions[1].InputSchema["required"] != nil || mcpToolDefinitions[3].InputSchema["required"] != nil {
-		t.Fatal("no-argument tools unexpectedly require fields")
+	for _, name := range []string{"list", "status", "tags_list", "template_list"} {
+		if mcpToolByName(t, name).InputSchema["required"] != nil {
+			t.Fatalf("no-argument tool %q unexpectedly requires fields", name)
+		}
+	}
+}
+
+// TestMCPSideEffectToolsDeclareTheirEffectInTheFirstSentence pins the one
+// safety mechanism this server has for tools that reach outside the machine:
+// the calling agent is told, before it decides, that the call sends a real
+// email or publishes to the public internet. Withholding those tools was
+// rejected as the mechanism; the description is it, so it is asserted.
+func TestMCPSideEffectToolsDeclareTheirEffectInTheFirstSentence(t *testing.T) {
+	cases := []struct {
+		tool  string
+		wants []string
+	}{
+		{"share", []string{"funnel true", "public internet", "ask the user"}},
+		{"add", []string{"funnel true", "public internet", "ask the user"}},
+		{"invite_user", []string{"Sends a real Tailscale invitation", "confirm"}},
+		{"invite_device", []string{"Sends a real device-sharing invitation", "confirm"}},
+		{"invite_revoke", []string{"Cancels a real outstanding invitation", "confirm"}},
+		{"invite_resend", []string{"Sends another real invitation email", "confirm"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.tool, func(t *testing.T) {
+			description := mcpToolByName(t, tc.tool).Description
+			first, _, found := strings.Cut(description, ". ")
+			if !found {
+				t.Fatalf("%s description has no first sentence: %q", tc.tool, description)
+			}
+			for _, want := range tc.wants {
+				if !strings.Contains(first, want) {
+					t.Fatalf("%s first sentence = %q, want it to contain %q", tc.tool, first, want)
+				}
+			}
+		})
+	}
+
+	// The read-only and local-only tools must not carry that language, or the
+	// warning stops meaning anything.
+	for _, name := range []string{"list", "status", "url", "tags_list", "access_explain", "doctor", "invite_list", "template_list", "template_plan"} {
+		first, _, _ := strings.Cut(mcpToolByName(t, name).Description, ". ")
+		for _, unwanted := range []string{"public internet", "Sends a real", "Cancels a real"} {
+			if strings.Contains(first, unwanted) {
+				t.Fatalf("%s first sentence = %q, but it has no such side effect", name, first)
+			}
+		}
 	}
 }
 
@@ -172,12 +315,27 @@ func TestMCPListHealthyAndFailedPayloadsValidateAgainstOutputSchema(t *testing.T
 			Next:    []string{"tslink status --urls --name failed --json"},
 		},
 	}
+	expiresAt := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	remaining := "23h59m"
+	funnelled := ListServiceSummary{
+		Name:            "public",
+		Type:            registry.TypeProxy,
+		URLPending:      false,
+		URL:             func() *string { url := "https://public.tail.ts.net"; return &url }(),
+		State:           inspect.EndpointStateExact,
+		FunnelRequested: true,
+		FunnelActive:    true,
+		FunnelState:     tsruntime.FunnelStateActive,
+		FunnelExpiresAt: &expiresAt,
+		FunnelRemaining: &remaining,
+	}
 	for _, tc := range []struct {
 		name    string
 		service ListServiceSummary
 	}{
 		{name: "healthy omits error", service: healthy},
 		{name: "failed carries error", service: failed},
+		{name: "funnel carries its deadline", service: funnelled},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			wire, err := json.Marshal(map[string]any{"services": []ListServiceSummary{tc.service}})
@@ -425,8 +583,8 @@ func TestMCPToolCallsValidateArgumentsAndReturnExecutionErrors(t *testing.T) {
 func TestMCPAllToolsAndOptionalEphemeral(t *testing.T) {
 	var ephemeral bool
 	actions := fakeMCPActions()
-	actions.share = func(_ context.Context, _, _ string, got bool) (ShareResult, error) {
-		ephemeral = got
+	actions.share = func(_ context.Context, req shareRequest) (ShareResult, error) {
+		ephemeral = req.Ephemeral
 		return ShareResult{Name: "demo", URL: "https://demo.tail.ts.net", Status: shareStatusReady}, nil
 	}
 	calls := []string{
@@ -477,7 +635,7 @@ func TestDefaultMCPActionsUseLocalRegistryAndRedactedStatus(t *testing.T) {
 		return serviceURLResolution{Result: URLResult{Name: name, URL: "https://" + name + ".tail.ts.net"}}, nil
 	}
 	actions := defaultMCPActions(paths, os.Stderr)
-	shared, err := actions.share(context.Background(), "3000", "", true)
+	shared, err := actions.share(context.Background(), shareRequest{Target: "3000", Ephemeral: true})
 	if err != nil || shared.URL != "https://port-3000.tail.ts.net" {
 		t.Fatalf("share = %+v err=%v", shared, err)
 	}

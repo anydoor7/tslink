@@ -223,166 +223,15 @@ func TestInviteMutationValidationPrecedesRegistryAndUsesStableUsageCodes(t *test
 	}
 }
 
-func TestInviteAPIListRequiresExplicitShowURLs(t *testing.T) {
-	regPath, pidPath, _ := configureExactInviteRuntime(t, nil, nil)
-	h := &apiHandler{regPath: regPath, pidPath: pidPath}
-	inviteListFn = func(context.Context, []tailapi.DeviceTarget) (tailapi.InviteList, error) {
-		return tailapi.InviteList{
-			Complete:      true,
-			UserInvites:   []tailapi.Invite{{Kind: tailapi.InviteKindUser, ID: "71101", InviteURL: "https://login.tailscale.com/uinv/api-list-placeholder"}},
-			DeviceInvites: []tailapi.Invite{},
-			Count:         1,
-		}, nil
-	}
-
-	for _, tc := range []struct {
-		name     string
-		showURLs bool
-		wantURL  bool
-	}{
-		{name: "default_redacted"},
-		{name: "explicit_show", showURLs: true, wantURL: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			var out bytes.Buffer
-			result := h.handle(APIRequest{Action: apiActionInviteList, ShowURLs: tc.showURLs}, &out)
-			if !result.OK || !strings.Contains(out.String(), `"complete":true`) || !strings.Contains(out.String(), `"device_invites":[]`) || !strings.Contains(out.String(), `"device_targets":[]`) || strings.Contains(out.String(), "api-list-placeholder") != tc.wantURL || strings.Contains(out.String(), `"invite_url"`) != tc.wantURL {
-				t.Fatalf("show_urls=%t result=%+v output=%s", tc.showURLs, result, out.String())
-			}
-		})
-	}
-}
-
-func TestInviteAPIMutationsRejectTraversalBeforeTargetsOrMutation(t *testing.T) {
-	restoreInviteCommandSeams(t)
-	inviteLoadRegistryFn = func(string) (*registry.Registry, error) {
-		t.Fatal("traversal API input reached target resolution")
-		return nil, errors.New("unreachable")
-	}
-	inviteRevokeFn = func(context.Context, string, string, []tailapi.DeviceTarget) (tailapi.Invite, error) {
-		t.Fatal("traversal API input reached revoke mutation seam")
-		return tailapi.Invite{}, errors.New("unreachable")
-	}
-	inviteResendFn = func(context.Context, string, string, []tailapi.DeviceTarget) (tailapi.Invite, error) {
-		t.Fatal("traversal API input reached resend mutation seam")
-		return tailapi.Invite{}, errors.New("unreachable")
-	}
-	h := &apiHandler{}
-
-	for _, request := range []APIRequest{
-		{Action: apiActionInviteRevoke, Kind: tailapi.InviteKindUser, InviteID: "../device/nodeid-VICTIM"},
-		{Action: apiActionInviteResend, Kind: tailapi.InviteKindDevice, InviteID: "../tailnet/-/keys/kVICTIM"},
-	} {
-		var out bytes.Buffer
-		result := h.handle(request, &out)
-		if result.OK || result.Code != output.ExitUsage || result.Error == nil || result.Error.Code != registry.CodeInviteIDInvalid || len(result.Error.Next) == 0 {
-			t.Fatalf("action=%s result=%+v output=%s", request.Action, result, out.String())
-		}
-	}
-}
-
-func TestInviteAPIMutationsRejectMissingOrBogusKindBeforeTargetsOrMutation(t *testing.T) {
-	restoreInviteCommandSeams(t)
-	targetCalls := 0
-	revokeCalls := 0
-	resendCalls := 0
-	inviteLoadRegistryFn = func(string) (*registry.Registry, error) {
-		targetCalls++
-		return &registry.Registry{}, nil
-	}
-	inviteRevokeFn = func(context.Context, string, string, []tailapi.DeviceTarget) (tailapi.Invite, error) {
-		revokeCalls++
-		return tailapi.Invite{Kind: tailapi.InviteKindDevice, ID: "12346"}, nil
-	}
-	inviteResendFn = func(context.Context, string, string, []tailapi.DeviceTarget) (tailapi.Invite, error) {
-		resendCalls++
-		return tailapi.Invite{Kind: tailapi.InviteKindDevice, ID: "12346", Email: "placeholder@example.com"}, nil
-	}
-	h := &apiHandler{}
-	for _, action := range []string{apiActionInviteRevoke, apiActionInviteResend} {
-		for _, kind := range []string{"", "both"} {
-			t.Run(action+"_"+kind, func(t *testing.T) {
-				var out bytes.Buffer
-				result := h.handle(APIRequest{Action: action, Kind: kind, InviteID: "12346"}, &out)
-				if result.OK || result.Code != output.ExitUsage || result.Error == nil || result.Error.Code != registry.CodeInviteKindInvalid || len(result.Error.Next) == 0 {
-					t.Fatalf("result=%+v raw=%s, want invite_kind_invalid/2 with next[]", result, out.String())
-				}
-				if !strings.Contains(out.String(), `"code":"invite_kind_invalid"`) {
-					t.Fatalf("raw API output = %s, want stable kind error", out.String())
-				}
-			})
-		}
-	}
-	if targetCalls != 0 || revokeCalls != 0 || resendCalls != 0 {
-		t.Fatalf("invalid kinds reached targets/revoke/resend: %d/%d/%d", targetCalls, revokeCalls, resendCalls)
-	}
-}
-
-func TestInviteAPIActionsDriveAllOperationsWithoutArgv(t *testing.T) {
+// TestInviteDeviceErrorEnvelopePreservesStableCodeExitAndNext pins the
+// remote-error passthrough: a CodedError raised inside the create seam must
+// reach the failure envelope with its own code, its conflict exit, both next[]
+// steps, and the matched device names still in the message. It ran through the
+// api handler until that command was removed; inviteDeviceRun is the same
+// passthrough on the shipped CLI path.
+func TestInviteDeviceErrorEnvelopePreservesStableCodeExitAndNext(t *testing.T) {
 	service := registry.Service{Name: "app", Type: registry.TypeProxy, Target: "http://localhost:3000"}
-	regPath, pidPath, snapshotPath := configureExactInviteRuntime(t, []registry.Service{service}, map[string]string{"app": "n-app-owned"})
-	fallbackCalls := 0
-	inviteRuntimeSnapshotPathFn = func() (string, error) {
-		fallbackCalls++
-		return snapshotPath, nil
-	}
-	h := &apiHandler{regPath: regPath, pidPath: pidPath}
-
-	inviteCreateUserFn = func(context.Context, string, string, bool) (tailapi.Invite, error) {
-		return tailapi.Invite{Kind: tailapi.InviteKindUser, ID: "71001", Recipient: "alice@example.com", InviteURL: "https://login.tailscale.com/uinv/api", Emailed: true}, nil
-	}
-	inviteCreateDeviceFn = func(_ context.Context, target tailapi.DeviceTarget, _ string, _, _, _ bool) (tailapi.Invite, error) {
-		if target.Service != "app" || target.NodeID != "n-app-owned" {
-			t.Fatalf("device target = %+v, want exact app ownership", target)
-		}
-		return tailapi.Invite{Kind: tailapi.InviteKindDevice, ID: "71002", Service: "app", Recipient: "bob@example.com", InviteURL: "https://login.tailscale.com/admin/invite/api", Emailed: false}, nil
-	}
-	inviteListFn = func(_ context.Context, targets []tailapi.DeviceTarget) (tailapi.InviteList, error) {
-		if len(targets) != 1 || targets[0].NodeID != "n-app-owned" {
-			t.Fatalf("list targets = %+v, want production-shape ownership target", targets)
-		}
-		return tailapi.InviteList{Complete: true, UserInvites: []tailapi.Invite{}, DeviceInvites: []tailapi.Invite{}, DeviceTargets: []tailapi.InviteTargetStatus{}, Count: 0}, nil
-	}
-	inviteRevokeFn = func(_ context.Context, kind, id string, targets []tailapi.DeviceTarget) (tailapi.Invite, error) {
-		if kind != tailapi.InviteKindDevice || id != "71003" || len(targets) != 1 || targets[0].NodeID != "n-app-owned" {
-			t.Fatalf("revoke kind=%q id=%q targets=%+v", kind, id, targets)
-		}
-		return tailapi.Invite{Kind: kind, ID: id, Service: "app"}, nil
-	}
-	inviteResendFn = func(_ context.Context, kind, id string, targets []tailapi.DeviceTarget) (tailapi.Invite, error) {
-		if kind != tailapi.InviteKindDevice || id != "71004" || len(targets) != 1 || targets[0].NodeID != "n-app-owned" {
-			t.Fatalf("resend kind=%q id=%q targets=%+v", kind, id, targets)
-		}
-		return tailapi.Invite{Kind: kind, ID: id, Service: "app", Email: "alice@example.com", InviteURL: "https://login.tailscale.com/uinv/api", Emailed: true}, nil
-	}
-
-	requests := []APIRequest{
-		{Action: apiActionInviteUser, Email: "alice@example.com"},
-		{Action: apiActionInviteDevice, Service: "app", Email: "bob@example.com", PrintLink: true},
-		{Action: apiActionInviteList},
-		{Action: apiActionInviteRevoke, Kind: tailapi.InviteKindDevice, InviteID: "71003"},
-		{Action: apiActionInviteResend, Kind: tailapi.InviteKindDevice, InviteID: "71004"},
-	}
-	for _, request := range requests {
-		var out bytes.Buffer
-		result := h.handle(request, &out)
-		if !result.OK || result.Command != request.Action || result.Code != output.ExitSuccess {
-			t.Fatalf("action %s result = %+v raw=%s", request.Action, result, out.String())
-		}
-		var envelope output.Result
-		if err := json.NewDecoder(&out).Decode(&envelope); err != nil || !envelope.OK || envelope.Command != request.Action {
-			t.Fatalf("action %s envelope=%+v err=%v raw=%s", request.Action, envelope, err, out.String())
-		}
-	}
-	if fallbackCalls != 4 {
-		t.Fatalf("production runtime-snapshot fallback calls = %d, want device/list/revoke/resend = 4", fallbackCalls)
-	}
-}
-
-func TestInviteAPIErrorEnvelopePreservesStableCodeExitAndNext(t *testing.T) {
-	service := registry.Service{Name: "app", Type: registry.TypeProxy, Target: "http://localhost:3000"}
-	regPath, pidPath, _ := configureExactInviteRuntime(t, []registry.Service{service}, map[string]string{"app": "n-app-owned"})
-	h := &apiHandler{regPath: regPath, pidPath: pidPath}
+	configureExactInviteRuntime(t, []registry.Service{service}, map[string]string{"app": "n-app-owned"})
 	inviteCreateDeviceFn = func(context.Context, tailapi.DeviceTarget, string, bool, bool, bool) (tailapi.Invite, error) {
 		return tailapi.Invite{}, registry.CodedError{
 			Code:        registry.CodeInviteDeviceAmbiguous,
@@ -392,7 +241,14 @@ func TestInviteAPIErrorEnvelopePreservesStableCodeExitAndNext(t *testing.T) {
 		}
 	}
 	var out bytes.Buffer
-	result := h.handle(APIRequest{Action: apiActionInviteDevice, Service: "app", Email: "bob@example.com"}, &out)
+	err := inviteDeviceRun(context.Background(), &out, "app", "bob@example.com", false, false, false, true)
+	if err == nil {
+		t.Fatal("expected the ambiguous-device error to surface")
+	}
+	if output.ExitCode(err) != output.ExitConflict {
+		t.Fatalf("exit = %d, want %d", output.ExitCode(err), output.ExitConflict)
+	}
+	result := output.NewFailureForError("invite device", err)
 	if result.OK || result.Code != output.ExitConflict || result.Error == nil || result.Error.Code != registry.CodeInviteDeviceAmbiguous || len(result.Error.Next) != 2 {
 		t.Fatalf("result = %+v, want distinct conflict code and exact next[]", result)
 	}
@@ -401,9 +257,11 @@ func TestInviteAPIErrorEnvelopePreservesStableCodeExitAndNext(t *testing.T) {
 	}
 }
 
-func TestInviteAPIKeyRequiredEnvelopeUsesAuthExit(t *testing.T) {
+// TestInviteUserAPIKeyRequiredEnvelopeUsesAuthExit is the same passthrough for
+// the credential-shape refusal, which must land on the auth exit rather than a
+// generic error so a caller knows to re-login instead of retrying.
+func TestInviteUserAPIKeyRequiredEnvelopeUsesAuthExit(t *testing.T) {
 	restoreInviteCommandSeams(t)
-	h := &apiHandler{}
 	inviteCreateUserFn = func(context.Context, string, string, bool) (tailapi.Invite, error) {
 		return tailapi.Invite{}, registry.CodedError{
 			Code:        registry.CodeInviteAPIKeyRequired,
@@ -413,7 +271,11 @@ func TestInviteAPIKeyRequiredEnvelopeUsesAuthExit(t *testing.T) {
 		}
 	}
 	var out bytes.Buffer
-	result := h.handle(APIRequest{Action: apiActionInviteUser, Email: "alice@example.com"}, &out)
+	err := inviteUserRun(context.Background(), &out, "alice@example.com", tailapi.InviteRoleMember, false, true)
+	if err == nil {
+		t.Fatal("expected the api-key-required error to surface")
+	}
+	result := output.NewFailureForError("invite user", err)
 	if result.OK || result.Code != output.ExitAuth || result.Error == nil || result.Error.Code != registry.CodeInviteAPIKeyRequired || !strings.Contains(result.Error.Message, "user-owned tskey-api-") || len(result.Error.Next) != 1 {
 		t.Fatalf("result = %+v, want auth exit, actionable type, and next[]", result)
 	}
@@ -648,51 +510,7 @@ func TestInviteListCompletenessIsVisibleWithReturnedInvites(t *testing.T) {
 	}
 }
 
-func TestInviteAPIInputGuardsDefaultDenyBeforeCreate(t *testing.T) {
-	restoreInviteCommandSeams(t)
-	inviteCreateUserFn = func(context.Context, string, string, bool) (tailapi.Invite, error) {
-		t.Fatal("invalid invite_user input reached create")
-		return tailapi.Invite{}, errors.New("unreachable")
-	}
-	inviteCreateDeviceFn = func(context.Context, tailapi.DeviceTarget, string, bool, bool, bool) (tailapi.Invite, error) {
-		t.Fatal("invalid invite_device input reached create")
-		return tailapi.Invite{}, errors.New("unreachable")
-	}
-
-	for _, tc := range []struct {
-		name     string
-		request  APIRequest
-		wantCode string
-	}{
-		{name: "user_missing_email", request: APIRequest{Action: apiActionInviteUser}, wantCode: "usage_error"},
-		{name: "user_invalid_role", request: APIRequest{Action: apiActionInviteUser, Email: "alice@example.com", Role: "owner"}, wantCode: registry.CodeInviteRoleInvalid},
-		{name: "device_missing_service", request: APIRequest{Action: apiActionInviteDevice, Email: "alice@example.com"}, wantCode: "usage_error"},
-		{name: "device_missing_email", request: APIRequest{Action: apiActionInviteDevice, Service: "app"}, wantCode: "usage_error"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			var out bytes.Buffer
-			result := (&apiHandler{}).handle(tc.request, &out)
-			if result.OK || result.Code != output.ExitUsage || result.Error == nil || result.Error.Code != tc.wantCode {
-				t.Fatalf("result=%+v raw=%s, want default-deny usage code %s", result, out.String(), tc.wantCode)
-			}
-		})
-	}
-}
-
-func TestInviteAPIDeviceUnknownServiceStopsBeforeCreate(t *testing.T) {
-	regPath, pidPath, _ := configureExactInviteRuntime(t, nil, nil)
-	inviteCreateDeviceFn = func(context.Context, tailapi.DeviceTarget, string, bool, bool, bool) (tailapi.Invite, error) {
-		t.Fatal("unknown service reached device invite creation")
-		return tailapi.Invite{}, errors.New("unreachable")
-	}
-	var out bytes.Buffer
-	result := (&apiHandler{regPath: regPath, pidPath: pidPath}).handle(APIRequest{Action: apiActionInviteDevice, Service: "missing", Email: "alice@example.com"}, &out)
-	if result.OK || result.Code != output.ExitNotFound || result.Error == nil || result.Error.Code != "not_found" {
-		t.Fatalf("result=%+v raw=%s, want service not_found before create", result, out.String())
-	}
-}
-
-func TestInviteAPIListRejectsMissingOrBlankRegistryAsIncompleteState(t *testing.T) {
+func TestInviteListRejectsMissingOrBlankRegistryAsIncompleteState(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		content *string
@@ -720,13 +538,13 @@ func TestInviteAPIListRejectsMissingOrBlankRegistryAsIncompleteState(t *testing.
 				return tailapi.InviteList{}, errors.New("unreachable")
 			}
 			var out bytes.Buffer
-			result := (&apiHandler{regPath: regPath, pidPath: pidPath}).handle(APIRequest{Action: apiActionInviteList}, &out)
-			if result.OK || result.Code != output.ExitConflict || result.Error == nil || result.Error.Code != "conflict" || strings.Contains(out.String(), `"complete":true`) {
-				t.Fatalf("result=%+v raw=%s, want explicit incomplete-state failure", result, out.String())
+			err := inviteListRun(context.Background(), &out, false, true)
+			if err == nil || output.ExitCode(err) != output.ExitConflict {
+				t.Fatalf("invite list error=%v exit=%d, want an incomplete-state conflict", err, output.ExitCode(err))
 			}
-			out.Reset()
-			if err := inviteListRun(context.Background(), &out, false, true); err == nil || output.ExitCode(err) != output.ExitConflict {
-				t.Fatalf("CLI invite list error=%v exit=%d, want the same incomplete-state conflict", err, output.ExitCode(err))
+			failure := output.NewFailureForError("invite list", err)
+			if failure.OK || failure.Error == nil || failure.Error.Code != "conflict" || strings.Contains(out.String(), `"complete":true`) {
+				t.Fatalf("failure=%+v raw=%s, want an explicit incomplete-state envelope and no completeness claim", failure, out.String())
 			}
 		})
 	}

@@ -40,7 +40,7 @@ go install .
 Tests that execute a freshly compiled TSLink binary must set all three of
 `TSLINK_CONFIG_DIR`, `TSLINK_DISABLE_KEYRING=1`, and
 `TSLINK_TEST_DAEMON_PARENT_LIFETIME=1`. The shared helpers in
-`cmd/api_binary_contract_test.go` already do this. The last variable is an
+`cmd/compiled_binary_contract_test.go` already do this. The last variable is an
 internal, test-only lifetime seam: a daemon launched by that process watches
 the short-lived `serve --daemon` launcher and exits when the launcher exits,
 including when a context cancellation kills it. The launcher supplies the

@@ -166,8 +166,40 @@ func writeInviteCreate(out io.Writer, command string, invite tailapi.Invite, isJ
 	return nil
 }
 
+// inviteUserCreate sends one real tailnet user invitation. `tslink invite user`
+// and the MCP invite_user tool share it; the empty role defaults and the role
+// validation live here so both surfaces reach tailapi with the same argument.
+func inviteUserCreate(ctx context.Context, email, role string, printLink bool) (tailapi.Invite, error) {
+	if strings.TrimSpace(email) == "" {
+		return tailapi.Invite{}, output.ErrUsage("email is required")
+	}
+	if role == "" {
+		role = tailapi.InviteRoleMember
+	}
+	if err := tailapi.ValidateInviteRole(role); err != nil {
+		return tailapi.Invite{}, err
+	}
+	return inviteCreateUserFn(ctx, email, role, printLink)
+}
+
+// inviteDeviceCreate shares one TSLink-owned service device with an external
+// user. `tslink invite device` and the MCP invite_device tool share it.
+func inviteDeviceCreate(ctx context.Context, regPath, pidPath, snapshotPath, service, email string, printLink, multiUse, allowExitNode bool) (tailapi.Invite, error) {
+	if strings.TrimSpace(service) == "" {
+		return tailapi.Invite{}, output.ErrUsage("service is required")
+	}
+	if strings.TrimSpace(email) == "" {
+		return tailapi.Invite{}, output.ErrUsage("email is required")
+	}
+	target, err := inviteDeviceTargetForService(regPath, pidPath, snapshotPath, service)
+	if err != nil {
+		return tailapi.Invite{}, err
+	}
+	return inviteCreateDeviceFn(ctx, target, email, printLink, multiUse, allowExitNode)
+}
+
 func inviteUserRun(ctx context.Context, out io.Writer, email, role string, printLink, isJSON bool) error {
-	invite, err := inviteCreateUserFn(ctx, email, role, printLink)
+	invite, err := inviteUserCreate(ctx, email, role, printLink)
 	if err != nil {
 		return err
 	}
@@ -179,11 +211,7 @@ func inviteDeviceRun(ctx context.Context, out io.Writer, service, email string, 
 	if err != nil {
 		return err
 	}
-	target, err := inviteDeviceTargetForService(regPath, pidPath, snapshotPath, service)
-	if err != nil {
-		return err
-	}
-	invite, err := inviteCreateDeviceFn(ctx, target, email, printLink, multiUse, allowExitNode)
+	invite, err := inviteDeviceCreate(ctx, regPath, pidPath, snapshotPath, service, email, printLink, multiUse, allowExitNode)
 	if err != nil {
 		return err
 	}
@@ -218,20 +246,30 @@ func writeInviteTargetErrors(out io.Writer, result tailapi.InviteList) {
 	}
 }
 
+// inviteListCollect reads open user and TSLink-owned device invites.
+// `tslink invite list` and the MCP invite_list tool share it, including the
+// bearer-URL redaction applied when showURLs is false.
+func inviteListCollect(ctx context.Context, regPath, pidPath, snapshotPath string, showURLs bool) (tailapi.InviteList, error) {
+	targets, err := inviteDeviceTargetsForListPaths(regPath, pidPath, snapshotPath)
+	if err != nil {
+		return tailapi.InviteList{}, err
+	}
+	result, err := inviteListFn(ctx, targets)
+	if err != nil {
+		return tailapi.InviteList{}, err
+	}
+	return inviteListForOutput(result, showURLs), nil
+}
+
 func inviteListRun(ctx context.Context, out io.Writer, showURLs, isJSON bool) error {
 	regPath, pidPath, snapshotPath, err := invitePaths()
 	if err != nil {
 		return err
 	}
-	targets, err := inviteDeviceTargetsForListPaths(regPath, pidPath, snapshotPath)
+	result, err := inviteListCollect(ctx, regPath, pidPath, snapshotPath, showURLs)
 	if err != nil {
 		return err
 	}
-	result, err := inviteListFn(ctx, targets)
-	if err != nil {
-		return err
-	}
-	result = inviteListForOutput(result, showURLs)
 	if isJSON {
 		output.WriteJSON(out, output.NewSuccess("invite list", result))
 		return nil
@@ -276,38 +314,79 @@ func inviteListRun(ctx context.Context, out io.Writer, showURLs, isJSON bool) er
 	return nil
 }
 
-func inviteTargetsForMutation(kind string) ([]tailapi.DeviceTarget, error) {
+// invitePathSupplier defers path resolution until a caller establishes that it
+// needs device targets at all. The revoke and resend paths validate their
+// arguments first and skip resolution entirely for user-kind invites, and both
+// properties are pinned by tests; passing resolved strings in would break them.
+type invitePathSupplier func() (regPath, pidPath, snapshotPath string, err error)
+
+// staticInvitePaths adapts already-known paths to invitePathSupplier. The MCP
+// tools use it because their paths come from the resolved sharePaths.
+func staticInvitePaths(regPath, pidPath, snapshotPath string) invitePathSupplier {
+	return func() (string, string, string, error) { return regPath, pidPath, snapshotPath, nil }
+}
+
+func inviteTargetsForMutation(kind string, paths invitePathSupplier) ([]tailapi.DeviceTarget, error) {
 	if kind == tailapi.InviteKindUser {
 		return nil, nil
 	}
-	regPath, pidPath, snapshotPath, err := invitePaths()
+	regPath, pidPath, snapshotPath, err := paths()
 	if err != nil {
 		return nil, err
 	}
 	return inviteDeviceTargetsForPaths(regPath, pidPath, snapshotPath)
 }
 
-func inviteRevokeRun(ctx context.Context, out io.Writer, kind, id string, isJSON bool) error {
+// inviteRevokeExecute cancels one real invitation. `tslink invite revoke` and
+// the MCP invite_revoke tool share it, including the id and kind validation.
+func inviteRevokeExecute(ctx context.Context, paths invitePathSupplier, kind, id string) (InviteRevokeResult, error) {
 	if err := tailapi.ValidateInviteID(id); err != nil {
-		return err
+		return InviteRevokeResult{}, err
 	}
 	if err := tailapi.ValidateInviteKind(kind); err != nil {
-		return err
+		return InviteRevokeResult{}, err
 	}
-	targets, err := inviteTargetsForMutation(kind)
+	targets, err := inviteTargetsForMutation(kind, paths)
 	if err != nil {
-		return err
+		return InviteRevokeResult{}, err
 	}
 	invite, err := inviteRevokeFn(ctx, kind, id, targets)
 	if err != nil {
+		return InviteRevokeResult{}, err
+	}
+	return InviteRevokeResult{Kind: invite.Kind, ID: invite.ID, Service: invite.Service, Revoked: true, RemoteSideEffectPlan: invitePlan(invite, "revoke")}, nil
+}
+
+// inviteResendExecute re-sends one real invitation email. `tslink invite
+// resend` and the MCP invite_resend tool share it.
+func inviteResendExecute(ctx context.Context, paths invitePathSupplier, kind, id string) (InviteResendResult, error) {
+	if err := tailapi.ValidateInviteID(id); err != nil {
+		return InviteResendResult{}, err
+	}
+	if err := tailapi.ValidateInviteKind(kind); err != nil {
+		return InviteResendResult{}, err
+	}
+	targets, err := inviteTargetsForMutation(kind, paths)
+	if err != nil {
+		return InviteResendResult{}, err
+	}
+	invite, err := inviteResendFn(ctx, kind, id, targets)
+	if err != nil {
+		return InviteResendResult{}, err
+	}
+	return inviteResendResult(invite), nil
+}
+
+func inviteRevokeRun(ctx context.Context, out io.Writer, kind, id string, isJSON bool) error {
+	data, err := inviteRevokeExecute(ctx, invitePaths, kind, id)
+	if err != nil {
 		return err
 	}
-	data := InviteRevokeResult{Kind: invite.Kind, ID: invite.ID, Service: invite.Service, Revoked: true, RemoteSideEffectPlan: invitePlan(invite, "revoke")}
 	if isJSON {
 		output.WriteJSON(out, output.NewSuccess("invite revoke", data))
 		return nil
 	}
-	fmt.Fprintf(out, "→ Revoked %s invite %s\n", invite.Kind, invite.ID)
+	fmt.Fprintf(out, "→ Revoked %s invite %s\n", data.Kind, data.ID)
 	return nil
 }
 
@@ -324,160 +403,16 @@ func inviteResendResult(invite tailapi.Invite) InviteResendResult {
 }
 
 func inviteResendRun(ctx context.Context, out io.Writer, kind, id string, isJSON bool) error {
-	if err := tailapi.ValidateInviteID(id); err != nil {
-		return err
-	}
-	if err := tailapi.ValidateInviteKind(kind); err != nil {
-		return err
-	}
-	targets, err := inviteTargetsForMutation(kind)
+	data, err := inviteResendExecute(ctx, invitePaths, kind, id)
 	if err != nil {
 		return err
 	}
-	invite, err := inviteResendFn(ctx, kind, id, targets)
-	if err != nil {
-		return err
-	}
-	data := inviteResendResult(invite)
 	if isJSON {
 		output.WriteJSON(out, output.NewSuccess("invite resend", data))
 		return nil
 	}
-	fmt.Fprintf(out, "→ Resent %s invite %s to %s\n", invite.Kind, invite.ID, invite.Email)
+	fmt.Fprintf(out, "→ Resent %s invite %s to %s\n", data.Kind, data.ID, data.Email)
 	return nil
-}
-
-func (h *apiHandler) inviteTargets() ([]tailapi.DeviceTarget, error) {
-	snapshotPath := h.runtimeSnapshotPath
-	if snapshotPath == "" {
-		var err error
-		snapshotPath, err = inviteRuntimeSnapshotPathFn()
-		if err != nil {
-			return nil, err
-		}
-	}
-	return inviteDeviceTargetsForPaths(h.regPath, h.pidPath, snapshotPath)
-}
-
-func (h *apiHandler) inviteListTargets() ([]tailapi.DeviceTarget, error) {
-	snapshotPath := h.runtimeSnapshotPath
-	if snapshotPath == "" {
-		var err error
-		snapshotPath, err = inviteRuntimeSnapshotPathFn()
-		if err != nil {
-			return nil, err
-		}
-	}
-	return inviteDeviceTargetsForListPaths(h.regPath, h.pidPath, snapshotPath)
-}
-
-func (h *apiHandler) handleInviteUser(req APIRequest, out io.Writer) output.Result {
-	if strings.TrimSpace(req.Email) == "" {
-		return writeAPIError(out, apiActionInviteUser, output.ErrUsage("email is required"))
-	}
-	role := req.Role
-	if role == "" {
-		role = tailapi.InviteRoleMember
-	}
-	if err := tailapi.ValidateInviteRole(role); err != nil {
-		return writeAPIError(out, apiActionInviteUser, err)
-	}
-	invite, err := inviteCreateUserFn(context.Background(), req.Email, role, req.PrintLink)
-	if err != nil {
-		return writeAPIError(out, apiActionInviteUser, err)
-	}
-	data := InviteMutationResult{Invite: invite, RemoteSideEffectPlan: invitePlan(invite, "create")}
-	return writeAPISuccess(out, apiActionInviteUser, data)
-}
-
-func (h *apiHandler) handleInviteDevice(req APIRequest, out io.Writer) output.Result {
-	if strings.TrimSpace(req.Service) == "" {
-		return writeAPIError(out, apiActionInviteDevice, output.ErrUsage("service is required"))
-	}
-	if strings.TrimSpace(req.Email) == "" {
-		return writeAPIError(out, apiActionInviteDevice, output.ErrUsage("email is required"))
-	}
-	targets, err := h.inviteTargets()
-	if err != nil {
-		return writeAPIError(out, apiActionInviteDevice, err)
-	}
-	var target tailapi.DeviceTarget
-	found := false
-	for _, candidate := range targets {
-		if candidate.Service == req.Service {
-			target = candidate
-			found = true
-			break
-		}
-	}
-	if !found {
-		return writeAPIError(out, apiActionInviteDevice, output.ErrNotFound(fmt.Sprintf("service not found: %s", req.Service)))
-	}
-	invite, err := inviteCreateDeviceFn(context.Background(), target, req.Email, req.PrintLink, req.MultiUse, req.AllowExitNode)
-	if err != nil {
-		return writeAPIError(out, apiActionInviteDevice, err)
-	}
-	data := InviteMutationResult{Invite: invite, RemoteSideEffectPlan: invitePlan(invite, "create")}
-	return writeAPISuccess(out, apiActionInviteDevice, data)
-}
-
-func (h *apiHandler) handleInviteList(req APIRequest, out io.Writer) output.Result {
-	targets, err := h.inviteListTargets()
-	if err != nil {
-		return writeAPIError(out, apiActionInviteList, err)
-	}
-	result, err := inviteListFn(context.Background(), targets)
-	if err != nil {
-		return writeAPIError(out, apiActionInviteList, err)
-	}
-	result = inviteListForOutput(result, req.ShowURLs)
-	return writeAPISuccess(out, apiActionInviteList, result)
-}
-
-func (h *apiHandler) handleInviteRevoke(req APIRequest, out io.Writer) output.Result {
-	if err := tailapi.ValidateInviteID(req.InviteID); err != nil {
-		return writeAPIError(out, apiActionInviteRevoke, err)
-	}
-	if err := tailapi.ValidateInviteKind(req.Kind); err != nil {
-		return writeAPIError(out, apiActionInviteRevoke, err)
-	}
-	var targets []tailapi.DeviceTarget
-	if req.Kind == tailapi.InviteKindDevice {
-		var err error
-		targets, err = h.inviteTargets()
-		if err != nil {
-			return writeAPIError(out, apiActionInviteRevoke, err)
-		}
-	}
-	invite, err := inviteRevokeFn(context.Background(), req.Kind, req.InviteID, targets)
-	if err != nil {
-		return writeAPIError(out, apiActionInviteRevoke, err)
-	}
-	data := InviteRevokeResult{Kind: invite.Kind, ID: invite.ID, Service: invite.Service, Revoked: true, RemoteSideEffectPlan: invitePlan(invite, "revoke")}
-	return writeAPISuccess(out, apiActionInviteRevoke, data)
-}
-
-func (h *apiHandler) handleInviteResend(req APIRequest, out io.Writer) output.Result {
-	if err := tailapi.ValidateInviteID(req.InviteID); err != nil {
-		return writeAPIError(out, apiActionInviteResend, err)
-	}
-	if err := tailapi.ValidateInviteKind(req.Kind); err != nil {
-		return writeAPIError(out, apiActionInviteResend, err)
-	}
-	var targets []tailapi.DeviceTarget
-	if req.Kind == tailapi.InviteKindDevice {
-		var err error
-		targets, err = h.inviteTargets()
-		if err != nil {
-			return writeAPIError(out, apiActionInviteResend, err)
-		}
-	}
-	invite, err := inviteResendFn(context.Background(), req.Kind, req.InviteID, targets)
-	if err != nil {
-		return writeAPIError(out, apiActionInviteResend, err)
-	}
-	data := inviteResendResult(invite)
-	return writeAPISuccess(out, apiActionInviteResend, data)
 }
 
 func init() {

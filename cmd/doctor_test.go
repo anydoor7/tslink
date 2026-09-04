@@ -73,6 +73,10 @@ func newDoctorTestEnv(t *testing.T, services []registry.Service) doctorTestEnv {
 	doctorOpenPathFn = func(path string) (io.Closer, error) { return os.Open(path) }
 	doctorProbeTargetFn = func(context.Context, string, time.Duration) error { return nil }
 	doctorLoadAuthHandoffFn = loadAuthHandoff
+	// The default fixture keeps Tailscale SSH deterministic and off the
+	// machine's real tailscaled: no test process may perform the local-API
+	// preferences read that production uses.
+	doctorTailscaleSSHFn = func(context.Context) (bool, error) { return false, nil }
 
 	isRunningFn = func(string) bool { return true }
 	readPIDFn = func(string) (int, error) { return env.pid, nil }
@@ -105,7 +109,9 @@ func resetDoctorSeams(t *testing.T) {
 	oldNow := doctorNowFn
 	oldInventory := doctorCredentialInventoryFn
 	oldProbeCredential := doctorProbeCredentialFn
+	oldTailscaleSSH := doctorTailscaleSSHFn
 	t.Cleanup(func() {
+		doctorTailscaleSSHFn = oldTailscaleSSH
 		doctorNowFn = oldNow
 		doctorCredentialInventoryFn = oldInventory
 		doctorProbeCredentialFn = oldProbeCredential
@@ -128,6 +134,17 @@ func resetDoctorSeams(t *testing.T) {
 		pidFileModTimeFn = oldPIDFileModTime
 		runtimeLoadSnapshotFn = oldRuntimeLoad
 	})
+}
+
+// stubDoctorTailscaleSSH pins the informational Tailscale SSH check to a fixed
+// outcome. Every test that reaches buildDoctorResult must install it (directly
+// or through newDoctorTestEnv): the production seam performs a local-API
+// preferences read against the machine's real tailscaled, which no test may do.
+func stubDoctorTailscaleSSH(t *testing.T, enabled bool, err error) {
+	t.Helper()
+	old := doctorTailscaleSSHFn
+	t.Cleanup(func() { doctorTailscaleSSHFn = old })
+	doctorTailscaleSSHFn = func(context.Context) (bool, error) { return enabled, err }
 }
 
 const (

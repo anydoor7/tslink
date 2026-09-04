@@ -32,7 +32,6 @@ type CLIManifest struct {
 	Toolchain             ToolchainInfo                   `json:"toolchain"`
 	ExitCodes             map[string]int                  `json:"exit_codes"`
 	RegistrySchema        RegistrySchemaInfo              `json:"registry_schema"`
-	APIActions            []string                        `json:"api_actions"`
 	CredentialSources     CredentialSources               `json:"credential_sources"`
 	HighRiskOperations    []HighRiskOperation             `json:"high_risk_operations"`
 	RemoteSideEffectPlans []security.RemoteSideEffectPlan `json:"remote_side_effect_plans"`
@@ -197,7 +196,6 @@ func Manifest() CLIManifest {
 				"middleware schema is reserved and rejected with feature_unavailable",
 			},
 		},
-		APIActions: apiActionNames(),
 		CredentialSources: CredentialSources{
 			Recommended: []CredentialSource{
 				{ID: "interactive_login", Command: "tslink login", Boundary: "normal path; prompts avoid putting secrets in argv or shell history"},
@@ -308,6 +306,47 @@ func commandJSONResultFields(commandPath string) map[string]JSONResultFieldInfo 
 			Description: "Slim list runtime state: exact, pending, or failed.",
 			Values:      listStateValues(),
 		}
+		fields["devices"] = JSONResultFieldInfo{
+			Type:        "array",
+			Description: "--tailnet only: every TSLink-tagged device in the shared tailnet, sorted by hostname. Read-only; node identity values are never emitted.",
+		}
+		fields["devices[].locally_registered"] = JSONResultFieldInfo{
+			Type:        "boolean",
+			Description: "--tailnet only: true when this machine's registry.json holds a service whose name equals the device hostname exactly.",
+		}
+		fields["devices[].origin"] = JSONResultFieldInfo{
+			Type:        "string",
+			Description: "--tailnet only: which side of the machine boundary the hostname came from.",
+			Values:      listTailnetOriginValues(),
+		}
+		fields["devices[].local_service"] = JSONResultFieldInfo{
+			Type:        "string",
+			Description: "--tailnet only: the locally registered service this hostname belongs to, for both an exact match and a <service>-N tsnet collision variant; omitted when this machine's registry knows nothing about it.",
+		}
+		fields["devices[].tags"] = JSONResultFieldInfo{
+			Type:        "array",
+			Description: "--tailnet only: the device's tailnet ACL tags, at least one of which matched the TSLink tag filter.",
+		}
+		fields["devices[].last_seen_at"] = JSONResultFieldInfo{
+			Type:        "string",
+			Description: "--tailnet only: RFC3339 last-seen time reported by the Tailscale API; omitted while connected_to_control is true, because the API then reports no last-seen value.",
+		}
+		fields["devices[].created_at"] = JSONResultFieldInfo{
+			Type:        "string",
+			Description: "--tailnet only: RFC3339 node creation time reported by the Tailscale API; omitted when the API reports none.",
+		}
+		fields["registered_count"] = JSONResultFieldInfo{
+			Type:        "integer",
+			Description: "--tailnet only: devices whose hostname exactly matches a service in this machine's registry.",
+		}
+		fields["unregistered_count"] = JSONResultFieldInfo{
+			Type:        "integer",
+			Description: "--tailnet only: devices this machine's registry does not name exactly; they are another machine's services or orphans.",
+		}
+		fields["cleanup_authority"] = JSONResultFieldInfo{
+			Type:        "string",
+			Description: "--tailnet only: constant statement that device deletion is authorized solely by an exact NodeID recorded in this machine's local node-ownership.json, so unregistered rows cannot be cleaned up from here.",
+		}
 		return fields
 	case "tslink login":
 		return map[string]JSONResultFieldInfo{
@@ -328,6 +367,18 @@ func commandJSONResultFields(commandPath string) map[string]JSONResultFieldInfo 
 		return map[string]JSONResultFieldInfo{
 			"kind":                {Type: "string", Description: "Selected credential slot for a selective logout; omitted for the full logout.", Values: []string{credentials.SlotAPIKey, credentials.SlotClientSecret}},
 			"deleted_credentials": {Type: "array", Description: "Credential slots removed by this invocation; empty when nothing was stored."},
+		}
+	case "tslink doctor":
+		return map[string]JSONResultFieldInfo{
+			"tailscale_ssh.state": {
+				Type:        "string",
+				Description: "Tailscale SSH enablement for this node, read from the local Tailscale client. Informational: it never changes status, health_status, or health_exit_code.",
+				Values:      doctorTailscaleSSHStateValues(),
+			},
+			"tailscale_ssh.acl_rule_required": {
+				Type:        "boolean",
+				Description: "Constant true: enabling Tailscale SSH on the node is not sufficient by itself; the tailnet ACL also needs an ssh rule admitting the caller, which no local check can observe.",
+			},
 		}
 	case "tslink status":
 		fields := agentServiceRuntimeJSONResultFields()
@@ -596,6 +647,14 @@ func listStateValues() []string {
 	return []string{inspect.EndpointStateExact, listStatePending, tsruntime.ServiceRuntimeFailed}
 }
 
+func listTailnetOriginValues() []string {
+	return []string{listOriginLocalRegistry, listOriginLocalNameVariant, listOriginUnregistered}
+}
+
+func doctorTailscaleSSHStateValues() []string {
+	return []string{doctorTailscaleSSHEnabled, doctorTailscaleSSHDisabled, doctorTailscaleSSHUnknown}
+}
+
 func statusRuntimeStateValues() []string {
 	return []string{statusEndpointStateUnknown, tsruntime.ServiceRuntimeRunning, tsruntime.ServiceRuntimeFailed}
 }
@@ -802,9 +861,13 @@ func flagRelationships(commandPath, name string) (oneOf, requires, conflicts []s
 	if commandPath == "tslink list" {
 		switch name {
 		case "fields":
-			conflicts = []string{"--verbose"}
+			conflicts = []string{"--verbose", "--tailnet"}
 		case "verbose":
-			conflicts = []string{"--fields"}
+			conflicts = []string{"--fields", "--tailnet"}
+		case "name", "type":
+			conflicts = []string{"--tailnet"}
+		case "tailnet":
+			conflicts = []string{"--name", "--type", "--fields", "--verbose"}
 		}
 	}
 	if commandPath == "tslink login" {

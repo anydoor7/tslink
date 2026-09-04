@@ -397,113 +397,19 @@ func registryServiceCount(t *testing.T, home string) int {
 	return len(reg.Services)
 }
 
-func TestCompiledAPIJSONLProcessStatusAndOrder(t *testing.T) {
-	successAdd := `{"action":"add","name":"web","type":"proxy","target":"http://localhost:3000"}`
-	unknown := `{"action":"unknown"}`
-
-	tests := []struct {
-		name         string
-		stdin        string
-		wantExit     int
-		wantOK       []bool
-		wantErrCodes []string
-		wantRegCount int
-	}{
-		{"empty input succeeds silently", "", 0, nil, nil, 0},
-		{"blank lines are ignored", "\n  \n\t\n", 0, nil, nil, 0},
-		{"one success", `{"action":"list"}` + "\n", 0, []bool{true}, []string{""}, 0},
-		{"one failure", unknown + "\n", output.ExitUsage, []bool{false}, []string{"usage_error"}, 0},
-		{"only failures", "{not-json}\n" + unknown + "\n", output.ExitUsage, []bool{false, false}, []string{"usage_error", "usage_error"}, 0},
-		{"mixed success then failure", successAdd + "\n" + unknown + "\n", output.ExitUsage, []bool{true, false}, []string{"", "usage_error"}, 1},
-		{"mixed failure then success", unknown + "\n" + successAdd + "\n", output.ExitUsage, []bool{false, true}, []string{"usage_error", ""}, 1},
-		{"unknown field", `{"action":"status","unknown":true}` + "\n", output.ExitUsage, []bool{false}, []string{"usage_error"}, 0},
-		{"missing target", `{"action":"add","name":"web","type":"proxy"}` + "\n", output.ExitUsage, []bool{false}, []string{"usage_error"}, 0},
-		{"invalid type", `{"action":"add","name":"web","type":"bogus","target":"http://localhost:3000"}` + "\n", output.ExitUsage, []bool{false}, []string{"usage_error"}, 0},
-		{"truncated final input", `{"action":"list"`, output.ExitUsage, []bool{false}, []string{"usage_error"}, 0},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			home := t.TempDir()
-			stdout, stderr, code := runCompiledTSLink(t, home, tc.stdin, "api")
-			if code != tc.wantExit {
-				t.Fatalf("exit = %d, want %d\nstdout=%s\nstderr=%s", code, tc.wantExit, stdout, stderr)
-			}
-			if stderr != "" {
-				t.Fatalf("stderr = %q, want empty", stderr)
-			}
-			results := parseCompiledJSONLines(t, stdout)
-			if len(results) != len(tc.wantOK) {
-				t.Fatalf("record count = %d, want %d\nstdout=%s", len(results), len(tc.wantOK), stdout)
-			}
-			for i, result := range results {
-				if result.OK != tc.wantOK[i] {
-					t.Fatalf("record %d ok = %v, want %v", i, result.OK, tc.wantOK[i])
-				}
-				gotCode := ""
-				if result.Error != nil {
-					gotCode = result.Error.Code
-				}
-				if gotCode != tc.wantErrCodes[i] {
-					t.Fatalf("record %d error code = %q, want %q", i, gotCode, tc.wantErrCodes[i])
-				}
-			}
-			if got := registryServiceCount(t, home); got != tc.wantRegCount {
-				t.Fatalf("registry service count = %d, want %d", got, tc.wantRegCount)
-			}
-		})
-	}
-}
-
-func TestCompiledAPIJSONLRecordSizeLimit(t *testing.T) {
-	base := `{"action":"list"}`
-	makeRecord := func(size int) string {
-		return base + strings.Repeat(" ", size-len(base))
-	}
-
-	tests := []struct {
-		name      string
-		recordLen int
-		wantExit  int
-		wantCount int
-		wantOK    bool
-	}{
-		{"limit minus one", apiMaxRecordBytes - 1, 0, 1, true},
-		{"limit", apiMaxRecordBytes, 0, 1, true},
-		{"limit plus one", apiMaxRecordBytes + 1, output.ExitUsage, 1, false},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			stdin := makeRecord(tc.recordLen) + "\n"
-			stdout, stderr, code := runCompiledTSLink(t, t.TempDir(), stdin, "api")
-			if code != tc.wantExit {
-				t.Fatalf("exit = %d, want %d", code, tc.wantExit)
-			}
-			if stderr != "" {
-				t.Fatalf("stderr = %q, want empty", stderr)
-			}
-			results := parseCompiledJSONLines(t, stdout)
-			if len(results) != tc.wantCount {
-				t.Fatalf("record count = %d, want %d", len(results), tc.wantCount)
-			}
-			if results[0].OK != tc.wantOK {
-				t.Fatalf("record ok = %v, want %v", results[0].OK, tc.wantOK)
-			}
-			if !tc.wantOK && (results[0].Error == nil || results[0].Error.Code != "usage_error") {
-				t.Fatalf("oversize error = %+v, want usage_error", results[0].Error)
-			}
-		})
-	}
-}
-
-func TestCompiledAPIRuntimePersistenceErrorEnvelope(t *testing.T) {
+// TestCompiledRuntimePersistenceErrorEnvelope covers the envelope a command
+// emits when the filesystem itself refuses the read: a directory sitting where
+// registry.json belongs is not user input, so it must surface as
+// internal_error/1 rather than a usage failure. This ran through `tslink api`
+// until the api command was removed; `tslink list` reaches the same registry
+// load through the shipped CLI.
+func TestCompiledRuntimePersistenceErrorEnvelope(t *testing.T) {
 	home := t.TempDir()
 	regPath := filepath.Join(home, ".config", "tslink", "registry.json")
 	if err := os.MkdirAll(regPath, 0o700); err != nil {
 		t.Fatalf("mkdir registry path as directory: %v", err)
 	}
-	stdout, stderr, code := runCompiledTSLink(t, home, `{"action":"list"}`+"\n", "api")
+	stdout, stderr, code := runCompiledTSLink(t, home, "", "list", "--json")
 	if code != output.ExitError {
 		t.Fatalf("exit = %d, want %d", code, output.ExitError)
 	}
@@ -516,40 +422,43 @@ func TestCompiledAPIRuntimePersistenceErrorEnvelope(t *testing.T) {
 	}
 }
 
-func TestCompiledCLIAndAPIValidationErrorsMatch(t *testing.T) {
+// TestCompiledCLIValidationErrorsUseStableCodes pins each of these five
+// rejections to its stable registry error code with a populated next[]. It was
+// a CLI-versus-api parity test; the api half is gone with the command, and the
+// CLI half is kept because no other compiled-binary test covers these five
+// codes (TestCompiledUserInputErrorsNeverBecomeInternalError covers a disjoint
+// set).
+func TestCompiledCLIValidationErrorsUseStableCodes(t *testing.T) {
 	tests := []struct {
 		name     string
 		cliArgs  []string
-		apiInput string
 		wantCode string
 	}{
-		{"missing service type", []string{"add", "web", "--json"}, `{"action":"add","name":"web"}` + "\n", registry.CodeServiceTypeAmbiguous},
-		{"invalid service name", []string{"add", "BAD_NAME", "--proxy", "localhost:3000", "--json"}, `{"action":"add","name":"BAD_NAME","type":"proxy","target":"localhost:3000"}` + "\n", registry.CodeInvalidServiceName},
-		{"invalid tag", []string{"add", "web", "--proxy", "localhost:3000", "--tags", "tag:Web", "--json"}, `{"action":"add","name":"web","type":"proxy","target":"localhost:3000","tags":["tag:Web"]}` + "\n", registry.CodeInvalidTag},
-		{"tcp allow unsupported", []string{"add", "db", "--tcp", "localhost:5432", "--allow", "alice@example.com", "--json"}, `{"action":"add","name":"db","type":"tcp","target":"localhost:5432","allow":["alice@example.com"]}` + "\n", registry.CodeAllowUnsupportedTCP},
-		{"relative path", []string{"add", "docs", "--dir", "relative", "--json"}, `{"action":"add","name":"docs","type":"file","path":"relative"}` + "\n", registry.CodePathMustBeAbsolute},
+		{"missing service type", []string{"add", "web", "--json"}, registry.CodeServiceTypeAmbiguous},
+		{"invalid service name", []string{"add", "BAD_NAME", "--proxy", "localhost:3000", "--json"}, registry.CodeInvalidServiceName},
+		{"invalid tag", []string{"add", "web", "--proxy", "localhost:3000", "--tags", "tag:Web", "--json"}, registry.CodeInvalidTag},
+		{"tcp allow unsupported", []string{"add", "db", "--tcp", "localhost:5432", "--allow", "alice@example.com", "--json"}, registry.CodeAllowUnsupportedTCP},
+		{"relative path", []string{"add", "docs", "--dir", "relative", "--json"}, registry.CodePathMustBeAbsolute},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			cliOut, cliErr, cliExit := runCompiledTSLink(t, t.TempDir(), "", tc.cliArgs...)
-			apiOut, apiErr, apiExit := runCompiledTSLink(t, t.TempDir(), tc.apiInput, "api")
-			if cliErr != "" || apiErr != "" {
-				t.Fatalf("stderr cli=%q api=%q", cliErr, apiErr)
+			if cliErr != "" {
+				t.Fatalf("stderr = %q, want empty", cliErr)
 			}
-			if cliExit != output.ExitUsage || apiExit != output.ExitUsage || cliExit != apiExit {
-				t.Fatalf("exit cli=%d api=%d, want %d", cliExit, apiExit, output.ExitUsage)
+			if cliExit != output.ExitUsage {
+				t.Fatalf("exit = %d, want %d\nstdout=%s", cliExit, output.ExitUsage, cliOut)
 			}
 			cliResults := parseCompiledJSONLines(t, cliOut)
-			apiResults := parseCompiledJSONLines(t, apiOut)
-			if len(cliResults) != 1 || len(apiResults) != 1 || cliResults[0].Error == nil || apiResults[0].Error == nil {
-				t.Fatalf("results cli=%+v api=%+v", cliResults, apiResults)
+			if len(cliResults) != 1 || cliResults[0].Error == nil {
+				t.Fatalf("results = %+v, want one failure envelope", cliResults)
 			}
-			if cliResults[0].Error.Code != tc.wantCode || apiResults[0].Error.Code != tc.wantCode {
-				t.Fatalf("error.code cli=%q api=%q, want %q", cliResults[0].Error.Code, apiResults[0].Error.Code, tc.wantCode)
+			if cliResults[0].Error.Code != tc.wantCode {
+				t.Fatalf("error.code = %q, want %q", cliResults[0].Error.Code, tc.wantCode)
 			}
-			if len(cliResults[0].Error.Next) == 0 || len(apiResults[0].Error.Next) == 0 {
-				t.Fatalf("next missing cli=%+v api=%+v", cliResults[0].Error, apiResults[0].Error)
+			if len(cliResults[0].Error.Next) == 0 {
+				t.Fatalf("next missing: %+v", cliResults[0].Error)
 			}
 		})
 	}
@@ -570,30 +479,32 @@ func compiledResultDataJSON(t *testing.T, stdout string) []byte {
 	return append([]byte(nil), envelope.Data...)
 }
 
-func TestCompiledCLIAndAPIStatusDataAreByteIsomorphic(t *testing.T) {
+// TestCompiledStatusJSONCarriesDataForASeededRegistry keeps the one thing the
+// deleted CLI-versus-api byte-isomorphism test uniquely covered: `status` run
+// through the shipped binary against a registry that actually holds a service
+// returns a success envelope with a non-empty data object. Every other
+// compiled-binary status invocation in this package runs against an empty
+// config dir or forces the flag-validation error path.
+func TestCompiledStatusJSONCarriesDataForASeededRegistry(t *testing.T) {
 	configDir := t.TempDir()
 	regPath := filepath.Join(configDir, "registry.json")
 	if _, err := registry.Add(regPath, registry.Service{Name: "web", Type: registry.TypeProxy, Target: "http://localhost:3000"}); err != nil {
 		t.Fatalf("registry.Add: %v", err)
 	}
 	for _, tc := range []struct {
-		name     string
-		cliArgs  []string
-		apiInput string
+		name    string
+		cliArgs []string
 	}{
-		{"status", []string{"status", "--json"}, `{"action":"status"}` + "\n"},
-		{"status urls", []string{"status", "--urls", "--json"}, `{"action":"status","urls":true}` + "\n"},
+		{"status", []string{"status", "--json"}},
+		{"status urls", []string{"status", "--urls", "--json"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cliOut, cliErr, cliExit := runCompiledTSLinkWithConfigDir(t, configDir, "", tc.cliArgs...)
-			apiOut, apiErr, apiExit := runCompiledTSLinkWithConfigDir(t, configDir, tc.apiInput, "api")
-			if cliExit != 0 || apiExit != 0 || cliErr != "" || apiErr != "" {
-				t.Fatalf("cli exit=%d err=%q; api exit=%d err=%q", cliExit, cliErr, apiExit, apiErr)
+			if cliExit != 0 || cliErr != "" {
+				t.Fatalf("cli exit=%d err=%q stdout=%s", cliExit, cliErr, cliOut)
 			}
-			cliData := compiledResultDataJSON(t, cliOut)
-			apiData := compiledResultDataJSON(t, apiOut)
-			if !bytes.Equal(cliData, apiData) {
-				t.Fatalf("data mismatch\ncli=%s\napi=%s", cliData, apiData)
+			if data := compiledResultDataJSON(t, cliOut); !bytes.Contains(data, []byte(`"web"`)) {
+				t.Fatalf("status data = %s, want the seeded service to appear", data)
 			}
 		})
 	}
