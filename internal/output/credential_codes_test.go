@@ -46,11 +46,15 @@ func TestCredentialAuthCodesMapToAuthExitAndCarryNext(t *testing.T) {
 	}
 }
 
-func TestDefaultAuthNextCarriesKeysPageBootstrap(t *testing.T) {
+func TestDefaultAuthNextIsSingleLoginCommand(t *testing.T) {
+	// A generic exit-3 auth error covers the Tier 1 browser-login case, so its
+	// default guidance is only "tslink login". The three-step tskey-api-*
+	// bootstrap is reserved for the specific credential codes (invite/api-token
+	// unauthorized, status/doctor expiry branches), not this generic default.
 	err := ErrAuth("not authenticated")
 	next := NextCommandsForError(err)
-	if len(next) < 2 || next[0] != "tslink login" || !strings.Contains(strings.Join(next, "\n"), credentials.KeysPageURL) {
-		t.Fatalf("default auth next = %v, want tslink login followed by Keys page bootstrap", next)
+	if !reflect.DeepEqual(next, []string{"tslink login"}) {
+		t.Fatalf("default auth next = %v, want exactly [tslink login]", next)
 	}
 	envelope := NewFailureForError("status", err)
 	if !reflect.DeepEqual(envelope.Error.Next, next) {

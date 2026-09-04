@@ -208,7 +208,7 @@ func TestCompiledRemoveStrictMissingReturnsNotFound(t *testing.T) {
 	}
 
 	humanOut, humanErr, humanCode := runCompiledTSLink(t, t.TempDir(), "", "remove", "missing", "--strict")
-	if humanCode != output.ExitNotFound || humanOut != "" || humanErr != "Error: service not found: missing\n" {
+	if humanCode != output.ExitNotFound || humanOut != "" || humanErr != "Error: service not found: missing\nNext: tslink list --json\n" {
 		t.Fatalf("human strict remove exit=%d stdout=%q stderr=%q", humanCode, humanOut, humanErr)
 	}
 }

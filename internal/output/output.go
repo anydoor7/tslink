@@ -8,7 +8,6 @@ import (
 	"os"
 	"strings"
 
-	"github.com/monody0007/tslink/internal/credentials"
 	"github.com/monody0007/tslink/internal/registry"
 )
 
@@ -185,7 +184,7 @@ func defaultNextForExitCode(code int) []string {
 	case ExitUsage:
 		return []string{"tslink --help"}
 	case ExitAuth:
-		return append([]string{"tslink login"}, credentials.NextAPIKeyBootstrap()...)
+		return []string{"tslink login"}
 	case ExitConflict:
 		return []string{"tslink status --json"}
 	case ExitNotFound:

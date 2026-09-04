@@ -65,6 +65,15 @@
         "id": "interactive_login",
         "command": "tslink login",
         "boundary": "normal path; prompts avoid putting secrets in argv or shell history"
+      },
+      {
+        "id": "keys_page_bootstrap",
+        "command": "tslink login --open-keys-page",
+        "flags": [
+          "--open-keys-page",
+          "--open-oauth-page"
+        ],
+        "boundary": "standalone helper that opens https://login.tailscale.com/admin/settings/keys (or the OAuth page) only for an interactive terminal outside CI; otherwise prints the URL and the three bootstrap steps and exits 0 without storing anything"
       }
     ],
     "automation": [
@@ -72,9 +81,11 @@
         "id": "api_key_stdin",
         "command": "tslink login --api-key-stdin",
         "flags": [
-          "--api-key-stdin"
+          "--api-key-stdin",
+          "--expires-in",
+          "--expires-at"
         ],
-        "boundary": "read API token from stdin; keep secret out of argv"
+        "boundary": "read API token from stdin; keep secret out of argv. The api-key slot expires within 90 days: pass --expires-in or --expires-at to record the real expiry, otherwise expires_at_source=assumed_max; status --json reports credential_expiry_state and renewing is another login to the same slot"
       },
       {
         "id": "client_secret_stdin",
@@ -82,7 +93,7 @@
         "flags": [
           "--client-secret-stdin"
         ],
-        "boundary": "read OAuth client secret from stdin; keep secret out of argv"
+        "boundary": "read OAuth client secret from stdin; keep secret out of argv; the client-secret slot does not expire"
       },
       {
         "id": "environment",
@@ -115,6 +126,18 @@
       {
         "id": "restricted_file_fallback",
         "boundary": "headless fallback uses user-only restricted files when keychain storage is unavailable"
+      },
+      {
+        "id": "dual_slot_coexistence",
+        "command": "tslink login --retire-other",
+        "flags": [
+          "--retire-other"
+        ],
+        "boundary": "the api-key (invites, expires) and client-secret (durable daemon auth) slots coexist; login fills one slot and keeps the other unless --retire-other is passed; logout --kind removes one slot"
+      },
+      {
+        "id": "value_free_metadata",
+        "boundary": "credential-meta.json (0600) stores only sha256 fingerprints, stored_at, expires_at, expires_at_source, and last verification per slot; never the credential value"
       }
     ]
   },
@@ -766,6 +789,13 @@
           "default": "false",
           "scope": "local",
           "usage": "Probe non-loopback service targets"
+        },
+        {
+          "name": "probe-remote",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Verify each stored credential against the Tailscale API with one device-list read and record last_verified in credential-meta.json"
         }
       ]
     },
@@ -1213,6 +1243,28 @@
           "usage": "Read OAuth client secret from stdin"
         },
         {
+          "name": "expires-at",
+          "type": "string",
+          "scope": "local",
+          "usage": "Record the API access token expiry as an RFC3339 timestamp; api-key only and mutually exclusive with --expires-in",
+          "conflicts": [
+            "--expires-in",
+            "--client-secret",
+            "--client-secret-stdin"
+          ]
+        },
+        {
+          "name": "expires-in",
+          "type": "string",
+          "scope": "local",
+          "usage": "Record the API access token expiry as a duration from now (90d, 30d, or a Go duration); api-key only. Without --expires-in/--expires-at TSLink assumes the 90-day maximum and records expires_at_source=assumed_max",
+          "conflicts": [
+            "--expires-at",
+            "--client-secret",
+            "--client-secret-stdin"
+          ]
+        },
+        {
           "name": "json",
           "type": "bool",
           "default": "false",
@@ -1225,8 +1277,109 @@
           "default": "false",
           "scope": "local",
           "usage": "Opt in to remote Tailscale ACL tag-owner mutation using a machine-readable side-effect plan"
+        },
+        {
+          "name": "open-keys-page",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Standalone helper: open https://login.tailscale.com/admin/settings/keys in a browser only when stdin is an interactive terminal and CI is unset; otherwise print the URL and bootstrap steps. Exits 0 without storing a credential",
+          "conflicts": [
+            "--open-oauth-page",
+            "--api-key",
+            "--api-key-stdin",
+            "--client-secret",
+            "--client-secret-stdin"
+          ]
+        },
+        {
+          "name": "open-oauth-page",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Standalone helper: open https://login.tailscale.com/admin/settings/oauth in a browser only when stdin is an interactive terminal and CI is unset; otherwise print the URL and bootstrap steps. Exits 0 without storing a credential",
+          "conflicts": [
+            "--open-keys-page",
+            "--api-key",
+            "--api-key-stdin",
+            "--client-secret",
+            "--client-secret-stdin"
+          ]
+        },
+        {
+          "name": "retire-other",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Delete the other credential slot after this one is verified and committed; by default the api-key and client-secret slots coexist"
         }
-      ]
+      ],
+      "json_result_fields": {
+        "credential_kind": {
+          "type": "string",
+          "description": "Kind of the committed credential slot.",
+          "values": [
+            "api_access_token",
+            "oauth_client_secret"
+          ]
+        },
+        "expires_at": {
+          "type": "string",
+          "description": "RFC3339 expiry recorded for the api-key slot; omitted for OAuth client secrets, which do not expire."
+        },
+        "expires_at_source": {
+          "type": "string",
+          "description": "Provenance of expires_at: user when given with --expires-in/--expires-at, assumed_max when TSLink assumed the 90-day maximum.",
+          "values": [
+            "user",
+            "assumed_max"
+          ]
+        },
+        "fingerprint": {
+          "type": "string",
+          "description": "First eight hex characters of sha256(credential); identifies the credential without revealing it."
+        },
+        "next": {
+          "type": "array",
+          "description": "Bootstrap helper only: the three-step credential bootstrap sequence."
+        },
+        "opened": {
+          "type": "boolean",
+          "description": "Bootstrap helper only: true when a browser was opened; always false under --json."
+        },
+        "page": {
+          "type": "string",
+          "description": "Bootstrap helper only (--open-keys-page/--open-oauth-page): which admin page was presented.",
+          "values": [
+            "keys",
+            "oauth"
+          ]
+        },
+        "previous_fingerprint": {
+          "type": "string",
+          "description": "Fingerprint of the replaced credential; present only when rotated."
+        },
+        "retired_credential": {
+          "type": "string",
+          "description": "Other slot deleted as part of this commit; present only with --retire-other and a populated other slot.",
+          "values": [
+            "api-key",
+            "client-secret"
+          ]
+        },
+        "rotated": {
+          "type": "boolean",
+          "description": "True when the same slot previously held a different credential."
+        },
+        "stored_at": {
+          "type": "string",
+          "description": "RFC3339 time the credential was committed."
+        },
+        "url": {
+          "type": "string",
+          "description": "Bootstrap helper only: the admin page URL to open."
+        }
+      }
     },
     {
       "path": "tslink logout",
@@ -1238,8 +1391,28 @@
           "default": "false",
           "scope": "inherited",
           "usage": "Output as JSON"
+        },
+        {
+          "name": "kind",
+          "type": "string",
+          "scope": "local",
+          "usage": "Remove only one credential slot (api-key or client-secret) and its metadata; node state and the other slot are kept"
         }
-      ]
+      ],
+      "json_result_fields": {
+        "deleted_credentials": {
+          "type": "array",
+          "description": "Credential slots removed by this invocation; empty when nothing was stored."
+        },
+        "kind": {
+          "type": "string",
+          "description": "Selected credential slot for a selective logout; omitted for the full logout.",
+          "values": [
+            "api-key",
+            "client-secret"
+          ]
+        }
+      }
     },
     {
       "path": "tslink logs",
@@ -1459,6 +1632,29 @@
         }
       ],
       "json_result_fields": {
+        "credential_expiry_state": {
+          "type": "string",
+          "description": "Worst per-slot credential expiry state; expiring means the api-key slot has 14 days or fewer left, and next then carries the key-bootstrap steps.",
+          "values": [
+            "none",
+            "ok",
+            "expiring",
+            "expired",
+            "unknown"
+          ]
+        },
+        "credentials.api_key": {
+          "type": "object",
+          "description": "Value-free api-key slot report: present, fingerprint, stored_at, expires_at, expires_at_source, days_left, expiry_state, last_verified_at, last_verified_result."
+        },
+        "credentials.client_secret": {
+          "type": "object",
+          "description": "Value-free client-secret slot report with the same fields as credentials.api_key; expires_at is omitted because OAuth client secrets do not expire."
+        },
+        "credentials.metadata_error": {
+          "type": "string",
+          "description": "Sanitized reason credential-meta.json could not be trusted; present slots then report expiry_state unknown."
+        },
         "daemon_state": {
           "type": "string",
           "description": "Additive daemon liveness state: running, absent, or unknown; daemon_running retains its existing boolean semantics.",
@@ -1935,6 +2131,14 @@
       "exit_code": 2,
       "description": "HTTP allow lists do not apply to raw TCP"
     },
+    "api_forbidden": {
+      "exit_code": 3,
+      "description": "Tailscale refused the API credential (HTTP 403): its user role or OAuth scopes do not permit the operation"
+    },
+    "api_token_unauthorized": {
+      "exit_code": 3,
+      "description": "Tailscale rejected the stored API credential as unauthenticated (HTTP 401) during ACL, device, auth-key derivation, or login verification; next carries the key-bootstrap steps"
+    },
     "auth_error": {
       "exit_code": 3,
       "description": "authentication required or rejected"
@@ -1985,11 +2189,15 @@
     },
     "invite_api_forbidden": {
       "exit_code": 3,
-      "description": "Tailscale rejected the user-owned token or its user permissions with HTTP 401 or 403"
+      "description": "Tailscale rejected the user-owned token's user permissions with HTTP 403; HTTP 401 (expired, revoked, or invalid token) is reported as invite_api_unauthorized"
     },
     "invite_api_key_required": {
       "exit_code": 3,
       "description": "a user-owned tskey-api- token is required and OAuth is not eligible"
+    },
+    "invite_api_unauthorized": {
+      "exit_code": 3,
+      "description": "Tailscale rejected the user-owned tskey-api- token as unauthenticated (HTTP 401): expired, revoked, or invalid; next carries the key-bootstrap steps"
     },
     "invite_device_ambiguous": {
       "exit_code": 4,
@@ -2042,6 +2250,10 @@
     "launchctl_domain_unavailable": {
       "exit_code": 1,
       "description": "a launchd domain could not be checked; failure data names the domain, explicit --force command, and residual risk"
+    },
+    "login_verify_failed": {
+      "exit_code": 1,
+      "description": "login could not verify the candidate credential against Tailscale for a reason other than HTTP 401/403; the previous credential was kept"
     },
     "not_found": {
       "exit_code": 5,

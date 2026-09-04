@@ -34,7 +34,7 @@ func NextOAuthBootstrap() []string {
 // valid but its user role or OAuth scopes do not permit the operation.
 func NextAPIForbidden() []string {
 	return []string{
-		"Verify the tskey-api- token belongs to a tailnet owner/admin allowed to perform this operation, or that the OAuth client grants the required scope",
+		"Verify the tskey-api-* token belongs to a tailnet user whose role (owner or admin) permits this operation, or that the OAuth client grants the required scope",
 		"tslink doctor --probe-remote --json",
 	}
 }
