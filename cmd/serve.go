@@ -205,6 +205,9 @@ Examples:
 				controlURL = globalCfg.ControlURL
 			}
 			mcpSettings := resolveMCPControlPlaneSettings(mcpFlag, globalCfg)
+			if err := validateMCPNodeName(mcpSettings.NodeName); err != nil {
+				return err
+			}
 			if err := registry.ValidateControlURL(controlURL); err != nil {
 				return output.ErrUsage(fmt.Sprintf("invalid control-url: %v", err))
 			}
@@ -671,10 +674,15 @@ func runForegroundWithOptions(pidPath, authKey, controlURL string, options foreg
 			if !options.Credentialed {
 				return "", nil
 			}
+			// Description uses %s, never %q: the Tailscale create-key API
+			// rejects a description containing double quotes ("description had
+			// invalid characters"). svc.Name is a registry-validated DNS label
+			// ([a-z0-9-]) or the validated MCP node name, so the result stays
+			// within letters, digits, spaces and hyphens.
 			return serveGetAuthKeyFn(ctx, credentials.AuthKeyOptions{
 				Tags:          svc.Tags,
 				Ephemeral:     svc.Ephemeral,
-				Description:   fmt.Sprintf("TSLink service %q startup auth key", svc.Name),
+				Description:   fmt.Sprintf("TSLink service %s startup auth key", svc.Name),
 				ClientFactory: tailapi.NewTailscaleClient,
 			})
 		})

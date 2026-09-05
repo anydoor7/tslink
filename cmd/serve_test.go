@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -2148,5 +2149,132 @@ func TestRegistryHasActiveFunnelAtUsesCurrentWallClock(t *testing.T) {
 	}
 	if active, err := registryHasActiveFunnelAt(path, deadline); err != nil || active {
 		t.Fatalf("at deadline active=%t err=%v", active, err)
+	}
+}
+
+// authKeyDescriptionSafeCharset is the character set a real Tailscale
+// create-key round trip accepted for the auth-key description: letters,
+// digits, spaces and hyphens. The double quote that fmt's %q verb emits is
+// outside it and made the API answer "description had invalid characters".
+var authKeyDescriptionSafeCharset = regexp.MustCompile(`^[A-Za-z0-9 -]+$`)
+
+// TestServeAuthKeyDescriptionStaysWithinAPISafeCharset asserts on the
+// Description the serve wiring's real auth-key provider closure builds, captured
+// at the serveGetAuthKeyFn seam that credentials.GetAuthKey would otherwise
+// receive. It deliberately never rebuilds the string in the test: a hand-written
+// literal is exactly how the original bug stayed invisible.
+func TestServeAuthKeyDescriptionStaysWithinAPISafeCharset(t *testing.T) {
+	// The MCP control-plane node bypasses `tslink add`, so pin that its name
+	// lives inside the registry grammar the charset argument relies on.
+	if err := registry.ValidateName(server.DefaultMCPNodeName); err != nil {
+		t.Fatalf("DefaultMCPNodeName %q fails registry.ValidateName: %v", server.DefaultMCPNodeName, err)
+	}
+	services := []registry.Service{
+		{Name: "svc1", Type: registry.TypeProxy, Target: "http://localhost:3000", Tags: []string{"tag:web"}},
+		{Name: "my-svc", Type: registry.TypeProxy, Target: "http://localhost:3000", Tags: []string{"tag:web"}, Ephemeral: true},
+		// Same shape internal/server/mcp_controlplane.go hands the provider for
+		// the control-plane node (name, proxy type, default tag, ephemeral).
+		{Name: server.DefaultMCPNodeName, Type: registry.TypeProxy, Target: "http://localhost:3000", Tags: []string{"tag:tsmain"}, Ephemeral: true},
+	}
+	for _, svc := range services {
+		t.Run(svc.Name, func(t *testing.T) {
+			dir := t.TempDir()
+			mockServeDefaults(t, dir)
+			data, err := json.Marshal(&registry.Registry{Services: []registry.Service{svc}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "registry.json"), data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			var captured []credentials.AuthKeyOptions
+			serveGetAuthKeyFn = func(_ context.Context, opts credentials.AuthKeyOptions) (string, error) {
+				captured = append(captured, opts)
+				return "fake-key", nil
+			}
+			serveNewServerFn = func(string, string) (serverRunner, error) {
+				return &mockServerWithAuthProvider{service: svc}, nil
+			}
+
+			cmd := findServeCmd(t)
+			if err := cmd.RunE(cmd, nil); err != nil {
+				t.Fatalf("RunE() error = %v", err)
+			}
+			if len(captured) != 1 {
+				t.Fatalf("auth key derivations = %d, want exactly 1", len(captured))
+			}
+			desc := captured[0].Description
+			if !strings.Contains(desc, svc.Name) {
+				t.Fatalf("description %q does not name the service %q", desc, svc.Name)
+			}
+			if !authKeyDescriptionSafeCharset.MatchString(desc) {
+				t.Fatalf("auth key description %q contains characters outside [A-Za-z0-9 -]; the Tailscale create-key API rejects such a description with \"description had invalid characters\"", desc)
+			}
+		})
+	}
+}
+
+func TestValidateMCPNodeName(t *testing.T) {
+	cases := []struct {
+		name    string
+		value   string
+		wantErr bool
+	}{
+		{"empty means default", "", false},
+		{"whitespace only means default", "   ", false},
+		{"lowercase hyphenated", "ops-mcp", false},
+		{"surrounding whitespace is trimmed like the daemon does", " ops-mcp ", false},
+		{"double quote", `ops"mcp`, true},
+		{"inner space", "ops mcp", true},
+		{"uppercase", "OpsMCP", true},
+		{"leading hyphen", "-ops", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateMCPNodeName(tc.value)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("validateMCPNodeName(%q) = nil, want error", tc.value)
+				}
+				if !strings.Contains(err.Error(), "invalid mcp node_name") {
+					t.Fatalf("validateMCPNodeName(%q) error = %q, want it to name mcp node_name", tc.value, err)
+				}
+				var coded *output.CodeError
+				if !errors.As(err, &coded) || coded.Code != output.ExitUsage {
+					t.Fatalf("validateMCPNodeName(%q) error = %#v, want usage exit code", tc.value, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("validateMCPNodeName(%q) error = %v, want nil", tc.value, err)
+			}
+		})
+	}
+}
+
+// TestServeCmdRejectsInvalidMCPNodeNameBeforeStart proves a hand-edited mcp
+// node_name is refused in the command layer, before any server is constructed
+// and therefore before the name could reach an auth-key description or a tsnet
+// hostname.
+func TestServeCmdRejectsInvalidMCPNodeNameBeforeStart(t *testing.T) {
+	dir := t.TempDir()
+	mockServeDefaults(t, dir)
+	serveLoadGlobalFn = func() (config.GlobalConfig, error) {
+		return config.GlobalConfig{MCP: &config.MCPConfig{Enabled: true, Allow: []string{"alice@example.com"}, NodeName: `ops"mcp`}}, nil
+	}
+	newServerCalls := 0
+	serveNewServerFn = func(string, string) (serverRunner, error) {
+		newServerCalls++
+		return nil, errors.New("server must not be constructed for an invalid mcp node_name")
+	}
+
+	cmd := findServeCmd(t)
+	err := cmd.RunE(cmd, nil)
+	if err == nil || !strings.Contains(err.Error(), "invalid mcp node_name") {
+		t.Fatalf("RunE() error = %v, want an invalid mcp node_name usage error", err)
+	}
+	if newServerCalls != 0 {
+		t.Fatalf("serveNewServerFn calls = %d, want 0", newServerCalls)
 	}
 }

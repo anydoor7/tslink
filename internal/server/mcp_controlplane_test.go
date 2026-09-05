@@ -5,13 +5,19 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
+	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/registry"
+	runtimesnapshot "github.com/monody0007/tslink/internal/runtime"
 	"github.com/monody0007/tslink/internal/testenv"
 	"tailscale.com/client/tailscale/apitype"
+	"tailscale.com/ipn"
+	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/tailcfg"
 )
 
@@ -650,5 +656,196 @@ func TestMCPControlPlaneHonoursConfiguredNodeName(t *testing.T) {
 	blank := &MCPControlPlane{NodeName: "   ", AllowedUsers: []string{"alice@example.com"}, Handler: &mcpProbeHandler{}}
 	if blank.nodeName() != DefaultMCPNodeName {
 		t.Fatalf("blank node name = %q, want %q", blank.nodeName(), DefaultMCPNodeName)
+	}
+}
+
+// TestMCPControlPlaneNodeIsEphemeralOnBothConsumers pins the ephemeral
+// contract of the control-plane node on the credentialed path. The node never
+// enters registry.json or the node-ownership ledger, so `tslink cleanup` can
+// never prove ownership of it; the only thing standing between "disable --mcp"
+// and a device stranded in the admin console is the Ephemeral flag reaching
+// both consumers: the auth key derivation (server-side capability) and the
+// tsnet.Server (client pref). The test captures the registry.Service at both
+// seams. The zero-credential counterpart is
+// TestMCPControlPlaneInteractivePathIsPersistent.
+func TestMCPControlPlaneNodeIsEphemeralOnBothConsumers(t *testing.T) {
+	fake := &fakeTSNetServer{
+		localClient: fakeWhoIsClient(t, &apitype.WhoIsResponse{
+			UserProfile: &tailcfg.UserProfile{LoginName: "alice@example.com"},
+			Node:        &tailcfg.Node{},
+		}, nil),
+	}
+	testenv.SetHome(t, t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+	registryPath := writeRegistry(t, nil)
+
+	var authKeySvc, tsnetSvc registry.Service
+	authKeyCalls, tsnetCalls, ledgerWrites := 0, 0, 0
+
+	oldNew := newTSNetServerFn
+	newTSNetServerFn = func(svc registry.Service, _, authKey, _ string) tsnetServer {
+		tsnetCalls++
+		tsnetSvc = svc
+		if authKey != "synthetic-mcp-auth" {
+			t.Errorf("tsnet auth key = %q, want the provider's value", authKey)
+		}
+		return fake
+	}
+	t.Cleanup(func() { newTSNetServerFn = oldNew })
+	oldRecord := recordOwnedNodeFn
+	recordOwnedNodeFn = func(string, string, string, time.Time) error {
+		ledgerWrites++
+		return nil
+	}
+	t.Cleanup(func() { recordOwnedNodeFn = oldRecord })
+
+	s, err := New("unused-static-key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	s.SetAuthKeyProvider(func(_ context.Context, svc registry.Service) (string, error) {
+		authKeyCalls++
+		authKeySvc = svc
+		return "synthetic-mcp-auth", nil
+	})
+	s.SetMCPControlPlane(&MCPControlPlane{
+		Tags:         []string{"tag:ops"},
+		AllowedUsers: []string{"alice@example.com"},
+		Handler:      &mcpProbeHandler{},
+	})
+	if err := s.startMCPControlPlane(context.Background()); err != nil {
+		t.Fatalf("startMCPControlPlane() error = %v", err)
+	}
+	t.Cleanup(s.closeMCPControlPlane)
+
+	// Consumer 1: the auth-key provider. cmd/serve.go forwards svc.Ephemeral
+	// into credentials.AuthKeyOptions, so a false here means a persistent
+	// device registration regardless of what tsnet asks for.
+	if authKeyCalls != 1 {
+		t.Fatalf("auth key provider calls = %d, want 1", authKeyCalls)
+	}
+	if !authKeySvc.Ephemeral {
+		t.Fatalf("auth key provider received Ephemeral=false for the control-plane node; the derived auth key would create a persistent device that tslink cleanup cannot delete")
+	}
+	if authKeySvc.Name != DefaultMCPNodeName || !containsString(authKeySvc.Tags, "tag:ops") {
+		t.Fatalf("auth key provider received %+v, want name %q with tag:ops", authKeySvc, DefaultMCPNodeName)
+	}
+
+	// Consumer 2: the tsnet.Server constructor copies svc.Ephemeral into
+	// tsnet.Server.Ephemeral, which selects LoginEphemeral on the client.
+	if tsnetCalls != 1 {
+		t.Fatalf("tsnet constructor calls = %d, want 1", tsnetCalls)
+	}
+	if !tsnetSvc.Ephemeral {
+		t.Fatalf("tsnet constructor received Ephemeral=false for the control-plane node; tsnet would log in as a persistent node")
+	}
+	if tsnetSvc.Name != DefaultMCPNodeName || !containsString(tsnetSvc.Tags, "tag:ops") {
+		t.Fatalf("tsnet constructor received %+v, want name %q with tag:ops", tsnetSvc, DefaultMCPNodeName)
+	}
+
+	// The node must stay out of both durable stores. Registering it "for
+	// completeness" would either make cleanup delete a node without ownership
+	// proof or, via lifecycle reconciliation, disable deletion globally for a
+	// ledger entry with no registry service.
+	reg, err := registry.Load(registryPath)
+	if err != nil {
+		t.Fatalf("registry.Load() error = %v", err)
+	}
+	if len(reg.Services) != 0 {
+		t.Fatalf("registry.json services = %+v, want none: the control-plane node must not be registered", reg.Services)
+	}
+	if ledgerWrites != 0 {
+		t.Fatalf("ownership ledger writes = %d, want 0 for the control-plane node", ledgerWrites)
+	}
+	ledgerPath, err := config.NodeOwnershipPath()
+	if err != nil {
+		t.Fatalf("NodeOwnershipPath() error = %v", err)
+	}
+	if _, err := os.Stat(ledgerPath); !os.IsNotExist(err) {
+		t.Fatalf("os.Stat(%q) err = %v, want not-exist: no ownership ledger may be created for the control-plane node", ledgerPath, err)
+	}
+	ledger, err := runtimesnapshot.LoadOwnership(ledgerPath)
+	if err != nil || len(ledger.Nodes) != 0 {
+		t.Fatalf("ownership ledger = %+v, err = %v, want an empty ledger", ledger, err)
+	}
+	if s.mcpNode == nil {
+		t.Fatal("control-plane node was not committed")
+	}
+	if _, ok := s.nodes[DefaultMCPNodeName]; ok {
+		t.Fatal("control-plane node was registered as a service node")
+	}
+}
+
+// TestMCPControlPlaneInteractivePathIsPersistent pins the zero-credential
+// contract, where the two consumers of Ephemeral are deliberately split. The
+// auth-key provider is still asked for an ephemeral key, so that a daemon
+// which later gains a stored credential derives the right capability with no
+// code change. The tsnet.Server, however, must be constructed persistent:
+// there is no auth key to carry server-side reclaim, and a LoginEphemeral
+// node is logged out by tsnet's Shutdown, which would force a fresh browser
+// authorization on every daemon restart with every service node queued
+// behind it. See the comment in startMCPControlPlane.
+func TestMCPControlPlaneInteractivePathIsPersistent(t *testing.T) {
+	fake := &fakeInteractiveTSNetServer{fakeTSNetServer: fakeTSNetServer{
+		localClient: fakeWhoIsClient(t, &apitype.WhoIsResponse{
+			UserProfile: &tailcfg.UserProfile{LoginName: "alice@example.com"},
+			Node:        &tailcfg.Node{},
+		}, nil),
+	}}
+	testenv.SetHome(t, t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+	writeRegistry(t, nil)
+
+	var authKeySvc, tsnetSvc registry.Service
+	var gotAuthKey string
+	oldNew := newTSNetServerFn
+	newTSNetServerFn = func(svc registry.Service, _, authKey, _ string) tsnetServer {
+		tsnetSvc = svc
+		gotAuthKey = authKey
+		return fake
+	}
+	t.Cleanup(func() { newTSNetServerFn = oldNew })
+	oldStatusClient := tsnetStatusClientFn
+	tsnetStatusClientFn = func(tsnetServer) (tsnetStatusClient, error) {
+		return &sequenceTSNetStatusClient{statuses: []*ipnstate.Status{{
+			BackendState: ipn.Running.String(),
+			TailscaleIPs: []netip.Addr{netip.MustParseAddr("100.64.0.7")},
+			Self:         &ipnstate.PeerStatus{DNSName: "tslink-mcp.example.ts.net."},
+		}}}, nil
+	}
+	t.Cleanup(func() { tsnetStatusClientFn = oldStatusClient })
+
+	s, err := New("", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	s.SetAuthKeyProvider(func(_ context.Context, svc registry.Service) (string, error) {
+		authKeySvc = svc
+		return "", nil
+	})
+	s.SetMCPControlPlane(&MCPControlPlane{
+		AllowedUsers: []string{"alice@example.com"},
+		Handler:      &mcpProbeHandler{},
+	})
+	if err := s.startMCPControlPlane(context.Background()); err != nil {
+		t.Fatalf("startMCPControlPlane() error = %v", err)
+	}
+	t.Cleanup(s.closeMCPControlPlane)
+
+	if gotAuthKey != "" {
+		t.Fatalf("tsnet auth key = %q, want empty on the zero-credential path", gotAuthKey)
+	}
+	if !fake.startCalled || fake.upCalled {
+		t.Fatalf("interactive path start=%v up=%v, want start without Up", fake.startCalled, fake.upCalled)
+	}
+	if !authKeySvc.Ephemeral {
+		t.Fatal("auth key provider received Ephemeral=false on the zero-credential path; a later stored credential would derive a persistent device")
+	}
+	if tsnetSvc.Ephemeral {
+		t.Fatal("tsnet constructor received Ephemeral=true on the zero-credential path; tsnet would log the user-owned node out on every shutdown and force a browser authorization on every restart")
 	}
 }

@@ -151,12 +151,46 @@ func (s *Server) startMCPControlPlane(ctx context.Context) error {
 
 	// The node is described to tsnet with the same shape a service uses, but
 	// this value never reaches registry.json and never becomes a ServiceNode.
-	nodeService := registry.Service{Name: name, Type: registry.TypeProxy, Tags: append([]string(nil), cp.Tags...)}
+	//
+	// Ephemeral is deliberate on the credentialed path. The control-plane node
+	// is not written to registry.json or to the node-ownership ledger, so
+	// `tslink cleanup` never holds the exact NodeID proof it requires before
+	// deleting a device. A persistent node would therefore outlive --mcp being
+	// disabled or the daemon being uninstalled, and could only be removed by
+	// hand in the Tailscale admin console. Marking it ephemeral lets the
+	// Tailscale control plane reclaim the device after the daemon stops, with
+	// no ledger entry.
+	//
+	// One field, two consumers, and they are deliberately not given the same
+	// value on every path:
+	//   1. s.authKeyProvider receives nodeService and forwards svc.Ephemeral
+	//      into credentials.AuthKeyOptions, which sets the auth key's
+	//      Devices.Create.Ephemeral capability (server-side registration).
+	//      It is always asked for; a zero-credential provider answers "" and
+	//      the request has no effect.
+	//   2. newTSNetServerFn copies svc.Ephemeral into tsnet.Server.Ephemeral,
+	//      which makes tsnet log in with LoginEphemeral (client-side pref).
+	//      It is set only when an auth key was actually obtained.
+	//
+	// Why the asymmetry: reclaim of an ephemeral device is a server-side
+	// property carried by the auth key. On the zero-credential path there is no
+	// auth key, so the node is enrolled interactively as a user-owned device and
+	// the client-side flag buys no server-side reclaim. It is not free either:
+	// tsnet's Shutdown logs an ephemeral node out and persists LoggedOut, so a
+	// LoginEphemeral node would force a fresh browser authorization on every
+	// daemon restart, and because the control plane starts before the service
+	// nodes are reconciled, every service would queue behind that login. The
+	// zero-credential node is therefore persistent: one browser authorization
+	// survives restarts, and disabling --mcp leaves a user-owned, untagged
+	// device that the operator deletes in the Tailscale admin console.
+	nodeService := registry.Service{Name: name, Type: registry.TypeProxy, Tags: append([]string(nil), cp.Tags...), Ephemeral: true}
 	authKey, err := s.authKeyProvider(ctx, nodeService)
 	if err != nil {
 		return fmt.Errorf("auth key for mcp control plane: %w", err)
 	}
-	tsnetSrv := newTSNetServerFn(nodeService, stateDir, authKey, s.controlURL)
+	tsnetService := nodeService
+	tsnetService.Ephemeral = authKey != ""
+	tsnetSrv := newTSNetServerFn(tsnetService, stateDir, authKey, s.controlURL)
 
 	nodeCtx, cancel := context.WithCancel(ctx)
 	node := &mcpControlPlaneNode{tsnetSrv: tsnetSrv, cancel: cancel}

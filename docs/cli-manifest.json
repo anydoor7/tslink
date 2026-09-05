@@ -157,7 +157,7 @@
       "required_flags": [
         "--mcp"
       ],
-      "boundary": "off unless --mcp or config.json mcp.enabled; every authorized tailnet peer reaching https://\u003cnode\u003e.\u003ctailnet\u003e.ts.net/mcp can register and remove services, publish Funnel and send or revoke invitations; authorization against config.json mcp.allow is mandatory and an empty list refuses startup; never published through Funnel and never bound to a host interface"
+      "boundary": "off unless --mcp or config.json mcp.enabled; every authorized tailnet peer reaching https://\u003cnode\u003e.\u003ctailnet\u003e.ts.net/mcp can register and remove services, publish Funnel and send or revoke invitations; authorization against config.json mcp.allow is mandatory and an empty list refuses startup; never published through Funnel and never bound to a host interface; node lifetime depends on the login path: with a stored credential the derived auth key carries the ephemeral capability and tsnet logs in ephemeral, so a clean daemon stop removes the node from the tailnet and no cleanup ledger entry is needed, while after a crash the node waits for Tailscale's ephemeral garbage collection; with zero credentials the node is persistent and user-owned, one browser authorization survives restarts, and disabling --mcp leaves a device to delete by hand in the Tailscale admin console"
     },
     {
       "command": "tslink cleanup",

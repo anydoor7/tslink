@@ -1,10 +1,14 @@
 package cmd
 
 import (
+	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/monody0007/tslink/internal/config"
+	"github.com/monody0007/tslink/internal/output"
+	"github.com/monody0007/tslink/internal/registry"
 	"github.com/monody0007/tslink/internal/server"
 )
 
@@ -54,6 +58,22 @@ func resolveMCPControlPlaneSettings(flagEnabled bool, cfg config.GlobalConfig) m
 		settings.NodeName = cfg.MCP.NodeName
 	}
 	return settings
+}
+
+// validateMCPNodeName applies the service-name grammar to the persisted mcp
+// node_name. Service names are validated by `tslink add`, but node_name is
+// hand-edited config that flows into the same auth-key description and tsnet
+// hostname, so it is the one name that would otherwise reach the Tailscale API
+// unchecked. Empty means the default node name and is always valid.
+func validateMCPNodeName(name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil
+	}
+	if err := registry.ValidateName(name); err != nil {
+		return output.ErrUsage(fmt.Sprintf("invalid mcp node_name: %v", err))
+	}
+	return nil
 }
 
 // buildMCPControlPlane returns the daemon-side control plane for these

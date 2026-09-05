@@ -80,7 +80,7 @@ tslink serve --daemon
 - **TCP proxy** — expose databases, SSH, Redis, and other non-HTTP services
 - **HTTP access control** — `--allow user@example.com,tag:admin` for proxy and file services
 - **Safety diagnostics** — `tslink doctor`, `tslink status --urls`, and `tslink access explain` make local evidence and unknown external policy layers explicit
-- **Local API mode** — JSON-over-stdin/stdout for local automation across list/add/remove/status, diagnostics, access explanation, and templates
+- **Agent-ready automation** — every command except the stdio `tslink mcp` server accepts `--json` and answers with one versioned envelope; `tslink mcp` (stdio) and `tslink serve --mcp` (tailnet-only remote control plane) expose the same MCP tools
 - **Personal templates** — preview and apply small private service suites without overwriting existing services
 - **Headscale compatibility path** — advanced/self-hosted control-server use via `--control-url`
 - **Funnel guardrails** — public internet exposure is opt-in and requires explicit `--public` acknowledgement
@@ -96,7 +96,7 @@ tslink serve --daemon
 | Registry-backed hot reload | Roadmap/experimental custom domain / ACME runtime TLS |
 | Daemon lifecycle and autostart | Roadmap/experimental cluster / multi-node registry sync |
 | Owner-only `status --urls`, `doctor`, and `access explain` | Roadmap/experimental member-facing portal or service directory |
-| Local JSON `tslink api` parity for shipped owner workflows | Roadmap/experimental remote API, dashboard, or multi-user admin plane |
+| `--json` envelope on every command, `tslink mcp` over stdio, and the opt-in tailnet-only MCP control plane (`tslink serve --mcp`) | Roadmap/experimental dashboard, REST API, or multi-user admin plane |
 | Built-in personal templates | Roadmap/experimental marketplace or third-party template registry |
 
 ## Quick Start
@@ -173,8 +173,12 @@ target reuses its existing service instead of creating suffixed orphan nodes.
 
 `tslink mcp` runs a local MCP server over stdio. The MCP process itself opens no
 network listener; invoking its `share` tool may start the separate TSLink daemon
-and the requested tsnet service. It exposes four tools: `share`, `list`,
-`unshare`, and `status`. Configure an
+and the requested tsnet service. It exposes 18 tools covering the per-service
+surface of the CLI: `share`, `add`, `list`, `unshare`, `status`, `url`,
+`tags_list`, `tags_set`, `access_explain`, `doctor`, `invite_user`,
+`invite_device`, `invite_list`, `invite_revoke`, `invite_resend`,
+`template_list`, `template_plan`, and `template_apply`. Daemon lifecycle,
+install, login/logout, logs, and configuration stay CLI-only. Configure an
 MCP client to launch the installed `tslink` command with the single argument
 `mcp`:
 
@@ -188,7 +192,8 @@ MCP client to launch the installed `tslink` command with the single argument
 The `share` tool accepts the same path/port/host:port targets as the CLI. When
 authorization is pending it returns `{"status":"needs_login","auth_url":"..."}`
 as a normal tool result so an agent can open the URL and retry. Credential
-values are never returned through MCP.
+values are never returned through MCP. The same tools can also be served to
+other machines on your tailnet; see [Remote MCP Control Plane](#remote-mcp-control-plane).
 
 TSLink has two authentication tiers:
 
@@ -280,13 +285,15 @@ tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 | `tslink add <name> --dir /path` | Expose a file directory |
 | `tslink add <name> --tcp host:port` | Expose a raw TCP service (databases, SSH, etc.) |
 | `tslink remove <name>` | Remove a service and report protected/manual remote cleanup guidance |
-| `tslink list` | List all registered services |
+| `tslink list` | List the services registered on this machine |
+| `tslink list --tailnet` | Read-only: list every TSLink-tagged device in the whole tailnet, including other machines' services and orphans (requires a stored API credential) |
 | `tslink serve` | Start the gateway (foreground) |
 | `tslink serve --daemon` | Start the gateway (background) |
+| `tslink serve --mcp` | Start the gateway and serve the remote MCP control plane on a dedicated tailnet-only node (`mcp.allow` required) |
 | `tslink stop` | Stop the gateway |
 | `tslink status` | Show gateway status |
 | `tslink status --urls` | Show owner-only service URLs, exposure mode, allow summary, backend, and warning codes |
-| `tslink doctor` | Diagnose credentials, daemon, registry, runtime snapshot, exposure, and target safety without mutating state |
+| `tslink doctor` | Diagnose credentials, daemon, registry, runtime snapshot, exposure, target safety, and Tailscale SSH enablement without mutating state |
 | `tslink access explain <service>` | Explain what TSLink knows locally about one service's access path and what remains external policy/backend auth |
 | `tslink logs` | Show recent gateway logs |
 | `tslink template list` | List built-in personal service templates |
@@ -298,7 +305,7 @@ tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 | `tslink tags set <service> <tag>` | Replace a service's tags |
 | `tslink tags set-default <tag>` | Change the default tag applied to new services |
 | `tslink tags delete-remote <tag> --force --manage-acl` | Remove an ACL tag owner rule globally from Tailscale ACL after local safety checks and explicit remote-write opt-in |
-| `tslink api` | JSON-over-stdin/stdout mode for programmatic control |
+| `tslink mcp` | Local MCP server over stdio for agents; no network listener, no `mcp.allow` needed |
 | `tslink config` | Manage global configuration (set/get/list) |
 | `tslink install` | Auto-start on login (macOS LaunchAgent / Linux systemd / Windows Startup) |
 | `tslink uninstall` | Remove auto-start |
@@ -357,69 +364,156 @@ TSLink creates a dedicated [tsnet](https://tailscale.com/kb/1244/tsnet) node for
 - **Structured logging** — slog-based structured logging with access logs
 - **Metrics instrumentation** — request metrics are collected internally; a public `/metrics` endpoint is roadmap
 
-## API Mode
+## JSON Automation
 
-TSLink includes a local JSON-over-stdin/stdout API mode for owner-side automation. It is not a REST server, dashboard, or member-facing service directory. Unknown JSON fields are rejected, and public API responses use redacted views rather than raw registry records.
+Every command except the stdio `tslink mcp` server accepts `--json` and writes one versioned envelope to stdout, so owner-side automation is the same CLI with one flag. There is no REST server, dashboard, or member-facing service directory; JSON views are redacted rather than raw registry records.
 
 ```bash
-# List services
-echo '{"action":"list"}' | tslink api
+# List services registered on this machine
+tslink list --json
 
 # Add a service
-echo '{"action":"add","name":"myapp","type":"proxy","target":"localhost:3000"}' | tslink api
+tslink add myapp --proxy localhost:3000 --json
 
 # Remove a service
-echo '{"action":"remove","name":"myapp"}' | tslink api
+tslink remove myapp --json
 
 # Check status
-echo '{"action":"status"}' | tslink api
+tslink status --json
 
 # Show owner-only endpoint/exposure overview
-echo '{"action":"status","urls":true}' | tslink api
+tslink status --urls --json
 
-# Run read-only diagnostics
-echo '{"action":"doctor","probe_external":false}' | tslink api
+# Run read-only diagnostics (non-loopback targets are probed only with --probe-external)
+tslink doctor --json
 
 # Explain one service's local access model
-echo '{"action":"access_explain","name":"myapp"}' | tslink api
+tslink access explain myapp --json
 
 # Preview/apply built-in templates
-echo '{"action":"template_list"}' | tslink api
-echo '{"action":"template_plan","name":"personal-harness"}' | tslink api
-echo '{"action":"template_apply","name":"personal-harness"}' | tslink api
+tslink template list --json
+tslink template apply personal-harness --dry-run --json
+tslink template apply personal-harness --yes --json
 ```
 
-Both `tslink api` and CLI `--json` output use the same versioned envelope:
+The same operations are available to MCP clients through `tslink mcp` (stdio) and the remote control plane described below; `tslink manifest --json` prints the machine-readable description of every command, flag, exit code, and error code.
+
+All `--json` output uses the same versioned envelope. `command` names the command that produced it:
 
 ```json
 {
+  "type": "tslink.result",
   "ok": true,
   "schema_version": 1,
+  "command": "list",
   "code": 0,
   "data": {
-    "running": false,
+    "schema_version": "vnext.1",
+    "services": [],
     "count": 0
   }
 }
 ```
 
-Failures include a stable machine error code plus human text:
+Failures include a stable machine error code plus human text, and `error.next` lists recovery commands when one applies:
 
 ```json
 {
+  "type": "tslink.result",
   "ok": false,
   "schema_version": 1,
+  "command": "list",
   "code": 2,
   "error": {
     "code": "usage_error",
-    "message": "unknown action: explode"
+    "message": "--tailnet conflicts with --verbose; --verbose filters this machine's registered services, while --tailnet reports tailnet devices",
+    "next": ["tslink --help"]
   }
 }
 ```
 
 On macOS, `launchctl_domain_unavailable` is the deliberate exit-1 refusal used when TSLink cannot prove an install or uninstall handoff is safe. Its failure `data` includes `unavailable_domain`, `force_available`, the exact `force_command`, and `force_risk`; agents do not need to parse `error.message` to discover the recovery contract.
 
-API `add` follows the same safety guardrails as the CLI. Funnel services require `public_ack:true`; TCP services reject `allow` because TSLink does not apply HTTP identity checks to raw TCP streams.
+`--json` changes only the output format. `tslink add --json` follows the same safety guardrails as the human path: Funnel services require `--public`; TCP services reject `--allow` because TSLink does not apply HTTP identity checks to raw TCP streams.
+
+## Working Across Machines
+
+The registry in `~/.config/tslink/registry.json` is per machine, while the tailnet is shared. Two read-only features make that boundary visible, and the [Remote MCP Control Plane](#remote-mcp-control-plane) lets an agent on another tailnet machine operate this install.
+
+### Every TSLink device in the tailnet
+
+`tslink list` reads this machine's registry. `tslink list --tailnet` asks the Tailscale API instead and reports every TSLink-tagged device in the tailnet: services registered here, services registered on other machines, and orphan nodes. A device counts as TSLink-tagged when it carries the configured default tag (`tag:tsmain` unless changed), `tag:tslink-funnel`, or any other `tag:tslink-*` tag.
+
+```bash
+tslink list --tailnet
+tslink list --tailnet --json
+```
+
+Each row says which side of the machine boundary it came from:
+
+| `origin` | Meaning |
+|---|---|
+| `local_registry` | This machine's `registry.json` holds a service with exactly this hostname |
+| `local_name_variant` | The hostname is a `<service>-N` tsnet collision variant of a service registered here, the usual shape of an orphan this machine left behind |
+| `unregistered` | This machine's registry knows nothing about the hostname: another machine's service, or an orphan |
+
+The human view ends with `N of M TSLink-owned tailnet devices are not registered on this machine.` and the JSON payload carries `registered_count` and `unregistered_count` alongside `count`. Every result also carries a constant `cleanup_authority` field, because the view exposes a real limit: `tslink cleanup` deletes only devices whose exact NodeID is recorded in this machine's local `node-ownership.json`, so a device this machine's registry does not name must be cleaned up from the machine that created it. `--tailnet` never emits NodeIDs and never deletes anything.
+
+`--tailnet` needs a stored Tailscale API credential (a `tskey-api-*` access token or an OAuth client secret). Without one it fails with `auth_error` (exit 3) and bootstrap guidance in `error.next`; it does not return an empty list. It also conflicts with `--name`, `--type`, `--fields`, and `--verbose` (exit 2), because those filter this machine's registered services while `--tailnet` reports tailnet devices.
+
+### Tailscale SSH as the remote CLI path
+
+If Tailscale SSH is enabled on the machine running TSLink and the tailnet policy has an `ssh` rule admitting you, `tailscale ssh <host> tslink <command>` drives that install from any other tailnet device with no extra software. Both halves are Tailscale-layer configuration: TSLink neither enables Tailscale SSH nor edits the policy, and it never requires either.
+
+To make the first half discoverable, `tslink doctor` reads Tailscale SSH enablement from the local `tailscaled` and prints `Tailscale SSH (this node): <state>`. The JSON payload carries `tailscale_ssh.state` and `tailscale_ssh.acl_rule_required: true`, the latter recording the half no local read can observe.
+
+| State | Finding code | What it says |
+|---|---|---|
+| `enabled` | `tailscale_ssh_enabled` | `tailscale ssh <this-host> tslink list --json` works once a tailnet ACL `ssh` rule admits the caller |
+| `disabled` | `tailscale_ssh_disabled` | Run `tailscale set --ssh` on this machine and add the ACL `ssh` rule to use the remote path |
+| `unknown` | `tailscale_ssh_unknown` | The local Tailscale client state could not be read within one second; check `tailscale status` |
+
+All three outcomes are informational. They never change doctor's status or exit code.
+
+## Remote MCP Control Plane
+
+`tslink serve --mcp` serves the same 18 MCP tools as `tslink mcp` over HTTPS on a dedicated tsnet node at `https://<node>.<tailnet>.ts.net/mcp`. It is an MCP endpoint for MCP clients, and there is no page to open in a browser. The node's default hostname is `tslink-mcp`; its tsnet state lives in `~/.config/tslink/mcp-node/`, beside the service nodes rather than among them.
+
+The control plane is off by default. Enable it with the `--mcp` flag or with `mcp.enabled: true` in `config.json`; either one turns it on. `mcp.allow` is required and lives only in `config.json`, because it is the security boundary of the whole feature (`tslink config set` manages only `control-url`, so edit the file directly):
+
+```json
+{
+  "mcp": {
+    "enabled": true,
+    "allow": ["you@example.com", "tag:ops"],
+    "node_name": "tslink-mcp"
+  }
+}
+```
+
+| Fact | Detail |
+|---|---|
+| Default | Off. Without `--mcp` or `mcp.enabled: true`, `serve` opens no control-plane listener and creates no control-plane node |
+| Authorization | `mcp.allow` is a list of login emails and/or `tag:` entries, matched against the caller's Tailscale WhoIs identity. An empty or whitespace-only list refuses to start `serve`; it never means "everyone". Every denial is the same `403` JSON-RPC `forbidden` body |
+| Reach | The only listener is `ListenTLS` on the control plane's own tsnet node. It is never published through Funnel and never bound to a host interface or `0.0.0.0` |
+| Node | Its own dedicated node, shared with no service. It is not a registry service, so it is absent from `tslink list`, and no code path can attach `--funnel` to it |
+| Lifetime | Depends on how `serve` is logged in. With a stored credential (`tslink login`) the node is ephemeral: the derived auth key carries the ephemeral capability and tsnet logs in with the ephemeral flag, so a clean daemon stop logs the node out and Tailscale removes it within seconds; disabling `--mcp` leaves no device to delete by hand. After a crash the node lingers until Tailscale's ephemeral garbage collection reclaims it (Tailscale's KB states this normally happens 30 to 60 minutes after the last activity; that figure is Tailscale's, not measured by TSLink). With zero credentials (interactive browser login) the node is persistent and user-owned: one browser authorization survives daemon restarts, and disabling `--mcp` leaves the `tslink-mcp` device in your tailnet until you delete it in the Tailscale admin console |
+| Power | An authorized peer has full control: register and remove services, publish a service to the public internet with Funnel, send and revoke real Tailscale invitations. Fill `mcp.allow` with that in mind; `serve` logs `mcp.controlplane.enabled` as a warning on every start |
+| Origin | A request that carries an `Origin` header must match the endpoint's own `https://<node>.<tailnet>.ts.net` origin exactly, per the MCP Streamable HTTP transport specification; anything else is `403` before authorization runs. Requests without `Origin`, which is what command-line MCP clients send, pass through |
+| Transport | Stateless Streamable HTTP; one request body is bounded at 1 MiB, the same limit the stdio transport applies per record |
+
+**Which clients can reach it.** Only MCP clients running on a machine inside your tailnet, such as Claude Code on your laptop or a server, can connect. Claude Desktop and claude.ai cannot: their remote MCP connections originate from Anthropic's cloud rather than from your device, so they never reach a private tailnet address. Use `tslink mcp` over stdio for those clients when they run on the same machine.
+
+### `tslink mcp` and `tslink serve --mcp` side by side
+
+| | `tslink mcp` | `tslink serve --mcp` |
+|---|---|---|
+| Transport | stdio, newline-delimited JSON-RPC | Streamable HTTP at `https://<node>.<tailnet>.ts.net/mcp` |
+| Network listener | None | TLS listener on a dedicated tsnet node, tailnet-only |
+| Authorization | The local user who launched it | `mcp.allow` login emails and/or `tag:` entries, mandatory |
+| Configuration | None | `--mcp` or `mcp.enabled`, plus `mcp.allow` in `config.json` |
+| Tools | 18 | The same 18, from one tool registry |
+| Typical client | An MCP client on this machine | An MCP client on another machine in the tailnet |
 
 ## Roadmap / Experimental Packages
 
@@ -429,7 +523,7 @@ The repository contains packages and registry fields for features that are not w
 |---|---|
 | Docker labels | Package exists, but `serve` does not start Docker discovery. |
 | Middleware | Package and schema exist, but runtime does not apply rate limit, Basic Auth, IP allow list, or CORS. |
-| Admin dashboard / REST API | No default-build package, REST handler, or admin node is shipped. Future work must be explicitly experimental and tested end to end. |
+| Admin dashboard / REST API | No dashboard or REST handler is shipped; the tailnet-only MCP control plane (`tslink serve --mcp`) is the only remote management surface. Future dashboard or REST work must be explicitly experimental and tested end to end. |
 | Prometheus `/metrics` | Instrumentation exists, but no scrape endpoint is mounted. |
 | Custom domain / ACME | Fields are reserved and rejected with `feature_unavailable`; runtime TLS/ACME listener is not wired. |
 | Cluster sync | Package exists without production transport or `serve` integration. |
@@ -461,7 +555,7 @@ On Linux, TSLink likewise saves an existing systemd user unit before replacing i
 - [ ] Web dashboard accessible from tailnet
 - [ ] Docker image and Docker label discovery
 - [ ] Headscale end-to-end testing
-- [x] Local API parity for shipped owner workflows
+- [x] `--json` envelope on every command, plus stdio and tailnet-only MCP transports
 - [ ] Integration-tested Layer 2 modules and optional remote/admin surfaces
 
 #### Release Artifacts

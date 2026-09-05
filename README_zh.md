@@ -80,7 +80,7 @@ tslink serve --daemon
 - **TCP 代理** — 暴露数据库、SSH、Redis 等非 HTTP 服务
 - **HTTP 访问控制** — proxy 和 file 服务支持 `--allow user@example.com,tag:admin`
 - **安全诊断** — `tslink doctor`、`tslink status --urls` 和 `tslink access explain` 明确展示本地证据和未知的外部策略层
-- **本地 API 模式** — JSON-over-stdin/stdout，覆盖 list/add/remove/status、诊断、访问解释和模板自动化
+- **面向 agent 的自动化** — 除 stdio 的 `tslink mcp` 外，每个命令都接受 `--json` 并返回同一套版本化 envelope；`tslink mcp`（stdio）与 `tslink serve --mcp`（仅限 tailnet 的远程控制面）暴露同一组 MCP tools
 - **个人模板** — 预览并添加小型私有服务套件，不覆盖已有服务
 - **Headscale 兼容路径** — 通过 `--control-url` 支持高级/自托管控制服务器场景
 - **Funnel 护栏** — 公网暴露必须显式选择，并要求 `--public` 确认
@@ -96,7 +96,7 @@ tslink serve --daemon
 | 注册表热重载 | Roadmap/experimental 自定义域名 / ACME 运行时 TLS |
 | 守护进程和开机自启 | Roadmap/experimental Cluster / 多节点注册表同步 |
 | owner-only `status --urls`、`doctor` 和 `access explain` | Roadmap/experimental 成员可见 portal 或服务目录 |
-| 已交付 owner 工作流的本地 JSON `tslink api` parity | Roadmap/experimental 远程 API、dashboard 或多用户管理面 |
+| 每个命令的 `--json` envelope、stdio 的 `tslink mcp`，以及 opt-in 的仅限 tailnet MCP 控制面（`tslink serve --mcp`） | Roadmap/experimental dashboard、REST API 或多用户管理面 |
 | 内置个人模板 | Roadmap/experimental marketplace 或第三方模板注册表 |
 
 ## 快速开始
@@ -169,8 +169,12 @@ tslink share ./build --ephemeral=false
 
 `tslink mcp` 通过 stdio 运行本地 MCP server。MCP 进程本身不打开网络
 listener；调用其中的 `share` tool 可能启动独立的 TSLink daemon 及所请求的
-tsnet service。它只暴露 `share`、`list`、`unshare` 和 `status` 四个 tools。可让 MCP client 启动已安装
-的 `tslink` 命令，并传入唯一参数 `mcp`：
+tsnet service。它暴露 18 个 tools，覆盖 CLI 的 per-service 能力面：`share`、`add`、
+`list`、`unshare`、`status`、`url`、`tags_list`、`tags_set`、`access_explain`、
+`doctor`、`invite_user`、`invite_device`、`invite_list`、`invite_revoke`、
+`invite_resend`、`template_list`、`template_plan` 和 `template_apply`。daemon
+生命周期、install、login/logout、日志和配置仍只通过 CLI 操作。可让 MCP client
+启动已安装的 `tslink` 命令，并传入唯一参数 `mcp`：
 
 ```json
 {
@@ -181,7 +185,8 @@ tsnet service。它只暴露 `share`、`list`、`unshare` 和 `status` 四个 to
 
 `share` tool 接受与 CLI 相同的 path/port/host:port target。需要授权时，它会
 把 `{"status":"needs_login","auth_url":"..."}` 作为正常 tool result 返回，agent
-可以打开该 URL 后重试。MCP 永远不会返回 credential 值。
+可以打开该 URL 后重试。MCP 永远不会返回 credential 值。同一组 tools 也可以提供给
+tailnet 内的其它机器，见[远程 MCP 控制面](#远程-mcp-控制面)。
 
 TSLink 有两层认证模式：
 
@@ -270,13 +275,15 @@ tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 | `tslink add <name> --dir /path` | 暴露文件目录 |
 | `tslink add <name> --tcp host:port` | 暴露 TCP 服务（数据库、SSH 等） |
 | `tslink remove <name>` | 移除已注册的服务，并报告 protected/manual 远端清理指引 |
-| `tslink list` | 列出所有已注册的服务 |
+| `tslink list` | 列出本机已注册的服务 |
+| `tslink list --tailnet` | 只读：列出整个 tailnet 中所有带 TSLink 标签的设备，包括其它机器的服务和孤儿节点（需要已存储的 API 凭证） |
 | `tslink serve` | 启动网关（前台） |
 | `tslink serve --daemon` | 启动网关（后台） |
+| `tslink serve --mcp` | 启动网关，并在专用的仅限 tailnet 节点上提供远程 MCP 控制面（必须配置 `mcp.allow`） |
 | `tslink stop` | 停止网关 |
 | `tslink status` | 显示网关状态 |
 | `tslink status --urls` | 显示 owner-only 服务 URL、暴露模式、allow 摘要、后端和 warning code |
-| `tslink doctor` | 只读诊断凭证、daemon、注册表、runtime snapshot、暴露模式和目标安全性 |
+| `tslink doctor` | 只读诊断凭证、daemon、注册表、runtime snapshot、暴露模式、目标安全性和 Tailscale SSH 开启状态 |
 | `tslink access explain <service>` | 解释某个服务的本地访问模型，以及仍属于外部策略/后端认证的部分 |
 | `tslink logs` | 查看最近的网关日志 |
 | `tslink template list` | 列出内置个人服务模板 |
@@ -288,7 +295,7 @@ tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 | `tslink tags set <service> <tag>` | 替换服务的全部标签 |
 | `tslink tags set-default <tag>` | 修改新服务的默认标签 |
 | `tslink tags delete-remote <tag> --force --manage-acl` | 通过本地安全检查和显式远端写入 opt-in 后从 Tailscale ACL 全局移除 ACL 标签所有者规则 |
-| `tslink api` | JSON-over-stdin/stdout 模式，用于程序化控制 |
+| `tslink mcp` | 面向 agent 的本地 stdio MCP server；不开网络 listener，不需要 `mcp.allow` |
 | `tslink config` | 管理全局配置（set/get/list） |
 | `tslink install` | 开机自启（macOS LaunchAgent / Linux systemd / Windows 启动文件夹） |
 | `tslink uninstall` | 移除自启 |
@@ -334,39 +341,156 @@ TSLink 为每个注册的服务创建一个专用的 [tsnet](https://tailscale.c
 - **结构化日志** — 基于 slog 的结构化日志 + 访问日志
 - **指标采集** — 内部记录请求指标；公开 `/metrics` 端点仍在 roadmap
 
-## API 模式
+## JSON 自动化
 
-TSLink 提供本地 JSON-over-stdin/stdout API 模式，用于 owner 侧自动化。它不是 REST server、dashboard 或成员可见的服务目录。未知 JSON 字段会被拒绝，公开 API 响应使用脱敏视图，不直接输出原始注册表记录。
+除 stdio 的 `tslink mcp` 外，每个命令都接受 `--json`，并向 stdout 写出同一套版本化 envelope，owner 侧自动化就是同一个 CLI 加一个 flag。TSLink 没有 REST server、dashboard 或成员可见的服务目录；JSON 视图经过脱敏，不直接输出原始注册表记录。
 
 ```bash
-# 列出服务
-echo '{"action":"list"}' | tslink api
+# 列出本机已注册的服务
+tslink list --json
 
 # 添加服务
-echo '{"action":"add","name":"myapp","type":"proxy","target":"localhost:3000"}' | tslink api
+tslink add myapp --proxy localhost:3000 --json
 
 # 删除服务
-echo '{"action":"remove","name":"myapp"}' | tslink api
+tslink remove myapp --json
 
 # 查看状态
-echo '{"action":"status"}' | tslink api
+tslink status --json
 
 # 查看 owner-only endpoint / exposure 概览
-echo '{"action":"status","urls":true}' | tslink api
+tslink status --urls --json
 
-# 运行只读诊断
-echo '{"action":"doctor","probe_external":false}' | tslink api
+# 运行只读诊断（只有传 --probe-external 才会探测非 loopback 目标）
+tslink doctor --json
 
 # 解释一个服务的本地访问模型
-echo '{"action":"access_explain","name":"myapp"}' | tslink api
+tslink access explain myapp --json
 
 # 预览/应用内置模板
-echo '{"action":"template_list"}' | tslink api
-echo '{"action":"template_plan","name":"personal-harness"}' | tslink api
-echo '{"action":"template_apply","name":"personal-harness"}' | tslink api
+tslink template list --json
+tslink template apply personal-harness --dry-run --json
+tslink template apply personal-harness --yes --json
 ```
 
-API `add` 和 CLI 使用同一套安全护栏。Funnel 服务必须传 `public_ack:true`；TCP 服务会拒绝 `allow`，因为 TSLink 不会对原始 TCP 字节流应用 HTTP 身份检查。
+同样的操作也可以由 MCP client 通过 `tslink mcp`（stdio）和下文的远程控制面完成；`tslink manifest --json` 会打印每个命令、flag、退出码和 error code 的机器可读描述。
+
+所有 `--json` 输出使用同一套版本化 envelope，`command` 字段标明产生它的命令：
+
+```json
+{
+  "type": "tslink.result",
+  "ok": true,
+  "schema_version": 1,
+  "command": "list",
+  "code": 0,
+  "data": {
+    "schema_version": "vnext.1",
+    "services": [],
+    "count": 0
+  }
+}
+```
+
+失败时包含稳定的机器 error code 和人类可读文本；有可用的恢复命令时 `error.next` 会列出：
+
+```json
+{
+  "type": "tslink.result",
+  "ok": false,
+  "schema_version": 1,
+  "command": "list",
+  "code": 2,
+  "error": {
+    "code": "usage_error",
+    "message": "--tailnet conflicts with --verbose; --verbose filters this machine's registered services, while --tailnet reports tailnet devices",
+    "next": ["tslink --help"]
+  }
+}
+```
+
+macOS 上，`launchctl_domain_unavailable` 是 TSLink 无法证明 install / uninstall handoff 安全时的刻意 exit-1 拒绝。其 failure `data` 包含 `unavailable_domain`、`force_available`、精确的 `force_command` 和 `force_risk`；agent 无需解析 `error.message` 就能拿到恢复契约。
+
+`--json` 只改变输出格式。`tslink add --json` 与人类路径使用同一套安全护栏：Funnel 服务必须传 `--public`；TCP 服务会拒绝 `--allow`，因为 TSLink 不会对原始 TCP 字节流应用 HTTP 身份检查。
+
+## 跨机器操作
+
+`~/.config/tslink/registry.json` 中的注册表属于单台机器，而 tailnet 是共享的。下面两个只读能力让这条边界可见；[远程 MCP 控制面](#远程-mcp-控制面)则让 tailnet 内另一台机器上的 agent 能操作这台机器的安装。
+
+### 查看 tailnet 中的全部 TSLink 设备
+
+`tslink list` 读的是本机注册表。`tslink list --tailnet` 改为查询 Tailscale API，报告 tailnet 中每一台带 TSLink 标签的设备：本机注册的服务、其它机器注册的服务，以及孤儿节点。设备带有配置的默认标签（未修改时为 `tag:tsmain`）、`tag:tslink-funnel` 或任何其它 `tag:tslink-*` 标签时，即被视为 TSLink 设备。
+
+```bash
+tslink list --tailnet
+tslink list --tailnet --json
+```
+
+每一行都标明它来自机器边界的哪一侧：
+
+| `origin` | 含义 |
+|---|---|
+| `local_registry` | 本机 `registry.json` 中有一个主机名完全相同的服务 |
+| `local_name_variant` | 该主机名是本机某个已注册服务的 `<service>-N` tsnet 冲突变体，这是本机留下孤儿节点的常见形态 |
+| `unregistered` | 本机注册表对该主机名一无所知：它是另一台机器的服务，或是一个孤儿节点 |
+
+人类可读输出以 `N of M TSLink-owned tailnet devices are not registered on this machine.` 结尾，JSON 负载在 `count` 之外还带 `registered_count` 与 `unregistered_count`。每个结果都带一个常量字段 `cleanup_authority`，因为这个视图暴露了一条真实的限制：`tslink cleanup` 只删除精确 NodeID 记录在本机 `node-ownership.json` 中的设备，所以本机注册表没有命名的设备，必须回到创建它的那台机器上清理。`--tailnet` 永远不输出 NodeID，也永远不删除任何东西。
+
+`--tailnet` 需要已存储的 Tailscale API 凭证（`tskey-api-*` 访问令牌或 OAuth 客户端密钥）。没有凭证时它以 `auth_error`（退出码 3）失败，并在 `error.next` 中给出 bootstrap 指引；它不会返回空列表。它与 `--name`、`--type`、`--fields`、`--verbose` 互斥（退出码 2），因为那些 flag 过滤的是本机已注册服务，而 `--tailnet` 报告的是 tailnet 设备。
+
+### 用 Tailscale SSH 远程执行 CLI
+
+如果运行 TSLink 的机器开启了 Tailscale SSH，且 tailnet policy 中有一条允许你的 `ssh` 规则，那么 `tailscale ssh <host> tslink <command>` 就能从 tailnet 内任何设备操作那台机器上的安装，无需额外软件。这两个条件都是 Tailscale 层的配置：TSLink 不开启 Tailscale SSH，也不修改 policy，更不依赖二者。
+
+为了让第一个条件可被发现，`tslink doctor` 从本机 `tailscaled` 读取 Tailscale SSH 的开启状态，并打印 `Tailscale SSH (this node): <state>`。JSON 负载带有 `tailscale_ssh.state` 与 `tailscale_ssh.acl_rule_required: true`，后者记录本地读取无法观测的第二个条件。
+
+| 状态 | Finding code | 含义 |
+|---|---|---|
+| `enabled` | `tailscale_ssh_enabled` | 一旦 tailnet ACL 有 `ssh` 规则允许调用者，`tailscale ssh <this-host> tslink list --json` 即可用 |
+| `disabled` | `tailscale_ssh_disabled` | 在这台机器上运行 `tailscale set --ssh` 并添加 ACL `ssh` 规则，才能使用远程路径 |
+| `unknown` | `tailscale_ssh_unknown` | 一秒内无法读取本机 Tailscale client 状态；检查 `tailscale status` |
+
+三种结果都是 informational，永远不会改变 doctor 的 status 或退出码。
+
+## 远程 MCP 控制面
+
+`tslink serve --mcp` 在一个专用 tsnet 节点上，通过 HTTPS 在 `https://<node>.<tailnet>.ts.net/mcp` 提供与 `tslink mcp` 相同的 18 个 MCP tools。它是给 MCP client 用的 MCP endpoint，没有可供浏览器打开的页面。节点默认主机名为 `tslink-mcp`；其 tsnet 状态位于 `~/.config/tslink/mcp-node/`，与服务节点并列存放，而非混在其中。
+
+控制面默认关闭。用 `--mcp` flag 或 `config.json` 中的 `mcp.enabled: true` 开启，二者任一生效。`mcp.allow` 是必填项，且只存在于 `config.json` 中，因为它是整个功能的安全边界（`tslink config set` 只管理 `control-url`，所以要直接编辑该文件）：
+
+```json
+{
+  "mcp": {
+    "enabled": true,
+    "allow": ["you@example.com", "tag:ops"],
+    "node_name": "tslink-mcp"
+  }
+}
+```
+
+| 事实 | 细节 |
+|---|---|
+| 默认 | 关闭。没有 `--mcp` 或 `mcp.enabled: true` 时，`serve` 不打开控制面 listener，也不创建控制面节点 |
+| 授权 | `mcp.allow` 是登录邮箱和/或 `tag:` 条目的列表，与调用者的 Tailscale WhoIs 身份匹配。空列表或全是空白的列表会让 `serve` 拒绝启动，永远不表示「允许所有人」。所有拒绝都返回同一个 `403` JSON-RPC `forbidden` 响应体 |
+| 可达范围 | 唯一的 listener 是控制面自己 tsnet 节点上的 `ListenTLS`。它永远不通过 Funnel 发布，永远不绑定主机网络接口或 `0.0.0.0` |
+| 节点 | 专用节点，不与任何服务共用。它不是 registry 服务，因此不出现在 `tslink list` 中，也没有任何代码路径能给它加 `--funnel` |
+| 生命周期 | 取决于 `serve` 的登录方式。已存凭证（`tslink login`）路径上节点是 ephemeral 的：派生出的 auth key 携带 ephemeral capability，tsnet 也以 ephemeral 标记登录，因此守护进程正常停止时会先登出节点，Tailscale 在几秒内把它从 tailnet 移除；关闭 `--mcp` 后没有需要手动删除的设备。如果守护进程崩溃，节点会留到 Tailscale 的 ephemeral 垃圾回收把它回收为止（Tailscale KB 写的是通常在最后活动后 30 到 60 分钟；这个数字来自 Tailscale KB，不是 TSLink 的实测）。零凭证（交互式浏览器登录）路径上节点是持久的、user-owned 的：一次浏览器授权在守护进程重启后仍然有效，关闭 `--mcp` 后 `tslink-mcp` 这台设备会留在 tailnet 里，需要你在 Tailscale admin console 手动删除 |
+| 权限 | 通过授权的 peer 拥有完整控制权：注册和删除服务、通过 Funnel 把服务发布到公网、发送和撤销真实的 Tailscale 邀请。填写 `mcp.allow` 时按这个前提考虑；`serve` 每次启动都会以 warning 级别记录 `mcp.controlplane.enabled` |
+| Origin | 带 `Origin` 头的请求必须与 endpoint 自身的 `https://<node>.<tailnet>.ts.net` origin 完全一致，遵循 MCP Streamable HTTP 传输规范；其它情况在授权之前即返回 `403`。不带 `Origin` 的请求（命令行 MCP client 就是这样）直接放行 |
+| 传输 | 无状态 Streamable HTTP；单个请求体上限 1 MiB，与 stdio 传输每条记录的上限一致 |
+
+**哪些 client 能连上。** 只有运行在你 tailnet 内某台机器上的 MCP client 能连接，例如笔记本或服务器上的 Claude Code。Claude Desktop 和 claude.ai 连不上：它们的 remote MCP 连接从 Anthropic 云端发起，不是从你的设备发起，因此到不了私有 tailnet 地址。这两者与 tslink 在同一台机器上时，请用 stdio 的 `tslink mcp`。
+
+### `tslink mcp` 与 `tslink serve --mcp` 对照
+
+| | `tslink mcp` | `tslink serve --mcp` |
+|---|---|---|
+| 传输 | stdio，newline-delimited JSON-RPC | Streamable HTTP，地址 `https://<node>.<tailnet>.ts.net/mcp` |
+| 网络 listener | 无 | 专用 tsnet 节点上的 TLS listener，仅限 tailnet |
+| 授权 | 启动它的本机用户 | `mcp.allow` 中的登录邮箱和/或 `tag:` 条目，必填 |
+| 配置 | 无 | `--mcp` 或 `mcp.enabled`，加上 `config.json` 中的 `mcp.allow` |
+| Tools | 18 个 | 同一组 18 个，来自同一个 tool registry |
+| 典型 client | 本机上的 MCP client | tailnet 内另一台机器上的 MCP client |
 
 ## Roadmap / Experimental 包
 
@@ -376,7 +500,7 @@ API `add` 和 CLI 使用同一套安全护栏。Funnel 服务必须传 `public_a
 |---|---|
 | Docker 标签 | 包存在，但 `serve` 不会启动 Docker discovery。 |
 | Middleware | 包和 schema 存在，但 runtime 不应用限流、Basic Auth、IP 白名单或 CORS。 |
-| Admin dashboard / REST API | 默认构建不包含 package、REST handler 或 admin 节点。未来恢复必须显式标为 experimental，并补端到端测试。 |
+| Admin dashboard / REST API | 没有交付 dashboard 或 REST handler；仅限 tailnet 的 MCP 控制面（`tslink serve --mcp`）是唯一的远程管理面。未来的 dashboard 或 REST 工作必须显式标为 experimental，并补端到端测试。 |
 | Prometheus `/metrics` | 内部 instrumentation 存在，但没有挂载 scrape endpoint。 |
 | Custom domain / ACME | 字段保留但会以 `feature_unavailable` 拒绝；runtime TLS/ACME listener 尚未接入。 |
 | Cluster sync | 包存在，但没有 production transport 或 `serve` 集成。 |
@@ -408,7 +532,7 @@ Linux 上，TSLink 同样会在替换前保存已有 systemd user unit。如果 
 - [ ] 可从 tailnet 访问的 Web 管理面板
 - [ ] Docker 镜像和 Docker 标签发现
 - [ ] Headscale 端到端测试
-- [x] 已交付 owner 工作流的本地 API parity
+- [x] 每个命令的 `--json` envelope，以及 stdio 与仅限 tailnet 的 MCP 传输
 - [ ] 经过集成测试的 Layer 2 模块和可选远程/管理面
 
 #### 发布产物
