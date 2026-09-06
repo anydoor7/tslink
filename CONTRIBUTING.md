@@ -49,11 +49,32 @@ internal parent PID automatically; tests must not set it themselves.
 Real `tslink share` and `tslink serve --daemon` commands do not set this seam,
 so their detached daemon continues to outlive the command as designed.
 
+`TSLINK_CONFIG_DIR` only isolates on-disk state — it does not isolate network
+side effects or spawned processes. Commands like `share` or `add --wait` have
+a product semantic of "register + bring the service up": they will still
+start a `tsnet` node, contact the Tailscale control plane, and can print a
+real `login.tailscale.com` authorization URL, even when pointed at a scratch
+config dir. After exercising any command whose product semantics start or
+listen on something, check for orphaned processes immediately (`ps`,
+filtered by the scratch config dir path), rather than assuming the exit
+value or a config-dir override proves there was no side effect.
+
+
 ### Maintainer Release Notes
 
 Stable releases are disabled until external readback proves the release environment, required reviewers, `refs/tags/v*` ruleset, branch protection, and Homebrew tap are configured. After that gate is enabled, stable releases publish a Homebrew cask to `monody0007/homebrew-tap`. The release workflow requires a repository secret named `HOMEBREW_TAP_GITHUB_TOKEN` with write access to that tap; the default repository-scoped `GITHUB_TOKEN` cannot write to the separate tap repository. Prefer a fine-grained personal access token or GitHub App installation token scoped only to `monody0007/homebrew-tap` with Contents read/write access. Use a broad classic `repo` token only as a fallback when fine-grained tokens or GitHub App credentials are not available.
 
 GoReleaser signs `checksums.txt` and generated SBOM sidecars with keyless Sigstore bundles, then the release workflow publishes GitHub artifact attestations for installable artifacts and supply-chain sidecars. Keep the `release.yml` attestation globs aligned with `.goreleaser.yml` when adding or removing release asset types.
+
+When a CI job on `main` fails in 0 steps within a few seconds (`steps: []` in
+the check-run), do not diagnose it as if it were the same failure you can
+reproduce locally — a same-named local error (e.g. a `govulncheck` exit code)
+is a different evidence chain than a remote job that never ran any steps.
+Read `gh api repos/<repo>/check-runs/<job>/annotations` first; a private
+repository can fail every job at the GitHub Actions billing/spending-limit
+gate for months while every commit still reports the wrong, more specific
+root cause if nobody checks the annotation.
+
 
 ### Project Structure
 
@@ -115,6 +136,18 @@ Open an issue with the feature request template. Describe:
 - Include tests for new functionality
 - Update documentation if behavior changes
 - Do not mix formatting changes with behavior changes
+
+### Documentation and Marketing Claims
+
+Any "competitor cannot do X" claim going into the README or public docs must
+be checked against that competitor's *current* official documentation before
+it is written, with a URL kept alongside the claim. A claim that "feels
+obviously true" is the most dangerous kind, precisely because it does not
+trigger the same verification instinct as a plain factual assertion — and a
+claim the two of you converged on together in conversation is not exempt
+from this check; if anything it needs it more, because both sides already
+feel confident it's right.
+
 
 ## Code Style
 
