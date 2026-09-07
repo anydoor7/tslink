@@ -287,6 +287,9 @@ tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 | `tslink remove <name>` | Remove a service and report protected/manual remote cleanup guidance |
 | `tslink list` | List the services registered on this machine |
 | `tslink list --tailnet` | Read-only: list every TSLink-tagged device in the whole tailnet, including other machines' services and orphans (requires a stored API credential) |
+| `tslink share <path\|port\|host:port>` | Share a local path or web port and print its tailnet URL |
+| `tslink url <name>` | Print one service's exact runtime URL |
+| `tslink cleanup` | Reconcile expired Funnel exposure and TSLink-owned resources; previews by default, applies with `--dry-run=false` |
 | `tslink serve` | Start the gateway (foreground) |
 | `tslink serve --daemon` | Start the gateway (background) |
 | `tslink serve --mcp` | Start the gateway and serve the remote MCP control plane on a dedicated tailnet-only node (`mcp.allow` required) |
@@ -305,8 +308,14 @@ tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 | `tslink tags set <service> <tag>` | Replace a service's tags |
 | `tslink tags set-default <tag>` | Change the default tag applied to new services |
 | `tslink tags delete-remote <tag> --force --manage-acl` | Remove an ACL tag owner rule globally from Tailscale ACL after local safety checks and explicit remote-write opt-in |
+| `tslink invite user <email>` | Invite a user to join the tailnet; requires a user-owned API access token |
+| `tslink invite device <service> <email>` | Share a TSLink-owned service device with an external user; requires exact node ownership proof |
+| `tslink invite list` | List open user and TSLink-owned device invites |
+| `tslink invite revoke <id> --kind <user\|device>` | Revoke a user or device invite |
+| `tslink invite resend <id> --kind <user\|device>` | Resend an emailed user or device invite |
 | `tslink mcp` | Local MCP server over stdio for agents; no network listener, no `mcp.allow` needed |
 | `tslink config` | Manage global configuration (set/get/list) |
+| `tslink registry check [path]` | Strictly validate a `registry.json` without modifying it |
 | `tslink install` | Auto-start on login (macOS LaunchAgent / Linux systemd / Windows Startup) |
 | `tslink uninstall` | Remove auto-start |
 
