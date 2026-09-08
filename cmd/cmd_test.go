@@ -82,6 +82,8 @@ func runAddCmd(t *testing.T, args []string, flags map[string]string) error {
 	}
 
 	resetCommandLocalFlags(t, addCmd)
+	_ = addCmd.Flags().Set("wait", "0")
+	addCmd.SetContext(context.Background())
 
 	for k, v := range flags {
 		addCmd.Flags().Set(k, v)
@@ -103,6 +105,8 @@ func runAddCmdOutput(t *testing.T, args []string, flags map[string]string) (stri
 	}
 
 	resetCommandLocalFlags(t, addCmd)
+	_ = addCmd.Flags().Set("wait", "0")
+	addCmd.SetContext(context.Background())
 
 	for k, v := range flags {
 		addCmd.Flags().Set(k, v)

@@ -1,0 +1,29 @@
+
+	disabled services = {
+		"com.example.fixture.service01" => enabled
+		"com.example.fixture.service02" => enabled
+		"com.example.fixture.service03" => enabled
+		"com.example.fixture.service04" => disabled
+		"com.example.fixture.service05" => enabled
+		"com.example.fixture.service06" => enabled
+		"com.example.fixture.service07" => enabled
+		"com.example.fixture.service08" => enabled
+		"com.example.fixture.service09" => enabled
+		"com.example.fixture.service10" => enabled
+		"com.example.fixture.service11" => enabled
+		"com.example.fixture.service12" => enabled
+		"com.example.fixture.service13" => enabled
+		"com.example.fixture.service14" => enabled
+		"com.example.fixture.service15" => enabled
+		"com.example.fixture.service16" => enabled
+		"com.example.fixture.service17" => enabled
+		"com.example.fixture.service18" => enabled
+		"com.example.fixture.service19" => enabled
+		"com.example.fixture.service20" => disabled
+		"com.example.fixture.service21" => enabled
+		"com.example.fixture.service22" => disabled
+		"com.example.fixture.service23" => enabled
+		"com.example.fixture.service24" => enabled
+		"com.example.fixture.service25" => enabled
+		"com.example.fixture.service26" => enabled
+	}

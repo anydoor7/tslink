@@ -874,7 +874,6 @@ func TestLoadForRuntimeRejectsUnavailableRegistryInputs(t *testing.T) {
 		write *string
 		want  string
 	}{
-		{name: "missing", want: "no such file"},
 		{name: "zero-byte", write: ptrString(""), want: "registry.json is empty"},
 		{name: "whitespace", write: ptrString(" \n\t"), want: "registry.json is empty"},
 	} {
@@ -2120,5 +2119,16 @@ func TestAddWithOutcomeRearmsExpiredFunnelButPreservesFutureDeadline(t *testing.
 	}
 	if outcome.RearmedExpiredFunnel || reg.Services[0].FunnelExpiresAt == nil || !reg.Services[0].FunnelExpiresAt.Equal(future) {
 		t.Fatalf("outcome=%+v stored expiry=%v, want preserved future %v", outcome, reg.Services[0].FunnelExpiresAt, future)
+	}
+}
+
+func TestLoadForRuntimeMissingIsEmpty(t *testing.T) {
+	path := testRegistryPath(t)
+	reg, issues, err := LoadForRuntime(path)
+	if err != nil || reg == nil || reg.SchemaVersion != 1 || len(reg.Services) != 0 || len(issues) != 0 {
+		t.Fatalf("missing registry: reg=%+v issues=%v err=%v", reg, issues, err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("runtime loader wrote registry: %v", err)
 	}
 }

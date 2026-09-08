@@ -4403,7 +4403,7 @@ func TestSyncNodes_RegistryAvailabilityDecisionMatrix(t *testing.T) {
 		wantPublicStateGone  bool
 		wantPrivateStateGone bool
 	}{
-		{name: "file-missing", wantError: true, wantPublicStopped: true},
+		{name: "file-missing", wantPublicStopped: true, wantPrivateStopped: true, wantPublicStateGone: true, wantPrivateStateGone: true},
 		{name: "zero-byte", registryData: ptrServerString(""), wantError: true, wantPublicStopped: true},
 		{name: "partial-json", registryData: ptrServerString(`{"schema_version":1,"services":[`), wantError: true, wantPublicStopped: true},
 		{name: "explicit-empty-services", registryData: ptrServerString(`{"schema_version":1,"services":[]}`), wantPublicStopped: true, wantPrivateStopped: true, wantPublicStateGone: true, wantPrivateStateGone: true},
@@ -6459,5 +6459,42 @@ func TestWatchRegistry_DebouncesRapidWrites(t *testing.T) {
 	}
 	if count == 0 {
 		t.Fatal("syncNodes was never called; debounce timer should have fired at least once")
+	}
+}
+
+func TestRun_MissingRegistryStartsEmpty(t *testing.T) {
+	testenv.SetHome(t, t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatal(err)
+	}
+	regPath, err := config.RegistryPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(regPath); !os.IsNotExist(err) {
+		t.Fatalf("expected fresh config: %v", err)
+	}
+	s, err := New("", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	ready := false
+	s.SetReadyFunc(func() error {
+		ready = true
+		snapshotPath, _ := config.RuntimeSnapshotPath()
+		snapshot, err := runtimesnapshot.Load(snapshotPath)
+		if err != nil || snapshot == nil || snapshot.GlobalError != nil || len(snapshot.Services) != 0 {
+			t.Errorf("missing empty business snapshot: %+v %v", snapshot, err)
+		}
+		cancel()
+		return nil
+	})
+	if err := s.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !ready {
+		t.Fatal("server never marked ready with absent registry")
 	}
 }

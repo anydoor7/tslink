@@ -57,6 +57,7 @@ const (
 
 // StatusResult holds the status information for display.
 type StatusResult struct {
+	Supervision             Supervision             `json:"supervision"`
 	DaemonRunning           bool                    `json:"daemon_running"`
 	DaemonState             string                  `json:"daemon_state"`
 	DaemonPID               int                     `json:"daemon_pid"`
@@ -112,6 +113,7 @@ type StatusServiceState struct {
 }
 
 type StatusURLsResult struct {
+	Supervision             Supervision                 `json:"supervision"`
 	SchemaVersion           string                      `json:"schema_version"`
 	DaemonRunning           bool                        `json:"daemon_running"`
 	DaemonState             string                      `json:"daemon_state"`
@@ -214,6 +216,7 @@ func baseStatus(pidPath string) StatusResult {
 	} else if isProcessAbsentFromPIDFileFn(pidPath) {
 		r.DaemonState = daemonStateAbsent
 	}
+	r.Supervision = detectSupervisionFn(pidPath, r.DaemonRunning, r.DaemonPID)
 	values := credentials.SlotValues{}
 	values.APIKey, _ = getAPIKeyFn()
 	hasClientSecret := hasClientSecretFn()
@@ -462,7 +465,9 @@ func formatStatus(r StatusResult, out io.Writer) {
 		fmt.Fprintf(out, "→ tslink: running (pid %d)\n", r.DaemonPID)
 	} else {
 		fmt.Fprintln(out, "→ tslink: not running")
+		fmt.Fprintln(out, "Next: tslink install")
 	}
+	formatSupervision(r.Supervision, out)
 	if r.Authenticated {
 		fmt.Fprintln(out, "→ tailnet: authenticated")
 		if summary := formatCredentialSummary(r.Credentials); summary != "" {
@@ -480,7 +485,7 @@ func formatStatus(r StatusResult, out io.Writer) {
 			fmt.Fprintf(out, "→ login URL: %s\n", r.AuthURL)
 		}
 	} else {
-		fmt.Fprintln(out, "→ tailnet: not authenticated (run: tslink serve)")
+		fmt.Fprintln(out, "→ tailnet: not authenticated (run: tslink install, then tslink status to obtain the login URL)")
 	}
 	fmt.Fprintf(out, "→ services: %d registered\n", r.ServiceCount)
 }
@@ -517,6 +522,7 @@ func getStatusURLsWithAuth(pidPath, regPath, snapshotPath, authHandoffPath strin
 
 	result := StatusURLsResult{
 		SchemaVersion:           inspect.SchemaVersion,
+		Supervision:             status.Supervision,
 		DaemonRunning:           status.DaemonRunning,
 		DaemonState:             status.DaemonState,
 		DaemonPID:               status.DaemonPID,
@@ -754,6 +760,7 @@ func appendStatusWarning(warnings []inspect.WarningView, code, message string) [
 
 func formatStatusURLs(r StatusURLsResult, out io.Writer) {
 	formatStatus(StatusResult{
+		Supervision:             r.Supervision,
 		DaemonRunning:           r.DaemonRunning,
 		DaemonState:             r.DaemonState,
 		DaemonPID:               r.DaemonPID,

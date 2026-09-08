@@ -73,8 +73,9 @@ var mcpCoveredCommands = map[string]mcpCoveredCommand{
 		Tools: []string{"share"},
 		Args:  []string{"target"},
 		Flags: map[string]string{
-			"ephemeral": "ephemeral",
-			"name":      "name",
+			"no-daemon-install": "no_daemon_install",
+			"ephemeral":         "ephemeral",
+			"name":              "name",
 		},
 		ExcludedFlags: map[string]string{
 			"json": mcpJSONFlagExclusion,
@@ -92,12 +93,14 @@ var mcpCoveredCommands = map[string]mcpCoveredCommand{
 			"funnel":            "funnel",
 			"funnel-ttl":        "funnel_ttl",
 			"no-auto-provision": "no_auto_provision",
+			"no-daemon-install": "no_daemon_install",
 			"proxy":             "target",
 			"public":            "public_ack",
 			"tags":              "tags",
 			"tcp":               "target",
 		},
 		ExcludedFlags: map[string]string{
+
 			"acme-email": "reserved and rejected with feature_unavailable; exposing it would only offer a parameter that always fails",
 			"domain":     "reserved and rejected with feature_unavailable; exposing it would only offer a parameter that always fails",
 			"dry-run":    "the add tool has one closed output schema for the write path and does not model the dry-run service preview",
@@ -205,8 +208,10 @@ var mcpCoveredCommands = map[string]mcpCoveredCommand{
 	},
 	"tslink template apply": {
 		Tools: []string{"template_plan", "template_apply"},
+		Flags: map[string]string{"no-daemon-install": "no_daemon_install"},
 		Args:  []string{"name"},
 		ExcludedFlags: map[string]string{
+
 			"dry-run": "carried by the tool split: template_plan is the dry run, template_apply is the write",
 			"json":    mcpJSONFlagExclusion,
 			"yes":     "carried by the tool split: calling template_apply is the confirmation",
@@ -1075,7 +1080,7 @@ func TestMCPLocalToolsReadAndWriteTheGivenRegistry(t *testing.T) {
 		t.Fatalf("template_plan wrote the registry: %+v (load error %v)", reg, loadErr)
 	}
 
-	applyValue, err := actions.templateApply("personal-harness")
+	applyValue, err := actions.templateApply(context.Background(), "personal-harness", true)
 	if err != nil {
 		t.Fatalf("template_apply: %v", err)
 	}
@@ -1089,7 +1094,7 @@ func TestMCPLocalToolsReadAndWriteTheGivenRegistry(t *testing.T) {
 	if _, err := actions.templatePlan("no-such-template"); err == nil {
 		t.Fatal("template_plan accepted an unknown template")
 	}
-	if _, err := actions.templateApply("no-such-template"); err == nil {
+	if _, err := actions.templateApply(context.Background(), "no-such-template", true); err == nil {
 		t.Fatal("template_apply accepted an unknown template")
 	}
 }
@@ -1341,7 +1346,7 @@ func validateAgainstToolOutputSchema(t *testing.T, tool string, value any) {
 
 func TestMCPNewToolsAreReachableOverTheProtocol(t *testing.T) {
 	calls := []string{
-		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"add","arguments":{"name":"web","type":"proxy","target":"localhost:3000","allow":["a@example.com"],"tags":["tag:web"],"ephemeral":true}}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"add","arguments":{"name":"web","no_daemon_install":true,"type":"proxy","target":"localhost:3000","allow":["a@example.com"],"tags":["tag:web"],"ephemeral":true}}}`,
 		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"url","arguments":{"name":"web","wait":"0s"}}}`,
 		`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"tags_list","arguments":{}}}`,
 		`{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"tags_set","arguments":{"service":"web","tag":"tag:web"}}}`,
@@ -1354,7 +1359,7 @@ func TestMCPNewToolsAreReachableOverTheProtocol(t *testing.T) {
 		`{"jsonrpc":"2.0","id":12,"method":"tools/call","params":{"name":"invite_resend","arguments":{"kind":"user","invite_id":"1"}}}`,
 		`{"jsonrpc":"2.0","id":13,"method":"tools/call","params":{"name":"template_list","arguments":{}}}`,
 		`{"jsonrpc":"2.0","id":14,"method":"tools/call","params":{"name":"template_plan","arguments":{"name":"personal-harness"}}}`,
-		`{"jsonrpc":"2.0","id":15,"method":"tools/call","params":{"name":"template_apply","arguments":{"name":"personal-harness"}}}`,
+		`{"jsonrpc":"2.0","id":15,"method":"tools/call","params":{"name":"template_apply","arguments":{"name":"personal-harness","no_daemon_install":true}}}`,
 		`{"jsonrpc":"2.0","id":16,"method":"tools/call","params":{"name":"share","arguments":{"target":"3000","allow":["a@example.com"],"tags":["tag:web"],"funnel":false,"public_ack":false}}}`,
 	}
 	stdout := runMCPSession(t, initializedMCPInput(strings.Join(calls, "\n")), fakeMCPActions())

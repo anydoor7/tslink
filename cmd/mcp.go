@@ -202,6 +202,7 @@ var (
 		"device_warning":         map[string]any{"type": "string"},
 	}, "ok", "name", "removed", "device_cleaned", "device_cleanup_skipped")
 	mcpStatusOutputSchema = objectSchema(map[string]any{
+		"supervision":              nestedObjectSchema("Verified manager, autostart, restart policy, and diagnostic evidence."),
 		"authenticated":            map[string]any{"type": "boolean", "description": "Legacy alias for node_authorized; it is not a stored-credential indicator."},
 		"credential_stored":        map[string]any{"type": "boolean"},
 		"node_authorized":          map[string]any{"type": "boolean"},
@@ -213,6 +214,9 @@ var (
 		"next":                     map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 	}, "authenticated", "credential_stored", "node_authorized", "authorized_service_count", "daemon_running", "service_count")
 	mcpAddOutputSchema = objectSchema(map[string]any{
+		"daemon_running":    map[string]any{"type": "boolean"},
+		"auth_url":          map[string]any{"type": "string"},
+		"next":              map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 		"name":              map[string]any{"type": "string"},
 		"type":              map[string]any{"type": "string", "enum": serviceTypeValues()},
 		"created":           map[string]any{"type": "boolean", "description": "True when this call created the registry entry; false when it replaced an existing entry with the same name."},
@@ -252,6 +256,7 @@ var (
 		"backend_auth_assumption":  nestedObjectSchema("Backend application, database and SSH authentication are outside TSLink and are not proven here."),
 	}, "schema_version", "service", "summary", "tslink_known", "tslink_local_enforcement", "external_policy_unknown", "backend_auth_assumption")
 	mcpDoctorOutputSchema = objectSchema(map[string]any{
+		"supervision":      nestedObjectSchema("Verified OS supervision, autostart, restart policy, and diagnostic evidence."),
 		"schema_version":   map[string]any{"type": "string"},
 		"execution_status": map[string]any{"type": "string"},
 		"status":           map[string]any{"type": "string"},
@@ -365,20 +370,21 @@ var mcpToolDefinitions = []mcpToolDefinition{
 		Name:        "share",
 		Description: "Setting funnel true on this tool publishes the target to the entire public internet, so ask the user before doing that; with funnel false (the default) it exposes a local directory, one file, or an HTTP port only on the user's private Tailscale network. Without allow, every member of the user's tailnet can read the share; pass allow to restrict it to named principals. Use this after creating a local page or report that the user wants to open on another tailnet device. If status is needs_login, open auth_url in a browser and retry after authorization.",
 		InputSchema: objectSchema(map[string]any{
-			"target":     map[string]any{"type": "string", "minLength": 1, "description": "Existing file or directory path, bare port from 1 to 65535, or host:port HTTP target."},
-			"name":       map[string]any{"type": "string", "pattern": `^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`, "maxLength": 63, "description": "Optional requested DNS-label service name. A matching target is reused only if it already has this name; unrelated name collisions receive a numeric suffix."},
-			"ephemeral":  map[string]any{"type": "boolean", "default": true, "description": "Keep true for temporary shares; set false only when the user wants durable tailnet node state."},
-			"allow":      map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Principals allowed to reach the share over HTTP: email addresses, or tag:<name> ACL tags. Omitting it leaves the share readable by every member of the user's tailnet. Rejected together with funnel."},
-			"tags":       map[string]any{"type": "array", "items": map[string]any{"type": "string", "pattern": `^tag:`}, "description": "ACL tags applied to the tailnet node, each prefixed tag:. Defaults to the configured default tag."},
-			"funnel":     map[string]any{"type": "boolean", "default": false, "description": "Publish to the public internet through Tailscale Funnel. Requires public_ack true, an HTTP port target, and no allow entries."},
-			"public_ack": map[string]any{"type": "boolean", "default": false, "description": "Explicit acknowledgement that funnel exposes the target publicly. funnel true without it is rejected."},
-			"funnel_ttl": map[string]any{"type": "string", "enum": []string{"1h", "8h", "24h", "72h", "7d", "never"}, "description": "Public Funnel lifetime; defaults to 24h. Only valid with funnel true."},
+			"no_daemon_install": map[string]any{"type": "boolean", "description": "Require an already running TSLink service; do not automatically install its background service."},
+			"target":            map[string]any{"type": "string", "minLength": 1, "description": "Existing file or directory path, bare port from 1 to 65535, or host:port HTTP target."},
+			"name":              map[string]any{"type": "string", "pattern": `^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`, "maxLength": 63, "description": "Optional requested DNS-label service name. A matching target is reused only if it already has this name; unrelated name collisions receive a numeric suffix."},
+			"ephemeral":         map[string]any{"type": "boolean", "default": true, "description": "Keep true for temporary shares; set false only when the user wants durable tailnet node state."},
+			"allow":             map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Principals allowed to reach the share over HTTP: email addresses, or tag:<name> ACL tags. Omitting it leaves the share readable by every member of the user's tailnet. Rejected together with funnel."},
+			"tags":              map[string]any{"type": "array", "items": map[string]any{"type": "string", "pattern": `^tag:`}, "description": "ACL tags applied to the tailnet node, each prefixed tag:. Defaults to the configured default tag."},
+			"funnel":            map[string]any{"type": "boolean", "default": false, "description": "Publish to the public internet through Tailscale Funnel. Requires public_ack true, an HTTP port target, and no allow entries."},
+			"public_ack":        map[string]any{"type": "boolean", "default": false, "description": "Explicit acknowledgement that funnel exposes the target publicly. funnel true without it is rejected."},
+			"funnel_ttl":        map[string]any{"type": "string", "enum": []string{"1h", "8h", "24h", "72h", "7d", "never"}, "description": "Public Funnel lifetime; defaults to 24h. Only valid with funnel true."},
 		}, "target"),
 		OutputSchema: mcpShareOutputSchema,
 	},
 	{
 		Name:        "add",
-		Description: "Setting funnel true on this tool publishes the service to the entire public internet, so ask the user before doing that; otherwise it only writes a registry entry for a proxy, file, or TCP service reachable on the user's private Tailscale network. Without allow, every member of the user's tailnet can reach an HTTP service. Use this instead of share when the user wants a named, configured service rather than a one-shot share; it does not start the daemon, so url is usually pending.",
+		Description: "Setting funnel true on this tool publishes the service to the entire public internet, so ask the user before doing that; otherwise it writes a registry entry for a proxy, file, or TCP service reachable on the user's private Tailscale network. Without allow, every member of the user's tailnet can reach an HTTP service. Use this instead of share when the user wants a named, configured service rather than a one-shot share; it installs the background service when absent unless no_daemon_install is true. Installation announcements go to stderr. After setup it returns current URL/enrollment evidence without an additional URL wait; use url to poll pending endpoints.",
 		InputSchema: objectSchema(map[string]any{
 			"name":              map[string]any{"type": "string", "pattern": `^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`, "maxLength": 63, "description": "Registry service name (DNS label). An existing entry with this name is replaced."},
 			"type":              map[string]any{"type": "string", "enum": serviceTypeValues(), "description": "proxy forwards HTTP to target; file serves the directory dir; tcp forwards a raw stream to target."},
@@ -390,6 +396,7 @@ var mcpToolDefinitions = []mcpToolDefinition{
 			"funnel":            map[string]any{"type": "boolean", "default": false, "description": "Publish to the public internet through Tailscale Funnel. Requires type proxy, public_ack true, no allow entries, and no control_url."},
 			"public_ack":        map[string]any{"type": "boolean", "default": false, "description": "Explicit acknowledgement that funnel exposes the service publicly. funnel true without it is rejected."},
 			"funnel_ttl":        map[string]any{"type": "string", "enum": []string{"1h", "8h", "24h", "72h", "7d", "never"}, "description": "Public Funnel lifetime; defaults to 24h on a new entry. Omitting it preserves an existing entry's deadline. Only valid with funnel true."},
+			"no_daemon_install": map[string]any{"type": "boolean", "description": "Save configuration without installing the background service."},
 			"no_auto_provision": map[string]any{"type": "boolean", "default": false, "description": "Disable automatic Funnel policy provisioning. Only valid with funnel true."},
 			"control_url":       map[string]any{"type": "string", "description": "Per-service custom control server URL, for example a Headscale deployment. Rejected together with funnel."},
 		}, "name", "type"),
@@ -519,9 +526,10 @@ var mcpToolDefinitions = []mcpToolDefinition{
 	},
 	{
 		Name:        "template_apply",
-		Description: "Write a built-in template's missing services into the local registry. Existing entries with the same names are left untouched, and nothing is started; call template_plan first so the user has seen the plan.",
+		Description: "Write a built-in template's missing services into the local registry. Existing entries with the same names are left untouched, and the background service is installed when absent unless no_daemon_install is true; call template_plan first so the user has seen the plan.",
 		InputSchema: objectSchema(map[string]any{
-			"name": map[string]any{"type": "string", "description": "Template name from template_list."},
+			"no_daemon_install": map[string]any{"type": "boolean", "description": "Save configuration without installing the background service."},
+			"name":              map[string]any{"type": "string", "description": "Template name from template_list."},
 		}, "name"),
 		OutputSchema: mcpTemplateApplyOutputSchema,
 	},
@@ -549,7 +557,7 @@ type mcpActions struct {
 	inviteResend  func(context.Context, string, string) (any, error)
 	templateList  func() (any, error)
 	templatePlan  func(string) (any, error)
-	templateApply func(string) (any, error)
+	templateApply func(context.Context, string, bool) (any, error)
 }
 
 // mcpAddArguments is the wire shape of the add tool's arguments.
@@ -565,6 +573,7 @@ type mcpAddArguments struct {
 	PublicAck       bool     `json:"public_ack,omitempty"`
 	FunnelTTL       *string  `json:"funnel_ttl,omitempty"`
 	NoAutoProvision bool     `json:"no_auto_provision,omitempty"`
+	NoDaemonInstall bool     `json:"no_daemon_install,omitempty"`
 	ControlURL      string   `json:"control_url,omitempty"`
 }
 
@@ -593,6 +602,7 @@ func addParamsFromMCPArguments(args mcpAddArguments) (AddParams, bool, error) {
 		Funnel:          args.Funnel,
 		Public:          args.PublicAck,
 		NoAutoProvision: args.NoAutoProvision,
+		NoDaemonInstall: args.NoDaemonInstall,
 		ControlURL:      args.ControlURL,
 	}
 	if args.FunnelTTL != nil {
@@ -646,15 +656,16 @@ func parseMCPWait(raw string) (time.Duration, error) {
 type mcpServiceSummary = ListServiceSummary
 
 type mcpStatusSummary struct {
-	Authenticated          bool     `json:"authenticated"`
-	CredentialStored       bool     `json:"credential_stored"`
-	NodeAuthorized         bool     `json:"node_authorized"`
-	AuthorizedServiceCount int      `json:"authorized_service_count"`
-	DaemonRunning          bool     `json:"daemon_running"`
-	ServiceCount           int      `json:"service_count"`
-	Status                 string   `json:"status,omitempty"`
-	AuthURL                string   `json:"auth_url,omitempty"`
-	Next                   []string `json:"next,omitempty"`
+	Supervision            Supervision `json:"supervision"`
+	Authenticated          bool        `json:"authenticated"`
+	CredentialStored       bool        `json:"credential_stored"`
+	NodeAuthorized         bool        `json:"node_authorized"`
+	AuthorizedServiceCount int         `json:"authorized_service_count"`
+	DaemonRunning          bool        `json:"daemon_running"`
+	ServiceCount           int         `json:"service_count"`
+	Status                 string      `json:"status,omitempty"`
+	AuthURL                string      `json:"auth_url,omitempty"`
+	Next                   []string    `json:"next,omitempty"`
 }
 
 type mcpUnshareSummary struct {
@@ -681,7 +692,9 @@ func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 			if err != nil {
 				return nil, err
 			}
-			result, _, err := executeAdd(ctx, svc, paths.Registry, paths.PID, paths.Snapshot, preserveFunnelExpiry, 0)
+			result, _, err := executeAdd(ctx, svc, paths.Registry, paths.PID, paths.Snapshot, preserveFunnelExpiry, 0, func() error {
+				return ensureDaemonFn(ctx, errOut, params.NoDaemonInstall)
+			})
 			if err != nil {
 				return nil, err
 			}
@@ -726,6 +739,7 @@ func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 				return nil, err
 			}
 			result := mcpStatusSummary{
+				Supervision:            status.Supervision,
 				Authenticated:          status.NodeAuthorized,
 				CredentialStored:       status.CredentialStored,
 				NodeAuthorized:         status.NodeAuthorized,
@@ -794,8 +808,15 @@ func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 		templatePlan: func(name string) (any, error) {
 			return applyTemplate(name, paths.Registry, true)
 		},
-		templateApply: func(name string) (any, error) {
-			return applyTemplate(name, paths.Registry, false)
+		templateApply: func(ctx context.Context, name string, noInstall bool) (any, error) {
+			result, err := applyTemplate(name, paths.Registry, false)
+			if err != nil {
+				return nil, err
+			}
+			if err := ensureDaemonFn(ctx, errOut, noInstall); err != nil {
+				return nil, err
+			}
+			return result, nil
 		},
 	}
 }
@@ -1175,26 +1196,28 @@ func callMCPTool(ctx context.Context, actions mcpActions, name string, arguments
 	switch name {
 	case "share":
 		var args struct {
-			Target    string   `json:"target"`
-			Name      string   `json:"name,omitempty"`
-			Ephemeral *bool    `json:"ephemeral,omitempty"`
-			Allow     []string `json:"allow,omitempty"`
-			Tags      []string `json:"tags,omitempty"`
-			Funnel    bool     `json:"funnel,omitempty"`
-			PublicAck bool     `json:"public_ack,omitempty"`
-			FunnelTTL *string  `json:"funnel_ttl,omitempty"`
+			NoDaemonInstall bool     `json:"no_daemon_install,omitempty"`
+			Target          string   `json:"target"`
+			Name            string   `json:"name,omitempty"`
+			Ephemeral       *bool    `json:"ephemeral,omitempty"`
+			Allow           []string `json:"allow,omitempty"`
+			Tags            []string `json:"tags,omitempty"`
+			Funnel          bool     `json:"funnel,omitempty"`
+			PublicAck       bool     `json:"public_ack,omitempty"`
+			FunnelTTL       *string  `json:"funnel_ttl,omitempty"`
 		}
 		if decodeErr := decodeMCPArguments(arguments, &args); decodeErr != nil || args.Target == "" {
 			return nil, mcpInvalidArgumentsError("share")
 		}
 		req := shareRequest{
-			Target:    args.Target,
-			Name:      args.Name,
-			Ephemeral: true,
-			Allow:     args.Allow,
-			Tags:      args.Tags,
-			Funnel:    args.Funnel,
-			PublicAck: args.PublicAck,
+			NoDaemonInstall: args.NoDaemonInstall,
+			Target:          args.Target,
+			Name:            args.Name,
+			Ephemeral:       true,
+			Allow:           args.Allow,
+			Tags:            args.Tags,
+			Funnel:          args.Funnel,
+			PublicAck:       args.PublicAck,
 		}
 		if args.Ephemeral != nil {
 			req.Ephemeral = *args.Ephemeral
@@ -1338,12 +1361,13 @@ func callMCPTool(ctx context.Context, actions mcpActions, name string, arguments
 		data, err = actions.templatePlan(args.Name)
 	case "template_apply":
 		var args struct {
-			Name string `json:"name"`
+			NoDaemonInstall bool   `json:"no_daemon_install,omitempty"`
+			Name            string `json:"name"`
 		}
 		if decodeErr := decodeMCPArguments(arguments, &args); decodeErr != nil || args.Name == "" {
 			return nil, mcpInvalidArgumentsError("template_apply")
 		}
-		data, err = actions.templateApply(args.Name)
+		data, err = actions.templateApply(ctx, args.Name, args.NoDaemonInstall)
 	default:
 		// Unreachable through the SDK, which rejects an unregistered tool name
 		// with the same -32602 before any handler runs. Kept so a tool added to
@@ -1427,8 +1451,10 @@ with initialize.
 Daemon lifecycle, installation, login/logout, log reading and configuration are
 deliberately not exposed; use the CLI for those.
 
-The MCP process itself opens no network listener. Invoking share may start the
-separate TSLink daemon and its requested tsnet service. share and add with
+The MCP process itself opens no network listener. Invoking share, add or
+template_apply installs the background service when absent unless no_daemon_install
+is true; announcements go to stderr. This starts the separate TSLink daemon
+and its requested tsnet services. share and add with
 funnel true publish to the public internet, and the invite_* tools send or
 cancel real invitations through the Tailscale API, so a client should confirm
 those with its user first. Protocol frames are written only to stdout;

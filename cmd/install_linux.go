@@ -35,6 +35,7 @@ var (
 	systemctlCombinedOutput  = func(args ...string) ([]byte, error) { return exec.Command("systemctl", args...).CombinedOutput() }
 	systemdSettleTimeout     = 3 * time.Second
 	systemdSettleInterval    = 250 * time.Millisecond
+	systemdStableWindow      = daemonSettleWindow
 	loginctlCombinedOutputFn = func(args ...string) ([]byte, error) { return exec.Command("loginctl", args...).CombinedOutput() }
 )
 
@@ -126,7 +127,11 @@ If lingering was enabled only for TSLink, disable it after uninstall:
 			return fmt.Errorf("create systemd user dir: %w", err)
 		}
 
-		service := systemdServiceContents(exe, noAutoProvision)
+		configDir, err := absoluteConfigDir()
+		if err != nil {
+			return err
+		}
+		service := strings.Replace(systemdServiceContents(exe, noAutoProvision), "[Service]\n", "[Service]\n"+systemdConfigEnvironment(configDir)+"\n", 1)
 		if err := atomicfile.WriteFileInExistingDir(servicePath, []byte(service), atomicfile.PrivateFileMode); err != nil {
 			return fmt.Errorf("write systemd service: %w", err)
 		}
@@ -289,6 +294,7 @@ func verifySystemdServiceRunning() (bool, error) {
 	var lastProperties map[string]string
 	var previousGoodPID int
 	var havePreviousGood bool
+	var firstGoodAt time.Time
 	var baselineNRestarts int
 	var nRestartsAvailable bool
 	var nRestartsUnavailable bool
@@ -350,8 +356,11 @@ func verifySystemdServiceRunning() (bool, error) {
 			if havePreviousGood && mainPID != previousGoodPID {
 				pidDrifted = true
 			}
-			if havePreviousGood && mainPID == previousGoodPID && !pidDrifted && !nRestartsIncreased {
+			if havePreviousGood && mainPID == previousGoodPID && !pidDrifted && !nRestartsIncreased && time.Since(firstGoodAt) >= systemdStableWindow {
 				return nRestartsUnavailable, nil
+			}
+			if !havePreviousGood {
+				firstGoodAt = time.Now()
 			}
 			previousGoodPID = mainPID
 			havePreviousGood = true

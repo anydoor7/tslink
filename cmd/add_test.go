@@ -643,8 +643,8 @@ func TestAddJSONIncludesInvalidAllowWarning(t *testing.T) {
 	})
 	data := dataMap(t, got)
 	warnings, ok := data["warnings"].([]any)
-	if !ok || len(warnings) != 1 {
-		t.Fatalf("warnings = %#v, want one JSON warning", data["warnings"])
+	if !ok || len(warnings) != 2 {
+		t.Fatalf("warnings = %#v, want invalid allow and offline daemon findings", data["warnings"])
 	}
 	warning, _ := warnings[0].(map[string]any)
 	if warning["code"] != "invalid_allow_entry" {

@@ -94,7 +94,7 @@ func fakeMCPActions() mcpActions {
 			result, _, err := planTemplateApply(name, nil, true)
 			return result, err
 		},
-		templateApply: func(string) (any, error) {
+		templateApply: func(context.Context, string, bool) (any, error) {
 			return TemplateApplyResult{SchemaVersion: inspect.SchemaVersion, Name: "personal-harness", Summary: "fake", Applied: true, Services: []TemplatePlanItem{}}, nil
 		},
 	}
@@ -507,7 +507,7 @@ func TestMCPToolSchemasAreClosedAndModelFocused(t *testing.T) {
 	shareSchema := mcpToolByName(t, "share").InputSchema
 	required := shareSchema["required"].([]string)
 	properties := shareSchema["properties"].(map[string]any)
-	if len(required) != 1 || required[0] != "target" || len(properties) != 8 {
+	if len(required) != 1 || required[0] != "target" || len(properties) != 9 {
 		t.Fatalf("share schema = %+v", shareSchema)
 	}
 	nameDescription := properties["name"].(map[string]any)["description"].(string)

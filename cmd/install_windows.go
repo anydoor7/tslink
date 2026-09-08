@@ -81,7 +81,11 @@ To remove the autostart:
 			return fmt.Errorf("create Startup directory: %w", err)
 		}
 
-		script := windowsStartupScript(exe, noAutoProvision)
+		configDir, err := absoluteConfigDir()
+		if err != nil {
+			return err
+		}
+		script := "Set shell = CreateObject(\"Wscript.Shell\")\r\n" + windowsConfigEnvironment(configDir) + "\r\n" + windowsStartupScript(exe, noAutoProvision)
 		if err := os.WriteFile(startupPath, []byte(script), 0o644); err != nil {
 			return fmt.Errorf("write Startup script: %w", err)
 		}

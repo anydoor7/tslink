@@ -390,6 +390,10 @@ services; change tags after apply if your tailnet policy uses another tag.`),
 				return err
 			}
 			if !dryRun {
+				// Validate the template before installing a background service.
+				if _, err := applyTemplate(args[0], regPath, true); err != nil {
+					return err
+				}
 				if err := ensureDirFn(); err != nil {
 					return err
 				}
@@ -398,6 +402,12 @@ services; change tags after apply if your tailnet policy uses another tag.`),
 			result, err := applyTemplate(args[0], regPath, dryRun)
 			if err != nil {
 				return err
+			}
+			if !dryRun {
+				noInstall, _ := cmd.Flags().GetBool("no-daemon-install")
+				if err := ensureDaemonFn(cmd.Context(), cmd.ErrOrStderr(), noInstall); err != nil {
+					return err
+				}
 			}
 			if jsonOutput(cmd) {
 				output.Success("template apply", result)
@@ -409,6 +419,7 @@ services; change tags after apply if your tailnet policy uses another tag.`),
 	}
 	applyCmd.Flags().Bool("dry-run", false, "Preview the template plan without writing the registry")
 	applyCmd.Flags().Bool("yes", false, "Write missing template services to the registry")
+	applyCmd.Flags().Bool("no-daemon-install", false, "Apply configuration only; do not install or start the background service")
 
 	templateCmd.AddCommand(listCmd, showCmd, applyCmd)
 	rootCmd.AddCommand(templateCmd)

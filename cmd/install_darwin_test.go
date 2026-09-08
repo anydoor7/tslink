@@ -34,11 +34,14 @@ func stubDarwinLaunchAgentVerificationNoWait(t *testing.T) {
 	t.Helper()
 	oldTimeout := launchAgentVerifyTimeout
 	oldPollInterval := launchAgentVerifyPollInterval
-	launchAgentVerifyTimeout = 0
+	oldSettle := launchAgentSettleWindow
+	launchAgentVerifyTimeout = 10 * time.Millisecond
 	launchAgentVerifyPollInterval = 0
+	launchAgentSettleWindow = 0
 	t.Cleanup(func() {
 		launchAgentVerifyTimeout = oldTimeout
 		launchAgentVerifyPollInterval = oldPollInterval
+		launchAgentSettleWindow = oldSettle
 	})
 }
 
@@ -328,6 +331,7 @@ func TestPlistTemplateEscapesXMLPaths(t *testing.T) {
 }
 
 func TestInstallCommandBootoutThenBootstrapsLaunchAgentOnSuccess(t *testing.T) {
+	stubDarwinLaunchAgentVerificationNoWait(t)
 	stubDarwinInstallDaemonStopped(t)
 	resetRootJSONFlag(t)
 	t.Cleanup(func() { installCmd.SetOut(nil) })
@@ -374,6 +378,7 @@ func TestInstallCommandBootoutThenBootstrapsLaunchAgentOnSuccess(t *testing.T) {
 		strings.Join([]string{"bootout", "gui/501/" + plistLabel}, "\x00"),
 		strings.Join([]string{"bootout", "user/501/" + plistLabel}, "\x00"),
 		strings.Join([]string{"bootstrap", "gui/501", plistPath}, "\x00"),
+		strings.Join([]string{"print", "gui/501/" + plistLabel}, "\x00"),
 		strings.Join([]string{"print", "gui/501/" + plistLabel}, "\x00"),
 	}
 	if strings.Join(gotCalls, "\n") != strings.Join(wantCalls, "\n") {
@@ -451,6 +456,7 @@ func TestInstallCommandBootstrapsLaunchAgentAndSurfacesOutput(t *testing.T) {
 }
 
 func TestInstallCommandFallsBackToUserDomainWhenGUIDomainMissing(t *testing.T) {
+	stubDarwinLaunchAgentVerificationNoWait(t)
 	stubDarwinInstallDaemonStopped(t)
 	resetRootJSONFlag(t)
 	resetCommandLocalFlags(t, installCmd)
@@ -510,6 +516,7 @@ func TestInstallCommandFallsBackToUserDomainWhenGUIDomainMissing(t *testing.T) {
 		strings.Join([]string{"bootout", "user/503/" + plistLabel}, "\x00"),
 		strings.Join([]string{"bootstrap", "gui/503", plistPath}, "\x00"),
 		strings.Join([]string{"bootstrap", "user/503", plistPath}, "\x00"),
+		strings.Join([]string{"print", "user/503/" + plistLabel}, "\x00"),
 		strings.Join([]string{"print", "user/503/" + plistLabel}, "\x00"),
 	}
 	if strings.Join(gotCalls, "\n") != strings.Join(wantCalls, "\n") {
@@ -808,6 +815,9 @@ func TestInstallCommandDoesNotClaimLoadedWhenLaunchAgentIsWaiting(t *testing.T) 
 	var launchctlCalls []string
 	launchctlCombinedOutput = func(args ...string) ([]byte, error) {
 		call := strings.Join(args, "\x00")
+		if len(launchctlCalls) == 5 && call == strings.Join([]string{"print", guiTarget}, "\x00") {
+			return []byte("state = waiting\npid = 0\n"), nil
+		}
 		launchctlCalls = append(launchctlCalls, call)
 		switch len(launchctlCalls) {
 		case 1:
@@ -840,7 +850,7 @@ func TestInstallCommandDoesNotClaimLoadedWhenLaunchAgentIsWaiting(t *testing.T) 
 			if call != strings.Join([]string{"bootstrap", "gui/501", plistPath}, "\x00") {
 				t.Fatalf("previous-job bootstrap = %q, want captured domain and plist path", call)
 			}
-		case 8:
+		case 8, 9:
 			if call != strings.Join([]string{"print", guiTarget}, "\x00") {
 				t.Fatalf("previous-job verification = %q, want captured target", call)
 			}
@@ -876,8 +886,8 @@ func TestInstallCommandDoesNotClaimLoadedWhenLaunchAgentIsWaiting(t *testing.T) 
 	if strings.Contains(err.Error(), "installation was rolled back") {
 		t.Fatalf("install error falsely uses generic rollback wording: %q", err)
 	}
-	if len(launchctlCalls) != 8 {
-		t.Fatalf("launchctl calls = %q, want exact eight-step ownership/handoff/restore sequence", launchctlCalls)
+	if len(launchctlCalls) != 9 {
+		t.Fatalf("launchctl calls = %q, want nine-step ownership/handoff/restore sequence", launchctlCalls)
 	}
 }
 
@@ -1244,6 +1254,7 @@ func TestInstallCommandKeepsNewPlistWhenRollbackBootoutFails(t *testing.T) {
 }
 
 func TestWaitForLaunchAgentRunningSettlesAfterTransientWaiting(t *testing.T) {
+	stubDarwinLaunchAgentVerificationNoWait(t)
 	oldLaunchctl := launchctlCombinedOutput
 	t.Cleanup(func() { launchctlCombinedOutput = oldLaunchctl })
 
@@ -1260,8 +1271,8 @@ func TestWaitForLaunchAgentRunningSettlesAfterTransientWaiting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("waitForLaunchAgentRunning() error = %v", err)
 	}
-	if printCalls != 3 {
-		t.Fatalf("launchctl print calls = %d, want 3", printCalls)
+	if printCalls != 4 {
+		t.Fatalf("launchctl print calls = %d, want 4", printCalls)
 	}
 	state, pid := parseLaunchAgentState(output)
 	if state != "running" || pid != 1775 {

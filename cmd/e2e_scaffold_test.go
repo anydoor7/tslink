@@ -53,7 +53,7 @@ func e2eRunBinary(t *testing.T, binary, configDir, stdin string, env []string, a
 	ctx, cancel := context.WithTimeout(context.Background(), e2eCommandTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, binary, args...)
+	cmd := exec.CommandContext(ctx, binary, offlineRegistrationArgs(args)...)
 	cmd.Env = env
 	cmd.Stdin = strings.NewReader(stdin)
 	var outBuf, errBuf bytes.Buffer
@@ -76,6 +76,25 @@ func e2eRunBinary(t *testing.T, binary, configDir, stdin string, env []string, a
 		t.Fatalf("run %s %v exceeded %s", filepath.Base(binary), args, e2eCommandTimeout)
 	}
 	return result
+}
+
+// Config isolation alone does not isolate the per-user supervisor slot.
+// Existing binary contracts exercise registration, not host installation.
+// Bootstrap integration tests use their own explicit fake manager process.
+func offlineRegistrationArgs(args []string) []string {
+	if len(args) > 0 && (args[0] == "add" || (args[0] == "template" && len(args) > 1 && args[1] == "apply")) {
+		result := append(append([]string{}, args...), "--no-daemon-install")
+		if args[0] == "add" {
+			for _, arg := range args {
+				if arg == "--wait" || strings.HasPrefix(arg, "--wait=") {
+					return result
+				}
+			}
+			result = append(result, "--wait=0")
+		}
+		return result
+	}
+	return args
 }
 
 // e2eDecodeEnvelope requires stdout to be exactly one well-formed result

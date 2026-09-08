@@ -4,6 +4,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"html/template"
@@ -61,6 +62,7 @@ var (
 	errLaunchctlDomainUnavailable  = errors.New("launchctl domain unavailable")
 	launchAgentVerifyTimeout       = launchAgentStartupTimeout
 	launchAgentVerifyPollInterval  = launchAgentStartupPollInterval
+	launchAgentSettleWindow        = daemonSettleWindow
 	launchAgentBootoutTimeout      = launchAgentShutdownTimeout
 	launchAgentBootoutPollInterval = launchAgentStartupPollInterval
 	launchctlCombinedOutput        = func(args ...string) ([]byte, error) {
@@ -109,6 +111,8 @@ var plistTemplate = template.Must(template.New("plist").Parse(`<?xml version="1.
         <string>serve</string>
         {{if .NoAutoProvision}}<string>--no-auto-provision</string>{{end}}
     </array>
+    {{if .ConfigDir}}<key>EnvironmentVariables</key>
+    <dict><key>TSLINK_CONFIG_DIR</key><string>{{.ConfigDir}}</string></dict>{{end}}
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
@@ -130,6 +134,7 @@ type plistData struct {
 	ErrLog           string
 	ThrottleInterval int
 	NoAutoProvision  bool
+	ConfigDir        string
 }
 
 var installCmd = &cobra.Command{
@@ -215,6 +220,10 @@ Desktop-session caveat:
 			return fmt.Errorf("create LaunchAgents directory: %w", err)
 		}
 
+		configDir, err := absoluteConfigDir()
+		if err != nil {
+			return err
+		}
 		data := plistData{
 			Label:            plistLabel,
 			Executable:       exe,
@@ -222,6 +231,7 @@ Desktop-session caveat:
 			ErrLog:           errLog,
 			ThrottleInterval: launchdThrottleInterval,
 			NoAutoProvision:  noAutoProvision,
+			ConfigDir:        configDir,
 		}
 		var plist bytes.Buffer
 		if err := plistTemplate.Execute(&plist, data); err != nil {
@@ -493,38 +503,24 @@ func verifyLaunchAgentRunning(target string) ([]byte, error) {
 }
 
 func waitForLaunchAgentRunning(target string, timeout, pollInterval time.Duration) ([]byte, error) {
-	lastOutput, lastErr, _ := pollLaunchAgent(
-		target,
-		timeout,
-		pollInterval,
-		func(output []byte, err error) bool {
-			if err != nil {
-				return false
-			}
-			state, pid := parseLaunchAgentState(output)
-			return state == "running" && pid > 0
-		},
-	)
-	lastState, lastPID := parseLaunchAgentState(lastOutput)
-	if lastErr == nil && lastState == "running" && lastPID > 0 {
-		return lastOutput, nil
-	}
-
-	if lastErr != nil {
-		detail := strings.TrimSpace(string(lastOutput))
-		if detail != "" {
-			detail = ": " + detail
+	var lastOutput []byte
+	_, err := waitStableDaemon(context.Background(), func() (int, error) {
+		var printErr error
+		lastOutput, printErr = launchctlCombinedOutput("print", target)
+		if printErr != nil {
+			return 0, nil
 		}
-		return lastOutput, fmt.Errorf("verify LaunchAgent state with 'launchctl print %s' for %s: %w%s", target, timeout, lastErr, detail)
+		state, pid := parseLaunchAgentState(lastOutput)
+		if state != "running" {
+			return 0, nil
+		}
+		return pid, nil
+	}, timeout, pollInterval, launchAgentSettleWindow)
+	if err != nil {
+		state, pid := parseLaunchAgentState(lastOutput)
+		return lastOutput, fmt.Errorf("LaunchAgent did not reach running state after bootstrap (state=%q, pid=%d): %w; run 'launchctl print %s' and inspect the TSLink error log", state, pid, err, target)
 	}
-	return lastOutput, fmt.Errorf(
-		"LaunchAgent did not reach running state within %s after bootstrap (target=%s, state=%q, pid=%d); run 'launchctl print %s' and inspect the TSLink error log",
-		timeout,
-		target,
-		lastState,
-		lastPID,
-		target,
-	)
+	return lastOutput, nil
 }
 
 func pollLaunchAgent(target string, timeout, pollInterval time.Duration, done func([]byte, error) bool) ([]byte, error, bool) {
@@ -553,9 +549,13 @@ func parseLaunchAgentState(output []byte) (string, int) {
 		}
 		switch strings.TrimSpace(key) {
 		case "state":
-			state = strings.TrimSpace(value)
+			if state == "" {
+				state = strings.TrimSpace(value)
+			}
 		case "pid":
-			pid, _ = strconv.Atoi(strings.TrimSpace(value))
+			if pid == 0 {
+				pid, _ = strconv.Atoi(strings.TrimSpace(value))
+			}
 		}
 	}
 	return state, pid

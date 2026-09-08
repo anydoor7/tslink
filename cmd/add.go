@@ -30,6 +30,9 @@ type AddResult struct {
 	Endpoint        inspect.EndpointView  `json:"endpoint"`
 	Exposure        inspect.ExposureView  `json:"exposure"`
 	Warnings        []inspect.WarningView `json:"warnings,omitempty"`
+	DaemonRunning   bool                  `json:"daemon_running"`
+	AuthURL         string                `json:"auth_url,omitempty"`
+	Next            []string              `json:"next,omitempty"`
 }
 
 type AddDryRunResult struct {
@@ -87,6 +90,7 @@ type AddParams struct {
 	Now             time.Time
 	Public          bool
 	NoAutoProvision bool
+	NoDaemonInstall bool
 	Domain          string
 	AcmeEmail       string
 	ControlURL      string
@@ -294,17 +298,57 @@ func buildAddResult(ctx context.Context, svc registry.Service, created bool, pid
 	}
 	result.Endpoint.Display = ""
 	result.Endpoint.Host = ""
-	resolution, err := resolveServiceEndpoint(ctx, pidPath, regPath, snapshotPath, svc.Name, wait)
+	result.DaemonRunning = isRunningFn(pidPath)
+	if !result.DaemonRunning {
+		result.Next = []string{"tslink install"}
+		result.Warnings = append(result.Warnings, inspect.WarningView{Code: "daemon_not_running", Severity: "error", Source: "cmd.add", Message: "Configuration saved only; run 'tslink install' to make this service reachable."})
+		return result, nil
+	}
+	resolution, handoff, err := resolveAddEndpoint(ctx, pidPath, regPath, snapshotPath, svc.Name, wait)
 	if err != nil {
 		if code, ok := registry.ErrorCode(err); ok && code == registry.CodeURLNotReady && wait <= 0 {
 			return result, nil
 		}
 		return AddResult{}, err
 	}
+	if handoff != "" {
+		result.AuthURL = handoff
+		result.Next = []string{"open the auth_url to authorize this node", "tslink url " + svc.Name + " --wait=30s"}
+		return result, nil
+	}
 	result.URL = &resolution.Result.URL
 	result.URLPending = false
 	result.Endpoint = resolution.Endpoint
 	return result, nil
+}
+
+func resolveAddEndpoint(ctx context.Context, pidPath, regPath, snapshotPath, name string, wait time.Duration) (serviceURLResolution, string, error) {
+	deadline := time.Now().Add(wait)
+	for {
+		resolution, err := resolveServiceEndpointOnce(pidPath, regPath, snapshotPath, name)
+		if err == nil {
+			return resolution, "", nil
+		}
+		if code, ok := registry.ErrorCode(err); !ok || (code != registry.CodeURLNotReady && code != "enrollment_required") {
+			return resolution, "", err
+		}
+		if handoff, loadErr := loadAuthHandoff(filepath.Join(filepath.Dir(pidPath), "auth-handoff.json")); loadErr == nil {
+			pid, _ := readPIDFn(pidPath)
+			if pid > 0 && handoff.DaemonPID == pid && handoff.ExpiresAt.After(time.Now()) {
+				return resolution, handoff.AuthURL, nil
+			}
+		}
+		if wait <= 0 || !time.Now().Before(deadline) {
+			return resolution, "", err
+		}
+		timer := time.NewTimer(min(urlPollInterval, time.Until(deadline)))
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return resolution, "", ctx.Err()
+		case <-timer.C:
+		}
+	}
 }
 
 // resolveAddService completes a service already built from p by buildService
@@ -337,7 +381,7 @@ func resolveAddService(svc registry.Service, p AddParams) (registry.Service, err
 // tool. The persisted service is returned alongside the result because the
 // human CLI rendering reports fields (TCP target and port) the result does not
 // carry.
-func executeAdd(ctx context.Context, svc registry.Service, regPath, pidPath, snapshotPath string, preserveFunnelExpiry bool, wait time.Duration) (AddResult, registry.Service, error) {
+func executeAdd(ctx context.Context, svc registry.Service, regPath, pidPath, snapshotPath string, preserveFunnelExpiry bool, wait time.Duration, afterPersist ...func() error) (AddResult, registry.Service, error) {
 	outcome, err := registry.AddWithOutcome(regPath, svc, registry.AddOptions{
 		PreserveFunnelExpiry: preserveFunnelExpiry,
 	})
@@ -347,6 +391,11 @@ func executeAdd(ctx context.Context, svc registry.Service, regPath, pidPath, sna
 	persisted, err := loadPersistedService(regPath, svc.Name)
 	if err != nil {
 		return AddResult{}, registry.Service{}, err
+	}
+	for _, setup := range afterPersist {
+		if err := setup(); err != nil {
+			return AddResult{}, persisted, err
+		}
 	}
 	result, err := buildAddResult(ctx, persisted, outcome.Created, pidPath, regPath, snapshotPath, wait)
 	if err != nil {
@@ -474,6 +523,7 @@ Examples:
 			if err := ensureDirFn(); err != nil {
 				return err
 			}
+			noDaemonInstall, _ := cmd.Flags().GetBool("no-daemon-install")
 
 			regPath, err := registryPathFn()
 			if err != nil {
@@ -488,7 +538,9 @@ Examples:
 			if err != nil {
 				return err
 			}
-			result, persisted, err := executeAdd(cmd.Context(), svc, regPath, pidPath, snapshotPath, !cmd.Flags().Changed("funnel-ttl"), wait)
+			result, persisted, err := executeAdd(cmd.Context(), svc, regPath, pidPath, snapshotPath, !cmd.Flags().Changed("funnel-ttl"), wait, func() error {
+				return ensureDaemonFn(cmd.Context(), cmd.ErrOrStderr(), noDaemonInstall)
+			})
 			if err != nil {
 				return err
 			}
@@ -496,6 +548,23 @@ Examples:
 
 			if jsonOutput(cmd) {
 				output.Success("add", result)
+				return nil
+			}
+			if !result.DaemonRunning {
+				if result.FunnelRearmed {
+					fmt.Fprintln(cmd.OutOrStdout(), "→ re-armed expired Funnel (24h)")
+				}
+				if svc.Funnel {
+					fmt.Fprintln(cmd.OutOrStdout(), "Configured exposure: PUBLIC via Tailscale Funnel (inactive until started).")
+				}
+				if svc.Type == registry.TypeTCP {
+					fmt.Fprintln(cmd.OutOrStdout(), "TCP configuration: TSLink HTTP allow and identity headers do not apply to raw TCP; protection is Tailscale policy plus backend auth.")
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "Service %q saved to configuration; not running or reachable.\nNext: tslink install\n", svc.Name)
+				return nil
+			}
+			if result.AuthURL != "" {
+				fmt.Fprintf(cmd.OutOrStdout(), "Service %q is waiting for Tailscale authorization.\nOpen: %s\nThen: tslink url %s --wait=30s\n", svc.Name, result.AuthURL, svc.Name)
 				return nil
 			}
 
@@ -536,8 +605,9 @@ Examples:
 	addCmd.Flags().String("allow", "", "Comma-separated allowed identities (e.g., user@example.com,tag:admin)")
 	addCmd.Flags().String("acme-email", "", "[UNAVAILABLE] Reserved: ACME runtime TLS is unavailable; rejected with feature_unavailable")
 	addCmd.Flags().String("control-url", "", "Per-service custom control server URL (e.g., Headscale)")
-	addCmd.Flags().Duration("wait", 0, "Wait for an exact runtime URL (optional value; default 30s)")
+	addCmd.Flags().Duration("wait", defaultURLWait, "Wait for an exact runtime URL or enrollment URL (default 30s; 0 disables waiting)")
 	addCmd.Flags().Lookup("wait").NoOptDefVal = defaultURLWait.String()
 	addCmd.Flags().Bool("dry-run", false, "Validate and print the service JSON without writing registry.json")
+	addCmd.Flags().Bool("no-daemon-install", false, "Save configuration only; do not install or start the background service")
 	rootCmd.AddCommand(addCmd)
 }

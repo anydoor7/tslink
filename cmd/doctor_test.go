@@ -36,6 +36,11 @@ type doctorTestEnv struct {
 func newDoctorTestEnv(t *testing.T, services []registry.Service) doctorTestEnv {
 	t.Helper()
 	resetDoctorSeams(t)
+	oldSupervision := detectSupervisionFn
+	t.Cleanup(func() { detectSupervisionFn = oldSupervision })
+	detectSupervisionFn = func(string, bool, int) Supervision {
+		return Supervision{Manager: "systemd", Autostart: true, RestartOnExit: true, Detail: "isolated managed fixture"}
+	}
 
 	dir := t.TempDir()
 	env := doctorTestEnv{

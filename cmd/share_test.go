@@ -28,18 +28,6 @@ func TestMain(m *testing.M) {
 			time.Sleep(time.Hour)
 		}
 	}
-	if mode := os.Getenv("TSLINK_SHARE_DAEMON_HELPER"); mode != "" {
-		fmt.Fprintln(os.Stderr, "helper diagnostic")
-		switch mode {
-		case "login":
-			fmt.Print(`{"type":"tslink.result","ok":true,"schema_version":1,"command":"serve","code":0,"data":{"status":"needs_login","auth_url":"https://login.tailscale.com/a/helper"}}`)
-		case "ready":
-			fmt.Print(`{"type":"tslink.result","ok":true,"schema_version":1,"command":"serve","code":0,"data":{"daemon":true,"pid":42}}`)
-		default:
-			fmt.Print(`not-json`)
-		}
-		os.Exit(0)
-	}
 
 	// Tests that reach config.Dir() without their own isolation must never
 	// touch the operator's real ~/.config/tslink. Point the whole package at a
@@ -51,6 +39,19 @@ func TestMain(m *testing.M) {
 		}
 	}
 
+	// Registry-focused unit tests never install OS services. Bootstrap tests
+	// explicitly exercise ensureDaemon with isolated manager/installer seams.
+	// All supervisor reads are isolated too. Individual manager tests replace this seam.
+	managerOutputFn = func(name string, args ...string) ([]byte, error) {
+		if name == "systemctl" {
+			return []byte("LoadState=not-found\nMainPID=0\n"), nil
+		}
+		return []byte("Could not find service\n"), fmt.Errorf("not found")
+	}
+	ensureDaemonFn = func(context.Context, io.Writer, bool) error { return nil }
+	detectSupervisionFn = func(_ string, running bool, _ int) Supervision {
+		return unmanagedSupervision(running, "isolated unit test")
+	}
 	code := testenv.RunWithNonLoopbackDialGuard(m.Run, "cmd")
 
 	// Own the teardown of the package's single compiled-binary build root.
@@ -553,41 +554,6 @@ func TestWaitForShareOutcomePollsAndHandlesLoginTimeoutAndContext(t *testing.T) 
 func codeOf(err error) string {
 	code, _ := registry.ErrorCode(err)
 	return code
-}
-
-func TestParseAndRunShareDaemon(t *testing.T) {
-	login := output.NewSuccess("serve", map[string]any{"status": authStatusNeedsLogin, "auth_url": "https://login.tailscale.com/a/parse"})
-	encoded, _ := json.Marshal(login)
-	result, err := parseShareDaemonResult(encoded, nil)
-	if err != nil || result.Status != authStatusNeedsLogin || result.AuthURL == "" {
-		t.Fatalf("result = %+v err=%v", result, err)
-	}
-	failure, _ := json.Marshal(output.NewFailure("serve", output.ExitConflict, "already running"))
-	if _, err := parseShareDaemonResult(failure, nil); err == nil || !strings.Contains(err.Error(), "already running") {
-		t.Fatalf("failure err = %v", err)
-	}
-	failureWithoutObject := []byte(`{"ok":false,"code":1}`)
-	if _, err := parseShareDaemonResult(failureWithoutObject, nil); err == nil || !strings.Contains(err.Error(), "exit code 1") {
-		t.Fatalf("failure without object err = %v", err)
-	}
-	if _, err := parseShareDaemonResult([]byte("bad"), errors.New("exit 1")); err == nil || !strings.Contains(err.Error(), "exit 1") {
-		t.Fatalf("invalid err = %v", err)
-	}
-	if _, err := parseShareDaemonResult([]byte("bad"), nil); err == nil || !strings.Contains(err.Error(), "invalid JSON") {
-		t.Fatalf("invalid JSON err = %v", err)
-	}
-
-	t.Setenv("TSLINK_SHARE_DAEMON_HELPER", "login")
-	var stderr bytes.Buffer
-	result, err = startShareDaemon(context.Background(), &stderr)
-	if err != nil || result.AuthURL != "https://login.tailscale.com/a/helper" || !strings.Contains(stderr.String(), "helper diagnostic") {
-		t.Fatalf("helper result = %+v stderr=%q err=%v", result, stderr.String(), err)
-	}
-	t.Setenv("TSLINK_SHARE_DAEMON_HELPER", "ready")
-	result, err = startShareDaemon(context.Background(), io.Discard)
-	if err != nil || result.Status != "" {
-		t.Fatalf("ready helper = %+v err=%v", result, err)
-	}
 }
 
 func TestResolveSharePathsAndCommandOutput(t *testing.T) {

@@ -1,17 +1,14 @@
 package cmd
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -53,15 +50,16 @@ type shareTargetSpec struct {
 // which runs registry.ValidateService and therefore
 // registry.ValidateFunnelGuardrails.
 type shareRequest struct {
-	Target       string
-	Name         string
-	Ephemeral    bool
-	Allow        []string
-	Tags         []string
-	Funnel       bool
-	PublicAck    bool
-	FunnelTTL    string
-	FunnelTTLSet bool
+	Target          string
+	Name            string
+	Ephemeral       bool
+	Allow           []string
+	Tags            []string
+	Funnel          bool
+	PublicAck       bool
+	FunnelTTL       string
+	FunnelTTLSet    bool
+	NoDaemonInstall bool
 }
 
 type sharePaths struct {
@@ -397,39 +395,11 @@ func waitForShareOutcome(ctx context.Context, paths sharePaths, name, fileName s
 	}
 }
 
-func parseShareDaemonResult(encoded []byte, runErr error) (shareDaemonStart, error) {
-	var envelope struct {
-		OK    bool                `json:"ok"`
-		Code  int                 `json:"code"`
-		Data  shareDaemonStart    `json:"data"`
-		Error *output.ErrorObject `json:"error"`
-	}
-	if err := json.Unmarshal(bytes.TrimSpace(encoded), &envelope); err != nil {
-		if runErr != nil {
-			return shareDaemonStart{}, fmt.Errorf("start tslink daemon: %w", runErr)
-		}
-		return shareDaemonStart{}, fmt.Errorf("start tslink daemon: invalid JSON response: %w", err)
-	}
-	if !envelope.OK {
-		if envelope.Error != nil {
-			return shareDaemonStart{}, fmt.Errorf("start tslink daemon: %s", envelope.Error.Message)
-		}
-		return shareDaemonStart{}, fmt.Errorf("start tslink daemon failed with exit code %d", envelope.Code)
-	}
-	return envelope.Data, nil
-}
-
 func startShareDaemon(ctx context.Context, errOut io.Writer) (shareDaemonStart, error) {
-	executable, err := os.Executable()
-	if err != nil {
+	if err := ensureDaemonFn(ctx, errOut, false); err != nil {
 		return shareDaemonStart{}, err
 	}
-	command := exec.CommandContext(ctx, executable, "serve", "--daemon", "--json", "--no-browser")
-	var stdout bytes.Buffer
-	command.Stdout = &stdout
-	command.Stderr = errOut
-	runErr := command.Run()
-	return parseShareDaemonResult(stdout.Bytes(), runErr)
+	return shareDaemonStart{}, nil
 }
 
 func executeShare(ctx context.Context, paths sharePaths, req shareRequest, wait time.Duration, errOut io.Writer) (result ShareResult, err error) {
@@ -440,6 +410,9 @@ func executeShare(ctx context.Context, paths sharePaths, req shareRequest, wait 
 	spec, err = applyShareExposure(spec, req)
 	if err != nil {
 		return ShareResult{}, err
+	}
+	if req.NoDaemonInstall && !shareIsRunningFn(paths.PID) {
+		return ShareResult{}, daemonNotRunningError()
 	}
 	svc, created, err := registerShare(paths.Registry, spec, req.Name)
 	if err != nil {
@@ -495,10 +468,12 @@ Examples:
 			name, _ := cmd.Flags().GetString("name")
 			ephemeral, _ := cmd.Flags().GetBool("ephemeral")
 			wait, _ := cmd.Flags().GetDuration("wait")
+			noDaemonInstall, _ := cmd.Flags().GetBool("no-daemon-install")
 			result, err := executeShare(cmd.Context(), paths, shareRequest{
-				Target:    args[0],
-				Name:      name,
-				Ephemeral: ephemeral,
+				Target:          args[0],
+				Name:            name,
+				Ephemeral:       ephemeral,
+				NoDaemonInstall: noDaemonInstall,
 			}, wait, cmd.ErrOrStderr())
 			if err != nil {
 				return err
@@ -518,6 +493,7 @@ Examples:
 	}
 	shareCmd.Flags().String("name", "", "Requested service name (DNS label); a matching target must already use it, while unrelated name collisions receive a numeric suffix")
 	shareCmd.Flags().Bool("ephemeral", true, "Use an ephemeral tailnet node (set --ephemeral=false for durable state)")
+	shareCmd.Flags().Bool("no-daemon-install", false, "Require an already running background service; do not install one")
 	shareCmd.Flags().Duration("wait", defaultURLWait, "Wait for an exact runtime URL (share waits 30s by default; unlike url, no flag is required)")
 	shareCmd.Flags().Lookup("wait").NoOptDefVal = defaultURLWait.String()
 	rootCmd.AddCommand(shareCmd)

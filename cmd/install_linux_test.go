@@ -29,11 +29,14 @@ func stubFastSystemdSettle(t *testing.T) {
 	t.Helper()
 	oldTimeout := systemdSettleTimeout
 	oldInterval := systemdSettleInterval
+	oldStable := systemdStableWindow
 	systemdSettleTimeout = 10 * time.Millisecond
 	systemdSettleInterval = time.Millisecond
+	systemdStableWindow = 0
 	t.Cleanup(func() {
 		systemdSettleTimeout = oldTimeout
 		systemdSettleInterval = oldInterval
+		systemdStableWindow = oldStable
 	})
 }
 

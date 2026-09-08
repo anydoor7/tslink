@@ -64,7 +64,6 @@ One command exposes any local service — a web app, an API, a file directory, a
 
 ```bash
 tslink add myapp --proxy localhost:3000
-tslink serve --daemon
 # → https://myapp.<your-tailnet>.ts.net — accessible from any device on your tailnet
 ```
 
@@ -141,12 +140,50 @@ If you would rather register services explicitly and keep them around:
 # 1. Expose a local web service
 tslink add myapp --proxy localhost:3000
 
-# 2. Start the gateway — no API token or OAuth secret required.
-# TSLink opens/prints one Tailscale authorization URL for the user-owned node.
-tslink serve --daemon
+# On first use, TSLink installs its background service and prints the exact URL.
+# If Tailscale enrollment is needed, open the printed authorization URL once.
 
 # Access https://myapp.<your-tailnet>.ts.net from any device
 ```
+
+`add`, `share`, and `template apply --yes` automatically install and start TSLink's
+background service when it is absent, including in CI or without a TTY. Installation
+announces the manager, file location, config directory, and `tslink uninstall` undo
+command on stderr; `--json` stdout remains a single result. Use `--no-daemon-install`
+on these commands to opt out. Offline `add` saves configuration and reports
+`daemon_running:false` plus repair guidance, without a green check. `share` with
+that flag requires an already running service. `add` waits up to 30 seconds for an
+exact URL or an enrollment URL; use `--wait=0` for registration without waiting.
+
+The MCP `add`, `share`, and `template_apply` tools use the same bootstrap policy
+and expose `no_daemon_install`. MCP `add` returns current URL/enrollment evidence
+after setup without an additional URL wait; poll `url` if it is still pending.
+`add` and template application save the registry before installing, retaining it
+if setup fails. Explicit `install` also works before any registry exists.
+Setup errors report whether a supervisor definition remains: Linux can leave an
+enabled unit retrying after a readiness failure; macOS new-install verification
+rolls back its job/plist when cleanup succeeds. Inspect `tslink logs` and `tslink
+doctor` before retrying (Linux also: `journalctl --user -u tslink.service`). The
+installer checks stable manager state; bootstrap then checks fresh daemon business
+evidence over another stable window. Neither check guarantees future uptime.
+
+`status` and `doctor` report `supervision` in text and JSON: verified manager,
+autostart, restart policy, and evidence. An unverified running process is `manual`;
+an absent process without verified management is `none`. Doctor treats registered
+services without supervision as an error and defers backend probes while TSLink is
+confirmed stopped. When PID identity or supervisor state is uncertain, doctor reports
+a warning and keeps backend probes enabled; inspect the running binary and logs
+before installing or restarting. `url` returns an enrollment action for any pending
+node in this daemon instead of waiting again. `url` points to `tslink install` when the service is stopped.
+
+On macOS this installs a LaunchAgent that starts at user login; on Linux it enables
+a systemd user unit. For Linux boot before login and survival after logout, run
+`loginctl enable-linger "$USER"` once. Windows Startup is started immediately by
+automatic setup and on later sign-ins; it has no crash restart or live PID ownership
+proof. The backend application must also start after reboot, and first-time Tailscale
+enrollment still requires authorization. Each installed definition binds the absolute
+`TSLINK_CONFIG_DIR`; automatic setup refuses to overwrite another config's manager.
+Homebrew does not install a second service manager.
 
 ### Share in one command
 
@@ -576,7 +613,7 @@ passes, GitHub Releases are expected to publish these installable artifacts:
 | Platform | Artifacts | Notes |
 |---|---|---|
 | macOS | Homebrew cask and `tar.gz` archives | The Homebrew cask uses GoReleaser `skip_upload: auto`, so pre-release tags can skip tap upload without failing the release. Use the archives for pre-release validation. |
-| Linux | `.deb`, `.rpm`, and `tar.gz` archives | Packages contain the native `tslink` binary. Use `tslink install` after installation to register the user service. |
+| Linux | `.deb`, `.rpm`, and `tar.gz` archives | Packages contain the native `tslink` binary. The first `tslink add` registers and starts the user service automatically. |
 | Windows | `.zip` archives | Windows support is archive-only today. There is no MSI/MSIX/Winget package or Windows code-signed installer yet. Use `tslink install` from the extracted binary to register Startup autostart. |
 
 Release assets are side-by-side files, not files embedded inside the archives. GoReleaser uploads installable archives/packages, `checksums.txt`, CycloneDX SBOM sidecars for archives, and keyless Sigstore bundle signatures for `checksums.txt` and SBOM sidecars. The signed `checksums.txt` covers both installable artifacts and SBOM sidecars. The release workflow also publishes GitHub artifact attestations for the installable artifacts and supply-chain sidecars.
@@ -739,3 +776,8 @@ This project is licensed under the [Apache License 2.0](./LICENSE).
 ```
 Copyright 2026 Maintainer (monody0007)
 ```
+
+Bootstrap behavior change: `add` now waits up to 30 seconds by default; scripts
+that only need to register configuration should pass `--wait=0`. Windows reports
+`windows-startup` when its Startup registration matches this config; doctor warns
+that crash restart is unavailable instead of asking for an ineffective reinstall.

@@ -19,6 +19,7 @@ import (
 
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/credentials"
+	"github.com/monody0007/tslink/internal/daemon"
 	"github.com/monody0007/tslink/internal/inspect"
 	"github.com/monody0007/tslink/internal/output"
 	"github.com/monody0007/tslink/internal/registry"
@@ -136,6 +137,7 @@ type doctorOptions struct {
 }
 
 type DoctorResult struct {
+	Supervision     Supervision                 `json:"supervision"`
 	SchemaVersion   string                      `json:"schema_version"`
 	ExecutionStatus string                      `json:"execution_status"`
 	Status          string                      `json:"status"`
@@ -181,8 +183,9 @@ type DoctorPaths struct {
 }
 
 type DoctorDaemon struct {
-	Running bool `json:"running"`
-	PID     int  `json:"pid,omitempty"`
+	IdentityUnverified bool `json:"identity_unverified,omitempty"`
+	Running            bool `json:"running"`
+	PID                int  `json:"pid,omitempty"`
 }
 
 type DoctorFinding struct {
@@ -274,6 +277,18 @@ func buildDoctorResult(opts doctorOptions) DoctorResult {
 		}
 	}
 
+	serviceCount := 0
+	if reg != nil {
+		serviceCount = len(reg.Services)
+	}
+	diagnoseDaemon(&result, serviceCount)
+	result.Supervision = detectSupervisionFn(result.Paths.PID, result.Daemon.Running, result.Daemon.PID)
+	if serviceCount > 0 && !result.Daemon.IdentityUnverified && (!result.Supervision.Autostart || result.Supervision.Manager == "manual" || result.Supervision.Manager == "none") {
+		result.addFinding(inspect.WarningCodeDaemonUnsupervised, "", "daemon", "Registered services have no verified supervisor/autostart; run 'tslink install'. "+result.Supervision.Detail, nil)
+	}
+	if serviceCount > 0 && result.Supervision.Manager == "windows-startup" && result.Supervision.Autostart && !result.Supervision.RestartOnExit {
+		result.addFinding(inspect.WarningCodeDaemonRestartUnavailable, "", "daemon", "Windows Startup starts TSLink at sign-in but does not restart it after a crash.", nil)
+	}
 	hasFunnel := false
 	if reg != nil {
 		for _, svc := range reg.Services {
@@ -293,11 +308,6 @@ func buildDoctorResult(opts doctorOptions) DoctorResult {
 		)
 	}
 
-	serviceCount := 0
-	if reg != nil {
-		serviceCount = len(reg.Services)
-	}
-	diagnoseDaemon(&result, serviceCount)
 	pendingEnrollment := diagnosePendingEnrollment(&result)
 
 	completedEnrollment := false
@@ -560,7 +570,12 @@ func diagnoseDaemon(result *DoctorResult, serviceCount int) {
 		if serviceCount == 0 {
 			return
 		}
-		result.addFinding(inspect.WarningCodeDaemonNotRunning, "", "daemon", "TSLink daemon is not running.", nil)
+		if _, err := os.Stat(result.Paths.PID); (!os.IsNotExist(err) && !daemon.IsProcessAbsentFromPIDFile(result.Paths.PID)) || checkSupervisorProcessScope() != nil {
+			result.Daemon.IdentityUnverified = true
+			result.addFinding(inspect.WarningCodeDaemonIdentityUnverified, "", "daemon", "Daemon identity could not be verified; the process may still be serving (including a different TSLink build). Inspect the PID file, running binary and supervisor with 'tslink status --json' and 'tslink logs' before any install/restart. Backend probes remain enabled.", nil)
+			return
+		}
+		result.addFinding(inspect.WarningCodeDaemonNotRunning, "", "daemon", "TSLink daemon is not running; run 'tslink install' to restore service.", nil)
 		return
 	}
 	result.Daemon.Running = true
@@ -697,6 +712,10 @@ func diagnoseNetworkTarget(result *DoctorResult, svc registry.Service, opts doct
 		}
 	}
 
+	if !result.Daemon.Running && !result.Daemon.IdentityUnverified {
+		result.addFinding(inspect.WarningCodeTargetProbeSkippedDaemon, svc.Name, "target_probe", "Backend probe deferred until TSLink is running; run 'tslink install' and then 'tslink doctor'.", nil)
+		return
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), doctorProbeTimeout)
 	defer cancel()
 	if err := doctorProbeTargetFn(ctx, target.ProbeAddress, doctorProbeTimeout); err != nil {
@@ -930,6 +949,7 @@ func formatDoctor(result DoctorResult, out io.Writer) {
 	fmt.Fprintf(out, "Config: %s\n", emptyDash(result.Paths.ConfigDir))
 	fmt.Fprintf(out, "Registry: %s (%d services)\n", emptyDash(result.Paths.Registry), result.Counts.Services)
 	fmt.Fprintf(out, "Credential tier: %s\n", formatDoctorCredentialTier(result))
+	formatSupervision(result.Supervision, out)
 	if result.Daemon.Running {
 		fmt.Fprintf(out, "Daemon: running (pid %d)\n", result.Daemon.PID)
 	} else {

@@ -30,7 +30,11 @@ const (
 	WarningCodeCredentialLegacyAuthKey             = "credential_legacy_authkey"
 	WarningCodeCredentialNoAPIClient               = "credential_no_api_client"
 	WarningCodeCredentialReadFailed                = "credential_read_failed"
+	WarningCodeDaemonIdentityUnverified            = "daemon_identity_unverified"
+	WarningCodeDaemonRestartUnavailable            = "daemon_restart_unavailable"
 	WarningCodeDaemonNotRunning                    = "daemon_not_running"
+	WarningCodeDaemonUnsupervised                  = "daemon_unsupervised"
+	WarningCodeTargetProbeSkippedDaemon            = "target_probe_skipped_daemon_not_running"
 	WarningCodeDaemonPIDUnreadable                 = "daemon_pid_unreadable"
 	WarningCodeTargetProbeSkippedExternal          = "target_probe_skipped_external"
 	WarningCodeTargetProbeFailed                   = "target_probe_failed"
@@ -202,10 +206,18 @@ var WarningCodeRegistry = map[string]WarningCodeMeta{
 		Source:      "credentials",
 		Description: "Stored credentials could not be inspected locally.",
 	},
+	WarningCodeDaemonIdentityUnverified: {Severity: "warning", Source: "daemon", Description: "Daemon process identity is unverified; preserve probes and inspect before restarting."},
+	WarningCodeDaemonRestartUnavailable: {Severity: "warning", Source: "daemon", Description: "Sign-in startup is installed but crash restart is unavailable."},
 	WarningCodeDaemonNotRunning: {
-		Severity:    "warning",
+		Severity:    "error",
 		Source:      "daemon",
 		Description: "The TSLink daemon is not currently running.",
+	},
+	WarningCodeDaemonUnsupervised: {
+		Severity: "error", Source: "daemon", Description: "Registered services have no verified supervisor/autostart.",
+	},
+	WarningCodeTargetProbeSkippedDaemon: {
+		Severity: "info", Source: "target_probe", Description: "Backend probe deferred until the TSLink daemon is running.",
 	},
 	WarningCodeDaemonPIDUnreadable: {
 		Severity:    "warning",

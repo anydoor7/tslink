@@ -4,6 +4,8 @@ package cmd
 
 import (
 	"fmt"
+	"github.com/monody0007/tslink/internal/daemon"
+	"os"
 
 	"github.com/monody0007/tslink/internal/output"
 )
@@ -14,6 +16,12 @@ func detectInstallDaemonConflict(recovery string) error {
 		return fmt.Errorf("find daemon PID file before install: %w", err)
 	}
 	if !isRunningFn(pidPath) {
+		if _, statErr := os.Stat(pidPath); !os.IsNotExist(statErr) && !daemon.IsProcessAbsentFromPIDFile(pidPath) {
+			return output.ErrConflict("daemon PID artifact exists but process identity is unverified; inspect the running binary and supervisor before install/restart")
+		}
+		if err := checkSupervisorProcessScope(); err != nil {
+			return output.ErrConflict("cannot safely replace the supervisor while daemon identity is unverified: " + err.Error())
+		}
 		return nil
 	}
 

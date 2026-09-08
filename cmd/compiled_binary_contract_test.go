@@ -190,7 +190,7 @@ func runCompiledTSLinkWithConfigDir(t *testing.T, configDir, stdin string, args 
 
 func runTSLinkBinaryWithConfigDir(t *testing.T, binary, configDir, stdin string, args ...string) (stdout, stderr string, exitCode int) {
 	t.Helper()
-	cmd := exec.Command(binary, args...)
+	cmd := exec.Command(binary, offlineRegistrationArgs(args)...)
 	cmd.Env = append(os.Environ(),
 		"TSLINK_CONFIG_DIR="+configDir,
 		"TSLINK_DISABLE_KEYRING=1",
@@ -281,7 +281,7 @@ func TestCompiledAddDryRunAndActualShareAdmissionVerdicts(t *testing.T) {
 			actualArgs := append(append([]string(nil), tc.args...), "--json")
 			dryOut, dryErr, dryExit := runCompiledTSLinkWithConfigDir(t, t.TempDir(), "", dryArgs...)
 			actualOut, actualErr, actualExit := runCompiledTSLinkWithConfigDir(t, t.TempDir(), "", actualArgs...)
-			if dryErr != "" || actualErr != "" {
+			if dryErr != "" || (actualErr != "" && !strings.Contains(actualErr, "--no-daemon-install")) {
 				t.Fatalf("dry stderr=%q actual stderr=%q", dryErr, actualErr)
 			}
 			dryResults := parseCompiledJSONLines(t, dryOut)
@@ -514,7 +514,7 @@ func TestCompiledAgentE2EAddURLListRemove(t *testing.T) {
 	configDir := t.TempDir()
 	binary := compiledTSLinkBinary(t)
 	addOut, addErr, addExit := runTSLinkBinaryWithConfigDir(t, binary, configDir, "", "add", "e2e-app", "--proxy", "localhost:3000", "--json")
-	if addExit != 0 || addErr != "" {
+	if addExit != 0 || !strings.Contains(addErr, "--no-daemon-install") {
 		t.Fatalf("add exit=%d stderr=%q stdout=%s", addExit, addErr, addOut)
 	}
 	t.Logf("add stdout: %s", strings.TrimSpace(addOut))

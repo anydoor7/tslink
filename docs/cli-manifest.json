@@ -533,6 +533,13 @@
           ]
         },
         {
+          "name": "no-daemon-install",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Save configuration only; do not install or start the background service"
+        },
+        {
           "name": "proxy",
           "type": "string",
           "scope": "local",
@@ -573,9 +580,9 @@
         {
           "name": "wait",
           "type": "duration",
-          "default": "0s",
+          "default": "30s",
           "scope": "local",
-          "usage": "Wait for an exact runtime URL (optional value; default 30s)"
+          "usage": "Wait for an exact runtime URL or enrollment URL (default 30s; 0 disables waiting)"
         }
       ],
       "json_result_fields": {
@@ -1662,6 +1669,13 @@
           "usage": "Requested service name (DNS label); a matching target must already use it, while unrelated name collisions receive a numeric suffix"
         },
         {
+          "name": "no-daemon-install",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Require an already running background service; do not install one"
+        },
+        {
           "name": "wait",
           "type": "duration",
           "default": "30s",
@@ -1942,6 +1956,13 @@
           "default": "false",
           "scope": "inherited",
           "usage": "Output as JSON"
+        },
+        {
+          "name": "no-daemon-install",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Apply configuration only; do not install or start the background service"
         },
         {
           "name": "yes",

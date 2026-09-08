@@ -644,6 +644,9 @@ func LoadForRuntime(path string) (*Registry, []ServiceIssue, error) {
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return emptyRegistry(), nil, nil
+		}
 		return nil, nil, err
 	}
 	if len(bytes.TrimSpace(data)) == 0 {
