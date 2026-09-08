@@ -16,7 +16,13 @@ func detectInstallDaemonConflict(recovery string) error {
 		return fmt.Errorf("find daemon PID file before install: %w", err)
 	}
 	if !isRunningFn(pidPath) {
-		if _, statErr := os.Stat(pidPath); !os.IsNotExist(statErr) && !daemon.IsProcessAbsentFromPIDFile(pidPath) {
+		// The same cut doctor makes, for the same reason and in the same
+		// direction: doctor now sends a provably foreign PID here with "run
+		// tslink install", so refusing that install would leave the operator
+		// with two commands that each point at the other. A PID owned by an
+		// unrelated program is a stale file; installing writes a unit and
+		// starts our own daemon without touching that process.
+		if _, statErr := os.Stat(pidPath); !os.IsNotExist(statErr) && !daemon.IsProcessAbsentFromPIDFile(pidPath) && !daemon.IsForeignProcessFromPIDFile(pidPath) {
 			return output.ErrConflict("daemon PID artifact exists but process identity is unverified; inspect the running binary and supervisor before install/restart")
 		}
 		if err := checkSupervisorProcessScope(); err != nil {

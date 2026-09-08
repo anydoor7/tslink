@@ -22,13 +22,32 @@ const daemonSettleWindow = time.Second
 // Unknown ownership falls back to manual/none, with a diagnostic, never a
 // promise that this process will survive a reboot.
 type Supervision struct {
-	Manager       string `json:"manager"`
-	Installed     bool   `json:"installed"`
-	Autostart     bool   `json:"autostart"`
-	RestartOnExit bool   `json:"restart_on_exit"`
-	Path          string `json:"path,omitempty"`
-	Detail        string `json:"detail"`
+	Manager   string `json:"manager"`
+	Installed bool   `json:"installed"`
+	Autostart bool   `json:"autostart"`
+	// AutostartScope answers the question Autostart alone cannot: "boot" comes
+	// back with the machine while nobody is logged in, "login" only comes back
+	// once this user has a session. Every supervisor this tool installs is a
+	// per-user one, so the difference is the whole of what "will it still be
+	// there after a reboot" means on a headless host. It is empty whenever
+	// autostart itself is unverified.
+	AutostartScope string `json:"autostart_scope,omitempty"`
+	RestartOnExit  bool   `json:"restart_on_exit"`
+	Path           string `json:"path,omitempty"`
+	Detail         string `json:"detail"`
 }
+
+const (
+	// autostartScopeBoot is reserved for supervisors proven to start without a
+	// login: a systemd user manager kept alive by lingering.
+	autostartScopeBoot = "boot"
+	// autostartScopeLogin is the honest answer for a launchd LaunchAgent, a
+	// Windows Startup entry, and a systemd user unit without lingering.
+	autostartScopeLogin = "login"
+	// autostartScopeUnknown is used when the enabled unit is real but the
+	// boot-versus-login question could not be answered.
+	autostartScopeUnknown = "unknown"
+)
 
 var (
 	detectSupervisionFn = detectSupervision
@@ -37,7 +56,12 @@ var (
 	bootstrapTimeout    = 15 * time.Second
 	bootstrapInterval   = 250 * time.Millisecond
 	bootstrapSettle     = daemonSettleWindow
-	managerOutputFn     = boundedManagerOutput
+	// The second gate is bounded separately and briefly. What it waits for is
+	// produced by the Tailscale control plane, and the caller's own --wait is
+	// the authoritative wait for that, so a long budget here would only be a
+	// second copy of a wait that already exists downstream.
+	bootstrapEvidenceTimeout = 3 * time.Second
+	managerOutputFn          = boundedManagerOutput
 )
 
 func boundedManagerOutput(name string, args ...string) ([]byte, error) {
@@ -55,12 +79,16 @@ func unmanagedSupervision(running bool, detail string) Supervision {
 }
 
 func windowsStartupSupervision(path string) Supervision {
-	return Supervision{Manager: "windows-startup", Installed: true, Autostart: true, Path: path,
-		Detail: "Windows Startup registration exists for this config; starts at sign-in, with no crash restart or provable live PID ownership. Undo: tslink uninstall"}
+	return Supervision{Manager: "windows-startup", Installed: true, Autostart: true, AutostartScope: autostartScopeLogin, Path: path,
+		Detail: "Windows Startup registration exists for this config; starts at sign-in, so it waits for a sign-in rather than returning at boot, with no crash restart or provable live PID ownership. Undo: tslink uninstall"}
 }
 
 func formatSupervision(s Supervision, out io.Writer) {
-	fmt.Fprintf(out, "Supervision: %s (autostart=%t, restart_on_exit=%t)\n", s.Manager, s.Autostart, s.RestartOnExit)
+	scope := ""
+	if s.AutostartScope != "" {
+		scope = ", autostart_scope=" + s.AutostartScope
+	}
+	fmt.Fprintf(out, "Supervision: %s (autostart=%t%s, restart_on_exit=%t)\n", s.Manager, s.Autostart, scope, s.RestartOnExit)
 	if s.Detail != "" {
 		fmt.Fprintln(out, s.Detail)
 	}
@@ -137,7 +165,11 @@ func ensureDaemon(ctx context.Context, out io.Writer, noInstall bool) error {
 		if err != nil {
 			return err
 		}
-		_, err = waitStableDaemon(ctx, func() (int, error) {
+		// Installation is judged by the first gate alone. Everything it reads is
+		// local and deterministic: the supervisor definition, the process, and
+		// whether the two agree, all held still across the settle window. When
+		// this gate fails, the installation really did fail.
+		pid, err := waitStableDaemon(ctx, func() (int, error) {
 			if !isRunningFn(pidPath) {
 				return 0, nil
 			}
@@ -149,24 +181,83 @@ func ensureDaemon(ctx context.Context, out io.Writer, noInstall bool) error {
 			if !s.Autostart || s.Manager == "manual" || s.Manager == "none" {
 				return 0, fmt.Errorf("supervisor ownership/autostart unconfirmed: %s", s.Detail)
 			}
-			// A PID alone precedes server initialization. Require a fresh
-			// business artifact from this process (including enrollment).
-			snapshot, loadErr := tsruntime.Load(snapshotPath)
-			if loadErr == nil && snapshot != nil && snapshot.DaemonPID == pid && snapshot.GlobalError == nil && time.Since(snapshot.UpdatedAt) >= 0 && time.Since(snapshot.UpdatedAt) < 30*time.Second {
-				return pid, nil
-			}
-			handoff, loadErr := loadAuthHandoff(filepath.Join(filepath.Dir(pidPath), "auth-handoff.json"))
-			if loadErr == nil && handoff.DaemonPID == pid && handoff.ExpiresAt.After(time.Now()) {
-				return pid, nil
-			}
-			return 0, nil
+			return pid, nil
 		}, bootstrapTimeout, bootstrapInterval, bootstrapSettle)
 		if err != nil {
 			return daemonSetupError(err)
 		}
-		fmt.Fprintln(out, "TSLink background service is ready and autostart is verified.")
+		// The second gate is remote and best effort. A first business artifact
+		// can only appear once tsnet has reached the Tailscale coordination
+		// server, so on a first run with no credentials its arrival time is a
+		// network measurement, observed on one host between 2.4s and 28.9s
+		// across ten first runs. Reporting a failed installation on that clock blames this
+		// machine for someone else's latency, and the registry write and the
+		// daemon are both already in place by then. Losing the process the
+		// first gate verified is still a failure, and is now the only way to
+		// reach the crash-loop wording.
+		ready, err := waitDaemonEvidence(ctx, pidPath, snapshotPath, pid)
+		if err != nil {
+			return daemonSetupError(err)
+		}
+		if ready {
+			fmt.Fprintln(out, "TSLink background service is ready and autostart is verified.")
+			return nil
+		}
+		fmt.Fprintf(out, "TSLink background service is running (pid %d) and autostart is verified. It has not published a first sync/enrollment artifact within %s; that step waits on the Tailscale coordination server, so the URL arrives through the wait this command already performs, or later through 'tslink status --json'.\n", pid, bootstrapEvidenceTimeout)
 		return nil
 	})
+}
+
+// waitDaemonEvidence watches an already verified daemon for its first business
+// artifact and reports whether one appeared. Not finding one is not an error:
+// the caller continues, and the enrollment URL is resolved by the wait the
+// caller already performs. The error return is reserved for the process going
+// away or being replaced, which is the crash/restart loop the first gate
+// cannot see after it returns.
+func waitDaemonEvidence(ctx context.Context, pidPath, snapshotPath string, pid int) (bool, error) {
+	handoffPath := filepath.Join(filepath.Dir(pidPath), "auth-handoff.json")
+	deadline := time.Now().Add(bootstrapEvidenceTimeout)
+	for {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+		// Distinct from the first gate's identical-shaped message on purpose:
+		// reaching either of these means the supervisor had already confirmed
+		// ownership of this process and then lost it, which is the restart loop
+		// the failure text describes.
+		if !isRunningFn(pidPath) {
+			return false, fmt.Errorf("daemon did not settle: verified process %d stopped after supervision confirmed it", pid)
+		}
+		if current, err := readPIDFn(pidPath); err == nil && current != pid {
+			return false, fmt.Errorf("daemon did not settle: verified process was replaced (%d -> %d) after supervision confirmed it", pid, current)
+		}
+		if daemonEvidenceReady(snapshotPath, handoffPath, pid) {
+			return true, nil
+		}
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return false, nil
+		}
+		timer := time.NewTimer(min(bootstrapInterval, remaining))
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return false, ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+// daemonEvidenceReady reports whether this exact process has published either
+// of the two artifacts that prove it finished initializing: a fresh runtime
+// snapshot, or an enrollment handoff still inside its validity window.
+func daemonEvidenceReady(snapshotPath, handoffPath string, pid int) bool {
+	snapshot, err := tsruntime.Load(snapshotPath)
+	if err == nil && snapshot != nil && snapshot.DaemonPID == pid && snapshot.GlobalError == nil && time.Since(snapshot.UpdatedAt) >= 0 && time.Since(snapshot.UpdatedAt) < 30*time.Second {
+		return true
+	}
+	handoff, err := loadAuthHandoff(handoffPath)
+	return err == nil && handoff.DaemonPID == pid && handoff.ExpiresAt.After(time.Now())
 }
 
 // At least two consistent samples spanning settle are mandatory. Once a

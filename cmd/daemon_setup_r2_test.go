@@ -113,8 +113,11 @@ func TestBootstrapEnrollmentAcrossServices(t *testing.T) {
 	}
 }
 
+// Only inconclusive evidence earns the conservative treatment. A PID file
+// naming a live process that is provably some other program is covered by
+// TestBootstrapDoctorForeignPIDIsAStoppedDaemon instead.
 func TestBootstrapDoctorUnverifiedIdentityKeepsProbes(t *testing.T) {
-	for _, contents := range []string{fmt.Sprint(os.Getpid()), "unreadable PID"} {
+	for _, contents := range []string{"unreadable PID"} {
 		t.Run(contents, func(t *testing.T) {
 			env := newDoctorTestEnv(t, []registry.Service{{Name: "app", Type: registry.TypeProxy, Target: "http://localhost:3000"}})
 			if err := os.WriteFile(env.pidPath, []byte(contents), 0600); err != nil {

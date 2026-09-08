@@ -159,8 +159,14 @@ registry 的新环境。失败消息会说明监管定义是否残留：Linux �
 和 `tslink doctor`；Linux 还可用 `journalctl --user -u tslink.service`。
 安装器验证监管状态稳定，自举再验证新鲜业务证据及稳定窗口；两者均不保证未来不会崩溃。
 
-`status` 与 `doctor` 的文本和 JSON 都报告 `supervision`：监管器、自启动、重启策略与
-探测说明。无法确认监管的运行进程记为 `manual`；没有运行进程且无可验证监管记为 `none`。
+`status` 与 `doctor` 的文本和 JSON 都报告 `supervision`：监管器、自启动、
+`autostart_scope`、重启策略与探测说明。无法确认监管的运行进程记为 `manual`；
+没有运行进程且无可验证监管记为 `none`。`autostart_scope` 回答单个 autostart 布尔量
+无法回答的问题：`boot` 表示无人登录时也随开机返回，`login` 表示要等这个用户登录，
+`unknown` 表示无法判定。macOS LaunchAgent 与 Windows 启动项恒为 `login`；
+systemd user unit 只有开启 lingering 才是 `boot`，否则报 `login` 并给出
+`loginctl enable-linger "$USER"`。TSLink 只报告 lingering，不代为修改，
+因为它作用于该用户的所有服务。
 已有注册服务但无监管时 doctor 判 error；确认后台服务未运行时延后后端探测。PID 身份或监管状态无法确认时则给 warning 并保留探针，
 先检查运行二进制与日志，再决定是否安装/重启。任何节点正在入网时，`url` 会返回授权动作，避免重复等待。
 此时 `url` 的后续动作是 `tslink install`。

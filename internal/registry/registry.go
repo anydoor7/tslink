@@ -634,6 +634,14 @@ func ValidateTCPTarget(target string) error {
 	return nil
 }
 
+// readRegistryFile is a seam. The two loaders below both turn a missing file
+// into a valid empty registry, and that single os.IsNotExist check is all that
+// separates "no services configured yet" from "the registry is unreadable, so
+// every configured service would be torn down". A test has to be able to
+// produce a non-ENOENT read error to hold that line, and on Unix a regular
+// file the caller owns cannot be made unreadable to that caller.
+var readRegistryFile = os.ReadFile
+
 // LoadForRuntime strictly decodes registry.json while isolating errors whose
 // service name remains trustworthy. A malformed top-level document or a
 // service without a usable name is global-invalid because runtime cannot know
@@ -642,7 +650,7 @@ func LoadForRuntime(path string) (*Registry, []ServiceIssue, error) {
 	if err := atomicfile.ConvergePrivateFile(path); err != nil {
 		return nil, nil, err
 	}
-	data, err := os.ReadFile(path)
+	data, err := readRegistryFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return emptyRegistry(), nil, nil
@@ -755,7 +763,7 @@ func LoadWithFileState(path string) (*Registry, RegistryFileState, error) {
 	if err := atomicfile.ConvergePrivateFile(path); err != nil {
 		return nil, "", err
 	}
-	data, err := os.ReadFile(path)
+	data, err := readRegistryFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return emptyRegistry(), RegistryFileMissing, nil

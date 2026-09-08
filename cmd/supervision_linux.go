@@ -58,32 +58,98 @@ func checkSupervisorProcessScope() error {
 	return nil
 }
 
+// The recovery command differs by cause, so the causes are kept apart. The one
+// that used to be folded in with the rest is an installed unit the user
+// manager cannot be asked about: reinstalling rewrites the same file and
+// changes neither lingering nor the missing session, so sending the operator
+// to 'tslink install' there is sending them at the wrong thing.
 func detectSupervision(_ string, running bool, pid int) Supervision {
-	s := unmanagedSupervision(running, "No systemd ownership/autostart could be verified. Run: tslink install")
 	path, err := systemdServicePath()
 	if err != nil {
-		return s
+		return unmanagedSupervision(running, "No systemd ownership/autostart could be verified: the unit path could not be resolved ("+err.Error()+"). Run: tslink install")
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return s
+		if os.IsNotExist(err) {
+			return unmanagedSupervision(running, "No systemd user unit is installed at "+path+". Run: tslink install")
+		}
+		return unmanagedSupervision(running, "The systemd user unit at "+path+" exists but could not be read ("+err.Error()+"). Inspect it before running: tslink install")
 	}
-	p, err := systemdObservation()
-	if err != nil || p["LoadState"] != "loaded" || p["FragmentPath"] != path {
-		return s
+	observed, err := systemdObservation()
+	if err != nil {
+		return unmanagedSupervision(running, "A systemd user unit is installed at "+path+", but the systemd user manager could not be queried ("+err.Error()+"). The unit file is already in place, so this is usually a missing login session or disabled lingering rather than a missing install, and reinstalling changes neither. For a host with no interactive login run: loginctl enable-linger \"$USER\". Then confirm with: systemctl --user status "+systemdServiceName)
 	}
-	mainPID, _ := strconv.Atoi(p["MainPID"])
+	if observed["LoadState"] != "loaded" || observed["FragmentPath"] != path {
+		return unmanagedSupervision(running, fmt.Sprintf("A systemd user unit is installed at %s, but systemd has not loaded it from that path (LoadState=%q, FragmentPath=%q). Run: systemctl --user daemon-reload. If it stays unloaded, run: tslink install", path, observed["LoadState"], observed["FragmentPath"]))
+	}
+	mainPID, _ := strconv.Atoi(observed["MainPID"])
 	if running {
-		if pid <= 0 || mainPID != pid || p["ActiveState"] != "active" || p["SubState"] != "running" {
-			return s
+		if pid <= 0 || mainPID != pid || observed["ActiveState"] != "active" || observed["SubState"] != "running" {
+			return unmanagedSupervision(running, fmt.Sprintf("A TSLink daemon is running (pid %d), but the systemd unit at %s does not own it (MainPID=%q, ActiveState=%q, SubState=%q). Stop the unsupervised daemon with 'tslink stop', then run: tslink install", pid, path, observed["MainPID"], observed["ActiveState"], observed["SubState"]))
 		}
 	} else {
-		dir, err := absoluteConfigDir()
-		if err != nil || mainPID > 0 || !supervisorConfigMatches(data, dir) {
-			return s
+		dir, dirErr := absoluteConfigDir()
+		switch {
+		case dirErr != nil:
+			return unmanagedSupervision(running, "A systemd user unit is installed at "+path+", but this config directory could not be resolved ("+dirErr.Error()+"), so its binding could not be checked.")
+		case mainPID > 0:
+			return unmanagedSupervision(running, fmt.Sprintf("The systemd unit at %s reports a running process (MainPID=%d) while no verified TSLink daemon was found for config %s. Inspect it with 'systemctl --user status %s' before any install or restart", path, mainPID, dir, systemdServiceName))
+		case !supervisorConfigMatches(data, dir):
+			return unmanagedSupervision(running, fmt.Sprintf("The systemd unit at %s is installed but bound to a different config directory than %s, so it would not supervise this config. Run: tslink install", path, dir))
 		}
 	}
+	autostart := observed["UnitFileState"] == "enabled"
+	scope, scopeDetail := linuxAutostartScope(autostart)
 	return Supervision{Manager: "systemd", Installed: true, Path: path,
-		Autostart: p["UnitFileState"] == "enabled", RestartOnExit: p["Restart"] == "always" || p["Restart"] == "on-failure",
-		Detail: "systemd user unit verified; starts at user login. For boot before login and logout survival: loginctl enable-linger \"$USER\". Undo: tslink uninstall"}
+		Autostart: autostart, AutostartScope: scope, RestartOnExit: observed["Restart"] == "always" || observed["Restart"] == "on-failure",
+		Detail: "systemd user unit verified; " + scopeDetail + " Undo: tslink uninstall"}
+}
+
+// linuxAutostartScope resolves boot versus login for a systemd *user* unit.
+// An enabled unit is started by the per-user manager, and without lingering
+// that manager exists only while the user has a session, so on a host nobody
+// logs into the unit does not come back after a reboot. Enabling lingering
+// affects every service this user owns, which makes it the user's decision;
+// this reports the state and the exact command instead of performing it.
+func linuxAutostartScope(autostart bool) (string, string) {
+	if !autostart {
+		return "", "the unit file is not enabled, so systemd does not start it on its own. Enable it with: tslink install."
+	}
+	switch linuxLingerState() {
+	case lingerEnabled:
+		return autostartScopeBoot, "systemd lingering is enabled for this user, so it starts at boot and survives logout."
+	case lingerDisabled:
+		return autostartScopeLogin, "it starts when this user logs in. Lingering is disabled, so it does NOT start at boot while nobody is logged in; for that run: loginctl enable-linger \"$USER\"."
+	default:
+		return autostartScopeUnknown, "it starts when this user logs in. Whether it also starts at boot could not be determined because systemd lingering could not be read; check with: loginctl show-user \"$USER\" --property=Linger, and enable boot start with: loginctl enable-linger \"$USER\"."
+	}
+}
+
+type lingerState int
+
+const (
+	lingerUnknown lingerState = iota
+	lingerEnabled
+	lingerDisabled
+)
+
+// linuxLingerState reads the same property, through the same seam, as the
+// install-time warning, so the two never disagree about what loginctl said.
+func linuxLingerState() lingerState {
+	user := linuxUserNameFn()
+	if user == "" {
+		return lingerUnknown
+	}
+	output, err := loginctlCombinedOutputFn("show-user", user, "--property=Linger", "--value")
+	if err != nil {
+		return lingerUnknown
+	}
+	switch strings.TrimSpace(string(output)) {
+	case "yes":
+		return lingerEnabled
+	case "no", "":
+		return lingerDisabled
+	default:
+		return lingerUnknown
+	}
 }

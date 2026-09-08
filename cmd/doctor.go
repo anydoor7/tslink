@@ -570,7 +570,13 @@ func diagnoseDaemon(result *DoctorResult, serviceCount int) {
 		if serviceCount == 0 {
 			return
 		}
-		if _, err := os.Stat(result.Paths.PID); (!os.IsNotExist(err) && !daemon.IsProcessAbsentFromPIDFile(result.Paths.PID)) || checkSupervisorProcessScope() != nil {
+		// A live PID that provably belongs to another program is a stale PID
+		// file, not an uncertain daemon: the daemon really is stopped, and
+		// downgrading that to a warning would hide both daemon_not_running and
+		// daemon_unsupervised behind an unverifiable-identity note. Only
+		// evidence that is merely inconclusive (a sidecar from another build, a
+		// timestamp outside tolerance) still earns the conservative treatment.
+		if _, err := os.Stat(result.Paths.PID); (!os.IsNotExist(err) && !daemon.IsProcessAbsentFromPIDFile(result.Paths.PID) && !daemon.IsForeignProcessFromPIDFile(result.Paths.PID)) || checkSupervisorProcessScope() != nil {
 			result.Daemon.IdentityUnverified = true
 			result.addFinding(inspect.WarningCodeDaemonIdentityUnverified, "", "daemon", "Daemon identity could not be verified; the process may still be serving (including a different TSLink build). Inspect the PID file, running binary and supervisor with 'tslink status --json' and 'tslink logs' before any install/restart. Backend probes remain enabled.", nil)
 			return

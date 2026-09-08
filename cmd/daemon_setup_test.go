@@ -29,16 +29,16 @@ func isolateBootstrap(t *testing.T) string {
 	t.Setenv("APPDATA", filepath.Join(home, "AppData"))
 	oldRunning, oldReadPID := isRunningFn, readPIDFn
 	oldEnsure, oldInstall, oldDetect, oldOutput := ensureDaemonFn, installDaemonFn, detectSupervisionFn, managerOutputFn
-	oldTimeout, oldInterval, oldSettle := bootstrapTimeout, bootstrapInterval, bootstrapSettle
+	oldTimeout, oldInterval, oldSettle, oldEvidence := bootstrapTimeout, bootstrapInterval, bootstrapSettle, bootstrapEvidenceTimeout
 	t.Cleanup(func() {
 		isRunningFn, readPIDFn = oldRunning, oldReadPID
 		ensureDaemonFn, installDaemonFn, detectSupervisionFn, managerOutputFn = oldEnsure, oldInstall, oldDetect, oldOutput
-		bootstrapTimeout, bootstrapInterval, bootstrapSettle = oldTimeout, oldInterval, oldSettle
+		bootstrapTimeout, bootstrapInterval, bootstrapSettle, bootstrapEvidenceTimeout = oldTimeout, oldInterval, oldSettle, oldEvidence
 	})
 	isRunningFn = func(string) bool { return false }
 	readPIDFn = func(string) (int, error) { return 4242, nil }
 	ensureDaemonFn = ensureDaemon
-	bootstrapTimeout, bootstrapInterval, bootstrapSettle = 20*time.Millisecond, time.Millisecond, 2*time.Millisecond
+	bootstrapTimeout, bootstrapInterval, bootstrapSettle, bootstrapEvidenceTimeout = 20*time.Millisecond, time.Millisecond, 2*time.Millisecond, 20*time.Millisecond
 	managerOutputFn = func(name string, args ...string) ([]byte, error) {
 		if name == "systemctl" {
 			return []byte("LoadState=not-found\n"), nil
@@ -73,7 +73,14 @@ func TestBootstrapOptOutAndAlreadyRunning(t *testing.T) {
 	}
 }
 
-func TestBootstrapInstallsAnnouncesAndWaitsForEvidence(t *testing.T) {
+// Setup is judged on what this machine controls. The first gate proves the
+// supervisor owns a stable process; the first business artifact is produced
+// only after tsnet reaches the Tailscale coordination server, so its absence
+// is a statement about the network and must not be reported as a failed
+// installation. Every variant below therefore succeeds, and the announcement
+// is what distinguishes a daemon that has already published evidence from one
+// that has not yet.
+func TestBootstrapSucceedsWhenEvidenceLagsControlPlane(t *testing.T) {
 	for _, evidence := range []string{"snapshot", "enrollment", "missing", "wrong_pid", "stale", "future"} {
 		t.Run(evidence, func(t *testing.T) {
 			dir := isolateBootstrap(t)
@@ -105,13 +112,23 @@ func TestBootstrapInstallsAnnouncesAndWaitsForEvidence(t *testing.T) {
 				return nil
 			}
 			var log bytes.Buffer
-			err := ensureDaemon(context.Background(), &log, false)
-			wantOK := evidence == "snapshot" || evidence == "enrollment"
-			if (err == nil) != wantOK {
+			if err := ensureDaemon(context.Background(), &log, false); err != nil {
 				t.Fatalf("evidence=%s err=%v log=%s", evidence, err, &log)
 			}
 			if installs != 1 || samples < 2 {
 				t.Fatalf("installs=%d samples=%d", installs, samples)
+			}
+			ready := evidence == "snapshot" || evidence == "enrollment"
+			if got := strings.Contains(log.String(), "background service is ready"); got != ready {
+				t.Fatalf("evidence=%s ready-announcement=%t: %s", evidence, got, &log)
+			}
+			if got := strings.Contains(log.String(), "has not published a first sync/enrollment artifact"); got == ready {
+				t.Fatalf("evidence=%s pending-announcement=%t: %s", evidence, got, &log)
+			}
+			// A successful setup never speculates about a crash loop; that
+			// wording belongs to daemonSetupError and to nothing else.
+			if strings.Contains(log.String(), "crash-looping") {
+				t.Fatalf("evidence=%s: healthy path mentioned a crash loop: %s", evidence, &log)
 			}
 			path, _ := supervisorPath()
 			for _, want := range []string{supervisorName(), path, dir, "tslink uninstall"} {
@@ -121,6 +138,83 @@ func TestBootstrapInstallsAnnouncesAndWaitsForEvidence(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The first gate still owns the failure verdict. Ownership that never settles
+// is a real installation failure and keeps reporting one.
+func TestBootstrapFailsWhenSupervisionNeverSettles(t *testing.T) {
+	isolateBootstrap(t)
+	installDaemonFn = func(context.Context, io.Writer) error {
+		isRunningFn = func(string) bool { return true }
+		detectSupervisionFn = func(_ string, running bool, _ int) Supervision {
+			return unmanagedSupervision(running, "no manager owns this process")
+		}
+		return nil
+	}
+	err := ensureDaemon(context.Background(), io.Discard, false)
+	if code, _ := registry.ErrorCode(err); code != "daemon_setup_failed" {
+		t.Fatalf("err=%v", err)
+	}
+	if !strings.Contains(err.Error(), "ownership/autostart unconfirmed") {
+		t.Fatalf("cause missing from %v", err)
+	}
+}
+
+// Losing the process the first gate verified is the crash/restart loop the
+// failure text describes, and after this change it is the only way to reach
+// that text. The two messages are worded differently from the first gate's so
+// the assertion proves which gate produced the verdict.
+func TestBootstrapEvidenceGateFailsOnlyWhenProcessGoesAway(t *testing.T) {
+	dir := t.TempDir()
+	pidPath, snapshotPath := filepath.Join(dir, "tslink.pid"), filepath.Join(dir, "runtime.json")
+	old, oldRead, oldEvidence := isRunningFn, readPIDFn, bootstrapEvidenceTimeout
+	t.Cleanup(func() { isRunningFn, readPIDFn, bootstrapEvidenceTimeout = old, oldRead, oldEvidence })
+	bootstrapEvidenceTimeout = 20 * time.Millisecond
+
+	for _, tc := range []struct {
+		name    string
+		running bool
+		pid     int
+		want    string
+	}{
+		{"stopped", false, 4242, "verified process 4242 stopped after supervision confirmed it"},
+		{"replaced", true, 4343, "verified process was replaced (4242 -> 4343) after supervision confirmed it"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			isRunningFn = func(string) bool { return tc.running }
+			readPIDFn = func(string) (int, error) { return tc.pid, nil }
+			ready, err := waitDaemonEvidence(context.Background(), pidPath, snapshotPath, 4242)
+			if ready || err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("ready=%t err=%v", ready, err)
+			}
+		})
+	}
+
+	t.Run("absent_evidence_is_not_an_error", func(t *testing.T) {
+		isRunningFn = func(string) bool { return true }
+		readPIDFn = func(string) (int, error) { return 4242, nil }
+		start := time.Now()
+		ready, err := waitDaemonEvidence(context.Background(), pidPath, snapshotPath, 4242)
+		if ready || err != nil {
+			t.Fatalf("ready=%t err=%v", ready, err)
+		}
+		if elapsed := time.Since(start); elapsed < bootstrapEvidenceTimeout {
+			t.Fatalf("returned after %s, before the budget elapsed", elapsed)
+		}
+	})
+
+	t.Run("late_evidence_is_picked_up", func(t *testing.T) {
+		isRunningFn = func(string) bool { return true }
+		readPIDFn = func(string) (int, error) { return 4242, nil }
+		go func() {
+			time.Sleep(2 * time.Millisecond)
+			_ = saveAuthHandoff(filepath.Join(dir, "auth-handoff.json"), newAuthHandoffRecord("myapp", "https://login.tailscale.com/a/late", 4242))
+		}()
+		ready, err := waitDaemonEvidence(context.Background(), pidPath, snapshotPath, 4242)
+		if !ready || err != nil {
+			t.Fatalf("ready=%t err=%v", ready, err)
+		}
+	})
 }
 
 func TestBootstrapRefusesOtherConfigBeforeInstall(t *testing.T) {
@@ -230,6 +324,91 @@ func TestBootstrapAddWritesBeforeInstallThenReturnsURL(t *testing.T) {
 	}
 	if installs != 1 || !strings.Contains(out, "URL: https://myapp.tailnet-example.ts.net") {
 		t.Fatalf("installs=%d out=%q", installs, out)
+	}
+}
+
+// The whole point of splitting the gates, seen from the command the user
+// actually types. The enrollment URL lands after the setup budget has already
+// elapsed, which used to end the command with daemon_setup_failed while the
+// daemon and the registry were both fine. It must now flow through to the
+// caller's own wait and come back as a successful add with an auth URL.
+func TestBootstrapAddSucceedsWhenEnrollmentURLArrivesLate(t *testing.T) {
+	dir := isolateBootstrap(t)
+	handoffPath := filepath.Join(dir, "auth-handoff.json")
+	record := newAuthHandoffRecord("myapp", "https://login.tailscale.com/a/late-fixture", 4242)
+	installDaemonFn = func(context.Context, io.Writer) error {
+		isRunningFn = func(string) bool { return true }
+		detectSupervisionFn = func(string, bool, int) Supervision { return Supervision{Manager: "systemd", Autostart: true} }
+		// Nothing to show for it yet, and nothing to show for it for longer
+		// than the whole setup budget.
+		go func() {
+			time.Sleep(3 * bootstrapEvidenceTimeout)
+			_ = saveAuthHandoff(handoffPath, record)
+		}()
+		return nil
+	}
+	var stderr bytes.Buffer
+	addCmd, _, err := rootCmd.Find([]string{"add"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resetCommandLocalFlags(t, addCmd)
+	addCmd.SetContext(context.Background())
+	addCmd.SetErr(&stderr)
+	var stdout bytes.Buffer
+	addCmd.SetOut(&stdout)
+	for k, v := range map[string]string{"proxy": "localhost:3000", "wait": "2s"} {
+		if err := addCmd.Flags().Set(k, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := addCmd.RunE(addCmd, []string{"myapp"}); err != nil {
+		t.Fatalf("late enrollment URL was reported as a failure: %v\nstderr=%s", err, &stderr)
+	}
+	if strings.Contains(stderr.String(), "crash-looping") || strings.Contains(stderr.String(), "daemon_setup_failed") {
+		t.Fatalf("healthy path blamed the installation: %s", &stderr)
+	}
+	svc, err := loadPersistedService(filepath.Join(dir, "registry.json"), "myapp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := buildAddResult(context.Background(), svc, true, filepath.Join(dir, "tslink.pid"), filepath.Join(dir, "registry.json"), filepath.Join(dir, "runtime.json"), 2*time.Second)
+	if err != nil || result.AuthURL != record.AuthURL || !result.URLPending {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+}
+
+// TestBootstrapTemplateApplyUsesSetup counts the call; this holds the order.
+// The CLI template path is the mirror of the add path: a setup failure must
+// never be able to discard configuration the user already asked to save, so
+// the services have to be on disk before installation is attempted.
+func TestBootstrapTemplateApplyWritesBeforeSetup(t *testing.T) {
+	dir := isolateBootstrap(t)
+	cmd, _, _ := rootCmd.Find([]string{"template", "apply"})
+	resetCommandLocalFlags(t, cmd)
+	if err := cmd.Flags().Set("yes", "true"); err != nil {
+		t.Fatal(err)
+	}
+	var namesAtSetup []string
+	ensureDaemonFn = func(context.Context, io.Writer, bool) error {
+		reg, err := registry.Load(filepath.Join(dir, "registry.json"))
+		if err != nil {
+			return err
+		}
+		for _, svc := range reg.Services {
+			namesAtSetup = append(namesAtSetup, svc.Name)
+		}
+		return errors.New("template setup marker")
+	}
+	if err := cmd.RunE(cmd, []string{"personal-harness"}); err == nil || !strings.Contains(err.Error(), "template setup marker") {
+		t.Fatalf("err=%v", err)
+	}
+	if len(namesAtSetup) == 0 {
+		t.Fatal("installation ran before the template services were persisted")
+	}
+	reg, err := registry.Load(filepath.Join(dir, "registry.json"))
+	if err != nil || len(reg.Services) != len(namesAtSetup) {
+		t.Fatalf("persisted=%+v seen-at-setup=%v err=%v", reg, namesAtSetup, err)
 	}
 }
 

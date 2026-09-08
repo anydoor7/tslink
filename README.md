@@ -164,12 +164,23 @@ Setup errors report whether a supervisor definition remains: Linux can leave an
 enabled unit retrying after a readiness failure; macOS new-install verification
 rolls back its job/plist when cleanup succeeds. Inspect `tslink logs` and `tslink
 doctor` before retrying (Linux also: `journalctl --user -u tslink.service`). The
-installer checks stable manager state; bootstrap then checks fresh daemon business
-evidence over another stable window. Neither check guarantees future uptime.
+installer checks stable manager state. Bootstrap then judges setup on that alone:
+the supervisor owns a stable process whose identity it verified. It also looks for
+fresh daemon business evidence, but that evidence is produced only after the daemon
+reaches the Tailscale coordination server, so its absence leaves setup successful and
+the enrollment URL is resolved by the wait `add` already performs. Losing the verified
+process is still a setup failure. Neither check guarantees future uptime.
 
 `status` and `doctor` report `supervision` in text and JSON: verified manager,
-autostart, restart policy, and evidence. An unverified running process is `manual`;
-an absent process without verified management is `none`. Doctor treats registered
+autostart, `autostart_scope`, restart policy, and evidence. An unverified running
+process is `manual`; an absent process without verified management is `none`.
+`autostart_scope` answers what `autostart` alone cannot for a per-user supervisor:
+`boot` returns with the machine while nobody is logged in, `login` waits for this
+user to sign in, and `unknown` means the difference could not be determined. A macOS
+LaunchAgent and a Windows Startup entry are always `login`. A systemd user unit is
+`boot` only with lingering enabled; without it, `status` reports `login` and names
+`loginctl enable-linger "$USER"`. TSLink reports lingering and never changes it,
+because it applies to every service the user owns. Doctor treats registered
 services without supervision as an error and defers backend probes while TSLink is
 confirmed stopped. When PID identity or supervisor state is uncertain, doctor reports
 a warning and keeps backend probes enabled; inspect the running binary and logs

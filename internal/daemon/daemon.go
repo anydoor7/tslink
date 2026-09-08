@@ -38,6 +38,14 @@ var readExecutableBuildInfo = buildinfo.ReadFile
 var (
 	readProcessIdentityData = os.ReadFile
 	errIdentityMismatch     = errors.New("process does not match the TSLink serve daemon")
+	// errForeignProcess is the subset of errIdentityMismatch that carries
+	// positive proof: the PID belongs to some other program. It wraps
+	// errIdentityMismatch so every existing mismatch check keeps working, while
+	// callers that must choose between "stopped" and "cannot tell" can ask for
+	// the stronger fact. Sidecar version, recorded-field and timestamp
+	// disagreements deliberately stay outside it: those say the evidence is
+	// stale or from another build, not that the process is somebody else's.
+	errForeignProcess = fmt.Errorf("%w: the PID belongs to a different program", errIdentityMismatch)
 )
 
 type processLiveness uint8
@@ -281,7 +289,7 @@ func verifyProcessProduct(pid int) error {
 	info, buildErr := readExecutableBuildInfo(actual)
 	if buildErr == nil {
 		if info.Main.Path != processProductID {
-			return identityMismatchf("process %d executable %q belongs to Go module %q, not %q", pid, actual, info.Main.Path, processProductID)
+			return foreignProcessf("process %d executable %q belongs to Go module %q, not %q", pid, actual, info.Main.Path, processProductID)
 		}
 		return verifyProcessServeCommand(pid)
 	}
@@ -294,7 +302,7 @@ func verifyProcessProduct(pid int) error {
 		return fmt.Errorf("stat process %d executable %q: %w", pid, actual, statErr)
 	}
 	if isDefinitiveNonGoExecutable(buildErr) {
-		return identityMismatchf("process %d executable %q is not a TSLink Go executable: %v", pid, actual, buildErr)
+		return foreignProcessf("process %d executable %q is not a TSLink Go executable: %v", pid, actual, buildErr)
 	}
 	return fmt.Errorf("process %d executable %q has unavailable TSLink build metadata: %w", pid, actual, buildErr)
 }
@@ -305,7 +313,7 @@ func verifyProcessServeCommand(pid int) error {
 		return fmt.Errorf("inspect process %d arguments: %w", pid, err)
 	}
 	if len(args) < 2 || args[1] != "serve" {
-		return identityMismatchf("process %d argv %q does not identify a serve daemon", pid, args)
+		return foreignProcessf("process %d argv %q does not identify a serve daemon", pid, args)
 	}
 	return nil
 }
@@ -313,7 +321,7 @@ func verifyProcessServeCommand(pid int) error {
 func legacyProcessProductFallback(pid int, executablePath string) error {
 	wantBase := processExecutableBaseName()
 	if filepath.Base(executablePath) != wantBase {
-		return identityMismatchf("process %d unlinked executable basename %q is not %s", pid, filepath.Base(executablePath), wantBase)
+		return foreignProcessf("process %d unlinked executable basename %q is not %s", pid, filepath.Base(executablePath), wantBase)
 	}
 	return verifyProcessServeCommand(pid)
 }
@@ -334,6 +342,27 @@ func isDefinitiveNonGoExecutable(err error) bool {
 
 func identityMismatchf(format string, args ...any) error {
 	return fmt.Errorf("%w: %s", errIdentityMismatch, fmt.Sprintf(format, args...))
+}
+
+// foreignProcessf records a mismatch that was observed on the live process
+// itself, rather than on the artifacts describing it.
+func foreignProcessf(format string, args ...any) error {
+	return fmt.Errorf("%w: %s", errForeignProcess, fmt.Sprintf(format, args...))
+}
+
+// IsForeignProcessFromPIDFile reports true only when the PID file names a live
+// process that is provably a different program. A process that merely cannot
+// be identified returns false, so the conservative "identity unverified"
+// treatment stays the default and only positive proof moves a caller off it.
+func IsForeignProcessFromPIDFile(path string) bool {
+	pid, err := ReadPID(path)
+	if err != nil || pid <= 0 {
+		return false
+	}
+	if inspectProcessLiveness(pid) != processLivenessAlive {
+		return false
+	}
+	return errors.Is(verifyProcessProduct(pid), errForeignProcess)
 }
 
 func identityVerifiedOrUnavailable(err error) bool {

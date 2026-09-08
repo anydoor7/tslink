@@ -164,12 +164,18 @@ func detectSupervision(_ string, running bool, pid int) Supervision {
 		return s
 	}
 	autostart := values["RunAtLoad"] == true && values["Disabled"] != true && launchdAutostartEnabled(matchedDomain)
-	detail := "launchd job verified; starts at user login. Undo: tslink uninstall"
+	// A LaunchAgent is a per-user job: launchd loads it when this user's
+	// session starts, so it returns at login rather than at boot. Saying so
+	// keeps the field comparable with the systemd side, where the same
+	// distinction is the difference between surviving a reboot and not.
+	scope := autostartScopeLogin
+	detail := "launchd job verified; it starts when this user logs in, so it returns at login rather than while the machine boots to the login window. Undo: tslink uninstall"
 	if !autostart {
+		scope = ""
 		detail = "launchd owns the job, but autostart is disabled or unverified. Inspect: launchctl print-disabled " + matchedDomain
 	}
 	return Supervision{Manager: "launchd", Installed: true, Path: path,
-		Autostart: autostart, RestartOnExit: values["KeepAlive"] == true, Detail: detail}
+		Autostart: autostart, AutostartScope: scope, RestartOnExit: values["KeepAlive"] == true, Detail: detail}
 }
 
 func launchdAutostartEnabled(domain string) bool {
