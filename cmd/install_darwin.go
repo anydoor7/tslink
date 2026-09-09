@@ -5,14 +5,15 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"encoding/xml"
 	"errors"
 	"fmt"
-	"html/template"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"text/template"
 	"time"
 
 	"github.com/monody0007/tslink/internal/atomicfile"
@@ -99,30 +100,48 @@ type launchAgentRestoreResult struct {
 	Reloaded      bool
 }
 
-var plistTemplate = template.Must(template.New("plist").Parse(`<?xml version="1.0" encoding="UTF-8"?>
+// xmlEscapeValue renders v as text and escapes every XML-significant
+// character (& < > " ') via encoding/xml's own escaper, so interpolated
+// values (paths, labels) that legitimately contain those characters still
+// produce well-formed XML. text/template has no automatic contextual
+// escaping (unlike html/template, which also mis-escapes the literal
+// leading "<?xml ...?>" prolog as HTML character data) so every
+// interpolation in plistTemplate below is piped through this function
+// explicitly.
+func xmlEscapeValue(v any) (string, error) {
+	var buf bytes.Buffer
+	if err := xml.EscapeText(&buf, []byte(fmt.Sprint(v))); err != nil {
+		return "", fmt.Errorf("xml escape: %w", err)
+	}
+	return buf.String(), nil
+}
+
+var plistTemplate = template.Must(template.New("plist").Funcs(template.FuncMap{
+	"xmlesc": xmlEscapeValue,
+}).Parse(`<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>{{.Label}}</string>
+    <string>{{.Label | xmlesc}}</string>
     <key>ProgramArguments</key>
     <array>
-        <string>{{.Executable}}</string>
+        <string>{{.Executable | xmlesc}}</string>
         <string>serve</string>
         {{if .NoAutoProvision}}<string>--no-auto-provision</string>{{end}}
     </array>
     {{if .ConfigDir}}<key>EnvironmentVariables</key>
-    <dict><key>TSLINK_CONFIG_DIR</key><string>{{.ConfigDir}}</string></dict>{{end}}
+    <dict><key>TSLINK_CONFIG_DIR</key><string>{{.ConfigDir | xmlesc}}</string></dict>{{end}}
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
     <true/>
     <key>ThrottleInterval</key>
-    <integer>{{.ThrottleInterval}}</integer>
+    <integer>{{.ThrottleInterval | xmlesc}}</integer>
     <key>StandardOutPath</key>
-    <string>{{.OutLog}}</string>
+    <string>{{.OutLog | xmlesc}}</string>
     <key>StandardErrorPath</key>
-    <string>{{.ErrLog}}</string>
+    <string>{{.ErrLog | xmlesc}}</string>
 </dict>
 </plist>
 `))

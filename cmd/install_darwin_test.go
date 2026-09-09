@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -313,11 +314,19 @@ func TestPlistTemplateEscapesXMLPaths(t *testing.T) {
 		t.Fatalf("plistTemplate.Execute() error = %v", err)
 	}
 
+	// encoding/xml.Unmarshal is a weak, non-authoritative check: it is
+	// lenient about the document prolog (it did not reject the historic
+	// html/template bug that rendered "&lt;?xml ...?>" as the first line
+	// of the file -- see TestPlistTemplateRendersWellFormedPlist for the
+	// checks that actually catch that regression) and it does not enforce
+	// launchd's stricter plist grammar. All a failure here proves is that
+	// plistData field values contain raw XML-significant characters
+	// (&, <, >) inside element text, i.e. that they were not escaped.
 	var parsed struct {
 		XMLName xml.Name `xml:"plist"`
 	}
 	if err := xml.Unmarshal(buf.Bytes(), &parsed); err != nil {
-		t.Fatalf("rendered plist is not well-formed XML: %v\n%s", err, buf.String())
+		t.Fatalf("plistData values were not escaped for XML text content (encoding/xml rejected them): %v\n%s", err, buf.String())
 	}
 	for _, want := range []string{
 		"/Applications/TSLink &amp; Tools/&lt;tslink&gt;/tslink",
@@ -327,6 +336,63 @@ func TestPlistTemplateEscapesXMLPaths(t *testing.T) {
 		if !strings.Contains(buf.String(), want) {
 			t.Fatalf("plist missing escaped path %q:\n%s", want, buf.String())
 		}
+	}
+}
+
+// TestPlistTemplateRendersWellFormedPlist guards against the html/template
+// regression that TestPlistTemplateEscapesXMLPaths could not catch: html/template
+// applied context-sensitive HTML autoescaping, which happened to escape
+// plistData field values correctly (satisfying the checks above) while
+// simultaneously mis-escaping the *static* leading "<" of the "<?xml ...?>"
+// declaration into "&lt;" because it treated the XML prolog as a suspicious
+// HTML construct. Go's encoding/xml.Unmarshal does not reject that leading
+// "&lt;" (text before the root element is lenient), so the historic bug
+// shipped with TestPlistTemplateEscapesXMLPaths green. This test instead
+// checks (1) the byte-exact prolog and (2) the real downstream consumer's
+// parser (plutil), the two checks with actual discriminating power.
+func TestPlistTemplateRendersWellFormedPlist(t *testing.T) {
+	var buf bytes.Buffer
+	err := plistTemplate.Execute(&buf, plistData{
+		Label:            plistLabel,
+		Executable:       "/usr/local/bin/tslink",
+		OutLog:           "/tmp/tslink.out.log",
+		ErrLog:           "/tmp/tslink.err.log",
+		ThrottleInterval: launchdThrottleInterval,
+	})
+	if err != nil {
+		t.Fatalf("plistTemplate.Execute() error = %v", err)
+	}
+	rendered := buf.String()
+
+	// Positive assertion: the rendered XML declaration must be byte-exact.
+	// Positive assertions like this cannot silently rot the way a "must not
+	// contain X" assertion can -- if the leading "<" is ever mangled again,
+	// this fails loudly instead of quietly stopping catching anything.
+	const wantProlog = `<?xml version="1.0" encoding="UTF-8"?>`
+	firstLine := rendered
+	if idx := strings.IndexByte(rendered, '\n'); idx >= 0 {
+		firstLine = rendered[:idx]
+	}
+	if firstLine != wantProlog {
+		t.Fatalf("plist XML declaration = %q, want %q (byte-exact):\n%s", firstLine, wantProlog, rendered)
+	}
+
+	// Hand the rendered bytes to the real downstream consumer. launchd's
+	// plist parser is stricter than Go's encoding/xml (see
+	// TestPlistTemplateEscapesXMLPaths's guard above), so `plutil -lint` is
+	// the closest thing to ground truth this suite can reach without
+	// actually invoking launchctl.
+	plutilPath, lookErr := exec.LookPath("plutil")
+	if lookErr != nil {
+		t.Skip("plutil not found on PATH; this test did NOT verify plist well-formedness against the real consumer (skipped, not passed)")
+	}
+	plistFile := filepath.Join(t.TempDir(), "tslink-plist-lint.plist")
+	if err := os.WriteFile(plistFile, buf.Bytes(), 0o600); err != nil {
+		t.Fatalf("write temp plist file: %v", err)
+	}
+	lintOutput, lintErr := exec.Command(plutilPath, "-lint", plistFile).CombinedOutput()
+	if lintErr != nil {
+		t.Fatalf("plutil -lint rejected the rendered plist: %v\n%s\n--- rendered plist ---\n%s", lintErr, lintOutput, rendered)
 	}
 }
 
