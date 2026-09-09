@@ -350,49 +350,428 @@ func TestPlistTemplateEscapesXMLPaths(t *testing.T) {
 // shipped with TestPlistTemplateEscapesXMLPaths green. This test instead
 // checks (1) the byte-exact prolog and (2) the real downstream consumer's
 // parser (plutil), the two checks with actual discriminating power.
+//
+// It is table-driven over the ConfigDir x NoAutoProvision matrix because
+// both fields gate a {{if}} branch in plistTemplate (cmd/install_darwin.go's
+// "{{if .ConfigDir}}" and "{{if .NoAutoProvision}}"), and the production
+// install path (installCmd's RunE, around cmd/install_darwin.go:254-257)
+// always sets ConfigDir to a non-empty value from absoluteConfigDir() --
+// NoAutoProvision may or may not be true depending on the --no-auto-provision
+// flag, but ConfigDir is never empty. Before this table existed, every case
+// here used the ConfigDir="" branch, so the one real consumer-level check in
+// this suite (plutil -lint) had never actually linted the shape of plist
+// tslink writes on a real install. The "production_shape_*" cases below
+// close that gap; the other two cases are kept so the ConfigDir="" branch
+// (used only by these unit tests, never by production) keeps its own
+// coverage rather than silently losing it.
 func TestPlistTemplateRendersWellFormedPlist(t *testing.T) {
+	cases := []struct {
+		name            string
+		configDir       string
+		noAutoProvision bool
+	}{
+		{
+			name:            "no_config_dir_no_kill_switch",
+			configDir:       "",
+			noAutoProvision: false,
+		},
+		{
+			name:            "no_config_dir_with_kill_switch",
+			configDir:       "",
+			noAutoProvision: true,
+		},
+		{
+			// Production shape: every real "tslink install" sets ConfigDir
+			// (absoluteConfigDir() is always non-empty after filepath.Abs)
+			// and leaves --no-auto-provision unset by default.
+			name:            "production_shape_config_dir_no_kill_switch",
+			configDir:       "/Users/example/.config/tslink",
+			noAutoProvision: false,
+		},
+		{
+			// Production shape with the --no-auto-provision flag: the other
+			// real shape "tslink install --no-auto-provision" writes.
+			name:            "production_shape_config_dir_with_kill_switch",
+			configDir:       "/Users/example/.config/tslink",
+			noAutoProvision: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			err := plistTemplate.Execute(&buf, plistData{
+				Label:            plistLabel,
+				Executable:       "/usr/local/bin/tslink",
+				OutLog:           "/tmp/tslink.out.log",
+				ErrLog:           "/tmp/tslink.err.log",
+				ThrottleInterval: launchdThrottleInterval,
+				ConfigDir:        tc.configDir,
+				NoAutoProvision:  tc.noAutoProvision,
+			})
+			if err != nil {
+				t.Fatalf("[%s] plistTemplate.Execute() error = %v", tc.name, err)
+			}
+			rendered := buf.String()
+
+			// Positive assertion: the rendered XML declaration must be
+			// byte-exact. Positive assertions like this cannot silently
+			// rot the way a "must not contain X" assertion can -- if the
+			// leading "<" is ever mangled again, this fails loudly instead
+			// of quietly stopping catching anything.
+			const wantProlog = `<?xml version="1.0" encoding="UTF-8"?>`
+			firstLine := rendered
+			if idx := strings.IndexByte(rendered, '\n'); idx >= 0 {
+				firstLine = rendered[:idx]
+			}
+			if firstLine != wantProlog {
+				t.Fatalf("[%s] plist XML declaration = %q, want %q (byte-exact):\n%s", tc.name, firstLine, wantProlog, rendered)
+			}
+
+			// This case's combination of ConfigDir and NoAutoProvision
+			// must actually control which optional blocks render, or the
+			// table isn't testing four distinct shapes.
+			hasEnvBlock := strings.Contains(rendered, "<key>EnvironmentVariables</key>")
+			if hasEnvBlock != (tc.configDir != "") {
+				t.Fatalf("[%s] EnvironmentVariables block present = %v, want %v (ConfigDir = %q):\n%s", tc.name, hasEnvBlock, tc.configDir != "", tc.configDir, rendered)
+			}
+			hasKillSwitch := strings.Contains(rendered, "<string>--no-auto-provision</string>")
+			if hasKillSwitch != tc.noAutoProvision {
+				t.Fatalf("[%s] --no-auto-provision arg present = %v, want %v:\n%s", tc.name, hasKillSwitch, tc.noAutoProvision, rendered)
+			}
+
+			// Hand the rendered bytes to the real downstream consumer.
+			// launchd's plist parser is stricter than Go's encoding/xml
+			// (see TestPlistTemplateEscapesXMLPaths's guard above), so
+			// `plutil -lint` is the closest thing to ground truth this
+			// suite can reach without actually invoking launchctl.
+			plutilPath, lookErr := exec.LookPath("plutil")
+			if lookErr != nil {
+				t.Skip("plutil not found on PATH; this test did NOT verify plist well-formedness against the real consumer (skipped, not passed)")
+			}
+			plistFile := filepath.Join(t.TempDir(), "tslink-plist-lint.plist")
+			if err := os.WriteFile(plistFile, buf.Bytes(), 0o600); err != nil {
+				t.Fatalf("[%s] write temp plist file: %v", tc.name, err)
+			}
+			lintOutput, lintErr := exec.Command(plutilPath, "-lint", plistFile).CombinedOutput()
+			if lintErr != nil {
+				t.Fatalf("[%s] plutil -lint rejected the rendered plist: %v\n%s\n--- rendered plist ---\n%s", tc.name, lintErr, lintOutput, rendered)
+			}
+		})
+	}
+}
+
+// TestPlistTemplateRejectsIllegalXMLBytes guards the M-2 fix. Before it,
+// xmlEscapeValue passed values straight to a bare xml.EscapeText call,
+// which silently replaces any XML 1.0-illegal byte (control bytes below
+// 0x20 other than tab/LF/CR, invalid UTF-8, the noncharacters U+FFFE and
+// U+FFFF) with the U+FFFD replacement character instead of reporting an
+// error. Because U+FFFD is itself a legal, well-formed XML character, the
+// result was a plist that still passed every check in this suite --
+// TestPlistTemplateRendersWellFormedPlist's prolog assertion and plutil
+// -lint included -- while silently containing a corrupted field value
+// (e.g. a path with a byte replaced). That is a fail-open regression versus
+// the html/template code this package replaced: html/template produced
+// non-well-formed XML for the same input (only NUL became U+FFFD; every
+// other illegal control byte passed through raw), which launchd would
+// simply refuse to load -- a loud, fail-closed failure. This test proves
+// the new validation in xmlEscapeValue/validateXMLText restores fail-closed
+// behavior: plistTemplate.Execute must return a non-nil error naming the
+// offending field for every category of illegal input, not silently
+// substitute a placeholder character and keep going.
+func TestPlistTemplateRejectsIllegalXMLBytes(t *testing.T) {
+	cases := []struct {
+		name   string
+		field  string
+		mutate func(*plistData)
+	}{
+		{
+			name:   "control_byte_0x01_in_executable",
+			field:  "Executable",
+			mutate: func(d *plistData) { d.Executable = "/opt/ts\x01link/tslink" },
+		},
+		{
+			name:   "nul_byte_in_out_log",
+			field:  "OutLog",
+			mutate: func(d *plistData) { d.OutLog = "/tmp/ts\x00link.out.log" },
+		},
+		{
+			name:   "invalid_utf8_in_config_dir",
+			field:  "ConfigDir",
+			mutate: func(d *plistData) { d.ConfigDir = "/Users/j/.config/ts\xfflink" },
+		},
+		{
+			// U+FFFE is a Unicode noncharacter, but it is a perfectly
+			// well-formed, validly-decoded UTF-8 code point (utf8.ValidString
+			// reports true for it): a validator that only checked
+			// utf8.ValidString would let this through. It is illegal under
+			// the XML 1.0 Char production, so xmlCharInRange must reject it
+			// on its own merits, not merely as a byproduct of a UTF-8
+			// validity check.
+			name:   "noncharacter_fffe_in_err_log",
+			field:  "ErrLog",
+			mutate: func(d *plistData) { d.ErrLog = "/tmp/ts\ufffelink.err.log" },
+		},
+		{
+			// U+FFFF: the second XML-illegal-but-UTF-8-legal noncharacter,
+			// same rationale as the FFFE case above.
+			name:   "noncharacter_ffff_in_err_log",
+			field:  "ErrLog",
+			mutate: func(d *plistData) { d.ErrLog = "/tmp/ts\ufffflink.err.log" },
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			data := plistData{
+				Label:            plistLabel,
+				Executable:       "/usr/local/bin/tslink",
+				OutLog:           "/tmp/tslink.out.log",
+				ErrLog:           "/tmp/tslink.err.log",
+				ThrottleInterval: launchdThrottleInterval,
+				ConfigDir:        "/Users/example/.config/tslink",
+			}
+			tc.mutate(&data)
+
+			var buf bytes.Buffer
+			err := plistTemplate.Execute(&buf, data)
+			if err == nil {
+				t.Fatalf("[%s] plistTemplate.Execute() with an illegal byte in %s returned nil error; want a fail-closed rejection, got rendered plist:\n%s", tc.name, tc.field, buf.String())
+			}
+			if !strings.Contains(err.Error(), tc.field) {
+				t.Fatalf("[%s] error %q does not name the offending field %q; a rejection must be diagnosable", tc.name, err, tc.field)
+			}
+			if strings.Contains(buf.String(), "\ufffd") {
+				t.Fatalf("[%s] Execute() returned an error but still emitted U+FFFD into the buffer, i.e. it fell back to the old silent-substitution behavior instead of aborting:\n%s", tc.name, buf.String())
+			}
+		})
+	}
+}
+
+// TestPlistTemplateAllowsLegalControlAndBoundaryCharacters is the positive
+// counterpart to TestPlistTemplateRejectsIllegalXMLBytes: it proves the M-2
+// fix's validation did not become overzealous and start rejecting bytes
+// that were always legal. Tab, LF and CR are the three exceptions XML 1.0
+// carves out below 0x20 (xmlCharInRange checks them explicitly before the
+// ">= 0x20" range test) and TestPlistTemplateEscapesXMLPaths already proves
+// & < > " ' still escape correctly, but neither of those was exercised by
+// the new validateXMLText code path before this test. A correctly-encoded,
+// literal U+FFFD is included too: it is a legal XML character in its own
+// right and must pass through unescaped, which is the case validateXMLText
+// has to get right to avoid confusing "this input already contained U+FFFD"
+// with "escaping this input would have produced U+FFFD by corruption".
+func TestPlistTemplateAllowsLegalControlAndBoundaryCharacters(t *testing.T) {
 	var buf bytes.Buffer
 	err := plistTemplate.Execute(&buf, plistData{
 		Label:            plistLabel,
 		Executable:       "/usr/local/bin/tslink",
-		OutLog:           "/tmp/tslink.out.log",
-		ErrLog:           "/tmp/tslink.err.log",
+		OutLog:           "/tmp/tslink\tout\n.log",
+		ErrLog:           "/tmp/tslink\rerr.log",
 		ThrottleInterval: launchdThrottleInterval,
+		ConfigDir:        "/Users/example/.config/tslink \ufffd already-valid",
 	})
 	if err != nil {
-		t.Fatalf("plistTemplate.Execute() error = %v", err)
+		t.Fatalf("plistTemplate.Execute() error = %v; tab/LF/CR and a legitimately-encoded U+FFFD are legal XML 1.0 characters and must not be rejected", err)
 	}
 	rendered := buf.String()
+	for _, want := range []string{
+		"&#x9;",                       // escaped tab
+		"&#xA;",                       // escaped LF
+		"&#xD;",                       // escaped CR
+		"tslink \ufffd already-valid", // a real, correctly-encoded U+FFFD passes through unescaped
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("plist missing %q:\n%s", want, rendered)
+		}
+	}
+}
 
-	// Positive assertion: the rendered XML declaration must be byte-exact.
-	// Positive assertions like this cannot silently rot the way a "must not
-	// contain X" assertion can -- if the leading "<" is ever mangled again,
-	// this fails loudly instead of quietly stopping catching anything.
-	const wantProlog = `<?xml version="1.0" encoding="UTF-8"?>`
-	firstLine := rendered
-	if idx := strings.IndexByte(rendered, '\n'); idx >= 0 {
-		firstLine = rendered[:idx]
+// xmlPackageAcceptsRune reports whether encoding/xml -- the package that
+// actually performs the escaping in xmlEscapeValue, and therefore the only
+// authority on which characters survive a round trip -- treats r as a legal
+// XML 1.0 character.
+//
+// EscapeText never returns an error for illegal input; it silently
+// substitutes U+FFFD. That substitution is the observable signal. A
+// genuine U+FFFD input escapes to itself, so "the output is U+FFFD but the
+// input was not" is exactly the set of runes the package rejects. Runes
+// that merely get escaped (&amp;, &#x9;, ...) are accepted, as are
+// surrogates, which string(r) already encodes as U+FFFD.
+func xmlPackageAcceptsRune(r rune) bool {
+	var buf bytes.Buffer
+	if err := xml.EscapeText(&buf, []byte(string(r))); err != nil {
+		return false
 	}
-	if firstLine != wantProlog {
-		t.Fatalf("plist XML declaration = %q, want %q (byte-exact):\n%s", firstLine, wantProlog, rendered)
+	return !(buf.String() == "\ufffd" && r != '\ufffd')
+}
+
+// TestXMLCharInRangeMatchesEncodingXMLExhaustively pins the accept side of
+// xmlCharInRange, which nothing else in the repo tests.
+//
+// TestPlistTemplateRejectsIllegalXMLBytes covers the reject side, but every
+// existing test passes with an over-narrow predicate: deleting the
+// "r >= 0x10000 && r <= 0x10FFFF" clause (no emoji or astral-plane
+// directory name can ever be installed) or narrowing "r <= 0xD7FF" to
+// "r <= 0x7F" (no Chinese, Korean or Cyrillic path can ever be installed)
+// leaves the entire 25-package suite green. Both are silent, total install
+// failures for real users, so the correctness of this predicate needs an
+// assertion of its own rather than only the absence of false negatives.
+//
+// The differential runs over the full Unicode codepoint space rather than a
+// hand-picked sample because the failure mode is a wrong *boundary*, and a
+// sample chosen by the same person who wrote the boundary tends to miss it.
+// The whole sweep costs about 60ms.
+//
+// The three population counts are the control group: they fail if the loop
+// body ever stops actually comparing anything (a zero-mismatch result is
+// otherwise indistinguishable from a zero-comparison result).
+func TestXMLCharInRangeMatchesEncodingXMLExhaustively(t *testing.T) {
+	const (
+		wantAccepted            = 1112033 // everything encoding/xml round-trips
+		wantSurrogateRejects    = 2048    // U+D800..U+DFFF, unrepresentable in UTF-8
+		wantNonSurrogateRejects = 31      // C0 controls except \t \n \r, plus U+FFFE and U+FFFF
+	)
+
+	var accepted, surrogateRejects, nonSurrogateRejects, mismatches int
+	for r := rune(0); r <= 0x10FFFF; r++ {
+		ours, pkg := xmlCharInRange(r), xmlPackageAcceptsRune(r)
+		if ours != pkg {
+			if mismatches < 10 {
+				t.Errorf("xmlCharInRange(%U) = %v, but encoding/xml accepts = %v; the validator and the escaper must agree or install either rejects a path the escaper would have handled correctly, or admits one the escaper silently corrupts to U+FFFD", r, ours, pkg)
+			}
+			mismatches++
+			continue
+		}
+		switch {
+		case pkg:
+			accepted++
+		case r >= 0xD800 && r <= 0xDFFF:
+			surrogateRejects++
+		default:
+			nonSurrogateRejects++
+		}
+	}
+	if mismatches > 10 {
+		t.Errorf("%d total mismatches (only the first 10 reported)", mismatches)
+	}
+	if accepted != wantAccepted || surrogateRejects != wantSurrogateRejects || nonSurrogateRejects != wantNonSurrogateRejects {
+		t.Fatalf("codepoint populations = %d accepted / %d surrogate rejects / %d other rejects; want %d / %d / %d. These counts are the control group for the differential above: if they drift, the sweep stopped covering what it claims to cover and its zero-mismatch result means nothing",
+			accepted, surrogateRejects, nonSurrogateRejects,
+			wantAccepted, wantSurrogateRejects, wantNonSurrogateRejects)
+	}
+}
+
+// TestPlistTemplateAcceptsRealWorldNonASCIIPaths states the user-facing half
+// of the property above: a home directory named in Chinese, or a build
+// checkout under a folder with an emoji in it, must install. macOS allows
+// every one of these in a path, launchd accepts them once escaped, and
+// XML 1.0 permits them, so a rejection here would be tslink inventing a
+// restriction none of the three layers has.
+//
+// Each path is asserted to appear byte-for-byte in the rendered plist:
+// these characters need no escaping, and a validator that mangled them into
+// U+FFFD (the pre-fix behaviour of encoding/xml on input it dislikes) would
+// still produce well-formed XML pointing at a path that does not exist.
+func TestPlistTemplateAcceptsRealWorldNonASCIIPaths(t *testing.T) {
+	cases := []struct {
+		name string
+		path string
+	}{
+		{name: "cjk_home_directory", path: "/Users/张伟/.config/tslink"},
+		{name: "emoji_astral_plane", path: "/Users/example/🚀 launch/tslink"},
+		{name: "cyrillic", path: "/Users/пример/.config/tslink"},
+		{name: "astral_plane_letters", path: "/Users/example/𝕥𝕤𝕝𝕚𝕟𝕜/bin"},
+		{name: "hangul_and_kana", path: "/Users/사용자/デスクトップ/tslink"},
 	}
 
-	// Hand the rendered bytes to the real downstream consumer. launchd's
-	// plist parser is stricter than Go's encoding/xml (see
-	// TestPlistTemplateEscapesXMLPaths's guard above), so `plutil -lint` is
-	// the closest thing to ground truth this suite can reach without
-	// actually invoking launchctl.
-	plutilPath, lookErr := exec.LookPath("plutil")
-	if lookErr != nil {
-		t.Skip("plutil not found on PATH; this test did NOT verify plist well-formedness against the real consumer (skipped, not passed)")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			err := plistTemplate.Execute(&buf, plistData{
+				Label:            plistLabel,
+				Executable:       tc.path + "/bin/tslink",
+				OutLog:           tc.path + "/tslink.out.log",
+				ErrLog:           tc.path + "/tslink.err.log",
+				ThrottleInterval: launchdThrottleInterval,
+				ConfigDir:        tc.path,
+			})
+			if err != nil {
+				t.Fatalf("plistTemplate.Execute() error = %v; %q contains only legal XML 1.0 characters and macOS permits it as a path, so refusing it would make tslink uninstallable for this user", err, tc.path)
+			}
+			rendered := buf.String()
+
+			if !strings.Contains(rendered, tc.path+"/bin/tslink") {
+				t.Fatalf("rendered plist does not contain the executable path %q verbatim; these characters require no XML escaping, and substituting them (for example with U+FFFD) yields a well-formed plist that points launchd at a path which does not exist:\n%s", tc.path+"/bin/tslink", rendered)
+			}
+			if strings.ContainsRune(rendered, '\ufffd') {
+				t.Fatalf("rendered plist contains U+FFFD; the path characters were corrupted rather than passed through:\n%s", rendered)
+			}
+
+			var parsed struct {
+				XMLName xml.Name `xml:"plist"`
+			}
+			if err := xml.Unmarshal(buf.Bytes(), &parsed); err != nil {
+				t.Fatalf("rendered plist is not well-formed XML: %v\n%s", err, rendered)
+			}
+		})
 	}
-	plistFile := filepath.Join(t.TempDir(), "tslink-plist-lint.plist")
-	if err := os.WriteFile(plistFile, buf.Bytes(), 0o600); err != nil {
-		t.Fatalf("write temp plist file: %v", err)
+}
+
+// TestInstallCommandDoesNotWritePlistWhenExecutablePathHasIllegalXMLBytes is
+// the file-system-level proof for M-2's "does not produce a plist" claim:
+// TestPlistTemplateRejectsIllegalXMLBytes above only proves
+// plistTemplate.Execute returns an error in isolation. This test drives the
+// real installCmd.RunE with a stubbed executablePathFn returning a path
+// containing an illegal control byte, and verifies (1) install fails with
+// the "write plist" error, and (2) no plist file is ever created --
+// confirming the call site named in xmlEscapeValue's doc comment
+// (cmd/install_darwin.go:328-331) really does return before
+// atomicfile.WriteFileInExistingDir is reached, and that N-1's dead error
+// branch (encoding/xml.EscapeText itself never errors; only the new
+// validateXMLText check can) is genuinely reachable end to end. It stubs
+// launchctlCombinedOutput to fail the test if called, both as a safety net
+// against ever invoking the real launchctl binary from a test and as an
+// assertion that plistTemplate.Execute's error truly short-circuits install
+// before any launchd interaction is attempted.
+func TestInstallCommandDoesNotWritePlistWhenExecutablePathHasIllegalXMLBytes(t *testing.T) {
+	stubDarwinInstallDaemonStopped(t)
+	resetRootJSONFlag(t)
+	home := t.TempDir()
+	testenv.SetHome(t, home)
+
+	oldHome := userHomeDirFn
+	oldExe := executablePathFn
+	oldEval := evalSymlinksFn
+	oldLaunchctl := launchctlCombinedOutput
+	t.Cleanup(func() {
+		userHomeDirFn = oldHome
+		executablePathFn = oldExe
+		evalSymlinksFn = oldEval
+		launchctlCombinedOutput = oldLaunchctl
+	})
+
+	userHomeDirFn = func() (string, error) { return home, nil }
+	executablePathFn = func() (string, error) { return "/opt/ts\x01link/tslink", nil }
+	evalSymlinksFn = func(path string) (string, error) { return path, nil }
+	launchctlCombinedOutput = func(args ...string) ([]byte, error) {
+		t.Fatalf("launchctl called after a rejected illegal-byte executable path: %v", args)
+		return nil, nil
 	}
-	lintOutput, lintErr := exec.Command(plutilPath, "-lint", plistFile).CombinedOutput()
-	if lintErr != nil {
-		t.Fatalf("plutil -lint rejected the rendered plist: %v\n%s\n--- rendered plist ---\n%s", lintErr, lintOutput, rendered)
+
+	err := installCmd.RunE(installCmd, nil)
+	if err == nil {
+		t.Fatal("install RunE() error = nil, want a write-plist failure for an illegal XML byte in the executable path")
+	}
+	if !strings.Contains(err.Error(), "write plist") {
+		t.Fatalf("install error = %q, want it to surface through the \"write plist\" handling", err)
+	}
+	if !strings.Contains(err.Error(), "Executable") {
+		t.Fatalf("install error = %q, want it to name the offending Executable field", err)
+	}
+
+	plistPath := filepath.Join(home, "Library", "LaunchAgents", plistLabel+".plist")
+	if _, statErr := os.Stat(plistPath); !os.IsNotExist(statErr) {
+		t.Fatalf("plist file exists after a rejected illegal-byte executable path: %v", statErr)
 	}
 }
 

@@ -15,6 +15,7 @@ import (
 	"strings"
 	"text/template"
 	"time"
+	"unicode/utf8"
 
 	"github.com/monody0007/tslink/internal/atomicfile"
 	"github.com/monody0007/tslink/internal/config"
@@ -107,13 +108,84 @@ type launchAgentRestoreResult struct {
 // escaping (unlike html/template, which also mis-escapes the literal
 // leading "<?xml ...?>" prolog as HTML character data) so every
 // interpolation in plistTemplate below is piped through this function
-// explicitly.
-func xmlEscapeValue(v any) (string, error) {
+// explicitly, naming the source struct field (e.g. "ConfigDir") so a
+// rejection can say which value was bad without printing the value itself.
+//
+// Before escaping, it validates s against the XML 1.0 Char production via
+// validateXMLText below. Without that check, xml.EscapeText silently
+// replaces every XML-illegal byte (control bytes, invalid UTF-8) with the
+// U+FFFD replacement character instead of reporting an error: the template
+// would still render a well-formed plist, just one with a corrupted field
+// value baked into it (e.g. a truncated ConfigDir path), and every other
+// check in this program -- the prolog assertion, encoding/xml.Unmarshal,
+// plutil -lint -- would pass it, because U+FFFD is itself a legal XML
+// character. That is a fail-open failure mode: a bad path silently becomes
+// a different, wrong path instead of aborting the install. Rejecting the
+// bad bytes here instead keeps the failure fail-closed: this function
+// returns an error, plistTemplate.Execute propagates it, and installCmd's
+// call site (the "write plist" handling below, at
+// cmd/install_darwin.go:328-331) returns before
+// atomicfile.WriteFileInExistingDir is ever reached, so no plist is
+// written to disk.
+func xmlEscapeValue(field string, v any) (string, error) {
+	s := fmt.Sprint(v)
+	if err := validateXMLText(s); err != nil {
+		return "", fmt.Errorf("plist field %s: %w", field, err)
+	}
 	var buf bytes.Buffer
-	if err := xml.EscapeText(&buf, []byte(fmt.Sprint(v))); err != nil {
-		return "", fmt.Errorf("xml escape: %w", err)
+	// xml.EscapeText's only failure mode is a write error from the
+	// underlying io.Writer, and bytes.Buffer.Write never returns one, so
+	// this branch is unreachable in practice; the error is still checked
+	// because EscapeText's signature promises one. validateXMLText above
+	// has already rejected every input that would otherwise make
+	// EscapeText fall back to silently emitting U+FFFD.
+	if err := xml.EscapeText(&buf, []byte(s)); err != nil {
+		return "", fmt.Errorf("plist field %s: xml escape: %w", field, err)
 	}
 	return buf.String(), nil
+}
+
+// validateXMLText reports an error for any byte sequence that
+// encoding/xml.EscapeText would otherwise silently replace with U+FFFD
+// instead of escaping intact: invalid UTF-8, or a validly-decoded code
+// point outside the XML 1.0 Char production. The rune-by-rune walk and the
+// xmlCharInRange check below intentionally mirror encoding/xml's own
+// unexported escapeText/isInCharacterRange (Go toolchain
+// src/encoding/xml/xml.go) exactly, including the width == 1 special case
+// for utf8.RuneError: U+FFFD is itself a legal, correctly-encoded XML
+// character (3 bytes wide), so only a *decode failure* that happens to
+// produce that same rune value is illegal, not the character U+FFFD
+// arriving correctly encoded in the input. This is the same test the
+// escaper applies internally, run before escaping instead of during it, so
+// "would this input have been silently corrupted" is answered exactly
+// rather than approximated by, say, comparing input and output lengths.
+func validateXMLText(s string) error {
+	for i := 0; i < len(s); {
+		r, width := utf8.DecodeRuneInString(s[i:])
+		if r == utf8.RuneError && width == 1 {
+			return fmt.Errorf("invalid UTF-8 at byte offset %d", i)
+		}
+		if !xmlCharInRange(r) {
+			return fmt.Errorf("XML 1.0 disallows character %U at byte offset %d", r, i)
+		}
+		i += width
+	}
+	return nil
+}
+
+// xmlCharInRange reports whether r falls in the XML 1.0 Char production
+// (https://www.w3.org/TR/xml/#charsets): tab, LF, CR, and code points
+// >= 0x20, excluding the UTF-16 surrogate range D800-DFFF and the two
+// noncharacters FFFE/FFFF. This duplicates encoding/xml's unexported
+// isInCharacterRange (Go toolchain src/encoding/xml/xml.go) byte for byte;
+// it exists here only because that helper is not exported.
+func xmlCharInRange(r rune) bool {
+	return r == 0x09 ||
+		r == 0x0A ||
+		r == 0x0D ||
+		r >= 0x20 && r <= 0xD7FF ||
+		r >= 0xE000 && r <= 0xFFFD ||
+		r >= 0x10000 && r <= 0x10FFFF
 }
 
 var plistTemplate = template.Must(template.New("plist").Funcs(template.FuncMap{
@@ -123,25 +195,25 @@ var plistTemplate = template.Must(template.New("plist").Funcs(template.FuncMap{
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>{{.Label | xmlesc}}</string>
+    <string>{{.Label | xmlesc "Label"}}</string>
     <key>ProgramArguments</key>
     <array>
-        <string>{{.Executable | xmlesc}}</string>
+        <string>{{.Executable | xmlesc "Executable"}}</string>
         <string>serve</string>
         {{if .NoAutoProvision}}<string>--no-auto-provision</string>{{end}}
     </array>
     {{if .ConfigDir}}<key>EnvironmentVariables</key>
-    <dict><key>TSLINK_CONFIG_DIR</key><string>{{.ConfigDir | xmlesc}}</string></dict>{{end}}
+    <dict><key>TSLINK_CONFIG_DIR</key><string>{{.ConfigDir | xmlesc "ConfigDir"}}</string></dict>{{end}}
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
     <true/>
     <key>ThrottleInterval</key>
-    <integer>{{.ThrottleInterval | xmlesc}}</integer>
+    <integer>{{.ThrottleInterval | xmlesc "ThrottleInterval"}}</integer>
     <key>StandardOutPath</key>
-    <string>{{.OutLog | xmlesc}}</string>
+    <string>{{.OutLog | xmlesc "OutLog"}}</string>
     <key>StandardErrorPath</key>
-    <string>{{.ErrLog | xmlesc}}</string>
+    <string>{{.ErrLog | xmlesc "ErrLog"}}</string>
 </dict>
 </plist>
 `))
