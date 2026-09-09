@@ -206,13 +206,34 @@ func TestBootstrapEvidenceGateFailsOnlyWhenProcessGoesAway(t *testing.T) {
 	t.Run("late_evidence_is_picked_up", func(t *testing.T) {
 		isRunningFn = func(string) bool { return true }
 		readPIDFn = func(string) (int, error) { return 4242, nil }
+		// What this subtest asserts is that evidence appearing *after* the wait
+		// has already started still gets picked up. How fast that happens is not
+		// under test here, so the budget must not be tight enough to race it:
+		// with the 20ms shared by the subtests above, a 2ms goroutine wake plus a
+		// file write plus a poll can exceed the budget under load, and the failure
+		// then reports machine business rather than code. Measured on 2026-09-08:
+		// idle 0/20 failures, but 1/12 while a full `go test ./...` ran alongside
+		// (an independent reviewer saw 2/5 under heavier concurrent load).
+		// A generous budget costs nothing in wall-clock: the wait returns as soon
+		// as the artifact lands (~2-3ms), not when the budget expires, and a
+		// regression that stops picking up late evidence still fails here because
+		// it then has to burn the whole budget and return ready=false.
+		bootstrapEvidenceTimeout = 2 * time.Second
 		go func() {
 			time.Sleep(2 * time.Millisecond)
 			_ = saveAuthHandoff(filepath.Join(dir, "auth-handoff.json"), newAuthHandoffRecord("myapp", "https://login.tailscale.com/a/late", 4242))
 		}()
+		start := time.Now()
 		ready, err := waitDaemonEvidence(context.Background(), pidPath, snapshotPath, 4242)
 		if !ready || err != nil {
 			t.Fatalf("ready=%t err=%v", ready, err)
+		}
+		// Positive assertion that the pickup was event-driven, not budget-driven:
+		// returning only once the budget elapsed would mean the poll never saw the
+		// artifact land. Half the budget is far above the ~2-3ms this really takes
+		// and far below the 2s a broken implementation would burn.
+		if elapsed := time.Since(start); elapsed > bootstrapEvidenceTimeout/2 {
+			t.Fatalf("late evidence took %s, i.e. it was not picked up while waiting", elapsed)
 		}
 	})
 }

@@ -31,6 +31,7 @@ const (
 	WarningCodeCredentialNoAPIClient               = "credential_no_api_client"
 	WarningCodeCredentialReadFailed                = "credential_read_failed"
 	WarningCodeDaemonIdentityUnverified            = "daemon_identity_unverified"
+	WarningCodeDaemonBuildSkew                     = "daemon_build_skew"
 	WarningCodeDaemonRestartUnavailable            = "daemon_restart_unavailable"
 	WarningCodeDaemonNotRunning                    = "daemon_not_running"
 	WarningCodeDaemonUnsupervised                  = "daemon_unsupervised"
@@ -207,6 +208,11 @@ var WarningCodeRegistry = map[string]WarningCodeMeta{
 		Description: "Stored credentials could not be inspected locally.",
 	},
 	WarningCodeDaemonIdentityUnverified: {Severity: "warning", Source: "daemon", Description: "Daemon process identity is unverified; preserve probes and inspect before restarting."},
+	WarningCodeDaemonBuildSkew: {
+		Severity:    "warning",
+		Source:      "daemon",
+		Description: "The running daemon's own reported build differs from this CLI invocation's build, so an upgraded binary is not yet the one actually serving; run 'tslink install' to restart the daemon with the current binary.",
+	},
 	WarningCodeDaemonRestartUnavailable: {Severity: "warning", Source: "daemon", Description: "Sign-in startup is installed but crash restart is unavailable."},
 	WarningCodeDaemonNotRunning: {
 		Severity:    "error",

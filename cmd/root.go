@@ -113,10 +113,7 @@ func WasJSONRequested() bool {
 }
 
 func Execute() error {
-	rootCmd.Version = Version
-	if Commit != "" {
-		rootCmd.Version = Version + " (" + Commit + ")"
-	}
+	rootCmd.Version = versionDisplayString(Version, Commit)
 	if rootVersionJSONRequested(os.Args[1:]) {
 		lastCommandName = "version"
 		output.Success("version", VersionResult{Version: Version, Commit: Commit})

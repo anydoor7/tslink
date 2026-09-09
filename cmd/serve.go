@@ -42,7 +42,9 @@ var serveDaemon bool
 
 // Testable function variables for serve
 var (
-	serveWritePIDFn               = daemon.WritePID
+	serveWritePIDFn = func(path string) error {
+		return daemon.WritePIDWithBuildIdentity(path, selfBuildIdentity())
+	}
 	serveRemovePIDFn              = daemon.RemovePID
 	serveWithPIDLockFn            = daemon.WithPIDLock
 	serveNewServerFn              = func(authKey, controlURL string) (serverRunner, error) { return server.New(authKey, controlURL) }

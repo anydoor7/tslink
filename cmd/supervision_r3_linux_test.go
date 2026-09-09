@@ -77,6 +77,15 @@ func TestLinuxSupervisionReportsAutostartScopeFromLinger(t *testing.T) {
 			managerOutputFn = func(string, ...string) ([]byte, error) {
 				return []byte(strings.Replace(linuxStoppedUnitProperties, "%s", path, 1)), nil
 			}
+			// Record what detection actually asks loginctl to do. The
+			// fixture's t.Cleanup restores the seam, so this wrapper lives
+			// exactly as long as the subtest.
+			var loginctlCalls []string
+			scripted := loginctlCombinedOutputFn
+			loginctlCombinedOutputFn = func(args ...string) ([]byte, error) {
+				loginctlCalls = append(loginctlCalls, strings.Join(args, " "))
+				return scripted(args...)
+			}
 			s := detectSupervision("", false, 0)
 			if s.Manager != "systemd" || !s.Autostart {
 				t.Fatalf("fixture did not verify: %+v", s)
@@ -88,9 +97,22 @@ func TestLinuxSupervisionReportsAutostartScopeFromLinger(t *testing.T) {
 				t.Fatalf("detail %q missing %q", s.Detail, tc.wantText)
 			}
 			// Lingering is a per-user setting affecting every service this
-			// user owns, so it is reported and never silently changed.
-			if strings.Contains(s.Detail, "enabling lingering for you") {
-				t.Fatalf("detail promises to change lingering: %q", s.Detail)
+			// user owns, so detection reads it and leaves it alone. Both
+			// halves of that promise are asserted positively: wantText above
+			// requires the detail to hand the user the command to run
+			// themselves, and the call log below requires the only loginctl
+			// invocation on this path to be the read-only property query.
+			//
+			// The assertion this replaced searched s.Detail for the phrase
+			// "enabling lingering for you", which appears nowhere in the
+			// production code -- `grep -rn` for it across non-test .go files
+			// returns 0 hits -- so it was a tautology that could never fail,
+			// and its silence was indistinguishable from a working guard.
+			// Checking the call log instead catches the thing the phrase was
+			// standing in for: an actual mutation of the user's setting.
+			wantQuery := `show-user tester --property=Linger --value`
+			if len(loginctlCalls) != 1 || loginctlCalls[0] != wantQuery {
+				t.Fatalf("loginctl calls = %q, want exactly one read-only query %q", loginctlCalls, wantQuery)
 			}
 		})
 	}

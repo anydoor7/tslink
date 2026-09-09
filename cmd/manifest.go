@@ -380,6 +380,18 @@ func commandJSONResultFields(commandPath string) map[string]JSONResultFieldInfo 
 				Type:        "boolean",
 				Description: "Constant true: enabling Tailscale SSH on the node is not sufficient by itself; the tailnet ACL also needs an ssh rule admitting the caller, which no local check can observe.",
 			},
+			"daemon.build_version": {
+				Type:        "string",
+				Description: "The running daemon's own reported build identity (release version, or module version plus VCS revision for a source build). Empty when the daemon predates build-identity reporting or could not determine its own build when it started; reporting-only, it is never used to decide daemon.running.",
+			},
+			"daemon.executable": {
+				Type:        "string",
+				Description: "The running daemon's own executable path at the moment it wrote its PID/identity sidecar. Informational only; never used to verify process identity, unlike the Go-module comparison identity verification relies on.",
+			},
+			"daemon.build_skew": {
+				Type:        "boolean",
+				Description: "True when the running daemon's reported build differs from this CLI invocation's own build, or one side could determine its build and the other could not. False, including when neither side could determine its own build. Never changes daemon.running, health_status, or health_exit_code beyond the daemon_build_skew warning itself.",
+			},
 		}
 	case "tslink status":
 		fields := agentServiceRuntimeJSONResultFields()

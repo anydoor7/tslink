@@ -77,6 +77,213 @@ func TestWriteAndReadPID(t *testing.T) {
 	}
 }
 
+// TestWritePID_OmitsBuildIdentityKeysOnTheWire pins WritePID's raw sidecar
+// bytes to exactly the four original identity fields. It exists so that a
+// future change accidentally routing WritePID through
+// WritePIDWithBuildIdentity (which also resolves Executable) is caught here,
+// not discovered later as an unplanned wire change for WritePID's remaining
+// callers.
+func TestWritePID_OmitsBuildIdentityKeysOnTheWire(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tslink.pid")
+	if err := WritePID(path); err != nil {
+		t.Fatalf("WritePID() error = %v", err)
+	}
+
+	raw, err := os.ReadFile(processIdentityPath(path))
+	if err != nil {
+		t.Fatalf("ReadFile(identity) error = %v", err)
+	}
+	for _, forbidden := range []string{`"build_version"`, `"executable"`} {
+		if strings.Contains(string(raw), forbidden) {
+			t.Fatalf("WritePID() sidecar = %s, must not contain %s", raw, forbidden)
+		}
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("json.Unmarshal(sidecar) error = %v", err)
+	}
+	wantKeys := map[string]bool{"version": true, "product": true, "pid": true, "start_unix_nano": true}
+	if len(decoded) != len(wantKeys) {
+		t.Fatalf("WritePID() sidecar keys = %v, want exactly %v", decoded, wantKeys)
+	}
+	for key := range wantKeys {
+		if _, ok := decoded[key]; !ok {
+			t.Fatalf("WritePID() sidecar missing key %q: %v", key, decoded)
+		}
+	}
+}
+
+// TestWritePIDWithBuildIdentity_RoundTripsThroughReadProcessBuildIdentity
+// exercises the real JSON encode/decode path end to end (not a hand-written
+// fixture): WritePIDWithBuildIdentity is the only thing that produces a
+// build-identity sidecar, so any test double for its shape would risk
+// diverging from what a real daemon actually writes.
+func TestWritePIDWithBuildIdentity_RoundTripsThroughReadProcessBuildIdentity(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tslink.pid")
+	const wantBuildVersion = "v9.9.9 (deadbeefcafe)"
+	if err := WritePIDWithBuildIdentity(path, wantBuildVersion); err != nil {
+		t.Fatalf("WritePIDWithBuildIdentity() error = %v", err)
+	}
+
+	selfExecutable, err := executable()
+	if err != nil {
+		t.Fatalf("executable() error = %v", err)
+	}
+
+	identity := ReadProcessBuildIdentity(path)
+	if identity.BuildVersion != wantBuildVersion {
+		t.Fatalf("ReadProcessBuildIdentity().BuildVersion = %q, want %q", identity.BuildVersion, wantBuildVersion)
+	}
+	if identity.Executable != selfExecutable {
+		t.Fatalf("ReadProcessBuildIdentity().Executable = %q, want %q", identity.Executable, selfExecutable)
+	}
+
+	// The rest of the identity record (PID, start time, product) must still
+	// round-trip unchanged: build-identity fields are additive, not a
+	// replacement for the fields IsRunning depends on.
+	record, err := readProcessIdentity(path)
+	if err != nil {
+		t.Fatalf("readProcessIdentity() error = %v", err)
+	}
+	if record.Version != processIdentityVersion || record.Product != processProductID || record.PID != os.Getpid() || record.StartUnixNano == 0 {
+		t.Fatalf("process identity = %+v, want version/product/current PID/start time intact alongside build fields", record)
+	}
+}
+
+// TestWritePIDWithBuildIdentity_EmptyBuildVersionOmitsOnlyThatKey checks the
+// "this process could not determine its own build" report (selfBuildIdentity
+// returning ""): the wire must omit build_version specifically, while
+// executable — resolved independently — still appears, and the empty build
+// version must round-trip as "", never as a phantom value equal to some
+// other daemon's empty result.
+func TestWritePIDWithBuildIdentity_EmptyBuildVersionOmitsOnlyThatKey(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tslink.pid")
+	if err := WritePIDWithBuildIdentity(path, ""); err != nil {
+		t.Fatalf("WritePIDWithBuildIdentity() error = %v", err)
+	}
+
+	raw, err := os.ReadFile(processIdentityPath(path))
+	if err != nil {
+		t.Fatalf("ReadFile(identity) error = %v", err)
+	}
+	if strings.Contains(string(raw), `"build_version"`) {
+		t.Fatalf("WritePIDWithBuildIdentity(path, \"\") sidecar = %s, must omit build_version", raw)
+	}
+	if !strings.Contains(string(raw), `"executable"`) {
+		t.Fatalf("WritePIDWithBuildIdentity(path, \"\") sidecar = %s, want executable still present", raw)
+	}
+
+	identity := ReadProcessBuildIdentity(path)
+	if identity.BuildVersion != "" {
+		t.Fatalf("ReadProcessBuildIdentity().BuildVersion = %q, want empty", identity.BuildVersion)
+	}
+	if identity.Executable == "" {
+		t.Fatal("ReadProcessBuildIdentity().Executable = \"\", want the resolved executable path")
+	}
+}
+
+func TestReadProcessBuildIdentity_MissingSidecarIsZeroValue(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tslink.pid")
+	// No WritePID/WritePIDWithBuildIdentity call at all: the sidecar file
+	// does not exist.
+	identity := ReadProcessBuildIdentity(path)
+	if identity != (ProcessBuildIdentity{}) {
+		t.Fatalf("ReadProcessBuildIdentity() = %+v, want zero value for a missing sidecar", identity)
+	}
+}
+
+func TestReadProcessBuildIdentity_MalformedSidecarIsZeroValue(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tslink.pid")
+	if err := os.WriteFile(processIdentityPath(path), []byte("not-json{{{"), 0o600); err != nil {
+		t.Fatalf("WriteFile(identity) error = %v", err)
+	}
+	identity := ReadProcessBuildIdentity(path)
+	if identity != (ProcessBuildIdentity{}) {
+		t.Fatalf("ReadProcessBuildIdentity() = %+v, want zero value for a malformed sidecar", identity)
+	}
+}
+
+// TestReadProcessBuildIdentity_LegacySidecarIsZeroValue uses
+// writeProcessIdentityForPID, the file's own helper for producing a sidecar
+// in the pre-build-identity shape (only version/product/pid/start_unix_nano),
+// to confirm reading a real daemon that predates this feature reports both
+// fields as unmeasured rather than erroring or panicking.
+func TestReadProcessBuildIdentity_LegacySidecarIsZeroValue(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tslink.pid")
+	writeProcessIdentityForPID(t, path, os.Getpid())
+
+	identity := ReadProcessBuildIdentity(path)
+	if identity != (ProcessBuildIdentity{}) {
+		t.Fatalf("ReadProcessBuildIdentity() = %+v, want zero value for a pre-build-identity sidecar", identity)
+	}
+}
+
+// TestVerifyProcessIdentityIgnoresBuildIdentityFields_FailurePath and
+// TestVerifyProcessIdentityIgnoresBuildIdentityFields_SuccessPath together
+// are the constraint that BuildVersion/Executable never move
+// IsRunning/verifyProcessIdentity: the same live process, described by two
+// sidecar shapes (with and without the additive fields), must verify
+// identically. The failure-path variant needs no subprocess (the current
+// test binary's own argv is never "serve"); the success-path variant spawns
+// a real copied "serve" helper, mirroring
+// TestIsRunningAllowsSameProductAtDifferentPath, so the true-positive branch
+// of verifyProcessIdentity is exercised too, not just its failure branch.
+func TestVerifyProcessIdentityIgnoresBuildIdentityFields_FailurePath(t *testing.T) {
+	pid := os.Getpid()
+
+	legacyPath := filepath.Join(t.TempDir(), "tslink.pid")
+	if err := WritePID(legacyPath); err != nil {
+		t.Fatalf("WritePID() error = %v", err)
+	}
+	buildPath := filepath.Join(t.TempDir(), "tslink.pid")
+	if err := WritePIDWithBuildIdentity(buildPath, "v9.9.9 (deadbeefcafe)"); err != nil {
+		t.Fatalf("WritePIDWithBuildIdentity() error = %v", err)
+	}
+
+	legacyErr := verifyProcessIdentity(legacyPath, pid)
+	buildErr := verifyProcessIdentity(buildPath, pid)
+	if (legacyErr == nil) != (buildErr == nil) {
+		t.Fatalf("verifyProcessIdentity() diverges: legacy err = %v, build-identity err = %v", legacyErr, buildErr)
+	}
+	if legacyErr == nil {
+		t.Fatal("verifyProcessIdentity() = nil for the current (non-serve) test process, want an error from both sidecar shapes")
+	}
+	if legacyErr.Error() != buildErr.Error() {
+		t.Fatalf("verifyProcessIdentity() error text diverges: legacy = %q, build-identity = %q", legacyErr, buildErr)
+	}
+
+	if legacyRunning, buildRunning := IsRunning(legacyPath), IsRunning(buildPath); legacyRunning != buildRunning {
+		t.Fatalf("IsRunning() diverges: legacy = %v, build-identity = %v", legacyRunning, buildRunning)
+	}
+}
+
+func TestVerifyProcessIdentityIgnoresBuildIdentityFields_SuccessPath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("copied-helper daemon uses Unix executable semantics, like TestIsRunningAllowsSameProductAtDifferentPath")
+	}
+	daemonPath := filepath.Join(t.TempDir(), "tslink")
+	cmd := startCopiedHelperProcess(t, daemonPath)
+	pid := cmd.Process.Pid
+
+	legacyPath := filepath.Join(t.TempDir(), "tslink.pid")
+	writeLegacyPIDFile(t, legacyPath, pid)
+	writeProcessIdentityForPID(t, legacyPath, pid)
+	buildPath := filepath.Join(t.TempDir(), "tslink.pid")
+	writeLegacyPIDFile(t, buildPath, pid)
+	writeProcessIdentityForPIDWithBuild(t, buildPath, pid, "v9.9.9 (deadbeefcafe)", filepath.Join(t.TempDir(), "some-other-tslink"))
+
+	legacyErr := verifyProcessIdentity(legacyPath, pid)
+	buildErr := verifyProcessIdentity(buildPath, pid)
+	if legacyErr != nil || buildErr != nil {
+		t.Fatalf("verifyProcessIdentity() legacy err = %v, build-identity err = %v, want both nil for a genuine serve daemon", legacyErr, buildErr)
+	}
+
+	if legacyRunning, buildRunning := IsRunning(legacyPath), IsRunning(buildPath); !legacyRunning || !buildRunning {
+		t.Fatalf("IsRunning() legacy = %v, build-identity = %v, want both true", legacyRunning, buildRunning)
+	}
+}
+
 func TestWritePIDForProcess(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "tslink.pid")
 
@@ -747,6 +954,34 @@ func writeProcessIdentityForPID(t *testing.T, pidPath string, pid int) {
 		Product:       processProductID,
 		PID:           pid,
 		StartUnixNano: started.UnixNano(),
+	}
+	data, err := json.Marshal(record)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+	if err := os.WriteFile(processIdentityPath(pidPath), append(data, '\n'), 0o600); err != nil {
+		t.Fatalf("WriteFile(identity) error = %v", err)
+	}
+}
+
+// writeProcessIdentityForPIDWithBuild is writeProcessIdentityForPID plus the
+// additive build-identity fields, for tests that need a peer PID's sidecar
+// to carry a build report a real WritePIDWithBuildIdentity call for that
+// exact PID could not produce (WritePIDWithBuildIdentity always resolves the
+// *current* process's own PID and executable, not an arbitrary peer's).
+func writeProcessIdentityForPIDWithBuild(t *testing.T, pidPath string, pid int, buildVersion, executablePath string) {
+	t.Helper()
+	started, err := processStartTime(pid)
+	if err != nil {
+		t.Fatalf("processStartTime(%d) error = %v", pid, err)
+	}
+	record := processIdentityRecord{
+		Version:       processIdentityVersion,
+		Product:       processProductID,
+		PID:           pid,
+		StartUnixNano: started.UnixNano(),
+		BuildVersion:  buildVersion,
+		Executable:    executablePath,
 	}
 	data, err := json.Marshal(record)
 	if err != nil {

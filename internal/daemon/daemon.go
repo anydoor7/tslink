@@ -31,6 +31,16 @@ type processIdentityRecord struct {
 	Product       string `json:"product"`
 	PID           int    `json:"pid"`
 	StartUnixNano int64  `json:"start_unix_nano"`
+	// BuildVersion and Executable are additive (omitempty on the wire) and
+	// exist only for 'tslink doctor' to report a build-skew warning when a
+	// long-running daemon predates the binary a later CLI invocation is
+	// running. Neither field is ever read by verifyProcessIdentity or any
+	// other identity-verification decision: a sidecar written before these
+	// fields existed, or one whose own build could not be determined when it
+	// was written, is exactly as valid an identity record as one that
+	// populates them. See ReadProcessBuildIdentity.
+	BuildVersion string `json:"build_version,omitempty"`
+	Executable   string `json:"executable,omitempty"`
 }
 
 var readExecutableBuildInfo = buildinfo.ReadFile
@@ -80,19 +90,54 @@ func daemonServeArgs(controlURL string, manageACL, noAutoProvision, mcp bool) []
 }
 
 // WritePID writes the current process PID and a process-instance identity
-// sidecar. The PID file remains numeric for compatibility with older clients.
+// sidecar, with no build-identity report at all: neither BuildVersion nor
+// Executable is set, so both stay omitted from the wire (see
+// processIdentityRecord). This keeps WritePID's on-disk output exactly what
+// it was before build-identity reporting existed, for its remaining callers
+// (tests, and any future caller with no build-identity evidence to report).
+// The PID file remains numeric for compatibility with older clients.
 func WritePID(path string) error {
 	pid := os.Getpid()
 	started, err := processStartTime(pid)
 	if err != nil {
 		return fmt.Errorf("inspect current process start time: %w", err)
 	}
-	record := processIdentityRecord{
+	return writeProcessIdentityAndPID(path, processIdentityRecord{
 		Version:       processIdentityVersion,
 		Product:       processProductID,
 		PID:           pid,
 		StartUnixNano: started.UnixNano(),
+	})
+}
+
+// WritePIDWithBuildIdentity writes the current process PID and a
+// process-instance identity sidecar carrying a reporting-only build
+// identity, so a later 'tslink doctor' invocation can compare what actually
+// started against what CLI it is running now. buildVersion is supplied by
+// the caller: only cmd knows the linked release version (see
+// selfBuildIdentity in cmd). The running executable path is resolved here
+// the same way verifyProcessProduct resolves a peer process's executable,
+// best-effort — a resolution failure just leaves the field empty, because
+// this is reporting-only and must never block daemon startup (see the
+// BuildVersion/Executable comment on processIdentityRecord).
+func WritePIDWithBuildIdentity(path, buildVersion string) error {
+	pid := os.Getpid()
+	started, err := processStartTime(pid)
+	if err != nil {
+		return fmt.Errorf("inspect current process start time: %w", err)
 	}
+	selfExecutable, _ := executable()
+	return writeProcessIdentityAndPID(path, processIdentityRecord{
+		Version:       processIdentityVersion,
+		Product:       processProductID,
+		PID:           pid,
+		StartUnixNano: started.UnixNano(),
+		BuildVersion:  buildVersion,
+		Executable:    selfExecutable,
+	})
+}
+
+func writeProcessIdentityAndPID(path string, record processIdentityRecord) error {
 	data, err := json.Marshal(record)
 	if err != nil {
 		return fmt.Errorf("encode process identity: %w", err)
@@ -102,7 +147,7 @@ func WritePID(path string) error {
 	if err := writePrivateFileAtomic(identityPath, data); err != nil {
 		return fmt.Errorf("write process identity: %w", err)
 	}
-	if err := WritePIDForProcess(path, pid); err != nil {
+	if err := WritePIDForProcess(path, record.PID); err != nil {
 		_ = os.Remove(identityPath)
 		return err
 	}
@@ -260,6 +305,45 @@ func readProcessIdentity(pidPath string) (processIdentityRecord, error) {
 	return record, nil
 }
 
+// ProcessBuildIdentity is the reporting-only subset of the daemon's identity
+// sidecar exposed for 'tslink doctor' build-skew comparisons. Both fields are
+// zero-valued when the sidecar is missing, unreadable, malformed, or simply
+// predates build-identity reporting: callers must render that as "unknown,"
+// never as a build identity equal to any other zero value.
+type ProcessBuildIdentity struct {
+	BuildVersion string
+	Executable   string
+}
+
+// ReadProcessBuildIdentity reads the build-identity subset of the process
+// identity sidecar at pidPath, for daemon/CLI build-skew reporting. It never
+// participates in IsRunning, IsProcessRunning, or any liveness/identity
+// verification decision (see verifyProcessIdentity): a missing, unreadable,
+// or malformed sidecar simply yields a zero-value ProcessBuildIdentity, not
+// an error a caller should act on. The sidecar's process-identity version and
+// product fields are deliberately not checked here either, for the same
+// reason — this is a best-effort report, not a gate.
+func ReadProcessBuildIdentity(pidPath string) ProcessBuildIdentity {
+	record, err := readProcessIdentity(pidPath)
+	if err != nil {
+		return ProcessBuildIdentity{}
+	}
+	return ProcessBuildIdentity{BuildVersion: record.BuildVersion, Executable: record.Executable}
+}
+
+// verifyRecordedProcessIdentity checks the sidecar's consistency fields only:
+// Version, Product, PID, StartUnixNano, then verifyProcessProduct against the
+// live process. Keep BuildVersion and Executable out of this function — they
+// are reporting fields (see ReadProcessBuildIdentity), never gates.
+//
+// Beyond the sidecar-is-not-an-authentication-boundary reason on
+// verifyProcessIdentity, there is a testing reason this rule cannot be
+// relaxed here: a gate added in this function is masked by
+// verifyLegacyProcessIdentity's fallback, so the common paths keep returning
+// the same answer and the whole suite still passes. A regression introduced
+// at this spot is invisible — it fails green. When a build or executable
+// check genuinely has to exist, put it in IsRunning, where the fallback does
+// not cover for it and the existing tests do catch it.
 func verifyRecordedProcessIdentity(pid int, record processIdentityRecord) error {
 	if record.Version != processIdentityVersion {
 		return identityMismatchf("unsupported process identity version %d", record.Version)

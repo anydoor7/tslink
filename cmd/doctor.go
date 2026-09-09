@@ -186,6 +186,13 @@ type DoctorDaemon struct {
 	IdentityUnverified bool `json:"identity_unverified,omitempty"`
 	Running            bool `json:"running"`
 	PID                int  `json:"pid,omitempty"`
+	// BuildVersion, Executable, and BuildSkew are reporting-only: they never
+	// factor into IdentityUnverified, Running, or health_status/exit code
+	// beyond the daemon_build_skew warning itself. See
+	// diagnoseDaemonBuildSkew and daemon.ProcessBuildIdentity.
+	BuildVersion string `json:"build_version,omitempty"`
+	Executable   string `json:"executable,omitempty"`
+	BuildSkew    bool   `json:"build_skew,omitempty"`
 }
 
 type DoctorFinding struct {
@@ -591,6 +598,83 @@ func diagnoseDaemon(result *DoctorResult, serviceCount int) {
 		return
 	}
 	result.Daemon.PID = pid
+	diagnoseDaemonBuildSkew(result, result.Paths.PID)
+}
+
+// diagnoseDaemonBuildSkew compares the running daemon's self-reported build
+// (written into its identity sidecar by WritePIDWithBuildIdentity) against
+// this CLI invocation's own build (selfBuildIdentity). It is purely a
+// reporting layer: it never changes Running, PID, or IdentityUnverified, and
+// a version-skew binary is by design still recognized as running (see
+// verifyProcessProduct, which compares Go module identity, not the exact
+// build). The comparison is skipped when neither side could determine its
+// own build identity — see selfBuildIdentity's "" contract — because there
+// is nothing evidenced to compare in that case, only two unrelated unknowns.
+func diagnoseDaemonBuildSkew(result *DoctorResult, pidPath string) {
+	daemonIdentity := daemon.ReadProcessBuildIdentity(pidPath)
+	selfIdentity := selfBuildIdentity()
+	result.Daemon.BuildVersion = daemonIdentity.BuildVersion
+	result.Daemon.Executable = daemonIdentity.Executable
+	// A single equality check is also the "both sides could not determine
+	// their own build identity, so there is nothing evidenced to compare"
+	// suppression this finding must honor: selfBuildIdentity's contract
+	// makes "" mean specifically "unmeasured," so daemonIdentity.BuildVersion
+	// == selfIdentity == "" is exactly that case, not a coincidental match.
+	// An asymmetric "" on only one side is a genuine difference and still
+	// falls through to the warning below, rendered as "unknown" on that side;
+	// daemonBuildSkewMessage then picks the remediation that is safe for the
+	// side that turned out to be unmeasurable.
+	if daemonIdentity.BuildVersion == selfIdentity {
+		return
+	}
+	result.Daemon.BuildSkew = true
+	result.addFinding(
+		inspect.WarningCodeDaemonBuildSkew,
+		"",
+		"daemon",
+		daemonBuildSkewMessage(daemonIdentity.BuildVersion, selfIdentity),
+		map[string]string{
+			"daemon_build":      daemonIdentity.BuildVersion,
+			"cli_build":         selfIdentity,
+			"daemon_executable": daemonIdentity.Executable,
+		},
+	)
+}
+
+// daemonBuildSkewMessage renders the skew warning with a remediation that is
+// safe to act on in the direction the skew was actually observed, so that
+// following either branch literally leaves the installation no worse off.
+//
+// When this CLI carries a build stamp, reinstalling from it moves the daemon
+// onto that known build, which is the fix regardless of whether the daemon's
+// own side was measurable. When this CLI carries no stamp at all — the ""
+// case of selfBuildIdentity's contract, which is how a development or
+// non-release build reports itself — the same advice would replace a daemon
+// whose build is identified with one that is not, so the remediation asks for
+// a release build of the CLI instead of sending this one to 'tslink install'.
+func daemonBuildSkewMessage(daemonBuild, cliBuild string) string {
+	if cliBuild == "" {
+		return fmt.Sprintf(
+			"Daemon build (%s) differs from this CLI's build (%s): this CLI carries no build stamp, which is how a development or non-release build reports itself. Re-run 'tslink doctor' from a release build of tslink to compare the two; installing from this binary would replace the daemon's identified build with an unidentified one.",
+			doctorDisplayBuildIdentity(daemonBuild),
+			doctorDisplayBuildIdentity(cliBuild),
+		)
+	}
+	return fmt.Sprintf(
+		"Daemon build (%s) differs from this CLI's build (%s); run 'tslink install' to restart the daemon with the current binary.",
+		doctorDisplayBuildIdentity(daemonBuild),
+		doctorDisplayBuildIdentity(cliBuild),
+	)
+}
+
+// doctorDisplayBuildIdentity renders an empty build identity as an explicit
+// "unknown" phrase instead of an empty string, so the finding message never
+// reads as if one side's build were literally blank.
+func doctorDisplayBuildIdentity(identity string) string {
+	if identity == "" {
+		return "unknown"
+	}
+	return identity
 }
 
 func diagnosePendingEnrollment(result *DoctorResult) bool {

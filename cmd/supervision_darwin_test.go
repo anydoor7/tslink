@@ -57,10 +57,15 @@ func TestBootstrapLaunchdOwnershipMatrix(t *testing.T) {
 			if s.Manager != tc.want || queries == 0 {
 				t.Fatalf("supervision=%+v queries=%d", s, queries)
 			}
-			if tc.want == "launchd" && (!s.Autostart || !s.RestartOnExit || s.Path != path) {
+			// A LaunchAgent is a per-user job, so a verified autostart has to
+			// say "login": the boolean on its own cannot answer whether the
+			// daemon returns after a reboot nobody signs in to, which is the
+			// only question that matters on a host with no interactive user.
+			// Ownership that could not be verified has no scope to report.
+			if tc.want == "launchd" && (!s.Autostart || !s.RestartOnExit || s.Path != path || s.AutostartScope != autostartScopeLogin) {
 				t.Fatalf("missing restart evidence: %+v", s)
 			}
-			if tc.want != "launchd" && (s.Autostart || s.RestartOnExit) {
+			if tc.want != "launchd" && (s.Autostart || s.RestartOnExit || s.AutostartScope != "") {
 				t.Fatalf("unknown ownership promised restart: %+v", s)
 			}
 		})
@@ -101,7 +106,10 @@ func TestBootstrapLaunchdDisabledOverride(t *testing.T) {
 		return []byte("state = running\npid = 4242\n"), nil
 	}
 	s := detectSupervision(filepath.Join(dir, "tslink.pid"), true, 4242)
-	if s.Manager != "launchd" || s.Autostart || !s.RestartOnExit {
+	// Autostart is disabled, so there is nothing to scope. An empty scope is
+	// how the renderer knows to print no boot-versus-login answer at all,
+	// rather than a login answer that would not happen.
+	if s.Manager != "launchd" || s.Autostart || !s.RestartOnExit || s.AutostartScope != "" {
 		t.Fatalf("disabled-but-running job misreported: %+v", s)
 	}
 }

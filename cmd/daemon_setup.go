@@ -157,7 +157,15 @@ func ensureDaemon(ctx context.Context, out io.Writer, noInstall bool) error {
 		if err != nil {
 			return err
 		}
-		fmt.Fprintf(out, "Installing TSLink background service (%s): %s\nConfig: %s\nAutostart persists across sign-in/reboot; undo with: tslink uninstall\n", supervisorName(), path, dir)
+		// Nothing about this host has been inspected yet, so this line states
+		// only what is being installed, where, and how to undo it. Whether the
+		// supervisor comes back at boot or only once this user signs in is a
+		// property of the host, not of the installer, and it is answered after
+		// installation by the one renderer that owns that question:
+		// formatSupervision, over a Supervision that was actually detected.
+		// Promising reboot survival here contradicted that renderer within the
+		// same command on any host without systemd lingering.
+		fmt.Fprintf(out, "Installing TSLink background service (%s): %s\nConfig: %s\nUndo with: tslink uninstall. Autostart scope is not known before this host is inspected; 'tslink status' reports whether it returns at boot or only at sign-in.\n", supervisorName(), path, dir)
 		if err := installDaemonFn(ctx, out); err != nil {
 			return daemonSetupError(err)
 		}
