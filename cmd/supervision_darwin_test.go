@@ -103,7 +103,7 @@ func TestBootstrapLaunchdDisabledOverride(t *testing.T) {
 		if args[0] == "print-disabled" {
 			return []byte("disabled services = {\n \"com.tslink.daemon\" => disabled\n}\n"), nil
 		}
-		return []byte("state = running\npid = 4242\n"), nil
+		return []byte("state = running\npid = 4242\nproperties = keepalive | runatload\n"), nil
 	}
 	s := detectSupervision(filepath.Join(dir, "tslink.pid"), true, 4242)
 	// Autostart is disabled, so there is nothing to scope. An empty scope is

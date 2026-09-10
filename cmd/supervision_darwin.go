@@ -145,6 +145,7 @@ func detectSupervision(_ string, running bool, pid int) Supervision {
 	// proof. For a stopped job require the explicit config binding.
 	matched := false
 	matchedDomain := ""
+	restartOnExit := false
 	for _, domain := range []string{launchctlDomain(), launchctlUserDomain()} {
 		output, err := managerOutputFn("launchctl", "print", launchctlServiceTargetForDomain(domain))
 		if err != nil {
@@ -154,10 +155,12 @@ func detectSupervision(_ string, running bool, pid int) Supervision {
 		if running && pid > 0 && state == "running" && managedPID == pid {
 			matched = true
 			matchedDomain = domain
+			restartOnExit = launchdLoadedKeepAlive(output)
 		}
 		if !running && managedPID == 0 && supervisorConfigMatches(data, dir) {
 			matched = true
 			matchedDomain = domain
+			restartOnExit = launchdLoadedKeepAlive(output)
 		}
 	}
 	if !matched {
@@ -174,8 +177,40 @@ func detectSupervision(_ string, running bool, pid int) Supervision {
 		scope = ""
 		detail = "launchd owns the job, but autostart is disabled or unverified. Inspect: launchctl print-disabled " + matchedDomain
 	}
+	if !restartOnExit {
+		detail += " Loaded launchd job has no verified keepalive policy. Inspect: launchctl print " + launchctlServiceTargetForDomain(matchedDomain) + "; repair with: tslink install"
+	}
 	return Supervision{Manager: "launchd", Installed: true, Path: path,
-		Autostart: autostart, AutostartScope: scope, RestartOnExit: values["KeepAlive"] == true, Detail: detail}
+		Autostart: autostart, AutostartScope: scope, RestartOnExit: restartOnExit, Detail: detail}
+}
+
+// The plist describes the next load, not necessarily the currently loaded job.
+// Read the properties from the same print observation that proved ownership.
+// Like parseLaunchAgentState, parse exact keys; properties is a pipe-delimited
+// token list, so substrings such as "notkeepalive" are not restart evidence.
+func launchdLoadedKeepAlive(output []byte) bool {
+	found, keepAlive := false, false
+	for _, line := range strings.Split(string(output), "\n") {
+		key, value, ok := strings.Cut(strings.TrimSpace(line), "=")
+		if !ok || strings.TrimSpace(key) != "properties" || strings.HasPrefix(strings.TrimSpace(value), ">") {
+			// Environment mappings use "=>", not the job field's "=".
+			continue
+		}
+		if found {
+			return false // Ambiguous duplicate properties are not proof.
+		}
+		found = true
+		for _, token := range strings.Split(value, "|") {
+			token = strings.TrimSpace(token)
+			if token == "" || strings.ContainsAny(token, "=><{}") {
+				return false
+			}
+			if token == "keepalive" {
+				keepAlive = true
+			}
+		}
+	}
+	return keepAlive
 }
 
 func launchdAutostartEnabled(domain string) bool {
