@@ -4,10 +4,16 @@ package cmd
 
 import (
 	"bytes"
+	"context"
+	"errors"
+	"github.com/spf13/cobra"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // windowsStartupScript must take the kill switch as a required argument. A
@@ -193,5 +199,109 @@ func TestWindowsUninstallJSONEnvelope(t *testing.T) {
 	data := dataMap(t, got)
 	if data["removed"] != true || data["service_manager"] != "windows-startup" {
 		t.Fatalf("uninstall data = %#v, want removed/windows-startup", data)
+	}
+}
+
+// Uses real per-user file locking on Windows. A different config must still
+// contend for the same Startup script, and a canceled waiter must never mutate.
+func TestWindowsDirectTransactionsCancelAndPreserveFinalState(t *testing.T) {
+	for _, op := range []string{"install", "uninstall", "auto"} {
+		t.Run(op, func(t *testing.T) {
+			isolateBootstrap(t)
+			oldExe, oldEval := windowsExecutablePathFn, windowsEvalSymlinksFn
+			t.Cleanup(func() { windowsExecutablePathFn, windowsEvalSymlinksFn = oldExe, oldEval })
+			var mutations atomic.Int32
+			windowsExecutablePathFn = func() (string, error) { mutations.Add(1); return `C:\TSLink\tslink.exe`, nil }
+			windowsEvalSymlinksFn = func(p string) (string, error) { return p, nil }
+			command := func(ctx context.Context) *cobra.Command {
+				c := &cobra.Command{}
+				c.SetContext(ctx)
+				c.SetOut(io.Discard)
+				c.SetErr(io.Discard)
+				c.Flags().Bool("no-auto-provision", false, "")
+				return c
+			}
+			if err := installCmd.RunE(command(context.Background()), nil); err != nil {
+				t.Fatal(err)
+			}
+			path, _ := windowsStartupScriptPath()
+			before, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			entered, release := make(chan struct{}), make(chan struct{})
+			owner := make(chan error, 1)
+			go func() {
+				owner <- withSupervisorTransaction(context.Background(), func() error { close(entered); <-release; return nil })
+			}()
+			<-entered
+			// Change config only after the owner is paused and no longer reads env.
+			t.Setenv("TSLINK_CONFIG_DIR", t.TempDir())
+			newDir, _ := absoluteConfigDir()
+			count := mutations.Load()
+			operation := func(ctx context.Context) error {
+				switch op {
+				case "install":
+					return installCmd.RunE(command(ctx), nil)
+				case "uninstall":
+					return uninstallCmd.RunE(command(ctx), nil)
+				default:
+					return ensureDaemon(ctx, io.Discard, false)
+				}
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
+			err = operation(ctx)
+			cancel()
+			after, readErr := os.ReadFile(path)
+			pausedCount := mutations.Load()
+			close(release)
+			if ownerErr := <-owner; ownerErr != nil {
+				t.Fatal(ownerErr)
+			}
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("%s bypassed per-user lock: %v", op, err)
+			}
+			if readErr != nil || !bytes.Equal(before, after) || pausedCount != count {
+				t.Fatalf("canceled %s entered mutation: %v, calls %d -> %d", op, readErr, count, pausedCount)
+			}
+			if op == "auto" {
+				// Bootstrap refuses replacement across config boundaries after unlock.
+				if err := operation(context.Background()); err == nil || !strings.Contains(err.Error(), "not bound to config") {
+					t.Fatalf("cross-config auto replacement accepted: %v", err)
+				}
+				if err := uninstallCmd.RunE(command(context.Background()), nil); err != nil {
+					t.Fatal(err)
+				}
+				// Keep bootstrap's real lock + locked installer; simulate only the
+				// daemon becoming live so this test never starts wscript or a daemon.
+				installDaemonFn = func(ctx context.Context, _ io.Writer) error {
+					if err := runInstallLocked(command(ctx), nil); err != nil {
+						return err
+					}
+					isRunningFn = func(string) bool { return true }
+					detectSupervisionFn = func(string, bool, int) Supervision { return windowsStartupSupervision(path) }
+					return nil
+				}
+			}
+			ctx, cancel = context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			if err := operation(ctx); err != nil {
+				t.Fatalf("positive control after unlock (nested lock?): %v", err)
+			}
+			if op == "uninstall" {
+				if _, err := os.Stat(path); !os.IsNotExist(err) {
+					t.Fatalf("script remains: %v", err)
+				}
+			} else {
+				data, err := os.ReadFile(path)
+				if err != nil || !supervisorConfigMatches(data, newDir) {
+					t.Fatalf("final config binding lost: %v", err)
+				}
+				s := windowsStartupSupervision(path)
+				if s.RestartOnExit || s.AutostartScope != autostartScopeLogin {
+					t.Fatalf("Startup policy changed: %+v", s)
+				}
+			}
+		})
 	}
 }

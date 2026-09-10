@@ -4,6 +4,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -323,6 +324,7 @@ func TestLinuxInstallCommandRunsSystemctlAndWarnsAboutLinger(t *testing.T) {
 	wantCalls := []string{
 		strings.Join([]string{"--user", "daemon-reload"}, "\x00"),
 		strings.Join([]string{"--user", "enable", systemdServiceName}, "\x00"),
+		strings.Join([]string{"--user", "reset-failed", systemdServiceName}, "\x00"),
 		strings.Join([]string{"--user", "restart", systemdServiceName}, "\x00"),
 		strings.Join([]string{"--user", "show", systemdServiceName, "--property=ActiveState", "--property=SubState", "--property=MainPID", "--property=NRestarts", "--no-pager"}, "\x00"),
 		strings.Join([]string{"--user", "show", systemdServiceName, "--property=ActiveState", "--property=SubState", "--property=MainPID", "--property=NRestarts", "--no-pager"}, "\x00"),
@@ -835,7 +837,7 @@ func TestLinuxInstallDoesNotClaimRestoredServiceRestartedWhenItDiesDuringSettlem
 }
 
 func TestLinuxInstallRestoresPreviousUnitAfterUpgradeFailures(t *testing.T) {
-	for _, failStage := range []string{"daemon-reload", "enable", "restart", "verify"} {
+	for _, failStage := range []string{"daemon-reload", "enable", "reset-failed", "restart", "verify"} {
 		t.Run(failStage, func(t *testing.T) {
 			stubFastSystemdSettle(t)
 			resetRootJSONFlag(t)
@@ -914,18 +916,21 @@ func TestLinuxInstallRestoresPreviousUnitAfterUpgradeFailures(t *testing.T) {
 			verifyShow := strings.Join([]string{"--user", "show", systemdServiceName, "--property=ActiveState", "--property=SubState", "--property=MainPID", "--property=NRestarts", "--no-pager"}, "\x00")
 			daemonReload := strings.Join([]string{"--user", "daemon-reload"}, "\x00")
 			enable := strings.Join([]string{"--user", "enable", systemdServiceName}, "\x00")
+			reset := strings.Join([]string{"--user", "reset-failed", systemdServiceName}, "\x00")
 			restart := strings.Join([]string{"--user", "restart", systemdServiceName}, "\x00")
 			stop := strings.Join([]string{"--user", "stop", systemdServiceName}, "\x00")
 			wantCalls := []string{ownershipShow, daemonReload}
 			switch failStage {
 			case "enable":
 				wantCalls = append(wantCalls, enable)
+			case "reset-failed":
+				wantCalls = append(wantCalls, enable, reset)
 			case "restart":
-				wantCalls = append(wantCalls, enable, restart)
+				wantCalls = append(wantCalls, enable, reset, restart)
 			case "verify":
-				wantCalls = append(wantCalls, enable, restart, verifyShow)
+				wantCalls = append(wantCalls, enable, reset, restart, verifyShow)
 			}
-			wantCalls = append(wantCalls, stop, daemonReload, restart, verifyShow, verifyShow)
+			wantCalls = append(wantCalls, stop, daemonReload, reset, restart, verifyShow, verifyShow)
 			if strings.Join(calls, "\n") != strings.Join(wantCalls, "\n") {
 				t.Fatalf("systemctl calls = %q, want exact forward/failure/restore sequence %q", calls, wantCalls)
 			}
@@ -984,6 +989,7 @@ func TestRestorePreviousSystemdUnitReportsAccurateProgress(t *testing.T) {
 			wantCalls: []string{
 				strings.Join([]string{"--user", "stop", systemdServiceName}, "\x00"),
 				strings.Join([]string{"--user", "daemon-reload"}, "\x00"),
+				strings.Join([]string{"--user", "reset-failed", systemdServiceName}, "\x00"),
 				strings.Join([]string{"--user", "restart", systemdServiceName}, "\x00"),
 			},
 		},
@@ -1354,5 +1360,164 @@ func TestDefaultLinuxUserNameFallsBackToLognameAndUID(t *testing.T) {
 	linuxUserIDFn = func() int { return 12345 }
 	if got := defaultLinuxUserName(); got != "12345" {
 		t.Fatalf("defaultLinuxUserName() = %q, want UID fallback", got)
+	}
+}
+
+// Stateful manager control: normal explicit starts consume the same budget as
+// crashes. Never pre-reset or sleep to drain the budget in this fixture.
+func TestLinuxExplicitInstallClearsPriorStartBudget(t *testing.T) {
+	setupRepairManager(t, func() {})
+	original := systemctlCombinedOutput
+	starts, resets := 5, 0
+	systemctlCombinedOutput = func(args ...string) ([]byte, error) {
+		switch args[1] {
+		case "reset-failed":
+			starts = 0
+			resets++
+		case "restart":
+			if starts >= 5 {
+				return []byte("start-limit-hit"), errors.New("start request repeated too quickly")
+			}
+			starts++
+		}
+		return original(args...)
+	}
+	for i := 0; i < 8; i++ {
+		if err := repairOperation(context.Background(), "install"); err != nil {
+			t.Fatalf("explicit install %d locked out by prior starts: %v", i, err)
+		}
+		if starts != 1 || resets != i+1 {
+			t.Fatalf("reset scope: starts=%d resets=%d iteration=%d", starts, resets, i)
+		}
+	}
+	// Unattended starts still hit the original budget: no implicit reset path.
+	for i := 0; i < 4; i++ {
+		if _, err := systemctlCombinedOutput("--user", "restart", systemdServiceName); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := systemctlCombinedOutput("--user", "restart", systemdServiceName); err == nil {
+		t.Fatal("background start budget disabled")
+	}
+	unit := systemdServiceContents("/test/tslink", false)
+	for _, policy := range []string{"StartLimitIntervalSec=300\n", "StartLimitBurst=5\n", "Restart=on-failure\n", "RestartSec=30\n"} {
+		if !strings.Contains(unit, policy) {
+			t.Fatalf("default crash protection changed: %s", policy)
+		}
+	}
+}
+
+func TestLinuxExplicitResetFailureAndBadBuildStayFailures(t *testing.T) {
+	for _, mode := range []string{"reset-error", "reset-ineffective", "bad-build"} {
+		t.Run(mode, func(t *testing.T) {
+			stubFastSystemdSettle(t)
+			old := systemctlCombinedOutput
+			t.Cleanup(func() { systemctlCombinedOutput = old })
+			var calls []string
+			systemctlCombinedOutput = func(args ...string) ([]byte, error) {
+				calls = append(calls, args[1])
+				if args[1] == "reset-failed" && mode == "reset-error" {
+					return []byte("access denied"), errors.New("reset rejected")
+				}
+				if args[1] == "restart" && mode == "reset-ineffective" {
+					return []byte("start-limit-hit"), errors.New("still limited")
+				}
+				if args[1] == "show" {
+					return []byte("ActiveState=activating\nSubState=auto-restart\nMainPID=0\nNRestarts=0\n"), nil
+				}
+				return nil, nil
+			}
+			_, err := activateSystemdService()
+			if err == nil {
+				t.Fatal("failure hidden")
+			}
+			want := "daemon-reload enable reset-failed"
+			switch mode {
+			case "reset-error":
+				if !strings.Contains(err.Error(), "access denied") {
+					t.Fatalf("lost reset diagnostics: %v", err)
+				}
+			case "reset-ineffective":
+				want += " restart"
+			case "bad-build":
+				want += " restart show"
+			}
+			if strings.Join(calls, " ") != want {
+				t.Fatalf("failure sequence=%v want=%s", calls, want)
+			}
+		})
+	}
+}
+
+func TestLinuxRestoreResetsOnlyAfterRestoredReload(t *testing.T) {
+	for _, mode := range []string{"limited", "reset-error", "not-owned", "stop-error", "reload-error", "bad-build"} {
+		t.Run(mode, func(t *testing.T) {
+			stubFastSystemdSettle(t)
+			path := filepath.Join(t.TempDir(), systemdServiceName)
+			if err := os.WriteFile(path, []byte("new unit"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			previous := systemdPreviousState{Existed: true, Unit: []byte("old unit"), Mode: 0600, OwnedRunning: mode != "not-owned"}
+			old := systemctlCombinedOutput
+			t.Cleanup(func() { systemctlCombinedOutput = old })
+			limited := true
+			var calls []string
+			systemctlCombinedOutput = func(args ...string) ([]byte, error) {
+				op := args[1]
+				calls = append(calls, op)
+				if op != "stop" {
+					data, err := os.ReadFile(path)
+					if err != nil || !bytes.Equal(data, previous.Unit) {
+						t.Fatalf("%s before old bytes restored: %q %v", op, data, err)
+					}
+				}
+				switch op {
+				case "stop":
+					if mode == "stop-error" {
+						return nil, errors.New("stop rejected")
+					}
+				case "daemon-reload":
+					if mode == "reload-error" {
+						return nil, errors.New("reload rejected")
+					}
+				case "reset-failed":
+					if mode == "reset-error" {
+						return []byte("reset denied"), errors.New("reset rejected")
+					}
+					limited = false
+				case "restart":
+					if limited {
+						return []byte("start-limit-hit"), errors.New("limited")
+					}
+				case "show":
+					if mode == "bad-build" {
+						return []byte("ActiveState=failed\nSubState=failed\nMainPID=0\nNRestarts=1\n"), nil
+					}
+					return runningSystemdState(), nil
+				}
+				return nil, nil
+			}
+			result, err := restorePreviousSystemdUnit(previous, path)
+			want := "stop daemon-reload"
+			switch mode {
+			case "limited":
+				want += " reset-failed restart show show"
+			case "reset-error":
+				want += " reset-failed"
+			case "bad-build":
+				want += " reset-failed restart show"
+			}
+			if strings.Join(calls, " ") != want {
+				t.Fatalf("restore sequence=%v want=%s", calls, want)
+			}
+			wantOK := mode == "limited" || mode == "not-owned"
+			if (err == nil) != wantOK || !result.UnitRestored || result.Restarted != (mode == "limited") {
+				t.Fatalf("restore result=%+v err=%v", result, err)
+			}
+			data, readErr := os.ReadFile(path)
+			if readErr != nil || !bytes.Equal(data, previous.Unit) {
+				t.Fatalf("old bytes lost: %q %v", data, readErr)
+			}
+		})
 	}
 }

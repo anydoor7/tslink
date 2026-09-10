@@ -58,52 +58,59 @@ To remove the autostart:
 	  tslink install                Register the Startup script`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		noAutoProvision, err := cmd.Flags().GetBool("no-auto-provision")
-		if err != nil {
-			return fmt.Errorf("read --no-auto-provision: %w", err)
-		}
-		// No daemon-conflict guard is needed here. Unlike launchd/systemd, the
-		// Startup folder does not take ownership or start a process during install.
-		exe, err := windowsExecutablePathFn()
-		if err != nil {
-			return fmt.Errorf("find executable: %w", err)
-		}
-		exe, err = windowsEvalSymlinksFn(exe)
-		if err != nil {
-			return fmt.Errorf("resolve executable path: %w", err)
-		}
-
-		startupPath, err := windowsStartupScriptPath()
-		if err != nil {
-			return err
-		}
-		if err := os.MkdirAll(filepath.Dir(startupPath), 0o755); err != nil {
-			return fmt.Errorf("create Startup directory: %w", err)
-		}
-
-		configDir, err := absoluteConfigDir()
-		if err != nil {
-			return err
-		}
-		script := "Set shell = CreateObject(\"Wscript.Shell\")\r\n" + windowsConfigEnvironment(configDir) + "\r\n" + windowsStartupScript(exe, noAutoProvision)
-		if err := os.WriteFile(startupPath, []byte(script), 0o644); err != nil {
-			return fmt.Errorf("write Startup script: %w", err)
-		}
-
-		if jsonOutput(cmd) {
-			output.Success("install", InstallResult{
-				Path:           startupPath,
-				Installed:      true,
-				Started:        false,
-				ServiceManager: "windows-startup",
-				Warning:        "Windows Startup launches TSLink only at next sign-in and does not auto-restart on crash",
-			})
-			return nil
-		}
-
-		fmt.Fprintf(cmd.OutOrStdout(), "→ ✓ Startup script installed: %s\n", startupPath)
-		return nil
+		return withSupervisorTransaction(cmd.Context(), func() error {
+			return runInstallLocked(cmd, args)
+		})
 	},
+}
+
+// runInstallLocked requires the per-user supervisor transaction lock.
+func runInstallLocked(cmd *cobra.Command, args []string) error {
+	noAutoProvision, err := cmd.Flags().GetBool("no-auto-provision")
+	if err != nil {
+		return fmt.Errorf("read --no-auto-provision: %w", err)
+	}
+	// No daemon-conflict guard is needed here. Unlike launchd/systemd, the
+	// Startup folder does not take ownership or start a process during install.
+	exe, err := windowsExecutablePathFn()
+	if err != nil {
+		return fmt.Errorf("find executable: %w", err)
+	}
+	exe, err = windowsEvalSymlinksFn(exe)
+	if err != nil {
+		return fmt.Errorf("resolve executable path: %w", err)
+	}
+
+	startupPath, err := windowsStartupScriptPath()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(startupPath), 0o755); err != nil {
+		return fmt.Errorf("create Startup directory: %w", err)
+	}
+
+	configDir, err := absoluteConfigDir()
+	if err != nil {
+		return err
+	}
+	script := "Set shell = CreateObject(\"Wscript.Shell\")\r\n" + windowsConfigEnvironment(configDir) + "\r\n" + windowsStartupScript(exe, noAutoProvision)
+	if err := os.WriteFile(startupPath, []byte(script), 0o644); err != nil {
+		return fmt.Errorf("write Startup script: %w", err)
+	}
+
+	if jsonOutput(cmd) {
+		output.Success("install", InstallResult{
+			Path:           startupPath,
+			Installed:      true,
+			Started:        false,
+			ServiceManager: "windows-startup",
+			Warning:        "Windows Startup launches TSLink only at next sign-in and does not auto-restart on crash",
+		})
+		return nil
+	}
+
+	fmt.Fprintf(cmd.OutOrStdout(), "→ ✓ Startup script installed: %s\n", startupPath)
+	return nil
 }
 
 func windowsStartupScriptPath() (string, error) {

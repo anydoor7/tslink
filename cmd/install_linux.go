@@ -224,6 +224,12 @@ func activateSystemdService() (bool, error) {
 	if commandOutput, err := systemctlCombinedOutput("--user", "enable", systemdServiceName); err != nil {
 		return false, fmt.Errorf("enable systemd user service: %w%s", err, commandOutputSuffix(commandOutput))
 	}
+	// Explicit installation starts a new operator-requested attempt. Normal
+	// installs also consume systemd's start budget; discard that old history
+	// only here, before restart and before the unchanged stability gate.
+	if commandOutput, err := systemctlCombinedOutput("--user", "reset-failed", systemdServiceName); err != nil {
+		return false, fmt.Errorf("reset systemd user service start limit before install: %w%s", err, commandOutputSuffix(commandOutput))
+	}
 	if commandOutput, err := systemctlCombinedOutput("--user", "restart", systemdServiceName); err != nil {
 		return false, fmt.Errorf("restart systemd user service: %w%s", err, commandOutputSuffix(commandOutput))
 	}
@@ -246,6 +252,11 @@ func restorePreviousSystemdUnit(previous systemdPreviousState, servicePath strin
 	}
 	if len(restoreErrs) > 0 || !previous.OwnedRunning {
 		return result, errors.Join(restoreErrs...)
+	}
+	// The failed upgrade may have exhausted the budget too. Only reset once
+	// the previous bytes are restored and reloaded, and only if restarting.
+	if commandOutput, err := systemctlCombinedOutput("--user", "reset-failed", systemdServiceName); err != nil {
+		return result, fmt.Errorf("reset restored systemd user service start limit: %w%s", err, commandOutputSuffix(commandOutput))
 	}
 	if commandOutput, err := systemctlCombinedOutput("--user", "restart", systemdServiceName); err != nil {
 		return result, fmt.Errorf("restart restored systemd user service: %w%s", err, commandOutputSuffix(commandOutput))

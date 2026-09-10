@@ -4,7 +4,6 @@ package cmd
 
 import (
 	"errors"
-	"github.com/spf13/cobra"
 	"golang.org/x/sys/windows"
 	"os"
 )
@@ -17,6 +16,3 @@ func trySupervisorLock(f *os.File) (bool, error) {
 	}
 	return err == nil, err
 }
-
-// Windows installer has no nested transaction wrapper.
-func runInstallLocked(cmd *cobra.Command, args []string) error { return installCmd.RunE(cmd, args) }

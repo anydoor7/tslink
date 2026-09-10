@@ -39,34 +39,41 @@ To verify the script was removed:
 	  tslink stop && tslink uninstall   Stop daemon then remove autostart`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		startupPath, err := windowsStartupScriptPath()
-		if err != nil {
-			return err
-		}
-
-		if _, err := os.Stat(startupPath); os.IsNotExist(err) {
-			if jsonOutput(cmd) {
-				output.Success("uninstall", UninstallResult{Path: startupPath, Removed: false, ServiceManager: "windows-startup"})
-				return nil
-			}
-			fmt.Fprintln(cmd.OutOrStdout(), "→ Startup script not installed")
-			return nil
-		} else if err != nil {
-			return fmt.Errorf("stat Startup script: %w", err)
-		}
-
-		if err := os.Remove(startupPath); err != nil {
-			return fmt.Errorf("remove Startup script: %w", err)
-		}
-
-		if jsonOutput(cmd) {
-			output.Success("uninstall", UninstallResult{Path: startupPath, Removed: true, ServiceManager: "windows-startup"})
-			return nil
-		}
-
-		fmt.Fprintln(cmd.OutOrStdout(), "→ ✓ Startup script removed")
-		return nil
+		return withSupervisorTransaction(cmd.Context(), func() error {
+			return runUninstallLocked(cmd, args)
+		})
 	},
+}
+
+// runUninstallLocked requires the per-user supervisor transaction lock.
+func runUninstallLocked(cmd *cobra.Command, args []string) error {
+	startupPath, err := windowsStartupScriptPath()
+	if err != nil {
+		return err
+	}
+
+	if _, err := os.Stat(startupPath); os.IsNotExist(err) {
+		if jsonOutput(cmd) {
+			output.Success("uninstall", UninstallResult{Path: startupPath, Removed: false, ServiceManager: "windows-startup"})
+			return nil
+		}
+		fmt.Fprintln(cmd.OutOrStdout(), "→ Startup script not installed")
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("stat Startup script: %w", err)
+	}
+
+	if err := os.Remove(startupPath); err != nil {
+		return fmt.Errorf("remove Startup script: %w", err)
+	}
+
+	if jsonOutput(cmd) {
+		output.Success("uninstall", UninstallResult{Path: startupPath, Removed: true, ServiceManager: "windows-startup"})
+		return nil
+	}
+
+	fmt.Fprintln(cmd.OutOrStdout(), "→ ✓ Startup script removed")
+	return nil
 }
 
 func init() {
