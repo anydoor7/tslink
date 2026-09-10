@@ -42,64 +42,71 @@ If you enabled lingering only for TSLink, disable it after uninstall:
 	  tslink uninstall              Remove the systemd user service`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		servicePath, err := systemdServicePath()
-		if err != nil {
-			return err
-		}
+		return withSupervisorTransaction(cmd.Context(), func() error {
+			return runUninstallLocked(cmd, args)
+		})
+	},
+}
 
-		if _, err := os.Stat(servicePath); os.IsNotExist(err) {
-			warning := resetFailedSystemdServiceWarning()
-			if jsonOutput(cmd) {
-				output.Success("uninstall", UninstallResult{Path: servicePath, Removed: false, ServiceManager: systemdServiceName, Warning: warning})
-				return nil
-			}
-			if warning != "" {
-				fmt.Fprintf(cmd.ErrOrStderr(), "→ ⚠ %s\n", warning)
-			}
-			fmt.Fprintln(cmd.OutOrStdout(), "→ systemd user service not installed")
-			return nil
-		} else if err != nil {
-			return fmt.Errorf("stat systemd service: %w", err)
-		}
+// runUninstallLocked requires the per-user supervisor transaction lock.
+func runUninstallLocked(cmd *cobra.Command, args []string) error {
+	servicePath, err := systemdServicePath()
+	if err != nil {
+		return err
+	}
 
-		var warnings []string
-		if output, err := systemctlCombinedOutput("--user", "stop", systemdServiceName); err != nil {
-			warnings = append(warnings, fmt.Sprintf("stop systemd user service: %v%s", err, commandOutputSuffix(output)))
-		}
-		if output, err := systemctlCombinedOutput("--user", "disable", systemdServiceName); err != nil {
-			warnings = append(warnings, fmt.Sprintf("disable systemd user service: %v%s", err, commandOutputSuffix(output)))
-		}
-
-		if err := os.Remove(servicePath); err != nil {
-			return fmt.Errorf("remove systemd service: %w", err)
-		}
-		// Reset while systemd still has the just-removed unit loaded. After
-		// daemon-reload a clean unit may already be forgotten, turning this
-		// best-effort cleanup into a noisy "unit not loaded" failure.
-		if warning := resetFailedSystemdServiceWarning(); warning != "" {
-			warnings = append(warnings, warning)
-		}
-		if output, err := systemctlCombinedOutput("--user", "daemon-reload"); err != nil {
-			return fmt.Errorf("reload systemd user daemon: %w%s", err, commandOutputSuffix(output))
-		}
-
-		warning := strings.Join(warnings, "; ")
+	if _, err := os.Stat(servicePath); os.IsNotExist(err) {
+		warning := resetFailedSystemdServiceWarning()
 		if jsonOutput(cmd) {
-			output.Success("uninstall", UninstallResult{
-				Path:           servicePath,
-				Removed:        true,
-				ServiceManager: systemdServiceName,
-				Warning:        warning,
-			})
+			output.Success("uninstall", UninstallResult{Path: servicePath, Removed: false, ServiceManager: systemdServiceName, Warning: warning})
 			return nil
 		}
-
-		if len(warnings) > 0 {
+		if warning != "" {
 			fmt.Fprintf(cmd.ErrOrStderr(), "→ ⚠ %s\n", warning)
 		}
-		fmt.Fprintln(cmd.OutOrStdout(), "→ ✓ systemd user service removed")
+		fmt.Fprintln(cmd.OutOrStdout(), "→ systemd user service not installed")
 		return nil
-	},
+	} else if err != nil {
+		return fmt.Errorf("stat systemd service: %w", err)
+	}
+
+	var warnings []string
+	if output, err := systemctlCombinedOutput("--user", "stop", systemdServiceName); err != nil {
+		warnings = append(warnings, fmt.Sprintf("stop systemd user service: %v%s", err, commandOutputSuffix(output)))
+	}
+	if output, err := systemctlCombinedOutput("--user", "disable", systemdServiceName); err != nil {
+		warnings = append(warnings, fmt.Sprintf("disable systemd user service: %v%s", err, commandOutputSuffix(output)))
+	}
+
+	if err := os.Remove(servicePath); err != nil {
+		return fmt.Errorf("remove systemd service: %w", err)
+	}
+	// Reset while systemd still has the just-removed unit loaded. After
+	// daemon-reload a clean unit may already be forgotten, turning this
+	// best-effort cleanup into a noisy "unit not loaded" failure.
+	if warning := resetFailedSystemdServiceWarning(); warning != "" {
+		warnings = append(warnings, warning)
+	}
+	if output, err := systemctlCombinedOutput("--user", "daemon-reload"); err != nil {
+		return fmt.Errorf("reload systemd user daemon: %w%s", err, commandOutputSuffix(output))
+	}
+
+	warning := strings.Join(warnings, "; ")
+	if jsonOutput(cmd) {
+		output.Success("uninstall", UninstallResult{
+			Path:           servicePath,
+			Removed:        true,
+			ServiceManager: systemdServiceName,
+			Warning:        warning,
+		})
+		return nil
+	}
+
+	if len(warnings) > 0 {
+		fmt.Fprintf(cmd.ErrOrStderr(), "→ ⚠ %s\n", warning)
+	}
+	fmt.Fprintln(cmd.OutOrStdout(), "→ ✓ systemd user service removed")
+	return nil
 }
 
 func resetFailedSystemdServiceWarning() string {

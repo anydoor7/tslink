@@ -106,7 +106,7 @@ func runDarwinInstallGuardTruthCase(t *testing.T, plistPresent, daemonRunning bo
 	launchctlCalls := 0
 	bootstrapCalls := 0
 	mutatingLaunchctlCalls := 0
-	launchctlCombinedOutput = func(args ...string) ([]byte, error) {
+	launchctlCombinedOutput = settledBootoutFixture(func(args ...string) ([]byte, error) {
 		launchctlCalls++
 		if len(args) > 0 && args[0] == "print" {
 			pid := launchdPID
@@ -122,7 +122,7 @@ func runDarwinInstallGuardTruthCase(t *testing.T, plistPresent, daemonRunning bo
 			mutatingLaunchctlCalls++
 		}
 		return nil, nil
-	}
+	})
 
 	var out bytes.Buffer
 	installCmd.SetOut(&out)
@@ -803,13 +803,13 @@ func TestInstallCommandBootoutThenBootstrapsLaunchAgentOnSuccess(t *testing.T) {
 	userUIDFn = func() int { return 501 }
 
 	var gotCalls []string
-	launchctlCombinedOutput = func(args ...string) ([]byte, error) {
+	launchctlCombinedOutput = settledBootoutFixture(func(args ...string) ([]byte, error) {
 		gotCalls = append(gotCalls, strings.Join(args, "\x00"))
 		if len(args) > 0 && args[0] == "print" {
 			return runningLaunchAgentState(), nil
 		}
 		return []byte("bootstrap ok"), nil
-	}
+	})
 
 	var out bytes.Buffer
 	installCmd.SetOut(&out)
@@ -861,13 +861,13 @@ func TestInstallCommandBootstrapsLaunchAgentAndSurfacesOutput(t *testing.T) {
 	userUIDFn = func() int { return 501 }
 
 	var gotCalls []string
-	launchctlCombinedOutput = func(args ...string) ([]byte, error) {
+	launchctlCombinedOutput = settledBootoutFixture(func(args ...string) ([]byte, error) {
 		gotCalls = append(gotCalls, strings.Join(args, "\x00"))
 		if len(args) > 0 && args[0] == "bootout" {
 			return []byte("Boot-out failed: 3: No such process"), errors.New("bootout failed")
 		}
 		return []byte("bootstrap stderr"), errors.New("launchctl failed")
-	}
+	})
 
 	var out bytes.Buffer
 	installCmd.SetOut(&out)
@@ -932,7 +932,7 @@ func TestInstallCommandFallsBackToUserDomainWhenGUIDomainMissing(t *testing.T) {
 	userUIDFn = func() int { return 503 }
 
 	var gotCalls []string
-	launchctlCombinedOutput = func(args ...string) ([]byte, error) {
+	launchctlCombinedOutput = settledBootoutFixture(func(args ...string) ([]byte, error) {
 		gotCalls = append(gotCalls, strings.Join(args, "\x00"))
 		if len(args) >= 2 && strings.HasPrefix(args[1], "gui/503") {
 			return []byte("Could not find domain for: " + args[1]), errors.New("exit status 112")
@@ -944,7 +944,7 @@ func TestInstallCommandFallsBackToUserDomainWhenGUIDomainMissing(t *testing.T) {
 			return runningLaunchAgentState(), nil
 		}
 		return []byte("user bootstrap ok"), nil
-	}
+	})
 
 	var out bytes.Buffer
 	var errOut bytes.Buffer
@@ -1017,7 +1017,7 @@ func TestInstallUpgradeDoesNotBootstrapFallbackWhenGUIDomainBootoutIsUnavailable
 	}
 
 	var calls []string
-	launchctlCombinedOutput = func(args ...string) ([]byte, error) {
+	launchctlCombinedOutput = settledBootoutFixture(func(args ...string) ([]byte, error) {
 		call := strings.Join(args, "\x00")
 		calls = append(calls, call)
 		if len(args) != 2 || args[0] != "bootout" {
@@ -1027,7 +1027,7 @@ func TestInstallUpgradeDoesNotBootstrapFallbackWhenGUIDomainBootoutIsUnavailable
 			return []byte("Could not find domain for: " + args[1]), errors.New("exit status 112")
 		}
 		return []byte("Boot-out failed: 3: No such process"), errors.New("exit status 3")
-	}
+	})
 
 	err := installCmd.RunE(installCmd, nil)
 	if err == nil || !strings.Contains(err.Error(), "could not confirm the prior job was unloaded") || !strings.Contains(err.Error(), "previous LaunchAgent plist was restored") || !strings.Contains(err.Error(), "tslink install --force") || !strings.Contains(err.Error(), "second daemon") {
@@ -1124,7 +1124,7 @@ func TestInstallForceRecoversHeadlessUpgradeStatesDAndE(t *testing.T) {
 			}
 
 			userLoaded := tc.userLoaded
-			launchctlCombinedOutput = func(args ...string) ([]byte, error) {
+			launchctlCombinedOutput = settledBootoutFixture(func(args ...string) ([]byte, error) {
 				isGUI := len(args) >= 2 && strings.HasPrefix(args[1], "gui/")
 				if isGUI {
 					return []byte("Could not find domain for: " + args[1]), errors.New("exit status 112")
@@ -1148,7 +1148,7 @@ func TestInstallForceRecoversHeadlessUpgradeStatesDAndE(t *testing.T) {
 					t.Fatalf("unexpected launchctl call: %q", args)
 					return nil, nil
 				}
-			}
+			})
 
 			var stdout, stderr bytes.Buffer
 			installCmd.SetOut(&stdout)
@@ -1258,7 +1258,7 @@ func TestInstallCommandDoesNotClaimLoadedWhenLaunchAgentIsWaiting(t *testing.T) 
 	guiTarget := "gui/501/" + plistLabel
 	userTarget := "user/501/" + plistLabel
 	var launchctlCalls []string
-	launchctlCombinedOutput = func(args ...string) ([]byte, error) {
+	launchctlCombinedOutput = settledBootoutFixture(func(args ...string) ([]byte, error) {
 		call := strings.Join(args, "\x00")
 		if len(launchctlCalls) == 5 && call == strings.Join([]string{"print", guiTarget}, "\x00") {
 			return []byte("state = waiting\npid = 0\n"), nil
@@ -1304,7 +1304,7 @@ func TestInstallCommandDoesNotClaimLoadedWhenLaunchAgentIsWaiting(t *testing.T) 
 			t.Fatalf("unexpected launchctl call %d: %q", len(launchctlCalls), call)
 		}
 		return nil, nil
-	}
+	})
 
 	var out bytes.Buffer
 	installCmd.SetOut(&out)
@@ -1351,7 +1351,7 @@ func TestRestorePreviousLaunchAgentDoesNotClaimReloadedWhenBootstrapFails(t *tes
 	t.Cleanup(func() { launchctlCombinedOutput = oldLaunchctl })
 	previousTarget := "gui/501/" + plistLabel
 	var calls []string
-	launchctlCombinedOutput = func(args ...string) ([]byte, error) {
+	launchctlCombinedOutput = settledBootoutFixture(func(args ...string) ([]byte, error) {
 		call := strings.Join(args, "\x00")
 		calls = append(calls, call)
 		switch len(calls) {
@@ -1369,7 +1369,7 @@ func TestRestorePreviousLaunchAgentDoesNotClaimReloadedWhenBootstrapFails(t *tes
 			t.Fatalf("unexpected launchctl call after failed restore bootstrap: %q", call)
 		}
 		return nil, nil
-	}
+	})
 
 	result, err := restorePreviousLaunchAgent(
 		launchAgentPreviousState{Existed: true, Plist: []byte("old plist"), Mode: 0o644, Domain: "gui/501", Target: previousTarget},
@@ -1455,12 +1455,12 @@ func TestInstallCommandSupportsSymlinkedLaunchAgentsDirectoryWithoutChangingMode
 	executablePathFn = func() (string, error) { return "/Applications/TSLink.app/tslink", nil }
 	evalSymlinksFn = func(path string) (string, error) { return path, nil }
 	userUIDFn = func() int { return 501 }
-	launchctlCombinedOutput = func(args ...string) ([]byte, error) {
+	launchctlCombinedOutput = settledBootoutFixture(func(args ...string) ([]byte, error) {
 		if len(args) > 0 && args[0] == "print" {
 			return runningLaunchAgentState(), nil
 		}
 		return nil, nil
-	}
+	})
 
 	libraryDir := filepath.Join(home, "Library")
 	realDir := filepath.Join(home, "RelocatedLaunchAgents")
@@ -1628,12 +1628,12 @@ func TestInstallCommandRemovesNewPlistWhenLaunchAgentVerificationFails(t *testin
 	executablePathFn = func() (string, error) { return "/Applications/TSLink.app/tslink", nil }
 	evalSymlinksFn = func(path string) (string, error) { return path, nil }
 	userUIDFn = func() int { return 501 }
-	launchctlCombinedOutput = func(args ...string) ([]byte, error) {
+	launchctlCombinedOutput = settledBootoutFixture(func(args ...string) ([]byte, error) {
 		if len(args) > 0 && args[0] == "print" {
 			return []byte("state = waiting\npid = 0\n"), nil
 		}
 		return nil, nil
-	}
+	})
 
 	err := installCmd.RunE(installCmd, nil)
 	if err == nil || !strings.Contains(err.Error(), "new installation was rolled back") || !strings.Contains(err.Error(), "re-run 'tslink install'") {
@@ -1670,7 +1670,7 @@ func TestInstallCommandKeepsNewPlistWhenRollbackBootoutFails(t *testing.T) {
 	evalSymlinksFn = func(path string) (string, error) { return path, nil }
 	userUIDFn = func() int { return 501 }
 	bootstrapped := false
-	launchctlCombinedOutput = func(args ...string) ([]byte, error) {
+	launchctlCombinedOutput = settledBootoutFixture(func(args ...string) ([]byte, error) {
 		if len(args) == 0 {
 			return nil, nil
 		}
@@ -1686,7 +1686,7 @@ func TestInstallCommandKeepsNewPlistWhenRollbackBootoutFails(t *testing.T) {
 			}
 		}
 		return nil, nil
-	}
+	})
 
 	err := installCmd.RunE(installCmd, nil)
 	if err == nil || !strings.Contains(err.Error(), "automatic rollback was incomplete") || !strings.Contains(err.Error(), "plist was kept") || !strings.Contains(err.Error(), "tslink uninstall") {
@@ -2063,7 +2063,7 @@ func TestUninstallCommandJSONCoversLaunchctlOutcomeMatrix(t *testing.T) {
 
 			outcomes := []outcome{tc.gui, tc.user}
 			var targets []string
-			launchctlCombinedOutput = func(args ...string) ([]byte, error) {
+			launchctlCombinedOutput = settledBootoutFixture(func(args ...string) ([]byte, error) {
 				if len(args) != 2 || args[0] != "bootout" {
 					t.Fatalf("launchctl args = %q, want bootout target", args)
 				}
@@ -2085,7 +2085,7 @@ func TestUninstallCommandJSONCoversLaunchctlOutcomeMatrix(t *testing.T) {
 					t.Fatalf("unknown outcome %q", outcomes[index])
 					return nil, nil
 				}
-			}
+			})
 
 			var runErr error
 			gotJSON := captureStdout(t, func() {
@@ -2268,13 +2268,13 @@ func TestUninstallCommandRequiresForceWhenOtherDomainIsUnavailable(t *testing.T)
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 	callIndex := 0
-	launchctlCombinedOutput = func(args ...string) ([]byte, error) {
+	launchctlCombinedOutput = settledBootoutFixture(func(args ...string) ([]byte, error) {
 		callIndex++
 		if callIndex == 1 {
 			return []byte("Could not find domain for: " + args[1]), errors.New("exit status 112")
 		}
 		return []byte("bootout ok"), nil
-	}
+	})
 
 	if err := uninstallCmd.RunE(uninstallCmd, nil); err == nil || !strings.Contains(err.Error(), "tslink uninstall --force") {
 		t.Fatalf("default uninstall error = %v, want explicit --force remedy", err)
@@ -2352,7 +2352,7 @@ func TestUninstallThenInstallCannotCreateSecondDaemonWithoutForce(t *testing.T) 
 	guiLoaded := true
 	userLoaded := true
 	var calls []string
-	launchctlCombinedOutput = func(args ...string) ([]byte, error) {
+	launchctlCombinedOutput = settledBootoutFixture(func(args ...string) ([]byte, error) {
 		calls = append(calls, strings.Join(args, " "))
 		isGUI := len(args) >= 2 && strings.HasPrefix(args[1], "gui/")
 		if isGUI {
@@ -2377,7 +2377,7 @@ func TestUninstallThenInstallCannotCreateSecondDaemonWithoutForce(t *testing.T) 
 			t.Fatalf("unexpected launchctl call: %q", args)
 			return nil, nil
 		}
-	}
+	})
 
 	uninstallErr := uninstallCmd.RunE(uninstallCmd, nil)
 	if uninstallErr == nil || !strings.Contains(uninstallErr.Error(), "tslink uninstall --force") {
@@ -2449,13 +2449,13 @@ func TestUninstallForceDoesNotOverrideRealLaunchctlError(t *testing.T) {
 	})
 	userUIDFn = func() int { return 507 }
 	callIndex := 0
-	launchctlCombinedOutput = func(args ...string) ([]byte, error) {
+	launchctlCombinedOutput = settledBootoutFixture(func(args ...string) ([]byte, error) {
 		callIndex++
 		if callIndex == 1 {
 			return []byte("Boot-out failed: 1: Operation not permitted"), errors.New("exit status 1")
 		}
 		return []byte("bootout ok"), nil
-	}
+	})
 
 	result := bootoutLaunchAgent(true)
 	if result.Err == nil || result.Outcome != launchctlOutcomeUnconfirmed || result.Target != "gui/507/"+plistLabel {
@@ -2490,10 +2490,10 @@ func TestUninstallCommandBootoutsLaunchAgentOnSuccess(t *testing.T) {
 	}
 
 	var gotCalls []string
-	launchctlCombinedOutput = func(args ...string) ([]byte, error) {
+	launchctlCombinedOutput = settledBootoutFixture(func(args ...string) ([]byte, error) {
 		gotCalls = append(gotCalls, strings.Join(args, "\x00"))
 		return []byte("bootout ok"), nil
-	}
+	})
 
 	var out bytes.Buffer
 	uninstallCmd.SetOut(&out)
@@ -2737,4 +2737,24 @@ func TestLaunchAgentTargetForRunningDaemonRequiresRunningStateAndPositivePID(t *
 			t.Fatal("launchAgentTargetForRunningDaemon() owned=true for waiting state")
 		}
 	})
+}
+
+// Existing tests model immediate bootout completion. Supply the newly required
+// print observation without consuming the fixture's subsequent bootstrap or
+// running-state samples. Async removal is tested separately with raw seams.
+func settledBootoutFixture(next func(...string) ([]byte, error)) func(...string) ([]byte, error) {
+	gone := map[string]bool{}
+	return func(args ...string) ([]byte, error) {
+		if len(args) >= 2 && args[0] == "print" && gone[args[1]] {
+			return []byte("Could not find service"), errors.New("service absent")
+		}
+		if len(args) >= 2 && args[0] == "bootstrap" {
+			delete(gone, args[1]+"/"+plistLabel)
+		}
+		out, err := next(args...)
+		if len(args) >= 2 && args[0] == "bootout" && err == nil {
+			gone[args[1]] = true
+		}
+		return out, err
+	}
 }

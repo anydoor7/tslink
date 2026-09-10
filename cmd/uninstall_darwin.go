@@ -3,6 +3,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -65,93 +66,100 @@ Log files in ~/.config/tslink/logs/ are NOT removed.
 	  tslink uninstall              Remove the LaunchAgent`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		force, err := cmd.Flags().GetBool("force")
-		if err != nil {
-			return fmt.Errorf("read --force: %w", err)
-		}
-		path, err := plistPath()
-		if err != nil {
-			return err
-		}
+		return withSupervisorTransaction(cmd.Context(), func() error {
+			return runUninstallLocked(cmd, args)
+		})
+	},
+}
 
-		if _, err := os.Stat(path); os.IsNotExist(err) {
-			if jsonOutput(cmd) {
-				output.Success("uninstall", UninstallResult{
-					PlistPath:        path,
-					Removed:          false,
-					LaunchctlOutcome: launchctlOutcomeNotInstalled,
-				})
-				return nil
-			}
-			fmt.Fprintln(cmd.OutOrStdout(), "→ LaunchAgent not installed")
-			return nil
-		} else if err != nil {
-			return fmt.Errorf("stat plist: %w", err)
-		}
+// runUninstallLocked requires the per-user supervisor transaction lock.
+func runUninstallLocked(cmd *cobra.Command, args []string) error {
+	force, err := cmd.Flags().GetBool("force")
+	if err != nil {
+		return fmt.Errorf("read --force: %w", err)
+	}
+	path, err := plistPath()
+	if err != nil {
+		return err
+	}
 
-		bootout := bootoutLaunchAgent(force)
-		if bootout.Err != nil {
-			warning := launchctlWarning("LaunchAgent plist was kept because launchctl bootout failed", bootout.Err, []byte(bootout.Output))
-			remedy := "fix the launchctl failure and retry 'tslink uninstall'"
-			if bootout.Detail != "" {
-				remedy = bootout.Detail
-			}
-			uninstallErr := fmt.Errorf("%s; the LaunchAgent is still installed at %s; %s", warning, path, remedy)
-			failure := error(uninstallErr)
-			if bootout.UnavailableDomain != "" {
-				failure = registry.CodedError{
-					Code:        registry.CodeLaunchctlDomainUnavailable,
-					Message:     uninstallErr.Error(),
-					Next:        []string{"tslink uninstall --force"},
-					MessageOnly: true,
-				}
-			}
-			if jsonOutput(cmd) {
-				result := output.NewFailureForError("uninstall", failure)
-				data := UninstallResult{
-					PlistPath:         path,
-					Removed:           false,
-					LaunchctlOutcome:  bootout.Outcome,
-					LaunchctlTarget:   bootout.Target,
-					LaunchctlOutput:   bootout.Output,
-					UnavailableDomain: bootout.UnavailableDomain,
-					Detail:            bootout.Detail,
-				}
-				if bootout.UnavailableDomain != "" {
-					data.ForceAvailable = true
-					data.ForceCommand = "tslink uninstall --force"
-					data.ForceRisk = "may remove the plist while a job remains running in the unavailable launchd domain"
-				}
-				result.Data = data
-				output.WriteJSON(os.Stdout, result)
-				return output.SilentExit(output.ExitError)
-			}
-			return failure
-		}
-
-		if err := os.Remove(path); err != nil {
-			return fmt.Errorf("remove plist: %w", err)
-		}
-
+	if _, err := os.Stat(path); os.IsNotExist(err) {
 		if jsonOutput(cmd) {
 			output.Success("uninstall", UninstallResult{
 				PlistPath:        path,
-				Removed:          true,
-				LaunchctlOutcome: bootout.Outcome,
-				LaunchctlTarget:  bootout.Target,
-				LaunchctlOutput:  bootout.Output,
-				Detail:           bootout.Detail,
-				Warning:          bootout.Warning,
+				Removed:          false,
+				LaunchctlOutcome: launchctlOutcomeNotInstalled,
 			})
 			return nil
 		}
-
-		if bootout.Warning != "" {
-			fmt.Fprintf(cmd.ErrOrStderr(), "→ ⚠ %s\n", bootout.Warning)
-		}
-		fmt.Fprintln(cmd.OutOrStdout(), "→ ✓ LaunchAgent removed")
+		fmt.Fprintln(cmd.OutOrStdout(), "→ LaunchAgent not installed")
 		return nil
-	},
+	} else if err != nil {
+		return fmt.Errorf("stat plist: %w", err)
+	}
+
+	bootout := bootoutLaunchAgent(force)
+	if bootout.Err != nil {
+		warning := launchctlWarning("LaunchAgent plist was kept because launchctl bootout failed", bootout.Err, []byte(bootout.Output))
+		remedy := "fix the launchctl failure and retry 'tslink uninstall'"
+		if bootout.Detail != "" {
+			remedy = bootout.Detail
+		}
+		uninstallErr := fmt.Errorf("%s; the LaunchAgent is still installed at %s; %s", warning, path, remedy)
+		failure := error(uninstallErr)
+		if bootout.UnavailableDomain != "" {
+			failure = registry.CodedError{
+				Code:        registry.CodeLaunchctlDomainUnavailable,
+				Message:     uninstallErr.Error(),
+				Next:        []string{"tslink uninstall --force"},
+				MessageOnly: true,
+			}
+		}
+		if jsonOutput(cmd) {
+			result := output.NewFailureForError("uninstall", failure)
+			data := UninstallResult{
+				PlistPath:         path,
+				Removed:           false,
+				LaunchctlOutcome:  bootout.Outcome,
+				LaunchctlTarget:   bootout.Target,
+				LaunchctlOutput:   bootout.Output,
+				UnavailableDomain: bootout.UnavailableDomain,
+				Detail:            bootout.Detail,
+			}
+			if bootout.UnavailableDomain != "" {
+				data.ForceAvailable = true
+				data.ForceCommand = "tslink uninstall --force"
+				data.ForceRisk = "may remove the plist while a job remains running in the unavailable launchd domain"
+			}
+			result.Data = data
+			output.WriteJSON(os.Stdout, result)
+			return output.SilentExit(output.ExitError)
+		}
+		return failure
+	}
+
+	if err := os.Remove(path); err != nil {
+		return fmt.Errorf("remove plist: %w", err)
+	}
+
+	if jsonOutput(cmd) {
+		output.Success("uninstall", UninstallResult{
+			PlistPath:        path,
+			Removed:          true,
+			LaunchctlOutcome: bootout.Outcome,
+			LaunchctlTarget:  bootout.Target,
+			LaunchctlOutput:  bootout.Output,
+			Detail:           bootout.Detail,
+			Warning:          bootout.Warning,
+		})
+		return nil
+	}
+
+	if bootout.Warning != "" {
+		fmt.Fprintf(cmd.ErrOrStderr(), "→ ⚠ %s\n", bootout.Warning)
+	}
+	fmt.Fprintln(cmd.OutOrStdout(), "→ ✓ LaunchAgent removed")
+	return nil
 }
 
 func bootoutLaunchAgent(force bool) launchctlBootoutResult {
@@ -165,6 +173,11 @@ func bootoutLaunchAgent(force bool) launchctlBootoutResult {
 	var firstUnavailable *launchctlBootoutResult
 	for _, target := range targets {
 		output, err := launchctlCombinedOutput("bootout", target)
+		if err == nil || launchctlOperationInProgress(output, err) {
+			// Preserve uninstall's unavailable-domain/force aggregation while
+			// sharing the same absence barrier used by install and rollback.
+			err = waitLaunchAgentAbsent(target, false)
+		}
 		text := strings.TrimSpace(string(output))
 		if text != "" {
 			outputs = append(outputs, text)
@@ -175,13 +188,13 @@ func bootoutLaunchAgent(force bool) launchctlBootoutResult {
 			success.Outcome = launchctlOutcomeUnloaded
 			firstSuccess = &success
 		}
-		if err != nil && launchctlDomainNotFound(output, err) && firstUnavailable == nil {
+		if err != nil && (launchctlDomainNotFound(output, err) || errors.Is(err, errLaunchctlDomainUnavailable)) && firstUnavailable == nil {
 			unavailable := attempt
 			unavailable.Outcome = launchctlOutcomeUnconfirmed
 			unavailable.UnavailableDomain = launchctlDomainForTarget(target)
 			firstUnavailable = &unavailable
 		}
-		if err != nil && !launchctlServiceNotFound(output, err) && !launchctlDomainNotFound(output, err) && firstRealError == nil {
+		if err != nil && !launchctlServiceNotFound(output, err) && !launchctlDomainNotFound(output, err) && !errors.Is(err, errLaunchctlDomainUnavailable) && firstRealError == nil {
 			failure := attempt
 			failure.Outcome = launchctlOutcomeUnconfirmed
 			firstRealError = &failure

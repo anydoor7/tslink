@@ -118,7 +118,7 @@ func TestBootstrapInstallBannerRoutesTheScopeQuestion(t *testing.T) {
 	installDaemonFn = func(context.Context, io.Writer) error {
 		isRunningFn = func(string) bool { return true }
 		detectSupervisionFn = func(string, bool, int) Supervision {
-			return Supervision{Manager: "systemd", Autostart: true, AutostartScope: autostartScopeLogin}
+			return Supervision{Manager: "systemd", Installed: true, RestartOnExit: true, Autostart: true, AutostartScope: autostartScopeLogin}
 		}
 		return nil
 	}

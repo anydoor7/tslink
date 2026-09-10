@@ -103,79 +103,86 @@ If lingering was enabled only for TSLink, disable it after uninstall:
 	  tslink install                Register and restart the systemd service`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		noAutoProvision, err := cmd.Flags().GetBool("no-auto-provision")
-		if err != nil {
-			return fmt.Errorf("read --no-auto-provision: %w", err)
-		}
-		servicePath, err := systemdServicePath()
-		if err != nil {
-			return err
-		}
-		previousState, err := captureSystemdPreviousState(servicePath)
-		if err != nil {
-			return err
-		}
-
-		exe, err := linuxExecutablePathFn()
-		if err != nil {
-			return fmt.Errorf("find executable: %w", err)
-		}
-		exe, err = linuxEvalSymlinksFn(exe)
-		if err != nil {
-			return fmt.Errorf("resolve executable path: %w", err)
-		}
-
-		if err := os.MkdirAll(filepath.Dir(servicePath), 0o755); err != nil {
-			return fmt.Errorf("create systemd user dir: %w", err)
-		}
-
-		configDir, err := absoluteConfigDir()
-		if err != nil {
-			return err
-		}
-		service := strings.Replace(systemdServiceContents(exe, noAutoProvision), "[Service]\n", "[Service]\n"+systemdConfigEnvironment(configDir)+"\n", 1)
-		if err := atomicfile.WriteFileInExistingDir(servicePath, []byte(service), atomicfile.PrivateFileMode); err != nil {
-			return fmt.Errorf("write systemd service: %w", err)
-		}
-
-		verifyDegraded, installErr := activateSystemdService()
-		if installErr != nil {
-			if !previousState.Existed {
-				return installErr
-			}
-			restoreResult, restoreErr := restorePreviousSystemdUnit(previousState, servicePath)
-			if restoreErr != nil {
-				status := "the previous systemd user unit could not be restored"
-				if restoreResult.UnitRestored {
-					status = "the previous systemd user unit was restored, but the prior managed service is not confirmed running"
-				}
-				return fmt.Errorf("%v; upgrade failed and automatic restoration was incomplete: %v; %s; fix the reported cause and re-run 'tslink install'", installErr, restoreErr, status)
-			}
-			if restoreResult.Restarted {
-				return fmt.Errorf("%v; upgrade failed, so the previous systemd user unit was restored and restarted; fix the reported cause and re-run 'tslink install'", installErr)
-			}
-			return fmt.Errorf("%v; upgrade failed, so the previous systemd user unit was restored; no prior systemd-owned running daemon was identified, so no service was restarted; fix the reported cause and re-run 'tslink install'", installErr)
-		}
-
-		warning := joinInstallWarnings(linuxLingerWarning(), systemdVerifyDegradedWarning(verifyDegraded))
-		if jsonOutput(cmd) {
-			output.Success("install", InstallResult{
-				Path:           servicePath,
-				Installed:      true,
-				Started:        true,
-				ServiceManager: systemdServiceName,
-				Warning:        warning,
-			})
-			return nil
-		}
-
-		if warning != "" {
-			fmt.Fprintf(cmd.ErrOrStderr(), "→ ⚠ %s\n", warning)
-		}
-
-		fmt.Fprintf(cmd.OutOrStdout(), "→ ✓ systemd user service installed and restarted: %s\n", servicePath)
-		return nil
+		return withSupervisorTransaction(cmd.Context(), func() error {
+			return runInstallLocked(cmd, args)
+		})
 	},
+}
+
+// runInstallLocked requires the per-user supervisor transaction lock.
+func runInstallLocked(cmd *cobra.Command, args []string) error {
+	noAutoProvision, err := cmd.Flags().GetBool("no-auto-provision")
+	if err != nil {
+		return fmt.Errorf("read --no-auto-provision: %w", err)
+	}
+	servicePath, err := systemdServicePath()
+	if err != nil {
+		return err
+	}
+	previousState, err := captureSystemdPreviousState(servicePath)
+	if err != nil {
+		return err
+	}
+
+	exe, err := linuxExecutablePathFn()
+	if err != nil {
+		return fmt.Errorf("find executable: %w", err)
+	}
+	exe, err = linuxEvalSymlinksFn(exe)
+	if err != nil {
+		return fmt.Errorf("resolve executable path: %w", err)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(servicePath), 0o755); err != nil {
+		return fmt.Errorf("create systemd user dir: %w", err)
+	}
+
+	configDir, err := absoluteConfigDir()
+	if err != nil {
+		return err
+	}
+	service := strings.Replace(systemdServiceContents(exe, noAutoProvision), "[Service]\n", "[Service]\n"+systemdConfigEnvironment(configDir)+"\n", 1)
+	if err := atomicfile.WriteFileInExistingDir(servicePath, []byte(service), atomicfile.PrivateFileMode); err != nil {
+		return fmt.Errorf("write systemd service: %w", err)
+	}
+
+	verifyDegraded, installErr := activateSystemdService()
+	if installErr != nil {
+		if !previousState.Existed {
+			return installErr
+		}
+		restoreResult, restoreErr := restorePreviousSystemdUnit(previousState, servicePath)
+		if restoreErr != nil {
+			status := "the previous systemd user unit could not be restored"
+			if restoreResult.UnitRestored {
+				status = "the previous systemd user unit was restored, but the prior managed service is not confirmed running"
+			}
+			return fmt.Errorf("%v; upgrade failed and automatic restoration was incomplete: %v; %s; fix the reported cause and re-run 'tslink install'", installErr, restoreErr, status)
+		}
+		if restoreResult.Restarted {
+			return fmt.Errorf("%v; upgrade failed, so the previous systemd user unit was restored and restarted; fix the reported cause and re-run 'tslink install'", installErr)
+		}
+		return fmt.Errorf("%v; upgrade failed, so the previous systemd user unit was restored; no prior systemd-owned running daemon was identified, so no service was restarted; fix the reported cause and re-run 'tslink install'", installErr)
+	}
+
+	warning := joinInstallWarnings(linuxLingerWarning(), systemdVerifyDegradedWarning(verifyDegraded))
+	if jsonOutput(cmd) {
+		output.Success("install", InstallResult{
+			Path:           servicePath,
+			Installed:      true,
+			Started:        true,
+			ServiceManager: systemdServiceName,
+			Warning:        warning,
+		})
+		return nil
+	}
+
+	if warning != "" {
+		fmt.Fprintf(cmd.ErrOrStderr(), "→ ⚠ %s\n", warning)
+	}
+
+	fmt.Fprintf(cmd.OutOrStdout(), "→ ✓ systemd user service installed and restarted: %s\n", servicePath)
+	return nil
 }
 
 func captureSystemdPreviousState(servicePath string) (systemdPreviousState, error) {

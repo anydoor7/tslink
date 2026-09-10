@@ -59,6 +59,9 @@ func TestBootstrapOptOutAndAlreadyRunning(t *testing.T) {
 		t.Run(fmt.Sprint(running), func(t *testing.T) {
 			isolateBootstrap(t)
 			isRunningFn = func(string) bool { return running }
+			detectSupervisionFn = func(string, bool, int) Supervision {
+				return Supervision{Manager: "launchd", Installed: true, Autostart: true, RestartOnExit: true}
+			}
 			var log bytes.Buffer
 			if err := ensureDaemon(context.Background(), &log, !running); err != nil {
 				t.Fatal(err)
@@ -90,7 +93,7 @@ func TestBootstrapSucceedsWhenEvidenceLagsControlPlane(t *testing.T) {
 				isRunningFn = func(string) bool { return true }
 				detectSupervisionFn = func(string, bool, int) Supervision {
 					samples++
-					return Supervision{Manager: "systemd", Autostart: true}
+					return Supervision{Manager: "systemd", Installed: true, RestartOnExit: true, Autostart: true}
 				}
 				if evidence == "snapshot" || evidence == "wrong_pid" || evidence == "stale" || evidence == "future" {
 					pid := 4242
@@ -331,7 +334,9 @@ func TestBootstrapAddWritesBeforeInstallThenReturnsURL(t *testing.T) {
 			t.Fatalf("daemon cannot see the saved service during installation: %+v err=%v", reg, err)
 		}
 		isRunningFn = func(string) bool { return true }
-		detectSupervisionFn = func(string, bool, int) Supervision { return Supervision{Manager: "launchd", Autostart: true} }
+		detectSupervisionFn = func(string, bool, int) Supervision {
+			return Supervision{Manager: "launchd", Installed: true, Autostart: true, RestartOnExit: true}
+		}
 		fp, _ := tsruntime.RegistryFingerprint(reg)
 		snapshot := tsruntime.NewSnapshot(4242, startedAt, fp, time.Now(), []tsruntime.ServiceState{{Service: reg.Services[0], RuntimeHost: "myapp.tailnet-example.ts.net"}})
 		return tsruntime.Save(snapshotPath, snapshot)
@@ -359,7 +364,9 @@ func TestBootstrapAddSucceedsWhenEnrollmentURLArrivesLate(t *testing.T) {
 	record := newAuthHandoffRecord("myapp", "https://login.tailscale.com/a/late-fixture", 4242)
 	installDaemonFn = func(context.Context, io.Writer) error {
 		isRunningFn = func(string) bool { return true }
-		detectSupervisionFn = func(string, bool, int) Supervision { return Supervision{Manager: "systemd", Autostart: true} }
+		detectSupervisionFn = func(string, bool, int) Supervision {
+			return Supervision{Manager: "systemd", Installed: true, RestartOnExit: true, Autostart: true}
+		}
 		// Nothing to show for it yet, and nothing to show for it for longer
 		// than the whole setup budget.
 		go func() {
@@ -537,7 +544,7 @@ func TestBootstrapStatusSupervisionBothFormats(t *testing.T) {
 	oldDetect := detectSupervisionFn
 	t.Cleanup(func() { detectSupervisionFn = oldDetect })
 	detectSupervisionFn = func(string, bool, int) Supervision {
-		return Supervision{Manager: "launchd", Autostart: true, RestartOnExit: true, Detail: "fixture"}
+		return Supervision{Manager: "launchd", Installed: true, Autostart: true, RestartOnExit: true, Detail: "fixture"}
 	}
 	r, err := getStatusURLs(pidPath, regPath, snapshotPath)
 	if err != nil {

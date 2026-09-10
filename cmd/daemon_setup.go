@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/monody0007/tslink/internal/config"
-	"github.com/monody0007/tslink/internal/daemon"
+	"github.com/monody0007/tslink/internal/filelock"
 	"github.com/monody0007/tslink/internal/registry"
 	tsruntime "github.com/monody0007/tslink/internal/runtime"
 	"github.com/spf13/cobra"
@@ -52,10 +52,11 @@ const (
 var (
 	detectSupervisionFn = detectSupervision
 	ensureDaemonFn      = ensureDaemon
-	installDaemonFn     = installDaemon
-	bootstrapTimeout    = 15 * time.Second
-	bootstrapInterval   = 250 * time.Millisecond
-	bootstrapSettle     = daemonSettleWindow
+	// installDaemonFn is called only while the supervisor transaction is locked.
+	installDaemonFn   = installDaemonLocked
+	bootstrapTimeout  = 15 * time.Second
+	bootstrapInterval = 250 * time.Millisecond
+	bootstrapSettle   = daemonSettleWindow
 	// The second gate is bounded separately and briefly. What it waits for is
 	// produced by the Tailscale control plane, and the caller's own --wait is
 	// the authoritative wait for that, so a long budget here would only be a
@@ -114,13 +115,18 @@ func daemonSetupError(err error) error {
 // checks and upgrade rollback. A detached command keeps --json output to one
 // envelope and sends every installation announcement to the caller's stderr.
 func installDaemon(ctx context.Context, out io.Writer) error {
+	return withSupervisorTransaction(ctx, func() error { return installDaemonLocked(ctx, out) })
+}
+
+// installDaemonLocked is the bootstrap entry point; its caller owns the lock.
+func installDaemonLocked(ctx context.Context, out io.Writer) error {
 	cmd := &cobra.Command{Use: "install"}
 	cmd.SetContext(ctx)
 	cmd.SetOut(out)
 	cmd.SetErr(out)
 	cmd.Flags().Bool("no-auto-provision", false, "")
 	cmd.Flags().Bool("force", false, "")
-	if err := installCmd.RunE(cmd, nil); err != nil {
+	if err := runInstallLocked(cmd, nil); err != nil {
 		return err
 	}
 	return startInstalledDaemon(ctx, out)
@@ -133,10 +139,10 @@ func ensureDaemon(ctx context.Context, out io.Writer, noInstall bool) error {
 	if err != nil {
 		return err
 	}
-	if isRunningFn(pidPath) {
-		return nil
-	}
 	if noInstall {
+		if isRunningFn(pidPath) {
+			return nil
+		}
 		fmt.Fprintln(out, "Background service installation skipped (--no-daemon-install). Configuration only; URLs are unavailable until 'tslink install'.")
 		return nil
 	}
@@ -146,9 +152,20 @@ func ensureDaemon(ctx context.Context, out io.Writer, noInstall bool) error {
 	}
 	// One manager slot per OS user, even when callers use different config
 	// directories. Never let concurrent add commands replace each other's job.
-	return daemon.WithPIDLock(path+".bootstrap", func() error {
+	return withSupervisorTransaction(ctx, func() error {
 		if isRunningFn(pidPath) {
-			return nil
+			pid, err := readPIDFn(pidPath)
+			if err == nil && pid <= 0 {
+				err = fmt.Errorf("invalid daemon PID %d", pid)
+			}
+			if err == nil && pid > 0 {
+				s := detectSupervisionFn(pidPath, true, pid)
+				if verifiedDaemonSupervision(s) {
+					return nil
+				}
+				err = fmt.Errorf("supervisor ownership/autostart unconfirmed (including restart policy): %s", s.Detail)
+			}
+			return registry.CodedError{Code: "daemon_supervision_unverified", Message: fmt.Sprintf("running daemon cannot be reused safely (%v); inspect with 'tslink doctor' and resolve the reported supervisor issue. For a manual daemon, run 'tslink stop', then 'tslink install'; no process was taken over", err), Next: []string{"tslink doctor", "tslink stop", "tslink install"}}
 		}
 		if err := checkBootstrapScope(path); err != nil {
 			return daemonSetupError(err)
@@ -186,8 +203,8 @@ func ensureDaemon(ctx context.Context, out io.Writer, noInstall bool) error {
 				return 0, err
 			}
 			s := detectSupervisionFn(pidPath, true, pid)
-			if !s.Autostart || s.Manager == "manual" || s.Manager == "none" {
-				return 0, fmt.Errorf("supervisor ownership/autostart unconfirmed: %s", s.Detail)
+			if !verifiedDaemonSupervision(s) {
+				return 0, fmt.Errorf("supervisor ownership/autostart unconfirmed (including restart policy): %s", s.Detail)
 			}
 			return pid, nil
 		}, bootstrapTimeout, bootstrapInterval, bootstrapSettle)
@@ -336,4 +353,68 @@ func checkBootstrapScope(path string) error {
 		return fmt.Errorf("existing supervisor at %s is not bound to config %s; automatic replacement refused; inspect it before explicitly running 'tslink install'", path, dir)
 	}
 	return checkSupervisorProcessScope()
+}
+
+// A detected launchd/systemd owner must include the restart policy promised by
+// that platform. Windows Startup promises sign-in only, not crash restart.
+func verifiedDaemonSupervision(s Supervision) bool {
+	if !s.Installed || !s.Autostart {
+		return false
+	}
+	switch s.Manager {
+	case "launchd", "systemd":
+		return s.RestartOnExit
+	case "windows-startup":
+		return supervisorName() == "windows-startup"
+	default:
+		return false
+	}
+}
+
+// The lock key is the per-user supervisor definition, never the selected config.
+// Hold it across capture, mutation, manager verification and rollback. Waiters
+// may cancel without leaving a goroutine that later starts a stale transaction.
+func withSupervisorTransaction(ctx context.Context, fn func() error) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	path, err := supervisorPath()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(path+".bootstrap.lock", os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		acquired, err := trySupervisorLock(f)
+		if err != nil {
+			return err
+		}
+		if acquired {
+			break
+		}
+		timer := time.NewTimer(10 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+	defer filelock.Unlock(f)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return fn()
 }

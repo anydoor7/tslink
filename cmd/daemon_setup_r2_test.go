@@ -40,7 +40,9 @@ func TestBootstrapConcurrentEnsureInstallsOnce(t *testing.T) {
 		running.Store(true)
 		return nil
 	}
-	detectSupervisionFn = func(string, bool, int) Supervision { return Supervision{Manager: "launchd", Autostart: true} }
+	detectSupervisionFn = func(string, bool, int) Supervision {
+		return Supervision{Manager: "launchd", Installed: true, Autostart: true, RestartOnExit: true}
+	}
 	var wg sync.WaitGroup
 	errs := make([]error, 2)
 	wg.Add(1)

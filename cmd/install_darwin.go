@@ -273,133 +273,140 @@ Desktop-session caveat:
 	  tslink install                Register and start the LaunchAgent`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		force, err := cmd.Flags().GetBool("force")
-		if err != nil {
-			return fmt.Errorf("read --force: %w", err)
-		}
-		noAutoProvision, err := cmd.Flags().GetBool("no-auto-provision")
-		if err != nil {
-			return fmt.Errorf("read --no-auto-provision: %w", err)
-		}
-		plistPath, err := plistPath()
-		if err != nil {
-			return err
-		}
-		previousState, err := captureLaunchAgentPreviousState(plistPath)
-		if err != nil {
-			return err
-		}
+		return withSupervisorTransaction(cmd.Context(), func() error {
+			return runInstallLocked(cmd, args)
+		})
+	},
+}
 
-		if err := config.EnsureDir(); err != nil {
-			return err
-		}
+// runInstallLocked requires the per-user supervisor transaction lock.
+func runInstallLocked(cmd *cobra.Command, args []string) error {
+	force, err := cmd.Flags().GetBool("force")
+	if err != nil {
+		return fmt.Errorf("read --force: %w", err)
+	}
+	noAutoProvision, err := cmd.Flags().GetBool("no-auto-provision")
+	if err != nil {
+		return fmt.Errorf("read --no-auto-provision: %w", err)
+	}
+	plistPath, err := plistPath()
+	if err != nil {
+		return err
+	}
+	previousState, err := captureLaunchAgentPreviousState(plistPath)
+	if err != nil {
+		return err
+	}
 
-		exe, err := executablePathFn()
-		if err != nil {
-			return fmt.Errorf("find executable: %w", err)
-		}
-		exe, err = evalSymlinksFn(exe)
-		if err != nil {
-			return fmt.Errorf("resolve executable path: %w", err)
-		}
+	if err := config.EnsureDir(); err != nil {
+		return err
+	}
 
-		logDir, _ := config.LogDir()
-		outLog := filepath.Join(logDir, "tslink.out.log")
-		errLog := filepath.Join(logDir, "tslink.err.log")
+	exe, err := executablePathFn()
+	if err != nil {
+		return fmt.Errorf("find executable: %w", err)
+	}
+	exe, err = evalSymlinksFn(exe)
+	if err != nil {
+		return fmt.Errorf("resolve executable path: %w", err)
+	}
 
-		if err := os.MkdirAll(filepath.Dir(plistPath), 0o755); err != nil {
-			return fmt.Errorf("create LaunchAgents directory: %w", err)
-		}
+	logDir, _ := config.LogDir()
+	outLog := filepath.Join(logDir, "tslink.out.log")
+	errLog := filepath.Join(logDir, "tslink.err.log")
 
-		configDir, err := absoluteConfigDir()
-		if err != nil {
-			return err
-		}
-		data := plistData{
-			Label:            plistLabel,
-			Executable:       exe,
-			OutLog:           outLog,
-			ErrLog:           errLog,
-			ThrottleInterval: launchdThrottleInterval,
-			NoAutoProvision:  noAutoProvision,
-			ConfigDir:        configDir,
-		}
-		var plist bytes.Buffer
-		if err := plistTemplate.Execute(&plist, data); err != nil {
-			return fmt.Errorf("write plist: %w", err)
-		}
-		if err := atomicfile.WriteFileInExistingDir(plistPath, plist.Bytes(), atomicfile.PrivateFileMode); err != nil {
-			return fmt.Errorf("write plist: %w", err)
-		}
+	if err := os.MkdirAll(filepath.Dir(plistPath), 0o755); err != nil {
+		return fmt.Errorf("create LaunchAgents directory: %w", err)
+	}
 
-		var loadResult launchctlLoadResult
-		if previousState.Existed {
-			if force {
-				loadResult = loadLaunchAgent(plistPath, false)
-				if loadResult.Err == nil && loadResult.Warning != "" {
-					loadResult.Warning += "; --force proceeded without confirming that every prior launchd job was unloaded; a second daemon may still be running in the unavailable domain"
-				}
-			} else {
-				loadResult = reinstallLaunchAgent(plistPath)
+	configDir, err := absoluteConfigDir()
+	if err != nil {
+		return err
+	}
+	data := plistData{
+		Label:            plistLabel,
+		Executable:       exe,
+		OutLog:           outLog,
+		ErrLog:           errLog,
+		ThrottleInterval: launchdThrottleInterval,
+		NoAutoProvision:  noAutoProvision,
+		ConfigDir:        configDir,
+	}
+	var plist bytes.Buffer
+	if err := plistTemplate.Execute(&plist, data); err != nil {
+		return fmt.Errorf("write plist: %w", err)
+	}
+	if err := atomicfile.WriteFileInExistingDir(plistPath, plist.Bytes(), atomicfile.PrivateFileMode); err != nil {
+		return fmt.Errorf("write plist: %w", err)
+	}
+
+	var loadResult launchctlLoadResult
+	if previousState.Existed {
+		if force {
+			loadResult = loadLaunchAgent(plistPath, false)
+			if loadResult.Err == nil && loadResult.Warning != "" {
+				loadResult.Warning += "; --force proceeded without confirming that every prior launchd job was unloaded; a second daemon may still be running in the unavailable domain"
 			}
 		} else {
-			loadResult = loadLaunchAgent(plistPath, false)
+			loadResult = reinstallLaunchAgent(plistPath)
 		}
-		if loadResult.Err != nil {
-			retryAdvice := installRetryAdvice(loadResult.Err)
-			warning := loadResult.Warning
-			if warning == "" && loadResult.BootoutFailed {
-				warning = launchctlWarning("LaunchAgent plist was written, but the existing launchd job could not be booted out", loadResult.Err, []byte(loadResult.Output))
-			}
-			if warning == "" {
-				warning = launchctlWarning("LaunchAgent plist installed but the service did not reach running state", loadResult.Err, []byte(loadResult.Output))
-			}
-			if previousState.Existed {
-				restoreResult, restoreErr := restorePreviousLaunchAgent(previousState, loadResult, plistPath)
-				if restoreErr != nil {
-					status := "the previous plist could not be restored"
-					if restoreResult.PlistRestored {
-						status = "the previous plist bytes were restored, but the prior managed job is not confirmed running"
-					}
-					return fmt.Errorf("%s; upgrade failed and automatic restoration was incomplete: %v; %s; %s", warning, restoreErr, status, retryAdvice)
+	} else {
+		loadResult = loadLaunchAgent(plistPath, false)
+	}
+	if loadResult.Err != nil {
+		retryAdvice := installRetryAdvice(loadResult.Err)
+		warning := loadResult.Warning
+		if warning == "" && loadResult.BootoutFailed {
+			warning = launchctlWarning("LaunchAgent plist was written, but the existing launchd job could not be booted out", loadResult.Err, []byte(loadResult.Output))
+		}
+		if warning == "" {
+			warning = launchctlWarning("LaunchAgent plist installed but the service did not reach running state", loadResult.Err, []byte(loadResult.Output))
+		}
+		if previousState.Existed {
+			restoreResult, restoreErr := restorePreviousLaunchAgent(previousState, loadResult, plistPath)
+			if restoreErr != nil {
+				status := "the previous plist could not be restored"
+				if restoreResult.PlistRestored {
+					status = "the previous plist bytes were restored, but the prior managed job is not confirmed running"
 				}
-				if restoreResult.Reloaded {
-					failure := fmt.Errorf("%s; upgrade failed, so the previous LaunchAgent plist was restored and reloaded in %s; %s", warning, previousState.Domain, retryAdvice)
-					return installCommandFailure(cmd, loadResult, plistPath, failure)
-				}
-				failure := fmt.Errorf("%s; upgrade failed, so the previous LaunchAgent plist was restored; the install handoff checked and booted out both launchd service targets, but no prior launchd-owned running daemon was identified, so no job was reloaded; %s", warning, retryAdvice)
+				return fmt.Errorf("%s; upgrade failed and automatic restoration was incomplete: %v; %s; %s", warning, restoreErr, status, retryAdvice)
+			}
+			if restoreResult.Reloaded {
+				failure := fmt.Errorf("%s; upgrade failed, so the previous LaunchAgent plist was restored and reloaded in %s; %s", warning, previousState.Domain, retryAdvice)
 				return installCommandFailure(cmd, loadResult, plistPath, failure)
 			}
-			if loadResult.Bootstrapped {
-				if rollbackErr := rollbackNewLaunchAgent(loadResult.Target, plistPath); rollbackErr != nil {
-					return fmt.Errorf("%s; automatic rollback was incomplete: %v; the plist was kept at %s so 'tslink uninstall' can retry bootout; %s", warning, rollbackErr, plistPath, retryAdvice)
-				}
-				return fmt.Errorf("%s; the new installation was rolled back by booting out %s and removing %s; %s", warning, loadResult.Target, plistPath, retryAdvice)
+			failure := fmt.Errorf("%s; upgrade failed, so the previous LaunchAgent plist was restored; the install handoff checked and booted out both launchd service targets, but no prior launchd-owned running daemon was identified, so no job was reloaded; %s", warning, retryAdvice)
+			return installCommandFailure(cmd, loadResult, plistPath, failure)
+		}
+		if loadResult.Bootstrapped {
+			if rollbackErr := rollbackNewLaunchAgent(loadResult.Target, plistPath); rollbackErr != nil {
+				return fmt.Errorf("%s; automatic rollback was incomplete: %v; the plist was kept at %s so 'tslink uninstall' can retry bootout; %s", warning, rollbackErr, plistPath, retryAdvice)
 			}
-			return fmt.Errorf("%s; plist remains installed at %s but no job was bootstrapped; %s", warning, plistPath, retryAdvice)
+			return fmt.Errorf("%s; the new installation was rolled back by booting out %s and removing %s; %s", warning, loadResult.Target, plistPath, retryAdvice)
 		}
+		return fmt.Errorf("%s; plist remains installed at %s but no job was bootstrapped; %s", warning, plistPath, retryAdvice)
+	}
 
-		if jsonOutput(cmd) {
-			result := InstallResult{
-				PlistPath:       plistPath,
-				Loaded:          true,
-				LaunchctlTarget: loadResult.Target,
-				LaunchctlOutput: loadResult.Output,
-				Warning:         loadResult.Warning,
-			}
-			output.Success("install", result)
-			return nil
+	if jsonOutput(cmd) {
+		result := InstallResult{
+			PlistPath:       plistPath,
+			Loaded:          true,
+			LaunchctlTarget: loadResult.Target,
+			LaunchctlOutput: loadResult.Output,
+			Warning:         loadResult.Warning,
 		}
-
-		if loadResult.Warning != "" {
-			fmt.Fprintf(cmd.ErrOrStderr(), "→ ⚠ %s\n", loadResult.Warning)
-		}
-		if loadResult.Output != "" {
-			fmt.Fprintf(cmd.OutOrStdout(), "→ launchctl output: %s\n", loadResult.Output)
-		}
-		fmt.Fprintf(cmd.OutOrStdout(), "→ ✓ LaunchAgent installed and loaded in %s: %s\n", loadResult.Domain, plistPath)
+		output.Success("install", result)
 		return nil
-	},
+	}
+
+	if loadResult.Warning != "" {
+		fmt.Fprintf(cmd.ErrOrStderr(), "→ ⚠ %s\n", loadResult.Warning)
+	}
+	if loadResult.Output != "" {
+		fmt.Fprintf(cmd.OutOrStdout(), "→ launchctl output: %s\n", loadResult.Output)
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "→ ✓ LaunchAgent installed and loaded in %s: %s\n", loadResult.Domain, plistPath)
+	return nil
 }
 
 func installCommandFailure(cmd *cobra.Command, loadResult launchctlLoadResult, plistPath string, failure error) error {
@@ -689,7 +696,7 @@ func bootoutLaunchAgentTargetForUpgrade(target string) error {
 
 func bootoutLaunchAgentTargetWithPolicy(target string, allowUnavailableDomain bool) error {
 	output, err := launchctlCombinedOutput("bootout", target)
-	if err == nil || launchctlServiceNotFound(output, err) {
+	if launchctlServiceNotFound(output, err) {
 		return nil
 	}
 	if launchctlDomainNotFound(output, err) {
@@ -701,19 +708,27 @@ func bootoutLaunchAgentTargetWithPolicy(target string, allowUnavailableDomain bo
 			Detail: launchctlWarning("bootout "+target+" could not confirm the prior job was unloaded", err, output),
 		}
 	}
-	if !launchctlOperationInProgress(output, err) {
+	if err != nil && !launchctlOperationInProgress(output, err) {
 		return errors.New(launchctlWarning("bootout "+target, err, output))
 	}
 
+	return waitLaunchAgentAbsent(target, allowUnavailableDomain)
+}
+
+// bootout acceptance (including rc=0) precedes asynchronous job removal.
+func waitLaunchAgentAbsent(target string, allowUnavailableDomain bool) error {
 	lastOutput, lastErr, gone := pollLaunchAgent(
 		target,
 		launchAgentBootoutTimeout,
 		launchAgentBootoutPollInterval,
 		func(output []byte, err error) bool {
-			return launchctlServiceNotFound(output, err) || (allowUnavailableDomain && launchctlDomainNotFound(output, err))
+			return launchctlServiceNotFound(output, err) || launchctlDomainNotFound(output, err)
 		},
 	)
 	if gone {
+		if launchctlDomainNotFound(lastOutput, lastErr) && !allowUnavailableDomain {
+			return &launchctlDomainUnavailableTargetError{Target: target, Detail: launchctlWarning("wait for bootout "+target, lastErr, lastOutput)}
+		}
 		return nil
 	}
 	detail := strings.TrimSpace(string(lastOutput))
