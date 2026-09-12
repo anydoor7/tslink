@@ -394,7 +394,7 @@ func executeAdd(ctx context.Context, svc registry.Service, regPath, pidPath, sna
 	}
 	for _, setup := range afterPersist {
 		if err := setup(); err != nil {
-			return AddResult{}, persisted, daemonConfigurationSavedError(err)
+			return AddResult{}, persisted, daemonRegistryRetainedError(err)
 		}
 	}
 	result, err := buildAddResult(ctx, persisted, outcome.Created, pidPath, regPath, snapshotPath, wait)

@@ -65,6 +65,7 @@ var (
 	bootstrapEvidenceTimeout = 3 * time.Second
 	managerOutputFn          = boundedManagerOutput
 	trySupervisorLockFn      = trySupervisorLock
+	openSupervisorLockFn     = os.OpenFile
 )
 
 func boundedManagerOutput(name string, args ...string) ([]byte, error) {
@@ -110,15 +111,16 @@ func daemonSetupError(err error) error {
 			state = "The remaining supervisor definition could not be inspected: " + path
 		}
 	}
-	return registry.CodedError{Code: "daemon_setup_failed", Message: fmt.Sprintf("background service setup failed: %v. %s Check saved configuration with 'tslink list'. Inspect 'tslink logs' and 'tslink doctor' before repairing with 'tslink install'", err, state), Next: []string{"tslink logs", "tslink doctor", "tslink install"}}
+	return registry.CodedError{Code: "daemon_setup_failed", Message: fmt.Sprintf("background service setup failed: %v. %s Inspect 'tslink logs' and 'tslink doctor' before repairing with 'tslink install'", err, state), Next: []string{"tslink logs", "tslink doctor", "tslink install"}}
 }
 
-// daemonConfigurationSavedError is only for callers that retain their registry
-// write on setup failure. Share rolls back new registrations and must not use it.
-func daemonConfigurationSavedError(err error) error {
+// daemonRegistryRetainedError is only for callers that retain registry entries
+// on setup failure, including templates that skip every existing entry without
+// writing. Share rolls back new registrations and must not use it.
+func daemonRegistryRetainedError(err error) error {
 	var coded registry.CodedError
-	if errors.As(err, &coded) && coded.Code == "daemon_supervision_unverified" {
-		coded.Message += ". Configuration has been saved; view it with 'tslink list'. After resolving supervision, retry the original command"
+	if errors.As(err, &coded) && (coded.Code == "daemon_supervision_unverified" || coded.Code == "daemon_setup_failed") {
+		coded.Message += ". Configuration remains in the registry; view it with 'tslink list'. After resolving supervision, retry the original command"
 		return coded
 	}
 	return err
@@ -401,7 +403,7 @@ func withSupervisorTransaction(ctx context.Context, fn func() error) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(path+".bootstrap.lock", os.O_CREATE|os.O_RDWR, 0o600)
+	f, err := openSupervisorLockFn(path+".bootstrap.lock", os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return err
 	}

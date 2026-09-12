@@ -97,20 +97,60 @@ func TestRepairLiveDaemonRejectsUnreadablePID(t *testing.T) {
 // Exercise registry writes and the shipped command/tool handlers, not a canned
 // coded error: the refusal must leave a discoverable service and its diagnosis.
 func TestRepairSavedConfigurationRefusal(t *testing.T) {
-	for _, entry := range []string{"cli_add", "cli_template", "mcp_add", "mcp_template"} {
-		t.Run(entry, func(t *testing.T) {
+	for _, scenario := range []string{
+		"live/cli_add", "live/cli_template", "live/mcp_add", "live/mcp_template",
+		"live/cli_template_existing", "live/mcp_template_existing",
+		"setup/cli_add", "setup/cli_template", "setup/mcp_add", "setup/mcp_template",
+		"setup/cli_template_existing", "setup/mcp_template_existing",
+	} {
+		t.Run(scenario, func(t *testing.T) {
+			mode, entry, _ := strings.Cut(scenario, "/")
+			existing := strings.HasSuffix(entry, "_existing")
+			entry = strings.TrimSuffix(entry, "_existing")
 			dir := isolateBootstrap(t)
 			resetRootJSONFlag(t)
 			paths := sharePaths{Registry: filepath.Join(dir, "registry.json"), PID: filepath.Join(dir, "tslink.pid"), Snapshot: filepath.Join(dir, "runtime.json")}
-			isRunningFn = func(string) bool { return true }
+			var before []byte
+			if existing {
+				if _, err := applyTemplate("personal-harness", paths.Registry, false); err != nil {
+					t.Fatal(err)
+				}
+				var err error
+				before, err = os.ReadFile(paths.Registry)
+				if err != nil {
+					t.Fatal(err)
+				}
+				oldAdd := templateAddIfMissingFn
+				t.Cleanup(func() { templateAddIfMissingFn = oldAdd })
+				templateAddIfMissingFn = func(string, registry.Service) (bool, error) {
+					t.Fatal("all-existing template attempted a registry write")
+					return false, nil
+				}
+			}
+			isRunningFn = func(string) bool { return mode == "live" }
 			inspections := 0
-			detectSupervisionFn = func(string, bool, int) Supervision {
+			checkPersisted := func() {
 				inspections++
 				reg, err := registry.Load(paths.Registry)
 				if err != nil || len(reg.Services) == 0 {
 					t.Fatalf("supervision checked before persistence: %+v, %v", reg, err)
 				}
+			}
+			detectSupervisionFn = func(string, bool, int) Supervision {
+				checkPersisted()
 				return unmanagedSupervision(true, "fixture manager does not own PID 4242")
+			}
+			installDaemonFn = func(context.Context, io.Writer) error {
+				checkPersisted()
+				return errors.New("fixture install failure")
+			}
+			wantCode := "daemon_supervision_unverified"
+			wantNext := []string{"tslink doctor", "tslink stop", "tslink install"}
+			wantText := []string{"fixture manager does not own PID 4242", "no process was taken over"}
+			if mode == "setup" {
+				wantCode = "daemon_setup_failed"
+				wantNext = []string{"tslink logs", "tslink doctor", "tslink install"}
+				wantText = []string{"fixture install failure", "No supervisor definition was found"}
 			}
 			var failure output.Result
 			var human string
@@ -159,22 +199,33 @@ func TestRepairSavedConfigurationRefusal(t *testing.T) {
 			if inspections != 1 {
 				t.Fatalf("inspections=%d, want 1", inspections)
 			}
-			if failure.OK || failure.Code != 1 || failure.Error == nil || failure.Error.Code != "daemon_supervision_unverified" {
+			if failure.OK || failure.Code != 1 || failure.Error == nil || failure.Error.Code != wantCode {
 				t.Fatalf("wrong refusal: %+v", failure)
 			}
 			for _, message := range []string{human, failure.Error.Message} {
-				for _, want := range []string{"Configuration has been saved", "tslink list", "fixture manager does not own PID 4242", "tslink doctor", "tslink stop", "tslink install", "no process was taken over", "retry the original command"} {
+				for _, want := range append(append(wantText, wantNext...), "Configuration remains in the registry", "tslink list", "retry the original command") {
 					if !strings.Contains(message, want) {
 						t.Errorf("missing %q in %q", want, message)
 					}
 				}
 			}
-			if !reflect.DeepEqual(failure.Error.Next, []string{"tslink doctor", "tslink stop", "tslink install"}) {
+			if !reflect.DeepEqual(failure.Error.Next, wantNext) {
 				t.Fatalf("recovery commands changed: %v", failure.Error.Next)
 			}
 			reg, err := registry.Load(paths.Registry)
 			if err != nil || len(reg.Services) == 0 {
 				t.Fatalf("saved registry lost: %+v, %v", reg, err)
+			}
+			if existing {
+				after, err := os.ReadFile(paths.Registry)
+				if err != nil || !bytes.Equal(before, after) {
+					t.Fatalf("all-existing template changed registry bytes: %v", err)
+				}
+				for _, message := range []string{human, failure.Error.Message} {
+					if strings.Contains(message, "has been saved") {
+						t.Errorf("no-op template claims this invocation saved configuration: %s", message)
+					}
+				}
 			}
 			if strings.HasSuffix(entry, "add") && (len(reg.Services) != 1 || reg.Services[0].Name != "saved-app" || reg.Services[0].Target != "http://localhost:3000") {
 				t.Fatalf("saved service changed: %+v", reg)
@@ -201,8 +252,9 @@ func TestRepairSavedConfigurationRefusal(t *testing.T) {
 }
 
 func TestRepairShareRefusalDoesNotClaimSavedConfiguration(t *testing.T) {
-	for _, entry := range []string{"cli", "mcp"} {
-		t.Run(entry, func(t *testing.T) {
+	for _, scenario := range []string{"live/cli", "live/mcp", "install/cli", "install/mcp", "settle/cli", "settle/mcp"} {
+		t.Run(scenario, func(t *testing.T) {
+			mode, entry, _ := strings.Cut(scenario, "/")
 			dir := isolateBootstrap(t)
 			restoreShareSeams(t)
 			resetRootJSONFlag(t)
@@ -211,7 +263,26 @@ func TestRepairShareRefusalDoesNotClaimSavedConfiguration(t *testing.T) {
 			// locked setup check, where share really can receive this refusal.
 			shareIsRunningFn = func(string) bool { return false }
 			shareStartDaemonFn = startShareDaemon
-			isRunningFn = func(string) bool { return true }
+			isRunningFn = func(string) bool { return mode == "live" }
+			installs := 0
+			installDaemonFn = func(context.Context, io.Writer) error {
+				installs++
+				reg, err := registry.Load(paths.Registry)
+				if err != nil || len(reg.Services) != 1 {
+					t.Fatalf("share setup did not follow registration: %+v, %v", reg, err)
+				}
+				if mode == "install" {
+					return errors.New("fixture share install failure")
+				}
+				return nil // Remains stopped: the real supervision-settle gate fails.
+			}
+			wantCode := "daemon_supervision_unverified"
+			wantNext := []string{"tslink doctor", "tslink stop", "tslink install"}
+			if mode != "live" {
+				wantCode = "daemon_setup_failed"
+				wantNext = []string{"tslink logs", "tslink doctor", "tslink install"}
+			}
+			var failure output.Result
 			var message string
 			if entry == "cli" {
 				command, _, err := rootCmd.Find([]string{"share"})
@@ -221,10 +292,11 @@ func TestRepairShareRefusalDoesNotClaimSavedConfiguration(t *testing.T) {
 				resetCommandLocalFlags(t, command)
 				command.SetContext(context.Background())
 				err = command.RunE(command, []string{"3000"})
-				if code, _ := registry.ErrorCode(err); code != "daemon_supervision_unverified" {
+				if code, _ := registry.ErrorCode(err); code != wantCode {
 					t.Fatalf("err=%v", err)
 				}
-				message = output.NewFailureForError("share", err).Error.Message
+				failure = output.NewFailureForError("share", err)
+				message = err.Error()
 			} else {
 				result, err := callMCPTool(context.Background(), defaultMCPActions(paths, io.Discard), "share", json.RawMessage(`{"target":"3000"}`))
 				if err != nil || result == nil || !result.IsError {
@@ -235,12 +307,29 @@ func TestRepairShareRefusalDoesNotClaimSavedConfiguration(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if !strings.Contains(string(encoded), "daemon_supervision_unverified") {
-					t.Fatalf("wrong refusal: %s", encoded)
+				if err := json.Unmarshal(encoded, &failure); err != nil {
+					t.Fatal(err)
 				}
 			}
-			if strings.Contains(message, "Configuration has been saved") || strings.Contains(message, "tslink list") {
-				t.Fatalf("rolled-back share claims saved configuration: %s", message)
+			if failure.OK || failure.Code != 1 || failure.Error == nil || failure.Error.Code != wantCode || !reflect.DeepEqual(failure.Error.Next, wantNext) {
+				t.Fatalf("wrong share failure/recovery: %+v", failure)
+			}
+			for _, message := range []string{message, failure.Error.Message} {
+				if strings.Contains(strings.ToLower(message), "saved") || strings.Contains(message, "tslink list") || strings.Contains(message, "remains in the registry") {
+					t.Errorf("rolled-back share claims saved configuration: %s", message)
+				}
+				for _, next := range wantNext {
+					if !strings.Contains(message, next) {
+						t.Errorf("missing recovery %q: %s", next, message)
+					}
+				}
+			}
+			wantInstalls := 0
+			if mode != "live" {
+				wantInstalls = 1
+			}
+			if installs != wantInstalls {
+				t.Fatalf("installs=%d, want %d", installs, wantInstalls)
 			}
 			reg, err := registry.Load(paths.Registry)
 			if err != nil || len(reg.Services) != 0 {
@@ -251,9 +340,9 @@ func TestRepairShareRefusalDoesNotClaimSavedConfiguration(t *testing.T) {
 }
 
 func TestRepairSavedConfigurationErrorPreservesOtherErrors(t *testing.T) {
-	for _, err := range []error{nil, errors.New("storage failure"), registry.CodedError{Code: "daemon_setup_failed", Message: "original setup diagnosis"}} {
+	for _, err := range []error{nil, errors.New("storage failure"), registry.CodedError{Code: "daemon_identity_unverified", Message: "original identity diagnosis"}} {
 		// CodedError contains a slice, so use reflect for the value variant.
-		if got := daemonConfigurationSavedError(err); !reflect.DeepEqual(got, err) {
+		if got := daemonRegistryRetainedError(err); !reflect.DeepEqual(got, err) {
 			t.Fatalf("changed unrelated error: %v -> %v", err, got)
 		}
 	}
@@ -281,18 +370,30 @@ func TestRepairSupervisorTransactionFailureBranches(t *testing.T) {
 				t.Fatal(err)
 			}
 			lockPath := path + ".bootstrap.lock"
-			oldTry := trySupervisorLockFn
-			t.Cleanup(func() { trySupervisorLockFn = oldTry })
+			oldTry, oldOpen := trySupervisorLockFn, openSupervisorLockFn
+			t.Cleanup(func() { trySupervisorLockFn, openSupervisorLockFn = oldTry, oldOpen })
 			base, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			var ctx context.Context = base
 			var opened *os.File
+			openSupervisorLockFn = func(name string, flag int, perm os.FileMode) (*os.File, error) {
+				f, err := os.OpenFile(name, flag, perm)
+				if err == nil {
+					opened = f
+					// Keep the real file reachable until the closure assertion;
+					// clean up leaks after a failed mutation assertion as well.
+					t.Cleanup(func() { f.Close() })
+				}
+				return f, err
+			}
 			var lockErr error
 			var openErr *os.PathError
 			attempts, callbacks := 0, 0
 			callbackErr := errors.New("original callback failure")
 			trySupervisorLockFn = func(f *os.File) (bool, error) {
-				opened = f
+				if f != opened {
+					t.Fatal("lock seam did not receive the opened transaction descriptor")
+				}
 				attempts++
 				if scenario == "lock_error" {
 					// Ask the real platform backend to reject a closed descriptor;
@@ -349,6 +450,12 @@ func TestRepairSupervisorTransactionFailureBranches(t *testing.T) {
 				ctx = supervisorErrObserver{Context: base, observe: func() {
 					checks++
 					if checks == 2 {
+						if opened == nil || attempts != 0 {
+							t.Fatal("cancellation missed the post-open/pre-lock window")
+						}
+						if _, err := opened.Stat(); err != nil {
+							t.Fatalf("transaction descriptor was not open before cancellation: %v", err)
+						}
 						if _, err := os.Stat(lockPath); err != nil {
 							t.Fatalf("cancel was not after open: %v", err)
 						}
@@ -412,6 +519,9 @@ func TestRepairSupervisorTransactionFailureBranches(t *testing.T) {
 			}
 			if callbacks != wantCallbacks || attempts != wantAttempts {
 				t.Fatalf("callbacks=%d attempts=%d, want %d/%d", callbacks, attempts, wantCallbacks, wantAttempts)
+			}
+			if scenario == "cancel_before_lock" && opened == nil {
+				t.Fatal("post-open cancellation skipped the descriptor closure assertion")
 			}
 			if opened != nil {
 				if _, err := opened.Stat(); !errors.Is(err, os.ErrClosed) {

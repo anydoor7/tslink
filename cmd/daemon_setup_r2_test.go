@@ -220,6 +220,9 @@ func TestBootstrapSetupFailureDisclosesRemainingDefinition(t *testing.T) {
 				}
 			}
 			err := daemonSetupError(errors.New("daemon did not settle"))
+			if strings.Contains(strings.ToLower(err.Error()), "saved") || strings.Contains(err.Error(), "tslink list") || strings.Contains(err.Error(), "remains in the registry") {
+				t.Fatalf("low-level setup error assumes registry retention: %v", err)
+			}
 			var next interface{ NextCommands() []string }
 			if !errors.As(err, &next) || !strings.Contains(strings.Join(next.NextCommands(), " "), "tslink logs") {
 				t.Fatalf("no log recovery: %v", err)
