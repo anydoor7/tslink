@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -63,6 +64,7 @@ var (
 	// second copy of a wait that already exists downstream.
 	bootstrapEvidenceTimeout = 3 * time.Second
 	managerOutputFn          = boundedManagerOutput
+	trySupervisorLockFn      = trySupervisorLock
 )
 
 func boundedManagerOutput(name string, args ...string) ([]byte, error) {
@@ -109,6 +111,17 @@ func daemonSetupError(err error) error {
 		}
 	}
 	return registry.CodedError{Code: "daemon_setup_failed", Message: fmt.Sprintf("background service setup failed: %v. %s Check saved configuration with 'tslink list'. Inspect 'tslink logs' and 'tslink doctor' before repairing with 'tslink install'", err, state), Next: []string{"tslink logs", "tslink doctor", "tslink install"}}
+}
+
+// daemonConfigurationSavedError is only for callers that retain their registry
+// write on setup failure. Share rolls back new registrations and must not use it.
+func daemonConfigurationSavedError(err error) error {
+	var coded registry.CodedError
+	if errors.As(err, &coded) && coded.Code == "daemon_supervision_unverified" {
+		coded.Message += ". Configuration has been saved; view it with 'tslink list'. After resolving supervision, retry the original command"
+		return coded
+	}
+	return err
 }
 
 // installDaemon calls the existing platform installer, including its conflict
@@ -397,7 +410,7 @@ func withSupervisorTransaction(ctx context.Context, fn func() error) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		acquired, err := trySupervisorLock(f)
+		acquired, err := trySupervisorLockFn(f)
 		if err != nil {
 			return err
 		}

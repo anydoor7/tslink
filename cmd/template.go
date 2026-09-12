@@ -406,7 +406,7 @@ services; change tags after apply if your tailnet policy uses another tag.`),
 			if !dryRun {
 				noInstall, _ := cmd.Flags().GetBool("no-daemon-install")
 				if err := ensureDaemonFn(cmd.Context(), cmd.ErrOrStderr(), noInstall); err != nil {
-					return err
+					return daemonConfigurationSavedError(err)
 				}
 			}
 			if jsonOutput(cmd) {

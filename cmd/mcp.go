@@ -814,7 +814,7 @@ func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 				return nil, err
 			}
 			if err := ensureDaemonFn(ctx, errOut, noInstall); err != nil {
-				return nil, err
+				return nil, daemonConfigurationSavedError(err)
 			}
 			return result, nil
 		},
