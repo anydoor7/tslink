@@ -83,7 +83,7 @@ func TestBootstrapEnrollmentAcrossServices(t *testing.T) {
 			if err := saveAuthHandoff(filepath.Join(dir, "auth-handoff.json"), handoff); err != nil {
 				t.Fatal(err)
 			}
-			valid := scenario == "same_service" || scenario == "other_service"
+			valid := scenario == "same_service"
 			wait := time.Duration(0)
 			if valid {
 				wait = 30 * time.Second

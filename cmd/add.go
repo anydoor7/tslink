@@ -334,7 +334,7 @@ func resolveAddEndpoint(ctx context.Context, pidPath, regPath, snapshotPath, nam
 		}
 		if handoff, loadErr := loadAuthHandoff(filepath.Join(filepath.Dir(pidPath), "auth-handoff.json")); loadErr == nil {
 			pid, _ := readPIDFn(pidPath)
-			if pid > 0 && handoff.DaemonPID == pid && handoff.ExpiresAt.After(time.Now()) {
+			if pid > 0 && handoff.DaemonPID == pid && handoff.ExpiresAt.After(time.Now()) && authHandoffMatchesService(handoff, name) {
 				return resolution, handoff.AuthURL, nil
 			}
 		}

@@ -71,7 +71,7 @@ func resolveServiceEndpointOnce(pidPath, regPath, snapshotPath, name string) (se
 	if !ready {
 		if handoff, loadErr := loadAuthHandoff(filepath.Join(filepath.Dir(pidPath), "auth-handoff.json")); loadErr == nil {
 			pid, _ := readPIDFn(pidPath)
-			if pid > 0 && handoff.DaemonPID == pid && handoff.ExpiresAt.After(time.Now()) {
+			if pid > 0 && handoff.DaemonPID == pid && handoff.ExpiresAt.After(time.Now()) && authHandoffMatchesService(handoff, name) {
 				return result, registry.CodedError{Code: "enrollment_required", Message: "Authorize TSLink before waiting for a service URL", Next: []string{"Open " + handoff.AuthURL, "tslink status --json"}}
 			}
 		}

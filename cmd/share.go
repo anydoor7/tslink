@@ -346,6 +346,15 @@ func directFileURL(base, fileName string) (string, error) {
 	return parsed.String(), nil
 }
 
+// shareEnrollmentPendingCode reports whether a service endpoint resolution
+// failure is one of the enrollment-pending signals that share turns into a
+// successful needs_login result. resolveServiceEndpointOnce returns
+// enrollment_required when a valid but global auth-handoff exists, and
+// url_not_ready when the service is simply not up yet.
+func shareEnrollmentPendingCode(code string) bool {
+	return code == registry.CodeURLNotReady || code == "enrollment_required"
+}
+
 func shareOutcomeOnce(paths sharePaths, name, fileName string) (ShareResult, bool, error) {
 	resolution, err := shareResolveEndpointOnceFn(paths.PID, paths.Registry, paths.Snapshot, name)
 	if err == nil {
@@ -355,7 +364,7 @@ func shareOutcomeOnce(paths sharePaths, name, fileName string) (ShareResult, boo
 		}
 		return ShareResult{URL: endpoint, Name: name, Status: shareStatusReady}, true, nil
 	}
-	if code, ok := registry.ErrorCode(err); !ok || code != registry.CodeURLNotReady {
+	if code, ok := registry.ErrorCode(err); !ok || !shareEnrollmentPendingCode(code) {
 		return ShareResult{}, false, err
 	}
 	status, err := sharePollableStatusFn(paths.PID, paths.Registry, paths.Snapshot, paths.AuthHandoff)

@@ -354,7 +354,7 @@ func getPollableStatus(pidPath, regPath, snapshotPath, authHandoffPath string) (
 	}
 	freshness := tsruntime.Classify(snapshot, loadErr, expected)
 	up := make(map[string]struct{})
-	if snapshotReportsServices(freshness) && snapshot != nil {
+	if snapshotContributesRuntimeEvidence(freshness) && snapshot != nil {
 		up = make(map[string]struct{}, len(snapshot.Services))
 		snapshotServices := make(map[string]tsruntime.ServiceSnapshot, len(snapshot.Services))
 		for _, svc := range snapshot.Services {
@@ -397,8 +397,15 @@ func getPollableStatus(pidPath, regPath, snapshotPath, authHandoffPath string) (
 				setStatusContinuation(&r)
 				return r, nil
 			}
-			r.Authenticated = false
-			r.NodeAuthorized = false
+			// A pending handoff for one service must not erase the
+			// authorization evidence of the other services this daemon is
+			// already serving. Keep the authorized count and only let the
+			// handoff's own service fall back to needs_login; suppress the
+			// global authenticated flag only when no service is up.
+			if len(up) == 0 {
+				r.Authenticated = false
+				r.NodeAuthorized = false
+			}
 			r.AuthStatus = authStatusNeedsLogin
 			r.AuthURL = handoff.AuthURL
 			expiresAt := handoff.ExpiresAt.UTC()
@@ -479,6 +486,12 @@ func formatStatus(r StatusResult, out io.Writer) {
 				fmt.Fprintf(out, "→ next: %s\n", step)
 			}
 		}
+		// Authenticated services can coexist with a pending enrollment for a
+		// newly added node; keep that node's login URL visible instead of
+		// hiding it behind the global authenticated state.
+		if r.AuthStatus == authStatusNeedsLogin && r.AuthURL != "" {
+			fmt.Fprintf(out, "→ pending login URL: %s\n", r.AuthURL)
+		}
 	} else if r.AuthStatus == authStatusNeedsLogin {
 		fmt.Fprintln(out, "→ tailnet: needs login")
 		if r.AuthURL != "" {
@@ -544,7 +557,7 @@ func getStatusURLsWithAuth(pidPath, regPath, snapshotPath, authHandoffPath strin
 	}
 
 	snapshotServices := map[string]tsruntime.ServiceSnapshot{}
-	if snapshotReportsServices(freshness) && snapshot != nil {
+	if snapshotContributesRuntimeEvidence(freshness) && snapshot != nil {
 		for _, svc := range snapshot.Services {
 			snapshotServices[svc.Name] = svc
 		}
@@ -574,7 +587,7 @@ func getStatusURLsWithAuth(pidPath, regPath, snapshotPath, authHandoffPath strin
 			Warnings:        append([]inspect.WarningView(nil), view.Warnings...),
 		}
 		snapshotService, snapshotServiceOK := snapshotServices[svc.Name]
-		if snapshotReportsServices(freshness) && snapshotServiceOK {
+		if snapshotContributesRuntimeEvidence(freshness) && snapshotServiceOK {
 			service.RuntimeState = normalizedRuntimeState(snapshotService)
 			if snapshotService.FunnelState != "" && !expired {
 				service.FunnelRequested = snapshotService.FunnelRequested
@@ -620,6 +633,26 @@ func getStatusURLsWithAuth(pidPath, regPath, snapshotPath, authHandoffPath strin
 				service.Endpoint.State = statusEndpointStateExpectedUnverified
 			default:
 				service.Endpoint.State = statusEndpointStateMissing
+			}
+			service.Warnings = appendRuntimeFreshnessWarning(service.Warnings, freshness)
+		case freshness.Status == tsruntime.StatusRegistryMismatch:
+			// A registry mismatch means a newer registry exists, but the
+			// snapshot entries for services still present are positive
+			// per-service evidence produced by this daemon. Present them as up
+			// while warning that the snapshot as a whole is stale, so one
+			// pending node cannot erase another service's running evidence.
+			switch {
+			case snapshotServiceOK && snapshotService.RuntimeState == tsruntime.ServiceRuntimeFailed:
+				service.Endpoint.State = statusEndpointStateMissing
+				service.Exposure = snapshotService.Exposure
+			case snapshotServiceOK && snapshotService.Endpoint.State == inspect.EndpointStateExact:
+				service.Endpoint = snapshotService.Endpoint
+				service.Endpoint.State = inspect.EndpointStateExact
+				service.Exposure = snapshotService.Exposure
+			case snapshotServiceOK:
+				service.Endpoint.State = statusEndpointStateExpectedUnverified
+			default:
+				service.Endpoint.State = statusEndpointStateStale
 			}
 			service.Warnings = appendRuntimeFreshnessWarning(service.Warnings, freshness)
 		default:
@@ -719,6 +752,17 @@ func runtimeSnapshotResult(snapshot *tsruntime.Snapshot, freshness tsruntime.Fre
 
 func snapshotReportsServices(freshness tsruntime.Freshness) bool {
 	return freshness.Exact || freshness.Status == tsruntime.StatusPartial
+}
+
+// snapshotContributesRuntimeEvidence reports whether individual services in a
+// non-authoritative snapshot may still be consumed as positive per-service
+// runtime evidence. A registry_mismatch snapshot was written by this same
+// daemon for an earlier registry; the services it lists were running under this
+// daemon and stay valid evidence for themselves even though a later registry
+// change (for example a newly added node awaiting authorization) means the
+// snapshot as a whole can no longer be trusted for omissions.
+func snapshotContributesRuntimeEvidence(freshness tsruntime.Freshness) bool {
+	return freshness.Exact || freshness.Status == tsruntime.StatusPartial || freshness.Status == tsruntime.StatusRegistryMismatch
 }
 
 func endpointStateForFreshness(freshness tsruntime.Freshness) string {

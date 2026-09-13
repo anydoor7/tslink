@@ -453,6 +453,38 @@ func TestShareDaemonStartIsGatedOnTheRunningPredicate(t *testing.T) {
 	})
 }
 
+// A pending enrollment must surface as a successful needs_login result, not an
+// error that rolls back the just-created share registration.
+func TestExecuteShareSurfacesEnrollmentRequiredAsNeedsLogin(t *testing.T) {
+	restoreShareSeams(t)
+	dir := t.TempDir()
+	paths := sharePaths{
+		Registry:    filepath.Join(dir, "registry.json"),
+		PID:         filepath.Join(dir, "tslink.pid"),
+		Snapshot:    filepath.Join(dir, "runtime.json"),
+		AuthHandoff: filepath.Join(dir, "auth-handoff.json"),
+	}
+	shareIsRunningFn = func(string) bool { return true }
+	shareResolveEndpointOnceFn = func(_, _, _, name string) (serviceURLResolution, error) {
+		return serviceURLResolution{}, registry.CodedError{Code: "enrollment_required", Message: "Authorize TSLink before waiting for a service URL"}
+	}
+	sharePollableStatusFn = func(_, _, _, _ string) (StatusResult, error) {
+		return StatusResult{AuthStatus: authStatusNeedsLogin, AuthURL: "https://login.tailscale.com/a/enroll"}, nil
+	}
+
+	result, err := executeShare(context.Background(), paths, shareRequest{Target: "3000", Ephemeral: true}, 0, io.Discard)
+	if err != nil {
+		t.Fatalf("executeShare() error = %v, want successful needs_login result", err)
+	}
+	if result.Status != authStatusNeedsLogin || result.AuthURL == "" || result.serviceName != "port-3000" {
+		t.Fatalf("result = %+v, want needs_login with auth URL", result)
+	}
+	reg, loadErr := registry.Load(paths.Registry)
+	if loadErr != nil || len(reg.Services) != 1 || reg.Services[0].Name != "port-3000" {
+		t.Fatalf("registry = %+v err=%v, want retained share registration", reg, loadErr)
+	}
+}
+
 func TestExecuteShareFailuresRollBackNewRegistration(t *testing.T) {
 	t.Run("daemon start failure", func(t *testing.T) {
 		restoreShareSeams(t)

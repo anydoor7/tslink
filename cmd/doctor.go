@@ -721,10 +721,13 @@ func diagnoseCredentialTier1(result *DoctorResult, state doctorCredentialState, 
 	}
 
 	switch {
+	case completedEnrollment:
+		// Authorized runtime state is positive evidence that enrollment
+		// completed. A lingering handoff file must not keep doctor reporting a
+		// pending enrollment after the node is already serving.
+		result.addFinding(inspect.WarningCodeCredentialTier1, "", "credentials", "Tier 1 is active without a stored credential; interactive enrollment has produced authorized runtime state.", nil)
 	case pendingEnrollment:
 		result.addFinding(inspect.WarningCodeCredentialTier1, "", "credentials", "Tier 1 is active without a stored credential; interactive enrollment is pending. Open the authorization URL reported by 'tslink status'.", nil)
-	case completedEnrollment:
-		result.addFinding(inspect.WarningCodeCredentialTier1, "", "credentials", "Tier 1 is active without a stored credential; interactive enrollment has produced authorized runtime state.", nil)
 	case result.Daemon.Running:
 		result.addFinding(inspect.WarningCodeCredentialTier1, "", "credentials", "Tier 1 is active without a stored credential; the daemon is running and waiting for interactive enrollment evidence.", nil)
 	default:

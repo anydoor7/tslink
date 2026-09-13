@@ -490,6 +490,31 @@ func TestDoctorTier1CompletedEnrollmentMessage(t *testing.T) {
 	}
 }
 
+// A lingering auth-handoff file must not keep doctor reporting a pending
+// enrollment after the daemon has already produced authorized runtime state.
+// Authorized snapshot evidence outranks the stale handoff.
+func TestDoctorTier1CompletedEnrollmentOutranksStaleHandoff(t *testing.T) {
+	service := registry.Service{Name: "web", Type: registry.TypeProxy, Target: "http://localhost:3000"}
+	env := newDoctorTestEnv(t, []registry.Service{service})
+	doctorGetAPIKeyFn = func() (string, error) { return "", nil }
+	doctorGetClientSecretFn = func() (string, error) { return "", nil }
+	doctorReadFileFn = func(string) ([]byte, error) { return nil, os.ErrNotExist }
+	env.writeExactSnapshot(t)
+	record := newAuthHandoffRecord("web", "https://login.tailscale.com/a/lingering", env.pid)
+	if err := saveAuthHandoff(env.authHandoff, record); err != nil {
+		t.Fatalf("saveAuthHandoff: %v", err)
+	}
+
+	result := buildDoctorResult(doctorOptions{})
+	finding := assertDoctorFinding(t, result, inspect.WarningCodeCredentialTier1)
+	if !strings.Contains(finding.Message, "has produced authorized runtime state") {
+		t.Fatalf("credential_tier1 message = %q, want completed-enrollment evidence despite lingering handoff", finding.Message)
+	}
+	if strings.Contains(finding.Message, "is pending") {
+		t.Fatalf("credential_tier1 message = %q, must not report pending after authorized runtime state", finding.Message)
+	}
+}
+
 func TestDoctorCredentialBackendFailureClassifiesTierUnknown(t *testing.T) {
 	newDoctorTestEnv(t, nil)
 	doctorGetAPIKeyFn = func() (string, error) { return "", errors.New("credential backend unavailable") }

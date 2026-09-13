@@ -124,3 +124,32 @@ func TestURLWaitFlagAcceptsOptionalValue(t *testing.T) {
 		t.Fatalf("wait flag = %+v, want optional 30s value", flag)
 	}
 }
+
+func TestResolveServiceEndpointOnceRejectsHandoffForDifferentService(t *testing.T) {
+	dir := t.TempDir()
+	regPath := filepath.Join(dir, "registry.json")
+	pidPath := filepath.Join(dir, "tslink.pid")
+	snapshotPath := filepath.Join(dir, "runtime.json")
+	addStatusTestService(t, regPath, registry.Service{Name: "newapp", Type: registry.TypeProxy, Target: "http://localhost:3000"})
+	withStatusURLSeams(t, true, 4242, time.Date(2026, 8, 2, 12, 0, 0, 0, time.UTC))
+
+	handoff := newAuthHandoffRecord("oldapp", "https://login.tailscale.com/a/stale-old", 4242)
+	if err := saveAuthHandoff(filepath.Join(dir, "auth-handoff.json"), handoff); err != nil {
+		t.Fatalf("saveAuthHandoff: %v", err)
+	}
+
+	_, err := resolveServiceEndpointOnce(pidPath, regPath, snapshotPath, "newapp")
+	code, ok := registry.ErrorCode(err)
+	if !ok || code != registry.CodeURLNotReady {
+		t.Fatalf("err = %v code=%q, want %s for a handoff naming another service", err, code, registry.CodeURLNotReady)
+	}
+
+	handoff.Service = "newapp"
+	if err := saveAuthHandoff(filepath.Join(dir, "auth-handoff.json"), handoff); err != nil {
+		t.Fatalf("saveAuthHandoff: %v", err)
+	}
+	_, err = resolveServiceEndpointOnce(pidPath, regPath, snapshotPath, "newapp")
+	if code, _ := registry.ErrorCode(err); code != "enrollment_required" {
+		t.Fatalf("err = %v code=%q, want enrollment_required for the matching service", err, code)
+	}
+}

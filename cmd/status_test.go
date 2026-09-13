@@ -650,8 +650,12 @@ func TestPollableStatusShowsEarlierServicesWhileNextNeedsLogin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("getPollableStatus: %v", err)
 	}
-	if result.Authenticated || result.NodeAuthorized || result.AuthorizedServiceCount != 1 || result.AuthStatus != authStatusNeedsLogin || result.AuthURL == "" {
-		t.Fatalf("auth state = authenticated:%v status:%q url:%q, want second service handoff", result.Authenticated, result.AuthStatus, result.AuthURL)
+	// A pending handoff for "second" must not erase the authorized evidence of
+	// the already-running "first": the authorized count stays, and only the
+	// handoff's own service falls back to needs_login.
+	if !result.Authenticated || !result.NodeAuthorized || result.AuthorizedServiceCount != 1 || result.AuthStatus != authStatusNeedsLogin || result.AuthURL == "" {
+		t.Fatalf("auth state = authenticated:%v node_authorized:%v count:%d status:%q url:%q, want first service retained with second handoff",
+			result.Authenticated, result.NodeAuthorized, result.AuthorizedServiceCount, result.AuthStatus, result.AuthURL)
 	}
 	want := map[string]string{"first": "up", "second": authStatusNeedsLogin}
 	for _, service := range result.Services {
@@ -766,14 +770,94 @@ func TestStatusURLsMissingSnapshotFallsBackToExpectedEndpoint(t *testing.T) {
 	}
 }
 
+// A pending node appended to the registry moves the snapshot into a
+// registry_mismatch state. That must not erase the running evidence of the
+// services the daemon is already serving, nor a pending handoff for one service
+// suppress the authorized state of the others.
+func TestStatusURLsRegistryMismatchKeepsRunningServiceEvidence(t *testing.T) {
+	dir := t.TempDir()
+	regPath := filepath.Join(dir, "registry.json")
+	pidPath := filepath.Join(dir, "tslink.pid")
+	snapshotPath := filepath.Join(dir, "runtime.json")
+	handoffPath := filepath.Join(dir, "auth-handoff.json")
+	startedAt := time.Date(2026, 5, 17, 12, 0, 0, 0, time.UTC)
+	authorized := addStatusTestService(t, regPath, registry.Service{
+		Name:   "tst-913a",
+		Type:   registry.TypeProxy,
+		Target: "http://localhost:3000",
+	})
+	addStatusTestService(t, regPath, registry.Service{
+		Name:   "tst-913b",
+		Type:   registry.TypeProxy,
+		Target: "http://localhost:3001",
+	})
+	// The snapshot only knows about the authorized service and was written for
+	// the pre-pending-node registry, so its fingerprint no longer matches.
+	snapshot := tsruntime.NewSnapshot(4242, startedAt, "sha256:stale-before-pending", startedAt.Add(time.Second), []tsruntime.ServiceState{
+		{Service: authorized, RuntimeHost: "tst-913a.tailnet.ts.net"},
+	})
+	if err := tsruntime.Save(snapshotPath, snapshot); err != nil {
+		t.Fatalf("runtime.Save: %v", err)
+	}
+	withStatusURLSeams(t, true, 4242, startedAt)
+
+	oldLoadHandoff := statusLoadAuthHandoffFn
+	statusLoadAuthHandoffFn = func(string) (authHandoffRecord, error) {
+		return authHandoffRecord{
+			SchemaVersion: authHandoffSchemaVersion,
+			Status:        authStatusNeedsLogin,
+			Service:       "tst-913b",
+			AuthURL:       "https://login.tailscale.com/a/tst-913b",
+			ExpiresAt:     startedAt.Add(authHandoffConservativeLifetime),
+			Poll:          "tslink status --json",
+			DaemonPID:     4242,
+		}, nil
+	}
+	t.Cleanup(func() { statusLoadAuthHandoffFn = oldLoadHandoff })
+
+	status, err := getPollableStatus(pidPath, regPath, snapshotPath, handoffPath)
+	if err != nil {
+		t.Fatalf("getPollableStatus: %v", err)
+	}
+	if !status.Authenticated || !status.NodeAuthorized || status.AuthorizedServiceCount != 1 {
+		t.Fatalf("auth state = authenticated:%t node_authorized:%t count:%d, want authorized service retained",
+			status.Authenticated, status.NodeAuthorized, status.AuthorizedServiceCount)
+	}
+	if status.AuthStatus != authStatusNeedsLogin || status.AuthURL == "" {
+		t.Fatalf("pending handoff lost: status=%q url=%q", status.AuthStatus, status.AuthURL)
+	}
+	wants := map[string]string{"tst-913a": "up", "tst-913b": authStatusNeedsLogin}
+	for _, svc := range status.Services {
+		if svc.Status != wants[svc.Name] {
+			t.Fatalf("service %q status = %q, want %q (all=%+v)", svc.Name, svc.Status, wants[svc.Name], status.Services)
+		}
+	}
+
+	urls, err := getStatusURLsWithAuth(pidPath, regPath, snapshotPath, handoffPath)
+	if err != nil {
+		t.Fatalf("getStatusURLsWithAuth: %v", err)
+	}
+	if urls.RuntimeSnapshot.Status != tsruntime.StatusRegistryMismatch {
+		t.Fatalf("freshness = %+v, want registry_mismatch", urls.RuntimeSnapshot)
+	}
+	upView := findStatusService(t, urls, "tst-913a")
+	if upView.RuntimeState != tsruntime.ServiceRuntimeRunning || upView.Endpoint.State != inspect.EndpointStateExact {
+		t.Fatalf("authorized service = %+v, want retained running evidence", upView)
+	}
+	if !hasStatusWarningCode(upView.Warnings, inspect.WarningCodeRuntimeSnapshotStale) {
+		t.Fatalf("warnings = %+v, want stale warning alongside positive evidence", upView.Warnings)
+	}
+}
+
 func TestStatusURLsStaleEvidenceFallsBackToExpectedEndpoint(t *testing.T) {
 	cases := []struct {
-		name            string
-		snapshotPID     int
-		snapshotStarted time.Time
-		snapshotUpdated time.Time
-		fingerprint     func(*testing.T, string) string
-		wantStatus      string
+		name              string
+		snapshotPID       int
+		snapshotStarted   time.Time
+		snapshotUpdated   time.Time
+		fingerprint       func(*testing.T, string) string
+		wantStatus        string
+		wantEndpointState string
 	}{
 		{
 			name:            "registry fingerprint mismatch",
@@ -782,22 +866,28 @@ func TestStatusURLsStaleEvidenceFallsBackToExpectedEndpoint(t *testing.T) {
 			snapshotUpdated: time.Date(2026, 5, 17, 12, 0, 1, 0, time.UTC),
 			fingerprint:     func(*testing.T, string) string { return "sha256:other" },
 			wantStatus:      tsruntime.StatusRegistryMismatch,
+			// A registry mismatch still carries positive running evidence for
+			// services present in the snapshot: P3 keeps that evidence visible
+			// rather than letting a newly added pending node erase it.
+			wantEndpointState: inspect.EndpointStateExact,
 		},
 		{
-			name:            "pid mismatch",
-			snapshotPID:     9999,
-			snapshotStarted: time.Date(2026, 5, 17, 12, 0, 0, 0, time.UTC),
-			snapshotUpdated: time.Date(2026, 5, 17, 12, 0, 1, 0, time.UTC),
-			fingerprint:     statusRegistryFingerprint,
-			wantStatus:      tsruntime.StatusPIDMismatch,
+			name:              "pid mismatch",
+			snapshotPID:       9999,
+			snapshotStarted:   time.Date(2026, 5, 17, 12, 0, 0, 0, time.UTC),
+			snapshotUpdated:   time.Date(2026, 5, 17, 12, 0, 1, 0, time.UTC),
+			fingerprint:       statusRegistryFingerprint,
+			wantStatus:        tsruntime.StatusPIDMismatch,
+			wantEndpointState: statusEndpointStateStale,
 		},
 		{
-			name:            "stale freshness",
-			snapshotPID:     4242,
-			snapshotStarted: time.Date(2026, 5, 17, 11, 59, 0, 0, time.UTC),
-			snapshotUpdated: time.Date(2026, 5, 17, 11, 59, 30, 0, time.UTC),
-			fingerprint:     statusRegistryFingerprint,
-			wantStatus:      tsruntime.StatusStale,
+			name:              "stale freshness",
+			snapshotPID:       4242,
+			snapshotStarted:   time.Date(2026, 5, 17, 11, 59, 0, 0, time.UTC),
+			snapshotUpdated:   time.Date(2026, 5, 17, 11, 59, 30, 0, time.UTC),
+			fingerprint:       statusRegistryFingerprint,
+			wantStatus:        tsruntime.StatusStale,
+			wantEndpointState: statusEndpointStateStale,
 		},
 	}
 
@@ -829,8 +919,11 @@ func TestStatusURLsStaleEvidenceFallsBackToExpectedEndpoint(t *testing.T) {
 				t.Fatalf("runtime snapshot = %+v, want status %s stale code", result.RuntimeSnapshot, tc.wantStatus)
 			}
 			web := findStatusService(t, result, "web")
-			if web.Endpoint.Display != "" || web.Endpoint.Host != "" || web.Endpoint.State != statusEndpointStateStale {
-				t.Fatalf("endpoint = %+v, want stale state without placeholder", web.Endpoint)
+			if web.Endpoint.State != tc.wantEndpointState {
+				t.Fatalf("endpoint = %+v, want state %q", web.Endpoint, tc.wantEndpointState)
+			}
+			if tc.wantEndpointState != inspect.EndpointStateExact && (web.Endpoint.Display != "" || web.Endpoint.Host != "") {
+				t.Fatalf("endpoint = %+v, want no placeholder outside positive evidence", web.Endpoint)
 			}
 			if !hasStatusWarningCode(web.Warnings, inspect.WarningCodeRuntimeSnapshotStale) {
 				t.Fatalf("warnings = %+v, want runtime_snapshot_stale", web.Warnings)

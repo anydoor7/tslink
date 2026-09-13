@@ -108,6 +108,15 @@ func removeAuthHandoff(path string) error {
 	return nil
 }
 
+// authHandoffMatchesService reports whether an interactive-enrollment handoff
+// describes the queried service. The handoff file is a daemon-wide singleton:
+// when several services are enrolling, a query for a different service must not
+// be handed the first service's authorization URL. A handoff with no service
+// recorded is treated as unbound and may satisfy any query.
+func authHandoffMatchesService(handoff authHandoffRecord, name string) bool {
+	return handoff.Service == "" || handoff.Service == name
+}
+
 func openBrowser(authURL string) error {
 	parsed, err := url.Parse(authURL)
 	if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Host == "" {
