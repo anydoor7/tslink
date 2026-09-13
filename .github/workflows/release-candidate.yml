@@ -309,7 +309,7 @@ jobs:
           go build -trimpath -ldflags "-s -w -X main.commit=${GITHUB_SHA}" \
             -o "${out}/tslink${ext}" .
           # Every published payload carries the legal set.
-          cp LICENSE LICENSE-POLYFORM-SMALL-BUSINESS-1.0.0 LICENSE-APACHE-2.0 NOTICE THIRD_PARTY_NOTICES.md COMMERCIAL.md COMMERCIAL_zh.md "${out}/"
+          cp LICENSE NOTICE THIRD_PARTY_NOTICES.md COMMERCIAL.md COMMERCIAL_zh.md "${out}/"
       - name: Smoke native artifact
         if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
         run: ./dist/cross/tslink-linux-amd64/tslink --help >/dev/null
@@ -337,7 +337,7 @@ jobs:
             [ -d "${dir}" ] || { echo "::error::missing artifact ${t}"; exit 1; }
             bin="${dir}/tslink"; [ "${t%-*}" = "windows" ] && bin="${dir}/tslink.exe"
             [ -s "${bin}" ] || { echo "::error::empty binary ${t}"; exit 1; }
-            for legal in LICENSE LICENSE-POLYFORM-SMALL-BUSINESS-1.0.0 LICENSE-APACHE-2.0 NOTICE THIRD_PARTY_NOTICES.md COMMERCIAL.md COMMERCIAL_zh.md; do
+            for legal in LICENSE NOTICE THIRD_PARTY_NOTICES.md COMMERCIAL.md COMMERCIAL_zh.md; do
               [ -s "${dir}/${legal}" ] || { echo "::error::missing ${legal} in ${t}"; exit 1; }
             done
           done
@@ -365,7 +365,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for f in LICENSE LICENSE-POLYFORM-SMALL-BUSINESS-1.0.0 LICENSE-APACHE-2.0 NOTICE THIRD_PARTY_NOTICES.md COMMERCIAL.md COMMERCIAL_zh.md; do
+          for f in LICENSE NOTICE THIRD_PARTY_NOTICES.md COMMERCIAL.md COMMERCIAL_zh.md; do
             [ -s "${f}" ] || { echo "::error::missing ${f}"; exit 1; }
           done
       - name: Third-party notice inventory is current
