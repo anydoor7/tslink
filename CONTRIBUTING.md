@@ -60,6 +60,12 @@ filtered by the scratch config dir path), rather than assuming the exit
 value or a config-dir override proves there was no side effect.
 
 
+### Local verification
+
+Run the local checks above for relevant changes. Inspect automated checks on the intended commit when available.
+
+A fresh check on the intended commit is required before release readiness can be established.
+
 ### Maintainer Release Notes
 
 Stable releases are disabled until external readback proves the release environment, required reviewers, `refs/tags/v*` ruleset, branch protection, and Homebrew tap are configured. After that gate is enabled, stable releases publish a Homebrew cask to `monody0007/homebrew-tap`. The release workflow requires a repository secret named `HOMEBREW_TAP_GITHUB_TOKEN` with write access to that tap; the default repository-scoped `GITHUB_TOKEN` cannot write to the separate tap repository. Prefer a fine-grained personal access token or GitHub App installation token scoped only to `monody0007/homebrew-tap` with Contents read/write access. Use a broad classic `repo` token only as a fallback when fine-grained tokens or GitHub App credentials are not available.
