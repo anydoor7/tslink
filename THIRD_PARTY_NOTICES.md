@@ -1,7 +1,7 @@
 # Third-Party Notices
 
-TSLink is distributed under the Apache License 2.0 (see `LICENSE` and
-`NOTICE`). This generated file inventories the union of third-party modules
+TSLink licensing is described in `LICENSE`; third-party rights are unchanged.
+See `NOTICE`. This generated file inventories the union of third-party modules
 linked into the supported CGO-disabled release targets (darwin/linux/windows
 × amd64/arm64) and includes the license/notice payloads found in the exact
 module source directories resolved by `go list -deps`. It is a

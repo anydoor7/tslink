@@ -1,12 +1,16 @@
 TSLink
-Copyright 2026 Maintainer (monody0007)
+Required Notice: Copyright 2026 Maintainer (monody0007).
 
-This product includes software developed by Maintainer (https://github.com/monody0007).
+This product includes software developed by Maintainer
+(https://github.com/monody0007).
 
-Licensed under the Apache License, Version 2.0.
+TSLink Community License 1.0 consists of LICENSE and
+LICENSE-POLYFORM-SMALL-BUSINESS-1.0.0. Both are included in this distribution.
+See COMMERCIAL.md for the commercial licensing policy.
 
-This product uses the following open source components:
+Earlier Apache-licensed TSLink material retains its existing rights;
+LICENSE-APACHE-2.0 preserves the pre-change license text.
 
-- Tailscale (tailscale.com) - BSD-3-Clause License
-- Cobra (github.com/spf13/cobra) - Apache License 2.0
-- fsnotify (github.com/fsnotify/fsnotify) - BSD-3-Clause License
+Third-party components retain their own licenses. The complete release
+module inventory and license/notice texts are in THIRD_PARTY_NOTICES.md.
+This notice does not change any third-party license.

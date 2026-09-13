@@ -63,11 +63,11 @@ if [ -d "$DIST_DIR" ]; then
       *.tar.gz) listing="$(tar tzf "$a")" ;;
       *.zip)    listing="$(unzip -Z1 "$a" 2>/dev/null || true)" ;;
     esac
-    for f in LICENSE NOTICE THIRD_PARTY_NOTICES.md; do
-      printf '%s\n' "$listing" | grep -q "$f" || { legal_ok=0; log "    missing $f in $(basename "$a")"; }
+    for f in LICENSE LICENSE-POLYFORM-SMALL-BUSINESS-1.0.0 LICENSE-APACHE-2.0 NOTICE THIRD_PARTY_NOTICES.md COMMERCIAL.md COMMERCIAL_zh.md; do
+      printf '%s\n' "$listing" | awk -F/ -v file="$f" '$NF == file { found=1 } END { exit !found }' || { legal_ok=0; log "    missing $f in $(basename "$a")"; }
     done
   done
-  [ "$legal_ok" -eq 1 ] && pass "LICENSE/NOTICE/THIRD_PARTY in every archive" || fail "legal payload missing in some archive"
+  [ "$legal_ok" -eq 1 ] && pass "complete community/historical/third-party legal payload in every archive" || fail "legal payload missing in some archive"
   # Sidecars for signing/SBOM must exist before we can verify signatures.
   sboms=("$DIST_DIR"/*.sbom.json)
   [ "${#sboms[@]}" -ge 1 ] && pass "SBOM sidecars present (${#sboms[@]})" || unknown "SBOM sidecars absent (snapshot ran with --skip=sbom?)"

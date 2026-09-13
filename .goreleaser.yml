@@ -42,8 +42,12 @@ archives:
     # The legal payload travels inside every tar/zip.
     files:
       - LICENSE
+      - LICENSE-POLYFORM-SMALL-BUSINESS-1.0.0
+      - LICENSE-APACHE-2.0
       - NOTICE
       - THIRD_PARTY_NOTICES.md
+      - COMMERCIAL.md
+      - COMMERCIAL_zh.md
 
 checksum:
   name_template: "checksums.txt"
@@ -83,7 +87,7 @@ nfpms:
     homepage: "https://github.com/monody0007/tslink"
     maintainer: "Maintainer <monody0007@users.noreply.github.com>"
     description: "Private Tailscale gateway for local services"
-    license: "Apache-2.0"
+    license: "LicenseRef-TSLink-Community-1.0"
     formats:
       - deb
       - rpm
@@ -91,6 +95,22 @@ nfpms:
     contents:
       - src: LICENSE
         dst: /usr/share/doc/tslink/LICENSE
+        file_info:
+          mode: 0644
+      - src: LICENSE-POLYFORM-SMALL-BUSINESS-1.0.0
+        dst: /usr/share/doc/tslink/LICENSE-POLYFORM-SMALL-BUSINESS-1.0.0
+        file_info:
+          mode: 0644
+      - src: LICENSE-APACHE-2.0
+        dst: /usr/share/doc/tslink/LICENSE-APACHE-2.0
+        file_info:
+          mode: 0644
+      - src: COMMERCIAL.md
+        dst: /usr/share/doc/tslink/COMMERCIAL.md
+        file_info:
+          mode: 0644
+      - src: COMMERCIAL_zh.md
+        dst: /usr/share/doc/tslink/COMMERCIAL_zh.md
         file_info:
           mode: 0644
       - src: NOTICE

@@ -298,8 +298,8 @@ func classifyLicense(files []noticeFile) (string, error) {
 func render(mods []module) []byte {
 	var b strings.Builder
 	b.WriteString("# Third-Party Notices\n\n")
-	b.WriteString("TSLink is distributed under the Apache License 2.0 (see `LICENSE` and\n")
-	b.WriteString("`NOTICE`). This generated file inventories the union of third-party modules\n")
+	b.WriteString("TSLink licensing is described in `LICENSE`; third-party rights are unchanged.\n")
+	b.WriteString("See `NOTICE`. This generated file inventories the union of third-party modules\n")
 	b.WriteString("linked into the supported CGO-disabled release targets (darwin/linux/windows\n")
 	b.WriteString("× amd64/arm64) and includes the license/notice payloads found in the exact\n")
 	b.WriteString("module source directories resolved by `go list -deps`. It is a\n")

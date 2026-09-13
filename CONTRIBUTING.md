@@ -162,4 +162,6 @@ Look for issues labeled [`good first issue`](https://github.com/monody0007/tslin
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the [Apache License 2.0](./LICENSE).
+TSLink uses the [TSLink Community License](./LICENSE) and may offer separate commercial licenses. Submit only material you are entitled to contribute, and identify any third-party code and its license.
+
+Before accepting new copyrightable contributions, maintainers must obtain a separate written contributor agreement covering distribution under both the community and commercial terms. Merely opening a pull request is not assumed to assign copyright or grant unrestricted relicensing rights. Until that agreement is in place, do not merge such contributions. Existing Apache-licensed contributions retain their original rights; see [LICENSE-APACHE-2.0](./LICENSE-APACHE-2.0).

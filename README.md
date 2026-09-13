@@ -5,7 +5,7 @@
 
 <p align="center">
   <a href="https://github.com/monody0007/tslink/actions"><img src="https://img.shields.io/github/actions/workflow/status/monody0007/tslink/ci.yml?branch=main&label=CI" alt="Build Status"></a>
-  <a href="https://github.com/monody0007/tslink/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License"></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/License-TSLink_Community-blue.svg" alt="License"></a>
   <a href="https://github.com/monody0007/tslink"><img src="https://img.shields.io/badge/Go-1.26.3%2B-00ADD8.svg" alt="Go"></a>
   <a href="https://github.com/monody0007/tslink"><img src="https://img.shields.io/github/stars/monody0007/tslink?style=social" alt="Stars"></a>
 </p>
@@ -14,6 +14,8 @@
   <a href="./README_zh.md">中文文档</a> ·
   <a href="https://github.com/monody0007/tslink">GitHub</a>
 </p>
+
+**Source-available:** personal use and qualifying small organizations are free; see [commercial eligibility](./COMMERCIAL.md).
 
 <!-- TODO: Add terminal recording / GIF demo here -->
 <!-- <p align="center"><img src="docs/demo.gif" alt="TSLink Demo" width="700"></p> -->
@@ -782,7 +784,11 @@ For security concerns, please see [SECURITY.md](./SECURITY.md).
 
 ## License
 
-This project is licensed under the [Apache License 2.0](./LICENSE).
+TSLink is **source-available** under the [TSLink Community License 1.0](./LICENSE), combining the unmodified [PolyForm Small Business License 1.0.0](./LICENSE-POLYFORM-SMALL-BUSINESS-1.0.0) with an additional personal-use permission. It is not an OSI-approved open source license.
+
+Personal non-business use is free. Organizational use is free while the controlled group has **fewer than 100 employees and independent contractors AND prior-tax-year revenue below USD 1 million in 2019 dollars, adjusted for inflation**. Uses outside the community permissions require a separate written commercial license. Eligible users need not notify us. See [eligibility, examples, and commercial contact](./COMMERCIAL.md).
+
+Earlier Apache-licensed TSLink material retains its existing rights; see [the preserved historical license](./LICENSE-APACHE-2.0). Third-party components keep their respective licenses in [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
 ```
 Copyright 2026 Maintainer (monody0007)
