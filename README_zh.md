@@ -4,7 +4,7 @@
 </p>
 
 <p align="center">
-  <a href="./LICENSE"><img src="https://img.shields.io/badge/License-TSLink_Community-blue.svg" alt="License"></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License"></a>
   <a href="https://github.com/monody0007/tslink"><img src="https://img.shields.io/badge/Go-1.26.3%2B-00ADD8.svg" alt="Go"></a>
   <a href="https://github.com/monody0007/tslink"><img src="https://img.shields.io/github/stars/monody0007/tslink?style=social" alt="Stars"></a>
 </p>
@@ -14,7 +14,7 @@
   <a href="https://github.com/monody0007/tslink">GitHub</a>
 </p>
 
-**源码可见许可：**个人用途和符合条件的小型组织免费；详见[商业授权范围](./COMMERCIAL_zh.md)。
+**开源许可：**Apache 2.0 允许个人和任何规模组织按许可用于个人及商业用途。[自愿支持与合作](./COMMERCIAL_zh.md)。
 
 <!-- TODO: 添加终端录屏 / GIF 演示 -->
 <!-- <p align="center"><img src="docs/demo.gif" alt="TSLink Demo" width="700"></p> -->
@@ -25,7 +25,7 @@
 
 ### 你省掉的那些步骤
 
-给服务单独的主机名是 Tailscale 的原生能力。[Tailscale Services](https://tailscale.com/docs/features/tailscale-services) 自 2026 年 2 月起正式可用，`tailscale serve --service=svc:web-server --https=443 127.0.0.1:8080` 在普通 `tailscaled` 上就能得到 `https://web-server.<tailnet>.ts.net`。TSLink 建立在 [tsnet](https://tailscale.com/docs/features/tsnet) 之上，而 Tailscale 的文档正是为这个用途写的，所以这里的架构是官方推荐的模式本身。
+给服务单独的主机名是 Tailscale 的原生能力。[Tailscale Services](https://tailscale.com/docs/features/tailscale-services) 自 2026 年 2 月起正式可用，`tailscale serve --service=svc:web-server --https=443 127.0.0.1:8080` 在普通 `tailscaled` 上就能得到 `https://web-server.<tailnet>.ts.net`。TSLink 建立在 [tsnet](https://tailscale.com/docs/features/tsnet) 之上，使用其文档介绍的集成方式独立开发。
 
 TSLink 改变的是谁能配、配多久。原生路径要求：
 
@@ -734,11 +734,11 @@ gh attestation verify "$sbom" \
 
 ## 许可证
 
-TSLink 采用[社区许可 1.0](./LICENSE)，由完整保留的 [PolyForm Small Business License 1.0.0](./LICENSE-POLYFORM-SMALL-BUSINESS-1.0.0) 加上个人用途补充授权组成。项目属于**源码可见**许可，未经 OSI 开源认证。
+TSLink 采用 [Apache License 2.0](./LICENSE)。个人和任何规模的组织均可按许可使用、修改和分发，包括商业用途。TSLink 不收取软件许可费，也不要求注册、申报使用情况或满足规模门槛。
 
-个人非业务用途免费。组织须同时满足：**受控集团的员工和独立承包商合计少于 100 人，且上一纳税年度营收低于按通胀调整的 100 万美元（2019 年基准）**。超出社区许可范围的用途，须另行取得书面商业授权。符合免费资格的用户无需通知。详见[资格、示例与商业联系](./COMMERCIAL_zh.md)。
+如果 TSLink 对你的组织有帮助，欢迎贡献代码，或洽谈维护、集成协助和定制开发。参与完全自愿；付费工作及支持承诺须另行书面约定。详见[商业使用与合作](./COMMERCIAL_zh.md)。
 
-历史 Apache 许可代码的已有权利继续有效，详见[保留的历史许可](./LICENSE-APACHE-2.0)。第三方组件按 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md) 中各自的许可使用。
+分发时请保留适用的许可和署名信息，参阅 [NOTICE](./NOTICE) 和 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md)。TSLink 是独立项目，其许可不授予 Tailscale 服务的使用权，也不代表官方背书；Tailscale 协议和套餐资格另行适用。
 
 ```
 Copyright 2026 Maintainer (monody0007)

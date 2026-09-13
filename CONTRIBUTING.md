@@ -6,7 +6,7 @@ Thank you for your interest in contributing to TSLink! This document provides gu
 
 ### Prerequisites
 
-- Go 1.26.3 or newer. The `go` directive in [`go.mod`](./go.mod) is the source of truth for the supported minimum toolchain, and CI uses that file through `actions/setup-go`.
+- Go 1.26.3 or newer. The `go` directive in [`go.mod`](./go.mod) is the source of truth for the supported minimum toolchain, and local checks should use a compatible toolchain.
 - A [Tailscale account](https://tailscale.com) (free for personal use) for integration testing
 - Git
 
@@ -26,7 +26,7 @@ go test ./...
 # Static analysis
 go vet ./...
 
-# Optional local mirrors of CI release gates
+# Optional local release checks
 go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 ./...
 go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
 go run github.com/goreleaser/goreleaser/v2@v2.17.0 check
@@ -168,6 +168,12 @@ Look for issues labeled [`good first issue`](https://github.com/monody0007/tslin
 
 ## License
 
-TSLink uses the [TSLink Community License](./LICENSE) and may offer separate commercial licenses. Submit only material you are entitled to contribute, and identify any third-party code and its license.
-
-Before accepting new copyrightable contributions, maintainers must obtain a separate written contributor agreement covering distribution under both the community and commercial terms. Merely opening a pull request is not assumed to assign copyright or grant unrestricted relicensing rights. Until that agreement is in place, do not merge such contributions. Existing Apache-licensed contributions retain their original rights; see [LICENSE-APACHE-2.0](./LICENSE-APACHE-2.0).
+Submit only material you have the right to contribute, including any required
+employer permission, and identify third-party material and its license.
+Unless explicitly stated otherwise, contributions intentionally submitted
+for inclusion in TSLink are offered under [Apache License 2.0](./LICENSE),
+as described in its section 5. Contributors retain their copyright; no
+copyright assignment or additional contributor agreement is required by
+this policy. Separately agreed contribution terms remain effective.
+Maintainers must verify the rights and license compatibility of contributed
+material before merging it.
