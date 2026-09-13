@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -115,6 +116,26 @@ func removeAuthHandoff(path string) error {
 // recorded is treated as unbound and may satisfy any query.
 func authHandoffMatchesService(handoff authHandoffRecord, name string) bool {
 	return handoff.Service == "" || handoff.Service == name
+}
+
+// validAuthHandoffForService loads the daemon's auth handoff and reports
+// whether it is a current, service-matching enrollment offer: the file must
+// load, name a live daemon PID, still be unexpired, and either describe the
+// queried service or be unbound. Callers use the returned record for the
+// enrollment URL; ok=false means fall through to the plain url_not_ready path.
+func validAuthHandoffForService(pidPath, name string) (authHandoffRecord, bool) {
+	handoff, loadErr := loadAuthHandoff(filepath.Join(filepath.Dir(pidPath), "auth-handoff.json"))
+	if loadErr != nil {
+		return authHandoffRecord{}, false
+	}
+	pid, _ := readPIDFn(pidPath)
+	if pid <= 0 || handoff.DaemonPID != pid || !handoff.ExpiresAt.After(time.Now()) {
+		return authHandoffRecord{}, false
+	}
+	if !authHandoffMatchesService(handoff, name) {
+		return authHandoffRecord{}, false
+	}
+	return handoff, true
 }
 
 func openBrowser(authURL string) error {

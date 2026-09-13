@@ -359,9 +359,6 @@ func getPollableStatus(pidPath, regPath, snapshotPath, authHandoffPath string) (
 		snapshotServices := make(map[string]tsruntime.ServiceSnapshot, len(snapshot.Services))
 		for _, svc := range snapshot.Services {
 			snapshotServices[svc.Name] = svc
-			if runtimeServiceRunning(svc) {
-				up[svc.Name] = struct{}{}
-			}
 		}
 		for i := range r.Services {
 			if runtimeService, ok := snapshotServices[r.Services[i].Name]; ok {
@@ -375,7 +372,12 @@ func getPollableStatus(pidPath, regPath, snapshotPath, authHandoffPath string) (
 					r.Services[i].Status = tsruntime.ServiceRuntimeFailed
 				}
 			}
-			if _, ok := up[r.Services[i].Name]; ok {
+			// Only services still present in the current registry can count
+			// toward authorization. A registry-mismatch snapshot may still list
+			// a service that was just removed; counting it would inflate
+			// AuthorizedServiceCount until the next snapshot write.
+			if runtimeService, ok := snapshotServices[r.Services[i].Name]; ok && runtimeServiceRunning(runtimeService) {
+				up[r.Services[i].Name] = struct{}{}
 				r.Services[i].Status = "up"
 			}
 		}
@@ -748,10 +750,6 @@ func runtimeSnapshotResult(snapshot *tsruntime.Snapshot, freshness tsruntime.Fre
 		result.RegistryFingerprint = snapshot.RegistryFingerprint
 	}
 	return result
-}
-
-func snapshotReportsServices(freshness tsruntime.Freshness) bool {
-	return freshness.Exact || freshness.Status == tsruntime.StatusPartial
 }
 
 // snapshotContributesRuntimeEvidence reports whether individual services in a

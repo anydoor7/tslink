@@ -329,14 +329,11 @@ func resolveAddEndpoint(ctx context.Context, pidPath, regPath, snapshotPath, nam
 		if err == nil {
 			return resolution, "", nil
 		}
-		if code, ok := registry.ErrorCode(err); !ok || (code != registry.CodeURLNotReady && code != "enrollment_required") {
+		if code, ok := registry.ErrorCode(err); !ok || (code != registry.CodeURLNotReady && code != registry.CodeEnrollmentRequired) {
 			return resolution, "", err
 		}
-		if handoff, loadErr := loadAuthHandoff(filepath.Join(filepath.Dir(pidPath), "auth-handoff.json")); loadErr == nil {
-			pid, _ := readPIDFn(pidPath)
-			if pid > 0 && handoff.DaemonPID == pid && handoff.ExpiresAt.After(time.Now()) && authHandoffMatchesService(handoff, name) {
-				return resolution, handoff.AuthURL, nil
-			}
+		if handoff, ok := validAuthHandoffForService(pidPath, name); ok {
+			return resolution, handoff.AuthURL, nil
 		}
 		if wait <= 0 || !time.Now().Before(deadline) {
 			return resolution, "", err

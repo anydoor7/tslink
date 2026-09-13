@@ -352,7 +352,7 @@ func directFileURL(base, fileName string) (string, error) {
 // enrollment_required when a valid but global auth-handoff exists, and
 // url_not_ready when the service is simply not up yet.
 func shareEnrollmentPendingCode(code string) bool {
-	return code == registry.CodeURLNotReady || code == "enrollment_required"
+	return code == registry.CodeURLNotReady || code == registry.CodeEnrollmentRequired
 }
 
 func shareOutcomeOnce(paths sharePaths, name, fileName string) (ShareResult, bool, error) {

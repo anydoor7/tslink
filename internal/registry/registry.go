@@ -60,6 +60,7 @@ const (
 	CodeInvalidServiceConfig       = "invalid_service_config"
 	CodeRegistryReloadInvalid      = "registry_reload_invalid"
 	CodeURLNotReady                = "url_not_ready"
+	CodeEnrollmentRequired         = "enrollment_required"
 	CodeLaunchctlDomainUnavailable = "launchctl_domain_unavailable"
 	CodeInviteAPIKeyRequired       = "invite_api_key_required"
 	CodeInviteRoleInvalid          = "invite_role_invalid"

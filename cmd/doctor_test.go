@@ -1104,3 +1104,76 @@ func TestDiagnoseFileTargetDirectPathFindings(t *testing.T) {
 		})
 	}
 }
+
+// TestDoctorTier1CompletedEnrollmentUnderRegistryMismatch reproduces the
+// cross-env retest finding: a new service in the registry makes the snapshot
+// registry_mismatch, and a lingering handoff used to keep doctor reporting a
+// pending enrollment even though the snapshot carries positive runtime
+// evidence for the authorized service. completedEnrollment must still outrank
+// the stale handoff in that state.
+func TestDoctorTier1CompletedEnrollmentUnderRegistryMismatch(t *testing.T) {
+	service := registry.Service{Name: "web", Type: registry.TypeProxy, Target: "http://localhost:3000"}
+	env := newDoctorTestEnv(t, []registry.Service{service})
+	doctorGetAPIKeyFn = func() (string, error) { return "", nil }
+	doctorGetClientSecretFn = func() (string, error) { return "", nil }
+	doctorReadFileFn = func(string) ([]byte, error) { return nil, os.ErrNotExist }
+	// Snapshot with a stale fingerprint: simulate a newer registry (e.g. a
+	// newly added service awaiting authorization) while the daemon keeps
+	// serving the authorized service.
+	stale := []registry.Service{{Name: "web", Type: registry.TypeProxy, Target: "http://localhost:9999"}}
+	states := make([]tsruntime.ServiceState, 0, len(stale))
+	for _, svc := range stale {
+		states = append(states, tsruntime.ServiceState{
+			Service:     svc,
+			RuntimeHost: svc.Name + ".tailnet.ts.net",
+		})
+	}
+	snapshot := tsruntime.NewSnapshot(env.pid, env.startedAt, "stale-fingerprint-0000", env.startedAt.Add(time.Second), states)
+	if err := tsruntime.Save(env.snapshotPath, snapshot); err != nil {
+		t.Fatalf("runtime.Save: %v", err)
+	}
+	record := newAuthHandoffRecord("web", "https://login.tailscale.com/a/lingering", env.pid)
+	if err := saveAuthHandoff(env.authHandoff, record); err != nil {
+		t.Fatalf("saveAuthHandoff: %v", err)
+	}
+
+	result := buildDoctorResult(doctorOptions{})
+	finding := assertDoctorFinding(t, result, inspect.WarningCodeCredentialTier1)
+	if !strings.Contains(finding.Message, "has produced authorized runtime state") {
+		t.Fatalf("credential_tier1 message = %q, want completed-enrollment evidence despite registry mismatch + lingering handoff", finding.Message)
+	}
+	if strings.Contains(finding.Message, "is pending") {
+		t.Fatalf("credential_tier1 message = %q, must not report pending under registry mismatch after authorized runtime state", finding.Message)
+	}
+}
+
+// TestDoctorTier1FailedSnapshotIsNotCompletedEnrollment covers the failure case:
+// a snapshot whose only entry is RuntimeState=failed
+// must not count as completed enrollment evidence, mirroring status's
+// running-only rule.
+func TestDoctorTier1FailedSnapshotIsNotCompletedEnrollment(t *testing.T) {
+	service := registry.Service{Name: "web", Type: registry.TypeProxy, Target: "http://localhost:3000"}
+	env := newDoctorTestEnv(t, []registry.Service{service})
+	doctorGetAPIKeyFn = func() (string, error) { return "", nil }
+	doctorGetClientSecretFn = func() (string, error) { return "", nil }
+	doctorReadFileFn = func(string) ([]byte, error) { return nil, os.ErrNotExist }
+	states := []tsruntime.ServiceState{{
+		Service:      service,
+		RuntimeHost:  service.Name + ".tailnet.ts.net",
+		RuntimeState: tsruntime.ServiceRuntimeFailed,
+	}}
+	states[0].Error = &tsruntime.ServiceError{Code: "service_start_timeout", Message: "timed out"}
+	snapshot := tsruntime.NewSnapshot(env.pid, env.startedAt, statusRegistryFingerprint(t, env.regPath), env.startedAt.Add(time.Second), states)
+	if err := tsruntime.Save(env.snapshotPath, snapshot); err != nil {
+		t.Fatalf("runtime.Save: %v", err)
+	}
+
+	result := buildDoctorResult(doctorOptions{})
+	finding := assertDoctorFinding(t, result, inspect.WarningCodeCredentialTier1)
+	if strings.Contains(finding.Message, "has produced authorized runtime state") {
+		t.Fatalf("credential_tier1 message = %q, failed service must not count as completed enrollment", finding.Message)
+	}
+	if !strings.Contains(finding.Message, "waiting for interactive enrollment evidence") {
+		t.Fatalf("credential_tier1 message = %q, want running-daemon waiting evidence", finding.Message)
+	}
+}

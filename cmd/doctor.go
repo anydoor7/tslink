@@ -701,7 +701,20 @@ func diagnoseRuntimeSnapshot(result *DoctorResult, fingerprint string, suppressM
 	}
 	freshness := tsruntime.Classify(snapshot, loadErr, expected)
 	result.RuntimeSnapshot = runtimeSnapshotResult(snapshot, freshness)
-	completedEnrollment := snapshotReportsServices(freshness) && snapshot != nil && len(snapshot.Services) > 0
+	// completedEnrollment mirrors status's per-service evidence rule: only a
+	// snapshot entry that is actually running counts as positive enrollment
+	// evidence. Counting failed or stale entries here would let doctor report
+	// authorized runtime state while status shows nothing up.
+	completedEnrollment := false
+	if snapshotContributesRuntimeEvidence(freshness) && snapshot != nil {
+		for i := range snapshot.Services {
+			state := snapshot.Services[i].RuntimeState
+			if state == "" || state == tsruntime.ServiceRuntimeRunning {
+				completedEnrollment = true
+				break
+			}
+		}
+	}
 	if freshness.Code != "" {
 		if suppressMissing && freshness.Code == inspect.WarningCodeRuntimeSnapshotMissing {
 			return completedEnrollment

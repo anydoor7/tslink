@@ -1204,3 +1204,46 @@ func TestFilterStatusURLsResultByName(t *testing.T) {
 		t.Fatal("invalid name error = nil")
 	}
 }
+
+// TestPollableStatusRemovalMismatchDoesNotInflateCount covers the mismatch
+// window when the fingerprint mismatch was caused by a service REMOVAL: the
+// snapshot still lists the removed service as running, but it must not count
+// toward AuthorizedServiceCount or the authenticated flag because it is no
+// longer in the registry.
+func TestPollableStatusRemovalMismatchDoesNotInflateCount(t *testing.T) {
+	dir := t.TempDir()
+	regPath := filepath.Join(dir, "registry.json")
+	pidPath := filepath.Join(dir, "tslink.pid")
+	snapshotPath := filepath.Join(dir, "runtime.json")
+	handoffPath := filepath.Join(dir, "auth-handoff.json")
+	startedAt := time.Date(2026, 9, 13, 12, 0, 0, 0, time.UTC)
+	removed := addStatusTestService(t, regPath, registry.Service{
+		Name:   "gone",
+		Type:   registry.TypeProxy,
+		Target: "http://localhost:3000",
+		Tags:   []string{"tag:tsmain"},
+	})
+	// Remove it from the registry so the current registry no longer has it,
+	// but keep the snapshot (written earlier) listing it as running.
+	if _, err := registry.Remove(regPath, "gone"); err != nil {
+		t.Fatalf("registry.Remove: %v", err)
+	}
+	snapshot := tsruntime.NewSnapshot(4242, startedAt, "sha256:stale-before-removal", startedAt.Add(time.Second), []tsruntime.ServiceState{
+		{Service: removed, RuntimeHost: "gone.tailnet.ts.net"},
+	})
+	if err := tsruntime.Save(snapshotPath, snapshot); err != nil {
+		t.Fatalf("runtime.Save: %v", err)
+	}
+	withStatusURLSeams(t, true, 4242, startedAt)
+
+	status, err := getPollableStatus(pidPath, regPath, snapshotPath, handoffPath)
+	if err != nil {
+		t.Fatalf("getPollableStatus: %v", err)
+	}
+	if status.Authenticated || status.NodeAuthorized || status.AuthorizedServiceCount != 0 {
+		t.Fatalf("auth state = authenticated:%v node:%v count:%d, want removed service not counted", status.Authenticated, status.NodeAuthorized, status.AuthorizedServiceCount)
+	}
+	if len(status.Services) != 0 {
+		t.Fatalf("services = %+v, want empty for a registry without services", status.Services)
+	}
+}

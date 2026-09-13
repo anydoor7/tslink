@@ -3,7 +3,6 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -69,11 +68,8 @@ func resolveServiceEndpointOnce(pidPath, regPath, snapshotPath, name string) (se
 		return serviceURLResolution{}, output.ErrNotFound(fmt.Sprintf("service not found: %s", name))
 	}
 	if !ready {
-		if handoff, loadErr := loadAuthHandoff(filepath.Join(filepath.Dir(pidPath), "auth-handoff.json")); loadErr == nil {
-			pid, _ := readPIDFn(pidPath)
-			if pid > 0 && handoff.DaemonPID == pid && handoff.ExpiresAt.After(time.Now()) && authHandoffMatchesService(handoff, name) {
-				return result, registry.CodedError{Code: "enrollment_required", Message: "Authorize TSLink before waiting for a service URL", Next: []string{"Open " + handoff.AuthURL, "tslink status --json"}}
-			}
+		if handoff, ok := validAuthHandoffForService(pidPath, name); ok {
+			return result, registry.CodedError{Code: registry.CodeEnrollmentRequired, Message: "Authorize TSLink before waiting for a service URL", Next: []string{"Open " + handoff.AuthURL, "tslink status --json"}}
 		}
 		return result, registry.URLNotReadyError(name)
 	}
