@@ -1,9 +1,8 @@
 name: Release Candidate
 
-# Single source of truth for the exact-SHA quality gate. PR, main, and tag
-# workflows all call this reusable workflow so no path can publish artifacts
-# from a commit that has not passed every required job. Any change to the set
-# of required jobs here changes the gate for all three trigger paths at once.
+# Reusable exact-SHA quality gate called by the Release workflow.
+# Automatic PR/main CI is removed during private development. Release still
+# requires this gate before publishing artifacts.
 
 on:
   workflow_call:
