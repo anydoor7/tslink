@@ -100,6 +100,7 @@ var (
 	registryLoadRuntimeFn   = registry.LoadForRuntime
 	afterDesiredLoadedFn    = func(context.Context, uint64) error { return nil }
 	observeNodeContextFn    = func(string, context.Context) {}
+	serveTCPFn              = serveTCP
 	registrySettleDelay     = 50 * time.Millisecond
 	lifecycleTickerInterval = 30 * time.Second
 )
@@ -1550,12 +1551,23 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service, prov
 	tsnetSrv := newTSNetServerFn(nodeService, stateDir, authKey, controlURL)
 
 	nodeCtx, cancel := context.WithCancel(ctx)
+	// The serving context must outlive the startup generation that created the
+	// node. generationCtx is canceled as soon as syncNodesWithOutcome returns,
+	// so deriving the TCP accept loop from nodeCtx would close its listener
+	// immediately after "ready". The daemon root ctx still cascades through
+	// WithoutCancel's values, while teardown is driven explicitly by
+	// closeResources and stopNodeLocked via cancelAll.
+	serveCtx, cancelServe := context.WithCancel(context.WithoutCancel(ctx))
+	cancelAll := func() {
+		cancelServe()
+		cancel()
+	}
 	observeNodeContextFn(svc.Name, nodeCtx)
 	var handlerCloser io.Closer
 	var closeResourcesOnce sync.Once
 	closeResources := func() {
 		closeResourcesOnce.Do(func() {
-			cancel()
+			cancelAll()
 			if handlerCloser != nil {
 				_ = handlerCloser.Close()
 			}
@@ -1657,11 +1669,11 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service, prov
 			nodeID:      nodeID,
 			runtimeHost: runtimeHost,
 			listener:    ln,
-			cancel:      cancel,
+			cancel:      cancelAll,
 		}
 
 		go func() {
-			serveTCP(nodeCtx, ln, svc.Target, svc.Name)
+			serveTCPFn(serveCtx, ln, svc.Target, svc.Name)
 		}()
 
 		slog.Info("tcp node ready", "name", svc.Name, "target", svc.Target, "port", port)
@@ -1763,7 +1775,7 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service, prov
 		listener:             ln,
 		httpSrv:              httpSrv,
 		handlerCloser:        handlerCloser,
-		cancel:               cancel,
+		cancel:               cancelAll,
 	}
 
 	// Serve in background

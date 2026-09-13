@@ -2967,6 +2967,65 @@ func TestSyncNodes_WritesConcreteTCPRuntimeHostFromStatus(t *testing.T) {
 	}
 }
 
+// A TCP service's accept loop must keep running after syncNodesWithOutcome
+// returns. The startup generation context is canceled by design on return, so a
+// serve loop derived from it would close its listener immediately after "tcp
+// node ready" and every connection would be refused.
+func TestSyncNodes_TCPListenerSurvivesStartupGenerationCompletion(t *testing.T) {
+	testenv.SetHome(t, t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+	writeRegistry(t, []registry.Service{
+		{Name: "db", Type: registry.TypeTCP, Target: "localhost:5432", Port: 5432},
+	})
+
+	oldNew := newTSNetServerFn
+	newTSNetServerFn = func(svc registry.Service, stateDir, authKey, controlURL string) tsnetServer {
+		return &fakeTSNetServer{status: &ipnstate.Status{Self: &ipnstate.PeerStatus{DNSName: "db.tailnet.ts.net."}}}
+	}
+	t.Cleanup(func() { newTSNetServerFn = oldNew })
+
+	oldServe := serveTCPFn
+	serveCtxCh := make(chan context.Context, 1)
+	serveTCPFn = func(ctx context.Context, ln net.Listener, target, name string) {
+		serveCtxCh <- ctx
+	}
+	t.Cleanup(func() { serveTCPFn = oldServe })
+
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(s.closeAllNodes)
+
+	if err := s.syncNodes(context.Background()); err != nil {
+		t.Fatalf("syncNodes() error = %v", err)
+	}
+	if _, ok := s.nodes["db"]; !ok {
+		t.Fatal("tcp node was not committed")
+	}
+
+	var serveCtx context.Context
+	select {
+	case serveCtx = <-serveCtxCh:
+	case <-time.After(time.Second):
+		t.Fatal("serveTCP was never invoked for the tcp node")
+	}
+	select {
+	case <-serveCtx.Done():
+		t.Fatal("tcp serve context was canceled when the startup generation completed")
+	default:
+	}
+
+	s.closeAllNodes()
+	select {
+	case <-serveCtx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("tcp serve context did not stop after closeAllNodes")
+	}
+}
+
 func TestSyncNodes_RecoverableAgentFailuresAreBoundedAndVisible(t *testing.T) {
 	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
