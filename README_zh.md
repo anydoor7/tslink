@@ -487,7 +487,7 @@ tslink list --tailnet --json
 
 ## 远程 MCP 控制面
 
-`tslink serve --mcp` 在一个专用 tsnet 节点上，通过 HTTPS 在 `https://<node>.<tailnet>.ts.net/mcp` 提供与 `tslink mcp` 相同的 18 个 MCP tools。它是给 MCP client 用的 MCP endpoint，没有可供浏览器打开的页面。节点默认主机名为 `tslink-mcp`；其 tsnet 状态位于 `~/.config/tslink/mcp-node/`，与服务节点并列存放，而非混在其中。
+`tslink serve --mcp` 在一个专用 tsnet 节点上，通过 HTTPS 在 `https://<node>.<tailnet>.ts.net/mcp` 提供与 `tslink mcp` 相同的 19 个 MCP tools。它是给 MCP client 用的 MCP endpoint，没有可供浏览器打开的页面。节点默认主机名为 `tslink-mcp`；其 tsnet 状态位于 `~/.config/tslink/mcp-node/`，与服务节点并列存放，而非混在其中。
 
 控制面默认关闭。用 `--mcp` flag 或 `config.json` 中的 `mcp.enabled: true` 开启，二者任一生效。`mcp.allow` 是必填项，且只存在于 `config.json` 中，因为它是整个功能的安全边界（`tslink config set` 只管理 `control-url`，所以要直接编辑该文件）：
 

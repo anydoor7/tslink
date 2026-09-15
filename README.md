@@ -222,7 +222,7 @@ target reuses its existing service instead of creating suffixed orphan nodes.
 
 `tslink mcp` runs a local MCP server over stdio. The MCP process itself opens no
 network listener; invoking its `share` tool may start the separate TSLink daemon
-and the requested tsnet service. It exposes 18 tools covering the per-service
+and the requested tsnet service. It exposes 19 tools covering the per-service
 surface of the CLI: `share`, `add`, `list`, `unshare`, `status`, `url`,
 `tags_list`, `tags_set`, `access_explain`, `doctor`, `invite_user`,
 `invite_device`, `invite_list`, `invite_revoke`, `invite_resend`,
@@ -535,7 +535,7 @@ All three outcomes are informational. They never change doctor's status or exit 
 
 ## Remote MCP Control Plane
 
-`tslink serve --mcp` serves the same 18 MCP tools as `tslink mcp` over HTTPS on a dedicated tsnet node at `https://<node>.<tailnet>.ts.net/mcp`. It is an MCP endpoint for MCP clients, and there is no page to open in a browser. The node's default hostname is `tslink-mcp`; its tsnet state lives in `~/.config/tslink/mcp-node/`, beside the service nodes rather than among them.
+`tslink serve --mcp` serves the same 19 MCP tools as `tslink mcp` over HTTPS on a dedicated tsnet node at `https://<node>.<tailnet>.ts.net/mcp`. It is an MCP endpoint for MCP clients, and there is no page to open in a browser. The node's default hostname is `tslink-mcp`; its tsnet state lives in `~/.config/tslink/mcp-node/`, beside the service nodes rather than among them.
 
 The control plane is off by default. Enable it with the `--mcp` flag or with `mcp.enabled: true` in `config.json`; either one turns it on. `mcp.allow` is required and lives only in `config.json`, because it is the security boundary of the whole feature (`tslink config set` manages only `control-url`, so edit the file directly):
 
