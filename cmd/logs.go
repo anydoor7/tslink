@@ -32,14 +32,49 @@ func validLogLevel(level string) bool {
 	}
 }
 
+// logSources maps the --source value, and the logs tool's source argument, to
+// the file each names. Both surfaces resolve through this one table so a source
+// the CLI accepts and the tool rejects cannot exist.
+var logSources = map[string]string{
+	"err": "tslink.err.log",
+	"out": "tslink.out.log",
+}
+
+// resolveLogFilePath returns the log file for one source name.
+func resolveLogFilePath(logDir, source string) (string, error) {
+	name, ok := logSources[source]
+	if !ok {
+		return "", output.ErrUsage(fmt.Sprintf("invalid --source: %q (must be \"out\" or \"err\")", source))
+	}
+	return filepath.Join(logDir, name), nil
+}
+
 // tailFile reads the last N lines from a file, optionally filtering by log level.
 func tailFile(path string, last int, level string) ([]string, error) {
+	lines, _, err := tailFileFiltered(path, last, level, nil)
+	return lines, err
+}
+
+// tailFileFiltered is tailFile with an extra per-line predicate, and it also
+// reports how many lines passed the filters before the last-N bound was
+// applied.
+//
+// The predicate and the count exist for the logs MCP tool, which needs a time
+// window and needs to say whether the line bound truncated the answer. They are
+// parameters rather than a second implementation because the level grammar in
+// matchLevel is the part that is easy to get subtly wrong, and a copy of it
+// would be the copy that drifts.
+//
+// Order matters: the predicate runs during the scan, before the last-N slice.
+// Filtering afterwards would answer "of the last N lines, which are recent",
+// which under-returns whenever older lines fill the bound.
+func tailFileFiltered(path string, last int, level string, keep func(string) bool) ([]string, int, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, nil
+			return nil, 0, nil
 		}
-		return nil, err
+		return nil, 0, err
 	}
 	defer f.Close()
 
@@ -53,17 +88,21 @@ func tailFile(path string, last int, level string) ([]string, error) {
 		if level != "" && !matchLevel(line, level) {
 			continue
 		}
+		if keep != nil && !keep(line) {
+			continue
+		}
 		allLines = append(allLines, line)
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
+	matched := len(allLines)
 	// Return last N lines
 	if last > 0 && len(allLines) > last {
 		allLines = allLines[len(allLines)-last:]
 	}
-	return allLines, nil
+	return allLines, matched, nil
 }
 
 // matchLevel checks the structured producer level field against a threshold.
@@ -173,14 +212,9 @@ Examples:
 				return err
 			}
 
-			var logFile string
-			switch source {
-			case "out":
-				logFile = filepath.Join(logDir, "tslink.out.log")
-			case "err":
-				logFile = filepath.Join(logDir, "tslink.err.log")
-			default:
-				return output.ErrUsage(fmt.Sprintf("invalid --source: %q (must be \"out\" or \"err\")", source))
+			logFile, err := resolveLogFilePath(logDir, source)
+			if err != nil {
+				return err
 			}
 
 			lines, err := tailFile(logFile, last, level)

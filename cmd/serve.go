@@ -152,7 +152,7 @@ returns a needs_login record immediately. --json, --no-browser, CI, and
 non-terminal sessions never try to open a browser.
 
 MCP control plane (off by default):
-  --mcp, or "mcp": {"enabled": true} in config.json, serves the same 18 MCP
+  --mcp, or "mcp": {"enabled": true} in config.json, serves the same 19 MCP
   tools "tslink mcp" exposes over stdio on a dedicated tailnet-only node at
   https://<node>.<tailnet>.ts.net/mcp. This is a control plane, not a page:
   every authorized tailnet peer that reaches it can register and remove
@@ -164,6 +164,13 @@ MCP control plane (off by default):
   identity matches mcp.allow in config.json, a list of login emails and/or
   "tag:..." entries. An empty list is not "everyone": serve refuses to start
   and says so.
+
+  The same node also serves a read-only server-sent event stream at
+  https://<node>.<tailnet>.ts.net/events, behind the identical Origin and
+  mcp.allow authorization. It pushes the list and status views on every runtime
+  change so a client stops polling, and sends a heartbeat so a silent stream
+  can be told from a dead one. Set "events_keepalive" to a Go duration between
+  5s and 5m to change the heartbeat; the default is 20s.
 
   config.json:
     {"mcp": {"enabled": true, "allow": ["you@example.com", "tag:ops"]}}
@@ -208,6 +215,10 @@ Examples:
 			}
 			mcpSettings := resolveMCPControlPlaneSettings(mcpFlag, globalCfg)
 			if err := validateMCPNodeName(mcpSettings.NodeName); err != nil {
+				return err
+			}
+			mcpEventsKeepalive, err := parseMCPEventsKeepalive(mcpSettings.EventsKeepalive)
+			if err != nil {
 				return err
 			}
 			if err := registry.ValidateControlURL(controlURL); err != nil {
@@ -362,6 +373,7 @@ Examples:
 				ManageACL:          manageACL,
 				NoAutoProvision:    noAutoProvision,
 				MCP:                mcpSettings,
+				MCPEventsKeepalive: mcpEventsKeepalive,
 				EnsureFunnelAttrFn: effectiveEnsureFunnelAttrFn,
 				PresentAuth: func(record authHandoffRecord) {
 					presentAuthHandoff(cmd, record)
@@ -560,6 +572,7 @@ type foregroundOptions struct {
 	ManageACL          bool
 	NoAutoProvision    bool
 	MCP                mcpControlPlaneSettings
+	MCPEventsKeepalive time.Duration
 	EnsureFunnelAttrFn server.EnsureFunnelAttrFunc
 	PresentAuth        func(authHandoffRecord)
 }
@@ -719,7 +732,7 @@ func runForegroundWithOptions(pidPath, authKey, controlURL string, options foreg
 		// The control plane runs the same actions the stdio transport runs;
 		// tool diagnostics go to the daemon's stderr log, never to a client.
 		actions := defaultMCPActions(paths, os.Stderr)
-		setter.SetMCPControlPlane(buildMCPControlPlane(options.MCP, actions, []string{config.GetDefaultTag()}))
+		setter.SetMCPControlPlane(buildMCPControlPlane(options.MCP, actions, []string{config.GetDefaultTag()}, options.MCPEventsKeepalive))
 	}
 	if options.ReadyPath != "" {
 		setter, ok := srv.(readySetter)

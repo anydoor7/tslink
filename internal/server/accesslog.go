@@ -34,6 +34,21 @@ func (rw *responseWriter) Write(b []byte) (int, error) {
 	return n, err
 }
 
+// Unwrap exposes the wrapped ResponseWriter to http.ResponseController.
+//
+// Without it the controller stops at this wrapper and answers
+// SetWriteDeadline with ErrNotSupported, because this type does not implement
+// it. The event stream depends on a per-frame write deadline to keep a stalled
+// reader from holding its handler goroutine open indefinitely, and every
+// control-plane response passes through this middleware, so the deadline would
+// be silently unavailable in production while remaining available in any test
+// that skipped the middleware. Flush and Hijack stay on this type, so the
+// controller still finds them here first and status/byte accounting is
+// unaffected.
+func (rw *responseWriter) Unwrap() http.ResponseWriter {
+	return rw.ResponseWriter
+}
+
 // Hijack implements http.Hijacker, required for WebSocket upgrade (101 Switching Protocols).
 func (rw *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	if hj, ok := rw.ResponseWriter.(http.Hijacker); ok {

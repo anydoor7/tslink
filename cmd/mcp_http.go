@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/monody0007/tslink/internal/config"
@@ -41,9 +42,10 @@ func newMCPStreamableHandler(actions mcpActions) http.Handler {
 // mcpControlPlaneSettings is the resolved enable decision for one serve
 // process: the flag wins over the config key, exactly as --control-url does.
 type mcpControlPlaneSettings struct {
-	Enabled  bool
-	Allow    []string
-	NodeName string
+	Enabled         bool
+	Allow           []string
+	NodeName        string
+	EventsKeepalive string
 }
 
 // resolveMCPControlPlaneSettings folds the --mcp flag into the persisted
@@ -56,6 +58,7 @@ func resolveMCPControlPlaneSettings(flagEnabled bool, cfg config.GlobalConfig) m
 		}
 		settings.Allow = append([]string(nil), cfg.MCP.Allow...)
 		settings.NodeName = cfg.MCP.NodeName
+		settings.EventsKeepalive = cfg.MCP.EventsKeepalive
 	}
 	return settings
 }
@@ -76,10 +79,38 @@ func validateMCPNodeName(name string) error {
 	return nil
 }
 
+// parseMCPEventsKeepalive validates the persisted events_keepalive value.
+//
+// It refuses rather than falls back. A heartbeat is what lets a client tell a
+// silent-but-alive stream from a dead one, so silently substituting a default
+// for a value the operator typed wrong would leave the deployment running a
+// period nobody chose, with nothing to observe. An empty value is the explicit
+// "use the default" and is always valid.
+func parseMCPEventsKeepalive(raw string) (time.Duration, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return 0, nil
+	}
+	keepalive, err := time.ParseDuration(trimmed)
+	if err != nil {
+		return 0, output.ErrUsage(fmt.Sprintf("invalid mcp events_keepalive %q: %v", raw, err))
+	}
+	if keepalive < server.MinMCPEventsKeepalive || keepalive > server.MaxMCPEventsKeepalive {
+		return 0, output.ErrUsage(fmt.Sprintf(
+			"invalid mcp events_keepalive %q: must be between %s and %s",
+			raw, server.MinMCPEventsKeepalive, server.MaxMCPEventsKeepalive))
+	}
+	return keepalive, nil
+}
+
 // buildMCPControlPlane returns the daemon-side control plane for these
 // settings, or nil when it is disabled. A nil result is what keeps the default
 // path free of any listener or tsnet node.
-func buildMCPControlPlane(settings mcpControlPlaneSettings, actions mcpActions, tags []string) *server.MCPControlPlane {
+//
+// keepalive is the already-validated heartbeat period; serve parses it during
+// flag resolution so a bad value refuses the daemon at startup rather than
+// after the control-plane node has enrolled.
+func buildMCPControlPlane(settings mcpControlPlaneSettings, actions mcpActions, tags []string, keepalive time.Duration) *server.MCPControlPlane {
 	if !settings.Enabled {
 		return nil
 	}
@@ -88,5 +119,10 @@ func buildMCPControlPlane(settings mcpControlPlaneSettings, actions mcpActions, 
 		Tags:         append([]string(nil), tags...),
 		AllowedUsers: append([]string(nil), settings.Allow...),
 		Handler:      newMCPStreamableHandler(actions),
+		// The event stream is mounted only because this is non-nil. It reuses
+		// the control plane's own Origin and authorization middleware; there is
+		// no second authorization model on this node.
+		EventsSnapshot:  mcpEventsSnapshotFn(actions),
+		EventsKeepalive: keepalive,
 	}
 }

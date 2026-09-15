@@ -1,0 +1,320 @@
+package cmd
+
+import (
+	"encoding/json"
+	"fmt"
+	"regexp"
+	"strings"
+	"time"
+
+	"github.com/monody0007/tslink/internal/output"
+)
+
+const (
+	// mcpLogsDefaultLast and mcpLogsMaxLast bound how many lines one call
+	// returns. A model asking for "the logs" wants the tail, not the file.
+	mcpLogsDefaultLast = 100
+	mcpLogsMaxLast     = 1000
+
+	// mcpLogsDefaultSince is the default time window. It is a recent window
+	// rather than "everything" on purpose: the daemon's log grows without
+	// bound, and a tool whose default answer is the whole history spends its
+	// caller's context on lines that predate the problem being diagnosed.
+	mcpLogsDefaultSince = time.Hour
+	mcpLogsMaxSince     = 168 * time.Hour
+
+	// mcpLogsMaxBytes is the hard ceiling on returned log text, counted after
+	// redaction. The bound is on bytes rather than lines because one access-log
+	// line and one panic backtrace differ by orders of magnitude, and the line
+	// count alone cannot stop a few enormous records from filling a response.
+	mcpLogsMaxBytes = 256 * 1024
+
+	mcpLogsTruncatedByBytes = "byte_limit"
+	mcpLogsTruncatedByLines = "line_limit"
+)
+
+// MCPLogsResult is the logs tool payload.
+type MCPLogsResult struct {
+	Source string `json:"source"`
+	File   string `json:"file"`
+	Level  string `json:"level,omitempty"`
+	// Since is the requested window as a Go duration; SinceAt is the resulting
+	// absolute cutoff, so a caller never has to recompute it against a clock
+	// that may not be the daemon's.
+	Since   string    `json:"since"`
+	SinceAt time.Time `json:"since_at"`
+	Lines   []string  `json:"lines"`
+	Count   int       `json:"count"`
+	// Truncated says the answer is not the whole of what matched, and
+	// TruncatedReason says which bound cut it. Both are always present rather
+	// than omitted when false: a client must be able to distinguish "complete"
+	// from "this field was not populated".
+	Truncated       bool   `json:"truncated"`
+	TruncatedReason string `json:"truncated_reason,omitempty"`
+	// Matched is how many lines passed the level and time filters before any
+	// bound was applied, so a caller can tell a quiet window from a truncated
+	// one and decide whether to narrow the query.
+	Matched int `json:"matched"`
+	// Redacted is constant true. It is emitted so a consumer of these lines
+	// knows they are not byte-identical to the file on disk, and does not treat
+	// a "[redacted]" token as something the daemon logged.
+	Redacted bool `json:"redacted"`
+}
+
+// mcpLogsEmailPattern matches a bare email address.
+//
+// Credential redaction is reused wholesale from doctor
+// (sanitizeDoctorEvidenceValue); this pattern is the one thing doctor does not
+// need and the log tool does. Doctor's evidence is assembled from local file
+// and config state, while the daemon log records who called the control plane:
+// mcp_controlplane.go logs the caller's Tailscale LoginName on every denial,
+// and that is a tailnet member's email address. doctorUserInfoPattern only
+// matches "user:password@", so a bare address would pass straight through it.
+var mcpLogsEmailPattern = regexp.MustCompile(`[A-Za-z0-9._%+\-]+@[A-Za-z0-9](?:[A-Za-z0-9.\-]*[A-Za-z0-9])?\.[A-Za-z]{2,}`)
+
+// mcpLogsTailscaleAuthURLPattern matches a Tailscale login or invitation URL.
+//
+// These are bearer capabilities: whoever opens one enrolls a device or accepts
+// an invitation. They reach the log legitimately — internal/logging routes
+// tsnet's interactive authorization URL through slog precisely so it is not
+// lost — and they carry neither userinfo nor a query string, so doctor's URL
+// rule leaves them intact. That rule is correct for doctor, whose job includes
+// showing an operator a control URL; it is wrong for a tool that hands log text
+// to a model.
+var mcpLogsTailscaleAuthURLPattern = regexp.MustCompile(`(?i)https://login\.tailscale\.com/\S+`)
+
+// sanitizeLogLine redacts one log line.
+//
+// Layering, outermost first: doctor's own evidence sanitizer (auth keys,
+// credential-bearing URLs, userinfo), then the two classes above that doctor
+// has no reason to carry. Running doctor's pass first means the userinfo rule
+// sees "user:password@host" before the email rule can consume part of it.
+func sanitizeLogLine(line string) string {
+	line = sanitizeDoctorEvidenceValue(line)
+	line = mcpLogsTailscaleAuthURLPattern.ReplaceAllString(line, doctorRedactedURL)
+	return mcpLogsEmailPattern.ReplaceAllString(line, doctorRedactedEvidenceValue)
+}
+
+// mcpLogsArguments is the wire shape of the logs tool's arguments.
+type mcpLogsArguments struct {
+	Source string `json:"source,omitempty"`
+	Last   *int   `json:"last,omitempty"`
+	Level  string `json:"level,omitempty"`
+	Since  string `json:"since,omitempty"`
+}
+
+// mcpLogsQuery is the validated form of those arguments.
+type mcpLogsQuery struct {
+	Source string
+	Last   int
+	Level  string
+	Since  time.Duration
+}
+
+// resolveMCPLogsQuery validates the tool arguments. Every refusal is a usage
+// error carrying the accepted values, because the model that called it can act
+// on that and cannot act on a generic failure.
+func resolveMCPLogsQuery(args mcpLogsArguments) (mcpLogsQuery, error) {
+	query := mcpLogsQuery{Source: "err", Last: mcpLogsDefaultLast, Since: mcpLogsDefaultSince}
+
+	if source := strings.TrimSpace(args.Source); source != "" {
+		if _, ok := logSources[source]; !ok {
+			return mcpLogsQuery{}, output.ErrUsage(fmt.Sprintf("invalid source %q (must be \"err\" or \"out\")", args.Source))
+		}
+		query.Source = source
+	}
+	if args.Last != nil {
+		if *args.Last < 1 || *args.Last > mcpLogsMaxLast {
+			return mcpLogsQuery{}, output.ErrUsage(fmt.Sprintf("invalid last %d (must be between 1 and %d)", *args.Last, mcpLogsMaxLast))
+		}
+		query.Last = *args.Last
+	}
+	if level := strings.TrimSpace(args.Level); level != "" {
+		if !validLogLevel(level) {
+			return mcpLogsQuery{}, output.ErrUsage(fmt.Sprintf("invalid level %q (must be debug, info, warn, or error)", args.Level))
+		}
+		query.Level = level
+	}
+	if since := strings.TrimSpace(args.Since); since != "" {
+		parsed, err := time.ParseDuration(since)
+		if err != nil {
+			return mcpLogsQuery{}, output.ErrUsage(fmt.Sprintf("invalid since %q: %v", args.Since, err))
+		}
+		if parsed <= 0 || parsed > mcpLogsMaxSince {
+			return mcpLogsQuery{}, output.ErrUsage(fmt.Sprintf("invalid since %q (must be positive and at most %s)", args.Since, mcpLogsMaxSince))
+		}
+		query.Since = parsed
+	}
+	return query, nil
+}
+
+// mcpLogsNowFn is the clock the time window is measured against.
+var mcpLogsNowFn = time.Now
+
+// collectMCPLogs answers one logs tool call. It opens the log file read-only
+// and writes nothing.
+func collectMCPLogs(logDir string, args mcpLogsArguments) (MCPLogsResult, error) {
+	query, err := resolveMCPLogsQuery(args)
+	if err != nil {
+		return MCPLogsResult{}, err
+	}
+	path, err := resolveLogFilePath(logDir, query.Source)
+	if err != nil {
+		return MCPLogsResult{}, err
+	}
+
+	cutoff := mcpLogsNowFn().Add(-query.Since)
+	keep := newLogWindowFilter(cutoff)
+	lines, matched, err := tailFileFiltered(path, query.Last, query.Level, keep)
+	if err != nil {
+		return MCPLogsResult{}, err
+	}
+
+	result := MCPLogsResult{
+		Source:   query.Source,
+		File:     path,
+		Level:    query.Level,
+		Since:    query.Since.String(),
+		SinceAt:  cutoff.UTC(),
+		Matched:  matched,
+		Redacted: true,
+	}
+	if matched > len(lines) {
+		result.Truncated = true
+		result.TruncatedReason = mcpLogsTruncatedByLines
+	}
+
+	// Redact first, then measure. Measuring the raw line and emitting the
+	// redacted one would let the byte ceiling drift from what is actually
+	// returned, in either direction.
+	redacted := make([]string, 0, len(lines))
+	for _, line := range lines {
+		redacted = append(redacted, sanitizeLogLine(line))
+	}
+	kept, droppedByBytes := boundLogBytes(redacted, mcpLogsMaxBytes)
+	if droppedByBytes > 0 {
+		result.Truncated = true
+		// Bytes win the reason: they are the tighter bound whenever both fired,
+		// and they are the one the caller can do something about by narrowing
+		// level or since.
+		result.TruncatedReason = mcpLogsTruncatedByBytes
+	}
+	// Always an array, never null, so a client's list rendering has one shape.
+	if kept == nil {
+		kept = []string{}
+	}
+	result.Lines = kept
+	result.Count = len(kept)
+	return result, nil
+}
+
+// boundLogBytes keeps the newest lines that fit in maxBytes and reports how
+// many older ones were dropped. Dropping from the front is deliberate: when a
+// log answer must be cut, the recent end is the part that explains the problem
+// being diagnosed.
+func boundLogBytes(lines []string, maxBytes int) ([]string, int) {
+	total := 0
+	start := len(lines)
+	for i := len(lines) - 1; i >= 0; i-- {
+		// +1 accounts for the newline a consumer re-joins these lines with, so
+		// the ceiling bounds rendered text rather than raw field bytes.
+		size := len(lines[i]) + 1
+		if total+size > maxBytes {
+			break
+		}
+		total += size
+		start = i
+	}
+	return lines[start:], start
+}
+
+// newLogWindowFilter builds the per-line time-window predicate.
+//
+// Two behaviours are load-bearing and neither is obvious:
+//
+//   - A line with no parseable timestamp inherits the previous line's. slog
+//     writes one record per line, but a record's own text can contain newlines
+//     (a wrapped error, a stack), and those continuation lines belong to the
+//     record above them.
+//   - A line with no timestamp and no predecessor is kept. Dropping it would
+//     make the tool return nothing at all for a file that is not slog-formatted
+//     — an empty answer that looks exactly like a quiet daemon. The window is a
+//     convenience for narrowing output, not a security boundary, so failing
+//     toward showing data is the right direction.
+func newLogWindowFilter(cutoff time.Time) func(string) bool {
+	var last time.Time
+	var haveLast bool
+	return func(line string) bool {
+		if ts, ok := extractLogTimestamp(line); ok {
+			last = ts
+			haveLast = true
+		}
+		if !haveLast {
+			return true
+		}
+		return !last.Before(cutoff)
+	}
+}
+
+// extractLogTimestamp reads the producer's own time field out of one line,
+// accepting both slog handler formats for the same reason matchLevel does.
+func extractLogTimestamp(line string) (time.Time, bool) {
+	trimmed := strings.TrimSpace(line)
+	if strings.HasPrefix(trimmed, "{") {
+		var fields map[string]any
+		if err := json.Unmarshal([]byte(trimmed), &fields); err == nil {
+			if raw, ok := fields["time"].(string); ok {
+				return parseLogTimestamp(raw)
+			}
+		}
+	}
+	raw, ok := extractTextLogField(line, "time")
+	if !ok {
+		return time.Time{}, false
+	}
+	return parseLogTimestamp(raw)
+}
+
+func parseLogTimestamp(raw string) (time.Time, bool) {
+	raw = strings.Trim(strings.TrimSpace(raw), `"`)
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02T15:04:05.999999999", "2006-01-02 15:04:05"} {
+		if ts, err := time.Parse(layout, raw); err == nil {
+			return ts, true
+		}
+	}
+	return time.Time{}, false
+}
+
+// extractTextLogField is extractTextLogLevel generalized to any key. It keeps
+// the same quote-aware tokenizer so a key=value pair inside a quoted message
+// cannot be mistaken for a top-level field.
+func extractTextLogField(line, key string) (string, bool) {
+	prefix := key + "="
+	inQuote := false
+	escaped := false
+	tokenStart := 0
+	for i := 0; i <= len(line); i++ {
+		end := i == len(line)
+		if !end {
+			ch := line[i]
+			if inQuote && escaped {
+				escaped = false
+			} else if inQuote && ch == '\\' {
+				escaped = true
+			} else if ch == '"' {
+				inQuote = !inQuote
+			}
+			if inQuote || ch != ' ' && ch != '\t' {
+				continue
+			}
+		}
+		if tokenStart < i {
+			token := line[tokenStart:i]
+			if strings.HasPrefix(token, prefix) {
+				return strings.Trim(strings.TrimPrefix(token, prefix), `"`), true
+			}
+		}
+		tokenStart = i + 1
+	}
+	return "", false
+}

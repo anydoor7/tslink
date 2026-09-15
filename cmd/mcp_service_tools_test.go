@@ -166,6 +166,17 @@ var mcpCoveredCommands = map[string]mcpCoveredCommand{
 			"probe-remote": "it reads the Tailscale API once per stored credential and writes last_verified into credential-meta.json; a remote read plus a local credential-metadata write is not something a tool call should do implicitly",
 		},
 	},
+	"tslink logs": {
+		Tools: []string{"logs"},
+		Flags: map[string]string{
+			"last":   "last",
+			"level":  "level",
+			"source": "source",
+		},
+		ExcludedFlags: map[string]string{
+			"json": mcpJSONFlagExclusion,
+		},
+	},
 	"tslink invite user": {
 		Tools: []string{"invite_user"},
 		Args:  []string{"email"},
@@ -243,7 +254,6 @@ var mcpUncoveredCommands = map[string]string{
 	"tslink cleanup":            "reconciles and can delete real tailnet devices; excluded from this tool surface by the owner",
 	"tslink registry check":     "registry file forensics; excluded from this tool surface by the owner. The doctor tool reports registry health",
 	"tslink manifest":           "describes the CLI itself; the MCP client reads tools/list instead",
-	"tslink logs":               "reads the local log file; excluded from this tool surface by the owner",
 	"tslink mcp":                "this server itself",
 	"tslink tags add":           "not requested for this surface; tags_list plus tags_set reach the same end state, and set is the operation that can change reachability",
 	"tslink tags set-default":   "changes the global default tag rather than one service",

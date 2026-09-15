@@ -37,6 +37,11 @@ type MCPConfig struct {
 	Enabled  bool     `json:"enabled,omitempty"`
 	Allow    []string `json:"allow,omitempty"`
 	NodeName string   `json:"node_name,omitempty"`
+	// EventsKeepalive is the event stream's heartbeat period as a Go duration
+	// string, for example "20s". Empty means the daemon's default. It is
+	// configuration rather than a flag because it is a property of the
+	// deployment's network path, not of one serve invocation.
+	EventsKeepalive string `json:"events_keepalive,omitempty"`
 }
 
 // GetDefaultTag returns the configured default tag, falling back to "tag:tsmain".

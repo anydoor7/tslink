@@ -312,6 +312,12 @@ type Server struct {
 	readyFn                 func() error
 	mcpControlPlane         *MCPControlPlane
 	mcpNode                 *mcpControlPlaneNode
+	// events fans runtime-state changes out to open control-plane event
+	// streams. It is always present so publishing is unconditional and cannot
+	// be skipped by a code path that forgot to check whether anyone is
+	// listening; with no subscribers, publish is a locked map walk over zero
+	// entries.
+	events *eventHub
 }
 
 // New creates a new multi-node server.
@@ -336,6 +342,7 @@ func New(authKey, controlURL string) (*Server, error) {
 		autoProvisionFunnel: true,
 		daemonPID:           os.Getpid(),
 		daemonStartedAt:     time.Now().UTC(),
+		events:              newEventHub(),
 	}, nil
 }
 
@@ -1401,6 +1408,15 @@ func (s *Server) writeRuntimeSnapshotLocked(registryFingerprint string, complete
 	if err := runtimeSaveSnapshotFn(path, snapshot); err != nil {
 		slog.Warn("runtime snapshot write failed; continuing with running services", "path", path, "error", err)
 	}
+	// Publish after the write, never before: an event stream rebuilds its
+	// payload by reading runtime.json back, so notifying first would hand a
+	// client the state it already had and call it fresh.
+	//
+	// This is also the whole of the event source. Every path that changes what
+	// a client can observe — a registry edit picked up by the fsnotify watcher,
+	// a lifecycle tick that expires a Funnel, a service that failed to start —
+	// ends in this function, so no separate goroutine polls anything.
+	s.events.publish()
 }
 
 func funnelStateForRunning(node *ServiceNode) string {
@@ -1485,6 +1501,11 @@ func (s *Server) removeRuntimeSnapshot() {
 	if err := runtimeRemoveSnapshotFn(path); err != nil {
 		slog.Warn("runtime snapshot remove failed during shutdown", "path", path, "error", err)
 	}
+	// Withdrawing runtime evidence is itself a state change a client must see:
+	// a failed sync leaves services the client was told were running with no
+	// runtime backing. At shutdown this is a no-op, because closeAllNodes
+	// closes the control plane before it reaches here.
+	s.events.publish()
 }
 
 // ValidateServiceForStartup validates a service definition before starting its node.

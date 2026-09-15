@@ -342,10 +342,10 @@ func TestResolveMCPControlPlaneSettingsIsOffByDefault(t *testing.T) {
 // default-off proof: with the feature off, no control plane object — and
 // therefore no handler and no node — is ever built.
 func TestBuildMCPControlPlaneIsNilWhenDisabled(t *testing.T) {
-	if cp := buildMCPControlPlane(mcpControlPlaneSettings{}, fakeMCPActions(), []string{"tag:tsmain"}); cp != nil {
+	if cp := buildMCPControlPlane(mcpControlPlaneSettings{}, fakeMCPActions(), []string{"tag:tsmain"}, 0); cp != nil {
 		t.Fatalf("buildMCPControlPlane() = %+v, want nil when disabled", cp)
 	}
-	cp := buildMCPControlPlane(mcpControlPlaneSettings{Enabled: true}, fakeMCPActions(), []string{"tag:tsmain"})
+	cp := buildMCPControlPlane(mcpControlPlaneSettings{Enabled: true}, fakeMCPActions(), []string{"tag:tsmain"}, 0)
 	if cp == nil {
 		t.Fatal("buildMCPControlPlane() = nil when enabled")
 	}
@@ -354,7 +354,7 @@ func TestBuildMCPControlPlaneIsNilWhenDisabled(t *testing.T) {
 	if err := cp.Validate(); err == nil {
 		t.Fatal("Validate() = nil for an enabled control plane with no principal")
 	}
-	withPrincipal := buildMCPControlPlane(mcpControlPlaneSettings{Enabled: true, Allow: []string{"alice@example.com"}}, fakeMCPActions(), []string{"tag:tsmain"})
+	withPrincipal := buildMCPControlPlane(mcpControlPlaneSettings{Enabled: true, Allow: []string{"alice@example.com"}}, fakeMCPActions(), []string{"tag:tsmain"}, 0)
 	if err := withPrincipal.Validate(); err != nil {
 		t.Fatalf("Validate() error = %v for a configured control plane", err)
 	}

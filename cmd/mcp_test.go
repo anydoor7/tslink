@@ -65,6 +65,18 @@ func fakeMCPActions() mcpActions {
 				RuntimeSnapshot: StatusRuntimeSnapshotResult{Status: "unknown"},
 			}, nil
 		},
+		logs: func(args mcpLogsArguments) (any, error) {
+			return MCPLogsResult{
+				Source:   "err",
+				File:     "/tmp/tslink.err.log",
+				Level:    args.Level,
+				Since:    mcpLogsDefaultSince.String(),
+				Lines:    []string{"time=2026-09-14T00:00:00Z level=INFO msg=access"},
+				Count:    1,
+				Matched:  1,
+				Redacted: true,
+			}, nil
+		},
 		inviteUser: func(_ context.Context, email, role string, printLink bool) (any, error) {
 			invite := tailapi.Invite{Kind: tailapi.InviteKindUser, ID: "1", Email: email, Role: role, Emailed: !printLink}
 			return InviteMutationResult{Invite: invite, RemoteSideEffectPlan: invitePlan(invite, "create")}, nil
@@ -474,7 +486,7 @@ func mcpToolByName(t *testing.T, name string) mcpToolDefinition {
 func TestMCPToolSchemasAreClosedAndModelFocused(t *testing.T) {
 	wantNames := []string{
 		"share", "add", "list", "unshare", "status", "url",
-		"tags_list", "tags_set", "access_explain", "doctor",
+		"tags_list", "tags_set", "access_explain", "doctor", "logs",
 		"invite_user", "invite_device", "invite_list", "invite_revoke", "invite_resend",
 		"template_list", "template_plan", "template_apply",
 	}
@@ -567,7 +579,7 @@ func TestMCPSideEffectToolsDeclareTheirEffectInTheFirstSentence(t *testing.T) {
 
 	// The read-only and local-only tools must not carry that language, or the
 	// warning stops meaning anything.
-	for _, name := range []string{"list", "status", "url", "tags_list", "access_explain", "doctor", "invite_list", "template_list", "template_plan"} {
+	for _, name := range []string{"list", "status", "url", "tags_list", "access_explain", "doctor", "logs", "invite_list", "template_list", "template_plan"} {
 		first, _, _ := strings.Cut(mcpToolByName(t, name).Description, ". ")
 		for _, unwanted := range []string{"public internet", "Sends a real", "Cancels a real"} {
 			if strings.Contains(first, unwanted) {

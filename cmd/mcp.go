@@ -281,6 +281,19 @@ var (
 			}, "code", "severity", "area", "message"),
 		},
 	}, "schema_version", "execution_status", "status", "health_status", "health_exit_code", "counts", "paths", "credential_mode", "credential_tier", "daemon", "runtime_snapshot", "tailscale_ssh", "findings")
+	mcpLogsOutputSchema = objectSchema(map[string]any{
+		"source":           map[string]any{"type": "string", "enum": []string{"err", "out"}},
+		"file":             map[string]any{"type": "string"},
+		"level":            map[string]any{"type": "string"},
+		"since":            map[string]any{"type": "string", "description": "The requested window as a Go duration."},
+		"since_at":         map[string]any{"type": "string", "description": "Absolute cutoff the window resolved to, in the daemon's clock."},
+		"lines":            stringArraySchema(),
+		"count":            map[string]any{"type": "integer", "minimum": 0},
+		"matched":          map[string]any{"type": "integer", "minimum": 0, "description": "Lines passing the level and time filters before the line and byte bounds; compare with count to see how much was cut."},
+		"truncated":        map[string]any{"type": "boolean", "description": "True when lines is not the whole of what matched."},
+		"truncated_reason": map[string]any{"type": "string", "enum": []string{mcpLogsTruncatedByLines, mcpLogsTruncatedByBytes}, "description": "Which bound cut the answer: line_limit is the last argument, byte_limit is the response size ceiling."},
+		"redacted":         map[string]any{"type": "boolean", "description": "Constant true. Credential material, Tailscale login and invitation URLs, and email addresses are replaced before the lines are returned, so they are not byte-identical to the file on disk."},
+	}, "source", "file", "since", "since_at", "lines", "count", "matched", "truncated", "redacted")
 	mcpInviteCreateOutputSchema = objectSchema(mergeSchemaProperties(mcpInviteProperties, map[string]any{
 		"remote_side_effect_plan": mcpRemoteSideEffectPlanSchema,
 	}), "kind", "id", "emailed", "remote_side_effect_plan")
@@ -463,6 +476,17 @@ var mcpToolDefinitions = []mcpToolDefinition{
 		OutputSchema: mcpDoctorOutputSchema,
 	},
 	{
+		Name:        "logs",
+		Description: "Read recent lines from the local TSLink daemon log. Use this when status and doctor did not explain a failure and the daemon's own account of what happened is needed; it opens the local log file read-only, returns a recent window rather than the whole file, and redacts credential material, Tailscale login and invitation URLs, and email addresses before returning anything.",
+		InputSchema: objectSchema(map[string]any{
+			"source": map[string]any{"type": "string", "enum": []string{"err", "out"}, "default": "err", "description": "err is the structured application log and is almost always the one wanted; out is the daemon's stdout."},
+			"last":   map[string]any{"type": "integer", "minimum": 1, "maximum": mcpLogsMaxLast, "default": mcpLogsDefaultLast, "description": "Maximum number of lines to return, counted from the newest."},
+			"level":  map[string]any{"type": "string", "enum": []string{"debug", "info", "warn", "error"}, "description": "Minimum producer log level. Omitting it returns every level."},
+			"since":  map[string]any{"type": "string", "description": "Go duration such as 15m or 6h bounding how far back to read; defaults to 1h and may not exceed 168h. Widen it only after the default window came back empty."},
+		}),
+		OutputSchema: mcpLogsOutputSchema,
+	},
+	{
 		Name:        "invite_user",
 		Description: "Sends a real Tailscale invitation to a real email address, so confirm the address and role with the user before calling this. The invitation joins the recipient to the user's tailnet. Set print_link true to receive a bearer invite URL instead of having Tailscale send the email.",
 		InputSchema: objectSchema(map[string]any{
@@ -550,6 +574,7 @@ type mcpActions struct {
 	tagsSet       func(string, string) (any, error)
 	accessExplain func(string) (any, error)
 	doctor        func(bool) (any, error)
+	logs          func(mcpLogsArguments) (any, error)
 	inviteUser    func(context.Context, string, string, bool) (any, error)
 	inviteDevice  func(context.Context, mcpInviteDeviceArguments) (any, error)
 	inviteList    func(context.Context, bool) (any, error)
@@ -778,6 +803,13 @@ func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 				RuntimeSnapshotPath: paths.Snapshot,
 				AuthHandoffPath:     paths.AuthHandoff,
 			}), nil
+		},
+		logs: func(args mcpLogsArguments) (any, error) {
+			logDir, err := logsLogDirFn()
+			if err != nil {
+				return nil, err
+			}
+			return collectMCPLogs(logDir, args)
 		},
 		inviteUser: func(ctx context.Context, email, role string, printLink bool) (any, error) {
 			invite, err := inviteUserCreate(ctx, email, role, printLink)
@@ -1303,6 +1335,12 @@ func callMCPTool(ctx context.Context, actions mcpActions, name string, arguments
 			return nil, mcpInvalidArgumentsError("doctor")
 		}
 		data, err = actions.doctor(args.ProbeExternal)
+	case "logs":
+		var args mcpLogsArguments
+		if decodeErr := decodeMCPArguments(arguments, &args); decodeErr != nil {
+			return nil, mcpInvalidArgumentsError("logs")
+		}
+		data, err = actions.logs(args)
 	case "invite_user":
 		var args struct {
 			Email     string `json:"email"`
@@ -1438,9 +1476,9 @@ func init() {
 		Long: `Run a local Model Context Protocol server using newline-delimited JSON-RPC
 over stdin/stdout. The server exposes the per-service surface of the CLI:
 share, add, list, unshare, status, url, tags_list, tags_set, access_explain,
-doctor, invite_user, invite_device, invite_list, invite_revoke, invite_resend,
-template_list, template_plan, and template_apply. Run "tslink mcp" and send a
-tools/list request to see the current set.
+doctor, logs, invite_user, invite_device, invite_list, invite_revoke,
+invite_resend, template_list, template_plan, and template_apply. Run
+"tslink mcp" and send a tools/list request to see the current set.
 
 Protocol handling comes from the official Go SDK, so this server speaks the
 current MCP revision ` + mcpProtocolVersion + ` and negotiates down to any of
@@ -1448,8 +1486,9 @@ current MCP revision ` + mcpProtocolVersion + ` and negotiates down to any of
 in each request's _meta and needs no handshake; an older client negotiates one
 with initialize.
 
-Daemon lifecycle, installation, login/logout, log reading and configuration are
-deliberately not exposed; use the CLI for those.
+Daemon lifecycle, installation, login/logout and configuration are deliberately
+not exposed; use the CLI for those. Log reading is exposed read-only through the
+logs tool, which bounds and redacts what it returns.
 
 The MCP process itself opens no network listener. Invoking share, add or
 template_apply installs the background service when absent unless no_daemon_install

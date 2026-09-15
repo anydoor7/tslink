@@ -12,6 +12,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/registry"
@@ -52,6 +53,21 @@ type MCPControlPlane struct {
 	AllowedUsers []string
 	// Handler is the MCP transport handler mounted at MCPControlPlanePath.
 	Handler http.Handler
+	// EventsSnapshot builds the body of one event frame. A nil function
+	// disables the event stream entirely: MCPEventsPath is then not mounted,
+	// and the node answers it with the mux's own 404. That is the default for
+	// any caller that does not opt in, so the stream cannot appear by
+	// accident.
+	//
+	// This package deliberately does not know the payload's shape. The views a
+	// client needs are the CLI's own list and status results, which live in
+	// package cmd; building them here would mean a second copy of them, and
+	// the copy would be the one that rots.
+	EventsSnapshot func(context.Context) (any, error)
+	// EventsKeepalive is the heartbeat period. Zero means
+	// DefaultMCPEventsKeepalive; out-of-range values are clamped to
+	// [MinMCPEventsKeepalive, MaxMCPEventsKeepalive].
+	EventsKeepalive time.Duration
 }
 
 // Validate reports whether the control plane may start.
@@ -216,7 +232,7 @@ func (s *Server) startMCPControlPlane(ctx context.Context) error {
 		return fmt.Errorf("local client for mcp control plane: %w", err)
 	}
 
-	handler := NewMCPControlPlaneHandler(cp, localClient)
+	handler := newMCPControlPlaneHandler(cp, localClient, s.events)
 
 	// ListenTLS binds the tsnet node only. There is no net.Listen here, no
 	// host interface, no 0.0.0.0, and deliberately no ListenFunnel: the
@@ -260,8 +276,22 @@ func (s *Server) startMCPControlPlane(ctx context.Context) error {
 // never reaches the routing mux and therefore never reaches a tool. Only the
 // mounted MCP path exists on this node.
 func NewMCPControlPlaneHandler(cp *MCPControlPlane, localClient *LocalClient) http.Handler {
+	return newMCPControlPlaneHandler(cp, localClient, newEventHub())
+}
+
+// newMCPControlPlaneHandler is NewMCPControlPlaneHandler with the hub supplied.
+// The daemon passes its own hub so runtime-state changes reach open streams;
+// the exported constructor gives callers that only want the tool surface a
+// private hub nothing ever publishes to.
+func newMCPControlPlaneHandler(cp *MCPControlPlane, localClient *LocalClient, hub *eventHub) http.Handler {
+	if hub == nil {
+		hub = newEventHub()
+	}
 	mux := http.NewServeMux()
 	mux.Handle(MCPControlPlanePath, ResourceBudgetMiddleware(cp.Handler))
+	if cp.EventsSnapshot != nil {
+		mux.Handle(MCPEventsPath, ResourceBudgetMiddleware(newMCPEventsHandler(cp, hub)))
+	}
 	return AccessLogMiddleware(cp.nodeName(), MCPOriginMiddleware(MCPAuthMiddleware(cp.AllowedUsers, localClient, mux)))
 }
 
