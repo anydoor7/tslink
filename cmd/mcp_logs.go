@@ -130,7 +130,14 @@ var mcpLogsTailscaleCredentialPathPattern = regexp.MustCompile(`(?i)^/(?:a|uinv|
 // tskey token. But a redaction rule whose safety depends on another rule
 // running first is one refactor away from being wrong, and the failure would be
 // silent — a credential in the output, with every test still green.
-// hostWithoutPort strips a trailing :port, leaving bare hosts and IPv6
+// hostWithoutPort strips a trailing :port by asking net.SplitHostPort, and the
+// fail-closed direction depends on that choice: an input SplitHostPort refuses
+// (a trailing dot in the port, a bracketless IPv6) comes back unchanged, which
+// then fails the exact-host comparison and redacts. Anyone replacing this helper
+// with hand-rolled string splitting must preserve that -- returning a "cleaned"
+// host for inputs SplitHostPort rejects turns the comparison fail-open.
+//
+// It strips a trailing :port, leaving bare hosts and IPv6
 // literals alone.
 func hostWithoutPort(host string) string {
 	if h, _, err := net.SplitHostPort(host); err == nil {
@@ -157,7 +164,16 @@ func redactTailscaleURL(raw string) string {
 	if !strings.EqualFold(hostWithoutPort(parsed.Host), "login.tailscale.com") {
 		return doctorRedactedURL
 	}
-	if parsed.User != nil || parsed.RawQuery != "" {
+	// Fragment sits beside userinfo and query for the same reason, and it is the
+	// one this rule originally missed: the outer pattern's token class does not
+	// exclude "#", so the whole fragment is inside the string this predicate is
+	// handed, while path.Clean(parsed.Path) never sees it. A bearer shape moved
+	// behind the "#" therefore passed the path rule by not being a path at all,
+	// and the line was emitted verbatim. Same family as the ":443" and
+	// single-slash shapes: the predicate reasons about scheme, host, userinfo,
+	// query and path, and anything carried outside those five is a shape it
+	// cannot reason about -- so it is redacted, not reasoned about.
+	if parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return doctorRedactedURL
 	}
 	// Match on the cleaned path, not the raw one. url.Parse does not normalize

@@ -487,11 +487,11 @@ func (s *Server) startLifecycleTicker(ctx context.Context) <-chan struct{} {
 	done := make(chan struct{})
 	// Read the clock seam on this goroutine, for the same reason the accept loop
 	// in startNodeLocked does: the ticker outlives this call, and every test that
-	// stubs serverNowFn restores it from t.Cleanup. Today no test leaks a ticker
-	// past its own stub, so the detector stays quiet -- but that is a property of
-	// the current tests, not of this code, and one new test that starts a ticker
-	// without waiting on done brings the race back. Capturing the function value
-	// costs nothing: production assigns this variable once, at init.
+	// stubs serverNowFn restores it from t.Cleanup, so a read from inside the
+	// goroutine races that restore. TestStartLifecycleTicker_ReadsClockSeamBeforeSpawning
+	// pins it from the other side: it starts the ticker, swaps the seam, and
+	// requires the tick to carry the value captured here. Capturing the function
+	// value costs nothing: production assigns this variable once, at init.
 	nowFn := serverNowFn
 	go func() {
 		defer close(done)

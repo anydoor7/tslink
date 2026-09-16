@@ -132,3 +132,26 @@ func TestRedactTailscaleURLRejectsLookalikeHosts(t *testing.T) {
 		})
 	}
 }
+
+// TestSanitizeLogLineDoesNotLeakFragmentCarriedCapabilities is the fragment half
+// of the URL-shape family that includes ":443" and the single-slash form: the
+// predicate reasons about scheme, host, userinfo, query and path, and a URL
+// fragment is none of those. It is asserted through sanitizeLogLine rather than
+// redactTailscaleURL because the question is what leaves the pipeline, and the
+// outer pattern decides how much of the line the predicate even sees.
+func TestSanitizeLogLineDoesNotLeakFragmentCarriedCapabilities(t *testing.T) {
+	const token = "kSEcReTtOkEn99"
+	for _, line := range []string{
+		"msg: https://login.tailscale.com#/a/" + token,
+		"msg: https://login.tailscale.com/x#/a/" + token,
+		"msg: https://login.tailscale.com#x/a/" + token,
+		"msg: https:/login.tailscale.com#/a/" + token,
+	} {
+		t.Run(line, func(t *testing.T) {
+			got := sanitizeLogLine(line)
+			if strings.Contains(got, token) {
+				t.Fatalf("sanitizeLogLine(%q) = %q, still carries the capability", line, got)
+			}
+		})
+	}
+}
