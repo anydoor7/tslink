@@ -52,7 +52,13 @@ func TestMain(m *testing.M) {
 	detectSupervisionFn = func(_ string, running bool, _ int) Supervision {
 		return unmanagedSupervision(running, "isolated unit test")
 	}
-	code := testenv.RunWithNonLoopbackDialGuard(m.Run, "cmd")
+	// Two independent process exits are closed for the whole binary: the real
+	// TCP dialer, and the real OS service manager (launchctl/systemctl). The
+	// service manager guard is the outer one so its report is emitted after the
+	// network guard has finished, and so a package that trips both still fails.
+	code := testenv.RunWithServiceManagerGuard(func() int {
+		return testenv.RunWithNonLoopbackDialGuard(m.Run, "cmd")
+	}, "cmd", osServiceManagerSeams()...)
 
 	// Own the teardown of the package's single compiled-binary build root.
 	// compiledTSLinkBinary creates it lazily and publishes the path here; see
