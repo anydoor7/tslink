@@ -265,11 +265,19 @@ func TestTagPublishCannotBypassCandidate(t *testing.T) {
 }
 
 // TestCIConsumesReusableCandidate proves PR/main run the same gate as the tag path.
+//
+// ci.yml was deliberately removed in bb943b5 ("remove automatic
+// private-development checks"), so on a private repo there is no PR/main
+// workflow for this invariant to hold over and the test skips. The assertion is
+// kept rather than deleted because the invariant it guards -- PR/main must call
+// the same reusable candidate gate as the tag path -- becomes live again the
+// moment ci.yml comes back, which is what publishing this repo would do.
+// Deleting the test would drop the guard silently at exactly that point.
 func TestCIConsumesReusableCandidate(t *testing.T) {
 	all := readWorkflows(t)
 	body, ok := all["ci.yml"]
 	if !ok {
-		t.Fatal("ci.yml is missing")
+		t.Skip("ci.yml absent (removed in bb943b5); no PR/main workflow to check")
 	}
 	wf := parse(t, "ci.yml", body)
 	job, ok := wf.Jobs["candidate"]

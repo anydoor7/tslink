@@ -3,6 +3,8 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
+	"path"
 	"regexp"
 	"strings"
 	"time"
@@ -72,26 +74,82 @@ type MCPLogsResult struct {
 // matches "user:password@", so a bare address would pass straight through it.
 var mcpLogsEmailPattern = regexp.MustCompile(`[A-Za-z0-9._%+\-]+@[A-Za-z0-9](?:[A-Za-z0-9.\-]*[A-Za-z0-9])?\.[A-Za-z]{2,}`)
 
-// mcpLogsTailscaleAuthURLPattern matches a Tailscale login or invitation URL.
+// mcpLogsTailscaleURLPattern matches any login.tailscale.com URL in a log line.
+// Matching is the cheap half; whether the match is redacted is decided by
+// redactTailscaleURL below.
 //
-// These are bearer capabilities: whoever opens one enrolls a device or accepts
-// an invitation. They reach the log legitimately — internal/logging routes
-// tsnet's interactive authorization URL through slog precisely so it is not
-// lost — and they carry neither userinfo nor a query string, so doctor's URL
-// rule leaves them intact. That rule is correct for doctor, whose job includes
-// showing an operator a control URL; it is wrong for a tool that hands log text
-// to a model.
-var mcpLogsTailscaleAuthURLPattern = regexp.MustCompile(`(?i)https://login\.tailscale\.com/\S+`)
+// The trailing character class mirrors doctorURLPattern's, so the two rules
+// agree on where a URL ends inside a quoted log field.
+var mcpLogsTailscaleURLPattern = regexp.MustCompile(`(?i)https://login\.tailscale\.com/[^\s"'<>)]*`)
+
+// mcpLogsTailscaleCredentialPathPattern matches the login.tailscale.com paths
+// that are bearer capabilities in themselves.
+//
+// These reach the log legitimately — internal/logging routes tsnet's
+// interactive authorization URL through slog precisely so it is not lost — and
+// they carry neither userinfo nor a query string, so doctor's URL rule leaves
+// them intact. Whoever opens one enrolls a device or accepts an invitation, so
+// the path prefix is the only thing that separates them from an ordinary
+// admin-console link:
+//
+//	/a/<token>              interactive enrollment
+//	/uinv/<token>           user invitation
+//	/admin/invite/<token>   device invitation
+//
+// Everything else under login.tailscale.com — /admin/settings/keys,
+// /admin/settings/oauth and the rest of the console — is a location, not a
+// capability, and the operator reading these logs is being told where to go.
+var mcpLogsTailscaleCredentialPathPattern = regexp.MustCompile(`(?i)^/(?:a|uinv|admin/invite)/.`)
+
+// redactTailscaleURL decides one login.tailscale.com match.
+//
+// The predicate is deliberately the same shape as doctor's: userinfo, a query
+// string, or an embedded credential token means the URL carries a secret. The
+// bearer paths above are the one thing doctor has no reason to know about, so
+// they are added here rather than widened into doctor's rule.
+//
+// This function does not rely on sanitizeDoctorEvidenceValue having run first.
+// It would be correct to: sanitizeLogLine runs doctor's pass before this one,
+// and that pass already replaces any URL with userinfo, a query string or a
+// tskey token. But a redaction rule whose safety depends on another rule
+// running first is one refactor away from being wrong, and the failure would be
+// silent — a credential in the output, with every test still green.
+func redactTailscaleURL(raw string) string {
+	if strings.ContainsAny(raw, "?@") || doctorCredentialTokenPattern.MatchString(raw) {
+		return doctorRedactedURL
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		// Unparseable and login.tailscale.com-shaped: redact. An address this
+		// rule cannot reason about is not one to hand to a model verbatim.
+		return doctorRedactedURL
+	}
+	if parsed.User != nil || parsed.RawQuery != "" {
+		return doctorRedactedURL
+	}
+	// Match on the cleaned path, not the raw one. url.Parse does not normalize
+	// "//a/<token>" or "/x/../a/<token>", so a prefix rule applied to the raw
+	// path lets a capability URL through while looking like it matched -- the
+	// fail-open direction, and silent. path.Clean collapses both forms before
+	// the rule sees them; it also makes "/X/../admin/invite/<token>" resolve to
+	// the invite path it actually is rather than being caught by accident.
+	if mcpLogsTailscaleCredentialPathPattern.MatchString(path.Clean(parsed.Path)) {
+		return doctorRedactedURL
+	}
+	return raw
+}
 
 // sanitizeLogLine redacts one log line.
 //
 // Layering, outermost first: doctor's own evidence sanitizer (auth keys,
 // credential-bearing URLs, userinfo), then the two classes above that doctor
-// has no reason to carry. Running doctor's pass first means the userinfo rule
-// sees "user:password@host" before the email rule can consume part of it.
+// has no reason to carry — the login.tailscale.com bearer paths, which are
+// redacted only when the URL actually carries a capability, and bare email
+// addresses. Running doctor's pass first means the userinfo rule sees
+// "user:password@host" before the email rule can consume part of it.
 func sanitizeLogLine(line string) string {
 	line = sanitizeDoctorEvidenceValue(line)
-	line = mcpLogsTailscaleAuthURLPattern.ReplaceAllString(line, doctorRedactedURL)
+	line = mcpLogsTailscaleURLPattern.ReplaceAllStringFunc(line, redactTailscaleURL)
 	return mcpLogsEmailPattern.ReplaceAllString(line, doctorRedactedEvidenceValue)
 }
 

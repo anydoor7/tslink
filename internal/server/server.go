@@ -318,6 +318,13 @@ type Server struct {
 	// listening; with no subscribers, publish is a locked map walk over zero
 	// entries.
 	events *eventHub
+	// credentialStateDigest is the last observed digest of the credential
+	// files in the config directory. It exists so a filesystem event that did
+	// not change the credential state does not become a frame on every open
+	// stream.
+	credentialStateMu     sync.Mutex
+	credentialStateKnown  bool
+	credentialStateDigest string
 }
 
 // New creates a new multi-node server.
@@ -2141,6 +2148,11 @@ func (s *Server) startRegistryWatcher(ctx context.Context) (<-chan struct{}, err
 		return nil, fmt.Errorf("watch directory %s: %w", s.cfgDir, err)
 	}
 
+	// Record what the credential files look like now, before any event can
+	// arrive, so the first frame published from this watcher corresponds to a
+	// real change rather than to the watcher having just started.
+	s.primeCredentialState()
+
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -2161,8 +2173,22 @@ func (s *Server) runRegistryWatcher(ctx context.Context, watcher registryWatcher
 			debounce = nil
 		}
 	}
+	// The credential timer is separate from the registry one on purpose: a
+	// registry write must not postpone a pending credential answer, and vice
+	// versa. Sharing one timer would let a busy registry starve the other.
+	credentialPaths := s.credentialStatePaths()
+	var credentialDebounce *time.Timer
+	stopCredentialDebounce := func() {
+		if credentialDebounce != nil {
+			if credentialDebounce.Stop() {
+				debounceCallbacks.Done()
+			}
+			credentialDebounce = nil
+		}
+	}
 	defer func() {
 		stopDebounce()
+		stopCredentialDebounce()
 		debounceCallbacks.Wait()
 	}()
 
@@ -2177,7 +2203,23 @@ func (s *Server) runRegistryWatcher(ctx context.Context, watcher registryWatcher
 			if err := s.ensureRunning(ctx); err != nil {
 				return
 			}
-			if filepath.Clean(event.Name) != regPath {
+			name := filepath.Clean(event.Name)
+			if _, isCredentialState := credentialPaths[name]; isCredentialState {
+				// Removal counts. Logout is a delete, and a client that is
+				// told about logins but not logouts holds the more dangerous
+				// of the two stale beliefs.
+				if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) ||
+					event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename) {
+					stopCredentialDebounce()
+					debounceCallbacks.Add(1)
+					credentialDebounce = time.AfterFunc(credentialStateDebounce, func() {
+						defer debounceCallbacks.Done()
+						s.notifyCredentialStateChanged()
+					})
+				}
+				continue
+			}
+			if name != regPath {
 				continue
 			}
 			if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) {

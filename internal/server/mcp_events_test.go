@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -138,12 +139,15 @@ func TestMCPEventStreamSendsSnapshotThenUpdate(t *testing.T) {
 	defer closeStream()
 
 	first := readMCPEventFrame(t, reader)
-	if first.Event != MCPEventSnapshot || first.ID != "1" {
-		t.Fatalf("first frame = %+v, want a snapshot with id 1", first)
+	if first.Event != MCPEventSnapshot {
+		t.Fatalf("first frame = %+v, want a snapshot", first)
 	}
 	firstPayload := decodeMCPEventPayload(t, first)
 	if firstPayload.Type != MCPEventSnapshot || firstPayload.Sequence != 1 {
 		t.Fatalf("first payload = %+v, want type snapshot sequence 1", firstPayload)
+	}
+	if first.ID != strconv.FormatUint(firstPayload.EventID, 10) {
+		t.Fatalf("SSE id %q does not match payload event_id %d", first.ID, firstPayload.EventID)
 	}
 	if firstPayload.Keepalive == "" || firstPayload.EmittedAt == "" {
 		t.Fatalf("first payload omits keepalive or emitted_at: %+v", firstPayload)
@@ -160,12 +164,15 @@ func TestMCPEventStreamSendsSnapshotThenUpdate(t *testing.T) {
 	hub.publish()
 
 	second := readMCPEventFrame(t, reader)
-	if second.Event != MCPEventUpdate || second.ID != "2" {
-		t.Fatalf("second frame = %+v, want an update with id 2", second)
+	if second.Event != MCPEventUpdate {
+		t.Fatalf("second frame = %+v, want an update", second)
 	}
 	secondPayload := decodeMCPEventPayload(t, second)
 	if secondPayload.Type != MCPEventUpdate || secondPayload.Sequence != 2 {
 		t.Fatalf("second payload = %+v, want type update sequence 2", secondPayload)
+	}
+	if secondPayload.EventID <= firstPayload.EventID {
+		t.Fatalf("event_id went from %d to %d, want it to advance", firstPayload.EventID, secondPayload.EventID)
 	}
 	if !strings.Contains(second.Data, `"revision":2`) {
 		t.Fatalf("update data = %q, want the rebuilt state", second.Data)
@@ -356,9 +363,9 @@ func TestMCPEventStreamEmitsKeepaliveFrames(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		serveMCPEventStream(rr, req, func(context.Context) (any, error) {
+		serveMCPEventStream(rr, req, newEventStateCache(func(context.Context) (any, error) {
 			return mcpEventsTestState{Revision: 1}, nil
-		}, hub, 5*time.Millisecond)
+		}), hub, 5*time.Millisecond)
 	}()
 
 	deadline := time.Now().Add(5 * time.Second)
@@ -614,9 +621,9 @@ func TestMCPEventStreamSetsAWriteDeadlinePerFrame(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		serveMCPEventStream(writer, req, func(context.Context) (any, error) {
+		serveMCPEventStream(writer, req, newEventStateCache(func(context.Context) (any, error) {
 			return mcpEventsTestState{Revision: 1}, nil
-		}, hub, time.Hour)
+		}), hub, time.Hour)
 	}()
 	waitForSubscribers(t, hub, 1)
 	cancel()
@@ -663,4 +670,334 @@ func (r *syncResponseRecorder) String() string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.body.String()
+}
+
+// setEventStateMaxAge pins the cache's staleness bound for one test. The
+// default is short enough that an unlucky scheduler could expire an entry in
+// the middle of a test that is about to assert it was reused.
+func setEventStateMaxAge(t *testing.T, d time.Duration) {
+	t.Helper()
+	old := mcpEventStateMaxAge
+	mcpEventStateMaxAge = d
+	t.Cleanup(func() { mcpEventStateMaxAge = old })
+}
+
+// TestMCPEventStateIsBuiltOncePerGeneration is the single-flight proof.
+//
+// Concurrency here is the point, not incidental: the leader is held inside the
+// builder until every follower has arrived, so a cache that merely deduplicated
+// completed builds would still fail this. Each phase also asserts a build does
+// happen for a new generation, which is the control — a cache that answered
+// everything from one build forever would satisfy "built once" trivially.
+func TestMCPEventStateIsBuiltOncePerGeneration(t *testing.T) {
+	const followers = 7
+
+	var builds atomic.Int64
+	entered := make(chan struct{}, followers+1)
+	release := make(chan struct{})
+	cache := &eventStateCache{
+		maxAge: time.Minute,
+		build: func(context.Context) (any, error) {
+			builds.Add(1)
+			entered <- struct{}{}
+			<-release
+			return mcpEventsTestState{Revision: int(builds.Load())}, nil
+		},
+	}
+
+	// Phase 1: one leader for generation 4, then everyone else joins it.
+	results := make(chan any, followers+1)
+	go func() {
+		state, err := cache.get(context.Background(), 4)
+		if err != nil {
+			t.Error(err)
+		}
+		results <- state
+	}()
+	<-entered // the leader is inside the builder, so c.entry is published
+
+	for i := 0; i < followers; i++ {
+		go func() {
+			state, err := cache.get(context.Background(), 4)
+			if err != nil {
+				t.Error(err)
+			}
+			results <- state
+		}()
+	}
+	close(release)
+
+	first := <-results
+	for i := 0; i < followers; i++ {
+		if got := <-results; got != first {
+			t.Fatalf("follower received %+v, want the leader's %+v", got, first)
+		}
+	}
+	if got := builds.Load(); got != 1 {
+		t.Fatalf("builds for one generation = %d, want 1", got)
+	}
+
+	// Phase 2 (control): a later generation must actually rebuild, or the
+	// assertion above would be satisfied by a cache that never expires.
+	release = make(chan struct{})
+	close(release)
+	if _, err := cache.get(context.Background(), 5); err != nil {
+		t.Fatalf("get(generation 5) error = %v", err)
+	}
+	<-entered
+	if got := builds.Load(); got != 2 {
+		t.Fatalf("builds after a new generation = %d, want 2", got)
+	}
+}
+
+// TestMCPEventStateCacheSharesBuildFailures keeps a failing build from
+// degenerating into the storm it was added to prevent. A daemon that cannot
+// read its own state is the worst moment to multiply the reads.
+func TestMCPEventStateCacheSharesBuildFailures(t *testing.T) {
+	var builds atomic.Int64
+	wantErr := errors.New("registry unreadable")
+	cache := &eventStateCache{
+		maxAge: time.Minute,
+		build: func(context.Context) (any, error) {
+			builds.Add(1)
+			return nil, wantErr
+		},
+	}
+	for i := 0; i < 5; i++ {
+		state, err := cache.get(context.Background(), 1)
+		if !errors.Is(err, wantErr) {
+			t.Fatalf("get() error = %v, want %v", err, wantErr)
+		}
+		if state != nil {
+			t.Fatalf("failed build returned state %+v", state)
+		}
+	}
+	if got := builds.Load(); got != 1 {
+		t.Fatalf("builds for one failing generation = %d, want 1", got)
+	}
+}
+
+// TestMCPEventStateCacheRebuildsAfterMaxAge is the staleness bound. The cache
+// keys on the publish sites being complete; this is what keeps a gap in them
+// from freezing a stream's state indefinitely.
+func TestMCPEventStateCacheRebuildsAfterMaxAge(t *testing.T) {
+	now := time.Now()
+	oldNow := serverNowFn
+	serverNowFn = func() time.Time { return now }
+	t.Cleanup(func() { serverNowFn = oldNow })
+
+	var builds atomic.Int64
+	cache := &eventStateCache{
+		maxAge: time.Second,
+		build: func(context.Context) (any, error) {
+			builds.Add(1)
+			return mcpEventsTestState{Revision: int(builds.Load())}, nil
+		},
+	}
+	if _, err := cache.get(context.Background(), 3); err != nil {
+		t.Fatalf("first get error = %v", err)
+	}
+	if _, err := cache.get(context.Background(), 3); err != nil {
+		t.Fatalf("second get error = %v", err)
+	}
+	if got := builds.Load(); got != 1 {
+		t.Fatalf("builds inside the freshness window = %d, want 1", got)
+	}
+
+	now = now.Add(2 * time.Second)
+	if _, err := cache.get(context.Background(), 3); err != nil {
+		t.Fatalf("third get error = %v", err)
+	}
+	if got := builds.Load(); got != 2 {
+		t.Fatalf("builds after the freshness window = %d, want 2", got)
+	}
+}
+
+// TestMCPEventStreamsShareOneBuildPerChange is the same property at the level
+// the cost is actually paid: real streams over a real handler, all woken by one
+// publish, must produce one pass over the daemon's files rather than one each.
+func TestMCPEventStreamsShareOneBuildPerChange(t *testing.T) {
+	const streams = 3
+	setEventStateMaxAge(t, time.Minute)
+
+	var builds atomic.Int64
+	hub := newEventHub()
+	srv := mcpEventsTestServer(t, hub, func(context.Context) (any, error) {
+		return mcpEventsTestState{Revision: int(builds.Add(1))}, nil
+	})
+
+	readers := make([]*bufio.Reader, 0, streams)
+	for i := 0; i < streams; i++ {
+		reader, closeStream := mcpEventsOpenStream(t, srv)
+		defer closeStream()
+		if frame := readMCPEventFrame(t, reader); frame.Event != MCPEventSnapshot {
+			t.Fatalf("stream %d opened with %q, want a snapshot", i, frame.Event)
+		}
+		readers = append(readers, reader)
+	}
+	waitForSubscribers(t, hub, streams)
+	afterOpen := builds.Load()
+	if afterOpen != 1 {
+		t.Fatalf("builds for %d opening streams = %d, want 1", streams, afterOpen)
+	}
+
+	hub.publish()
+	for i, reader := range readers {
+		frame := readMCPEventFrame(t, reader)
+		if frame.Event != MCPEventUpdate {
+			t.Fatalf("stream %d received %q, want an update", i, frame.Event)
+		}
+	}
+	if got := builds.Load(); got != afterOpen+1 {
+		t.Fatalf("builds after one change across %d streams = %d, want %d", streams, got, afterOpen+1)
+	}
+}
+
+// TestMCPEventIDIsInstanceWideAndInstanceIsStable pins the id contract that
+// replaced the per-connection counter.
+//
+// Two sequential connections: the per-connection Sequence restarts at 1 —
+// that is what it is for — while the SSE id and its payload mirror keep
+// advancing, and the instance identifier does not move. A client can therefore
+// read "id went backwards" as loss and "instance changed" as a restart, which
+// is exactly what a per-connection id made impossible.
+func TestMCPEventIDIsInstanceWideAndInstanceIsStable(t *testing.T) {
+	hub := newEventHub()
+	srv := mcpEventsTestServer(t, hub, func(context.Context) (any, error) {
+		return mcpEventsTestState{Revision: 1}, nil
+	})
+
+	open := func() MCPEventPayload {
+		t.Helper()
+		reader, closeStream := mcpEventsOpenStream(t, srv)
+		defer closeStream()
+		frame := readMCPEventFrame(t, reader)
+		payload := decodeMCPEventPayload(t, frame)
+		if payload.Sequence != 1 {
+			t.Fatalf("first frame sequence = %d, want 1 on every connection", payload.Sequence)
+		}
+		if payload.Instance == "" {
+			t.Fatal("payload carries no instance identifier")
+		}
+		if frame.ID != strconv.FormatUint(payload.EventID, 10) {
+			t.Fatalf("SSE id %q does not match payload event_id %d", frame.ID, payload.EventID)
+		}
+		return payload
+	}
+
+	firstConn := open()
+	secondConn := open()
+
+	if secondConn.EventID <= firstConn.EventID {
+		t.Fatalf("event_id across connections went %d -> %d, want it to keep advancing", firstConn.EventID, secondConn.EventID)
+	}
+	if secondConn.Instance != firstConn.Instance {
+		t.Fatalf("instance changed within one process: %q -> %q", firstConn.Instance, secondConn.Instance)
+	}
+	if firstConn.Instance != mcpEventInstanceID {
+		t.Fatalf("payload instance %q is not the process identifier %q", firstConn.Instance, mcpEventInstanceID)
+	}
+}
+
+// TestMCPEventStateCacheReleasesWaitersWhenABuildPanics covers the failure mode
+// that sharing a build introduced.
+//
+// Before the cache, a panicking builder ended exactly one stream: every stream
+// built its own state. Now the waiters are parked on one channel and a newly
+// arriving stream joins them instead of starting its own build, so a panic that
+// did not release them would leave the whole path hung — and hung streams show
+// nothing at all, which is indistinguishable from a quiet daemon.
+//
+// The control is the last phase: once the entry ages out, a build that no
+// longer panics must succeed, so this is not asserting a permanently poisoned
+// cache.
+func TestMCPEventStateCacheReleasesWaitersWhenABuildPanics(t *testing.T) {
+	now := time.Now()
+	oldNow := serverNowFn
+	serverNowFn = func() time.Time { return now }
+	t.Cleanup(func() { serverNowFn = oldNow })
+
+	var explode atomic.Bool
+	explode.Store(true)
+	cache := &eventStateCache{
+		maxAge: time.Second,
+		build: func(context.Context) (any, error) {
+			if explode.Load() {
+				panic("builder exploded")
+			}
+			return mcpEventsTestState{Revision: 9}, nil
+		},
+	}
+
+	panicked := make(chan any, 1)
+	go func() {
+		defer func() { panicked <- recover() }()
+		_, _ = cache.get(context.Background(), 1)
+	}()
+	if r := <-panicked; r == nil {
+		t.Fatal("the leader did not panic, so nothing below is about the panic path")
+	}
+
+	// A follower arriving afterwards must be answered, not parked forever.
+	done := make(chan error, 1)
+	go func() {
+		_, err := cache.get(context.Background(), 1)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("a waiter behind a panicking build got no error")
+		}
+		if !strings.Contains(err.Error(), "panicked") {
+			t.Fatalf("waiter error = %v, want it to name the panic", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a waiter behind a panicking build never returned")
+	}
+
+	// Control: the cache recovers once the entry ages out.
+	explode.Store(false)
+	now = now.Add(2 * time.Second)
+	state, err := cache.get(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("get() after the panicking entry aged out = %v, want a fresh build", err)
+	}
+	if state != (mcpEventsTestState{Revision: 9}) {
+		t.Fatalf("recovered state = %+v, want the new build's", state)
+	}
+}
+
+// TestMCPEventStreamSurvivesAPanickingBuilderEndToEnd re-checks, under the
+// shared-build architecture, the property an earlier review established under
+// the per-stream one: a snapshot builder that panics must not leak the stream
+// slot or the hub subscription, and a later stream must still be served.
+func TestMCPEventStreamSurvivesAPanickingBuilderEndToEnd(t *testing.T) {
+	setEventStateMaxAge(t, time.Millisecond)
+
+	var explode atomic.Bool
+	explode.Store(true)
+	hub := newEventHub()
+	srv := mcpEventsTestServer(t, hub, func(context.Context) (any, error) {
+		if explode.Load() {
+			panic("builder exploded")
+		}
+		return mcpEventsTestState{Revision: 7}, nil
+	})
+
+	resp, err := srv.Client().Get(srv.URL + MCPEventsPath)
+	if err == nil {
+		resp.Body.Close()
+	}
+	waitForSubscribers(t, hub, 0)
+
+	// The slot and the subscription are both back, so a healthy stream opens.
+	explode.Store(false)
+	time.Sleep(5 * time.Millisecond) // let the poisoned entry age out
+	reader, closeStream := mcpEventsOpenStream(t, srv)
+	defer closeStream()
+	frame := readMCPEventFrame(t, reader)
+	if frame.Event != MCPEventSnapshot || !strings.Contains(frame.Data, `"revision":7`) {
+		t.Fatalf("stream after a panicking build = %+v, want a fresh snapshot", frame)
+	}
 }

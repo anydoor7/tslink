@@ -473,3 +473,169 @@ func TestTailFileFilteredMatchesTailFile(t *testing.T) {
 		t.Fatalf("predicate result = %#v, want the oldest line even under last=1", keepOnlyOldest)
 	}
 }
+
+// mcpLogsAdminConsoleSentinel is the readable half of the F7 fix: a plain
+// console link an operator is being told to visit.
+//
+// Unlike the redaction sentinels, this one is asserted to be *present*, so its
+// appearing in product code would not make the assertion vacuous — and it does
+// appear, as credentials.KeysPageURL. It is spelled out literally here rather
+// than referenced so that renaming or repointing that constant cannot quietly
+// change what this test is about.
+const mcpLogsAdminConsoleSentinel = "https://login.tailscale.com/admin/settings/keys"
+
+// TestMCPLogsRedactsOnlyCredentialBearingTailscaleURLs pins both directions of
+// the login.tailscale.com rule.
+//
+// Redacting every login.tailscale.com URL is safe and was the previous
+// behaviour, so "no credential leaked" alone cannot tell a correct rule from
+// that one. The preserved cases are what makes this a real assertion: they fail
+// if the rule widens back, and the redacted cases fail if it narrows too far.
+func TestMCPLogsRedactsOnlyCredentialBearingTailscaleURLs(t *testing.T) {
+	cases := []struct {
+		name     string
+		url      string
+		redacted bool
+		why      string
+	}{
+		{
+			name:     "interactive enrollment path",
+			url:      "https://login.tailscale.com/a/F7SENTINELAAAA",
+			redacted: true,
+			why:      "whoever opens it enrolls a device",
+		},
+		{
+			name:     "user invitation path",
+			url:      "https://login.tailscale.com/uinv/F7SENTINELBBBB",
+			redacted: true,
+			why:      "whoever opens it joins the tailnet",
+		},
+		{
+			name:     "device invitation path",
+			url:      "https://login.tailscale.com/admin/invite/F7SENTINELCCCC",
+			redacted: true,
+			why:      "whoever opens it accepts a device share",
+		},
+		{
+			name:     "query string",
+			url:      "https://login.tailscale.com/admin/settings/keys?token=F7SENTINELDDDD",
+			redacted: true,
+			why:      "a query string can carry a credential",
+		},
+		{
+			name:     "userinfo",
+			url:      "https://admin:F7SENTINELEEEE@login.tailscale.com/admin/settings/keys",
+			redacted: true,
+			why:      "userinfo is a credential",
+		},
+		{
+			name:     "embedded auth key",
+			url:      "https://login.tailscale.com/admin/settings/keys/tskey-auth-F7SENTINELFFFF",
+			redacted: true,
+			why:      "the path carries a tskey token",
+		},
+		{
+			name:     "admin keys page",
+			url:      mcpLogsAdminConsoleSentinel,
+			redacted: false,
+			why:      "it is a location, not a capability",
+		},
+		{
+			name:     "admin oauth page",
+			url:      "https://login.tailscale.com/admin/settings/oauth",
+			redacted: false,
+			why:      "it is a location, not a capability",
+		},
+		{
+			name:     "admin machines page",
+			url:      "https://login.tailscale.com/admin/machines",
+			redacted: false,
+			why:      "it is a location, not a capability",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			line := `msg="visit ` + tc.url + `" source=tsnet`
+			got := sanitizeLogLine(line)
+			if !strings.Contains(got, "source=tsnet") {
+				t.Fatalf("the surrounding line was erased, so nothing below is about the URL: %q", got)
+			}
+			switch {
+			case tc.redacted && strings.Contains(got, tc.url):
+				t.Fatalf("%s survived redaction (%s): %q", tc.url, tc.why, got)
+			case tc.redacted && !strings.Contains(got, doctorRedactedURL) && !strings.Contains(got, doctorRedactedEvidenceValue):
+				t.Fatalf("%s was neither kept nor marked redacted: %q", tc.url, got)
+			case !tc.redacted && !strings.Contains(got, tc.url):
+				t.Fatalf("%s was redacted (%s): %q", tc.url, tc.why, got)
+			}
+		})
+	}
+}
+
+// TestMCPLogsKeepsAdminConsoleLinksEndToEnd runs the same property through the
+// tool's own entry point, so a future change that re-redacts at a different
+// layer is caught where the caller actually reads.
+func TestMCPLogsKeepsAdminConsoleLinksEndToEnd(t *testing.T) {
+	now := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
+	readable := `api key expired; generate a new one at ` + mcpLogsAdminConsoleSentinel
+	bearer := "https://login.tailscale.com/a/F7SENTINELGGGG"
+	dir := writeTestLog(t, "tslink.err.log",
+		logLine(now.Add(-time.Minute), "WARN", "x")+" "+readable,
+		logLine(now.Add(-time.Minute), "WARN", "x")+" authorize at "+bearer,
+	)
+	freezeLogsClock(t, now)
+
+	result, err := collectMCPLogs(dir, mcpLogsArguments{})
+	if err != nil {
+		t.Fatalf("collectMCPLogs() error = %v", err)
+	}
+	if len(result.Lines) != 2 {
+		t.Fatalf("lines = %#v, want both fixture lines back", result.Lines)
+	}
+	if !strings.Contains(result.Lines[0], mcpLogsAdminConsoleSentinel) {
+		t.Fatalf("the console link was redacted out of the tool result: %q", result.Lines[0])
+	}
+	if strings.Contains(result.Lines[1], bearer) {
+		t.Fatalf("the enrollment URL leaked through the tool result: %q", result.Lines[1])
+	}
+}
+
+// TestRedactTailscaleURLStandsAlone tests the predicate directly, with doctor's
+// pass deliberately not run first.
+//
+// sanitizeLogLine runs sanitizeDoctorEvidenceValue before this rule, and that
+// pass already removes any URL with userinfo, a query string or a tskey token.
+// So through sanitizeLogLine those three legs of this predicate are unreachable
+// and a mutation that deleted them would leave every end-to-end test green.
+// This test is what makes them real: it is the only place the predicate is
+// asked to defend itself.
+func TestRedactTailscaleURLStandsAlone(t *testing.T) {
+	cases := []struct {
+		url      string
+		redacted bool
+	}{
+		{"https://login.tailscale.com/a/TOKEN", true},
+		{"https://login.tailscale.com/uinv/TOKEN", true},
+		{"https://login.tailscale.com/admin/invite/TOKEN", true},
+		{"https://login.tailscale.com/admin/settings/keys?token=SECRET", true},
+		{"https://admin:pw@login.tailscale.com/admin/settings/keys", true},
+		{"https://login.tailscale.com/admin/settings/keys/tskey-auth-SECRET", true},
+		{"https://login.tailscale.com/admin/settings/keys", false},
+		{"https://login.tailscale.com/admin/settings/oauth", false},
+		{"https://login.tailscale.com/admin/machines", false},
+		{"https://login.tailscale.com/admin", false},
+		// A bare /a or /uinv with nothing after it is a console route, not a
+		// token: the credential paths require something to follow the prefix.
+		{"https://login.tailscale.com/a/", false},
+	}
+	for _, tc := range cases {
+		got := redactTailscaleURL(tc.url)
+		switch {
+		case tc.redacted && got != doctorRedactedURL:
+			t.Errorf("redactTailscaleURL(%q) = %q, want it redacted", tc.url, got)
+		case !tc.redacted && got != tc.url:
+			t.Errorf("redactTailscaleURL(%q) = %q, want it preserved", tc.url, got)
+		}
+	}
+}

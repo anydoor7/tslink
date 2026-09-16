@@ -171,13 +171,3 @@ func TestBootstrapInstallerUsesExistingConflictGuard(t *testing.T) {
 		t.Fatalf("err=%v guard=%d", err, guardCalls)
 	}
 }
-
-func fmtPID(pid int) string {
-	if pid == 4242 {
-		return "4242"
-	}
-	if pid == 9999 {
-		return "9999"
-	}
-	return "0"
-}

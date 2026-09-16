@@ -168,9 +168,11 @@ MCP control plane (off by default):
   The same node also serves a read-only server-sent event stream at
   https://<node>.<tailnet>.ts.net/events, behind the identical Origin and
   mcp.allow authorization. It pushes the list and status views on every runtime
-  change so a client stops polling, and sends a heartbeat so a silent stream
-  can be told from a dead one. Set "events_keepalive" to a Go duration between
-  5s and 5m to change the heartbeat; the default is 20s.
+  change and on every credential-state change — including a "tslink login" or
+  "tslink logout" run from another process — so a client stops polling, and
+  sends a heartbeat so a silent stream can be told from a dead one. Set
+  "events_keepalive" to a Go duration between 5s and 5m to change the
+  heartbeat; the default is 20s.
 
   config.json:
     {"mcp": {"enabled": true, "allow": ["you@example.com", "tag:ops"]}}

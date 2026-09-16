@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/monody0007/tslink/internal/inspect"
@@ -66,14 +67,43 @@ func mcpEventsSnapshotFn(actions mcpActions) func(context.Context) (any, error) 
 	return func(context.Context) (any, error) {
 		listValue, err := actions.list()
 		if err != nil {
-			return nil, err
+			return nil, sanitizedSnapshotError(err)
 		}
 		statusValue, err := actions.status()
 		if err != nil {
-			return nil, err
+			return nil, sanitizedSnapshotError(err)
 		}
-		return buildMCPEventState(listValue, statusValue)
+		state, err := buildMCPEventState(listValue, statusValue)
+		if err != nil {
+			return nil, sanitizedSnapshotError(err)
+		}
+		return state, nil
 	}
+}
+
+// sanitizedSnapshotError strips credential-bearing text from a snapshot error
+// before it leaves this package.
+//
+// A snapshot failure is rendered verbatim into every connected client's
+// state_error frame, so it is an egress point like any other. The doctor
+// sanitizer lives here in cmd and the event transport lives in internal/server,
+// which cannot reach it -- so the redaction has to happen where the error is
+// produced rather than where it is rendered. Service-level error text already
+// goes through sanitizedServiceError; this closes the same gap for the
+// top-level error.
+//
+// The original error is returned unchanged when redaction is a no-op, so
+// wrapping survives the common case. When text is redacted the chain is
+// dropped: this error is terminal, the transport only ever calls Error() on it.
+func sanitizedSnapshotError(err error) error {
+	if err == nil {
+		return nil
+	}
+	sanitized := sanitizeDoctorEvidenceValue(err.Error())
+	if sanitized == err.Error() {
+		return err
+	}
+	return errors.New(sanitized)
 }
 
 // buildMCPEventState projects one list result and one status result onto the

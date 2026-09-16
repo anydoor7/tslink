@@ -99,6 +99,21 @@ func SaveGlobalConfig(cfg GlobalConfig) error {
 	return atomicfile.WriteFile(path, data)
 }
 
+// Base names of the config-directory files that hold credential state.
+//
+// They are named here rather than inline in each path helper because a second
+// consumer needs to recognise these files by name without asking for their
+// absolute paths: the daemon watches its whole config directory with fsnotify
+// and has to decide, per event, whether the file that changed is one of these.
+// Two spellings of the same name would make that consumer silently stop
+// matching the day a path helper changed.
+const (
+	AuthHandoffFileName    = "auth-handoff.json"
+	APIKeyFileName         = "apikey"
+	ClientSecretFileName   = "clientsecret"
+	CredentialMetaFileName = "credential-meta.json"
+)
+
 func Dir() (string, error) {
 	if dir := os.Getenv(ConfigDirEnv); dir != "" {
 		return filepath.Clean(dir), nil
@@ -140,7 +155,7 @@ func AuthHandoffPath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "auth-handoff.json"), nil
+	return filepath.Join(dir, AuthHandoffFileName), nil
 }
 
 func PIDPath() (string, error) {
@@ -184,7 +199,7 @@ func APIKeyPath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "apikey"), nil
+	return filepath.Join(dir, APIKeyFileName), nil
 }
 
 func ClientSecretPath() (string, error) {
@@ -192,7 +207,7 @@ func ClientSecretPath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "clientsecret"), nil
+	return filepath.Join(dir, ClientSecretFileName), nil
 }
 
 // CredentialMetaPath stores value-free credential bookkeeping (fingerprint,
@@ -203,7 +218,7 @@ func CredentialMetaPath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "credential-meta.json"), nil
+	return filepath.Join(dir, CredentialMetaFileName), nil
 }
 
 func LogDir() (string, error) {
