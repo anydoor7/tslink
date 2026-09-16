@@ -126,13 +126,6 @@ func daemonRegistryRetainedError(err error) error {
 	return err
 }
 
-// installDaemon calls the existing platform installer, including its conflict
-// checks and upgrade rollback. A detached command keeps --json output to one
-// envelope and sends every installation announcement to the caller's stderr.
-func installDaemon(ctx context.Context, out io.Writer) error {
-	return withSupervisorTransaction(ctx, func() error { return installDaemonLocked(ctx, out) })
-}
-
 // installDaemonLocked is the bootstrap entry point; its caller owns the lock.
 func installDaemonLocked(ctx context.Context, out io.Writer) error {
 	cmd := &cobra.Command{Use: "install"}

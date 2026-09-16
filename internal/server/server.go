@@ -485,6 +485,14 @@ func (s *Server) Run(ctx context.Context) error {
 
 func (s *Server) startLifecycleTicker(ctx context.Context) <-chan struct{} {
 	done := make(chan struct{})
+	// Read the clock seam on this goroutine, for the same reason the accept loop
+	// in startNodeLocked does: the ticker outlives this call, and every test that
+	// stubs serverNowFn restores it from t.Cleanup. Today no test leaks a ticker
+	// past its own stub, so the detector stays quiet -- but that is a property of
+	// the current tests, not of this code, and one new test that starts a ticker
+	// without waiting on done brings the race back. Capturing the function value
+	// costs nothing: production assigns this variable once, at init.
+	nowFn := serverNowFn
 	go func() {
 		defer close(done)
 		ticker := time.NewTicker(lifecycleTickerInterval)
@@ -494,7 +502,7 @@ func (s *Server) startLifecycleTicker(ctx context.Context) <-chan struct{} {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				now := serverNowFn()
+				now := nowFn()
 				shouldSync := s.lifecycleReconcileFn == nil
 				if s.lifecycleReconcileFn != nil {
 					changed, err := s.lifecycleReconcileFn(ctx, now)
@@ -1700,8 +1708,13 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service, prov
 			cancel:      cancelAll,
 		}
 
+		// Read the serveTCP seam on this goroutine. The accept loop outlives
+		// startNodeLocked, so a read from inside it is unordered with respect to
+		// every later write of serveTCPFn -- and tests swap that seam (and restore
+		// it from t.Cleanup) between test functions.
+		serveTCP := serveTCPFn
 		go func() {
-			serveTCPFn(serveCtx, ln, svc.Target, svc.Name)
+			serveTCP(serveCtx, ln, svc.Target, svc.Name)
 		}()
 
 		slog.Info("tcp node ready", "name", svc.Name, "target", svc.Target, "port", port)

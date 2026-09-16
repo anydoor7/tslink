@@ -132,28 +132,72 @@ func TestBootstrapLaunchdConfigAndSideEffects(t *testing.T) {
 	}
 }
 
+// TestBootstrapLaunchdInstallSettles pins the settle contract:
+// waitStableDaemon accepts only after two consecutive samples agree AND the
+// settle window has elapsed, and rejects a job whose state or PID moves inside
+// that window.
+//
+// The settle window is scenario-specific on purpose, because the two halves of
+// the contract want opposite things from it. The production invariant is
+// "samples >= 2 && time.Since(firstGood) >= settle" (cmd/daemon_setup.go), so:
+//
+//   - stable needs a window short enough to elapse, and can only be promised
+//     two samples. Asserting three was a wall-clock assumption, not the
+//     contract: under load a 1ms poll sleeps far longer, the 6ms window is
+//     already spent by the second sample, and the call returns correctly with
+//     calls=2. That is what turned this red in a full -race package run while
+//     it passed in isolation.
+//   - dies and changes_pid need a window long enough that it cannot elapse
+//     before their divergence lands, or the wait succeeds first and the
+//     scenario silently stops testing rejection at all. With a 6ms window this
+//     half was flaky in the direction that looks like a pass.
 func TestBootstrapLaunchdInstallSettles(t *testing.T) {
 	oldOutput, oldSettle := launchctlCombinedOutput, launchAgentSettleWindow
 	t.Cleanup(func() { launchctlCombinedOutput, launchAgentSettleWindow = oldOutput, oldSettle })
-	launchAgentSettleWindow = 6 * time.Millisecond
-	for _, scenario := range []string{"stable", "dies", "changes_pid"} {
-		t.Run(scenario, func(t *testing.T) {
+	for _, tc := range []struct {
+		scenario  string
+		settle    time.Duration
+		timeout   time.Duration
+		wantErr   string
+		wantCalls int
+	}{
+		// Short window: the wait may return as soon as the second sample agrees.
+		{scenario: "stable", settle: time.Millisecond, timeout: 5 * time.Second, wantErr: "", wantCalls: 2},
+		// Window far longer than the three samples take, so divergence always
+		// lands first no matter how slow this machine is. The expected error is
+		// matched by reason, not merely by being non-nil: a timeout also
+		// produces an error, so "wantErr != nil" would stay green with the
+		// divergence check deleted outright -- it would just take the full
+		// timeout to say so.
+		{scenario: "dies", settle: time.Minute, timeout: 5 * time.Second, wantErr: "PID/state changed", wantCalls: 3},
+		{scenario: "changes_pid", settle: time.Minute, timeout: 5 * time.Second, wantErr: "PID/state changed", wantCalls: 3},
+	} {
+		t.Run(tc.scenario, func(t *testing.T) {
+			launchAgentSettleWindow = tc.settle
 			calls := 0
 			launchctlCombinedOutput = func(...string) ([]byte, error) {
 				calls++
 				if calls > 2 {
-					if scenario == "dies" {
+					if tc.scenario == "dies" {
 						return []byte("state = waiting\n"), nil
 					}
-					if scenario == "changes_pid" {
+					if tc.scenario == "changes_pid" {
 						return []byte("state = running\npid = 43\n"), nil
 					}
 				}
 				return []byte("state = running\npid = 42\n"), nil
 			}
-			_, err := waitForLaunchAgentRunning("user/fixture/com.tslink.daemon", 30*time.Millisecond, time.Millisecond)
-			if (err == nil) != (scenario == "stable") || calls < 3 {
-				t.Fatalf("scenario=%s err=%v calls=%d", scenario, err, calls)
+			_, err := waitForLaunchAgentRunning("user/fixture/com.tslink.daemon", tc.timeout, time.Millisecond)
+			switch {
+			case tc.wantErr == "" && err != nil:
+				t.Fatalf("scenario=%s err=%v, want success (calls=%d)", tc.scenario, err, calls)
+			case tc.wantErr != "" && err == nil:
+				t.Fatalf("scenario=%s succeeded, want rejection naming %q (calls=%d)", tc.scenario, tc.wantErr, calls)
+			case tc.wantErr != "" && !strings.Contains(err.Error(), tc.wantErr):
+				t.Fatalf("scenario=%s err=%v, want it to name %q (calls=%d)", tc.scenario, err, tc.wantErr, calls)
+			}
+			if calls < tc.wantCalls {
+				t.Fatalf("scenario=%s made %d launchctl calls, want at least %d", tc.scenario, calls, tc.wantCalls)
 			}
 		})
 	}
@@ -166,7 +210,7 @@ func TestBootstrapInstallerUsesExistingConflictGuard(t *testing.T) {
 	guardCalls := 0
 	installDaemonConflictFn = func() error { guardCalls++; return errors.New("existing conflict guard marker") }
 	var out bytes.Buffer
-	err := installDaemon(context.Background(), &out)
+	err := installDaemonLocked(context.Background(), &out)
 	if err == nil || !strings.Contains(err.Error(), "existing conflict guard marker") || guardCalls != 1 {
 		t.Fatalf("err=%v guard=%d", err, guardCalls)
 	}

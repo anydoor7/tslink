@@ -71,3 +71,64 @@ func TestRedactTailscaleURLKeepsRedactingCredentialCarriers(t *testing.T) {
 		})
 	}
 }
+
+// portBypassToken is the capability used by the port/slash bypass tests. It
+// exists only in this file; grep the product code for it before trusting the
+// "does not appear" assertions.
+const portBypassToken = "PORTBYPASSPROBETOKEN"
+
+// TestRedactTailscaleURLCoversPortAndSlashShapes covers the URL-shape regression: the
+// outer pattern required "//host/", so ":443" and a single slash never matched
+// and the whole line passed through with the capability intact.
+func TestRedactTailscaleURLCoversPortAndSlashShapes(t *testing.T) {
+	for _, raw := range []string{
+		"https://login.tailscale.com:443/a/" + portBypassToken,
+		"https://login.tailscale.com:8443/uinv/" + portBypassToken,
+		"https:/login.tailscale.com/a/" + portBypassToken,
+		"https:/login.tailscale.com:443/admin/invite/" + portBypassToken,
+		"https://login.tailscale.com:443//a/" + portBypassToken,
+	} {
+		t.Run(raw, func(t *testing.T) {
+			got := sanitizeLogLine("msg: " + raw)
+			if strings.Contains(got, portBypassToken) {
+				t.Fatalf("capability survived sanitization: %q", got)
+			}
+		})
+	}
+}
+
+// TestRedactTailscaleURLWiderPatternStillPassesCleanLinks is the control group
+// for the widened pattern. Matching more shapes is only safe if the predicate
+// still says no to the ones that carry nothing -- otherwise the fix for F7
+// (stop redacting documentation links) has been quietly undone.
+func TestRedactTailscaleURLWiderPatternStillPassesCleanLinks(t *testing.T) {
+	for _, line := range []string{
+		"msg: open https://login.tailscale.com/admin/settings/keys to renew",
+		"msg: open https://login.tailscale.com:443/admin/settings/keys to renew",
+		"msg: see https://login.tailscale.com/admin/machines",
+		"msg: bare host https://login.tailscale.com and text after",
+	} {
+		t.Run(line, func(t *testing.T) {
+			if got := sanitizeLogLine(line); got != line {
+				t.Fatalf("clean link was redacted:\n got %q\nwant %q", got, line)
+			}
+		})
+	}
+}
+
+// TestRedactTailscaleURLRejectsLookalikeHosts pins the fail-closed half: the
+// widened pattern must not become a way for a host that merely resembles the
+// real one to be reasoned about as if it were the real one.
+func TestRedactTailscaleURLRejectsLookalikeHosts(t *testing.T) {
+	for _, raw := range []string{
+		"https:/login.tailscale.com.evil.example/a/" + portBypassToken,
+		"https://login.tailscale.com:notaport/a/" + portBypassToken,
+	} {
+		t.Run(raw, func(t *testing.T) {
+			got := sanitizeLogLine("msg: " + raw)
+			if strings.Contains(got, portBypassToken) {
+				t.Fatalf("capability survived on lookalike host: %q", got)
+			}
+		})
+	}
+}

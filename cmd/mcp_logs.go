@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/url"
 	"path"
 	"regexp"
@@ -80,7 +81,22 @@ var mcpLogsEmailPattern = regexp.MustCompile(`[A-Za-z0-9._%+\-]+@[A-Za-z0-9](?:[
 //
 // The trailing character class mirrors doctorURLPattern's, so the two rules
 // agree on where a URL ends inside a quoted log field.
-var mcpLogsTailscaleURLPattern = regexp.MustCompile(`(?i)https://login\.tailscale\.com/[^\s"'<>)]*`)
+//
+// The pattern consumes everything up to a delimiter instead of spelling out the
+// URL's grammar, and accepts one or two slashes after the scheme. Both are
+// reactions to the same failure: a rule shaped like "//host/..." did not match
+// "https://login.tailscale.com:443/a/<token>" or "https:/login.tailscale.com/a/
+// <token>" at all, so redactTailscaleURL never ran and the line was emitted with
+// the capability in it. A later attempt that allowed an optional ":<digits>"
+// port failed the same way on ":notaport" -- the match stopped at the host and
+// the rest of the string, capability included, fell outside it.
+//
+// Whatever this pattern declines to consume is emitted verbatim, so the pattern
+// is deliberately greedy and the judgement lives in the predicate, which fails
+// closed on any host it cannot resolve to this one. doctorURLPattern carries
+// the same "://" literal, so there is no second layer to catch what this one
+// misses.
+var mcpLogsTailscaleURLPattern = regexp.MustCompile(`(?i)https:/{1,2}login\.tailscale\.com[^\s"'<>)]*`)
 
 // mcpLogsTailscaleCredentialPathPattern matches the login.tailscale.com paths
 // that are bearer capabilities in themselves.
@@ -114,6 +130,15 @@ var mcpLogsTailscaleCredentialPathPattern = regexp.MustCompile(`(?i)^/(?:a|uinv|
 // tskey token. But a redaction rule whose safety depends on another rule
 // running first is one refactor away from being wrong, and the failure would be
 // silent — a credential in the output, with every test still green.
+// hostWithoutPort strips a trailing :port, leaving bare hosts and IPv6
+// literals alone.
+func hostWithoutPort(host string) string {
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		return h
+	}
+	return host
+}
+
 func redactTailscaleURL(raw string) string {
 	if strings.ContainsAny(raw, "?@") || doctorCredentialTokenPattern.MatchString(raw) {
 		return doctorRedactedURL
@@ -122,6 +147,14 @@ func redactTailscaleURL(raw string) string {
 	if err != nil {
 		// Unparseable and login.tailscale.com-shaped: redact. An address this
 		// rule cannot reason about is not one to hand to a model verbatim.
+		return doctorRedactedURL
+	}
+	// The outer pattern now matches shapes url.Parse does not read as a host:
+	// "https:/login.tailscale.com/a/<token>" parses with an empty Host and the
+	// whole string in Path, which would then miss the bearer-path rule. Anything
+	// whose host is not exactly this one, port aside, is a shape this predicate
+	// cannot reason about, so it is redacted rather than reasoned about.
+	if !strings.EqualFold(hostWithoutPort(parsed.Host), "login.tailscale.com") {
 		return doctorRedactedURL
 	}
 	if parsed.User != nil || parsed.RawQuery != "" {

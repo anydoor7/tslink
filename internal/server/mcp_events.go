@@ -239,6 +239,14 @@ func (h *eventHub) subscriberCount() int {
 type eventStateCache struct {
 	build  func(context.Context) (any, error)
 	maxAge time.Duration
+	// nowFn is the clock this cache reads, captured once by whoever built it.
+	// It is a field rather than a direct read of the package-level seam for the
+	// same reason the accept loop in startNodeLocked and the lifecycle ticker
+	// hoist theirs: this cache is reached from net/http's per-request
+	// goroutines, which outlive the test that installed a stub and restored it
+	// from t.Cleanup. Reading the seam from those goroutines is a data race
+	// whether or not any current test happens to trigger it.
+	nowFn func() time.Time
 
 	mu    sync.Mutex
 	entry *eventStateEntry
@@ -252,8 +260,8 @@ type eventStateEntry struct {
 	err        error
 }
 
-func newEventStateCache(build func(context.Context) (any, error)) *eventStateCache {
-	return &eventStateCache{build: build, maxAge: mcpEventStateMaxAge}
+func newEventStateCache(build func(context.Context) (any, error), nowFn func() time.Time) *eventStateCache {
+	return &eventStateCache{build: build, maxAge: mcpEventStateMaxAge, nowFn: nowFn}
 }
 
 // fresh reports whether an entry may still answer for the requested
@@ -277,7 +285,7 @@ func (c *eventStateCache) get(ctx context.Context, generation uint64) (any, erro
 		return nil, nil
 	}
 	c.mu.Lock()
-	if entry := c.entry; entry.fresh(generation, serverNowFn(), c.maxAge) {
+	if entry := c.entry; entry.fresh(generation, c.nowFn(), c.maxAge) {
 		c.mu.Unlock()
 		select {
 		case <-entry.done:
@@ -307,7 +315,7 @@ func (c *eventStateCache) run(ctx context.Context, entry *eventStateEntry) {
 	defer func() {
 		if r := recover(); r != nil {
 			entry.err = fmt.Errorf("event state build panicked: %v", r)
-			entry.builtAt = serverNowFn()
+			entry.builtAt = c.nowFn()
 			close(entry.done)
 			panic(r)
 		}
@@ -317,7 +325,7 @@ func (c *eventStateCache) run(ctx context.Context, entry *eventStateEntry) {
 	// that happened to arrive first must not decide what the others get by
 	// disconnecting mid-build.
 	entry.state, entry.err = c.build(context.WithoutCancel(ctx))
-	entry.builtAt = serverNowFn()
+	entry.builtAt = c.nowFn()
 	close(entry.done)
 }
 
@@ -342,9 +350,14 @@ func mcpEventsKeepalive(configured time.Duration) time.Duration {
 func newMCPEventsHandler(cp *MCPControlPlane, hub *eventHub) http.Handler {
 	keepalive := mcpEventsKeepalive(cp.EventsKeepalive)
 	slots := make(chan struct{}, mcpEventsMaxStreams)
+	// Read the clock seam here, on the goroutine that assembles the mux, and
+	// hand the function value down. Every site below runs on a net/http
+	// request goroutine that outlives the caller, so none of them may touch the
+	// package-level variable directly. Production assigns it once, at init.
+	nowFn := serverNowFn
 	// One cache for the whole handler, not one per stream: sharing is the
 	// entire point.
-	cache := newEventStateCache(cp.EventsSnapshot)
+	cache := newEventStateCache(cp.EventsSnapshot, nowFn)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			w.Header().Set("Allow", http.MethodGet)
@@ -361,7 +374,7 @@ func newMCPEventsHandler(cp *MCPControlPlane, hub *eventHub) http.Handler {
 			mcpEventsError(w, http.StatusServiceUnavailable, "too many concurrent event streams")
 			return
 		}
-		serveMCPEventStream(w, r, cache, hub, keepalive)
+		serveMCPEventStream(w, r, cache, hub, keepalive, nowFn)
 	})
 }
 
@@ -389,6 +402,7 @@ func serveMCPEventStream(
 	cache *eventStateCache,
 	hub *eventHub,
 	keepalive time.Duration,
+	nowFn func() time.Time,
 ) {
 	changed, release := hub.subscribe()
 	defer release()
@@ -411,13 +425,13 @@ func serveMCPEventStream(
 	w.WriteHeader(http.StatusOK)
 
 	controller := http.NewResponseController(w)
-	stream := &mcpEventStream{w: w, controller: controller}
+	stream := &mcpEventStream{w: w, controller: controller, nowFn: nowFn}
 
 	ctx := r.Context()
 	var sequence uint64
 
 	sequence++
-	if err := stream.write(mcpEventFrame(ctx, MCPEventSnapshot, sequence, keepalive, snapshot)); err != nil {
+	if err := stream.write(mcpEventFrame(ctx, MCPEventSnapshot, sequence, keepalive, snapshot, nowFn)); err != nil {
 		slog.Warn("mcp event stream ended writing the initial snapshot", "remote_addr", r.RemoteAddr, "error", err)
 		return
 	}
@@ -431,13 +445,13 @@ func serveMCPEventStream(
 			return
 		case <-changed:
 			sequence++
-			if err := stream.write(mcpEventFrame(ctx, MCPEventUpdate, sequence, keepalive, snapshot)); err != nil {
+			if err := stream.write(mcpEventFrame(ctx, MCPEventUpdate, sequence, keepalive, snapshot, nowFn)); err != nil {
 				slog.Warn("mcp event stream ended writing an update", "remote_addr", r.RemoteAddr, "error", err)
 				return
 			}
 		case <-ticker.C:
 			sequence++
-			if err := stream.write(mcpEventFrame(ctx, MCPEventKeepalive, sequence, keepalive, nil)); err != nil {
+			if err := stream.write(mcpEventFrame(ctx, MCPEventKeepalive, sequence, keepalive, nil, nowFn)); err != nil {
 				slog.Warn("mcp event stream ended writing a keepalive", "remote_addr", r.RemoteAddr, "error", err)
 				return
 			}
@@ -454,13 +468,14 @@ func mcpEventFrame(
 	sequence uint64,
 	keepalive time.Duration,
 	snapshot func(context.Context) (any, error),
+	nowFn func() time.Time,
 ) []byte {
 	payload := MCPEventPayload{
 		Type:      kind,
 		Instance:  mcpEventInstanceID,
 		EventID:   mcpEventID.Add(1),
 		Sequence:  sequence,
-		EmittedAt: serverNowFn().UTC().Format(time.RFC3339Nano),
+		EmittedAt: nowFn().UTC().Format(time.RFC3339Nano),
 		Keepalive: keepalive.String(),
 	}
 	if snapshot != nil {
@@ -495,6 +510,8 @@ func mcpEventFrame(
 type mcpEventStream struct {
 	w          http.ResponseWriter
 	controller *http.ResponseController
+	// nowFn is the clock seam, captured by the handler. See eventStateCache.
+	nowFn func() time.Time
 	// deadlineUnsupported records that this ResponseWriter chain cannot carry
 	// a write deadline, so the warning is logged once per stream rather than
 	// once per frame.
@@ -502,7 +519,7 @@ type mcpEventStream struct {
 }
 
 func (s *mcpEventStream) write(frame []byte) error {
-	deadline := serverNowFn().Add(mcpEventsWriteTimeout)
+	deadline := s.nowFn().Add(mcpEventsWriteTimeout)
 	if err := s.controller.SetWriteDeadline(deadline); err != nil {
 		if !errors.Is(err, http.ErrNotSupported) {
 			return err

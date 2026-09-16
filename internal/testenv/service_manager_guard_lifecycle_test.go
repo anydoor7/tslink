@@ -113,30 +113,68 @@ func TestRunWithServiceManagerGuardFailsThePackageOnSeamDrift(t *testing.T) {
 
 // TestRunWithServiceManagerGuardControlGroupStaysGreenWithoutDrift pins the
 // other direction: the drift check must not fire on the normal path.
+//
+// Both values of the report env are exercised because this assertion is about
+// the guard's behaviour and must not be about the caller's shell. The previous
+// spelling captured stderr and required it to be empty, which silently made the
+// test's colour a function of the ambient TSLINK_SERVICE_MANAGER_GUARD_REPORT:
+// green with the variable unset, red when an external runner sets
+// that env on purpose so a green run still prints proof the guard was
+// installed. A test whose result depends on the environment it is invoked from
+// cannot gate anything.
 func TestRunWithServiceManagerGuardControlGroupStaysGreenWithoutDrift(t *testing.T) {
-	real := &realCallRecorder{}
-	var slot ServiceManagerCall
-	seam := seamFor("launchctl", &slot, real.Call)
+	for _, env := range []struct{ name, value string }{
+		{"report off", ""},
+		{"report on", "1"},
+	} {
+		t.Run(env.name, func(t *testing.T) {
+			t.Setenv(ServiceManagerGuardReportEnv, env.value)
 
-	var log string
-	code := 0
-	log = captureStderr(t, func() {
-		code = RunWithServiceManagerGuard(func() int {
-			blocked := slot
-			slot = func(args ...string) ([]byte, error) { return []byte("fixture\n"), nil }
-			defer func() { slot = blocked }()
-			if _, err := slot("print", "x"); err != nil {
-				t.Errorf("stubbed seam: %v", err)
+			real := &realCallRecorder{}
+			var slot ServiceManagerCall
+			seam := seamFor("launchctl", &slot, real.Call)
+
+			code := 0
+			log := captureStderr(t, func() {
+				code = RunWithServiceManagerGuard(func() int {
+					blocked := slot
+					slot = func(args ...string) ([]byte, error) { return []byte("fixture\n"), nil }
+					defer func() { slot = blocked }()
+					if _, err := slot("print", "x"); err != nil {
+						t.Errorf("stubbed seam: %v", err)
+					}
+					return 0
+				}, "control", seam)
+			})
+
+			if code != 0 {
+				t.Fatalf("exit code = %d, want 0:\n%s", code, log)
 			}
-			return 0
-		}, "control", seam)
-	})
+			// The load-bearing half, and it holds under both env values: a
+			// clean run produces no blocked attempt and no drift. This is what
+			// must not be weakened to buy the env independence above.
+			if strings.Contains(log, "blocked attempt") {
+				t.Fatalf("a clean run recorded a blocked attempt:\n%s", log)
+			}
+			if strings.Contains(log, "re-pointed away from the guard") {
+				t.Fatalf("a clean run was reported as drifted:\n%s", log)
+			}
+			if real.Ran {
+				t.Fatal("the control group reached the real service manager")
+			}
 
-	if code != 0 {
-		t.Fatalf("exit code = %d, want 0:\n%s", code, log)
-	}
-	if log != "" {
-		t.Fatalf("a clean run must stay silent, got:\n%s", log)
+			// The env decides one thing only: whether the zero-hit summary is
+			// printed. Pinning the exact text in both directions is stronger
+			// than the old "must be silent", because it also proves the env=on
+			// run says = 0 rather than merely saying something.
+			want := ""
+			if env.value != "" {
+				want = "service manager guard [control]: blocked real service manager calls = 0\n"
+			}
+			if log != want {
+				t.Fatalf("stderr = %q, want %q", log, want)
+			}
+		})
 	}
 }
 

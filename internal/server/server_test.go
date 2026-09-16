@@ -3026,6 +3026,68 @@ func TestSyncNodes_TCPListenerSurvivesStartupGenerationCompletion(t *testing.T) 
 	}
 }
 
+// startNodeLocked must read the serveTCP seam on the caller's goroutine. The
+// TCP accept loop it spawns outlives the call, so a seam read from inside that
+// goroutine is unordered with respect to every later write of serveTCPFn --
+// including the t.Cleanup restore that every serveTCP test performs. Under
+// -race the unfixed code reports a data race between the swap below and the
+// accept loop's read, and the leaked loop can also invoke the *next* test's
+// stub.
+func TestStartNode_ReadsServeTCPSeamBeforeSpawningAcceptLoop(t *testing.T) {
+	testenv.SetHome(t, t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+	writeRegistry(t, []registry.Service{
+		{Name: "db", Type: registry.TypeTCP, Target: "localhost:5432", Port: 5432},
+	})
+
+	oldNew := newTSNetServerFn
+	newTSNetServerFn = func(svc registry.Service, stateDir, authKey, controlURL string) tsnetServer {
+		return &fakeTSNetServer{status: &ipnstate.Status{Self: &ipnstate.PeerStatus{DNSName: "db.tailnet.ts.net."}}}
+	}
+	t.Cleanup(func() { newTSNetServerFn = oldNew })
+
+	oldServe := serveTCPFn
+	t.Cleanup(func() { serveTCPFn = oldServe })
+
+	var once sync.Once
+	served := make(chan struct{})
+	var variant atomic.Int32
+	// Both variants unblock the test, so whichever one the accept loop reads the
+	// test still terminates; only the recorded variant differs.
+	installedBeforeSync := func(context.Context, net.Listener, string, string) {
+		variant.Store(1)
+		once.Do(func() { close(served) })
+	}
+	swappedInAfterSync := func(context.Context, net.Listener, string, string) {
+		variant.Store(2)
+		once.Do(func() { close(served) })
+	}
+	serveTCPFn = installedBeforeSync
+
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(s.closeAllNodes)
+	if err := s.syncNodes(context.Background()); err != nil {
+		t.Fatalf("syncNodes() error = %v", err)
+	}
+
+	// Swap the seam the way the next test would.
+	serveTCPFn = swappedInAfterSync
+
+	select {
+	case <-served:
+	case <-time.After(5 * time.Second):
+		t.Fatal("tcp accept loop never invoked the serveTCP seam")
+	}
+	if got := variant.Load(); got != 1 {
+		t.Fatalf("accept loop invoked seam variant %d, want 1 (the value installed before syncNodes)", got)
+	}
+}
+
 func TestSyncNodes_RecoverableAgentFailuresAreBoundedAndVisible(t *testing.T) {
 	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
@@ -6555,5 +6617,69 @@ func TestRun_MissingRegistryStartsEmpty(t *testing.T) {
 	}
 	if !ready {
 		t.Fatal("server never marked ready with absent registry")
+	}
+}
+
+// TestStartLifecycleTicker_ReadsClockSeamBeforeSpawning is the ticker's half of
+// the seam-capture contract that TestStartNode_ReadsServeTCPSeamBeforeSpawningAcceptLoop
+// pins for the accept loop. The ticker outlives the call that starts it, so a
+// read of serverNowFn from inside it is unordered with respect to every later
+// write of that package-level variable -- and tests both install and restore
+// stubs there. Capturing the function value before the goroutine exists is what
+// keeps a later swap from reaching a ticker that is already running.
+func TestStartLifecycleTicker_ReadsClockSeamBeforeSpawning(t *testing.T) {
+	testenv.SetHome(t, t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatal(err)
+	}
+	writeRegistry(t, nil)
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	captured := time.Date(2026, 9, 16, 1, 0, 0, 0, time.UTC)
+	swapped := captured.Add(24 * time.Hour)
+
+	oldNow, oldInterval := serverNowFn, lifecycleTickerInterval
+	t.Cleanup(func() {
+		serverNowFn = oldNow
+		lifecycleTickerInterval = oldInterval
+	})
+	serverNowFn = func() time.Time { return captured }
+	// Long enough that the swap below lands before the first tick, so the
+	// assertion is about which function the goroutine holds rather than a race
+	// between two goroutines.
+	lifecycleTickerInterval = 150 * time.Millisecond
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	observed := make(chan time.Time, 1)
+	s.SetLifecycleReconcileFn(func(_ context.Context, now time.Time) (bool, error) {
+		select {
+		case observed <- now:
+		default:
+		}
+		return false, nil
+	})
+
+	done := s.startLifecycleTicker(ctx)
+	// The ticker is running; replace the seam it was started with.
+	serverNowFn = func() time.Time { return swapped }
+
+	select {
+	case got := <-observed:
+		if !got.Equal(captured) {
+			t.Fatalf("ticker used the seam installed after it started: got %v, want %v", got, captured)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("lifecycle ticker never reconciled")
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("lifecycle ticker did not stop")
 	}
 }

@@ -17,6 +17,20 @@ import (
 
 const serviceManagerGuardTripwireEnv = "TSLINK_SERVICE_MANAGER_GUARD_TRIPWIRE"
 
+// How to check by hand whether a test run took the live daemon down, on a
+// machine that has one: compare `runs`, `execs` and `last exit code` from
+// `launchctl print gui/<uid>/com.tslink.daemon` before and after, plus
+// `program`/`path`/`state`. A job that was booted out and re-bootstrapped
+// cannot keep `runs = 1` with `last exit code = (never exited)`.
+//
+// Do not diff the whole `launchctl print` output. `forks` is a live counter
+// that moves on its own: sampled ten times across 110 idle seconds on
+// 2026-09-16 with no tests running at all, it went 374 -> 378. Reading its
+// increase as evidence that the test suite disturbed the daemon is a wrong
+// conclusion this comment exists to prevent; an earlier 18-second sample
+// happened to land in a quiet window and showed no movement, which is how the
+// wrong conclusion nearly got drawn.
+
 // TestServiceManagerGuardIsInstalledForThisPackage is the cheap half of the
 // evidence: it proves TestMain actually handed the seams to the guard, which
 // is the one step that silently degrades to "no guard at all" if someone edits

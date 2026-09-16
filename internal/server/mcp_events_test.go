@@ -365,7 +365,7 @@ func TestMCPEventStreamEmitsKeepaliveFrames(t *testing.T) {
 		defer close(done)
 		serveMCPEventStream(rr, req, newEventStateCache(func(context.Context) (any, error) {
 			return mcpEventsTestState{Revision: 1}, nil
-		}), hub, 5*time.Millisecond)
+		}, time.Now), hub, 5*time.Millisecond, time.Now)
 	}()
 
 	deadline := time.Now().Add(5 * time.Second)
@@ -618,12 +618,20 @@ func TestMCPEventStreamSetsAWriteDeadlinePerFrame(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	req := httptest.NewRequest(http.MethodGet, MCPEventsPath, nil).WithContext(ctx)
 
+	// The stream's clock is injected and deliberately far from the real one, so
+	// the assertion below pins both properties at once: that a deadline is set
+	// at all, and that it is derived from the clock this stream was handed
+	// rather than from the package-level seam. With time.Now on both sides the
+	// two are indistinguishable and a regression to the seam passes silently.
+	streamNow := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	nowFn := func() time.Time { return streamNow }
+
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		serveMCPEventStream(writer, req, newEventStateCache(func(context.Context) (any, error) {
 			return mcpEventsTestState{Revision: 1}, nil
-		}), hub, time.Hour)
+		}, nowFn), hub, time.Hour, nowFn)
 	}()
 	waitForSubscribers(t, hub, 1)
 	cancel()
@@ -632,8 +640,9 @@ func TestMCPEventStreamSetsAWriteDeadlinePerFrame(t *testing.T) {
 	if base.writeDeadline.IsZero() {
 		t.Fatal("no write deadline was set while writing the snapshot frame")
 	}
-	if got := time.Until(base.writeDeadline); got > mcpEventsWriteTimeout+time.Minute {
-		t.Fatalf("write deadline is %s out, want about %s", got, mcpEventsWriteTimeout)
+	want := streamNow.Add(mcpEventsWriteTimeout)
+	if !base.writeDeadline.Equal(want) {
+		t.Fatalf("write deadline = %s, want %s (the injected clock plus %s)", base.writeDeadline, want, mcpEventsWriteTimeout)
 	}
 }
 
@@ -697,6 +706,7 @@ func TestMCPEventStateIsBuiltOncePerGeneration(t *testing.T) {
 	release := make(chan struct{})
 	cache := &eventStateCache{
 		maxAge: time.Minute,
+		nowFn:  time.Now,
 		build: func(context.Context) (any, error) {
 			builds.Add(1)
 			entered <- struct{}{}
@@ -758,6 +768,7 @@ func TestMCPEventStateCacheSharesBuildFailures(t *testing.T) {
 	wantErr := errors.New("registry unreadable")
 	cache := &eventStateCache{
 		maxAge: time.Minute,
+		nowFn:  time.Now,
 		build: func(context.Context) (any, error) {
 			builds.Add(1)
 			return nil, wantErr
@@ -781,14 +792,22 @@ func TestMCPEventStateCacheSharesBuildFailures(t *testing.T) {
 // keys on the publish sites being complete; this is what keeps a gap in them
 // from freezing a stream's state indefinitely.
 func TestMCPEventStateCacheRebuildsAfterMaxAge(t *testing.T) {
-	now := time.Now()
-	oldNow := serverNowFn
-	serverNowFn = func() time.Time { return now }
-	t.Cleanup(func() { serverNowFn = oldNow })
+	// The clock is injected into this cache rather than stubbed globally: the
+	// cache now carries its own nowFn, so this test controls exactly the clock
+	// it is about and leaves nothing for a concurrently running test to see.
+	// The base instant is deliberately far from the real wall clock. With it set
+	// to time.Now() this test cannot tell the injected clock from the real one:
+	// every site would compute the same freshness verdict either way, and a
+	// regression that reads the package-level seam again would pass unnoticed.
+	var mu sync.Mutex
+	now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	setNow := func(t time.Time) { mu.Lock(); now = t; mu.Unlock() }
+	readNow := func() time.Time { mu.Lock(); defer mu.Unlock(); return now }
 
 	var builds atomic.Int64
 	cache := &eventStateCache{
 		maxAge: time.Second,
+		nowFn:  readNow,
 		build: func(context.Context) (any, error) {
 			builds.Add(1)
 			return mcpEventsTestState{Revision: int(builds.Load())}, nil
@@ -804,7 +823,7 @@ func TestMCPEventStateCacheRebuildsAfterMaxAge(t *testing.T) {
 		t.Fatalf("builds inside the freshness window = %d, want 1", got)
 	}
 
-	now = now.Add(2 * time.Second)
+	setNow(readNow().Add(2 * time.Second))
 	if _, err := cache.get(context.Background(), 3); err != nil {
 		t.Fatalf("third get error = %v", err)
 	}
@@ -912,15 +931,23 @@ func TestMCPEventIDIsInstanceWideAndInstanceIsStable(t *testing.T) {
 // longer panics must succeed, so this is not asserting a permanently poisoned
 // cache.
 func TestMCPEventStateCacheReleasesWaitersWhenABuildPanics(t *testing.T) {
-	now := time.Now()
-	oldNow := serverNowFn
-	serverNowFn = func() time.Time { return now }
-	t.Cleanup(func() { serverNowFn = oldNow })
+	// Injected clock, not a global stub: the build below runs on its own
+	// goroutine, so a package-level stub restored by t.Cleanup would be read
+	// from a goroutine this test does not join.
+	// The base instant is deliberately far from the real wall clock. With it set
+	// to time.Now() this test cannot tell the injected clock from the real one:
+	// every site would compute the same freshness verdict either way, and a
+	// regression that reads the package-level seam again would pass unnoticed.
+	var mu sync.Mutex
+	now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	setNow := func(t time.Time) { mu.Lock(); now = t; mu.Unlock() }
+	readNow := func() time.Time { mu.Lock(); defer mu.Unlock(); return now }
 
 	var explode atomic.Bool
 	explode.Store(true)
 	cache := &eventStateCache{
 		maxAge: time.Second,
+		nowFn:  readNow,
 		build: func(context.Context) (any, error) {
 			if explode.Load() {
 				panic("builder exploded")
@@ -958,7 +985,7 @@ func TestMCPEventStateCacheReleasesWaitersWhenABuildPanics(t *testing.T) {
 
 	// Control: the cache recovers once the entry ages out.
 	explode.Store(false)
-	now = now.Add(2 * time.Second)
+	setNow(readNow().Add(2 * time.Second))
 	state, err := cache.get(context.Background(), 1)
 	if err != nil {
 		t.Fatalf("get() after the panicking entry aged out = %v, want a fresh build", err)
@@ -999,5 +1026,64 @@ func TestMCPEventStreamSurvivesAPanickingBuilderEndToEnd(t *testing.T) {
 	frame := readMCPEventFrame(t, reader)
 	if frame.Event != MCPEventSnapshot || !strings.Contains(frame.Data, `"revision":7`) {
 		t.Fatalf("stream after a panicking build = %+v, want a fresh snapshot", frame)
+	}
+}
+
+// TestMCPEventsHandlerCapturesTheClockAtConstruction pins the property that
+// keeps the stream path off the package-level clock seam: the handler reads
+// serverNowFn once, when the mux is assembled, and every per-request goroutine
+// below it uses that captured function value.
+//
+// Without this test the property lives only in the shape of the code, and the
+// shape is one careless serverNowFn() away from being silently undone — a
+// change that produces no failure here and no visible misbehaviour in
+// production, only a data race against whichever test next restores its stub.
+//
+// The assertion is positive rather than "no race is reported": the clock is
+// swapped *after* the handler exists, and the frame must still carry the value
+// installed before it. Reading the seam at emit time would produce the swapped
+// value, so this fails loudly if the capture is removed.
+func TestMCPEventsHandlerCapturesTheClockAtConstruction(t *testing.T) {
+	// Both sentinels are in the future on purpose: this same clock also feeds
+	// SetWriteDeadline, so a frozen past instant would expire the write before
+	// the frame left the server and the test would fail for the wrong reason.
+	captured := time.Date(2030, 9, 16, 1, 2, 3, 0, time.UTC)
+	swapped := time.Date(2031, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	oldNow := serverNowFn
+	t.Cleanup(func() { serverNowFn = oldNow })
+	serverNowFn = func() time.Time { return captured }
+
+	hub := newEventHub()
+	cp := &MCPControlPlane{
+		AllowedUsers: []string{"alice@example.com"},
+		Handler:      &mcpProbeHandler{},
+		EventsSnapshot: func(context.Context) (any, error) {
+			return mcpEventsTestState{Revision: 1}, nil
+		},
+	}
+	handler := newMCPControlPlaneHandler(cp, mcpEventsAllowedClient(t), hub)
+
+	// Swap the seam before a single request is served. Post-fix nothing below
+	// reads it again, so this write cannot race with the stream goroutine.
+	serverNowFn = func() time.Time { return swapped }
+
+	srv := httptest.NewServer(handler)
+	t.Cleanup(srv.Close)
+
+	reader, closeStream := mcpEventsOpenStream(t, srv)
+	defer closeStream()
+
+	frame := readMCPEventFrame(t, reader)
+	if frame.Event != MCPEventSnapshot {
+		t.Fatalf("first frame = %q, want %q", frame.Event, MCPEventSnapshot)
+	}
+	var payload MCPEventPayload
+	if err := json.Unmarshal([]byte(frame.Data), &payload); err != nil {
+		t.Fatalf("decode snapshot frame: %v", err)
+	}
+	want := captured.UTC().Format(time.RFC3339Nano)
+	if payload.EmittedAt != want {
+		t.Fatalf("emitted_at = %q, want %q (the clock captured when the handler was built, not the one installed afterwards)", payload.EmittedAt, want)
 	}
 }
