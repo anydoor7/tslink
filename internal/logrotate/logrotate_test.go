@@ -256,7 +256,7 @@ func TestCopyPrefixStopsAtTheSizeItWasGiven(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 
-	if err := copyPrefix(source, destination, 1500); err != nil {
+	if err := copyPrefix(source, destination, 1500, 0o600); err != nil {
 		t.Fatalf("copyPrefix: %v", err)
 	}
 	archived, err := os.ReadFile(destination)
@@ -291,5 +291,157 @@ func TestRotateArchivesExactlyWhatItMeasured(t *testing.T) {
 	}
 	if int64(len(archived)) != result.SizeBefore {
 		t.Fatalf("archive holds %d bytes but the decision was taken on %d", len(archived), result.SizeBefore)
+	}
+}
+
+// TestRotateMarksADeletedTargetDegraded covers a deleted target. Deleting
+// the log is the one skip the caller must keep hearing about: the descriptor
+// follows the deleted inode, the daemon keeps appending to a file no path
+// points at, and the same-inode check below correctly refuses to truncate it
+// forever after. Reported as an ordinary skip, that state is announced once and
+// then looks exactly like a healthy daemon under the size cap.
+//
+// The control is the same call one line earlier, with the file still present,
+// so a run where both go red cannot be read as the distinction working.
+func TestRotateMarksADeletedTargetDegraded(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "tslink.err.log")
+	handle := openSupervisedLog(t, target, bytes.Repeat([]byte("a"), 64))
+
+	control, err := RotateStderrLog(handle, target, 1<<20)
+	if err != nil {
+		t.Fatalf("control RotateStderrLog: %v", err)
+	}
+	if control.Rotated || control.Degraded {
+		t.Fatalf("control: an ordinary under-cap skip must not be degraded: %+v", control)
+	}
+
+	if err := os.Remove(target); err != nil {
+		t.Fatalf("remove the target: %v", err)
+	}
+	result, err := RotateStderrLog(handle, target, 1<<20)
+	if err != nil {
+		t.Fatalf("RotateStderrLog after delete: %v", err)
+	}
+	if result.Rotated {
+		t.Fatalf("a deleted target must not be rotated: %+v", result)
+	}
+	if !result.Degraded {
+		t.Fatalf("a deleted target left the result undegraded, so the caller will announce it once and go quiet: %+v", result)
+	}
+	// The text has to name the cause, not just say "unreadable": an operator
+	// reading it has to know the daemon is still writing somewhere.
+	if !strings.Contains(result.Reason, "no longer exists") {
+		t.Fatalf("reason does not say the file is gone: %q", result.Reason)
+	}
+}
+
+// TestRotateMarksAReplacedTargetDegraded is the other half of F3: `mv` rather
+// than `rm`. The same-inode check is what stops this call from truncating a
+// file the process does not own, and it is correct -- but it is also permanent,
+// so the refusal has to keep being audible.
+func TestRotateMarksAReplacedTargetDegraded(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "tslink.err.log")
+	handle := openSupervisedLog(t, target, bytes.Repeat([]byte("a"), 64))
+
+	if err := os.Rename(target, target+".moved"); err != nil {
+		t.Fatalf("move the target aside: %v", err)
+	}
+	if err := os.WriteFile(target, []byte("someone else's file\n"), 0o600); err != nil {
+		t.Fatalf("recreate the target: %v", err)
+	}
+
+	result, err := RotateStderrLog(handle, target, 1<<20)
+	if err != nil {
+		t.Fatalf("RotateStderrLog after replace: %v", err)
+	}
+	if result.Rotated {
+		t.Fatalf("a replaced target must not be rotated: %+v", result)
+	}
+	if !result.Degraded {
+		t.Fatalf("a replaced target left the result undegraded: %+v", result)
+	}
+	if data, err := os.ReadFile(target); err != nil || string(data) != "someone else's file\n" {
+		t.Fatalf("the replacement file was touched: data=%q err=%v", data, err)
+	}
+}
+
+// TestRotateRefusalsThatAreNormalStayUndegraded is the positive half of the
+// Degraded flag. An interactive run writes to a terminal and a test writes to a
+// pipe; marking those degraded would make every such run restate the same line
+// hourly, which is how a signal gets turned off.
+func TestRotateRefusalsThatAreNormalStayUndegraded(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "tslink.err.log")
+
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	t.Cleanup(func() { _ = reader.Close(); _ = writer.Close() })
+	if err := os.WriteFile(target, bytes.Repeat([]byte("a"), 4096), 0o600); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	result, err := RotateStderrLog(writer, target, 1024)
+	if err != nil {
+		t.Fatalf("RotateStderrLog on a pipe: %v", err)
+	}
+	if result.Degraded {
+		t.Fatalf("a pipe is the normal interactive shape, not a degradation: %+v", result)
+	}
+
+	// A descriptor without O_APPEND is the same kind of fact: fixed for the
+	// life of the process, stated once, and nothing changes by restating it.
+	plain, err := os.OpenFile(target, os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatalf("open without O_APPEND: %v", err)
+	}
+	t.Cleanup(func() { _ = plain.Close() })
+	noAppend, err := RotateStderrLog(plain, target, 1024)
+	if err != nil {
+		t.Fatalf("RotateStderrLog without O_APPEND: %v", err)
+	}
+	if noAppend.Degraded {
+		t.Fatalf("a non-append descriptor is refused, not degraded: %+v", noAppend)
+	}
+}
+
+// TestRotateArchiveKeepsTheLiveLogPermissions checks archive permissions. The
+// archive used to be chmod'd to a hardcoded 0600, so a log launchd created 0644
+// produced a .1 that the cross-user investigation it exists for could not read.
+//
+// The control is the 0600 case in the same test: if the archive simply copied
+// whatever mode CreateTemp produced, the 0644 case would fail while 0600 -- the
+// old hardcoded value -- would still pass by accident.
+func TestRotateArchiveKeepsTheLiveLogPermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix permission bits")
+	}
+	for _, mode := range []os.FileMode{0o644, 0o600} {
+		t.Run(mode.String(), func(t *testing.T) {
+			dir := t.TempDir()
+			target := filepath.Join(dir, "tslink.err.log")
+			handle := openSupervisedLog(t, target, bytes.Repeat([]byte("a"), 4096))
+			if err := os.Chmod(target, mode); err != nil {
+				t.Fatalf("chmod the live log: %v", err)
+			}
+
+			result, err := RotateStderrLog(handle, target, 1024)
+			if err != nil {
+				t.Fatalf("RotateStderrLog: %v", err)
+			}
+			if !result.Rotated {
+				t.Fatalf("expected a rotation: %+v", result)
+			}
+			info, err := os.Stat(result.ArchivePath)
+			if err != nil {
+				t.Fatalf("stat the archive: %v", err)
+			}
+			if got := info.Mode().Perm(); got != mode {
+				t.Fatalf("archive mode = %v, want the live log's %v", got, mode)
+			}
+		})
 	}
 }

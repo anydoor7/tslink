@@ -27,6 +27,11 @@ var (
 	// it guards against is measured in hundreds of kilobytes per day.
 	stderrLogRotateInterval = 5 * time.Minute
 	stderrLogMaxBytes       = logrotate.DefaultMaxBytes
+	// stderrLogDegradedRepeatInterval is how long a decision that will not fix
+	// itself stays quiet before it is stated again. It is an hour rather than
+	// zero (a line every tick, i.e. this code feeding the growth it bounds) and
+	// rather than never (the failure mode below).
+	stderrLogDegradedRepeatInterval = time.Hour
 )
 
 // startStderrLogRotation bounds the daemon's own stderr log for the lifetime of
@@ -43,6 +48,14 @@ var (
 // decisions are not. One line at startup is what separates "installed and
 // nothing to do" from "never installed"; a line every five minutes would be
 // this function contributing to the growth it exists to stop.
+//
+// Two decisions are exempt from that silence, because for them it is the wrong
+// default. A rotation error and a logrotate.Result marked Degraded both mean
+// rotation has stopped and will not restart on its own -- the operator deleted
+// the log, or something replaced it, and the daemon is still appending to the
+// old inode with nothing bounding it. Announced once and never again, that
+// state is indistinguishable in the log from a healthy daemon under the size
+// cap. They are restated every stderrLogDegradedRepeatInterval instead.
 func startStderrLogRotation(ctx context.Context) <-chan struct{} {
 	done := make(chan struct{})
 
@@ -57,20 +70,38 @@ func startStderrLogRotation(ctx context.Context) <-chan struct{} {
 	go func() {
 		defer close(done)
 		announced := ""
+		announcedAt := time.Time{}
+		// due reports whether this decision has earned a line: a change of
+		// decision always has, and a decision that will not fix itself has
+		// again once the repeat interval has passed.
+		due := func(reason string, degraded bool) bool {
+			return reason != announced ||
+				(degraded && time.Since(announcedAt) >= stderrLogDegradedRepeatInterval)
+		}
 		rotate := func() {
 			result, err := stderrLogRotateFn(stderrLogFileFn(), target, stderrLogMaxBytes)
 			switch {
 			case err != nil:
-				slog.Warn("stderr log rotation failed", "path", target, "error", err)
+				reason := "rotation returned an error: " + err.Error()
+				if due(reason, true) {
+					slog.Warn("stderr log rotation failed", "path", target, "error", err,
+						"repeat_after", stderrLogDegradedRepeatInterval)
+					announced, announcedAt = reason, time.Now()
+				}
 			case result.Rotated:
 				slog.Info("stderr log rotated", "path", target, "archive", result.ArchivePath, "bytes", result.SizeBefore)
-			case result.Reason != announced:
-				slog.Info("stderr log rotation active", "path", target,
-					"max_bytes", stderrLogMaxBytes, "decision", result.Reason, "bytes", result.SizeBefore)
-				announced = result.Reason
+			case due(result.Reason, result.Degraded):
+				if result.Degraded {
+					slog.Warn("stderr log rotation is off and will not resume on its own", "path", target,
+						"decision", result.Reason, "repeat_after", stderrLogDegradedRepeatInterval)
+				} else {
+					slog.Info("stderr log rotation active", "path", target,
+						"max_bytes", stderrLogMaxBytes, "decision", result.Reason, "bytes", result.SizeBefore)
+				}
+				announced, announcedAt = result.Reason, time.Now()
 			}
 			if result.Rotated {
-				announced = ""
+				announced, announcedAt = "", time.Time{}
 			}
 		}
 

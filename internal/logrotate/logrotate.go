@@ -51,7 +51,21 @@ var ErrCannotVerifyAppend = errors.New("cannot read the file descriptor's open f
 // carries the reason, so a caller that logs it says why nothing happened rather
 // than staying silent.
 type Result struct {
-	Rotated     bool
+	Rotated bool
+	// Degraded marks the skips that will not resolve on their own and that
+	// leave the file this package exists to bound growing without a cap.
+	//
+	// It exists because a caller that logs only on a change of Reason goes
+	// permanently silent after one line, and the states below are exactly the
+	// ones where silence is wrong: the operator deleted or replaced the log,
+	// the descriptor kept following the old inode, and nothing will ever print
+	// again or write an archive the operator could notice.
+	//
+	// The skips that are *not* degraded are the ones that are normal and
+	// unchanging for the whole life of the process: a terminal or a pipe, and
+	// a descriptor without O_APPEND. Announcing those on a repeat would make
+	// every interactive run noisier without telling anyone anything new.
+	Degraded    bool
 	Reason      string
 	SizeBefore  int64
 	ArchivePath string
@@ -73,10 +87,12 @@ type Result struct {
 // The archive is written to a temporary file in the same directory and renamed
 // into place, so a reader never observes a half-copied generation.
 //
-// What it loses, stated plainly: writes that land between the copy and the
-// truncate are discarded. There is no way to avoid that from inside the writing
-// process without stopping every other goroutine, and the window is the time it
-// takes to copy at most maxBytes.
+// What it loses, stated plainly: writes that land between the size snapshot and
+// the truncate are discarded. The snapshot is the f.Stat() at the top of this
+// function, not the copy, so the window is the whole of Stat -> preconditions
+// -> copy -> Truncate, which is wider than the copy alone. There is no way to
+// avoid that from inside the writing process without stopping every other
+// goroutine.
 func RotateStderrLog(f *os.File, target string, maxBytes int64) (Result, error) {
 	if f == nil {
 		return Result{Reason: "no descriptor"}, nil
@@ -99,10 +115,27 @@ func RotateStderrLog(f *os.File, target string, maxBytes int64) (Result, error) 
 
 	targetInfo, err := os.Stat(target)
 	if err != nil {
-		return Result{Reason: "the configured log file is unreadable: " + err.Error()}, nil
+		// Missing is its own case, and the worst one. The descriptor keeps
+		// following the deleted inode, so the daemon carries on writing to a
+		// file no path points at, this function can never truncate it again
+		// (the same-inode check below is what makes that refusal correct), and
+		// no archive will appear for anyone to notice. Saying "unreadable" for
+		// it would hide the one outcome the caller has to act on.
+		if os.IsNotExist(err) {
+			return Result{
+				Degraded: true,
+				Reason: "the configured log file no longer exists; the descriptor still points at the deleted file, " +
+					"so it keeps growing unbounded and unreachable until this process restarts",
+			}, nil
+		}
+		return Result{Degraded: true, Reason: "the configured log file is unreadable: " + err.Error()}, nil
 	}
 	if !os.SameFile(info, targetInfo) {
-		return Result{Reason: "the descriptor is not the configured log file"}, nil
+		return Result{
+			Degraded: true,
+			Reason: "the descriptor is not the configured log file; something replaced the file at that path " +
+				"and this process is still writing to the old one",
+		}, nil
 	}
 
 	size := info.Size()
@@ -111,7 +144,7 @@ func RotateStderrLog(f *os.File, target string, maxBytes int64) (Result, error) 
 	}
 
 	archivePath := target + ArchiveSuffix
-	if err := copyPrefix(target, archivePath, size); err != nil {
+	if err := copyPrefix(target, archivePath, size, info.Mode().Perm()); err != nil {
 		return Result{SizeBefore: size, ArchivePath: archivePath}, err
 	}
 	if err := f.Truncate(0); err != nil {
@@ -127,7 +160,7 @@ func RotateStderrLog(f *os.File, target string, maxBytes int64) (Result, error) 
 // reading to EOF: the file is being appended to concurrently, and an unbounded
 // copy would chase a moving end while the truncate that follows discards
 // whatever it managed to catch.
-func copyPrefix(source, destination string, size int64) error {
+func copyPrefix(source, destination string, size int64, mode os.FileMode) error {
 	in, err := os.Open(source)
 	if err != nil {
 		return fmt.Errorf("open the log for archiving: %w", err)
@@ -143,13 +176,24 @@ func copyPrefix(source, destination string, size int64) error {
 		_ = temporary.Close()
 		_ = os.Remove(temporaryPath)
 	}
-	if err := temporary.Chmod(0o600); err != nil {
+	// The archive carries the live log's own permissions rather than a fixed
+	// 0600. launchd creates the log 0644; an archive that silently narrowed to
+	// 0600 would be unreadable to exactly the cross-user investigation the
+	// retained generation exists for.
+	if err := temporary.Chmod(mode); err != nil {
 		cleanup()
-		return fmt.Errorf("restrict the archive temporary: %w", err)
+		return fmt.Errorf("set the archive permissions: %w", err)
 	}
 	if _, err := io.Copy(temporary, io.LimitReader(in, size)); err != nil {
 		cleanup()
 		return fmt.Errorf("copy the log into the archive: %w", err)
+	}
+	// Flush before the rename. Without it a crash or power loss between the
+	// two can leave a published .1 whose data blocks never reached the disk --
+	// an archive that exists, is named, and is empty.
+	if err := temporary.Sync(); err != nil {
+		cleanup()
+		return fmt.Errorf("flush the archive temporary: %w", err)
 	}
 	if err := temporary.Close(); err != nil {
 		_ = os.Remove(temporaryPath)
