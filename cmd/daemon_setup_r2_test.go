@@ -88,10 +88,41 @@ func TestBootstrapEnrollmentAcrossServices(t *testing.T) {
 			if valid {
 				wait = 30 * time.Second
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+			// What the valid scenario has to prove is that a stored handoff
+			// short-circuits the wait rather than sitting in the poll loop
+			// until the 30s timer or the context deadline.
+			//
+			// It used to prove that with a one-second wall-clock threshold
+			// against a 1500ms context: 500ms of margin against scheduler
+			// jitter. The full suite crossed it (1.2678s measured on
+			// 2026-09-16 under `go test ./...`, while 12 isolated runs of this
+			// test failed zero times), so the assertion was reporting machine
+			// load rather than the error condition
+			//
+			// The criterion is the error's identity instead, and it still
+			// catches the same regression for a reason that does not depend on
+			// how fast the machine is. The fixture is static: nothing mutates
+			// the registry, the snapshot or the handoff file while the call
+			// runs, so every poll inside the wait loop re-reads the same state
+			// and returns the same error. The loop therefore has exactly two
+			// exits, ctx.Done and the wait timer, and ctxBudget is kept below
+			// wait so ctx.Done is the one that fires. A call that waited out
+			// the wait comes back as context.DeadlineExceeded; a call that
+			// short-circuited comes back as the enrollment error. Those are
+			// disjoint values, not two points on a timeline.
+			ctxBudget := 1500 * time.Millisecond
+			if valid && ctxBudget >= wait {
+				t.Fatalf("the context budget (%s) must stay below the wait (%s), or a call that sat in the "+
+					"wait loop would return the not-ready error instead of a deadline and this assertion would stop discriminating",
+					ctxBudget, wait)
+			}
+
+			ctx, cancel := context.WithTimeout(context.Background(), ctxBudget)
 			defer cancel()
-			started := time.Now()
 			result, err := buildAddResult(ctx, svc, true, pidPath, regPath, snapshotPath, wait)
+			if errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("add sat in its wait loop instead of short-circuiting on the stored handoff: %v", err)
+			}
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -101,12 +132,16 @@ func TestBootstrapEnrollmentAcrossServices(t *testing.T) {
 			_, err = resolveServiceURL(ctx, pidPath, regPath, snapshotPath, "app2", wait)
 			code, _ := registry.ErrorCode(err)
 			if valid {
+				// Named before the shape assertions below so the failure says
+				// which defect it is: a deadline here means the enrollment
+				// classification stopped short-circuiting and the call went
+				// into the poll loop, not that the error shape drifted.
+				if errors.Is(err, context.DeadlineExceeded) {
+					t.Fatalf("resolveServiceURL waited out its 30s wait instead of returning the stored enrollment handoff: %v", err)
+				}
 				var next interface{ NextCommands() []string }
 				if code != "enrollment_required" || !errors.As(err, &next) || !strings.Contains(strings.Join(next.NextCommands(), " "), handoff.AuthURL) || strings.Contains(strings.Join(next.NextCommands(), " "), "tslink url") {
 					t.Fatalf("URL repair loop: %v", err)
-				}
-				if time.Since(started) > time.Second {
-					t.Fatalf("enrollment was delayed: %s", time.Since(started))
 				}
 			} else if code != registry.CodeURLNotReady {
 				t.Fatalf("stale/wrong process handoff accepted: %v", err)
