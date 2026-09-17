@@ -2,6 +2,7 @@ package testenv
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -267,4 +268,63 @@ func environmentRestorer(name string) func() {
 		}
 		_ = os.Unsetenv(name)
 	}
+}
+
+// AllowRealServiceManagerInChildProcesses takes the planted shim directory back
+// out of PATH, so that a test which must drive the caller's real service
+// manager reaches it instead of a fake that answers
+// ServiceManagerShimExitCode for everything.
+//
+// It exists because the shim's protection is not selective: it rewrites this
+// process's PATH once, and every child that inherits the environment resolves
+// the manager to a fake. That is the right default and it is also wrong for
+// exactly one test in this repo -- the systemd install e2e, which is gated
+// behind TSLINK_SYSTEMD_E2E=1, refuses to run against anything that looks like
+// a real installation, and exists precisely to drive real systemd inside a
+// disposable VM. Without an opt-out that test does not fail; it silently
+// verifies the shim.
+//
+// The opt-out is deliberately loud and narrow:
+//   - it requires a reason, and the reason is printed in the guard's teardown
+//     report alongside the seam-level AllowReal opt-ins, so a run that took it
+//     cannot look like a run that did not;
+//   - it fails rather than degrading when no shim is installed, because a
+//     caller asking for this has decided the fakes are in its way, and quietly
+//     returning a no-op would leave it believing it got what it asked for;
+//   - it only moves PATH. The in-process seams stay blocked; reaching those
+//     still requires ServiceManagerGuard.AllowReal.
+//
+// Call the returned function to put PATH back.
+func AllowRealServiceManagerInChildProcesses(reason string) (func(), error) {
+	if reason == "" {
+		return nil, errors.New("testenv: AllowRealServiceManagerInChildProcesses requires a reason")
+	}
+	guard := ActiveServiceManagerGuard()
+	if guard == nil {
+		return nil, errors.New("testenv: no service manager guard is active, so there is no shim to opt out of; " +
+			"this call belongs in a package whose TestMain runs RunWithServiceManagerGuard")
+	}
+	shim := guard.ServiceManagerShim()
+	if shim == nil || shim.Dir == "" {
+		return nil, errors.New("testenv: the active guard installed no PATH shim, so there is nothing to opt out of")
+	}
+
+	restorePath := environmentRestorer("PATH")
+	if err := os.Setenv("PATH", pathWithoutDir(os.Getenv("PATH"), shim.Dir)); err != nil {
+		return nil, err
+	}
+	guard.recordOptIn("child processes reach the real service manager: " + reason)
+	return restorePath, nil
+}
+
+// pathWithoutDir returns path with every entry equal to dir removed.
+func pathWithoutDir(path, dir string) string {
+	kept := make([]string, 0, len(filepath.SplitList(path)))
+	for _, entry := range filepath.SplitList(path) {
+		if entry == dir {
+			continue
+		}
+		kept = append(kept, entry)
+	}
+	return strings.Join(kept, string(os.PathListSeparator))
 }

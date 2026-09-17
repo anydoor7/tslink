@@ -185,6 +185,10 @@ func TestServiceManagerShimLogStaysEmptyWithoutAServiceManagerCall(t *testing.T)
 	if err != nil {
 		t.Fatalf("plant shims: %v", err)
 	}
+	// An empty log means nothing unless fakes were there to write into it.
+	if len(planted) == 0 {
+		t.Fatal("no fake was planted, so an empty log is not evidence that no manager was called")
+	}
 
 	probe := exec.Command(compiledTSLinkBinary(t), "--version")
 	probe.Env = append(os.Environ(),

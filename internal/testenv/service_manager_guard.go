@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"runtime"
 	"runtime/debug"
 	"sort"
 	"strings"
@@ -206,13 +207,22 @@ func (g *ServiceManagerGuard) AllowReal(manager, reason string) func() {
 	}
 	g.mu.Lock()
 	g.allowed[manager] = reason
-	g.optIns = append(g.optIns, manager+": "+reason)
 	g.mu.Unlock()
+	g.recordOptIn(manager + ": " + reason)
 	return func() {
 		g.mu.Lock()
 		delete(g.allowed, manager)
 		g.mu.Unlock()
 	}
+}
+
+// recordOptIn adds one line to the audit list Report prints. Every deliberate
+// weakening of the guard goes through here, so no opt-in can exist without
+// appearing in the teardown report.
+func (g *ServiceManagerGuard) recordOptIn(entry string) {
+	g.mu.Lock()
+	g.optIns = append(g.optIns, entry)
+	g.mu.Unlock()
 }
 
 // Attempts returns the blocked calls recorded so far.
@@ -287,7 +297,9 @@ func (g *ServiceManagerGuard) ServiceManagerShim() *ServiceManagerPathShim {
 //   - a child that redirects ServiceManagerShimLogEnv at its own file. That is
 //     how the shim's own tests keep their deliberate calls out of this report,
 //     and it is equally available to a test that wants to hide one.
-//   - anything on Windows, where no fake is planted at all.
+//   - anything on Windows, where no fake is planted at all. The count line
+//     says so in that case rather than printing a zero that reads like
+//     coverage.
 func (g *ServiceManagerGuard) reportShimCalls() bool {
 	if g.shim == nil {
 		return false
@@ -300,8 +312,18 @@ func (g *ServiceManagerGuard) reportShimCalls() bool {
 		return true
 	}
 	if envIsTrue(os.Getenv(ServiceManagerGuardReportEnv)) || len(calls) > 0 {
-		fmt.Fprintf(os.Stderr, "service manager guard [%s]: child process service manager calls intercepted = %d\n",
-			g.pkg, len(calls))
+		// "intercepted = 0" is only evidence when something was there to do the
+		// intercepting. On a platform where no fake is planted the count is zero
+		// by construction, and printing the same sentence for both states hands
+		// a CI operator an audit line that claims coverage this run never had.
+		if len(g.shim.Planted) == 0 {
+			fmt.Fprintf(os.Stderr, "service manager guard [%s]: child process service manager calls intercepted = "+
+				"not measured: no fake is planted on %s, so a child process reaches the real binaries and leaves no record here\n",
+				g.pkg, runtime.GOOS)
+		} else {
+			fmt.Fprintf(os.Stderr, "service manager guard [%s]: child process service manager calls intercepted = %d\n",
+				g.pkg, len(calls))
+		}
 	}
 	failed := false
 	for i, call := range calls {

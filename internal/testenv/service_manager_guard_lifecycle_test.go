@@ -4,6 +4,9 @@ import (
 	"errors"
 	"io"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -328,5 +331,163 @@ func TestInstallRejectsMalformedSeams(t *testing.T) {
 			}()
 			NewServiceManagerGuard("malformed").Install(seam)
 		})
+	}
+}
+
+// TestReportDistinguishesAnUnplantedShimFromZeroInterceptions covers the unplanted-shim
+// negative case. Windows plants no fake at all, yet the teardown still printed
+// "child process service manager calls intercepted = 0" -- a sentence whose
+// meaning on unix is "the shim was in front of every child and none called a
+// manager" and whose meaning there is "nothing was in front of anything". No
+// field told the two apart, so the run that protected nothing emitted the same
+// audit line as the run that protected everything.
+//
+// The control is the unix shape in the same shape of call, so a batch where
+// both go red (because reportShimCalls stopped printing at all) cannot be read
+// as the check working.
+func TestReportDistinguishesAnUnplantedShimFromZeroInterceptions(t *testing.T) {
+	t.Setenv(ServiceManagerGuardReportEnv, "1")
+
+	newGuard := func(planted []string) *ServiceManagerGuard {
+		t.Helper()
+		logPath := filepath.Join(t.TempDir(), "service-manager-calls.log")
+		if err := os.WriteFile(logPath, nil, 0o600); err != nil {
+			t.Fatalf("create the shim log: %v", err)
+		}
+		guard := NewServiceManagerGuard("shimreport")
+		guard.shim = &ServiceManagerPathShim{Dir: filepath.Dir(logPath), LogPath: logPath, Planted: planted}
+		return guard
+	}
+
+	// Control: fakes were planted and the log is empty. This is the only state
+	// in which a bare zero is evidence, and it must keep reading exactly as it
+	// did before, because the whole-suite gate pins this text byte for byte.
+	planted := newGuard(serviceManagerShimBinaries)
+	control := captureStderr(t, func() {
+		if planted.reportShimCalls() {
+			t.Error("an empty log must not fail the package")
+		}
+	})
+	if control != "service manager guard [shimreport]: child process service manager calls intercepted = 0\n" {
+		t.Fatalf("control stderr = %q", control)
+	}
+
+	// Negative: nothing was planted. The count is zero by construction, so the
+	// line must not claim a measurement.
+	unplanted := newGuard(nil)
+	log := captureStderr(t, func() {
+		if unplanted.reportShimCalls() {
+			t.Error("an unplanted shim must not fail the package either; it is a platform fact, not a test defect")
+		}
+	})
+	if strings.Contains(log, "intercepted = 0\n") {
+		t.Fatalf("an unplanted shim reported a measured zero:\n%s", log)
+	}
+	if !strings.Contains(log, "not measured") || !strings.Contains(log, runtime.GOOS) {
+		t.Fatalf("stderr does not say the count was never measured, or on which platform:\n%s", log)
+	}
+}
+
+// TestAllowRealServiceManagerInChildProcessesIsExplicitAndAudited covers the
+// explicit opt-out. The gated systemd e2e must be able to reach the caller's
+// real manager, and until this existed the shim silently answered its calls
+// instead -- an e2e that claims in its own doc comment to drive real systemd
+// and in fact drives a fake is worse than no e2e.
+//
+// Resolution is checked with exec.LookPath rather than by running anything:
+// after the opt-out the bare name resolves to the machine's real launchctl, and
+// this test has no business executing that.
+func TestAllowRealServiceManagerInChildProcessesIsExplicitAndAudited(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no fake is planted on Windows, so there is nothing to opt out of")
+	}
+	t.Setenv(ServiceManagerGuardReportEnv, "")
+
+	code := RunWithServiceManagerGuard(func() int {
+		guard := ActiveServiceManagerGuard()
+		shim := guard.ServiceManagerShim()
+
+		// Control: with the shim installed, a bare manager name resolves into
+		// the planted directory. Every assertion below is measured against it.
+		resolved, err := exec.LookPath(serviceManagerShimBinaries[0])
+		if err != nil {
+			t.Errorf("control: %s does not resolve at all: %v", serviceManagerShimBinaries[0], err)
+			return 0
+		}
+		if filepath.Dir(resolved) != shim.Dir {
+			t.Errorf("control: %s resolved to %s, want a fake inside %s", serviceManagerShimBinaries[0], resolved, shim.Dir)
+			return 0
+		}
+
+		// An opt-out with no reason is refused: the reason is the audit record.
+		if _, err := AllowRealServiceManagerInChildProcesses(""); err == nil {
+			t.Error("an opt-out with no reason was accepted")
+		}
+
+		restore, err := AllowRealServiceManagerInChildProcesses("unit test: prove the shim leaves PATH")
+		if err != nil {
+			t.Errorf("opt-out: %v", err)
+			return 0
+		}
+		after, err := exec.LookPath(serviceManagerShimBinaries[0])
+		if err == nil && filepath.Dir(after) == shim.Dir {
+			t.Errorf("after the opt-out %s still resolved to the fake at %s", serviceManagerShimBinaries[0], after)
+		}
+		if strings.Contains(os.Getenv("PATH"), shim.Dir) {
+			t.Errorf("the shim directory is still on PATH after the opt-out: %s", os.Getenv("PATH"))
+		}
+
+		restore()
+		back, err := exec.LookPath(serviceManagerShimBinaries[0])
+		if err != nil || filepath.Dir(back) != shim.Dir {
+			t.Errorf("restore did not put the shim back: %s (%v)", back, err)
+		}
+		return 0
+	}, "optout")
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0", code)
+	}
+
+	// The opt-out has to be visible without the report env set, for the same
+	// reason the seam-level AllowReal is: CI is exactly where nobody is
+	// watching, and an unaudited weakening of the guard is the thing that makes
+	// the next incident unexplainable.
+	guard := NewServiceManagerGuard("optout")
+	logPath := filepath.Join(t.TempDir(), "calls.log")
+	if err := os.WriteFile(logPath, nil, 0o600); err != nil {
+		t.Fatalf("seed the log: %v", err)
+	}
+	guard.shim = &ServiceManagerPathShim{Dir: filepath.Dir(logPath), LogPath: logPath, Planted: serviceManagerShimBinaries}
+	silent := captureStderr(t, func() { guard.Report() })
+	if silent != "" {
+		t.Fatalf("control: a guard with no opt-ins must stay silent, got:\n%s", silent)
+	}
+	guard.recordOptIn("child processes reach the real service manager: a gated e2e")
+	report := captureStderr(t, func() { guard.Report() })
+	if !strings.Contains(report, "explicit real opt-in child processes reach the real service manager: a gated e2e") {
+		t.Fatalf("the child-process opt-out is missing from the report:\n%s", report)
+	}
+}
+
+// TestAllowRealServiceManagerInChildProcessesFailsWithoutAGuard pins the
+// fail-closed direction. A caller reaching for this has already decided the
+// fakes are in its way; handing it a silent no-op leaves it believing it got
+// what it asked for, which is how the e2e came to verify the shim in the first
+// place.
+func TestAllowRealServiceManagerInChildProcessesFailsWithoutAGuard(t *testing.T) {
+	if ActiveServiceManagerGuard() != nil {
+		t.Skip("a guard is active in this process; this case needs the bare state")
+	}
+	before := os.Getenv("PATH")
+	restore, err := AllowRealServiceManagerInChildProcesses("no guard is installed")
+	if err == nil {
+		if restore != nil {
+			restore()
+		}
+		t.Fatal("opting out with no guard installed succeeded; a no-op here reads as protection removed")
+	}
+	if os.Getenv("PATH") != before {
+		t.Fatal("a refused opt-out still changed PATH")
 	}
 }

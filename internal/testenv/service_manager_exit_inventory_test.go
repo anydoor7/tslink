@@ -121,7 +121,13 @@ var serviceManagerTestExecAllowlist = map[string]serviceManagerExitEntry{
 	// Opt-in e2e, off unless TSLINK_SYSTEMD_E2E=1, and it refuses to run
 	// against anything that looks like a real installation. It drives the
 	// caller's real `systemctl --user` on purpose; that is the test.
-	"cmd/install_linux_e2e_test.go": {note: "gated real-systemd e2e (TSLINK_SYSTEMD_E2E=1)", occurrences: 3},
+	//
+	// "On purpose" became conditional when the PATH shim arrived: the shim is
+	// not selective, so from 0dd23bf until 2026-09-17 this e2e resolved
+	// systemctl to a fake in both halves and verified the shim instead of
+	// systemd. It now calls testenv.AllowRealServiceManagerInChildProcesses
+	// after its own gate, and the opt-in is named in the teardown report.
+	"cmd/install_linux_e2e_test.go": {note: "gated real-systemd e2e (TSLINK_SYSTEMD_E2E=1), explicit shim opt-out", occurrences: 3},
 	// The PATH shim's own probes. They are written with the binary inline so
 	// that this scan sees them: a probe that resolved the name from a variable
 	// would be a real process exit hidden from the one check built to find it.
@@ -153,7 +159,7 @@ var serviceManagerTestArgPassthroughAllowlist = map[string]serviceManagerExitEnt
 	"cmd/registry_check_filesystem_unix_test.go": {note: "filesystem probe helper; PATH shim covers the child", occurrences: 1},
 	// The gated real-systemd e2e forwards to systemctl directly; it is on the
 	// exec allowlist above for the same reason.
-	"cmd/install_linux_e2e_test.go": {note: "gated real-systemd e2e (TSLINK_SYSTEMD_E2E=1)", occurrences: 2},
+	"cmd/install_linux_e2e_test.go": {note: "gated real-systemd e2e (TSLINK_SYSTEMD_E2E=1), explicit shim opt-out", occurrences: 2},
 	// The PATH shim's own probes, whose targets do not exist.
 	"cmd/service_manager_path_shim_unix_test.go": {note: "PATH shim probes, nonexistent targets only", occurrences: 2},
 	// Helpers that re-run this repo's own test executable as a daemon, and the

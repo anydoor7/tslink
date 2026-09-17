@@ -21,6 +21,17 @@ func plantForTest(t *testing.T) (dir, logPath string) {
 	if err != nil {
 		t.Fatalf("plant shims: %v", err)
 	}
+	// The planted list is what the teardown report uses to tell "no child
+	// called a manager" apart from "no fake existed to call". A planter that
+	// reported fewer names than it wrote would make that distinction lie.
+	if len(planted) != len(serviceManagerShimBinaries) {
+		t.Fatalf("planted = %v, want one entry per %v", planted, serviceManagerShimBinaries)
+	}
+	for _, binary := range planted {
+		if _, err := os.Stat(filepath.Join(dir, binary)); err != nil {
+			t.Fatalf("planted names %s but it is not on disk: %v", binary, err)
+		}
+	}
 	return dir, logPath
 }
 

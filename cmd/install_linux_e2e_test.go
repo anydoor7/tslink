@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/monody0007/tslink/internal/testenv"
 )
 
 // Real-systemd e2e for the install settle window (the Round C-2 defect: install
@@ -50,6 +52,7 @@ const systemdE2ESentinel = "E2E_SENTINEL: install claimed success while the unit
 
 func TestSystemdInstallE2E(t *testing.T) {
 	good, bad := systemdE2EBinaries(t)
+	systemdE2EAllowRealSystemctl(t)
 	systemdE2ERequireUserManager(t)
 	systemdE2ERefuseForeignUnit(t, good, bad)
 	systemdE2ERefuseStoredCredential(t, good)
@@ -110,6 +113,31 @@ func TestSystemdInstallE2E(t *testing.T) {
 			t.Fatalf("bad fresh install: unit is %v, want the crash loop systemd actually entered (auto-restart or failed)", props)
 		}
 	})
+}
+
+// systemdE2EAllowRealSystemctl takes the guard's child-process PATH shim out of
+// PATH for this test.
+//
+// It is needed because that shim is not selective: testenv rewrites the test
+// binary's PATH once, so both halves of this e2e -- the systemctl commands this
+// file builds directly and the compiled tslink binaries it spawns -- resolve the
+// manager to a fake that refuses everything with exit 97. Without this call the e2e does not
+// fail loudly; it passes or fails against the shim while claiming in its own doc
+// comment to drive real systemd, which is worse than not having the e2e.
+//
+// It runs after systemdE2EBinaries, so the gate decides first: a run without
+// TSLINK_SYSTEMD_E2E=1 skips before the shim is ever weakened. The opt-in is
+// recorded in the guard's teardown report, so a run that took it is
+// distinguishable from one that did not.
+func systemdE2EAllowRealSystemctl(t *testing.T) {
+	t.Helper()
+	restore, err := testenv.AllowRealServiceManagerInChildProcesses(
+		"TSLINK_SYSTEMD_E2E drives a real systemctl --user inside a disposable session; " +
+			"the planted fake would answer every call with exit 97")
+	if err != nil {
+		t.Fatalf("cannot reach the real systemd user manager: %v", err)
+	}
+	t.Cleanup(restore)
 }
 
 func systemdE2EBinaries(t *testing.T) (good, bad string) {
