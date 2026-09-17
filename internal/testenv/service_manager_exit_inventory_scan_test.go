@@ -17,6 +17,19 @@ func execCallText(binary, verb string) string {
 	return "\t_, _ = exec.Command(" + strconv.Quote(binary) + ", " + strconv.Quote(verb) + ").CombinedOutput()\n"
 }
 
+// argSpreadCloser is written in pieces so that no line in this file matches
+// serviceManagerTestArgPassthroughPattern itself, for the same reason
+// execCallText quotes its binary at runtime: a scanner's own test file must not
+// become one of its findings.
+var argSpreadCloser = "." + ".." + ")"
+
+// passthroughCallText builds the source text for a spawn that forwards
+// caller-supplied arguments verbatim. It names no service manager, which is
+// exactly why the two scans above cannot see it.
+func passthroughCallText(program string) string {
+	return "\t_, _ = exec.Command(" + program + ", args" + argSpreadCloser + "\n"
+}
+
 // literalText is a non-exec mention of a manager name, the shape the
 // non-test inventory counts.
 func literalText(binary string) string {
@@ -44,6 +57,7 @@ func syntheticTree(t *testing.T) string {
 	writeFile(t, root, "cmd/install_darwin.go", "package cmd\n\nfunc a() {\n"+literalText("launchctl")+"}\n")
 	writeFile(t, root, "cmd/quiet.go", "package cmd\n\nfunc b() {}\n")
 	writeFile(t, root, "cmd/e2e_test.go", "package cmd\n\nfunc c() {\n"+execCallText("systemctl", "--user")+"}\n")
+	writeFile(t, root, "cmd/passthrough_test.go", "package cmd\n\nfunc d() {\n"+passthroughCallText("binary")+"}\n")
 	return root
 }
 
@@ -53,6 +67,19 @@ var syntheticInventory = map[string]serviceManagerExitEntry{
 
 var syntheticTestAllowlist = map[string]serviceManagerExitEntry{
 	"cmd/e2e_test.go": {note: "gated e2e", occurrences: 1},
+}
+
+var syntheticPassthroughAllowlist = map[string]serviceManagerExitEntry{
+	"cmd/passthrough_test.go": {note: "reviewed compiled-binary helper", occurrences: 1},
+}
+
+func scanPassthrough(t *testing.T, root string) map[string]int {
+	t.Helper()
+	found, err := scanServiceManagerTestArgPassthroughs(root)
+	if err != nil {
+		t.Fatalf("scan argument pass-throughs: %v", err)
+	}
+	return found
 }
 
 func scanBoth(t *testing.T, root string) (nonTest, testFiles map[string]int) {
@@ -88,6 +115,84 @@ func TestInventoryScannerControlGroupIsClean(t *testing.T) {
 	unexpected, missing, miscounted = diffServiceManagerInventory(testFiles, syntheticTestAllowlist)
 	if len(unexpected)+len(missing)+len(miscounted) > 0 {
 		t.Fatalf("control test diff not clean: unexpected=%v missing=%v miscounted=%v", unexpected, missing, miscounted)
+	}
+
+	passthrough := scanPassthrough(t, root)
+	if got := passthrough["cmd/passthrough_test.go"]; got != 1 {
+		t.Fatalf("control: reviewed pass-through file counted %d spreads, want 1", got)
+	}
+	// The three scans must stay disjoint on the corpus: a pass-through names no
+	// manager, so seeing it in either manager scan would mean a count somewhere
+	// is really two findings stacked.
+	if _, ok := testFiles["cmd/passthrough_test.go"]; ok {
+		t.Fatal("the manager exec scan matched a pass-through that names no manager")
+	}
+	if _, ok := passthrough["cmd/e2e_test.go"]; ok {
+		t.Fatal("the pass-through scan matched an exec with no argument spread")
+	}
+	unexpected, missing, miscounted = diffServiceManagerInventory(passthrough, syntheticPassthroughAllowlist)
+	if len(unexpected)+len(missing)+len(miscounted) > 0 {
+		t.Fatalf("control pass-through diff not clean: unexpected=%v missing=%v miscounted=%v", unexpected, missing, miscounted)
+	}
+}
+
+// TestPassthroughScannerFlagsANewFile is the omission half: a helper nobody
+// reviewed starts forwarding caller-supplied arguments into a spawned process.
+func TestPassthroughScannerFlagsANewFile(t *testing.T) {
+	root := syntheticTree(t)
+	writeFile(t, root, "cmd/rogue_runner_test.go", "package cmd\n\nfunc e() {\n"+passthroughCallText("compiledTSLinkBinary(t)")+"}\n")
+
+	unexpected, missing, miscounted := diffServiceManagerInventory(scanPassthrough(t, root), syntheticPassthroughAllowlist)
+	if len(unexpected) != 1 || unexpected[0] != "cmd/rogue_runner_test.go" {
+		t.Fatalf("unexpected = %v, want [cmd/rogue_runner_test.go]", unexpected)
+	}
+	if len(missing)+len(miscounted) != 0 {
+		t.Fatalf("a new file must not disturb the other directions: missing=%v miscounted=%v", missing, miscounted)
+	}
+}
+
+// TestPassthroughScannerFlagsAnExtraSpreadInsideAReviewedFile keeps a reviewed
+// entry from becoming a blanket permit for the file it names.
+func TestPassthroughScannerFlagsAnExtraSpreadInsideAReviewedFile(t *testing.T) {
+	root := syntheticTree(t)
+	writeFile(t, root, "cmd/passthrough_test.go",
+		"package cmd\n\nfunc d() {\n"+passthroughCallText("binary")+passthroughCallText("other")+"}\n")
+
+	found := scanPassthrough(t, root)
+	if got := found["cmd/passthrough_test.go"]; got != 2 {
+		t.Fatalf("mutated file counted %d spreads, want 2", got)
+	}
+	unexpected, missing, miscounted := diffServiceManagerInventory(found, syntheticPassthroughAllowlist)
+	if len(miscounted) != 1 {
+		t.Fatalf("miscounted = %v, want one entry for cmd/passthrough_test.go", miscounted)
+	}
+	if len(unexpected)+len(missing) != 0 {
+		t.Fatalf("an extra spread must show up as a count change only: unexpected=%v missing=%v", unexpected, missing)
+	}
+}
+
+// TestPassthroughScannerFlagsAReviewedFileThatStoppedMatching is the scanner's
+// own tripwire. Without it, a broken pattern finds nothing and every direction
+// of the diff reports nothing, which reads exactly like a clean repository.
+func TestPassthroughScannerFlagsAReviewedFileThatStoppedMatching(t *testing.T) {
+	root := syntheticTree(t)
+	writeFile(t, root, "cmd/passthrough_test.go", "package cmd\n\nfunc d() {}\n")
+
+	_, missing, _ := diffServiceManagerInventory(scanPassthrough(t, root), syntheticPassthroughAllowlist)
+	if len(missing) != 1 || missing[0] != "cmd/passthrough_test.go" {
+		t.Fatalf("missing = %v, want [cmd/passthrough_test.go]", missing)
+	}
+}
+
+// TestPassthroughScannerIgnoresAFixedArgumentList guards the opposite error. A
+// scan that fired on every exec in every test file would be turned off by its
+// own noise within a week.
+func TestPassthroughScannerIgnoresAFixedArgumentList(t *testing.T) {
+	root := syntheticTree(t)
+	writeFile(t, root, "cmd/fixed_args_test.go", "package cmd\n\nfunc f() {\n"+execCallText("sleep", "30")+"}\n")
+
+	if n, ok := scanPassthrough(t, root)["cmd/fixed_args_test.go"]; ok {
+		t.Fatalf("a spawn with a fixed argument list counted %d times, want no entry", n)
 	}
 }
 

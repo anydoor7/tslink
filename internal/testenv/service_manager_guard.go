@@ -73,6 +73,11 @@ type installedSeam struct {
 type ServiceManagerGuard struct {
 	pkg string
 
+	// shim is the child-process half. The seams above only exist inside this
+	// process; a test that runs a compiled binary hands the work to a process
+	// where no seam was ever replaced. See InstallServiceManagerPathShim.
+	shim *ServiceManagerPathShim
+
 	mu        sync.Mutex
 	attempts  []ServiceManagerAttempt
 	real      map[string]ServiceManagerCall
@@ -258,6 +263,62 @@ func envIsTrue(value string) bool {
 	}
 }
 
+// ServiceManagerShim returns the child-process PATH shim this guard installed,
+// or nil when none was installed. A test uses it to find the default log and to
+// point a child at a log of its own.
+func (g *ServiceManagerGuard) ServiceManagerShim() *ServiceManagerPathShim {
+	return g.shim
+}
+
+// reportShimCalls prints every service manager call a child process made
+// through the planted fakes, and reports whether the package must fail.
+//
+// The policy is the same default-deny the seams use, expressed on the only
+// evidence a parent process has about a child: a call whose verb is not on the
+// read-only allowlist would have changed system state, so it fails the package.
+// A read-only call is printed and tolerated -- `tslink status` legitimately
+// reads `launchctl print`, and the shim has already made that read harmless.
+//
+// What this cannot see, stated plainly:
+//   - a child given an environment built without os.Environ(), or one that
+//     overwrites PATH, or one that names the binary by absolute path. None of
+//     those resolve through PATH, so none reach the shim. That is the source
+//     scan's half.
+//   - a child that redirects ServiceManagerShimLogEnv at its own file. That is
+//     how the shim's own tests keep their deliberate calls out of this report,
+//     and it is equally available to a test that wants to hide one.
+//   - anything on Windows, where no fake is planted at all.
+func (g *ServiceManagerGuard) reportShimCalls() bool {
+	if g.shim == nil {
+		return false
+	}
+	calls, err := g.shim.Calls()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "service manager guard [%s]: could not read the child-process shim log %s: %v\n"+
+			"Treating this as a failure: an unreadable log and an empty one look identical.\n",
+			g.pkg, g.shim.LogPath, err)
+		return true
+	}
+	if envIsTrue(os.Getenv(ServiceManagerGuardReportEnv)) || len(calls) > 0 {
+		fmt.Fprintf(os.Stderr, "service manager guard [%s]: child process service manager calls intercepted = %d\n",
+			g.pkg, len(calls))
+	}
+	failed := false
+	for i, call := range calls {
+		verdict := "read-only, tolerated"
+		if !call.IsReadOnly() {
+			verdict = "NOT read-only: this call would have changed the operator's real system state"
+			failed = true
+		}
+		fmt.Fprintf(os.Stderr, "service manager guard [%s]: child call %d: %s [%s]\n", g.pkg, i+1, call, verdict)
+	}
+	if failed {
+		fmt.Fprintf(os.Stderr, "service manager guard [%s]: a test spawned a process that tried to mutate an OS "+
+			"service manager. The shim stopped it; the test is still not isolated and must stop making the call.\n", g.pkg)
+	}
+	return failed
+}
+
 // RunWithServiceManagerGuard runs one package's complete test binary with every
 // listed OS service manager exit closed. See ErrServiceManagerBlocked for the
 // incident this prevents.
@@ -268,6 +329,20 @@ func envIsTrue(value string) bool {
 // explanation.
 func RunWithServiceManagerGuard(run func() int, packageName string, seams ...ServiceManagerSeam) (code int) {
 	guard := NewServiceManagerGuard(packageName)
+
+	// Fail closed. A package whose PATH shim could not be planted is a package
+	// whose compiled-binary tests would reach the real launchctl, and the only
+	// visible difference between that and a healthy run is a line of stderr
+	// nobody reads. Refusing to run is the one outcome that cannot be missed.
+	shim, restoreShim, err := InstallServiceManagerPathShim()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "service manager guard [%s]: refusing to run: the child-process PATH shim "+
+			"could not be planted (%v). A test that runs a compiled binary would reach the real OS service manager.\n",
+			packageName, err)
+		return 1
+	}
+	guard.shim = shim
+
 	restore := guard.Install(seams...)
 	previous := swapActiveServiceManagerGuard(guard)
 
@@ -277,12 +352,15 @@ func RunWithServiceManagerGuard(run func() int, packageName string, seams ...Ser
 		swapActiveServiceManagerGuard(previous)
 		drifted := guard.DriftedSeams()
 		restore()
+		// Read the shim log before restoreShim removes the directory.
+		shimFailed := guard.reportShimCalls()
+		restoreShim()
 		for _, manager := range drifted {
 			fmt.Fprintf(os.Stderr, "service manager guard [%s]: seam %s was re-pointed away from the guard "+
 				"and never restored; a test replaced the guarded call with its own implementation, "+
 				"so this package ran unguarded\n", packageName, manager)
 		}
-		if guard.Report() || len(drifted) > 0 {
+		if guard.Report() || len(drifted) > 0 || shimFailed {
 			code = 1
 		}
 	}()

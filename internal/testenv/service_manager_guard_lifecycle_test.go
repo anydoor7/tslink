@@ -163,13 +163,19 @@ func TestRunWithServiceManagerGuardControlGroupStaysGreenWithoutDrift(t *testing
 				t.Fatal("the control group reached the real service manager")
 			}
 
-			// The env decides one thing only: whether the zero-hit summary is
+			// The env decides one thing only: whether the zero-hit summaries are
 			// printed. Pinning the exact text in both directions is stronger
 			// than the old "must be silent", because it also proves the env=on
 			// run says = 0 rather than merely saying something.
+			//
+			// Both halves of the guard report their own zero: the in-process
+			// seams and the child-process PATH shim fail in different places,
+			// so one line saying = 0 would leave the other half's absence
+			// indistinguishable from its silence.
 			want := ""
 			if env.value != "" {
-				want = "service manager guard [control]: blocked real service manager calls = 0\n"
+				want = "service manager guard [control]: child process service manager calls intercepted = 0\n" +
+					"service manager guard [control]: blocked real service manager calls = 0\n"
 			}
 			if log != want {
 				t.Fatalf("stderr = %q, want %q", log, want)

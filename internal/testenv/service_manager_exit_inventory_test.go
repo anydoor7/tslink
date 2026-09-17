@@ -6,14 +6,28 @@ import (
 	"regexp"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 )
 
-// serviceManagerBinaries are the OS service managers whose process exits the
-// guard has to own. A source file that names one of them is either a seam the
-// guard installs over, or a hole in the guard.
-var serviceManagerBinaries = []string{`"launchctl"`, `"systemctl"`, `"loginctl"`}
+// serviceManagerBinaries are the quoted forms of the OS service managers whose
+// process exits the guard has to own. A source file that names one of them is
+// either a seam the guard installs over, or a hole in the guard.
+//
+// It is derived from serviceManagerShimBinaries rather than written out again,
+// so a manager the PATH shim plants a fake for cannot be one this scan ignores.
+// The regex below still spells the three names itself; adding a fourth manager
+// means editing that too.
+var serviceManagerBinaries = quotedServiceManagerBinaries()
+
+func quotedServiceManagerBinaries() []string {
+	quoted := make([]string, 0, len(serviceManagerShimBinaries))
+	for _, binary := range serviceManagerShimBinaries {
+		quoted = append(quoted, strconv.Quote(binary))
+	}
+	return quoted
+}
 
 // serviceManagerTestExecPattern matches a test file building its own process
 // exit to a service manager, e.g. exec.Command with the binary named inline.
@@ -22,6 +36,21 @@ var serviceManagerBinaries = []string{`"launchctl"`, `"systemctl"`, `"loginctl"`
 // thing that can silently stop matching.
 var serviceManagerTestExecPattern = regexp.MustCompile(
 	`exec\.Command(?:Context)?\([^)\n]*"(?:launchctl|systemctl|loginctl)"`)
+
+// serviceManagerTestArgPassthroughPattern matches a test file spreading a
+// caller-supplied slice into a spawned process: an exec constructor whose
+// argument list ends in a spread.
+//
+// This is the shape the PATH shim cannot see. The shim decides what a child
+// resolves the name `launchctl` to; it says nothing about a call site that
+// hands a compiled tslink binary an argv the helper never inspects, because
+// such a call site names no manager at all. `add` without --no-daemon-install
+// and `install` both reach the OS service manager through exactly that door,
+// and both are one argument away from any existing pass-through helper.
+//
+// Like the pattern above it matches inside comments and strings on purpose.
+var serviceManagerTestArgPassthroughPattern = regexp.MustCompile(
+	`exec\.Command(?:Context)?\([^\n]*\.\.\.\)`)
 
 // serviceManagerExitEntry is one reviewed file and the exact number of service
 // manager mentions it is allowed to contain.
@@ -54,6 +83,10 @@ var serviceManagerExitInventory = map[string]serviceManagerExitEntry{
 	"cmd/supervision_linux.go":  {note: "reads via managerOutputFn", occurrences: 1},
 	// Not an exit: a vocabulary list used to validate release-note wording.
 	"cmd/manifest.go": {note: "documentation vocabulary, no exec", occurrences: 1},
+	// Not an exit either, and the opposite of one: the list of fake binaries
+	// the child-process PATH shim plants, plus one mention inside the doc
+	// comment that explains why PATH is the mechanism.
+	"internal/testenv/service_manager_path_shim.go": {note: "PATH shim: names the fakes it plants, execs nothing", occurrences: 4},
 }
 
 // serviceManagerTestExecAllowlist is the reviewed set of _test.go files allowed
@@ -68,6 +101,79 @@ var serviceManagerTestExecAllowlist = map[string]serviceManagerExitEntry{
 	// against anything that looks like a real installation. It drives the
 	// caller's real `systemctl --user` on purpose; that is the test.
 	"cmd/install_linux_e2e_test.go": {note: "gated real-systemd e2e (TSLINK_SYSTEMD_E2E=1)", occurrences: 3},
+	// The PATH shim's own probes. They are written with the binary inline so
+	// that this scan sees them: a probe that resolved the name from a variable
+	// would be a real process exit hidden from the one check built to find it.
+	// Every argv they build names a job label or unit that does not exist, so
+	// the worst a real binary could do with them is answer "not found".
+	"cmd/service_manager_path_shim_unix_test.go": {note: "PATH shim probes, nonexistent targets only", occurrences: 2},
+}
+
+// serviceManagerTestArgPassthroughAllowlist is the reviewed set of _test.go
+// files that spread caller-supplied arguments into a spawned process.
+//
+// Why this list exists at all: cmd/e2e_scaffold_test.go's
+// offlineRegistrationArgs appends --no-daemon-install to `add` and
+// `template apply`, which is what keeps those two out of the installer. That is
+// a convention, not a boundary -- it is applied by two of the pass-through
+// helpers and not by the others, and none of them inspects what a caller
+// passes. A helper that forwards args verbatim can be handed `install`.
+//
+// Counting per file is the point, same as the two lists above: a second
+// pass-through added to a file that is already listed is the cheapest way to
+// open a door nobody reviewed.
+var serviceManagerTestArgPassthroughAllowlist = map[string]serviceManagerExitEntry{
+	// runCompiledTSLink (no arg filter) and runTSLinkBinaryWithConfigDir
+	// (offlineRegistrationArgs). Both run the shipped binary.
+	"cmd/compiled_binary_contract_test.go": {note: "compiled-binary helpers; PATH shim covers the child", occurrences: 2},
+	// e2eRunBinary, via offlineRegistrationArgs.
+	"cmd/e2e_scaffold_test.go": {note: "e2e helper; PATH shim covers the child", occurrences: 1},
+	// runRegistryFilesystemProbe: no arg filter at all.
+	"cmd/registry_check_filesystem_unix_test.go": {note: "filesystem probe helper; PATH shim covers the child", occurrences: 1},
+	// The gated real-systemd e2e forwards to systemctl directly; it is on the
+	// exec allowlist above for the same reason.
+	"cmd/install_linux_e2e_test.go": {note: "gated real-systemd e2e (TSLINK_SYSTEMD_E2E=1)", occurrences: 2},
+	// The PATH shim's own probes, whose targets do not exist.
+	"cmd/service_manager_path_shim_unix_test.go": {note: "PATH shim probes, nonexistent targets only", occurrences: 2},
+	// Helpers that re-run this repo's own test executable as a daemon, and the
+	// execCommand seam stubs that forward to the real constructor. None of them
+	// spawns a service manager, and all of them inherit the parent environment.
+	"internal/daemon/daemon_test.go": {note: "self-exec daemon helpers and execCommand seam stubs", occurrences: 4},
+}
+
+// TestServiceManagerTestArgPassthroughsAreReviewed fails when a test file
+// starts forwarding caller-supplied arguments into a spawned process without
+// being reviewed for it.
+//
+// This is the half the PATH shim structurally cannot cover. The shim decides
+// what the name `launchctl` resolves to inside a child that inherited this
+// process's environment; it has nothing to say about a child given an
+// environment built from scratch, a child handed an absolute path, or a helper
+// that will happily forward `install`. Those are all visible in source and
+// invisible at runtime, which is the exact inverse of the shim.
+func TestServiceManagerTestArgPassthroughsAreReviewed(t *testing.T) {
+	root := repoRootForTest(t)
+
+	found, err := scanServiceManagerTestArgPassthroughs(root)
+	if err != nil {
+		t.Fatalf("scan %s: %v", root, err)
+	}
+	unexpected, missing, miscounted := diffServiceManagerInventory(found, serviceManagerTestArgPassthroughAllowlist)
+
+	if len(unexpected) > 0 {
+		t.Errorf("these test files forward caller-supplied arguments into a spawned process and are not reviewed: %v\n"+
+			"A helper that passes args through unfiltered can be handed `install` or an `add` without --no-daemon-install, "+
+			"and the OS service manager is then reached from a process where no seam was ever replaced. "+
+			"Confirm the callers cannot reach an installing verb, then add the file here.", unexpected)
+	}
+	if len(missing) > 0 {
+		t.Errorf("reviewed pass-through files no longer forward arguments into a spawned process: %v\n"+
+			"Either the helper moved or this scanner stopped matching, in which case it would silently pass on a real hole.", missing)
+	}
+	if len(miscounted) > 0 {
+		t.Errorf("reviewed files changed how many argument pass-throughs they build: %v\n"+
+			"A second pass-through inside an already-listed file is the cheapest way to open an unreviewed door.", miscounted)
+	}
 }
 
 // TestServiceManagerExitInventoryIsComplete fails when a new non-test file
@@ -148,6 +254,14 @@ func scanServiceManagerLiterals(root string) (map[string]int, error) {
 func scanServiceManagerTestExecs(root string) (map[string]int, error) {
 	return scanServiceManagerSources(root, true, func(data string) int {
 		return len(serviceManagerTestExecPattern.FindAllString(data, -1))
+	})
+}
+
+// scanServiceManagerTestArgPassthroughs counts argument pass-throughs into a
+// spawned process per _test.go file under root.
+func scanServiceManagerTestArgPassthroughs(root string) (map[string]int, error) {
+	return scanServiceManagerSources(root, true, func(data string) int {
+		return len(serviceManagerTestArgPassthroughPattern.FindAllString(data, -1))
 	})
 }
 
