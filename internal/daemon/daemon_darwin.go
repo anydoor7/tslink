@@ -36,73 +36,116 @@ func defaultProcessArguments(pid int) ([]string, error) {
 	return args, err
 }
 
-// darwinProcArgs reads a process's argv block. It is a seam so the EIO retry in
+// darwinProcArgs reads a process's argv block. It is a seam so the retry in
 // readDarwinProcArgs can be exercised without racing a real fork/exec.
+//
+// This and the two knobs below are package-level vars that tests swap out. That
+// is the shape that caused a data race in internal/server (serverNowFn, fixed
+// 2026-09-16): a goroutine outliving the test that installed a stub reads the
+// seam after t.Cleanup restored it. It is safe here only because every reader is
+// synchronous -- readDarwinProcArgs returns before its caller does, and no test
+// in this package runs t.Parallel. Note that production does have a goroutine
+// reader: cmd/serve.go:818 polls IsProcessRunning every daemonParentPoll. It
+// never swaps the seam, so there is no race today; a test that both stubs these
+// vars and starts that loop would create one.
 var darwinProcArgs = func(pid int) ([]byte, error) {
 	return unix.SysctlRaw("kern.procargs2", pid)
 }
 
-// darwinProcArgsAttempts and darwinProcArgsRetryDelay bound that retry. The
-// delay is a variable only so tests do not pay it.
+// darwinProcArgsAttempts and darwinProcArgsRetryDelay bound the retry.
+//
+// The ceiling is set by the fastest caller, not by the measurement: cmd/serve.go
+// polls IsProcessRunning every daemonParentPoll = 10ms, so a budget above that
+// would make one poll overrun the next whenever the target is unreadable. 8 x 1ms
+// = 7ms worst case stays under it.
+//
+// Measured need, 2026-09-16, 8 concurrent spawners under 12-way CPU load: of
+// 9,600 freshly started processes, 150 hit the not-ready window; ~95% cleared
+// within the first 4ms, and the stragglers cleared one millisecond later -- i.e.
+// 6 attempts sufficed for every case observed. 8 leaves margin for a slower
+// machine without crossing the poll interval.
 var (
-	darwinProcArgsAttempts   = 5
+	darwinProcArgsAttempts   = 8
 	darwinProcArgsRetryDelay = time.Millisecond
 )
 
-// readDarwinProcArgs retries kern.procargs2 on EIO.
+// errProcArgsNotReady marks "this process's argv is not readable *yet*", as
+// opposed to "not readable". Only this class is retried.
+var errProcArgsNotReady = errors.New("kern.procargs2 argv not ready")
+
+// readDarwinProcArgs reads and parses a process's argv, retrying while the
+// kernel says the answer is not ready yet.
 //
-// EIO from this sysctl does not mean inspection is broken; it means the target's
-// argv is not readable *yet*, which is what a process looks like in the window
-// between fork returning a PID and exec finishing. Every other errno is a real
-// answer (ESRCH: gone, EINVAL: not ours to read) and is returned immediately.
+// The window is the gap between fork returning a PID and exec finishing, and it
+// shows up in two different disguises -- which is the whole reason this function
+// retries the parse and not just the syscall:
 //
-// The retry is here because the caller cannot distinguish the two. Every error
-// out of this function reaches verifyProcessProduct, which wraps anything that
-// is not an identity mismatch, and identityVerifiedOrUnavailable then reads
-// "could not determine" as "assume it is ours" -- so a transient EIO makes
-// IsProcessRunning answer true for a foreign PID, and the daemon becomes willing
-// to signal it. Fixing that by treating EIO as a mismatch would trade a rare
-// wrong yes for a rare wrong no on the real daemon, which is worse; the
-// condition clears on its own, so waiting for it is the honest fix.
+//   - the sysctl fails with EIO;
+//   - the sysctl *succeeds* with err == nil and hands back a block that has no
+//     executable path in it yet.
 //
-// Measured 2026-09-16 on this machine under 12-way CPU load: 3 of 600 freshly
-// started processes returned EIO, and all 3 succeeded on the first retry 1 ms
-// later. Five attempts leaves four times that margin at a 4 ms worst case.
-func readDarwinProcArgs(pid int) ([]byte, error) {
+// The second form is why an EIO-only retry was not enough. Measured on the same
+// 9,600-process run: EIO 150 occurrences, argv-present-but-empty 9. An EIO-only
+// rule never fires on the second form, because there is no error to match on.
+//
+// Why retrying matters at all: every error out of here reaches
+// verifyProcessProduct, which wraps anything that is not an identity mismatch,
+// and identityVerifiedOrUnavailable then reads "could not determine" as "assume
+// it is ours". So a transient here makes IsProcessRunning answer true for a
+// foreign PID. Note that the two production callers want opposite things from
+// that answer -- cmd/stop.go asks before signalling, while cmd/serve.go's poll
+// loop shuts the daemon down on false -- so flipping the unknown case to
+// fail-closed would trade a rare wrong yes for a rare wrong self-shutdown. The
+// condition clears on its own; waiting for it is the honest fix.
+//
+// EINVAL is deliberately not retried. It is the kernel's answer both inside this
+// window and for any process we simply may not read -- pid 1 and a nonexistent
+// pid both return it (verified 2026-09-16). Retrying it would make every check of
+// a foreign PID pay the full budget on every 10ms poll, to recover a form
+// measured at 1 occurrence in 9,600.
+func readDarwinProcArgs(pid int) (string, []string, error) {
 	var err error
-	for attempt := 0; attempt < darwinProcArgsAttempts; attempt++ {
-		if attempt > 0 {
+	for attempt := 1; attempt <= darwinProcArgsAttempts; attempt++ {
+		if attempt > 1 {
 			time.Sleep(darwinProcArgsRetryDelay)
 		}
-		var data []byte
-		data, err = darwinProcArgs(pid)
+		var executablePath string
+		var args []string
+		executablePath, args, err = readDarwinProcArgsOnce(pid)
 		if err == nil {
-			return data, nil
+			return executablePath, args, nil
 		}
-		if !errors.Is(err, unix.EIO) {
-			return nil, err
+		if !errors.Is(err, errProcArgsNotReady) {
+			return "", nil, err
 		}
 	}
-	return nil, err
+	// Name the budget so an exhausted retry is distinguishable in the log from a
+	// single unlucky read; without it, giving up is silent and looks exactly like
+	// never having retried.
+	return "", nil, fmt.Errorf("after %d attempts: %w", darwinProcArgsAttempts, err)
 }
 
-func darwinProcessArguments(pid int) (string, []string, error) {
-	data, err := readDarwinProcArgs(pid)
+func readDarwinProcArgsOnce(pid int) (string, []string, error) {
+	data, err := darwinProcArgs(pid)
 	if err != nil {
+		if errors.Is(err, unix.EIO) {
+			return "", nil, fmt.Errorf("%w: %w", errProcArgsNotReady, err)
+		}
 		return "", nil, err
 	}
+	// Everything below here is "the block came back but is not populated yet".
 	if len(data) < 4 {
-		return "", nil, fmt.Errorf("kern.procargs2 returned %d bytes", len(data))
+		return "", nil, fmt.Errorf("%w: kern.procargs2 returned %d bytes", errProcArgsNotReady, len(data))
 	}
 
 	argc := int(binary.NativeEndian.Uint32(data[:4]))
 	if argc <= 0 {
-		return "", nil, fmt.Errorf("kern.procargs2 returned invalid argc %d", argc)
+		return "", nil, fmt.Errorf("%w: kern.procargs2 returned invalid argc %d", errProcArgsNotReady, argc)
 	}
 	cursor := 4
 	executablePath, next, ok := readNULTerminated(data, cursor)
 	if !ok || executablePath == "" {
-		return "", nil, fmt.Errorf("kern.procargs2 returned no executable path")
+		return "", nil, fmt.Errorf("%w: kern.procargs2 returned no executable path", errProcArgsNotReady)
 	}
 	cursor = next
 	for cursor < len(data) && data[cursor] == 0 {
@@ -113,12 +156,16 @@ func darwinProcessArguments(pid int) (string, []string, error) {
 	for len(args) < argc {
 		arg, next, ok := readNULTerminated(data, cursor)
 		if !ok {
-			return "", nil, fmt.Errorf("kern.procargs2 returned %d of %d arguments", len(args), argc)
+			return "", nil, fmt.Errorf("%w: kern.procargs2 returned %d of %d arguments", errProcArgsNotReady, len(args), argc)
 		}
 		args = append(args, arg)
 		cursor = next
 	}
 	return executablePath, args, nil
+}
+
+func darwinProcessArguments(pid int) (string, []string, error) {
+	return readDarwinProcArgs(pid)
 }
 
 func readNULTerminated(data []byte, offset int) (string, int, bool) {
