@@ -259,7 +259,7 @@ Examples:
 				}
 
 				outLog := filepath.Join(logDir, "tslink.out.log")
-				errLog := filepath.Join(logDir, "tslink.err.log")
+				errLog := filepath.Join(logDir, stderrLogFileName)
 				readyPath, err := serveReadyPathFn()
 				if err != nil {
 					return err
@@ -753,6 +753,21 @@ func runForegroundWithOptions(pidPath, authKey, controlURL string, options foreg
 			return nil
 		})
 	}
+
+	// Bound the daemon's own stderr log. This process holds the descriptor the
+	// supervisor opened, so it is the only one that can verify O_APPEND before
+	// truncating; see internal/logrotate. The call is a no-op in any run whose
+	// stderr is not that file, which is every foreground and test invocation.
+	// The rotation context is derived and cancelled here rather than being ctx
+	// itself: srv.Run can return on an error while ctx is still live, and a
+	// deferred receive on a goroutine that only stops with ctx would then hang
+	// the daemon's own shutdown path forever.
+	rotationCtx, stopRotation := context.WithCancel(ctx)
+	rotationDone := startStderrLogRotation(rotationCtx)
+	defer func() {
+		stopRotation()
+		<-rotationDone
+	}()
 
 	runErr := srv.Run(ctx)
 	// A signal-driven shutdown can cancel the initial sync before it has
