@@ -181,7 +181,7 @@ func TestServiceManagerPathShimInterceptsAStateChangingVerb(t *testing.T) {
 // group for every log assertion in this file and in the guard's teardown.
 func TestServiceManagerShimLogStaysEmptyWithoutAServiceManagerCall(t *testing.T) {
 	dir := t.TempDir()
-	logPath, err := testenv.PlantServiceManagerShims(dir)
+	logPath, planted, err := testenv.PlantServiceManagerShims(dir)
 	if err != nil {
 		t.Fatalf("plant shims: %v", err)
 	}
@@ -251,7 +251,7 @@ func TestCompiledBinaryResolvesTheServiceManagerThroughItsOwnPath(t *testing.T) 
 	// directory comes first on the child's PATH is the one that answers, which
 	// is precisely why a child with no shim at all reaches /bin/launchctl.
 	decoyDir := t.TempDir()
-	decoyLog, err := testenv.PlantServiceManagerShims(decoyDir)
+	decoyLog, _, err := testenv.PlantServiceManagerShims(decoyDir)
 	if err != nil {
 		t.Fatalf("plant decoy shims: %v", err)
 	}

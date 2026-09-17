@@ -6,28 +6,49 @@ import (
 	"regexp"
 	"runtime"
 	"sort"
-	"strconv"
 	"strings"
 	"testing"
 )
 
-// serviceManagerBinaries are the quoted forms of the OS service managers whose
-// process exits the guard has to own. A source file that names one of them is
-// either a seam the guard installs over, or a hole in the guard.
+// serviceManagerQuotedBinaryPattern matches a Go string literal that names an
+// OS service manager whose process exits the guard has to own, with or without
+// a leading directory. A source file containing one is either a seam the guard
+// installs over, or a hole in the guard.
 //
-// It is derived from serviceManagerShimBinaries rather than written out again,
-// so a manager the PATH shim plants a fake for cannot be one this scan ignores.
-// The regex below still spells the three names itself; adding a fourth manager
-// means editing that too.
-var serviceManagerBinaries = quotedServiceManagerBinaries()
+// The optional directory group is the whole point of the shape. `"launchctl"`
+// and `"/bin/launchctl"` reach the same binary; only the first consults PATH,
+// so only the first is something the child-process shim can stand in front of.
+// The absolute form is therefore the *more* dangerous of the two and was, until
+// 2026-09-16, the one form every check here failed to see: the patterns
+// required a double quote immediately before the name, which an absolute path
+// does not have. A test that built an exec.Command whose program argument was
+// the absolute path of launchctl and whose verb was bootout against the
+// production label passed all three scans and the shim at once.
+//
+// This comment says that in prose rather than writing the call out, because
+// the pattern below now matches it -- writing the example literally makes this
+// file a finding of its own, which is the first thing the fix demonstrated.
+//
+// The alternation is derived from serviceManagerShimBinaries rather than spelled
+// out again, so a manager the PATH shim plants a fake for cannot be one these
+// scans ignore.
+//
+// The closing quote must follow the name directly: "/usr/bin/launchctl-wrapper"
+// and "/etc/systemctl.conf" name something else and are not findings.
+var serviceManagerQuotedBinaryPattern = `"(?:[^"\n]*/)?` + serviceManagerNameAlternation() + `"`
 
-func quotedServiceManagerBinaries() []string {
-	quoted := make([]string, 0, len(serviceManagerShimBinaries))
+func serviceManagerNameAlternation() string {
+	escaped := make([]string, 0, len(serviceManagerShimBinaries))
 	for _, binary := range serviceManagerShimBinaries {
-		quoted = append(quoted, strconv.Quote(binary))
+		escaped = append(escaped, regexp.QuoteMeta(binary))
 	}
-	return quoted
+	return "(?:" + strings.Join(escaped, "|") + ")"
 }
+
+// serviceManagerLiteralPattern counts those literals anywhere in a file. It
+// replaced a strings.Count over the quoted names for the reason above: counting
+// `"launchctl"` as a substring cannot see `"/bin/launchctl"`.
+var serviceManagerLiteralPattern = regexp.MustCompile(serviceManagerQuotedBinaryPattern)
 
 // serviceManagerTestExecPattern matches a test file building its own process
 // exit to a service manager, e.g. exec.Command with the binary named inline.
@@ -35,7 +56,7 @@ func quotedServiceManagerBinaries() []string {
 // lexical scanner that tried to be clever about context would be one more
 // thing that can silently stop matching.
 var serviceManagerTestExecPattern = regexp.MustCompile(
-	`exec\.Command(?:Context)?\([^)\n]*"(?:launchctl|systemctl|loginctl)"`)
+	`exec\.Command(?:Context)?\([^)\n]*` + serviceManagerQuotedBinaryPattern)
 
 // serviceManagerTestArgPassthroughPattern matches a test file spreading a
 // caller-supplied slice into a spawned process: an exec constructor whose
@@ -241,11 +262,7 @@ func TestServiceManagerTestExecsAreReviewed(t *testing.T) {
 // non-test .go file under root.
 func scanServiceManagerLiterals(root string) (map[string]int, error) {
 	return scanServiceManagerSources(root, false, func(data string) int {
-		total := 0
-		for _, binary := range serviceManagerBinaries {
-			total += strings.Count(data, binary)
-		}
-		return total
+		return len(serviceManagerLiteralPattern.FindAllString(data, -1))
 	})
 }
 

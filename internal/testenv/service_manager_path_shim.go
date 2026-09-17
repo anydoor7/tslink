@@ -85,12 +85,20 @@ func (c ServiceManagerShimCall) String() string {
 // ServiceManagerPathShim is a directory of fake service manager binaries plus
 // the file they record into.
 type ServiceManagerPathShim struct {
-	// Dir holds the planted fakes. Empty on a platform where nothing was
-	// planted; see PlantServiceManagerShims.
+	// Dir is the directory put at the front of PATH. It is set even on a
+	// platform where nothing was planted, because the log lives there too.
 	Dir string
 	// LogPath is the file the fakes append to when the child inherits no
 	// override for ServiceManagerShimLogEnv.
 	LogPath string
+	// Planted names the fakes that actually exist in Dir. It is empty on
+	// Windows, where the shim protects nothing; see PlantServiceManagerShims.
+	//
+	// It is a list rather than a bool because the teardown report has to say
+	// which of "no child called a manager" and "no fake was there to call"
+	// produced a count of zero. Those two read identically otherwise, and the
+	// second is the one that means the package ran unprotected.
+	Planted []string
 }
 
 // Calls parses this shim's log.
@@ -102,8 +110,8 @@ func (s *ServiceManagerPathShim) Calls() ([]ServiceManagerShimCall, error) {
 }
 
 // PlantServiceManagerShims writes one executable fake per service manager into
-// dir, creates the log the fakes append to, and returns the log path. The
-// caller owns dir.
+// dir, creates the log the fakes append to, and returns the log path together
+// with the names it actually planted. The caller owns dir.
 //
 // The fakes are /bin/sh scripts rather than compiled binaries so that planting
 // them costs no build and cannot itself fail for toolchain reasons. On Windows
@@ -111,36 +119,37 @@ func (s *ServiceManagerPathShim) Calls() ([]ServiceManagerShimCall, error) {
 // script would not be executable anyway. That is stated here rather than hidden
 // behind a nil return, because "the shim protects nothing on Windows" is a fact
 // about the mechanism and not a detail.
-func PlantServiceManagerShims(dir string) (logPath string, err error) {
+func PlantServiceManagerShims(dir string) (logPath string, planted []string, err error) {
 	logPath = filepath.Join(dir, "service-manager-calls.log")
 	// The default is substituted inside "${VAR:-...}", which keeps spaces but
 	// would still let these characters change what the shell does.
 	if strings.ContainsAny(logPath, "'\"\n$`{}\\") {
-		return "", fmt.Errorf("testenv: shim log path %q contains a character that cannot be embedded in the shim script", logPath)
+		return "", nil, fmt.Errorf("testenv: shim log path %q contains a character that cannot be embedded in the shim script", logPath)
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", err
+		return "", nil, err
 	}
 	// Create the log up front so a reader can tell "no calls" from "the shim
 	// was never planted": the first is an existing empty file, the second is
 	// a missing one, and ReadServiceManagerShimCalls reports them differently.
 	handle, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	if err := handle.Close(); err != nil {
-		return "", err
+		return "", nil, err
 	}
 	if runtime.GOOS == "windows" {
-		return logPath, nil
+		return logPath, nil, nil
 	}
 	for _, binary := range serviceManagerShimBinaries {
 		script := serviceManagerShimScript(binary, logPath)
 		if err := os.WriteFile(filepath.Join(dir, binary), []byte(script), 0o700); err != nil {
-			return "", err
+			return "", nil, err
 		}
+		planted = append(planted, binary)
 	}
-	return logPath, nil
+	return logPath, planted, nil
 }
 
 // serviceManagerShimScript builds one fake. It records each argument as its own
@@ -149,9 +158,9 @@ func PlantServiceManagerShims(dir string) (logPath string, err error) {
 // no real invocation produces.
 //
 // The record is assembled in a variable and emitted by a single printf, not
-// printed field by field into an open append. Several fakes run at once -- the
-// cmd package makes 74 of these calls in one run from concurrently spawned
-// children -- and a `{ printf; printf; } >>log` block is one write(2) per
+// printed field by field into an open append. Several fakes run at once -- a
+// full cmd run on 2026-09-16 recorded 73 of these calls from concurrently
+// spawned children -- and a `{ printf; printf; } >>log` block is one write(2) per
 // printf, so the fields of two calls interleave. That was not theoretical: the
 // first full-suite run under this shim produced the line
 // `launchctl printlaunchctl gui/501/com.tslink.daemon`, which the verb
@@ -222,7 +231,7 @@ func InstallServiceManagerPathShim() (*ServiceManagerPathShim, func(), error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	logPath, err := PlantServiceManagerShims(dir)
+	logPath, planted, err := PlantServiceManagerShims(dir)
 	if err != nil {
 		_ = os.RemoveAll(dir)
 		return nil, nil, err
@@ -240,7 +249,7 @@ func InstallServiceManagerPathShim() (*ServiceManagerPathShim, func(), error) {
 		return nil, nil, err
 	}
 
-	shim := &ServiceManagerPathShim{Dir: dir, LogPath: logPath}
+	shim := &ServiceManagerPathShim{Dir: dir, LogPath: logPath, Planted: planted}
 	return shim, func() {
 		restoreLog()
 		restorePath()

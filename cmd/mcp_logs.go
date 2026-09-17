@@ -130,12 +130,19 @@ var mcpLogsTailscaleCredentialPathPattern = regexp.MustCompile(`(?i)^/(?:a|uinv|
 // tskey token. But a redaction rule whose safety depends on another rule
 // running first is one refactor away from being wrong, and the failure would be
 // silent — a credential in the output, with every test still green.
-// hostWithoutPort strips a trailing :port by asking net.SplitHostPort, and the
-// fail-closed direction depends on that choice: an input SplitHostPort refuses
-// (a trailing dot in the port, a bracketless IPv6) comes back unchanged, which
-// then fails the exact-host comparison and redacts. Anyone replacing this helper
-// with hand-rolled string splitting must preserve that -- returning a "cleaned"
-// host for inputs SplitHostPort rejects turns the comparison fail-open.
+// hostWithoutPort strips a trailing :port by asking net.SplitHostPort. An input
+// SplitHostPort refuses -- a bracketless IPv6 such as "::1" ("too many colons")
+// -- comes back unchanged, which then fails the exact-host comparison and
+// redacts. Anyone replacing this helper with hand-rolled string splitting must
+// preserve that: returning a "cleaned" host for inputs SplitHostPort rejects
+// turns the comparison fail-open.
+//
+// It does NOT carry every malformed-port case. "login.tailscale.com:443." is
+// accepted by SplitHostPort (port "443.", err nil) and yields the matching
+// host, so the comparison passes; that shape is refused one layer earlier, by
+// url.Parse rejecting `invalid port ":443." after host`. Do not read this
+// helper as the fail-closed gate for ports -- it is only the gate for hosts
+// that reach it.
 //
 // It strips a trailing :port, leaving bare hosts and IPv6
 // literals alone.
@@ -171,8 +178,15 @@ func redactTailscaleURL(raw string) string {
 	// behind the "#" therefore passed the path rule by not being a path at all,
 	// and the line was emitted verbatim. Same family as the ":443" and
 	// single-slash shapes: the predicate reasons about scheme, host, userinfo,
-	// query and path, and anything carried outside those five is a shape it
-	// cannot reason about -- so it is redacted, not reasoned about.
+	// query and path, and a capability carried outside those five is redacted
+	// rather than reasoned about.
+	//
+	// That statement is about this predicate only, and is not a claim that the
+	// rule as a whole is exhaustive: whether a capability reaches the predicate
+	// at all is decided earlier, by how much of the line the outer pattern
+	// matched. The pattern's token class stops at whitespace, quotes, angle
+	// brackets and ")", so a capability separated from the host by one of those
+	// never enters this function -- see CLAUDE.md "Known gaps" for that half.
 	if parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return doctorRedactedURL
 	}

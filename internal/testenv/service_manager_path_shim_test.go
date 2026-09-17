@@ -17,7 +17,7 @@ func plantForTest(t *testing.T) (dir, logPath string) {
 		t.Skip("no service manager fake is planted on Windows; see PlantServiceManagerShims")
 	}
 	dir = t.TempDir()
-	logPath, err := PlantServiceManagerShims(dir)
+	logPath, planted, err := PlantServiceManagerShims(dir)
 	if err != nil {
 		t.Fatalf("plant shims: %v", err)
 	}

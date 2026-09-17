@@ -296,3 +296,129 @@ func TestInventoryScannerTestPatternIgnoresSeamNames(t *testing.T) {
 		t.Fatalf("naming a manager without exec'ing it counted %d times, want no entry", n)
 	}
 }
+
+// absolutePathFor renders the absolute path a real caller would type for a
+// manager. It is built at runtime for the same reason execCallText quotes its
+// binary at runtime: a literal here would make this file a finding of the
+// pattern it tests.
+func absolutePathFor(binary string) string {
+	if binary == "launchctl" {
+		return "/bin/" + binary
+	}
+	return "/usr/bin/" + binary
+}
+
+// TestInventoryScannerFlagsAnAbsolutePathTestExec covers the scanner
+// negative case. Before 2026-09-16 every check here required a double
+// quote immediately before the manager name, so naming the binary by absolute
+// path escaped the exec scan, the pass-through scan (no argument spread), the
+// literal count (it counted the quoted bare name) and the PATH shim (an
+// absolute path never consults PATH) at the same time. Four mechanisms, one
+// blind spot, no output anywhere.
+func TestInventoryScannerFlagsAnAbsolutePathTestExec(t *testing.T) {
+	root := syntheticTree(t)
+	writeFile(t, root, "cmd/rogue_abs_test.go",
+		"package cmd\n\nfunc e() {\n"+execCallText(absolutePathFor("launchctl"), "bootout")+"}\n")
+
+	nonTest, testFiles := scanBoth(t, root)
+	if _, ok := nonTest["cmd/rogue_abs_test.go"]; ok {
+		t.Fatal("the non-test scan must not see _test.go files; that is why the test scan exists")
+	}
+	unexpected, missing, miscounted := diffServiceManagerInventory(testFiles, syntheticTestAllowlist)
+	if len(unexpected) != 1 || unexpected[0] != "cmd/rogue_abs_test.go" {
+		t.Fatalf("unexpected = %v, want [cmd/rogue_abs_test.go]", unexpected)
+	}
+	if len(missing)+len(miscounted) != 0 {
+		t.Fatalf("an absolute-path exec must not disturb the other directions: missing=%v miscounted=%v", missing, miscounted)
+	}
+	// The pass-through scan is the one mechanism that legitimately stays quiet
+	// here: this call spreads nothing. Asserting it keeps the three scans'
+	// division of labour honest rather than letting one cover for another.
+	if n, ok := scanPassthrough(t, root)["cmd/rogue_abs_test.go"]; ok {
+		t.Fatalf("a fixed-argument exec counted %d pass-throughs, want no entry", n)
+	}
+}
+
+// TestInventoryScannerFlagsAnAbsolutePathLiteralInANewFile is the same blind
+// spot on the non-test side: a new package that reaches a manager by absolute
+// path names no bare binary, so the old substring count found nothing.
+func TestInventoryScannerFlagsAnAbsolutePathLiteralInANewFile(t *testing.T) {
+	root := syntheticTree(t)
+	writeFile(t, root, "internal/newpkg/exit.go",
+		"package newpkg\n\nfunc d() {\n"+literalText(absolutePathFor("systemctl"))+"}\n")
+
+	nonTest, _ := scanBoth(t, root)
+	unexpected, missing, miscounted := diffServiceManagerInventory(nonTest, syntheticInventory)
+	if len(unexpected) != 1 || unexpected[0] != "internal/newpkg/exit.go" {
+		t.Fatalf("unexpected = %v, want [internal/newpkg/exit.go]", unexpected)
+	}
+	if len(missing)+len(miscounted) != 0 {
+		t.Fatalf("missing=%v miscounted=%v", missing, miscounted)
+	}
+}
+
+// TestInventoryScannerFlagsAnAbsolutePathMentionInsideAReviewedFile keeps the
+// per-file count meaningful for the absolute form too: adding one to a file
+// already on the list was the cheapest version of this hole.
+func TestInventoryScannerFlagsAnAbsolutePathMentionInsideAReviewedFile(t *testing.T) {
+	root := syntheticTree(t)
+	writeFile(t, root, "cmd/install_darwin.go",
+		"package cmd\n\nfunc a() {\n"+literalText("launchctl")+"}\n\nfunc sneaky() {\n"+
+			execCallText(absolutePathFor("launchctl"), "bootout")+"}\n")
+
+	nonTest, _ := scanBoth(t, root)
+	if got := nonTest["cmd/install_darwin.go"]; got != 2 {
+		t.Fatalf("mutated file counted %d mentions, want 2", got)
+	}
+	_, _, miscounted := diffServiceManagerInventory(nonTest, syntheticInventory)
+	if len(miscounted) != 1 {
+		t.Fatalf("miscounted = %v, want one entry for cmd/install_darwin.go", miscounted)
+	}
+}
+
+// TestInventoryScannerIgnoresPathsThatOnlyLookLikeAManager is the positive half
+// of the fix: the widened pattern must not start reporting strings that reach
+// some other file. A scan that fired on every path containing the letters
+// "systemctl" would be silenced by its own noise, and the allowlist would then
+// stop meaning "these files really exec a manager".
+func TestInventoryScannerIgnoresPathsThatOnlyLookLikeAManager(t *testing.T) {
+	root := syntheticTree(t)
+	body := "package cmd\n\nfunc g() {\n"
+	for _, lookalike := range []string{
+		"/usr/local/bin/launchctl-wrapper", // the name is a prefix, not the whole basename
+		"/etc/systemctl.conf",              // a config file next to the binary
+		"/var/log/loginctl/today.log",      // the name is a directory component
+		"launchctld",                       // a different program
+		"launchctl/",                       // a directory, not a program
+	} {
+		body += literalText(lookalike)
+	}
+	body += "}\n"
+	writeFile(t, root, "cmd/lookalikes.go", body)
+	writeFile(t, root, "cmd/lookalikes_test.go",
+		"package cmd\n\nfunc h() {\n"+execCallText("/usr/local/bin/launchctl-wrapper", "bootout")+"}\n")
+
+	nonTest, testFiles := scanBoth(t, root)
+	if n, ok := nonTest["cmd/lookalikes.go"]; ok {
+		t.Fatalf("paths that merely contain a manager name counted %d times, want no entry", n)
+	}
+	if n, ok := testFiles["cmd/lookalikes_test.go"]; ok {
+		t.Fatalf("an exec to a wrapper binary counted %d times, want no entry", n)
+	}
+}
+
+// TestInventoryScannerCountsOneMentionPerLiteral pins the optional directory
+// group to a single string literal. The group excludes the quote character, so
+// it cannot reach across `"/tmp/x", "launchctl"` and swallow both into one
+// match -- which would undercount exactly where two exits sit side by side.
+func TestInventoryScannerCountsOneMentionPerLiteral(t *testing.T) {
+	root := syntheticTree(t)
+	writeFile(t, root, "internal/newpkg/pair.go",
+		"package newpkg\n\nfunc p() {\n\tname := []string{\"/tmp/x\", \"launchctl\", \""+
+			absolutePathFor("systemctl")+"\"}\n\t_ = name\n}\n")
+
+	nonTest, _ := scanBoth(t, root)
+	if got := nonTest["internal/newpkg/pair.go"]; got != 2 {
+		t.Fatalf("counted %d mentions, want 2 (one bare name, one absolute path; the leading \"/tmp/x\" is neither)", got)
+	}
+}

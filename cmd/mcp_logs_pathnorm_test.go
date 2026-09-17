@@ -152,6 +152,37 @@ func TestSanitizeLogLineDoesNotLeakFragmentCarriedCapabilities(t *testing.T) {
 			if strings.Contains(got, token) {
 				t.Fatalf("sanitizeLogLine(%q) = %q, still carries the capability", line, got)
 			}
+			// Positive control. The check above is single-directional: a
+			// sanitizer that returned "" would satisfy it while destroying the
+			// log. Requiring the redaction marker pins that the line was
+			// rewritten by this rule rather than emptied by a broken one.
+			if !strings.Contains(got, doctorRedactedURL) {
+				t.Fatalf("sanitizeLogLine(%q) = %q, want it to carry %q", line, got, doctorRedactedURL)
+			}
 		})
+	}
+}
+
+// TestRedactTailscaleURLRedactsAnchoredDocumentationLinks pins the cost of the
+// fragment guard rather than leaving it undocumented: a documentation link with
+// an anchor is now redacted whole. That is the intended fail-closed trade -- the
+// alternative is parsing the fragment to decide whether it looks like a
+// capability, which is exactly the reasoning this rule refuses to do.
+//
+// It is pinned because the behaviour looks like a bug to anyone who meets it in
+// a log. Without a test, "let anchored links through" is a one-line change that
+// silently reopens the leak TestSanitizeLogLineDoesNotLeakFragmentCarriedCapabilities
+// closes.
+func TestRedactTailscaleURLRedactsAnchoredDocumentationLinks(t *testing.T) {
+	const line = "msg: open https://login.tailscale.com/admin/settings/keys#api to renew"
+	got := sanitizeLogLine(line)
+	if !strings.Contains(got, doctorRedactedURL) {
+		t.Fatalf("anchored documentation link was not redacted:\n got %q", got)
+	}
+	// Control: the same link without the anchor must still pass through intact,
+	// so this is pinning the anchor as the cause rather than the whole path.
+	const plain = "msg: open https://login.tailscale.com/admin/settings/keys to renew"
+	if out := sanitizeLogLine(plain); out != plain {
+		t.Fatalf("unanchored documentation link was redacted:\n got %q\nwant %q", out, plain)
 	}
 }
