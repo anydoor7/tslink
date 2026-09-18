@@ -797,3 +797,6 @@ Bootstrap behavior change: `add` now waits up to 30 seconds by default; scripts
 that only need to register configuration should pass `--wait=0`. Windows reports
 `windows-startup` when its Startup registration matches this config; doctor warns
 that crash restart is unavailable instead of asking for an ineffective reinstall.
+
+
+
