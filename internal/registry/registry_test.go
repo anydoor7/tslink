@@ -1702,6 +1702,46 @@ func TestValidateServicePropagatesLinkLocalRefusal(t *testing.T) {
 	}
 }
 
+// TestLoadForRuntimeIsolatesExistingLinkLocalTarget covers the upgrade path: a
+// registry.json written before the refusal existed can already hold a
+// link-local proxy target. LoadForRuntime must fail that single service closed
+// into a ServiceIssue carrying the stable code, which is what doctor/status
+// surface as the service issue, while still serving every other valid service.
+func TestLoadForRuntimeIsolatesExistingLinkLocalTarget(t *testing.T) {
+	path := testRegistryPath(t)
+	data := `{"schema_version":1,"services":[` +
+		`{"name":"legacy-direct","type":"proxy","target":"http://169.254.10.10:80"},` +
+		`{"name":"healthy","type":"proxy","target":"http://localhost:3000"}` +
+		`]}`
+	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	reg, issues, err := LoadForRuntime(path)
+	if err != nil {
+		t.Fatalf("LoadForRuntime() global error = %v", err)
+	}
+	if len(reg.Services) != 1 || reg.Services[0].Name != "healthy" {
+		t.Fatalf("valid services = %+v, want only healthy; a link-local entry must not be served", reg.Services)
+	}
+	if len(issues) != 1 {
+		t.Fatalf("issues = %+v, want exactly the legacy link-local entry", issues)
+	}
+	issue := issues[0]
+	if issue.Index != 0 || issue.Name != "legacy-direct" {
+		t.Fatalf("issue = %+v, want index 0 named legacy-direct", issue)
+	}
+	if issue.Service.Target != "http://169.254.10.10:80" {
+		t.Fatalf("issue target = %q, want the raw entry preserved for runtime evidence", issue.Service.Target)
+	}
+	if code, ok := ErrorCode(issue.Err); !ok || code != CodeLinkLocalTargetRefused {
+		t.Fatalf("issue code = %q, %v; want %s", code, ok, CodeLinkLocalTargetRefused)
+	}
+	if !strings.Contains(issue.Error(), "edit registry.json") {
+		t.Fatalf("issue error = %v, want the runtime recovery text", issue.Error())
+	}
+}
+
 func TestAddRejectsInvalidControlURLBeforeMutation(t *testing.T) {
 	path := testRegistryPath(t)
 
