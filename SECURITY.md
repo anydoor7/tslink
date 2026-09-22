@@ -17,10 +17,17 @@ Important boundaries:
 
 - `--allow` is HTTP access control for proxy and file services. Raw TCP services do not receive TSLink HTTP identity filtering; protect them with Tailscale/Headscale policy, tags, tailnet membership, and the target service's own authentication.
 - `tslink doctor`, `tslink status --urls`, and `tslink access explain` are local evidence tools. They do not prove live remote Tailscale ACL/grants, Funnel reachability, or backend application authentication unless those checks are explicitly added in the future.
-- `tslink api` is a local JSON-over-stdin/stdout interface. It is not a REST/admin server and does not create a member-facing service directory.
+- `tslink mcp` is a local stdio MCP server. It is not a REST/admin server and does not create a member-facing service directory.
 - Remote Tailscale ACL mutation is disabled by default. `tslink login --manage-acl`, `tslink serve --manage-acl`, and `tslink tags delete-remote --manage-acl` opt in to typed whole-policy ACL writes with a machine-readable side-effect plan. Default login, serve, and tag flows do not rewrite shared ACL policy.
 - Per-service tsnet nodes provide network identity and routing separation. TSLink does not provide host process isolation or a compliance attestation.
 - Atomic writes into existing directories reject foreign-owned and group- or world-writable parents on Unix. On Windows, TSLink does not validate the parent directory's DACL: Go's `os.FileMode` exposes only synthesized bits that do not represent Windows access control. Windows callers must provision an appropriately restricted DACL when the parent directory is security-sensitive.
+- The `logs` MCP tool's redaction narrows what incidentally reaches a model's context; it is not an isolation boundary. The same log file is emitted verbatim by the `tslink logs` CLI, so any agent with a shell reads the originals.
+- That redaction does not cover a capability separated from its host by a delimiter. `mcpLogsTailscaleURLPattern` ends a URL at whitespace, a quote, an angle bracket or `)`, and requires one or two slashes after `https:`. Both choices are deliberate -- the token class is what lets the rule find a URL inside a quoted log field, and the slash count is what made it match `https:/login...` -- but they leave two shapes that reach `sanitizeLogLine` intact:
+
+      https://login.tailscale.com<SP|TAB|CR|">/a/<token>
+      https:login.tailscale.com/a/<token>          (zero slashes, url.Opaque)
+
+  Nothing in TSLink emits either shape: `internal/logging` routes tsnet's authorization URL through slog as one unbroken token. The exposure is a log line authored elsewhere -- a third-party library, a user pasting into a log, a future formatter that wraps long lines. Widening the token class is not a fix on its own: it trades this leak for over-redacting ordinary prose that mentions the host.
 
 ## Reporting a Vulnerability
 
@@ -28,20 +35,22 @@ If you discover a security vulnerability, please report it responsibly:
 
 1. **Do not** open a public GitHub issue
 2. Open a private GitHub Security Advisory: <https://github.com/monody0007/tslink/security/advisories/new>
-3. Include:
+3. If you cannot use GitHub Security Advisories, email maintainer@example.com with the same information. Use the subject prefix `[tslink-security]`.
+4. Include:
    - Description of the vulnerability
    - Steps to reproduce
    - Potential impact
    - Suggested fix (if any)
 
-Private GitHub Security Advisories are the supported vulnerability intake channel for this repository. Maintainers coordinate disclosure, fixes, and credit in the advisory thread before any public issue or pull request is opened.
+Private GitHub Security Advisories are the preferred vulnerability intake channel for this repository. The maintainers coordinate disclosure, fixes, and credit in the advisory thread before any public issue or pull request is opened.
+
+Expect an initial acknowledgement within 7 days. The coordinated disclosure target is 90 days from that acknowledgement; if a fix needs longer, the advisory thread says so and names a new date rather than going quiet.
 
 ## Supported Versions
 
 | Version | Supported |
 |---------|-----------|
-| Latest release | Yes |
-| Previous release | Best effort |
+| v0.1.x | Yes |
 | Older versions | No |
 
 ## Scope
