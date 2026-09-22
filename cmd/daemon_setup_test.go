@@ -428,7 +428,7 @@ func TestBootstrapTemplateApplyWritesBeforeSetup(t *testing.T) {
 		}
 		return errors.New("template setup marker")
 	}
-	if err := cmd.RunE(cmd, []string{"personal-harness"}); err == nil || !strings.Contains(err.Error(), "template setup marker") {
+	if err := cmd.RunE(cmd, []string{"local-web"}); err == nil || !strings.Contains(err.Error(), "template setup marker") {
 		t.Fatalf("err=%v", err)
 	}
 	if len(namesAtSetup) == 0 {
@@ -449,7 +449,7 @@ func TestBootstrapTemplateApplyUsesSetup(t *testing.T) {
 	}
 	calls := 0
 	ensureDaemonFn = func(context.Context, io.Writer, bool) error { calls++; return errors.New("template setup marker") }
-	err := cmd.RunE(cmd, []string{"personal-harness"})
+	err := cmd.RunE(cmd, []string{"local-web"})
 	if err == nil || !strings.Contains(err.Error(), "template setup marker") || calls != 1 {
 		t.Fatalf("calls=%d err=%v", calls, err)
 	}

@@ -229,7 +229,7 @@ func TestBootstrapMCPWritesThenInstallsWithOptOut(t *testing.T) {
 				}
 				args := fmt.Sprintf(`{"name":"app","type":"proxy","target":"localhost:3000","no_daemon_install":%t}`, noInstall)
 				if tool == "template_apply" {
-					args = fmt.Sprintf(`{"name":"personal-harness","no_daemon_install":%t}`, noInstall)
+					args = fmt.Sprintf(`{"name":"local-web","no_daemon_install":%t}`, noInstall)
 				}
 				var stderr bytes.Buffer
 				result, err := callMCPTool(context.Background(), defaultMCPActions(paths, &stderr), tool, json.RawMessage(args))

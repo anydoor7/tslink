@@ -107,7 +107,7 @@ func fakeMCPActions() mcpActions {
 			return result, err
 		},
 		templateApply: func(context.Context, string, bool) (any, error) {
-			return TemplateApplyResult{SchemaVersion: inspect.SchemaVersion, Name: "personal-harness", Summary: "fake", Applied: true, Services: []TemplatePlanItem{}}, nil
+			return TemplateApplyResult{SchemaVersion: inspect.SchemaVersion, Name: "local-web", Summary: "fake", Applied: true, Services: []TemplatePlanItem{}}, nil
 		},
 	}
 }

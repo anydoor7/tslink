@@ -77,8 +77,8 @@ func TestTemplateCommandTree(t *testing.T) {
 	cases := [][]string{
 		{"template"},
 		{"template", "list"},
-		{"template", "show", "personal-harness"},
-		{"template", "apply", "personal-harness"},
+		{"template", "show", "local-web"},
+		{"template", "apply", "local-web"},
 	}
 	for _, args := range cases {
 		cmd, _, err := rootCmd.Find(args)
@@ -112,7 +112,7 @@ func TestTemplateListJSONIncludesBuiltins(t *testing.T) {
 	for _, tmpl := range resp.Data.Templates {
 		found[tmpl.Name] = true
 	}
-	for _, name := range []string{"personal-harness", "dev-suite", "local-ai-suite"} {
+	for _, name := range []string{"local-web", "dev-suite", "local-ai-suite"} {
 		if !found[name] {
 			t.Fatalf("template list missing %q: %+v", name, resp.Data.Templates)
 		}
@@ -122,8 +122,8 @@ func TestTemplateListJSONIncludesBuiltins(t *testing.T) {
 	}
 }
 
-func TestTemplateShowPersonalHarnessJSONUsesPublicViews(t *testing.T) {
-	raw, err := runTemplateRootCommand(t, "template", "show", "personal-harness", "--json")
+func TestTemplateShowLocalWebJSONUsesPublicViews(t *testing.T) {
+	raw, err := runTemplateRootCommand(t, "template", "show", "local-web", "--json")
 	if err != nil {
 		t.Fatalf("template show --json: %v", err)
 	}
@@ -139,8 +139,8 @@ func TestTemplateShowPersonalHarnessJSONUsesPublicViews(t *testing.T) {
 	if resp.Data.SchemaVersion != inspect.SchemaVersion {
 		t.Fatalf("schema_version = %q, want %q", resp.Data.SchemaVersion, inspect.SchemaVersion)
 	}
-	if resp.Data.Name != "personal-harness" || len(resp.Data.Services) != 2 {
-		t.Fatalf("show data = %+v, want personal-harness with 2 services", resp.Data)
+	if resp.Data.Name != "local-web" || len(resp.Data.Services) != 2 {
+		t.Fatalf("show data = %+v, want local-web with 2 services", resp.Data)
 	}
 	for _, svc := range resp.Data.Services {
 		if svc.SchemaVersion != inspect.SchemaVersion {
@@ -186,7 +186,7 @@ func TestTemplateApplyDryRunDefaultDoesNotCreateRegistry(t *testing.T) {
 	regPath := filepath.Join(dir, "registry.json")
 	withTemplateRegistryPath(t, regPath)
 
-	raw, err := runTemplateRootCommand(t, "template", "apply", "personal-harness", "--json")
+	raw, err := runTemplateRootCommand(t, "template", "apply", "local-web", "--json")
 	if err != nil {
 		t.Fatalf("template apply dry-run: %v", err)
 	}
@@ -214,7 +214,7 @@ func TestTemplateApplyYesWritesOnlyMissingServices(t *testing.T) {
 	withTemplateRegistryPath(t, regPath)
 
 	if _, err := registry.Add(regPath, registry.Service{
-		Name:   "harness-web",
+		Name:   "web",
 		Type:   registry.TypeProxy,
 		Target: "http://localhost:9999",
 		Tags:   []string{"tag:custom"},
@@ -222,7 +222,7 @@ func TestTemplateApplyYesWritesOnlyMissingServices(t *testing.T) {
 		t.Fatalf("prepopulate registry: %v", err)
 	}
 
-	raw, err := runTemplateRootCommand(t, "template", "apply", "personal-harness", "--yes", "--json")
+	raw, err := runTemplateRootCommand(t, "template", "apply", "local-web", "--yes", "--json")
 	if err != nil {
 		t.Fatalf("template apply --yes: %v", err)
 	}
@@ -244,9 +244,9 @@ func TestTemplateApplyYesWritesOnlyMissingServices(t *testing.T) {
 	if len(reg.Services) != 2 {
 		t.Fatalf("services = %d, want 2", len(reg.Services))
 	}
-	assertHarnessWebCustomized(t, reg)
-	if !hasRegistryService(reg, "harness-api") {
-		t.Fatalf("registry missing harness-api: %+v", reg.Services)
+	assertWebServiceCustomized(t, reg)
+	if !hasRegistryService(reg, "api") {
+		t.Fatalf("registry missing api: %+v", reg.Services)
 	}
 }
 
@@ -256,17 +256,17 @@ func TestTemplateReapplySkipsExistingAndDoesNotOverwriteCustomized(t *testing.T)
 	withTemplateRegistryPath(t, regPath)
 
 	if _, err := registry.Add(regPath, registry.Service{
-		Name:   "harness-web",
+		Name:   "web",
 		Type:   registry.TypeProxy,
 		Target: "http://localhost:9999",
 		Tags:   []string{"tag:custom"},
 	}); err != nil {
 		t.Fatalf("prepopulate registry: %v", err)
 	}
-	if _, err := runTemplateRootCommand(t, "template", "apply", "personal-harness", "--yes", "--json"); err != nil {
+	if _, err := runTemplateRootCommand(t, "template", "apply", "local-web", "--yes", "--json"); err != nil {
 		t.Fatalf("first apply: %v", err)
 	}
-	raw, err := runTemplateRootCommand(t, "template", "apply", "personal-harness", "--yes", "--json")
+	raw, err := runTemplateRootCommand(t, "template", "apply", "local-web", "--yes", "--json")
 	if err != nil {
 		t.Fatalf("second apply: %v", err)
 	}
@@ -285,7 +285,7 @@ func TestTemplateReapplySkipsExistingAndDoesNotOverwriteCustomized(t *testing.T)
 	if len(reg.Services) != 2 {
 		t.Fatalf("services = %d, want 2", len(reg.Services))
 	}
-	assertHarnessWebCustomized(t, reg)
+	assertWebServiceCustomized(t, reg)
 }
 
 func TestTemplateApplyDryRunWinsOverYes(t *testing.T) {
@@ -293,7 +293,7 @@ func TestTemplateApplyDryRunWinsOverYes(t *testing.T) {
 	regPath := filepath.Join(dir, "registry.json")
 	withTemplateRegistryPath(t, regPath)
 
-	raw, err := runTemplateRootCommand(t, "template", "apply", "personal-harness", "--dry-run", "--yes", "--json")
+	raw, err := runTemplateRootCommand(t, "template", "apply", "local-web", "--dry-run", "--yes", "--json")
 	if err != nil {
 		t.Fatalf("template apply --dry-run --yes: %v", err)
 	}
@@ -385,15 +385,16 @@ func TestTemplateListHumanIncludesAllTemplateNames(t *testing.T) {
 }
 
 func TestTemplateShowHumanIncludesServicesAndLocalhostBackends(t *testing.T) {
-	out, err := runTemplateRootCommand(t, "template", "show", "personal-harness")
+	out, err := runTemplateRootCommand(t, "template", "show", "local-web")
 	if err != nil {
-		t.Fatalf("template show personal-harness: %v", err)
+		t.Fatalf("template show local-web: %v", err)
 	}
+	// Assert the whole rendered service line, not the bare name: "web" and
+	// "api" also occur inside the service summaries, so a substring check on
+	// the name alone would stay green after the name changed.
 	for _, want := range []string{
-		"harness-web",
-		"harness-api",
-		"http://localhost:8787",
-		"http://localhost:8788",
+		"  web: proxy -> http://localhost:8080",
+		"  api: proxy -> http://localhost:8000",
 		"tag:tslink",
 	} {
 		if !strings.Contains(out, want) {
@@ -406,9 +407,9 @@ func TestTemplateApplyHumanDryRunIncludesReminder(t *testing.T) {
 	dir := t.TempDir()
 	withTemplateRegistryPath(t, filepath.Join(dir, "registry.json"))
 
-	out, err := runTemplateRootCommand(t, "template", "apply", "personal-harness")
+	out, err := runTemplateRootCommand(t, "template", "apply", "local-web")
 	if err != nil {
-		t.Fatalf("template apply personal-harness: %v", err)
+		t.Fatalf("template apply local-web: %v", err)
 	}
 	for _, want := range []string{
 		"No registry changes written",
@@ -424,14 +425,14 @@ func TestTemplateApplyHumanYesIncludesCreatedSummary(t *testing.T) {
 	dir := t.TempDir()
 	withTemplateRegistryPath(t, filepath.Join(dir, "registry.json"))
 
-	out, err := runTemplateRootCommand(t, "template", "apply", "personal-harness", "--yes")
+	out, err := runTemplateRootCommand(t, "template", "apply", "local-web", "--yes")
 	if err != nil {
-		t.Fatalf("template apply personal-harness --yes: %v", err)
+		t.Fatalf("template apply local-web --yes: %v", err)
 	}
 	for _, want := range []string{
-		`Template "personal-harness" applied`,
-		"created harness-web",
-		"created harness-api",
+		`Template "local-web" applied`,
+		"created web",
+		"created api",
 		"Created 2, skipped 0.",
 	} {
 		if !strings.Contains(out, want) {
@@ -448,7 +449,7 @@ func TestTemplateApplyConvertsRaceCreatedServiceToSkipped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load empty registry: %v", err)
 	}
-	plan, _, err := planTemplateApply("personal-harness", reg, false)
+	plan, _, err := planTemplateApply("local-web", reg, false)
 	if err != nil {
 		t.Fatalf("planTemplateApply: %v", err)
 	}
@@ -459,7 +460,7 @@ func TestTemplateApplyConvertsRaceCreatedServiceToSkipped(t *testing.T) {
 	oldAddIfMissing := templateAddIfMissingFn
 	raced := false
 	templateAddIfMissingFn = func(path string, svc registry.Service) (bool, error) {
-		if svc.Name == "harness-web" && !raced {
+		if svc.Name == "web" && !raced {
 			raced = true
 			if _, err := registry.Add(path, svc); err != nil {
 				return false, err
@@ -472,7 +473,7 @@ func TestTemplateApplyConvertsRaceCreatedServiceToSkipped(t *testing.T) {
 		templateAddIfMissingFn = oldAddIfMissing
 	})
 
-	result, err := applyTemplate("personal-harness", regPath, false)
+	result, err := applyTemplate("local-web", regPath, false)
 	if err != nil {
 		t.Fatalf("applyTemplate: %v", err)
 	}
@@ -524,19 +525,19 @@ func hasRegistryService(reg *registry.Registry, name string) bool {
 	return false
 }
 
-func assertHarnessWebCustomized(t *testing.T, reg *registry.Registry) {
+func assertWebServiceCustomized(t *testing.T, reg *registry.Registry) {
 	t.Helper()
 	for _, svc := range reg.Services {
-		if svc.Name != "harness-web" {
+		if svc.Name != "web" {
 			continue
 		}
 		if svc.Target != "http://localhost:9999" {
-			t.Fatalf("harness-web target = %q, want custom target", svc.Target)
+			t.Fatalf("web target = %q, want custom target", svc.Target)
 		}
 		if len(svc.Tags) != 1 || svc.Tags[0] != "tag:custom" {
-			t.Fatalf("harness-web tags = %v, want custom tags", svc.Tags)
+			t.Fatalf("web tags = %v, want custom tags", svc.Tags)
 		}
 		return
 	}
-	t.Fatalf("harness-web not found in registry: %+v", reg.Services)
+	t.Fatalf("web not found in registry: %+v", reg.Services)
 }

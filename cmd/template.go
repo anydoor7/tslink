@@ -74,17 +74,17 @@ type TemplateApplyResult struct {
 func builtinTemplates() []serviceTemplate {
 	return []serviceTemplate{
 		{
-			Name:        "personal-harness",
-			Summary:     "Local personal harness web and API endpoints",
-			Description: "Small private harness services on localhost ports in the 8787 range. " + templateTagPolicy,
+			Name:        "local-web",
+			Summary:     "Generic local web and API endpoints",
+			Description: "Two generic HTTP services on common local ports. " + templateTagPolicy,
 			Services: []templateServiceSpec{
 				{
-					Summary: "Harness web interface",
-					Params:  AddParams{Name: "harness-web", Proxy: "localhost:8787", Tags: "tag:tslink"},
+					Summary: "Local web interface",
+					Params:  AddParams{Name: "web", Proxy: "localhost:8080", Tags: "tag:tslink"},
 				},
 				{
-					Summary: "Harness API endpoint",
-					Params:  AddParams{Name: "harness-api", Proxy: "localhost:8788", Tags: "tag:tslink"},
+					Summary: "Local API endpoint",
+					Params:  AddParams{Name: "api", Proxy: "localhost:8000", Tags: "tag:tslink"},
 				},
 			},
 		},

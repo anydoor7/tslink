@@ -450,8 +450,8 @@ tslink access explain myapp --json
 
 # Preview/apply built-in templates
 tslink template list --json
-tslink template apply personal-harness --dry-run --json
-tslink template apply personal-harness --yes --json
+tslink template apply local-web --dry-run --json
+tslink template apply local-web --yes --json
 ```
 
 The same operations are available to MCP clients through `tslink mcp` (stdio) and the remote control plane described below; `tslink manifest --json` prints the machine-readable description of every command, flag, exit code, and error code.

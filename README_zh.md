@@ -402,8 +402,8 @@ tslink access explain myapp --json
 
 # 预览/应用内置模板
 tslink template list --json
-tslink template apply personal-harness --dry-run --json
-tslink template apply personal-harness --yes --json
+tslink template apply local-web --dry-run --json
+tslink template apply local-web --yes --json
 ```
 
 同样的操作也可以由 MCP client 通过 `tslink mcp`（stdio）和下文的远程控制面完成；`tslink manifest --json` 会打印每个命令、flag、退出码和 error code 的机器可读描述。

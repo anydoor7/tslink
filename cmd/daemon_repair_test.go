@@ -112,7 +112,7 @@ func TestRepairSavedConfigurationRefusal(t *testing.T) {
 			paths := sharePaths{Registry: filepath.Join(dir, "registry.json"), PID: filepath.Join(dir, "tslink.pid"), Snapshot: filepath.Join(dir, "runtime.json")}
 			var before []byte
 			if existing {
-				if _, err := applyTemplate("personal-harness", paths.Registry, false); err != nil {
+				if _, err := applyTemplate("local-web", paths.Registry, false); err != nil {
 					t.Fatal(err)
 				}
 				var err error
@@ -172,7 +172,7 @@ func TestRepairSavedConfigurationRefusal(t *testing.T) {
 				if err := command.Flags().Set("yes", "true"); err != nil {
 					t.Fatal(err)
 				}
-				err = command.RunE(command, []string{"personal-harness"})
+				err = command.RunE(command, []string{"local-web"})
 				if err == nil {
 					t.Fatal("unverified live daemon accepted")
 				}
@@ -181,7 +181,7 @@ func TestRepairSavedConfigurationRefusal(t *testing.T) {
 			default:
 				tool, args := "add", `{"name":"saved-app","type":"proxy","target":"localhost:3000"}`
 				if entry == "mcp_template" {
-					tool, args = "template_apply", `{"name":"personal-harness"}`
+					tool, args = "template_apply", `{"name":"local-web"}`
 				}
 				result, err := callMCPTool(context.Background(), defaultMCPActions(paths, io.Discard), tool, json.RawMessage(args))
 				if err != nil || result == nil || !result.IsError {

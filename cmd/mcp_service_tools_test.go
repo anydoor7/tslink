@@ -1078,7 +1078,7 @@ func TestMCPLocalToolsReadAndWriteTheGivenRegistry(t *testing.T) {
 		t.Fatalf("template_list = %+v", templates)
 	}
 
-	planValue, err := actions.templatePlan("personal-harness")
+	planValue, err := actions.templatePlan("local-web")
 	if err != nil {
 		t.Fatalf("template_plan: %v", err)
 	}
@@ -1090,7 +1090,7 @@ func TestMCPLocalToolsReadAndWriteTheGivenRegistry(t *testing.T) {
 		t.Fatalf("template_plan wrote the registry: %+v (load error %v)", reg, loadErr)
 	}
 
-	applyValue, err := actions.templateApply(context.Background(), "personal-harness", true)
+	applyValue, err := actions.templateApply(context.Background(), "local-web", true)
 	if err != nil {
 		t.Fatalf("template_apply: %v", err)
 	}
@@ -1368,8 +1368,8 @@ func TestMCPNewToolsAreReachableOverTheProtocol(t *testing.T) {
 		`{"jsonrpc":"2.0","id":11,"method":"tools/call","params":{"name":"invite_revoke","arguments":{"kind":"user","invite_id":"1"}}}`,
 		`{"jsonrpc":"2.0","id":12,"method":"tools/call","params":{"name":"invite_resend","arguments":{"kind":"user","invite_id":"1"}}}`,
 		`{"jsonrpc":"2.0","id":13,"method":"tools/call","params":{"name":"template_list","arguments":{}}}`,
-		`{"jsonrpc":"2.0","id":14,"method":"tools/call","params":{"name":"template_plan","arguments":{"name":"personal-harness"}}}`,
-		`{"jsonrpc":"2.0","id":15,"method":"tools/call","params":{"name":"template_apply","arguments":{"name":"personal-harness","no_daemon_install":true}}}`,
+		`{"jsonrpc":"2.0","id":14,"method":"tools/call","params":{"name":"template_plan","arguments":{"name":"local-web"}}}`,
+		`{"jsonrpc":"2.0","id":15,"method":"tools/call","params":{"name":"template_apply","arguments":{"name":"local-web","no_daemon_install":true}}}`,
 		`{"jsonrpc":"2.0","id":16,"method":"tools/call","params":{"name":"share","arguments":{"target":"3000","allow":["a@example.com"],"tags":["tag:web"],"funnel":false,"public_ack":false}}}`,
 	}
 	stdout := runMCPSession(t, initializedMCPInput(strings.Join(calls, "\n")), fakeMCPActions())
