@@ -39,7 +39,7 @@ archives:
       - goos: windows
         formats:
           - zip
-    # The legal payload travels inside every tar/zip.
+    # The licence files and project documents travel inside every tar/zip.
     files:
       - LICENSE
       - NOTICE
@@ -83,13 +83,13 @@ nfpms:
     package_name: tslink
     vendor: monody0007
     homepage: "https://github.com/monody0007/tslink"
-    maintainer: "Maintainer <monody0007@users.noreply.github.com>"
+    maintainer: "monody0007 <monody0007@users.noreply.github.com>"
     description: "Private Tailscale gateway for local services"
     license: "Apache-2.0"
     formats:
       - deb
       - rpm
-    # Conventional deb/rpm documentation paths carry the legal set.
+    # Conventional deb/rpm documentation paths carry those same files.
     contents:
       - src: LICENSE
         dst: /usr/share/doc/tslink/LICENSE

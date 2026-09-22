@@ -27,7 +27,7 @@ jobs:
       ref: ${{ github.sha }}
 
   publish:
-    name: Publish (disabled until repository release authorization is enabled)
+    name: Publish
     needs: candidate
     runs-on: ubuntu-latest
     environment: release

@@ -1,8 +1,8 @@
 name: Release Candidate
 
 # Reusable exact-SHA quality gate called by the Release workflow.
-# Automatic PR/main CI is removed during private development. Release still
-# requires this gate before publishing artifacts.
+# Pull-request and main CI are not enabled; Release requires this gate before
+# publishing artifacts.
 
 on:
   workflow_call:
@@ -96,6 +96,13 @@ jobs:
             "tags --help" "tags list --help" "tags pull --help" "tags add --help"
             "tags set --help" "tags set-default --help" "tags delete-remote --help"
             "install --help" "uninstall --help"
+            "share --help" "url --help" "cleanup --help" "doctor --help"
+            "access --help" "access explain --help" "manifest --help"
+            "template --help" "template list --help" "template show --help"
+            "template apply --help" "mcp --help"
+            "invite --help" "invite user --help" "invite device --help"
+            "invite list --help" "invite revoke --help" "invite resend --help"
+            "registry --help" "registry check --help"
           )
           for command in "${commands[@]}"; do
             read -r -a args <<< "${command}"
@@ -308,7 +315,7 @@ jobs:
           mkdir -p "${out}"
           go build -trimpath -ldflags "-s -w -X main.commit=${GITHUB_SHA}" \
             -o "${out}/tslink${ext}" .
-          # Every published payload carries the legal set.
+          # Every published payload carries the licence files and project documents.
           cp LICENSE NOTICE THIRD_PARTY_NOTICES.md COMMERCIAL.md COMMERCIAL_zh.md "${out}/"
       - name: Smoke native artifact
         if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
@@ -337,8 +344,8 @@ jobs:
             [ -d "${dir}" ] || { echo "::error::missing artifact ${t}"; exit 1; }
             bin="${dir}/tslink"; [ "${t%-*}" = "windows" ] && bin="${dir}/tslink.exe"
             [ -s "${bin}" ] || { echo "::error::empty binary ${t}"; exit 1; }
-            for legal in LICENSE NOTICE THIRD_PARTY_NOTICES.md COMMERCIAL.md COMMERCIAL_zh.md; do
-              [ -s "${dir}/${legal}" ] || { echo "::error::missing ${legal} in ${t}"; exit 1; }
+            for f in "${required_license[@]}" "${bundled_docs[@]}"; do
+              [ -s "${dir}/${f}" ] || { echo "::error::missing ${f} in ${t}"; exit 1; }
             done
           done
           ( cd downloaded && find . -type f -exec sha256sum {} + | sort -k2 ) | tee candidate-artifacts.sha256
@@ -361,11 +368,13 @@ jobs:
         with:
           go-version-file: go.mod
           check-latest: true
-      - name: Required legal files present
+      - name: Required licence and project documents present
         shell: bash
         run: |
           set -euo pipefail
-          for f in LICENSE NOTICE THIRD_PARTY_NOTICES.md COMMERCIAL.md COMMERCIAL_zh.md; do
+          required_license=(LICENSE NOTICE THIRD_PARTY_NOTICES.md)
+          bundled_docs=(COMMERCIAL.md COMMERCIAL_zh.md)
+          for f in "${required_license[@]}" "${bundled_docs[@]}"; do
             [ -s "${f}" ] || { echo "::error::missing ${f}"; exit 1; }
           done
       - name: Third-party notice inventory is current

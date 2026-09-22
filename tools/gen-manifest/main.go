@@ -1,7 +1,8 @@
 // Command gen-manifest exports the CLI manifest (commands, flags, exit codes,
 // registry schema version, and security capabilities) to docs/cli-manifest.json.
-// The documentation site consumes this fixture, so command/schema/capability
-// facts have a single source of truth in the product repository.
+// Downstream documentation and clients consume this fixture, so
+// command/schema/capability facts have a single source of truth in the
+// product repository.
 //
 //	go run ./tools/gen-manifest          # (re)write docs/cli-manifest.json
 //	go run ./tools/gen-manifest -check   # exit nonzero if the committed fixture is stale

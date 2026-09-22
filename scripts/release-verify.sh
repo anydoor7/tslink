@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 #
-# release-verify.sh — local release readiness checklist.
+# release-verify.sh — local release readiness checklist. MAINTAINER-ONLY.
+#
+# The Phase 3 gates are external and can never pass locally, so a nonzero exit
+# from this script is its designed outcome, not a broken checkout.
 #
 # This script is intentionally read-only. It verifies local toolchain,
 # configuration, and generated snapshot assets, then names the external gates
@@ -56,18 +59,20 @@ if [ -d "$DIST_DIR" ]; then
   [ "${#archives[@]}" -ge 6 ] && pass "archives present (${#archives[@]})" || fail "expected >=6 archives, found ${#archives[@]}"
   [ "${#packages[@]}" -ge 2 ] && pass "linux packages present (${#packages[@]})" || fail "expected deb+rpm, found ${#packages[@]}"
   [ -f "$DIST_DIR/checksums.txt" ] && pass "checksums.txt present" || fail "checksums.txt missing"
-  # Every archive must carry the legal payload.
-  legal_ok=1
+  # Every archive must carry the licence files and project documents.
+  required_license=(LICENSE NOTICE THIRD_PARTY_NOTICES.md)
+  bundled_docs=(COMMERCIAL.md COMMERCIAL_zh.md)
+  docs_ok=1
   for a in "${archives[@]}"; do
     case "$a" in
       *.tar.gz) listing="$(tar tzf "$a")" ;;
       *.zip)    listing="$(unzip -Z1 "$a" 2>/dev/null || true)" ;;
     esac
-    for f in LICENSE NOTICE THIRD_PARTY_NOTICES.md COMMERCIAL.md COMMERCIAL_zh.md; do
-      printf '%s\n' "$listing" | awk -F/ -v file="$f" '$NF == file { found=1 } END { exit !found }' || { legal_ok=0; log "    missing $f in $(basename "$a")"; }
+    for f in "${required_license[@]}" "${bundled_docs[@]}"; do
+      printf '%s\n' "$listing" | awk -F/ -v file="$f" '$NF == file { found=1 } END { exit !found }' || { docs_ok=0; log "    missing $f in $(basename "$a")"; }
     done
   done
-  [ "$legal_ok" -eq 1 ] && pass "complete Apache/third-party legal payload in every archive" || fail "legal payload missing in some archive"
+  [ "$docs_ok" -eq 1 ] && pass "licence files and project documents present in every archive" || fail "a licence file or project document is missing from some archive"
   # Sidecars for signing/SBOM must exist before we can verify signatures.
   sboms=("$DIST_DIR"/*.sbom.json)
   [ "${#sboms[@]}" -ge 1 ] && pass "SBOM sidecars present (${#sboms[@]})" || unknown "SBOM sidecars absent (snapshot ran with --skip=sbom?)"
