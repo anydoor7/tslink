@@ -174,9 +174,11 @@ func removeServiceResult(regPath, ownershipPath, name string) (RemoveResult, err
 			//
 			// So deferring to a running daemon is correct for the common case
 			// and incomplete for that one: this command defers, and the daemon
-			// has nothing to stop. Such a directory survives until a later
-			// reconciliation proves the remote side is gone or an operator
-			// deletes it. Narrowing this branch further would mean asking a
+			// has nothing to stop. Such a directory is not cleaned up
+			// automatically afterwards: the ownership rows this command has
+			// already removed are the only thing the daemon's reconcile pass
+			// looks at, so it never sees the directory again. An operator
+			// deletes it by hand. Narrowing this branch further would mean asking a
 			// separate process which nodes it is running, which is what
 			// lifecycle.Options.LocalNodeStateInUse exists for inside the
 			// daemon and what a CLI process has no way to answer.
@@ -266,8 +268,8 @@ While a daemon is running this command leaves that directory alone, because the
 daemon removes it itself when the registry change reaches it -- but only for a
 service whose node that daemon currently has running. A service whose node never
 started, or failed to start, is in neither place: this command deferred to the
-daemon and the daemon has nothing to stop. Its directory survives until a later
-reconciliation proves the remote side is gone, or until you delete it by hand.
+daemon and the daemon has nothing to stop. Its directory is not cleaned up
+automatically afterwards; delete it by hand.
 
 State is also kept whenever the remote side could not be confirmed, such as a
 protected hostname-only match or an unavailable API client.

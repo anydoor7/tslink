@@ -294,7 +294,7 @@ func TestRotateArchivesExactlyWhatItMeasured(t *testing.T) {
 	}
 }
 
-// TestRotateMarksADeletedTargetDegraded covers a deleted target. Deleting
+// TestRotateMarksADeletedTargetDegraded is the negative case for a deleted target. Deleting
 // the log is the one skip the caller must keep hearing about: the descriptor
 // follows the deleted inode, the daemon keeps appending to a file no path
 // points at, and the same-inode check below correctly refuses to truncate it
