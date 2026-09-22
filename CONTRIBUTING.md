@@ -6,7 +6,7 @@ Thank you for your interest in contributing to TSLink! This document provides gu
 
 ### Prerequisites
 
-- Go 1.26.3 or newer. The `go` directive in [`go.mod`](./go.mod) is the source of truth for the supported minimum toolchain, and local checks should use a compatible toolchain.
+- Go 1.26.6 or newer. The `go` directive in [`go.mod`](./go.mod) is the source of truth for the supported minimum toolchain, and local checks should use a compatible toolchain.
 - A [Tailscale account](https://tailscale.com) (free for personal use) for integration testing
 - Git
 
@@ -27,7 +27,7 @@ go test ./...
 go vet ./...
 
 # Optional local release checks
-go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 ./...
+go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 ./...   # pinned to match CI (STATICCHECK_VERSION in .github/workflows/release-candidate.yml)
 go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
 go run github.com/goreleaser/goreleaser/v2@v2.17.0 check
 
@@ -59,11 +59,9 @@ listen on something, check for orphaned processes immediately (`ps`,
 filtered by the scratch config dir path), rather than assuming the exit
 value or a config-dir override proves there was no side effect.
 
-### Local verification
+### CI scope
 
-Run the local checks above for relevant changes. Inspect automated checks on the intended commit when available.
-
-A fresh check on the intended commit is required before release readiness can be established.
+Pull-request and `main` CI are not enabled. The reusable Release Candidate gate runs on tags, and Dependabot is active. Run the local checks above before opening a pull request.
 
 ### Maintainer Release Notes
 
@@ -71,14 +69,14 @@ Stable releases are disabled until external readback proves the release environm
 
 GoReleaser signs `checksums.txt` and generated SBOM sidecars with keyless Sigstore bundles, then the release workflow publishes GitHub artifact attestations for installable artifacts and supply-chain sidecars. Keep the `release.yml` attestation globs aligned with `.goreleaser.yml` when adding or removing release asset types.
 
-When a CI job on `main` fails in 0 steps within a few seconds (`steps: []` in
-the check-run), do not diagnose it as if it were the same failure you can
+When a CI job fails in 0 steps within a few seconds (`steps: []` in the
+check-run), do not diagnose it as if it were the same failure you can
 reproduce locally — a same-named local error (e.g. a `govulncheck` exit code)
 is a different evidence chain than a remote job that never ran any steps.
-Read `gh api repos/<repo>/check-runs/<job>/annotations` first; a private
-repository can fail every job at the GitHub Actions billing/spending-limit
-gate for months while every commit still reports the wrong, more specific
-root cause if nobody checks the annotation.
+Read `gh api repos/<repo>/check-runs/<job>/annotations` first: an account- or
+organization-level Actions gate reports as a job failure with no step output,
+and every commit keeps reporting the wrong, more specific root cause until
+someone reads the annotation.
 
 ### Project Structure
 
@@ -88,10 +86,8 @@ internal/
   config/      → Configuration and paths
   credentials/ → Keychain + file-based credential management
   daemon/      → Process management and daemonization
-  docker/      → Docker container auto-discovery
   logging/     → Structured logging (slog)
-  metrics/     → Prometheus metrics
-  middleware/  → Rate limiting, auth, IP allowlist, CORS
+  metrics/     → Internal request instrumentation (no scrape endpoint)
   registry/    → Service registry (JSON)
   server/      → tsnet server, proxy, file handler, TCP proxy
   tailapi/     → Tailscale API client
@@ -147,10 +143,9 @@ Any "competitor cannot do X" claim going into the README or public docs must
 be checked against that competitor's *current* official documentation before
 it is written, with a URL kept alongside the claim. A claim that "feels
 obviously true" is the most dangerous kind, precisely because it does not
-trigger the same verification instinct as a plain factual assertion — and a
-claim the two of you converged on together in conversation is not exempt
-from this check; if anything it needs it more, because both sides already
-feel confident it's right.
+trigger the same verification instinct as a plain factual assertion. A claim that
+emerged from discussion rather than from a source is not exempt; agreement
+between reviewers is not verification.
 
 ## Code Style
 
@@ -172,5 +167,5 @@ for inclusion in TSLink are offered under [Apache License 2.0](./LICENSE),
 as described in its section 5. Contributors retain their copyright; no
 copyright assignment or additional contributor agreement is required by
 this policy. Separately agreed contribution terms remain effective.
-Maintainers must verify the rights and license compatibility of contributed
-material before merging it.
+The maintainers must verify the rights and license compatibility of
+contributed material before merging it.
