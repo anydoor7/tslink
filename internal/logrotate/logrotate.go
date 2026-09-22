@@ -18,7 +18,7 @@
 // the kernel seek to end-of-file as part of every write. Measured on this
 // machine on 2026-09-16: a writer started with `2>>` returned to 15 bytes after
 // a truncate, and the same writer started with `2>` returned to 202015 bytes.
-// The production daemon's fd 2 carries the AP flag (lsof -a -p <pid> -d 2 +fg),
+// A supervisor-started daemon's fd 2 carries the AP flag (lsof -a -p <pid> -d 2 +fg),
 // as does the descriptor internal/daemon opens for `serve --daemon`.
 //
 // So O_APPEND is a precondition, not an assumption: RotateStderrLog verifies it

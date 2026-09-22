@@ -363,16 +363,18 @@ func TestExecuteShareNeedsLoginRetriesReuseSingleService(t *testing.T) {
 	}
 }
 
-// TestShareDaemonStartIsGatedOnTheRunningPredicate covers the `share` half of
-// the B16 incident shape: 83 orphaned `tslink serve` processes.
+// TestShareDaemonStartIsGatedOnTheRunningPredicate covers the `share` half of a
+// failure that was observed once as 83 orphaned `tslink serve` processes on one
+// machine.
 //
 // `share` starts a daemon only when shareIsRunningFn (daemon.IsRunning) says
 // none is running, and its failure path rolls back the registry entry it
 // created without reclaiming any daemon it started. So if that predicate ever
-// false-negatives on a live daemon — which E1 shows happens on the
-// cross-binary-identity path — every `share` invocation starts another daemon
-// and nothing removes them. That is per-invocation and measurable, unlike the
-// "accumulation over hours" framing that Round C-1 filed as operational.
+// false-negatives on a live daemon -- which it does when the running daemon was
+// built from a different binary than the one asking, because the identity check
+// then cannot match them -- every `share` invocation starts another daemon and
+// nothing removes them. That is a per-invocation, countable defect rather than
+// a gradual accumulation to be watched in production.
 //
 // Two things this test deliberately does NOT do, and why:
 //
@@ -380,9 +382,9 @@ func TestExecuteShareNeedsLoginRetriesReuseSingleService(t *testing.T) {
 //     requires the running predicate to lie, and under that mutation the real
 //     `share` execs a real `tslink serve`, which contacts the Tailscale control
 //     plane. That is forbidden here, so a process-level version of this
-//     scenario could only ever be observed green. A green-only assertion is the
-//     same defect class Round C-1's review found in E5, and adding one would be
-//     worse than not adding it.
+//     scenario could only ever be observed green. An assertion that cannot go
+//     red is not a test: it reports success in both the working and the broken
+//     case, so adding one would be worse than leaving the gap visible.
 //
 //  2. It does not assert that `share` ought to reclaim the daemon. It should
 //     not. The daemon is a shared resource: other registered services and other
