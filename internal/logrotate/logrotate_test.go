@@ -408,23 +408,34 @@ func TestRotateRefusalsThatAreNormalStayUndegraded(t *testing.T) {
 	}
 }
 
-// TestRotateArchiveKeepsTheLiveLogPermissions checks archive permissions. The
-// archive used to be chmod'd to a hardcoded 0600, so a log launchd created 0644
-// produced a .1 that the cross-user investigation it exists for could not read.
+// TestRotateArchiveNeverWidensBeyondOwnerOnly replaces an earlier test that
+// asserted the opposite: that the archive carried the live log's mode through
+// unchanged, so a log launchd creates 0644 produced a group- and world-readable
+// .1. That was deliberate, for cross-user investigation, and it is now wrong:
+// the file is an access log that also carries invite recipient addresses and
+// tsnet authorization URLs, so a second copy of it must not be readable by
+// anyone the owner did not choose.
 //
-// The control is the 0600 case in the same test: if the archive simply copied
-// whatever mode CreateTemp produced, the 0644 case would fail while 0600 -- the
-// old hardcoded value -- would still pass by accident.
-func TestRotateArchiveKeepsTheLiveLogPermissions(t *testing.T) {
+// The table is two-sided on purpose. 0644 is the case that must narrow; 0400 is
+// the control that must NOT be forced up to 0600, because "cap at 0600" and
+// "set to 0600" produce identical output for every other row and only this one
+// tells them apart.
+func TestRotateArchiveNeverWidensBeyondOwnerOnly(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("unix permission bits")
 	}
-	for _, mode := range []os.FileMode{0o644, 0o600} {
-		t.Run(mode.String(), func(t *testing.T) {
+	for _, tc := range []struct{ live, wantArchive os.FileMode }{
+		{live: 0o644, wantArchive: 0o600},
+		{live: 0o640, wantArchive: 0o600},
+		{live: 0o666, wantArchive: 0o600},
+		{live: 0o600, wantArchive: 0o600},
+		{live: 0o400, wantArchive: 0o400},
+	} {
+		t.Run(tc.live.String(), func(t *testing.T) {
 			dir := t.TempDir()
 			target := filepath.Join(dir, "tslink.err.log")
 			handle := openSupervisedLog(t, target, bytes.Repeat([]byte("a"), 4096))
-			if err := os.Chmod(target, mode); err != nil {
+			if err := os.Chmod(target, tc.live); err != nil {
 				t.Fatalf("chmod the live log: %v", err)
 			}
 
@@ -439,8 +450,11 @@ func TestRotateArchiveKeepsTheLiveLogPermissions(t *testing.T) {
 			if err != nil {
 				t.Fatalf("stat the archive: %v", err)
 			}
-			if got := info.Mode().Perm(); got != mode {
-				t.Fatalf("archive mode = %v, want the live log's %v", got, mode)
+			if got := info.Mode().Perm(); got != tc.wantArchive {
+				t.Fatalf("archive mode = %v for a live log at %v, want %v", got, tc.live, tc.wantArchive)
+			}
+			if got := info.Mode().Perm() &^ 0o600; got != 0 {
+				t.Fatalf("archive is readable beyond its owner: extra bits %v", got)
 			}
 		})
 	}
