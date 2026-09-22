@@ -38,6 +38,18 @@ var removeNodeStateFn = tsruntime.RemoveServiceNodeState
 // directory. A wrong "not running" deletes state underneath a live node; a
 // wrong "running" leaves a directory behind, which is the bug this is fixing
 // and not a new one.
+//
+// It asks the process-default config directory, while the directory this
+// command deletes is derived from the registry path it was given. In
+// production those are the same place -- the registry path comes from
+// config.RegistryPath(), and the PID file is its sibling -- so the two agree.
+// They can disagree only for a caller that passes a registry path from a
+// non-default installation, and the disagreement is one-directional and
+// harmless in the safe sense: the answer is then about some other
+// installation's daemon, and the worst outcome is a keep that did not need to
+// happen. Deriving the PID path from the registry path as well would make them
+// same-origin by construction, which is the better shape if this command ever
+// grows a --config-dir style flag.
 var removeDaemonPIDPathFn = config.PIDPath
 
 var removeDaemonRunningFn = func() bool {

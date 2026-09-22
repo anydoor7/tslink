@@ -273,6 +273,27 @@ func Reconcile(ctx context.Context, options Options) (Result, error) {
 //     true; it costs one map lookup and the alternative is a live service
 //     losing its identity.
 //
+// One window is open and is worth naming rather than implying away. This
+// function does not run under the daemon's sync gate, and HoldsNodeState
+// answers only "is this name in s.nodes right now". So between the registry
+// read at the top of Reconcile and the removal here, `tslink add` can put the
+// same name back and startNodeLocked can be partway through starting it --
+// before the node is published into s.nodes, where HoldsNodeState would see it.
+// In that interleaving the directory of a starting node is removed.
+//
+// The cost is bounded by what is in the directory at that moment. This branch
+// is reached only after every remote node recorded for that name was deleted or
+// confirmed absent, so the key being removed authenticates to nothing; the
+// service that was just re-added is enrolling a new identity, not reusing that
+// one. The outcome is a node that enrolls from scratch, which is what a
+// re-added service does anyway.
+//
+// Closing it properly means holding the sync gate across the reconcile, or
+// re-reading the registry immediately before each removal. Both are cheap; both
+// were left out because the window is narrow enough that neither has been
+// observed, and a gate held across a network-bound reconcile is its own
+// availability risk.
+//
 // What it deliberately does not do is sweep node directories that have no
 // ownership record at all -- the shape the long-dead `funnel-probe` directory
 // on a production machine has, because `tslink remove` already consumed its
