@@ -46,7 +46,7 @@ import (
 //   - Nothing here ever matches processes by name. e2eLivePIDsForBinary only
 //     matches an absolute path that this test run created under the per-run
 //     temp build directory, and e2eRequireTempPath fails closed if that path is
-//     not under os.TempDir(). A production daemon installed at, for example,
+//     not under os.TempDir(). A daemon an operator installed at, for example,
 //     /Users/<user>/go/bin/tslink is therefore structurally unmatchable.
 //   - No helper reads or writes the real ~/.config/tslink. Every caller passes
 //     an explicit t.TempDir() config directory.

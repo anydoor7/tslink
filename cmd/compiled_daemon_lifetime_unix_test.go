@@ -70,7 +70,7 @@ func TestCompiledDaemonDoesNotOutliveTestLauncher(t *testing.T) {
 		t.Fatalf("detached daemon never became observable: stdout=%q stderr=%q", stdout.String(), stderr.String())
 	}
 	if daemonPID == 2469 {
-		t.Fatal("refusing to signal production daemon PID 2469")
+		t.Fatal("refusing to signal a real installed daemon PID 2469")
 	}
 
 	var err error
