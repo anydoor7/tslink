@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"time"
 
 	"github.com/monody0007/tslink/internal/config"
@@ -25,6 +24,13 @@ type RemoveResult struct {
 	DeviceCleanupSkipped bool   `json:"device_cleanup_skipped"`
 	DeviceSkipReason     string `json:"device_skip_reason,omitempty"`
 	DeviceWarning        string `json:"device_warning,omitempty"`
+	// NodeStateKeptReason explains a local tsnet state directory this command
+	// left in place, and only for the cause that reaches no other field here.
+	// A protected hostname or a skipped cleanup are already stated by
+	// device_cleanup_skipped and device_skip_reason; partial resolution --
+	// some of the service's recorded nodes deleted and some unaccounted for --
+	// was previously a silent decision.
+	NodeStateKeptReason string `json:"node_state_kept_reason,omitempty"`
 }
 
 var deleteDevicesFn = tailapi.DeleteDevicesForService
@@ -62,11 +68,13 @@ var removeDaemonRunningFn = func() bool {
 
 // localNodeStateIsStale reports whether the local tsnet state for a service
 // just removed from the registry can no longer authenticate to anything, and
-// when it still can, why this run could not establish otherwise.
+// returns a reason for the one keep this command would otherwise never
+// explain.
 //
-// The reason is a return value rather than a comment because it is the only
-// thing that explains a directory that is still there. A keep with no stated
-// cause is indistinguishable, from outside, from a cleanup that never ran.
+// A keep with no stated cause is indistinguishable, from outside, from a
+// cleanup that never ran. Two of the three causes are already stated -- a
+// protected hostname and a skipped cleanup both reach the caller through
+// RemoveResult -- so only partial resolution needs a reason of its own.
 //
 // Every condition below is a fact this process observed in this invocation, not
 // an inference:
@@ -88,16 +96,13 @@ var removeDaemonRunningFn = func() bool {
 //
 // Absent a remote identity the directory holds only a key that authenticates to
 // nothing, which is why removing it is not a loss.
-func localNodeStateIsStale(ownedNodeIDs []string, cleanup tailapi.CleanupResult) (stale bool, keepReason string) {
-	if len(cleanup.Protected) > 0 {
-		return false, fmt.Sprintf("the tailnet lists %d device(s) matching this service's hostname that TSLink cannot prove it owns", len(cleanup.Protected))
-	}
-	if cleanup.Skipped {
-		reason := cleanup.SkipReason
-		if reason == "" {
-			reason = "no reason reported"
-		}
-		return false, "remote device cleanup was skipped: " + reason
+func localNodeStateIsStale(ownedNodeIDs []string, cleanup tailapi.CleanupResult) (stale bool, unreportedKeepReason string) {
+	// Protected and Skipped are already carried by device_cleanup_skipped and
+	// device_skip_reason, so they return no reason here: repeating them would
+	// put the same fact on two surfaces and make the field useless as a signal
+	// that something went unexplained.
+	if len(cleanup.Protected) > 0 || cleanup.Skipped {
+		return false, ""
 	}
 	resolved := make(map[string]struct{}, len(cleanup.ResolvedOwnershipIDs))
 	for _, id := range cleanup.ResolvedOwnershipIDs {
@@ -180,17 +185,20 @@ func removeServiceResult(regPath, ownershipPath, name string) (RemoveResult, err
 			// all: a remove issued while no daemon is running, which is how
 			// ~/.config/tslink/nodes/ accumulates directories for services that
 			// were removed months ago.
-			stale, keepReason := localNodeStateIsStale(ownedNodeIDs, cleanup)
+			// Nothing on this path writes to stderr. `tslink remove` reports
+			// through its result envelope, and the compiled-binary contract
+			// tests assert stderr is empty on success, so an slog line here
+			// would fail the machine contract on the branch that fires most
+			// often -- once for every removal without an API client, and once
+			// for every removal while a daemon is running.
+			stale, unreportedKeepReason := localNodeStateIsStale(ownedNodeIDs, cleanup)
 			switch {
 			case !stale:
-				// Protected and Skipped also reach the caller through
-				// RemoveResult; partial resolution does not, and that is the
-				// one an operator is otherwise left to guess at.
-				slog.Info("keeping local node state; this run could not confirm the service holds no remote tailnet identity",
-					"service", name, "path", "nodes/"+name, "reason", keepReason)
+				result.NodeStateKeptReason = unreportedKeepReason
 			case removeDaemonRunningFn():
-				slog.Info("keeping local node state; a running daemon removes it when the registry change reaches it, provided that daemon currently runs this service's node",
-					"service", name, "path", "nodes/"+name)
+				// Deliberately silent: the daemon deleting the directory it
+				// owns is the ordinary outcome, and the one case where it does
+				// not is documented in this command's help text.
 			default:
 				if removeErr := removeNodeStateFn(tsruntime.ServiceNodeStateConfigDir(regPath), name); removeErr != nil {
 					result.DeviceWarning = fmt.Sprintf("service and tailnet node removed but local node state could not be deleted: %v", removeErr)
@@ -226,6 +234,9 @@ func removeServiceWithOptions(regPath, ownershipPath, name string, out, errOut i
 		fmt.Fprintf(out, "→ ✓ removed: %s\n", name)
 		if result.DeviceCleanupSkipped {
 			fmt.Fprintf(out, "→ remote tailnet node cleanup skipped: %s\n", result.DeviceSkipReason)
+		}
+		if result.NodeStateKeptReason != "" {
+			fmt.Fprintf(out, "→ local node state kept: %s\n", result.NodeStateKeptReason)
 		}
 	} else {
 		fmt.Fprintf(out, "→ %s not registered, nothing to remove\n", name)

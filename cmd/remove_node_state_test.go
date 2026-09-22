@@ -241,71 +241,120 @@ func TestRemoveNodeStateUsesTheRegistrysOwnConfigDir(t *testing.T) {
 
 // TestRemoveStatesWhyLocalNodeStateWasKept pins the explanation, not just the
 // decision. A directory that is still there with nothing said about it is
-// indistinguishable, from outside, from a cleanup that never ran -- and partial
-// resolution is the one keep reason that reaches no other surface: Protected
-// and Skipped also arrive through RemoveResult's device_skip_reason.
+// indistinguishable, from outside, from a cleanup that never ran.
+//
+// Only partial resolution gets a reason of its own: a protected hostname and a
+// skipped cleanup already reach the caller through device_cleanup_skipped and
+// device_skip_reason, and repeating them here would make the field useless as a
+// signal that something went unexplained. Those two rows assert exactly that --
+// the fact is reported, and reported once.
+//
+// The reason travels on the result, never on stderr. `tslink remove` reports
+// through its result envelope and the compiled-binary contract tests assert an
+// empty stderr on success, so every row here also asserts that this command
+// logged nothing.
 func TestRemoveStatesWhyLocalNodeStateWasKept(t *testing.T) {
 	for _, tc := range []struct {
-		name        string
-		cleanup     tailapi.CleanupResult
-		wantFrag    string
-		wantReasons []string
+		name           string
+		cleanup        tailapi.CleanupResult
+		wantKeptReason string
+		wantSkipReason string
 	}{
 		{
-			name:     "partial resolution",
-			cleanup:  tailapi.CleanupResult{Deleted: []string{"web"}, ResolvedOwnershipIDs: []string{"node-other"}},
-			wantFrag: "neither deleted nor confirmed absent",
+			name:           "partial resolution is reported nowhere else",
+			cleanup:        tailapi.CleanupResult{Deleted: []string{"web"}, ResolvedOwnershipIDs: []string{"node-other"}},
+			wantKeptReason: "neither deleted nor confirmed absent",
 		},
 		{
-			name:     "protected hostname",
-			cleanup:  tailapi.CleanupResult{Matched: []string{"web"}, Protected: []string{"web"}, Skipped: true, SkipReason: "ownership unproven"},
-			wantFrag: "cannot prove it owns",
+			name:           "a protected hostname is already reported as a skip",
+			cleanup:        tailapi.CleanupResult{Matched: []string{"web"}, Protected: []string{"web"}, Skipped: true, SkipReason: "ownership unproven"},
+			wantSkipReason: "ownership unproven",
 		},
 		{
-			name:     "skipped cleanup",
-			cleanup:  tailapi.CleanupResult{Skipped: true, SkipReason: tailapi.ErrNoAPIClient.Error()},
-			wantFrag: "remote device cleanup was skipped",
+			name:           "a skipped cleanup is already reported as a skip",
+			cleanup:        tailapi.CleanupResult{Skipped: true, SkipReason: tailapi.ErrNoAPIClient.Error()},
+			wantSkipReason: tailapi.ErrNoAPIClient.Error(),
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			regPath, ownershipPath, stateDir := removeNodeStateFixture(t, "web")
 			stubDaemonRunning(t, false)
 			stubDeleteDevices(t, tc.cleanup, nil)
+			logs := captureRemoveLogs(t)
 
-			var logs bytes.Buffer
-			previous := slog.Default()
-			slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
-			t.Cleanup(func() { slog.SetDefault(previous) })
-
-			if _, err := removeServiceResult(regPath, ownershipPath, "web"); err != nil {
+			result, err := removeServiceResult(regPath, ownershipPath, "web")
+			if err != nil {
 				t.Fatalf("removeServiceResult() error = %v", err)
 			}
 			assertStateDir(t, stateDir, true)
-			if !strings.Contains(logs.String(), tc.wantFrag) {
-				t.Fatalf("log did not state why the node state was kept; want a line containing %q, got:\n%s", tc.wantFrag, logs.String())
+
+			if tc.wantKeptReason != "" && !strings.Contains(result.NodeStateKeptReason, tc.wantKeptReason) {
+				t.Fatalf("NodeStateKeptReason = %q, want it to contain %q", result.NodeStateKeptReason, tc.wantKeptReason)
+			}
+			if tc.wantSkipReason != "" {
+				if result.DeviceSkipReason != tc.wantSkipReason {
+					t.Fatalf("DeviceSkipReason = %q, want %q", result.DeviceSkipReason, tc.wantSkipReason)
+				}
+				if result.NodeStateKeptReason != "" {
+					t.Fatalf("NodeStateKeptReason = %q, want empty: this cause is already carried by device_skip_reason", result.NodeStateKeptReason)
+				}
+			}
+			if logs.String() != "" {
+				t.Fatalf("remove wrote to the log; its contract is an empty stderr on success:\n%s", logs.String())
 			}
 		})
 	}
 
-	// Control: a removal that does delete the directory must not emit a keep
-	// reason, or the assertions above would pass against a line printed
-	// unconditionally.
+	// Control: a removal that does delete the directory reports no keep reason,
+	// so the first row above is reading a field that is actually conditional.
 	t.Run("no keep reason when the state is deleted", func(t *testing.T) {
 		regPath, ownershipPath, stateDir := removeNodeStateFixture(t, "web")
 		stubDaemonRunning(t, false)
 		stubDeleteDevices(t, tailapi.CleanupResult{Deleted: []string{"web"}, ResolvedOwnershipIDs: []string{"node-web"}}, nil)
+		logs := captureRemoveLogs(t)
 
-		var logs bytes.Buffer
-		previous := slog.Default()
-		slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
-		t.Cleanup(func() { slog.SetDefault(previous) })
-
-		if _, err := removeServiceResult(regPath, ownershipPath, "web"); err != nil {
+		result, err := removeServiceResult(regPath, ownershipPath, "web")
+		if err != nil {
 			t.Fatalf("removeServiceResult() error = %v", err)
 		}
 		assertStateDir(t, stateDir, false)
-		if strings.Contains(logs.String(), "keeping local node state") {
-			t.Fatalf("a deleted state directory still logged a keep reason:\n%s", logs.String())
+		if result.NodeStateKeptReason != "" {
+			t.Fatalf("NodeStateKeptReason = %q for a deleted directory, want empty", result.NodeStateKeptReason)
+		}
+		if logs.String() != "" {
+			t.Fatalf("remove wrote to the log:\n%s", logs.String())
 		}
 	})
+
+	// The keep branch that defers to a running daemon is the one that fires on
+	// every removal on a machine with a live daemon. It must also stay silent.
+	t.Run("deferring to a running daemon is silent", func(t *testing.T) {
+		regPath, ownershipPath, stateDir := removeNodeStateFixture(t, "web")
+		stubDaemonRunning(t, true)
+		stubDeleteDevices(t, tailapi.CleanupResult{Deleted: []string{"web"}, ResolvedOwnershipIDs: []string{"node-web"}}, nil)
+		logs := captureRemoveLogs(t)
+
+		result, err := removeServiceResult(regPath, ownershipPath, "web")
+		if err != nil {
+			t.Fatalf("removeServiceResult() error = %v", err)
+		}
+		assertStateDir(t, stateDir, true)
+		if result.NodeStateKeptReason != "" {
+			t.Fatalf("NodeStateKeptReason = %q, want empty for the ordinary defer-to-daemon case", result.NodeStateKeptReason)
+		}
+		if logs.String() != "" {
+			t.Fatalf("remove wrote to the log on the branch that fires whenever a daemon is running:\n%s", logs.String())
+		}
+	})
+}
+
+// captureRemoveLogs redirects the default logger for one test and returns the
+// buffer, so a test can assert that this command logged nothing at all.
+func captureRemoveLogs(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	return &buf
 }
