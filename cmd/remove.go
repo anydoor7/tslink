@@ -126,16 +126,31 @@ func removeServiceResult(regPath, ownershipPath, name string) (RemoveResult, err
 				result.DeviceCleanupSkipped = true
 				result.DeviceSkipReason = cleanup.SkipReason
 			}
-			// The state directory outlives the service unless something removes
-			// it. A running daemon does that itself when the registry change
-			// reaches its watcher, so this path only has to cover the case that
-			// daemon cannot: a remove issued while no daemon is running, which
-			// is how ~/.config/tslink/nodes/ accumulates directories for
-			// services that were removed months ago.
+			// The state directory outlives the service unless something
+			// removes it. A running daemon does that itself when the registry
+			// change reaches its watcher -- but only for a service that is in
+			// its s.nodes map, because internal/server's removal loop iterates
+			// that map and calls stopNodeLocked(name, true) per entry. A
+			// service whose node never started, or failed to start, is not in
+			// it.
+			//
+			// So deferring to a running daemon is correct for the common case
+			// and incomplete for that one: this command defers, and the daemon
+			// has nothing to stop. Such a directory survives until a later
+			// reconciliation proves the remote side is gone or an operator
+			// deletes it. Narrowing this branch further would mean asking a
+			// separate process which nodes it is running, which is what
+			// lifecycle.Options.LocalNodeStateInUse exists for inside the
+			// daemon and what a CLI process has no way to answer.
+			//
+			// What this path does cover is the case the daemon cannot see at
+			// all: a remove issued while no daemon is running, which is how
+			// ~/.config/tslink/nodes/ accumulates directories for services that
+			// were removed months ago.
 			if localNodeStateIsStale(ownedNodeIDs, cleanup, err) {
 				switch {
 				case removeDaemonRunningFn():
-					slog.Info("keeping local node state; the running daemon removes it when the registry change reaches it",
+					slog.Info("keeping local node state; a running daemon removes it when the registry change reaches it, provided that daemon currently runs this service's node",
 						"service", name, "path", "nodes/"+name)
 				default:
 					if removeErr := removeNodeStateFn(tsruntime.ServiceNodeStateConfigDir(regPath), name); removeErr != nil {
@@ -196,10 +211,17 @@ and stop the removed service's tsnet node automatically.
 
 The service's node state in ~/.config/tslink/nodes/<name>/ is removed once this
 command has confirmed the service holds no remote tailnet identity: either its
-recorded device was deleted, or it never had one. A running daemon removes that
-directory itself when it sees the registry change, so this command leaves it
-alone while one is running. State is kept whenever the remote side could not be
-confirmed, such as a protected hostname-only match or an unavailable API client.
+recorded device was deleted, or it never had one.
+
+While a daemon is running this command leaves that directory alone, because the
+daemon removes it itself when the registry change reaches it -- but only for a
+service whose node that daemon currently has running. A service whose node never
+started, or failed to start, is in neither place: this command deferred to the
+daemon and the daemon has nothing to stop. Its directory survives until a later
+reconciliation proves the remote side is gone, or until you delete it by hand.
+
+State is also kept whenever the remote side could not be confirmed, such as a
+protected hostname-only match or an unavailable API client.
 
 By default, removal is idempotent: an absent service is reported as unchanged
 and the command exits successfully. Use --strict to return not_found (exit 5)
