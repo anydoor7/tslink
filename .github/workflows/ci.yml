@@ -1,0 +1,33 @@
+name: CI
+
+# PR and main run the exact-SHA release candidate gate defined in
+# release-candidate.yml. There is no separate, weaker CI path: the same
+# reusable workflow gates every trigger, so a commit that cannot pass the
+# release gate cannot land on main either, and the invariant "PR/main and the
+# tag path consume the same gate" holds for all three trigger paths at once.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Least privilege: the reusable candidate gate only reads the repository.
+permissions:
+  contents: read
+
+# One run per ref. A new push to a PR branch cancels the superseded run
+# instead of spending another three-OS matrix on a commit nobody will merge.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  candidate:
+    name: Release candidate gate
+    permissions:
+      contents: read
+    uses: ./.github/workflows/release-candidate.yml
+    with:
+      ref: ${{ github.sha }}
+    secrets: inherit

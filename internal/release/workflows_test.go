@@ -189,6 +189,8 @@ type jobDef struct {
 	Needs       stringOrSlice     `yaml:"needs"`
 	Environment envField          `yaml:"environment"`
 	Permissions map[string]string `yaml:"permissions"`
+	With        map[string]string `yaml:"with"`
+	Secrets     any               `yaml:"secrets"`
 }
 
 type workflowFile struct {
@@ -287,6 +289,71 @@ func TestCIConsumesReusableCandidate(t *testing.T) {
 	if job.Uses != reusableRef {
 		t.Errorf("ci.yml candidate job must call %q, got %q", reusableRef, job.Uses)
 	}
+}
+
+// TestCIShapePinsTriggersAndCostControls pins the parts of ci.yml that the
+// `uses:` assertion above cannot see: pull_request plus push to main,
+// read-only permissions, and a per-ref concurrency group that cancels
+// superseded runs. Dropping the pull_request trigger, deleting the
+// concurrency block, or granting a write permission turns an assertion red.
+func TestCIShapePinsTriggersAndCostControls(t *testing.T) {
+	body, ok := readWorkflows(t)["ci.yml"]
+	if !ok {
+		t.Fatal("ci.yml is missing")
+	}
+	var wf struct {
+		On struct {
+			Push struct {
+				Branches []string `yaml:"branches"`
+			} `yaml:"push"`
+			PullRequest struct {
+				Branches []string `yaml:"branches"`
+			} `yaml:"pull_request"`
+		} `yaml:"on"`
+		Permissions map[string]string `yaml:"permissions"`
+		Concurrency struct {
+			Group            string `yaml:"group"`
+			CancelInProgress bool   `yaml:"cancel-in-progress"`
+		} `yaml:"concurrency"`
+		Jobs map[string]jobDef `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal(body, &wf); err != nil {
+		t.Fatalf("parse ci.yml: %v", err)
+	}
+	if !containsString(wf.On.Push.Branches, "main") {
+		t.Errorf("ci.yml push branches = %v, want main", wf.On.Push.Branches)
+	}
+	if len(wf.On.PullRequest.Branches) == 0 {
+		t.Error("ci.yml must run on pull_request")
+	}
+	if len(wf.Permissions) != 1 || wf.Permissions["contents"] != "read" {
+		t.Errorf("ci.yml workflow permissions = %v, want only contents: read", wf.Permissions)
+	}
+	if !strings.Contains(wf.Concurrency.Group, "github.ref") || !wf.Concurrency.CancelInProgress {
+		t.Errorf("ci.yml concurrency = %+v, want a per-ref group with cancel-in-progress: true", wf.Concurrency)
+	}
+	candidate, ok := wf.Jobs["candidate"]
+	if !ok {
+		t.Fatal("ci.yml has no `candidate` job")
+	}
+	if candidate.Permissions["contents"] != "read" {
+		t.Errorf("ci.yml candidate permissions = %v, want contents: read", candidate.Permissions)
+	}
+	if _, ok := candidate.With["ref"]; !ok {
+		t.Errorf("ci.yml candidate must pass a ref input to the reusable gate, got %v", candidate.With)
+	}
+	if candidate.Secrets != "inherit" {
+		t.Errorf("ci.yml candidate secrets = %v, want inherit", candidate.Secrets)
+	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, v := range values {
+		if v == want {
+			return true
+		}
+	}
+	return false
 }
 
 // TestCandidateDeclaresRequiredGates guards against a gate being silently dropped.
