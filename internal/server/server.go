@@ -1233,7 +1233,10 @@ func serviceChanged(old, new registry.Service) bool {
 }
 
 func serviceChangedWithFallback(old, new registry.Service, fallbackControlURL string) bool {
-	if old.Type != new.Type || old.Target != new.Target || old.Path != new.Path {
+	// File is part of this comparison because dropping it widens a single-file
+	// share back to its whole parent directory. A change the daemon does not
+	// notice here is a node that keeps serving the previous reachable surface.
+	if old.Type != new.Type || old.Target != new.Target || old.Path != new.Path || old.File != new.File {
 		return true
 	}
 	if old.Port != new.Port || old.Ephemeral != new.Ephemeral || old.Funnel != new.Funnel || old.PublicAck != new.PublicAck || old.NoAutoProvision != new.NoAutoProvision || old.Domain != new.Domain {
@@ -1328,6 +1331,21 @@ func effectiveControlURL(svc registry.Service, fallback string) string {
 		return svc.ControlURL
 	}
 	return fallback
+}
+
+// HoldsNodeState reports whether this server currently runs a node for name and
+// therefore has a live tsnet server holding that name's state directory open.
+//
+// It exists for the lifecycle reconciliation, which decides whether the local
+// state of an orphan service is safe to delete. That decision needs a fact only
+// this process has, and the honest form of the fact is "I am holding it right
+// now" rather than "nothing is holding it anywhere": a separate `tslink
+// cleanup` process gets no answer from here and does not delete.
+func (s *Server) HoldsNodeState(name string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, running := s.nodes[name]
+	return running
 }
 
 func removeServiceStateDir(name string) error {
@@ -1746,7 +1764,16 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service, prov
 		}
 		handler = h
 	case registry.TypeFile:
-		h, err2 := NewFileHandler(svc.Path)
+		// svc.File is the narrowing set by a regular-file share. Absent, this is
+		// a directory share and the whole subtree is served, which is also how
+		// every registry written before the field existed reads.
+		var h *FileHandler
+		var err2 error
+		if svc.File != "" {
+			h, err2 = NewSingleFileHandler(svc.Path, svc.File)
+		} else {
+			h, err2 = NewFileHandler(svc.Path)
+		}
 		if err2 != nil {
 			return fmt.Errorf("file handler for %q: %w", svc.Name, err2)
 		}

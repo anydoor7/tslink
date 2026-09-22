@@ -438,10 +438,15 @@ type MiddlewareConfig struct {
 }
 
 type Service struct {
-	Name            string            `json:"name"`
-	Type            string            `json:"type"`
-	Target          string            `json:"target,omitempty"`
-	Path            string            `json:"path,omitempty"`
+	Name   string `json:"name"`
+	Type   string `json:"type"`
+	Target string `json:"target,omitempty"`
+	Path   string `json:"path,omitempty"`
+	// File narrows a file service to exactly one name inside Path. It is the
+	// bare file name, never a path. Empty means the whole Path subtree is
+	// served, which is also what every registry written before this field
+	// existed means, so an older file keeps its directory behaviour.
+	File            string            `json:"file,omitempty"`
 	Port            int               `json:"port,omitempty"`
 	Ephemeral       bool              `json:"ephemeral,omitempty"`
 	Tags            []string          `json:"tags,omitempty"`
@@ -622,6 +627,9 @@ func validateServiceShape(svc Service) error {
 		if svc.Port != 0 {
 			return fmt.Errorf("proxy services do not support port")
 		}
+		if svc.File != "" {
+			return fmt.Errorf("proxy services do not support file")
+		}
 		if err := ValidateProxyTarget(svc.Target); err != nil {
 			return err
 		}
@@ -638,12 +646,18 @@ func validateServiceShape(svc Service) error {
 		if err := ValidateFileRoot(svc.Path); err != nil {
 			return err
 		}
+		if err := ValidateServedFile(svc.File); err != nil {
+			return err
+		}
 	case TypeTCP:
 		if svc.Target == "" {
 			return fmt.Errorf("tcp services require target")
 		}
 		if svc.Path != "" {
 			return fmt.Errorf("tcp services do not support path")
+		}
+		if svc.File != "" {
+			return fmt.Errorf("tcp services do not support file")
 		}
 		if svc.Funnel {
 			return FunnelTypeConflictError(svc.Type)
@@ -710,6 +724,57 @@ func ValidateFileRoot(path string) error {
 	}
 	if !info.IsDir() {
 		return PathNotDirectoryError(path)
+	}
+	return nil
+}
+
+// ValidateServedFile constrains Service.File to one name resolved inside the
+// service's own Path. The daemon anchors every open at an os.Root handle on
+// Path, so a separator or a dot segment here cannot reach outside that root in
+// the first place; the point of rejecting them at the registry boundary is that
+// "file" must not be able to express a second directory level at all. A file
+// service whose File names a subdirectory entry would still be one file, but it
+// would also make Path stop describing what the URL serves, and every reader of
+// the registry -- inspect, doctor, the docs -- would then be describing a
+// different thing from the daemon.
+//
+// Empty is valid and means the whole Path subtree, which is what every registry
+// written before this field existed says by omission.
+func ValidateServedFile(file string) error {
+	if file == "" {
+		return nil
+	}
+	return ValidateServedFileName(file)
+}
+
+// ValidateServedFileName is the shape rule itself, with no empty-means-whole-
+// directory reading. internal/server calls it from NewSingleFileHandler so the
+// registry boundary and the handler constructor accept exactly the same set:
+// two nearly-identical copies of this predicate had already drifted apart, and
+// the direction of the drift was the dangerous one -- the registry accepted a
+// whitespace-only name that the handler rejected, so a hand-written or
+// third-party registry entry passed `tslink registry check` and then failed at
+// node startup, with the error surfacing in the daemon rather than at the
+// boundary whose job is to refuse it.
+func ValidateServedFileName(file string) error {
+	// Whitespace-only is not a file name. It is worth naming separately from
+	// the other rejections because it is the one a human produces by accident.
+	if strings.TrimSpace(file) == "" {
+		return fmt.Errorf("file services require file to be a file name; got %q, which is empty or whitespace only", file)
+	}
+	// Control characters never appear in a name a user meant to type, and they
+	// do appear in a name built by a broken writer or an injection attempt: a
+	// newline splits a log line, and a NUL truncates the name for any C API
+	// that later receives it.
+	if idx := strings.IndexFunc(file, func(r rune) bool { return r < 0x20 || r == 0x7f }); idx >= 0 {
+		return fmt.Errorf("file services require file to be free of control characters; got %q", file)
+	}
+	// Both separators are rejected on every platform. A registry file is a
+	// portable document: one written on Windows is readable on Unix, where
+	// filepath.Base would not treat a backslash as a separator and would accept
+	// the whole thing as a single strange name.
+	if strings.ContainsAny(file, `/\`) || file != filepath.Base(file) || file == "." || file == ".." {
+		return fmt.Errorf("file services require file to be a bare file name inside path, without a path separator or dot segment; got %q", file)
 	}
 	return nil
 }

@@ -123,12 +123,17 @@ func TestInferShareTarget(t *testing.T) {
 
 	directory, err := inferShareTarget(dir, true)
 	canonicalDir, canonicalErr := filepath.EvalSymlinks(dir)
-	if err != nil || canonicalErr != nil || directory.Service.Type != registry.TypeFile || directory.Service.Path != canonicalDir || !directory.Service.Ephemeral || directory.FileName != "" {
+	if err != nil || canonicalErr != nil || directory.Service.Type != registry.TypeFile || directory.Service.Path != canonicalDir || !directory.Service.Ephemeral || directory.Service.File != "" {
 		t.Fatalf("directory = %+v err=%v", directory, err)
 	}
 	regular, err := inferShareTarget(file, false)
-	if err != nil || regular.Service.Path != canonicalDir || regular.FileName != "Report Final.html" || regular.Service.Ephemeral {
+	// The served file name has to be on the Service, not only on the spec: the
+	// daemon reads the registry, and a narrowing it cannot read is not applied.
+	if err != nil || regular.Service.Path != canonicalDir || regular.Service.File != "Report Final.html" || regular.Service.Ephemeral {
 		t.Fatalf("file = %+v err=%v", regular, err)
+	}
+	if err := registry.ValidateService(registry.Service{Name: "report", Type: registry.TypeFile, Path: canonicalDir, File: "Report Final.html"}); err != nil {
+		t.Fatalf("regular-file share does not validate: %v", err)
 	}
 	port, err := inferShareTarget("3000", true)
 	if err != nil || port.Service.Target != "http://localhost:3000" || port.NameBase != "port-3000" {
@@ -358,16 +363,18 @@ func TestExecuteShareNeedsLoginRetriesReuseSingleService(t *testing.T) {
 	}
 }
 
-// TestShareDaemonStartIsGatedOnTheRunningPredicate covers the `share` half of
-// the B16 incident shape: 83 orphaned `tslink serve` processes.
+// TestShareDaemonStartIsGatedOnTheRunningPredicate covers the `share` half of a
+// failure that was observed once as 83 orphaned `tslink serve` processes on one
+// machine.
 //
 // `share` starts a daemon only when shareIsRunningFn (daemon.IsRunning) says
 // none is running, and its failure path rolls back the registry entry it
 // created without reclaiming any daemon it started. So if that predicate ever
-// false-negatives on a live daemon — which E1 shows happens on the
-// cross-binary-identity path — every `share` invocation starts another daemon
-// and nothing removes them. That is per-invocation and measurable, unlike the
-// "accumulation over hours" framing that Round C-1 filed as operational.
+// false-negatives on a live daemon -- which it does when the running daemon was
+// built from a different binary than the one asking, because the identity check
+// then cannot match them -- every `share` invocation starts another daemon and
+// nothing removes them. That is a per-invocation, countable defect rather than
+// a gradual accumulation to be watched in production.
 //
 // Two things this test deliberately does NOT do, and why:
 //
@@ -375,9 +382,9 @@ func TestExecuteShareNeedsLoginRetriesReuseSingleService(t *testing.T) {
 //     requires the running predicate to lie, and under that mutation the real
 //     `share` execs a real `tslink serve`, which contacts the Tailscale control
 //     plane. That is forbidden here, so a process-level version of this
-//     scenario could only ever be observed green. A green-only assertion is the
-//     same defect class Round C-1's review found in E5, and adding one would be
-//     worse than not adding it.
+//     scenario could only ever be observed green. An assertion that cannot go
+//     red is not a test: it reports success in both the working and the broken
+//     case, so adding one would be worse than leaving the gap visible.
 //
 //  2. It does not assert that `share` ought to reclaim the daemon. It should
 //     not. The daemon is a shared resource: other registered services and other
@@ -741,5 +748,63 @@ func TestResolveSharePathsErrors(t *testing.T) {
 	shareAuthHandoffPathFn = func() (string, error) { return "", want }
 	if _, err := resolveSharePaths(); !errors.Is(err, want) {
 		t.Fatalf("auth err = %v", err)
+	}
+}
+
+// TestRegisterShareKeepsTwoFilesInOneDirectoryApart pins that the served file
+// name participates in target identity. Two regular files in one directory share
+// a Path, so a comparison that stopped at Path would reuse the service created
+// for the first file and then hand back a URL for the second that the running
+// service answers 404 for -- a broken link produced by a successful command.
+//
+// The reuse case in the same test is the control: an unchanged repeat must still
+// reuse, otherwise "creates a second service" would pass against a comparison
+// that never matches anything.
+func TestRegisterShareKeepsTwoFilesInOneDirectoryApart(t *testing.T) {
+	restoreShareSeams(t)
+	dir := t.TempDir()
+	regPath := filepath.Join(t.TempDir(), "registry.json")
+
+	specFor := func(file string) shareTargetSpec {
+		return shareTargetSpec{
+			Service:  registry.Service{Type: registry.TypeFile, Path: dir, File: file, Ephemeral: true},
+			NameBase: file,
+		}
+	}
+
+	first, created, err := registerShare(regPath, specFor("a.html"), "")
+	if err != nil || !created {
+		t.Fatalf("first share: created=%v err=%v", created, err)
+	}
+	second, created, err := registerShare(regPath, specFor("b.html"), "")
+	if err != nil || !created {
+		t.Fatalf("second file in the same directory: created=%v err=%v", created, err)
+	}
+	if first.Name == second.Name {
+		t.Fatalf("both files reused one service %q; the second share would 404", first.Name)
+	}
+	if first.File != "a.html" || second.File != "b.html" {
+		t.Fatalf("registered files = %q, %q; want a.html, b.html", first.File, second.File)
+	}
+
+	reused, created, err := registerShare(regPath, specFor("a.html"), "")
+	if err != nil || created || reused.Name != first.Name {
+		t.Fatalf("repeat of the same file = %+v created=%v err=%v, want reuse of %q", reused, created, err, first.Name)
+	}
+
+	// A directory share of the same Path is a third distinct target: its
+	// reachable surface is every file under dir, not one of them.
+	wholeDir, created, err := registerShare(regPath, shareTargetSpec{
+		Service:  registry.Service{Type: registry.TypeFile, Path: dir, Ephemeral: true},
+		NameBase: "whole",
+	}, "")
+	if err != nil || !created {
+		t.Fatalf("directory share of the same path: created=%v err=%v", created, err)
+	}
+	if wholeDir.Name == first.Name || wholeDir.Name == second.Name {
+		t.Fatalf("directory share reused a single-file service %q", wholeDir.Name)
+	}
+	if wholeDir.File != "" {
+		t.Fatalf("directory share File = %q, want empty", wholeDir.File)
 	}
 }

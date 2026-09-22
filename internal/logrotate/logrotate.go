@@ -18,7 +18,7 @@
 // the kernel seek to end-of-file as part of every write. Measured on this
 // machine on 2026-09-16: a writer started with `2>>` returned to 15 bytes after
 // a truncate, and the same writer started with `2>` returned to 202015 bytes.
-// The production daemon's fd 2 carries the AP flag (lsof -a -p <pid> -d 2 +fg),
+// A supervisor-started daemon's fd 2 carries the AP flag (lsof -a -p <pid> -d 2 +fg),
 // as does the descriptor internal/daemon opens for `serve --daemon`.
 //
 // So O_APPEND is a precondition, not an assumption: RotateStderrLog verifies it
@@ -144,13 +144,31 @@ func RotateStderrLog(f *os.File, target string, maxBytes int64) (Result, error) 
 	}
 
 	archivePath := target + ArchiveSuffix
-	if err := copyPrefix(target, archivePath, size, info.Mode().Perm()); err != nil {
+	if err := copyPrefix(target, archivePath, size, archiveMode(info.Mode().Perm())); err != nil {
 		return Result{SizeBefore: size, ArchivePath: archivePath}, err
 	}
 	if err := f.Truncate(0); err != nil {
 		return Result{SizeBefore: size, ArchivePath: archivePath}, fmt.Errorf("truncate the log through its own descriptor: %w", err)
 	}
 	return Result{Rotated: true, SizeBefore: size, ArchivePath: archivePath, Reason: "rotated"}, nil
+}
+
+// archiveMaxMode caps what an archived generation may be readable by.
+//
+// This reverses an earlier decision to carry the live log's own mode through
+// unchanged, which was made so that a log launchd creates 0644 kept a .1 a
+// second user could read. What that argument missed is what the file contains:
+// the access log names every principal that reached a service, invite flows log
+// recipient email addresses, and tsnet's authorization URL is a bearer link.
+// A cross-user reader of the archive is the exposure, not the feature -- and an
+// investigation that needs the archive is being run by the owner, who is not
+// affected by this.
+const archiveMaxMode os.FileMode = 0o600
+
+// archiveMode narrows, never widens. A live log already at 0400 keeps 0400: the
+// cap is a ceiling on who may read the copy, not a mode the copy is forced to.
+func archiveMode(mode os.FileMode) os.FileMode {
+	return mode & archiveMaxMode
 }
 
 // copyPrefix writes the first size bytes of source to destination through a
@@ -176,10 +194,9 @@ func copyPrefix(source, destination string, size int64, mode os.FileMode) error 
 		_ = temporary.Close()
 		_ = os.Remove(temporaryPath)
 	}
-	// The archive carries the live log's own permissions rather than a fixed
-	// 0600. launchd creates the log 0644; an archive that silently narrowed to
-	// 0600 would be unreadable to exactly the cross-user investigation the
-	// retained generation exists for.
+	// mode has already been through archiveMode. Setting it explicitly rather
+	// than leaving CreateTemp's 0600 is what carries a live log that is
+	// narrower than owner-only through to its archive.
 	if err := temporary.Chmod(mode); err != nil {
 		cleanup()
 		return fmt.Errorf("set the archive permissions: %w", err)

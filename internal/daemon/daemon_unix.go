@@ -5,6 +5,7 @@ package daemon
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,6 +20,7 @@ var (
 	execCommand = exec.Command
 	startCmd    = func(cmd *exec.Cmd) error { return cmd.Start() }
 	setUmask    = syscall.Umask
+	chmodFile   = func(f *os.File, mode os.FileMode) error { return f.Chmod(mode) }
 
 	processExecutable = defaultProcessExecutable
 	processStartTime  = defaultProcessStartTime
@@ -93,15 +95,15 @@ func Daemonize(outLog, errLog, controlURL string, manageACL, noAutoProvision, mc
 		return 0, fmt.Errorf("create stderr log dir: %w", err)
 	}
 
-	stdout, err := os.OpenFile(outLog, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	stdout, err := openDaemonLog(outLog, "stdout")
 	if err != nil {
-		return 0, fmt.Errorf("open stdout log: %w", err)
+		return 0, err
 	}
 
-	stderr, err := os.OpenFile(errLog, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	stderr, err := openDaemonLog(errLog, "stderr")
 	if err != nil {
 		_ = stdout.Close()
-		return 0, fmt.Errorf("open stderr log: %w", err)
+		return 0, err
 	}
 
 	args := daemonServeArgs(controlURL, manageACL, noAutoProvision, mcp)
@@ -128,6 +130,32 @@ func Daemonize(outLog, errLog, controlURL string, manageACL, noAutoProvision, mc
 	_ = stderr.Close()
 
 	return pid, nil
+}
+
+// openDaemonLog opens one of the daemon's log files for appending, creating it
+// owner-only, and narrows it if it already exists with a wider mode.
+//
+// The chmod is the half that matters on an upgrade. O_CREATE applies its mode
+// argument only when it creates the file, so a log left behind by a build that
+// used 0644 would keep that mode for the rest of its life no matter what this
+// call asks for; narrowing it here is what makes the fix apply to machines that
+// already ran tslink rather than only to fresh ones.
+//
+// A chmod failure is logged and not returned. Refusing to start the daemon
+// because a log file could not be tightened trades an exposed log for no
+// service at all, and the operator cannot act on either without the daemon's
+// own log, which is the file in question.
+func openDaemonLog(path, label string) (*os.File, error) {
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, daemonLogFileMode)
+	if err != nil {
+		return nil, fmt.Errorf("open %s log: %w", label, err)
+	}
+	// fchmod through the descriptor already held, not a second chmod by path:
+	// the path could name a different file by now.
+	if err := chmodFile(f, daemonLogFileMode); err != nil {
+		slog.Warn("could not restrict daemon log file permissions", "stream", label, "path", path, "want_mode", daemonLogFileMode.String(), "error", err)
+	}
+	return f, nil
 }
 
 // StopDaemon sends SIGTERM to the daemon and waits up to 5 seconds for exit.

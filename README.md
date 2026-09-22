@@ -204,12 +204,24 @@ existing name, starts the daemon when needed, waits for an exact runtime URL,
 and prints only that URL to stdout. Shares use ephemeral nodes by default.
 
 ```bash
-tslink share ./build
-tslink share ./report.html          # URL points directly to report.html
+tslink share ./build                # serves the whole ./build tree, browsable
+tslink share ./report.html          # serves only report.html, not its siblings
 tslink share 3000
 tslink share localhost:8080 --name preview
 tslink share ./build --ephemeral=false
 ```
+
+The two path forms differ in reachable surface, and the difference is the
+service's own boundary rather than a listing preference. A directory target
+serves every file under it and directories without an `index.html` render a
+listing. A regular-file target serves that one file: its URL is the file, the
+service root redirects to it, and every other path answers 404, including the
+file's siblings in the same directory. The registry records the narrowing in
+the file service's `file` field; an entry without that field is a directory
+share.
+
+Neither form restricts *who* may read it. Without `--allow`, every member of
+the tailnet can fetch the share.
 
 On a credential-free first run, the one stdout line is the Tailscale
 authorization URL and stderr gives the exact `tslink url <name> --wait`

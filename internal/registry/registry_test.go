@@ -2286,3 +2286,164 @@ func TestLoadForRuntimeMissingIsEmpty(t *testing.T) {
 		t.Fatalf("runtime loader wrote registry: %v", err)
 	}
 }
+
+// TestValidateServedFileConstrainsSingleFileShare pins the shape of the file
+// field that narrows a file service to one name. The negative cases are the
+// ones that matter: File is joined against the service's own Path by the
+// daemon, so anything that can express a second path element here would make
+// the registry say something different from what Path claims.
+//
+// The first subtest is the control: a plain basename must stay valid, because a
+// rule that rejects everything would make the rest of this table pass without
+// testing anything.
+func TestValidateServedFileConstrainsSingleFileShare(t *testing.T) {
+	root := t.TempDir()
+	base := Service{Name: "report", Type: TypeFile, Path: root}
+
+	accepted := []struct {
+		name string
+		file string
+	}{
+		{"control_plain_basename", "report.html"},
+		{"control_absent_means_whole_directory", ""},
+		{"control_spaces_and_dots_in_name", "Report Final.v2.html"},
+		{"control_leading_dot_is_a_name_not_a_segment", "..config"},
+	}
+	for _, tc := range accepted {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := base
+			svc.File = tc.file
+			if err := ValidateService(svc); err != nil {
+				t.Fatalf("ValidateService(File=%q) error = %v, want nil", tc.file, err)
+			}
+		})
+	}
+
+	rejected := []struct {
+		name string
+		file string
+	}{
+		{"unix_separator", "sub/report.html"},
+		{"windows_separator", `sub\report.html`},
+		{"absolute", "/etc/passwd"},
+		{"parent_segment", ".."},
+		{"parent_segment_with_child", "../secret"},
+		{"current_segment", "."},
+		{"trailing_separator", "sub/"},
+		{"root", "/"},
+		// A name that is only whitespace is not a file name, and this is the
+		// shape a human or a broken writer produces by accident. It used to
+		// pass here and fail in the daemon at node startup, which put the
+		// error as far as possible from the boundary whose job is to refuse it.
+		{"spaces_only", "   "},
+		{"tab_only", "\t"},
+		{"newline_only", "\n"},
+		// Control characters never appear in a name anyone meant to type. A
+		// newline splits a log line; a NUL truncates the name for any C API
+		// that later receives it.
+		{"embedded_newline", "a\nb"},
+		{"embedded_nul", "a\x00b"},
+		{"embedded_carriage_return", "a\rb"},
+		{"embedded_tab", "a\tb"},
+		{"embedded_delete", "a\x7fb"},
+	}
+	for _, tc := range rejected {
+		t.Run("rejected_"+tc.name, func(t *testing.T) {
+			svc := base
+			svc.File = tc.file
+			if err := ValidateService(svc); err == nil {
+				t.Fatalf("ValidateService(File=%q) error = nil, want rejection", tc.file)
+			}
+		})
+	}
+
+	// One predicate, two boundaries: the shape rule the handler constructor
+	// uses is this same exported function, so a name the registry accepts
+	// cannot be one the daemon then refuses to build a handler for.
+	for _, tc := range accepted {
+		if tc.file == "" {
+			continue // empty means the whole directory; the handler has no such reading
+		}
+		t.Run("handler_accepts_"+tc.name, func(t *testing.T) {
+			if err := ValidateServedFileName(tc.file); err != nil {
+				t.Fatalf("ValidateServedFileName(%q) error = %v, want nil", tc.file, err)
+			}
+		})
+	}
+	for _, tc := range rejected {
+		t.Run("handler_rejects_"+tc.name, func(t *testing.T) {
+			if err := ValidateServedFileName(tc.file); err == nil {
+				t.Fatalf("ValidateServedFileName(%q) error = nil, want rejection", tc.file)
+			}
+		})
+	}
+	if err := ValidateServedFileName(""); err == nil {
+		t.Fatal("ValidateServedFileName(\"\") error = nil; empty is only meaningful as \"whole directory\" at the Service level")
+	}
+
+	// file belongs to file services only. On a proxy or tcp service it would be
+	// silently ignored by the daemon, which is the shape of a setting that looks
+	// applied and is not.
+	for _, svc := range []Service{
+		{Name: "proxy", Type: TypeProxy, Target: "http://localhost:3000", File: "report.html"},
+		{Name: "tcp", Type: TypeTCP, Target: "localhost:5432", File: "report.html"},
+	} {
+		t.Run("rejected_on_"+svc.Type, func(t *testing.T) {
+			if err := ValidateService(svc); err == nil {
+				t.Fatalf("ValidateService(%s with File) error = nil, want rejection", svc.Type)
+			}
+		})
+	}
+}
+
+// TestRegistryWithoutFileFieldKeepsDirectoryBehaviour pins backward
+// compatibility at the decoding boundary: a registry written before the file
+// field existed must still load, and must load as a directory share rather than
+// as anything that could be mistaken for a narrowed one.
+func TestRegistryWithoutFileFieldKeepsDirectoryBehaviour(t *testing.T) {
+	root := t.TempDir()
+	path := testRegistryPath(t)
+	legacy := fmt.Sprintf(`{"schema_version":1,"services":[{"name":"legacy","type":"file","path":%q,"created_at":"2026-01-01T00:00:00Z"}]}`+"\n", root)
+	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	reg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load(legacy registry) error = %v", err)
+	}
+	if len(reg.Services) != 1 {
+		t.Fatalf("services = %d, want 1", len(reg.Services))
+	}
+	if got := reg.Services[0].File; got != "" {
+		t.Fatalf("legacy service File = %q, want empty (whole-directory behaviour)", got)
+	}
+	if err := ValidateService(reg.Services[0]); err != nil {
+		t.Fatalf("ValidateService(legacy service) error = %v", err)
+	}
+}
+
+// TestSingleFileServiceRoundTripsThroughTheRegistryFile pins that the narrowing
+// survives a write and a re-read. The daemon only ever sees the file on disk, so
+// a field held in memory and dropped on encode would leave the share wide open
+// while every in-process assertion still passed.
+func TestSingleFileServiceRoundTripsThroughTheRegistryFile(t *testing.T) {
+	root := t.TempDir()
+	path := testRegistryPath(t)
+	if _, err := Add(path, Service{Name: "report", Type: TypeFile, Path: root, File: "report.html"}); err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if !strings.Contains(string(raw), `"file": "report.html"`) && !strings.Contains(string(raw), `"file":"report.html"`) {
+		t.Fatalf("registry file does not carry the served file name:\n%s", raw)
+	}
+	reg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got := reg.Services[0].File; got != "report.html" {
+		t.Fatalf("reloaded File = %q, want %q", got, "report.html")
+	}
+}
