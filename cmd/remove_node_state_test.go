@@ -166,6 +166,17 @@ func TestRemoveKeepsLocalNodeStateWhenTheRemoteSideIsUnconfirmed(t *testing.T) {
 			name:    "the cleanup reported skipped although every recorded node resolved",
 			cleanup: tailapi.CleanupResult{Deleted: []string{"web"}, ResolvedOwnershipIDs: []string{"node-web"}, Skipped: true, SkipReason: "partial device listing"},
 		},
+		// Protected without Skipped is not a state internal/tailapi produces
+		// today: CleanupStaleNodesResultWithDryRun sets Skipped whenever it
+		// protects anything. This row exists because the guard must not depend
+		// on that coupling holding. Without it, deleting the Protected clause
+		// changes nothing observable, and a later producer that reports a
+		// protected hostname without the Skipped flag would silently start
+		// deleting the local key of a device TSLink could not prove it owns.
+		{
+			name:    "a hostname match was protected without the skipped flag",
+			cleanup: tailapi.CleanupResult{Matched: []string{"web"}, Deleted: []string{"web"}, ResolvedOwnershipIDs: []string{"node-web"}, Protected: []string{"web"}},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			regPath, ownershipPath, stateDir := removeNodeStateFixture(t, "web")

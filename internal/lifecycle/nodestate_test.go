@@ -127,6 +127,14 @@ func TestReconcileKeepsOrphanNodeStateWhenTheRunCannotProveTheRemoteIsGone(t *te
 		// that protected device may still be using.
 		{name: "a second hostname match stayed protected although every recorded node resolved", options: Options{CleanLocalNodeState: true, LocalNodeStateInUse: nothingHoldsNodeState}, cleanup: tailapi.CleanupResult{Matched: []string{"orphan"}, Deleted: []string{"orphan"}, ResolvedOwnershipIDs: []string{"node-orphan"}, Protected: []string{"orphan"}, Skipped: true}, nodeIDs: []string{"node-orphan"}},
 		{name: "the cleanup reported skipped although every recorded node resolved", options: Options{CleanLocalNodeState: true, LocalNodeStateInUse: nothingHoldsNodeState}, cleanup: tailapi.CleanupResult{Deleted: []string{"orphan"}, ResolvedOwnershipIDs: []string{"node-orphan"}, Skipped: true}, nodeIDs: []string{"node-orphan"}},
+		// Protected without Skipped is not a state internal/tailapi produces
+		// today: CleanupStaleNodesResultWithDryRun sets Skipped whenever it
+		// protects anything. This row exists because the guard must not depend
+		// on that coupling holding. Without it, deleting the Protected clause
+		// changes nothing observable, and a later producer that reports a
+		// protected hostname without the Skipped flag would silently start
+		// deleting the local key of a device TSLink could not prove it owns.
+		{name: "a hostname match was protected without the skipped flag", options: Options{CleanLocalNodeState: true, LocalNodeStateInUse: nothingHoldsNodeState}, cleanup: tailapi.CleanupResult{Matched: []string{"orphan"}, Deleted: []string{"orphan"}, ResolvedOwnershipIDs: []string{"node-orphan"}, Protected: []string{"orphan"}}, nodeIDs: []string{"node-orphan"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			configDir, regPath, ownershipPath := orphanNodeStateFixture(t, now, tc.nodeIDs...)
