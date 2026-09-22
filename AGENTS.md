@@ -299,7 +299,7 @@ Semantic exit codes for programmatic error handling:
 - Bootstrap judges setup on the supervisor owning a verified, stable process. A missing first business artifact is a statement about the Tailscale coordination server, not a failed install, so it leaves `add` successful with `url_pending`. Installation or supervision-settle failures report `daemon_setup_failed`; after supervision settles, losing or replacing the verified process during the evidence wait also reports that code.
 - `supervision.autostart_scope` carries boot-versus-login for per-user supervisors: launchd and Windows Startup are `login`; a systemd user unit is `boot` only with lingering. Lingering is reported, never enabled, because it affects every service the user owns.
 - Treat daemon_identity_unverified as uncertain liveness: keep backend probes and inspect the PID/binary/supervisor before install or restart. A PID file naming a live process that is provably a different program is a stopped daemon, not an uncertain one, and both doctor and the install conflict guard treat it that way. windows-startup has sign-in autostart but no crash restart; doctor warns about that limitation. Setup failure can leave a Linux unit installed and retrying; inspect logs and the reported definition before retrying.
-- launchd parser regressions must use the captured macOS fixtures in `cmd/testdata/launchctl/` (provenance in its `INDEX.md`), including nested coalition state and enabled/disabled overrides.
+- launchd parser regressions must use the fixtures in `cmd/testdata/launchctl/` (provenance in its `README.md`), including nested coalition state and enabled/disabled overrides.
 
 ## Clock seam discipline (`serverNowFn`)
 

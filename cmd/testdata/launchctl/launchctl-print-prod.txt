@@ -1,22 +1,22 @@
 gui/501/com.tslink.daemon = {
 	active count = 1
-	path = /Users/testuser/Library/LaunchAgents/com.tslink.daemon.plist
+	path = /Users/example/Library/LaunchAgents/com.tslink.daemon.plist
 	type = LaunchAgent
 	state = running
 
-	program = /Users/testuser/go/bin/tslink
+	program = /Users/example/go/bin/tslink
 	arguments = {
-		/Users/testuser/go/bin/tslink
+		/Users/example/go/bin/tslink
 		serve
 	}
 
-	working directory = /Users/testuser/monody0007
+	working directory = /Users/example/project
 
-	stdout path = /Users/testuser/.config/tslink/logs/tslink.out.log
-	stderr path = /Users/testuser/.config/tslink/logs/tslink.err.log
+	stdout path = /Users/example/.config/tslink/logs/tslink.out.log
+	stderr path = /Users/example/.config/tslink/logs/tslink.err.log
 	inherited environment = {
 		HOME => /Users/example
-		PATH => /usr/bin:/bin
+		PATH => /usr/bin:/bin:/usr/sbin:/sbin
 	}
 
 	default environment = {
@@ -25,19 +25,19 @@ gui/501/com.tslink.daemon = {
 
 	environment = {
 		OSLogRateLimit => 64
-		PATH => /Users/testuser/go/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
-		HOME => /Users/testuser
+		PATH => /Users/example/go/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+		HOME => /Users/example
 		XPC_SERVICE_NAME => com.tslink.daemon
 	}
 
-	domain = gui/501 [100028]
-	asid = 100028
+	domain = gui/501 [100001]
+	asid = 100001
 	minimum runtime = 30
 	exit timeout = 5
 	runs = 5
 	pid = 41564
 	immediate reason = inefficient
-	forks = 4550
+	forks = 12
 	execs = 1
 	initialized = 1
 	trampolined = 1
@@ -49,7 +49,7 @@ gui/501/com.tslink.daemon = {
 	last exit code = 0
 
 	resource coalition = {
-		ID = 1345
+		ID = 1001
 		type = resource
 		state = active
 		active count = 1
@@ -57,7 +57,7 @@ gui/501/com.tslink.daemon = {
 	}
 
 	jetsam coalition = {
-		ID = 1346
+		ID = 1002
 		type = jetsam
 		state = active
 		active count = 1
