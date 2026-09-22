@@ -268,13 +268,12 @@ func TestTagPublishCannotBypassCandidate(t *testing.T) {
 
 // TestCIConsumesReusableCandidate proves PR/main run the same gate as the tag path.
 //
-// ci.yml was deliberately removed in bb943b5 ("remove automatic
-// private-development checks"), so on a private repo there is no PR/main
-// workflow for this invariant to hold over and the test skips. The assertion is
-// kept rather than deleted because the invariant it guards -- PR/main must call
-// the same reusable candidate gate as the tag path -- becomes live again the
-// moment ci.yml comes back, which is what publishing this repo would do.
-// Deleting the test would drop the guard silently at exactly that point.
+// ci.yml is present again, so this test runs rather than skipping; the skip
+// branch is kept only so a future deletion of ci.yml does not turn this test
+// into a spurious failure. Deleting ci.yml is still refused by
+// TestCIShapePinsTriggersAndCostControls, which fails with "ci.yml is missing".
+// The invariant stays worth guarding because it is what makes PR/main and the
+// tag path consume one gate instead of two drifting ones.
 func TestCIConsumesReusableCandidate(t *testing.T) {
 	all := readWorkflows(t)
 	body, ok := all["ci.yml"]
@@ -291,11 +290,39 @@ func TestCIConsumesReusableCandidate(t *testing.T) {
 	}
 }
 
+// onTriggers returns the keys declared under the top-level `on:` mapping.
+// yaml.v2 resolves an unquoted `on` key to the boolean true (YAML 1.1), so both
+// spellings are accepted. Presence is judged on the decoded mapping's keys
+// rather than on a typed struct field, because `pull_request:` with a null
+// value is a valid trigger and still counts as present.
+func onTriggers(t *testing.T, name string, body []byte) map[interface{}]interface{} {
+	t.Helper()
+	var raw map[interface{}]interface{}
+	if err := yaml.Unmarshal(body, &raw); err != nil {
+		t.Fatalf("parse %s: %v", name, err)
+	}
+	for key, value := range raw {
+		if key != true && key != "on" {
+			continue
+		}
+		triggers, ok := value.(map[interface{}]interface{})
+		if !ok {
+			t.Fatalf("%s `on:` is not a mapping: %T", name, value)
+		}
+		return triggers
+	}
+	t.Fatalf("%s has no `on:` mapping", name)
+	return nil
+}
+
 // TestCIShapePinsTriggersAndCostControls pins the parts of ci.yml that the
 // `uses:` assertion above cannot see: pull_request plus push to main,
-// read-only permissions, and a per-ref concurrency group that cancels
-// superseded runs. Dropping the pull_request trigger, deleting the
-// concurrency block, or granting a write permission turns an assertion red.
+// read-only permissions, a per-ref concurrency group that cancels superseded
+// runs, and a candidate job that declares no secrets of its own. Dropping the
+// pull_request trigger, deleting the concurrency block, granting a write
+// permission, or passing `secrets: inherit` turns an assertion red. The
+// pull_request branch filter is deliberately not pinned, so widening CI to
+// every PR is not a test failure.
 func TestCIShapePinsTriggersAndCostControls(t *testing.T) {
 	body, ok := readWorkflows(t)["ci.yml"]
 	if !ok {
@@ -306,9 +333,6 @@ func TestCIShapePinsTriggersAndCostControls(t *testing.T) {
 			Push struct {
 				Branches []string `yaml:"branches"`
 			} `yaml:"push"`
-			PullRequest struct {
-				Branches []string `yaml:"branches"`
-			} `yaml:"pull_request"`
 		} `yaml:"on"`
 		Permissions map[string]string `yaml:"permissions"`
 		Concurrency struct {
@@ -323,7 +347,7 @@ func TestCIShapePinsTriggersAndCostControls(t *testing.T) {
 	if !containsString(wf.On.Push.Branches, "main") {
 		t.Errorf("ci.yml push branches = %v, want main", wf.On.Push.Branches)
 	}
-	if len(wf.On.PullRequest.Branches) == 0 {
+	if _, ok := onTriggers(t, "ci.yml", body)["pull_request"]; !ok {
 		t.Error("ci.yml must run on pull_request")
 	}
 	if len(wf.Permissions) != 1 || wf.Permissions["contents"] != "read" {
@@ -342,8 +366,8 @@ func TestCIShapePinsTriggersAndCostControls(t *testing.T) {
 	if _, ok := candidate.With["ref"]; !ok {
 		t.Errorf("ci.yml candidate must pass a ref input to the reusable gate, got %v", candidate.With)
 	}
-	if candidate.Secrets != "inherit" {
-		t.Errorf("ci.yml candidate secrets = %v, want inherit", candidate.Secrets)
+	if candidate.Secrets != nil {
+		t.Errorf("ci.yml candidate must not declare secrets: release-candidate.yml declares none and release.yml passes none, got %v", candidate.Secrets)
 	}
 }
 

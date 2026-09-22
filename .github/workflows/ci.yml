@@ -23,6 +23,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # No `secrets:` here: release-candidate.yml declares and uses no secrets, and
+  # release.yml calls the same workflow without passing any. Keeping the
+  # PR-triggered call secret-free is the point -- a same-repo PR must not drag
+  # the caller's secret scope behind it.
   candidate:
     name: Release candidate gate
     permissions:
@@ -30,4 +34,3 @@ jobs:
     uses: ./.github/workflows/release-candidate.yml
     with:
       ref: ${{ github.sha }}
-    secrets: inherit
