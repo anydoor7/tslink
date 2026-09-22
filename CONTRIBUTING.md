@@ -59,9 +59,9 @@ listen on something, check for orphaned processes immediately (`ps`,
 filtered by the scratch config dir path), rather than assuming the exit
 value or a config-dir override proves there was no side effect.
 
-### CI scope
+### Continuous integration
 
-Pull-request and `main` CI are not enabled. The reusable Release Candidate gate runs on tags, and Dependabot is active. Run the local checks above before opening a pull request.
+`ci.yml` runs the reusable Release Candidate gate on every pull request and on every push to `main`; `release.yml` runs the same gate on tags. Dependabot is active. CodeQL scanning is not enabled; to add it, commit a CodeQL workflow and enable code scanning for the repository. Running the local checks above before opening a pull request is still the fastest way to find a failure.
 
 ### Maintainer Release Notes
 

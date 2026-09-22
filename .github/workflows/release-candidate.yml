@@ -1,8 +1,8 @@
 name: Release Candidate
 
-# Reusable exact-SHA quality gate called by the Release workflow.
-# Pull-request and main CI are not enabled; Release requires this gate before
-# publishing artifacts.
+# Reusable exact-SHA quality gate.
+# Called by ci.yml on pull requests and pushes to main, and by release.yml on
+# tags.
 
 on:
   workflow_call:
