@@ -323,9 +323,10 @@ func LinkLocalTargetRefusedError(target string) error {
 }
 
 // isRefusedTargetHost reports whether host names the link-local address space
-// (IPv4 169.254.0.0/16, IPv6 fe80::/10) or the cloud metadata endpoint. Only
-// literals are judged; the check must stay hermetic, so a hostname that
-// happens to resolve into link-local is a DNS-layer concern, not this one.
+// (IPv4 169.254.0.0/16, IPv6 fe80::/10), the unspecified address (0.0.0.0 or
+// ::), or the cloud metadata endpoint. Only literals are judged; the check must
+// stay hermetic, so a hostname that happens to resolve into link-local is a
+// DNS-layer concern, not this one.
 func isRefusedTargetHost(host string) bool {
 	normalized := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(host)), ".")
 	if normalized == metadataHost {
@@ -337,10 +338,60 @@ func isRefusedTargetHost(host string) bool {
 		normalized = normalized[:percent]
 	}
 	ip := net.ParseIP(normalized)
-	if ip == nil {
+	if ip != nil {
+		return ip.IsLinkLocalUnicast() || ip.IsUnspecified()
+	}
+	// The platform resolver accepts non-canonical spellings of an IPv4 address
+	// that net.ParseIP rejects -- hexadecimal 0xA9FEA9FE, the dotted 32-bit
+	// form 169.254.43518, octal-looking 0251.0376.0251.0376, and bare decimal
+	// 2852039166 all fold into the same address the daemon would then dial.
+	// Every such spelling ends in a wholly numeric label, while a real
+	// hostname's last label (its TLD) is never all digits, so refusing that
+	// shape closes the bypass without touching ordinary names such as
+	// 169.254.169.254.example.com or 169.254.169.254.nip.io.
+	if dot := strings.LastIndexByte(normalized, '.'); dot >= 0 {
+		normalized = normalized[dot+1:]
+	}
+	return isNumericHostLabel(normalized)
+}
+
+// isNumericHostLabel reports whether label is a wholly decimal host label
+// (169.254.43518) or a 0x/0X-prefixed hexadecimal one (0xA9FEA9FE). Both are
+// numeric IPv4 spellings the platform resolver folds into a single address.
+func isNumericHostLabel(label string) bool {
+	if label == "" {
 		return false
 	}
-	return ip.IsLinkLocalUnicast()
+	if len(label) > 2 && (strings.HasPrefix(label, "0x") || strings.HasPrefix(label, "0X")) {
+		return allASCIIHexDigits(label[2:])
+	}
+	return allASCIIDecimalDigits(label)
+}
+
+func allASCIIDecimalDigits(value string) bool {
+	if value == "" {
+		return false
+	}
+	for i := 0; i < len(value); i++ {
+		if value[i] < '0' || value[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func allASCIIHexDigits(value string) bool {
+	if value == "" {
+		return false
+	}
+	for i := 0; i < len(value); i++ {
+		c := value[i]
+		if (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F') {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func URLNotReadyError(name string) error {

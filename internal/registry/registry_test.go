@@ -1591,9 +1591,13 @@ func TestValidateServiceDiscriminatedShape(t *testing.T) {
 // TestTargetsRefuseLinkLocalAndCloudMetadata pins the link-local refusal: a
 // proxy or TCP target may point anywhere the daemon can reach on its own
 // network -- loopback, RFC1918, ULA, public addresses, ordinary hostnames --
-// but never into the link-local space (IPv4 169.254.0.0/16, IPv6 fe80::/10)
-// or at the cloud metadata endpoint. Deleting the refusal turns every
-// wantRefused row red; widening it turns every accepted row red.
+// but never into the link-local space (IPv4 169.254.0.0/16, IPv6 fe80::/10),
+// at the unspecified address (0.0.0.0, ::), or at the cloud metadata endpoint.
+// Non-canonical numeric spellings of the metadata address (hexadecimal,
+// dotted 32-bit, octal-looking, bare decimal) are refused by label shape, so
+// no row asserts what a platform resolver would fold them into. Deleting the
+// refusal turns every wantRefused row red; widening it turns every accepted
+// row red.
 func TestTargetsRefuseLinkLocalAndCloudMetadata(t *testing.T) {
 	const refusal = "link-local / cloud metadata addresses are refused"
 
@@ -1606,13 +1610,25 @@ func TestTargetsRefuseLinkLocalAndCloudMetadata(t *testing.T) {
 		{name: "proxy ipv4 link-local", kind: TypeProxy, target: "http://169.254.1.1", wantRefused: true},
 		{name: "proxy ipv4 metadata with port", kind: TypeProxy, target: "http://169.254.169.254:80/latest/meta-data", wantRefused: true},
 		{name: "proxy ipv4 metadata mapped into ipv6", kind: TypeProxy, target: "http://[::ffff:169.254.169.254]", wantRefused: true},
+		{name: "proxy ipv4 metadata hexadecimal spelling", kind: TypeProxy, target: "http://0xA9FEA9FE/", wantRefused: true},
+		{name: "proxy ipv4 metadata dotted 32-bit spelling", kind: TypeProxy, target: "http://169.254.43518/", wantRefused: true},
+		{name: "proxy ipv4 metadata octal-looking spelling", kind: TypeProxy, target: "http://0251.0376.0251.0376/", wantRefused: true},
+		{name: "proxy ipv4 metadata bare decimal spelling", kind: TypeProxy, target: "http://2852039166/", wantRefused: true},
+		{name: "proxy ipv4 metadata with userinfo", kind: TypeProxy, target: "http://u:p@169.254.169.254/", wantRefused: true},
 		{name: "proxy ipv6 link-local", kind: TypeProxy, target: "http://[fe80::1]:80", wantRefused: true},
 		{name: "proxy ipv6 link-local with zone", kind: TypeProxy, target: "http://[fe80::1%25eth0]:80", wantRefused: true},
+		{name: "proxy unspecified ipv4", kind: TypeProxy, target: "http://0.0.0.0:80", wantRefused: true},
+		{name: "proxy unspecified ipv6", kind: TypeProxy, target: "http://[::]:80", wantRefused: true},
 		{name: "proxy metadata hostname", kind: TypeProxy, target: "http://metadata.google.internal/computeMetadata/v1/", wantRefused: true},
 		{name: "proxy metadata hostname uppercase", kind: TypeProxy, target: "http://METADATA.GOOGLE.INTERNAL", wantRefused: true},
 		{name: "proxy metadata hostname trailing dot", kind: TypeProxy, target: "http://metadata.google.internal./", wantRefused: true},
 		{name: "tcp ipv4 metadata", kind: TypeTCP, target: "169.254.169.254:80", wantRefused: true},
 		{name: "tcp ipv4 link-local", kind: TypeTCP, target: "169.254.1.1:80", wantRefused: true},
+		{name: "tcp ipv4 metadata hexadecimal spelling", kind: TypeTCP, target: "0xA9FEA9FE:80", wantRefused: true},
+		{name: "tcp ipv4 metadata dotted 32-bit spelling", kind: TypeTCP, target: "169.254.43518:80", wantRefused: true},
+		{name: "tcp ipv4 metadata octal-looking spelling", kind: TypeTCP, target: "0251.0376.0251.0376:80", wantRefused: true},
+		{name: "tcp ipv4 metadata bare decimal spelling", kind: TypeTCP, target: "2852039166:80", wantRefused: true},
+		{name: "tcp unspecified ipv4", kind: TypeTCP, target: "0.0.0.0:80", wantRefused: true},
 		{name: "tcp ipv6 link-local", kind: TypeTCP, target: "[fe80::1]:80", wantRefused: true},
 		{name: "tcp ipv6 link-local with zone", kind: TypeTCP, target: "[fe80::1%eth0]:80", wantRefused: true},
 		{name: "tcp metadata hostname", kind: TypeTCP, target: "metadata.google.internal:80", wantRefused: true},
@@ -1627,6 +1643,8 @@ func TestTargetsRefuseLinkLocalAndCloudMetadata(t *testing.T) {
 		{name: "proxy ula ipv6", kind: TypeProxy, target: "http://[fd00::1]:8080"},
 		{name: "proxy site-local ipv6", kind: TypeProxy, target: "http://[fec0::1]:8080"},
 		{name: "proxy just outside link-local", kind: TypeProxy, target: "http://169.255.0.1:80"},
+		{name: "proxy metadata address as subdomain label", kind: TypeProxy, target: "http://169.254.169.254.example.com"},
+		{name: "proxy metadata address under nip.io", kind: TypeProxy, target: "http://169.254.169.254.nip.io"},
 		{name: "tcp loopback hostname", kind: TypeTCP, target: "localhost:3000"},
 		{name: "tcp loopback ipv4", kind: TypeTCP, target: "127.0.0.1:8080"},
 		{name: "tcp rfc1918 10", kind: TypeTCP, target: "10.0.0.5:8080"},
@@ -1634,6 +1652,7 @@ func TestTargetsRefuseLinkLocalAndCloudMetadata(t *testing.T) {
 		{name: "tcp loopback ipv6", kind: TypeTCP, target: "[::1]:80"},
 		{name: "tcp public hostname", kind: TypeTCP, target: "example.com:443"},
 		{name: "tcp public ipv4", kind: TypeTCP, target: "8.8.8.8:80"},
+		{name: "tcp metadata address as subdomain label", kind: TypeTCP, target: "169.254.169.254.example.com:80"},
 	}
 
 	for _, tc := range tests {
