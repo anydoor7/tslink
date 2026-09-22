@@ -186,7 +186,7 @@ func redactTailscaleURL(raw string) string {
 	// at all is decided earlier, by how much of the line the outer pattern
 	// matched. The pattern's token class stops at whitespace, quotes, angle
 	// brackets and ")", so a capability separated from the host by one of those
-	// never enters this function -- see CLAUDE.md "Known gaps" for that half.
+	// never enters this function -- see AGENTS.md "Known gaps" for that half.
 	if parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return doctorRedactedURL
 	}

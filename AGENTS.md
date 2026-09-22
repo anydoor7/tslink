@@ -65,8 +65,8 @@ internal/
 
 ### Key Dependencies
 
-- `tailscale.com v1.98.5` — tsnet (embedded nodes) + `client/tailscale` (LocalClient for identity verification)
-- `tailscale.com/client/tailscale/v2 v2.9.0` — Tailscale REST API client (ACL management, device management, auth key derivation)
+- `tailscale.com v1.102.4` — tsnet (embedded nodes) + `client/tailscale` (LocalClient for identity verification)
+- `tailscale.com/client/tailscale/v2 v2.10.1` — Tailscale REST API client (ACL management, device management, auth key derivation)
 - `github.com/zalando/go-keyring v0.2.6` — cross-platform keychain
 - `github.com/spf13/cobra` — CLI framework
 - `github.com/fsnotify/fsnotify` — registry hot-reload
@@ -110,7 +110,7 @@ This section teaches an agent how to install, configure, and operate tslink with
 
 ### Prerequisites
 
-- Go 1.26.3+ installed
+- Go 1.26.6+ installed
 - A Tailscale account. The default zero-credential path needs no admin-console token.
 - Optional, only for the durable Tier 2 path, one of:
   - API access token ([generate here](https://login.tailscale.com/admin/settings/keys)) — expires periodically
@@ -280,13 +280,13 @@ Semantic exit codes for programmatic error handling:
 
 ## Known Pitfalls
 
-- **Switching login mode retires the other credential — it does not coexist.** `tslink login --api-key-stdin` and the existing OAuth `client-secret` are not two independent lifecycles just because they live under different Keychain account names. The commit in `cmd/login.go` is one transaction: it deletes the other mode's stored credential before writing the new value. Before telling anyone "A won't affect B" for a credential-storage claim, verify it against the code path that actually executes on write/delete, not against the fact that the storage keys look distinct. OAuth client secrets are shown once at creation time and are not recoverable from the CLI or from Google Secret Manager afterward — losing one to an unintended mode switch means creating a new client in the admin console.
+- **Login is dual-slot by default; `--retire-other` is the only path that deletes the other credential.** `tslink login --api-key-stdin` fills the api-key slot and leaves the existing OAuth `client-secret` slot untouched (`cmd/login.go`, `loginReplaceOptions.RetireOther` defaults to false); logging into the same slot again rotates it. `--retire-other` deletes the other slot only after the new value is verified and committed. Earlier builds retired the other slot unconditionally, which is why this entry exists. Before telling anyone "A won't affect B" for a credential-storage claim, verify it against the code path that actually executes on write/delete, not against the fact that the storage keys look distinct. OAuth client secrets are shown once at creation time and are not recoverable from the CLI or from Google Secret Manager afterward — losing one to an unintended `--retire-other` means creating a new client in the admin console.
   
 
 - **The upstream reverse-proxy path has a fixed 30s `ReadTimeout` and a 32 MB body cap that are not yet raised.** `internal/server/server.go` (`http.Server.ReadTimeout` and the request body limit) will cut off any long-running upload or streamed response once it crosses either threshold, independent of anything the downstream local service does. If you add or debug a proxied endpoint that streams for longer than ~30s or transfers more than 32 MB, this is a known unfixed limitation in this file, not a bug in the caller.
   
 
-- **`docs/cli-manifest.json`'s `next[]` field is not populated by `tools/gen-manifest`.** Counting "how many entries still need manual follow-up" against this file's `next[]` will always read `0` — that is not evidence that zero manual steps remain, it is evidence the field is empty by construction. The actual per-error-code follow-up guidance lives at runtime in `internal/manifestcheck/messages.go`, not in the generated manifest. Before treating any "count is 0 / all pass / no hits" result from a generated artifact as a conclusion, confirm the field you are counting can actually be non-zero in that artifact.
+- **`docs/cli-manifest.json`'s `next[]` field is not populated by `tools/gen-manifest`.** Counting "how many entries still need manual follow-up" against this file's `next[]` will always read `0` — that is not evidence that zero manual steps remain, it is evidence the field is empty by construction. The actual per-error-code follow-up guidance lives at runtime in `registry.CodedError.Next` (`internal/registry/registry.go`), not in the generated manifest. Before treating any "count is 0 / all pass / no hits" result from a generated artifact as a conclusion, confirm the field you are counting can actually be non-zero in that artifact.
   
 
 
