@@ -56,6 +56,7 @@ const (
 	CodePathNotFound               = "path_not_found"
 	CodePathNotDirectory           = "path_not_directory"
 	CodePathNotAccessible          = "path_not_accessible"
+	CodeLinkLocalTargetRefused     = "link_local_target_refused"
 	CodeUnknownConfigKey           = "unknown_config_key"
 	CodeInvalidServiceConfig       = "invalid_service_config"
 	CodeRegistryReloadInvalid      = "registry_reload_invalid"
@@ -301,6 +302,45 @@ func PathNotAccessibleError(path string, cause error) error {
 		Next:        []string{fmt.Sprintf("Grant the current user read and traverse access to %q", path), "Retry the original tslink add command"},
 		MessageOnly: true,
 	}
+}
+
+// metadataHost is the well-known cloud metadata endpoint hostname. It is
+// refused by name as well as by address: resolving it reaches the same
+// link-local plane the address rule blocks, and a raw-string rule is what
+// makes the refusal hold before any DNS lookup happens.
+const metadataHost = "metadata.google.internal"
+
+// LinkLocalTargetRefusedError is deliberately CodedError-shaped so an MCP
+// caller receives a machine discriminator and recovery steps instead of a
+// generic invalid-target failure it cannot classify.
+func LinkLocalTargetRefusedError(target string) error {
+	return CodedError{
+		Code:        CodeLinkLocalTargetRefused,
+		Message:     fmt.Sprintf("invalid target %q: link-local / cloud metadata addresses are refused", target),
+		Next:        []string{"Choose a loopback, LAN, or public address the daemon can reach on its own network", "tslink add --help"},
+		MessageOnly: true,
+	}
+}
+
+// isRefusedTargetHost reports whether host names the link-local address space
+// (IPv4 169.254.0.0/16, IPv6 fe80::/10) or the cloud metadata endpoint. Only
+// literals are judged; the check must stay hermetic, so a hostname that
+// happens to resolve into link-local is a DNS-layer concern, not this one.
+func isRefusedTargetHost(host string) bool {
+	normalized := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(host)), ".")
+	if normalized == metadataHost {
+		return true
+	}
+	// An IPv6 literal can carry a zone (fe80::1%en0); the zone selects an
+	// interface and does not change which address the literal denotes.
+	if percent := strings.IndexByte(normalized, '%'); percent >= 0 {
+		normalized = normalized[:percent]
+	}
+	ip := net.ParseIP(normalized)
+	if ip == nil {
+		return false
+	}
+	return ip.IsLinkLocalUnicast()
 }
 
 func URLNotReadyError(name string) error {
@@ -597,6 +637,9 @@ func ValidateProxyTarget(target string) error {
 	if parsed.Host == "" {
 		return fmt.Errorf("invalid proxy target %q: host is required", target)
 	}
+	if isRefusedTargetHost(parsed.Hostname()) {
+		return LinkLocalTargetRefusedError(target)
+	}
 	return nil
 }
 
@@ -627,6 +670,9 @@ func ValidateTCPTarget(target string) error {
 	}
 	if strings.TrimSpace(host) == "" {
 		return fmt.Errorf("tcp target %q must include a host", target)
+	}
+	if isRefusedTargetHost(host) {
+		return LinkLocalTargetRefusedError(target)
 	}
 	port, err := strconv.Atoi(portText)
 	if err != nil || port <= 0 || port > 65535 {

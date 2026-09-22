@@ -1588,6 +1588,101 @@ func TestValidateServiceDiscriminatedShape(t *testing.T) {
 	}
 }
 
+// TestTargetsRefuseLinkLocalAndCloudMetadata pins the link-local refusal: a
+// proxy or TCP target may point anywhere the daemon can reach on its own
+// network -- loopback, RFC1918, ULA, public addresses, ordinary hostnames --
+// but never into the link-local space (IPv4 169.254.0.0/16, IPv6 fe80::/10)
+// or at the cloud metadata endpoint. Deleting the refusal turns every
+// wantRefused row red; widening it turns every accepted row red.
+func TestTargetsRefuseLinkLocalAndCloudMetadata(t *testing.T) {
+	const refusal = "link-local / cloud metadata addresses are refused"
+
+	tests := []struct {
+		name        string
+		kind        string
+		target      string
+		wantRefused bool
+	}{
+		{name: "proxy ipv4 link-local", kind: TypeProxy, target: "http://169.254.1.1", wantRefused: true},
+		{name: "proxy ipv4 metadata with port", kind: TypeProxy, target: "http://169.254.169.254:80/latest/meta-data", wantRefused: true},
+		{name: "proxy ipv4 metadata mapped into ipv6", kind: TypeProxy, target: "http://[::ffff:169.254.169.254]", wantRefused: true},
+		{name: "proxy ipv6 link-local", kind: TypeProxy, target: "http://[fe80::1]:80", wantRefused: true},
+		{name: "proxy ipv6 link-local with zone", kind: TypeProxy, target: "http://[fe80::1%25eth0]:80", wantRefused: true},
+		{name: "proxy metadata hostname", kind: TypeProxy, target: "http://metadata.google.internal/computeMetadata/v1/", wantRefused: true},
+		{name: "proxy metadata hostname uppercase", kind: TypeProxy, target: "http://METADATA.GOOGLE.INTERNAL", wantRefused: true},
+		{name: "proxy metadata hostname trailing dot", kind: TypeProxy, target: "http://metadata.google.internal./", wantRefused: true},
+		{name: "tcp ipv4 metadata", kind: TypeTCP, target: "169.254.169.254:80", wantRefused: true},
+		{name: "tcp ipv4 link-local", kind: TypeTCP, target: "169.254.1.1:80", wantRefused: true},
+		{name: "tcp ipv6 link-local", kind: TypeTCP, target: "[fe80::1]:80", wantRefused: true},
+		{name: "tcp ipv6 link-local with zone", kind: TypeTCP, target: "[fe80::1%eth0]:80", wantRefused: true},
+		{name: "tcp metadata hostname", kind: TypeTCP, target: "metadata.google.internal:80", wantRefused: true},
+
+		{name: "proxy loopback hostname", kind: TypeProxy, target: "http://localhost:3000"},
+		{name: "proxy loopback ipv4", kind: TypeProxy, target: "http://127.0.0.1:8080"},
+		{name: "proxy rfc1918 10", kind: TypeProxy, target: "http://10.0.0.5:8080"},
+		{name: "proxy rfc1918 192", kind: TypeProxy, target: "http://192.168.1.10"},
+		{name: "proxy loopback ipv6", kind: TypeProxy, target: "http://[::1]:80"},
+		{name: "proxy public hostname", kind: TypeProxy, target: "https://example.com:443"},
+		{name: "proxy public ipv4", kind: TypeProxy, target: "http://8.8.8.8:80"},
+		{name: "proxy ula ipv6", kind: TypeProxy, target: "http://[fd00::1]:8080"},
+		{name: "proxy site-local ipv6", kind: TypeProxy, target: "http://[fec0::1]:8080"},
+		{name: "proxy just outside link-local", kind: TypeProxy, target: "http://169.255.0.1:80"},
+		{name: "tcp loopback hostname", kind: TypeTCP, target: "localhost:3000"},
+		{name: "tcp loopback ipv4", kind: TypeTCP, target: "127.0.0.1:8080"},
+		{name: "tcp rfc1918 10", kind: TypeTCP, target: "10.0.0.5:8080"},
+		{name: "tcp rfc1918 192", kind: TypeTCP, target: "192.168.1.10:80"},
+		{name: "tcp loopback ipv6", kind: TypeTCP, target: "[::1]:80"},
+		{name: "tcp public hostname", kind: TypeTCP, target: "example.com:443"},
+		{name: "tcp public ipv4", kind: TypeTCP, target: "8.8.8.8:80"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var err error
+			switch tc.kind {
+			case TypeProxy:
+				err = ValidateProxyTarget(tc.target)
+			case TypeTCP:
+				err = ValidateTCPTarget(tc.target)
+			default:
+				t.Fatalf("unknown kind %q", tc.kind)
+			}
+			if !tc.wantRefused {
+				if err != nil {
+					t.Fatalf("%s(%q) error = %v, want nil (legitimate targets must stay allowed)", tc.kind, tc.target, err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("%s(%q) error = nil, want link-local refusal", tc.kind, tc.target)
+			}
+			if code, ok := ErrorCode(err); !ok || code != CodeLinkLocalTargetRefused {
+				t.Fatalf("%s(%q) code = %q, %v; want %s, true (err=%v)", tc.kind, tc.target, code, ok, CodeLinkLocalTargetRefused, err)
+			}
+			if !strings.Contains(err.Error(), refusal) {
+				t.Fatalf("%s(%q) error = %v, want message containing %q", tc.kind, tc.target, err, refusal)
+			}
+		})
+	}
+}
+
+// TestValidateServicePropagatesLinkLocalRefusal proves the rule is enforced on
+// the registration path, not only when the validators are called directly.
+func TestValidateServicePropagatesLinkLocalRefusal(t *testing.T) {
+	services := []Service{
+		{Name: "metadata-proxy", Type: TypeProxy, Target: "http://169.254.169.254"},
+		{Name: "metadata-tcp", Type: TypeTCP, Target: "169.254.169.254:80", Port: 80},
+	}
+	for _, svc := range services {
+		t.Run(svc.Name, func(t *testing.T) {
+			err := ValidateService(svc)
+			if code, ok := ErrorCode(err); !ok || code != CodeLinkLocalTargetRefused {
+				t.Fatalf("ValidateService(%+v) code = %q, %v, err = %v; want %s", svc, code, ok, err, CodeLinkLocalTargetRefused)
+			}
+		})
+	}
+}
+
 func TestAddRejectsInvalidControlURLBeforeMutation(t *testing.T) {
 	path := testRegistryPath(t)
 
