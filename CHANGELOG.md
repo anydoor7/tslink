@@ -11,6 +11,21 @@ Initial public release.
 
 ### Security
 
+- `tslink share <file>` now serves only that one file. The registry records
+  the served file in a new `file` field; the daemon answers `GET /<file>`,
+  redirects `GET /` to it, and returns 404 for every other path, so sibling
+  files and directory listings are no longer reachable through a single-file
+  share. Shares created by earlier releases have no `file` field and keep
+  serving their parent directory until they are shared again; re-run
+  `tslink share <file>` for any existing single-file share you rely on.
+- The daemon's own log files are created 0600, an existing wider log is
+  narrowed on the next start, and rotated archives never carry more than
+  owner-only permissions. Logs contain access records, invite recipients and
+  authorization URLs.
+- `tslink remove` deletes the service's local node identity directory once the
+  remote device deletion is confirmed and no daemon holds that node; the
+  daemon's reconcile pass does the same for orphaned identities it can prove
+  stale. Directories left behind by earlier releases are not swept.
 - Proxy and TCP targets that point at a link-local address (`169.254.0.0/16`,
   `fe80::/10`), an unspecified address (`0.0.0.0`, `::`), the
   `metadata.google.internal` hostname, or a non-canonical numeric spelling of
