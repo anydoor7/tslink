@@ -18,7 +18,7 @@ import (
 	tsruntime "github.com/monody0007/tslink/internal/runtime"
 )
 
-// E4: concurrent registry mutation while a daemon owns the config directory.
+// Concurrent registry mutation while a daemon owns the config directory.
 //
 // internal/registry already proves 12-process concurrent Add() converges
 // exactly (TestAddConcurrentProcessesPreservesExactRegistry). This scenario

@@ -44,8 +44,8 @@ func defaultProcessArguments(pid int) ([]string, error) {
 // 2026-09-16): a goroutine outliving the test that installed a stub reads the
 // seam after t.Cleanup restored it. It is safe here only because every reader is
 // synchronous -- readDarwinProcArgs returns before its caller does, and no test
-// in this package runs t.Parallel. Note that production does have a goroutine
-// reader: cmd/serve.go:818 polls IsProcessRunning every daemonParentPoll. It
+// in this package runs t.Parallel. Note that the daemon does have a goroutine
+// reader: cmd/serve.go polls IsProcessRunning every daemonParentPoll. It
 // never swaps the seam, so there is no race today; a test that both stubs these
 // vars and starts that loop would create one.
 var darwinProcArgs = func(pid int) ([]byte, error) {

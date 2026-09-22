@@ -45,7 +45,7 @@ Examples:
   tslink serve                                   Enroll without an admin credential
   tslink login                                   Store an optional durable-install credential
   tslink add docs --dir ~/Documents              Expose a file directory
-  tslink add mydb --tcp localhost:5432            Expose a TCP endpoint
+  tslink add mydb --tcp localhost:5432           Expose a TCP endpoint
   tslink serve --daemon                          Start as background daemon
   tslink list                                    List registered services
   tslink status                                  Show running status

@@ -110,7 +110,7 @@ func runTripwireChild(t *testing.T, mode string) (int, string) {
 // TestServiceManagerGuardFailsThePackageOnRealCall runs a control and a
 // mutation through the same child harness. The mutation is "a test that
 // forgot to stub the service manager seam", which is literally what happened
-// on 2026-09-16 and took the production LaunchAgent down for 23 minutes.
+// on 2026-09-16 and took the developer's own LaunchAgent down for 23 minutes.
 func TestServiceManagerGuardFailsThePackageOnRealCall(t *testing.T) {
 	if testing.Short() {
 		t.Skip("spawns a child test binary")

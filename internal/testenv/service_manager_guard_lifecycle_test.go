@@ -334,8 +334,8 @@ func TestInstallRejectsMalformedSeams(t *testing.T) {
 	}
 }
 
-// TestReportDistinguishesAnUnplantedShimFromZeroInterceptions covers the unplanted-shim
-// negative case. Windows plants no fake at all, yet the teardown still printed
+// TestReportDistinguishesAnUnplantedShimFromZeroInterceptions is the negative
+// case for a shim that was never planted. Windows plants no fake at all, yet the teardown still printed
 // "child process service manager calls intercepted = 0" -- a sentence whose
 // meaning on unix is "the shim was in front of every child and none called a
 // manager" and whose meaning there is "nothing was in front of anything". No
@@ -389,7 +389,7 @@ func TestReportDistinguishesAnUnplantedShimFromZeroInterceptions(t *testing.T) {
 }
 
 // TestAllowRealServiceManagerInChildProcessesIsExplicitAndAudited covers the
-// explicit opt-out. The gated systemd e2e must be able to reach the caller's
+// audited opt-out. The gated systemd e2e must be able to reach the caller's
 // real manager, and until this existed the shim silently answered its calls
 // instead -- an e2e that claims in its own doc comment to drive real systemd
 // and in fact drives a fake is worse than no e2e.

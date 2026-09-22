@@ -1072,9 +1072,9 @@ func loginCredentialFlow(cmd *cobra.Command, cfgDir string) error {
 		fmt.Print("  2. Click \"+ credential\" → choose \"OAuth client\"\n")
 		fmt.Print("  3. Validate OAuth scopes and tags for each service before unattended use\n")
 		fmt.Print("  4. Click \"Create\" — you will see two values:\n")
-		fmt.Print("       Client ID:     km9GkS...  (short, NOT this one)\n")
+		fmt.Print("       Client ID:     kABC123...  (short, NOT this one)\n")
 		fmt.Print("       Client secret: tskey-client-...  ← copy THIS one\n")
-		fmt.Print("     ⚠ The secret is shown only once!\n\n")
+		fmt.Print("     ⚠ The secret is shown only once.\n\n")
 		fmt.Print("  Paste client secret: ")
 
 		inputKey, _ := reader.ReadString('\n')

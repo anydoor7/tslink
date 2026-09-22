@@ -36,8 +36,8 @@ var failedTestLine = regexp.MustCompile(`(?m)^\s*--- FAIL: (\S+)`)
 // That env is not a debugging convenience. An external runner may set
 // it on purpose: without the zero-hit summary line there is no way to tell
 // "the guard was installed and blocked nothing" from "the guard was never
-// installed", and the second one is how `go test` took the production daemon
-// down on 2026-09-16. A suite that is only green with the env unset depends on the caller's
+// installed", and the second one is how `go test` took a developer's own
+// installed daemon down on 2026-09-16. A suite that is only green with the env unset depends on the caller's
 // environment.
 //
 // How it works: re-exec this same test binary twice, once with the env removed

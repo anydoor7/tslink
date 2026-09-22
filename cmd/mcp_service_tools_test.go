@@ -30,8 +30,7 @@ import (
 //     added to a Cobra command has no mechanical reason to appear as a tool
 //     parameter. Nothing failed when share's schema shipped without allow,
 //     which is how the MCP share tool came to create services with no
-//     allow-list — readable, per project/tools/tslink_allow_audit.py, by every
-//     member of the tailnet. TestMCPToolSurfaceCoversTheManifest is the gate:
+//     allow-list — readable by every member of the tailnet. TestMCPToolSurfaceCoversTheManifest is the gate:
 //     every command in docs/cli-manifest.json is either mapped onto MCP tools
 //     with each of its flags accounted for, or explicitly excluded with a
 //     reason, and every MCP tool is claimed by exactly one command.
@@ -665,8 +664,7 @@ func mcpLoadService(t *testing.T, regPath, name string) registry.Service {
 
 // TestMCPSharePersistsAllowListAndTags closes the gap this whole change exists
 // for: before it, an MCP share always produced a service with an empty
-// allow-list, which project/tools/tslink_allow_audit.py flags as readable by
-// every tailnet member. The assertion is on the persisted registry entry, not
+// allow-list, which leaves the service readable by every tailnet member. The assertion is on the persisted registry entry, not
 // on the tool's reply.
 func TestMCPSharePersistsAllowListAndTags(t *testing.T) {
 	restoreShareSeams(t)

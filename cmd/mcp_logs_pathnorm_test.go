@@ -77,7 +77,7 @@ func TestRedactTailscaleURLKeepsRedactingCredentialCarriers(t *testing.T) {
 // "does not appear" assertions.
 const portBypassToken = "PORTBYPASSPROBETOKEN"
 
-// TestRedactTailscaleURLCoversPortAndSlashShapes covers the URL-shape regression: the
+// TestRedactTailscaleURLCoversPortAndSlashShapes covers a redaction gap: the
 // outer pattern required "//host/", so ":443" and a single slash never matched
 // and the whole line passed through with the capability intact.
 func TestRedactTailscaleURLCoversPortAndSlashShapes(t *testing.T) {
@@ -134,7 +134,7 @@ func TestRedactTailscaleURLRejectsLookalikeHosts(t *testing.T) {
 }
 
 // TestSanitizeLogLineDoesNotLeakFragmentCarriedCapabilities is the fragment half
-// of the URL-shape family that includes ":443" and the single-slash form: the
+// of the shape family opened by ":443" and the single-slash form: the
 // predicate reasons about scheme, host, userinfo, query and path, and a URL
 // fragment is none of those. It is asserted through sanitizeLogLine rather than
 // redactTailscaleURL because the question is what leaves the pipeline, and the

@@ -125,7 +125,7 @@ func TestRegistryCheckLeavesAnInvalidRegistryUntouched(t *testing.T) {
 // TestCompiledRegistryCheckAndListAgreeOnFirstRun is the cross-command half of
 // the contract, run against the shipped binary: on a config directory with no
 // registry yet, `registry check` and `list` must classify the state the same
-// way. They disagreeing is the defect the Round C-1 review surfaced.
+// way. They disagreeing is the defect an earlier review surfaced.
 func TestCompiledRegistryCheckAndListAgreeOnFirstRun(t *testing.T) {
 	binary := compiledTSLinkBinary(t)
 	configDir := t.TempDir()

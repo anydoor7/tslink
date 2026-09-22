@@ -229,7 +229,7 @@ func TestLoginCredentialFlow_ClientSecret_WrongPrefix(t *testing.T) {
 func TestLoginCredentialFlow_ClientSecret_ClientIDRejected(t *testing.T) {
 	dir := setupLoginTest(t)
 	// User accidentally pastes the short Client ID instead of the secret
-	mockStdin(t, "2", "km9GkSnaBK11CNTRL")
+	mockStdin(t, "2", "kABC123naBK11CNTRL")
 
 	err := loginCredentialFlow(loginCmd, dir)
 	if err == nil {

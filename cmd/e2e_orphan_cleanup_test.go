@@ -17,12 +17,12 @@ import (
 	tailscale "tailscale.com/client/tailscale/v2"
 )
 
-// E3: orphan tailnet node convergence, driven end to end through the shipped
-// binary against the Round B stateful fake tailnet.
+// Orphan tailnet node convergence, driven end to end through the shipped
+// binary against the stateful fake tailnet.
 //
 // Two incidents are covered. First, the orphan node: `tslink remove` must
 // delete exactly the one device whose NodeID this installation durably owns and
-// touch nothing else. Second, the degradation family (M4/M5): when the evidence
+// touch nothing else. Second, the degradation family: when the evidence
 // this decision rests on is untrustworthy, the number of DELETE calls must be
 // zero rather than "whatever the corrupted evidence implies". The dangerous
 // direction is unique to this feature: an empty registry file read as "zero

@@ -32,10 +32,10 @@ const ServiceManagerGuardReportEnv = "TSLINK_SERVICE_MANAGER_GUARD_REPORT"
 // the real launchctl exit and ran `bootout`+`bootstrap` against the live
 // gui/<uid> domain. launchd's domain namespace is global to the login session,
 // so it is reachable from any process regardless of HOME or t.TempDir(); the
-// job label is a compile-time constant shared with production. The test
-// therefore replaced the operator's real com.tslink.daemon job with one
+// job label is a compile-time constant shared with the installed daemon. The
+// test therefore replaced the developer's own com.tslink.daemon job with one
 // pointing at the ephemeral cmd.test binary, and when the temp dir was cleaned
-// up launchd could no longer start it (exit 78, EX_CONFIG). Production was
+// up launchd could no longer start it (exit 78, EX_CONFIG). That daemon stayed
 // down for 23 minutes. Path isolation cannot prevent this; only closing the
 // process exit can.
 var ErrServiceManagerBlocked = errors.New("test service manager guard blocked a real OS service manager call")
@@ -235,7 +235,7 @@ func (g *ServiceManagerGuard) Attempts() []ServiceManagerAttempt {
 // Report writes the guard summary to stderr and reports whether the package
 // must fail. A blocked attempt is always fatal for the package: the test that
 // made it is not isolated, and the next run of it on a developer machine is
-// what takes production down.
+// what takes that developer's own installed daemon down.
 //
 // An opt-in line is printed whenever one was taken, independent of the env var
 // and of whether anything was blocked. An AllowReal that runs the real binary

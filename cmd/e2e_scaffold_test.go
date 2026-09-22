@@ -14,7 +14,7 @@ import (
 	"github.com/monody0007/tslink/internal/output"
 )
 
-// Cross-platform half of the Round C-1 e2e scaffolding: the helpers that run a
+// Cross-platform half of the e2e scaffolding: the helpers that run a
 // compiled binary once and decode its envelope. Everything that starts a
 // long-lived child, enumerates processes by absolute path, or reaps by PID lives
 // in e2e_scaffold_unix_test.go, which is POSIX-only. Splitting on that line is

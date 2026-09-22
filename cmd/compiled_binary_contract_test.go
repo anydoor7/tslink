@@ -34,7 +34,7 @@ var (
 	// so the root would be deleted when whichever test happened to trigger the
 	// build finished, and every later test in the package would be handed a
 	// dangling path. It is also no longer an unmanaged os.MkdirTemp with no
-	// owner: that is what leaked here before Round C-1's review, and Round C-1
+	// owner: that is what leaked here before an earlier review, which also
 	// made the leak materially worse by adding a second real CLI copy
 	// (~45.9 MB), the overlay fake daemon (~3.0 MB) and its generated sources
 	// into the same never-removed tree — about 47 MiB per test process, six

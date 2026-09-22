@@ -22,7 +22,7 @@ import (
 	"github.com/monody0007/tslink/internal/daemon"
 )
 
-// Round C-1 process-level e2e scaffolding.
+// Process-level e2e scaffolding.
 //
 // These helpers extend the four existing compiled-binary contract suites
 // (compiled_binary_contract_test.go, machine_contract_binary_test.go,

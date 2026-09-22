@@ -490,7 +490,7 @@ func init() {
 		Use:   "list",
 		Args:  cobra.NoArgs,
 		Short: "List registered services",
-		Long: `List registered services with token-efficient filtering.
+		Long: `List registered services with a compact default projection.
 
 JSON defaults to name, type, exact runtime URL (or null), url_pending, state,
 and Funnel intent/active/reason fields. Use --verbose for the complete

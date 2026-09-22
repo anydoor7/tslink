@@ -23,9 +23,9 @@ import (
 // Deleting a live daemon's PID file is how a machine ends up with two daemons:
 // the evidence that a daemon exists disappears, so the next `serve` sees a
 // clean slate and starts a second one. daemon.IsProcessAbsentFromPIDFile is the
-// single guard for this and had 0% coverage before Round A.
+// single guard for this and was uncovered until the unit test named below.
 //
-// The Round A unit test (TestStopOnlyDeletesPIDArtifactsForConclusiveExitedProcess)
+// That unit test (TestStopOnlyDeletesPIDArtifactsForConclusiveExitedProcess)
 // covers the same predicate in-process, but it stubs isRunningFn to a constant
 // false and calls stopService directly. This scenario runs the shipped binary
 // against a real config directory with real OS processes and no seams stubbed,
@@ -139,7 +139,7 @@ func TestE2EStopPreservesLiveDaemonPIDEvidence(t *testing.T) {
 	}
 }
 
-// E2, second half: a genuinely live serve daemon must actually be stopped, and
+// Second half: a genuinely live serve daemon must actually be stopped, and
 // its artifacts removed only after the process is really gone. Without this the
 // preservation cases above could all be satisfied by a `stop` that never
 // deletes anything.

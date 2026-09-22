@@ -216,7 +216,7 @@ func TestBootstrapEvidenceGateFailsOnlyWhenProcessGoesAway(t *testing.T) {
 		// file write plus a poll can exceed the budget under load, and the failure
 		// then reports machine business rather than code. Measured on 2026-09-08:
 		// idle 0/20 failures, but 1/12 while a full `go test ./...` ran alongside
-		// (an independent reviewer saw 2/5 under heavier concurrent load).
+		// (2/5 on another machine under heavier concurrent load).
 		// A generous budget costs nothing in wall-clock: the wait returns as soon
 		// as the artifact lands (~2-3ms), not when the budget expires, and a
 		// regression that stops picking up late evidence still fails here because

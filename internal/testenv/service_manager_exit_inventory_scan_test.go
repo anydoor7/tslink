@@ -308,8 +308,9 @@ func absolutePathFor(binary string) string {
 	return "/usr/bin/" + binary
 }
 
-// TestInventoryScannerFlagsAnAbsolutePathTestExec covers the scanner
-// negative case. Before 2026-09-16 every check here required a double
+// TestInventoryScannerFlagsAnAbsolutePathTestExec is the negative case for
+// an absolute-path manager name. Before 2026-09-16 every check here required
+// a double
 // quote immediately before the manager name, so naming the binary by absolute
 // path escaped the exec scan, the pass-through scan (no argument spread), the
 // literal count (it counted the quoted bare name) and the PATH shim (an

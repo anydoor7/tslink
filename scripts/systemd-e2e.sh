@@ -2,9 +2,9 @@
 # Real-systemd end-to-end check for `tslink install`, with a mutation control.
 #
 # Runs on the host that has the OrbStack CLI (`orb`); everything that touches
-# systemd runs inside a disposable OrbStack Linux VM. It exercises the Round
-# C-2 defect: `install` used to report success while the freshly restarted
-# unit was already in systemd's restart loop.
+# systemd runs inside a disposable OrbStack Linux VM. It exercises the defect
+# where `install` reported success while the freshly restarted unit was
+# already in systemd's restart loop.
 #
 # Why a script and not a CI gate: GitHub's ubuntu-latest has no reliable
 # `systemctl --user` session, and a permanently red job is worse than no job.
@@ -17,7 +17,8 @@
 # the fixed run as well as for the controls.
 #
 # Usage:
-#   scripts/systemd-e2e.sh                # VM defaults to tslink-cold2
+#   scripts/systemd-e2e.sh                # VM defaults to tslink-e2e, which
+#                                         # must already exist
 #   TSLINK_E2E_VM=<name> scripts/systemd-e2e.sh
 #   TSLINK_E2E_KEEP=1 ...                 # keep host work dir + VM dir + logs
 #   TSLINK_E2E_PREFIX_BAD_BIN=/abs/in/vm  # optional: a pre-fix bad build already
@@ -34,7 +35,7 @@
 # The working tree is never modified: mutants are built with `go build -overlay`.
 set -euo pipefail
 
-VM="${TSLINK_E2E_VM:-tslink-cold2}"
+VM="${TSLINK_E2E_VM:-tslink-e2e}"
 KEEP="${TSLINK_E2E_KEEP:-0}"
 PREFIX_BAD_BIN="${TSLINK_E2E_PREFIX_BAD_BIN:-}"
 SENTINEL='E2E_SENTINEL: install claimed success while the unit is crash-looping'

@@ -172,7 +172,7 @@ func serviceManagerShimScript(binary, defaultLog string) string {
 	var script strings.Builder
 	script.WriteString("#!/bin/sh\n")
 	script.WriteString("# Planted by tslink's testenv. Executing the real " + binary + " from a test\n")
-	script.WriteString("# child process is what took the production daemon down on 2026-09-16.\n")
+	script.WriteString("# child process is what took a developer's own installed daemon down.\n")
 	// The default is unquoted inside ${...:-...}; the enclosing double quotes
 	// are what preserve spaces. Adding single quotes here would make them
 	// literal characters in the path.

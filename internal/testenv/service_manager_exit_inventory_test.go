@@ -123,7 +123,7 @@ var serviceManagerTestExecAllowlist = map[string]serviceManagerExitEntry{
 	// caller's real `systemctl --user` on purpose; that is the test.
 	//
 	// "On purpose" became conditional when the PATH shim arrived: the shim is
-	// not selective, so from 0dd23bf until 2026-09-17 this e2e resolved
+	// not selective, so until 2026-09-17 this e2e resolved
 	// systemctl to a fake in both halves and verified the shim instead of
 	// systemd. It now calls testenv.AllowRealServiceManagerInChildProcesses
 	// after its own gate, and the opt-in is named in the teardown report.
@@ -207,7 +207,7 @@ func TestServiceManagerTestArgPassthroughsAreReviewed(t *testing.T) {
 // starts naming a service manager binary, and when an already-reviewed file
 // grows a new mention. The guard can only close exits it knows about, and a
 // hole added in some future package would otherwise be invisible until it took
-// production down.
+// a developer's own installed daemon down.
 //
 // The assertion is set equality plus per-file counts, not "no unexpected
 // files". If the scanner itself broke, every known entry would go missing and

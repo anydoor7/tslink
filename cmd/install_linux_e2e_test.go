@@ -14,7 +14,7 @@ import (
 	"github.com/monody0007/tslink/internal/testenv"
 )
 
-// Real-systemd e2e for the install settle window (the Round C-2 defect: install
+// Real-systemd e2e for the install settle window (the defect where install
 // reported success while the freshly restarted unit was already in systemd's
 // restart loop).
 //

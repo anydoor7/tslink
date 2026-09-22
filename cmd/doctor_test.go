@@ -1147,8 +1147,8 @@ func TestDoctorTier1CompletedEnrollmentUnderRegistryMismatch(t *testing.T) {
 	}
 }
 
-// TestDoctorTier1FailedSnapshotIsNotCompletedEnrollment covers the failure case:
-// a snapshot whose only entry is RuntimeState=failed
+// TestDoctorTier1FailedSnapshotIsNotCompletedEnrollment covers a defect an
+// earlier review found: a snapshot whose only entry is RuntimeState=failed
 // must not count as completed enrollment evidence, mirroring status's
 // running-only rule.
 func TestDoctorTier1FailedSnapshotIsNotCompletedEnrollment(t *testing.T) {

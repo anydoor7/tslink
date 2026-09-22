@@ -97,7 +97,7 @@ func TestBootstrapEnrollmentAcrossServices(t *testing.T) {
 			// jitter. The full suite crossed it (1.2678s measured on
 			// 2026-09-16 under `go test ./...`, while 12 isolated runs of this
 			// test failed zero times), so the assertion was reporting machine
-			// load rather than the error condition
+			// load rather than the error condition.
 			//
 			// The criterion is the error's identity instead, and it still
 			// catches the same regression for a reason that does not depend on

@@ -16,7 +16,7 @@ import (
 //
 // # Classification is fail-closed
 //
-// Round C-1 shipped this as a denylist: anything not explicitly denied was
+// This shipped first as a denylist: anything not explicitly denied was
 // executed. That made a newly added command *executable by default* — a command
 // merged tomorrow would have its body run twice by the default `go test ./...`
 // before anyone decided whether that is safe. The independent review
@@ -222,7 +222,7 @@ type e2eDecoupledException struct {
 // process exit status and from the final envelope. `tslink doctor` is a real,
 // intentional exception: the envelope reports whether *the doctor ran*
 // (ok=true, code=0) while the process exit status reports *what the doctor
-// found* (64 when there are warnings). Round C's brief asked for the process
+// found* (64 when there are warnings). An earlier brief asked for the process
 // exit and the envelope code to be equal unconditionally; that is false on
 // healthy code today, and asserting it would have reported a defect that is not
 // one.

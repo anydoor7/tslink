@@ -12,7 +12,7 @@ import (
 	"github.com/monody0007/tslink/internal/output"
 )
 
-// E1: two tslink binaries at different absolute paths sharing one config
+// Two tslink binaries at different absolute paths sharing one config
 // directory must not produce two daemons, and the second binary must not report
 // an assertive "no daemon" while the first one's daemon is alive.
 //

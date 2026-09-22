@@ -324,8 +324,8 @@ func runRotationUntil(t *testing.T, calls int, result logrotate.Result, rotateEr
 	return read()
 }
 
-// TestStartStderrLogRotationKeepsRestatingADegradedDecision covers the caller-side
-// negative case. The log-once-per-change policy is right for the
+// TestStartStderrLogRotationKeepsRestatingADegradedDecision is the negative
+// case for a degraded rotation. The log-once-per-change policy is right for the
 // steady state and wrong for the one state that matters: the operator deleted
 // the log, rotation refused, and after a single line the daemon's own log looks
 // exactly like a healthy daemon under the size cap for as long as the process
@@ -358,9 +358,10 @@ func TestStartStderrLogRotationKeepsRestatingADegradedDecision(t *testing.T) {
 	})
 }
 
-// TestStartStderrLogRotationDeduplicatesRepeatedRotationErrors covers the
-// error-path regression. The error branch used to log every tick with no deduplication at
-// all, so a log directory turned read-only produced a Warn every five minutes
+// TestStartStderrLogRotationDeduplicatesRepeatedRotationErrors is the negative
+// case for a repeated rotation error. The error branch used to log every
+// tick with no deduplication at all, so a log directory turned read-only
+// produced a Warn every five minutes
 // -- this function feeding the growth it exists to bound, which is the exact
 // shape its own comment names as the thing to avoid.
 func TestStartStderrLogRotationDeduplicatesRepeatedRotationErrors(t *testing.T) {
