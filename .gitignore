@@ -1,12 +1,18 @@
+# Local tool and editor state
 .worktrees/
 .claude/
+.io/
+
+# Build output
 tslink
+dist/
+.releases/
 coverage*.out
 coverage*.html
-dist/
+
+# Release notes are drafted locally and published on the GitHub release
 RELEASE.md
 
 # Generated HTML previews of the READMEs (not source)
 README.html
 README_zh.html
-.releases/

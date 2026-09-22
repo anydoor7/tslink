@@ -59,7 +59,6 @@ listen on something, check for orphaned processes immediately (`ps`,
 filtered by the scratch config dir path), rather than assuming the exit
 value or a config-dir override proves there was no side effect.
 
-
 ### Local verification
 
 Run the local checks above for relevant changes. Inspect automated checks on the intended commit when available.
@@ -80,7 +79,6 @@ Read `gh api repos/<repo>/check-runs/<job>/annotations` first; a private
 repository can fail every job at the GitHub Actions billing/spending-limit
 gate for months while every commit still reports the wrong, more specific
 root cause if nobody checks the annotation.
-
 
 ### Project Structure
 
@@ -153,7 +151,6 @@ trigger the same verification instinct as a plain factual assertion — and a
 claim the two of you converged on together in conversation is not exempt
 from this check; if anything it needs it more, because both sides already
 feel confident it's right.
-
 
 ## Code Style
 
