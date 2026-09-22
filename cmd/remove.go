@@ -38,8 +38,10 @@ var removeNodeStateFn = tsruntime.RemoveServiceNodeState
 // directory. A wrong "not running" deletes state underneath a live node; a
 // wrong "running" leaves a directory behind, which is the bug this is fixing
 // and not a new one.
+var removeDaemonPIDPathFn = config.PIDPath
+
 var removeDaemonRunningFn = func() bool {
-	pidPath, err := config.PIDPath()
+	pidPath, err := removeDaemonPIDPathFn()
 	if err != nil {
 		return true
 	}
