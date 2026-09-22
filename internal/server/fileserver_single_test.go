@@ -199,6 +199,9 @@ func TestSingleFileHandlerRejectsUnsafeArguments(t *testing.T) {
 	}{
 		{"empty_file", dir, ""},
 		{"whitespace_file", dir, "   "},
+		{"tab_only_file", dir, "\t"},
+		{"embedded_newline_file", dir, "a\nb"},
+		{"embedded_nul_file", dir, "a\x00b"},
 		{"separator_file", dir, "sub/report.html"},
 		{"windows_separator_file", dir, `sub\report.html`},
 		{"parent_file", dir, ".."},

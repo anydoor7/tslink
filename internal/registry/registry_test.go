@@ -2331,6 +2331,21 @@ func TestValidateServedFileConstrainsSingleFileShare(t *testing.T) {
 		{"current_segment", "."},
 		{"trailing_separator", "sub/"},
 		{"root", "/"},
+		// A name that is only whitespace is not a file name, and this is the
+		// shape a human or a broken writer produces by accident. It used to
+		// pass here and fail in the daemon at node startup, which put the
+		// error as far as possible from the boundary whose job is to refuse it.
+		{"spaces_only", "   "},
+		{"tab_only", "\t"},
+		{"newline_only", "\n"},
+		// Control characters never appear in a name anyone meant to type. A
+		// newline splits a log line; a NUL truncates the name for any C API
+		// that later receives it.
+		{"embedded_newline", "a\nb"},
+		{"embedded_nul", "a\x00b"},
+		{"embedded_carriage_return", "a\rb"},
+		{"embedded_tab", "a\tb"},
+		{"embedded_delete", "a\x7fb"},
 	}
 	for _, tc := range rejected {
 		t.Run("rejected_"+tc.name, func(t *testing.T) {
@@ -2340,6 +2355,30 @@ func TestValidateServedFileConstrainsSingleFileShare(t *testing.T) {
 				t.Fatalf("ValidateService(File=%q) error = nil, want rejection", tc.file)
 			}
 		})
+	}
+
+	// One predicate, two boundaries: the shape rule the handler constructor
+	// uses is this same exported function, so a name the registry accepts
+	// cannot be one the daemon then refuses to build a handler for.
+	for _, tc := range accepted {
+		if tc.file == "" {
+			continue // empty means the whole directory; the handler has no such reading
+		}
+		t.Run("handler_accepts_"+tc.name, func(t *testing.T) {
+			if err := ValidateServedFileName(tc.file); err != nil {
+				t.Fatalf("ValidateServedFileName(%q) error = %v, want nil", tc.file, err)
+			}
+		})
+	}
+	for _, tc := range rejected {
+		t.Run("handler_rejects_"+tc.name, func(t *testing.T) {
+			if err := ValidateServedFileName(tc.file); err == nil {
+				t.Fatalf("ValidateServedFileName(%q) error = nil, want rejection", tc.file)
+			}
+		})
+	}
+	if err := ValidateServedFileName(""); err == nil {
+		t.Fatal("ValidateServedFileName(\"\") error = nil; empty is only meaningful as \"whole directory\" at the Service level")
 	}
 
 	// file belongs to file services only. On a proxy or tcp service it would be

@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"github.com/monody0007/tslink/internal/registry"
 )
 
 // NewFileHandler returns an HTTP handler that serves files from dir,
@@ -43,15 +45,14 @@ func NewFileHandler(dir string) (*FileHandler, error) {
 // addressable rather than merely unlisted.
 //
 // file must be a bare file name. The caller has already enforced that at the
-// registry boundary (registry.ValidateServedFile); repeating the check here is
-// defense-in-depth for a direct caller of this constructor, the same reason
-// NewFileHandler re-checks its own root.
+// registry boundary; repeating the check here is defense-in-depth for a direct
+// caller of this constructor, the same reason NewFileHandler re-checks its own
+// root. It calls the registry's own predicate rather than restating it, because
+// a restated copy is a copy that can drift -- and the first version of this
+// function did drift, accepting and rejecting different sets of whitespace.
 func NewSingleFileHandler(dir, file string) (*FileHandler, error) {
-	if strings.TrimSpace(file) == "" {
-		return nil, fmt.Errorf("file service served file name is empty")
-	}
-	if strings.ContainsAny(file, `/\`) || file != filepath.Base(file) || file == "." || file == ".." {
-		return nil, fmt.Errorf("file service served file name %q must be a bare file name", file)
+	if err := registry.ValidateServedFileName(file); err != nil {
+		return nil, fmt.Errorf("file service served file name: %w", err)
 	}
 	fsys, err := openServedRoot(dir)
 	if err != nil {

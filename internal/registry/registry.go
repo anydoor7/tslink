@@ -744,6 +744,31 @@ func ValidateServedFile(file string) error {
 	if file == "" {
 		return nil
 	}
+	return ValidateServedFileName(file)
+}
+
+// ValidateServedFileName is the shape rule itself, with no empty-means-whole-
+// directory reading. internal/server calls it from NewSingleFileHandler so the
+// registry boundary and the handler constructor accept exactly the same set:
+// two nearly-identical copies of this predicate had already drifted apart, and
+// the direction of the drift was the dangerous one -- the registry accepted a
+// whitespace-only name that the handler rejected, so a hand-written or
+// third-party registry entry passed `tslink registry check` and then failed at
+// node startup, with the error surfacing in the daemon rather than at the
+// boundary whose job is to refuse it.
+func ValidateServedFileName(file string) error {
+	// Whitespace-only is not a file name. It is worth naming separately from
+	// the other rejections because it is the one a human produces by accident.
+	if strings.TrimSpace(file) == "" {
+		return fmt.Errorf("file services require file to be a file name; got %q, which is empty or whitespace only", file)
+	}
+	// Control characters never appear in a name a user meant to type, and they
+	// do appear in a name built by a broken writer or an injection attempt: a
+	// newline splits a log line, and a NUL truncates the name for any C API
+	// that later receives it.
+	if idx := strings.IndexFunc(file, func(r rune) bool { return r < 0x20 || r == 0x7f }); idx >= 0 {
+		return fmt.Errorf("file services require file to be free of control characters; got %q", file)
+	}
 	// Both separators are rejected on every platform. A registry file is a
 	// portable document: one written on Windows is readable on Unix, where
 	// filepath.Base would not treat a backslash as a separator and would accept
