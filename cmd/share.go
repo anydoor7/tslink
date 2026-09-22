@@ -38,7 +38,6 @@ type ShareResult struct {
 type shareTargetSpec struct {
 	Service  registry.Service
 	NameBase string
-	FileName string
 }
 
 // shareRequest is the complete one-shot share intent. Target, Name and
@@ -134,10 +133,20 @@ func inferShareTarget(target string, ephemeral bool) (shareTargetSpec, error) {
 				NameBase: filepath.Base(absolute),
 			}, nil
 		case info.Mode().IsRegular():
+			// Path is the parent directory because that is the only thing a
+			// file open can be anchored at, and File is what keeps the share
+			// to the one file the user named. The served file name lives in
+			// the registry rather than only in this spec: the daemon reads the
+			// registry, so a narrowing recorded anywhere else is a narrowing
+			// the daemon never applies.
 			return shareTargetSpec{
-				Service:  registry.Service{Type: registry.TypeFile, Path: filepath.Dir(absolute), Ephemeral: ephemeral},
+				Service: registry.Service{
+					Type:      registry.TypeFile,
+					Path:      filepath.Dir(absolute),
+					File:      filepath.Base(absolute),
+					Ephemeral: ephemeral,
+				},
 				NameBase: filepath.Base(absolute),
-				FileName: filepath.Base(absolute),
 			}, nil
 		default:
 			return shareTargetSpec{}, output.ErrUsage(fmt.Sprintf("share target %q is not a directory or regular file", target))
@@ -254,9 +263,16 @@ func suffixedShareName(base string, attempt int) string {
 	return trimmed + suffix
 }
 
+// sameShareBackend decides whether an existing service already serves this
+// share's target, so a repeated share reuses it instead of creating a suffixed
+// node. File is part of the comparison: two regular files in one directory
+// share a Path, and without File `tslink share ./b.html` would reuse the
+// service registered for ./a.html and then return a URL for /b.html that that
+// service answers 404 for.
 func sameShareBackend(existing, candidate registry.Service) bool {
 	return existing.Type == candidate.Type &&
 		existing.Path == candidate.Path &&
+		existing.File == candidate.File &&
 		existing.Target == candidate.Target &&
 		existing.Ephemeral == candidate.Ephemeral
 }
@@ -444,7 +460,9 @@ func executeShare(ctx context.Context, paths sharePaths, req shareRequest, wait 
 			return ShareResult{Status: authStatusNeedsLogin, AuthURL: startup.AuthURL, serviceName: svc.Name}, nil
 		}
 	}
-	return waitForShareOutcome(ctx, paths, svc.Name, spec.FileName, wait)
+	// svc, not spec: when registerShare reused an existing service, the URL has
+	// to describe what that service actually serves.
+	return waitForShareOutcome(ctx, paths, svc.Name, svc.File, wait)
 }
 
 func init() {
@@ -452,9 +470,11 @@ func init() {
 		Use:   "share <path|port|host:port>",
 		Short: "Share a local path or web port and print its tailnet URL",
 		Long: `Register a one-shot file or proxy service, start the daemon if needed,
-and wait for an exact tailnet URL. Existing directories become file services;
-regular files share their parent directory and return a URL for that file;
-ports and host:port targets become HTTP proxies. Shares are ephemeral by default.
+and wait for an exact tailnet URL. An existing directory becomes a file service
+serving that whole directory, browsable. An existing regular file serves only
+that one file: its URL is the file, the service root redirects to it, and every
+other path is 404. Ports and host:port targets become HTTP proxies. Shares are
+ephemeral by default.
 
 If Tailscale authorization is required, the authorization URL is returned as a
 successful needs_login result. Open it and then use "tslink url <name> --wait".
