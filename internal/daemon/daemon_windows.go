@@ -95,12 +95,17 @@ func Daemonize(outLog, errLog, controlURL string, manageACL, noAutoProvision, mc
 		return 0, fmt.Errorf("create stderr log dir: %w", err)
 	}
 
-	stdout, err := os.OpenFile(outLog, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	// Windows ignores the permission argument, so this carries no protection
+	// here; it uses the shared constant anyway, because a 0644 literal in this
+	// file would read as a deliberate statement that these logs are less
+	// sensitive on Windows than on unix. Windows access control for these files
+	// comes from the ACL the config directory is created with, not from here.
+	stdout, err := os.OpenFile(outLog, os.O_APPEND|os.O_CREATE|os.O_WRONLY, daemonLogFileMode)
 	if err != nil {
 		return 0, fmt.Errorf("open stdout log: %w", err)
 	}
 
-	stderr, err := os.OpenFile(errLog, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	stderr, err := os.OpenFile(errLog, os.O_APPEND|os.O_CREATE|os.O_WRONLY, daemonLogFileMode)
 	if err != nil {
 		_ = stdout.Close()
 		return 0, fmt.Errorf("open stderr log: %w", err)

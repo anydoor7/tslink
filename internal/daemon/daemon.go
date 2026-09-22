@@ -26,6 +26,23 @@ const (
 	legacyPIDStartTolerance = 2 * time.Minute
 )
 
+// daemonLogFileMode is the mode the daemon's own stdout and stderr logs are
+// created with, and narrowed to when they already exist.
+//
+// Owner-only rather than the 0644 these used to get, because of what is in
+// them: the access log names every principal that reached a service, invite
+// flows log recipient email addresses, and tsnet's authorization URL is a
+// bearer link to the tailnet. A log directory created 0700 does not make the
+// files inside it safe on its own -- a mode is the thing that survives the
+// directory being opened up, a backup being restored, or the files being copied
+// somewhere else.
+//
+// It lives in the shared file, and the Windows Daemonize uses it too, even
+// though Windows ignores the permission argument to OpenFile: a second literal
+// there would read as a deliberate difference in how sensitive these files are,
+// which is not what it would mean.
+const daemonLogFileMode os.FileMode = 0o600
+
 type processIdentityRecord struct {
 	Version       int    `json:"version"`
 	Product       string `json:"product"`

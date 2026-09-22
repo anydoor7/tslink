@@ -13,18 +13,6 @@ import (
 	"time"
 )
 
-// daemonLogFileMode is the mode the daemon's own stdout and stderr logs are
-// created with, and narrowed to when they already exist.
-//
-// Owner-only rather than the 0644 these used to get, because of what is in
-// them: the access log names every principal that reached a service, invite
-// flows log recipient email addresses, and tsnet's authorization URL is a
-// bearer link to the tailnet. A log directory created 0700 does not make the
-// files inside it safe on its own -- a mode is the thing that survives the
-// directory being opened up, a backup being restored, or the files being copied
-// somewhere else.
-const daemonLogFileMode os.FileMode = 0o600
-
 // Seams for testing – overridden in tests to inject errors.
 var (
 	findProcess = os.FindProcess
