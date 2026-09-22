@@ -211,8 +211,7 @@ func startLongLivedForeignProcess(t *testing.T) int {
 // identity but its argv is not "serve", so identity verification must classify
 // it as "not the daemon" while liveness classifies it as alive.
 //
-// `mcp` is used because it is the remaining subcommand that reads stdin until
-// EOF; this helper drove `tslink api` until that command was removed. Any
+// `mcp` is used because it is the subcommand that reads stdin until EOF. Any
 // long-lived non-serve invocation of the shipped binary satisfies the
 // scenario — what matters is the module identity and the argv, not the
 // protocol spoken on the pipe.

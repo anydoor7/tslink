@@ -400,9 +400,8 @@ func registryServiceCount(t *testing.T, home string) int {
 // TestCompiledRuntimePersistenceErrorEnvelope covers the envelope a command
 // emits when the filesystem itself refuses the read: a directory sitting where
 // registry.json belongs is not user input, so it must surface as
-// internal_error/1 rather than a usage failure. This ran through `tslink api`
-// until the api command was removed; `tslink list` reaches the same registry
-// load through the shipped CLI.
+// internal_error/1 rather than a usage failure. `tslink list` reaches that
+// same registry load through the shipped CLI.
 func TestCompiledRuntimePersistenceErrorEnvelope(t *testing.T) {
 	home := t.TempDir()
 	regPath := filepath.Join(home, ".config", "tslink", "registry.json")

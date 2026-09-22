@@ -126,9 +126,8 @@ func TestCompiledMachineContractVersionJSON(t *testing.T) {
 // single-shot remove tests cannot: `remove` on a service that exists must both
 // report removed=true and actually shrink registry.json, and the immediately
 // following remove of the same name must report removed=false without
-// resurrecting or corrupting the file. This was a CLI-versus-api shared-shape
-// test seeded through `tslink api`; the api half is gone with the command and
-// the registry is now seeded directly.
+// resurrecting or corrupting the file. The registry is seeded directly rather
+// than through a command, so the test starts from a file it fully controls.
 func TestCompiledRemoveMutatesRegistryThenStaysIdempotent(t *testing.T) {
 	home := t.TempDir()
 	regPath := filepath.Join(testenv.ConfigDir(home), "registry.json")
@@ -249,8 +248,8 @@ func TestCompiledRemoveHelpDocumentsStrictAndIdempotentDefault(t *testing.T) {
 // TestCompiledManifestSelfDescriptionWithoutDaemon holds the line that made
 // the manifest usable for discovery: a caller can read the full command surface
 // out of the shipped binary without a daemon running, and the call must not
-// create one. It ran as {"action":"manifest"} through `tslink api`; `tslink
-// manifest --json` is the same self-description on the shipped CLI.
+// create one. `tslink manifest --json` is that self-description on the
+// shipped CLI.
 func TestCompiledManifestSelfDescriptionWithoutDaemon(t *testing.T) {
 	configDir := t.TempDir()
 	pidPath := filepath.Join(configDir, "tslink.pid")

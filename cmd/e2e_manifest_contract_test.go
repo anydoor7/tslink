@@ -509,10 +509,9 @@ func assertEnvelopeContract(
 			label, len(run.Stderr), run.Stderr)
 	}
 
-	// Every --json invocation must publish at least one envelope. The one
-	// command that could legitimately print nothing was `tslink api` with empty
-	// stdin; with that command removed, empty stdout is unconditionally a
-	// contract violation.
+	// Every --json invocation must publish at least one envelope. No command in
+	// the current surface can legitimately print nothing, so empty stdout is
+	// unconditionally a contract violation.
 	if strings.TrimSpace(run.Stdout) == "" {
 		t.Fatalf("%s --json produced no envelope on stdout", label)
 	}
