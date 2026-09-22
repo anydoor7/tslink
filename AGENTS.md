@@ -1,8 +1,11 @@
 # AGENTS.md
 
+This file is the operating manual for AI agents working on or with TSLink.
+Human contributors should start from [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## Project Overview
 
-TSLink is a private Tailscale gateway that exposes local proxy, file, and TCP services through embedded tsnet nodes. It implements the shipped core with per-service microsegmentation, identity-aware HTTP proxying, WireGuard encryption, registry-backed hot reload, and system keychain credential storage. Packaged Layer 2 modules such as admin, Docker discovery, middleware, cluster sync, custom-domain ACME, and an exposed `/metrics` endpoint are roadmap/experimental unless runtime wiring and integration tests are added.
+TSLink is a private Tailscale gateway that exposes local proxy, file, and TCP services through embedded tsnet nodes. It implements the shipped core with per-service microsegmentation, identity-aware HTTP proxying, WireGuard encryption, registry-backed hot reload, and system keychain credential storage. Admin, Docker discovery, middleware, cluster sync, custom-domain ACME, and an exposed `/metrics` endpoint are roadmap items with no shipped package.
 
 ## Build & Development
 
@@ -71,26 +74,29 @@ internal/
 - `github.com/spf13/cobra` — CLI framework
 - `github.com/fsnotify/fsnotify` — registry hot-reload
 
+### Toolchain notes
+
 **Go version (`go.mod`, `go 1.26.6`)**: the module floor is 1.26.6 and there is no
 separate `toolchain` line. `tailscale.com@v1.102.4` itself requires `go 1.26.6`, so
 `go mod tidy` raised the floor to match and dropped the now-redundant toolchain
-directive (2026-09-15). Raise the floor only when a dependency or a stdlib CVE
-forces it; `toolchain` is a floor, not a pin, so a newer local Go is used as-is.
+directive. Raise the floor only when a dependency or a stdlib CVE forces it;
+`toolchain` is a floor, not a pin, so a newer local Go is used as-is.
 
-**Builds on Go 1.27+ natively.** It did not before 2026-09-15: `tailscale.com@v1.98.5`
-pulled `go-json-experiment/json@2025-08-13`, which references `json.SkipFunc` and
-`json.DiscardUnknownMembers` — `encoding/json/v2` experimental API that 1.27 changed.
-The symptom is a compile error inside the module cache, not in this repo, so it reads
-like a local toolchain problem; the fix was upgrading `tailscale.com` (which carries a
-newer transitive pin), not pinning `GOTOOLCHAIN`. If it reappears after a dependency
-bump, check that transitive version before reaching for an override.
+**Builds on Go 1.27+ natively.** If a compile error appears inside the module cache
+referencing `json.SkipFunc` or `json.DiscardUnknownMembers`, check the transitive
+`go-json-experiment/json` version before reaching for a `GOTOOLCHAIN` override. Those
+are `encoding/json/v2` experimental API that 1.27 changed, and the fix is upgrading
+`tailscale.com`, which carries a newer transitive pin. The error names the module
+cache rather than this repository, so it reads like a local toolchain problem when it
+is a dependency problem.
 
 **`staticcheck` must be built with the same Go release it analyzes.** A staticcheck
 compiled by 1.26 reports `export data version 4 is greater than maximum supported
 version 2` against 1.27 sources, and one that is merely old reports the same thing —
-two different causes, one message. Install with the toolchain you build with, without a
-`GOTOOLCHAIN` override, so the analyzer and the code it reads agree:
-`go install honnef.co/go/tools/cmd/staticcheck@latest`. Note the release name and the
+two different causes, one message. Install it with the toolchain you build with and
+without a `GOTOOLCHAIN` override, pinned to the version CI uses
+(`STATICCHECK_VERSION` in `.github/workflows/release-candidate.yml`):
+`go install honnef.co/go/tools/cmd/staticcheck@v0.7.0`. Note the release name and the
 module version differ -- release 2026.2.1 is module `v0.8.1` -- so a version reported
 by `staticcheck -version` reads as two numbers for the same build.
 
@@ -216,7 +222,7 @@ tslink add testapp --proxy localhost:3000 --json | jq '.data.created'
 tslink logs --last 10 --json
 ```
 
-`--json` and `tslink api` share one envelope:
+Every `--json` command shares one envelope:
 
 ```json
 {
@@ -241,7 +247,7 @@ A zero-credential `tslink serve --json` returns immediately while its daemon chi
 {"type":"tslink.result","ok":true,"schema_version":1,"command":"serve","code":0,"data":{"status":"needs_login","auth_url":"https://login.tailscale.com/a/example","expires_at":"2026-08-15T12:00:00Z","poll":"tslink status --json"}}
 ```
 
-API mode omits `command` but keeps the same envelope. Action-specific fields live under `data`, for example `data.services`, `data.status_urls`, `data.template_plan`, or `data.template_apply`. Failures use `error.code` for stable machine handling and `error.message` for human text.
+Action-specific fields live under `data`, for example `data.services`, `data.status_urls`, `data.template_plan`, or `data.template_apply`. Failures use `error.code` for stable machine handling and `error.message` for human text.
 
 Semantic exit codes for programmatic error handling:
 
@@ -253,6 +259,8 @@ Semantic exit codes for programmatic error handling:
 | 3 | Authentication error |
 | 4 | Conflict (e.g., already running) |
 | 5 | Not found (e.g., service doesn't exist) |
+| 64 | Diagnostic warning threshold |
+| 65 | Diagnostic critical threshold |
 
 `launchctl_domain_unavailable` is a stable `error.code` at exit 1, not an unexpected internal failure. On the conservative macOS install/uninstall refusal, failure `data` includes `unavailable_domain`, `force_available`, the exact `force_command`, and `force_risk`.
 
@@ -279,13 +287,11 @@ Semantic exit codes for programmatic error handling:
 
 ## Known Pitfalls
 
-- **Login is dual-slot by default; `--retire-other` is the only path that deletes the other credential.** `tslink login --api-key-stdin` fills the api-key slot and leaves the existing OAuth `client-secret` slot untouched (`cmd/login.go`, `loginReplaceOptions.RetireOther` defaults to false); logging into the same slot again rotates it. `--retire-other` deletes the other slot only after the new value is verified and committed. Earlier builds retired the other slot unconditionally, which is why this entry exists. Before telling anyone "A won't affect B" for a credential-storage claim, verify it against the code path that actually executes on write/delete, not against the fact that the storage keys look distinct. OAuth client secrets are shown once at creation time and are not recoverable from the CLI or from Google Secret Manager afterward — losing one to an unintended `--retire-other` means creating a new client in the admin console.
+- **Login is dual-slot by default; `--retire-other` is the only path that deletes the other credential.** `tslink login --api-key-stdin` fills the api-key slot and leaves the existing OAuth `client-secret` slot untouched (`cmd/login.go`, `loginReplaceOptions.RetireOther` defaults to false); logging into the same slot again rotates it. `--retire-other` deletes the other slot only after the new value is verified and committed. Earlier builds retired the other slot unconditionally, which is why this entry exists. Before telling anyone "A won't affect B" for a credential-storage claim, verify it against the code path that actually executes on write/delete, not against the fact that the storage keys look distinct. OAuth client secrets are shown once at creation time and are not recoverable after creation — losing one to an unintended `--retire-other` means creating a new client in the admin console.
 
 - **The upstream reverse-proxy path has a fixed 30s `ReadTimeout` and a 32 MB body cap that are not yet raised.** `internal/server/server.go` (`http.Server.ReadTimeout` and the request body limit) will cut off any long-running upload or streamed response once it crosses either threshold, independent of anything the downstream local service does. If you add or debug a proxied endpoint that streams for longer than ~30s or transfers more than 32 MB, this is a known unfixed limitation in this file, not a bug in the caller.
 
 - **`docs/cli-manifest.json`'s `next[]` field is not populated by `tools/gen-manifest`.** Counting "how many entries still need manual follow-up" against this file's `next[]` will always read `0` — that is not evidence that zero manual steps remain, it is evidence the field is empty by construction. The actual per-error-code follow-up guidance lives at runtime in `registry.CodedError.Next` (`internal/registry/registry.go`), not in the generated manifest. Before treating any "count is 0 / all pass / no hits" result from a generated artifact as a conclusion, confirm the field you are counting can actually be non-zero in that artifact.
-
-
 
 
 - Default `add` refuses an already-live daemon with `daemon_supervision_unverified` (exit 1) when supervisor ownership, installation, autostart, or the platform-required restart policy cannot be verified; liveness alone is insufficient. It does not take over the process. launchd/systemd require restart-on-exit; Windows Startup retains its documented sign-in-only/no-crash-restart limitation. `--no-daemon-install` explicitly bypasses this supervision gate.
@@ -298,33 +304,33 @@ Semantic exit codes for programmatic error handling:
 
 ## Clock seam discipline (`serverNowFn`)
 
-`serverNowFn` is a package-level test seam. **A goroutine that can outlive the
-caller must never read it directly** -- capture the function value on the
-goroutine that spawns it and pass that value down. Every test that stubs the
-seam restores it from `t.Cleanup`, so a read from a goroutine the test does not
-join is a data race regardless of whether today's tests happen to trigger it.
-Two such reads were found by the detector (the accept loop in `startNodeLocked`,
-the lifecycle ticker); the event-stream path had five more that the detector had
-not yet reached, now injected as fields (`eventStateCache.nowFn`,
-`mcpEventStream.nowFn`) captured once in `newMCPEventsHandler`.
+`serverNowFn` is a package-level test seam.
 
-The property is pinned by behaviour, not by code shape:
+**Rule: capture `serverNowFn` on the goroutine that spawns the work and pass the
+value down.** A goroutine that can outlive its caller must never read the seam
+directly. Every test that stubs the seam restores it from `t.Cleanup`, so a read
+from a goroutine the test does not join is a data race whether or not today's
+tests happen to trigger it. The accept loop in `startNodeLocked`, the lifecycle
+ticker, and the event-stream path all follow this rule; the event-stream clocks
+are injected as fields (`eventStateCache.nowFn`, `mcpEventStream.nowFn`)
+captured once in `newMCPEventsHandler`.
+
+**Rule: inject clocks far from wall time.** The tests use 2030. With
+`time.Now()` on both sides a test cannot tell the injected clock from the real
+one, and a regression passes by coincidence.
+
+The property is pinned by behaviour rather than by code shape:
 `TestMCPEventsHandlerCapturesTheClockAtConstruction` swaps the seam *after* the
 handler exists and asserts the frame still carries the clock installed before
-it, and the cache/deadline tests inject clocks set to 2030 so the injected and
-real clocks are distinguishable. Mutating any of the five sites back to
-`serverNowFn()` turns one of those tests red -- four by assertion, and the panic
-path by crashing the binary (the waiter restarts a build that panics again on an
-unrecovered goroutine), so do not read this as "all five have a positive
-assertion of their own". **Keep the injected clocks far
-from wall time** -- with `time.Now()` on both sides the tests cannot tell the
-two apart and a regression passes silently.
+it. Mutating an injected site back to `serverNowFn()` turns a test red, but not
+every site has a positive assertion of its own: one of them fails by panicking
+on an unrecovered goroutine rather than by a failed assertion.
 
 The remaining reads in `server.go` (`Run`, `syncNodes`, `recordOwnedNodeWithBackoff`,
 `startNodeLocked`) are all synchronous within `Run`'s call tree; the one test
 that starts `Run` on a goroutine joins it and does not stub the seam.
 
-## Known gaps (verified 2026-09-16)
+## Known gaps (last reviewed for v0.1.0)
 
 **The `logs` MCP tool's redaction is a surface property, not a secrecy property.**
 The same log file is emitted verbatim by the `tslink logs` CLI; only the MCP tool
@@ -333,24 +339,10 @@ as narrowing what incidentally reaches a model's context, never as an isolation
 boundary -- a design that relies on it to keep a credential from an agent is
 already wrong, because that agent almost certainly has a shell.
 
-**A capability separated from its host by a delimiter is not redacted.**
-`mcpLogsTailscaleURLPattern` ends a URL at whitespace, a quote, an angle bracket
-or `)`, and requires one or two slashes after `https:`. Both choices are
-deliberate -- the token class is what lets the rule find a URL inside a quoted
-log field, and the slash count is what made it match `https:/login...` -- but
-they leave two shapes that reach `sanitizeLogLine` intact (verified 2026-09-16,
-`kSEcReTtOkEn99` survives all of these):
-
-	https://login.tailscale.com<SP|TAB|CR|">/a/<token>
-	https:login.tailscale.com/a/<token>          (zero slashes, url.Opaque)
-
-Nothing in tslink emits either shape: `internal/logging` routes tsnet's
-authorization URL through slog as one unbroken token. The exposure is a log line
-authored elsewhere -- a third-party library, a user pasting into a log, a future
-formatter that wraps long lines. Widening the token class is not a fix on its
-own: it trades this leak for over-redacting ordinary prose that happens to
-mention the host. Treat it the way the first gap above says to treat the whole
-rule -- as narrowing what incidentally reaches a model, never as a boundary.
+**A capability separated from its host by a delimiter is not redacted.** The
+two shapes `mcpLogsTailscaleURLPattern` does not cover, why both of its choices
+are deliberate, and why widening the token class is not a fix on its own are
+documented in [SECURITY.md](SECURITY.md) under Important boundaries.
 
 **The SSE stream emits only named events** (`snapshot` / `update` / `keepalive`)
 and never a default `message` event -- verified over real cross-device tailnet
@@ -362,4 +354,4 @@ which is a different counter from the per-stream `sequence` -- deduplicate on
 
 ## Licensing boundary
 
-`LICENSE` is the unmodified Apache License 2.0. All organization sizes may use TSLink commercially under its terms; do not add mandatory fees, registration, notification, telemetry, or revenue/headcount thresholds in documentation. `COMMERCIAL.md` and `COMMERCIAL_zh.md` describe voluntary cooperation and must remain equivalent. Preserve attribution, third-party notices, previously granted rights, and the contributor rights policy in CONTRIBUTING.md. Do not infer copyright ownership or absence of past distribution from Git authors/tags, or transfer attribution to a company without verified authority. Code licensing does not grant Tailscale service/resale rights: verify applicable service agreements, distribution rights, and public contact accessibility before external release or service commitments. Public publication remains a separate action.
+`LICENSE` is the unmodified Apache License 2.0. All organization sizes may use TSLink commercially under its terms; do not add mandatory fees, registration, notification, telemetry, or revenue/headcount thresholds in documentation. `COMMERCIAL.md` and `COMMERCIAL_zh.md` describe voluntary cooperation and must remain equivalent. Preserve attribution, third-party notices, previously granted rights, and the contributor rights policy in CONTRIBUTING.md. Code licensing does not grant Tailscale service or resale rights.
