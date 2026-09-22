@@ -3,6 +3,7 @@ package lifecycle
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 	"time"
@@ -43,6 +44,22 @@ type Options struct {
 	DryRun            bool
 	ManageACL         bool
 	CheckUnusedACL    bool
+	// CleanLocalNodeState allows this run to delete the local tsnet state
+	// directory of an orphan service whose remote nodes it proved are gone.
+	//
+	// It is off by default and set only by the daemon, because the daemon is
+	// the process that can answer LocalNodeStateInUse. A separate `tslink
+	// cleanup` process cannot see another process's tsnet servers, so it leaves
+	// the directories alone rather than guessing.
+	CleanLocalNodeState bool
+	// LocalNodeStateInUse reports whether a tsnet server in this process still
+	// holds the state directory for serviceName.
+	//
+	// It is required whenever CleanLocalNodeState is set, and a nil function
+	// disables the cleanup instead of being read as "nothing holds any state".
+	// "Nobody told me" and "nothing holds it" are different statements, and
+	// only the caller can tell them apart.
+	LocalNodeStateInUse func(serviceName string) bool
 }
 
 type AdoptionResult struct {
@@ -73,6 +90,7 @@ var (
 	cleanupDevicesFn          = tailapi.CleanupStaleNodesResultWithDryRun
 	deleteTagFn               = tailapi.DeleteTag
 	downgradeExpiredFunnelsFn = registry.DowngradeExpiredFunnels
+	removeNodeStateFn         = tsruntime.RemoveServiceNodeState
 )
 
 // Reconcile is the single lifecycle implementation used by cleanup, serve
@@ -201,6 +219,7 @@ func Reconcile(ctx context.Context, options Options) (Result, error) {
 				return Result{}, fmt.Errorf("update node ownership ledger: %w", err)
 			}
 		}
+		removeStaleNodeState(options, &result, cleanup, cleanupErr, orphanIDs, serviceNames, active)
 	}
 
 	if options.ManageACL {
@@ -225,4 +244,81 @@ func Reconcile(ctx context.Context, options Options) (Result, error) {
 	sort.Strings(result.DevicesDeleted)
 	sort.Strings(result.DevicesProtected)
 	return result, nil
+}
+
+// removeStaleNodeState deletes the local tsnet state directory of an orphan
+// service this run proved holds no remote identity any more.
+//
+// Safe means every one of these, checked rather than assumed:
+//
+//   - Not a dry run. A dry run writes nothing anywhere.
+//   - The caller opted in and supplied the in-use predicate, and the predicate
+//     says no tsnet server in this process holds the directory. Closing the
+//     server is what releases the state; deleting it underneath a live one
+//     leaves that node writing into a directory no path points at.
+//   - The cleanup call itself succeeded, was not Skipped, and protected
+//     nothing. Protected means the API listed a device matching one of these
+//     service names that TSLink could not prove it owns. Protection is reported
+//     by hostname while ownership is tracked by node ID, so there is no
+//     reliable way to attribute a protection back to one service -- a single
+//     protected hostname therefore stops the whole sweep rather than one entry
+//     of it.
+//   - Every node ID recorded for that service came back in
+//     ResolvedOwnershipIDs: the union of the devices the API accepted a DELETE
+//     for and the recorded IDs the API no longer lists at all. Partial
+//     resolution means an identity survived remotely and the key that
+//     authenticates as it is still live.
+//   - The service is absent from the registry. Every name reaching here is an
+//     orphan by construction, so this can only fire if that ever stops being
+//     true; it costs one map lookup and the alternative is a live service
+//     losing its identity.
+//
+// What it deliberately does not do is sweep node directories that have no
+// ownership record at all -- the shape the long-dead `funnel-probe` directory
+// on a production machine has, because `tslink remove` already consumed its
+// ledger entries. That sweep would have to read "absent from the registry" as
+// "not a live service", and registry.Load is allowed to drop entries it cannot
+// parse, so a registry with one malformed service would make a live service
+// look absent and cost it its node identity. cmd/remove covers that case at the
+// point where the facts are still in hand.
+func removeStaleNodeState(options Options, result *Result, cleanup tailapi.CleanupResult, cleanupErr error, orphanIDs map[string][]string, serviceNames []string, active map[string]struct{}) {
+	if options.DryRun || !options.CleanLocalNodeState || options.LocalNodeStateInUse == nil {
+		return
+	}
+	if cleanupErr != nil || cleanup.Skipped || len(cleanup.Protected) > 0 {
+		slog.Info("keeping local node state for orphan services; this run could not confirm every remote device is gone",
+			"services", serviceNames, "protected", len(cleanup.Protected), "skipped", cleanup.Skipped)
+		return
+	}
+	resolved := make(map[string]struct{}, len(cleanup.ResolvedOwnershipIDs))
+	for _, id := range cleanup.ResolvedOwnershipIDs {
+		resolved[id] = struct{}{}
+	}
+	for _, name := range serviceNames {
+		if _, registered := active[name]; registered {
+			continue
+		}
+		unresolved := 0
+		for _, id := range orphanIDs[name] {
+			if _, ok := resolved[id]; !ok {
+				unresolved++
+			}
+		}
+		if unresolved > 0 {
+			slog.Info("keeping local node state; some remote devices for this service are unaccounted for",
+				"service", name, "unresolved_nodes", unresolved)
+			continue
+		}
+		if options.LocalNodeStateInUse(name) {
+			slog.Info("keeping local node state; a tsnet server still holds it", "service", name)
+			continue
+		}
+		if err := removeNodeStateFn(tsruntime.ServiceNodeStateConfigDir(options.RegistryPath), name); err != nil {
+			warning := fmt.Sprintf("local node state for %q could not be removed: %v", name, err)
+			slog.Warn("local node state removal failed", "service", name, "error", err)
+			result.Warnings = append(result.Warnings, warning)
+			continue
+		}
+		slog.Info("removed local node state for an orphan service with no remaining remote identity", "service", name)
+	}
 }

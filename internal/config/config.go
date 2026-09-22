@@ -171,7 +171,18 @@ func NodesDir() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "nodes"), nil
+	return NodesDirIn(dir), nil
+}
+
+// NodesDirIn names the tsnet state directory inside an arbitrary config
+// directory, so a caller that already knows which config directory it is
+// operating on does not have to re-derive it from the environment. Callers that
+// hold a path into a config directory -- a registry path, say -- must use this
+// rather than NodesDir: the two answer differently whenever the caller is not
+// operating on the process default, and silently mixing them means writing to
+// one config directory while deleting from another.
+func NodesDirIn(configDir string) string {
+	return filepath.Join(configDir, "nodes")
 }
 
 // MCPNodeDir returns the tsnet state directory for the remote MCP control

@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"time"
 
 	"github.com/monody0007/tslink/internal/config"
+	"github.com/monody0007/tslink/internal/daemon"
 	"github.com/monody0007/tslink/internal/output"
 	"github.com/monody0007/tslink/internal/registry"
 	tsruntime "github.com/monody0007/tslink/internal/runtime"
@@ -28,6 +30,57 @@ type RemoveResult struct {
 var deleteDevicesFn = tailapi.DeleteDevicesForService
 var ensureDirFn = config.EnsureDir
 var removeNowFn = time.Now
+var removeNodeStateFn = tsruntime.RemoveServiceNodeState
+
+// removeDaemonRunningFn answers "could a live tsnet server still be holding
+// this service's state directory?". It is deliberately pessimistic when it
+// cannot tell: an unresolvable PID path reports running, which keeps the
+// directory. A wrong "not running" deletes state underneath a live node; a
+// wrong "running" leaves a directory behind, which is the bug this is fixing
+// and not a new one.
+var removeDaemonRunningFn = func() bool {
+	pidPath, err := config.PIDPath()
+	if err != nil {
+		return true
+	}
+	return daemon.IsRunning(pidPath)
+}
+
+// localNodeStateIsStale reports whether the local tsnet state for a service
+// just removed from the registry can no longer authenticate to anything.
+//
+// Every condition below is a fact this process observed in this invocation, not
+// an inference:
+//
+//   - cleanupErr == nil and the cleanup was neither Skipped nor Protected. A
+//     Protected hostname means the API listed a device matching this service's
+//     name that TSLink could not prove it owns; the local key may still be that
+//     device's key.
+//   - every recorded node ID came back in ResolvedOwnershipIDs, which is the
+//     union of the devices the API accepted a DELETE for and the recorded IDs
+//     the API no longer lists at all. Partial resolution means some identity
+//     survived remotely, so the state that authenticates as it is still live.
+//   - no recorded node ID at all is its own sufficient case: the service never
+//     proved a remote node, and the clause above already established the API
+//     did not report a hostname match either.
+//
+// Absent a remote identity the directory holds only a key that authenticates to
+// nothing, which is why removing it is not a loss.
+func localNodeStateIsStale(ownedNodeIDs []string, cleanup tailapi.CleanupResult, cleanupErr error) bool {
+	if cleanupErr != nil || cleanup.Skipped || len(cleanup.Protected) > 0 {
+		return false
+	}
+	resolved := make(map[string]struct{}, len(cleanup.ResolvedOwnershipIDs))
+	for _, id := range cleanup.ResolvedOwnershipIDs {
+		resolved[id] = struct{}{}
+	}
+	for _, id := range ownedNodeIDs {
+		if _, ok := resolved[id]; !ok {
+			return false
+		}
+	}
+	return true
+}
 
 func removeServiceResult(regPath, ownershipPath, name string) (RemoveResult, error) {
 	ledger, ownershipErr := tsruntime.LoadOwnership(ownershipPath)
@@ -72,6 +125,23 @@ func removeServiceResult(regPath, ownershipPath, name string) (RemoveResult, err
 			if cleanup.Skipped {
 				result.DeviceCleanupSkipped = true
 				result.DeviceSkipReason = cleanup.SkipReason
+			}
+			// The state directory outlives the service unless something removes
+			// it. A running daemon does that itself when the registry change
+			// reaches its watcher, so this path only has to cover the case that
+			// daemon cannot: a remove issued while no daemon is running, which
+			// is how ~/.config/tslink/nodes/ accumulates directories for
+			// services that were removed months ago.
+			if localNodeStateIsStale(ownedNodeIDs, cleanup, err) {
+				switch {
+				case removeDaemonRunningFn():
+					slog.Info("keeping local node state; the running daemon removes it when the registry change reaches it",
+						"service", name, "path", "nodes/"+name)
+				default:
+					if removeErr := removeNodeStateFn(tsruntime.ServiceNodeStateConfigDir(regPath), name); removeErr != nil {
+						result.DeviceWarning = fmt.Sprintf("service and tailnet node removed but local node state could not be deleted: %v", removeErr)
+					}
+				}
 			}
 		}
 	}
@@ -124,9 +194,12 @@ This command:
 If the gateway is running, it will detect the registry change via hot-reload
 and stop the removed service's tsnet node automatically.
 
-The service's node state in ~/.config/tslink/nodes/<name>/ is NOT removed by
-this command. It will be cleaned up on the next 'tslink serve' or can be
-removed manually.
+The service's node state in ~/.config/tslink/nodes/<name>/ is removed once this
+command has confirmed the service holds no remote tailnet identity: either its
+recorded device was deleted, or it never had one. A running daemon removes that
+directory itself when it sees the registry change, so this command leaves it
+alone while one is running. State is kept whenever the remote side could not be
+confirmed, such as a protected hostname-only match or an unavailable API client.
 
 By default, removal is idempotent: an absent service is reported as unchanged
 and the command exits successfully. Use --strict to return not_found (exit 5)

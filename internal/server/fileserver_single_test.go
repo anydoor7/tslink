@@ -353,3 +353,42 @@ func TestServiceChanged_ServedFile(t *testing.T) {
 		t.Error("an unchanged single-file service should not restart")
 	}
 }
+
+// TestHoldsNodeStateReportsOnlyRunningNodes pins the fact the lifecycle
+// reconciliation depends on before it deletes a state directory. Both answers
+// are asserted: a method that always said true would keep every orphan
+// directory forever, and one that always said false would delete state
+// underneath a live node.
+func TestHoldsNodeStateReportsOnlyRunningNodes(t *testing.T) {
+	testenv.SetHome(t, t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	oldNew := newTSNetServerFn
+	newTSNetServerFn = func(registry.Service, string, string, string) tsnetServer { return &fakeTSNetServer{} }
+	t.Cleanup(func() { newTSNetServerFn = oldNew })
+
+	if s.HoldsNodeState("files") {
+		t.Fatal("HoldsNodeState(\"files\") = true before the node started")
+	}
+	if err := s.startNodeLocked(context.Background(), registry.Service{Name: "files", Type: registry.TypeFile, Path: t.TempDir()}); err != nil {
+		t.Fatalf("startNodeLocked() error = %v", err)
+	}
+	if !s.HoldsNodeState("files") {
+		t.Fatal("HoldsNodeState(\"files\") = false while the node is running")
+	}
+	if s.HoldsNodeState("other") {
+		t.Fatal("HoldsNodeState(\"other\") = true for a name this server never started")
+	}
+
+	s.mu.Lock()
+	s.stopNodeLocked("files", false)
+	s.mu.Unlock()
+	if s.HoldsNodeState("files") {
+		t.Fatal("HoldsNodeState(\"files\") = true after the node stopped and released its state")
+	}
+}

@@ -92,6 +92,13 @@ type serverRunner interface {
 	Run(ctx context.Context) error
 }
 
+// nodeStateHolder is the runner's answer to "are you holding this service's
+// tsnet state directory right now?". server.Server implements it; a test double
+// that does not simply leaves local node-state cleanup off.
+type nodeStateHolder interface {
+	HoldsNodeState(name string) bool
+}
+
 type ensureTagsSetter interface {
 	SetEnsureTagsFn(server.EnsureTagsFunc)
 }
@@ -653,6 +660,17 @@ func runForegroundWithOptions(pidPath, authKey, controlURL string, options foreg
 		if err != nil {
 			return err
 		}
+		// Local node-state cleanup is enabled only when the runner can say
+		// which state directories it is holding. A runner that cannot answer
+		// gets no cleanup rather than a default answer: the cost of a wrong
+		// "nothing holds it" is a live node losing its identity, and the cost
+		// of no cleanup is a leftover directory.
+		cleanLocalNodeState := false
+		var localNodeStateInUse func(string) bool
+		if holder, holds := srv.(nodeStateHolder); holds {
+			cleanLocalNodeState = true
+			localNodeStateInUse = holder.HoldsNodeState
+		}
 		firstLifecycleReconcile := true
 		hadActiveFunnel := false
 		setter.SetLifecycleReconcileFn(func(ctx context.Context, now time.Time) (bool, error) {
@@ -662,12 +680,14 @@ func runForegroundWithOptions(pidPath, authKey, controlURL string, options foreg
 			}
 			checkUnusedACL := options.ManageACL && (firstLifecycleReconcile || (hadActiveFunnel && !hasActiveFunnel))
 			result, err := serveLifecycleReconcileFn(ctx, lifecycle.Options{
-				RegistryPath:   regPath,
-				OwnershipPath:  ownershipPath,
-				Now:            now,
-				DryRun:         false,
-				ManageACL:      options.ManageACL,
-				CheckUnusedACL: checkUnusedACL,
+				RegistryPath:        regPath,
+				OwnershipPath:       ownershipPath,
+				Now:                 now,
+				DryRun:              false,
+				ManageACL:           options.ManageACL,
+				CheckUnusedACL:      checkUnusedACL,
+				CleanLocalNodeState: cleanLocalNodeState,
+				LocalNodeStateInUse: localNodeStateInUse,
 			})
 			if err != nil {
 				return false, err

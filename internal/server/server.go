@@ -1333,6 +1333,21 @@ func effectiveControlURL(svc registry.Service, fallback string) string {
 	return fallback
 }
 
+// HoldsNodeState reports whether this server currently runs a node for name and
+// therefore has a live tsnet server holding that name's state directory open.
+//
+// It exists for the lifecycle reconciliation, which decides whether the local
+// state of an orphan service is safe to delete. That decision needs a fact only
+// this process has, and the honest form of the fact is "I am holding it right
+// now" rather than "nothing is holding it anywhere": a separate `tslink
+// cleanup` process gets no answer from here and does not delete.
+func (s *Server) HoldsNodeState(name string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, running := s.nodes[name]
+	return running
+}
+
 func removeServiceStateDir(name string) error {
 	nodesDir, err := config.NodesDir()
 	if err != nil {
