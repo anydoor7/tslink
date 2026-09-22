@@ -1,10 +1,13 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/monody0007/tslink/internal/config"
@@ -234,4 +237,75 @@ func TestRemoveNodeStateUsesTheRegistrysOwnConfigDir(t *testing.T) {
 	}
 	assertStateDir(t, stateDir, false)
 	assertStateDir(t, elsewhereState, true)
+}
+
+// TestRemoveStatesWhyLocalNodeStateWasKept pins the explanation, not just the
+// decision. A directory that is still there with nothing said about it is
+// indistinguishable, from outside, from a cleanup that never ran -- and partial
+// resolution is the one keep reason that reaches no other surface: Protected
+// and Skipped also arrive through RemoveResult's device_skip_reason.
+func TestRemoveStatesWhyLocalNodeStateWasKept(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		cleanup     tailapi.CleanupResult
+		wantFrag    string
+		wantReasons []string
+	}{
+		{
+			name:     "partial resolution",
+			cleanup:  tailapi.CleanupResult{Deleted: []string{"web"}, ResolvedOwnershipIDs: []string{"node-other"}},
+			wantFrag: "neither deleted nor confirmed absent",
+		},
+		{
+			name:     "protected hostname",
+			cleanup:  tailapi.CleanupResult{Matched: []string{"web"}, Protected: []string{"web"}, Skipped: true, SkipReason: "ownership unproven"},
+			wantFrag: "cannot prove it owns",
+		},
+		{
+			name:     "skipped cleanup",
+			cleanup:  tailapi.CleanupResult{Skipped: true, SkipReason: tailapi.ErrNoAPIClient.Error()},
+			wantFrag: "remote device cleanup was skipped",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			regPath, ownershipPath, stateDir := removeNodeStateFixture(t, "web")
+			stubDaemonRunning(t, false)
+			stubDeleteDevices(t, tc.cleanup, nil)
+
+			var logs bytes.Buffer
+			previous := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+			t.Cleanup(func() { slog.SetDefault(previous) })
+
+			if _, err := removeServiceResult(regPath, ownershipPath, "web"); err != nil {
+				t.Fatalf("removeServiceResult() error = %v", err)
+			}
+			assertStateDir(t, stateDir, true)
+			if !strings.Contains(logs.String(), tc.wantFrag) {
+				t.Fatalf("log did not state why the node state was kept; want a line containing %q, got:\n%s", tc.wantFrag, logs.String())
+			}
+		})
+	}
+
+	// Control: a removal that does delete the directory must not emit a keep
+	// reason, or the assertions above would pass against a line printed
+	// unconditionally.
+	t.Run("no keep reason when the state is deleted", func(t *testing.T) {
+		regPath, ownershipPath, stateDir := removeNodeStateFixture(t, "web")
+		stubDaemonRunning(t, false)
+		stubDeleteDevices(t, tailapi.CleanupResult{Deleted: []string{"web"}, ResolvedOwnershipIDs: []string{"node-web"}}, nil)
+
+		var logs bytes.Buffer
+		previous := slog.Default()
+		slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+		t.Cleanup(func() { slog.SetDefault(previous) })
+
+		if _, err := removeServiceResult(regPath, ownershipPath, "web"); err != nil {
+			t.Fatalf("removeServiceResult() error = %v", err)
+		}
+		assertStateDir(t, stateDir, false)
+		if strings.Contains(logs.String(), "keeping local node state") {
+			t.Fatalf("a deleted state directory still logged a keep reason:\n%s", logs.String())
+		}
+	})
 }

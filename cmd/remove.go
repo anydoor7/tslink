@@ -49,15 +49,19 @@ var removeDaemonRunningFn = func() bool {
 }
 
 // localNodeStateIsStale reports whether the local tsnet state for a service
-// just removed from the registry can no longer authenticate to anything.
+// just removed from the registry can no longer authenticate to anything, and
+// when it still can, why this run could not establish otherwise.
+//
+// The reason is a return value rather than a comment because it is the only
+// thing that explains a directory that is still there. A keep with no stated
+// cause is indistinguishable, from outside, from a cleanup that never ran.
 //
 // Every condition below is a fact this process observed in this invocation, not
 // an inference:
 //
-//   - cleanupErr == nil and the cleanup was neither Skipped nor Protected. A
-//     Protected hostname means the API listed a device matching this service's
-//     name that TSLink could not prove it owns; the local key may still be that
-//     device's key.
+//   - the cleanup was neither Skipped nor Protected. A Protected hostname means
+//     the API listed a device matching this service's name that TSLink could
+//     not prove it owns; the local key may still be that device's key.
 //   - every recorded node ID came back in ResolvedOwnershipIDs, which is the
 //     union of the devices the API accepted a DELETE for and the recorded IDs
 //     the API no longer lists at all. Partial resolution means some identity
@@ -66,22 +70,37 @@ var removeDaemonRunningFn = func() bool {
 //     proved a remote node, and the clause above already established the API
 //     did not report a hostname match either.
 //
+// There is no error parameter. The only call site is inside the branch where
+// the cleanup call returned no error, so an error argument could only ever be
+// nil -- a parameter that cannot vary looks like a guard and is not one.
+//
 // Absent a remote identity the directory holds only a key that authenticates to
 // nothing, which is why removing it is not a loss.
-func localNodeStateIsStale(ownedNodeIDs []string, cleanup tailapi.CleanupResult, cleanupErr error) bool {
-	if cleanupErr != nil || cleanup.Skipped || len(cleanup.Protected) > 0 {
-		return false
+func localNodeStateIsStale(ownedNodeIDs []string, cleanup tailapi.CleanupResult) (stale bool, keepReason string) {
+	if len(cleanup.Protected) > 0 {
+		return false, fmt.Sprintf("the tailnet lists %d device(s) matching this service's hostname that TSLink cannot prove it owns", len(cleanup.Protected))
+	}
+	if cleanup.Skipped {
+		reason := cleanup.SkipReason
+		if reason == "" {
+			reason = "no reason reported"
+		}
+		return false, "remote device cleanup was skipped: " + reason
 	}
 	resolved := make(map[string]struct{}, len(cleanup.ResolvedOwnershipIDs))
 	for _, id := range cleanup.ResolvedOwnershipIDs {
 		resolved[id] = struct{}{}
 	}
+	unresolved := 0
 	for _, id := range ownedNodeIDs {
 		if _, ok := resolved[id]; !ok {
-			return false
+			unresolved++
 		}
 	}
-	return true
+	if unresolved > 0 {
+		return false, fmt.Sprintf("%d of %d recorded tailnet node(s) for this service were neither deleted nor confirmed absent", unresolved, len(ownedNodeIDs))
+	}
+	return true, ""
 }
 
 func removeServiceResult(regPath, ownershipPath, name string) (RemoveResult, error) {
@@ -149,15 +168,20 @@ func removeServiceResult(regPath, ownershipPath, name string) (RemoveResult, err
 			// all: a remove issued while no daemon is running, which is how
 			// ~/.config/tslink/nodes/ accumulates directories for services that
 			// were removed months ago.
-			if localNodeStateIsStale(ownedNodeIDs, cleanup, err) {
-				switch {
-				case removeDaemonRunningFn():
-					slog.Info("keeping local node state; a running daemon removes it when the registry change reaches it, provided that daemon currently runs this service's node",
-						"service", name, "path", "nodes/"+name)
-				default:
-					if removeErr := removeNodeStateFn(tsruntime.ServiceNodeStateConfigDir(regPath), name); removeErr != nil {
-						result.DeviceWarning = fmt.Sprintf("service and tailnet node removed but local node state could not be deleted: %v", removeErr)
-					}
+			stale, keepReason := localNodeStateIsStale(ownedNodeIDs, cleanup)
+			switch {
+			case !stale:
+				// Protected and Skipped also reach the caller through
+				// RemoveResult; partial resolution does not, and that is the
+				// one an operator is otherwise left to guess at.
+				slog.Info("keeping local node state; this run could not confirm the service holds no remote tailnet identity",
+					"service", name, "path", "nodes/"+name, "reason", keepReason)
+			case removeDaemonRunningFn():
+				slog.Info("keeping local node state; a running daemon removes it when the registry change reaches it, provided that daemon currently runs this service's node",
+					"service", name, "path", "nodes/"+name)
+			default:
+				if removeErr := removeNodeStateFn(tsruntime.ServiceNodeStateConfigDir(regPath), name); removeErr != nil {
+					result.DeviceWarning = fmt.Sprintf("service and tailnet node removed but local node state could not be deleted: %v", removeErr)
 				}
 			}
 		}
