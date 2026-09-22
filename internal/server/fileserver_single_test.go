@@ -27,7 +27,7 @@ func newSingleFileFixture(t *testing.T) (dir string, handler *FileHandler) {
 	}
 	for name, body := range map[string]string{
 		"report.html":  "SHARED",
-		"secrets.env":  "API_KEY=leak",
+		"secrets.env":  "SIBLING SECRET",
 		"index.html":   "SIBLING INDEX",
 		"..config":     "DOTTED SIBLING",
 		"Report v2.md": "SPACED SIBLING",
@@ -127,7 +127,7 @@ func TestSingleFileHandlerRefusesEverySiblingAndListing(t *testing.T) {
 			if w.Code == http.StatusOK {
 				t.Fatalf("GET %s status = 200, want a refusal; body=%q", tc.target, w.Body.String())
 			}
-			for _, leak := range []string{"API_KEY=leak", "SIBLING INDEX", "NESTED", "OUTSIDE", "DOTTED SIBLING", "SPACED SIBLING"} {
+			for _, leak := range []string{"SIBLING SECRET", "SIBLING INDEX", "NESTED", "OUTSIDE", "DOTTED SIBLING", "SPACED SIBLING"} {
 				if strings.Contains(w.Body.String(), leak) {
 					t.Fatalf("GET %s leaked %q; body=%q", tc.target, leak, w.Body.String())
 				}
@@ -317,7 +317,7 @@ func TestStartNodeDispatchesFileServiceOnTheRegistryFileField(t *testing.T) {
 			if w.Code != tc.siblingStatus {
 				t.Fatalf("GET /secrets.env status = %d, want %d", w.Code, tc.siblingStatus)
 			}
-			if tc.siblingStatus == http.StatusNotFound && strings.Contains(w.Body.String(), "API_KEY=leak") {
+			if tc.siblingStatus == http.StatusNotFound && strings.Contains(w.Body.String(), "SIBLING SECRET") {
 				t.Fatalf("sibling content leaked through the node handler: %q", w.Body.String())
 			}
 		})
