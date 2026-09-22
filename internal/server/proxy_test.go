@@ -34,7 +34,7 @@ func (e *timeoutError) Temporary() bool { return false }
 func mustReverseProxy(t *testing.T, target string, localClient *LocalClient) *httputil.ReverseProxy {
 	t.Helper()
 
-	h, err := NewProxyHandler(target, localClient)
+	h, err := NewProxyHandler(target, NewStaticIdentityResolver(localClient))
 	if err != nil {
 		t.Fatalf("NewProxyHandler() error = %v", err)
 	}
@@ -360,7 +360,7 @@ func TestSecuritySemantics_ProxyNoAllowWhoIsFailureStripsSpoofedAndStaleIdentity
 	t.Cleanup(backend.Close)
 
 	lc := fakeWhoIsClient(t, nil, errors.New("whois unavailable"))
-	handler, err := NewProxyHandler(backend.URL, lc)
+	handler, err := NewProxyHandler(backend.URL, NewStaticIdentityResolver(lc))
 	if err != nil {
 		t.Fatalf("NewProxyHandler() error = %v", err)
 	}
@@ -394,7 +394,7 @@ func TestSecuritySemantics_ProxyAllowWhoIsFailureReturnsForbiddenBeforeBackend(t
 	t.Cleanup(backend.Close)
 
 	lc := fakeWhoIsClient(t, nil, errors.New("whois unavailable"))
-	proxy, err := NewProxyHandler(backend.URL, lc)
+	proxy, err := NewProxyHandler(backend.URL, NewStaticIdentityResolver(lc))
 	if err != nil {
 		t.Fatalf("NewProxyHandler() error = %v", err)
 	}

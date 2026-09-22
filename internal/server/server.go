@@ -1751,6 +1751,11 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service, prov
 	// HTTP-based services (proxy, file)
 	var handler http.Handler
 	var lc *LocalClient
+	// identity answers "who is behind this address" for every consumer on this
+	// node, through one cache. It is assigned below rather than here because
+	// how it gets its local client differs by what else on the node already
+	// needs one.
+	var identity *IdentityResolver
 	switch svc.Type {
 	case registry.TypeProxy:
 		var err2 error
@@ -1758,7 +1763,8 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service, prov
 		if err2 != nil {
 			return fmt.Errorf("local client for %q: %w", svc.Name, err2)
 		}
-		h, err2 := NewProxyHandler(svc.Target, lc)
+		identity = NewStaticIdentityResolver(lc)
+		h, err2 := NewProxyHandler(svc.Target, identity)
 		if err2 != nil {
 			return fmt.Errorf("proxy handler for %q: %w", svc.Name, err2)
 		}
@@ -1795,8 +1801,26 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service, prov
 		handler = ACLMiddleware(svc.AllowedUsers, lc)(handler)
 	}
 
+	if identity == nil {
+		if lc != nil {
+			// A file share with an allow list already opened a client, and
+			// failing to do so already refused the service. Reuse it.
+			identity = NewStaticIdentityResolver(lc)
+		} else {
+			// A file share with no allow list: nothing on this path
+			// needs WhoIs to start, and the security-semantics test
+			// FileNoAllowStartsWithoutWhoIsDependency pins that. So the
+			// client is acquired on the first request instead, which is
+			// late enough that the node is up and early enough that the
+			// first logged request carries a login. Identity is still
+			// reported for these shares, and a share still starts on a
+			// node that cannot report one.
+			identity = NewIdentityResolver(tsnetSrv.LocalClient)
+		}
+	}
+
 	handler = ResourceBudgetMiddleware(handler)
-	handler = AccessLogMiddleware(svc.Name, handler)
+	handler = AccessLogMiddleware(svc.Name, identity, handler)
 	handler = s.metrics.Middleware(svc.Name, handler)
 
 	var ln net.Listener

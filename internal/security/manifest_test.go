@@ -33,6 +33,39 @@ func TestCapabilityManifestSecuritySemantics(t *testing.T) {
 	}
 }
 
+// TestCapabilityManifestDeclaresTheAccessLogIdentitySchema pins the manifest
+// against the code. The manifest is the published SSOT for what tslink does
+// with a caller's identity, and a log line that started naming accounts while
+// the manifest still said it named none would be a documented promise the
+// product had stopped keeping -- with nothing failing to say so.
+func TestCapabilityManifestDeclaresTheAccessLogIdentitySchema(t *testing.T) {
+	manifest, err := LoadCapabilityManifest()
+	if err != nil {
+		t.Fatalf("LoadCapabilityManifest() error = %v", err)
+	}
+	for _, cap := range manifest.Capabilities {
+		// TCP carries no HTTP request and reaches no access-log middleware.
+		// It is the control for the rows below: an assertion that every
+		// capability claims an identity-bearing log schema would pass on a
+		// build that had wired identity into a raw TCP stream.
+		if cap.ServiceType == "tcp" {
+			if cap.LogSchema != "tcp_events_no_http_identity_fields" {
+				t.Fatalf("tcp log schema = %q, want the no-HTTP-identity schema", cap.LogSchema)
+			}
+			if cap.WhoIsCache != "not_applicable" {
+				t.Fatalf("tcp whois cache = %q, want not_applicable", cap.WhoIsCache)
+			}
+			continue
+		}
+		if !strings.HasPrefix(cap.LogSchema, "access_v2_whois_attested_login_and_node") {
+			t.Fatalf("%s log schema = %q, want the WhoIs-attested access schema", cap.ID, cap.LogSchema)
+		}
+		if !strings.HasPrefix(cap.WhoIsCache, "60s_by_source_ip") {
+			t.Fatalf("%s whois cache = %q, want the shared 60s source-address cache", cap.ID, cap.WhoIsCache)
+		}
+	}
+}
+
 func TestACLSideEffectPlanIsHighFrictionOptIn(t *testing.T) {
 	plan := ACLMutationPlan("ensure_tags", []string{"tag:tsmain"}, false)
 	if plan.SchemaVersion != 1 || plan.ID != "remote.acl.mutation" {

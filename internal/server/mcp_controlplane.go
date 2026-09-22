@@ -292,7 +292,15 @@ func newMCPControlPlaneHandler(cp *MCPControlPlane, localClient *LocalClient, hu
 	if cp.EventsSnapshot != nil {
 		mux.Handle(MCPEventsPath, ResourceBudgetMiddleware(newMCPEventsHandler(cp, hub)))
 	}
-	return AccessLogMiddleware(cp.nodeName(), MCPOriginMiddleware(MCPAuthMiddleware(cp.AllowedUsers, localClient, mux)))
+	// No identity resolver: the control plane's access line keeps the schema
+	// with empty login and node fields. This is deliberately narrower than the
+	// service nodes and it is a gap, stated rather than hidden: the
+	// MCPAuthMiddleware below names the principal on its denial paths but not
+	// on the accepted one, so an authorized control-plane call is currently
+	// attributable to a source address and no account. Closing it is passing a
+	// resolver here; it is left for a change that can weigh a cached principal
+	// sitting beside this surface's authoritative uncached one.
+	return AccessLogMiddleware(cp.nodeName(), nil, MCPOriginMiddleware(MCPAuthMiddleware(cp.AllowedUsers, localClient, mux)))
 }
 
 func (s *Server) closeMCPControlPlane() {

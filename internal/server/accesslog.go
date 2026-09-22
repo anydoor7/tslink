@@ -68,10 +68,30 @@ func (rw *responseWriter) Flush() {
 }
 
 // AccessLogMiddleware logs every HTTP request with structured fields via slog.
-func AccessLogMiddleware(serviceName string, next http.Handler) http.Handler {
+//
+// identity may be nil, and is nil for every node that cannot resolve a caller.
+// The login and node fields are then empty, which is the same shape the record
+// has for a caller whose identity could not be established -- one schema, so a
+// reader parsing these lines never has to handle a missing key.
+//
+// The two identity fields are the only ones sourced from outside the request
+// itself, and they carry exactly what the local Tailscale daemon attested for
+// the source address. Nothing here reads an X-Tailscale-* request header: those
+// are attacker-controlled on the way in (the proxy strips them for that
+// reason), and a log that repeated them would record a claim as a fact.
+func AccessLogMiddleware(serviceName string, identity *IdentityResolver, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		rw := &responseWriter{ResponseWriter: w, status: http.StatusOK}
+
+		// Resolved before the handler rather than beside the log call after
+		// it. The request context is cancelled the moment the client goes
+		// away, and a caller that disconnects mid-response is exactly the one
+		// worth attributing; resolving afterwards would lose the identity for
+		// every aborted request. On the ordinary path this costs nothing: the
+		// answer is cached for the node, and the proxy that runs inside this
+		// handler reads the same entry.
+		login, node := identity.Principal(r.Context(), r.RemoteAddr)
 
 		next.ServeHTTP(rw, r)
 
@@ -86,6 +106,8 @@ func AccessLogMiddleware(serviceName string, next http.Handler) http.Handler {
 			"bytes", rw.bytes,
 			"remote_addr", r.RemoteAddr,
 			"user_agent", r.UserAgent(),
+			"login", login,
+			"node", node,
 		)
 	})
 }

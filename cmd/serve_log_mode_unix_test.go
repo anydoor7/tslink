@@ -157,3 +157,71 @@ func TestNarrowSupervisedLogModesIgnoresAbsentAndNonRegularPaths(t *testing.T) {
 		t.Fatalf("control log mode = %v, want 0600", got)
 	}
 }
+
+// TestStartStderrLogRotationNarrowsRotatedArchives covers the file nothing
+// else can reach. An archive is written once and never reopened, so a .1 left
+// world-readable by a build that predated the 0600 cap stays that way for as
+// long as it exists -- and it holds more history than the live log beside it,
+// now including the account behind every request.
+func TestStartStderrLogRotationNarrowsRotatedArchives(t *testing.T) {
+	logDir := t.TempDir()
+	errArchive := writeSupervisedLog(t, logDir, "tslink.err.log.1", 0o644)
+	outArchive := writeSupervisedLog(t, logDir, "tslink.out.log.1", 0o644)
+
+	runStderrLogRotationOnce(t, logDir)
+
+	for _, path := range []string{errArchive, outArchive} {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("Stat(%q) error = %v", path, err)
+		}
+		if got := info.Mode().Perm(); got != 0o600 {
+			t.Fatalf("%s mode = %v after daemon startup, want 0600", filepath.Base(path), got)
+		}
+		body, err := os.ReadFile(path)
+		if err != nil || string(body) != "a line the supervisor already wrote\n" {
+			t.Fatalf("%s content = %q err=%v, want the archived log preserved", filepath.Base(path), body, err)
+		}
+	}
+}
+
+// TestNarrowSupervisedLogModesTouchesOnlyTheDaemonsOwnLogs is the control for
+// the archive row above: widening the set of paths this function chmods is a
+// step toward chmodding whatever else shares the directory, and every file
+// here is one the operator put there.
+func TestNarrowSupervisedLogModesTouchesOnlyTheDaemonsOwnLogs(t *testing.T) {
+	logDir := t.TempDir()
+	bystanders := []string{
+		"tslink.err.log.2",
+		"tslink.err.log.bak",
+		"notes.txt",
+		"tslink.log",
+	}
+	for _, name := range bystanders {
+		writeSupervisedLog(t, logDir, name, 0o644)
+	}
+
+	oldChmod := chmodLogFileFn
+	var chmodded []string
+	chmodLogFileFn = func(path string, mode os.FileMode) error {
+		chmodded = append(chmodded, filepath.Base(path))
+		return os.Chmod(path, mode)
+	}
+	t.Cleanup(func() { chmodLogFileFn = oldChmod })
+
+	narrowSupervisedLogModes(logDir)
+
+	if len(chmodded) != 0 {
+		t.Fatalf("chmod called for %v, want only the daemon's own log files touched", chmodded)
+	}
+
+	// Control: the two names this function does own, in the same directory,
+	// are narrowed -- so the assertion above is about the selection and not
+	// about the function having skipped the directory entirely.
+	writeSupervisedLog(t, logDir, "tslink.err.log", 0o644)
+	writeSupervisedLog(t, logDir, "tslink.err.log.1", 0o644)
+	narrowSupervisedLogModes(logDir)
+	if len(chmodded) != 2 {
+		t.Fatalf("chmod called for %v, want the live log and its archive", chmodded)
+	}
+}
