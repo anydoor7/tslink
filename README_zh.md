@@ -16,16 +16,13 @@
 
 **开源许可：**Apache 2.0 允许个人和任何规模组织按许可用于个人及商业用途。[自愿支持与合作](./COMMERCIAL_zh.md)。
 
-<!-- TODO: 添加终端录屏 / GIF 演示 -->
-<!-- <p align="center"><img src="docs/demo.gif" alt="TSLink Demo" width="700"></p> -->
-
 ---
 
 ## 为什么需要 TSLink？
 
 ### 你省掉的那些步骤
 
-给服务单独的主机名是 Tailscale 的原生能力。[Tailscale Services](https://tailscale.com/docs/features/tailscale-services) 自 2026 年 2 月起正式可用，`tailscale serve --service=svc:web-server --https=443 127.0.0.1:8080` 在普通 `tailscaled` 上就能得到 `https://web-server.<tailnet>.ts.net`。TSLink 建立在 [tsnet](https://tailscale.com/docs/features/tsnet) 之上，使用其文档介绍的集成方式独立开发。
+给服务单独的主机名是 Tailscale 的原生能力。[Tailscale Services](https://tailscale.com/docs/features/tailscale-services) [自 2026 年 2 月起正式可用](https://tailscale.com/blog/services-ga)，`tailscale serve --service=svc:web-server --https=443 127.0.0.1:8080` 在普通 `tailscaled` 上就能得到 `https://web-server.<tailnet>.ts.net`。TSLink 建立在 [tsnet](https://tailscale.com/docs/features/tsnet) 之上，使用其文档介绍的集成方式独立开发。
 
 TSLink 改变的是谁能配、配多久。原生路径要求：
 
@@ -41,15 +38,15 @@ TSLink 这些都不要。`tslink add ollama --proxy localhost:11434` 指向的�
 
 ### 更大的背景
 
-端口转发、VPN、ngrok、Cloudflare Tunnel — 这些传统方案不是为零信任时代设计的。它们要么把服务暴露到公网，要么让数据经过第三方，要么需要大量运维开销。
+端口转发、VPN、ngrok、Cloudflare Tunnel，每一种要么把服务放到公网上，要么让私有流量经过第三方；两者都避免的 VPN 则要承担自建运维的开销。
 
-随着本地 AI 工作负载、自托管服务和个人基础设施的增长，个人开发者和小团队的安全需求与企业级工具之间的差距越来越大。美国联邦政府已认识到这一转变：[Executive Order 14028](https://www.whitehouse.gov/briefing-room/presidential-actions/2021/05/12/executive-order-on-improving-the-nations-cybersecurity/) 要求采用零信任架构，[NIST SP 800-207](https://csrc.nist.gov/publications/detail/sp/800-207/final) 定义了标准。但大多数零信任工具面向的是拥有专业安全团队的大型企业。
+随着本地 AI 工作负载、自托管服务和个人基础设施的增长，个人开发者和小团队的安全需求与企业级工具之间的差距越来越大。大多数零信任工具面向的是拥有专业安全团队的大型企业。
 
 **TSLink 为本地服务提供 per-service tailnet 身份。** 一条命令将你的机器变成 Tailscale-backed 网关。tailnet transport 遵循 Tailscale/WireGuard 语义；proxy/file 服务可以增加 HTTP identity 和 `--allow` 检查，raw TCP 保持私有字节流，不经过 TSLink HTTP middleware。
 
 ## 安全模型
 
-TSLink 在每一层实现零信任原则：
+TSLink 与常见零信任原则的对应关系：
 
 | 零信任原则 | TSLink 实现 |
 |-----------|------------|
@@ -58,6 +55,8 @@ TSLink 在每一层实现零信任原则：
 | **假设已被攻破** | tailnet 设备之间的流量使用 WireGuard 加密。即使本地网络被攻破，Tailscale 设备之间的流量仍然加密；公网 Funnel 路径遵循 Tailscale Funnel 语义。 |
 | **Per-service 网络身份** | 每个服务作为独立 tsnet 节点运行，拥有自己的主机名和网络身份。这是网络分段，不是 host process isolation 或合规背书。 |
 | **消除隐式信任** | 默认不暴露任何服务到公网。首次运行默认走 Tailscale interactive enrollment：不存储管理员凭证、不 advertise tags、也不修改 ACL。可选的 durable-install 凭证优先存入系统钥匙串；headless 环境可回退到受限权限文件。 |
+
+这是一份设计层面的对应关系，不是认证。TSLink 不声称任何合规状态；[`internal/security/capabilities.v1.json`](./internal/security/capabilities.v1.json) 是机器可读的能力清单，其中每一条 capability 都记录着 `"compliance_status": "not_certified"`。
 
 ## TSLink 做什么
 
@@ -202,11 +201,11 @@ tslink share ./build --ephemeral=false
 
 `tslink mcp` 通过 stdio 运行本地 MCP server。MCP 进程本身不打开网络
 listener；调用其中的 `share` tool 可能启动独立的 TSLink daemon 及所请求的
-tsnet service。它暴露 18 个 tools，覆盖 CLI 的 per-service 能力面：`share`、`add`、
+tsnet service。它暴露 19 个 tools，覆盖 CLI 的 per-service 能力面：`share`、`add`、
 `list`、`unshare`、`status`、`url`、`tags_list`、`tags_set`、`access_explain`、
-`doctor`、`invite_user`、`invite_device`、`invite_list`、`invite_revoke`、
+`doctor`、`logs`、`invite_user`、`invite_device`、`invite_list`、`invite_revoke`、
 `invite_resend`、`template_list`、`template_plan` 和 `template_apply`。daemon
-生命周期、install、login/logout、日志和配置仍只通过 CLI 操作。可让 MCP client
+生命周期、install、login/logout 和配置仍只通过 CLI 操作。可让 MCP client
 启动已安装的 `tslink` 命令，并传入唯一参数 `mcp`：
 
 ```json
@@ -310,6 +309,9 @@ tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 | `tslink remove <name>` | 移除已注册的服务，并报告 protected/manual 远端清理指引 |
 | `tslink list` | 列出本机已注册的服务 |
 | `tslink list --tailnet` | 只读：列出整个 tailnet 中所有带 TSLink 标签的设备，包括其它机器的服务和孤儿节点（需要已存储的 API 凭证） |
+| `tslink share <path\|port\|host:port>` | 分享一个本地路径或 Web 端口，并打印它的 tailnet URL |
+| `tslink url <name>` | 打印某个服务的准确运行时 URL |
+| `tslink cleanup` | 回收过期的 Funnel 暴露和 TSLink 拥有的资源；默认只预览，传 `--dry-run=false` 才实际执行 |
 | `tslink serve` | 启动网关（前台） |
 | `tslink serve --daemon` | 启动网关（后台） |
 | `tslink serve --mcp` | 启动网关，并在专用的仅限 tailnet 节点上提供远程 MCP 控制面（必须配置 `mcp.allow`） |
@@ -328,10 +330,30 @@ tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 | `tslink tags set <service> <tag>` | 替换服务的全部标签 |
 | `tslink tags set-default <tag>` | 修改新服务的默认标签 |
 | `tslink tags delete-remote <tag> --force --manage-acl` | 通过本地安全检查和显式远端写入 opt-in 后从 Tailscale ACL 全局移除 ACL 标签所有者规则 |
+| `tslink invite user <email>` | 邀请一位用户加入 tailnet；需要 user-owned API 访问令牌 |
+| `tslink invite device <service> <email>` | 把某个 TSLink 拥有的服务设备分享给外部用户；需要确切的节点归属证明 |
+| `tslink invite list` | 列出未完成的用户邀请和 TSLink 拥有的设备邀请 |
+| `tslink invite revoke <id> --kind <user\|device>` | 撤销一个用户或设备邀请 |
+| `tslink invite resend <id> --kind <user\|device>` | 重新发送用户或设备的邮件邀请 |
 | `tslink mcp` | 面向 agent 的本地 stdio MCP server；不开网络 listener，不需要 `mcp.allow` |
 | `tslink config` | 管理全局配置（set/get/list） |
+| `tslink manifest` | 打印每个命令、flag、退出码和 error code 的机器可读描述 |
+| `tslink registry check [path]` | 严格校验一个 `registry.json`，不做任何修改 |
 | `tslink install` | 开机自启（macOS LaunchAgent / Linux systemd / Windows 启动文件夹） |
 | `tslink uninstall` | 移除自启 |
+
+### 退出码
+
+| 退出码 | 含义 |
+|------|------|
+| `0` | 成功 |
+| `1` | 一般运行时错误 |
+| `2` | 用法、参数或 flag 错误 |
+| `3` | 认证错误 |
+| `4` | 冲突，例如 daemon 已在运行 |
+| `5` | 请求的资源不存在 |
+| `64` | 诊断 warning 阈值 |
+| `65` | 诊断 critical 阈值 |
 
 ### add 命令标志
 
@@ -522,7 +544,7 @@ tslink list --tailnet --json
 | 网络 listener | 无 | 专用 tsnet 节点上的 TLS listener，仅限 tailnet |
 | 授权 | 启动它的本机用户 | `mcp.allow` 中的登录邮箱和/或 `tag:` 条目，必填 |
 | 配置 | 无 | `--mcp` 或 `mcp.enabled`，加上 `config.json` 中的 `mcp.allow` |
-| Tools | 18 个 | 同一组 18 个，来自同一个 tool registry |
+| Tools | 19 个 | 同一组 19 个，来自同一个 tool registry |
 | 典型 client | 本机上的 MCP client | tailnet 内另一台机器上的 MCP client |
 
 ## Roadmap / Experimental 包
@@ -531,12 +553,12 @@ tslink list --tailnet --json
 
 | 领域 | 当前状态 |
 |---|---|
-| Docker 标签 | 包存在，但 `serve` 不会启动 Docker discovery。 |
-| Middleware | 包和 schema 存在，但 runtime 不应用限流、Basic Auth、IP 白名单或 CORS。 |
+| Docker 标签 | 未实现；注册表 schema 保留了这些字段，runtime 会以 `feature_unavailable` 拒绝。 |
+| Middleware | 未实现；注册表 schema 保留了这些字段，runtime 会以 `feature_unavailable` 拒绝。 |
 | Admin dashboard / REST API | 没有交付 dashboard 或 REST handler；仅限 tailnet 的 MCP 控制面（`tslink serve --mcp`）是唯一的远程管理面。未来的 dashboard 或 REST 工作必须显式标为 experimental，并补端到端测试。 |
 | Prometheus `/metrics` | 内部 instrumentation 存在，但没有挂载 scrape endpoint。 |
 | Custom domain / ACME | 字段保留但会以 `feature_unavailable` 拒绝；runtime TLS/ACME listener 尚未接入。 |
-| Cluster sync | 包存在，但没有 production transport 或 `serve` 集成。 |
+| Cluster sync | 未实现；注册表 schema 保留了这些字段，runtime 会以 `feature_unavailable` 拒绝。 |
 
 ## 前置条件
 
@@ -741,9 +763,5 @@ TSLink 采用 [Apache License 2.0](./LICENSE)。个人和任何规模的组织�
 分发时请保留适用的许可和署名信息，参阅 [NOTICE](./NOTICE) 和 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md)。TSLink 是独立项目，其许可不授予 Tailscale 服务的使用权，也不代表官方背书；Tailscale 协议和套餐资格另行适用。
 
 ```
-Copyright 2026 Maintainer (monody0007)
+Copyright 2026 monody0007
 ```
-
-行为变更：`add` 默认等待从 0 改为 30 秒；只需登记配置的脚本应显式传 `--wait=0`。
-Windows Startup 与当前配置匹配时报告 `windows-startup`；doctor 以 warning 说明缺少崩溃重启，
-不会再建议反复安装来消除这一固有限制。

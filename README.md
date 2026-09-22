@@ -16,16 +16,13 @@
 
 **Open source:** Apache 2.0 permits personal and commercial use by organizations of any size. [Optional support and cooperation](./COMMERCIAL.md).
 
-<!-- TODO: Add terminal recording / GIF demo here -->
-<!-- <p align="center"><img src="docs/demo.gif" alt="TSLink Demo" width="700"></p> -->
-
 ---
 
 ## Why TSLink?
 
 ### What you skip
 
-Per-service hostnames are a first-class Tailscale feature. [Tailscale Services](https://tailscale.com/docs/features/tailscale-services) has been generally available since February 2026, and `tailscale serve --service=svc:web-server --https=443 127.0.0.1:8080` gives you `https://web-server.<tailnet>.ts.net` on a plain `tailscaled`. TSLink is built on [tsnet](https://tailscale.com/docs/features/tsnet), which Tailscale documents for exactly this purpose. TSLink independently uses this documented integration pattern.
+Per-service hostnames are a first-class Tailscale feature. [Tailscale Services](https://tailscale.com/docs/features/tailscale-services) has been [generally available since February 2026](https://tailscale.com/blog/services-ga), and `tailscale serve --service=svc:web-server --https=443 127.0.0.1:8080` gives you `https://web-server.<tailnet>.ts.net` on a plain `tailscaled`. TSLink is built on [tsnet](https://tailscale.com/docs/features/tsnet), which Tailscale documents for exactly this purpose. TSLink independently uses this documented integration pattern.
 
 What TSLink changes is who can set it up and how long it takes. The native path asks for:
 
@@ -41,15 +38,15 @@ That access list is enforced at the HTTP layer, so it complements tailnet ACLs r
 
 ### The broader landscape
 
-Traditional approaches to exposing local services — port forwarding, VPNs, ngrok, Cloudflare Tunnel — were not designed for a zero-trust world. They either expose your services to the public internet, route private data through third-party servers, or require significant operational overhead.
+Port forwarding, VPNs, ngrok, and Cloudflare Tunnel each either place the service on the public internet or route private traffic through a third party, and a VPN that avoids both carries the operational overhead of running one.
 
-As local AI workloads, self-hosted services, and personal infrastructure grow, the gap between what individuals need and what enterprise security tools provide keeps widening. The federal government recognized this shift: [Executive Order 14028](https://www.whitehouse.gov/briefing-room/presidential-actions/2021/05/12/executive-order-on-improving-the-nations-cybersecurity/) mandates zero-trust adoption, and [NIST SP 800-207](https://csrc.nist.gov/publications/detail/sp/800-207/final) defines the architecture. But most zero-trust tooling targets large enterprises with dedicated security teams. TSLink aligns with several of these zero-trust *principles*. It carries no formal NIST SP 800-207 or EO 14028 attestation, claims no compliance status, and makes no federal-grade guarantee; treat the standards discussion here as an educational mapping rather than a compliance determination.
+As local AI workloads, self-hosted services, and personal infrastructure grow, the gap between what individuals need and what enterprise security tools provide keeps widening. Most zero-trust tooling targets large enterprises with dedicated security teams.
 
 **TSLink gives local services per-service tailnet identities.** One command turns your machine into a Tailscale-backed gateway. Tailnet transport uses Tailscale/WireGuard semantics; proxy/file services can add HTTP identity and `--allow` checks, while raw TCP stays a private byte stream without TSLink HTTP middleware.
 
 ## Security Model
 
-TSLink implements zero-trust principles at every layer:
+How TSLink maps onto common zero-trust principles:
 
 | Zero-Trust Principle | TSLink Implementation |
 |-----|-----|
@@ -58,6 +55,8 @@ TSLink implements zero-trust principles at every layer:
 | **Assume breach** | Tailnet device-to-device traffic uses WireGuard encryption. Even if your local network is compromised, traffic between your Tailscale devices remains encrypted; public Funnel paths follow Tailscale Funnel semantics. |
 | **Per-service network identity** | Each service runs as a separate tsnet node with its own hostname and network identity. This is network segmentation, not host process isolation or a compliance attestation. |
 | **No implicit trust** | No services are exposed to the public internet by default. The default first run uses Tailscale interactive enrollment with no stored administrative credential, no advertised tags, and no ACL edits. Optional durable-install credentials are stored in the system keychain first, with restricted-permission file fallback for headless environments. |
+
+This is a design mapping, not a certification. TSLink claims no compliance status; [`internal/security/capabilities.v1.json`](./internal/security/capabilities.v1.json) is the machine-readable manifest, and every capability in it records `"compliance_status": "not_certified"`.
 
 ## What TSLink Does
 
@@ -224,10 +223,10 @@ target reuses its existing service instead of creating suffixed orphan nodes.
 network listener; invoking its `share` tool may start the separate TSLink daemon
 and the requested tsnet service. It exposes 19 tools covering the per-service
 surface of the CLI: `share`, `add`, `list`, `unshare`, `status`, `url`,
-`tags_list`, `tags_set`, `access_explain`, `doctor`, `invite_user`,
+`tags_list`, `tags_set`, `access_explain`, `doctor`, `logs`, `invite_user`,
 `invite_device`, `invite_list`, `invite_revoke`, `invite_resend`,
 `template_list`, `template_plan`, and `template_apply`. Daemon lifecycle,
-install, login/logout, logs, and configuration stay CLI-only. Configure an
+install, login/logout, and configuration stay CLI-only. Configure an
 MCP client to launch the installed `tslink` command with the single argument
 `mcp`:
 
@@ -364,6 +363,7 @@ tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 | `tslink invite resend <id> --kind <user\|device>` | Resend an emailed user or device invite |
 | `tslink mcp` | Local MCP server over stdio for agents; no network listener, no `mcp.allow` needed |
 | `tslink config` | Manage global configuration (set/get/list) |
+| `tslink manifest` | Print the machine-readable description of every command, flag, exit code, and error code |
 | `tslink registry check [path]` | Strictly validate a `registry.json` without modifying it |
 | `tslink install` | Auto-start on login (macOS LaunchAgent / Linux systemd / Windows Startup) |
 | `tslink uninstall` | Remove auto-start |
@@ -570,7 +570,7 @@ The control plane is off by default. Enable it with the `--mcp` flag or with `mc
 | Network listener | None | TLS listener on a dedicated tsnet node, tailnet-only |
 | Authorization | The local user who launched it | `mcp.allow` login emails and/or `tag:` entries, mandatory |
 | Configuration | None | `--mcp` or `mcp.enabled`, plus `mcp.allow` in `config.json` |
-| Tools | 18 | The same 18, from one tool registry |
+| Tools | 19 | The same 19, from one tool registry |
 | Typical client | An MCP client on this machine | An MCP client on another machine in the tailnet |
 
 ## Roadmap / Experimental Packages
@@ -579,12 +579,12 @@ The repository contains packages and registry fields for features that are not w
 
 | Area | Current status |
 |---|---|
-| Docker labels | Package exists, but `serve` does not start Docker discovery. |
-| Middleware | Package and schema exist, but runtime does not apply rate limit, Basic Auth, IP allow list, or CORS. |
+| Docker labels | Not implemented; the registry schema reserves the fields and the runtime rejects them with `feature_unavailable`. |
+| Middleware | Not implemented; the registry schema reserves the fields and the runtime rejects them with `feature_unavailable`. |
 | Admin dashboard / REST API | No dashboard or REST handler is shipped; the tailnet-only MCP control plane (`tslink serve --mcp`) is the only remote management surface. Future dashboard or REST work must be explicitly experimental and tested end to end. |
 | Prometheus `/metrics` | Instrumentation exists, but no scrape endpoint is mounted. |
 | Custom domain / ACME | Fields are reserved and rejected with `feature_unavailable`; runtime TLS/ACME listener is not wired. |
-| Cluster sync | Package exists without production transport or `serve` integration. |
+| Cluster sync | Not implemented; the registry schema reserves the fields and the runtime rejects them with `feature_unavailable`. |
 
 ## Prerequisites
 
@@ -790,13 +790,5 @@ If TSLink helps your organization, we welcome contributions and inquiries about 
 Retain applicable license and attribution notices when redistributing. See [NOTICE](./NOTICE) and [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md). TSLink is an independent project; its license does not grant rights to Tailscale services or imply endorsement. Tailscale agreements and plan eligibility apply separately.
 
 ```
-Copyright 2026 Maintainer (monody0007)
+Copyright 2026 monody0007
 ```
-
-Bootstrap behavior change: `add` now waits up to 30 seconds by default; scripts
-that only need to register configuration should pass `--wait=0`. Windows reports
-`windows-startup` when its Startup registration matches this config; doctor warns
-that crash restart is unavailable instead of asking for an ineffective reinstall.
-
-
-
