@@ -56,7 +56,7 @@ How TSLink maps onto common zero-trust principles:
 | **Per-service network identity** | Each service runs as a separate tsnet node with its own hostname and network identity. This is network segmentation, not host process isolation or a compliance attestation. |
 | **No implicit trust** | No services are exposed to the public internet by default. The default first run uses Tailscale interactive enrollment with no stored administrative credential, no advertised tags, and no ACL edits. Optional durable-install credentials are stored in the system keychain first, with restricted-permission file fallback for headless environments. |
 
-This is a design mapping, not a certification. TSLink claims no compliance status; [`internal/security/capabilities.v1.json`](./internal/security/capabilities.v1.json) is the machine-readable manifest, and every capability in it records `"compliance_status": "not_certified"`.
+This is a design mapping, not a formal attestation. TSLink claims no compliance status; the machine-readable manifest is [`internal/security/capabilities.v1.json`](./internal/security/capabilities.v1.json), and every capability in it records its compliance status explicitly.
 
 ## What TSLink Does
 

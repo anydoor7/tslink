@@ -56,7 +56,7 @@ TSLink 与常见零信任原则的对应关系：
 | **Per-service 网络身份** | 每个服务作为独立 tsnet 节点运行，拥有自己的主机名和网络身份。这是网络分段，不是 host process isolation 或合规背书。 |
 | **消除隐式信任** | 默认不暴露任何服务到公网。首次运行默认走 Tailscale interactive enrollment：不存储管理员凭证、不 advertise tags、也不修改 ACL。可选的 durable-install 凭证优先存入系统钥匙串；headless 环境可回退到受限权限文件。 |
 
-这是一份设计层面的对应关系，不是认证。TSLink 不声称任何合规状态；[`internal/security/capabilities.v1.json`](./internal/security/capabilities.v1.json) 是机器可读的能力清单，其中每一条 capability 都记录着 `"compliance_status": "not_certified"`。
+这是一份设计层面的对应关系，不是正式背书。TSLink 不声称任何合规状态；机器可读的能力清单是 [`internal/security/capabilities.v1.json`](./internal/security/capabilities.v1.json)，其中每一条 capability 都显式记录了自己的合规状态。
 
 ## TSLink 做什么
 
