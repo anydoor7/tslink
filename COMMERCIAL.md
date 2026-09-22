@@ -19,7 +19,9 @@ response time, or service level.
 For a non-confidential cooperation inquiry, use the
 [project issue tracker](https://github.com/monody0007/tslink/issues).
 Describe the help you need; do not post credentials, customer data, or
-confidential business information. No paid service is promised by an inquiry.
+confidential business information. For anything you would rather not post
+publicly, email maintainer@example.com. No paid service is promised by an
+inquiry.
 
 ## Attribution and project identity
 
@@ -29,7 +31,7 @@ requirements when redistributing. See [NOTICE](NOTICE) and
 terms, warranty disclaimers, and limitations of liability. It does not grant
 trademark rights beyond the limited uses described in section 6. Describe
 forks and modified distributions accurately; do not imply endorsement by
-the TSLink maintainers or Tailscale.
+the maintainers or Tailscale.
 
 This document explains our cooperation approach and adds no conditions to
 Apache 2.0. Previously granted rights and separately licensed material retain

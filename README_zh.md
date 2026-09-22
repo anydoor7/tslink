@@ -746,6 +746,18 @@ gh attestation verify "$sbom" \
 ```
 
 
+## 文档
+
+| 文档 | 内容 |
+|---|---|
+| [docs/mcp-clients.md](./docs/mcp-clients.md) | 通过 stdio 或 HTTP 接入 MCP client、19 个 tools、以及事件流契约（英文） |
+| [docs/cli-manifest.json](./docs/cli-manifest.json) | 自动生成的机器可读描述，覆盖每个命令、flag、退出码和 error code |
+| [CONTRIBUTING.md](./CONTRIBUTING.md) | 开发环境、本地检查、CI 范围和贡献者权利（英文） |
+| [SECURITY.md](./SECURITY.md) | 安全模型、边界，以及如何报告漏洞（英文） |
+| [COMMERCIAL_zh.md](./COMMERCIAL_zh.md) | 商业使用与自愿合作 |
+| [CHANGELOG.md](./CHANGELOG.md) | 版本历史（英文） |
+| [AGENTS.md](./AGENTS.md) | 面向 AI agent 的操作手册（英文） |
+
 ## 贡献
 
 欢迎贡献！请参阅 [CONTRIBUTING.md](./CONTRIBUTING.md) 了解指南。

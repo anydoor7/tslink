@@ -773,6 +773,18 @@ gh attestation verify "$sbom" \
 ```
 
 
+## Documentation
+
+| Document | What it covers |
+|---|---|
+| [docs/mcp-clients.md](./docs/mcp-clients.md) | Connecting an MCP client over stdio or HTTP, the 19 tools, and the event-stream contract |
+| [docs/cli-manifest.json](./docs/cli-manifest.json) | Generated machine-readable description of every command, flag, exit code, and error code |
+| [CONTRIBUTING.md](./CONTRIBUTING.md) | Development setup, local checks, CI scope, and contributor rights |
+| [SECURITY.md](./SECURITY.md) | Security model, boundaries, and how to report a vulnerability |
+| [COMMERCIAL.md](./COMMERCIAL.md) | Commercial use and voluntary cooperation |
+| [CHANGELOG.md](./CHANGELOG.md) | Release history |
+| [AGENTS.md](./AGENTS.md) | Operating manual for AI agents working on or with TSLink |
+
 ## Contributing
 
 Contributions are welcome! Please see [CONTRIBUTING.md](./CONTRIBUTING.md) for guidelines.
