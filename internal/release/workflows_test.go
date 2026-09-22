@@ -189,6 +189,8 @@ type jobDef struct {
 	Needs       stringOrSlice     `yaml:"needs"`
 	Environment envField          `yaml:"environment"`
 	Permissions map[string]string `yaml:"permissions"`
+	With        map[string]string `yaml:"with"`
+	Secrets     any               `yaml:"secrets"`
 }
 
 type workflowFile struct {
@@ -266,12 +268,12 @@ func TestTagPublishCannotBypassCandidate(t *testing.T) {
 
 // TestCIConsumesReusableCandidate proves PR/main run the same gate as the tag path.
 //
-// The test skips when ci.yml is absent rather than failing, so that a
-// checkout without it is not reported as a broken invariant. The assertion is
-// kept rather than deleted because the invariant it guards -- PR/main must call
-// the same reusable candidate gate as the tag path -- goes live again the
-// moment ci.yml is present. Deleting the test would drop the guard silently at
-// exactly that point.
+// ci.yml is present again, so this test runs rather than skipping; the skip
+// branch is kept only so a future deletion of ci.yml does not turn this test
+// into a spurious failure. Deleting ci.yml is still refused by
+// TestCIShapePinsTriggersAndCostControls, which fails with "ci.yml is missing".
+// The invariant stays worth guarding because it is what makes PR/main and the
+// tag path consume one gate instead of two drifting ones.
 func TestCIConsumesReusableCandidate(t *testing.T) {
 	all := readWorkflows(t)
 	body, ok := all["ci.yml"]
@@ -286,6 +288,96 @@ func TestCIConsumesReusableCandidate(t *testing.T) {
 	if job.Uses != reusableRef {
 		t.Errorf("ci.yml candidate job must call %q, got %q", reusableRef, job.Uses)
 	}
+}
+
+// onTriggers returns the keys declared under the top-level `on:` mapping.
+// yaml.v2 resolves an unquoted `on` key to the boolean true (YAML 1.1), so both
+// spellings are accepted. Presence is judged on the decoded mapping's keys
+// rather than on a typed struct field, because `pull_request:` with a null
+// value is a valid trigger and still counts as present.
+func onTriggers(t *testing.T, name string, body []byte) map[interface{}]interface{} {
+	t.Helper()
+	var raw map[interface{}]interface{}
+	if err := yaml.Unmarshal(body, &raw); err != nil {
+		t.Fatalf("parse %s: %v", name, err)
+	}
+	for key, value := range raw {
+		if key != true && key != "on" {
+			continue
+		}
+		triggers, ok := value.(map[interface{}]interface{})
+		if !ok {
+			t.Fatalf("%s `on:` is not a mapping: %T", name, value)
+		}
+		return triggers
+	}
+	t.Fatalf("%s has no `on:` mapping", name)
+	return nil
+}
+
+// TestCIShapePinsTriggersAndCostControls pins the parts of ci.yml that the
+// `uses:` assertion above cannot see: pull_request plus push to main,
+// read-only permissions, a per-ref concurrency group that cancels superseded
+// runs, and a candidate job that declares no secrets of its own. Dropping the
+// pull_request trigger, deleting the concurrency block, granting a write
+// permission, or passing `secrets: inherit` turns an assertion red. The
+// pull_request branch filter is deliberately not pinned, so widening CI to
+// every PR is not a test failure.
+func TestCIShapePinsTriggersAndCostControls(t *testing.T) {
+	body, ok := readWorkflows(t)["ci.yml"]
+	if !ok {
+		t.Fatal("ci.yml is missing")
+	}
+	var wf struct {
+		On struct {
+			Push struct {
+				Branches []string `yaml:"branches"`
+			} `yaml:"push"`
+		} `yaml:"on"`
+		Permissions map[string]string `yaml:"permissions"`
+		Concurrency struct {
+			Group            string `yaml:"group"`
+			CancelInProgress bool   `yaml:"cancel-in-progress"`
+		} `yaml:"concurrency"`
+		Jobs map[string]jobDef `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal(body, &wf); err != nil {
+		t.Fatalf("parse ci.yml: %v", err)
+	}
+	if !containsString(wf.On.Push.Branches, "main") {
+		t.Errorf("ci.yml push branches = %v, want main", wf.On.Push.Branches)
+	}
+	if _, ok := onTriggers(t, "ci.yml", body)["pull_request"]; !ok {
+		t.Error("ci.yml must run on pull_request")
+	}
+	if len(wf.Permissions) != 1 || wf.Permissions["contents"] != "read" {
+		t.Errorf("ci.yml workflow permissions = %v, want only contents: read", wf.Permissions)
+	}
+	if !strings.Contains(wf.Concurrency.Group, "github.ref") || !wf.Concurrency.CancelInProgress {
+		t.Errorf("ci.yml concurrency = %+v, want a per-ref group with cancel-in-progress: true", wf.Concurrency)
+	}
+	candidate, ok := wf.Jobs["candidate"]
+	if !ok {
+		t.Fatal("ci.yml has no `candidate` job")
+	}
+	if candidate.Permissions["contents"] != "read" {
+		t.Errorf("ci.yml candidate permissions = %v, want contents: read", candidate.Permissions)
+	}
+	if _, ok := candidate.With["ref"]; !ok {
+		t.Errorf("ci.yml candidate must pass a ref input to the reusable gate, got %v", candidate.With)
+	}
+	if candidate.Secrets != nil {
+		t.Errorf("ci.yml candidate must not declare secrets: release-candidate.yml declares none and release.yml passes none, got %v", candidate.Secrets)
+	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, v := range values {
+		if v == want {
+			return true
+		}
+	}
+	return false
 }
 
 // TestCandidateDeclaresRequiredGates guards against a gate being silently dropped.

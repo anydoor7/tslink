@@ -60,14 +60,14 @@ Linked third-party modules: 63
 | `github.com/zalando/go-keyring` | v0.2.6 | MIT | `LICENSE` |
 | `go4.org/mem` | v0.0.0-20240501181205-ae6ca9944745 | Apache-2.0 | `LICENSE` |
 | `go4.org/netipx` | v0.0.0-20231129151722-fdeea329fbba | BSD-3-Clause | `LICENSE` |
-| `golang.org/x/crypto` | v0.54.0 | BSD-3-Clause | `LICENSE` |
+| `golang.org/x/crypto` | v0.57.0 | BSD-3-Clause | `LICENSE` |
 | `golang.org/x/exp` | v0.0.0-20260410095643-746e56fc9e2f | BSD-3-Clause | `LICENSE` |
-| `golang.org/x/net` | v0.56.0 | BSD-3-Clause | `LICENSE` |
+| `golang.org/x/net` | v0.58.0 | BSD-3-Clause | `LICENSE` |
 | `golang.org/x/oauth2` | v0.36.0 | BSD-3-Clause | `LICENSE` |
-| `golang.org/x/sync` | v0.22.0 | BSD-3-Clause | `LICENSE` |
-| `golang.org/x/sys` | v0.47.0 | BSD-3-Clause | `LICENSE` |
-| `golang.org/x/term` | v0.45.0 | BSD-3-Clause | `LICENSE` |
-| `golang.org/x/text` | v0.40.0 | BSD-3-Clause | `LICENSE` |
+| `golang.org/x/sync` | v0.23.0 | BSD-3-Clause | `LICENSE` |
+| `golang.org/x/sys` | v0.48.0 | BSD-3-Clause | `LICENSE` |
+| `golang.org/x/term` | v0.46.0 | BSD-3-Clause | `LICENSE` |
+| `golang.org/x/text` | v0.42.0 | BSD-3-Clause | `LICENSE` |
 | `golang.org/x/time` | v0.15.0 | BSD-3-Clause | `LICENSE` |
 | `golang.zx2c4.com/wintun` | v0.0.0-20230126152724-0fa3db229ce2 | MIT | `LICENSE` |
 | `golang.zx2c4.com/wireguard/windows` | v0.5.3 | MIT | `COPYING` |
@@ -4140,10 +4140,10 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ~~~~
 
-### `golang.org/x/crypto` v0.54.0
+### `golang.org/x/crypto` v0.57.0
 
 - License: BSD-3-Clause
-- Evidence source: `golang.org/x/crypto@v0.54.0` from the resolved Go module graph
+- Evidence source: `golang.org/x/crypto@v0.57.0` from the resolved Go module graph
 - Included files: `LICENSE`
 
 #### LICENSE
@@ -4216,10 +4216,10 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ~~~~
 
-### `golang.org/x/net` v0.56.0
+### `golang.org/x/net` v0.58.0
 
 - License: BSD-3-Clause
-- Evidence source: `golang.org/x/net@v0.56.0` from the resolved Go module graph
+- Evidence source: `golang.org/x/net@v0.58.0` from the resolved Go module graph
 - Included files: `LICENSE`
 
 #### LICENSE
@@ -4292,10 +4292,10 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ~~~~
 
-### `golang.org/x/sync` v0.22.0
+### `golang.org/x/sync` v0.23.0
 
 - License: BSD-3-Clause
-- Evidence source: `golang.org/x/sync@v0.22.0` from the resolved Go module graph
+- Evidence source: `golang.org/x/sync@v0.23.0` from the resolved Go module graph
 - Included files: `LICENSE`
 
 #### LICENSE
@@ -4330,10 +4330,10 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ~~~~
 
-### `golang.org/x/sys` v0.47.0
+### `golang.org/x/sys` v0.48.0
 
 - License: BSD-3-Clause
-- Evidence source: `golang.org/x/sys@v0.47.0` from the resolved Go module graph
+- Evidence source: `golang.org/x/sys@v0.48.0` from the resolved Go module graph
 - Included files: `LICENSE`
 
 #### LICENSE
@@ -4368,10 +4368,10 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ~~~~
 
-### `golang.org/x/term` v0.45.0
+### `golang.org/x/term` v0.46.0
 
 - License: BSD-3-Clause
-- Evidence source: `golang.org/x/term@v0.45.0` from the resolved Go module graph
+- Evidence source: `golang.org/x/term@v0.46.0` from the resolved Go module graph
 - Included files: `LICENSE`
 
 #### LICENSE
@@ -4406,10 +4406,10 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ~~~~
 
-### `golang.org/x/text` v0.40.0
+### `golang.org/x/text` v0.42.0
 
 - License: BSD-3-Clause
-- Evidence source: `golang.org/x/text@v0.40.0` from the resolved Go module graph
+- Evidence source: `golang.org/x/text@v0.42.0` from the resolved Go module graph
 - Included files: `LICENSE`
 
 #### LICENSE

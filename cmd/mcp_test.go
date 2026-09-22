@@ -531,6 +531,17 @@ func TestMCPToolSchemasAreClosedAndModelFocused(t *testing.T) {
 		t.Fatalf("share allow description = %q, want the no-allow-list consequence spelled out", allowDescription)
 	}
 
+	// The refusal runs in the daemon, but the calling model only sees the tool
+	// schema; the description is where it learns the target rule before it
+	// picks an address. Deleting the sentence leaves the daemon safe and the
+	// model blind, so it is asserted here rather than trusted.
+	for _, name := range []string{"share", "add"} {
+		targetDescription := mcpToolByName(t, name).InputSchema["properties"].(map[string]any)["target"].(map[string]any)["description"].(string)
+		if !strings.Contains(targetDescription, "link-local and cloud-metadata addresses are refused") {
+			t.Fatalf("%s target description = %q, want the link-local/cloud-metadata refusal spelled out", name, targetDescription)
+		}
+	}
+
 	unshareProperties := mcpToolByName(t, "unshare").OutputSchema["properties"].(map[string]any)
 	unshareOKDescription := unshareProperties["ok"].(map[string]any)["description"].(string)
 	for _, want := range []string{"idempotent", "service absent", "removed false", "does not guarantee tailnet device cleanup", "device_cleaned", "device_warning"} {
