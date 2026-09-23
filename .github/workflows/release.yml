@@ -57,8 +57,16 @@ jobs:
         if: ${{ !contains(github.ref_name, '-') }}
         env:
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+          MACOS_SIGN_P12: ${{ secrets.MACOS_SIGN_P12 }}
+          MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
+          MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+          MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
         run: |
           set -euo pipefail
+          if [ -z "${MACOS_SIGN_P12}" ] || [ -z "${MACOS_NOTARY_KEY}" ] || [ -z "${MACOS_NOTARY_KEY_ID}" ] || [ -z "${MACOS_NOTARY_ISSUER_ID}" ]; then
+            echo "::error::Stable releases require the macOS signing secrets (MACOS_SIGN_P12, MACOS_NOTARY_ISSUER_ID, MACOS_NOTARY_KEY_ID, MACOS_NOTARY_KEY): the published cask has no quarantine workaround, so an unsigned darwin binary would not run"
+            exit 1
+          fi
           if [ -z "${HOMEBREW_TAP_GITHUB_TOKEN}" ]; then
             echo "::error::Stable releases require HOMEBREW_TAP_GITHUB_TOKEN with write access to monody0007/homebrew-tap"
             exit 1
@@ -84,6 +92,14 @@ jobs:
           # Pre-release tags may leave this empty because skip_upload: auto skips
           # tap upload; stable tags are checked above before installing tools.
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+          # macOS Developer ID signing + notarization (see .goreleaser.yml
+          # `notarize`). Leaving MACOS_SIGN_P12 empty disables the step; the
+          # stable-tag gate above refuses that, pre-release tags may run unsigned.
+          MACOS_SIGN_P12: ${{ secrets.MACOS_SIGN_P12 }}
+          MACOS_SIGN_P12_PASSWORD: ${{ secrets.MACOS_SIGN_P12_PASSWORD }}
+          MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
+          MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+          MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }} # base64 of the .p8
       - name: Attest release artifacts
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:

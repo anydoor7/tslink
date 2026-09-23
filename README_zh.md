@@ -606,7 +606,7 @@ release/readback 前请从源码安装。该外部 gate 通过后，GitHub Relea
 
 | 平台 | 产物 | 说明 |
 |---|---|---|
-| macOS | Homebrew cask 和 `tar.gz` 归档 | Homebrew cask 使用 GoReleaser `skip_upload: auto`，pre-release tag 可以跳过 tap upload 且不让发布失败。预发布验证优先使用归档产物。macOS 二进制只有 ad-hoc 签名、未经 Apple notarize；cask 在安装过程中（postflight 阶段）去掉 staged 文件上的 `com.apple.quarantine`，Gatekeeper 才放行。这是对 notarization 的显式替代，不是 Apple 推荐的路径。如果改用浏览器下载归档，首次运行前执行一次 `xattr -d com.apple.quarantine ./tslink`。 |
+| macOS | Homebrew cask 和 `tar.gz` 归档 | Homebrew cask 使用 GoReleaser `skip_upload: auto`，pre-release tag 可以跳过 tap upload 且不让发布失败。预发布验证优先使用归档产物。macOS 二进制带 Developer ID 签名并经 Apple notarize，无论通过 cask 还是下载归档安装，Gatekeeper 都直接放行。 |
 | Linux | `.deb`、`.rpm` 和 `tar.gz` 归档 | 包内包含原生 `tslink` 二进制。安装后用 `tslink install` 注册 user service。 |
 | Windows | `.zip` 归档 | Windows 当前是 archive-only 支持。尚未提供 MSI/MSIX/Winget 包或 Windows 代码签名安装器。解压后用 `tslink install` 注册 Startup 自启动。 |
 

@@ -76,6 +76,29 @@ signs:
       - "--yes"
     artifacts: sbom
 
+# macOS code signing + notarization (Developer ID). Runs inside GoReleaser via
+# quill, so it works on the Linux release runner. Enabled only when the
+# certificate is present in the environment: snapshot and pre-release builds
+# without the secrets produce unsigned binaries, which never reach the cask
+# because release.yml refuses stable tags without them. Values:
+# MACOS_SIGN_P12 = base64 PKCS#12 of the
+# "Developer ID Application" identity, MACOS_SIGN_P12_PASSWORD = its password,
+# MACOS_NOTARY_ISSUER_ID / MACOS_NOTARY_KEY_ID / MACOS_NOTARY_KEY = an App
+# Store Connect API team key (the .p8 file, base64-encoded) with the Developer role.
+notarize:
+  macos:
+    - enabled: '{{ isEnvSet "MACOS_SIGN_P12" }}'
+      ids:
+        - tslink
+      sign:
+        certificate: "{{ .Env.MACOS_SIGN_P12 }}"
+        password: "{{ .Env.MACOS_SIGN_P12_PASSWORD }}"
+      notarize:
+        issuer_id: "{{ .Env.MACOS_NOTARY_ISSUER_ID }}"
+        key_id: "{{ .Env.MACOS_NOTARY_KEY_ID }}"
+        key: "{{ .Env.MACOS_NOTARY_KEY }}"
+        wait: true
+        timeout: 20m
 nfpms:
   - id: linux-packages
     ids:
@@ -129,29 +152,17 @@ homebrew_casks:
     description: "Private Tailscale gateway for local services"
     skip_upload: auto
     commit_msg_template: "Brew cask update for {{ .ProjectName }} version {{ .Tag }}"
-    # The darwin binaries carry only the Go linker's ad-hoc signature and are
-    # not notarized. Homebrew stamps every cask download with
-    # com.apple.quarantine, and Gatekeeper then blocks the first exec of an
-    # unnotarized quarantined binary (measured 2026-09-22 on a clean Mac mini:
-    # `tslink --version` hung until killed; the same bytes without the
-    # attribute ran immediately). Strip the attribute from the staged binary so
-    # `brew install --cask` yields a runnable tool, and say so in the caveats.
-    # The cask DSL's system_command raises on failure (no exit-status guard is
-    # reachable), so gate on the OS instead: on macOS /usr/bin/xattr always
-    # exists and `-dr` on a missing attribute is a no-op; the on_linux block
-    # never runs it.
-    hooks:
-      post:
-        install: |
-          if OS.mac?
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", staged_path.to_s]
-          end
+    # The darwin binaries are Developer ID signed and notarized by Apple (see
+    # `notarize` below), so Gatekeeper runs them straight from the quarantined
+    # cask download: measured 2026-09-22 on a clean Mac mini, first run of the
+    # notarized binary with com.apple.quarantine still attached exits 0 at
+    # once (syspolicyd evaluateScanResult 1), while the earlier unsigned build
+    # hung until killed (result 2, a prompt nobody can answer over SSH). No
+    # postflight quarantine strip is needed; release.yml refuses stable tags
+    # without the signing secrets so an unsigned cask can never be published.
     caveats: |
-      tslink is not notarized by Apple. During install this cask removes the
-      quarantine attribute from the staged files so macOS Gatekeeper lets the
-      binary run. That is an explicit substitute for notarization, not Apple's
-      recommended path. If you install from a downloaded archive instead, run:
-        xattr -d com.apple.quarantine ./tslink
+      tslink is signed with a Developer ID certificate and notarized by Apple,
+      so macOS Gatekeeper runs it without any extra step.
 
 changelog:
   sort: asc

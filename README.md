@@ -636,7 +636,7 @@ passes, GitHub Releases are expected to publish these installable artifacts:
 
 | Platform | Artifacts | Notes |
 |---|---|---|
-| macOS | Homebrew cask and `tar.gz` archives | The Homebrew cask uses GoReleaser `skip_upload: auto`, so pre-release tags can skip tap upload without failing the release. Use the archives for pre-release validation. The macOS binary carries only an ad-hoc signature and is not notarized; during install the cask strips `com.apple.quarantine` from the staged files (a `postflight` step) so Gatekeeper lets it run. That is an explicit substitute for notarization, not Apple's recommended path. If you download an archive with a browser instead, run `xattr -d com.apple.quarantine ./tslink` once before the first run. |
+| macOS | Homebrew cask and `tar.gz` archives | The Homebrew cask uses GoReleaser `skip_upload: auto`, so pre-release tags can skip tap upload without failing the release. Use the archives for pre-release validation. macOS binaries are signed with a Developer ID certificate and notarized by Apple, so Gatekeeper runs them directly whether they arrive through the cask or a downloaded archive. |
 | Linux | `.deb`, `.rpm`, and `tar.gz` archives | Packages contain the native `tslink` binary. The first `tslink add` registers and starts the user service automatically. |
 | Windows | `.zip` archives | Windows support is archive-only today. There is no MSI/MSIX/Winget package or Windows code-signed installer yet. Use `tslink install` from the extracted binary to register Startup autostart. |
 
