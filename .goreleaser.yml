@@ -97,6 +97,8 @@ notarize:
         issuer_id: "{{ .Env.MACOS_NOTARY_ISSUER_ID }}"
         key_id: "{{ .Env.MACOS_NOTARY_KEY_ID }}"
         key: "{{ .Env.MACOS_NOTARY_KEY }}"
+        # Deliberately wait: a stable release must not ship until Apple has
+        # issued the ticket (measured 46 s locally; 20m is the config maximum).
         wait: true
         timeout: 20m
 nfpms:
@@ -160,9 +162,19 @@ homebrew_casks:
     # hung until killed (result 2, a prompt nobody can answer over SSH). No
     # postflight quarantine strip is needed; release.yml refuses stable tags
     # without the signing secrets so an unsigned cask can never be published.
+    # Templated: the same config renders a snapshot/pre-release cask without
+    # the secrets, whose binary is unsigned, and the caveats must say so.
     caveats: |
-      tslink is signed with a Developer ID certificate and notarized by Apple,
-      so macOS Gatekeeper runs it without any extra step.
+      {{- if isEnvSet "MACOS_SIGN_P12" }}
+      tslink is signed with a Developer ID certificate and notarized by Apple.
+      The first run needs network access so macOS can look up the notarization
+      ticket: a bare binary cannot carry a stapled ticket.
+      {{- else }}
+      This build is not signed or notarized (snapshot or pre-release), so macOS
+      Gatekeeper will block it. Install a stable release instead, or allow this
+      binary with:
+        xattr -d com.apple.quarantine "$(readlink -f "$(command -v tslink)")"
+      {{- end }}
 
 changelog:
   sort: asc

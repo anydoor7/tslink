@@ -58,6 +58,7 @@ jobs:
         env:
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
           MACOS_SIGN_P12: ${{ secrets.MACOS_SIGN_P12 }}
+          MACOS_SIGN_P12_PASSWORD: ${{ secrets.MACOS_SIGN_P12_PASSWORD }}
           MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
           MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
           MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
@@ -65,6 +66,14 @@ jobs:
           set -euo pipefail
           if [ -z "${MACOS_SIGN_P12}" ] || [ -z "${MACOS_NOTARY_KEY}" ] || [ -z "${MACOS_NOTARY_KEY_ID}" ] || [ -z "${MACOS_NOTARY_ISSUER_ID}" ]; then
             echo "::error::Stable releases require the macOS signing secrets (MACOS_SIGN_P12, MACOS_NOTARY_ISSUER_ID, MACOS_NOTARY_KEY_ID, MACOS_NOTARY_KEY): the published cask has no quarantine workaround, so an unsigned darwin binary would not run"
+            exit 1
+          fi
+          # MACOS_SIGN_P12_PASSWORD may legitimately be empty: the identity is
+          # exported as a PKCS#12 without a passphrase. Both blobs must decode as
+          # base64 (quill decodes them); the .p8 must be stored base64-encoded,
+          # not as PEM text. Nothing here prints a value.
+          if ! printf '%s' "${MACOS_SIGN_P12}" | base64 -d >/dev/null 2>&1 || ! printf '%s' "${MACOS_NOTARY_KEY}" | base64 -d >/dev/null 2>&1; then
+            echo "::error::MACOS_SIGN_P12 and MACOS_NOTARY_KEY must be base64-encoded blobs (store the .p8 as base64, not PEM text)"
             exit 1
           fi
           if [ -z "${HOMEBREW_TAP_GITHUB_TOKEN}" ]; then
