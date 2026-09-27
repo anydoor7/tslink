@@ -4,6 +4,7 @@ package daemon
 
 import (
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -136,16 +137,40 @@ func TestIsProcessRunningRejectsAForeignProcessEvenWhenArgvLooksLikeServe(t *tes
 	if _, err := os.Stat(shell); err != nil {
 		t.Skipf("no %s available: %v", shell, err)
 	}
-	cmd := exec.Command(shell, "-c", "while :; do sleep 1; done")
+	// Make "serve" a real script argument. Replacing a shell's -c arguments
+	// with {"tslink", "serve"} without this script exits the child immediately;
+	// an unreaped zombie can then look live while its executable is unreadable.
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "serve"), []byte("printf 'ready\\n'\nread x\n"), 0o600); err != nil {
+		t.Fatalf("write blocking foreign script: %v", err)
+	}
+	cmd := exec.Command(shell, "serve")
 	cmd.Args = []string{"tslink", "serve"}
 	cmd.Path = shell
+	cmd.Dir = dir
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatalf("open foreign process stdin: %v", err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatalf("open foreign process stdout: %v", err)
+	}
 	if err := cmd.Start(); err != nil {
-		t.Skipf("cannot start the disguised process here: %v", err)
+		t.Fatalf("start disguised foreign process: %v", err)
 	}
 	t.Cleanup(func() {
+		_ = stdin.Close()
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
 	})
+	ready := make([]byte, len("ready\n"))
+	if _, err := io.ReadFull(stdout, ready); err != nil || string(ready) != "ready\n" {
+		t.Fatalf("foreign process did not become ready: marker %q, error %v", ready, err)
+	}
+	if executablePath, err := processExecutable(cmd.Process.Pid); err != nil || executablePath == "" {
+		t.Fatalf("foreign process executable not inspectable while ready: %q, %v", executablePath, err)
+	}
 
 	if IsProcessRunning(cmd.Process.Pid) {
 		t.Fatalf("IsProcessRunning(%d) = true for a non-TSLink process whose argv claims to be a serve daemon", cmd.Process.Pid)

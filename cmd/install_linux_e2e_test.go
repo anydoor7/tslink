@@ -207,9 +207,10 @@ func systemdE2ERefuseStoredCredential(t *testing.T, good string) {
 }
 
 // systemdE2EEnv keeps the CLI processes off the keyring. Deliberately no
-// TSLINK_CONFIG_DIR: the unit file has no Environment= line, so the daemon
-// always uses the real ~/.config/tslink; giving the CLI a private config dir
-// would desync its pidfile view from MainPID and trip the ownership guard.
+// TSLINK_CONFIG_DIR: TestMain's exact E2E gate requires it unset, and install
+// writes the resolved config directory into the unit's Environment= line.
+// Giving these CLI calls a separate private directory would desync their
+// pidfile view from the unit's MainPID and trip the ownership guard.
 func systemdE2EEnv() []string {
 	return append(os.Environ(),
 		"TSLINK_DISABLE_KEYRING=1",

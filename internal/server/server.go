@@ -657,6 +657,12 @@ func (s *Server) syncNodesWithOutcome(ctx context.Context) (outcome syncOutcome,
 		}
 		return outcome, generationCtx.Err()
 	}
+	// An already-running node can predate the identity record (for example,
+	// during an in-process upgrade). Capture the service used to construct it
+	// before any preflight path can withdraw its listener.
+	s.mu.Lock()
+	identityFailures := s.recordRunningIdentitiesLocked()
+	s.mu.Unlock()
 
 	// Complete every policy read-modify-write before stopping a running node or
 	// deleting its enrolled state. A failed Funnel preflight is isolated to the
@@ -680,8 +686,14 @@ func (s *Server) syncNodesWithOutcome(ctx context.Context) (outcome syncOutcome,
 				// key/start errors identify any tag that truly cannot be used.
 				slog.Warn("degraded mode: skipped ACL tag ensure because policy access was forbidden", "reason", err.Error(), "tags", tagsToEnsure, "degraded_mode", true)
 			default:
-				// This return is intentionally before the stop phase: even a
-				// persistent policy failure cannot destroy a working identity.
+				// A global policy failure must leave unchanged services alone,
+				// but it cannot keep an older public surface reachable after
+				// the registry changes or removes it.
+				s.mu.Lock()
+				if generation == s.syncGeneration.Load() && s.stopDivergentPublicNodesLocked(desired, validationFailures) {
+					s.writeRuntimeSnapshotLocked(registryFingerprint, false)
+				}
+				s.mu.Unlock()
 				return outcome, fmt.Errorf("ensure ACL tags before restart: %w", err)
 			}
 		}
@@ -700,13 +712,15 @@ func (s *Server) syncNodesWithOutcome(ctx context.Context) (outcome syncOutcome,
 	s.globalFailure = nil
 	s.lastRegistryFingerprint = registryFingerprint
 	if err := s.prepareCredentialUpgradeLocked(reg.Services); err != nil {
+		if s.stopDivergentPublicNodesLocked(desired, validationFailures) {
+			s.writeRuntimeSnapshotLocked(registryFingerprint, false)
+		}
 		s.mu.Unlock()
 		return outcome, err
 	}
 
-	// Stop nodes for removed or changed services
-	var authIdentityRestartTargets []tailapi.CleanupTarget
-	var reloadErrs []error
+	// Stop nodes for removed or changed services. The common start path below
+	// compares durable identity and resets old state before any replacement Up.
 	for name, node := range s.nodes {
 		svc, exists := desired[name]
 		if !exists {
@@ -716,23 +730,35 @@ func (s *Server) syncNodesWithOutcome(ctx context.Context) (outcome syncOutcome,
 			slog.Warn("stopping node whose service no longer validates", "name", name, "code", failure.Error.Code)
 			s.stopNodeLocked(name, false)
 			s.serviceFailures[name] = failure
+		} else if identityErr, failed := identityFailures[name]; failed {
+			// A damaged or unwritable record affects this service only. Close
+			// any divergent public listener, while unrelated nodes still sync.
+			if node.funnelListenerActive && serviceChangedWithFallback(node.service, svc, s.controlURL) {
+				slog.Warn("closing changed public listener after node identity error", "name", name, "error", identityErr)
+				s.stopNodeLocked(name, false)
+			}
 		} else if failure, blocked := policyFailures[name]; blocked {
-			slog.Warn("keeping existing node identity because Funnel policy preflight failed", "name", name, "reason", failure.Error.Provision.Reason)
+			if node.funnelListenerActive && serviceChangedWithFallback(node.service, svc, s.controlURL) {
+				// A public listener serving an older target or identity must not
+				// remain reachable after the registry changes. Keep its local
+				// state for a later retry, but close the stale exposure now.
+				slog.Warn("closing changed public listener after Funnel policy preflight failed", "name", name, "reason", failure.Error.Provision.Reason)
+				s.stopNodeLocked(name, false)
+			} else {
+				// An unchanged public node or an older private node may keep
+				// serving while Funnel enrollment is unavailable.
+				slog.Warn("keeping existing node identity because Funnel policy preflight failed", "name", name, "reason", failure.Error.Provision.Reason)
+			}
 			s.serviceFailures[name] = failure
 		} else if serviceChangedWithFallback(node.service, svc, s.controlURL) {
-			authIdentityChanged := s.authIdentityChanged(node.service, svc)
-			slog.Info("restarting node", "name", name, "auth_identity_changed", authIdentityChanged)
+			slog.Info("restarting node", "name", name, "auth_identity_changed", s.authIdentityChanged(node.service, svc))
 			s.stopNodeLocked(name, false)
-			if authIdentityChanged {
-				authIdentityRestartTargets = append(authIdentityRestartTargets, tailapi.CleanupTargetForService(node.service))
-				if err := removeServiceStateDirFn(name); err != nil {
-					reloadErr := fmt.Errorf("remove state for auth identity change %q: %w", name, err)
-					slog.Warn("failed to remove node state before auth identity restart; continuing restart", "name", name, "error", err)
-					reloadErrs = append(reloadErrs, reloadErr)
-				}
-			}
 		}
 	}
+	// A prior failed preflight may have closed and removed a public node from
+	// memory. Its durable record lets a later removal finish deleting state,
+	// including after a process restart.
+	removedIdentityErr := s.removeAbsentNodeIdentities(desired)
 	for name, failure := range policyFailures {
 		s.serviceFailures[name] = failure
 	}
@@ -746,22 +772,20 @@ func (s *Server) syncNodesWithOutcome(ctx context.Context) (outcome syncOutcome,
 	}
 	s.mu.Unlock()
 
-	if err := s.cleanupAuthIdentityNodes(generationCtx, authIdentityRestartTargets); err != nil {
-		slog.Warn("failed to cleanup stale tailnet nodes before auth identity restart; continuing restart", "error", err)
-		reloadErrs = append(reloadErrs, err)
-	}
-
 	// Start nodes for new or changed services
-	var startErrs []error
+	startErrs := make([]error, 0, len(identityFailures))
+	for _, identityErr := range identityFailures {
+		startErrs = append(startErrs, identityErr)
+	}
 	if err := s.ensureRunning(generationCtx); err != nil {
-		syncErr := errors.Join(append(reloadErrs, err)...)
-		if syncErr != nil {
-			s.removeRuntimeSnapshot()
-		}
-		return outcome, syncErr
+		s.removeRuntimeSnapshot()
+		return outcome, errors.Join(removedIdentityErr, err)
 	}
 	for _, name := range desiredOrder {
 		svc := desired[name]
+		if _, failed := identityFailures[name]; failed {
+			continue
+		}
 		if s.nodeRunning(name) {
 			continue
 		}
@@ -781,6 +805,17 @@ func (s *Server) syncNodesWithOutcome(ctx context.Context) (outcome syncOutcome,
 		if err := s.ensureRunning(generationCtx); err != nil {
 			startErrs = append(startErrs, err)
 			break
+		}
+		cleanupErr, err := s.prepareNodeIdentity(generationCtx, svc)
+		if err != nil {
+			startErrs = append(startErrs, fmt.Errorf("start service %q: %w", name, err))
+			continue
+		}
+		if cleanupErr != nil {
+			// Preserve the prior sync error signal without letting a remote
+			// cleanup outage prevent safe local re-enrollment.
+			startErrs = append(startErrs, cleanupErr)
+			slog.Warn("remote cleanup failed after old state removal; continuing restart", "name", name, "error", cleanupErr)
 		}
 		provision := provisionOutcomes[name]
 		if err := s.startNodeLocked(generationCtx, svc, provision); err != nil {
@@ -807,7 +842,7 @@ func (s *Server) syncNodesWithOutcome(ctx context.Context) (outcome syncOutcome,
 		s.mu.Unlock()
 	}
 
-	syncErr := errors.Join(append(reloadErrs, startErrs...)...)
+	syncErr := errors.Join(append([]error{removedIdentityErr}, startErrs...)...)
 	if syncErr != nil {
 		s.removeRuntimeSnapshot()
 		return outcome, syncErr
@@ -1130,6 +1165,28 @@ func (s *Server) nodeRunning(name string) bool {
 	_, ok := s.nodes[name]
 	s.mu.RUnlock()
 	return ok
+}
+
+// stopDivergentPublicNodesLocked withdraws only public listeners whose saved
+// service has been removed, invalidated, or changed. It is used when a global
+// preflight error returns before the normal stop phase. The durable identity
+// record remains available for a later retry, including in a fresh process.
+func (s *Server) stopDivergentPublicNodesLocked(desired map[string]registry.Service, invalid map[string]runtimesnapshot.ServiceState) bool {
+	stopped := false
+	for name, node := range s.nodes {
+		if !node.funnelListenerActive {
+			continue
+		}
+		svc, exists := desired[name]
+		_, invalidService := invalid[name]
+		if exists && !invalidService && !serviceChangedWithFallback(node.service, svc, s.controlURL) {
+			continue
+		}
+		slog.Warn("closing divergent public listener before failed registry sync returns", "name", name, "registered", exists)
+		s.stopNodeLocked(name, !exists)
+		stopped = true
+	}
+	return stopped
 }
 
 func (s *Server) publishSyncResult(result syncResult) {
@@ -1579,6 +1636,15 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service, prov
 	svc = registry.EffectiveServiceAt(svc, serverNowFn())
 	if err := ValidateServiceForStartup(svc); err != nil {
 		return err
+	}
+	// Direct callers use the same durable guard as registry reconciliation.
+	// During reconciliation this is an inexpensive read after its preparation.
+	cleanupErr, err := s.prepareNodeIdentity(ctx, svc)
+	if err != nil {
+		return err
+	}
+	if cleanupErr != nil {
+		slog.Warn("remote cleanup failed after old state removal; continuing restart", "name", svc.Name, "error", cleanupErr)
 	}
 
 	nodesDir, err := config.NodesDir()

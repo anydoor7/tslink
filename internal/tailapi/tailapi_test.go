@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -25,7 +26,9 @@ func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 func setup(t *testing.T) {
 	t.Helper()
 	keyring.MockInit()
-	testenv.SetHome(t, t.TempDir())
+	home := t.TempDir()
+	testenv.SetHome(t, home)
+	t.Cleanup(credentials.SetMutationLockPathForTesting(filepath.Join(home, "credential-test.lock")))
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
@@ -44,6 +47,25 @@ func mustSetAPIKey(t *testing.T, key string) {
 	t.Helper()
 	if err := credentials.SetAPIKey(key); err != nil {
 		t.Fatalf("SetAPIKey() error = %v", err)
+	}
+}
+
+func TestFakeKeyringSetupsKeepCredentialMutationLockInTempHome(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(*testing.T)
+	}{
+		{name: "tailapi setup", setup: setup},
+		{name: "ACL setup", setup: aclSetup},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.setup(t)
+			mustSetAPIKey(t, "tskey-api-placeholder")
+			lockPath := filepath.Join(os.Getenv("HOME"), "credential-test.lock")
+			if _, err := os.Stat(lockPath); err != nil {
+				t.Fatalf("fake-keyring credential lock was not created inside temporary home %s: %v", lockPath, err)
+			}
+		})
 	}
 }
 

@@ -338,6 +338,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          required_license=(LICENSE NOTICE THIRD_PARTY_NOTICES.md)
+          bundled_docs=(COMMERCIAL.md COMMERCIAL_zh.md)
           expected=(darwin-amd64 darwin-arm64 linux-amd64 linux-arm64 windows-amd64 windows-arm64)
           for t in "${expected[@]}"; do
             dir="downloaded/tslink-${t}"

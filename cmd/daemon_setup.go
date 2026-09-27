@@ -19,6 +19,11 @@ import (
 
 const daemonSettleWindow = time.Second
 
+const (
+	managerQueryTimeout = 2 * time.Second
+	managerWaitDelay    = 500 * time.Millisecond
+)
+
 // Supervision separates current liveness from verified restart configuration.
 // Unknown ownership falls back to manual/none, with a diagnostic, never a
 // promise that this process will survive a reboot.
@@ -69,9 +74,21 @@ var (
 )
 
 func boundedManagerOutput(name string, args ...string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	return runBoundedManagerCommand(name, managerQueryTimeout, args...)
+}
+
+// Each manager process has a finite bound. The settle windows around repeated
+// queries do not interrupt a single blocked CombinedOutput call on their own.
+func runBoundedManagerCommand(name string, timeout time.Duration, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	return exec.CommandContext(ctx, name, args...).CombinedOutput()
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.WaitDelay = managerWaitDelay
+	output, err := cmd.CombinedOutput()
+	if ctx.Err() != nil {
+		return output, fmt.Errorf("%s command exceeded %s: %w", name, timeout, ctx.Err())
+	}
+	return output, err
 }
 
 func unmanagedSupervision(running bool, detail string) Supervision {

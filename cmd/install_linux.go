@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -32,10 +31,12 @@ var (
 	installDaemonArtifactConflictFn = func() error {
 		return detectInstallDaemonConflict("a systemd user unit is installed, but TSLink could not confirm that systemd owns the running daemon; stop the manual daemon with 'tslink stop' and retry 'tslink install'; keep the existing unit installed")
 	}
-	systemctlCombinedOutput = func(args ...string) ([]byte, error) { return exec.Command("systemctl", args...).CombinedOutput() }
-	systemdSettleTimeout    = 3 * time.Second
-	systemdSettleInterval   = 250 * time.Millisecond
-	systemdStableWindow     = daemonSettleWindow
+	systemctlCombinedOutput = func(args ...string) ([]byte, error) {
+		return runBoundedManagerCommand("systemctl", managerCommandTimeout(args...), args...)
+	}
+	systemdSettleTimeout  = 3 * time.Second
+	systemdSettleInterval = 250 * time.Millisecond
+	systemdStableWindow   = daemonSettleWindow
 	// Bounded like every other manager query: supervision detection now reads
 	// lingering on the status path, where an unbounded exec would be a hang.
 	loginctlCombinedOutputFn = func(args ...string) ([]byte, error) { return boundedManagerOutput("loginctl", args...) }

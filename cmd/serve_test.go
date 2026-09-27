@@ -314,6 +314,7 @@ func mockServeDefaults(t *testing.T, dir string) {
 
 	keyring.MockInit()
 	testenv.SetHome(t, dir)
+	t.Cleanup(credentials.SetMutationLockPathForTesting(filepath.Join(dir, "credential-test.lock")))
 
 	serveEnsureDirFn = func() error { return nil }
 	serveMigrateFn = func() bool { return false }
@@ -355,6 +356,18 @@ func mockServeDefaults(t *testing.T, dir string) {
 	serveWithPIDLockFn = func(path string, fn func() error) error { return fn() }
 	serveNewServerFn = func(authKey, controlURL string) (serverRunner, error) {
 		return &mockServer{}, nil
+	}
+}
+
+func TestMockServeDefaultsKeepsCredentialMutationLockInTempHome(t *testing.T) {
+	dir := t.TempDir()
+	mockServeDefaults(t, dir)
+	if err := credentials.SetAPIKey("tskey-api-placeholder"); err != nil {
+		t.Fatal(err)
+	}
+	lockPath := filepath.Join(dir, "credential-test.lock")
+	if _, err := os.Stat(lockPath); err != nil {
+		t.Fatalf("fake-keyring credential lock was not created inside temporary home %s: %v", lockPath, err)
 	}
 }
 

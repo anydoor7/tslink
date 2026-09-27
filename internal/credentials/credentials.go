@@ -150,6 +150,11 @@ func inspectCredentialStrict(label, keychainKey string, pathFunc func() (string,
 // and returns their join so callers never report success while residual
 // credential risk remains.
 func DeleteStoredCredentialsStrict() error {
+	unlock, err := acquireCredentialMutationLock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	return errors.Join(
 		deleteCredentialStrict("API key", keychainAPIKey, apiKeyPathFunc),
 		deleteCredentialStrict("OAuth client secret", keychainClientSecret, clientSecretPathFunc),
@@ -208,6 +213,18 @@ func deleteCredentialFilePathStrict(label, path string) error {
 }
 
 func storeCredentialWithBackend(
+	label, keychainKey, value string,
+	pathFunc func() (string, error),
+) (CredentialBackend, error) {
+	unlock, err := acquireCredentialMutationLock()
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
+	return storeCredentialWithBackendLocked(label, keychainKey, value, pathFunc)
+}
+
+func storeCredentialWithBackendLocked(
 	label, keychainKey, value string,
 	pathFunc func() (string, error),
 ) (CredentialBackend, error) {
@@ -296,6 +313,15 @@ func DeleteAPIKey() {
 // DeleteAPIKeyChecked removes the API key from all storage locations and
 // surfaces cleanup failures for callers that need transactional semantics.
 func DeleteAPIKeyChecked() error {
+	unlock, err := acquireCredentialMutationLock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	return deleteAPIKeyCheckedLocked()
+}
+
+func deleteAPIKeyCheckedLocked() error {
 	var errs []error
 	if keyringEnabledFunc() {
 		if err := keyringDeleteFunc(keychainService, keychainAPIKey); err != nil && !errors.Is(err, keyring.ErrNotFound) {
@@ -369,6 +395,15 @@ func DeleteClientSecret() {
 // DeleteClientSecretChecked removes the OAuth client secret from all storage
 // locations and surfaces cleanup failures for transactional credential swaps.
 func DeleteClientSecretChecked() error {
+	unlock, err := acquireCredentialMutationLock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	return deleteClientSecretCheckedLocked()
+}
+
+func deleteClientSecretCheckedLocked() error {
 	var errs []error
 	if keyringEnabledFunc() {
 		if err := keyringDeleteFunc(keychainService, keychainClientSecret); err != nil && !errors.Is(err, keyring.ErrNotFound) {
@@ -631,6 +666,12 @@ func GetAuthKey(ctx context.Context, opts AuthKeyOptions) (string, error) {
 // MigrateFromLegacy moves a file-based API key into the system keychain.
 // Safe to call even if there's nothing to migrate.
 func MigrateFromLegacy() (migrated bool) {
+	unlock, err := acquireCredentialMutationLock()
+	if err != nil {
+		return false
+	}
+	defer unlock()
+
 	path, err := apiKeyPathFunc()
 	if err != nil {
 		return false
@@ -644,14 +685,33 @@ func MigrateFromLegacy() (migrated bool) {
 		return false
 	}
 
-	// Attempt keychain migration
-	if keyringEnabledFunc() {
-		if err := keyringSetFunc(keychainService, keychainAPIKey, key); err != nil {
-			return false // keychain not available, keep the file
-		}
-	} else {
+	if !keyringEnabledFunc() {
 		return false
 	}
-	os.Remove(path)
+	stored, err := keyringGetFunc(keychainService, keychainAPIKey)
+	switch {
+	case err == nil && stored != "":
+		// The keyring is already authoritative. A different file value may be
+		// stale after rotation, so neither overwrite the keyring nor delete the
+		// conflicting file without an explicit operator decision.
+		if stored != key {
+			return false
+		}
+	case err == nil, errors.Is(err, keyring.ErrNotFound):
+		if err := keyringSetFunc(keychainService, keychainAPIKey, key); err != nil {
+			return false
+		}
+		stored, err = keyringGetFunc(keychainService, keychainAPIKey)
+		if err != nil || stored != key {
+			return false
+		}
+	default:
+		// An unreadable keyring might contain a newer credential. Refuse to
+		// replace it based on the mere presence of an old file.
+		return false
+	}
+	if err := os.Remove(path); err != nil {
+		return false
+	}
 	return true
 }

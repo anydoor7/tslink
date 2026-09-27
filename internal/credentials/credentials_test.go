@@ -22,9 +22,20 @@ func setup(t *testing.T) {
 	t.Helper()
 	keyring.MockInit()
 	testenv.SetHome(t, t.TempDir())
+	isolateMutationLock(t)
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
+}
+
+func isolateMutationLock(t *testing.T) {
+	t.Helper()
+	oldLockPath := credentialMutationLockPathFunc
+	lockPath := filepath.Join(t.TempDir(), "credentials.lock")
+	credentialMutationLockPathFunc = func() (string, error) {
+		return lockPath, nil
+	}
+	t.Cleanup(func() { credentialMutationLockPathFunc = oldLockPath })
 }
 
 func setInvalidConfigHome(t *testing.T) {
@@ -34,6 +45,7 @@ func setInvalidConfigHome(t *testing.T) {
 		t.Fatalf("WriteFile(invalid home) error = %v", err)
 	}
 	testenv.SetHome(t, home)
+	isolateMutationLock(t)
 }
 
 func assertWindowsFileFallbackDisabled(t *testing.T, backend CredentialBackend, err error, path string) bool {

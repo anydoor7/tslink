@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -29,7 +30,9 @@ import (
 func aclSetup(t *testing.T) {
 	t.Helper()
 	keyring.MockInit()
-	testenv.SetHome(t, t.TempDir())
+	home := t.TempDir()
+	testenv.SetHome(t, home)
+	t.Cleanup(credentials.SetMutationLockPathForTesting(filepath.Join(home, "credential-test.lock")))
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}

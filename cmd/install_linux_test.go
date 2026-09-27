@@ -1135,6 +1135,8 @@ func TestLinuxUninstallRunsSystemctlPathsAndSurfacesWarnings(t *testing.T) {
 	t.Cleanup(func() {
 		linuxUserHomeDirFn = oldHome
 		systemctlCombinedOutput = oldSystemctl
+		uninstallCmd.SetOut(nil)
+		uninstallCmd.SetErr(nil)
 	})
 
 	linuxUserHomeDirFn = func() (string, error) { return home, nil }
@@ -1152,6 +1154,9 @@ func TestLinuxUninstallRunsSystemctlPathsAndSurfacesWarnings(t *testing.T) {
 		if len(args) == 3 && args[1] == "stop" {
 			return []byte("stop stderr"), errors.New("stop failed")
 		}
+		if len(args) > 1 && args[1] == "show" {
+			return []byte("ActiveState=inactive\nMainPID=0\n"), nil
+		}
 		return nil, nil
 	}
 
@@ -1165,6 +1170,7 @@ func TestLinuxUninstallRunsSystemctlPathsAndSurfacesWarnings(t *testing.T) {
 
 	wantCalls := []string{
 		strings.Join([]string{"--user", "stop", systemdServiceName}, "\x00"),
+		strings.Join([]string{"--user", "show", systemdServiceName, "--property=ActiveState", "--property=MainPID", "--no-pager"}, "\x00"),
 		strings.Join([]string{"--user", "disable", systemdServiceName}, "\x00"),
 		strings.Join([]string{"--user", "reset-failed", systemdServiceName}, "\x00"),
 		strings.Join([]string{"--user", "daemon-reload"}, "\x00"),
@@ -1177,6 +1183,67 @@ func TestLinuxUninstallRunsSystemctlPathsAndSurfacesWarnings(t *testing.T) {
 	}
 	if _, err := os.Stat(servicePath); !os.IsNotExist(err) {
 		t.Fatalf("service file should be removed, stat error = %v", err)
+	}
+}
+
+func TestLinuxUninstallPreservesUnitWhenFailedStopCannotProveAbsence(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		showOutput string
+		showErr    error
+	}{
+		{name: "still running", showOutput: "ActiveState=active\nMainPID=288\n"},
+		{name: "state unavailable", showErr: errors.New("manager unavailable")},
+		{name: "empty answer"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			oldHome, oldSystemctl := linuxUserHomeDirFn, systemctlCombinedOutput
+			t.Cleanup(func() {
+				linuxUserHomeDirFn, systemctlCombinedOutput = oldHome, oldSystemctl
+				uninstallCmd.SetOut(nil)
+				uninstallCmd.SetErr(nil)
+			})
+			linuxUserHomeDirFn = func() (string, error) { return home, nil }
+			path := filepath.Join(home, ".config", "systemd", "user", systemdServiceName)
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			const original = "old unit must remain\n"
+			if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			var calls []string
+			systemctlCombinedOutput = func(args ...string) ([]byte, error) {
+				calls = append(calls, args[1])
+				switch args[1] {
+				case "stop":
+					return []byte("stop refused"), errors.New("stop failed")
+				case "show":
+					return []byte(tc.showOutput), tc.showErr
+				default:
+					t.Fatalf("uninstall mutated manager after uncertain stop: %v", args)
+					return nil, nil
+				}
+			}
+			var out, errOut bytes.Buffer
+			uninstallCmd.SetOut(&out)
+			uninstallCmd.SetErr(&errOut)
+			err := uninstallCmd.RunE(uninstallCmd, nil)
+			if err == nil || !strings.Contains(err.Error(), "unit retained") || !strings.Contains(err.Error(), "stop failed") {
+				t.Fatalf("uninstall error = %v, want failed stop with unit retained", err)
+			}
+			if strings.Join(calls, ",") != "stop,show" {
+				t.Fatalf("manager calls = %v, want stop and read-only show only", calls)
+			}
+			got, readErr := os.ReadFile(path)
+			if readErr != nil || string(got) != original {
+				t.Fatalf("unit bytes changed after failed stop: %q, %v", got, readErr)
+			}
+			if strings.Contains(out.String(), "removed") {
+				t.Fatalf("uninstall claimed removal: %s", out.String())
+			}
+		})
 	}
 }
 

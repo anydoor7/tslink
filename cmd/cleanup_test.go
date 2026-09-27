@@ -101,7 +101,7 @@ func TestCleanupCommandDefaultsToDryRunAndPassesManageACLOptIn(t *testing.T) {
 	var got lifecycle.Options
 	cleanupReconcileFn = func(_ context.Context, options lifecycle.Options) (lifecycle.Result, error) {
 		got = options
-		return lifecycle.Result{DryRun: options.DryRun, ExpiredFunnels: []string{"public"}, DevicesWouldDelete: []string{"orphan"}, ACLAction: lifecycle.ACLWouldDelete}, nil
+		return lifecycle.Result{DryRun: options.DryRun, ExpiredFunnels: []string{"public"}, DevicesWouldDelete: []string{"orphan"}, ACLAction: lifecycle.ACLSkipped}, nil
 	}
 	if err := command.Flags().Set("manage-acl", "true"); err != nil {
 		t.Fatal(err)

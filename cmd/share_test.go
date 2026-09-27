@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -22,6 +23,15 @@ import (
 const stopLivenessHelperReady = "tslink-stop-liveness-helper-ready"
 
 func TestMain(m *testing.M) {
+	dedicatedE2E := dedicatedSystemdE2EInvocation()
+	if os.Getenv("TSLINK_SYSTEMD_E2E") == "1" && !dedicatedE2E {
+		// The E2E test itself can remove the service-manager PATH guard after
+		// checking this environment variable. Reject a broad/missing selector
+		// before any test body can reach that opt-out with a private config dir
+		// that hides the host credential preflight.
+		fmt.Fprintln(os.Stderr, "systemd E2E requires Linux and one exact -test.run=^TestSystemdInstallE2E$ selector")
+		os.Exit(2)
+	}
 	if os.Getenv("TSLINK_STOP_LIVENESS_HELPER") == "1" {
 		fmt.Fprintln(os.Stdout, stopLivenessHelperReady)
 		for {
@@ -32,10 +42,26 @@ func TestMain(m *testing.M) {
 	// Tests that reach config.Dir() without their own isolation must never
 	// touch the operator's real ~/.config/tslink. Point the whole package at a
 	// throwaway config dir; individual tests still override it with t.Setenv.
-	if os.Getenv(config.ConfigDirEnv) == "" {
-		if isolated, err := os.MkdirTemp("", "tslink-cmd-test-config-"); err == nil {
-			os.Setenv(config.ConfigDirEnv, isolated)
-			defer os.RemoveAll(isolated)
+	var isolatedConfig string
+	if dedicatedE2E {
+		// This one disposable-VM test must inspect the host's actual credential
+		// files before it enables a real systemd unit. A private config here
+		// would make that safety check blind to the default user's files.
+		if os.Getenv(config.ConfigDirEnv) != "" {
+			fmt.Fprintln(os.Stderr, "systemd E2E requires TSLINK_CONFIG_DIR unset so the host credential check is complete")
+			os.Exit(2)
+		}
+	} else {
+		var err error
+		isolatedConfig, err = os.MkdirTemp("", "tslink-cmd-test-config-")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "cannot isolate cmd tests: %v\n", err)
+			os.Exit(2)
+		}
+		if err := os.Setenv(config.ConfigDirEnv, isolatedConfig); err != nil {
+			_ = os.RemoveAll(isolatedConfig)
+			fmt.Fprintf(os.Stderr, "cannot set isolated cmd config: %v\n", err)
+			os.Exit(2)
 		}
 	}
 
@@ -70,16 +96,38 @@ func TestMain(m *testing.M) {
 			fmt.Fprintf(os.Stderr, "warning: remove compiled binary root %s: %v\n", tslinkBinaryRoot, err)
 		}
 	}
-	exitTestMain(code)
+	if isolatedConfig != "" {
+		if err := os.RemoveAll(isolatedConfig); err != nil {
+			fmt.Fprintf(os.Stderr, "cannot remove isolated cmd config: %v\n", err)
+			if code == 0 {
+				code = 1
+			}
+		}
+	}
+	os.Exit(code)
 }
 
-// exitTestMain runs deferred cleanups (the isolated config dir) before exiting.
-func exitTestMain(code int) {
-	if code != 0 {
-		defer os.Exit(code)
-		return
+func dedicatedSystemdE2EInvocation() bool {
+	if runtime.GOOS != "linux" || os.Getenv("TSLINK_SYSTEMD_E2E") != "1" {
+		return false
 	}
-	defer os.Exit(0)
+	selectors := 0
+	for i, arg := range os.Args {
+		if strings.HasPrefix(arg, "-test.run=") || strings.HasPrefix(arg, "--test.run=") {
+			selectors++
+			if strings.SplitN(arg, "=", 2)[1] != "^TestSystemdInstallE2E$" {
+				return false
+			}
+		} else if arg == "-test.run" || arg == "--test.run" {
+			selectors++
+			if i+1 >= len(os.Args) || os.Args[i+1] != "^TestSystemdInstallE2E$" {
+				return false
+			}
+		}
+	}
+	// A repeated selector can have different effective semantics depending on
+	// flag parsing. Require one exact selector before bypassing isolation.
+	return selectors == 1
 }
 
 func restoreShareSeams(t *testing.T) {

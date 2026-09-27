@@ -21,6 +21,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -404,6 +405,85 @@ func TestCandidateDeclaresRequiredGates(t *testing.T) {
 		if _, ok := wf.Jobs[job]; !ok {
 			t.Errorf("%s is missing required gate job %q", candidateWorkflow, job)
 		}
+	}
+}
+
+// Execute the workflow's own Bash block, so a missing array declaration or a
+// renamed payload can no longer pass a source-text-only assertion.
+func TestArtifactVerifyChecksEveryBundledDocument(t *testing.T) {
+	body := readWorkflows(t)[candidateWorkflow]
+	var workflow struct {
+		Jobs map[string]struct {
+			Steps []struct {
+				Name string `yaml:"name"`
+				Run  string `yaml:"run"`
+			} `yaml:"steps"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal(body, &workflow); err != nil {
+		t.Fatal(err)
+	}
+	var script string
+	for _, step := range workflow.Jobs["artifact-verify"].Steps {
+		if step.Name == "Verify content, license payload, and hashes" {
+			script = step.Run
+		}
+	}
+	if script == "" {
+		t.Fatal("artifact-verify Bash step is missing")
+	}
+
+	var expectedFiles = []string{"LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md", "COMMERCIAL.md", "COMMERCIAL_zh.md"}
+	var targets = []string{"darwin-amd64", "darwin-arm64", "linux-amd64", "linux-arm64", "windows-amd64", "windows-arm64"}
+	makeFixture := func(t *testing.T) string {
+		t.Helper()
+		dir := t.TempDir()
+		for _, target := range targets {
+			payloadDir := filepath.Join(dir, "downloaded", "tslink-"+target)
+			if err := os.MkdirAll(payloadDir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			binary := "tslink"
+			if strings.HasPrefix(target, "windows-") {
+				binary = "tslink.exe"
+			}
+			for _, name := range append([]string{binary}, expectedFiles...) {
+				if err := os.WriteFile(filepath.Join(payloadDir, name), []byte("fixture\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+		return dir
+	}
+	run := func(dir string) ([]byte, error) {
+		cmd := exec.Command("bash", "-c", script)
+		cmd.Dir = dir
+		return cmd.CombinedOutput()
+	}
+
+	t.Run("complete payload reaches checksum", func(t *testing.T) {
+		dir := makeFixture(t)
+		out, err := run(dir)
+		if err != nil {
+			t.Fatalf("complete artifact step failed: %v\n%s", err, out)
+		}
+		hashes, err := os.ReadFile(filepath.Join(dir, "candidate-artifacts.sha256"))
+		if err != nil || len(strings.Split(strings.TrimSpace(string(hashes)), "\n")) != len(targets)*(len(expectedFiles)+1) {
+			t.Fatalf("checksum file did not include every payload: %v, %s", err, hashes)
+		}
+	})
+	for _, missing := range expectedFiles {
+		t.Run("missing "+missing, func(t *testing.T) {
+			dir := makeFixture(t)
+			if err := os.Remove(filepath.Join(dir, "downloaded", "tslink-linux-arm64", missing)); err != nil {
+				t.Fatal(err)
+			}
+			out, err := run(dir)
+			want := "missing " + missing + " in linux-arm64"
+			if err == nil || !strings.Contains(string(out), want) {
+				t.Fatalf("missing payload did not fail at the file check: err=%v output=%s", err, out)
+			}
+		})
 	}
 }
 

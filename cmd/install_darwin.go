@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -68,7 +67,7 @@ var (
 	launchAgentBootoutTimeout      = launchAgentShutdownTimeout
 	launchAgentBootoutPollInterval = launchAgentStartupPollInterval
 	launchctlCombinedOutput        = func(args ...string) ([]byte, error) {
-		return exec.Command("launchctl", args...).CombinedOutput()
+		return runBoundedManagerCommand("launchctl", managerCommandTimeout(args...), args...)
 	}
 )
 

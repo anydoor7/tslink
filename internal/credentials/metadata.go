@@ -515,12 +515,20 @@ func BackfillMetadata(now time.Time) ([]string, error) {
 // every supported store and reads back each store, mirroring
 // DeleteStoredCredentialsStrict for selective logout.
 func DeleteStoredCredentialKindStrict(slot string) error {
+	if !ValidSlot(slot) {
+		return fmt.Errorf("%w: %q", ErrUnknownCredentialSlot, slot)
+	}
+	unlock, err := acquireCredentialMutationLock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
 	switch slot {
 	case SlotAPIKey:
 		return deleteCredentialStrict("API key", keychainAPIKey, apiKeyPathFunc)
 	case SlotClientSecret:
 		return deleteCredentialStrict("OAuth client secret", keychainClientSecret, clientSecretPathFunc)
-	default:
-		return fmt.Errorf("%w: %q", ErrUnknownCredentialSlot, slot)
 	}
+	return nil
 }

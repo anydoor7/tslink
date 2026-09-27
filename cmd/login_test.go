@@ -24,6 +24,7 @@ func setupLoginTest(t *testing.T) string {
 	dir := t.TempDir()
 	testenv.SetHome(t, dir)
 	keyring.MockInit()
+	t.Cleanup(credentials.SetMutationLockPathForTesting(filepath.Join(dir, "credential-test.lock")))
 	// Cobra resolves nil writers dynamically from the current os.Stdout/Stderr.
 	// Reset all three so a shuffled test cannot retain another test's buffer (or
 	// a concrete pre-redirection os.Stderr pointer).
@@ -41,6 +42,13 @@ func setupLoginTest(t *testing.T) string {
 		t.Fatalf("mkdir: %v", err)
 	}
 	return dir
+}
+
+func mockLoginMutationTransaction(t *testing.T) {
+	t.Helper()
+	old := loginMutationTransactionFn
+	loginMutationTransactionFn = func(fn func(*credentials.MutationTransaction) error) error { return fn(nil) }
+	t.Cleanup(func() { loginMutationTransactionFn = old })
 }
 
 // mockStdin replaces loginStdinReaderFn with a reader that returns the given input lines.
@@ -264,6 +272,7 @@ func TestLoginCredentialFlow_APIToken_VerifyFails(t *testing.T) {
 
 func TestLoginCredentialFlow_ClientSecret_SaveFails(t *testing.T) {
 	dir := setupLoginTest(t)
+	mockLoginMutationTransaction(t)
 	mockStdin(t, "2", "tskey-client-test-secret-12345")
 	mockClientSecretSuccess(t) // activation succeeds so the save failure is what surfaces
 
@@ -601,6 +610,7 @@ func TestLoginWithAPIKeyJSONDefaultReturnsSideEffectPlanWithoutACLWrite(t *testi
 
 func TestLoginWithAPIKeyJSONReportsFileBackendAndDowngrade(t *testing.T) {
 	setupLoginTest(t)
+	mockLoginMutationTransaction(t)
 	resetLoginFlags(t)
 	oldSet := loginSetAPIKeyFn
 	oldGetAPI := loginGetAPIKeyFn
@@ -648,6 +658,7 @@ func TestLoginWithAPIKeyJSONReportsFileBackendAndDowngrade(t *testing.T) {
 
 func TestLoginWithClientSecretJSONReportsFileBackendAndDowngrade(t *testing.T) {
 	setupLoginTest(t)
+	mockLoginMutationTransaction(t)
 	resetLoginFlags(t)
 	oldSave := loginSaveClientSecretFn
 	oldGetAPI := loginGetAPIKeyFn

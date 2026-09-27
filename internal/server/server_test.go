@@ -5071,7 +5071,22 @@ func TestSyncNodes_CleanupFailureStillRestartsChangedService(t *testing.T) {
 	}
 	oldNode := newNode(t, oldSvc)
 	s.nodes["app"] = oldNode
+	nodesDir, err := config.NodesDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateDir := filepath.Join(nodesDir, "app")
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(stateDir, "old-state")
+	if err := os.WriteFile(marker, []byte("old"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	s.SetCleanupStaleNodesFn(func(ctx context.Context, targets []tailapi.CleanupTarget) (tailapi.CleanupResult, error) {
+		if _, err := os.Stat(marker); !os.IsNotExist(err) {
+			t.Fatalf("remote cleanup ran before old local state was absent: %v", err)
+		}
 		return tailapi.CleanupResult{}, errors.New("tailnet cleanup down")
 	})
 
@@ -5090,7 +5105,7 @@ func TestSyncNodes_CleanupFailureStillRestartsChangedService(t *testing.T) {
 	}
 }
 
-func TestSyncNodes_StateRemovalFailureStillRestartsChangedService(t *testing.T) {
+func TestSyncNodes_StateRemovalFailureBlocksChangedIdentityRestart(t *testing.T) {
 	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
@@ -5128,11 +5143,11 @@ func TestSyncNodes_StateRemovalFailureStillRestartsChangedService(t *testing.T) 
 	if !oldNode.closed.Load() {
 		t.Fatal("old node should be stopped before restart")
 	}
-	if strings.Join(started, ",") != "app" {
-		t.Fatalf("started = %v, want [app]", started)
+	if len(started) != 0 {
+		t.Fatalf("started = %v, want no new node while old state remains", started)
 	}
-	if got := s.nodes["app"].service.Tags; len(got) != 1 || got[0] != "tag:new" {
-		t.Fatalf("running service tags = %v, want [tag:new]", got)
+	if _, running := s.nodes["app"]; running {
+		t.Fatal("changed identity reused old enrolled state after removal failed")
 	}
 }
 

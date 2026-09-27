@@ -88,16 +88,17 @@ var (
 		}
 		return nil
 	}
-	loginSaveClientSecretFn   = credentials.SaveClientSecretWithBackend
-	loginGetClientSecretFn    = credentials.GetClientSecret
-	loginDeleteClientSecretFn = credentials.DeleteClientSecretChecked
-	loginReadSlotMetaFn       = credentials.ReadSlotMetadata
-	loginWriteSlotMetaFn      = credentials.WriteSlotMetadata
-	loginDeleteSlotMetaFn     = credentials.DeleteSlotMetadata
-	loginNowFn                = func() time.Time { return time.Now().UTC() }
-	loginOpenBrowserFn        = openBrowser
-	loginCIEnvironmentSetFn   = ciEnvironmentSet
-	loginIsTerminalFn         = func() bool { return term.IsTerminal(int(os.Stdin.Fd())) }
+	loginSaveClientSecretFn    = credentials.SaveClientSecretWithBackend
+	loginGetClientSecretFn     = credentials.GetClientSecret
+	loginDeleteClientSecretFn  = credentials.DeleteClientSecretChecked
+	loginReadSlotMetaFn        = credentials.ReadSlotMetadata
+	loginWriteSlotMetaFn       = credentials.WriteSlotMetadata
+	loginDeleteSlotMetaFn      = credentials.DeleteSlotMetadata
+	loginMutationTransactionFn = credentials.WithMutationTransaction
+	loginNowFn                 = func() time.Time { return time.Now().UTC() }
+	loginOpenBrowserFn         = openBrowser
+	loginCIEnvironmentSetFn    = ciEnvironmentSet
+	loginIsTerminalFn          = func() bool { return term.IsTerminal(int(os.Stdin.Fd())) }
 	// loginActivateClientSecretFn semantically proves a candidate OAuth client
 	// secret is usable by completing a real, disposable, ephemeral tsnet Up with
 	// it. Production wires the real path (activateClientSecretViaUp); tests inject
@@ -462,7 +463,9 @@ type loginCredentialStore interface {
 	DeleteMeta(loginCredentialMode) error
 }
 
-type defaultLoginCredentialStore struct{}
+type defaultLoginCredentialStore struct {
+	transaction *credentials.MutationTransaction
+}
 
 func (defaultLoginCredentialStore) Read(mode loginCredentialMode) (string, error) {
 	switch mode {
@@ -475,22 +478,34 @@ func (defaultLoginCredentialStore) Read(mode loginCredentialMode) (string, error
 	}
 }
 
-func (defaultLoginCredentialStore) Write(mode loginCredentialMode, value string) (credentials.CredentialBackend, error) {
+func (store defaultLoginCredentialStore) Write(mode loginCredentialMode, value string) (credentials.CredentialBackend, error) {
 	switch mode {
 	case loginCredentialModeAPIKey:
+		if store.transaction != nil {
+			return store.transaction.SetAPIKeyWithBackend(value)
+		}
 		return loginSetAPIKeyFn(value)
 	case loginCredentialModeClientSecret:
+		if store.transaction != nil {
+			return store.transaction.SaveClientSecretWithBackend(value)
+		}
 		return loginSaveClientSecretFn(value)
 	default:
 		return "", fmt.Errorf("unsupported credential mode")
 	}
 }
 
-func (defaultLoginCredentialStore) Delete(mode loginCredentialMode) error {
+func (store defaultLoginCredentialStore) Delete(mode loginCredentialMode) error {
 	switch mode {
 	case loginCredentialModeAPIKey:
+		if store.transaction != nil {
+			return store.transaction.DeleteAPIKeyChecked()
+		}
 		return loginDeleteAPIKeyFn()
 	case loginCredentialModeClientSecret:
+		if store.transaction != nil {
+			return store.transaction.DeleteClientSecretChecked()
+		}
 		return loginDeleteClientSecretFn()
 	default:
 		return fmt.Errorf("unsupported credential mode")
@@ -690,6 +705,26 @@ func replaceLoginCredential(ctx context.Context, store loginCredentialStore, mod
 // metadata is written after the value read-back succeeds, and every failure
 // after the first write rolls both values and metadata back to the snapshot.
 func commitLoginCredential(ctx context.Context, store loginCredentialStore, mode loginCredentialMode, value string, opts loginReplaceOptions) (loginCommitResult, error) {
+	if liveStore, ok := store.(defaultLoginCredentialStore); ok && liveStore.transaction == nil {
+		// Candidate validation may contact the tailnet. Keep that bounded work
+		// outside the local credential lock, then take the lock before reading
+		// the snapshot used for commit and rollback.
+		if err := validateLoginCredentialCandidate(ctx, mode, value); err != nil {
+			return loginCommitResult{}, err
+		}
+		var result loginCommitResult
+		err := loginMutationTransactionFn(func(transaction *credentials.MutationTransaction) error {
+			liveStore.transaction = transaction
+			var commitErr error
+			result, commitErr = commitLoginCredentialValidated(ctx, liveStore, mode, value, opts, true)
+			return commitErr
+		})
+		return result, err
+	}
+	return commitLoginCredentialValidated(ctx, store, mode, value, opts, false)
+}
+
+func commitLoginCredentialValidated(ctx context.Context, store loginCredentialStore, mode loginCredentialMode, value string, opts loginReplaceOptions, candidateValidated bool) (loginCommitResult, error) {
 	if opts.Now.IsZero() {
 		opts.Now = loginNowFn()
 	}
@@ -697,8 +732,10 @@ func commitLoginCredential(ctx context.Context, store loginCredentialStore, mode
 	if err != nil {
 		return loginCommitResult{}, err
 	}
-	if err := validateLoginCredentialCandidate(ctx, mode, value); err != nil {
-		return loginCommitResult{}, err
+	if !candidateValidated {
+		if err := validateLoginCredentialCandidate(ctx, mode, value); err != nil {
+			return loginCommitResult{}, err
+		}
 	}
 
 	backend, err := store.Write(mode, value)

@@ -29,15 +29,17 @@ func init() {
 		Use:   "cleanup",
 		Args:  cobra.NoArgs,
 		Short: "Reconcile expired Funnel exposure and TSLink-owned resources",
-		Long: `Reconcile Funnel expiration, orphan TSLink-owned tailnet devices, and
-optionally the unused shared Funnel ACL grant.
+		Long: `Reconcile Funnel expiration and orphan TSLink-owned tailnet devices.
 
 The command defaults to dry-run because it is an explicit one-shot remote
 maintenance entry point. Use --dry-run=false to apply. Device deletion is
 authorized only by a durable exact NodeID previously observed from that
-service's tsnet node; hostname matches alone are always protected. Remote ACL
-removal additionally requires --manage-acl and retains the canonical-grant and
-ETag guards of the normal tag deletion path.`,
+service's tsnet node; hostname matches alone are always protected.
+
+The shared Funnel ACL grant is never removed by local reconciliation, because
+another installation may still use it. --manage-acl reports this safety
+decision; global revocation requires separate tailnet-wide review and the
+explicit tags delete-remote command with --force and --manage-acl.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			adopt, _ := cmd.Flags().GetString("adopt")
 			force, _ := cmd.Flags().GetBool("force")
@@ -162,7 +164,7 @@ ETag guards of the normal tag deletion path.`,
 		},
 	}
 	cleanupCmd.Flags().Bool("dry-run", true, "Preview reconciliation without registry, device, or ACL deletion (set --dry-run=false to apply)")
-	cleanupCmd.Flags().Bool("manage-acl", false, "Opt in to removing the unused canonical Funnel tag owner and nodeAttrs grant")
+	cleanupCmd.Flags().Bool("manage-acl", false, "Report shared Funnel ACL status; local cleanup never revokes the tailnet-wide grant")
 	cleanupCmd.Flags().String("adopt", "", "Preview or record exact ownership for one literal TSLink-tagged legacy device hostname (writing requires --dry-run=false)")
 	cleanupCmd.Flags().Bool("force", false, "Confirm the explicitly named --adopt migration")
 	rootCmd.AddCommand(cleanupCmd)

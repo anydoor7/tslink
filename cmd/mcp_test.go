@@ -374,7 +374,6 @@ func TestMCPRecordLimitReaderCountsAndGuards(t *testing.T) {
 			t.Fatal(err)
 		}
 		// The limit reader stops before EOF, so pull once more to reach it.
-		go reader.Release()
 		buffer := make([]byte, 8)
 		if _, err := reader.Read(buffer); err != io.EOF {
 			t.Fatalf("read after input = %v, want io.EOF", err)
@@ -1172,6 +1171,134 @@ func TestMCPOversizeRecordIsBounded(t *testing.T) {
 	frames := decodeMCPResponses(t, stdout)
 	if len(frames) != 1 || frames[0]["id"] != float64(1) || mcpFrameError(frames[0]) != nil {
 		t.Fatalf("under-limit record = %+v", frames)
+	}
+}
+
+func TestMCPLargeUnderLimitRequestWithInteractiveStdin(t *testing.T) {
+	// An MCP host normally keeps stdin open until it receives a response.
+	// This control uses the same large ping as the finite-input test, but
+	// closes stdin only after reading the reply.
+	frame := `{"jsonrpc":"2.0","id":1,"method":"ping","params":{"note":"` +
+		strings.Repeat("a", mcpMaxRecordBytes/2) + `"}}` + "\n"
+	inReader, inWriter := io.Pipe()
+	outReader, outWriter := io.Pipe()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- runMCPStdio(ctx, inReader, outWriter, fakeMCPActions()) }()
+	t.Cleanup(func() {
+		_ = inWriter.Close()
+		_ = outReader.Close()
+	})
+	go func() { _, _ = io.WriteString(inWriter, frame) }()
+	reply := make(chan string, 1)
+	go func() {
+		line, _ := bufio.NewReader(outReader).ReadString('\n')
+		reply <- line
+	}()
+	select {
+	case line := <-reply:
+		frames := decodeMCPResponses(t, line)
+		if len(frames) != 1 || frames[0]["id"] != float64(1) || mcpFrameError(frames[0]) != nil {
+			t.Fatalf("interactive under-limit reply = %+v", frames)
+		}
+	case <-ctx.Done():
+		t.Fatal("interactive MCP host did not receive a reply")
+	}
+	_ = inWriter.Close()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("interactive MCP session ended with error: %v", err)
+		}
+	case <-ctx.Done():
+		t.Fatal("interactive MCP session did not close after stdin EOF")
+	}
+}
+
+func TestMCPCancelInterruptsActiveTool(t *testing.T) {
+	for _, closeInput := range []bool{false, true} {
+		t.Run(fmt.Sprintf("stdin_eof=%v", closeInput), func(t *testing.T) {
+			actions := fakeMCPActions()
+			started := make(chan struct{})
+			stopped := make(chan struct{})
+			actions.share = func(ctx context.Context, _ shareRequest) (ShareResult, error) {
+				close(started)
+				<-ctx.Done()
+				close(stopped)
+				return ShareResult{}, ctx.Err()
+			}
+			input := initializedMCPInput(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"share","arguments":{"target":"8080"}}}`)
+			inReader, inWriter := io.Pipe()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			defer inWriter.Close()
+			var stdout bytes.Buffer
+			done := make(chan error, 1)
+			go func() { done <- runMCPStdio(ctx, inReader, &stdout, actions) }()
+			go func() {
+				_, _ = io.WriteString(inWriter, input)
+				if closeInput {
+					_ = inWriter.Close()
+				}
+			}()
+			select {
+			case <-started:
+			case <-time.After(3 * time.Second):
+				t.Fatal("tool was not dispatched")
+			}
+			cancel()
+			select {
+			case <-stopped:
+			case <-time.After(time.Second):
+				t.Fatal("context-aware tool kept running after caller cancellation")
+			}
+			select {
+			case err := <-done:
+				if !errors.Is(err, context.Canceled) {
+					t.Fatalf("session cancellation error = %v", err)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("MCP session did not return after cancellation")
+			}
+		})
+	}
+}
+
+func TestMCPFiniteEOFBoundaryCases(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		input     string
+		wantID    float64
+		wantError bool
+	}{
+		{"multiline valid JSON", "{\n\"jsonrpc\":\"2.0\",\n\"id\":1,\"method\":\"ping\"\n}\n", 1, false},
+		{"no trailing newline", `{"jsonrpc":"2.0","id":2,"method":"ping"}`, 2, false},
+		{"multiple buffered records", `{"jsonrpc":"2.0","id":3,"method":"ping"}` + "\n" + `{"jsonrpc":"2.0","id":4,"method":"ping"}` + "\n", 4, false},
+		{"whitespace only", "  \n\t\n", 0, false},
+		{"truncated JSON", `{"jsonrpc":"2.0","id":5,"method":"ping"`, 0, true},
+		{"notification only", `{"jsonrpc":"2.0","method":"notifications/unknown"}` + "\n", 0, false},
+		{"unsolicited client response", `{"jsonrpc":"2.0","id":6,"result":{}}` + "\n", 0, false},
+		{"duplicate request ID", `{"jsonrpc":"2.0","id":7,"method":"ping"}` + "\n" + `{"jsonrpc":"2.0","id":7,"method":"ping"}` + "\n", 7, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			var stdout bytes.Buffer
+			err := runMCPStdio(ctx, strings.NewReader(tc.input), &stdout, fakeMCPActions())
+			if errors.Is(err, context.DeadlineExceeded) {
+				t.Fatal("finite input did not settle before deadline")
+			}
+			if tc.wantError != (err != nil) {
+				t.Fatalf("session error = %v, want error=%v", err, tc.wantError)
+			}
+			frames := decodeMCPResponses(t, stdout.String())
+			if tc.wantID != 0 {
+				if mcpFrameError(mcpFrameByID(t, frames, tc.wantID)) != nil {
+					t.Fatalf("valid request returned protocol error: %+v", frames)
+				}
+			}
+		})
 	}
 }
 

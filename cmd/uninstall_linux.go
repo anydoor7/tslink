@@ -5,6 +5,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/monody0007/tslink/internal/output"
@@ -72,6 +73,9 @@ func runUninstallLocked(cmd *cobra.Command, args []string) error {
 
 	var warnings []string
 	if output, err := systemctlCombinedOutput("--user", "stop", systemdServiceName); err != nil {
+		if stateErr := confirmSystemdStoppedAfterError(); stateErr != nil {
+			return fmt.Errorf("stop systemd user service: %w%s; unit retained because shutdown could not be confirmed: %v", err, commandOutputSuffix(output), stateErr)
+		}
 		warnings = append(warnings, fmt.Sprintf("stop systemd user service: %v%s", err, commandOutputSuffix(output)))
 	}
 	if output, err := systemctlCombinedOutput("--user", "disable", systemdServiceName); err != nil {
@@ -106,6 +110,22 @@ func runUninstallLocked(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(cmd.ErrOrStderr(), "→ ⚠ %s\n", warning)
 	}
 	fmt.Fprintln(cmd.OutOrStdout(), "→ ✓ systemd user service removed")
+	return nil
+}
+
+// A failed stop may still have stopped the unit. Only an explicit inactive or
+// failed state with no MainPID lets uninstall continue and remove its definition.
+func confirmSystemdStoppedAfterError() error {
+	output, err := systemctlCombinedOutput("--user", "show", systemdServiceName,
+		"--property=ActiveState", "--property=MainPID", "--no-pager")
+	if err != nil {
+		return fmt.Errorf("inspect systemd service state: %w%s", err, commandOutputSuffix(output))
+	}
+	state := parseSystemdProperties(output)
+	pid, pidErr := strconv.Atoi(state["MainPID"])
+	if (state["ActiveState"] != "inactive" && state["ActiveState"] != "failed") || pidErr != nil || pid != 0 {
+		return fmt.Errorf("ActiveState=%q MainPID=%q", state["ActiveState"], state["MainPID"])
+	}
 	return nil
 }
 

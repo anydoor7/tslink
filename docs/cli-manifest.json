@@ -181,13 +181,12 @@
     },
     {
       "command": "tslink cleanup",
-      "operation": "unused Funnel ACL removal",
+      "operation": "shared Funnel ACL status",
       "default": "disabled",
       "required_flags": [
-        "--dry-run=false",
         "--manage-acl"
       ],
-      "boundary": "reuses canonical grant refusal and ETag If-Match guards"
+      "boundary": "reports local use or skips; local absence never authorizes tailnet-wide grant deletion"
     },
     {
       "command": "tslink tags delete-remote",
@@ -632,13 +631,13 @@
           "type": "bool",
           "default": "false",
           "scope": "local",
-          "usage": "Opt in to removing the unused canonical Funnel tag owner and nodeAttrs grant"
+          "usage": "Report shared Funnel ACL status; local cleanup never revokes the tailnet-wide grant"
         }
       ],
       "json_result_fields": {
         "acl_action": {
           "type": "string",
-          "description": "Unused Funnel ACL reconciliation outcome."
+          "description": "Shared Funnel ACL status; local cleanup never deletes the global grant."
         },
         "adoption.matches": {
           "type": "integer",

@@ -162,6 +162,11 @@ var serviceManagerTestArgPassthroughAllowlist = map[string]serviceManagerExitEnt
 	"cmd/install_linux_e2e_test.go": {note: "gated real-systemd e2e (TSLINK_SYSTEMD_E2E=1), explicit shim opt-out", occurrences: 2},
 	// The PATH shim's own probes, whose targets do not exist.
 	"cmd/service_manager_path_shim_unix_test.go": {note: "PATH shim probes, nonexistent targets only", occurrences: 2},
+	// TestMain isolation probes re-exec this test binary with only fixed
+	// -test.run selectors. The table cannot pass an install/add CLI verb: its
+	// successful child runs only a harmless sentinel body, while an enabled
+	// non-dedicated systemd E2E opt-in exits in TestMain before any test body.
+	"cmd/testmain_isolation_test.go": {note: "self-exec TestMain probes; fixed test selectors only, E2E opt-in fail-closed", occurrences: 1},
 	// Helpers that re-run this repo's own test executable as a daemon, and the
 	// execCommand seam stubs that forward to the real constructor. None of them
 	// spawns a service manager, and all of them inherit the parent environment.

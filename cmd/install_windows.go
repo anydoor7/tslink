@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/monody0007/tslink/internal/atomicfile"
 	"github.com/monody0007/tslink/internal/output"
 	"github.com/spf13/cobra"
 )
@@ -94,7 +95,7 @@ func runInstallLocked(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	script := "Set shell = CreateObject(\"Wscript.Shell\")\r\n" + windowsConfigEnvironment(configDir) + "\r\n" + windowsStartupScript(exe, noAutoProvision)
-	if err := os.WriteFile(startupPath, []byte(script), 0o644); err != nil {
+	if err := atomicfile.WriteFileInExistingDir(startupPath, []byte(script), atomicfile.PrivateFileMode); err != nil {
 		return fmt.Errorf("write Startup script: %w", err)
 	}
 

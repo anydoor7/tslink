@@ -917,16 +917,10 @@ func newMCPServer(actions mcpActions) *mcp.Server {
 // out. It returns when the peer closes the stream, when ctx is cancelled, or
 // when the transport fails.
 //
-// It drives the session with [mcp.Server.Connect] rather than
-// [mcp.Server.Run], because the two disagree about what end-of-input means.
-// Run lets the reader's io.EOF reach the JSON-RPC layer, which treats a dead
-// reader as a reason to cancel every request still in flight. That is right
-// for a socket that vanished and wrong for a pipe whose writer simply finished
-// sending: a client that writes its requests and closes stdin — which is how
-// `tslink mcp` is scripted, and how this repository's compiled-binary tests
-// drive it — would race the server for its own last answer, and usually win.
-// So end-of-input starts a drain instead, and the session is closed only once
-// every message that was read has been answered.
+// The SDK decodes input on a separate goroutine. Its Connection.Read EOF is
+// the first reliable indication that all preceding values have been accepted
+// by the dispatcher. At that point, finish response writes before asking the
+// SDK to drain its remaining notification queue and close.
 func runMCPStdio(ctx context.Context, in io.Reader, out io.Writer, actions mcpActions) error {
 	if ctx == nil {
 		// cobra leaves Command.Context nil until the command tree is executed,
@@ -934,143 +928,167 @@ func runMCPStdio(ctx context.Context, in io.Reader, out io.Writer, actions mcpAc
 		ctx = context.Background()
 	}
 	reader := newMCPRecordLimitReader(in, mcpMaxRecordBytes)
-	writer := &mcpActivityWriter{inner: out}
-	drain := &mcpDrainTracker{}
 	server := newMCPServer(actions)
-	server.AddReceivingMiddleware(drain.middleware)
-	session, err := server.Connect(ctx, &mcp.IOTransport{Reader: reader, Writer: writer}, nil)
+	settled := make(chan struct{})
+	transport := &mcpDrainTransport{
+		inner:      &mcp.IOTransport{Reader: reader, Writer: &mcpNonClosingWriter{inner: out}},
+		reader:     reader,
+		caller:     ctx,
+		decodedEOF: make(chan struct{}),
+	}
+	session, err := server.Connect(ctx, transport, nil)
 	if err != nil {
 		return err
 	}
-	settled := make(chan struct{})
 	go func() {
 		select {
-		case <-reader.EndOfInput():
-			drain.wait(reader.Records, writer.Writes)
-			_ = session.Close()
 		case <-ctx.Done():
+			// The SDK's graceful session Close can leave a context-aware tool
+			// running. Closing the actual connection first makes readIncoming
+			// cancel requests, including a tool that outlives stdin.
+			_ = transport.connection.Close()
 			_ = session.Close()
+		case <-settled:
+		}
+	}()
+	go func() {
+		select {
+		case <-transport.decodedEOF:
+			// Do not set connClosing while a call still needs its response:
+			// pinned SDK rejects writes after Close starts. The wrapper has
+			// observed every decoded call and response at this EOF boundary.
+			transport.connection.waitForResponses()
+			if ctx.Err() == nil {
+				_ = session.Close()
+			}
 		case <-settled:
 		}
 	}()
 	waitErr := session.Wait()
 	close(settled)
-	// Release the SDK's decoder goroutine, which is parked in a read that will
-	// never return on its own now that end-of-input no longer ends the stream.
-	reader.Release()
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return ctxErr
 	}
 	return waitErr
 }
 
-// mcpDrainSettle is how long the drain waits on a session that has gone
-// completely silent — no handler running, no byte written — before concluding
-// that whatever is unaccounted for was refused before it ever reached a
-// handler, and that there is nothing left to wait for.
-const mcpDrainSettle = 100 * time.Millisecond
-
-// mcpDrainPoll is the drain's observation interval.
-const mcpDrainPoll = 250 * time.Microsecond
-
-// mcpDrainTracker counts messages through the SDK's receiving middleware so
-// that end-of-input can be turned into "everything that was read has been
-// answered".
-type mcpDrainTracker struct {
-	mu       sync.Mutex
-	started  int
-	finished int
-	answers  int
+// mcpDrainTransport observes the SDK's decoded Connection.Read boundary while
+// retaining IOTransport's actual wire codec and writer. In pinned SDK v1.7.0,
+// IOTransport's private sessionUpdated hook only changes batch-version checks;
+// TSLink's record guard rejects batches at every protocol version already.
+type mcpDrainTransport struct {
+	inner      mcp.Transport
+	reader     *mcpRecordLimitReader
+	caller     context.Context
+	decodedEOF chan struct{}
+	connection *mcpDrainConnection
 }
 
-func (d *mcpDrainTracker) middleware(next mcp.MethodHandler) mcp.MethodHandler {
-	return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
-		d.mu.Lock()
-		d.started++
-		d.mu.Unlock()
-		result, err := next(ctx, method, req)
-		d.mu.Lock()
-		d.finished++
-		// Per the MethodHandler contract a notification returns nothing at all,
-		// and anything else — a result or an error — becomes a response frame.
-		// Counting those is what lets the drain wait for the frame rather than
-		// for the handler, which finishes one step earlier.
-		if result != nil || err != nil {
-			d.answers++
-		}
-		d.mu.Unlock()
-		return result, err
+func (t *mcpDrainTransport) Connect(ctx context.Context) (mcp.Connection, error) {
+	connection, err := t.inner.Connect(ctx)
+	if err != nil {
+		return nil, err
 	}
+	t.connection = &mcpDrainConnection{Connection: connection, reader: t.reader, caller: t.caller, decodedEOF: t.decodedEOF, released: make(chan struct{}), changed: make(chan struct{}, 1)}
+	return t.connection, nil
 }
 
-func (d *mcpDrainTracker) counts() (started, finished, answers int) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	return d.started, d.finished, d.answers
+type mcpDrainConnection struct {
+	mcp.Connection
+	reader      *mcpRecordLimitReader
+	caller      context.Context
+	decodedEOF  chan struct{}
+	released    chan struct{}
+	releaseOnce sync.Once
+	mu          sync.Mutex
+	previous    *jsonrpc.Request
+	accepted    int
+	answered    int
+	changed     chan struct{}
 }
 
-// wait blocks until the session has answered every message the reader handed
-// over, or until it has been silent for mcpDrainSettle.
-//
-// records is final by the time wait is called, because the reader only reports
-// end of input once it has stopped producing. The settle branch exists because
-// a message can be refused before it reaches a handler — an unsupported
-// protocol version, a method sent before initialization — and would otherwise
-// leave the count permanently short; it re-arms on any sign of life, so a tool
-// that takes its time is never cut off.
-func (d *mcpDrainTracker) wait(records func() int, writes func() int) {
-	type observation struct{ started, finished, answers, records, writes int }
-	var last observation
-	quietSince := time.Now()
-	for {
-		started, finished, answers := d.counts()
-		current := observation{started, finished, answers, records(), writes()}
-		if current != last {
-			last = current
-			quietSince = time.Now()
-		}
-		inFlight := current.started > current.finished
-		if !inFlight &&
-			current.finished >= current.records &&
-			current.writes >= current.answers {
-			return
-		}
-		// The settle timeout only covers the short gap between a record being
-		// read and its handler being entered. A handler that is already running
-		// is waited for without a deadline, the same way the SDK's own Close
-		// drains in-flight calls: a tool that takes 30s to answer is entitled to
-		// answer even though the client has finished writing.
-		if !inFlight && time.Since(quietSince) >= mcpDrainSettle {
-			return
-		}
-		time.Sleep(mcpDrainPoll)
+func (c *mcpDrainConnection) Read(ctx context.Context) (jsonrpc.Message, error) {
+	// The SDK synchronously accepts a delivered request before invoking Read
+	// again. A duplicate in-flight ID is cleared on that same Request object,
+	// so inspecting it here counts only calls that can produce a response.
+	c.mu.Lock()
+	if c.previous != nil && c.previous.IsCall() {
+		c.accepted++
 	}
+	c.previous = nil
+	c.mu.Unlock()
+	msg, err := c.Connection.Read(ctx)
+	if err == nil {
+		if req, ok := msg.(*jsonrpc.Request); ok {
+			c.mu.Lock()
+			c.previous = req
+			c.mu.Unlock()
+		}
+	}
+	if errors.Is(err, io.EOF) && c.caller.Err() == nil {
+		select {
+		case <-c.reader.EndOfInput():
+			close(c.decodedEOF)
+			select {
+			case <-c.released:
+			case <-c.caller.Done():
+			}
+		default:
+		}
+	}
+	return msg, err
 }
 
-// mcpActivityWriter is the transport's output side. It counts writes so the
-// drain can tell a silent session from a busy one, and it deliberately does not
-// close the underlying writer, which the command owns.
-type mcpActivityWriter struct {
+func (c *mcpDrainConnection) Write(ctx context.Context, msg jsonrpc.Message) error {
+	err := c.Connection.Write(ctx, msg)
+	if err != nil {
+		c.releaseOnce.Do(func() { close(c.released) })
+	} else if _, ok := msg.(*jsonrpc.Response); ok {
+		c.mu.Lock()
+		c.answered++
+		select {
+		case c.changed <- struct{}{}:
+		default:
+		}
+		c.mu.Unlock()
+	}
+	return err
+}
+
+func (c *mcpDrainConnection) waitForResponses() {
+	c.mu.Lock()
+	for c.answered < c.accepted && c.caller.Err() == nil {
+		changed := c.changed
+		c.mu.Unlock()
+		select {
+		case <-changed:
+		case <-c.caller.Done():
+		case <-c.released:
+		}
+		c.mu.Lock()
+		select {
+		case <-c.released:
+			c.mu.Unlock()
+			return
+		default:
+		}
+	}
+	c.mu.Unlock()
+}
+
+func (c *mcpDrainConnection) Close() error {
+	c.releaseOnce.Do(func() { close(c.released) })
+	return c.Connection.Close()
+}
+
+// mcpNonClosingWriter leaves command-owned stdout open when the SDK closes its
+// transport.
+type mcpNonClosingWriter struct {
 	inner io.Writer
-	mu    sync.Mutex
-	count int
 }
 
-func (w *mcpActivityWriter) Write(p []byte) (int, error) {
-	n, err := w.inner.Write(p)
-	w.mu.Lock()
-	w.count++
-	w.mu.Unlock()
-	return n, err
-}
-
-func (w *mcpActivityWriter) Writes() int {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return w.count
-}
-
-func (w *mcpActivityWriter) Close() error { return nil }
+func (w *mcpNonClosingWriter) Write(p []byte) (int, error) { return w.inner.Write(p) }
+func (w *mcpNonClosingWriter) Close() error                { return nil }
 
 // mcpRecordLimitReader bounds the bytes a single newline-delimited record may
 // contribute before the stream is abandoned.
@@ -1081,10 +1099,8 @@ func (w *mcpActivityWriter) Close() error { return nil }
 // the last newline and fails the read, leaving every JSON-level decision to the
 // SDK.
 //
-// It also holds end-of-input rather than reporting it, so that the reader
-// cannot end the session out from under a request that is still being answered,
-// and counts the records it handed over so the drain knows how many answers to
-// expect.
+// It reports physical EOF to the SDK, where mcpDrainConnection delays only
+// the decoded Connection.Read EOF until already delivered calls are answered.
 type mcpRecordLimitReader struct {
 	inner io.Reader
 	limit int
@@ -1095,10 +1111,8 @@ type mcpRecordLimitReader struct {
 	inRecord bool
 	err      error
 
-	eof      chan struct{}
-	eofOnce  sync.Once
-	release  chan struct{}
-	stopOnce sync.Once
+	eof     chan struct{}
+	eofOnce sync.Once
 }
 
 // errMCPBatchUnsupported ends a session that sent a JSON-RPC batch.
@@ -1106,10 +1120,9 @@ var errMCPBatchUnsupported = errors.New("JSON-RPC batch requests are not support
 
 func newMCPRecordLimitReader(inner io.Reader, limit int) *mcpRecordLimitReader {
 	return &mcpRecordLimitReader{
-		inner:   inner,
-		limit:   limit,
-		eof:     make(chan struct{}),
-		release: make(chan struct{}),
+		inner: inner,
+		limit: limit,
+		eof:   make(chan struct{}),
 	}
 }
 
@@ -1123,15 +1136,9 @@ func (r *mcpRecordLimitReader) Records() int {
 	return r.records
 }
 
-// Release unblocks a read that is parked on end-of-input.
-func (r *mcpRecordLimitReader) Release() {
-	r.stopOnce.Do(func() { close(r.release) })
-}
-
-// Close implements io.ReadCloser. It releases a parked read and leaves the
-// wrapped reader, which this type does not own, alone.
+// Close implements io.ReadCloser and leaves the wrapped reader, which this
+// type does not own, alone.
 func (r *mcpRecordLimitReader) Close() error {
-	r.Release()
 	return nil
 }
 
@@ -1183,10 +1190,9 @@ func (r *mcpRecordLimitReader) Read(p []byte) (int, error) {
 	if err == io.EOF {
 		r.eofOnce.Do(func() { close(r.eof) })
 		if n > 0 {
-			// Hand the trailing bytes over first; the next call parks.
+			// Hand the trailing bytes over first; the next call reports EOF.
 			return n, nil
 		}
-		<-r.release
 		r.mu.Lock()
 		r.err = io.EOF
 		r.mu.Unlock()

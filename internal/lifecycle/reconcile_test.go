@@ -60,7 +60,7 @@ func TestReconcileDryRunUsesWallClockWithoutMutation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(result.ExpiredFunnels, ",") != "expired" || result.ACLAction != ACLWouldDelete || strings.Join(result.DevicesWouldDelete, ",") != "orphan" {
+	if strings.Join(result.ExpiredFunnels, ",") != "expired" || result.ACLAction != ACLSkipped || strings.Join(result.DevicesWouldDelete, ",") != "orphan" {
 		t.Fatalf("result = %+v", result)
 	}
 	reg, _ := registry.Load(regPath)
@@ -115,7 +115,7 @@ func TestReconcileDryRunUsesInMemoryAdoptionToPreviewApplyDeletion(t *testing.T)
 	}
 }
 
-func TestReconcileApplyDowngradesDeletesOrphanAndRevokesLastACL(t *testing.T) {
+func TestReconcileApplyDowngradesDeletesOrphanAndPreservesSharedACL(t *testing.T) {
 	now := time.Date(2030, 8, 31, 12, 0, 0, 0, time.UTC)
 	regPath, ownershipPath := saveLifecycleFixture(t, now)
 	oldCleanup, oldDelete := cleanupDevicesFn, deleteTagFn
@@ -139,7 +139,7 @@ func TestReconcileApplyDowngradesDeletesOrphanAndRevokesLastACL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !result.RegistryChanged || result.ACLAction != ACLDeleted || aclCalls != 1 || strings.Join(result.DevicesDeleted, ",") != "orphan" {
+	if !result.RegistryChanged || result.ACLAction != ACLSkipped || aclCalls != 0 || strings.Join(result.DevicesDeleted, ",") != "orphan" {
 		t.Fatalf("result = %+v aclCalls=%d", result, aclCalls)
 	}
 	reg, _ := registry.Load(regPath)

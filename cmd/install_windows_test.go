@@ -84,6 +84,36 @@ func TestWindowsInstallCommandWritesStartupScript(t *testing.T) {
 	}
 }
 
+func TestWindowsInstallRejectsStartupSymlinkWithoutChangingOldBytes(t *testing.T) {
+	t.Setenv("APPDATA", t.TempDir())
+	path, err := windowsStartupScriptPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	referent := filepath.Join(t.TempDir(), "previous-script.vbs")
+	const oldScript = "previous working startup script\r\n"
+	if err := os.WriteFile(referent, []byte(oldScript), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(referent, path); err != nil {
+		t.Skipf("Windows host cannot create test symlink: %v", err)
+	}
+	oldExe, oldEval := windowsExecutablePathFn, windowsEvalSymlinksFn
+	t.Cleanup(func() { windowsExecutablePathFn, windowsEvalSymlinksFn = oldExe, oldEval })
+	windowsExecutablePathFn = func() (string, error) { return `C:\TSLink\tslink.exe`, nil }
+	windowsEvalSymlinksFn = func(p string) (string, error) { return p, nil }
+	if err := installCmd.RunE(installCmd, nil); err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("install through Startup symlink error = %v, want rejection", err)
+	}
+	got, err := os.ReadFile(referent)
+	if err != nil || string(got) != oldScript {
+		t.Fatalf("old script changed after failed install: %q, %v", got, err)
+	}
+}
+
 func TestWindowsInstallIntentionallyDoesNotInspectCurrentDaemon(t *testing.T) {
 	appData := t.TempDir()
 	t.Setenv("APPDATA", appData)

@@ -282,15 +282,58 @@ func sameShareTarget(existing, candidate registry.Service) bool {
 		existing.Funnel == candidate.Funnel &&
 		existing.PublicAck == candidate.PublicAck &&
 		slices.Equal(existing.AllowedUsers, candidate.AllowedUsers) &&
+		sameShareTags(existing.Tags, candidate.Tags) &&
 		existing.Domain == candidate.Domain
 }
 
+func sameShareTags(a, b []string) bool {
+	first := make(map[string]struct{}, len(a))
+	second := make(map[string]struct{}, len(b))
+	for _, tag := range a {
+		first[tag] = struct{}{}
+	}
+	for _, tag := range b {
+		second[tag] = struct{}{}
+	}
+	if len(first) != len(second) {
+		return false
+	}
+	for tag := range first {
+		if _, ok := second[tag]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func shareFunnelDeadlineCompatible(existing registry.Service, spec shareTargetSpec) bool {
+	if !existing.Funnel {
+		return true
+	}
+	requested := spec.Service.FunnelExpiresAt
+	current := existing.FunnelExpiresAt
+	if requested == nil {
+		return current == nil
+	}
+	return current != nil && current.After(time.Now()) && !current.After(*requested)
+}
+
+func shareFunnelDeadlineDescription(deadline *time.Time) string {
+	if deadline == nil {
+		return "never"
+	}
+	return deadline.UTC().Format(time.RFC3339Nano)
+}
+
 func shareExposurePosture(svc registry.Service) string {
-	return fmt.Sprintf("funnel=%t, public_ack=%t, allowed_users=%d, domain=%q",
-		svc.Funnel, svc.PublicAck, len(svc.AllowedUsers), svc.Domain)
+	return fmt.Sprintf("funnel=%t, funnel_deadline=%s, public_ack=%t, allowed_users=%d, tags=%v, domain=%q",
+		svc.Funnel, shareFunnelDeadlineDescription(svc.FunnelExpiresAt), svc.PublicAck, len(svc.AllowedUsers), svc.Tags, svc.Domain)
 }
 
 func registerShare(regPath string, spec shareTargetSpec, requestedName string) (registry.Service, bool, error) {
+	if len(spec.Service.Tags) == 0 {
+		spec.Service.Tags = []string{config.GetDefaultTag()}
+	}
 	base := sanitizeShareName(spec.NameBase)
 	if requestedName != "" {
 		if err := registry.ValidateName(requestedName); err != nil {
@@ -310,6 +353,11 @@ func registerShare(regPath string, spec shareTargetSpec, requestedName string) (
 					return registry.Service{}, false, output.ErrConflict(fmt.Sprintf(
 						"cannot apply requested name %q: target is already shared as %q; re-run without an explicit name to reuse it, or remove the existing service before retrying with the requested name",
 						requestedName, existing.Name))
+				}
+				if !shareFunnelDeadlineCompatible(existing, spec) {
+					return registry.Service{}, false, output.ErrConflict(fmt.Sprintf(
+						"cannot reuse service %q for this funnel deadline: existing deadline is %s, requested deadline is %s; remove or reconfigure the existing service before retrying",
+						existing.Name, shareFunnelDeadlineDescription(existing.FunnelExpiresAt), shareFunnelDeadlineDescription(spec.Service.FunnelExpiresAt)))
 				}
 				return existing, false, nil
 			}
@@ -335,9 +383,6 @@ func registerShare(regPath string, spec shareTargetSpec, requestedName string) (
 
 		svc := spec.Service
 		svc.Name = name
-		if len(svc.Tags) == 0 {
-			svc.Tags = []string{config.GetDefaultTag()}
-		}
 		svc.CreatedAt = time.Now().UTC()
 		created, err := shareAddIfMissingFn(regPath, svc)
 		if err != nil {
