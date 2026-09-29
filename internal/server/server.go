@@ -1464,7 +1464,8 @@ func (s *Server) authIdentityChanged(old, new registry.Service) bool {
 	if old.Ephemeral != new.Ephemeral {
 		return true
 	}
-	if !sameStringSet(old.Tags, new.Tags) {
+	// A Tier 1 node advertises no tags, so a tag change is not one there.
+	if s.credentialed && !sameStringSet(old.Tags, new.Tags) {
 		return true
 	}
 	return effectiveControlURL(old, s.controlURL) != effectiveControlURL(new, s.controlURL)

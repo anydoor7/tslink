@@ -114,7 +114,9 @@ func (s *Server) nodeIdentityPath(name string) (string, error) {
 
 // requestedNodeIdentity describes the node as it is constructed, not as the
 // registry stores it: tag:tslink-funnel is derived at construction for a
-// public service, so turning Funnel on or off is an auth identity change.
+// public service, so turning Funnel on or off is an auth identity change. A
+// Tier 1 node advertises no tags at all; prepareNodeIdentity compares it
+// without them.
 func requestedNodeIdentity(svc registry.Service, fallbackControlURL, origin string) nodeIdentity {
 	svc = serviceForNodeConstruction(svc)
 	tags := append([]string(nil), svc.Tags...)
@@ -137,6 +139,14 @@ func (a nodeIdentity) sameAuthIdentity(b nodeIdentity) bool {
 
 func (a nodeIdentity) sameAuthIdentityExceptControlURL(b nodeIdentity) bool {
 	return a.Service == b.Service && a.Ephemeral == b.Ephemeral && sameStringSet(a.Tags, b.Tags)
+}
+
+// sameUntaggedIdentity compares identities as a Tier 1 node is built: without
+// advertised tags, so only the service, the ephemeral flag and the control URL
+// identify it. An unknown control URL is the unverified fallback, which never
+// justifies a reset.
+func (a nodeIdentity) sameUntaggedIdentity(b nodeIdentity, controlURLUnknown bool) bool {
+	return a.Service == b.Service && a.Ephemeral == b.Ephemeral && (controlURLUnknown || a.ControlURL == b.ControlURL)
 }
 
 // controlURLUnknown reports whether svc's effective control URL is only the
@@ -413,6 +423,19 @@ func (s *Server) prepareNodeIdentity(ctx context.Context, svc registry.Service) 
 	}
 	if unknownURL && old.sameAuthIdentityExceptControlURL(requested) {
 		slog.Warn("keeping node state; its recorded control URL differs only from an unverified fallback", "name", svc.Name, "recorded_control_url", old.ControlURL)
+		return nil, nil
+	}
+	if !s.credentialed && old.sameUntaggedIdentity(requested, unknownURL) {
+		// A Tier 1 node enrolls interactively and advertises no tags
+		// (newTSNetServer), so stored tags and Funnel never change the
+		// identity it is built with. Keep its state, and record the requested
+		// tags so a later Tier 2 start compares against the current registry.
+		slog.Info("keeping interactive node state; tag and Funnel changes do not change an untagged Tier 1 node", "name", svc.Name, "recorded_tags", old.Tags, "requested_tags", requested.Tags)
+		kept := old
+		kept.Tags = requested.Tags
+		if err := writeNodeIdentityFn(path, kept); err != nil {
+			return nil, fmt.Errorf("record node identity before start %q: %w", svc.Name, err)
+		}
 		return nil, nil
 	}
 	if err := removeServiceStateDirFn(svc.Name); err != nil {
