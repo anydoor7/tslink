@@ -54,7 +54,7 @@ How TSLink maps onto common zero-trust principles:
 | **HTTP least-privilege access** | `--allow` restricts proxy and file services to specific users or tags. TCP services rely on Tailscale network ACLs and tags. |
 | **Assume breach** | Tailnet device-to-device traffic uses WireGuard encryption. Even if your local network is compromised, traffic between your Tailscale devices remains encrypted; public Funnel paths follow Tailscale Funnel semantics. |
 | **Per-service network identity** | Each service runs as a separate tsnet node with its own hostname and network identity. This is network segmentation, not host process isolation or a compliance attestation. |
-| **No implicit trust** | No services are exposed to the public internet by default. The default first run uses Tailscale interactive enrollment with no stored administrative credential, no advertised tags, and no ACL edits. Optional durable-install credentials are stored in the system keychain first, with restricted-permission file fallback for headless environments. |
+| **No implicit trust** | No services are exposed to the public internet by default. The default first run uses Tailscale interactive enrollment with no stored administrative credential, no advertised tags, and no ACL edits. Optional durable-install credentials are stored in the system keychain first, with a restricted-permission file fallback for headless macOS and Linux environments. |
 
 This is a design mapping, not a formal attestation. TSLink claims no compliance status; the machine-readable manifest is [`internal/security/capabilities.v1.json`](./internal/security/capabilities.v1.json), and every capability in it records its compliance status explicitly.
 
@@ -220,8 +220,10 @@ file's siblings in the same directory. The registry records the narrowing in
 the file service's `file` field; an entry without that field is a directory
 share.
 
-Neither form restricts *who* may read it. Without `--allow`, every member of
-the tailnet can fetch the share.
+Neither form restricts *who* may read it: every member of the tailnet can
+fetch the share, and `tslink share` has no `--allow` flag. To limit readers of
+a directory, register it with `tslink add <name> --dir <directory> --allow
+<principal>` instead, or pass `allow` to the MCP `share` tool.
 
 On a credential-free first run, the one stdout line is the Tailscale
 authorization URL and stderr gives the exact `tslink url <name> --wait`
@@ -265,7 +267,7 @@ Tier 2 accepts one of these administrative credential types:
 - **API access token** (`tskey-api-*`) — generate at [Admin → Keys](https://login.tailscale.com/admin/settings/keys). Use this for the most complete automation today, including tag and device management through the Tailscale API. It expires periodically.
 - **OAuth client secret** (`tskey-client-*`) — generate at [Admin → OAuth](https://login.tailscale.com/admin/settings/oauth). It does not expire, but TSLink's current Tailscale tag/device automation is narrower in this mode because those operations use the Tailscale REST API. Use it only after validating your required tag/device operations.
 
-`tslink login` guides you through either Tier 2 credential path. It does not perform a disposable browser login first. Credentials are stored in the system keychain first (macOS Keychain / Linux secret service / Windows Credential Manager), with restricted-permission file fallback for headless environments. A running Tier 1 daemon remains unchanged until it is restarted; on the next credentialed start, existing per-service tsnet state is cleared and each service re-enrolls with its derived auth key and configured tags.
+`tslink login` guides you through either Tier 2 credential path. It does not perform a disposable browser login first. Credentials are stored in the system keychain first (macOS Keychain / Linux secret service / Windows Credential Manager). On macOS and Linux a restricted-permission file is the fallback for headless environments. Windows has no file fallback, because TSLink cannot prove a user-only DACL locally, so `tslink login` fails there when Credential Manager is unavailable. A running Tier 1 daemon remains unchanged until it is restarted; on the next credentialed start, existing per-service tsnet state is cleared and each service re-enrolls with its derived auth key and configured tags.
 
 For non-interactive setup, prefer stdin. Environment variables are acceptable only when they are pre-injected by a secret manager before the command starts; do not inline secret values in the shell command because they can land in shell history:
 
@@ -427,7 +429,7 @@ TSLink creates a dedicated [tsnet](https://tailscale.com/kb/1244/tsnet) node for
 **Key architectural decisions:**
 - **Per-service embedded nodes** — each service gets its own tailnet identity and hostname; proxy/file services also get Tailscale HTTPS listener semantics
 - **Identity-aware proxying** — WhoIs verification on tailnet HTTP proxy/file requests, with identity headers injected and spoofing prevented; public Funnel and raw TCP do not get TSLink-enforced HTTP identity
-- **Secure credential management** — system keychain storage with restricted-permission file fallback for headless environments
+- **Secure credential management** — system keychain storage, with a restricted-permission file fallback for headless macOS and Linux environments
 - **File-based registry** — services persist across restarts in `~/.config/tslink/registry.json`
 - **Hot reload** — file watcher on the registry means `tslink add` takes effect without restarting the server
 - **PID-based lifecycle** — daemon management with process identity checks and platform-specific stop behavior
@@ -611,6 +613,8 @@ The repository contains packages and registry fields for features that are not w
 | macOS | `--daemon` | LaunchAgent | Graceful SIGTERM |
 | Linux | `--daemon` | systemd user service | Graceful SIGTERM |
 | Windows | `--daemon` | Startup folder | Forced process termination |
+
+Configuration and state live in `~/.config/tslink/` on macOS and Linux and in `%AppData%\tslink\` on Windows; set `TSLINK_CONFIG_DIR` to use another directory. Paths written as `~/.config/tslink/` elsewhere in this README mean that directory. On Windows, an older `%USERPROFILE%\.config\tslink\` is moved into `%AppData%\tslink\` the first time TSLink resolves its config directory. If the move is impossible (for example with a redirected profile), TSLink keeps using the old directory; if both directories exist, it refuses to choose and names both.
 
 macOS LaunchAgent installs use launchd `KeepAlive` with `ThrottleInterval=30`. If `tslink stop` is run while the LaunchAgent remains installed, launchd will restart TSLink. Run `tslink uninstall` before `tslink stop` when the intent is to disable autostart. When no desktop session exists for the user, `tslink install` first tries `gui/$(id -u)` and falls back to `user/$(id -u)` if the GUI launchd domain is unavailable. Linux headless user services may need `loginctl enable-linger "$USER"` to keep running after logout; if lingering was enabled only for TSLink, run `loginctl disable-linger "$USER"` after uninstall.
 

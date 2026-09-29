@@ -86,8 +86,8 @@ full state or a delta.
 
 ## Tools
 
-The one-line summaries below are the first sentence of each tool's own
-description as registered in `cmd/mcp.go`; the client receives the full text.
+The one-line summaries below condense each tool's own description as
+registered in `cmd/mcp.go`; the client receives the full text.
 
 | Tool | What it does |
 |---|---|

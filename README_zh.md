@@ -54,7 +54,7 @@ TSLink 与常见零信任原则的对应关系：
 | **HTTP 最小权限访问** | `--allow` 限制 proxy 和 file 服务的访问用户或标签。TCP 服务依赖 Tailscale 网络 ACL 和标签。 |
 | **假设已被攻破** | tailnet 设备之间的流量使用 WireGuard 加密。即使本地网络被攻破，Tailscale 设备之间的流量仍然加密；公网 Funnel 路径遵循 Tailscale Funnel 语义。 |
 | **Per-service 网络身份** | 每个服务作为独立 tsnet 节点运行，拥有自己的主机名和网络身份。这是网络分段，不是 host process isolation 或合规背书。 |
-| **消除隐式信任** | 默认不暴露任何服务到公网。首次运行默认走 Tailscale interactive enrollment：不存储管理员凭证、不 advertise tags、也不修改 ACL。可选的 durable-install 凭证优先存入系统钥匙串；headless 环境可回退到受限权限文件。 |
+| **消除隐式信任** | 默认不暴露任何服务到公网。首次运行默认走 Tailscale interactive enrollment：不存储管理员凭证、不 advertise tags、也不修改 ACL。可选的 durable-install 凭证优先存入系统钥匙串；headless 的 macOS 与 Linux 环境可回退到受限权限文件。 |
 
 这是一份设计层面的对应关系，不是正式背书。TSLink 不声称任何合规状态；机器可读的能力清单是 [`internal/security/capabilities.v1.json`](./internal/security/capabilities.v1.json)，其中每一条 capability 都显式记录了自己的合规状态。
 
@@ -198,8 +198,10 @@ tslink share ./build --ephemeral=false
 其余任何路径都返回 404，包括同目录下的其它文件。registry 用 file service 的
 `file` 字段记录这个收窄；没有该字段的条目就是目录 share。
 
-两种形态都不限制**谁**可以读。不带 `--allow` 时，tailnet 的每个成员都能取到该
-share。
+两种形态都不限制**谁**可以读：tailnet 的每个成员都能取到该 share，而且
+`tslink share` 没有 `--allow` 参数。要限制目录的读者，改用
+`tslink add <name> --dir <directory> --allow <principal>` 注册，或在 MCP
+`share` 工具里传 `allow`。
 
 零凭证首次运行时，stdout 的唯一一行是 Tailscale 授权 URL；stderr 会给出
 精确的 `tslink url <name> --wait` 后续命令。使用 `--json` 时，这是包含
@@ -239,7 +241,7 @@ Tier 2 接受以下任一种管理员凭证：
 - **API 访问令牌** (`tskey-api-*`) — 在 [管理后台 → Keys](https://login.tailscale.com/admin/settings/keys) 生成。当前自动化能力最完整，包括通过 Tailscale API 管理标签和设备。它会周期性过期。
 - **OAuth 客户端密钥** (`tskey-client-*`) — 在 [管理后台 → OAuth](https://login.tailscale.com/admin/settings/oauth) 生成。它不会过期，但 TSLink 当前的 Tailscale 标签/设备自动化在该模式下更窄，因为这些操作依赖 Tailscale REST API。用于无人值守前请先验证所需的标签/设备操作。
 
-`tslink login` 会交互式引导你完成任一 Tier 2 凭证路径；它不会先做一次无实际作用的临时 browser login。凭证优先存储在系统钥匙串（macOS Keychain / Linux secret service / Windows 凭据管理器）中；headless 环境可回退到受限权限文件。
+`tslink login` 会交互式引导你完成任一 Tier 2 凭证路径；它不会先做一次无实际作用的临时 browser login。凭证优先存储在系统钥匙串（macOS Keychain / Linux secret service / Windows 凭据管理器）中。macOS 与 Linux 的 headless 环境可回退到受限权限文件。Windows 没有文件回退：TSLink 无法在本地证明该文件的 DACL 只允许当前用户访问，所以凭据管理器不可用时 `tslink login` 会直接失败。
 
 非交互式自动化优先使用 stdin。环境变量只适合由 secret manager 在进程启动前预注入；不要在 shell 命令里 inline secret 值，否则可能进入 shell history：
 
@@ -320,7 +322,7 @@ tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 | `tslink list --tailnet` | 只读：列出整个 tailnet 中所有带 TSLink 标签的设备，包括其它机器的服务和孤儿节点（需要已存储的 API 凭证） |
 | `tslink share <path\|port\|host:port>` | 分享一个本地路径或 Web 端口，并打印它的 tailnet URL |
 | `tslink url <name>` | 打印某个服务的准确运行时 URL |
-| `tslink cleanup` | 回收过期的 Funnel 暴露和 TSLink 拥有的资源；默认只预览，传 `--dry-run=false` 才实际执行 |
+| `tslink cleanup` | 回收过期的 Funnel 暴露和 TSLink 拥有的资源；默认只预览，传 `--dry-run=false` 才实际执行；即使没有本地服务在用，也保留共享的 Funnel ACL grant |
 | `tslink serve` | 启动网关（前台） |
 | `tslink serve --daemon` | 启动网关（后台） |
 | `tslink serve --mcp` | 启动网关，并在专用的仅限 tailnet 节点上提供远程 MCP 控制面（必须配置 `mcp.allow`） |
@@ -398,7 +400,7 @@ TSLink 为每个注册的服务创建一个专用的 [tsnet](https://tailscale.c
 **关键架构决策：**
 - **Per-service 嵌入式节点** — 每个服务获得独立的 tailnet 身份和主机名；proxy/file 服务还获得 Tailscale HTTPS listener 语义
 - **身份感知代理** — tailnet 内的 HTTP 代理/文件请求进行 WhoIs 验证，注入身份头并防止伪造；公网 Funnel 和 raw TCP 不获得 TSLink 强制执行的 HTTP 身份认证
-- **安全凭证管理** — 系统钥匙串存储，headless 环境支持受限权限文件后备
+- **安全凭证管理** — 系统钥匙串存储，headless 的 macOS 与 Linux 环境支持受限权限文件后备
 - **基于文件的注册表** — 服务在 `~/.config/tslink/registry.json` 中持久化，跨重启保存
 - **热重载** — 注册表文件监听意味着 `tslink add` 无需重启服务即可生效
 - **基于 PID 的生命周期** — 通过进程身份检查管理守护进程，并按平台明确停止行为
@@ -582,6 +584,8 @@ tslink list --tailnet --json
 | macOS | `--daemon` | LaunchAgent | SIGTERM 优雅停止 |
 | Linux | `--daemon` | systemd user service | SIGTERM 优雅停止 |
 | Windows | `--daemon` | 启动文件夹 | 强制终止进程 |
+
+配置与状态目录在 macOS 和 Linux 上是 `~/.config/tslink/`，在 Windows 上是 `%AppData%\tslink\`；设置 `TSLINK_CONFIG_DIR` 可以改用其他目录。本 README 其他地方写的 `~/.config/tslink/` 都指这个目录。Windows 上如果还留着旧的 `%USERPROFILE%\.config\tslink\`，TSLink 第一次解析配置目录时会把它移到 `%AppData%\tslink\`。移动失败时（例如启用了文件夹重定向）继续使用旧目录；两个目录同时存在时，TSLink 拒绝二选一，并报出两个路径。
 
 macOS LaunchAgent 安装会使用 launchd `KeepAlive` 和 `ThrottleInterval=30`。如果 LaunchAgent 仍在安装状态，运行 `tslink stop` 后 launchd 会重启 TSLink。想禁用自启动时，先运行 `tslink uninstall`，再运行 `tslink stop`。`gui/$(id -u)` 是否可用取决于该 uid 是否存在桌面（Aqua）session，而不是调用者是否通过 SSH 连接；没有 Aqua session 时，`tslink install` 会先尝试 `gui/$(id -u)`，如果该 launchd domain 不可用则回退到 `user/$(id -u)`。Linux headless user service 如需登出后继续运行，可能需要执行 `loginctl enable-linger "$USER"`；如果 lingering 只为 TSLink 启用，卸载后运行 `loginctl disable-linger "$USER"`。
 

@@ -61,7 +61,7 @@ value or a config-dir override proves there was no side effect.
 
 ### Continuous integration
 
-`ci.yml` runs the reusable Release Candidate gate on every pull request and on every push to `main`; `release.yml` runs the same gate on tags. Dependabot is active. CodeQL scanning is not enabled; to add it, commit a CodeQL workflow and enable code scanning for the repository. Running the local checks above before opening a pull request is still the fastest way to find a failure.
+`ci.yml` runs the reusable Release Candidate gate on every pull request and on every push to `main`; `release.yml` runs the same gate on tags. Dependabot is active. A Go dependency bump changes the module versions pinned in `THIRD_PARTY_NOTICES.md`, so the gate's `go run ./tools/gen-notices -check` fails on every Dependabot `gomod` pull request until someone runs `go run ./tools/gen-notices` and pushes the regenerated file onto that branch. CodeQL scanning is not enabled; to add it, commit a CodeQL workflow and enable code scanning for the repository. Running the local checks above before opening a pull request is still the fastest way to find a failure.
 
 ### Maintainer Release Notes
 

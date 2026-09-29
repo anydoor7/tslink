@@ -58,10 +58,10 @@ body:
   - type: input
     id: go-version
     attributes:
-      label: Go version
+      label: Go version (if built from source)
       placeholder: go version
     validations:
-      required: true
+      required: false
   - type: textarea
     id: tailscale
     attributes:
