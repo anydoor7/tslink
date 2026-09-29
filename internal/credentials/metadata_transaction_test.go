@@ -119,3 +119,123 @@ func TestStatusBackfillStillPersistsWhenNoWriterIntervenes(t *testing.T) {
 		t.Fatalf("persisted backfill = %+v, %v", got, err)
 	}
 }
+
+// A status poll that read the credential before a rotation must not replace
+// the rotated credential's metadata with a backfill for the old value: under
+// the lock the backfill re-checks the slot's fingerprint and skips a slot
+// another writer recorded after the backfill read the file.
+func TestStatusBackfillOfPreRotationValueCannotReplaceRotatedRecord(t *testing.T) {
+	setup(t)
+	const oldKey, newKey = "tskey-api-FAKE-pre", "tskey-api-FAKE-post"
+	if err := SetAPIKey(oldKey); err != nil {
+		t.Fatal(err)
+	}
+	var metaPathCalls atomic.Int32
+	oldPath := credentialMetaPathFunc
+	credentialMetaPathFunc = func() (string, error) {
+		metaPathCalls.Add(1)
+		return oldPath()
+	}
+	statusAtSave := make(chan struct{})
+	releaseStatus := make(chan struct{})
+	var paused atomic.Bool
+	oldWrite := metadataWriteFunc
+	metadataWriteFunc = func(path string, data []byte) error {
+		if bytes.Contains(data, []byte(Fingerprint(oldKey))) && paused.CompareAndSwap(false, true) {
+			close(statusAtSave)
+			<-releaseStatus
+		}
+		return oldWrite(path, data)
+	}
+	t.Cleanup(func() {
+		credentialMetaPathFunc = oldPath
+		metadataWriteFunc = oldWrite
+	})
+
+	statusDone := make(chan Inventory, 1)
+	txErr := WithMutationTransaction(func(tx *MutationTransaction) error {
+		// Status reads the old value and loads the metadata before the
+		// login in this transaction rotates the slot.
+		started := metaPathCalls.Load()
+		go func() {
+			values, _ := StoredSlotValues()
+			statusDone <- DescribeSlots(values, metaTestNow, true)
+		}()
+		deadline := time.Now().Add(3 * time.Second)
+		for metaPathCalls.Load() == started {
+			if time.Now().After(deadline) {
+				t.Error("status never loaded credential metadata")
+				break
+			}
+			time.Sleep(time.Millisecond)
+		}
+		select {
+		case <-statusAtSave:
+		case <-time.After(300 * time.Millisecond):
+		}
+		if _, err := tx.SetAPIKeyWithBackend(newKey); err != nil {
+			return err
+		}
+		meta, err := NewSlotMetadata(SlotAPIKey, newKey, StoredOptions{Now: metaTestNow, Verified: true})
+		if err != nil {
+			return err
+		}
+		return WriteSlotMetadataLocked(SlotAPIKey, meta)
+	})
+	close(releaseStatus)
+	if txErr != nil {
+		t.Fatalf("login transaction: %v", txErr)
+	}
+	select {
+	case <-statusDone:
+	case <-time.After(10 * time.Second):
+		t.Fatal("status backfill did not finish")
+	}
+	got, err := ReadSlotMetadata(SlotAPIKey)
+	if err != nil || got == nil {
+		t.Fatalf("api-key metadata = %+v, %v", got, err)
+	}
+	if got.Fingerprint != Fingerprint(newKey) || got.LastVerifiedResult != VerifyResultOK {
+		t.Fatalf("LOST UPDATE: backfill for the pre-rotation value replaced the rotated credential's record (fingerprint_is_new=%v verified=%q)", got.Fingerprint == Fingerprint(newKey), got.LastVerifiedResult)
+	}
+}
+
+// Every metadata read-modify-write waits for a running credential
+// transaction instead of interleaving with it.
+func TestMetadataWritersWaitForCredentialTransaction(t *testing.T) {
+	const key = "tskey-api-FAKE-writer"
+	cases := []struct {
+		name string
+		op   func() error
+	}{
+		{"RecordCredentialStored", func() error {
+			_, _, err := RecordCredentialStored(SlotAPIKey, key, StoredOptions{Now: metaTestNow})
+			return err
+		}},
+		{"WriteSlotMetadata", func() error {
+			meta, err := NewSlotMetadata(SlotAPIKey, key, StoredOptions{Now: metaTestNow})
+			if err != nil {
+				return err
+			}
+			return WriteSlotMetadata(SlotAPIKey, meta)
+		}},
+		{"DeleteSlotMetadata", func() error { return DeleteSlotMetadata(SlotAPIKey) }},
+		{"RemoveMetadataFile", RemoveMetadataFile},
+		{"RecordVerification", func() error {
+			return RecordVerification(SlotAPIKey, Fingerprint(key), VerifyResultOK, metaTestNow.Add(time.Hour))
+		}},
+		{"DescribeSlots persist", func() error {
+			inventory := DescribeSlots(SlotValues{APIKey: key + "-rotated"}, metaTestNow, true)
+			return inventory.BackfillError
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			setup(t)
+			if _, _, err := RecordCredentialStored(SlotAPIKey, key, StoredOptions{Now: metaTestNow}); err != nil {
+				t.Fatal(err)
+			}
+			assertWaitsForCredentialTransaction(t, tc.name, tc.op)
+		})
+	}
+}
