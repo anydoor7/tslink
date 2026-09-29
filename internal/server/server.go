@@ -1464,8 +1464,10 @@ func (s *Server) authIdentityChanged(old, new registry.Service) bool {
 	if old.Ephemeral != new.Ephemeral {
 		return true
 	}
-	// A Tier 1 node advertises no tags, so a tag change is not one there.
-	if s.credentialed && !sameStringSet(old.Tags, new.Tags) {
+	// A Tier 1 node advertises no tags, so a tag change is not one there. A
+	// Tier 2 node is built with the derived Funnel tag too, so a Funnel toggle
+	// is one, as prepareNodeIdentity's reset decision already counts it.
+	if s.credentialed && !sameStringSet(serviceForNodeConstruction(old).Tags, serviceForNodeConstruction(new).Tags) {
 		return true
 	}
 	return effectiveControlURL(old, s.controlURL) != effectiveControlURL(new, s.controlURL)

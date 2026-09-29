@@ -533,3 +533,54 @@ func TestNodeIdentityTier1RecordWriteFailureKeepsEnrollment(t *testing.T) {
 		t.Fatalf("recorded tags = %v, want the old record left unchanged", recorded.Tags)
 	}
 }
+
+// On Tier 2 a Funnel toggle changes the tags the node is built with (the
+// derived tag:tslink-funnel), and the node is reset, so the restart log must
+// say so. On Tier 1 it changes nothing the node advertises.
+func TestAuthIdentityChangedCountsTheDerivedFunnelTagOnTier2(t *testing.T) {
+	testenv.SetHome(t, t.TempDir())
+	private := registry.Service{Name: "a", Type: registry.TypeProxy, Target: "http://localhost:3000", Tags: []string{"tag:web"}}
+	public := private
+	public.Funnel, public.PublicAck = true, true
+	for _, credentialed := range []bool{false, true} {
+		s, err := New("", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		s.SetCredentialed(credentialed)
+		for _, change := range [][2]registry.Service{{private, public}, {public, private}} {
+			if got := s.authIdentityChanged(change[0], change[1]); got != credentialed {
+				t.Fatalf("credentialed=%v: Funnel %v -> %v auth_identity_changed=%v, want %v", credentialed, change[0].Funnel, change[1].Funnel, got, credentialed)
+			}
+		}
+	}
+}
+
+// Turning Funnel on is the other direction of the expiry above: the untagged
+// Tier 1 node keeps its enrollment and is rebuilt with its public listener.
+func TestNodeIdentityTier1FunnelEnableKeepsEnrollment(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		hotReload bool
+	}{{"at start", false}, {"on hot reload", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := instrumentTiers(t)
+			expires := tierBase.Add(24 * time.Hour)
+			marker := changeRegistered(t, p, tc.hotReload, func(svc registry.Service) registry.Service {
+				svc.Funnel, svc.PublicAck, svc.NoAutoProvision = true, true, true
+				svc.FunnelExpiresAt = &expires
+				return svc
+			})
+			removed, cleanups, constructed, _ := p.observed()
+			if len(constructed) != 1 || !constructed[0].Funnel {
+				t.Fatalf("constructions after enabling Funnel = %+v, want one public node", constructed)
+			}
+			if !enrollmentKept(marker) || len(removed) != 0 || cleanups != 0 {
+				t.Fatalf("Tier 1 Funnel enable reset the untagged enrollment: kept=%v removal calls=%v cleanup calls=%d", enrollmentKept(marker), removed, cleanups)
+			}
+			if recorded := recordedIdentity(t); joinTags(recorded.Tags) != "tag:old,tag:tslink-funnel" {
+				t.Fatalf("recorded tags = %v, want the requested [tag:old tag:tslink-funnel] for a later Tier 2 start", recorded.Tags)
+			}
+		})
+	}
+}
