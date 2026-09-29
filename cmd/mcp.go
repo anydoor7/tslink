@@ -973,9 +973,12 @@ func runMCPStdio(ctx context.Context, in io.Reader, out io.Writer, actions mcpAc
 }
 
 // mcpDrainTransport observes the SDK's decoded Connection.Read boundary while
-// retaining IOTransport's actual wire codec and writer. In pinned SDK v1.7.0,
-// IOTransport's private sessionUpdated hook only changes batch-version checks;
-// TSLink's record guard rejects batches at every protocol version already.
+// retaining IOTransport's actual wire codec and writer. Wrapping the
+// connection hides IOTransport's private sessionUpdated hook, which in pinned
+// SDK v1.7.0 only drives the SDK's own refusal of batches at 2025-06-18 and
+// later, so that refusal never runs here. mcpRecordLimitReader is therefore
+// the only batch refusal: it rejects a '[' that begins any top-level value,
+// at every protocol version.
 type mcpDrainTransport struct {
 	inner      mcp.Transport
 	reader     *mcpRecordLimitReader
@@ -1096,8 +1099,10 @@ func (w *mcpNonClosingWriter) Close() error                { return nil }
 // The SDK decodes straight off the reader, so without this an unbounded line is
 // an unbounded allocation in a process the user did not intend to hand a memory
 // budget to. The limit is a stream guard, not a framer: it counts bytes since
-// the last newline and fails the read, leaving every JSON-level decision to the
-// SDK.
+// the last newline and fails the read. Its one JSON-level decision is refusing
+// a batch, for which it tracks just enough structure (string and nesting
+// state) to see where a top-level value begins; everything else is left to
+// the SDK.
 //
 // It reports physical EOF to the SDK, where mcpDrainConnection delays only
 // the decoded Connection.Read EOF until already delivered calls are answered.
@@ -1108,7 +1113,9 @@ type mcpRecordLimitReader struct {
 	mu       sync.Mutex
 	count    int
 	records  int
-	inRecord bool
+	depth    int
+	inString bool
+	escaped  bool
 	err      error
 
 	eof     chan struct{}
@@ -1157,27 +1164,44 @@ func (r *mcpRecordLimitReader) Read(p []byte) (int, error) {
 	// anything after it, would let the decoder dispatch the very value the
 	// guard refused. r.err stays set, so every later Read reports it again.
 	for i, b := range p[:n] {
+		switch {
+		case r.inString:
+			switch {
+			case r.escaped:
+				r.escaped = false
+			case b == '\\':
+				r.escaped = true
+			case b == '"':
+				r.inString = false
+			}
+		case b == '"':
+			r.inString = true
+		case b == '{':
+			r.depth++
+		case b == '[' && r.depth == 0:
+			// A '[' outside every object and string begins a top-level
+			// value, and a top-level array is a JSON-RPC batch. The decoder
+			// does not frame on newlines: any JSON whitespace separates two
+			// values, so a batch can follow a CR, a space or a tab on the
+			// same line, not only a newline. This server has never supported
+			// batching, and the revisions it speaks from 2025-06-18 onward
+			// removed it from the protocol; refusing it here refuses it at
+			// every revision, rather than at whichever one the session
+			// happens to have negotiated by the time the value is read.
+			r.err = errMCPBatchUnsupported
+			r.mu.Unlock()
+			return i, r.err
+		case b == '[':
+			r.depth++
+		case (b == '}' || b == ']') && r.depth > 0:
+			r.depth--
+		}
 		if b == '\n' {
 			if r.count > 0 {
 				r.records++
 			}
 			r.count = 0
-			r.inRecord = false
 			continue
-		}
-		if !r.inRecord && b != ' ' && b != '\t' && b != '\r' {
-			r.inRecord = true
-			if b == '[' {
-				// A record that opens with an array is a JSON-RPC batch. This
-				// server has never supported batching, and the revisions it
-				// speaks from 2025-06-18 onward removed it from the protocol;
-				// refusing it here refuses it at every revision, rather than at
-				// whichever one the session happens to have negotiated by the
-				// time the line is read.
-				r.err = errMCPBatchUnsupported
-				r.mu.Unlock()
-				return i, r.err
-			}
 		}
 		r.count++
 		if r.count > r.limit {
