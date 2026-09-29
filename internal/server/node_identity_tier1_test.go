@@ -483,3 +483,28 @@ func TestNodeIdentityTier1RestartAfterLogoutDoesNotReset(t *testing.T) {
 		})
 	}
 }
+
+// The hot-reload log reports whether a restart changes the node's auth
+// identity. A Tier 1 node advertises no tags, so a tag change is not one
+// there; the ephemeral flag still is. Tier 2 compares tags as before.
+func TestAuthIdentityChangedIgnoresTagsOnTier1(t *testing.T) {
+	testenv.SetHome(t, t.TempDir())
+	base := registry.Service{Name: "a", Type: registry.TypeProxy, Target: "http://localhost:3000", Tags: []string{"tag:old"}}
+	retagged := base
+	retagged.Tags = []string{"tag:new"}
+	ephemeral := base
+	ephemeral.Ephemeral = true
+	for _, credentialed := range []bool{false, true} {
+		s, err := New("", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		s.SetCredentialed(credentialed)
+		if got := s.authIdentityChanged(base, retagged); got != credentialed {
+			t.Fatalf("credentialed=%v: tag change auth_identity_changed=%v, want %v", credentialed, got, credentialed)
+		}
+		if !s.authIdentityChanged(base, ephemeral) {
+			t.Fatalf("credentialed=%v: ephemeral change auth_identity_changed=false, want true", credentialed)
+		}
+	}
+}
