@@ -41,13 +41,16 @@ func emptyOwnershipLedger() OwnershipLedger {
 	return OwnershipLedger{SchemaVersion: OwnershipSchemaVersion, Nodes: []OwnedNode{}}
 }
 
+// ownershipLoadError quotes the path without escaping it. %q doubles every
+// backslash, so a Windows user was told about a file named
+// "C:\\Users\\...", which is not a path they can copy or recognise.
 func ownershipLoadError(path string, err error) error {
 	return registry.CodedError{
 		Code:    "internal_error",
-		Message: fmt.Sprintf("cannot safely read node ownership ledger %q: %v; device deletion is disabled until the ledger is repaired or moved aside", path, err),
+		Message: fmt.Sprintf("cannot safely read node ownership ledger \"%s\": %v; device deletion is disabled until the ledger is repaired or moved aside", path, err),
 		Next: []string{
-			fmt.Sprintf("Back up and inspect %q", path),
-			fmt.Sprintf("Move %q aside only after preserving it for recovery", path),
+			fmt.Sprintf("Back up and inspect \"%s\"", path),
+			fmt.Sprintf("Move \"%s\" aside only after preserving it for recovery", path),
 			"tslink cleanup --dry-run",
 		},
 		MessageOnly: true,
