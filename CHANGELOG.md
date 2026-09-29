@@ -44,12 +44,15 @@ Initial public release.
   leaving the previous target reachable from the internet. This covers a
   failed Funnel policy preflight or tag-policy update, a failed
   credential-mode change and an unreadable node identity record; public
-  services that did not change keep serving. While a service is blocked on a
-  failed preflight or an unreadable identity record, the daemon retries the
-  sync on every 30-second lifecycle tick, so a service withdrawn during a
-  transient Tailscale API outage comes back without a registry change or a
-  restart. Each retry makes one Funnel policy request, plus the tag ensure
-  when `serve --manage-acl` is set.
+  services that did not change keep serving. The daemon retries a blocked
+  service by itself, so a service withdrawn during a transient Tailscale API
+  outage comes back without a registry change or a restart. A service
+  blocked on a failed preflight is retried on the next 30-second lifecycle
+  tick, then after 1, 2, 4 and 8 minutes, then every 15 minutes; each retry
+  makes one Funnel policy request, plus the tag ensure when
+  `serve --manage-acl` is set, and a registry change or a sync without a
+  policy failure restarts the schedule. A service blocked on an unreadable
+  identity record is retried on every tick.
 - `tslink tags delete-remote tag:tslink-funnel` now counts every local
   service with an effective Funnel as a user of the tag and refuses with the
   in-use error (`conflict`, exit 4 with `--json`), even with `--force
@@ -96,7 +99,9 @@ Initial public release.
   the derived `tag:tslink-funnel`), ephemeral setting and control URL the
   service's node was prepared with. When they no longer match the service,
   the daemon removes the node's local state before it starts the node again,
-  so the node enrolls with its new identity. A record that cannot be read
+  so the node enrolls with its new identity. On Tier 1, where a node enrolls
+  interactively and advertises no tags, only a change of the ephemeral
+  setting or the control URL counts. A record that cannot be read
   safely fails only its own service: `status` reports `internal_error` with
   the record's path and recovery steps, the node state is kept, and the
   service recovers on the next lifecycle tick once the file is moved aside.
@@ -174,14 +179,14 @@ Initial public release.
   and names the commands that finish the removal instead of printing
   `systemd user service not installed`. `uninstall --help` describes both
   cases.
-- Turning Funnel on or off for a service now re-enrolls its node, because a
-  public service's node carries `tag:tslink-funnel`. This includes the
-  daemon turning an expired Funnel off. On Tier 2 the node enrolls as a new
-  device; on Tier 1 it needs one browser authorization. Before, the old
-  enrollment was reused with its old tags. A change of tags, ephemeral
-  setting or control URL made while the daemon was not running now takes
-  effect the same way at the next start. Nodes enrolled before this release
-  are adopted as they are, without a reset.
+- On Tier 2, turning Funnel on or off for a service now re-enrolls its node
+  as a new device, because a public service's node carries
+  `tag:tslink-funnel`. This includes the daemon turning an expired Funnel
+  off. Before, the old enrollment was reused with its old tags. A change of
+  tags, ephemeral setting or control URL made while the daemon was not
+  running now takes effect the same way at the next start. On Tier 1 a node
+  advertises no tags, so Funnel and tag changes keep its enrollment. Nodes
+  enrolled before this release are adopted as they are, without a reset.
 - `tslink doctor` on a fresh default-tier install (no stored credential, no
   services) now exits 0, and `doctor --json` reports `health_exit_code: 0`;
   it used to exit 64. The `credential_none` finding now has severity `info`
@@ -208,6 +213,14 @@ Initial public release.
 
 ### Fixed
 
+- On Tier 1, `tslink tags set` and `tags add` no longer clear the service's
+  node state. A Tier 1 node advertises no tags, so the reset changed nothing
+  on the tailnet and only forced a new browser authorization. The new tags
+  take effect once the daemon runs on Tier 2 after `tslink login`.
+- On Windows, `tslink stop` now removes the PID file and identity artifacts
+  of a daemon that has already exited, even while another process still
+  holds a handle to it. It used to read such a daemon as running and keep
+  them.
 - When a backend sends an informational response such as `103 Early Hints`
   or `100 Continue` before an error, the client now receives that error (for
   example `503`) instead of an implicit `200`, and the access log and
