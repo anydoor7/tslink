@@ -306,6 +306,7 @@ type Server struct {
 	cleanupNodesFn          CleanupStaleNodesFunc
 	lifecycleReconcileFn    LifecycleReconcileFunc
 	lastSyncFailed          atomic.Bool
+	syncRetryPending        atomic.Bool
 	shuttingDown            atomic.Bool
 	syncGeneration          atomic.Uint64
 	reconcileGate           chan struct{}
@@ -515,13 +516,14 @@ func (s *Server) startLifecycleTicker(ctx context.Context) <-chan struct{} {
 				shouldSync := s.lifecycleReconcileFn == nil
 				if s.lifecycleReconcileFn != nil {
 					changed, err := s.lifecycleReconcileFn(ctx, now)
-					shouldSync = changed || err != nil || s.lastSyncFailed.Load()
+					shouldSync = changed || err != nil || s.lastSyncFailed.Load() || s.syncRetryPending.Load()
 					if err != nil {
 						slog.Warn("lifecycle reconciliation failed; applying in-memory wall-clock guard", "error", err)
 					}
 				}
 				// Rebuild listeners after desired state changed, reconciliation failed,
-				// or the latest sync failed and needs retry. Reconciliation still runs
+				// the latest sync failed, or it left a service blocked on a
+				// preflight that only a retry can clear. Reconciliation still runs
 				// from the wall clock on every tick, so suspend/resume cannot preserve
 				// an expired public listener without restoring unconditional sync traffic.
 				if shouldSync {
@@ -539,6 +541,10 @@ func (s *Server) startLifecycleTicker(ctx context.Context) <-chan struct{} {
 type syncOutcome struct {
 	generation uint64
 	committed  bool
+	// retry reports a sync that succeeded but left a service blocked on a
+	// transient condition, such as a failed Funnel policy preflight. Nothing
+	// else re-runs that preflight, so the lifecycle ticker must.
+	retry bool
 }
 
 type syncResult struct {
@@ -552,6 +558,7 @@ func (s *Server) syncNodes(ctx context.Context) error {
 	outcome, err := s.syncNodesWithOutcome(ctx)
 	if outcome.generation == s.syncGeneration.Load() {
 		s.lastSyncFailed.Store(err != nil)
+		s.syncRetryPending.Store(outcome.retry)
 	}
 	return err
 }
@@ -561,6 +568,7 @@ func (s *Server) syncNodesAuthoritative(ctx context.Context) error {
 		outcome, err := s.syncNodesWithOutcome(ctx)
 		if outcome.generation == s.syncGeneration.Load() {
 			s.lastSyncFailed.Store(err != nil)
+			s.syncRetryPending.Store(outcome.retry)
 		}
 		if err != nil {
 			return err
@@ -679,6 +687,7 @@ func (s *Server) syncNodesWithOutcome(ctx context.Context) (outcome syncOutcome,
 	// intact while unrelated services continue reconciling.
 	tagsToEnsure := uniqueDesiredTags(desired, validationFailures)
 	policyFailures, provisionOutcomes, fusedTagsEnsured := s.ensureFunnelPolicyBeforeRestart(generationCtx, desired, validationFailures, tagsToEnsure)
+	outcome.retry = len(policyFailures) > 0
 	if !fusedTagsEnsured && s.ensureTagsFn != nil && len(tagsToEnsure) > 0 {
 		if err := ensureTagsBeforeRestart(generationCtx, s.ensureTagsFn, tagsToEnsure); err != nil {
 			switch {
