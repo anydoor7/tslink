@@ -86,6 +86,7 @@ func acquireCredentialMutationLock() (func(), error) {
 		}
 	}
 	var lockedFiles []*os.File
+	var lockedInfos []os.FileInfo
 	releaseAll := func() {
 		for i := len(lockedFiles) - 1; i >= 0; i-- {
 			_ = filelock.Unlock(lockedFiles[i])
@@ -94,45 +95,76 @@ func acquireCredentialMutationLock() (func(), error) {
 		releaseGate()
 	}
 	for _, path := range paths {
-		f, err := lockCredentialPath(path, deadline)
+		f, info, err := openCredentialLockPath(path)
 		if err != nil {
 			releaseAll()
 			return nil, err
 		}
+		if sameCredentialLockFile(lockedInfos, info) {
+			// Another spelling of a lock this process already holds, e.g. a
+			// symlink or case variant of ~/.tslink as TSLINK_CONFIG_DIR. A
+			// second descriptor would wait on this process's own lock.
+			_ = f.Close()
+			continue
+		}
+		if err := lockCredentialFile(f, deadline); err != nil {
+			releaseAll()
+			return nil, err
+		}
 		lockedFiles = append(lockedFiles, f)
+		lockedInfos = append(lockedInfos, info)
 	}
 	return releaseAll, nil
 }
 
-func lockCredentialPath(path string, deadline time.Time) (*os.File, error) {
+func sameCredentialLockFile(locked []os.FileInfo, info os.FileInfo) bool {
+	for _, held := range locked {
+		if os.SameFile(held, info) {
+			return true
+		}
+	}
+	return false
+}
+
+func openCredentialLockPath(path string) (*os.File, os.FileInfo, error) {
 	if credentialLockPathCheck != nil {
 		if err := credentialLockPathCheck(path); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return nil, fmt.Errorf("create credential transaction lock directory: %w", err)
+		return nil, nil, fmt.Errorf("create credential transaction lock directory: %w", err)
 	}
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
-		return nil, fmt.Errorf("open credential transaction lock: %w", err)
+		return nil, nil, fmt.Errorf("open credential transaction lock: %w", err)
 	}
+	info, err := f.Stat()
+	if err != nil {
+		_ = f.Close()
+		return nil, nil, fmt.Errorf("inspect credential transaction lock: %w", err)
+	}
+	return f, info, nil
+}
+
+// lockCredentialFile waits for an exclusive lock on f until deadline. It
+// closes f on failure.
+func lockCredentialFile(f *os.File, deadline time.Time) error {
 	for {
 		locked, lockErr := tryLockCredentialFile(f)
 		if lockErr != nil {
 			_ = f.Close()
-			return nil, fmt.Errorf("lock credential transaction: %w", lockErr)
+			return fmt.Errorf("lock credential transaction: %w", lockErr)
 		}
 		if locked {
-			break
+			return nil
 		}
 		if !time.Now().Before(deadline) {
 			_ = f.Close()
-			return nil, fmt.Errorf("credential transaction lock timed out")
+			return fmt.Errorf("credential transaction lock timed out")
 		}
 		time.Sleep(min(25*time.Millisecond, time.Until(deadline)))
 	}
-	return f, nil
 }
 
 // MutationTransaction keeps the shared keyring lock across a multi-step
