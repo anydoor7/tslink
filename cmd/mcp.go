@@ -34,7 +34,25 @@ const (
 	// mcpMaxRecordBytes bounds one newline-delimited record. See
 	// mcpRecordLimitReader for why the bound exists rather than what it frames.
 	mcpMaxRecordBytes = 1024 * 1024
+	// mcpMaxURLWait caps the url tool's wait, the only tool wait a caller
+	// chooses. Every other tool wait is fixed and shorter, so this is also the
+	// longest a legitimate call may keep `tslink mcp` busy.
+	mcpMaxURLWait = 5 * time.Minute
 )
+
+var (
+	// mcpEOFWatchdogDelay bounds how long calls still running after stdin ends
+	// may keep the process alive: the longest legitimate tool wait plus a
+	// minute. A call past it is stuck, not slow, so it is cancelled.
+	mcpEOFWatchdogDelay = mcpMaxURLWait + time.Minute
+	// mcpCancelGrace is how long a cancelled session waits for its handlers to
+	// return before giving up on them.
+	mcpCancelGrace = 5 * time.Second
+)
+
+// errMCPEOFWatchdog ends a session whose calls were still running
+// mcpEOFWatchdogDelay after end of input.
+var errMCPEOFWatchdog = errors.New("in-flight MCP calls did not finish after end of input")
 
 // mcpSupportedProtocolVersions is the revision set this server accepts, newest
 // first. It is documented in `tslink mcp --help` and asserted against the SDK's
@@ -440,7 +458,7 @@ var mcpToolDefinitions = []mcpToolDefinition{
 		Description: "Return one registered service's exact runtime URL. Use this after add, or after a needs_login share was authorized; it reads local runtime evidence only and never guesses a hostname. It fails with url_not_ready until the daemon has published an exact URL, so pass wait to poll.",
 		InputSchema: objectSchema(map[string]any{
 			"name": map[string]any{"type": "string", "pattern": `^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`, "maxLength": 63, "description": "Exact registered service name."},
-			"wait": map[string]any{"type": "string", "description": "Go duration such as 30s to poll for an exact URL. Omitted or 0s returns immediately."},
+			"wait": map[string]any{"type": "string", "description": "Go duration such as 30s to poll for an exact URL, at most 5m. Omitted or 0s returns immediately."},
 		}, "name"),
 		OutputSchema: mcpURLOutputSchema,
 	},
@@ -666,7 +684,9 @@ func addParamsFromMCPArguments(args mcpAddArguments) (AddParams, bool, error) {
 }
 
 // parseMCPWait reads the url tool's optional Go duration. It mirrors
-// `tslink url --wait`, where a non-positive duration means "do not poll".
+// `tslink url --wait`, where a non-positive duration means "do not poll",
+// except that it is capped at mcpMaxURLWait: a stdio server has no other way
+// to bound how long one call keeps it alive.
 func parseMCPWait(raw string) (time.Duration, error) {
 	if raw == "" {
 		return 0, nil
@@ -674,6 +694,9 @@ func parseMCPWait(raw string) (time.Duration, error) {
 	wait, err := time.ParseDuration(raw)
 	if err != nil {
 		return 0, output.ErrUsage(fmt.Sprintf("invalid wait duration %q: %v", raw, err))
+	}
+	if wait > mcpMaxURLWait {
+		return 0, output.ErrUsage(fmt.Sprintf("wait %q exceeds the maximum of %s", raw, mcpMaxURLWait))
 	}
 	return wait, nil
 }
@@ -921,19 +944,27 @@ func newMCPServer(actions mcpActions) *mcp.Server {
 // the first reliable indication that all preceding values have been accepted
 // by the dispatcher. At that point, finish response writes before asking the
 // SDK to drain its remaining notification queue and close.
+//
+// Calls still running mcpEOFWatchdogDelay after end of input are cancelled and
+// the session ends with errMCPEOFWatchdog. Once the session is cancelled, for
+// that reason or because ctx was, it waits at most mcpCancelGrace for the
+// handlers, so one that ignores cancellation cannot keep the process alive.
 func runMCPStdio(ctx context.Context, in io.Reader, out io.Writer, actions mcpActions) error {
 	if ctx == nil {
 		// cobra leaves Command.Context nil until the command tree is executed,
 		// and the SDK selects on Done.
 		ctx = context.Background()
 	}
+	watchdogDelay, cancelGrace := mcpEOFWatchdogDelay, mcpCancelGrace
+	sessionCtx, cancelSession := context.WithCancelCause(ctx)
+	defer cancelSession(nil)
 	reader := newMCPRecordLimitReader(in, mcpMaxRecordBytes)
 	server := newMCPServer(actions)
 	settled := make(chan struct{})
 	transport := &mcpDrainTransport{
 		inner:      &mcp.IOTransport{Reader: reader, Writer: &mcpNonClosingWriter{inner: out}},
 		reader:     reader,
-		caller:     ctx,
+		caller:     sessionCtx,
 		decodedEOF: make(chan struct{}),
 	}
 	session, err := server.Connect(ctx, transport, nil)
@@ -942,7 +973,7 @@ func runMCPStdio(ctx context.Context, in io.Reader, out io.Writer, actions mcpAc
 	}
 	go func() {
 		select {
-		case <-ctx.Done():
+		case <-sessionCtx.Done():
 			// The SDK's graceful session Close can leave a context-aware tool
 			// running. Closing the actual connection first makes readIncoming
 			// cancel requests, including a tool that outlives stdin.
@@ -957,17 +988,36 @@ func runMCPStdio(ctx context.Context, in io.Reader, out io.Writer, actions mcpAc
 			// Do not set connClosing while a call still needs its response:
 			// pinned SDK rejects writes after Close starts. The wrapper has
 			// observed every decoded call and response at this EOF boundary.
+			watchdog := time.AfterFunc(watchdogDelay, func() {
+				cancelSession(fmt.Errorf("%w: still running %s after stdin closed, so they were cancelled", errMCPEOFWatchdog, watchdogDelay))
+			})
 			transport.connection.waitForResponses()
-			if ctx.Err() == nil {
+			watchdog.Stop()
+			if sessionCtx.Err() == nil {
 				_ = session.Close()
 			}
 		case <-settled:
 		}
 	}()
-	waitErr := session.Wait()
+	waited := make(chan error, 1)
+	go func() { waited <- session.Wait() }()
+	var waitErr error
+	select {
+	case waitErr = <-waited:
+	case <-sessionCtx.Done():
+		// session.Wait returns only once every handler has, and cancellation
+		// reaches a handler only if it watches its context.
+		select {
+		case waitErr = <-waited:
+		case <-time.After(cancelGrace):
+		}
+	}
 	close(settled)
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return ctxErr
+	}
+	if cause := context.Cause(sessionCtx); cause != nil {
+		return cause
 	}
 	return waitErr
 }
@@ -1536,7 +1586,12 @@ and its requested tsnet services. share and add with
 funnel true publish to the public internet, and the invite_* tools send or
 cancel real invitations through the Tailscale API, so a client should confirm
 those with its user first. Protocol frames are written only to stdout;
-diagnostics and logs are written only to stderr.`,
+diagnostics and logs are written only to stderr.
+
+When stdin closes, requests already read still get their answers before the
+server exits. The url tool's wait is capped at ` + mcpMaxURLWait.String() + `, and a call still
+running ` + mcpEOFWatchdogDelay.String() + ` after stdin closed is cancelled and the command exits
+non-zero.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if jsonOutput(cmd) {
