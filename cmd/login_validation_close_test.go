@@ -84,11 +84,11 @@ func TestLoginWithClientSecretReturnsAnEarlyUpFailureInsteadOfPanicking(t *testi
 	if stateDir == "" || removed != stateDir {
 		t.Fatalf("removed state dir = %q, want the validation node's %q", removed, stateDir)
 	}
-	if !strings.Contains(logs.String(), "tsnet close after a failed start panicked") || !strings.Contains(logs.String(), clientSecretValidationHostname) {
-		t.Fatalf("log = %q, want the abandoned validation node reported", logs.String())
-	}
 	if strings.Contains(err.Error(), secretMaterial) || strings.Contains(logs.String(), secretMaterial) {
 		t.Fatal("the client secret reached the error or the log")
+	}
+	if !strings.Contains(logs.String(), "tsnet close after a failed start panicked") || !strings.Contains(logs.String(), clientSecretValidationHostname) {
+		t.Fatalf("log = %q, want the abandoned validation node reported", logs.String())
 	}
 
 	gotAPIKey, err := credentials.GetAPIKey()
