@@ -34,7 +34,7 @@ func TestNodeIdentityStartupTransitionCleanupFailureIsDegraded(t *testing.T) {
 		cleanupTargets = append(cleanupTargets, targets...)
 		return tailapi.CleanupResult{}, errors.New("tailscale API 503")
 	})
-	err, obs := runUntilReady(t, s)
+	obs, err := runUntilReady(t, s)
 	if err != nil || !obs.ready {
 		t.Fatalf("stale-node listing outage took the daemon down: Run err=%v ready=%v", err, obs.ready)
 	}

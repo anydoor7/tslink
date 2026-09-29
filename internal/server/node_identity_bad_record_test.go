@@ -26,7 +26,7 @@ type startObservation struct {
 
 // runUntilReady runs the daemon's real start path and records what was up,
 // what failed, and what runtime.json said at the moment it became ready.
-func runUntilReady(t *testing.T, s *Server) (error, startObservation) {
+func runUntilReady(t *testing.T, s *Server) (startObservation, error) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -49,7 +49,8 @@ func runUntilReady(t *testing.T, s *Server) (error, startObservation) {
 		cancel()
 		return nil
 	})
-	return s.Run(ctx), obs
+	err := s.Run(ctx)
+	return obs, err
 }
 
 func snapshotService(snapshot *tsruntime.Snapshot, name string) (tsruntime.ServiceSnapshot, bool) {
@@ -123,7 +124,7 @@ func TestNodeIdentityBadRecordAtStartFailsOnlyThatService(t *testing.T) {
 			}
 
 			s := newIdentityProbeServer(t, "", p)
-			err, obs := runUntilReady(t, s)
+			obs, err := runUntilReady(t, s)
 			if err != nil || !obs.ready {
 				t.Fatalf("one identity record took the daemon down: Run err=%v ready=%v", err, obs.ready)
 			}

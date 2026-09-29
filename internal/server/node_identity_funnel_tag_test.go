@@ -22,7 +22,7 @@ func funnelPolicySatisfied(context.Context, tailapi.FunnelPolicyRequest) (tailap
 // syncOnceWithFakeNode runs one fresh-process sync. The fake node stops at Up
 // (after the identity is prepared and the node constructed) unless
 // startsCleanly is set. It returns the tags each construction advertised.
-func syncOnceWithFakeNode(t *testing.T, startsCleanly bool, cleanups *[][]tailapi.CleanupTarget) (error, [][]string) {
+func syncOnceWithFakeNode(t *testing.T, startsCleanly bool, cleanups *[][]tailapi.CleanupTarget) ([][]string, error) {
 	t.Helper()
 	var advertised [][]string
 	oldNew := newTSNetServerFn
@@ -47,7 +47,7 @@ func syncOnceWithFakeNode(t *testing.T, startsCleanly bool, cleanups *[][]tailap
 	})
 	err = s.syncNodes(context.Background())
 	s.closeAllNodes()
-	return err, advertised
+	return advertised, err
 }
 
 // tsnet ignores the auth key once state exists, so a node keeps whatever tags
@@ -86,7 +86,7 @@ func TestNodeIdentityFunnelToggleResetsEnrollment(t *testing.T) {
 			cleanups = nil
 
 			writeRegistry(t, []registry.Service{tc.after})
-			_, advertised := syncOnceWithFakeNode(t, !tc.after.Funnel, &cleanups)
+			advertised, _ := syncOnceWithFakeNode(t, !tc.after.Funnel, &cleanups)
 			if len(advertised) != 1 {
 				t.Fatalf("constructions = %v, want 1", advertised)
 			}
@@ -129,7 +129,7 @@ func TestNodeIdentityLegacyPublicAdoptionDoesNotChurn(t *testing.T) {
 	}
 	var cleanups [][]tailapi.CleanupTarget
 	for start := 1; start <= 2; start++ {
-		_, advertised := syncOnceWithFakeNode(t, false, &cleanups)
+		advertised, _ := syncOnceWithFakeNode(t, false, &cleanups)
 		if len(advertised) != 1 || !containsString(advertised[0], registry.FunnelTag) {
 			t.Fatalf("start %d constructed %v, want one public node with %s", start, advertised, registry.FunnelTag)
 		}
