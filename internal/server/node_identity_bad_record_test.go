@@ -202,6 +202,7 @@ func TestNodeIdentityBadRecordDuringHotReloadKeepsRuntimeSnapshot(t *testing.T) 
 				t.Fatal(err)
 			}
 			planted := filepath.Join(mustConfigDir(t), "node-identities", tc.file)
+			original, _ := os.ReadFile(planted)
 			if err := os.WriteFile(planted, []byte("{bad"), 0o600); err != nil {
 				t.Fatal(err)
 			}
@@ -229,6 +230,23 @@ func TestNodeIdentityBadRecordDuringHotReloadKeepsRuntimeSnapshot(t *testing.T) 
 			assertStateIntact(t, markers, "files", "api", "eph")
 			if data, err := os.ReadFile(planted); err != nil || string(data) != "{bad" {
 				t.Fatalf("bad record changed: %q err=%v", data, err)
+			}
+			if tc.wantFailure == "" {
+				return
+			}
+			// Once the record is readable again, the still-running node must
+			// stop being reported as failed.
+			if err := os.WriteFile(planted, original, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.syncNodes(context.Background()); err != nil {
+				t.Fatalf("sync after record repair: %v", err)
+			}
+			s.mu.RLock()
+			failure, failed = s.serviceFailures[tc.wantFailure]
+			s.mu.RUnlock()
+			if failed || !s.nodeRunning(tc.wantFailure) {
+				t.Fatalf("repaired record: running=%v failure still reported=%v (%+v)", s.nodeRunning(tc.wantFailure), failed, failure.Error)
 			}
 		})
 	}
