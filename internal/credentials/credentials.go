@@ -708,6 +708,7 @@ func MigrateFromLegacy() (migrated bool) {
 		// stale after rotation, so neither overwrite the keyring nor delete the
 		// conflicting file without an explicit operator decision.
 		if stored != key {
+			slog.Warn("legacy API key file differs from the keyring credential; kept the keyring value and left the file in place", "path", path)
 			return false
 		}
 	case err == nil, errors.Is(err, keyring.ErrNotFound):

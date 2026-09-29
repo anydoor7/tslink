@@ -715,8 +715,16 @@ func commitLoginCredential(ctx context.Context, store loginCredentialStore, mode
 		var result loginCommitResult
 		err := loginMutationTransactionFn(func(transaction *credentials.MutationTransaction) error {
 			liveStore.transaction = transaction
+			files := transaction.SnapshotCredentialFiles()
 			var commitErr error
 			result, commitErr = commitLoginCredentialValidated(ctx, liveStore, mode, value, opts, true)
+			if commitErr != nil {
+				// A keyring write removed any file copy; put back a file that
+				// disagreed with the keyring before this login.
+				if restoreErr := transaction.RestoreRemovedCredentialFiles(files); restoreErr != nil {
+					commitErr = fmt.Errorf("%w; restore credential files failed: %v", commitErr, restoreErr)
+				}
+			}
 			return commitErr
 		})
 		return result, credentialLockConflict(err)

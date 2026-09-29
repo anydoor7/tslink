@@ -252,3 +252,51 @@ func (*MutationTransaction) DeleteAPIKeyChecked() error {
 func (*MutationTransaction) DeleteClientSecretChecked() error {
 	return deleteClientSecretCheckedLocked()
 }
+
+// CredentialFileSnapshot holds the credential files that existed when a
+// transaction began. It carries credential material: never log or persist it.
+type CredentialFileSnapshot struct {
+	files map[string][]byte
+}
+
+// SnapshotCredentialFiles records the API key and client secret files. A
+// keyring write removes the file copy, and a login snapshot records only the
+// effective keyring-first value, so a file that disagreed with the keyring
+// would otherwise be lost when the login rolls back.
+func (*MutationTransaction) SnapshotCredentialFiles() CredentialFileSnapshot {
+	snapshot := CredentialFileSnapshot{files: map[string][]byte{}}
+	for _, pathFunc := range []func() (string, error){apiKeyPathFunc, clientSecretPathFunc} {
+		path, err := pathFunc()
+		if err != nil {
+			continue
+		}
+		info, err := os.Lstat(path)
+		if err != nil || !info.Mode().IsRegular() {
+			continue
+		}
+		if data, err := os.ReadFile(path); err == nil {
+			snapshot.files[path] = data
+		}
+	}
+	return snapshot
+}
+
+// RestoreRemovedCredentialFiles writes back each snapshotted file that is now
+// missing. It never overwrites or deletes a file: after a rollback, an
+// existing file is the one the value restore wrote. Windows never writes
+// credential files, so it restores nothing there.
+func (*MutationTransaction) RestoreRemovedCredentialFiles(snapshot CredentialFileSnapshot) error {
+	if !fileCredentialFallbackEnabledFunc() {
+		return nil
+	}
+	var errs []error
+	for path, data := range snapshot.files {
+		if _, err := os.Lstat(path); !os.IsNotExist(err) {
+			continue
+		}
+		if err := credentialFileWriteFunc(path, data); err != nil {
+			errs = append(errs, fmt.Errorf("restore credential file %s: %w", path, err))
+		}
+	}
+	return errors.Join(errs...)
+}
