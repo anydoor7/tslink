@@ -70,7 +70,7 @@ func TestMCPEOFWatchdogDefaultsOutlastEveryToolWait(t *testing.T) {
 
 // runMCPUntil runs a finite session and fails the test if it outlives limit,
 // instead of hanging the package.
-func runMCPUntil(t *testing.T, input string, actions mcpActions, limit time.Duration) (string, error, time.Duration) {
+func runMCPUntil(t *testing.T, input string, actions mcpActions, limit time.Duration) (string, time.Duration, error) {
 	t.Helper()
 	var stdout bytes.Buffer
 	done := make(chan error, 1)
@@ -78,10 +78,10 @@ func runMCPUntil(t *testing.T, input string, actions mcpActions, limit time.Dura
 	go func() { done <- runMCPStdio(context.Background(), strings.NewReader(input), &stdout, actions) }()
 	select {
 	case err := <-done:
-		return stdout.String(), err, time.Since(start)
+		return stdout.String(), time.Since(start), err
 	case <-time.After(limit):
 		t.Fatalf("tslink mcp outlived its closed stdin by more than %v", limit)
-		return "", nil, 0
+		return "", 0, nil
 	}
 }
 
@@ -97,7 +97,7 @@ func TestMCPEOFWatchdogCancelsACallStuckPastEveryBound(t *testing.T) {
 			cancelled.Store(true)
 			return nil, ctx.Err()
 		}
-		_, err, took := runMCPUntil(t, call, actions, 5*time.Second)
+		_, took, err := runMCPUntil(t, call, actions, 5*time.Second)
 		if !errors.Is(err, errMCPEOFWatchdog) {
 			t.Fatalf("session error = %v, want the post-EOF watchdog", err)
 		}
@@ -117,7 +117,7 @@ func TestMCPEOFWatchdogCancelsACallStuckPastEveryBound(t *testing.T) {
 			<-release
 			return URLResult{}, nil
 		}
-		_, err, took := runMCPUntil(t, call, actions, 5*time.Second)
+		_, took, err := runMCPUntil(t, call, actions, 5*time.Second)
 		if !errors.Is(err, errMCPEOFWatchdog) {
 			t.Fatalf("session error = %v, want the post-EOF watchdog", err)
 		}
@@ -143,7 +143,7 @@ func TestMCPEOFWatchdogLeavesABoundedCallAlone(t *testing.T) {
 			return URLResult{Name: name, URL: "https://" + name + ".tail.ts.net", State: "exact"}, nil
 		}
 	}
-	stdout, err, _ := runMCPUntil(t, initializedMCPInput(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"url","arguments":{"name":"web","wait":"500ms"}}}`), actions, 10*time.Second)
+	stdout, _, err := runMCPUntil(t, initializedMCPInput(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"url","arguments":{"name":"web","wait":"500ms"}}}`), actions, 10*time.Second)
 	if err != nil {
 		t.Fatalf("session error = %v", err)
 	}
