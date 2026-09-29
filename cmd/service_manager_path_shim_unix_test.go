@@ -225,12 +225,18 @@ func TestCompiledBinaryResolvesTheServiceManagerThroughItsOwnPath(t *testing.T) 
 		t.Skip("verified for darwin's launchctl read path only; see the comment above")
 	}
 	binary := compiledTSLinkBinary(t)
+	// status only asks launchctl about a LaunchAgent it can find, so an
+	// inherited HOME makes the result depend on the host: it passes where TSLink
+	// is installed and fails on a clean Mac or CI runner. Both children get a
+	// scratch HOME holding a stand-in plist instead.
+	home := launchAgentFixtureHome(t)
 
 	// Redirect this child's recording away from the package-wide log so the
 	// guard's teardown report stays a statement about the rest of the suite.
 	guardedLog := filepath.Join(t.TempDir(), "guarded.log")
 	guarded := exec.Command(binary, "status", "--json")
 	guarded.Env = append(os.Environ(),
+		"HOME="+home,
 		"TSLINK_CONFIG_DIR="+t.TempDir(),
 		"TSLINK_DISABLE_KEYRING=1",
 		testenv.ServiceManagerShimLogEnv+"="+guardedLog,
@@ -261,6 +267,7 @@ func TestCompiledBinaryResolvesTheServiceManagerThroughItsOwnPath(t *testing.T) 
 	}
 	decoy := exec.Command(binary, "status", "--json")
 	decoy.Env = append(environWithout(testenv.ServiceManagerShimLogEnv),
+		"HOME="+home,
 		"TSLINK_CONFIG_DIR="+t.TempDir(),
 		"TSLINK_DISABLE_KEYRING=1",
 		"PATH="+decoyDir+string(os.PathListSeparator)+os.Getenv("PATH"),
@@ -277,6 +284,29 @@ func TestCompiledBinaryResolvesTheServiceManagerThroughItsOwnPath(t *testing.T) 
 	if len(readShimCallsAllowingAbsence(t, guardedLog)) != len(guardedCalls) {
 		t.Fatal("the decoy run also wrote to the guarded log; the two runs are not distinguishable and the negative proves nothing")
 	}
+}
+
+// launchAgentFixtureHome returns a scratch HOME whose LaunchAgents directory
+// holds a minimal com.tslink.daemon plist. The plist points at a binary that
+// does not exist; it only has to make status look the agent up.
+func launchAgentFixtureHome(t *testing.T) string {
+	t.Helper()
+	// The same label as plistLabel, which only exists in darwin builds; this
+	// file also compiles on Linux.
+	const label = "com.tslink.daemon"
+	home := t.TempDir()
+	agents := filepath.Join(home, "Library", "LaunchAgents")
+	if err := os.MkdirAll(agents, 0o700); err != nil {
+		t.Fatalf("create LaunchAgents fixture: %v", err)
+	}
+	plist := `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict><key>Label</key><string>` + label + `</string><key>ProgramArguments</key><array><string>/nonexistent/tslink</string><string>serve</string></array></dict></plist>
+`
+	if err := os.WriteFile(filepath.Join(agents, label+".plist"), []byte(plist), 0o600); err != nil {
+		t.Fatalf("write LaunchAgent fixture: %v", err)
+	}
+	return home
 }
 
 func readShimCallsAllowingAbsence(t *testing.T, logPath string) []testenv.ServiceManagerShimCall {
