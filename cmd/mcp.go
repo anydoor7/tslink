@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -51,6 +52,10 @@ var (
 	// mcpCancelGrace is how long a cancelled session waits for its handlers to
 	// return before giving up on them.
 	mcpCancelGrace = 5 * time.Second
+	// mcpWriteGrace is how long a returning session waits for a write to out
+	// already in progress. A write past it is blocked, typically because the
+	// client stopped reading stdout, and is left behind.
+	mcpWriteGrace = 5 * time.Second
 )
 
 // errMCPEOFWatchdog ends a session whose calls were still running
@@ -974,15 +979,15 @@ func runMCPStdio(ctx context.Context, in io.Reader, out io.Writer, actions mcpAc
 		// and the SDK selects on Done.
 		ctx = context.Background()
 	}
-	watchdogDelay, cancelGrace := mcpEOFWatchdogDelay, mcpCancelGrace
+	watchdogDelay, cancelGrace, writeGrace := mcpEOFWatchdogDelay, mcpCancelGrace, mcpWriteGrace
 	sessionCtx, cancelSession := context.WithCancelCause(ctx)
 	defer cancelSession(nil)
 	reader := newMCPRecordLimitReader(in, mcpMaxRecordBytes)
-	writer := &mcpNonClosingWriter{inner: out}
+	writer := newMCPNonClosingWriter(out)
 	// On every return, including one that abandons a handler after
 	// mcpCancelGrace, nothing writes to out afterwards and what was written
-	// is complete.
-	defer writer.release()
+	// is complete, unless a write outlasted mcpWriteGrace.
+	defer writer.release(writeGrace)
 	server := newMCPServer(actions)
 	settled := make(chan struct{})
 	transport := &mcpDrainTransport{
@@ -1165,15 +1170,21 @@ func (c *mcpDrainConnection) Close() error {
 // mcpNonClosingWriter leaves command-owned stdout open when the SDK closes its
 // transport, and stops writing to it once runMCPStdio returns.
 type mcpNonClosingWriter struct {
-	inner    io.Writer
-	mu       sync.Mutex
-	released bool
+	inner io.Writer
+	// turn is held across each write to inner, like a mutex that release can
+	// stop waiting for.
+	turn     chan struct{}
+	released atomic.Bool
+}
+
+func newMCPNonClosingWriter(inner io.Writer) *mcpNonClosingWriter {
+	return &mcpNonClosingWriter{inner: inner, turn: make(chan struct{}, 1)}
 }
 
 func (w *mcpNonClosingWriter) Write(p []byte) (int, error) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	if w.released {
+	w.turn <- struct{}{}
+	defer func() { <-w.turn }()
+	if w.released.Load() {
 		return 0, io.ErrClosedPipe
 	}
 	return w.inner.Write(p)
@@ -1181,13 +1192,21 @@ func (w *mcpNonClosingWriter) Write(p []byte) (int, error) {
 
 func (w *mcpNonClosingWriter) Close() error { return nil }
 
-// release refuses every later write. It waits for a write already in
-// progress, so everything written happens before the caller reads out; a
-// session abandoned after mcpCancelGrace would otherwise still be writing.
-func (w *mcpNonClosingWriter) release() {
-	w.mu.Lock()
-	w.released = true
-	w.mu.Unlock()
+// release refuses every later write. It waits up to grace for a write already
+// in progress, so everything written happens before the caller reads out; a
+// session abandoned after mcpCancelGrace would otherwise still be writing. A
+// write that outlasts grace is blocked, and waiting for it would keep the
+// process from exiting, so it is left behind; writes queued behind it are
+// still refused when they get their turn.
+func (w *mcpNonClosingWriter) release(grace time.Duration) {
+	w.released.Store(true)
+	timer := time.NewTimer(grace)
+	defer timer.Stop()
+	select {
+	case w.turn <- struct{}{}:
+		<-w.turn
+	case <-timer.C:
+	}
 }
 
 // mcpRecordLimitReader bounds the bytes a single newline-delimited record may
