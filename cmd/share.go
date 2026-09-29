@@ -28,11 +28,15 @@ const (
 )
 
 type ShareResult struct {
-	URL         string `json:"url,omitempty"`
-	Name        string `json:"name,omitempty"`
-	Status      string `json:"status"`
-	AuthURL     string `json:"auth_url,omitempty"`
-	serviceName string
+	URL     string `json:"url,omitempty"`
+	Name    string `json:"name,omitempty"`
+	Status  string `json:"status"`
+	AuthURL string `json:"auth_url,omitempty"`
+	// FunnelExpiresAt is the deadline of the Funnel share this call returned.
+	// A reused share keeps its own, which can be sooner than the one asked
+	// for, so it is reported rather than implied by the request.
+	FunnelExpiresAt *time.Time `json:"funnel_expires_at,omitempty"`
+	serviceName     string
 }
 
 type shareTargetSpec struct {
@@ -511,12 +515,25 @@ func executeShare(ctx context.Context, paths sharePaths, req shareRequest, wait 
 			return ShareResult{}, err
 		}
 		if startup.Status == authStatusNeedsLogin && startup.AuthURL != "" {
-			return ShareResult{Status: authStatusNeedsLogin, AuthURL: startup.AuthURL, serviceName: svc.Name}, nil
+			return withShareFunnelState(ShareResult{Status: authStatusNeedsLogin, AuthURL: startup.AuthURL, serviceName: svc.Name}, svc), nil
 		}
 	}
 	// svc, not spec: when registerShare reused an existing service, the URL has
 	// to describe what that service actually serves.
-	return waitForShareOutcome(ctx, paths, svc.Name, svc.File, wait)
+	result, err = waitForShareOutcome(ctx, paths, svc.Name, svc.File, wait)
+	if err != nil {
+		return result, err
+	}
+	return withShareFunnelState(result, svc), nil
+}
+
+// withShareFunnelState reports the Funnel deadline of the service the share
+// actually uses.
+func withShareFunnelState(result ShareResult, svc registry.Service) ShareResult {
+	if svc.Funnel {
+		result.FunnelExpiresAt = cloneTimePointer(svc.FunnelExpiresAt)
+	}
+	return result
 }
 
 func init() {

@@ -187,10 +187,11 @@ var (
 		}, "attempted", "changed", "reason"),
 	}, "code", "message")
 	mcpShareOutputSchema = objectSchema(map[string]any{
-		"url":      map[string]any{"type": "string"},
-		"name":     map[string]any{"type": "string"},
-		"status":   map[string]any{"type": "string", "enum": []string{shareStatusReady, authStatusNeedsLogin}},
-		"auth_url": map[string]any{"type": "string"},
+		"url":               map[string]any{"type": "string"},
+		"name":              map[string]any{"type": "string"},
+		"status":            map[string]any{"type": "string", "enum": []string{shareStatusReady, authStatusNeedsLogin}},
+		"auth_url":          map[string]any{"type": "string"},
+		"funnel_expires_at": map[string]any{"type": "string", "description": "When the public Funnel of this share stops; absent for a tailnet-only share or a Funnel that never expires. A reused share keeps its own deadline, which can be sooner than the funnel_ttl this call asked for."},
 	}, "status")
 	mcpListOutputSchema = objectSchema(map[string]any{
 		"services": map[string]any{
