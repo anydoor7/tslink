@@ -89,6 +89,7 @@ func TestNodeIdentityBadRecordAtStartFailsOnlyThatService(t *testing.T) {
 		{name: "invalid-origin-registered", file: "api.json", content: `{"version":1,"service":"api","tags":["tag:api","tag:web"],"ephemeral":false,"control_url":"","origin":"guessed"}`, want: apiFailed},
 		{name: "future-version-registered", file: "api.json", content: `{"version":2,"service":"api","tags":["tag:other"],"ephemeral":true,"control_url":"https://elsewhere.example","origin":"enrolled"}`, want: apiUnknownKeeps},
 		{name: "future-field-registered", file: "api.json", content: `{"version":1,"service":"api","tags":["tag:other"],"ephemeral":false,"control_url":"","origin":"requested_before_up","enrolled_node_id":"n1"}`, want: apiUnknownKeeps},
+		{name: "unversioned-foreign-registered", file: "api.json", content: `{"enrolled_node_id":"n1"}`, want: apiFailed},
 		{name: "unreadable-registered", unreadable: true, want: allUp},
 		{name: "corrupt-orphan", file: "gone.json", content: "{bad", want: allUp},
 		{name: "stray-appledouble", file: "._api.json", content: "\x00\x05\x16\x07", want: allUp},

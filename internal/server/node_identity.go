@@ -169,8 +169,10 @@ func readNodeIdentity(path string) (nodeIdentity, bool, error) {
 	if version > nodeIdentityVersion {
 		return nodeIdentity{}, true, fmt.Errorf("%w: version %d", errNodeIdentityUnknown, version)
 	}
+	// An added field is tolerated only on a record that claims this version;
+	// without one the file is not a record any TSLink build wrote.
 	for key := range fields {
-		if _, known := nodeIdentityFields[key]; !known {
+		if _, known := nodeIdentityFields[key]; !known && version == nodeIdentityVersion {
 			return nodeIdentity{}, true, fmt.Errorf("%w: field %q", errNodeIdentityUnknown, key)
 		}
 	}
