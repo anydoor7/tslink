@@ -595,7 +595,7 @@ type mcpActions struct {
 	share         func(context.Context, shareRequest) (ShareResult, error)
 	add           func(context.Context, AddParams, bool) (any, error)
 	list          func() (any, error)
-	unshare       func(string) (any, error)
+	unshare       func(context.Context, string) (any, error)
 	status        func() (any, error)
 	url           func(context.Context, string, time.Duration) (any, error)
 	tagsList      func() (any, error)
@@ -611,11 +611,6 @@ type mcpActions struct {
 	templateList  func() (any, error)
 	templatePlan  func(string) (any, error)
 	templateApply func(context.Context, string, bool) (any, error)
-
-	// unshareContext, when set, is what the unshare tool calls, so device
-	// cleanup sees the request's cancellation. unshare stays the seam test
-	// doubles replace.
-	unshareContext func(context.Context, string) (any, error)
 }
 
 // mcpAddArguments is the wire shape of the add tool's arguments.
@@ -778,10 +773,7 @@ func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 			}
 			return map[string]any{"services": services}, nil
 		},
-		unshare: func(name string) (any, error) {
-			return unshareMCPService(context.Background(), paths, name)
-		},
-		unshareContext: func(ctx context.Context, name string) (any, error) {
+		unshare: func(ctx context.Context, name string) (any, error) {
 			return unshareMCPService(ctx, paths, name)
 		},
 		status: func() (any, error) {
@@ -1434,11 +1426,7 @@ func callMCPTool(ctx context.Context, actions mcpActions, name string, arguments
 		if decodeErr := decodeMCPArguments(arguments, &args); decodeErr != nil || args.Name == "" {
 			return nil, mcpInvalidArgumentsError("unshare")
 		}
-		if actions.unshareContext != nil {
-			data, err = actions.unshareContext(ctx, args.Name)
-		} else {
-			data, err = actions.unshare(args.Name)
-		}
+		data, err = actions.unshare(ctx, args.Name)
 	case "status":
 		var args struct{}
 		if decodeErr := decodeMCPArguments(arguments, &args); decodeErr != nil {
