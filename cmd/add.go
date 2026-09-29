@@ -160,9 +160,6 @@ func resolveFunnelExpiry(funnel bool, ttl string, ttlSet bool, now time.Time) (*
 	return &expiresAt, nil
 }
 
-// buildService validates parameters and constructs a registry.Service.
-// For Dir type, it returns the service with Type set but Path empty —
-// the caller must resolve and validate the filesystem path.
 // barePortTarget reads a digits-only proxy or tcp target the way `tslink share`
 // reads its argument: a port on localhost. Anything with a host, a scheme or a
 // path is returned unchanged for the usual validation.
@@ -177,6 +174,9 @@ func barePortTarget(kind, target string) (string, error) {
 	return net.JoinHostPort("localhost", strconv.Itoa(port)), nil
 }
 
+// buildService validates parameters and constructs a registry.Service.
+// For Dir type, it returns the service with Type set but Path empty —
+// the caller must resolve and validate the filesystem path.
 func buildService(p AddParams) (registry.Service, error) {
 	if err := registry.ValidateName(p.Name); err != nil {
 		return registry.Service{}, err
