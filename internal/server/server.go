@@ -64,8 +64,10 @@ func newTSNetServer(svc registry.Service, stateDir, authKey, controlURL string) 
 var newTSNetServerFn = newTSNetServer
 
 // CloseTSNetServer releases a tsnet node whose start may not have completed;
-// every such Close in TSLink goes through it (service nodes, the MCP
-// control-plane node, the CLI's client-secret validation node). tsnet's Close
+// every Close that can follow an incomplete Start or Up goes through it
+// (service nodes, the MCP control-plane node, the CLI's client-secret
+// validation node), while stopNodeLocked closes only nodes whose start
+// completed. tsnet's Close
 // dereferences state its start builds part-way through, so closing a node
 // whose start failed early panics upstream (tailscale.com v1.102.4,
 // tsnet.Server.close; reached for example when os.Executable fails because
