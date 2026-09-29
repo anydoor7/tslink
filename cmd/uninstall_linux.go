@@ -31,6 +31,14 @@ This command:
   3. Deletes the unit file at ~/.config/systemd/user/tslink.service
   4. Runs 'systemctl --user daemon-reload' to clean up systemd state
 
+If the stop fails and TSLink cannot confirm that the service has shut down,
+the unit file is kept and the command fails. When the cause is that
+'systemctl --user' cannot reach your user manager (su, sudo -u, or SSH
+without a login session), rerun from a login session of this user that has
+the user bus (XDG_RUNTIME_DIR=/run/user/$UID). If 'systemctl --user' is
+permanently unavailable on this host,
+remove ~/.config/systemd/user/tslink.service by hand.
+
 If the service is not installed, prints a message and exits cleanly.
 
 To check if the service is still active after removal:
@@ -73,7 +81,7 @@ func runUninstallLocked(cmd *cobra.Command, args []string) error {
 
 	var warnings []string
 	if output, err := systemctlCombinedOutput("--user", "stop", systemdServiceName); err != nil {
-		if stateErr := confirmSystemdStoppedAfterError(); stateErr != nil {
+		if stateErr := confirmSystemdStoppedAfterError(servicePath); stateErr != nil {
 			return fmt.Errorf("stop systemd user service: %w%s; unit retained because shutdown could not be confirmed: %v", err, commandOutputSuffix(output), stateErr)
 		}
 		warnings = append(warnings, fmt.Sprintf("stop systemd user service: %v%s", err, commandOutputSuffix(output)))
@@ -115,11 +123,11 @@ func runUninstallLocked(cmd *cobra.Command, args []string) error {
 
 // A failed stop may still have stopped the unit. Only an explicit inactive or
 // failed state with no MainPID lets uninstall continue and remove its definition.
-func confirmSystemdStoppedAfterError() error {
+func confirmSystemdStoppedAfterError(servicePath string) error {
 	output, err := systemctlCombinedOutput("--user", "show", systemdServiceName,
 		"--property=ActiveState", "--property=MainPID", "--no-pager")
 	if err != nil {
-		return fmt.Errorf("inspect systemd service state: %w%s", err, commandOutputSuffix(output))
+		return fmt.Errorf("inspect systemd service state: %w%s; %s", err, commandOutputSuffix(output), systemdUserManagerRemedy(servicePath))
 	}
 	state := parseSystemdProperties(output)
 	pid, pidErr := strconv.Atoi(state["MainPID"])
@@ -127,6 +135,13 @@ func confirmSystemdStoppedAfterError() error {
 		return fmt.Errorf("ActiveState=%q MainPID=%q", state["ActiveState"], state["MainPID"])
 	}
 	return nil
+}
+
+// systemdUserManagerRemedy is the way out when uninstall keeps the unit because
+// systemctl --user could not answer at all: there is no user bus in this
+// session, or no systemctl. Retrying from the same shell cannot change either.
+func systemdUserManagerRemedy(servicePath string) string {
+	return "if 'systemctl --user' cannot reach your user manager, rerun 'tslink uninstall' from a login session of this user that has the user bus (XDG_RUNTIME_DIR=/run/user/$UID); if 'systemctl --user' is permanently unavailable on this host, remove " + servicePath + " by hand"
 }
 
 func resetFailedSystemdServiceWarning() string {
