@@ -296,11 +296,21 @@ func TestNodeIdentityLegacyAdoptionAndCorruptRecord(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := fresh.syncNodes(context.Background()); err == nil {
+	// A corrupt record is a failure of its own service, not of the sync.
+	if err := fresh.syncNodes(context.Background()); err != nil {
+		t.Fatalf("corrupt record failed the whole sync: %v", err)
+	}
+	if failure := fresh.serviceFailures[old.Name]; !isNodeIdentityFailure(failure) || !strings.Contains(failure.Error.Message, path) {
 		t.Fatal("corrupt record fell through to legacy adoption")
 	}
 	if constructs != 1 {
 		t.Fatalf("corrupt record constructed node: %d", constructs)
+	}
+	if data, err := os.ReadFile(path); err != nil || string(data) != "{bad json" {
+		t.Fatalf("corrupt record was rewritten: %q err=%v", data, err)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("corrupt record removed legacy state: %v", err)
 	}
 }
 
@@ -473,8 +483,13 @@ func TestNodeIdentityCorruptServiceDoesNotBlockUnrelatedPrivateStart(t *testing.
 	}
 	t.Cleanup(func() { newTSNetServerFn = oldNew })
 	t.Cleanup(s.closeAllNodes)
-	if err := s.syncNodes(context.Background()); err == nil || !strings.Contains(err.Error(), "read identity for running service") {
-		t.Fatalf("corrupt service error = %v", err)
+	// The corrupt record is reported as this service's failure, not as a
+	// sync error that would withdraw runtime evidence for every service.
+	if err := s.syncNodes(context.Background()); err != nil {
+		t.Fatalf("corrupt service failed the whole sync: %v", err)
+	}
+	if failure := s.serviceFailures[old.Name]; !isNodeIdentityFailure(failure) || !strings.Contains(failure.Error.Message, path) {
+		t.Fatalf("corrupt service error = %+v", failure)
 	}
 	if strings.Join(constructed, ",") != "other" || !s.nodeRunning("other") || !s.nodeRunning(old.Name) {
 		t.Fatalf("corrupt service blocked unrelated private start: constructed=%v", constructed)

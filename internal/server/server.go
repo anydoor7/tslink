@@ -755,6 +755,7 @@ func (s *Server) syncNodesWithOutcome(ctx context.Context) (outcome syncOutcome,
 				slog.Warn("closing changed public listener after node identity error", "name", name, "error", identityErr)
 				s.stopNodeLocked(name, false)
 			}
+			s.serviceFailures[name] = nodeIdentityFailure(svc, identityErr)
 		} else if failure, blocked := policyFailures[name]; blocked {
 			if node.funnelListenerActive && serviceChangedWithFallback(node.service, svc, s.controlURL) {
 				// A public listener serving an older target or identity must not
@@ -784,17 +785,21 @@ func (s *Server) syncNodesWithOutcome(ctx context.Context) (outcome syncOutcome,
 		svc, exists := desired[name]
 		_, stillPolicyBlocked := policyFailures[name]
 		resolvedPolicyFailure := failure.Error != nil && failure.Error.Provision != nil && !stillPolicyBlocked
-		if !exists || resolvedPolicyFailure || serviceChangedWithFallback(failure.Service, svc, s.controlURL) {
+		// A service that is not running re-reads its record in the start loop
+		// below and is marked failed again if the record is still unreadable.
+		_, stillIdentityFailed := identityFailures[name]
+		resolvedIdentityFailure := isNodeIdentityFailure(failure) && !stillIdentityFailed
+		if !exists || resolvedPolicyFailure || resolvedIdentityFailure || serviceChangedWithFallback(failure.Service, svc, s.controlURL) {
 			delete(s.serviceFailures, name)
 		}
 	}
 	s.mu.Unlock()
 
-	// Start nodes for new or changed services
-	startErrs := make([]error, 0, len(identityFailures))
-	for _, identityErr := range identityFailures {
-		startErrs = append(startErrs, identityErr)
-	}
+	// Start nodes for new or changed services. Identity record failures are
+	// per-service failures recorded above, not sync errors: one unreadable
+	// record must not fail the sync and withdraw runtime.json for everyone.
+	var startErrs []error
+	identityBlocked := len(identityFailures) > 0
 	if err := s.ensureRunning(generationCtx); err != nil {
 		s.removeRuntimeSnapshot()
 		return outcome, errors.Join(removedIdentityErr, err)
@@ -825,6 +830,16 @@ func (s *Server) syncNodesWithOutcome(ctx context.Context) (outcome syncOutcome,
 			break
 		}
 		cleanupErr, err := s.prepareNodeIdentity(generationCtx, svc)
+		var recordErr *nodeIdentityReadError
+		if errors.As(err, &recordErr) {
+			slog.Error("not starting service; its node identity record cannot be read safely", "name", name, "error", err)
+			s.mu.Lock()
+			s.serviceFailures[name] = nodeIdentityFailure(svc, err)
+			s.writeRuntimeSnapshotLocked(registryFingerprint, false)
+			s.mu.Unlock()
+			identityBlocked = true
+			continue
+		}
 		if err != nil {
 			startErrs = append(startErrs, fmt.Errorf("start service %q: %w", name, err))
 			continue
@@ -860,6 +875,9 @@ func (s *Server) syncNodesWithOutcome(ctx context.Context) (outcome syncOutcome,
 		s.mu.Unlock()
 	}
 
+	// Retry while a record stays unreadable, so moving it aside takes effect
+	// without a registry change or restart.
+	outcome.retry = outcome.retry || identityBlocked
 	syncErr := errors.Join(append([]error{removedIdentityErr}, startErrs...)...)
 	if syncErr != nil {
 		s.removeRuntimeSnapshot()

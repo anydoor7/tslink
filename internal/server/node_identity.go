@@ -16,6 +16,7 @@ import (
 	"github.com/monody0007/tslink/internal/atomicfile"
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/registry"
+	runtimesnapshot "github.com/monody0007/tslink/internal/runtime"
 	"github.com/monody0007/tslink/internal/tailapi"
 )
 
@@ -42,6 +43,67 @@ var (
 	readNodeIdentityFn  = readNodeIdentity
 	writeNodeIdentityFn = writeNodeIdentity
 )
+
+// errNodeIdentityUnknown marks a record this build cannot interpret but that
+// is not damaged: a newer version, or a field added by a newer build. Its
+// identity is unknown, so it is neither compared (no reset) nor rewritten.
+var errNodeIdentityUnknown = errors.New("node identity record is from a newer TSLink or has fields this build does not know")
+
+var nodeIdentityFields = map[string]struct{}{
+	"version": {}, "service": {}, "tags": {}, "ephemeral": {}, "control_url": {}, "origin": {},
+}
+
+// nodeIdentityErrorCode is the stable code of a per-service identity record
+// failure. It matches the code the ownership ledger uses for a local durable
+// file that cannot be read safely, and no other serviceFailures entry uses it.
+const nodeIdentityErrorCode = "internal_error"
+
+// nodeIdentityReadError is a record that cannot be read safely. It fails only
+// its own service: that service is not started or restarted from it, and
+// neither its node state nor the record is changed.
+type nodeIdentityReadError struct {
+	service string
+	path    string
+	err     error
+}
+
+func (e *nodeIdentityReadError) Error() string {
+	return fmt.Sprintf("cannot safely read node identity record %q for service %q: %v; the service is not started from it and its node state is kept", e.path, e.service, e.err)
+}
+
+func (e *nodeIdentityReadError) Unwrap() error { return e.err }
+
+func (e *nodeIdentityReadError) StableCode() string { return nodeIdentityErrorCode }
+
+func (e *nodeIdentityReadError) NextCommands() []string {
+	return []string{
+		fmt.Sprintf("Back up and inspect %q", e.path),
+		fmt.Sprintf("Move %q aside only after preserving it; the next sync adopts the service's existing node state without resetting it", e.path),
+		fmt.Sprintf("tslink status --urls --name %s --json", e.service),
+	}
+}
+
+func nodeIdentityFailure(svc registry.Service, err error) runtimesnapshot.ServiceState {
+	var next []string
+	var recovery interface{ NextCommands() []string }
+	if errors.As(err, &recovery) {
+		next = recovery.NextCommands()
+	}
+	return runtimesnapshot.ServiceState{
+		Service:      svc,
+		RuntimeState: runtimesnapshot.ServiceRuntimeFailed,
+		FunnelState:  funnelFailureState(svc, nodeIdentityErrorCode),
+		Error: &runtimesnapshot.ServiceError{
+			Code:    nodeIdentityErrorCode,
+			Message: err.Error(),
+			Next:    next,
+		},
+	}
+}
+
+func isNodeIdentityFailure(failure runtimesnapshot.ServiceState) bool {
+	return failure.Error != nil && failure.Error.Code == nodeIdentityErrorCode
+}
 
 func (s *Server) nodeIdentityPath(name string) (string, error) {
 	if err := registry.ValidateName(name); err != nil {
@@ -80,6 +142,24 @@ func readNodeIdentity(path string) (nodeIdentity, bool, error) {
 	}
 	if err != nil {
 		return nodeIdentity{}, false, err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return nodeIdentity{}, false, fmt.Errorf("decode node identity: %w", err)
+	}
+	var version int
+	if raw, ok := fields["version"]; ok {
+		if err := json.Unmarshal(raw, &version); err != nil {
+			return nodeIdentity{}, false, fmt.Errorf("decode node identity version: %w", err)
+		}
+	}
+	if version > nodeIdentityVersion {
+		return nodeIdentity{}, true, fmt.Errorf("%w: version %d", errNodeIdentityUnknown, version)
+	}
+	for key := range fields {
+		if _, known := nodeIdentityFields[key]; !known {
+			return nodeIdentity{}, true, fmt.Errorf("%w: field %q", errNodeIdentityUnknown, key)
+		}
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
@@ -133,8 +213,12 @@ func (s *Server) recordRunningIdentitiesLocked() map[string]error {
 			continue
 		}
 		existing, found, err := readNodeIdentityFn(path)
+		if errors.Is(err, errNodeIdentityUnknown) {
+			slog.Warn("keeping running node; its identity record is unknown to this build and is left unchanged", "name", name, "path", path, "reason", err)
+			continue
+		}
 		if err != nil {
-			failures[name] = fmt.Errorf("read identity for running service %q: %w", name, err)
+			failures[name] = &nodeIdentityReadError{service: name, path: path, err: err}
 			continue
 		}
 		requested := requestedNodeIdentity(node.service, s.controlURL, identityPreparedBeforeUp)
@@ -182,6 +266,12 @@ func (s *Server) removeAbsentNodeIdentities(desired map[string]registry.Service)
 			continue
 		}
 		name := strings.TrimSuffix(entry.Name(), ".json")
+		if err := registry.ValidateName(name); err != nil {
+			// Not a record this daemon wrote (for example a Finder copy or an
+			// AppleDouble file). It names no service, so it is left alone.
+			slog.Warn("ignoring a file in node-identities that is not a service identity record", "path", filepath.Join(dir, entry.Name()), "error", err)
+			continue
+		}
 		if _, exists := desired[name]; !exists {
 			absent = append(absent, name)
 		}
@@ -194,7 +284,8 @@ func (s *Server) removeAbsentNodeIdentities(desired map[string]registry.Service)
 		slog.Warn("keeping node state and identity records for services absent from registry.json; the registry file is missing, blank, or unreadable", "services", absent)
 		return nil
 	}
-	var errs []error
+	// Pruning is housekeeping for services no longer configured. A record it
+	// cannot read or remove is kept and logged; it never fails the sync.
 	for _, name := range absent {
 		if _, exists := registered[name]; exists {
 			continue
@@ -209,7 +300,7 @@ func (s *Server) removeAbsentNodeIdentities(desired map[string]registry.Service)
 			}
 		}
 		if err != nil {
-			errs = append(errs, fmt.Errorf("read removed service identity %q: %w", name, err))
+			slog.Warn("keeping the identity record of a removed service; it cannot be read safely", "service", name, "path", path, "error", err)
 			continue
 		}
 		stateDir := filepath.Join(config.NodesDirIn(s.cfgDir), name)
@@ -217,14 +308,14 @@ func (s *Server) removeAbsentNodeIdentities(desired map[string]registry.Service)
 			slog.Info("keeping node state and identity record for a removed service; no ownership proof has cleared its tailnet node", "service", name)
 			continue
 		} else if !errors.Is(err, os.ErrNotExist) {
-			errs = append(errs, fmt.Errorf("inspect state for removed service %q: %w", name, err))
+			slog.Warn("keeping the identity record of a removed service; its state directory cannot be inspected", "service", name, "error", err)
 			continue
 		}
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-			errs = append(errs, fmt.Errorf("remove identity for deleted service %q: %w", name, err))
+			slog.Warn("could not remove the identity record of a removed service", "service", name, "path", path, "error", err)
 		}
 	}
-	return errors.Join(errs...)
+	return nil
 }
 
 // trustedRegistryNames re-reads registry.json with the same file-state rule
@@ -257,8 +348,12 @@ func (s *Server) prepareNodeIdentity(ctx context.Context, svc registry.Service) 
 		return nil, err
 	}
 	old, found, err := readNodeIdentityFn(path)
+	if errors.Is(err, errNodeIdentityUnknown) {
+		slog.Warn("node identity record is unknown to this build; starting over the existing node state without a reset and leaving the record unchanged", "name", svc.Name, "path", path, "reason", err)
+		return nil, nil
+	}
 	if err != nil {
-		return nil, fmt.Errorf("read node identity for %q: %w", svc.Name, err)
+		return nil, &nodeIdentityReadError{service: svc.Name, path: path, err: err}
 	}
 	stateDir := filepath.Join(config.NodesDirIn(s.cfgDir), svc.Name)
 	requested := requestedNodeIdentity(svc, s.controlURL, identityPreparedBeforeUp)
