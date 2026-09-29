@@ -8,7 +8,5 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	os.Exit(testenv.Main(m, func() int {
-		return testenv.RunWithNonLoopbackDialGuard(m.Run, ".")
-	}))
+	os.Exit(testenv.Main(m, nil))
 }

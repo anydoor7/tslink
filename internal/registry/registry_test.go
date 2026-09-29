@@ -11,12 +11,17 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/monody0007/tslink/internal/testenv"
 )
 
 const registryAddHelperEnv = "TSLINK_REGISTRY_ADD_HELPER"
 
 func TestMain(m *testing.M) {
-	if os.Getenv(registryAddHelperEnv) == "1" {
+	// Helper mode runs only in a copy of this binary that a test of an
+	// isolated binary started (testenv.Root), never because a contributor
+	// exported the variable.
+	if os.Getenv(registryAddHelperEnv) == "1" && testenv.Root() != "" {
 		path := os.Getenv("TSLINK_REGISTRY_ADD_PATH")
 		name := os.Getenv("TSLINK_REGISTRY_ADD_NAME")
 		target := os.Getenv("TSLINK_REGISTRY_ADD_TARGET")
@@ -30,7 +35,7 @@ func TestMain(m *testing.M) {
 		}
 		os.Exit(0)
 	}
-	os.Exit(m.Run())
+	os.Exit(testenv.Main(m, nil))
 }
 
 func TestAgentRuntimeErrorsExposeStableActionableMetadata(t *testing.T) {

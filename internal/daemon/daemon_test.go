@@ -14,6 +14,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/monody0007/tslink/internal/testenv"
 )
 
 var (
@@ -22,7 +24,11 @@ var (
 )
 
 func TestMain(m *testing.M) {
-	if len(os.Args) > 1 && os.Args[1] == "serve" {
+	// The helper modes below run only in a copy of this binary that a test of
+	// an isolated binary started (testenv.Root), never because a contributor
+	// exported one of their variables.
+	helperChild := testenv.Root() != ""
+	if helperChild && len(os.Args) > 1 && os.Args[1] == "serve" {
 		switch os.Getenv("TSLINK_DAEMON_TEST_MODE") {
 		case "success":
 			blockTestHelper(false)
@@ -34,10 +40,10 @@ func TestMain(m *testing.M) {
 			os.Exit(0)
 		}
 	}
-	if os.Getenv("TSLINK_HELPER_PROCESS") == "1" {
+	if helperChild && os.Getenv("TSLINK_HELPER_PROCESS") == "1" {
 		blockTestHelper(os.Getenv("TSLINK_HELPER_IGNORE_TERM") == "1" && runtime.GOOS != "windows")
 	}
-	os.Exit(m.Run())
+	os.Exit(testenv.Main(m, nil))
 }
 
 func blockTestHelper(ignoreTerm bool) {

@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/daemon"
 	"github.com/monody0007/tslink/internal/output"
 	"github.com/monody0007/tslink/internal/registry"
@@ -158,11 +157,14 @@ func main() {
 
 func runCompiledTSLink(t *testing.T, home, stdin string, args ...string) (stdout, stderr string, exitCode int) {
 	t.Helper()
-	configDir := testenv.ConfigDir(home)
 	cmd := exec.Command(compiledTSLinkBinary(t), args...)
-	cmd.Env = append(os.Environ(),
-		"HOME="+home,
-		config.ConfigDirEnv+"="+configDir,
+	// Every home, config, data and cache location of the child (and its
+	// TSLINK_CONFIG_DIR) follows this test's home, not just HOME.
+	env := os.Environ()
+	for _, kv := range testenv.HomeEnv(home) {
+		env = append(env, kv[0]+"="+kv[1])
+	}
+	cmd.Env = append(env,
 		"TSLINK_DISABLE_KEYRING=1",
 		testDaemonParentLifetimeEnv+"=1",
 	)

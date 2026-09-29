@@ -205,6 +205,9 @@ func TestCredentialMutationLockChild(t *testing.T) {
 	if path == "" {
 		return
 	}
+	// This binary's TestMain gave the child a config directory of its own;
+	// contend on the parent's, which the parent passes explicitly.
+	t.Setenv("TSLINK_CONFIG_DIR", os.Getenv("TSLINK_TEST_CREDENTIAL_LOCK_CONFIG_DIR"))
 	if os.Getenv("TSLINK_TEST_CREDENTIAL_LOCK_FILE_ONLY") != "1" {
 		credentialMutationLockPathFunc = func() (string, error) { return path, nil }
 	}
@@ -232,7 +235,8 @@ func TestCredentialMutationLockMixedKeyringModes(t *testing.T) {
 func assertCredentialMutationLockCrossProcess(t *testing.T, childFileOnly bool) {
 	t.Helper()
 	t.Setenv("TSLINK_DISABLE_KEYRING", "0")
-	t.Setenv("TSLINK_CONFIG_DIR", t.TempDir())
+	configDir := t.TempDir()
+	t.Setenv("TSLINK_CONFIG_DIR", configDir)
 	path := filepath.Join(t.TempDir(), "credentials.lock")
 	old := credentialMutationLockPathFunc
 	credentialMutationLockPathFunc = func() (string, error) { return path, nil }
@@ -245,7 +249,7 @@ func assertCredentialMutationLockCrossProcess(t *testing.T, childFileOnly bool) 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestCredentialMutationLockChild$")
-	cmd.Env = append(os.Environ(), "TSLINK_TEST_CREDENTIAL_LOCK_CHILD="+path)
+	cmd.Env = append(os.Environ(), "TSLINK_TEST_CREDENTIAL_LOCK_CHILD="+path, "TSLINK_TEST_CREDENTIAL_LOCK_CONFIG_DIR="+configDir)
 	if childFileOnly {
 		cmd.Env = append(cmd.Env, "TSLINK_TEST_CREDENTIAL_LOCK_FILE_ONLY=1", "TSLINK_DISABLE_KEYRING=1")
 	}
