@@ -109,10 +109,18 @@ func (rw *responseWriter) Flush() {
 
 // Hijack implements http.Hijacker, required for WebSocket upgrade (101 Switching Protocols).
 func (rw *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	if hj, ok := rw.ResponseWriter.(http.Hijacker); ok {
-		return hj.Hijack()
+	hj, ok := rw.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, fmt.Errorf("underlying ResponseWriter does not implement http.Hijacker")
 	}
-	return nil, nil, fmt.Errorf("underlying ResponseWriter does not implement http.Hijacker")
+	conn, brw, err := hj.Hijack()
+	if err == nil && !rw.wroteHeader {
+		// The hijacker writes its own status line; ReverseProxy writes the
+		// backend's 101 there and never calls WriteHeader.
+		rw.status = http.StatusSwitchingProtocols
+		rw.wroteHeader = true
+	}
+	return conn, brw, err
 }
 
 // Middleware wraps an HTTP handler with Prometheus instrumentation.
