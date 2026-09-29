@@ -100,6 +100,13 @@ func TestWriteFileInExistingDirReportsSpecialParentModeBits(t *testing.T) {
 			if info, err := os.Stat(dir); err != nil {
 				t.Fatalf("Stat(unsafe) error = %v", err)
 			} else if info.Mode()&(os.ModeSetgid|os.ModeSticky) != tc.mode&(os.ModeSetgid|os.ModeSticky) {
+				// With the directory's owner and group this process's own, a
+				// bit that still did not stick was refused by the environment,
+				// not by anything this test controls: sandbox-exec profiles
+				// deny file-write-setugid and drop the bit silently.
+				if stat, ok := info.Sys().(*syscall.Stat_t); ok && int(stat.Uid) == os.Getuid() && int(stat.Gid) == os.Getgid() {
+					t.Skipf("Chmod(unsafe, %v) left mode %v although the directory is owned by this process's uid %d and gid %d: this environment does not let the process set the bit (a sandbox that denies file-write-setugid, or a mount that ignores it), so the case cannot be staged", tc.mode, info.Mode(), stat.Uid, stat.Gid)
+				}
 				t.Fatalf("Chmod(unsafe, %v) left mode %v: the special bit this case reports was not staged", tc.mode, info.Mode())
 			}
 
