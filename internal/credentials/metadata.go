@@ -376,10 +376,12 @@ func DeleteSlotMetadataLocked(slot string) error {
 	return SaveMetadata(doc)
 }
 
-// RecordVerification stores the outcome of a remote probe for a slot that
-// already has metadata, under the credential mutation lock. Slots without
-// metadata are left alone so a probe can never invent a stored_at.
-func RecordVerification(slot, result string, now time.Time) error {
+// RecordVerification stores the outcome of a remote probe of the credential
+// with the given fingerprint. Under the credential mutation lock it records
+// the verdict only if the slot's metadata still describes that credential: a
+// slot without metadata, or one rotated while the probe ran, is left alone so
+// a probe can never invent a stored_at or stamp a verdict on another value.
+func RecordVerification(slot, fingerprint, result string, now time.Time) error {
 	if !ValidSlot(slot) {
 		return fmt.Errorf("%w: %q", ErrUnknownCredentialSlot, slot)
 	}
@@ -394,7 +396,7 @@ func RecordVerification(slot, result string, now time.Time) error {
 			return err
 		}
 		meta, ok := doc.Slots[slot]
-		if !ok {
+		if !ok || fingerprint == "" || meta.Fingerprint != fingerprint {
 			return nil
 		}
 		verified := now.UTC()
