@@ -274,8 +274,21 @@ func TestBootstrapStableWindow(t *testing.T) {
 			}
 			calls := 0
 			start := time.Now()
+			// late_death is driven by call count, not by the scheduler. On the
+			// wall clock, three 1ms polls could span the 8ms window under load
+			// and the wait accepted the process before it died. This clock
+			// moves one poll interval per sample and never otherwise, so the
+			// three good samples always span 2ms and the death on the fourth
+			// always lands inside the window.
+			clock := time.Unix(0, 0)
+			if scenario == "late_death" {
+				oldNow := bootstrapNowFn
+				t.Cleanup(func() { bootstrapNowFn = oldNow })
+				bootstrapNowFn = func() time.Time { return clock }
+			}
 			pid, err := waitStableDaemon(ctx, func() (int, error) {
 				calls++
+				clock = clock.Add(time.Millisecond)
 				switch scenario {
 				case "death":
 					if calls > 1 {
@@ -300,6 +313,12 @@ func TestBootstrapStableWindow(t *testing.T) {
 				}
 			} else if err == nil {
 				t.Fatalf("accepted unstable process: %s calls=%d pid=%d", scenario, calls, pid)
+			}
+			// Rejected by the death itself, not by running out the deadline:
+			// a timeout is also an error, and would stay green with the
+			// PID/state check deleted.
+			if scenario == "late_death" && (calls != 4 || !strings.Contains(err.Error(), "PID/state changed (42 -> 0)")) {
+				t.Fatalf("late_death rejected for the wrong reason: calls=%d err=%v", calls, err)
 			}
 		})
 	}
