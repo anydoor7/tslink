@@ -445,7 +445,7 @@ func commandJSONResultFields(commandPath string) map[string]JSONResultFieldInfo 
 		return fields
 	case "tslink cleanup":
 		return map[string]JSONResultFieldInfo{
-			"dry_run":                        {Type: "boolean", Description: "True when no registry, device, or ACL deletion was applied."},
+			"dry_run":                        {Type: "boolean", Description: "True when no registry or device change was applied."},
 			"registry_changed":               {Type: "boolean", Description: "True when expired Funnel services were persisted as tailnet-only."},
 			"expired_funnels":                {Type: "array", Description: "Service names whose public Funnel deadline has elapsed."},
 			"devices_matched":                {Type: "array", Description: "Hostnames discovered by exact NodeID or protected hostname matching; NodeIDs are never emitted."},

@@ -33,4 +33,13 @@ func TestCleanupHelpDescribesLocalACLReportOnly(t *testing.T) {
 	if !strings.Contains(command.Long, "does not query the tailnet ACL") {
 		t.Errorf("cleanup help does not say --manage-acl stays local:\n%s", command.Long)
 	}
+	// The manifest describes the dry_run result field to agents, so it must
+	// not offer an ACL deletion either (CV-2).
+	dryRunField, ok := commandJSONResultFields("tslink cleanup")["dry_run"]
+	if !ok {
+		t.Fatal("tslink cleanup manifest has no dry_run result field")
+	}
+	if strings.Contains(dryRunField.Description, "ACL") {
+		t.Errorf("manifest dry_run description = %q, still mentions an ACL deletion cleanup never performs", dryRunField.Description)
+	}
 }

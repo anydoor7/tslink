@@ -685,7 +685,7 @@
         },
         "dry_run": {
           "type": "boolean",
-          "description": "True when no registry, device, or ACL deletion was applied."
+          "description": "True when no registry or device change was applied."
         },
         "error.data.matches": {
           "type": "integer",
