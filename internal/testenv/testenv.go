@@ -17,17 +17,19 @@ func ConfigDir(home string) string {
 	return filepath.Join(home, ".config", "tslink")
 }
 
-// SetHome isolates both conventional home lookups and TSLink's config directory.
-// The config override is always non-empty and does not need to exist yet;
-// testing.TB.Setenv restores the prior environment exactly during cleanup.
+// SetHome points every home, config, data and cache lookup of the process at
+// home (the same variable set Main uses, see HomeEnv) and returns TSLink's
+// config override. The override is always non-empty and does not need to
+// exist yet; testing.TB.Setenv restores the prior environment exactly during
+// cleanup.
 func SetHome(t testing.TB, home string) string {
 	t.Helper()
 	if home == "" {
 		t.Fatal("testenv.SetHome requires a non-empty home")
 	}
 
-	configDir := ConfigDir(home)
-	t.Setenv("HOME", home)
-	t.Setenv(configDirEnv, configDir)
-	return configDir
+	for _, kv := range HomeEnv(home) {
+		t.Setenv(kv[0], kv[1])
+	}
+	return ConfigDir(home)
 }

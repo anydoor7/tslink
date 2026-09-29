@@ -1,0 +1,298 @@
+package testenv
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime/debug"
+	"strings"
+	"sync"
+	"testing"
+)
+
+// RootEnv names the temporary root Main created for the running test binary.
+// Every home, config, data and cache location of the process points inside it.
+//
+// A test binary that starts with RootEnv naming a root that still carries
+// Main's marker file was started by a test in an already isolated binary (a
+// helper re-exec such as `os.Args[0] -test.run=^TestX$`). Its TSLINK_
+// variables were put there by that test, not by the contributor's shell, so
+// Main keeps them; it still moves every location into a fresh root of its own.
+const RootEnv = "TSLINK_TESTENV_ROOT"
+
+// RootPrefix is the name prefix of each root Main creates under os.TempDir().
+const RootPrefix = "tslink-testenv-"
+
+// IsolationFailure starts the message Main prints when it refuses to run a
+// test binary it could not isolate.
+const IsolationFailure = "testenv: cannot isolate this test binary"
+
+// DoctorSkipTailscaleSSHEnv is the product knob that makes `tslink doctor`
+// skip its read of the local tailscaled (cmd/doctor.go). Main sets it so every
+// compiled tslink child a test runs inherits it; in-process tests fake the
+// doctor seams instead, so the knob changes nothing inside the test binary.
+const DoctorSkipTailscaleSSHEnv = "TSLINK_DOCTOR_SKIP_TAILSCALE_SSH"
+
+// rootMarker is the file that proves a root was made by Main. A contributor
+// who happens to export RootEnv cannot switch off the TSLINK_ scrub with it.
+const rootMarker = "tslink-testenv-root"
+
+// harnessReportEnvs are the test harness's own diagnostic switches. They only
+// add summary lines to the guards' stderr, never change what a test sees, and
+// an external runner may enable one for diagnostics; see
+// report_env_independence_test.go. They survive the TSLINK_ scrub.
+var harnessReportEnvs = []string{ServiceManagerGuardReportEnv, NetworkGuardReportEnv}
+
+// goToolchainLocationEnvs are the Go toolchain's own locations. Their
+// defaults derive from HOME, USERPROFILE, APPDATA and LOCALAPPDATA, which Main
+// moves, so Main resolves and exports them first. Tests that run the go
+// command (building the tslink binary, go list) then keep using the
+// contributor's build cache, module cache and go env file instead of starting
+// cold and downloading modules.
+var goToolchainLocationEnvs = []string{"GOCACHE", "GOMODCACHE", "GOPATH", "GOENV"}
+
+// Main is the TestMain entry point of every test binary in this module. It
+// isolates the process before any test runs, calls run (m.Run when nil), and
+// returns the exit code for os.Exit:
+//
+//   - every TSLINK_ variable inherited from the contributor's environment is
+//     removed, so an exported credential or knob can neither be consumed by a
+//     test nor change a result; a test that needs one sets it with t.Setenv;
+//   - HOME, USERPROFILE, APPDATA, LOCALAPPDATA, XDG_CONFIG_HOME,
+//     XDG_DATA_HOME, XDG_CACHE_HOME, XDG_STATE_HOME and TSLINK_CONFIG_DIR
+//     point into one fresh temporary root, so os.UserHomeDir,
+//     os.UserConfigDir, os.UserCacheDir and config.Dir resolve there, in this
+//     process and in every child it starts;
+//   - DoctorSkipTailscaleSSHEnv is set for compiled tslink children;
+//   - a call to a host seam's test-binary default (UnfakedHostSeam) turns the
+//     package red with the call's stack;
+//   - the root is removed after run returns.
+//
+// Everything that may still reach a real host resource is an explicit opt-in
+// inside a test: t.Setenv, a fake that delegates to the real seam, or
+// RealHostMain for a whole binary.
+func Main(m *testing.M, run func() int) int {
+	if run == nil {
+		run = m.Run
+	}
+	root, err := isolateProcess()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s: %v\n", IsolationFailure, err)
+		return 2
+	}
+	code := reportUnfakedHostSeams(run())
+	if err := os.RemoveAll(root); err != nil {
+		fmt.Fprintf(os.Stderr, "testenv: remove isolation root %s: %v\n", root, err)
+		if code == 0 {
+			code = 1
+		}
+	}
+	return code
+}
+
+// RealHostMain runs a test binary without Main's isolation. It exists for the
+// one gated test that must reach real host state (the Linux systemd E2E, which
+// cmd's TestMain admits only with TSLINK_SYSTEMD_E2E=1 and one exact -test.run
+// selector on a disposable VM). reason is printed so the run's log records the
+// opt-in. Unfaked host seams are still reported.
+func RealHostMain(m *testing.M, reason string, run func() int) int {
+	if run == nil {
+		run = m.Run
+	}
+	if strings.TrimSpace(reason) == "" {
+		fmt.Fprintln(os.Stderr, "testenv: RealHostMain requires a reason")
+		return 2
+	}
+	fmt.Fprintf(os.Stderr, "testenv: running without host isolation: %s\n", reason)
+	return reportUnfakedHostSeams(run())
+}
+
+// isolateProcess applies Main's environment and returns the root it created.
+func isolateProcess() (string, error) {
+	child := inheritedRoot() != ""
+	if !child {
+		// Resolve the toolchain's locations while HOME and the platform
+		// directories still name the contributor's own.
+		if err := pinGoToolchainLocations(); err != nil {
+			return "", err
+		}
+		for _, name := range tslinkEnvNames() {
+			if isHarnessReportEnv(name) {
+				continue
+			}
+			if err := os.Unsetenv(name); err != nil {
+				return "", fmt.Errorf("unset %s: %w", name, err)
+			}
+		}
+	}
+
+	root, err := os.MkdirTemp("", RootPrefix)
+	if err != nil {
+		return "", err
+	}
+	fail := func(err error) (string, error) {
+		_ = os.RemoveAll(root)
+		return "", err
+	}
+	if err := os.WriteFile(filepath.Join(root, rootMarker), nil, 0o600); err != nil {
+		return fail(err)
+	}
+	// Only the home exists. Like SetHome, the TSLink config dir inside it is
+	// left for the code under test to create; pre-creating it would, on
+	// Windows, look like a legacy %USERPROFILE%\.config\tslink to the config
+	// migration of any test that clears TSLINK_CONFIG_DIR.
+	home := filepath.Join(root, "home")
+	if err := os.Mkdir(home, 0o700); err != nil {
+		return fail(err)
+	}
+	for _, kv := range HomeEnv(home) {
+		if err := os.Setenv(kv[0], kv[1]); err != nil {
+			return fail(err)
+		}
+	}
+	if err := os.Setenv(DoctorSkipTailscaleSSHEnv, "1"); err != nil {
+		return fail(err)
+	}
+	if err := os.Setenv(RootEnv, root); err != nil {
+		return fail(err)
+	}
+	return root, nil
+}
+
+// HomeEnv returns the variable assignments that make home the only home of a
+// process: the conventional home variables of every platform, the platform
+// config/data/cache/state directories derived from them, and TSLink's config
+// override. Main and SetHome both apply exactly this set.
+func HomeEnv(home string) [][2]string {
+	return [][2]string{
+		{"HOME", home},
+		{"USERPROFILE", home},
+		{"APPDATA", filepath.Join(home, "AppData", "Roaming")},
+		{"LOCALAPPDATA", filepath.Join(home, "AppData", "Local")},
+		{"XDG_CONFIG_HOME", filepath.Join(home, ".config")},
+		{"XDG_DATA_HOME", filepath.Join(home, ".local", "share")},
+		{"XDG_CACHE_HOME", filepath.Join(home, ".cache")},
+		{"XDG_STATE_HOME", filepath.Join(home, ".local", "state")},
+		{configDirEnv, ConfigDir(home)},
+	}
+}
+
+// Root returns the root Main created for this test binary, or "" when the
+// binary is not running under Main.
+func Root() string {
+	return inheritedRoot()
+}
+
+func inheritedRoot() string {
+	root := os.Getenv(RootEnv)
+	if root == "" || !filepath.IsAbs(root) {
+		return ""
+	}
+	if info, err := os.Stat(filepath.Join(root, rootMarker)); err != nil || !info.Mode().IsRegular() {
+		return ""
+	}
+	return root
+}
+
+func tslinkEnvNames() []string {
+	var names []string
+	for _, entry := range os.Environ() {
+		name, _, _ := strings.Cut(entry, "=")
+		if strings.HasPrefix(name, "TSLINK_") {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+func isHarnessReportEnv(name string) bool {
+	for _, allowed := range harnessReportEnvs {
+		if name == allowed {
+			return true
+		}
+	}
+	return false
+}
+
+// pinGoToolchainLocations exports the go command's resolved GOCACHE,
+// GOMODCACHE, GOPATH and GOENV. `go env` is the only resolver that honours
+// the environment, the go env file and the platform defaults in the same
+// order the go command itself does. Without a go command on PATH nothing in
+// this binary can run go either, so there is nothing to pin.
+func pinGoToolchainLocations() error {
+	missing := false
+	for _, name := range goToolchainLocationEnvs {
+		if os.Getenv(name) == "" {
+			missing = true
+		}
+	}
+	if !missing {
+		return nil
+	}
+	goBin, err := exec.LookPath("go")
+	if err != nil {
+		return nil
+	}
+	out, err := exec.Command(goBin, append([]string{"env", "-json"}, goToolchainLocationEnvs...)...).Output()
+	if err != nil {
+		return fmt.Errorf("resolve Go toolchain locations with %s env: %w", goBin, err)
+	}
+	values := map[string]string{}
+	if err := json.Unmarshal(out, &values); err != nil {
+		return fmt.Errorf("parse %s env -json: %w", goBin, err)
+	}
+	for _, name := range goToolchainLocationEnvs {
+		if os.Getenv(name) != "" || values[name] == "" {
+			continue
+		}
+		if err := os.Setenv(name, values[name]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ErrUnfakedHostSeam is returned by a host seam's test-binary default. A
+// production seam that reaches a real host resource (a tsnet node, the local
+// tailscaled, a browser) is replaced in its package's TestMain by a default
+// that returns this error instead; a test that exercises the seam installs
+// its own fake.
+var ErrUnfakedHostSeam = errors.New("a test reached a production seam that touches a real host resource without faking it")
+
+type unfakedHostSeamCall struct {
+	seam  string
+	stack []byte
+}
+
+var unfakedHostSeams struct {
+	sync.Mutex
+	calls []unfakedHostSeamCall
+}
+
+// UnfakedHostSeam records that the named seam ran its test-binary default and
+// returns an error that names it. Main prints every recorded call with its
+// stack after the tests finish and fails the package, so a forgotten fake is
+// loud even when the product code turns the error into a soft outcome.
+func UnfakedHostSeam(seam string) error {
+	unfakedHostSeams.Lock()
+	unfakedHostSeams.calls = append(unfakedHostSeams.calls, unfakedHostSeamCall{seam: seam, stack: debug.Stack()})
+	unfakedHostSeams.Unlock()
+	return fmt.Errorf("%w: %s (fake it in the test)", ErrUnfakedHostSeam, seam)
+}
+
+func reportUnfakedHostSeams(code int) int {
+	unfakedHostSeams.Lock()
+	calls := append([]unfakedHostSeamCall(nil), unfakedHostSeams.calls...)
+	unfakedHostSeams.Unlock()
+	if len(calls) == 0 {
+		return code
+	}
+	fmt.Fprintf(os.Stderr, "testenv: %d call(s) reached the TestMain default of a host seam; the test must install its own fake:\n", len(calls))
+	for i, call := range calls {
+		fmt.Fprintf(os.Stderr, "testenv: unfaked host seam %d: %s\n%s", i+1, call.seam, call.stack)
+	}
+	return 1
+}
