@@ -63,14 +63,18 @@ func newTSNetServer(svc registry.Service, stateDir, authKey, controlURL string) 
 
 var newTSNetServerFn = newTSNetServer
 
-// closeFailedTSNetServer releases a node whose start did not complete. tsnet's
-// Close dereferences state its start builds part-way through, so closing a node
+// CloseTSNetServer releases a tsnet node whose start may not have completed;
+// every such Close in TSLink goes through it (service nodes, the MCP
+// control-plane node, the CLI's client-secret validation node). tsnet's Close
+// dereferences state its start builds part-way through, so closing a node
 // whose start failed early panics upstream (tailscale.com v1.102.4,
 // tsnet.Server.close; reached for example when os.Executable fails because
 // /proc/self/exe is unreadable). That panic must not take down the daemon,
-// whose supervisor would restart it into the same failure: it is logged, and
-// the start error stays the service's reported outcome.
-func closeFailedTSNetServer(name string, srv tsnetServer) {
+// whose supervisor would restart it into the same failure, nor turn a CLI
+// command's start error into a panic trace: it is logged, and the start error
+// stays the reported outcome. The log line holds name and the panic value only,
+// so name must never be a credential.
+func CloseTSNetServer(name string, srv io.Closer) {
 	defer func() {
 		if r := recover(); r != nil {
 			slog.Error("tsnet close after a failed start panicked; the node is abandoned", "name", name, "panic", fmt.Sprint(r))
@@ -1839,7 +1843,7 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service, prov
 			if handlerCloser != nil {
 				_ = handlerCloser.Close()
 			}
-			closeFailedTSNetServer(svc.Name, tsnetSrv)
+			CloseTSNetServer(svc.Name, tsnetSrv)
 		})
 	}
 	committed := false

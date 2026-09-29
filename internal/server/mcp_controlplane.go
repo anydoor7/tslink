@@ -106,6 +106,7 @@ func nonEmptyPrincipals(entries []string) []string {
 // mcpControlPlaneNode is the running control plane: one tsnet node, one TLS
 // listener on that node, one HTTP server.
 type mcpControlPlaneNode struct {
+	name      string
 	tsnetSrv  tsnetServer
 	listener  net.Listener
 	httpSrv   *http.Server
@@ -125,7 +126,8 @@ func (n *mcpControlPlaneNode) close() {
 			_ = n.listener.Close()
 		}
 		if n.tsnetSrv != nil {
-			_ = n.tsnetSrv.Close()
+			// Also reached when the node's Start or Up failed early.
+			CloseTSNetServer(n.name, n.tsnetSrv)
 		}
 	})
 }
@@ -209,7 +211,7 @@ func (s *Server) startMCPControlPlane(ctx context.Context) error {
 	tsnetSrv := newTSNetServerFn(tsnetService, stateDir, authKey, s.controlURL)
 
 	nodeCtx, cancel := context.WithCancel(ctx)
-	node := &mcpControlPlaneNode{tsnetSrv: tsnetSrv, cancel: cancel}
+	node := &mcpControlPlaneNode{name: name, tsnetSrv: tsnetSrv, cancel: cancel}
 	committed := false
 	defer func() {
 		if !committed {

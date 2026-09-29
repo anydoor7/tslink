@@ -81,3 +81,45 @@ func TestStartNodeLockedReturnsAnEarlyTSNetStartFailureInsteadOfPanicking(t *tes
 		})
 	}
 }
+
+// TestMCPControlPlaneReturnsAnEarlyTSNetStartFailureInsteadOfPanicking: the
+// --mcp control-plane node has the same hazard as a service node. The failed
+// start is returned from startMCPControlPlane, the node is still closed, and
+// the daemon does not crash.
+func TestMCPControlPlaneReturnsAnEarlyTSNetStartFailureInsteadOfPanicking(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		authKey string
+		wantMsg string
+	}{
+		// An auth key starts the node through Up.
+		{name: "auth key", authKey: "synthetic-auth", wantMsg: "tsnet up for mcp control plane"},
+		// Zero-credential enrollment starts the node through Start.
+		{name: "interactive", authKey: "", wantMsg: "tsnet start for"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &panicOnCloseTSNetServer{fakeTSNetServer: &fakeTSNetServer{}}
+			s, constructed := newMCPControlPlaneTestServer(t, fake)
+			s.SetAuthKeyProvider(func(context.Context, registry.Service) (string, error) { return tc.authKey, nil })
+			s.SetMCPControlPlane(&MCPControlPlane{
+				AllowedUsers: []string{"alice@example.com"},
+				Handler:      &mcpProbeHandler{},
+			})
+			t.Cleanup(s.closeMCPControlPlane)
+
+			err := s.startMCPControlPlane(context.Background())
+			if !errors.Is(err, errEarlyTSNetStart) || !strings.Contains(err.Error(), tc.wantMsg) {
+				t.Fatalf("startMCPControlPlane() error = %v, want the tsnet start failure (%v) from %q", err, errEarlyTSNetStart, tc.wantMsg)
+			}
+			if *constructed != 1 {
+				t.Fatalf("tsnet servers constructed = %d, want 1", *constructed)
+			}
+			if fake.closeCalls != 1 {
+				t.Fatalf("tsnet Close calls = %d, want 1: the failed node must still be released", fake.closeCalls)
+			}
+			if s.mcpNode != nil {
+				t.Fatal("a control-plane node whose start failed was kept as running")
+			}
+		})
+	}
+}

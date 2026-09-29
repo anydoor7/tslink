@@ -19,6 +19,7 @@ import (
 	"github.com/monody0007/tslink/internal/output"
 	"github.com/monody0007/tslink/internal/registry"
 	"github.com/monody0007/tslink/internal/security"
+	"github.com/monody0007/tslink/internal/server"
 	"github.com/monody0007/tslink/internal/tailapi"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -646,7 +647,9 @@ func activateClientSecretViaUp(ctx context.Context, secret string) error {
 	// OAuth authkeys require the tags to be advertised on the node, otherwise
 	// tsnet rejects the Up with "oauth authkeys require --advertise-tags".
 	srv := loginNewValidationServerFn(tmpStateDir, authKey, tags)
-	defer srv.Close()
+	// An Up that failed early leaves a node whose tsnet Close panics; the Up
+	// error must stay the command's outcome.
+	defer server.CloseTSNetServer(clientSecretValidationHostname, srv)
 
 	upCtx, cancel := context.WithTimeout(ctx, clientSecretActivationTimeout)
 	defer cancel()
@@ -656,9 +659,11 @@ func activateClientSecretViaUp(ctx context.Context, secret string) error {
 	return nil
 }
 
+const clientSecretValidationHostname = "tslink-auth"
+
 func newClientSecretValidationServer(tmpStateDir, authKey string, tags []string) *tsnet.Server {
 	return &tsnet.Server{
-		Hostname:      "tslink-auth",
+		Hostname:      clientSecretValidationHostname,
 		Dir:           tmpStateDir,
 		Ephemeral:     true,
 		AuthKey:       authKey,
