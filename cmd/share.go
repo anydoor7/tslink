@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -36,7 +37,10 @@ type ShareResult struct {
 	// A reused share keeps its own, which can be sooner than the one asked
 	// for, so it is reported rather than implied by the request.
 	FunnelExpiresAt *time.Time `json:"funnel_expires_at,omitempty"`
-	serviceName     string
+	// FunnelRearmed is true when this call re-armed the expired Funnel
+	// deadline of the share it reused.
+	FunnelRearmed bool `json:"funnel_rearmed,omitempty"`
+	serviceName   string
 }
 
 type shareTargetSpec struct {
@@ -334,7 +338,63 @@ func shareExposurePosture(svc registry.Service) string {
 		svc.Funnel, shareFunnelDeadlineDescription(svc.FunnelExpiresAt), svc.PublicAck, len(svc.AllowedUsers), svc.Tags, svc.Domain)
 }
 
+// shareRequestedExposure undoes the daemon's Funnel expiry for the reuse
+// match. Once a deadline passes, reconcile turns the service tailnet-only but
+// keeps its deadline and public_ack, so the record an identical Funnel share
+// created no longer says funnel. Read as the Funnel share it was, it matches
+// the retry, whose expired deadline is then re-armed rather than refused as a
+// different posture.
+func shareRequestedExposure(existing registry.Service, now time.Time) registry.Service {
+	if !existing.Funnel && existing.FunnelExpiresAt != nil && !existing.FunnelExpiresAt.After(now) {
+		existing.Funnel = true
+	}
+	return existing
+}
+
+// shareFunnelRearmable reports whether a deadline the reuse check refused is
+// one a retry re-arms, as `add` re-arms an expired preserved deadline: the
+// existing deadline has passed and the request asks for a bounded Funnel. A
+// request for a Funnel that never expires is a different posture and stays a
+// conflict.
+func shareFunnelRearmable(existing registry.Service, spec shareTargetSpec, now time.Time) bool {
+	return existing.Funnel && existing.FunnelExpiresAt != nil && !existing.FunnelExpiresAt.After(now) &&
+		spec.Service.FunnelExpiresAt != nil
+}
+
+// rearmShareFunnel gives existing the requested Funnel deadline, turning
+// Funnel back on if the daemon had downgraded it, provided the entry is still
+// exactly what was read. ok is false when it changed or disappeared meanwhile,
+// and the caller reads the registry again.
+func rearmShareFunnel(regPath string, existing registry.Service, deadline time.Time) (rearmed registry.Service, ok bool, err error) {
+	errChanged := errors.New("share changed since it was read")
+	rearmed, err = registry.MutateService(regPath, existing.Name, func(stored registry.Service) (registry.Service, error) {
+		if !reflect.DeepEqual(stored, existing) {
+			return registry.Service{}, errChanged
+		}
+		ok = true
+		stored.Funnel = true
+		stored.FunnelExpiresAt = &deadline
+		return stored, nil
+	})
+	if !ok {
+		return registry.Service{}, false, nil
+	}
+	return rearmed, true, err
+}
+
+// shareRegistration is registerShareWithOutcome's result.
+type shareRegistration struct {
+	Service       registry.Service
+	Created       bool
+	FunnelRearmed bool
+}
+
 func registerShare(regPath string, spec shareTargetSpec, requestedName string) (registry.Service, bool, error) {
+	registration, err := registerShareWithOutcome(regPath, spec, requestedName)
+	return registration.Service, registration.Created, err
+}
+
+func registerShareWithOutcome(regPath string, spec shareTargetSpec, requestedName string) (shareRegistration, error) {
 	// Tags take part in reuse only when the caller asked for them. `tslink
 	// share` has no way to, so matching its request against the default tag
 	// would turn a retry into a conflict as soon as the default tag, or the
@@ -343,36 +403,49 @@ func registerShare(regPath string, spec shareTargetSpec, requestedName string) (
 	base := sanitizeShareName(spec.NameBase)
 	if requestedName != "" {
 		if err := registry.ValidateName(requestedName); err != nil {
-			return registry.Service{}, false, err
+			return shareRegistration{}, err
 		}
 		base = requestedName
 	}
+retries:
 	for retry := 0; retry < maxShareNameCandidates; retry++ {
 		reg, err := registry.Load(regPath)
 		if err != nil {
-			return registry.Service{}, false, err
+			return shareRegistration{}, err
 		}
+		now := time.Now()
 		usedNames := make(map[string]struct{}, len(reg.Services))
 		for _, existing := range reg.Services {
 			candidate := spec.Service
 			if !tagsRequested {
 				candidate.Tags = existing.Tags
 			}
-			if sameShareTarget(existing, candidate) {
+			current := shareRequestedExposure(existing, now)
+			if sameShareTarget(current, candidate) {
 				if requestedName != "" && existing.Name != requestedName {
-					return registry.Service{}, false, output.ErrConflict(fmt.Sprintf(
+					return shareRegistration{}, output.ErrConflict(fmt.Sprintf(
 						"cannot apply requested name %q: target is already shared as %q; re-run without an explicit name to reuse it, or remove the existing service before retrying with the requested name",
 						requestedName, existing.Name))
 				}
-				if !shareFunnelDeadlineCompatible(existing, spec) {
-					return registry.Service{}, false, output.ErrConflict(fmt.Sprintf(
-						"cannot reuse service %q for this funnel deadline: existing deadline is %s, requested deadline is %s; remove or reconfigure the existing service before retrying",
-						existing.Name, shareFunnelDeadlineDescription(existing.FunnelExpiresAt), shareFunnelDeadlineDescription(spec.Service.FunnelExpiresAt)))
+				if !shareFunnelDeadlineCompatible(current, spec) {
+					if !shareFunnelRearmable(current, spec, now) {
+						return shareRegistration{}, output.ErrConflict(fmt.Sprintf(
+							"cannot reuse service %q for this funnel deadline: existing deadline is %s, requested deadline is %s; remove or reconfigure the existing service before retrying",
+							existing.Name, shareFunnelDeadlineDescription(existing.FunnelExpiresAt), shareFunnelDeadlineDescription(spec.Service.FunnelExpiresAt)))
+					}
+					rearmed, ok, err := rearmShareFunnel(regPath, existing, *spec.Service.FunnelExpiresAt)
+					if err != nil {
+						return shareRegistration{}, err
+					}
+					if !ok {
+						continue retries
+					}
+					return shareRegistration{Service: rearmed, FunnelRearmed: true}, nil
 				}
-				return existing, false, nil
+				return shareRegistration{Service: existing}, nil
 			}
 			if sameShareBackend(existing, spec.Service) {
-				return registry.Service{}, false, output.ErrConflict(fmt.Sprintf(
+				return shareRegistration{}, output.ErrConflict(fmt.Sprintf(
 					"cannot reuse service %q for this share target: its exposure posture is %s, but this share requires %s; remove or reconfigure the existing service, or share a different target",
 					existing.Name, shareExposurePosture(existing), shareExposurePosture(spec.Service)))
 			}
@@ -388,7 +461,7 @@ func registerShare(regPath string, spec shareTargetSpec, requestedName string) (
 			}
 		}
 		if name == "" {
-			return registry.Service{}, false, fmt.Errorf("could not allocate share name %q after %d candidates", base, maxShareNameCandidates)
+			return shareRegistration{}, fmt.Errorf("could not allocate share name %q after %d candidates", base, maxShareNameCandidates)
 		}
 
 		svc := spec.Service
@@ -399,13 +472,13 @@ func registerShare(regPath string, spec shareTargetSpec, requestedName string) (
 		svc.CreatedAt = time.Now().UTC()
 		created, err := shareAddIfMissingFn(regPath, svc)
 		if err != nil {
-			return registry.Service{}, false, err
+			return shareRegistration{}, err
 		}
 		if created {
-			return svc, true, nil
+			return shareRegistration{Service: svc, Created: true}, nil
 		}
 	}
-	return registry.Service{}, false, fmt.Errorf("could not register share %q after concurrent registry updates", base)
+	return shareRegistration{}, fmt.Errorf("could not register share %q after concurrent registry updates", base)
 }
 
 func directFileURL(base, fileName string) (string, error) {
@@ -497,10 +570,11 @@ func executeShare(ctx context.Context, paths sharePaths, req shareRequest, wait 
 	if req.NoDaemonInstall && !shareIsRunningFn(paths.PID) {
 		return ShareResult{}, daemonNotRunningError()
 	}
-	svc, created, err := registerShare(paths.Registry, spec, req.Name)
+	registration, err := registerShareWithOutcome(paths.Registry, spec, req.Name)
 	if err != nil {
 		return ShareResult{}, err
 	}
+	svc, created := registration.Service, registration.Created
 	defer func() {
 		if err == nil || !created {
 			return
@@ -515,7 +589,7 @@ func executeShare(ctx context.Context, paths sharePaths, req shareRequest, wait 
 			return ShareResult{}, err
 		}
 		if startup.Status == authStatusNeedsLogin && startup.AuthURL != "" {
-			return withShareFunnelState(ShareResult{Status: authStatusNeedsLogin, AuthURL: startup.AuthURL, serviceName: svc.Name}, svc), nil
+			return withShareFunnelState(ShareResult{Status: authStatusNeedsLogin, AuthURL: startup.AuthURL, serviceName: svc.Name}, registration), nil
 		}
 	}
 	// svc, not spec: when registerShare reused an existing service, the URL has
@@ -524,15 +598,16 @@ func executeShare(ctx context.Context, paths sharePaths, req shareRequest, wait 
 	if err != nil {
 		return result, err
 	}
-	return withShareFunnelState(result, svc), nil
+	return withShareFunnelState(result, registration), nil
 }
 
 // withShareFunnelState reports the Funnel deadline of the service the share
-// actually uses.
-func withShareFunnelState(result ShareResult, svc registry.Service) ShareResult {
-	if svc.Funnel {
-		result.FunnelExpiresAt = cloneTimePointer(svc.FunnelExpiresAt)
+// actually uses, and whether this call re-armed it.
+func withShareFunnelState(result ShareResult, registration shareRegistration) ShareResult {
+	if registration.Service.Funnel {
+		result.FunnelExpiresAt = cloneTimePointer(registration.Service.FunnelExpiresAt)
 	}
+	result.FunnelRearmed = registration.FunnelRearmed
 	return result
 }
 

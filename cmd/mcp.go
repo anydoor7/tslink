@@ -192,6 +192,7 @@ var (
 		"status":            map[string]any{"type": "string", "enum": []string{shareStatusReady, authStatusNeedsLogin}},
 		"auth_url":          map[string]any{"type": "string"},
 		"funnel_expires_at": map[string]any{"type": "string", "description": "When the public Funnel of this share stops; absent for a tailnet-only share or a Funnel that never expires. A reused share keeps its own deadline, which can be sooner than the funnel_ttl this call asked for."},
+		"funnel_rearmed":    map[string]any{"type": "boolean", "description": "True when the reused share's Funnel deadline had already passed and this call re-armed it with the requested funnel_ttl."},
 	}, "status")
 	mcpListOutputSchema = objectSchema(map[string]any{
 		"services": map[string]any{
@@ -413,7 +414,7 @@ var mcpToolDefinitions = []mcpToolDefinition{
 			"tags":              map[string]any{"type": "array", "items": map[string]any{"type": "string", "pattern": `^tag:`}, "description": "ACL tags applied to the tailnet node, each prefixed tag:. Defaults to the configured default tag."},
 			"funnel":            map[string]any{"type": "boolean", "default": false, "description": "Publish to the public internet through Tailscale Funnel. Requires public_ack true, an HTTP port target, and no allow entries."},
 			"public_ack":        map[string]any{"type": "boolean", "default": false, "description": "Explicit acknowledgement that funnel exposes the target publicly. funnel true without it is rejected."},
-			"funnel_ttl":        map[string]any{"type": "string", "enum": []string{"1h", "8h", "24h", "72h", "7d", "never"}, "description": "Public Funnel lifetime; defaults to 24h. Only valid with funnel true."},
+			"funnel_ttl":        map[string]any{"type": "string", "enum": []string{"1h", "8h", "24h", "72h", "7d", "never"}, "description": "Public Funnel lifetime; defaults to 24h. Only valid with funnel true. A share reused for the same target keeps its own deadline, reported as funnel_expires_at; one that has already expired is re-armed with this lifetime."},
 		}, "target"),
 		OutputSchema: mcpShareOutputSchema,
 	},
