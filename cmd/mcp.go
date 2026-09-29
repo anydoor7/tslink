@@ -1613,7 +1613,12 @@ When stdin closes, requests already read still get their answers before the
 server exits. The url tool's wait is capped at ` + mcpMaxURLWait.String() + `, and a call still
 running ` + mcpEOFWatchdogDelay.String() + ` after stdin closed is cancelled and the command exits
 non-zero. SIGINT or SIGTERM cancels the calls in flight, so a share still
-waiting for its URL is rolled back; a second signal exits at once.`,
+waiting for its URL is rolled back; a second signal exits at once.
+
+Some inputs end the session and drop the answers of calls still in flight,
+and nothing after them is read: malformed JSON, a JSON value that is not a
+JSON-RPC message, a JSON-RPC batch, and a record longer than ` + fmt.Sprint(mcpMaxRecordBytes) + ` bytes.
+A request that reuses the id of a call still in flight gets no answer.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if jsonOutput(cmd) {
