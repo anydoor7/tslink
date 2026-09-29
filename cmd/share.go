@@ -344,8 +344,13 @@ func shareExposurePosture(svc registry.Service) string {
 // created no longer says funnel. Read as the Funnel share it was, it matches
 // the retry, whose expired deadline is then re-armed rather than refused as a
 // different posture.
-func shareRequestedExposure(existing registry.Service, now time.Time) registry.Service {
-	if !existing.Funnel && existing.FunnelExpiresAt != nil && !existing.FunnelExpiresAt.After(now) {
+//
+// Only a Funnel request reads it that way, and only a record that kept
+// public_ack. `tslink add` without --funnel also leaves an expired deadline on
+// a tailnet-only record, but clears public_ack: that record is the posture a
+// plain share asks for, and a share does not turn its Funnel back on.
+func shareRequestedExposure(existing registry.Service, spec shareTargetSpec, now time.Time) registry.Service {
+	if spec.Service.Funnel && !existing.Funnel && existing.PublicAck && existing.FunnelExpiresAt != nil && !existing.FunnelExpiresAt.After(now) {
 		existing.Funnel = true
 	}
 	return existing
@@ -420,7 +425,7 @@ retries:
 			if !tagsRequested {
 				candidate.Tags = existing.Tags
 			}
-			current := shareRequestedExposure(existing, now)
+			current := shareRequestedExposure(existing, spec, now)
 			if sameShareTarget(current, candidate) {
 				if requestedName != "" && existing.Name != requestedName {
 					return shareRegistration{}, output.ErrConflict(fmt.Sprintf(
