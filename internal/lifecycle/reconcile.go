@@ -43,8 +43,9 @@ type Options struct {
 	Now               time.Time
 	DryRun            bool
 	ManageACL         bool
-	// CheckUnusedACL is retained for callers that request the legacy check.
-	// Local absence cannot authorize deletion of a tailnet-wide shared grant.
+	// CheckUnusedACL asks this run to report on the shared Funnel grant.
+	// Local absence cannot authorize deletion of a tailnet-wide shared grant,
+	// so the report is a skip with a warning, never a deletion.
 	CheckUnusedACL bool
 	// CleanLocalNodeState allows this run to delete the local tsnet state
 	// directory of an orphan service whose remote nodes it proved are gone.
@@ -225,13 +226,19 @@ func Reconcile(ctx context.Context, options Options) (Result, error) {
 	}
 
 	if options.ManageACL {
+		// The shared grant is reported on only when this run asks about it:
+		// explicitly, or because a Funnel expired in this very run. The serve
+		// loop asks on its first tick and on a Funnel-to-none transition; a
+		// steady tick stays not_requested, or the same warning would be
+		// logged every 30 seconds for as long as the daemon runs.
+		requested := options.CheckUnusedACL || len(expired) > 0
 		switch {
-		case !registryTrusted:
+		case !registryTrusted && requested:
 			result.ACLAction = ACLSkipped
 			result.Warnings = append(result.Warnings, fmt.Sprintf("Funnel ACL cleanup skipped: registry.json is %s; active Funnel use cannot be established", registryState))
 		case activeFunnels > 0:
 			result.ACLAction = ACLStillInUse
-		default:
+		case requested:
 			// The grant is shared by every TSLink installation. This machine's
 			// registry cannot prove that another host has no tagged node, even
 			// after a successful device-list snapshot. Never preview or perform
