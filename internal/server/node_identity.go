@@ -317,7 +317,11 @@ func (s *Server) removeAbsentNodeIdentities(desired map[string]registry.Service)
 			var identity nodeIdentity
 			var found bool
 			identity, found, err = readNodeIdentityFn(path)
-			if err == nil && (!found || identity.Service != name) {
+			if (err == nil && !found) || errors.Is(err, os.ErrNotExist) {
+				// Gone since ReadDir listed it: nothing is left to prune.
+				continue
+			}
+			if err == nil && identity.Service != name {
 				err = fmt.Errorf("node identity record does not match service %q", name)
 			}
 		}
