@@ -7,8 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"os/signal"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
@@ -1609,7 +1612,8 @@ diagnostics and logs are written only to stderr.
 When stdin closes, requests already read still get their answers before the
 server exits. The url tool's wait is capped at ` + mcpMaxURLWait.String() + `, and a call still
 running ` + mcpEOFWatchdogDelay.String() + ` after stdin closed is cancelled and the command exits
-non-zero.`,
+non-zero. SIGINT or SIGTERM cancels the calls in flight, so a share still
+waiting for its URL is rolled back; a second signal exits at once.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if jsonOutput(cmd) {
@@ -1623,11 +1627,35 @@ non-zero.`,
 			if err != nil {
 				return err
 			}
-			if err := runMCPStdio(cmd.Context(), cmd.InOrStdin(), cmd.OutOrStdout(), defaultMCPActions(paths, cmd.ErrOrStderr())); err != nil {
-				return fmt.Errorf("mcp stdio: %w", err)
-			}
-			return nil
+			return runMCPCommand(cmd.Context(), cmd.InOrStdin(), cmd.OutOrStdout(), defaultMCPActions(paths, cmd.ErrOrStderr()))
 		},
 	}
 	rootCmd.AddCommand(mcpCmd)
+}
+
+// runMCPCommand is the body of `tslink mcp`: one stdio session that SIGINT or
+// SIGTERM cancels rather than kills, so handlers see the cancellation and
+// their deferred rollbacks run (executeShare removes a share it registered
+// and is still waiting on). Two fallbacks keep a handler that ignores its
+// context from holding the process: runMCPStdio waits only mcpCancelGrace for
+// it, and the first signal restores the default disposition, so a second one
+// terminates at once. No other command's signal handling changes.
+func runMCPCommand(parent context.Context, in io.Reader, out io.Writer, actions mcpActions) error {
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, stop := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	go func() {
+		<-ctx.Done()
+		stop()
+	}()
+	if err := runMCPStdio(ctx, in, out, actions); err != nil {
+		if cause := context.Cause(ctx); cause != nil && errors.Is(err, context.Canceled) {
+			// Name the signal rather than a bare "context canceled".
+			err = cause
+		}
+		return fmt.Errorf("mcp stdio: %w", err)
+	}
+	return nil
 }
