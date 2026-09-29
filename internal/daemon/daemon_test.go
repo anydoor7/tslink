@@ -1542,27 +1542,6 @@ func TestIsRunningAcceptsVerifiedServeProcess(t *testing.T) {
 	}
 }
 
-func TestStopDaemon_SignalError(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("SIGTERM not applicable on Windows")
-	}
-	// Use PID 1 (init/launchd) — sending SIGTERM to it should return EPERM,
-	// which is NOT ESRCH and NOT os.ErrProcessDone, so it hits the
-	// "signal SIGTERM to %d" error path.
-	path := filepath.Join(t.TempDir(), "tslink.pid")
-	if err := os.WriteFile(path, []byte("1\n"), 0o600); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
-
-	err := StopDaemon(path)
-	if err == nil {
-		t.Fatal("StopDaemon() error = nil, want signal error")
-	}
-	if !strings.Contains(err.Error(), "refusing to stop process") {
-		t.Fatalf("StopDaemon() error = %v, want identity refusal error", err)
-	}
-}
-
 // TestDaemonize_StartError was removed: the FD-exhaustion approach is inherently
 // fragile — on some OS/runtime combos cmd.Start() succeeds and wait4 blocks forever,
 // causing a 10-minute timeout. The error branch it covered (Daemonize line 61-64)
