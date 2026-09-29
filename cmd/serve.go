@@ -119,6 +119,10 @@ type credentialModeSetter interface {
 	SetCredentialed(bool)
 }
 
+type controlURLTrustSetter interface {
+	SetControlURLUnverified(bool)
+}
+
 type authHandoffSetter interface {
 	SetAuthHandoffFunc(server.AuthHandoffFunc)
 }
@@ -219,8 +223,15 @@ Examples:
 				globalCfg = config.GlobalConfig{}
 			}
 			controlURL, _ := cmd.Flags().GetString("control-url")
+			controlURLUnverified := false
 			if controlURL == "" && globalCfgErr == nil {
 				controlURL = globalCfg.ControlURL
+			} else if controlURL == "" {
+				// Keep starting on the default control URL, but never let that
+				// fallback reset a node enrolled against the configured one.
+				controlURLUnverified = true
+				configPath, _ := config.ConfigPath()
+				slog.Warn("config.json could not be loaded; using the default control URL, which will not reset any node identity by itself", "path", configPath, "error", globalCfgErr)
 			}
 			mcpSettings := resolveMCPControlPlaneSettings(mcpFlag, globalCfg)
 			if err := validateMCPNodeName(mcpSettings.NodeName); err != nil {
@@ -387,6 +398,7 @@ Examples:
 				PresentAuth: func(record authHandoffRecord) {
 					presentAuthHandoff(cmd, record)
 				},
+				ControlURLUnverified: controlURLUnverified,
 			})
 		},
 	}
@@ -584,6 +596,9 @@ type foregroundOptions struct {
 	MCPEventsKeepalive time.Duration
 	EnsureFunnelAttrFn server.EnsureFunnelAttrFunc
 	PresentAuth        func(authHandoffRecord)
+	// ControlURLUnverified reports that controlURL is the default fallback
+	// used because config.json failed to load.
+	ControlURLUnverified bool
 }
 
 func runForeground(pidPath, readyPath, authKey, controlURL string) error {
@@ -637,6 +652,9 @@ func runForegroundWithOptions(pidPath, authKey, controlURL string, options foreg
 	}
 	if setter, ok := srv.(credentialModeSetter); ok {
 		setter.SetCredentialed(options.Credentialed)
+	}
+	if setter, ok := srv.(controlURLTrustSetter); ok {
+		setter.SetControlURLUnverified(options.ControlURLUnverified)
 	}
 	if setter, ok := srv.(ensureTagsSetter); ok {
 		setter.SetEnsureTagsFn(serveEnsureTagsFn)

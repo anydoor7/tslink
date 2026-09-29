@@ -132,8 +132,17 @@ func requestedNodeIdentity(svc registry.Service, fallbackControlURL, origin stri
 }
 
 func (a nodeIdentity) sameAuthIdentity(b nodeIdentity) bool {
-	return a.Service == b.Service && a.Ephemeral == b.Ephemeral &&
-		a.ControlURL == b.ControlURL && sameStringSet(a.Tags, b.Tags)
+	return a.sameAuthIdentityExceptControlURL(b) && a.ControlURL == b.ControlURL
+}
+
+func (a nodeIdentity) sameAuthIdentityExceptControlURL(b nodeIdentity) bool {
+	return a.Service == b.Service && a.Ephemeral == b.Ephemeral && sameStringSet(a.Tags, b.Tags)
+}
+
+// controlURLUnknown reports whether svc's effective control URL is only the
+// server's unverified fallback, which can never justify an identity reset.
+func (s *Server) controlURLUnknown(svc registry.Service) bool {
+	return s.controlURLUnverified && svc.ControlURL == ""
 }
 
 func readNodeIdentity(path string) (nodeIdentity, bool, error) {
@@ -226,10 +235,17 @@ func (s *Server) recordRunningIdentitiesLocked() map[string]error {
 			continue
 		}
 		requested := requestedNodeIdentity(node.service, s.controlURL, identityPreparedBeforeUp)
+		unknownURL := s.controlURLUnknown(node.service)
 		if found {
-			if existing.Service != name || !existing.sameAuthIdentity(requested) {
+			same := existing.sameAuthIdentity(requested) || unknownURL && existing.sameAuthIdentityExceptControlURL(requested)
+			if existing.Service != name || !same {
 				failures[name] = fmt.Errorf("running service %q disagrees with durable node identity", name)
 			}
+			continue
+		}
+		if unknownURL {
+			// Recording the fallback would make a later start with the real
+			// control URL look like a change and reset this node.
 			continue
 		}
 		if err := writeNodeIdentityFn(path, requested); err != nil {
@@ -361,8 +377,16 @@ func (s *Server) prepareNodeIdentity(ctx context.Context, svc registry.Service) 
 	}
 	stateDir := filepath.Join(config.NodesDirIn(s.cfgDir), svc.Name)
 	requested := requestedNodeIdentity(svc, s.controlURL, identityPreparedBeforeUp)
+	unknownURL := s.controlURLUnknown(svc)
 	if !found {
 		if _, err := os.Lstat(stateDir); err == nil {
+			if unknownURL {
+				// Existing state enrolled against a control server this run
+				// cannot name. Adopt it without a record; a later start with a
+				// loaded config records the real control URL.
+				slog.Warn("not recording node identity for existing state; the control URL is an unverified fallback", "name", svc.Name)
+				return nil, nil
+			}
 			// Compatibility baseline for state created before identity records
 			// existed. This adopts the requested identity, not a verified old
 			// enrollment. Subsequent transitions are tracked strictly.
@@ -379,6 +403,10 @@ func (s *Server) prepareNodeIdentity(ctx context.Context, svc registry.Service) 
 		return nil, fmt.Errorf("node identity record for %q names %q", svc.Name, old.Service)
 	}
 	if old.sameAuthIdentity(requested) {
+		return nil, nil
+	}
+	if unknownURL && old.sameAuthIdentityExceptControlURL(requested) {
+		slog.Warn("keeping node state; its recorded control URL differs only from an unverified fallback", "name", svc.Name, "recorded_control_url", old.ControlURL)
 		return nil, nil
 	}
 	if err := removeServiceStateDirFn(svc.Name); err != nil {

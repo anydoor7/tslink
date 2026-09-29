@@ -296,6 +296,7 @@ type Server struct {
 	authKeyProvider         AuthKeyProvider
 	credentialed            bool
 	controlURL              string
+	controlURLUnverified    bool
 	mu                      sync.RWMutex
 	cfgDir                  string
 	metrics                 *metrics.Metrics
@@ -391,6 +392,14 @@ func (s *Server) SetAuthKeyProvider(fn AuthKeyProvider) {
 		return
 	}
 	s.authKeyProvider = fn
+}
+
+// SetControlURLUnverified marks the server's control URL as a default the
+// caller fell back to (config.json failed to load) rather than configuration.
+// A service without its own control URL then has an unknown control server for
+// identity comparison, so a control URL difference alone never resets its node.
+func (s *Server) SetControlURLUnverified(unverified bool) {
+	s.controlURLUnverified = unverified
 }
 
 // SetCredentialed records whether this process is running the stored-
