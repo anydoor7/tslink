@@ -52,15 +52,15 @@ const supervisedLogFileMode os.FileMode = 0o600
 // the plist names StandardOutPath and StandardErrorPath and sets no Umask, so
 // launchd creates them with its own umask and they land 0644. The daemon never
 // opens those files, so nothing in the create path can reach them -- which left
-// the live log on the one deployment that matters readable by every local user,
+// the live log of a launchd-supervised install readable by every local user,
 // while only the rotated .1 archive was narrowed.
 //
 // Rotated archives are narrowed alongside the live files. logrotate caps every
 // archive it writes at 0600, so this only ever finds one written by a build
 // that predated that cap -- but an archive is never reopened, so nothing else
 // will ever reach it and it stays as wide as it was created for as long as it
-// exists. On this machine that is a 93 MB .1 at 0644 holding months of access
-// lines, next to a live log at 0600.
+// exists. Such a .1 can hold months of access lines at 0644 next to a live log
+// at 0600.
 //
 // The narrowing is by path rather than through os.Stderr, and that is not an
 // oversight: in a foreground run stderr is a terminal, and calling Chmod on

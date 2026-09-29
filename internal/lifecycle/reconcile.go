@@ -305,13 +305,13 @@ func Reconcile(ctx context.Context, options Options) (Result, error) {
 // availability risk.
 //
 // What it deliberately does not do is sweep node directories that have no
-// ownership record at all -- the shape the long-dead `funnel-probe` directory
-// on a production machine has, because `tslink remove` already consumed its
-// ledger entries. That sweep would have to read "absent from the registry" as
-// "not a live service", and registry.Load is allowed to drop entries it cannot
-// parse, so a registry with one malformed service would make a live service
-// look absent and cost it its node identity. cmd/remove covers that case at the
-// point where the facts are still in hand.
+// ownership record at all -- the shape a long-removed service's directory has
+// once `tslink remove` has consumed its ledger entries. That sweep would have
+// to read "absent from the registry" as "not a live service", and
+// registry.Load is allowed to drop entries it cannot parse, so a registry with
+// one malformed service would make a live service look absent and cost it its
+// node identity. cmd/remove covers that case at the point where the facts are
+// still in hand.
 func removeStaleNodeState(options Options, result *Result, cleanup tailapi.CleanupResult, cleanupErr error, orphanIDs map[string][]string, serviceNames []string, active map[string]struct{}) {
 	if options.DryRun || !options.CleanLocalNodeState || options.LocalNodeStateInUse == nil {
 		return

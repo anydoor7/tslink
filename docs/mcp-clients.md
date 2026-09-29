@@ -28,6 +28,23 @@ service.
 }
 ```
 
+### How a stdio session ends
+
+When the client closes stdin, calls that were already read still get their
+answers before the server exits. The `url` tool's `wait` is capped at 5m, and
+a larger value is refused as a usage error. A call still running 6m after
+stdin closed is cancelled; after a 5s grace for its handler to return,
+`tslink mcp` exits 1 with a single error line.
+
+SIGINT or SIGTERM cancels the calls in flight, so a `share` still waiting for
+its URL is rolled back. The command exits 1 with an error line that names the
+signal. A second signal terminates the process at once.
+
+Some inputs end the session and drop the answers of calls still in flight,
+and nothing after them is read: malformed JSON, a JSON value that is not a
+JSON-RPC message, a JSON-RPC batch, and a record longer than 1048576 bytes. A
+request that reuses the id of a call still in flight gets no answer.
+
 ## HTTP
 
 `tslink serve --mcp` serves the same tools over HTTPS on a dedicated tsnet
