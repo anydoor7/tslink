@@ -1028,7 +1028,11 @@ func (c *mcpDrainConnection) Read(ctx context.Context) (jsonrpc.Message, error) 
 			c.mu.Unlock()
 		}
 	}
-	if errors.Is(err, io.EOF) && c.caller.Err() == nil {
+	// A final record cut off mid-value decodes as io.ErrUnexpectedEOF rather
+	// than io.EOF. Once the reader has reached end of input it is the same
+	// boundary: hold it until what was accepted before it is answered, and the
+	// session still ends with the error.
+	if (errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)) && c.caller.Err() == nil {
 		select {
 		case <-c.reader.EndOfInput():
 			close(c.decodedEOF)
