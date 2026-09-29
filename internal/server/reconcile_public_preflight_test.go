@@ -30,19 +30,17 @@ func TestSyncNodesFunnelPreflightFailureClosesOnlyChangedPublicNode(t *testing.T
 			if err := config.EnsureDir(); err != nil {
 				t.Fatal(err)
 			}
+			// Registry shape `tslink share --funnel` writes: tag:tslink-funnel is
+			// derived at node construction and never stored in registry tags.
 			oldSvc := registry.Service{Name: "app", Type: registry.TypeProxy, Target: "http://localhost:3000", Tags: []string{"tag:tsmain"}}
 			if tc.oldPublic {
 				oldSvc.Funnel = true
 				oldSvc.PublicAck = true
-				oldSvc.Tags = append(oldSvc.Tags, registry.FunnelTag)
 			}
 			newSvc := oldSvc
 			newSvc.Target = tc.newTarget
 			newSvc.Funnel = true
 			newSvc.PublicAck = true
-			if !tc.oldPublic {
-				newSvc.Tags = append(append([]string(nil), oldSvc.Tags...), registry.FunnelTag)
-			}
 			writeRegistry(t, []registry.Service{newSvc})
 
 			nodesDir, err := config.NodesDir()

@@ -208,6 +208,15 @@ func ResourceBudgetMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// instrumentServiceHandler applies the per-request wrappers every HTTP node
+// serves through, metrics outermost. Both status-recording wrappers see the
+// same WriteHeader sequence, so they must agree on which status is final.
+func instrumentServiceHandler(m *metrics.Metrics, serviceName string, identity *IdentityResolver, handler http.Handler) http.Handler {
+	handler = ResourceBudgetMiddleware(handler)
+	handler = AccessLogMiddleware(serviceName, identity, handler)
+	return m.Middleware(serviceName, handler)
+}
+
 type registryWatcher interface {
 	Add(string) error
 	Close() error
@@ -287,6 +296,7 @@ type Server struct {
 	authKeyProvider         AuthKeyProvider
 	credentialed            bool
 	controlURL              string
+	controlURLUnverified    bool
 	mu                      sync.RWMutex
 	cfgDir                  string
 	metrics                 *metrics.Metrics
@@ -297,6 +307,7 @@ type Server struct {
 	cleanupNodesFn          CleanupStaleNodesFunc
 	lifecycleReconcileFn    LifecycleReconcileFunc
 	lastSyncFailed          atomic.Bool
+	syncRetryPending        atomic.Bool
 	shuttingDown            atomic.Bool
 	syncGeneration          atomic.Uint64
 	reconcileGate           chan struct{}
@@ -381,6 +392,14 @@ func (s *Server) SetAuthKeyProvider(fn AuthKeyProvider) {
 		return
 	}
 	s.authKeyProvider = fn
+}
+
+// SetControlURLUnverified marks the server's control URL as a default the
+// caller fell back to (config.json failed to load) rather than configuration.
+// A service without its own control URL then has an unknown control server for
+// identity comparison, so a control URL difference alone never resets its node.
+func (s *Server) SetControlURLUnverified(unverified bool) {
+	s.controlURLUnverified = unverified
 }
 
 // SetCredentialed records whether this process is running the stored-
@@ -506,13 +525,14 @@ func (s *Server) startLifecycleTicker(ctx context.Context) <-chan struct{} {
 				shouldSync := s.lifecycleReconcileFn == nil
 				if s.lifecycleReconcileFn != nil {
 					changed, err := s.lifecycleReconcileFn(ctx, now)
-					shouldSync = changed || err != nil || s.lastSyncFailed.Load()
+					shouldSync = changed || err != nil || s.lastSyncFailed.Load() || s.syncRetryPending.Load()
 					if err != nil {
 						slog.Warn("lifecycle reconciliation failed; applying in-memory wall-clock guard", "error", err)
 					}
 				}
 				// Rebuild listeners after desired state changed, reconciliation failed,
-				// or the latest sync failed and needs retry. Reconciliation still runs
+				// the latest sync failed, or it left a service blocked on a
+				// preflight that only a retry can clear. Reconciliation still runs
 				// from the wall clock on every tick, so suspend/resume cannot preserve
 				// an expired public listener without restoring unconditional sync traffic.
 				if shouldSync {
@@ -530,6 +550,10 @@ func (s *Server) startLifecycleTicker(ctx context.Context) <-chan struct{} {
 type syncOutcome struct {
 	generation uint64
 	committed  bool
+	// retry reports a sync that succeeded but left a service blocked on a
+	// transient condition, such as a failed Funnel policy preflight. Nothing
+	// else re-runs that preflight, so the lifecycle ticker must.
+	retry bool
 }
 
 type syncResult struct {
@@ -540,18 +564,20 @@ type syncResult struct {
 
 // syncNodes compares registry to running nodes and starts/stops as needed.
 func (s *Server) syncNodes(ctx context.Context) error {
-	outcome, err := s.syncNodesWithOutcome(ctx)
+	outcome, err := s.syncNodesWithOutcome(ctx, false)
 	if outcome.generation == s.syncGeneration.Load() {
 		s.lastSyncFailed.Store(err != nil)
+		s.syncRetryPending.Store(outcome.retry)
 	}
 	return err
 }
 
 func (s *Server) syncNodesAuthoritative(ctx context.Context) error {
 	for {
-		outcome, err := s.syncNodesWithOutcome(ctx)
+		outcome, err := s.syncNodesWithOutcome(ctx, true)
 		if outcome.generation == s.syncGeneration.Load() {
 			s.lastSyncFailed.Store(err != nil)
+			s.syncRetryPending.Store(outcome.retry)
 		}
 		if err != nil {
 			return err
@@ -580,7 +606,9 @@ func (s *Server) syncNodesAuthoritative(ctx context.Context) error {
 	}
 }
 
-func (s *Server) syncNodesWithOutcome(ctx context.Context) (outcome syncOutcome, resultErr error) {
+// startup marks the authoritative sync that gates daemon start, where any
+// sync error closes every node and exits the daemon.
+func (s *Server) syncNodesWithOutcome(ctx context.Context, startup bool) (outcome syncOutcome, resultErr error) {
 	generation := s.syncGeneration.Add(1)
 	outcome = syncOutcome{generation: generation}
 	defer func() {
@@ -670,6 +698,7 @@ func (s *Server) syncNodesWithOutcome(ctx context.Context) (outcome syncOutcome,
 	// intact while unrelated services continue reconciling.
 	tagsToEnsure := uniqueDesiredTags(desired, validationFailures)
 	policyFailures, provisionOutcomes, fusedTagsEnsured := s.ensureFunnelPolicyBeforeRestart(generationCtx, desired, validationFailures, tagsToEnsure)
+	outcome.retry = len(policyFailures) > 0
 	if !fusedTagsEnsured && s.ensureTagsFn != nil && len(tagsToEnsure) > 0 {
 		if err := ensureTagsBeforeRestart(generationCtx, s.ensureTagsFn, tagsToEnsure); err != nil {
 			switch {
@@ -737,6 +766,7 @@ func (s *Server) syncNodesWithOutcome(ctx context.Context) (outcome syncOutcome,
 				slog.Warn("closing changed public listener after node identity error", "name", name, "error", identityErr)
 				s.stopNodeLocked(name, false)
 			}
+			s.serviceFailures[name] = nodeIdentityFailure(svc, identityErr)
 		} else if failure, blocked := policyFailures[name]; blocked {
 			if node.funnelListenerActive && serviceChangedWithFallback(node.service, svc, s.controlURL) {
 				// A public listener serving an older target or identity must not
@@ -755,9 +785,9 @@ func (s *Server) syncNodesWithOutcome(ctx context.Context) (outcome syncOutcome,
 			s.stopNodeLocked(name, false)
 		}
 	}
-	// A prior failed preflight may have closed and removed a public node from
-	// memory. Its durable record lets a later removal finish deleting state,
-	// including after a process restart.
+	// Prune records of removed services whose state is already gone. State of
+	// a service that is not running here, for example a public node withdrawn
+	// by a failed preflight, is left to the paths that hold ownership proof.
 	removedIdentityErr := s.removeAbsentNodeIdentities(desired)
 	for name, failure := range policyFailures {
 		s.serviceFailures[name] = failure
@@ -766,17 +796,21 @@ func (s *Server) syncNodesWithOutcome(ctx context.Context) (outcome syncOutcome,
 		svc, exists := desired[name]
 		_, stillPolicyBlocked := policyFailures[name]
 		resolvedPolicyFailure := failure.Error != nil && failure.Error.Provision != nil && !stillPolicyBlocked
-		if !exists || resolvedPolicyFailure || serviceChangedWithFallback(failure.Service, svc, s.controlURL) {
+		// A service that is not running re-reads its record in the start loop
+		// below and is marked failed again if the record is still unreadable.
+		_, stillIdentityFailed := identityFailures[name]
+		resolvedIdentityFailure := isNodeIdentityFailure(failure) && !stillIdentityFailed
+		if !exists || resolvedPolicyFailure || resolvedIdentityFailure || serviceChangedWithFallback(failure.Service, svc, s.controlURL) {
 			delete(s.serviceFailures, name)
 		}
 	}
 	s.mu.Unlock()
 
-	// Start nodes for new or changed services
-	startErrs := make([]error, 0, len(identityFailures))
-	for _, identityErr := range identityFailures {
-		startErrs = append(startErrs, identityErr)
-	}
+	// Start nodes for new or changed services. Identity record failures are
+	// per-service failures recorded above, not sync errors: one unreadable
+	// record must not fail the sync and withdraw runtime.json for everyone.
+	var startErrs []error
+	identityBlocked := len(identityFailures) > 0
 	if err := s.ensureRunning(generationCtx); err != nil {
 		s.removeRuntimeSnapshot()
 		return outcome, errors.Join(removedIdentityErr, err)
@@ -807,11 +841,26 @@ func (s *Server) syncNodesWithOutcome(ctx context.Context) (outcome syncOutcome,
 			break
 		}
 		cleanupErr, err := s.prepareNodeIdentity(generationCtx, svc)
+		var recordErr *nodeIdentityReadError
+		if errors.As(err, &recordErr) {
+			slog.Error("not starting service; its node identity record cannot be read safely", "name", name, "error", err)
+			s.mu.Lock()
+			s.serviceFailures[name] = nodeIdentityFailure(svc, err)
+			s.writeRuntimeSnapshotLocked(registryFingerprint, false)
+			s.mu.Unlock()
+			identityBlocked = true
+			continue
+		}
 		if err != nil {
 			startErrs = append(startErrs, fmt.Errorf("start service %q: %w", name, err))
 			continue
 		}
-		if cleanupErr != nil {
+		if cleanupErr != nil && startup {
+			// This cleanup has no NodeIDs, so it can only list and protect
+			// hostname matches, never delete. At daemon start a sync error
+			// takes every service down, which buys no safety here.
+			slog.Warn("degraded mode: stale tailnet node cleanup failed after old state removal; continuing start", "name", name, "error", cleanupErr, "degraded_mode", true)
+		} else if cleanupErr != nil {
 			// Preserve the prior sync error signal without letting a remote
 			// cleanup outage prevent safe local re-enrollment.
 			startErrs = append(startErrs, cleanupErr)
@@ -842,6 +891,9 @@ func (s *Server) syncNodesWithOutcome(ctx context.Context) (outcome syncOutcome,
 		s.mu.Unlock()
 	}
 
+	// Retry while a record stays unreadable, so moving it aside takes effect
+	// without a registry change or restart.
+	outcome.retry = outcome.retry || identityBlocked
 	syncErr := errors.Join(append([]error{removedIdentityErr}, startErrs...)...)
 	if syncErr != nil {
 		s.removeRuntimeSnapshot()
@@ -1885,9 +1937,7 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service, prov
 		}
 	}
 
-	handler = ResourceBudgetMiddleware(handler)
-	handler = AccessLogMiddleware(svc.Name, identity, handler)
-	handler = s.metrics.Middleware(svc.Name, handler)
+	handler = instrumentServiceHandler(s.metrics, svc.Name, identity, handler)
 
 	var ln net.Listener
 	funnelListenerActive := false

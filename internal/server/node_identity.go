@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -15,6 +16,7 @@ import (
 	"github.com/monody0007/tslink/internal/atomicfile"
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/registry"
+	runtimesnapshot "github.com/monody0007/tslink/internal/runtime"
 	"github.com/monody0007/tslink/internal/tailapi"
 )
 
@@ -42,6 +44,67 @@ var (
 	writeNodeIdentityFn = writeNodeIdentity
 )
 
+// errNodeIdentityUnknown marks a record this build cannot interpret but that
+// is not damaged: a newer version, or a field added by a newer build. Its
+// identity is unknown, so it is neither compared (no reset) nor rewritten.
+var errNodeIdentityUnknown = errors.New("node identity record is from a newer TSLink or has fields this build does not know")
+
+var nodeIdentityFields = map[string]struct{}{
+	"version": {}, "service": {}, "tags": {}, "ephemeral": {}, "control_url": {}, "origin": {},
+}
+
+// nodeIdentityErrorCode is the stable code of a per-service identity record
+// failure. It matches the code the ownership ledger uses for a local durable
+// file that cannot be read safely, and no other serviceFailures entry uses it.
+const nodeIdentityErrorCode = "internal_error"
+
+// nodeIdentityReadError is a record that cannot be read safely. It fails only
+// its own service: that service is not started or restarted from it, and
+// neither its node state nor the record is changed.
+type nodeIdentityReadError struct {
+	service string
+	path    string
+	err     error
+}
+
+func (e *nodeIdentityReadError) Error() string {
+	return fmt.Sprintf("cannot safely read node identity record %q for service %q: %v; the service is not started from it and its node state is kept", e.path, e.service, e.err)
+}
+
+func (e *nodeIdentityReadError) Unwrap() error { return e.err }
+
+func (e *nodeIdentityReadError) StableCode() string { return nodeIdentityErrorCode }
+
+func (e *nodeIdentityReadError) NextCommands() []string {
+	return []string{
+		fmt.Sprintf("Back up and inspect %q", e.path),
+		fmt.Sprintf("Move %q aside only after preserving it; the next sync adopts the service's existing node state without resetting it", e.path),
+		fmt.Sprintf("tslink status --urls --name %s --json", e.service),
+	}
+}
+
+func nodeIdentityFailure(svc registry.Service, err error) runtimesnapshot.ServiceState {
+	var next []string
+	var recovery interface{ NextCommands() []string }
+	if errors.As(err, &recovery) {
+		next = recovery.NextCommands()
+	}
+	return runtimesnapshot.ServiceState{
+		Service:      svc,
+		RuntimeState: runtimesnapshot.ServiceRuntimeFailed,
+		FunnelState:  funnelFailureState(svc, nodeIdentityErrorCode),
+		Error: &runtimesnapshot.ServiceError{
+			Code:    nodeIdentityErrorCode,
+			Message: err.Error(),
+			Next:    next,
+		},
+	}
+}
+
+func isNodeIdentityFailure(failure runtimesnapshot.ServiceState) bool {
+	return failure.Error != nil && failure.Error.Code == nodeIdentityErrorCode
+}
+
 func (s *Server) nodeIdentityPath(name string) (string, error) {
 	if err := registry.ValidateName(name); err != nil {
 		return "", fmt.Errorf("node identity service name: %w", err)
@@ -49,7 +112,11 @@ func (s *Server) nodeIdentityPath(name string) (string, error) {
 	return filepath.Join(s.cfgDir, "node-identities", name+".json"), nil
 }
 
+// requestedNodeIdentity describes the node as it is constructed, not as the
+// registry stores it: tag:tslink-funnel is derived at construction for a
+// public service, so turning Funnel on or off is an auth identity change.
 func requestedNodeIdentity(svc registry.Service, fallbackControlURL, origin string) nodeIdentity {
+	svc = serviceForNodeConstruction(svc)
 	tags := append([]string(nil), svc.Tags...)
 	sort.Strings(tags)
 	unique := tags[:0]
@@ -65,8 +132,17 @@ func requestedNodeIdentity(svc registry.Service, fallbackControlURL, origin stri
 }
 
 func (a nodeIdentity) sameAuthIdentity(b nodeIdentity) bool {
-	return a.Service == b.Service && a.Ephemeral == b.Ephemeral &&
-		a.ControlURL == b.ControlURL && sameStringSet(a.Tags, b.Tags)
+	return a.sameAuthIdentityExceptControlURL(b) && a.ControlURL == b.ControlURL
+}
+
+func (a nodeIdentity) sameAuthIdentityExceptControlURL(b nodeIdentity) bool {
+	return a.Service == b.Service && a.Ephemeral == b.Ephemeral && sameStringSet(a.Tags, b.Tags)
+}
+
+// controlURLUnknown reports whether svc's effective control URL is only the
+// server's unverified fallback, which can never justify an identity reset.
+func (s *Server) controlURLUnknown(svc registry.Service) bool {
+	return s.controlURLUnverified && svc.ControlURL == ""
 }
 
 func readNodeIdentity(path string) (nodeIdentity, bool, error) {
@@ -79,6 +155,26 @@ func readNodeIdentity(path string) (nodeIdentity, bool, error) {
 	}
 	if err != nil {
 		return nodeIdentity{}, false, err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return nodeIdentity{}, false, fmt.Errorf("decode node identity: %w", err)
+	}
+	var version int
+	if raw, ok := fields["version"]; ok {
+		if err := json.Unmarshal(raw, &version); err != nil {
+			return nodeIdentity{}, false, fmt.Errorf("decode node identity version: %w", err)
+		}
+	}
+	if version > nodeIdentityVersion {
+		return nodeIdentity{}, true, fmt.Errorf("%w: version %d", errNodeIdentityUnknown, version)
+	}
+	// An added field is tolerated only on a record that claims this version;
+	// without one the file is not a record any TSLink build wrote.
+	for key := range fields {
+		if _, known := nodeIdentityFields[key]; !known && version == nodeIdentityVersion {
+			return nodeIdentity{}, true, fmt.Errorf("%w: field %q", errNodeIdentityUnknown, key)
+		}
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
@@ -132,15 +228,26 @@ func (s *Server) recordRunningIdentitiesLocked() map[string]error {
 			continue
 		}
 		existing, found, err := readNodeIdentityFn(path)
+		if errors.Is(err, errNodeIdentityUnknown) {
+			slog.Warn("keeping running node; its identity record is unknown to this build and is left unchanged", "name", name, "path", path, "reason", err)
+			continue
+		}
 		if err != nil {
-			failures[name] = fmt.Errorf("read identity for running service %q: %w", name, err)
+			failures[name] = &nodeIdentityReadError{service: name, path: path, err: err}
 			continue
 		}
 		requested := requestedNodeIdentity(node.service, s.controlURL, identityPreparedBeforeUp)
+		unknownURL := s.controlURLUnknown(node.service)
 		if found {
-			if existing.Service != name || !existing.sameAuthIdentity(requested) {
+			same := existing.sameAuthIdentity(requested) || unknownURL && existing.sameAuthIdentityExceptControlURL(requested)
+			if existing.Service != name || !same {
 				failures[name] = fmt.Errorf("running service %q disagrees with durable node identity", name)
 			}
+			continue
+		}
+		if unknownURL {
+			// Recording the fallback would make a later start with the real
+			// control URL look like a change and reset this node.
 			continue
 		}
 		if err := writeNodeIdentityFn(path, requested); err != nil {
@@ -150,9 +257,15 @@ func (s *Server) recordRunningIdentitiesLocked() map[string]error {
 	return failures
 }
 
-// removeAbsentNodeIdentities finishes removal for services whose listener was
-// already withdrawn in a previous sync or process. The record remains until
-// state removal is verified, so an interrupted deletion is retried safely.
+// removeAbsentNodeIdentities prunes the records of services absent from the
+// registry once their node state is already gone. It never deletes node state
+// itself. Absence from registry.json is not proof that no tailnet node still
+// authenticates with that key: the file may be missing or blank, or the
+// service may have been removed while no daemon ran and `tslink remove` could
+// not confirm the remote side. State of a service that is not running here is
+// deleted only by paths that hold remote ownership proof: `tslink remove` and
+// the lifecycle reconciler, which require a valid registry file and resolved
+// ownership-ledger NodeIDs. Until then the record stays with its state.
 func (s *Server) removeAbsentNodeIdentities(desired map[string]registry.Service) error {
 	dir := filepath.Join(s.cfgDir, "node-identities")
 	info, err := os.Lstat(dir)
@@ -169,13 +282,34 @@ func (s *Server) removeAbsentNodeIdentities(desired map[string]registry.Service)
 	if err != nil {
 		return fmt.Errorf("read node identities: %w", err)
 	}
-	var errs []error
+	var absent []string
 	for _, entry := range entries {
 		if !strings.HasSuffix(entry.Name(), ".json") {
 			continue
 		}
 		name := strings.TrimSuffix(entry.Name(), ".json")
-		if _, exists := desired[name]; exists {
+		if err := registry.ValidateName(name); err != nil {
+			// Not a record this daemon wrote (for example a Finder copy or an
+			// AppleDouble file). It names no service, so it is left alone.
+			slog.Warn("ignoring a file in node-identities that is not a service identity record", "path", filepath.Join(dir, entry.Name()), "error", err)
+			continue
+		}
+		if _, exists := desired[name]; !exists {
+			absent = append(absent, name)
+		}
+	}
+	if len(absent) == 0 {
+		return nil
+	}
+	registered, trusted := s.trustedRegistryNames()
+	if !trusted {
+		slog.Warn("keeping node state and identity records for services absent from registry.json; the registry file is missing, blank, or unreadable", "services", absent)
+		return nil
+	}
+	// Pruning is housekeeping for services no longer configured. A record it
+	// cannot read or remove is kept and logged; it never fails the sync.
+	for _, name := range absent {
+		if _, exists := registered[name]; exists {
 			continue
 		}
 		path, err := s.nodeIdentityPath(name)
@@ -188,26 +322,41 @@ func (s *Server) removeAbsentNodeIdentities(desired map[string]registry.Service)
 			}
 		}
 		if err != nil {
-			errs = append(errs, fmt.Errorf("read removed service identity %q: %w", name, err))
-			continue
-		}
-		if err := removeServiceStateDirFn(name); err != nil {
-			errs = append(errs, fmt.Errorf("remove state for deleted service %q: %w", name, err))
+			slog.Warn("keeping the identity record of a removed service; it cannot be read safely", "service", name, "path", path, "error", err)
 			continue
 		}
 		stateDir := filepath.Join(config.NodesDirIn(s.cfgDir), name)
 		if _, err := os.Lstat(stateDir); err == nil {
-			errs = append(errs, fmt.Errorf("remove state for deleted service %q: state directory remains", name))
+			slog.Info("keeping node state and identity record for a removed service; no ownership proof has cleared its tailnet node", "service", name)
 			continue
 		} else if !errors.Is(err, os.ErrNotExist) {
-			errs = append(errs, fmt.Errorf("verify state removal for deleted service %q: %w", name, err))
+			slog.Warn("keeping the identity record of a removed service; its state directory cannot be inspected", "service", name, "error", err)
 			continue
 		}
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-			errs = append(errs, fmt.Errorf("remove identity for deleted service %q: %w", name, err))
+			slog.Warn("could not remove the identity record of a removed service", "service", name, "path", path, "error", err)
 		}
 	}
-	return errors.Join(errs...)
+	return nil
+}
+
+// trustedRegistryNames re-reads registry.json with the same file-state rule
+// the lifecycle reconciler uses before any deletion: only a present, valid
+// file can say that a service was removed.
+func (s *Server) trustedRegistryNames() (map[string]struct{}, bool) {
+	regPath, err := registryPathFn()
+	if err != nil {
+		return nil, false
+	}
+	reg, state, err := registry.LoadWithFileState(regPath)
+	if err != nil || state != registry.RegistryFileValid {
+		return nil, false
+	}
+	names := make(map[string]struct{}, len(reg.Services))
+	for _, svc := range reg.Services {
+		names[svc.Name] = struct{}{}
+	}
+	return names, true
 }
 
 // prepareNodeIdentity is the sole transition from an old requested identity
@@ -221,13 +370,25 @@ func (s *Server) prepareNodeIdentity(ctx context.Context, svc registry.Service) 
 		return nil, err
 	}
 	old, found, err := readNodeIdentityFn(path)
+	if errors.Is(err, errNodeIdentityUnknown) {
+		slog.Warn("node identity record is unknown to this build; starting over the existing node state without a reset and leaving the record unchanged", "name", svc.Name, "path", path, "reason", err)
+		return nil, nil
+	}
 	if err != nil {
-		return nil, fmt.Errorf("read node identity for %q: %w", svc.Name, err)
+		return nil, &nodeIdentityReadError{service: svc.Name, path: path, err: err}
 	}
 	stateDir := filepath.Join(config.NodesDirIn(s.cfgDir), svc.Name)
 	requested := requestedNodeIdentity(svc, s.controlURL, identityPreparedBeforeUp)
+	unknownURL := s.controlURLUnknown(svc)
 	if !found {
 		if _, err := os.Lstat(stateDir); err == nil {
+			if unknownURL {
+				// Existing state enrolled against a control server this run
+				// cannot name. Adopt it without a record; a later start with a
+				// loaded config records the real control URL.
+				slog.Warn("not recording node identity for existing state; the control URL is an unverified fallback", "name", svc.Name)
+				return nil, nil
+			}
 			// Compatibility baseline for state created before identity records
 			// existed. This adopts the requested identity, not a verified old
 			// enrollment. Subsequent transitions are tracked strictly.
@@ -244,6 +405,10 @@ func (s *Server) prepareNodeIdentity(ctx context.Context, svc registry.Service) 
 		return nil, fmt.Errorf("node identity record for %q names %q", svc.Name, old.Service)
 	}
 	if old.sameAuthIdentity(requested) {
+		return nil, nil
+	}
+	if unknownURL && old.sameAuthIdentityExceptControlURL(requested) {
+		slog.Warn("keeping node state; its recorded control URL differs only from an unverified fallback", "name", svc.Name, "recorded_control_url", old.ControlURL)
 		return nil, nil
 	}
 	if err := removeServiceStateDirFn(svc.Name); err != nil {
