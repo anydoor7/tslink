@@ -52,7 +52,9 @@ func startRootOwner(t *testing.T, testName string) *rootOwner {
 		defer close(owner.drained)
 		scanner := bufio.NewScanner(stdout)
 		for scanner.Scan() {
-			if root, ok := strings.CutPrefix(strings.TrimSpace(scanner.Text()), heldRootReportPrefix); ok {
+			// Not TrimSpace: an owner outside Main reports an empty root, and
+			// the prefix's trailing space must survive for that to be seen.
+			if root, ok := strings.CutPrefix(scanner.Text(), heldRootReportPrefix); ok {
 				select {
 				case reported <- root:
 				default:
