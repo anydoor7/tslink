@@ -16,8 +16,6 @@ import (
 const (
 	ACLNotRequested = "not_requested"
 	ACLStillInUse   = "still_in_use"
-	ACLWouldDelete  = "would_delete_if_canonical"
-	ACLDeleted      = "deleted"
 	ACLSkipped      = "skipped"
 
 	cleanupUnavailableReason      = "device cleanup could not be completed; see warnings"
