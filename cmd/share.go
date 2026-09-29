@@ -331,9 +331,11 @@ func shareExposurePosture(svc registry.Service) string {
 }
 
 func registerShare(regPath string, spec shareTargetSpec, requestedName string) (registry.Service, bool, error) {
-	if len(spec.Service.Tags) == 0 {
-		spec.Service.Tags = []string{config.GetDefaultTag()}
-	}
+	// Tags take part in reuse only when the caller asked for them. `tslink
+	// share` has no way to, so matching its request against the default tag
+	// would turn a retry into a conflict as soon as the default tag, or the
+	// share's own tags, changed. The default fills in for a new service only.
+	tagsRequested := len(spec.Service.Tags) > 0
 	base := sanitizeShareName(spec.NameBase)
 	if requestedName != "" {
 		if err := registry.ValidateName(requestedName); err != nil {
@@ -348,7 +350,11 @@ func registerShare(regPath string, spec shareTargetSpec, requestedName string) (
 		}
 		usedNames := make(map[string]struct{}, len(reg.Services))
 		for _, existing := range reg.Services {
-			if sameShareTarget(existing, spec.Service) {
+			candidate := spec.Service
+			if !tagsRequested {
+				candidate.Tags = existing.Tags
+			}
+			if sameShareTarget(existing, candidate) {
 				if requestedName != "" && existing.Name != requestedName {
 					return registry.Service{}, false, output.ErrConflict(fmt.Sprintf(
 						"cannot apply requested name %q: target is already shared as %q; re-run without an explicit name to reuse it, or remove the existing service before retrying with the requested name",
@@ -382,6 +388,9 @@ func registerShare(regPath string, spec shareTargetSpec, requestedName string) (
 		}
 
 		svc := spec.Service
+		if !tagsRequested {
+			svc.Tags = []string{config.GetDefaultTag()}
+		}
 		svc.Name = name
 		svc.CreatedAt = time.Now().UTC()
 		created, err := shareAddIfMissingFn(regPath, svc)
