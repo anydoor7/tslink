@@ -601,6 +601,11 @@ type mcpActions struct {
 	templateList  func() (any, error)
 	templatePlan  func(string) (any, error)
 	templateApply func(context.Context, string, bool) (any, error)
+
+	// unshareContext, when set, is what the unshare tool calls, so device
+	// cleanup sees the request's cancellation. unshare stays the seam test
+	// doubles replace.
+	unshareContext func(context.Context, string) (any, error)
 }
 
 // mcpAddArguments is the wire shape of the add tool's arguments.
@@ -764,22 +769,10 @@ func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 			return map[string]any{"services": services}, nil
 		},
 		unshare: func(name string) (any, error) {
-			if err := registry.ValidateName(name); err != nil {
-				return nil, err
-			}
-			removed, err := removeServiceResult(paths.Registry, paths.Ownership, name)
-			if err != nil {
-				return nil, err
-			}
-			return mcpUnshareSummary{
-				OK:                   true,
-				Name:                 removed.Name,
-				Removed:              removed.Removed,
-				DeviceCleaned:        removed.DeviceCleaned,
-				DeviceCleanupSkipped: removed.DeviceCleanupSkipped,
-				DeviceSkipReason:     removed.DeviceSkipReason,
-				DeviceWarning:        removed.DeviceWarning,
-			}, nil
+			return unshareMCPService(context.Background(), paths, name)
+		},
+		unshareContext: func(ctx context.Context, name string) (any, error) {
+			return unshareMCPService(ctx, paths, name)
 		},
 		status: func() (any, error) {
 			status, err := sharePollableStatusFn(paths.PID, paths.Registry, paths.Snapshot, paths.AuthHandoff)
@@ -874,6 +867,27 @@ func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 			return result, nil
 		},
 	}
+}
+
+// unshareMCPService is the unshare tool: the CLI's idempotent remove, reported
+// as an mcpUnshareSummary.
+func unshareMCPService(ctx context.Context, paths sharePaths, name string) (any, error) {
+	if err := registry.ValidateName(name); err != nil {
+		return nil, err
+	}
+	removed, err := removeServiceResultContext(ctx, paths.Registry, paths.Ownership, name)
+	if err != nil {
+		return nil, err
+	}
+	return mcpUnshareSummary{
+		OK:                   true,
+		Name:                 removed.Name,
+		Removed:              removed.Removed,
+		DeviceCleaned:        removed.DeviceCleaned,
+		DeviceCleanupSkipped: removed.DeviceCleanupSkipped,
+		DeviceSkipReason:     removed.DeviceSkipReason,
+		DeviceWarning:        removed.DeviceWarning,
+	}, nil
 }
 
 // --- Transport ------------------------------------------------------------
@@ -1372,7 +1386,11 @@ func callMCPTool(ctx context.Context, actions mcpActions, name string, arguments
 		if decodeErr := decodeMCPArguments(arguments, &args); decodeErr != nil || args.Name == "" {
 			return nil, mcpInvalidArgumentsError("unshare")
 		}
-		data, err = actions.unshare(args.Name)
+		if actions.unshareContext != nil {
+			data, err = actions.unshareContext(ctx, args.Name)
+		} else {
+			data, err = actions.unshare(args.Name)
+		}
 	case "status":
 		var args struct{}
 		if decodeErr := decodeMCPArguments(arguments, &args); decodeErr != nil {
