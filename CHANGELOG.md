@@ -66,6 +66,10 @@ Initial public release.
 
 ### Added
 
+- `TSLINK_DOCTOR_SKIP_TAILSCALE_SSH=1` makes `tslink doctor` skip its read of
+  the local `tailscaled` for the Tailscale SSH check. The state is then
+  `unknown` and the `tailscale_ssh_unknown` finding says the check was
+  skipped; doctor's status and exit code are unchanged.
 - `.github/workflows/ci.yml` runs the Release Candidate gate on every pull
   request and on every push to `main`.
 - The `share` result (`tslink share --json` data and the MCP `share` tool)
@@ -214,6 +218,17 @@ Initial public release.
 
 ### Fixed
 
+- A service node or the `--mcp` control-plane node whose tsnet start fails
+  very early (for example on Linux when `/proc/self/exe` cannot be read) no
+  longer crashes the daemon with a nil-pointer panic in tsnet's `Close`. The
+  failure is reported as that node's start error; a control-plane failure
+  still stops the daemon, as before. `tslink login` client-secret validation
+  reports the same failure as a validation error instead of a panic trace.
+- `go test ./...` no longer reaches anything real on the machine that runs
+  it: not the contributor's TSLink config or credentials, their Tailscale
+  daemon or its LocalAPI token, their LaunchAgent, systemd unit or Startup
+  script, or Tailscale's servers. Exported `TSLINK_*` variables no longer
+  change test results.
 - On Tier 1, `tslink tags set` and `tags add` no longer clear the service's
   node state. A Tier 1 node advertises no tags, so the reset changed nothing
   on the tailnet and only forced a new browser authorization. The new tags

@@ -35,6 +35,22 @@ go run github.com/goreleaser/goreleaser/v2@v2.17.0 check
 go install .
 ```
 
+### Test isolation
+
+Every test binary starts in `testenv.Main` (`internal/testenv`), so a package
+with tests needs a `TestMain` that calls it; `TestEveryTestPackageRunsTheSharedIsolation`
+fails otherwise. Before any test runs, `testenv.Main` removes inherited
+`TSLINK_*` variables, moves `HOME`, `USERPROFILE`, `APPDATA`, `LOCALAPPDATA`,
+the `XDG_*` directories and `TSLINK_CONFIG_DIR` into a temporary root (the Go
+build and module caches stay where they were), and exports
+`TSLINK_DOCTOR_SKIP_TAILSCALE_SSH=1` so compiled children never query the
+machine's `tailscaled`. Production seams that reach the host, such as real
+tsnet nodes, the local Tailscale client and browser openers, have refusing
+defaults in the test binaries; a test that reaches one without faking it
+fails its package and names the seam. Build LocalAPI clients in tests with
+`localapitest.NewClient`; `TestNoTestBuildsALocalAPIClientThatCanReachTheHost`
+rejects any other form.
+
 ### Compiled-binary test isolation
 
 Tests that execute a freshly compiled TSLink binary must set all three of
