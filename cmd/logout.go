@@ -131,7 +131,7 @@ func logoutUserWithOptions(opts logoutOptions, isJSON bool, out io.Writer) error
 		}
 	}
 	if err := errors.Join(cleanupErrs...); err != nil {
-		return err
+		return credentialLockConflict(err)
 	}
 	if err := verifyLogoutCleanup(opts.AuthKeyPath, opts.NodesDir, stateDir); err != nil {
 		return err
@@ -183,7 +183,7 @@ func logoutCredentialKind(kind string, isJSON bool, out io.Writer) error {
 		cleanupErrs = append(cleanupErrs, fmt.Errorf("delete %s credential: %w", kind, err))
 	}
 	if err := errors.Join(cleanupErrs...); err != nil {
-		return err
+		return credentialLockConflict(err)
 	}
 	after, err := inspectStoredCredentialsFn()
 	if err != nil {

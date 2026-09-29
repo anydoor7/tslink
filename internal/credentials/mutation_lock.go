@@ -1,15 +1,18 @@
 package credentials
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/user"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/filelock"
+	"github.com/monody0007/tslink/internal/registry"
 )
 
 var credentialMutationLockPathFunc = defaultCredentialMutationLockPath
@@ -50,7 +53,44 @@ func SetMutationLockPathForTesting(path string) (restore func()) {
 	return func() { credentialMutationLockPathFunc = old }
 }
 
-const credentialMutationLockTimeout = 5 * time.Second
+const defaultCredentialMutationLockTimeout = 5 * time.Second
+
+// credentialMutationLockTimeoutOverride is zero outside contention tests.
+var credentialMutationLockTimeoutOverride atomic.Int64
+
+func credentialMutationLockTimeout() time.Duration {
+	if timeout := credentialMutationLockTimeoutOverride.Load(); timeout > 0 {
+		return time.Duration(timeout)
+	}
+	return defaultCredentialMutationLockTimeout
+}
+
+// Used only by lock-contention tests; production always waits 5 s.
+func SetMutationLockTimeoutForTesting(timeout time.Duration) (restore func()) {
+	old := credentialMutationLockTimeoutOverride.Swap(int64(timeout))
+	return func() { credentialMutationLockTimeoutOverride.Store(old) }
+}
+
+// ErrMutationLockBusy reports that another credential transaction held the
+// lock for the whole wait. It is wrapped in a registry.StableCodeError with
+// the CLI's retryable "conflict" code.
+var ErrMutationLockBusy = errors.New("credential transaction lock busy")
+
+// credentialLockConflictCode is the stable code the CLI maps to its
+// retryable conflict exit (output.StableErrorCode(output.ExitConflict)).
+const credentialLockConflictCode = "conflict"
+
+func credentialLockBusyError(path string, waited time.Duration) error {
+	target := "the credential transaction lock"
+	if path != "" {
+		target = path
+	}
+	return &registry.StableCodeError{
+		Code: credentialLockConflictCode,
+		Next: []string{"Wait for the other tslink login, logout, or serve to finish, then retry the command"},
+		Err:  fmt.Errorf("%w: waited %s for %s; another tslink login, logout, or serve is running; retry when it finishes", ErrMutationLockBusy, waited, target),
+	}
+}
 
 var credentialMutationGate = func() chan struct{} {
 	gate := make(chan struct{}, 1)
@@ -59,11 +99,13 @@ var credentialMutationGate = func() chan struct{} {
 }()
 
 func acquireCredentialMutationLock() (func(), error) {
-	deadline := time.Now().Add(credentialMutationLockTimeout)
+	timeout := credentialMutationLockTimeout()
+	deadline := time.Now().Add(timeout)
 	select {
 	case <-credentialMutationGate:
 	case <-time.After(time.Until(deadline)):
-		return nil, fmt.Errorf("credential transaction lock timed out")
+		path, _ := credentialMutationLockPathFunc()
+		return nil, credentialLockBusyError(path, timeout)
 	}
 	releaseGate := func() { credentialMutationGate <- struct{}{} }
 	primaryPath, err := credentialMutationLockPathFunc()
@@ -107,7 +149,7 @@ func acquireCredentialMutationLock() (func(), error) {
 			_ = f.Close()
 			continue
 		}
-		if err := lockCredentialFile(f, deadline); err != nil {
+		if err := lockCredentialFile(f, path, timeout, deadline); err != nil {
 			releaseAll()
 			return nil, err
 		}
@@ -149,7 +191,7 @@ func openCredentialLockPath(path string) (*os.File, os.FileInfo, error) {
 
 // lockCredentialFile waits for an exclusive lock on f until deadline. It
 // closes f on failure.
-func lockCredentialFile(f *os.File, deadline time.Time) error {
+func lockCredentialFile(f *os.File, path string, timeout time.Duration, deadline time.Time) error {
 	for {
 		locked, lockErr := tryLockCredentialFile(f)
 		if lockErr != nil {
@@ -161,7 +203,7 @@ func lockCredentialFile(f *os.File, deadline time.Time) error {
 		}
 		if !time.Now().Before(deadline) {
 			_ = f.Close()
-			return fmt.Errorf("credential transaction lock timed out")
+			return credentialLockBusyError(path, timeout)
 		}
 		time.Sleep(min(25*time.Millisecond, time.Until(deadline)))
 	}

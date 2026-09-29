@@ -719,7 +719,7 @@ func commitLoginCredential(ctx context.Context, store loginCredentialStore, mode
 			result, commitErr = commitLoginCredentialValidated(ctx, liveStore, mode, value, opts, true)
 			return commitErr
 		})
-		return result, err
+		return result, credentialLockConflict(err)
 	}
 	return commitLoginCredentialValidated(ctx, store, mode, value, opts, false)
 }
@@ -790,6 +790,16 @@ func commitLoginCredentialValidated(ctx context.Context, store loginCredentialSt
 		}
 	}
 	return result, nil
+}
+
+// credentialLockConflict gives credential-lock contention the CLI's retryable
+// conflict exit code while keeping its stable code, message and next steps.
+func credentialLockConflict(err error) error {
+	var coded *registry.StableCodeError
+	if !errors.Is(err, credentials.ErrMutationLockBusy) || !errors.As(err, &coded) {
+		return err
+	}
+	return &registry.StableCodeError{Code: coded.Code, Next: coded.NextCommands(), Err: &output.CodeError{Code: output.ExitConflict, Message: err.Error()}}
 }
 
 func verifyLoginCredentialValue(store loginCredentialStore, mode loginCredentialMode, want string) error {

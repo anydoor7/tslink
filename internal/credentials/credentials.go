@@ -675,6 +675,7 @@ func GetAuthKey(ctx context.Context, opts AuthKeyOptions) (string, error) {
 func MigrateFromLegacy() (migrated bool) {
 	unlock, err := acquireCredentialMutationLock()
 	if err != nil {
+		slog.Warn("legacy credential migration skipped: credential transaction lock unavailable", "error", err)
 		return false
 	}
 	defer unlock()
