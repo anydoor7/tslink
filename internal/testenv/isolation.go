@@ -11,14 +11,17 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
+
+	"github.com/monody0007/tslink/internal/filelock"
 )
 
 // RootEnv names the temporary root Main created for the running test binary.
 // Every home, config, data and cache location of the process points inside it.
 //
-// A test binary that starts with RootEnv naming a root that still carries
-// Main's marker file was started by a test in an already isolated binary (a
-// helper re-exec such as `os.Args[0] -test.run=^TestX$`). Its TSLINK_
+// A test binary that starts with RootEnv naming a root whose marker a running
+// test binary holds locked was started by a test in an already isolated binary
+// (a helper re-exec such as `os.Args[0] -test.run=^TestX$`). Its TSLINK_
 // variables were put there by that test, not by the contributor's shell, so
 // Main keeps them; it still moves every location into a fresh root of its own.
 const RootEnv = "TSLINK_TESTENV_ROOT"
@@ -36,8 +39,16 @@ const IsolationFailure = "testenv: cannot isolate this test binary"
 // doctor seams instead, so the knob changes nothing inside the test binary.
 const DoctorSkipTailscaleSSHEnv = "TSLINK_DOCTOR_SKIP_TAILSCALE_SSH"
 
-// rootMarker is the file that proves a root was made by Main. A contributor
-// who happens to export RootEnv cannot switch off the TSLINK_ scrub with it.
+// rootMarker is the file that proves a root was made by Main and that the
+// test binary owning it is still running. The owner creates it, locks it
+// (filelock) for as long as it runs, and only then writes its pid into it. The
+// OS drops the lock when the owner exits, however it exits, so:
+//
+//   - a contributor who exports RootEnv, or a leftover root, cannot switch off
+//     the TSLINK_ scrub: only a root whose marker is locked is inherited;
+//   - a root whose marker is unlocked although it names an owner was left by
+//     a binary that was interrupted, timed out or crashed, and the next Main
+//     removes it (reclaimStaleRoots).
 const rootMarker = "tslink-testenv-root"
 
 // harnessReportEnvs are the test harness's own diagnostic switches. They only
@@ -69,7 +80,9 @@ var goToolchainLocationEnvs = []string{"GOCACHE", "GOMODCACHE", "GOPATH", "GOENV
 //   - DoctorSkipTailscaleSSHEnv is set for compiled tslink children;
 //   - a call to a host seam's test-binary default (UnfakedHostSeam) turns the
 //     package red with the call's stack;
-//   - the root is removed after run returns.
+//   - the root is removed after run returns, and roots that interrupted,
+//     timed-out or crashed binaries left in os.TempDir() are removed before
+//     the new one is made.
 //
 // Everything that may still reach a real host resource is an explicit opt-in
 // inside a test: t.Setenv, a fake that delegates to the real seam, or
@@ -78,13 +91,14 @@ func Main(m *testing.M, run func() int) int {
 	if run == nil {
 		run = m.Run
 	}
-	root, err := isolateProcess()
+	root, marker, err := isolateProcess()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s: %v\n", IsolationFailure, err)
 		return 2
 	}
 	code := reportUnfakedHostSeams(run())
-	if err := os.RemoveAll(root); err != nil {
+	// marker stays open, and its lock held, until here.
+	if err := removeRoot(root, marker); err != nil {
 		fmt.Fprintf(os.Stderr, "testenv: remove isolation root %s: %v\n", root, err)
 		if code == 0 {
 			code = 1
@@ -110,35 +124,34 @@ func RealHostMain(m *testing.M, reason string, run func() int) int {
 	return reportUnfakedHostSeams(run())
 }
 
-// isolateProcess applies Main's environment and returns the root it created.
-func isolateProcess() (string, error) {
+// isolateProcess applies Main's environment and returns the root it created
+// with its marker, open and locked.
+func isolateProcess() (string, *os.File, error) {
 	child := inheritedRoot() != ""
 	if !child {
 		// Resolve the toolchain's locations while HOME and the platform
 		// directories still name the contributor's own.
 		if err := pinGoToolchainLocations(); err != nil {
-			return "", err
+			return "", nil, err
 		}
 		for _, name := range tslinkEnvNames() {
 			if isHarnessReportEnv(name) {
 				continue
 			}
 			if err := os.Unsetenv(name); err != nil {
-				return "", fmt.Errorf("unset %s: %w", name, err)
+				return "", nil, fmt.Errorf("unset %s: %w", name, err)
 			}
 		}
 	}
 
-	root, err := os.MkdirTemp("", RootPrefix)
+	reclaimStaleRoots(os.TempDir())
+	root, marker, err := createRoot(os.TempDir())
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
-	fail := func(err error) (string, error) {
-		_ = os.RemoveAll(root)
-		return "", err
-	}
-	if err := os.WriteFile(filepath.Join(root, rootMarker), nil, 0o600); err != nil {
-		return fail(err)
+	fail := func(err error) (string, *os.File, error) {
+		_ = removeRoot(root, marker)
+		return "", nil, err
 	}
 	// Only the home exists. Like SetHome, the TSLink config dir inside it is
 	// left for the code under test to create; pre-creating it would, on
@@ -159,7 +172,156 @@ func isolateProcess() (string, error) {
 	if err := os.Setenv(RootEnv, root); err != nil {
 		return fail(err)
 	}
-	return root, nil
+	return root, marker, nil
+}
+
+// markerCreatedHook, when a test sets it, runs between createRoot creating a
+// marker and locking it.
+var markerCreatedHook func(root string)
+
+// createRoot makes a fresh root under dir and returns it with its marker open
+// and locked. The marker records this process only once the lock is held, so
+// a reclaimStaleRoots that opens it in between finds it empty and leaves the
+// root alone.
+func createRoot(dir string) (string, *os.File, error) {
+	root, err := os.MkdirTemp(dir, RootPrefix)
+	if err != nil {
+		return "", nil, err
+	}
+	marker, err := os.OpenFile(filepath.Join(root, rootMarker), os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		_ = os.RemoveAll(root)
+		return "", nil, err
+	}
+	if markerCreatedHook != nil {
+		markerCreatedHook(root)
+	}
+	if err := filelock.Lock(marker); err != nil {
+		_ = marker.Close()
+		_ = os.RemoveAll(root)
+		return "", nil, fmt.Errorf("lock %s: %w", marker.Name(), err)
+	}
+	if _, err := fmt.Fprintf(marker, "%d\n", os.Getpid()); err != nil {
+		_ = removeRoot(root, marker)
+		return "", nil, fmt.Errorf("record the owner in %s: %w", marker.Name(), err)
+	}
+	return root, marker, nil
+}
+
+// removeRoot deletes root, whose marker this process holds open and locked.
+// Everything else goes while the lock still keeps reclaimStaleRoots out. Then
+// the marker is unlocked and closed, which Windows needs before it can delete
+// it, and the marker and root follow; a reclaimStaleRoots in another binary
+// may remove those two first, which is fine.
+func removeRoot(root string, marker *os.File) error {
+	var firstErr error
+	keep := func(err error) {
+		if err != nil && !os.IsNotExist(err) && firstErr == nil {
+			firstErr = err
+		}
+	}
+	entries, err := os.ReadDir(root)
+	keep(err)
+	for _, entry := range entries {
+		if entry.Name() != rootMarker {
+			keep(os.RemoveAll(filepath.Join(root, entry.Name())))
+		}
+	}
+	keep(filelock.Unlock(marker))
+	keep(marker.Close())
+	keep(removeBriefly(filepath.Join(root, rootMarker)))
+	keep(removeBriefly(root))
+	return firstErr
+}
+
+// removeBriefly removes path, retrying for up to a second: another binary's
+// rootMarkerState may have the marker open for a moment, and while it does
+// Windows can delete neither the marker nor its directory.
+func removeBriefly(path string) error {
+	deadline := time.Now().Add(time.Second)
+	for {
+		err := os.Remove(path)
+		if err == nil || os.IsNotExist(err) || time.Now().After(deadline) {
+			return err
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// reclaimStaleRoots removes the roots under dir that test binaries left when
+// they were interrupted, killed by -timeout or crashed: entries named
+// RootPrefix* that are directories, not symlinks, whose marker is abandoned
+// (see rootMarkerState). Nothing else is touched: an entry without a marker, a
+// symlink, a root whose owner still holds its lock, and a root whose marker is
+// still empty. Two binaries that reclaim the same root at once both just
+// remove it.
+func reclaimStaleRoots(dir string) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if !strings.HasPrefix(entry.Name(), RootPrefix) {
+			continue
+		}
+		root := filepath.Join(dir, entry.Name())
+		if info, err := os.Lstat(root); err != nil || !info.IsDir() {
+			continue
+		}
+		if rootMarkerState(root) == markerAbandoned {
+			_ = os.RemoveAll(root)
+		}
+	}
+}
+
+// markerState is what a root's marker says about the binary that owns it.
+type markerState int
+
+const (
+	// markerMissing: no regular marker file, or one that cannot be locked.
+	markerMissing markerState = iota
+	// markerHeld: a running test binary holds the lock.
+	markerHeld
+	// markerEmpty: unlocked and empty. Its owner has not locked it yet, or
+	// the root was made before roots were locked; either way it is left alone.
+	markerEmpty
+	// markerAbandoned: unlocked although an owner recorded itself in it, so
+	// that owner has exited without removing its root.
+	markerAbandoned
+)
+
+// rootMarkerState opens root's marker, without following a symlink in its
+// place, and tries its lock. When the lock is free this call holds it just
+// long enough to read the marker's size.
+func rootMarkerState(root string) markerState {
+	path := filepath.Join(root, rootMarker)
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return markerMissing
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return markerMissing
+	}
+	defer f.Close()
+	locked, err := filelock.TryLock(f)
+	if err != nil {
+		return markerMissing
+	}
+	if !locked {
+		return markerHeld
+	}
+	defer func() { _ = filelock.Unlock(f) }()
+	// The size is read under the lock: an owner writes its record while it
+	// holds the lock, so it is either complete or absent here.
+	held, err := f.Stat()
+	if err != nil || !os.SameFile(info, held) {
+		return markerMissing
+	}
+	if held.Size() == 0 {
+		return markerEmpty
+	}
+	return markerAbandoned
 }
 
 // HomeEnv returns the variable assignments that make home the only home of a
@@ -189,12 +351,15 @@ func Root() string {
 	return inheritedRoot()
 }
 
+// inheritedRoot returns RootEnv's root if a running test binary holds its
+// marker locked: the parent that started this binary, or, once Main has run,
+// this binary itself. A root whose owner is gone is not honoured.
 func inheritedRoot() string {
 	root := os.Getenv(RootEnv)
 	if root == "" || !filepath.IsAbs(root) {
 		return ""
 	}
-	if info, err := os.Stat(filepath.Join(root, rootMarker)); err != nil || !info.Mode().IsRegular() {
+	if rootMarkerState(root) != markerHeld {
 		return ""
 	}
 	return root

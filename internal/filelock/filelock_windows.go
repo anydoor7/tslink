@@ -3,6 +3,7 @@
 package filelock
 
 import (
+	"errors"
 	"os"
 
 	"golang.org/x/sys/windows"
@@ -11,6 +12,8 @@ import (
 const (
 	lockfileExclusiveLock = 0x00000002
 )
+
+const lockfileFailImmediately = 0x00000001
 
 func lock(f *os.File) error {
 	var ol windows.Overlapped
@@ -31,4 +34,19 @@ func unlock(f *os.File) error {
 		1, 0,
 		&ol,
 	)
+}
+
+func tryLock(f *os.File) (bool, error) {
+	var ol windows.Overlapped
+	err := windows.LockFileEx(
+		windows.Handle(f.Fd()),
+		lockfileExclusiveLock|lockfileFailImmediately,
+		0,
+		1, 0,
+		&ol,
+	)
+	if errors.Is(err, windows.ERROR_LOCK_VIOLATION) {
+		return false, nil
+	}
+	return err == nil, err
 }

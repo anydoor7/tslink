@@ -17,8 +17,8 @@ import (
 const testenvImportPath = "github.com/monody0007/tslink/internal/testenv"
 
 // isolationGuardGOOS are the platforms whose test binaries must all run Main.
-// A package can have tests on one platform only (internal/filelock has none on
-// Windows), so the check is per platform, with each platform's own file set.
+// A package can have tests on some platforms only, so the check is per
+// platform, with each platform's own file set.
 var isolationGuardGOOS = []string{"darwin", "linux", "windows"}
 
 // TestEveryTestPackageRunsTheSharedIsolation (G1) keeps Main's coverage
