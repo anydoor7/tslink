@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -131,7 +132,10 @@ func TestMigrateFromLegacyWarnsWhenSkippedForLockContention(t *testing.T) {
 		t.Fatal("migration ran while another process held the credential lock")
 	}
 	out := logs.String()
-	if !strings.Contains(out, "level=WARN") || !strings.Contains(out, "legacy credential migration skipped") || !strings.Contains(out, lockPath) {
+	// The text handler quotes the error value and escapes it as strconv.Quote
+	// does, so on Windows every separator of the lock path appears doubled.
+	loggedLockPath := strings.Trim(strconv.Quote(lockPath), `"`)
+	if !strings.Contains(out, "level=WARN") || !strings.Contains(out, "legacy credential migration skipped") || !strings.Contains(out, loggedLockPath) {
 		t.Fatalf("migration skipped for lock contention without a warning naming the lock:\n%s", out)
 	}
 	if _, err := os.Stat(apiKeyPath(t)); err != nil {

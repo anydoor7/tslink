@@ -68,7 +68,7 @@ type nodeIdentityReadError struct {
 }
 
 func (e *nodeIdentityReadError) Error() string {
-	return fmt.Sprintf("cannot safely read node identity record %q for service %q: %v; the service is not started from it and its node state is kept", e.path, e.service, e.err)
+	return fmt.Sprintf("cannot safely read node identity record \"%s\" for service %q: %v; the service is not started from it and its node state is kept", e.path, e.service, e.err)
 }
 
 func (e *nodeIdentityReadError) Unwrap() error { return e.err }
@@ -77,8 +77,8 @@ func (e *nodeIdentityReadError) StableCode() string { return nodeIdentityErrorCo
 
 func (e *nodeIdentityReadError) NextCommands() []string {
 	return []string{
-		fmt.Sprintf("Back up and inspect %q", e.path),
-		fmt.Sprintf("Move %q aside only after preserving it; the next sync adopts the service's existing node state without resetting it", e.path),
+		fmt.Sprintf("Back up and inspect \"%s\"", e.path),
+		fmt.Sprintf("Move \"%s\" aside only after preserving it; the next sync adopts the service's existing node state without resetting it", e.path),
 		fmt.Sprintf("tslink status --urls --name %s --json", e.service),
 	}
 }
@@ -276,7 +276,7 @@ func (s *Server) removeAbsentNodeIdentities(desired map[string]registry.Service)
 		return fmt.Errorf("inspect node identities: %w", err)
 	}
 	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("unsafe node identities directory %q", dir)
+		return fmt.Errorf("unsafe node identities directory \"%s\"", dir)
 	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -317,7 +317,11 @@ func (s *Server) removeAbsentNodeIdentities(desired map[string]registry.Service)
 			var identity nodeIdentity
 			var found bool
 			identity, found, err = readNodeIdentityFn(path)
-			if err == nil && (!found || identity.Service != name) {
+			if (err == nil && !found) || errors.Is(err, os.ErrNotExist) {
+				// Gone since ReadDir listed it: nothing is left to prune.
+				continue
+			}
+			if err == nil && identity.Service != name {
 				err = fmt.Errorf("node identity record does not match service %q", name)
 			}
 		}

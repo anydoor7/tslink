@@ -282,11 +282,11 @@ func TestNewFileHandler_DotDotTraversalBlocked(t *testing.T) {
 
 func TestNewFileHandlerPinsRootAcrossPathReplacement(t *testing.T) {
 	parent := t.TempDir()
-	rootPath := filepath.Join(parent, "public")
-	if err := os.Mkdir(rootPath, 0o700); err != nil {
+	pinned := filepath.Join(parent, "public")
+	if err := os.Mkdir(pinned, 0o700); err != nil {
 		t.Fatalf("Mkdir(root) error = %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(rootPath, "value.txt"), []byte("PINNED"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(pinned, "value.txt"), []byte("PINNED"), 0o600); err != nil {
 		t.Fatalf("WriteFile(pinned) error = %v", err)
 	}
 	external := t.TempDir()
@@ -294,16 +294,17 @@ func TestNewFileHandlerPinsRootAcrossPathReplacement(t *testing.T) {
 		t.Fatalf("WriteFile(external) error = %v", err)
 	}
 
+	rootPath := replaceableRootPath(t, pinned)
 	handler, err := NewFileHandler(rootPath)
 	if err != nil {
 		t.Fatalf("NewFileHandler() error = %v", err)
 	}
 	t.Cleanup(func() { _ = handler.Close() })
-	if err := os.Rename(rootPath, rootPath+".pinned"); err != nil {
-		t.Fatalf("Rename(root) error = %v", err)
-	}
-	if err := os.Symlink(external, rootPath); err != nil {
-		t.Fatalf("Symlink(replacement) error = %v", err)
+	replaceRootPath(t, rootPath, external)
+	// Premise: the served path itself now leads to the external content, so a
+	// handler that re-resolved it would serve the secret.
+	if got, err := os.ReadFile(filepath.Join(rootPath, "value.txt")); err != nil || string(got) != "ROOT-EXTERNAL-SECRET" {
+		t.Fatalf("premise: replaced root path reads %q (err=%v), want the external content", got, err)
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/value.txt", nil)

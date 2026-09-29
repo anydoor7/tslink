@@ -73,9 +73,23 @@ func inspectProcessLiveness(pid int) processLiveness {
 		// the process may be alive; callers must fail closed.
 		return processLivenessUnknown
 	}
-	_ = windows.CloseHandle(handle)
+	defer windows.CloseHandle(handle)
+	// OpenProcess also succeeds on a process that has already exited, for as
+	// long as any handle to it stays open anywhere (its parent, a service,
+	// antivirus): the process object outlives the process, and its PID is not
+	// reused until the object is freed. The exit code tells the two apart. A
+	// live process always reports STILL_ACTIVE; one that exited with that very
+	// code still reads as alive, which is the conservative direction.
+	var exitCode uint32
+	if err := windows.GetExitCodeProcess(handle, &exitCode); err == nil && exitCode != windowsStillActive {
+		return processLivenessAbsent
+	}
 	return processLivenessAlive
 }
+
+// windowsStillActive is STILL_ACTIVE from winbase.h, the exit code
+// GetExitCodeProcess reports for a process that has not terminated.
+const windowsStillActive = 259
 
 // Daemonize re-launches the current binary in the background with the serve
 // command. controlURL, manageACL, noAutoProvision and mcp are propagated to the
