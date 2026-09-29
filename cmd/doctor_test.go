@@ -346,7 +346,9 @@ func TestDoctorExitCodes(t *testing.T) {
 	}
 }
 
-func TestDoctorMissingCredentialsFinding(t *testing.T) {
+// The pristine default tier is healthy (R5-10): credential_none is reported,
+// but as info, and doctor exits 0.
+func TestDoctorMissingCredentialsFindingIsInfo(t *testing.T) {
 	newDoctorTestEnv(t, nil)
 	doctorGetAPIKeyFn = func() (string, error) { return "", nil }
 	doctorGetClientSecretFn = func() (string, error) { return "", nil }
@@ -355,13 +357,13 @@ func TestDoctorMissingCredentialsFinding(t *testing.T) {
 
 	var buf bytes.Buffer
 	err := runDoctor(&buf, doctorOptions{}, false)
-	if output.ExitCode(err) != output.ExitWarning {
-		t.Fatalf("ExitCode = %d, want %d", output.ExitCode(err), output.ExitWarning)
+	if output.ExitCode(err) != output.ExitSuccess {
+		t.Fatalf("ExitCode = %d, want %d", output.ExitCode(err), output.ExitSuccess)
 	}
 	result := buildDoctorResult(doctorOptions{})
 	finding := assertDoctorFinding(t, result, inspect.WarningCodeCredentialNone)
-	if finding.Severity != doctorSeverityWarning {
-		t.Fatalf("credential_none severity = %q, want warning", finding.Severity)
+	if finding.Severity != doctorSeverityInfo {
+		t.Fatalf("credential_none severity = %q, want info", finding.Severity)
 	}
 	assertDoctorNoFinding(t, result, inspect.WarningCodeRuntimeSnapshotMissing)
 	assertDoctorCodesRegistered(t, result)
@@ -389,8 +391,8 @@ func TestDoctorTier1StateMatrix(t *testing.T) {
 		{
 			name:         "no enrollment and no daemon",
 			wantCode:     inspect.WarningCodeCredentialNone,
-			wantSeverity: doctorSeverityWarning,
-			wantExit:     output.ExitWarning,
+			wantSeverity: doctorSeverityInfo,
+			wantExit:     output.ExitSuccess,
 			setup: func(t *testing.T, env doctorTestEnv) {
 				isRunningFn = func(string) bool { return false }
 			},
