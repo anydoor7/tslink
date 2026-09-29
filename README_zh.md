@@ -60,29 +60,29 @@ TSLink 与常见零信任原则的对应关系：
 
 ## TSLink 做什么
 
-一条命令将任何本地服务 — Web 应用、API、文件目录、数据库 — 暴露到你的私有 Tailscale 网络。proxy/file 服务使用 Tailscale HTTPS listener；raw TCP 服务使用私有 tailnet transport，不由 TSLink 终止 TLS。
+一条命令就能把任何本地服务暴露到你的私有 Tailscale 网络，Web 应用、API、文件目录、数据库都可以。proxy/file 服务使用 Tailscale HTTPS listener；raw TCP 服务使用私有 tailnet transport，不由 TSLink 终止 TLS。
 
 ```bash
 tslink add myapp --proxy localhost:3000
-# → https://myapp.<your-tailnet>.ts.net — 从 tailnet 上任何设备访问
+# tailnet 上任何设备都能访问 https://myapp.<your-tailnet>.ts.net
 ```
 
 ### 功能特性
 
-- **零配置** — 无需端口转发、DNS 或证书管理
-- **WireGuard tailnet 路径** — tailnet 设备间流量通过 Tailscale 使用 WireGuard；公网暴露必须显式启用 Funnel
-- **Proxy/file HTTPS** — HTTP proxy 和 file 服务使用 Tailscale HTTPS listener；raw TCP 保持私有 tailnet 字节流
-- **Per-service 身份** — 每个服务获得独立的 tailnet 主机名和网络身份（proxy/file URL 形如 `https://<name>.<tailnet>.ts.net`）
-- **热重载** — 运行时添加或移除服务，更改立即生效
-- **全平台支持** — 支持 macOS、Linux 和 Windows
-- **守护进程运行** — 启动一次，后台运行，支持开机自启
-- **TCP 代理** — 暴露数据库、SSH、Redis 等非 HTTP 服务
-- **HTTP 访问控制** — proxy 和 file 服务支持 `--allow user@example.com,tag:admin`
-- **安全诊断** — `tslink doctor`、`tslink status --urls` 和 `tslink access explain` 明确展示本地证据和未知的外部策略层
-- **面向 agent 的自动化** — 除 stdio 的 `tslink mcp` 外，每个命令都接受 `--json` 并返回同一套版本化 envelope；`tslink mcp`（stdio）与 `tslink serve --mcp`（仅限 tailnet 的远程控制面）暴露同一组 MCP tools
-- **个人模板** — 预览并添加小型私有服务套件，不覆盖已有服务
-- **Headscale 兼容路径** — 通过 `--control-url` 支持高级/自托管控制服务器场景
-- **Funnel 护栏** — 公网暴露必须显式选择，并要求 `--public` 确认
+- **零配置**：无需端口转发、DNS 或证书管理
+- **WireGuard tailnet 路径**：tailnet 设备间流量通过 Tailscale 使用 WireGuard；公网暴露必须显式启用 Funnel
+- **Proxy/file HTTPS**：HTTP proxy 和 file 服务使用 Tailscale HTTPS listener；raw TCP 保持私有 tailnet 字节流
+- **Per-service 身份**：每个服务获得独立的 tailnet 主机名和网络身份（proxy/file URL 形如 `https://<name>.<tailnet>.ts.net`）
+- **热重载**：运行时添加或移除服务，更改立即生效
+- **全平台支持**：支持 macOS、Linux 和 Windows
+- **守护进程运行**：启动一次，后台运行，支持开机自启
+- **TCP 代理**：暴露数据库、SSH、Redis 等非 HTTP 服务
+- **HTTP 访问控制**：proxy 和 file 服务支持 `--allow user@example.com,tag:admin`
+- **安全诊断**：`tslink doctor`、`tslink status --urls` 和 `tslink access explain` 明确展示本地证据和未知的外部策略层
+- **面向 agent 的自动化**：除 stdio 的 `tslink mcp` 外，每个命令都接受 `--json` 并返回同一套版本化 envelope；`tslink mcp`（stdio）与 `tslink serve --mcp`（仅限 tailnet 的远程控制面）暴露同一组 MCP tools
+- **个人模板**：预览并添加小型私有服务套件，不覆盖已有服务
+- **Headscale 兼容路径**：通过 `--control-url` 支持高级/自托管控制服务器场景
+- **Funnel 护栏**：公网暴露必须显式选择，并要求 `--public` 确认
 
 ### 发布状态
 
@@ -233,13 +233,13 @@ tailnet 内的其它机器，见[远程 MCP 控制面](#远程-mcp-控制面)。
 
 TSLink 有两层认证模式：
 
-- **Tier 1 — 零凭证（默认）**：user-owned node，不 advertise tags，也不调用远端 ACL API。适合临时展示页面或 ephemeral share。每个新的 service node 都有自己的 enrollment URL；单服务 quick share 只需一次 browser click。Tailscale 的 user-owned node key 会过期，因此持续运行数月的节点最终可能需要重新认证。
-- **Tier 2 — 存储凭证（opt-in）**：保留 tagged、per-service 的启动行为，适合 durable multi-service 安装。只有需要这一层时才运行 `tslink login`。
+- **Tier 1 零凭证（默认）**：user-owned node，不 advertise tags，也不调用远端 ACL API。适合临时展示页面或 ephemeral share。每个新的 service node 都有自己的 enrollment URL；单服务 quick share 只需一次 browser click。Tailscale 的 user-owned node key 会过期，因此持续运行数月的节点最终可能需要重新认证。
+- **Tier 2 存储凭证（需主动开启）**：保留 tagged、per-service 的启动行为，适合 durable multi-service 安装。只有需要这一层时才运行 `tslink login`。
 
 Tier 2 接受以下任一种管理员凭证：
 
-- **API 访问令牌** (`tskey-api-*`) — 在 [管理后台 → Keys](https://login.tailscale.com/admin/settings/keys) 生成。当前自动化能力最完整，包括通过 Tailscale API 管理标签和设备。它会周期性过期。
-- **OAuth 客户端密钥** (`tskey-client-*`) — 在 [管理后台 → OAuth](https://login.tailscale.com/admin/settings/oauth) 生成。它不会过期，但 TSLink 当前的 Tailscale 标签/设备自动化在该模式下更窄，因为这些操作依赖 Tailscale REST API。用于无人值守前请先验证所需的标签/设备操作。
+- **API 访问令牌**：前缀为 `tskey-api-*`，在 [管理后台 → Keys](https://login.tailscale.com/admin/settings/keys) 生成。当前自动化能力最完整，包括通过 Tailscale API 管理标签和设备。它会周期性过期。
+- **OAuth 客户端密钥**：前缀为 `tskey-client-*`，在 [管理后台 → OAuth](https://login.tailscale.com/admin/settings/oauth) 生成。它不会过期，但 TSLink 当前的 Tailscale 标签/设备自动化在该模式下更窄，因为这些操作依赖 Tailscale REST API。用于无人值守前请先验证所需的标签/设备操作。
 
 `tslink login` 会交互式引导你完成任一 Tier 2 凭证路径；它不会先做一次无实际作用的临时 browser login。凭证优先存储在系统钥匙串（macOS Keychain / Linux secret service / Windows 凭据管理器）中。macOS 与 Linux 的 headless 环境可回退到受限权限文件。Windows 没有文件回退：TSLink 无法在本地证明该文件的 DACL 只允许当前用户访问，所以凭据管理器不可用时 `tslink login` 会直接失败。
 
@@ -258,11 +258,11 @@ TSLink 默认管理本地服务标签。远端 Tailscale ACL mutation 默认关�
 
 零凭证 Tier 1 会保留 registry 中的 tags 配置，但 user-owned node 不 advertise 这些 tags，也不会调用远端 tag/ACL API。下面的标签行为适用于存储凭证的 Tier 2。
 
-- **默认标签** — 当 `tslink add` 未指定 `--tags` 时，每个服务自动应用 `tag:tsmain`。
-- **远端 ACL 读取** — `tslink tags pull` 只在 API 访问令牌模式下拉取远端 ACL 标签；OAuth-only 模式会跳过远端读取并提示需要 API 访问令牌。
-- **远端 ACL 写入** — `tslink login --manage-acl`、`tslink serve --manage-acl` 和 `tslink tags delete-remote --manage-acl` 才会 opt in typed whole-policy ACL writes，并输出 machine-readable side-effect plan。默认 login、serve 和 tag flows 不会改写共享 ACL policy。
-- **严格标签语法** — 标签必须匹配 `tag:<lowercase-hyphen-name>`，只使用小写字母、数字和连字符。将 `tag:Web`、`tag:db_main` 或 `web` 这类旧值迁移为 `tslink tags set <service> tag:<lowercase-hyphen-name>`，也可以直接编辑 `registry.json`。无效旧标签会让 `tslink serve` 验证失败，必须先修复才能启动网关。
-- **运行时认证刷新** — 标签、临时节点设置和有效控制服务器 URL 变化时，受影响节点会删除本地状态并用新的每服务认证材料重启。切换凭证模式或修改旧版 `authkey` 文件后仍需重启 `tslink serve` 进程。
+- **默认标签**：`tslink add` 未指定 `--tags` 的服务自动应用 `tag:tsmain`。
+- **远端 ACL 读取**：`tslink tags pull` 只在 API 访问令牌模式下拉取远端 ACL 标签；OAuth-only 模式会跳过远端读取并提示需要 API 访问令牌。
+- **远端 ACL 写入**：`tslink login --manage-acl`、`tslink serve --manage-acl` 和 `tslink tags delete-remote --manage-acl` 才会 opt in typed whole-policy ACL writes，并输出 machine-readable side-effect plan。默认 login、serve 和 tag flows 不会改写共享 ACL policy。
+- **严格标签语法**：标签必须匹配 `tag:<lowercase-hyphen-name>`，只使用小写字母、数字和连字符。将 `tag:Web`、`tag:db_main` 或 `web` 这类旧值迁移为 `tslink tags set <service> tag:<lowercase-hyphen-name>`，也可以直接编辑 `registry.json`。无效旧标签会让 `tslink serve` 验证失败，必须先修复才能启动网关。
+- **运行时认证刷新**：标签、临时节点设置和有效控制服务器 URL 变化时，受影响节点会删除本地状态并用新的每服务认证材料重启。切换凭证模式或修改旧版 `authkey` 文件后仍需重启 `tslink serve` 进程。
 
 使用 `tslink tags` 查看和自定义标签分配：
 
@@ -347,7 +347,7 @@ tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 | `tslink invite revoke <id> --kind <user\|device>` | 撤销一个用户或设备邀请 |
 | `tslink invite resend <id> --kind <user\|device>` | 重新发送用户或设备的邮件邀请 |
 | `tslink mcp` | 面向 agent 的本地 stdio MCP server；不开网络 listener，不需要 `mcp.allow` |
-| `tslink config` | 管理全局配置（set/get/list） |
+| `tslink config` | 管理全局配置，子命令为 set、get、list |
 | `tslink manifest` | 打印每个命令、flag、退出码和 error code 的机器可读描述 |
 | `tslink registry check [path]` | 严格校验一个 `registry.json`，不做任何修改 |
 | `tslink install` | 开机自启（macOS LaunchAgent / Linux systemd / Windows 启动文件夹） |
@@ -395,17 +395,17 @@ tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 └─────────────┘         └──────────────────────┘         └──────────────┘
 ```
 
-TSLink 为每个注册的服务创建一个专用的 [tsnet](https://tailscale.com/kb/1244/tsnet) 节点 — 服务端无需安装 Tailscale 客户端。每个服务作为独立设备加入 tailnet（如 `myapp`、`docs`、`mydb`）。proxy/file 服务使用 Tailscale HTTPS listener；raw TCP 服务使用私有 tailnet transport，并把字节代理到配置的目标。
+TSLink 为每个注册的服务创建一个专用的 [tsnet](https://tailscale.com/kb/1244/tsnet) 节点，服务端无需安装 Tailscale 客户端。每个服务作为独立设备加入 tailnet（如 `myapp`、`docs`、`mydb`）。proxy/file 服务使用 Tailscale HTTPS listener；raw TCP 服务使用私有 tailnet transport，并把字节代理到配置的目标。
 
 **关键架构决策：**
-- **Per-service 嵌入式节点** — 每个服务获得独立的 tailnet 身份和主机名；proxy/file 服务还获得 Tailscale HTTPS listener 语义
-- **身份感知代理** — tailnet 内的 HTTP 代理/文件请求进行 WhoIs 验证，注入身份头并防止伪造；公网 Funnel 和 raw TCP 不获得 TSLink 强制执行的 HTTP 身份认证
-- **安全凭证管理** — 系统钥匙串存储，headless 的 macOS 与 Linux 环境支持受限权限文件后备
-- **基于文件的注册表** — 服务在 `~/.config/tslink/registry.json` 中持久化，跨重启保存
-- **热重载** — 注册表文件监听意味着 `tslink add` 无需重启服务即可生效
-- **基于 PID 的生命周期** — 通过进程身份检查管理守护进程，并按平台明确停止行为
-- **结构化日志** — 基于 slog 的结构化日志 + 访问日志
-- **指标采集** — 内部记录请求指标；公开 `/metrics` 端点仍在 roadmap
+- **Per-service 嵌入式节点**：每个服务获得独立的 tailnet 身份和主机名；proxy/file 服务还获得 Tailscale HTTPS listener 语义
+- **身份感知代理**：tailnet 内的 HTTP 代理/文件请求进行 WhoIs 验证，注入身份头并防止伪造；公网 Funnel 和 raw TCP 不获得 TSLink 强制执行的 HTTP 身份认证
+- **安全凭证管理**：系统钥匙串存储，headless 的 macOS 与 Linux 环境支持受限权限文件后备
+- **基于文件的注册表**：服务在 `~/.config/tslink/registry.json` 中持久化，跨重启保存
+- **热重载**：注册表文件监听意味着 `tslink add` 无需重启服务即可生效
+- **基于 PID 的生命周期**：通过进程身份检查管理守护进程，并按平台明确停止行为
+- **结构化日志**：基于 slog 的结构化日志 + 访问日志
+- **指标采集**：内部记录请求指标；公开 `/metrics` 端点仍在 roadmap
 
 ## JSON 自动化
 
@@ -575,7 +575,7 @@ tslink list --tailnet --json
 
 - [Tailscale 账户](https://tailscale.com)（个人使用免费）
 - 你要访问的设备上安装 Tailscale（手机、平板等）
-- Go 1.26.6+（如果从源码构建）
+- 从源码构建需要 Go 1.26.6+
 
 ## 平台支持
 
