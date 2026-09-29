@@ -208,6 +208,15 @@ func ResourceBudgetMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// instrumentServiceHandler applies the per-request wrappers every HTTP node
+// serves through, metrics outermost. Both status-recording wrappers see the
+// same WriteHeader sequence, so they must agree on which status is final.
+func instrumentServiceHandler(m *metrics.Metrics, serviceName string, identity *IdentityResolver, handler http.Handler) http.Handler {
+	handler = ResourceBudgetMiddleware(handler)
+	handler = AccessLogMiddleware(serviceName, identity, handler)
+	return m.Middleware(serviceName, handler)
+}
+
 type registryWatcher interface {
 	Add(string) error
 	Close() error
@@ -1885,9 +1894,7 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service, prov
 		}
 	}
 
-	handler = ResourceBudgetMiddleware(handler)
-	handler = AccessLogMiddleware(svc.Name, identity, handler)
-	handler = s.metrics.Middleware(svc.Name, handler)
+	handler = instrumentServiceHandler(s.metrics, svc.Name, identity, handler)
 
 	var ln net.Listener
 	funnelListenerActive := false

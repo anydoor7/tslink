@@ -74,6 +74,13 @@ type responseWriter struct {
 }
 
 func (rw *responseWriter) WriteHeader(code int) {
+	// Informational responses do not commit the final status. ReverseProxy
+	// forwards backend 1xx responses before its final response, so consuming
+	// the one final-header slot here would turn a later 503 into an implicit 200.
+	if code >= 100 && code < 200 && code != http.StatusSwitchingProtocols {
+		rw.ResponseWriter.WriteHeader(code)
+		return
+	}
 	if !rw.wroteHeader {
 		rw.status = code
 		rw.wroteHeader = true
