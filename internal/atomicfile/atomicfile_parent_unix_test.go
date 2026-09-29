@@ -87,8 +87,20 @@ func TestWriteFileInExistingDirReportsSpecialParentModeBits(t *testing.T) {
 			if err := os.Mkdir(dir, 0o755); err != nil {
 				t.Fatalf("Mkdir(unsafe) error = %v", err)
 			}
+			// A new directory takes its parent's group on macOS (and under a
+			// setgid parent on Linux). When that is not one of this user's
+			// groups, macOS silently drops the setgid bit from the chmod below
+			// (TMPDIR under /tmp is group wheel). Own the group first.
+			if err := os.Chown(dir, os.Getuid(), os.Getgid()); err != nil {
+				t.Fatalf("Chown(unsafe) to this process's uid/gid error = %v", err)
+			}
 			if err := os.Chmod(dir, tc.mode); err != nil {
 				t.Fatalf("Chmod(unsafe, %04o) error = %v", tc.mode, err)
+			}
+			if info, err := os.Stat(dir); err != nil {
+				t.Fatalf("Stat(unsafe) error = %v", err)
+			} else if info.Mode()&(os.ModeSetgid|os.ModeSticky) != tc.mode&(os.ModeSetgid|os.ModeSticky) {
+				t.Fatalf("Chmod(unsafe, %v) left mode %v: the special bit this case reports was not staged", tc.mode, info.Mode())
 			}
 
 			err := WriteFileInExistingDir(filepath.Join(dir, "state.json"), []byte("state\n"), PrivateFileMode)
