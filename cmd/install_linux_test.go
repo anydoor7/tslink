@@ -1111,8 +1111,8 @@ func TestSystemdOwnsRunningDaemonRequiresPositivePIDAndMatchingMainPID(t *testin
 			t.Fatalf("systemctl called with non-positive daemon PID: %v", args)
 			return nil, nil
 		}
-		if systemdOwnsRunningDaemon() {
-			t.Fatal("systemdOwnsRunningDaemon() = true for PID 0")
+		if owned, err := systemdOwnsRunningDaemon(); owned || err != nil {
+			t.Fatalf("systemdOwnsRunningDaemon() = %v, %v for PID 0", owned, err)
 		}
 	})
 
@@ -1121,8 +1121,8 @@ func TestSystemdOwnsRunningDaemonRequiresPositivePIDAndMatchingMainPID(t *testin
 		systemctlCombinedOutput = func(args ...string) ([]byte, error) {
 			return []byte("MainPID=1888\n"), nil
 		}
-		if systemdOwnsRunningDaemon() {
-			t.Fatal("systemdOwnsRunningDaemon() = true for mismatched MainPID")
+		if owned, err := systemdOwnsRunningDaemon(); owned || err != nil {
+			t.Fatalf("systemdOwnsRunningDaemon() = %v, %v for mismatched MainPID", owned, err)
 		}
 	})
 }
