@@ -508,3 +508,28 @@ func TestAuthIdentityChangedIgnoresTagsOnTier1(t *testing.T) {
 		}
 	}
 }
+
+// A Tier 1 tag change whose record cannot be updated fails that start, as any
+// record write before start does, and still resets nothing.
+func TestNodeIdentityTier1RecordWriteFailureKeepsEnrollment(t *testing.T) {
+	p := instrumentTiers(t)
+	writeRegistry(t, []registry.Service{{Name: "app", Type: registry.TypeProxy, Target: "http://localhost:3000", Tags: []string{"tag:old"}}})
+	runDaemonStart(t, newTierServer(t, p, false))
+	marker := markEnrolled(t)
+	p.reset()
+	oldWrite := writeNodeIdentityFn
+	writeNodeIdentityFn = func(string, nodeIdentity) error { return errors.New("synthetic record write failure") }
+	t.Cleanup(func() { writeNodeIdentityFn = oldWrite })
+	retagged := registry.Service{Name: "app", Type: registry.TypeProxy, Target: "http://localhost:3000", Tags: []string{"tag:new"}}
+	_, err := newTierServer(t, p, false).prepareNodeIdentity(context.Background(), retagged)
+	if err == nil || !strings.Contains(err.Error(), "synthetic record write failure") {
+		t.Fatalf("prepareNodeIdentity error = %v, want the record write failure", err)
+	}
+	removed, cleanups, _, _ := p.observed()
+	if !enrollmentKept(marker) || len(removed) != 0 || cleanups != 0 {
+		t.Fatalf("record write failure reset the enrollment: kept=%v removal calls=%v cleanup calls=%d", enrollmentKept(marker), removed, cleanups)
+	}
+	if recorded := recordedIdentity(t); joinTags(recorded.Tags) != "tag:old" {
+		t.Fatalf("recorded tags = %v, want the old record left unchanged", recorded.Tags)
+	}
+}
