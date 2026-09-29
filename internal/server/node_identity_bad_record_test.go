@@ -279,3 +279,58 @@ func TestNodeIdentitySweepSkipsStrayFileWithWarning(t *testing.T) {
 		t.Fatalf("stray file changed: %q err=%v", data, err)
 	}
 }
+
+// The documented remedy for an unreadable record is to move it aside. The
+// failed service must then recover on the lifecycle ticker, without a registry
+// change or a restart, by adopting its existing state with no reset.
+func TestNodeIdentityRecordMovedAsideRecoversOnTicker(t *testing.T) {
+	services := legacyLayoutServices(t)
+	markers := writeLegacyLayout(t, services)
+	p := instrumentIdentity(t)
+	startLegacyLayoutOnce(t, p)
+	recordPath := filepath.Join(mustConfigDir(t), "node-identities", "api.json")
+	if err := os.WriteFile(recordPath, []byte("{bad"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := newIdentityProbeServer(t, "", p)
+	t.Cleanup(s.closeAllNodes)
+	s.SetLifecycleReconcileFn(func(context.Context, time.Time) (bool, error) { return false, nil })
+	if err := s.syncNodes(context.Background()); err != nil {
+		t.Fatalf("sync with one unreadable record: %v", err)
+	}
+	if s.nodeRunning("api") {
+		t.Fatal("api started from an unreadable record")
+	}
+	if err := os.Rename(recordPath, recordPath+".bak"); err != nil {
+		t.Fatal(err)
+	}
+
+	oldInterval := lifecycleTickerInterval
+	lifecycleTickerInterval = 10 * time.Millisecond
+	t.Cleanup(func() { lifecycleTickerInterval = oldInterval })
+	ctx, cancel := context.WithCancel(context.Background())
+	done := s.startLifecycleTicker(ctx)
+	deadline := time.Now().Add(3 * time.Second)
+	for !s.nodeRunning("api") && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	cancel()
+	<-done
+	if !s.nodeRunning("api") {
+		t.Fatal("api did not recover on the ticker after its record was moved aside")
+	}
+	s.mu.RLock()
+	_, stillFailed := s.serviceFailures["api"]
+	s.mu.RUnlock()
+	if stillFailed {
+		t.Fatal("api recovered but its record failure is still reported")
+	}
+	if removed := p.removedNames(); len(removed) != 0 || p.cleanupCount() != 0 {
+		t.Fatalf("recovery reset state: removed=%v cleanups=%d", removed, p.cleanupCount())
+	}
+	assertStateIntact(t, markers, "api")
+	recorded, found, err := readNodeIdentity(recordPath)
+	if err != nil || !found || recorded.Origin != identityLegacyAdopted {
+		t.Fatalf("recovered record = %+v found=%v err=%v, want legacy adoption", recorded, found, err)
+	}
+}
