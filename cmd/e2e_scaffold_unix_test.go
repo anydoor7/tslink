@@ -5,7 +5,6 @@ package cmd
 import (
 	"bufio"
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,7 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strconv"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -47,7 +46,8 @@ import (
 //     matches an absolute path that this test run created under the per-run
 //     temp build directory, and e2eRequireTempPath fails closed if that path is
 //     not under os.TempDir(). A daemon an operator installed at, for example,
-//     /Users/<user>/go/bin/tslink is therefore structurally unmatchable.
+//     /Users/<user>/go/bin/tslink is therefore structurally unmatchable. It
+//     only ever looks at this user's own processes and runs no ps.
 //   - No helper reads or writes the real ~/.config/tslink. Every caller passes
 //     an explicit t.TempDir() config directory.
 
@@ -356,45 +356,34 @@ func (h *e2eDaemonHandle) WaitExit(d time.Duration) bool {
 	}
 }
 
-// e2eLivePIDsForBinary returns the PIDs of live processes whose argv[0] is
-// exactly binaryPath.
+// e2eLivePIDsForBinary returns the PIDs of this user's live processes whose
+// executable is exactly binaryPath.
 //
 // This is an absolute-path match against a binary this test run built under the
 // OS temp root, enforced by e2eRequireTempPath. It is deliberately NOT a name
 // match: an installed daemon at ~/go/bin/tslink or /opt/homebrew/bin/tslink can
 // never satisfy it. The result is only ever used for counting and assertions,
 // never to select a signal target.
+//
+// It looks only at this user's processes (e2eUserProcessExecutables) and runs
+// no ps: `ps -A` read the argv of every process on the host and failed outright
+// where ps cannot run. Where no per-user reader works the test is skipped with
+// the reason instead.
 func e2eLivePIDsForBinary(t *testing.T, binaryPath string) []int {
 	t.Helper()
 	resolved := e2eRequireTempPath(t, binaryPath)
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	out, err := exec.CommandContext(ctx, "ps", "-A", "-o", "pid=,args=").Output()
+	executables, err := e2eUserProcessExecutables()
 	if err != nil {
-		t.Fatalf("enumerate processes: %v", err)
+		t.Skipf("cannot list this user's processes to count those started from %s: %v", binaryPath, err)
 	}
 
 	var pids []int
-	for _, line := range strings.Split(string(out), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
+	for pid, executable := range executables {
+		if executable == binaryPath || executable == resolved {
+			pids = append(pids, pid)
 		}
-		pidField, argv, found := strings.Cut(line, " ")
-		if !found {
-			continue
-		}
-		pid, convErr := strconv.Atoi(strings.TrimSpace(pidField))
-		if convErr != nil {
-			continue
-		}
-		argv = strings.TrimSpace(argv)
-		if argv != binaryPath && argv != resolved &&
-			!strings.HasPrefix(argv, binaryPath+" ") && !strings.HasPrefix(argv, resolved+" ") {
-			continue
-		}
-		pids = append(pids, pid)
 	}
+	sort.Ints(pids)
 	return pids
 }
 
