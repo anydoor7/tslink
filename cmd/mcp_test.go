@@ -37,7 +37,7 @@ func fakeMCPActions() mcpActions {
 		list: func() (any, error) {
 			return map[string]any{"services": []mcpServiceSummary{{Name: "demo", Type: registry.TypeProxy, State: "pending"}}}, nil
 		},
-		unshare: func(name string) (any, error) { return map[string]any{"ok": name == "demo"}, nil },
+		unshare: func(_ context.Context, name string) (any, error) { return map[string]any{"ok": name == "demo"}, nil },
 		status: func() (any, error) {
 			return mcpStatusSummary{Authenticated: false, DaemonRunning: true, ServiceCount: 1, Status: authStatusNeedsLogin, AuthURL: "https://login.tailscale.com/a/mcp"}, nil
 		},
@@ -1003,7 +1003,7 @@ func TestDefaultMCPActionsUseLocalRegistryAndRedactedStatus(t *testing.T) {
 	if err != nil || bytes.Contains(statusJSON, []byte("tskey-")) {
 		t.Fatalf("status serialization exposed credential material: %s err=%v", statusJSON, err)
 	}
-	removed, err := actions.unshare("demo")
+	removed, err := actions.unshare(context.Background(), "demo")
 	removedSummary, ok := removed.(mcpUnshareSummary)
 	if err != nil || !ok || !removedSummary.OK || !removedSummary.Removed || !removedSummary.DeviceCleaned || removedSummary.DeviceCleanupSkipped {
 		t.Fatalf("unshare = %+v err=%v", removed, err)
@@ -1014,12 +1014,12 @@ func TestDefaultMCPActionsUseLocalRegistryAndRedactedStatus(t *testing.T) {
 	deleteDevicesFn = func(_ context.Context, target tailapi.CleanupTarget) (tailapi.CleanupResult, error) {
 		return tailapi.CleanupResult{Matched: []string{target.Hostname}, Protected: []string{target.Hostname}, Skipped: true, SkipReason: "ownership could not be proven"}, nil
 	}
-	partialValue, err := actions.unshare("partial")
+	partialValue, err := actions.unshare(context.Background(), "partial")
 	partial := partialValue.(mcpUnshareSummary)
 	if err != nil || !partial.OK || !partial.Removed || !partial.DeviceCleanupSkipped || partial.DeviceSkipReason != "ownership could not be proven" {
 		t.Fatalf("partial unshare = %+v err=%v", partial, err)
 	}
-	if _, err := actions.unshare("Bad_Name"); err == nil {
+	if _, err := actions.unshare(context.Background(), "Bad_Name"); err == nil {
 		t.Fatal("invalid name accepted")
 	}
 	listValue, err = actions.list()
@@ -1044,7 +1044,7 @@ func TestDefaultMCPActionsUnshareReportsSuccessWithoutAPIClient(t *testing.T) {
 		return tailapi.CleanupResult{Skipped: true, SkipReason: tailapi.ErrNoAPIClient.Error()}, nil
 	}
 
-	value, err := defaultMCPActions(paths, os.Stderr).unshare("zero-credential")
+	value, err := defaultMCPActions(paths, os.Stderr).unshare(context.Background(), "zero-credential")
 	summary, ok := value.(mcpUnshareSummary)
 	if err != nil || !ok {
 		t.Fatalf("unshare = %T(%+v) err=%v", value, value, err)
@@ -1072,7 +1072,7 @@ func TestMCPUnshareMissingAgreesWithCLIDefaultIdempotency(t *testing.T) {
 		t.Fatalf("CLI default remove stderr = %q", cliErrOut.String())
 	}
 
-	value, mcpErr := defaultMCPActions(sharePaths{Registry: regPath, Ownership: testOwnershipPath(regPath)}, os.Stderr).unshare(name)
+	value, mcpErr := defaultMCPActions(sharePaths{Registry: regPath, Ownership: testOwnershipPath(regPath)}, os.Stderr).unshare(context.Background(), name)
 	summary, ok := value.(mcpUnshareSummary)
 	if mcpErr != nil || !ok {
 		t.Fatalf("MCP unshare = %T(%+v) err=%v", value, value, mcpErr)

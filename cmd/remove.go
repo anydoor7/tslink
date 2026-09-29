@@ -121,6 +121,16 @@ func localNodeStateIsStale(ownedNodeIDs []string, cleanup tailapi.CleanupResult)
 }
 
 func removeServiceResult(regPath, ownershipPath, name string) (RemoveResult, error) {
+	return removeServiceResultContext(context.Background(), regPath, ownershipPath, name)
+}
+
+// removeServiceResultContext is removeServiceResult with the caller's context
+// handed to remote device cleanup, so a cancelled request or a stopped MCP
+// session interrupts a cleanup call the Tailscale API never answers.
+func removeServiceResultContext(ctx context.Context, regPath, ownershipPath, name string) (RemoveResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	ledger, ownershipErr := tsruntime.LoadOwnership(ownershipPath)
 	var ownedNodeIDs []string
 	if ownershipErr == nil {
@@ -145,7 +155,7 @@ func removeServiceResult(regPath, ownershipPath, name string) (RemoveResult, err
 		if err := tsruntime.MarkOwnedNodeIDsRetired(ownershipPath, ownedNodeIDs, removeNowFn()); err != nil {
 			result.DeviceWarning = fmt.Sprintf("service removed but ownership retirement provenance could not be recorded: %v", err)
 		}
-		cleanup, err := deleteDevicesFn(context.Background(), tailapi.CleanupTargetForOwnedService(svc, ownedNodeIDs))
+		cleanup, err := deleteDevicesFn(ctx, tailapi.CleanupTargetForOwnedService(svc, ownedNodeIDs))
 		if err != nil {
 			if errors.Is(err, tailapi.ErrNoAPIClient) {
 				result.DeviceCleanupSkipped = true
@@ -216,7 +226,11 @@ func removeService(regPath, ownershipPath, name string, out, errOut io.Writer, i
 }
 
 func removeServiceWithOptions(regPath, ownershipPath, name string, out, errOut io.Writer, isJSON, strict bool) error {
-	result, err := removeServiceResult(regPath, ownershipPath, name)
+	return removeServiceWithContext(context.Background(), regPath, ownershipPath, name, out, errOut, isJSON, strict)
+}
+
+func removeServiceWithContext(ctx context.Context, regPath, ownershipPath, name string, out, errOut io.Writer, isJSON, strict bool) error {
+	result, err := removeServiceResultContext(ctx, regPath, ownershipPath, name)
 	if err != nil {
 		return err
 	}
@@ -301,7 +315,7 @@ Examples:
 				return err
 			}
 
-			return removeServiceWithOptions(regPath, ownershipPath, args[0], cmd.OutOrStdout(), cmd.ErrOrStderr(), jsonOutput(cmd), strict)
+			return removeServiceWithContext(cmd.Context(), regPath, ownershipPath, args[0], cmd.OutOrStdout(), cmd.ErrOrStderr(), jsonOutput(cmd), strict)
 		},
 	}
 

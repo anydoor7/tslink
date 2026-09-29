@@ -60,9 +60,9 @@ func mcpHTTPCountingActions(calls *int) mcpActions {
 		return base()
 	}
 	baseUnshare := actions.unshare
-	actions.unshare = func(name string) (any, error) {
+	actions.unshare = func(ctx context.Context, name string) (any, error) {
 		*calls++
-		return baseUnshare(name)
+		return baseUnshare(ctx, name)
 	}
 	return actions
 }

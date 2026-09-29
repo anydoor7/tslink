@@ -91,7 +91,7 @@ func TestShareReuseHonorsExplicitFunnelDeadline(t *testing.T) {
 			second := shareIntentForRegression(t, shareRequest{Funnel: true, PublicAck: true, FunnelTTL: tc.secondTTL, FunnelTTLSet: tc.secondExplicit})
 			reused, created, err := registerShare(path, second, "")
 			if tc.wantConflict {
-				if err == nil || created || output.ExitCode(err) != output.ExitConflict || !strings.Contains(err.Error(), "funnel") {
+				if err == nil || created || output.ExitCode(err) != output.ExitConflict || !strings.Contains(err.Error(), "funnel deadline") {
 					t.Fatalf("want Funnel deadline conflict, got %+v created=%v err=%v", reused, created, err)
 				}
 			} else if err != nil || created || reused.Name != original.Name {

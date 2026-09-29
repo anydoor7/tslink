@@ -7,8 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"os/signal"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
@@ -34,7 +38,29 @@ const (
 	// mcpMaxRecordBytes bounds one newline-delimited record. See
 	// mcpRecordLimitReader for why the bound exists rather than what it frames.
 	mcpMaxRecordBytes = 1024 * 1024
+	// mcpMaxURLWait caps the url tool's wait, the only tool wait a caller
+	// chooses. Every other tool wait is fixed and shorter, so this is also the
+	// longest a legitimate call may keep `tslink mcp` busy.
+	mcpMaxURLWait = 5 * time.Minute
 )
+
+var (
+	// mcpEOFWatchdogDelay bounds how long calls still running after stdin ends
+	// may keep the process alive: the longest legitimate tool wait plus a
+	// minute. A call past it is stuck, not slow, so it is cancelled.
+	mcpEOFWatchdogDelay = mcpMaxURLWait + time.Minute
+	// mcpCancelGrace is how long a cancelled session waits for its handlers to
+	// return before giving up on them.
+	mcpCancelGrace = 5 * time.Second
+	// mcpWriteGrace is how long a returning session waits for a write to out
+	// already in progress. A write past it is blocked, typically because the
+	// client stopped reading stdout, and is left behind.
+	mcpWriteGrace = 5 * time.Second
+)
+
+// errMCPEOFWatchdog ends a session whose calls were still running
+// mcpEOFWatchdogDelay after end of input.
+var errMCPEOFWatchdog = errors.New("in-flight MCP calls did not finish after end of input")
 
 // mcpSupportedProtocolVersions is the revision set this server accepts, newest
 // first. It is documented in `tslink mcp --help` and asserted against the SDK's
@@ -166,10 +192,12 @@ var (
 		}, "attempted", "changed", "reason"),
 	}, "code", "message")
 	mcpShareOutputSchema = objectSchema(map[string]any{
-		"url":      map[string]any{"type": "string"},
-		"name":     map[string]any{"type": "string"},
-		"status":   map[string]any{"type": "string", "enum": []string{shareStatusReady, authStatusNeedsLogin}},
-		"auth_url": map[string]any{"type": "string"},
+		"url":               map[string]any{"type": "string"},
+		"name":              map[string]any{"type": "string"},
+		"status":            map[string]any{"type": "string", "enum": []string{shareStatusReady, authStatusNeedsLogin}},
+		"auth_url":          map[string]any{"type": "string"},
+		"funnel_expires_at": map[string]any{"type": "string", "description": "When the public Funnel of this share stops; absent for a tailnet-only share or a Funnel that never expires. A reused share keeps its own deadline, which can be sooner than the funnel_ttl this call asked for."},
+		"funnel_rearmed":    map[string]any{"type": "boolean", "description": "True when the reused share's Funnel deadline had already passed and this call re-armed it with the requested funnel_ttl."},
 	}, "status")
 	mcpListOutputSchema = objectSchema(map[string]any{
 		"services": map[string]any{
@@ -384,14 +412,14 @@ var mcpToolDefinitions = []mcpToolDefinition{
 		Description: "Setting funnel true on this tool publishes the target to the entire public internet, so ask the user before doing that; with funnel false (the default) it exposes a local directory, one file, or an HTTP port only on the user's private Tailscale network. A directory target serves every file under it and is browsable; a regular-file target serves only that file and answers 404 for its siblings. Without allow, every member of the user's tailnet can read the share; pass allow to restrict it to named principals. Use this after creating a local page or report that the user wants to open on another tailnet device. If status is needs_login, open auth_url in a browser and retry after authorization.",
 		InputSchema: objectSchema(map[string]any{
 			"no_daemon_install": map[string]any{"type": "boolean", "description": "Require an already running TSLink service; do not automatically install its background service."},
-			"target":            map[string]any{"type": "string", "minLength": 1, "description": "Existing file or directory path, bare port from 1 to 65535, or host:port HTTP target. A file path shares that one file; a directory path shares everything under it. The daemon will proxy to any address it can reach on its own network; link-local and cloud-metadata addresses are refused."},
+			"target":            map[string]any{"type": "string", "minLength": 1, "description": "Existing file or directory path, bare port from 1 to 65535, or host:port HTTP target. A file path shares that one file; a directory path shares everything under it. The daemon will proxy to any address it can reach on its own network; link-local and cloud-metadata addresses are refused only as literal IP addresses (unspecified addresses too) or the metadata.google.internal hostname: hostnames are not resolved and nothing is checked at connect time, so a name that resolves to one of those addresses is accepted."},
 			"name":              map[string]any{"type": "string", "pattern": `^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`, "maxLength": 63, "description": "Optional requested DNS-label service name. A matching target is reused only if it already has this name; unrelated name collisions receive a numeric suffix."},
 			"ephemeral":         map[string]any{"type": "boolean", "default": true, "description": "Keep true for temporary shares; set false only when the user wants durable tailnet node state."},
 			"allow":             map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Principals allowed to reach the share over HTTP: email addresses, or tag:<name> ACL tags. Omitting it leaves the share readable by every member of the user's tailnet. Rejected together with funnel."},
 			"tags":              map[string]any{"type": "array", "items": map[string]any{"type": "string", "pattern": `^tag:`}, "description": "ACL tags applied to the tailnet node, each prefixed tag:. Defaults to the configured default tag."},
 			"funnel":            map[string]any{"type": "boolean", "default": false, "description": "Publish to the public internet through Tailscale Funnel. Requires public_ack true, an HTTP port target, and no allow entries."},
 			"public_ack":        map[string]any{"type": "boolean", "default": false, "description": "Explicit acknowledgement that funnel exposes the target publicly. funnel true without it is rejected."},
-			"funnel_ttl":        map[string]any{"type": "string", "enum": []string{"1h", "8h", "24h", "72h", "7d", "never"}, "description": "Public Funnel lifetime; defaults to 24h. Only valid with funnel true."},
+			"funnel_ttl":        map[string]any{"type": "string", "enum": []string{"1h", "8h", "24h", "72h", "7d", "never"}, "description": "Public Funnel lifetime; defaults to 24h. Only valid with funnel true. A share reused for the same target keeps its own deadline, reported as funnel_expires_at; one that has already expired is re-armed with this lifetime."},
 		}, "target"),
 		OutputSchema: mcpShareOutputSchema,
 	},
@@ -401,7 +429,7 @@ var mcpToolDefinitions = []mcpToolDefinition{
 		InputSchema: objectSchema(map[string]any{
 			"name":              map[string]any{"type": "string", "pattern": `^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`, "maxLength": 63, "description": "Registry service name (DNS label). An existing entry with this name is replaced."},
 			"type":              map[string]any{"type": "string", "enum": serviceTypeValues(), "description": "proxy forwards HTTP to target; file serves the directory dir; tcp forwards a raw stream to target."},
-			"target":            map[string]any{"type": "string", "description": "host:port or URL for proxy, host:port for tcp. Rejected for file. The daemon will proxy to any address it can reach on its own network; link-local and cloud-metadata addresses are refused."},
+			"target":            map[string]any{"type": "string", "description": "host:port or URL for proxy, host:port for tcp. Rejected for file. The daemon will proxy to any address it can reach on its own network; link-local and cloud-metadata addresses are refused only as literal IP addresses (unspecified addresses too) or the metadata.google.internal hostname: hostnames are not resolved and nothing is checked at connect time, so a name that resolves to one of those addresses is accepted."},
 			"dir":               map[string]any{"type": "string", "description": "Absolute directory path for file. Rejected for proxy and tcp."},
 			"allow":             map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Principals allowed to reach the service over HTTP: email addresses, or tag:<name> ACL tags. Omitting it leaves an HTTP service readable by every member of the user's tailnet. Unsupported for tcp and rejected together with funnel."},
 			"tags":              map[string]any{"type": "array", "items": map[string]any{"type": "string", "pattern": `^tag:`}, "description": "ACL tags applied to the tailnet node, each prefixed tag:. Defaults to the configured default tag."},
@@ -440,7 +468,7 @@ var mcpToolDefinitions = []mcpToolDefinition{
 		Description: "Return one registered service's exact runtime URL. Use this after add, or after a needs_login share was authorized; it reads local runtime evidence only and never guesses a hostname. It fails with url_not_ready until the daemon has published an exact URL, so pass wait to poll.",
 		InputSchema: objectSchema(map[string]any{
 			"name": map[string]any{"type": "string", "pattern": `^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`, "maxLength": 63, "description": "Exact registered service name."},
-			"wait": map[string]any{"type": "string", "description": "Go duration such as 30s to poll for an exact URL. Omitted or 0s returns immediately."},
+			"wait": map[string]any{"type": "string", "description": "Go duration such as 30s to poll for an exact URL, at most 5m. Omitted or 0s returns immediately."},
 		}, "name"),
 		OutputSchema: mcpURLOutputSchema,
 	},
@@ -567,7 +595,7 @@ type mcpActions struct {
 	share         func(context.Context, shareRequest) (ShareResult, error)
 	add           func(context.Context, AddParams, bool) (any, error)
 	list          func() (any, error)
-	unshare       func(string) (any, error)
+	unshare       func(context.Context, string) (any, error)
 	status        func() (any, error)
 	url           func(context.Context, string, time.Duration) (any, error)
 	tagsList      func() (any, error)
@@ -666,7 +694,9 @@ func addParamsFromMCPArguments(args mcpAddArguments) (AddParams, bool, error) {
 }
 
 // parseMCPWait reads the url tool's optional Go duration. It mirrors
-// `tslink url --wait`, where a non-positive duration means "do not poll".
+// `tslink url --wait`, where a non-positive duration means "do not poll",
+// except that it is capped at mcpMaxURLWait: a stdio server has no other way
+// to bound how long one call keeps it alive.
 func parseMCPWait(raw string) (time.Duration, error) {
 	if raw == "" {
 		return 0, nil
@@ -674,6 +704,9 @@ func parseMCPWait(raw string) (time.Duration, error) {
 	wait, err := time.ParseDuration(raw)
 	if err != nil {
 		return 0, output.ErrUsage(fmt.Sprintf("invalid wait duration %q: %v", raw, err))
+	}
+	if wait > mcpMaxURLWait {
+		return 0, output.ErrUsage(fmt.Sprintf("wait %q exceeds the maximum of %s", raw, mcpMaxURLWait))
 	}
 	return wait, nil
 }
@@ -740,23 +773,8 @@ func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 			}
 			return map[string]any{"services": services}, nil
 		},
-		unshare: func(name string) (any, error) {
-			if err := registry.ValidateName(name); err != nil {
-				return nil, err
-			}
-			removed, err := removeServiceResult(paths.Registry, paths.Ownership, name)
-			if err != nil {
-				return nil, err
-			}
-			return mcpUnshareSummary{
-				OK:                   true,
-				Name:                 removed.Name,
-				Removed:              removed.Removed,
-				DeviceCleaned:        removed.DeviceCleaned,
-				DeviceCleanupSkipped: removed.DeviceCleanupSkipped,
-				DeviceSkipReason:     removed.DeviceSkipReason,
-				DeviceWarning:        removed.DeviceWarning,
-			}, nil
+		unshare: func(ctx context.Context, name string) (any, error) {
+			return unshareMCPService(ctx, paths, name)
 		},
 		status: func() (any, error) {
 			status, err := sharePollableStatusFn(paths.PID, paths.Registry, paths.Snapshot, paths.AuthHandoff)
@@ -853,6 +871,27 @@ func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 	}
 }
 
+// unshareMCPService is the unshare tool: the CLI's idempotent remove, reported
+// as an mcpUnshareSummary.
+func unshareMCPService(ctx context.Context, paths sharePaths, name string) (any, error) {
+	if err := registry.ValidateName(name); err != nil {
+		return nil, err
+	}
+	removed, err := removeServiceResultContext(ctx, paths.Registry, paths.Ownership, name)
+	if err != nil {
+		return nil, err
+	}
+	return mcpUnshareSummary{
+		OK:                   true,
+		Name:                 removed.Name,
+		Removed:              removed.Removed,
+		DeviceCleaned:        removed.DeviceCleaned,
+		DeviceCleanupSkipped: removed.DeviceCleanupSkipped,
+		DeviceSkipReason:     removed.DeviceSkipReason,
+		DeviceWarning:        removed.DeviceWarning,
+	}, nil
+}
+
 // --- Transport ------------------------------------------------------------
 //
 // Framing, session lifecycle and protocol-version negotiation belong to the
@@ -921,19 +960,32 @@ func newMCPServer(actions mcpActions) *mcp.Server {
 // the first reliable indication that all preceding values have been accepted
 // by the dispatcher. At that point, finish response writes before asking the
 // SDK to drain its remaining notification queue and close.
+//
+// Calls still running mcpEOFWatchdogDelay after end of input are cancelled and
+// the session ends with errMCPEOFWatchdog. Once the session is cancelled, for
+// that reason or because ctx was, it waits at most mcpCancelGrace for the
+// handlers, so one that ignores cancellation cannot keep the process alive.
 func runMCPStdio(ctx context.Context, in io.Reader, out io.Writer, actions mcpActions) error {
 	if ctx == nil {
 		// cobra leaves Command.Context nil until the command tree is executed,
 		// and the SDK selects on Done.
 		ctx = context.Background()
 	}
+	watchdogDelay, cancelGrace, writeGrace := mcpEOFWatchdogDelay, mcpCancelGrace, mcpWriteGrace
+	sessionCtx, cancelSession := context.WithCancelCause(ctx)
+	defer cancelSession(nil)
 	reader := newMCPRecordLimitReader(in, mcpMaxRecordBytes)
+	writer := newMCPNonClosingWriter(out)
+	// On every return, including one that abandons a handler after
+	// mcpCancelGrace, nothing writes to out afterwards and what was written
+	// is complete, unless a write outlasted mcpWriteGrace.
+	defer writer.release(writeGrace)
 	server := newMCPServer(actions)
 	settled := make(chan struct{})
 	transport := &mcpDrainTransport{
-		inner:      &mcp.IOTransport{Reader: reader, Writer: &mcpNonClosingWriter{inner: out}},
+		inner:      &mcp.IOTransport{Reader: reader, Writer: writer},
 		reader:     reader,
-		caller:     ctx,
+		caller:     sessionCtx,
 		decodedEOF: make(chan struct{}),
 	}
 	session, err := server.Connect(ctx, transport, nil)
@@ -942,7 +994,7 @@ func runMCPStdio(ctx context.Context, in io.Reader, out io.Writer, actions mcpAc
 	}
 	go func() {
 		select {
-		case <-ctx.Done():
+		case <-sessionCtx.Done():
 			// The SDK's graceful session Close can leave a context-aware tool
 			// running. Closing the actual connection first makes readIncoming
 			// cancel requests, including a tool that outlives stdin.
@@ -957,25 +1009,47 @@ func runMCPStdio(ctx context.Context, in io.Reader, out io.Writer, actions mcpAc
 			// Do not set connClosing while a call still needs its response:
 			// pinned SDK rejects writes after Close starts. The wrapper has
 			// observed every decoded call and response at this EOF boundary.
+			watchdog := time.AfterFunc(watchdogDelay, func() {
+				cancelSession(fmt.Errorf("%w: still running %s after stdin closed, so they were cancelled", errMCPEOFWatchdog, watchdogDelay))
+			})
 			transport.connection.waitForResponses()
-			if ctx.Err() == nil {
+			watchdog.Stop()
+			if sessionCtx.Err() == nil {
 				_ = session.Close()
 			}
 		case <-settled:
 		}
 	}()
-	waitErr := session.Wait()
+	waited := make(chan error, 1)
+	go func() { waited <- session.Wait() }()
+	var waitErr error
+	select {
+	case waitErr = <-waited:
+	case <-sessionCtx.Done():
+		// session.Wait returns only once every handler has, and cancellation
+		// reaches a handler only if it watches its context.
+		select {
+		case waitErr = <-waited:
+		case <-time.After(cancelGrace):
+		}
+	}
 	close(settled)
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return ctxErr
+	}
+	if cause := context.Cause(sessionCtx); cause != nil {
+		return cause
 	}
 	return waitErr
 }
 
 // mcpDrainTransport observes the SDK's decoded Connection.Read boundary while
-// retaining IOTransport's actual wire codec and writer. In pinned SDK v1.7.0,
-// IOTransport's private sessionUpdated hook only changes batch-version checks;
-// TSLink's record guard rejects batches at every protocol version already.
+// retaining IOTransport's actual wire codec and writer. Wrapping the
+// connection hides IOTransport's private sessionUpdated hook, which in pinned
+// SDK v1.7.0 only drives the SDK's own refusal of batches at 2025-06-18 and
+// later, so that refusal never runs here. mcpRecordLimitReader is therefore
+// the only batch refusal: it rejects a '[' that begins any top-level value,
+// at every protocol version.
 type mcpDrainTransport struct {
 	inner      mcp.Transport
 	reader     *mcpRecordLimitReader
@@ -1025,7 +1099,11 @@ func (c *mcpDrainConnection) Read(ctx context.Context) (jsonrpc.Message, error) 
 			c.mu.Unlock()
 		}
 	}
-	if errors.Is(err, io.EOF) && c.caller.Err() == nil {
+	// A final record cut off mid-value decodes as io.ErrUnexpectedEOF rather
+	// than io.EOF. Once the reader has reached end of input it is the same
+	// boundary: hold it until what was accepted before it is answered, and the
+	// session still ends with the error.
+	if (errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)) && c.caller.Err() == nil {
 		select {
 		case <-c.reader.EndOfInput():
 			close(c.decodedEOF)
@@ -1082,13 +1160,46 @@ func (c *mcpDrainConnection) Close() error {
 }
 
 // mcpNonClosingWriter leaves command-owned stdout open when the SDK closes its
-// transport.
+// transport, and stops writing to it once runMCPStdio returns.
 type mcpNonClosingWriter struct {
 	inner io.Writer
+	// turn is held across each write to inner, like a mutex that release can
+	// stop waiting for.
+	turn     chan struct{}
+	released atomic.Bool
 }
 
-func (w *mcpNonClosingWriter) Write(p []byte) (int, error) { return w.inner.Write(p) }
-func (w *mcpNonClosingWriter) Close() error                { return nil }
+func newMCPNonClosingWriter(inner io.Writer) *mcpNonClosingWriter {
+	return &mcpNonClosingWriter{inner: inner, turn: make(chan struct{}, 1)}
+}
+
+func (w *mcpNonClosingWriter) Write(p []byte) (int, error) {
+	w.turn <- struct{}{}
+	defer func() { <-w.turn }()
+	if w.released.Load() {
+		return 0, io.ErrClosedPipe
+	}
+	return w.inner.Write(p)
+}
+
+func (w *mcpNonClosingWriter) Close() error { return nil }
+
+// release refuses every later write. It waits up to grace for a write already
+// in progress, so everything written happens before the caller reads out; a
+// session abandoned after mcpCancelGrace would otherwise still be writing. A
+// write that outlasts grace is blocked, and waiting for it would keep the
+// process from exiting, so it is left behind; writes queued behind it are
+// still refused when they get their turn.
+func (w *mcpNonClosingWriter) release(grace time.Duration) {
+	w.released.Store(true)
+	timer := time.NewTimer(grace)
+	defer timer.Stop()
+	select {
+	case w.turn <- struct{}{}:
+		<-w.turn
+	case <-timer.C:
+	}
+}
 
 // mcpRecordLimitReader bounds the bytes a single newline-delimited record may
 // contribute before the stream is abandoned.
@@ -1096,8 +1207,10 @@ func (w *mcpNonClosingWriter) Close() error                { return nil }
 // The SDK decodes straight off the reader, so without this an unbounded line is
 // an unbounded allocation in a process the user did not intend to hand a memory
 // budget to. The limit is a stream guard, not a framer: it counts bytes since
-// the last newline and fails the read, leaving every JSON-level decision to the
-// SDK.
+// the last newline and fails the read. Its one JSON-level decision is refusing
+// a batch, for which it tracks just enough structure (string and nesting
+// state) to see where a top-level value begins; everything else is left to
+// the SDK.
 //
 // It reports physical EOF to the SDK, where mcpDrainConnection delays only
 // the decoded Connection.Read EOF until already delivered calls are answered.
@@ -1108,7 +1221,9 @@ type mcpRecordLimitReader struct {
 	mu       sync.Mutex
 	count    int
 	records  int
-	inRecord bool
+	depth    int
+	inString bool
+	escaped  bool
 	err      error
 
 	eof     chan struct{}
@@ -1151,34 +1266,56 @@ func (r *mcpRecordLimitReader) Read(p []byte) (int, error) {
 	}
 	n, err := r.inner.Read(p)
 	r.mu.Lock()
-	for _, b := range p[:n] {
+	// A refusal hands over only the bytes before the one that broke a guard.
+	// encoding/json's Decoder scans every byte a Read returned before it looks
+	// at the error returned with them, so returning the violating byte, or
+	// anything after it, would let the decoder dispatch the very value the
+	// guard refused. r.err stays set, so every later Read reports it again.
+	for i, b := range p[:n] {
+		switch {
+		case r.inString:
+			switch {
+			case r.escaped:
+				r.escaped = false
+			case b == '\\':
+				r.escaped = true
+			case b == '"':
+				r.inString = false
+			}
+		case b == '"':
+			r.inString = true
+		case b == '{':
+			r.depth++
+		case b == '[' && r.depth == 0:
+			// A '[' outside every object and string begins a top-level
+			// value, and a top-level array is a JSON-RPC batch. The decoder
+			// does not frame on newlines: any JSON whitespace separates two
+			// values, so a batch can follow a CR, a space or a tab on the
+			// same line, not only a newline. This server has never supported
+			// batching, and the revisions it speaks from 2025-06-18 onward
+			// removed it from the protocol; refusing it here refuses it at
+			// every revision, rather than at whichever one the session
+			// happens to have negotiated by the time the value is read.
+			r.err = errMCPBatchUnsupported
+			r.mu.Unlock()
+			return i, r.err
+		case b == '[':
+			r.depth++
+		case (b == '}' || b == ']') && r.depth > 0:
+			r.depth--
+		}
 		if b == '\n' {
 			if r.count > 0 {
 				r.records++
 			}
 			r.count = 0
-			r.inRecord = false
 			continue
-		}
-		if !r.inRecord && b != ' ' && b != '\t' && b != '\r' {
-			r.inRecord = true
-			if b == '[' {
-				// A record that opens with an array is a JSON-RPC batch. This
-				// server has never supported batching, and the revisions it
-				// speaks from 2025-06-18 onward removed it from the protocol;
-				// refusing it here refuses it at every revision, rather than at
-				// whichever one the session happens to have negotiated by the
-				// time the line is read.
-				r.err = errMCPBatchUnsupported
-				r.mu.Unlock()
-				return n, r.err
-			}
 		}
 		r.count++
 		if r.count > r.limit {
 			r.err = fmt.Errorf("JSON-RPC message exceeds maximum size of %d bytes", r.limit)
 			r.mu.Unlock()
-			return n, r.err
+			return i, r.err
 		}
 	}
 	if err == io.EOF && r.count > 0 {
@@ -1289,7 +1426,7 @@ func callMCPTool(ctx context.Context, actions mcpActions, name string, arguments
 		if decodeErr := decodeMCPArguments(arguments, &args); decodeErr != nil || args.Name == "" {
 			return nil, mcpInvalidArgumentsError("unshare")
 		}
-		data, err = actions.unshare(args.Name)
+		data, err = actions.unshare(ctx, args.Name)
 	case "status":
 		var args struct{}
 		if decodeErr := decodeMCPArguments(arguments, &args); decodeErr != nil {
@@ -1503,7 +1640,18 @@ and its requested tsnet services. share and add with
 funnel true publish to the public internet, and the invite_* tools send or
 cancel real invitations through the Tailscale API, so a client should confirm
 those with its user first. Protocol frames are written only to stdout;
-diagnostics and logs are written only to stderr.`,
+diagnostics and logs are written only to stderr.
+
+When stdin closes, requests already read still get their answers before the
+server exits. The url tool's wait is capped at ` + mcpMaxURLWait.String() + `, and a call still
+running ` + mcpEOFWatchdogDelay.String() + ` after stdin closed is cancelled and the command exits
+non-zero. SIGINT or SIGTERM cancels the calls in flight, so a share still
+waiting for its URL is rolled back; a second signal exits at once.
+
+Some inputs end the session and drop the answers of calls still in flight,
+and nothing after them is read: malformed JSON, a JSON value that is not a
+JSON-RPC message, a JSON-RPC batch, and a record longer than ` + fmt.Sprint(mcpMaxRecordBytes) + ` bytes.
+A request that reuses the id of a call still in flight gets no answer.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if jsonOutput(cmd) {
@@ -1517,11 +1665,35 @@ diagnostics and logs are written only to stderr.`,
 			if err != nil {
 				return err
 			}
-			if err := runMCPStdio(cmd.Context(), cmd.InOrStdin(), cmd.OutOrStdout(), defaultMCPActions(paths, cmd.ErrOrStderr())); err != nil {
-				return fmt.Errorf("mcp stdio: %w", err)
-			}
-			return nil
+			return runMCPCommand(cmd.Context(), cmd.InOrStdin(), cmd.OutOrStdout(), defaultMCPActions(paths, cmd.ErrOrStderr()))
 		},
 	}
 	rootCmd.AddCommand(mcpCmd)
+}
+
+// runMCPCommand is the body of `tslink mcp`: one stdio session that SIGINT or
+// SIGTERM cancels rather than kills, so handlers see the cancellation and
+// their deferred rollbacks run (executeShare removes a share it registered
+// and is still waiting on). Two fallbacks keep a handler that ignores its
+// context from holding the process: runMCPStdio waits only mcpCancelGrace for
+// it, and the first signal restores the default disposition, so a second one
+// terminates at once. No other command's signal handling changes.
+func runMCPCommand(parent context.Context, in io.Reader, out io.Writer, actions mcpActions) error {
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, stop := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	go func() {
+		<-ctx.Done()
+		stop()
+	}()
+	if err := runMCPStdio(ctx, in, out, actions); err != nil {
+		if cause := context.Cause(ctx); cause != nil && errors.Is(err, context.Canceled) {
+			// Name the signal rather than a bare "context canceled".
+			err = cause
+		}
+		return fmt.Errorf("mcp stdio: %w", err)
+	}
+	return nil
 }
