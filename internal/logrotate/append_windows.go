@@ -20,9 +20,9 @@ const fileAccessInformation = 8
 // FILE_APPEND_DATA without FILE_WRITE_DATA, which the kernel only lets write at
 // end-of-file. That is the handle os.OpenFile makes for O_APPEND, including the
 // one internal/daemon opens for `serve --daemon`. A handle that also holds
-// FILE_WRITE_DATA (cmd.exe's `2>>`, for one) writes at its own offset, so after
-// a truncate it would leave the same sparse file O_APPEND prevents on unix, and
-// it is reported as not append-only.
+// FILE_WRITE_DATA, which os.OpenFile grants without O_APPEND, writes at its own
+// offset, so after a truncate it would leave the same sparse file O_APPEND
+// prevents on unix, and it is reported as not append-only.
 //
 // Like the unix probe, this asks about the exact handle rather than about the
 // file, because two handles on one file can hold different access.

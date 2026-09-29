@@ -104,8 +104,8 @@ func WriteFile(path string, data []byte) error {
 // not group- or world-writable. Windows does not expose DACLs through
 // os.FileMode, so parent ownership and permissions are not validated there.
 // Parent-directory symlinks and Windows junctions are followed and their
-// referent is validated, while a symlink at path itself is rejected. The mode is caller policy and is
-// applied exactly; callers choose any privacy floor.
+// referent is validated, while a symlink at path itself is rejected. The mode
+// is caller policy and is applied exactly; callers choose any privacy floor.
 func WriteFileInExistingDir(path string, data []byte, mode os.FileMode) error {
 	if err := validateExistingParent(path); err != nil {
 		return err
