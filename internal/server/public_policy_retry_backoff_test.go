@@ -6,7 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"reflect"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -128,7 +128,7 @@ func TestPolicyRetryBackoffDoublesTheWaitBetweenRetries(t *testing.T) {
 
 	runLifecycleTicks(t, s, r, 31, nil)
 
-	if got, want := r.callTicks(31), []int32{0, 1, 3, 7, 15, 31}; !reflect.DeepEqual(got, want) {
+	if got, want := r.callTicks(31), []int32{0, 1, 3, 7, 15, 31}; !slices.Equal(got, want) {
 		t.Fatalf("policy requests on ticks %v, want %v (tick 0 is the initial sync)", got, want)
 	}
 }
@@ -160,7 +160,7 @@ func TestPolicyRetryBackoffRestartsAfterRegistryChange(t *testing.T) {
 		return true
 	})
 
-	if got, want := r.callTicks(30), []int32{0, 1, 3, 7, 9, 10, 12, 16, 24}; !reflect.DeepEqual(got, want) {
+	if got, want := r.callTicks(30), []int32{0, 1, 3, 7, 9, 10, 12, 16, 24}; !slices.Equal(got, want) {
 		t.Fatalf("policy requests on ticks %v, want %v (registry changed on tick 9)", got, want)
 	}
 }
@@ -197,7 +197,7 @@ func TestIdentityRecordRetryIsNotSpacedOutByPolicyBackoff(t *testing.T) {
 	for tick := int32(0); tick <= 12; tick++ {
 		want = append(want, tick)
 	}
-	if got := r.callTicks(12); !reflect.DeepEqual(got, want) {
+	if got := r.callTicks(12); !slices.Equal(got, want) {
 		t.Fatalf("syncs (seen through policy requests) on ticks %v, want every tick %v", got, want)
 	}
 	if s.nodeRunning("api") {

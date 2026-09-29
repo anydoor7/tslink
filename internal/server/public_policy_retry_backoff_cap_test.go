@@ -1,7 +1,7 @@
 package server
 
 import (
-	"reflect"
+	"slices"
 	"testing"
 	"time"
 
@@ -22,7 +22,7 @@ func TestPolicyRetryBackoffProductionScheduleCapsAtFifteenMinutes(t *testing.T) 
 		got = append(got, time.Duration(policyRetryWaitTicks(streak, capTicks))*tick)
 	}
 	want := []time.Duration{30 * time.Second, time.Minute, 2 * time.Minute, 4 * time.Minute, 8 * time.Minute, 15 * time.Minute, 15 * time.Minute, 15 * time.Minute}
-	if !reflect.DeepEqual(got, want) {
+	if !slices.Equal(got, want) {
 		t.Fatalf("retry waits = %v, want %v", got, want)
 	}
 	if perDay := int(24 * time.Hour / (time.Duration(capTicks) * tick)); perDay != 96 {
@@ -46,7 +46,7 @@ func TestPolicyRetryBackoffStopsDoublingAtTheCap(t *testing.T) {
 
 	runLifecycleTicks(t, s, r, 19, nil)
 
-	if got, want := r.callTicks(19), []int32{0, 1, 3, 7, 11, 15, 19}; !reflect.DeepEqual(got, want) {
+	if got, want := r.callTicks(19), []int32{0, 1, 3, 7, 11, 15, 19}; !slices.Equal(got, want) {
 		t.Fatalf("policy requests on ticks %v, want %v", got, want)
 	}
 }
