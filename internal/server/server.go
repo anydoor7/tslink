@@ -103,6 +103,12 @@ var (
 	serveTCPFn              = serveTCP
 	registrySettleDelay     = 50 * time.Millisecond
 	lifecycleTickerInterval = 30 * time.Second
+	// policyRetryMaxWait caps the spacing of the lifecycle ticker's retries of
+	// a failed Funnel policy preflight. Each retry costs one Tailscale policy
+	// API request (plus the tag ensure with --manage-acl), and a service can
+	// stay blocked for good (tailnet HTTPS disabled, Funnel capability
+	// missing): about 2880 requests a day at one per 30 s tick, 96 at the cap.
+	policyRetryMaxWait = 15 * time.Minute
 )
 
 var ownershipRetryDelays = []time.Duration{time.Second, 5 * time.Second}
@@ -307,7 +313,8 @@ type Server struct {
 	cleanupNodesFn          CleanupStaleNodesFunc
 	lifecycleReconcileFn    LifecycleReconcileFunc
 	lastSyncFailed          atomic.Bool
-	syncRetryPending        atomic.Bool
+	identityRetryPending    atomic.Bool
+	policyRetry             policyRetryBackoff
 	shuttingDown            atomic.Bool
 	syncGeneration          atomic.Uint64
 	reconcileGate           chan struct{}
@@ -516,6 +523,7 @@ func (s *Server) startLifecycleTicker(ctx context.Context) <-chan struct{} {
 		defer close(done)
 		ticker := time.NewTicker(lifecycleTickerInterval)
 		defer ticker.Stop()
+		maxPolicyRetryWaitTicks := policyRetryWaitCapTicks(lifecycleTickerInterval)
 		for {
 			select {
 			case <-ctx.Done():
@@ -525,14 +533,18 @@ func (s *Server) startLifecycleTicker(ctx context.Context) <-chan struct{} {
 				shouldSync := s.lifecycleReconcileFn == nil
 				if s.lifecycleReconcileFn != nil {
 					changed, err := s.lifecycleReconcileFn(ctx, now)
-					shouldSync = changed || err != nil || s.lastSyncFailed.Load() || s.syncRetryPending.Load()
+					// Counted on every tick, so the backoff measures ticks since the
+					// latest sync whatever made this one run.
+					policyRetryDue := s.policyRetry.tick(maxPolicyRetryWaitTicks)
+					shouldSync = changed || err != nil || s.lastSyncFailed.Load() || s.identityRetryPending.Load() || policyRetryDue
 					if err != nil {
 						slog.Warn("lifecycle reconciliation failed; applying in-memory wall-clock guard", "error", err)
 					}
 				}
 				// Rebuild listeners after desired state changed, reconciliation failed,
 				// the latest sync failed, or it left a service blocked on a
-				// preflight that only a retry can clear. Reconciliation still runs
+				// preflight that only a retry can clear (a policy preflight on the
+				// backoff schedule, an identity record on every tick). Reconciliation still runs
 				// from the wall clock on every tick, so suspend/resume cannot preserve
 				// an expired public listener without restoring unconditional sync traffic.
 				if shouldSync {
@@ -550,10 +562,72 @@ func (s *Server) startLifecycleTicker(ctx context.Context) <-chan struct{} {
 type syncOutcome struct {
 	generation uint64
 	committed  bool
-	// retry reports a sync that succeeded but left a service blocked on a
-	// transient condition, such as a failed Funnel policy preflight. Nothing
-	// else re-runs that preflight, so the lifecycle ticker must.
-	retry bool
+	// policyRetry and identityRetry report a sync that succeeded but left a
+	// service blocked on a condition only a retry can clear: a failed Funnel
+	// policy preflight, or an unreadable node identity record. Nothing else
+	// re-runs either check, so the lifecycle ticker must.
+	policyRetry   bool
+	identityRetry bool
+	// registryFingerprint is the registry state the sync ran against; a
+	// change restarts the policy retry backoff.
+	registryFingerprint string
+}
+
+// policyRetryBackoff spaces out the lifecycle ticker's retries of syncs that
+// leave a service blocked on a failed Funnel policy preflight. The first retry
+// runs on the next tick and each further one waits twice as many ticks, up to
+// policyRetryMaxWait. A sync that leaves no policy failure, or that ran against
+// a changed registry, starts the schedule over. Retries for an unreadable
+// identity record read only local files and are not spaced out.
+type policyRetryBackoff struct {
+	mu          sync.Mutex
+	streak      int    // consecutive policy-blocked syncs against fingerprint
+	fingerprint string // registry state the streak counts
+	ticks       int    // ticks since the latest recorded sync
+}
+
+// record notes the outcome of a sync of the current generation.
+func (b *policyRetryBackoff) record(blocked bool, fingerprint string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	switch {
+	case !blocked:
+		b.streak, b.fingerprint = 0, ""
+	case b.streak == 0 || fingerprint != b.fingerprint:
+		b.streak, b.fingerprint = 1, fingerprint
+	default:
+		b.streak++
+	}
+	b.ticks = 0
+}
+
+// tick counts one lifecycle tick and reports whether a policy retry is due.
+func (b *policyRetryBackoff) tick(maxWaitTicks int) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.streak == 0 {
+		return false
+	}
+	b.ticks++
+	return b.ticks >= policyRetryWaitTicks(b.streak, maxWaitTicks)
+}
+
+// policyRetryWaitTicks is how many ticks the retry after the streak-th
+// consecutive policy-blocked sync waits: 1, 2, 4, ... up to maxWaitTicks.
+func policyRetryWaitTicks(streak, maxWaitTicks int) int {
+	wait := 1
+	for i := 1; i < streak && wait < maxWaitTicks; i++ {
+		wait *= 2
+	}
+	return min(wait, maxWaitTicks)
+}
+
+// policyRetryWaitCapTicks converts policyRetryMaxWait into ticks of interval.
+func policyRetryWaitCapTicks(interval time.Duration) int {
+	if interval <= 0 {
+		return 1
+	}
+	return max(1, int(policyRetryMaxWait/interval))
 }
 
 type syncResult struct {
@@ -567,7 +641,8 @@ func (s *Server) syncNodes(ctx context.Context) error {
 	outcome, err := s.syncNodesWithOutcome(ctx, false)
 	if outcome.generation == s.syncGeneration.Load() {
 		s.lastSyncFailed.Store(err != nil)
-		s.syncRetryPending.Store(outcome.retry)
+		s.identityRetryPending.Store(outcome.identityRetry)
+		s.policyRetry.record(outcome.policyRetry, outcome.registryFingerprint)
 	}
 	return err
 }
@@ -577,7 +652,8 @@ func (s *Server) syncNodesAuthoritative(ctx context.Context) error {
 		outcome, err := s.syncNodesWithOutcome(ctx, true)
 		if outcome.generation == s.syncGeneration.Load() {
 			s.lastSyncFailed.Store(err != nil)
-			s.syncRetryPending.Store(outcome.retry)
+			s.identityRetryPending.Store(outcome.identityRetry)
+			s.policyRetry.record(outcome.policyRetry, outcome.registryFingerprint)
 		}
 		if err != nil {
 			return err
@@ -636,6 +712,7 @@ func (s *Server) syncNodesWithOutcome(ctx context.Context, startup bool) (outcom
 	if err != nil {
 		return outcome, fmt.Errorf("runtime snapshot registry fingerprint: %w", err)
 	}
+	outcome.registryFingerprint = registryFingerprint
 
 	// Build desired state
 	desired := make(map[string]registry.Service, len(reg.Services))
@@ -698,7 +775,7 @@ func (s *Server) syncNodesWithOutcome(ctx context.Context, startup bool) (outcom
 	// intact while unrelated services continue reconciling.
 	tagsToEnsure := uniqueDesiredTags(desired, validationFailures)
 	policyFailures, provisionOutcomes, fusedTagsEnsured := s.ensureFunnelPolicyBeforeRestart(generationCtx, desired, validationFailures, tagsToEnsure)
-	outcome.retry = len(policyFailures) > 0
+	outcome.policyRetry = len(policyFailures) > 0
 	if !fusedTagsEnsured && s.ensureTagsFn != nil && len(tagsToEnsure) > 0 {
 		if err := ensureTagsBeforeRestart(generationCtx, s.ensureTagsFn, tagsToEnsure); err != nil {
 			switch {
@@ -893,7 +970,7 @@ func (s *Server) syncNodesWithOutcome(ctx context.Context, startup bool) (outcom
 
 	// Retry while a record stays unreadable, so moving it aside takes effect
 	// without a registry change or restart.
-	outcome.retry = outcome.retry || identityBlocked
+	outcome.identityRetry = identityBlocked
 	syncErr := errors.Join(append([]error{removedIdentityErr}, startErrs...)...)
 	if syncErr != nil {
 		s.removeRuntimeSnapshot()
