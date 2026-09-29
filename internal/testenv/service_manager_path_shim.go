@@ -123,8 +123,10 @@ func (s *ServiceManagerPathShim) Calls() ([]ServiceManagerShimCall, error) {
 func PlantServiceManagerShims(dir string) (logPath string, planted []string, err error) {
 	logPath = filepath.Join(dir, "service-manager-calls.log")
 	// The default is substituted inside "${VAR:-...}", which keeps spaces but
-	// would still let these characters change what the shell does.
-	if strings.ContainsAny(logPath, "'\"\n$`{}\\") {
+	// would still let these characters change what the shell does. Windows
+	// plants no script, so there is nothing to embed the path in; applying the
+	// check there refused every Windows path, since each one contains `\`.
+	if runtime.GOOS != "windows" && strings.ContainsAny(logPath, "'\"\n$`{}\\") {
 		return "", nil, fmt.Errorf("testenv: shim log path %q contains a character that cannot be embedded in the shim script", logPath)
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
