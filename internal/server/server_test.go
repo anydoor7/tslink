@@ -1000,6 +1000,7 @@ func TestStartNodeLocked_ZeroCredentialUsesStableStatusWithoutUp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
+	t.Cleanup(s.closeAllNodes)
 	s.SetAuthKeyProvider(func(context.Context, registry.Service) (string, error) { return "", nil })
 
 	fake := &fakeInteractiveTSNetServer{}
@@ -1198,6 +1199,7 @@ func TestStartNodeLocked_UsesPerServiceAuthKeyProvider(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
+	t.Cleanup(s.closeAllNodes)
 
 	var providerService registry.Service
 	s.SetAuthKeyProvider(func(ctx context.Context, svc registry.Service) (string, error) {
@@ -1334,6 +1336,7 @@ func TestSecuritySemantics_FileNoAllowStartsWithoutWhoIsDependency(t *testing.T)
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
+	t.Cleanup(s.closeAllNodes)
 
 	fake := &fakeTSNetServer{}
 	oldNew := newTSNetServerFn
@@ -1448,6 +1451,7 @@ func TestStartNodeLocked_UsesEffectiveControlURL(t *testing.T) {
 			if err != nil {
 				t.Fatalf("New() error = %v", err)
 			}
+			t.Cleanup(s.closeAllNodes)
 
 			var capturedControlURL string
 			oldNew := newTSNetServerFn
@@ -2779,6 +2783,7 @@ func TestSyncNodes_CredentialUpgradeRemovesTierOneStateBeforeAuthKey(t *testing.
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
+	t.Cleanup(s.closeAllNodes)
 	s.SetCredentialed(true)
 	s.SetAuthKeyProvider(func(context.Context, registry.Service) (string, error) {
 		return "derived-tier-2-key", nil
@@ -2819,6 +2824,7 @@ func TestSyncNodes_WritesRuntimeSnapshotAfterServiceStarts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
+	t.Cleanup(s.closeAllNodes)
 	if err := s.syncNodes(context.Background()); err != nil {
 		t.Fatalf("syncNodes() error = %v", err)
 	}
@@ -2897,6 +2903,7 @@ func TestSyncNodes_PublishesPartialSnapshotBeforeStartingNextService(t *testing.
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
+	t.Cleanup(s.closeAllNodes)
 	if err := s.syncNodes(context.Background()); err != nil {
 		t.Fatalf("syncNodes() error = %v", err)
 	}
@@ -4763,6 +4770,7 @@ func TestSyncNodes_PartialStartFailureRemovesRuntimeSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
+	t.Cleanup(s.closeAllNodes)
 	if err := s.syncNodes(context.Background()); err != nil {
 		t.Fatalf("initial syncNodes() error = %v", err)
 	}
@@ -4830,6 +4838,7 @@ func TestSyncNodes_UpdatesRuntimeSnapshotFingerprintAfterSuccessfulReload(t *tes
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
+	t.Cleanup(s.closeAllNodes)
 	if err := s.syncNodes(context.Background()); err != nil {
 		t.Fatalf("initial syncNodes() error = %v", err)
 	}
@@ -4955,6 +4964,7 @@ func TestSyncNodes_RuntimeSnapshotWriteFailureLoggedNonFatal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
+	t.Cleanup(s.closeAllNodes)
 	err = s.syncNodes(context.Background())
 	if err != nil {
 		t.Fatalf("syncNodes() error = %v, want snapshot write failure to be non-fatal", err)
@@ -4985,6 +4995,7 @@ func TestSyncNodes_HotReloadUsesFreshPerServiceAuthMaterial(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
+	t.Cleanup(s.closeAllNodes)
 
 	var providerCalls []registry.Service
 	s.SetAuthKeyProvider(func(ctx context.Context, svc registry.Service) (string, error) {
@@ -5069,6 +5080,7 @@ func TestSyncNodes_CleanupFailureStillRestartsChangedService(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
+	t.Cleanup(s.closeAllNodes)
 	oldNode := newNode(t, oldSvc)
 	s.nodes["app"] = oldNode
 	nodesDir, err := config.NodesDir()
@@ -6561,6 +6573,7 @@ func TestWatchRegistry_DebouncesRapidWrites(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
+	t.Cleanup(s.closeAllNodes)
 
 	stopWatcher := startRegistryWatcherTest(t, s)
 
