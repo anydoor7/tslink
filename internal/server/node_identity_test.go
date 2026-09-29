@@ -73,7 +73,8 @@ func TestNodeIdentityFreshServerRetryAfterPolicyFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	recorded, found, err := readNodeIdentity(path)
-	if err != nil || !found || !sameStringSet(recorded.Tags, old.Tags) || recorded.ControlURL != "https://old-control.example" {
+	oldIdentity := requestedNodeIdentity(old, "https://old-control.example", identityPreparedBeforeUp)
+	if err != nil || !found || !sameStringSet(recorded.Tags, oldIdentity.Tags) || recorded.ControlURL != "https://old-control.example" {
 		t.Fatalf("old identity was not durable: %+v found=%v err=%v", recorded, found, err)
 	}
 	second, err := New("key", "https://new-control.example")
@@ -102,7 +103,7 @@ func TestNodeIdentityFreshServerRetryAfterPolicyFailure(t *testing.T) {
 	if err := second.syncNodes(context.Background()); !errors.Is(err, stopAtUp) {
 		t.Fatalf("fresh Server retry error = %v", err)
 	}
-	if !constructed || strings.Join(cleanupTags, ",") != "tag:old" {
+	if !constructed || !sameStringSet(cleanupTags, oldIdentity.Tags) {
 		t.Fatalf("fresh Server lost old identity: constructed=%v cleanup tags=%v", constructed, cleanupTags)
 	}
 }
@@ -426,8 +427,9 @@ func TestNodeIdentityPublicReplacementWriteFailureClosesListener(t *testing.T) {
 		return tailapi.CleanupResult{}, nil
 	})
 	oldWrite := writeNodeIdentityFn
+	changedIdentity := requestedNodeIdentity(changed, "", identityPreparedBeforeUp)
 	writeNodeIdentityFn = func(path string, identity nodeIdentity) error {
-		if sameStringSet(identity.Tags, changed.Tags) {
+		if sameStringSet(identity.Tags, changedIdentity.Tags) {
 			return errors.New("disk full")
 		}
 		return oldWrite(path, identity)
@@ -447,7 +449,7 @@ func TestNodeIdentityPublicReplacementWriteFailureClosesListener(t *testing.T) {
 		t.Fatalf("public replacement failure left listener or constructed new node: closed=%v constructed=%v", listener.closed.Load(), constructed)
 	}
 	recorded, found, err := readNodeIdentity(path)
-	if err != nil || !found || !sameStringSet(recorded.Tags, old.Tags) {
+	if err != nil || !found || !sameStringSet(recorded.Tags, requestedNodeIdentity(old, "", identityPreparedBeforeUp).Tags) {
 		t.Fatalf("public replacement lost old durable record: %+v found=%v err=%v", recorded, found, err)
 	}
 }

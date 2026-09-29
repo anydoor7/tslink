@@ -112,7 +112,11 @@ func (s *Server) nodeIdentityPath(name string) (string, error) {
 	return filepath.Join(s.cfgDir, "node-identities", name+".json"), nil
 }
 
+// requestedNodeIdentity describes the node as it is constructed, not as the
+// registry stores it: tag:tslink-funnel is derived at construction for a
+// public service, so turning Funnel on or off is an auth identity change.
 func requestedNodeIdentity(svc registry.Service, fallbackControlURL, origin string) nodeIdentity {
+	svc = serviceForNodeConstruction(svc)
 	tags := append([]string(nil), svc.Tags...)
 	sort.Strings(tags)
 	unique := tags[:0]
