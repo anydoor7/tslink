@@ -5,9 +5,9 @@ package cmd
 import "testing"
 
 // TestLaunchctlSeamIsBoundedAgainstABlockedManager pins the launchctl seam's
-// default implementation to runBoundedManagerCommand. A seam reverted to a
-// plain exec.Command(...).CombinedOutput() keeps every fixture-driven test
-// green, because those tests never reach the default; this one does.
+// default implementation to runBoundedManagerCommand. A seam reverted to an
+// unbounded CombinedOutput call keeps every fixture-driven test green,
+// because those tests never reach the default; this one does.
 func TestLaunchctlSeamIsBoundedAgainstABlockedManager(t *testing.T) {
 	installBlockingManagerShim(t, "launchctl")
 	requireSeamReturnsWithinBudget(t, "launchctl", func() ([]byte, error) {
