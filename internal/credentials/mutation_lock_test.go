@@ -153,12 +153,12 @@ func TestCredentialLockIgnoresConfigDirectory(t *testing.T) {
 	t.Setenv("USERPROFILE", t.TempDir())
 	t.Setenv("TSLINK_DISABLE_KEYRING", "0")
 	t.Setenv("TSLINK_CONFIG_DIR", filepath.Join(t.TempDir(), "one"))
-	first, err := credentialMutationLockPathFunc()
+	first, err := defaultCredentialMutationLockPath()
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("TSLINK_CONFIG_DIR", filepath.Join(t.TempDir(), "two"))
-	second, err := credentialMutationLockPathFunc()
+	second, err := defaultCredentialMutationLockPath()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,13 +174,13 @@ func TestFileOnlyCredentialLocksFollowConfigDirectory(t *testing.T) {
 	t.Setenv("TSLINK_DISABLE_KEYRING", "1")
 	firstConfig := filepath.Join(t.TempDir(), "one")
 	t.Setenv("TSLINK_CONFIG_DIR", firstConfig)
-	first, err := credentialMutationLockPathFunc()
+	first, err := defaultCredentialMutationLockPath()
 	if err != nil {
 		t.Fatal(err)
 	}
 	secondConfig := filepath.Join(t.TempDir(), "two")
 	t.Setenv("TSLINK_CONFIG_DIR", secondConfig)
-	second, err := credentialMutationLockPathFunc()
+	second, err := defaultCredentialMutationLockPath()
 	if err != nil {
 		t.Fatal(err)
 	}

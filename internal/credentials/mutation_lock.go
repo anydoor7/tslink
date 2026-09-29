@@ -12,10 +12,17 @@ import (
 	"github.com/monody0007/tslink/internal/filelock"
 )
 
+var credentialMutationLockPathFunc = defaultCredentialMutationLockPath
+
+// credentialLockPathCheck vets every lock path before it is created or
+// opened. Production leaves it nil; IsolateForTesting installs a check that
+// refuses the real account home.
+var credentialLockPathCheck func(path string) error
+
 // The keyring is shared by all TSLink config directories for this OS user.
 // Keep its transaction lock outside TSLINK_CONFIG_DIR so a CLI and daemon
 // using different config directories still serialize their credential writes.
-var credentialMutationLockPathFunc = func() (string, error) {
+func defaultCredentialMutationLockPath() (string, error) {
 	if !keyringEnabledFunc() {
 		// With keyring deliberately disabled, credential files are scoped to
 		// this config directory. This also keeps isolated CLI/E2E fixtures
@@ -98,6 +105,11 @@ func acquireCredentialMutationLock() (func(), error) {
 }
 
 func lockCredentialPath(path string, deadline time.Time) (*os.File, error) {
+	if credentialLockPathCheck != nil {
+		if err := credentialLockPathCheck(path); err != nil {
+			return nil, err
+		}
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, fmt.Errorf("create credential transaction lock directory: %w", err)
 	}
