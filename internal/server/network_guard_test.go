@@ -8,5 +8,8 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	os.Exit(testenv.RunWithNonLoopbackDialGuard(m.Run, "internal/server"))
+	os.Exit(testenv.Main(m, func() int {
+		newTSNetServerFn = refuseRealTSNetServer
+		return testenv.RunWithNonLoopbackDialGuard(m.Run, "internal/server")
+	}))
 }

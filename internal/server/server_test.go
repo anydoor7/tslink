@@ -6455,22 +6455,41 @@ func TestSyncNodes_EnsureTagsCalledOnNewService(t *testing.T) {
 		{Name: "newapp", Type: "proxy", Target: "http://localhost:3000", Tags: []string{"tag:tsmain", "tag:shared"}},
 	})
 
+	fake := &fakeTSNetServer{localClient: localapitest.NewClient(nil), certDomains: []string{"newapp.tailnet.ts.net"}}
+	nodesBuilt := 0
+	oldNew := newTSNetServerFn
+	newTSNetServerFn = func(registry.Service, string, string, string) tsnetServer {
+		nodesBuilt++
+		return fake
+	}
+	t.Cleanup(func() { newTSNetServerFn = oldNew })
+
 	s, err := New("key", "")
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
+	t.Cleanup(s.closeAllNodes)
 
 	var ensuredTags []string
+	nodesBuiltAtEnsure := -1
 	s.SetEnsureTagsFn(func(ctx context.Context, tags []string) error {
 		ensuredTags = tags
+		nodesBuiltAtEnsure = nodesBuilt
 		return nil
 	})
 
-	// syncNodes will fail on startNodeLocked (no real tsnet), but ensureTagsFn should be called first
-	_ = s.syncNodes(context.Background())
+	// The fake tsnet lets the new service's node come up, so the ensure has to
+	// happen on the way to a started node, before that node is constructed.
+	if err := s.syncNodes(context.Background()); err != nil {
+		t.Fatalf("syncNodes() error = %v", err)
+	}
 
 	if len(ensuredTags) < 2 {
 		t.Fatalf("expected at least 2 tags ensured, got: %v", ensuredTags)
+	}
+	if nodesBuiltAtEnsure != 0 || nodesBuilt != 1 || fake.upContext == nil {
+		t.Fatalf("ensure ran after %d node construction(s); %d node(s) built, Up called %v; want tags ensured before the one new node is built and brought up",
+			nodesBuiltAtEnsure, nodesBuilt, fake.upContext != nil)
 	}
 }
 
@@ -6484,13 +6503,25 @@ func TestSyncNodes_EnsureTagsNotCalledWhenNil(t *testing.T) {
 		{Name: "app", Type: "proxy", Target: "http://localhost:3000", Tags: []string{"tag:tsmain"}},
 	})
 
+	fake := &fakeTSNetServer{localClient: localapitest.NewClient(nil), certDomains: []string{"app.tailnet.ts.net"}}
+	oldNew := newTSNetServerFn
+	newTSNetServerFn = func(registry.Service, string, string, string) tsnetServer { return fake }
+	t.Cleanup(func() { newTSNetServerFn = oldNew })
+
 	s, err := New("key", "")
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
+	t.Cleanup(s.closeAllNodes)
 
-	// ensureTagsFn is nil by default — should not panic
-	_ = s.syncNodes(context.Background())
+	// ensureTagsFn is nil by default — should not panic, and must not keep
+	// the service's node from starting.
+	if err := s.syncNodes(context.Background()); err != nil {
+		t.Fatalf("syncNodes() error = %v", err)
+	}
+	if fake.upContext == nil {
+		t.Fatal("syncNodes() with a nil ensureTagsFn never brought the node up")
+	}
 }
 
 func TestSyncNodes_EnsureTagsErrorLogged(t *testing.T) {
