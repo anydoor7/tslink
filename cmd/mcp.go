@@ -978,10 +978,15 @@ func runMCPStdio(ctx context.Context, in io.Reader, out io.Writer, actions mcpAc
 	sessionCtx, cancelSession := context.WithCancelCause(ctx)
 	defer cancelSession(nil)
 	reader := newMCPRecordLimitReader(in, mcpMaxRecordBytes)
+	writer := &mcpNonClosingWriter{inner: out}
+	// On every return, including one that abandons a handler after
+	// mcpCancelGrace, nothing writes to out afterwards and what was written
+	// is complete.
+	defer writer.release()
 	server := newMCPServer(actions)
 	settled := make(chan struct{})
 	transport := &mcpDrainTransport{
-		inner:      &mcp.IOTransport{Reader: reader, Writer: &mcpNonClosingWriter{inner: out}},
+		inner:      &mcp.IOTransport{Reader: reader, Writer: writer},
 		reader:     reader,
 		caller:     sessionCtx,
 		decodedEOF: make(chan struct{}),
@@ -1158,13 +1163,32 @@ func (c *mcpDrainConnection) Close() error {
 }
 
 // mcpNonClosingWriter leaves command-owned stdout open when the SDK closes its
-// transport.
+// transport, and stops writing to it once runMCPStdio returns.
 type mcpNonClosingWriter struct {
-	inner io.Writer
+	inner    io.Writer
+	mu       sync.Mutex
+	released bool
 }
 
-func (w *mcpNonClosingWriter) Write(p []byte) (int, error) { return w.inner.Write(p) }
-func (w *mcpNonClosingWriter) Close() error                { return nil }
+func (w *mcpNonClosingWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.released {
+		return 0, io.ErrClosedPipe
+	}
+	return w.inner.Write(p)
+}
+
+func (w *mcpNonClosingWriter) Close() error { return nil }
+
+// release refuses every later write. It waits for a write already in
+// progress, so everything written happens before the caller reads out; a
+// session abandoned after mcpCancelGrace would otherwise still be writing.
+func (w *mcpNonClosingWriter) release() {
+	w.mu.Lock()
+	w.released = true
+	w.mu.Unlock()
+}
 
 // mcpRecordLimitReader bounds the bytes a single newline-delimited record may
 // contribute before the stream is abandoned.
