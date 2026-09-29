@@ -610,7 +610,7 @@
           "type": "bool",
           "default": "true",
           "scope": "local",
-          "usage": "Preview reconciliation without registry, device, or ACL deletion (set --dry-run=false to apply)"
+          "usage": "Preview reconciliation without registry or device changes (set --dry-run=false to apply)"
         },
         {
           "name": "force",
@@ -631,7 +631,7 @@
           "type": "bool",
           "default": "false",
           "scope": "local",
-          "usage": "Report shared Funnel ACL status; local cleanup never revokes the tailnet-wide grant"
+          "usage": "Report whether this host still uses the shared Funnel grant (does not query the tailnet ACL); local cleanup never revokes the tailnet-wide grant"
         }
       ],
       "json_result_fields": {
