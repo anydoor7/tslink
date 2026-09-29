@@ -3,6 +3,7 @@ package credentials
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -92,6 +93,12 @@ func credentialLockBusyError(path string, waited time.Duration) error {
 	}
 }
 
+var tryLockCredentialFileFunc = tryLockCredentialFile
+
+// credentialLockUnavailableWarned limits the unsupported-flock warning to one
+// per process.
+var credentialLockUnavailableWarned atomic.Bool
+
 var credentialMutationGate = func() chan struct{} {
 	gate := make(chan struct{}, 1)
 	gate <- struct{}{}
@@ -150,6 +157,10 @@ func acquireCredentialMutationLock() (func(), error) {
 			continue
 		}
 		if err := lockCredentialFile(f, path, timeout, deadline); err != nil {
+			if errors.Is(err, errCredentialFileLockUnavailable) {
+				// The filesystem cannot flock; the in-process gate still holds.
+				continue
+			}
 			releaseAll()
 			return nil, err
 		}
@@ -189,13 +200,23 @@ func openCredentialLockPath(path string) (*os.File, os.FileInfo, error) {
 	return f, info, nil
 }
 
+// errCredentialFileLockUnavailable means the filesystem cannot lock the file
+// at all (NFS without lockd, some SMB/FUSE mounts), as opposed to contention.
+var errCredentialFileLockUnavailable = errors.New("credential transaction file lock unavailable")
+
 // lockCredentialFile waits for an exclusive lock on f until deadline. It
 // closes f on failure.
 func lockCredentialFile(f *os.File, path string, timeout time.Duration, deadline time.Time) error {
 	for {
-		locked, lockErr := tryLockCredentialFile(f)
+		locked, lockErr := tryLockCredentialFileFunc(f)
 		if lockErr != nil {
 			_ = f.Close()
+			if credentialFileLockUnsupported(lockErr) {
+				if credentialLockUnavailableWarned.CompareAndSwap(false, true) {
+					slog.Warn("credential transaction file lock unavailable on this filesystem; other tslink processes are not excluded, only this process's transactions are serialized", "path", path, "error", lockErr)
+				}
+				return errCredentialFileLockUnavailable
+			}
 			return fmt.Errorf("lock credential transaction: %w", lockErr)
 		}
 		if locked {
