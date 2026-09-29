@@ -673,6 +673,15 @@ func GetAuthKey(ctx context.Context, opts AuthKeyOptions) (string, error) {
 // MigrateFromLegacy moves a file-based API key into the system keychain.
 // Safe to call even if there's nothing to migrate.
 func MigrateFromLegacy() (migrated bool) {
+	path, err := apiKeyPathFunc()
+	if err != nil {
+		return false
+	}
+	// Most installs never had a legacy file; do not create lock files for
+	// them on every serve start. The file is read again under the lock.
+	if _, err := os.Lstat(path); err != nil {
+		return false
+	}
 	unlock, err := acquireCredentialMutationLock()
 	if err != nil {
 		slog.Warn("legacy credential migration skipped: credential transaction lock unavailable", "error", err)
@@ -680,10 +689,6 @@ func MigrateFromLegacy() (migrated bool) {
 	}
 	defer unlock()
 
-	path, err := apiKeyPathFunc()
-	if err != nil {
-		return false
-	}
 	b, err := readCredentialFile(path)
 	if err != nil {
 		return false
