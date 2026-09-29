@@ -9,6 +9,9 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+// Every LockFileEx failure other than contention stays fatal on Windows.
+func credentialFileLockUnsupported(error) bool { return false }
+
 func tryLockCredentialFile(f *os.File) (bool, error) {
 	var overlapped windows.Overlapped
 	err := windows.LockFileEx(windows.Handle(f.Fd()), 0x00000002|0x00000001, 0, 1, 0, &overlapped)

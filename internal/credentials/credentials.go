@@ -155,6 +155,13 @@ func DeleteStoredCredentialsStrict() error {
 		return err
 	}
 	defer unlock()
+	return DeleteStoredCredentialsStrictLocked()
+}
+
+// DeleteStoredCredentialsStrictLocked is DeleteStoredCredentialsStrict for a
+// caller that already holds the credential mutation lock, such as logout
+// removing values and metadata in one transaction.
+func DeleteStoredCredentialsStrictLocked() error {
 	return errors.Join(
 		deleteCredentialStrict("API key", keychainAPIKey, apiKeyPathFunc),
 		deleteCredentialStrict("OAuth client secret", keychainClientSecret, clientSecretPathFunc),
@@ -666,16 +673,22 @@ func GetAuthKey(ctx context.Context, opts AuthKeyOptions) (string, error) {
 // MigrateFromLegacy moves a file-based API key into the system keychain.
 // Safe to call even if there's nothing to migrate.
 func MigrateFromLegacy() (migrated bool) {
-	unlock, err := acquireCredentialMutationLock()
-	if err != nil {
-		return false
-	}
-	defer unlock()
-
 	path, err := apiKeyPathFunc()
 	if err != nil {
 		return false
 	}
+	// Most installs never had a legacy file; do not create lock files for
+	// them on every serve start. The file is read again under the lock.
+	if _, err := os.Lstat(path); err != nil {
+		return false
+	}
+	unlock, err := acquireCredentialMutationLock()
+	if err != nil {
+		slog.Warn("legacy credential migration skipped: credential transaction lock unavailable", "error", err)
+		return false
+	}
+	defer unlock()
+
 	b, err := readCredentialFile(path)
 	if err != nil {
 		return false
@@ -695,6 +708,7 @@ func MigrateFromLegacy() (migrated bool) {
 		// stale after rotation, so neither overwrite the keyring nor delete the
 		// conflicting file without an explicit operator decision.
 		if stored != key {
+			slog.Warn("legacy API key file differs from the keyring credential; kept the keyring value and left the file in place", "path", path)
 			return false
 		}
 	case err == nil, errors.Is(err, keyring.ErrNotFound):

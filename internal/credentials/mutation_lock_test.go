@@ -149,16 +149,22 @@ func TestMigrationDoesNotDeleteConcurrentFallback(t *testing.T) {
 }
 
 func TestCredentialLockIgnoresConfigDirectory(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("USERPROFILE", t.TempDir())
+	// HOME and USERPROFILE do not isolate the account lock: it follows the OS
+	// account. Vary them with the config directory and assert the path does
+	// not move. Only the path is computed; nothing is opened.
 	t.Setenv("TSLINK_DISABLE_KEYRING", "0")
+	firstHome, secondHome := t.TempDir(), t.TempDir()
+	t.Setenv("HOME", firstHome)
+	t.Setenv("USERPROFILE", firstHome)
 	t.Setenv("TSLINK_CONFIG_DIR", filepath.Join(t.TempDir(), "one"))
-	first, err := credentialMutationLockPathFunc()
+	first, err := defaultCredentialMutationLockPath()
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Setenv("HOME", secondHome)
+	t.Setenv("USERPROFILE", secondHome)
 	t.Setenv("TSLINK_CONFIG_DIR", filepath.Join(t.TempDir(), "two"))
-	second, err := credentialMutationLockPathFunc()
+	second, err := defaultCredentialMutationLockPath()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,19 +174,24 @@ func TestCredentialLockIgnoresConfigDirectory(t *testing.T) {
 	if first == "" {
 		t.Fatal("enabled keyring has no account lock path")
 	}
+	for _, home := range []string{firstHome, secondHome} {
+		if pathInside(first, home) {
+			t.Fatalf("account lock %s follows HOME/USERPROFILE %s instead of the OS account", first, home)
+		}
+	}
 }
 
 func TestFileOnlyCredentialLocksFollowConfigDirectory(t *testing.T) {
 	t.Setenv("TSLINK_DISABLE_KEYRING", "1")
 	firstConfig := filepath.Join(t.TempDir(), "one")
 	t.Setenv("TSLINK_CONFIG_DIR", firstConfig)
-	first, err := credentialMutationLockPathFunc()
+	first, err := defaultCredentialMutationLockPath()
 	if err != nil {
 		t.Fatal(err)
 	}
 	secondConfig := filepath.Join(t.TempDir(), "two")
 	t.Setenv("TSLINK_CONFIG_DIR", secondConfig)
-	second, err := credentialMutationLockPathFunc()
+	second, err := defaultCredentialMutationLockPath()
 	if err != nil {
 		t.Fatal(err)
 	}

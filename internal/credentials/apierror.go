@@ -129,7 +129,7 @@ func ProbeStoredCredential(ctx context.Context, slot string, now time.Time) (Pro
 			outcome.Cause = ClassifyAPIError("probe "+slot+" credential", probeErr)
 		}
 	}
-	if recordErr := RecordVerification(slot, outcome.Result, now); recordErr == nil {
+	if recordErr := RecordVerification(slot, Fingerprint(value), outcome.Result, now); recordErr == nil {
 		outcome.Recorded = true
 	} else {
 		outcome.Cause = errors.Join(outcome.Cause, fmt.Errorf("record %s verification: %w", slot, recordErr))

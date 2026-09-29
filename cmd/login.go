@@ -92,8 +92,8 @@ var (
 	loginGetClientSecretFn     = credentials.GetClientSecret
 	loginDeleteClientSecretFn  = credentials.DeleteClientSecretChecked
 	loginReadSlotMetaFn        = credentials.ReadSlotMetadata
-	loginWriteSlotMetaFn       = credentials.WriteSlotMetadata
-	loginDeleteSlotMetaFn      = credentials.DeleteSlotMetadata
+	loginWriteSlotMetaFn       = credentials.WriteSlotMetadataLocked  // only inside the login transaction
+	loginDeleteSlotMetaFn      = credentials.DeleteSlotMetadataLocked // only inside the login transaction
 	loginMutationTransactionFn = credentials.WithMutationTransaction
 	loginNowFn                 = func() time.Time { return time.Now().UTC() }
 	loginOpenBrowserFn         = openBrowser
@@ -715,11 +715,19 @@ func commitLoginCredential(ctx context.Context, store loginCredentialStore, mode
 		var result loginCommitResult
 		err := loginMutationTransactionFn(func(transaction *credentials.MutationTransaction) error {
 			liveStore.transaction = transaction
+			files := transaction.SnapshotCredentialFiles()
 			var commitErr error
 			result, commitErr = commitLoginCredentialValidated(ctx, liveStore, mode, value, opts, true)
+			if commitErr != nil {
+				// A keyring write removed any file copy; put back a file that
+				// disagreed with the keyring before this login.
+				if restoreErr := transaction.RestoreRemovedCredentialFiles(files); restoreErr != nil {
+					commitErr = fmt.Errorf("%w; restore credential files failed: %v", commitErr, restoreErr)
+				}
+			}
 			return commitErr
 		})
-		return result, err
+		return result, credentialLockConflict(err)
 	}
 	return commitLoginCredentialValidated(ctx, store, mode, value, opts, false)
 }
@@ -790,6 +798,16 @@ func commitLoginCredentialValidated(ctx context.Context, store loginCredentialSt
 		}
 	}
 	return result, nil
+}
+
+// credentialLockConflict gives credential-lock contention the CLI's retryable
+// conflict exit code while keeping its stable code, message and next steps.
+func credentialLockConflict(err error) error {
+	var coded *registry.StableCodeError
+	if !errors.Is(err, credentials.ErrMutationLockBusy) || !errors.As(err, &coded) {
+		return err
+	}
+	return &registry.StableCodeError{Code: coded.Code, Next: coded.NextCommands(), Err: &output.CodeError{Code: output.ExitConflict, Message: err.Error()}}
 }
 
 func verifyLoginCredentialValue(store loginCredentialStore, mode loginCredentialMode, want string) error {

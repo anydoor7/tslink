@@ -256,7 +256,7 @@ func TestDeleteSlotMetadataAndRemoveFile(t *testing.T) {
 
 func TestRecordVerificationOnlyTouchesKnownSlots(t *testing.T) {
 	setup(t)
-	if err := RecordVerification(SlotAPIKey, VerifyResultOK, metaTestNow); err != nil {
+	if err := RecordVerification(SlotAPIKey, Fingerprint("tskey-api-FAKE"), VerifyResultOK, metaTestNow); err != nil {
 		t.Fatalf("RecordVerification() without metadata error = %v", err)
 	}
 	if _, err := os.Stat(metaPath(t)); !os.IsNotExist(err) {
@@ -267,7 +267,7 @@ func TestRecordVerificationOnlyTouchesKnownSlots(t *testing.T) {
 	}
 	later := metaTestNow.Add(2 * time.Hour)
 	for _, result := range []string{VerifyResultOK, VerifyResultUnauthorized, VerifyResultForbidden, VerifyResultUnreachable} {
-		if err := RecordVerification(SlotAPIKey, result, later); err != nil {
+		if err := RecordVerification(SlotAPIKey, Fingerprint("tskey-api-FAKE"), result, later); err != nil {
 			t.Fatalf("RecordVerification(%s) error = %v", result, err)
 		}
 		meta, err := ReadSlotMetadata(SlotAPIKey)
@@ -275,10 +275,10 @@ func TestRecordVerificationOnlyTouchesKnownSlots(t *testing.T) {
 			t.Fatalf("after %s: meta=%+v err=%v", result, meta, err)
 		}
 	}
-	if err := RecordVerification(SlotAPIKey, "maybe", later); err == nil {
+	if err := RecordVerification(SlotAPIKey, Fingerprint("tskey-api-FAKE"), "maybe", later); err == nil {
 		t.Fatal("unknown verification result must be rejected")
 	}
-	if err := RecordVerification("bogus", VerifyResultOK, later); !errors.Is(err, ErrUnknownCredentialSlot) {
+	if err := RecordVerification("bogus", Fingerprint("tskey-api-FAKE"), VerifyResultOK, later); !errors.Is(err, ErrUnknownCredentialSlot) {
 		t.Fatalf("RecordVerification(bogus) error = %v", err)
 	}
 }
@@ -510,7 +510,7 @@ func TestMetadataPathResolutionErrorPropagates(t *testing.T) {
 	if err := DeleteSlotMetadata(SlotAPIKey); err == nil {
 		t.Fatal("DeleteSlotMetadata() error = nil, want path error")
 	}
-	if err := RecordVerification(SlotAPIKey, VerifyResultOK, metaTestNow); err == nil {
+	if err := RecordVerification(SlotAPIKey, Fingerprint("tskey-api-FAKE"), VerifyResultOK, metaTestNow); err == nil {
 		t.Fatal("RecordVerification() error = nil, want path error")
 	}
 	if err := WriteSlotMetadata("bogus", SlotMetadata{}); !errors.Is(err, ErrUnknownCredentialSlot) {
