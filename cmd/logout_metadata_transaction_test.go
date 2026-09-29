@@ -5,6 +5,7 @@ import (
 	"context"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -30,23 +31,41 @@ func TestLogoutCannotRemoveMetadataOfLoginCommittedDuringLogout(t *testing.T) {
 	}
 
 	userExpiry := loginTestNow.Add(30 * 24 * time.Hour)
-	loginDone := make(chan error, 1)
+	var loginErr error
+	var loginStarted atomic.Bool
+	loginFinished := make(chan struct{})
 	originalDelete := deleteStoredCredentialsFn
 	t.Cleanup(func() { deleteStoredCredentialsFn = originalDelete })
 	deleteStoredCredentialsFn = func() error {
 		err := originalDelete()
+		loginStarted.Store(true)
 		go func() {
-			_, commitErr := commitLoginCredential(context.Background(), defaultLoginCredentialStore{}, loginCredentialModeAPIKey, "tskey-api-FAKE-new",
+			_, loginErr = commitLoginCredential(context.Background(), defaultLoginCredentialStore{}, loginCredentialModeAPIKey, "tskey-api-FAKE-new",
 				loginReplaceOptions{Now: loginTestNow, ExpiresAt: &userExpiry, ExpiresAtSource: credentials.ExpirySourceUser})
-			loginDone <- commitErr
+			close(loginFinished)
 		}()
 		select {
-		case commitErr := <-loginDone:
+		case <-loginFinished:
 			t.Log("login committed between logout's value delete and its metadata removal")
-			loginDone <- commitErr
 		case <-time.After(300 * time.Millisecond):
 		}
 		return err
+	}
+	// go-keyring's in-memory mock is not goroutine-safe (the real stores are
+	// separate processes). Logout's final read-back waits for the concurrent
+	// login so the two never touch the mock map at once; the ordering of
+	// logout's own delete and metadata removal is unaffected.
+	originalInspect := inspectStoredCredentialsFn
+	t.Cleanup(func() { inspectStoredCredentialsFn = originalInspect })
+	inspectStoredCredentialsFn = func() (credentials.StoredCredentialStatus, error) {
+		if loginStarted.Load() {
+			select {
+			case <-loginFinished:
+			case <-time.After(10 * time.Second):
+				t.Error("concurrent login did not finish")
+			}
+		}
+		return originalInspect()
 	}
 
 	// Logout's final read-back may see the concurrent login's credential and
@@ -56,9 +75,9 @@ func TestLogoutCannotRemoveMetadataOfLoginCommittedDuringLogout(t *testing.T) {
 		t.Fatalf("logout: %v", err)
 	}
 	select {
-	case err := <-loginDone:
-		if err != nil {
-			t.Fatalf("concurrent login: %v", err)
+	case <-loginFinished:
+		if loginErr != nil {
+			t.Fatalf("concurrent login: %v", loginErr)
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("concurrent login did not finish")
