@@ -458,7 +458,10 @@ func captureLaunchAgentPreviousState(plistPath string) (launchAgentPreviousState
 		Mode:    info.Mode().Perm(),
 	}
 
-	domain, target, owned := launchAgentTargetForRunningDaemon()
+	domain, target, owned, err := launchAgentTargetForRunningDaemon()
+	if err != nil {
+		return launchAgentPreviousState{}, fmt.Errorf("could not tell whether launchd owns the running TSLink daemon: %w; nothing was changed, retry 'tslink install'", err)
+	}
 	if owned {
 		state.Domain = domain
 		state.Target = target
@@ -470,28 +473,38 @@ func captureLaunchAgentPreviousState(plistPath string) (launchAgentPreviousState
 	return state, nil
 }
 
-func launchAgentTargetForRunningDaemon() (string, string, bool) {
+// launchAgentTargetForRunningDaemon returns an error only when no domain
+// proved ownership and at least one could not be asked within two query
+// budgets: ownership is then unknown, which is neither "owned" nor "not owned".
+func launchAgentTargetForRunningDaemon() (string, string, bool, error) {
 	pidPath, err := pidPathFn()
 	if err != nil || !isRunningFn(pidPath) {
-		return "", "", false
+		return "", "", false, nil
 	}
 	daemonPID, err := readPIDFn(pidPath)
 	if err != nil || daemonPID <= 0 {
-		return "", "", false
+		return "", "", false, nil
 	}
 
+	var unknown error
 	for _, domain := range []string{launchctlDomain(), launchctlUserDomain()} {
 		target := launchctlServiceTargetForDomain(domain)
-		stateOutput, printErr := launchctlCombinedOutput("print", target)
+		stateOutput, printErr := retryManagerQueryOnTimeout(func() ([]byte, error) {
+			return launchctlCombinedOutput("print", target)
+		})
+		if errors.Is(printErr, context.DeadlineExceeded) {
+			unknown = printErr
+			continue
+		}
 		if printErr != nil {
 			continue
 		}
 		state, launchdPID := parseLaunchAgentState(stateOutput)
 		if state == "running" && launchdPID == daemonPID {
-			return domain, target, true
+			return domain, target, true, nil
 		}
 	}
-	return "", "", false
+	return "", "", false, unknown
 }
 
 func plistPath() (string, error) {
@@ -601,9 +614,18 @@ func verifyLaunchAgentRunning(target string) ([]byte, error) {
 
 func waitForLaunchAgentRunning(target string, timeout, pollInterval time.Duration) ([]byte, error) {
 	var lastOutput []byte
+	seenRunning := false
 	_, err := waitStableDaemon(context.Background(), func() (int, error) {
 		var printErr error
-		lastOutput, printErr = launchctlCombinedOutput("print", target)
+		lastOutput, printErr = retryManagerQueryOnTimeout(func() ([]byte, error) {
+			return launchctlCombinedOutput("print", target)
+		})
+		if seenRunning && errors.Is(printErr, context.DeadlineExceeded) {
+			// Unknown, not "not running": once the job was seen, reporting 0
+			// here would read as its PID changing and roll back a job that
+			// may be healthy.
+			return 0, printErr
+		}
 		if printErr != nil {
 			return 0, nil
 		}
@@ -611,6 +633,7 @@ func waitForLaunchAgentRunning(target string, timeout, pollInterval time.Duratio
 		if state != "running" {
 			return 0, nil
 		}
+		seenRunning = pid > 0
 		return pid, nil
 	}, timeout, pollInterval, launchAgentSettleWindow)
 	if err != nil {

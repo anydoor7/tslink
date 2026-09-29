@@ -37,9 +37,10 @@ authorized only by a durable exact NodeID previously observed from that
 service's tsnet node; hostname matches alone are always protected.
 
 The shared Funnel ACL grant is never removed by local reconciliation, because
-another installation may still use it. --manage-acl reports this safety
-decision; global revocation requires separate tailnet-wide review and the
-explicit tags delete-remote command with --force and --manage-acl.`,
+another installation may still use it. --manage-acl reports whether this
+host still uses the shared Funnel grant; it does not query the tailnet ACL.
+Global revocation requires separate tailnet-wide review and the explicit
+tags delete-remote command with --force and --manage-acl.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			adopt, _ := cmd.Flags().GetString("adopt")
 			force, _ := cmd.Flags().GetBool("force")
@@ -163,8 +164,8 @@ explicit tags delete-remote command with --force and --manage-acl.`,
 			return nil
 		},
 	}
-	cleanupCmd.Flags().Bool("dry-run", true, "Preview reconciliation without registry, device, or ACL deletion (set --dry-run=false to apply)")
-	cleanupCmd.Flags().Bool("manage-acl", false, "Report shared Funnel ACL status; local cleanup never revokes the tailnet-wide grant")
+	cleanupCmd.Flags().Bool("dry-run", true, "Preview reconciliation without registry or device changes (set --dry-run=false to apply)")
+	cleanupCmd.Flags().Bool("manage-acl", false, "Report whether this host still uses the shared Funnel grant (does not query the tailnet ACL); local cleanup never revokes the tailnet-wide grant")
 	cleanupCmd.Flags().String("adopt", "", "Preview or record exact ownership for one literal TSLink-tagged legacy device hostname (writing requires --dry-run=false)")
 	cleanupCmd.Flags().Bool("force", false, "Confirm the explicitly named --adopt migration")
 	rootCmd.AddCommand(cleanupCmd)

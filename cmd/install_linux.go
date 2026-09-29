@@ -3,6 +3,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -202,11 +203,15 @@ func captureSystemdPreviousState(servicePath string) (systemdPreviousState, erro
 	if err != nil {
 		return systemdPreviousState{}, fmt.Errorf("read existing systemd user unit before upgrade: %w", err)
 	}
+	owned, err := systemdOwnsRunningDaemon()
+	if err != nil {
+		return systemdPreviousState{}, fmt.Errorf("could not tell whether systemd owns the running TSLink daemon: %w; nothing was changed, retry 'tslink install'", err)
+	}
 	state := systemdPreviousState{
 		Existed:      true,
 		Unit:         unit,
 		Mode:         info.Mode().Perm(),
-		OwnedRunning: systemdOwnsRunningDaemon(),
+		OwnedRunning: owned,
 	}
 	if !state.OwnedRunning {
 		if err := installDaemonArtifactConflictFn(); err != nil {
@@ -279,28 +284,36 @@ func secureSystemdUnitMode(mode os.FileMode) os.FileMode {
 	return mode.Perm()
 }
 
-func systemdOwnsRunningDaemon() bool {
+// systemdOwnsRunningDaemon returns an error only when systemd could not be
+// asked at all within two query budgets: ownership is then unknown, which is
+// neither "owned" nor "not owned".
+func systemdOwnsRunningDaemon() (bool, error) {
 	pidPath, err := pidPathFn()
 	if err != nil || !isRunningFn(pidPath) {
-		return false
+		return false, nil
 	}
 	daemonPID, err := readPIDFn(pidPath)
 	if err != nil || daemonPID <= 0 {
-		return false
+		return false, nil
 	}
 
-	stateOutput, err := systemctlCombinedOutput(
-		"--user",
-		"show",
-		systemdServiceName,
-		"--property=MainPID",
-		"--no-pager",
-	)
+	stateOutput, err := retryManagerQueryOnTimeout(func() ([]byte, error) {
+		return systemctlCombinedOutput(
+			"--user",
+			"show",
+			systemdServiceName,
+			"--property=MainPID",
+			"--no-pager",
+		)
+	})
+	if errors.Is(err, context.DeadlineExceeded) {
+		return false, err
+	}
 	if err != nil {
-		return false
+		return false, nil
 	}
 	mainPID, err := strconv.Atoi(parseSystemdProperties(stateOutput)["MainPID"])
-	return err == nil && mainPID == daemonPID
+	return err == nil && mainPID == daemonPID, nil
 }
 
 // verifySystemdServiceRunning reports whether the unit settled, and whether it
@@ -324,16 +337,18 @@ func verifySystemdServiceRunning() (bool, error) {
 	firstSample := true
 
 	for {
-		output, err := systemctlCombinedOutput(
-			"--user",
-			"show",
-			systemdServiceName,
-			"--property=ActiveState",
-			"--property=SubState",
-			"--property=MainPID",
-			"--property=NRestarts",
-			"--no-pager",
-		)
+		output, err := retryManagerQueryOnTimeout(func() ([]byte, error) {
+			return systemctlCombinedOutput(
+				"--user",
+				"show",
+				systemdServiceName,
+				"--property=ActiveState",
+				"--property=SubState",
+				"--property=MainPID",
+				"--property=NRestarts",
+				"--no-pager",
+			)
+		})
 		if err != nil {
 			return false, fmt.Errorf("verify systemd user service state: %w%s", err, commandOutputSuffix(output))
 		}

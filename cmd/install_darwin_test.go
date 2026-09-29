@@ -2723,8 +2723,8 @@ func TestLaunchAgentTargetForRunningDaemonRequiresRunningStateAndPositivePID(t *
 			t.Fatalf("launchctl called with non-positive daemon PID: %v", args)
 			return nil, nil
 		}
-		if _, _, owned := launchAgentTargetForRunningDaemon(); owned {
-			t.Fatal("launchAgentTargetForRunningDaemon() owned=true for PID 0")
+		if _, _, owned, err := launchAgentTargetForRunningDaemon(); owned || err != nil {
+			t.Fatalf("launchAgentTargetForRunningDaemon() owned=%v err=%v for PID 0", owned, err)
 		}
 	})
 
@@ -2733,8 +2733,8 @@ func TestLaunchAgentTargetForRunningDaemonRequiresRunningStateAndPositivePID(t *
 		launchctlCombinedOutput = func(args ...string) ([]byte, error) {
 			return []byte("state = waiting\npid = 1775\n"), nil
 		}
-		if _, _, owned := launchAgentTargetForRunningDaemon(); owned {
-			t.Fatal("launchAgentTargetForRunningDaemon() owned=true for waiting state")
+		if _, _, owned, err := launchAgentTargetForRunningDaemon(); owned || err != nil {
+			t.Fatalf("launchAgentTargetForRunningDaemon() owned=%v err=%v for waiting state", owned, err)
 		}
 	})
 }

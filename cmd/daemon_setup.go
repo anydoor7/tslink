@@ -71,6 +71,11 @@ var (
 	managerOutputFn          = boundedManagerOutput
 	trySupervisorLockFn      = trySupervisorLock
 	openSupervisorLockFn     = os.OpenFile
+
+	// bootstrapNowFn is the clock waitStableDaemon measures its settle window
+	// and deadline against, so a test can hold the window still while it
+	// counts samples instead of racing the scheduler.
+	bootstrapNowFn = time.Now
 )
 
 func boundedManagerOutput(name string, args ...string) ([]byte, error) {
@@ -314,7 +319,7 @@ func daemonEvidenceReady(snapshotPath, handoffPath string, pid int) bool {
 // process has been seen, death, a changed PID, or a changed state fails the
 // check, rather than blessing a crash/restart loop on its next lucky sample.
 func waitStableDaemon(ctx context.Context, sample func() (int, error), timeout, interval, settle time.Duration) (int, error) {
-	deadline := time.Now().Add(timeout)
+	deadline := bootstrapNowFn().Add(timeout)
 	var firstGood time.Time
 	var previousPID, samples int
 	for {
@@ -330,15 +335,15 @@ func waitStableDaemon(ctx context.Context, sample func() (int, error), timeout, 
 		}
 		if pid > 0 {
 			if previousPID == 0 {
-				firstGood = time.Now()
+				firstGood = bootstrapNowFn()
 			}
 			previousPID = pid
 			samples++
-			if samples >= 2 && time.Since(firstGood) >= settle {
+			if samples >= 2 && bootstrapNowFn().Sub(firstGood) >= settle {
 				return pid, nil
 			}
 		}
-		remaining := time.Until(deadline)
+		remaining := deadline.Sub(bootstrapNowFn())
 		if remaining <= 0 {
 			return 0, fmt.Errorf("daemon did not settle within %s (%d ready samples)", timeout, samples)
 		}

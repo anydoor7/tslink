@@ -8,6 +8,7 @@ import (
 	"io"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/output"
@@ -318,8 +319,15 @@ func tagsDeleteRemoteRun(ctx context.Context, out io.Writer, tag string, force, 
 	if err != nil {
 		return err
 	}
+	now := time.Now()
 	var usedBy []string
 	for _, svc := range reg.Services {
+		// The Funnel tag is derived from the Funnel setting and never
+		// persisted in svc.Tags, so an effective Funnel holds it as well.
+		if tag == registry.FunnelTag && registry.EffectiveServiceAt(svc, now).Funnel {
+			usedBy = append(usedBy, svc.Name)
+			continue
+		}
 		for _, t := range svc.Tags {
 			if t == tag {
 				usedBy = append(usedBy, svc.Name)

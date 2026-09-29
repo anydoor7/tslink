@@ -163,6 +163,20 @@ func resolveFunnelExpiry(funnel bool, ttl string, ttlSet bool, now time.Time) (*
 // buildService validates parameters and constructs a registry.Service.
 // For Dir type, it returns the service with Type set but Path empty —
 // the caller must resolve and validate the filesystem path.
+// barePortTarget reads a digits-only proxy or tcp target the way `tslink share`
+// reads its argument: a port on localhost. Anything with a host, a scheme or a
+// path is returned unchanged for the usual validation.
+func barePortTarget(kind, target string) (string, error) {
+	if target == "" || strings.Trim(target, "0123456789") != "" {
+		return target, nil
+	}
+	port, err := strconv.Atoi(target)
+	if err != nil || port < 1 || port > 65535 {
+		return "", output.ErrUsage(fmt.Sprintf("%s target %q: a bare value must be a port from 1 to 65535; otherwise use host:port", kind, target))
+	}
+	return net.JoinHostPort("localhost", strconv.Itoa(port)), nil
+}
+
 func buildService(p AddParams) (registry.Service, error) {
 	if err := registry.ValidateName(p.Name); err != nil {
 		return registry.Service{}, err
@@ -189,6 +203,12 @@ func buildService(p AddParams) (registry.Service, error) {
 	}
 	if modes != 1 {
 		return registry.Service{}, registry.ServiceTypeAmbiguousError()
+	}
+	if p.Proxy, err = barePortTarget("proxy", p.Proxy); err != nil {
+		return registry.Service{}, err
+	}
+	if p.TCP, err = barePortTarget("tcp", p.TCP); err != nil {
+		return registry.Service{}, err
 	}
 
 	if err := funnelOptionRequiresFunnel("--public", "--funnel", p.Public, p.Funnel); err != nil {

@@ -3,6 +3,7 @@ package inspect
 import (
 	"fmt"
 	"net"
+	"path/filepath"
 	"strconv"
 
 	"github.com/monody0007/tslink/internal/registry"
@@ -193,6 +194,10 @@ func backendFor(svc registry.Service) BackendView {
 	case registry.TypeProxy:
 		return BackendView{Kind: "http_target", Display: SanitizeBackendDisplay(svc.Target)}
 	case registry.TypeFile:
+		if svc.File != "" {
+			// A single-file share serves that one file, not its directory.
+			return BackendView{Kind: "file", Display: filepath.Join(svc.Path, svc.File)}
+		}
 		return BackendView{Kind: "directory", Display: svc.Path}
 	case registry.TypeTCP:
 		return BackendView{Kind: "tcp_target", Display: SanitizeBackendDisplay(svc.Target)}

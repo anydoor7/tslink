@@ -400,7 +400,7 @@ func TestRunForeground_WritePIDError(t *testing.T) {
 	saveServeState(t)
 	serveWritePIDFn = func(path string) error { return fmt.Errorf("permission denied") }
 
-	err := runForeground("/tmp/test.pid", "", "fake-key", "")
+	err := runForeground(filepath.Join(t.TempDir(), "test.pid"), "", "fake-key", "")
 	if err == nil || err.Error() != "write PID: permission denied" {
 		t.Fatalf("expected 'write PID: permission denied', got: %v", err)
 	}

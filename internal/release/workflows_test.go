@@ -24,6 +24,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -411,6 +412,13 @@ func TestCandidateDeclaresRequiredGates(t *testing.T) {
 // Execute the workflow's own Bash block, so a missing array declaration or a
 // renamed payload can no longer pass a source-text-only assertion.
 func TestArtifactVerifyChecksEveryBundledDocument(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		// The step runs on ubuntu-latest and the Linux release-config job
+		// already executes it here. On Windows, "bash" may resolve to Git Bash
+		// or to the System32 WSL launcher, and find/sha256sum/sort need not be
+		// on its PATH, so a result there would test the runner, not the step.
+		t.Skip("executes the ubuntu artifact-verify step with bash; covered on Linux")
+	}
 	body := readWorkflows(t)[candidateWorkflow]
 	var workflow struct {
 		Jobs map[string]struct {

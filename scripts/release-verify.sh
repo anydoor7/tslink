@@ -62,17 +62,23 @@ if [ -d "$DIST_DIR" ]; then
   # Every archive must carry the licence files and project documents.
   required_license=(LICENSE NOTICE THIRD_PARTY_NOTICES.md)
   bundled_docs=(COMMERCIAL.md COMMERCIAL_zh.md)
-  docs_ok=1
-  for a in "${archives[@]}"; do
-    case "$a" in
-      *.tar.gz) listing="$(tar tzf "$a")" ;;
-      *.zip)    listing="$(unzip -Z1 "$a" 2>/dev/null || true)" ;;
-    esac
-    for f in "${required_license[@]}" "${bundled_docs[@]}"; do
-      printf '%s\n' "$listing" | awk -F/ -v file="$f" '$NF == file { found=1 } END { exit !found }' || { docs_ok=0; log "    missing $f in $(basename "$a")"; }
+  # With no archives the loop checks nothing: bash >= 4.4 would report a
+  # vacuous pass, and bash 3.2 dies on the empty array under set -u.
+  if [ "${#archives[@]}" -gt 0 ]; then
+    docs_ok=1
+    for a in "${archives[@]}"; do
+      case "$a" in
+        *.tar.gz) listing="$(tar tzf "$a")" ;;
+        *.zip)    listing="$(unzip -Z1 "$a" 2>/dev/null || true)" ;;
+      esac
+      for f in "${required_license[@]}" "${bundled_docs[@]}"; do
+        printf '%s\n' "$listing" | awk -F/ -v file="$f" '$NF == file { found=1 } END { exit !found }' || { docs_ok=0; log "    missing $f in $(basename "$a")"; }
+      done
     done
-  done
-  [ "$docs_ok" -eq 1 ] && pass "licence files and project documents present in every archive" || fail "a licence file or project document is missing from some archive"
+    [ "$docs_ok" -eq 1 ] && pass "licence files and project documents present in every archive" || fail "a licence file or project document is missing from some archive"
+  else
+    fail "no archives to check for licence files and project documents"
+  fi
   # Sidecars for signing/SBOM must exist before we can verify signatures.
   sboms=("$DIST_DIR"/*.sbom.json)
   [ "${#sboms[@]}" -ge 1 ] && pass "SBOM sidecars present (${#sboms[@]})" || unknown "SBOM sidecars absent (snapshot ran with --skip=sbom?)"

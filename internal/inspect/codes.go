@@ -182,8 +182,11 @@ var WarningCodeRegistry = map[string]WarningCodeMeta{
 		Source:      "control_url",
 		Description: "A configured control_url is not a valid HTTP or HTTPS URL.",
 	},
+	// Info, like credential_tier1: the default tier needs no stored
+	// credential, so a fresh install with nothing enrolled yet is healthy.
+	// Anything actually wrong in that state is reported by its own finding.
 	WarningCodeCredentialNone: {
-		Severity:    "warning",
+		Severity:    "info",
 		Source:      "credentials",
 		Description: "Tier 1 interactive enrollment has not started; run tslink serve, or use tslink login only for optional Tier 2.",
 	},
