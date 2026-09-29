@@ -133,3 +133,38 @@ func TestMCPShareReportsARearmedFunnel(t *testing.T) {
 		t.Fatalf("funnel_expires_at = %v (%v), want the re-armed 1h deadline", again["funnel_expires_at"], err)
 	}
 }
+
+// TestRearmShareFunnelOnlyWritesTheEntryItRead keeps the re-arm from
+// overwriting a concurrent change: an entry edited or removed since it was
+// read is left alone, and the caller reads the registry again.
+func TestRearmShareFunnelOnlyWritesTheEntryItRead(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "registry.json")
+	first := shareIntentForRegression(t, shareRequest{Funnel: true, PublicAck: true, FunnelTTL: "1h", FunnelTTLSet: true})
+	original, _, err := registerShare(path, first, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	expireShareFunnel(t, path, original.Name, false)
+	read, err := registry.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale := read.Services[0]
+	if _, err := tagsSetForPath(path, stale.Name, "tag:changed"); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(time.Hour)
+	if _, ok, err := rearmShareFunnel(path, stale, deadline); ok || err != nil {
+		t.Fatalf("re-arm of a changed entry: ok=%v err=%v, want it refused for a re-read", ok, err)
+	}
+	stored, err := registry.Load(path)
+	if err != nil || !stored.Services[0].FunnelExpiresAt.Before(time.Now()) || stored.Services[0].Tags[0] != "tag:changed" {
+		t.Fatalf("the concurrent change was overwritten: %+v err=%v", stored, err)
+	}
+	if _, err := registry.Remove(path, stale.Name); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := rearmShareFunnel(path, stale, deadline); ok || err != nil {
+		t.Fatalf("re-arm of a removed entry: ok=%v err=%v, want it refused for a re-read", ok, err)
+	}
+}
