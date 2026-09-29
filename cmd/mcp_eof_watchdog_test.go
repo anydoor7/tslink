@@ -155,3 +155,26 @@ func TestMCPEOFWatchdogLeavesABoundedCallAlone(t *testing.T) {
 		t.Fatalf("bounded call after end of input was not answered: %s", stdout)
 	}
 }
+
+// TestMCPWatchdogEndsTheCommandWithOneErrorLine pins what the user sees when
+// the watchdog fires: `tslink mcp` returns an error main prints as a single
+// "Error: mcp stdio: ..." line with no Next: hints, and exits 1.
+func TestMCPWatchdogEndsTheCommandWithOneErrorLine(t *testing.T) {
+	withMCPEOFWatchdog(t, 200*time.Millisecond, 200*time.Millisecond)
+	actions := fakeMCPActions()
+	actions.url = func(ctx context.Context, _ string, _ time.Duration) (any, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	call := initializedMCPInput(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"url","arguments":{"name":"web","wait":"1s"}}}`)
+	err := runMCPCommand(context.Background(), strings.NewReader(call), &bytes.Buffer{}, actions)
+	if !errors.Is(err, errMCPEOFWatchdog) || !strings.HasPrefix(err.Error(), "mcp stdio: ") || strings.Contains(err.Error(), "\n") {
+		t.Fatalf("command error = %q, want one mcp stdio line naming the watchdog", err)
+	}
+	if code := output.ExitCode(err); code != output.ExitError {
+		t.Fatalf("exit code = %d, want %d", code, output.ExitError)
+	}
+	if next := output.NextCommandsForError(err); len(next) != 0 {
+		t.Fatalf("Next: hints = %v, want none", next)
+	}
+}
