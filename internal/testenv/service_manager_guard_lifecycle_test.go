@@ -175,10 +175,18 @@ func TestRunWithServiceManagerGuardControlGroupStaysGreenWithoutDrift(t *testing
 			// seams and the child-process PATH shim fail in different places,
 			// so one line saying = 0 would leave the other half's absence
 			// indistinguishable from its silence.
+			//
+			// Windows plants no fake, so its child-process line cannot be a
+			// measured zero; it must say so instead. The expectation is still
+			// the exact text, so neither platform's line can drift unnoticed.
 			want := ""
 			if env.value != "" {
-				want = "service manager guard [control]: child process service manager calls intercepted = 0\n" +
-					"service manager guard [control]: blocked real service manager calls = 0\n"
+				shimLine := "service manager guard [control]: child process service manager calls intercepted = 0\n"
+				if runtime.GOOS == "windows" {
+					shimLine = "service manager guard [control]: child process service manager calls intercepted = " +
+						"not measured: no fake is planted on windows, so a child process reaches the real binaries and leaves no record here\n"
+				}
+				want = shimLine + "service manager guard [control]: blocked real service manager calls = 0\n"
 			}
 			if log != want {
 				t.Fatalf("stderr = %q, want %q", log, want)

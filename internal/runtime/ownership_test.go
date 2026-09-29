@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
 	"strings"
 	"testing"
 	"time"
@@ -54,8 +55,10 @@ func TestOwnershipLedgerRecordsDeduplicatesAndRemovesExactIDs(t *testing.T) {
 	if len(ledger.Nodes) != 1 || ledger.Nodes[0].NodeID != "node-owned-b" {
 		t.Fatalf("ledger after exact removal = %+v", ledger)
 	}
+	// Windows reports only the read-only attribute through these bits, so the
+	// 0600 the ledger is written with reads back as 0666 there.
 	info, err := os.Stat(path)
-	if err != nil || info.Mode().Perm() != 0o600 {
+	if err != nil || (goruntime.GOOS != "windows" && info.Mode().Perm() != 0o600) {
 		t.Fatalf("ownership mode = %v, err=%v", info.Mode().Perm(), err)
 	}
 }

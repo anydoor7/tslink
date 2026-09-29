@@ -361,6 +361,16 @@ func (ctx supervisorErrObserver) Err() error {
 	return ctx.Context.Err()
 }
 
+// probeTransactionDescriptor returns nil for an open file and os.ErrClosed for
+// a closed one, on every platform. Stat does not: on Windows it asks
+// GetFileType about the handle, so a file that was correctly closed answers
+// "The handle is invalid" instead of os.ErrClosed and read as a leak. Seek
+// consults the file's own closed state first, as Stat does on unix.
+func probeTransactionDescriptor(f *os.File) error {
+	_, err := f.Seek(0, io.SeekCurrent)
+	return err
+}
+
 func TestRepairSupervisorTransactionFailureBranches(t *testing.T) {
 	for _, scenario := range []string{"open_error", "lock_error", "cancel_initial", "cancel_before_lock", "cancel_after_lock", "cancel_waiting", "callback_error", "nil_context"} {
 		t.Run(scenario, func(t *testing.T) {
@@ -453,7 +463,7 @@ func TestRepairSupervisorTransactionFailureBranches(t *testing.T) {
 						if opened == nil || attempts != 0 {
 							t.Fatal("cancellation missed the post-open/pre-lock window")
 						}
-						if _, err := opened.Stat(); err != nil {
+						if err := probeTransactionDescriptor(opened); err != nil {
 							t.Fatalf("transaction descriptor was not open before cancellation: %v", err)
 						}
 						if _, err := os.Stat(lockPath); err != nil {
@@ -524,7 +534,7 @@ func TestRepairSupervisorTransactionFailureBranches(t *testing.T) {
 				t.Fatal("post-open cancellation skipped the descriptor closure assertion")
 			}
 			if opened != nil {
-				if _, err := opened.Stat(); !errors.Is(err, os.ErrClosed) {
+				if err := probeTransactionDescriptor(opened); !errors.Is(err, os.ErrClosed) {
 					t.Fatalf("transaction descriptor leaked: %v", err)
 				}
 			}

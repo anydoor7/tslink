@@ -23,6 +23,12 @@
 //
 // So O_APPEND is a precondition, not an assumption: RotateStderrLog verifies it
 // and refuses rather than producing the sparse file above.
+//
+// Windows has no O_APPEND on an open handle. Its equivalent is a handle granted
+// FILE_APPEND_DATA without FILE_WRITE_DATA, which the kernel only lets write at
+// end-of-file; os.OpenFile makes that handle for O_APPEND. Such a handle cannot
+// set end-of-file itself, so on Windows the truncate goes through a second
+// handle to the same file, and the writer's next write lands at the new end.
 package logrotate
 
 import (
@@ -76,7 +82,8 @@ type Result struct {
 //
 //  1. f is a regular file. An interactive run writes to a terminal and a test
 //     usually writes to a pipe; neither is rotatable and neither is an error.
-//  2. f was opened with O_APPEND. See the package comment.
+//  2. f was opened with O_APPEND, or on Windows is append-only. See the
+//     package comment.
 //  3. f and target are the same inode. This is what makes the call safe to
 //     place on a timer inside a process whose tests also reach this code: a
 //     descriptor pointing anywhere other than the configured log file is left
@@ -147,8 +154,8 @@ func RotateStderrLog(f *os.File, target string, maxBytes int64) (Result, error) 
 	if err := copyPrefix(target, archivePath, size, archiveMode(info.Mode().Perm())); err != nil {
 		return Result{SizeBefore: size, ArchivePath: archivePath}, err
 	}
-	if err := f.Truncate(0); err != nil {
-		return Result{SizeBefore: size, ArchivePath: archivePath}, fmt.Errorf("truncate the log through its own descriptor: %w", err)
+	if err := truncateLog(f, target, info); err != nil {
+		return Result{SizeBefore: size, ArchivePath: archivePath}, err
 	}
 	return Result{Rotated: true, SizeBefore: size, ArchivePath: archivePath, Reason: "rotated"}, nil
 }

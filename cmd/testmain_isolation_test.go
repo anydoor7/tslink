@@ -34,6 +34,19 @@ func TestCmdTestMainCleansIsolatedConfig(t *testing.T) {
 
 func TestCmdTestMainFailsClosedWhenTempUnavailable(t *testing.T) {
 	badTmp := filepath.Join(t.TempDir(), "missing-parent")
+	// The premise is that these variables decide where the child's TestMain
+	// creates its config directory. A Windows process running as SYSTEM
+	// breaks it: GetTempPath2 returns C:\Windows\SystemTemp for SYSTEM and
+	// ignores TMP and TEMP, so the child never meets the missing directory and
+	// its clean exit is not TestMain failing open. Stage the premise with the
+	// resolution TestMain uses before reading the child's result.
+	for _, name := range []string{"TMPDIR", "TMP", "TEMP"} {
+		t.Setenv(name, badTmp)
+	}
+	if resolved := os.TempDir(); resolved != badTmp {
+		t.Skipf("the temp directory of this account cannot be redirected: os.TempDir() = %q with TMPDIR/TMP/TEMP = %q, "+
+			"so a missing temp directory cannot be staged for the child", resolved, badTmp)
+	}
 	cmd := exec.Command(os.Args[0], "-test.run=^$")
 	cmd.Env = append(os.Environ(), "TMPDIR="+badTmp, "TMP="+badTmp, "TEMP="+badTmp, "TSLINK_CONFIG_DIR=", "TSLINK_STOP_LIVENESS_HELPER=")
 	out, err := cmd.CombinedOutput()

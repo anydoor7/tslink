@@ -92,7 +92,9 @@ func TestRemoveServiceNodeStateRefusesAnEmptyConfigDir(t *testing.T) {
 }
 
 func TestServiceNodeStateConfigDirIsTheRegistrySibling(t *testing.T) {
-	if got := ServiceNodeStateConfigDir("/home/u/.config/tslink/registry.json"); got != "/home/u/.config/tslink" {
+	// FromSlash keeps the fixture a native path: on Windows the result is
+	// built with `\`, and a `/` literal would never compare equal to it.
+	if got := ServiceNodeStateConfigDir(filepath.FromSlash("/home/u/.config/tslink/registry.json")); got != filepath.FromSlash("/home/u/.config/tslink") {
 		t.Fatalf("ServiceNodeStateConfigDir() = %q, want the registry's own directory", got)
 	}
 	if got := ServiceNodeStateConfigDir(""); got != "" {

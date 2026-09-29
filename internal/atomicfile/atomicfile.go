@@ -103,9 +103,9 @@ func WriteFile(path string, data []byte) error {
 // is owned by the current user where ownership is available, and, on Unix, is
 // not group- or world-writable. Windows does not expose DACLs through
 // os.FileMode, so parent ownership and permissions are not validated there.
-// Parent-directory symlinks are followed and their referent is validated,
-// while a symlink at path itself is rejected. The mode is caller policy and is
-// applied exactly; callers choose any privacy floor.
+// Parent-directory symlinks and Windows junctions are followed and their
+// referent is validated, while a symlink at path itself is rejected. The mode
+// is caller policy and is applied exactly; callers choose any privacy floor.
 func WriteFileInExistingDir(path string, data []byte, mode os.FileMode) error {
 	if err := validateExistingParent(path); err != nil {
 		return err
@@ -119,7 +119,12 @@ func validateExistingParent(path string) error {
 	if err != nil {
 		return fmt.Errorf("validate parent for %s: %w", path, err)
 	}
-	if info.Mode()&os.ModeSymlink != 0 {
+	// A Windows directory junction is followed like a symlink. Since Go 1.23
+	// Lstat reports it, like other name-surrogate reparse points, as
+	// ModeIrregular without ModeDir, so checking ModeSymlink alone rejected a
+	// junctioned Startup folder as "not a directory". Either way the verdict
+	// is taken on what the link resolves to, which must be a directory.
+	if info.Mode()&(os.ModeSymlink|os.ModeIrregular) != 0 {
 		info, err = statFn(dir)
 		if err != nil {
 			return fmt.Errorf("validate parent for %s: %w", path, err)

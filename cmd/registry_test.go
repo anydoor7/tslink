@@ -4,12 +4,20 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/monody0007/tslink/internal/output"
 	"github.com/monody0007/tslink/internal/registry"
 )
+
+// registryModeObservable says whether a 0640 registry reads back as 0640.
+// Windows mode bits carry only the read-only attribute, so there the file reads
+// back 0666 and the 0600 a repairing loader would set is invisible; the mode
+// half of the "left untouched" checks can only be asserted off Windows. The
+// byte-for-byte half runs everywhere.
+var registryModeObservable = runtime.GOOS != "windows"
 
 func TestRegistryCheckValidatesCopiesWithoutChangingThem(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "registry.json")
@@ -36,7 +44,7 @@ func TestRegistryCheckValidatesCopiesWithoutChangingThem(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o640 {
+	if registryModeObservable && info.Mode().Perm() != 0o640 {
 		t.Fatalf("registry check changed mode to %o, want 640", info.Mode().Perm())
 	}
 }
@@ -117,7 +125,7 @@ func TestRegistryCheckLeavesAnInvalidRegistryUntouched(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o640 {
+	if registryModeObservable && info.Mode().Perm() != 0o640 {
 		t.Fatalf("registry check changed the mode of an invalid registry to %o, want 640", info.Mode().Perm())
 	}
 }

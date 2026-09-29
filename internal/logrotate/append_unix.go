@@ -21,3 +21,12 @@ func isAppendOnly(f *os.File) (bool, error) {
 	}
 	return flags&unix.O_APPEND != 0, nil
 }
+
+// truncateLog truncates through the descriptor the process writes to, which
+// needs nothing beyond the write access it already has.
+func truncateLog(f *os.File, _ string, _ os.FileInfo) error {
+	if err := f.Truncate(0); err != nil {
+		return fmt.Errorf("truncate the log through its own descriptor: %w", err)
+	}
+	return nil
+}

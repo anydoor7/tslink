@@ -73,9 +73,12 @@ func TestRotateArchivesAndTruncatesThroughTheDescriptor(t *testing.T) {
 	if !bytes.Equal(archived, content) {
 		t.Fatalf("archive holds %d bytes, want the original %d", len(archived), len(content))
 	}
+	// Windows reports only the read-only attribute through these bits, so a
+	// 0600 archive reads back as 0666 there; the cap is pinned on unix, as in
+	// TestRotateArchiveNeverWidensBeyondOwnerOnly.
 	if info, err := os.Stat(target + ArchiveSuffix); err != nil {
 		t.Fatalf("stat archive: %v", err)
-	} else if info.Mode().Perm() != 0o600 {
+	} else if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("archive mode = %v, want 0600", info.Mode().Perm())
 	}
 	if got := sizeOf(t, target); got != 0 {
@@ -105,10 +108,10 @@ func TestRotateArchivesAndTruncatesThroughTheDescriptor(t *testing.T) {
 // into a refusal. Without this guard the function would truncate, the offset
 // would stay where it was, and the next write would restore the old size with a
 // hole in front, which reads on disk as "rotation did nothing".
+//
+// On Windows the same shape is a handle that holds FILE_WRITE_DATA, which is
+// what os.OpenFile grants for O_WRONLY without O_APPEND.
 func TestRotateRefusesADescriptorWithoutAppend(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("isAppendOnly has no implementation off unix; the refusing path is covered by TestRotateRefusesWhenAppendCannotBeVerified")
-	}
 	dir := t.TempDir()
 	target := filepath.Join(dir, "tslink.err.log")
 	content := bytes.Repeat([]byte("access line\n"), 2000)
@@ -306,7 +309,7 @@ func TestRotateArchivesExactlyWhatItMeasured(t *testing.T) {
 func TestRotateMarksADeletedTargetDegraded(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "tslink.err.log")
-	handle := openSupervisedLog(t, target, bytes.Repeat([]byte("a"), 64))
+	handle := openRemovableSupervisedLog(t, target, bytes.Repeat([]byte("a"), 64))
 
 	control, err := RotateStderrLog(handle, target, 1<<20)
 	if err != nil {
@@ -343,7 +346,7 @@ func TestRotateMarksADeletedTargetDegraded(t *testing.T) {
 func TestRotateMarksAReplacedTargetDegraded(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "tslink.err.log")
-	handle := openSupervisedLog(t, target, bytes.Repeat([]byte("a"), 64))
+	handle := openRemovableSupervisedLog(t, target, bytes.Repeat([]byte("a"), 64))
 
 	if err := os.Rename(target, target+".moved"); err != nil {
 		t.Fatalf("move the target aside: %v", err)
