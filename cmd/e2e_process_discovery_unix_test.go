@@ -3,6 +3,7 @@
 package cmd
 
 import (
+	"bufio"
 	"fmt"
 	"maps"
 	"os"
@@ -99,28 +100,44 @@ func TestE2EProcessDiscoveryRefusesAListingWithoutThisProcess(t *testing.T) {
 // TestE2EProcessDiscoveryFindsAChildWhoseNameTheOSCuts runs the real listing
 // of this platform against a child this test starts from a binary whose name
 // is longer than any kernel command name: it must be found by its start time
-// and cut name, with the path it was started from.
+// and cut name, with the path it was started from. The child is the suite's
+// fake daemon under a longer name; it blocks on stdin, so it is alive for the
+// whole check. (A copy of sleep would not do: where sleep is a multicall
+// binary such as uutils coreutils, it picks the utility by its own file name
+// and a renamed copy exits at once.)
 func TestE2EProcessDiscoveryFindsAChildWhoseNameTheOSCuts(t *testing.T) {
-	sleep, err := exec.LookPath("sleep")
-	if err != nil {
-		t.Skipf("no sleep on PATH to copy into a long-named child binary: %v", err)
-	}
-	image, err := os.ReadFile(sleep)
-	if err != nil {
-		t.Fatalf("read %s: %v", sleep, err)
-	}
+	daemon := e2eFakeDaemonBinary(t)
 	binary := filepath.Join(t.TempDir(), "tslink-e2e-process-discovery-probe")
-	if err := os.WriteFile(binary, image, 0o700); err != nil {
-		t.Fatalf("write %s: %v", binary, err)
+	if err := os.Link(daemon, binary); err != nil {
+		image, readErr := os.ReadFile(daemon)
+		if readErr != nil {
+			t.Fatalf("read %s: %v", daemon, readErr)
+		}
+		if err := os.WriteFile(binary, image, 0o700); err != nil {
+			t.Fatalf("write %s: %v", binary, err)
+		}
 	}
-	child := exec.Command(binary, "60")
+	child := exec.Command(binary, "serve")
+	child.Env = append(os.Environ(), "TSLINK_CONFIG_DIR="+t.TempDir())
+	stdin, err := child.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout, err := child.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := child.Start(); err != nil {
 		t.Fatalf("start %s: %v", binary, err)
 	}
 	t.Cleanup(func() {
+		_ = stdin.Close()
 		_ = child.Process.Kill()
 		_ = child.Wait()
 	})
+	if line, err := bufio.NewReader(stdout).ReadString('\n'); line != e2eDaemonReadyLine {
+		t.Fatalf("child readiness = %q, %v; want %q", line, err, e2eDaemonReadyLine)
+	}
 	resolved := e2eRequireTempPath(t, binary)
 
 	got, err := e2eCandidateExecutables(e2eHostProcessTable, filepath.Base(binary))
