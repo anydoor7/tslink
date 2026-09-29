@@ -1151,7 +1151,12 @@ func (r *mcpRecordLimitReader) Read(p []byte) (int, error) {
 	}
 	n, err := r.inner.Read(p)
 	r.mu.Lock()
-	for _, b := range p[:n] {
+	// A refusal hands over only the bytes before the one that broke a guard.
+	// encoding/json's Decoder scans every byte a Read returned before it looks
+	// at the error returned with them, so returning the violating byte, or
+	// anything after it, would let the decoder dispatch the very value the
+	// guard refused. r.err stays set, so every later Read reports it again.
+	for i, b := range p[:n] {
 		if b == '\n' {
 			if r.count > 0 {
 				r.records++
@@ -1171,14 +1176,14 @@ func (r *mcpRecordLimitReader) Read(p []byte) (int, error) {
 				// time the line is read.
 				r.err = errMCPBatchUnsupported
 				r.mu.Unlock()
-				return n, r.err
+				return i, r.err
 			}
 		}
 		r.count++
 		if r.count > r.limit {
 			r.err = fmt.Errorf("JSON-RPC message exceeds maximum size of %d bytes", r.limit)
 			r.mu.Unlock()
-			return n, r.err
+			return i, r.err
 		}
 	}
 	if err == io.EOF && r.count > 0 {
