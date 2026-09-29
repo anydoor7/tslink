@@ -555,7 +555,7 @@ type syncResult struct {
 
 // syncNodes compares registry to running nodes and starts/stops as needed.
 func (s *Server) syncNodes(ctx context.Context) error {
-	outcome, err := s.syncNodesWithOutcome(ctx)
+	outcome, err := s.syncNodesWithOutcome(ctx, false)
 	if outcome.generation == s.syncGeneration.Load() {
 		s.lastSyncFailed.Store(err != nil)
 		s.syncRetryPending.Store(outcome.retry)
@@ -565,7 +565,7 @@ func (s *Server) syncNodes(ctx context.Context) error {
 
 func (s *Server) syncNodesAuthoritative(ctx context.Context) error {
 	for {
-		outcome, err := s.syncNodesWithOutcome(ctx)
+		outcome, err := s.syncNodesWithOutcome(ctx, true)
 		if outcome.generation == s.syncGeneration.Load() {
 			s.lastSyncFailed.Store(err != nil)
 			s.syncRetryPending.Store(outcome.retry)
@@ -597,7 +597,9 @@ func (s *Server) syncNodesAuthoritative(ctx context.Context) error {
 	}
 }
 
-func (s *Server) syncNodesWithOutcome(ctx context.Context) (outcome syncOutcome, resultErr error) {
+// startup marks the authoritative sync that gates daemon start, where any
+// sync error closes every node and exits the daemon.
+func (s *Server) syncNodesWithOutcome(ctx context.Context, startup bool) (outcome syncOutcome, resultErr error) {
 	generation := s.syncGeneration.Add(1)
 	outcome = syncOutcome{generation: generation}
 	defer func() {
@@ -844,7 +846,12 @@ func (s *Server) syncNodesWithOutcome(ctx context.Context) (outcome syncOutcome,
 			startErrs = append(startErrs, fmt.Errorf("start service %q: %w", name, err))
 			continue
 		}
-		if cleanupErr != nil {
+		if cleanupErr != nil && startup {
+			// This cleanup has no NodeIDs, so it can only list and protect
+			// hostname matches, never delete. At daemon start a sync error
+			// takes every service down, which buys no safety here.
+			slog.Warn("degraded mode: stale tailnet node cleanup failed after old state removal; continuing start", "name", name, "error", cleanupErr, "degraded_mode", true)
+		} else if cleanupErr != nil {
 			// Preserve the prior sync error signal without letting a remote
 			// cleanup outage prevent safe local re-enrollment.
 			startErrs = append(startErrs, cleanupErr)
