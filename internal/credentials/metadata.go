@@ -217,8 +217,15 @@ func SaveMetadata(doc Metadata) error {
 	return metadataWriteFunc(path, data)
 }
 
-// RemoveMetadataFile deletes credential-meta.json. Missing files are not errors.
+// RemoveMetadataFile deletes credential-meta.json under the credential
+// mutation lock. Missing files are not errors.
 func RemoveMetadataFile() error {
+	return withCredentialMutationLock(RemoveMetadataFileLocked)
+}
+
+// RemoveMetadataFileLocked is RemoveMetadataFile for a caller that already
+// holds the credential mutation lock inside WithMutationTransaction.
+func RemoveMetadataFileLocked() error {
 	path, err := credentialMetaPathFunc()
 	if err != nil {
 		return err
@@ -274,31 +281,45 @@ func NewSlotMetadata(slot, value string, opts StoredOptions) (SlotMetadata, erro
 
 // RecordCredentialStored writes the slot record after a credential commit and
 // returns the previous record when one existed. A corrupt metadata file is
-// replaced: the new commit is the only fact TSLink can still vouch for.
+// replaced: the new commit is the only fact TSLink can still vouch for. The
+// read-modify-write runs under the credential mutation lock.
 func RecordCredentialStored(slot, value string, opts StoredOptions) (SlotMetadata, *SlotMetadata, error) {
 	meta, err := NewSlotMetadata(slot, value, opts)
 	if err != nil {
 		return SlotMetadata{}, nil, err
 	}
-	doc, loadErr := LoadMetadata()
-	if loadErr != nil && !errors.Is(loadErr, ErrMetadataCorrupt) {
-		return SlotMetadata{}, nil, loadErr
-	}
 	var previous *SlotMetadata
-	if existing, ok := doc.Slots[slot]; ok {
-		copied := existing
-		previous = &copied
-	}
-	doc.Slots[slot] = meta
-	if err := SaveMetadata(doc); err != nil {
+	err = withCredentialMutationLock(func() error {
+		doc, loadErr := LoadMetadata()
+		if loadErr != nil && !errors.Is(loadErr, ErrMetadataCorrupt) {
+			return loadErr
+		}
+		if existing, ok := doc.Slots[slot]; ok {
+			copied := existing
+			previous = &copied
+		}
+		doc.Slots[slot] = meta
+		return SaveMetadata(doc)
+	})
+	if err != nil {
 		return SlotMetadata{}, nil, err
 	}
 	return meta, previous, nil
 }
 
-// WriteSlotMetadata replaces one slot record verbatim. Login rollback uses it
-// to restore the previous record after a failed commit.
+// WriteSlotMetadata replaces one slot record verbatim under the credential
+// mutation lock.
 func WriteSlotMetadata(slot string, meta SlotMetadata) error {
+	if !ValidSlot(slot) {
+		return fmt.Errorf("%w: %q", ErrUnknownCredentialSlot, slot)
+	}
+	return withCredentialMutationLock(func() error { return WriteSlotMetadataLocked(slot, meta) })
+}
+
+// WriteSlotMetadataLocked is WriteSlotMetadata for a caller that already holds
+// the credential mutation lock inside WithMutationTransaction. Login uses it
+// to record a commit and to restore the previous record on rollback.
+func WriteSlotMetadataLocked(slot string, meta SlotMetadata) error {
 	if !ValidSlot(slot) {
 		return fmt.Errorf("%w: %q", ErrUnknownCredentialSlot, slot)
 	}
@@ -326,16 +347,25 @@ func ReadSlotMetadata(slot string) (*SlotMetadata, error) {
 	return &meta, nil
 }
 
-// DeleteSlotMetadata removes one slot record. When the file is corrupt or no
-// slots remain, the whole file is removed.
+// DeleteSlotMetadata removes one slot record under the credential mutation
+// lock. When the file is corrupt or no slots remain, the whole file is removed.
 func DeleteSlotMetadata(slot string) error {
+	if !ValidSlot(slot) {
+		return fmt.Errorf("%w: %q", ErrUnknownCredentialSlot, slot)
+	}
+	return withCredentialMutationLock(func() error { return DeleteSlotMetadataLocked(slot) })
+}
+
+// DeleteSlotMetadataLocked is DeleteSlotMetadata for a caller that already
+// holds the credential mutation lock inside WithMutationTransaction.
+func DeleteSlotMetadataLocked(slot string) error {
 	if !ValidSlot(slot) {
 		return fmt.Errorf("%w: %q", ErrUnknownCredentialSlot, slot)
 	}
 	doc, loadErr := LoadMetadata()
 	if loadErr != nil {
 		if errors.Is(loadErr, ErrMetadataCorrupt) {
-			return RemoveMetadataFile()
+			return RemoveMetadataFileLocked()
 		}
 		return loadErr
 	}
@@ -347,8 +377,8 @@ func DeleteSlotMetadata(slot string) error {
 }
 
 // RecordVerification stores the outcome of a remote probe for a slot that
-// already has metadata. Slots without metadata are left alone so a probe can
-// never invent a stored_at.
+// already has metadata, under the credential mutation lock. Slots without
+// metadata are left alone so a probe can never invent a stored_at.
 func RecordVerification(slot, result string, now time.Time) error {
 	if !ValidSlot(slot) {
 		return fmt.Errorf("%w: %q", ErrUnknownCredentialSlot, slot)
@@ -358,19 +388,21 @@ func RecordVerification(slot, result string, now time.Time) error {
 	default:
 		return fmt.Errorf("unknown verification result %q", result)
 	}
-	doc, err := LoadMetadata()
-	if err != nil {
-		return err
-	}
-	meta, ok := doc.Slots[slot]
-	if !ok {
-		return nil
-	}
-	verified := now.UTC()
-	meta.LastVerifiedAt = &verified
-	meta.LastVerifiedResult = result
-	doc.Slots[slot] = meta
-	return SaveMetadata(doc)
+	return withCredentialMutationLock(func() error {
+		doc, err := LoadMetadata()
+		if err != nil {
+			return err
+		}
+		meta, ok := doc.Slots[slot]
+		if !ok {
+			return nil
+		}
+		verified := now.UTC()
+		meta.LastVerifiedAt = &verified
+		meta.LastVerifiedResult = result
+		doc.Slots[slot] = meta
+		return SaveMetadata(doc)
+	})
 }
 
 // ExpiryState classifies one slot. A present slot without trusted metadata is
@@ -428,18 +460,47 @@ func DescribeSlots(values SlotValues, now time.Time, persist bool) Inventory {
 	doc, loadErr := LoadMetadata()
 	inventory := DescribeSlotsWithMetadata(values, doc, loadErr, now)
 	if persist && loadErr == nil && len(inventory.Backfilled) > 0 {
-		for _, slot := range inventory.Backfilled {
-			view := inventory.APIKey
+		inventory = persistBackfill(values, doc, inventory, now)
+	}
+	return inventory
+}
+
+// persistBackfill saves backfilled slot records under the credential mutation
+// lock. It reloads the metadata there and re-checks each slot's fingerprint
+// against the document the backfill was computed from: a slot another writer
+// (a login) recorded in between keeps that writer's record, and the returned
+// inventory reports it instead of the discarded backfill.
+func persistBackfill(values SlotValues, seen Metadata, inventory Inventory, now time.Time) Inventory {
+	err := withCredentialMutationLock(func() error {
+		current, err := LoadMetadata()
+		if err != nil {
+			return err
+		}
+		fresh := DescribeSlotsWithMetadata(values, current, nil, now)
+		save := false
+		for _, slot := range fresh.Backfilled {
+			before, hadBefore := seen.Slots[slot]
+			after, hasAfter := current.Slots[slot]
+			if hadBefore != hasAfter || before.Fingerprint != after.Fingerprint {
+				continue
+			}
+			view := fresh.APIKey
 			if slot == SlotClientSecret {
-				view = inventory.ClientSecret
+				view = fresh.ClientSecret
 			}
 			if view.Metadata != nil {
-				doc.Slots[slot] = *view.Metadata
+				current.Slots[slot] = *view.Metadata
+				save = true
 			}
 		}
-		if err := SaveMetadata(doc); err != nil {
-			inventory.BackfillError = err
+		inventory = fresh
+		if !save {
+			return nil
 		}
+		return SaveMetadata(current)
+	})
+	if err != nil {
+		inventory.BackfillError = err
 	}
 	return inventory
 }
@@ -523,12 +584,18 @@ func DeleteStoredCredentialKindStrict(slot string) error {
 		return err
 	}
 	defer unlock()
+	return DeleteStoredCredentialKindStrictLocked(slot)
+}
 
+// DeleteStoredCredentialKindStrictLocked is DeleteStoredCredentialKindStrict
+// for a caller that already holds the credential mutation lock, such as
+// logout removing a slot and its metadata in one transaction.
+func DeleteStoredCredentialKindStrictLocked(slot string) error {
 	switch slot {
 	case SlotAPIKey:
 		return deleteCredentialStrict("API key", keychainAPIKey, apiKeyPathFunc)
 	case SlotClientSecret:
 		return deleteCredentialStrict("OAuth client secret", keychainClientSecret, clientSecretPathFunc)
 	}
-	return nil
+	return fmt.Errorf("%w: %q", ErrUnknownCredentialSlot, slot)
 }

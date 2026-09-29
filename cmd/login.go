@@ -92,8 +92,8 @@ var (
 	loginGetClientSecretFn     = credentials.GetClientSecret
 	loginDeleteClientSecretFn  = credentials.DeleteClientSecretChecked
 	loginReadSlotMetaFn        = credentials.ReadSlotMetadata
-	loginWriteSlotMetaFn       = credentials.WriteSlotMetadata
-	loginDeleteSlotMetaFn      = credentials.DeleteSlotMetadata
+	loginWriteSlotMetaFn       = credentials.WriteSlotMetadataLocked  // only inside the login transaction
+	loginDeleteSlotMetaFn      = credentials.DeleteSlotMetadataLocked // only inside the login transaction
 	loginMutationTransactionFn = credentials.WithMutationTransaction
 	loginNowFn                 = func() time.Time { return time.Now().UTC() }
 	loginOpenBrowserFn         = openBrowser

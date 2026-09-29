@@ -155,6 +155,13 @@ func DeleteStoredCredentialsStrict() error {
 		return err
 	}
 	defer unlock()
+	return DeleteStoredCredentialsStrictLocked()
+}
+
+// DeleteStoredCredentialsStrictLocked is DeleteStoredCredentialsStrict for a
+// caller that already holds the credential mutation lock, such as logout
+// removing values and metadata in one transaction.
+func DeleteStoredCredentialsStrictLocked() error {
 	return errors.Join(
 		deleteCredentialStrict("API key", keychainAPIKey, apiKeyPathFunc),
 		deleteCredentialStrict("OAuth client secret", keychainClientSecret, clientSecretPathFunc),

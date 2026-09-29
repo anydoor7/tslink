@@ -140,6 +140,17 @@ func lockCredentialPath(path string, deadline time.Time) (*os.File, error) {
 // re-locking; callers must use it only inside WithMutationTransaction.
 type MutationTransaction struct{}
 
+// withCredentialMutationLock runs fn under the credential mutation lock. The
+// lock is not reentrant: fn must use only ...Locked helpers.
+func withCredentialMutationLock(fn func() error) error {
+	unlock, err := acquireCredentialMutationLock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	return fn()
+}
+
 func WithMutationTransaction(fn func(*MutationTransaction) error) error {
 	unlock, err := acquireCredentialMutationLock()
 	if err != nil {

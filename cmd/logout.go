@@ -17,10 +17,14 @@ import (
 var getAPIKeyFn = credentials.GetAPIKey
 var hasClientSecretFn = credentials.HasClientSecret
 var inspectStoredCredentialsFn = credentials.InspectStoredCredentialsStrict
-var deleteStoredCredentialsFn = credentials.DeleteStoredCredentialsStrict
-var deleteStoredCredentialKindFn = credentials.DeleteStoredCredentialKindStrict
-var deleteCredentialMetadataFn = credentials.DeleteSlotMetadata
-var removeCredentialMetadataFn = credentials.RemoveMetadataFile
+
+// Logout removes credential values and their metadata inside one credential
+// transaction, so the delete and metadata seams are the ...Locked variants.
+var logoutMutationTransactionFn = credentials.WithMutationTransaction
+var deleteStoredCredentialsFn = credentials.DeleteStoredCredentialsStrictLocked
+var deleteStoredCredentialKindFn = credentials.DeleteStoredCredentialKindStrictLocked
+var deleteCredentialMetadataFn = credentials.DeleteSlotMetadataLocked
+var removeCredentialMetadataFn = credentials.RemoveMetadataFileLocked
 var statFileFn = os.Stat
 var removeFileFn = os.Remove
 var removeAllFn = os.RemoveAll
@@ -99,11 +103,17 @@ func logoutUserWithOptions(opts logoutOptions, isJSON bool, out io.Writer) error
 	if inspectCredentialErr != nil {
 		cleanupErrs = append(cleanupErrs, fmt.Errorf("inspect credential stores: %w", inspectCredentialErr))
 	}
-	if err := deleteStoredCredentialsFn(); err != nil {
+	// A login that commits after this transaction keeps its metadata.
+	if err := logoutMutationTransactionFn(func(*credentials.MutationTransaction) error {
+		if err := deleteStoredCredentialsFn(); err != nil {
+			cleanupErrs = append(cleanupErrs, fmt.Errorf("delete credential stores: %w", err))
+		}
+		if err := removeCredentialMetadataFn(); err != nil {
+			cleanupErrs = append(cleanupErrs, fmt.Errorf("remove credential metadata: %w", err))
+		}
+		return nil
+	}); err != nil {
 		cleanupErrs = append(cleanupErrs, fmt.Errorf("delete credential stores: %w", err))
-	}
-	if err := removeCredentialMetadataFn(); err != nil {
-		cleanupErrs = append(cleanupErrs, fmt.Errorf("remove credential metadata: %w", err))
 	}
 	if authExists {
 		if err := removeFileFn(opts.AuthKeyPath); err != nil && !os.IsNotExist(err) {
@@ -161,11 +171,16 @@ func logoutCredentialKind(kind string, isJSON bool, out io.Writer) error {
 	}
 
 	var cleanupErrs []error
-	if err := deleteStoredCredentialKindFn(kind); err != nil {
+	if err := logoutMutationTransactionFn(func(*credentials.MutationTransaction) error {
+		if err := deleteStoredCredentialKindFn(kind); err != nil {
+			cleanupErrs = append(cleanupErrs, fmt.Errorf("delete %s credential: %w", kind, err))
+		}
+		if err := deleteCredentialMetadataFn(kind); err != nil {
+			cleanupErrs = append(cleanupErrs, fmt.Errorf("remove %s credential metadata: %w", kind, err))
+		}
+		return nil
+	}); err != nil {
 		cleanupErrs = append(cleanupErrs, fmt.Errorf("delete %s credential: %w", kind, err))
-	}
-	if err := deleteCredentialMetadataFn(kind); err != nil {
-		cleanupErrs = append(cleanupErrs, fmt.Errorf("remove %s credential metadata: %w", kind, err))
 	}
 	if err := errors.Join(cleanupErrs...); err != nil {
 		return err
