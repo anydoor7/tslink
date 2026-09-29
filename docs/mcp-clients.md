@@ -34,7 +34,9 @@ When the client closes stdin, calls that were already read still get their
 answers before the server exits. The `url` tool's `wait` is capped at 5m, and
 a larger value is refused as a usage error. A call still running 6m after
 stdin closed is cancelled; after a 5s grace for its handler to return,
-`tslink mcp` exits 1 with a single error line.
+`tslink mcp` exits 1 with a single error line. If a response is still blocked
+on a stdout the client no longer reads, the exit waits at most another 5s for
+it and then abandons it.
 
 SIGINT or SIGTERM cancels the calls in flight, so a `share` still waiting for
 its URL is rolled back. The command exits 1 with an error line that names the

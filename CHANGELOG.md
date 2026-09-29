@@ -156,8 +156,9 @@ Initial public release.
   closes stdin, `tslink mcp` still answers the calls it has already read,
   but a call still running 6m after stdin closed is cancelled, and after a
   5s grace the command exits 1 with a single `Error: mcp stdio: in-flight
-  MCP calls did not finish after end of input: ...` line. It used to wait
-  for such a call indefinitely.
+  MCP calls did not finish after end of input: ...` line. A response still
+  blocked on a stdout the client no longer reads delays that exit by at most
+  another 5s. It used to wait for such a call indefinitely.
 - SIGINT and SIGTERM now cancel a `tslink mcp` session instead of killing
   the process. In-flight calls see the cancellation, so a share still
   waiting for its URL is rolled back instead of staying registered, and the
