@@ -92,7 +92,21 @@ var (
 	// Tailscale client. Tests replace it so no test process talks to a real
 	// tailscaled.
 	doctorTailscaleSSHFn = defaultTailscaleSSHEnabled
+	// doctorLocalClientFn builds the client defaultTailscaleSSHEnabled reads
+	// through. Tests replace it with a stub-transport client.
+	doctorLocalClientFn = newDoctorLocalClient
 )
+
+// doctorSkipTailscaleSSHEnv set to 1 makes doctor skip its read of the local
+// tailscaled and report Tailscale SSH as unknown, naming the variable. It
+// exists for environments where contacting the machine's tailscaled is not
+// wanted, such as test suites that run the compiled binary on a developer's
+// machine. Unset, doctor behaves as before.
+const doctorSkipTailscaleSSHEnv = "TSLINK_DOCTOR_SKIP_TAILSCALE_SSH"
+
+// errTailscaleSSHCheckSkipped is defaultTailscaleSSHEnabled's answer while
+// doctorSkipTailscaleSSHEnv is set.
+var errTailscaleSSHCheckSkipped = errors.New(doctorSkipTailscaleSSHEnv + "=1 skips the local tailscaled read")
 
 // doctorRemoteProbeTimeout bounds each --probe-remote device-list read.
 const doctorRemoteProbeTimeout = 10 * time.Second
@@ -110,8 +124,10 @@ const doctorTailscaleSSHTimeout = time.Second
 // This is a localhost IPC to the daemon on this machine, not a Tailscale
 // control-plane API call, and it only reads.
 func defaultTailscaleSSHEnabled(ctx context.Context) (bool, error) {
-	var client local.Client
-	prefs, err := client.GetPrefs(ctx)
+	if os.Getenv(doctorSkipTailscaleSSHEnv) == "1" {
+		return false, errTailscaleSSHCheckSkipped
+	}
+	prefs, err := doctorLocalClientFn().GetPrefs(ctx)
 	if err != nil {
 		return false, err
 	}
@@ -119,6 +135,12 @@ func defaultTailscaleSSHEnabled(ctx context.Context) (bool, error) {
 		return false, errors.New("local Tailscale client returned no preferences")
 	}
 	return prefs.RunSSH, nil
+}
+
+// newDoctorLocalClient returns the default local Tailscale client: the
+// platform's tailscaled socket, authenticated the way the tailscale CLI is.
+func newDoctorLocalClient() *local.Client {
+	return &local.Client{}
 }
 
 var (
@@ -338,6 +360,12 @@ func diagnoseTailscaleSSH(result *DoctorResult) {
 	ctx, cancel := context.WithTimeout(context.Background(), doctorTailscaleSSHTimeout)
 	enabled, err := doctorTailscaleSSHFn(ctx)
 	cancel()
+	if errors.Is(err, errTailscaleSSHCheckSkipped) {
+		result.addFinding(inspect.WarningCodeTailscaleSSHUnknown, "", "tailscale_ssh",
+			"The Tailscale SSH check was skipped, so Tailscale SSH enablement on this node is unknown.",
+			map[string]string{"skipped": doctorSkipTailscaleSSHEnv + "=1"})
+		return
+	}
 	if err != nil {
 		result.addFinding(inspect.WarningCodeTailscaleSSHUnknown, "", "tailscale_ssh", "", evidenceError(err))
 		return
@@ -1164,7 +1192,9 @@ TSLink neither installs nor requires; it is reported because
 'tailscale ssh <this-host> tslink <command>' is the zero-code way to drive this
 install from another machine, and it needs both 'tailscale set --ssh' here and
 a tailnet ACL ssh rule admitting the caller. All three outcomes are
-informational and never change doctor's status or exit code.`,
+informational and never change doctor's status or exit code. Set
+TSLINK_DOCTOR_SKIP_TAILSCALE_SSH=1 to skip the local read; the state is then
+unknown and the tailscale_ssh_unknown finding says the check was skipped.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		probeExternal, err := cmd.Flags().GetBool("probe-external")

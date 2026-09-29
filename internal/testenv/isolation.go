@@ -181,7 +181,10 @@ func HomeEnv(home string) [][2]string {
 }
 
 // Root returns the root Main created for this test binary, or "" when the
-// binary is not running under Main.
+// binary is not running under Main. Before Main has run, a non-empty Root
+// means the binary was started by a test of an isolated binary: helper modes
+// that a TestMain dispatches before calling Main check it, so a variable a
+// contributor exported cannot turn a top-level run into a helper.
 func Root() string {
 	return inheritedRoot()
 }

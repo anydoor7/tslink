@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/monody0007/tslink/internal/config"
+	"github.com/monody0007/tslink/internal/testenv"
 )
 
 // serveSignalHandlerChildEnv re-enters this test file as a child process. The
@@ -23,8 +23,8 @@ import (
 const serveSignalHandlerChildEnv = "TSLINK_TEST_SIGNAL_HANDLER_CHILD"
 
 // serveSignalHandlerChildDirMarker prefixes the child's report of the two
-// directories its TestMain created: the isolated config dir and the service
-// manager PATH shim.
+// directories its TestMain created: the test isolation root (which holds the
+// isolated home and config dir) and the service manager PATH shim.
 const serveSignalHandlerChildDirMarker = "tslink-signal-child-testmain-dir: "
 
 // TestServeSignalContextInstallsRealHandler pins the production default of
@@ -50,11 +50,11 @@ const serveSignalHandlerChildDirMarker = "tslink-signal-child-testmain-dir: "
 //
 // The child runs with a private TMPDIR and must leave nothing in it. It used to
 // report through os.Exit inside the test body, which skipped TestMain's
-// teardown and leaked the child's isolated config dir and PATH shim into the
-// real TMPDIR on every run.
+// teardown and leaked the child's isolated config dir (now the isolation root)
+// and PATH shim into the real TMPDIR on every run.
 func TestServeSignalContextInstallsRealHandler(t *testing.T) {
 	if os.Getenv(serveSignalHandlerChildEnv) == "1" {
-		t.Logf("%s%s", serveSignalHandlerChildDirMarker, os.Getenv(config.ConfigDirEnv))
+		t.Logf("%s%s", serveSignalHandlerChildDirMarker, testenv.Root())
 		t.Logf("%s%s", serveSignalHandlerChildDirMarker, filepath.SplitList(os.Getenv("PATH"))[0])
 		runServeSignalHandlerChild(t)
 		return
@@ -135,7 +135,7 @@ func requireSignalChildLeftNoTestMainDirs(t *testing.T, childTemp string, out []
 		t.Fatal(err)
 	}
 	for _, entry := range entries {
-		if strings.HasPrefix(entry.Name(), "tslink-cmd-test-config-") || strings.HasPrefix(entry.Name(), "tslink-service-manager-shim-") {
+		if strings.HasPrefix(entry.Name(), testenv.RootPrefix) || strings.HasPrefix(entry.Name(), "tslink-service-manager-shim-") {
 			t.Errorf("child leaked %s into TMPDIR", entry.Name())
 		}
 	}

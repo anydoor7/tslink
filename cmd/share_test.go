@@ -32,39 +32,36 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, "systemd E2E requires Linux and one exact -test.run=^TestSystemdInstallE2E$ selector")
 		os.Exit(2)
 	}
-	if os.Getenv("TSLINK_STOP_LIVENESS_HELPER") == "1" {
+	// Helper mode is honoured only in a child that a test of an isolated
+	// binary started; a contributor's exported variable cannot trigger it.
+	if os.Getenv("TSLINK_STOP_LIVENESS_HELPER") == "1" && testenv.Root() != "" {
 		fmt.Fprintln(os.Stdout, stopLivenessHelperReady)
 		for {
 			time.Sleep(time.Hour)
 		}
 	}
 
-	// Tests that reach config.Dir() without their own isolation must never
-	// touch the operator's real ~/.config/tslink. Point the whole package at a
-	// throwaway config dir; individual tests still override it with t.Setenv.
-	var isolatedConfig string
 	if dedicatedE2E {
 		// This one disposable-VM test must inspect the host's actual credential
-		// files before it enables a real systemd unit. A private config here
-		// would make that safety check blind to the default user's files.
+		// files before it enables a real systemd unit. The shared isolation
+		// would make that safety check blind to the default user's files, and
+		// it would drop the TSLINK_SYSTEMD_E2E_* inputs the test reads.
 		if os.Getenv(config.ConfigDirEnv) != "" {
 			fmt.Fprintln(os.Stderr, "systemd E2E requires TSLINK_CONFIG_DIR unset so the host credential check is complete")
 			os.Exit(2)
 		}
-	} else {
-		var err error
-		isolatedConfig, err = os.MkdirTemp("", "tslink-cmd-test-config-")
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "cannot isolate cmd tests: %v\n", err)
-			os.Exit(2)
-		}
-		if err := os.Setenv(config.ConfigDirEnv, isolatedConfig); err != nil {
-			_ = os.RemoveAll(isolatedConfig)
-			fmt.Fprintf(os.Stderr, "cannot set isolated cmd config: %v\n", err)
-			os.Exit(2)
-		}
+		os.Exit(testenv.RealHostMain(m, "TSLINK_SYSTEMD_E2E=1 with the exact -test.run=^TestSystemdInstallE2E$ selector",
+			func() int { return runCmdTests(m.Run) }))
 	}
+	// Every other run: no inherited TSLINK_ variable, and home, config and
+	// cache lookups (config.Dir() included) resolve inside a throwaway root,
+	// in this process and in every compiled tslink child it starts.
+	os.Exit(testenv.Main(m, func() int { return runCmdTests(m.Run) }))
+}
 
+// runCmdTests closes the package's process exits for the whole binary and
+// runs the tests.
+func runCmdTests(run func() int) int {
 	// Registry-focused unit tests never install OS services. Bootstrap tests
 	// explicitly exercise ensureDaemon with isolated manager/installer seams.
 	// All supervisor reads are isolated too. Individual manager tests replace this seam.
@@ -78,12 +75,13 @@ func TestMain(m *testing.M) {
 	detectSupervisionFn = func(_ string, running bool, _ int) Supervision {
 		return unmanagedSupervision(running, "isolated unit test")
 	}
+	installRefusingHostSeams()
 	// Two independent process exits are closed for the whole binary: the real
 	// TCP dialer, and the real OS service manager (launchctl/systemctl). The
 	// service manager guard is the outer one so its report is emitted after the
 	// network guard has finished, and so a package that trips both still fails.
 	code := testenv.RunWithServiceManagerGuard(func() int {
-		return testenv.RunWithNonLoopbackDialGuard(m.Run, "cmd")
+		return testenv.RunWithNonLoopbackDialGuard(run, "cmd")
 	}, "cmd", osServiceManagerSeams()...)
 
 	// Own the teardown of the package's single compiled-binary build root.
@@ -96,15 +94,7 @@ func TestMain(m *testing.M) {
 			fmt.Fprintf(os.Stderr, "warning: remove compiled binary root %s: %v\n", tslinkBinaryRoot, err)
 		}
 	}
-	if isolatedConfig != "" {
-		if err := os.RemoveAll(isolatedConfig); err != nil {
-			fmt.Fprintf(os.Stderr, "cannot remove isolated cmd config: %v\n", err)
-			if code == 0 {
-				code = 1
-			}
-		}
-	}
-	os.Exit(code)
+	return code
 }
 
 func dedicatedSystemdE2EInvocation() bool {

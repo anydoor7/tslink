@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/monody0007/tslink/internal/inspect"
 	"github.com/monody0007/tslink/internal/output"
+	"github.com/monody0007/tslink/internal/testenv/localapitest"
 )
 
 // TestDoctorTailscaleSSHIsInformationalInEveryOutcome pins the property the
@@ -182,17 +184,33 @@ func TestDoctorTailscaleSSHProbeIsBounded(t *testing.T) {
 }
 
 // TestDefaultTailscaleSSHEnabledFailsClosedOnACancelledContext exercises the
-// production seam's error path without contacting any tailscaled: the HTTP
-// round trip is abandoned on the already-cancelled context before any dial.
+// production seam's error path without contacting any tailscaled: the client
+// comes from doctorLocalClientFn with a stub transport that, like a real one,
+// refuses a request whose context is already cancelled. A zero local.Client
+// would not get that far without the host: it looks up the LocalAPI token
+// (lsof and a token file read on macOS) before the request even starts.
 func TestDefaultTailscaleSSHEnabledFailsClosedOnACancelledContext(t *testing.T) {
+	t.Setenv(doctorSkipTailscaleSSHEnv, "")
+	requests := 0
+	stubDoctorLocalClient(t, localapitest.RoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requests++
+		if err := req.Context().Err(); err != nil {
+			return nil, err
+		}
+		t.Fatal("stub transport received a live request on a cancelled context")
+		return nil, nil
+	}))
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
 	enabled, err := defaultTailscaleSSHEnabled(ctx)
-	if err == nil {
-		t.Fatal("defaultTailscaleSSHEnabled succeeded on a cancelled context")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("defaultTailscaleSSHEnabled on a cancelled context = %v, want context.Canceled", err)
 	}
 	if enabled {
 		t.Fatal("defaultTailscaleSSHEnabled reported enabled without reading preferences")
+	}
+	if requests > 1 {
+		t.Fatalf("stub saw %d requests, want at most one", requests)
 	}
 }

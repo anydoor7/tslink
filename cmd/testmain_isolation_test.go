@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/monody0007/tslink/internal/config"
+	"github.com/monody0007/tslink/internal/testenv"
 )
 
 // A zero-test child exercises TestMain's setup and teardown without running
@@ -26,7 +27,7 @@ func TestCmdTestMainCleansIsolatedConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, entry := range entries {
-		if strings.HasPrefix(entry.Name(), "tslink-cmd-test-config-") {
+		if strings.HasPrefix(entry.Name(), testenv.RootPrefix) {
 			t.Fatalf("TestMain leaked config directory %s", entry.Name())
 		}
 	}
@@ -50,13 +51,18 @@ func TestCmdTestMainFailsClosedWhenTempUnavailable(t *testing.T) {
 	cmd := exec.Command(os.Args[0], "-test.run=^$")
 	cmd.Env = append(os.Environ(), "TMPDIR="+badTmp, "TMP="+badTmp, "TEMP="+badTmp, "TSLINK_CONFIG_DIR=", "TSLINK_STOP_LIVENESS_HELPER=")
 	out, err := cmd.CombinedOutput()
-	if err == nil || !strings.Contains(string(out), "cannot isolate cmd tests") {
+	if err == nil || !strings.Contains(string(out), testenv.IsolationFailure) {
 		t.Fatalf("TestMain did not refuse missing temp directory: err=%v output=%s", err, out)
 	}
 }
 
 func TestCmdTestMainOverridesInheritedConfigWithoutChangingIt(t *testing.T) {
 	if os.Getenv("TSLINK_TESTMAIN_CONFIG_WRITE_HELPER") == "1" {
+		// TestMain points config.Dir() at a directory it does not create, so
+		// create it the way product writers do before writing through it.
+		if err := config.EnsureDir(); err != nil {
+			t.Fatal(err)
+		}
 		dir, err := config.Dir()
 		if err != nil {
 			t.Fatal(err)
@@ -93,7 +99,7 @@ func TestCmdTestMainOverridesInheritedConfigWithoutChangingIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, entry := range entries {
-		if strings.HasPrefix(entry.Name(), "tslink-cmd-test-config-") {
+		if strings.HasPrefix(entry.Name(), testenv.RootPrefix) {
 			t.Fatalf("inherited-config child leaked isolated config %s", entry.Name())
 		}
 	}

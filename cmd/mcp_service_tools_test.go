@@ -1001,6 +1001,8 @@ func TestMCPAddSharesTheCLIAdmissionGate(t *testing.T) {
 
 func TestMCPLocalToolsReadAndWriteTheGivenRegistry(t *testing.T) {
 	restoreShareSeams(t)
+	// The doctor action below reads Tailscale SSH through this seam.
+	stubDoctorTailscaleSSH(t, false, nil)
 	paths := mcpSharePaths(t)
 	if _, err := registry.Add(paths.Registry, registry.Service{Name: "web", Type: registry.TypeProxy, Target: "http://localhost:3000", Tags: []string{"tag:tsmain"}}); err != nil {
 		t.Fatalf("registry.Add: %v", err)
