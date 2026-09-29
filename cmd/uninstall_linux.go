@@ -5,6 +5,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -39,7 +40,9 @@ the user bus (XDG_RUNTIME_DIR=/run/user/$UID). If 'systemctl --user' is
 permanently unavailable on this host,
 remove ~/.config/systemd/user/tslink.service by hand.
 
-If the service is not installed, prints a message and exits cleanly.
+If the service is not installed, prints a message and exits cleanly. If the
+unit file is already gone but systemd still runs or enables tslink.service,
+the command fails and names the commands that finish the removal.
 
 To check if the service is still active after removal:
   systemctl --user status tslink
@@ -65,6 +68,9 @@ func runUninstallLocked(cmd *cobra.Command, args []string) error {
 	}
 
 	if _, err := os.Stat(servicePath); os.IsNotExist(err) {
+		if err := systemdUnitLeftBehind(servicePath); err != nil {
+			return err
+		}
 		warning := resetFailedSystemdServiceWarning()
 		if jsonOutput(cmd) {
 			output.Success("uninstall", UninstallResult{Path: servicePath, Removed: false, ServiceManager: systemdServiceName, Warning: warning})
@@ -135,6 +141,33 @@ func confirmSystemdStoppedAfterError(servicePath string) error {
 		return fmt.Errorf("ActiveState=%q MainPID=%q", state["ActiveState"], state["MainPID"])
 	}
 	return nil
+}
+
+// systemdUnitLeftBehind reports a tslink.service that systemd still runs or
+// enables after its unit file was deleted by hand, where "not installed" would
+// be false. It only reports and changes nothing: the definition this command
+// would stop and disable is already gone. A user manager that cannot be
+// reached is evidence of neither, and keeps the plain "not installed" answer.
+func systemdUnitLeftBehind(servicePath string) error {
+	var problems []string
+	output, err := systemctlCombinedOutput("--user", "show", systemdServiceName,
+		"--property=LoadState", "--property=ActiveState", "--property=MainPID", "--no-pager")
+	if err == nil {
+		state := parseSystemdProperties(output)
+		active := state["ActiveState"]
+		pid, pidErr := strconv.Atoi(state["MainPID"])
+		if (active != "" && active != "inactive" && active != "failed") || (pidErr == nil && pid != 0) {
+			problems = append(problems, fmt.Sprintf("systemd still runs it (ActiveState=%q MainPID=%q); stop it with 'systemctl --user stop %s'", active, state["MainPID"], systemdServiceName))
+		}
+	}
+	link := filepath.Join(filepath.Dir(servicePath), "default.target.wants", systemdServiceName)
+	if _, err := os.Lstat(link); err == nil {
+		problems = append(problems, fmt.Sprintf("it is still enabled through %s; remove that link by hand and run 'systemctl --user daemon-reload'", link))
+	}
+	if len(problems) == 0 {
+		return nil
+	}
+	return fmt.Errorf("systemd unit file %s is already gone, but %s; then rerun 'tslink uninstall'", servicePath, strings.Join(problems, ", and "))
 }
 
 // systemdUserManagerRemedy is the way out when uninstall keeps the unit because

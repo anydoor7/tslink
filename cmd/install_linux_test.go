@@ -1311,11 +1311,12 @@ func TestLinuxUninstallAbsentUnitStillResetsFailedStateBestEffort(t *testing.T) 
 		t.Fatalf("uninstall RunE() error = %v, want absent unit and reset failure tolerated", err)
 	}
 	wantCalls := []string{
+		strings.Join([]string{"--user", "show", systemdServiceName, "--property=LoadState", "--property=ActiveState", "--property=MainPID", "--no-pager"}, "\x00"),
 		strings.Join([]string{"--user", "reset-failed", systemdServiceName}, "\x00"),
 		strings.Join([]string{"--user", "show", systemdServiceName, "--property=LoadState", "--property=ActiveState", "--no-pager"}, "\x00"),
 	}
 	if strings.Join(calls, "\n") != strings.Join(wantCalls, "\n") {
-		t.Fatalf("systemctl calls = %q, want reset-failed plus absent-state confirmation", calls)
+		t.Fatalf("systemctl calls = %q, want left-behind check, reset-failed, then absent-state confirmation", calls)
 	}
 	if !strings.Contains(out.String(), "not installed") || errOut.Len() != 0 {
 		t.Fatalf("stdout = %q stderr = %q, want clean not-installed success after absent-state confirmation", out.String(), errOut.String())
