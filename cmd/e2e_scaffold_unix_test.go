@@ -47,7 +47,9 @@ import (
 //     temp build directory, and e2eRequireTempPath fails closed if that path is
 //     not under os.TempDir(). A daemon an operator installed at, for example,
 //     /Users/<user>/go/bin/tslink is therefore structurally unmatchable. It
-//     only ever looks at this user's own processes and runs no ps.
+//     only ever looks at this user's own processes, runs no ps, and reads
+//     nothing inside a process that was already running when this test
+//     process started (e2eCandidateExecutables).
 //   - No helper reads or writes the real ~/.config/tslink. Every caller passes
 //     an explicit t.TempDir() config directory.
 
@@ -356,6 +358,82 @@ func (h *e2eDaemonHandle) WaitExit(d time.Duration) bool {
 	}
 }
 
+// e2eProcess is one entry of the listing of this user's processes. It holds
+// only what the listing itself carries; nothing inside the process is read to
+// fill it.
+type e2eProcess struct {
+	PID int
+	// Command is the kernel's command name, the executable's base name cut to
+	// the platform's e2eProcessTable.commandMax bytes.
+	Command string
+	// Start is when the process was created, in the listing's own clock and
+	// units. It is compared only with other entries of the same listing.
+	Start int64
+}
+
+// e2eProcessTable is how the e2e helpers see the host's processes.
+// e2eHostProcessTable is the real one, per platform.
+type e2eProcessTable struct {
+	// list returns this user's processes, including this test process.
+	list func() ([]e2eProcess, error)
+	// executable returns the path a process was started from. It is the only
+	// read inside another process (on macOS it copies the argv and environment
+	// block that carries the path), so it is called only for candidates.
+	executable func(pid int) (string, error)
+	// commandMax is the length the OS cuts command names to.
+	commandMax int
+}
+
+// e2eCandidateExecutables returns the executable of every process in table
+// that this test process can have started from a binary named base: the
+// process started after this one did, and its command name is base cut to the
+// OS limit. Nothing is read inside any other process. In particular a process
+// that was already running when this test process started, such as the
+// contributor's own tslink daemon, is never read, whatever its name; and no
+// binary this run built can back such a process, because the run built it
+// later.
+//
+// The cutoff is this process's own start time, taken from the same listing, so
+// it is in the same clock and units as every candidate's. The comparison is
+// strict: on Linux a start time is a clock tick (10 ms at the usual USER_HZ of
+// 100), and a process that started in the same tick as this one may have
+// started before it.
+func e2eCandidateExecutables(table e2eProcessTable, base string) (map[int]string, error) {
+	listing, err := table.list()
+	if err != nil {
+		return nil, err
+	}
+	self := os.Getpid()
+	var cutoff int64
+	found := false
+	for _, proc := range listing {
+		if proc.PID == self {
+			cutoff, found = proc.Start, true
+			break
+		}
+	}
+	if !found {
+		return nil, fmt.Errorf("the listing of this user's %d processes does not include this one (pid %d), so it cannot be trusted to include the ones this test started", len(listing), self)
+	}
+	command := base
+	if len(command) > table.commandMax {
+		command = command[:table.commandMax]
+	}
+	executables := map[int]string{}
+	for _, proc := range listing {
+		if proc.Start <= cutoff || proc.Command != command {
+			continue
+		}
+		executable, err := table.executable(proc.PID)
+		if err != nil {
+			// Exited since the listing, or a zombie.
+			continue
+		}
+		executables[proc.PID] = executable
+	}
+	return executables, nil
+}
+
 // e2eLivePIDsForBinary returns the PIDs of this user's live processes whose
 // executable is exactly binaryPath.
 //
@@ -365,14 +443,15 @@ func (h *e2eDaemonHandle) WaitExit(d time.Duration) bool {
 // never satisfy it. The result is only ever used for counting and assertions,
 // never to select a signal target.
 //
-// It looks only at this user's processes (e2eUserProcessExecutables) and runs
-// no ps: `ps -A` read the argv of every process on the host and failed outright
-// where ps cannot run. Where no per-user reader works the test is skipped with
-// the reason instead.
+// It lists only this user's processes and runs no ps: `ps -A` read the argv of
+// every process on the host and failed outright where ps cannot run. It reads
+// the executable only of the processes e2eCandidateExecutables selects by start
+// time and command name. Where the listing does not work the test is skipped
+// with the reason instead.
 func e2eLivePIDsForBinary(t *testing.T, binaryPath string) []int {
 	t.Helper()
 	resolved := e2eRequireTempPath(t, binaryPath)
-	executables, err := e2eUserProcessExecutables()
+	executables, err := e2eCandidateExecutables(e2eHostProcessTable, filepath.Base(binaryPath))
 	if err != nil {
 		t.Skipf("cannot list this user's processes to count those started from %s: %v", binaryPath, err)
 	}
