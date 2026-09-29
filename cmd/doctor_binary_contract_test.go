@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -89,12 +90,29 @@ func decodeCompiledDoctor(t *testing.T, stdout string) DoctorResult {
 	return data
 }
 
+// closedLoopbackTCPTarget returns 127.0.0.1:<port> for a port this test bound
+// and released, so a probe of it is refused on every host instead of reaching
+// whatever the machine runs on a well-known port (localhost:5432 used to hit a
+// contributor's PostgreSQL).
+func closedLoopbackTCPTarget(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve a loopback port: %v", err)
+	}
+	target := ln.Addr().String()
+	if err := ln.Close(); err != nil {
+		t.Fatalf("release the loopback port: %v", err)
+	}
+	return target
+}
+
 func TestCompiledDoctorJSONHealthFixtures(t *testing.T) {
 	validReg := registry.Registry{Services: []registry.Service{}}
 	errorReg := registry.Registry{Services: []registry.Service{{
 		Name:         "db",
 		Type:         registry.TypeTCP,
-		Target:       "localhost:5432",
+		Target:       closedLoopbackTCPTarget(t),
 		AllowedUsers: []string{"alice@example.com"},
 	}}}
 
