@@ -8,7 +8,7 @@ TSLink is designed around explicit capability boundaries. The machine-readable p
 - **Explicit public exposure guardrail** — Tailscale Funnel is proxy-only and requires an explicit `--public` / `public_ack:true` acknowledgement
 - **Tailnet transport encryption** — traffic between Tailscale devices uses WireGuard; public Funnel paths follow Tailscale Funnel semantics
 - **HTTP identity verification for proxy/file requests** — Tailscale WhoIs authenticates TSLink-managed HTTP requests before identity headers are injected; raw TCP streams and public Funnel exposure are not treated as TSLink-enforced Tailscale user authentication
-- **Credential storage with restricted fallback** — API keys and OAuth client secrets are stored in macOS Keychain / Linux secret service when available, with restricted-permission file fallback for headless or unavailable-keychain environments
+- **Credential storage with restricted fallback** — API keys and OAuth client secrets are stored in macOS Keychain / Linux secret service / Windows Credential Manager when available. macOS and Linux fall back to a restricted-permission file for headless or unavailable-keychain environments; Windows has no file fallback, because TSLink cannot prove a user-only DACL locally
 - **Dynamic auth key derivation** — API-token-derived startup auth keys are generated on demand and not persisted; legacy authkey files may still be read for compatibility and should be migrated
 - **Per-service isolation** — each service runs as its own tsnet node with an independent identity
 - **Inbound header stripping** — identity headers from external sources are stripped to prevent spoofing
