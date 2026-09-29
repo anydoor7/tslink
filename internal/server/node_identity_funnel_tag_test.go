@@ -13,6 +13,7 @@ import (
 	"github.com/monody0007/tslink/internal/registry"
 	"github.com/monody0007/tslink/internal/tailapi"
 	"github.com/monody0007/tslink/internal/testenv"
+	"github.com/monody0007/tslink/internal/testenv/localapitest"
 )
 
 func funnelPolicySatisfied(context.Context, tailapi.FunnelPolicyRequest) (tailapi.PolicyMutationResult, error) {
@@ -31,7 +32,7 @@ func syncOnceWithFakeNode(t *testing.T, startsCleanly bool, cleanups *[][]tailap
 		sort.Strings(tags)
 		advertised = append(advertised, tags)
 		if startsCleanly {
-			return &fakeTSNetServer{localClient: &LocalClient{}}
+			return &fakeTSNetServer{localClient: localapitest.NewClient(nil)}
 		}
 		return &fakeTSNetServer{upErr: errors.New("intentional fake Up stop")}
 	}

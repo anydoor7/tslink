@@ -17,6 +17,7 @@ import (
 	"github.com/monody0007/tslink/internal/registry"
 	"github.com/monody0007/tslink/internal/tailapi"
 	"github.com/monody0007/tslink/internal/testenv"
+	"github.com/monody0007/tslink/internal/testenv/localapitest"
 	"tailscale.com/ipn"
 	"tailscale.com/ipn/ipnstate"
 )
@@ -76,9 +77,9 @@ func instrumentTiers(t *testing.T) *tierProbe {
 		p.authKeys = append(p.authKeys, authKey)
 		p.mu.Unlock()
 		if authKey == "" {
-			return &fakeInteractiveTSNetServer{fakeTSNetServer: fakeTSNetServer{localClient: &LocalClient{}, certDomains: []string{"app.tailnet.ts.net"}}}
+			return &fakeInteractiveTSNetServer{fakeTSNetServer: fakeTSNetServer{localClient: localapitest.NewClient(nil), certDomains: []string{"app.tailnet.ts.net"}}}
 		}
-		return &fakeTSNetServer{localClient: &LocalClient{}, status: tierRunningStatus(), certDomains: []string{"app.tailnet.ts.net"}}
+		return &fakeTSNetServer{localClient: localapitest.NewClient(nil), status: tierRunningStatus(), certDomains: []string{"app.tailnet.ts.net"}}
 	}
 	oldStatus := tsnetStatusClientFn
 	tsnetStatusClientFn = func(tsnetServer) (tsnetStatusClient, error) { return tierStatusClient{}, nil }

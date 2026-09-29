@@ -134,8 +134,8 @@ func TestACLMiddleware_WhoIsError_ReturnsForbidden(t *testing.T) {
 		called = true
 	})
 
-	// A LocalClient with no running tailscale will fail WhoIs
-	lc := &LocalClient{}
+	// WhoIs fails; the stub answers instead of the host's tailscaled.
+	lc := fakeWhoIsClient(t, nil, errors.New("whois unavailable"))
 	mw := ACLMiddleware([]string{"alice@example.com"}, lc)
 	handler := mw(inner)
 

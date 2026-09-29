@@ -13,6 +13,7 @@ import (
 	"github.com/monody0007/tslink/internal/registry"
 	"github.com/monody0007/tslink/internal/tailapi"
 	"github.com/monody0007/tslink/internal/testenv"
+	"github.com/monody0007/tslink/internal/testenv/localapitest"
 )
 
 // identityProbe counts every destructive or remote step an identity
@@ -53,7 +54,7 @@ func instrumentIdentity(t *testing.T) *identityProbe {
 		p.mu.Lock()
 		p.constructs = append(p.constructs, svc.Name+"|"+stateDir+"|"+joinTags(tags))
 		p.mu.Unlock()
-		return &fakeTSNetServer{localClient: &LocalClient{}}
+		return &fakeTSNetServer{localClient: localapitest.NewClient(nil)}
 	}
 	t.Cleanup(func() {
 		removeServiceStateDirFn = oldRemove

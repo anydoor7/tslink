@@ -28,6 +28,7 @@ import (
 	runtimesnapshot "github.com/monody0007/tslink/internal/runtime"
 	"github.com/monody0007/tslink/internal/tailapi"
 	"github.com/monody0007/tslink/internal/testenv"
+	"github.com/monody0007/tslink/internal/testenv/localapitest"
 	"tailscale.com/ipn"
 	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/tailcfg"
@@ -1940,7 +1941,7 @@ func TestStartNodeLockedChecksExpiredFunnelBeforeArmingAnyFunnelListener(t *test
 	serverNowFn = func() time.Time { return now }
 	t.Cleanup(func() { serverNowFn = oldNow })
 
-	fake := &fakeTSNetServer{localClient: &LocalClient{}, status: &ipnstate.Status{Self: &ipnstate.PeerStatus{
+	fake := &fakeTSNetServer{localClient: localapitest.NewClient(nil), status: &ipnstate.Status{Self: &ipnstate.PeerStatus{
 		ID:      tailcfg.StableNodeID("node-expired-fixture"),
 		DNSName: "public-app.example.ts.net.",
 	}}}
@@ -1990,7 +1991,7 @@ func TestRunPerformsStartupLifecycleCheckBeforeConstructingListeners(t *testing.
 	serverNowFn = func() time.Time { return now }
 	t.Cleanup(func() { serverNowFn = oldNow })
 	lifecycleChecked := false
-	fake := &fakeTSNetServer{localClient: &LocalClient{}, status: &ipnstate.Status{Self: &ipnstate.PeerStatus{DNSName: "startup-expired.example.ts.net."}}}
+	fake := &fakeTSNetServer{localClient: localapitest.NewClient(nil), status: &ipnstate.Status{Self: &ipnstate.PeerStatus{DNSName: "startup-expired.example.ts.net."}}}
 	oldNew := newTSNetServerFn
 	newTSNetServerFn = func(svc registry.Service, _ string, _ string, _ string) tsnetServer {
 		if !lifecycleChecked {
@@ -2080,7 +2081,7 @@ func TestLifecycleTickerSkipsFullSyncWhenReconcileReportsNoChange(t *testing.T) 
 	oldNew := newTSNetServerFn
 	newTSNetServerFn = func(registry.Service, string, string, string) tsnetServer {
 		constructed.Add(1)
-		return &fakeTSNetServer{localClient: &LocalClient{}, status: &ipnstate.Status{Self: &ipnstate.PeerStatus{DNSName: "private.example.ts.net."}}}
+		return &fakeTSNetServer{localClient: localapitest.NewClient(nil), status: &ipnstate.Status{Self: &ipnstate.PeerStatus{DNSName: "private.example.ts.net."}}}
 	}
 	oldInterval := lifecycleTickerInterval
 	lifecycleTickerInterval = 5 * time.Millisecond
@@ -2124,7 +2125,7 @@ func probeServer(t *testing.T) *Server {
 	t.Cleanup(s.closeAllNodes)
 	oldNew := newTSNetServerFn
 	newTSNetServerFn = func(registry.Service, string, string, string) tsnetServer {
-		return &fakeTSNetServer{localClient: &LocalClient{}, status: &ipnstate.Status{Self: &ipnstate.PeerStatus{ID: "nprobe1CNTRL", DNSName: "private.example.ts.net."}}}
+		return &fakeTSNetServer{localClient: localapitest.NewClient(nil), status: &ipnstate.Status{Self: &ipnstate.PeerStatus{ID: "nprobe1CNTRL", DNSName: "private.example.ts.net."}}}
 	}
 	t.Cleanup(func() { newTSNetServerFn = oldNew })
 	return s
@@ -2203,7 +2204,7 @@ func TestLifecycleTickerRetriesFailedSyncThenReturnsToChangeOnly(t *testing.T) {
 	t.Cleanup(s.closeAllNodes)
 	oldNew := newTSNetServerFn
 	newTSNetServerFn = func(registry.Service, string, string, string) tsnetServer {
-		return &fakeTSNetServer{localClient: &LocalClient{}, status: &ipnstate.Status{Self: &ipnstate.PeerStatus{DNSName: "private.example.ts.net."}}}
+		return &fakeTSNetServer{localClient: localapitest.NewClient(nil), status: &ipnstate.Status{Self: &ipnstate.PeerStatus{DNSName: "private.example.ts.net."}}}
 	}
 	oldAfter := afterDesiredLoadedFn
 	var syncAttempts atomic.Int32
@@ -2276,7 +2277,7 @@ func TestRunningFunnelListenerIsTornDownAfterDeadline(t *testing.T) {
 			}
 		}
 		return &fakeTSNetServer{
-			localClient: &LocalClient{},
+			localClient: localapitest.NewClient(nil),
 			status:      funnelEnabledStatus("public-app.tailnet.ts.net."),
 			certDomains: []string{"public-app.tailnet.ts.net"},
 		}
@@ -2322,7 +2323,7 @@ func TestOwnershipWriteFailureRetriesThenContinuesServiceStartup(t *testing.T) {
 	if err := config.EnsureDir(); err != nil {
 		t.Fatal(err)
 	}
-	fake := &fakeTSNetServer{localClient: &LocalClient{}, status: &ipnstate.Status{Self: &ipnstate.PeerStatus{
+	fake := &fakeTSNetServer{localClient: localapitest.NewClient(nil), status: &ipnstate.Status{Self: &ipnstate.PeerStatus{
 		ID: tailcfg.StableNodeID("node-ledger-retry-fixture"), DNSName: "private.example.ts.net.",
 	}}}
 	oldNew := newTSNetServerFn
@@ -3128,7 +3129,7 @@ func TestSyncNodes_RecoverableAgentFailuresAreBoundedAndVisible(t *testing.T) {
 			fake.upWait = true
 		case "listen-fail":
 			fake.status = funnelEnabledStatus("listen-fail.tailnet.ts.net.")
-			fake.localClient = &LocalClient{}
+			fake.localClient = localapitest.NewClient(nil)
 			fake.listenFunnelErr = errors.New("synthetic Funnel bind failure")
 		case "healthy":
 			fake.certDomains = []string{"healthy.tailnet.ts.net"}
@@ -3229,7 +3230,7 @@ func TestStartNodeLocked_VerifiesPreparedFunnelPolicyAndWaitsForNetmap(t *testin
 	}
 	fake := &fakeTSNetServer{
 		status:      funnelMissingStatus("public-app.tailnet.ts.net."),
-		localClient: &LocalClient{},
+		localClient: localapitest.NewClient(nil),
 	}
 	statusClient := &sequenceTSNetStatusClient{statuses: []*ipnstate.Status{
 		funnelMissingStatus("public-app.tailnet.ts.net."),
@@ -3290,7 +3291,7 @@ func TestStartNodeLocked_RuntimeHostComesFromTheNetmapTheFunnelWaitObserved(t *t
 	// the netmap carries this node's DNS name. The Funnel capability wait polls
 	// a later netmap; the host it observed is the one the node must publish.
 	upStatus := funnelMissingStatus("")
-	fake := &fakeTSNetServer{status: upStatus, localClient: &LocalClient{}}
+	fake := &fakeTSNetServer{status: upStatus, localClient: localapitest.NewClient(nil)}
 	statusClient := &sequenceTSNetStatusClient{statuses: []*ipnstate.Status{
 		funnelMissingStatus(""),
 		funnelEnabledStatus("public-late.tailnet.ts.net."),
@@ -3899,7 +3900,7 @@ func TestSyncNodes_FunnelActiveRequiresSuccessfulFunnelListener(t *testing.T) {
 
 	fake := &fakeTSNetServer{
 		status:      funnelEnabledStatus("public-ok.tailnet.ts.net."),
-		localClient: &LocalClient{},
+		localClient: localapitest.NewClient(nil),
 		certDomains: []string{"public-ok.tailnet.ts.net"},
 	}
 	oldNew := newTSNetServerFn
@@ -3971,7 +3972,7 @@ func TestSyncNodes_FunnelPolicyConflictRetryRecordsEnsureAndAudit(t *testing.T) 
 
 	fake := &fakeTSNetServer{
 		status:      funnelEnabledStatus("public-retry.tailnet.ts.net."),
-		localClient: &LocalClient{},
+		localClient: localapitest.NewClient(nil),
 		certDomains: []string{"public-retry.tailnet.ts.net"},
 	}
 	oldNew := newTSNetServerFn
@@ -4102,7 +4103,7 @@ func TestSyncNodes_FunnelOptOutNeverSendsSharedTagToLegacyEnsureTags(t *testing.
 			}})
 
 			fake := &fakeTSNetServer{
-				status: funnelEnabledStatus("public.tailnet.ts.net."), localClient: &LocalClient{},
+				status: funnelEnabledStatus("public.tailnet.ts.net."), localClient: localapitest.NewClient(nil),
 				certDomains: []string{"public.tailnet.ts.net"},
 			}
 			oldNew := newTSNetServerFn
@@ -4185,7 +4186,7 @@ func TestSyncNodes_ListenerActivationTimeoutClosesAndUnblocksLaterService(t *tes
 	})
 
 	blocked := &blockingListenerTSNetServer{
-		fakeTSNetServer: fakeTSNetServer{status: funnelEnabledStatus("blocked-funnel.tailnet.ts.net."), localClient: &LocalClient{}},
+		fakeTSNetServer: fakeTSNetServer{status: funnelEnabledStatus("blocked-funnel.tailnet.ts.net."), localClient: localapitest.NewClient(nil)},
 		listenStarted:   make(chan struct{}),
 		unblock:         make(chan struct{}),
 	}
