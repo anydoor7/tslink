@@ -119,7 +119,11 @@ func TestSyncNodesPublicIdentityRetryAfterPreflightFailure(t *testing.T) {
 	}
 }
 
-func TestSyncNodesRemoveAfterFailedPublicPreflightClearsOldState(t *testing.T) {
+// A public node withdrawn by a failed preflight is no longer running, so a
+// later registry removal alone is not proof that its tailnet node is gone.
+// Its state and record stay until an ownership-proven path (tslink remove, the
+// lifecycle reconciler) deletes the state; only then is the record pruned.
+func TestSyncNodesRemoveAfterFailedPublicPreflightKeepsStateUntilProvenGone(t *testing.T) {
 	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatal(err)
@@ -163,11 +167,22 @@ func TestSyncNodesRemoveAfterFailedPublicPreflightClearsOldState(t *testing.T) {
 	if err := s.syncNodes(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(marker); !os.IsNotExist(err) {
-		t.Fatalf("removed service retained old node state: %v", err)
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("registry removal without ownership proof deleted node state: %v", err)
 	}
 	path, err := s.nodeIdentityPath(oldSvc.Name)
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := readNodeIdentity(path); err != nil || !found {
+		t.Fatalf("record dropped while its state remains: found=%v err=%v", found, err)
+	}
+	// The ownership-proven path removes the state (lifecycle
+	// removeStaleNodeState, or tslink remove with no daemon running).
+	if err := os.RemoveAll(stateDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.syncNodes(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	_, found, err := readNodeIdentity(path)

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -150,9 +151,15 @@ func (s *Server) recordRunningIdentitiesLocked() map[string]error {
 	return failures
 }
 
-// removeAbsentNodeIdentities finishes removal for services whose listener was
-// already withdrawn in a previous sync or process. The record remains until
-// state removal is verified, so an interrupted deletion is retried safely.
+// removeAbsentNodeIdentities prunes the records of services absent from the
+// registry once their node state is already gone. It never deletes node state
+// itself. Absence from registry.json is not proof that no tailnet node still
+// authenticates with that key: the file may be missing or blank, or the
+// service may have been removed while no daemon ran and `tslink remove` could
+// not confirm the remote side. State of a service that is not running here is
+// deleted only by paths that hold remote ownership proof: `tslink remove` and
+// the lifecycle reconciler, which require a valid registry file and resolved
+// ownership-ledger NodeIDs. Until then the record stays with its state.
 func (s *Server) removeAbsentNodeIdentities(desired map[string]registry.Service) error {
 	dir := filepath.Join(s.cfgDir, "node-identities")
 	info, err := os.Lstat(dir)
@@ -169,13 +176,27 @@ func (s *Server) removeAbsentNodeIdentities(desired map[string]registry.Service)
 	if err != nil {
 		return fmt.Errorf("read node identities: %w", err)
 	}
-	var errs []error
+	var absent []string
 	for _, entry := range entries {
 		if !strings.HasSuffix(entry.Name(), ".json") {
 			continue
 		}
 		name := strings.TrimSuffix(entry.Name(), ".json")
-		if _, exists := desired[name]; exists {
+		if _, exists := desired[name]; !exists {
+			absent = append(absent, name)
+		}
+	}
+	if len(absent) == 0 {
+		return nil
+	}
+	registered, trusted := s.trustedRegistryNames()
+	if !trusted {
+		slog.Warn("keeping node state and identity records for services absent from registry.json; the registry file is missing, blank, or unreadable", "services", absent)
+		return nil
+	}
+	var errs []error
+	for _, name := range absent {
+		if _, exists := registered[name]; exists {
 			continue
 		}
 		path, err := s.nodeIdentityPath(name)
@@ -191,16 +212,12 @@ func (s *Server) removeAbsentNodeIdentities(desired map[string]registry.Service)
 			errs = append(errs, fmt.Errorf("read removed service identity %q: %w", name, err))
 			continue
 		}
-		if err := removeServiceStateDirFn(name); err != nil {
-			errs = append(errs, fmt.Errorf("remove state for deleted service %q: %w", name, err))
-			continue
-		}
 		stateDir := filepath.Join(config.NodesDirIn(s.cfgDir), name)
 		if _, err := os.Lstat(stateDir); err == nil {
-			errs = append(errs, fmt.Errorf("remove state for deleted service %q: state directory remains", name))
+			slog.Info("keeping node state and identity record for a removed service; no ownership proof has cleared its tailnet node", "service", name)
 			continue
 		} else if !errors.Is(err, os.ErrNotExist) {
-			errs = append(errs, fmt.Errorf("verify state removal for deleted service %q: %w", name, err))
+			errs = append(errs, fmt.Errorf("inspect state for removed service %q: %w", name, err))
 			continue
 		}
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -208,6 +225,25 @@ func (s *Server) removeAbsentNodeIdentities(desired map[string]registry.Service)
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// trustedRegistryNames re-reads registry.json with the same file-state rule
+// the lifecycle reconciler uses before any deletion: only a present, valid
+// file can say that a service was removed.
+func (s *Server) trustedRegistryNames() (map[string]struct{}, bool) {
+	regPath, err := registryPathFn()
+	if err != nil {
+		return nil, false
+	}
+	reg, state, err := registry.LoadWithFileState(regPath)
+	if err != nil || state != registry.RegistryFileValid {
+		return nil, false
+	}
+	names := make(map[string]struct{}, len(reg.Services))
+	for _, svc := range reg.Services {
+		names[svc.Name] = struct{}{}
+	}
+	return names, true
 }
 
 // prepareNodeIdentity is the sole transition from an old requested identity

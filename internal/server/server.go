@@ -764,9 +764,9 @@ func (s *Server) syncNodesWithOutcome(ctx context.Context) (outcome syncOutcome,
 			s.stopNodeLocked(name, false)
 		}
 	}
-	// A prior failed preflight may have closed and removed a public node from
-	// memory. Its durable record lets a later removal finish deleting state,
-	// including after a process restart.
+	// Prune records of removed services whose state is already gone. State of
+	// a service that is not running here, for example a public node withdrawn
+	// by a failed preflight, is left to the paths that hold ownership proof.
 	removedIdentityErr := s.removeAbsentNodeIdentities(desired)
 	for name, failure := range policyFailures {
 		s.serviceFailures[name] = failure
