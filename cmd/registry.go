@@ -134,6 +134,9 @@ func init() {
 			path := ""
 			if len(args) == 1 {
 				path = args[0]
+				if _, err := os.Lstat(path); os.IsNotExist(err) {
+					return output.ErrNotFound(fmt.Sprintf("registry file not found: %s", path))
+				}
 			} else {
 				var err error
 				path, err = config.RegistryPath()
