@@ -144,8 +144,13 @@ func TestKeptFlagsAreKeyedByCommandAndName(t *testing.T) {
 			flag := &committed.Commands[i].Flags[j]
 			if flag.Name == "force" {
 				// install/uninstall --force are darwin-only; tags delete-remote
-				// --force exists everywhere and Linux registers it itself.
+				// --force exists everywhere and Linux registers it itself, so
+				// even a committed entry wrongly marked darwin-only must not
+				// replace or duplicate it.
 				flag.Usage = "committed " + committed.Commands[i].Path + " --force"
+				if committed.Commands[i].Path == "tslink tags delete-remote" {
+					flag.Platforms = []string{"darwin"}
+				}
 			}
 		}
 	}
@@ -165,6 +170,9 @@ func TestKeptFlagsAreKeyedByCommandAndName(t *testing.T) {
 	for _, command := range fixture.Commands {
 		for _, flag := range command.Flags {
 			if flag.Name == "force" {
+				if _, twice := usages[command.Path]; twice {
+					t.Errorf("%s lists --force twice", command.Path)
+				}
 				usages[command.Path] = flag.Usage
 			}
 		}
