@@ -454,7 +454,8 @@ func WorstExpiryState(states ...string) string {
 // When a slot holds a credential but has no matching metadata (or the stored
 // fingerprint no longer matches), the slot is backfilled with stored_at=now and
 // the assumed maximum lifetime; persist controls whether that backfill is
-// written to disk. No disk access happens when neither slot is present.
+// written to disk, which happens only while the slot still stores that value.
+// No disk access happens when neither slot is present.
 func DescribeSlots(values SlotValues, now time.Time, persist bool) Inventory {
 	if strings.TrimSpace(values.APIKey) == "" && strings.TrimSpace(values.ClientSecret) == "" {
 		return DescribeSlotsWithMetadata(values, emptyMetadata(), nil, now)
@@ -472,7 +473,16 @@ func DescribeSlots(values SlotValues, now time.Time, persist bool) Inventory {
 // against the document the backfill was computed from: a slot another writer
 // (a login) recorded in between keeps that writer's record, and the returned
 // inventory reports it instead of the discarded backfill.
+//
+// Two reads of the metadata cannot say whether values is still what the slot
+// stores. A login that commits before the first read leaves both reads
+// describing its new credential while values may still hold the one it
+// replaced, and a backfill computed from that stale value would erase the
+// login's expiry and verification. So each slot is also read back here, under
+// the lock every login and logout holds, and a backfill is written only for a
+// slot that still stores the value it describes.
 func persistBackfill(values SlotValues, seen Metadata, inventory Inventory, now time.Time) Inventory {
+	var readErrs []error
 	err := withCredentialMutationLock(func() error {
 		current, err := LoadMetadata()
 		if err != nil {
@@ -486,9 +496,17 @@ func persistBackfill(values SlotValues, seen Metadata, inventory Inventory, now 
 			if hadBefore != hasAfter || before.Fingerprint != after.Fingerprint {
 				continue
 			}
-			view := fresh.APIKey
+			view, value, readStored := fresh.APIKey, values.APIKey, GetAPIKey
 			if slot == SlotClientSecret {
-				view = fresh.ClientSecret
+				view, value, readStored = fresh.ClientSecret, values.ClientSecret, GetClientSecret
+			}
+			stored, err := readStored()
+			if err != nil {
+				readErrs = append(readErrs, err)
+				continue
+			}
+			if Fingerprint(stored) != Fingerprint(value) {
+				continue
 			}
 			if view.Metadata != nil {
 				current.Slots[slot] = *view.Metadata
@@ -501,7 +519,7 @@ func persistBackfill(values SlotValues, seen Metadata, inventory Inventory, now 
 		}
 		return SaveMetadata(current)
 	})
-	if err != nil {
+	if err := errors.Join(append([]error{err}, readErrs...)...); err != nil {
 		inventory.BackfillError = err
 	}
 	return inventory

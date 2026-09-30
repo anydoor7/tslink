@@ -135,53 +135,40 @@ func removeServiceResultContext(ctx context.Context, regPath, ownershipPath, nam
 	// can neither record that the user removed the service nor find its
 	// devices, and unregistering it anyway leaves ownership rows nobody
 	// retired, which withhold that service's device deletion for good.
-	ledger, err := tsruntime.LoadOwnership(ownershipPath)
-	if err != nil {
+	if _, err := tsruntime.LoadOwnership(ownershipPath); err != nil {
 		return RemoveResult{}, err
-	}
-	var owned []tsruntime.OwnedNode
-	var ownedNodeIDs []string
-	for _, node := range ledger.Nodes {
-		if node.ServiceName == name {
-			owned = append(owned, node)
-			ownedNodeIDs = append(ownedNodeIDs, node.NodeID)
-		}
 	}
 	// The retirement is recorded before the registry entry goes, so no crash
 	// or failure in between can leave an unregistered service whose rows say
-	// nothing about its removal. A failed registry write puts the rows back.
-	retired := false
-	if len(ownedNodeIDs) > 0 {
-		registered, err := serviceRegistered(regPath, name)
-		if err != nil {
-			return RemoveResult{}, err
+	// nothing about its removal, and a failed registry write puts the rows
+	// back. Both happen under the registry lock and then the ledger lock, so
+	// the rows retired are the ones recorded up to the moment the entry goes:
+	// a node that enrolled while this command waited for the registry lock is
+	// retired too, rather than left with a row nobody retired.
+	var owned []tsruntime.OwnedNode
+	svc, removed, err := registry.RemoveAndReturnWithin(regPath, name, func(_ registry.Service, commit func() error) error {
+		committing := false
+		var err error
+		owned, err = tsruntime.RetireServiceNodes(ownershipPath, name, removeNowFn(), func() error {
+			committing = true
+			return commit()
+		})
+		if err != nil && !committing {
+			return fmt.Errorf("record the removal of %q in the node ownership ledger before unregistering it: %w", name, err)
 		}
-		if registered {
-			if err := tsruntime.MarkOwnedNodeIDsRetired(ownershipPath, ownedNodeIDs, removeNowFn()); err != nil {
-				return RemoveResult{}, fmt.Errorf("record the removal of %q in the node ownership ledger before unregistering it: %w", name, err)
-			}
-			retired = true
-		}
-	}
-	svc, removed, err := registry.RemoveAndReturn(regPath, name)
+		return err
+	})
 	if err != nil {
-		if retired {
-			if restoreErr := restoreOwnedNodes(ownershipPath, owned); restoreErr != nil {
-				return RemoveResult{}, errors.Join(err, fmt.Errorf("restore the ownership records of %q: %w", name, restoreErr))
-			}
-		}
 		return RemoveResult{}, err
+	}
+	var ownedNodeIDs []string
+	for _, node := range owned {
+		ownedNodeIDs = append(ownedNodeIDs, node.NodeID)
 	}
 
 	result := RemoveResult{Name: name, Removed: removed}
 
 	if result.Removed {
-		if !retired {
-			// Registered only after the check above, by a concurrent add.
-			if err := tsruntime.MarkOwnedNodeIDsRetired(ownershipPath, ownedNodeIDs, removeNowFn()); err != nil {
-				result.DeviceWarning = fmt.Sprintf("service removed but ownership retirement provenance could not be recorded: %v", err)
-			}
-		}
 		cleanup, err := deleteDevicesFn(ctx, tailapi.CleanupTargetForOwnedService(svc, ownedNodeIDs))
 		if err != nil {
 			if errors.Is(err, tailapi.ErrNoAPIClient) {
@@ -200,16 +187,13 @@ func removeServiceResultContext(ctx context.Context, regPath, ownershipPath, nam
 			// holds it. So the rows stay retired here instead of being
 			// forgotten; the reconciler forgets them when it finishes.
 			//
-			// Without a daemon nothing else will ever look, so this command
+			// Without a daemon nothing else looks now, so this command
 			// finishes the job itself: that is how ~/.config/tslink/nodes/
 			// would otherwise accumulate directories for services removed
-			// months ago.
+			// months ago. It forgets the rows only once the directory is gone.
+			// A directory it keeps, or fails to delete, keeps them, so a later
+			// reconciliation can still find it and finish.
 			daemonRunning := removeDaemonRunningFn()
-			if len(cleanup.ResolvedOwnershipIDs) > 0 && !daemonRunning {
-				if err := tsruntime.RemoveOwnedNodeIDs(ownershipPath, cleanup.ResolvedOwnershipIDs); err != nil {
-					result.DeviceWarning = fmt.Sprintf("device cleanup succeeded but ownership ledger update failed: %v", err)
-				}
-			}
 			if cleanup.Skipped {
 				result.DeviceCleanupSkipped = true
 				result.DeviceSkipReason = cleanup.SkipReason
@@ -230,41 +214,15 @@ func removeServiceResultContext(ctx context.Context, regPath, ownershipPath, nam
 			default:
 				if removeErr := removeNodeStateFn(tsruntime.ServiceNodeStateConfigDir(regPath), name); removeErr != nil {
 					result.DeviceWarning = fmt.Sprintf("service and tailnet node removed but local node state could not be deleted: %v", removeErr)
+				} else if len(cleanup.ResolvedOwnershipIDs) > 0 {
+					if err := tsruntime.RemoveOwnedNodeIDs(ownershipPath, cleanup.ResolvedOwnershipIDs); err != nil {
+						result.DeviceWarning = fmt.Sprintf("device cleanup succeeded but ownership ledger update failed: %v", err)
+					}
 				}
 			}
 		}
 	}
 	return result, nil
-}
-
-// serviceRegistered reports whether regPath lists name.
-func serviceRegistered(regPath, name string) (bool, error) {
-	reg, err := registry.Load(regPath)
-	if err != nil {
-		return false, err
-	}
-	for _, svc := range reg.Services {
-		if svc.Name == name {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-// restoreOwnedNodes puts back the rows a removal retired before its registry
-// write failed: an active row is recorded again with its original time, and a
-// row that was already retired stays retired.
-func restoreOwnedNodes(ownershipPath string, rows []tsruntime.OwnedNode) error {
-	var errs []error
-	for _, row := range rows {
-		if row.RetiredAt != nil {
-			continue
-		}
-		if err := tsruntime.RecordOwnedNode(ownershipPath, row.ServiceName, row.NodeID, row.RecordedAt); err != nil {
-			errs = append(errs, err)
-		}
-	}
-	return errors.Join(errs...)
 }
 
 func removeService(regPath, ownershipPath, name string, out, errOut io.Writer, isJSON bool) error {

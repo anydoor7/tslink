@@ -131,6 +131,33 @@ func withOwnershipLock(path string, fn func() error) error {
 	return fn()
 }
 
+// WithOwnershipLock runs fn while holding the ledger's lock, the lock every
+// ledger writer in this package takes in every process. A decision fn makes
+// cannot be overtaken by a RecordOwnedNode, MarkOwnedNodeIDsRetired or
+// RemoveOwnedNodeIDs. The lock is not reentrant: fn must not call those
+// writers, or UpdateOwnership.
+func WithOwnershipLock(path string, fn func() error) error {
+	return withOwnershipLock(path, fn)
+}
+
+// UpdateOwnership loads the ledger under its lock and hands it to update,
+// saving it afterwards when update reports a change. What update reads, and
+// any action it takes on that basis, happens before any other writer can
+// change the ledger.
+func UpdateOwnership(path string, update func(*OwnershipLedger) (changed bool, err error)) error {
+	return withOwnershipLock(path, func() error {
+		ledger, err := LoadOwnership(path)
+		if err != nil {
+			return err
+		}
+		changed, err := update(&ledger)
+		if err != nil || !changed {
+			return err
+		}
+		return saveOwnership(path, ledger)
+	})
+}
+
 func saveOwnership(path string, ledger OwnershipLedger) error {
 	ledger.SchemaVersion = OwnershipSchemaVersion
 	if ledger.Nodes == nil {
@@ -298,6 +325,52 @@ func MarkOwnedNodeIDsRetired(path string, nodeIDs []string, retiredAt time.Time)
 		}
 		return saveOwnership(path, ledger)
 	})
+}
+
+// RetireServiceNodes records the removal of serviceName in the same step as
+// the removal itself. Holding the ledger lock, it marks every row of the
+// service retired and then runs commit, the registry write that unregisters
+// the service; when commit fails the ledger is put back exactly as it was. It
+// returns the service's rows as they were before retirement.
+//
+// The rows are the ones the ledger holds at that moment, not a snapshot taken
+// before the caller waited for the registry lock: RecordOwnedNode takes the
+// same ledger lock, so a node that enrolled for the service while the removal
+// waited is retired with the others instead of keeping a row without
+// retired_at, which would withhold its device deletion for good.
+func RetireServiceNodes(path, serviceName string, retiredAt time.Time, commit func() error) ([]OwnedNode, error) {
+	var owned []OwnedNode
+	err := withOwnershipLock(path, func() error {
+		ledger, err := LoadOwnership(path)
+		if err != nil {
+			return err
+		}
+		original := ledger
+		original.Nodes = append([]OwnedNode(nil), ledger.Nodes...)
+		retiredAt = retiredAt.UTC()
+		for i := range ledger.Nodes {
+			if ledger.Nodes[i].ServiceName != serviceName {
+				continue
+			}
+			owned = append(owned, ledger.Nodes[i])
+			ledger.Nodes[i].RetiredAt = &retiredAt
+		}
+		if len(owned) > 0 {
+			if err := saveOwnership(path, ledger); err != nil {
+				return err
+			}
+		}
+		if err := commit(); err != nil {
+			if len(owned) > 0 {
+				if restoreErr := saveOwnership(path, original); restoreErr != nil {
+					return errors.Join(err, fmt.Errorf("restore the ownership records of %q: %w", serviceName, restoreErr))
+				}
+			}
+			return err
+		}
+		return nil
+	})
+	return owned, err
 }
 
 // RemoveOwnedNodeIDs forgets only ownership IDs that remote reconciliation has

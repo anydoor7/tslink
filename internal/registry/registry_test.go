@@ -652,8 +652,9 @@ func TestRemoveAndReturn(t *testing.T) {
 
 func TestRemoveIfUnchangedProtectsConcurrentEdits(t *testing.T) {
 	path := testRegistryPath(t)
-	if _, err := Add(path, Service{Name: "report", Type: TypeProxy, Target: "http://localhost:3000"}); err != nil {
-		t.Fatalf("Add(initial) error = %v", err)
+	// RemoveIfUnchanged undoes a tentative creation (B6a-5).
+	if _, err := AddTentative(path, Service{Name: "report", Type: TypeProxy, Target: "http://localhost:3000"}); err != nil {
+		t.Fatalf("AddTentative(initial) error = %v", err)
 	}
 	initial, err := Load(path)
 	if err != nil {

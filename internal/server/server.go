@@ -316,7 +316,11 @@ type LifecycleReconcileFunc func(context.Context, time.Time) (bool, error)
 
 // Server manages multiple tsnet nodes, one per registered service.
 type Server struct {
-	nodes                   map[string]*ServiceNode
+	nodes map[string]*ServiceNode
+	// stateReservations counts, per service, the startups in progress that
+	// may write into its tsnet state directory; see reserveNodeState. It is
+	// guarded by mu, like nodes.
+	stateReservations       map[string]int
 	serviceFailures         map[string]runtimesnapshot.ServiceState
 	globalFailure           *runtimesnapshot.ServiceError
 	authKey                 string
@@ -1598,19 +1602,67 @@ func (s *Server) mintedKeyControlURLError(name, controlURL string) error {
 	}
 }
 
-// HoldsNodeState reports whether this server currently runs a node for name and
-// therefore has a live tsnet server holding that name's state directory open.
+// HoldsNodeState reports whether this server runs a node for name, or is
+// starting one, and therefore has a tsnet server holding that name's state
+// directory open or about to write into it.
 //
 // It exists for the lifecycle reconciliation, which decides whether the local
 // state of an orphan service is safe to delete. That decision needs a fact only
 // this process has, and the honest form of the fact is "I am holding it right
 // now" rather than "nothing is holding it anywhere": a separate `tslink
-// cleanup` process gets no answer from here and does not delete.
+// cleanup` process gets no answer from here and does not delete. The
+// reconciler asks under the ownership ledger's lock, the lock a startup takes
+// to reserve the directory, so a "no" stays true until its removal is done.
 func (s *Server) HoldsNodeState(name string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	_, running := s.nodes[name]
-	return running
+	return running || s.stateReservations[name] > 0
+}
+
+// reserveNodeState marks name's state directory as in use by a startup that
+// is about to touch it; the returned release ends the mark. startNodeLocked
+// takes it before its first access to the directory and releases it only
+// after the node is published into s.nodes, which HoldsNodeState reads too,
+// or after a failed start has closed its tsnet server.
+//
+// The mark is set under the ownership ledger's lock. The lifecycle reconciler
+// holds that lock from its last reads of the registry, the ledger and
+// HoldsNodeState until it has removed an orphan's state directory, so a
+// startup either reserves first and the reconciler keeps the directory, or
+// reserves after the removal is done and then creates a fresh one. It never
+// writes into a directory whose removal was already decided.
+func (s *Server) reserveNodeState(name string) (release func()) {
+	reserved := false
+	reserve := func() error {
+		s.mu.Lock()
+		if s.stateReservations == nil {
+			s.stateReservations = make(map[string]int)
+		}
+		s.stateReservations[name]++
+		s.mu.Unlock()
+		reserved = true
+		return nil
+	}
+	ownershipPath, err := nodeOwnershipPathFn()
+	if err == nil {
+		err = runtimesnapshot.WithOwnershipLock(ownershipPath, reserve)
+	}
+	if !reserved {
+		// Starting is not refused over the ledger lock; the reservation
+		// still answers every later HoldsNodeState.
+		slog.Warn("node ownership ledger lock unavailable; reserving node state without it", "service", name, "error", err)
+		_ = reserve()
+	}
+	return func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.stateReservations[name] <= 1 {
+			delete(s.stateReservations, name)
+			return
+		}
+		s.stateReservations[name]--
+	}
 }
 
 // removeServiceStateDirFn deletes a service's node state inside the daemon's
@@ -1874,6 +1926,11 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service, prov
 	if err := s.mintedKeyControlURLError(svc.Name, effectiveControlURL(svc, s.controlURL)); err != nil {
 		return err
 	}
+	// From here on this start touches the service's state directory, so the
+	// lifecycle reconciler must not remove it until the node is published or
+	// closed. The release runs after the deferred close below.
+	release := s.reserveNodeState(svc.Name)
+	defer release()
 	// Direct callers use the same durable guard as registry reconciliation.
 	// During reconciliation this is an inexpensive read after its preparation.
 	cleanupErr, err := s.prepareNodeIdentity(ctx, svc)

@@ -63,7 +63,7 @@ type shareTargetSpec struct {
 // carry the same meaning as the corresponding `tslink add` flags and exist so
 // an MCP client can create a share with an allow-list instead of one readable
 // by every tailnet member. Every exposure field is enforced by the domain
-// layer: the service this request builds goes through registry.AddIfMissing,
+// layer: the service this request builds goes through registry.AddTentative,
 // which runs registry.ValidateService and therefore
 // registry.ValidateFunnelGuardrails.
 type shareRequest struct {
@@ -103,7 +103,7 @@ var (
 	shareStartDaemonFn         = startShareDaemon
 	shareResolveEndpointOnceFn = resolveServiceEndpointOnce
 	sharePollableStatusFn      = getPollableStatus
-	shareAddIfMissingFn        = registry.AddIfMissing
+	shareAddIfMissingFn        = registry.AddTentative
 )
 
 func resolveSharePaths() (sharePaths, error) {
@@ -462,6 +462,16 @@ retries:
 					}
 					return shareRegistration{Service: rearmed, FunnelRearmed: true}, nil
 				}
+				// A share still waiting on the registration it created
+				// removes it if that wait fails. Keeping it here, as stored,
+				// takes that rollback away before this call relies on it.
+				kept, err := registry.KeepIfUnchanged(regPath, existing)
+				if err != nil {
+					return shareRegistration{}, err
+				}
+				if !kept {
+					continue retries
+				}
 				return shareRegistration{Service: existing}, nil
 			}
 			if sameShareBackend(existing, spec.Service) {
@@ -606,9 +616,18 @@ func executeShare(ctx context.Context, paths sharePaths, req shareRequest, wait 
 	}
 	svc, created := registration.Service, registration.Created
 	defer func() {
-		if err == nil || !created {
+		if !created {
 			return
 		}
+		if err == nil {
+			// Settle the registration this call created. A failure only
+			// leaves a mark no later rollback can match, so it does not turn
+			// a successful share into an error.
+			_, _ = registry.KeepIfUnchanged(paths.Registry, svc)
+			return
+		}
+		// Removed only while no other call has kept it meanwhile: a
+		// concurrent identical share may already have reported it ready.
 		if _, rollbackErr := registry.RemoveIfUnchanged(paths.Registry, svc); rollbackErr != nil {
 			err = errors.Join(err, fmt.Errorf("roll back share %q: %w", svc.Name, rollbackErr))
 		}
