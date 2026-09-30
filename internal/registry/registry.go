@@ -677,7 +677,24 @@ func ValidateName(name string) error {
 	if !nameRegexp.MatchString(name) {
 		return CodedError{Code: CodeInvalidServiceName, Message: fmt.Sprintf("invalid service name: %q", name), Next: []string{"tslink add --help"}, MessageOnly: true}
 	}
+	if IsWindowsReservedDeviceName(name) {
+		return CodedError{Code: CodeInvalidServiceName, Message: fmt.Sprintf("invalid service name: %q is a reserved device name on Windows, and service names are also file names; choose another name", name), Next: []string{"tslink add --help"}, MessageOnly: true}
+	}
 	return nil
+}
+
+// IsWindowsReservedDeviceName reports whether name is one of the device names
+// Windows reserves as a file name (CON, PRN, AUX, NUL, COM1-COM9, LPT1-LPT9;
+// learn.microsoft.com/windows/win32/fileio/naming-a-file). A service name
+// becomes nodes/<name> and node-identities/<name>.json, and the registry is a
+// portable document, so the names are refused on every platform. name has
+// already matched the lowercase DNS-label grammar.
+func IsWindowsReservedDeviceName(name string) bool {
+	switch name {
+	case "con", "prn", "aux", "nul":
+		return true
+	}
+	return len(name) == 4 && (strings.HasPrefix(name, "com") || strings.HasPrefix(name, "lpt")) && name[3] >= '1' && name[3] <= '9'
 }
 
 func ValidateTag(tag string) error {

@@ -254,6 +254,11 @@ func sanitizeShareName(value string) string {
 	if len(name) > 63 {
 		name = strings.TrimRight(name[:63], "-")
 	}
+	// A directory called aux or con still gets a share: service names are
+	// file names too, and these are Windows devices.
+	if registry.IsWindowsReservedDeviceName(name) {
+		name += "-share"
+	}
 	return name
 }
 
