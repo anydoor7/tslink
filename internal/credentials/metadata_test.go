@@ -360,6 +360,15 @@ func TestDescribeSlotsNoCredentialsTouchesNoDisk(t *testing.T) {
 func TestDescribeSlotsBackfillPersistsOnceAndReanchorsOnFingerprintChange(t *testing.T) {
 	setup(t)
 	values := SlotValues{APIKey: "tskey-api-FAKE-backfill", ClientSecret: "tskey-client-FAKE-backfill"}
+	// A backfill is persisted only for the value a slot stores (B6a-2), so
+	// the fixture stores the values it describes, as status and doctor read
+	// them from the store.
+	if err := SetAPIKey(values.APIKey); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveClientSecret(values.ClientSecret); err != nil {
+		t.Fatal(err)
+	}
 
 	// Persist=false classifies but leaves the disk alone.
 	preview := DescribeSlots(values, metaTestNow, false)
@@ -398,6 +407,9 @@ func TestDescribeSlotsBackfillPersistsOnceAndReanchorsOnFingerprintChange(t *tes
 	}
 
 	// Rotating the value outside login (fingerprint mismatch) re-anchors.
+	if err := SetAPIKey("tskey-api-FAKE-rotated"); err != nil {
+		t.Fatal(err)
+	}
 	rotated := DescribeSlots(SlotValues{APIKey: "tskey-api-FAKE-rotated", ClientSecret: values.ClientSecret}, metaTestNow.Add(48*time.Hour), true)
 	if len(rotated.Backfilled) != 1 || rotated.Backfilled[0] != SlotAPIKey || !rotated.APIKey.Metadata.StoredAt.Equal(metaTestNow.Add(48*time.Hour)) {
 		t.Fatalf("rotated inventory = %+v, want api-key re-anchored", rotated)
@@ -434,6 +446,10 @@ func TestDescribeSlotsExpiryMatrix(t *testing.T) {
 
 func TestDescribeSlotsBackfillWriteFailureIsReportedNotFatal(t *testing.T) {
 	setup(t)
+	// The slot stores the value described, so the backfill reaches the write.
+	if err := SetAPIKey("tskey-api-FAKE"); err != nil {
+		t.Fatal(err)
+	}
 	old := metadataWriteFunc
 	t.Cleanup(func() { metadataWriteFunc = old })
 	metadataWriteFunc = func(string, []byte) error { return errors.New("disk full") }
