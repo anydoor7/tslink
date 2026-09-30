@@ -5,31 +5,12 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
-
-	"github.com/monody0007/tslink/internal/metrics"
 )
 
-// requestsTotalLines returns the tslink_requests_total series from the real
-// Prometheus exposition, so the assertion reads what a scrape would read.
-func requestsTotalLines(t *testing.T, m *metrics.Metrics) []string {
-	t.Helper()
-	rec := httptest.NewRecorder()
-	m.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
-	var lines []string
-	for _, line := range strings.Split(rec.Body.String(), "\n") {
-		if strings.HasPrefix(line, "tslink_requests_total{") {
-			lines = append(lines, line)
-		}
-	}
-	return lines
-}
-
-// The production chain puts metrics outside the access log. A backend 1xx
-// followed by an error must reach the client as that error, and the access
-// log and metrics must both record it, rather than the wire carrying an
-// implicit 200 that neither record shows.
+// A backend 1xx followed by an error must reach the client through the
+// production chain as that error, and the access log must record it, rather
+// than the wire carrying an implicit 200 that the record does not show.
 func TestServiceHandlerChainInformationalThenFinalStatus(t *testing.T) {
 	oldLogger := slog.Default()
 	logs := installCaptureLogger()
@@ -51,8 +32,7 @@ func TestServiceHandlerChainInformationalThenFinalStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := metrics.New()
-	front := httptest.NewServer(instrumentServiceHandler(m, "probe", nil, proxy))
+	front := httptest.NewServer(instrumentServiceHandler("probe", nil, proxy))
 	t.Cleanup(front.Close)
 
 	for i, path := range []string{"/hints-503", "/continue-503"} {
@@ -71,9 +51,5 @@ func TestServiceHandlerChainInformationalThenFinalStatus(t *testing.T) {
 		if got := logs.attrMap(t, i)["status"]; got != int64(http.StatusServiceUnavailable) {
 			t.Fatalf("%s: logged status = %v, want 503", path, got)
 		}
-	}
-	want := `tslink_requests_total{method="GET",service="probe",status="503"} 2`
-	if got := requestsTotalLines(t, m); len(got) != 1 || got[0] != want {
-		t.Fatalf("request metrics = %q, want only %q", got, want)
 	}
 }

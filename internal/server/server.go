@@ -20,7 +20,6 @@ import (
 	"github.com/monody0007/tslink/internal/authmode"
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/logging"
-	"github.com/monody0007/tslink/internal/metrics"
 	"github.com/monody0007/tslink/internal/registry"
 	runtimesnapshot "github.com/monody0007/tslink/internal/runtime"
 	"github.com/monody0007/tslink/internal/security"
@@ -237,12 +236,11 @@ func ResourceBudgetMiddleware(next http.Handler) http.Handler {
 }
 
 // instrumentServiceHandler applies the per-request wrappers every HTTP node
-// serves through, metrics outermost. Both status-recording wrappers see the
-// same WriteHeader sequence, so they must agree on which status is final.
-func instrumentServiceHandler(m *metrics.Metrics, serviceName string, identity *IdentityResolver, handler http.Handler) http.Handler {
+// serves through, the access log outermost. The access log is the one status
+// recorder on this chain.
+func instrumentServiceHandler(serviceName string, identity *IdentityResolver, handler http.Handler) http.Handler {
 	handler = ResourceBudgetMiddleware(handler)
-	handler = AccessLogMiddleware(serviceName, identity, handler)
-	return m.Middleware(serviceName, handler)
+	return AccessLogMiddleware(serviceName, identity, handler)
 }
 
 type registryWatcher interface {
@@ -327,7 +325,6 @@ type Server struct {
 	controlURLUnverified    bool
 	mu                      sync.RWMutex
 	cfgDir                  string
-	metrics                 *metrics.Metrics
 	ensureTagsFn            EnsureTagsFunc
 	ensureFunnelAttrFn      EnsureFunnelAttrFunc
 	autoProvisionFunnel     bool
@@ -383,7 +380,6 @@ func New(authKey, controlURL string) (*Server, error) {
 		credentialed:        authKey != "",
 		controlURL:          controlURL,
 		cfgDir:              cfgDir,
-		metrics:             metrics.New(),
 		cleanupNodesFn:      tailapi.CleanupStaleNodesResult,
 		ensureFunnelAttrFn:  tailapi.EnsureFunnelAttr,
 		autoProvisionFunnel: true,
@@ -2039,7 +2035,7 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service, prov
 		}
 	}
 
-	handler = instrumentServiceHandler(s.metrics, svc.Name, identity, handler)
+	handler = instrumentServiceHandler(svc.Name, identity, handler)
 
 	var ln net.Listener
 	funnelListenerActive := false

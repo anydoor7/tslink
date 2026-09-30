@@ -11,14 +11,12 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/monody0007/tslink/internal/metrics"
 )
 
 // ReverseProxy hijacks a WebSocket upgrade and writes the backend's 101
 // itself, without calling WriteHeader. Through the production chain the
-// tunnel must keep working and both the access log and metrics must record
-// 101 rather than the wrappers' implicit 200 default.
+// tunnel must keep working and the access log must record 101 rather than the
+// wrapper's implicit 200 default.
 func TestServiceHandlerChainHijackedUpgradeRecordedAs101(t *testing.T) {
 	oldLogger := slog.Default()
 	logs := installCaptureLogger()
@@ -46,8 +44,7 @@ func TestServiceHandlerChainHijackedUpgradeRecordedAs101(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := metrics.New()
-	chain := instrumentServiceHandler(m, "ws", nil, proxy)
+	chain := instrumentServiceHandler("ws", nil, proxy)
 	done := make(chan struct{})
 	front := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer close(done)
@@ -97,9 +94,5 @@ func TestServiceHandlerChainHijackedUpgradeRecordedAs101(t *testing.T) {
 
 	if got := logs.attrMap(t, 0)["status"]; got != int64(http.StatusSwitchingProtocols) {
 		t.Fatalf("logged upgrade status = %v, want 101", got)
-	}
-	want := `tslink_requests_total{method="GET",service="ws",status="101"} 1`
-	if got := requestsTotalLines(t, m); len(got) != 1 || got[0] != want {
-		t.Fatalf("request metrics = %q, want only %q", got, want)
 	}
 }
