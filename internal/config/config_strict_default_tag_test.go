@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -53,7 +54,7 @@ func TestDefaultTagFailsClosedOnAConfigItCannotRead(t *testing.T) {
 			if tag != "" {
 				t.Fatalf("DefaultTag() returned %q alongside its error", tag)
 			}
-			if !strings.Contains(err.Error(), path) || !strings.Contains(err.Error(), tc.problem) {
+			if !strings.Contains(err.Error(), strconv.Quote(path)) || !strings.Contains(err.Error(), tc.problem) {
 				t.Fatalf("error %q does not name %q and %q", err, path, tc.problem)
 			}
 			if next := strings.Join(loadErr.NextCommands(), "\n"); !strings.Contains(next, path) {

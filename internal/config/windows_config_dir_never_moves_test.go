@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -75,7 +76,7 @@ func TestResolveWindowsConfigDirRefusesLegacyOnlyWithoutMoving(t *testing.T) {
 			}
 		}
 		next := legacyErr.NextCommands()
-		if want := fmt.Sprintf("move %q %q", legacy, current); len(next) != 1 || next[0] != want {
+		if want := `move "` + legacy + `" "` + current + `"`; len(next) != 1 || next[0] != want {
 			t.Fatalf("attempt %d: next = %q, want the one command %q", attempt, next, want)
 		}
 		if data, err := os.ReadFile(state); err != nil || string(data) != "node key" {
@@ -130,7 +131,7 @@ func TestResolveWindowsConfigDirReportsUnreadableCandidates(t *testing.T) {
 			}
 			return os.Stat(path)
 		}
-		if _, err := resolveWindowsConfigDir(current, legacy, stat); !errors.Is(err, denied) || !strings.Contains(err.Error(), broken) {
+		if _, err := resolveWindowsConfigDir(current, legacy, stat); !errors.Is(err, denied) || !strings.Contains(err.Error(), strconv.Quote(broken)) {
 			t.Fatalf("resolve with %q unreadable error = %v, want it named and wrapped", broken, err)
 		}
 	}

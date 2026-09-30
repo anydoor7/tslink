@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -34,7 +35,7 @@ func assertConfigDirRefusal(t *testing.T, err error, root, configDir string) {
 	if code, _ := ErrorCode(err); code != CodePathExposesConfigDir {
 		t.Fatalf("share root %q error code = %q (%v), want %s", root, code, err, CodePathExposesConfigDir)
 	}
-	if !strings.Contains(err.Error(), configDir) {
+	if !strings.Contains(err.Error(), strconv.Quote(configDir)) {
 		t.Fatalf("refusal %q does not name the config directory %q", err, configDir)
 	}
 }

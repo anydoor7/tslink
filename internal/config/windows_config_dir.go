@@ -26,9 +26,11 @@ func (e *LegacyConfigDirError) Error() string {
 
 func (e *LegacyConfigDirError) StableCode() string { return CodeLegacyConfigDirPresent }
 
-// NextCommands returns the one manual command that moves the directory.
+// NextCommands returns the one manual command that moves the directory, as
+// cmd.exe reads it: each path in double quotes and not escaped (a Windows
+// path cannot contain a double quote; Go's %q would double every backslash).
 func (e *LegacyConfigDirError) NextCommands() []string {
-	return []string{fmt.Sprintf("move %q %q", e.Legacy, e.Current)}
+	return []string{fmt.Sprintf(`move "%s" "%s"`, e.Legacy, e.Current)}
 }
 
 // resolveWindowsConfigDir decides which Windows config directory to use from
