@@ -309,10 +309,7 @@ func tagsDeleteRemoteRun(ctx context.Context, out io.Writer, tag string, force, 
 	}
 	if tag == defaultTag {
 		msg := fmt.Sprintf("cannot delete default tag %q — change the default first with: tslink tags set-default <other-tag>", tag)
-		if isJSON {
-			return output.ErrConflict(msg)
-		}
-		return fmt.Errorf("%s", msg)
+		return output.ErrConflict(msg)
 	}
 	// Check local registry for services using this tag
 	regPath, err := tagsRegistryPathFn()
@@ -341,24 +338,15 @@ func tagsDeleteRemoteRun(ctx context.Context, out io.Writer, tag string, force, 
 	}
 	if len(usedBy) > 0 {
 		msg := fmt.Sprintf("cannot delete %q — in use by services: %s", tag, strings.Join(usedBy, ", "))
-		if isJSON {
-			return output.ErrConflict(msg)
-		}
-		return fmt.Errorf("%s", msg)
+		return output.ErrConflict(msg)
 	}
 	forceMsg := fmt.Sprintf("refusing to delete %q from the tailnet ACL without --force; this removes the ACL tag owner rule globally", tag)
 	if !force {
-		if isJSON {
-			return output.ErrConflict(forceMsg)
-		}
-		return fmt.Errorf("%s", forceMsg)
+		return output.ErrConflict(forceMsg)
 	}
 	if !manageACL {
 		msg := fmt.Sprintf("refusing to delete %q from the tailnet ACL without --manage-acl; remote ACL mutation is disabled by default; remote_side_effect_plan=%s", tag, compactJSON(plan))
-		if isJSON {
-			return output.ErrConflict(msg)
-		}
-		return fmt.Errorf("%s", msg)
+		return output.ErrConflict(msg)
 	}
 	if err := tagsDeleteTagFn(ctx, tag); err != nil {
 		if errors.Is(err, tailapi.ErrNoAPIClient) {
