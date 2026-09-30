@@ -263,6 +263,13 @@ func Manifest() CLIManifest {
 	return m
 }
 
+// daemonInstalledJSONResultField describes the record share, add and
+// template apply return when they installed the background service.
+var daemonInstalledJSONResultField = JSONResultFieldInfo{
+	Type:        "object",
+	Description: "Present only when this command installed TSLink's background service (a persistent OS autostart entry): manager (the supervisor, as status reports it in supervision.manager), path of the definition written, and undo (tslink uninstall). Omitted when the service already ran or --no-daemon-install was set.",
+}
+
 func commandJSONResultFields(commandPath string) map[string]JSONResultFieldInfo {
 	switch commandPath {
 	case "tslink serve":
@@ -272,8 +279,13 @@ func commandJSONResultFields(commandPath string) map[string]JSONResultFieldInfo 
 				Description: "True when this invocation migrated a legacy API credential to the system keychain; omitted otherwise.",
 			},
 		}
+	case "tslink share", "tslink template apply":
+		return map[string]JSONResultFieldInfo{
+			"daemon_installed": daemonInstalledJSONResultField,
+		}
 	case "tslink add":
 		return map[string]JSONResultFieldInfo{
+			"daemon_installed":  daemonInstalledJSONResultField,
 			"funnel_expires_at": {Type: "string", Description: "Persisted public Funnel deadline; omitted for tailnet-only services and explicit never."},
 			"funnel_rearmed":    {Type: "boolean", Description: "True when an expired preserved Funnel deadline was re-armed with the default 24h TTL."},
 			"replaced_fields":   {Type: "array", Description: "registry.json fields a replacing add changed or dropped, sorted; empty when the add created the service. Warnings access_changed_on_replace and identity_reset_on_replace flag access and node-identity changes."},

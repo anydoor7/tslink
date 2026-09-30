@@ -162,27 +162,41 @@ func installDaemonLocked(ctx context.Context, out io.Writer) error {
 	return startInstalledDaemon(ctx, out)
 }
 
+// DaemonInstalled records a background service a command installed: the
+// supervisor, the definition it wrote, and the command that undoes it. The
+// install announcement goes to stderr, which an agent never reads, so share,
+// add and template apply carry this in their result, and only when they
+// installed one.
+type DaemonInstalled struct {
+	Manager string `json:"manager"`
+	Path    string `json:"path"`
+	Undo    string `json:"undo"`
+}
+
 // CLI and CI have the same behavior; no terminal detection or prompts. The
 // opt-out is configuration-only and cannot make a stopped daemon look ready.
-func ensureDaemon(ctx context.Context, out io.Writer, noInstall bool) error {
+// It returns what it installed, or nil when a verified daemon already ran or
+// installation was skipped.
+func ensureDaemon(ctx context.Context, out io.Writer, noInstall bool) (*DaemonInstalled, error) {
 	pidPath, err := config.PIDPath()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if noInstall {
 		if isRunningFn(pidPath) {
-			return nil
+			return nil, nil
 		}
 		fmt.Fprintln(out, "Background service installation skipped (--no-daemon-install). Configuration only; URLs are unavailable until 'tslink install'.")
-		return nil
+		return nil, nil
 	}
 	path, err := supervisorPath()
 	if err != nil {
-		return daemonSetupError(err)
+		return nil, daemonSetupError(err)
 	}
+	var installed *DaemonInstalled
 	// One manager slot per OS user, even when callers use different config
 	// directories. Never let concurrent add commands replace each other's job.
-	return withSupervisorTransaction(ctx, func() error {
+	err = withSupervisorTransaction(ctx, func() error {
 		if isRunningFn(pidPath) {
 			pid, err := readPIDFn(pidPath)
 			if err == nil && pid <= 0 {
@@ -254,6 +268,7 @@ func ensureDaemon(ctx context.Context, out io.Writer, noInstall bool) error {
 		if err != nil {
 			return daemonSetupError(err)
 		}
+		installed = &DaemonInstalled{Manager: supervisorName(), Path: path, Undo: "tslink uninstall"}
 		if ready {
 			fmt.Fprintln(out, "TSLink background service is ready and autostart is verified.")
 			return nil
@@ -261,6 +276,10 @@ func ensureDaemon(ctx context.Context, out io.Writer, noInstall bool) error {
 		fmt.Fprintf(out, "TSLink background service is running (pid %d) and autostart is verified. It has not published a first sync/enrollment artifact within %s; that step waits on the Tailscale coordination server, so the URL arrives through the wait this command already performs, or later through 'tslink status --json'.\n", pid, bootstrapEvidenceTimeout)
 		return nil
 	})
+	if err != nil {
+		return nil, err
+	}
+	return installed, nil
 }
 
 // waitDaemonEvidence watches an already verified daemon for its first business

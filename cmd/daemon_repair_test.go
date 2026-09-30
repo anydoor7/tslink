@@ -37,7 +37,7 @@ func TestRepairLiveDaemonRequiresSupervision(t *testing.T) {
 			isRunningFn = func(string) bool { return true }
 			inspected := 0
 			detectSupervisionFn = func(string, bool, int) Supervision { inspected++; return tc.s }
-			err := ensureDaemon(context.Background(), io.Discard, false)
+			err := ensureDaemonErr(context.Background(), io.Discard, false)
 			if tc.ok {
 				if err != nil {
 					t.Fatal(err)
@@ -64,7 +64,7 @@ func TestRepairOptOutDoesNotClaimSupervision(t *testing.T) {
 	isolateBootstrap(t)
 	isRunningFn = func(string) bool { return true }
 	detectSupervisionFn = func(string, bool, int) Supervision { t.Fatal("opt-out inspected supervisor"); return Supervision{} }
-	if err := ensureDaemon(context.Background(), io.Discard, true); err != nil {
+	if err := ensureDaemonErr(context.Background(), io.Discard, true); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -84,7 +84,7 @@ func TestRepairLiveDaemonRejectsUnreadablePID(t *testing.T) {
 				t.Error("invalid PID reached ownership detector")
 				return Supervision{}
 			}
-			err := ensureDaemon(context.Background(), io.Discard, false)
+			err := ensureDaemonErr(context.Background(), io.Discard, false)
 			var coded registry.CodedError
 			if !errors.As(err, &coded) || coded.Code != "daemon_supervision_unverified" {
 				t.Fatalf("invalid PID accepted: %v", err)

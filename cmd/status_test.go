@@ -494,8 +494,11 @@ func TestStatusNotAuthenticatedIncludesMachineContinuation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status.AuthStatus != authStatusNotAuthenticated || !reflect.DeepEqual(status.Next, []string{"tslink serve --json"}) {
-		t.Fatalf("status = %+v, want not_authenticated with serve continuation", status)
+	// B3-7: without a daemon the continuation is tslink install, which starts
+	// the supervised background service; it was tslink serve --json, which
+	// starts an unsupervised one the next share refuses to reuse.
+	if status.AuthStatus != authStatusNotAuthenticated || !reflect.DeepEqual(status.Next, []string{"tslink install"}) {
+		t.Fatalf("status = %+v, want not_authenticated with install continuation", status)
 	}
 	urls, err := getStatusURLsWithAuth(pidPath, regPath, snapshotPath, handoffPath)
 	if err != nil {
@@ -505,7 +508,7 @@ func TestStatusNotAuthenticatedIncludesMachineContinuation(t *testing.T) {
 		t.Fatalf("status --urls next = %v, want %v", urls.Next, status.Next)
 	}
 	wire, err := json.Marshal(status)
-	if err != nil || !bytes.Contains(wire, []byte(`"next":["tslink serve --json"]`)) {
+	if err != nil || !bytes.Contains(wire, []byte(`"next":["tslink install"]`)) {
 		t.Fatalf("wire=%s err=%v", wire, err)
 	}
 }

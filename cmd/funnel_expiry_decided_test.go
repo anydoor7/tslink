@@ -24,7 +24,7 @@ func stubAddWritePaths(t *testing.T) string {
 	})
 	registryPathFn = func() (string, error) { return regPath, nil }
 	ensureDirFn = func() error { return nil }
-	ensureDaemonFn = func(context.Context, io.Writer, bool) error { return nil }
+	ensureDaemonFn = func(context.Context, io.Writer, bool) (*DaemonInstalled, error) { return nil, nil }
 	isRunningFn = func(string) bool { return false }
 	return regPath
 }

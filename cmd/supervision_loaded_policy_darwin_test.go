@@ -305,7 +305,7 @@ func TestSupervisionLoadedPolicyFastPathRealDetect(t *testing.T) {
 					detectSupervisionFn = detectSupervision // Real detector, not a Supervision stub.
 					var out string
 					if entry == "ensure" {
-						err = ensureDaemon(context.Background(), io.Discard, false)
+						err = ensureDaemonErr(context.Background(), io.Discard, false)
 					} else {
 						out, err = runAddCmdOutput(t, []string{"loaded-policy-app"}, map[string]string{"proxy": "localhost:3000"})
 						reg, loadErr := registry.Load(filepath.Join(dir, "registry.json"))

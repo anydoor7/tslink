@@ -46,10 +46,10 @@ func TestBootstrapConcurrentEnsureInstallsOnce(t *testing.T) {
 	var wg sync.WaitGroup
 	errs := make([]error, 2)
 	wg.Add(1)
-	go func() { defer wg.Done(); errs[0] = ensureDaemon(context.Background(), io.Discard, false) }()
+	go func() { defer wg.Done(); errs[0] = ensureDaemonErr(context.Background(), io.Discard, false) }()
 	<-entered
 	wg.Add(1)
-	go func() { defer wg.Done(); errs[1] = ensureDaemon(context.Background(), io.Discard, false) }()
+	go func() { defer wg.Done(); errs[1] = ensureDaemonErr(context.Background(), io.Discard, false) }()
 	// Force overlap while the first installer holds the OS lock.
 	time.Sleep(100 * time.Millisecond)
 	countWhileBlocked := installs.Load()
@@ -213,7 +213,7 @@ func TestBootstrapMCPWritesThenInstallsWithOptOut(t *testing.T) {
 				dir := isolateBootstrap(t)
 				paths := sharePaths{Registry: filepath.Join(dir, "registry.json"), PID: filepath.Join(dir, "tslink.pid"), Snapshot: filepath.Join(dir, "runtime.json")}
 				calls := 0
-				ensureDaemonFn = func(ctx context.Context, out io.Writer, optout bool) error {
+				ensureDaemonFn = func(ctx context.Context, out io.Writer, optout bool) (*DaemonInstalled, error) {
 					calls++
 					reg, err := registry.Load(paths.Registry)
 					if err != nil || len(reg.Services) == 0 {
@@ -223,9 +223,9 @@ func TestBootstrapMCPWritesThenInstallsWithOptOut(t *testing.T) {
 						t.Fatalf("optout=%t want=%t", optout, noInstall)
 					}
 					if !optout {
-						return errors.New("installer reached")
+						return nil, errors.New("installer reached")
 					}
-					return nil
+					return nil, nil
 				}
 				args := fmt.Sprintf(`{"name":"app","type":"proxy","target":"localhost:3000","no_daemon_install":%t}`, noInstall)
 				if tool == "template_apply" {

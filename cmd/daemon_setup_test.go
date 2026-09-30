@@ -22,6 +22,12 @@ import (
 	"github.com/monody0007/tslink/internal/testenv"
 )
 
+// ensureDaemonErr is ensureDaemon for a test that only judges its error.
+func ensureDaemonErr(ctx context.Context, out io.Writer, noInstall bool) error {
+	_, err := ensureDaemon(ctx, out, noInstall)
+	return err
+}
+
 func isolateBootstrap(t *testing.T) string {
 	t.Helper()
 	home := t.TempDir()
@@ -63,7 +69,7 @@ func TestBootstrapOptOutAndAlreadyRunning(t *testing.T) {
 				return Supervision{Manager: "launchd", Installed: true, Autostart: true, RestartOnExit: true}
 			}
 			var log bytes.Buffer
-			if err := ensureDaemon(context.Background(), &log, !running); err != nil {
+			if err := ensureDaemonErr(context.Background(), &log, !running); err != nil {
 				t.Fatal(err)
 			}
 			if !running && !strings.Contains(log.String(), "--no-daemon-install") {
@@ -115,7 +121,7 @@ func TestBootstrapSucceedsWhenEvidenceLagsControlPlane(t *testing.T) {
 				return nil
 			}
 			var log bytes.Buffer
-			if err := ensureDaemon(context.Background(), &log, false); err != nil {
+			if err := ensureDaemonErr(context.Background(), &log, false); err != nil {
 				t.Fatalf("evidence=%s err=%v log=%s", evidence, err, &log)
 			}
 			if installs != 1 || samples < 2 {
@@ -154,7 +160,7 @@ func TestBootstrapFailsWhenSupervisionNeverSettles(t *testing.T) {
 		}
 		return nil
 	}
-	err := ensureDaemon(context.Background(), io.Discard, false)
+	err := ensureDaemonErr(context.Background(), io.Discard, false)
 	if code, _ := registry.ErrorCode(err); code != "daemon_setup_failed" {
 		t.Fatalf("err=%v", err)
 	}
@@ -254,7 +260,7 @@ func TestBootstrapRefusesOtherConfigBeforeInstall(t *testing.T) {
 	if err := os.WriteFile(path, prior, 0600); err != nil {
 		t.Fatal(err)
 	}
-	err = ensureDaemon(context.Background(), io.Discard, false)
+	err = ensureDaemonErr(context.Background(), io.Discard, false)
 	if err == nil || !strings.Contains(err.Error(), "automatic replacement refused") {
 		t.Fatalf("err=%v", err)
 	}
@@ -437,15 +443,15 @@ func TestBootstrapTemplateApplyWritesBeforeSetup(t *testing.T) {
 		t.Fatal(err)
 	}
 	var namesAtSetup []string
-	ensureDaemonFn = func(context.Context, io.Writer, bool) error {
+	ensureDaemonFn = func(context.Context, io.Writer, bool) (*DaemonInstalled, error) {
 		reg, err := registry.Load(filepath.Join(dir, "registry.json"))
 		if err != nil {
-			return err
+			return nil, err
 		}
 		for _, svc := range reg.Services {
 			namesAtSetup = append(namesAtSetup, svc.Name)
 		}
-		return errors.New("template setup marker")
+		return nil, errors.New("template setup marker")
 	}
 	if err := cmd.RunE(cmd, []string{"local-web"}); err == nil || !strings.Contains(err.Error(), "template setup marker") {
 		t.Fatalf("err=%v", err)
@@ -467,7 +473,10 @@ func TestBootstrapTemplateApplyUsesSetup(t *testing.T) {
 		t.Fatal(err)
 	}
 	calls := 0
-	ensureDaemonFn = func(context.Context, io.Writer, bool) error { calls++; return errors.New("template setup marker") }
+	ensureDaemonFn = func(context.Context, io.Writer, bool) (*DaemonInstalled, error) {
+		calls++
+		return nil, errors.New("template setup marker")
+	}
 	err := cmd.RunE(cmd, []string{"local-web"})
 	if err == nil || !strings.Contains(err.Error(), "template setup marker") || calls != 1 {
 		t.Fatalf("calls=%d err=%v", calls, err)
@@ -603,7 +612,10 @@ func TestBootstrapAddEnrollmentAndExactURL(t *testing.T) {
 func TestBootstrapShareUsesManagedSetupAndOptOut(t *testing.T) {
 	dir := isolateBootstrap(t)
 	calls := 0
-	ensureDaemonFn = func(context.Context, io.Writer, bool) error { calls++; return errors.New("managed install failure") }
+	ensureDaemonFn = func(context.Context, io.Writer, bool) (*DaemonInstalled, error) {
+		calls++
+		return nil, errors.New("managed install failure")
+	}
 	if _, err := startShareDaemon(context.Background(), io.Discard); err == nil || calls != 1 {
 		t.Fatalf("managed startup calls=%d err=%v", calls, err)
 	}

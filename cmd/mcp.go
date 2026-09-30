@@ -192,6 +192,15 @@ var (
 			"write_outcome": map[string]any{"type": "string", "enum": []string{tailapi.PolicyWriteNotAttempted, tailapi.PolicyWriteUnchanged, tailapi.PolicyWriteChanged, tailapi.PolicyWriteRejected, tailapi.PolicyWriteUnknown}},
 		}, "attempted", "changed", "reason"),
 	}, "code", "message")
+	mcpDaemonInstalledSchema = func() map[string]any {
+		schema := objectSchema(map[string]any{
+			"manager": map[string]any{"type": "string", "enum": []string{"launchd", "systemd", "windows-startup"}, "description": "The supervisor that now starts TSLink at login or boot."},
+			"path":    map[string]any{"type": "string", "description": "The supervisor definition this call wrote."},
+			"undo":    map[string]any{"type": "string", "description": "The command that removes it."},
+		}, "manager", "path", "undo")
+		schema["description"] = "Present only when this call installed TSLink's background service, a persistent OS autostart entry; absent when the service already ran or no_daemon_install was true."
+		return schema
+	}()
 	mcpShareOutputSchema = objectSchema(map[string]any{
 		"url":               map[string]any{"type": "string"},
 		"name":              map[string]any{"type": "string"},
@@ -201,6 +210,7 @@ var (
 		"funnel_rearmed":    map[string]any{"type": "boolean", "description": "True when the reused share's Funnel deadline had already passed and this call re-armed it with the requested funnel_ttl."},
 		"exposure":          mcpExposureViewSchema,
 		"warnings":          mcpWarningArraySchema,
+		"daemon_installed":  mcpDaemonInstalledSchema,
 	}, "status", "exposure")
 	mcpListOutputSchema = objectSchema(map[string]any{
 		"services": map[string]any{
@@ -260,6 +270,7 @@ var (
 		"endpoint":          mcpEndpointViewSchema,
 		"exposure":          mcpExposureViewSchema,
 		"warnings":          mcpWarningArraySchema,
+		"daemon_installed":  mcpDaemonInstalledSchema,
 	}, "name", "type", "created", "replaced_fields", "funnel_rearmed", "url", "url_pending", "endpoint", "exposure")
 	mcpURLOutputSchema = objectSchema(map[string]any{
 		"name":  map[string]any{"type": "string"},
@@ -392,8 +403,9 @@ var (
 				"service": mcpServiceViewSchema,
 			}, "name", "action", "service"),
 		},
-		"created": map[string]any{"type": "integer", "minimum": 0},
-		"skipped": map[string]any{"type": "integer", "minimum": 0},
+		"created":          map[string]any{"type": "integer", "minimum": 0},
+		"skipped":          map[string]any{"type": "integer", "minimum": 0},
+		"daemon_installed": mcpDaemonInstalledSchema,
 	}, "schema_version", "name", "summary", "dry_run", "applied", "services", "created", "skipped")
 )
 
@@ -792,7 +804,7 @@ func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 			if err != nil {
 				return nil, err
 			}
-			result, _, err := executeAdd(ctx, svc, paths.Registry, paths.PID, paths.Snapshot, preserveFunnelExpiry, 0, func() error {
+			result, _, err := executeAdd(ctx, svc, paths.Registry, paths.PID, paths.Snapshot, preserveFunnelExpiry, 0, func() (*DaemonInstalled, error) {
 				return ensureDaemonFn(ctx, errOut, params.NoDaemonInstall)
 			})
 			if err != nil {
@@ -916,9 +928,11 @@ func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 			if err != nil {
 				return nil, err
 			}
-			if err := ensureDaemonFn(ctx, errOut, noInstall); err != nil {
+			installed, err := ensureDaemonFn(ctx, errOut, noInstall)
+			if err != nil {
 				return nil, daemonRegistryRetainedError(err)
 			}
+			result.DaemonInstalled = installed
 			return result, nil
 		},
 	}
@@ -1756,7 +1770,8 @@ logs tool, which bounds and redacts what it returns.
 
 The MCP process itself opens no network listener. Invoking share, add or
 template_apply installs the background service when absent unless no_daemon_install
-is true; announcements go to stderr. This starts the separate TSLink daemon
+is true; announcements go to stderr, and the tool result reports the install as
+daemon_installed. This starts the separate TSLink daemon
 and its requested tsnet services. share and add with
 funnel true publish to the public internet, unshare deletes a service's tailnet
 device and local node state, and the invite_* tools send or cancel real

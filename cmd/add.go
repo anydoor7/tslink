@@ -40,6 +40,9 @@ type AddResult struct {
 	DaemonRunning   bool                  `json:"daemon_running"`
 	AuthURL         string                `json:"auth_url,omitempty"`
 	Next            []string              `json:"next,omitempty"`
+	// DaemonInstalled is the background service this add installed; omitted
+	// when it installed none.
+	DaemonInstalled *DaemonInstalled `json:"daemon_installed,omitempty"`
 }
 
 // fieldList is a list of registry.json field names that is always encoded as
@@ -479,7 +482,7 @@ func resolveAddService(svc registry.Service, p AddParams) (registry.Service, err
 // tool. The persisted service is returned alongside the result because the
 // human CLI rendering reports fields (TCP target and port) the result does not
 // carry.
-func executeAdd(ctx context.Context, svc registry.Service, regPath, pidPath, snapshotPath string, preserveFunnelExpiry bool, wait time.Duration, afterPersist ...func() error) (AddResult, registry.Service, error) {
+func executeAdd(ctx context.Context, svc registry.Service, regPath, pidPath, snapshotPath string, preserveFunnelExpiry bool, wait time.Duration, afterPersist ...func() (*DaemonInstalled, error)) (AddResult, registry.Service, error) {
 	registryWasAbsent := registryFileAbsent(regPath)
 	outcome, err := registry.AddWithOutcome(regPath, svc, registry.AddOptions{
 		PreserveFunnelExpiry: preserveFunnelExpiry,
@@ -497,9 +500,14 @@ func executeAdd(ctx context.Context, svc registry.Service, regPath, pidPath, sna
 			return AddResult{}, registry.Service{}, err
 		}
 	}
+	var installed *DaemonInstalled
 	for _, setup := range afterPersist {
-		if err := setup(); err != nil {
+		done, err := setup()
+		if err != nil {
 			return AddResult{}, persisted, daemonRegistryRetainedError(err)
+		}
+		if done != nil {
+			installed = done
 		}
 	}
 	result, err := buildAddResult(ctx, persisted, outcome.Created, pidPath, regPath, snapshotPath, wait)
@@ -516,6 +524,7 @@ func executeAdd(ctx context.Context, svc registry.Service, regPath, pidPath, sna
 		}
 	}
 	result.FunnelRearmed = outcome.RearmedExpiredFunnel
+	result.DaemonInstalled = installed
 	return result, persisted, nil
 }
 
@@ -720,7 +729,7 @@ Examples:
 			if err != nil {
 				return err
 			}
-			result, persisted, err := executeAdd(cmd.Context(), svc, regPath, pidPath, snapshotPath, !cmd.Flags().Changed("funnel-ttl"), wait, func() error {
+			result, persisted, err := executeAdd(cmd.Context(), svc, regPath, pidPath, snapshotPath, !cmd.Flags().Changed("funnel-ttl"), wait, func() (*DaemonInstalled, error) {
 				return ensureDaemonFn(cmd.Context(), cmd.ErrOrStderr(), noDaemonInstall)
 			})
 			if err != nil {

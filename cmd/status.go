@@ -279,7 +279,21 @@ func setStatusContinuation(r *StatusResult) {
 	case r.AuthStatus == authStatusNeedsLogin:
 		r.Next = []string{"tslink status --json"}
 	case r.AuthStatus == authStatusNotAuthenticated && !r.CredentialStored:
-		r.Next = []string{"tslink serve --json"}
+		// Each step is a command that does what it says. Without a daemon,
+		// tslink install starts the supervised background service, which
+		// enrolls the registered services; a running daemon's authorization
+		// URL appears in tslink status --json. With nothing registered there
+		// is nothing to authorize: the next share or add enrolls and installs.
+		// (tslink serve --json would start an unsupervised daemon that the
+		// next share refuses to reuse.)
+		switch {
+		case r.ServiceCount == 0:
+			r.Next = nil
+		case !r.DaemonRunning:
+			r.Next = []string{"tslink install"}
+		default:
+			r.Next = []string{"tslink status --json"}
+		}
 	default:
 		// Authorized, or a stored credential whose nodes are not up yet.
 		r.Next = nil

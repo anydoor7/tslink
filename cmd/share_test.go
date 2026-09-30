@@ -71,7 +71,7 @@ func runCmdTests(run func() int) int {
 		}
 		return []byte("Could not find service\n"), fmt.Errorf("not found")
 	}
-	ensureDaemonFn = func(context.Context, io.Writer, bool) error { return nil }
+	ensureDaemonFn = func(context.Context, io.Writer, bool) (*DaemonInstalled, error) { return nil, nil }
 	detectSupervisionFn = func(_ string, running bool, _ int) Supervision {
 		return unmanagedSupervision(running, "isolated unit test")
 	}

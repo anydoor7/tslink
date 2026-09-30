@@ -69,6 +69,9 @@ type TemplateApplyResult struct {
 	Services      []TemplatePlanItem `json:"services"`
 	Created       int                `json:"created"`
 	Skipped       int                `json:"skipped"`
+	// DaemonInstalled is the background service this apply installed;
+	// omitted when it installed none.
+	DaemonInstalled *DaemonInstalled `json:"daemon_installed,omitempty"`
 }
 
 func builtinTemplates() []serviceTemplate {
@@ -405,9 +408,11 @@ services; change tags after apply if your tailnet policy uses another tag.`),
 			}
 			if !dryRun {
 				noInstall, _ := cmd.Flags().GetBool("no-daemon-install")
-				if err := ensureDaemonFn(cmd.Context(), cmd.ErrOrStderr(), noInstall); err != nil {
+				installed, err := ensureDaemonFn(cmd.Context(), cmd.ErrOrStderr(), noInstall)
+				if err != nil {
 					return daemonRegistryRetainedError(err)
 				}
+				result.DaemonInstalled = installed
 			}
 			if jsonOutput(cmd) {
 				output.Success("template apply", result)
