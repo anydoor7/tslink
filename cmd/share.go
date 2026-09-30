@@ -405,6 +405,7 @@ type shareRegistration struct {
 	Service       registry.Service
 	Created       bool
 	FunnelRearmed bool
+	Warnings      []inspect.WarningView
 }
 
 func registerShare(regPath string, spec shareTargetSpec, requestedName string) (registry.Service, bool, error) {
@@ -592,9 +593,15 @@ func executeShare(ctx context.Context, paths sharePaths, req shareRequest, wait 
 	if req.NoDaemonInstall && !shareIsRunningFn(paths.PID) {
 		return ShareResult{}, daemonNotRunningError()
 	}
+	registryWasAbsent := registryFileAbsent(paths.Registry)
 	registration, err := registerShareWithOutcome(paths.Registry, spec, req.Name)
 	if err != nil {
 		return ShareResult{}, err
+	}
+	if registryWasAbsent && registration.Created {
+		if warning, ok := recreatedRegistryWarning(paths.Registry, registration.Service.Name, "cmd.share"); ok {
+			registration.Warnings = append(registration.Warnings, warning)
+		}
 	}
 	svc, created := registration.Service, registration.Created
 	defer func() {
@@ -634,6 +641,7 @@ func withShareFunnelState(result ShareResult, registration shareRegistration) Sh
 	if warning, ok := homeDirectoryShareWarning(registration.Service, "cmd.share"); ok {
 		result.Warnings = append(result.Warnings, warning)
 	}
+	result.Warnings = append(result.Warnings, registration.Warnings...)
 	return result
 }
 

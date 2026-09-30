@@ -276,7 +276,19 @@ func NodeOwnershipPath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "node-ownership.json"), nil
+	return NodeOwnershipPathIn(dir), nil
+}
+
+// NodeOwnershipPathIn names the ownership ledger inside an arbitrary config
+// directory, for callers that already hold one (see NodesDirIn).
+func NodeOwnershipPathIn(configDir string) string {
+	return filepath.Join(configDir, "node-ownership.json")
+}
+
+// NodeIdentitiesDirIn names the directory of per-service node identity
+// records (node-identities/<service>.json) inside a config directory.
+func NodeIdentitiesDirIn(configDir string) string {
+	return filepath.Join(configDir, "node-identities")
 }
 
 // AuthHandoffPath returns the path used to publish a pending interactive

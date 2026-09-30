@@ -21,6 +21,7 @@ const (
 	WarningCodeFileRootHomeDirectory     = "file_root_home_directory"
 	WarningCodeAccessChangedOnReplace    = "access_changed_on_replace"
 	WarningCodeIdentityResetOnReplace    = "identity_reset_on_replace"
+	WarningCodeRegistryRecreated         = "registry_recreated_with_node_state"
 
 	WarningCodeConfigPathUnavailable               = "config_path_unavailable"
 	WarningCodeConfigLoadFailed                    = registry.CodeConfigLoadFailed
@@ -168,6 +169,11 @@ var WarningCodeRegistry = map[string]WarningCodeMeta{
 		Severity:    "warning",
 		Source:      "cmd.add",
 		Description: "add replaced an existing service and changed its tags, ephemeral flag or control URL; the daemon re-enrolls it as a new tailnet node.",
+	},
+	WarningCodeRegistryRecreated: {
+		Severity:    "warning",
+		Source:      "registry.create",
+		Description: "add or share created registry.json while the config directory still held node state, identity records or ownership rows for services not in it; if registry.json was lost, restore it before adding services.",
 	},
 	WarningCodeConfigPathUnavailable: {
 		Severity:    "error",

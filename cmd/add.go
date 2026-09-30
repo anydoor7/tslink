@@ -1,12 +1,15 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"net"
 	"net/mail"
+	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -15,6 +18,7 @@ import (
 	"github.com/monody0007/tslink/internal/inspect"
 	"github.com/monody0007/tslink/internal/output"
 	"github.com/monody0007/tslink/internal/registry"
+	tsruntime "github.com/monody0007/tslink/internal/runtime"
 	"github.com/spf13/cobra"
 )
 
@@ -476,6 +480,7 @@ func resolveAddService(svc registry.Service, p AddParams) (registry.Service, err
 // human CLI rendering reports fields (TCP target and port) the result does not
 // carry.
 func executeAdd(ctx context.Context, svc registry.Service, regPath, pidPath, snapshotPath string, preserveFunnelExpiry bool, wait time.Duration, afterPersist ...func() error) (AddResult, registry.Service, error) {
+	registryWasAbsent := registryFileAbsent(regPath)
 	outcome, err := registry.AddWithOutcome(regPath, svc, registry.AddOptions{
 		PreserveFunnelExpiry: preserveFunnelExpiry,
 	})
@@ -505,8 +510,79 @@ func executeAdd(ctx context.Context, svc registry.Service, regPath, pidPath, sna
 		result.ReplacedFields = replaced
 		result.Warnings = append(result.Warnings, replaceWarnings(persisted.Name, replaced)...)
 	}
+	if registryWasAbsent && outcome.Created {
+		if warning, ok := recreatedRegistryWarning(regPath, persisted.Name, "cmd.add"); ok {
+			result.Warnings = append(result.Warnings, warning)
+		}
+	}
 	result.FunnelRearmed = outcome.RearmedExpiredFunnel
 	return result, persisted, nil
+}
+
+// registryFileAbsent reports whether registry.json is missing or blank, the
+// states in which a write creates a new registry.
+func registryFileAbsent(regPath string) bool {
+	data, err := os.ReadFile(regPath)
+	if err != nil {
+		return os.IsNotExist(err)
+	}
+	return len(bytes.TrimSpace(data)) == 0
+}
+
+// servicesWithNodeState names the services, other than except, that still
+// have node state (nodes/<name>), an identity record
+// (node-identities/<name>.json) or an unretired ownership row in the config
+// directory that holds regPath.
+func servicesWithNodeState(regPath, except string) []string {
+	configDir := tsruntime.ServiceNodeStateConfigDir(regPath)
+	names := map[string]bool{}
+	if entries, err := os.ReadDir(config.NodesDirIn(configDir)); err == nil {
+		for _, entry := range entries {
+			if entry.IsDir() && registry.ValidateName(entry.Name()) == nil {
+				names[entry.Name()] = true
+			}
+		}
+	}
+	if entries, err := os.ReadDir(config.NodeIdentitiesDirIn(configDir)); err == nil {
+		for _, entry := range entries {
+			name, ok := strings.CutSuffix(entry.Name(), ".json")
+			if ok && !entry.IsDir() && registry.ValidateName(name) == nil {
+				names[name] = true
+			}
+		}
+	}
+	if ledger, err := tsruntime.LoadOwnership(config.NodeOwnershipPathIn(configDir)); err == nil {
+		for _, node := range ledger.Nodes {
+			if node.RetiredAt == nil {
+				names[node.ServiceName] = true
+			}
+		}
+	}
+	delete(names, except)
+	sorted := make([]string, 0, len(names))
+	for name := range names {
+		sorted = append(sorted, name)
+	}
+	sort.Strings(sorted)
+	return sorted
+}
+
+// recreatedRegistryWarning is the warning for a write that created
+// registry.json next to state of services it does not list: the usual cause is
+// a lost registry.json, and adding services on top of a fresh one is how that
+// loss becomes lost node keys.
+func recreatedRegistryWarning(regPath, created, source string) (inspect.WarningView, bool) {
+	orphaned := servicesWithNodeState(regPath, created)
+	if len(orphaned) == 0 {
+		return inspect.WarningView{}, false
+	}
+	return inspect.WarningView{
+		Code:     inspect.WarningCodeRegistryRecreated,
+		Severity: inspect.WarningCodeRegistry[inspect.WarningCodeRegistryRecreated].Severity,
+		Message: fmt.Sprintf("registry.json did not exist, so a new one was created, but %d services that it does not list still have node state, identity records or ownership rows (%s). If registry.json was lost, restore the old registry.json before adding services, or their node identities can be lost.",
+			len(orphaned), strings.Join(orphaned, ", ")),
+		Source: source,
+	}, true
 }
 
 func loadPersistedService(regPath, name string) (registry.Service, error) {
