@@ -84,20 +84,6 @@ tslink add myapp --proxy localhost:3000
 - **Headscale 兼容路径**：通过 `--control-url` 支持高级/自托管控制服务器场景
 - **Funnel 护栏**：公网暴露必须显式选择，并要求 `--public` 确认
 
-### 发布状态
-
-| 已交付 | Roadmap / experimental |
-|---|---|
-| Proxy、file、原始 TCP 服务 | Roadmap/experimental 中间件管道（限流、Basic Auth、IP 白名单、CORS） |
-| 每服务一个嵌入式 `tsnet` 节点 | Roadmap/experimental Docker 标签自动发现 |
-| 身份感知 HTTP 代理头 | Roadmap/experimental 管理面板或 REST surface |
-| proxy/file 的 HTTP `--allow` | Roadmap/experimental Prometheus `/metrics` 端点 |
-| 注册表热重载 | Roadmap/experimental 自定义域名 / ACME 运行时 TLS |
-| 守护进程和开机自启 | Roadmap/experimental Cluster / 多节点注册表同步 |
-| owner-only `status --urls`、`doctor` 和 `access explain` | Roadmap/experimental 成员可见 portal 或服务目录 |
-| 每个命令的 `--json` envelope、stdio 的 `tslink mcp`，以及 opt-in 的仅限 tailnet MCP 控制面（`tslink serve --mcp`） | Roadmap/experimental dashboard、REST API 或多用户管理面 |
-| 内置个人模板 | Roadmap/experimental marketplace 或第三方模板注册表 |
-
 ## 快速开始
 
 ### 安装
@@ -236,6 +222,8 @@ tsnet service。它暴露 19 个 tools，覆盖 CLI 的 per-service 能力面：
 可以打开该 URL 后重试。MCP 永远不会返回 credential 值。同一组 tools 也可以提供给
 tailnet 内的其它机器，见[远程 MCP 控制面](#远程-mcp-控制面)。
 
+### 凭证层级
+
 TSLink 有两层认证模式：
 
 - **Tier 1 零凭证（默认）**：user-owned node，不 advertise tags，也不调用远端 ACL API。适合临时展示页面或 ephemeral share。每个新的 service node 都有自己的 enrollment URL；单服务 quick share 只需一次 browser click。Tailscale 的 user-owned node key 会过期，因此持续运行数月的节点最终可能需要重新认证。
@@ -259,13 +247,13 @@ printf %s "$TSLINK_CLIENT_SECRET" | tslink login --client-secret-stdin
 
 ### 标签管理
 
-TSLink 默认管理本地服务标签。远端 Tailscale ACL mutation 默认关闭，因为 TSLink 还没有本地证明对 HuJSON policy 的无损保留。
+TSLink 默认管理本地服务标签。普通远端 tag ACL 写入需要 `--manage-acl`；已确认公网暴露的 Funnel 服务使用上文所述的默认开启的 policy 自动配置。
 
 零凭证 Tier 1 会保留 registry 中的 tags 配置，但 user-owned node 不 advertise 这些 tags，也不会调用远端 tag/ACL API。下面的标签行为适用于存储凭证的 Tier 2。
 
 - **默认标签**：`tslink add` 未指定 `--tags` 的服务自动应用 `tag:tsmain`。
 - **远端 ACL 读取**：`tslink tags pull` 只在 API 访问令牌模式下拉取远端 ACL 标签；OAuth-only 模式会跳过远端读取并提示需要 API 访问令牌。
-- **远端 ACL 写入**：`tslink login --manage-acl`、`tslink serve --manage-acl` 和 `tslink tags delete-remote --manage-acl` 才会 opt in typed whole-policy ACL writes，并输出 machine-readable side-effect plan。默认 login、serve 和 tag flows 不会改写共享 ACL policy。
+- **远端 ACL 写入**：`tslink login --manage-acl`、`tslink serve --manage-acl` 和 `tslink tags delete-remote --manage-acl` 才会 opt in typed whole-policy ACL writes，并输出 machine-readable side-effect plan。这个 flag 管理普通 tag 写入；已确认公网暴露的 Funnel 服务另行使用默认开启的 policy 自动配置。
 - **严格标签语法**：标签必须匹配 `tag:<lowercase-hyphen-name>`，只使用小写字母、数字和连字符。将 `tag:Web`、`tag:db_main` 或 `web` 这类旧值迁移为 `tslink tags set <service> tag:<lowercase-hyphen-name>`，也可以直接编辑 `registry.json`。无效旧标签会让 `tslink serve` 验证失败，必须先修复才能启动网关。
 - **运行时认证刷新**：标签、临时节点设置和有效控制服务器 URL 变化时，受影响节点会删除本地状态并用新的每服务认证材料重启。切换凭证模式或修改旧版 `authkey` 文件后仍需重启 `tslink serve` 进程。
 
@@ -314,6 +302,8 @@ tslink add public --proxy localhost:3000 --funnel --public
 # ACL 标签
 tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 ```
+
+Funnel ACL 自动配置默认开启，只作用于已确认公网暴露的服务。它可能在 tailnet policy file 中写入共享的 `tag:tslink-funnel` tag owner 和 `nodeAttrs` Funnel grant。给 `tslink add --funnel`、`tslink serve` 或 `tslink install` 传 `--no-auto-provision`，可关闭对应服务或 daemon 设置路径的自动配置；此时 tailnet policy 必须已包含所需规则。普通 tag ACL 写入仍需要 `--manage-acl`。
 
 ## 命令
 
@@ -382,12 +372,18 @@ tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 | `--proxy host:port` | 反向代理到本地 HTTP 服务 |
 | `--dir /path` | 文件目录服务 |
 | `--tcp host:port` | 原始 TCP 转发 |
+| `--dry-run` | 校验并打印服务，不写入注册表 |
 | `--ephemeral` | 临时节点，停止后自动从 tailnet 移除 |
 | `--tags tag:a,tag:b` | ACL 标签，用于 Tailscale 网络策略 |
 | `--allow user@,tag:x` | proxy/file 服务的 HTTP 访问控制；TCP 会拒绝该标志，因为原始 TCP 使用 Tailscale ACL 标签和目标服务自身认证 |
 | `--control-url URL` | 服务级控制服务器覆盖，例如 Headscale。用已存储的 Tailscale 凭证铸造的 auth key 只发给 Tailscale 自己的控制服务器；存有这类凭证时，TSLink 以 `credential_control_url_mismatch` 拒绝指向其他控制服务器的 service |
 | `--funnel` | 通过 Tailscale Funnel 暴露到公网（仅限 proxy，必须同时传 `--public`） |
 | `--public` | 显式确认 `--funnel` 的公网暴露；没有 `--funnel` 时无效 |
+| `--funnel-ttl 1h\|8h\|24h\|72h\|7d\|never` | Funnel 公网期限，默认 `24h`；需要 `--funnel` |
+| `--no-auto-provision` | 关闭该服务的 Funnel policy 自动配置；需要 `--funnel` |
+| `--no-daemon-install` | 只保存配置，不安装或启动 daemon |
+| `--wait duration` | 等待 URL 或授权 URL；默认 `30s`，`0` 表示不等待 |
+| `--json` | 打印版本化的结果 envelope |
 
 ## 工作原理
 
@@ -536,11 +532,13 @@ tslink list --tailnet --json
 {
   "mcp": {
     "enabled": true,
-    "allow": ["you@example.com", "tag:ops"],
+    "allow": ["you@example.com"],
     "node_name": "tslink-mcp"
   }
 }
 ```
+
+`mcp.allow` 中的 `tag:` 条目会授权所有带该 tag 的机器，包括 service node。优先填写具体的登录邮箱；如需用 tag，请建立专用 tag 并控制哪些机器带有它。
 
 `config.json` 按严格模式读取：TSLink 不认识的 key（包括拼写错误）会让写配置的命令以 `config_load_failed` 拒绝，`tslink doctor` 会报出来，`serve` 则回到默认控制服务器，并且不开控制面。
 
@@ -568,9 +566,9 @@ tslink list --tailnet --json
 | Tools | 19 个 | 同一组 19 个，来自同一个 tool registry |
 | 典型 client | 本机上的 MCP client | tailnet 内另一台机器上的 MCP client |
 
-## Roadmap / Experimental 包
+## 路线图
 
-下面这些功能不在已交付的 `tslink serve` 运行路径里。在它们带着端到端集成测试交付之前，请视为 roadmap：
+以下功能尚未进入已交付的运行路径：
 
 | 领域 | 当前状态 |
 |---|---|
@@ -580,6 +578,11 @@ tslink list --tailnet --json
 | Prometheus `/metrics` | 未实现；没有请求 instrumentation，也没有 scrape endpoint。 |
 | Custom domain / ACME | 未实现；目前没有对应的注册表字段或 flag。 |
 | Cluster sync | 未实现。 |
+| 成员 portal 或服务目录 | 未实现。 |
+| Marketplace 或第三方模板注册表 | 未实现。 |
+| Docker 镜像 | 尚未发布。 |
+| Headscale 端到端验证 | 待完成。 |
+| 其他 Layer 2 模块 | 待集成测试。 |
 
 ## 前置条件
 
@@ -605,17 +608,7 @@ macOS LaunchAgent 安装会使用 launchd `KeepAlive` 和 `ThrottleInterval=30`�
 
 Linux 上，TSLink 同样会在替换前保存已有 systemd user unit。如果 `daemon-reload`、`enable`、`restart` 或 restart 后验证失败，TSLink 会停止失败的 service，原子恢复旧 unit，重新加载 systemd，并重启此前已确认由 systemd 管理的 service。两个平台都无法恢复在 `tslink install` 运行前已被替换的可执行二进制。修复报出的原因后，重新运行 `tslink install`。
 
-## 路线图
-
-- [x] OAuth client secret 可由 login 和 tsnet auth 路径接受；无人值守前需验证标签/设备自动化
-- [ ] 自定义域名 / ACME 运行时 TLS
-- [ ] 可从 tailnet 访问的 Web 管理面板
-- [ ] Docker 镜像和 Docker 标签发现
-- [ ] Headscale 端到端测试
-- [x] 每个命令的 `--json` envelope，以及 stdio 与仅限 tailnet 的 MCP 传输
-- [ ] 经过集成测试的 Layer 2 模块和可选远程/管理面
-
-#### 发布产物
+### 发布产物
 
 当前还没有公开 tag/release，Homebrew tap 也尚未发布可安装产物。首个公开
 release/readback 前请从源码安装。该外部 gate 通过后，GitHub Releases 预计发布以下可安装产物：
@@ -628,148 +621,7 @@ release/readback 前请从源码安装。该外部 gate 通过后，GitHub Relea
 
 发布产物是并列的 release assets，不是嵌入归档内部的文件。GoReleaser 会上传可安装归档/包、`checksums.txt`、归档对应的 CycloneDX SBOM sidecar，以及 `checksums.txt` 和 SBOM sidecar 的 keyless Sigstore bundle 签名。签名后的 `checksums.txt` 覆盖可安装产物和 SBOM sidecar。release workflow 还会为可安装产物和供应链 sidecar 发布 GitHub artifact attestations。
 
-#### 验证发布完整性
-
-下面命令需要 `gh` 2.49 或更新版本并支持 `gh attestation verify`，`cosign` 支持 `verify-blob --bundle`，以及 `sha256sum` 或 `shasum`。将 `<version>` 替换为 GitHub Release tag，将 `<artifact>` 替换为该 release 里的产物文件名。
-
-Sigstore 证书的信任根是 GitHub Actions OIDC issuer `https://token.actions.githubusercontent.com`。验证会钉住精确的 release workflow 身份 `https://github.com/monody0007/tslink/.github/workflows/release.yml@refs/tags/<version>`，以及 GitHub attestation signer workflow `github.com/monody0007/tslink/.github/workflows/release.yml`。tag ref 绑定意味着匹配的签名或 attestation 必须来自本仓库对该 tag 运行的 release workflow。
-
-```bash
-set -euo pipefail
-
-repo="monody0007/tslink"
-version="<version>"
-artifact="<artifact>"
-
-sha256_file() {
-  if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$1" | awk '{print $1}'
-  elif command -v shasum >/dev/null 2>&1; then
-    shasum -a 256 "$1" | awk '{print $1}'
-  else
-    echo "missing checksum tool: install sha256sum or shasum" >&2
-    exit 1
-  fi
-}
-
-require_file() {
-  if [ ! -f "$1" ]; then
-    echo "missing downloaded release asset: $1" >&2
-    exit 1
-  fi
-}
-
-verify_checksum() {
-  file="$1"
-  require_file "$file"
-  require_file "checksums.txt"
-
-  expected="$(awk -v file="$file" '$2 == file {print $1}' checksums.txt)"
-  if [ -z "$expected" ]; then
-    echo "missing checksum entry for $file in checksums.txt" >&2
-    exit 1
-  fi
-
-  actual="$(sha256_file "$file")"
-  if [ "$actual" != "$expected" ]; then
-    echo "checksum mismatch for $file" >&2
-    echo "expected: $expected" >&2
-    echo "actual:   $actual" >&2
-    exit 1
-  fi
-}
-
-mkdir -p "tslink-$version-verify"
-cd "tslink-$version-verify"
-
-gh release download "$version" --repo "$repo" \
-  --pattern "$artifact" \
-  --pattern "checksums.txt" \
-  --pattern "checksums.txt.sigstore.json"
-
-require_file "$artifact"
-require_file "checksums.txt"
-require_file "checksums.txt.sigstore.json"
-verify_checksum "$artifact"
-
-cosign verify-blob checksums.txt \
-  --bundle checksums.txt.sigstore.json \
-  --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-  --certificate-identity "https://github.com/$repo/.github/workflows/release.yml@refs/tags/$version"
-
-gh attestation verify "$artifact" \
-  --repo "$repo" \
-  --source-ref "refs/tags/$version" \
-  --signer-workflow "github.com/$repo/.github/workflows/release.yml"
-```
-
-归档 SBOM sidecar 是独立 release asset，需要单独验证。请在归档验证后的同一个验证目录中运行，使用相同的 `version` 和 `artifact`。
-
-```bash
-set -euo pipefail
-
-repo="monody0007/tslink"
-version="<version>"
-artifact="<artifact>"
-sbom="$artifact.sbom.json"
-
-sha256_file() {
-  if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$1" | awk '{print $1}'
-  elif command -v shasum >/dev/null 2>&1; then
-    shasum -a 256 "$1" | awk '{print $1}'
-  else
-    echo "missing checksum tool: install sha256sum or shasum" >&2
-    exit 1
-  fi
-}
-
-require_file() {
-  if [ ! -f "$1" ]; then
-    echo "missing downloaded release asset: $1" >&2
-    exit 1
-  fi
-}
-
-verify_checksum() {
-  file="$1"
-  require_file "$file"
-  require_file "checksums.txt"
-
-  expected="$(awk -v file="$file" '$2 == file {print $1}' checksums.txt)"
-  if [ -z "$expected" ]; then
-    echo "missing checksum entry for $file in checksums.txt" >&2
-    exit 1
-  fi
-
-  actual="$(sha256_file "$file")"
-  if [ "$actual" != "$expected" ]; then
-    echo "checksum mismatch for $file" >&2
-    echo "expected: $expected" >&2
-    echo "actual:   $actual" >&2
-    exit 1
-  fi
-}
-
-gh release download "$version" --repo "$repo" \
-  --pattern "$sbom" \
-  --pattern "$sbom.sigstore.json"
-
-require_file "$sbom"
-require_file "$sbom.sigstore.json"
-verify_checksum "$sbom"
-
-cosign verify-blob "$sbom" \
-  --bundle "$sbom.sigstore.json" \
-  --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-  --certificate-identity "https://github.com/$repo/.github/workflows/release.yml@refs/tags/$version"
-
-gh attestation verify "$sbom" \
-  --repo "$repo" \
-  --source-ref "refs/tags/$version" \
-  --signer-workflow "github.com/$repo/.github/workflows/release.yml"
-```
-
+发布产物、checksum、签名、SBOM 和 attestation 的验证步骤见[验证发布产物](docs/verify-release_zh.md)。
 
 ## 文档
 

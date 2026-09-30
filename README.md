@@ -84,20 +84,6 @@ tslink add myapp --proxy localhost:3000
 - **Headscale compatibility path** — advanced/self-hosted control-server use via `--control-url`
 - **Funnel guardrails** — public internet exposure is opt-in and requires explicit `--public` acknowledgement
 
-### Launch status
-
-| Shipped now | Roadmap / experimental |
-|---|---|
-| Proxy, file, and raw TCP services | Roadmap/experimental middleware pipeline (rate limit, Basic Auth, IP allow list, CORS) |
-| One embedded `tsnet` node per service | Roadmap/experimental Docker label auto-discovery |
-| Identity-aware HTTP proxy headers | Roadmap/experimental admin dashboard or REST surface |
-| HTTP `--allow` for proxy/file services | Roadmap/experimental Prometheus `/metrics` endpoint |
-| Registry-backed hot reload | Roadmap/experimental custom domain / ACME runtime TLS |
-| Daemon lifecycle and autostart | Roadmap/experimental cluster / multi-node registry sync |
-| Owner-only `status --urls`, `doctor`, and `access explain` | Roadmap/experimental member-facing portal or service directory |
-| `--json` envelope on every command, `tslink mcp` over stdio, and the opt-in tailnet-only MCP control plane (`tslink serve --mcp`) | Roadmap/experimental dashboard, REST API, or multi-user admin plane |
-| Built-in personal templates | Roadmap/experimental marketplace or third-party template registry |
-
 ## Quick Start
 
 ### Install
@@ -264,6 +250,8 @@ as a normal tool result so an agent can open the URL and retry. Credential
 values are never returned through MCP. The same tools can also be served to
 other machines on your tailnet; see [Remote MCP Control Plane](#remote-mcp-control-plane).
 
+### Credential tiers
+
 TSLink has two authentication tiers:
 
 - **Tier 1 — zero credential (default)**: a user-owned node with no advertised tags and no remote ACL edits. This is the least-privilege path for a quick page or ephemeral share. Each fresh service node has its own enrollment URL; a one-service quick share takes one browser click. User-owned Tailscale node keys expire, so a node left running for months can eventually require re-authentication.
@@ -287,13 +275,13 @@ The compatible `--api-key` and `--client-secret` flags remain available, but com
 
 ### Tag Management
 
-TSLink manages local service tags by default. Remote Tailscale ACL mutation is disabled by default because TSLink does not yet prove lossless HuJSON policy preservation.
+TSLink manages local service tags by default. Ordinary remote tag ACL mutation requires `--manage-acl`; acknowledged Funnel services use the separate default-on policy provisioning described above.
 
 On the zero-credential Tier 1 path, registry tags remain configured but are not advertised by the user-owned node, and no remote tag/ACL API is called. The following tag behavior applies to the stored-credential Tier 2 path.
 
 - **Default tag** — every service gets `tag:tsmain` applied automatically when `--tags` is not specified.
 - **Remote ACL reads** — `tslink tags pull` fetches remote ACL tags only in API access token mode; OAuth-only mode skips the remote read and reports that an API access token is required.
-- **Remote ACL writes** — `tslink login --manage-acl`, `tslink serve --manage-acl`, and `tslink tags delete-remote --manage-acl` opt in to typed whole-policy ACL writes with a machine-readable side-effect plan. Default login, serve, and tag flows do not rewrite shared ACL policy.
+- **Remote ACL writes** — `tslink login --manage-acl`, `tslink serve --manage-acl`, and `tslink tags delete-remote --manage-acl` opt in to typed whole-policy ACL writes with a machine-readable side-effect plan. This flag is for ordinary tag management; acknowledged Funnel services use the separate default-on policy provisioning described above.
 - **Strict tag grammar** — tags must match `tag:<lowercase-hyphen-name>` with lowercase letters, numbers, and hyphens. Migrate legacy tags such as `tag:Web`, `tag:db_main`, or `web` with `tslink tags set <service> tag:<lowercase-hyphen-name>` or by editing `registry.json`. Invalid legacy tags fail `tslink serve` validation and must be fixed before the gateway starts.
 - **Runtime auth refresh** — tag, ephemeral, and effective control-server URL changes restart affected nodes with fresh per-service auth material. A zero-credential to stored-credential login records a pending identity transition; restart `tslink serve` to clear the old user-owned node state and re-enroll with tagged credentials. Legacy `authkey` file changes also require a restart.
 
@@ -342,6 +330,8 @@ tslink add public --proxy localhost:3000 --funnel --public
 # ACL tags for Tailscale network policy
 tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 ```
+
+Funnel ACL auto-provisioning is enabled by default for an acknowledged public service. It may write the shared `tag:tslink-funnel` tag owner and a `nodeAttrs` Funnel grant in the tailnet policy file. Pass `--no-auto-provision` to `tslink add --funnel`, `tslink serve`, or `tslink install` to disable the corresponding service or daemon setup path; the required tailnet policy must then exist already. Ordinary tag ACL writes still require `--manage-acl`.
 
 ## Commands
 
@@ -410,12 +400,18 @@ tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 | `--proxy host:port` | Reverse proxy to a local HTTP service |
 | `--dir /path` | Serve a local file directory |
 | `--tcp host:port` | Raw TCP forwarding |
+| `--dry-run` | Validate and print the service without saving it |
 | `--ephemeral` | Ephemeral node, auto-removed from tailnet when stopped |
 | `--tags tag:a,tag:b` | ACL tags for Tailscale network policy |
 | `--allow user@,tag:x` | HTTP access control for proxy/file services; rejected for TCP because raw TCP uses Tailscale ACL tags and target-service auth |
 | `--control-url URL` | Per-service control server override, e.g. Headscale. TSLink never sends an auth key minted from a stored Tailscale credential to another control server: with such a credential stored, the service is refused with `credential_control_url_mismatch` |
 | `--funnel` | Expose via Tailscale Funnel (public internet, proxy only, requires `--public`) |
 | `--public` | Explicitly acknowledge public internet exposure for `--funnel`; invalid without `--funnel` |
+| `--funnel-ttl 1h\|8h\|24h\|72h\|7d\|never` | Public Funnel lifetime; default `24h`; requires `--funnel` |
+| `--no-auto-provision` | Disable Funnel policy provisioning for this service; requires `--funnel` |
+| `--no-daemon-install` | Save configuration without installing or starting the daemon |
+| `--wait duration` | Wait for a URL or enrollment URL; default `30s`, `0` disables waiting |
+| `--json` | Print the versioned result envelope |
 
 ## How It Works
 
@@ -564,11 +560,13 @@ The control plane is off by default. Enable it with the `--mcp` flag or with `mc
 {
   "mcp": {
     "enabled": true,
-    "allow": ["you@example.com", "tag:ops"],
+    "allow": ["you@example.com"],
     "node_name": "tslink-mcp"
   }
 }
 ```
+
+A `tag:` entry in `mcp.allow` authorizes every machine carrying that tag, including service nodes. Prefer specific login emails or a dedicated tag whose membership you control.
 
 `config.json` is read strictly: a key TSLink does not know, a typo included, is refused with `config_load_failed` by the commands that write settings, reported by `tslink doctor`, and makes `serve` fall back to the default control server without the control plane.
 
@@ -596,9 +594,9 @@ The control plane is off by default. Enable it with the `--mcp` flag or with `mc
 | Tools | 19 | The same 19, from one tool registry |
 | Typical client | An MCP client on this machine | An MCP client on another machine in the tailnet |
 
-## Roadmap / Experimental Packages
+## Roadmap
 
-These features are not part of the shipped `tslink serve` runtime. Treat them as roadmap until they ship with end-to-end integration tests:
+These features are not part of the shipped runtime:
 
 | Area | Current status |
 |---|---|
@@ -608,6 +606,11 @@ These features are not part of the shipped `tslink serve` runtime. Treat them as
 | Prometheus `/metrics` | Not implemented; there is no request instrumentation and no scrape endpoint. |
 | Custom domain / ACME | Not implemented; there are no registry fields or flags for it yet. |
 | Cluster sync | Not implemented. |
+| Member portal or service directory | Not implemented. |
+| Marketplace or third-party template registry | Not implemented. |
+| Docker image | Not published. |
+| Headscale end-to-end validation | Pending. |
+| Other Layer 2 modules | Pending integration tests. |
 
 ## Prerequisites
 
@@ -633,17 +636,7 @@ Re-running `tslink install` is the supported upgrade path on every platform. On 
 
 On Linux, TSLink likewise saves an existing systemd user unit before replacing it. If `daemon-reload`, `enable`, `restart`, or post-restart verification fails, TSLink stops the failed service, atomically restores the previous unit, reloads systemd, and restarts a service that was previously confirmed systemd-owned. Neither platform can restore an executable binary that was replaced before `tslink install` ran. Fix the reported cause and re-run `tslink install`.
 
-## Roadmap
-
-- [x] OAuth client secret accepted by login and tsnet auth paths; validate tag/device automation before unattended use
-- [ ] Runtime custom-domain / ACME TLS
-- [ ] Web dashboard accessible from tailnet
-- [ ] Docker image and Docker label discovery
-- [ ] Headscale end-to-end testing
-- [x] `--json` envelope on every command, plus stdio and tailnet-only MCP transports
-- [ ] Integration-tested Layer 2 modules and optional remote/admin surfaces
-
-#### Release Artifacts
+### Release Artifacts
 
 There is no public tag/release or populated Homebrew tap yet. Before the first
 published release/readback, install from source. After that external gate
@@ -657,148 +650,7 @@ passes, GitHub Releases are expected to publish these installable artifacts:
 
 Release assets are side-by-side files, not files embedded inside the archives. GoReleaser uploads installable archives/packages, `checksums.txt`, CycloneDX SBOM sidecars for archives, and keyless Sigstore bundle signatures for `checksums.txt` and SBOM sidecars. The signed `checksums.txt` covers both installable artifacts and SBOM sidecars. The release workflow also publishes GitHub artifact attestations for the installable artifacts and supply-chain sidecars.
 
-#### Verify Release Integrity
-
-These commands require `gh` 2.49 or newer with `gh attestation verify`, `cosign` with `verify-blob --bundle` support, and either `sha256sum` or `shasum`. Use a tag such as `<version>` and an asset name such as `<artifact>` from the GitHub Release.
-
-The Sigstore certificate trust root is the GitHub Actions OIDC issuer `https://token.actions.githubusercontent.com`. Verification pins the exact release workflow identity `https://github.com/monody0007/tslink/.github/workflows/release.yml@refs/tags/<version>` and the GitHub attestation signer workflow `github.com/monody0007/tslink/.github/workflows/release.yml`. The tag ref binding means a matching signature or attestation must come from this repository's release workflow for the requested tag.
-
-```bash
-set -euo pipefail
-
-repo="monody0007/tslink"
-version="<version>"
-artifact="<artifact>"
-
-sha256_file() {
-  if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$1" | awk '{print $1}'
-  elif command -v shasum >/dev/null 2>&1; then
-    shasum -a 256 "$1" | awk '{print $1}'
-  else
-    echo "missing checksum tool: install sha256sum or shasum" >&2
-    exit 1
-  fi
-}
-
-require_file() {
-  if [ ! -f "$1" ]; then
-    echo "missing downloaded release asset: $1" >&2
-    exit 1
-  fi
-}
-
-verify_checksum() {
-  file="$1"
-  require_file "$file"
-  require_file "checksums.txt"
-
-  expected="$(awk -v file="$file" '$2 == file {print $1}' checksums.txt)"
-  if [ -z "$expected" ]; then
-    echo "missing checksum entry for $file in checksums.txt" >&2
-    exit 1
-  fi
-
-  actual="$(sha256_file "$file")"
-  if [ "$actual" != "$expected" ]; then
-    echo "checksum mismatch for $file" >&2
-    echo "expected: $expected" >&2
-    echo "actual:   $actual" >&2
-    exit 1
-  fi
-}
-
-mkdir -p "tslink-$version-verify"
-cd "tslink-$version-verify"
-
-gh release download "$version" --repo "$repo" \
-  --pattern "$artifact" \
-  --pattern "checksums.txt" \
-  --pattern "checksums.txt.sigstore.json"
-
-require_file "$artifact"
-require_file "checksums.txt"
-require_file "checksums.txt.sigstore.json"
-verify_checksum "$artifact"
-
-cosign verify-blob checksums.txt \
-  --bundle checksums.txt.sigstore.json \
-  --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-  --certificate-identity "https://github.com/$repo/.github/workflows/release.yml@refs/tags/$version"
-
-gh attestation verify "$artifact" \
-  --repo "$repo" \
-  --source-ref "refs/tags/$version" \
-  --signer-workflow "github.com/$repo/.github/workflows/release.yml"
-```
-
-Archive SBOM sidecars are verified separately because they are independent release assets. Run this from the same verification directory after the archive check, using the same `version` and `artifact`.
-
-```bash
-set -euo pipefail
-
-repo="monody0007/tslink"
-version="<version>"
-artifact="<artifact>"
-sbom="$artifact.sbom.json"
-
-sha256_file() {
-  if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$1" | awk '{print $1}'
-  elif command -v shasum >/dev/null 2>&1; then
-    shasum -a 256 "$1" | awk '{print $1}'
-  else
-    echo "missing checksum tool: install sha256sum or shasum" >&2
-    exit 1
-  fi
-}
-
-require_file() {
-  if [ ! -f "$1" ]; then
-    echo "missing downloaded release asset: $1" >&2
-    exit 1
-  fi
-}
-
-verify_checksum() {
-  file="$1"
-  require_file "$file"
-  require_file "checksums.txt"
-
-  expected="$(awk -v file="$file" '$2 == file {print $1}' checksums.txt)"
-  if [ -z "$expected" ]; then
-    echo "missing checksum entry for $file in checksums.txt" >&2
-    exit 1
-  fi
-
-  actual="$(sha256_file "$file")"
-  if [ "$actual" != "$expected" ]; then
-    echo "checksum mismatch for $file" >&2
-    echo "expected: $expected" >&2
-    echo "actual:   $actual" >&2
-    exit 1
-  fi
-}
-
-gh release download "$version" --repo "$repo" \
-  --pattern "$sbom" \
-  --pattern "$sbom.sigstore.json"
-
-require_file "$sbom"
-require_file "$sbom.sigstore.json"
-verify_checksum "$sbom"
-
-cosign verify-blob "$sbom" \
-  --bundle "$sbom.sigstore.json" \
-  --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-  --certificate-identity "https://github.com/$repo/.github/workflows/release.yml@refs/tags/$version"
-
-gh attestation verify "$sbom" \
-  --repo "$repo" \
-  --source-ref "refs/tags/$version" \
-  --signer-workflow "github.com/$repo/.github/workflows/release.yml"
-```
-
+See [Verify a release](docs/verify-release.md) for artifact, checksum, signature, SBOM, and attestation checks.
 
 ## Documentation
 
