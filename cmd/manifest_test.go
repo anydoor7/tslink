@@ -977,7 +977,9 @@ func TestCompactManifestStaysBelowAgentTokenBudget(t *testing.T) {
 	// path_exposes_config_dir, legacy_config_dir_present, config_load_failed)
 	// and dropped feature_unavailable, which took the compact form past 2500
 	// bytes (2550 measured alone); the code->exit map is what an agent looks
-	// up, so it stays and the ceiling moves to 3000.
+	// up, so it stays and the ceiling moves to 3000. Batch B3 then derived the
+	// map from the one error-code table, which added the ten codes the old map
+	// missed and mcp_elevated_invite_refused: 2860 bytes at the end of B3.
 	if len(data) >= 3000 {
 		t.Fatalf("compact manifest = %d bytes, want < 3000", len(data))
 	}
