@@ -258,6 +258,9 @@ func ensureDaemon(ctx context.Context, out io.Writer, noInstall bool) error {
 		if err := installDaemonFn(ctx, out); err != nil {
 			return daemonSetupError(err)
 		}
+		// Installer rollback returns an error above; only a committed definition
+		// earns a receipt, even if a later setup or endpoint gate fails.
+		noteDaemonInstall(ctx, DaemonInstalled{Manager: supervisorName(), Path: path, Undo: "tslink uninstall"})
 		snapshotPath, err := config.RuntimeSnapshotPath()
 		if err != nil {
 			return err
@@ -296,7 +299,6 @@ func ensureDaemon(ctx context.Context, out io.Writer, noInstall bool) error {
 		if err != nil {
 			return daemonSetupError(err)
 		}
-		noteDaemonInstall(ctx, DaemonInstalled{Manager: supervisorName(), Path: path, Undo: "tslink uninstall"})
 		if ready {
 			fmt.Fprintln(out, "TSLink background service is ready and autostart is verified.")
 			return nil

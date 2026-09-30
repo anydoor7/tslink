@@ -1705,7 +1705,10 @@ func callMCPTool(ctx context.Context, actions mcpActions, name string, arguments
 		// answering with a zero value.
 		return nil, mcpUnknownToolError(name)
 	}
-	if err == nil && install != nil && install.installed != nil {
+	if install != nil && install.installed != nil {
+		if err != nil {
+			return makeMCPToolErrorResult(err, *install.installed), nil
+		}
 		data, err = withDaemonInstalled(data, *install.installed)
 	}
 	return makeMCPToolResult(data, err), nil
@@ -1720,6 +1723,9 @@ func withDaemonInstalled(data any, installed DaemonInstalled) (any, error) {
 	var result map[string]any
 	if err := json.Unmarshal(encoded, &result); err != nil {
 		return nil, err
+	}
+	if result == nil {
+		result = map[string]any{}
 	}
 	result["daemon_installed"] = installed
 	return result, nil
@@ -1769,8 +1775,17 @@ func makeMCPToolResult(data any, callErr error) *mcp.CallToolResult {
 // output schema for its success payload, the specification requires
 // structured results to conform to it, and a client that validates them (the
 // TypeScript SDK's whole v1 line) would throw the refusal away.
-func makeMCPToolErrorResult(err error) *mcp.CallToolResult {
+func makeMCPToolErrorResult(err error, installed ...DaemonInstalled) *mcp.CallToolResult {
 	failure := output.NewFailureForError("", err).Error
+	if len(installed) > 0 {
+		data, mergeErr := withDaemonInstalled(failure.Data, installed[0])
+		if mergeErr != nil {
+			// Match the existing fallback for unencodable failure data while
+			// retaining the verified installation receipt.
+			data = map[string]any{"daemon_installed": installed[0]}
+		}
+		failure.Data = data
+	}
 	encoded, marshalErr := json.Marshal(failure)
 	if marshalErr != nil {
 		// Data that cannot be encoded is dropped, never the code and next steps.
