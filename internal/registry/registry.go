@@ -1435,6 +1435,17 @@ func AddWithOutcome(path string, svc Service, options AddOptions) (outcome AddOu
 }
 
 func AddIfMissing(path string, svc Service) (created bool, err error) {
+	return addIfMissing(path, svc, false)
+}
+
+// AddTentative is AddIfMissing for a caller that may still undo the creation
+// with RemoveIfUnchanged: the service it creates stays tentative until the
+// caller, or anyone else relying on it, settles it with KeepIfUnchanged.
+func AddTentative(path string, svc Service) (created bool, err error) {
+	return addIfMissing(path, svc, true)
+}
+
+func addIfMissing(path string, svc Service, tentative bool) (created bool, err error) {
 	if err := ValidateService(svc); err != nil {
 		return false, err
 	}
@@ -1456,9 +1467,22 @@ func AddIfMissing(path string, svc Service) (created bool, err error) {
 			svc.CreatedAt = time.Now().UTC()
 		}
 
+		// The mark goes first, so a registration its creator may still
+		// roll back always carries one; a failed save takes it away again.
+		if tentative {
+			if err := atomicfile.WriteFile(tentativeMarkPath(path, svc.Name), tentativeMark(svc)); err != nil {
+				return err
+			}
+		}
 		reg.Services = append(reg.Services, svc)
+		if err := save(path, reg); err != nil {
+			if tentative {
+				_ = dropTentativeMark(path, svc.Name)
+			}
+			return err
+		}
 		created = true
-		return save(path, reg)
+		return nil
 	})
 	return created, err
 }
@@ -1491,11 +1515,73 @@ func RemoveAndReturn(path, name string) (removedService Service, removed bool, e
 	return removedService, removed, err
 }
 
-// RemoveIfUnchanged removes expected only when the currently stored service is
-// byte-for-byte equivalent. It is intended for compensating transactions that
-// must not delete a service another process changed after creation.
+// A registration is tentative while the call that created it may still undo
+// the creation: `tslink share` registers a service, waits for it, and removes
+// it again when the wait fails. Content equality cannot tell that removal
+// whether another call relies on the registration by now -- an identical share
+// reuses it unchanged and may already have reported it ready -- so the creation
+// leaves a mark beside registry.json holding its created_at, and every caller
+// that relies on the registration as stored takes the mark away under the
+// registry lock. The compensating removal applies only while the mark of that
+// very creation is still there.
+func tentativeMarkPath(regPath, name string) string {
+	return regPath + ".tentative-" + name
+}
+
+func tentativeMark(svc Service) []byte {
+	return []byte(svc.CreatedAt.UTC().Format(time.RFC3339Nano) + "\n")
+}
+
+func dropTentativeMark(regPath, name string) error {
+	if err := os.Remove(tentativeMarkPath(regPath, name)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+// KeepIfUnchanged settles expected when it is still stored exactly as given:
+// afterwards RemoveIfUnchanged no longer removes it, whoever created it. A
+// share reusing an existing registration calls it before relying on that
+// registration, and the share that created one calls it once it succeeds. It
+// reports false, and settles nothing, when the stored service changed or is
+// gone.
+func KeepIfUnchanged(path string, expected Service) (kept bool, err error) {
+	err = withLock(path, func() error {
+		reg, err := Load(path)
+		if err != nil {
+			return err
+		}
+		for _, svc := range reg.Services {
+			if svc.Name != expected.Name || !reflect.DeepEqual(svc, expected) {
+				continue
+			}
+			if err := dropTentativeMark(path, expected.Name); err != nil {
+				return err
+			}
+			kept = true
+			return nil
+		}
+		return nil
+	})
+	return kept, err
+}
+
+// RemoveIfUnchanged undoes an AddTentative: it removes expected only when the
+// currently stored service is byte-for-byte equivalent and still carries the
+// tentative mark of its creation. It deletes neither a service another process
+// changed after creation nor one another call has kept since.
 func RemoveIfUnchanged(path string, expected Service) (removed bool, err error) {
 	err = withLock(path, func() error {
+		mark, err := os.ReadFile(tentativeMarkPath(path, expected.Name))
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if !bytes.Equal(mark, tentativeMark(expected)) {
+			return nil
+		}
 		reg, err := loadForMutation(path)
 		if err != nil {
 			return err
@@ -1505,8 +1591,14 @@ func RemoveIfUnchanged(path string, expected Service) (removed bool, err error) 
 				continue
 			}
 			reg.Services = append(reg.Services[:i], reg.Services[i+1:]...)
+			if err := save(path, reg); err != nil {
+				return err
+			}
 			removed = true
-			return save(path, reg)
+			// The service is gone, so a mark left behind names nothing any
+			// caller can match; failing to delete it is not a failed undo.
+			_ = dropTentativeMark(path, expected.Name)
+			return nil
 		}
 		return nil
 	})
