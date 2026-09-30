@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/monody0007/tslink/internal/config"
@@ -133,7 +134,14 @@ func daemonSetupError(err error) error {
 			state = "The remaining supervisor definition could not be inspected: " + path
 		}
 	}
-	return registry.CodedError{Code: "daemon_setup_failed", Message: fmt.Sprintf("background service setup failed: %v. %s Inspect 'tslink logs' and 'tslink doctor' before repairing with 'tslink install'", err, state), Next: []string{"tslink logs", "tslink doctor", "tslink install"}}
+	// Installing again is the repair on every platform, except where a Linux
+	// host has no systemd user manager: install then fails the same way until
+	// a login session provides one, so the route is the one status gives.
+	repair, next := "repairing with 'tslink install'", []string{"tslink install"}
+	if strings.Contains(err.Error(), systemdUserManagerUnavailableMessage) {
+		repair, next = "retrying; installing again fails the same way until that login session exists", systemdUserManagerUnavailableNext()
+	}
+	return registry.CodedError{Code: "daemon_setup_failed", Message: fmt.Sprintf("background service setup failed: %v. %s Inspect 'tslink logs' and 'tslink doctor' before %s", err, state, repair), Next: append([]string{"tslink logs", "tslink doctor"}, next...)}
 }
 
 // daemonRegistryRetainedError is only for callers that retain registry entries

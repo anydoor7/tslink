@@ -313,10 +313,17 @@ func statusCredentialsFromInventory(inventory credentials.Inventory, clientSecre
 	return result, state
 }
 
+// systemdUserManagerUnavailableNext is the way out of a missing systemd user
+// manager: a login session that provides one, or a manual serve. Installing
+// again is not, since install fails the same way until that session exists.
+func systemdUserManagerUnavailableNext() []string {
+	return []string{"Establish a login session with a working systemd user manager and XDG_RUNTIME_DIR", "tslink serve", "Use add/share --no-daemon-install to register services for manual serve"}
+}
+
 func setStatusContinuation(r *StatusResult) {
 	switch {
 	case strings.Contains(r.Supervision.Detail, systemdUserManagerUnavailableMessage):
-		r.Next = []string{"Establish a login session with a working systemd user manager and XDG_RUNTIME_DIR", "tslink serve", "Use add/share --no-daemon-install to register services for manual serve"}
+		r.Next = systemdUserManagerUnavailableNext()
 	case r.AuthStatus == authStatusNeedsLogin:
 		r.Next = []string{"tslink status --json"}
 	case r.AuthStatus == authStatusNotAuthenticated && !r.CredentialStored:
