@@ -309,7 +309,7 @@ func TestReconcileValidEmptyRegistryWithAllRowsRetiredAllowsDeviceDeletion(t *te
 	}
 }
 
-func TestReconcileUnknownRetirementProvenanceRefusesAllDeviceDeletion(t *testing.T) {
+func TestReconcileUnknownRetirementProvenanceRefusesThatServicesDeletion(t *testing.T) {
 	dir := t.TempDir()
 	regPath := filepath.Join(dir, "registry.json")
 	ownershipPath := filepath.Join(dir, "node-ownership.json")
@@ -321,7 +321,7 @@ func TestReconcileUnknownRetirementProvenanceRefusesAllDeviceDeletion(t *testing
 	oldCleanup := cleanupDevicesFn
 	t.Cleanup(func() { cleanupDevicesFn = oldCleanup })
 	cleanupDevicesFn = func(context.Context, []tailapi.CleanupTarget, bool) (tailapi.CleanupResult, error) {
-		t.Fatal("unknown retirement provenance must disable every remote device deletion")
+		t.Fatal("unknown retirement provenance must withhold that service's remote device deletion")
 		return tailapi.CleanupResult{}, nil
 	}
 
@@ -543,33 +543,6 @@ func TestReconcileAdoptedUniqueOrphanIsDeletedWithoutGuard(t *testing.T) {
 		t.Fatalf("result=%+v err=%v, want adopted orphan deleted", result, err)
 	}
 	t.Logf("adopted_orphans=1 unknown_orphans=0 skipped=%t deleted=%v", result.DeviceCleanupSkipped, result.DevicesDeleted)
-}
-
-func TestReconcileUnretiredOrphanBlocksAdoptedOrphanToo(t *testing.T) {
-	dir := t.TempDir()
-	regPath := filepath.Join(dir, "registry.json")
-	ownershipPath := filepath.Join(dir, "node-ownership.json")
-	now := time.Date(2030, 8, 31, 12, 0, 0, 0, time.UTC)
-	if _, err := registry.Add(regPath, registry.Service{Name: "active", Type: registry.TypeProxy, Target: "http://localhost:3000"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := tsruntime.AdoptOwnedNode(ownershipPath, "reviewed-x", "node-x", now, true); err != nil {
-		t.Fatal(err)
-	}
-	if err := tsruntime.RecordOwnedNode(ownershipPath, "unknown-y", "node-y", now); err != nil {
-		t.Fatal(err)
-	}
-	oldCleanup := cleanupDevicesFn
-	t.Cleanup(func() { cleanupDevicesFn = oldCleanup })
-	cleanupDevicesFn = func(context.Context, []tailapi.CleanupTarget, bool) (tailapi.CleanupResult, error) {
-		t.Fatal("one unknown orphan must block deletion of every target, including reviewed-x")
-		return tailapi.CleanupResult{}, nil
-	}
-	result, err := Reconcile(context.Background(), Options{RegistryPath: regPath, OwnershipPath: ownershipPath, Now: now})
-	if err != nil || !result.DeviceCleanupSkipped || !strings.Contains(result.DeviceSkipReason, unknownRetirementReasonPrefix) || !strings.Contains(result.DeviceSkipReason, "unknown-y") || len(result.DevicesDeleted) != 0 {
-		t.Fatalf("result=%+v err=%v, want global provenance block", result, err)
-	}
-	t.Logf("adopted=reviewed-x unretired=unknown-y skipped=%t deleted=%d reason=%q", result.DeviceCleanupSkipped, len(result.DevicesDeleted), result.DeviceSkipReason)
 }
 
 func TestReconcileLegacyOwnershipSchemaBlocksWithExecutableRecovery(t *testing.T) {

@@ -27,7 +27,54 @@ const (
 func unknownRetirementReason(serviceNames []string) string {
 	names := append([]string(nil), serviceNames...)
 	sort.Strings(names)
-	return fmt.Sprintf("%s for: %s; all remote device deletion is disabled; restore registry.json, or explicitly review every listed orphan hostname with tslink cleanup --adopt <hostname> --force --dry-run=false", unknownRetirementReasonPrefix, strings.Join(names, ", "))
+	return fmt.Sprintf("%s for: %s; remote device deletion is disabled for these services, while retired services are still cleaned up; restore registry.json, or explicitly review every listed orphan hostname with tslink cleanup --adopt <hostname> --force --dry-run=false", unknownRetirementReasonPrefix, strings.Join(names, ", "))
+}
+
+// unretiredOrphanNames returns, sorted, the services absent from the registry
+// that have an ownership record without retired_at. Nothing says the user
+// removed them, so their remote devices are not deleted; every other orphan
+// is unaffected by them.
+func unretiredOrphanNames(ledger tsruntime.OwnershipLedger, active map[string]struct{}) []string {
+	unknown := make(map[string]struct{})
+	for _, node := range ledger.Nodes {
+		if _, registered := active[node.ServiceName]; registered {
+			continue
+		}
+		if node.RetiredAt == nil {
+			unknown[node.ServiceName] = struct{}{}
+		}
+	}
+	names := make([]string, 0, len(unknown))
+	for name := range unknown {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// UnretiredOrphanServices lists the services whose remote device deletion is
+// dormant because an ownership record for them has no retired_at while they
+// are absent from a present, valid registry.json. It reads local files only,
+// so doctor can report it without calling the Tailscale API. A registry file
+// that is missing or blank makes every deletion dormant for that reason
+// instead, and yields no names.
+func UnretiredOrphanServices(registryPath, ownershipPath string) ([]string, error) {
+	reg, state, err := registry.LoadWithFileState(registryPath)
+	if err != nil {
+		return nil, err
+	}
+	if state != registry.RegistryFileValid {
+		return nil, nil
+	}
+	ledger, err := tsruntime.LoadOwnership(ownershipPath)
+	if err != nil {
+		return nil, err
+	}
+	active := make(map[string]struct{}, len(reg.Services))
+	for _, svc := range reg.Services {
+		active[svc.Name] = struct{}{}
+	}
+	return unretiredOrphanNames(ledger, active), nil
 }
 
 func registryFileReason(state registry.RegistryFileState) string {
@@ -159,35 +206,32 @@ func Reconcile(ctx context.Context, options Options) (Result, error) {
 		result.DeviceSkipReason = reason
 		result.Warnings = append(result.Warnings, reason)
 	}
+	// Dormancy is per service: an orphan record without retired_at withholds
+	// deletion of that service's devices only. It says nothing about another
+	// service that `tslink remove` retired.
 	orphanIDs := make(map[string][]string)
-	unknownRetirementNames := make(map[string]struct{})
-	deletionEnabled := ownershipErr == nil && registryTrusted
-	if deletionEnabled {
+	if ownershipErr == nil && registryTrusted {
+		unknownRetirementNames := unretiredOrphanNames(ledger, active)
+		unknown := make(map[string]struct{}, len(unknownRetirementNames))
+		for _, name := range unknownRetirementNames {
+			unknown[name] = struct{}{}
+		}
 		for _, node := range ledger.Nodes {
 			if _, registered := active[node.ServiceName]; registered {
 				continue
 			}
-			orphanIDs[node.ServiceName] = append(orphanIDs[node.ServiceName], node.NodeID)
-			if node.RetiredAt == nil {
-				unknownRetirementNames[node.ServiceName] = struct{}{}
+			if _, dormant := unknown[node.ServiceName]; dormant {
+				continue
 			}
+			orphanIDs[node.ServiceName] = append(orphanIDs[node.ServiceName], node.NodeID)
 		}
-	}
-	if deletionEnabled && len(unknownRetirementNames) > 0 {
-		serviceNames := make([]string, 0, len(unknownRetirementNames))
-		for name := range unknownRetirementNames {
-			serviceNames = append(serviceNames, name)
+		if len(unknownRetirementNames) > 0 {
+			reason := unknownRetirementReason(unknownRetirementNames)
+			result.DeviceCleanupSkipped = true
+			result.DeviceSkipReason = reason
+			result.DeviceSkipUnknownProvenance = unknownRetirementNames
+			result.Warnings = append(result.Warnings, reason)
 		}
-		sort.Strings(serviceNames)
-		reason := unknownRetirementReason(serviceNames)
-		deletionEnabled = false
-		result.DeviceCleanupSkipped = true
-		result.DeviceSkipReason = reason
-		result.DeviceSkipUnknownProvenance = serviceNames
-		result.Warnings = append(result.Warnings, reason)
-	}
-	if !deletionEnabled {
-		orphanIDs = make(map[string][]string)
 	}
 	serviceNames := make([]string, 0, len(orphanIDs))
 	for name := range orphanIDs {
@@ -207,8 +251,10 @@ func Reconcile(ctx context.Context, options Options) (Result, error) {
 		result.DevicesWouldDelete = append(result.DevicesWouldDelete, cleanup.WouldDelete...)
 		result.DevicesDeleted = append(result.DevicesDeleted, cleanup.Deleted...)
 		result.DevicesProtected = append(result.DevicesProtected, cleanup.Protected...)
-		result.DeviceCleanupSkipped = cleanup.Skipped
-		result.DeviceSkipReason = cleanup.SkipReason
+		if cleanup.Skipped {
+			result.DeviceCleanupSkipped = true
+			result.DeviceSkipReason = cleanup.SkipReason
+		}
 		if cleanupErr != nil {
 			result.DeviceCleanupSkipped = true
 			if result.DeviceSkipReason == "" {

@@ -61,6 +61,7 @@ func newDoctorTestEnv(t *testing.T, services []registry.Service) doctorTestEnv {
 	doctorAuthHandoffPathFn = func() (string, error) { return env.authHandoff, nil }
 	doctorPIDPathFn = func() (string, error) { return env.pidPath, nil }
 	doctorAuthKeyPathFn = func() (string, error) { return env.authKeyPath, nil }
+	doctorNodeOwnershipPathFn = func() (string, error) { return filepath.Join(dir, "node-ownership.json"), nil }
 	doctorLoadGlobalConfigFn = func() (config.GlobalConfig, error) { return config.GlobalConfig{}, nil }
 	// The default fixture models the recommended dual-slot state (api-key for
 	// invites, client-secret for durable daemon auth) with fresh, verified
@@ -99,6 +100,7 @@ func resetDoctorSeams(t *testing.T) {
 	oldAuthHandoffPath := doctorAuthHandoffPathFn
 	oldPIDPath := doctorPIDPathFn
 	oldAuthKeyPath := doctorAuthKeyPathFn
+	oldNodeOwnershipPath := doctorNodeOwnershipPathFn
 	oldLoadGlobalConfig := doctorLoadGlobalConfigFn
 	oldGetAPIKey := doctorGetAPIKeyFn
 	oldGetClientSecret := doctorGetClientSecretFn
@@ -126,6 +128,7 @@ func resetDoctorSeams(t *testing.T) {
 		doctorAuthHandoffPathFn = oldAuthHandoffPath
 		doctorPIDPathFn = oldPIDPath
 		doctorAuthKeyPathFn = oldAuthKeyPath
+		doctorNodeOwnershipPathFn = oldNodeOwnershipPath
 		doctorLoadGlobalConfigFn = oldLoadGlobalConfig
 		doctorGetAPIKeyFn = oldGetAPIKey
 		doctorGetClientSecretFn = oldGetClientSecret

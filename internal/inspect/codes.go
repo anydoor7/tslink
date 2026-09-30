@@ -51,6 +51,7 @@ const (
 	WarningCodeFilePathUnreadable                  = "file_path_unreadable"
 	WarningCodeFunnelGlobalControlURLUnknownCompat = "funnel_global_control_url_unknown_compat"
 	WarningCodeIdentityResolutionUnknown           = "identity_resolution_unknown"
+	WarningCodeDeviceCleanupBlocked                = "device_cleanup_blocked"
 
 	WarningCodeCredentialMixedRecommended  = "credential_mixed_recommended"
 	WarningCodeCredentialAPITokenOnly      = "credential_api_token_only"
@@ -305,6 +306,11 @@ var WarningCodeRegistry = map[string]WarningCodeMeta{
 		Severity:    "info",
 		Source:      "identity",
 		Description: "Local diagnostics cannot prove real Tailscale identity resolution or remote ACL policy.",
+	},
+	WarningCodeDeviceCleanupBlocked: {
+		Severity:    "warning",
+		Source:      "ownership",
+		Description: "TSLink does not delete this service's tailnet device: an ownership record for it has no retired_at while the service is absent from registry.json, so nothing says it was removed. Restore the service in registry.json, or review the device and retire the record with tslink cleanup --adopt <hostname> --force --dry-run=false.",
 	},
 	WarningCodeCredentialMixedRecommended: {
 		Severity:    "info",

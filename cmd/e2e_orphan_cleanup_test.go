@@ -175,7 +175,7 @@ func TestE2ECorruptOwnershipLedgerIssuesZeroDeletes(t *testing.T) {
 	configDir := t.TempDir()
 	binary := compiledTSLinkBinary(t)
 	fake := testenv.NewStatefulTailnet(t)
-	_, ownershipPath := e2eSeedThreeOwnedServices(t, configDir)
+	regPath, ownershipPath := e2eSeedThreeOwnedServices(t, configDir)
 	e2eSeedFakeDevices(t, fake)
 
 	// Corrupt the one artifact that authorizes deletion.
@@ -184,20 +184,27 @@ func TestE2ECorruptOwnershipLedgerIssuesZeroDeletes(t *testing.T) {
 	}
 
 	run := e2eRunBinary(t, binary, configDir, "", e2eTailnetEnv(configDir, fake.URL()), "remove", "bravo", "--json")
-	if run.ExitCode != output.ExitSuccess {
-		t.Fatalf("remove exit=%d stdout=%s stderr=%s", run.ExitCode, run.Stdout, run.Stderr)
+	if run.ExitCode != output.ExitError {
+		t.Fatalf("remove exit=%d stdout=%s stderr=%s, want the refusal exit %d", run.ExitCode, run.Stdout, run.Stderr, output.ExitError)
 	}
-	_, data := e2eDecodeEnvelope(t, run, "remove with corrupt ledger")
+	envelope, _ := e2eDecodeEnvelope(t, run, "remove with corrupt ledger")
 
-	// The local registry edit still succeeds; only the remote action is denied.
-	if removed, _ := data["removed"].(bool); !removed {
-		t.Fatalf("removed = false; a corrupt ledger must not block the local edit; data=%+v", data)
+	// remove refuses before it changes anything: unregistering the service
+	// without a readable ledger would leave its ownership rows unretired, and
+	// the reconciler withholds that service's device deletion for good.
+	if envelope.OK || envelope.Error == nil || envelope.Error.Code != "internal_error" || !strings.Contains(envelope.Error.Message, ownershipPath) || len(envelope.Error.Next) == 0 {
+		t.Fatalf("remove with a corrupt ledger = %+v, want a coded refusal naming the ledger with next steps", envelope)
 	}
-	if cleaned, _ := data["device_cleaned"].(bool); cleaned {
-		t.Fatalf("device_cleaned = true with an unreadable ownership ledger; data=%+v", data)
+	reg, err := registry.Load(regPath)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if warning, _ := data["device_warning"].(string); warning == "" {
-		t.Fatalf("a corrupt ownership ledger must be surfaced, got no device_warning; data=%+v", data)
+	stillRegistered := false
+	for _, svc := range reg.Services {
+		stillRegistered = stillRegistered || svc.Name == "bravo"
+	}
+	if !stillRegistered {
+		t.Fatalf("bravo was unregistered although the ledger could not be read: services=%+v", reg.Services)
 	}
 
 	// The invariant is stronger than "no DELETE was issued": with unreadable

@@ -21,6 +21,7 @@ import (
 	"github.com/monody0007/tslink/internal/credentials"
 	"github.com/monody0007/tslink/internal/daemon"
 	"github.com/monody0007/tslink/internal/inspect"
+	"github.com/monody0007/tslink/internal/lifecycle"
 	"github.com/monody0007/tslink/internal/output"
 	"github.com/monody0007/tslink/internal/registry"
 	tsruntime "github.com/monody0007/tslink/internal/runtime"
@@ -96,6 +97,10 @@ var (
 	// through. Tests replace it with a stub-transport client.
 	doctorLocalClientFn = newDoctorLocalClient
 )
+
+// doctorNodeOwnershipPathFn locates the ownership ledger whose unretired
+// records for unregistered services withhold device deletion.
+var doctorNodeOwnershipPathFn = config.NodeOwnershipPath
 
 // doctorSkipTailscaleSSHEnv set to 1 makes doctor skip its read of the local
 // tailscaled and report Tailscale SSH as unknown, naming the variable. It
@@ -327,6 +332,9 @@ func buildDoctorResult(opts doctorOptions) DoctorResult {
 			diagnoseService(&result, svc, opts)
 		}
 	}
+	if reg != nil {
+		diagnoseDeviceCleanupBlocked(&result)
+	}
 	if cfgOK && cfg.ControlURL != "" && hasFunnel {
 		result.addFinding(
 			inspect.WarningCodeFunnelGlobalControlURLUnknownCompat,
@@ -349,6 +357,30 @@ func buildDoctorResult(opts doctorOptions) DoctorResult {
 
 	result.finalize()
 	return result
+}
+
+// diagnoseDeviceCleanupBlocked reports, from local files only, what keeps the
+// lifecycle reconciler from deleting tailnet devices: an unreadable ownership
+// ledger stops all of it, and an unretired record for a service absent from
+// the registry stops that service's.
+func diagnoseDeviceCleanupBlocked(result *DoctorResult) {
+	ownershipPath, err := doctorNodeOwnershipPathFn()
+	if err != nil {
+		result.addFinding(inspect.WarningCodeConfigPathUnavailable, "", "config", "Node ownership ledger path could not be discovered.", evidenceError(err))
+		return
+	}
+	if _, err := tsruntime.LoadOwnership(ownershipPath); err != nil {
+		result.addFinding(inspect.WarningCodeDeviceCleanupBlocked, "", "ownership", "The node ownership ledger cannot be read, so TSLink deletes no tailnet device until it is repaired or moved aside.", evidenceError(err))
+		return
+	}
+	names, err := lifecycle.UnretiredOrphanServices(result.Paths.Registry, ownershipPath)
+	if err != nil {
+		result.addFinding(inspect.WarningCodeDeviceCleanupBlocked, "", "ownership", "Device cleanup could not be checked against registry.json.", evidenceError(err))
+		return
+	}
+	for _, name := range names {
+		result.addFinding(inspect.WarningCodeDeviceCleanupBlocked, name, "ownership", "", nil)
+	}
 }
 
 // diagnoseTailscaleSSH reports Tailscale SSH enablement on this node. All three

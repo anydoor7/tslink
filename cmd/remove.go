@@ -131,29 +131,56 @@ func removeServiceResultContext(ctx context.Context, regPath, ownershipPath, nam
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	ledger, ownershipErr := tsruntime.LoadOwnership(ownershipPath)
+	// The ledger is read before anything changes. Without it this command
+	// can neither record that the user removed the service nor find its
+	// devices, and unregistering it anyway leaves ownership rows nobody
+	// retired, which withhold that service's device deletion for good.
+	ledger, err := tsruntime.LoadOwnership(ownershipPath)
+	if err != nil {
+		return RemoveResult{}, err
+	}
+	var owned []tsruntime.OwnedNode
 	var ownedNodeIDs []string
-	if ownershipErr == nil {
-		for _, node := range ledger.Nodes {
-			if node.ServiceName == name {
-				ownedNodeIDs = append(ownedNodeIDs, node.NodeID)
+	for _, node := range ledger.Nodes {
+		if node.ServiceName == name {
+			owned = append(owned, node)
+			ownedNodeIDs = append(ownedNodeIDs, node.NodeID)
+		}
+	}
+	// The retirement is recorded before the registry entry goes, so no crash
+	// or failure in between can leave an unregistered service whose rows say
+	// nothing about its removal. A failed registry write puts the rows back.
+	retired := false
+	if len(ownedNodeIDs) > 0 {
+		registered, err := serviceRegistered(regPath, name)
+		if err != nil {
+			return RemoveResult{}, err
+		}
+		if registered {
+			if err := tsruntime.MarkOwnedNodeIDsRetired(ownershipPath, ownedNodeIDs, removeNowFn()); err != nil {
+				return RemoveResult{}, fmt.Errorf("record the removal of %q in the node ownership ledger before unregistering it: %w", name, err)
 			}
+			retired = true
 		}
 	}
 	svc, removed, err := registry.RemoveAndReturn(regPath, name)
 	if err != nil {
+		if retired {
+			if restoreErr := restoreOwnedNodes(ownershipPath, owned); restoreErr != nil {
+				return RemoveResult{}, errors.Join(err, fmt.Errorf("restore the ownership records of %q: %w", name, restoreErr))
+			}
+		}
 		return RemoveResult{}, err
 	}
 
 	result := RemoveResult{Name: name, Removed: removed}
 
 	if result.Removed {
-		if ownershipErr != nil {
-			result.DeviceWarning = fmt.Sprintf("could not read node ownership proof: %v", ownershipErr)
-			return result, nil
-		}
-		if err := tsruntime.MarkOwnedNodeIDsRetired(ownershipPath, ownedNodeIDs, removeNowFn()); err != nil {
-			result.DeviceWarning = fmt.Sprintf("service removed but ownership retirement provenance could not be recorded: %v", err)
+		if !retired {
+			// Registered only after the check above, by a concurrent add.
+			if err := tsruntime.MarkOwnedNodeIDsRetired(ownershipPath, ownedNodeIDs, removeNowFn()); err != nil {
+				result.DeviceWarning = fmt.Sprintf("service removed but ownership retirement provenance could not be recorded: %v", err)
+			}
 		}
 		cleanup, err := deleteDevicesFn(ctx, tailapi.CleanupTargetForOwnedService(svc, ownedNodeIDs))
 		if err != nil {
@@ -208,6 +235,36 @@ func removeServiceResultContext(ctx context.Context, regPath, ownershipPath, nam
 		}
 	}
 	return result, nil
+}
+
+// serviceRegistered reports whether regPath lists name.
+func serviceRegistered(regPath, name string) (bool, error) {
+	reg, err := registry.Load(regPath)
+	if err != nil {
+		return false, err
+	}
+	for _, svc := range reg.Services {
+		if svc.Name == name {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// restoreOwnedNodes puts back the rows a removal retired before its registry
+// write failed: an active row is recorded again with its original time, and a
+// row that was already retired stays retired.
+func restoreOwnedNodes(ownershipPath string, rows []tsruntime.OwnedNode) error {
+	var errs []error
+	for _, row := range rows {
+		if row.RetiredAt != nil {
+			continue
+		}
+		if err := tsruntime.RecordOwnedNode(ownershipPath, row.ServiceName, row.NodeID, row.RecordedAt); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func removeService(regPath, ownershipPath, name string, out, errOut io.Writer, isJSON bool) error {
