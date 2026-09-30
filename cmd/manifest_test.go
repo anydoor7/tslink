@@ -621,6 +621,7 @@ func TestManifestErrorExitTaxonomyMatchesRuntime(t *testing.T) {
 		registry.CodeInvalidServiceConfig:            registry.CodedError{Code: registry.CodeInvalidServiceConfig, Message: "invalid entry"},
 		registry.CodeLinkLocalTargetRefused:          registry.LinkLocalTargetRefusedError("169.254.169.254:80"),
 		registry.CodeRegistryReloadInvalid:           registry.CodedError{Code: registry.CodeRegistryReloadInvalid, Message: "reload invalid"},
+		registry.CodeMCPElevatedInviteRefused:        registry.CodedError{Code: registry.CodeMCPElevatedInviteRefused, Message: "needs the owner's opt-in"},
 		inspect.WarningCodeRuntimeSnapshotMissing:    &tsruntime.SnapshotError{Status: tsruntime.StatusMissing, Code: inspect.WarningCodeRuntimeSnapshotMissing, Err: errors.New("missing")},
 		inspect.WarningCodeRuntimeSnapshotStale:      &tsruntime.SnapshotError{Status: tsruntime.StatusStale, Code: inspect.WarningCodeRuntimeSnapshotStale, Err: errors.New("stale")},
 		inspect.WarningCodeRuntimeSnapshotUnreadable: &tsruntime.SnapshotError{Status: tsruntime.StatusUnreadable, Code: inspect.WarningCodeRuntimeSnapshotUnreadable, Err: errors.New("unreadable")},
