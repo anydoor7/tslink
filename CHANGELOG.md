@@ -135,8 +135,9 @@ proxy service is explicitly published through Funnel.
   after a service node is authorized. `credential_stored` reports a stored
   credential separately. A missing PID file yields `daemon_state: "absent"`;
   status distinguishes `running`, `absent`, and `unknown`. Without a credential
-  or authorized node, its next step depends on whether a daemon is running and
-  whether a service is registered.
+  or authorized node, `next` is `tslink install` for a registered service with
+  no daemon, `tslink status --json` while a running daemon enrolls it, or empty
+  if no service is registered. MCP status and events include `daemon_state`.
 - The public view `schema_version` inside result `data` is the integer `1`.
   `doctor --json` sets envelope `code` to its diagnostic exit code (0, 64, or
   65). `enrollment_required` exits 3.
@@ -144,7 +145,8 @@ proxy service is explicitly published through Funnel.
   `events_keepalive` accept Go duration syntax plus `d` for days. MCP
   `funnel_ttl` accepts equivalent spellings of its five timed lifetimes and
   `never` (`168h` equals `7d`); each option keeps its own bounds. CLI `--wait`
-  and `--funnel-ttl` retain their existing syntax.
+  and `--funnel-ttl` retain their existing syntax. `funnel_remaining` uses Go
+  duration spelling, `0s` after a deadline, and `never` without one.
 - `doctor` on an empty, credential-free install exits 0 and reports
   `credential_none` as info. Set `TSLINK_DOCTOR_SKIP_TAILSCALE_SSH=1` to skip
   its local Tailscale SSH check; the finding is `tailscale_ssh_unknown` and
