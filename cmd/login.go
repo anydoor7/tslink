@@ -15,6 +15,7 @@ import (
 	"github.com/monody0007/tslink/internal/authmode"
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/credentials"
+	"github.com/monody0007/tslink/internal/duration"
 	"github.com/monody0007/tslink/internal/logging"
 	"github.com/monody0007/tslink/internal/output"
 	"github.com/monody0007/tslink/internal/registry"
@@ -371,24 +372,18 @@ func loginOpenBootstrapPage(cmd *cobra.Command, page string) error {
 	return nil
 }
 
-// parseLoginExpiresIn accepts Go durations plus a day suffix (90d, 30d).
+// parseLoginExpiresIn reads TSLink's one duration grammar: Go durations plus
+// d for days (90d, 30d, 1d12h).
 func parseLoginExpiresIn(raw string) (time.Duration, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return 0, errors.New("empty duration")
 	}
-	if strings.HasSuffix(raw, "d") {
-		days, err := strconv.Atoi(strings.TrimSuffix(raw, "d"))
-		if err != nil {
+	d, err := duration.Parse(raw)
+	if err != nil {
+		if strings.HasSuffix(raw, "d") {
 			return 0, fmt.Errorf("invalid day count %q", raw)
 		}
-		if days <= 0 {
-			return 0, fmt.Errorf("duration must be positive, got %q", raw)
-		}
-		return time.Duration(days) * 24 * time.Hour, nil
-	}
-	d, err := time.ParseDuration(raw)
-	if err != nil {
 		return 0, err
 	}
 	if d <= 0 {
@@ -408,7 +403,7 @@ func resolveLoginExpiry(cmd *cobra.Command) (*time.Time, string, error) {
 	case expiresIn != "":
 		d, err := parseLoginExpiresIn(expiresIn)
 		if err != nil {
-			return nil, "", output.ErrUsage(fmt.Sprintf("invalid --expires-in %q: %v (use 90d, 30d, or a Go duration such as 720h)", expiresIn, err))
+			return nil, "", output.ErrUsage(fmt.Sprintf("invalid --expires-in %q: %v (use 90d, 30d, or a Go duration such as 720h or 1d12h)", expiresIn, err))
 		}
 		expiry := loginNowFn().Add(d)
 		return &expiry, credentials.ExpirySourceUser, nil

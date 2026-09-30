@@ -27,6 +27,10 @@ func TestParseLoginExpiresInAcceptsDaysAndGoDurations(t *testing.T) {
 		{"1h30m", 90 * time.Minute},
 		{"1s", time.Second},
 		{"1.5h", 90 * time.Minute},
+		// One duration grammar (B3-5): days take Go's fractions and
+		// combine with other units, as hours do.
+		{"1.5d", 36 * time.Hour},
+		{"1d12h", 36 * time.Hour},
 	}
 	for _, tc := range cases {
 		t.Run(tc.raw, func(t *testing.T) {
@@ -51,7 +55,6 @@ func TestParseLoginExpiresInRejectsNonPositiveAndMalformedValues(t *testing.T) {
 		{"whitespace only", "   ", "empty duration"},
 		{"zero days", "0d", "must be positive"},
 		{"negative days", "-5d", "must be positive"},
-		{"fractional days", "1.5d", "invalid day count"},
 		{"day suffix without a number", "d", "invalid day count"},
 		{"non numeric days", "abcd", "invalid day count"},
 		{"zero duration", "0", "must be positive"},

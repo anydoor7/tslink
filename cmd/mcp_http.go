@@ -8,6 +8,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/monody0007/tslink/internal/config"
+	"github.com/monody0007/tslink/internal/duration"
 	"github.com/monody0007/tslink/internal/output"
 	"github.com/monody0007/tslink/internal/registry"
 	"github.com/monody0007/tslink/internal/server"
@@ -91,7 +92,7 @@ func parseMCPEventsKeepalive(raw string) (time.Duration, error) {
 	if trimmed == "" {
 		return 0, nil
 	}
-	keepalive, err := time.ParseDuration(trimmed)
+	keepalive, err := duration.Parse(trimmed)
 	if err != nil {
 		return 0, output.ErrUsage(fmt.Sprintf("invalid mcp events_keepalive %q: %v", raw, err))
 	}

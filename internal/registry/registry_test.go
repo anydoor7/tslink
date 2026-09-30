@@ -2085,15 +2085,19 @@ func TestWithLock_LockError(t *testing.T) {
 	}
 }
 
-func TestParseFunnelTTLStrictContractIncludesExplicitSevenDays(t *testing.T) {
-	duration, never, err := ParseFunnelTTL("7d")
-	if err != nil || never || duration != 168*time.Hour {
-		t.Fatalf("ParseFunnelTTL(7d) = %s, %t, %v; want 168h, false, nil", duration, never, err)
+// B3-5 made funnel_ttl read the one duration grammar: the five lifetimes stay
+// the contract, and 168h is now the same choice as 7d instead of a refusal.
+func TestParseFunnelTTLStrictChoicesIncludeSevenDaysInAnySpelling(t *testing.T) {
+	for _, spelling := range []string{"7d", "168h"} {
+		duration, never, err := ParseFunnelTTL(spelling)
+		if err != nil || never || duration != 168*time.Hour {
+			t.Fatalf("ParseFunnelTTL(%s) = %s, %t, %v; want 168h, false, nil", spelling, duration, never, err)
+		}
 	}
 	if duration, never, err := ParseFunnelTTL("never"); err != nil || !never || duration != 0 {
 		t.Fatalf("ParseFunnelTTL(never) = %s, %t, %v", duration, never, err)
 	}
-	for _, value := range []string{"2h", "168h", "7D", "1.5h", "0"} {
+	for _, value := range []string{"2h", "7D", "1.5h", "0", "6d", "167h59m59s"} {
 		if _, _, err := ParseFunnelTTL(value); err == nil {
 			t.Errorf("ParseFunnelTTL(%q) error = nil, want strict whitelist rejection", value)
 		}

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/monody0007/tslink/internal/duration"
 	"github.com/monody0007/tslink/internal/output"
 )
 
@@ -41,7 +42,7 @@ type MCPLogsResult struct {
 	Source string `json:"source"`
 	File   string `json:"file"`
 	Level  string `json:"level,omitempty"`
-	// Since is the requested window as a Go duration; SinceAt is the resulting
+	// Since is the requested window as a duration; SinceAt is the resulting
 	// absolute cutoff, so a caller never has to recompute it against a clock
 	// that may not be the daemon's.
 	Since   string    `json:"since"`
@@ -257,7 +258,7 @@ func resolveMCPLogsQuery(args mcpLogsArguments) (mcpLogsQuery, error) {
 		query.Level = level
 	}
 	if since := strings.TrimSpace(args.Since); since != "" {
-		parsed, err := time.ParseDuration(since)
+		parsed, err := duration.Parse(since)
 		if err != nil {
 			return mcpLogsQuery{}, output.ErrUsage(fmt.Sprintf("invalid since %q: %v", args.Since, err))
 		}

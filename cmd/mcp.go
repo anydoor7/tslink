@@ -18,6 +18,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/monody0007/tslink/internal/config"
+	"github.com/monody0007/tslink/internal/duration"
 	"github.com/monody0007/tslink/internal/output"
 	"github.com/monody0007/tslink/internal/registry"
 	"github.com/monody0007/tslink/internal/tailapi"
@@ -317,7 +318,7 @@ var (
 		"source":           map[string]any{"type": "string", "enum": []string{"err", "out"}},
 		"file":             map[string]any{"type": "string"},
 		"level":            map[string]any{"type": "string"},
-		"since":            map[string]any{"type": "string", "description": "The requested window as a Go duration."},
+		"since":            map[string]any{"type": "string", "description": "The requested window as a duration."},
 		"since_at":         map[string]any{"type": "string", "description": "Absolute cutoff the window resolved to, in the daemon's clock."},
 		"lines":            stringArraySchema(),
 		"count":            map[string]any{"type": "integer", "minimum": 0},
@@ -472,7 +473,7 @@ var mcpToolDefinitions = []mcpToolDefinition{
 		Description: "Return one registered service's exact runtime URL. Use this after add, or after a needs_login share was authorized; it reads local runtime evidence only and never guesses a hostname. It fails with url_not_ready until the daemon has published an exact URL, so pass wait to poll.",
 		InputSchema: objectSchema(map[string]any{
 			"name": map[string]any{"type": "string", "pattern": `^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`, "maxLength": 63, "description": "Exact registered service name."},
-			"wait": map[string]any{"type": "string", "description": "Go duration such as 30s to poll for an exact URL, at most 5m. Omitted or 0s returns immediately."},
+			"wait": map[string]any{"type": "string", "description": "Duration such as 30s to poll for an exact URL, at most 5m: Go syntax, where d is also accepted for days. Omitted or 0s returns immediately."},
 		}, "name"),
 		OutputSchema: mcpURLOutputSchema,
 	},
@@ -514,7 +515,7 @@ var mcpToolDefinitions = []mcpToolDefinition{
 			"source": map[string]any{"type": "string", "enum": []string{"err", "out"}, "default": "err", "description": "err is the structured application log and is almost always the one wanted; out is the daemon's stdout."},
 			"last":   map[string]any{"type": "integer", "minimum": 1, "maximum": mcpLogsMaxLast, "default": mcpLogsDefaultLast, "description": "Maximum number of lines to return, counted from the newest."},
 			"level":  map[string]any{"type": "string", "enum": []string{"debug", "info", "warn", "error"}, "description": "Minimum producer log level. Omitting it returns every level."},
-			"since":  map[string]any{"type": "string", "description": "Go duration such as 15m or 6h bounding how far back to read; defaults to 1h and may not exceed 168h. Widen it only after the default window came back empty."},
+			"since":  map[string]any{"type": "string", "description": "Duration such as 15m, 6h or 2d bounding how far back to read (Go syntax, plus d for days); defaults to 1h and may not exceed 7d (168h). Widen it only after the default window came back empty."},
 		}),
 		OutputSchema: mcpLogsOutputSchema,
 	},
@@ -697,7 +698,7 @@ func addParamsFromMCPArguments(args mcpAddArguments) (AddParams, bool, error) {
 	return params, args.FunnelTTL == nil, nil
 }
 
-// parseMCPWait reads the url tool's optional Go duration. It mirrors
+// parseMCPWait reads the url tool's optional duration (Go syntax or days). It mirrors
 // `tslink url --wait`, where a non-positive duration means "do not poll",
 // except that it is capped at mcpMaxURLWait: a stdio server has no other way
 // to bound how long one call keeps it alive.
@@ -705,7 +706,7 @@ func parseMCPWait(raw string) (time.Duration, error) {
 	if raw == "" {
 		return 0, nil
 	}
-	wait, err := time.ParseDuration(raw)
+	wait, err := duration.Parse(raw)
 	if err != nil {
 		return 0, output.ErrUsage(fmt.Sprintf("invalid wait duration %q: %v", raw, err))
 	}
