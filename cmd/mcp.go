@@ -440,16 +440,18 @@ func mcpHints(readOnly, destructive, idempotent, openWorld bool) *mcp.ToolAnnota
 //     existing service's definition or tags; invite_revoke cancels an
 //     invitation for good. share, template_apply and the invitations only add.
 //   - Idempotent tools reach the same state when repeated with the same
-//     arguments: share and add reuse the service they made, template_apply
-//     skips what exists, unshare and invite_revoke find the thing gone. Each
-//     invite_user, invite_device and invite_resend call sends another email.
+//     arguments: tags_set replaces the same tags, template_apply skips what
+//     exists, unshare and invite_revoke find the thing gone. add renews an
+//     explicit Funnel deadline and share can re-arm an expired Funnel, so
+//     neither is idempotent. Each invite_user, invite_device and invite_resend
+//     call sends another email.
 //   - Open-world tools reach beyond this machine: the tailnet and its nodes,
 //     the Tailscale API, the public internet through Funnel, or (doctor with
 //     probe_external) external endpoints.
 var mcpToolHints = map[string]*mcp.ToolAnnotations{
 	//                              readOnly destructive idempotent openWorld
-	"share":          mcpHints(false, false, true, true),
-	"add":            mcpHints(false, true, true, true),
+	"share":          mcpHints(false, false, false, true),
+	"add":            mcpHints(false, true, false, true),
 	"list":           mcpHints(true, false, true, false),
 	"unshare":        mcpHints(false, true, true, true),
 	"status":         mcpHints(true, false, true, false),
