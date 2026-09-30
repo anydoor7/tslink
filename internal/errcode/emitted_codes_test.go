@@ -18,8 +18,8 @@ import (
 // The scanner reads every non-test Go file of the module, for every platform,
 // and collects each stable error code the product can emit:
 //
-//   - every string constant named Code<Something> (registry.CodeX,
-//     config.CodeX, ...);
+//   - string constants named Code<Something> used in returns (registry.CodeX,
+//     config.CodeX, ...); declarations alone are only resolution targets;
 //   - the Code field of every error-code carrier literal (CodedError,
 //     StableCodeError, SnapshotError, the runtime ServiceError, ...), resolved
 //     through constants and through local variables assigned in the same
@@ -461,14 +461,6 @@ func (s *moduleScanner) collect() {
 	for _, path := range paths {
 		pkg := s.pkgs[path]
 		s.checkCarrierRegistrations(pkg)
-		for name := range pkg.consts {
-			if !codeConstName.MatchString(name) {
-				continue
-			}
-			if value, ok := s.constString(path, name, 0); ok {
-				s.emit(value, pkg.consts[name].expr.Pos())
-			}
-		}
 		for _, file := range pkg.files {
 			for _, decl := range file.Decls {
 				fn, _ := decl.(*ast.FuncDecl)
@@ -481,6 +473,15 @@ func (s *moduleScanner) collect() {
 					})
 				}
 				ast.Inspect(decl, func(n ast.Node) bool {
+					if ret, ok := n.(*ast.ReturnStmt); ok {
+						for _, result := range ret.Results {
+							// A named code returned directly is an emission, unlike
+							// its declaration or an entry in the metadata table.
+							if codeConstName.MatchString(carrierName(result)) {
+								s.codeValue(path, file, fn, result, map[string]bool{})
+							}
+						}
+					}
 					lit, ok := n.(*ast.CompositeLit)
 					if !ok || !codeCarriers[carrierName(lit.Type)] {
 						return true
@@ -605,6 +606,8 @@ func (own) StableCode() string { return "from_stable_code" }
 func Literal() error { return CodedError{Code: "literal_code"} }
 
 func Imported() error { return &CodedError{Code: c.CodeAlias} }
+
+func Returned() string { return c.CodeDeclared }
 
 func Positional() error { return CodedError{"message_not_code", "positional_code"} }
 
