@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/monody0007/tslink/internal/cliargs"
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/credentials"
 	"github.com/monody0007/tslink/internal/daemon"
@@ -97,6 +98,11 @@ type serverRunner interface {
 // that does not simply leaves local node-state cleanup off.
 type nodeStateHolder interface {
 	HoldsNodeState(name string) bool
+}
+
+type nodeStateSynchronizer interface {
+	WithNodeStateLock(func() error) error
+	TryWithNodeStateLock(context.Context, func() error) (bool, error)
 }
 
 type ensureTagsSetter interface {
@@ -403,12 +409,7 @@ Examples:
 		},
 	}
 
-	serveCmd.Flags().BoolVar(&serveDaemon, "daemon", false, "Run as background daemon")
-	serveCmd.Flags().Bool("no-browser", false, "Print the Tailscale login URL without opening a browser")
-	serveCmd.Flags().String("control-url", "", "Custom control server URL (e.g., Headscale)")
-	serveCmd.Flags().Bool("manage-acl", false, "Opt in to remote Tailscale ACL tag-owner mutation using a machine-readable side-effect plan")
-	serveCmd.Flags().Bool("no-auto-provision", false, "Disable automatic Funnel policy provisioning for every service in this serve process")
-	serveCmd.Flags().Bool("mcp", false, "Serve the MCP control plane on a dedicated tailnet-only node; every authorized peer can then change services, publish Funnel and send invitations")
+	cliargs.RegisterServeFlags(serveCmd, &serveDaemon)
 	rootCmd.AddCommand(serveCmd)
 }
 
@@ -678,16 +679,19 @@ func runForegroundWithOptions(pidPath, authKey, controlURL string, options foreg
 		if err != nil {
 			return err
 		}
-		// Local node-state cleanup is enabled only when the runner can say
-		// which state directories it is holding. A runner that cannot answer
-		// gets no cleanup rather than a default answer: the cost of a wrong
-		// "nothing holds it" is a live node losing its identity, and the cost
-		// of no cleanup is a leftover directory.
+		// Local node-state cleanup needs both a holder check and a startup
+		// gate. A runner missing either cannot prove deletion is safe.
 		cleanLocalNodeState := false
 		var localNodeStateInUse func(string) bool
+		var withNodeStateLock func(func() error) error
+		var tryWithNodeStateLock func(context.Context, func() error) (bool, error)
 		if holder, holds := srv.(nodeStateHolder); holds {
-			cleanLocalNodeState = true
-			localNodeStateInUse = holder.HoldsNodeState
+			if synchronizer, ok := srv.(nodeStateSynchronizer); ok {
+				cleanLocalNodeState = true
+				localNodeStateInUse = holder.HoldsNodeState
+				withNodeStateLock = synchronizer.WithNodeStateLock
+				tryWithNodeStateLock = synchronizer.TryWithNodeStateLock
+			}
 		}
 		firstLifecycleReconcile := true
 		hadActiveFunnel := false
@@ -698,14 +702,16 @@ func runForegroundWithOptions(pidPath, authKey, controlURL string, options foreg
 			}
 			checkUnusedACL := options.ManageACL && (firstLifecycleReconcile || (hadActiveFunnel && !hasActiveFunnel))
 			result, err := serveLifecycleReconcileFn(ctx, lifecycle.Options{
-				RegistryPath:        regPath,
-				OwnershipPath:       ownershipPath,
-				Now:                 now,
-				DryRun:              false,
-				ManageACL:           options.ManageACL,
-				CheckUnusedACL:      checkUnusedACL,
-				CleanLocalNodeState: cleanLocalNodeState,
-				LocalNodeStateInUse: localNodeStateInUse,
+				RegistryPath:         regPath,
+				OwnershipPath:        ownershipPath,
+				Now:                  now,
+				DryRun:               false,
+				ManageACL:            options.ManageACL,
+				CheckUnusedACL:       checkUnusedACL,
+				CleanLocalNodeState:  cleanLocalNodeState,
+				LocalNodeStateInUse:  localNodeStateInUse,
+				WithNodeStateLock:    withNodeStateLock,
+				TryWithNodeStateLock: tryWithNodeStateLock,
 			})
 			if err != nil {
 				return false, err

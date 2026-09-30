@@ -1037,6 +1037,52 @@ func withLock(regPath string, fn func() error) error {
 	return fn()
 }
 
+// tryWithLock uses the same on-disk lock as mutations, but never waits for a
+// writer. Final orphan cleanup can then retain state when proof is unavailable.
+func tryWithLock(regPath string, fn func() error) (bool, error) {
+	if err := atomicfile.EnsurePrivateDir(filepath.Dir(regPath)); err != nil {
+		return false, err
+	}
+	if err := atomicfile.ConvergePrivateFile(regPath + ".lock"); err != nil {
+		return false, err
+	}
+	lockFile, err := os.OpenFile(regPath+".lock", os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return false, err
+	}
+	defer lockFile.Close()
+	acquired, err := filelock.TryLock(lockFile)
+	if err != nil || !acquired {
+		return acquired, err
+	}
+	defer filelock.Unlock(lockFile)
+	return true, fn()
+}
+
+// WithLockedFileState runs a short local-state decision under the same lock as
+// Add and Remove. It lets a cleanup caller recheck membership and act before a
+// concurrent registry mutation can re-add that service.
+func WithLockedFileState(path string, fn func(*Registry, RegistryFileState) error) error {
+	return withLock(path, func() error {
+		reg, state, err := LoadWithFileState(path)
+		if err != nil {
+			return err
+		}
+		return fn(reg, state)
+	})
+}
+
+// TryWithLockedFileState reports false on lock contention without invoking fn.
+func TryWithLockedFileState(path string, fn func(*Registry, RegistryFileState) error) (bool, error) {
+	return tryWithLock(path, func() error {
+		reg, state, err := LoadWithFileState(path)
+		if err != nil {
+			return err
+		}
+		return fn(reg, state)
+	})
+}
+
 func save(path string, reg *Registry) error {
 	if reg.Services == nil {
 		reg.Services = []Service{}
@@ -1198,6 +1244,40 @@ func RemoveIfUnchanged(path string, expected Service) (removed bool, err error) 
 		return nil
 	})
 	return removed, err
+}
+
+// ReplaceIfUnchanged restores a prior service value only when the current
+// value still equals expected. It keeps a compensating write from clobbering
+// another process's registry edit or resurrecting a removed service.
+func ReplaceIfUnchanged(path string, expected, replacement Service) (replaced bool, err error) {
+	if expected.Name != replacement.Name {
+		return false, fmt.Errorf("replacement service name differs from expected name")
+	}
+	if err := ValidateService(replacement); err != nil {
+		return false, err
+	}
+	err = withLock(path, func() error {
+		reg, err := loadForMutation(path)
+		if err != nil {
+			return err
+		}
+		for i, svc := range reg.Services {
+			if svc.Name != expected.Name {
+				continue
+			}
+			if !reflect.DeepEqual(svc, expected) {
+				return nil
+			}
+			reg.Services[i] = replacement
+			if err := save(path, reg); err != nil {
+				return err
+			}
+			replaced = true
+			return nil
+		}
+		return nil
+	})
+	return replaced, err
 }
 
 // DowngradeExpiredFunnels atomically converts every expired Funnel service to

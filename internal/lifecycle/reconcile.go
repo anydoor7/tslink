@@ -61,6 +61,12 @@ type Options struct {
 	// "Nobody told me" and "nothing holds it" are different statements, and
 	// only the caller can tell them apart.
 	LocalNodeStateInUse func(serviceName string) bool
+	// WithNodeStateLock serializes the final local deletion with this daemon's
+	// service startup. The network cleanup runs outside this short lock.
+	WithNodeStateLock func(func() error) error
+	// TryWithNodeStateLock is the daemon's nonblocking startup gate. A false
+	// result means cleanup must retain state and retry on a later tick.
+	TryWithNodeStateLock func(context.Context, func() error) (bool, error)
 }
 
 type AdoptionResult struct {
@@ -215,12 +221,28 @@ func Reconcile(ctx context.Context, options Options) (Result, error) {
 				result.DeviceSkipReason = cleanupUnavailableReason
 			}
 			result.Warnings = append(result.Warnings, cleanupErr.Error())
-		} else if !options.DryRun && len(cleanup.ResolvedOwnershipIDs) > 0 {
-			if err := tsruntime.RemoveOwnedNodeIDs(options.OwnershipPath, cleanup.ResolvedOwnershipIDs); err != nil {
-				return Result{}, fmt.Errorf("update node ownership ledger: %w", err)
-			}
 		}
-		removeStaleNodeState(options, &result, cleanup, cleanupErr, orphanIDs, serviceNames, active)
+		if options.CleanLocalNodeState && options.LocalNodeStateInUse != nil && options.TryWithNodeStateLock != nil {
+			// Keep the old ownership rows until the local proof succeeds. A busy
+			// lock or canceled tick must leave enough durable proof to retry.
+			settledNodes := removeStaleNodeState(ctx, options, &result, cleanup, cleanupErr, orphanIDs, serviceNames, active, ledger)
+			if len(settledNodes) > 0 && ctx.Err() == nil {
+				acquired, err := tsruntime.TryRemoveOwnedNodesIfUnchanged(options.OwnershipPath, settledNodes)
+				if err != nil {
+					return Result{}, fmt.Errorf("update node ownership ledger: %w", err)
+				}
+				if !acquired {
+					slog.Info("keeping resolved ownership records for a later cleanup tick; ledger lock is busy")
+				}
+			}
+		} else {
+			if cleanupErr == nil && !options.DryRun && len(cleanup.ResolvedOwnershipIDs) > 0 {
+				if err := tsruntime.RemoveOwnedNodeIDs(options.OwnershipPath, cleanup.ResolvedOwnershipIDs); err != nil {
+					return Result{}, fmt.Errorf("update node ownership ledger: %w", err)
+				}
+			}
+			removeStaleNodeState(ctx, options, &result, cleanup, cleanupErr, orphanIDs, serviceNames, active, tsruntime.OwnershipLedger{})
+		}
 	}
 
 	if options.ManageACL {
@@ -281,26 +303,9 @@ func Reconcile(ctx context.Context, options Options) (Result, error) {
 //     true; it costs one map lookup and the alternative is a live service
 //     losing its identity.
 //
-// One window is open and is worth naming rather than implying away. This
-// function does not run under the daemon's sync gate, and HoldsNodeState
-// answers only "is this name in s.nodes right now". So between the registry
-// read at the top of Reconcile and the removal here, `tslink add` can put the
-// same name back and startNodeLocked can be partway through starting it --
-// before the node is published into s.nodes, where HoldsNodeState would see it.
-// In that interleaving the directory of a starting node is removed.
-//
-// The cost is bounded by what is in the directory at that moment. This branch
-// is reached only after every remote node recorded for that name was deleted or
-// confirmed absent, so the key being removed authenticates to nothing; the
-// service that was just re-added is enrolling a new identity, not reusing that
-// one. The outcome is a node that enrolls from scratch, which is what a
-// re-added service does anyway.
-//
-// Closing it properly means holding the sync gate across the reconcile, or
-// re-reading the registry immediately before each removal. Both are cheap; both
-// were left out because the window is narrow enough that neither has been
-// observed, and a gate held across a network-bound reconcile is its own
-// availability risk.
+// The final decision holds the daemon startup gate, registry mutation lock,
+// and ownership lock while re-reading current proof and removing the directory.
+// No network operation is performed under these locks.
 //
 // What it deliberately does not do is sweep node directories that have no
 // ownership record at all -- the shape a long-removed service's directory has
@@ -310,20 +315,35 @@ func Reconcile(ctx context.Context, options Options) (Result, error) {
 // one malformed service would make a live service look absent and cost it its
 // node identity. cmd/remove covers that case at the point where the facts are
 // still in hand.
-func removeStaleNodeState(options Options, result *Result, cleanup tailapi.CleanupResult, cleanupErr error, orphanIDs map[string][]string, serviceNames []string, active map[string]struct{}) {
+func sameOwnedNode(a, b tsruntime.OwnedNode) bool {
+	if a.ServiceName != b.ServiceName || a.NodeID != b.NodeID || !a.RecordedAt.Equal(b.RecordedAt) || (a.RetiredAt == nil) != (b.RetiredAt == nil) {
+		return false
+	}
+	return a.RetiredAt == nil || a.RetiredAt.Equal(*b.RetiredAt)
+}
+
+func removeStaleNodeState(ctx context.Context, options Options, result *Result, cleanup tailapi.CleanupResult, cleanupErr error, orphanIDs map[string][]string, serviceNames []string, active map[string]struct{}, baseline tsruntime.OwnershipLedger) []tsruntime.OwnedNode {
 	if options.DryRun || !options.CleanLocalNodeState || options.LocalNodeStateInUse == nil {
-		return
+		return nil
 	}
 	if cleanupErr != nil || cleanup.Skipped || len(cleanup.Protected) > 0 {
 		slog.Info("keeping local node state for orphan services; this run could not confirm every remote device is gone",
 			"services", serviceNames, "protected", len(cleanup.Protected), "skipped", cleanup.Skipped)
-		return
+		return nil
 	}
 	resolved := make(map[string]struct{}, len(cleanup.ResolvedOwnershipIDs))
 	for _, id := range cleanup.ResolvedOwnershipIDs {
 		resolved[id] = struct{}{}
 	}
+	baselineByID := make(map[string]tsruntime.OwnedNode, len(baseline.Nodes))
+	for _, node := range baseline.Nodes {
+		baselineByID[node.NodeID] = node
+	}
+	var settledNodes []tsruntime.OwnedNode
 	for _, name := range serviceNames {
+		if ctx.Err() != nil {
+			return settledNodes
+		}
 		if _, registered := active[name]; registered {
 			continue
 		}
@@ -338,16 +358,87 @@ func removeStaleNodeState(options Options, result *Result, cleanup tailapi.Clean
 				"service", name, "unresolved_nodes", unresolved)
 			continue
 		}
-		if options.LocalNodeStateInUse(name) {
-			slog.Info("keeping local node state; a tsnet server still holds it", "service", name)
-			continue
+		removed := false
+		newIdentity := false
+		remove := func() error {
+			registryAcquired, err := registry.TryWithLockedFileState(options.RegistryPath, func(current *registry.Registry, state registry.RegistryFileState) error {
+				if ctx.Err() != nil {
+					return nil
+				}
+				if state != registry.RegistryFileValid {
+					return fmt.Errorf("registry is %s; cannot prove %q remains orphaned", state, name)
+				}
+				for _, svc := range current.Services {
+					if svc.Name == name {
+						newIdentity = true
+						slog.Info("keeping local node state; service was re-added", "service", name)
+						return nil
+					}
+				}
+				ownershipAcquired, err := tsruntime.TryWithLockedOwnership(options.OwnershipPath, func(current tsruntime.OwnershipLedger) error {
+					if ctx.Err() != nil {
+						return nil
+					}
+					for _, node := range current.Nodes {
+						if node.ServiceName == name {
+							if old, ok := baselineByID[node.NodeID]; ok && options.TryWithNodeStateLock != nil && sameOwnedNode(old, node) {
+								if _, remoteResolved := resolved[node.NodeID]; remoteResolved {
+									continue
+								}
+							}
+							newIdentity = true
+							slog.Info("keeping local node state; current ownership proof exists", "service", name)
+							return nil
+						}
+					}
+					if options.LocalNodeStateInUse(name) {
+						slog.Info("keeping local node state; a tsnet server still holds it", "service", name)
+						return nil
+					}
+					if err := removeNodeStateFn(tsruntime.ServiceNodeStateConfigDir(options.RegistryPath), name); err != nil {
+						return err
+					}
+					removed = true
+					return nil
+				})
+				if !ownershipAcquired {
+					slog.Info("keeping local node state; ownership proof lock is busy", "service", name)
+				}
+				return err
+			})
+			if !registryAcquired {
+				slog.Info("keeping local node state; registry proof lock is busy", "service", name)
+			}
+			return err
 		}
-		if err := removeNodeStateFn(tsruntime.ServiceNodeStateConfigDir(options.RegistryPath), name); err != nil {
+		var err error
+		if options.TryWithNodeStateLock != nil {
+			var acquired bool
+			acquired, err = options.TryWithNodeStateLock(ctx, remove)
+			if !acquired {
+				slog.Info("keeping local node state; startup gate is busy or reconciliation was canceled", "service", name)
+			}
+		} else if options.WithNodeStateLock != nil {
+			err = options.WithNodeStateLock(remove)
+		} else {
+			err = remove()
+		}
+		if err != nil {
 			warning := fmt.Sprintf("local node state for %q could not be removed: %v", name, err)
 			slog.Warn("local node state removal failed", "service", name, "error", err)
 			result.Warnings = append(result.Warnings, warning)
 			continue
 		}
-		slog.Info("removed local node state for an orphan service with no remaining remote identity", "service", name)
+		if removed || newIdentity {
+			for _, id := range orphanIDs[name] {
+				if node, ok := baselineByID[id]; ok {
+					settledNodes = append(settledNodes, node)
+				}
+			}
+		}
+		if removed {
+			slog.Info("removed local node state for an orphan service with no remaining remote identity", "service", name)
+		}
 	}
+	return settledNodes
 }

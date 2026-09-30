@@ -29,6 +29,11 @@ const (
 // OAuth client and needs an API access token tied to an inviting user.
 var ErrUserOwnedAPIKeyRequired = errors.New("user-owned Tailscale API access token required")
 
+// ErrCredentialWritePartial means compensation after a failed write could not
+// prove the prior keyring value was restored. Callers with a wider transaction
+// should attempt their own snapshot rollback and report the partial state.
+var ErrCredentialWritePartial = errors.New("credential write may be partially committed")
+
 // Testable seams.
 var (
 	newTailscaleClientFunc = NewTailscaleClient
@@ -45,6 +50,7 @@ var (
 	apiKeyPathFunc                       = config.APIKeyPath
 	clientSecretPathFunc                 = config.ClientSecretPath
 	credentialFileWriteFunc              = atomicfile.WriteFile
+	credentialFileRemoveFunc             = os.Remove
 )
 
 // CredentialBackend identifies the storage location that accepted a
@@ -208,7 +214,7 @@ func deleteKeyringCredentialStrict(label, keychainKey string) error {
 
 func deleteCredentialFilePathStrict(label, path string) error {
 	var errs []error
-	if removeErr := os.Remove(path); removeErr != nil && !os.IsNotExist(removeErr) {
+	if removeErr := credentialFileRemoveFunc(path); removeErr != nil && !os.IsNotExist(removeErr) {
 		errs = append(errs, fmt.Errorf("%s file delete: %w", label, removeErr))
 	}
 	if _, statErr := os.Stat(path); statErr == nil {
@@ -236,10 +242,33 @@ func storeCredentialWithBackendLocked(
 	pathFunc func() (string, error),
 ) (CredentialBackend, error) {
 	if keyringEnabledFunc() {
+		// Resolve the fallback location before any keyring mutation. A path
+		// error would otherwise leave a new keyring value with an unknown old
+		// fallback copy still present.
+		path, pathErr := pathFunc()
+		if pathErr != nil {
+			return "", fmt.Errorf("%s fallback path before keyring write: %w", label, pathErr)
+		}
+		previous, previousErr := keyringGetFunc(keychainService, keychainKey)
+		if previousErr != nil && !errors.Is(previousErr, keyring.ErrNotFound) {
+			return "", fmt.Errorf("%s keyring read before write: %w", label, previousErr)
+		}
 		if err := keyringSetFunc(keychainService, keychainKey, value); err == nil {
-			// Keyring succeeded, so the file copy must no longer be authoritative.
-			if path, pathErr := pathFunc(); pathErr == nil {
-				_ = os.Remove(path)
+			if cleanupErr := deleteCredentialFilePathStrict(label, path); cleanupErr != nil {
+				// If removal may have succeeded, keep the newly written keyring
+				// value usable. Reverting to an absent prior keyring could leave
+				// no credential at all when the fallback was already removed.
+				if _, statErr := os.Stat(path); statErr != nil {
+					return "", errors.Join(ErrCredentialWritePartial,
+						fmt.Errorf("%s keyring retains the new value after fallback cleanup error; fallback state needs inspection: %w", label, cleanupErr))
+				}
+				rollbackErr := restoreKeyringAfterFileCleanupFailure(keychainKey, previous, previousErr)
+				if rollbackErr != nil {
+					return "", errors.Join(ErrCredentialWritePartial,
+						fmt.Errorf("%s keyring updated but fallback cleanup failed: %w", label, cleanupErr),
+						fmt.Errorf("keyring rollback failed: %w", rollbackErr))
+				}
+				return "", fmt.Errorf("%s fallback cleanup failed; prior keyring value restored: %w", label, cleanupErr)
 			}
 			return CredentialBackendKeyring, nil
 		}
@@ -270,6 +299,33 @@ func storeCredentialWithBackendLocked(
 		}
 	}
 	return CredentialBackendFile, nil
+}
+
+func restoreKeyringAfterFileCleanupFailure(keychainKey, previous string, previousErr error) error {
+	if errors.Is(previousErr, keyring.ErrNotFound) {
+		if err := keyringDeleteFunc(keychainService, keychainKey); err != nil && !errors.Is(err, keyring.ErrNotFound) {
+			return err
+		}
+		_, err := keyringGetFunc(keychainService, keychainKey)
+		if errors.Is(err, keyring.ErrNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf("keyring credential remains after rollback")
+	}
+	if err := keyringSetFunc(keychainService, keychainKey, previous); err != nil {
+		return err
+	}
+	got, err := keyringGetFunc(keychainService, keychainKey)
+	if err != nil {
+		return err
+	}
+	if got != previous {
+		return fmt.Errorf("keyring rollback read-back mismatch")
+	}
+	return nil
 }
 
 // SetAPIKey stores the API key. It is the source-compatible wrapper for callers

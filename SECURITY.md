@@ -8,7 +8,7 @@ TSLink is designed around explicit capability boundaries. The machine-readable p
 - **Explicit public exposure guardrail** — Tailscale Funnel is proxy-only and requires an explicit `--public` / `public_ack:true` acknowledgement
 - **Tailnet transport encryption** — traffic between Tailscale devices uses WireGuard; public Funnel paths follow Tailscale Funnel semantics
 - **HTTP identity verification for proxy/file requests** — Tailscale WhoIs authenticates TSLink-managed HTTP requests before identity headers are injected; raw TCP streams and public Funnel exposure are not treated as TSLink-enforced Tailscale user authentication
-- **Credential storage with restricted fallback** — API keys and OAuth client secrets are stored in macOS Keychain / Linux secret service / Windows Credential Manager when available. macOS and Linux fall back to a restricted-permission file for headless or unavailable-keychain environments; Windows has no file fallback, because TSLink cannot prove a user-only DACL locally
+- **Credential storage with restricted fallback** — API keys and OAuth client secrets use macOS Keychain / Linux secret service / Windows Credential Manager when available. On macOS and Linux, restricted-permission file fallback succeeds only after TSLink proves any stale keychain credential absent or removed. A completely unreachable or uncertain keychain causes an explicit failure to preserve existing credential authority; restore keychain access and retry. Windows has no file fallback, because TSLink cannot prove a user-only DACL locally
 - **Dynamic auth key derivation** — API-token-derived startup auth keys are generated on demand and not persisted; legacy authkey files may still be read for compatibility and should be migrated
 - **Per-service isolation** — each service runs as its own tsnet node with an independent identity
 - **Inbound header stripping** — identity headers from external sources are stripped to prevent spoofing
@@ -29,6 +29,10 @@ Important boundaries:
       https:login.tailscale.com/a/<token>          (zero slashes, url.Opaque)
 
   Nothing in TSLink emits either shape: `internal/logging` routes tsnet's authorization URL through slog as one unbroken token. The exposure is a log line authored elsewhere -- a third-party library, a user pasting into a log, a future formatter that wraps long lines. Widening the token class is not a fix on its own: it trades this leak for over-redacting ordinary prose that mentions the host.
+
+## Dependency advisory GO-2026-5932
+
+The [Go vulnerability database](https://pkg.go.dev/vuln/GO-2026-5932) identifies `golang.org/x/crypto/openpgp` and its six subpackages as unmaintained and unsafe, with no known fixed release. TSLink requires other `x/crypto` packages through Tailscale. As reviewed on 2026-09-30, the package and test import graphs for all six supported release targets contain none of the affected OpenPGP packages. The required-module advisory remains visible in `govulncheck` output. The release candidate gate scans `./...` for all six OS/architecture targets so a future platform-specific affected import fails the gate; this statement must be rechecked when dependencies or targets change.
 
 ## Reporting a Vulnerability
 

@@ -94,6 +94,7 @@ var (
 	shareResolveEndpointOnceFn = resolveServiceEndpointOnce
 	sharePollableStatusFn      = getPollableStatus
 	shareAddIfMissingFn        = registry.AddIfMissing
+	shareReplaceIfUnchangedFn  = registry.ReplaceIfUnchanged
 )
 
 func resolveSharePaths() (sharePaths, error) {
@@ -390,6 +391,7 @@ func rearmShareFunnel(regPath string, existing registry.Service, deadline time.T
 // shareRegistration is registerShareWithOutcome's result.
 type shareRegistration struct {
 	Service       registry.Service
+	Previous      registry.Service
 	Created       bool
 	FunnelRearmed bool
 }
@@ -439,13 +441,19 @@ retries:
 							existing.Name, shareFunnelDeadlineDescription(existing.FunnelExpiresAt), shareFunnelDeadlineDescription(spec.Service.FunnelExpiresAt)))
 					}
 					rearmed, ok, err := rearmShareFunnel(regPath, existing, *spec.Service.FunnelExpiresAt)
+					// MutateService may return an error after atomic rename (directory
+					// sync). Preserve the exact expected and prior values so the
+					// caller can compensate even though registration returned error.
 					if err != nil {
+						if ok {
+							return shareRegistration{Service: rearmed, Previous: existing, FunnelRearmed: true}, err
+						}
 						return shareRegistration{}, err
 					}
 					if !ok {
 						continue retries
 					}
-					return shareRegistration{Service: rearmed, FunnelRearmed: true}, nil
+					return shareRegistration{Service: rearmed, Previous: existing, FunnelRearmed: true}, nil
 				}
 				return shareRegistration{Service: existing}, nil
 			}
@@ -477,6 +485,9 @@ retries:
 		svc.CreatedAt = time.Now().UTC()
 		created, err := shareAddIfMissingFn(regPath, svc)
 		if err != nil {
+			if created {
+				return shareRegistration{Service: svc, Created: true}, err
+			}
 			return shareRegistration{}, err
 		}
 		if created {
@@ -576,18 +587,32 @@ func executeShare(ctx context.Context, paths sharePaths, req shareRequest, wait 
 		return ShareResult{}, daemonNotRunningError()
 	}
 	registration, err := registerShareWithOutcome(paths.Registry, spec, req.Name)
+	svc, created := registration.Service, registration.Created
+	defer func() {
+		if err == nil {
+			return
+		}
+		if created {
+			removed, rollbackErr := registry.RemoveIfUnchanged(paths.Registry, svc)
+			switch {
+			case rollbackErr != nil:
+				err = output.ErrConflict(fmt.Sprintf("share %q failed: %v; registration rollback failed and service state may remain: %v; inspect with `tslink list`", svc.Name, err, rollbackErr))
+			case !removed:
+				err = output.ErrConflict(fmt.Sprintf("share %q failed: %v; service changed or was deleted concurrently, so registration rollback was skipped; inspect with `tslink list`", svc.Name, err))
+			}
+		} else if registration.FunnelRearmed {
+			restored, rollbackErr := shareReplaceIfUnchangedFn(paths.Registry, svc, registration.Previous)
+			switch {
+			case rollbackErr != nil:
+				err = output.ErrConflict(fmt.Sprintf("share %q failed: %v; rearm rollback failed and public authorization may remain enabled: %v; inspect with `tslink list`", svc.Name, err, rollbackErr))
+			case !restored:
+				err = output.ErrConflict(fmt.Sprintf("share %q failed: %v; service changed concurrently, so rearm rollback was skipped and public authorization state must be inspected with `tslink list`", svc.Name, err))
+			}
+		}
+	}()
 	if err != nil {
 		return ShareResult{}, err
 	}
-	svc, created := registration.Service, registration.Created
-	defer func() {
-		if err == nil || !created {
-			return
-		}
-		if _, rollbackErr := registry.RemoveIfUnchanged(paths.Registry, svc); rollbackErr != nil {
-			err = errors.Join(err, fmt.Errorf("roll back share %q: %w", svc.Name, rollbackErr))
-		}
-	}()
 	if !shareIsRunningFn(paths.PID) {
 		startup, err := shareStartDaemonFn(ctx, errOut)
 		if err != nil {

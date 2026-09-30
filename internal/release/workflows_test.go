@@ -190,12 +190,26 @@ type jobDef struct {
 	Uses        string            `yaml:"uses"`
 	Needs       stringOrSlice     `yaml:"needs"`
 	Environment envField          `yaml:"environment"`
+	Env         map[string]string `yaml:"env"`
 	Permissions map[string]string `yaml:"permissions"`
 	With        map[string]string `yaml:"with"`
 	Secrets     any               `yaml:"secrets"`
+	Strategy    struct {
+		Matrix struct {
+			GOOS   []string `yaml:"goos"`
+			GOARCH []string `yaml:"goarch"`
+		} `yaml:"matrix"`
+	} `yaml:"strategy"`
+	Steps []struct {
+		Name string            `yaml:"name"`
+		Run  string            `yaml:"run"`
+		Env  map[string]string `yaml:"env"`
+		With map[string]string `yaml:"with"`
+	} `yaml:"steps"`
 }
 
 type workflowFile struct {
+	Env  map[string]string `yaml:"env"`
 	Jobs map[string]jobDef `yaml:"jobs"`
 }
 
@@ -406,6 +420,161 @@ func TestCandidateDeclaresRequiredGates(t *testing.T) {
 		if _, ok := wf.Jobs[job]; !ok {
 			t.Errorf("%s is missing required gate job %q", candidateWorkflow, job)
 		}
+	}
+}
+
+// A Linux-only scan misses imports selected exclusively on Darwin or Windows.
+func TestGovulncheckRepoCoversReleaseTargets(t *testing.T) {
+	wf := parse(t, candidateWorkflow, readWorkflows(t)[candidateWorkflow])
+	job, ok := wf.Jobs["govulncheck-repo"]
+	if !ok {
+		t.Fatal("govulncheck-repo job is missing")
+	}
+	osTargets := job.Strategy.Matrix.GOOS
+	archTargets := job.Strategy.Matrix.GOARCH
+	if len(osTargets) != 3 || len(archTargets) != 2 {
+		t.Fatalf("govulncheck-repo matrix = %v x %v, want 3 OS x 2 architectures", osTargets, archTargets)
+	}
+	for _, target := range []string{"darwin", "linux", "windows"} {
+		if !containsString(osTargets, target) {
+			t.Errorf("govulncheck-repo omits %s", target)
+		}
+	}
+	for _, target := range []string{"amd64", "arm64"} {
+		if !containsString(archTargets, target) {
+			t.Errorf("govulncheck-repo omits %s", target)
+		}
+	}
+	artifact := false
+	for _, step := range job.Steps {
+		if step.With["name"] == "govulncheck-repo-${{ matrix.goos }}-${{ matrix.goarch }}" {
+			artifact = true
+		}
+	}
+	if !artifact {
+		t.Fatal("govulncheck-repo has no unique target artifact")
+	}
+}
+
+// Run the checked-in step, with only the compiler and scanner replaced. This
+// catches a target environment accidentally applied to the host tool install.
+func TestGovulncheckRepoExecutesHostToolForForeignTarget(t *testing.T) {
+	wf := parse(t, candidateWorkflow, readWorkflows(t)[candidateWorkflow])
+	job := wf.Jobs["govulncheck-repo"]
+	var stepRun string
+	var stepEnv map[string]string
+	for _, step := range job.Steps {
+		if step.Name == "govulncheck ./..." {
+			stepRun, stepEnv = step.Run, step.Env
+		}
+	}
+	if stepRun == "" {
+		t.Fatal("govulncheck ./... run block is missing")
+	}
+	targetOS, targetArch := "windows", "amd64"
+	if runtime.GOOS == targetOS {
+		targetOS = "darwin"
+	}
+	if runtime.GOARCH == targetArch {
+		targetArch = "arm64"
+	}
+	if !containsString(job.Strategy.Matrix.GOOS, targetOS) || !containsString(job.Strategy.Matrix.GOARCH, targetArch) {
+		t.Fatalf("foreign target %s/%s is absent from matrix", targetOS, targetArch)
+	}
+	stepRun = strings.ReplaceAll(stepRun, "${{ matrix.goos }}", targetOS)
+	stepRun = strings.ReplaceAll(stepRun, "${{ matrix.goarch }}", targetArch)
+
+	for _, tc := range []struct {
+		name          string
+		scanExit      string
+		installExit   string
+		ambientTarget bool
+		wantExit      int
+	}{
+		{"clean", "0", "0", false, 0},
+		{"affected", "3", "0", true, 3},
+		{"install-failure", "0", "79", false, 79},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			binDir := filepath.Join(dir, "stubs")
+			gopath := filepath.Join(dir, "gopath")
+			if err := os.MkdirAll(binDir, 0700); err != nil {
+				t.Fatal(err)
+			}
+			compiler := `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1" == env && "$2" == GOPATH ]]; then printf '%s\n' "$MOCK_GOPATH"; exit 0; fi
+[[ "$1" == install && "$2" == 'golang.org/x/vuln/cmd/govulncheck@v1.6.0' ]] || exit 81
+if [[ -n "${GOOS:-}" || -n "${GOARCH:-}" || -n "${CGO_ENABLED:-}" ]]; then
+  printf 'foreign tool install: GOOS=%s GOARCH=%s CGO_ENABLED=%s\n' "${GOOS:-}" "${GOARCH:-}" "${CGO_ENABLED:-}" >&2
+  exit 82
+fi
+printf 'host install\n' > "$MOCK_INSTALL_TRACE"
+if [[ "${MOCK_INSTALL_EXIT:-0}" != 0 ]]; then exit "$MOCK_INSTALL_EXIT"; fi
+mkdir -p "$MOCK_GOPATH/bin"
+cp "$MOCK_SCANNER" "$MOCK_GOPATH/bin/govulncheck"
+`
+			scanner := `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s/%s/%s:%s\n' "${GOOS:-}" "${GOARCH:-}" "${CGO_ENABLED:-}" "$*" > "$MOCK_SCAN_TRACE"
+printf 'raw advisory warning for %s/%s\n' "$GOOS" "$GOARCH"
+exit "$MOCK_SCAN_EXIT"
+`
+			for name, body := range map[string]string{"go": compiler, "scanner": scanner} {
+				if err := os.WriteFile(filepath.Join(binDir, name), []byte(body), 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			installTrace := filepath.Join(dir, "install.trace")
+			scanTrace := filepath.Join(dir, "scan.trace")
+			cmd := exec.Command("bash", "-c", stepRun)
+			cmd.Dir = dir
+			cmd.Env = []string{}
+			for _, value := range os.Environ() {
+				key := strings.SplitN(value, "=", 2)[0]
+				if key != "GOOS" && key != "GOARCH" && key != "CGO_ENABLED" && key != "GOBIN" && key != "GOPATH" && key != "PATH" && key != "GOVULNCHECK_VERSION" {
+					cmd.Env = append(cmd.Env, value)
+				}
+			}
+			cmd.Env = append(cmd.Env, "PATH="+binDir+":"+os.Getenv("PATH"), "MOCK_GOPATH="+gopath, "MOCK_SCANNER="+filepath.Join(binDir, "scanner"), "MOCK_INSTALL_TRACE="+installTrace, "MOCK_SCAN_TRACE="+scanTrace, "MOCK_SCAN_EXIT="+tc.scanExit, "MOCK_INSTALL_EXIT="+tc.installExit)
+			if tc.ambientTarget {
+				cmd.Env = append(cmd.Env, "GOOS="+targetOS, "GOARCH="+targetArch, "CGO_ENABLED=0")
+			}
+			for _, scope := range []map[string]string{wf.Env, job.Env, stepEnv} {
+				for key, value := range scope {
+					value = strings.ReplaceAll(strings.ReplaceAll(value, "${{ matrix.goos }}", targetOS), "${{ matrix.goarch }}", targetArch)
+					cmd.Env = append(cmd.Env, key+"="+value)
+				}
+			}
+			output, err := cmd.CombinedOutput()
+			if tc.wantExit == 0 {
+				if err != nil {
+					t.Fatalf("workflow run block failed before clean scan: %v\n%s", err, output)
+				}
+			} else {
+				if exit, ok := err.(*exec.ExitError); !ok || exit.ExitCode() != tc.wantExit {
+					t.Fatalf("failure exit %d must propagate, got %v\n%s", tc.wantExit, err, output)
+				}
+			}
+			if got, err := os.ReadFile(installTrace); err != nil || string(got) != "host install\n" {
+				t.Fatalf("host scanner installation was not reached: %q, %v\n%s", got, err, output)
+			}
+			if tc.installExit != "0" {
+				if _, err := os.Stat(scanTrace); !os.IsNotExist(err) {
+					t.Fatalf("scanner ran after failed install: stat error %v", err)
+				}
+				return
+			}
+			wantScan := targetOS + "/" + targetArch + "/0:-show verbose ./...\n"
+			if got, err := os.ReadFile(scanTrace); err != nil || string(got) != wantScan {
+				t.Fatalf("target scanner invocation = %q, %v; want %q", got, err, wantScan)
+			}
+			wantWarning := "raw advisory warning for " + targetOS + "/" + targetArch + "\n"
+			if got, err := os.ReadFile(filepath.Join(dir, "govulncheck-repo.txt")); err != nil || string(got) != wantWarning || !strings.Contains(string(output), wantWarning) {
+				t.Fatalf("raw warning lost from artifact or output: artifact %q, err %v, output %q", got, err, output)
+			}
+		})
 	}
 }
 

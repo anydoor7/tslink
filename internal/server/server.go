@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -181,7 +182,11 @@ func (l *limitedListener) Accept() (net.Conn, error) {
 		}
 		select {
 		case l.sem <- struct{}{}:
-			return &limitedConn{Conn: conn, release: func() { <-l.sem }}, nil
+			limited := &limitedConn{Conn: conn, release: func() { <-l.sem }}
+			if tlsConn, ok := conn.(*tls.Conn); ok {
+				return &limitedTLSConn{limitedConn: limited, tlsConn: tlsConn}, nil
+			}
+			return limited, nil
 		default:
 			slog.Warn("connection limit exceeded; closing accepted connection", "kind", l.kind, "name", l.service)
 			_ = conn.Close()
@@ -199,6 +204,25 @@ func (c *limitedConn) Close() error {
 	err := c.Conn.Close()
 	c.once.Do(c.release)
 	return err
+}
+
+// net/http needs the TLS connection state even when the connection is capped.
+// Go 1.26 reads ConnectionState before reading the request, so perform the
+// handshake here with a bound; Go 1.27 calls HandshakeContext first.
+type limitedTLSConn struct {
+	*limitedConn
+	tlsConn *tls.Conn
+}
+
+func (c *limitedTLSConn) HandshakeContext(ctx context.Context) error {
+	return c.tlsConn.HandshakeContext(ctx)
+}
+
+func (c *limitedTLSConn) ConnectionState() tls.ConnectionState {
+	ctx, cancel := context.WithTimeout(context.Background(), httpReadHeaderTimeout)
+	defer cancel()
+	_ = c.tlsConn.HandshakeContext(ctx)
+	return c.tlsConn.ConnectionState()
 }
 
 func ResourceBudgetMiddleware(next http.Handler) http.Handler {
@@ -688,10 +712,15 @@ func (s *Server) syncNodesWithOutcome(ctx context.Context, startup bool) (outcom
 	generation := s.syncGeneration.Add(1)
 	outcome = syncOutcome{generation: generation}
 	defer func() {
+		if generation != s.syncGeneration.Load() {
+			resultErr = nil // a newer generation owns the startup result
+		}
 		s.publishSyncResult(syncResult{generation: generation, committed: outcome.committed, err: resultErr})
 	}()
 	generationCtx, cancelGeneration := context.WithCancel(ctx)
-	s.installStartupGeneration(generation, cancelGeneration)
+	if !s.installStartupGeneration(generation, cancelGeneration) {
+		return outcome, nil
+	}
 	defer s.finishStartupGeneration(generation, cancelGeneration)
 
 	if err := s.ensureRunning(generationCtx); err != nil {
@@ -793,10 +822,10 @@ func (s *Server) syncNodesWithOutcome(ctx context.Context, startup bool) (outcom
 				slog.Warn("degraded mode: skipped ACL tag ensure because policy access was forbidden", "reason", err.Error(), "tags", tagsToEnsure, "degraded_mode", true)
 			default:
 				// A global policy failure must leave unchanged services alone,
-				// but it cannot keep an older public surface reachable after
-				// the registry changes or removes it.
+				// but it cannot keep an older public surface or private
+				// authorization reachable after the registry changes.
 				s.mu.Lock()
-				if generation == s.syncGeneration.Load() && s.stopDivergentPublicNodesLocked(desired, validationFailures) {
+				if generation == s.syncGeneration.Load() && s.stopDivergentNodesLocked(desired, validationFailures) {
 					s.writeRuntimeSnapshotLocked(registryFingerprint, false)
 				}
 				s.mu.Unlock()
@@ -818,7 +847,7 @@ func (s *Server) syncNodesWithOutcome(ctx context.Context, startup bool) (outcom
 	s.globalFailure = nil
 	s.lastRegistryFingerprint = registryFingerprint
 	if err := s.prepareCredentialUpgradeLocked(reg.Services); err != nil {
-		if s.stopDivergentPublicNodesLocked(desired, validationFailures) {
+		if s.stopDivergentNodesLocked(desired, validationFailures) {
 			s.writeRuntimeSnapshotLocked(registryFingerprint, false)
 		}
 		s.mu.Unlock()
@@ -837,19 +866,18 @@ func (s *Server) syncNodesWithOutcome(ctx context.Context, startup bool) (outcom
 			s.stopNodeLocked(name, false)
 			s.serviceFailures[name] = failure
 		} else if identityErr, failed := identityFailures[name]; failed {
-			// A damaged or unwritable record affects this service only. Close
-			// any divergent public listener, while unrelated nodes still sync.
-			if node.funnelListenerActive && serviceChangedWithFallback(node.service, svc, s.controlURL) {
-				slog.Warn("closing changed public listener after node identity error", "name", name, "error", identityErr)
+			// A failed identity write must not leave a changed handler serving
+			// its old allow list or surface. Keep the enrolled node state.
+			if serviceChangedWithFallback(node.service, svc, s.controlURL) {
+				slog.Warn("closing changed listener after node identity error", "name", name, "error", identityErr)
 				s.stopNodeLocked(name, false)
 			}
 			s.serviceFailures[name] = nodeIdentityFailure(svc, identityErr)
 		} else if failure, blocked := policyFailures[name]; blocked {
-			if node.funnelListenerActive && serviceChangedWithFallback(node.service, svc, s.controlURL) {
-				// A public listener serving an older target or identity must not
-				// remain reachable after the registry changes. Keep its local
-				// state for a later retry, but close the stale exposure now.
-				slog.Warn("closing changed public listener after Funnel policy preflight failed", "name", name, "reason", failure.Error.Provision.Reason)
+			if s.listenerMustWithdraw(node, svc) {
+				// Close a changed public surface or private authorization while
+				// keeping its local node state for a later retry.
+				slog.Warn("closing changed listener after Funnel policy preflight failed", "name", name, "reason", failure.Error.Provision.Reason)
 				s.stopNodeLocked(name, false)
 			} else {
 				// An unchanged public node or an older private node may keep
@@ -1270,14 +1298,19 @@ func copyProvisionOutcome(source *registry.ProvisionOutcome) *registry.Provision
 	return &copied
 }
 
-func (s *Server) installStartupGeneration(generation uint64, cancel context.CancelFunc) {
+func (s *Server) installStartupGeneration(generation uint64, cancel context.CancelFunc) bool {
 	s.startupCancelMu.Lock()
+	defer s.startupCancelMu.Unlock()
+	if generation < s.syncGeneration.Load() || generation < s.startupGeneration {
+		cancel()
+		return false
+	}
 	if s.startupCancel != nil {
 		s.startupCancel()
 	}
 	s.startupCancel = cancel
 	s.startupGeneration = generation
-	s.startupCancelMu.Unlock()
+	return true
 }
 
 func (s *Server) finishStartupGeneration(generation uint64, cancel context.CancelFunc) {
@@ -1296,22 +1329,38 @@ func (s *Server) nodeRunning(name string) bool {
 	return ok
 }
 
-// stopDivergentPublicNodesLocked withdraws only public listeners whose saved
-// service has been removed, invalidated, or changed. It is used when a global
-// preflight error returns before the normal stop phase. The durable identity
-// record remains available for a later retry, including in a fresh process.
-func (s *Server) stopDivergentPublicNodesLocked(desired map[string]registry.Service, invalid map[string]runtimesnapshot.ServiceState) bool {
+// listenerMustWithdraw checks changes that cannot safely keep serving from a
+// private handler while a replacement is blocked. A private-to-public request
+// alone can keep its existing private listener during Funnel preflight.
+func (s *Server) listenerMustWithdraw(node *ServiceNode, desired registry.Service) bool {
+	if node.funnelListenerActive {
+		return serviceChangedWithFallback(node.service, desired, s.controlURL)
+	}
+	old := node.service
+	tagsCompatible := sameStringSet(old.Tags, desired.Tags)
+	if !tagsCompatible && !old.Funnel && desired.Funnel {
+		// The derived Funnel tag belongs to the replacement identity. It
+		// does not change authorization on the still-private listener.
+		tagsCompatible = sameStringSet(old.Tags, stringsExcept(desired.Tags, registry.FunnelTag))
+	}
+	return old.Type != desired.Type || old.Target != desired.Target || old.Path != desired.Path || old.File != desired.File ||
+		old.Port != desired.Port || old.Ephemeral != desired.Ephemeral ||
+		effectiveControlURL(old, s.controlURL) != effectiveControlURL(desired, s.controlURL) ||
+		!tagsCompatible || !sameStringSet(old.AllowedUsers, desired.AllowedUsers)
+}
+
+// stopDivergentNodesLocked is used before the normal stop phase for public
+// listeners and private listeners whose authorization or served surface changed.
+// Durable node state remains available for retry.
+func (s *Server) stopDivergentNodesLocked(desired map[string]registry.Service, invalid map[string]runtimesnapshot.ServiceState) bool {
 	stopped := false
 	for name, node := range s.nodes {
-		if !node.funnelListenerActive {
-			continue
-		}
 		svc, exists := desired[name]
 		_, invalidService := invalid[name]
-		if exists && !invalidService && !serviceChangedWithFallback(node.service, svc, s.controlURL) {
+		if exists && !invalidService && !s.listenerMustWithdraw(node, svc) {
 			continue
 		}
-		slog.Warn("closing divergent public listener before failed registry sync returns", "name", name, "registered", exists)
+		slog.Warn("closing divergent listener before failed registry sync returns", "name", name, "registered", exists)
 		s.stopNodeLocked(name, !exists)
 		stopped = true
 	}
@@ -1535,6 +1584,38 @@ func (s *Server) HoldsNodeState(name string) bool {
 	defer s.mu.Unlock()
 	_, running := s.nodes[name]
 	return running
+}
+
+// WithNodeStateLock excludes an in-progress sync from the final, local part
+// of orphan cleanup. In particular, a node being started is not yet in nodes.
+func (s *Server) WithNodeStateLock(fn func() error) error {
+	if s.reconcileGate == nil {
+		return errors.New("node-state startup gate unavailable")
+	}
+	s.reconcileGate <- struct{}{}
+	defer func() { <-s.reconcileGate }()
+	return fn()
+}
+
+// TryWithNodeStateLock acquires the same startup gate without waiting. Optional
+// local cleanup may skip a tick when startup is active or shutdown has begun.
+func (s *Server) TryWithNodeStateLock(ctx context.Context, fn func() error) (bool, error) {
+	if s.reconcileGate == nil {
+		return false, errors.New("node-state startup gate unavailable")
+	}
+	if ctx.Err() != nil {
+		return false, nil
+	}
+	select {
+	case s.reconcileGate <- struct{}{}:
+		defer func() { <-s.reconcileGate }()
+		if ctx.Err() != nil {
+			return false, nil
+		}
+		return true, fn()
+	default:
+		return false, nil
+	}
 }
 
 func removeServiceStateDir(name string) error {

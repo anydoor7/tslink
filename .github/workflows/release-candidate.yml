@@ -224,8 +224,13 @@ jobs:
           if-no-files-found: warn
 
   govulncheck-repo:
-    name: govulncheck (repo)
+    name: govulncheck (repo ${{ matrix.goos }}/${{ matrix.goarch }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        goos: [darwin, linux, windows]
+        goarch: [amd64, arm64]
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -238,12 +243,12 @@ jobs:
       - name: govulncheck ./...
         run: |
           set -euo pipefail
-          go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"
-          "$(go env GOPATH)/bin/govulncheck" -show verbose ./... | tee govulncheck-repo.txt
+          env -u GOOS -u GOARCH -u CGO_ENABLED go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"
+          GOOS="${{ matrix.goos }}" GOARCH="${{ matrix.goarch }}" CGO_ENABLED=0 "$(go env GOPATH)/bin/govulncheck" -show verbose ./... | tee govulncheck-repo.txt
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
-          name: govulncheck-repo
+          name: govulncheck-repo-${{ matrix.goos }}-${{ matrix.goarch }}
           path: govulncheck-repo.txt
           if-no-files-found: warn
 
