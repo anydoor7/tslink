@@ -356,7 +356,7 @@ func TestBootstrapAddWritesBeforeInstallThenReturnsURL(t *testing.T) {
 		detectSupervisionFn = func(string, bool, int) Supervision {
 			return Supervision{Manager: "launchd", Installed: true, Autostart: true, RestartOnExit: true}
 		}
-		fp, _ := tsruntime.RegistryFingerprint(reg)
+		fp, _ := tsruntime.RegistryFingerprint(reg, nil)
 		snapshot := tsruntime.NewSnapshot(4242, startedAt, fp, time.Now(), []tsruntime.ServiceState{{Service: reg.Services[0], RuntimeHost: "myapp.tailnet-example.ts.net"}})
 		return tsruntime.Save(snapshotPath, snapshot)
 	}

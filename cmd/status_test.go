@@ -190,7 +190,7 @@ func statusRegistryFingerprint(t *testing.T, regPath string) string {
 	if err != nil {
 		t.Fatalf("registry.Load: %v", err)
 	}
-	fingerprint, err := tsruntime.RegistryFingerprint(reg)
+	fingerprint, err := tsruntime.RegistryFingerprint(reg, nil)
 	if err != nil {
 		t.Fatalf("RegistryFingerprint: %v", err)
 	}

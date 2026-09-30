@@ -20,7 +20,18 @@ import (
 )
 
 const (
-	SchemaVersion = inspect.SchemaVersion
+	// SchemaVersion is the version of the runtime.json shape, the file the
+	// daemon writes for the CLI. It is independent of the public view schema
+	// (inspect.SchemaVersion), so a change to the public views never makes a
+	// running daemon's snapshot unreadable to a newer CLI. Readers accept a
+	// snapshot of this version and ignore fields they do not know: a daemon
+	// may add fields without raising it, and raises it only for a shape an
+	// older reader cannot read.
+	SchemaVersion = 1
+
+	// legacySchemaVersion is what builds before SchemaVersion existed wrote in
+	// schema_version, the public view schema of the time. It is version 1.
+	legacySchemaVersion = "vnext.1"
 
 	StatusExact            = "exact"
 	StatusMissing          = "missing"
@@ -48,8 +59,29 @@ var (
 	renameFile        = os.Rename
 )
 
+// SnapshotVersion is runtime.json's schema_version. It reads the string
+// that builds before the integer version wrote as version 1.
+type SnapshotVersion int
+
+func (v *SnapshotVersion) UnmarshalJSON(data []byte) error {
+	var legacy string
+	if err := json.Unmarshal(data, &legacy); err == nil {
+		if legacy != legacySchemaVersion {
+			return fmt.Errorf("unsupported runtime snapshot schema_version %q", legacy)
+		}
+		*v = 1
+		return nil
+	}
+	var version int
+	if err := json.Unmarshal(data, &version); err != nil {
+		return fmt.Errorf("runtime snapshot schema_version: %w", err)
+	}
+	*v = SnapshotVersion(version)
+	return nil
+}
+
 type Snapshot struct {
-	SchemaVersion       string            `json:"schema_version"`
+	SchemaVersion       SnapshotVersion   `json:"schema_version"`
 	DaemonPID           int               `json:"daemon_pid"`
 	DaemonStartedAt     time.Time         `json:"daemon_started_at"`
 	RegistryFingerprint string            `json:"registry_fingerprint"`
@@ -214,15 +246,30 @@ func newSnapshot(daemonPID int, daemonStartedAt time.Time, registryFingerprint s
 	}
 }
 
-func RegistryFingerprint(reg *registry.Registry) (string, error) {
-	if reg == nil {
-		reg = &registry.Registry{}
+// RegistryFingerprint is the one derivation of the registry fingerprint: the
+// daemon writes it into runtime.json and the CLI compares against it. Its
+// input is every service entry registry.LoadForRuntime decodes, in file
+// order, the valid ones and the ones isolated as per-service issues alike.
+// The daemon passes what it loaded; the CLI calls CurrentRegistryFingerprint.
+// A fingerprint over only the valid entries on one side would call a snapshot
+// stale for as long as any service has an issue, which says nothing about
+// whether the daemon applied the latest registry.
+func RegistryFingerprint(reg *registry.Registry, issues []registry.ServiceIssue) (string, error) {
+	var valid []registry.Service
+	if reg != nil {
+		valid = reg.Services
 	}
-	canonical := registry.Registry{
-		Services: append([]registry.Service(nil), reg.Services...),
-	}
-	if canonical.Services == nil {
-		canonical.Services = []registry.Service{}
+	isolated := append([]registry.ServiceIssue(nil), issues...)
+	sort.SliceStable(isolated, func(i, j int) bool { return isolated[i].Index < isolated[j].Index })
+	canonical := registry.Registry{Services: make([]registry.Service, 0, len(valid)+len(isolated))}
+	for len(valid) > 0 || len(isolated) > 0 {
+		if len(isolated) > 0 && (len(valid) == 0 || isolated[0].Index <= len(canonical.Services)) {
+			canonical.Services = append(canonical.Services, isolated[0].Service)
+			isolated = isolated[1:]
+			continue
+		}
+		canonical.Services = append(canonical.Services, valid[0])
+		valid = valid[1:]
 	}
 	data, err := json.Marshal(canonical)
 	if err != nil {
@@ -230,6 +277,16 @@ func RegistryFingerprint(reg *registry.Registry) (string, error) {
 	}
 	sum := sha256.Sum256(data)
 	return "sha256:" + hex.EncodeToString(sum[:]), nil
+}
+
+// CurrentRegistryFingerprint fingerprints registry.json at path the way the
+// daemon does, for comparison with the fingerprint in runtime.json.
+func CurrentRegistryFingerprint(path string) (string, error) {
+	reg, issues, err := registry.LoadForRuntime(path)
+	if err != nil {
+		return "", err
+	}
+	return RegistryFingerprint(reg, issues)
 }
 
 func Save(path string, snapshot Snapshot) error {
@@ -383,12 +440,22 @@ func loadOnce(path string) (*Snapshot, error) {
 		}
 		return nil, unreadableError(err)
 	}
+	var header struct {
+		SchemaVersion json.RawMessage `json:"schema_version"`
+	}
+	if err := json.Unmarshal(data, &header); err != nil {
+		return nil, malformedError(err)
+	}
+	var version SnapshotVersion
+	if err := version.UnmarshalJSON(header.SchemaVersion); err != nil {
+		return nil, incompatibleError(err)
+	}
+	if version != SchemaVersion {
+		return nil, incompatibleError(fmt.Errorf("runtime snapshot schema_version %d is not %d, the version this build reads", version, SchemaVersion))
+	}
 	var snapshot Snapshot
 	if err := json.Unmarshal(data, &snapshot); err != nil {
 		return nil, malformedError(err)
-	}
-	if snapshot.SchemaVersion != SchemaVersion {
-		return nil, malformedError(fmt.Errorf("unsupported runtime snapshot schema_version %q", snapshot.SchemaVersion))
 	}
 	if snapshot.Services == nil {
 		snapshot.Services = []ServiceSnapshot{}
@@ -396,10 +463,21 @@ func loadOnce(path string) (*Snapshot, error) {
 	return &snapshot, nil
 }
 
+// malformedError and incompatibleError report a snapshot this build cannot
+// read. That is not staleness, which is a readable snapshot for another daemon
+// or registry, so both carry the unreadable code.
 func malformedError(err error) error {
 	return &SnapshotError{
 		Status: StatusMalformed,
-		Code:   inspect.WarningCodeRuntimeSnapshotStale,
+		Code:   inspect.WarningCodeRuntimeSnapshotUnreadable,
+		Err:    err,
+	}
+}
+
+func incompatibleError(err error) error {
+	return &SnapshotError{
+		Status: StatusUnreadable,
+		Code:   inspect.WarningCodeRuntimeSnapshotUnreadable,
 		Err:    err,
 	}
 }

@@ -73,7 +73,7 @@ func TestSaveLoadSnapshotAtomicPrivateFile(t *testing.T) {
 		t.Fatalf("Load() error = %v", err)
 	}
 	if got.SchemaVersion != SchemaVersion {
-		t.Fatalf("SchemaVersion = %q, want %q", got.SchemaVersion, SchemaVersion)
+		t.Fatalf("SchemaVersion = %d, want %d", got.SchemaVersion, SchemaVersion)
 	}
 	if got.DaemonPID != want.DaemonPID || !got.DaemonStartedAt.Equal(want.DaemonStartedAt) {
 		t.Fatalf("daemon fields = pid %d started %s, want pid %d started %s", got.DaemonPID, got.DaemonStartedAt, want.DaemonPID, want.DaemonStartedAt)
@@ -154,11 +154,11 @@ func TestRegistryFingerprintStableAndChanges(t *testing.T) {
 		{Name: "app", Type: registry.TypeProxy, Target: "http://localhost:4000"},
 	}}
 
-	first, err := RegistryFingerprint(reg)
+	first, err := RegistryFingerprint(reg, nil)
 	if err != nil {
 		t.Fatalf("RegistryFingerprint() error = %v", err)
 	}
-	second, err := RegistryFingerprint(again)
+	second, err := RegistryFingerprint(again, nil)
 	if err != nil {
 		t.Fatalf("RegistryFingerprint() error = %v", err)
 	}
@@ -169,21 +169,21 @@ func TestRegistryFingerprintStableAndChanges(t *testing.T) {
 		t.Fatalf("fingerprint = %q, want sha256 prefix", first)
 	}
 
-	third, err := RegistryFingerprint(changed)
+	third, err := RegistryFingerprint(changed, nil)
 	if err != nil {
-		t.Fatalf("RegistryFingerprint(changed) error = %v", err)
+		t.Fatalf("RegistryFingerprint(changed, nil) error = %v", err)
 	}
 	if third == first {
 		t.Fatalf("fingerprint did not change after registry content changed: %q", third)
 	}
 
-	nilFingerprint, err := RegistryFingerprint(nil)
+	nilFingerprint, err := RegistryFingerprint(nil, nil)
 	if err != nil {
-		t.Fatalf("RegistryFingerprint(nil) error = %v", err)
+		t.Fatalf("RegistryFingerprint(nil, nil) error = %v", err)
 	}
-	emptyFingerprint, err := RegistryFingerprint(&registry.Registry{Services: []registry.Service{}})
+	emptyFingerprint, err := RegistryFingerprint(&registry.Registry{Services: []registry.Service{}}, nil)
 	if err != nil {
-		t.Fatalf("RegistryFingerprint(empty) error = %v", err)
+		t.Fatalf("RegistryFingerprint(empty, nil) error = %v", err)
 	}
 	if nilFingerprint != emptyFingerprint {
 		t.Fatalf("nil fingerprint = %q, empty fingerprint = %q; want equal", nilFingerprint, emptyFingerprint)
@@ -199,7 +199,7 @@ func TestLoadMissingAndMalformedSnapshot(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 	_, err = Load(path)
-	assertSnapshotError(t, err, StatusMalformed, inspect.WarningCodeRuntimeSnapshotStale)
+	assertSnapshotError(t, err, StatusMalformed, inspect.WarningCodeRuntimeSnapshotUnreadable)
 }
 
 func TestLoadUnreadableSnapshot(t *testing.T) {
@@ -242,7 +242,7 @@ func TestLoadRetriesOnceOnMalformedThenSucceeds(t *testing.T) {
 	}
 }
 
-func TestLoadRetriesOnceOnMalformedThenReturnsStale(t *testing.T) {
+func TestLoadRetriesOnceOnMalformedThenReturnsUnreadable(t *testing.T) {
 	oldRead := readFile
 	var calls int
 	readFile = func(path string) ([]byte, error) {
@@ -252,7 +252,7 @@ func TestLoadRetriesOnceOnMalformedThenReturnsStale(t *testing.T) {
 	t.Cleanup(func() { readFile = oldRead })
 
 	_, err := Load("/does/not/matter/runtime.json")
-	assertSnapshotError(t, err, StatusMalformed, inspect.WarningCodeRuntimeSnapshotStale)
+	assertSnapshotError(t, err, StatusMalformed, inspect.WarningCodeRuntimeSnapshotUnreadable)
 	if calls != 2 {
 		t.Fatalf("read attempts = %d, want 2", calls)
 	}
@@ -286,8 +286,8 @@ func TestClassifyFreshness(t *testing.T) {
 		t.Fatalf("Classify(missing) = %+v", got)
 	}
 
-	malformedErr := &SnapshotError{Status: StatusMalformed, Code: inspect.WarningCodeRuntimeSnapshotStale, Err: errors.New("bad json")}
-	if got := Classify(nil, malformedErr, expected); got.Status != StatusMalformed || got.Code != inspect.WarningCodeRuntimeSnapshotStale || got.Exact {
+	malformedErr := &SnapshotError{Status: StatusMalformed, Code: inspect.WarningCodeRuntimeSnapshotUnreadable, Err: errors.New("bad json")}
+	if got := Classify(nil, malformedErr, expected); got.Status != StatusMalformed || got.Code != inspect.WarningCodeRuntimeSnapshotUnreadable || got.Exact {
 		t.Fatalf("Classify(malformed) = %+v", got)
 	}
 

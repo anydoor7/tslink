@@ -322,6 +322,19 @@ func formatCredentialSummary(c StatusCredentials) string {
 	return strings.Join(parts, "; ")
 }
 
+// currentRegistryFingerprint fingerprints registry.json the way the daemon
+// does (tsruntime.CurrentRegistryFingerprint), so a snapshot the daemon wrote
+// for this registry compares equal. A registry the daemon's loader rejects
+// cannot be the one it applied: the blank fingerprint keeps the snapshot
+// from classifying as exact.
+func currentRegistryFingerprint(regPath string) string {
+	fingerprint, err := tsruntime.CurrentRegistryFingerprint(regPath)
+	if err != nil {
+		return ""
+	}
+	return fingerprint
+}
+
 func getPollableStatus(pidPath, regPath, snapshotPath, authHandoffPath string) (StatusResult, error) {
 	r, err := getStatus(pidPath, regPath)
 	if err != nil {
@@ -332,14 +345,10 @@ func getPollableStatus(pidPath, regPath, snapshotPath, authHandoffPath string) (
 		}
 		return StatusResult{}, err
 	}
-	reg, err := registry.Load(regPath)
-	if err != nil {
+	if _, err := registry.Load(regPath); err != nil {
 		return StatusResult{}, err
 	}
-	fingerprint, err := tsruntime.RegistryFingerprint(reg)
-	if err != nil {
-		return StatusResult{}, err
-	}
+	fingerprint := currentRegistryFingerprint(regPath)
 
 	snapshot, loadErr := runtimeLoadSnapshotFn(snapshotPath)
 	if snapshot != nil {
@@ -518,10 +527,7 @@ func getStatusURLsWithAuth(pidPath, regPath, snapshotPath, authHandoffPath strin
 	if err != nil {
 		return StatusURLsResult{}, err
 	}
-	fingerprint, err := tsruntime.RegistryFingerprint(reg)
-	if err != nil {
-		return StatusURLsResult{}, err
-	}
+	fingerprint := currentRegistryFingerprint(regPath)
 
 	snapshot, loadErr := runtimeLoadSnapshotFn(snapshotPath)
 	expected := tsruntime.ExpectedRuntime{

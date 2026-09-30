@@ -268,7 +268,7 @@ func writeConcurrencyRuntimeSnapshot(t *testing.T, regPath, runtimePath string, 
 	if err != nil {
 		t.Fatalf("load registry for snapshot: %v", err)
 	}
-	fingerprint, err := tsruntime.RegistryFingerprint(reg)
+	fingerprint, err := tsruntime.RegistryFingerprint(reg, nil)
 	if err != nil {
 		t.Fatalf("fingerprint registry: %v", err)
 	}

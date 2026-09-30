@@ -85,10 +85,7 @@ func inviteDeviceTargetsForPaths(regPath, pidPath, snapshotPath string) ([]taila
 	if err != nil {
 		return nil, err
 	}
-	fingerprint, err := tsruntime.RegistryFingerprint(reg)
-	if err != nil {
-		return nil, err
-	}
+	fingerprint := currentRegistryFingerprint(regPath)
 
 	nodeIDs := make(map[string]string)
 	snapshot, loadErr := inviteLoadSnapshotFn(snapshotPath)

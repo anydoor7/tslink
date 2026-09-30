@@ -64,7 +64,7 @@ func configureExactInviteRuntime(t *testing.T, services []registry.Service, node
 	if err := os.WriteFile(regPath, registryData, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	fingerprint, err := tsruntime.RegistryFingerprint(reg)
+	fingerprint, err := tsruntime.RegistryFingerprint(reg, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

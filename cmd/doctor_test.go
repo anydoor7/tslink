@@ -206,7 +206,7 @@ func (env doctorTestEnv) writeExactSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("registry.Load: %v", err)
 	}
-	fingerprint, err := tsruntime.RegistryFingerprint(reg)
+	fingerprint, err := tsruntime.RegistryFingerprint(reg, nil)
 	if err != nil {
 		t.Fatalf("RegistryFingerprint: %v", err)
 	}
@@ -642,7 +642,7 @@ func TestDoctorRuntimeSnapshotWarnings(t *testing.T) {
 				if err != nil {
 					t.Fatalf("registry.Load: %v", err)
 				}
-				fingerprint, err := tsruntime.RegistryFingerprint(reg)
+				fingerprint, err := tsruntime.RegistryFingerprint(reg, nil)
 				if err != nil {
 					t.Fatalf("RegistryFingerprint: %v", err)
 				}

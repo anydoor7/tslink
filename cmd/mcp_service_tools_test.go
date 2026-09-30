@@ -512,7 +512,7 @@ func seedCompiledDaemonEvidence(t *testing.T, configDir, name string) {
 	if err != nil {
 		t.Fatalf("stat pid fixture: %v", err)
 	}
-	fingerprint, err := tsruntime.RegistryFingerprint(reg)
+	fingerprint, err := tsruntime.RegistryFingerprint(reg, nil)
 	if err != nil {
 		t.Fatalf("fingerprint: %v", err)
 	}

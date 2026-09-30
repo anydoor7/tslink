@@ -2806,7 +2806,7 @@ func TestSyncNodes_WritesRuntimeSnapshotAfterServiceStarts(t *testing.T) {
 		t.Fatalf("runtime Load() error = %v", err)
 	}
 	if snapshot.SchemaVersion != runtimesnapshot.SchemaVersion {
-		t.Fatalf("schema_version = %q, want %q", snapshot.SchemaVersion, runtimesnapshot.SchemaVersion)
+		t.Fatalf("schema_version = %d, want %d", snapshot.SchemaVersion, runtimesnapshot.SchemaVersion)
 	}
 	if snapshot.DaemonPID != os.Getpid() {
 		t.Fatalf("daemon_pid = %d, want %d", snapshot.DaemonPID, os.Getpid())
@@ -2818,7 +2818,7 @@ func TestSyncNodes_WritesRuntimeSnapshotAfterServiceStarts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("registry.Load() error = %v", err)
 	}
-	wantFingerprint, err := runtimesnapshot.RegistryFingerprint(reg)
+	wantFingerprint, err := runtimesnapshot.RegistryFingerprint(reg, nil)
 	if err != nil {
 		t.Fatalf("RegistryFingerprint() error = %v", err)
 	}
@@ -4766,7 +4766,7 @@ func TestSyncNodes_PartialStartFailureRemovesRuntimeSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("registry.Load() error = %v", err)
 	}
-	fingerprint, err := runtimesnapshot.RegistryFingerprint(reg)
+	fingerprint, err := runtimesnapshot.RegistryFingerprint(reg, nil)
 	if err != nil {
 		t.Fatalf("RegistryFingerprint() error = %v", err)
 	}
@@ -4835,7 +4835,7 @@ func TestSyncNodes_UpdatesRuntimeSnapshotFingerprintAfterSuccessfulReload(t *tes
 	if err != nil {
 		t.Fatalf("registry.Load() error = %v", err)
 	}
-	wantFingerprint, err := runtimesnapshot.RegistryFingerprint(reg)
+	wantFingerprint, err := runtimesnapshot.RegistryFingerprint(reg, nil)
 	if err != nil {
 		t.Fatalf("RegistryFingerprint() error = %v", err)
 	}

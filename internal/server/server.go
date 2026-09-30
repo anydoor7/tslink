@@ -740,7 +740,7 @@ func (s *Server) syncNodesWithOutcome(ctx context.Context, startup bool) (outcom
 		s.failClosedGlobalRegistryError(generation, err)
 		return outcome, err
 	}
-	registryFingerprint, err := runtimesnapshot.RegistryFingerprint(reg)
+	registryFingerprint, err := runtimesnapshot.RegistryFingerprint(reg, registryIssues)
 	if err != nil {
 		return outcome, fmt.Errorf("runtime snapshot registry fingerprint: %w", err)
 	}

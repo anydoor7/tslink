@@ -48,7 +48,7 @@ func writeDoctorExactRuntime(t *testing.T, home string, reg registry.Registry) {
 	if err := os.Chtimes(pidPath, lowerBound, lowerBound); err != nil {
 		t.Fatalf("chtimes pid: %v", err)
 	}
-	fp, err := tsruntime.RegistryFingerprint(&reg)
+	fp, err := tsruntime.RegistryFingerprint(&reg, nil)
 	if err != nil {
 		t.Fatalf("fingerprint registry: %v", err)
 	}
