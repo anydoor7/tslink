@@ -100,11 +100,9 @@ var mcpCoveredCommands = map[string]mcpCoveredCommand{
 		},
 		ExcludedFlags: map[string]string{
 
-			"acme-email": "reserved and rejected with feature_unavailable; exposing it would only offer a parameter that always fails",
-			"domain":     "reserved and rejected with feature_unavailable; exposing it would only offer a parameter that always fails",
-			"dry-run":    "the add tool has one closed output schema for the write path and does not model the dry-run service preview",
-			"json":       mcpJSONFlagExclusion,
-			"wait":       "the add tool returns immediately with url_pending; an agent polls with the url tool, which takes its own wait",
+			"dry-run": "the add tool has one closed output schema for the write path and does not model the dry-run service preview",
+			"json":    mcpJSONFlagExclusion,
+			"wait":    "the add tool returns immediately with url_pending; an agent polls with the url tool, which takes its own wait",
 		},
 	},
 	"tslink list": {

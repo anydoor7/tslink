@@ -15,29 +15,6 @@ import (
 	"github.com/monody0007/tslink/internal/testenv"
 )
 
-func TestAddDomainACMEFlagsAdvertiseRejectedReservedState(t *testing.T) {
-	addCmd, _, err := rootCmd.Find([]string{"add"})
-	if err != nil {
-		t.Fatalf("find add command: %v", err)
-	}
-	for _, name := range []string{"domain", "acme-email"} {
-		flag := addCmd.Flags().Lookup(name)
-		if flag == nil {
-			t.Fatalf("add flag %q missing", name)
-		}
-		for _, want := range []string{"Reserved", "unavailable", "feature_unavailable"} {
-			if !strings.Contains(flag.Usage, want) {
-				t.Fatalf("flag %s usage = %q, want %q", name, flag.Usage, want)
-			}
-		}
-		for _, forbidden := range []string{"accepted", "stored"} {
-			if strings.Contains(strings.ToLower(flag.Usage), forbidden) {
-				t.Fatalf("flag %s usage = %q, must not claim %s", name, flag.Usage, forbidden)
-			}
-		}
-	}
-}
-
 func TestAddFunnel_WithProxy_Persisted(t *testing.T) {
 	dir := t.TempDir()
 	regPath := dir + "/registry.json"
@@ -603,8 +580,6 @@ func TestAddCmd_InvalidAllowEntryWarns(t *testing.T) {
 	_ = addCmd.Flags().Set("allow", "")
 	_ = addCmd.Flags().Set("funnel", "false")
 	_ = addCmd.Flags().Set("public", "false")
-	_ = addCmd.Flags().Set("domain", "")
-	_ = addCmd.Flags().Set("acme-email", "")
 	_ = addCmd.Flags().Set("control-url", "")
 	t.Cleanup(func() {
 		addCmd.SetErr(os.Stderr)

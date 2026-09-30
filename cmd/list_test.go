@@ -75,7 +75,7 @@ func TestListServices_TCPTextUsesTypedEndpoint(t *testing.T) {
 	}
 }
 
-func TestListRejectsMiddlewareConfig(t *testing.T) {
+func TestListRejectsRemovedMiddlewareKey(t *testing.T) {
 	dir := t.TempDir()
 	regPath := filepath.Join(dir, "registry.json")
 	rawRegistry := `{"schema_version":1,"services":[{"name":"web","type":"proxy","target":"http://localhost:3000","middleware":{"basic_auth":"user:pass"}}]}`
@@ -86,10 +86,10 @@ func TestListRejectsMiddlewareConfig(t *testing.T) {
 	var buf bytes.Buffer
 	err := listServices(regPath, &buf)
 	if err == nil {
-		t.Fatal("listServices() error = nil, want feature_unavailable")
+		t.Fatal("listServices() error = nil, want the removed middleware key refused")
 	}
-	if !strings.Contains(err.Error(), registry.CodeFeatureUnavailable) {
-		t.Fatalf("listServices() error = %v, want feature_unavailable", err)
+	if code, _ := registry.ErrorCode(err); code != registry.CodeUnknownConfigKey || !strings.Contains(err.Error(), `"middleware"`) {
+		t.Fatalf("listServices() error = %v, want %s naming middleware", err, registry.CodeUnknownConfigKey)
 	}
 	if strings.Contains(err.Error(), "user:pass") {
 		t.Fatalf("listServices() error leaked credential: %v", err)

@@ -97,58 +97,6 @@ func TestServiceViewsPreservesOrderAndBuildsViews(t *testing.T) {
 	}
 }
 
-func TestServiceViewForCustomDomainDoesNotPresentDomainEndpoint(t *testing.T) {
-	view := ServiceViewFor(registry.Service{
-		Name:   "web",
-		Type:   registry.TypeProxy,
-		Target: "http://localhost:3000",
-		Domain: "app.example.com",
-	})
-	if view.Endpoint.Display == "https://app.example.com" || view.Endpoint.Host == "app.example.com" {
-		t.Fatalf("endpoint = %+v, must not present custom domain as reachable", view.Endpoint)
-	}
-	if view.Endpoint.Display != "" || view.Endpoint.Host != "" {
-		t.Fatalf("endpoint = %+v, want pending endpoint without custom-domain or placeholder host", view.Endpoint)
-	}
-	if view.Exposure.Kind == ExposureCustomDomain {
-		t.Fatalf("exposure = %+v, must not present custom domain exposure", view.Exposure)
-	}
-	if len(view.Warnings) != 1 || view.Warnings[0].Code != WarningCodeCustomDomainNotWired {
-		t.Fatalf("warnings = %+v, want custom-domain unavailable warning", view.Warnings)
-	}
-}
-
-func TestServiceViewRedactsHTTPAuthCredentials(t *testing.T) {
-	view := ServiceViewFor(registry.Service{
-		Name:   "web",
-		Type:   registry.TypeProxy,
-		Target: "http://localhost:3000",
-		Middleware: &registry.MiddlewareConfig{
-			BasicAuth: "user:pass",
-		},
-	})
-	data, err := json.Marshal(view)
-	if err != nil {
-		t.Fatalf("marshal view: %v", err)
-	}
-	raw := string(data)
-	if strings.Contains(raw, "user:pass") {
-		t.Fatalf("public service view leaked credential: %s", raw)
-	}
-	if strings.Contains(raw, "basic_auth") {
-		t.Fatalf("public service view leaked private field name: %s", raw)
-	}
-	if view.Middleware == nil || !view.Middleware.HTTPAuth {
-		t.Fatalf("middleware summary = %+v, want redacted auth presence", view.Middleware)
-	}
-	if len(view.Warnings) != 1 || view.Warnings[0].Code != WarningCodeMiddlewareNotEnforced {
-		t.Fatalf("warnings = %+v, want middleware_not_enforced", view.Warnings)
-	}
-	if !strings.Contains(view.Warnings[0].Message, "NOT enforced") {
-		t.Fatalf("warning message = %q, want explicit unenforced wording", view.Warnings[0].Message)
-	}
-}
-
 func TestServiceViewRedactsBackendURLSecrets(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -281,9 +229,7 @@ func TestServiceViewWarningCodesAreRegistered(t *testing.T) {
 	required := []string{
 		WarningCodeTCPHTTPACLNotApplicable,
 		WarningCodeTCPAllowedUsersInvalid,
-		WarningCodeMiddlewareNotEnforced,
 		WarningCodeServiceTypeUnknown,
-		WarningCodeCustomDomainNotWired,
 	}
 	for _, code := range required {
 		meta, ok := WarningCodeRegistry[code]
@@ -303,22 +249,8 @@ func TestServiceViewWarningCodesAreRegistered(t *testing.T) {
 			AllowedUsers: []string{"alice@example.com"},
 		},
 		{
-			Name:   "auth",
-			Type:   registry.TypeProxy,
-			Target: "http://localhost:3000",
-			Middleware: &registry.MiddlewareConfig{
-				BasicAuth: "user:pass",
-			},
-		},
-		{
 			Name: "mystery",
 			Type: "udp",
-		},
-		{
-			Name:   "domain",
-			Type:   registry.TypeProxy,
-			Target: "http://localhost:3000",
-			Domain: "app.example.com",
 		},
 	}
 

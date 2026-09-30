@@ -105,8 +105,6 @@ type AddParams struct {
 	Public          bool
 	NoAutoProvision bool
 	NoDaemonInstall bool
-	Domain          string
-	AcmeEmail       string
 	ControlURL      string
 }
 
@@ -236,9 +234,6 @@ func buildService(p AddParams) (registry.Service, error) {
 	}
 	if err := registry.ValidateFunnelGuardrails(svcType, p.Funnel, allowedUsers, p.ControlURL, p.Public); err != nil {
 		return registry.Service{}, err
-	}
-	if p.Domain != "" || p.AcmeEmail != "" {
-		return registry.Service{}, registry.FeatureUnavailableError("custom-domain/ACME runtime is not wired; --domain and --acme-email are unavailable")
 	}
 	if err := registry.ValidateControlURL(p.ControlURL); err != nil {
 		return registry.Service{}, output.ErrUsage(err.Error())
@@ -558,8 +553,6 @@ Examples:
 			funnelTTL, _ := cmd.Flags().GetString("funnel-ttl")
 			public, _ := cmd.Flags().GetBool("public")
 			noAutoProvision, _ := cmd.Flags().GetBool("no-auto-provision")
-			domainName, _ := cmd.Flags().GetString("domain")
-			acmeEmail, _ := cmd.Flags().GetString("acme-email")
 			controlURL, _ := cmd.Flags().GetString("control-url")
 			wait, _ := cmd.Flags().GetDuration("wait")
 			dryRun, _ := cmd.Flags().GetBool("dry-run")
@@ -577,8 +570,6 @@ Examples:
 				FunnelTTLSet:    cmd.Flags().Changed("funnel-ttl"),
 				Public:          public,
 				NoAutoProvision: noAutoProvision,
-				Domain:          domainName,
-				AcmeEmail:       acmeEmail,
 				ControlURL:      controlURL,
 			}
 			svc, err := buildService(params)
@@ -721,9 +712,7 @@ Examples:
 	addCmd.Flags().String("funnel-ttl", "24h", "Public Funnel lifetime: 1h, 8h, 24h, 72h, 7d, or never")
 	addCmd.Flags().Bool("public", false, "Acknowledge public internet exposure for --funnel (only valid with --funnel)")
 	addCmd.Flags().Bool("no-auto-provision", false, "Disable automatic Funnel policy provisioning (only valid with --funnel)")
-	addCmd.Flags().String("domain", "", "[UNAVAILABLE] Reserved: custom-domain runtime TLS is unavailable; rejected with feature_unavailable")
 	addCmd.Flags().String("allow", "", "Comma-separated allowed identities (e.g., user@example.com,tag:admin)")
-	addCmd.Flags().String("acme-email", "", "[UNAVAILABLE] Reserved: ACME runtime TLS is unavailable; rejected with feature_unavailable")
 	addCmd.Flags().String("control-url", "", "Per-service custom control server URL (e.g., Headscale)")
 	addCmd.Flags().Duration("wait", defaultURLWait, "Wait for an exact runtime URL or enrollment URL (default 30s; 0 disables waiting)")
 	addCmd.Flags().Lookup("wait").NoOptDefVal = defaultURLWait.String()

@@ -266,7 +266,6 @@ func TestSameShareTargetRequiresMatchingExposurePosture(t *testing.T) {
 		{"funnel", func(svc *registry.Service) { svc.Funnel = true }},
 		{"public acknowledgement", func(svc *registry.Service) { svc.PublicAck = true }},
 		{"allow list", func(svc *registry.Service) { svc.AllowedUsers = []string{"nobody@example.com"} }},
-		{"custom domain", func(svc *registry.Service) { svc.Domain = "preview.example.com" }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

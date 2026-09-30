@@ -295,8 +295,6 @@ func ExitCode(err error) int {
 
 func exitCodeForStableError(stable string) int {
 	switch stable {
-	case registry.CodeFeatureUnavailable:
-		return ExitUsage
 	case registry.CodeInviteRoleInvalid,
 		registry.CodeInviteRecipientInvalid,
 		registry.CodeInviteIDInvalid,

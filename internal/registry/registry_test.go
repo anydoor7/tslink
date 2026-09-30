@@ -287,17 +287,25 @@ func TestLoadLegacyRegistryWithoutSchemaVersionThenSaveAddsCurrentVersion(t *tes
 	}
 }
 
-func TestLoadRejectsUnavailableFeatureFields(t *testing.T) {
+func TestLoadRejectsRemovedReservedFields(t *testing.T) {
 	cases := []struct {
 		name string
+		key  string
 		raw  string
 	}{
 		{
 			name: "custom domain",
+			key:  "domain",
 			raw:  `{"schema_version":1,"services":[{"name":"web","type":"proxy","target":"http://localhost:3000","domain":"app.example.com"}]}`,
 		},
 		{
+			name: "acme email",
+			key:  "acme_email",
+			raw:  `{"schema_version":1,"services":[{"name":"web","type":"proxy","target":"http://localhost:3000","acme_email":"admin@example.com"}]}`,
+		},
+		{
 			name: "middleware",
+			key:  "middleware",
 			raw:  `{"schema_version":1,"services":[{"name":"web","type":"proxy","target":"http://localhost:3000","middleware":{"basic_auth":"user:pass"}}]}`,
 		},
 	}
@@ -309,10 +317,13 @@ func TestLoadRejectsUnavailableFeatureFields(t *testing.T) {
 			}
 			_, err := Load(path)
 			if err == nil {
-				t.Fatal("Load() error = nil, want feature_unavailable")
+				t.Fatal("Load() error = nil, want the removed key refused")
 			}
-			if code, ok := ErrorCode(err); !ok || code != CodeFeatureUnavailable {
-				t.Fatalf("ErrorCode() = %q,%v; want %s,true; err=%v", code, ok, CodeFeatureUnavailable, err)
+			if code, ok := ErrorCode(err); !ok || code != CodeUnknownConfigKey {
+				t.Fatalf("ErrorCode() = %q,%v; want %s,true; err=%v", code, ok, CodeUnknownConfigKey, err)
+			}
+			if !strings.Contains(err.Error(), fmt.Sprintf("%q", tc.key)) {
+				t.Fatalf("Load() error = %v, want it to name %q", err, tc.key)
 			}
 			if strings.Contains(err.Error(), "user:pass") {
 				t.Fatalf("Load() error leaked middleware secret: %v", err)

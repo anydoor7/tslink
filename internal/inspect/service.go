@@ -23,7 +23,6 @@ const (
 	ExposureTailnet      = "tailnet"
 	ExposureTailnetAllow = "tailnet_allow"
 	ExposurePublicFunnel = "public_funnel"
-	ExposureCustomDomain = "custom_domain"
 	ExposureUnknown      = "unknown"
 )
 
@@ -53,13 +52,6 @@ type BackendView struct {
 	Display string `json:"display,omitempty"`
 }
 
-type MiddlewareView struct {
-	HTTPAuth         bool    `json:"http_auth,omitempty"`
-	RateLimit        float64 `json:"rate_limit,omitempty"`
-	IPAllowListCount int     `json:"ip_allow_list_count,omitempty"`
-	CORSOriginsCount int     `json:"cors_origins_count,omitempty"`
-}
-
 type WarningView struct {
 	Code     string `json:"code"`
 	Severity string `json:"severity"`
@@ -68,17 +60,16 @@ type WarningView struct {
 }
 
 type ServiceView struct {
-	SchemaVersion string          `json:"schema_version"`
-	Name          string          `json:"name"`
-	Type          string          `json:"type"`
-	Endpoint      EndpointView    `json:"endpoint"`
-	Exposure      ExposureView    `json:"exposure"`
-	Tags          SummaryView     `json:"tags"`
-	Allow         SummaryView     `json:"allow"`
-	Backend       BackendView     `json:"backend"`
-	Funnel        bool            `json:"funnel,omitempty"`
-	Middleware    *MiddlewareView `json:"middleware,omitempty"`
-	Warnings      []WarningView   `json:"warnings,omitempty"`
+	SchemaVersion string        `json:"schema_version"`
+	Name          string        `json:"name"`
+	Type          string        `json:"type"`
+	Endpoint      EndpointView  `json:"endpoint"`
+	Exposure      ExposureView  `json:"exposure"`
+	Tags          SummaryView   `json:"tags"`
+	Allow         SummaryView   `json:"allow"`
+	Backend       BackendView   `json:"backend"`
+	Funnel        bool          `json:"funnel,omitempty"`
+	Warnings      []WarningView `json:"warnings,omitempty"`
 }
 
 func ServiceViews(services []registry.Service) []ServiceView {
@@ -100,9 +91,8 @@ func ServiceViewFor(svc registry.Service) ServiceView {
 		Allow:         allowSummary(svc),
 		Backend:       backendFor(svc),
 		Funnel:        svc.Funnel,
-		Middleware:    middlewareFor(svc.Middleware),
 	}
-	view.Warnings = warningsFor(svc, view.Middleware)
+	view.Warnings = warningsFor(svc)
 	return view
 }
 
@@ -206,23 +196,7 @@ func backendFor(svc registry.Service) BackendView {
 	}
 }
 
-func middlewareFor(mw *registry.MiddlewareConfig) *MiddlewareView {
-	if mw == nil {
-		return nil
-	}
-	view := &MiddlewareView{
-		HTTPAuth:         mw.BasicAuth != "",
-		RateLimit:        mw.RateLimit,
-		IPAllowListCount: len(mw.IPAllowList),
-		CORSOriginsCount: len(mw.CORSOrigins),
-	}
-	if !view.HTTPAuth && view.RateLimit == 0 && view.IPAllowListCount == 0 && view.CORSOriginsCount == 0 {
-		return nil
-	}
-	return view
-}
-
-func warningsFor(svc registry.Service, mw *MiddlewareView) []WarningView {
+func warningsFor(svc registry.Service) []WarningView {
 	var warnings []WarningView
 	if svc.Type == registry.TypeTCP {
 		if len(svc.AllowedUsers) > 0 {
@@ -246,18 +220,6 @@ func warningsFor(svc registry.Service, mw *MiddlewareView) []WarningView {
 		warnings = append(warnings, warningView(
 			WarningCodeFunnelExpiryRequired,
 			"Funnel is requested but funnel_expires_at is missing; set an RFC 3339 deadline or \"never\" in registry.json. Until then the daemon does not start this service.",
-		))
-	}
-	if svc.Domain != "" || svc.AcmeEmail != "" {
-		warnings = append(warnings, warningView(
-			WarningCodeCustomDomainNotWired,
-			"Custom-domain/ACME fields are configured but unavailable; serve rejects them and no custom-domain endpoint is exposed.",
-		))
-	}
-	if mw != nil {
-		warnings = append(warnings, warningView(
-			WarningCodeMiddlewareNotEnforced,
-			"Middleware is configured but NOT enforced; Basic Auth, rate limiting, IP allow list, and CORS are roadmap/experimental because the middleware pipeline is not wired into serve.",
 		))
 	}
 	return warnings

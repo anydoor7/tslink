@@ -36,10 +36,6 @@
       "schema_version",
       "services[].name",
       "services[].type"
-    ],
-    "unavailable_features": [
-      "custom-domain/ACME fields are reserved and rejected with feature_unavailable",
-      "middleware schema is reserved and rejected with feature_unavailable"
     ]
   },
   "credential_sources": {
@@ -434,15 +430,6 @@
       "short": "Register a local service or file directory",
       "flags": [
         {
-          "name": "acme-email",
-          "type": "string",
-          "scope": "local",
-          "usage": "[UNAVAILABLE] Reserved: ACME runtime TLS is unavailable; rejected with feature_unavailable",
-          "conflicts": [
-            "feature_unavailable"
-          ]
-        },
-        {
           "name": "allow",
           "type": "string",
           "scope": "local",
@@ -467,15 +454,6 @@
             "--proxy",
             "--dir",
             "--tcp"
-          ]
-        },
-        {
-          "name": "domain",
-          "type": "string",
-          "scope": "local",
-          "usage": "[UNAVAILABLE] Reserved: custom-domain runtime TLS is unavailable; rejected with feature_unavailable",
-          "conflicts": [
-            "feature_unavailable"
           ]
         },
         {
@@ -2253,10 +2231,6 @@
     "conflict": {
       "exit_code": 4,
       "description": "requested state conflicts with existing state"
-    },
-    "feature_unavailable": {
-      "exit_code": 2,
-      "description": "reserved feature is not available"
     },
     "funnel_allow_conflict": {
       "exit_code": 4,

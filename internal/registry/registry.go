@@ -470,7 +470,8 @@ var (
 	marshalFn = json.MarshalIndent
 )
 
-// MiddlewareConfig defines optional middleware settings for a service.
+// MiddlewareConfig is the Go shape of a middleware feature that does not
+// exist. It is not part of registry.json (see Service.Middleware).
 type MiddlewareConfig struct {
 	RateLimit   float64  `json:"rate_limit,omitempty"`    // requests per second, 0 = disabled
 	BasicAuth   string   `json:"basic_auth,omitempty"`    // "user:pass" format
@@ -487,20 +488,26 @@ type Service struct {
 	// bare file name, never a path. Empty means the whole Path subtree is
 	// served, which is also what every registry written before this field
 	// existed means, so an older file keeps its directory behaviour.
-	File            string            `json:"file,omitempty"`
-	Port            int               `json:"port,omitempty"`
-	Ephemeral       bool              `json:"ephemeral,omitempty"`
-	Tags            []string          `json:"tags,omitempty"`
-	AllowedUsers    []string          `json:"allowed_users,omitempty"`
-	ControlURL      string            `json:"control_url,omitempty"`
-	Funnel          bool              `json:"funnel,omitempty"`
-	FunnelExpiresAt *time.Time        `json:"funnel_expires_at,omitempty"`
-	PublicAck       bool              `json:"public_ack,omitempty"`
-	NoAutoProvision bool              `json:"no_auto_provision,omitempty"`
-	Domain          string            `json:"domain,omitempty"`
-	AcmeEmail       string            `json:"acme_email,omitempty"`
-	Middleware      *MiddlewareConfig `json:"middleware,omitempty"`
-	CreatedAt       time.Time         `json:"created_at"`
+	File            string     `json:"file,omitempty"`
+	Port            int        `json:"port,omitempty"`
+	Ephemeral       bool       `json:"ephemeral,omitempty"`
+	Tags            []string   `json:"tags,omitempty"`
+	AllowedUsers    []string   `json:"allowed_users,omitempty"`
+	ControlURL      string     `json:"control_url,omitempty"`
+	Funnel          bool       `json:"funnel,omitempty"`
+	FunnelExpiresAt *time.Time `json:"funnel_expires_at,omitempty"`
+	PublicAck       bool       `json:"public_ack,omitempty"`
+	NoAutoProvision bool       `json:"no_auto_provision,omitempty"`
+	// Domain, AcmeEmail and Middleware are not registry.json fields: the
+	// reserved custom-domain, ACME and middleware keys were removed before
+	// the first public release, and strict decoding refuses them as unknown
+	// keys. They are always empty in a decoded registry and are kept only
+	// because code outside the registry still reads them;
+	// ValidateUnavailableFeatures keeps refusing a Go caller that sets them.
+	Domain     string            `json:"-"`
+	AcmeEmail  string            `json:"-"`
+	Middleware *MiddlewareConfig `json:"-"`
+	CreatedAt  time.Time         `json:"created_at"`
 
 	// funnelExpiryUndecided is set only by UnmarshalJSON, for a Funnel entry
 	// whose stored funnel_expires_at is absent or null. In memory a nil
@@ -1141,8 +1148,11 @@ func configDecodeError(scope string, err error) error {
 	}
 	key := matches[1]
 	message := fmt.Sprintf("unknown registry.json key %q in %s", key, scope)
-	if key == "allow" {
+	switch key {
+	case "allow":
 		message += "; registry.json uses allowed_users; allow is API-only"
+	case "domain", "acme_email", "middleware":
+		message += "; custom domains, ACME and middleware are not implemented, so the key was removed; delete it"
 	}
 	return CodedError{Code: CodeUnknownConfigKey, Message: message, Next: []string{"tslink registry check --json"}, MessageOnly: true}
 }
@@ -1176,8 +1186,7 @@ func LoadWithFileState(path string) (*Registry, RegistryFileState, error) {
 	}
 	var blocking []error
 	for _, issue := range issues {
-		code, _ := ErrorCode(issue.Err)
-		if code == CodeUnknownConfigKey || code == CodeFeatureUnavailable {
+		if code, _ := ErrorCode(issue.Err); code == CodeUnknownConfigKey {
 			blocking = append(blocking, issue)
 		}
 	}

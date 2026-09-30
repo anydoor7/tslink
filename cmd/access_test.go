@@ -353,40 +353,6 @@ func TestAccessExplainFunnelMarksPublicAndPolicyUnknown(t *testing.T) {
 	}
 }
 
-func TestAccessExplainCustomDomainIncludesDNSAndCertificateCaveat(t *testing.T) {
-	raw, _, err := runAccessExplainWithRawServices(t, "site", true, registry.Service{
-		Name:   "site",
-		Type:   registry.TypeProxy,
-		Target: "http://localhost:3000",
-		Domain: "site.example.com",
-	})
-	if err == nil {
-		t.Fatal("runAccessExplain JSON error = nil, want feature_unavailable")
-	}
-	if !strings.Contains(err.Error(), registry.CodeFeatureUnavailable) {
-		t.Fatalf("runAccessExplain JSON error = %v, want feature_unavailable", err)
-	}
-	if strings.Contains(raw, "site.example.com") {
-		t.Fatalf("custom-domain failure wrote endpoint/domain output: %s", raw)
-	}
-
-	raw, _, err = runAccessExplainWithRawServices(t, "site", false, registry.Service{
-		Name:   "site",
-		Type:   registry.TypeProxy,
-		Target: "http://localhost:3000",
-		Domain: "site.example.com",
-	})
-	if err == nil {
-		t.Fatal("runAccessExplain human error = nil, want feature_unavailable")
-	}
-	if !strings.Contains(err.Error(), registry.CodeFeatureUnavailable) {
-		t.Fatalf("runAccessExplain human error = %v, want feature_unavailable", err)
-	}
-	if strings.Contains(raw, "site.example.com") {
-		t.Fatalf("custom-domain failure wrote endpoint/domain output: %s", raw)
-	}
-}
-
 func TestAccessExplainTCPFunnelIncludesRawTCPCaveat(t *testing.T) {
 	raw, result, err := runAccessExplainWithRawServices(t, "db", true, registry.Service{
 		Name:   "db",

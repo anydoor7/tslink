@@ -5,10 +5,7 @@ import "github.com/monody0007/tslink/internal/registry"
 const (
 	WarningCodeTCPHTTPACLNotApplicable   = "tcp_http_acl_not_applicable"
 	WarningCodeTCPAllowedUsersInvalid    = "tcp_allowed_users_invalid"
-	WarningCodeHTTPAuthConfigured        = "http_auth_configured"
-	WarningCodeMiddlewareNotEnforced     = "middleware_not_enforced"
 	WarningCodeServiceTypeUnknown        = "service_type_unknown"
-	WarningCodeCustomDomainNotWired      = "custom_domain_not_wired"
 	WarningCodeRuntimeSnapshotMissing    = "runtime_snapshot_missing"
 	WarningCodeRuntimeSnapshotStale      = "runtime_snapshot_stale"
 	WarningCodeRuntimeSnapshotUnreadable = "runtime_snapshot_unreadable"
@@ -92,25 +89,10 @@ var WarningCodeRegistry = map[string]WarningCodeMeta{
 		Source:      "service.allowed_users",
 		Description: "Raw TCP services cannot enforce allowed_users; remove the allow list or convert the service to HTTP.",
 	},
-	WarningCodeHTTPAuthConfigured: {
-		Severity:    "info",
-		Source:      "service.middleware",
-		Description: "HTTP authentication is configured and credential values are redacted from public service views.",
-	},
-	WarningCodeMiddlewareNotEnforced: {
-		Severity:    "warning",
-		Source:      "service.middleware",
-		Description: "Middleware configuration is present but the serve runtime does not enforce it yet.",
-	},
 	WarningCodeServiceTypeUnknown: {
 		Severity:    "warning",
 		Source:      "service.type",
 		Description: "The registry contains a service type unknown to this TSLink version.",
-	},
-	WarningCodeCustomDomainNotWired: {
-		Severity:    "error",
-		Source:      "service.domain",
-		Description: "Custom-domain/ACME fields are present but the serve runtime does not wire them.",
 	},
 	WarningCodeRuntimeSnapshotMissing: {
 		Severity:    "warning",

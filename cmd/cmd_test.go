@@ -464,24 +464,6 @@ func TestAddCmd_FunnelWithoutProxy(t *testing.T) {
 	}
 }
 
-func TestAddCmd_DomainWithoutProxy(t *testing.T) {
-	dir := t.TempDir()
-	testenv.SetHome(t, dir)
-
-	os.MkdirAll(filepath.Join(dir, ".config", "tslink"), 0o700)
-
-	shareDir := filepath.Join(dir, "share")
-	os.MkdirAll(shareDir, 0o700)
-
-	err := runAddCmd(t, []string{"domapp"}, map[string]string{"dir": shareDir, "domain": "app.example.com"})
-	if err == nil {
-		t.Fatal("expected error when using --domain with --dir")
-	}
-	if !strings.Contains(err.Error(), "custom-domain/ACME runtime is not wired") {
-		t.Errorf("unexpected error: %v", err)
-	}
-}
-
 // --- list command tests ---
 
 func TestListCmd_Empty(t *testing.T) {
@@ -1114,73 +1096,6 @@ func TestBuildService_FunnelWithoutProxy(t *testing.T) {
 	}
 }
 
-func TestBuildService_DomainWithoutProxy(t *testing.T) {
-	_, err := buildService(AddParams{Name: "bad", Dir: "/tmp", Domain: "x.com"})
-	if err == nil {
-		t.Fatal("expected error")
-	}
-}
-
-func TestBuildService_AcmeEmailWithoutDomain(t *testing.T) {
-	_, err := buildService(AddParams{Name: "bad", Proxy: "localhost:3000", AcmeEmail: "user@example.com"})
-	if err == nil {
-		t.Fatal("expected error")
-	}
-	if !strings.Contains(err.Error(), "custom-domain/ACME runtime is not wired") {
-		t.Errorf("unexpected error: %v", err)
-	}
-}
-
-func TestBuildService_AcmeEmailWithDomain(t *testing.T) {
-	_, err := buildService(AddParams{
-		Name: "acme-app", Proxy: "localhost:3000",
-		Domain: "app.example.com", AcmeEmail: "admin@example.com",
-	})
-	if err == nil {
-		t.Fatal("expected custom-domain/ACME unavailable error")
-	}
-	if !strings.Contains(err.Error(), "custom-domain/ACME runtime is not wired") {
-		t.Errorf("unexpected error: %v", err)
-	}
-}
-
-func TestAddCmd_AcmeEmailWithoutDomain(t *testing.T) {
-	dir := t.TempDir()
-	testenv.SetHome(t, dir)
-
-	os.MkdirAll(filepath.Join(dir, ".config", "tslink"), 0o700)
-
-	err := runAddCmd(t, []string{"acmeapp"}, map[string]string{
-		"proxy":      "localhost:3000",
-		"acme-email": "user@example.com",
-	})
-	if err == nil {
-		t.Fatal("expected error when --acme-email used without --domain")
-	}
-	if !strings.Contains(err.Error(), "custom-domain/ACME runtime is not wired") {
-		t.Errorf("unexpected error: %v", err)
-	}
-}
-
-func TestAddCmd_AcmeEmailWithDomain(t *testing.T) {
-	dir := t.TempDir()
-	testenv.SetHome(t, dir)
-
-	os.MkdirAll(filepath.Join(dir, ".config", "tslink"), 0o700)
-
-	_, err := runAddCmdOutput(t, []string{"acmeapp"}, map[string]string{
-		"proxy":      "localhost:3000",
-		"domain":     "app.example.com",
-		"acme-email": "admin@example.com",
-	})
-	if err == nil {
-		t.Fatal("expected custom-domain/ACME unavailable error")
-	}
-	if !strings.Contains(err.Error(), "custom-domain/ACME runtime is not wired") {
-		t.Errorf("unexpected error: %v", err)
-	}
-}
-
 func TestBuildService_InvalidName(t *testing.T) {
 	_, err := buildService(AddParams{Name: "My App!", Proxy: "localhost:3000"})
 	if err == nil {
@@ -1634,20 +1549,6 @@ func TestExecute(t *testing.T) {
 	os.Args = []string{"tslink", "--help"}
 	if err := Execute(); err != nil {
 		t.Fatalf("Execute() error = %v", err)
-	}
-}
-
-func TestBuildService_InvalidDomain(t *testing.T) {
-	_, err := buildService(AddParams{
-		Name:   "web",
-		Proxy:  "localhost:3000",
-		Domain: "not a valid domain",
-	})
-	if err == nil {
-		t.Fatal("buildService() error = nil, want domain validation error")
-	}
-	if !strings.Contains(err.Error(), "domain") {
-		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

@@ -57,10 +57,9 @@ type ToolchainInfo struct {
 }
 
 type RegistrySchemaInfo struct {
-	Version             int      `json:"version"`
-	ServiceTypes        []string `json:"service_types"`
-	RequiredFields      []string `json:"required_fields"`
-	UnavailableFeatures []string `json:"unavailable_features"`
+	Version        int      `json:"version"`
+	ServiceTypes   []string `json:"service_types"`
+	RequiredFields []string `json:"required_fields"`
 }
 
 type CredentialSources struct {
@@ -191,10 +190,6 @@ func Manifest() CLIManifest {
 			Version:        registry.CurrentRegistrySchemaVersion,
 			ServiceTypes:   serviceTypeValues(),
 			RequiredFields: []string{"schema_version", "services[].name", "services[].type"},
-			UnavailableFeatures: []string{
-				"custom-domain/ACME fields are reserved and rejected with feature_unavailable",
-				"middleware schema is reserved and rejected with feature_unavailable",
-			},
 		},
 		CredentialSources: CredentialSources{
 			Recommended: []CredentialSource{
@@ -865,8 +860,6 @@ func flagRelationships(commandPath, name string) (oneOf, requires, conflicts []s
 			requires = []string{"--funnel"}
 		case "allow":
 			conflicts = []string{"--tcp", "--funnel"}
-		case "domain", "acme-email":
-			conflicts = []string{"feature_unavailable"}
 		}
 	}
 	if commandPath == "tslink url" && name == "raw" {
@@ -922,7 +915,6 @@ func errorCodeManifest() map[string]ErrorCodeInfo {
 		registry.CodeConfigLoadFailed:           {ExitCode: output.ExitUsage, Description: "config.json exists but cannot be read strictly (malformed JSON or an unknown key); commands that would persist its settings refuse to guess"},
 		registry.CodeURLNotReady:                {ExitCode: output.ExitNotFound, Description: "runtime has not reported an exact tailnet hostname"},
 		registry.CodeLaunchctlDomainUnavailable: {ExitCode: output.ExitError, Description: "a launchd domain could not be checked; failure data names the domain, explicit --force command, and residual risk"},
-		registry.CodeFeatureUnavailable:         {ExitCode: output.ExitUsage, Description: "reserved feature is not available"},
 		registry.CodeFunnelPublicAckRequired:    {ExitCode: output.ExitUsage, Description: "public Funnel acknowledgement is required"},
 		registry.CodeFunnelExpiryRequired:       {ExitCode: output.ExitUsage, Description: "a Funnel entry records neither a funnel_expires_at deadline nor \"never\"; it is not made public until one is set"},
 		registry.CodeFunnelAllowConflict:        {ExitCode: output.ExitConflict, Description: "Funnel conflicts with an allow list"},
@@ -980,17 +972,7 @@ func CompactManifest() CompactCLIManifest {
 		path := strings.TrimPrefix(command.Path, "tslink ")
 		flags := make([]string, 0, len(command.Flags))
 		for _, flag := range command.Flags {
-			unavailable := false
-			for _, conflict := range flag.Conflicts {
-				if conflict == "feature_unavailable" {
-					unavailable = true
-					break
-				}
-			}
-			// The compact surface is executable guidance. Reserved flags that
-			// deterministically return feature_unavailable remain in the full
-			// manifest but do not consume the agent token budget here.
-			if flag.Scope != "inherited" && flag.Name != "json" && !unavailable {
+			if flag.Scope != "inherited" && flag.Name != "json" {
 				flags = append(flags, flag.Name)
 			}
 		}

@@ -299,8 +299,7 @@ func sameShareTarget(existing, candidate registry.Service) bool {
 		existing.Funnel == candidate.Funnel &&
 		existing.PublicAck == candidate.PublicAck &&
 		slices.Equal(existing.AllowedUsers, candidate.AllowedUsers) &&
-		sameShareTags(existing.Tags, candidate.Tags) &&
-		existing.Domain == candidate.Domain
+		sameShareTags(existing.Tags, candidate.Tags)
 }
 
 func sameShareTags(a, b []string) bool {
@@ -343,8 +342,8 @@ func shareFunnelDeadlineDescription(deadline *time.Time) string {
 }
 
 func shareExposurePosture(svc registry.Service) string {
-	return fmt.Sprintf("funnel=%t, funnel_deadline=%s, public_ack=%t, allowed_users=%d, tags=%v, domain=%q",
-		svc.Funnel, shareFunnelDeadlineDescription(svc.FunnelExpiresAt), svc.PublicAck, len(svc.AllowedUsers), svc.Tags, svc.Domain)
+	return fmt.Sprintf("funnel=%t, funnel_deadline=%s, public_ack=%t, allowed_users=%d, tags=%v",
+		svc.Funnel, shareFunnelDeadlineDescription(svc.FunnelExpiresAt), svc.PublicAck, len(svc.AllowedUsers), svc.Tags)
 }
 
 // shareRequestedExposure undoes the daemon's Funnel expiry for the reuse

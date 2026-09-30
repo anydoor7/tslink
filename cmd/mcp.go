@@ -146,7 +146,6 @@ var (
 		"allow":          mcpSummaryViewSchema,
 		"backend":        mcpBackendViewSchema,
 		"funnel":         map[string]any{"type": "boolean"},
-		"middleware":     nestedObjectSchema("Reserved middleware view; the middleware runtime is unavailable and rejected at admission."),
 		"warnings":       mcpWarningArraySchema,
 	}, "schema_version", "name", "type", "endpoint", "exposure", "tags", "allow", "backend")
 	mcpRemoteSideEffectPlanSchema = objectSchema(map[string]any{

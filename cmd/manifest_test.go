@@ -379,13 +379,8 @@ func TestManifestCarriesMachineConsumerFacts(t *testing.T) {
 	if m.Toolchain.HomebrewArtifact != "cask" {
 		t.Fatalf("HomebrewArtifact = %q, want cask", m.Toolchain.HomebrewArtifact)
 	}
-	if len(m.RegistrySchema.ServiceTypes) == 0 || len(m.RegistrySchema.UnavailableFeatures) == 0 {
+	if len(m.RegistrySchema.ServiceTypes) == 0 {
 		t.Fatalf("registry schema is incomplete: %#v", m.RegistrySchema)
-	}
-	for _, feature := range m.RegistrySchema.UnavailableFeatures {
-		if !contains(feature, "feature_unavailable") {
-			t.Fatalf("unavailable feature %q does not name feature_unavailable", feature)
-		}
 	}
 	if m.Release.PublicReleaseAvailable || m.Release.PrebuiltAvailable || m.Release.HomebrewTapAvailable {
 		t.Fatalf("release availability must stay false before first public readback: %#v", m.Release)
@@ -598,7 +593,6 @@ func TestManifestErrorExitTaxonomyMatchesRuntime(t *testing.T) {
 		registry.CodeConfigLoadFailed:           &config.ConfigLoadError{Path: "/home/u/.config/tslink/config.json", Problem: `unknown key "default_tags"`},
 		registry.CodeURLNotReady:                registry.URLNotReadyError("pending"),
 		registry.CodeLaunchctlDomainUnavailable: registry.CodedError{Code: registry.CodeLaunchctlDomainUnavailable, Message: "unavailable"},
-		registry.CodeFeatureUnavailable:         registry.FeatureUnavailableError("unavailable"),
 		registry.CodeFunnelPublicAckRequired:    registry.FunnelPublicAckError(),
 		registry.CodeFunnelExpiryRequired:       registry.FunnelExpiryRequiredError("svc"),
 		registry.CodeFunnelAllowConflict:        registry.FunnelAllowedUsersError(),
@@ -939,12 +933,6 @@ func TestManifestFlagsAreSelfDescribingAndRelationshipsAreExplicit(t *testing.T)
 	noAutoProvision := flag("tslink add", "no-auto-provision")
 	if !containsString(noAutoProvision.Requires, "--funnel") {
 		t.Fatalf("add --no-auto-provision relationships = %+v", noAutoProvision)
-	}
-	for _, name := range []string{"domain", "acme-email"} {
-		reserved := flag("tslink add", name)
-		if !strings.HasPrefix(reserved.Usage, "[UNAVAILABLE]") {
-			t.Fatalf("add --%s usage = %q, want [UNAVAILABLE] prefix", name, reserved.Usage)
-		}
 	}
 	showURLs := flag("tslink invite list", "show-urls")
 	if showURLs.Default != "false" || !strings.Contains(showURLs.Usage, "bearer invite URLs") {
