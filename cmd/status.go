@@ -167,10 +167,11 @@ type StatusServiceView struct {
 
 func getStatus(pidPath, regPath string) (StatusResult, error) {
 	r := baseStatus(pidPath)
-	reg, err := registry.Load(regPath)
+	reg, issues, err := registry.LoadForDiagnostics(regPath)
 	if err != nil {
 		return StatusResult{}, err
 	}
+	issueErrors := diagnosticServiceErrors(issues)
 	r.ServiceCount = len(reg.Services)
 	r.Services = make([]StatusServiceState, 0, len(reg.Services))
 	ownershipProofs, ownershipProofAvailable := ownershipProofsForRegistry(regPath)
@@ -181,15 +182,31 @@ func getStatus(pidPath, regPath string) (StatusResult, error) {
 		r.Services = append(r.Services, StatusServiceState{
 			Name:            svc.Name,
 			Status:          "down",
+			Error:           issueErrors[svc.Name],
 			OwnershipProof:  ownershipProofs[svc.Name],
 			FunnelRequested: effective.Funnel,
 			FunnelState:     configuredFunnelState(effective.Funnel),
 			FunnelExpiresAt: cloneTimePointer(svc.FunnelExpiresAt),
 			FunnelRemaining: registry.FunnelRemainingAt(svc, now),
 		})
+		if issueErrors[svc.Name] != nil {
+			r.Services[len(r.Services)-1].Status = tsruntime.ServiceRuntimeFailed
+		}
 	}
 	setStatusContinuation(&r)
 	return r, nil
+}
+
+func diagnosticServiceErrors(issues []registry.ServiceIssue) map[string]*tsruntime.ServiceError {
+	result := make(map[string]*tsruntime.ServiceError, len(issues))
+	for _, issue := range issues {
+		code, ok := registry.ErrorCode(issue.Err)
+		if !ok {
+			code = registry.CodeInvalidServiceConfig
+		}
+		result[issue.Name] = &tsruntime.ServiceError{Code: code, Message: issue.Error(), Next: []string{"tslink registry check --json"}}
+	}
+	return result
 }
 
 func ownershipProofsForRegistry(_ string) (map[string]bool, bool) {
@@ -365,7 +382,7 @@ func getPollableStatus(pidPath, regPath, snapshotPath, authHandoffPath string) (
 		}
 		return StatusResult{}, err
 	}
-	if _, err := registry.Load(regPath); err != nil {
+	if _, _, err := registry.LoadForDiagnostics(regPath); err != nil {
 		return StatusResult{}, err
 	}
 	fingerprint := currentRegistryFingerprint(regPath)
@@ -390,6 +407,9 @@ func getPollableStatus(pidPath, regPath, snapshotPath, authHandoffPath string) (
 			snapshotServices[svc.Name] = svc
 		}
 		for i := range r.Services {
+			if r.Services[i].Error != nil {
+				continue
+			}
 			if runtimeService, ok := snapshotServices[r.Services[i].Name]; ok {
 				if runtimeService.FunnelState != "" {
 					r.Services[i].FunnelRequested = runtimeService.FunnelRequested
@@ -442,7 +462,7 @@ func getPollableStatus(pidPath, regPath, snapshotPath, authHandoffPath string) (
 			expiresAt := handoff.ExpiresAt.UTC()
 			r.ExpiresAt = &expiresAt
 			for i := range r.Services {
-				if r.Services[i].Name == handoff.Service {
+				if r.Services[i].Name == handoff.Service && r.Services[i].Error == nil {
 					r.Services[i].Status = authStatusNeedsLogin
 				}
 			}
@@ -548,10 +568,11 @@ func getStatusURLsWithAuth(pidPath, regPath, snapshotPath, authHandoffPath strin
 	if err != nil {
 		return StatusURLsResult{}, err
 	}
-	reg, err := registry.Load(regPath)
+	reg, issues, err := registry.LoadForDiagnostics(regPath)
 	if err != nil {
 		return StatusURLsResult{}, err
 	}
+	issueErrors := diagnosticServiceErrors(issues)
 	fingerprint := currentRegistryFingerprint(regPath)
 
 	snapshot, loadErr := runtimeLoadSnapshotFn(snapshotPath)
@@ -703,6 +724,12 @@ func getStatusURLsWithAuth(pidPath, regPath, snapshotPath, authHandoffPath strin
 			if service.Endpoint.Kind == inspect.EndpointKindPublicHTTPS {
 				service.Endpoint.Kind = inspect.EndpointKindHTTPS
 			}
+		}
+		if issueErr := issueErrors[svc.Name]; issueErr != nil {
+			service.RuntimeState = tsruntime.ServiceRuntimeFailed
+			service.Error = issueErr
+			service.Endpoint.State = statusEndpointStateMissing
+			service.FunnelActive = false
 		}
 		if service.Endpoint.State != inspect.EndpointStateExact {
 			// Expected endpoint templates are internal planning data. Never expose a

@@ -1192,6 +1192,43 @@ func Load(path string) (*Registry, error) {
 	return reg, err
 }
 
+// LoadForDiagnostics retains trustworthy names and recognized fields from
+// isolated entries alongside healthy services. Callers must display issues;
+// this view must never be used to rewrite the registry. Mutation loaders stay
+// strict so unknown input is never silently discarded.
+func LoadForDiagnostics(path string) (*Registry, []ServiceIssue, error) {
+	reg, issues, err := LoadForRuntime(path)
+	if err != nil || len(issues) == 0 {
+		return reg, issues, err
+	}
+	if len(reg.Services) == 0 {
+		var blocking []error
+		for _, issue := range issues {
+			if code, _ := ErrorCode(issue.Err); code == CodeUnknownConfigKey {
+				blocking = append(blocking, issue)
+			}
+		}
+		if len(blocking) > 0 {
+			// Preserve the strict refusal when there are no healthy entries
+			// to display. The error still names each unknown-key entry.
+			return nil, issues, errors.Join(blocking...)
+		}
+	}
+	services := make([]Service, len(reg.Services)+len(issues))
+	validIndex, issueIndex := 0, 0
+	for index := range services {
+		if issueIndex < len(issues) && issues[issueIndex].Index == index {
+			services[index] = issues[issueIndex].Service
+			issueIndex++
+		} else {
+			services[index] = reg.Services[validIndex]
+			validIndex++
+		}
+	}
+	reg.Services = services
+	return reg, issues, nil
+}
+
 // LoadWithFileState preserves Load's compatibility behavior while exposing
 // whether its empty registry came from an absent file, blank contents, or a
 // successfully decoded registry. Deletion callers use this distinction to
