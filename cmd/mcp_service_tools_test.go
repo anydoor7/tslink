@@ -1418,9 +1418,15 @@ func TestMCPNewToolsRejectMalformedArguments(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			frames := decodeMCPResponses(t, runMCPSession(t, initializedMCPInput(tc.call), fakeMCPActions()))
 			last := frames[len(frames)-1]
-			errorObject, ok := last["error"].(map[string]any)
-			if !ok || errorObject["code"] != float64(-32602) {
-				t.Fatalf("response = %+v, want an invalid-params protocol error", last)
+			// An input validation error is a tool execution error the model
+			// can correct (A3-1), not a protocol error.
+			result, _ := last["result"].(map[string]any)
+			if last["error"] != nil || result["isError"] != true || result["structuredContent"] != nil {
+				t.Fatalf("response = %+v, want an error result without structuredContent", last)
+			}
+			errorObject := decodeMCPFailureText(t, result["content"].([]any)[0].(map[string]any)["text"].(string))
+			if errorObject["code"] != "usage_error" || !strings.Contains(errorObject["message"].(string), "arguments") {
+				t.Fatalf("argument error = %+v, want usage_error naming the arguments", errorObject)
 			}
 		})
 	}
@@ -1450,8 +1456,10 @@ func TestMCPToolExecutionErrorsSurviveAsToolResults(t *testing.T) {
 			if result["isError"] != true {
 				t.Fatalf("result = %+v, want isError", result)
 			}
-			structured := result["structuredContent"].(map[string]any)
-			errorObject := structured["error"].(map[string]any)
+			if result["structuredContent"] != nil {
+				t.Fatalf("error result carries structuredContent: %+v", result)
+			}
+			errorObject := decodeMCPFailureText(t, result["content"].([]any)[0].(map[string]any)["text"].(string))
 			if errorObject["code"] != tc.wantCode {
 				t.Fatalf("error code = %v, want %q", errorObject["code"], tc.wantCode)
 			}

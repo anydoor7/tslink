@@ -1352,13 +1352,33 @@ func mcpToolHandler(name string, actions mcpActions) mcp.ToolHandler {
 	}
 }
 
-// mcpInvalidArgumentsError reports a malformed tools/call as a JSON-RPC
-// protocol error rather than a tool result. The distinction is deliberate and
-// predates the SDK: a tool result with isError means "the tool ran and
-// refused", which a model should read and act on, while arguments that do not
-// satisfy the declared schema never reached the tool at all.
-func mcpInvalidArgumentsError(tool string) error {
-	return &jsonrpc.Error{Code: jsonrpc.CodeInvalidParams, Message: "Invalid " + tool + " arguments"}
+// mcpUnknownToolError reports a tools/call for a tool the server does not
+// declare, which the specification makes a protocol error.
+func mcpUnknownToolError(tool string) error {
+	return &jsonrpc.Error{Code: jsonrpc.CodeInvalidParams, Message: "Unknown tool " + tool}
+}
+
+// mcpRequiredArgument pairs a required argument's name with its decoded value.
+type mcpRequiredArgument struct {
+	name, value string
+}
+
+// mcpArgumentsRefusal returns the tool error for arguments that do not fit the
+// tool's input schema, or nil when they fit. The specification classes input
+// validation errors as tool execution errors a model can use to correct
+// itself, so this is a usage_error tool result whose message carries the
+// strict decoder's reason (the unknown field, the field with the wrong type)
+// or the missing field, not a protocol error that drops the reason.
+func mcpArgumentsRefusal(tool string, decodeErr error, required ...mcpRequiredArgument) *mcp.CallToolResult {
+	if decodeErr != nil {
+		return makeMCPToolErrorResult(output.ErrUsage(fmt.Sprintf("invalid %s arguments: %v", tool, decodeErr)))
+	}
+	for _, argument := range required {
+		if argument.value == "" {
+			return makeMCPToolErrorResult(output.ErrUsage(fmt.Sprintf("invalid %s arguments: %s is required", tool, argument.name)))
+		}
+	}
+	return nil
 }
 
 // callMCPTool decodes one tool's arguments and forwards to its action.
@@ -1383,8 +1403,9 @@ func callMCPTool(ctx context.Context, actions mcpActions, name string, arguments
 			PublicAck       bool     `json:"public_ack,omitempty"`
 			FunnelTTL       *string  `json:"funnel_ttl,omitempty"`
 		}
-		if decodeErr := decodeMCPArguments(arguments, &args); decodeErr != nil || args.Target == "" {
-			return nil, mcpInvalidArgumentsError("share")
+		decodeErr := decodeMCPArguments(arguments, &args)
+		if refusal := mcpArgumentsRefusal("share", decodeErr, mcpRequiredArgument{"target", args.Target}); refusal != nil {
+			return refusal, nil
 		}
 		req := shareRequest{
 			NoDaemonInstall: args.NoDaemonInstall,
@@ -1406,8 +1427,9 @@ func callMCPTool(ctx context.Context, actions mcpActions, name string, arguments
 		data, err = actions.share(ctx, req)
 	case "add":
 		var args mcpAddArguments
-		if decodeErr := decodeMCPArguments(arguments, &args); decodeErr != nil || args.Name == "" || args.Type == "" {
-			return nil, mcpInvalidArgumentsError("add")
+		decodeErr := decodeMCPArguments(arguments, &args)
+		if refusal := mcpArgumentsRefusal("add", decodeErr, mcpRequiredArgument{"name", args.Name}, mcpRequiredArgument{"type", args.Type}); refusal != nil {
+			return refusal, nil
 		}
 		params, preserveFunnelExpiry, paramsErr := addParamsFromMCPArguments(args)
 		if paramsErr != nil {
@@ -1417,22 +1439,25 @@ func callMCPTool(ctx context.Context, actions mcpActions, name string, arguments
 		}
 	case "list":
 		var args struct{}
-		if decodeErr := decodeMCPArguments(arguments, &args); decodeErr != nil {
-			return nil, mcpInvalidArgumentsError("list")
+		decodeErr := decodeMCPArguments(arguments, &args)
+		if refusal := mcpArgumentsRefusal("list", decodeErr); refusal != nil {
+			return refusal, nil
 		}
 		data, err = actions.list()
 	case "unshare":
 		var args struct {
 			Name string `json:"name"`
 		}
-		if decodeErr := decodeMCPArguments(arguments, &args); decodeErr != nil || args.Name == "" {
-			return nil, mcpInvalidArgumentsError("unshare")
+		decodeErr := decodeMCPArguments(arguments, &args)
+		if refusal := mcpArgumentsRefusal("unshare", decodeErr, mcpRequiredArgument{"name", args.Name}); refusal != nil {
+			return refusal, nil
 		}
 		data, err = actions.unshare(ctx, args.Name)
 	case "status":
 		var args struct{}
-		if decodeErr := decodeMCPArguments(arguments, &args); decodeErr != nil {
-			return nil, mcpInvalidArgumentsError("status")
+		decodeErr := decodeMCPArguments(arguments, &args)
+		if refusal := mcpArgumentsRefusal("status", decodeErr); refusal != nil {
+			return refusal, nil
 		}
 		data, err = actions.status()
 	case "url":
@@ -1440,8 +1465,9 @@ func callMCPTool(ctx context.Context, actions mcpActions, name string, arguments
 			Name string `json:"name"`
 			Wait string `json:"wait,omitempty"`
 		}
-		if decodeErr := decodeMCPArguments(arguments, &args); decodeErr != nil || args.Name == "" {
-			return nil, mcpInvalidArgumentsError("url")
+		decodeErr := decodeMCPArguments(arguments, &args)
+		if refusal := mcpArgumentsRefusal("url", decodeErr, mcpRequiredArgument{"name", args.Name}); refusal != nil {
+			return refusal, nil
 		}
 		wait, waitErr := parseMCPWait(args.Wait)
 		if waitErr != nil {
@@ -1451,8 +1477,9 @@ func callMCPTool(ctx context.Context, actions mcpActions, name string, arguments
 		}
 	case "tags_list":
 		var args struct{}
-		if decodeErr := decodeMCPArguments(arguments, &args); decodeErr != nil {
-			return nil, mcpInvalidArgumentsError("tags_list")
+		decodeErr := decodeMCPArguments(arguments, &args)
+		if refusal := mcpArgumentsRefusal("tags_list", decodeErr); refusal != nil {
+			return refusal, nil
 		}
 		data, err = actions.tagsList()
 	case "tags_set":
@@ -1460,30 +1487,34 @@ func callMCPTool(ctx context.Context, actions mcpActions, name string, arguments
 			Service string `json:"service"`
 			Tag     string `json:"tag"`
 		}
-		if decodeErr := decodeMCPArguments(arguments, &args); decodeErr != nil || args.Service == "" || args.Tag == "" {
-			return nil, mcpInvalidArgumentsError("tags_set")
+		decodeErr := decodeMCPArguments(arguments, &args)
+		if refusal := mcpArgumentsRefusal("tags_set", decodeErr, mcpRequiredArgument{"service", args.Service}, mcpRequiredArgument{"tag", args.Tag}); refusal != nil {
+			return refusal, nil
 		}
 		data, err = actions.tagsSet(args.Service, args.Tag)
 	case "access_explain":
 		var args struct {
 			Service string `json:"service"`
 		}
-		if decodeErr := decodeMCPArguments(arguments, &args); decodeErr != nil || args.Service == "" {
-			return nil, mcpInvalidArgumentsError("access_explain")
+		decodeErr := decodeMCPArguments(arguments, &args)
+		if refusal := mcpArgumentsRefusal("access_explain", decodeErr, mcpRequiredArgument{"service", args.Service}); refusal != nil {
+			return refusal, nil
 		}
 		data, err = actions.accessExplain(args.Service)
 	case "doctor":
 		var args struct {
 			ProbeExternal bool `json:"probe_external,omitempty"`
 		}
-		if decodeErr := decodeMCPArguments(arguments, &args); decodeErr != nil {
-			return nil, mcpInvalidArgumentsError("doctor")
+		decodeErr := decodeMCPArguments(arguments, &args)
+		if refusal := mcpArgumentsRefusal("doctor", decodeErr); refusal != nil {
+			return refusal, nil
 		}
 		data, err = actions.doctor(args.ProbeExternal)
 	case "logs":
 		var args mcpLogsArguments
-		if decodeErr := decodeMCPArguments(arguments, &args); decodeErr != nil {
-			return nil, mcpInvalidArgumentsError("logs")
+		decodeErr := decodeMCPArguments(arguments, &args)
+		if refusal := mcpArgumentsRefusal("logs", decodeErr); refusal != nil {
+			return refusal, nil
 		}
 		data, err = actions.logs(args)
 	case "invite_user":
@@ -1492,22 +1523,25 @@ func callMCPTool(ctx context.Context, actions mcpActions, name string, arguments
 			Role      string `json:"role,omitempty"`
 			PrintLink bool   `json:"print_link,omitempty"`
 		}
-		if decodeErr := decodeMCPArguments(arguments, &args); decodeErr != nil || args.Email == "" {
-			return nil, mcpInvalidArgumentsError("invite_user")
+		decodeErr := decodeMCPArguments(arguments, &args)
+		if refusal := mcpArgumentsRefusal("invite_user", decodeErr, mcpRequiredArgument{"email", args.Email}); refusal != nil {
+			return refusal, nil
 		}
 		data, err = actions.inviteUser(ctx, args.Email, args.Role, args.PrintLink)
 	case "invite_device":
 		var args mcpInviteDeviceArguments
-		if decodeErr := decodeMCPArguments(arguments, &args); decodeErr != nil || args.Service == "" || args.Email == "" {
-			return nil, mcpInvalidArgumentsError("invite_device")
+		decodeErr := decodeMCPArguments(arguments, &args)
+		if refusal := mcpArgumentsRefusal("invite_device", decodeErr, mcpRequiredArgument{"service", args.Service}, mcpRequiredArgument{"email", args.Email}); refusal != nil {
+			return refusal, nil
 		}
 		data, err = actions.inviteDevice(ctx, args)
 	case "invite_list":
 		var args struct {
 			ShowURLs bool `json:"show_urls,omitempty"`
 		}
-		if decodeErr := decodeMCPArguments(arguments, &args); decodeErr != nil {
-			return nil, mcpInvalidArgumentsError("invite_list")
+		decodeErr := decodeMCPArguments(arguments, &args)
+		if refusal := mcpArgumentsRefusal("invite_list", decodeErr); refusal != nil {
+			return refusal, nil
 		}
 		data, err = actions.inviteList(ctx, args.ShowURLs)
 	case "invite_revoke":
@@ -1515,8 +1549,9 @@ func callMCPTool(ctx context.Context, actions mcpActions, name string, arguments
 			Kind     string `json:"kind"`
 			InviteID string `json:"invite_id"`
 		}
-		if decodeErr := decodeMCPArguments(arguments, &args); decodeErr != nil || args.Kind == "" || args.InviteID == "" {
-			return nil, mcpInvalidArgumentsError("invite_revoke")
+		decodeErr := decodeMCPArguments(arguments, &args)
+		if refusal := mcpArgumentsRefusal("invite_revoke", decodeErr, mcpRequiredArgument{"kind", args.Kind}, mcpRequiredArgument{"invite_id", args.InviteID}); refusal != nil {
+			return refusal, nil
 		}
 		data, err = actions.inviteRevoke(ctx, args.Kind, args.InviteID)
 	case "invite_resend":
@@ -1524,22 +1559,25 @@ func callMCPTool(ctx context.Context, actions mcpActions, name string, arguments
 			Kind     string `json:"kind"`
 			InviteID string `json:"invite_id"`
 		}
-		if decodeErr := decodeMCPArguments(arguments, &args); decodeErr != nil || args.Kind == "" || args.InviteID == "" {
-			return nil, mcpInvalidArgumentsError("invite_resend")
+		decodeErr := decodeMCPArguments(arguments, &args)
+		if refusal := mcpArgumentsRefusal("invite_resend", decodeErr, mcpRequiredArgument{"kind", args.Kind}, mcpRequiredArgument{"invite_id", args.InviteID}); refusal != nil {
+			return refusal, nil
 		}
 		data, err = actions.inviteResend(ctx, args.Kind, args.InviteID)
 	case "template_list":
 		var args struct{}
-		if decodeErr := decodeMCPArguments(arguments, &args); decodeErr != nil {
-			return nil, mcpInvalidArgumentsError("template_list")
+		decodeErr := decodeMCPArguments(arguments, &args)
+		if refusal := mcpArgumentsRefusal("template_list", decodeErr); refusal != nil {
+			return refusal, nil
 		}
 		data, err = actions.templateList()
 	case "template_plan":
 		var args struct {
 			Name string `json:"name"`
 		}
-		if decodeErr := decodeMCPArguments(arguments, &args); decodeErr != nil || args.Name == "" {
-			return nil, mcpInvalidArgumentsError("template_plan")
+		decodeErr := decodeMCPArguments(arguments, &args)
+		if refusal := mcpArgumentsRefusal("template_plan", decodeErr, mcpRequiredArgument{"name", args.Name}); refusal != nil {
+			return refusal, nil
 		}
 		data, err = actions.templatePlan(args.Name)
 	case "template_apply":
@@ -1547,8 +1585,9 @@ func callMCPTool(ctx context.Context, actions mcpActions, name string, arguments
 			NoDaemonInstall bool   `json:"no_daemon_install,omitempty"`
 			Name            string `json:"name"`
 		}
-		if decodeErr := decodeMCPArguments(arguments, &args); decodeErr != nil || args.Name == "" {
-			return nil, mcpInvalidArgumentsError("template_apply")
+		decodeErr := decodeMCPArguments(arguments, &args)
+		if refusal := mcpArgumentsRefusal("template_apply", decodeErr, mcpRequiredArgument{"name", args.Name}); refusal != nil {
+			return refusal, nil
 		}
 		data, err = actions.templateApply(ctx, args.Name, args.NoDaemonInstall)
 	default:
@@ -1556,7 +1595,7 @@ func callMCPTool(ctx context.Context, actions mcpActions, name string, arguments
 		// with the same -32602 before any handler runs. Kept so a tool added to
 		// mcpToolDefinitions without a case here fails loudly instead of
 		// answering with a zero value.
-		return nil, mcpInvalidArgumentsError(name)
+		return nil, mcpUnknownToolError(name)
 	}
 	return makeMCPToolResult(data, err), nil
 }
@@ -1597,19 +1636,24 @@ func makeMCPToolResult(data any, callErr error) *mcp.CallToolResult {
 	}
 }
 
-// makeMCPToolErrorResult reports a refusal the way the CLI reports it: the same
-// output.Failure envelope, carrying the same error code and next steps. It is a
-// tool result rather than a protocol error so the model can read the refusal
-// and act on it.
+// makeMCPToolErrorResult reports a refusal the way the CLI reports it: the
+// --json envelope's error object (code, message, next, data), as the JSON text
+// of a tool result, so the model reads the stable code and next steps on every
+// client. It is a tool result rather than a protocol error so the model can
+// act on it. It carries no structuredContent: every tool declares a closed
+// output schema for its success payload, the specification requires
+// structured results to conform to it, and a client that validates them (the
+// TypeScript SDK's whole v1 line) would throw the refusal away.
 func makeMCPToolErrorResult(err error) *mcp.CallToolResult {
-	failure := output.NewFailureForError("", err)
+	failure := output.NewFailureForError("", err).Error
+	encoded, marshalErr := json.Marshal(failure)
+	if marshalErr != nil {
+		// Data that cannot be encoded is dropped, never the code and next steps.
+		failure.Data = nil
+		encoded, _ = json.Marshal(failure)
+	}
 	return &mcp.CallToolResult{
-		Content: []mcp.Content{&mcp.TextContent{Text: failure.Error.Message}},
-		StructuredContent: map[string]any{
-			"ok":    false,
-			"code":  failure.Code,
-			"error": failure.Error,
-		},
+		Content: []mcp.Content{&mcp.TextContent{Text: string(encoded)}},
 		IsError: true,
 	}
 }

@@ -427,9 +427,11 @@ func TestMCPLogsToolIsReachableOverTheProtocol(t *testing.T) {
 	}
 
 	// An argument the schema does not declare is refused rather than dropped,
-	// matching every other tool on this surface.
-	if _, err := callMCPTool(context.Background(), fakeMCPActions(), "logs", json.RawMessage(`{"tail":10}`)); err == nil {
-		t.Fatal("callMCPTool(logs) accepted an undeclared argument")
+	// matching every other tool on this surface: a usage_error tool result
+	// that names it.
+	refused, err := callMCPTool(context.Background(), fakeMCPActions(), "logs", json.RawMessage(`{"tail":10}`))
+	if err != nil || !refused.IsError || !strings.Contains(mcpResultText(t, refused), `\"tail\"`) {
+		t.Fatalf("callMCPTool(logs) with an undeclared argument = %+v, %v; want a refusal naming it", refused, err)
 	}
 }
 

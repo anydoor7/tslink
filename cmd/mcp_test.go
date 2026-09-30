@@ -890,38 +890,40 @@ func initializedMCPInput(call string) string {
 }
 
 func TestMCPToolCallsValidateArgumentsAndReturnExecutionErrors(t *testing.T) {
+	// Only an unknown tool is a protocol error. Arguments that do not fit a
+	// tool's schema are input validation errors, which the specification
+	// makes tool execution errors (A3-1), and name what is wrong.
 	cases := []struct {
 		name         string
 		call         string
 		wantProtocol bool
-		wantToolErr  bool
+		wantMessage  string
 	}{
-		{"missing share target", `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"share","arguments":{}}}`, true, false},
-		{"unknown share field", `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"share","arguments":{"target":"3000","extra":true}}}`, true, false},
-		{"unknown tool", `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"other","arguments":{}}}`, true, false},
-		{"list arguments", `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list","arguments":{"extra":1}}}`, true, false},
-		{"unshare arguments", `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"unshare","arguments":{}}}`, true, false},
-		{"status arguments", `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"status","arguments":{"extra":1}}}`, true, false},
-		{"execution error", `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"share","arguments":{"target":"error","ephemeral":false}}}`, false, true},
+		{"missing share target", `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"share","arguments":{}}}`, false, "target is required"},
+		{"unknown share field", `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"share","arguments":{"target":"3000","extra":true}}}`, false, `unknown field "extra"`},
+		{"unknown tool", `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"other","arguments":{}}}`, true, ""},
+		{"list arguments", `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list","arguments":{"extra":1}}}`, false, `unknown field "extra"`},
+		{"unshare arguments", `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"unshare","arguments":{}}}`, false, "name is required"},
+		{"status arguments", `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"status","arguments":{"extra":1}}}`, false, `unknown field "extra"`},
+		{"execution error", `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"share","arguments":{"target":"error","ephemeral":false}}}`, false, "share failed"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			frames := decodeMCPResponses(t, runMCPSession(t, initializedMCPInput(tc.call), fakeMCPActions()))
 			last := frames[len(frames)-1]
 			if tc.wantProtocol {
-				if last["error"].(map[string]any)["code"] != float64(-32602) {
+				if errorObject, _ := last["error"].(map[string]any); errorObject["code"] != float64(-32602) {
 					t.Fatalf("response = %+v", last)
 				}
-			} else if tc.wantToolErr {
-				result := last["result"].(map[string]any)
-				if result["isError"] != true || !strings.Contains(result["content"].([]any)[0].(map[string]any)["text"].(string), "share failed") {
-					t.Fatalf("response = %+v", last)
-				}
-				structured := result["structuredContent"].(map[string]any)
-				errorObject := structured["error"].(map[string]any)
-				if structured["ok"] != false || structured["code"] != float64(output.ExitUsage) || errorObject["code"] != "usage_error" || len(errorObject["next"].([]any)) == 0 {
-					t.Fatalf("structured execution error = %+v", structured)
-				}
+				return
+			}
+			result, _ := last["result"].(map[string]any)
+			if result["isError"] != true || result["structuredContent"] != nil {
+				t.Fatalf("response = %+v, want an error result without structuredContent", last)
+			}
+			errorObject := decodeMCPFailureText(t, result["content"].([]any)[0].(map[string]any)["text"].(string))
+			if errorObject["code"] != "usage_error" || len(errorObject["next"].([]any)) == 0 || !strings.Contains(errorObject["message"].(string), tc.wantMessage) {
+				t.Fatalf("execution error = %+v, want usage_error with next steps and %q", errorObject, tc.wantMessage)
 			}
 		})
 	}
@@ -1114,13 +1116,13 @@ func TestMCPToolResultMarshalFailureAndCodedErrors(t *testing.T) {
 		t.Fatalf("result = %+v", result)
 	}
 	result = makeMCPToolResult(nil, errors.New("failed"))
-	if !result.IsError || mcpResultText(t, result) != "failed" || mcpResultStructured(t, result)["code"] != output.ExitError {
+	failure := decodeMCPFailureText(t, mcpResultText(t, result))
+	if !result.IsError || result.StructuredContent != nil || failure["message"] != "failed" || failure["code"] != output.StableErrorCode(output.ExitError) {
 		t.Fatalf("error result = %+v", result)
 	}
 	coded := makeMCPToolResult(nil, registry.ValidateName("Bad_Name"))
-	structured := mcpResultStructured(t, coded)
-	errorObject, ok := structured["error"].(*output.ErrorObject)
-	if !ok || errorObject.Code != registry.CodeInvalidServiceName || len(errorObject.Next) == 0 || structured["ok"] != false || structured["code"] != output.ExitUsage {
+	errorObject := decodeMCPFailureText(t, mcpResultText(t, coded))
+	if next, _ := errorObject["next"].([]any); !coded.IsError || coded.StructuredContent != nil || errorObject["code"] != registry.CodeInvalidServiceName || len(next) == 0 {
 		t.Fatalf("coded error result = %+v", coded)
 	}
 	result = makeMCPToolResult("scalar", nil)
