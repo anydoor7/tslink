@@ -11,9 +11,7 @@
   ],
   "registry_schema_version": 1,
   "toolchain": {
-    "minimum_go_version": "1.26.6",
-    "goreleaser_version": "v2.17.0",
-    "homebrew_artifact": "cask"
+    "minimum_go_version": "1.26.6"
   },
   "exit_codes": {
     "auth": 3,
@@ -373,18 +371,6 @@
       ]
     }
   ],
-  "release": {
-    "public_release_available": false,
-    "prebuilt_available": false,
-    "homebrew_tap_available": false,
-    "local_source_install": "go install . from a checked-out source tree before the first public release",
-    "external_gates": [
-      "hosted exact-SHA CI readback",
-      "GitHub release environment reviewer/ruleset readback",
-      "first tag/release artifact readback",
-      "Homebrew tap readback"
-    ]
-  },
   "commands": [
     {
       "path": "tslink",

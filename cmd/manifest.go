@@ -36,7 +36,6 @@ type CLIManifest struct {
 	CredentialSources     CredentialSources               `json:"credential_sources"`
 	HighRiskOperations    []HighRiskOperation             `json:"high_risk_operations"`
 	RemoteSideEffectPlans []security.RemoteSideEffectPlan `json:"remote_side_effect_plans"`
-	Release               ReleaseInfo                     `json:"release"`
 	Commands              []CommandInfo                   `json:"commands"`
 	Capabilities          security.CapabilityManifest     `json:"capabilities"`
 	ErrorCodes            map[string]ErrorCodeInfo        `json:"error_codes"`
@@ -51,10 +50,11 @@ type PlatformInfo struct {
 	GOARCH string `json:"goarch"`
 }
 
+// ToolchainInfo describes the source the binary was built from. Release
+// tooling and distribution channels are facts about the world, which a
+// binary cannot keep true after it ships, so they are not here.
 type ToolchainInfo struct {
-	MinimumGoVersion  string `json:"minimum_go_version"`
-	GoReleaserVersion string `json:"goreleaser_version"`
-	HomebrewArtifact  string `json:"homebrew_artifact"`
+	MinimumGoVersion string `json:"minimum_go_version"`
 }
 
 type RegistrySchemaInfo struct {
@@ -84,14 +84,6 @@ type HighRiskOperation struct {
 	Default       string   `json:"default"`
 	RequiredFlags []string `json:"required_flags"`
 	Boundary      string   `json:"boundary"`
-}
-
-type ReleaseInfo struct {
-	PublicReleaseAvailable bool     `json:"public_release_available"`
-	PrebuiltAvailable      bool     `json:"prebuilt_available"`
-	HomebrewTapAvailable   bool     `json:"homebrew_tap_available"`
-	LocalSourceInstall     string   `json:"local_source_install"`
-	ExternalGates          []string `json:"external_gates"`
 }
 
 type ErrorCodeInfo struct {
@@ -173,9 +165,7 @@ func Manifest() CLIManifest {
 		SupportedPlatforms:    SupportedManifestPlatforms(),
 		RegistrySchemaVersion: registry.CurrentRegistrySchemaVersion,
 		Toolchain: ToolchainInfo{
-			MinimumGoVersion:  "1.26.6",
-			GoReleaserVersion: "v2.17.0",
-			HomebrewArtifact:  "cask",
+			MinimumGoVersion: "1.26.6",
 		},
 		ExitCodes: map[string]int{
 			"success":   output.ExitSuccess,
@@ -236,18 +226,6 @@ func Manifest() CLIManifest {
 			security.InviteMutationPlan(tailapi.InviteKindDevice, "revoke", "<invite-id>", "<service>", 0),
 			security.InviteMutationPlan(tailapi.InviteKindUser, "resend", "<invite-id>", "", 0),
 			security.InviteMutationPlan(tailapi.InviteKindDevice, "resend", "<invite-id>", "<service>", 0),
-		},
-		Release: ReleaseInfo{
-			PublicReleaseAvailable: false,
-			PrebuiltAvailable:      false,
-			HomebrewTapAvailable:   false,
-			LocalSourceInstall:     "go install . from a checked-out source tree before the first public release",
-			ExternalGates: []string{
-				"hosted exact-SHA CI readback",
-				"GitHub release environment reviewer/ruleset readback",
-				"first tag/release artifact readback",
-				"Homebrew tap readback",
-			},
 		},
 		ErrorCodes: errorCodeManifest(),
 	}
