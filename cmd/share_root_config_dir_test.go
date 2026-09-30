@@ -19,12 +19,13 @@ import (
 // writers: `tslink share <config dir>` and `tslink add --dir <config dir>`
 // used to register a whole-tree file share of the node keys.
 func TestShareAndAddRefuseTSLinkConfigDirectory(t *testing.T) {
-	configDir := testenv.SetHome(t, t.TempDir())
+	home := t.TempDir()
+	configDir := testenv.SetHome(t, home)
 	if err := os.MkdirAll(filepath.Join(configDir, "nodes", "svc"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	_, regPath := shareMCPWireActions(t)
-	for _, root := range []string{configDir, filepath.Join(configDir, "nodes")} {
+	for _, root := range []string{configDir, filepath.Join(configDir, "nodes"), home} {
 		_, err := executeShare(context.Background(), sharePaths{Registry: regPath}, shareRequest{Target: root, Ephemeral: true}, time.Second, io.Discard)
 		if code, _ := registry.ErrorCode(err); code != registry.CodePathExposesConfigDir {
 			t.Fatalf("share %s error = %v, want %s", root, err, registry.CodePathExposesConfigDir)
@@ -35,9 +36,11 @@ func TestShareAndAddRefuseTSLinkConfigDirectory(t *testing.T) {
 	}
 
 	addRegPath := stubAddWritePaths(t)
-	err := runAddCmd(t, []string{"cfg"}, map[string]string{"dir": configDir})
-	if code, _ := registry.ErrorCode(err); code != registry.CodePathExposesConfigDir {
-		t.Fatalf("add --dir %s error = %v, want %s", configDir, err, registry.CodePathExposesConfigDir)
+	for _, root := range []string{configDir, home} {
+		err := runAddCmd(t, []string{"cfg"}, map[string]string{"dir": root})
+		if code, _ := registry.ErrorCode(err); code != registry.CodePathExposesConfigDir {
+			t.Fatalf("add --dir %s error = %v, want %s", root, err, registry.CodePathExposesConfigDir)
+		}
 	}
 	if _, err := os.Stat(addRegPath); !os.IsNotExist(err) {
 		t.Fatalf("a refused add wrote %s: %v", addRegPath, err)
