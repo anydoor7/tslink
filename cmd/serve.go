@@ -54,7 +54,7 @@ var (
 		return credentials.BackfillMetadata(time.Now().UTC())
 	}
 	serveRegistryPathFn        = config.RegistryPath
-	serveLoadRegistryFn        = registry.Load
+	serveLoadRegistryFn        = registry.LoadForRuntime
 	serveGetAuthKeyFn          = credentials.GetAuthKey
 	serveHasStoredCredentialFn = credentials.HasStoredCredential
 	servePIDPathFn             = config.PIDPath
@@ -496,27 +496,27 @@ func setTemporaryEnv(key, value string) func() {
 	}
 }
 
+// loadValidatedRegistryForServe reads registry.json the way the daemon does.
+// Only a problem of the document itself (unreadable, empty, malformed, a
+// service without a usable name) refuses to start. A problem of one service,
+// such as a missing share directory or a refused target, is isolated by the
+// daemon's sync, which reports it for that service in runtime.json and
+// status; refusing here would keep every other service down with it. The
+// returned registry holds the services that validated.
 func loadValidatedRegistryForServe() (*registry.Registry, error) {
 	regPath, err := serveRegistryPathFn()
 	if err != nil {
 		return nil, err
 	}
-	reg, err := serveLoadRegistryFn(regPath)
+	reg, issues, err := serveLoadRegistryFn(regPath)
 	if err != nil {
 		return nil, fmt.Errorf("load registry: %w", err)
 	}
-	validServices := make([]registry.Service, 0, len(reg.Services))
-	for _, svc := range reg.Services {
-		if err := server.ValidateServiceForStartup(svc); err != nil {
-			if shouldSkipServiceForServeStartup(err) {
-				warnSkippedServiceForServeStartup(svc, err)
-				continue
-			}
-			return nil, err
+	for _, issue := range issues {
+		if shouldSkipServiceForServeStartup(issue.Err) {
+			warnSkippedServiceForServeStartup(issue.Service, issue.Err)
 		}
-		validServices = append(validServices, svc)
 	}
-	reg.Services = validServices
 	return reg, nil
 }
 

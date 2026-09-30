@@ -212,7 +212,7 @@ func saveServeState(t *testing.T) {
 		ensureDir          func() error
 		migrate            func() bool
 		registryPath       func() (string, error)
-		loadRegistry       func(string) (*registry.Registry, error)
+		loadRegistry       func(string) (*registry.Registry, []registry.ServiceIssue, error)
 		getAuthKey         func(context.Context, credentials.AuthKeyOptions) (string, error)
 		hasCredential      func() (bool, error)
 		pidPath            func() (string, error)
@@ -322,7 +322,7 @@ func mockServeDefaults(t *testing.T, dir string) {
 	t.Cleanup(func() { serveBackfillCredentialMetaFn = oldBackfill })
 	serveBackfillCredentialMetaFn = func() ([]string, error) { return nil, nil }
 	serveRegistryPathFn = func() (string, error) { return regPath, nil }
-	serveLoadRegistryFn = registry.Load
+	serveLoadRegistryFn = registry.LoadForRuntime
 	serveGetAuthKeyFn = func(ctx context.Context, opts credentials.AuthKeyOptions) (string, error) {
 		return "fake-auth-key", nil
 	}
@@ -674,8 +674,8 @@ func TestServeCmd_RegistryPathError(t *testing.T) {
 func TestServeCmd_LoadRegistryError(t *testing.T) {
 	dir := t.TempDir()
 	mockServeDefaults(t, dir)
-	serveLoadRegistryFn = func(path string) (*registry.Registry, error) {
-		return nil, fmt.Errorf("corrupt registry")
+	serveLoadRegistryFn = func(path string) (*registry.Registry, []registry.ServiceIssue, error) {
+		return nil, nil, fmt.Errorf("corrupt registry")
 	}
 
 	cmd := findServeCmd(t)
@@ -1717,59 +1717,6 @@ func TestServeCmd_DaemonModeSkipsHeavyweightParentPreflight(t *testing.T) {
 	}
 }
 
-func TestServeCmd_DaemonModeValidatesRegistryBeforeDaemonize(t *testing.T) {
-	dir := t.TempDir()
-	mockServeDefaults(t, dir)
-	serveDaemon = true
-
-	reg := &registry.Registry{
-		Services: []registry.Service{
-			{
-				Name:         "public-app",
-				Type:         registry.TypeProxy,
-				Target:       "http://localhost:3000",
-				Funnel:       true,
-				AllowedUsers: []string{"alice@example.com"},
-			},
-		},
-	}
-	data, _ := json.Marshal(reg)
-	if err := os.WriteFile(filepath.Join(dir, "registry.json"), data, 0o600); err != nil {
-		t.Fatalf("write registry: %v", err)
-	}
-
-	daemonizeCalled := false
-	serveDaemonizeFn = func(out, errLog, controlURL string, manageACL, noAutoProvision, mcp bool) (int, error) {
-		daemonizeCalled = true
-		return 0, fmt.Errorf("daemonize should not be called")
-	}
-	removePIDCalled := false
-	serveRemovePIDFn = func(path string) {
-		removePIDCalled = true
-	}
-
-	cmd := findServeCmd(t)
-	err := cmd.RunE(cmd, nil)
-	if err == nil {
-		t.Fatal("RunE() error = nil, want funnel allowed_users error")
-	}
-	if !strings.Contains(err.Error(), registry.ErrFunnelAllowedUsers) {
-		t.Fatalf("RunE() error = %v, want funnel allowed_users error", err)
-	}
-	if !strings.Contains(err.Error(), registry.CodeFunnelAllowConflict) {
-		t.Fatalf("RunE() error = %v, want stable code %s", err, registry.CodeFunnelAllowConflict)
-	}
-	if code, ok := registry.ErrorCode(err); !ok || code != registry.CodeFunnelAllowConflict {
-		t.Fatalf("ErrorCode() = %q, %v; want %s, true", code, ok, registry.CodeFunnelAllowConflict)
-	}
-	if daemonizeCalled {
-		t.Fatal("daemonize was called after invalid registry")
-	}
-	if removePIDCalled {
-		t.Fatal("stale PID was removed before hard-fail registry validation")
-	}
-}
-
 func TestLoadValidatedRegistryForServeSkipsLegacyFunnelMissingPublicAck(t *testing.T) {
 	dir := t.TempDir()
 	mockServeDefaults(t, dir)
@@ -1815,98 +1762,6 @@ func TestLoadValidatedRegistryForServeSkipsLegacyFunnelMissingPublicAck(t *testi
 		!strings.Contains(logs, "public-app") ||
 		!strings.Contains(logs, "tslink add public-app --funnel --public") {
 		t.Fatalf("logs = %s, want skip warning with service name and remediation", logs)
-	}
-}
-
-func TestServeCmd_DaemonModeFunnelControlURLIncludesStableCode(t *testing.T) {
-	dir := t.TempDir()
-	mockServeDefaults(t, dir)
-	serveDaemon = true
-
-	reg := &registry.Registry{
-		Services: []registry.Service{
-			{
-				Name:       "public-app",
-				Type:       registry.TypeProxy,
-				Target:     "http://localhost:3000",
-				Funnel:     true,
-				ControlURL: "https://headscale.example.com",
-			},
-		},
-	}
-	data, _ := json.Marshal(reg)
-	if err := os.WriteFile(filepath.Join(dir, "registry.json"), data, 0o600); err != nil {
-		t.Fatalf("write registry: %v", err)
-	}
-
-	cmd := findServeCmd(t)
-	err := cmd.RunE(cmd, nil)
-	if err == nil {
-		t.Fatal("RunE() error = nil, want funnel control_url error")
-	}
-	if !strings.Contains(err.Error(), registry.ErrFunnelControlURL) {
-		t.Fatalf("RunE() error = %v, want funnel control_url error", err)
-	}
-	if !strings.Contains(err.Error(), registry.CodeFunnelControlURLConflict) {
-		t.Fatalf("RunE() error = %v, want stable code %s", err, registry.CodeFunnelControlURLConflict)
-	}
-	if code, ok := registry.ErrorCode(err); !ok || code != registry.CodeFunnelControlURLConflict {
-		t.Fatalf("ErrorCode() = %q, %v; want %s, true", code, ok, registry.CodeFunnelControlURLConflict)
-	}
-}
-
-func TestServeCmd_DaemonModeFunnelNonProxyTypesIncludeStableCode(t *testing.T) {
-	cases := []registry.Service{
-		{
-			Name:   "public-files",
-			Type:   registry.TypeFile,
-			Path:   "/tmp/public-files",
-			Funnel: true,
-		},
-		{
-			Name:   "public-db",
-			Type:   registry.TypeTCP,
-			Target: "localhost:5432",
-			Port:   5432,
-			Funnel: true,
-		},
-	}
-	for _, svc := range cases {
-		t.Run(svc.Type, func(t *testing.T) {
-			dir := t.TempDir()
-			mockServeDefaults(t, dir)
-			serveDaemon = true
-
-			reg := &registry.Registry{Services: []registry.Service{svc}}
-			data, _ := json.Marshal(reg)
-			if err := os.WriteFile(filepath.Join(dir, "registry.json"), data, 0o600); err != nil {
-				t.Fatalf("write registry: %v", err)
-			}
-
-			daemonizeCalled := false
-			serveDaemonizeFn = func(out, errLog, controlURL string, manageACL, noAutoProvision, mcp bool) (int, error) {
-				daemonizeCalled = true
-				return 0, fmt.Errorf("daemonize should not be called")
-			}
-
-			cmd := findServeCmd(t)
-			err := cmd.RunE(cmd, nil)
-			if err == nil {
-				t.Fatal("RunE() error = nil, want funnel type conflict error")
-			}
-			if !strings.Contains(err.Error(), registry.ErrFunnelTypeConflict) {
-				t.Fatalf("RunE() error = %v, want funnel type conflict error", err)
-			}
-			if !strings.Contains(err.Error(), registry.CodeFunnelTypeConflict) {
-				t.Fatalf("RunE() error = %v, want stable code %s", err, registry.CodeFunnelTypeConflict)
-			}
-			if code, ok := registry.ErrorCode(err); !ok || code != registry.CodeFunnelTypeConflict {
-				t.Fatalf("ErrorCode() = %q, %v; want %s, true", code, ok, registry.CodeFunnelTypeConflict)
-			}
-			if daemonizeCalled {
-				t.Fatal("daemonize was called after invalid registry")
-			}
-		})
 	}
 }
 
@@ -2123,31 +1978,6 @@ func TestServeCmd_EnsureTagsNoAPIClientSkipped(t *testing.T) {
 	}
 	if !serverStarted {
 		t.Fatal("server should start after no-client tag ensure skip")
-	}
-}
-
-func TestServeCmd_InvalidTagIncludesServiceContext(t *testing.T) {
-	dir := t.TempDir()
-	mockServeDefaults(t, dir)
-
-	reg := &registry.Registry{
-		Services: []registry.Service{
-			{Name: "legacy", Type: "proxy", Target: "http://localhost:3000", Tags: []string{"tag:Bad"}},
-		},
-	}
-	data, _ := json.Marshal(reg)
-	os.WriteFile(filepath.Join(dir, "registry.json"), data, 0600)
-
-	cmd := findServeCmd(t)
-	err := cmd.RunE(cmd, nil)
-	if err == nil {
-		t.Fatal("RunE() error = nil, want invalid tag error")
-	}
-	if !strings.Contains(err.Error(), `service "legacy": invalid tag "tag:Bad"`) {
-		t.Fatalf("error = %v, want service/tag context", err)
-	}
-	if !strings.Contains(err.Error(), "tag:<lowercase-hyphen-name>") || !strings.Contains(err.Error(), "edit registry.json") {
-		t.Fatalf("error = %v, want grammar and registry remediation", err)
 	}
 }
 
