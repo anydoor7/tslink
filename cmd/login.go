@@ -23,6 +23,7 @@ import (
 	"github.com/monody0007/tslink/internal/tailapi"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
+	"tailscale.com/ipn"
 	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/tsnet"
 )
@@ -665,12 +666,18 @@ func activateClientSecretViaUp(ctx context.Context, secret string) error {
 
 const clientSecretValidationHostname = "tslink-auth"
 
+// newClientSecretValidationServer builds the node that proves a candidate
+// OAuth client secret. Its key is minted with that secret for the owner's
+// tailnet, and the secret is a Tailscale API credential, so the node always
+// registers with Tailscale's control server: an empty ControlURL would make
+// tsnet take TS_CONTROL_URL from the environment and send the key there.
 func newClientSecretValidationServer(tmpStateDir, authKey string, tags []string) *tsnet.Server {
 	return &tsnet.Server{
 		Hostname:      clientSecretValidationHostname,
 		Dir:           tmpStateDir,
 		Ephemeral:     true,
 		AuthKey:       authKey,
+		ControlURL:    ipn.DefaultControlURL,
 		AdvertiseTags: append([]string(nil), tags...),
 		UserLogf:      logging.TSNetUserLogf,
 	}
