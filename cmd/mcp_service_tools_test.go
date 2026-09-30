@@ -1143,6 +1143,10 @@ func TestMCPURLActionResolvesRuntimeEvidence(t *testing.T) {
 // The invite tools are the ones with real external effect. They are exercised
 // only through the package's invite*Fn seams; no Tailscale API call is made.
 func TestMCPInviteToolsUseTheCLIInviteFunctions(t *testing.T) {
+	// The owner's opt-in lets allow_exit_node through MCP (A2-2), so the
+	// forwarding below still sees it; TestMCPElevatedInvitesNeedTheOwnersOptIn
+	// covers the refusal without it.
+	writeGlobalConfigFixture(t, `{"mcp":{"allow_elevated_invites":true}}`)
 	restoreShareSeams(t)
 	paths := mcpSharePaths(t)
 	if _, err := registry.Add(paths.Registry, registry.Service{Name: "web", Type: registry.TypeProxy, Target: "http://localhost:3000"}); err != nil {

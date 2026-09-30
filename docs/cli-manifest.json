@@ -2372,6 +2372,10 @@
       "exit_code": 1,
       "description": "login could not verify the candidate credential against Tailscale for a reason other than HTTP 401/403; the previous credential was kept"
     },
+    "mcp_elevated_invite_refused": {
+      "exit_code": 3,
+      "description": "through MCP, a user invitation with a role other than member or a device invitation that allows exit-node use needs the owner's opt-in (mcp.allow_elevated_invites in config.json); next names the CLI command a person can run instead"
+    },
     "not_found": {
       "exit_code": 5,
       "description": "requested object was not found"

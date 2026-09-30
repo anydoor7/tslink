@@ -93,6 +93,7 @@ const (
 	CodeLegacyConfigDirPresent     = config.CodeLegacyConfigDirPresent
 	CodeConfigLoadFailed           = config.CodeConfigLoadFailed
 	CodeCredentialURLMismatch      = "credential_control_url_mismatch"
+	CodeMCPElevatedInviteRefused   = "mcp_elevated_invite_refused"
 
 	ProvisionReasonDaemonDisabled      = "daemon_disabled"
 	ProvisionReasonServiceDisabled     = "service_disabled"

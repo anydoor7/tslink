@@ -17,6 +17,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/output"
 	"github.com/monody0007/tslink/internal/registry"
 	"github.com/monody0007/tslink/internal/tailapi"
@@ -518,10 +519,10 @@ var mcpToolDefinitions = []mcpToolDefinition{
 	},
 	{
 		Name:        "invite_user",
-		Description: "Sends a real Tailscale invitation to a real email address, so confirm the address and role with the user before calling this. The invitation joins the recipient to the user's tailnet. Set print_link true to receive a bearer invite URL instead of having Tailscale send the email.",
+		Description: "Sends a real Tailscale invitation to a real email address, so confirm the address and role with the user before calling this. The invitation joins the recipient to the user's tailnet. Set print_link true to receive a bearer invite URL instead of having Tailscale send the email. A role other than member is refused with mcp_elevated_invite_refused unless the owner set mcp.allow_elevated_invites in config.json; the user can always run tslink invite user themselves.",
 		InputSchema: objectSchema(map[string]any{
 			"email":      map[string]any{"type": "string", "description": "Recipient email address."},
-			"role":       map[string]any{"type": "string", "enum": tailapi.InviteRoles(), "description": "Role assigned on acceptance. Defaults to member."},
+			"role":       map[string]any{"type": "string", "enum": tailapi.InviteRoles(), "description": "Role assigned on acceptance. Defaults to member. Any other role needs the owner's opt-in (mcp.allow_elevated_invites in config.json)."},
 			"print_link": map[string]any{"type": "boolean", "default": false, "description": "Do not send email; return the API-provided invite URL for the user to deliver. Anyone holding that URL can accept."},
 		}, "email"),
 		OutputSchema: mcpInviteCreateOutputSchema,
@@ -534,7 +535,7 @@ var mcpToolDefinitions = []mcpToolDefinition{
 			"email":           map[string]any{"type": "string", "description": "Recipient email address."},
 			"print_link":      map[string]any{"type": "boolean", "default": false, "description": "Do not send email; return the API-provided invite URL for the user to deliver. Anyone holding that URL can accept."},
 			"multi_use":       map[string]any{"type": "boolean", "default": false, "description": "Allow the invitation to be accepted more than once."},
-			"allow_exit_node": map[string]any{"type": "boolean", "default": false, "description": "Allow the recipient to route traffic through the shared device as an exit node."},
+			"allow_exit_node": map[string]any{"type": "boolean", "default": false, "description": "Allow the recipient to route traffic through the shared device as an exit node. Needs the owner's opt-in (mcp.allow_elevated_invites in config.json); otherwise refused with mcp_elevated_invite_refused."},
 		}, "service", "email"),
 		OutputSchema: mcpInviteCreateOutputSchema,
 	},
@@ -832,6 +833,11 @@ func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 			return collectMCPLogs(logDir, args)
 		},
 		inviteUser: func(ctx context.Context, email, role string, printLink bool) (any, error) {
+			if role != "" && role != tailapi.InviteRoleMember && tailapi.ValidateInviteRole(role) == nil {
+				if err := mcpRefuseElevatedInvite("a "+role+" invitation", fmt.Sprintf("tslink invite user %s --role %s", email, role)); err != nil {
+					return nil, err
+				}
+			}
 			invite, err := inviteUserCreate(ctx, email, role, printLink)
 			if err != nil {
 				return nil, err
@@ -839,6 +845,11 @@ func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 			return InviteMutationResult{Invite: invite, RemoteSideEffectPlan: invitePlan(invite, "create")}, nil
 		},
 		inviteDevice: func(ctx context.Context, args mcpInviteDeviceArguments) (any, error) {
+			if args.AllowExitNode {
+				if err := mcpRefuseElevatedInvite("a device invitation that allows exit-node use", fmt.Sprintf("tslink invite device %s %s --allow-exit-node", args.Service, args.Email)); err != nil {
+					return nil, err
+				}
+			}
 			invite, err := inviteDeviceCreate(ctx, paths.Registry, paths.PID, paths.Snapshot, args.Service, args.Email, args.PrintLink, args.MultiUse, args.AllowExitNode)
 			if err != nil {
 				return nil, err
@@ -1349,6 +1360,37 @@ func (r *mcpRecordLimitReader) Read(p []byte) (int, error) {
 func mcpToolHandler(name string, actions mcpActions) mcp.ToolHandler {
 	return func(ctx context.Context, request *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		return callMCPTool(ctx, actions, name, request.Params.Arguments)
+	}
+}
+
+// mcpRefuseElevatedInvite refuses, on the MCP surface (stdio and the remote
+// control plane alike), an invitation that grants more than tailnet
+// membership, unless the owner opted in with mcp.allow_elevated_invites in
+// config.json. An agent calls these tools with the owner's stored credential,
+// and a sentence asking it to confirm with the user is no barrier against a
+// prompt-injected agent or a hostile remote principal, so the check is here,
+// in code. The CLI, where a person types the command, keeps every role; cli
+// is that command. A config.json that cannot be read refuses too.
+func mcpRefuseElevatedInvite(what, cli string) error {
+	cfg, err := config.LoadGlobalConfig()
+	if err != nil {
+		return err
+	}
+	if cfg.MCP != nil && cfg.MCP.AllowElevatedInvites {
+		return nil
+	}
+	where := "config.json"
+	if path, err := config.ConfigPath(); err == nil {
+		where = path
+	}
+	return registry.CodedError{
+		Code:    registry.CodeMCPElevatedInviteRefused,
+		Message: fmt.Sprintf("%s grants more than tailnet membership, and through MCP that needs the owner's opt-in; nothing was sent", what),
+		Next: []string{
+			"Ask the user to run it from the CLI: " + cli,
+			fmt.Sprintf(`Or the owner sets "allow_elevated_invites": true in the "mcp" object of %s to allow it through MCP`, where),
+		},
+		MessageOnly: true,
 	}
 }
 

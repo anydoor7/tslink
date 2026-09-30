@@ -48,6 +48,13 @@ type MCPConfig struct {
 	// configuration rather than a flag because it is a property of the
 	// deployment's network path, not of one serve invocation.
 	EventsKeepalive string `json:"events_keepalive,omitempty"`
+	// AllowElevatedInvites lets the MCP tools (stdio and the remote control
+	// plane) send invitations that grant more than tailnet membership: a user
+	// role other than member, or a device share that allows exit-node use.
+	// Off by default: an agent calls these tools with the owner's stored
+	// credential, so the elevated forms stay with the CLI, where a person
+	// types the command, until the owner opts in.
+	AllowElevatedInvites bool `json:"allow_elevated_invites,omitempty"`
 }
 
 // fallbackDefaultTag is the default tag when config.json sets none.
