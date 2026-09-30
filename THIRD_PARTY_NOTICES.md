@@ -4,75 +4,78 @@ TSLink licensing is described in `LICENSE`; third-party rights are unchanged.
 See `NOTICE`. This generated file inventories the union of third-party modules
 linked into the supported CGO-disabled release targets (darwin/linux/windows
 × amd64/arm64) and includes the license/notice payloads found in the exact
-module source directories resolved by `go list -deps`. It is a
+module roots, linked package ancestors, source-file headers (including alternate
+build files in those packages), and embedded assets
+resolved by `go list -deps`. Embedded vendor payloads are pinned by SHA-256;
+changed or unreviewed vendor assets require an updated notice inventory. It is a
 mechanical inventory, not legal advice. Do not edit it by hand; run
 `go run ./tools/gen-notices` instead.
 
 Linked third-party modules: 55
 
-| Module | Version | License | Included files |
+| Module | Version | Module-root license | Included files |
 |---|---|---|---|
 | `al.essio.dev/pkg/shellescape` | v1.5.1 | MIT | `LICENSE` |
-| `filippo.io/edwards25519` | v1.2.0 | BSD-3-Clause | `LICENSE` |
-| `github.com/alexbrainman/sspi` | v0.0.0-20231016080023-1a75b4708caa | BSD-3-Clause | `LICENSE` |
+| `filippo.io/edwards25519` | v1.2.0 | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
+| `github.com/alexbrainman/sspi` | v0.0.0-20231016080023-1a75b4708caa | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
 | `github.com/coder/websocket` | v1.8.14 | ISC | `LICENSE.txt` |
 | `github.com/creachadair/msync` | v0.8.1 | BSD-2-Clause | `LICENSE` |
 | `github.com/danieljoos/wincred` | v1.2.2 | MIT | `LICENSE` |
-| `github.com/dblohm7/wingoes` | v0.0.0-20240119213807-a09d6be7affa | BSD-3-Clause | `LICENSE` |
+| `github.com/dblohm7/wingoes` | v0.0.0-20240119213807-a09d6be7affa | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
 | `github.com/fsnotify/fsnotify` | v1.9.0 | BSD-3-Clause | `LICENSE` |
-| `github.com/fxamacker/cbor/v2` | v2.9.0 | MIT | `LICENSE` |
-| `github.com/gaissmai/bart` | v0.26.1 | MIT | `LICENSE` |
-| `github.com/go-json-experiment/json` | v0.0.0-20260214004413-d219187c3433 | BSD-3-Clause | `LICENSE` |
+| `github.com/fxamacker/cbor/v2` | v2.9.0 | MIT | `LICENSE`, `Linked source copyright and license headers` |
+| `github.com/gaissmai/bart` | v0.26.1 | MIT | `LICENSE`, `Linked source copyright and license headers` |
+| `github.com/go-json-experiment/json` | v0.0.0-20260214004413-d219187c3433 | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
 | `github.com/godbus/dbus/v5` | v5.2.2 | BSD-2-Clause | `LICENSE` |
-| `github.com/golang/groupcache` | v0.0.0-20241129210726-2c02b8208cf8 | Apache-2.0 | `LICENSE` |
-| `github.com/google/btree` | v1.1.3 | Apache-2.0 | `LICENSE` |
-| `github.com/google/jsonschema-go` | v0.4.3 | MIT | `LICENSE` |
-| `github.com/hdevalence/ed25519consensus` | v0.2.0 | BSD-3-Clause | `LICENSE` |
+| `github.com/golang/groupcache` | v0.0.0-20241129210726-2c02b8208cf8 | Apache-2.0 | `LICENSE`, `Linked source copyright and license headers` |
+| `github.com/google/btree` | v1.1.3 | Apache-2.0 | `LICENSE`, `Linked source copyright and license headers` |
+| `github.com/google/jsonschema-go` | v0.4.3 | MIT | `LICENSE`, `Linked source copyright and license headers` |
+| `github.com/hdevalence/ed25519consensus` | v0.2.0 | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
 | `github.com/huin/goupnp` | v1.3.0 | BSD-2-Clause | `LICENSE` |
 | `github.com/inconshreveable/mousetrap` | v1.1.0 | Apache-2.0 | `LICENSE` |
 | `github.com/jsimonetti/rtnetlink` | v1.4.1 | MIT | `LICENSE.md` |
-| `github.com/klauspost/compress` | v1.19.1 | Apache-2.0 | `LICENSE` |
+| `github.com/klauspost/compress` | v1.19.1 | Apache-2.0 | `LICENSE`, `Linked source copyright and license headers`, `internal/snapref/LICENSE`, `zstd/internal/xxhash/LICENSE.txt` |
 | `github.com/mdlayher/netlink` | v1.7.3-0.20250113171957-fbb4dce95f42 | MIT | `LICENSE.md` |
 | `github.com/mdlayher/socket` | v0.5.0 | MIT | `LICENSE.md` |
 | `github.com/mitchellh/go-ps` | v1.0.0 | MIT | `LICENSE.md` |
-| `github.com/modelcontextprotocol/go-sdk` | v1.7.0 | Apache-2.0 | `LICENSE` |
+| `github.com/modelcontextprotocol/go-sdk` | v1.7.0 | Apache-2.0 | `LICENSE`, `Linked source copyright and license headers` |
 | `github.com/pires/go-proxyproto` | v0.8.1 | Apache-2.0 | `LICENSE` |
-| `github.com/safchain/ethtool` | v0.3.0 | Apache-2.0 | `LICENSE` |
+| `github.com/safchain/ethtool` | v0.3.0 | Apache-2.0 | `LICENSE`, `Linked source copyright and license headers` |
 | `github.com/segmentio/asm` | v1.1.3 | MIT | `LICENSE` |
 | `github.com/segmentio/encoding` | v0.5.4 | MIT | `LICENSE` |
-| `github.com/spf13/cobra` | v1.10.2 | Apache-2.0 | `LICENSE.txt` |
-| `github.com/spf13/pflag` | v1.0.10 | BSD-3-Clause | `LICENSE` |
+| `github.com/spf13/cobra` | v1.10.2 | Apache-2.0 | `LICENSE.txt`, `Linked source copyright and license headers` |
+| `github.com/spf13/pflag` | v1.0.10 | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
 | `github.com/tailscale/certstore` | v0.1.1-0.20260409135935-3638fb84b77d | MIT | `LICENSE.md` |
 | `github.com/tailscale/go-winio` | v0.0.0-20231025203758-c4f33415bf55 | MIT | `LICENSE` |
-| `github.com/tailscale/hujson` | v0.0.0-20260302212456-ecc657c15afd | BSD-3-Clause | `LICENSE` |
-| `github.com/tailscale/peercred` | v0.0.0-20250107143737-35a0c7bd7edc | BSD-3-Clause | `LICENSE` |
-| `github.com/tailscale/web-client-prebuilt` | v0.0.0-20250124233751-d4cd19a26976 | BSD-3-Clause | `LICENSE` |
-| `github.com/tailscale/wireguard-go` | v0.0.0-20260715223240-2e01ba5b00f0 | MIT | `LICENSE` |
-| `github.com/x448/float16` | v0.8.4 | MIT | `LICENSE` |
-| `github.com/yosida95/uritemplate/v3` | v3.0.2 | BSD-3-Clause | `LICENSE` |
-| `github.com/zalando/go-keyring` | v0.2.6 | MIT | `LICENSE` |
-| `go4.org/mem` | v0.0.0-20240501181205-ae6ca9944745 | Apache-2.0 | `LICENSE` |
-| `go4.org/netipx` | v0.0.0-20231129151722-fdeea329fbba | BSD-3-Clause | `LICENSE` |
-| `golang.org/x/crypto` | v0.57.0 | BSD-3-Clause | `LICENSE` |
-| `golang.org/x/exp` | v0.0.0-20260410095643-746e56fc9e2f | BSD-3-Clause | `LICENSE` |
-| `golang.org/x/net` | v0.58.0 | BSD-3-Clause | `LICENSE` |
-| `golang.org/x/oauth2` | v0.36.0 | BSD-3-Clause | `LICENSE` |
-| `golang.org/x/sync` | v0.23.0 | BSD-3-Clause | `LICENSE` |
-| `golang.org/x/sys` | v0.48.0 | BSD-3-Clause | `LICENSE` |
-| `golang.org/x/term` | v0.46.0 | BSD-3-Clause | `LICENSE` |
-| `golang.org/x/text` | v0.42.0 | BSD-3-Clause | `LICENSE` |
-| `golang.org/x/time` | v0.15.0 | BSD-3-Clause | `LICENSE` |
-| `golang.zx2c4.com/wintun` | v0.0.0-20230126152724-0fa3db229ce2 | MIT | `LICENSE` |
-| `golang.zx2c4.com/wireguard/windows` | v0.5.3 | MIT | `COPYING` |
-| `gvisor.dev/gvisor` | v0.0.0-20260224225140-573d5e7127a8 | Apache-2.0 | `LICENSE` |
-| `tailscale.com` | v1.102.4 | BSD-3-Clause | `LICENSE` |
-| `tailscale.com/client/tailscale/v2` | v2.10.1 | MIT | `LICENSE` |
+| `github.com/tailscale/hujson` | v0.0.0-20260302212456-ecc657c15afd | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
+| `github.com/tailscale/peercred` | v0.0.0-20250107143737-35a0c7bd7edc | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
+| `github.com/tailscale/web-client-prebuilt` | v0.0.0-20250124233751-d4cd19a26976 | BSD-3-Clause | `Embedded Inter font license`, `Embedded web-client runtime dependency notices`, `LICENSE`, `Linked source copyright and license headers` |
+| `github.com/tailscale/wireguard-go` | v0.0.0-20260715223240-2e01ba5b00f0 | MIT | `LICENSE`, `Linked source copyright and license headers` |
+| `github.com/x448/float16` | v0.8.4 | MIT | `LICENSE`, `Linked source copyright and license headers` |
+| `github.com/yosida95/uritemplate/v3` | v3.0.2 | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
+| `github.com/zalando/go-keyring` | v0.2.6 | MIT | `LICENSE`, `Linked source copyright and license headers` |
+| `go4.org/mem` | v0.0.0-20240501181205-ae6ca9944745 | Apache-2.0 | `LICENSE`, `Linked source copyright and license headers` |
+| `go4.org/netipx` | v0.0.0-20231129151722-fdeea329fbba | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
+| `golang.org/x/crypto` | v0.57.0 | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
+| `golang.org/x/exp` | v0.0.0-20260410095643-746e56fc9e2f | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
+| `golang.org/x/net` | v0.58.0 | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
+| `golang.org/x/oauth2` | v0.36.0 | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
+| `golang.org/x/sync` | v0.23.0 | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
+| `golang.org/x/sys` | v0.48.0 | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
+| `golang.org/x/term` | v0.46.0 | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
+| `golang.org/x/text` | v0.42.0 | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
+| `golang.org/x/time` | v0.15.0 | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
+| `golang.zx2c4.com/wintun` | v0.0.0-20230126152724-0fa3db229ce2 | MIT | `LICENSE`, `Linked source copyright and license headers` |
+| `golang.zx2c4.com/wireguard/windows` | v0.5.3 | MIT | `COPYING`, `Linked source copyright and license headers` |
+| `gvisor.dev/gvisor` | v0.0.0-20260224225140-573d5e7127a8 | Apache-2.0 | `LICENSE`, `Linked source copyright and license headers` |
+| `tailscale.com` | v1.102.4 | BSD-3-Clause | `Embedded HTMX WebSocket license`, `Embedded HTMX license`, `LICENSE`, `Linked source copyright and license headers` |
+| `tailscale.com/client/tailscale/v2` | v2.10.1 | MIT | `LICENSE`, `Linked source copyright and license headers` |
 
 ## Included License And Notice Text
 
 ### `al.essio.dev/pkg/shellescape` v1.5.1
 
-- License: MIT
+- Module-root license: MIT (nested and embedded components may differ)
 - Evidence source: `al.essio.dev/pkg/shellescape@v1.5.1` from the resolved Go module graph
 - Included files: `LICENSE`
 
@@ -104,9 +107,9 @@ SOFTWARE.
 
 ### `filippo.io/edwards25519` v1.2.0
 
-- License: BSD-3-Clause
+- Module-root license: BSD-3-Clause (nested and embedded components may differ)
 - Evidence source: `filippo.io/edwards25519@v1.2.0` from the resolved Go module graph
-- Included files: `LICENSE`
+- Included files: `LICENSE`, `Linked source copyright and license headers`
 
 #### LICENSE
 
@@ -140,11 +143,31 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ~~~~
 
+#### Linked source copyright and license headers
+
+~~~~text
+// Copyright (c) 2016 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright (c) 2017 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright (c) 2019 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright (c) 2021 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+~~~~
+
 ### `github.com/alexbrainman/sspi` v0.0.0-20231016080023-1a75b4708caa
 
-- License: BSD-3-Clause
+- Module-root license: BSD-3-Clause (nested and embedded components may differ)
 - Evidence source: `github.com/alexbrainman/sspi@v0.0.0-20231016080023-1a75b4708caa` from the resolved Go module graph
-- Included files: `LICENSE`
+- Included files: `LICENSE`, `Linked source copyright and license headers`
 
 #### LICENSE
 
@@ -178,9 +201,29 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ~~~~
 
+#### Linked source copyright and license headers
+
+~~~~text
+// Copyright 2015 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2016 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2018 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2021 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+~~~~
+
 ### `github.com/coder/websocket` v1.8.14
 
-- License: ISC
+- Module-root license: ISC (nested and embedded components may differ)
 - Evidence source: `github.com/coder/websocket@v1.8.14` from the resolved Go module graph
 - Included files: `LICENSE.txt`
 
@@ -204,7 +247,7 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 ### `github.com/creachadair/msync` v0.8.1
 
-- License: BSD-2-Clause
+- Module-root license: BSD-2-Clause (nested and embedded components may differ)
 - Evidence source: `github.com/creachadair/msync@v0.8.1` from the resolved Go module graph
 - Included files: `LICENSE`
 
@@ -241,7 +284,7 @@ OF SUCH DAMAGE.
 
 ### `github.com/danieljoos/wincred` v1.2.2
 
-- License: MIT
+- Module-root license: MIT (nested and embedded components may differ)
 - Evidence source: `github.com/danieljoos/wincred@v1.2.2` from the resolved Go module graph
 - Included files: `LICENSE`
 
@@ -273,9 +316,9 @@ SOFTWARE.
 
 ### `github.com/dblohm7/wingoes` v0.0.0-20240119213807-a09d6be7affa
 
-- License: BSD-3-Clause
+- Module-root license: BSD-3-Clause (nested and embedded components may differ)
 - Evidence source: `github.com/dblohm7/wingoes@v0.0.0-20240119213807-a09d6be7affa` from the resolved Go module graph
-- Included files: `LICENSE`
+- Included files: `LICENSE`, `Linked source copyright and license headers`
 
 #### LICENSE
 
@@ -311,9 +354,24 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ~~~~
 
+#### Linked source copyright and license headers
+
+~~~~text
+// Copyright (c) 2022 Tailscale Inc & AUTHORS. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright (c) 2023 Tailscale Inc & AUTHORS. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright (c) Tailscale Inc & AUTHORS
+// SPDX-License-Identifier: BSD-3-Clause
+~~~~
+
 ### `github.com/fsnotify/fsnotify` v1.9.0
 
-- License: BSD-3-Clause
+- Module-root license: BSD-3-Clause (nested and embedded components may differ)
 - Evidence source: `github.com/fsnotify/fsnotify@v1.9.0` from the resolved Go module graph
 - Included files: `LICENSE`
 
@@ -349,9 +407,9 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ### `github.com/fxamacker/cbor/v2` v2.9.0
 
-- License: MIT
+- Module-root license: MIT (nested and embedded components may differ)
 - Evidence source: `github.com/fxamacker/cbor/v2@v2.9.0` from the resolved Go module graph
-- Included files: `LICENSE`
+- Included files: `LICENSE`, `Linked source copyright and license headers`
 
 #### LICENSE
 
@@ -379,11 +437,18 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ~~~~
 
+#### Linked source copyright and license headers
+
+~~~~text
+// Copyright (c) Faye Amacker. All rights reserved.
+// Licensed under the MIT License. See LICENSE in the project root for license information.
+~~~~
+
 ### `github.com/gaissmai/bart` v0.26.1
 
-- License: MIT
+- Module-root license: MIT (nested and embedded components may differ)
 - Evidence source: `github.com/gaissmai/bart@v0.26.1` from the resolved Go module graph
-- Included files: `LICENSE`
+- Included files: `LICENSE`, `Linked source copyright and license headers`
 
 #### LICENSE
 
@@ -411,11 +476,21 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ~~~~
 
+#### Linked source copyright and license headers
+
+~~~~text
+// Copyright (c) 2024 Karl Gaissmaier
+// SPDX-License-Identifier: MIT
+
+// Copyright (c) 2025 Karl Gaissmaier
+// SPDX-License-Identifier: MIT
+~~~~
+
 ### `github.com/go-json-experiment/json` v0.0.0-20260214004413-d219187c3433
 
-- License: BSD-3-Clause
+- Module-root license: BSD-3-Clause (nested and embedded components may differ)
 - Evidence source: `github.com/go-json-experiment/json@v0.0.0-20260214004413-d219187c3433` from the resolved Go module graph
-- Included files: `LICENSE`
+- Included files: `LICENSE`, `Linked source copyright and license headers`
 
 #### LICENSE
 
@@ -449,9 +524,41 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ~~~~
 
+#### Linked source copyright and license headers
+
+~~~~text
+// Copyright 2010 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2020 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2021 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2022 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2023 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2024 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2025 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+~~~~
+
 ### `github.com/godbus/dbus/v5` v5.2.2
 
-- License: BSD-2-Clause
+- Module-root license: BSD-2-Clause (nested and embedded components may differ)
 - Evidence source: `github.com/godbus/dbus/v5@v5.2.2` from the resolved Go module graph
 - Included files: `LICENSE`
 
@@ -487,9 +594,9 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ### `github.com/golang/groupcache` v0.0.0-20241129210726-2c02b8208cf8
 
-- License: Apache-2.0
+- Module-root license: Apache-2.0 (nested and embedded components may differ)
 - Evidence source: `github.com/golang/groupcache@v0.0.0-20241129210726-2c02b8208cf8` from the resolved Go module graph
-- Included files: `LICENSE`
+- Included files: `LICENSE`, `Linked source copyright and license headers`
 
 #### LICENSE
 
@@ -687,11 +794,31 @@ third-party archives.
    limitations under the License.
 ~~~~
 
+#### Linked source copyright and license headers
+
+~~~~text
+/*
+Copyright 2013 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+~~~~
+
 ### `github.com/google/btree` v1.1.3
 
-- License: Apache-2.0
+- Module-root license: Apache-2.0 (nested and embedded components may differ)
 - Evidence source: `github.com/google/btree@v1.1.3` from the resolved Go module graph
-- Included files: `LICENSE`
+- Included files: `LICENSE`, `Linked source copyright and license headers`
 
 #### LICENSE
 
@@ -900,11 +1027,43 @@ third-party archives.
    limitations under the License.
 ~~~~
 
+#### Linked source copyright and license headers
+
+~~~~text
+// Copyright 2014 Google Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// Copyright 2014-2022 Google Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+~~~~
+
 ### `github.com/google/jsonschema-go` v0.4.3
 
-- License: MIT
+- Module-root license: MIT (nested and embedded components may differ)
 - Evidence source: `github.com/google/jsonschema-go@v0.4.3` from the resolved Go module graph
-- Included files: `LICENSE`
+- Included files: `LICENSE`, `Linked source copyright and license headers`
 
 #### LICENSE
 
@@ -932,11 +1091,19 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ~~~~
 
+#### Linked source copyright and license headers
+
+~~~~text
+// Copyright 2025 The JSON Schema Go Project Authors. All rights reserved.
+// Use of this source code is governed by an MIT-style
+// license that can be found in the LICENSE file.
+~~~~
+
 ### `github.com/hdevalence/ed25519consensus` v0.2.0
 
-- License: BSD-3-Clause
+- Module-root license: BSD-3-Clause (nested and embedded components may differ)
 - Evidence source: `github.com/hdevalence/ed25519consensus@v0.2.0` from the resolved Go module graph
-- Included files: `LICENSE`
+- Included files: `LICENSE`, `Linked source copyright and license headers`
 
 #### LICENSE
 
@@ -971,9 +1138,18 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ~~~~
 
+#### Linked source copyright and license headers
+
+~~~~text
+// Copyright 2016 The Go Authors. All rights reserved.
+// Copyright 2016 Henry de Valence. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+~~~~
+
 ### `github.com/huin/goupnp` v1.3.0
 
-- License: BSD-2-Clause
+- Module-root license: BSD-2-Clause (nested and embedded components may differ)
 - Evidence source: `github.com/huin/goupnp@v1.3.0` from the resolved Go module graph
 - Included files: `LICENSE`
 
@@ -1007,7 +1183,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ### `github.com/inconshreveable/mousetrap` v1.1.0
 
-- License: Apache-2.0
+- Module-root license: Apache-2.0 (nested and embedded components may differ)
 - Evidence source: `github.com/inconshreveable/mousetrap@v1.1.0` from the resolved Go module graph
 - Included files: `LICENSE`
 
@@ -1219,7 +1395,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ### `github.com/jsimonetti/rtnetlink` v1.4.1
 
-- License: MIT
+- Module-root license: MIT (nested and embedded components may differ)
 - Evidence source: `github.com/jsimonetti/rtnetlink@v1.4.1` from the resolved Go module graph
 - Included files: `LICENSE.md`
 
@@ -1240,9 +1416,9 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 ### `github.com/klauspost/compress` v1.19.1
 
-- License: Apache-2.0
+- Module-root license: Apache-2.0 (nested and embedded components may differ)
 - Evidence source: `github.com/klauspost/compress@v1.19.1` from the resolved Go module graph
-- Included files: `LICENSE`
+- Included files: `LICENSE`, `Linked source copyright and license headers`, `internal/snapref/LICENSE`, `zstd/internal/xxhash/LICENSE.txt`
 
 #### LICENSE
 
@@ -1553,9 +1729,98 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ~~~~
 
+#### Linked source copyright and license headers
+
+~~~~text
+// Copyright 2011 The Snappy-Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2016 The Snappy-Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2018 Klaus Post. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+// Based on work Copyright (c) 2013, Yann Collet, released under BSD License.
+
+// Copyright 2019+ Klaus Post. All rights reserved.
+// License information can be found in the LICENSE file.
+
+// Copyright 2019+ Klaus Post. All rights reserved.
+// License information can be found in the LICENSE file.
+// Based on work by Yann Collet, released under BSD License.
+
+// Copyright 2020+ Klaus Post. All rights reserved.
+// License information can be found in the LICENSE file.
+
+// Copyright 2025+ Klaus Post. All rights reserved.
+// License information can be found in the LICENSE file.
+~~~~
+
+#### internal/snapref/LICENSE
+
+~~~~text
+Copyright (c) 2011 The Snappy-Go Authors. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+   * Redistributions of source code must retain the above copyright
+notice, this list of conditions and the following disclaimer.
+   * Redistributions in binary form must reproduce the above
+copyright notice, this list of conditions and the following disclaimer
+in the documentation and/or other materials provided with the
+distribution.
+   * Neither the name of Google Inc. nor the names of its
+contributors may be used to endorse or promote products derived from
+this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+~~~~
+
+#### zstd/internal/xxhash/LICENSE.txt
+
+~~~~text
+Copyright (c) 2016 Caleb Spare
+
+MIT License
+
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of this software and associated documentation files (the
+"Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish,
+distribute, sublicense, and/or sell copies of the Software, and to
+permit persons to whom the Software is furnished to do so, subject to
+the following conditions:
+
+The above copyright notice and this permission notice shall be
+included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
+LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+~~~~
+
 ### `github.com/mdlayher/netlink` v1.7.3-0.20250113171957-fbb4dce95f42
 
-- License: MIT
+- Module-root license: MIT (nested and embedded components may differ)
 - Evidence source: `github.com/mdlayher/netlink@v1.7.3-0.20250113171957-fbb4dce95f42` from the resolved Go module graph
 - Included files: `LICENSE.md`
 
@@ -1575,7 +1840,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 ### `github.com/mdlayher/socket` v0.5.0
 
-- License: MIT
+- Module-root license: MIT (nested and embedded components may differ)
 - Evidence source: `github.com/mdlayher/socket@v0.5.0` from the resolved Go module graph
 - Included files: `LICENSE.md`
 
@@ -1595,7 +1860,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 ### `github.com/mitchellh/go-ps` v1.0.0
 
-- License: MIT
+- Module-root license: MIT (nested and embedded components may differ)
 - Evidence source: `github.com/mitchellh/go-ps@v1.0.0` from the resolved Go module graph
 - Included files: `LICENSE.md`
 
@@ -1627,9 +1892,9 @@ THE SOFTWARE.
 
 ### `github.com/modelcontextprotocol/go-sdk` v1.7.0
 
-- License: Apache-2.0
+- Module-root license: Apache-2.0 (nested and embedded components may differ)
 - Evidence source: `github.com/modelcontextprotocol/go-sdk@v1.7.0` from the resolved Go module graph
-- Included files: `LICENSE`
+- Included files: `LICENSE`, `Linked source copyright and license headers`
 
 #### LICENSE
 
@@ -1852,9 +2117,37 @@ CC-BY-4.0. See https://creativecommons.org/licenses/by/4.0/legalcode for
 the full license text.
 ~~~~
 
+#### Linked source copyright and license headers
+
+~~~~text
+// Copyright 2018 The Go MCP SDK Authors. All rights reserved.
+// Use of this source code is governed by an MIT-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2019 The Go MCP SDK Authors. All rights reserved.
+// Use of this source code is governed by an MIT-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2025 The Go MCP SDK Authors. All rights reserved.
+// Use of this source code is governed by an MIT-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2025 The Go MCP SDK Authors. All rights reserved.
+// Use of this source code is governed by the license
+// that can be found in the LICENSE file.
+
+// Copyright 2026 The Go MCP SDK Authors. All rights reserved.
+// Use of this source code is governed by an MIT-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2026 The Go MCP SDK Authors. All rights reserved.
+// Use of this source code is governed by the license
+// that can be found in the LICENSE file.
+~~~~
+
 ### `github.com/pires/go-proxyproto` v0.8.1
 
-- License: Apache-2.0
+- Module-root license: Apache-2.0 (nested and embedded components may differ)
 - Evidence source: `github.com/pires/go-proxyproto@v0.8.1` from the resolved Go module graph
 - Included files: `LICENSE`
 
@@ -2066,9 +2359,9 @@ the full license text.
 
 ### `github.com/safchain/ethtool` v0.3.0
 
-- License: Apache-2.0
+- Module-root license: Apache-2.0 (nested and embedded components may differ)
 - Evidence source: `github.com/safchain/ethtool@v0.3.0` from the resolved Go module graph
-- Included files: `LICENSE`
+- Included files: `LICENSE`, `Linked source copyright and license headers`
 
 #### LICENSE
 
@@ -2276,9 +2569,34 @@ the full license text.
    limitations under the License.
 ~~~~
 
+#### Linked source copyright and license headers
+
+~~~~text
+/*
+ *
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ *
+ */
+~~~~
+
 ### `github.com/segmentio/asm` v1.1.3
 
-- License: MIT
+- Module-root license: MIT (nested and embedded components may differ)
 - Evidence source: `github.com/segmentio/asm@v1.1.3` from the resolved Go module graph
 - Included files: `LICENSE`
 
@@ -2310,7 +2628,7 @@ SOFTWARE.
 
 ### `github.com/segmentio/encoding` v0.5.4
 
-- License: MIT
+- Module-root license: MIT (nested and embedded components may differ)
 - Evidence source: `github.com/segmentio/encoding@v0.5.4` from the resolved Go module graph
 - Included files: `LICENSE`
 
@@ -2342,9 +2660,9 @@ SOFTWARE.
 
 ### `github.com/spf13/cobra` v1.10.2
 
-- License: Apache-2.0
+- Module-root license: Apache-2.0 (nested and embedded components may differ)
 - Evidence source: `github.com/spf13/cobra@v1.10.2` from the resolved Go module graph
-- Included files: `LICENSE.txt`
+- Included files: `LICENSE.txt`, `Linked source copyright and license headers`
 
 #### LICENSE.txt
 
@@ -2525,11 +2843,29 @@ SOFTWARE.
       of your accepting any such warranty or additional liability.
 ~~~~
 
+#### Linked source copyright and license headers
+
+~~~~text
+// Copyright 2013-2023 The Cobra Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+~~~~
+
 ### `github.com/spf13/pflag` v1.0.10
 
-- License: BSD-3-Clause
+- Module-root license: BSD-3-Clause (nested and embedded components may differ)
 - Evidence source: `github.com/spf13/pflag@v1.0.10` from the resolved Go module graph
-- Included files: `LICENSE`
+- Included files: `LICENSE`, `Linked source copyright and license headers`
 
 #### LICENSE
 
@@ -2564,9 +2900,17 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ~~~~
 
+#### Linked source copyright and license headers
+
+~~~~text
+// Copyright 2009 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+~~~~
+
 ### `github.com/tailscale/certstore` v0.1.1-0.20260409135935-3638fb84b77d
 
-- License: MIT
+- Module-root license: MIT (nested and embedded components may differ)
 - Evidence source: `github.com/tailscale/certstore@v0.1.1-0.20260409135935-3638fb84b77d` from the resolved Go module graph
 - Included files: `LICENSE.md`
 
@@ -2598,7 +2942,7 @@ SOFTWARE.
 
 ### `github.com/tailscale/go-winio` v0.0.0-20231025203758-c4f33415bf55
 
-- License: MIT
+- Module-root license: MIT (nested and embedded components may differ)
 - Evidence source: `github.com/tailscale/go-winio@v0.0.0-20231025203758-c4f33415bf55` from the resolved Go module graph
 - Included files: `LICENSE`
 
@@ -2630,9 +2974,9 @@ SOFTWARE.
 
 ### `github.com/tailscale/hujson` v0.0.0-20260302212456-ecc657c15afd
 
-- License: BSD-3-Clause
+- Module-root license: BSD-3-Clause (nested and embedded components may differ)
 - Evidence source: `github.com/tailscale/hujson@v0.0.0-20260302212456-ecc657c15afd` from the resolved Go module graph
-- Included files: `LICENSE`
+- Included files: `LICENSE`, `Linked source copyright and license headers`
 
 #### LICENSE
 
@@ -2666,11 +3010,19 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ~~~~
 
+#### Linked source copyright and license headers
+
+~~~~text
+// Copyright (c) 2021 Tailscale Inc & AUTHORS All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+~~~~
+
 ### `github.com/tailscale/peercred` v0.0.0-20250107143737-35a0c7bd7edc
 
-- License: BSD-3-Clause
+- Module-root license: BSD-3-Clause (nested and embedded components may differ)
 - Evidence source: `github.com/tailscale/peercred@v0.0.0-20250107143737-35a0c7bd7edc` from the resolved Go module graph
-- Included files: `LICENSE`
+- Included files: `LICENSE`, `Linked source copyright and license headers`
 
 #### LICENSE
 
@@ -2706,11 +3058,1090 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ~~~~
 
+#### Linked source copyright and license headers
+
+~~~~text
+// Copyright (c) 2021 AUTHORS All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+~~~~
+
 ### `github.com/tailscale/web-client-prebuilt` v0.0.0-20250124233751-d4cd19a26976
 
-- License: BSD-3-Clause
+- Module-root license: BSD-3-Clause (nested and embedded components may differ)
 - Evidence source: `github.com/tailscale/web-client-prebuilt@v0.0.0-20250124233751-d4cd19a26976` from the resolved Go module graph
-- Included files: `LICENSE`
+- Included files: `Embedded Inter font license`, `Embedded web-client runtime dependency notices`, `LICENSE`, `Linked source copyright and license headers`
+
+#### Embedded Inter font license
+
+~~~~text
+Embedded font metadata: Copyright 2020 The Inter Project Authors (https://github.com/rsms/inter)
+Version 3.019;git-0a5106e0b
+Source: https://github.com/rsms/inter/blob/v3.19/LICENSE.txt
+
+Copyright (c) 2016-2020 The Inter Project Authors.
+"Inter" is trademark of Rasmus Andersson.
+https://github.com/rsms/inter
+
+This Font Software is licensed under the SIL Open Font License, Version 1.1.
+This license is copied below, and is also available with a FAQ at:
+http://scripts.sil.org/OFL
+
+-----------------------------------------------------------
+SIL OPEN FONT LICENSE Version 1.1 - 26 February 2007
+-----------------------------------------------------------
+
+PREAMBLE
+The goals of the Open Font License (OFL) are to stimulate worldwide
+development of collaborative font projects, to support the font creation
+efforts of academic and linguistic communities, and to provide a free and
+open framework in which fonts may be shared and improved in partnership
+with others.
+
+The OFL allows the licensed fonts to be used, studied, modified and
+redistributed freely as long as they are not sold by themselves. The
+fonts, including any derivative works, can be bundled, embedded,
+redistributed and/or sold with any software provided that any reserved
+names are not used by derivative works. The fonts and derivatives,
+however, cannot be released under any other type of license. The
+requirement for fonts to remain under this license does not apply
+to any document created using the fonts or their derivatives.
+
+DEFINITIONS
+"Font Software" refers to the set of files released by the Copyright
+Holder(s) under this license and clearly marked as such. This may
+include source files, build scripts and documentation.
+
+"Reserved Font Name" refers to any names specified as such after the
+copyright statement(s).
+
+"Original Version" refers to the collection of Font Software components as
+distributed by the Copyright Holder(s).
+
+"Modified Version" refers to any derivative made by adding to, deleting,
+or substituting -- in part or in whole -- any of the components of the
+Original Version, by changing formats or by porting the Font Software to a
+new environment.
+
+"Author" refers to any designer, engineer, programmer, technical
+writer or other person who contributed to the Font Software.
+
+PERMISSION AND CONDITIONS
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of the Font Software, to use, study, copy, merge, embed, modify,
+redistribute, and sell modified and unmodified copies of the Font
+Software, subject to the following conditions:
+
+1) Neither the Font Software nor any of its individual components,
+in Original or Modified Versions, may be sold by itself.
+
+2) Original or Modified Versions of the Font Software may be bundled,
+redistributed and/or sold with any software, provided that each copy
+contains the above copyright notice and this license. These can be
+included either as stand-alone text files, human-readable headers or
+in the appropriate machine-readable metadata fields within text or
+binary files as long as those fields can be easily viewed by the user.
+
+3) No Modified Version of the Font Software may use the Reserved Font
+Name(s) unless explicit written permission is granted by the corresponding
+Copyright Holder. This restriction only applies to the primary font name as
+presented to the users.
+
+4) The name(s) of the Copyright Holder(s) or the Author(s) of the Font
+Software shall not be used to promote, endorse or advertise any
+Modified Version, except to acknowledge the contribution(s) of the
+Copyright Holder(s) and the Author(s) or with their explicit written
+permission.
+
+5) The Font Software, modified or unmodified, in part or in whole,
+must be distributed entirely under this license, and must not be
+distributed under any other license. The requirement for fonts to
+remain under this license does not apply to any document created
+using the Font Software.
+
+TERMINATION
+This license becomes null and void if any of the above conditions are
+not met.
+
+DISCLAIMER
+THE FONT SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO ANY WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT
+OF COPYRIGHT, PATENT, TRADEMARK, OR OTHER RIGHT. IN NO EVENT SHALL THE
+COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+INCLUDING ANY GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL
+DAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
+OTHER DEALINGS IN THE FONT SOFTWARE.
+~~~~
+
+#### Embedded web-client runtime dependency notices
+
+~~~~text
+Upstream web-client runtime dependency notices, conservatively included for the pinned embedded bundle.
+Notice-source manifest and lock: https://github.com/tailscale/tailscale/tree/716e4fcc97759308f79875ff1809da945df70574/client/web
+Versions below identify notice sources, not a claim that every package survives bundler tree shaking.
+
+Sources: @babel/runtime@7.23.4/package/LICENSE
+
+MIT License
+
+Copyright (c) 2014-present Sebastian McKenzie and other contributors
+
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of this software and associated documentation files (the
+"Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish,
+distribute, sublicense, and/or sell copies of the Software, and to
+permit persons to whom the Software is furnished to do so, subject to
+the following conditions:
+
+The above copyright notice and this permission notice shall be
+included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
+LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+Sources: @floating-ui/core@1.5.0/package/LICENSE, @floating-ui/dom@1.5.3/package/LICENSE, @floating-ui/react-dom@2.0.4/package/LICENSE, @floating-ui/utils@0.1.6/package/LICENSE
+
+MIT License
+
+Copyright (c) 2021-present Floating UI contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software is furnished to do so,
+subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+Sources: aria-hidden@1.2.3/package/LICENSE, react-remove-scroll@2.5.5/package/LICENSE, use-callback-ref@1.3.0/package/LICENSE, use-sidecar@1.1.2/package/LICENSE
+
+MIT License
+
+Copyright (c) 2017 Anton Korzunov
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+Sources: classnames@2.3.2/package/LICENSE
+
+The MIT License (MIT)
+
+Copyright (c) 2018 Jed Watson
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+Sources: detect-node-es@1.1.0/package/LICENSE
+
+MIT License
+
+Copyright (c) 2017 Ilya Kantor
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+Sources: get-nonce@1.0.1/package/LICENSE
+
+MIT License
+
+Copyright (c) 2020 Anton Korzunov
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+Sources: https://registry.npmjs.org/@radix-ui/primitive/1.0.1
+
+@radix-ui/primitive@1.0.1 package metadata declares MIT; its published archive has no separate LICENSE file.
+Author attribution from package metadata: null
+Standard MIT permission and disclaimer:
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
+associated documentation files (the "Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the
+following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial
+portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT
+LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO
+EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+Sources: https://registry.npmjs.org/@radix-ui/react-arrow/1.0.3
+
+@radix-ui/react-arrow@1.0.3 package metadata declares MIT; its published archive has no separate LICENSE file.
+Author attribution from package metadata: null
+Standard MIT permission and disclaimer:
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
+associated documentation files (the "Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the
+following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial
+portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT
+LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO
+EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+Sources: https://registry.npmjs.org/@radix-ui/react-collapsible/1.0.3
+
+@radix-ui/react-collapsible@1.0.3 package metadata declares MIT; its published archive has no separate LICENSE file.
+Author attribution from package metadata: null
+Standard MIT permission and disclaimer:
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
+associated documentation files (the "Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the
+following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial
+portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT
+LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO
+EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+Sources: https://registry.npmjs.org/@radix-ui/react-compose-refs/1.0.1
+
+@radix-ui/react-compose-refs@1.0.1 package metadata declares MIT; its published archive has no separate LICENSE file.
+Author attribution from package metadata: null
+Standard MIT permission and disclaimer:
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
+associated documentation files (the "Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the
+following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial
+portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT
+LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO
+EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+Sources: https://registry.npmjs.org/@radix-ui/react-context/1.0.1
+
+@radix-ui/react-context@1.0.1 package metadata declares MIT; its published archive has no separate LICENSE file.
+Author attribution from package metadata: null
+Standard MIT permission and disclaimer:
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
+associated documentation files (the "Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the
+following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial
+portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT
+LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO
+EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+Sources: https://registry.npmjs.org/@radix-ui/react-dialog/1.0.5
+
+@radix-ui/react-dialog@1.0.5 package metadata declares MIT; its published archive has no separate LICENSE file.
+Author attribution from package metadata: null
+Standard MIT permission and disclaimer:
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
+associated documentation files (the "Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the
+following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial
+portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT
+LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO
+EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+Sources: https://registry.npmjs.org/@radix-ui/react-dismissable-layer/1.0.5
+
+@radix-ui/react-dismissable-layer@1.0.5 package metadata declares MIT; its published archive has no separate LICENSE file.
+Author attribution from package metadata: null
+Standard MIT permission and disclaimer:
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
+associated documentation files (the "Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the
+following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial
+portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT
+LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO
+EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+Sources: https://registry.npmjs.org/@radix-ui/react-focus-guards/1.0.1
+
+@radix-ui/react-focus-guards@1.0.1 package metadata declares MIT; its published archive has no separate LICENSE file.
+Author attribution from package metadata: null
+Standard MIT permission and disclaimer:
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
+associated documentation files (the "Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the
+following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial
+portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT
+LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO
+EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+Sources: https://registry.npmjs.org/@radix-ui/react-focus-scope/1.0.4
+
+@radix-ui/react-focus-scope@1.0.4 package metadata declares MIT; its published archive has no separate LICENSE file.
+Author attribution from package metadata: null
+Standard MIT permission and disclaimer:
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
+associated documentation files (the "Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the
+following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial
+portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT
+LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO
+EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+Sources: https://registry.npmjs.org/@radix-ui/react-id/1.0.1
+
+@radix-ui/react-id@1.0.1 package metadata declares MIT; its published archive has no separate LICENSE file.
+Author attribution from package metadata: null
+Standard MIT permission and disclaimer:
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
+associated documentation files (the "Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the
+following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial
+portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT
+LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO
+EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+Sources: https://registry.npmjs.org/@radix-ui/react-popover/1.0.7
+
+@radix-ui/react-popover@1.0.7 package metadata declares MIT; its published archive has no separate LICENSE file.
+Author attribution from package metadata: null
+Standard MIT permission and disclaimer:
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
+associated documentation files (the "Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the
+following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial
+portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT
+LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO
+EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+Sources: https://registry.npmjs.org/@radix-ui/react-popper/1.1.3
+
+@radix-ui/react-popper@1.1.3 package metadata declares MIT; its published archive has no separate LICENSE file.
+Author attribution from package metadata: null
+Standard MIT permission and disclaimer:
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
+associated documentation files (the "Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the
+following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial
+portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT
+LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO
+EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+Sources: https://registry.npmjs.org/@radix-ui/react-portal/1.0.4
+
+@radix-ui/react-portal@1.0.4 package metadata declares MIT; its published archive has no separate LICENSE file.
+Author attribution from package metadata: null
+Standard MIT permission and disclaimer:
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
+associated documentation files (the "Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the
+following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial
+portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT
+LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO
+EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+Sources: https://registry.npmjs.org/@radix-ui/react-presence/1.0.1
+
+@radix-ui/react-presence@1.0.1 package metadata declares MIT; its published archive has no separate LICENSE file.
+Author attribution from package metadata: null
+Standard MIT permission and disclaimer:
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
+associated documentation files (the "Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the
+following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial
+portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT
+LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO
+EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+Sources: https://registry.npmjs.org/@radix-ui/react-primitive/1.0.3
+
+@radix-ui/react-primitive@1.0.3 package metadata declares MIT; its published archive has no separate LICENSE file.
+Author attribution from package metadata: null
+Standard MIT permission and disclaimer:
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
+associated documentation files (the "Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the
+following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial
+portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT
+LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO
+EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+Sources: https://registry.npmjs.org/@radix-ui/react-slot/1.0.2
+
+@radix-ui/react-slot@1.0.2 package metadata declares MIT; its published archive has no separate LICENSE file.
+Author attribution from package metadata: null
+Standard MIT permission and disclaimer:
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
+associated documentation files (the "Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the
+following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial
+portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT
+LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO
+EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+Sources: https://registry.npmjs.org/@radix-ui/react-use-callback-ref/1.0.1
+
+@radix-ui/react-use-callback-ref@1.0.1 package metadata declares MIT; its published archive has no separate LICENSE file.
+Author attribution from package metadata: null
+Standard MIT permission and disclaimer:
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
+associated documentation files (the "Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the
+following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial
+portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT
+LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO
+EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+Sources: https://registry.npmjs.org/@radix-ui/react-use-controllable-state/1.0.1
+
+@radix-ui/react-use-controllable-state@1.0.1 package metadata declares MIT; its published archive has no separate LICENSE file.
+Author attribution from package metadata: null
+Standard MIT permission and disclaimer:
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
+associated documentation files (the "Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the
+following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial
+portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT
+LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO
+EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+Sources: https://registry.npmjs.org/@radix-ui/react-use-escape-keydown/1.0.3
+
+@radix-ui/react-use-escape-keydown@1.0.3 package metadata declares MIT; its published archive has no separate LICENSE file.
+Author attribution from package metadata: null
+Standard MIT permission and disclaimer:
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
+associated documentation files (the "Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the
+following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial
+portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT
+LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO
+EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+Sources: https://registry.npmjs.org/@radix-ui/react-use-layout-effect/1.0.1
+
+@radix-ui/react-use-layout-effect@1.0.1 package metadata declares MIT; its published archive has no separate LICENSE file.
+Author attribution from package metadata: null
+Standard MIT permission and disclaimer:
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
+associated documentation files (the "Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the
+following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial
+portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT
+LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO
+EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+Sources: https://registry.npmjs.org/@radix-ui/react-use-rect/1.0.1
+
+@radix-ui/react-use-rect@1.0.1 package metadata declares MIT; its published archive has no separate LICENSE file.
+Author attribution from package metadata: null
+Standard MIT permission and disclaimer:
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
+associated documentation files (the "Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the
+following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial
+portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT
+LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO
+EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+Sources: https://registry.npmjs.org/@radix-ui/react-use-size/1.0.1
+
+@radix-ui/react-use-size@1.0.1 package metadata declares MIT; its published archive has no separate LICENSE file.
+Author attribution from package metadata: null
+Standard MIT permission and disclaimer:
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
+associated documentation files (the "Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the
+following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial
+portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT
+LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO
+EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+Sources: https://registry.npmjs.org/@radix-ui/rect/1.0.1
+
+@radix-ui/rect@1.0.1 package metadata declares MIT; its published archive has no separate LICENSE file.
+Author attribution from package metadata: null
+Standard MIT permission and disclaimer:
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
+associated documentation files (the "Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the
+following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial
+portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT
+LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO
+EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+Sources: https://registry.npmjs.org/client-only/0.0.1
+
+client-only@0.0.1 package metadata declares MIT; its published archive has no separate LICENSE file.
+Author attribution from package metadata: null
+Standard MIT permission and disclaimer:
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
+associated documentation files (the "Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the
+following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial
+portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT
+LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO
+EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+Sources: https://registry.npmjs.org/react-remove-scroll-bar/2.3.4
+
+react-remove-scroll-bar@2.3.4 package metadata declares MIT; its published archive has no separate LICENSE file.
+Author attribution from package metadata: {"name": "Anton Korzunov", "email": "thekashey@gmail.com"}
+Standard MIT permission and disclaimer:
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
+associated documentation files (the "Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the
+following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial
+portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT
+LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO
+EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+Sources: https://registry.npmjs.org/react-style-singleton/2.2.1
+
+react-style-singleton@2.2.1 package metadata declares MIT; its published archive has no separate LICENSE file.
+Author attribution from package metadata: {"url": "thekashey@gmail.com", "name": "Anton Korzunov"}
+Standard MIT permission and disclaimer:
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
+associated documentation files (the "Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the
+following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial
+portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT
+LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO
+EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+Sources: https://registry.npmjs.org/wouter/2.12.1
+
+wouter@2.12.1 package metadata declares ISC; its published archive has no separate LICENSE file.
+Author attribution from package metadata: {"name": "Alexey Taktarov", "email": "molefrog@gmail.com"}
+Standard ISC permission and disclaimer:
+
+Permission to use, copy, modify, and/or distribute this software for any purpose with or without fee is hereby granted, provided that the above copyright notice and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND ISC DISCLAIMS ALL WARRANTIES WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL ISC BE LIABLE FOR ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+Sources: invariant@2.2.4/package/LICENSE
+
+MIT License
+
+Copyright (c) 2013-present, Facebook, Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+Sources: js-tokens@4.0.0/package/LICENSE
+
+The MIT License (MIT)
+
+Copyright (c) 2014, 2015, 2016, 2017, 2018 Simon Lydell
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+Sources: loose-envify@1.4.0/package/LICENSE
+
+The MIT License (MIT)
+
+Copyright (c) 2015 Andres Suarez <zertosh@gmail.com>
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+Sources: react-dom@18.2.0/package/LICENSE, react@18.2.0/package/LICENSE, scheduler@0.23.0/package/LICENSE, use-sync-external-store@1.2.0/package/LICENSE
+
+MIT License
+
+Copyright (c) Facebook, Inc. and its affiliates.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+Sources: regenerator-runtime@0.14.0/package/LICENSE
+
+MIT License
+
+Copyright (c) 2014-present, Facebook, Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+Sources: swr@2.2.4/package/LICENSE
+
+MIT License
+
+Copyright (c) 2023 Vercel, Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+Sources: tailwindcss@3.3.3/package/LICENSE
+
+MIT License
+
+Copyright (c) Tailwind Labs, Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+Sources: tailwindcss@3.3.3/package/lib/css/LICENSE, tailwindcss@3.3.3/package/src/css/LICENSE
+
+MIT License
+
+Copyright (c) Nicolas Gallagher
+Copyright (c) Jonathan Neal
+Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (sindresorhus.com)
+Copyright (c) Adam Wathan
+Copyright (c) Jonathan Reinink
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+Sources: tailwindcss@3.3.3/package/lib/value-parser/LICENSE, tailwindcss@3.3.3/package/src/value-parser/LICENSE
+
+Copyright (c) Bogdan Chadkin <trysound@yandex.ru>
+
+Permission is hereby granted, free of charge, to any person
+obtaining a copy of this software and associated documentation
+files (the "Software"), to deal in the Software without
+restriction, including without limitation the rights to use,
+copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the
+Software is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice shall be
+included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+OTHER DEALINGS IN THE SOFTWARE.
+
+Sources: tslib@2.6.2/package/LICENSE.txt
+
+Copyright (c) Microsoft Corporation.
+
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY
+AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM
+LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR
+OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
+PERFORMANCE OF THIS SOFTWARE.
+
+Sources: zustand@4.4.7/package/LICENSE
+
+MIT License
+
+Copyright (c) 2019 Paul Henschel
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+~~~~
 
 #### LICENSE
 
@@ -2745,11 +4176,18 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ~~~~
 
+#### Linked source copyright and license headers
+
+~~~~text
+// Copyright (c) Tailscale Inc & AUTHORS
+// SPDX-License-Identifier: BSD-3-Clause
+~~~~
+
 ### `github.com/tailscale/wireguard-go` v0.0.0-20260715223240-2e01ba5b00f0
 
-- License: MIT
+- Module-root license: MIT (nested and embedded components may differ)
 - Evidence source: `github.com/tailscale/wireguard-go@v0.0.0-20260715223240-2e01ba5b00f0` from the resolved Go module graph
-- Included files: `LICENSE`
+- Included files: `LICENSE`, `Linked source copyright and license headers`
 
 #### LICENSE
 
@@ -2773,11 +4211,48 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ~~~~
 
+#### Linked source copyright and license headers
+
+~~~~text
+/* SPDX-License-Identifier: MIT
+ *
+ * Copyright (C) 2017-2023 WireGuard LLC. All Rights Reserved.
+ *
+ * This implements userspace semantics of "sticky sockets", modeled after
+ * WireGuard's kernelspace implementation. This is more or less a straight port
+ * of the sticky-sockets.c example code:
+ * https://git.zx2c4.com/WireGuard/tree/contrib/examples/sticky-sockets/sticky-sockets.c
+ *
+ * Currently there is no way to achieve this within the net package:
+ * See e.g. https://github.com/golang/go/issues/17930
+ * So this code is remains platform dependent.
+ */
+
+/* SPDX-License-Identifier: MIT
+ *
+ * Copyright (C) 2017-2023 WireGuard LLC. All Rights Reserved.
+ *
+ * This is based heavily on timers.c from the kernel implementation.
+ */
+
+/* SPDX-License-Identifier: MIT
+ *
+ * Copyright (C) 2017-2023 WireGuard LLC. All Rights Reserved.
+ */
+
+// Copyright 2021 The Go Authors. All rights reserved.
+// Copyright 2015 Microsoft
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// SPDX-License-Identifier: MIT
+~~~~
+
 ### `github.com/x448/float16` v0.8.4
 
-- License: MIT
+- Module-root license: MIT (nested and embedded components may differ)
 - Evidence source: `github.com/x448/float16@v0.8.4` from the resolved Go module graph
-- Included files: `LICENSE`
+- Included files: `LICENSE`, `Linked source copyright and license headers`
 
 #### LICENSE
 
@@ -2805,11 +4280,20 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ~~~~
 
+#### Linked source copyright and license headers
+
+~~~~text
+// Copyright 2019 Montgomery Edwards⁴⁴⁸ and Faye Amacker
+//
+// Special thanks to Kathryn Long for her Rust implementation
+// of float16 at github.com/starkat99/half-rs (MIT license)
+~~~~
+
 ### `github.com/yosida95/uritemplate/v3` v3.0.2
 
-- License: BSD-3-Clause
+- Module-root license: BSD-3-Clause (nested and embedded components may differ)
 - Evidence source: `github.com/yosida95/uritemplate/v3@v3.0.2` from the resolved Go module graph
-- Included files: `LICENSE`
+- Included files: `LICENSE`, `Linked source copyright and license headers`
 
 #### LICENSE
 
@@ -2841,11 +4325,21 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ~~~~
 
+#### Linked source copyright and license headers
+
+~~~~text
+// Copyright (C) 2016 Kohei YOSHIDA. All rights reserved.
+//
+// This program is free software; you can redistribute it and/or
+// modify it under the terms of The BSD 3-Clause License
+// that can be found in the LICENSE file.
+~~~~
+
 ### `github.com/zalando/go-keyring` v0.2.6
 
-- License: MIT
+- Module-root license: MIT (nested and embedded components may differ)
 - Evidence source: `github.com/zalando/go-keyring@v0.2.6` from the resolved Go module graph
-- Included files: `LICENSE`
+- Included files: `LICENSE`, `Linked source copyright and license headers`
 
 #### LICENSE
 
@@ -2873,11 +4367,29 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ~~~~
 
+#### Linked source copyright and license headers
+
+~~~~text
+// Copyright 2013 Google Inc. All Rights Reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+~~~~
+
 ### `go4.org/mem` v0.0.0-20240501181205-ae6ca9944745
 
-- License: Apache-2.0
+- Module-root license: Apache-2.0 (nested and embedded components may differ)
 - Evidence source: `go4.org/mem@v0.0.0-20240501181205-ae6ca9944745` from the resolved Go module graph
-- Included files: `LICENSE`
+- Included files: `LICENSE`, `Linked source copyright and license headers`
 
 #### LICENSE
 
@@ -3085,11 +4597,31 @@ SOFTWARE.
    limitations under the License.
 ~~~~
 
+#### Linked source copyright and license headers
+
+~~~~text
+/*
+Copyright 2020 The Go4 AUTHORS
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+~~~~
+
 ### `go4.org/netipx` v0.0.0-20231129151722-fdeea329fbba
 
-- License: BSD-3-Clause
+- Module-root license: BSD-3-Clause (nested and embedded components may differ)
 - Evidence source: `go4.org/netipx@v0.0.0-20231129151722-fdeea329fbba` from the resolved Go module graph
-- Included files: `LICENSE`
+- Included files: `LICENSE`, `Linked source copyright and license headers`
 
 #### LICENSE
 
@@ -3123,11 +4655,23 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ~~~~
 
+#### Linked source copyright and license headers
+
+~~~~text
+// Copyright 2020 The Inet.Af AUTHORS. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2021 The Inet.Af AUTHORS. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+~~~~
+
 ### `golang.org/x/crypto` v0.57.0
 
-- License: BSD-3-Clause
+- Module-root license: BSD-3-Clause (nested and embedded components may differ)
 - Evidence source: `golang.org/x/crypto@v0.57.0` from the resolved Go module graph
-- Included files: `LICENSE`
+- Included files: `LICENSE`, `Linked source copyright and license headers`
 
 #### LICENSE
 
@@ -3159,13 +4703,49 @@ DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
 THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+~~~~
+
+#### Linked source copyright and license headers
+
+~~~~text
+// Copyright 2012 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2014 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2016 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2017 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2018 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2018 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found src the LICENSE file.
+
+// Copyright 2019 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2025 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
 ~~~~
 
 ### `golang.org/x/exp` v0.0.0-20260410095643-746e56fc9e2f
 
-- License: BSD-3-Clause
+- Module-root license: BSD-3-Clause (nested and embedded components may differ)
 - Evidence source: `golang.org/x/exp@v0.0.0-20260410095643-746e56fc9e2f` from the resolved Go module graph
-- Included files: `LICENSE`
+- Included files: `LICENSE`, `Linked source copyright and license headers`
 
 #### LICENSE
 
@@ -3197,13 +4777,21 @@ DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
 THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+~~~~
+
+#### Linked source copyright and license headers
+
+~~~~text
+// Copyright 2021 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
 ~~~~
 
 ### `golang.org/x/net` v0.58.0
 
-- License: BSD-3-Clause
+- Module-root license: BSD-3-Clause (nested and embedded components may differ)
 - Evidence source: `golang.org/x/net@v0.58.0` from the resolved Go module graph
-- Included files: `LICENSE`
+- Included files: `LICENSE`, `Linked source copyright and license headers`
 
 #### LICENSE
 
@@ -3235,13 +4823,69 @@ DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
 THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+~~~~
+
+#### Linked source copyright and license headers
+
+~~~~text
+// Copyright 2009 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2011 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2012 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2013 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2014 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2015 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2016 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2017 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2018 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2019 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2020 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2021 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2025 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
 ~~~~
 
 ### `golang.org/x/oauth2` v0.36.0
 
-- License: BSD-3-Clause
+- Module-root license: BSD-3-Clause (nested and embedded components may differ)
 - Evidence source: `golang.org/x/oauth2@v0.36.0` from the resolved Go module graph
-- Included files: `LICENSE`
+- Included files: `LICENSE`, `Linked source copyright and license headers`
 
 #### LICENSE
 
@@ -3273,13 +4917,29 @@ DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
 THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+~~~~
+
+#### Linked source copyright and license headers
+
+~~~~text
+// Copyright 2014 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2017 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2023 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
 ~~~~
 
 ### `golang.org/x/sync` v0.23.0
 
-- License: BSD-3-Clause
+- Module-root license: BSD-3-Clause (nested and embedded components may differ)
 - Evidence source: `golang.org/x/sync@v0.23.0` from the resolved Go module graph
-- Included files: `LICENSE`
+- Included files: `LICENSE`, `Linked source copyright and license headers`
 
 #### LICENSE
 
@@ -3311,13 +4971,21 @@ DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
 THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+~~~~
+
+#### Linked source copyright and license headers
+
+~~~~text
+// Copyright 2016 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
 ~~~~
 
 ### `golang.org/x/sys` v0.48.0
 
-- License: BSD-3-Clause
+- Module-root license: BSD-3-Clause (nested and embedded components may differ)
 - Evidence source: `golang.org/x/sys@v0.48.0` from the resolved Go module graph
-- Included files: `LICENSE`
+- Included files: `LICENSE`, `Linked source copyright and license headers`
 
 #### LICENSE
 
@@ -3349,13 +5017,105 @@ DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
 THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+~~~~
+
+#### Linked source copyright and license headers
+
+~~~~text
+// Copyright 2009 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2009,2010 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2010 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2011 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2012 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2013 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2014 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2015 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2016 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2016 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+//
+//go:build 386 || amd64 || amd64p32 || alpha || arm || arm64 || loong64 || mipsle || mips64le || mips64p32le || nios2 || ppc64le || riscv || riscv64 || sh
+
+// Copyright 2016 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+//
+//go:build armbe || arm64be || m68k || mips || mips64 || mips64p32 || ppc || ppc64 || s390 || s390x || shbe || sparc || sparc64
+
+// Copyright 2017 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2018 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2019 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2020 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2021 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2022 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2023 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2024 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2025 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2026 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
 ~~~~
 
 ### `golang.org/x/term` v0.46.0
 
-- License: BSD-3-Clause
+- Module-root license: BSD-3-Clause (nested and embedded components may differ)
 - Evidence source: `golang.org/x/term@v0.46.0` from the resolved Go module graph
-- Included files: `LICENSE`
+- Included files: `LICENSE`, `Linked source copyright and license headers`
 
 #### LICENSE
 
@@ -3387,13 +5147,33 @@ DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
 THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+~~~~
+
+#### Linked source copyright and license headers
+
+~~~~text
+// Copyright 2011 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2013 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2019 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2021 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
 ~~~~
 
 ### `golang.org/x/text` v0.42.0
 
-- License: BSD-3-Clause
+- Module-root license: BSD-3-Clause (nested and embedded components may differ)
 - Evidence source: `golang.org/x/text@v0.42.0` from the resolved Go module graph
-- Included files: `LICENSE`
+- Included files: `LICENSE`, `Linked source copyright and license headers`
 
 #### LICENSE
 
@@ -3425,13 +5205,33 @@ DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
 THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+~~~~
+
+#### Linked source copyright and license headers
+
+~~~~text
+// Copyright 2011 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2013 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2015 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2016 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
 ~~~~
 
 ### `golang.org/x/time` v0.15.0
 
-- License: BSD-3-Clause
+- Module-root license: BSD-3-Clause (nested and embedded components may differ)
 - Evidence source: `golang.org/x/time@v0.15.0` from the resolved Go module graph
-- Included files: `LICENSE`
+- Included files: `LICENSE`, `Linked source copyright and license headers`
 
 #### LICENSE
 
@@ -3465,11 +5265,23 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ~~~~
 
+#### Linked source copyright and license headers
+
+~~~~text
+// Copyright 2015 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2022 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+~~~~
+
 ### `golang.zx2c4.com/wintun` v0.0.0-20230126152724-0fa3db229ce2
 
-- License: MIT
+- Module-root license: MIT (nested and embedded components may differ)
 - Evidence source: `golang.zx2c4.com/wintun@v0.0.0-20230126152724-0fa3db229ce2` from the resolved Go module graph
-- Included files: `LICENSE`
+- Included files: `LICENSE`, `Linked source copyright and license headers`
 
 #### LICENSE
 
@@ -3493,11 +5305,20 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ~~~~
 
+#### Linked source copyright and license headers
+
+~~~~text
+/* SPDX-License-Identifier: MIT
+ *
+ * Copyright (C) 2017-2021 WireGuard LLC. All Rights Reserved.
+ */
+~~~~
+
 ### `golang.zx2c4.com/wireguard/windows` v0.5.3
 
-- License: MIT
+- Module-root license: MIT (nested and embedded components may differ)
 - Evidence source: `golang.zx2c4.com/wireguard/windows@v0.5.3` from the resolved Go module graph
-- Included files: `COPYING`
+- Included files: `COPYING`, `Linked source copyright and license headers`
 
 #### COPYING
 
@@ -3523,11 +5344,20 @@ FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ~~~~
 
+#### Linked source copyright and license headers
+
+~~~~text
+/* SPDX-License-Identifier: MIT
+ *
+ * Copyright (C) 2019-2021 WireGuard LLC. All Rights Reserved.
+ */
+~~~~
+
 ### `gvisor.dev/gvisor` v0.0.0-20260224225140-573d5e7127a8
 
-- License: Apache-2.0
+- Module-root license: Apache-2.0 (nested and embedded components may differ)
 - Evidence source: `gvisor.dev/gvisor@v0.0.0-20260224225140-573d5e7127a8` from the resolved Go module graph
-- Included files: `LICENSE`
+- Included files: `LICENSE`, `Linked source copyright and license headers`
 
 #### LICENSE
 
@@ -3788,11 +5618,251 @@ Some files carry the "BSD" license, noted at the top of each file:
    POSSIBILITY OF SUCH DAMAGE.
 ~~~~
 
+#### Linked source copyright and license headers
+
+~~~~text
+// Copyright 2009 The Go Authors. All rights reserved.
+// Copyright 2019 The gVisor Authors.
+//
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file or at
+// https://developers.google.com/open-source/licenses/bsd.
+
+// Copyright 2018 The gVisor Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// Copyright 2019 The gVisor Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// Copyright 2019 The gVisor Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at //
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// Copyright 2019 The gVisor Authors.
+//
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file or at
+// https://developers.google.com/open-source/licenses/bsd.
+
+// Copyright 2020 The gVisor Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// Copyright 2020 The gVisor Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at //
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// Copyright 2020 The gVisor Authors.
+//
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file or at
+// https://developers.google.com/open-source/licenses/bsd.
+
+// Copyright 2021 The gVisor Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// Copyright 2021 The gVisor Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at //
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// Copyright 2022 The gVisor Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// Copyright 2022 The gVisor Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at //
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// Copyright 2023 The gVisor Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// Copyright 2023 The gVisor Authors.
+//
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file or at
+// https://developers.google.com/open-source/licenses/bsd.
+
+// Copyright 2024 The gVisor Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// Copyright 2024 The gVisor Authors.
+//
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file or at
+// https://developers.google.com/open-source/licenses/bsd.
+
+// Copyright 2025 The gVisor Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+~~~~
+
 ### `tailscale.com` v1.102.4
 
-- License: BSD-3-Clause
+- Module-root license: BSD-3-Clause (nested and embedded components may differ)
 - Evidence source: `tailscale.com@v1.102.4` from the resolved Go module graph
-- Included files: `LICENSE`
+- Included files: `Embedded HTMX WebSocket license`, `Embedded HTMX license`, `LICENSE`, `Linked source copyright and license headers`
+
+#### Embedded HTMX WebSocket license
+
+~~~~text
+HTMX WebSocket extension 2.0.2; source: https://unpkg.com/htmx-ext-ws@2.0.2/LICENSE
+
+BSD Zero Clause License
+
+Copyright (c) 2023, Alexander Petros
+
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+~~~~
+
+#### Embedded HTMX license
+
+~~~~text
+HTMX 2.0.4; source: https://github.com/bigskysoftware/htmx/blob/v2.0.4/LICENSE
+
+Zero-Clause BSD
+=============
+
+Permission to use, copy, modify, and/or distribute this software for
+any purpose with or without fee is hereby granted.
+
+THE SOFTWARE IS PROVIDED “AS IS” AND THE AUTHOR DISCLAIMS ALL
+WARRANTIES WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES
+OF MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE
+FOR ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY
+DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN
+AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT
+OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+~~~~
 
 #### LICENSE
 
@@ -3827,11 +5897,60 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ~~~~
 
+#### Linked source copyright and license headers
+
+~~~~text
+// Copyright (c) Tailscale Inc & contributors
+// SPDX-License-Identifier: BSD-3-Clause
+
+// Copyright (c) Tailscale Inc & contributors
+// SPDX-License-Identifier: BSD-3-Clause
+//
+// Original implementation (from same author) from which this was derived was:
+// https://github.com/golang/groupcache/blob/5b532d6fd5efaf7fa130d4e859a2fde0fc3a9e1b/lru/lru.go
+// ... which was Apache licensed:
+// https://github.com/golang/groupcache/blob/master/LICENSE
+
+// Copyright (c) Tailscale Inc & contributors
+// SPDX-License-Identifier: BSD-3-Clause
+//go:build gofuzz
+
+// Copyright 2009 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2011 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2013 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2015 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2016 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2018 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Copyright 2019 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Package licenses provides utilities for working with open source licenses.
+~~~~
+
 ### `tailscale.com/client/tailscale/v2` v2.10.1
 
-- License: MIT
+- Module-root license: MIT (nested and embedded components may differ)
 - Evidence source: `tailscale.com/client/tailscale/v2@v2.10.1` from the resolved Go module graph
-- Included files: `LICENSE`
+- Included files: `LICENSE`, `Linked source copyright and license headers`
 
 #### LICENSE
 
@@ -3858,5 +5977,12 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+~~~~
+
+#### Linked source copyright and license headers
+
+~~~~text
+// Copyright (c) David Bond, Tailscale Inc, & Contributors
+// SPDX-License-Identifier: MIT
 ~~~~
 

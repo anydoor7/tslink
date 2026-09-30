@@ -367,7 +367,8 @@ func LinkLocalTargetRefusedError(target string) error {
 // DNS-layer concern, not this one.
 func isRefusedTargetHost(host string) bool {
 	normalized := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(host)), ".")
-	if normalized == metadataHost {
+	switch normalized {
+	case metadataHost, "metadata.tencentyun.com", "instance-data", "metadata":
 		return true
 	}
 	// An IPv6 literal can carry a zone (fe80::1%en0); the zone selects an
@@ -377,33 +378,47 @@ func isRefusedTargetHost(host string) bool {
 	}
 	ip := net.ParseIP(normalized)
 	if ip != nil {
-		return ip.IsLinkLocalUnicast() || ip.IsUnspecified()
-	}
-	// The platform resolver accepts non-canonical spellings of an IPv4 address
-	// that net.ParseIP rejects -- hexadecimal 0xA9FEA9FE, the dotted 32-bit
-	// form 169.254.43518, octal-looking 0251.0376.0251.0376, and bare decimal
-	// 2852039166 all fold into the same address the daemon would then dial.
-	// Every such spelling ends in a wholly numeric label, while a real
-	// hostname's last label (its TLD) is never all digits, so refusing that
-	// shape closes the bypass without touching ordinary names such as
-	// 169.254.169.254.example.com or 169.254.169.254.nip.io.
-	if dot := strings.LastIndexByte(normalized, '.'); dot >= 0 {
-		normalized = normalized[dot+1:]
+		return ip.IsLinkLocalUnicast() || ip.IsUnspecified() || ip.String() == "fd00:ec2::254" || ip.String() == "100.100.100.200"
 	}
 	return isNumericHostLabel(normalized)
 }
 
-// isNumericHostLabel reports whether label is a wholly decimal host label
-// (169.254.43518) or a 0x/0X-prefixed hexadecimal one (0xA9FEA9FE). Both are
-// numeric IPv4 spellings the platform resolver folds into a single address.
-func isNumericHostLabel(label string) bool {
-	if label == "" {
+// isNumericHostLabel recognizes traditional inet_aton IPv4 spellings before
+// judging their address. A numeric last label alone is not a refused target:
+// for example 127.1 is loopback, while 169.254.43518 is metadata.
+func isNumericHostLabel(host string) bool {
+	parts := strings.Split(host, ".")
+	if len(parts) > 4 {
 		return false
 	}
-	if len(label) > 2 && (strings.HasPrefix(label, "0x") || strings.HasPrefix(label, "0X")) {
-		return allASCIIHexDigits(label[2:])
+	var address uint64
+	for i, part := range parts {
+		base := 10
+		if strings.HasPrefix(part, "0x") || strings.HasPrefix(part, "0X") {
+			part, base = part[2:], 16
+			if !allASCIIHexDigits(part) {
+				return false
+			}
+		} else {
+			if !allASCIIDecimalDigits(part) {
+				return false
+			}
+			if len(part) > 1 && part[0] == '0' {
+				base = 8
+			}
+		}
+		bits := 8
+		if i == len(parts)-1 {
+			bits = 8 * (5 - len(parts))
+		}
+		value, err := strconv.ParseUint(part, base, bits)
+		if err != nil {
+			return false
+		}
+		address = address<<bits | value
 	}
-	return allASCIIDecimalDigits(label)
+	ip := net.IPv4(byte(address>>24), byte(address>>16), byte(address>>8), byte(address))
+	return isRefusedTargetHost(ip.String())
 }
 
 func allASCIIDecimalDigits(value string) bool {
@@ -1060,7 +1075,8 @@ func LoadForRuntime(path string) (*Registry, []ServiceIssue, error) {
 	if len(bytes.TrimSpace(data)) == 0 {
 		return nil, nil, fmt.Errorf("registry.json is empty: %s", path)
 	}
-	return decodeForRuntime(data)
+	reg, issues, err := decodeForRuntime(data)
+	return reg, issues, registryLoadError(path, err)
 }
 
 // Preflight reads and strictly validates a registry copy without changing its
@@ -1073,7 +1089,8 @@ func Preflight(path string) (*Registry, []ServiceIssue, error) {
 	if len(bytes.TrimSpace(data)) == 0 {
 		return nil, nil, fmt.Errorf("registry.json is empty: %s", path)
 	}
-	return decodeForRuntime(data)
+	reg, issues, err := decodeForRuntime(data)
+	return reg, issues, registryLoadError(path, err)
 }
 
 func decodeForRuntime(data []byte) (*Registry, []ServiceIssue, error) {
@@ -1122,6 +1139,23 @@ func decodeForRuntime(data []byte) (*Registry, []ServiceIssue, error) {
 	return reg, issues, nil
 }
 
+// registryLoadError classifies malformed user input at the file boundary so
+// every reader retains the path and recovery guidance. Existing specific
+// codes (such as unknown_config_key) keep their classification.
+func registryLoadError(path string, err error) error {
+	if err == nil {
+		return nil
+	}
+	if _, coded := ErrorCode(err); coded {
+		return err
+	}
+	return &StableCodeError{
+		Code: "usage_error",
+		Err:  fmt.Errorf("load registry %q: %w", path, err),
+		Next: []string{"Check and repair the JSON syntax and field types in " + path, "tslink registry check --help"},
+	}
+}
+
 func strictJSONDecode(data []byte, dst any) error {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
@@ -1158,6 +1192,43 @@ func Load(path string) (*Registry, error) {
 	return reg, err
 }
 
+// LoadForDiagnostics retains trustworthy names and recognized fields from
+// isolated entries alongside healthy services. Callers must display issues;
+// this view must never be used to rewrite the registry. Mutation loaders stay
+// strict so unknown input is never silently discarded.
+func LoadForDiagnostics(path string) (*Registry, []ServiceIssue, error) {
+	reg, issues, err := LoadForRuntime(path)
+	if err != nil || len(issues) == 0 {
+		return reg, issues, err
+	}
+	if len(reg.Services) == 0 {
+		var blocking []error
+		for _, issue := range issues {
+			if code, _ := ErrorCode(issue.Err); code == CodeUnknownConfigKey {
+				blocking = append(blocking, issue)
+			}
+		}
+		if len(blocking) > 0 {
+			// Preserve the strict refusal when there are no healthy entries
+			// to display. The error still names each unknown-key entry.
+			return nil, issues, errors.Join(blocking...)
+		}
+	}
+	services := make([]Service, len(reg.Services)+len(issues))
+	validIndex, issueIndex := 0, 0
+	for index := range services {
+		if issueIndex < len(issues) && issues[issueIndex].Index == index {
+			services[index] = issues[issueIndex].Service
+			issueIndex++
+		} else {
+			services[index] = reg.Services[validIndex]
+			validIndex++
+		}
+	}
+	reg.Services = services
+	return reg, issues, nil
+}
+
 // LoadWithFileState preserves Load's compatibility behavior while exposing
 // whether its empty registry came from an absent file, blank contents, or a
 // successfully decoded registry. Deletion callers use this distinction to
@@ -1178,7 +1249,7 @@ func LoadWithFileState(path string) (*Registry, RegistryFileState, error) {
 	}
 	reg, issues, err := decodeForRuntime(data)
 	if err != nil {
-		return nil, "", err
+		return nil, "", registryLoadError(path, err)
 	}
 	var blocking []error
 	for _, issue := range issues {
@@ -1228,7 +1299,7 @@ func loadForMutation(path string) (*Registry, error) {
 	}
 	reg, issues, err := decodeForRuntime(data)
 	if err != nil {
-		return nil, err
+		return nil, registryLoadError(path, err)
 	}
 	if len(issues) == 0 {
 		return reg, nil

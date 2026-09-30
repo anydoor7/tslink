@@ -555,6 +555,10 @@ func TestManifestCheckStepsNameFullFixtureCoverage(t *testing.T) {
 			t.Errorf("%s must name the strict fixture check: %s", candidateWorkflow, name)
 		}
 	}
+	linuxStep := "- name: CLI manifest fixture is current (Linux)\n        run: go run ./tools/gen-manifest -check"
+	if !strings.Contains(string(body), linuxStep) {
+		t.Errorf("%s Linux manifest step must run exactly go run ./tools/gen-manifest -check", candidateWorkflow)
+	}
 }
 
 // goreleaserFeatureFloors maps a GoReleaser config key to the minimum GoReleaser

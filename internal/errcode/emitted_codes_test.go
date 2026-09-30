@@ -34,15 +34,20 @@ import (
 // codeCarriers are the struct types whose Code field is a stable error code
 // an agent or script can read.
 var codeCarriers = map[string]bool{
-	"CodedError":                  true, // registry
-	"StableCodeError":             true, // registry
-	"SnapshotError":               true, // runtime
-	"Freshness":                   true, // runtime: status's runtime_snapshot.code
-	"ServiceError":                true, // runtime: a service's failure in status and doctor
-	"InviteTargetError":           true, // tailapi: a per-target failure in invite list
-	"RegistryCheckIssue":          true, // cmd: registry check issues
-	"ErrorObject":                 true, // output: the envelope's error object
-	"StatusRuntimeSnapshotResult": true, // cmd: forwards runtime freshness codes
+	"github.com/monody0007/tslink/internal/registry.CodedError":       true,
+	"github.com/monody0007/tslink/internal/registry.StableCodeError":  true,
+	"github.com/monody0007/tslink/internal/runtime.SnapshotError":     true,
+	"github.com/monody0007/tslink/internal/runtime.Freshness":         true,
+	"github.com/monody0007/tslink/internal/runtime.ServiceError":      true,
+	"github.com/monody0007/tslink/internal/tailapi.InviteTargetError": true,
+	"github.com/monody0007/tslink/cmd.RegistryCheckIssue":             true,
+	"github.com/monody0007/tslink/internal/output.ErrorObject":        true,
+	"github.com/monody0007/tslink/cmd.StatusRuntimeSnapshotResult":    true,
+
+	// Explicit positive controls in the scanner's synthetic modules. These
+	// registrations do not admit a same-named type in any other package.
+	"example.com/control.CodedError": true,
+	"example.com/m/p.CodedError":     true,
 }
 
 // These Code fields describe table metadata or diagnostics, not emitted error
@@ -416,6 +421,21 @@ func codeFieldIndex(st *ast.StructType) (int, bool) {
 	return 0, false
 }
 
+// carrierIdentity resolves import aliases before looking up a registration.
+func (s *moduleScanner) carrierIdentity(pkgPath string, file *ast.File, typ ast.Expr) string {
+	if sel, ok := typ.(*ast.SelectorExpr); ok {
+		ident, ok := sel.X.(*ast.Ident)
+		if !ok {
+			return ""
+		}
+		pkgPath, ok = s.importPathFor(file, ident.Name)
+		if !ok {
+			return ""
+		}
+	}
+	return pkgPath + "." + carrierName(typ)
+}
+
 func (s *moduleScanner) carrierCodeIndex(pkgPath string, file *ast.File, typ ast.Expr) (int, bool) {
 	if sel, ok := typ.(*ast.SelectorExpr); ok {
 		ident, ok := sel.X.(*ast.Ident)
@@ -440,7 +460,7 @@ func (s *moduleScanner) carrierCodeIndex(pkgPath string, file *ast.File, typ ast
 
 func (s *moduleScanner) checkCarrierRegistrations(pkg *scannedPackage) {
 	for name, st := range pkg.structs {
-		if _, hasCode := codeFieldIndex(st); !hasCode || codeCarriers[name] {
+		if _, hasCode := codeFieldIndex(st); !hasCode || codeCarriers[pkg.path+"."+name] {
 			continue
 		}
 		qualified := strings.TrimPrefix(pkg.path, s.module+"/") + "." + name
@@ -483,7 +503,7 @@ func (s *moduleScanner) collect() {
 						}
 					}
 					lit, ok := n.(*ast.CompositeLit)
-					if !ok || !codeCarriers[carrierName(lit.Type)] {
+					if !ok || !codeCarriers[s.carrierIdentity(path, file, lit.Type)] {
 						return true
 					}
 					index, resolved := s.carrierCodeIndex(path, file, lit.Type)

@@ -301,13 +301,15 @@ func buildDoctorResult(opts doctorOptions) DoctorResult {
 	}
 
 	var reg *registry.Registry
+	var registryIssues []registry.ServiceIssue
 	var fingerprint string
 	if result.Paths.Registry != "" {
-		loaded, err := registry.Load(result.Paths.Registry)
+		loaded, issues, err := registry.LoadForDiagnostics(result.Paths.Registry)
 		if err != nil {
 			result.addFinding(inspect.WarningCodeRegistryLoadFailed, "", "registry", "Registry could not be loaded.", evidenceError(err))
 		} else {
 			reg = loaded
+			registryIssues = issues
 			result.Counts.Services = len(reg.Services)
 			if fp, err := tsruntime.CurrentRegistryFingerprint(result.Paths.Registry); err != nil {
 				result.addFinding(inspect.WarningCodeRegistryLoadFailed, "", "registry", "Registry fingerprint could not be computed.", evidenceError(err))
@@ -329,13 +331,35 @@ func buildDoctorResult(opts doctorOptions) DoctorResult {
 	if serviceCount > 0 && result.Supervision.Manager == "windows-startup" && result.Supervision.Autostart && !result.Supervision.RestartOnExit {
 		result.addFinding(inspect.WarningCodeDaemonRestartUnavailable, "", "daemon", "Windows Startup starts TSLink at sign-in but does not restart it after a crash.", nil)
 	}
+	invalidServices := make(map[string]bool, len(registryIssues))
+	for _, issue := range registryIssues {
+		invalidServices[issue.Name] = true
+	}
+	var validNames []string
+	if reg != nil && len(registryIssues) > 0 {
+		for _, svc := range reg.Services {
+			if !invalidServices[svc.Name] {
+				validNames = append(validNames, svc.Name)
+			}
+		}
+	}
+	for _, issue := range registryIssues {
+		if registry.ValidateService(issue.Service) != nil {
+			continue // Existing service diagnostics provide the specific repair.
+		}
+		evidence := evidenceError(issue.Err)
+		evidence["valid_services"] = strings.Join(validNames, ", ")
+		result.addFinding(doctorRegistryValidationCode(issue.Service, issue.Err), issue.Name, "registry", issue.Error(), evidence)
+	}
 	hasFunnel := false
 	if reg != nil {
 		for _, svc := range reg.Services {
 			if svc.Funnel {
 				hasFunnel = true
 			}
-			diagnoseService(&result, svc, opts)
+			if !invalidServices[svc.Name] || registry.ValidateService(svc) != nil {
+				diagnoseService(&result, svc, opts)
+			}
 		}
 	}
 	if reg != nil {
@@ -649,9 +673,14 @@ func diagnoseDaemon(result *DoctorResult, serviceCount int) {
 		// daemon_unsupervised behind an unverifiable-identity note. Only
 		// evidence that is merely inconclusive (a sidecar from another build, a
 		// timestamp outside tolerance) still earns the conservative treatment.
-		if _, err := os.Stat(result.Paths.PID); (!os.IsNotExist(err) && !daemon.IsProcessAbsentFromPIDFile(result.Paths.PID) && !daemon.IsForeignProcessFromPIDFile(result.Paths.PID)) || checkSupervisorProcessScope() != nil {
+		scopeErr := checkSupervisorProcessScope()
+		if _, err := os.Stat(result.Paths.PID); (!os.IsNotExist(err) && !daemon.IsProcessAbsentFromPIDFile(result.Paths.PID) && !daemon.IsForeignProcessFromPIDFile(result.Paths.PID)) || scopeErr != nil {
 			result.Daemon.IdentityUnverified = true
-			result.addFinding(inspect.WarningCodeDaemonIdentityUnverified, "", "daemon", "Daemon identity could not be verified; the process may still be serving (including a different TSLink build). Inspect the PID file, running binary and supervisor with 'tslink status --json' and 'tslink logs' before any install/restart. Backend probes remain enabled.", nil)
+			message := "Daemon identity could not be verified; the process may still be serving (including a different TSLink build). Inspect the PID file, running binary and supervisor with 'tslink status --json' and 'tslink logs' before any install/restart. Backend probes remain enabled."
+			if scopeErr != nil {
+				message += " " + scopeErr.Error()
+			}
+			result.addFinding(inspect.WarningCodeDaemonIdentityUnverified, "", "daemon", message, nil)
 			return
 		}
 		result.addFinding(inspect.WarningCodeDaemonNotRunning, "", "daemon", "TSLink daemon is not running; run 'tslink install' to restore service.", nil)

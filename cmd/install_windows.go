@@ -127,7 +127,7 @@ func windowsStartupScript(exe string, noAutoProvision bool) string {
 	if noAutoProvision {
 		serveArgs += " --no-auto-provision"
 	}
-	return fmt.Sprintf("CreateObject(\"Wscript.Shell\").Run \"\"\"\" & %s & \"\"\"%s\", 0, False\r\n", vbsStringLiteral(exe), serveArgs)
+	return `shell.Environment("Process")("TSLINK_MANAGED_LOGS") = "1"` + "\r\n" + fmt.Sprintf("CreateObject(\"Wscript.Shell\").Run \"\"\"\" & %s & \"\"\"%s\", 0, False\r\n", vbsStringLiteral(exe), serveArgs)
 }
 
 func vbsStringLiteral(value string) string {
