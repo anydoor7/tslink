@@ -367,7 +367,8 @@ func LinkLocalTargetRefusedError(target string) error {
 // DNS-layer concern, not this one.
 func isRefusedTargetHost(host string) bool {
 	normalized := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(host)), ".")
-	if normalized == metadataHost {
+	switch normalized {
+	case metadataHost, "metadata.tencentyun.com", "instance-data", "metadata":
 		return true
 	}
 	// An IPv6 literal can carry a zone (fe80::1%en0); the zone selects an
@@ -377,7 +378,7 @@ func isRefusedTargetHost(host string) bool {
 	}
 	ip := net.ParseIP(normalized)
 	if ip != nil {
-		return ip.IsLinkLocalUnicast() || ip.IsUnspecified()
+		return ip.IsLinkLocalUnicast() || ip.IsUnspecified() || ip.String() == "fd00:ec2::254" || ip.String() == "100.100.100.200"
 	}
 	// The platform resolver accepts non-canonical spellings of an IPv4 address
 	// that net.ParseIP rejects -- hexadecimal 0xA9FEA9FE, the dotted 32-bit
