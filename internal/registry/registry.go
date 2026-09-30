@@ -842,8 +842,10 @@ var configDirFn = config.Dir
 // refuseConfigDirExposure refuses a file service that would serve TSLink's
 // config directory. A directory share (file empty) serves its whole tree, so
 // its root must neither be, contain, nor lie inside the config directory. A
-// single-file share serves one regular file, so only that file's resolved
-// location matters. Both sides are compared as files (os.SameFile) after
+// single-file share serves one regular file, so the directory that file
+// lives in and the file's own resolved location matter. The directory is
+// checked whether or not the file exists yet: the daemon serves the file once
+// it appears. Both sides are compared as files (os.SameFile) after
 // resolving symlinks, so another spelling of the same directory, a symlink to
 // it, or a case variant on a case-insensitive file system is the same
 // directory. It does not change what an accepted share serves.
@@ -860,10 +862,8 @@ func refuseConfigDirExposure(root, file string) error {
 		served = filepath.Join(root, file)
 	}
 	servedInfo, err := os.Stat(served)
-	if err != nil {
-		if file != "" && errors.Is(err, fs.ErrNotExist) {
-			return nil
-		}
+	missingFile := file != "" && errors.Is(err, fs.ErrNotExist)
+	if err != nil && !missingFile {
 		return PathNotAccessibleError(served, err)
 	}
 
@@ -882,13 +882,26 @@ func refuseConfigDirExposure(root, file string) error {
 		// A config directory that does not exist yet has nothing inside it.
 		return nil
 	}
-	resolved, err := filepath.EvalSymlinks(served)
-	if err != nil {
-		return PathNotAccessibleError(served, err)
+	var locations []string
+	if file != "" {
+		parent, ok := resolveThroughExistingAncestor(root)
+		if !ok {
+			return PathNotAccessibleError(root, fs.ErrNotExist)
+		}
+		locations = append(locations, parent)
 	}
-	for _, dir := range pathAndAncestors(resolved) {
-		if info, err := os.Stat(dir); err == nil && os.SameFile(info, configInfo) {
-			return PathExposesConfigDirError(root, configDir)
+	if !missingFile {
+		resolved, err := filepath.EvalSymlinks(served)
+		if err != nil {
+			return PathNotAccessibleError(served, err)
+		}
+		locations = append(locations, resolved)
+	}
+	for _, location := range locations {
+		for _, dir := range pathAndAncestors(location) {
+			if info, err := os.Stat(dir); err == nil && os.SameFile(info, configInfo) {
+				return PathExposesConfigDirError(root, configDir)
+			}
 		}
 	}
 	return nil
@@ -899,20 +912,28 @@ func refuseConfigDirExposure(root, file string) error {
 // its nearest existing ancestor is resolved and the rest appended.
 func configDirAncestry(configDir string) []string {
 	dirs := pathAndAncestors(configDir)
+	if resolved, ok := resolveThroughExistingAncestor(configDir); ok {
+		dirs = append(dirs, pathAndAncestors(resolved)...)
+	}
+	return dirs
+}
+
+// resolveThroughExistingAncestor resolves the symlinks of path's nearest
+// existing ancestor (path itself when it exists) and appends the part that
+// does not exist yet.
+func resolveThroughExistingAncestor(path string) (string, bool) {
 	rest := ""
-	for dir := configDir; ; {
+	for dir := path; ; {
 		if resolved, err := filepath.EvalSymlinks(dir); err == nil {
-			dirs = append(dirs, pathAndAncestors(filepath.Join(resolved, rest))...)
-			break
+			return filepath.Join(resolved, rest), true
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
-			break
+			return "", false
 		}
 		rest = filepath.Join(filepath.Base(dir), rest)
 		dir = parent
 	}
-	return dirs
 }
 
 func pathAndAncestors(path string) []string {
