@@ -353,11 +353,15 @@ func TestNodeIdentityInitialWriteFailureBlocksConstruction(t *testing.T) {
 func TestNodeIdentityEphemeralResetAndTargetOnlyReuse(t *testing.T) {
 	for _, tc := range []struct {
 		name        string
-		change      func(*registry.Service)
+		change      func(*testing.T, *registry.Service)
 		wantRemoved bool
 	}{
-		{name: "ephemeral", change: func(svc *registry.Service) { svc.Ephemeral = true }, wantRemoved: true},
-		{name: "target-only", change: func(svc *registry.Service) { svc.Path = filepath.Dir(svc.Path) }, wantRemoved: false},
+		{name: "ephemeral", change: func(_ *testing.T, svc *registry.Service) { svc.Ephemeral = true }, wantRemoved: true},
+		// The share moves to a fresh directory of its own. Its parent would be
+		// the per-test temp root, which also holds the test's HOME and so the
+		// config directory, and a share of that is refused before any node is
+		// built (path_exposes_config_dir).
+		{name: "target-only", change: func(t *testing.T, svc *registry.Service) { svc.Path = t.TempDir() }, wantRemoved: false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			old, _, stateDir := identityTestSetup(t)
@@ -385,7 +389,7 @@ func TestNodeIdentityEphemeralResetAndTargetOnlyReuse(t *testing.T) {
 				t.Fatal(err)
 			}
 			changed := old
-			tc.change(&changed)
+			tc.change(t, &changed)
 			writeRegistry(t, []registry.Service{changed})
 			if err := s.syncNodes(context.Background()); err != nil {
 				t.Fatal(err)

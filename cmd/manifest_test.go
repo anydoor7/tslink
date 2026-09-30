@@ -968,8 +968,14 @@ func TestCompactManifestStaysBelowAgentTokenBudget(t *testing.T) {
 	// --open-keys-page/--open-oauth-page, logout --kind, and the api_token_unauthorized,
 	// api_forbidden, invite_api_unauthorized, login_verify_failed error codes) add
 	// machine contract surface; keep a fixed ceiling while accounting for it.
-	if len(data) >= 2500 {
-		t.Fatalf("compact manifest = %d bytes, want < 2500", len(data))
+	// The architecture round then registered the per-service and daemon codes
+	// it introduced (credential_control_url_mismatch, funnel_expiry_required,
+	// path_exposes_config_dir, legacy_config_dir_present, config_load_failed)
+	// and dropped feature_unavailable, which took the compact form past 2500
+	// bytes (2550 measured alone); the code->exit map is what an agent looks
+	// up, so it stays and the ceiling moves to 3000.
+	if len(data) >= 3000 {
+		t.Fatalf("compact manifest = %d bytes, want < 3000", len(data))
 	}
 	compact := CompactManifest()
 	if compact.ErrorCodes[registry.CodeURLNotReady] != 5 {
