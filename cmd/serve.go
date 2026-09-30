@@ -8,7 +8,9 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"reflect"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -159,6 +161,49 @@ type mcpControlPlaneSetter interface {
 
 type lifecycleReconcileSetter interface {
 	SetLifecycleReconcileFn(server.LifecycleReconcileFunc)
+}
+
+// daemonSettings is every setting serve passes the daemon on every start.
+// serve refuses a runner that lacks one: a daemon started without one runs on
+// a default nobody chose (no lifecycle reconciliation, so no Funnel expiry;
+// the wrong credential mode; no Funnel policy), and nothing would say so.
+type daemonSettings interface {
+	credentialModeSetter
+	controlURLTrustSetter
+	ensureTagsSetter
+	ensureFunnelAttrSetter
+	autoProvisionFunnelSetter
+	lifecycleReconcileSetter
+	authKeyProviderSetter
+	userSuppliedAuthKeySetter
+}
+
+// server.Server must take everything serve passes it, so a setter renamed or
+// dropped on it fails the build here instead of every daemon start. The last
+// three settings are passed only in some modes: interactive enrollment, the
+// MCP control plane and daemon readiness.
+var (
+	_ serverRunner          = (*server.Server)(nil)
+	_ nodeStateHolder       = (*server.Server)(nil)
+	_ daemonSettings        = (*server.Server)(nil)
+	_ authHandoffSetter     = (*server.Server)(nil)
+	_ mcpControlPlaneSetter = (*server.Server)(nil)
+	_ readySetter           = (*server.Server)(nil)
+)
+
+// missingDaemonSettings names the daemonSettings methods runner lacks.
+func missingDaemonSettings(runner serverRunner) []string {
+	want := reflect.TypeFor[daemonSettings]()
+	var missing []string
+	for i := range want.NumMethod() {
+		name := want.Method(i).Name
+		if runner == nil {
+			missing = append(missing, name)
+		} else if _, ok := reflect.TypeOf(runner).MethodByName(name); !ok {
+			missing = append(missing, name)
+		}
+	}
+	return missing
 }
 
 func init() {
@@ -683,101 +728,89 @@ func runForegroundWithOptions(pidPath, authKey, controlURL string, options foreg
 	if err != nil {
 		return err
 	}
-	if setter, ok := srv.(credentialModeSetter); ok {
-		setter.SetCredentialed(options.Credentialed)
+	settings, ok := srv.(daemonSettings)
+	if !ok {
+		return fmt.Errorf("server does not take every daemon setting serve passes it; missing or different: %s", strings.Join(missingDaemonSettings(srv), ", "))
 	}
-	if setter, ok := srv.(controlURLTrustSetter); ok {
-		setter.SetControlURLUnverified(options.ControlURLUnverified)
+	settings.SetCredentialed(options.Credentialed)
+	settings.SetControlURLUnverified(options.ControlURLUnverified)
+	settings.SetEnsureTagsFn(serveEnsureTagsFn)
+	ensure := options.EnsureFunnelAttrFn
+	if ensure == nil {
+		ensure = serveEnsureFunnelAttrFn
 	}
-	if setter, ok := srv.(ensureTagsSetter); ok {
-		setter.SetEnsureTagsFn(serveEnsureTagsFn)
+	settings.SetEnsureFunnelAttrFn(ensure)
+	settings.SetAutoProvisionFunnel(!options.NoAutoProvision)
+	regPath, err := config.RegistryPath()
+	if err != nil {
+		return err
 	}
-	if setter, ok := srv.(ensureFunnelAttrSetter); ok {
-		ensure := options.EnsureFunnelAttrFn
-		if ensure == nil {
-			ensure = serveEnsureFunnelAttrFn
-		}
-		setter.SetEnsureFunnelAttrFn(ensure)
+	ownershipPath, err := config.NodeOwnershipPath()
+	if err != nil {
+		return err
 	}
-	if setter, ok := srv.(autoProvisionFunnelSetter); ok {
-		setter.SetAutoProvisionFunnel(!options.NoAutoProvision)
+	// Local node-state cleanup is enabled only when the runner can say
+	// which state directories it is holding. A runner that cannot answer
+	// gets no cleanup rather than a default answer: the cost of a wrong
+	// "nothing holds it" is a live node losing its identity, and the cost
+	// of no cleanup is a leftover directory.
+	cleanLocalNodeState := false
+	var localNodeStateInUse func(string) bool
+	if holder, holds := srv.(nodeStateHolder); holds {
+		cleanLocalNodeState = true
+		localNodeStateInUse = holder.HoldsNodeState
 	}
-	if setter, ok := srv.(lifecycleReconcileSetter); ok {
-		regPath, err := config.RegistryPath()
+	firstLifecycleReconcile := true
+	hadActiveFunnel := false
+	settings.SetLifecycleReconcileFn(func(ctx context.Context, now time.Time) (bool, error) {
+		hasActiveFunnel, err := registryHasActiveFunnelAt(regPath, now)
 		if err != nil {
-			return err
+			return false, err
 		}
-		ownershipPath, err := config.NodeOwnershipPath()
+		checkUnusedACL := options.ManageACL && (firstLifecycleReconcile || (hadActiveFunnel && !hasActiveFunnel))
+		result, err := serveLifecycleReconcileFn(ctx, lifecycle.Options{
+			RegistryPath:        regPath,
+			OwnershipPath:       ownershipPath,
+			Now:                 now,
+			DryRun:              false,
+			ManageACL:           options.ManageACL,
+			CheckUnusedACL:      checkUnusedACL,
+			CleanLocalNodeState: cleanLocalNodeState,
+			LocalNodeStateInUse: localNodeStateInUse,
+		})
 		if err != nil {
-			return err
+			return false, err
 		}
-		// Local node-state cleanup is enabled only when the runner can say
-		// which state directories it is holding. A runner that cannot answer
-		// gets no cleanup rather than a default answer: the cost of a wrong
-		// "nothing holds it" is a live node losing its identity, and the cost
-		// of no cleanup is a leftover directory.
-		cleanLocalNodeState := false
-		var localNodeStateInUse func(string) bool
-		if holder, holds := srv.(nodeStateHolder); holds {
-			cleanLocalNodeState = true
-			localNodeStateInUse = holder.HoldsNodeState
+		firstLifecycleReconcile = false
+		hadActiveFunnel = hasActiveFunnel
+		if len(result.ExpiredFunnels) > 0 || len(result.DevicesDeleted) > 0 || len(result.Warnings) > 0 {
+			slog.Info("lifecycle reconciliation completed",
+				"expired_funnels", result.ExpiredFunnels,
+				"devices_deleted", result.DevicesDeleted,
+				"devices_protected", result.DevicesProtected,
+				"acl_action", result.ACLAction,
+				"warnings", result.Warnings,
+			)
 		}
-		firstLifecycleReconcile := true
-		hadActiveFunnel := false
-		setter.SetLifecycleReconcileFn(func(ctx context.Context, now time.Time) (bool, error) {
-			hasActiveFunnel, err := registryHasActiveFunnelAt(regPath, now)
-			if err != nil {
-				return false, err
-			}
-			checkUnusedACL := options.ManageACL && (firstLifecycleReconcile || (hadActiveFunnel && !hasActiveFunnel))
-			result, err := serveLifecycleReconcileFn(ctx, lifecycle.Options{
-				RegistryPath:        regPath,
-				OwnershipPath:       ownershipPath,
-				Now:                 now,
-				DryRun:              false,
-				ManageACL:           options.ManageACL,
-				CheckUnusedACL:      checkUnusedACL,
-				CleanLocalNodeState: cleanLocalNodeState,
-				LocalNodeStateInUse: localNodeStateInUse,
-			})
-			if err != nil {
-				return false, err
-			}
-			firstLifecycleReconcile = false
-			hadActiveFunnel = hasActiveFunnel
-			if len(result.ExpiredFunnels) > 0 || len(result.DevicesDeleted) > 0 || len(result.Warnings) > 0 {
-				slog.Info("lifecycle reconciliation completed",
-					"expired_funnels", result.ExpiredFunnels,
-					"devices_deleted", result.DevicesDeleted,
-					"devices_protected", result.DevicesProtected,
-					"acl_action", result.ACLAction,
-					"warnings", result.Warnings,
-				)
-			}
-			return result.RegistryChanged, nil
+		return result.RegistryChanged, nil
+	})
+	settings.SetAuthKeyProvider(func(ctx context.Context, svc registry.Service) (string, error) {
+		if !options.Credentialed {
+			return "", nil
+		}
+		// Description uses %s, never %q: the Tailscale create-key API
+		// rejects a description containing double quotes ("description had
+		// invalid characters"). svc.Name is a registry-validated DNS label
+		// ([a-z0-9-]) or the validated MCP node name, so the result stays
+		// within letters, digits, spaces and hyphens.
+		return serveGetAuthKeyFn(ctx, credentials.AuthKeyOptions{
+			Tags:          svc.Tags,
+			Ephemeral:     svc.Ephemeral,
+			Description:   fmt.Sprintf("TSLink service %s startup auth key", svc.Name),
+			ClientFactory: tailapi.NewTailscaleClient,
 		})
-	}
-	if setter, ok := srv.(authKeyProviderSetter); ok {
-		setter.SetAuthKeyProvider(func(ctx context.Context, svc registry.Service) (string, error) {
-			if !options.Credentialed {
-				return "", nil
-			}
-			// Description uses %s, never %q: the Tailscale create-key API
-			// rejects a description containing double quotes ("description had
-			// invalid characters"). svc.Name is a registry-validated DNS label
-			// ([a-z0-9-]) or the validated MCP node name, so the result stays
-			// within letters, digits, spaces and hyphens.
-			return serveGetAuthKeyFn(ctx, credentials.AuthKeyOptions{
-				Tags:          svc.Tags,
-				Ephemeral:     svc.Ephemeral,
-				Description:   fmt.Sprintf("TSLink service %s startup auth key", svc.Name),
-				ClientFactory: tailapi.NewTailscaleClient,
-			})
-		})
-	}
-	if setter, ok := srv.(userSuppliedAuthKeySetter); ok {
-		setter.SetUserSuppliedAuthKey(options.UserSuppliedAuthKey)
-	}
+	})
+	settings.SetUserSuppliedAuthKey(options.UserSuppliedAuthKey)
 	if !options.Credentialed {
 		setter, ok := srv.(authHandoffSetter)
 		if !ok {

@@ -41,6 +41,7 @@ func (f cleanupDevicesContractFake) Cleanup(_ context.Context, targets []tailapi
 }
 
 type mockServer struct {
+	ignoresDaemonSettings
 	runErr            error
 	runCalled         bool
 	credentialed      bool
@@ -58,6 +59,7 @@ func (m *mockServer) SetCredentialed(credentialed bool) {
 }
 
 type mockReadyServer struct {
+	ignoresDaemonSettings
 	readyFn func() error
 	runErr  error
 }
@@ -77,11 +79,13 @@ func (m *mockReadyServer) Run(ctx context.Context) error {
 }
 
 type mockServerWithEnsureTags struct {
+	ignoresDaemonSettings
 	ensureTagsFn server.EnsureTagsFunc
 	runErr       error
 }
 
 type mockServerWithFunnelProvisioning struct {
+	ignoresDaemonSettings
 	ensureFn  server.EnsureFunnelAttrFunc
 	auto      bool
 	autoSet   bool
@@ -90,6 +94,7 @@ type mockServerWithFunnelProvisioning struct {
 }
 
 type mockServerWithLifecycle struct {
+	ignoresDaemonSettings
 	reconcile server.LifecycleReconcileFunc
 	runAt     time.Time
 }
@@ -141,11 +146,13 @@ func (m *mockServerWithEnsureTags) Run(ctx context.Context) error {
 }
 
 type mockServerWithAuthProvider struct {
+	ignoresDaemonSettings
 	authProvider server.AuthKeyProvider
 	service      registry.Service
 }
 
 type mockInteractiveServer struct {
+	ignoresDaemonSettings
 	authProvider server.AuthKeyProvider
 	authHandoff  server.AuthHandoffFunc
 	service      registry.Service

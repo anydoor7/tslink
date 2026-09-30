@@ -388,6 +388,7 @@ func TestServeCommandDeclaresTheControlPlaneOffByDefault(t *testing.T) {
 // mcpHTTPRecordingServer is a serverRunner that records the control plane the
 // serve wiring hands it.
 type mcpHTTPRecordingServer struct {
+	ignoresDaemonSettings
 	setCalls     int
 	controlPlane *server.MCPControlPlane
 	runErr       error

@@ -15,6 +15,7 @@ import (
 // mockServerHoldingNodeState is a runner that can answer which node state it
 // holds, the way server.Server does.
 type mockServerHoldingNodeState struct {
+	ignoresDaemonSettings
 	reconcile server.LifecycleReconcileFunc
 	runAt     time.Time
 	held      map[string]bool
