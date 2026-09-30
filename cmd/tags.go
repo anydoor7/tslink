@@ -70,6 +70,10 @@ var (
 	tagsEnsureDirFn     = config.EnsureDir
 	tagsUpdateGlobalFn  = config.UpdateGlobalConfig
 	tagsGetDefaultFn    = config.GetDefaultTag
+	// tagsDefaultTagFn is the strict read for the delete-remote guard: a
+	// config.json it cannot read must not answer tag:tsmain there, or the
+	// real default tag's owner rule passes the guard.
+	tagsDefaultTagFn = config.DefaultTag
 )
 
 func validateTagPrefix(tag string) error {
@@ -299,7 +303,10 @@ func tagsDeleteRemoteRun(ctx context.Context, out io.Writer, tag string, force, 
 	}
 	plan := security.ACLMutationPlan("delete_tag_owner", []string{tag}, manageACL)
 	// Check if tag is the current default
-	defaultTag := tagsGetDefaultFn()
+	defaultTag, err := tagsDefaultTagFn()
+	if err != nil {
+		return err
+	}
 	if tag == defaultTag {
 		msg := fmt.Sprintf("cannot delete default tag %q — change the default first with: tslink tags set-default <other-tag>", tag)
 		if isJSON {
