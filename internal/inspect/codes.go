@@ -104,12 +104,12 @@ var WarningCodeRegistry = map[string]WarningCodeMeta{
 	WarningCodeRuntimeSnapshotStale: {
 		Severity:    "warning",
 		Source:      "runtime.snapshot",
-		Description: "The runtime snapshot is malformed or does not match the current daemon or registry.",
+		Description: "The runtime snapshot is readable but does not match the current daemon or registry, or is partial while the registry is being synchronized.",
 	},
 	WarningCodeRuntimeSnapshotUnreadable: {
 		Severity:    "warning",
 		Source:      "runtime.snapshot",
-		Description: "The runtime snapshot could not be read because of a raw filesystem or permission error.",
+		Description: "The runtime snapshot could not be read: a filesystem or permission error, malformed JSON, or a schema_version this build does not understand.",
 	},
 	WarningCodeFunnelAllowConflict: {
 		Severity:    "error",
