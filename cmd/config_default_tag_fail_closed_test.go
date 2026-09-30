@@ -140,3 +140,35 @@ func TestConfigWritersTakeTheConfigLock(t *testing.T) {
 		t.Fatalf("config = %+v, %v; want both writers' values", cfg, err)
 	}
 }
+
+// TestLoginFailsClosedBeforeStoringOnAnUnreadableConfig: login resolves the
+// default tag it plans ACL writes and the client-secret validation node for
+// before any credential is verified or stored.
+func TestLoginFailsClosedBeforeStoringOnAnUnreadableConfig(t *testing.T) {
+	dir := setupLoginTest(t)
+	resetLoginFlags(t)
+	t.Cleanup(func() { resetLoginFlags(t) })
+	if err := os.WriteFile(filepath.Join(dir, ".config", "tslink", "config.json"), []byte(`{"default_tags":"tag:web"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	oldVerify, oldActivate := loginVerifyAPIKeyFn, loginActivateClientSecretFn
+	t.Cleanup(func() { loginVerifyAPIKeyFn, loginActivateClientSecretFn = oldVerify, oldActivate })
+	reached := 0
+	loginVerifyAPIKeyFn = func(context.Context, string) error { reached++; return nil }
+	loginActivateClientSecretFn = func(context.Context, string) error { reached++; return nil }
+
+	if err := loginWithAPIKey(loginCmd, "tskey-api-synthetic"); registryCode(err) != registry.CodeConfigLoadFailed {
+		t.Fatalf("login --api-key error = %v, want %s", err, registry.CodeConfigLoadFailed)
+	}
+	if err := loginWithClientSecret(loginCmd, "tskey-client-synthetic"); registryCode(err) != registry.CodeConfigLoadFailed {
+		t.Fatalf("login --client-secret error = %v, want %s", err, registry.CodeConfigLoadFailed)
+	}
+	if reached != 0 {
+		t.Fatalf("login verified %d candidate credentials before refusing the config", reached)
+	}
+}
+
+func registryCode(err error) string {
+	code, _ := registry.ErrorCode(err)
+	return code
+}
