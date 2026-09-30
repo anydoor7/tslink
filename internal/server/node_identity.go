@@ -109,7 +109,7 @@ func (s *Server) nodeIdentityPath(name string) (string, error) {
 	if err := registry.ValidateName(name); err != nil {
 		return "", fmt.Errorf("node identity service name: %w", err)
 	}
-	return filepath.Join(s.cfgDir, "node-identities", name+".json"), nil
+	return filepath.Join(config.NodeIdentitiesDirIn(s.cfgDir), name+".json"), nil
 }
 
 // requestedNodeIdentity describes the node as it is constructed, not as the
@@ -277,7 +277,7 @@ func (s *Server) recordRunningIdentitiesLocked() map[string]error {
 // the lifecycle reconciler, which require a valid registry file and resolved
 // ownership-ledger NodeIDs. Until then the record stays with its state.
 func (s *Server) removeAbsentNodeIdentities(desired map[string]registry.Service) error {
-	dir := filepath.Join(s.cfgDir, "node-identities")
+	dir := config.NodeIdentitiesDirIn(s.cfgDir)
 	info, err := os.Lstat(dir)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
