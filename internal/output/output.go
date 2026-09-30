@@ -316,7 +316,8 @@ func exitCodeForStableError(stable string) int {
 	case registry.CodeInviteDeviceAmbiguous,
 		registry.CodeInviteOwnershipUnproven,
 		registry.CodeInviteResendEmailMissing,
-		registry.CodeInviteStateConflict:
+		registry.CodeInviteStateConflict,
+		registry.CodeLegacyConfigDirPresent:
 		return ExitConflict
 	case registry.CodeInviteRateLimited,
 		registry.CodeInviteResponseInvalid:

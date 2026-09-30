@@ -946,6 +946,7 @@ func errorCodeManifest() map[string]ErrorCodeInfo {
 		registry.CodeInviteStateConflict:        {ExitCode: output.ExitConflict, Description: "Tailscale rejected the invite operation because current remote state conflicts with it (HTTP 409)"},
 		registry.CodeInviteRequestInvalid:       {ExitCode: output.ExitUsage, Description: "Tailscale rejected the invite request as another 4xx input error"},
 		registry.CodeInviteResponseInvalid:      {ExitCode: output.ExitError, Description: "Tailscale returned an invalid invite wire response"},
+		registry.CodeLegacyConfigDirPresent:     {ExitCode: output.ExitConflict, Description: "Windows only: the config directory is still at the legacy %USERPROFILE%\\.config\\tslink location; TSLink never moves it, and next carries the one manual move command"},
 	}
 }
 

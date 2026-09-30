@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/monody0007/tslink/internal/atomicfile"
+	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/filelock"
 )
 
@@ -87,6 +88,7 @@ const (
 	CodeAPITokenUnauthorized       = "api_token_unauthorized"
 	CodeAPIForbidden               = "api_forbidden"
 	CodeLoginVerifyFailed          = "login_verify_failed"
+	CodeLegacyConfigDirPresent     = config.CodeLegacyConfigDirPresent
 
 	ProvisionReasonDaemonDisabled      = "daemon_disabled"
 	ProvisionReasonServiceDisabled     = "service_disabled"

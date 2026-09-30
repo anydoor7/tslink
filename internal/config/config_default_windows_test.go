@@ -33,7 +33,10 @@ func TestWindowsDefaultConfigDirUsesAppData(t *testing.T) {
 	}
 }
 
-func TestWindowsDefaultConfigDirMigratesLegacyDirectory(t *testing.T) {
+// TestWindowsDefaultConfigDirRefusesLegacyOnlyWithoutMoving replaces the two
+// tests of the removed migration (it moved the legacy directory, and silently
+// kept using it when the move failed): Dir() now only reads, and refuses.
+func TestWindowsDefaultConfigDirRefusesLegacyOnlyWithoutMoving(t *testing.T) {
 	current, legacy := setWindowsDefaultRoots(t)
 	if err := os.MkdirAll(legacy, 0o700); err != nil {
 		t.Fatalf("MkdirAll(legacy) error = %v", err)
@@ -43,48 +46,18 @@ func TestWindowsDefaultConfigDirMigratesLegacyDirectory(t *testing.T) {
 	}
 
 	got, err := Dir()
-	if err != nil {
-		t.Fatalf("Dir() error = %v", err)
+	var legacyErr *LegacyConfigDirError
+	if !errors.As(err, &legacyErr) {
+		t.Fatalf("Dir() = %q, %v; want LegacyConfigDirError", got, err)
 	}
-	if got != current {
-		t.Fatalf("Dir() = %q, want migrated path %q", got, current)
+	if legacyErr.Legacy != legacy || legacyErr.Current != current {
+		t.Fatalf("LegacyConfigDirError = %+v, want legacy %q and current %q", legacyErr, legacy, current)
 	}
-	data, err := os.ReadFile(filepath.Join(current, "registry.json"))
-	if err != nil {
-		t.Fatalf("ReadFile(migrated registry) error = %v", err)
-	}
-	if string(data) != "legacy fixture" {
-		t.Fatalf("migrated registry = %q, want legacy fixture", data)
-	}
-	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
-		t.Fatalf("legacy directory still exists after migration: %v", err)
-	}
-}
-
-func TestWindowsDefaultConfigDirKeepsLegacyOnMigrationFailure(t *testing.T) {
-	current, legacy := setWindowsDefaultRoots(t)
-	if err := os.MkdirAll(legacy, 0o700); err != nil {
-		t.Fatalf("MkdirAll(legacy) error = %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(legacy, "config.json"), []byte("legacy fixture"), 0o600); err != nil {
-		t.Fatalf("WriteFile(legacy) error = %v", err)
-	}
-	orig := renameConfigDir
-	renameConfigDir = func(string, string) error { return errors.New("synthetic cross-volume move failure") }
-	t.Cleanup(func() { renameConfigDir = orig })
-
-	got, err := Dir()
-	if err != nil {
-		t.Fatalf("Dir() error = %v", err)
-	}
-	if got != legacy {
-		t.Fatalf("Dir() = %q, want preserved legacy path %q", got, legacy)
-	}
-	if _, err := os.Stat(filepath.Join(legacy, "config.json")); err != nil {
-		t.Fatalf("legacy config was not preserved: %v", err)
+	if data, err := os.ReadFile(filepath.Join(legacy, "registry.json")); err != nil || string(data) != "legacy fixture" {
+		t.Fatalf("legacy registry was moved or changed: %q, %v", data, err)
 	}
 	if _, err := os.Stat(current); !os.IsNotExist(err) {
-		t.Fatalf("current config unexpectedly exists after failed migration: %v", err)
+		t.Fatalf("current config unexpectedly exists: %v", err)
 	}
 }
 

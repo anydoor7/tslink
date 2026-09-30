@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/credentials"
 	"github.com/monody0007/tslink/internal/inspect"
 	"github.com/monody0007/tslink/internal/output"
@@ -622,6 +623,7 @@ func TestManifestErrorExitTaxonomyMatchesRuntime(t *testing.T) {
 		registry.CodeAPITokenUnauthorized:       &registry.StableCodeError{Code: registry.CodeAPITokenUnauthorized, Err: errors.New("unauthorized")},
 		registry.CodeAPIForbidden:               &registry.StableCodeError{Code: registry.CodeAPIForbidden, Err: errors.New("forbidden")},
 		registry.CodeLoginVerifyFailed:          &registry.StableCodeError{Code: registry.CodeLoginVerifyFailed, Err: errors.New("verify failed")},
+		registry.CodeLegacyConfigDirPresent:     &config.LegacyConfigDirError{Legacy: `C:\Users\u\.config\tslink`, Current: `C:\Users\u\AppData\Roaming\tslink`},
 	}
 	manifest := errorCodeManifest()
 	if len(manifest) != len(tests) {

@@ -2354,6 +2354,10 @@
       "exit_code": 1,
       "description": "a launchd domain could not be checked; failure data names the domain, explicit --force command, and residual risk"
     },
+    "legacy_config_dir_present": {
+      "exit_code": 4,
+      "description": "Windows only: the config directory is still at the legacy %USERPROFILE%\\.config\\tslink location; TSLink never moves it, and next carries the one manual move command"
+    },
     "login_verify_failed": {
       "exit_code": 1,
       "description": "login could not verify the candidate credential against Tailscale for a reason other than HTTP 401/403; the previous credential was kept"
