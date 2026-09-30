@@ -86,7 +86,7 @@ func TestMCPResultsReportTheDaemonTheyInstalled(t *testing.T) {
 			if err != nil || result.IsError {
 				t.Fatalf("%s: result %+v, err %v", tool, result, err)
 			}
-			structured, _ := result.StructuredContent.(map[string]any)
+			structured := mcpResultStructured(t, result)
 			validateAgainstToolOutputSchema(t, tool, structured)
 			got, present := structured["daemon_installed"]
 			switch {
