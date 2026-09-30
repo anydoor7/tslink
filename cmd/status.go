@@ -54,6 +54,7 @@ const (
 	daemonStateRunning                    = "running"
 	daemonStateAbsent                     = "absent"
 	daemonStateUnknown                    = "unknown"
+	systemdUserManagerUnavailableMessage  = "systemd user manager unavailable"
 )
 
 // StatusResult holds the status information for display.
@@ -293,6 +294,8 @@ func statusCredentialsFromInventory(inventory credentials.Inventory, clientSecre
 
 func setStatusContinuation(r *StatusResult) {
 	switch {
+	case strings.Contains(r.Supervision.Detail, systemdUserManagerUnavailableMessage):
+		r.Next = []string{"Establish a login session with a working systemd user manager and XDG_RUNTIME_DIR", "tslink serve", "Use add/share --no-daemon-install to register services for manual serve"}
 	case r.AuthStatus == authStatusNeedsLogin:
 		r.Next = []string{"tslink status --json"}
 	case r.AuthStatus == authStatusNotAuthenticated && !r.CredentialStored:
@@ -519,6 +522,7 @@ func cloneServiceError(source *tsruntime.ServiceError) *tsruntime.ServiceError {
 }
 
 func formatStatus(r StatusResult, out io.Writer) {
+	userManagerUnavailable := strings.Contains(r.Supervision.Detail, systemdUserManagerUnavailableMessage)
 	noNodes := false
 	if r.ServiceCount == 0 {
 		cfg, err := config.LoadGlobalConfig()
@@ -528,7 +532,7 @@ func formatStatus(r StatusResult, out io.Writer) {
 		fmt.Fprintf(out, "→ tslink: running (pid %d)\n", r.DaemonPID)
 	} else {
 		fmt.Fprintln(out, "→ tslink: not running")
-		if !noNodes {
+		if !noNodes && !userManagerUnavailable {
 			fmt.Fprintln(out, "Next: tslink install")
 		}
 	}
@@ -562,6 +566,8 @@ func formatStatus(r StatusResult, out io.Writer) {
 		}
 	} else if noNodes {
 		fmt.Fprintln(out, "→ tailnet: not authenticated; no service nodes configured; register one with tslink add or tslink share")
+	} else if userManagerUnavailable {
+		fmt.Fprintln(out, "→ tailnet: not authenticated; restore the login session described above, or run tslink serve manually to enroll")
 	} else {
 		fmt.Fprintln(out, "→ tailnet: not authenticated (run: tslink install, then tslink status to obtain the login URL)")
 	}

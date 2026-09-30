@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/monody0007/tslink/internal/daemon"
 	"os"
+	"strings"
 
 	"github.com/monody0007/tslink/internal/output"
 )
@@ -26,6 +27,9 @@ func detectInstallDaemonConflict(recovery string) error {
 			return output.ErrConflict("daemon PID artifact exists but process identity is unverified; inspect the running binary and supervisor before install/restart")
 		}
 		if err := checkSupervisorProcessScope(); err != nil {
+			if strings.Contains(err.Error(), systemdUserManagerUnavailableMessage) {
+				return output.ErrConflict(err.Error())
+			}
 			return output.ErrConflict("cannot safely replace the supervisor while daemon identity is unverified: " + err.Error())
 		}
 		return nil

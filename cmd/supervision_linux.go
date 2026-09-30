@@ -31,7 +31,17 @@ func systemdObservation() (map[string]string, error) {
 	data, err := managerOutputFn("systemctl", "--user", "show", systemdServiceName,
 		"--property=LoadState,ActiveState,SubState,MainPID,UnitFileState,Restart,FragmentPath", "--no-pager")
 	if err != nil {
-		return nil, fmt.Errorf("cannot inspect systemd user service: %w", err)
+		if len(data) > 4096 {
+			data = append(append([]byte(nil), data[:4096]...), []byte(" [truncated]")...)
+		}
+		detail := strings.TrimSpace(strings.ToValidUTF8(string(data), "?"))
+		lower := strings.ToLower(detail)
+		for _, clue := range []string{"failed to connect to bus", "failed to connect to user scope bus", "xdg_runtime_dir", "dbus_session_bus_address", "no medium found"} {
+			if strings.Contains(lower, clue) {
+				return nil, fmt.Errorf("%s: %s (%w); automatic installation requires a login session with a working systemd user manager and XDG_RUNTIME_DIR. In CI or without a user bus, register with --no-daemon-install and run tslink serve manually", systemdUserManagerUnavailableMessage, detail, err)
+			}
+		}
+		return nil, fmt.Errorf("cannot inspect systemd user service: %w; %s", err, detail)
 	}
 	return parseSystemdProperties(data), nil
 }
@@ -71,6 +81,9 @@ func detectSupervision(_ string, running bool, pid int) Supervision {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
+			if _, managerErr := systemdObservation(); managerErr != nil {
+				return unmanagedSupervision(running, "No systemd user unit is installed at "+path+". "+managerErr.Error()+". After establishing that login session, Run: tslink install")
+			}
 			return unmanagedSupervision(running, "No systemd user unit is installed at "+path+". Run: tslink install")
 		}
 		return unmanagedSupervision(running, "The systemd user unit at "+path+" exists but could not be read ("+err.Error()+"). Inspect it before running: tslink install")
