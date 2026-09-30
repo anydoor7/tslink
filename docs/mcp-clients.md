@@ -39,8 +39,9 @@ on a stdout the client no longer reads, the exit waits at most another 5s for
 it and then abandons it.
 
 SIGINT or SIGTERM cancels the calls in flight, so a `share` still waiting for
-its URL is rolled back. The command exits 1 with an error line that names the
-signal. A second signal terminates the process at once.
+its URL is rolled back unless an identical `share` or `add` has relied on that
+registration in the meantime; then it stays. The command exits 1 with an error
+line that names the signal. A second signal terminates the process at once.
 
 Some inputs end the session and drop the answers of calls still in flight,
 and nothing after them is read: malformed JSON, a JSON value that is not a
@@ -140,9 +141,12 @@ Refused calls return `isError: true` with a JSON failure object (`code`,
 `structuredContent`. Invalid arguments return `usage_error` tool results.
 Every tool declares `readOnlyHint`, `destructiveHint`, `idempotentHint`, and
 `openWorldHint`. `share`, `add`, and `template_apply` add `daemon_installed`
-(`manager`, `path`, `undo`) to a successful result if they installed the daemon.
+(`manager`, `path`, `undo`) to a successful result if they installed the daemon;
+later failures carry it in `data`. The read-only `list`, `status`, `url`, and
+`doctor` tools describe missing credential metadata without recording it or
+creating `credential-meta.json` or `credentials.lock`.
 MCP `logs` `since` and `url` `wait` accept Go durations plus `d` for days;
-MCP `funnel_ttl` accepts equivalent spellings of its five timed lifetimes.
+MCP `funnel_ttl` accepts only `1h`, `8h`, `24h`, `72h`, `7d`, or `never`.
 
 ## Redaction is not a boundary
 

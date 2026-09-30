@@ -28,6 +28,11 @@ go run ./tools/gen-manifest
 identically on macOS, Linux, and Windows. `go run ./tools/gen-manifest -check`
 fails on any of them if the committed fixture is stale.
 
+`THIRD_PARTY_NOTICES.md` also includes linked nested notices and reviewed
+embedded assets. Embedded vendor bytes are SHA-256 pinned; when one changes,
+review its license payload and update the notice inventory before regenerating
+the file with `go run ./tools/gen-notices`.
+
 ### Test isolation
 
 Every test binary starts in `testenv.Main` (`internal/testenv`), so a package

@@ -50,11 +50,16 @@ How TSLink maps onto common zero-trust principles:
 
 | Zero-Trust Principle | TSLink Implementation |
 |-----|-----|
-| **HTTP caller verification** | Tailnet HTTP proxy/file requests can be authenticated via Tailscale WhoIs. Identity headers (`X-Tailscale-User-Login`, `X-Tailscale-User-Name`, `X-Tailscale-User-Picture`, `X-Tailscale-Node`) are injected only when WhoIs succeeds. Public Funnel exposure and raw TCP streams are not treated as TSLink-enforced Tailscale user authentication. |
+| **HTTP caller verification** | Tailnet HTTP proxy/file requests can be authenticated via Tailscale WhoIs. The proxy strips client-supplied `Tailscale-*` and `X-Tailscale-*` identity headers, including underscore variants, before injecting `X-Tailscale-User-Login`, `X-Tailscale-User-Name`, `X-Tailscale-User-Picture`, and `X-Tailscale-Node` only when WhoIs succeeds. Public Funnel exposure and raw TCP streams are not treated as TSLink-enforced Tailscale user authentication. |
 | **HTTP least-privilege access** | `--allow` restricts proxy and file services to specific users or tags. TCP services rely on Tailscale network ACLs and tags. |
 | **Assume breach** | Tailnet device-to-device traffic uses WireGuard encryption. Even if your local network is compromised, traffic between your Tailscale devices remains encrypted; public Funnel paths follow Tailscale Funnel semantics. |
 | **Per-service network identity** | Each service runs as a separate tsnet node with its own hostname and network identity. This is network segmentation, not host process isolation or a compliance attestation. |
 | **No implicit trust** | No services are exposed to the public internet by default. The default first run uses Tailscale interactive enrollment with no stored administrative credential, no advertised tags, and no ACL edits. Optional durable-install credentials are stored in the system keychain first, with a restricted-permission file fallback for headless macOS and Linux environments. |
+
+Proxy and TCP registration refuses literal link-local and unspecified addresses,
+known cloud-metadata targets, and numeric respellings of refused IPv4 addresses.
+Loopback shorthand such as `127.1` is accepted. Target validation does not
+resolve DNS or check the resolved address when connecting.
 
 This is a design mapping, not a formal attestation. TSLink claims no compliance status; the machine-readable manifest is [`internal/security/capabilities.v1.json`](./internal/security/capabilities.v1.json), and every capability in it records its compliance status explicitly.
 
@@ -133,7 +138,10 @@ tslink add myapp --proxy localhost:3000
 ```
 
 `add`, `share`, and `template apply --yes` automatically install and start TSLink's
-background service when it is absent, including in CI or without a TTY. Installation
+background service when it is absent. Automatic installation needs no TTY. On
+Linux it requires a login session with a working systemd user manager and
+`XDG_RUNTIME_DIR`; in CI or without that user bus, use `--no-daemon-install`
+and run `tslink serve` manually. Installation
 announces the manager, file location, config directory, and `tslink uninstall` undo
 command on stderr; `--json` stdout remains a single result. Use `--no-daemon-install`
 on these commands to opt out. Offline `add` saves configuration and reports
@@ -145,14 +153,18 @@ The MCP `add`, `share`, and `template_apply` tools use the same bootstrap policy
 and expose `no_daemon_install`. MCP `add` returns current URL/enrollment evidence
 after setup without an additional URL wait; poll `url` if it is still pending.
 These tools report a completed background-service install as
-`daemon_installed` (`manager`, `path`, `undo`) in their results.
+`daemon_installed` (`manager`, `path`, `undo`) in their results. If a later
+step fails, the MCP failure `data` still carries that installation receipt.
 `add` and template application save the registry before installing, retaining it
 if setup fails. Explicit `install` also works before any registry exists.
 Setup errors report whether a supervisor definition remains: Linux can leave an
 enabled unit retrying after a readiness failure; macOS new-install verification
-rolls back its job/plist when cleanup succeeds. Inspect `tslink logs` and `tslink
-doctor` before retrying (Linux also: `journalctl --user -u tslink.service`). The
-installer checks stable manager state. Bootstrap then judges setup on that alone:
+rolls back its job/plist when cleanup succeeds. Inspect `tslink logs` and
+`tslink doctor` before retrying (Linux also: `journalctl --user -u tslink.service`).
+Newly installed or reinstalled Linux and Windows service definitions write the
+log file read by `tslink logs`; after upgrading either platform, run
+`tslink install` again to update an existing definition. The installer checks
+stable manager state. Bootstrap then judges setup on that alone:
 the supervisor owns a stable process whose identity it verified. It also looks for
 fresh daemon business evidence, but that evidence is produced only after the daemon
 reaches the Tailscale coordination server, so its absence leaves setup successful and
@@ -174,6 +186,10 @@ confirmed stopped. When PID identity or supervisor state is uncertain, doctor re
 a warning and keeps backend probes enabled; inspect the running binary and logs
 before installing or restarting. `url` returns an enrollment action for any pending
 node in this daemon instead of waiting again. `url` points to `tslink install` when the service is stopped.
+
+With no registered services and no enabled MCP node, human `status` points to
+`tslink add` or `tslink share`; installing an empty daemon creates no service
+node to enroll.
 
 On macOS this installs a LaunchAgent that starts at user login; on Linux it enables
 a systemd user unit. For Linux boot before login and survival after logout, run
@@ -365,7 +381,7 @@ Funnel ACL auto-provisioning is enabled by default for an acknowledged public se
 | `tslink stop` | Stop the gateway |
 | `tslink status` | Show gateway status |
 | `tslink status --urls` | Show owner-only service URLs, exposure mode, allow summary, backend, and warning codes |
-| `tslink doctor` | Diagnose credentials, daemon, registry, runtime snapshot, exposure, target safety, and Tailscale SSH enablement without mutating state |
+| `tslink doctor` | Diagnose credentials, daemon, registry, runtime snapshot, exposure, target safety, and Tailscale SSH enablement; may record missing credential metadata |
 | `tslink access explain <service>` | Explain what TSLink knows locally about one service's access path and what remains external policy/backend auth |
 | `tslink logs` | Show recent gateway logs |
 | `tslink template list` | List built-in personal service templates |
@@ -389,6 +405,12 @@ Funnel ACL auto-provisioning is enabled by default for an acknowledged public se
 | `tslink install` | Auto-start on login (macOS LaunchAgent / Linux systemd / Windows Startup) |
 | `tslink uninstall` | Remove auto-start |
 
+A missing implicit default registry is valid on first run. An explicit missing
+`registry check <path>` reports `not_found` (exit 5). Malformed registry JSON,
+field types, or trailing data report `usage_error` (exit 2), naming the path
+and repair guidance. `list`, `status`, and `doctor` show bad entries beside
+healthy services; fix or remove bad entries before changing the registry.
+
 ### Exit Codes
 
 | Code | Meaning |
@@ -396,7 +418,7 @@ Funnel ACL auto-provisioning is enabled by default for an acknowledged public se
 | `0` | Success |
 | `1` | General runtime error |
 | `2` | Usage, argument, or flag error |
-| `3` | Authentication error |
+| `3` | Authentication or authorization error |
 | `4` | Conflict, such as an already-running daemon |
 | `5` | Requested resource not found |
 | `64` | Diagnostic warning threshold |
@@ -441,7 +463,7 @@ TSLink creates a dedicated [tsnet](https://tailscale.com/kb/1244/tsnet) node for
 
 **Key architectural decisions:**
 - **Per-service embedded nodes** — each service gets its own tailnet identity and hostname; proxy/file services also get Tailscale HTTPS listener semantics
-- **Identity-aware proxying** — WhoIs verification on tailnet HTTP proxy/file requests, with identity headers injected and spoofing prevented; public Funnel and raw TCP do not get TSLink-enforced HTTP identity
+- **Identity-aware proxying** — WhoIs verification on tailnet HTTP proxy/file requests; the proxy strips client-supplied Tailscale identity headers, including underscore variants, before injecting verified identity; public Funnel and raw TCP do not get TSLink-enforced HTTP identity
 - **Secure credential management** — system keychain storage, with a restricted-permission file fallback for headless macOS and Linux environments
 - **File-based registry** — services persist across restarts in `~/.config/tslink/registry.json`
 - **Hot reload** — file watcher on the registry means `tslink add` takes effect without restarting the server
@@ -468,7 +490,7 @@ tslink status --json
 # Show owner-only endpoint/exposure overview
 tslink status --urls --json
 
-# Run read-only diagnostics (non-loopback targets are probed only with --probe-external)
+# Run diagnostics; may record credential metadata (non-loopback probes need --probe-external)
 tslink doctor --json
 
 # Explain one service's local access model
@@ -527,9 +549,10 @@ file gives `absent`. MCP `status` and its event stream use the same state field.
 
 MCP `logs` `since`, MCP `url` `wait`, `login --expires-in`, and
 `mcp.events_keepalive` accept Go duration syntax plus `d` for days, with their
-own bounds. MCP `funnel_ttl` accepts equivalent spellings for its five timed
-lifetimes (`168h` equals `7d`) and `never`. CLI `--wait` and `--funnel-ttl`
-retain their existing syntax.
+own bounds. MCP `funnel_ttl` and CLI `--funnel-ttl` accept only `1h`, `8h`,
+`24h`, `72h`, `7d`, or `never`; `168h` is refused. CLI `add --wait`,
+`share --wait`, and `url --wait` accept Go duration syntax plus fractional
+or composite days using `d`.
 
 `--json` changes only the output format. `tslink add --json` follows the same safety guardrails as the human path: Funnel services require `--public`; TCP services reject `--allow` because TSLink does not apply HTTP identity checks to raw TCP streams.
 
@@ -660,6 +683,15 @@ These features are not part of the shipped runtime:
 Configuration and state live in `~/.config/tslink/` on macOS and Linux and in `%AppData%\tslink\` on Windows; set `TSLINK_CONFIG_DIR` to use another directory. Paths written as `~/.config/tslink/` elsewhere in this README mean that directory. On Windows, TSLink never moves an older `%USERPROFILE%\.config\tslink\`: if only that directory exists, every command stops with `legacy_config_dir_present` and prints the one `move` command to run; if both exist, it refuses to choose and names both.
 
 `credentials.lock` in that directory serializes credential changes between TSLink processes: `tslink login`, `tslink logout` and `tslink doctor --probe-remote` create it, while `tslink serve` and the commands that report credential status create it only when they record metadata for a stored credential that has none yet, or when `serve` finds a legacy `apikey` file. With the system keychain enabled, which is the default, TSLink also takes `.tslink/credentials.lock` in the OS account's home directory (`%USERPROFILE%\.tslink\` on Windows), which follows neither `TSLINK_CONFIG_DIR` nor `$HOME`; both files are empty and stay in place. `node-identities/` holds one record per service with the tags (including the derived `tag:tslink-funnel`), ephemeral setting and control URL its node was started with, so a change to any of them, even one made while the daemon was stopped, clears that node's state and enrolls it again. On Tier 1 (no stored credential) a node advertises no tags, so there only an ephemeral or control URL change does. Once a removed service's `nodes/<name>/` state is gone, whether `tslink remove` or the daemon deleted it (`tslink remove --help` says when), the daemon deletes the service's record on its next sync. A service that is only missing from `registry.json`, without `tslink remove`, keeps its node state: a lost, replaced or mistyped registry never deletes a node identity.
+
+The read-only MCP `list`, `status`, `url`, and `doctor` tools describe missing
+credential metadata without recording it or creating `credential-meta.json`
+or `credentials.lock`. CLI `status` and `doctor` record it when needed, and a
+backfill is written only while the credential store still holds the value read.
+While a newly registered `share` waits for its URL,
+`registry.json.tentative-<name>` marks a registration it may roll back. An
+identical `share` or unchanged `add` settles it; the mark is removed when the
+share finishes or the registration is reused.
 
 macOS LaunchAgent installs use launchd `KeepAlive` with `ThrottleInterval=30`. If `tslink stop` is run while the LaunchAgent remains installed, launchd will restart TSLink. Run `tslink uninstall` before `tslink stop` when the intent is to disable autostart. When no desktop session exists for the user, `tslink install` first tries `gui/$(id -u)` and falls back to `user/$(id -u)` if the GUI launchd domain is unavailable. Linux headless user services may need `loginctl enable-linger "$USER"` to keep running after logout; if lingering was enabled only for TSLink, run `loginctl disable-linger "$USER"` after uninstall.
 

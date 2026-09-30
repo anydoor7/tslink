@@ -50,11 +50,15 @@ TSLink 与常见零信任原则的对应关系：
 
 | 零信任原则 | TSLink 实现 |
 |-----------|------------|
-| **HTTP 调用方验证** | tailnet 内的 HTTP 代理/文件请求可以通过 Tailscale WhoIs 认证。身份头（`X-Tailscale-User-Login`、`X-Tailscale-User-Name`、`X-Tailscale-User-Picture`、`X-Tailscale-Node`）只在 WhoIs 成功时注入代理请求。公网 Funnel 和 raw TCP 不视为 TSLink 强制执行的 Tailscale 用户认证。 |
+| **HTTP 调用方验证** | tailnet 内的 HTTP 代理/文件请求可以通过 Tailscale WhoIs 认证。代理先移除客户端传来的 `Tailscale-*`、`X-Tailscale-*` 身份头及带下划线的变体；只有 WhoIs 成功，才注入 `X-Tailscale-User-Login`、`X-Tailscale-User-Name`、`X-Tailscale-User-Picture` 和 `X-Tailscale-Node`。公网 Funnel 和 raw TCP 不视为 TSLink 强制执行的 Tailscale 用户认证。 |
 | **HTTP 最小权限访问** | `--allow` 限制 proxy 和 file 服务的访问用户或标签。TCP 服务依赖 Tailscale 网络 ACL 和标签。 |
 | **假设已被攻破** | tailnet 设备之间的流量使用 WireGuard 加密。即使本地网络被攻破，Tailscale 设备之间的流量仍然加密；公网 Funnel 路径遵循 Tailscale Funnel 语义。 |
 | **Per-service 网络身份** | 每个服务作为独立 tsnet 节点运行，拥有自己的主机名和网络身份。这是网络分段，不是 host process isolation 或合规背书。 |
 | **消除隐式信任** | 默认不暴露任何服务到公网。首次运行默认走 Tailscale interactive enrollment：不存储管理员凭证、不 advertise tags、也不修改 ACL。可选的 durable-install 凭证优先存入系统钥匙串；headless 的 macOS 与 Linux 环境可回退到受限权限文件。 |
+
+注册 proxy 和 TCP 服务时，TSLink 拒绝以字面地址写出的链路本地地址、未指定地址、
+已知云元数据目标，以及被拒绝 IPv4 地址的数字变体。`127.1` 这样的 loopback 简写可以使用。
+目标校验不解析 DNS，也不在连接时检查解析出的地址。
 
 这是一份设计层面的对应关系，不是正式背书。TSLink 不声称任何合规状态；机器可读的能力清单是 [`internal/security/capabilities.v1.json`](./internal/security/capabilities.v1.json)，其中每一条 capability 都显式记录了自己的合规状态。
 
@@ -131,7 +135,9 @@ tslink add myapp --proxy localhost:3000
 ```
 
 `add`、`share` 和 `template apply --yes` 在后台服务未运行时自动安装并启动它，
-CI、无 TTY 与交互终端行为相同。安装会向 stderr 声明监管器、安装路径、配置目录和
+自动安装不要求 TTY。Linux 需要有可用 systemd 用户管理器和 `XDG_RUNTIME_DIR` 的登录会话；
+CI 或没有用户总线时，使用 `--no-daemon-install` 并手动运行 `tslink serve`。
+安装会向 stderr 声明监管器、安装路径、配置目录和
 撤销命令 `tslink uninstall`；`--json` 的 stdout 保持单条结果。使用
 `--no-daemon-install` 可跳过安装。离线 `add` 只保存配置，返回
 `daemon_running:false` 和修复指引，不显示绿勾；带此参数的 `share` 要求已有服务在运行。
@@ -139,11 +145,14 @@ CI、无 TTY 与交互终端行为相同。安装会向 stderr 声明监管器�
 
 MCP 的 `add`、`share`、`template_apply` 同样自举，并提供 `no_daemon_install`。
 这些 tool 完成后台服务安装后，在结果中通过 `daemon_installed` 返回 `manager`、`path` 和 `undo`。
+若后续步骤失败，MCP failure 的 `data` 仍带有这份安装回执。
 MCP `add` 自举完成后返回当前 URL/入网证据，不额外等待 URL；仍 pending 时可调用 `url`。
 `add` 和模板先写 registry 再安装，安装失败保留已保存的配置。显式 `install` 也支持尚无
 registry 的新环境。失败消息会说明监管定义是否残留：Linux 可能留下 enabled 且正在
 重试的 unit；macOS 新装校验失败会在清理成功时撤回 job/plist。重试前检查 `tslink logs`
 和 `tslink doctor`；Linux 还可用 `journalctl --user -u tslink.service`。
+新安装或重新安装的 Linux 和 Windows 服务定义会写入 `tslink logs` 读取的日志文件；
+升级这两个平台后，已有定义需要再运行 `tslink install` 才会选择该文件。
 安装器验证监管状态稳定，自举再验证新鲜业务证据及稳定窗口；两者均不保证未来不会崩溃。
 
 `status` 与 `doctor` 的文本和 JSON 都报告 `supervision`：监管器、自启动、
@@ -157,6 +166,9 @@ systemd user unit 只有开启 lingering 才是 `boot`，否则报 `login` 并�
 已有注册服务但无监管时 doctor 判 error；确认后台服务未运行时延后后端探测。PID 身份或监管状态无法确认时则给 warning 并保留探针，
 先检查运行二进制与日志，再决定是否安装/重启。任何节点正在入网时，`url` 会返回授权动作，避免重复等待。
 此时 `url` 的后续动作是 `tslink install`。
+
+没有注册服务、也未启用 MCP node 时，人类可读的 `status` 会提示使用 `tslink add`
+或 `tslink share`。只安装空的 daemon 不会产生可入网的服务 node。
 
 macOS 注册登录时启动的 LaunchAgent；Linux 启用 systemd user unit。Linux 若要开机无需
 登录、退出登录后也继续运行，需执行一次 `loginctl enable-linger "$USER"`。
@@ -336,7 +348,7 @@ Funnel ACL 自动配置默认开启，只作用于已确认公网暴露的服务
 | `tslink stop` | 停止网关 |
 | `tslink status` | 显示网关状态 |
 | `tslink status --urls` | 显示 owner-only 服务 URL、暴露模式、allow 摘要、后端和 warning code |
-| `tslink doctor` | 只读诊断凭证、daemon、注册表、runtime snapshot、暴露模式、目标安全性和 Tailscale SSH 开启状态 |
+| `tslink doctor` | 诊断凭证、daemon、注册表、runtime snapshot、暴露模式、目标安全性和 Tailscale SSH 开启状态；可能补写缺失的凭证 metadata |
 | `tslink access explain <service>` | 解释某个服务的本地访问模型，以及仍属于外部策略/后端认证的部分 |
 | `tslink logs` | 查看最近的网关日志 |
 | `tslink template list` | 列出内置个人服务模板 |
@@ -360,6 +372,11 @@ Funnel ACL 自动配置默认开启，只作用于已确认公网暴露的服务
 | `tslink install` | 开机自启（macOS LaunchAgent / Linux systemd / Windows 启动文件夹） |
 | `tslink uninstall` | 移除自启 |
 
+首次运行时，默认 registry 文件尚不存在是有效的空状态。显式传入不存在的
+`registry check <path>` 会报 `not_found`（退出码 5）。registry JSON 语法、字段类型
+或尾部数据有误时，会报 `usage_error`（退出码 2），并给出文件路径和修复指引。
+`list`、`status` 和 `doctor` 会在健康服务旁显示有误条目；修改 registry 前应先修复或移除它。
+
 ### 退出码
 
 | 退出码 | 含义 |
@@ -367,7 +384,7 @@ Funnel ACL 自动配置默认开启，只作用于已确认公网暴露的服务
 | `0` | 成功 |
 | `1` | 一般运行时错误 |
 | `2` | 用法、参数或 flag 错误 |
-| `3` | 认证错误 |
+| `3` | 认证或授权错误 |
 | `4` | 冲突，例如 daemon 已在运行 |
 | `5` | 请求的资源不存在 |
 | `64` | 诊断 warning 阈值 |
@@ -412,7 +429,7 @@ TSLink 为每个注册的服务创建一个专用的 [tsnet](https://tailscale.c
 
 **关键架构决策：**
 - **Per-service 嵌入式节点**：每个服务获得独立的 tailnet 身份和主机名；proxy/file 服务还获得 Tailscale HTTPS listener 语义
-- **身份感知代理**：tailnet 内的 HTTP 代理/文件请求进行 WhoIs 验证，注入身份头并防止伪造；公网 Funnel 和 raw TCP 不获得 TSLink 强制执行的 HTTP 身份认证
+- **身份感知代理**：tailnet 内的 HTTP 代理/文件请求进行 WhoIs 验证；代理先移除客户端传来的 Tailscale 身份头及下划线变体，再注入已验证身份；公网 Funnel 和 raw TCP 不获得 TSLink 强制执行的 HTTP 身份认证
 - **安全凭证管理**：系统钥匙串存储，headless 的 macOS 与 Linux 环境支持受限权限文件后备
 - **基于文件的注册表**：服务在 `~/.config/tslink/registry.json` 中持久化，跨重启保存
 - **热重载**：注册表文件监听意味着 `tslink add` 无需重启服务即可生效
@@ -439,7 +456,7 @@ tslink status --json
 # 查看 owner-only endpoint / exposure 概览
 tslink status --urls --json
 
-# 运行只读诊断（只有传 --probe-external 才会探测非 loopback 目标）
+# 运行诊断，可能补写凭证 metadata（探测非 loopback 目标需传 --probe-external）
 tslink doctor --json
 
 # 解释一个服务的本地访问模型
@@ -497,8 +514,9 @@ macOS 上，`launchctl_domain_unavailable` 是 TSLink 无法证明 install / uni
 
 MCP `logs` 的 `since`、MCP `url` 的 `wait`、`login --expires-in` 和
 `mcp.events_keepalive` 接受 Go duration 语法及表示天数的 `d`，各自仍有范围限制。
-MCP `funnel_ttl` 接受五种时限的等价写法（`168h` 等于 `7d`）及 `never`。
-CLI `--wait` 和 `--funnel-ttl` 保持原有语法。
+MCP `funnel_ttl` 和 CLI `--funnel-ttl` 只接受 `1h`、`8h`、`24h`、`72h`、`7d`
+或 `never`，会拒绝 `168h`。CLI `add --wait`、`share --wait` 和 `url --wait`
+接受 Go duration 语法，也接受用 `d` 表示的分数天数及组合时长。
 
 `--json` 只改变输出格式。`tslink add --json` 与人类路径使用同一套安全护栏：Funnel 服务必须传 `--public`；TCP 服务会拒绝 `--allow`，因为 TSLink 不会对原始 TCP 字节流应用 HTTP 身份检查。
 
@@ -628,6 +646,13 @@ tslink list --tailnet --json
 配置与状态目录在 macOS 和 Linux 上是 `~/.config/tslink/`，在 Windows 上是 `%AppData%\tslink\`；设置 `TSLINK_CONFIG_DIR` 可以改用其他目录。本 README 其他地方写的 `~/.config/tslink/` 都指这个目录。Windows 上 TSLink 不会移动旧的 `%USERPROFILE%\.config\tslink\`：只有旧目录时，每个命令都以 `legacy_config_dir_present` 停止，并给出要执行的那一条 `move` 命令；两个目录同时存在时，拒绝二选一并报出两个路径。
 
 这个目录里的 `credentials.lock` 让多个 TSLink 进程依次修改 credential：`tslink login`、`tslink logout` 和 `tslink doctor --probe-remote` 会创建它；`tslink serve` 和读取 credential 状态的命令，只在为已存储但还没有 metadata 记录的 credential 补写记录，或 `serve` 发现旧的 `apikey` 文件时，才会创建它。启用系统 keychain 时，也就是默认情况下，TSLink 还会锁住 OS 账户 home 目录下的 `.tslink/credentials.lock`，Windows 上对应 `%USERPROFILE%\.tslink\`，这个位置不随 `TSLINK_CONFIG_DIR` 或 `$HOME` 改变；两个文件都是空文件，创建后一直保留。`node-identities/` 为每个 service 保存一条记录，写明它的 node 启动时用的 tags、ephemeral 设置和 control URL，其中 tags 包括自动派生的 `tag:tslink-funnel`；任何一项改变，包括 daemon 停止期间做的改动，都会让 daemon 清掉这个 node 的状态，让它重新加入 tailnet。在未存储凭证的 Tier 1 上，node 不 advertise tags，所以只有 ephemeral 设置或 control URL 的改变会这样做。移除一个 service 之后，只要它的 `nodes/<name>/` 状态已经删掉，无论是 `tslink remove` 还是 daemon 删的，daemon 都会在下一次同步时删除它的记录；这份状态何时删除见 `tslink remove --help`。只是从 `registry.json` 里消失、没有经过 `tslink remove` 的 service 会保留 node 状态：registry 丢失、换成别的副本或手改出错，都不会删掉 node 身份。
+
+只读 MCP `list`、`status`、`url` 和 `doctor` 会描述缺失的凭证 metadata，
+但不会补写记录，也不会创建 `credential-meta.json` 或 `credentials.lock`。
+CLI `status` 和 `doctor` 在需要时仍会补写；只有 credential store 仍保存读取时的值，
+补写才会落盘。新注册的 `share` 等待 URL 时，`registry.json.tentative-<name>`
+标记它可能回滚的注册项。相同的 `share` 或未修改该注册项的 `add` 会确认保留该项；
+`share` 完成或注册项被复用时，该标记会移除。
 
 macOS LaunchAgent 安装会使用 launchd `KeepAlive` 和 `ThrottleInterval=30`。如果 LaunchAgent 仍在安装状态，运行 `tslink stop` 后 launchd 会重启 TSLink。想禁用自启动时，先运行 `tslink uninstall`，再运行 `tslink stop`。`gui/$(id -u)` 是否可用取决于该 uid 是否存在桌面（Aqua）session，而不是调用者是否通过 SSH 连接；没有 Aqua session 时，`tslink install` 会先尝试 `gui/$(id -u)`，如果该 launchd domain 不可用则回退到 `user/$(id -u)`。Linux headless user service 如需登出后继续运行，可能需要执行 `loginctl enable-linger "$USER"`；如果 lingering 只为 TSLink 启用，卸载后运行 `loginctl disable-linger "$USER"`。
 
