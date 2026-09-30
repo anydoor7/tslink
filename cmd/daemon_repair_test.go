@@ -12,7 +12,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/monody0007/tslink/internal/filelock"
 	"github.com/monody0007/tslink/internal/output"
 	"github.com/monody0007/tslink/internal/registry"
@@ -187,14 +186,9 @@ func TestRepairSavedConfigurationRefusal(t *testing.T) {
 				if err != nil || result == nil || !result.IsError {
 					t.Fatalf("result=%+v err=%v", result, err)
 				}
-				encoded, err := json.Marshal(result.StructuredContent)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if err := json.Unmarshal(encoded, &failure); err != nil {
-					t.Fatal(err)
-				}
-				human = result.Content[0].(*mcp.TextContent).Text
+				// The failure object is the text of the result (A3-1).
+				failure = mcpToolResultFailure(t, result)
+				human = failure.Error.Message
 			}
 			if inspections != 1 {
 				t.Fatalf("inspections=%d, want 1", inspections)
@@ -302,14 +296,9 @@ func TestRepairShareRefusalDoesNotClaimSavedConfiguration(t *testing.T) {
 				if err != nil || result == nil || !result.IsError {
 					t.Fatalf("result=%+v err=%v", result, err)
 				}
-				message = result.Content[0].(*mcp.TextContent).Text
-				encoded, err := json.Marshal(result.StructuredContent)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if err := json.Unmarshal(encoded, &failure); err != nil {
-					t.Fatal(err)
-				}
+				// The failure object is the text of the result (A3-1).
+				failure = mcpToolResultFailure(t, result)
+				message = failure.Error.Message
 			}
 			if failure.OK || failure.Code != 1 || failure.Error == nil || failure.Error.Code != wantCode || !reflect.DeepEqual(failure.Error.Next, wantNext) {
 				t.Fatalf("wrong share failure/recovery: %+v", failure)

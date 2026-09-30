@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/monody0007/tslink/internal/errcode"
 	"github.com/monody0007/tslink/internal/output"
 	"github.com/monody0007/tslink/internal/registry"
 )
@@ -88,6 +90,25 @@ func decodeMCPFailureText(t *testing.T, text string) map[string]any {
 		t.Fatalf("error text %q is not a failure object: %v", text, err)
 	}
 	return failure
+}
+
+// mcpToolResultFailure reads an in-process tool error result the way a client
+// does: the failure object from its text, and the exit its stable code
+// produces, as the CLI envelope would carry it.
+func mcpToolResultFailure(t *testing.T, result *mcp.CallToolResult) output.Result {
+	t.Helper()
+	if result == nil || !result.IsError || result.StructuredContent != nil || len(result.Content) != 1 {
+		t.Fatalf("result = %+v, want an error result with one text item and no structuredContent", result)
+	}
+	text, ok := result.Content[0].(*mcp.TextContent)
+	if !ok {
+		t.Fatalf("content = %T, want text", result.Content[0])
+	}
+	var object output.ErrorObject
+	if err := json.Unmarshal([]byte(text.Text), &object); err != nil {
+		t.Fatalf("error text %q is not a failure object: %v", text.Text, err)
+	}
+	return output.Result{OK: false, Code: errcode.ExitFor(object.Code), Error: &object}
 }
 
 // mcpToolErrorFailure checks one tools/call answer is a tool error result

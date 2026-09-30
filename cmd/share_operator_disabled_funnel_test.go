@@ -102,8 +102,13 @@ func TestFunnelShareDoesNotRearmAnOperatorDisabledRecord(t *testing.T) {
 			before, _ := readRegistryBytes(t, filepath.Dir(regPath))
 			stdout := runMCPSession(t, initializedMCPInput(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"share","arguments":`+tc.arguments+`}}`), actions)
 			result, _ := mcpFrameByID(t, decodeMCPResponses(t, stdout), float64(2))["result"].(map[string]any)
-			if result == nil || result["isError"] != true || !strings.Contains(stdout, postureConflict) || strings.Contains(stdout, "funnel_rearmed") {
+			if result == nil || result["isError"] != true || strings.Contains(stdout, "funnel_rearmed") {
 				t.Fatalf("funnel share of an operator-disabled record = %s, want a posture conflict", stdout)
+			}
+			// The failure object is the text of the result (A3-1).
+			failure := decodeMCPFailureText(t, result["content"].([]any)[0].(map[string]any)["text"].(string))
+			if message, _ := failure["message"].(string); !strings.Contains(message, strings.ReplaceAll(postureConflict, `\"`, `"`)) {
+				t.Fatalf("funnel share of an operator-disabled record = %v, want a posture conflict", failure)
 			}
 			if after, _ := readRegistryBytes(t, filepath.Dir(regPath)); !bytes.Equal(after, before) {
 				t.Fatalf("a refused funnel share changed the registry:\nbefore %s\nafter  %s", before, after)
