@@ -69,7 +69,7 @@ security boundary of the whole feature. `tslink config set` manages only
 ```
 
 An empty `allow` list, or one containing only blank entries, makes `serve`
-refuse to start. It never means "allow everyone". Every rejection returns the
+refuse to start and never grants open access. Every rejection returns the
 same `403` JSON-RPC `forbidden` body. A peer that passes `mcp.allow` can
 register and delete services, publish them to the public internet through
 Funnel, and send or revoke real Tailscale invitations. Elevated invitations
