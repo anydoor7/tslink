@@ -519,11 +519,18 @@ func cloneServiceError(source *tsruntime.ServiceError) *tsruntime.ServiceError {
 }
 
 func formatStatus(r StatusResult, out io.Writer) {
+	noNodes := false
+	if r.ServiceCount == 0 {
+		cfg, err := config.LoadGlobalConfig()
+		noNodes = err == nil && (cfg.MCP == nil || !cfg.MCP.Enabled)
+	}
 	if r.DaemonRunning {
 		fmt.Fprintf(out, "→ tslink: running (pid %d)\n", r.DaemonPID)
 	} else {
 		fmt.Fprintln(out, "→ tslink: not running")
-		fmt.Fprintln(out, "Next: tslink install")
+		if !noNodes {
+			fmt.Fprintln(out, "Next: tslink install")
+		}
 	}
 	formatSupervision(r.Supervision, out)
 	if r.Authenticated || r.CredentialStored && r.AuthStatus != authStatusNeedsLogin {
@@ -553,6 +560,8 @@ func formatStatus(r StatusResult, out io.Writer) {
 		if r.AuthURL != "" {
 			fmt.Fprintf(out, "→ login URL: %s\n", r.AuthURL)
 		}
+	} else if noNodes {
+		fmt.Fprintln(out, "→ tailnet: not authenticated; no service nodes configured; register one with tslink add or tslink share")
 	} else {
 		fmt.Fprintln(out, "→ tailnet: not authenticated (run: tslink install, then tslink status to obtain the login URL)")
 	}
