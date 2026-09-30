@@ -3,9 +3,10 @@
 package cmd
 
 import (
-	"bytes"
 	"errors"
 	"os"
+	"syscall"
+	"unsafe"
 
 	"golang.org/x/sys/unix"
 )
@@ -15,10 +16,9 @@ import (
 // nothing, so a sandbox that forbids /bin/ps does not break it.
 //
 // The listing (kern.proc.uid) asks only for this user's processes and carries
-// each one's command name and start time. kern.procargs2, which returns a
-// process's executable path together with its argv and its whole environment,
-// is called only for the candidates e2eCandidateExecutables selects from that
-// listing.
+// each one's command name and start time. Only for the candidates
+// e2eCandidateExecutables selects from that listing is the executable path
+// read, and only the path: see e2eProcessExecutable.
 var e2eHostProcessTable = e2eProcessTable{
 	list:       e2eListUserProcesses,
 	executable: e2eProcessExecutable,
@@ -44,17 +44,31 @@ func e2eListUserProcesses() ([]e2eProcess, error) {
 	return listing, nil
 }
 
+// proc_info(2) arguments of libproc's proc_pidpath, which asks the kernel for
+// a process's executable path and nothing else (sys/proc_info.h).
+const (
+	procInfoCallPIDInfo    = 2    // PROC_INFO_CALL_PIDINFO
+	procPIDPathInfo        = 11   // PROC_PIDPATHINFO
+	procPIDPathInfoMaxSize = 4096 // PROC_PIDPATHINFO_MAXSIZE
+)
+
+// e2eProcessExecutable returns pid's executable path the way proc_pidpath
+// does, without cgo. It must not use kern.procargs2: that sysctl copies the
+// process's argv and its whole environment into this test process along with
+// the path, and a candidate can be any tslink the contributor's shell, editor
+// or monitoring starts while the tests run.
 func e2eProcessExecutable(pid int) (string, error) {
-	raw, err := unix.SysctlRaw("kern.procargs2", pid)
-	if err != nil {
-		return "", err
+	buf := make([]byte, procPIDPathInfoMaxSize)
+	// On success the call returns 0, not the length; the path ends at the
+	// first NUL.
+	_, _, errno := syscall.Syscall6(syscall.SYS_PROC_INFO, procInfoCallPIDInfo, uintptr(pid), procPIDPathInfo, 0,
+		uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf)))
+	if errno != 0 {
+		return "", errno
 	}
-	if len(raw) < 4 {
-		return "", errors.New("short kern.procargs2 record")
+	path := unix.ByteSliceToString(buf)
+	if path == "" {
+		return "", errors.New("proc_info returned no executable path")
 	}
-	path, _, found := bytes.Cut(raw[4:], []byte{0})
-	if !found || len(path) == 0 {
-		return "", errors.New("kern.procargs2 record without an executable path")
-	}
-	return string(path), nil
+	return path, nil
 }

@@ -376,9 +376,9 @@ type e2eProcess struct {
 type e2eProcessTable struct {
 	// list returns this user's processes, including this test process.
 	list func() ([]e2eProcess, error)
-	// executable returns the path a process was started from. It is the only
-	// read inside another process (on macOS it copies the argv and environment
-	// block that carries the path), so it is called only for candidates.
+	// executable returns the path a process was started from, and nothing
+	// else of that process: never its argv or environment. It is the only
+	// read inside another process, so it is called only for candidates.
 	executable func(pid int) (string, error)
 	// commandMax is the length the OS cuts command names to.
 	commandMax int
