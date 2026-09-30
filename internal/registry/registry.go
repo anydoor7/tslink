@@ -1075,7 +1075,8 @@ func LoadForRuntime(path string) (*Registry, []ServiceIssue, error) {
 	if len(bytes.TrimSpace(data)) == 0 {
 		return nil, nil, fmt.Errorf("registry.json is empty: %s", path)
 	}
-	return decodeForRuntime(data)
+	reg, issues, err := decodeForRuntime(data)
+	return reg, issues, registryLoadError(path, err)
 }
 
 // Preflight reads and strictly validates a registry copy without changing its
@@ -1088,7 +1089,8 @@ func Preflight(path string) (*Registry, []ServiceIssue, error) {
 	if len(bytes.TrimSpace(data)) == 0 {
 		return nil, nil, fmt.Errorf("registry.json is empty: %s", path)
 	}
-	return decodeForRuntime(data)
+	reg, issues, err := decodeForRuntime(data)
+	return reg, issues, registryLoadError(path, err)
 }
 
 func decodeForRuntime(data []byte) (*Registry, []ServiceIssue, error) {
@@ -1135,6 +1137,23 @@ func decodeForRuntime(data []byte) (*Registry, []ServiceIssue, error) {
 		reg.Services = append(reg.Services, svc)
 	}
 	return reg, issues, nil
+}
+
+// registryLoadError classifies malformed user input at the file boundary so
+// every reader retains the path and recovery guidance. Existing specific
+// codes (such as unknown_config_key) keep their classification.
+func registryLoadError(path string, err error) error {
+	if err == nil {
+		return nil
+	}
+	if _, coded := ErrorCode(err); coded {
+		return err
+	}
+	return &StableCodeError{
+		Code: "usage_error",
+		Err:  fmt.Errorf("load registry %q: %w", path, err),
+		Next: []string{"Check and repair the JSON syntax and field types in " + path, "tslink registry check --help"},
+	}
 }
 
 func strictJSONDecode(data []byte, dst any) error {
@@ -1193,7 +1212,7 @@ func LoadWithFileState(path string) (*Registry, RegistryFileState, error) {
 	}
 	reg, issues, err := decodeForRuntime(data)
 	if err != nil {
-		return nil, "", err
+		return nil, "", registryLoadError(path, err)
 	}
 	var blocking []error
 	for _, issue := range issues {
@@ -1243,7 +1262,7 @@ func loadForMutation(path string) (*Registry, error) {
 	}
 	reg, issues, err := decodeForRuntime(data)
 	if err != nil {
-		return nil, err
+		return nil, registryLoadError(path, err)
 	}
 	if len(issues) == 0 {
 		return reg, nil
