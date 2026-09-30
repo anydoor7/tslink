@@ -87,6 +87,24 @@ var (
 	serveDaemonReadyPollInterval = 50 * time.Millisecond
 )
 
+// serveUserSuppliedAuthKeyFn reports whether the stored credential the
+// auth-key provider uses is the legacy authkey file, a key the user supplied,
+// rather than an OAuth client secret or API access token that mints keys
+// through the Tailscale API. It is asked only when a stored credential exists,
+// and follows credentials.GetAuthKey's order: client secret, then API key,
+// then the legacy file.
+var serveUserSuppliedAuthKeyFn = func() (bool, error) {
+	clientSecret, err := credentials.GetClientSecret()
+	if err != nil || clientSecret != "" {
+		return false, err
+	}
+	apiKey, err := credentials.GetAPIKey()
+	if err != nil || apiKey != "" {
+		return false, err
+	}
+	return true, nil
+}
+
 // serverRunner abstracts server.Server for testing.
 type serverRunner interface {
 	Run(ctx context.Context) error
@@ -117,6 +135,10 @@ type authKeyProviderSetter interface {
 
 type credentialModeSetter interface {
 	SetCredentialed(bool)
+}
+
+type userSuppliedAuthKeySetter interface {
+	SetUserSuppliedAuthKey(bool)
 }
 
 type controlURLTrustSetter interface {
@@ -343,6 +365,13 @@ Examples:
 			if err != nil {
 				return err
 			}
+			userSuppliedAuthKey := false
+			if credentialed {
+				userSuppliedAuthKey, err = serveUserSuppliedAuthKeyFn()
+				if err != nil {
+					return err
+				}
+			}
 
 			effectiveEnsureTagsFn := serveEnsureTagsFn
 			if !credentialed {
@@ -399,6 +428,7 @@ Examples:
 					presentAuthHandoff(cmd, record)
 				},
 				ControlURLUnverified: controlURLUnverified,
+				UserSuppliedAuthKey:  userSuppliedAuthKey,
 			})
 		},
 	}
@@ -599,6 +629,9 @@ type foregroundOptions struct {
 	// ControlURLUnverified reports that controlURL is the default fallback
 	// used because config.json failed to load.
 	ControlURLUnverified bool
+	// UserSuppliedAuthKey reports that the stored credential is the legacy
+	// authkey file rather than one that mints keys through the Tailscale API.
+	UserSuppliedAuthKey bool
 }
 
 func runForeground(pidPath, readyPath, authKey, controlURL string) error {
@@ -741,6 +774,9 @@ func runForegroundWithOptions(pidPath, authKey, controlURL string, options foreg
 				ClientFactory: tailapi.NewTailscaleClient,
 			})
 		})
+	}
+	if setter, ok := srv.(userSuppliedAuthKeySetter); ok {
+		setter.SetUserSuppliedAuthKey(options.UserSuppliedAuthKey)
 	}
 	if !options.Credentialed {
 		setter, ok := srv.(authHandoffSetter)

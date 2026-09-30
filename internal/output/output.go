@@ -339,7 +339,8 @@ func exitCodeForStableError(stable string) int {
 		return ExitNotFound
 	case registry.CodeFunnelAllowConflict,
 		registry.CodeFunnelControlURLConflict,
-		registry.CodeFunnelTypeConflict:
+		registry.CodeFunnelTypeConflict,
+		registry.CodeCredentialURLMismatch:
 		return ExitConflict
 	default:
 		return ExitError

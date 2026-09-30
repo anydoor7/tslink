@@ -202,6 +202,9 @@ func (s *Server) startMCPControlPlane(ctx context.Context) error {
 	// survives restarts, and disabling --mcp leaves a user-owned, untagged
 	// device that the operator deletes in the Tailscale admin console.
 	nodeService := registry.Service{Name: name, Type: registry.TypeProxy, Tags: append([]string(nil), cp.Tags...), Ephemeral: true}
+	if err := s.mintedKeyControlURLError(name, s.controlURL); err != nil {
+		return err
+	}
 	authKey, err := s.authKeyProvider(ctx, nodeService)
 	if err != nil {
 		return fmt.Errorf("auth key for mcp control plane: %w", err)

@@ -320,6 +320,7 @@ type Server struct {
 	globalFailure           *runtimesnapshot.ServiceError
 	authKey                 string
 	authKeyProvider         AuthKeyProvider
+	authKeyUserSupplied     bool
 	credentialed            bool
 	controlURL              string
 	controlURLUnverified    bool
@@ -377,6 +378,7 @@ func New(authKey, controlURL string) (*Server, error) {
 		syncResultChanged:   make(chan struct{}),
 		authKey:             authKey,
 		authKeyProvider:     staticAuthKeyProvider(authKey),
+		authKeyUserSupplied: authKey != "",
 		credentialed:        authKey != "",
 		controlURL:          controlURL,
 		cfgDir:              cfgDir,
@@ -411,12 +413,24 @@ func (s *Server) SetAutoProvisionFunnel(enabled bool) {
 }
 
 // SetAuthKeyProvider sets the function used to resolve auth material per service.
+// A provider is taken to mint its keys through the Tailscale API until
+// SetUserSuppliedAuthKey says otherwise, so call that after this.
 func (s *Server) SetAuthKeyProvider(fn AuthKeyProvider) {
 	if fn == nil {
 		s.authKeyProvider = staticAuthKeyProvider(s.authKey)
+		s.authKeyUserSupplied = s.authKey != ""
 		return
 	}
 	s.authKeyProvider = fn
+	s.authKeyUserSupplied = false
+}
+
+// SetUserSuppliedAuthKey records whether the auth-key provider returns a key
+// the user supplied (the legacy authkey file) rather than one minted through
+// the Tailscale API with a stored credential. Only a minted key is tied to
+// Tailscale's control server; see mintedKeyControlURLError.
+func (s *Server) SetUserSuppliedAuthKey(userSupplied bool) {
+	s.authKeyUserSupplied = userSupplied
 }
 
 // SetControlURLUnverified marks the server's control URL as a default the
@@ -748,7 +762,11 @@ func (s *Server) syncNodesWithOutcome(ctx context.Context, startup bool) (outcom
 		// remain legacy-never; expired services are never allowed into Funnel
 		// policy or listener construction even if persisting the downgrade failed.
 		svc = registry.EffectiveServiceAt(svc, serverNowFn())
-		if err := ValidateServiceForStartup(svc); err != nil {
+		err := ValidateServiceForStartup(svc)
+		if err == nil {
+			err = s.mintedKeyControlURLError(svc.Name, effectiveControlURL(svc, s.controlURL))
+		}
+		if err != nil {
 			if failure, recoverable := recoverableServiceFailure(svc, err); recoverable {
 				slog.Warn("service validation failed; isolating service and continuing sync", "name", svc.Name, "code", failure.Error.Code, "error", err)
 				if _, seen := desired[svc.Name]; !seen {
@@ -1540,6 +1558,40 @@ func effectiveControlURL(svc registry.Service, fallback string) string {
 	return fallback
 }
 
+// mintedKeyControlURLError refuses a node that would carry an auth key minted
+// through the Tailscale API to a control server that is not Tailscale's. A
+// credentialed provider mints a preauthorized, tagged key for the owner's
+// tailnet, and tsnet sends whatever key it holds in the registration request
+// to the node's control URL; control_url is an ordinary registry field that
+// the MCP add tool can set. So the provider is never asked for such a node.
+//
+// controlURL is the node's effective control URL. tsnet resolves an empty one
+// from TS_CONTROL_URL before its built-in default, and upstream treats
+// login.tailscale.com as a synonym of that default (ipn.IsLoginServerSynonym);
+// nothing else is Tailscale's. A key the user supplied, the legacy authkey
+// file, is not minted by TSLink and keeps reaching the server the user chose.
+func (s *Server) mintedKeyControlURLError(name, controlURL string) error {
+	if !s.credentialed || s.authKeyUserSupplied {
+		return nil
+	}
+	resolved := controlURL
+	if resolved == "" {
+		resolved = os.Getenv("TS_CONTROL_URL")
+	}
+	if resolved == "" || ipn.IsLoginServerSynonym(resolved) {
+		return nil
+	}
+	return registry.CodedError{
+		Code:    registry.CodeCredentialURLMismatch,
+		Message: fmt.Sprintf("%q would register with control server %s, which is not Tailscale's; TSLink does not send an auth key minted with its stored Tailscale credential to another control server, so the node is not started", name, resolved),
+		Next: []string{
+			fmt.Sprintf("To stay on Tailscale's control server, remove the control_url that names %s: the service's control_url in registry.json, or the global one (tslink config set control-url \"\", or the serve --control-url flag)", resolved),
+			fmt.Sprintf("To enroll on %s, run TSLink without a stored Tailscale credential (tslink logout): the node then enrolls interactively on that server, or with an auth key that server issued in the legacy authkey file", resolved),
+			fmt.Sprintf("tslink status --urls --name %s --json", name),
+		},
+	}
+}
+
 // HoldsNodeState reports whether this server currently runs a node for name and
 // therefore has a live tsnet server holding that name's state directory open.
 //
@@ -1688,7 +1740,8 @@ func recoverableServiceFailure(svc registry.Service, err error) (runtimesnapshot
 		registry.CodeFunnelTypeConflict, registry.CodeFunnelPublicAckRequired,
 		registry.CodeUnknownConfigKey, registry.CodeFeatureUnavailable,
 		registry.CodeInvalidServiceName, registry.CodeInvalidTag,
-		registry.CodeAllowUnsupportedTCP, registry.CodePathMustBeAbsolute:
+		registry.CodeAllowUnsupportedTCP, registry.CodePathMustBeAbsolute,
+		registry.CodeCredentialURLMismatch:
 	default:
 		return runtimesnapshot.ServiceState{}, false
 	}
@@ -1785,6 +1838,9 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service, prov
 	// This closes the interval between desired-state loading and construction.
 	svc = registry.EffectiveServiceAt(svc, serverNowFn())
 	if err := ValidateServiceForStartup(svc); err != nil {
+		return err
+	}
+	if err := s.mintedKeyControlURLError(svc.Name, effectiveControlURL(svc, s.controlURL)); err != nil {
 		return err
 	}
 	// Direct callers use the same durable guard as registry reconciliation.

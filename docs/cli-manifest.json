@@ -2232,6 +2232,10 @@
       "exit_code": 4,
       "description": "requested state conflicts with existing state"
     },
+    "credential_control_url_mismatch": {
+      "exit_code": 4,
+      "description": "a credentialed daemon refuses to send an auth key minted through the Tailscale API to a control server that is not Tailscale's; the service is not started"
+    },
     "funnel_allow_conflict": {
       "exit_code": 4,
       "description": "Funnel conflicts with an allow list"

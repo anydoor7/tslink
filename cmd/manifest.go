@@ -920,6 +920,7 @@ func errorCodeManifest() map[string]ErrorCodeInfo {
 		registry.CodeFunnelAllowConflict:        {ExitCode: output.ExitConflict, Description: "Funnel conflicts with an allow list"},
 		registry.CodeFunnelControlURLConflict:   {ExitCode: output.ExitConflict, Description: "Funnel conflicts with control_url"},
 		registry.CodeFunnelTypeConflict:         {ExitCode: output.ExitConflict, Description: "Funnel requires a proxy service"},
+		registry.CodeCredentialURLMismatch:      {ExitCode: output.ExitConflict, Description: "a credentialed daemon refuses to send an auth key minted through the Tailscale API to a control server that is not Tailscale's; the service is not started"},
 		registry.CodeFunnelCapabilityMissing:    {ExitCode: output.ExitError, Description: "service tsnet node lacks Funnel capability, HTTPS, or allowed port"},
 		registry.CodeFunnelListenFailed:         {ExitCode: output.ExitError, Description: "Funnel capability preflight passed but listener activation failed"},
 		registry.CodeServiceStartTimeout:        {ExitCode: output.ExitError, Description: "service node did not reach running state before its startup deadline"},

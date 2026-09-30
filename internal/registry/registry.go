@@ -93,6 +93,7 @@ const (
 	CodeLoginVerifyFailed          = "login_verify_failed"
 	CodeLegacyConfigDirPresent     = config.CodeLegacyConfigDirPresent
 	CodeConfigLoadFailed           = config.CodeConfigLoadFailed
+	CodeCredentialURLMismatch      = "credential_control_url_mismatch"
 
 	ProvisionReasonDaemonDisabled      = "daemon_disabled"
 	ProvisionReasonServiceDisabled     = "service_disabled"

@@ -620,6 +620,7 @@ func TestManifestErrorExitTaxonomyMatchesRuntime(t *testing.T) {
 		registry.CodeAPIForbidden:               &registry.StableCodeError{Code: registry.CodeAPIForbidden, Err: errors.New("forbidden")},
 		registry.CodeLoginVerifyFailed:          &registry.StableCodeError{Code: registry.CodeLoginVerifyFailed, Err: errors.New("verify failed")},
 		registry.CodeLegacyConfigDirPresent:     &config.LegacyConfigDirError{Legacy: `C:\Users\u\.config\tslink`, Current: `C:\Users\u\AppData\Roaming\tslink`},
+		registry.CodeCredentialURLMismatch:      registry.CodedError{Code: registry.CodeCredentialURLMismatch, Message: "minted key refused for another control server"},
 	}
 	manifest := errorCodeManifest()
 	if len(manifest) != len(tests) {
