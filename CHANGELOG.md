@@ -25,7 +25,7 @@ proxy service is explicitly published through Funnel.
 - Proxy and TCP registration refuses literal link-local addresses
   (`169.254.0.0/16`, `fe80::/10`), unspecified addresses (`0.0.0.0`, `::`),
   non-canonical numeric spellings of them, and `metadata.google.internal`
-  with `link_local_target_refused` (exit 1). A registered service with that
+  with `link_local_target_refused` (exit 2). A registered service with that
   target is isolated and reported by `status` and `doctor`. Validation does
   not resolve hostnames or check resolved addresses at connection time.
 - A credentialed daemon refuses a non-Tailscale control URL before sending a
@@ -45,8 +45,8 @@ proxy service is explicitly published through Funnel.
   disables the corresponding service or daemon setup path. Ordinary tag ACL
   writes require `--manage-acl`.
 - `tags delete-remote tag:tslink-funnel` treats each active local Funnel as
-  using the shared tag and refuses deletion with `conflict` (exit 4 with
-  `--json`), even with `--force --manage-acl`. An expired Funnel does not
+  using the shared tag and refuses deletion with `conflict` (exit 4 in both
+  human and JSON output), even with `--force --manage-acl`. An expired Funnel does not
   block this command. `cleanup --manage-acl` and `serve --manage-acl` retain
   the shared grant because this host cannot prove other hosts have stopped
   using it; `cleanup --json` reports `acl_action` as `not_requested`,
@@ -60,6 +60,14 @@ proxy service is explicitly published through Funnel.
   absent from `registry.json` keeps its node state. A missing service with an
   unretired ownership row blocks only that service's device deletion, which
   `doctor` reports as `device_cleanup_blocked`.
+- MCP user invitations with a role other than `member` and device invitations
+  with `allow_exit_node: true` require `mcp.allow_elevated_invites: true` in
+  `config.json`. Without that opt-in they return `mcp_elevated_invite_refused`
+  (mapped to exit 3). The setting is off by default and CLI invitations do not use it.
+- `tags delete-remote` refuses with `config_load_failed` if `config.json`
+  cannot be read strictly. A single-file share inside the config directory is
+  refused even before the file exists. `login --client-secret` validates with
+  Tailscale's control server regardless of `TS_CONTROL_URL`.
 
 ### Services and sharing
 
@@ -123,6 +131,20 @@ proxy service is explicitly published through Funnel.
   well-formed snapshot that does not match the registry reports
   `runtime_snapshot_stale`. The CLI, daemon, and invite views fingerprint
   the registry consistently, including isolated bad entries.
+- `status` reports `authenticated` and `auth_status: "authenticated"` only
+  after a service node is authorized. `credential_stored` reports a stored
+  credential separately. A missing PID file yields `daemon_state: "absent"`;
+  status distinguishes `running`, `absent`, and `unknown`. Without a credential
+  or authorized node, its next step depends on whether a daemon is running and
+  whether a service is registered.
+- The public view `schema_version` inside result `data` is the integer `1`.
+  `doctor --json` sets envelope `code` to its diagnostic exit code (0, 64, or
+  65). `enrollment_required` exits 3.
+- MCP `logs` `since`, MCP `url` `wait`, `login --expires-in`, and
+  `events_keepalive` accept Go duration syntax plus `d` for days. MCP
+  `funnel_ttl` accepts equivalent spellings of its five timed lifetimes and
+  `never` (`168h` equals `7d`); each option keeps its own bounds. CLI `--wait`
+  and `--funnel-ttl` retain their existing syntax.
 - `doctor` on an empty, credential-free install exits 0 and reports
   `credential_none` as info. Set `TSLINK_DOCTOR_SKIP_TAILSCALE_SSH=1` to skip
   its local Tailscale SSH check; the finding is `tailscale_ssh_unknown` and
@@ -158,6 +180,29 @@ proxy service is explicitly published through Funnel.
 - The `share` and `add` tool descriptions specify that target blocking
   checks literal IPs and `metadata.google.internal`, without DNS resolution
   or a connect-time check.
+- A refused MCP call returns `isError: true` with one text item containing a
+  JSON failure object (`code`, `message`, `next`, `data`) and no
+  `structuredContent`. Invalid tool arguments return a `usage_error` tool
+  result naming the tool and invalid field.
+- MCP `unshare` returns the `tslink remove --json` result, including
+  `node_state_kept_reason` when applicable. It deletes the service and,
+  subject to ownership checks, its recorded tailnet device and local node
+  state. The server instructions ask clients to confirm the deletion.
+- Every MCP tool declares `readOnlyHint`, `destructiveHint`, `idempotentHint`,
+  and `openWorldHint`. MCP `share`, `add`, and `template_apply` include
+  `daemon_installed` (`manager`, `path`, `undo`) when their call installed the
+  background service.
+- The manifest derives `error_codes` from the same table as process exits and
+  service isolation. Its codes include `daemon_not_running`,
+  `daemon_setup_failed`, `daemon_supervision_unverified`,
+  `enrollment_required`, `invalid_service_config`,
+  `link_local_target_refused`, `registry_reload_invalid`,
+  `runtime_snapshot_missing`, `runtime_snapshot_stale`,
+  `runtime_snapshot_unreadable`, and `mcp_elevated_invite_refused`.
+  The manifest describes the binary without a `release` block or
+  `toolchain.goreleaser_version` and `toolchain.homebrew_artifact` fields.
+  `high_risk_operations` includes
+  `tslink remove`, MCP `unshare`, and daemon lifecycle deletion.
 
 ### Platforms and release checks
 
@@ -179,6 +224,12 @@ proxy service is explicitly published through Funnel.
   the only directory, commands refuse with `legacy_config_dir_present`
   (exit 4) and provide a `move` command; if both exist, they refuse to pick
   one. macOS and Linux use `~/.config/tslink/` by default.
+- Windows legacy-directory guidance provides a runnable `move` command.
+  An invalid registry entry is isolated without inheriting fields from the
+  previous entry; `doctor` reports `registry_service_invalid` for it.
+- `go run ./tools/gen-manifest` writes the same committed manifest on macOS,
+  Linux, and Windows, and `-check` detects a stale fixture on each platform.
+  `scripts/check.sh` runs the portable release checks.
 - CI runs the Release Candidate gate on pull requests and pushes to `main`;
   isolated tests use test-owned state rather than a contributor's TSLink
   configuration, Tailscale LocalAPI, or service manager.
@@ -195,13 +246,18 @@ For later 0.x releases, these are the public automation and data contracts:
   `schema_version`, `command`, `code`, `data`, and `error` fields. Optional
   `data`, `error`, and `error.next` stay optional; fields may be added.
 - Documented command `data` fields keep their meaning; fields and warnings
-  may be added.
+  may be added. Public view `data.schema_version` stays an integer.
 - Published error codes keep their meanings and exit-code mapping. Codes may
   be added; exit classes 0, 1, 2, 3, 4, 5, 64, and 65 stay as documented.
+  `tslink manifest --json` derives `error_codes` from this mapping.
 - `registry.json` schema 1 and known `config.json` keys remain readable;
   fields may be added. Run `registry check` before an upgrade.
 - The 19 MCP tool names and output schemas remain available with additive
-  fields; tools and optional fields may be added.
+  fields; tools and optional fields may be added. Refusals remain tool results
+  with `isError: true`, one JSON text failure object (`code`, `message`,
+  `next`, optional `data`), and no `structuredContent`; schema argument
+  errors use `usage_error`. The four behavior annotations remain present on
+  every tool.
 - Human output, error messages, and logs are not parsing interfaces. Use
   `--json` instead. `runtime.json` and other daemon/CLI state files are private.
 - Go packages are not a library API. A future incompatible 0.x change needs
