@@ -1194,6 +1194,11 @@ func LoadWithFileState(path string) (*Registry, RegistryFileState, error) {
 	// Diagnostic readers historically inspect recognized-but-invalid service
 	// shapes (for example doctor/access warnings). Unknown keys are never
 	// admitted above. Mutations use loadForMutation and reject every issue.
+	// The document is decoded into a fresh value: encoding/json reuses the
+	// elements of a slice it decodes into, so decoding over the valid
+	// services would give an invalid entry every field it omits from the
+	// valid entry at its index.
+	reg = &Registry{}
 	if err := json.Unmarshal(data, reg); err != nil {
 		return nil, "", err
 	}
