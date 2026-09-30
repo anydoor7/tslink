@@ -59,13 +59,13 @@ func TestNoE2ETestReadsTheArgvOrEnvironmentOfAnotherProcess(t *testing.T) {
 			return true
 		})
 	}
-	if pathOnlyReads == 0 {
-		t.Fatal("the scan saw no SYS_PROC_INFO call in cmd's _test.go files; the macOS e2e process table reads executable paths some other way, or the scan is not reading those files, so a clean result would mean nothing")
-	}
 	if len(problems) > 0 {
 		sort.Strings(problems)
 		t.Fatalf("%d place(s) in cmd's tests name procargs, which reads another process's argv and environment:\n  %s\n"+
 			"Read only the executable path: proc_info PROC_PIDPATHINFO on macOS (cmd/e2e_process_table_darwin_test.go).",
 			len(problems), strings.Join(problems, "\n  "))
+	}
+	if pathOnlyReads == 0 {
+		t.Fatal("the scan saw no SYS_PROC_INFO call in cmd's _test.go files; the macOS e2e process table reads executable paths some other way, or the scan is not reading those files, so a clean result would mean nothing")
 	}
 }
