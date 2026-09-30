@@ -19,6 +19,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"github.com/monody0007/tslink/internal/authmode"
 	"github.com/monody0007/tslink/internal/config"
+	"github.com/monody0007/tslink/internal/errcode"
 	"github.com/monody0007/tslink/internal/logging"
 	"github.com/monody0007/tslink/internal/registry"
 	runtimesnapshot "github.com/monody0007/tslink/internal/runtime"
@@ -1766,25 +1767,15 @@ func recoverableServiceFailure(svc registry.Service, err error) (runtimesnapshot
 	if !ok {
 		return runtimesnapshot.ServiceState{}, false
 	}
-	funnelState := funnelFailureState(svc, code)
-	switch code {
-	case registry.CodeFunnelCapabilityMissing:
-	case registry.CodeFunnelListenFailed:
-	case registry.CodeServiceStartTimeout:
-	case registry.CodeAPITokenUnauthorized, registry.CodeAPIForbidden:
-		// Auth-key derivation rejected by Tailscale: the credential is expired,
-		// revoked, or under-scoped. Persist the coded failure so status and
-		// doctor show the reason and recovery steps instead of a bare log line.
-	case registry.CodePathNotFound, registry.CodePathNotDirectory, registry.CodePathNotAccessible,
-		registry.CodeFunnelAllowConflict, registry.CodeFunnelControlURLConflict,
-		registry.CodeFunnelTypeConflict, registry.CodeFunnelPublicAckRequired,
-		registry.CodeUnknownConfigKey,
-		registry.CodeInvalidServiceName, registry.CodeInvalidTag,
-		registry.CodeAllowUnsupportedTCP, registry.CodePathMustBeAbsolute,
-		registry.CodeCredentialURLMismatch:
-	default:
+	// The error-code table decides which codes describe one service; that
+	// service is isolated with its code and next steps, and the others keep
+	// running. Auth-key derivation rejected by Tailscale (api_token_unauthorized,
+	// api_forbidden) is one of them: status and doctor then show the reason and
+	// recovery steps instead of a bare log line.
+	if !errcode.IsServiceScoped(code) {
 		return runtimesnapshot.ServiceState{}, false
 	}
+	funnelState := funnelFailureState(svc, code)
 	var recovery interface{ NextCommands() []string }
 	var next []string
 	if errors.As(err, &recovery) {
