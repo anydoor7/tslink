@@ -2229,7 +2229,7 @@
     },
     "auth_error": {
       "exit_code": 3,
-      "description": "authentication required or rejected"
+      "description": "authentication or authorization required or rejected"
     },
     "config_load_failed": {
       "exit_code": 2,

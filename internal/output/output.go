@@ -61,7 +61,7 @@ func IsSilent(err error) bool {
 	return ok
 }
 
-// ErrAuth returns an authentication error (exit code 3).
+// ErrAuth returns an authentication or authorization error (exit code 3).
 func ErrAuth(msg string) *CodeError {
 	return &CodeError{Code: ExitAuth, Message: msg}
 }

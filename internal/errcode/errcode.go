@@ -59,7 +59,7 @@ var table = []Code{
 	// Generic classes.
 	{InternalError, ExitError, Command, "unexpected internal failure"},
 	{UsageError, ExitUsage, Command, "invalid command syntax or value"},
-	{AuthError, ExitAuth, Command, "authentication required or rejected"},
+	{AuthError, ExitAuth, Command, "authentication or authorization required or rejected"},
 	{Conflict, ExitConflict, Command, "requested state conflicts with existing state"},
 	{NotFound, ExitNotFound, Command, "requested object was not found"},
 
