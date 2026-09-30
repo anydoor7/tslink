@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/monody0007/tslink/internal/config"
+	"github.com/monody0007/tslink/internal/duration"
 	"github.com/monody0007/tslink/internal/inspect"
 	"github.com/monody0007/tslink/internal/output"
 	"github.com/monody0007/tslink/internal/registry"
@@ -156,7 +157,7 @@ func init() {
 			return nil
 		},
 	}
-	urlCmd.Flags().Duration("wait", 0, "Wait for an exact runtime URL only when supplied (bare --wait means 30s)")
+	urlCmd.Flags().Var(duration.NewValue(0), "wait", "Wait for an exact runtime URL only when supplied (bare --wait means 30s)")
 	urlCmd.Flags().Lookup("wait").NoOptDefVal = defaultURLWait.String()
 	urlCmd.Flags().Bool("raw", false, "Print only the URL and one trailing newline")
 	rootCmd.AddCommand(urlCmd)

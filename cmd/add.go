@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/monody0007/tslink/internal/config"
+	"github.com/monody0007/tslink/internal/duration"
 	"github.com/monody0007/tslink/internal/inspect"
 	"github.com/monody0007/tslink/internal/output"
 	"github.com/monody0007/tslink/internal/registry"
@@ -790,7 +791,7 @@ Examples:
 	addCmd.Flags().Bool("no-auto-provision", false, "Disable automatic Funnel policy provisioning (only valid with --funnel)")
 	addCmd.Flags().String("allow", "", "Comma-separated allowed identities (e.g., user@example.com,tag:admin)")
 	addCmd.Flags().String("control-url", "", "Per-service custom control server URL (e.g., Headscale)")
-	addCmd.Flags().Duration("wait", defaultURLWait, "Wait for an exact runtime URL or enrollment URL (default 30s; 0 disables waiting)")
+	addCmd.Flags().Var(duration.NewValue(defaultURLWait), "wait", "Wait for an exact runtime URL or enrollment URL (default 30s; 0 disables waiting)")
 	addCmd.Flags().Lookup("wait").NoOptDefVal = defaultURLWait.String()
 	addCmd.Flags().Bool("dry-run", false, "Validate and print the service JSON without writing registry.json")
 	addCmd.Flags().Bool("no-daemon-install", false, "Save configuration only; do not install or start the background service")

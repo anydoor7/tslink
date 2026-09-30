@@ -18,6 +18,7 @@ import (
 
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/daemon"
+	"github.com/monody0007/tslink/internal/duration"
 	"github.com/monody0007/tslink/internal/inspect"
 	"github.com/monody0007/tslink/internal/output"
 	"github.com/monody0007/tslink/internal/registry"
@@ -703,7 +704,7 @@ Examples:
 	shareCmd.Flags().String("name", "", "Requested service name (DNS label); a matching target must already use it, while unrelated name collisions receive a numeric suffix")
 	shareCmd.Flags().Bool("ephemeral", true, "Use an ephemeral tailnet node (set --ephemeral=false for durable state)")
 	shareCmd.Flags().Bool("no-daemon-install", false, "Require an already running background service; do not install one")
-	shareCmd.Flags().Duration("wait", defaultURLWait, "Wait for an exact runtime URL (share waits 30s by default; unlike url, no flag is required)")
+	shareCmd.Flags().Var(duration.NewValue(defaultURLWait), "wait", "Wait for an exact runtime URL (share waits 30s by default; unlike url, no flag is required)")
 	shareCmd.Flags().Lookup("wait").NoOptDefVal = defaultURLWait.String()
 	rootCmd.AddCommand(shareCmd)
 }
