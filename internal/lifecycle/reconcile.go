@@ -132,6 +132,11 @@ type Result struct {
 	DeviceSkipUnknownProvenance []string        `json:"device_skip_unknown_provenance,omitempty"`
 	ACLAction                   string          `json:"acl_action"`
 	Warnings                    []string        `json:"warnings,omitempty"`
+	// ExpiredFunnelsNotWritten names services whose Funnel deadline has
+	// passed while another registry entry has a problem of its own, so the
+	// downgrade was not written to registry.json. A daemon withdraws them in
+	// memory at every sync and must sync; the warning reports them.
+	ExpiredFunnelsNotWritten []string `json:"-"`
 }
 
 var (
@@ -140,6 +145,25 @@ var (
 	downgradeExpiredFunnelsFn = registry.DowngradeExpiredFunnels
 	removeNodeStateFn         = tsruntime.RemoveServiceNodeState
 )
+
+// expiredFunnelsBesideIsolatedEntries names the entries the daemon's loader
+// isolates as per-service issues and, when there are any, the valid services
+// whose Funnel deadline has passed.
+func expiredFunnelsBesideIsolatedEntries(registryPath string, now time.Time) (isolated, due []string, err error) {
+	reg, issues, err := registry.LoadForRuntime(registryPath)
+	if err != nil || len(issues) == 0 {
+		return nil, nil, err
+	}
+	for _, issue := range issues {
+		isolated = append(isolated, issue.Name)
+	}
+	for _, svc := range reg.Services {
+		if registry.FunnelExpiredAt(svc, now) {
+			due = append(due, svc.Name)
+		}
+	}
+	return isolated, due, nil
+}
 
 // Reconcile is the single lifecycle implementation used by cleanup, serve
 // startup, and the serve wall-clock ticker.
@@ -163,13 +187,28 @@ func Reconcile(ctx context.Context, options Options) (Result, error) {
 	}
 	var expired []registry.Service
 	if registryState == registry.RegistryFileValid {
-		expired, err = downgradeExpiredFunnelsFn(options.RegistryPath, options.Now, options.DryRun)
-		if err != nil {
-			return Result{}, fmt.Errorf("downgrade expired Funnel services: %w", err)
-		}
-		reg, registryState, err = registry.LoadWithFileState(options.RegistryPath)
+		isolated, due, err := expiredFunnelsBesideIsolatedEntries(options.RegistryPath, options.Now)
 		if err != nil {
 			return Result{}, fmt.Errorf("%s: %w", registryUnavailableReason, err)
+		}
+		if len(isolated) > 0 {
+			// registry.json is rewritten only when every entry in it is
+			// valid, and one bad entry must not stop the lifecycle of the
+			// others (serve starts with it): the downgrade waits for the file
+			// to be fixed while the daemon keeps these services tailnet-only.
+			if len(due) > 0 {
+				result.ExpiredFunnelsNotWritten = due
+				result.Warnings = append(result.Warnings, fmt.Sprintf("Funnel deadline passed for %s; registry.json is not rewritten while %s has a problem of its own, so the daemon keeps them tailnet-only in memory until that entry is fixed or removed", strings.Join(due, ", "), strings.Join(isolated, ", ")))
+			}
+		} else {
+			expired, err = downgradeExpiredFunnelsFn(options.RegistryPath, options.Now, options.DryRun)
+			if err != nil {
+				return Result{}, fmt.Errorf("downgrade expired Funnel services: %w", err)
+			}
+			reg, registryState, err = registry.LoadWithFileState(options.RegistryPath)
+			if err != nil {
+				return Result{}, fmt.Errorf("%s: %w", registryUnavailableReason, err)
+			}
 		}
 	}
 	for _, svc := range expired {

@@ -792,7 +792,7 @@ func runForegroundWithOptions(pidPath, authKey, controlURL string, options foreg
 				"warnings", result.Warnings,
 			)
 		}
-		return result.RegistryChanged, nil
+		return result.RegistryChanged || len(result.ExpiredFunnelsNotWritten) > 0, nil
 	})
 	settings.SetAuthKeyProvider(func(ctx context.Context, svc registry.Service) (string, error) {
 		if !options.Credentialed {

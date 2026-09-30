@@ -1,11 +1,18 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
+
+	"github.com/monody0007/tslink/internal/config"
+	"github.com/monody0007/tslink/internal/lifecycle"
+	"github.com/monody0007/tslink/internal/server"
+	"github.com/monody0007/tslink/internal/tailapi"
 )
 
 // errDaemonizeStubbed stops the daemon-mode run right after the point under
@@ -107,5 +114,62 @@ func TestServeStillRefusesAMalformedRegistry(t *testing.T) {
 		if err := cmd.RunE(cmd, nil); err == nil {
 			t.Fatalf("serve (daemon=%v) started with a malformed registry.json", daemonMode)
 		}
+	}
+}
+
+// lifecycleChangeRecordingServer runs the lifecycle reconciler serve wires in
+// once, the way the daemon does before it starts anything, and keeps whether
+// it asked for a resync.
+type lifecycleChangeRecordingServer struct {
+	ignoresDaemonSettings
+	reconcile server.LifecycleReconcileFunc
+	runAt     time.Time
+	changed   bool
+}
+
+func (m *lifecycleChangeRecordingServer) SetLifecycleReconcileFn(fn server.LifecycleReconcileFunc) {
+	m.reconcile = fn
+}
+
+func (m *lifecycleChangeRecordingServer) Run(ctx context.Context) error {
+	if m.reconcile == nil {
+		return errors.New("lifecycle reconciler was not set")
+	}
+	changed, err := m.reconcile(ctx, m.runAt)
+	m.changed = changed
+	return err
+}
+
+// The daemon runs the lifecycle reconciler before it starts any service, and
+// an error from it stops the daemon, so the reconciler has to run beside a bad
+// entry too (the compiled binary stopped there). A Funnel deadline that passed
+// meanwhile asks for a resync, which withdraws that Funnel in memory.
+func TestServeLifecycleReconcilerRunsBesideABadServiceEntry(t *testing.T) {
+	dir := t.TempDir()
+	mockServeDefaults(t, dir)
+	// serve's own load and the reconciler read the same registry.json.
+	t.Setenv(config.ConfigDirEnv, dir)
+	t.Setenv(tailapi.APIBaseURLEnv, "http://127.0.0.1:1")
+	now := time.Date(2030, 8, 31, 12, 0, 0, 0, time.UTC)
+	data, err := json.Marshal(map[string]any{"schema_version": 1, "services": []map[string]any{
+		{"name": "web", "type": "proxy", "target": "http://127.0.0.1:3000", "tags": []string{"tag:tsmain"}},
+		{"name": "docs", "type": "file", "path": filepath.Join(dir, "gone"), "tags": []string{"tag:tsmain"}},
+		{"name": "public", "type": "proxy", "target": "http://127.0.0.1:3001", "funnel": true, "public_ack": true, "funnel_expires_at": now.Add(-time.Minute).Format(time.RFC3339), "tags": []string{"tag:tsmain"}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "registry.json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mock := &lifecycleChangeRecordingServer{runAt: now}
+	serveNewServerFn = func(string, string) (serverRunner, error) { return mock, nil }
+	serveLifecycleReconcileFn = lifecycle.Reconcile
+
+	if err := runForegroundWithOptions(filepath.Join(dir, "test.pid"), "fake-key", "", foregroundOptions{Credentialed: true}); err != nil {
+		t.Fatalf("daemon stopped at its first lifecycle reconciliation: %v", err)
+	}
+	if !mock.changed {
+		t.Fatal("the reconciler did not ask for a resync for the Funnel whose deadline passed")
 	}
 }
