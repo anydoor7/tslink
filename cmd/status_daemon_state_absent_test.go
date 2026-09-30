@@ -46,6 +46,11 @@ func TestNeverStartedInstallReportsDaemonAbsentOnEverySurface(t *testing.T) {
 	if mcp := value.(mcpStatusSummary); mcp.DaemonState != daemonStateAbsent || mcp.DaemonRunning {
 		t.Fatalf("MCP status = %+v, want daemon_state absent", mcp)
 	}
+	// The event stream pushes the status tool's payload minus auth_url.
+	state, err := buildMCPEventState(map[string]any{"services": []ListServiceSummary{}}, value)
+	if err != nil || state.Status.DaemonState != daemonStateAbsent {
+		t.Fatalf("event status = %+v (%v), want daemon_state absent", state.Status, err)
+	}
 	schema := mcpToolByName(t, "status").OutputSchema
 	if _, ok := schema["properties"].(map[string]any)["daemon_state"]; !ok || !containsString(requiredFields(schema), "daemon_state") {
 		t.Fatalf("status output schema does not require daemon_state: %v", schema["required"])

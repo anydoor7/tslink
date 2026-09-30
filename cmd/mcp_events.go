@@ -49,6 +49,7 @@ type mcpEventStatus struct {
 	NodeAuthorized         bool        `json:"node_authorized"`
 	AuthorizedServiceCount int         `json:"authorized_service_count"`
 	DaemonRunning          bool        `json:"daemon_running"`
+	DaemonState            string      `json:"daemon_state"`
 	ServiceCount           int         `json:"service_count"`
 	Status                 string      `json:"status,omitempty"`
 	Next                   []string    `json:"next,omitempty"`
