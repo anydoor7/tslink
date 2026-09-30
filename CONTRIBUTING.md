@@ -17,23 +17,16 @@ Thank you for your interest in contributing to TSLink! This document provides gu
 git clone https://github.com/monody0007/tslink.git
 cd tslink
 
-# Build
-go build ./...
+# Run the portable local release checks
+scripts/check.sh
 
-# Run tests
-go test ./...
-
-# Static analysis
-go vet ./...
-
-# Optional local release checks
-go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 ./...   # pinned to match CI (STATICCHECK_VERSION in .github/workflows/release-candidate.yml)
-go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
-go run github.com/goreleaser/goreleaser/v2@v2.17.0 check
-
-# Install locally
-go install .
+# Refresh the committed CLI manifest after command or flag changes
+go run ./tools/gen-manifest
 ```
+
+`go run ./tools/gen-manifest` regenerates `docs/cli-manifest.json`
+identically on macOS, Linux, and Windows. `go run ./tools/gen-manifest -check`
+fails on any of them if the committed fixture is stale.
 
 ### Test isolation
 
@@ -188,13 +181,9 @@ Open an issue with the feature request template. Describe:
 2. Fork the repository and create a branch from `main`
 3. Write your code following the existing patterns
 4. Add or update tests as appropriate
-5. Ensure all checks pass:
+5. Ensure the portable checks pass (add `-race` if needed):
    ```bash
-   go build ./...
-   go vet ./...
-   go test ./...
-   go test ./... -race -coverprofile=coverage.out
-   go tool cover -func=coverage.out
+   scripts/check.sh
    ```
 6. Submit a pull request
 

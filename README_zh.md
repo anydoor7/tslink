@@ -138,6 +138,7 @@ CI、无 TTY 与交互终端行为相同。安装会向 stderr 声明监管器�
 `add` 默认等待至多 30 秒取得精确 URL 或入网授权 URL；`--wait=0` 可关闭等待。
 
 MCP 的 `add`、`share`、`template_apply` 同样自举，并提供 `no_daemon_install`。
+这些 tool 完成后台服务安装后，在结果中通过 `daemon_installed` 返回 `manager`、`path` 和 `undo`。
 MCP `add` 自举完成后返回当前 URL/入网证据，不额外等待 URL；仍 pending 时可调用 `url`。
 `add` 和模板先写 registry 再安装，安装失败保留已保存的配置。显式 `install` 也支持尚无
 registry 的新环境。失败消息会说明监管定义是否残留：Linux 可能留下 enabled 且正在
@@ -221,6 +222,15 @@ tsnet service。它暴露 19 个 tools，覆盖 CLI 的 per-service 能力面：
 把 `{"status":"needs_login","auth_url":"..."}` 作为正常 tool result 返回，agent
 可以打开该 URL 后重试。MCP 永远不会返回 credential 值。同一组 tools 也可以提供给
 tailnet 内的其它机器，见[远程 MCP 控制面](#远程-mcp-控制面)。
+
+MCP tool 拒绝调用时返回 `isError: true`，在一个 text item 中放入 JSON failure
+object（`code`、`message`、`next` 和可选的 `data`），不包含 `structuredContent`。
+参数不符合 tool schema 时，返回 `usage_error` tool result。每个 tool 都声明
+`readOnlyHint`、`destructiveHint`、`idempotentHint` 和 `openWorldHint`。
+MCP `unshare` 返回与 `tslink remove --json` 相同的结果，适用时包含
+`node_state_kept_reason`。MCP `invite_user` 使用 `member` 以外的 role，或
+`invite_device` 设置 `allow_exit_node: true`，需要所有者开启
+`mcp.allow_elevated_invites`。
 
 ### 凭证层级
 
@@ -453,7 +463,7 @@ tslink template apply local-web --yes --json
   "command": "list",
   "code": 0,
   "data": {
-    "schema_version": "vnext.1",
+    "schema_version": 1,
     "services": [],
     "count": 0
   }
@@ -478,6 +488,17 @@ tslink template apply local-web --yes --json
 ```
 
 macOS 上，`launchctl_domain_unavailable` 是 TSLink 无法证明 install / uninstall handoff 安全时的刻意 exit-1 拒绝。其 failure `data` 包含 `unavailable_domain`、`force_available`、精确的 `force_command` 和 `force_risk`；agent 无需解析 `error.message` 就能拿到恢复契约。
+
+只有 service node 完成授权后，`status` 才设置 `authenticated`，并把
+`auth_status` 设为 `authenticated`；`credential_stored` 单独表示已有存储凭证。
+`daemon_state` 可为 `running`、`absent` 或 `unknown`；缺少 PID 文件表示
+`absent`。MCP `status` 和事件流也提供该字段。`doctor --json` 在 envelope 的
+`code` 中返回诊断退出码 0、64 或 65；`enrollment_required` 的退出码为 3。
+
+MCP `logs` 的 `since`、MCP `url` 的 `wait`、`login --expires-in` 和
+`mcp.events_keepalive` 接受 Go duration 语法及表示天数的 `d`，各自仍有范围限制。
+MCP `funnel_ttl` 接受五种时限的等价写法（`168h` 等于 `7d`）及 `never`。
+CLI `--wait` 和 `--funnel-ttl` 保持原有语法。
 
 `--json` 只改变输出格式。`tslink add --json` 与人类路径使用同一套安全护栏：Funnel 服务必须传 `--public`；TCP 服务会拒绝 `--allow`，因为 TSLink 不会对原始 TCP 字节流应用 HTTP 身份检查。
 
@@ -533,12 +554,18 @@ tslink list --tailnet --json
   "mcp": {
     "enabled": true,
     "allow": ["you@example.com"],
+    "allow_elevated_invites": false,
     "node_name": "tslink-mcp"
   }
 }
 ```
 
 `mcp.allow` 中的 `tag:` 条目会授权所有带该 tag 的机器，包括 service node。优先填写具体的登录邮箱；如需用 tag，请建立专用 tag 并控制哪些机器带有它。
+
+`mcp.allow_elevated_invites` 也是 `config.json` 的 key，默认关闭。设为 `true`
+后，MCP client 可以邀请用户担任 `member` 以外的 role，或通过
+`allow_exit_node: true` 分享设备。CLI 邀请命令无需此设置。
+`mcp.events_keepalive` 接受 Go duration 语法和表示天数的 `d`，范围为 5 秒至 5 分钟。
 
 `config.json` 按严格模式读取：TSLink 不认识的 key（包括拼写错误）会让写配置的命令以 `config_load_failed` 拒绝，`tslink doctor` 会报出来，`serve` 则回到默认控制服务器，并且不开控制面。
 
@@ -549,7 +576,7 @@ tslink list --tailnet --json
 | 可达范围 | 唯一的 listener 是控制面自己 tsnet 节点上的 `ListenTLS`。它永远不通过 Funnel 发布，永远不绑定主机网络接口或 `0.0.0.0` |
 | 节点 | 专用节点，不与任何服务共用。它不是 registry 服务，因此不出现在 `tslink list` 中，也没有任何代码路径能给它加 `--funnel` |
 | 生命周期 | 取决于 `serve` 的登录方式。已存凭证（`tslink login`）路径上节点是 ephemeral 的：派生出的 auth key 携带 ephemeral capability，tsnet 也以 ephemeral 标记登录，因此守护进程正常停止时会先登出节点，Tailscale 在几秒内把它从 tailnet 移除；关闭 `--mcp` 后没有需要手动删除的设备。如果守护进程崩溃，节点会留到 Tailscale 的 ephemeral 垃圾回收把它回收为止（Tailscale KB 写的是通常在最后活动后 30 到 60 分钟；这个数字来自 Tailscale KB，不是 TSLink 的实测）。零凭证（交互式浏览器登录）路径上节点是持久的、user-owned 的：一次浏览器授权在守护进程重启后仍然有效，关闭 `--mcp` 后 `tslink-mcp` 这台设备会留在 tailnet 里，需要你在 Tailscale admin console 手动删除 |
-| 权限 | 通过授权的 peer 拥有完整控制权：注册和删除服务、通过 Funnel 把服务发布到公网、发送和撤销真实的 Tailscale 邀请。填写 `mcp.allow` 时按这个前提考虑；`serve` 每次启动都会以 warning 级别记录 `mcp.controlplane.enabled` |
+| 权限 | 通过授权的 peer 可以注册和删除服务、通过 Funnel 把服务发布到公网、发送和撤销真实的 Tailscale 邀请。高权限邀请还需开启 `mcp.allow_elevated_invites`。填写 `mcp.allow` 时考虑这些权限；`serve` 每次启动都会以 warning 级别记录 `mcp.controlplane.enabled` |
 | Origin | 带 `Origin` 头的请求必须与 endpoint 自身的 `https://<node>.<tailnet>.ts.net` origin 完全一致，遵循 MCP Streamable HTTP 传输规范；其它情况在授权之前即返回 `403`。不带 `Origin` 的请求（命令行 MCP client 就是这样）直接放行 |
 | 传输 | 无状态 Streamable HTTP；单个请求体上限 1 MiB，与 stdio 传输每条记录的上限一致 |
 

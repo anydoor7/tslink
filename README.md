@@ -144,6 +144,8 @@ exact URL or an enrollment URL; use `--wait=0` for registration without waiting.
 The MCP `add`, `share`, and `template_apply` tools use the same bootstrap policy
 and expose `no_daemon_install`. MCP `add` returns current URL/enrollment evidence
 after setup without an additional URL wait; poll `url` if it is still pending.
+These tools report a completed background-service install as
+`daemon_installed` (`manager`, `path`, `undo`) in their results.
 `add` and template application save the registry before installing, retaining it
 if setup fails. Explicit `install` also works before any registry exists.
 Setup errors report whether a supervisor definition remains: Linux can leave an
@@ -249,6 +251,15 @@ authorization is pending it returns `{"status":"needs_login","auth_url":"..."}`
 as a normal tool result so an agent can open the URL and retry. Credential
 values are never returned through MCP. The same tools can also be served to
 other machines on your tailnet; see [Remote MCP Control Plane](#remote-mcp-control-plane).
+
+A refused tool call has `isError: true` and one text item containing the JSON
+failure object (`code`, `message`, `next`, and optional `data`), without
+`structuredContent`. Arguments outside a tool's schema return a `usage_error`
+tool result. Every tool declares `readOnlyHint`, `destructiveHint`,
+`idempotentHint`, and `openWorldHint`. MCP `unshare` returns the same result as
+`tslink remove --json`, including `node_state_kept_reason` when applicable.
+MCP `invite_user` roles other than `member` and `invite_device` with
+`allow_exit_node: true` need the owner's `mcp.allow_elevated_invites` opt-in.
 
 ### Credential tiers
 
@@ -471,7 +482,7 @@ tslink template apply local-web --yes --json
 
 The same operations are available to MCP clients through `tslink mcp` (stdio) and the remote control plane described below; `tslink manifest --json` prints the machine-readable description of every command, flag, exit code, and error code.
 
-All `--json` output uses the same versioned envelope. `command` names the command that produced it:
+All `--json` output uses the same versioned envelope. `command` names the command that produced it. Public view `data.schema_version` is the integer `1`:
 
 ```json
 {
@@ -481,7 +492,7 @@ All `--json` output uses the same versioned envelope. `command` names the comman
   "command": "list",
   "code": 0,
   "data": {
-    "schema_version": "vnext.1",
+    "schema_version": 1,
     "services": [],
     "count": 0
   }
@@ -506,6 +517,19 @@ Failures include a stable machine error code plus human text, and `error.next` l
 ```
 
 On macOS, `launchctl_domain_unavailable` is the deliberate exit-1 refusal used when TSLink cannot prove an install or uninstall handoff is safe. Its failure `data` includes `unavailable_domain`, `force_available`, the exact `force_command`, and `force_risk`; agents do not need to parse `error.message` to discover the recovery contract.
+
+`status` sets `authenticated` and `auth_status: "authenticated"` only after a
+service node is authorized. `credential_stored` separately reports a stored
+credential. `daemon_state` is `running`, `absent`, or `unknown`; a missing PID
+file gives `absent`. MCP `status` and its event stream use the same state field.
+`doctor --json` puts its diagnostic exit code (0, 64, or 65) in the envelope
+`code`. `enrollment_required` exits 3.
+
+MCP `logs` `since`, MCP `url` `wait`, `login --expires-in`, and
+`mcp.events_keepalive` accept Go duration syntax plus `d` for days, with their
+own bounds. MCP `funnel_ttl` accepts equivalent spellings for its five timed
+lifetimes (`168h` equals `7d`) and `never`. CLI `--wait` and `--funnel-ttl`
+retain their existing syntax.
 
 `--json` changes only the output format. `tslink add --json` follows the same safety guardrails as the human path: Funnel services require `--public`; TCP services reject `--allow` because TSLink does not apply HTTP identity checks to raw TCP streams.
 
@@ -561,12 +585,19 @@ The control plane is off by default. Enable it with the `--mcp` flag or with `mc
   "mcp": {
     "enabled": true,
     "allow": ["you@example.com"],
+    "allow_elevated_invites": false,
     "node_name": "tslink-mcp"
   }
 }
 ```
 
 A `tag:` entry in `mcp.allow` authorizes every machine carrying that tag, including service nodes. Prefer specific login emails or a dedicated tag whose membership you control.
+
+`mcp.allow_elevated_invites` is another `config.json` key, off by default. Set
+it to `true` to let MCP clients invite users with roles other than `member` or
+share a device with `allow_exit_node: true`. CLI invitation commands never need
+this opt-in. `mcp.events_keepalive` accepts Go duration syntax plus `d` for
+days, within its 5-second to 5-minute bounds.
 
 `config.json` is read strictly: a key TSLink does not know, a typo included, is refused with `config_load_failed` by the commands that write settings, reported by `tslink doctor`, and makes `serve` fall back to the default control server without the control plane.
 
@@ -577,7 +608,7 @@ A `tag:` entry in `mcp.allow` authorizes every machine carrying that tag, includ
 | Reach | The only listener is `ListenTLS` on the control plane's own tsnet node. It is never published through Funnel and never bound to a host interface or `0.0.0.0` |
 | Node | Its own dedicated node, shared with no service. It is not a registry service, so it is absent from `tslink list`, and no code path can attach `--funnel` to it |
 | Lifetime | Depends on how `serve` is logged in. With a stored credential (`tslink login`) the node is ephemeral: the derived auth key carries the ephemeral capability and tsnet logs in with the ephemeral flag, so a clean daemon stop logs the node out and Tailscale removes it within seconds; disabling `--mcp` leaves no device to delete by hand. After a crash the node lingers until Tailscale's ephemeral garbage collection reclaims it (Tailscale's KB states this normally happens 30 to 60 minutes after the last activity; that figure is Tailscale's, not measured by TSLink). With zero credentials (interactive browser login) the node is persistent and user-owned: one browser authorization survives daemon restarts, and disabling `--mcp` leaves the `tslink-mcp` device in your tailnet until you delete it in the Tailscale admin console |
-| Power | An authorized peer has full control: register and remove services, publish a service to the public internet with Funnel, send and revoke real Tailscale invitations. Fill `mcp.allow` with that in mind; `serve` logs `mcp.controlplane.enabled` as a warning on every start |
+| Power | An authorized peer can register and remove services, publish a service to the public internet with Funnel, and send or revoke real Tailscale invitations. Elevated invitations additionally require `mcp.allow_elevated_invites`. Fill `mcp.allow` with that in mind; `serve` logs `mcp.controlplane.enabled` as a warning on every start |
 | Origin | A request that carries an `Origin` header must match the endpoint's own `https://<node>.<tailnet>.ts.net` origin exactly, per the MCP Streamable HTTP transport specification; anything else is `403` before authorization runs. Requests without `Origin`, which is what command-line MCP clients send, pass through |
 | Transport | Stateless Streamable HTTP; one request body is bounded at 1 MiB, the same limit the stdio transport applies per record |
 
