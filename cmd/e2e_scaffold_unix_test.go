@@ -72,25 +72,50 @@ var (
 	e2eDaemonBinaryErr  error
 )
 
-// e2eRequireTempPath fails the test unless path is inside the OS temp root.
-// Every destructive or process-matching helper routes through this, so a bug in
-// a caller cannot aim this suite at an installed binary or the real config dir.
+// e2eRequireTempPath fails the test unless path is inside the OS temp root,
+// or inside GOTMPDIR when that is set, because T.TempDir creates its
+// directories there. Every destructive or process-matching helper routes
+// through this, so a bug in a caller cannot aim this suite at an installed
+// binary or the real config dir.
 func e2eRequireTempPath(t *testing.T, path string) string {
 	t.Helper()
-	tempRoot, err := filepath.EvalSymlinks(os.TempDir())
+	resolved, err := e2eResolveTempPath(path)
 	if err != nil {
-		t.Fatalf("resolve temp root: %v", err)
+		t.Fatal(err)
+	}
+	return resolved
+}
+
+func e2eResolveTempPath(path string) (string, error) {
+	roots := []string{os.TempDir()}
+	if dir := os.Getenv("GOTMPDIR"); dir != "" {
+		roots = append(roots, dir)
 	}
 	resolvedDir, err := filepath.EvalSymlinks(filepath.Dir(path))
 	if err != nil {
-		t.Fatalf("resolve %q: %v", path, err)
+		return "", fmt.Errorf("resolve %q: %v", path, err)
 	}
 	resolved := filepath.Join(resolvedDir, filepath.Base(path))
-	rel, err := filepath.Rel(tempRoot, resolved)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		t.Fatalf("refusing to operate on %q: not under the OS temp root %q", path, tempRoot)
+	var tempRoots []string
+	for _, root := range roots {
+		absolute, err := filepath.Abs(root)
+		if err != nil {
+			return "", fmt.Errorf("resolve temp root %q: %v", root, err)
+		}
+		tempRoot, err := filepath.EvalSymlinks(absolute)
+		if err != nil {
+			return "", fmt.Errorf("resolve temp root %q: %v", root, err)
+		}
+		rel, err := filepath.Rel(tempRoot, resolved)
+		if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return resolved, nil
+		}
+		tempRoots = append(tempRoots, tempRoot)
 	}
-	return resolved
+	if len(tempRoots) > 1 {
+		return "", fmt.Errorf("refusing to operate on %q: not under the OS temp root %q or GOTMPDIR %q", path, tempRoots[0], tempRoots[1])
+	}
+	return "", fmt.Errorf("refusing to operate on %q: not under the OS temp root %q", path, tempRoots[0])
 }
 
 // e2eBinaryDir returns the temp directory the package's single compiled binary
