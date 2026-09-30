@@ -192,22 +192,17 @@ proxy service is explicitly published through Funnel.
 For later 0.x releases, these are the public automation and data contracts:
 
 - `--json` keeps the `tslink.result` envelope and its `type`, `ok`,
-  `schema_version`, `command`, `code`, `data`, and `error` fields. A result
-  may add fields; optional `data`, `error`, and `error.next` remain optional.
-- Documented fields inside each command's `data` view remain readable with
-  the documented meaning. New fields and warnings may be added.
-- Published machine error codes retain their meanings and exit-code mapping;
-  later releases may add codes. Exit codes 0, 1, 2, 3, 4, 5, 64, and 65 retain
-  the classes documented in the README.
-- `registry.json` schema version 1 and `config.json` keys remain readable;
-  later releases may add keys and fields. `registry check` validates the
-  registry before an upgrade.
-- The 19 published MCP tool names and their output schemas remain available
-  with additive fields. A new tool or optional output field may be added.
-- Human-readable command output, error messages, and log text are not parsing
-  interfaces. Use `--json` for automation.
-- `runtime.json`, identity and ownership ledgers, and credential metadata are
-  private daemon/CLI state, not interchange formats. Go `internal/` packages
-  and other Go packages are not a library API.
-- A change that cannot honor these 0.x contracts needs a migration note in a
-  future release entry; private pre-release behavior is not a baseline.
+  `schema_version`, `command`, `code`, `data`, and `error` fields. Optional
+  `data`, `error`, and `error.next` stay optional; fields may be added.
+- Documented command `data` fields keep their meaning; fields and warnings
+  may be added.
+- Published error codes keep their meanings and exit-code mapping. Codes may
+  be added; exit classes 0, 1, 2, 3, 4, 5, 64, and 65 stay as documented.
+- `registry.json` schema 1 and known `config.json` keys remain readable;
+  fields may be added. Run `registry check` before an upgrade.
+- The 19 MCP tool names and output schemas remain available with additive
+  fields; tools and optional fields may be added.
+- Human output, error messages, and logs are not parsing interfaces. Use
+  `--json` instead. `runtime.json` and other daemon/CLI state files are private.
+- Go packages are not a library API. A future incompatible 0.x change needs
+  a migration note; private pre-release behavior is not a baseline.
