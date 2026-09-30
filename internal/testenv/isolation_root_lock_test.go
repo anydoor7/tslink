@@ -273,6 +273,35 @@ func TestReclaimStaleRootsRemovesOnlyAbandonedRoots(t *testing.T) {
 	requireExists(t, filepath.Join(unprefixed, "home"), "only entries named "+RootPrefix+"* are considered")
 }
 
+// TestReclaimStaleRootsLeavesAnotherUsersRootAlone: on a TMPDIR that users
+// share, such as /tmp, the sweep must not remove another user's tree for
+// them, however abandoned it looks. A root the owner check reports as another
+// user's is left untouched and its marker is never opened; this user's
+// abandoned root next to it still goes.
+func TestReclaimStaleRootsLeavesAnotherUsersRootAlone(t *testing.T) {
+	dir := t.TempDir()
+	abandoned := plantRoot(t, dir, RootPrefix+"abandoned", "4242\n")
+	foreign := plantRoot(t, dir, RootPrefix+"foreign", "4242\n")
+	owned := rootOwnedByThisUser
+	rootOwnedByThisUser = func(info os.FileInfo) bool {
+		return info.Name() != filepath.Base(foreign) && owned(info)
+	}
+	var probed []string
+	markerProbedHook = func(root string) { probed = append(probed, root) }
+	t.Cleanup(func() {
+		rootOwnedByThisUser = owned
+		markerProbedHook = nil
+	})
+
+	reclaimStaleRoots(dir)
+
+	requireGone(t, abandoned, "this user's abandoned root must still be removed, or the sweep did not run")
+	requireExists(t, filepath.Join(foreign, "home"), "a root another user owns must be left alone")
+	if slices.Contains(probed, foreign) {
+		t.Fatalf("the sweep opened the marker of %s, which another user owns; the owner check must come before any marker is opened", foreign)
+	}
+}
+
 // TestReclaimStaleRootsNeverFollowsASymlink: a symlink named like a root, and
 // a root whose marker is a symlink, both point at an abandoned-looking root
 // outside the swept directory. Neither the links nor their target may go.

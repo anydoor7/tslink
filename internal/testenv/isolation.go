@@ -257,13 +257,17 @@ func removeBriefly(path string) error {
 	}
 }
 
+// rootOwnedByThisUser is the sweep's owner check. Tests replace it to report
+// a root as another user's.
+var rootOwnedByThisUser = ownedByThisUser
+
 // reclaimStaleRoots removes the roots under dir that test binaries left when
 // they were interrupted, killed by -timeout or crashed: entries named
-// RootPrefix* that are directories, not symlinks, whose marker is abandoned
-// (see rootMarkerState). Nothing else is touched: an entry without a marker, a
-// symlink, a root whose owner still holds its lock, and a root whose marker is
-// still empty. Two binaries that reclaim the same root at once both just
-// remove it.
+// RootPrefix* that are directories, not symlinks, owned by this user, whose
+// marker is abandoned (see rootMarkerState). Nothing else is touched: another
+// user's entry, an entry without a marker, a symlink, a root whose owner still
+// holds its lock, and a root whose marker is still empty. Two binaries that
+// reclaim the same root at once both just remove it.
 func reclaimStaleRoots(dir string) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -274,7 +278,12 @@ func reclaimStaleRoots(dir string) {
 			continue
 		}
 		root := filepath.Join(dir, entry.Name())
-		if info, err := os.Lstat(root); err != nil || !info.IsDir() {
+		// On a TMPDIR that users share, such as /tmp, another user's tree is
+		// not this binary's to remove, however it looks. The owner is checked
+		// before any marker is opened: nobody else can create files in a root
+		// this user made (0700), so its marker cannot be swapped for a FIFO,
+		// whose open would block.
+		if info, err := os.Lstat(root); err != nil || !info.IsDir() || !rootOwnedByThisUser(info) {
 			continue
 		}
 		if rootMarkerState(root) == markerAbandoned {
