@@ -410,7 +410,7 @@ func commandJSONResultFields(commandPath string) map[string]JSONResultFieldInfo 
 		}
 		fields["daemon_state"] = JSONResultFieldInfo{
 			Type:        "string",
-			Description: "Additive daemon liveness state: running, absent, or unknown; daemon_running retains its existing boolean semantics.",
+			Description: "Daemon liveness: running (a verified daemon runs), absent (no PID file, or its process is gone), or unknown (a PID file whose process cannot be verified either way); daemon_running is true only for running.",
 			Values:      []string{daemonStateRunning, daemonStateAbsent, daemonStateUnknown},
 		}
 		fields["ownership_proof_available"] = JSONResultFieldInfo{

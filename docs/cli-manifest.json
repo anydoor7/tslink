@@ -1717,7 +1717,7 @@
         },
         "daemon_state": {
           "type": "string",
-          "description": "Additive daemon liveness state: running, absent, or unknown; daemon_running retains its existing boolean semantics.",
+          "description": "Daemon liveness: running (a verified daemon runs), absent (no PID file, or its process is gone), or unknown (a PID file whose process cannot be verified either way); daemon_running is true only for running.",
           "values": [
             "running",
             "absent",

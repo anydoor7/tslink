@@ -98,11 +98,14 @@ func TestOwnershipProofsDoNotDependOnRegistryPath(t *testing.T) {
 }
 
 func TestStatusDaemonStateIsAdditiveAndKeepsDaemonRunningSemantics(t *testing.T) {
-	oldIsRunning, oldReadPID, oldAbsent := isRunningFn, readPIDFn, isProcessAbsentFromPIDFileFn
+	oldIsRunning, oldReadPID, oldAbsent, oldMissing := isRunningFn, readPIDFn, isProcessAbsentFromPIDFileFn, isPIDFileMissingFn
 	t.Cleanup(func() {
-		isRunningFn, readPIDFn, isProcessAbsentFromPIDFileFn = oldIsRunning, oldReadPID, oldAbsent
+		isRunningFn, readPIDFn, isProcessAbsentFromPIDFileFn, isPIDFileMissingFn = oldIsRunning, oldReadPID, oldAbsent, oldMissing
 	})
 	readPIDFn = func(string) (int, error) { return 4242, nil }
+	// The PID file exists in every case below; a missing one is absent
+	// (TestNeverStartedInstallReportsDaemonAbsentOnEverySurface).
+	isPIDFileMissingFn = func(string) bool { return false }
 
 	for _, tc := range []struct {
 		name        string

@@ -20,7 +20,8 @@ import (
 )
 
 var (
-	readPIDFn = daemon.ReadPID
+	readPIDFn          = daemon.ReadPID
+	isPIDFileMissingFn = daemon.IsPIDFileMissing
 
 	statusPIDPathFn             = config.PIDPath
 	statusRegistryPathFn        = config.RegistryPath
@@ -213,7 +214,10 @@ func baseStatus(pidPath string) StatusResult {
 		r.DaemonRunning = true
 		r.DaemonState = daemonStateRunning
 		r.DaemonPID, _ = readPIDFn(pidPath)
-	} else if isProcessAbsentFromPIDFileFn(pidPath) {
+	} else if isPIDFileMissingFn(pidPath) || isProcessAbsentFromPIDFileFn(pidPath) {
+		// No PID file, or a PID file whose process is gone: no daemon runs
+		// for this config directory. Only a PID file that cannot be judged
+		// leaves the state unknown.
 		r.DaemonState = daemonStateAbsent
 	}
 	r.Supervision = detectSupervisionFn(pidPath, r.DaemonRunning, r.DaemonPID)

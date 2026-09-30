@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -245,6 +246,16 @@ func ReadPID(path string) (int, error) {
 func RemovePID(path string) {
 	_ = os.Remove(path)
 	_ = os.Remove(processIdentityPath(path))
+}
+
+// IsPIDFileMissing reports whether no PID file exists at path: no daemon was
+// started from this config directory, or it exited and removed its file.
+// Status reports that as absent rather than unknown. It says nothing about a
+// PID file that exists but cannot be read, and it is not a reason to delete
+// other PID artifacts (IsProcessAbsentFromPIDFile decides that).
+func IsPIDFileMissing(path string) bool {
+	_, err := os.Lstat(path)
+	return errors.Is(err, fs.ErrNotExist)
 }
 
 // IsProcessAbsentFromPIDFile reports true only when a readable positive PID is

@@ -238,11 +238,12 @@ var (
 		"node_authorized":          map[string]any{"type": "boolean"},
 		"authorized_service_count": map[string]any{"type": "integer", "minimum": 0},
 		"daemon_running":           map[string]any{"type": "boolean"},
+		"daemon_state":             map[string]any{"type": "string", "enum": []string{daemonStateRunning, daemonStateAbsent, daemonStateUnknown}, "description": "running: a verified daemon runs; absent: no daemon runs for this config directory (no PID file, or its process is gone); unknown: a PID file exists but its process could not be verified either way."},
 		"service_count":            map[string]any{"type": "integer", "minimum": 0},
 		"status":                   map[string]any{"type": "string"},
 		"auth_url":                 map[string]any{"type": "string"},
 		"next":                     map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
-	}, "authenticated", "credential_stored", "node_authorized", "authorized_service_count", "daemon_running", "service_count")
+	}, "authenticated", "credential_stored", "node_authorized", "authorized_service_count", "daemon_running", "daemon_state", "service_count")
 	mcpAddOutputSchema = objectSchema(map[string]any{
 		"daemon_running":    map[string]any{"type": "boolean"},
 		"auth_url":          map[string]any{"type": "string"},
@@ -723,6 +724,7 @@ type mcpStatusSummary struct {
 	NodeAuthorized         bool        `json:"node_authorized"`
 	AuthorizedServiceCount int         `json:"authorized_service_count"`
 	DaemonRunning          bool        `json:"daemon_running"`
+	DaemonState            string      `json:"daemon_state"`
 	ServiceCount           int         `json:"service_count"`
 	Status                 string      `json:"status,omitempty"`
 	AuthURL                string      `json:"auth_url,omitempty"`
@@ -791,6 +793,7 @@ func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 				NodeAuthorized:         status.NodeAuthorized,
 				AuthorizedServiceCount: status.AuthorizedServiceCount,
 				DaemonRunning:          status.DaemonRunning,
+				DaemonState:            status.DaemonState,
 				ServiceCount:           status.ServiceCount,
 				Next:                   append([]string(nil), status.Next...),
 			}
