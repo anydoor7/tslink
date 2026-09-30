@@ -411,6 +411,52 @@ func mergeSchemaProperties(base, extra map[string]any) map[string]any {
 	return merged
 }
 
+// mcpHints states all four MCP behaviour hints. Each is set explicitly: an
+// absent destructiveHint or openWorldHint defaults to true in the
+// specification, which would mark every read-only tool destructive.
+func mcpHints(readOnly, destructive, idempotent, openWorld bool) *mcp.ToolAnnotations {
+	return &mcp.ToolAnnotations{ReadOnlyHint: readOnly, DestructiveHint: &destructive, IdempotentHint: idempotent, OpenWorldHint: &openWorld}
+}
+
+// mcpToolHints are the tools' behaviour hints, a static table a reviewer can
+// read in one place.
+//
+//   - Read-only tools only read local files, the runtime snapshot, or the
+//     Tailscale API; a test calls each and checks nothing on disk changed.
+//   - Destructive tools can remove or overwrite: unshare deletes a service,
+//     its tailnet device and its node state; add and tags_set replace an
+//     existing service's definition or tags; invite_revoke cancels an
+//     invitation for good. share, template_apply and the invitations only add.
+//   - Idempotent tools reach the same state when repeated with the same
+//     arguments: share and add reuse the service they made, template_apply
+//     skips what exists, unshare and invite_revoke find the thing gone. Each
+//     invite_user, invite_device and invite_resend call sends another email.
+//   - Open-world tools reach beyond this machine: the tailnet and its nodes,
+//     the Tailscale API, the public internet through Funnel, or (doctor with
+//     probe_external) external endpoints.
+var mcpToolHints = map[string]*mcp.ToolAnnotations{
+	//                              readOnly destructive idempotent openWorld
+	"share":          mcpHints(false, false, true, true),
+	"add":            mcpHints(false, true, true, true),
+	"list":           mcpHints(true, false, true, false),
+	"unshare":        mcpHints(false, true, true, true),
+	"status":         mcpHints(true, false, true, false),
+	"url":            mcpHints(true, false, true, false),
+	"tags_list":      mcpHints(true, false, true, false),
+	"tags_set":       mcpHints(false, true, true, true),
+	"access_explain": mcpHints(true, false, true, false),
+	"doctor":         mcpHints(true, false, true, true),
+	"logs":           mcpHints(true, false, true, false),
+	"invite_user":    mcpHints(false, false, false, true),
+	"invite_device":  mcpHints(false, false, false, true),
+	"invite_list":    mcpHints(true, false, true, true),
+	"invite_revoke":  mcpHints(false, true, true, true),
+	"invite_resend":  mcpHints(false, false, false, true),
+	"template_list":  mcpHints(true, false, true, false),
+	"template_plan":  mcpHints(true, false, true, false),
+	"template_apply": mcpHints(false, false, true, true),
+}
+
 var mcpToolDefinitions = []mcpToolDefinition{
 	{
 		Name:        "share",
@@ -444,7 +490,7 @@ var mcpToolDefinitions = []mcpToolDefinition{
 			"funnel_ttl":        map[string]any{"type": "string", "enum": []string{"1h", "8h", "24h", "72h", "7d", "never"}, "description": "Public Funnel lifetime; defaults to 24h on a new entry. Omitting it preserves an existing entry's deadline. Only valid with funnel true."},
 			"no_daemon_install": map[string]any{"type": "boolean", "description": "Save configuration without installing the background service."},
 			"no_auto_provision": map[string]any{"type": "boolean", "default": false, "description": "Disable automatic Funnel policy provisioning. Only valid with funnel true."},
-			"control_url":       map[string]any{"type": "string", "description": "Per-service custom control server URL, for example a Headscale deployment. Rejected together with funnel."},
+			"control_url":       map[string]any{"type": "string", "description": "Per-service custom control server URL, for example a Headscale deployment. A custom control server never receives the stored Tailscale credential or an auth key minted with it: while a credential is stored the daemon does not start such a service (credential_control_url_mismatch), and without one the node enrolls interactively on that server. Rejected together with funnel."},
 		}, "name", "type"),
 		OutputSchema: mcpAddOutputSchema,
 	},
@@ -456,7 +502,7 @@ var mcpToolDefinitions = []mcpToolDefinition{
 	},
 	{
 		Name:        "unshare",
-		Description: "Remove one named service from the local TSLink registry. Use this when the user asks to stop sharing a specific service; it does not expose credentials or open a network listener.",
+		Description: "Deletes a service and its tailnet device, so confirm with the user before calling this. It removes the named service from the local TSLink registry, deletes the service's tailnet device through the Tailscale API when TSLink holds its exact recorded NodeID (a device matched only by hostname is kept and reported), and deletes the service's local node state once no tailnet node of it survives; a running daemon finishes that last step itself. It is idempotent: a service already absent is success with removed false. Use this when the user asks to stop sharing a specific service.",
 		InputSchema: objectSchema(map[string]any{
 			"name": map[string]any{"type": "string", "pattern": `^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`, "maxLength": 63, "description": "Exact registered service name to remove."},
 		}, "name"),
@@ -906,7 +952,7 @@ const mcpServerName = "tslink"
 // It names the tools whose descriptions carry a confirmation requirement, so a
 // client that reads instructions before tool descriptions still gets the
 // warning.
-const mcpInstructions = "Use share to expose a local page to the private tailnet. A needs_login tool result is successful: open auth_url and retry after authorization. Confirm with the user before any tool whose description says it publishes publicly or sends a real invitation: share/add with funnel true, and invite_user, invite_device, invite_revoke, invite_resend."
+const mcpInstructions = "Use share to expose a local page to the private tailnet. A needs_login tool result is successful: open auth_url and retry after authorization. Confirm with the user before any tool whose description says it publishes publicly, deletes, or sends a real invitation: share/add with funnel true, unshare, and invite_user, invite_device, invite_revoke, invite_resend."
 
 // mcpServerVersion is the version reported in serverInfo. Unstamped
 // development builds report "dev" rather than an empty string, which some
@@ -946,6 +992,7 @@ func newMCPServer(actions mcpActions) *mcp.Server {
 			Description:  definition.Description,
 			InputSchema:  definition.InputSchema,
 			OutputSchema: definition.OutputSchema,
+			Annotations:  mcpToolHints[definition.Name],
 		}, mcpToolHandler(definition.Name, actions))
 	}
 	return server
@@ -1711,9 +1758,11 @@ The MCP process itself opens no network listener. Invoking share, add or
 template_apply installs the background service when absent unless no_daemon_install
 is true; announcements go to stderr. This starts the separate TSLink daemon
 and its requested tsnet services. share and add with
-funnel true publish to the public internet, and the invite_* tools send or
-cancel real invitations through the Tailscale API, so a client should confirm
-those with its user first. Protocol frames are written only to stdout;
+funnel true publish to the public internet, unshare deletes a service's tailnet
+device and local node state, and the invite_* tools send or cancel real
+invitations through the Tailscale API, so a client should confirm those with
+its user first. Every tool declares readOnlyHint, destructiveHint,
+idempotentHint and openWorldHint. Protocol frames are written only to stdout;
 diagnostics and logs are written only to stderr.
 
 When stdin closes, requests already read still get their answers before the

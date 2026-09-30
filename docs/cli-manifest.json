@@ -183,6 +183,27 @@
       "boundary": "reports local use or skips; local absence never authorizes tailnet-wide grant deletion"
     },
     {
+      "command": "tslink remove",
+      "operation": "service removal with tailnet device and local node state deletion",
+      "default": "enabled",
+      "required_flags": [],
+      "boundary": "removes the registry entry, then deletes the service's tailnet devices through the Tailscale API only by exact recorded NodeID proof (a hostname match without proof is protected and reported as device_cleanup_skipped), and deletes the local tsnet state once no remote identity of the service survives; with a daemon running, the daemon's reconciliation deletes that state instead; without an API credential nothing remote is deleted; idempotent: an absent service succeeds with removed false"
+    },
+    {
+      "command": "tslink mcp",
+      "operation": "MCP unshare tool: the tslink remove deletion",
+      "default": "enabled",
+      "required_flags": [],
+      "boundary": "the same removal and exact NodeID-proven device and node-state deletion as tslink remove, with the same result; any client of tslink mcp and, under serve --mcp, every authorized peer of the remote control plane can call it; the tool is annotated destructive and the server instructions ask the client to confirm it with the user"
+    },
+    {
+      "command": "tslink serve",
+      "operation": "lifecycle reconciliation deletion of removed services' devices and node state",
+      "default": "enabled",
+      "required_flags": [],
+      "boundary": "at startup and every 30 seconds the daemon deletes, through the Tailscale API, only devices whose exact NodeID is recorded with retired_at provenance for a service absent from registry.json (hostname is discovery-only; a record without retired_at stays dormant), and deletes such a service's local tsnet state once its remote nodes are proven gone and no node in the daemon holds it; an untrusted registry.json or unreadable ownership ledger disables deletion; without an API credential nothing remote is deleted"
+    },
+    {
       "command": "tslink tags delete-remote",
       "operation": "remote ACL tag-owner deletion",
       "default": "disabled",
