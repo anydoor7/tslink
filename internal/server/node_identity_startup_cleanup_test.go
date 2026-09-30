@@ -13,9 +13,10 @@ import (
 )
 
 // Tags changed while the daemon was down, after identity records exist, so
-// the next start resets that node and asks for stale-device cleanup. That
-// cleanup carries no NodeIDs and can never delete; a device-listing outage
-// there must be logged as degraded, not take the whole daemon down.
+// the next start resets that node and asks for stale-device cleanup. No
+// NodeID was recorded in this fixture, so that cleanup carries none and can
+// never delete; a device-listing outage there must be logged as degraded, not
+// take the whole daemon down.
 func TestNodeIdentityStartupTransitionCleanupFailureIsDegraded(t *testing.T) {
 	services := legacyLayoutServices(t)
 	markers := writeLegacyLayout(t, services)

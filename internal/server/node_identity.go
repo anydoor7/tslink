@@ -446,8 +446,12 @@ func (s *Server) prepareNodeIdentity(ctx context.Context, svc registry.Service) 
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("verify state removal for auth identity change %q: %w", svc.Name, err)
 	}
+	// The old device is deleted by the exact StableNodeIDs the ownership
+	// ledger records for this service, before the replacement node comes up,
+	// so its hostname is free for it. Without a record the target is
+	// hostname-only and can only list and protect matches.
 	cleanupErr = s.cleanupAuthIdentityNodes(ctx, []tailapi.CleanupTarget{
-		tailapi.CleanupTargetForService(registry.Service{Name: old.Service, Tags: old.Tags}),
+		tailapi.CleanupTargetForOwnedService(registry.Service{Name: old.Service, Tags: old.Tags}, s.ownedNodeIDs(old.Service)),
 	})
 	if err := writeNodeIdentityFn(path, requested); err != nil {
 		return cleanupErr, fmt.Errorf("record replacement identity before start %q: %w", svc.Name, err)

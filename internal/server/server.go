@@ -974,8 +974,8 @@ func (s *Server) syncNodesWithOutcome(ctx context.Context, startup bool) (outcom
 			continue
 		}
 		if cleanupErr != nil && startup {
-			// This cleanup has no NodeIDs, so it can only list and protect
-			// hostname matches, never delete. At daemon start a sync error
+			// A failed cleanup leaves the old device in place, and refusing
+			// to start would not remove it. At daemon start a sync error
 			// takes every service down, which buys no safety here.
 			slog.Warn("degraded mode: stale tailnet node cleanup failed after old state removal; continuing start", "name", name, "error", cleanupErr, "degraded_mode", true)
 		} else if cleanupErr != nil {
@@ -1625,12 +1625,52 @@ func cleanupTargetHostnames(targets []tailapi.CleanupTarget) []string {
 	return hostnames
 }
 
+// ownedNodeIDs returns the StableNodeIDs the ownership ledger records for
+// name. An unreadable ledger yields none, which leaves a cleanup target
+// hostname-only: it can list and protect matches but never delete.
+func (s *Server) ownedNodeIDs(name string) []string {
+	ownershipPath, err := nodeOwnershipPathFn()
+	if err != nil {
+		slog.Warn("node ownership path unavailable; stale device cleanup has no exact NodeID proof", "service", name, "error", err)
+		return nil
+	}
+	ledger, err := runtimesnapshot.LoadOwnership(ownershipPath)
+	if err != nil {
+		slog.Warn("node ownership ledger unreadable; stale device cleanup has no exact NodeID proof", "service", name, "error", err)
+		return nil
+	}
+	var ids []string
+	for _, node := range ledger.Nodes {
+		if node.ServiceName == name {
+			ids = append(ids, node.NodeID)
+		}
+	}
+	return ids
+}
+
+// forgetResolvedOwnership drops ledger rows whose devices a cleanup deleted or
+// found already gone. A failure only leaves a row that the next cleanup
+// resolves again.
+func forgetResolvedOwnership(ids []string) {
+	if len(ids) == 0 {
+		return
+	}
+	ownershipPath, err := nodeOwnershipPathFn()
+	if err == nil {
+		err = runtimesnapshot.RemoveOwnedNodeIDs(ownershipPath, ids)
+	}
+	if err != nil {
+		slog.Warn("could not forget ownership records of devices already removed", "error", err)
+	}
+}
+
 func (s *Server) cleanupAuthIdentityNodes(ctx context.Context, targets []tailapi.CleanupTarget) error {
 	if len(targets) == 0 || s.cleanupNodesFn == nil {
 		return nil
 	}
 	hostnames := cleanupTargetHostnames(targets)
 	cleanup, err := s.cleanupNodesFn(ctx, targets)
+	forgetResolvedOwnership(cleanup.ResolvedOwnershipIDs)
 	if err != nil {
 		if errors.Is(err, tailapi.ErrNoAPIClient) {
 			slog.Warn("degraded mode: skipped stale tailnet node cleanup", "reason", err.Error(), "hostnames", hostnames, "degraded_mode", true)
