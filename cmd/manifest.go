@@ -916,6 +916,7 @@ func errorCodeManifest() map[string]ErrorCodeInfo {
 		registry.CodePathNotFound:               {ExitCode: output.ExitUsage, Description: "file service directory does not exist"},
 		registry.CodePathNotDirectory:           {ExitCode: output.ExitUsage, Description: "file service path is not a directory"},
 		registry.CodePathNotAccessible:          {ExitCode: output.ExitUsage, Description: "file service path is not accessible to the current user"},
+		registry.CodePathExposesConfigDir:       {ExitCode: output.ExitUsage, Description: "file service path is, contains, or lies inside TSLink's config directory, which holds node keys and credentials"},
 		registry.CodeUnknownConfigKey:           {ExitCode: output.ExitUsage, Description: "configuration key is not supported"},
 		registry.CodeURLNotReady:                {ExitCode: output.ExitNotFound, Description: "runtime has not reported an exact tailnet hostname"},
 		registry.CodeLaunchctlDomainUnavailable: {ExitCode: output.ExitError, Description: "a launchd domain could not be checked; failure data names the domain, explicit --force command, and residual risk"},

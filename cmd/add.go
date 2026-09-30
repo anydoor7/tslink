@@ -293,6 +293,9 @@ func buildService(p AddParams) (registry.Service, error) {
 
 func addWarnings(svc registry.Service, base []inspect.WarningView) []inspect.WarningView {
 	warnings := append([]inspect.WarningView(nil), base...)
+	if warning, ok := homeDirectoryShareWarning(svc, "cmd.add"); ok {
+		warnings = append(warnings, warning)
+	}
 	for _, invalid := range invalidAllowEntries(svc.AllowedUsers) {
 		warnings = append(warnings, inspect.WarningView{
 			Code:     "invalid_allow_entry",
@@ -302,6 +305,22 @@ func addWarnings(svc registry.Service, base []inspect.WarningView) []inspect.War
 		})
 	}
 	return warnings
+}
+
+// homeDirectoryShareWarning warns about a directory share of the user's home.
+// It is admitted only because TSLink's config directory lives elsewhere
+// (registry.ValidateFileRoot refuses a root that contains it), but it still
+// serves every dotfile in home.
+func homeDirectoryShareWarning(svc registry.Service, source string) (inspect.WarningView, bool) {
+	if svc.Type != registry.TypeFile || svc.File != "" || svc.Path == "" || !registry.IsHomeDir(svc.Path) {
+		return inspect.WarningView{}, false
+	}
+	return inspect.WarningView{
+		Code:     inspect.WarningCodeFileRootHomeDirectory,
+		Severity: inspect.WarningCodeRegistry[inspect.WarningCodeFileRootHomeDirectory].Severity,
+		Message:  fmt.Sprintf("Service %q serves your whole home directory %q, dotfiles such as SSH keys and shell history included; share a narrower directory unless that is intended.", svc.Name, svc.Path),
+		Source:   source,
+	}, true
 }
 
 func buildAddResult(ctx context.Context, svc registry.Service, created bool, pidPath, regPath, snapshotPath string, wait time.Duration) (AddResult, error) {

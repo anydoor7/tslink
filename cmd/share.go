@@ -45,7 +45,10 @@ type ShareResult struct {
 	// tailnet-only (kind tailnet or tailnet_allow) from public until a
 	// deadline (public_funnel with funnel_expires_at) from public with no
 	// deadline (public_funnel without it).
-	Exposure    inspect.ExposureView `json:"exposure"`
+	Exposure inspect.ExposureView `json:"exposure"`
+	// Warnings are non-fatal notes about the share, such as a directory share
+	// of the whole home directory.
+	Warnings    []inspect.WarningView `json:"warnings,omitempty"`
 	serviceName string
 }
 
@@ -612,14 +615,17 @@ func executeShare(ctx context.Context, paths sharePaths, req shareRequest, wait 
 	return withShareFunnelState(result, registration), nil
 }
 
-// withShareFunnelState reports the exposure and Funnel deadline of the
-// service the share actually uses, and whether this call re-armed it.
+// withShareFunnelState reports the exposure, Funnel deadline and warnings of
+// the service the share actually uses, and whether this call re-armed it.
 func withShareFunnelState(result ShareResult, registration shareRegistration) ShareResult {
 	if registration.Service.Funnel {
 		result.FunnelExpiresAt = cloneTimePointer(registration.Service.FunnelExpiresAt)
 	}
 	result.FunnelRearmed = registration.FunnelRearmed
 	result.Exposure = inspect.ServiceViewFor(registry.EffectiveServiceAt(registration.Service, time.Now())).Exposure
+	if warning, ok := homeDirectoryShareWarning(registration.Service, "cmd.share"); ok {
+		result.Warnings = append(result.Warnings, warning)
+	}
 	return result
 }
 

@@ -199,6 +199,7 @@ var (
 		"funnel_expires_at": map[string]any{"type": "string", "description": "When the public Funnel of this share stops. Absent when exposure.kind is not public_funnel, and absent for a public_funnel share that never expires. A reused share keeps its own deadline, which can be sooner than the funnel_ttl this call asked for."},
 		"funnel_rearmed":    map[string]any{"type": "boolean", "description": "True when the reused share's Funnel deadline had already passed and this call re-armed it with the requested funnel_ttl."},
 		"exposure":          mcpExposureViewSchema,
+		"warnings":          mcpWarningArraySchema,
 	}, "status", "exposure")
 	mcpListOutputSchema = objectSchema(map[string]any{
 		"services": map[string]any{

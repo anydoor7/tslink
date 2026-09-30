@@ -20,6 +20,8 @@ const (
 	WarningCodePathNotFound              = registry.CodePathNotFound
 	WarningCodePathNotDirectory          = registry.CodePathNotDirectory
 	WarningCodePathNotAccessible         = registry.CodePathNotAccessible
+	WarningCodePathExposesConfigDir      = registry.CodePathExposesConfigDir
+	WarningCodeFileRootHomeDirectory     = "file_root_home_directory"
 
 	WarningCodeConfigPathUnavailable               = "config_path_unavailable"
 	WarningCodeConfigLoadFailed                    = "config_load_failed"
@@ -162,6 +164,16 @@ var WarningCodeRegistry = map[string]WarningCodeMeta{
 		Severity:    "error",
 		Source:      "service.path",
 		Description: "A configured file service path is not accessible to the current user.",
+	},
+	WarningCodePathExposesConfigDir: {
+		Severity:    "error",
+		Source:      "service.path",
+		Description: "A file service path is, contains, or lies inside TSLink's config directory; it is refused so node keys and credentials are never served.",
+	},
+	WarningCodeFileRootHomeDirectory: {
+		Severity:    "warning",
+		Source:      "service.path",
+		Description: "A directory share serves the user's whole home directory, dotfiles included; it is accepted only because TSLink's config directory lives elsewhere.",
 	},
 	WarningCodeConfigPathUnavailable: {
 		Severity:    "error",

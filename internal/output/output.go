@@ -333,6 +333,7 @@ func exitCodeForStableError(stable string) int {
 		registry.CodePathNotFound,
 		registry.CodePathNotDirectory,
 		registry.CodePathNotAccessible,
+		registry.CodePathExposesConfigDir,
 		registry.CodeUnknownConfigKey:
 		return ExitUsage
 	case registry.CodeURLNotReady:

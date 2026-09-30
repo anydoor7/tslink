@@ -2366,6 +2366,10 @@
       "exit_code": 5,
       "description": "requested object was not found"
     },
+    "path_exposes_config_dir": {
+      "exit_code": 2,
+      "description": "file service path is, contains, or lies inside TSLink's config directory, which holds node keys and credentials"
+    },
     "path_must_be_absolute": {
       "exit_code": 2,
       "description": "file service path must be absolute"

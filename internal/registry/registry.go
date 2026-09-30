@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"net/url"
 	"os"
@@ -64,6 +65,7 @@ const (
 	CodePathNotDirectory           = "path_not_directory"
 	CodePathNotAccessible          = "path_not_accessible"
 	CodeLinkLocalTargetRefused     = "link_local_target_refused"
+	CodePathExposesConfigDir       = "path_exposes_config_dir"
 	CodeUnknownConfigKey           = "unknown_config_key"
 	CodeInvalidServiceConfig       = "invalid_service_config"
 	CodeRegistryReloadInvalid      = "registry_reload_invalid"
@@ -316,6 +318,18 @@ func PathNotDirectoryError(path string) error {
 		Code:        CodePathNotDirectory,
 		Message:     fmt.Sprintf("file service path %q is not a directory", path),
 		Next:        []string{"Choose an existing directory", "Retry the original tslink add command with --dir <absolute-directory>"},
+		MessageOnly: true,
+	}
+}
+
+// PathExposesConfigDirError refuses a file service whose served path is,
+// contains, or lies inside TSLink's own config directory, which holds every
+// service's node key and the stored credentials.
+func PathExposesConfigDirError(path, configDir string) error {
+	return CodedError{
+		Code:        CodePathExposesConfigDir,
+		Message:     fmt.Sprintf("file service path %q would serve TSLink's config directory %q (node keys, credentials and state); share a directory that neither is, contains, nor lies inside it", path, configDir),
+		Next:        []string{"Choose a directory that does not contain TSLink's config directory", "Retry the original tslink add or tslink share command"},
 		MessageOnly: true,
 	}
 }
@@ -740,10 +754,13 @@ func validateServiceShape(svc Service) error {
 		if svc.Port != 0 {
 			return fmt.Errorf("file services do not support port")
 		}
-		if err := ValidateFileRoot(svc.Path); err != nil {
+		if err := validateFileRootShape(svc.Path); err != nil {
 			return err
 		}
 		if err := ValidateServedFile(svc.File); err != nil {
+			return err
+		}
+		if err := refuseConfigDirExposure(svc.Path, svc.File); err != nil {
 			return err
 		}
 	case TypeTCP:
@@ -805,7 +822,16 @@ func ValidateProxyTarget(target string) error {
 	return nil
 }
 
+// ValidateFileRoot admits the root of a directory share: an existing absolute
+// directory whose tree does not include TSLink's own config directory.
 func ValidateFileRoot(path string) error {
+	if err := validateFileRootShape(path); err != nil {
+		return err
+	}
+	return refuseConfigDirExposure(path, "")
+}
+
+func validateFileRootShape(path string) error {
 	if path == "" {
 		return fmt.Errorf("file services require non-empty absolute path")
 	}
@@ -823,6 +849,115 @@ func ValidateFileRoot(path string) error {
 		return PathNotDirectoryError(path)
 	}
 	return nil
+}
+
+// configDirFn resolves the config directory a share must not expose. It is
+// the process's own config.Dir, the same one the daemon reads its node state
+// from.
+var configDirFn = config.Dir
+
+// refuseConfigDirExposure refuses a file service that would serve TSLink's
+// config directory. A directory share (file empty) serves its whole tree, so
+// its root must neither be, contain, nor lie inside the config directory. A
+// single-file share serves one regular file, so only that file's resolved
+// location matters. Both sides are compared as files (os.SameFile) after
+// resolving symlinks, so another spelling of the same directory, a symlink to
+// it, or a case variant on a case-insensitive file system is the same
+// directory. It does not change what an accepted share serves.
+func refuseConfigDirExposure(root, file string) error {
+	configDir, err := configDirFn()
+	if err != nil {
+		return fmt.Errorf("resolve TSLink's config directory to check file service path %q: %w", root, err)
+	}
+	if absolute, err := filepath.Abs(configDir); err == nil {
+		configDir = absolute
+	}
+	served := root
+	if file != "" {
+		served = filepath.Join(root, file)
+	}
+	servedInfo, err := os.Stat(served)
+	if err != nil {
+		if file != "" && errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return PathNotAccessibleError(served, err)
+	}
+
+	if file == "" {
+		// The root is the config directory or one of its ancestors, along
+		// either the path as spelled or the path its symlinks resolve to.
+		for _, dir := range configDirAncestry(configDir) {
+			if info, err := os.Stat(dir); err == nil && os.SameFile(info, servedInfo) {
+				return PathExposesConfigDirError(root, configDir)
+			}
+		}
+	}
+
+	configInfo, err := os.Stat(configDir)
+	if err != nil {
+		// A config directory that does not exist yet has nothing inside it.
+		return nil
+	}
+	resolved, err := filepath.EvalSymlinks(served)
+	if err != nil {
+		return PathNotAccessibleError(served, err)
+	}
+	for _, dir := range pathAndAncestors(resolved) {
+		if info, err := os.Stat(dir); err == nil && os.SameFile(info, configInfo) {
+			return PathExposesConfigDirError(root, configDir)
+		}
+	}
+	return nil
+}
+
+// configDirAncestry lists configDir and its ancestors as spelled, then as
+// resolved through symlinks. The config directory itself need not exist yet:
+// its nearest existing ancestor is resolved and the rest appended.
+func configDirAncestry(configDir string) []string {
+	dirs := pathAndAncestors(configDir)
+	rest := ""
+	for dir := configDir; ; {
+		if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+			dirs = append(dirs, pathAndAncestors(filepath.Join(resolved, rest))...)
+			break
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		rest = filepath.Join(filepath.Base(dir), rest)
+		dir = parent
+	}
+	return dirs
+}
+
+func pathAndAncestors(path string) []string {
+	var dirs []string
+	for dir := filepath.Clean(path); ; {
+		dirs = append(dirs, dir)
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return dirs
+		}
+		dir = parent
+	}
+}
+
+// IsHomeDir reports whether path is the current user's home directory. A
+// directory share of home is accepted when the config directory lives
+// elsewhere, and callers warn about it.
+func IsHomeDir(path string) bool {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return false
+	}
+	homeInfo, err := os.Stat(home)
+	if err != nil {
+		return false
+	}
+	info, err := os.Stat(path)
+	return err == nil && os.SameFile(info, homeInfo)
 }
 
 // ValidateServedFile constrains Service.File to one name resolved inside the
