@@ -12,17 +12,18 @@ import (
 	"github.com/monody0007/tslink/internal/registry"
 )
 
-// writeRegistryWithIsolatedEntry writes a registry whose second service is a
+// writeRegistryWithIsolatedEntry writes a registry whose first service is a
 // file share with a missing directory: the daemon's loader isolates it as a
-// per-service issue and keeps the other service.
+// per-service issue and keeps the service after it, so the fingerprint input
+// has to put the isolated entry back in its place.
 func writeRegistryWithIsolatedEntry(t *testing.T, missingDir string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "registry.json")
 	data, err := json.Marshal(map[string]any{
 		"schema_version": registry.CurrentRegistrySchemaVersion,
 		"services": []map[string]any{
-			{"name": "web", "type": "proxy", "target": "http://127.0.0.1:3000", "tags": []string{"tag:tsmain"}},
 			{"name": "docs", "type": "file", "path": missingDir, "tags": []string{"tag:tsmain"}},
+			{"name": "web", "type": "proxy", "target": "http://127.0.0.1:3000", "tags": []string{"tag:tsmain"}},
 		},
 	})
 	if err != nil {

@@ -12,17 +12,19 @@ import (
 	tsruntime "github.com/monody0007/tslink/internal/runtime"
 )
 
-// writeRegistryWithIsolatedEntry writes web and a file share whose directory
-// is gone, which the daemon's loader isolates as a per-service issue. It
-// returns what the daemon's sync loads and the fingerprint it writes into
-// runtime.json.
+// writeRegistryWithIsolatedEntry writes a file share whose directory is gone,
+// which the daemon's loader isolates as a per-service issue, followed by web.
+// The isolated entry comes first because there registry.Load, the diagnostic
+// loader, fills fields the entry omits from web's; only the daemon's loader
+// reads the entries as the daemon does. It returns what the daemon's sync
+// loads and the fingerprint it writes into runtime.json.
 func writeRegistryWithIsolatedEntry(t *testing.T, regPath string) (*registry.Registry, []registry.ServiceIssue, string) {
 	t.Helper()
 	data, err := json.Marshal(map[string]any{
 		"schema_version": registry.CurrentRegistrySchemaVersion,
 		"services": []map[string]any{
-			{"name": "web", "type": "proxy", "target": "http://127.0.0.1:3000", "tags": []string{"tag:tsmain"}},
 			{"name": "docs", "type": "file", "path": filepath.Join(t.TempDir(), "gone"), "tags": []string{"tag:tsmain"}},
+			{"name": "web", "type": "proxy", "target": "http://127.0.0.1:3000", "tags": []string{"tag:tsmain"}},
 		},
 	})
 	if err != nil {

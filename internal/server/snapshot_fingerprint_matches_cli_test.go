@@ -27,8 +27,8 @@ func TestDaemonSnapshotFingerprintIsTheCLIsWithAnIsolatedEntry(t *testing.T) {
 		t.Fatal(err)
 	}
 	data, err := json.Marshal(map[string]any{"schema_version": registry.CurrentRegistrySchemaVersion, "services": []map[string]any{
-		{"name": "web", "type": "proxy", "target": "http://127.0.0.1:3000", "tags": []string{"tag:tsmain"}},
 		{"name": "docs", "type": "file", "path": filepath.Join(t.TempDir(), "gone"), "tags": []string{"tag:tsmain"}},
+		{"name": "web", "type": "proxy", "target": "http://127.0.0.1:3000", "tags": []string{"tag:tsmain"}},
 	}})
 	if err != nil {
 		t.Fatal(err)
