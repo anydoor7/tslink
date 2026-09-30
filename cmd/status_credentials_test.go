@@ -243,6 +243,13 @@ func TestStatusCredentialsDefaultInventoryPersistsBackfillInConfigDir(t *testing
 	if err := credentials.SetAPIKey(statusFixtureAPIKey); err != nil {
 		t.Fatal(err)
 	}
+	// Every test in this binary shares the isolated keyring; take the key out
+	// again so no later test finds a credential it did not store.
+	t.Cleanup(func() {
+		if err := credentials.DeleteAPIKeyChecked(); err != nil {
+			t.Errorf("remove the fixture API key: %v", err)
+		}
+	})
 	withStatusCredentialSeams(t, statusFixtureAPIKey, "", nil)
 	status, err := getPollableStatus(pidPath, regPath, snapshotPath, handoffPath)
 	if err != nil {
