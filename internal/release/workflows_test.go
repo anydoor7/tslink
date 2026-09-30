@@ -531,7 +531,7 @@ func TestDarwinManifestStrictCheckRunsInExistingNativeJob(t *testing.T) {
 	}
 	text := string(body)
 	want := strings.Join([]string{
-		"- name: CLI manifest fixture is current (Darwin strict)",
+		"- name: CLI manifest fixture is current (Darwin)",
 		"        if: matrix.os == 'macos-latest'",
 		"        shell: bash",
 		"        run: |",
@@ -544,13 +544,16 @@ func TestDarwinManifestStrictCheckRunsInExistingNativeJob(t *testing.T) {
 	}
 }
 
-func TestLinuxManifestCheckStepNamesReducedCoverage(t *testing.T) {
+func TestManifestCheckStepsNameFullFixtureCoverage(t *testing.T) {
 	body, ok := readWorkflows(t)[candidateWorkflow]
 	if !ok {
 		t.Fatalf("%s is missing", candidateWorkflow)
 	}
-	if !strings.Contains(string(body), "- name: CLI manifest platform-independent fields are current (Linux)") {
-		t.Fatalf("%s must disclose the Linux manifest check's reduced coverage in the step name", candidateWorkflow)
+	for _, platform := range []string{"Linux", "Darwin"} {
+		name := "- name: CLI manifest fixture is current (" + platform + ")"
+		if !strings.Contains(string(body), name) {
+			t.Errorf("%s must name the strict fixture check: %s", candidateWorkflow, name)
+		}
 	}
 }
 
