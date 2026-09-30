@@ -83,10 +83,11 @@ var (
 	doctorProbeTargetFn         = defaultDoctorProbeTarget
 	doctorLoadAuthHandoffFn     = loadAuthHandoff
 	doctorNowFn                 = func() time.Time { return time.Now().UTC() }
-	// doctorCredentialInventoryFn classifies credential slots and backfills
-	// missing value-free metadata. Tests replace it to stay off the filesystem.
-	doctorCredentialInventoryFn = func(values credentials.SlotValues, now time.Time) credentials.Inventory {
-		return credentials.DescribeSlots(values, now, true)
+	// doctorCredentialInventoryFn classifies credential slots and, with
+	// persist, backfills missing value-free metadata. Tests replace it to stay
+	// off the filesystem.
+	doctorCredentialInventoryFn = func(values credentials.SlotValues, now time.Time, persist bool) credentials.Inventory {
+		return credentials.DescribeSlots(values, now, persist)
 	}
 	doctorProbeCredentialFn = credentials.ProbeStoredCredential
 	// doctorTailscaleSSHFn reads Tailscale SSH enablement from the local
@@ -161,6 +162,10 @@ type doctorOptions struct {
 	PIDPath             string
 	RuntimeSnapshotPath string
 	AuthHandoffPath     string
+	// ReadOnly reports a credential metadata backfill without recording it.
+	// The MCP doctor tool sets it: it declares readOnlyHint and must not
+	// write, while tslink doctor records the backfill (see statusRead).
+	ReadOnly bool
 }
 
 type DoctorResult struct {
@@ -563,7 +568,7 @@ func diagnoseCredentialExpiry(result *DoctorResult, values credentials.SlotValue
 		return
 	}
 	now := doctorNowFn()
-	inventory := doctorCredentialInventoryFn(values, now)
+	inventory := doctorCredentialInventoryFn(values, now, !opts.ReadOnly)
 	if inventory.MetadataError != nil {
 		result.addFinding(inspect.WarningCodeCredentialExpiryUnknown, "", "credentials", "", evidenceError(inventory.MetadataError))
 	}

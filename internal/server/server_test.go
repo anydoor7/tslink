@@ -1091,6 +1091,13 @@ func TestStartNodeLocked_InteractiveAuthorizationOutlivesTechnicalStartupDeadlin
 	default:
 	}
 
+	// Authorization starts the listener's own technical deadline
+	// (TestStartNodeLocked_InteractiveListenerUsesIndependentTechnicalDeadline).
+	// At 10ms that deadline raced the listener goroutine under parallel load
+	// and failed a correct start (B6b-15), so the rest of the start gets one
+	// no scheduler delay exhausts. The start reads nodeStartupTimeout again
+	// only after statusClient.ready is closed, which orders this write first.
+	nodeStartupTimeout = time.Minute
 	close(statusClient.ready)
 	select {
 	case err := <-result:

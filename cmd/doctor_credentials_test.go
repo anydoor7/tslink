@@ -15,8 +15,8 @@ import (
 
 // doctorInventoryAt builds an in-memory inventory where the api-key slot was
 // stored so that it has daysLeft days remaining under the assumed maximum.
-func doctorInventoryAt(daysLeft int, verified bool) func(credentials.SlotValues, time.Time) credentials.Inventory {
-	return func(values credentials.SlotValues, now time.Time) credentials.Inventory {
+func doctorInventoryAt(daysLeft int, verified bool) func(credentials.SlotValues, time.Time, bool) credentials.Inventory {
+	return func(values credentials.SlotValues, now time.Time, _ bool) credentials.Inventory {
 		doc := credentials.Metadata{SchemaVersion: credentials.MetadataSchemaVersion, Slots: map[string]credentials.SlotMetadata{}}
 		// A positive sub-day offset only matters at the zero boundary, where the
 		// slot must still read as "expiring today" (days_left 0, remaining > 0)
@@ -151,7 +151,7 @@ func TestDoctorCredentialMetadataStates(t *testing.T) {
 	t.Run("backfilled", func(t *testing.T) {
 		env := newDoctorTestEnv(t, nil)
 		env.writeExactSnapshot(t)
-		doctorCredentialInventoryFn = func(values credentials.SlotValues, now time.Time) credentials.Inventory {
+		doctorCredentialInventoryFn = func(values credentials.SlotValues, now time.Time, _ bool) credentials.Inventory {
 			return credentials.DescribeSlotsWithMetadata(values, credentials.Metadata{}, nil, now)
 		}
 		result := buildDoctorResult(doctorOptions{})
@@ -165,7 +165,7 @@ func TestDoctorCredentialMetadataStates(t *testing.T) {
 	t.Run("corrupt metadata is unknown warning", func(t *testing.T) {
 		env := newDoctorTestEnv(t, nil)
 		env.writeExactSnapshot(t)
-		doctorCredentialInventoryFn = func(values credentials.SlotValues, now time.Time) credentials.Inventory {
+		doctorCredentialInventoryFn = func(values credentials.SlotValues, now time.Time, _ bool) credentials.Inventory {
 			return credentials.DescribeSlotsWithMetadata(values, credentials.Metadata{}, errors.New("credential metadata file is unreadable or malformed: token tskey-api-FAKE-inside-error"), now)
 		}
 		var buf bytes.Buffer
@@ -184,7 +184,7 @@ func TestDoctorCredentialMetadataStates(t *testing.T) {
 	t.Run("backfill persistence failure", func(t *testing.T) {
 		env := newDoctorTestEnv(t, nil)
 		env.writeExactSnapshot(t)
-		doctorCredentialInventoryFn = func(values credentials.SlotValues, now time.Time) credentials.Inventory {
+		doctorCredentialInventoryFn = func(values credentials.SlotValues, now time.Time, _ bool) credentials.Inventory {
 			inv := credentials.DescribeSlotsWithMetadata(values, credentials.Metadata{}, nil, now)
 			inv.BackfillError = errors.New("read-only filesystem")
 			return inv
@@ -199,7 +199,7 @@ func TestDoctorCredentialMetadataStates(t *testing.T) {
 		newDoctorTestEnv(t, nil)
 		doctorGetAPIKeyFn = func() (string, error) { return "", nil }
 		doctorGetClientSecretFn = func() (string, error) { return "", nil }
-		doctorCredentialInventoryFn = func(credentials.SlotValues, time.Time) credentials.Inventory {
+		doctorCredentialInventoryFn = func(credentials.SlotValues, time.Time, bool) credentials.Inventory {
 			t.Fatal("inventory ran without any stored credential")
 			return credentials.Inventory{}
 		}

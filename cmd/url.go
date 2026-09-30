@@ -57,10 +57,14 @@ func exactServiceURL(result StatusURLsResult, name string) (serviceURLResolution
 }
 
 func resolveServiceEndpointOnce(pidPath, regPath, snapshotPath, name string) (serviceURLResolution, error) {
+	return commandStatus.resolveServiceEndpointOnce(pidPath, regPath, snapshotPath, name)
+}
+
+func (s statusRead) resolveServiceEndpointOnce(pidPath, regPath, snapshotPath, name string) (serviceURLResolution, error) {
 	if err := registry.ValidateName(name); err != nil {
 		return serviceURLResolution{}, err
 	}
-	status, err := getStatusURLs(pidPath, regPath, snapshotPath)
+	status, err := s.getStatusURLs(pidPath, regPath, snapshotPath)
 	if err != nil {
 		return serviceURLResolution{}, err
 	}
@@ -77,8 +81,8 @@ func resolveServiceEndpointOnce(pidPath, regPath, snapshotPath, name string) (se
 	return result, nil
 }
 
-func resolveServiceEndpoint(ctx context.Context, pidPath, regPath, snapshotPath, name string, wait time.Duration) (serviceURLResolution, error) {
-	result, err := resolveServiceEndpointOnce(pidPath, regPath, snapshotPath, name)
+func (s statusRead) resolveServiceEndpoint(ctx context.Context, pidPath, regPath, snapshotPath, name string, wait time.Duration) (serviceURLResolution, error) {
+	result, err := s.resolveServiceEndpointOnce(pidPath, regPath, snapshotPath, name)
 	if err == nil || wait <= 0 {
 		return result, err
 	}
@@ -97,7 +101,7 @@ func resolveServiceEndpoint(ctx context.Context, pidPath, regPath, snapshotPath,
 		case <-timer.C:
 			return serviceURLResolution{}, registry.URLNotReadyError(name)
 		case <-ticker.C:
-			result, err = resolveServiceEndpointOnce(pidPath, regPath, snapshotPath, name)
+			result, err = s.resolveServiceEndpointOnce(pidPath, regPath, snapshotPath, name)
 			if err == nil {
 				return result, nil
 			}
@@ -109,7 +113,11 @@ func resolveServiceEndpoint(ctx context.Context, pidPath, regPath, snapshotPath,
 }
 
 func resolveServiceURL(ctx context.Context, pidPath, regPath, snapshotPath, name string, wait time.Duration) (URLResult, error) {
-	resolution, err := resolveServiceEndpoint(ctx, pidPath, regPath, snapshotPath, name, wait)
+	return commandStatus.resolveServiceURL(ctx, pidPath, regPath, snapshotPath, name, wait)
+}
+
+func (s statusRead) resolveServiceURL(ctx context.Context, pidPath, regPath, snapshotPath, name string, wait time.Duration) (URLResult, error) {
+	resolution, err := s.resolveServiceEndpoint(ctx, pidPath, regPath, snapshotPath, name, wait)
 	return resolution.Result, err
 }
 

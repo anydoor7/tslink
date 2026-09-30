@@ -163,7 +163,7 @@ const (
 // doctorFixtureInventory classifies the fixture values against an in-memory
 // metadata document (both slots stored a day ago and verified) so tests never
 // touch a credential-meta.json on disk and see no backfill noise.
-func doctorFixtureInventory(values credentials.SlotValues, now time.Time) credentials.Inventory {
+func doctorFixtureInventory(values credentials.SlotValues, now time.Time, _ bool) credentials.Inventory {
 	doc := credentials.Metadata{SchemaVersion: credentials.MetadataSchemaVersion, Slots: map[string]credentials.SlotMetadata{}}
 	storedAt := now.Add(-24 * time.Hour)
 	for slot, value := range map[string]string{credentials.SlotAPIKey: values.APIKey, credentials.SlotClientSecret: values.ClientSecret} {
