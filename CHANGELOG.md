@@ -45,8 +45,9 @@ proxy service is explicitly published through Funnel.
   disables the corresponding service or daemon setup path. Ordinary tag ACL
   writes require `--manage-acl`.
 - `tags delete-remote tag:tslink-funnel` treats each active local Funnel as
-  using the shared tag and refuses deletion with `conflict` (exit 4 in both
-  human and JSON output), even with `--force --manage-acl`. An expired Funnel does not
+  using the shared tag and refuses deletion even with `--force --manage-acl`.
+  The JSON path reports `conflict` (exit 4); the human path reports an error
+  (exit 1). An expired Funnel does not
   block this command. `cleanup --manage-acl` and `serve --manage-acl` retain
   the shared grant because this host cannot prove other hosts have stopped
   using it; `cleanup --json` reports `acl_action` as `not_requested`,
