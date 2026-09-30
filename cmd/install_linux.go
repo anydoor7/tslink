@@ -487,6 +487,7 @@ StartLimitBurst=5
 
 [Service]
 Type=simple
+Environment=TSLINK_MANAGED_LOGS=1
 ExecStart=%s %s
 Restart=on-failure
 RestartSec=%d
