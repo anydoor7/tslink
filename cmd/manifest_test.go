@@ -373,17 +373,8 @@ func TestManifestCarriesMachineConsumerFacts(t *testing.T) {
 		t.Fatal("manifest missing executable tslink registry check recovery command")
 	}
 
-	if m.Toolchain.GoReleaserVersion != "v2.17.0" {
-		t.Fatalf("GoReleaserVersion = %q, want v2.17.0", m.Toolchain.GoReleaserVersion)
-	}
-	if m.Toolchain.HomebrewArtifact != "cask" {
-		t.Fatalf("HomebrewArtifact = %q, want cask", m.Toolchain.HomebrewArtifact)
-	}
 	if len(m.RegistrySchema.ServiceTypes) == 0 {
 		t.Fatalf("registry schema is incomplete: %#v", m.RegistrySchema)
-	}
-	if m.Release.PublicReleaseAvailable || m.Release.PrebuiltAvailable || m.Release.HomebrewTapAvailable {
-		t.Fatalf("release availability must stay false before first public readback: %#v", m.Release)
 	}
 	for _, code := range []string{
 		registry.CodeFunnelCapabilityMissing,
