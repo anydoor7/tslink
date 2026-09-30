@@ -48,6 +48,10 @@ func TestFileRootRefusesTSLinkConfigDirectory(t *testing.T) {
 	if err := os.Symlink(configDir, link); err != nil {
 		t.Fatal(err)
 	}
+	homeLink := filepath.Join(t.TempDir(), "home-link")
+	if err := os.Symlink(home, homeLink); err != nil {
+		t.Fatal(err)
+	}
 	for name, root := range map[string]string{
 		"the config directory":         configDir,
 		"a subdirectory of it":         filepath.Join(configDir, "nodes"),
@@ -55,6 +59,7 @@ func TestFileRootRefusesTSLinkConfigDirectory(t *testing.T) {
 		"home with the default layout": home,
 		"a symlink to it":              link,
 		"a path through that symlink":  filepath.Join(link, "nodes"),
+		"home through a symlink":       homeLink,
 	} {
 		t.Run(name, func(t *testing.T) {
 			assertConfigDirRefusal(t, ValidateFileRoot(root), root, configDir)
