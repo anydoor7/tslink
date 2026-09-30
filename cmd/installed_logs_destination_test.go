@@ -12,8 +12,13 @@ import (
 )
 
 func TestInstalledDaemonLogsReachCLIReader(t *testing.T) {
-	t.Setenv(config.ConfigDirEnv, t.TempDir())
 	t.Setenv("TSLINK_MANAGED_LOGS", "1")
+	assertManagedDaemonLogsReachCLIReader(t)
+}
+
+func assertManagedDaemonLogsReachCLIReader(t *testing.T) {
+	t.Helper()
+	t.Setenv(config.ConfigDirEnv, t.TempDir())
 	old := slog.Default()
 	t.Cleanup(func() { slog.SetDefault(old) })
 	logging.Init(false)
