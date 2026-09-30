@@ -2242,6 +2242,10 @@
       "exit_code": 3,
       "description": "authentication required or rejected"
     },
+    "config_load_failed": {
+      "exit_code": 2,
+      "description": "config.json exists but cannot be read strictly (malformed JSON or an unknown key); commands that would persist its settings refuse to guess"
+    },
     "conflict": {
       "exit_code": 4,
       "description": "requested state conflicts with existing state"

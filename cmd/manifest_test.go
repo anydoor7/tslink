@@ -595,6 +595,7 @@ func TestManifestErrorExitTaxonomyMatchesRuntime(t *testing.T) {
 		registry.CodePathNotAccessible:          registry.PathNotAccessibleError("/denied", errors.New("denied")),
 		registry.CodePathExposesConfigDir:       registry.PathExposesConfigDirError("/home/u", "/home/u/.config/tslink"),
 		registry.CodeUnknownConfigKey:           fmt.Errorf("unknown config key: %q", "bad"),
+		registry.CodeConfigLoadFailed:           &config.ConfigLoadError{Path: "/home/u/.config/tslink/config.json", Problem: `unknown key "default_tags"`},
 		registry.CodeURLNotReady:                registry.URLNotReadyError("pending"),
 		registry.CodeLaunchctlDomainUnavailable: registry.CodedError{Code: registry.CodeLaunchctlDomainUnavailable, Message: "unavailable"},
 		registry.CodeFeatureUnavailable:         registry.FeatureUnavailableError("unavailable"),

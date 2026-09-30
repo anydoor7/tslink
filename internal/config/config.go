@@ -1,11 +1,17 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 
 	"github.com/monody0007/tslink/internal/atomicfile"
+	"github.com/monody0007/tslink/internal/filelock"
 )
 
 // ConfigDirEnv overrides the default per-user configuration directory. It is
@@ -44,13 +50,61 @@ type MCPConfig struct {
 	EventsKeepalive string `json:"events_keepalive,omitempty"`
 }
 
-// GetDefaultTag returns the configured default tag, falling back to "tag:tsmain".
+// fallbackDefaultTag is the default tag when config.json sets none.
+const fallbackDefaultTag = "tag:tsmain"
+
+// GetDefaultTag returns the configured default tag, falling back to
+// "tag:tsmain" when config.json is missing, unreadable, or sets none. It is
+// for callers that only read or display the tag. A caller that persists the
+// default tag into registry.json or a credential must use DefaultTag, which
+// refuses a config.json it cannot read instead of substituting a tag.
 func GetDefaultTag() string {
-	cfg, err := LoadGlobalConfig()
+	cfg, err := loadGlobalConfig(false)
 	if err != nil || cfg.DefaultTag == "" {
-		return "tag:tsmain"
+		return fallbackDefaultTag
 	}
 	return cfg.DefaultTag
+}
+
+// DefaultTag returns the default tag for callers that persist it: the
+// configured one, or "tag:tsmain" when config.json is absent or sets none.
+// When config.json exists but cannot be parsed, or has a key TSLink does not
+// know (a typo such as default_tags), it returns a ConfigLoadError rather than
+// a tag the user did not configure.
+func DefaultTag() (string, error) {
+	cfg, err := LoadGlobalConfig()
+	if err != nil {
+		return "", err
+	}
+	if cfg.DefaultTag == "" {
+		return fallbackDefaultTag, nil
+	}
+	return cfg.DefaultTag, nil
+}
+
+// CodeConfigLoadFailed is the stable code of ConfigLoadError.
+const CodeConfigLoadFailed = "config_load_failed"
+
+// ConfigLoadError reports a config.json that exists but cannot be decoded
+// under the strict policy registry.json also follows: malformed JSON, an
+// unknown key, or trailing data.
+type ConfigLoadError struct {
+	Path    string
+	Problem string
+}
+
+func (e *ConfigLoadError) Error() string {
+	return fmt.Sprintf("config.json at %q cannot be loaded: %s", e.Path, e.Problem)
+}
+
+func (e *ConfigLoadError) StableCode() string { return CodeConfigLoadFailed }
+
+// NextCommands returns the recovery steps for a config.json TSLink refuses.
+func (e *ConfigLoadError) NextCommands() []string {
+	return []string{
+		fmt.Sprintf("Fix %s: %s (known keys: control_url, default_tag, mcp)", e.Path, e.Problem),
+		"tslink doctor --json",
+	}
 }
 
 // ConfigPath returns the path to the global config file.
@@ -62,8 +116,15 @@ func ConfigPath() (string, error) {
 	return filepath.Join(dir, "config.json"), nil
 }
 
-// LoadGlobalConfig reads the global config file. Returns zero-value config if not found.
+// LoadGlobalConfig reads the global config file. Returns zero-value config if
+// not found. Decoding is strict, like registry.json: a key TSLink does not know
+// is a ConfigLoadError rather than silently ignored, so a typo is reported and
+// a rewrite cannot drop a key it did not read.
 func LoadGlobalConfig() (GlobalConfig, error) {
+	return loadGlobalConfig(true)
+}
+
+func loadGlobalConfig(strict bool) (GlobalConfig, error) {
 	path, err := ConfigPath()
 	if err != nil {
 		return GlobalConfig{}, err
@@ -79,10 +140,80 @@ func LoadGlobalConfig() (GlobalConfig, error) {
 		return GlobalConfig{}, err
 	}
 	var cfg GlobalConfig
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return GlobalConfig{}, err
+	if !strict {
+		if err := json.Unmarshal(data, &cfg); err != nil {
+			return GlobalConfig{}, err
+		}
+		return cfg, nil
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&cfg); err != nil {
+		return GlobalConfig{}, &ConfigLoadError{Path: path, Problem: configDecodeProblem(err)}
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return GlobalConfig{}, &ConfigLoadError{Path: path, Problem: "unexpected data after the JSON object"}
 	}
 	return cfg, nil
+}
+
+var unknownConfigFieldRegexp = regexp.MustCompile(`^json: unknown field "([^"]+)"$`)
+
+func configDecodeProblem(err error) string {
+	if matches := unknownConfigFieldRegexp.FindStringSubmatch(err.Error()); len(matches) == 2 {
+		return fmt.Sprintf("unknown key %q", matches[1])
+	}
+	if errors.Is(err, io.EOF) {
+		return "the file is empty"
+	}
+	return err.Error()
+}
+
+// globalConfigAfterLoadHook runs between the read and the write of
+// UpdateGlobalConfig. Tests use it to interleave a second writer.
+var globalConfigAfterLoadHook func()
+
+// UpdateGlobalConfig applies mutate to config.json as one read-modify-write
+// under config.json.lock, so two writers (config set and tags set-default)
+// cannot erase each other's change. The read is strict, so a config.json this
+// version cannot fully read is refused rather than rewritten without the
+// keys it did not understand.
+func UpdateGlobalConfig(mutate func(*GlobalConfig) error) error {
+	path, err := ConfigPath()
+	if err != nil {
+		return err
+	}
+	if err := atomicfile.EnsurePrivateDir(filepath.Dir(path)); err != nil {
+		return err
+	}
+	lockPath := path + ".lock"
+	if err := atomicfile.ConvergePrivateFile(lockPath); err != nil {
+		return err
+	}
+	lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return err
+	}
+	defer lockFile.Close()
+	if err := filelock.Lock(lockFile); err != nil {
+		return err
+	}
+	defer filelock.Unlock(lockFile)
+
+	cfg, err := LoadGlobalConfig()
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+	if globalConfigAfterLoadHook != nil {
+		globalConfigAfterLoadHook()
+	}
+	if err := mutate(&cfg); err != nil {
+		return err
+	}
+	if err := SaveGlobalConfig(cfg); err != nil {
+		return fmt.Errorf("save config: %w", err)
+	}
+	return nil
 }
 
 // SaveGlobalConfig writes the global config to disk.

@@ -480,7 +480,11 @@ retries:
 
 		svc := spec.Service
 		if !tagsRequested {
-			svc.Tags = []string{config.GetDefaultTag()}
+			defaultTag, err := config.DefaultTag()
+			if err != nil {
+				return shareRegistration{}, err
+			}
+			svc.Tags = []string{defaultTag}
 		}
 		svc.Name = name
 		svc.CreatedAt = time.Now().UTC()

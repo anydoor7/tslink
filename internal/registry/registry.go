@@ -91,6 +91,7 @@ const (
 	CodeAPIForbidden               = "api_forbidden"
 	CodeLoginVerifyFailed          = "login_verify_failed"
 	CodeLegacyConfigDirPresent     = config.CodeLegacyConfigDirPresent
+	CodeConfigLoadFailed           = config.CodeConfigLoadFailed
 
 	ProvisionReasonDaemonDisabled      = "daemon_disabled"
 	ProvisionReasonServiceDisabled     = "service_disabled"

@@ -240,9 +240,15 @@ func buildService(p AddParams) (registry.Service, error) {
 			return registry.Service{}, err
 		}
 	}
-	// If no tags specified, use default
+	// If no tags specified, use the configured default. A config.json that
+	// cannot be read fails the add rather than enrolling the service under a
+	// tag the user did not configure.
 	if len(tags) == 0 {
-		tags = []string{config.GetDefaultTag()}
+		defaultTag, err := config.DefaultTag()
+		if err != nil {
+			return registry.Service{}, err
+		}
+		tags = []string{defaultTag}
 	}
 	if p.TCP != "" {
 		if err := registry.ValidateTCPTarget(p.TCP); err != nil {

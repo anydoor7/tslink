@@ -811,11 +811,9 @@ func TestTagsSetDefaultJSON(t *testing.T) {
 	setTagsMocks(t)
 	testenv.SetHome(t, t.TempDir())
 
-	tagsLoadGlobalFn = func() (config.GlobalConfig, error) {
-		return config.GlobalConfig{}, nil
-	}
-	tagsSaveGlobalFn = func(cfg config.GlobalConfig) error {
-		return nil
+	tagsUpdateGlobalFn = func(mutate func(*config.GlobalConfig) error) error {
+		cfg := config.GlobalConfig{}
+		return mutate(&cfg)
 	}
 
 	var buf bytes.Buffer

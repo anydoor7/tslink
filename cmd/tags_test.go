@@ -25,8 +25,7 @@ func setTagsMocks(t *testing.T) {
 	origLoadReg := tagsLoadRegistryFn
 	origMutateService := tagsMutateServiceFn
 	origEnsureDir := tagsEnsureDirFn
-	origLoadGlobal := tagsLoadGlobalFn
-	origSaveGlobal := tagsSaveGlobalFn
+	origUpdateGlobal := tagsUpdateGlobalFn
 	origGetDefault := tagsGetDefaultFn
 	t.Cleanup(func() {
 		tagsReadTagsFn = origReadTags
@@ -35,8 +34,7 @@ func setTagsMocks(t *testing.T) {
 		tagsLoadRegistryFn = origLoadReg
 		tagsMutateServiceFn = origMutateService
 		tagsEnsureDirFn = origEnsureDir
-		tagsLoadGlobalFn = origLoadGlobal
-		tagsSaveGlobalFn = origSaveGlobal
+		tagsUpdateGlobalFn = origUpdateGlobal
 		tagsGetDefaultFn = origGetDefault
 	})
 }
@@ -452,10 +450,11 @@ func TestTagsSetDefault_Success(t *testing.T) {
 	testenv.SetHome(t, t.TempDir())
 
 	var savedCfg config.GlobalConfig
-	tagsLoadGlobalFn = func() (config.GlobalConfig, error) {
-		return config.GlobalConfig{}, nil
-	}
-	tagsSaveGlobalFn = func(cfg config.GlobalConfig) error {
+	tagsUpdateGlobalFn = func(mutate func(*config.GlobalConfig) error) error {
+		cfg := config.GlobalConfig{}
+		if err := mutate(&cfg); err != nil {
+			return err
+		}
 		savedCfg = cfg
 		return nil
 	}
@@ -484,8 +483,8 @@ func TestTagsSetDefault_InvalidPrefix(t *testing.T) {
 
 func TestTagsSetDefault_LoadError(t *testing.T) {
 	setTagsMocks(t)
-	tagsLoadGlobalFn = func() (config.GlobalConfig, error) {
-		return config.GlobalConfig{}, fmt.Errorf("load error")
+	tagsUpdateGlobalFn = func(func(*config.GlobalConfig) error) error {
+		return fmt.Errorf("load error")
 	}
 
 	err := tagsSetDefaultRun(&bytes.Buffer{}, "tag:test", false)
@@ -496,10 +495,11 @@ func TestTagsSetDefault_LoadError(t *testing.T) {
 
 func TestTagsSetDefault_SaveError(t *testing.T) {
 	setTagsMocks(t)
-	tagsLoadGlobalFn = func() (config.GlobalConfig, error) {
-		return config.GlobalConfig{}, nil
-	}
-	tagsSaveGlobalFn = func(cfg config.GlobalConfig) error {
+	tagsUpdateGlobalFn = func(mutate func(*config.GlobalConfig) error) error {
+		cfg := config.GlobalConfig{}
+		if err := mutate(&cfg); err != nil {
+			return err
+		}
 		return fmt.Errorf("save error")
 	}
 

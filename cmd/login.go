@@ -623,7 +623,11 @@ func validateLoginCredentialCandidate(ctx context.Context, mode loginCredentialM
 // plane) returns an error so the transaction keeps the previous credential
 // active. The secret value is never written to logs or error text.
 func activateClientSecretViaUp(ctx context.Context, secret string) error {
-	tags := []string{config.GetDefaultTag()}
+	defaultTag, err := config.DefaultTag()
+	if err != nil {
+		return err
+	}
+	tags := []string{defaultTag}
 	authKey, err := credentials.ClientSecretAuthKey(secret, credentials.AuthKeyOptions{
 		Tags:        tags,
 		Ephemeral:   true,
@@ -908,8 +912,7 @@ func loginRetireOther(cmd *cobra.Command) bool {
 	return retire
 }
 
-func loginMaybeEnsureDefaultACLTag(cmd *cobra.Command, operation string) (tagCreated string, degraded bool, tagEnsureError string, aclMutationSkipped bool, plan *security.RemoteSideEffectPlan) {
-	defaultTag := config.GetDefaultTag()
+func loginMaybeEnsureDefaultACLTag(cmd *cobra.Command, operation, defaultTag string) (tagCreated string, degraded bool, tagEnsureError string, aclMutationSkipped bool, plan *security.RemoteSideEffectPlan) {
 	resources := []string{defaultTag}
 	if !loginManageACL(cmd) {
 		sideEffectPlan := security.ACLMutationPlan(operation, resources, false)
@@ -972,6 +975,12 @@ func loginWithAPIKey(cmd *cobra.Command, key string) error {
 	if err != nil {
 		return err
 	}
+	// Resolve the default tag before anything is stored: a config.json that
+	// cannot be read must not let login plan ACL writes for another tag.
+	defaultTag, err := config.DefaultTag()
+	if err != nil {
+		return err
+	}
 	commit, err := commitLoginCredential(context.Background(), defaultLoginCredentialStore{}, loginCredentialModeAPIKey, key, opts)
 	if err != nil {
 		return err
@@ -980,7 +989,7 @@ func loginWithAPIKey(cmd *cobra.Command, key string) error {
 		return fmt.Errorf("credential activated but cleanup failed: %w", err)
 	}
 
-	tagCreated, degraded, tagEnsureError, aclMutationSkipped, sideEffectPlan := loginMaybeEnsureDefaultACLTag(cmd, "ensure_default_tag")
+	tagCreated, degraded, tagEnsureError, aclMutationSkipped, sideEffectPlan := loginMaybeEnsureDefaultACLTag(cmd, "ensure_default_tag", defaultTag)
 	warnCredentialBackendDowngrade(cmd, "API key", commit.Backend)
 
 	if jsonOutput(cmd) {
@@ -1006,6 +1015,10 @@ func loginWithClientSecret(cmd *cobra.Command, secret string) error {
 	if err != nil {
 		return err
 	}
+	defaultTag, err := config.DefaultTag()
+	if err != nil {
+		return err
+	}
 	commit, err := commitLoginCredential(context.Background(), defaultLoginCredentialStore{}, loginCredentialModeClientSecret, secret, opts)
 	if err != nil {
 		return err
@@ -1014,7 +1027,7 @@ func loginWithClientSecret(cmd *cobra.Command, secret string) error {
 		return fmt.Errorf("credential activated but cleanup failed: %w", err)
 	}
 
-	tagCreated, degraded, tagEnsureError, aclMutationSkipped, sideEffectPlan := loginMaybeEnsureDefaultACLTag(cmd, "ensure_default_tag")
+	tagCreated, degraded, tagEnsureError, aclMutationSkipped, sideEffectPlan := loginMaybeEnsureDefaultACLTag(cmd, "ensure_default_tag", defaultTag)
 	warnCredentialBackendDowngrade(cmd, "Client secret", commit.Backend)
 
 	if jsonOutput(cmd) {

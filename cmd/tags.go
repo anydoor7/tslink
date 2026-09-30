@@ -68,8 +68,7 @@ var (
 	tagsLoadRegistryFn  = registry.Load
 	tagsMutateServiceFn = registry.MutateService
 	tagsEnsureDirFn     = config.EnsureDir
-	tagsLoadGlobalFn    = config.LoadGlobalConfig
-	tagsSaveGlobalFn    = config.SaveGlobalConfig
+	tagsUpdateGlobalFn  = config.UpdateGlobalConfig
 	tagsGetDefaultFn    = config.GetDefaultTag
 )
 
@@ -279,12 +278,10 @@ func tagsSetDefaultRun(out io.Writer, tag string, isJSON bool) error {
 	if err := validateTagPrefix(tag); err != nil {
 		return err
 	}
-	cfg, err := tagsLoadGlobalFn()
-	if err != nil {
-		return err
-	}
-	cfg.DefaultTag = tag
-	if err := tagsSaveGlobalFn(cfg); err != nil {
+	if err := tagsUpdateGlobalFn(func(cfg *config.GlobalConfig) error {
+		cfg.DefaultTag = tag
+		return nil
+	}); err != nil {
 		return err
 	}
 	if isJSON {

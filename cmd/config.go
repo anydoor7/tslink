@@ -40,25 +40,25 @@ type ConfigItem struct {
 // validConfigKeys lists all supported global config keys.
 var validConfigKeys = []string{"control-url"}
 
+// configUpdateGlobalFn is the locked read-modify-write of config.json.
+var configUpdateGlobalFn = config.UpdateGlobalConfig
+
 // configSet persists a key-value pair to global config.
 func configSet(key, value string, out io.Writer, isJSON bool) error {
-	cfg, err := config.LoadGlobalConfig()
-	if err != nil {
-		return fmt.Errorf("load config: %w", err)
-	}
-
 	switch key {
 	case "control-url":
 		if err := registry.ValidateControlURL(value); err != nil {
 			return output.ErrUsage(err.Error())
 		}
-		cfg.ControlURL = value
 	default:
 		return fmt.Errorf("unknown config key: %q (valid keys: %s)", key, strings.Join(validConfigKeys, ", "))
 	}
 
-	if err := config.SaveGlobalConfig(cfg); err != nil {
-		return fmt.Errorf("save config: %w", err)
+	if err := configUpdateGlobalFn(func(cfg *config.GlobalConfig) error {
+		cfg.ControlURL = value
+		return nil
+	}); err != nil {
+		return err
 	}
 
 	if isJSON {

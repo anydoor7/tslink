@@ -24,7 +24,7 @@ const (
 	WarningCodeFileRootHomeDirectory     = "file_root_home_directory"
 
 	WarningCodeConfigPathUnavailable               = "config_path_unavailable"
-	WarningCodeConfigLoadFailed                    = "config_load_failed"
+	WarningCodeConfigLoadFailed                    = registry.CodeConfigLoadFailed
 	WarningCodeRegistryLoadFailed                  = "registry_load_failed"
 	WarningCodeRegistryServiceInvalid              = "registry_service_invalid"
 	WarningCodeControlURLInvalid                   = "control_url_invalid"
