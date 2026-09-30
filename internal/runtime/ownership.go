@@ -131,6 +131,33 @@ func withOwnershipLock(path string, fn func() error) error {
 	return fn()
 }
 
+// WithOwnershipLock runs fn while holding the ledger's lock, the lock every
+// ledger writer in this package takes in every process. A decision fn makes
+// cannot be overtaken by a RecordOwnedNode, MarkOwnedNodeIDsRetired or
+// RemoveOwnedNodeIDs. The lock is not reentrant: fn must not call those
+// writers, or UpdateOwnership.
+func WithOwnershipLock(path string, fn func() error) error {
+	return withOwnershipLock(path, fn)
+}
+
+// UpdateOwnership loads the ledger under its lock and hands it to update,
+// saving it afterwards when update reports a change. What update reads, and
+// any action it takes on that basis, happens before any other writer can
+// change the ledger.
+func UpdateOwnership(path string, update func(*OwnershipLedger) (changed bool, err error)) error {
+	return withOwnershipLock(path, func() error {
+		ledger, err := LoadOwnership(path)
+		if err != nil {
+			return err
+		}
+		changed, err := update(&ledger)
+		if err != nil || !changed {
+			return err
+		}
+		return saveOwnership(path, ledger)
+	})
+}
+
 func saveOwnership(path string, ledger OwnershipLedger) error {
 	ledger.SchemaVersion = OwnershipSchemaVersion
 	if ledger.Nodes == nil {
