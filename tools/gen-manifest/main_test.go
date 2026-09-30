@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"go/ast"
 	"go/build/constraint"
@@ -10,338 +9,28 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strconv"
 	"strings"
 	"testing"
 
-	"github.com/monody0007/tslink/cmd"
 	"github.com/monody0007/tslink/internal/manifestcheck"
 )
 
-func testManifestBytes(t *testing.T, platform cmd.PlatformInfo, mutate func(*cmd.CLIManifest)) []byte {
-	t.Helper()
-	manifest := cmd.Manifest()
-	manifest.Platform = platform
-	if mutate != nil {
-		mutate(&manifest)
-	}
-	data, err := json.MarshalIndent(manifest, "", "  ")
-	if err != nil {
-		t.Fatal(err)
-	}
-	return append(data, '\n')
-}
-
-func otherPlatform() cmd.PlatformInfo {
-	goos := "linux"
-	if runtime.GOOS == goos {
-		goos = "darwin"
-	}
-	return cmd.PlatformInfo{GOOS: goos, GOARCH: runtime.GOARCH}
-}
-
-func TestCheckManifestStrictSamePlatformRejectsGenuinelyStaleManifest(t *testing.T) {
-	platform := cmd.PlatformInfo{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH}
-	generated := testManifestBytes(t, platform, nil)
-	existing := testManifestBytes(t, platform, func(manifest *cmd.CLIManifest) {
-		manifest.Commands[0].Short = "deliberately stale same-platform command text"
-	})
-
-	result, err := compareManifest(existing, generated)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !result.SamePlatform || result.Equal {
-		t.Fatalf("same-platform stale check = %+v, want strict mismatch", result)
-	}
-}
-
-func TestCheckManifestStrictSameGOOSIgnoresArchitectureButRejectsStaleContent(t *testing.T) {
-	manifestPlatform := cmd.PlatformInfo{GOOS: runtime.GOOS, GOARCH: "arm64"}
-	runningPlatform := cmd.PlatformInfo{GOOS: runtime.GOOS, GOARCH: "amd64"}
-	generated := testManifestBytes(t, runningPlatform, nil)
-
-	current := testManifestBytes(t, manifestPlatform, nil)
-	result, err := compareManifest(current, generated)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !result.SamePlatform || !result.Equal {
-		t.Fatalf("same-GOOS different-architecture current check = %+v, want strict match", result)
-	}
-
-	stale := testManifestBytes(t, manifestPlatform, func(manifest *cmd.CLIManifest) {
-		manifest.Commands[0].Short = "deliberately stale same-GOOS command text"
-	})
-	result, err = compareManifest(stale, generated)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !result.SamePlatform || result.Equal {
-		t.Fatalf("same-GOOS different-architecture stale check = %+v, want strict mismatch", result)
-	}
-}
-
-func TestCheckManifestCrossPlatformAcceptsOnlyMarkedCommandDifferences(t *testing.T) {
-	running := cmd.PlatformInfo{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH}
-	generated := testManifestBytes(t, running, nil)
-	existing := testManifestBytes(t, otherPlatform(), func(manifest *cmd.CLIManifest) {
-		manifest.Commands[0].Flags = append(manifest.Commands[0].Flags, cmd.FlagInfo{
-			Name: "platform-only", Type: "bool", Usage: "synthetic marked flag", Platforms: []string{otherPlatform().GOOS},
-		})
-	})
-
-	result, err := compareManifest(existing, generated)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.SamePlatform || !result.Equal {
-		t.Fatalf("cross-platform marked-entry check = %+v, want match after exact exclusion", result)
-	}
-}
-
-func TestCheckManifestCrossPlatformRejectsUnmarkedPlatformSpecificFlag(t *testing.T) {
-	running := cmd.PlatformInfo{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH}
-	generated := testManifestBytes(t, running, nil)
-	existing := testManifestBytes(t, otherPlatform(), func(manifest *cmd.CLIManifest) {
-		manifest.Commands[0].Flags = append(manifest.Commands[0].Flags, cmd.FlagInfo{
-			Name: "unmarked-platform-only", Type: "bool", Usage: "must remain visible to the comparison",
-		})
-	})
-
-	result, err := compareManifest(existing, generated)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.SamePlatform || result.Equal {
-		t.Fatalf("cross-platform unmarked flag check = %+v, want mismatch", result)
-	}
-}
-
-func TestCheckManifestCrossPlatformRejectsRenamedServeCommand(t *testing.T) {
-	running := cmd.PlatformInfo{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH}
-	generated := testManifestBytes(t, running, nil)
-	existing := testManifestBytes(t, otherPlatform(), func(manifest *cmd.CLIManifest) {
-		for i := range manifest.Commands {
-			if manifest.Commands[i].Path == "tslink serve" {
-				manifest.Commands[i].Path = "tslink nonexistent-serve"
-				return
-			}
-		}
-		t.Fatal("test manifest has no tslink serve command")
-	})
-
-	result, err := compareManifest(existing, generated)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.SamePlatform || result.Equal {
-		t.Fatalf("cross-platform renamed-command check = %+v, want mismatch", result)
-	}
-}
-
-func TestCheckManifestStrictStillRejectsMutatedMarkedEntries(t *testing.T) {
-	platform := cmd.PlatformInfo{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH}
-	addMarkedFlag := func(manifest *cmd.CLIManifest, usage string) {
-		manifest.Commands[0].Flags = append(manifest.Commands[0].Flags, cmd.FlagInfo{
-			Name: "marked-strict-probe", Type: "bool", Usage: usage, Platforms: []string{"darwin"},
-		})
-	}
-	generatedFlag := testManifestBytes(t, platform, func(manifest *cmd.CLIManifest) {
-		addMarkedFlag(manifest, "current marked usage")
-	})
-	existingFlag := testManifestBytes(t, platform, func(manifest *cmd.CLIManifest) {
-		addMarkedFlag(manifest, "mutated marked usage")
-	})
-	result, err := compareManifest(existingFlag, generatedFlag)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !result.SamePlatform || result.Equal {
-		t.Fatalf("strict marked-flag mutation = %+v, want mismatch", result)
-	}
-
-	generatedField := testManifestBytes(t, platform, nil)
-	existingField := testManifestBytes(t, platform, func(manifest *cmd.CLIManifest) {
-		field := manifestCommand(t, manifest, "tslink install").JSONResultFields["plist_path"]
-		field.Description = "mutated marked result field"
-		for i := range manifest.Commands {
-			if manifest.Commands[i].Path == "tslink install" {
-				manifest.Commands[i].JSONResultFields["plist_path"] = field
-				return
-			}
-		}
-	})
-	result, err = compareManifest(existingField, generatedField)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !result.SamePlatform || result.Equal {
-		t.Fatalf("strict marked-result-field mutation = %+v, want mismatch", result)
-	}
-}
-
-func manifestCommand(t *testing.T, manifest *cmd.CLIManifest, path string) cmd.CommandInfo {
-	t.Helper()
-	for _, command := range manifest.Commands {
-		if command.Path == path {
-			return command
-		}
-	}
-	t.Fatalf("test manifest has no %s command", path)
-	return cmd.CommandInfo{}
-}
-
-func TestCheckManifestPlatformMarksAreKeyedByCommandPathAndFlagName(t *testing.T) {
-	running := cmd.PlatformInfo{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH}
-	generated := testManifestBytes(t, running, nil)
-	withInstallMark := func(manifest *cmd.CLIManifest, mutateNeutral bool) {
-		for i := range manifest.Commands {
-			switch manifest.Commands[i].Path {
-			case "tslink install":
-				manifest.Commands[i].Flags = append(manifest.Commands[i].Flags, cmd.FlagInfo{
-					Name: "force", Type: "bool", Usage: "synthetic install force", Platforms: []string{otherPlatform().GOOS},
-				})
-			case "tslink tags delete-remote":
-				if mutateNeutral {
-					for j := range manifest.Commands[i].Flags {
-						if manifest.Commands[i].Flags[j].Name == "force" {
-							manifest.Commands[i].Flags[j].Usage = "mutated neutral force usage"
-						}
-					}
-				}
-			}
-		}
-	}
-	existing := testManifestBytes(t, otherPlatform(), func(manifest *cmd.CLIManifest) {
-		withInstallMark(manifest, false)
-	})
-	result, err := compareManifest(existing, generated)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !result.Equal {
-		t.Fatalf("install --force mark should exclude only its own key: %+v", result)
-	}
-
-	existing = testManifestBytes(t, otherPlatform(), func(manifest *cmd.CLIManifest) {
-		withInstallMark(manifest, true)
-	})
-	result, err = compareManifest(existing, generated)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.Equal {
-		t.Fatal("install --force mark incorrectly excluded tags delete-remote --force")
-	}
-}
-
-func TestCheckManifestCrossPlatformRejectsPlatformIndependentChange(t *testing.T) {
-	running := cmd.PlatformInfo{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH}
-	generated := testManifestBytes(t, running, nil)
-	existing := testManifestBytes(t, otherPlatform(), func(manifest *cmd.CLIManifest) {
-		manifest.RegistrySchemaVersion++
-	})
-
-	result, err := compareManifest(existing, generated)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.SamePlatform || result.Equal {
-		t.Fatalf("cross-platform independent-field check = %+v, want mismatch", result)
-	}
-}
-
-func TestCheckManifestRequiresDeclaredPlatform(t *testing.T) {
-	data := testManifestBytes(t, cmd.PlatformInfo{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH}, nil)
-	var object map[string]json.RawMessage
-	if err := json.Unmarshal(data, &object); err != nil {
-		t.Fatal(err)
-	}
-	delete(object, "platform")
-	withoutPlatform, err := json.Marshal(object)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	_, err = compareManifest(withoutPlatform, data)
-	if err == nil || !strings.Contains(err.Error(), "required top-level field platform is missing") {
-		t.Fatalf("missing platform error = %v", err)
-	}
-}
-
-func TestCheckManifestRejectsFabricatedGOARCH(t *testing.T) {
-	generated := testManifestBytes(t, cmd.PlatformInfo{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH}, nil)
-	existing := testManifestBytes(t, cmd.PlatformInfo{GOOS: runtime.GOOS, GOARCH: "TOTALLY-FAKE-ARCH"}, nil)
-
-	_, err := compareManifest(existing, generated)
-	if err == nil || !strings.Contains(err.Error(), `decode committed manifest: platform goarch "TOTALLY-FAKE-ARCH" is not a recognized Go architecture`) {
-		t.Fatalf("fabricated GOARCH error = %v", err)
-	}
-}
-
-func TestCheckManifestCrossPlatformReportsComparedAndSkippedCoverage(t *testing.T) {
-	result := manifestCheckResult{
-		ManifestPlatform: cmd.PlatformInfo{GOOS: "darwin", GOARCH: "arm64"},
-		RunningPlatform:  cmd.PlatformInfo{GOOS: "linux", GOARCH: "arm64"},
-		ManifestCoverage: manifestCoverage{Commands: 35, Flags: 80, MarkedFlags: 2, MarkedJSONResultFields: 23},
-	}
-	compared, skipped := crossPlatformCoverageMessages(result)
-	if want := "gen-manifest: compared all top-level fields except platform for manifest darwin/arm64 and running linux/arm64"; compared != want {
-		t.Fatalf("compared message = %q, want %q", compared, want)
-	}
-	if want := "gen-manifest: compared 35/35 command identities and 78/80 committed flag entries; excluded 2 platform-marked flags and 23 platform-marked JSON result fields"; skipped != want {
-		t.Fatalf("skipped message = %q, want %q", skipped, want)
-	}
-}
-
-func TestCheckManifestCrossPlatformFailureNamesConstraintWithoutSuccessOutput(t *testing.T) {
-	result := manifestCheckResult{
-		ManifestPlatform: cmd.PlatformInfo{GOOS: "darwin", GOARCH: "arm64"},
-		RunningPlatform:  cmd.PlatformInfo{GOOS: "linux", GOARCH: "arm64"},
-		SamePlatform:     false,
-		Equal:            false,
-	}
-	output := outputForManifestCheck(result)
-	if output.OK {
-		t.Fatal("cross-platform stale output reports success")
-	}
-	if len(output.Stdout) != 0 {
-		t.Fatalf("cross-platform stale stdout = %q, want no success-shaped coverage lines", output.Stdout)
-	}
-	want := "gen-manifest: docs/cli-manifest.json is stale; the committed manifest is authoritative for GOOS=darwin and must be regenerated on that GOOS, or mark a proven platform-scoped command entry with platforms"
-	if output.Stderr != want {
-		t.Fatalf("cross-platform stale stderr = %q, want %q", output.Stderr, want)
-	}
-}
-
-func TestCheckManifestSameGOOSArchitectureDivergenceIsDiagnostic(t *testing.T) {
-	output := outputForManifestCheck(manifestCheckResult{
-		ManifestPlatform: cmd.PlatformInfo{GOOS: "darwin", GOARCH: "arm64"},
-		RunningPlatform:  cmd.PlatformInfo{GOOS: "darwin", GOARCH: "amd64"},
-		SamePlatform:     true,
-		Equal:            false,
-	})
-	want := "gen-manifest: docs/cli-manifest.json differs across architectures on GOOS=darwin (manifest GOARCH=arm64, running GOARCH=amd64); manifest generation must remain architecture-independent"
-	if output.OK || len(output.Stdout) != 0 || output.Stderr != want {
-		t.Fatalf("same-GOOS architecture-divergent output = %+v, want stderr %q only", output, want)
-	}
-}
-
 func TestStrictSuccessOutputIsTheAssertedConstant(t *testing.T) {
-	output := outputForManifestCheck(manifestCheckResult{SamePlatform: true, Equal: true})
+	output := outputForManifestCheck(true)
 	if !output.OK || output.Stderr != "" || len(output.Stdout) != 1 || output.Stdout[0] != manifestcheck.StrictUpToDateMessage {
 		t.Fatalf("strict success output = %+v, want stdout exactly %q", output, manifestcheck.StrictUpToDateMessage)
 	}
 }
 
-func TestCheckManifestSamePlatformStaleMessageRemainsActionable(t *testing.T) {
-	output := outputForManifestCheck(manifestCheckResult{SamePlatform: true, Equal: false})
+// B3-8 renamed this from TestCheckManifestSamePlatformStaleMessageRemainsActionable:
+// there is no longer a same- or cross-platform check, only the one strict one.
+func TestCheckManifestStaleMessageRemainsActionable(t *testing.T) {
+	output := outputForManifestCheck(false)
 	want := "gen-manifest: docs/cli-manifest.json is stale; run `go run ./tools/gen-manifest`"
 	if output.OK || len(output.Stdout) != 0 || output.Stderr != want {
-		t.Fatalf("same-platform stale output = %+v, want stderr %q only", output, want)
+		t.Fatalf("stale output = %+v, want stderr %q only", output, want)
 	}
 }
 
@@ -529,6 +218,14 @@ func TestSameGOOSComparisonAssumesNoArchitectureScopedPackageSources(t *testing.
 	if len(found) != 0 {
 		t.Fatalf("GOARCH-neutral manifest comparison is invalid; architecture-scoped package sources found: %v", found)
 	}
+}
+
+// knownGOARCH is every Go architecture, for the scan below: the fixture
+// must not depend on the architecture of the machine that generates it.
+var knownGOARCH = map[string]struct{}{
+	"386": {}, "amd64": {}, "arm": {}, "arm64": {}, "loong64": {},
+	"mips": {}, "mips64": {}, "mips64le": {}, "mipsle": {},
+	"ppc64": {}, "ppc64le": {}, "riscv64": {}, "s390x": {}, "wasm": {},
 }
 
 var knownGOOS = map[string]struct{}{
