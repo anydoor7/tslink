@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/monody0007/tslink/internal/duration"
 	"github.com/monody0007/tslink/internal/output"
 )
 
@@ -258,7 +257,7 @@ func resolveMCPLogsQuery(args mcpLogsArguments) (mcpLogsQuery, error) {
 		query.Level = level
 	}
 	if since := strings.TrimSpace(args.Since); since != "" {
-		parsed, err := duration.Parse(since)
+		parsed, err := parseDuration(since)
 		if err != nil {
 			return mcpLogsQuery{}, output.ErrUsage(fmt.Sprintf("invalid since %q: %v", args.Since, err))
 		}

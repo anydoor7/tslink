@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -18,7 +19,6 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/monody0007/tslink/internal/config"
-	"github.com/monody0007/tslink/internal/duration"
 	"github.com/monody0007/tslink/internal/output"
 	"github.com/monody0007/tslink/internal/registry"
 	"github.com/monody0007/tslink/internal/tailapi"
@@ -722,7 +722,7 @@ func addParamsFromMCPArguments(args mcpAddArguments) (AddParams, bool, error) {
 		ControlURL:      args.ControlURL,
 	}
 	if args.FunnelTTL != nil {
-		params.FunnelTTL = *args.FunnelTTL
+		params.FunnelTTL = canonicalMCPFunnelTTL(*args.FunnelTTL)
 		params.FunnelTTLSet = true
 	}
 	switch args.Type {
@@ -756,6 +756,81 @@ func addParamsFromMCPArguments(args mcpAddArguments) (AddParams, bool, error) {
 	return params, args.FunnelTTL == nil, nil
 }
 
+// durationDay is the length of the d unit parseDuration adds to Go's syntax.
+const durationDay = 24 * time.Hour
+
+// parseDuration is TSLink's one duration grammar for what an agent or a person
+// types: Go's time.ParseDuration syntax (300ms, 1.5h, 2h45m) plus d for days
+// of 24 hours (7d, 1d12h, 1.5d); surrounding space is ignored. The MCP logs
+// since, the url wait and funnel_ttl, login --expires-in and the event
+// stream's events_keepalive read it, each within its own bounds. Every
+// duration TSLink prints, such as funnel_remaining, is Go's
+// time.Duration.String form (167h59m59s, 0s), which it reads back.
+func parseDuration(value string) (time.Duration, error) {
+	text := strings.TrimSpace(value)
+	if !strings.Contains(text, "d") {
+		return time.ParseDuration(text)
+	}
+	// Rewrite each day component as hours and let Go parse the rest, so the
+	// grammar stays Go's with one more unit.
+	var rewritten strings.Builder
+	rest := text
+	if rest != "" && (rest[0] == '-' || rest[0] == '+') {
+		rewritten.WriteByte(rest[0])
+		rest = rest[1:]
+	}
+	for rest != "" {
+		number := len(rest) - len(strings.TrimLeft(rest, "0123456789."))
+		unit := number + len(rest[number:]) - len(strings.TrimLeft(rest[number:], "abcdefghijklmnopqrstuvwxyzµμ"))
+		if number == 0 || unit == number {
+			return 0, fmt.Errorf("time: invalid duration %q", value)
+		}
+		if rest[number:unit] == "d" {
+			days, err := strconv.ParseFloat(rest[:number], 64)
+			if err != nil {
+				return 0, fmt.Errorf("time: invalid duration %q", value)
+			}
+			rewritten.WriteString(strconv.FormatFloat(days*24, 'f', -1, 64))
+			rewritten.WriteString("h")
+		} else {
+			rewritten.WriteString(rest[:unit])
+		}
+		rest = rest[unit:]
+	}
+	parsed, err := time.ParseDuration(rewritten.String())
+	if err != nil {
+		return 0, fmt.Errorf("time: invalid duration %q", value)
+	}
+	return parsed, nil
+}
+
+// mcpFunnelTTLChoices maps each Funnel lifetime the CLI contract offers to its
+// canonical spelling.
+var mcpFunnelTTLChoices = map[time.Duration]string{
+	time.Hour:       "1h",
+	8 * time.Hour:   "8h",
+	24 * time.Hour:  "24h",
+	72 * time.Hour:  "72h",
+	7 * durationDay: "7d",
+}
+
+// canonicalMCPFunnelTTL reads an MCP funnel_ttl with parseDuration, so 168h
+// (or 168h0m0s, how funnel_remaining prints seven days) is the same choice as
+// 7d, and returns the spelling registry.ParseFunnelTTL accepts. Any other
+// value is returned unchanged for ParseFunnelTTL to refuse with the list of
+// choices.
+func canonicalMCPFunnelTTL(value string) string {
+	if strings.TrimSpace(value) == registry.FunnelNeverExpires {
+		return registry.FunnelNeverExpires
+	}
+	if parsed, err := parseDuration(value); err == nil {
+		if canonical, ok := mcpFunnelTTLChoices[parsed]; ok {
+			return canonical
+		}
+	}
+	return value
+}
+
 // parseMCPWait reads the url tool's optional duration (Go syntax or days). It mirrors
 // `tslink url --wait`, where a non-positive duration means "do not poll",
 // except that it is capped at mcpMaxURLWait: a stdio server has no other way
@@ -764,7 +839,7 @@ func parseMCPWait(raw string) (time.Duration, error) {
 	if raw == "" {
 		return 0, nil
 	}
-	wait, err := duration.Parse(raw)
+	wait, err := parseDuration(raw)
 	if err != nil {
 		return 0, output.ErrUsage(fmt.Sprintf("invalid wait duration %q: %v", raw, err))
 	}
@@ -1515,7 +1590,7 @@ func callMCPTool(ctx context.Context, actions mcpActions, name string, arguments
 			req.Ephemeral = *args.Ephemeral
 		}
 		if args.FunnelTTL != nil {
-			req.FunnelTTL = *args.FunnelTTL
+			req.FunnelTTL = canonicalMCPFunnelTTL(*args.FunnelTTL)
 			req.FunnelTTLSet = true
 		}
 		data, err = actions.share(ctx, req)

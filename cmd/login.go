@@ -15,7 +15,6 @@ import (
 	"github.com/monody0007/tslink/internal/authmode"
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/credentials"
-	"github.com/monody0007/tslink/internal/duration"
 	"github.com/monody0007/tslink/internal/logging"
 	"github.com/monody0007/tslink/internal/output"
 	"github.com/monody0007/tslink/internal/registry"
@@ -379,7 +378,7 @@ func parseLoginExpiresIn(raw string) (time.Duration, error) {
 	if raw == "" {
 		return 0, errors.New("empty duration")
 	}
-	d, err := duration.Parse(raw)
+	d, err := parseDuration(raw)
 	if err != nil {
 		if strings.HasSuffix(raw, "d") {
 			return 0, fmt.Errorf("invalid day count %q", raw)

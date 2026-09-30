@@ -20,7 +20,6 @@ import (
 
 	"github.com/monody0007/tslink/internal/atomicfile"
 	"github.com/monody0007/tslink/internal/config"
-	"github.com/monody0007/tslink/internal/duration"
 	"github.com/monody0007/tslink/internal/filelock"
 )
 
@@ -558,24 +557,25 @@ func (s *Service) UnmarshalJSON(data []byte) error {
 	return expiryErr
 }
 
-// funnelTTLChoices are the Funnel lifetimes the public CLI contract offers.
-var funnelTTLChoices = []time.Duration{time.Hour, 8 * time.Hour, DefaultFunnelTTL, 72 * time.Hour, 7 * duration.Day}
-
-// ParseFunnelTTL accepts only the public CLI contract: never, or one of five
-// lifetimes. The value is read with TSLink's one duration grammar, so 7d,
-// 168h and 168h0m0s (how funnel_remaining prints it) are the same choice.
-func ParseFunnelTTL(value string) (ttl time.Duration, never bool, err error) {
-	if strings.TrimSpace(value) == FunnelNeverExpires {
+// ParseFunnelTTL accepts only the public CLI contract. In particular, Go's
+// time.ParseDuration does not understand days, so 7d is mapped explicitly.
+func ParseFunnelTTL(value string) (duration time.Duration, never bool, err error) {
+	switch value {
+	case "1h":
+		return time.Hour, false, nil
+	case "8h":
+		return 8 * time.Hour, false, nil
+	case "24h":
+		return DefaultFunnelTTL, false, nil
+	case "72h":
+		return 72 * time.Hour, false, nil
+	case "7d":
+		return 7 * 24 * time.Hour, false, nil
+	case "never":
 		return 0, true, nil
+	default:
+		return 0, false, fmt.Errorf("funnel TTL must be one of: 1h, 8h, 24h, 72h, 7d, never")
 	}
-	if parsed, parseErr := duration.Parse(value); parseErr == nil {
-		for _, choice := range funnelTTLChoices {
-			if parsed == choice {
-				return choice, false, nil
-			}
-		}
-	}
-	return 0, false, fmt.Errorf("funnel TTL must be one of: 1h, 8h, 24h, 72h, 7d, never")
 }
 
 // FunnelExpiredAt reads wall-clock state. A nil deadline on a decided Funnel is
