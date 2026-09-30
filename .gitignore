@@ -5,10 +5,16 @@
 
 # Build output
 tslink
+tslink.exe
+tslink.test
 dist/
 .releases/
 coverage*.out
 coverage*.html
+
+# Local environment overrides
+.env
+.env.local
 
 # Release notes are drafted locally and published on the GitHub release
 RELEASE.md
