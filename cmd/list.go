@@ -249,10 +249,14 @@ func selectListFields(summary ListServiceSummary, fields []string) map[string]an
 }
 
 func loadListResultForPaths(regPath, pidPath, snapshotPath string, opts listOptions) (ListResult, error) {
+	return commandStatus.loadListResultForPaths(regPath, pidPath, snapshotPath, opts)
+}
+
+func (s statusRead) loadListResultForPaths(regPath, pidPath, snapshotPath string, opts listOptions) (ListResult, error) {
 	if err := validateListOptions(opts); err != nil {
 		return ListResult{}, err
 	}
-	status, err := getStatusURLs(pidPath, regPath, snapshotPath)
+	status, err := s.getStatusURLs(pidPath, regPath, snapshotPath)
 	if err != nil {
 		return ListResult{}, err
 	}

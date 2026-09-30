@@ -975,7 +975,9 @@ func TestDefaultMCPActionsUseLocalRegistryAndRedactedStatus(t *testing.T) {
 	if _, err := registry.Add(paths.Registry, registry.Service{Name: "demo", Type: registry.TypeProxy, Target: "http://localhost:3000"}); err != nil {
 		t.Fatal(err)
 	}
-	sharePollableStatusFn = func(_, _, _, _ string) (StatusResult, error) {
+	oldMCPStatus := mcpStatusFn
+	t.Cleanup(func() { mcpStatusFn = oldMCPStatus })
+	mcpStatusFn = func(_, _, _, _ string) (StatusResult, error) {
 		return StatusResult{DaemonRunning: true, CredentialStored: true, AuthStatus: authStatusNeedsLogin, AuthURL: "https://login.tailscale.com/a/status", ServiceCount: 1}, nil
 	}
 	oldDelete := deleteDevicesFn

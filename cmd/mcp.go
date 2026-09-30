@@ -809,6 +809,10 @@ type mcpStatusSummary struct {
 	Next                   []string    `json:"next,omitempty"`
 }
 
+// mcpStatusFn reads what the status tool reports. Like every read-only tool it
+// reads readOnlyStatus, which records nothing. Tests replace it.
+var mcpStatusFn = readOnlyStatus.getPollableStatus
+
 func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 	return mcpActions{
 		share: func(ctx context.Context, req shareRequest) (ShareResult, error) {
@@ -832,7 +836,7 @@ func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 			return result, nil
 		},
 		list: func() (any, error) {
-			result, err := loadListResultForPaths(paths.Registry, paths.PID, paths.Snapshot, listOptions{})
+			result, err := readOnlyStatus.loadListResultForPaths(paths.Registry, paths.PID, paths.Snapshot, listOptions{})
 			if err != nil {
 				return nil, err
 			}
@@ -850,7 +854,7 @@ func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 			return unshareMCPService(ctx, paths, name)
 		},
 		status: func() (any, error) {
-			status, err := sharePollableStatusFn(paths.PID, paths.Registry, paths.Snapshot, paths.AuthHandoff)
+			status, err := mcpStatusFn(paths.PID, paths.Registry, paths.Snapshot, paths.AuthHandoff)
 			if err != nil {
 				return nil, err
 			}
@@ -872,7 +876,7 @@ func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 			return result, nil
 		},
 		url: func(ctx context.Context, name string, wait time.Duration) (any, error) {
-			return resolveServiceURL(ctx, paths.PID, paths.Registry, paths.Snapshot, name, wait)
+			return readOnlyStatus.resolveServiceURL(ctx, paths.PID, paths.Registry, paths.Snapshot, name, wait)
 		},
 		tagsList: func() (any, error) {
 			return tagsListResultForPath(paths.Registry)
@@ -894,6 +898,7 @@ func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 				PIDPath:             paths.PID,
 				RuntimeSnapshotPath: paths.Snapshot,
 				AuthHandoffPath:     paths.AuthHandoff,
+				ReadOnly:            true,
 			}), nil
 		},
 		logs: func(args mcpLogsArguments) (any, error) {

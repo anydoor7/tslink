@@ -122,7 +122,7 @@ func TestStatusDaemonStateIsAdditiveAndKeepsDaemonRunningSemantics(t *testing.T)
 		t.Run(tc.name, func(t *testing.T) {
 			isRunningFn = func(string) bool { return tc.running }
 			isProcessAbsentFromPIDFileFn = func(string) bool { return tc.absent }
-			result := baseStatus("isolated.pid")
+			result := commandStatus.baseStatus("isolated.pid")
 			if result.DaemonState != tc.wantState || result.DaemonRunning != tc.wantRunning || result.DaemonPID != tc.wantPID {
 				t.Fatalf("daemon status = state:%q running:%t pid:%d, want state:%q running:%t pid:%d", result.DaemonState, result.DaemonRunning, result.DaemonPID, tc.wantState, tc.wantRunning, tc.wantPID)
 			}

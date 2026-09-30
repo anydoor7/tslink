@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"io"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/registry"
+	"github.com/monody0007/tslink/internal/tailapi"
 )
 
 // mcpWantHints is each tool's behaviour as the tool descriptions state it:
@@ -110,10 +112,19 @@ func configTreeDigest(t *testing.T, roots ...string) map[string]string {
 // TestMCPReadOnlyToolsWriteNothing holds readOnlyHint to what the tools do:
 // every tool the table marks read-only is called over the protocol against a
 // registered service, a log file and the config directory, and none of them
-// may change a file there.
+// may change a file there. The keyring starts empty and then holds one key
+// without metadata, whatever ran before this test, so a tool that recorded a
+// metadata backfill would show here (B7-1); a write tool in the same harness
+// is the control that such a record is seen.
 func TestMCPReadOnlyToolsWriteNothing(t *testing.T) {
 	stubDoctorTailscaleSSH(t, false, nil)
 	restoreShareSeams(t)
+	storeCredentialWithoutMetadata(t)
+	oldInviteList := inviteListFn
+	t.Cleanup(func() { inviteListFn = oldInviteList })
+	inviteListFn = func(context.Context, []tailapi.DeviceTarget) (tailapi.InviteList, error) {
+		return tailapi.InviteList{}, nil
+	}
 	paths := mcpSharePaths(t)
 	if _, err := registry.Add(paths.Registry, registry.Service{Name: "web", Type: registry.TypeProxy, Target: "http://localhost:3000"}); err != nil {
 		t.Fatal(err)
@@ -164,5 +175,23 @@ func TestMCPReadOnlyToolsWriteNothing(t *testing.T) {
 	}
 	if readOnly != 10 {
 		t.Fatalf("%d tools are marked read-only, want the 10 that only read", readOnly)
+	}
+
+	// Control: add is a write tool. With the daemon reported running it reads
+	// the new service's URL evidence the way the status-reporting commands
+	// read status, so in this same harness it records the key's metadata.
+	oldIsRunning := isRunningFn
+	t.Cleanup(func() { isRunningFn = oldIsRunning })
+	isRunningFn = func(string) bool { return true }
+	before := configTreeDigest(t, roots...)
+	call := `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"add","arguments":{"name":"api","type":"proxy","target":"http://localhost:3001"}}}`
+	if frame := mcpFrameByID(t, decodeMCPResponses(t, runMCPSession(t, initializedMCPInput(call), actions)), float64(2)); frame["result"] == nil {
+		t.Fatalf("add: no tool result: %v", frame)
+	}
+	after := configTreeDigest(t, roots...)
+	for _, path := range []string{filepath.Join(configDir, "credential-meta.json"), filepath.Join(configDir, "credentials.lock"), paths.Registry} {
+		if before[path] == after[path] {
+			t.Errorf("control: add left %s as it was; a read-only tool's record would go unseen", path)
+		}
 	}
 }

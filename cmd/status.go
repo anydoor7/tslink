@@ -31,11 +31,11 @@ var (
 	statusLoadAuthHandoffFn     = loadAuthHandoff
 	statusNowFn                 = time.Now
 	statusGetClientSecretFn     = credentials.GetClientSecret
-	// statusCredentialInventoryFn classifies the stored credential slots and
-	// persists any missing value-free metadata (backfill). Tests replace it to
-	// stay off the filesystem.
-	statusCredentialInventoryFn = func(values credentials.SlotValues, now time.Time) credentials.Inventory {
-		return credentials.DescribeSlots(values, now, true)
+	// statusCredentialInventoryFn classifies the stored credential slots and,
+	// with persist, records any missing value-free metadata (backfill). Tests
+	// replace it to stay off the filesystem.
+	statusCredentialInventoryFn = func(values credentials.SlotValues, now time.Time, persist bool) credentials.Inventory {
+		return credentials.DescribeSlots(values, now, persist)
 	}
 	pidFileModTimeFn = func(path string) (time.Time, error) {
 		info, err := os.Stat(path)
@@ -166,8 +166,29 @@ type StatusServiceView struct {
 	Warnings        []inspect.WarningView   `json:"warnings,omitempty"`
 }
 
+// statusRead is how a caller reads status. The commands that report status
+// record the value-free metadata they backfill for a stored credential that
+// has none yet (README: they create credentials.lock only then). An MCP tool
+// that declares readOnlyHint must not write anything, so it reads readOnly:
+// the backfill is described but not recorded. Nothing else differs.
+type statusRead struct {
+	readOnly bool
+}
+
+var (
+	// commandStatus is how the CLI commands read status, and how share and
+	// add read it while they wait for a URL.
+	commandStatus = statusRead{}
+	// readOnlyStatus is how the read-only MCP tools read it.
+	readOnlyStatus = statusRead{readOnly: true}
+)
+
 func getStatus(pidPath, regPath string) (StatusResult, error) {
-	r := baseStatus(pidPath)
+	return commandStatus.getStatus(pidPath, regPath)
+}
+
+func (s statusRead) getStatus(pidPath, regPath string) (StatusResult, error) {
+	r := s.baseStatus(pidPath)
 	reg, issues, err := registry.LoadForDiagnostics(regPath)
 	if err != nil {
 		return StatusResult{}, err
@@ -226,7 +247,7 @@ func ownershipProofsForRegistry(_ string) (map[string]bool, bool) {
 	return proofs, true
 }
 
-func baseStatus(pidPath string) StatusResult {
+func (s statusRead) baseStatus(pidPath string) StatusResult {
 	r := StatusResult{DaemonState: daemonStateUnknown, AuthStatus: authStatusNotAuthenticated, Services: []StatusServiceState{}}
 	if isRunningFn(pidPath) {
 		r.DaemonRunning = true
@@ -251,7 +272,7 @@ func baseStatus(pidPath string) StatusResult {
 	if values.APIKey != "" || hasClientSecret {
 		r.CredentialStored = true
 	}
-	r.Credentials, r.CredentialExpiryState = statusCredentialsFromInventory(statusCredentialInventoryFn(values, statusNowFn()), hasClientSecret)
+	r.Credentials, r.CredentialExpiryState = statusCredentialsFromInventory(statusCredentialInventoryFn(values, statusNowFn(), !s.readOnly), hasClientSecret)
 	return r
 }
 
@@ -376,12 +397,16 @@ func currentRegistryFingerprint(regPath string) string {
 }
 
 func getPollableStatus(pidPath, regPath, snapshotPath, authHandoffPath string) (StatusResult, error) {
-	r, err := getStatus(pidPath, regPath)
+	return commandStatus.getPollableStatus(pidPath, regPath, snapshotPath, authHandoffPath)
+}
+
+func (s statusRead) getPollableStatus(pidPath, regPath, snapshotPath, authHandoffPath string) (StatusResult, error) {
+	r, err := s.getStatus(pidPath, regPath)
 	if err != nil {
 		snapshot, snapshotErr := runtimeLoadSnapshotFn(snapshotPath)
 		if snapshotErr == nil && snapshot != nil && snapshot.GlobalError != nil {
 			ownershipProofs, ownershipProofAvailable := ownershipProofsForRegistry(regPath)
-			return statusFromGlobalFailure(pidPath, snapshot, ownershipProofs, ownershipProofAvailable), nil
+			return s.statusFromGlobalFailure(pidPath, snapshot, ownershipProofs, ownershipProofAvailable), nil
 		}
 		return StatusResult{}, err
 	}
@@ -475,8 +500,8 @@ func getPollableStatus(pidPath, regPath, snapshotPath, authHandoffPath string) (
 	return r, nil
 }
 
-func statusFromGlobalFailure(pidPath string, snapshot *tsruntime.Snapshot, ownershipProofs map[string]bool, ownershipProofAvailable bool) StatusResult {
-	r := baseStatus(pidPath)
+func (s statusRead) statusFromGlobalFailure(pidPath string, snapshot *tsruntime.Snapshot, ownershipProofs map[string]bool, ownershipProofAvailable bool) StatusResult {
+	r := s.baseStatus(pidPath)
 	r.OwnershipProofAvailable = ownershipProofAvailable
 	r.GlobalError = cloneServiceError(snapshot.GlobalError)
 	r.ServiceCount = len(snapshot.Services)
@@ -575,11 +600,19 @@ func formatStatus(r StatusResult, out io.Writer) {
 }
 
 func getStatusURLs(pidPath, regPath, snapshotPath string) (StatusURLsResult, error) {
-	return getStatusURLsWithAuth(pidPath, regPath, snapshotPath, filepath.Join(filepath.Dir(snapshotPath), "auth-handoff.json"))
+	return commandStatus.getStatusURLs(pidPath, regPath, snapshotPath)
+}
+
+func (s statusRead) getStatusURLs(pidPath, regPath, snapshotPath string) (StatusURLsResult, error) {
+	return s.getStatusURLsWithAuth(pidPath, regPath, snapshotPath, filepath.Join(filepath.Dir(snapshotPath), "auth-handoff.json"))
 }
 
 func getStatusURLsWithAuth(pidPath, regPath, snapshotPath, authHandoffPath string) (StatusURLsResult, error) {
-	status, err := getPollableStatus(pidPath, regPath, snapshotPath, authHandoffPath)
+	return commandStatus.getStatusURLsWithAuth(pidPath, regPath, snapshotPath, authHandoffPath)
+}
+
+func (s statusRead) getStatusURLsWithAuth(pidPath, regPath, snapshotPath, authHandoffPath string) (StatusURLsResult, error) {
+	status, err := s.getPollableStatus(pidPath, regPath, snapshotPath, authHandoffPath)
 	if err != nil {
 		return StatusURLsResult{}, err
 	}

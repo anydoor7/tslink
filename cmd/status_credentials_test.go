@@ -24,7 +24,7 @@ const (
 
 // withStatusCredentialSeams stubs the value readers and swaps the inventory for
 // an in-memory classification so no test touches credential-meta.json.
-func withStatusCredentialSeams(t *testing.T, apiKey, clientSecret string, inventory func(credentials.SlotValues, time.Time) credentials.Inventory) {
+func withStatusCredentialSeams(t *testing.T, apiKey, clientSecret string, inventory func(credentials.SlotValues, time.Time, bool) credentials.Inventory) {
 	t.Helper()
 	oldGetAPIKey := getAPIKeyFn
 	oldHasClientSecret := hasClientSecretFn
@@ -52,8 +52,8 @@ func withStatusCredentialSeams(t *testing.T, apiKey, clientSecret string, invent
 
 // statusInventoryAt anchors the api-key slot so it has daysLeft days remaining
 // under the assumed maximum lifetime.
-func statusInventoryAt(daysLeft int, verified bool) func(credentials.SlotValues, time.Time) credentials.Inventory {
-	return func(values credentials.SlotValues, now time.Time) credentials.Inventory {
+func statusInventoryAt(daysLeft int, verified bool) func(credentials.SlotValues, time.Time, bool) credentials.Inventory {
+	return func(values credentials.SlotValues, now time.Time, _ bool) credentials.Inventory {
 		doc := credentials.Metadata{SchemaVersion: credentials.MetadataSchemaVersion, Slots: map[string]credentials.SlotMetadata{}}
 		// A positive sub-day offset only matters at the zero boundary, where the
 		// slot must still read as "expiring today" (days_left 0, remaining > 0)
@@ -198,7 +198,7 @@ func intPtr(v int) *int { return &v }
 func TestStatusCredentialUnknownStatesAndMetadataError(t *testing.T) {
 	t.Run("corrupt metadata", func(t *testing.T) {
 		pidPath, regPath, snapshotPath, handoffPath := statusTestPaths(t)
-		withStatusCredentialSeams(t, statusFixtureAPIKey, "", func(values credentials.SlotValues, now time.Time) credentials.Inventory {
+		withStatusCredentialSeams(t, statusFixtureAPIKey, "", func(values credentials.SlotValues, now time.Time, _ bool) credentials.Inventory {
 			return credentials.DescribeSlotsWithMetadata(values, credentials.Metadata{}, errors.New("credential metadata file is unreadable or malformed: tskey-api-FAKE-in-error"), now)
 		})
 		status, err := getPollableStatus(pidPath, regPath, snapshotPath, handoffPath)
