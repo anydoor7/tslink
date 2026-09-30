@@ -237,6 +237,12 @@ func TestStatusCredentialUnknownStatesAndMetadataError(t *testing.T) {
 
 func TestStatusCredentialsDefaultInventoryPersistsBackfillInConfigDir(t *testing.T) {
 	pidPath, regPath, snapshotPath, handoffPath := statusTestPaths(t)
+	// A backfill is persisted only while the store still holds the value
+	// status read (B6a-2), so the (isolated) store holds the key the status
+	// seam reports.
+	if err := credentials.SetAPIKey(statusFixtureAPIKey); err != nil {
+		t.Fatal(err)
+	}
 	withStatusCredentialSeams(t, statusFixtureAPIKey, "", nil)
 	status, err := getPollableStatus(pidPath, regPath, snapshotPath, handoffPath)
 	if err != nil {
