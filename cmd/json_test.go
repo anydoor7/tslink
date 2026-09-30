@@ -114,8 +114,9 @@ func TestStatusJSON(t *testing.T) {
 	if data["daemon_pid"] != float64(42) {
 		t.Errorf("expected daemon_pid=42, got %v", data["daemon_pid"])
 	}
-	if data["authenticated"] != true {
-		t.Errorf("expected authenticated=true, got %v", data["authenticated"])
+	// A stored credential without an authorized node (A3-5).
+	if data["credential_stored"] != true || data["authenticated"] != false {
+		t.Errorf("expected credential_stored=true authenticated=false, got %v and %v", data["credential_stored"], data["authenticated"])
 	}
 	if data["service_count"] != float64(1) {
 		t.Errorf("expected service_count=1, got %v", data["service_count"])

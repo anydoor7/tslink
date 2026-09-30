@@ -223,10 +223,11 @@ func baseStatus(pidPath string) StatusResult {
 	if hasClientSecret {
 		values.ClientSecret, _ = statusGetClientSecretFn()
 	}
+	// A stored credential is a string on disk until a node proves it:
+	// credential_stored reports it, while authenticated and auth_status wait
+	// for an authorized service node (node_authorized), on every surface.
 	if values.APIKey != "" || hasClientSecret {
 		r.CredentialStored = true
-		r.Authenticated = true
-		r.AuthStatus = authStatusAuthenticated
 	}
 	r.Credentials, r.CredentialExpiryState = statusCredentialsFromInventory(statusCredentialInventoryFn(values, statusNowFn()), hasClientSecret)
 	return r
@@ -270,12 +271,13 @@ func statusCredentialsFromInventory(inventory credentials.Inventory, clientSecre
 }
 
 func setStatusContinuation(r *StatusResult) {
-	switch r.AuthStatus {
-	case authStatusNotAuthenticated:
-		r.Next = []string{"tslink serve --json"}
-	case authStatusNeedsLogin:
+	switch {
+	case r.AuthStatus == authStatusNeedsLogin:
 		r.Next = []string{"tslink status --json"}
+	case r.AuthStatus == authStatusNotAuthenticated && !r.CredentialStored:
+		r.Next = []string{"tslink serve --json"}
 	default:
+		// Authorized, or a stored credential whose nodes are not up yet.
 		r.Next = nil
 		switch r.CredentialExpiryState {
 		case credentials.ExpiryStateExpiring, credentials.ExpiryStateExpired:
@@ -486,8 +488,13 @@ func formatStatus(r StatusResult, out io.Writer) {
 		fmt.Fprintln(out, "Next: tslink install")
 	}
 	formatSupervision(r.Supervision, out)
-	if r.Authenticated {
-		fmt.Fprintln(out, "→ tailnet: authenticated")
+	if r.Authenticated || r.CredentialStored && r.AuthStatus != authStatusNeedsLogin {
+		if r.Authenticated {
+			fmt.Fprintln(out, "→ tailnet: authenticated")
+		} else {
+			// A stored credential is not an authorized node; say which.
+			fmt.Fprintln(out, "→ tailnet: no authorized node yet (credential stored)")
+		}
 		if summary := formatCredentialSummary(r.Credentials); summary != "" {
 			fmt.Fprintf(out, "→ credentials: %s\n", summary)
 		}

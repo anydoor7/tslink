@@ -229,7 +229,7 @@ func TestStatusCredentialUnknownStatesAndMetadataError(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !status.Authenticated || !status.Credentials.ClientSecret.Present || status.Credentials.ClientSecret.ExpiryState != credentials.ExpiryStateUnknown || status.CredentialExpiryState != credentials.ExpiryStateUnknown {
+		if !status.CredentialStored || status.Authenticated || !status.Credentials.ClientSecret.Present || status.Credentials.ClientSecret.ExpiryState != credentials.ExpiryStateUnknown || status.CredentialExpiryState != credentials.ExpiryStateUnknown {
 			t.Fatalf("status = %+v, want present/unknown client-secret", status.Credentials)
 		}
 	})

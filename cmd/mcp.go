@@ -233,7 +233,7 @@ var (
 	}, "ok", "name", "removed", "device_cleaned", "device_cleanup_skipped")
 	mcpStatusOutputSchema = objectSchema(map[string]any{
 		"supervision":              nestedObjectSchema("Verified manager, autostart, restart policy, and diagnostic evidence."),
-		"authenticated":            map[string]any{"type": "boolean", "description": "Legacy alias for node_authorized; it is not a stored-credential indicator."},
+		"authenticated":            map[string]any{"type": "boolean", "description": "True when at least one service node is authorized on the tailnet, the same fact as node_authorized and the same meaning as in tslink status --json; a stored credential alone (credential_stored) never makes it true."},
 		"credential_stored":        map[string]any{"type": "boolean"},
 		"node_authorized":          map[string]any{"type": "boolean"},
 		"authorized_service_count": map[string]any{"type": "integer", "minimum": 0},
@@ -786,7 +786,7 @@ func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 			}
 			result := mcpStatusSummary{
 				Supervision:            status.Supervision,
-				Authenticated:          status.NodeAuthorized,
+				Authenticated:          status.Authenticated,
 				CredentialStored:       status.CredentialStored,
 				NodeAuthorized:         status.NodeAuthorized,
 				AuthorizedServiceCount: status.AuthorizedServiceCount,

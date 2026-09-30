@@ -1179,7 +1179,9 @@ func TestStopService_Error(t *testing.T) {
 
 // --- getStatus: full coverage ---
 
-func TestGetStatus_Running_Authenticated(t *testing.T) {
+// A stored credential with no authorized node is credential_stored, not
+// authenticated (A3-5): only an authorized service node authenticates.
+func TestGetStatus_Running_CredentialStoredIsNotAuthenticated(t *testing.T) {
 	oldIsRunning, oldReadPID, oldGetKey := isRunningFn, readPIDFn, getAPIKeyFn
 	oldCS := hasClientSecretFn
 	defer func() {
@@ -1206,15 +1208,16 @@ func TestGetStatus_Running_Authenticated(t *testing.T) {
 	if r.DaemonPID != 42 {
 		t.Errorf("expected PID 42, got %d", r.DaemonPID)
 	}
-	if !r.Authenticated {
-		t.Error("expected authenticated")
+	if !r.CredentialStored || r.Authenticated || r.AuthStatus != authStatusNotAuthenticated {
+		t.Errorf("credential_stored=%v authenticated=%v auth_status=%q, want a stored credential that is not authenticated", r.CredentialStored, r.Authenticated, r.AuthStatus)
 	}
 	if r.ServiceCount != 1 {
 		t.Errorf("expected 1 service, got %d", r.ServiceCount)
 	}
 }
 
-func TestGetStatus_AuthenticatedViaClientSecret(t *testing.T) {
+// A stored client secret alone is credential_stored, not authenticated (A3-5).
+func TestGetStatus_ClientSecretIsStoredNotAuthenticated(t *testing.T) {
 	oldIsRunning, oldGetKey := isRunningFn, getAPIKeyFn
 	oldCS := hasClientSecretFn
 	defer func() { isRunningFn = oldIsRunning; getAPIKeyFn = oldGetKey; hasClientSecretFn = oldCS }()
@@ -1228,8 +1231,8 @@ func TestGetStatus_AuthenticatedViaClientSecret(t *testing.T) {
 	if err != nil {
 		t.Fatalf("getStatus() error = %v", err)
 	}
-	if !r.Authenticated {
-		t.Error("expected authenticated via client secret")
+	if !r.CredentialStored || r.Authenticated {
+		t.Errorf("credential_stored=%v authenticated=%v, want a stored client secret that is not authenticated", r.CredentialStored, r.Authenticated)
 	}
 }
 
