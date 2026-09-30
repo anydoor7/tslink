@@ -194,7 +194,9 @@ proxy service is explicitly published through Funnel.
 - Every MCP tool declares `readOnlyHint`, `destructiveHint`, `idempotentHint`,
   and `openWorldHint`. MCP `share`, `add`, and `template_apply` include
   `daemon_installed` (`manager`, `path`, `undo`) when their call installed the
-  background service.
+  background service. The `add` tool describes how a custom `control_url`
+  keeps the stored Tailscale credential and keys minted from it off that
+  server.
 - The manifest derives `error_codes` from the same table as process exits and
   service isolation. Its codes include `daemon_not_running`,
   `daemon_setup_failed`, `daemon_supervision_unverified`,
