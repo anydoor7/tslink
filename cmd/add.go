@@ -475,6 +475,10 @@ func resolveAddService(svc registry.Service, p AddParams) (registry.Service, err
 	return svc, nil
 }
 
+// addKeepIfUnchangedFn settles a registration an add left unchanged. Tests
+// replace it to run a share's rollback first.
+var addKeepIfUnchangedFn = registry.KeepIfUnchanged
+
 // executeAdd writes an admitted service to the registry and builds the shared
 // AddResult. It is the single write path behind `tslink add` and the MCP add
 // tool. The persisted service is returned alongside the result because the
@@ -496,6 +500,22 @@ func executeAdd(ctx context.Context, svc registry.Service, regPath, pidPath, sna
 	if outcome.Replaced != nil {
 		if replaced, err = registry.ChangedFields(*outcome.Replaced, persisted); err != nil {
 			return AddResult{}, registry.Service{}, err
+		}
+		if len(replaced) == 0 {
+			// An add that changes nothing relies on the registration as
+			// stored, as a share reusing it does: keeping it takes away the
+			// rollback of a share still waiting on the registration it
+			// created. One gone by now was rolled back before this add could
+			// keep it, and is reported missing rather than present.
+			kept, err := addKeepIfUnchangedFn(regPath, persisted)
+			if err != nil {
+				return AddResult{}, registry.Service{}, err
+			}
+			if !kept {
+				if _, err := loadPersistedService(regPath, svc.Name); err != nil {
+					return AddResult{}, registry.Service{}, err
+				}
+			}
 		}
 	}
 	for _, setup := range afterPersist {
