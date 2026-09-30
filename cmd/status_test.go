@@ -1047,7 +1047,7 @@ func TestStatusURLsJSONIncludesSchemaWarningsAndRedactedAllow(t *testing.T) {
 		t.Fatalf("response envelope = %+v, want ok status", resp)
 	}
 	if resp.Data.SchemaVersion != inspect.SchemaVersion {
-		t.Fatalf("schema_version = %q, want %q", resp.Data.SchemaVersion, inspect.SchemaVersion)
+		t.Fatalf("schema_version = %v, want %v", resp.Data.SchemaVersion, inspect.SchemaVersion)
 	}
 	if resp.Data.RuntimeSnapshot.Code != inspect.WarningCodeRuntimeSnapshotMissing {
 		t.Fatalf("runtime snapshot = %+v, want missing code", resp.Data.RuntimeSnapshot)

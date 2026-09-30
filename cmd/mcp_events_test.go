@@ -86,7 +86,7 @@ func TestMCPEventStateMirrorsTheListAndStatusTools(t *testing.T) {
 		t.Fatalf("buildMCPEventState() error = %v", err)
 	}
 	if state.SchemaVersion != inspect.SchemaVersion {
-		t.Fatalf("schema_version = %q, want %q", state.SchemaVersion, inspect.SchemaVersion)
+		t.Fatalf("schema_version = %v, want %v", state.SchemaVersion, inspect.SchemaVersion)
 	}
 	if len(state.Services) != len(services) {
 		t.Fatalf("services = %d, want %d", len(state.Services), len(services))

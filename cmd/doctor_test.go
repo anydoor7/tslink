@@ -297,7 +297,7 @@ func decodeDoctorJSON(t *testing.T, raw string) DoctorResult {
 	if err := json.Unmarshal(dataBytes, &data); err != nil {
 		t.Fatalf("unmarshal doctor data: %v\nraw data: %s", err, dataBytes)
 	}
-	if data.SchemaVersion == "" || data.ExecutionStatus == "" {
+	if data.SchemaVersion == 0 || data.ExecutionStatus == "" {
 		t.Fatalf("flat doctor data incomplete\nraw data: %s", dataBytes)
 	}
 	return data
@@ -598,7 +598,7 @@ func TestDoctorJSONSchemaCountsAndRedaction(t *testing.T) {
 	}
 	result := decodeDoctorJSON(t, raw)
 	if result.SchemaVersion != inspect.SchemaVersion {
-		t.Fatalf("schema_version = %q, want %q", result.SchemaVersion, inspect.SchemaVersion)
+		t.Fatalf("schema_version = %v, want %v", result.SchemaVersion, inspect.SchemaVersion)
 	}
 	if result.Counts.Findings != len(result.Findings) || result.Counts.Info == 0 {
 		t.Fatalf("counts = %+v findings=%d, want info finding counted", result.Counts, len(result.Findings))

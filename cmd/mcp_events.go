@@ -35,7 +35,7 @@ import (
 // later is dropped here by construction; a blacklist would have to be updated
 // by whoever added it, and would not be.
 type mcpEventState struct {
-	SchemaVersion string               `json:"schema_version"`
+	SchemaVersion int                  `json:"schema_version"`
 	Services      []ListServiceSummary `json:"services"`
 	Status        mcpEventStatus       `json:"status"`
 }

@@ -138,7 +138,7 @@ var (
 	}, "code", "severity", "message", "source")
 	mcpWarningArraySchema = map[string]any{"type": "array", "items": mcpWarningViewSchema}
 	mcpServiceViewSchema  = objectSchema(map[string]any{
-		"schema_version": map[string]any{"type": "string"},
+		"schema_version": map[string]any{"type": "integer"},
 		"name":           map[string]any{"type": "string"},
 		"type":           map[string]any{"type": "string", "enum": serviceTypeValues()},
 		"endpoint":       mcpEndpointViewSchema,
@@ -278,7 +278,7 @@ var (
 		"tags":    stringArraySchema(),
 	}, "service", "tags")
 	mcpAccessExplainOutputSchema = objectSchema(map[string]any{
-		"schema_version":           map[string]any{"type": "string"},
+		"schema_version":           map[string]any{"type": "integer"},
 		"service":                  map[string]any{"type": "string"},
 		"summary":                  map[string]any{"type": "string"},
 		"tslink_known":             nestedObjectSchema("What the local registry records: service type, endpoint, exposure, tags, redacted allow-list, backend, and target loopback classification."),
@@ -288,7 +288,7 @@ var (
 	}, "schema_version", "service", "summary", "tslink_known", "tslink_local_enforcement", "external_policy_unknown", "backend_auth_assumption")
 	mcpDoctorOutputSchema = objectSchema(map[string]any{
 		"supervision":      nestedObjectSchema("Verified OS supervision, autostart, restart policy, and diagnostic evidence."),
-		"schema_version":   map[string]any{"type": "string"},
+		"schema_version":   map[string]any{"type": "integer"},
 		"execution_status": map[string]any{"type": "string"},
 		"status":           map[string]any{"type": "string"},
 		"health_status":    map[string]any{"type": "string"},
@@ -364,7 +364,7 @@ var (
 		"remote_side_effect_plan": mcpRemoteSideEffectPlanSchema,
 	}, "kind", "id", "email", "emailed", "remote_side_effect_plan")
 	mcpTemplateListOutputSchema = objectSchema(map[string]any{
-		"schema_version": map[string]any{"type": "string"},
+		"schema_version": map[string]any{"type": "integer"},
 		"templates": map[string]any{
 			"type": "array",
 			"items": objectSchema(map[string]any{
@@ -376,7 +376,7 @@ var (
 		"count": map[string]any{"type": "integer", "minimum": 0},
 	}, "schema_version", "templates", "count")
 	mcpTemplateApplyOutputSchema = objectSchema(map[string]any{
-		"schema_version": map[string]any{"type": "string"},
+		"schema_version": map[string]any{"type": "integer"},
 		"name":           map[string]any{"type": "string"},
 		"summary":        map[string]any{"type": "string"},
 		"dry_run":        map[string]any{"type": "boolean"},

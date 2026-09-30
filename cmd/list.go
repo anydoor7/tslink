@@ -84,9 +84,9 @@ type ListServiceSummary struct {
 
 // ListResult holds the result for JSON output.
 type ListResult struct {
-	SchemaVersion string `json:"schema_version"`
-	Services      any    `json:"services"`
-	Count         int    `json:"count"`
+	SchemaVersion int `json:"schema_version"`
+	Services      any `json:"services"`
+	Count         int `json:"count"`
 }
 
 // TailnetDeviceView is one row of `tslink list --tailnet`. It carries no node
@@ -111,7 +111,7 @@ type TailnetDeviceView struct {
 // registered services, this one reports tailnet devices, and collapsing them
 // would make "count" mean two different things.
 type TailnetListResult struct {
-	SchemaVersion     string              `json:"schema_version"`
+	SchemaVersion     int                 `json:"schema_version"`
 	Devices           []TailnetDeviceView `json:"devices"`
 	Count             int                 `json:"count"`
 	RegisteredCount   int                 `json:"registered_count"`

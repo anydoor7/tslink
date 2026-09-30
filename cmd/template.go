@@ -39,13 +39,13 @@ type TemplateSummary struct {
 }
 
 type TemplateListResult struct {
-	SchemaVersion string            `json:"schema_version"`
+	SchemaVersion int               `json:"schema_version"`
 	Templates     []TemplateSummary `json:"templates"`
 	Count         int               `json:"count"`
 }
 
 type TemplateShowResult struct {
-	SchemaVersion string                `json:"schema_version"`
+	SchemaVersion int                   `json:"schema_version"`
 	Name          string                `json:"name"`
 	Summary       string                `json:"summary"`
 	Description   string                `json:"description"`
@@ -61,7 +61,7 @@ type TemplatePlanItem struct {
 }
 
 type TemplateApplyResult struct {
-	SchemaVersion string             `json:"schema_version"`
+	SchemaVersion int                `json:"schema_version"`
 	Name          string             `json:"name"`
 	Summary       string             `json:"summary"`
 	DryRun        bool               `json:"dry_run"`

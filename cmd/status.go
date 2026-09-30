@@ -114,7 +114,7 @@ type StatusServiceState struct {
 
 type StatusURLsResult struct {
 	Supervision             Supervision                 `json:"supervision"`
-	SchemaVersion           string                      `json:"schema_version"`
+	SchemaVersion           int                         `json:"schema_version"`
 	DaemonRunning           bool                        `json:"daemon_running"`
 	DaemonState             string                      `json:"daemon_state"`
 	DaemonPID               int                         `json:"daemon_pid"`

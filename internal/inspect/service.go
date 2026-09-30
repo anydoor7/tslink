@@ -10,7 +10,11 @@ import (
 )
 
 const (
-	SchemaVersion = "vnext.1"
+	// SchemaVersion is the version of the public data views (list, status
+	// --urls, doctor, access explain, templates, the service view). It is an
+	// integer like the envelope's, registry.json's and runtime.json's own
+	// schema_version; runtime.json keeps its own number.
+	SchemaVersion = 1
 
 	EndpointKindHTTPS       = "https"
 	EndpointKindPublicHTTPS = "public_https"
@@ -60,7 +64,7 @@ type WarningView struct {
 }
 
 type ServiceView struct {
-	SchemaVersion string        `json:"schema_version"`
+	SchemaVersion int           `json:"schema_version"`
 	Name          string        `json:"name"`
 	Type          string        `json:"type"`
 	Endpoint      EndpointView  `json:"endpoint"`

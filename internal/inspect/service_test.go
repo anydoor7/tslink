@@ -17,7 +17,7 @@ func TestServiceViewForProxyFileAndTCP(t *testing.T) {
 		AllowedUsers: []string{"alice@example.com"},
 	})
 	if proxy.SchemaVersion != SchemaVersion {
-		t.Fatalf("proxy schema_version = %q, want %q", proxy.SchemaVersion, SchemaVersion)
+		t.Fatalf("proxy schema_version = %v, want %v", proxy.SchemaVersion, SchemaVersion)
 	}
 	if proxy.Endpoint.Kind != EndpointKindHTTPS || proxy.Endpoint.Display != "" || proxy.Endpoint.Host != "" || proxy.Endpoint.State != EndpointStateExpected {
 		t.Fatalf("proxy endpoint = %+v, want pending https endpoint without placeholder", proxy.Endpoint)

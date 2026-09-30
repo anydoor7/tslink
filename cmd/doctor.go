@@ -165,7 +165,7 @@ type doctorOptions struct {
 
 type DoctorResult struct {
 	Supervision     Supervision                 `json:"supervision"`
-	SchemaVersion   string                      `json:"schema_version"`
+	SchemaVersion   int                         `json:"schema_version"`
 	ExecutionStatus string                      `json:"execution_status"`
 	Status          string                      `json:"status"`
 	HealthStatus    string                      `json:"health_status"`

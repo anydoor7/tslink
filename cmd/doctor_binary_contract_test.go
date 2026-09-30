@@ -201,7 +201,7 @@ func TestCompiledDoctorJSONHealthFixtures(t *testing.T) {
 				t.Fatalf("health_exit_code = %d, want %d", result.HealthExitCode, tc.wantCode)
 			}
 			if result.SchemaVersion != inspect.SchemaVersion {
-				t.Fatalf("schema_version = %q, want %q", result.SchemaVersion, inspect.SchemaVersion)
+				t.Fatalf("schema_version = %v, want %v", result.SchemaVersion, inspect.SchemaVersion)
 			}
 			// The child inherited the test isolation's knob, so it never read
 			// the local tailscaled of the machine running the tests.

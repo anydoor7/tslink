@@ -97,7 +97,7 @@ func decodeAccessExplainJSON(t *testing.T, raw string) AccessExplainResult {
 	if err := json.Unmarshal(dataBytes, &data); err != nil {
 		t.Fatalf("unmarshal access explain data: %v\nraw data: %s", err, dataBytes)
 	}
-	if data.SchemaVersion == "" || data.Service == "" {
+	if data.SchemaVersion == 0 || data.Service == "" {
 		t.Fatalf("flat access explain data incomplete\nraw data: %s", dataBytes)
 	}
 	return data

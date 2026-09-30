@@ -106,7 +106,7 @@ func TestListTailnetJSONReportsOriginRegistrationAndCleanupAuthority(t *testing.
 	}
 	data := resp.Data
 	if data.SchemaVersion != inspect.SchemaVersion {
-		t.Fatalf("schema_version = %q, want %q", data.SchemaVersion, inspect.SchemaVersion)
+		t.Fatalf("schema_version = %v, want %v", data.SchemaVersion, inspect.SchemaVersion)
 	}
 	if data.Count != 3 || data.RegisteredCount != 1 || data.UnregisteredCount != 2 {
 		t.Fatalf("counts = count:%d registered:%d unregistered:%d, want 3/1/2", data.Count, data.RegisteredCount, data.UnregisteredCount)

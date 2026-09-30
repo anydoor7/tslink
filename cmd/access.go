@@ -27,7 +27,7 @@ type accessExplainJSONData struct {
 func (d accessExplainJSONData) MarshalJSON() ([]byte, error) { return json.Marshal(d.AccessExplain) }
 
 type AccessExplainResult struct {
-	SchemaVersion          string                             `json:"schema_version"`
+	SchemaVersion          int                                `json:"schema_version"`
 	Service                string                             `json:"service"`
 	Summary                string                             `json:"summary"`
 	TSLinkKnown            AccessExplainKnown                 `json:"tslink_known"`

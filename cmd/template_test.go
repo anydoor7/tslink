@@ -105,7 +105,7 @@ func TestTemplateListJSONIncludesBuiltins(t *testing.T) {
 		t.Fatalf("response = %+v, want ok template list", resp)
 	}
 	if resp.Data.SchemaVersion != inspect.SchemaVersion {
-		t.Fatalf("schema_version = %q, want %q", resp.Data.SchemaVersion, inspect.SchemaVersion)
+		t.Fatalf("schema_version = %v, want %v", resp.Data.SchemaVersion, inspect.SchemaVersion)
 	}
 
 	found := map[string]bool{}
@@ -137,14 +137,14 @@ func TestTemplateShowLocalWebJSONUsesPublicViews(t *testing.T) {
 		t.Fatalf("response = %+v, want ok template show", resp)
 	}
 	if resp.Data.SchemaVersion != inspect.SchemaVersion {
-		t.Fatalf("schema_version = %q, want %q", resp.Data.SchemaVersion, inspect.SchemaVersion)
+		t.Fatalf("schema_version = %v, want %v", resp.Data.SchemaVersion, inspect.SchemaVersion)
 	}
 	if resp.Data.Name != "local-web" || len(resp.Data.Services) != 2 {
 		t.Fatalf("show data = %+v, want local-web with 2 services", resp.Data)
 	}
 	for _, svc := range resp.Data.Services {
 		if svc.SchemaVersion != inspect.SchemaVersion {
-			t.Fatalf("service schema_version = %q, want %q", svc.SchemaVersion, inspect.SchemaVersion)
+			t.Fatalf("service schema_version = %v, want %v", svc.SchemaVersion, inspect.SchemaVersion)
 		}
 		if svc.Funnel || svc.Exposure.Public {
 			t.Fatalf("template service is public/funnel: %+v", svc)

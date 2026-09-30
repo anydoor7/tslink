@@ -17,7 +17,7 @@ type listJSONResponse struct {
 	OK      bool   `json:"ok"`
 	Command string `json:"command"`
 	Data    struct {
-		SchemaVersion string               `json:"schema_version"`
+		SchemaVersion int                  `json:"schema_version"`
 		Services      []ListServiceSummary `json:"services"`
 		Count         int                  `json:"count"`
 	} `json:"data"`
