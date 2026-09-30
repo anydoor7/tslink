@@ -213,9 +213,6 @@ func accessLocalEnforcementFor(svc registry.Service, view inspect.ServiceView) A
 }
 
 func accessAddContextNotes(enforcement AccessExplainLocalEnforcement, svc registry.Service, view inspect.ServiceView) AccessExplainLocalEnforcement {
-	if svc.Domain != "" || svc.AcmeEmail != "" {
-		enforcement.Notes = append(enforcement.Notes, "Custom-domain/ACME fields are present but the serve runtime does not wire them; no custom-domain endpoint is exposed.")
-	}
 	if svc.Type == registry.TypeTCP && svc.Funnel {
 		enforcement.Notes = append(enforcement.Notes, "Tailscale Funnel does not carry raw TCP; a hand-edited TCP Funnel registry mark is not proof of public reachability.")
 	}

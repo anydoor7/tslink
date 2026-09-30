@@ -10,13 +10,11 @@ import (
 
 // TestServiceViewHasNoReservedFeatureSurface replaces the view tests of the
 // removed custom-domain and middleware features: the view has no middleware
-// summary and emits none of their warning codes, even for a Go caller that
-// still sets the retained Go fields, and the codes are no longer registered.
+// summary and emits none of their warning codes, and the codes are no longer
+// registered. The Go fields are gone too, so no caller can set them.
 func TestServiceViewHasNoReservedFeatureSurface(t *testing.T) {
 	view := ServiceViewFor(registry.Service{
 		Name: "web", Type: registry.TypeProxy, Target: "http://localhost:3000",
-		Domain: "app.example.com", AcmeEmail: "admin@example.com",
-		Middleware: &registry.MiddlewareConfig{BasicAuth: "user:pass"},
 	})
 	encoded, err := json.Marshal(view)
 	if err != nil {

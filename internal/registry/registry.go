@@ -56,7 +56,6 @@ const (
 	CodeFunnelCapabilityMissing    = "funnel_capability_missing"
 	CodeFunnelListenFailed         = "funnel_listen_failed"
 	CodeServiceStartTimeout        = "service_start_timeout"
-	CodeFeatureUnavailable         = "feature_unavailable"
 	CodeServiceTypeAmbiguous       = "service_type_ambiguous"
 	CodeInvalidServiceName         = "invalid_service_name"
 	CodeInvalidTag                 = "invalid_tag"
@@ -276,10 +275,6 @@ func ServiceStartTimeoutError(serviceName string, timeout time.Duration) error {
 	}
 }
 
-func FeatureUnavailableError(message string) error {
-	return CodedError{Code: CodeFeatureUnavailable, Message: message, Next: []string{"tslink add --help"}}
-}
-
 func ServiceTypeAmbiguousError() error {
 	return CodedError{
 		Code:        CodeServiceTypeAmbiguous,
@@ -471,15 +466,6 @@ var (
 	marshalFn = json.MarshalIndent
 )
 
-// MiddlewareConfig is the Go shape of a middleware feature that does not
-// exist. It is not part of registry.json (see Service.Middleware).
-type MiddlewareConfig struct {
-	RateLimit   float64  `json:"rate_limit,omitempty"`    // requests per second, 0 = disabled
-	BasicAuth   string   `json:"basic_auth,omitempty"`    // "user:pass" format
-	IPAllowList []string `json:"ip_allow_list,omitempty"` // CIDR strings
-	CORSOrigins []string `json:"cors_origins,omitempty"`  // allowed origins
-}
-
 type Service struct {
 	Name   string `json:"name"`
 	Type   string `json:"type"`
@@ -499,16 +485,7 @@ type Service struct {
 	FunnelExpiresAt *time.Time `json:"funnel_expires_at,omitempty"`
 	PublicAck       bool       `json:"public_ack,omitempty"`
 	NoAutoProvision bool       `json:"no_auto_provision,omitempty"`
-	// Domain, AcmeEmail and Middleware are not registry.json fields: the
-	// reserved custom-domain, ACME and middleware keys were removed before
-	// the first public release, and strict decoding refuses them as unknown
-	// keys. They are always empty in a decoded registry and are kept only
-	// because code outside the registry still reads them;
-	// ValidateUnavailableFeatures keeps refusing a Go caller that sets them.
-	Domain     string            `json:"-"`
-	AcmeEmail  string            `json:"-"`
-	Middleware *MiddlewareConfig `json:"-"`
-	CreatedAt  time.Time         `json:"created_at"`
+	CreatedAt       time.Time  `json:"created_at"`
 
 	// funnelExpiryUndecided is set only by UnmarshalJSON, for a Funnel entry
 	// whose stored funnel_expires_at is absent or null. In memory a nil
@@ -750,10 +727,6 @@ func ValidateService(svc Service) error {
 }
 
 func validateServiceShape(svc Service) error {
-	if err := ValidateUnavailableFeatures(svc); err != nil {
-		return err
-	}
-
 	switch svc.Type {
 	case TypeProxy:
 		if svc.Target == "" {
@@ -813,23 +786,6 @@ func validateServiceShape(svc Service) error {
 		return fmt.Errorf("unsupported service type %q; must be one of: %s, %s, %s", svc.Type, TypeProxy, TypeFile, TypeTCP)
 	}
 	return nil
-}
-
-func ValidateUnavailableFeatures(svc Service) error {
-	if svc.Domain != "" || svc.AcmeEmail != "" {
-		return FeatureUnavailableError(fmt.Sprintf("custom-domain/ACME runtime is not wired; remove domain/acme_email from service %q", svc.Name))
-	}
-	if MiddlewareConfigured(svc.Middleware) {
-		return FeatureUnavailableError(fmt.Sprintf("middleware runtime is not wired; remove middleware from service %q", svc.Name))
-	}
-	return nil
-}
-
-func MiddlewareConfigured(mw *MiddlewareConfig) bool {
-	if mw == nil {
-		return false
-	}
-	return mw.BasicAuth != "" || mw.RateLimit != 0 || len(mw.IPAllowList) > 0 || len(mw.CORSOrigins) > 0
 }
 
 func ValidateProxyTarget(target string) error {

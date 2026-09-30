@@ -35,8 +35,8 @@ func TestReservedFeatureSurfaceIsGone(t *testing.T) {
 	}
 
 	manifest := Manifest()
-	if _, ok := manifest.ErrorCodes[registry.CodeFeatureUnavailable]; ok {
-		t.Fatalf("manifest still declares %s", registry.CodeFeatureUnavailable)
+	if _, ok := manifest.ErrorCodes["feature_unavailable"]; ok {
+		t.Fatal("manifest still declares feature_unavailable")
 	}
 	encoded, err := json.Marshal(manifest)
 	if err != nil {

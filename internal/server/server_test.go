@@ -2379,83 +2379,6 @@ func TestOwnershipRetryBackoffSuccessAndCancellation(t *testing.T) {
 	}
 }
 
-func TestStartNodeLocked_MiddlewareConfigFailsBeforeTSNet(t *testing.T) {
-	testenv.SetHome(t, t.TempDir())
-	if err := config.EnsureDir(); err != nil {
-		t.Fatalf("EnsureDir() error = %v", err)
-	}
-
-	var constructed atomic.Int32
-	oldNew := newTSNetServerFn
-	newTSNetServerFn = func(svc registry.Service, stateDir, authKey, controlURL string) tsnetServer {
-		constructed.Add(1)
-		return &fakeTSNetServer{}
-	}
-	t.Cleanup(func() { newTSNetServerFn = oldNew })
-
-	s, err := New("key", "")
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-	t.Cleanup(s.closeAllNodes)
-
-	err = s.startNodeLocked(context.Background(), registry.Service{
-		Name: "docs",
-		Type: registry.TypeFile,
-		Path: t.TempDir(),
-		Middleware: &registry.MiddlewareConfig{
-			BasicAuth: "user:pass",
-		},
-	})
-	if err == nil {
-		t.Fatal("startNodeLocked() error = nil, want middleware unavailable error")
-	}
-	if !strings.Contains(err.Error(), "middleware runtime is not wired") {
-		t.Fatalf("startNodeLocked() error = %v, want middleware unavailable error", err)
-	}
-	if got := constructed.Load(); got != 0 {
-		t.Fatalf("tsnet constructions = %d, want 0", got)
-	}
-}
-
-func TestStartNodeLocked_CustomDomainFailsBeforeTSNet(t *testing.T) {
-	testenv.SetHome(t, t.TempDir())
-	if err := config.EnsureDir(); err != nil {
-		t.Fatalf("EnsureDir() error = %v", err)
-	}
-
-	var constructed atomic.Int32
-	oldNew := newTSNetServerFn
-	newTSNetServerFn = func(svc registry.Service, stateDir, authKey, controlURL string) tsnetServer {
-		constructed.Add(1)
-		return &fakeTSNetServer{}
-	}
-	t.Cleanup(func() { newTSNetServerFn = oldNew })
-
-	s, err := New("key", "")
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-	t.Cleanup(s.closeAllNodes)
-
-	err = s.startNodeLocked(context.Background(), registry.Service{
-		Name:      "web",
-		Type:      registry.TypeProxy,
-		Target:    "http://localhost:3000",
-		Domain:    "app.example.com",
-		AcmeEmail: "admin@example.com",
-	})
-	if err == nil {
-		t.Fatal("startNodeLocked() error = nil, want custom-domain/ACME unavailable error")
-	}
-	if !strings.Contains(err.Error(), "custom-domain/ACME runtime is not wired") {
-		t.Fatalf("startNodeLocked() error = %v, want custom-domain/ACME unavailable error", err)
-	}
-	if got := constructed.Load(); got != 0 {
-		t.Fatalf("tsnet constructions = %d, want 0", got)
-	}
-}
-
 func TestSyncNodes_ContextCancelledPreventsStartingNode(t *testing.T) {
 	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
@@ -5364,7 +5287,6 @@ func TestSyncNodesHandlesMalformedPersistedServicesBeforeTSNetSideEffects(t *tes
 		{service: registry.Service{Name: "proxy-unsupported", Type: registry.TypeProxy, Target: "ftp://example.com"}},
 		{service: registry.Service{Name: "tcp-hostless", Type: registry.TypeTCP, Target: ":5432", Port: 5432}},
 		{service: registry.Service{Name: "tcp-nonnum", Type: registry.TypeTCP, Target: "localhost:abc"}},
-		{service: registry.Service{Name: "domain", Type: registry.TypeProxy, Target: "http://localhost:3000", Domain: "app.example.com"}, recoverableCode: registry.CodeFeatureUnavailable},
 	}
 
 	for _, tc := range cases {
@@ -6120,20 +6042,6 @@ func TestServiceChanged_AllowedUsersSameSetDifferentOrder(t *testing.T) {
 	changed.AllowedUsers = []string{"bob@example.com", "alice@example.com"}
 	if serviceChanged(base, changed) {
 		t.Error("same AllowedUsers set in different order should not be changed")
-	}
-}
-
-func TestServiceChanged_Domain(t *testing.T) {
-	base := registry.Service{
-		Name:   "a",
-		Type:   registry.TypeProxy,
-		Target: "http://localhost:3000",
-	}
-
-	changed := base
-	changed.Domain = "app.example.com"
-	if !serviceChanged(base, changed) {
-		t.Error("different domain should be changed")
 	}
 }
 

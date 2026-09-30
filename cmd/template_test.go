@@ -343,17 +343,8 @@ func TestTemplateBuiltInServicesAvoidPublicExposureFields(t *testing.T) {
 				if svc.Funnel {
 					t.Fatalf("%s has Funnel enabled", svc.Name)
 				}
-				if svc.Domain != "" {
-					t.Fatalf("%s domain = %q, want empty", svc.Name, svc.Domain)
-				}
-				if svc.AcmeEmail != "" {
-					t.Fatalf("%s acme_email = %q, want empty", svc.Name, svc.AcmeEmail)
-				}
 				if svc.ControlURL != "" {
 					t.Fatalf("%s control_url = %q, want empty", svc.Name, svc.ControlURL)
-				}
-				if svc.Middleware != nil {
-					t.Fatalf("%s middleware = %+v, want nil", svc.Name, svc.Middleware)
 				}
 				if len(svc.AllowedUsers) != 0 {
 					t.Fatalf("%s allowed_users = %v, want none", svc.Name, svc.AllowedUsers)

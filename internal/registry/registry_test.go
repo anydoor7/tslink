@@ -1592,8 +1592,6 @@ func TestValidateServiceDiscriminatedShape(t *testing.T) {
 		{Name: "tcp-overflow", Type: TypeTCP, Target: "localhost:70000", Port: 70000},
 		{Name: "tcp-path", Type: TypeTCP, Target: "localhost:5432", Port: 5432, Path: fileRoot},
 		{Name: "tcp-allow", Type: TypeTCP, Target: "localhost:5432", Port: 5432, AllowedUsers: []string{"alice@example.com"}},
-		{Name: "domain", Type: TypeProxy, Target: "http://localhost:3000", Domain: "app.example.com"},
-		{Name: "acme", Type: TypeProxy, Target: "http://localhost:3000", AcmeEmail: "admin@example.com"},
 	}
 	for _, svc := range invalid {
 		t.Run("invalid_"+svc.Name, func(t *testing.T) {
@@ -2084,50 +2082,6 @@ func TestWithLock_LockError(t *testing.T) {
 	}
 	if err.Error() != "injected lock error" {
 		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestAddRejectsDomainAndAcmeEmail(t *testing.T) {
-	path := testRegistryPath(t)
-
-	cases := []Service{
-		{Name: "domain-svc", Type: TypeProxy, Target: "http://localhost:3000", Domain: "app.example.com"},
-		{Name: "acme-svc", Type: TypeProxy, Target: "http://localhost:3000", AcmeEmail: "admin@example.com"},
-	}
-	for _, svc := range cases {
-		t.Run(svc.Name, func(t *testing.T) {
-			created, err := Add(path, svc)
-			if err == nil {
-				t.Fatal("Add() error = nil, want custom-domain/ACME unavailable error")
-			}
-			if created {
-				t.Fatal("Add() created = true, want false")
-			}
-			if !strings.Contains(err.Error(), "custom-domain/ACME runtime is not wired") {
-				t.Fatalf("Add() error = %v, want custom-domain/ACME unavailable error", err)
-			}
-		})
-	}
-}
-
-func TestAcmeEmailOmittedWhenEmpty(t *testing.T) {
-	path := testRegistryPath(t)
-
-	if _, err := Add(path, Service{
-		Name:   "no-acme",
-		Type:   TypeProxy,
-		Target: "http://localhost:3000",
-	}); err != nil {
-		t.Fatalf("Add() error = %v", err)
-	}
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("ReadFile() error = %v", err)
-	}
-
-	if strings.Contains(string(data), "acme_email") {
-		t.Fatal("acme_email should be omitted from JSON when empty")
 	}
 }
 

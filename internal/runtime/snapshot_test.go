@@ -438,7 +438,7 @@ func TestNewSnapshotServicesAreSortedByName(t *testing.T) {
 	}
 }
 
-func TestNewSnapshotCertDomainRewritesCustomDomainEndpoint(t *testing.T) {
+func TestNewSnapshotCertDomainSetsEndpoint(t *testing.T) {
 	startedAt := time.Date(2026, 5, 17, 12, 0, 0, 0, time.UTC)
 	updatedAt := startedAt.Add(time.Minute)
 	snapshot := NewSnapshot(1234, startedAt, "sha256:test", updatedAt, []ServiceState{
@@ -447,7 +447,6 @@ func TestNewSnapshotCertDomainRewritesCustomDomainEndpoint(t *testing.T) {
 				Name:   "web",
 				Type:   registry.TypeProxy,
 				Target: "http://localhost:3000",
-				Domain: "configured.example.com",
 			},
 			CertDomains: []string{"runtime.example.com"},
 		},

@@ -1466,7 +1466,7 @@ func serviceChangedWithFallback(old, new registry.Service, fallbackControlURL st
 	if old.Type != new.Type || old.Target != new.Target || old.Path != new.Path || old.File != new.File {
 		return true
 	}
-	if old.Port != new.Port || old.Ephemeral != new.Ephemeral || old.Funnel != new.Funnel || old.PublicAck != new.PublicAck || old.NoAutoProvision != new.NoAutoProvision || old.Domain != new.Domain {
+	if old.Port != new.Port || old.Ephemeral != new.Ephemeral || old.Funnel != new.Funnel || old.PublicAck != new.PublicAck || old.NoAutoProvision != new.NoAutoProvision {
 		return true
 	}
 	if effectiveControlURL(old, fallbackControlURL) != effectiveControlURL(new, fallbackControlURL) {
@@ -1778,7 +1778,7 @@ func recoverableServiceFailure(svc registry.Service, err error) (runtimesnapshot
 	case registry.CodePathNotFound, registry.CodePathNotDirectory, registry.CodePathNotAccessible,
 		registry.CodeFunnelAllowConflict, registry.CodeFunnelControlURLConflict,
 		registry.CodeFunnelTypeConflict, registry.CodeFunnelPublicAckRequired,
-		registry.CodeUnknownConfigKey, registry.CodeFeatureUnavailable,
+		registry.CodeUnknownConfigKey,
 		registry.CodeInvalidServiceName, registry.CodeInvalidTag,
 		registry.CodeAllowUnsupportedTCP, registry.CodePathMustBeAbsolute,
 		registry.CodeCredentialURLMismatch:
@@ -2184,10 +2184,6 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service, prov
 
 	if domains := tsnetSrv.CertDomains(); len(domains) > 0 {
 		slog.Info("node ready", "name", svc.Name, "url", "https://"+domains[0])
-	}
-
-	if svc.Domain != "" {
-		slog.Warn("custom domain configured but runtime TLS is not wired", "code", "custom_domain.tls_not_wired", "name", svc.Name, "domain", svc.Domain, "acme_email_configured", svc.AcmeEmail != "", "message", "custom-domain/ACME runtime TLS is roadmap and is not wired into serve")
 	}
 
 	s.mu.Lock()
