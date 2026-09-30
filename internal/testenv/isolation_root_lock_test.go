@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -142,6 +143,34 @@ func TestMainHoldsItsRootLockedForItsWholeRun(t *testing.T) {
 	info, err := os.Stat(filepath.Join(root, rootMarker))
 	if err != nil || info.Size() == 0 {
 		t.Fatalf("marker of this binary's own root: %v, %v; want it to record its owner", info, err)
+	}
+}
+
+// TestRootNeverProbesThisBinarysOwnMarker: once Main has made this binary's
+// root, Root reports it without opening its marker. This process holds that
+// marker's lock. Where flock is emulated with byte-range locks (NFS,
+// SMB/CIFS), a probe through a second open file is either refused, so Root
+// would report "" and helper children would not inherit the root, or granted,
+// and its unlock and close would drop this process's lock while the root is
+// in use.
+func TestRootNeverProbesThisBinarysOwnMarker(t *testing.T) {
+	var probed []string
+	markerProbedHook = func(root string) { probed = append(probed, root) }
+	t.Cleanup(func() { markerProbedHook = nil })
+
+	root := Root()
+	if root == "" || root != os.Getenv(RootEnv) {
+		t.Fatalf("Root() = %q, want the root Main made for this binary (%s=%q)", root, RootEnv, os.Getenv(RootEnv))
+	}
+	if len(probed) != 0 {
+		t.Fatalf("Root() opened the marker of %q to try its lock; it must report this binary's own root without probing the lock this process holds", probed)
+	}
+
+	// Control: the hook sees a probe, so the check above can fail.
+	other := plantRoot(t, t.TempDir(), RootPrefix+"other", "4242\n")
+	rootMarkerState(other)
+	if !slices.Equal(probed, []string{other}) {
+		t.Fatalf("probes seen after rootMarkerState(%q) = %q; the hook does not see probes, so the check above proves nothing", other, probed)
 	}
 }
 

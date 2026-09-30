@@ -96,6 +96,7 @@ func Main(m *testing.M, run func() int) int {
 		fmt.Fprintf(os.Stderr, "%s: %v\n", IsolationFailure, err)
 		return 2
 	}
+	mainRoot = root
 	code := reportUnfakedHostSeams(run())
 	// marker stays open, and its lock held, until here.
 	if err := removeRoot(root, marker); err != nil {
@@ -175,9 +176,17 @@ func isolateProcess() (string, *os.File, error) {
 	return root, marker, nil
 }
 
+// mainRoot is the root Main created in this process, whose marker this
+// process holds locked until Main removes it.
+var mainRoot string
+
 // markerCreatedHook, when a test sets it, runs between createRoot creating a
 // marker and locking it.
 var markerCreatedHook func(root string)
+
+// markerProbedHook, when a test sets it, runs at the start of every
+// rootMarkerState with the root whose marker it is about to open.
+var markerProbedHook func(root string)
 
 // createRoot makes a fresh root under dir and returns it with its marker open
 // and locked. The marker records this process only once the lock is held, so
@@ -293,13 +302,23 @@ const (
 // rootMarkerState opens root's marker, without following a symlink in its
 // place, and tries its lock. When the lock is free this call holds it just
 // long enough to read the marker's size.
+//
+// root must not be this process's own root (see Root). The marker is opened
+// for writing, although nothing is written: where Linux emulates flock with
+// byte-range locks (NFS), an exclusive lock needs a descriptor open for
+// writing, and a read-only one is refused as if the marker could not be
+// locked. Main creates markers 0600, so another user's marker cannot be
+// opened here and counts as missing, as it did when it was opened read-only.
 func rootMarkerState(root string) markerState {
+	if markerProbedHook != nil {
+		markerProbedHook(root)
+	}
 	path := filepath.Join(root, rootMarker)
 	info, err := os.Lstat(path)
 	if err != nil || !info.Mode().IsRegular() {
 		return markerMissing
 	}
-	f, err := os.Open(path)
+	f, err := os.OpenFile(path, os.O_RDWR, 0)
 	if err != nil {
 		return markerMissing
 	}
@@ -347,13 +366,26 @@ func HomeEnv(home string) [][2]string {
 // means the binary was started by a test of an isolated binary: helper modes
 // that a TestMain dispatches before calling Main check it, so a variable a
 // contributor exported cannot turn a top-level run into a helper.
+//
+// Once Main has made this binary's root, Root reports it without opening its
+// marker. This process holds that marker's lock, and only local flock
+// promises that a second open file of it is a separate lock holder. Where
+// Linux emulates flock with byte-range locks (NFS, SMB/CIFS), such a probe
+// can be refused, and Root would report "", or be granted to the process
+// that already holds the lock, and its unlock and close would then drop the
+// lock while the root is in use, so another binary's reclaimStaleRoots could
+// remove it.
 func Root() string {
+	if mainRoot != "" {
+		return mainRoot
+	}
 	return inheritedRoot()
 }
 
 // inheritedRoot returns RootEnv's root if a running test binary holds its
-// marker locked: the parent that started this binary, or, once Main has run,
-// this binary itself. A root whose owner is gone is not honoured.
+// marker locked: the parent that started this binary. It is called only
+// before this binary has a root of its own. A root whose owner is gone is not
+// honoured.
 func inheritedRoot() string {
 	root := os.Getenv(RootEnv)
 	if root == "" || !filepath.IsAbs(root) {
