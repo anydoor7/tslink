@@ -48,11 +48,8 @@ type ShareResult struct {
 	Exposure inspect.ExposureView `json:"exposure"`
 	// Warnings are non-fatal notes about the share, such as a directory share
 	// of the whole home directory.
-	Warnings []inspect.WarningView `json:"warnings,omitempty"`
-	// DaemonInstalled is the background service this call installed; omitted
-	// when it installed none.
-	DaemonInstalled *DaemonInstalled `json:"daemon_installed,omitempty"`
-	serviceName     string
+	Warnings    []inspect.WarningView `json:"warnings,omitempty"`
+	serviceName string
 }
 
 type shareTargetSpec struct {
@@ -90,9 +87,8 @@ type sharePaths struct {
 }
 
 type shareDaemonStart struct {
-	Status    string           `json:"status,omitempty"`
-	AuthURL   string           `json:"auth_url,omitempty"`
-	Installed *DaemonInstalled `json:"-"`
+	Status  string `json:"status,omitempty"`
+	AuthURL string `json:"auth_url,omitempty"`
 }
 
 var (
@@ -579,11 +575,10 @@ func waitForShareOutcome(ctx context.Context, paths sharePaths, name, fileName s
 }
 
 func startShareDaemon(ctx context.Context, errOut io.Writer) (shareDaemonStart, error) {
-	installed, err := ensureDaemonFn(ctx, errOut, false)
-	if err != nil {
+	if err := ensureDaemonFn(ctx, errOut, false); err != nil {
 		return shareDaemonStart{}, err
 	}
-	return shareDaemonStart{Installed: installed}, nil
+	return shareDaemonStart{}, nil
 }
 
 func executeShare(ctx context.Context, paths sharePaths, req shareRequest, wait time.Duration, errOut io.Writer) (result ShareResult, err error) {
@@ -617,17 +612,13 @@ func executeShare(ctx context.Context, paths sharePaths, req shareRequest, wait 
 			err = errors.Join(err, fmt.Errorf("roll back share %q: %w", svc.Name, rollbackErr))
 		}
 	}()
-	var installed *DaemonInstalled
 	if !shareIsRunningFn(paths.PID) {
 		startup, err := shareStartDaemonFn(ctx, errOut)
 		if err != nil {
 			return ShareResult{}, err
 		}
-		installed = startup.Installed
 		if startup.Status == authStatusNeedsLogin && startup.AuthURL != "" {
-			result = withShareFunnelState(ShareResult{Status: authStatusNeedsLogin, AuthURL: startup.AuthURL, serviceName: svc.Name}, registration)
-			result.DaemonInstalled = installed
-			return result, nil
+			return withShareFunnelState(ShareResult{Status: authStatusNeedsLogin, AuthURL: startup.AuthURL, serviceName: svc.Name}, registration), nil
 		}
 	}
 	// svc, not spec: when registerShare reused an existing service, the URL has
@@ -636,9 +627,7 @@ func executeShare(ctx context.Context, paths sharePaths, req shareRequest, wait 
 	if err != nil {
 		return result, err
 	}
-	result = withShareFunnelState(result, registration)
-	result.DaemonInstalled = installed
-	return result, nil
+	return withShareFunnelState(result, registration), nil
 }
 
 // withShareFunnelState reports the exposure, Funnel deadline and warnings of

@@ -570,10 +570,6 @@
         }
       ],
       "json_result_fields": {
-        "daemon_installed": {
-          "type": "object",
-          "description": "Present only when this command installed TSLink's background service (a persistent OS autostart entry): manager (the supervisor, as status reports it in supervision.manager), path of the definition written, and undo (tslink uninstall). Omitted when the service already ran or --no-daemon-install was set."
-        },
         "funnel_expires_at": {
           "type": "string",
           "description": "Persisted public Funnel deadline; omitted for tailnet-only services and explicit never."
@@ -1686,13 +1682,7 @@
           "scope": "local",
           "usage": "Wait for an exact runtime URL (share waits 30s by default; unlike url, no flag is required)"
         }
-      ],
-      "json_result_fields": {
-        "daemon_installed": {
-          "type": "object",
-          "description": "Present only when this command installed TSLink's background service (a persistent OS autostart entry): manager (the supervisor, as status reports it in supervision.manager), path of the definition written, and undo (tslink uninstall). Omitted when the service already ran or --no-daemon-install was set."
-        }
-      }
+      ]
     },
     {
       "path": "tslink status",
@@ -1981,13 +1971,7 @@
           "scope": "local",
           "usage": "Write missing template services to the registry"
         }
-      ],
-      "json_result_fields": {
-        "daemon_installed": {
-          "type": "object",
-          "description": "Present only when this command installed TSLink's background service (a persistent OS autostart entry): manager (the supervisor, as status reports it in supervision.manager), path of the definition written, and undo (tslink uninstall). Omitted when the service already ran or --no-daemon-install was set."
-        }
-      }
+      ]
     },
     {
       "path": "tslink template list",

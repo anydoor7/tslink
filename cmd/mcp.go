@@ -804,7 +804,7 @@ func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 			if err != nil {
 				return nil, err
 			}
-			result, _, err := executeAdd(ctx, svc, paths.Registry, paths.PID, paths.Snapshot, preserveFunnelExpiry, 0, func() (*DaemonInstalled, error) {
+			result, _, err := executeAdd(ctx, svc, paths.Registry, paths.PID, paths.Snapshot, preserveFunnelExpiry, 0, func() error {
 				return ensureDaemonFn(ctx, errOut, params.NoDaemonInstall)
 			})
 			if err != nil {
@@ -928,11 +928,9 @@ func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 			if err != nil {
 				return nil, err
 			}
-			installed, err := ensureDaemonFn(ctx, errOut, noInstall)
-			if err != nil {
+			if err := ensureDaemonFn(ctx, errOut, noInstall); err != nil {
 				return nil, daemonRegistryRetainedError(err)
 			}
-			result.DaemonInstalled = installed
 			return result, nil
 		},
 	}
@@ -1479,6 +1477,13 @@ func mcpArgumentsRefusal(tool string, decodeErr error, required ...mcpRequiredAr
 func callMCPTool(ctx context.Context, actions mcpActions, name string, arguments json.RawMessage) (*mcp.CallToolResult, error) {
 	var data any
 	var err error
+	// share, add and template_apply install the background service when it
+	// is absent; their result reports an install as daemon_installed.
+	var install *daemonInstallRecord
+	switch name {
+	case "share", "add", "template_apply":
+		ctx, install = recordDaemonInstall(ctx)
+	}
 	switch name {
 	case "share":
 		var args struct {
@@ -1686,7 +1691,24 @@ func callMCPTool(ctx context.Context, actions mcpActions, name string, arguments
 		// answering with a zero value.
 		return nil, mcpUnknownToolError(name)
 	}
+	if err == nil && install != nil && install.installed != nil {
+		data, err = withDaemonInstalled(data, *install.installed)
+	}
 	return makeMCPToolResult(data, err), nil
+}
+
+// withDaemonInstalled adds daemon_installed to a tool's result object.
+func withDaemonInstalled(data any, installed DaemonInstalled) (any, error) {
+	encoded, err := json.Marshal(data)
+	if err != nil {
+		return nil, err
+	}
+	var result map[string]any
+	if err := json.Unmarshal(encoded, &result); err != nil {
+		return nil, err
+	}
+	result["daemon_installed"] = installed
+	return result, nil
 }
 
 func decodeMCPArguments(raw json.RawMessage, target any) error {

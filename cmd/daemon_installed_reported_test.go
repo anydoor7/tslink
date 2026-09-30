@@ -6,18 +6,18 @@ import (
 	"encoding/json"
 	"io"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
 	tsruntime "github.com/monody0007/tslink/internal/runtime"
 )
 
-// TestEnsureDaemonReportsTheInstallItPerformed: the install announcement goes
-// to stderr only, so ensureDaemon also returns what it installed -- the
-// supervisor, its definition and the undo command -- and nothing when a
-// verified daemon already ran or installation was skipped.
-func TestEnsureDaemonReportsTheInstallItPerformed(t *testing.T) {
+// TestEnsureDaemonNotesTheInstallItPerformed: the install announcement goes
+// to stderr only, so ensureDaemon also notes what it installed -- the
+// supervisor, its definition and the undo command -- for a caller that asked,
+// and notes nothing when a verified daemon already ran or installation was
+// skipped.
+func TestEnsureDaemonNotesTheInstallItPerformed(t *testing.T) {
 	dir := isolateBootstrap(t)
 	installDaemonFn = func(context.Context, io.Writer) error {
 		isRunningFn = func(string) bool { return true }
@@ -26,35 +26,42 @@ func TestEnsureDaemonReportsTheInstallItPerformed(t *testing.T) {
 		}
 		return tsruntime.Save(filepath.Join(dir, "runtime.json"), tsruntime.NewSnapshot(4242, time.Now(), "fixture", time.Now(), nil))
 	}
+	ctx, record := recordDaemonInstall(context.Background())
 	var log bytes.Buffer
-	installed, err := ensureDaemon(context.Background(), &log, false)
-	if err != nil {
+	if err := ensureDaemon(ctx, &log, false); err != nil {
 		t.Fatalf("ensureDaemon: %v (%s)", err, &log)
 	}
 	path, _ := supervisorPath()
-	if installed == nil || installed.Manager != supervisorName() || installed.Path != path || installed.Undo != "tslink uninstall" {
-		t.Fatalf("installed = %+v, want {%s %s tslink uninstall}", installed, supervisorName(), path)
+	if got := record.installed; got == nil || got.Manager != supervisorName() || got.Path != path || got.Undo != "tslink uninstall" {
+		t.Fatalf("installed = %+v, want {%s %s tslink uninstall}", got, supervisorName(), path)
 	}
 
 	// Already running under verified supervision, and the opt-out: no install.
 	for _, noInstall := range []bool{false, true} {
-		if again, err := ensureDaemon(context.Background(), io.Discard, noInstall); err != nil || again != nil {
-			t.Fatalf("noInstall=%v with a verified daemon: installed = %+v, err = %v; want nothing", noInstall, again, err)
+		ctx, record := recordDaemonInstall(context.Background())
+		if err := ensureDaemon(ctx, io.Discard, noInstall); err != nil || record.installed != nil {
+			t.Fatalf("noInstall=%v with a verified daemon: installed = %+v, err = %v; want nothing", noInstall, record.installed, err)
 		}
 	}
 	isRunningFn = func(string) bool { return false }
-	if skipped, err := ensureDaemon(context.Background(), io.Discard, true); err != nil || skipped != nil {
-		t.Fatalf("opt-out without a daemon: installed = %+v, err = %v; want nothing", skipped, err)
+	ctx, record = recordDaemonInstall(context.Background())
+	if err := ensureDaemon(ctx, io.Discard, true); err != nil || record.installed != nil {
+		t.Fatalf("opt-out without a daemon: installed = %+v, err = %v; want nothing", record.installed, err)
 	}
 }
 
 // TestMCPResultsReportTheDaemonTheyInstalled is A3-9: share, add and
 // template_apply install a persistent OS autostart unless told not to, the
 // announcement went to stderr, which the model never sees, and no result
-// field recorded it. Each result now carries daemon_installed when an install
-// happened, and nothing otherwise.
+// field recorded it. Each tool result now carries daemon_installed when an
+// install happened, and nothing otherwise.
 func TestMCPResultsReportTheDaemonTheyInstalled(t *testing.T) {
-	record := &DaemonInstalled{Manager: "launchd", Path: "/Users/someone/Library/LaunchAgents/com.tslink.daemon.plist", Undo: "tslink uninstall"}
+	record := DaemonInstalled{Manager: "launchd", Path: "/Users/someone/Library/LaunchAgents/com.tslink.daemon.plist", Undo: "tslink uninstall"}
+	calls := map[string]string{
+		"share":          `{"target":"3000"}`,
+		"add":            `{"name":"web","type":"proxy","target":"localhost:3000"}`,
+		"template_apply": `{"name":"local-web"}`,
+	}
 	for _, install := range []bool{true, false} {
 		restoreShareSeams(t)
 		paths := mcpSharePaths(t)
@@ -65,43 +72,33 @@ func TestMCPResultsReportTheDaemonTheyInstalled(t *testing.T) {
 		shareResolveEndpointOnceFn = func(_, _, _, name string) (serviceURLResolution, error) {
 			return serviceURLResolution{Result: URLResult{Name: name, URL: "https://" + name + ".tail.ts.net"}}, nil
 		}
-		ensureDaemonFn = func(context.Context, io.Writer, bool) (*DaemonInstalled, error) {
+		ensureDaemonFn = func(ctx context.Context, _ io.Writer, _ bool) error {
 			running = true
 			if install {
-				return record, nil
+				noteDaemonInstall(ctx, record)
 			}
-			return nil, nil
+			return nil
 		}
 		actions := defaultMCPActions(paths, io.Discard)
-
-		shared, err := actions.share(context.Background(), shareRequest{Target: "3000", Ephemeral: true})
-		if err != nil {
-			t.Fatal(err)
-		}
-		running = false
-		added, err := actions.add(context.Background(), AddParams{Name: "web", Proxy: "localhost:3000"}, true)
-		if err != nil {
-			t.Fatal(err)
-		}
-		applied, err := actions.templateApply(context.Background(), "local-web", false)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for tool, value := range map[string]any{"share": shared, "add": added, "template_apply": applied} {
-			validateAgainstToolOutputSchema(t, tool, value)
-			wire, _ := json.Marshal(value)
-			var fields map[string]json.RawMessage
-			if err := json.Unmarshal(wire, &fields); err != nil {
-				t.Fatal(err)
+		for _, tool := range []string{"share", "add", "template_apply"} {
+			running = false
+			result, err := callMCPTool(context.Background(), actions, tool, json.RawMessage(calls[tool]))
+			if err != nil || result.IsError {
+				t.Fatalf("%s: result %+v, err %v", tool, result, err)
 			}
-			got, present := fields["daemon_installed"]
+			structured, _ := result.StructuredContent.(map[string]any)
+			validateAgainstToolOutputSchema(t, tool, structured)
+			got, present := structured["daemon_installed"]
 			switch {
 			case install && !present:
-				t.Errorf("%s installed a daemon and its result does not say so: %s", tool, wire)
-			case install && !strings.Contains(string(got), `"undo":"tslink uninstall"`):
-				t.Errorf("%s daemon_installed = %s", tool, got)
-			case !install && present:
-				t.Errorf("%s installed nothing and reports daemon_installed %s", tool, got)
+				t.Errorf("%s installed a daemon and its result does not say so: %v", tool, structured)
+			case install:
+				wire, _ := json.Marshal(got)
+				if string(wire) != `{"manager":"launchd","path":"/Users/someone/Library/LaunchAgents/com.tslink.daemon.plist","undo":"tslink uninstall"}` {
+					t.Errorf("%s daemon_installed = %s", tool, wire)
+				}
+			case present:
+				t.Errorf("%s installed nothing and reports daemon_installed %v", tool, got)
 			}
 		}
 	}

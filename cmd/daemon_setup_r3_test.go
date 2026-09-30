@@ -123,7 +123,7 @@ func TestBootstrapInstallBannerRoutesTheScopeQuestion(t *testing.T) {
 		return nil
 	}
 	var log bytes.Buffer
-	if err := ensureDaemonErr(context.Background(), &log, false); err != nil {
+	if err := ensureDaemon(context.Background(), &log, false); err != nil {
 		t.Fatalf("err=%v log=%s", err, &log)
 	}
 	path, _ := supervisorPath()

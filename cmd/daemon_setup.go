@@ -162,41 +162,69 @@ func installDaemonLocked(ctx context.Context, out io.Writer) error {
 	return startInstalledDaemon(ctx, out)
 }
 
-// DaemonInstalled records a background service a command installed: the
-// supervisor, the definition it wrote, and the command that undoes it. The
-// install announcement goes to stderr, which an agent never reads, so share,
-// add and template apply carry this in their result, and only when they
-// installed one.
+// DaemonInstalled records a background service a call installed: the
+// supervisor, the definition it wrote, and the command that undoes it.
 type DaemonInstalled struct {
 	Manager string `json:"manager"`
 	Path    string `json:"path"`
 	Undo    string `json:"undo"`
 }
 
+// daemonInstallRecord is where ensureDaemon notes an install for a caller that
+// asked, through recordDaemonInstall.
+type daemonInstallRecord struct {
+	installed *DaemonInstalled
+}
+
+type daemonInstallRecordKey struct{}
+
+// recordDaemonInstall returns a context under which ensureDaemon notes the
+// background service it installs, and the record it fills. The MCP share, add
+// and template_apply tools use it to report the install in their results: the
+// announcement goes to stderr, which an agent never reads, and those tools
+// reach ensureDaemon through the share, add and template code, whose results
+// the CLI shares.
+func recordDaemonInstall(ctx context.Context) (context.Context, *daemonInstallRecord) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	record := &daemonInstallRecord{}
+	return context.WithValue(ctx, daemonInstallRecordKey{}, record), record
+}
+
+// noteDaemonInstall fills the record of a caller that asked for one.
+func noteDaemonInstall(ctx context.Context, installed DaemonInstalled) {
+	if ctx == nil {
+		return
+	}
+	if record, ok := ctx.Value(daemonInstallRecordKey{}).(*daemonInstallRecord); ok {
+		record.installed = &installed
+	}
+}
+
 // CLI and CI have the same behavior; no terminal detection or prompts. The
 // opt-out is configuration-only and cannot make a stopped daemon look ready.
-// It returns what it installed, or nil when a verified daemon already ran or
-// installation was skipped.
-func ensureDaemon(ctx context.Context, out io.Writer, noInstall bool) (*DaemonInstalled, error) {
+// An install that succeeds is noted for a caller that asked (see
+// recordDaemonInstall).
+func ensureDaemon(ctx context.Context, out io.Writer, noInstall bool) error {
 	pidPath, err := config.PIDPath()
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if noInstall {
 		if isRunningFn(pidPath) {
-			return nil, nil
+			return nil
 		}
 		fmt.Fprintln(out, "Background service installation skipped (--no-daemon-install). Configuration only; URLs are unavailable until 'tslink install'.")
-		return nil, nil
+		return nil
 	}
 	path, err := supervisorPath()
 	if err != nil {
-		return nil, daemonSetupError(err)
+		return daemonSetupError(err)
 	}
-	var installed *DaemonInstalled
 	// One manager slot per OS user, even when callers use different config
 	// directories. Never let concurrent add commands replace each other's job.
-	err = withSupervisorTransaction(ctx, func() error {
+	return withSupervisorTransaction(ctx, func() error {
 		if isRunningFn(pidPath) {
 			pid, err := readPIDFn(pidPath)
 			if err == nil && pid <= 0 {
@@ -268,7 +296,7 @@ func ensureDaemon(ctx context.Context, out io.Writer, noInstall bool) (*DaemonIn
 		if err != nil {
 			return daemonSetupError(err)
 		}
-		installed = &DaemonInstalled{Manager: supervisorName(), Path: path, Undo: "tslink uninstall"}
+		noteDaemonInstall(ctx, DaemonInstalled{Manager: supervisorName(), Path: path, Undo: "tslink uninstall"})
 		if ready {
 			fmt.Fprintln(out, "TSLink background service is ready and autostart is verified.")
 			return nil
@@ -276,10 +304,6 @@ func ensureDaemon(ctx context.Context, out io.Writer, noInstall bool) (*DaemonIn
 		fmt.Fprintf(out, "TSLink background service is running (pid %d) and autostart is verified. It has not published a first sync/enrollment artifact within %s; that step waits on the Tailscale coordination server, so the URL arrives through the wait this command already performs, or later through 'tslink status --json'.\n", pid, bootstrapEvidenceTimeout)
 		return nil
 	})
-	if err != nil {
-		return nil, err
-	}
-	return installed, nil
 }
 
 // waitDaemonEvidence watches an already verified daemon for its first business

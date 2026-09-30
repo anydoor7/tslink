@@ -32,7 +32,7 @@ func repairOperation(ctx context.Context, op string) error {
 	case "uninstall":
 		return uninstallCmd.RunE(repairCommand(ctx), nil)
 	default:
-		return ensureDaemonErr(ctx, io.Discard, false)
+		return ensureDaemon(ctx, io.Discard, false)
 	}
 }
 func repairAwait(t *testing.T, ch <-chan error) error {
@@ -153,7 +153,7 @@ func TestRepairBootstrapRechecksLiveDaemonInsideLock(t *testing.T) {
 	<-entered
 	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
 	blocked := make(chan error, 1)
-	go func() { blocked <- ensureDaemonErr(ctx, io.Discard, false) }()
+	go func() { blocked <- ensureDaemon(ctx, io.Discard, false) }()
 	// A canceled waiter must not install after the lock becomes free.
 	canceledReturned := false
 	select {
@@ -169,7 +169,7 @@ func TestRepairBootstrapRechecksLiveDaemonInsideLock(t *testing.T) {
 	// Start a fresh waiter while the slot is still held. Its lock-internal
 	// observation must see the manual daemon that appears before acquisition.
 	waiting := make(chan error, 1)
-	go func() { waiting <- ensureDaemonErr(context.Background(), io.Discard, false) }()
+	go func() { waiting <- ensureDaemon(context.Background(), io.Discard, false) }()
 	running.Store(true)
 	close(release)
 	if err := repairAwait(t, owner); err != nil {

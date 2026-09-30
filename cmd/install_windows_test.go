@@ -276,7 +276,7 @@ func TestWindowsDirectTransactionsCancelAndPreserveFinalState(t *testing.T) {
 				case "uninstall":
 					return uninstallCmd.RunE(command(ctx), nil)
 				default:
-					return ensureDaemonErr(ctx, io.Discard, false)
+					return ensureDaemon(ctx, io.Discard, false)
 				}
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
