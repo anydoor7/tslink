@@ -542,7 +542,11 @@ func TestMCPToolSchemasAreClosedAndModelFocused(t *testing.T) {
 	}
 
 	unshareProperties := mcpToolByName(t, "unshare").OutputSchema["properties"].(map[string]any)
-	unshareOKDescription := unshareProperties["ok"].(map[string]any)["description"].(string)
+	// B3-5 moved the idempotency guidance from the dropped ok field to removed.
+	if _, present := unshareProperties["ok"]; present {
+		t.Fatal("unshare output schema still declares ok; the result is tslink remove's")
+	}
+	unshareOKDescription := unshareProperties["removed"].(map[string]any)["description"].(string)
 	for _, want := range []string{"idempotent", "service absent", "removed false", "does not guarantee tailnet device cleanup", "device_cleaned", "device_warning"} {
 		if !strings.Contains(unshareOKDescription, want) {
 			t.Fatalf("unshare ok description = %q, want %q", unshareOKDescription, want)
@@ -1006,8 +1010,8 @@ func TestDefaultMCPActionsUseLocalRegistryAndRedactedStatus(t *testing.T) {
 		t.Fatalf("status serialization exposed credential material: %s err=%v", statusJSON, err)
 	}
 	removed, err := actions.unshare(context.Background(), "demo")
-	removedSummary, ok := removed.(mcpUnshareSummary)
-	if err != nil || !ok || !removedSummary.OK || !removedSummary.Removed || !removedSummary.DeviceCleaned || removedSummary.DeviceCleanupSkipped {
+	removedSummary, ok := removed.(RemoveResult)
+	if err != nil || !ok || !removedSummary.Removed || !removedSummary.DeviceCleaned || removedSummary.DeviceCleanupSkipped {
 		t.Fatalf("unshare = %+v err=%v", removed, err)
 	}
 	if _, err := registry.Add(paths.Registry, registry.Service{Name: "partial", Type: registry.TypeProxy, Target: "http://localhost:4000"}); err != nil {
@@ -1017,8 +1021,8 @@ func TestDefaultMCPActionsUseLocalRegistryAndRedactedStatus(t *testing.T) {
 		return tailapi.CleanupResult{Matched: []string{target.Hostname}, Protected: []string{target.Hostname}, Skipped: true, SkipReason: "ownership could not be proven"}, nil
 	}
 	partialValue, err := actions.unshare(context.Background(), "partial")
-	partial := partialValue.(mcpUnshareSummary)
-	if err != nil || !partial.OK || !partial.Removed || !partial.DeviceCleanupSkipped || partial.DeviceSkipReason != "ownership could not be proven" {
+	partial := partialValue.(RemoveResult)
+	if err != nil || !partial.Removed || !partial.DeviceCleanupSkipped || partial.DeviceSkipReason != "ownership could not be proven" {
 		t.Fatalf("partial unshare = %+v err=%v", partial, err)
 	}
 	if _, err := actions.unshare(context.Background(), "Bad_Name"); err == nil {
@@ -1047,11 +1051,11 @@ func TestDefaultMCPActionsUnshareReportsSuccessWithoutAPIClient(t *testing.T) {
 	}
 
 	value, err := defaultMCPActions(paths, os.Stderr).unshare(context.Background(), "zero-credential")
-	summary, ok := value.(mcpUnshareSummary)
+	summary, ok := value.(RemoveResult)
 	if err != nil || !ok {
 		t.Fatalf("unshare = %T(%+v) err=%v", value, value, err)
 	}
-	if !summary.OK || !summary.Removed || !summary.DeviceCleanupSkipped || summary.DeviceSkipReason != tailapi.ErrNoAPIClient.Error() {
+	if !summary.Removed || !summary.DeviceCleanupSkipped || summary.DeviceSkipReason != tailapi.ErrNoAPIClient.Error() {
 		t.Fatalf("unshare summary = %+v", summary)
 	}
 }
@@ -1075,14 +1079,16 @@ func TestMCPUnshareMissingAgreesWithCLIDefaultIdempotency(t *testing.T) {
 	}
 
 	value, mcpErr := defaultMCPActions(sharePaths{Registry: regPath, Ownership: testOwnershipPath(regPath)}, os.Stderr).unshare(context.Background(), name)
-	summary, ok := value.(mcpUnshareSummary)
+	summary, ok := value.(RemoveResult)
 	if mcpErr != nil || !ok {
 		t.Fatalf("MCP unshare = %T(%+v) err=%v", value, value, mcpErr)
 	}
-	if summary.OK != (cliErr == nil) {
-		t.Fatalf("MCP ok=%v disagrees with CLI default success=%v", summary.OK, cliErr == nil)
+	// B3-5 dropped unshare's ok field: success is the tool result not being
+	// an error, as for every other tool.
+	if (mcpErr == nil) != (cliErr == nil) {
+		t.Fatalf("MCP success=%v disagrees with CLI default success=%v", mcpErr == nil, cliErr == nil)
 	}
-	if !summary.OK || summary.Name != name || summary.Removed || summary.DeviceCleaned || summary.DeviceCleanupSkipped || summary.DeviceSkipReason != "" || summary.DeviceWarning != "" {
+	if summary.Name != name || summary.Removed || summary.DeviceCleaned || summary.DeviceCleanupSkipped || summary.DeviceSkipReason != "" || summary.DeviceWarning != "" {
 		t.Fatalf("MCP missing-service detail = %+v, want success with removed=false and preserved detail fields", summary)
 	}
 }

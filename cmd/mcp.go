@@ -224,14 +224,14 @@ var (
 		},
 	}, "services")
 	mcpUnshareOutputSchema = objectSchema(map[string]any{
-		"ok":                     map[string]any{"type": "boolean", "description": "Whether the idempotent unshare request removed the local registry entry or found the service absent (removed false); ok true does not guarantee tailnet device cleanup, so check device_cleaned and device_warning."},
 		"name":                   map[string]any{"type": "string"},
-		"removed":                map[string]any{"type": "boolean"},
+		"removed":                map[string]any{"type": "boolean", "description": "Whether this call removed the local registry entry (true) or found the service absent (removed false). The request is idempotent, so both are success, and success does not guarantee tailnet device cleanup: check device_cleaned and device_warning."},
 		"device_cleaned":         map[string]any{"type": "boolean"},
 		"device_cleanup_skipped": map[string]any{"type": "boolean"},
 		"device_skip_reason":     map[string]any{"type": "string"},
 		"device_warning":         map[string]any{"type": "string"},
-	}, "ok", "name", "removed", "device_cleaned", "device_cleanup_skipped")
+		"node_state_kept_reason": map[string]any{"type": "string", "description": "Why the service's local node state was kept when no other field says so: some of its recorded tailnet nodes were neither deleted nor confirmed absent."},
+	}, "name", "removed", "device_cleaned", "device_cleanup_skipped")
 	mcpStatusOutputSchema = objectSchema(map[string]any{
 		"supervision":              nestedObjectSchema("Verified manager, autostart, restart policy, and diagnostic evidence."),
 		"authenticated":            map[string]any{"type": "boolean", "description": "True when at least one service node is authorized on the tailnet, the same fact as node_authorized and the same meaning as in tslink status --json; a stored credential alone (credential_stored) never makes it true."},
@@ -732,16 +732,6 @@ type mcpStatusSummary struct {
 	Next                   []string    `json:"next,omitempty"`
 }
 
-type mcpUnshareSummary struct {
-	OK                   bool   `json:"ok"`
-	Name                 string `json:"name"`
-	Removed              bool   `json:"removed"`
-	DeviceCleaned        bool   `json:"device_cleaned"`
-	DeviceCleanupSkipped bool   `json:"device_cleanup_skipped"`
-	DeviceSkipReason     string `json:"device_skip_reason,omitempty"`
-	DeviceWarning        string `json:"device_warning,omitempty"`
-}
-
 func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 	return mcpActions{
 		share: func(ctx context.Context, req shareRequest) (ShareResult, error) {
@@ -888,8 +878,8 @@ func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 	}
 }
 
-// unshareMCPService is the unshare tool: the CLI's idempotent remove, reported
-// as an mcpUnshareSummary.
+// unshareMCPService is the unshare tool: the CLI's idempotent remove, with
+// the result `tslink remove --json` carries.
 func unshareMCPService(ctx context.Context, paths sharePaths, name string) (any, error) {
 	if err := registry.ValidateName(name); err != nil {
 		return nil, err
@@ -898,15 +888,7 @@ func unshareMCPService(ctx context.Context, paths sharePaths, name string) (any,
 	if err != nil {
 		return nil, err
 	}
-	return mcpUnshareSummary{
-		OK:                   true,
-		Name:                 removed.Name,
-		Removed:              removed.Removed,
-		DeviceCleaned:        removed.DeviceCleaned,
-		DeviceCleanupSkipped: removed.DeviceCleanupSkipped,
-		DeviceSkipReason:     removed.DeviceSkipReason,
-		DeviceWarning:        removed.DeviceWarning,
-	}, nil
+	return removed, nil
 }
 
 // --- Transport ------------------------------------------------------------
