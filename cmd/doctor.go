@@ -303,7 +303,11 @@ func buildDoctorResult(opts doctorOptions) DoctorResult {
 		} else {
 			reg = loaded
 			result.Counts.Services = len(reg.Services)
-			fingerprint = currentRegistryFingerprint(result.Paths.Registry)
+			if fp, err := tsruntime.CurrentRegistryFingerprint(result.Paths.Registry); err != nil {
+				result.addFinding(inspect.WarningCodeRegistryLoadFailed, "", "registry", "Registry fingerprint could not be computed.", evidenceError(err))
+			} else {
+				fingerprint = fp
+			}
 		}
 	}
 
