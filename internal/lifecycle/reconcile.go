@@ -215,12 +215,16 @@ func Reconcile(ctx context.Context, options Options) (Result, error) {
 				result.DeviceSkipReason = cleanupUnavailableReason
 			}
 			result.Warnings = append(result.Warnings, cleanupErr.Error())
-		} else if !options.DryRun && len(cleanup.ResolvedOwnershipIDs) > 0 {
-			if err := tsruntime.RemoveOwnedNodeIDs(options.OwnershipPath, cleanup.ResolvedOwnershipIDs); err != nil {
+		}
+		held := removeStaleNodeState(options, &result, cleanup, cleanupErr, orphanIDs, serviceNames, active)
+		if cleanupErr == nil && !options.DryRun && len(cleanup.ResolvedOwnershipIDs) > 0 {
+			// The rows of a service whose state a live tsnet server still
+			// holds are the only way a later run finds that state again, so
+			// they are kept until the state itself is gone.
+			if err := tsruntime.RemoveOwnedNodeIDs(options.OwnershipPath, idsExcept(cleanup.ResolvedOwnershipIDs, orphanIDs, held)); err != nil {
 				return Result{}, fmt.Errorf("update node ownership ledger: %w", err)
 			}
 		}
-		removeStaleNodeState(options, &result, cleanup, cleanupErr, orphanIDs, serviceNames, active)
 	}
 
 	if options.ManageACL {
@@ -310,14 +314,20 @@ func Reconcile(ctx context.Context, options Options) (Result, error) {
 // one malformed service would make a live service look absent and cost it its
 // node identity. cmd/remove covers that case at the point where the facts are
 // still in hand.
-func removeStaleNodeState(options Options, result *Result, cleanup tailapi.CleanupResult, cleanupErr error, orphanIDs map[string][]string, serviceNames []string, active map[string]struct{}) {
+//
+// It returns the services whose remote side resolved but whose state a live
+// tsnet server still holds, for example a node the daemon has not stopped yet
+// because the registry change has not reached its sync. Their ownership rows
+// must outlive this run so the next one can finish.
+func removeStaleNodeState(options Options, result *Result, cleanup tailapi.CleanupResult, cleanupErr error, orphanIDs map[string][]string, serviceNames []string, active map[string]struct{}) (held map[string]struct{}) {
+	held = make(map[string]struct{})
 	if options.DryRun || !options.CleanLocalNodeState || options.LocalNodeStateInUse == nil {
-		return
+		return held
 	}
 	if cleanupErr != nil || cleanup.Skipped || len(cleanup.Protected) > 0 {
 		slog.Info("keeping local node state for orphan services; this run could not confirm every remote device is gone",
 			"services", serviceNames, "protected", len(cleanup.Protected), "skipped", cleanup.Skipped)
-		return
+		return held
 	}
 	resolved := make(map[string]struct{}, len(cleanup.ResolvedOwnershipIDs))
 	for _, id := range cleanup.ResolvedOwnershipIDs {
@@ -339,7 +349,8 @@ func removeStaleNodeState(options Options, result *Result, cleanup tailapi.Clean
 			continue
 		}
 		if options.LocalNodeStateInUse(name) {
-			slog.Info("keeping local node state; a tsnet server still holds it", "service", name)
+			slog.Info("keeping local node state and its ownership record; a tsnet server still holds it", "service", name)
+			held[name] = struct{}{}
 			continue
 		}
 		if err := removeNodeStateFn(tsruntime.ServiceNodeStateConfigDir(options.RegistryPath), name); err != nil {
@@ -350,4 +361,22 @@ func removeStaleNodeState(options Options, result *Result, cleanup tailapi.Clean
 		}
 		slog.Info("removed local node state for an orphan service with no remaining remote identity", "service", name)
 	}
+	return held
+}
+
+// idsExcept returns ids without the ownership rows of the services in skip.
+func idsExcept(ids []string, orphanIDs map[string][]string, skip map[string]struct{}) []string {
+	skipped := make(map[string]struct{})
+	for name := range skip {
+		for _, id := range orphanIDs[name] {
+			skipped[id] = struct{}{}
+		}
+	}
+	kept := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if _, ok := skipped[id]; !ok {
+			kept = append(kept, id)
+		}
+	}
+	return kept
 }

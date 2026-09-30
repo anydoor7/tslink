@@ -415,7 +415,7 @@ func startHTTPNode(t *testing.T, fake *fakeTSNetServer, svc registry.Service) ht
 	if !ok {
 		t.Fatalf("service %q did not commit a node", svc.Name)
 	}
-	t.Cleanup(func() { s.stopNodeLocked(svc.Name, false) })
+	t.Cleanup(func() { s.stopNodeLocked(svc.Name) })
 	return node.httpSrv.Handler
 }
 

@@ -438,7 +438,7 @@ func (s *Server) prepareNodeIdentity(ctx context.Context, svc registry.Service) 
 		}
 		return nil, nil
 	}
-	if err := removeServiceStateDirFn(svc.Name); err != nil {
+	if err := removeServiceStateDirFn(s.cfgDir, svc.Name); err != nil {
 		return nil, fmt.Errorf("remove state for auth identity change %q: %w", svc.Name, err)
 	}
 	if _, err := os.Lstat(stateDir); err == nil {

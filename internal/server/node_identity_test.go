@@ -111,10 +111,10 @@ func TestNodeIdentityFreshServerRetryAfterPolicyFailure(t *testing.T) {
 func TestNodeIdentityRemovalGateAndRecovery(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
-		remove func(string) error
+		remove func(string, string) error
 	}{
-		{name: "error", remove: func(string) error { return errors.New("permission denied") }},
-		{name: "no-op-success", remove: func(string) error { return nil }},
+		{name: "error", remove: func(string, string) error { return errors.New("permission denied") }},
+		{name: "no-op-success", remove: func(string, string) error { return nil }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			old, newService, stateDir := identityTestSetup(t)

@@ -306,7 +306,7 @@ func TestStartNodeDispatchesFileServiceOnTheRegistryFileField(t *testing.T) {
 			}
 			t.Cleanup(func() {
 				s.mu.Lock()
-				s.stopNodeLocked("files", false)
+				s.stopNodeLocked("files")
 				s.mu.Unlock()
 			})
 
@@ -389,7 +389,7 @@ func TestHoldsNodeStateReportsOnlyRunningNodes(t *testing.T) {
 	}
 
 	s.mu.Lock()
-	s.stopNodeLocked("files", false)
+	s.stopNodeLocked("files")
 	s.mu.Unlock()
 	if s.HoldsNodeState("files") {
 		t.Fatal("HoldsNodeState(\"files\") = true after the node stopped and released its state")

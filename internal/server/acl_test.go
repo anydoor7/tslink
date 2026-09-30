@@ -206,7 +206,7 @@ func TestStartNodeLocked_AssemblesAllowedUsersACL(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("startNodeLocked() error = %v", err)
 	}
-	t.Cleanup(func() { s.stopNodeLocked("x", false) })
+	t.Cleanup(func() { s.stopNodeLocked("x") })
 
 	node, ok := s.nodes["x"]
 	if !ok || node.httpSrv == nil || node.httpSrv.Handler == nil {

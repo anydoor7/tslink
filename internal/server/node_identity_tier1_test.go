@@ -64,11 +64,11 @@ func instrumentTiers(t *testing.T) *tierProbe {
 	oldNow := serverNowFn
 	serverNowFn = func() time.Time { return time.Unix(0, p.now.Load()).UTC() }
 	oldRemove := removeServiceStateDirFn
-	removeServiceStateDirFn = func(name string) error {
+	removeServiceStateDirFn = func(cfgDir, name string) error {
 		p.mu.Lock()
 		p.removed = append(p.removed, name)
 		p.mu.Unlock()
-		return oldRemove(name)
+		return oldRemove(cfgDir, name)
 	}
 	oldNew := newTSNetServerFn
 	newTSNetServerFn = func(svc registry.Service, _, authKey, _ string) tsnetServer {

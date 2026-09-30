@@ -101,9 +101,6 @@ func TestSyncNodesWithdrawsRemovedOrExpiredPublicOnGlobalPolicyFailure(t *testin
 			if tc.expires && stateErr != nil {
 				t.Fatalf("expired service lost state needed for private retry: %v", stateErr)
 			}
-			if !tc.expires && !os.IsNotExist(stateErr) {
-				t.Fatalf("removed service state still exists: %v", stateErr)
-			}
 		})
 	}
 }

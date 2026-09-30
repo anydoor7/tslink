@@ -861,23 +861,28 @@ func (s *Server) syncNodesWithOutcome(ctx context.Context, startup bool) (outcom
 		return outcome, err
 	}
 
-	// Stop nodes for removed or changed services. The common start path below
+	// Stop nodes for absent or changed services. The common start path below
 	// compares durable identity and resets old state before any replacement Up.
+	// An absent service keeps its node state: absence from the registry just
+	// loaded is not proof of removal (the file may have been lost, replaced or
+	// mistyped). The lifecycle reconciler deletes a removed service's state
+	// once the ownership ledger's retired_at, written by `tslink remove`, and
+	// the remote side prove it.
 	for name, node := range s.nodes {
 		svc, exists := desired[name]
 		if !exists {
-			slog.Info("removing node", "name", name)
-			s.stopNodeLocked(name, true) // remove state for deleted services
+			slog.Info("stopping node whose service is absent from the registry; its node state is kept", "name", name)
+			s.stopNodeLocked(name)
 		} else if failure, invalid := validationFailures[name]; invalid {
 			slog.Warn("stopping node whose service no longer validates", "name", name, "code", failure.Error.Code)
-			s.stopNodeLocked(name, false)
+			s.stopNodeLocked(name)
 			s.serviceFailures[name] = failure
 		} else if identityErr, failed := identityFailures[name]; failed {
 			// A damaged or unwritable record affects this service only. Close
 			// any divergent public listener, while unrelated nodes still sync.
 			if node.funnelListenerActive && serviceChangedWithFallback(node.service, svc, s.controlURL) {
 				slog.Warn("closing changed public listener after node identity error", "name", name, "error", identityErr)
-				s.stopNodeLocked(name, false)
+				s.stopNodeLocked(name)
 			}
 			s.serviceFailures[name] = nodeIdentityFailure(svc, identityErr)
 		} else if failure, blocked := policyFailures[name]; blocked {
@@ -886,7 +891,7 @@ func (s *Server) syncNodesWithOutcome(ctx context.Context, startup bool) (outcom
 				// remain reachable after the registry changes. Keep its local
 				// state for a later retry, but close the stale exposure now.
 				slog.Warn("closing changed public listener after Funnel policy preflight failed", "name", name, "reason", failure.Error.Provision.Reason)
-				s.stopNodeLocked(name, false)
+				s.stopNodeLocked(name)
 			} else {
 				// An unchanged public node or an older private node may keep
 				// serving while Funnel enrollment is unavailable.
@@ -895,7 +900,7 @@ func (s *Server) syncNodesWithOutcome(ctx context.Context, startup bool) (outcom
 			s.serviceFailures[name] = failure
 		} else if serviceChangedWithFallback(node.service, svc, s.controlURL) {
 			slog.Info("restarting node", "name", name, "auth_identity_changed", s.authIdentityChanged(node.service, svc))
-			s.stopNodeLocked(name, false)
+			s.stopNodeLocked(name)
 		}
 	}
 	// Prune records of removed services whose state is already gone. State of
@@ -1348,7 +1353,7 @@ func (s *Server) stopDivergentPublicNodesLocked(desired map[string]registry.Serv
 			continue
 		}
 		slog.Warn("closing divergent public listener before failed registry sync returns", "name", name, "registered", exists)
-		s.stopNodeLocked(name, !exists)
+		s.stopNodeLocked(name)
 		stopped = true
 	}
 	return stopped
@@ -1426,7 +1431,7 @@ func (s *Server) failClosedGlobalRegistryError(generation uint64, loadErr error)
 			continue
 		}
 		slog.Warn("closing active Funnel listener after invalid registry reload", "name", name, "code", registry.CodeRegistryReloadInvalid)
-		s.stopNodeLocked(name, false)
+		s.stopNodeLocked(name)
 	}
 	s.globalFailure = &runtimesnapshot.ServiceError{
 		Code:    registry.CodeRegistryReloadInvalid,
@@ -1539,7 +1544,7 @@ func (s *Server) prepareCredentialUpgradeLocked(services []registry.Service) err
 		if err := registry.ValidateName(name); err != nil {
 			return fmt.Errorf("validate service for credential upgrade: %w", err)
 		}
-		if err := removeServiceStateDirFn(name); err != nil {
+		if err := removeServiceStateDirFn(s.cfgDir, name); err != nil {
 			return fmt.Errorf("remove Tier 1 state for credential upgrade %q: %w", name, err)
 		}
 		removed++
@@ -1607,15 +1612,10 @@ func (s *Server) HoldsNodeState(name string) bool {
 	return running
 }
 
-func removeServiceStateDir(name string) error {
-	nodesDir, err := config.NodesDir()
-	if err != nil {
-		return err
-	}
-	return os.RemoveAll(filepath.Join(nodesDir, name))
-}
-
-var removeServiceStateDirFn = removeServiceStateDir
+// removeServiceStateDirFn deletes a service's node state inside the daemon's
+// configured directory. Every node-state deletion goes through
+// runtime.RemoveServiceNodeState.
+var removeServiceStateDirFn = runtimesnapshot.RemoveServiceNodeState
 
 func cleanupTargetHostnames(targets []tailapi.CleanupTarget) []string {
 	hostnames := make([]string, 0, len(targets))
@@ -1853,12 +1853,7 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service, prov
 		slog.Warn("remote cleanup failed after old state removal; continuing restart", "name", svc.Name, "error", cleanupErr)
 	}
 
-	nodesDir, err := config.NodesDir()
-	if err != nil {
-		return err
-	}
-
-	stateDir := filepath.Join(nodesDir, svc.Name)
+	stateDir := filepath.Join(config.NodesDirIn(s.cfgDir), svc.Name)
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
 		return err
 	}
@@ -2400,9 +2395,9 @@ func runtimeNodeIDFromStatus(status *ipnstate.Status) string {
 	return string(status.Self.ID)
 }
 
-// stopNodeLocked stops a node. If removeState is true, its tsnet state dir is deleted.
-// Use removeState=true only when a service is removed from the registry.
-func (s *Server) stopNodeLocked(name string, removeState bool) {
+// stopNodeLocked stops a node and keeps its tsnet state directory. Stopping is
+// never a decision about the state: see runtime.RemoveServiceNodeState.
+func (s *Server) stopNodeLocked(name string) {
 	node, ok := s.nodes[name]
 	if !ok {
 		return
@@ -2437,13 +2432,6 @@ func (s *Server) stopNodeLocked(name string, removeState bool) {
 		_ = node.handlerCloser.Close()
 	}
 
-	if removeState {
-		nodesDir, err := config.NodesDir()
-		if err == nil {
-			os.RemoveAll(filepath.Join(nodesDir, name))
-		}
-	}
-
 	delete(s.nodes, name)
 }
 
@@ -2451,7 +2439,7 @@ func (s *Server) closeAllNodes() {
 	s.closeMCPControlPlane()
 	s.mu.Lock()
 	for name := range s.nodes {
-		s.stopNodeLocked(name, false) // keep state on graceful shutdown
+		s.stopNodeLocked(name)
 	}
 	s.mu.Unlock()
 	s.removeRuntimeSnapshot()

@@ -232,7 +232,7 @@ func TestStopNodeLocked_ClosesInFlightTCPConnection(t *testing.T) {
 		t.Fatal("backend did not receive in-flight proxy connection")
 	}
 
-	s.stopNodeLocked("db", false)
+	s.stopNodeLocked("db")
 
 	if err := clientConn.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
 		t.Fatalf("SetReadDeadline() error = %v", err)

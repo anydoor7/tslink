@@ -132,7 +132,7 @@ func TestRemoveKeepsLocalNodeStateWhenTheRemoteSideIsUnconfirmed(t *testing.T) {
 		cleanupErr    error
 	}{
 		{
-			name:          "a daemon is running and removes it itself",
+			name:          "a daemon is running and its reconciler removes it",
 			daemonRunning: true,
 			cleanup:       tailapi.CleanupResult{Deleted: []string{"web"}, ResolvedOwnershipIDs: []string{"node-web"}},
 		},

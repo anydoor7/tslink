@@ -692,7 +692,7 @@ func TestStopNodeLocked_CAS(t *testing.T) {
 	node := newNode(t, registry.Service{Name: "test"})
 	s.nodes["test"] = node
 
-	s.stopNodeLocked("test", false)
+	s.stopNodeLocked("test")
 
 	if _, exists := s.nodes["test"]; exists {
 		t.Error("node should be removed after stop")
@@ -714,40 +714,10 @@ func TestStopNodeLocked_AlreadyClosed(t *testing.T) {
 	node.closed.Store(true)
 	s.nodes["test"] = node
 
-	s.stopNodeLocked("test", false)
+	s.stopNodeLocked("test")
 
 	if _, exists := s.nodes["test"]; exists {
 		t.Error("node should be removed from map")
-	}
-}
-
-func TestStopNodeLocked_RemoveState(t *testing.T) {
-	testenv.SetHome(t, t.TempDir())
-	if err := config.EnsureDir(); err != nil {
-		t.Fatalf("EnsureDir() error = %v", err)
-	}
-
-	s, err := New("key", "")
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-
-	nodesDir, err := config.NodesDir()
-	if err != nil {
-		t.Fatalf("NodesDir() error = %v", err)
-	}
-	stateDir := filepath.Join(nodesDir, "test")
-	if err := os.MkdirAll(stateDir, 0o700); err != nil {
-		t.Fatalf("MkdirAll() error = %v", err)
-	}
-
-	node := newNode(t, registry.Service{Name: "test"})
-	s.nodes["test"] = node
-
-	s.stopNodeLocked("test", true)
-
-	if _, err := os.Stat(stateDir); !os.IsNotExist(err) {
-		t.Fatalf("expected %q to be removed, stat err = %v", stateDir, err)
 	}
 }
 
@@ -769,7 +739,7 @@ func TestStopNodeLocked_ClosesListenerAndServer(t *testing.T) {
 		cancel:   func() {},
 	}
 
-	s.stopNodeLocked("test", false)
+	s.stopNodeLocked("test")
 
 	if !ln.closed.Load() {
 		t.Fatal("listener should be closed")
@@ -792,7 +762,7 @@ func TestStopNodeLocked_ClosesPinnedFileHandler(t *testing.T) {
 		cancel:        func() {},
 	}
 
-	s.stopNodeLocked("files", false)
+	s.stopNodeLocked("files")
 
 	if got := closer.closeCount.Load(); got != 1 {
 		t.Fatalf("pinned file handler Close calls = %d, want exactly 1", got)
@@ -839,7 +809,7 @@ func TestStopNodeLocked_HTTPServerShutdownFallsBackToClose(t *testing.T) {
 		cancel:   func() {},
 	}
 
-	s.stopNodeLocked("test", false)
+	s.stopNodeLocked("test")
 
 	if shutdownCalled.Load() != 1 {
 		t.Fatalf("shutdown calls = %d, want 1", shutdownCalled.Load())
@@ -1504,7 +1474,7 @@ func TestStartNodeLocked_HTTPServerHasTimeouts(t *testing.T) {
 		t.Fatalf("startNodeLocked() error = %v", err)
 	}
 	t.Cleanup(func() {
-		s.stopNodeLocked("files", false)
+		s.stopNodeLocked("files")
 	})
 
 	node := s.nodes["files"]
@@ -1564,7 +1534,7 @@ func TestStartNodeLocked_HTTPServerReadHeaderTimeoutClosesSlowClient(t *testing.
 		t.Fatalf("startNodeLocked() error = %v", err)
 	}
 	t.Cleanup(func() {
-		s.stopNodeLocked("files", false)
+		s.stopNodeLocked("files")
 	})
 
 	conn, err := net.Dial("tcp", ln.Addr().String())
@@ -2703,7 +2673,7 @@ func TestSyncNodes_ShutdownStatePreventsStartingNode(t *testing.T) {
 	}
 }
 
-func TestSyncNodes_RemovesDeletedService(t *testing.T) {
+func TestSyncNodes_StopsDeletedService(t *testing.T) {
 	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
@@ -2732,9 +2702,6 @@ func TestSyncNodes_RemovesDeletedService(t *testing.T) {
 
 	if _, exists := s.nodes["old"]; exists {
 		t.Fatal("removed service should no longer have a running node")
-	}
-	if _, err := os.Stat(stateDir); !os.IsNotExist(err) {
-		t.Fatalf("expected %q to be removed, stat err = %v", stateDir, err)
 	}
 }
 
@@ -3557,7 +3524,7 @@ func TestSyncNodes_FunnelPolicyFailurePrecedesStopAndStateWipe(t *testing.T) {
 	s.nodes[oldSvc.Name] = oldNode
 	wipes := 0
 	oldRemove := removeServiceStateDirFn
-	removeServiceStateDirFn = func(name string) error {
+	removeServiceStateDirFn = func(string, string) error {
 		wipes++
 		return nil
 	}
@@ -4532,11 +4499,13 @@ func TestSyncNodes_RegistryAvailabilityDecisionMatrix(t *testing.T) {
 		wantPublicStateGone  bool
 		wantPrivateStateGone bool
 	}{
-		{name: "file-missing", wantPublicStopped: true, wantPrivateStopped: true, wantPublicStateGone: true, wantPrivateStateGone: true},
+		// Absence from the registry stops a node and never deletes its state:
+		// the lifecycle reconciler does that on ownership-ledger proof.
+		{name: "file-missing", wantPublicStopped: true, wantPrivateStopped: true},
 		{name: "zero-byte", registryData: ptrServerString(""), wantError: true, wantPublicStopped: true},
 		{name: "partial-json", registryData: ptrServerString(`{"schema_version":1,"services":[`), wantError: true, wantPublicStopped: true},
-		{name: "explicit-empty-services", registryData: ptrServerString(`{"schema_version":1,"services":[]}`), wantPublicStopped: true, wantPrivateStopped: true, wantPublicStateGone: true, wantPrivateStateGone: true},
-		{name: "delete-one-service", registryData: ptrServerString(`{"schema_version":1,"services":[{"name":"private-app","type":"proxy","target":"http://localhost:3001"}]}`), wantPublicStopped: true, wantPublicStateGone: true},
+		{name: "explicit-empty-services", registryData: ptrServerString(`{"schema_version":1,"services":[]}`), wantPublicStopped: true, wantPrivateStopped: true},
+		{name: "delete-one-service", registryData: ptrServerString(`{"schema_version":1,"services":[{"name":"private-app","type":"proxy","target":"http://localhost:3001"}]}`), wantPublicStopped: true},
 	}
 
 	for _, tc := range tests {
@@ -5133,7 +5102,7 @@ func TestSyncNodes_StateRemovalFailureBlocksChangedIdentityRestart(t *testing.T)
 	t.Cleanup(func() { newTSNetServerFn = oldNew })
 
 	oldRemove := removeServiceStateDirFn
-	removeServiceStateDirFn = func(name string) error {
+	removeServiceStateDirFn = func(string, string) error {
 		return errors.New("permission denied")
 	}
 	t.Cleanup(func() { removeServiceStateDirFn = oldRemove })
@@ -5319,9 +5288,6 @@ func TestWatchRegistry_ReactsToCreate(t *testing.T) {
 		_, exists := s.nodes["stale"]
 		s.mu.RUnlock()
 		if !exists {
-			if _, err := os.Stat(stateDir); !os.IsNotExist(err) {
-				t.Fatalf("expected %q to be removed, stat err = %v", stateDir, err)
-			}
 			return
 		}
 		time.Sleep(25 * time.Millisecond)
@@ -5844,8 +5810,7 @@ func TestStopNodeLocked_NonexistentNode(t *testing.T) {
 	}
 
 	// Should be a no-op, not panic
-	s.stopNodeLocked("nonexistent", false)
-	s.stopNodeLocked("nonexistent", true)
+	s.stopNodeLocked("nonexistent")
 }
 
 func TestStopNodeLocked_NilListenerAndServer(t *testing.T) {
@@ -5863,7 +5828,7 @@ func TestStopNodeLocked_NilListenerAndServer(t *testing.T) {
 		cancel:   func() {},
 	}
 
-	s.stopNodeLocked("test", false)
+	s.stopNodeLocked("test")
 
 	if _, exists := s.nodes["test"]; exists {
 		t.Error("node should be removed after stop")

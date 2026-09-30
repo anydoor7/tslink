@@ -165,7 +165,20 @@ func removeServiceResultContext(ctx context.Context, regPath, ownershipPath, nam
 			}
 		} else {
 			result.DeviceCleaned = len(cleanup.Deleted) > 0
-			if len(cleanup.ResolvedOwnershipIDs) > 0 {
+			// While a daemon runs, a live tsnet server may still hold the
+			// state directory, and only the daemon can tell. Its lifecycle
+			// reconciler is then the one authority that deletes the state: it
+			// finds the service through these retired ownership rows, confirms
+			// the remote side again, and removes the directory once no node
+			// holds it. So the rows stay retired here instead of being
+			// forgotten; the reconciler forgets them when it finishes.
+			//
+			// Without a daemon nothing else will ever look, so this command
+			// finishes the job itself: that is how ~/.config/tslink/nodes/
+			// would otherwise accumulate directories for services removed
+			// months ago.
+			daemonRunning := removeDaemonRunningFn()
+			if len(cleanup.ResolvedOwnershipIDs) > 0 && !daemonRunning {
 				if err := tsruntime.RemoveOwnedNodeIDs(ownershipPath, cleanup.ResolvedOwnershipIDs); err != nil {
 					result.DeviceWarning = fmt.Sprintf("device cleanup succeeded but ownership ledger update failed: %v", err)
 				}
@@ -174,29 +187,6 @@ func removeServiceResultContext(ctx context.Context, regPath, ownershipPath, nam
 				result.DeviceCleanupSkipped = true
 				result.DeviceSkipReason = cleanup.SkipReason
 			}
-			// The state directory outlives the service unless something
-			// removes it. A running daemon does that itself when the registry
-			// change reaches its watcher -- but only for a service that is in
-			// its s.nodes map, because internal/server's removal loop iterates
-			// that map and calls stopNodeLocked(name, true) per entry. A
-			// service whose node never started, or failed to start, is not in
-			// it.
-			//
-			// So deferring to a running daemon is correct for the common case
-			// and incomplete for that one: this command defers, and the daemon
-			// has nothing to stop. Such a directory is not cleaned up
-			// automatically afterwards: the ownership rows this command has
-			// already removed are the only thing the daemon's reconcile pass
-			// looks at, so it never sees the directory again. An operator
-			// deletes it by hand. Narrowing this branch further would mean asking a
-			// separate process which nodes it is running, which is what
-			// lifecycle.Options.LocalNodeStateInUse exists for inside the
-			// daemon and what a CLI process has no way to answer.
-			//
-			// What this path does cover is the case the daemon cannot see at
-			// all: a remove issued while no daemon is running, which is how
-			// ~/.config/tslink/nodes/ accumulates directories for services that
-			// were removed months ago.
 			// Nothing on this path writes to stderr. `tslink remove` reports
 			// through its result envelope, and the compiled-binary contract
 			// tests assert stderr is empty on success, so an slog line here
@@ -207,10 +197,9 @@ func removeServiceResultContext(ctx context.Context, regPath, ownershipPath, nam
 			switch {
 			case !stale:
 				result.NodeStateKeptReason = unreportedKeepReason
-			case removeDaemonRunningFn():
-				// Deliberately silent: the daemon deleting the directory it
-				// owns is the ordinary outcome, and the one case where it does
-				// not is documented in this command's help text.
+			case daemonRunning:
+				// Deliberately silent: the daemon's reconciler deleting the
+				// directory is the ordinary outcome.
 			default:
 				if removeErr := removeNodeStateFn(tsruntime.ServiceNodeStateConfigDir(regPath), name); removeErr != nil {
 					result.DeviceWarning = fmt.Sprintf("service and tailnet node removed but local node state could not be deleted: %v", removeErr)
@@ -274,16 +263,14 @@ This command:
 If the gateway is running, it will detect the registry change via hot-reload
 and stop the removed service's tsnet node automatically.
 
-The service's node state in ~/.config/tslink/nodes/<name>/ is removed once this
-command has confirmed the service holds no remote tailnet identity: either its
-recorded device was deleted, or it never had one.
+The service's node state in ~/.config/tslink/nodes/<name>/ is removed once the
+service is confirmed to hold no remote tailnet identity: either its recorded
+device was deleted, or it never had one.
 
-While a daemon is running this command leaves that directory alone, because the
-daemon removes it itself when the registry change reaches it -- but only for a
-service whose node that daemon currently has running. A service whose node never
-started, or failed to start, is in neither place: this command deferred to the
-daemon and the daemon has nothing to stop. Its directory is not cleaned up
-automatically afterwards; delete it by hand.
+While a daemon is running this command leaves that directory to the daemon: it
+keeps the service's retired ownership record, and the daemon's lifecycle
+reconciliation confirms the remote side again and removes the directory once no
+node of its own holds it. Without a daemon this command removes it itself.
 
 State is also kept whenever the remote side could not be confirmed, such as a
 protected hostname-only match or an unavailable API client.

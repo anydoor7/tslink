@@ -41,11 +41,11 @@ func instrumentIdentity(t *testing.T) *identityProbe {
 	t.Helper()
 	p := &identityProbe{}
 	oldRemove := removeServiceStateDirFn
-	removeServiceStateDirFn = func(name string) error {
+	removeServiceStateDirFn = func(cfgDir, name string) error {
 		p.mu.Lock()
 		p.removed = append(p.removed, name)
 		p.mu.Unlock()
-		return oldRemove(name)
+		return oldRemove(cfgDir, name)
 	}
 	oldNew := newTSNetServerFn
 	newTSNetServerFn = func(svc registry.Service, stateDir, _, _ string) tsnetServer {

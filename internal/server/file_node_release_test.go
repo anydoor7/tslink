@@ -25,7 +25,7 @@ func TestStoppedFileNodeReleasesServedDirectory(t *testing.T) {
 		{name: "graceful shutdown", stop: func(s *Server) { s.closeAllNodes() }},
 		{name: "service removal", stop: func(s *Server) {
 			s.mu.Lock()
-			s.stopNodeLocked("files", true)
+			s.stopNodeLocked("files")
 			s.mu.Unlock()
 		}},
 	} {
