@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/monody0007/tslink/internal/credentials"
+	"github.com/monody0007/tslink/internal/errcode"
 	"github.com/monody0007/tslink/internal/inspect"
 	"github.com/monody0007/tslink/internal/output"
 	"github.com/monody0007/tslink/internal/registry"
@@ -895,55 +896,14 @@ func flagRelationships(commandPath, name string) (oneOf, requires, conflicts []s
 	return oneOf, requires, conflicts
 }
 
+// errorCodeManifest is the error-code table of internal/errcode, the same
+// table output.ExitCode and the daemon's per-service isolation read.
 func errorCodeManifest() map[string]ErrorCodeInfo {
-	return map[string]ErrorCodeInfo{
-		"internal_error":                        {ExitCode: output.ExitError, Description: "unexpected internal failure"},
-		"usage_error":                           {ExitCode: output.ExitUsage, Description: "invalid command syntax or value"},
-		"auth_error":                            {ExitCode: output.ExitAuth, Description: "authentication required or rejected"},
-		"conflict":                              {ExitCode: output.ExitConflict, Description: "requested state conflicts with existing state"},
-		"not_found":                             {ExitCode: output.ExitNotFound, Description: "requested object was not found"},
-		registry.CodeServiceTypeAmbiguous:       {ExitCode: output.ExitUsage, Description: "exactly one service type is required"},
-		registry.CodeInvalidServiceName:         {ExitCode: output.ExitUsage, Description: "service name is not a valid DNS label"},
-		registry.CodeInvalidTag:                 {ExitCode: output.ExitUsage, Description: "ACL tag is invalid"},
-		registry.CodeAllowUnsupportedTCP:        {ExitCode: output.ExitUsage, Description: "HTTP allow lists do not apply to raw TCP"},
-		registry.CodePathMustBeAbsolute:         {ExitCode: output.ExitUsage, Description: "file service path must be absolute"},
-		registry.CodePathNotFound:               {ExitCode: output.ExitUsage, Description: "file service directory does not exist"},
-		registry.CodePathNotDirectory:           {ExitCode: output.ExitUsage, Description: "file service path is not a directory"},
-		registry.CodePathNotAccessible:          {ExitCode: output.ExitUsage, Description: "file service path is not accessible to the current user"},
-		registry.CodePathExposesConfigDir:       {ExitCode: output.ExitUsage, Description: "file service path is, contains, or lies inside TSLink's config directory, which holds node keys and credentials"},
-		registry.CodeUnknownConfigKey:           {ExitCode: output.ExitUsage, Description: "configuration key is not supported"},
-		registry.CodeConfigLoadFailed:           {ExitCode: output.ExitUsage, Description: "config.json exists but cannot be read strictly (malformed JSON or an unknown key); commands that would persist its settings refuse to guess"},
-		registry.CodeURLNotReady:                {ExitCode: output.ExitNotFound, Description: "runtime has not reported an exact tailnet hostname"},
-		registry.CodeLaunchctlDomainUnavailable: {ExitCode: output.ExitError, Description: "a launchd domain could not be checked; failure data names the domain, explicit --force command, and residual risk"},
-		registry.CodeFunnelPublicAckRequired:    {ExitCode: output.ExitUsage, Description: "public Funnel acknowledgement is required"},
-		registry.CodeFunnelExpiryRequired:       {ExitCode: output.ExitUsage, Description: "a Funnel entry records neither a funnel_expires_at deadline nor \"never\"; it is not made public until one is set"},
-		registry.CodeFunnelAllowConflict:        {ExitCode: output.ExitConflict, Description: "Funnel conflicts with an allow list"},
-		registry.CodeFunnelControlURLConflict:   {ExitCode: output.ExitConflict, Description: "Funnel conflicts with control_url"},
-		registry.CodeFunnelTypeConflict:         {ExitCode: output.ExitConflict, Description: "Funnel requires a proxy service"},
-		registry.CodeCredentialURLMismatch:      {ExitCode: output.ExitConflict, Description: "a credentialed daemon refuses to send an auth key minted through the Tailscale API to a control server that is not Tailscale's; the service is not started"},
-		registry.CodeFunnelCapabilityMissing:    {ExitCode: output.ExitError, Description: "service tsnet node lacks Funnel capability, HTTPS, or allowed port"},
-		registry.CodeFunnelListenFailed:         {ExitCode: output.ExitError, Description: "Funnel capability preflight passed but listener activation failed"},
-		registry.CodeServiceStartTimeout:        {ExitCode: output.ExitError, Description: "service node did not reach running state before its startup deadline"},
-		registry.CodeInviteAPIKeyRequired:       {ExitCode: output.ExitAuth, Description: "a user-owned tskey-api- token is required and OAuth is not eligible"},
-		registry.CodeInviteRoleInvalid:          {ExitCode: output.ExitUsage, Description: "invite role is outside the first-party enum"},
-		registry.CodeInviteRecipientInvalid:     {ExitCode: output.ExitUsage, Description: "invite recipient is missing"},
-		registry.CodeInviteNotFound:             {ExitCode: output.ExitNotFound, Description: "invite or matching service device was not found"},
-		registry.CodeInviteDeviceAmbiguous:      {ExitCode: output.ExitConflict, Description: "multiple hostname candidates remain after ownership resolution"},
-		registry.CodeInviteOwnershipUnproven:    {ExitCode: output.ExitConflict, Description: "TSLink lacks exact stable nodeId proof for the device"},
-		registry.CodeInviteAPIForbidden:         {ExitCode: output.ExitAuth, Description: "Tailscale rejected the user-owned token's user permissions with HTTP 403; HTTP 401 (expired, revoked, or invalid token) is reported as invite_api_unauthorized"},
-		registry.CodeInviteAPIUnauthorized:      {ExitCode: output.ExitAuth, Description: "Tailscale rejected the user-owned tskey-api- token as unauthenticated (HTTP 401): expired, revoked, or invalid; next carries the key-bootstrap steps"},
-		registry.CodeAPITokenUnauthorized:       {ExitCode: output.ExitAuth, Description: "Tailscale rejected the stored API credential as unauthenticated (HTTP 401) during ACL, device, auth-key derivation, or login verification; next carries the key-bootstrap steps"},
-		registry.CodeAPIForbidden:               {ExitCode: output.ExitAuth, Description: "Tailscale refused the API credential (HTTP 403): its user role or OAuth scopes do not permit the operation"},
-		registry.CodeLoginVerifyFailed:          {ExitCode: output.ExitError, Description: "login could not verify the candidate credential against Tailscale for a reason other than HTTP 401/403; the previous credential was kept"},
-		registry.CodeInviteResendEmailMissing:   {ExitCode: output.ExitConflict, Description: "an invite created without email cannot be resent"},
-		registry.CodeInviteIDInvalid:            {ExitCode: output.ExitUsage, Description: "invite ID is not a bare ASCII decimal string"},
-		registry.CodeInviteKindInvalid:          {ExitCode: output.ExitUsage, Description: "invite namespace is not explicitly user or device"},
-		registry.CodeInviteRateLimited:          {ExitCode: output.ExitError, Description: "Tailscale rate limited the invite operation"},
-		registry.CodeInviteStateConflict:        {ExitCode: output.ExitConflict, Description: "Tailscale rejected the invite operation because current remote state conflicts with it (HTTP 409)"},
-		registry.CodeInviteRequestInvalid:       {ExitCode: output.ExitUsage, Description: "Tailscale rejected the invite request as another 4xx input error"},
-		registry.CodeInviteResponseInvalid:      {ExitCode: output.ExitError, Description: "Tailscale returned an invalid invite wire response"},
-		registry.CodeLegacyConfigDirPresent:     {ExitCode: output.ExitConflict, Description: "Windows only: the config directory is still at the legacy %USERPROFILE%\\.config\\tslink location; TSLink never moves it, and next carries the one manual move command"},
+	codes := map[string]ErrorCodeInfo{}
+	for _, row := range errcode.All() {
+		codes[row.Code] = ErrorCodeInfo{ExitCode: row.Exit, Description: row.Description}
 	}
+	return codes
 }
 
 func CompactManifest() CompactCLIManifest {

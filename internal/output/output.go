@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/monody0007/tslink/internal/errcode"
 	"github.com/monody0007/tslink/internal/registry"
 )
 
@@ -16,16 +17,17 @@ const (
 	SchemaType    = "tslink.result"
 )
 
-// Semantic exit codes for programmatic consumers.
+// Semantic exit codes for programmatic consumers, defined with the error-code
+// table in internal/errcode.
 const (
-	ExitSuccess  = 0
-	ExitError    = 1
-	ExitUsage    = 2
-	ExitAuth     = 3
-	ExitConflict = 4
-	ExitNotFound = 5
-	ExitWarning  = 64
-	ExitCritical = 65
+	ExitSuccess  = errcode.ExitSuccess
+	ExitError    = errcode.ExitError
+	ExitUsage    = errcode.ExitUsage
+	ExitAuth     = errcode.ExitAuth
+	ExitConflict = errcode.ExitConflict
+	ExitNotFound = errcode.ExitNotFound
+	ExitWarning  = errcode.ExitWarning
+	ExitCritical = errcode.ExitCritical
 )
 
 // CodeError is an error that carries a semantic exit code.
@@ -235,18 +237,7 @@ func NextCommandsForError(err error) []string {
 
 // StableErrorCode maps numeric semantic exit codes to stable machine strings.
 func StableErrorCode(code int) string {
-	switch code {
-	case ExitUsage:
-		return "usage_error"
-	case ExitAuth:
-		return "auth_error"
-	case ExitConflict:
-		return "conflict"
-	case ExitNotFound:
-		return "not_found"
-	default:
-		return "internal_error"
-	}
+	return errcode.Generic(code)
 }
 
 // WriteJSON writes a Result as JSON to the given writer.
@@ -270,81 +261,30 @@ func FailureForError(command string, err error) {
 	WriteJSON(os.Stdout, NewFailureForError(command, err))
 }
 
-// ExitCode extracts the exit code from an error.
-// Returns ExitError (1) for non-CodeError errors, ExitSuccess (0) for nil.
+// ExitCode extracts the exit code from an error. A stable code decides it
+// through the error-code table, whatever type carries the code, so a code
+// always exits the same way; an error with only a CodeError or
+// SilentCodeError exits with its number. Returns ExitError (1) for any other
+// error and ExitSuccess (0) for nil.
 func ExitCode(err error) int {
 	if err == nil {
 		return ExitSuccess
-	}
-	var ce *CodeError
-	if errors.As(err, &ce) {
-		return ce.Code
 	}
 	var se *SilentCodeError
 	if errors.As(err, &se) {
 		return se.Code
 	}
 	if stable, _, ok := stableErrorMetadata(err); ok {
-		return exitCodeForStableError(stable)
+		return errcode.ExitFor(stable)
+	}
+	var ce *CodeError
+	if errors.As(err, &ce) {
+		return ce.Code
 	}
 	if isUsageErrorMessage(err.Error()) {
 		return ExitUsage
 	}
 	return ExitError
-}
-
-func exitCodeForStableError(stable string) int {
-	switch stable {
-	case registry.CodeInviteRoleInvalid,
-		registry.CodeInviteRecipientInvalid,
-		registry.CodeInviteIDInvalid,
-		registry.CodeInviteKindInvalid,
-		registry.CodeInviteRequestInvalid:
-		return ExitUsage
-	case registry.CodeInviteAPIKeyRequired,
-		registry.CodeInviteAPIForbidden,
-		registry.CodeInviteAPIUnauthorized,
-		registry.CodeAPITokenUnauthorized,
-		registry.CodeAPIForbidden:
-		return ExitAuth
-	case registry.CodeLoginVerifyFailed:
-		return ExitError
-	case registry.CodeInviteNotFound:
-		return ExitNotFound
-	case registry.CodeInviteDeviceAmbiguous,
-		registry.CodeInviteOwnershipUnproven,
-		registry.CodeInviteResendEmailMissing,
-		registry.CodeInviteStateConflict,
-		registry.CodeLegacyConfigDirPresent:
-		return ExitConflict
-	case registry.CodeInviteRateLimited,
-		registry.CodeInviteResponseInvalid:
-		return ExitError
-	case registry.CodeFunnelPublicAckRequired,
-		registry.CodeFunnelExpiryRequired:
-		return ExitUsage
-	case registry.CodeServiceTypeAmbiguous,
-		registry.CodeInvalidServiceName,
-		registry.CodeInvalidTag,
-		registry.CodeAllowUnsupportedTCP,
-		registry.CodePathMustBeAbsolute,
-		registry.CodePathNotFound,
-		registry.CodePathNotDirectory,
-		registry.CodePathNotAccessible,
-		registry.CodePathExposesConfigDir,
-		registry.CodeConfigLoadFailed,
-		registry.CodeUnknownConfigKey:
-		return ExitUsage
-	case registry.CodeURLNotReady:
-		return ExitNotFound
-	case registry.CodeFunnelAllowConflict,
-		registry.CodeFunnelControlURLConflict,
-		registry.CodeFunnelTypeConflict,
-		registry.CodeCredentialURLMismatch:
-		return ExitConflict
-	default:
-		return ExitError
-	}
 }
 
 func isUsageErrorMessage(msg string) bool {

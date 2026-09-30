@@ -2236,6 +2236,22 @@
       "exit_code": 4,
       "description": "a credentialed daemon refuses to send an auth key minted through the Tailscale API to a control server that is not Tailscale's; the service is not started"
     },
+    "daemon_not_running": {
+      "exit_code": 1,
+      "description": "the command needs the TSLink daemon and it is not running; next says how to install and start it"
+    },
+    "daemon_setup_failed": {
+      "exit_code": 1,
+      "description": "installing or starting the background service failed; next names the logs and doctor to inspect first"
+    },
+    "daemon_supervision_unverified": {
+      "exit_code": 1,
+      "description": "a daemon is running but its supervisor could not be verified, so TSLink does not take it over"
+    },
+    "enrollment_required": {
+      "exit_code": 3,
+      "description": "the node is waiting for interactive Tailscale authorization; next carries the authorization URL to open"
+    },
     "funnel_allow_conflict": {
       "exit_code": 4,
       "description": "Funnel conflicts with an allow list"
@@ -2267,6 +2283,10 @@
     "internal_error": {
       "exit_code": 1,
       "description": "unexpected internal failure"
+    },
+    "invalid_service_config": {
+      "exit_code": 1,
+      "description": "a registry.json service entry failed validation for a reason without a more specific code; the daemon isolates it and keeps the others"
     },
     "invalid_service_name": {
       "exit_code": 2,
@@ -2344,6 +2364,10 @@
       "exit_code": 4,
       "description": "Windows only: the config directory is still at the legacy %USERPROFILE%\\.config\\tslink location; TSLink never moves it, and next carries the one manual move command"
     },
+    "link_local_target_refused": {
+      "exit_code": 2,
+      "description": "proxy or TCP target is a link-local or cloud metadata address, which TSLink refuses"
+    },
     "login_verify_failed": {
       "exit_code": 1,
       "description": "login could not verify the candidate credential against Tailscale for a reason other than HTTP 401/403; the previous credential was kept"
@@ -2371,6 +2395,22 @@
     "path_not_found": {
       "exit_code": 2,
       "description": "file service directory does not exist"
+    },
+    "registry_reload_invalid": {
+      "exit_code": 1,
+      "description": "a registry.json edit made a running public Funnel service invalid; the daemon closed its public listener"
+    },
+    "runtime_snapshot_missing": {
+      "exit_code": 1,
+      "description": "no runtime snapshot (runtime.json) is available, so exact runtime endpoints cannot be proven"
+    },
+    "runtime_snapshot_stale": {
+      "exit_code": 1,
+      "description": "the runtime snapshot is readable but belongs to another daemon or registry, or is partial while the registry is being synchronized"
+    },
+    "runtime_snapshot_unreadable": {
+      "exit_code": 1,
+      "description": "the runtime snapshot could not be read: a filesystem or permission error, malformed JSON, or a schema_version this build does not understand"
     },
     "service_start_timeout": {
       "exit_code": 1,

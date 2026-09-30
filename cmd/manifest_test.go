@@ -621,6 +621,18 @@ func TestManifestErrorExitTaxonomyMatchesRuntime(t *testing.T) {
 		registry.CodeLoginVerifyFailed:          &registry.StableCodeError{Code: registry.CodeLoginVerifyFailed, Err: errors.New("verify failed")},
 		registry.CodeLegacyConfigDirPresent:     &config.LegacyConfigDirError{Legacy: `C:\Users\u\.config\tslink`, Current: `C:\Users\u\AppData\Roaming\tslink`},
 		registry.CodeCredentialURLMismatch:      registry.CodedError{Code: registry.CodeCredentialURLMismatch, Message: "minted key refused for another control server"},
+		// Codes the product emitted without a manifest entry until the
+		// errcode table (A3-4, A4-3).
+		"daemon_not_running":                         daemonNotRunningError(),
+		"daemon_setup_failed":                        daemonSetupError(errors.New("unit rejected")),
+		"daemon_supervision_unverified":              registry.CodedError{Code: "daemon_supervision_unverified", Message: "supervisor unverified"},
+		registry.CodeEnrollmentRequired:              registry.CodedError{Code: registry.CodeEnrollmentRequired, Message: "authorize first"},
+		registry.CodeInvalidServiceConfig:            registry.CodedError{Code: registry.CodeInvalidServiceConfig, Message: "invalid entry"},
+		registry.CodeLinkLocalTargetRefused:          registry.LinkLocalTargetRefusedError("169.254.169.254:80"),
+		registry.CodeRegistryReloadInvalid:           registry.CodedError{Code: registry.CodeRegistryReloadInvalid, Message: "reload invalid"},
+		inspect.WarningCodeRuntimeSnapshotMissing:    &tsruntime.SnapshotError{Status: tsruntime.StatusMissing, Code: inspect.WarningCodeRuntimeSnapshotMissing, Err: errors.New("missing")},
+		inspect.WarningCodeRuntimeSnapshotStale:      &tsruntime.SnapshotError{Status: tsruntime.StatusStale, Code: inspect.WarningCodeRuntimeSnapshotStale, Err: errors.New("stale")},
+		inspect.WarningCodeRuntimeSnapshotUnreadable: &tsruntime.SnapshotError{Status: tsruntime.StatusUnreadable, Code: inspect.WarningCodeRuntimeSnapshotUnreadable, Err: errors.New("unreadable")},
 	}
 	manifest := errorCodeManifest()
 	if len(manifest) != len(tests) {

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/monody0007/tslink/internal/config"
+	"github.com/monody0007/tslink/internal/errcode"
 	"github.com/monody0007/tslink/internal/filelock"
 	"github.com/monody0007/tslink/internal/registry"
 )
@@ -78,8 +79,8 @@ func SetMutationLockTimeoutForTesting(timeout time.Duration) (restore func()) {
 var ErrMutationLockBusy = errors.New("credential transaction lock busy")
 
 // credentialLockConflictCode is the stable code the CLI maps to its
-// retryable conflict exit (output.StableErrorCode(output.ExitConflict)).
-const credentialLockConflictCode = "conflict"
+// retryable conflict exit through the error-code table.
+const credentialLockConflictCode = errcode.Conflict
 
 func credentialLockBusyError(path string, waited time.Duration) error {
 	target := "the credential transaction lock"
