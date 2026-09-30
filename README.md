@@ -84,20 +84,6 @@ tslink add myapp --proxy localhost:3000
 - **Headscale compatibility path** — advanced/self-hosted control-server use via `--control-url`
 - **Funnel guardrails** — public internet exposure is opt-in and requires explicit `--public` acknowledgement
 
-### Launch status
-
-| Shipped now | Roadmap / experimental |
-|---|---|
-| Proxy, file, and raw TCP services | Roadmap/experimental middleware pipeline (rate limit, Basic Auth, IP allow list, CORS) |
-| One embedded `tsnet` node per service | Roadmap/experimental Docker label auto-discovery |
-| Identity-aware HTTP proxy headers | Roadmap/experimental admin dashboard or REST surface |
-| HTTP `--allow` for proxy/file services | Roadmap/experimental Prometheus `/metrics` endpoint |
-| Registry-backed hot reload | Roadmap/experimental custom domain / ACME runtime TLS |
-| Daemon lifecycle and autostart | Roadmap/experimental cluster / multi-node registry sync |
-| Owner-only `status --urls`, `doctor`, and `access explain` | Roadmap/experimental member-facing portal or service directory |
-| `--json` envelope on every command, `tslink mcp` over stdio, and the opt-in tailnet-only MCP control plane (`tslink serve --mcp`) | Roadmap/experimental dashboard, REST API, or multi-user admin plane |
-| Built-in personal templates | Roadmap/experimental marketplace or third-party template registry |
-
 ## Quick Start
 
 ### Install
@@ -158,6 +144,8 @@ exact URL or an enrollment URL; use `--wait=0` for registration without waiting.
 The MCP `add`, `share`, and `template_apply` tools use the same bootstrap policy
 and expose `no_daemon_install`. MCP `add` returns current URL/enrollment evidence
 after setup without an additional URL wait; poll `url` if it is still pending.
+These tools report a completed background-service install as
+`daemon_installed` (`manager`, `path`, `undo`) in their results.
 `add` and template application save the registry before installing, retaining it
 if setup fails. Explicit `install` also works before any registry exists.
 Setup errors report whether a supervisor definition remains: Linux can leave an
@@ -225,6 +213,13 @@ fetch the share, and `tslink share` has no `--allow` flag. To limit readers of
 a directory, register it with `tslink add <name> --dir <directory> --allow
 <principal>` instead, or pass `allow` to the MCP `share` tool.
 
+TSLink refuses to serve its own configuration directory, a directory inside
+it, or a directory that contains it (with the default layout that includes your
+home directory), with `path_exposes_config_dir`; `add --dir`, `share`, the MCP
+tools and the daemon all apply the check. It compares paths after resolving
+symbolic links, so a hard link that you place outside the configuration
+directory is served like any other file.
+
 On a credential-free first run, the one stdout line is the Tailscale
 authorization URL and stderr gives the exact `tslink url <name> --wait`
 continuation. With `--json`, this is a successful `status:"needs_login"`
@@ -257,6 +252,17 @@ as a normal tool result so an agent can open the URL and retry. Credential
 values are never returned through MCP. The same tools can also be served to
 other machines on your tailnet; see [Remote MCP Control Plane](#remote-mcp-control-plane).
 
+A refused tool call has `isError: true` and one text item containing the JSON
+failure object (`code`, `message`, `next`, and optional `data`), without
+`structuredContent`. Arguments outside a tool's schema return a `usage_error`
+tool result. Every tool declares `readOnlyHint`, `destructiveHint`,
+`idempotentHint`, and `openWorldHint`. MCP `unshare` returns the same result as
+`tslink remove --json`, including `node_state_kept_reason` when applicable.
+MCP `invite_user` roles other than `member` and `invite_device` with
+`allow_exit_node: true` need the owner's `mcp.allow_elevated_invites` opt-in.
+
+### Credential tiers
+
 TSLink has two authentication tiers:
 
 - **Tier 1 — zero credential (default)**: a user-owned node with no advertised tags and no remote ACL edits. This is the least-privilege path for a quick page or ephemeral share. Each fresh service node has its own enrollment URL; a one-service quick share takes one browser click. User-owned Tailscale node keys expire, so a node left running for months can eventually require re-authentication.
@@ -280,13 +286,13 @@ The compatible `--api-key` and `--client-secret` flags remain available, but com
 
 ### Tag Management
 
-TSLink manages local service tags by default. Remote Tailscale ACL mutation is disabled by default because TSLink does not yet prove lossless HuJSON policy preservation.
+TSLink manages local service tags by default. Ordinary remote tag ACL mutation requires `--manage-acl`; acknowledged Funnel services use the separate default-on policy provisioning described above.
 
 On the zero-credential Tier 1 path, registry tags remain configured but are not advertised by the user-owned node, and no remote tag/ACL API is called. The following tag behavior applies to the stored-credential Tier 2 path.
 
 - **Default tag** — every service gets `tag:tsmain` applied automatically when `--tags` is not specified.
 - **Remote ACL reads** — `tslink tags pull` fetches remote ACL tags only in API access token mode; OAuth-only mode skips the remote read and reports that an API access token is required.
-- **Remote ACL writes** — `tslink login --manage-acl`, `tslink serve --manage-acl`, and `tslink tags delete-remote --manage-acl` opt in to typed whole-policy ACL writes with a machine-readable side-effect plan. Default login, serve, and tag flows do not rewrite shared ACL policy.
+- **Remote ACL writes** — `tslink login --manage-acl`, `tslink serve --manage-acl`, and `tslink tags delete-remote --manage-acl` opt in to typed whole-policy ACL writes with a machine-readable side-effect plan. This flag is for ordinary tag management; acknowledged Funnel services use the separate default-on policy provisioning described above.
 - **Strict tag grammar** — tags must match `tag:<lowercase-hyphen-name>` with lowercase letters, numbers, and hyphens. Migrate legacy tags such as `tag:Web`, `tag:db_main`, or `web` with `tslink tags set <service> tag:<lowercase-hyphen-name>` or by editing `registry.json`. Invalid legacy tags fail `tslink serve` validation and must be fixed before the gateway starts.
 - **Runtime auth refresh** — tag, ephemeral, and effective control-server URL changes restart affected nodes with fresh per-service auth material. A zero-credential to stored-credential login records a pending identity transition; restart `tslink serve` to clear the old user-owned node state and re-enroll with tagged credentials. Legacy `authkey` file changes also require a restart.
 
@@ -327,15 +333,16 @@ tslink add demo --proxy localhost:8080 --ephemeral
 # Identity-aware HTTP access control (proxy/file only)
 tslink add internal --proxy localhost:9090 --allow user@example.com,tag:admin
 
-# Public exposure via Tailscale Funnel (requires explicit acknowledgement)
+# Public exposure via Tailscale Funnel (requires explicit acknowledgement).
+# Public for 24h by default; --funnel-ttl 1h|8h|24h|72h|7d|never
+# ("never" is stored as "funnel_expires_at": "never")
 tslink add public --proxy localhost:3000 --funnel --public
-
-# Migration note: existing Funnel entries created before public_ack was added
-# must be re-added with --public or edited to include "public_ack": true.
 
 # ACL tags for Tailscale network policy
 tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 ```
+
+Funnel ACL auto-provisioning is enabled by default for an acknowledged public service. It may write the shared `tag:tslink-funnel` tag owner and a `nodeAttrs` Funnel grant in the tailnet policy file. Pass `--no-auto-provision` to `tslink add --funnel`, `tslink serve`, or `tslink install` to disable the corresponding service or daemon setup path; the required tailnet policy must then exist already. Ordinary tag ACL writes still require `--manage-acl`.
 
 ## Commands
 
@@ -397,19 +404,25 @@ tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 
 ### Add Command Flags
 
+`tslink add` with an existing name replaces that service: flags you do not repeat (`--allow`, `--tags`, `--funnel`, ...) are dropped. The JSON result lists `replaced_fields` and warns when access or the node identity changed.
+
 | Flag | Description |
 |------|-------------|
 | `--proxy host:port` | Reverse proxy to a local HTTP service |
 | `--dir /path` | Serve a local file directory |
 | `--tcp host:port` | Raw TCP forwarding |
+| `--dry-run` | Validate and print the service without saving it |
 | `--ephemeral` | Ephemeral node, auto-removed from tailnet when stopped |
 | `--tags tag:a,tag:b` | ACL tags for Tailscale network policy |
 | `--allow user@,tag:x` | HTTP access control for proxy/file services; rejected for TCP because raw TCP uses Tailscale ACL tags and target-service auth |
-| `--control-url URL` | Per-service control server override, e.g. Headscale |
+| `--control-url URL` | Per-service control server override, e.g. Headscale. TSLink never sends an auth key minted from a stored Tailscale credential to another control server: with such a credential stored, the service is refused with `credential_control_url_mismatch` |
 | `--funnel` | Expose via Tailscale Funnel (public internet, proxy only, requires `--public`) |
 | `--public` | Explicitly acknowledge public internet exposure for `--funnel`; invalid without `--funnel` |
-| `--domain example.com` | Reserved roadmap flag: rejected with `feature_unavailable`; custom-domain runtime TLS is not wired |
-| `--acme-email user@example.com` | Reserved roadmap flag: rejected with `feature_unavailable`; no shipped ACME listener |
+| `--funnel-ttl 1h\|8h\|24h\|72h\|7d\|never` | Public Funnel lifetime; default `24h`; requires `--funnel` |
+| `--no-auto-provision` | Disable Funnel policy provisioning for this service; requires `--funnel` |
+| `--no-daemon-install` | Save configuration without installing or starting the daemon |
+| `--wait duration` | Wait for a URL or enrollment URL; default `30s`, `0` disables waiting |
+| `--json` | Print the versioned result envelope |
 
 ## How It Works
 
@@ -434,7 +447,6 @@ TSLink creates a dedicated [tsnet](https://tailscale.com/kb/1244/tsnet) node for
 - **Hot reload** — file watcher on the registry means `tslink add` takes effect without restarting the server
 - **PID-based lifecycle** — daemon management with process identity checks and platform-specific stop behavior
 - **Structured logging** — slog-based structured logging with access logs
-- **Metrics instrumentation** — request metrics are collected internally; a public `/metrics` endpoint is roadmap
 
 ## JSON Automation
 
@@ -470,7 +482,7 @@ tslink template apply local-web --yes --json
 
 The same operations are available to MCP clients through `tslink mcp` (stdio) and the remote control plane described below; `tslink manifest --json` prints the machine-readable description of every command, flag, exit code, and error code.
 
-All `--json` output uses the same versioned envelope. `command` names the command that produced it:
+All `--json` output uses the same versioned envelope. `command` names the command that produced it. Public view `data.schema_version` is the integer `1`:
 
 ```json
 {
@@ -480,7 +492,7 @@ All `--json` output uses the same versioned envelope. `command` names the comman
   "command": "list",
   "code": 0,
   "data": {
-    "schema_version": "vnext.1",
+    "schema_version": 1,
     "services": [],
     "count": 0
   }
@@ -505,6 +517,19 @@ Failures include a stable machine error code plus human text, and `error.next` l
 ```
 
 On macOS, `launchctl_domain_unavailable` is the deliberate exit-1 refusal used when TSLink cannot prove an install or uninstall handoff is safe. Its failure `data` includes `unavailable_domain`, `force_available`, the exact `force_command`, and `force_risk`; agents do not need to parse `error.message` to discover the recovery contract.
+
+`status` sets `authenticated` and `auth_status: "authenticated"` only after a
+service node is authorized. `credential_stored` separately reports a stored
+credential. `daemon_state` is `running`, `absent`, or `unknown`; a missing PID
+file gives `absent`. MCP `status` and its event stream use the same state field.
+`doctor --json` puts its diagnostic exit code (0, 64, or 65) in the envelope
+`code`. `enrollment_required` exits 3.
+
+MCP `logs` `since`, MCP `url` `wait`, `login --expires-in`, and
+`mcp.events_keepalive` accept Go duration syntax plus `d` for days, with their
+own bounds. MCP `funnel_ttl` accepts equivalent spellings for its five timed
+lifetimes (`168h` equals `7d`) and `never`. CLI `--wait` and `--funnel-ttl`
+retain their existing syntax.
 
 `--json` changes only the output format. `tslink add --json` follows the same safety guardrails as the human path: Funnel services require `--public`; TCP services reject `--allow` because TSLink does not apply HTTP identity checks to raw TCP streams.
 
@@ -559,20 +584,31 @@ The control plane is off by default. Enable it with the `--mcp` flag or with `mc
 {
   "mcp": {
     "enabled": true,
-    "allow": ["you@example.com", "tag:ops"],
+    "allow": ["you@example.com"],
+    "allow_elevated_invites": false,
     "node_name": "tslink-mcp"
   }
 }
 ```
 
+A `tag:` entry in `mcp.allow` authorizes every machine carrying that tag, including service nodes. Prefer specific login emails or a dedicated tag whose membership you control.
+
+`mcp.allow_elevated_invites` is another `config.json` key, off by default. Set
+it to `true` to let MCP clients invite users with roles other than `member` or
+share a device with `allow_exit_node: true`. CLI invitation commands never need
+this opt-in. `mcp.events_keepalive` accepts Go duration syntax plus `d` for
+days, within its 5-second to 5-minute bounds.
+
+`config.json` is read strictly: a key TSLink does not know, a typo included, is refused with `config_load_failed` by the commands that write settings, reported by `tslink doctor`, and makes `serve` fall back to the default control server without the control plane.
+
 | Fact | Detail |
 |---|---|
 | Default | Off. Without `--mcp` or `mcp.enabled: true`, `serve` opens no control-plane listener and creates no control-plane node |
-| Authorization | `mcp.allow` is a list of login emails and/or `tag:` entries, matched against the caller's Tailscale WhoIs identity. An empty or whitespace-only list refuses to start `serve`; it never means "everyone". Every denial is the same `403` JSON-RPC `forbidden` body |
+| Authorization | `mcp.allow` is a list of login emails and/or `tag:` entries, matched against the caller's Tailscale WhoIs identity. An empty or whitespace-only list refuses to start `serve` and grants no access. Every denial is the same `403` JSON-RPC `forbidden` body |
 | Reach | The only listener is `ListenTLS` on the control plane's own tsnet node. It is never published through Funnel and never bound to a host interface or `0.0.0.0` |
 | Node | Its own dedicated node, shared with no service. It is not a registry service, so it is absent from `tslink list`, and no code path can attach `--funnel` to it |
 | Lifetime | Depends on how `serve` is logged in. With a stored credential (`tslink login`) the node is ephemeral: the derived auth key carries the ephemeral capability and tsnet logs in with the ephemeral flag, so a clean daemon stop logs the node out and Tailscale removes it within seconds; disabling `--mcp` leaves no device to delete by hand. After a crash the node lingers until Tailscale's ephemeral garbage collection reclaims it (Tailscale's KB states this normally happens 30 to 60 minutes after the last activity; that figure is Tailscale's, not measured by TSLink). With zero credentials (interactive browser login) the node is persistent and user-owned: one browser authorization survives daemon restarts, and disabling `--mcp` leaves the `tslink-mcp` device in your tailnet until you delete it in the Tailscale admin console |
-| Power | An authorized peer has full control: register and remove services, publish a service to the public internet with Funnel, send and revoke real Tailscale invitations. Fill `mcp.allow` with that in mind; `serve` logs `mcp.controlplane.enabled` as a warning on every start |
+| Power | An authorized peer can register and remove services, publish a service to the public internet with Funnel, and send or revoke real Tailscale invitations. Elevated invitations additionally require `mcp.allow_elevated_invites`. Fill `mcp.allow` with that in mind; `serve` logs `mcp.controlplane.enabled` as a warning on every start |
 | Origin | A request that carries an `Origin` header must match the endpoint's own `https://<node>.<tailnet>.ts.net` origin exactly, per the MCP Streamable HTTP transport specification; anything else is `403` before authorization runs. Requests without `Origin`, which is what command-line MCP clients send, pass through |
 | Transport | Stateless Streamable HTTP; one request body is bounded at 1 MiB, the same limit the stdio transport applies per record |
 
@@ -589,18 +625,23 @@ The control plane is off by default. Enable it with the `--mcp` flag or with `mc
 | Tools | 19 | The same 19, from one tool registry |
 | Typical client | An MCP client on this machine | An MCP client on another machine in the tailnet |
 
-## Roadmap / Experimental Packages
+## Roadmap
 
-The repository contains packages and registry fields for features that are not wired into the shipped `tslink serve` runtime yet. Treat these as roadmap or experimental until end-to-end integration tests are added:
+These features are not part of the shipped runtime:
 
 | Area | Current status |
 |---|---|
-| Docker labels | Not implemented; the registry schema reserves the fields and the runtime rejects them with `feature_unavailable`. |
-| Middleware | Not implemented; the registry schema reserves the fields and the runtime rejects them with `feature_unavailable`. |
+| Docker labels | Not implemented. |
+| Middleware | Not implemented; there are no registry fields or flags for it yet. |
 | Admin dashboard / REST API | No dashboard or REST handler is shipped; the tailnet-only MCP control plane (`tslink serve --mcp`) is the only remote management surface. Future dashboard or REST work must be explicitly experimental and tested end to end. |
-| Prometheus `/metrics` | Instrumentation exists, but no scrape endpoint is mounted. |
-| Custom domain / ACME | Fields are reserved and rejected with `feature_unavailable`; runtime TLS/ACME listener is not wired. |
-| Cluster sync | Not implemented; the registry schema reserves the fields and the runtime rejects them with `feature_unavailable`. |
+| Prometheus `/metrics` | Not implemented; there is no request instrumentation and no scrape endpoint. |
+| Custom domain / ACME | Not implemented; there are no registry fields or flags for it yet. |
+| Cluster sync | Not implemented. |
+| Member portal or service directory | Not implemented. |
+| Marketplace or third-party template registry | Not implemented. |
+| Docker image | Not published. |
+| Headscale end-to-end validation | Pending. |
+| Other Layer 2 modules | Pending integration tests. |
 
 ## Prerequisites
 
@@ -616,9 +657,9 @@ The repository contains packages and registry fields for features that are not w
 | Linux | `--daemon` | systemd user service | Graceful SIGTERM |
 | Windows | `--daemon` | Startup folder | Forced process termination |
 
-Configuration and state live in `~/.config/tslink/` on macOS and Linux and in `%AppData%\tslink\` on Windows; set `TSLINK_CONFIG_DIR` to use another directory. Paths written as `~/.config/tslink/` elsewhere in this README mean that directory. On Windows, an older `%USERPROFILE%\.config\tslink\` is moved into `%AppData%\tslink\` the first time TSLink resolves its config directory. If the move is impossible (for example with a redirected profile), TSLink keeps using the old directory; if both directories exist, it refuses to choose and names both.
+Configuration and state live in `~/.config/tslink/` on macOS and Linux and in `%AppData%\tslink\` on Windows; set `TSLINK_CONFIG_DIR` to use another directory. Paths written as `~/.config/tslink/` elsewhere in this README mean that directory. On Windows, TSLink never moves an older `%USERPROFILE%\.config\tslink\`: if only that directory exists, every command stops with `legacy_config_dir_present` and prints the one `move` command to run; if both exist, it refuses to choose and names both.
 
-`credentials.lock` in that directory serializes credential changes between TSLink processes: `tslink login`, `tslink logout` and `tslink doctor --probe-remote` create it, while `tslink serve` and the commands that report credential status create it only when they record metadata for a stored credential that has none yet, or when `serve` finds a legacy `apikey` file. With the system keychain enabled, which is the default, TSLink also takes `.tslink/credentials.lock` in the OS account's home directory (`%USERPROFILE%\.tslink\` on Windows), which follows neither `TSLINK_CONFIG_DIR` nor `$HOME`; both files are empty and stay in place. `node-identities/` holds one record per service with the tags (including the derived `tag:tslink-funnel`), ephemeral setting and control URL its node was started with, so a change to any of them, even one made while the daemon was stopped, clears that node's state and enrolls it again. On Tier 1 (no stored credential) a node advertises no tags, so there only an ephemeral or control URL change does. Once a removed service's `nodes/<name>/` state is gone, whether `tslink remove` or the daemon deleted it (`tslink remove --help` says when), the daemon deletes the service's record on its next sync.
+`credentials.lock` in that directory serializes credential changes between TSLink processes: `tslink login`, `tslink logout` and `tslink doctor --probe-remote` create it, while `tslink serve` and the commands that report credential status create it only when they record metadata for a stored credential that has none yet, or when `serve` finds a legacy `apikey` file. With the system keychain enabled, which is the default, TSLink also takes `.tslink/credentials.lock` in the OS account's home directory (`%USERPROFILE%\.tslink\` on Windows), which follows neither `TSLINK_CONFIG_DIR` nor `$HOME`; both files are empty and stay in place. `node-identities/` holds one record per service with the tags (including the derived `tag:tslink-funnel`), ephemeral setting and control URL its node was started with, so a change to any of them, even one made while the daemon was stopped, clears that node's state and enrolls it again. On Tier 1 (no stored credential) a node advertises no tags, so there only an ephemeral or control URL change does. Once a removed service's `nodes/<name>/` state is gone, whether `tslink remove` or the daemon deleted it (`tslink remove --help` says when), the daemon deletes the service's record on its next sync. A service that is only missing from `registry.json`, without `tslink remove`, keeps its node state: a lost, replaced or mistyped registry never deletes a node identity.
 
 macOS LaunchAgent installs use launchd `KeepAlive` with `ThrottleInterval=30`. If `tslink stop` is run while the LaunchAgent remains installed, launchd will restart TSLink. Run `tslink uninstall` before `tslink stop` when the intent is to disable autostart. When no desktop session exists for the user, `tslink install` first tries `gui/$(id -u)` and falls back to `user/$(id -u)` if the GUI launchd domain is unavailable. Linux headless user services may need `loginctl enable-linger "$USER"` to keep running after logout; if lingering was enabled only for TSLink, run `loginctl disable-linger "$USER"` after uninstall.
 
@@ -626,17 +667,7 @@ Re-running `tslink install` is the supported upgrade path on every platform. On 
 
 On Linux, TSLink likewise saves an existing systemd user unit before replacing it. If `daemon-reload`, `enable`, `restart`, or post-restart verification fails, TSLink stops the failed service, atomically restores the previous unit, reloads systemd, and restarts a service that was previously confirmed systemd-owned. Neither platform can restore an executable binary that was replaced before `tslink install` ran. Fix the reported cause and re-run `tslink install`.
 
-## Roadmap
-
-- [x] OAuth client secret accepted by login and tsnet auth paths; validate tag/device automation before unattended use
-- [ ] Runtime custom-domain / ACME TLS
-- [ ] Web dashboard accessible from tailnet
-- [ ] Docker image and Docker label discovery
-- [ ] Headscale end-to-end testing
-- [x] `--json` envelope on every command, plus stdio and tailnet-only MCP transports
-- [ ] Integration-tested Layer 2 modules and optional remote/admin surfaces
-
-#### Release Artifacts
+### Release Artifacts
 
 There is no public tag/release or populated Homebrew tap yet. Before the first
 published release/readback, install from source. After that external gate
@@ -650,148 +681,7 @@ passes, GitHub Releases are expected to publish these installable artifacts:
 
 Release assets are side-by-side files, not files embedded inside the archives. GoReleaser uploads installable archives/packages, `checksums.txt`, CycloneDX SBOM sidecars for archives, and keyless Sigstore bundle signatures for `checksums.txt` and SBOM sidecars. The signed `checksums.txt` covers both installable artifacts and SBOM sidecars. The release workflow also publishes GitHub artifact attestations for the installable artifacts and supply-chain sidecars.
 
-#### Verify Release Integrity
-
-These commands require `gh` 2.49 or newer with `gh attestation verify`, `cosign` with `verify-blob --bundle` support, and either `sha256sum` or `shasum`. Use a tag such as `<version>` and an asset name such as `<artifact>` from the GitHub Release.
-
-The Sigstore certificate trust root is the GitHub Actions OIDC issuer `https://token.actions.githubusercontent.com`. Verification pins the exact release workflow identity `https://github.com/monody0007/tslink/.github/workflows/release.yml@refs/tags/<version>` and the GitHub attestation signer workflow `github.com/monody0007/tslink/.github/workflows/release.yml`. The tag ref binding means a matching signature or attestation must come from this repository's release workflow for the requested tag.
-
-```bash
-set -euo pipefail
-
-repo="monody0007/tslink"
-version="<version>"
-artifact="<artifact>"
-
-sha256_file() {
-  if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$1" | awk '{print $1}'
-  elif command -v shasum >/dev/null 2>&1; then
-    shasum -a 256 "$1" | awk '{print $1}'
-  else
-    echo "missing checksum tool: install sha256sum or shasum" >&2
-    exit 1
-  fi
-}
-
-require_file() {
-  if [ ! -f "$1" ]; then
-    echo "missing downloaded release asset: $1" >&2
-    exit 1
-  fi
-}
-
-verify_checksum() {
-  file="$1"
-  require_file "$file"
-  require_file "checksums.txt"
-
-  expected="$(awk -v file="$file" '$2 == file {print $1}' checksums.txt)"
-  if [ -z "$expected" ]; then
-    echo "missing checksum entry for $file in checksums.txt" >&2
-    exit 1
-  fi
-
-  actual="$(sha256_file "$file")"
-  if [ "$actual" != "$expected" ]; then
-    echo "checksum mismatch for $file" >&2
-    echo "expected: $expected" >&2
-    echo "actual:   $actual" >&2
-    exit 1
-  fi
-}
-
-mkdir -p "tslink-$version-verify"
-cd "tslink-$version-verify"
-
-gh release download "$version" --repo "$repo" \
-  --pattern "$artifact" \
-  --pattern "checksums.txt" \
-  --pattern "checksums.txt.sigstore.json"
-
-require_file "$artifact"
-require_file "checksums.txt"
-require_file "checksums.txt.sigstore.json"
-verify_checksum "$artifact"
-
-cosign verify-blob checksums.txt \
-  --bundle checksums.txt.sigstore.json \
-  --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-  --certificate-identity "https://github.com/$repo/.github/workflows/release.yml@refs/tags/$version"
-
-gh attestation verify "$artifact" \
-  --repo "$repo" \
-  --source-ref "refs/tags/$version" \
-  --signer-workflow "github.com/$repo/.github/workflows/release.yml"
-```
-
-Archive SBOM sidecars are verified separately because they are independent release assets. Run this from the same verification directory after the archive check, using the same `version` and `artifact`.
-
-```bash
-set -euo pipefail
-
-repo="monody0007/tslink"
-version="<version>"
-artifact="<artifact>"
-sbom="$artifact.sbom.json"
-
-sha256_file() {
-  if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$1" | awk '{print $1}'
-  elif command -v shasum >/dev/null 2>&1; then
-    shasum -a 256 "$1" | awk '{print $1}'
-  else
-    echo "missing checksum tool: install sha256sum or shasum" >&2
-    exit 1
-  fi
-}
-
-require_file() {
-  if [ ! -f "$1" ]; then
-    echo "missing downloaded release asset: $1" >&2
-    exit 1
-  fi
-}
-
-verify_checksum() {
-  file="$1"
-  require_file "$file"
-  require_file "checksums.txt"
-
-  expected="$(awk -v file="$file" '$2 == file {print $1}' checksums.txt)"
-  if [ -z "$expected" ]; then
-    echo "missing checksum entry for $file in checksums.txt" >&2
-    exit 1
-  fi
-
-  actual="$(sha256_file "$file")"
-  if [ "$actual" != "$expected" ]; then
-    echo "checksum mismatch for $file" >&2
-    echo "expected: $expected" >&2
-    echo "actual:   $actual" >&2
-    exit 1
-  fi
-}
-
-gh release download "$version" --repo "$repo" \
-  --pattern "$sbom" \
-  --pattern "$sbom.sigstore.json"
-
-require_file "$sbom"
-require_file "$sbom.sigstore.json"
-verify_checksum "$sbom"
-
-cosign verify-blob "$sbom" \
-  --bundle "$sbom.sigstore.json" \
-  --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-  --certificate-identity "https://github.com/$repo/.github/workflows/release.yml@refs/tags/$version"
-
-gh attestation verify "$sbom" \
-  --repo "$repo" \
-  --source-ref "refs/tags/$version" \
-  --signer-workflow "github.com/$repo/.github/workflows/release.yml"
-```
-
+See [Verify a release](docs/verify-release.md) for artifact, checksum, signature, SBOM, and attestation checks.
 
 ## Documentation
 

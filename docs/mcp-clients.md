@@ -62,16 +62,18 @@ security boundary of the whole feature. `tslink config set` manages only
   "mcp": {
     "enabled": true,
     "allow": ["you@example.com", "tag:ops"],
+    "allow_elevated_invites": false,
     "node_name": "tslink-mcp"
   }
 }
 ```
 
 An empty `allow` list, or one containing only blank entries, makes `serve`
-refuse to start. It never means "allow everyone". Every rejection returns the
-same `403` JSON-RPC `forbidden` body, and a peer that passes `mcp.allow` has
-full control: it can register and delete services, publish them to the public
-internet through Funnel, and send or revoke real Tailscale invitations.
+refuse to start and never grants open access. Every rejection returns the
+same `403` JSON-RPC `forbidden` body. A peer that passes `mcp.allow` can
+register and delete services, publish them to the public internet through
+Funnel, and send or revoke real Tailscale invitations. Elevated invitations
+also require `mcp.allow_elevated_invites`.
 
 A request carrying an `Origin` header must match the endpoint's own
 `https://<node>.<tailnet>.ts.net` origin exactly, per the MCP Streamable HTTP
@@ -113,7 +115,7 @@ registered in `cmd/mcp.go`; the client receives the full text.
 | `share` | Expose a local directory, a single file, or an HTTP port on the user's private Tailscale network. Setting `funnel` true publishes the target to the entire public internet, so ask the user first. |
 | `add` | Write a registry entry for a proxy, file, or TCP service reachable on the user's private Tailscale network. Setting `funnel` true publishes it to the entire public internet, so ask the user first. |
 | `list` | List locally registered TSLink services with exact runtime URLs and explicit Funnel requested/active/reason state. |
-| `unshare` | Remove one named service from the local TSLink registry. |
+| `unshare` | Remove a service; delete its recorded tailnet device by exact NodeID when credentials and ownership proof permit, then remove its local node state when safe. Confirm with the user first. Its result matches `tslink remove --json`, including `node_state_kept_reason` when applicable. |
 | `status` | Report local TSLink daemon, stored-credential, node-authorization, and service-count state. |
 | `url` | Return one registered service's exact runtime URL. |
 | `tags_list` | List every registered service with the ACL tags recorded for it locally. |
@@ -121,8 +123,8 @@ registered in `cmd/mcp.go`; the client receives the full text.
 | `access_explain` | Explain what TSLink knows locally about one service's access: its exposure, whether an allow-list is enforced, and which layers this answer does not cover. |
 | `doctor` | Run local TSLink diagnostics and return findings by severity. |
 | `logs` | Read recent lines from the local TSLink daemon log. |
-| `invite_user` | Sends a real Tailscale invitation to a real email address, so confirm the address and role with the user before calling this. |
-| `invite_device` | Sends a real device-sharing invitation to a real email address outside the tailnet, so confirm the service and address with the user before calling this. |
+| `invite_user` | Sends a real Tailscale invitation. Confirm the address and role with the user. A role other than `member` needs `mcp.allow_elevated_invites: true` in `config.json`. |
+| `invite_device` | Sends a real device-sharing invitation outside the tailnet. Confirm the service and address with the user. `allow_exit_node: true` needs `mcp.allow_elevated_invites: true` in `config.json`. |
 | `invite_list` | List open tailnet user invitations and TSLink-owned device invitations. |
 | `invite_revoke` | Cancels a real outstanding invitation on the user's tailnet, so confirm with the user before calling this. |
 | `invite_resend` | Sends another real invitation email to the original recipient, so confirm with the user before calling this. |
@@ -131,6 +133,16 @@ registered in `cmd/mcp.go`; the client receives the full text.
 | `template_apply` | Write a built-in template's missing services into the local registry. |
 
 Daemon lifecycle, install, login and logout, and configuration stay CLI-only.
+
+`mcp.allow_elevated_invites` is off by default; CLI invitations never need it.
+Refused calls return `isError: true` with a JSON failure object (`code`,
+`message`, `next`, optional `data`) as one text item and no
+`structuredContent`. Invalid arguments return `usage_error` tool results.
+Every tool declares `readOnlyHint`, `destructiveHint`, `idempotentHint`, and
+`openWorldHint`. `share`, `add`, and `template_apply` add `daemon_installed`
+(`manager`, `path`, `undo`) to a successful result if they installed the daemon.
+MCP `logs` `since` and `url` `wait` accept Go durations plus `d` for days;
+MCP `funnel_ttl` accepts equivalent spellings of its five timed lifetimes.
 
 ## Redaction is not a boundary
 

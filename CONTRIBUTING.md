@@ -17,23 +17,16 @@ Thank you for your interest in contributing to TSLink! This document provides gu
 git clone https://github.com/monody0007/tslink.git
 cd tslink
 
-# Build
-go build ./...
+# Run the portable local release checks
+scripts/check.sh
 
-# Run tests
-go test ./...
-
-# Static analysis
-go vet ./...
-
-# Optional local release checks
-go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 ./...   # pinned to match CI (STATICCHECK_VERSION in .github/workflows/release-candidate.yml)
-go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
-go run github.com/goreleaser/goreleaser/v2@v2.17.0 check
-
-# Install locally
-go install .
+# Refresh the committed CLI manifest after command or flag changes
+go run ./tools/gen-manifest
 ```
+
+`go run ./tools/gen-manifest` regenerates `docs/cli-manifest.json`
+identically on macOS, Linux, and Windows. `go run ./tools/gen-manifest -check`
+fails on any of them if the committed fixture is stale.
 
 ### Test isolation
 
@@ -51,6 +44,34 @@ fails its package and names the seam. Build LocalAPI clients in tests with
 `localapitest.NewClient`; `TestNoTestBuildsALocalAPIClientThatCanReachTheHost`
 rejects any other form.
 
+What this means for your machine and for the directory `TMPDIR` points at:
+
+- **Leftover roots.** A test binary that is interrupted (Ctrl-C), killed by
+  `-timeout` or crashes leaves its `tslink-testenv-*` root in `TMPDIR`; the next
+  `go test` of any package in the same `TMPDIR` removes it. It removes only roots
+  that your user owns and whose lock is free, so a shared `TMPDIR` such as `/tmp`
+  is safe, and another user's leftovers are never touched. Roots from checkouts
+  older than this mechanism (an empty marker file), and roots abandoned between
+  taking their lock and writing their pid, are never removed automatically:
+  delete them by hand while no TSLink test is running.
+- **Locks.** `TMPDIR` must support advisory file locks (`flock` on macOS and
+  Linux, `LockFileEx` on Windows). Local disks, tmpfs and NFSv4.2 do. Where
+  locking fails, every test binary stops before its first test with
+  `testenv: cannot isolate this test binary: lock …`.
+- **NFS.** With `TMPDIR` on NFS, the `go` command's own work directory can fail
+  to clean up (`unlinkat …/.nfs…: device or resource busy`), and `go` then exits
+  1 after the package printed `ok`. That comes from the Go toolchain; set
+  `GOTMPDIR` to a local directory. `t.TempDir()` then creates its directories in
+  `GOTMPDIR`, which the tests accept as a temporary root.
+- **`TSLINK_TESTENV_ROOT`** is honoured only while the test binary that created
+  that root is running; exporting the path of a leftover root has no effect.
+- **Go's own files.** Each test binary runs `go env -json` once with your real
+  home, so it reads Go's environment and telemetry files, the same files the
+  parent `go test` uses.
+- **macOS sandbox.** Under `sandbox-exec`,
+  `TestWriteFileInExistingDirReportsSpecialParentModeBits/setgid` skips and says
+  why; unsandboxed it runs.
+
 ### Compiled-binary test isolation
 
 Tests that execute a freshly compiled TSLink binary must set all three of
@@ -64,6 +85,19 @@ internal parent PID automatically; tests must not set it themselves.
 
 Real `tslink share` and `tslink serve --daemon` commands do not set this seam,
 so their detached daemon continues to outlive the command as designed.
+
+The four compiled-binary end-to-end tests that start daemons find them by
+listing your processes. From a process they read only its executable path
+(`proc_pidpath` on macOS, `/proc/<pid>/exe` on Linux), and only when it is named
+like the binary the test built (`tslink`) and started after the test binary.
+They never read another process's arguments or environment, and never read a
+process that was already running, such as an installed daemon; a `tslink` that
+your shell prompt, editor or monitoring starts during the run may have its path
+read, and nothing else. The product code under test works differently: `tslink
+stop`, `status` and similar commands check the identity of the daemon named in
+the pid file, and on macOS that check reads the process's arguments
+(`kern.procargs2`). In these tests the pid file lives in the test's isolated
+config directory, so the process checked is the test's own fake daemon.
 
 `TSLINK_CONFIG_DIR` only isolates on-disk state — it does not isolate network
 side effects or spawned processes. Commands like `share` or `add --wait` have
@@ -97,16 +131,28 @@ someone reads the annotation.
 ### Project Structure
 
 ```
-cmd/           → CLI commands (Cobra)
+cmd/             → CLI commands (Cobra), MCP server, CLI manifest
 internal/
-  config/      → Configuration and paths
-  credentials/ → Keychain + file-based credential management
-  daemon/      → Process management and daemonization
-  logging/     → Structured logging (slog)
-  metrics/     → Internal request instrumentation (no scrape endpoint)
-  registry/    → Service registry (JSON)
-  server/      → tsnet server, proxy, file handler, TCP proxy
-  tailapi/     → Tailscale API client
+  atomicfile/    → Permission-safe writes of local state files
+  authmode/      → Credential-tier transitions applied at the next daemon start
+  config/        → config.json and paths
+  credentials/   → Keychain + file-based credential management
+  daemon/        → Process management and daemonization
+  filelock/      → Cross-platform file locks
+  inspect/       → Service view and warning codes
+  lifecycle/     → Reconciliation: Funnel expiry, owned-device and node-state cleanup
+  logging/       → Structured logging (slog)
+  logrotate/     → Size-bounded daemon log files
+  manifestcheck/ → Messages of the CLI manifest check
+  output/        → JSON result envelope and exit codes
+  registry/      → Service registry (JSON)
+  release/       → Tests that validate the release workflows (no product code)
+  runtime/       → Daemon snapshot (runtime.json), node state, ownership ledger
+  security/      → Capability manifest and plans for remote mutations
+  server/        → tsnet server, proxy, file handler, TCP proxy
+  tailapi/       → Tailscale API client
+  testenv/       → Test-process isolation (every test binary starts here)
+tools/           → Manifest and notices generators, repository checks
 ```
 
 ## How to Contribute
@@ -135,13 +181,9 @@ Open an issue with the feature request template. Describe:
 2. Fork the repository and create a branch from `main`
 3. Write your code following the existing patterns
 4. Add or update tests as appropriate
-5. Ensure all checks pass:
+5. Ensure the portable checks pass (add `-race` if needed):
    ```bash
-   go build ./...
-   go vet ./...
-   go test ./...
-   go test ./... -race -coverprofile=coverage.out
-   go tool cover -func=coverage.out
+   scripts/check.sh
    ```
 6. Submit a pull request
 
