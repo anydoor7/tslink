@@ -34,14 +34,24 @@ import (
 // codeCarriers are the struct types whose Code field is a stable error code
 // an agent or script can read.
 var codeCarriers = map[string]bool{
-	"CodedError":         true, // registry
-	"StableCodeError":    true, // registry
-	"SnapshotError":      true, // runtime
-	"Freshness":          true, // runtime: status's runtime_snapshot.code
-	"ServiceError":       true, // runtime: a service's failure in status and doctor
-	"InviteTargetError":  true, // tailapi: a per-target failure in invite list
-	"RegistryCheckIssue": true, // cmd: registry check issues
-	"ErrorObject":        true, // output: the envelope's error object
+	"CodedError":                  true, // registry
+	"StableCodeError":             true, // registry
+	"SnapshotError":               true, // runtime
+	"Freshness":                   true, // runtime: status's runtime_snapshot.code
+	"ServiceError":                true, // runtime: a service's failure in status and doctor
+	"InviteTargetError":           true, // tailapi: a per-target failure in invite list
+	"RegistryCheckIssue":          true, // cmd: registry check issues
+	"ErrorObject":                 true, // output: the envelope's error object
+	"StatusRuntimeSnapshotResult": true, // cmd: forwards runtime freshness codes
+}
+
+// These Code fields describe table metadata or diagnostics, not emitted error
+// codes. Keep the exceptions qualified and explicit so a new carrier cannot
+// silently escape the registration check.
+var nonErrorCodeFields = map[string]string{
+	"internal/errcode.Code":        "the table itself, not an emission",
+	"internal/inspect.WarningView": "warning namespace, not error exits",
+	"cmd.DoctorFinding":            "doctor diagnostics, not error exits",
 }
 
 var codeConstName = regexp.MustCompile(`^Code[A-Z]`)
@@ -56,7 +66,8 @@ type scannedPackage struct {
 	files []*ast.File
 	// consts maps a constant name to the expression and file it is declared
 	// with, for resolution.
-	consts map[string]constDecl
+	consts  map[string]constDecl
+	structs map[string]*ast.StructType
 }
 
 type constDecl struct {
@@ -145,10 +156,18 @@ func scanModule(t *testing.T, root string) *moduleScanner {
 		}
 		pkg := s.pkgs[importPath]
 		if pkg == nil {
-			pkg = &scannedPackage{path: importPath, consts: map[string]constDecl{}}
+			pkg = &scannedPackage{path: importPath, consts: map[string]constDecl{}, structs: map[string]*ast.StructType{}}
 			s.pkgs[importPath] = pkg
 		}
 		pkg.files = append(pkg.files, file)
+		ast.Inspect(file, func(n ast.Node) bool {
+			if spec, ok := n.(*ast.TypeSpec); ok {
+				if st, ok := spec.Type.(*ast.StructType); ok {
+					pkg.structs[spec.Name.Name] = st
+				}
+			}
+			return true
+		})
 		for _, decl := range file.Decls {
 			gen, ok := decl.(*ast.GenDecl)
 			if !ok || gen.Tok != token.CONST {
@@ -379,6 +398,59 @@ func carrierName(expr ast.Expr) string {
 	return ""
 }
 
+// codeFieldIndex follows the declaration, including grouped and embedded
+// fields: Code need not be the first field of a positional literal.
+func codeFieldIndex(st *ast.StructType) (int, bool) {
+	index := 0
+	for _, field := range st.Fields.List {
+		for _, name := range field.Names {
+			if typ, ok := field.Type.(*ast.Ident); ok && name.Name == "Code" && typ.Name == "string" {
+				return index, true
+			}
+			index++
+		}
+		if len(field.Names) == 0 {
+			index++
+		}
+	}
+	return 0, false
+}
+
+func (s *moduleScanner) carrierCodeIndex(pkgPath string, file *ast.File, typ ast.Expr) (int, bool) {
+	if sel, ok := typ.(*ast.SelectorExpr); ok {
+		ident, ok := sel.X.(*ast.Ident)
+		if !ok {
+			return 0, false
+		}
+		pkgPath, ok = s.importPathFor(file, ident.Name)
+		if !ok {
+			return 0, false
+		}
+	}
+	pkg := s.pkgs[pkgPath]
+	if pkg == nil {
+		return 0, false
+	}
+	st := pkg.structs[carrierName(typ)]
+	if st == nil {
+		return 0, false
+	}
+	return codeFieldIndex(st)
+}
+
+func (s *moduleScanner) checkCarrierRegistrations(pkg *scannedPackage) {
+	for name, st := range pkg.structs {
+		if _, hasCode := codeFieldIndex(st); !hasCode || codeCarriers[name] {
+			continue
+		}
+		qualified := strings.TrimPrefix(pkg.path, s.module+"/") + "." + name
+		if _, exempt := nonErrorCodeFields[qualified]; exempt {
+			continue
+		}
+		s.problems = append(s.problems, fmt.Sprintf("%s: unregistered Code string carrier %s", s.position(st.Pos()), qualified))
+	}
+}
+
 // collect finds every emitted code.
 func (s *moduleScanner) collect() {
 	paths := make([]string, 0, len(s.pkgs))
@@ -388,6 +460,7 @@ func (s *moduleScanner) collect() {
 	sort.Strings(paths)
 	for _, path := range paths {
 		pkg := s.pkgs[path]
+		s.checkCarrierRegistrations(pkg)
 		for name := range pkg.consts {
 			if !codeConstName.MatchString(name) {
 				continue
@@ -412,9 +485,17 @@ func (s *moduleScanner) collect() {
 					if !ok || !codeCarriers[carrierName(lit.Type)] {
 						return true
 					}
-					for _, elt := range lit.Elts {
+					index, resolved := s.carrierCodeIndex(path, file, lit.Type)
+					for i, elt := range lit.Elts {
 						kv, ok := elt.(*ast.KeyValueExpr)
 						if !ok {
+							if !resolved {
+								s.problems = append(s.problems, fmt.Sprintf("%s: cannot locate Code field of %s", s.position(lit.Pos()), carrierName(lit.Type)))
+								break
+							}
+							if i == index {
+								s.codeValue(path, file, fn, elt, map[string]bool{})
+							}
 							continue
 						}
 						if key, ok := kv.Key.(*ast.Ident); ok && key.Name == "Code" {
@@ -513,7 +594,7 @@ import (
 	c "example.com/m/codes"
 )
 
-type CodedError struct{ Code string }
+type CodedError struct{ Message string; Code string }
 
 func (CodedError) Error() string { return "" }
 
@@ -524,6 +605,8 @@ func (own) StableCode() string { return "from_stable_code" }
 func Literal() error { return CodedError{Code: "literal_code"} }
 
 func Imported() error { return &CodedError{Code: c.CodeAlias} }
+
+func Positional() error { return CodedError{"message_not_code", "positional_code"} }
 
 func Local(err error) error {
 	code := "local_default"
@@ -549,10 +632,13 @@ func Built(name string) error { return CodedError{Code: name + "_x"} }
 	}
 	s := scanEmittedCodes(t, root)
 	sites := s.sites()
-	for _, want := range []string{"declared_constant", "via_alias", "from_stable_code", "literal_code", "local_default", "local_branch"} {
+	for _, want := range []string{"declared_constant", "via_alias", "from_stable_code", "literal_code", "local_default", "local_branch", "positional_code"} {
 		if len(sites[want]) == 0 {
 			t.Errorf("scanner missed %s; found %v", want, sites)
 		}
+	}
+	if len(sites["message_not_code"]) != 0 {
+		t.Error("scanner assumed Code was the first field")
 	}
 	if len(s.problems) != 1 || !strings.Contains(s.problems[0], "p.go") {
 		t.Fatalf("problems = %q, want exactly the run-time code built in Built", s.problems)
