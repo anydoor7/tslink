@@ -44,12 +44,8 @@ func TestParseDurationIsGoSyntaxPlusDays(t *testing.T) {
 	}
 }
 
-// TestEveryDurationInputSpeaksOneGrammar is A3-5's probe: MCP logs since
-// "7d" failed with time: unknown unit "d" while funnel_ttl accepted 7d and
-// funnel_remaining printed 168h0m0s, which funnel_ttl refused. Every duration
-// input now reads Go syntax plus d for days, each within its own bounds, and
-// reads back what funnel_remaining prints.
-func TestEveryDurationInputSpeaksOneGrammar(t *testing.T) {
+// Duration inputs read Go syntax plus days; Funnel TTL is a fixed choice.
+func TestDurationGrammarAndFunnelChoices(t *testing.T) {
 	// MCP logs since: the default ceiling is 168h, spelled either way.
 	for _, since := range []string{"7d", "168h", "1d12h"} {
 		if _, err := resolveMCPLogsQuery(mcpLogsArguments{Since: since}); err != nil {
@@ -68,31 +64,31 @@ func TestEveryDurationInputSpeaksOneGrammar(t *testing.T) {
 		t.Errorf("wait 1d: %v, want the cap named rather than a parse error", err)
 	}
 
-	// MCP funnel_ttl: the same five choices and never, in any spelling.
-	for spelling, want := range map[string]time.Duration{"7d": 7 * durationDay, "168h": 7 * durationDay, "1d": 24 * time.Hour, "3d": 72 * time.Hour, "60m": time.Hour} {
-		got, never, err := registry.ParseFunnelTTL(canonicalMCPFunnelTTL(spelling))
+	// MCP funnel_ttl: exactly the five lifetimes and never.
+	for spelling, want := range map[string]time.Duration{"7d": 7 * durationDay, "24h": 24 * time.Hour, "72h": 72 * time.Hour, "1h": time.Hour} {
+		got, never, err := registry.ParseFunnelTTL(spelling)
 		if err != nil || never || got != want {
 			t.Errorf("funnel_ttl %q = %v never=%v err=%v; want %v", spelling, got, never, err, want)
 		}
 	}
-	for _, refused := range []string{"2h", "6d", "167h59m59s", "soon"} {
-		if _, _, err := registry.ParseFunnelTTL(canonicalMCPFunnelTTL(refused)); err == nil || !strings.Contains(err.Error(), "must be one of") {
+	for _, refused := range []string{"2h", "6d", "167h59m59s", "soon", "168h", "168h0m0s", "1d", "60m"} {
+		if _, _, err := registry.ParseFunnelTTL(refused); err == nil || !strings.Contains(err.Error(), "must be one of") {
 			t.Errorf("funnel_ttl %q: %v, want the list of choices", refused, err)
 		}
 	}
-	if _, never, err := registry.ParseFunnelTTL(canonicalMCPFunnelTTL("never")); err != nil || !never {
+	if _, never, err := registry.ParseFunnelTTL("never"); err != nil || !never {
 		t.Errorf("funnel_ttl never = %v, %v", never, err)
 	}
-	// Over the protocol: add with funnel_ttl 168h records a seven-day Funnel.
+	// Over the protocol: add with funnel_ttl 7d records a seven-day Funnel.
 	restoreShareSeams(t)
 	paths := mcpSharePaths(t)
 	oldEnsure := ensureDaemonFn
 	t.Cleanup(func() { ensureDaemonFn = oldEnsure })
 	ensureDaemonFn = func(context.Context, io.Writer, bool) error { return nil }
 	result, err := callMCPTool(context.Background(), defaultMCPActions(paths, io.Discard), "add",
-		json.RawMessage(`{"name":"pub","type":"proxy","target":"localhost:3000","funnel":true,"public_ack":true,"funnel_ttl":"168h"}`))
+		json.RawMessage(`{"name":"pub","type":"proxy","target":"localhost:3000","funnel":true,"public_ack":true,"funnel_ttl":"7d"}`))
 	if err != nil || result.IsError {
-		t.Fatalf("add funnel_ttl 168h: %+v, %v", result, err)
+		t.Fatalf("add funnel_ttl 7d: %+v, %v", result, err)
 	}
 	if svc := mcpLoadService(t, paths.Registry, "pub"); svc.FunnelExpiresAt == nil || time.Until(*svc.FunnelExpiresAt) < 7*durationDay-time.Minute {
 		t.Fatalf("funnel_expires_at = %v, want seven days from now", svc.FunnelExpiresAt)
@@ -110,15 +106,18 @@ func TestEveryDurationInputSpeaksOneGrammar(t *testing.T) {
 		t.Errorf("events_keepalive 0.001d = %v, %v", keepalive, err)
 	}
 
-	// funnel_remaining is printed in Go's form, which every input reads.
+	// Printed durations round-trip through the grammar, but are not TTL choices.
 	now := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
 	deadline := now.Add(7 * durationDay)
 	remaining := registry.FunnelRemainingAt(registry.Service{Name: "pub", Type: registry.TypeProxy, Funnel: true, PublicAck: true, FunnelExpiresAt: &deadline}, now)
 	if remaining == nil || *remaining != "168h0m0s" {
 		t.Fatalf("funnel_remaining = %v, want 168h0m0s", remaining)
 	}
-	if got, _, err := registry.ParseFunnelTTL(canonicalMCPFunnelTTL(*remaining)); err != nil || got != 7*durationDay {
-		t.Errorf("funnel_ttl %q (a funnel_remaining value) = %v, %v; want 7d", *remaining, got, err)
+	if got, err := parseDuration(*remaining); err != nil || got != 7*durationDay {
+		t.Errorf("printed duration %q = %v, %v; want 7d", *remaining, got, err)
+	}
+	if _, _, err := registry.ParseFunnelTTL(*remaining); err == nil || !strings.Contains(err.Error(), "must be one of") {
+		t.Errorf("funnel_ttl %q: %v, want the list of choices", *remaining, err)
 	}
 	if _, err := resolveMCPLogsQuery(mcpLogsArguments{Since: *remaining}); err != nil {
 		t.Errorf("logs since %q (a funnel_remaining value): %v", *remaining, err)

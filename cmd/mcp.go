@@ -722,7 +722,7 @@ func addParamsFromMCPArguments(args mcpAddArguments) (AddParams, bool, error) {
 		ControlURL:      args.ControlURL,
 	}
 	if args.FunnelTTL != nil {
-		params.FunnelTTL = canonicalMCPFunnelTTL(*args.FunnelTTL)
+		params.FunnelTTL = *args.FunnelTTL
 		params.FunnelTTLSet = true
 	}
 	switch args.Type {
@@ -762,7 +762,7 @@ const durationDay = 24 * time.Hour
 // parseDuration is TSLink's one duration grammar for what an agent or a person
 // types: Go's time.ParseDuration syntax (300ms, 1.5h, 2h45m) plus d for days
 // of 24 hours (7d, 1d12h, 1.5d); surrounding space is ignored. The MCP logs
-// since, the url wait and funnel_ttl, login --expires-in and the event
+// since, the url wait, login --expires-in and the event
 // stream's events_keepalive read it, each within its own bounds. Every
 // duration TSLink prints, such as funnel_remaining, is Go's
 // time.Duration.String form (167h59m59s, 0s), which it reads back.
@@ -802,33 +802,6 @@ func parseDuration(value string) (time.Duration, error) {
 		return 0, fmt.Errorf("time: invalid duration %q", value)
 	}
 	return parsed, nil
-}
-
-// mcpFunnelTTLChoices maps each Funnel lifetime the CLI contract offers to its
-// canonical spelling.
-var mcpFunnelTTLChoices = map[time.Duration]string{
-	time.Hour:       "1h",
-	8 * time.Hour:   "8h",
-	24 * time.Hour:  "24h",
-	72 * time.Hour:  "72h",
-	7 * durationDay: "7d",
-}
-
-// canonicalMCPFunnelTTL reads an MCP funnel_ttl with parseDuration, so 168h
-// (or 168h0m0s, how funnel_remaining prints seven days) is the same choice as
-// 7d, and returns the spelling registry.ParseFunnelTTL accepts. Any other
-// value is returned unchanged for ParseFunnelTTL to refuse with the list of
-// choices.
-func canonicalMCPFunnelTTL(value string) string {
-	if strings.TrimSpace(value) == registry.FunnelNeverExpires {
-		return registry.FunnelNeverExpires
-	}
-	if parsed, err := parseDuration(value); err == nil {
-		if canonical, ok := mcpFunnelTTLChoices[parsed]; ok {
-			return canonical
-		}
-	}
-	return value
 }
 
 // parseMCPWait reads the url tool's optional duration (Go syntax or days). It mirrors
@@ -1590,7 +1563,7 @@ func callMCPTool(ctx context.Context, actions mcpActions, name string, arguments
 			req.Ephemeral = *args.Ephemeral
 		}
 		if args.FunnelTTL != nil {
-			req.FunnelTTL = canonicalMCPFunnelTTL(*args.FunnelTTL)
+			req.FunnelTTL = *args.FunnelTTL
 			req.FunnelTTLSet = true
 		}
 		data, err = actions.share(ctx, req)
