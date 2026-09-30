@@ -285,10 +285,6 @@ func decodeDoctorJSON(t *testing.T, raw string) DoctorResult {
 	if envelope.Command != "doctor" {
 		t.Fatalf("command = %q, want %q", envelope.Command, "doctor")
 	}
-	if envelope.Code != output.ExitSuccess {
-		t.Fatalf("code = %d, want %d", envelope.Code, output.ExitSuccess)
-	}
-
 	dataBytes, err := json.Marshal(envelope.Data)
 	if err != nil {
 		t.Fatalf("marshal doctor data: %v", err)
@@ -299,6 +295,11 @@ func decodeDoctorJSON(t *testing.T, raw string) DoctorResult {
 	}
 	if data.SchemaVersion == 0 || data.ExecutionStatus == "" {
 		t.Fatalf("flat doctor data incomplete\nraw data: %s", dataBytes)
+	}
+	// The envelope code is the process exit code (A3-5), which is the
+	// health exit code the data reports.
+	if envelope.Code != data.HealthExitCode {
+		t.Fatalf("code = %d, want the health exit code %d", envelope.Code, data.HealthExitCode)
 	}
 	return data
 }

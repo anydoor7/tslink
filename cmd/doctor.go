@@ -253,12 +253,18 @@ func (d doctorJSONData) MarshalJSON() ([]byte, error) { return json.Marshal(d.Do
 
 func runDoctor(out io.Writer, opts doctorOptions, isJSON bool) error {
 	result := buildDoctorResult(opts)
+	exit := doctorExit(result)
 	if isJSON {
-		output.WriteJSON(out, output.NewSuccess("doctor", doctorJSONData{Doctor: result}))
+		// The diagnosis completed, so ok stays true, but code is the process
+		// exit code, as on every other command: 64 for warnings, 65 for
+		// errors (health_exit_code in data carries the same number).
+		envelope := output.NewSuccess("doctor", doctorJSONData{Doctor: result})
+		envelope.Code = output.ExitCode(exit)
+		output.WriteJSON(out, envelope)
 	} else {
 		formatDoctor(result, out)
 	}
-	return doctorExit(result)
+	return exit
 }
 
 func buildDoctorResult(opts doctorOptions) DoctorResult {

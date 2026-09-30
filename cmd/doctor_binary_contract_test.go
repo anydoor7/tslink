@@ -76,8 +76,8 @@ func decodeCompiledDoctor(t *testing.T, stdout string) DoctorResult {
 	if len(results) != 1 {
 		t.Fatalf("doctor stdout record count = %d, want 1", len(results))
 	}
-	if !results[0].OK || results[0].Command != "doctor" || results[0].Code != output.ExitSuccess {
-		t.Fatalf("doctor execution envelope = %+v, want transport success", results[0])
+	if !results[0].OK || results[0].Command != "doctor" {
+		t.Fatalf("doctor execution envelope = %+v, want a completed diagnosis", results[0])
 	}
 	dataBytes, err := json.Marshal(results[0].Data)
 	if err != nil {
@@ -86,6 +86,11 @@ func decodeCompiledDoctor(t *testing.T, stdout string) DoctorResult {
 	var data DoctorResult
 	if err := json.Unmarshal(dataBytes, &data); err != nil {
 		t.Fatalf("decode doctor payload: %v", err)
+	}
+	// The envelope code is the process exit code (A3-5), which is the
+	// health exit code the data reports; callers check it against the exit.
+	if results[0].Code != data.HealthExitCode {
+		t.Fatalf("doctor envelope code = %d, want the health exit code %d", results[0].Code, data.HealthExitCode)
 	}
 	return data
 }
