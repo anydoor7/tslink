@@ -24,10 +24,16 @@ proxy service is explicitly published through Funnel.
   separate `TSLINK_CONFIG_DIR` receives `file_root_home_directory`.
 - Proxy and TCP registration refuses literal link-local addresses
   (`169.254.0.0/16`, `fe80::/10`), unspecified addresses (`0.0.0.0`, `::`),
-  non-canonical numeric spellings of them, and `metadata.google.internal`
-  with `link_local_target_refused` (exit 2). A registered service with that
-  target is isolated and reported by `status` and `doctor`. Validation does
-  not resolve hostnames or check resolved addresses at connection time.
+  known cloud-metadata targets (`fd00:ec2::254`, `100.100.100.200`,
+  `metadata.google.internal`, `metadata.tencentyun.com`, `instance-data`,
+  `metadata`), and numeric respellings of refused IPv4 addresses with
+  `link_local_target_refused` (exit 2). Loopback shorthand such as `127.1`
+  is accepted. A registered service with a refused target is isolated and
+  reported by `status` and `doctor`. Validation does not resolve hostnames
+  or check resolved addresses at connection time.
+- The HTTP proxy strips client-supplied `Tailscale-*` and `X-Tailscale-*`
+  identity headers, including underscore and mixed spellings, before
+  injecting identity from a successful WhoIs lookup.
 - A credentialed daemon refuses a non-Tailscale control URL before sending a
   Tailscale-derived auth key. This covers a service `control_url`, global
   `control-url` or `--control-url`, `TS_CONTROL_URL`, and the MCP node. The
@@ -46,9 +52,8 @@ proxy service is explicitly published through Funnel.
   writes require `--manage-acl`.
 - `tags delete-remote tag:tslink-funnel` treats each active local Funnel as
   using the shared tag and refuses deletion even with `--force --manage-acl`.
-  The JSON path reports `conflict` (exit 4); the human path reports an error
-  (exit 1). An expired Funnel does not
-  block this command. `cleanup --manage-acl` and `serve --manage-acl` retain
+  Both JSON and human paths report `conflict` (exit 4). An expired Funnel does
+  not block this command. `cleanup --manage-acl` and `serve --manage-acl` retain
   the shared grant because this host cannot prove other hosts have stopped
   using it; `cleanup --json` reports `acl_action` as `not_requested`,
   `still_in_use`, or `skipped`. To revoke the grant, inspect every host and
@@ -61,6 +66,11 @@ proxy service is explicitly published through Funnel.
   absent from `registry.json` keeps its node state. A missing service with an
   unretired ownership row blocks only that service's device deletion, which
   `doctor` reports as `device_cleanup_blocked`.
+- A re-added service keeps its starting node state during lifecycle cleanup.
+  Removed services keep ownership records when local node-state cleanup is
+  skipped or fails; a later reconciliation retries them. `remove` and MCP
+  `unshare` retire every ownership row present when they unregister a service,
+  including rows enrolled while waiting for the registry lock.
 - MCP user invitations with a role other than `member` and device invitations
   with `allow_exit_node: true` require `mcp.allow_elevated_invites: true` in
   `config.json`. Without that opt-in they return `mcp_elevated_invite_refused`
@@ -96,6 +106,10 @@ proxy service is explicitly published through Funnel.
   deadline and is omitted for tailnet-only or never-expiring shares. CLI and
   MCP share results include `exposure` (`kind`, `display`, `public`) and may
   include `warnings`; CLI `share` creates tailnet-only shares.
+- A newly registered `share` carries a transient
+  `registry.json.tentative-<name>` claim while it waits. An identical reused
+  `share` or unchanged `add` settles the registration, so cancellation or a
+  failed wait by the creator cannot roll back that adopted service.
 - Reserved registry fields `domain`, `acme_email`, and `middleware` are
   refused with `unknown_config_key` (exit 2). Custom-domain ACME and
   middleware are roadmap features, not active runtime controls.
@@ -108,6 +122,13 @@ proxy service is explicitly published through Funnel.
   registry-level errors still stop startup. An expired Funnel beside an
   invalid service is withdrawn in memory; the registry rewrite waits until
   the invalid entry is repaired or removed.
+- Malformed registry JSON, field types, or trailing data report `usage_error`
+  (exit 2) with the registry path and repair guidance. Diagnostics show a bad
+  entry beside healthy services and retain available exact runtime endpoints;
+  strict registry mutations still refuse the bad entry.
+  `registry check <missing-path>` reports
+  `not_found` (exit 5); an absent implicit default registry is a valid empty
+  first-run state.
 - The daemon stores per-service startup identity in
   `node-identities/<name>.json`. A Tier 2 tag, Funnel, ephemeral, or control
   URL change clears the old local identity, deletes its recorded tailnet
@@ -142,12 +163,16 @@ proxy service is explicitly published through Funnel.
 - The public view `schema_version` inside result `data` is the integer `1`.
   `doctor --json` sets envelope `code` to its diagnostic exit code (0, 64, or
   65). `enrollment_required` exits 3.
+- Human `status` with no registered services and no enabled MCP node points
+  to `add` or `share` rather than enrollment through `install` alone.
 - MCP `logs` `since`, MCP `url` `wait`, `login --expires-in`, and
   `events_keepalive` accept Go duration syntax plus `d` for days. MCP
-  `funnel_ttl` accepts equivalent spellings of its five timed lifetimes and
-  `never` (`168h` equals `7d`); each option keeps its own bounds. CLI `--wait`
-  and `--funnel-ttl` retain their existing syntax. `funnel_remaining` uses Go
-  duration spelling, `0s` after a deadline, and `never` without one.
+  `funnel_ttl` accepts only `1h`, `8h`, `24h`, `72h`, `7d`, or `never`; other
+  spellings such as `168h` are usage errors. CLI `add --wait`, `share --wait`,
+  and `url --wait` accept Go duration syntax plus fractional or composite
+  days using `d`. CLI `--funnel-ttl` keeps its six exact choices.
+  `funnel_remaining` uses Go duration spelling, `0s` after a deadline, and
+  `never` without one.
 - `doctor` on an empty, credential-free install exits 0 and reports
   `credential_none` as info. Set `TSLINK_DOCTOR_SKIP_TAILSCALE_SSH=1` to skip
   its local Tailscale SSH check; the finding is `tailscale_ssh_unknown` and
@@ -176,13 +201,17 @@ proxy service is explicitly published through Funnel.
   newer credential record. If a legacy `apikey` file differs from the
   keychain value, `serve` keeps the keychain value and leaves the file for
   inspection; an unreadable keychain also leaves the file untouched.
+- A credential metadata backfill is written only while the store still holds
+  the value that was read. The read-only MCP `list`, `status`, `url`, and
+  `doctor` tools describe missing metadata without creating
+  `credential-meta.json` or `credentials.lock`. CLI status and doctor still
+  record a backfill when needed.
 - A JSON-RPC batch or oversized record ends an MCP stdio session before any
   part is dispatched. A cancelled MCP `unshare` or CLI `remove` interrupts
   remote cleanup and reports a `device_warning` while keeping the local
   removal.
-- The `share` and `add` tool descriptions specify that target blocking
-  checks literal IPs and `metadata.google.internal`, without DNS resolution
-  or a connect-time check.
+- The `share` and `add` tool descriptions distinguish registration-time
+  target checks from DNS resolution and connect-time checks.
 - A refused MCP call returns `isError: true` with one text item containing a
   JSON failure object (`code`, `message`, `next`, `data`) and no
   `structuredContent`. Invalid tool arguments return a `usage_error` tool
@@ -194,9 +223,12 @@ proxy service is explicitly published through Funnel.
 - Every MCP tool declares `readOnlyHint`, `destructiveHint`, `idempotentHint`,
   and `openWorldHint`. MCP `share`, `add`, and `template_apply` include
   `daemon_installed` (`manager`, `path`, `undo`) when their call installed the
-  background service. The `add` tool describes how a custom `control_url`
-  keeps the stored Tailscale credential and keys minted from it off that
-  server.
+  background service; failures after that installation carry the same receipt
+  in `data`. `template_plan` has no installation field. MCP `share` and `add`
+  hints identify Funnel lifetime effects as non-idempotent. The `add` tool
+  describes how a custom `control_url` keeps the stored Tailscale credential
+  and keys minted from it off that server. `serve` help describes elevated MCP
+  invitation opt-in and the event keepalive duration grammar.
 - The manifest derives `error_codes` from the same table as process exits and
   service isolation. Its codes include `daemon_not_running`,
   `daemon_setup_failed`, `daemon_supervision_unverified`,
@@ -215,6 +247,11 @@ proxy service is explicitly published through Funnel.
   script. `install` and `uninstall` bound service-manager queries to two
   seconds with one retry and state changes to 120 seconds; an uncertain
   supervisor state is never treated as stopped or unowned.
+- Newly installed or reinstalled Linux systemd units and Windows Startup
+  scripts select the private daemon log read by `tslink logs` and MCP `logs`,
+  while retaining supervisor stderr. When a Linux systemd user bus is absent,
+  automatic setup names a login session with a working user manager and
+  `XDG_RUNTIME_DIR`, or manual `tslink serve` with `--no-daemon-install`.
 - Linux `uninstall` keeps the unit and fails if `systemctl --user stop` fails
   and shutdown is unconfirmed. It also reports a running unit or enabled
   link left behind after its unit file disappears, with manual recovery
@@ -235,6 +272,12 @@ proxy service is explicitly published through Funnel.
 - `go run ./tools/gen-manifest` writes the same committed manifest on macOS,
   Linux, and Windows, and `-check` detects a stale fixture on each platform.
   `scripts/check.sh` runs the portable release checks.
+- Error-code guards cover positional and newly registered code carriers and
+  qualify carriers by package. Linux and Darwin CI check the full CLI manifest
+  fixture.
+- `THIRD_PARTY_NOTICES.md` includes linked nested notices and reviewed
+  embedded-asset licenses, including xxhash and Inter. Local build, test, and
+  environment artifacts are ignored by `.gitignore`.
 - CI runs the Release Candidate gate on pull requests and pushes to `main`;
   isolated tests use test-owned state rather than a contributor's TSLink
   configuration, Tailscale LocalAPI, or service manager.
