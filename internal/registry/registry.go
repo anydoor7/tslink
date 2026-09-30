@@ -380,31 +380,45 @@ func isRefusedTargetHost(host string) bool {
 	if ip != nil {
 		return ip.IsLinkLocalUnicast() || ip.IsUnspecified() || ip.String() == "fd00:ec2::254" || ip.String() == "100.100.100.200"
 	}
-	// The platform resolver accepts non-canonical spellings of an IPv4 address
-	// that net.ParseIP rejects -- hexadecimal 0xA9FEA9FE, the dotted 32-bit
-	// form 169.254.43518, octal-looking 0251.0376.0251.0376, and bare decimal
-	// 2852039166 all fold into the same address the daemon would then dial.
-	// Every such spelling ends in a wholly numeric label, while a real
-	// hostname's last label (its TLD) is never all digits, so refusing that
-	// shape closes the bypass without touching ordinary names such as
-	// 169.254.169.254.example.com or 169.254.169.254.nip.io.
-	if dot := strings.LastIndexByte(normalized, '.'); dot >= 0 {
-		normalized = normalized[dot+1:]
-	}
 	return isNumericHostLabel(normalized)
 }
 
-// isNumericHostLabel reports whether label is a wholly decimal host label
-// (169.254.43518) or a 0x/0X-prefixed hexadecimal one (0xA9FEA9FE). Both are
-// numeric IPv4 spellings the platform resolver folds into a single address.
-func isNumericHostLabel(label string) bool {
-	if label == "" {
+// isNumericHostLabel recognizes traditional inet_aton IPv4 spellings before
+// judging their address. A numeric last label alone is not a refused target:
+// for example 127.1 is loopback, while 169.254.43518 is metadata.
+func isNumericHostLabel(host string) bool {
+	parts := strings.Split(host, ".")
+	if len(parts) > 4 {
 		return false
 	}
-	if len(label) > 2 && (strings.HasPrefix(label, "0x") || strings.HasPrefix(label, "0X")) {
-		return allASCIIHexDigits(label[2:])
+	var address uint64
+	for i, part := range parts {
+		base := 10
+		if strings.HasPrefix(part, "0x") || strings.HasPrefix(part, "0X") {
+			part, base = part[2:], 16
+			if !allASCIIHexDigits(part) {
+				return false
+			}
+		} else {
+			if !allASCIIDecimalDigits(part) {
+				return false
+			}
+			if len(part) > 1 && part[0] == '0' {
+				base = 8
+			}
+		}
+		bits := 8
+		if i == len(parts)-1 {
+			bits = 8 * (5 - len(parts))
+		}
+		value, err := strconv.ParseUint(part, base, bits)
+		if err != nil {
+			return false
+		}
+		address = address<<bits | value
 	}
-	return allASCIIDecimalDigits(label)
+	ip := net.IPv4(byte(address>>24), byte(address>>16), byte(address>>8), byte(address))
+	return isRefusedTargetHost(ip.String())
 }
 
 func allASCIIDecimalDigits(value string) bool {
