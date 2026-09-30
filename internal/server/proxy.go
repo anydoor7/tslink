@@ -39,10 +39,11 @@ func NewProxyHandler(target string, identity *IdentityResolver) (http.Handler, e
 		Rewrite: func(r *httputil.ProxyRequest) {
 			r.SetURL(targetURL)
 			r.SetXForwarded()
-			// Strip X-Tailscale-* headers from inbound to prevent spoofing
+			// Strip both identity namespaces, including CGI-equivalent spellings.
 			for key := range r.In.Header {
-				if strings.HasPrefix(strings.ToLower(key), "x-tailscale-") {
-					r.Out.Header.Del(key)
+				normalized := strings.ToLower(strings.ReplaceAll(key, "_", "-"))
+				if strings.HasPrefix(normalized, "x-tailscale-") || strings.HasPrefix(normalized, "tailscale-") {
+					delete(r.Out.Header, key)
 				}
 			}
 			// Inject caller identity
