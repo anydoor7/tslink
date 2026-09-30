@@ -964,7 +964,10 @@ func TestDefaultMCPActionsUseLocalRegistryAndRedactedStatus(t *testing.T) {
 	withStatusURLSeams(t, false, 0, time.Time{})
 	dir := t.TempDir()
 	paths := sharePaths{
-		Registry:    filepath.Join(dir, "registry.json"),
+		Registry: filepath.Join(dir, "registry.json"),
+		// unshare records the removal in the ownership ledger under its lock,
+		// so the fixture carries the ledger path production always resolves.
+		Ownership:   filepath.Join(dir, "node-ownership.json"),
 		PID:         filepath.Join(dir, "pid"),
 		Snapshot:    filepath.Join(dir, "runtime.json"),
 		AuthHandoff: filepath.Join(dir, "auth.json"),
