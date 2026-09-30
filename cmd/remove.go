@@ -187,16 +187,13 @@ func removeServiceResultContext(ctx context.Context, regPath, ownershipPath, nam
 			// holds it. So the rows stay retired here instead of being
 			// forgotten; the reconciler forgets them when it finishes.
 			//
-			// Without a daemon nothing else will ever look, so this command
+			// Without a daemon nothing else looks now, so this command
 			// finishes the job itself: that is how ~/.config/tslink/nodes/
 			// would otherwise accumulate directories for services removed
-			// months ago.
+			// months ago. It forgets the rows only once the directory is gone.
+			// A directory it keeps, or fails to delete, keeps them, so a later
+			// reconciliation can still find it and finish.
 			daemonRunning := removeDaemonRunningFn()
-			if len(cleanup.ResolvedOwnershipIDs) > 0 && !daemonRunning {
-				if err := tsruntime.RemoveOwnedNodeIDs(ownershipPath, cleanup.ResolvedOwnershipIDs); err != nil {
-					result.DeviceWarning = fmt.Sprintf("device cleanup succeeded but ownership ledger update failed: %v", err)
-				}
-			}
 			if cleanup.Skipped {
 				result.DeviceCleanupSkipped = true
 				result.DeviceSkipReason = cleanup.SkipReason
@@ -217,6 +214,10 @@ func removeServiceResultContext(ctx context.Context, regPath, ownershipPath, nam
 			default:
 				if removeErr := removeNodeStateFn(tsruntime.ServiceNodeStateConfigDir(regPath), name); removeErr != nil {
 					result.DeviceWarning = fmt.Sprintf("service and tailnet node removed but local node state could not be deleted: %v", removeErr)
+				} else if len(cleanup.ResolvedOwnershipIDs) > 0 {
+					if err := tsruntime.RemoveOwnedNodeIDs(ownershipPath, cleanup.ResolvedOwnershipIDs); err != nil {
+						result.DeviceWarning = fmt.Sprintf("device cleanup succeeded but ownership ledger update failed: %v", err)
+					}
 				}
 			}
 		}

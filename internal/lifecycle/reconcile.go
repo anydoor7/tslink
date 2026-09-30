@@ -2,12 +2,17 @@ package lifecycle
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/registry"
 	tsruntime "github.com/monody0007/tslink/internal/runtime"
 	"github.com/monody0007/tslink/internal/tailapi"
@@ -301,12 +306,13 @@ func Reconcile(ctx context.Context, options Options) (Result, error) {
 			}
 			result.Warnings = append(result.Warnings, cleanupErr.Error())
 		}
-		held := removeStaleNodeState(options, &result, cleanup, cleanupErr, orphanIDs, serviceNames, active)
+		gone := removeStaleNodeState(options, &result, cleanup, cleanupErr, orphanIDs, serviceNames, active)
 		if cleanupErr == nil && !options.DryRun && len(cleanup.ResolvedOwnershipIDs) > 0 {
-			// The rows of a service whose state a live tsnet server still
-			// holds are the only way a later run finds that state again, so
-			// they are kept until the state itself is gone.
-			if err := tsruntime.RemoveOwnedNodeIDs(options.OwnershipPath, idsExcept(cleanup.ResolvedOwnershipIDs, orphanIDs, held)); err != nil {
+			// A service's rows are the only way a later run finds its local
+			// state again, so they are forgotten only once that state is
+			// gone: never while a tsnet server holds it, after a failed
+			// removal, or for a caller that may not remove it.
+			if err := tsruntime.RemoveOwnedNodeIDs(options.OwnershipPath, idsOf(cleanup.ResolvedOwnershipIDs, orphanIDs, gone)); err != nil {
 				return Result{}, fmt.Errorf("update node ownership ledger: %w", err)
 			}
 		}
@@ -400,19 +406,21 @@ func Reconcile(ctx context.Context, options Options) (Result, error) {
 // node identity. cmd/remove covers that case at the point where the facts are
 // still in hand.
 //
-// It returns the services whose remote side resolved but whose state a live
-// tsnet server still holds, for example a node the daemon has not stopped yet
-// because the registry change has not reached its sync. Their ownership rows
-// must outlive this run so the next one can finish.
-func removeStaleNodeState(options Options, result *Result, cleanup tailapi.CleanupResult, cleanupErr error, orphanIDs map[string][]string, serviceNames []string, active map[string]struct{}) (held map[string]struct{}) {
-	held = make(map[string]struct{})
-	if options.DryRun || !options.CleanLocalNodeState || options.LocalNodeStateInUse == nil {
-		return held
-	}
-	if cleanupErr != nil || cleanup.Skipped || len(cleanup.Protected) > 0 {
+// It returns the services whose remote side resolved and whose local state is
+// confirmed gone: removed by this run, or already absent. Only their ownership
+// rows may be forgotten. Every other service keeps its rows, because they are
+// the only record through which a later run finds the state and finishes: a
+// directory a live tsnet server still holds (a node the daemon has not stopped
+// yet), one whose removal failed, and one this caller may not remove at all,
+// such as a `tslink cleanup` process between two daemon ticks.
+func removeStaleNodeState(options Options, result *Result, cleanup tailapi.CleanupResult, cleanupErr error, orphanIDs map[string][]string, serviceNames []string, active map[string]struct{}) (gone map[string]struct{}) {
+	gone = make(map[string]struct{})
+	configDir := tsruntime.ServiceNodeStateConfigDir(options.RegistryPath)
+	mayRemove := !options.DryRun && options.CleanLocalNodeState && options.LocalNodeStateInUse != nil
+	if mayRemove && (cleanupErr != nil || cleanup.Skipped || len(cleanup.Protected) > 0) {
 		slog.Info("keeping local node state for orphan services; this run could not confirm every remote device is gone",
 			"services", serviceNames, "protected", len(cleanup.Protected), "skipped", cleanup.Skipped)
-		return held
+		mayRemove = false
 	}
 	resolved := make(map[string]struct{}, len(cleanup.ResolvedOwnershipIDs))
 	for _, id := range cleanup.ResolvedOwnershipIDs {
@@ -429,37 +437,47 @@ func removeStaleNodeState(options Options, result *Result, cleanup tailapi.Clean
 			}
 		}
 		if unresolved > 0 {
-			slog.Info("keeping local node state; some remote devices for this service are unaccounted for",
-				"service", name, "unresolved_nodes", unresolved)
+			if mayRemove {
+				slog.Info("keeping local node state; some remote devices for this service are unaccounted for",
+					"service", name, "unresolved_nodes", unresolved)
+			}
+			continue
+		}
+		if !mayRemove {
+			// Nothing is removed here, but state that is already gone
+			// leaves the rows nothing to find.
+			if _, err := os.Lstat(filepath.Join(config.NodesDirIn(configDir), name)); errors.Is(err, fs.ErrNotExist) {
+				gone[name] = struct{}{}
+			}
 			continue
 		}
 		if options.LocalNodeStateInUse(name) {
 			slog.Info("keeping local node state and its ownership record; a tsnet server still holds it", "service", name)
-			held[name] = struct{}{}
 			continue
 		}
-		if err := removeNodeStateFn(tsruntime.ServiceNodeStateConfigDir(options.RegistryPath), name); err != nil {
+		if err := removeNodeStateFn(configDir, name); err != nil {
 			warning := fmt.Sprintf("local node state for %q could not be removed: %v", name, err)
-			slog.Warn("local node state removal failed", "service", name, "error", err)
+			slog.Warn("local node state removal failed; its ownership record is kept so a later run retries", "service", name, "error", err)
 			result.Warnings = append(result.Warnings, warning)
 			continue
 		}
 		slog.Info("removed local node state for an orphan service with no remaining remote identity", "service", name)
+		gone[name] = struct{}{}
 	}
-	return held
+	return gone
 }
 
-// idsExcept returns ids without the ownership rows of the services in skip.
-func idsExcept(ids []string, orphanIDs map[string][]string, skip map[string]struct{}) []string {
-	skipped := make(map[string]struct{})
-	for name := range skip {
+// idsOf returns the ids that are ownership rows of the services in only.
+func idsOf(ids []string, orphanIDs map[string][]string, only map[string]struct{}) []string {
+	wanted := make(map[string]struct{})
+	for name := range only {
 		for _, id := range orphanIDs[name] {
-			skipped[id] = struct{}{}
+			wanted[id] = struct{}{}
 		}
 	}
 	kept := make([]string, 0, len(ids))
 	for _, id := range ids {
-		if _, ok := skipped[id]; !ok {
+		if _, ok := wanted[id]; ok {
 			kept = append(kept, id)
 		}
 	}
