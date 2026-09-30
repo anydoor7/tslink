@@ -22,6 +22,8 @@ const (
 	WarningCodePathNotAccessible         = registry.CodePathNotAccessible
 	WarningCodePathExposesConfigDir      = registry.CodePathExposesConfigDir
 	WarningCodeFileRootHomeDirectory     = "file_root_home_directory"
+	WarningCodeAccessChangedOnReplace    = "access_changed_on_replace"
+	WarningCodeIdentityResetOnReplace    = "identity_reset_on_replace"
 
 	WarningCodeConfigPathUnavailable               = "config_path_unavailable"
 	WarningCodeConfigLoadFailed                    = registry.CodeConfigLoadFailed
@@ -174,6 +176,16 @@ var WarningCodeRegistry = map[string]WarningCodeMeta{
 		Severity:    "warning",
 		Source:      "service.path",
 		Description: "A directory share serves the user's whole home directory, dotfiles included; it is accepted only because TSLink's config directory lives elsewhere.",
+	},
+	WarningCodeAccessChangedOnReplace: {
+		Severity:    "warning",
+		Source:      "cmd.add",
+		Description: "add replaced an existing service and changed its allow list, tags or Funnel; settings not given again were dropped.",
+	},
+	WarningCodeIdentityResetOnReplace: {
+		Severity:    "warning",
+		Source:      "cmd.add",
+		Description: "add replaced an existing service and changed its tags, ephemeral flag or control URL; the daemon re-enrolls it as a new tailnet node.",
 	},
 	WarningCodeConfigPathUnavailable: {
 		Severity:    "error",

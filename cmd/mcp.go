@@ -250,6 +250,7 @@ var (
 		"name":              map[string]any{"type": "string"},
 		"type":              map[string]any{"type": "string", "enum": serviceTypeValues()},
 		"created":           map[string]any{"type": "boolean", "description": "True when this call created the registry entry; false when it replaced an existing entry with the same name."},
+		"replaced_fields":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "registry.json fields the replace changed or dropped, sorted; empty when created is true. add sets every field from this call, so a field not given again is dropped."},
 		"funnel_expires_at": map[string]any{"type": "string"},
 		"funnel_rearmed":    map[string]any{"type": "boolean"},
 		"url":               map[string]any{"type": []string{"string", "null"}},
@@ -257,7 +258,7 @@ var (
 		"endpoint":          mcpEndpointViewSchema,
 		"exposure":          mcpExposureViewSchema,
 		"warnings":          mcpWarningArraySchema,
-	}, "name", "type", "created", "funnel_rearmed", "url", "url_pending", "endpoint", "exposure")
+	}, "name", "type", "created", "replaced_fields", "funnel_rearmed", "url", "url_pending", "endpoint", "exposure")
 	mcpURLOutputSchema = objectSchema(map[string]any{
 		"name":  map[string]any{"type": "string"},
 		"url":   map[string]any{"type": "string"},

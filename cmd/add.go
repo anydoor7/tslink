@@ -20,9 +20,12 @@ import (
 
 // AddResult is the JSON data for the add command.
 type AddResult struct {
-	Name            string                `json:"name"`
-	Type            string                `json:"type"`
-	Created         bool                  `json:"created"`
+	Name    string `json:"name"`
+	Type    string `json:"type"`
+	Created bool   `json:"created"`
+	// ReplacedFields names the registry.json fields an add of an existing
+	// service changed or dropped; empty when the add created the service.
+	ReplacedFields  fieldList             `json:"replaced_fields"`
 	FunnelExpiresAt *time.Time            `json:"funnel_expires_at,omitempty"`
 	FunnelRearmed   bool                  `json:"funnel_rearmed"`
 	URL             *string               `json:"url"`
@@ -33,6 +36,17 @@ type AddResult struct {
 	DaemonRunning   bool                  `json:"daemon_running"`
 	AuthURL         string                `json:"auth_url,omitempty"`
 	Next            []string              `json:"next,omitempty"`
+}
+
+// fieldList is a list of registry.json field names that is always encoded as
+// a JSON array, never null, so "nothing replaced" reads as [].
+type fieldList []string
+
+func (l fieldList) MarshalJSON() ([]byte, error) {
+	if l == nil {
+		return []byte("[]"), nil
+	}
+	return json.Marshal([]string(l))
 }
 
 type AddDryRunResult struct {
@@ -329,6 +343,49 @@ func homeDirectoryShareWarning(svc registry.Service, source string) (inspect.War
 	}, true
 }
 
+// replaceAccessFields and replaceIdentityFields are the registry.json fields
+// whose change on a replacing add is worth a warning: who can reach the
+// service, and what makes the daemon re-enroll its node.
+var (
+	replaceAccessFields   = []string{"allowed_users", "tags", "funnel"}
+	replaceIdentityFields = []string{"tags", "ephemeral", "control_url"}
+)
+
+// replaceWarnings explains a replacing add: add sets every field from the
+// command, so a field the caller did not repeat is dropped.
+func replaceWarnings(name string, replaced []string) []inspect.WarningView {
+	var warnings []inspect.WarningView
+	if access := intersectFields(replaced, replaceAccessFields); len(access) > 0 {
+		warnings = append(warnings, inspect.WarningView{
+			Code:     inspect.WarningCodeAccessChangedOnReplace,
+			Severity: inspect.WarningCodeRegistry[inspect.WarningCodeAccessChangedOnReplace].Severity,
+			Message:  fmt.Sprintf("add replaced existing service %q and changed who can reach it (%s); fields not given again, such as --allow or --tags, were dropped. Re-run add with every flag the service should keep.", name, strings.Join(access, ", ")),
+			Source:   "cmd.add",
+		})
+	}
+	if identity := intersectFields(replaced, replaceIdentityFields); len(identity) > 0 {
+		warnings = append(warnings, inspect.WarningView{
+			Code:     inspect.WarningCodeIdentityResetOnReplace,
+			Severity: inspect.WarningCodeRegistry[inspect.WarningCodeIdentityResetOnReplace].Severity,
+			Message:  fmt.Sprintf("add replaced existing service %q and changed its node identity (%s); the daemon will re-enroll it as a new tailnet node.", name, strings.Join(identity, ", ")),
+			Source:   "cmd.add",
+		})
+	}
+	return warnings
+}
+
+func intersectFields(fields, wanted []string) []string {
+	var matched []string
+	for _, field := range fields {
+		for _, candidate := range wanted {
+			if field == candidate {
+				matched = append(matched, field)
+			}
+		}
+	}
+	return matched
+}
+
 func buildAddResult(ctx context.Context, svc registry.Service, created bool, pidPath, regPath, snapshotPath string, wait time.Duration) (AddResult, error) {
 	view := inspect.ServiceViewFor(registry.EffectiveServiceAt(svc, time.Now()))
 	result := AddResult{
@@ -434,6 +491,12 @@ func executeAdd(ctx context.Context, svc registry.Service, regPath, pidPath, sna
 	if err != nil {
 		return AddResult{}, registry.Service{}, err
 	}
+	var replaced []string
+	if outcome.Replaced != nil {
+		if replaced, err = registry.ChangedFields(*outcome.Replaced, persisted); err != nil {
+			return AddResult{}, registry.Service{}, err
+		}
+	}
 	for _, setup := range afterPersist {
 		if err := setup(); err != nil {
 			return AddResult{}, persisted, daemonRegistryRetainedError(err)
@@ -442,6 +505,10 @@ func executeAdd(ctx context.Context, svc registry.Service, regPath, pidPath, sna
 	result, err := buildAddResult(ctx, persisted, outcome.Created, pidPath, regPath, snapshotPath, wait)
 	if err != nil {
 		return AddResult{}, registry.Service{}, err
+	}
+	if replaced != nil {
+		result.ReplacedFields = replaced
+		result.Warnings = append(result.Warnings, replaceWarnings(persisted.Name, replaced)...)
 	}
 	result.FunnelRearmed = outcome.RearmedExpiredFunnel
 	return result, persisted, nil
@@ -465,6 +532,12 @@ func init() {
 		Use:   "add <name>",
 		Short: "Register a local service or file directory",
 		Long: `Register a local service or file directory to expose on the Tailscale network.
+
+If a service with the same name already exists, add replaces it: every
+setting comes from this command, so flags you do not repeat (--allow, --tags,
+--funnel, --ephemeral, --control-url, ...) are dropped, and tags fall back to
+the default. The result lists replaced_fields and warns when access or the
+node identity changed.
 
 Examples:
   tslink add myapp --proxy localhost:3000         Expose a web service
@@ -591,6 +664,11 @@ Examples:
 			if jsonOutput(cmd) {
 				output.Success("add", result)
 				return nil
+			}
+			for _, warning := range result.Warnings {
+				if warning.Code == inspect.WarningCodeAccessChangedOnReplace || warning.Code == inspect.WarningCodeIdentityResetOnReplace {
+					fmt.Fprintf(cmd.ErrOrStderr(), "Warning: %s\n", warning.Message)
+				}
 			}
 			if !result.DaemonRunning {
 				if result.FunnelRearmed {

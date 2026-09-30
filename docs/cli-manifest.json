@@ -592,6 +592,10 @@
         "funnel_rearmed": {
           "type": "boolean",
           "description": "True when an expired preserved Funnel deadline was re-armed with the default 24h TTL."
+        },
+        "replaced_fields": {
+          "type": "array",
+          "description": "registry.json fields a replacing add changed or dropped, sorted; empty when the add created the service. Warnings access_changed_on_replace and identity_reset_on_replace flag access and node-identity changes."
         }
       }
     },

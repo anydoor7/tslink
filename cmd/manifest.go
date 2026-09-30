@@ -299,6 +299,7 @@ func commandJSONResultFields(commandPath string) map[string]JSONResultFieldInfo 
 		return map[string]JSONResultFieldInfo{
 			"funnel_expires_at": {Type: "string", Description: "Persisted public Funnel deadline; omitted for tailnet-only services and explicit never."},
 			"funnel_rearmed":    {Type: "boolean", Description: "True when an expired preserved Funnel deadline was re-armed with the default 24h TTL."},
+			"replaced_fields":   {Type: "array", Description: "registry.json fields a replacing add changed or dropped, sorted; empty when the add created the service. Warnings access_changed_on_replace and identity_reset_on_replace flag access and node-identity changes."},
 		}
 	case "tslink list":
 		fields := agentServiceRuntimeJSONResultFields()

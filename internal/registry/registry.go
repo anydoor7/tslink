@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -1306,6 +1307,73 @@ func AddWithOptions(path string, svc Service, options AddOptions) (created bool,
 type AddOutcome struct {
 	Created              bool
 	RearmedExpiredFunnel bool
+	// Replaced is the entry this add replaced, read under the registry lock;
+	// nil when the add created the service.
+	Replaced *Service
+}
+
+// ChangedFields names, by their registry.json keys and in sorted order, the
+// fields whose stored value differs between before and after, including
+// fields after no longer has. Tag order is not a change; name and created_at
+// are identity and bookkeeping, not settings, and are not compared.
+func ChangedFields(before, after Service) ([]string, error) {
+	beforeFields, err := serviceFieldMap(before)
+	if err != nil {
+		return nil, err
+	}
+	afterFields, err := serviceFieldMap(after)
+	if err != nil {
+		return nil, err
+	}
+	changed := []string{}
+	for key := range beforeFields {
+		if _, ok := afterFields[key]; !ok {
+			afterFields[key] = nil
+		}
+	}
+	for key, value := range afterFields {
+		if key == "name" || key == "created_at" {
+			continue
+		}
+		if key == "tags" {
+			if !sameTagSet(before.Tags, after.Tags) {
+				changed = append(changed, key)
+			}
+			continue
+		}
+		if !bytes.Equal(beforeFields[key], value) {
+			changed = append(changed, key)
+		}
+	}
+	sort.Strings(changed)
+	return changed, nil
+}
+
+func serviceFieldMap(svc Service) (map[string]json.RawMessage, error) {
+	data, err := json.Marshal(svc)
+	if err != nil {
+		return nil, err
+	}
+	fields := map[string]json.RawMessage{}
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return nil, err
+	}
+	return fields, nil
+}
+
+func sameTagSet(a, b []string) bool {
+	seen := make(map[string]bool, len(a))
+	for _, tag := range a {
+		seen[tag] = true
+	}
+	other := make(map[string]bool, len(b))
+	for _, tag := range b {
+		if !seen[tag] {
+			return false
+		}
+		other[tag] = true
+	}
+	return len(seen) == len(other)
 }
 
 func AddWithOutcome(path string, svc Service, options AddOptions) (outcome AddOutcome, err error) {
@@ -1328,6 +1396,8 @@ func AddWithOutcome(path string, svc Service, options AddOptions) (outcome AddOu
 				continue
 			}
 
+			previous := existing
+			outcome.Replaced = &previous
 			svc.CreatedAt = existing.CreatedAt
 			if options.PreserveFunnelExpiry {
 				if svc.Funnel && existing.FunnelExpiresAt != nil && !existing.FunnelExpiresAt.After(now) {
