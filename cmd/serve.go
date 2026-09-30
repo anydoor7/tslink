@@ -249,8 +249,12 @@ MCP control plane (off by default):
   change and on every credential-state change — including a "tslink login" or
   "tslink logout" run from another process — so a client stops polling, and
   sends a heartbeat so a silent stream can be told from a dead one. Set
-  "events_keepalive" to a Go duration between 5s and 5m to change the
-  heartbeat; the default is 20s.
+  "events_keepalive" to a duration (Go syntax, or d for days of 24 hours)
+  between 5s and 5m to change the heartbeat; the default is 20s.
+
+  "allow_elevated_invites" (bool, default false) lets MCP clients send user
+  invitations with a role other than member and device invitations that
+  allow exit-node use. The CLI never needs this opt-in.
 
   config.json:
     {"mcp": {"enabled": true, "allow": ["you@example.com", "tag:ops"]}}
