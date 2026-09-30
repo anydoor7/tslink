@@ -38,7 +38,11 @@ func TestWindowsStartupScriptPath(t *testing.T) {
 func TestWindowsStartupScriptEscapesSpacesAndQuotes(t *testing.T) {
 	exe := `C:\Program Files\TS "Link"\tslink.exe`
 	got := windowsStartupScript(exe, false)
-	want := "CreateObject(\"Wscript.Shell\").Run \"\"\"\" & \"C:\\Program Files\\TS \"\"Link\"\"\\tslink.exe\" & \"\"\" serve\", 0, False\r\n"
+	// windowsStartupScript prepends a TSLINK_MANAGED_LOGS environment line
+	// before the Run line (managed-logs install destination). The escaping
+	// this test pins is on the Run line's exe path.
+	want := "shell.Environment(\"Process\")(\"TSLINK_MANAGED_LOGS\") = \"1\"\r\n" +
+		"CreateObject(\"Wscript.Shell\").Run \"\"\"\" & \"C:\\Program Files\\TS \"\"Link\"\"\\tslink.exe\" & \"\"\" serve\", 0, False\r\n"
 	if got != want {
 		t.Fatalf("script = %q, want %q", got, want)
 	}
