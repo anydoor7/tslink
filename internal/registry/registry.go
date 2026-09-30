@@ -1493,6 +1493,18 @@ func Remove(path, name string) (removed bool, err error) {
 }
 
 func RemoveAndReturn(path, name string) (removedService Service, removed bool, err error) {
+	return RemoveAndReturnWithin(path, name, func(_ Service, commit func() error) error {
+		return commit()
+	})
+}
+
+// RemoveAndReturnWithin is RemoveAndReturn for a caller that must record the
+// removal elsewhere in the same step. Once the service is found under the
+// registry lock, within receives it and commit, which writes registry.json
+// without it; the service is removed only when within calls commit and commit
+// succeeds. Nothing can add, change or remove the service between the lookup
+// and the commit.
+func RemoveAndReturnWithin(path, name string, within func(svc Service, commit func() error) error) (removedService Service, removed bool, err error) {
 	err = withLock(path, func() error {
 		reg, err := loadForMutation(path)
 		if err != nil {
@@ -1504,10 +1516,15 @@ func RemoveAndReturn(path, name string) (removedService Service, removed bool, e
 				continue
 			}
 
-			removedService = svc
-			reg.Services = append(reg.Services[:i], reg.Services[i+1:]...)
-			removed = true
-			return save(path, reg)
+			remaining := append(append([]Service{}, reg.Services[:i]...), reg.Services[i+1:]...)
+			commit := func() error {
+				if err := save(path, &Registry{Services: remaining}); err != nil {
+					return err
+				}
+				removedService, removed = svc, true
+				return nil
+			}
+			return within(svc, commit)
 		}
 
 		return nil

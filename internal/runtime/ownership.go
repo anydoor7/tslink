@@ -300,6 +300,52 @@ func MarkOwnedNodeIDsRetired(path string, nodeIDs []string, retiredAt time.Time)
 	})
 }
 
+// RetireServiceNodes records the removal of serviceName in the same step as
+// the removal itself. Holding the ledger lock, it marks every row of the
+// service retired and then runs commit, the registry write that unregisters
+// the service; when commit fails the ledger is put back exactly as it was. It
+// returns the service's rows as they were before retirement.
+//
+// The rows are the ones the ledger holds at that moment, not a snapshot taken
+// before the caller waited for the registry lock: RecordOwnedNode takes the
+// same ledger lock, so a node that enrolled for the service while the removal
+// waited is retired with the others instead of keeping a row without
+// retired_at, which would withhold its device deletion for good.
+func RetireServiceNodes(path, serviceName string, retiredAt time.Time, commit func() error) ([]OwnedNode, error) {
+	var owned []OwnedNode
+	err := withOwnershipLock(path, func() error {
+		ledger, err := LoadOwnership(path)
+		if err != nil {
+			return err
+		}
+		original := ledger
+		original.Nodes = append([]OwnedNode(nil), ledger.Nodes...)
+		retiredAt = retiredAt.UTC()
+		for i := range ledger.Nodes {
+			if ledger.Nodes[i].ServiceName != serviceName {
+				continue
+			}
+			owned = append(owned, ledger.Nodes[i])
+			ledger.Nodes[i].RetiredAt = &retiredAt
+		}
+		if len(owned) > 0 {
+			if err := saveOwnership(path, ledger); err != nil {
+				return err
+			}
+		}
+		if err := commit(); err != nil {
+			if len(owned) > 0 {
+				if restoreErr := saveOwnership(path, original); restoreErr != nil {
+					return errors.Join(err, fmt.Errorf("restore the ownership records of %q: %w", serviceName, restoreErr))
+				}
+			}
+			return err
+		}
+		return nil
+	})
+	return owned, err
+}
+
 // RemoveOwnedNodeIDs forgets only ownership IDs that remote reconciliation has
 // proved deleted or already absent.
 func RemoveOwnedNodeIDs(path string, nodeIDs []string) error {
