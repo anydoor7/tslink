@@ -3,9 +3,10 @@ package server
 import (
 	"encoding/json"
 	"errors"
+	"maps"
 	"net/http"
 	"net/http/httptest"
-	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -62,7 +63,7 @@ func TestProxyIdentityHeaderSpellingsAtCGIBackend(t *testing.T) {
 			if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 				t.Fatal(err)
 			}
-			if !reflect.DeepEqual(got, want) {
+			if !maps.EqualFunc(got, want, slices.Equal[[]string]) {
 				t.Fatalf("CGI identity = %v, want only verified identity %v", got, want)
 			}
 		})
