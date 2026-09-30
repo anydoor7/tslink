@@ -203,6 +203,11 @@ tslink share ./build --ephemeral=false
 `tslink add <name> --dir <directory> --allow <principal>` 注册，或在 MCP
 `share` 工具里传 `allow`。
 
+TSLink 拒绝服务它自己的配置目录、配置目录里的目录，以及包含配置目录的目录
+（默认布局下包括你的 home 目录），错误码是 `path_exposes_config_dir`；
+`add --dir`、`share`、MCP 工具和 daemon 都做这项检查。检查比较的是解析符号链接
+之后的路径，所以 TSLink 会像对待普通文件一样，服务你放在配置目录之外的硬链接。
+
 零凭证首次运行时，stdout 的唯一一行是 Tailscale 授权 URL；stderr 会给出
 精确的 `tslink url <name> --wait` 后续命令。使用 `--json` 时，这是包含
 `auth_url` 的成功 `status:"needs_login"` 结果，不是认证错误。对同一 target
@@ -301,7 +306,9 @@ tslink add demo --proxy localhost:8080 --ephemeral
 # 基于身份的 HTTP 访问控制（仅 proxy/file）
 tslink add internal --proxy localhost:9090 --allow user@example.com,tag:admin
 
-# 通过 Tailscale Funnel 公开暴露（必须显式确认）
+# 通过 Tailscale Funnel 公开暴露（必须显式确认）。
+# 默认公开 24h；--funnel-ttl 1h|8h|24h|72h|7d|never
+# （never 在 registry 里存为 "funnel_expires_at": "never"）
 tslink add public --proxy localhost:3000 --funnel --public
 
 # ACL 标签
@@ -368,6 +375,8 @@ tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 
 ### add 命令标志
 
+对已存在的名字执行 `tslink add` 会替换那个 service：替换只保留这次给出的 flag，没有重复写的 `--allow`、`--tags`、`--funnel` 等都会丢掉。JSON 结果列出 `replaced_fields`，访问权限或 node 身份改变时会给出警告。
+
 | 标志 | 描述 |
 |------|------|
 | `--proxy host:port` | 反向代理到本地 HTTP 服务 |
@@ -376,11 +385,9 @@ tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 | `--ephemeral` | 临时节点，停止后自动从 tailnet 移除 |
 | `--tags tag:a,tag:b` | ACL 标签，用于 Tailscale 网络策略 |
 | `--allow user@,tag:x` | proxy/file 服务的 HTTP 访问控制；TCP 会拒绝该标志，因为原始 TCP 使用 Tailscale ACL 标签和目标服务自身认证 |
-| `--control-url URL` | 服务级控制服务器覆盖，例如 Headscale |
+| `--control-url URL` | 服务级控制服务器覆盖，例如 Headscale。用已存储的 Tailscale 凭证铸造的 auth key 只发给 Tailscale 自己的控制服务器；存有这类凭证时，TSLink 以 `credential_control_url_mismatch` 拒绝指向其他控制服务器的 service |
 | `--funnel` | 通过 Tailscale Funnel 暴露到公网（仅限 proxy，必须同时传 `--public`） |
 | `--public` | 显式确认 `--funnel` 的公网暴露；没有 `--funnel` 时无效 |
-| `--domain example.com` | Reserved roadmap flag：会以 `feature_unavailable` 拒绝；自定义域名运行时 TLS 尚未接入 |
-| `--acme-email user@example.com` | Reserved roadmap flag：会以 `feature_unavailable` 拒绝；尚无已交付 ACME listener |
 
 ## 工作原理
 
@@ -405,7 +412,6 @@ TSLink 为每个注册的服务创建一个专用的 [tsnet](https://tailscale.c
 - **热重载**：注册表文件监听意味着 `tslink add` 无需重启服务即可生效
 - **基于 PID 的生命周期**：通过进程身份检查管理守护进程，并按平台明确停止行为
 - **结构化日志**：基于 slog 的结构化日志 + 访问日志
-- **指标采集**：内部记录请求指标；公开 `/metrics` 端点仍在 roadmap
 
 ## JSON 自动化
 
@@ -536,6 +542,8 @@ tslink list --tailnet --json
 }
 ```
 
+`config.json` 按严格模式读取：TSLink 不认识的 key（包括拼写错误）会让写配置的命令以 `config_load_failed` 拒绝，`tslink doctor` 会报出来，`serve` 则回到默认控制服务器，并且不开控制面。
+
 | 事实 | 细节 |
 |---|---|
 | 默认 | 关闭。没有 `--mcp` 或 `mcp.enabled: true` 时，`serve` 不打开控制面 listener，也不创建控制面节点 |
@@ -562,16 +570,16 @@ tslink list --tailnet --json
 
 ## Roadmap / Experimental 包
 
-仓库中包含一些尚未接入已交付 `tslink serve` 运行路径的包和注册表字段。除非后续有端到端集成测试证明，否则请把它们视为 roadmap 或 experimental：
+下面这些功能不在已交付的 `tslink serve` 运行路径里。在它们带着端到端集成测试交付之前，请视为 roadmap：
 
 | 领域 | 当前状态 |
 |---|---|
-| Docker 标签 | 未实现；注册表 schema 保留了这些字段，runtime 会以 `feature_unavailable` 拒绝。 |
-| Middleware | 未实现；注册表 schema 保留了这些字段，runtime 会以 `feature_unavailable` 拒绝。 |
+| Docker 标签 | 未实现。 |
+| Middleware | 未实现；目前没有对应的注册表字段或 flag。 |
 | Admin dashboard / REST API | 没有交付 dashboard 或 REST handler；仅限 tailnet 的 MCP 控制面（`tslink serve --mcp`）是唯一的远程管理面。未来的 dashboard 或 REST 工作必须显式标为 experimental，并补端到端测试。 |
-| Prometheus `/metrics` | 内部 instrumentation 存在，但没有挂载 scrape endpoint。 |
-| Custom domain / ACME | 字段保留但会以 `feature_unavailable` 拒绝；runtime TLS/ACME listener 尚未接入。 |
-| Cluster sync | 未实现；注册表 schema 保留了这些字段，runtime 会以 `feature_unavailable` 拒绝。 |
+| Prometheus `/metrics` | 未实现；没有请求 instrumentation，也没有 scrape endpoint。 |
+| Custom domain / ACME | 未实现；目前没有对应的注册表字段或 flag。 |
+| Cluster sync | 未实现。 |
 
 ## 前置条件
 
@@ -587,9 +595,9 @@ tslink list --tailnet --json
 | Linux | `--daemon` | systemd user service | SIGTERM 优雅停止 |
 | Windows | `--daemon` | 启动文件夹 | 强制终止进程 |
 
-配置与状态目录在 macOS 和 Linux 上是 `~/.config/tslink/`，在 Windows 上是 `%AppData%\tslink\`；设置 `TSLINK_CONFIG_DIR` 可以改用其他目录。本 README 其他地方写的 `~/.config/tslink/` 都指这个目录。Windows 上如果还留着旧的 `%USERPROFILE%\.config\tslink\`，TSLink 第一次解析配置目录时会把它移到 `%AppData%\tslink\`。移动失败时（例如启用了文件夹重定向）继续使用旧目录；两个目录同时存在时，TSLink 拒绝二选一，并报出两个路径。
+配置与状态目录在 macOS 和 Linux 上是 `~/.config/tslink/`，在 Windows 上是 `%AppData%\tslink\`；设置 `TSLINK_CONFIG_DIR` 可以改用其他目录。本 README 其他地方写的 `~/.config/tslink/` 都指这个目录。Windows 上 TSLink 不会移动旧的 `%USERPROFILE%\.config\tslink\`：只有旧目录时，每个命令都以 `legacy_config_dir_present` 停止，并给出要执行的那一条 `move` 命令；两个目录同时存在时，拒绝二选一并报出两个路径。
 
-这个目录里的 `credentials.lock` 让多个 TSLink 进程依次修改 credential：`tslink login`、`tslink logout` 和 `tslink doctor --probe-remote` 会创建它；`tslink serve` 和读取 credential 状态的命令，只在为已存储但还没有 metadata 记录的 credential 补写记录，或 `serve` 发现旧的 `apikey` 文件时，才会创建它。启用系统 keychain 时，也就是默认情况下，TSLink 还会锁住 OS 账户 home 目录下的 `.tslink/credentials.lock`，Windows 上对应 `%USERPROFILE%\.tslink\`，这个位置不随 `TSLINK_CONFIG_DIR` 或 `$HOME` 改变；两个文件都是空文件，创建后一直保留。`node-identities/` 为每个 service 保存一条记录，写明它的 node 启动时用的 tags、ephemeral 设置和 control URL，其中 tags 包括自动派生的 `tag:tslink-funnel`；任何一项改变，包括 daemon 停止期间做的改动，都会让 daemon 清掉这个 node 的状态，让它重新加入 tailnet。在未存储凭证的 Tier 1 上，node 不 advertise tags，所以只有 ephemeral 设置或 control URL 的改变会这样做。移除一个 service 之后，只要它的 `nodes/<name>/` 状态已经删掉，无论是 `tslink remove` 还是 daemon 删的，daemon 都会在下一次同步时删除它的记录；这份状态何时删除见 `tslink remove --help`。
+这个目录里的 `credentials.lock` 让多个 TSLink 进程依次修改 credential：`tslink login`、`tslink logout` 和 `tslink doctor --probe-remote` 会创建它；`tslink serve` 和读取 credential 状态的命令，只在为已存储但还没有 metadata 记录的 credential 补写记录，或 `serve` 发现旧的 `apikey` 文件时，才会创建它。启用系统 keychain 时，也就是默认情况下，TSLink 还会锁住 OS 账户 home 目录下的 `.tslink/credentials.lock`，Windows 上对应 `%USERPROFILE%\.tslink\`，这个位置不随 `TSLINK_CONFIG_DIR` 或 `$HOME` 改变；两个文件都是空文件，创建后一直保留。`node-identities/` 为每个 service 保存一条记录，写明它的 node 启动时用的 tags、ephemeral 设置和 control URL，其中 tags 包括自动派生的 `tag:tslink-funnel`；任何一项改变，包括 daemon 停止期间做的改动，都会让 daemon 清掉这个 node 的状态，让它重新加入 tailnet。在未存储凭证的 Tier 1 上，node 不 advertise tags，所以只有 ephemeral 设置或 control URL 的改变会这样做。移除一个 service 之后，只要它的 `nodes/<name>/` 状态已经删掉，无论是 `tslink remove` 还是 daemon 删的，daemon 都会在下一次同步时删除它的记录；这份状态何时删除见 `tslink remove --help`。只是从 `registry.json` 里消失、没有经过 `tslink remove` 的 service 会保留 node 状态：registry 丢失、换成别的副本或手改出错，都不会删掉 node 身份。
 
 macOS LaunchAgent 安装会使用 launchd `KeepAlive` 和 `ThrottleInterval=30`。如果 LaunchAgent 仍在安装状态，运行 `tslink stop` 后 launchd 会重启 TSLink。想禁用自启动时，先运行 `tslink uninstall`，再运行 `tslink stop`。`gui/$(id -u)` 是否可用取决于该 uid 是否存在桌面（Aqua）session，而不是调用者是否通过 SSH 连接；没有 Aqua session 时，`tslink install` 会先尝试 `gui/$(id -u)`，如果该 launchd domain 不可用则回退到 `user/$(id -u)`。Linux headless user service 如需登出后继续运行，可能需要执行 `loginctl enable-linger "$USER"`；如果 lingering 只为 TSLink 启用，卸载后运行 `loginctl disable-linger "$USER"`。
 

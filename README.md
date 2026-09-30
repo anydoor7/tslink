@@ -225,6 +225,13 @@ fetch the share, and `tslink share` has no `--allow` flag. To limit readers of
 a directory, register it with `tslink add <name> --dir <directory> --allow
 <principal>` instead, or pass `allow` to the MCP `share` tool.
 
+TSLink refuses to serve its own configuration directory, a directory inside
+it, or a directory that contains it (with the default layout that includes your
+home directory), with `path_exposes_config_dir`; `add --dir`, `share`, the MCP
+tools and the daemon all apply the check. It compares paths after resolving
+symbolic links, so a hard link that you place outside the configuration
+directory is served like any other file.
+
 On a credential-free first run, the one stdout line is the Tailscale
 authorization URL and stderr gives the exact `tslink url <name> --wait`
 continuation. With `--json`, this is a successful `status:"needs_login"`
@@ -327,11 +334,10 @@ tslink add demo --proxy localhost:8080 --ephemeral
 # Identity-aware HTTP access control (proxy/file only)
 tslink add internal --proxy localhost:9090 --allow user@example.com,tag:admin
 
-# Public exposure via Tailscale Funnel (requires explicit acknowledgement)
+# Public exposure via Tailscale Funnel (requires explicit acknowledgement).
+# Public for 24h by default; --funnel-ttl 1h|8h|24h|72h|7d|never
+# ("never" is stored as "funnel_expires_at": "never")
 tslink add public --proxy localhost:3000 --funnel --public
-
-# Migration note: existing Funnel entries created before public_ack was added
-# must be re-added with --public or edited to include "public_ack": true.
 
 # ACL tags for Tailscale network policy
 tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
@@ -397,6 +403,8 @@ tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 
 ### Add Command Flags
 
+`tslink add` with an existing name replaces that service: flags you do not repeat (`--allow`, `--tags`, `--funnel`, ...) are dropped. The JSON result lists `replaced_fields` and warns when access or the node identity changed.
+
 | Flag | Description |
 |------|-------------|
 | `--proxy host:port` | Reverse proxy to a local HTTP service |
@@ -405,11 +413,9 @@ tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 | `--ephemeral` | Ephemeral node, auto-removed from tailnet when stopped |
 | `--tags tag:a,tag:b` | ACL tags for Tailscale network policy |
 | `--allow user@,tag:x` | HTTP access control for proxy/file services; rejected for TCP because raw TCP uses Tailscale ACL tags and target-service auth |
-| `--control-url URL` | Per-service control server override, e.g. Headscale |
+| `--control-url URL` | Per-service control server override, e.g. Headscale. TSLink never sends an auth key minted from a stored Tailscale credential to another control server: with such a credential stored, the service is refused with `credential_control_url_mismatch` |
 | `--funnel` | Expose via Tailscale Funnel (public internet, proxy only, requires `--public`) |
 | `--public` | Explicitly acknowledge public internet exposure for `--funnel`; invalid without `--funnel` |
-| `--domain example.com` | Reserved roadmap flag: rejected with `feature_unavailable`; custom-domain runtime TLS is not wired |
-| `--acme-email user@example.com` | Reserved roadmap flag: rejected with `feature_unavailable`; no shipped ACME listener |
 
 ## How It Works
 
@@ -434,7 +440,6 @@ TSLink creates a dedicated [tsnet](https://tailscale.com/kb/1244/tsnet) node for
 - **Hot reload** — file watcher on the registry means `tslink add` takes effect without restarting the server
 - **PID-based lifecycle** — daemon management with process identity checks and platform-specific stop behavior
 - **Structured logging** — slog-based structured logging with access logs
-- **Metrics instrumentation** — request metrics are collected internally; a public `/metrics` endpoint is roadmap
 
 ## JSON Automation
 
@@ -565,6 +570,8 @@ The control plane is off by default. Enable it with the `--mcp` flag or with `mc
 }
 ```
 
+`config.json` is read strictly: a key TSLink does not know, a typo included, is refused with `config_load_failed` by the commands that write settings, reported by `tslink doctor`, and makes `serve` fall back to the default control server without the control plane.
+
 | Fact | Detail |
 |---|---|
 | Default | Off. Without `--mcp` or `mcp.enabled: true`, `serve` opens no control-plane listener and creates no control-plane node |
@@ -591,16 +598,16 @@ The control plane is off by default. Enable it with the `--mcp` flag or with `mc
 
 ## Roadmap / Experimental Packages
 
-The repository contains packages and registry fields for features that are not wired into the shipped `tslink serve` runtime yet. Treat these as roadmap or experimental until end-to-end integration tests are added:
+These features are not part of the shipped `tslink serve` runtime. Treat them as roadmap until they ship with end-to-end integration tests:
 
 | Area | Current status |
 |---|---|
-| Docker labels | Not implemented; the registry schema reserves the fields and the runtime rejects them with `feature_unavailable`. |
-| Middleware | Not implemented; the registry schema reserves the fields and the runtime rejects them with `feature_unavailable`. |
+| Docker labels | Not implemented. |
+| Middleware | Not implemented; there are no registry fields or flags for it yet. |
 | Admin dashboard / REST API | No dashboard or REST handler is shipped; the tailnet-only MCP control plane (`tslink serve --mcp`) is the only remote management surface. Future dashboard or REST work must be explicitly experimental and tested end to end. |
-| Prometheus `/metrics` | Instrumentation exists, but no scrape endpoint is mounted. |
-| Custom domain / ACME | Fields are reserved and rejected with `feature_unavailable`; runtime TLS/ACME listener is not wired. |
-| Cluster sync | Not implemented; the registry schema reserves the fields and the runtime rejects them with `feature_unavailable`. |
+| Prometheus `/metrics` | Not implemented; there is no request instrumentation and no scrape endpoint. |
+| Custom domain / ACME | Not implemented; there are no registry fields or flags for it yet. |
+| Cluster sync | Not implemented. |
 
 ## Prerequisites
 
@@ -616,9 +623,9 @@ The repository contains packages and registry fields for features that are not w
 | Linux | `--daemon` | systemd user service | Graceful SIGTERM |
 | Windows | `--daemon` | Startup folder | Forced process termination |
 
-Configuration and state live in `~/.config/tslink/` on macOS and Linux and in `%AppData%\tslink\` on Windows; set `TSLINK_CONFIG_DIR` to use another directory. Paths written as `~/.config/tslink/` elsewhere in this README mean that directory. On Windows, an older `%USERPROFILE%\.config\tslink\` is moved into `%AppData%\tslink\` the first time TSLink resolves its config directory. If the move is impossible (for example with a redirected profile), TSLink keeps using the old directory; if both directories exist, it refuses to choose and names both.
+Configuration and state live in `~/.config/tslink/` on macOS and Linux and in `%AppData%\tslink\` on Windows; set `TSLINK_CONFIG_DIR` to use another directory. Paths written as `~/.config/tslink/` elsewhere in this README mean that directory. On Windows, TSLink never moves an older `%USERPROFILE%\.config\tslink\`: if only that directory exists, every command stops with `legacy_config_dir_present` and prints the one `move` command to run; if both exist, it refuses to choose and names both.
 
-`credentials.lock` in that directory serializes credential changes between TSLink processes: `tslink login`, `tslink logout` and `tslink doctor --probe-remote` create it, while `tslink serve` and the commands that report credential status create it only when they record metadata for a stored credential that has none yet, or when `serve` finds a legacy `apikey` file. With the system keychain enabled, which is the default, TSLink also takes `.tslink/credentials.lock` in the OS account's home directory (`%USERPROFILE%\.tslink\` on Windows), which follows neither `TSLINK_CONFIG_DIR` nor `$HOME`; both files are empty and stay in place. `node-identities/` holds one record per service with the tags (including the derived `tag:tslink-funnel`), ephemeral setting and control URL its node was started with, so a change to any of them, even one made while the daemon was stopped, clears that node's state and enrolls it again. On Tier 1 (no stored credential) a node advertises no tags, so there only an ephemeral or control URL change does. Once a removed service's `nodes/<name>/` state is gone, whether `tslink remove` or the daemon deleted it (`tslink remove --help` says when), the daemon deletes the service's record on its next sync.
+`credentials.lock` in that directory serializes credential changes between TSLink processes: `tslink login`, `tslink logout` and `tslink doctor --probe-remote` create it, while `tslink serve` and the commands that report credential status create it only when they record metadata for a stored credential that has none yet, or when `serve` finds a legacy `apikey` file. With the system keychain enabled, which is the default, TSLink also takes `.tslink/credentials.lock` in the OS account's home directory (`%USERPROFILE%\.tslink\` on Windows), which follows neither `TSLINK_CONFIG_DIR` nor `$HOME`; both files are empty and stay in place. `node-identities/` holds one record per service with the tags (including the derived `tag:tslink-funnel`), ephemeral setting and control URL its node was started with, so a change to any of them, even one made while the daemon was stopped, clears that node's state and enrolls it again. On Tier 1 (no stored credential) a node advertises no tags, so there only an ephemeral or control URL change does. Once a removed service's `nodes/<name>/` state is gone, whether `tslink remove` or the daemon deleted it (`tslink remove --help` says when), the daemon deletes the service's record on its next sync. A service that is only missing from `registry.json`, without `tslink remove`, keeps its node state: a lost, replaced or mistyped registry never deletes a node identity.
 
 macOS LaunchAgent installs use launchd `KeepAlive` with `ThrottleInterval=30`. If `tslink stop` is run while the LaunchAgent remains installed, launchd will restart TSLink. Run `tslink uninstall` before `tslink stop` when the intent is to disable autostart. When no desktop session exists for the user, `tslink install` first tries `gui/$(id -u)` and falls back to `user/$(id -u)` if the GUI launchd domain is unavailable. Linux headless user services may need `loginctl enable-linger "$USER"` to keep running after logout; if lingering was enabled only for TSLink, run `loginctl disable-linger "$USER"` after uninstall.
 
