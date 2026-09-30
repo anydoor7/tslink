@@ -315,7 +315,8 @@ func render(mods []module) []byte {
 	b.WriteString("See `NOTICE`. This generated file inventories the union of third-party modules\n")
 	b.WriteString("linked into the supported CGO-disabled release targets (darwin/linux/windows\n")
 	b.WriteString("× amd64/arm64) and includes the license/notice payloads found in the exact\n")
-	b.WriteString("module roots, linked package ancestors, source-file headers, and embedded assets\n")
+	b.WriteString("module roots, linked package ancestors, source-file headers (including alternate\n")
+	b.WriteString("build files in those packages), and embedded assets\n")
 	b.WriteString("resolved by `go list -deps`. Embedded vendor payloads are pinned by SHA-256;\n")
 	b.WriteString("changed or unreviewed vendor assets require an updated notice inventory. It is a\n")
 	b.WriteString("mechanical inventory, not legal advice. Do not edit it by hand; run\n")
@@ -361,9 +362,9 @@ func parseLinkedPackages(out []byte) ([]module, error) {
 	seen := map[string]module{}
 	for {
 		var pkg struct {
-			Dir                                                             string
-			GoFiles, CgoFiles, CFiles, CXXFiles, HFiles, SFiles, EmbedFiles []string
-			Module                                                          *struct {
+			Dir                                                                             string
+			GoFiles, IgnoredGoFiles, CgoFiles, CFiles, CXXFiles, HFiles, SFiles, EmbedFiles []string
+			Module                                                                          *struct {
 				Path, Version, Dir string
 				Main               bool
 			}
@@ -382,8 +383,14 @@ func parseLinkedPackages(out []byte) ([]module, error) {
 		mod := seen[key]
 		mod.path, mod.version, mod.dir = m.Path, m.Version, m.Dir
 		mod.packageDirs = unionPaths(mod.packageDirs, []string{pkg.Dir})
-		for _, files := range [][]string{pkg.GoFiles, pkg.CgoFiles, pkg.CFiles, pkg.CXXFiles, pkg.HFiles, pkg.SFiles} {
+		// Alternative Go-version/platform files can carry different copyright
+		// headers. Include their notices within each linked package so the
+		// release floor and newer supported toolchains produce one inventory.
+		for _, files := range [][]string{pkg.GoFiles, pkg.IgnoredGoFiles, pkg.CgoFiles, pkg.CFiles, pkg.CXXFiles, pkg.HFiles, pkg.SFiles} {
 			for _, name := range files {
+				if strings.HasSuffix(name, "_test.go") {
+					continue
+				}
 				mod.sourceFiles = append(mod.sourceFiles, filepath.Join(pkg.Dir, name))
 			}
 		}
