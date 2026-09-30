@@ -581,7 +581,7 @@ func agentServiceRuntimeJSONResultFields() map[string]JSONResultFieldInfo {
 		},
 		"services[].funnel_expires_at": {
 			Type:        "string",
-			Description: "RFC3339 public Funnel deadline; omitted for legacy/permanent never entries.",
+			Description: "RFC3339 public Funnel deadline; omitted for a Funnel stored as never and for one whose lifetime was never decided (funnel_expiry_required).",
 		},
 		"services[].funnel_remaining": {
 			Type:        "string",
@@ -921,6 +921,7 @@ func errorCodeManifest() map[string]ErrorCodeInfo {
 		registry.CodeLaunchctlDomainUnavailable: {ExitCode: output.ExitError, Description: "a launchd domain could not be checked; failure data names the domain, explicit --force command, and residual risk"},
 		registry.CodeFeatureUnavailable:         {ExitCode: output.ExitUsage, Description: "reserved feature is not available"},
 		registry.CodeFunnelPublicAckRequired:    {ExitCode: output.ExitUsage, Description: "public Funnel acknowledgement is required"},
+		registry.CodeFunnelExpiryRequired:       {ExitCode: output.ExitUsage, Description: "a Funnel entry records neither a funnel_expires_at deadline nor \"never\"; it is not made public until one is set"},
 		registry.CodeFunnelAllowConflict:        {ExitCode: output.ExitConflict, Description: "Funnel conflicts with an allow list"},
 		registry.CodeFunnelControlURLConflict:   {ExitCode: output.ExitConflict, Description: "Funnel conflicts with control_url"},
 		registry.CodeFunnelTypeConflict:         {ExitCode: output.ExitConflict, Description: "Funnel requires a proxy service"},

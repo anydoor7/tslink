@@ -321,7 +321,8 @@ func exitCodeForStableError(stable string) int {
 	case registry.CodeInviteRateLimited,
 		registry.CodeInviteResponseInvalid:
 		return ExitError
-	case registry.CodeFunnelPublicAckRequired:
+	case registry.CodeFunnelPublicAckRequired,
+		registry.CodeFunnelExpiryRequired:
 		return ExitUsage
 	case registry.CodeServiceTypeAmbiguous,
 		registry.CodeInvalidServiceName,

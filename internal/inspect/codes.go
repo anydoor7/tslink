@@ -14,6 +14,7 @@ const (
 	WarningCodeRuntimeSnapshotUnreadable = "runtime_snapshot_unreadable"
 	WarningCodeFunnelAllowConflict       = registry.CodeFunnelAllowConflict
 	WarningCodeFunnelPublicAckRequired   = registry.CodeFunnelPublicAckRequired
+	WarningCodeFunnelExpiryRequired      = registry.CodeFunnelExpiryRequired
 	WarningCodeFunnelControlURLConflict  = registry.CodeFunnelControlURLConflict
 	WarningCodeFunnelTypeConflict        = registry.CodeFunnelTypeConflict
 	WarningCodePathNotFound              = registry.CodePathNotFound
@@ -131,6 +132,11 @@ var WarningCodeRegistry = map[string]WarningCodeMeta{
 		Severity:    "error",
 		Source:      "service.public_ack",
 		Description: "Public Funnel services require recorded public acknowledgement.",
+	},
+	WarningCodeFunnelExpiryRequired: {
+		Severity:    "error",
+		Source:      "service.funnel_expires_at",
+		Description: "A Funnel entry records neither a deadline nor \"never\"; the daemon does not start it until one is set.",
 	},
 	WarningCodeFunnelControlURLConflict: {
 		Severity:    "error",

@@ -597,6 +597,7 @@ func TestManifestErrorExitTaxonomyMatchesRuntime(t *testing.T) {
 		registry.CodeLaunchctlDomainUnavailable: registry.CodedError{Code: registry.CodeLaunchctlDomainUnavailable, Message: "unavailable"},
 		registry.CodeFeatureUnavailable:         registry.FeatureUnavailableError("unavailable"),
 		registry.CodeFunnelPublicAckRequired:    registry.FunnelPublicAckError(),
+		registry.CodeFunnelExpiryRequired:       registry.FunnelExpiryRequiredError("svc"),
 		registry.CodeFunnelAllowConflict:        registry.FunnelAllowedUsersError(),
 		registry.CodeFunnelControlURLConflict:   registry.FunnelControlURLError(),
 		registry.CodeFunnelTypeConflict:         registry.FunnelTypeConflictError(registry.TypeTCP),

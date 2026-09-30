@@ -242,6 +242,12 @@ func warningsFor(svc registry.Service, mw *MiddlewareView) []WarningView {
 			fmt.Sprintf("Unknown service type %q.", svc.Type),
 		))
 	}
+	if svc.FunnelExpiryUndecided() {
+		warnings = append(warnings, warningView(
+			WarningCodeFunnelExpiryRequired,
+			"Funnel is requested but funnel_expires_at is missing; set an RFC 3339 deadline or \"never\" in registry.json. Until then the daemon does not start this service.",
+		))
+	}
 	if svc.Domain != "" || svc.AcmeEmail != "" {
 		warnings = append(warnings, warningView(
 			WarningCodeCustomDomainNotWired,

@@ -18,6 +18,7 @@ import (
 
 	"github.com/monody0007/tslink/internal/config"
 	"github.com/monody0007/tslink/internal/daemon"
+	"github.com/monody0007/tslink/internal/inspect"
 	"github.com/monody0007/tslink/internal/output"
 	"github.com/monody0007/tslink/internal/registry"
 	"github.com/spf13/cobra"
@@ -40,7 +41,12 @@ type ShareResult struct {
 	// FunnelRearmed is true when this call re-armed the expired Funnel
 	// deadline of the share it reused.
 	FunnelRearmed bool `json:"funnel_rearmed,omitempty"`
-	serviceName   string
+	// Exposure is the same view add returns. With FunnelExpiresAt it tells
+	// tailnet-only (kind tailnet or tailnet_allow) from public until a
+	// deadline (public_funnel with funnel_expires_at) from public with no
+	// deadline (public_funnel without it).
+	Exposure    inspect.ExposureView `json:"exposure"`
+	serviceName string
 }
 
 type shareTargetSpec struct {
@@ -606,13 +612,14 @@ func executeShare(ctx context.Context, paths sharePaths, req shareRequest, wait 
 	return withShareFunnelState(result, registration), nil
 }
 
-// withShareFunnelState reports the Funnel deadline of the service the share
-// actually uses, and whether this call re-armed it.
+// withShareFunnelState reports the exposure and Funnel deadline of the
+// service the share actually uses, and whether this call re-armed it.
 func withShareFunnelState(result ShareResult, registration shareRegistration) ShareResult {
 	if registration.Service.Funnel {
 		result.FunnelExpiresAt = cloneTimePointer(registration.Service.FunnelExpiresAt)
 	}
 	result.FunnelRearmed = registration.FunnelRearmed
+	result.Exposure = inspect.ServiceViewFor(registry.EffectiveServiceAt(registration.Service, time.Now())).Exposure
 	return result
 }
 

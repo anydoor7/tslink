@@ -37,11 +37,17 @@ const (
 
 	DefaultFunnelTTL = 24 * time.Hour
 
+	// FunnelNeverExpires is the stored funnel_expires_at of a Funnel the user
+	// chose to keep public with no deadline. It is written explicitly so an
+	// absent deadline can only mean that nobody decided.
+	FunnelNeverExpires = "never"
+
 	// TagGrammar describes the strict Tailscale ACL tag syntax accepted by TSLink.
 	TagGrammar = "tag:<lowercase-hyphen-name> using lowercase letters, numbers, and hyphens"
 
 	CodeFunnelAllowConflict        = "funnel_allow_conflict"
 	CodeFunnelPublicAckRequired    = "funnel_public_ack_required"
+	CodeFunnelExpiryRequired       = "funnel_expiry_required"
 	CodeFunnelControlURLConflict   = "funnel_control_url_conflict"
 	CodeFunnelTypeConflict         = "funnel_type_conflict"
 	CodeFunnelCapabilityMissing    = "funnel_capability_missing"
@@ -97,7 +103,7 @@ const (
 	ProvisionReasonPortUnsupported     = "port_unsupported"
 
 	ErrFunnelAllowedUsers = "funnel services do not support allowed_users; public Funnel cannot be combined with TSLink allow lists"
-	ErrFunnelPublicAck    = "funnel services require recorded public acknowledgement; re-run `tslink add ... --funnel --public` or set public_ack:true after confirming public internet exposure"
+	ErrFunnelPublicAck    = "funnel services require recorded public acknowledgement; re-run `tslink add ... --funnel --public` or set public_ack:true and funnel_expires_at (an RFC 3339 deadline or \"never\") after confirming public internet exposure"
 	ErrFunnelControlURL   = "funnel services do not support per-service control_url; use the default Tailscale control server or disable funnel"
 	ErrFunnelTypeConflict = "funnel can only be used with proxy services; public Funnel is not supported for file or tcp services"
 )
@@ -187,6 +193,23 @@ func FunnelAllowedUsersError() error {
 
 func FunnelPublicAckError() error {
 	return CodedError{Code: CodeFunnelPublicAckRequired, Message: ErrFunnelPublicAck, Next: []string{"tslink add ... --funnel --public"}}
+}
+
+// FunnelExpiryRequiredError refuses a Funnel entry that records neither a
+// deadline nor the explicit never. Absence is not a choice, so the entry is not
+// made public at all until one of them is written.
+func FunnelExpiryRequiredError(serviceName string) error {
+	return CodedError{
+		Code:    CodeFunnelExpiryRequired,
+		Message: fmt.Sprintf("funnel service %q records no funnel_expires_at; set an RFC 3339 deadline or \"never\" to decide how long it stays public", serviceName),
+		// Only a hand edit fixes it: like every other entry issue, it makes
+		// the registry refuse typed rewrites until it is resolved.
+		Next: []string{
+			fmt.Sprintf(`Edit registry.json: on service %q set "funnel_expires_at" to the RFC 3339 time the Funnel should stop, such as "funnel_expires_at": "2030-01-01T00:00:00Z", or set "funnel_expires_at": "never" to keep it public with no deadline`, serviceName),
+			"tslink registry check --json",
+		},
+		MessageOnly: true,
+	}
 }
 
 func FunnelControlURLError() error {
@@ -460,6 +483,74 @@ type Service struct {
 	AcmeEmail       string            `json:"acme_email,omitempty"`
 	Middleware      *MiddlewareConfig `json:"middleware,omitempty"`
 	CreatedAt       time.Time         `json:"created_at"`
+
+	// funnelExpiryUndecided is set only by UnmarshalJSON, for a Funnel entry
+	// whose stored funnel_expires_at is absent or null. In memory a nil
+	// FunnelExpiresAt on a Funnel service means never; this marker is what
+	// keeps "nobody decided" from reading as that.
+	funnelExpiryUndecided bool
+}
+
+// FunnelExpiryUndecided reports whether this entry was read from a registry
+// that records neither a Funnel deadline nor the explicit never.
+func (s Service) FunnelExpiryUndecided() bool {
+	return s.Funnel && s.funnelExpiryUndecided
+}
+
+// MarshalJSON stores the Funnel lifetime explicitly: an RFC 3339 deadline, or
+// "never" for a Funnel without one. An entry read without a decision is
+// written back without one, so a rewrite never turns it into a permanent
+// Funnel.
+func (s Service) MarshalJSON() ([]byte, error) {
+	type serviceFields Service
+	wire := struct {
+		serviceFields
+		FunnelExpiresAt any `json:"funnel_expires_at,omitempty"`
+	}{serviceFields: serviceFields(s)}
+	switch {
+	case s.FunnelExpiresAt != nil:
+		wire.FunnelExpiresAt = s.FunnelExpiresAt
+	case s.Funnel && !s.funnelExpiryUndecided:
+		wire.FunnelExpiresAt = FunnelNeverExpires
+	}
+	return json.Marshal(wire)
+}
+
+// UnmarshalJSON reads funnel_expires_at as a deadline or the explicit never
+// and marks a Funnel entry that has neither. It refuses unknown keys for every
+// caller: a decoder's DisallowUnknownFields does not reach a custom
+// unmarshaler, and the registry policy is strict. Recognized fields are filled
+// even when the entry is refused, so diagnostics can still name what it holds.
+func (s *Service) UnmarshalJSON(data []byte) error {
+	type serviceFields Service
+	wire := struct {
+		*serviceFields
+		FunnelExpiresAt json.RawMessage `json:"funnel_expires_at"`
+	}{serviceFields: (*serviceFields)(s)}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	decodeErr := decoder.Decode(&wire)
+
+	s.FunnelExpiresAt = nil
+	s.funnelExpiryUndecided = false
+	raw := bytes.TrimSpace(wire.FunnelExpiresAt)
+	var expiryErr error
+	switch {
+	case len(raw) == 0 || bytes.Equal(raw, []byte("null")):
+		s.funnelExpiryUndecided = s.Funnel
+	case bytes.Equal(raw, []byte(`"`+FunnelNeverExpires+`"`)):
+	default:
+		var deadline time.Time
+		if err := deadline.UnmarshalJSON(raw); err != nil {
+			expiryErr = fmt.Errorf("funnel_expires_at must be an RFC 3339 time or %q; got %s", FunnelNeverExpires, raw)
+		} else {
+			s.FunnelExpiresAt = &deadline
+		}
+	}
+	if decodeErr != nil {
+		return decodeErr
+	}
+	return expiryErr
 }
 
 // ParseFunnelTTL accepts only the public CLI contract. In particular, Go's
@@ -483,8 +574,8 @@ func ParseFunnelTTL(value string) (duration time.Duration, never bool, err error
 	}
 }
 
-// FunnelExpiredAt reads wall-clock state. A missing timestamp is the legacy
-// compatibility representation of never, not an implicit 24-hour deadline.
+// FunnelExpiredAt reads wall-clock state. A nil deadline on a decided Funnel is
+// never, stored as "never"; an undecided entry never reaches the runtime.
 func FunnelExpiredAt(svc Service, now time.Time) bool {
 	return svc.Funnel && svc.FunnelExpiresAt != nil && !now.Before(*svc.FunnelExpiresAt)
 }
@@ -498,10 +589,11 @@ func EffectiveServiceAt(svc Service, now time.Time) Service {
 	return svc
 }
 
-// FunnelRemainingAt returns a stable human/JSON duration. nil means never or
-// not configured; expired deadlines return exactly "0s".
+// FunnelRemainingAt returns a stable human/JSON duration: "never" for a Funnel
+// stored without a deadline, and exactly "0s" once a deadline has passed. nil
+// means no Funnel, or a Funnel whose lifetime was never decided.
 func FunnelRemainingAt(svc Service, now time.Time) *string {
-	if !svc.Funnel {
+	if !svc.Funnel || svc.FunnelExpiryUndecided() {
 		return nil
 	}
 	if svc.FunnelExpiresAt == nil {
@@ -596,6 +688,9 @@ func ValidateService(svc Service) error {
 	}
 	if err := ValidateFunnelGuardrails(svc.Type, svc.Funnel, svc.AllowedUsers, svc.ControlURL, svc.PublicAck); err != nil {
 		return err
+	}
+	if svc.FunnelExpiryUndecided() {
+		return FunnelExpiryRequiredError(svc.Name)
 	}
 	if err := ValidateControlURL(svc.ControlURL); err != nil {
 		return err
@@ -1058,7 +1153,7 @@ func Add(path string, svc Service) (created bool, err error) {
 
 type AddOptions struct {
 	// PreserveFunnelExpiry keeps an existing entry's deadline. It is used when
-	// --funnel-ttl was not explicitly supplied, including legacy nil=never.
+	// --funnel-ttl was not explicitly supplied, including an explicit never.
 	PreserveFunnelExpiry bool
 	// Now is injectable for deterministic expiration decisions. Zero uses the
 	// current wall clock.

@@ -504,9 +504,9 @@ Examples:
 			}
 
 			if dryRun {
-				// Preview the same compatibility rule as AddWithOptions: an
-				// existing entry without funnel_expires_at is legacy never unless
-				// the operator explicitly supplies --funnel-ttl.
+				// Preview the same rule as AddWithOptions: an existing entry's
+				// deadline, or its explicit never, is kept unless the operator
+				// explicitly supplies --funnel-ttl.
 				if !cmd.Flags().Changed("funnel-ttl") {
 					regPath, err := registryPathFn()
 					if err != nil {
