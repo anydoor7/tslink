@@ -388,7 +388,7 @@ var (
 		},
 		"count": map[string]any{"type": "integer", "minimum": 0},
 	}, "schema_version", "templates", "count")
-	mcpTemplateApplyOutputSchema = objectSchema(map[string]any{
+	mcpTemplatePlanOutputSchema = objectSchema(map[string]any{
 		"schema_version": map[string]any{"type": "integer"},
 		"name":           map[string]any{"type": "string"},
 		"summary":        map[string]any{"type": "string"},
@@ -403,10 +403,13 @@ var (
 				"service": mcpServiceViewSchema,
 			}, "name", "action", "service"),
 		},
-		"created":          map[string]any{"type": "integer", "minimum": 0},
-		"skipped":          map[string]any{"type": "integer", "minimum": 0},
-		"daemon_installed": mcpDaemonInstalledSchema,
+		"created": map[string]any{"type": "integer", "minimum": 0},
+		"skipped": map[string]any{"type": "integer", "minimum": 0},
 	}, "schema_version", "name", "summary", "dry_run", "applied", "services", "created", "skipped")
+	mcpTemplateApplyOutputSchema = objectSchema(mergeSchemaProperties(
+		mcpTemplatePlanOutputSchema["properties"].(map[string]any),
+		map[string]any{"daemon_installed": mcpDaemonInstalledSchema},
+	), "schema_version", "name", "summary", "dry_run", "applied", "services", "created", "skipped")
 )
 
 // mergeSchemaProperties copies base and overlays extra, so a schema built from
@@ -639,7 +642,7 @@ var mcpToolDefinitions = []mcpToolDefinition{
 		InputSchema: objectSchema(map[string]any{
 			"name": map[string]any{"type": "string", "description": "Template name from template_list."},
 		}, "name"),
-		OutputSchema: mcpTemplateApplyOutputSchema,
+		OutputSchema: mcpTemplatePlanOutputSchema,
 	},
 	{
 		Name:        "template_apply",
