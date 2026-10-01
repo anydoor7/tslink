@@ -158,6 +158,69 @@ func UpdateOwnership(path string, update func(*OwnershipLedger) (changed bool, e
 	})
 }
 
+// tryWithOwnershipLock leaves cleanup's proof unresolved when a writer owns
+// the ledger lock. It never starts a waiter that could delete state later.
+func tryWithOwnershipLock(path string, fn func() error) (bool, error) {
+	if err := atomicfile.EnsurePrivateDir(filepath.Dir(path)); err != nil {
+		return false, err
+	}
+	lockPath := path + ".lock"
+	if err := atomicfile.ConvergePrivateFile(lockPath); err != nil {
+		return false, err
+	}
+	lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return false, err
+	}
+	defer lockFile.Close()
+	acquired, err := filelock.TryLock(lockFile)
+	if err != nil || !acquired {
+		return acquired, err
+	}
+	defer filelock.Unlock(lockFile)
+	return true, fn()
+}
+
+// WithLockedOwnership keeps a read and its local-state action atomic with
+// RecordOwnedNode and RemoveOwnedNodeIDs. The callback must not write the
+// ownership ledger or acquire this lock again.
+func WithLockedOwnership(path string, fn func(OwnershipLedger) error) error {
+	return withOwnershipLock(path, func() error {
+		ledger, err := LoadOwnership(path)
+		if err != nil {
+			return err
+		}
+		return fn(ledger)
+	})
+}
+
+// TryWithLockedOwnership reports false on contention without invoking fn.
+func TryWithLockedOwnership(path string, fn func(OwnershipLedger) error) (bool, error) {
+	return tryWithOwnershipLock(path, func() error {
+		ledger, err := LoadOwnership(path)
+		if err != nil {
+			return err
+		}
+		return fn(ledger)
+	})
+}
+
+// TryUpdateOwnership updates the ledger atomically without waiting for a writer.
+// A busy lock leaves both the local state and its retry evidence unchanged.
+func TryUpdateOwnership(path string, update func(*OwnershipLedger) (bool, error)) (bool, error) {
+	return tryWithOwnershipLock(path, func() error {
+		ledger, err := LoadOwnership(path)
+		if err != nil {
+			return err
+		}
+		changed, err := update(&ledger)
+		if err != nil || !changed {
+			return err
+		}
+		return saveOwnership(path, ledger)
+	})
+}
+
 func saveOwnership(path string, ledger OwnershipLedger) error {
 	ledger.SchemaVersion = OwnershipSchemaVersion
 	if ledger.Nodes == nil {
@@ -379,11 +442,49 @@ func RemoveOwnedNodeIDs(path string, nodeIDs []string) error {
 	if len(nodeIDs) == 0 {
 		return nil
 	}
+	return withOwnershipLock(path, removeOwnedNodeIDsAction(path, nodeIDs))
+}
+
+// TryRemoveOwnedNodesIfUnchanged clears only the exact rows that were proved
+// resolved before local cleanup. A newly recorded identity with the same ID
+// must survive a writer arriving after the final state deletion.
+func TryRemoveOwnedNodesIfUnchanged(path string, oldNodes []OwnedNode) (bool, error) {
+	if len(oldNodes) == 0 {
+		return true, nil
+	}
+	byID := make(map[string]OwnedNode, len(oldNodes))
+	for _, node := range oldNodes {
+		byID[node.NodeID] = node
+	}
+	return tryWithOwnershipLock(path, func() error {
+		ledger, err := LoadOwnership(path)
+		if err != nil {
+			return err
+		}
+		kept := ledger.Nodes[:0]
+		for _, node := range ledger.Nodes {
+			if old, ok := byID[node.NodeID]; !ok || !sameOwnedNode(old, node) {
+				kept = append(kept, node)
+			}
+		}
+		ledger.Nodes = kept
+		return saveOwnership(path, ledger)
+	})
+}
+
+func sameOwnedNode(a, b OwnedNode) bool {
+	if a.ServiceName != b.ServiceName || a.NodeID != b.NodeID || !a.RecordedAt.Equal(b.RecordedAt) || (a.RetiredAt == nil) != (b.RetiredAt == nil) {
+		return false
+	}
+	return a.RetiredAt == nil || a.RetiredAt.Equal(*b.RetiredAt)
+}
+
+func removeOwnedNodeIDsAction(path string, nodeIDs []string) func() error {
 	remove := make(map[string]struct{}, len(nodeIDs))
 	for _, nodeID := range nodeIDs {
 		remove[nodeID] = struct{}{}
 	}
-	return withOwnershipLock(path, func() error {
+	return func() error {
 		ledger, err := LoadOwnership(path)
 		if err != nil {
 			return err
@@ -396,5 +497,5 @@ func RemoveOwnedNodeIDs(path string, nodeIDs []string) error {
 		}
 		ledger.Nodes = kept
 		return saveOwnership(path, ledger)
-	})
+	}
 }

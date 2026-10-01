@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/monody0007/tslink/internal/cliargs"
 	"github.com/monody0007/tslink/internal/output"
 	"github.com/spf13/cobra"
 )
@@ -97,7 +98,7 @@ func runCommandGroup(cmd *cobra.Command, _ []string) error {
 }
 
 func init() {
-	rootCmd.PersistentFlags().Bool("json", false, "Output as JSON")
+	cliargs.RegisterRootFlags(rootCmd)
 	rootCmd.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
 		return output.ErrUsage(err.Error())
 	})

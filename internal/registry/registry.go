@@ -1352,6 +1352,52 @@ func withLock(regPath string, fn func() error) error {
 	return fn()
 }
 
+// tryWithLock uses the same on-disk lock as mutations, but never waits for a
+// writer. Final orphan cleanup can then retain state when proof is unavailable.
+func tryWithLock(regPath string, fn func() error) (bool, error) {
+	if err := atomicfile.EnsurePrivateDir(filepath.Dir(regPath)); err != nil {
+		return false, err
+	}
+	if err := atomicfile.ConvergePrivateFile(regPath + ".lock"); err != nil {
+		return false, err
+	}
+	lockFile, err := os.OpenFile(regPath+".lock", os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return false, err
+	}
+	defer lockFile.Close()
+	acquired, err := filelock.TryLock(lockFile)
+	if err != nil || !acquired {
+		return acquired, err
+	}
+	defer filelock.Unlock(lockFile)
+	return true, fn()
+}
+
+// WithLockedFileState runs a short local-state decision under the same lock as
+// Add and Remove. It lets a cleanup caller recheck membership and act before a
+// concurrent registry mutation can re-add that service.
+func WithLockedFileState(path string, fn func(*Registry, RegistryFileState) error) error {
+	return withLock(path, func() error {
+		reg, state, err := LoadWithFileState(path)
+		if err != nil {
+			return err
+		}
+		return fn(reg, state)
+	})
+}
+
+// TryWithLockedFileState reports false on lock contention without invoking fn.
+func TryWithLockedFileState(path string, fn func(*Registry, RegistryFileState) error) (bool, error) {
+	return tryWithLock(path, func() error {
+		reg, state, err := LoadWithFileState(path)
+		if err != nil {
+			return err
+		}
+		return fn(reg, state)
+	})
+}
+
 func save(path string, reg *Registry) error {
 	if reg.Services == nil {
 		reg.Services = []Service{}
@@ -1547,7 +1593,18 @@ func addIfMissing(path string, svc Service, tentative bool) (created bool, err e
 		}
 		reg.Services = append(reg.Services, svc)
 		if err := save(path, reg); err != nil {
-			if tentative {
+			// A directory sync can fail after rename published the service.
+			// Report that creation and keep its mark so share can compensate.
+			published, readErr := Load(path)
+			if readErr == nil {
+				for _, stored := range published.Services {
+					if reflect.DeepEqual(stored, svc) {
+						created = true
+						break
+					}
+				}
+			}
+			if tentative && readErr == nil && !created {
 				_ = dropTentativeMark(path, svc.Name)
 			}
 			return err
@@ -1620,6 +1677,16 @@ func tentativeMark(svc Service) []byte {
 	return []byte(svc.CreatedAt.UTC().Format(time.RFC3339Nano) + "\n")
 }
 
+// A tentative mutation keeps the previous value's mark after its own first
+// line, if that value was also tentative. Restoring it then restores the
+// earlier caller's right to compensate. Repeated mutations retain the chain.
+func splitTentativeMark(mark []byte) (current, previous []byte) {
+	if end := bytes.IndexByte(mark, '\n'); end >= 0 {
+		return mark[:end+1], mark[end+1:]
+	}
+	return mark, nil
+}
+
 func dropTentativeMark(regPath, name string) error {
 	if err := os.Remove(tentativeMarkPath(regPath, name)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
@@ -1667,7 +1734,8 @@ func RemoveIfUnchanged(path string, expected Service) (removed bool, err error) 
 		if err != nil {
 			return err
 		}
-		if !bytes.Equal(mark, tentativeMark(expected)) {
+		current, _ := splitTentativeMark(mark)
+		if !bytes.Equal(current, tentativeMark(expected)) {
 			return nil
 		}
 		reg, err := loadForMutation(path)
@@ -1691,6 +1759,71 @@ func RemoveIfUnchanged(path string, expected Service) (removed bool, err error) 
 		return nil
 	})
 	return removed, err
+}
+
+// ReplaceIfUnchanged restores a prior service value only when the current
+// value still equals expected. It keeps a compensating write from clobbering
+// another process's registry edit or resurrecting a removed service.
+func ReplaceIfUnchanged(path string, expected, replacement Service) (replaced bool, err error) {
+	return replaceIfUnchanged(path, expected, replacement, false)
+}
+
+// RestoreTentativeIfUnchanged compensates a tentative mutation only while no
+// other caller has kept the resulting registration.
+func RestoreTentativeIfUnchanged(path string, expected, replacement Service) (bool, error) {
+	return replaceIfUnchanged(path, expected, replacement, true)
+}
+
+func replaceIfUnchanged(path string, expected, replacement Service, tentative bool) (replaced bool, err error) {
+	if expected.Name != replacement.Name {
+		return false, fmt.Errorf("replacement service name differs from expected name")
+	}
+	if err := ValidateService(replacement); err != nil {
+		return false, err
+	}
+	err = withLock(path, func() error {
+		var previousMark []byte
+		if tentative {
+			mark, err := os.ReadFile(tentativeMarkPath(path, expected.Name))
+			if errors.Is(err, fs.ErrNotExist) {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			current, previous := splitTentativeMark(mark)
+			if !bytes.Equal(current, tentativeMark(expected)) {
+				return nil
+			}
+			previousMark = previous
+		}
+		reg, err := loadForMutation(path)
+		if err != nil {
+			return err
+		}
+		for i, svc := range reg.Services {
+			if svc.Name != expected.Name {
+				continue
+			}
+			if !reflect.DeepEqual(svc, expected) {
+				return nil
+			}
+			reg.Services[i] = replacement
+			if err := save(path, reg); err != nil {
+				return err
+			}
+			replaced = true
+			if tentative {
+				if len(previousMark) > 0 {
+					return atomicfile.WriteFile(tentativeMarkPath(path, replacement.Name), previousMark)
+				}
+				_ = dropTentativeMark(path, expected.Name)
+			}
+			return nil
+		}
+		return nil
+	})
+	return replaced, err
 }
 
 // DowngradeExpiredFunnels atomically converts every expired Funnel service to
@@ -1718,6 +1851,16 @@ func DowngradeExpiredFunnels(path string, now time.Time, dryRun bool) (expired [
 }
 
 func MutateService(path, name string, mutate func(Service) (Service, error)) (Service, error) {
+	return mutateService(path, name, mutate, false)
+}
+
+// MutateServiceTentative marks the new value before publishing it so a failed
+// caller can restore the previous value unless another caller keeps it first.
+func MutateServiceTentative(path, name string, mutate func(Service) (Service, error)) (Service, error) {
+	return mutateService(path, name, mutate, true)
+}
+
+func mutateService(path, name string, mutate func(Service) (Service, error), tentative bool) (Service, error) {
 	var updated Service
 	err := withLock(path, func() error {
 		reg, err := loadForMutation(path)
@@ -1743,6 +1886,20 @@ func MutateService(path, name string, mutate func(Service) (Service, error)) (Se
 			}
 			if err := ValidateService(next); err != nil {
 				return err
+			}
+			if tentative {
+				mark, err := os.ReadFile(tentativeMarkPath(path, existing.Name))
+				if err != nil && !errors.Is(err, fs.ErrNotExist) {
+					return err
+				}
+				nextMark := tentativeMark(next)
+				current, _ := splitTentativeMark(mark)
+				if bytes.Equal(current, tentativeMark(existing)) {
+					nextMark = append(nextMark, mark...)
+				}
+				if err := atomicfile.WriteFile(tentativeMarkPath(path, next.Name), nextMark); err != nil {
+					return err
+				}
 			}
 			reg.Services[i] = next
 			updated = next

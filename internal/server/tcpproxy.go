@@ -97,8 +97,8 @@ func handleTCPConn(ctx context.Context, clientConn net.Conn, target, name string
 		defer wg.Done()
 		_, _ = io.Copy(backendConn, clientConn)
 		// Signal backend that client is done writing
-		if tc, ok := backendConn.(*net.TCPConn); ok {
-			tc.CloseWrite()
+		if halfCloser, ok := backendConn.(interface{ CloseWrite() error }); ok {
+			_ = halfCloser.CloseWrite()
 		}
 	}()
 
@@ -107,8 +107,8 @@ func handleTCPConn(ctx context.Context, clientConn net.Conn, target, name string
 		defer wg.Done()
 		_, _ = io.Copy(clientConn, backendConn)
 		// Signal client that backend is done writing
-		if tc, ok := clientConn.(*net.TCPConn); ok {
-			tc.CloseWrite()
+		if halfCloser, ok := clientConn.(interface{ CloseWrite() error }); ok {
+			_ = halfCloser.CloseWrite()
 		}
 	}()
 

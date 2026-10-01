@@ -170,8 +170,11 @@ is recorded atomically; the next credentialed start removes the old per-service
 tsnet state before enrollment so the auth key creates the tagged Tier 2 nodes.
 
 Credentials are stored in the system keychain (macOS Keychain, Linux secret
-service, Windows Credential Manager). On systems without keychain support,
-they fall back to files in ~/.config/tslink/ with restricted permissions (0600).
+service, Windows Credential Manager). On macOS and Linux, restricted-permission
+file fallback (0600) in ~/.config/tslink/ succeeds only after any stale keychain
+credential is proven absent or removed. If the keychain provider is completely
+unreachable or its state is uncertain, login fails explicitly; restore keychain
+access and retry. Windows has no credential file fallback.
 Metadata never contains the credential value, only a sha256 fingerprint.
 
 	Non-interactive mode:
@@ -758,7 +761,15 @@ func commitLoginCredentialValidated(ctx context.Context, store loginCredentialSt
 
 	backend, err := store.Write(mode, value)
 	if err != nil {
-		return loginCommitResult{}, fmt.Errorf("commit %s credential: %w", loginCredentialModeLabel(mode), err)
+		cause := fmt.Errorf("commit %s credential: %w", loginCredentialModeLabel(mode), err)
+		// A store may have changed the value before reporting its write error.
+		// The default credential store compensates internally when possible;
+		// avoid a second write when its read-back already matches the snapshot.
+		current, readErr := store.Read(mode)
+		if errors.Is(err, credentials.ErrCredentialWritePartial) || readErr != nil || current != previous.value(mode) {
+			return loginCommitResult{}, rollbackLoginCredential(store, previous, cause)
+		}
+		return loginCommitResult{}, cause
 	}
 	if err := verifyLoginCredentialValue(store, mode, value); err != nil {
 		return loginCommitResult{}, rollbackLoginCredential(store, previous, fmt.Errorf("verify committed %s credential: %w", loginCredentialModeLabel(mode), err))

@@ -417,8 +417,26 @@ func (s statusRead) getPollableStatus(pidPath, regPath, snapshotPath, authHandof
 		}
 		return StatusResult{}, err
 	}
-	if _, _, err := registry.LoadForDiagnostics(regPath); err != nil {
+	reg, _, err := registry.LoadForDiagnostics(regPath)
+	if err != nil {
 		return StatusResult{}, err
+	}
+	expiredByName := make(map[string]bool, len(reg.Services))
+	now := statusNowFn()
+	for _, svc := range reg.Services {
+		expiredByName[svc.Name] = registry.FunnelExpiredAt(svc, now)
+	}
+	// getStatus may have sampled the clock just before a deadline. Normalize
+	// every Funnel field to this later effective time before applying runtime
+	// snapshot evidence, so one response cannot mix pre/post-deadline state.
+	for i := range r.Services {
+		if expiredByName[r.Services[i].Name] {
+			r.Services[i].FunnelRequested = false
+			r.Services[i].FunnelActive = false
+			r.Services[i].FunnelState = tsruntime.FunnelStateNotRequested
+			remaining := "0s"
+			r.Services[i].FunnelRemaining = &remaining
+		}
 	}
 	fingerprint := currentRegistryFingerprint(regPath)
 
@@ -446,7 +464,7 @@ func (s statusRead) getPollableStatus(pidPath, regPath, snapshotPath, authHandof
 				continue
 			}
 			if runtimeService, ok := snapshotServices[r.Services[i].Name]; ok {
-				if runtimeService.FunnelState != "" {
+				if runtimeService.FunnelState != "" && !expiredByName[r.Services[i].Name] {
 					r.Services[i].FunnelRequested = runtimeService.FunnelRequested
 					r.Services[i].FunnelActive = runtimeService.FunnelActive
 					r.Services[i].FunnelState = runtimeService.FunnelState

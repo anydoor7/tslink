@@ -198,7 +198,7 @@ func Manifest() CLIManifest {
 			},
 			Storage: []CredentialSource{
 				{ID: "system_keychain", Boundary: "preferred storage: macOS Keychain, Linux Secret Service, or Windows Credential Manager"},
-				{ID: "restricted_file_fallback", Boundary: "headless fallback uses user-only restricted files when keychain storage is unavailable"},
+				{ID: "restricted_file_fallback", Boundary: "macOS/Linux user-only file fallback succeeds only after stale keychain credentials are proven absent or removed; an unreachable or uncertain keychain causes explicit failure; restore keychain access and retry; Windows has no file fallback"},
 				{ID: "dual_slot_coexistence", Command: "tslink login --retire-other", Flags: []string{"--retire-other"}, Boundary: "the api-key (invites, expires) and client-secret (durable daemon auth) slots coexist; login fills one slot and keeps the other unless --retire-other is passed; logout --kind removes one slot"},
 				{ID: "value_free_metadata", Boundary: "credential-meta.json (0600) stores only sha256 fingerprints, stored_at, expires_at, expires_at_source, and last verification per slot; never the credential value"},
 			},

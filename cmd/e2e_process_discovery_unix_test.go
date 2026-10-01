@@ -108,14 +108,14 @@ func TestE2EProcessDiscoveryRefusesAListingWithoutThisProcess(t *testing.T) {
 func TestE2EProcessDiscoveryFindsAChildWhoseNameTheOSCuts(t *testing.T) {
 	daemon := e2eFakeDaemonBinary(t)
 	binary := filepath.Join(t.TempDir(), "tslink-e2e-process-discovery-probe")
-	if err := os.Link(daemon, binary); err != nil {
-		image, readErr := os.ReadFile(daemon)
-		if readErr != nil {
-			t.Fatalf("read %s: %v", daemon, readErr)
-		}
-		if err := os.WriteFile(binary, image, 0o700); err != nil {
-			t.Fatalf("write %s: %v", binary, err)
-		}
+	// macOS can report the original vnode path for a hard-linked binary.
+	// A separate file makes the long executable name the actual process path.
+	image, readErr := os.ReadFile(daemon)
+	if readErr != nil {
+		t.Fatalf("read %s: %v", daemon, readErr)
+	}
+	if err := os.WriteFile(binary, image, 0o700); err != nil {
+		t.Fatalf("write %s: %v", binary, err)
 	}
 	child := exec.Command(binary, "serve")
 	child.Env = append(os.Environ(), "TSLINK_CONFIG_DIR="+t.TempDir())

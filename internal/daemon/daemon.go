@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/monody0007/tslink/internal/cliargs"
 	"github.com/monody0007/tslink/internal/filelock"
 )
 
@@ -424,7 +425,7 @@ func verifyProcessServeCommand(pid int) error {
 	if err != nil {
 		return fmt.Errorf("inspect process %d arguments: %w", pid, err)
 	}
-	if len(args) < 2 || args[1] != "serve" {
+	if len(args) < 2 || !cliargs.IsRunnableServe(args[1:]) {
 		return foreignProcessf("process %d argv %q does not identify a serve daemon", pid, args)
 	}
 	return nil

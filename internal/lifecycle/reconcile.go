@@ -113,6 +113,12 @@ type Options struct {
 	// "Nobody told me" and "nothing holds it" are different statements, and
 	// only the caller can tell them apart.
 	LocalNodeStateInUse func(serviceName string) bool
+	// WithNodeStateLock serializes the final local deletion with this daemon's
+	// service startup. The network cleanup runs outside this short lock.
+	WithNodeStateLock func(func() error) error
+	// TryWithNodeStateLock is the daemon's nonblocking startup gate. A false
+	// result means cleanup must retain state and retry on a later tick.
+	TryWithNodeStateLock func(context.Context, func() error) (bool, error)
 }
 
 type AdoptionResult struct {
@@ -313,7 +319,7 @@ func Reconcile(ctx context.Context, options Options) (Result, error) {
 				"services", serviceNames, "protected", len(cleanup.Protected), "skipped", cleanup.Skipped)
 		}
 		if cleanupErr == nil && !options.DryRun && len(cleanup.ResolvedOwnershipIDs) > 0 {
-			if err := finishOrphanServices(options, &result, cleanup, orphanRows, serviceNames); err != nil {
+			if err := finishOrphanServices(ctx, options, &result, cleanup, orphanRows, serviceNames); err != nil {
 				return Result{}, fmt.Errorf("update node ownership ledger: %w", err)
 			}
 		}
@@ -360,7 +366,7 @@ func Reconcile(ctx context.Context, options Options) (Result, error) {
 // same state directory, recording its new NodeID before it publishes the node
 // where HoldsNodeState used to look. Acting on the earlier reads deleted that
 // new node's state underneath it. So this part runs under the ownership
-// ledger's lock and reads again there. It acts only on a service that is
+// ledger's lock after taking the registry lock, and reads again there. It acts only on a service that is
 // still absent from a valid registry.json and whose ownership rows are still
 // exactly the ones this run resolved -- a new or re-recorded node means a newer
 // enrollment owns the directory -- and it asks LocalNodeStateInUse inside the
@@ -368,54 +374,98 @@ func Reconcile(ctx context.Context, options Options) (Result, error) {
 // before a startup first touches it and keeps the reservation until the node
 // is published or closed, so a startup either reserved first and is seen here,
 // or waits for this removal to finish and then creates a fresh directory.
-func finishOrphanServices(options Options, result *Result, cleanup tailapi.CleanupResult, snapshot map[string][]tsruntime.OwnedNode, serviceNames []string) error {
-	return tsruntime.UpdateOwnership(options.OwnershipPath, func(ledger *tsruntime.OwnershipLedger) (bool, error) {
-		reg, state, err := registry.LoadWithFileState(options.RegistryPath)
-		if err != nil || state != registry.RegistryFileValid {
-			slog.Info("keeping local node state and ownership records; registry.json no longer reads as a valid file", "services", serviceNames, "state", state, "error", err)
-			return false, nil
+// Daemon proof locks are nonblocking; a busy writer leaves retry evidence intact.
+// CLI cleanup waits for proof locks so a one-shot run finishes its ledger update.
+// The optional startup gate is acquired before registry and ownership locks.
+func finishOrphanServices(ctx context.Context, options Options, result *Result, cleanup tailapi.CleanupResult, snapshot map[string][]tsruntime.OwnedNode, serviceNames []string) error {
+	nonblocking := options.TryWithNodeStateLock != nil
+	busy := false
+	defer func() {
+		if busy {
+			slog.Info("keeping node state and ownership records for a later run; a proof lock is busy", "services", serviceNames)
 		}
-		active := make(map[string]struct{}, len(reg.Services))
-		for _, svc := range reg.Services {
-			active[svc.Name] = struct{}{}
+	}()
+	finish := func() error {
+		if ctx.Err() != nil {
+			return nil
 		}
-		current := make(map[string][]tsruntime.OwnedNode)
-		for _, node := range ledger.Nodes {
-			current[node.ServiceName] = append(current[node.ServiceName], node)
-		}
-		orphanIDs := make(map[string][]string, len(serviceNames))
-		unchanged := make([]string, 0, len(serviceNames))
-		for _, name := range serviceNames {
-			if _, registered := active[name]; registered {
-				slog.Info("keeping node state and ownership records; the service was registered again while this run waited", "service", name)
-				continue
+		checkRegistry := func(reg *registry.Registry, state registry.RegistryFileState) error {
+			if ctx.Err() != nil {
+				return nil
 			}
-			if !sameOwnedNodes(snapshot[name], current[name]) {
-				slog.Info("keeping node state and ownership records; the service's recorded nodes changed while this run waited", "service", name)
-				continue
+			if state != registry.RegistryFileValid {
+				slog.Info("keeping local node state and ownership records; registry.json no longer reads as a valid file", "services", serviceNames, "state", state)
+				return nil
 			}
-			unchanged = append(unchanged, name)
-			for _, node := range snapshot[name] {
-				orphanIDs[name] = append(orphanIDs[name], node.NodeID)
+			update := func(ledger *tsruntime.OwnershipLedger) (bool, error) {
+				if ctx.Err() != nil {
+					return false, nil
+				}
+
+				active := make(map[string]struct{}, len(reg.Services))
+				for _, svc := range reg.Services {
+					active[svc.Name] = struct{}{}
+				}
+				current := make(map[string][]tsruntime.OwnedNode)
+				for _, node := range ledger.Nodes {
+					current[node.ServiceName] = append(current[node.ServiceName], node)
+				}
+				orphanIDs := make(map[string][]string, len(serviceNames))
+				unchanged := make([]string, 0, len(serviceNames))
+				for _, name := range serviceNames {
+					if _, registered := active[name]; registered {
+						slog.Info("keeping node state and ownership records; the service was registered again while this run waited", "service", name)
+						continue
+					}
+					if !sameOwnedNodes(snapshot[name], current[name]) {
+						slog.Info("keeping node state and ownership records; the service's recorded nodes changed while this run waited", "service", name)
+						continue
+					}
+					unchanged = append(unchanged, name)
+					for _, node := range snapshot[name] {
+						orphanIDs[name] = append(orphanIDs[name], node.NodeID)
+					}
+				}
+				gone := removeStaleNodeState(options, result, cleanup, orphanIDs, unchanged, active)
+				forget := make(map[string]struct{})
+				for _, id := range idsOf(cleanup.ResolvedOwnershipIDs, orphanIDs, gone) {
+					forget[id] = struct{}{}
+				}
+				if len(forget) == 0 {
+					return false, nil
+				}
+				kept := ledger.Nodes[:0]
+				for _, node := range ledger.Nodes {
+					if _, drop := forget[node.NodeID]; !drop {
+						kept = append(kept, node)
+					}
+				}
+				ledger.Nodes = kept
+				return true, nil
 			}
-		}
-		gone := removeStaleNodeState(options, result, cleanup, orphanIDs, unchanged, active)
-		forget := make(map[string]struct{})
-		for _, id := range idsOf(cleanup.ResolvedOwnershipIDs, orphanIDs, gone) {
-			forget[id] = struct{}{}
-		}
-		if len(forget) == 0 {
-			return false, nil
-		}
-		kept := ledger.Nodes[:0]
-		for _, node := range ledger.Nodes {
-			if _, drop := forget[node.NodeID]; !drop {
-				kept = append(kept, node)
+			if nonblocking {
+				acquired, err := tsruntime.TryUpdateOwnership(options.OwnershipPath, update)
+				busy = busy || !acquired
+				return err
 			}
+			return tsruntime.UpdateOwnership(options.OwnershipPath, update)
 		}
-		ledger.Nodes = kept
-		return true, nil
-	})
+		if nonblocking {
+			acquired, err := registry.TryWithLockedFileState(options.RegistryPath, checkRegistry)
+			busy = busy || !acquired
+			return err
+		}
+		return registry.WithLockedFileState(options.RegistryPath, checkRegistry)
+	}
+	if nonblocking {
+		acquired, err := options.TryWithNodeStateLock(ctx, finish)
+		busy = busy || !acquired
+		return err
+	}
+	if options.WithNodeStateLock != nil {
+		return options.WithNodeStateLock(finish)
+	}
+	return finish()
 }
 
 // sameOwnedNodes reports whether a service's ownership rows are still exactly

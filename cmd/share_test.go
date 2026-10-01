@@ -133,6 +133,7 @@ func restoreShareSeams(t *testing.T) {
 	oldResolve := shareResolveEndpointOnceFn
 	oldStatus := sharePollableStatusFn
 	oldAdd := shareAddIfMissingFn
+	oldReplace := shareReplaceIfUnchangedFn
 	t.Cleanup(func() {
 		shareEnsureDirFn = oldEnsure
 		shareRegistryPathFn = oldRegistryPath
@@ -145,6 +146,7 @@ func restoreShareSeams(t *testing.T) {
 		shareResolveEndpointOnceFn = oldResolve
 		sharePollableStatusFn = oldStatus
 		shareAddIfMissingFn = oldAdd
+		shareReplaceIfUnchangedFn = oldReplace
 	})
 }
 

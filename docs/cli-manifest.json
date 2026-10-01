@@ -102,7 +102,7 @@
       },
       {
         "id": "restricted_file_fallback",
-        "boundary": "headless fallback uses user-only restricted files when keychain storage is unavailable"
+        "boundary": "macOS/Linux user-only file fallback succeeds only after stale keychain credentials are proven absent or removed; an unreachable or uncertain keychain causes explicit failure; restore keychain access and retry; Windows has no file fallback"
       },
       {
         "id": "dual_slot_coexistence",
