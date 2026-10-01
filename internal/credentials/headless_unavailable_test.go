@@ -3,6 +3,8 @@ package credentials
 import (
 	"errors"
 	"os"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/anydoor7/tslink/internal/config"
@@ -21,7 +23,11 @@ func TestWholeProviderUnavailablePreservesAuthority(t *testing.T) {
 				keyringEnabledFunc = func() bool { return !disabled }
 				t.Cleanup(func() { keyringEnabledFunc = old })
 				unavailable := errors.New("synthetic keyring unavailable")
-				stubKeyring(t, func(string, string) (string, error) { return "", unavailable }, func(string, string, string) error { return unavailable }, func(string, string) error { return unavailable })
+				setCalls, deleteCalls := 0, 0
+				stubKeyring(t,
+					func(string, string) (string, error) { return "", unavailable },
+					func(string, string, string) error { setCalls++; return unavailable },
+					func(string, string) error { deleteCalls++; return unavailable })
 				value := "tskey-api-FAKE-review"
 				oldValue := "tskey-api-FAKE-OLD"
 				set := SetAPIKeyWithBackend
@@ -38,7 +44,7 @@ func TestWholeProviderUnavailablePreservesAuthority(t *testing.T) {
 					t.Fatal(pathErr)
 				}
 				backend, err := set(value)
-				if disabled {
+				if disabled && runtime.GOOS != "windows" {
 					if err != nil || backend != CredentialBackendFile {
 						t.Fatalf("file-only control: %q %v", backend, err)
 					}
@@ -52,7 +58,18 @@ func TestWholeProviderUnavailablePreservesAuthority(t *testing.T) {
 					}
 					return
 				}
-				if err == nil || backend != "" {
+				if disabled {
+					if err == nil || backend != "" ||
+						!strings.Contains(err.Error(), "file credential fallback is disabled on Windows") ||
+						!strings.Contains(err.Error(), "Credential Manager") {
+						t.Fatalf("Windows must refuse file fallback: backend=%q err=%v", backend, err)
+					}
+					if setCalls != 0 || deleteCalls != 0 {
+						t.Fatalf("disabled keyring was mutated: set=%d delete=%d", setCalls, deleteCalls)
+					}
+					// Restore keyring access below to prove the old authority is still readable.
+					keyringEnabledFunc = func() bool { return true }
+				} else if err == nil || backend != "" {
 					t.Fatalf("unproven keyring absence silently swapped authority: backend=%q err=%v", backend, err)
 				}
 				if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
