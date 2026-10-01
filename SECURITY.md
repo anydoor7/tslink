@@ -40,14 +40,13 @@ If you discover a security vulnerability, please report it responsibly:
 
 1. **Do not** open a public GitHub issue
 2. Open a private GitHub Security Advisory: <https://github.com/anydoor7/tslink/security/advisories/new>
-3. If you cannot use GitHub Security Advisories, email maintainer@example.com with the same information. Use the subject prefix `[tslink-security]`.
-4. Include:
+3. Include:
    - Description of the vulnerability
    - Steps to reproduce
    - Potential impact
    - Suggested fix (if any)
 
-Private GitHub Security Advisories are the preferred vulnerability intake channel for this repository. The maintainers coordinate disclosure, fixes, and credit in the advisory thread before any public issue or pull request is opened.
+GitHub private vulnerability reporting is the vulnerability intake channel for this repository. The repository maintainer must enable it in GitHub settings. The maintainers coordinate disclosure, fixes, and credit in the advisory thread before any public issue or pull request is opened.
 
 Expect an initial acknowledgement within 7 days. The coordinated disclosure target is 90 days from that acknowledgement; if a fix needs longer, the advisory thread says so and names a new date rather than going quiet.
 

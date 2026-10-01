@@ -36,7 +36,7 @@ This Code of Conduct applies within all community spaces, and also applies when 
 
 ## Enforcement
 
-Instances of abusive, harassing, or otherwise unacceptable behavior may be reported to the community leaders responsible for enforcement at maintainer@example.com. All complaints will be reviewed and investigated promptly and fairly.
+Report abusive, harassing, or otherwise unacceptable behavior in this repository with GitHub's **Report content** action on the relevant issue, pull request, discussion, or comment. Select **Report to repository admins** so the maintainers receive the report through GitHub's reported-content queue. If that option is unavailable, use **Report abuse to GitHub Support**. Do not put sensitive details in a public issue or discussion. Community leaders review reports promptly and fairly.
 
 All community leaders are obligated to respect the privacy and security of the reporter of any incident.
 

@@ -16,12 +16,7 @@ scope, fees, delivery, and any support commitments. Downloading or using
 TSLink creates no payment obligation and includes no guaranteed support,
 response time, or service level.
 
-For a non-confidential cooperation inquiry, use the
-[project issue tracker](https://github.com/anydoor7/tslink/issues).
-Describe the help you need; do not post credentials, customer data, or
-confidential business information. For anything you would rather not post
-publicly, email maintainer@example.com. No paid service is promised by an
-inquiry.
+For cooperation inquiries, start a [GitHub Discussion](https://github.com/anydoor7/tslink/discussions) in this repository. Describe the help you need without posting credentials, customer data, or confidential business information. GitHub Discussions are public; if an inquiry requires a private channel, request one there without sharing the details. No paid service is promised by an inquiry.
 
 ## Attribution and project identity
 

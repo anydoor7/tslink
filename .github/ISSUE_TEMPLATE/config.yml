@@ -2,7 +2,10 @@ blank_issues_enabled: false
 contact_links:
   - name: Report a security vulnerability
     url: https://github.com/anydoor7/tslink/security/advisories/new
-    about: Use private GitHub Security Advisories for vulnerabilities. Do not open public issues for security reports.
-  - name: Security report without a GitHub account
-    url: mailto:maintainer@example.com
-    about: Email if you cannot use private Security Advisories. Use the subject prefix [tslink-security].
+    about: Use GitHub private vulnerability reporting. Do not open a public issue.
+  - name: Report a code of conduct concern
+    url: https://github.com/anydoor7/tslink/blob/main/CODE_OF_CONDUCT.md#enforcement
+    about: Use Report content on the relevant item and select Report to repository admins.
+  - name: Commercial or cooperation inquiry
+    url: https://github.com/anydoor7/tslink/discussions
+    about: Start a public discussion without confidential business information.

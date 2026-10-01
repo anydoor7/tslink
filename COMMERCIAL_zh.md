@@ -6,7 +6,7 @@ TSLink 采用标准 [Apache License 2.0](LICENSE)。个人和任何规模的组�
 
 如果 TSLink 对你的组织有帮助，欢迎贡献代码，或洽谈维护资助、集成协助和定制开发。参与完全自愿，不影响已有的 Apache 2.0 权利。若达成付费合作，须另行签署书面协议，约定范围、费用、交付和支持承诺。下载或使用 TSLink 不产生付款义务，也不包含有保证的支持、响应时间或服务水平。
 
-非保密合作意向可通过[项目 issue](https://github.com/anydoor7/tslink/issues)提出，说明需要的帮助即可。请勿公开凭据、客户数据或机密业务信息。不便公开的内容可发邮件至 maintainer@example.com。提出意向不代表我们已承诺提供付费服务。
+合作意向请先在本仓库的 [GitHub Discussions](https://github.com/anydoor7/tslink/discussions) 发帖，说明需要的帮助。请勿公开凭据、客户数据或机密业务信息。Discussions 是公开渠道；需要私下沟通时，请只提出私下沟通请求，不要在帖子中写入细节。提出意向不代表我们已承诺提供付费服务。
 
 ## 署名与项目身份
 
