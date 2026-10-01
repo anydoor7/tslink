@@ -18,7 +18,16 @@ Homebrew 与预构建归档随首个 tagged release 提供。在那之前，源�
 git clone https://github.com/anydoor7/tslink.git && cd tslink && go install .
 ```
 
+安装后可分享一个页面：
+
+```bash
+mkdir -p tslink-demo && printf '<h1>TSLink demo</h1>\n' > tslink-demo/index.html
+tslink share ./tslink-demo --name demo
+```
+
 ## 更多示例
+
+下列 proxy 示例要求本机已有应用监听相应端口。
 
 ```bash
 # 暴露文件目录

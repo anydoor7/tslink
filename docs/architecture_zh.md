@@ -17,7 +17,7 @@ TSLink 为每个注册的服务创建一个专用的 [tsnet](https://tailscale.c
 
 **关键架构决策：**
 - **Per-service 嵌入式节点**：每个服务获得独立的 tailnet 身份和主机名；proxy/file 服务还获得 Tailscale HTTPS listener 语义
-- **身份感知代理**：tailnet 内的 HTTP 代理/文件请求进行 WhoIs 验证；代理先移除客户端传来的 Tailscale 身份头及下划线变体，再注入已验证身份；公网 Funnel 和 raw TCP 不获得 TSLink 强制执行的 HTTP 身份认证
+- **身份感知代理**：配置 `--allow` 后，HTTP 代理/文件请求必须通过 WhoIs 并匹配名单，否则在到达后端前返回 403。未配置名单时，tailnet 策略决定能否连接，WhoIs 身份头和日志属于尽力提供的信息。即使 WhoIs 失败，代理仍会移除客户端传来的 Tailscale 身份头及下划线变体。raw TCP 不经过 HTTP 身份层；公网 Funnel 调用方不视为经过 TSLink 强制认证的 Tailscale 用户
 - **安全凭证管理**：系统钥匙串存储；macOS/Linux 的受限权限文件回退仅在证明残留钥匙串凭证不存在或已清除后成功
 - **基于文件的注册表**：服务在 `~/.config/tslink/registry.json` 中持久化，跨重启保存
 - **热重载**：注册表文件监听意味着 `tslink add` 无需重启服务即可生效

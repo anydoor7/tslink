@@ -17,7 +17,7 @@ TSLink creates a dedicated [tsnet](https://tailscale.com/kb/1244/tsnet) node for
 
 **Key architectural decisions:**
 - **Per-service embedded nodes**: each service gets its own tailnet identity and hostname; proxy/file services also get Tailscale HTTPS listener semantics
-- **Identity-aware proxying**: WhoIs verification on tailnet HTTP proxy/file requests; the proxy strips client-supplied Tailscale identity headers, including underscore variants, before injecting verified identity; public Funnel and raw TCP do not get TSLink-enforced HTTP identity
+- **Identity-aware proxying**: with `--allow`, WhoIs must succeed and the caller must match or HTTP proxy/file requests receive 403 before the backend; without an allow list, tailnet policy governs reachability and WhoIs-derived identity headers and logs are best effort. The proxy strips client-supplied Tailscale identity headers, including underscore variants, even if WhoIs fails. Raw TCP has no HTTP identity layer; public Funnel callers are not treated as TSLink-enforced Tailscale user identities
 - **Secure credential management**: system keychain storage; macOS/Linux restricted-permission file fallback only after stale keychain authority is proven absent or cleared
 - **File-based registry**: services persist across restarts in `~/.config/tslink/registry.json`
 - **Hot reload**: file watcher on the registry means `tslink add` takes effect without restarting the server

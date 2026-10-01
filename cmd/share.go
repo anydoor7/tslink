@@ -696,11 +696,10 @@ If Tailscale authorization is required, the authorization URL is returned as a
 successful needs_login result. Open it and then use "tslink url <name> --wait".
 
 Examples:
-  tslink share ./build
-  tslink share ./report.html
-  tslink share 3000
-  tslink share localhost:8080 --name preview
-  tslink share ./build --ephemeral=false`,
+  mkdir -p tslink-demo && printf '<h1>TSLink demo</h1>\n' > tslink-demo/index.html
+  tslink share ./tslink-demo --name demo
+  tslink share 3000  (requires a local app listening on port 3000)
+  tslink share localhost:8080 --name preview  (requires a local app on port 8080)`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := shareEnsureDirFn(); err != nil {

@@ -48,13 +48,14 @@ TSLink 通过 [tsnet](https://tailscale.com/docs/features/tsnet)
 git clone https://github.com/anydoor7/tslink.git
 cd tslink
 go install .
-tslink share ./build
-tslink add myapp --proxy localhost:3000
+mkdir -p tslink-demo && printf '<h1>TSLink demo</h1>\n' > tslink-demo/index.html
+tslink share ./tslink-demo --name demo
 ```
 
 首次运行 `share` 会打印入网授权 URL。完成授权后，如果服务 URL 仍待生成，可执行
-`tslink url <name> --wait`。`add`
-会注册命名服务，并在有可用监督器时启动后台服务。其他路径见[入门文档](docs/getting-started_zh.md)和[守护进程生命周期](docs/daemon-lifecycle_zh.md)。
+`tslink url demo --wait`。如果本机已有应用监听 3000 端口，可用
+`tslink add myapp --proxy localhost:3000` 注册命名服务，并在有可用监督器时启动后台服务。
+其他路径见[入门文档](docs/getting-started_zh.md)和[守护进程生命周期](docs/daemon-lifecycle_zh.md)。
 
 ## 功能
 
@@ -94,17 +95,22 @@ flowchart LR
   Mesh --> Web[tsnet 节点: Web 服务]
   Mesh --> Files[tsnet 节点: 文件服务]
   Mesh --> TCP[tsnet 节点: TCP 服务]
-  Web --> WhoIs[WhoIs 身份检查]
-  Files --> WhoIs
-  WhoIs --> Allow[HTTP --allow 筛选]
-  Allow --> HTTP[本地 HTTP 或文件]
+  Web --> Policy{已配置 allow 名单?}
+  Files --> Policy
+  Policy -->|是| Gate[WhoIs 成功且调用方匹配]
+  Gate -->|是| HTTP[本地 HTTP 或文件]
+  Gate -->|否| Denied[访问后端前返回 403]
+  Policy -->|否| Best[WhoIs 尽力提供身份和日志]
+  Best --> HTTP
   TCP --> ACL[tailnet ACL 与目标认证]
   ACL --> Raw[本地 raw TCP 目标]
 ```
 
-每个注册服务都运行在独立的 tsnet 节点上。HTTP 代理和文件服务先进行 WhoIs 检查，再应用 `--allow`
-名单。raw TCP 不经过 TSLink 的 HTTP
-身份筛选；其保护来自 tailnet 策略和目标服务。详情见[架构文档](docs/architecture_zh.md)。
+每个注册服务都运行在独立的 tsnet 节点上。配置 `--allow` 后，HTTP 代理和文件请求必须
+通过 WhoIs 身份检查并匹配名单，否则会在到达后端前返回 403。未配置 `--allow` 时，
+tailnet 策略决定能否连接；WhoIs 身份头和日志属于尽力提供的信息。即使 WhoIs 失败，
+代理仍会移除客户端伪造的 Tailscale 身份头。raw TCP 不经过 HTTP 身份层，依赖 tailnet
+策略和目标服务自身的认证。详情见[架构文档](docs/architecture_zh.md)。
 
 ## 安全模型
 
@@ -112,7 +118,7 @@ TSLink 与常见零信任原则的对应关系：
 
 | 零信任原则 | TSLink 实现 |
 |-----------|------------|
-| **HTTP 调用方验证** | tailnet 内的 HTTP 代理/文件请求可以通过 Tailscale WhoIs 认证。代理先移除客户端传来的 `Tailscale-*`、`X-Tailscale-*` 身份头及带下划线的变体；只有 WhoIs 成功，才注入 `X-Tailscale-User-Login`、`X-Tailscale-User-Name`、`X-Tailscale-User-Picture` 和 `X-Tailscale-Node`。公网 Funnel 和 raw TCP 不视为 TSLink 强制执行的 Tailscale 用户认证。 |
+| **HTTP 调用方验证** | 配置 `--allow` 后，tailnet 内的 HTTP 代理/文件请求必须通过 Tailscale WhoIs 身份检查并匹配名单。未配置名单时，WhoIs 身份信息属于尽力提供的信息。代理先移除客户端传来的 `Tailscale-*`、`X-Tailscale-*` 身份头及带下划线的变体；只有 WhoIs 成功，才注入 `X-Tailscale-User-Login`、`X-Tailscale-User-Name`、`X-Tailscale-User-Picture` 和 `X-Tailscale-Node`。公网 Funnel 和 raw TCP 不视为 TSLink 强制执行的 Tailscale 用户认证。 |
 | **HTTP 最小权限访问** | `--allow` 限制 proxy 和 file 服务的访问用户或标签。TCP 服务依赖 Tailscale 网络 ACL 和标签。 |
 | **假设已被攻破** | tailnet 设备之间的流量使用 WireGuard 加密。即使本地网络被攻破，Tailscale 设备之间的流量仍然加密；公网 Funnel 路径遵循 Tailscale Funnel 语义。 |
 | **Per-service 网络身份** | 每个服务作为独立 tsnet 节点运行，拥有自己的主机名和网络身份。这是网络分段，不是 host process isolation 或合规背书。 |

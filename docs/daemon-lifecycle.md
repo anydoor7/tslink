@@ -2,21 +2,24 @@
 
 ## From nothing to a URL
 
-One command, no account setup, no token to copy:
+Create a demo page and share it without an API token:
 
 ```bash
-tslink share ./build
+mkdir -p tslink-demo && printf '<h1>TSLink demo</h1>\n' > tslink-demo/index.html
+tslink share ./tslink-demo --name demo
 ```
 
-TSLink registers the directory, starts the daemon if it is not already running,
-and prints one Tailscale authorization URL. Open it once, approve the node, and
-the command returns the live URL. Open that from your phone, your tablet, or any
-other device on your tailnet.
+TSLink registers the directory and starts the daemon if it is not already running.
+On first use, it prints a Tailscale authorization URL. Open it to approve the node,
+then run `tslink url demo --wait` if the service URL is still pending. Open the
+service URL from another device on your tailnet.
 
 No API token. No OAuth client. No admin console visit. The node is enrolled as
 you, so it needs no ACL policy of its own.
 
 If you would rather register services explicitly and keep them around:
+
+The proxy example requires a local app already listening on port 3000.
 
 ```bash
 # 1. Expose a local web service

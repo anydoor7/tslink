@@ -18,7 +18,16 @@ installing from source is the supported path. Building from a clone works too:
 git clone https://github.com/anydoor7/tslink.git && cd tslink && go install .
 ```
 
+To share a page after installation:
+
+```bash
+mkdir -p tslink-demo && printf '<h1>TSLink demo</h1>\n' > tslink-demo/index.html
+tslink share ./tslink-demo --name demo
+```
+
 ## More Examples
+
+The proxy examples below require a local app already listening on the specified port.
 
 ```bash
 # Expose a file directory

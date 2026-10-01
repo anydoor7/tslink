@@ -2,19 +2,23 @@
 
 ## 从零到一个 URL
 
-一条命令，不用注册账号，不用复制任何 token：
+创建演示页面并分享，无需 API token：
 
 ```bash
-tslink share ./build
+mkdir -p tslink-demo && printf '<h1>TSLink demo</h1>\n' > tslink-demo/index.html
+tslink share ./tslink-demo --name demo
 ```
 
-TSLink 会注册这个目录，daemon 没在跑就顺手启动，然后打印一个 Tailscale 授权 URL。
-打开它、批准这个节点，命令就返回真实 URL。用手机、平板或 tailnet 上任何其它设备打开即可。
+TSLink 会注册这个目录，并在 daemon 未运行时启动它。首次使用会打印 Tailscale 授权 URL。
+打开该地址批准节点。如果服务 URL 仍待生成，可执行 `tslink url demo --wait`，
+然后在其他 tailnet 设备上打开服务 URL。
 
 不需要 API token，不需要 OAuth client，不用去 admin console。节点以你的身份入网，
 因此它自己不需要任何 ACL 策略。
 
 如果你更想显式注册服务并长期保留：
+
+下列 proxy 示例要求本机已有应用监听 3000 端口。
 
 ```bash
 # 1. 暴露本地 Web 服务

@@ -47,12 +47,13 @@ newer. The binary goes in `$(go env GOPATH)/bin`; add that directory to `PATH` i
 git clone https://github.com/anydoor7/tslink.git
 cd tslink
 go install .
-tslink share ./build
-tslink add myapp --proxy localhost:3000
+mkdir -p tslink-demo && printf '<h1>TSLink demo</h1>\n' > tslink-demo/index.html
+tslink share ./tslink-demo --name demo
 ```
 
 `share` prints an enrollment URL on first use. Open it to authorize the node, then run
-`tslink url <name> --wait` if the service URL is still pending. `add` registers a named service
+`tslink url demo --wait` if the service URL is still pending. If a local app is already
+listening on port 3000, `tslink add myapp --proxy localhost:3000` registers it as a named service
 and starts the background service when its supervisor is available. See
 [getting started](docs/getting-started.md) and [daemon lifecycle](docs/daemon-lifecycle.md) for
 other paths.
@@ -98,17 +99,23 @@ flowchart LR
   Mesh --> Web[tsnet node: web service]
   Mesh --> Files[tsnet node: file service]
   Mesh --> TCP[tsnet node: TCP service]
-  Web --> WhoIs[WhoIs identity check]
-  Files --> WhoIs
-  WhoIs --> Allow[HTTP --allow filter]
-  Allow --> HTTP[Local HTTP or files]
+  Web --> Policy{Allow list configured?}
+  Files --> Policy
+  Policy -->|Yes| Gate[WhoIs succeeds and caller matches]
+  Gate -->|Yes| HTTP[Local HTTP or files]
+  Gate -->|No| Denied[403 before backend]
+  Policy -->|No| Best[WhoIs best effort for identity and logs]
+  Best --> HTTP
   TCP --> ACL[Tailnet ACL and target auth]
   ACL --> Raw[Local raw TCP target]
 ```
 
-Each registered service runs as its own tsnet node. HTTP proxy and file paths verify WhoIs before
-using the `--allow` list. Raw TCP has no TSLink HTTP identity filter; its protection comes from
-the tailnet policy and target service. [Architecture details](docs/architecture.md).
+Each registered service runs as its own tsnet node. With `--allow`, HTTP proxy and file requests
+require successful WhoIs identification and a matching caller; failures return 403 before reaching
+the backend. Without `--allow`, tailnet policy governs reachability. WhoIs-derived identity headers
+and logging are best effort; the proxy strips client-supplied Tailscale identity headers even when
+WhoIs fails. Raw TCP has no HTTP identity layer and relies on tailnet policy and target authentication.
+[Architecture details](docs/architecture.md).
 
 ## Security model
 
@@ -116,7 +123,7 @@ How TSLink maps onto common zero-trust principles:
 
 | Zero-Trust Principle | TSLink Implementation |
 |-----|-----|
-| **HTTP caller verification** | Tailnet HTTP proxy/file requests can be authenticated via Tailscale WhoIs. The proxy strips client-supplied `Tailscale-*` and `X-Tailscale-*` identity headers, including underscore variants, before injecting `X-Tailscale-User-Login`, `X-Tailscale-User-Name`, `X-Tailscale-User-Picture`, and `X-Tailscale-Node` only when WhoIs succeeds. Public Funnel exposure and raw TCP streams are not treated as TSLink-enforced Tailscale user authentication. |
+| **HTTP caller verification** | `--allow` makes Tailscale WhoIs identification and a matching caller mandatory for tailnet HTTP proxy/file requests. Without an allow list, WhoIs identity is best effort. The proxy strips client-supplied `Tailscale-*` and `X-Tailscale-*` identity headers, including underscore variants, before injecting `X-Tailscale-User-Login`, `X-Tailscale-User-Name`, `X-Tailscale-User-Picture`, and `X-Tailscale-Node` only when WhoIs succeeds. Public Funnel exposure and raw TCP streams are not treated as TSLink-enforced Tailscale user authentication. |
 | **HTTP least-privilege access** | `--allow` restricts proxy and file services to specific users or tags. TCP services rely on Tailscale network ACLs and tags. |
 | **Assume breach** | Tailnet device-to-device traffic uses WireGuard encryption. Even if your local network is compromised, traffic between your Tailscale devices remains encrypted; public Funnel paths follow Tailscale Funnel semantics. |
 | **Per-service network identity** | Each service runs as a separate tsnet node with its own hostname and network identity. This is network segmentation, not host process isolation or a compliance attestation. |

@@ -7,12 +7,14 @@
 最后只向 stdout 打印该 URL。share 默认使用 ephemeral node。
 
 ```bash
-tslink share ./build                # 服务整个 ./build 目录树，可浏览目录
-tslink share ./report.html          # 只服务 report.html，同目录其它文件不可达
-tslink share 3000
-tslink share localhost:8080 --name preview
-tslink share ./build --ephemeral=false
+mkdir -p tslink-demo && printf '<h1>TSLink demo</h1>\n' > tslink-demo/index.html
+tslink share ./tslink-demo --name demo
+tslink share ./tslink-demo/index.html --name demo-file  # 只服务这个文件
+tslink share ./tslink-demo --name demo-persistent --ephemeral=false
 ```
+
+如果要分享端口，请先启动本机应用并确认它监听对应端口，再执行
+`tslink share 3000` 或 `tslink share localhost:8080 --name preview`。
 
 两种路径形态的可达范围不同，这是 service 自身的边界，不是列目录的显示偏好。
 目录 target 会服务其下全部文件，没有 `index.html` 的目录会渲染目录列表。
@@ -20,7 +22,7 @@ tslink share ./build --ephemeral=false
 其余任何路径都返回 404，包括同目录下的其它文件。registry 用 file service 的
 `file` 字段记录这个收窄；没有该字段的条目就是目录 share。
 
-两种形态都不限制**谁**可以读：tailnet 的每个成员都能取到该 share，而且
+两种形态都不增加 HTTP 调用方限制：tailnet 策略决定谁能连接，而且
 `tslink share` 没有 `--allow` 参数。要限制目录的读者，改用
 `tslink add <name> --dir <directory> --allow <principal>` 注册，或在 MCP
 `share` 工具里传 `allow`。
