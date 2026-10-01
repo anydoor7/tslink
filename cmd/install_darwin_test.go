@@ -1918,10 +1918,10 @@ func TestUninstallDocumentationMatchesConfirmedRemovalPolicy(t *testing.T) {
 	if !ok {
 		t.Fatal("runtime.Caller() did not return this test file")
 	}
-	readmePath := filepath.Join(filepath.Dir(filename), "..", "README.md")
-	readme, err := os.ReadFile(readmePath)
+	policyPath := filepath.Join(filepath.Dir(filename), "..", "docs", "platforms.md")
+	policy, err := os.ReadFile(policyPath)
 	if err != nil {
-		t.Fatalf("ReadFile(%s) error = %v", readmePath, err)
+		t.Fatalf("ReadFile(%s) error = %v", policyPath, err)
 	}
 	for _, want := range []string{
 		"If any domain is unavailable",
@@ -1929,12 +1929,12 @@ func TestUninstallDocumentationMatchesConfirmedRemovalPolicy(t *testing.T) {
 		"job may remain running",
 		"Real launchctl errors remain fatal with `--force`",
 	} {
-		if !strings.Contains(string(readme), want) {
-			t.Fatalf("README uninstall policy missing %q", want)
+		if !strings.Contains(string(policy), want) {
+			t.Fatalf("platform guide uninstall policy missing %q", want)
 		}
 	}
-	if strings.Contains(string(readme), "During SSH/headless macOS installs") {
-		t.Fatal("README retains inaccurate SSH/headless domain wording")
+	if strings.Contains(string(policy), "During SSH/headless macOS installs") {
+		t.Fatal("platform guide retains inaccurate SSH/headless domain wording")
 	}
 }
 
@@ -2170,7 +2170,7 @@ func TestDocumentationDoesNotConflateSSHWithLaunchdGUIDomain(t *testing.T) {
 		t.Fatal("runtime.Caller() did not return this test file")
 	}
 	repoRoot := filepath.Join(filepath.Dir(filename), "..")
-	for _, name := range []string{"README_zh.md", "AGENTS.md"} {
+	for _, name := range []string{"docs/platforms_zh.md", "AGENTS.md"} {
 		contents, err := os.ReadFile(filepath.Join(repoRoot, name))
 		if err != nil {
 			t.Fatalf("ReadFile(%s): %v", name, err)
