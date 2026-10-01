@@ -10,11 +10,11 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/monody0007/tslink/internal/config"
-	"github.com/monody0007/tslink/internal/output"
-	"github.com/monody0007/tslink/internal/registry"
-	"github.com/monody0007/tslink/internal/security"
-	"github.com/monody0007/tslink/internal/tailapi"
+	"github.com/anydoor7/tslink/internal/config"
+	"github.com/anydoor7/tslink/internal/output"
+	"github.com/anydoor7/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/security"
+	"github.com/anydoor7/tslink/internal/tailapi"
 	"github.com/spf13/cobra"
 )
 

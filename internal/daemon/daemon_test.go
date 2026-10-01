@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/monody0007/tslink/internal/testenv"
+	"github.com/anydoor7/tslink/internal/testenv"
 )
 
 var (
@@ -705,7 +705,7 @@ func TestIsRunningFallsBackFromDamagedIdentitySidecar(t *testing.T) {
 	}{
 		{"zero-byte", nil},
 		{"truncated-json", []byte(`{"version":1,"product":"github.com/mono`)},
-		{"future-schema", []byte(`{"version":2,"product":"github.com/monody0007/tslink","pid":1,"start_unix_nano":1}`)},
+		{"future-schema", []byte(`{"version":2,"product":"github.com/anydoor7/tslink","pid":1,"start_unix_nano":1}`)},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

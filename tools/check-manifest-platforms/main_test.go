@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/monody0007/tslink/cmd"
+	"github.com/anydoor7/tslink/cmd"
 )
 
 type syntheticFlag struct {

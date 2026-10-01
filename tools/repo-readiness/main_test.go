@@ -32,7 +32,7 @@ func statusOf(rs []Result, control string) Status {
 }
 
 func TestNoTokenIsAllUnknown(t *testing.T) {
-	rs := Evaluate(fakeFetcher{}, "monody0007/tslink", false)
+	rs := Evaluate(fakeFetcher{}, "anydoor7/tslink", false)
 	if allReady(rs) {
 		t.Fatal("no token must never be ready")
 	}

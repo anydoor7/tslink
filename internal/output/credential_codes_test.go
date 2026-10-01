@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/monody0007/tslink/internal/credentials"
-	"github.com/monody0007/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/credentials"
+	"github.com/anydoor7/tslink/internal/registry"
 )
 
 func TestCredentialAuthCodesMapToAuthExitAndCarryNext(t *testing.T) {

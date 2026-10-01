@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/monody0007/tslink/internal/output"
+	"github.com/anydoor7/tslink/internal/output"
 )
 
 // TestMCPURLWaitIsCapped keeps every MCP tool wait bounded: an agent can no

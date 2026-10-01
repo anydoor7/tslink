@@ -15,8 +15,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/monody0007/tslink/internal/inspect"
-	"github.com/monody0007/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/inspect"
+	"github.com/anydoor7/tslink/internal/registry"
 )
 
 const (

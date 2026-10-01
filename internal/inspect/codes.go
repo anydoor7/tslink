@@ -1,6 +1,6 @@
 package inspect
 
-import "github.com/monody0007/tslink/internal/registry"
+import "github.com/anydoor7/tslink/internal/registry"
 
 const (
 	WarningCodeTCPHTTPACLNotApplicable   = "tcp_http_acl_not_applicable"

@@ -6,10 +6,10 @@ import (
 	"os"
 	"testing"
 
-	"github.com/monody0007/tslink/internal/config"
-	"github.com/monody0007/tslink/internal/registry"
-	runtimesnapshot "github.com/monody0007/tslink/internal/runtime"
-	"github.com/monody0007/tslink/internal/testenv"
+	"github.com/anydoor7/tslink/internal/config"
+	"github.com/anydoor7/tslink/internal/registry"
+	runtimesnapshot "github.com/anydoor7/tslink/internal/runtime"
+	"github.com/anydoor7/tslink/internal/testenv"
 )
 
 // TestSyncNodes_FunnelWithoutDecidedExpiryIsNeverStarted pins the daemon side

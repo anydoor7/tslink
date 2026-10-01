@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/monody0007/tslink/internal/config"
+	"github.com/anydoor7/tslink/internal/config"
 )
 
 // RV-C: a keyring-enabled acquisition locks the account lock and then

@@ -5,9 +5,9 @@ import (
 	"io"
 	"strings"
 
-	"github.com/monody0007/tslink/internal/inspect"
-	"github.com/monody0007/tslink/internal/output"
-	"github.com/monody0007/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/inspect"
+	"github.com/anydoor7/tslink/internal/output"
+	"github.com/anydoor7/tslink/internal/registry"
 	"github.com/spf13/cobra"
 )
 

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/monody0007/tslink/internal/inspect"
+	"github.com/anydoor7/tslink/internal/inspect"
 )
 
 // TestDoctorReportsAnIsolatedEntryBeforeAValidOne is the B1 review's binary

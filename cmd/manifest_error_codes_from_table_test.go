@@ -3,7 +3,7 @@ package cmd
 import (
 	"testing"
 
-	"github.com/monody0007/tslink/internal/errcode"
+	"github.com/anydoor7/tslink/internal/errcode"
 )
 
 // TestManifestErrorCodesAreTheErrcodeTable: the manifest's error_codes is the

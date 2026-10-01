@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/monody0007/tslink/internal/atomicfile"
-	"github.com/monody0007/tslink/internal/output"
+	"github.com/anydoor7/tslink/internal/atomicfile"
+	"github.com/anydoor7/tslink/internal/output"
 	"github.com/spf13/cobra"
 )
 

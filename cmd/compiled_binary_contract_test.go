@@ -13,11 +13,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/monody0007/tslink/internal/daemon"
-	"github.com/monody0007/tslink/internal/output"
-	"github.com/monody0007/tslink/internal/registry"
-	tsruntime "github.com/monody0007/tslink/internal/runtime"
-	"github.com/monody0007/tslink/internal/testenv"
+	"github.com/anydoor7/tslink/internal/daemon"
+	"github.com/anydoor7/tslink/internal/output"
+	"github.com/anydoor7/tslink/internal/registry"
+	tsruntime "github.com/anydoor7/tslink/internal/runtime"
+	"github.com/anydoor7/tslink/internal/testenv"
 )
 
 var (
@@ -108,7 +108,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/monody0007/tslink/internal/daemon"
+	"github.com/anydoor7/tslink/internal/daemon"
 )
 
 func main() {

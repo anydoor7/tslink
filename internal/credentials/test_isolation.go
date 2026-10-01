@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/monody0007/tslink/internal/config"
+	"github.com/anydoor7/tslink/internal/config"
 	"github.com/zalando/go-keyring"
 )
 

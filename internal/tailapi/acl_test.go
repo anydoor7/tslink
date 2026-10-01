@@ -18,10 +18,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/monody0007/tslink/internal/config"
-	"github.com/monody0007/tslink/internal/credentials"
-	"github.com/monody0007/tslink/internal/registry"
-	"github.com/monody0007/tslink/internal/testenv"
+	"github.com/anydoor7/tslink/internal/config"
+	"github.com/anydoor7/tslink/internal/credentials"
+	"github.com/anydoor7/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/testenv"
 	"github.com/zalando/go-keyring"
 	tailscale "tailscale.com/client/tailscale/v2"
 )

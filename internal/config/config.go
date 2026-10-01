@@ -10,8 +10,8 @@ import (
 	"path/filepath"
 	"regexp"
 
-	"github.com/monody0007/tslink/internal/atomicfile"
-	"github.com/monody0007/tslink/internal/filelock"
+	"github.com/anydoor7/tslink/internal/atomicfile"
+	"github.com/anydoor7/tslink/internal/filelock"
 )
 
 // ConfigDirEnv overrides the default per-user configuration directory. It is

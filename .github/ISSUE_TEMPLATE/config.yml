@@ -1,7 +1,7 @@
 blank_issues_enabled: false
 contact_links:
   - name: Report a security vulnerability
-    url: https://github.com/monody0007/tslink/security/advisories/new
+    url: https://github.com/anydoor7/tslink/security/advisories/new
     about: Use private GitHub Security Advisories for vulnerabilities. Do not open public issues for security reports.
   - name: Security report without a GitHub account
     url: mailto:maintainer@example.com

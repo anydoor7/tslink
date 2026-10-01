@@ -6,11 +6,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/anydoor7/tslink/internal/config"
+	"github.com/anydoor7/tslink/internal/output"
+	"github.com/anydoor7/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/server"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/monody0007/tslink/internal/config"
-	"github.com/monody0007/tslink/internal/output"
-	"github.com/monody0007/tslink/internal/registry"
-	"github.com/monody0007/tslink/internal/server"
 )
 
 // newMCPStreamableHandler builds the remote transport over the same

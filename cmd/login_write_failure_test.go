@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/monody0007/tslink/internal/credentials"
+	"github.com/anydoor7/tslink/internal/credentials"
 )
 
 type partialWriteLoginStore struct {

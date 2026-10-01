@@ -17,7 +17,7 @@ TSLink creates no payment obligation and includes no guaranteed support,
 response time, or service level.
 
 For a non-confidential cooperation inquiry, use the
-[project issue tracker](https://github.com/monody0007/tslink/issues).
+[project issue tracker](https://github.com/anydoor7/tslink/issues).
 Describe the help you need; do not post credentials, customer data, or
 confidential business information. For anything you would rather not post
 publicly, email maintainer@example.com. No paid service is promised by an

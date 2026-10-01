@@ -11,10 +11,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/monody0007/tslink/internal/config"
-	"github.com/monody0007/tslink/internal/errcode"
-	"github.com/monody0007/tslink/internal/filelock"
-	"github.com/monody0007/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/config"
+	"github.com/anydoor7/tslink/internal/errcode"
+	"github.com/anydoor7/tslink/internal/filelock"
+	"github.com/anydoor7/tslink/internal/registry"
 )
 
 var credentialMutationLockPathFunc = defaultCredentialMutationLockPath

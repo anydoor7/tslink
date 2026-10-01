@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/monody0007/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/registry"
 )
 
 // mcpSignalChildEnv re-enters this test file as a child process running the

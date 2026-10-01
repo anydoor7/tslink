@@ -2,7 +2,7 @@
 
 package cmd
 
-import "github.com/monody0007/tslink/internal/testenv"
+import "github.com/anydoor7/tslink/internal/testenv"
 
 // osServiceManagerSeams lists every launchd process exit this package owns.
 // launchctl writes (bootout/bootstrap) address gui/<uid>, a namespace shared

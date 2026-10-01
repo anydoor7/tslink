@@ -13,13 +13,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/monody0007/tslink/internal/cliargs"
-	"github.com/monody0007/tslink/internal/filelock"
+	"github.com/anydoor7/tslink/internal/cliargs"
+	"github.com/anydoor7/tslink/internal/filelock"
 )
 
 const (
 	processIdentityVersion = 1
-	processProductID       = "github.com/monody0007/tslink"
+	processProductID       = "github.com/anydoor7/tslink"
 
 	// Legacy PID files contain only a PID. Their mtime is the only durable
 	// launch-time evidence available during the upgrade to identity sidecars.

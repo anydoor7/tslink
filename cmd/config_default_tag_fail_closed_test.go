@@ -9,11 +9,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/monody0007/tslink/internal/config"
-	"github.com/monody0007/tslink/internal/filelock"
-	"github.com/monody0007/tslink/internal/output"
-	"github.com/monody0007/tslink/internal/registry"
-	"github.com/monody0007/tslink/internal/testenv"
+	"github.com/anydoor7/tslink/internal/config"
+	"github.com/anydoor7/tslink/internal/filelock"
+	"github.com/anydoor7/tslink/internal/output"
+	"github.com/anydoor7/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/testenv"
 )
 
 func writeGlobalConfigFixture(t *testing.T, raw string) string {

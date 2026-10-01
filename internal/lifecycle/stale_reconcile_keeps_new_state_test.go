@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/monody0007/tslink/internal/registry"
-	tsruntime "github.com/monody0007/tslink/internal/runtime"
-	"github.com/monody0007/tslink/internal/tailapi"
+	"github.com/anydoor7/tslink/internal/registry"
+	tsruntime "github.com/anydoor7/tslink/internal/runtime"
+	"github.com/anydoor7/tslink/internal/tailapi"
 )
 
 // B6a-1 (audit X4-1). The reconciler's view of a removed service is read

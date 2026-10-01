@@ -9,11 +9,11 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/monody0007/tslink/internal/config"
-	"github.com/monody0007/tslink/internal/registry"
-	"github.com/monody0007/tslink/internal/tailapi"
-	"github.com/monody0007/tslink/internal/testenv"
-	"github.com/monody0007/tslink/internal/testenv/localapitest"
+	"github.com/anydoor7/tslink/internal/config"
+	"github.com/anydoor7/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/tailapi"
+	"github.com/anydoor7/tslink/internal/testenv"
+	"github.com/anydoor7/tslink/internal/testenv/localapitest"
 )
 
 // identityProbe counts every destructive or remote step an identity

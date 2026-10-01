@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/monody0007/tslink/internal/testenv"
+	"github.com/anydoor7/tslink/internal/testenv"
 )
 
 const serviceManagerGuardTripwireEnv = "TSLINK_SERVICE_MANAGER_GUARD_TRIPWIRE"

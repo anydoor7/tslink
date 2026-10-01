@@ -5,9 +5,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/monody0007/tslink/internal/config"
-	"github.com/monody0007/tslink/internal/credentials"
-	"github.com/monody0007/tslink/internal/server"
+	"github.com/anydoor7/tslink/internal/config"
+	"github.com/anydoor7/tslink/internal/credentials"
+	"github.com/anydoor7/tslink/internal/server"
 )
 
 // The daemon refuses a minted key for a node on another control server unless

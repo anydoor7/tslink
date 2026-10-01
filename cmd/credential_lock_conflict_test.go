@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/monody0007/tslink/internal/credentials"
-	"github.com/monody0007/tslink/internal/output"
+	"github.com/anydoor7/tslink/internal/credentials"
+	"github.com/anydoor7/tslink/internal/output"
 )
 
 func holdCmdCredentialTransaction(t *testing.T) {

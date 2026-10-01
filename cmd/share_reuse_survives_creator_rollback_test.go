@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/monody0007/tslink/internal/config"
-	"github.com/monody0007/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/config"
+	"github.com/anydoor7/tslink/internal/registry"
 )
 
 // B6a-5 (audit X4-5). Share A creates a registration and waits for its URL.

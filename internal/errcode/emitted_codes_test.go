@@ -34,15 +34,15 @@ import (
 // codeCarriers are the struct types whose Code field is a stable error code
 // an agent or script can read.
 var codeCarriers = map[string]bool{
-	"github.com/monody0007/tslink/internal/registry.CodedError":       true,
-	"github.com/monody0007/tslink/internal/registry.StableCodeError":  true,
-	"github.com/monody0007/tslink/internal/runtime.SnapshotError":     true,
-	"github.com/monody0007/tslink/internal/runtime.Freshness":         true,
-	"github.com/monody0007/tslink/internal/runtime.ServiceError":      true,
-	"github.com/monody0007/tslink/internal/tailapi.InviteTargetError": true,
-	"github.com/monody0007/tslink/cmd.RegistryCheckIssue":             true,
-	"github.com/monody0007/tslink/internal/output.ErrorObject":        true,
-	"github.com/monody0007/tslink/cmd.StatusRuntimeSnapshotResult":    true,
+	"github.com/anydoor7/tslink/internal/registry.CodedError":       true,
+	"github.com/anydoor7/tslink/internal/registry.StableCodeError":  true,
+	"github.com/anydoor7/tslink/internal/runtime.SnapshotError":     true,
+	"github.com/anydoor7/tslink/internal/runtime.Freshness":         true,
+	"github.com/anydoor7/tslink/internal/runtime.ServiceError":      true,
+	"github.com/anydoor7/tslink/internal/tailapi.InviteTargetError": true,
+	"github.com/anydoor7/tslink/cmd.RegistryCheckIssue":             true,
+	"github.com/anydoor7/tslink/internal/output.ErrorObject":        true,
+	"github.com/anydoor7/tslink/cmd.StatusRuntimeSnapshotResult":    true,
 
 	// Explicit positive controls in the scanner's synthetic modules. These
 	// registrations do not admit a same-named type in any other package.

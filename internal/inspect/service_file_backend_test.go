@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/monody0007/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/registry"
 )
 
 // TestSingleFileShareBackendIsTheFile pins R5-8. A share of one file used to be

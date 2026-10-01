@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/monody0007/tslink/internal/inspect"
-	"github.com/monody0007/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/inspect"
+	"github.com/anydoor7/tslink/internal/registry"
 )
 
 // writeRegistryWithIsolatedEntry writes a registry whose first service is a

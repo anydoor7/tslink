@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/monody0007/tslink/internal/logrotate"
+	"github.com/anydoor7/tslink/internal/logrotate"
 )
 
 // stubStderrLogRotation replaces every seam this file touches and restores them

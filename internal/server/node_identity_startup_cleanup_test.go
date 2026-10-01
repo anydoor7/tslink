@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/monody0007/tslink/internal/registry"
-	"github.com/monody0007/tslink/internal/tailapi"
+	"github.com/anydoor7/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/tailapi"
 )
 
 // Tags changed while the daemon was down, after identity records exist, so

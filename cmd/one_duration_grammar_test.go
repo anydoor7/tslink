@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/monody0007/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/registry"
 )
 
 func TestParseDurationIsGoSyntaxPlusDays(t *testing.T) {

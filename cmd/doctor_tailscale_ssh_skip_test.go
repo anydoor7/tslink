@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/monody0007/tslink/internal/inspect"
-	"github.com/monody0007/tslink/internal/testenv"
-	"github.com/monody0007/tslink/internal/testenv/localapitest"
+	"github.com/anydoor7/tslink/internal/inspect"
+	"github.com/anydoor7/tslink/internal/testenv"
+	"github.com/anydoor7/tslink/internal/testenv/localapitest"
 	"tailscale.com/client/local"
 )
 

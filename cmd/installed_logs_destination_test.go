@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/monody0007/tslink/internal/config"
-	"github.com/monody0007/tslink/internal/logging"
+	"github.com/anydoor7/tslink/internal/config"
+	"github.com/anydoor7/tslink/internal/logging"
 )
 
 func TestInstalledDaemonLogsReachCLIReader(t *testing.T) {

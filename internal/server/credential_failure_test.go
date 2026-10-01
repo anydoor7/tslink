@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/monody0007/tslink/internal/credentials"
-	"github.com/monody0007/tslink/internal/registry"
-	runtimesnapshot "github.com/monody0007/tslink/internal/runtime"
+	"github.com/anydoor7/tslink/internal/credentials"
+	"github.com/anydoor7/tslink/internal/registry"
+	runtimesnapshot "github.com/anydoor7/tslink/internal/runtime"
 	tailscale "tailscale.com/client/tailscale/v2"
 )
 

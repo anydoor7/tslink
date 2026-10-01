@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/monody0007/tslink/internal/output"
-	"github.com/monody0007/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/output"
+	"github.com/anydoor7/tslink/internal/registry"
 )
 
 // registryModeObservable says whether a 0640 registry reads back as 0640.

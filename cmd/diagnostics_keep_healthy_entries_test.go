@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/monody0007/tslink/internal/config"
-	"github.com/monody0007/tslink/internal/registry"
-	tsruntime "github.com/monody0007/tslink/internal/runtime"
+	"github.com/anydoor7/tslink/internal/config"
+	"github.com/anydoor7/tslink/internal/registry"
+	tsruntime "github.com/anydoor7/tslink/internal/runtime"
 )
 
 func TestDiagnosticsKeepHealthyEntriesBesideUnknownField(t *testing.T) {

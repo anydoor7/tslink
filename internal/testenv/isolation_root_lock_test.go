@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/monody0007/tslink/internal/filelock"
+	"github.com/anydoor7/tslink/internal/filelock"
 )
 
 const heldRootReportPrefix = "testenv-held-root: "

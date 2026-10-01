@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/monody0007/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/registry"
 )
 
 func TestOwnershipLedgerRecordsDeduplicatesAndRemovesExactIDs(t *testing.T) {

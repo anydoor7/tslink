@@ -5,13 +5,13 @@
 
 <p align="center">
   <a href="./LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License"></a>
-  <a href="https://github.com/monody0007/tslink"><img src="https://img.shields.io/badge/Go-1.26.6%2B-00ADD8.svg" alt="Go"></a>
-  <a href="https://github.com/monody0007/tslink"><img src="https://img.shields.io/github/stars/monody0007/tslink?style=social" alt="Stars"></a>
+  <a href="https://github.com/anydoor7/tslink"><img src="https://img.shields.io/badge/Go-1.26.6%2B-00ADD8.svg" alt="Go"></a>
+  <a href="https://github.com/anydoor7/tslink"><img src="https://img.shields.io/github/stars/anydoor7/tslink?style=social" alt="Stars"></a>
 </p>
 
 <p align="center">
   <a href="./README_zh.md">中文文档</a> ·
-  <a href="https://github.com/monody0007/tslink">GitHub</a>
+  <a href="https://github.com/anydoor7/tslink">GitHub</a>
 </p>
 
 **Open source:** Apache 2.0 permits personal and commercial use by organizations of any size. [Optional support and cooperation](./COMMERCIAL.md).
@@ -96,7 +96,7 @@ tslink add myapp --proxy localhost:3000
 Requires Go 1.26.6 or newer.
 
 ```bash
-go install github.com/monody0007/tslink@latest
+go install github.com/anydoor7/tslink@latest
 
 # The binary lands in $(go env GOPATH)/bin, which is not on PATH by default:
 export PATH="$PATH:$(go env GOPATH)/bin"
@@ -106,7 +106,7 @@ Homebrew and prebuilt archives arrive with the first tagged release. Until then,
 installing from source is the supported path. Building from a clone works too:
 
 ```bash
-git clone https://github.com/monody0007/tslink.git && cd tslink && go install .
+git clone https://github.com/anydoor7/tslink.git && cd tslink && go install .
 ```
 
 ### From nothing to a URL
@@ -744,5 +744,5 @@ If TSLink helps your organization, we welcome contributions and inquiries about 
 Retain applicable license and attribution notices when redistributing. See [NOTICE](./NOTICE) and [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md). TSLink is an independent project; its license does not grant rights to Tailscale services or imply endorsement. Tailscale agreements and plan eligibility apply separately.
 
 ```
-Copyright 2026 monody0007
+Copyright 2026 anydoor7
 ```

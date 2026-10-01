@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/monody0007/tslink/internal/daemon"
-	"github.com/monody0007/tslink/internal/output"
+	"github.com/anydoor7/tslink/internal/daemon"
+	"github.com/anydoor7/tslink/internal/output"
 )
 
 // Two tslink binaries at different absolute paths sharing one config

@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/monody0007/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/registry"
 )
 
 // Keep these tests usable against the frozen detector: exercise its public

@@ -10,8 +10,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/monody0007/tslink/internal/credentials"
-	"github.com/monody0007/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/credentials"
+	"github.com/anydoor7/tslink/internal/registry"
 	"github.com/tailscale/hujson"
 	tailscale "tailscale.com/client/tailscale/v2"
 )

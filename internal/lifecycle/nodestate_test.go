@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/monody0007/tslink/internal/config"
-	"github.com/monody0007/tslink/internal/registry"
-	tsruntime "github.com/monody0007/tslink/internal/runtime"
-	"github.com/monody0007/tslink/internal/tailapi"
+	"github.com/anydoor7/tslink/internal/config"
+	"github.com/anydoor7/tslink/internal/registry"
+	tsruntime "github.com/anydoor7/tslink/internal/runtime"
+	"github.com/anydoor7/tslink/internal/tailapi"
 )
 
 // orphanNodeStateFixture registers one live service and leaves ownership

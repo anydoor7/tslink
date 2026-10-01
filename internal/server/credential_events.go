@@ -11,7 +11,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/monody0007/tslink/internal/config"
+	"github.com/anydoor7/tslink/internal/config"
 )
 
 // credentialStateDebounce collapses the burst of filesystem events one

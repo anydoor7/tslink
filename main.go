@@ -5,9 +5,9 @@ import (
 	"runtime/debug"
 	"strings"
 
-	"github.com/monody0007/tslink/cmd"
-	"github.com/monody0007/tslink/internal/logging"
-	"github.com/monody0007/tslink/internal/output"
+	"github.com/anydoor7/tslink/cmd"
+	"github.com/anydoor7/tslink/internal/logging"
+	"github.com/anydoor7/tslink/internal/output"
 )
 
 const (

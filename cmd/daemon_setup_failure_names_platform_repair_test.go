@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/monody0007/tslink/internal/output"
-	"github.com/monody0007/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/output"
+	"github.com/anydoor7/tslink/internal/registry"
 )
 
 // userManagerRoute is the way out of a missing systemd user manager that

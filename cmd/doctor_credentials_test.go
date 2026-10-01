@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/monody0007/tslink/internal/credentials"
-	"github.com/monody0007/tslink/internal/inspect"
-	"github.com/monody0007/tslink/internal/output"
+	"github.com/anydoor7/tslink/internal/credentials"
+	"github.com/anydoor7/tslink/internal/inspect"
+	"github.com/anydoor7/tslink/internal/output"
 )
 
 // doctorInventoryAt builds an in-memory inventory where the api-key slot was

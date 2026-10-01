@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	runtimesnapshot "github.com/monody0007/tslink/internal/runtime"
+	runtimesnapshot "github.com/anydoor7/tslink/internal/runtime"
 	"tailscale.com/client/tailscale/apitype"
 	"tailscale.com/tailcfg"
 )

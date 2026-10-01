@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/monody0007/tslink/internal/testenv"
+	"github.com/anydoor7/tslink/internal/testenv"
 )
 
 // TestMain is in the external test package because testenv locks its roots

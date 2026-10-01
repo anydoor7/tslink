@@ -15,7 +15,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/monody0007/tslink/cmd"
+	"github.com/anydoor7/tslink/cmd"
 )
 
 var comparedGOOS = cmd.SupportedManifestPlatforms()

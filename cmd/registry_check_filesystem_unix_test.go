@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/monody0007/tslink/internal/output"
+	"github.com/anydoor7/tslink/internal/output"
 )
 
 // These two tests pin the boundary that separates "registry.json does not exist

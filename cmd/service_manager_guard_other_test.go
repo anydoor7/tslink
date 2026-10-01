@@ -2,7 +2,7 @@
 
 package cmd
 
-import "github.com/monody0007/tslink/internal/testenv"
+import "github.com/anydoor7/tslink/internal/testenv"
 
 // osServiceManagerSeams is empty on platforms where this package installs no
 // OS service manager through a process exit. Windows registers autostart by

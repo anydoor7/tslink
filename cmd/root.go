@@ -6,8 +6,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/monody0007/tslink/internal/cliargs"
-	"github.com/monody0007/tslink/internal/output"
+	"github.com/anydoor7/tslink/internal/cliargs"
+	"github.com/anydoor7/tslink/internal/output"
 	"github.com/spf13/cobra"
 )
 

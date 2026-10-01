@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/monody0007/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/registry"
 )
 
 // TestNeverStartedInstallReportsDaemonAbsentOnEverySurface is A3-5's probe:

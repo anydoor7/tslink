@@ -9,8 +9,8 @@
 // negative protection tests remain an external gate; this tool only reports the
 // current control-plane state it can read.
 //
-//	GITHUB_TOKEN=<read-only> go run ./tools/repo-readiness -repo monody0007/tslink
-//	GITHUB_TOKEN=<read-only> go run ./tools/repo-readiness -repo monody0007/tslink -json
+//	GITHUB_TOKEN=<read-only> go run ./tools/repo-readiness -repo anydoor7/tslink
+//	GITHUB_TOKEN=<read-only> go run ./tools/repo-readiness -repo anydoor7/tslink -json
 package main
 
 import (

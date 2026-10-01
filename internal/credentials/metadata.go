@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/monody0007/tslink/internal/atomicfile"
-	"github.com/monody0007/tslink/internal/config"
+	"github.com/anydoor7/tslink/internal/atomicfile"
+	"github.com/anydoor7/tslink/internal/config"
 )
 
 // Value-free credential metadata. The file records what TSLink knows about each

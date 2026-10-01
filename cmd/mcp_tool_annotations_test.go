@@ -11,9 +11,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/monody0007/tslink/internal/config"
-	"github.com/monody0007/tslink/internal/registry"
-	"github.com/monody0007/tslink/internal/tailapi"
+	"github.com/anydoor7/tslink/internal/config"
+	"github.com/anydoor7/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/tailapi"
 )
 
 // mcpWantHints is each tool's behaviour as the tool descriptions state it:

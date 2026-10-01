@@ -195,7 +195,7 @@ func parseGoListModules(out []byte) ([]module, error) {
 			return nil, fmt.Errorf("unexpected go list module line %q", line)
 		}
 		path, version, dir := parts[0], parts[1], parts[2]
-		if path == "github.com/monody0007/tslink" {
+		if path == "github.com/anydoor7/tslink" {
 			continue
 		}
 		seen[path+"\t"+version] = module{path: path, version: version, dir: dir}

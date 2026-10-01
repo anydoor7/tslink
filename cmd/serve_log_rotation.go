@@ -8,7 +8,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/monody0007/tslink/internal/logrotate"
+	"github.com/anydoor7/tslink/internal/logrotate"
 )
 
 // stderrLogFileName is the file every supervisor redirects the daemon's stderr

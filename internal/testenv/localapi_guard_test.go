@@ -16,9 +16,9 @@ import (
 // the Tailscale LocalAPI client type (tailscale.com's own type, its deprecated
 // alias, and TSLink's alias in internal/server).
 var localAPIClientTypes = map[string]string{
-	"tailscale.com/client/local":                   "Client",
-	"tailscale.com/client/tailscale":               "LocalClient",
-	"github.com/monody0007/tslink/internal/server": "LocalClient",
+	"tailscale.com/client/local":                 "Client",
+	"tailscale.com/client/tailscale":             "LocalClient",
+	"github.com/anydoor7/tslink/internal/server": "LocalClient",
 }
 
 // TestNoTestBuildsALocalAPIClientThatCanReachTheHost (G2). A LocalAPI client

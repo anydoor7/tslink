@@ -6,8 +6,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/monody0007/tslink/internal/inspect"
-	tsruntime "github.com/monody0007/tslink/internal/runtime"
+	"github.com/anydoor7/tslink/internal/inspect"
+	tsruntime "github.com/anydoor7/tslink/internal/runtime"
 )
 
 // mcpEventState is the body of one control-plane event frame.

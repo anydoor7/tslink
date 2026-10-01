@@ -126,7 +126,7 @@ This section teaches an agent how to install, configure, and operate tslink with
 
 ```bash
 # Clone and install
-git clone https://github.com/monody0007/tslink.git /tmp/tslink-install
+git clone https://github.com/anydoor7/tslink.git /tmp/tslink-install
 cd /tmp/tslink-install && go install .
 
 # Ensure binary is in PATH

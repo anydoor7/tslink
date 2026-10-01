@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/monody0007/tslink/internal/daemon"
-	"github.com/monody0007/tslink/internal/inspect"
-	"github.com/monody0007/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/daemon"
+	"github.com/anydoor7/tslink/internal/inspect"
+	"github.com/anydoor7/tslink/internal/registry"
 )
 
 // A live PID that belongs to a different program is positive proof that our

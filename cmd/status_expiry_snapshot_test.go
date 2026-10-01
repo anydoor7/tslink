@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/monody0007/tslink/internal/registry"
-	tsruntime "github.com/monody0007/tslink/internal/runtime"
+	"github.com/anydoor7/tslink/internal/registry"
+	tsruntime "github.com/anydoor7/tslink/internal/runtime"
 )
 
 func TestStatusSnapshotRespectsFunnelExpiry(t *testing.T) {

@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/monody0007/tslink/internal/registry"
-	"github.com/monody0007/tslink/internal/tailapi"
+	"github.com/anydoor7/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/tailapi"
 )
 
 // blockingDeleteDevices stands in for a Tailscale API that accepted the

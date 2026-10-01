@@ -19,7 +19,7 @@ import (
 
 const (
 	goKeyringImportPath   = "github.com/zalando/go-keyring"
-	credentialsImportPath = "github.com/monody0007/tslink/internal/credentials"
+	credentialsImportPath = "github.com/anydoor7/tslink/internal/credentials"
 	isolationFuncName     = "IsolateForTesting"
 )
 

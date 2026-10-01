@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/monody0007/tslink/internal/registry"
-	tsruntime "github.com/monody0007/tslink/internal/runtime"
+	"github.com/anydoor7/tslink/internal/registry"
+	tsruntime "github.com/anydoor7/tslink/internal/runtime"
 )
 
 // TestAuthenticatedMeansANodeIsAuthorizedOnEverySurface is A3-5's probe: with

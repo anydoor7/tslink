@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/monody0007/tslink/internal/config"
+	"github.com/anydoor7/tslink/internal/config"
 )
 
 // TestRemoveDaemonRunningPredicateDefaultImplementation tests the seam's own

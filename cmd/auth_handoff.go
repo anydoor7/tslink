@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/monody0007/tslink/internal/atomicfile"
+	"github.com/anydoor7/tslink/internal/atomicfile"
 )
 
 const (

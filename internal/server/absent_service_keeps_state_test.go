@@ -9,12 +9,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/monody0007/tslink/internal/config"
-	"github.com/monody0007/tslink/internal/lifecycle"
-	"github.com/monody0007/tslink/internal/registry"
-	runtimesnapshot "github.com/monody0007/tslink/internal/runtime"
-	"github.com/monody0007/tslink/internal/tailapi"
-	"github.com/monody0007/tslink/internal/testenv"
+	"github.com/anydoor7/tslink/internal/config"
+	"github.com/anydoor7/tslink/internal/lifecycle"
+	"github.com/anydoor7/tslink/internal/registry"
+	runtimesnapshot "github.com/anydoor7/tslink/internal/runtime"
+	"github.com/anydoor7/tslink/internal/tailapi"
+	"github.com/anydoor7/tslink/internal/testenv"
 	tailscale "tailscale.com/client/tailscale/v2"
 )
 

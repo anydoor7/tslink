@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/monody0007/tslink/internal/atomicfile"
-	"github.com/monody0007/tslink/internal/cliargs"
-	"github.com/monody0007/tslink/internal/registry"
-	tsruntime "github.com/monody0007/tslink/internal/runtime"
+	"github.com/anydoor7/tslink/internal/atomicfile"
+	"github.com/anydoor7/tslink/internal/cliargs"
+	"github.com/anydoor7/tslink/internal/registry"
+	tsruntime "github.com/anydoor7/tslink/internal/runtime"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )

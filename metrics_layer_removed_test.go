@@ -29,7 +29,7 @@ func TestBinaryDoesNotLinkPrometheus(t *testing.T) {
 				t.Fatalf("go list -deps . (GOOS=%s): %v\n%s", goos, err, stderr.String())
 			}
 			deps := strings.Fields(string(out))
-			for _, want := range []string{"github.com/monody0007/tslink", "tailscale.com/tsnet"} {
+			for _, want := range []string{"github.com/anydoor7/tslink", "tailscale.com/tsnet"} {
 				if !containsDep(deps, want) {
 					t.Fatalf("go list -deps . (GOOS=%s) does not list %s; the listing cannot vouch for anything (%d lines)", goos, want, len(deps))
 				}

@@ -14,7 +14,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/monody0007/tslink/internal/manifestcheck"
+	"github.com/anydoor7/tslink/internal/manifestcheck"
 )
 
 func TestStrictSuccessOutputIsTheAssertedConstant(t *testing.T) {

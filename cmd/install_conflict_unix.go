@@ -4,11 +4,11 @@ package cmd
 
 import (
 	"fmt"
-	"github.com/monody0007/tslink/internal/daemon"
+	"github.com/anydoor7/tslink/internal/daemon"
 	"os"
 	"strings"
 
-	"github.com/monody0007/tslink/internal/output"
+	"github.com/anydoor7/tslink/internal/output"
 )
 
 func detectInstallDaemonConflict(recovery string) error {

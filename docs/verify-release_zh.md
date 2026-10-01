@@ -4,12 +4,12 @@
 
 下面命令需要 `gh` 2.49 或更新版本并支持 `gh attestation verify`，`cosign` 支持 `verify-blob --bundle`，以及 `sha256sum` 或 `shasum`。将 `<version>` 替换为 GitHub Release tag，将 `<artifact>` 替换为该 release 里的产物文件名。
 
-Sigstore 证书的信任根是 [GitHub Actions OIDC issuer](https://token.actions.githubusercontent.com)。验证会钉住本仓库指定 tag 的精确 release workflow 身份（下方命令用 `$repo` 和 `$version` 组成），以及 GitHub attestation signer workflow `github.com/monody0007/tslink/.github/workflows/release.yml`。tag ref 绑定要求匹配的签名或 attestation 来自该 tag 的 release workflow。
+Sigstore 证书的信任根是 [GitHub Actions OIDC issuer](https://token.actions.githubusercontent.com)。验证会钉住本仓库指定 tag 的精确 release workflow 身份（下方命令用 `$repo` 和 `$version` 组成），以及 GitHub attestation signer workflow `github.com/anydoor7/tslink/.github/workflows/release.yml`。tag ref 绑定要求匹配的签名或 attestation 来自该 tag 的 release workflow。
 
 ```bash
 set -euo pipefail
 
-repo="monody0007/tslink"
+repo="anydoor7/tslink"
 version="<version>"
 artifact="<artifact>"
 
@@ -80,7 +80,7 @@ gh attestation verify "$artifact" \
 ```bash
 set -euo pipefail
 
-repo="monody0007/tslink"
+repo="anydoor7/tslink"
 version="<version>"
 artifact="<artifact>"
 sbom="$artifact.sbom.json"

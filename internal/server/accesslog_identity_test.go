@@ -13,9 +13,9 @@ import (
 	"tailscale.com/client/tailscale/apitype"
 	"tailscale.com/tailcfg"
 
-	"github.com/monody0007/tslink/internal/config"
-	"github.com/monody0007/tslink/internal/registry"
-	"github.com/monody0007/tslink/internal/testenv"
+	"github.com/anydoor7/tslink/internal/config"
+	"github.com/anydoor7/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/testenv"
 )
 
 // countingWhoIsClient is fakeWhoIsClient with a call counter. The counter is

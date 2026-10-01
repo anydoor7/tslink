@@ -77,7 +77,7 @@ jobs:
             exit 1
           fi
           if [ -z "${HOMEBREW_TAP_GITHUB_TOKEN}" ]; then
-            echo "::error::Stable releases require HOMEBREW_TAP_GITHUB_TOKEN with write access to monody0007/homebrew-tap"
+            echo "::error::Stable releases require HOMEBREW_TAP_GITHUB_TOKEN with write access to anydoor7/homebrew-tap"
             exit 1
           fi
       - name: Install cosign

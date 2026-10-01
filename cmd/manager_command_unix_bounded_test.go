@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/monody0007/tslink/internal/testenv"
+	"github.com/anydoor7/tslink/internal/testenv"
 )
 
 // boundedCallResult carries one seam call out of the goroutine that makes it,

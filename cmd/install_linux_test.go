@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/monody0007/tslink/internal/output"
+	"github.com/anydoor7/tslink/internal/output"
 )
 
 var _ func(string, bool) string = systemdServiceContents

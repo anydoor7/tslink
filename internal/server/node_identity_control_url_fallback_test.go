@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/monody0007/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/registry"
 )
 
 // `serve` falls back to the default control URL when config.json fails to

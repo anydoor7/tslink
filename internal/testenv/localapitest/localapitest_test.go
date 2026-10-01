@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/monody0007/tslink/internal/testenv"
+	"github.com/anydoor7/tslink/internal/testenv"
 )
 
 func TestMain(m *testing.M) {

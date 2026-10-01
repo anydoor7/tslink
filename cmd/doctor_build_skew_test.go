@@ -5,9 +5,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/monody0007/tslink/internal/daemon"
-	"github.com/monody0007/tslink/internal/inspect"
-	"github.com/monody0007/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/daemon"
+	"github.com/anydoor7/tslink/internal/inspect"
+	"github.com/anydoor7/tslink/internal/registry"
 )
 
 // writeRealDaemonSidecar produces a fixture by calling the real production

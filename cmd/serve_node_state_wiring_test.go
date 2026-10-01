@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/monody0007/tslink/internal/config"
-	"github.com/monody0007/tslink/internal/lifecycle"
-	"github.com/monody0007/tslink/internal/server"
+	"github.com/anydoor7/tslink/internal/config"
+	"github.com/anydoor7/tslink/internal/lifecycle"
+	"github.com/anydoor7/tslink/internal/server"
 )
 
 // mockServerHoldingNodeState is a runner that can answer which node state it

@@ -4,8 +4,8 @@ import (
 	"errors"
 	"testing"
 
-	tsruntime "github.com/monody0007/tslink/internal/runtime"
-	"github.com/monody0007/tslink/internal/tailapi"
+	tsruntime "github.com/anydoor7/tslink/internal/runtime"
+	"github.com/anydoor7/tslink/internal/tailapi"
 )
 
 // B6a-3's invariant on the remove path (audit X4-3 found it in the

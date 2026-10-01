@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/monody0007/tslink/internal/output"
+	"github.com/anydoor7/tslink/internal/output"
 )
 
 // Cross-platform half of the e2e scaffolding: the helpers that run a

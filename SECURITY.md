@@ -39,7 +39,7 @@ The [Go vulnerability database](https://pkg.go.dev/vuln/GO-2026-5932) identifies
 If you discover a security vulnerability, please report it responsibly:
 
 1. **Do not** open a public GitHub issue
-2. Open a private GitHub Security Advisory: <https://github.com/monody0007/tslink/security/advisories/new>
+2. Open a private GitHub Security Advisory: <https://github.com/anydoor7/tslink/security/advisories/new>
 3. If you cannot use GitHub Security Advisories, email maintainer@example.com with the same information. Use the subject prefix `[tslink-security]`.
 4. Include:
    - Description of the vulnerability

@@ -1,4 +1,4 @@
-module github.com/monody0007/tslink
+module github.com/anydoor7/tslink
 
 go 1.26.6
 

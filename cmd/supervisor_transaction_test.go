@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/monody0007/tslink/internal/daemon"
+	"github.com/anydoor7/tslink/internal/daemon"
 	"github.com/spf13/cobra"
 )
 

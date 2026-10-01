@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/monody0007/tslink/internal/testenv"
+	"github.com/anydoor7/tslink/internal/testenv"
 )
 
 const registryAddHelperEnv = "TSLINK_REGISTRY_ADD_HELPER"

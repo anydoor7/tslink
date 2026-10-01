@@ -14,8 +14,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/monody0007/tslink/internal/config"
-	"github.com/monody0007/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/config"
+	"github.com/anydoor7/tslink/internal/registry"
 	"tailscale.com/ipn/ipnstate"
 )
 

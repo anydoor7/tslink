@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/monody0007/tslink/internal/inspect"
-	"github.com/monody0007/tslink/internal/registry"
-	tsruntime "github.com/monody0007/tslink/internal/runtime"
+	"github.com/anydoor7/tslink/internal/inspect"
+	"github.com/anydoor7/tslink/internal/registry"
+	tsruntime "github.com/anydoor7/tslink/internal/runtime"
 )
 
 const mcpEventAuthURLSentinel = "https://login.tailscale.com/a/EVENT-STREAM-SENTINEL"

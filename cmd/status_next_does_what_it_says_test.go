@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/monody0007/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/registry"
 )
 
 // TestStatusNextNamesACommandThatDoesWhatItSays is A3-9's status finding:

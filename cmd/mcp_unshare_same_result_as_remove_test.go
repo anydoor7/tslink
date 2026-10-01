@@ -7,7 +7,7 @@ import (
 	"io"
 	"testing"
 
-	"github.com/monody0007/tslink/internal/tailapi"
+	"github.com/anydoor7/tslink/internal/tailapi"
 )
 
 // TestMCPUnshareReturnsWhatRemoveReturns is A3-5's unshare finding: the MCP

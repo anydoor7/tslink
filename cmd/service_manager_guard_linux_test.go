@@ -2,7 +2,7 @@
 
 package cmd
 
-import "github.com/monody0007/tslink/internal/testenv"
+import "github.com/anydoor7/tslink/internal/testenv"
 
 // osServiceManagerSeams lists every systemd process exit this package owns.
 // systemctl --user writes against the caller's live user manager, which no

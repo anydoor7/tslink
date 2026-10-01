@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/monody0007/tslink/internal/output"
+	"github.com/anydoor7/tslink/internal/output"
 )
 
 // E2: `tslink stop` may delete PID artifacts only when the process is
@@ -116,7 +116,7 @@ func TestE2EStopPreservesLiveDaemonPIDEvidence(t *testing.T) {
 			// Identity evidence is written for every case, including the ones
 			// where the PID path is a directory, so "was it deleted" is a
 			// meaningful question in all of them.
-			if err := os.WriteFile(identityPath, []byte(`{"version":1,"product":"github.com/monody0007/tslink","pid":1,"start_unix_nano":1}`+"\n"), 0o600); err != nil {
+			if err := os.WriteFile(identityPath, []byte(`{"version":1,"product":"github.com/anydoor7/tslink","pid":1,"start_unix_nano":1}`+"\n"), 0o600); err != nil {
 				t.Fatalf("write identity fixture: %v", err)
 			}
 

@@ -8,8 +8,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/monody0007/tslink/internal/errcode"
-	"github.com/monody0007/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/errcode"
+	"github.com/anydoor7/tslink/internal/registry"
 )
 
 const (

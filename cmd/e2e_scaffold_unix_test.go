@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/monody0007/tslink/internal/daemon"
+	"github.com/anydoor7/tslink/internal/daemon"
 )
 
 // Process-level e2e scaffolding.
@@ -233,7 +233,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/monody0007/tslink/internal/daemon"
+	"github.com/anydoor7/tslink/internal/daemon"
 )
 
 func main() {

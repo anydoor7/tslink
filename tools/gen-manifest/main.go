@@ -38,8 +38,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/monody0007/tslink/cmd"
-	"github.com/monody0007/tslink/internal/manifestcheck"
+	"github.com/anydoor7/tslink/cmd"
+	"github.com/anydoor7/tslink/internal/manifestcheck"
 )
 
 const outputFile = manifestcheck.OutputFile

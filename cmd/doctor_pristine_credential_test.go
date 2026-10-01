@@ -5,8 +5,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/monody0007/tslink/internal/inspect"
-	"github.com/monody0007/tslink/internal/output"
+	"github.com/anydoor7/tslink/internal/inspect"
+	"github.com/anydoor7/tslink/internal/output"
 )
 
 // TestDoctorPristineDefaultTierIsHealthy pins R5-10. On a fresh install in the

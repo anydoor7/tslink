@@ -11,7 +11,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/monody0007/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/registry"
 )
 
 // NewFileHandler returns an HTTP handler that serves files from dir,

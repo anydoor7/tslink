@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/monody0007/tslink/internal/config"
+	"github.com/anydoor7/tslink/internal/config"
 )
 
 func writeNodeState(t *testing.T, configDir, name string) string {

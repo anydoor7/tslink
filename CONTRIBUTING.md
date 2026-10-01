@@ -14,7 +14,7 @@ Thank you for your interest in contributing to TSLink! This document provides gu
 
 ```bash
 # Clone the repository
-git clone https://github.com/monody0007/tslink.git
+git clone https://github.com/anydoor7/tslink.git
 cd tslink
 
 # Run the portable local release checks
@@ -120,7 +120,7 @@ value or a config-dir override proves there was no side effect.
 
 ### Maintainer Release Notes
 
-Stable releases are disabled until external readback proves the release environment, required reviewers, `refs/tags/v*` ruleset, branch protection, and Homebrew tap are configured. After that gate is enabled, stable releases publish a Homebrew cask to `monody0007/homebrew-tap`. The release workflow requires a repository secret named `HOMEBREW_TAP_GITHUB_TOKEN` with write access to that tap; the default repository-scoped `GITHUB_TOKEN` cannot write to the separate tap repository. Prefer a fine-grained personal access token or GitHub App installation token scoped only to `monody0007/homebrew-tap` with Contents read/write access. Use a broad classic `repo` token only as a fallback when fine-grained tokens or GitHub App credentials are not available.
+Stable releases are disabled until external readback proves the release environment, required reviewers, `refs/tags/v*` ruleset, branch protection, and Homebrew tap are configured. After that gate is enabled, stable releases publish a Homebrew cask to `anydoor7/homebrew-tap`. The release workflow requires a repository secret named `HOMEBREW_TAP_GITHUB_TOKEN` with write access to that tap; the default repository-scoped `GITHUB_TOKEN` cannot write to the separate tap repository. Prefer a fine-grained personal access token or GitHub App installation token scoped only to `anydoor7/homebrew-tap` with Contents read/write access. Use a broad classic `repo` token only as a fallback when fine-grained tokens or GitHub App credentials are not available.
 
 GoReleaser signs `checksums.txt` and generated SBOM sidecars with keyless Sigstore bundles, then the release workflow publishes GitHub artifact attestations for installable artifacts and supply-chain sidecars. Keep the `release.yml` attestation globs aligned with `.goreleaser.yml` when adding or removing release asset types.
 
@@ -164,7 +164,7 @@ tools/           → Manifest and notices generators, repository checks
 
 ### Reporting Bugs
 
-1. Check existing [issues](https://github.com/monody0007/tslink/issues) to avoid duplicates
+1. Check existing [issues](https://github.com/anydoor7/tslink/issues) to avoid duplicates
 2. Open a new issue with the bug report template, including:
    - Steps to reproduce
    - Expected vs. actual behavior
@@ -219,7 +219,7 @@ between reviewers is not verification.
 
 ## Good First Issues
 
-Look for issues labeled [`good first issue`](https://github.com/monody0007/tslink/labels/good%20first%20issue) — these are specifically chosen to be approachable for new contributors.
+Look for issues labeled [`good first issue`](https://github.com/anydoor7/tslink/labels/good%20first%20issue) — these are specifically chosen to be approachable for new contributors.
 
 ## License
 

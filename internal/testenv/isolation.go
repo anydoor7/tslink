@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/monody0007/tslink/internal/filelock"
+	"github.com/anydoor7/tslink/internal/filelock"
 )
 
 // RootEnv names the temporary root Main created for the running test binary.

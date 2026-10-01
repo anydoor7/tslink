@@ -14,7 +14,7 @@ import (
 	"testing"
 )
 
-const testenvImportPath = "github.com/monody0007/tslink/internal/testenv"
+const testenvImportPath = "github.com/anydoor7/tslink/internal/testenv"
 
 // isolationGuardGOOS are the platforms whose test binaries must all run Main.
 // A package can have tests on some platforms only, so the check is per

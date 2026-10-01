@@ -5,13 +5,13 @@
 
 <p align="center">
   <a href="./LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License"></a>
-  <a href="https://github.com/monody0007/tslink"><img src="https://img.shields.io/badge/Go-1.26.6%2B-00ADD8.svg" alt="Go"></a>
-  <a href="https://github.com/monody0007/tslink"><img src="https://img.shields.io/github/stars/monody0007/tslink?style=social" alt="Stars"></a>
+  <a href="https://github.com/anydoor7/tslink"><img src="https://img.shields.io/badge/Go-1.26.6%2B-00ADD8.svg" alt="Go"></a>
+  <a href="https://github.com/anydoor7/tslink"><img src="https://img.shields.io/github/stars/anydoor7/tslink?style=social" alt="Stars"></a>
 </p>
 
 <p align="center">
   <a href="./README.md">English</a> ·
-  <a href="https://github.com/monody0007/tslink">GitHub</a>
+  <a href="https://github.com/anydoor7/tslink">GitHub</a>
 </p>
 
 **开源许可：**Apache 2.0 允许个人和任何规模组织按许可用于个人及商业用途。[自愿支持与合作](./COMMERCIAL_zh.md)。
@@ -95,7 +95,7 @@ tslink add myapp --proxy localhost:3000
 需要 Go 1.26.6 或更高版本。
 
 ```bash
-go install github.com/monody0007/tslink@latest
+go install github.com/anydoor7/tslink@latest
 
 # 二进制装到 $(go env GOPATH)/bin，该目录默认不在 PATH 中：
 export PATH="$PATH:$(go env GOPATH)/bin"
@@ -105,7 +105,7 @@ Homebrew 与预构建归档随首个 tagged release 提供。在那之前，源�
 从 clone 构建同样可行：
 
 ```bash
-git clone https://github.com/monody0007/tslink.git && cd tslink && go install .
+git clone https://github.com/anydoor7/tslink.git && cd tslink && go install .
 ```
 
 ### 从零到一个 URL
@@ -704,5 +704,5 @@ TSLink 采用 [Apache License 2.0](./LICENSE)。个人和任何规模的组织�
 分发时请保留适用的许可和署名信息，参阅 [NOTICE](./NOTICE) 和 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md)。TSLink 是独立项目，其许可不授予 Tailscale 服务的使用权，也不代表官方背书；Tailscale 协议和套餐资格另行适用。
 
 ```
-Copyright 2026 monody0007
+Copyright 2026 anydoor7
 ```

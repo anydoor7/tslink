@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/monody0007/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/registry"
 )
 
 // operatorDisabledFunnelShare shares port 3000 through Funnel and then turns

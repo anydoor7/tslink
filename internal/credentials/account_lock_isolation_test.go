@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/monody0007/tslink/internal/config"
+	"github.com/anydoor7/tslink/internal/config"
 )
 
 func realAccountHome(t *testing.T) string {

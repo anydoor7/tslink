@@ -5,8 +5,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/monody0007/tslink/internal/testenv"
-	"github.com/monody0007/tslink/internal/testenv/localapitest"
+	"github.com/anydoor7/tslink/internal/testenv"
+	"github.com/anydoor7/tslink/internal/testenv/localapitest"
 	"tailscale.com/client/local"
 	"tailscale.com/ipn/ipnstate"
 )

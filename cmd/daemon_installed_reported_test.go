@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	tsruntime "github.com/monody0007/tslink/internal/runtime"
+	tsruntime "github.com/anydoor7/tslink/internal/runtime"
 )
 
 // TestEnsureDaemonNotesTheInstallItPerformed: the install announcement goes

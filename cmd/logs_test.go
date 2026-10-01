@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/monody0007/tslink/internal/logging"
+	"github.com/anydoor7/tslink/internal/logging"
 	"github.com/spf13/cobra"
 )
 

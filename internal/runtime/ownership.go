@@ -13,9 +13,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/monody0007/tslink/internal/atomicfile"
-	"github.com/monody0007/tslink/internal/filelock"
-	"github.com/monody0007/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/atomicfile"
+	"github.com/anydoor7/tslink/internal/filelock"
+	"github.com/anydoor7/tslink/internal/registry"
 )
 
 const (

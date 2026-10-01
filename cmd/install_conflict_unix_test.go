@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/monody0007/tslink/internal/daemon"
-	"github.com/monody0007/tslink/internal/output"
+	"github.com/anydoor7/tslink/internal/daemon"
+	"github.com/anydoor7/tslink/internal/output"
 )
 
 func TestDetectInstallDaemonConflictNamesPIDAndResolution(t *testing.T) {

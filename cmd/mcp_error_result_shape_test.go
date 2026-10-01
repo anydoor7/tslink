@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/anydoor7/tslink/internal/errcode"
+	"github.com/anydoor7/tslink/internal/output"
+	"github.com/anydoor7/tslink/internal/registry"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/monody0007/tslink/internal/errcode"
-	"github.com/monody0007/tslink/internal/output"
-	"github.com/monody0007/tslink/internal/registry"
 )
 
 // mcpToolMinimalArguments is one valid call per tool, so a test can reach

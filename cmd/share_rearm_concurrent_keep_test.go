@@ -6,7 +6,7 @@ import (
 	"io"
 	"testing"
 
-	"github.com/monody0007/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/registry"
 )
 
 // A second share can rely on a renewal before the renewing call fails.
