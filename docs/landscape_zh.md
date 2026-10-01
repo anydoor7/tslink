@@ -32,7 +32,7 @@ TSLink 这些都不要。`tslink add ollama --proxy localhost:11434` 指向的�
 
 ```bash
 tslink add myapp --proxy localhost:3000
-# tailnet 上任何设备都能访问 https://myapp.<your-tailnet>.ts.net
+# tailnet 策略允许的设备都能访问 https://myapp.<your-tailnet>.ts.net
 ```
 
 ### 功能特性
@@ -51,4 +51,3 @@ tslink add myapp --proxy localhost:3000
 - **个人模板**：预览并添加小型私有服务套件，不覆盖已有服务
 - **Headscale 兼容路径**：通过 `--control-url` 支持高级/自托管控制服务器场景
 - **Funnel 护栏**：公网暴露必须显式选择，并要求 `--public` 确认
-

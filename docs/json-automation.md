@@ -85,4 +85,3 @@ own bounds. MCP `funnel_ttl` and CLI `--funnel-ttl` accept only `1h`, `8h`,
 or composite days using `d`.
 
 `--json` changes only the output format. `tslink add --json` follows the same safety guardrails as the human path: Funnel services require `--public`; TCP services reject `--allow` because TSLink does not apply HTTP identity checks to raw TCP streams.
-

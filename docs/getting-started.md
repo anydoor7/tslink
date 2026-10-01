@@ -52,4 +52,3 @@ tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 ```
 
 Funnel ACL auto-provisioning is enabled by default for an acknowledged public service. It may write the shared `tag:tslink-funnel` tag owner and a `nodeAttrs` Funnel grant in the tailnet policy file. Pass `--no-auto-provision` to `tslink add --funnel`, `tslink serve`, or `tslink install` to disable the corresponding service or daemon setup path; the required tailnet policy must then exist already. Ordinary tag ACL writes still require `--manage-acl`.
-

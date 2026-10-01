@@ -17,4 +17,3 @@ These features are not part of the shipped runtime:
 | Docker image | Not published. |
 | Headscale end-to-end validation | Pending. |
 | Other Layer 2 modules | Pending integration tests. |
-

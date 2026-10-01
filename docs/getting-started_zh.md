@@ -52,4 +52,3 @@ tslink add api --proxy localhost:8000 --tags tag:webserver,tag:production
 ```
 
 Funnel ACL 自动配置默认开启，只作用于已确认公网暴露的服务。它可能在 tailnet policy file 中写入共享的 `tag:tslink-funnel` tag owner 和 `nodeAttrs` Funnel grant。给 `tslink add --funnel`、`tslink serve` 或 `tslink install` 传 `--no-auto-provision`，可关闭对应服务或 daemon 设置路径的自动配置；此时 tailnet policy 必须已包含所需规则。普通 tag ACL 写入仍需要 `--manage-acl`。
-

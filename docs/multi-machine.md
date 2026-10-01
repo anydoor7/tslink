@@ -40,4 +40,3 @@ To make the first half discoverable, `tslink doctor` reads Tailscale SSH enablem
 All three outcomes are informational. They never change doctor's status or exit code.
 
 Set `TSLINK_DOCTOR_SKIP_TAILSCALE_SSH=1` to skip the local read, for example when a test suite runs the compiled binary on a developer's machine. The state is then `unknown`, and the `tailscale_ssh_unknown` finding says the check was skipped.
-

@@ -40,4 +40,3 @@ tslink list --tailnet --json
 三种结果都是 informational，永远不会改变 doctor 的 status 或退出码。
 
 设置 `TSLINK_DOCTOR_SKIP_TAILSCALE_SSH=1` 可以跳过这次本地读取，例如测试套件在开发者的机器上运行编译出的二进制。此时状态为 `unknown`，`tailscale_ssh_unknown` finding 会注明跳过了这项检查。
-

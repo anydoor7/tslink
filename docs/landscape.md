@@ -32,7 +32,7 @@ One command exposes any local service: a web app, an API, a file directory, a da
 
 ```bash
 tslink add myapp --proxy localhost:3000
-# → https://myapp.<your-tailnet>.ts.net: accessible from any device on your tailnet
+# → https://myapp.<your-tailnet>.ts.net: reachable from tailnet devices your tailnet policy permits
 ```
 
 ### Features
@@ -51,4 +51,3 @@ tslink add myapp --proxy localhost:3000
 - **Personal templates**: preview and apply small private service suites without overwriting existing services
 - **Headscale compatibility path**: advanced/self-hosted control-server use via `--control-url`
 - **Funnel guardrails**: public internet exposure is opt-in and requires explicit `--public` acknowledgement
-

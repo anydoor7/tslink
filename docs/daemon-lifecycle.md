@@ -28,7 +28,7 @@ tslink add myapp --proxy localhost:3000
 # On first use, TSLink installs its background service and prints the exact URL.
 # If Tailscale enrollment is needed, open the printed authorization URL once.
 
-# Access https://myapp.<your-tailnet>.ts.net from any device
+# Reachable from tailnet devices your tailnet policy permits: https://myapp.<your-tailnet>.ts.net
 ```
 
 `add`, `share`, and `template apply --yes` automatically install and start TSLink's
@@ -93,4 +93,3 @@ proof. The backend application must also start after reboot, and first-time Tail
 enrollment still requires authorization. Each installed definition binds the absolute
 `TSLINK_CONFIG_DIR`; automatic setup refuses to overwrite another config's manager.
 Homebrew does not install a second service manager.
-

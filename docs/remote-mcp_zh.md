@@ -49,4 +49,3 @@
 | 配置 | 无 | `--mcp` 或 `mcp.enabled`，加上 `config.json` 中的 `mcp.allow` |
 | Tools | 19 个 | 同一组 19 个，来自同一个 tool registry |
 | 典型 client | 本机上的 MCP client | tailnet 内另一台机器上的 MCP client |
-

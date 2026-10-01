@@ -27,7 +27,7 @@ tslink add myapp --proxy localhost:3000
 # 首次使用会自动安装后台服务并打印精确 URL。
 # 如果需要 Tailscale 入网，打开打印的授权 URL 批准节点。
 
-# 从任何设备访问 https://myapp.<your-tailnet>.ts.net
+# tailnet 策略允许的设备可以访问 https://myapp.<your-tailnet>.ts.net
 ```
 
 `add`、`share` 和 `template apply --yes` 在后台服务未运行时自动安装并启动它，
@@ -72,4 +72,3 @@ Windows 自动安装后立即运行 Startup 脚本，后续登录时再次启动
 证明当前 PID 的归属。后端应用本身仍需设置开机启动，首次 Tailscale 入网仍需授权。
 安装文件绑定绝对 `TSLINK_CONFIG_DIR`，自动安装拒绝覆盖另一配置的监管器。
 Homebrew 不注册第二套服务管理器。
-

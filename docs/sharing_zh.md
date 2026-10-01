@@ -36,4 +36,3 @@ TSLink 拒绝服务它自己的配置目录、配置目录里的目录，以及�
 精确的 `tslink url <name> --wait` 后续命令。使用 `--json` 时，这是包含
 `auth_url` 的成功 `status:"needs_login"` 结果，不是认证错误。对同一 target
 重试会复用已有 service，不会持续创建带数字后缀的孤儿 node。
-

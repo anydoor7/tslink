@@ -23,4 +23,3 @@ TSLink creates a dedicated [tsnet](https://tailscale.com/kb/1244/tsnet) node for
 - **Hot reload**: file watcher on the registry means `tslink add` takes effect without restarting the server
 - **PID-based lifecycle**: daemon management with process identity checks and platform-specific stop behavior
 - **Structured logging**: slog-based structured logging with access logs
-

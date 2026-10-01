@@ -43,4 +43,3 @@ authorization URL and stderr gives the exact `tslink url <name> --wait`
 continuation. With `--json`, this is a successful `status:"needs_login"`
 result containing `auth_url`, not an authentication error. Retrying the same
 target reuses its existing service instead of creating suffixed orphan nodes.
-

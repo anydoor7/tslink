@@ -50,4 +50,3 @@ days, within its 5-second to 5-minute bounds.
 | Configuration | None | `--mcp` or `mcp.enabled`, plus `mcp.allow` in `config.json` |
 | Tools | 19 | The same 19, from one tool registry |
 | Typical client | An MCP client on this machine | An MCP client on another machine in the tailnet |
-

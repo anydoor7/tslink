@@ -31,4 +31,3 @@ MCP `unshare` 返回与 `tslink remove --json` 相同的结果，适用时包含
 `node_state_kept_reason`。MCP `invite_user` 使用 `member` 以外的 role，或
 `invite_device` 设置 `allow_exit_node: true`，需要所有者开启
 `mcp.allow_elevated_invites`。
-

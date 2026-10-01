@@ -83,4 +83,3 @@ MCP `funnel_ttl` 和 CLI `--funnel-ttl` 只接受 `1h`、`8h`、`24h`、`72h`、
 接受 Go duration 语法，也接受用 `d` 表示的分数天数及组合时长。
 
 `--json` 只改变输出格式。`tslink add --json` 与人类路径使用同一套安全护栏：Funnel 服务必须传 `--public`；TCP 服务会拒绝 `--allow`，因为 TSLink 不会对原始 TCP 字节流应用 HTTP 身份检查。
-

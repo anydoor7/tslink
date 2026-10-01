@@ -85,4 +85,3 @@ healthy services; fix or remove bad entries before changing the registry.
 | `--no-daemon-install` | Save configuration without installing or starting the daemon |
 | `--wait duration` | Wait for a URL or enrollment URL; default `30s`, `0` disables waiting |
 | `--json` | Print the versioned result envelope |
-

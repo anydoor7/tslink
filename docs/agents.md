@@ -34,4 +34,3 @@ tool result. Every tool declares `readOnlyHint`, `destructiveHint`,
 `tslink remove --json`, including `node_state_kept_reason` when applicable.
 MCP `invite_user` roles other than `member` and `invite_device` with
 `allow_exit_node: true` need the owner's `mcp.allow_elevated_invites` opt-in.
-

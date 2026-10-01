@@ -84,4 +84,3 @@
 | `--no-daemon-install` | 只保存配置，不安装或启动 daemon |
 | `--wait duration` | 等待 URL 或授权 URL；默认 `30s`，`0` 表示不等待 |
 | `--json` | 打印版本化的结果 envelope |
-
