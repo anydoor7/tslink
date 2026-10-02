@@ -12,3 +12,11 @@ This index records the people sharing lifecycle implementation and regression te
 - [testdata/INDEX.md](testdata/INDEX.md): parent registry upgrade provenance.
 - [review3_identity_test.go](review3_identity_test.go): complete-list or UTF-8 boundary regression evidence.
 - [review3_utf8_test.go](review3_utf8_test.go): complete-list or UTF-8 boundary regression evidence.
+
+# Service registry tests
+
+> **定位**: Service registry tests
+> **下一跳**: `registry.go`
+> **边界**: Registry admission and persistence; runtime proxy settings are in ../server/proxy.go.
+
+- `preserve_host_test.go`: strict boolean decoding, legacy defaults, persistence and proxy-only admission.

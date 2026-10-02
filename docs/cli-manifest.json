@@ -478,6 +478,18 @@
           "usage": "Register as ephemeral node (removed on disconnect)"
         },
         {
+          "name": "force-unsafe-public",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "DANGER: override a never-public recipe policy (requires --recipe and --funnel)",
+          "requires": [
+            "--recipe",
+            "--funnel",
+            "--public"
+          ]
+        },
+        {
           "name": "funnel",
           "type": "bool",
           "default": "false",
@@ -564,6 +576,13 @@
           "usage": "Save configuration only; do not install or start the background service"
         },
         {
+          "name": "preserve-host",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Forward this node's canonical external Host (proxy only; recipes choose their default)"
+        },
+        {
           "name": "proxy",
           "type": "string",
           "scope": "local",
@@ -583,6 +602,12 @@
           "requires": [
             "--funnel"
           ]
+        },
+        {
+          "name": "recipe",
+          "type": "string",
+          "scope": "local",
+          "usage": "Use an app recipe; preview by default, apply with --yes"
         },
         {
           "name": "tags",
@@ -607,9 +632,31 @@
           "default": "30s",
           "scope": "local",
           "usage": "Wait for an exact runtime URL or enrollment URL (default 30s; 0 disables waiting)"
+        },
+        {
+          "name": "yes",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Apply a reviewed recipe plan (requires --recipe)",
+          "requires": [
+            "--recipe"
+          ]
         }
       ],
       "json_result_fields": {
+        "action": {
+          "type": "string",
+          "description": "With --recipe: create preview, created, or skip_existing; same-name entries are preserved."
+        },
+        "applied": {
+          "type": "boolean",
+          "description": "With --recipe: true only when this call created a service."
+        },
+        "dry_run": {
+          "type": "boolean",
+          "description": "With --recipe: true unless --yes without --dry-run."
+        },
         "funnel_expires_at": {
           "type": "string",
           "description": "Persisted public Funnel deadline; omitted for tailnet-only services and explicit never."
@@ -618,9 +665,255 @@
           "type": "boolean",
           "description": "True when an expired preserved Funnel deadline was re-armed with the default 24h TTL."
         },
+        "preserve_host": {
+          "type": "boolean",
+          "description": "Ordinary add: whether the proxy forwards this node's trusted canonical external Host; default false. With --recipe, inspect service.preserve_host and requested.preserve_host."
+        },
+        "recipe": {
+          "type": "object",
+          "description": "With --recipe: app-side snippets, safety notes and documentation."
+        },
         "replaced_fields": {
           "type": "array",
           "description": "registry.json fields a replacing add changed or dropped, sorted; empty when the add created the service. Warnings access_changed_on_replace and identity_reset_on_replace flag access and node-identity changes."
+        }
+      }
+    },
+    {
+      "path": "tslink apps",
+      "short": "Discover local apps and preview app-specific sharing recipes",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        }
+      ]
+    },
+    {
+      "path": "tslink apps detect",
+      "short": "Fingerprint listening TCP services over loopback HTTP without credentials",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        }
+      ],
+      "json_result_fields": {
+        "complete": {
+          "type": "boolean",
+          "description": "False when cancelled or the 15 second discovery deadline was reached."
+        },
+        "listeners": {
+          "type": "array",
+          "description": "Numeric loopback HTTP probe targets from OS TCP listeners."
+        },
+        "matches": {
+          "type": "array",
+          "description": "Recipe confidence, evidence and registered names; no response bodies."
+        }
+      }
+    },
+    {
+      "path": "tslink apps list",
+      "short": "List the versioned application recipe catalog",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        }
+      ],
+      "json_result_fields": {
+        "catalog_version": {
+          "type": "integer",
+          "description": "Version of app advice and fingerprints."
+        },
+        "recipes": {
+          "type": "array",
+          "description": "Complete recipe catalog with safety levels and dated official documentation."
+        }
+      }
+    },
+    {
+      "path": "tslink apps share",
+      "short": "Preview an app recipe; --yes registers missing services",
+      "flags": [
+        {
+          "name": "allow",
+          "type": "string",
+          "scope": "local",
+          "usage": "Comma-separated private HTTP identities",
+          "conflicts": [
+            "--funnel"
+          ]
+        },
+        {
+          "name": "control-url",
+          "type": "string",
+          "scope": "local",
+          "usage": "Per-service control server URL"
+        },
+        {
+          "name": "dry-run",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Preview without writing, even with --yes"
+        },
+        {
+          "name": "ephemeral",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Use an ephemeral node"
+        },
+        {
+          "name": "force-unsafe-public",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "DANGER: override never-public recipe policy; may expose host control or private data to everyone",
+          "requires": [
+            "--funnel",
+            "--public"
+          ]
+        },
+        {
+          "name": "funnel",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Publish on the internet; requires --public and recipe safety review",
+          "requires": [
+            "--public"
+          ],
+          "conflicts": [
+            "--allow",
+            "--control-url"
+          ]
+        },
+        {
+          "name": "funnel-ttl",
+          "type": "string",
+          "default": "24h",
+          "scope": "local",
+          "usage": "Public lifetime: 1h, 8h, 24h, 72h, 7d, or never",
+          "requires": [
+            "--funnel"
+          ]
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "scope": "local",
+          "usage": "Override the recommended service name"
+        },
+        {
+          "name": "no-auto-provision",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Disable automatic Funnel policy provisioning (requires --funnel)",
+          "requires": [
+            "--funnel"
+          ]
+        },
+        {
+          "name": "no-daemon-install",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Save configuration only; do not install or start the background service"
+        },
+        {
+          "name": "preserve-host",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Forward this node's canonical external Host (proxy only; recipes choose their default)"
+        },
+        {
+          "name": "proxy",
+          "type": "string",
+          "scope": "local",
+          "usage": "Override the loopback HTTP(S) target (host port, not container port)"
+        },
+        {
+          "name": "public",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Acknowledge public internet exposure (requires --funnel)",
+          "requires": [
+            "--funnel"
+          ]
+        },
+        {
+          "name": "tags",
+          "type": "string",
+          "scope": "local",
+          "usage": "Comma-separated ACL tags"
+        },
+        {
+          "name": "yes",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Apply the reviewed recipe plan without replacing existing entries"
+        }
+      ],
+      "json_result_fields": {
+        "action": {
+          "type": "string",
+          "description": "Planned or completed registry action.",
+          "values": [
+            "create",
+            "created",
+            "skip_existing"
+          ]
+        },
+        "applied": {
+          "type": "boolean",
+          "description": "True only when this invocation created the service."
+        },
+        "dry_run": {
+          "type": "boolean",
+          "description": "True for preview; --dry-run wins over --yes."
+        },
+        "recipe": {
+          "type": "object",
+          "description": "App-specific configuration, safety advice and dated official docs."
+        },
+        "requested": {
+          "type": "object",
+          "description": "Requested defaults; compare with service if existing entry is skipped."
+        },
+        "requested.preserve_host": {
+          "type": "boolean",
+          "description": "Recipe default unless explicitly overridden; may differ from an existing service."
+        },
+        "service": {
+          "type": "object",
+          "description": "Effective requested service, or existing service preserved unchanged."
+        },
+        "service.preserve_host": {
+          "type": "boolean",
+          "description": "Effective Host policy of the created or preserved service."
         }
       }
     },
@@ -1174,7 +1467,7 @@
           "name": "fields",
           "type": "string",
           "scope": "local",
-          "usage": "Comma-separated slim fields: name,type,url,url_pending,state,funnel_requested,funnel_active,funnel_state,funnel_expires_at,funnel_remaining,error",
+          "usage": "Comma-separated slim fields: name,type,url,url_pending,state,preserve_host,funnel_requested,funnel_active,funnel_state,funnel_expires_at,funnel_remaining,error",
           "conflicts": [
             "--verbose",
             "--tailnet"
@@ -1303,6 +1596,10 @@
             "listen_failed",
             "startup_timeout"
           ]
+        },
+        "services[].preserve_host": {
+          "type": "boolean",
+          "description": "Configured proxy Host policy; false rewrites Host to the upstream, true forwards this node's trusted canonical external name in Host and X-Forwarded-Host, or returns HTTP 503 canonical_host_unavailable."
         },
         "services[].state": {
           "type": "string",
@@ -1942,13 +2239,26 @@
           "usage": "Require an already running background service; do not install one"
         },
         {
+          "name": "preserve-host",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Forward this node's canonical external Host (proxy only; recipes choose their default)"
+        },
+        {
           "name": "wait",
           "type": "duration",
           "default": "30s",
           "scope": "local",
           "usage": "Wait for an exact runtime URL (share waits 30s by default; unlike url, no flag is required)"
         }
-      ]
+      ],
+      "json_result_fields": {
+        "preserve_host": {
+          "type": "boolean",
+          "description": "Whether the returned HTTP share forwards this node's trusted canonical external Host. Conflicting reuse is refused."
+        }
+      }
     },
     {
       "path": "tslink status",
@@ -2058,6 +2368,10 @@
         "services[].ownership_proof": {
           "type": "boolean",
           "description": "True only when the durable ownership ledger contains exact StableNodeID cleanup proof for the service; NodeIDs are never emitted."
+        },
+        "services[].preserve_host": {
+          "type": "boolean",
+          "description": "Configured proxy Host policy; false rewrites Host to the upstream, true forwards this node's trusted canonical external name in Host and X-Forwarded-Host, or returns HTTP 503 canonical_host_unavailable."
         },
         "services[].runtime_state": {
           "type": "string",

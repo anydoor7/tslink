@@ -74,11 +74,12 @@ healthy services; fix or remove bad entries before changing the registry.
 
 ### Add Command Flags
 
-`tslink add` with an existing name replaces that service: flags you do not repeat (`--allow`, `--tags`, `--funnel`, ...) are dropped. The JSON result lists `replaced_fields` and warns when access or the node identity changed.
+Without `--recipe`, `tslink add` with an existing name replaces that service: flags you do not repeat (`--allow`, `--tags`, `--funnel`, ...) are dropped. The JSON result lists `replaced_fields` and warns when access or the node identity changed.
 
 | Flag | Description |
 |------|-------------|
 | `--proxy host:port` | Reverse proxy to a local HTTP service |
+| `--preserve-host[=false]` | Proxy only: forward this node's trusted canonical external Host; ordinary add/share default false, recipes supply their own default. Explicit false overrides a recipe. |
 | `--dir /path` | Serve a local file directory |
 | `--tcp host:port` | Raw TCP forwarding |
 | `--dry-run` | Validate and print the service without saving it |
@@ -102,3 +103,25 @@ healthy services; fix or remove bad entries before changing the registry.
 App health (`healthy`/`degraded`/`down`/`unknown`), observation timestamps and consecutive failures appear in status, list JSON, `list --verbose`, MCP and `/events`. Node-key and credential expiry warnings use 14-day and 3-day thresholds with next steps; metadata sources remain explicit. `doctor` adds a fresh HTTP business probe and makes the 3-day expiry warning critical (exit 65). Owner notifications are opt-in through `alerts.json`; events and restart dedup state are persisted by default. See [health and alerts](health-and-alerts.md).
 
 HTTP/TCP health checks enforce the registry's target-safety rules. Node-key expiry refreshes independently of `--health-interval` and is invalidated when a node is replaced. Each service has one read per pool; queue admission has a separate five-second bound, and unattempted checks preserve failure counts and observation timestamps. Stuck pools report `alerts.monitor_error=health_monitor_saturated` with monitor saturation/recovery events and a doctor warning. Ready results persist in batches; unchanged state does not write. Status and doctor read events and monitor state from the durable journal; snapshots may only supplement write errors. Notification delivery uses a bounded queue; commands have a 10-second deadline plus up to 250 ms of pipe cleanup, and cancellation counts as failure.
+
+### Application recipes
+
+| Command or flag | Behavior |
+|---|---|
+| `tslink apps list` | Versioned recipe catalog, including configuration snippets, safety policy and dated official docs |
+| `tslink apps detect` | Credential-free loopback HTTP fingerprints of OS TCP listeners; confidence and existing registrations |
+| `tslink apps share <id>` | Preview one recipe using its recommended name and local target |
+| `tslink add [name] --recipe <id>` | Same recipe preview, with an optional name override |
+| `--yes` | Apply the recipe plan; existing names are kept unchanged |
+| `--dry-run` | Preview only, even when `--yes` is present |
+| `--proxy host:port` | Override the recipe's loopback HTTP(S) host target |
+| `--name name` | Name override on `apps share`; `add` uses its positional name |
+| `--force-unsafe-public` | DANGER: override a `never_public` recipe; requires `--funnel --public` and can expose host control or private data to everyone |
+
+Recipes support `--allow`, `--tags`, `--ephemeral`, `--control-url`, the existing Funnel acknowledgement/TTL/provisioning flags and `--no-daemon-install`. `add --recipe` rejects `--dir`, `--tcp` and `--wait`; poll `tslink url` after applying. Without `--recipe`, ordinary `add` retains its replacement behavior and rejects recipe-only flags.
+
+The plan/apply JSON data includes `recipe`, `requested`, `service`, `action`, `dry_run`, `applied`, `warnings` and `next`. `applied=true` means this invocation created the service; `skip_existing` reports its preserved configuration. Detection includes `listeners`, `matches`, `complete` and `warnings`. A partial scan sets `complete=false`. App health paths are recommendation data only.
+
+MCP tools: `recipe_list`, read-only `apps_detect`, `recipe_plan` and `recipe_apply`; plan/apply take `recipe_id`, optional `name`/`target`, string `allow`/`tags`, and snake_case counterparts of the flags above. Call the plan before apply. Existing generic `template` commands and `template_list/plan/apply` tools continue to work. See [application setup and limitations](apps.md).
+
+`share <port|host:port>` also accepts `--preserve-host` (default false); file/directory shares reject true. With preservation enabled, Host and X-Forwarded-Host use this node's canonical external DNS name, never a client-supplied authority. The first runtime certificate domain takes precedence over the node's DNS FQDN, matching the shared HTTPS URL, including Funnel. The name is lowercase with no terminal dot or port. If it is unavailable or invalid, HTTP 503 returns `canonical_host_unavailable` without contacting the backend. Client aliases and unexpected authorities are forwarded under the canonical name, with no 421 rejection. Default mode keeps upstream Host rewriting and its existing incoming-authority X-Forwarded-Host behavior. X-Forwarded-Proto/For come from the actual request in both modes; Origin is unchanged. Reuse with a different Host policy reports a conflict. Existing services and generic templates keep upstream Host rewriting. Registry `preserve_host` is an optional proxy boolean; absent means false. Recipes can be overridden with `--preserve-host=false` or MCP `preserve_host:false`. Status/list service projections and `access explain` report the configured policy. In global-failure status without a readable registry, the Host policy is unknown and omitted.

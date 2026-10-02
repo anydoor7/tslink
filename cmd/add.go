@@ -25,9 +25,10 @@ import (
 
 // AddResult is the JSON data for the add command.
 type AddResult struct {
-	Name    string `json:"name"`
-	Type    string `json:"type"`
-	Created bool   `json:"created"`
+	Name         string `json:"name"`
+	Type         string `json:"type"`
+	Created      bool   `json:"created"`
+	PreserveHost bool   `json:"preserve_host"`
 	// ReplacedFields names the registry.json fields an add of an existing
 	// service changed or dropped; empty when the add created the service.
 	ReplacedFields  fieldList             `json:"replaced_fields"`
@@ -99,6 +100,7 @@ type AddParams struct {
 	Health          *registry.HealthConfig
 	Name            string
 	Proxy           string
+	PreserveHost    bool
 	Dir             string
 	TCP             string
 	Ephemeral       bool
@@ -225,6 +227,9 @@ func buildService(p AddParams) (registry.Service, error) {
 	if modes != 1 {
 		return registry.Service{}, registry.ServiceTypeAmbiguousError()
 	}
+	if p.PreserveHost && svcType != registry.TypeProxy {
+		return registry.Service{}, output.ErrUsage("--preserve-host requires --proxy")
+	}
 	if p.Proxy, err = barePortTarget("proxy", p.Proxy); err != nil {
 		return registry.Service{}, err
 	}
@@ -299,7 +304,7 @@ func buildService(p AddParams) (registry.Service, error) {
 			target = "http://" + target
 		}
 		return registry.Service{
-			Health: p.Health, Name: p.Name, Type: registry.TypeProxy, Target: target,
+			Health: p.Health, Name: p.Name, Type: registry.TypeProxy, Target: target, PreserveHost: p.PreserveHost,
 			Ephemeral: p.Ephemeral, Tags: tags, AllowedUsers: allowedUsers,
 			Funnel: p.Funnel, PublicAck: p.Public, NoAutoProvision: p.NoAutoProvision,
 			FunnelExpiresAt: funnelExpiresAt,
@@ -396,6 +401,7 @@ func buildAddResult(ctx context.Context, svc registry.Service, created bool, pid
 		Name:            svc.Name,
 		Type:            svc.Type,
 		Created:         created,
+		PreserveHost:    svc.PreserveHost,
 		FunnelExpiresAt: cloneTimePointer(svc.FunnelExpiresAt),
 		URLPending:      true,
 		Endpoint:        view.Endpoint,
@@ -479,7 +485,7 @@ func resolveAddService(svc registry.Service, p AddParams) (registry.Service, err
 	return svc, nil
 }
 
-// addKeepIfUnchangedFn settles a registration an add left unchanged. Tests
+// addKeepIfUnchangedFn settles a registration an add or recipe reuses. Tests
 // replace it to run a share's rollback first.
 var addKeepIfUnchangedFn = registry.KeepIfUnchanged
 
@@ -625,7 +631,7 @@ func loadPersistedService(regPath, name string) (registry.Service, error) {
 
 func init() {
 	addCmd := &cobra.Command{
-		Use:   "add <name>",
+		Use:   "add [name]",
 		Short: "Register a local service or file directory",
 		Long: `Register a local service or file directory to expose on the Tailscale network.
 
@@ -642,8 +648,29 @@ Examples:
   tslink add myapp --proxy :3000 --ephemeral      Ephemeral node (removed on disconnect)
   tslink add myapp --proxy :3000 --tags tag:web    Tag the node in the tailnet
   tslink add myapp --proxy :3000 --funnel --public Expose publicly via Tailscale Funnel`,
-		Args: cobra.ExactArgs(1),
+		Args: func(cmd *cobra.Command, args []string) error {
+			id, _ := cmd.Flags().GetString("recipe")
+			if id != "" {
+				return cobra.MaximumNArgs(1)(cmd, args)
+			}
+			return cobra.ExactArgs(1)(cmd, args)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			id, _ := cmd.Flags().GetString("recipe")
+			if id != "" {
+				if cmd.Flags().Changed("dir") || cmd.Flags().Changed("tcp") || cmd.Flags().Changed("wait") {
+					return output.ErrUsage("--recipe accepts HTTP proxy services; --dir, --tcp and --wait are not recipe options")
+				}
+				name := ""
+				if len(args) > 0 {
+					name = args[0]
+				}
+				return runRecipeCLI(cmd, recipeRequestFromCLI(cmd, id, name), "add")
+			}
+			if cmd.Flags().Changed("yes") || cmd.Flags().Changed("force-unsafe-public") {
+				return output.ErrUsage("--yes and --force-unsafe-public require --recipe")
+			}
+			preserveHost, _ := cmd.Flags().GetBool("preserve-host")
 			proxyTarget, _ := cmd.Flags().GetString("proxy")
 			dirPath, _ := cmd.Flags().GetString("dir")
 			tcpTarget, _ := cmd.Flags().GetString("tcp")
@@ -661,6 +688,7 @@ Examples:
 			params := AddParams{
 				Name:            args[0],
 				Proxy:           proxyTarget,
+				PreserveHost:    preserveHost,
 				Dir:             dirPath,
 				TCP:             tcpTarget,
 				Ephemeral:       ephemeral,
@@ -805,6 +833,7 @@ Examples:
 		},
 	}
 
+	addCmd.Flags().Bool("preserve-host", false, "Forward this node's canonical external Host (proxy only; recipes choose their default)")
 	addCmd.Flags().String("proxy", "", "Proxy target in host:port or URL form")
 	addCmd.Flags().String("dir", "", "Directory to expose")
 	addCmd.Flags().String("tcp", "", "TCP proxy target in host:port form")
@@ -826,5 +855,8 @@ Examples:
 	addCmd.Flags().String("health-body", "", "Expected body substring within first 64 KiB (proxy only; avoid secrets in argv)")
 	addCmd.Flags().String("health-timeout", "5s", "Backend probe timeout, 100ms to 30s")
 	addCmd.Flags().String("health-interval", "1m", "Backend probe interval, 10s to 1d")
+	addCmd.Flags().String("recipe", "", "Use an app recipe; preview by default, apply with --yes")
+	addCmd.Flags().Bool("yes", false, "Apply a reviewed recipe plan (requires --recipe)")
+	addCmd.Flags().Bool("force-unsafe-public", false, "DANGER: override a never-public recipe policy (requires --recipe and --funnel)")
 	rootCmd.AddCommand(addCmd)
 }

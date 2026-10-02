@@ -92,7 +92,8 @@ func assertTreeUnchanged(t *testing.T, what string, before, after map[string]str
 // in exactly that state and must leave every root as it found it. Where the
 // result reports the credential, it must still see it.
 func TestMCPReadOnlyToolsDescribeAStoredCredentialWithoutRecordingIt(t *testing.T) {
-	arguments := map[string]string{"url": `{"name":"web"}`, "access_explain": `{"service":"web"}`, "template_plan": `{"name":"local-web"}`}
+	stubAppsDetection(t)
+	arguments := map[string]string{"url": `{"name":"web"}`, "access_explain": `{"service":"web"}`, "template_plan": `{"name":"local-web"}`, "recipe_plan": `{"recipe_id":"jellyfin"}`}
 	readOnly := 0
 	for _, definition := range mcpToolDefinitions {
 		if hints := mcpToolHints[definition.Name]; hints == nil || !hints.ReadOnlyHint {
@@ -126,8 +127,8 @@ func TestMCPReadOnlyToolsDescribeAStoredCredentialWithoutRecordingIt(t *testing.
 			}
 		})
 	}
-	if readOnly != 11 {
-		t.Fatalf("%d tools are marked read-only, want the 10 that only read", readOnly)
+	if readOnly != 14 {
+		t.Fatalf("%d tools are marked read-only, want the 14 that only read", readOnly)
 	}
 	t.Run("event stream", func(t *testing.T) {
 		_, paths, roots := readOnlyCredentialFixture(t)

@@ -31,10 +31,11 @@ const (
 )
 
 type ShareResult struct {
-	URL     string `json:"url,omitempty"`
-	Name    string `json:"name,omitempty"`
-	Status  string `json:"status"`
-	AuthURL string `json:"auth_url,omitempty"`
+	URL          string `json:"url,omitempty"`
+	Name         string `json:"name,omitempty"`
+	Status       string `json:"status"`
+	PreserveHost bool   `json:"preserve_host"`
+	AuthURL      string `json:"auth_url,omitempty"`
 	// FunnelExpiresAt is the deadline of the Funnel share this call returned.
 	// A reused share keeps its own, which can be sooner than the one asked
 	// for, so it is reported rather than implied by the request.
@@ -70,6 +71,7 @@ type shareRequest struct {
 	Target          string
 	Name            string
 	Ephemeral       bool
+	PreserveHost    bool
 	Allow           []string
 	Tags            []string
 	Funnel          bool
@@ -229,6 +231,10 @@ func applyShareExposure(spec shareTargetSpec, req shareRequest) (shareTargetSpec
 	if err != nil {
 		return shareTargetSpec{}, err
 	}
+	if req.PreserveHost && spec.Service.Type != registry.TypeProxy {
+		return shareTargetSpec{}, output.ErrUsage("preserve_host / --preserve-host requires an HTTP port target")
+	}
+	spec.Service.PreserveHost = req.PreserveHost
 	spec.Service.AllowedUsers = allowedUsers
 	spec.Service.Tags = tags
 	spec.Service.Funnel = req.Funnel
@@ -305,6 +311,7 @@ func sameShareTarget(existing, candidate registry.Service) bool {
 	return sameShareBackend(existing, candidate) &&
 		existing.Funnel == candidate.Funnel &&
 		existing.PublicAck == candidate.PublicAck &&
+		existing.PreserveHost == candidate.PreserveHost &&
 		slices.Equal(existing.AllowedUsers, candidate.AllowedUsers) &&
 		sameShareTags(existing.Tags, candidate.Tags)
 }
@@ -349,8 +356,8 @@ func shareFunnelDeadlineDescription(deadline *time.Time) string {
 }
 
 func shareExposurePosture(svc registry.Service) string {
-	return fmt.Sprintf("funnel=%t, funnel_deadline=%s, public_ack=%t, allowed_users=%d, tags=%v",
-		svc.Funnel, shareFunnelDeadlineDescription(svc.FunnelExpiresAt), svc.PublicAck, len(svc.AllowedUsers), svc.Tags)
+	return fmt.Sprintf("funnel=%t, funnel_deadline=%s, public_ack=%t, allowed_users=%d, tags=%v, preserve_host=%t",
+		svc.Funnel, shareFunnelDeadlineDescription(svc.FunnelExpiresAt), svc.PublicAck, len(svc.AllowedUsers), svc.Tags, svc.PreserveHost)
 }
 
 // shareRequestedExposure undoes the daemon's Funnel expiry for the reuse
@@ -672,6 +679,7 @@ func withShareFunnelState(result ShareResult, registration shareRegistration) Sh
 	if registration.Service.Funnel {
 		result.FunnelExpiresAt = cloneTimePointer(registration.Service.FunnelExpiresAt)
 	}
+	result.PreserveHost = registration.Service.PreserveHost
 	result.FunnelRearmed = registration.FunnelRearmed
 	result.Exposure = inspect.ServiceViewFor(registry.EffectiveServiceAt(registration.Service, time.Now())).Exposure
 	if warning, ok := homeDirectoryShareWarning(registration.Service, "cmd.share"); ok {
@@ -712,6 +720,7 @@ The next two examples need a local app already listening on the given port:
 				return err
 			}
 			name, _ := cmd.Flags().GetString("name")
+			preserveHost, _ := cmd.Flags().GetBool("preserve-host")
 			ephemeral, _ := cmd.Flags().GetBool("ephemeral")
 			wait, _ := cmd.Flags().GetDuration("wait")
 			noDaemonInstall, _ := cmd.Flags().GetBool("no-daemon-install")
@@ -719,6 +728,7 @@ The next two examples need a local app already listening on the given port:
 				Target:          args[0],
 				Name:            name,
 				Ephemeral:       ephemeral,
+				PreserveHost:    preserveHost,
 				NoDaemonInstall: noDaemonInstall,
 			}, wait, cmd.ErrOrStderr())
 			if err != nil {
@@ -738,6 +748,7 @@ The next two examples need a local app already listening on the given port:
 		},
 	}
 	shareCmd.Flags().String("name", "", "Requested service name (DNS label); a matching target must already use it, while unrelated name collisions receive a numeric suffix")
+	shareCmd.Flags().Bool("preserve-host", false, "Forward this node's canonical external Host (proxy only; recipes choose their default)")
 	shareCmd.Flags().Bool("ephemeral", true, "Use an ephemeral tailnet node (set --ephemeral=false for durable state)")
 	shareCmd.Flags().Bool("no-daemon-install", false, "Require an already running background service; do not install one")
 	shareCmd.Flags().Var(duration.NewValue(defaultURLWait), "wait", "Wait for an exact runtime URL (share waits 30s by default; unlike url, no flag is required)")

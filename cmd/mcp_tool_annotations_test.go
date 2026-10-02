@@ -40,6 +40,10 @@ var mcpWantHints = map[string][4]bool{
 	"invite_list":    {true, false, true, true},
 	"invite_revoke":  {false, true, true, true},
 	"invite_resend":  {false, false, false, true},
+	"apps_detect":    {true, false, true, false},
+	"recipe_list":    {true, false, true, false},
+	"recipe_plan":    {true, false, true, false},
+	"recipe_apply":   {false, false, true, true},
 	"template_list":  {true, false, true, false},
 	"template_plan":  {true, false, true, false},
 	"template_apply": {false, false, true, true},
@@ -121,6 +125,7 @@ func configTreeDigest(t *testing.T, roots ...string) map[string]string {
 // metadata backfill would show here (B7-1); a write tool in the same harness
 // is the control that such a record is seen.
 func TestMCPReadOnlyToolsWriteNothing(t *testing.T) {
+	stubAppsDetection(t)
 	stubDoctorTailscaleSSH(t, false, nil)
 	restoreShareSeams(t)
 	storeCredentialWithoutMetadata(t)
@@ -177,8 +182,8 @@ func TestMCPReadOnlyToolsWriteNothing(t *testing.T) {
 			}
 		}
 	}
-	if readOnly != 11 {
-		t.Fatalf("%d tools are marked read-only, want the 10 that only read", readOnly)
+	if readOnly != 14 {
+		t.Fatalf("%d tools are marked read-only, want the 14 that only read", readOnly)
 	}
 
 	// Control: add is a write tool. With the daemon reported running it reads

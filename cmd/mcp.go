@@ -19,6 +19,7 @@ import (
 	"github.com/anydoor7/tslink/internal/duration"
 	"github.com/anydoor7/tslink/internal/health"
 	"github.com/anydoor7/tslink/internal/output"
+	"github.com/anydoor7/tslink/internal/recipes"
 	"github.com/anydoor7/tslink/internal/registry"
 	"github.com/anydoor7/tslink/internal/tailapi"
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
@@ -147,6 +148,7 @@ var (
 		"exposure":       mcpExposureViewSchema,
 		"tags":           mcpSummaryViewSchema,
 		"allow":          mcpSummaryViewSchema,
+		"preserve_host":  map[string]any{"type": "boolean", "default": false, "description": "Proxy only: forward this node's trusted canonical external name in Host and X-Forwarded-Host; fail closed if unavailable. Default false keeps upstream Host rewriting."},
 		"backend":        mcpBackendViewSchema,
 		"funnel":         map[string]any{"type": "boolean"},
 		"warnings":       mcpWarningArraySchema,
@@ -205,6 +207,7 @@ var (
 	mcpShareOutputSchema = objectSchema(map[string]any{
 		"url":               map[string]any{"type": "string"},
 		"name":              map[string]any{"type": "string"},
+		"preserve_host":     map[string]any{"type": "boolean", "default": false, "description": "Proxy only: forward this node's trusted canonical external name in Host and X-Forwarded-Host; fail closed if unavailable. Default false keeps upstream Host rewriting."},
 		"status":            map[string]any{"type": "string", "enum": []string{shareStatusReady, authStatusNeedsLogin}},
 		"auth_url":          map[string]any{"type": "string"},
 		"funnel_expires_at": map[string]any{"type": "string", "description": "When the public Funnel of this share stops. Absent when exposure.kind is not public_funnel, and absent for a public_funnel share that never expires. A reused share keeps its own deadline, which can be sooner than the funnel_ttl this call asked for."},
@@ -224,6 +227,7 @@ var (
 				"url":              map[string]any{"type": []string{"string", "null"}},
 				"url_pending":      map[string]any{"type": "boolean"},
 				"state":            map[string]any{"type": "string", "enum": listStateValues()},
+				"preserve_host":    map[string]any{"type": "boolean", "default": false, "description": "Proxy only: forward this node's trusted canonical external name in Host and X-Forwarded-Host; fail closed if unavailable. Default false keeps upstream Host rewriting."},
 				"funnel_requested": map[string]any{"type": "boolean"},
 				"funnel_active":    map[string]any{"type": "boolean"},
 				"funnel_state":     map[string]any{"type": "string", "enum": funnelStateValues()},
@@ -248,7 +252,7 @@ var (
 	mcpStatusOutputSchema = objectSchema(map[string]any{
 		"credentials":              nestedObjectSchema("Value-free stored expiry metadata and early warnings; assumed expiry remains identified."),
 		"alerts":                   nestedObjectSchema("Recent durable alert events; destination is redacted."),
-		"services":                 map[string]any{"type": "array", "items": nestedObjectSchema("App health observations and node-key expiry warnings.")},
+		"services":                 map[string]any{"type": "array", "items": map[string]any{"type": "object", "description": "App health observations, node-key expiry warnings and Host policy.", "properties": map[string]any{"preserve_host": map[string]any{"type": "boolean", "default": false, "description": "Proxy only: forward this node's trusted canonical external name in Host and X-Forwarded-Host; fail closed if unavailable. Default false keeps upstream Host rewriting."}}}},
 		"supervision":              nestedObjectSchema("Verified manager, autostart, restart policy, and diagnostic evidence."),
 		"authenticated":            map[string]any{"type": "boolean", "description": "True when at least one service node is authorized on the tailnet, the same fact as node_authorized and the same meaning as in tslink status --json; a stored credential alone (credential_stored) never makes it true."},
 		"credential_stored":        map[string]any{"type": "boolean"},
@@ -262,6 +266,7 @@ var (
 		"next":                     map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 	}, "authenticated", "credential_stored", "node_authorized", "authorized_service_count", "daemon_running", "daemon_state", "service_count")
 	mcpAddOutputSchema = objectSchema(map[string]any{
+		"preserve_host":     map[string]any{"type": "boolean", "default": false, "description": "Proxy only: forward this node's trusted canonical external name in Host and X-Forwarded-Host; fail closed if unavailable. Default false keeps upstream Host rewriting."},
 		"daemon_running":    map[string]any{"type": "boolean"},
 		"auth_url":          map[string]any{"type": "string"},
 		"next":              map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
@@ -491,6 +496,7 @@ var mcpToolDefinitions = []mcpToolDefinition{
 			"no_daemon_install": map[string]any{"type": "boolean", "description": "Require an already running TSLink service; do not automatically install its background service."},
 			"target":            map[string]any{"type": "string", "minLength": 1, "description": "Existing file or directory path, bare port from 1 to 65535, or host:port HTTP target. A file path shares that one file; a directory path shares everything under it. The daemon will proxy to any address it can reach on its own network; link-local and cloud-metadata addresses are refused only as literal IP addresses (unspecified addresses too) or the metadata.google.internal hostname: hostnames are not resolved and nothing is checked at connect time, so a name that resolves to one of those addresses is accepted."},
 			"name":              map[string]any{"type": "string", "pattern": `^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`, "maxLength": 63, "description": "Optional requested DNS-label service name. A matching target is reused only if it already has this name; unrelated name collisions receive a numeric suffix."},
+			"preserve_host":     map[string]any{"type": "boolean", "default": false, "description": "Proxy only: forward this node's trusted canonical external name in Host and X-Forwarded-Host; fail closed if unavailable. Default false keeps upstream Host rewriting."},
 			"ephemeral":         map[string]any{"type": "boolean", "default": true, "description": "Keep true for temporary shares; set false only when the user wants durable tailnet node state."},
 			"allow":             map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Principals allowed to reach the share over HTTP: email addresses, or tag:<name> ACL tags. Omitting it leaves the share readable by every member of the user's tailnet. Rejected together with funnel."},
 			"tags":              map[string]any{"type": "array", "items": map[string]any{"type": "string", "pattern": `^tag:`}, "description": "ACL tags applied to the tailnet node, each prefixed tag:. Defaults to the configured default tag."},
@@ -518,6 +524,7 @@ var mcpToolDefinitions = []mcpToolDefinition{
 			"dir":               map[string]any{"type": "string", "description": "Absolute directory path for file. Rejected for proxy and tcp."},
 			"allow":             map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Principals allowed to reach the service over HTTP: email addresses, or tag:<name> ACL tags. Omitting it leaves an HTTP service readable by every member of the user's tailnet. Unsupported for tcp and rejected together with funnel."},
 			"tags":              map[string]any{"type": "array", "items": map[string]any{"type": "string", "pattern": `^tag:`}, "description": "ACL tags applied to the tailnet node, each prefixed tag:. Defaults to the configured default tag."},
+			"preserve_host":     map[string]any{"type": "boolean", "default": false, "description": "Proxy only: forward this node's trusted canonical external name in Host and X-Forwarded-Host; fail closed if unavailable. Default false keeps upstream Host rewriting."},
 			"ephemeral":         map[string]any{"type": "boolean", "default": false, "description": "Register an ephemeral tailnet node that disappears on disconnect."},
 			"funnel":            map[string]any{"type": "boolean", "default": false, "description": "Publish to the public internet through Tailscale Funnel. Requires type proxy, public_ack true, no allow entries, and no control_url."},
 			"public_ack":        map[string]any{"type": "boolean", "default": false, "description": "Explicit acknowledgement that funnel exposes the service publicly. funnel true without it is rejected."},
@@ -696,6 +703,9 @@ type mcpActions struct {
 	inviteList    func(context.Context, bool) (any, error)
 	inviteRevoke  func(context.Context, string, string) (any, error)
 	inviteResend  func(context.Context, string, string) (any, error)
+	appsDetect    func(context.Context) (any, error)
+	recipeList    func() (any, error)
+	recipeApply   func(context.Context, recipeRequest, bool) (any, error)
 	templateList  func() (any, error)
 	templatePlan  func(string) (any, error)
 	templateApply func(context.Context, string, bool) (any, error)
@@ -710,6 +720,7 @@ type mcpAddArguments struct {
 	Dir             string                 `json:"dir,omitempty"`
 	Allow           []string               `json:"allow,omitempty"`
 	Tags            []string               `json:"tags,omitempty"`
+	PreserveHost    bool                   `json:"preserve_host,omitempty"`
 	Ephemeral       bool                   `json:"ephemeral,omitempty"`
 	Funnel          bool                   `json:"funnel,omitempty"`
 	PublicAck       bool                   `json:"public_ack,omitempty"`
@@ -740,6 +751,7 @@ func addParamsFromMCPArguments(args mcpAddArguments) (AddParams, bool, error) {
 		Health:          args.Health,
 		Name:            args.Name,
 		Ephemeral:       args.Ephemeral,
+		PreserveHost:    args.PreserveHost,
 		Tags:            strings.Join(args.Tags, ","),
 		Allow:           strings.Join(args.Allow, ","),
 		Funnel:          args.Funnel,
@@ -973,6 +985,11 @@ func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 		},
 		inviteResend: func(ctx context.Context, kind, id string) (any, error) {
 			return inviteResendExecute(ctx, staticInvitePaths(paths.Registry, paths.PID, paths.Snapshot), kind, id)
+		},
+		appsDetect: func(ctx context.Context) (any, error) { return detectApps(ctx, paths.Registry) },
+		recipeList: func() (any, error) { return recipes.List(), nil },
+		recipeApply: func(ctx context.Context, req recipeRequest, dryRun bool) (any, error) {
+			return applyRecipe(ctx, req, paths.Registry, dryRun, errOut)
 		},
 		templateList: func() (any, error) {
 			return listTemplatesResult(), nil
@@ -1538,7 +1555,7 @@ func callMCPTool(ctx context.Context, actions mcpActions, name string, arguments
 	// is absent; their result reports an install as daemon_installed.
 	var install *daemonInstallRecord
 	switch name {
-	case "share", "add", "template_apply":
+	case "share", "add", "template_apply", "recipe_apply":
 		ctx, install = recordDaemonInstall(ctx)
 	}
 	switch name {
@@ -1570,6 +1587,7 @@ func callMCPTool(ctx context.Context, actions mcpActions, name string, arguments
 			NoDaemonInstall bool     `json:"no_daemon_install,omitempty"`
 			Target          string   `json:"target"`
 			Name            string   `json:"name,omitempty"`
+			PreserveHost    bool     `json:"preserve_host,omitempty"`
 			Ephemeral       *bool    `json:"ephemeral,omitempty"`
 			Allow           []string `json:"allow,omitempty"`
 			Tags            []string `json:"tags,omitempty"`
@@ -1586,6 +1604,7 @@ func callMCPTool(ctx context.Context, actions mcpActions, name string, arguments
 			Target:          args.Target,
 			Name:            args.Name,
 			Ephemeral:       true,
+			PreserveHost:    args.PreserveHost,
 			Allow:           args.Allow,
 			Tags:            args.Tags,
 			Funnel:          args.Funnel,
@@ -1738,6 +1757,12 @@ func callMCPTool(ctx context.Context, actions mcpActions, name string, arguments
 			return refusal, nil
 		}
 		data, err = actions.inviteResend(ctx, args.Kind, args.InviteID)
+	case "apps_detect", "recipe_list", "recipe_plan", "recipe_apply":
+		var refusal *mcp.CallToolResult
+		data, refusal, err = callRecipeMCPTool(ctx, actions, name, arguments)
+		if refusal != nil {
+			return refusal, nil
+		}
 	case "template_list":
 		var args struct{}
 		decodeErr := decodeMCPArguments(arguments, &args)

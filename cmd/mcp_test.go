@@ -17,6 +17,7 @@ import (
 
 	"github.com/anydoor7/tslink/internal/inspect"
 	"github.com/anydoor7/tslink/internal/output"
+	"github.com/anydoor7/tslink/internal/recipes"
 	"github.com/anydoor7/tslink/internal/registry"
 	tsruntime "github.com/anydoor7/tslink/internal/runtime"
 	"github.com/anydoor7/tslink/internal/tailapi"
@@ -107,6 +108,14 @@ func fakeMCPActions() mcpActions {
 		inviteResend: func(_ context.Context, kind, id string) (any, error) {
 			invite := tailapi.Invite{Kind: kind, ID: id, Email: "person@example.com", Emailed: true}
 			return inviteResendResult(invite), nil
+		},
+		appsDetect: func(context.Context) (any, error) {
+			return recipes.Detection{SchemaVersion: 1, Listeners: []recipes.Listener{}, Matches: []recipes.Match{}, Warnings: []string{}, Complete: true}, nil
+		},
+		recipeList: func() (any, error) { return recipes.List(), nil },
+		recipeApply: func(_ context.Context, req recipeRequest, dry bool) (any, error) {
+			result, _, err := planRecipe(req, "/missing/recipe-registry.json")
+			return result, err
 		},
 		templateList: func() (any, error) { return listTemplatesResult(), nil },
 		templatePlan: func(name string) (any, error) {
@@ -495,6 +504,7 @@ func TestMCPToolSchemasAreClosedAndModelFocused(t *testing.T) {
 		"tags_list", "tags_set", "access_explain", "doctor", "logs",
 		"invite_user", "invite_device", "invite_list", "invite_revoke", "invite_resend",
 		"template_list", "template_plan", "template_apply",
+		"apps_detect", "recipe_list", "recipe_plan", "recipe_apply",
 		"people_add", "people_update", "people_list", "people_remove",
 	}
 	if len(mcpToolDefinitions) != len(wantNames) {
@@ -526,7 +536,7 @@ func TestMCPToolSchemasAreClosedAndModelFocused(t *testing.T) {
 	shareSchema := mcpToolByName(t, "share").InputSchema
 	required := shareSchema["required"].([]string)
 	properties := shareSchema["properties"].(map[string]any)
-	if len(required) != 1 || required[0] != "target" || len(properties) != 9 {
+	if len(required) != 1 || required[0] != "target" || len(properties) != 10 {
 		t.Fatalf("share schema = %+v", shareSchema)
 	}
 	nameDescription := properties["name"].(map[string]any)["description"].(string)

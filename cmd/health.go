@@ -146,16 +146,17 @@ func readAlertsForRegistry(regPath string) health.AlertsView {
 }
 
 type mcpHealthService struct {
-	Name    string        `json:"name"`
-	Status  string        `json:"status"`
-	Health  health.State  `json:"health"`
-	NodeKey health.Expiry `json:"node_key"`
+	PreserveHost *bool         `json:"preserve_host,omitempty"`
+	Name         string        `json:"name"`
+	Status       string        `json:"status"`
+	Health       health.State  `json:"health"`
+	NodeKey      health.Expiry `json:"node_key"`
 }
 
 func mcpHealthServices(states []StatusServiceState) []mcpHealthService {
 	services := make([]mcpHealthService, 0, len(states))
 	for _, s := range states {
-		services = append(services, mcpHealthService{s.Name, s.Status, s.Health, s.NodeKey})
+		services = append(services, mcpHealthService{PreserveHost: s.PreserveHost, Name: s.Name, Status: s.Status, Health: s.Health, NodeKey: s.NodeKey})
 	}
 	return services
 }
