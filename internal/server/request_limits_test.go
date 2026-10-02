@@ -53,6 +53,12 @@ func uploadTLSFront(t *testing.T, svc registry.Service, handler http.Handler, h2
 
 func uploadTLSFrontWithReport(t *testing.T, svc registry.Service, handler http.Handler, h2 bool, report func(inspect.WarningView)) (string, *limitedListener) {
 	t.Helper()
+	addr, limited, _ := uploadTLSFrontServer(t, svc, handler, h2, report, 1)
+	return addr, limited
+}
+
+func uploadTLSFrontServer(t *testing.T, svc registry.Service, handler http.Handler, h2 bool, report func(inspect.WarningView), cap int) (string, *limitedListener, *http.Server) {
+	t.Helper()
 	cert := httptest.NewTLSServer(http.NotFoundHandler())
 	t.Cleanup(cert.Close)
 	tlsConfig := cert.TLS.Clone()
@@ -63,7 +69,7 @@ func uploadTLSFrontWithReport(t *testing.T, svc registry.Service, handler http.H
 	if err != nil {
 		t.Fatal(err)
 	}
-	limited := newLimitedListener(tls.NewListener(raw, tlsConfig), 1, "http", svc.Name).(*limitedListener)
+	limited := newLimitedListener(tls.NewListener(raw, tlsConfig), cap, "http", svc.Name).(*limitedListener)
 	srv := newHTTPServerFn(AccessLogMiddleware(svc.Name, nil, RequestLimitsMiddleware(svc, report, handler)))
 	ln := configureServiceHTTP(srv, svc, limited, report)
 	done := make(chan error, 1)
@@ -74,7 +80,335 @@ func uploadTLSFrontWithReport(t *testing.T, svc registry.Service, handler http.H
 			t.Error(err)
 		}
 	})
-	return raw.Addr().String(), limited
+	return raw.Addr().String(), limited, srv
+}
+
+func TestRequestLimitsTLSHandshakeLifecycle(t *testing.T) {
+	for _, path := range []string{"timeout", "invalid", "close", "shutdown"} {
+		t.Run(path, func(t *testing.T) {
+			svc := registry.Service{Name: "handshake", Type: registry.TypeFile, RequestLimits: &registry.RequestLimits{HeaderTimeout: "200ms"}}
+			if path == "close" || path == "shutdown" {
+				svc.RequestLimits.HeaderTimeout = "5s"
+			}
+			addr, limited, srv := uploadTLSFrontServer(t, svc, http.NotFoundHandler(), true, nil, 1)
+			client, err := net.Dial("tcp", addr)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer client.Close()
+			deadline := time.Now().Add(time.Second)
+			for len(limited.sem) != 1 && time.Now().Before(deadline) {
+				time.Sleep(time.Millisecond)
+			}
+			if len(limited.sem) != 1 {
+				t.Fatal("stalled handshake did not acquire its connection slot")
+			}
+			switch path {
+			case "invalid":
+				_, _ = fmt.Fprint(client, "not a TLS record")
+			case "close":
+				if err := srv.Close(); err != nil {
+					t.Fatal(err)
+				}
+			case "shutdown":
+				ctx, cancel := context.WithDeadline(context.Background(), deadline)
+				defer cancel()
+				if err := srv.Shutdown(ctx); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if time.Now().After(deadline) {
+				t.Error("handshake disposal or server stop exceeded 1s")
+			}
+			_ = client.SetReadDeadline(deadline)
+			if _, err := client.Read(make([]byte, 1)); err == nil || isTimeout(err) {
+				t.Fatalf("unserved handshake was not closed within 1s: %v", err)
+			}
+			uploadRelease(t, limited, deadline)
+			if path == "timeout" || path == "invalid" {
+				// A failed handshake must not stop the accept loop.
+				tr := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, ForceAttemptHTTP2: true}
+				defer tr.CloseIdleConnections()
+				resp, err := (&http.Client{Transport: tr, Timeout: time.Second}).Get("https://" + addr)
+				if err != nil {
+					t.Fatal(err)
+				}
+				_, _ = io.Copy(io.Discard, resp.Body)
+				_ = resp.Body.Close()
+				if resp.ProtoMajor != 2 || resp.StatusCode != 404 {
+					t.Fatalf("handshake recovery response=%s %d", resp.Proto, resp.StatusCode)
+				}
+				tr.CloseIdleConnections()
+				uploadRelease(t, limited, time.Now().Add(time.Second), tr)
+			}
+		})
+	}
+}
+
+func TestRequestLimitsTLSHandshakeDoesNotBlockAccept(t *testing.T) {
+	svc := registry.Service{Name: "parallel-handshake", Type: registry.TypeFile, RequestLimits: &registry.RequestLimits{HeaderTimeout: "5s"}}
+	addr, limited, _ := uploadTLSFrontServer(t, svc, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }), true, nil, 2)
+	stalled, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stalled.Close()
+	deadline := time.Now().Add(time.Second)
+	for len(limited.sem) != 1 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if len(limited.sem) != 1 {
+		t.Fatal("stalled handshake did not acquire its connection slot")
+	}
+	tr := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, ForceAttemptHTTP2: true}
+	defer tr.CloseIdleConnections()
+	resp, err := (&http.Client{Transport: tr, Timeout: time.Second}).Get("https://" + addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != 204 || resp.ProtoMajor != 2 || len(limited.sem) != 2 {
+		t.Fatalf("parallel response=%s %d active=%d", resp.Proto, resp.StatusCode, len(limited.sem))
+	}
+}
+
+func TestRequestLimitsTLSHTTP2ServerLifecycle(t *testing.T) {
+	for _, shutdown := range []bool{false, true} {
+		t.Run(fmt.Sprintf("shutdown=%v", shutdown), func(t *testing.T) {
+			entered, release := make(chan struct{}), make(chan struct{})
+			var once sync.Once
+			unblock := func() { once.Do(func() { close(release) }) }
+			defer unblock()
+			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				close(entered)
+				select {
+				case <-release:
+					w.WriteHeader(204)
+				case <-r.Context().Done():
+				}
+			})
+			addr, limited, srv := uploadTLSFrontServer(t, registry.Service{Name: "h2-lifecycle", Type: registry.TypeFile}, handler, true, nil, 1)
+			tr := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, ForceAttemptHTTP2: true}
+			defer tr.CloseIdleConnections()
+			response := make(chan error, 1)
+			go func() {
+				resp, err := (&http.Client{Transport: tr, Timeout: 3 * time.Second}).Get("https://" + addr)
+				if err == nil {
+					_ = resp.Body.Close()
+					if resp.StatusCode != 204 || resp.ProtoMajor != 2 {
+						err = fmt.Errorf("response=%s %d", resp.Proto, resp.StatusCode)
+					}
+				}
+				response <- err
+			}()
+			uploadWait(t, entered, time.Second, "HTTP/2 handler was not reached")
+			if len(limited.sem) != 1 {
+				t.Fatal("HTTP/2 connection did not retain its cap")
+			}
+			if shutdown {
+				stopped := make(chan error, 1)
+				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+				defer cancel()
+				go func() { stopped <- srv.Shutdown(ctx) }()
+				select {
+				case err := <-response:
+					t.Fatalf("Shutdown aborted an active stream: %v", err)
+				case <-time.After(30 * time.Millisecond):
+				}
+				unblock()
+				if err := <-response; err != nil {
+					t.Fatal(err)
+				}
+				if err := <-stopped; err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				if err := srv.Close(); err != nil {
+					t.Fatal(err)
+				}
+				if err := <-response; err == nil {
+					t.Fatal("Close did not interrupt the active HTTP/2 stream")
+				}
+			}
+			uploadRelease(t, limited, time.Now().Add(time.Second), tr)
+		})
+	}
+}
+
+func TestRequestLimitsTLSPendingHandoffClosed(t *testing.T) {
+	for _, capped := range []bool{false, true} {
+		t.Run(fmt.Sprintf("capped=%v", capped), func(t *testing.T) {
+			cert := httptest.NewTLSServer(http.NotFoundHandler())
+			defer cert.Close()
+			tlsConfig := cert.TLS.Clone()
+			tlsConfig.NextProtos = []string{"h2", "http/1.1"}
+			raw, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var transport net.Listener = tls.NewListener(raw, tlsConfig)
+			var limited *limitedListener
+			if capped {
+				limited = newLimitedListener(transport, 1, "http", "handoff").(*limitedListener)
+				transport = limited
+			}
+			srv := newHTTPServerFn(http.NotFoundHandler())
+			ln := configureServiceHTTP(srv, registry.Service{Type: registry.TypeFile}, transport, nil).(*headerBudgetListener)
+			defer ln.Close()
+			// Start accepting while the HTTP server has not requested the next
+			// prepared connection yet. The completed TLS handoff must remain
+			// owned by the listener until Accept returns it.
+			ln.once.Do(func() { go ln.acceptLoop() })
+			peer, err := tls.Dial("tcp", raw.Addr().String(), &tls.Config{InsecureSkipVerify: true, NextProtos: []string{"h2"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer peer.Close()
+			deadline := time.Now().Add(time.Second)
+			var tracked int
+			for tracked == 0 && time.Now().Before(deadline) {
+				ln.tlsSlots.Range(func(_, _ any) bool { tracked++; return true })
+				if tracked == 0 {
+					time.Sleep(time.Millisecond)
+				}
+			}
+			if tracked != 1 || (limited != nil && len(limited.sem) != 1) {
+				t.Fatalf("completed TLS handoff was not tracked: connections=%d", tracked)
+			}
+			if err := ln.Close(); err != nil {
+				t.Fatal(err)
+			}
+			_ = peer.SetReadDeadline(deadline)
+			if _, err := peer.Read(make([]byte, 1)); err == nil || isTimeout(err) {
+				t.Fatalf("completed but unserved TLS connection survived Close: %v", err)
+			}
+			ln.mu.Lock()
+			pending := len(ln.pending)
+			ln.mu.Unlock()
+			tracked = 0
+			ln.tlsSlots.Range(func(_, _ any) bool { tracked++; return true })
+			if pending != 0 || tracked != 0 || (limited != nil && len(limited.sem) != 0) {
+				t.Fatalf("unserved TLS handoff leaked: pending=%d tracked=%d", pending, tracked)
+			}
+		})
+	}
+}
+
+type uploadTemporaryAcceptError struct{}
+
+func (uploadTemporaryAcceptError) Error() string   { return "temporary accept failure" }
+func (uploadTemporaryAcceptError) Timeout() bool   { return false }
+func (uploadTemporaryAcceptError) Temporary() bool { return true }
+
+type uploadAcceptControl struct {
+	net.Listener
+	once       sync.Once
+	firstError error
+	accepted   chan struct{}
+	released   chan struct{}
+}
+
+func (l *uploadAcceptControl) Accept() (net.Conn, error) {
+	var err error
+	l.once.Do(func() { err = l.firstError })
+	if err != nil {
+		return nil, err
+	}
+	c, err := l.Listener.Accept()
+	if err == nil && l.accepted != nil {
+		close(l.accepted)
+		<-l.released
+	}
+	return c, err
+}
+
+func (l *uploadAcceptControl) Close() error {
+	if l.released != nil {
+		close(l.released)
+	}
+	return l.Listener.Close()
+}
+
+func TestRequestLimitsTLSAcceptLifecycle(t *testing.T) {
+	for _, path := range []string{"temporary", "closed_during_accept", "closed_handoff", "closed_error"} {
+		t.Run(path, func(t *testing.T) {
+			raw, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer raw.Close()
+			limited := newLimitedListener(raw, 1, "http", "accept").(*limitedListener)
+			control := &uploadAcceptControl{Listener: limited}
+			if path == "temporary" {
+				control.firstError = uploadTemporaryAcceptError{}
+			}
+			if path == "closed_during_accept" {
+				control.accepted, control.released = make(chan struct{}), make(chan struct{})
+			}
+			srv := newHTTPServerFn(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
+			ln := configureServiceHTTP(srv, registry.Service{Type: registry.TypeFile}, control, nil).(*headerBudgetListener)
+			defer ln.Close()
+			if path == "temporary" {
+				done := make(chan error, 1)
+				go func() { done <- srv.Serve(ln) }()
+				defer func() { _ = srv.Close(); <-done }()
+				resp, err := (&http.Client{Timeout: time.Second}).Get("http://" + raw.Addr().String())
+				if err != nil {
+					t.Fatal(err)
+				}
+				_ = resp.Body.Close()
+				if resp.StatusCode != 204 {
+					t.Fatalf("temporary accept failure stopped serving: %d", resp.StatusCode)
+				}
+				return
+			}
+			if path == "closed_during_accept" {
+				ln.once.Do(func() { go ln.acceptLoop() })
+			}
+			peer, err := net.Dial("tcp", raw.Addr().String())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer peer.Close()
+			if path == "closed_during_accept" {
+				uploadWait(t, control.accepted, time.Second, "accept did not acquire the connection")
+				if len(limited.sem) != 1 {
+					t.Fatal("accept did not acquire the slot")
+				}
+				_ = ln.Close()
+			} else {
+				original, err := limited.Accept()
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer original.Close()
+				if len(limited.sem) != 1 {
+					t.Fatal("handoff did not acquire the slot")
+				}
+				// Model the schedule in which the ready send wins the select,
+				// but Close owns the listener before Accept checks ownership.
+				ln.once.Do(func() {})
+				ln.ready = make(chan preparedHTTPConn, 1)
+				if path == "closed_handoff" {
+					ln.ready <- preparedHTTPConn{conn: original, original: original}
+				} else {
+					ln.ready <- preparedHTTPConn{err: net.ErrClosed}
+				}
+				ln.closed = true
+				if got, err := ln.Accept(); got != nil || !errors.Is(err, net.ErrClosed) {
+					t.Fatalf("closed listener returned connection=%v error=%v", got, err)
+				}
+				if path == "closed_error" {
+					_ = original.Close()
+				}
+			}
+			_ = peer.SetReadDeadline(time.Now().Add(time.Second))
+			if _, err := peer.Read(make([]byte, 1)); err == nil || isTimeout(err) {
+				t.Fatalf("connection survived the closed listener: %v", err)
+			}
+			uploadRelease(t, limited, time.Now().Add(time.Second))
+		})
+	}
 }
 
 func TestRequestLimitsTLSUnconsumedBodyDrain(t *testing.T) {
@@ -650,10 +984,19 @@ func TestRequestLimitsDeadlineAndCancellationErrors(t *testing.T) {
 	srv := newHTTPServerFn(http.NotFoundHandler())
 	called := false
 	srv.ConnState = func(net.Conn, http.ConnState) { called = true }
+	type contextKey struct{}
+	srv.ConnContext = func(ctx context.Context, c net.Conn) context.Context {
+		return context.WithValue(ctx, contextKey{}, "retained")
+	}
 	ln := configureServiceHTTP(srv, registry.Service{Type: registry.TypeProxy}, &fakeListener{}, nil)
 	srv.ConnState(nil, http.StateNew)
 	if !called {
 		t.Fatal("existing ConnState hook lost")
+	}
+	conn := &headerBudgetConn{}
+	ctx = srv.ConnContext(context.Background(), conn)
+	if ctx.Value(contextKey{}) != "retained" || ctx.Value(requestConnKey{}) != conn {
+		t.Fatal("existing ConnContext or disposal connection lost")
 	}
 	ln.Close()
 }
@@ -825,8 +1168,11 @@ func TestRequestLimitsTLSProxyEarlyRejection(t *testing.T) {
 						// Observe the real Read below progressBody and its completion
 						// above it, including warning classification and deadline changes.
 						body := r.Body.(*progressBody)
-						body.ReadCloser = &uploadReadSignal{ReadCloser: body.ReadCloser, entered: entered}
-						r.Body = &uploadReadSignal{ReadCloser: body, finished: readFinished, closed: closeFinished}
+						// Go 1.26's ReverseProxy wraps its outbound body in a
+						// noopCloseReader. Observe the actual underlying disposal,
+						// which our middleware performs on both toolchains.
+						body.ReadCloser = &uploadReadSignal{ReadCloser: body.ReadCloser, entered: entered, closed: closeFinished}
+						r.Body = &uploadReadSignal{ReadCloser: body, finished: readFinished}
 						defer close(handlerFinished)
 					}
 					proxy.ServeHTTP(w, r)
@@ -902,7 +1248,12 @@ func TestRequestLimitsTLSProxyEarlyRejection(t *testing.T) {
 				}
 				uploadWait(t, handlerFinished, time.Second, "proxy handler retained rejected stream")
 				uploadWait(t, readFinished, time.Second, "proxy body Read was not interrupted")
-				closeElapsed := <-closeFinished
+				var closeElapsed time.Duration
+				select {
+				case closeElapsed = <-closeFinished:
+				case <-time.After(time.Second):
+					t.Fatal("underlying request body was not closed")
+				}
 				closeBound := 1500 * time.Millisecond
 				if h2 || complete {
 					closeBound = 500 * time.Millisecond
