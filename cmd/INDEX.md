@@ -31,3 +31,7 @@ This index records the app recipe additions; the CLI manifest describes the comp
 - `add.go`, `mcp.go`, `manifest.go`: thin integration with existing command, tool and manifest registries.
 
 - `preserve_host_test.go`: CLI/MCP overrides, Host policy conflict reuse, registry-backed status/list/access projections.
+
+# Wave-1 integration
+
+- `wave1_integration_test.go`: recipe health/limits overrides, people scope and reuse, combined conflict diagnostics, CLI/MCP projections and doctor canonical Host business probes.

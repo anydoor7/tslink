@@ -20,3 +20,4 @@ This index records the people sharing lifecycle implementation and regression te
 > **边界**: Registry admission and persistence; runtime proxy settings are in ../server/proxy.go.
 
 - `preserve_host_test.go`: strict boolean decoding, legacy defaults, persistence and proxy-only admission.
+- `proxy_host.go`: shared trusted canonical name selection for proxy, health monitor and doctor.

@@ -7,3 +7,4 @@
 - `regression_notifier_test.go`, `regression_file_timeout_test.go`: reviewer process-tree and FIFO regressions (Unix).
 - `regression_junction_windows_test.go`: native Windows directory-junction compatibility fixture.
 - `persistence_test.go`: batched delivery persistence and unchanged-state write counts.
+- `wave1_integration_test.go`: bodyless real HTTP probes under finite/unlimited request limits and invalid-limit refusal before backend I/O.

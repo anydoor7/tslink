@@ -9,6 +9,8 @@ import (
 
 func recipeInputSchema() map[string]any {
 	return objectSchema(map[string]any{
+		"health":              healthInputSchema(),
+		"request_limits":      mcpRequestLimitsInputSchema,
 		"recipe_id":           map[string]any{"type": "string", "description": "Recipe ID from recipe_list."},
 		"name":                map[string]any{"type": "string", "description": "Optional service name override."},
 		"target":              map[string]any{"type": "string", "description": "Optional loopback HTTP(S) target override; use the host port."},
@@ -65,7 +67,7 @@ func init() {
 			"complete":       map[string]any{"type": "boolean"},
 			"warnings":       map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 		}, "schema_version", "listeners", "matches", "complete", "warnings")},
-		mcpToolDefinition{Name: "recipe_list", Description: "List the versioned app recipe catalog including ports, WebSocket requirements, recommended health paths (data only), app-side snippets, safety levels and dated official documentation. Templates remain generic multi-service stacks.", InputSchema: objectSchema(map[string]any{}), OutputSchema: objectSchema(map[string]any{
+		mcpToolDefinition{Name: "recipe_list", Description: "List the versioned app recipe catalog including ports, WebSocket requirements, health path defaults applied to new recipe services, app-side snippets, safety levels and dated official documentation. Templates remain generic multi-service stacks.", InputSchema: objectSchema(map[string]any{}), OutputSchema: objectSchema(map[string]any{
 			"schema_version": map[string]any{"type": "integer"}, "catalog_version": map[string]any{"type": "integer"},
 			"recipes": map[string]any{"type": "array", "items": recipeCatalogSchema()},
 		}, "schema_version", "catalog_version", "recipes")},

@@ -163,3 +163,23 @@ func mcpHealthServices(states []StatusServiceState) []mcpHealthService {
 	}
 	return services
 }
+
+func addHealthFlags(cmd *cobra.Command) {
+	cmd.Flags().String("health-path", "", "HTTP business probe path (default /; proxy only)")
+	cmd.Flags().Int("health-status-min", 200, "Lowest expected HTTP probe status (proxy only)")
+	cmd.Flags().Int("health-status-max", 299, "Highest expected HTTP probe status (proxy only)")
+	cmd.Flags().String("health-body", "", "Expected body substring within first 64 KiB (proxy only; avoid secrets in argv)")
+	cmd.Flags().String("health-timeout", "5s", "Backend probe timeout, 100ms to 30s")
+	cmd.Flags().String("health-interval", "1m", "Backend probe interval, 10s to 1d")
+}
+
+func healthInputSchema() map[string]any {
+	return objectSchema(map[string]any{
+		"path":          map[string]any{"type": "string", "description": "HTTP business path joined to backend base path; default /."},
+		"status_min":    map[string]any{"type": "integer", "minimum": 100, "maximum": 599},
+		"status_max":    map[string]any{"type": "integer", "minimum": 100, "maximum": 599},
+		"body_contains": map[string]any{"type": "string", "maxLength": 4096},
+		"timeout":       map[string]any{"type": "string", "description": "100ms..30s; default 5s."},
+		"interval":      map[string]any{"type": "string", "description": "10s..1d; default 1m."},
+	})
+}

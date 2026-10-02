@@ -21,6 +21,14 @@ HTTP/TCP 在任何 I/O 前执行 registry 的 target 安全校验，被拒绝的
 应用可能需要独立的本地 readiness endpoint。这些检查不能证明远端访问、ACL
 或 Tailscale frontend 的 TLS 可用。
 
+`preserve_host` 服务的探针发送与代理相同的 canonical Host 和
+X-Forwarded-Host。可信 runtime 名称缺失或无效时，在 backend I/O 前返回
+`health_canonical_host_unavailable`。Doctor 只使用已验证、未过期且与注册
+endpoint 匹配的 snapshot 名称。探针校验 request-limit 配置，发送无正文
+GET，符合所有合法请求体上限。客户端上传、header 和 idle 限制不约束 backend
+响应读取；仍使用 health timeout 和 64 KiB 响应上限。新建 recipe 使用 catalog
+健康路径，可显式覆盖；复用已有服务保留原设置。
+
 `--health-body` 检查前 64 KiB 内的子串。超时范围 100ms 到 30s，间隔范围
 10s 到 1d，且不得小于超时。HTTP 路径、状态和正文选项只用于 proxy；TCP
 仍检查连接，file 在打开前检查类型，打开后重新检查对象类型和文件身份。

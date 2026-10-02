@@ -782,6 +782,13 @@
       "short": "Preview an app recipe; --yes registers missing services",
       "flags": [
         {
+          "name": "ack-unlimited-request-body",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Acknowledge removal of the HTTP request body size limit"
+        },
+        {
           "name": "allow",
           "type": "string",
           "scope": "local",
@@ -846,11 +853,63 @@
           ]
         },
         {
+          "name": "health-body",
+          "type": "string",
+          "scope": "local",
+          "usage": "Expected body substring within first 64 KiB (proxy only; avoid secrets in argv)"
+        },
+        {
+          "name": "health-interval",
+          "type": "string",
+          "default": "1m",
+          "scope": "local",
+          "usage": "Backend probe interval, 10s to 1d"
+        },
+        {
+          "name": "health-path",
+          "type": "string",
+          "scope": "local",
+          "usage": "HTTP business probe path (default /; proxy only)"
+        },
+        {
+          "name": "health-status-max",
+          "type": "int",
+          "default": "299",
+          "scope": "local",
+          "usage": "Highest expected HTTP probe status (proxy only)"
+        },
+        {
+          "name": "health-status-min",
+          "type": "int",
+          "default": "200",
+          "scope": "local",
+          "usage": "Lowest expected HTTP probe status (proxy only)"
+        },
+        {
+          "name": "health-timeout",
+          "type": "string",
+          "default": "5s",
+          "scope": "local",
+          "usage": "Backend probe timeout, 100ms to 30s"
+        },
+        {
+          "name": "idle-timeout",
+          "type": "string",
+          "scope": "local",
+          "usage": "HTTP keep-alive idle timeout (default 60s)"
+        },
+        {
           "name": "json",
           "type": "bool",
           "default": "false",
           "scope": "inherited",
           "usage": "Output as JSON"
+        },
+        {
+          "name": "max-request-body",
+          "type": "string",
+          "scope": "local",
+          "usage": "Maximum HTTP upload size (default 32MiB); unlimited requires --ack-unlimited-request-body"
         },
         {
           "name": "name",
@@ -897,6 +956,18 @@
           "requires": [
             "--funnel"
           ]
+        },
+        {
+          "name": "request-header-timeout",
+          "type": "string",
+          "scope": "local",
+          "usage": "HTTP header read timeout (default 10s)"
+        },
+        {
+          "name": "request-read-timeout",
+          "type": "string",
+          "scope": "local",
+          "usage": "Maximum time without body read progress, not total upload time (default 30s)"
         },
         {
           "name": "tags",

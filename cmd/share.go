@@ -499,8 +499,8 @@ retries:
 			if sameShareBackend(existing, spec.Service) {
 				if !sameEffectiveRequestLimits(existing, spec.Service) {
 					return shareRegistration{}, output.ErrConflict(fmt.Sprintf(
-						"cannot reuse service %q for this share target: request limits differ (%s); reconfigure the existing service with tslink add and the listed flags before retrying",
-						existing.Name, requestLimitDifferences(existing, spec.Service)))
+						"cannot reuse service %q for this share target: request limits differ (%s); its exposure posture is %s, but this share requires %s; reconfigure the existing service with tslink add and the listed flags before retrying",
+						existing.Name, requestLimitDifferences(existing, spec.Service), shareExposurePosture(existing), shareExposurePosture(spec.Service)))
 				}
 				return shareRegistration{}, output.ErrConflict(fmt.Sprintf(
 					"cannot reuse service %q for this share target: its exposure posture is %s, but this share requires %s; remove or reconfigure the existing service, or share a different target",

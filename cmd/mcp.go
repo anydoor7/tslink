@@ -222,6 +222,8 @@ var (
 		"services": map[string]any{
 			"type": "array",
 			"items": objectSchema(map[string]any{
+				"request_limits":   mcpRequestLimitsOutputSchema,
+				"warnings":         mcpWarningArraySchema,
 				"health":           nestedObjectSchema("App health observation without response bodies."),
 				"node_key":         nestedObjectSchema("Reported node-key expiry; an absent deadline is unknown."),
 				"name":             map[string]any{"type": "string"},
@@ -252,9 +254,17 @@ var (
 		"node_state_kept_reason": map[string]any{"type": "string", "description": "Why the service's local node state was kept when no other field says so: some of its recorded tailnet nodes were neither deleted nor confirmed absent."},
 	}, "name", "removed", "device_cleaned", "device_cleanup_skipped")
 	mcpStatusOutputSchema = objectSchema(map[string]any{
-		"credentials":              nestedObjectSchema("Value-free stored expiry metadata and early warnings; assumed expiry remains identified."),
-		"alerts":                   nestedObjectSchema("Recent durable alert events; destination is redacted."),
-		"services":                 map[string]any{"type": "array", "items": map[string]any{"type": "object", "description": "App health observations, node-key expiry warnings and Host policy.", "properties": map[string]any{"preserve_host": map[string]any{"type": "boolean", "default": false, "description": "Proxy only: forward this node's trusted canonical external name in Host and X-Forwarded-Host; fail closed if unavailable. Default false keeps upstream Host rewriting."}}}},
+		"credentials": nestedObjectSchema("Value-free stored expiry metadata and early warnings; assumed expiry remains identified."),
+		"alerts":      nestedObjectSchema("Recent durable alert events; destination is redacted."),
+		"services": map[string]any{"type": "array", "items": objectSchema(map[string]any{
+			"name":           map[string]any{"type": "string"},
+			"status":         map[string]any{"type": "string"},
+			"health":         nestedObjectSchema("App health observation without response bodies."),
+			"node_key":       nestedObjectSchema("Reported node-key expiry."),
+			"preserve_host":  map[string]any{"type": "boolean", "default": false, "description": "Configured canonical Host policy; absent when registry policy is unknown."},
+			"request_limits": mcpRequestLimitsOutputSchema,
+			"warnings":       mcpWarningArraySchema,
+		}, "name", "status", "health", "node_key")},
 		"supervision":              nestedObjectSchema("Verified manager, autostart, restart policy, and diagnostic evidence."),
 		"authenticated":            map[string]any{"type": "boolean", "description": "True when at least one service node is authorized on the tailnet, the same fact as node_authorized and the same meaning as in tslink status --json; a stored credential alone (credential_stored) never makes it true."},
 		"credential_stored":        map[string]any{"type": "boolean"},
@@ -514,14 +524,7 @@ var mcpToolDefinitions = []mcpToolDefinition{
 		Name:        "add",
 		Description: "Setting funnel true on this tool publishes the service to the entire public internet, so ask the user before doing that; otherwise it writes a registry entry for a proxy, file, or TCP service reachable on the user's private Tailscale network. Without allow, every member of the user's tailnet can reach an HTTP service. Use this instead of share when the user wants a named, configured service rather than a one-shot share; it installs the background service when absent unless no_daemon_install is true. Installation announcements go to stderr. After setup it returns current URL/enrollment evidence without an additional URL wait; use url to poll pending endpoints.",
 		InputSchema: objectSchema(map[string]any{
-			"health": objectSchema(map[string]any{
-				"path":          map[string]any{"type": "string", "description": "HTTP business path joined to backend base path; default /."},
-				"status_min":    map[string]any{"type": "integer", "minimum": 100, "maximum": 599},
-				"status_max":    map[string]any{"type": "integer", "minimum": 100, "maximum": 599},
-				"body_contains": map[string]any{"type": "string", "maxLength": 4096},
-				"timeout":       map[string]any{"type": "string", "description": "100ms..30s; default 5s."},
-				"interval":      map[string]any{"type": "string", "description": "10s..1d; default 1m."},
-			}),
+			"health":            healthInputSchema(),
 			"request_limits":    mcpRequestLimitsInputSchema,
 			"name":              map[string]any{"type": "string", "pattern": `^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`, "maxLength": 63, "description": "Registry service name (DNS label). An existing entry with this name is replaced."},
 			"type":              map[string]any{"type": "string", "enum": serviceTypeValues(), "description": "proxy forwards HTTP to target; file serves the directory dir; tcp forwards a raw stream to target."},

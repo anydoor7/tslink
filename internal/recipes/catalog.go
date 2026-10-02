@@ -1,5 +1,5 @@
 // Package recipes contains app advice and credential-free loopback discovery.
-// HealthPath is recommendation data only; this package does not monitor health.
+// HealthPath supplies recipe registration defaults; monitoring belongs to health.
 package recipes
 
 import (

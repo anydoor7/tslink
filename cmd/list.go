@@ -70,20 +70,22 @@ const listTailnetCredentialMessage = "listing tailnet devices requires a stored 
 // URL is null until runtime.json contains exact evidence for the current daemon
 // and registry fingerprint.
 type ListServiceSummary struct {
-	Health          health.State            `json:"health"`
-	NodeKey         health.Expiry           `json:"node_key"`
-	Name            string                  `json:"name"`
-	Type            string                  `json:"type"`
-	URL             *string                 `json:"url"`
-	URLPending      bool                    `json:"url_pending"`
-	State           string                  `json:"state"`
-	PreserveHost    bool                    `json:"preserve_host"`
-	FunnelRequested bool                    `json:"funnel_requested"`
-	FunnelActive    bool                    `json:"funnel_active"`
-	FunnelState     string                  `json:"funnel_state"`
-	FunnelExpiresAt *time.Time              `json:"funnel_expires_at,omitempty"`
-	FunnelRemaining *string                 `json:"funnel_remaining,omitempty"`
-	Error           *tsruntime.ServiceError `json:"error,omitempty"`
+	RequestLimits   *registry.EffectiveRequestLimits `json:"request_limits,omitempty"`
+	Warnings        []inspect.WarningView            `json:"warnings,omitempty"`
+	Health          health.State                     `json:"health"`
+	NodeKey         health.Expiry                    `json:"node_key"`
+	Name            string                           `json:"name"`
+	Type            string                           `json:"type"`
+	URL             *string                          `json:"url"`
+	URLPending      bool                             `json:"url_pending"`
+	State           string                           `json:"state"`
+	PreserveHost    bool                             `json:"preserve_host"`
+	FunnelRequested bool                             `json:"funnel_requested"`
+	FunnelActive    bool                             `json:"funnel_active"`
+	FunnelState     string                           `json:"funnel_state"`
+	FunnelExpiresAt *time.Time                       `json:"funnel_expires_at,omitempty"`
+	FunnelRemaining *string                          `json:"funnel_remaining,omitempty"`
+	Error           *tsruntime.ServiceError          `json:"error,omitempty"`
 }
 
 // ListResult holds the result for JSON output.
@@ -197,7 +199,9 @@ func filterStatusServices(result StatusURLsResult, opts listOptions) ([]StatusSe
 
 func listSummary(svc StatusServiceView) ListServiceSummary {
 	summary := ListServiceSummary{
-		Health: svc.Health, NodeKey: svc.NodeKey,
+		RequestLimits: svc.RequestLimits,
+		Warnings:      append([]inspect.WarningView(nil), svc.Warnings...),
+		Health:        svc.Health, NodeKey: svc.NodeKey,
 		Name:            svc.Name,
 		Type:            svc.Type,
 		URLPending:      true,

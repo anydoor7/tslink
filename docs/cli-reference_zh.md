@@ -119,7 +119,7 @@ HTTP/TCP 探针执行 registry 的 target 安全校验。节点到期独立于 `
 
 Recipes 支持 `--allow`、`--tags`、`--ephemeral`、`--control-url`、已有 Funnel 确认/TTL/自动配置标志及 `--no-daemon-install`。`add --recipe` 拒绝 `--dir`、`--tcp`、`--wait`；应用后用 `tslink url` 轮询。无 `--recipe` 的普通 `add` 保留替换行为，拒绝 recipe 专用标志。
 
-计划/应用 JSON data 包含 `recipe`、`requested`、`service`、`action`、`dry_run`、`applied`、`warnings`、`next`。只有此次创建服务才返回 `applied=true`；`skip_existing` 展示保留的实际配置。探测包含 `listeners`、`matches`、`complete`、`warnings`，部分扫描返回 `complete=false`。健康路径只是建议数据。
+计划/应用 JSON data 包含 `recipe`、`requested`、`service`、`action`、`dry_run`、`applied`、`warnings`、`next`。只有此次创建服务才返回 `applied=true`；`skip_existing` 展示保留的实际配置。探测包含 `listeners`、`matches`、`complete`、`warnings`，部分扫描返回 `complete=false`。新建 recipe 服务默认使用 catalog 健康路径；`apps share`、`add --recipe` 支持 `--health-*` 与 request-limit 覆盖，MCP `recipe_plan`/`recipe_apply` 支持 `health`、`request_limits`。复用保留已有配置，包括 people scope 和授权。
 
 MCP 工具为 `recipe_list`、只读 `apps_detect`、`recipe_plan`、`recipe_apply`；计划/应用接收 `recipe_id`、可选 `name`/`target`、字符串 `allow`/`tags` 及上述 flag 的 snake_case 参数。先 plan 后 apply。已有通用 `template` 命令及 `template_list/plan/apply` 工具继续工作。见[应用设置与限制](apps_zh.md)。
 

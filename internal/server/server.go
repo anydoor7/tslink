@@ -1889,7 +1889,7 @@ func (s *Server) writeRuntimeSnapshotLocked(registryFingerprint string, complete
 	var snapshot runtimesnapshot.Snapshot
 	for i := range states {
 		states[i].NodeKey = nodeKeyExpiry(nil, s.daemonStartedAt)
-		if observed, ok := s.healthStates[states[i].Service.Name]; ok && observed.Identity == healthIdentity(states[i].Service) {
+		if observed, ok := s.healthStates[states[i].Service.Name]; ok && observed.Identity == healthProbeIdentity(states[i].Service, registry.CanonicalProxyHost(states[i].CertDomains, states[i].RuntimeHost)) {
 			states[i].Health = observed.Health
 			if node := s.nodes[states[i].Service.Name]; node != nil && node == observed.Node {
 				states[i].NodeKey = observed.NodeKey
@@ -2244,12 +2244,7 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service, prov
 		h, err2 := NewProxyHandlerWithOptions(svc.Target, identity, ProxyOptions{
 			PreserveHost: svc.PreserveHost,
 			CanonicalHost: func() string {
-				// Match the owner-facing HTTPS URL in the runtime snapshot. This
-				// also chooses the public certificate name for a Funnel listener.
-				if domains := tsnetSrv.CertDomains(); len(domains) > 0 {
-					return domains[0]
-				}
-				return runtimeHost
+				return canonicalHostFor(tsnetSrv, runtimeHost)
 			},
 		})
 		if err2 != nil {

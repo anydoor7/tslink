@@ -36,9 +36,10 @@ type serviceHealth struct {
 	Stale       bool // Last freshness projection announced to event clients.
 }
 type healthTarget struct {
-	Service registry.Service
-	Node    *ServiceNode
-	Failed  bool
+	CanonicalHost string
+	Service       registry.Service
+	Node          *ServiceNode
+	Failed        bool
 }
 
 func healthIdentity(svc registry.Service) string {
@@ -48,9 +49,19 @@ func healthIdentity(svc registry.Service) string {
 		Type, Target, Path, File string
 		Health                   *registry.HealthConfig
 		CreatedAt                time.Time
-	}{svc.Type, svc.Target, svc.Path, svc.File, svc.Health, svc.CreatedAt})
+		PreserveHost             bool
+		RequestLimits            *registry.EffectiveRequestLimits
+	}{svc.Type, svc.Target, svc.Path, svc.File, svc.Health, svc.CreatedAt, svc.PreserveHost, svc.EffectiveRequestLimits()})
 	h := sha256.Sum256(b)
 	return hex.EncodeToString(h[:])
+}
+
+func healthProbeIdentity(svc registry.Service, host string) string {
+	identity := healthIdentity(svc)
+	if svc.PreserveHost {
+		identity += ":" + host
+	}
+	return identity
 }
 
 func nodeKeyExpiry(st *ipnstate.Status, now time.Time) health.Expiry {
@@ -141,7 +152,7 @@ func (s *Server) healthCycle(ctx context.Context, r *health.Recorder, now time.T
 	var targets []healthTarget
 	for _, node := range s.nodes {
 		if health.TargetSafe(node.service) {
-			targets = append(targets, healthTarget{Service: node.service, Node: node})
+			targets = append(targets, healthTarget{Service: node.service, Node: node, CanonicalHost: canonicalHostFor(node.tsnetSrv, node.runtimeHost)})
 		}
 	}
 	for name, failure := range s.serviceFailures {
@@ -161,7 +172,7 @@ func (s *Server) healthCycle(ctx context.Context, r *health.Recorder, now time.T
 	results := make(chan result, 2*len(targets))
 	jobs := 0
 	for _, target := range targets {
-		identity := healthIdentity(target.Service)
+		identity := healthProbeIdentity(target.Service, target.CanonicalHost)
 		previous := r.Previous(target.Service.Name, identity)
 		cfg := registry.HealthConfig{}
 		if target.Service.Health != nil {
@@ -178,7 +189,9 @@ func (s *Server) healthCycle(ctx context.Context, r *health.Recorder, now time.T
 			jobs++
 			go func() {
 				// Enrollment/policy failures still get backend observations.
-				code, attempted := boundedHealthRead(ctx, probeSlots, target.Service.Name, timeout, "health_timeout", func(ctx context.Context) string { return probe(ctx, target.Service) })
+				code, attempted := boundedHealthRead(ctx, probeSlots, target.Service.Name, timeout, "health_timeout", func(ctx context.Context) string {
+					return probe(health.WithCanonicalHost(ctx, target.CanonicalHost), target.Service)
+				})
 				var h *health.State
 				if attempted {
 					value := health.Result(previous, target.Service.Type, code, now)
@@ -244,13 +257,13 @@ func (s *Server) healthCycle(ctx context.Context, r *health.Recorder, now time.T
 			s.mu.Lock()
 			name := result.target.Service.Name
 			current, running := s.nodes[name]
-			if result.target.Node != nil && (!running || current != result.target.Node || healthIdentity(current.service) != result.identity) {
+			if result.target.Node != nil && (!running || current != result.target.Node || healthProbeIdentity(current.service, canonicalHostFor(current.tsnetSrv, current.runtimeHost)) != result.identity) {
 				s.mu.Unlock()
 				continue
 			}
 			if result.target.Failed {
 				failure, failed := s.serviceFailures[name]
-				if running || !failed || healthIdentity(failure.Service) != result.identity {
+				if running || !failed || healthProbeIdentity(failure.Service, "") != result.identity {
 					s.mu.Unlock()
 					continue
 				}
@@ -292,7 +305,7 @@ func (s *Server) healthCycle(ctx context.Context, r *health.Recorder, now time.T
 		for _, target := range targets {
 			name := target.Service.Name
 			observed, ok := s.healthStates[name]
-			if !ok || observed.Identity != healthIdentity(target.Service) || observed.Health.LastChecked == nil {
+			if !ok || observed.Identity != healthProbeIdentity(target.Service, target.CanonicalHost) || observed.Health.LastChecked == nil {
 				continue
 			}
 			cfg := registry.HealthConfig{}

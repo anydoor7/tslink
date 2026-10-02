@@ -170,6 +170,7 @@ type doctorOptions struct {
 }
 
 type DoctorResult struct {
+	canonicalHosts  map[string]string
 	NodeKeys        map[string]health.Expiry    `json:"node_keys"`
 	Credentials     StatusCredentials           `json:"credentials"`
 	Alerts          health.AlertsView           `json:"alerts"`
@@ -365,6 +366,14 @@ func buildDoctorResult(opts doctorOptions) DoctorResult {
 		evidence["valid_services"] = strings.Join(validNames, ", ")
 		result.addFinding(doctorRegistryValidationCode(issue.Service, issue.Err), issue.Name, "registry", issue.Error(), evidence)
 	}
+	// Resolve verified receiving-node names before HTTP business probes.
+	pendingEnrollment := diagnosePendingEnrollment(&result)
+
+	completedEnrollment := false
+	if reg != nil && (serviceCount > 0 || result.Daemon.Running) && result.Paths.RuntimeSnapshot != "" && fingerprint != "" {
+		suppressExpectedMissing := credentialState.CredentialFree && (pendingEnrollment || !result.Daemon.Running)
+		completedEnrollment = diagnoseRuntimeSnapshot(&result, fingerprint, suppressExpectedMissing)
+	}
 	hasFunnel := false
 	if reg != nil {
 		for _, svc := range reg.Services {
@@ -389,13 +398,6 @@ func buildDoctorResult(opts doctorOptions) DoctorResult {
 		)
 	}
 
-	pendingEnrollment := diagnosePendingEnrollment(&result)
-
-	completedEnrollment := false
-	if reg != nil && (serviceCount > 0 || result.Daemon.Running) && result.Paths.RuntimeSnapshot != "" && fingerprint != "" {
-		suppressExpectedMissing := credentialState.CredentialFree && (pendingEnrollment || !result.Daemon.Running)
-		completedEnrollment = diagnoseRuntimeSnapshot(&result, fingerprint, suppressExpectedMissing)
-	}
 	diagnoseCredentialTier1(&result, credentialState, pendingEnrollment, completedEnrollment)
 	if result.Alerts.MonitorError != "" {
 		result.addFinding(inspect.WarningCodeHealthMonitorSaturated, "", "health_monitor", "Health monitor slots are stuck; some checks were not attempted. Monitoring recovers when reads finish.", nil)
@@ -838,6 +840,13 @@ func diagnoseRuntimeSnapshot(result *DoctorResult, fingerprint string, suppressM
 				}
 			}
 		}
+		result.canonicalHosts = map[string]string{}
+		for _, svc := range snapshot.Services {
+			if runtimeServiceRunning(svc) && svc.Endpoint.State == inspect.EndpointStateExact {
+				result.canonicalHosts[svc.Name] = registry.CanonicalProxyHost(svc.CertDomains, svc.Endpoint.Host)
+			}
+		}
+
 		if result.NodeKeys == nil {
 			result.NodeKeys = map[string]health.Expiry{}
 		}
@@ -988,7 +997,7 @@ func diagnoseNetworkTarget(result *DoctorResult, svc registry.Service, opts doct
 		return
 	}
 	if svc.Type == registry.TypeProxy {
-		if code := doctorHTTPProbeFn(context.Background(), svc); code != "" {
+		if code := doctorHTTPProbeFn(health.WithCanonicalHost(context.Background(), result.canonicalHosts[svc.Name]), svc); code != "" {
 			result.addFinding(inspect.WarningCodeAppProbeFailed, svc.Name, "app_probe", "", map[string]string{"error_code": code})
 		}
 	}

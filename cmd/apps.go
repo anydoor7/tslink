@@ -21,20 +21,22 @@ var appsDetectFn = recipes.Detect
 var recipeAddIfMissingFn = registry.AddIfMissing
 
 type recipeRequest struct {
-	RecipeID          string  `json:"recipe_id"`
-	Name              string  `json:"name,omitempty"`
-	Target            string  `json:"target,omitempty"`
-	PreserveHost      *bool   `json:"preserve_host,omitempty"`
-	Allow             string  `json:"allow,omitempty"`
-	Tags              string  `json:"tags,omitempty"`
-	Ephemeral         bool    `json:"ephemeral,omitempty"`
-	Funnel            bool    `json:"funnel,omitempty"`
-	PublicAck         bool    `json:"public_ack,omitempty"`
-	FunnelTTL         *string `json:"funnel_ttl,omitempty"`
-	NoAutoProvision   bool    `json:"no_auto_provision,omitempty"`
-	NoDaemonInstall   bool    `json:"no_daemon_install,omitempty"`
-	ControlURL        string  `json:"control_url,omitempty"`
-	ForceUnsafePublic bool    `json:"force_unsafe_public,omitempty"`
+	Health            *registry.HealthConfig  `json:"health,omitempty"`
+	RequestLimits     *registry.RequestLimits `json:"request_limits,omitempty"`
+	RecipeID          string                  `json:"recipe_id"`
+	Name              string                  `json:"name,omitempty"`
+	Target            string                  `json:"target,omitempty"`
+	PreserveHost      *bool                   `json:"preserve_host,omitempty"`
+	Allow             string                  `json:"allow,omitempty"`
+	Tags              string                  `json:"tags,omitempty"`
+	Ephemeral         bool                    `json:"ephemeral,omitempty"`
+	Funnel            bool                    `json:"funnel,omitempty"`
+	PublicAck         bool                    `json:"public_ack,omitempty"`
+	FunnelTTL         *string                 `json:"funnel_ttl,omitempty"`
+	NoAutoProvision   bool                    `json:"no_auto_provision,omitempty"`
+	NoDaemonInstall   bool                    `json:"no_daemon_install,omitempty"`
+	ControlURL        string                  `json:"control_url,omitempty"`
+	ForceUnsafePublic bool                    `json:"force_unsafe_public,omitempty"`
 }
 type RecipeResult struct {
 	SchemaVersion  int                 `json:"schema_version"`
@@ -76,7 +78,14 @@ func recipeService(req recipeRequest) (recipes.Recipe, registry.Service, error) 
 	if req.PreserveHost != nil {
 		preserveHost = *req.PreserveHost
 	}
-	p := AddParams{Name: name, Proxy: target, PreserveHost: preserveHost, Allow: req.Allow, Tags: req.Tags, Ephemeral: req.Ephemeral, Funnel: req.Funnel, Public: req.PublicAck, FunnelTTL: ttl, FunnelTTLSet: req.FunnelTTL != nil, NoAutoProvision: req.NoAutoProvision, ControlURL: req.ControlURL}
+	health := registry.HealthConfig{Path: r.HealthPath}
+	if req.Health != nil {
+		health = *req.Health
+		if health.Path == "" {
+			health.Path = r.HealthPath
+		}
+	}
+	p := AddParams{Health: &health, RequestLimits: req.RequestLimits, Name: name, Proxy: target, PreserveHost: preserveHost, Allow: req.Allow, Tags: req.Tags, Ephemeral: req.Ephemeral, Funnel: req.Funnel, Public: req.PublicAck, FunnelTTL: ttl, FunnelTTLSet: req.FunnelTTL != nil, NoAutoProvision: req.NoAutoProvision, ControlURL: req.ControlURL}
 	svc, err := buildService(p)
 	if err != nil {
 		return r, svc, err
@@ -175,7 +184,7 @@ func detectApps(ctx context.Context, regPath string) (recipes.Detection, error) 
 func renderRecipe(out io.Writer, result RecipeResult) {
 	fmt.Fprintf(out, "%s: %s -> %s (%s)\n", result.Recipe.DisplayName, result.Service.Name, result.Service.Backend.Display, result.Action)
 	fmt.Fprintf(out, "Use canonical external Host: %t (recipe default: %t).\n", result.Service.PreserveHost, result.Recipe.PreserveHost)
-	fmt.Fprintf(out, "Ports: %v. %s\nWebSockets: %t; recommended health path: %s (data only).\n", result.Recipe.DefaultPorts, result.Recipe.PortNote, result.Recipe.WebSockets, result.Recipe.HealthPath)
+	fmt.Fprintf(out, "Ports: %v. %s\nWebSockets: %t; recipe health path default: %s (new services; existing configuration is kept).\n", result.Recipe.DefaultPorts, result.Recipe.PortNote, result.Recipe.WebSockets, result.Recipe.HealthPath)
 	for _, w := range result.Warnings {
 		fmt.Fprintf(out, "Warning: %s\n", w)
 	}
@@ -202,7 +211,7 @@ func recipeRequestFromCLI(cmd *cobra.Command, id, name string) recipeRequest {
 		value := b("preserve-host")
 		preserveHost = &value
 	}
-	return recipeRequest{PreserveHost: preserveHost, RecipeID: id, Name: name, Target: str("proxy"), Allow: str("allow"), Tags: str("tags"), Ephemeral: b("ephemeral"), Funnel: b("funnel"), PublicAck: b("public"), FunnelTTL: ttl, NoAutoProvision: b("no-auto-provision"), NoDaemonInstall: b("no-daemon-install"), ControlURL: str("control-url"), ForceUnsafePublic: b("force-unsafe-public")}
+	return recipeRequest{Health: healthConfigFromFlags(cmd), RequestLimits: requestLimitsFromFlags(cmd), PreserveHost: preserveHost, RecipeID: id, Name: name, Target: str("proxy"), Allow: str("allow"), Tags: str("tags"), Ephemeral: b("ephemeral"), Funnel: b("funnel"), PublicAck: b("public"), FunnelTTL: ttl, NoAutoProvision: b("no-auto-provision"), NoDaemonInstall: b("no-daemon-install"), ControlURL: str("control-url"), ForceUnsafePublic: b("force-unsafe-public")}
 }
 func runRecipeCLI(cmd *cobra.Command, req recipeRequest, command string) error {
 	dry, _ := cmd.Flags().GetBool("dry-run")
@@ -262,6 +271,8 @@ func init() {
 		name, _ := cmd.Flags().GetString("name")
 		return runRecipeCLI(cmd, recipeRequestFromCLI(cmd, args[0], name), "apps share")
 	}}
+	addHealthFlags(share)
+	addRequestLimitFlags(share)
 	share.Flags().String("name", "", "Override the recommended service name")
 	share.Flags().Bool("preserve-host", false, "Forward this node's canonical external Host (proxy only; recipes choose their default)")
 	share.Flags().String("proxy", "", "Override the loopback HTTP(S) target (host port, not container port)")

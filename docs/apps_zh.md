@@ -21,11 +21,11 @@ Recipe catalog 版本 2，官方文档核对日期为 **2026-10-02**。区分宿
 
 私有访问仍受 tailnet policy 和 `--allow` 影响。Funnel 面向整个互联网：验证应用自身认证后才考虑 `--funnel --public`。`never_public` recipe 会拒绝 Funnel；只有所有者有意传入 **`--force-unsafe-public`** 才能覆盖，可能向所有人暴露主机控制、代码执行、GPU 消耗或私密数据。覆盖不能建立应用认证。`app_login` 也不表示关闭登录或未完成初始化的实例可安全公开。
 
-下方健康路径仅为 catalog 数据，供后续监控使用，本功能不实现健康探针。登录页有响应只能说明 HTTP 可用。TSLink 当前请求体限制为 32 MiB、请求读取超时 30 秒，Immich、Nextcloud、Paperless 和聊天界面的大文件或慢速上传可能失败。Recipes 各自选择下方显示的 Host 策略：大多数转发节点自身的外部 canonical Host；Ollama、Syncthing 为满足本地 Host 防护继续改写；generic-web 未核对前默认改写。普通 add/share 和已有服务、templates 仍默认改写。用 `--preserve-host` 或 `--preserve-host=false` 覆盖 recipe（MCP 为显式布尔 `preserve_host`），省略则使用 recipe 默认值。Preserve 模式的 Host 和 X-Forwarded-Host 均使用 canonical 名称；两种模式均从真实请求重新生成 X-Forwarded-Proto/For，忽略伪造的 forwarded 头；Origin 不变。Immich 和 Uptime Kuma 直接连接原生 HTTP 端口。代理支持 WebSocket upgrade，分享前仍需验证真实应用。
+新建 recipe 服务会把 catalog 健康路径设为 daemon 探针默认值。可通过 `--health-path` 和其他 `--health-*` 参数覆盖（MCP：`health`）；复用已有服务保留原 health 配置。登录页有响应只能说明 HTTP 可用。TSLink 默认请求体限制为 32 MiB、请求体无进展超时 30 秒，Immich、Nextcloud、Paperless 和聊天界面的大文件或慢速上传可能失败。可用 request-limit 参数（MCP：`request_limits`）设置适当的有限上限；recipe 不自动启用无限上传。Recipes 各自选择下方显示的 Host 策略：大多数转发节点自身的外部 canonical Host；Ollama、Syncthing 为满足本地 Host 防护继续改写；generic-web 未核对前默认改写。普通 add/share 和已有服务、templates 仍默认改写。用 `--preserve-host` 或 `--preserve-host=false` 覆盖 recipe（MCP 为显式布尔 `preserve_host`），省略则使用 recipe 默认值。Preserve 模式的 Host 和 X-Forwarded-Host 均使用 canonical 名称；两种模式均从真实请求重新生成 X-Forwarded-Proto/For，忽略伪造的 forwarded 头；Origin 不变。Immich 和 Uptime Kuma 直接连接原生 HTTP 端口。代理支持 WebSocket upgrade，分享前仍需验证真实应用。
 
 `template list/show/apply` 继续工作：`local-web`、`dev-suite`、`local-ai-suite` 是通用多服务组合，没有 recipe 的安全检查或应用配置建议。需要应用指导时使用 recipe，AI 模板中的 Ollama 也适用。
 
-Agent 可依次调用 `recipe_list`、`apps_detect`、`recipe_plan`、`recipe_apply`；CLI 保留 `schema_version=1` envelope。计划和应用使用相同的 `recipe_id` 与选项。Recipe 注册与接收人的邀请/授权是不同操作。
+Agent 可依次调用 `recipe_list`、`apps_detect`、`recipe_plan`、`recipe_apply`；CLI 保留 `schema_version=1` envelope。计划和应用使用相同的 `recipe_id` 与选项。注册后，可用 `tslink people add alice@example.com --apps jellyfin --for 7d` 授权已有 tailnet 成员。Recipe 服务使用与其他私有 HTTP 代理相同的 people 授权、请求时到期校验和撤权规则；邀请仍是独立操作。参见[人员分享](people_zh.md)。
 
 ## Home Assistant
 

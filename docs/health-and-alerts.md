@@ -25,6 +25,16 @@ app redirects. An endpoint requiring caller authentication may need a separate
 local readiness path. This observation does not prove remote access, ACLs or
 TLS on the Tailscale frontend.
 
+For `preserve_host` services, probes send the same canonical Host and
+X-Forwarded-Host as the proxy. Missing or invalid trusted runtime names produce
+`health_canonical_host_unavailable` before backend I/O. Doctor obtains names
+only from a verified, current snapshot matching the registered endpoint.
+Probes validate request-limit configuration and send bodyless GETs, which fit
+every valid request-body bound. Client upload/header/idle limits do not limit
+backend response reads; health timeout and the 64 KiB response cap still apply.
+New recipe registrations default to their catalog health path; explicit health
+options override it, and recipe reuse preserves the existing settings.
+
 `--health-body` matches a substring in the first 64 KiB. Timeout must be
 100ms through 30s; interval must be 10s through 1d and at least the timeout.
 HTTP path/status/body options are valid only for proxy services. TCP services

@@ -32,6 +32,15 @@ type State struct {
 
 func Unchecked(kind string) State { return State{State: Unknown, Kind: kind} }
 
+type canonicalHostKey struct{}
+
+// WithCanonicalHost supplies trusted receiving-node metadata for a backend
+// probe. Preserve-host services refuse a missing or invalid name. The scheduler
+// and doctor obtain it from the node or verified runtime evidence, never callers.
+func WithCanonicalHost(ctx context.Context, host string) context.Context {
+	return context.WithValue(ctx, canonicalHostKey{}, host)
+}
+
 // Probe returns only stable error codes. No URL, path, transport error or body
 // is returned, including on malformed configuration or a response read failure.
 func Probe(ctx context.Context, svc registry.Service) string {
@@ -40,6 +49,12 @@ func Probe(ctx context.Context, svc registry.Service) string {
 	}
 	if !TargetSafe(svc) {
 		return "health_target_invalid"
+	}
+	if svc.RequestLimits != nil && svc.Type == registry.TypeTCP {
+		return "health_request_limits_invalid"
+	}
+	if _, err := registry.ResolveRequestLimits(svc.RequestLimits); err != nil {
+		return "health_request_limits_invalid"
 	}
 	c := registry.HealthConfig{}
 	if svc.Health != nil {
@@ -63,6 +78,19 @@ func Probe(ctx context.Context, svc registry.Service) string {
 		pr := httputil.ProxyRequest{In: in, Out: out}
 		pr.SetURL(target)
 		out.URL.User = nil // ReverseProxy does not synthesize Basic Auth.
+		if svc.PreserveHost {
+			host, _ := ctx.Value(canonicalHostKey{}).(string)
+			host = registry.CanonicalProxyHost(nil, host)
+			if host == "" {
+				return "health_canonical_host_unavailable"
+			}
+			out.Host = host
+			out.Header.Set("X-Forwarded-Host", host)
+			out.Header.Set("X-Forwarded-Proto", "https")
+		}
+		// This bodyless GET fits every valid request-body limit. F8's read,
+		// header and idle limits bound incoming client data, not this backend's
+		// response; health.timeout and the 64 KiB response cap still apply.
 		transport := &http.Transport{DisableCompression: true}
 		defer transport.CloseIdleConnections()
 		client := &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}

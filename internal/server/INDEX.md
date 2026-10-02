@@ -29,3 +29,5 @@ This index covers the recipe integration tests. The repository AGENTS.md describ
 
 - `host_authority_test.go`: reviewer-derived real TLS, HTTP/1 absolute-form and HTTP/2 cross-node virtual-host regressions.
 - `canonical_host_test.go`: trusted runtime name selection, normalization, missing-name refusal and recovery.
+
+- `wave1_integration_test.go`: real proxy and health Host agreement, rename/refusal/recovery, snapshot health, request limits and immediate people revocation.

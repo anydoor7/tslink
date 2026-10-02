@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/anydoor7/tslink/internal/registry"
 	"tailscale.com/client/local"
 )
 
@@ -110,21 +111,15 @@ type canonicalProxyHostKey struct{}
 // A canonical authority is a DNS name without a port, normalized to lowercase
 // with no terminal root dot. Invalid runtime metadata fails closed as missing.
 func normalizeCanonicalProxyHost(host string) string {
-	host = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(host), "."))
-	if len(host) > 253 || !strings.Contains(host, ".") || net.ParseIP(host) != nil {
-		return ""
+	return registry.CanonicalProxyHost(nil, host)
+}
+
+func canonicalHostFor(node tsnetServer, runtimeHost string) string {
+	var domains []string
+	if node != nil {
+		domains = node.CertDomains()
 	}
-	for label := range strings.SplitSeq(host, ".") {
-		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
-			return ""
-		}
-		for _, c := range label {
-			if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-') {
-				return ""
-			}
-		}
-	}
-	return host
+	return registry.CanonicalProxyHost(domains, runtimeHost)
 }
 
 func isTimeout(err error) bool {
