@@ -32,7 +32,7 @@ func stubStopProcessLookupError(t *testing.T) {
 	t.Cleanup(func() { findProcessForStop = orig })
 }
 
-func TestStopDaemonWindowsReportsSuccessAfterTermination(t *testing.T) {
+func TestStopDaemonWindowsReportsSuccessAfterGracefulShutdown(t *testing.T) {
 	cmd := exec.Command(os.Args[0])
 	cmd.Env = append(os.Environ(), "TSLINK_HELPER_PROCESS=1")
 	if err := cmd.Start(); err != nil {
@@ -64,9 +64,8 @@ func TestStopDaemonWindowsReportsSuccessAfterTermination(t *testing.T) {
 
 	select {
 	case waitErr := <-done:
-		var exitErr *exec.ExitError
-		if waitErr != nil && !errors.As(waitErr, &exitErr) {
-			t.Fatalf("Wait() error = %v", waitErr)
+		if waitErr != nil {
+			t.Fatalf("graceful helper did not exit successfully: %v", waitErr)
 		}
 	case <-time.After(windowsStopTimeout):
 		t.Fatal("terminated helper process did not exit")

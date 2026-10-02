@@ -334,7 +334,7 @@ func buildDoctorResult(opts doctorOptions) DoctorResult {
 		result.addFinding(inspect.WarningCodeDaemonUnsupervised, "", "daemon", "Registered services have no verified supervisor/autostart; run 'tslink install'. "+result.Supervision.Detail, nil)
 	}
 	if serviceCount > 0 && result.Supervision.Manager == "windows-startup" && result.Supervision.Autostart && !result.Supervision.RestartOnExit {
-		result.addFinding(inspect.WarningCodeDaemonRestartUnavailable, "", "daemon", "Windows Startup starts TSLink at sign-in but does not restart it after a crash.", nil)
+		result.addFinding(inspect.WarningCodeDaemonRestartUnavailable, "", "daemon", "Windows Startup starts TSLink at sign-in but does not restart it after a crash. Stop the daemon and run 'tslink install' to migrate to Task Scheduler when available.", nil)
 	}
 	invalidServices := make(map[string]bool, len(registryIssues))
 	for _, issue := range registryIssues {

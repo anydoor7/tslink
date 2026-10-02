@@ -71,7 +71,7 @@ process is `manual`; an absent process without verified management is `none`.
 `autostart_scope` answers what `autostart` alone cannot for a per-user supervisor:
 `boot` returns with the machine while nobody is logged in, `login` waits for this
 user to sign in, and `unknown` means the difference could not be determined. A macOS
-LaunchAgent and a Windows Startup entry are always `login`. A systemd user unit is
+LaunchAgent, Windows scheduled task and Windows Startup entry are always `login`. A systemd user unit is
 `boot` only with lingering enabled; without it, `status` reports `login` and names
 `loginctl enable-linger "$USER"`. TSLink reports lingering and never changes it,
 because it applies to every service the user owns. Doctor treats registered
@@ -87,9 +87,64 @@ node to enroll.
 
 On macOS this installs a LaunchAgent that starts at user login; on Linux it enables
 a systemd user unit. For Linux boot before login and survival after logout, run
-`loginctl enable-linger "$USER"` once. Windows Startup is started immediately by
-automatic setup and on later sign-ins; it has no crash restart or live PID ownership
+`loginctl enable-linger "$USER"` once. Windows Task Scheduler starts immediately and at later sign-ins, with a
+60-second crash retry delay (up to 255 attempts), but requires the user to remain
+signed in. `--startup` is a fallback without crash restart or live PID ownership
 proof. The backend application must also start after reboot, and first-time Tailscale
 enrollment still requires authorization. Each installed definition binds the absolute
 `TSLINK_CONFIG_DIR`; automatic setup refuses to overwrite another config's manager.
 Homebrew does not install a second service manager.
+
+## Windows supervision and migration
+
+The default Windows manager is `windows-task-scheduler`; `supervision` reports
+`autostart_scope:login` and `restart_on_exit:true` only after checking the loaded
+user, config, action, enabled state and restart policy. For a running daemon it
+also checks its executable and process ancestry against the task's engine PIDs.
+An unknown or mismatched state stays `manual`/`none` with diagnostic detail.
+This is failure restart: a successful graceful stop is intentionally left stopped.
+
+To migrate a Startup install, stop its daemon, then run `tslink install`. For an
+older binary without a shutdown event, the new `stop` returns an explicit error;
+stop that old daemon separately after checking its identity, then install. The
+installer verifies the task before deleting `Startup\tslink.vbs`. Reinstalling
+updates a scheduler-owned daemon with a graceful restart; an unrelated/manual
+daemon is a conflict and is never taken over. Task registration/start/settle
+failures retain `%APPDATA%\tslink-supervisor\task.xml` for inspection and retry.
+Windows upgrades do not restore the previous task or a replaced executable after
+failure; a stopped/disabled task may need a successful reinstall to resume.
+
+`tslink stop` verifies process identity and sets a Windows named shutdown event
+whose DACL admits only the current user and SYSTEM. The daemon cancels the same
+context used by the normal tsnet cleanup path. No console window, port, admin
+rights or force termination are used. It waits up to five seconds; a timeout or
+missing listener is an error and retains PID evidence. `tslink uninstall` disables
+the task first, gracefully stops its verified daemon, confirms no running task
+instance, deletes the task, then removes the local definition. Inspection,
+ownership or stop failures retain the definition; the task may be disabled.
+Startup-only uninstall removes autostart without taking ownership of a process.
+
+If Task Scheduler is unavailable, `tslink install --startup` remains a deliberate
+fallback. It has no crash recovery and doctor reports `daemon_restart_unavailable`
+when services are registered. See [Windows platform options](platforms.md#windows-unattended-operation).
+
+On a clean, disposable Windows user session, run the non-interactive smoke:
+
+```powershell
+go build -o .\tslink.exe .
+powershell -NoProfile -File .\scripts\windows-supervision-smoke.ps1 -Binary .\tslink.exe
+```
+
+It refuses existing TSLink supervisor files/tasks and credentials, uses an isolated
+empty registry, and creates no Tailscale nodes. It checks a matching daemon runtime
+artifact, kills the daemon, observes restart after the backoff, verifies that
+graceful stop stays stopped, reinstalls, then uninstalls. It prints explicit
+`PASS`/`FAIL` and exits 0/1; budget roughly three minutes. The Windows CI job runs
+this smoke and the native unit/race tests. A normal admin-capable CI user does not
+by itself prove standard-user install; run the same smoke as a standard user on a VM.
+
+Microsoft references, accessed **2026-10-01**:
+[task instance engines](https://learn.microsoft.com/en-us/windows/win32/taskschd/runningtask-enginepid),
+[running instances](https://learn.microsoft.com/en-us/windows/win32/taskschd/registeredtask-getinstances),
+[named events and security](https://learn.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-createeventw),
+[global object namespaces](https://learn.microsoft.com/en-us/windows/win32/termserv/kernel-object-namespaces).

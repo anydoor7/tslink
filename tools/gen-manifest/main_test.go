@@ -482,6 +482,11 @@ func TestPlatformSpecificFlagRegistrationsMatchManagedDaemonSurface(t *testing.T
 			Usage:  "Install the managed daemon with Funnel policy auto-provisioning disabled",
 		},
 		{
+			Source: "install_windows.go",
+			Key:    platformFlagKey{CommandPath: "tslink install", FlagName: "startup"},
+			Usage:  "Use the Windows Startup fallback without crash restart when Task Scheduler is unavailable",
+		},
+		{
 			Source: "uninstall_darwin.go",
 			Key:    platformFlagKey{CommandPath: "tslink uninstall", FlagName: "force"},
 			Usage:  "Remove the plist despite an unavailable launchd domain (may leave a daemon running)",

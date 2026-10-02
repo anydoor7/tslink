@@ -42,7 +42,7 @@
 | `tslink config` | Manage global configuration (set/get/list) |
 | `tslink manifest` | Print the machine-readable description of every command, flag, exit code, and error code |
 | `tslink registry check [path]` | Strictly validate a `registry.json` without modifying it |
-| `tslink install` | Auto-start on login (macOS LaunchAgent / Linux systemd / Windows Startup) |
+| `tslink install` | Auto-start on login (macOS LaunchAgent / Linux systemd / Windows Task Scheduler) |
 | `tslink uninstall` | Remove auto-start |
 
 A missing implicit default registry is valid on first run. An explicit missing
@@ -85,3 +85,5 @@ healthy services; fix or remove bad entries before changing the registry.
 | `--no-daemon-install` | Save configuration without installing or starting the daemon |
 | `--wait duration` | Wait for a URL or enrollment URL; default `30s`, `0` disables waiting |
 | `--json` | Print the versioned result envelope |
+
+Windows `tslink install --startup` uses the Startup fallback for the next sign-in, without crash restart. Default `install` uses Task Scheduler and verifies immediate startup. See [daemon lifecycle](daemon-lifecycle.md#windows-supervision-and-migration).

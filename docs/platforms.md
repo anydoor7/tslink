@@ -12,7 +12,48 @@
 |----------|--------|------------|---------------|
 | macOS | `--daemon` | LaunchAgent | Graceful SIGTERM |
 | Linux | `--daemon` | systemd user service | Graceful SIGTERM |
-| Windows | `--daemon` | Startup folder | Forced process termination |
+| Windows | `--daemon` | Per-user Task Scheduler (Startup fallback) | Graceful named event |
+
+## Windows unattended operation
+
+`tslink install` registers `TSLink-<current-user-SID>` in Task Scheduler using
+`InteractiveToken`, `LeastPrivilege` and a logon trigger restricted to that user.
+It starts and verifies the daemon immediately. No administrator rights or Windows
+password are needed. Using the existing interactive token preserves the user's
+Credential Manager logon context; credential availability still depends on the
+host's policies. Keep the user signed in (locking the desktop is fine). This is
+login autostart, not boot before login or operation after logout.
+
+The task waits for foreground `serve` and propagates its exit code. A nonzero exit
+retries after a fixed 60-second backoff, up to 255 attempts, the scheduler schema's
+maximum. Continuous crash loops eventually stop; inspect `tslink logs` and
+`tslink doctor`, fix the cause, and run `tslink install` again. The task has no
+execution time limit, ignores overlapping starts, and does not require idle,
+network availability, or AC power. Sleep suspends the host; TSLink does not wake it.
+These settings support long sessions, and do not guarantee months of uptime.
+
+| Option | Admin needed | Credential context / trade-off | TSLink choice |
+|---|---|---|---|
+| Task Scheduler with interactive token | No, for your own least privilege task | Existing user's logon session; available only while signed in; crash retry settings | Default |
+| Task Scheduler with S4U or password | S4U registration may avoid admin | S4U lacks network/encrypted-file access; password mode stores a Windows password and needs batch-logon rights; cannot promise the same Credential Manager session | Not offered |
+| SCM Windows service (including service wrappers) | Normally yes to create the service | Session 0 and a separate service account/logon context; suitable for machine boot only with separate credential and service support | Not implemented |
+| Startup folder / HKCU Run | No | Interactive user context; login launch only, no native crash restart | `tslink install --startup` fallback |
+| Custom per-user watchdog | No | Can retry indefinitely, but another process and shutdown protocol must themselves be supervised | Not added |
+
+When Task Scheduler or built-in Windows PowerShell is unavailable or blocked by
+policy, explicitly choose `tslink install --startup`. It registers the existing
+VBScript launcher for the next sign-in and reports `windows-startup`, with
+`restart_on_exit:false` and a doctor warning. It requires Windows Script Host.
+Uninstall a scheduled task before choosing this fallback. No silent downgrade
+turns a scheduler failure into a promise of crash recovery.
+
+Microsoft documentation, accessed **2026-10-01**:
+
+- [Task security contexts](https://learn.microsoft.com/en-us/windows/win32/taskschd/security-contexts-for-running-tasks): own-user interactive registration and least privilege without a password.
+- [Task registration and logon types](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskfolder-registertask): interactive session, S4U restrictions and batch logon alternatives.
+- [Credential Manager token context](https://learn.microsoft.com/en-us/windows/win32/api/wincred/nf-wincred-credreadw): credentials belong to the current token's logon session; the access conclusion above follows from selecting that existing token.
+- [Restart interval](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-interval-restarttype-element), [retry count](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-restarttype-complextype), [unlimited runtime](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-executiontimelimit-settingstype-element).
+- [SCM access rights](https://learn.microsoft.com/en-us/windows/win32/services/service-security-and-access-rights), [service session isolation](https://learn.microsoft.com/en-us/windows/win32/services/interactive-services).
 
 Configuration and state live in `~/.config/tslink/` on macOS and Linux and in `%AppData%\tslink\` on Windows; set `TSLINK_CONFIG_DIR` to use another directory. Paths written as `~/.config/tslink/` elsewhere in this README mean that directory. On Windows, TSLink never moves an older `%USERPROFILE%\.config\tslink\`: if only that directory exists, every command stops with `legacy_config_dir_present` and prints the one `move` command to run; if both exist, it refuses to choose and names both.
 

@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	"github.com/anydoor7/tslink/internal/atomicfile"
+	"github.com/anydoor7/tslink/internal/config"
+	"github.com/anydoor7/tslink/internal/daemon"
 	"github.com/anydoor7/tslink/internal/output"
 	"github.com/spf13/cobra"
 )
@@ -30,33 +32,24 @@ type InstallResult struct {
 
 var installCmd = &cobra.Command{
 	Use:   "install",
-	Short: "Install from Windows Startup",
-	Long: `Register TSLink in the Windows Startup folder so it launches in the
-background when you sign in.
+	Short: "Install a per-user Windows scheduled task",
+	Long: `Install and start TSLink using Task Scheduler at user sign-in, with
+least privilege and access to the current user's Credential Manager. No
+administrator rights or stored Windows password are required. A failed daemon
+is retried every 60 seconds, up to 255 times. A graceful stop stays stopped.
+The user must remain signed in; this does not run before sign-in or after logout.
 
-This command:
-  1. Creates a VBScript at %APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\tslink.vbs
-  2. The script runs 'tslink serve' silently (no console window) at login
+Re-running install updates the executable and gracefully restarts an identified
+scheduler-owned daemon. Stop an existing manual or Startup daemon first. The old
+Startup entry is removed only after the scheduled task is registered and checked.
 
-Re-running 'tslink install' is the supported upgrade path; it rewrites the
-Startup script to point at the current executable.
+If Task Scheduler or PowerShell is unavailable, use 'tslink install --startup'.
+That fallback installs a Startup script for the next sign-in, with no crash
+restart. Use 'tslink status' and 'tslink doctor' to inspect supervision.
 
-The installer intentionally does not inspect or stop a daemon that is running
-now: writing the Startup script does not start another process in this session.
-The command reports Started=false; the script takes effect only at next sign-in.
-
-Note: Unlike macOS LaunchAgent and Linux systemd, the Windows Startup script
-does not auto-restart on crash. If the process exits, it will only restart on
-the next login.
-
-To verify the script exists:
-  dir "%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\tslink.vbs"
-
-To remove the autostart:
-  tslink uninstall
-
-	Examples:
-	  tslink install                Register the Startup script`,
+Examples:
+  tslink install
+  tslink install --startup`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return withSupervisorTransaction(cmd.Context(), func() error {
@@ -71,8 +64,29 @@ func runInstallLocked(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("read --no-auto-provision: %w", err)
 	}
-	// No daemon-conflict guard is needed here. Unlike launchd/systemd, the
-	// Startup folder does not take ownership or start a process during install.
+	startup, _ := cmd.Flags().GetBool("startup")
+	if cmd.Annotations["tslink.bootstrap"] == "true" && supervisorName() == "windows-startup" {
+		startup = true
+	}
+	if !startup {
+		return installWindowsTask(cmd, noAutoProvision)
+	}
+	// Fallback cannot coexist with a task we installed. If the task has no
+	// local definition, confirm absence before adding another autostart owner.
+	taskPath, err := windowsTaskPath()
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(taskPath); err == nil {
+		return fmt.Errorf("scheduled task definition exists; run tslink uninstall before choosing --startup")
+	}
+	name, err := windowsTaskName()
+	if err != nil {
+		return err
+	}
+	if existing, queryErr := windowsSchedulerFn("query", name, nil); queryErr == nil && existing.Exists {
+		return fmt.Errorf("scheduled task exists; run tslink uninstall before choosing --startup")
+	}
 	exe, err := windowsExecutablePathFn()
 	if err != nil {
 		return fmt.Errorf("find executable: %w", err)
@@ -136,5 +150,131 @@ func vbsStringLiteral(value string) string {
 
 func init() {
 	installCmd.Flags().Bool("no-auto-provision", false, "Install the managed daemon with Funnel policy auto-provisioning disabled")
+	installCmd.Flags().Bool("startup", false, "Use the Windows Startup fallback without crash restart when Task Scheduler is unavailable")
+	mustMarkFlagPlatforms(installCmd, "startup", "windows")
 	rootCmd.AddCommand(installCmd)
+}
+
+func installWindowsTask(cmd *cobra.Command, noAutoProvision bool) error {
+	name, err := windowsTaskName()
+	if err != nil {
+		return err
+	}
+	old, err := windowsSchedulerFn("query", name, nil)
+	if err != nil {
+		return fmt.Errorf("Task Scheduler unavailable (fallback: tslink install --startup): %w", err)
+	}
+	dir, err := absoluteConfigDir()
+	if err != nil {
+		return err
+	}
+	if old.Exists {
+		if _, err := windowsTaskSpecFromDefinition([]byte(old.XML), dir); err != nil {
+			return fmt.Errorf("refusing to replace foreign scheduler task: %w", err)
+		}
+	}
+	pidPath, err := config.PIDPath()
+	if err != nil {
+		return err
+	}
+	if isRunningFn(pidPath) {
+		pid, err := readPIDFn(pidPath)
+		if err != nil {
+			return err
+		}
+		s := detectSupervisionFn(pidPath, true, pid)
+		if s.Manager != "windows-task-scheduler" || !verifiedDaemonSupervision(s) {
+			return output.ErrConflict("daemon already running without verified Task Scheduler ownership; run tslink stop, then tslink install")
+		}
+		if _, err := windowsSchedulerFn("disable", name, nil); err != nil {
+			return err
+		}
+		if err := stopDaemonFn(pidPath); err != nil {
+			return fmt.Errorf("task disabled; graceful stop failed (definition retained): %w", err)
+		}
+	} else if !daemon.IsProcessAbsentFromPIDFile(pidPath) && !daemon.IsForeignProcessFromPIDFile(pidPath) {
+		return output.ErrConflict("daemon PID identity is unverified; inspect tslink doctor before install")
+	}
+	if old.State == 4 || len(old.Engines) > 0 {
+		current, err := windowsSchedulerFn("query", name, nil)
+		if err != nil {
+			return err
+		}
+		if current.State == 4 || len(current.Engines) > 0 {
+			return output.ErrConflict("task engine still running; retry after graceful shutdown")
+		}
+	}
+	exe, err := windowsExecutablePathFn()
+	if err != nil {
+		return fmt.Errorf("find executable: %w", err)
+	}
+	exe, err = windowsEvalSymlinksFn(exe)
+	if err != nil {
+		return fmt.Errorf("resolve executable: %w", err)
+	}
+	sid, err := windowsSIDFn()
+	if err != nil {
+		return err
+	}
+	spec := windowsTaskSpec{sid, exe, dir, windowsPowerShellPath(), noAutoProvision}
+	definition, err := renderWindowsTask(spec)
+	if err != nil {
+		return err
+	}
+	path, err := windowsTaskPath()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return err
+	}
+	if err := config.EnsureDir(); err != nil {
+		return err
+	}
+	// Retain evidence before mutation: a timed-out COM call may have committed.
+	if err := atomicfile.WriteFileInExistingDir(path, definition, atomicfile.PrivateFileMode); err != nil {
+		return err
+	}
+	installed, err := windowsSchedulerFn("register", name, definition)
+	if err != nil {
+		return fmt.Errorf("scheduler registration uncertain; definition retained at %s; inspect doctor/uninstall before retry: %w", path, err)
+	}
+	if !installed.Exists || !installed.Enabled || !windowsTaskMatches([]byte(installed.XML), spec) {
+		if installed.Exists {
+			_, _ = windowsSchedulerFn("disable", name, nil)
+		}
+		return fmt.Errorf("loaded scheduler definition verification failed; definition retained at %s", path)
+	}
+	startupPath, err := windowsStartupScriptPath()
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(startupPath); err != nil && !os.IsNotExist(err) {
+		_, disableErr := windowsSchedulerFn("disable", name, nil)
+		return fmt.Errorf("Startup migration cleanup failed; task not started; disable result=%v; inspect before next sign-in: %w", disableErr, err)
+	}
+	if _, err := windowsSchedulerFn("run", name, nil); err != nil {
+		return fmt.Errorf("task registered but could not start: %w", err)
+	}
+	if _, err := waitStableDaemon(cmd.Context(), func() (int, error) {
+		if !isRunningFn(pidPath) {
+			return 0, nil
+		}
+		pid, err := readPIDFn(pidPath)
+		if err != nil {
+			return 0, err
+		}
+		if s := detectSupervisionFn(pidPath, true, pid); s.Manager != "windows-task-scheduler" || !verifiedDaemonSupervision(s) {
+			return 0, fmt.Errorf("scheduler ownership/restart policy unverified: %s", s.Detail)
+		}
+		return pid, nil
+	}, bootstrapTimeout, bootstrapInterval, bootstrapSettle); err != nil {
+		return fmt.Errorf("task installed but daemon did not settle; definition retained: %w", err)
+	}
+	if jsonOutput(cmd) {
+		output.Success("install", InstallResult{Path: path, Installed: true, Started: true, ServiceManager: "windows-task-scheduler"})
+		return nil
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "→ ✓ Task Scheduler task installed and start requested: %s\nDefinition: %s\n", name, path)
+	return nil
 }

@@ -21,6 +21,21 @@ import (
 // Startup script without --no-auto-provision for a user who asked for it.
 var _ func(string, bool) string = windowsStartupScript
 
+func isolateWindowsStartupInstall(t *testing.T) {
+	t.Helper()
+	old := windowsSchedulerFn
+	windowsSchedulerFn = func(string, string, []byte) (windowsSchedulerStatus, error) { return windowsSchedulerStatus{}, nil }
+	if err := installCmd.Flags().Set("startup", "true"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		windowsSchedulerFn = old
+		_ = installCmd.Flags().Set("startup", "false")
+		installCmd.SetOut(nil)
+		uninstallCmd.SetOut(nil)
+	})
+}
+
 func TestWindowsStartupScriptPath(t *testing.T) {
 	appData := filepath.Join("C:\\Users", "Alice Example", "AppData", "Roaming")
 	t.Setenv("APPDATA", appData)
@@ -56,6 +71,7 @@ func TestWindowsStartupScriptCarriesNoAutoProvision(t *testing.T) {
 }
 
 func TestWindowsInstallCommandWritesStartupScript(t *testing.T) {
+	isolateWindowsStartupInstall(t)
 	appData := t.TempDir()
 	t.Setenv("APPDATA", appData)
 
@@ -89,6 +105,7 @@ func TestWindowsInstallCommandWritesStartupScript(t *testing.T) {
 }
 
 func TestWindowsInstallRejectsStartupSymlinkWithoutChangingOldBytes(t *testing.T) {
+	isolateWindowsStartupInstall(t)
 	t.Setenv("APPDATA", t.TempDir())
 	path, err := windowsStartupScriptPath()
 	if err != nil {
@@ -119,6 +136,7 @@ func TestWindowsInstallRejectsStartupSymlinkWithoutChangingOldBytes(t *testing.T
 }
 
 func TestWindowsInstallIntentionallyDoesNotInspectCurrentDaemon(t *testing.T) {
+	isolateWindowsStartupInstall(t)
 	appData := t.TempDir()
 	t.Setenv("APPDATA", appData)
 
@@ -150,6 +168,7 @@ func TestWindowsInstallIntentionallyDoesNotInspectCurrentDaemon(t *testing.T) {
 }
 
 func TestWindowsInstallJSONEnvelope(t *testing.T) {
+	isolateWindowsStartupInstall(t)
 	appData := t.TempDir()
 	t.Setenv("APPDATA", appData)
 
@@ -180,6 +199,7 @@ func TestWindowsInstallJSONEnvelope(t *testing.T) {
 }
 
 func TestWindowsUninstallCommandRemovesStartupScript(t *testing.T) {
+	isolateWindowsStartupInstall(t)
 	appData := t.TempDir()
 	t.Setenv("APPDATA", appData)
 
@@ -206,6 +226,7 @@ func TestWindowsUninstallCommandRemovesStartupScript(t *testing.T) {
 }
 
 func TestWindowsUninstallJSONEnvelope(t *testing.T) {
+	isolateWindowsStartupInstall(t)
 	appData := t.TempDir()
 	t.Setenv("APPDATA", appData)
 
@@ -239,9 +260,11 @@ func TestWindowsUninstallJSONEnvelope(t *testing.T) {
 // Uses real per-user file locking on Windows. A different config must still
 // contend for the same Startup script, and a canceled waiter must never mutate.
 func TestWindowsDirectTransactionsCancelAndPreserveFinalState(t *testing.T) {
+	isolateWindowsStartupInstall(t)
 	for _, op := range []string{"install", "uninstall", "auto"} {
 		t.Run(op, func(t *testing.T) {
 			isolateBootstrap(t)
+			windowsSchedulerFn = func(string, string, []byte) (windowsSchedulerStatus, error) { return windowsSchedulerStatus{}, nil }
 			oldExe, oldEval := windowsExecutablePathFn, windowsEvalSymlinksFn
 			t.Cleanup(func() { windowsExecutablePathFn, windowsEvalSymlinksFn = oldExe, oldEval })
 			var mutations atomic.Int32
@@ -253,6 +276,7 @@ func TestWindowsDirectTransactionsCancelAndPreserveFinalState(t *testing.T) {
 				c.SetOut(io.Discard)
 				c.SetErr(io.Discard)
 				c.Flags().Bool("no-auto-provision", false, "")
+				c.Flags().Bool("startup", true, "")
 				return c
 			}
 			if err := installCmd.RunE(command(context.Background()), nil); err != nil {

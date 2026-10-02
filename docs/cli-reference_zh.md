@@ -42,7 +42,7 @@
 | `tslink config` | 管理全局配置，子命令为 set、get、list |
 | `tslink manifest` | 打印每个命令、flag、退出码和 error code 的机器可读描述 |
 | `tslink registry check [path]` | 严格校验一个 `registry.json`，不做任何修改 |
-| `tslink install` | 开机自启（macOS LaunchAgent / Linux systemd / Windows 启动文件夹） |
+| `tslink install` | 用户登录时自启（macOS LaunchAgent / Linux systemd / Windows Task Scheduler） |
 | `tslink uninstall` | 移除自启 |
 
 首次运行时，默认 registry 文件尚不存在是有效的空状态。显式传入不存在的
@@ -84,3 +84,5 @@
 | `--no-daemon-install` | 只保存配置，不安装或启动 daemon |
 | `--wait duration` | 等待 URL 或授权 URL；默认 `30s`，`0` 表示不等待 |
 | `--json` | 打印版本化的结果 envelope |
+
+Windows `tslink install --startup` 显式选择下次登录启动、无崩溃恢复的 Startup 降级。默认 `install` 使用 Task Scheduler 并验证立即启动。见[daemon 生命周期](daemon-lifecycle_zh.md#windows-监管与迁移)。

@@ -48,6 +48,8 @@ func TestMain(m *testing.M) {
 }
 
 func blockTestHelper(ignoreTerm bool) {
+	ctx, cleanup := testHelperShutdownContext()
+	defer cleanup()
 	ch := make(chan os.Signal, 1)
 	// Registering with os/signal keeps a runtime signal goroutine alive, so the
 	// helper cannot trip Go's "all goroutines are asleep" deadlock detector.
@@ -57,7 +59,13 @@ func blockTestHelper(ignoreTerm bool) {
 			os.Exit(1)
 		}
 	}
-	for sig := range ch {
+	for {
+		var sig os.Signal
+		select {
+		case <-ctx.Done():
+			os.Exit(0)
+		case sig = <-ch:
+		}
 		if ignoreTerm && sig == syscall.SIGTERM {
 			continue
 		}

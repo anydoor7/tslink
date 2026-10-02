@@ -723,6 +723,11 @@ func runForegroundWithOptions(pidPath, authKey, controlURL string, options foreg
 
 	ctx, stop := serveSignalContextFn()
 	defer stop()
+	ctx, stopWindows, err := serveShutdownContext(ctx)
+	if err != nil {
+		return fmt.Errorf("prepare graceful shutdown: %w", err)
+	}
+	defer stopWindows()
 	ctx, stopTestParent, err := withTestDaemonParentLifetime(ctx)
 	if err != nil {
 		return err

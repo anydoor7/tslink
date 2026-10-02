@@ -68,8 +68,9 @@ func init() {
 
 Reads the PID from ~/.config/tslink/tslink.pid and verifies it still belongs
 to TSLink before stopping it. On macOS/Linux, TSLink sends SIGTERM so the
-daemon can shut down tsnet nodes gracefully. On Windows, TSLink currently uses
-process termination, so stop is not graceful there.
+daemon can shut down tsnet nodes gracefully. On Windows, a current-user named
+event requests the same graceful shutdown. An older daemon without that event
+returns an explicit error; it is never force-terminated by this command.
 
 If TSLink was installed as a macOS LaunchAgent, launchd KeepAlive will restart
 the daemon after 'tslink stop', throttled by ThrottleInterval=30. Run
@@ -79,6 +80,9 @@ restarting.
 If TSLink was installed as a Linux systemd user service, a graceful stop exits
 successfully, so Restart=on-failure leaves it stopped. Run 'tslink install' or
 'systemctl --user start tslink.service' to start the installed service again.
+
+A Windows scheduled task likewise leaves a successful graceful stop stopped;
+run 'tslink install' to start it again. Crash restart uses a 60-second delay.
 
 If the daemon is not running, a "not running" message is displayed. Stale PID
 identity files are cleaned up only after process absence is confirmed; an

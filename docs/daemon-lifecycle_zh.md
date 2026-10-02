@@ -55,7 +55,7 @@ registry 的新环境。失败消息会说明监管定义是否残留：Linux �
 `autostart_scope`、重启策略与探测说明。无法确认监管的运行进程记为 `manual`；
 没有运行进程且无可验证监管记为 `none`。`autostart_scope` 回答单个 autostart 布尔量
 无法回答的问题：`boot` 表示无人登录时也随开机返回，`login` 表示要等这个用户登录，
-`unknown` 表示无法判定。macOS LaunchAgent 与 Windows 启动项恒为 `login`；
+`unknown` 表示无法判定。macOS LaunchAgent、Windows 计划任务和 Startup 启动项恒为 `login`；
 systemd user unit 只有开启 lingering 才是 `boot`，否则报 `login` 并给出
 `loginctl enable-linger "$USER"`。TSLink 只报告 lingering，不代为修改，
 因为它作用于该用户的所有服务。
@@ -68,7 +68,51 @@ systemd user unit 只有开启 lingering 才是 `boot`，否则报 `login` 并�
 
 macOS 注册登录时启动的 LaunchAgent；Linux 启用 systemd user unit。Linux 若要开机无需
 登录、退出登录后也继续运行，需执行一次 `loginctl enable-linger "$USER"`。
-Windows 自动安装后立即运行 Startup 脚本，后续登录时再次启动；它不监管崩溃重启，也无法
-证明当前 PID 的归属。后端应用本身仍需设置开机启动，首次 Tailscale 入网仍需授权。
+Windows 默认通过 Task Scheduler 立即启动，并在后续登录时启动；失败后每 60 秒重试，
+最多 255 次，要求用户保持登录。`--startup` 降级不提供崩溃重启，也无法证明当前 PID 的归属。后端应用本身仍需设置开机启动，首次 Tailscale 入网仍需授权。
 安装文件绑定绝对 `TSLINK_CONFIG_DIR`，自动安装拒绝覆盖另一配置的监管器。
 Homebrew 不注册第二套服务管理器。
+
+## Windows 监管与迁移
+
+Windows 默认监管器是 `windows-task-scheduler`。只有加载的用户、配置、动作、启用状态和
+重启策略通过检查，`supervision` 才报告 `autostart_scope:login`、`restart_on_exit:true`。
+对运行中的 daemon，还会核对程序路径和任务 engine PID 的进程父链。未知或不匹配状态
+报告 `manual`/`none` 并给出诊断。它是失败重启；成功的优雅停止会保持停止。
+
+迁移 Startup 安装时，先停止 daemon，再运行 `tslink install`。老版本没有 shutdown event
+时，新版 `stop` 会显式报错；先核实旧 daemon 身份并单独停止，再安装。安装器验证任务后
+才删除 `Startup\tslink.vbs`。重新安装会更新任务并优雅重启已验证的任务所属 daemon；
+手动或无关 daemon 被视为冲突，不会接管。注册、启动或稳定性校验失败时保留
+`%APPDATA%\tslink-supervisor\task.xml`，用于检查和重试。Windows 升级失败不会恢复旧任务
+或已替换的程序；停止/禁用的任务可能需要成功重新安装才能恢复运行。
+
+`tslink stop` 先验证进程身份，再设置只允许当前用户和 SYSTEM 访问的 Windows 命名停止
+事件。daemon 取消正常 tsnet 清理流程所用的 context，无需控制台、端口、管理员权限或
+强制终止。最多等待 5 秒；超时或缺少 listener 会报错并保留 PID 证据。`tslink uninstall`
+先禁用任务，优雅停止其所属且已验证的 daemon，确认无运行实例后删除任务和本地定义。
+检查、归属或停止失败时保留定义，任务可能已经禁用。只有 Startup 的卸载只移除自启动，
+不会接管当前进程。
+
+Task Scheduler 不可用时，仍可显式选择 `tslink install --startup`。这个降级没有崩溃恢复；
+存在注册服务时 doctor 报 `daemon_restart_unavailable`。选项比较见
+[Windows 平台选择](platforms_zh.md#windows-无人值守运行)。
+
+在干净、可丢弃的 Windows 用户会话运行非交互 smoke：
+
+```powershell
+go build -o .\tslink.exe .
+powershell -NoProfile -File .\scripts\windows-supervision-smoke.ps1 -Binary .\tslink.exe
+```
+
+脚本拒绝已有 TSLink 监管文件/任务和凭据，用隔离的空 registry，不创建 Tailscale 节点。
+它核对 daemon 的 runtime 业务产物，杀死 daemon 后观察延迟重启，证明优雅停止后保持停止，
+再安装并卸载。明确打印 `PASS`/`FAIL`，退出码为 0/1，大约需要 3 分钟。
+Windows CI 执行此 smoke 和原生 unit/race 测试；有管理员能力的 CI 用户本身不能证明普通
+用户的安装权限，仍应在 VM 的普通用户会话运行同一脚本。
+
+Microsoft 参考，访问日期 **2026-10-01**：
+[任务 instance engine](https://learn.microsoft.com/en-us/windows/win32/taskschd/runningtask-enginepid)、
+[运行实例](https://learn.microsoft.com/en-us/windows/win32/taskschd/registeredtask-getinstances)、
+[命名事件与安全](https://learn.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-createeventw)、
+[全局对象命名空间](https://learn.microsoft.com/en-us/windows/win32/termserv/kernel-object-namespaces)。

@@ -152,7 +152,7 @@ func Daemonize(outLog, errLog, controlURL string, manageACL, noAutoProvision, mc
 	return pid, nil
 }
 
-// StopDaemon terminates the daemon process and waits up to 5 seconds for exit.
+// StopDaemon requests graceful shutdown and waits up to 5 seconds for exit.
 func StopDaemon(pidPath string) error {
 	pid, err := ReadPID(pidPath)
 	if err != nil {
@@ -183,18 +183,13 @@ func StopDaemon(pidPath string) error {
 		return fmt.Errorf("refusing to stop process from PID file: %w", err)
 	}
 
-	// On Windows there is no SIGTERM; use Kill (TerminateProcess).
-	if err := proc.Kill(); err != nil {
-		if errors.Is(err, os.ErrProcessDone) {
-			RemovePID(pidPath)
-			return nil
-		}
-		return fmt.Errorf("terminate process %d: %w", pid, err)
+	if err := requestGracefulWindowsStop(pid); err != nil {
+		return fmt.Errorf("request graceful shutdown of process %d (process and PID evidence retained): %w", pid, err)
 	}
 
 	if err := waitForProcessExit(proc, windowsStopTimeout); err != nil {
 		if errors.Is(err, errProcessWaitTimeout) {
-			return fmt.Errorf("process %d did not exit after termination", pid)
+			return fmt.Errorf("process %d did not exit after graceful shutdown; process and PID evidence retained", pid)
 		}
 		return fmt.Errorf("confirm process %d exit: %w", pid, err)
 	}

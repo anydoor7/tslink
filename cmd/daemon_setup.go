@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -72,6 +73,7 @@ var (
 	managerOutputFn          = boundedManagerOutput
 	trySupervisorLockFn      = trySupervisorLock
 	openSupervisorLockFn     = os.OpenFile
+	supervisorLockPathFn     = supervisorPath
 
 	// bootstrapNowFn is the clock waitStableDaemon measures its settle window
 	// and deadline against, so a test can hold the window still while it
@@ -162,6 +164,7 @@ func installDaemonLocked(ctx context.Context, out io.Writer) error {
 	cmd.SetContext(ctx)
 	cmd.SetOut(out)
 	cmd.SetErr(out)
+	cmd.Annotations = map[string]string{"tslink.bootstrap": "true"}
 	cmd.Flags().Bool("no-auto-provision", false, "")
 	cmd.Flags().Bool("force", false, "")
 	if err := runInstallLocked(cmd, nil); err != nil {
@@ -445,10 +448,10 @@ func verifiedDaemonSupervision(s Supervision) bool {
 		return false
 	}
 	switch s.Manager {
-	case "launchd", "systemd":
+	case "launchd", "systemd", "windows-task-scheduler":
 		return s.RestartOnExit
 	case "windows-startup":
-		return supervisorName() == "windows-startup"
+		return runtime.GOOS == "windows"
 	default:
 		return false
 	}
@@ -464,7 +467,7 @@ func withSupervisorTransaction(ctx context.Context, fn func() error) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	path, err := supervisorPath()
+	path, err := supervisorLockPathFn()
 	if err != nil {
 		return err
 	}

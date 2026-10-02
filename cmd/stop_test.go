@@ -13,18 +13,17 @@ import (
 	"github.com/anydoor7/tslink/internal/daemon"
 )
 
-func TestStopHelpDocumentsWindowsForcedTermination(t *testing.T) {
+func TestStopHelpDocumentsWindowsGracefulShutdown(t *testing.T) {
 	stopCmd, _, err := rootCmd.Find([]string{"stop"})
 	if err != nil {
 		t.Fatalf("find stop command: %v", err)
 	}
 
 	help := stopCmd.Long
-	if strings.Contains(help, "Windows). The daemon shuts down all") {
-		t.Fatalf("stop help still claims graceful shutdown on Windows: %s", help)
-	}
-	if !strings.Contains(help, "Windows") || !strings.Contains(help, "not graceful") {
-		t.Fatalf("stop help = %q, want explicit Windows non-graceful caveat", help)
+	for _, want := range []string{"Windows", "named", "event", "graceful shutdown", "older daemon", "explicit error", "never force-terminated"} {
+		if !strings.Contains(help, want) {
+			t.Fatalf("stop help missing %q", want)
+		}
 	}
 }
 
