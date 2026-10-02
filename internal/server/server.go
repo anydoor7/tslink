@@ -376,6 +376,7 @@ type Server struct {
 	// including isolated decode errors. A partial or failed sync is not applied.
 	appliedWatchFingerprint string
 	appliedWatchFile        os.FileInfo
+	inFlightWatchTarget     *watchedRegistryTarget
 	registryWatchGate       chan struct{}
 	syncResultMu            sync.Mutex
 	latestSyncResult        syncResult
@@ -707,12 +708,16 @@ type syncResult struct {
 // syncNodes compares registry to running nodes and starts/stops as needed.
 func (s *Server) syncNodes(ctx context.Context) error {
 	outcome, err := s.syncNodesWithOutcome(ctx, false)
+	s.recordSyncOutcome(outcome, err)
+	return err
+}
+
+func (s *Server) recordSyncOutcome(outcome syncOutcome, err error) {
 	if outcome.generation == s.syncGeneration.Load() {
 		s.lastSyncFailed.Store(err != nil)
 		s.identityRetryPending.Store(outcome.identityRetry)
 		s.policyRetry.record(outcome.policyRetry, outcome.registryFingerprint)
 	}
-	return err
 }
 
 func (s *Server) syncNodesAuthoritative(ctx context.Context) error {
@@ -754,6 +759,13 @@ func (s *Server) syncNodesAuthoritative(ctx context.Context) error {
 // sync error closes every node and exits the daemon.
 func (s *Server) syncNodesWithOutcome(ctx context.Context, startup bool) (outcome syncOutcome, resultErr error) {
 	generation := s.syncGeneration.Add(1)
+	return s.syncNodesAtGeneration(ctx, startup, generation)
+}
+
+// Watcher decisions reserve their generation before releasing the decision
+// gate. A delayed older caller cannot then supersede a newer decision. All
+// registry loading, remote work and enrollment happen after that gate is free.
+func (s *Server) syncNodesAtGeneration(ctx context.Context, startup bool, generation uint64) (outcome syncOutcome, resultErr error) {
 	outcome = syncOutcome{generation: generation}
 	defer func() {
 		if generation != s.syncGeneration.Load() {
@@ -2656,37 +2668,79 @@ func sameWatchedRegistryFile(a, b os.FileInfo) bool {
 	return os.SameFile(a, b) && a.Size() == b.Size() && a.ModTime().Equal(b.ModTime())
 }
 
-func (s *Server) reconcileWatchedRegistry(ctx context.Context, regPath string) {
-	// A tick or error can coincide with an already-running debounce callback.
-	// Serialize the comparison and sync so both observe the same applied state.
+type watchedRegistryTarget struct {
+	fingerprint string
+	file        os.FileInfo
+	generation  uint64
+}
+
+func (s *Server) decideWatchedRegistry(ctx context.Context, regPath string) *watchedRegistryTarget {
+	// Only one local decision may run. Overlapping callbacks coalesce rather
+	// than queue behind it; the periodic check also repairs a racing file edit.
 	select {
 	case s.registryWatchGate <- struct{}{}:
 		defer func() { <-s.registryWatchGate }()
 	case <-ctx.Done():
-		return
+		return nil
+	default:
+		return nil
 	}
 	if s.ensureRunning(ctx) != nil {
-		return
+		return nil
 	}
 	watchFile, statErr := os.Stat(regPath)
 	reg, issues, err := registry.LoadForRuntime(regPath)
+	target := &watchedRegistryTarget{file: watchFile}
 	if err == nil {
 		fingerprint, fingerprintErr := runtimesnapshot.RegistryFingerprint(reg, issues)
 		if fingerprintErr == nil {
-			watchFingerprint := watchedRegistryFingerprint(fingerprint, issues)
-			s.mu.RLock()
-			unchanged := s.appliedWatchFingerprint == watchFingerprint &&
-				sameWatchedRegistryFile(s.appliedWatchFile, watchFile) &&
-				(statErr == nil || errors.Is(statErr, os.ErrNotExist))
-			s.mu.RUnlock()
-			if unchanged && !s.lastSyncFailed.Load() {
-				return
-			}
+			target.fingerprint = watchedRegistryFingerprint(fingerprint, issues)
 		}
 	}
+	if target.fingerprint == "" {
+		// Invalid input still has a target: do not repeatedly cancel the settled
+		// load for identical malformed bytes. Failed syncs clear this target and
+		// remain eligible for a later retry.
+		data, readErr := os.ReadFile(regPath)
+		target.fingerprint = fmt.Sprintf("unreadable:%x:%v", sha256.Sum256(data), readErr)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if pending := s.inFlightWatchTarget; pending != nil {
+		if pending.fingerprint == target.fingerprint && sameWatchedRegistryFile(pending.file, target.file) {
+			return nil
+		}
+		// Even an already-applied state must supersede a different pending
+		// target when the registry reverts while enrollment is waiting.
+	} else if s.appliedWatchFingerprint == target.fingerprint &&
+		sameWatchedRegistryFile(s.appliedWatchFile, target.file) &&
+		(statErr == nil || errors.Is(statErr, os.ErrNotExist)) && !s.lastSyncFailed.Load() {
+		return nil
+	}
+	target.generation = s.syncGeneration.Add(1)
+	s.inFlightWatchTarget = target
+	return target
+}
+
+func (s *Server) reconcileWatchedRegistry(ctx context.Context, regPath string) {
+	target := s.decideWatchedRegistry(ctx, regPath)
+	if target == nil {
+		return
+	}
+	s.syncWatchedRegistryTarget(ctx, target)
+}
+
+func (s *Server) syncWatchedRegistryTarget(ctx context.Context, target *watchedRegistryTarget) {
 	// Use the existing settled load, fail-closed handling and retry bookkeeping
-	// on changed or unreadable input. The check above does only local file work.
-	if err := s.syncNodes(ctx); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, errServerShuttingDown) {
+	// after releasing the decision gate. New targets can cancel this generation.
+	outcome, err := s.syncNodesAtGeneration(ctx, false, target.generation)
+	s.recordSyncOutcome(outcome, err)
+	s.mu.Lock()
+	if s.inFlightWatchTarget == target {
+		s.inFlightWatchTarget = nil
+	}
+	s.mu.Unlock()
+	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, errServerShuttingDown) {
 		slog.Warn("reload registry failed", "error", err)
 	}
 }
