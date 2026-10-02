@@ -66,7 +66,7 @@ healthy services; fix or remove bad entries before changing the registry.
 
 ### Add Command Flags
 
-`tslink add` with an existing name replaces that service: flags you do not repeat (`--allow`, `--tags`, `--funnel`, ...) are dropped. The JSON result lists `replaced_fields` and warns when access or the node identity changed.
+Without `--recipe`, `tslink add` with an existing name replaces that service: flags you do not repeat (`--allow`, `--tags`, `--funnel`, ...) are dropped. The JSON result lists `replaced_fields` and warns when access or the node identity changed.
 
 | Flag | Description |
 |------|-------------|
@@ -85,3 +85,23 @@ healthy services; fix or remove bad entries before changing the registry.
 | `--no-daemon-install` | Save configuration without installing or starting the daemon |
 | `--wait duration` | Wait for a URL or enrollment URL; default `30s`, `0` disables waiting |
 | `--json` | Print the versioned result envelope |
+
+### Application recipes
+
+| Command or flag | Behavior |
+|---|---|
+| `tslink apps list` | Versioned recipe catalog, including configuration snippets, safety policy and dated official docs |
+| `tslink apps detect` | Credential-free loopback HTTP fingerprints of OS TCP listeners; confidence and existing registrations |
+| `tslink apps share <id>` | Preview one recipe using its recommended name and local target |
+| `tslink add [name] --recipe <id>` | Same recipe preview, with an optional name override |
+| `--yes` | Apply the recipe plan; existing names are kept unchanged |
+| `--dry-run` | Preview only, even when `--yes` is present |
+| `--proxy host:port` | Override the recipe's loopback HTTP(S) host target |
+| `--name name` | Name override on `apps share`; `add` uses its positional name |
+| `--force-unsafe-public` | DANGER: override a `never_public` recipe; requires `--funnel --public` and can expose host control or private data to everyone |
+
+Recipes support `--allow`, `--tags`, `--ephemeral`, `--control-url`, the existing Funnel acknowledgement/TTL/provisioning flags and `--no-daemon-install`. `add --recipe` rejects `--dir`, `--tcp` and `--wait`; poll `tslink url` after applying. Without `--recipe`, ordinary `add` retains its replacement behavior and rejects recipe-only flags.
+
+The plan/apply JSON data includes `recipe`, `requested`, `service`, `action`, `dry_run`, `applied`, `warnings` and `next`. `applied=true` means this invocation created the service; `skip_existing` reports its preserved configuration. Detection includes `listeners`, `matches`, `complete` and `warnings`. A partial scan sets `complete=false`. App health paths are recommendation data only.
+
+MCP tools: `recipe_list`, read-only `apps_detect`, `recipe_plan` and `recipe_apply`; plan/apply take `recipe_id`, optional `name`/`target`, string `allow`/`tags`, and snake_case counterparts of the flags above. Call the plan before apply. Existing generic `template` commands and `template_list/plan/apply` tools continue to work. See [application setup and limitations](apps.md).

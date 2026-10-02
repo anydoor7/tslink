@@ -18,6 +18,7 @@ import (
 	"github.com/anydoor7/tslink/internal/config"
 	"github.com/anydoor7/tslink/internal/duration"
 	"github.com/anydoor7/tslink/internal/output"
+	"github.com/anydoor7/tslink/internal/recipes"
 	"github.com/anydoor7/tslink/internal/registry"
 	"github.com/anydoor7/tslink/internal/tailapi"
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
@@ -676,6 +677,9 @@ type mcpActions struct {
 	inviteList    func(context.Context, bool) (any, error)
 	inviteRevoke  func(context.Context, string, string) (any, error)
 	inviteResend  func(context.Context, string, string) (any, error)
+	appsDetect    func(context.Context) (any, error)
+	recipeList    func() (any, error)
+	recipeApply   func(context.Context, recipeRequest, bool) (any, error)
 	templateList  func() (any, error)
 	templatePlan  func(string) (any, error)
 	templateApply func(context.Context, string, bool) (any, error)
@@ -940,6 +944,11 @@ func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 		},
 		inviteResend: func(ctx context.Context, kind, id string) (any, error) {
 			return inviteResendExecute(ctx, staticInvitePaths(paths.Registry, paths.PID, paths.Snapshot), kind, id)
+		},
+		appsDetect: func(ctx context.Context) (any, error) { return detectApps(ctx, paths.Registry) },
+		recipeList: func() (any, error) { return recipes.List(), nil },
+		recipeApply: func(ctx context.Context, req recipeRequest, dryRun bool) (any, error) {
+			return applyRecipe(ctx, req, paths.Registry, dryRun, errOut)
 		},
 		templateList: func() (any, error) {
 			return listTemplatesResult(), nil
@@ -1505,7 +1514,7 @@ func callMCPTool(ctx context.Context, actions mcpActions, name string, arguments
 	// is absent; their result reports an install as daemon_installed.
 	var install *daemonInstallRecord
 	switch name {
-	case "share", "add", "template_apply":
+	case "share", "add", "template_apply", "recipe_apply":
 		ctx, install = recordDaemonInstall(ctx)
 	}
 	switch name {
@@ -1682,6 +1691,12 @@ func callMCPTool(ctx context.Context, actions mcpActions, name string, arguments
 			return refusal, nil
 		}
 		data, err = actions.inviteResend(ctx, args.Kind, args.InviteID)
+	case "apps_detect", "recipe_list", "recipe_plan", "recipe_apply":
+		var refusal *mcp.CallToolResult
+		data, refusal, err = callRecipeMCPTool(ctx, actions, name, arguments)
+		if refusal != nil {
+			return refusal, nil
+		}
 	case "template_list":
 		var args struct{}
 		decodeErr := decodeMCPArguments(arguments, &args)

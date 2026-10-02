@@ -17,6 +17,7 @@ import (
 
 	"github.com/anydoor7/tslink/internal/inspect"
 	"github.com/anydoor7/tslink/internal/output"
+	"github.com/anydoor7/tslink/internal/recipes"
 	"github.com/anydoor7/tslink/internal/registry"
 	tsruntime "github.com/anydoor7/tslink/internal/runtime"
 	"github.com/anydoor7/tslink/internal/tailapi"
@@ -100,6 +101,14 @@ func fakeMCPActions() mcpActions {
 		inviteResend: func(_ context.Context, kind, id string) (any, error) {
 			invite := tailapi.Invite{Kind: kind, ID: id, Email: "person@example.com", Emailed: true}
 			return inviteResendResult(invite), nil
+		},
+		appsDetect: func(context.Context) (any, error) {
+			return recipes.Detection{SchemaVersion: 1, Listeners: []recipes.Listener{}, Matches: []recipes.Match{}, Warnings: []string{}, Complete: true}, nil
+		},
+		recipeList: func() (any, error) { return recipes.List(), nil },
+		recipeApply: func(_ context.Context, req recipeRequest, dry bool) (any, error) {
+			result, _, err := planRecipe(req, "/missing/recipe-registry.json")
+			return result, err
 		},
 		templateList: func() (any, error) { return listTemplatesResult(), nil },
 		templatePlan: func(name string) (any, error) {
@@ -488,6 +497,7 @@ func TestMCPToolSchemasAreClosedAndModelFocused(t *testing.T) {
 		"tags_list", "tags_set", "access_explain", "doctor", "logs",
 		"invite_user", "invite_device", "invite_list", "invite_revoke", "invite_resend",
 		"template_list", "template_plan", "template_apply",
+		"apps_detect", "recipe_list", "recipe_plan", "recipe_apply",
 	}
 	if len(mcpToolDefinitions) != len(wantNames) {
 		t.Fatalf("tools = %d, want %d", len(mcpToolDefinitions), len(wantNames))

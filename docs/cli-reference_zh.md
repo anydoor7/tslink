@@ -65,7 +65,7 @@
 
 ### add 命令标志
 
-对已存在的名字执行 `tslink add` 会替换那个 service：替换只保留这次给出的 flag，没有重复写的 `--allow`、`--tags`、`--funnel` 等都会丢掉。JSON 结果列出 `replaced_fields`，访问权限或 node 身份改变时会给出警告。
+未使用 `--recipe` 时，对已存在的名字执行 `tslink add` 会替换那个 service：替换只保留这次给出的 flag，没有重复写的 `--allow`、`--tags`、`--funnel` 等都会丢掉。JSON 结果列出 `replaced_fields`，访问权限或 node 身份改变时会给出警告。
 
 | 标志 | 描述 |
 |------|------|
@@ -84,3 +84,23 @@
 | `--no-daemon-install` | 只保存配置，不安装或启动 daemon |
 | `--wait duration` | 等待 URL 或授权 URL；默认 `30s`，`0` 表示不等待 |
 | `--json` | 打印版本化的结果 envelope |
+
+### 应用 recipes
+
+| 命令或标志 | 行为 |
+|---|---|
+| `tslink apps list` | 版本化 catalog，包含配置片段、安全策略和带访问日期的官方文档 |
+| `tslink apps detect` | 无凭据地向 OS TCP listener 的 loopback HTTP 发请求，返回置信度及已有注册 |
+| `tslink apps share <id>` | 用建议的名称及目标预览单个 recipe |
+| `tslink add [name] --recipe <id>` | 等价预览，可用位置参数自定义名称 |
+| `--yes` | 应用计划，保留已有同名服务 |
+| `--dry-run` | 只预览，即使同时有 `--yes` |
+| `--proxy host:port` | 覆盖 recipe 的 loopback HTTP(S) 宿主机目标 |
+| `--name name` | `apps share` 的名称覆盖；`add` 用位置参数 |
+| `--force-unsafe-public` | 危险：覆盖 `never_public` 策略；必须有 `--funnel --public`，可能向所有人暴露主机控制或私密数据 |
+
+Recipes 支持 `--allow`、`--tags`、`--ephemeral`、`--control-url`、已有 Funnel 确认/TTL/自动配置标志及 `--no-daemon-install`。`add --recipe` 拒绝 `--dir`、`--tcp`、`--wait`；应用后用 `tslink url` 轮询。无 `--recipe` 的普通 `add` 保留替换行为，拒绝 recipe 专用标志。
+
+计划/应用 JSON data 包含 `recipe`、`requested`、`service`、`action`、`dry_run`、`applied`、`warnings`、`next`。只有此次创建服务才返回 `applied=true`；`skip_existing` 展示保留的实际配置。探测包含 `listeners`、`matches`、`complete`、`warnings`，部分扫描返回 `complete=false`。健康路径只是建议数据。
+
+MCP 工具为 `recipe_list`、只读 `apps_detect`、`recipe_plan`、`recipe_apply`；计划/应用接收 `recipe_id`、可选 `name`/`target`、字符串 `allow`/`tags` 及上述 flag 的 snake_case 参数。先 plan 后 apply。已有通用 `template` 命令及 `template_list/plan/apply` 工具继续工作。见[应用设置与限制](apps_zh.md)。

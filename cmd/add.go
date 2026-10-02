@@ -621,7 +621,7 @@ func loadPersistedService(regPath, name string) (registry.Service, error) {
 
 func init() {
 	addCmd := &cobra.Command{
-		Use:   "add <name>",
+		Use:   "add [name]",
 		Short: "Register a local service or file directory",
 		Long: `Register a local service or file directory to expose on the Tailscale network.
 
@@ -638,8 +638,28 @@ Examples:
   tslink add myapp --proxy :3000 --ephemeral      Ephemeral node (removed on disconnect)
   tslink add myapp --proxy :3000 --tags tag:web    Tag the node in the tailnet
   tslink add myapp --proxy :3000 --funnel --public Expose publicly via Tailscale Funnel`,
-		Args: cobra.ExactArgs(1),
+		Args: func(cmd *cobra.Command, args []string) error {
+			id, _ := cmd.Flags().GetString("recipe")
+			if id != "" {
+				return cobra.MaximumNArgs(1)(cmd, args)
+			}
+			return cobra.ExactArgs(1)(cmd, args)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			id, _ := cmd.Flags().GetString("recipe")
+			if id != "" {
+				if cmd.Flags().Changed("dir") || cmd.Flags().Changed("tcp") || cmd.Flags().Changed("wait") {
+					return output.ErrUsage("--recipe accepts HTTP proxy services; --dir, --tcp and --wait are not recipe options")
+				}
+				name := ""
+				if len(args) > 0 {
+					name = args[0]
+				}
+				return runRecipeCLI(cmd, recipeRequestFromCLI(cmd, id, name), "add")
+			}
+			if cmd.Flags().Changed("yes") || cmd.Flags().Changed("force-unsafe-public") {
+				return output.ErrUsage("--yes and --force-unsafe-public require --recipe")
+			}
 			proxyTarget, _ := cmd.Flags().GetString("proxy")
 			dirPath, _ := cmd.Flags().GetString("dir")
 			tcpTarget, _ := cmd.Flags().GetString("tcp")
@@ -815,5 +835,8 @@ Examples:
 	addCmd.Flags().Lookup("wait").NoOptDefVal = defaultURLWait.String()
 	addCmd.Flags().Bool("dry-run", false, "Validate and print the service JSON without writing registry.json")
 	addCmd.Flags().Bool("no-daemon-install", false, "Save configuration only; do not install or start the background service")
+	addCmd.Flags().String("recipe", "", "Use an app recipe; preview by default, apply with --yes")
+	addCmd.Flags().Bool("yes", false, "Apply a reviewed recipe plan (requires --recipe)")
+	addCmd.Flags().Bool("force-unsafe-public", false, "DANGER: override a never-public recipe policy (requires --recipe and --funnel)")
 	rootCmd.AddCommand(addCmd)
 }

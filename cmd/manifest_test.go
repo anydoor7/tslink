@@ -497,6 +497,7 @@ func TestAllManifestValuesMatchProductionOutputSets(t *testing.T) {
 	}
 
 	production := map[string]map[string]struct{}{
+		"tslink apps share/action":              sliceSet([]string{templateActionCreate, templateActionCreated, templateActionSkipExisting}),
 		"tslink status/daemon_state":            sliceSet([]string{daemonStateRunning, daemonStateAbsent, daemonStateUnknown}),
 		"tslink list/services[].state":          listStates,
 		"tslink list/services[].funnel_state":   funnelStates,
@@ -980,8 +981,10 @@ func TestCompactManifestStaysBelowAgentTokenBudget(t *testing.T) {
 	// up, so it stays and the ceiling moves to 3000. Batch B3 then derived the
 	// map from the one error-code table, which added the ten codes the old map
 	// missed and mcp_elevated_invite_refused: 2860 bytes at the end of B3.
-	if len(data) >= 3000 {
-		t.Fatalf("compact manifest = %d bytes, want < 3000", len(data))
+	// Application recipes add four commands and recipe flags: 3142 bytes measured.
+	// Keep a fixed ceiling below 3500 bytes for the expanded agent surface.
+	if len(data) >= 3500 {
+		t.Fatalf("compact manifest = %d bytes, want < 3500", len(data))
 	}
 	compact := CompactManifest()
 	if compact.ErrorCodes[registry.CodeURLNotReady] != 5 {

@@ -276,8 +276,18 @@ func commandJSONResultFields(commandPath string) map[string]JSONResultFieldInfo 
 		return map[string]JSONResultFieldInfo{
 			"funnel_expires_at": {Type: "string", Description: "Persisted public Funnel deadline; omitted for tailnet-only services and explicit never."},
 			"funnel_rearmed":    {Type: "boolean", Description: "True when an expired preserved Funnel deadline was re-armed with the default 24h TTL."},
+			"recipe":            {Type: "object", Description: "With --recipe: app-side snippets, safety notes and documentation."},
+			"action":            {Type: "string", Description: "With --recipe: create preview, created, or skip_existing; same-name entries are preserved."},
+			"dry_run":           {Type: "boolean", Description: "With --recipe: true unless --yes without --dry-run."},
+			"applied":           {Type: "boolean", Description: "With --recipe: true only when this call created a service."},
 			"replaced_fields":   {Type: "array", Description: "registry.json fields a replacing add changed or dropped, sorted; empty when the add created the service. Warnings access_changed_on_replace and identity_reset_on_replace flag access and node-identity changes."},
 		}
+	case "tslink apps list":
+		return map[string]JSONResultFieldInfo{"catalog_version": {Type: "integer", Description: "Version of app advice and fingerprints."}, "recipes": {Type: "array", Description: "Complete recipe catalog with safety levels and dated official documentation."}}
+	case "tslink apps detect":
+		return map[string]JSONResultFieldInfo{"listeners": {Type: "array", Description: "Numeric loopback HTTP probe targets from OS TCP listeners."}, "matches": {Type: "array", Description: "Recipe confidence, evidence and registered names; no response bodies."}, "complete": {Type: "boolean", Description: "False when cancelled or the 15 second discovery deadline was reached."}}
+	case "tslink apps share":
+		return recipeManifestResultFields()
 	case "tslink list":
 		fields := agentServiceRuntimeJSONResultFields()
 		fields["services[].state"] = JSONResultFieldInfo{
@@ -844,6 +854,25 @@ func flagRelationships(commandPath, name string) (oneOf, requires, conflicts []s
 			conflicts = []string{"--tcp", "--funnel"}
 		}
 	}
+	if commandPath == "tslink add" && (name == "yes" || name == "force-unsafe-public") {
+		requires = []string{"--recipe"}
+		if name == "force-unsafe-public" {
+			requires = append(requires, "--funnel", "--public")
+		}
+	}
+	if commandPath == "tslink apps share" {
+		switch name {
+		case "funnel":
+			requires = []string{"--public"}
+			conflicts = []string{"--allow", "--control-url"}
+		case "public", "no-auto-provision", "funnel-ttl":
+			requires = []string{"--funnel"}
+		case "force-unsafe-public":
+			requires = []string{"--funnel", "--public"}
+		case "allow":
+			conflicts = []string{"--funnel"}
+		}
+	}
 	if commandPath == "tslink url" && name == "raw" {
 		conflicts = []string{"--json"}
 	}
@@ -957,4 +986,15 @@ func init() {
 	}
 	manifestCmd.Flags().Bool("compact", false, "Print only commands, flags, and stable error codes")
 	rootCmd.AddCommand(manifestCmd)
+}
+
+func recipeManifestResultFields() map[string]JSONResultFieldInfo {
+	return map[string]JSONResultFieldInfo{
+		"recipe":    {Type: "object", Description: "App-specific configuration, safety advice and dated official docs."},
+		"service":   {Type: "object", Description: "Effective requested service, or existing service preserved unchanged."},
+		"requested": {Type: "object", Description: "Requested defaults; compare with service if existing entry is skipped."},
+		"action":    {Type: "string", Values: []string{"create", "created", "skip_existing"}, Description: "Planned or completed registry action."},
+		"dry_run":   {Type: "boolean", Description: "True for preview; --dry-run wins over --yes."},
+		"applied":   {Type: "boolean", Description: "True only when this invocation created the service."},
+	}
 }

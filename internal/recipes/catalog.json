@@ -1,0 +1,701 @@
+{
+  "schema_version": 1,
+  "catalog_version": 1,
+  "recipes": [
+    {
+      "id": "home-assistant",
+      "display_name": "Home Assistant",
+      "default_ports": [
+        8123,
+        80
+      ],
+      "default_target": "http://127.0.0.1:8123",
+      "port_note": "8123: Container and older installs; 80: HA OS default since 2026.8. Override the host port when needed.",
+      "recommended_name": "home-assistant",
+      "websockets": true,
+      "health_path": "/",
+      "fingerprints": [
+        {
+          "path": "/",
+          "kind": "title",
+          "value": "Home Assistant",
+          "confidence": "medium"
+        }
+      ],
+      "safety_level": "app_login",
+      "safety_note": "Keep Home Assistant login enabled; never use trusted_networks to bypass authentication for proxy traffic.",
+      "safety_note_zh": "保留应用登录，禁止用 trusted_networks 为代理流量绕过认证。",
+      "notes": [
+        {
+          "text": "2026.8+: Settings > System > Network > HTTP server. Enable Trust X-Forwarded-For and add only the actual proxy source IP to Trusted proxies. Saving restarts HA; confirm within 5 minutes. For <=2026.7 use the YAML below; remove the imported http block after upgrading. Container networking may require a bridge gateway IP instead of loopback.",
+          "text_zh": "2026.8 起在 Settings > System > Network 的 HTTP server 中启用 Trust X-Forwarded-For，并只信任实际代理来源 IP。保存后重启，5 分钟内确认。以下 YAML 仅用于 <=2026.7；升级导入后删除 http 块。容器网络可能需要信任网桥网关 IP。",
+          "snippet": "http:\n  use_x_forwarded_for: true\n  trusted_proxies:\n    - 127.0.0.1\n    - ::1",
+          "format": "yaml",
+          "sources": [
+            {
+              "url": "https://www.home-assistant.io/integrations/http/",
+              "accessed": "2026-10-01"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "jellyfin",
+      "display_name": "Jellyfin",
+      "default_ports": [
+        8096,
+        8920
+      ],
+      "default_target": "http://127.0.0.1:8096",
+      "port_note": "8096 HTTP; 8920 optional HTTPS, not the recipe target.",
+      "recommended_name": "jellyfin",
+      "websockets": true,
+      "health_path": "/health",
+      "fingerprints": [
+        {
+          "path": "/web/index.html",
+          "kind": "title",
+          "value": "Jellyfin",
+          "confidence": "medium"
+        },
+        {
+          "path": "/System/Info/Public",
+          "kind": "json",
+          "json_match": {
+            "ProductName": "Jellyfin"
+          },
+          "confidence": "high"
+        }
+      ],
+      "safety_level": "app_login",
+      "safety_note": "Has user login after setup. Verify every family account before public exposure.",
+      "safety_note_zh": "完成初始化后有用户登录；公网暴露前验证家人的账号。",
+      "notes": [
+        {
+          "text": "Dashboard > Networking: add the actual TSLink source IP to Known Proxies. Use a dedicated hostname and an empty Base URL. Keep user login enabled; finish initial setup locally. These are UI values, not a config file.",
+          "text_zh": "在 Dashboard > Networking 的 Known Proxies 中加入实际代理 IP；独立域名的 Base URL 留空。先在本机完成初始化并保留用户登录。以下为 UI 设置值。",
+          "snippet": "Known Proxies: 127.0.0.1, ::1\nBase URL: (empty)",
+          "format": "text",
+          "sources": [
+            {
+              "url": "https://jellyfin.org/docs/general/post-install/networking/reverse-proxy/",
+              "accessed": "2026-10-01"
+            },
+            {
+              "url": "https://jellyfin.org/docs/general/post-install/networking/",
+              "accessed": "2026-10-01"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "plex",
+      "display_name": "Plex",
+      "default_ports": [
+        32400
+      ],
+      "default_target": "http://127.0.0.1:32400",
+      "port_note": "",
+      "recommended_name": "plex",
+      "websockets": true,
+      "health_path": "/identity",
+      "fingerprints": [
+        {
+          "path": "/web/index.html",
+          "kind": "title",
+          "value": "Plex",
+          "confidence": "medium"
+        }
+      ],
+      "safety_level": "app_login",
+      "safety_note": "Requires a claimed server and Plex accounts. Loopback must not be exempted from authentication.",
+      "safety_note_zh": "先认领服务器并使用 Plex 账号；不要为 loopback 来源豁免认证。",
+      "notes": [
+        {
+          "text": "Claim the server first. Settings > Server > Network > Show Advanced: publish the exact URL including :443 (otherwise Plex may substitute the Remote Access port). Keep the unauthenticated networks list empty. UI values below.",
+          "text_zh": "先认领服务器。在 Settings > Server > Network 的高级选项中填完整 URL，显式使用 :443；免认证网络列表留空。以下为 UI 值。",
+          "snippet": "Custom server access URLs: https://plex.YOUR-TAILNET.ts.net:443\nList of IP addresses and networks allowed without auth: (empty)",
+          "format": "text",
+          "sources": [
+            {
+              "url": "https://support.plex.tv/articles/200430283-network/",
+              "accessed": "2026-10-01"
+            },
+            {
+              "url": "https://support.plex.tv/articles/200890058-authentication-for-local-network-access/",
+              "accessed": "2026-10-01"
+            },
+            {
+              "url": "https://support.plex.tv/articles/200931138-troubleshooting-remote-access/",
+              "accessed": "2026-10-01"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "immich",
+      "display_name": "Immich",
+      "default_ports": [
+        2283
+      ],
+      "default_target": "http://127.0.0.1:2283",
+      "port_note": "",
+      "recommended_name": "immich",
+      "websockets": true,
+      "health_path": "/api/server/ping",
+      "fingerprints": [
+        {
+          "path": "/",
+          "kind": "title",
+          "value": "Immich",
+          "confidence": "medium"
+        },
+        {
+          "path": "/.well-known/immich",
+          "kind": "json",
+          "json_match": {
+            "api.endpoint": "*"
+          },
+          "confidence": "high"
+        }
+      ],
+      "safety_level": "app_login",
+      "safety_note": "Has its own login. Finish first-admin setup before sharing; large uploads need gateway changes.",
+      "safety_note_zh": "有应用登录；分享前完成管理员初始化；大文件上传还需网关层支持。",
+      "notes": [
+        {
+          "text": "Use the root of a dedicated hostname, never a subpath. Set the mobile app server URL as below. Official reverse-proxy guidance requires Host, X-Real-IP, X-Forwarded-Proto and X-Forwarded-For. TSLink currently rewrites Host and does not set X-Real-IP; validate clients or use a local compatible proxy in front of Immich. TSLink also caps uploads at 32 MiB and request reads at 30 seconds, so large/slow photo uploads are not supported by this recipe alone.",
+          "text_zh": "使用独立域名根路径，不能使用子路径。官方要求透传 Host、X-Real-IP、X-Forwarded-Proto、X-Forwarded-For。TSLink 当前改写 Host 且不设置 X-Real-IP，需验证客户端或使用本地兼容代理。TSLink 上传限制为 32 MiB、读取请求超时 30 秒，recipe 本身不能解决大文件或慢速上传。",
+          "snippet": "Mobile app server URL: https://immich.YOUR-TAILNET.ts.net",
+          "format": "text",
+          "sources": [
+            {
+              "url": "https://docs.immich.app/administration/reverse-proxy/",
+              "accessed": "2026-10-01"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "nextcloud",
+      "display_name": "Nextcloud",
+      "default_ports": [
+        8080,
+        80
+      ],
+      "default_target": "http://127.0.0.1:8080",
+      "port_note": "8080 host port in official Docker example; container Apache uses 80. FPM 9000 is not HTTP.",
+      "recommended_name": "nextcloud",
+      "websockets": false,
+      "health_path": "/status.php",
+      "fingerprints": [
+        {
+          "path": "/status.php",
+          "kind": "json",
+          "json_match": {
+            "productname": "Nextcloud"
+          },
+          "confidence": "high"
+        }
+      ],
+      "safety_level": "app_login",
+      "safety_note": "Has account login; complete installation first. Sharing the gateway does not create Nextcloud accounts.",
+      "safety_note_zh": "有账号登录；先完成安装；分享网关不会创建 Nextcloud 账号。",
+      "notes": [
+        {
+          "text": "Merge these entries into existing config/config.php; keep other trusted_domains and replace the hostname. Trust only the actual proxy source IP. Dedicated hostname uses the root path. Optional Talk/notify-push services have separate WebSocket requirements. TSLink 32 MiB/30s upload limits still apply.",
+          "text_zh": "将片段合并进 config/config.php，保留已有可信域名并替换域名；只信任实际代理 IP。根路径部署，Talk/notify-push 另需 WebSocket。仍受 TSLink 32 MiB/30 秒上传限制。",
+          "snippet": "'trusted_domains' => ['localhost', 'nextcloud.YOUR-TAILNET.ts.net'],\n 'trusted_proxies' => ['127.0.0.1', '::1'],\n 'overwritehost' => 'nextcloud.YOUR-TAILNET.ts.net',\n 'overwriteprotocol' => 'https',\n 'overwrite.cli.url' => 'https://nextcloud.YOUR-TAILNET.ts.net',",
+          "format": "php",
+          "sources": [
+            {
+              "url": "https://docs.nextcloud.com/server/latest/admin_manual/configuration_server/reverse_proxy_configuration.html",
+              "accessed": "2026-10-01"
+            },
+            {
+              "url": "https://docs.nextcloud.com/server/latest/admin_manual/configuration_server/config_sample_php_parameters.html",
+              "accessed": "2026-10-01"
+            },
+            {
+              "url": "https://github.com/nextcloud/docker",
+              "accessed": "2026-10-01"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "open-webui",
+      "display_name": "Open WebUI",
+      "default_ports": [
+        3000,
+        8080
+      ],
+      "default_target": "http://127.0.0.1:3000",
+      "port_note": "3000 host port in Docker quick start (maps to 8080); native server commonly 8080.",
+      "recommended_name": "open-webui",
+      "websockets": true,
+      "health_path": "/health",
+      "fingerprints": [
+        {
+          "path": "/",
+          "kind": "title",
+          "value": "Open WebUI",
+          "confidence": "medium"
+        }
+      ],
+      "safety_level": "app_login",
+      "safety_note": "Has login when WEBUI_AUTH is enabled. Auth-disabled installs and the first-admin signup screen must stay private.",
+      "safety_note_zh": "WEBUI_AUTH 开启时有登录；关闭认证的实例及首个管理员注册页面应保持私有。",
+      "notes": [
+        {
+          "text": "Set before first startup, or update persistent WEBUI_URL in Admin > Settings > General. Use exact origins, keep auth on, finish first-admin signup locally, then close signup. Do not enable trusted-header auth merely because TSLink supplies identity headers.",
+          "text_zh": "首次启动前设置；已启动时在 Admin > Settings > General 修改持久化 WEBUI_URL。使用精确 origin，保留认证，在本机完成首个管理员注册后关闭注册。不要仅因 TSLink 提供身份头就启用 trusted-header 认证。",
+          "snippet": "WEBUI_URL=https://open-webui.YOUR-TAILNET.ts.net\nCORS_ALLOW_ORIGIN=https://open-webui.YOUR-TAILNET.ts.net\nWEBUI_AUTH=true\nENABLE_SIGNUP=false\nWEBUI_SESSION_COOKIE_SECURE=true\nWEBUI_AUTH_COOKIE_SECURE=true",
+          "format": "dotenv",
+          "sources": [
+            {
+              "url": "https://docs.openwebui.com/troubleshooting/connection-error/",
+              "accessed": "2026-10-01"
+            },
+            {
+              "url": "https://docs.openwebui.com/reference/env-configuration/",
+              "accessed": "2026-10-01"
+            },
+            {
+              "url": "https://docs.openwebui.com/getting-started/quick-start/",
+              "accessed": "2026-10-01"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "ollama",
+      "display_name": "Ollama",
+      "default_ports": [
+        11434
+      ],
+      "default_target": "http://127.0.0.1:11434",
+      "port_note": "",
+      "recommended_name": "ollama",
+      "websockets": false,
+      "health_path": "/",
+      "fingerprints": [
+        {
+          "path": "/",
+          "kind": "body",
+          "value": "Ollama is running",
+          "confidence": "high"
+        }
+      ],
+      "safety_level": "never_public",
+      "safety_note": "No local API auth: never Funnel. Requests can consume GPU resources and invoke configured cloud models.",
+      "safety_note_zh": "本地 API 无认证，禁止 Funnel；请求可消耗 GPU 并调用已配置的云模型。",
+      "notes": [
+        {
+          "text": "Local Ollama API has no authentication. Keep binding on loopback. If a browser must call it directly, allow only the exact browser origin, never *. Platform environment-variable setup is in the FAQ.",
+          "text_zh": "本地 Ollama API 没有认证。保留 loopback 绑定；浏览器直接调用时只允许精确 origin，禁止 *。各平台环境变量设置见 FAQ。",
+          "snippet": "OLLAMA_HOST=127.0.0.1:11434\nOLLAMA_ORIGINS=https://open-webui.YOUR-TAILNET.ts.net",
+          "format": "dotenv",
+          "sources": [
+            {
+              "url": "https://docs.ollama.com/faq",
+              "accessed": "2026-10-01"
+            },
+            {
+              "url": "https://docs.ollama.com/api/authentication",
+              "accessed": "2026-10-01"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "comfyui",
+      "display_name": "ComfyUI",
+      "default_ports": [
+        8188
+      ],
+      "default_target": "http://127.0.0.1:8188",
+      "port_note": "",
+      "recommended_name": "comfyui",
+      "websockets": true,
+      "health_path": "/system_stats",
+      "fingerprints": [
+        {
+          "path": "/",
+          "kind": "title",
+          "value": "ComfyUI",
+          "confidence": "medium"
+        },
+        {
+          "path": "/system_stats",
+          "kind": "json",
+          "json_match": {
+            "system.comfyui_version": "*"
+          },
+          "confidence": "high"
+        }
+      ],
+      "safety_level": "never_public",
+      "safety_note": "Local workflow server: never Funnel. Only share with trusted people who may run workflows and custom nodes.",
+      "safety_note_zh": "本地工作流服务禁止 Funnel；只分享给可被授权运行工作流及自定义节点的人。",
+      "notes": [
+        {
+          "text": "Keep the server on loopback. No reverse-proxy trust setting is required for the basic server; WebSocket /ws must work. Custom nodes can execute code. TSLink classifies the self-hosted server as never public because this recipe does not establish an authentication layer.",
+          "text_zh": "保持 loopback 绑定。基本服务无需代理信任配置，/ws 必须可用。自定义节点可执行代码；此 recipe 不建立认证层，因此采用禁止公开策略。",
+          "snippet": "python main.py --listen 127.0.0.1 --port 8188",
+          "format": "sh",
+          "sources": [
+            {
+              "url": "https://docs.comfy.org/development/comfyui-server/startup-flags",
+              "accessed": "2026-10-01"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "grafana",
+      "display_name": "Grafana",
+      "default_ports": [
+        3000
+      ],
+      "default_target": "http://127.0.0.1:3000",
+      "port_note": "",
+      "recommended_name": "grafana",
+      "websockets": true,
+      "health_path": "/api/health",
+      "fingerprints": [
+        {
+          "path": "/login",
+          "kind": "title",
+          "value": "Grafana",
+          "confidence": "medium"
+        }
+      ],
+      "safety_level": "app_login",
+      "safety_note": "Has login when anonymous access is disabled; rotate the initial admin password.",
+      "safety_note_zh": "禁用匿名访问后有登录；更换初始管理员密码。",
+      "notes": [
+        {
+          "text": "Merge into grafana.ini (custom.ini on Windows), then restart. Set the exact HTTPS URL for links and Grafana Live origin checks; the upstream stays HTTP. Disable anonymous access and rotate initial credentials.",
+          "text_zh": "合并进 grafana.ini（Windows 为 custom.ini）后重启。精确 HTTPS URL 用于链接及 Live origin 校验，上游保留 HTTP；禁用匿名访问并更换初始凭据。",
+          "snippet": "[server]\nprotocol = http\nhttp_addr = 127.0.0.1\nhttp_port = 3000\nroot_url = https://grafana.YOUR-TAILNET.ts.net/\n[auth.anonymous]\nenabled = false",
+          "format": "ini",
+          "sources": [
+            {
+              "url": "https://grafana.com/tutorials/run-grafana-behind-a-proxy/",
+              "accessed": "2026-10-01"
+            },
+            {
+              "url": "https://grafana.com/docs/grafana/latest/setup-grafana/configure-grafana/",
+              "accessed": "2026-10-01"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "jupyter",
+      "display_name": "Jupyter",
+      "default_ports": [
+        8888
+      ],
+      "default_target": "http://127.0.0.1:8888",
+      "port_note": "",
+      "recommended_name": "jupyter",
+      "websockets": true,
+      "health_path": "/login",
+      "fingerprints": [
+        {
+          "path": "/login",
+          "kind": "title",
+          "value": "Jupyter",
+          "confidence": "medium"
+        }
+      ],
+      "safety_level": "never_public",
+      "safety_note": "Code execution environment; without token/password there is no protection. Never Funnel by default.",
+      "safety_note_zh": "代码执行环境；无 token/密码即无保护，默认禁止 Funnel。",
+      "notes": [
+        {
+          "text": "Merge into jupyter_server_config.py. Keep generated token authentication, or set a password using jupyter server password. Never clear the token and password. Only trusted users should receive access because notebooks execute code as the owner. This recipe stays never public even when a token is configured; detection cannot verify auth.",
+          "text_zh": "合并进 jupyter_server_config.py。保留随机 token，或用 jupyter server password 设置密码，不能同时清空二者。Notebook 以所有者权限执行代码，只给可信用户访问；探测无法验证认证，因此 recipe 即使有 token 也禁止公开。",
+          "snippet": "c.ServerApp.ip = \"127.0.0.1\"\nc.ServerApp.port = 8888\nc.ServerApp.base_url = \"/\"\nc.ServerApp.trust_xheaders = True",
+          "format": "python",
+          "sources": [
+            {
+              "url": "https://jupyter-server.readthedocs.io/en/latest/operators/public-server.html",
+              "accessed": "2026-10-01"
+            },
+            {
+              "url": "https://jupyter-server.readthedocs.io/en/latest/other/full-config.html",
+              "accessed": "2026-10-01"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "uptime-kuma",
+      "display_name": "Uptime Kuma",
+      "default_ports": [
+        3001
+      ],
+      "default_target": "http://127.0.0.1:3001",
+      "port_note": "",
+      "recommended_name": "uptime-kuma",
+      "websockets": true,
+      "health_path": "/",
+      "fingerprints": [
+        {
+          "path": "/",
+          "kind": "title",
+          "value": "Uptime Kuma",
+          "confidence": "medium"
+        }
+      ],
+      "safety_level": "app_login",
+      "safety_note": "Has dashboard login after setup; public status pages are intentionally unauthenticated.",
+      "safety_note_zh": "初始化后控制台有登录；公开状态页本来就无需登录。",
+      "notes": [
+        {
+          "text": "Finish administrator setup locally and keep dashboard authentication on. Publish only deliberately public status pages. No app-side proxy config is required at a dedicated hostname; WebSocket upgrades must pass. The following is a UI action, not a file setting.",
+          "text_zh": "先在本机建立管理员并保留控制台认证，只公开有意发布的状态页。独立域名无需额外应用代理设置，必须支持 WebSocket。以下为 UI 操作。",
+          "snippet": "Setup: create administrator locally\nDashboard authentication: enabled",
+          "format": "text",
+          "sources": [
+            {
+              "url": "https://github.com/louislam/uptime-kuma/wiki/Reverse-Proxy",
+              "accessed": "2026-10-01"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "paperless-ngx",
+      "display_name": "Paperless-ngx",
+      "default_ports": [
+        8000
+      ],
+      "default_target": "http://127.0.0.1:8000",
+      "port_note": "",
+      "recommended_name": "paperless-ngx",
+      "websockets": true,
+      "health_path": "/accounts/login/",
+      "fingerprints": [
+        {
+          "path": "/accounts/login/",
+          "kind": "title",
+          "value": "Paperless",
+          "confidence": "medium"
+        }
+      ],
+      "safety_level": "app_login",
+      "safety_note": "Has account login; PAPERLESS_AUTO_LOGIN_USERNAME must be unset before exposure.",
+      "safety_note_zh": "有账号登录；暴露前必须取消 PAPERLESS_AUTO_LOGIN_USERNAME。",
+      "notes": [
+        {
+          "text": "Set in docker-compose.env or the webserver environment. PAPERLESS_URL adds host, CORS and CSRF trust; no trailing slash. Keep auto-login unset and configure a secret key through your secret manager. Uploads remain subject to TSLink 32 MiB/30s limits.",
+          "text_zh": "写入 docker-compose.env 或 webserver 环境。PAPERLESS_URL 添加域名、CORS、CSRF 信任，不加尾部斜线；不设置自动登录，密钥由 secret manager 配置。上传仍受 TSLink 32 MiB/30 秒限制。",
+          "snippet": "PAPERLESS_URL=https://paperless-ngx.YOUR-TAILNET.ts.net\nPAPERLESS_ALLOWED_HOSTS=paperless-ngx.YOUR-TAILNET.ts.net\nPAPERLESS_TRUSTED_PROXIES=127.0.0.1,::1",
+          "format": "dotenv",
+          "sources": [
+            {
+              "url": "https://docs.paperless-ngx.com/configuration/",
+              "accessed": "2026-10-01"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "vaultwarden",
+      "display_name": "Vaultwarden",
+      "default_ports": [
+        80,
+        8080
+      ],
+      "default_target": "http://127.0.0.1:80",
+      "port_note": "Container listens on 80; 8080 is a common owner-selected host mapping, not a universal default.",
+      "recommended_name": "vaultwarden",
+      "websockets": true,
+      "health_path": "/alive",
+      "fingerprints": [
+        {
+          "path": "/",
+          "kind": "title",
+          "value": "Bitwarden",
+          "confidence": "medium"
+        },
+        {
+          "path": "/",
+          "kind": "title",
+          "value": "Vaultwarden",
+          "confidence": "medium"
+        }
+      ],
+      "safety_level": "never_public",
+      "safety_note": "Has vault login, but contains high-value secrets. TSLink policy: never public.",
+      "safety_note_zh": "有密码库登录但内容高度敏感；TSLink 策略禁止公开。",
+      "notes": [
+        {
+          "text": "Set DOMAIN to the exact HTTPS origin. Finish account provisioning locally, then disable registration; leave SIGNUPS_DOMAINS_WHITELIST empty because it can override SIGNUPS_ALLOWED. Modern notifications use WebSockets on the main HTTP port; do not register the obsolete 3012 port. This recipe is private-only because it serves password vaults.",
+          "text_zh": "DOMAIN 填精确 HTTPS origin。本机完成账号准备后关闭注册，清空可覆盖 SIGNUPS_ALLOWED 的 SIGNUPS_DOMAINS_WHITELIST。新版通知使用主 HTTP 端口的 WebSocket，禁止使用旧 3012 端口。密码库采用仅私有策略。",
+          "snippet": "DOMAIN=https://vaultwarden.YOUR-TAILNET.ts.net\nSIGNUPS_ALLOWED=false\nSIGNUPS_DOMAINS_WHITELIST=",
+          "format": "dotenv",
+          "sources": [
+            {
+              "url": "https://github.com/dani-garcia/vaultwarden/wiki/Proxy-examples",
+              "accessed": "2026-10-01"
+            },
+            {
+              "url": "https://github.com/dani-garcia/vaultwarden/wiki/Disable-registration-of-new-users",
+              "accessed": "2026-10-01"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "syncthing",
+      "display_name": "Syncthing GUI",
+      "default_ports": [
+        8384
+      ],
+      "default_target": "http://127.0.0.1:8384",
+      "port_note": "",
+      "recommended_name": "syncthing",
+      "websockets": false,
+      "health_path": "/",
+      "fingerprints": [
+        {
+          "path": "/",
+          "kind": "title",
+          "value": "Syncthing",
+          "confidence": "medium"
+        },
+        {
+          "path": "/",
+          "kind": "header",
+          "header": "X-Syncthing-Version",
+          "value": "",
+          "confidence": "high"
+        }
+      ],
+      "safety_level": "never_public",
+      "safety_note": "GUI auth is optional and controls file synchronization. Never Funnel.",
+      "safety_note_zh": "GUI 认证可选且能管理文件同步，禁止 Funnel。",
+      "notes": [
+        {
+          "text": "Settings > GUI: set a GUI username and password first and retain loopback binding. TSLink uses an upstream loopback Host, so keep host checking enabled. No insecureSkipHostcheck bypass is required. GUI settings below are UI values. This shares the management GUI, not file-sync port 22000.",
+          "text_zh": "先在 Settings > GUI 设置用户名及密码并保留 loopback 绑定。TSLink 使用上游 loopback Host，应保留 Host 校验，不需要 insecureSkipHostcheck。以下为 UI 值；分享的是管理界面，不是 22000 文件同步端口。",
+          "snippet": "GUI Listen Address: 127.0.0.1:8384\nGUI Authentication User: (choose locally)\nGUI Authentication Password: (set locally)",
+          "format": "text",
+          "sources": [
+            {
+              "url": "https://docs.syncthing.net/users/config.html",
+              "accessed": "2026-10-01"
+            },
+            {
+              "url": "https://docs.syncthing.net/users/reverseproxy.html",
+              "accessed": "2026-10-01"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "portainer",
+      "display_name": "Portainer",
+      "default_ports": [
+        9443,
+        9000
+      ],
+      "default_target": "http://127.0.0.1:9000",
+      "port_note": "9443 HTTPS default; 9000 optional HTTP, explicitly enabled for this recipe.",
+      "recommended_name": "portainer",
+      "websockets": true,
+      "health_path": "/api/status",
+      "fingerprints": [
+        {
+          "path": "/",
+          "kind": "title",
+          "value": "Portainer",
+          "confidence": "medium"
+        }
+      ],
+      "safety_level": "never_public",
+      "safety_note": "Container administrator can control the host. Never Funnel, especially the setup screen.",
+      "safety_note_zh": "容器管理员可控制主机，禁止 Funnel，尤其禁止公开初始化界面。",
+      "notes": [
+        {
+          "text": "Complete first-admin setup locally before sharing. Default 9443 uses a self-signed certificate which TSLink will not bypass. For loopback HTTP proxying, explicitly publish legacy port 9000 only on loopback as below, and verify your Portainer version enables its HTTP listener. Do not expose agent port 8000. UI sessions and consoles require WebSockets. Setup-token protection is version-dependent; it does not make a setup screen safe to share.",
+          "text_zh": "先在本机完成首个管理员设置。默认 9443 为自签名 HTTPS，TSLink 不绕过证书校验。使用 HTTP 时明确仅将旧 9000 端口映射到 loopback，并确认版本启用了 HTTP 监听。不要分享 agent 8000 端口。控制台需 WebSocket；版本相关的 setup token 不能让初始化界面适合分享。",
+          "snippet": "ports:\n  - \"127.0.0.1:9000:9000\"",
+          "format": "yaml",
+          "sources": [
+            {
+              "url": "https://docs.portainer.io/start/install-ce/server/docker/linux",
+              "accessed": "2026-10-01"
+            },
+            {
+              "url": "https://docs.portainer.io/advanced/reverse-proxy/traefik",
+              "accessed": "2026-10-01"
+            },
+            {
+              "url": "https://docs.portainer.io/start/install/server/setup",
+              "accessed": "2026-10-01"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "generic-web",
+      "display_name": "Generic web app",
+      "default_ports": [
+        8080,
+        3000,
+        8000
+      ],
+      "default_target": "http://127.0.0.1:8080",
+      "port_note": "Examples only; there is no universal local port.",
+      "recommended_name": "generic-web",
+      "websockets": true,
+      "health_path": "/",
+      "fingerprints": [
+        {
+          "path": "/",
+          "kind": "title",
+          "value": "",
+          "confidence": "medium"
+        }
+      ],
+      "safety_level": "never_public",
+      "safety_note": "Authentication unknown: never Funnel until the owner has reviewed the application.",
+      "safety_note_zh": "无法判定认证，所有者审查具体应用前禁止 Funnel。",
+      "notes": [
+        {
+          "text": "Inspect the application documentation for its exact external URL, allowed hosts/origins and proxy trust settings. There is no universal config snippet. Keep its own authentication enabled and use a dedicated hostname. TSLink policy keeps unknown apps private; GET / with a nonempty HTML title identifies only a generic web response.",
+          "text_zh": "检查具体应用文档中的外部 URL、可信域名/origin 和代理 IP；没有通用配置文件片段。保留认证并使用独立域名。未知应用保持私有；根路径非空 HTML title 只能说明是通用网页。",
+          "snippet": "External URL: https://generic-web.YOUR-TAILNET.ts.net\nAuthentication: enabled\nTrusted proxy: actual loopback source IP",
+          "format": "text",
+          "sources": [
+            {
+              "url": "https://tailscale.com/docs/features/tailscale-funnel",
+              "accessed": "2026-10-01"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
