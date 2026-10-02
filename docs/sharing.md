@@ -74,6 +74,10 @@ If a handler rejects or ignores a body, its remaining HTTP/1 body is discarded
 with an absolute deadline of at most 1s (or the shorter read inactivity window).
 An unfinished body then closes the connection; this cleanup does not extend for
 progress and does not impose a total timeout on accepted uploads or downloads.
+An early backend rejection also interrupts an in-flight body read: HTTP/1 uses
+that cleanup bound, and HTTP/2 closes the request-body stream immediately. Reads
+finishing during cleanup cannot renew its deadline or generate an upload-timeout
+warning. Completed bodies keep the usual connection reuse behavior.
 
 The owner gets a structured service/limit log and a runtime warning in
 `status --urls` and `list --verbose`; `doctor` points to the flag to adjust.

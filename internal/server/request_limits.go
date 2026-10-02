@@ -25,8 +25,10 @@ func (e *requestLimitError) Error() string { return e.message }
 
 type requestBudgetKey struct{}
 type requestBudgetState struct {
-	mu      sync.Mutex
-	failure *requestLimitError
+	mu       sync.Mutex
+	failure  *requestLimitError
+	closing  bool
+	readDone chan struct{} // joins timeout classification without locking across Read
 }
 
 // Retain at most one warning per limit for this node lifetime. Repeated
@@ -94,7 +96,7 @@ func RequestLimitsMiddleware(service registry.Service, report func(inspect.Warni
 		r.Body = wrapped
 		// Go's post-handler drain uses its original body, bypassing Read.
 		// Bound that disposal even for file handlers, ACL denial and early 413.
-		defer wrapped.disposalDeadline()
+		defer wrapped.Close()
 		if limits.MaxBodyBytes >= 0 && r.ContentLength > limits.MaxBodyBytes {
 			e := &requestLimitError{code: registry.CodeRequestBodyLimit, message: fmt.Sprintf("service %s: request body exceeds %d bytes; adjust --max-request-body", service.Name, limits.MaxBodyBytes), limit: fmt.Sprint(limits.MaxBodyBytes), status: http.StatusRequestEntityTooLarge}
 			reject(e)
@@ -112,7 +114,7 @@ type progressBody struct {
 	state   *requestBudgetState
 	service string
 	reject  func(*requestLimitError)
-	eof     bool // protected by state.mu, including transport Read/Close
+	eof     bool // protected by state.mu
 }
 
 // Disposal is no longer an upload: a steady drip must not prolong it. Give
@@ -121,10 +123,12 @@ type progressBody struct {
 func (b *progressBody) disposalDeadline() {
 	b.state.mu.Lock()
 	defer b.state.mu.Unlock()
-	b.disposalDeadlineLocked()
-}
-
-func (b *progressBody) disposalDeadlineLocked() {
+	if b.state.closing {
+		return
+	}
+	// Serialize the transition with all deadline updates, but never with the
+	// underlying Read/Close. Once closing, no read may renew or clear this bound.
+	b.state.closing = true
 	deadline := time.Time{}
 	if !b.eof {
 		deadline = time.Now().Add(min(b.idle, time.Second))
@@ -135,23 +139,37 @@ func (b *progressBody) disposalDeadlineLocked() {
 func (b *progressBody) Close() error {
 	// The proxy transport may close before the handler returns. Close itself
 	// can drain the original body, so install its deadline before invoking it.
-	b.state.mu.Lock()
-	defer b.state.mu.Unlock()
-	b.disposalDeadlineLocked()
+	b.disposalDeadline()
 	return b.ReadCloser.Close()
 }
 
 func (b *progressBody) Read(p []byte) (int, error) {
 	b.state.mu.Lock()
-	defer b.state.mu.Unlock()
+	if b.state.closing {
+		b.state.mu.Unlock()
+		return 0, http.ErrBodyReadAfterClose
+	}
 	// A ResponseRecorder has no deadline API; real HTTP servers do. Error paths
 	// are handled by the underlying read, preserving httptest handler tests.
 	if err := b.ctl.SetReadDeadline(time.Now().Add(b.idle)); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		b.state.mu.Unlock()
 		return 0, err
 	}
+	done := make(chan struct{})
+	b.state.readDone = done
+	b.state.mu.Unlock()
 	n, err := b.ReadCloser.Read(p)
+	b.state.mu.Lock()
+	defer b.state.mu.Unlock()
+	defer close(done)
+	b.state.readDone = nil
 	if err == io.EOF {
 		b.eof = true
+	}
+	if b.state.closing {
+		// A disposal timeout is not a stalled upload. In particular, an in-flight
+		// successful read must leave the absolute disposal deadline untouched.
+		return n, err
 	}
 	var tooLarge *http.MaxBytesError
 	var failure *requestLimitError
@@ -183,6 +201,12 @@ func requestFailure(r *http.Request, err error) *requestLimitError {
 	// join that in-flight read to preserve the specific 408 rather than a 502.
 	if r.Context().Err() != nil {
 		if state, ok := r.Context().Value(requestBudgetKey{}).(*requestBudgetState); ok {
+			state.mu.Lock()
+			done := state.readDone
+			state.mu.Unlock()
+			if done != nil {
+				<-done
+			}
 			state.mu.Lock()
 			defer state.mu.Unlock()
 			return state.failure

@@ -48,6 +48,10 @@ func uploadProxy(t *testing.T, backend *httptest.Server) http.Handler {
 // Exercise the same TLS -> connection cap -> header budget -> access log ->
 // request limits chain as startNodeLocked, without any tailnet or owner state.
 func uploadTLSFront(t *testing.T, svc registry.Service, handler http.Handler, h2 bool) (string, *limitedListener) {
+	return uploadTLSFrontWithReport(t, svc, handler, h2, nil)
+}
+
+func uploadTLSFrontWithReport(t *testing.T, svc registry.Service, handler http.Handler, h2 bool, report func(inspect.WarningView)) (string, *limitedListener) {
 	t.Helper()
 	cert := httptest.NewTLSServer(http.NotFoundHandler())
 	t.Cleanup(cert.Close)
@@ -60,8 +64,8 @@ func uploadTLSFront(t *testing.T, svc registry.Service, handler http.Handler, h2
 		t.Fatal(err)
 	}
 	limited := newLimitedListener(tls.NewListener(raw, tlsConfig), 1, "http", svc.Name).(*limitedListener)
-	srv := newHTTPServerFn(AccessLogMiddleware(svc.Name, nil, RequestLimitsMiddleware(svc, nil, handler)))
-	ln := configureServiceHTTP(srv, svc, limited, nil)
+	srv := newHTTPServerFn(AccessLogMiddleware(svc.Name, nil, RequestLimitsMiddleware(svc, report, handler)))
+	ln := configureServiceHTTP(srv, svc, limited, report)
 	done := make(chan error, 1)
 	go func() { done <- srv.Serve(ln) }()
 	t.Cleanup(func() {
@@ -724,5 +728,457 @@ func TestRequestLimitsInvalidMiddlewareFailsClosed(t *testing.T) {
 	handler.ServeHTTP(w, httptest.NewRequest("POST", "/", nil))
 	if w.Code != 503 || !strings.Contains(w.Body.String(), "ack-unlimited-request-body") {
 		t.Fatalf("invalid response=%d %s", w.Code, w.Body.String())
+	}
+}
+
+// Signal the proxy transport's second underlying Read. Limiting the first Read
+// to one byte makes both complete and partial uploads exercise another Read.
+type uploadReadSignal struct {
+	io.ReadCloser
+	reads     int
+	entered   chan struct{}
+	finished  chan struct{}
+	closed    chan time.Duration
+	closeOnce sync.Once
+}
+
+func (b *uploadReadSignal) Read(p []byte) (int, error) {
+	b.reads++
+	if b.reads == 1 && b.entered != nil && len(p) > 1 {
+		p = p[:1]
+	}
+	if b.reads == 2 && b.entered != nil {
+		close(b.entered)
+	}
+	n, err := b.ReadCloser.Read(p)
+	if b.reads == 2 && b.finished != nil {
+		close(b.finished)
+	}
+	return n, err
+}
+
+func (b *uploadReadSignal) Close() error {
+	start := time.Now()
+	err := b.ReadCloser.Close()
+	if b.closed != nil {
+		b.closeOnce.Do(func() { b.closed <- time.Since(start) })
+	}
+	return err
+}
+
+func uploadWait(t *testing.T, done <-chan struct{}, bound time.Duration, message string) {
+	t.Helper()
+	select {
+	case <-done:
+	case <-time.After(bound):
+		t.Fatal(message)
+	}
+}
+
+func uploadRelease(t *testing.T, listener *limitedListener, deadline time.Time, transport ...*http.Transport) {
+	t.Helper()
+	for len(listener.sem) != 0 && time.Now().Before(deadline) {
+		// HTTP/2's client marks a just-completed stream idle asynchronously.
+		// Close only idle connections, after response and server Read completion.
+		for _, tr := range transport {
+			if tr != nil {
+				tr.CloseIdleConnections()
+			}
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if got := len(listener.sem); got != 0 {
+		t.Errorf("server retained %d connection slots past the disposal bound", got)
+	}
+}
+
+func TestRequestLimitsTLSProxyEarlyRejection(t *testing.T) {
+	for _, h2 := range []bool{false, true} {
+		for _, complete := range []bool{false, true} {
+			t.Run(fmt.Sprintf("http2=%v/complete=%v", h2, complete), func(t *testing.T) {
+				t.Setenv(config.ConfigDirEnv, t.TempDir())
+				entered, readFinished, handlerFinished := make(chan struct{}), make(chan struct{}), make(chan struct{})
+				closeFinished := make(chan time.Duration, 1)
+				backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.Method == "GET" {
+						w.WriteHeader(http.StatusNoContent)
+						return
+					}
+					_ = http.NewResponseController(w).EnableFullDuplex() // HTTP/1 backend.
+					if _, err := io.ReadFull(r.Body, make([]byte, 1)); err != nil {
+						t.Errorf("backend did not receive the partial upload: %v", err)
+						return
+					}
+					select {
+					case <-entered:
+					case <-r.Context().Done():
+						return
+					}
+					w.Header().Set("Connection", "close")
+					http.Error(w, "denied", http.StatusForbidden)
+					w.(http.Flusher).Flush()
+				}))
+				t.Cleanup(backend.Close)
+				proxy := uploadProxy(t, backend)
+				handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.Method == "POST" {
+						// Observe the real Read below progressBody and its completion
+						// above it, including warning classification and deadline changes.
+						body := r.Body.(*progressBody)
+						body.ReadCloser = &uploadReadSignal{ReadCloser: body.ReadCloser, entered: entered}
+						r.Body = &uploadReadSignal{ReadCloser: body, finished: readFinished, closed: closeFinished}
+						defer close(handlerFinished)
+					}
+					proxy.ServeHTTP(w, r)
+				})
+				warnings := &serviceLimitWarnings{}
+				svc := registry.Service{Name: "early-rejection", Type: registry.TypeProxy, RequestLimits: &registry.RequestLimits{ReadTimeout: "3s", IdleTimeout: "5s"}}
+				addr, listener := uploadTLSFrontWithReport(t, svc, handler, h2, func(w inspect.WarningView) { warnings.add(w) })
+				start := time.Now()
+				const bound = 2 * time.Second // 1s disposal plus Go's 500ms HTTP/1 close grace.
+				deadline := start.Add(bound)
+				var resp *http.Response
+				var err error
+				var conn *tls.Conn
+				var transport *http.Transport
+				var client *http.Client
+				var buffered *bufio.Reader
+				if h2 {
+					transport = &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, ForceAttemptHTTP2: true}
+					defer transport.CloseIdleConnections()
+					client = &http.Client{Transport: transport, Timeout: 5 * time.Second}
+					reader, writer := io.Pipe()
+					written := make(chan struct{})
+					go func() {
+						defer close(written)
+						body := "x"
+						if complete {
+							body = strings.Repeat("x", 1000)
+						}
+						_, _ = io.WriteString(writer, body)
+						if complete {
+							_ = writer.Close()
+						}
+					}()
+					defer func() { _ = reader.Close(); _ = writer.Close(); <-written }()
+					req, _ := http.NewRequest("POST", "https://"+addr, reader)
+					req.ContentLength = 1000
+					resp, err = client.Do(req)
+				} else {
+					conn, err = tls.Dial("tcp", addr, &tls.Config{InsecureSkipVerify: true})
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer conn.Close()
+					_ = conn.SetDeadline(start.Add(5 * time.Second))
+					body := "x"
+					if complete {
+						body = strings.Repeat("x", 1000)
+					}
+					if _, err = fmt.Fprintf(conn, "POST / HTTP/1.1\r\nHost: early\r\nContent-Length: 1000\r\n\r\n%s", body); err != nil {
+						t.Fatal(err)
+					}
+					buffered = bufio.NewReader(conn)
+					resp, err = http.ReadResponse(buffered, nil)
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				data, err := io.ReadAll(resp.Body)
+				_ = resp.Body.Close()
+				elapsed := time.Since(start)
+				if resp.StatusCode != http.StatusForbidden || string(data) != "denied\n" || err != nil {
+					t.Errorf("early rejection response=%d body=%q error=%v", resp.StatusCode, data, err)
+				}
+				wantProtocol := 1
+				if h2 {
+					wantProtocol = 2
+				}
+				if resp.ProtoMajor != wantProtocol {
+					t.Fatalf("negotiated %s, want HTTP/%d", resp.Proto, wantProtocol)
+				}
+				if elapsed > bound {
+					t.Errorf("final response waited %s for rejected upload; bound=%s", elapsed, bound)
+				}
+				uploadWait(t, handlerFinished, time.Second, "proxy handler retained rejected stream")
+				uploadWait(t, readFinished, time.Second, "proxy body Read was not interrupted")
+				closeElapsed := <-closeFinished
+				closeBound := 1500 * time.Millisecond
+				if h2 || complete {
+					closeBound = 500 * time.Millisecond
+				}
+				if closeElapsed > closeBound {
+					t.Errorf("proxy Close waited %s behind Read; bound=%s", closeElapsed, closeBound)
+				}
+				if got := warnings.snapshot(); len(got) != 0 {
+					t.Errorf("backend rejection generated spurious upload warnings: %+v", got)
+				}
+				if h2 || complete {
+					if got := len(listener.sem); got != 1 {
+						t.Fatalf("single-connection control acquired %d slots, want 1", got)
+					}
+					// A new stream/request must work on the same one-slot connection.
+					if h2 {
+						resp, err = client.Get("https://" + addr + "/after")
+					} else {
+						_, err = fmt.Fprint(conn, "GET /after HTTP/1.1\r\nHost: early\r\n\r\n")
+						if err == nil {
+							resp, err = http.ReadResponse(buffered, nil)
+						}
+					}
+					if err != nil {
+						t.Fatal(err)
+					}
+					data, err = io.ReadAll(resp.Body)
+					_ = resp.Body.Close()
+					if resp.StatusCode != http.StatusNoContent || resp.ProtoMajor != wantProtocol || len(data) != 0 || err != nil {
+						t.Errorf("connection reuse status=%d protocol=%s body=%q error=%v", resp.StatusCode, resp.Proto, data, err)
+					}
+					if h2 {
+						transport.CloseIdleConnections()
+					} else {
+						_ = conn.Close()
+					}
+				}
+				// A partial HTTP/1 upload remains open on the client until this
+				// assertion proves that the server released its connection slot.
+				uploadRelease(t, listener, deadline, transport)
+				t.Logf("response complete in %s; proxy Close in %s; slot released after %s", elapsed, closeElapsed, time.Since(start))
+			})
+		}
+	}
+}
+
+type uploadDeadlineWriter struct {
+	*httptest.ResponseRecorder
+	mu        sync.Mutex
+	deadlines []time.Time
+}
+
+func (w *uploadDeadlineWriter) SetReadDeadline(deadline time.Time) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.deadlines = append(w.deadlines, deadline)
+	return nil
+}
+
+func (w *uploadDeadlineWriter) snapshot() []time.Time {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return append([]time.Time(nil), w.deadlines...)
+}
+
+// A read may have accepted input before Close but return afterward. The barrier
+// pins that ordering without relying on socket scheduling or the race detector.
+type uploadBarrierBody struct {
+	entered, release, closed chan struct{}
+	closeOnce                sync.Once
+	enterOnce                sync.Once
+	result                   error
+}
+
+func (b *uploadBarrierBody) Read(p []byte) (int, error) {
+	b.enterOnce.Do(func() { close(b.entered) })
+	<-b.release
+	if b.result == context.DeadlineExceeded {
+		return 0, b.result
+	}
+	p[0] = 'x'
+	return 1, b.result
+}
+
+func (b *uploadBarrierBody) Close() error {
+	b.closeOnce.Do(func() { close(b.closed) })
+	return nil
+}
+
+func TestRequestLimitsClosingDeadline(t *testing.T) {
+	for _, result := range []error{nil, io.EOF, context.DeadlineExceeded} {
+		t.Run(fmt.Sprint(result), func(t *testing.T) {
+			underlying := &uploadBarrierBody{entered: make(chan struct{}), release: make(chan struct{}), closed: make(chan struct{}), result: result}
+			writer := &uploadDeadlineWriter{ResponseRecorder: httptest.NewRecorder()}
+			warnings := atomic.Int32{}
+			body := &progressBody{ReadCloser: underlying, ctl: http.NewResponseController(writer), idle: 3 * time.Second, state: &requestBudgetState{}, reject: func(*requestLimitError) { warnings.Add(1) }}
+			readDone := make(chan struct{})
+			go func() { defer close(readDone); _, _ = body.Read(make([]byte, 1)) }()
+			<-underlying.entered
+			closeDone := make(chan struct{})
+			go func() { defer close(closeDone); _ = body.Close() }()
+			// Record the old implementation's liveness failure, then release the
+			// barrier so even a RED run joins all goroutines before returning.
+			select {
+			case <-closeDone:
+			case <-time.After(200 * time.Millisecond):
+				t.Error("Close waited for the in-flight Read before calling underlying Close")
+			}
+			select {
+			case <-underlying.closed:
+			default:
+				t.Error("Close did not reach the underlying body while Read was in flight")
+			}
+			deadlines := writer.snapshot()
+			if len(deadlines) != 2 || deadlines[1].IsZero() || deadlines[1].After(time.Now().Add(time.Second)) {
+				t.Errorf("Close did not install its <=1s disposal deadline: %v", deadlines)
+			}
+			close(underlying.release)
+			<-readDone
+			<-closeDone
+			_ = body.Close()
+			body.disposalDeadline()
+			if got := writer.snapshot(); len(got) != len(deadlines) {
+				t.Errorf("a concurrent Read or repeated Close changed the disposal deadline: before=%v after=%v", deadlines, got)
+			}
+			if got := warnings.Load(); got != 0 {
+				t.Errorf("disposal generated %d upload warnings", got)
+			}
+			if len(deadlines) == 2 {
+				if _, err := body.Read(make([]byte, 1)); !errors.Is(err, http.ErrBodyReadAfterClose) {
+					t.Errorf("Read after Close=%v, want ErrBodyReadAfterClose", err)
+				}
+				if got := writer.snapshot(); len(got) != len(deadlines) {
+					t.Errorf("Read after Close renewed deadline: %v", got)
+				}
+			}
+		})
+	}
+}
+
+func TestRequestLimitsCanceledReadJoin(t *testing.T) {
+	underlying := &uploadBarrierBody{entered: make(chan struct{}), release: make(chan struct{}), closed: make(chan struct{}), result: context.DeadlineExceeded}
+	state := &requestBudgetState{}
+	body := &progressBody{ReadCloser: underlying, ctl: http.NewResponseController(httptest.NewRecorder()), idle: time.Second, state: state, reject: func(*requestLimitError) {}}
+	readDone := make(chan struct{})
+	go func() { defer close(readDone); _, _ = body.Read(make([]byte, 1)) }()
+	<-underlying.entered
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	r := httptest.NewRequest("POST", "/", nil).WithContext(context.WithValue(ctx, requestBudgetKey{}, state))
+	failure := make(chan *requestLimitError, 1)
+	go func() { failure <- requestFailure(r, context.Canceled) }()
+	select {
+	case <-failure:
+		t.Error("cancellation classification did not join the in-flight read")
+		close(underlying.release)
+		<-readDone
+		return
+	case <-time.After(30 * time.Millisecond):
+	}
+	close(underlying.release)
+	<-readDone
+	if got := <-failure; got == nil || got.status != 408 || got.code != registry.CodeRequestReadTimeout {
+		t.Errorf("cancellation masked upload timeout: %+v", got)
+	}
+}
+
+func TestRequestLimitsTLSConcurrentReadClose(t *testing.T) {
+	for _, h2 := range []bool{false, true} {
+		for _, complete := range []bool{false, true} {
+			t.Run(fmt.Sprintf("http2=%v/complete=%v", h2, complete), func(t *testing.T) {
+				t.Setenv(config.ConfigDirEnv, t.TempDir())
+				readStarted, readDone, closeDone := make(chan struct{}), make(chan struct{}), make(chan time.Duration, 1)
+				warnings := &serviceLimitWarnings{}
+				handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if _, err := io.ReadFull(r.Body, make([]byte, 1)); err != nil {
+						t.Errorf("initial read failed: %v", err)
+						return
+					}
+					go func() {
+						defer close(readDone)
+						close(readStarted)
+						_, _ = io.Copy(io.Discard, r.Body)
+					}()
+					<-readStarted
+					time.Sleep(30 * time.Millisecond)
+					select {
+					case <-readDone:
+						if !complete {
+							t.Error("unfinished-body control did not keep Read in flight")
+						}
+					default:
+						if complete {
+							t.Error("complete-body control did not reach EOF")
+						}
+					}
+					start := time.Now()
+					_ = r.Body.Close()
+					closeDone <- time.Since(start)
+					<-readDone
+					w.WriteHeader(http.StatusNoContent)
+				})
+				svc := registry.Service{Name: "concurrent-close", Type: registry.TypeProxy, RequestLimits: &registry.RequestLimits{ReadTimeout: "3s"}}
+				addr, listener := uploadTLSFrontWithReport(t, svc, handler, h2, func(w inspect.WarningView) { warnings.add(w) })
+				start := time.Now()
+				var transport *http.Transport
+				if h2 {
+					transport = &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, ForceAttemptHTTP2: true}
+					defer transport.CloseIdleConnections()
+					reader, writer := io.Pipe()
+					written := make(chan struct{})
+					go func() {
+						defer close(written)
+						body := "x"
+						if complete {
+							body = "123456789"
+						}
+						_, _ = io.WriteString(writer, body)
+						if complete {
+							_ = writer.Close()
+						}
+					}()
+					defer func() { _ = reader.Close(); _ = writer.Close(); <-written }()
+					req, _ := http.NewRequest("POST", "https://"+addr, reader)
+					req.ContentLength = 9
+					resp, err := (&http.Client{Transport: transport, Timeout: 5 * time.Second}).Do(req)
+					if err != nil {
+						t.Fatal(err)
+					}
+					_, err = io.Copy(io.Discard, resp.Body)
+					_ = resp.Body.Close()
+					if err != nil || resp.StatusCode != 204 || resp.ProtoMajor != 2 {
+						t.Errorf("response=%d protocol=%s error=%v", resp.StatusCode, resp.Proto, err)
+					}
+					transport.CloseIdleConnections()
+				} else {
+					conn, err := tls.Dial("tcp", addr, &tls.Config{InsecureSkipVerify: true})
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer conn.Close()
+					_ = conn.SetDeadline(start.Add(5 * time.Second))
+					body := "x"
+					if complete {
+						body = "123456789"
+					}
+					if _, err := fmt.Fprintf(conn, "POST / HTTP/1.1\r\nHost: close\r\nContent-Length: 9\r\n\r\n%s", body); err != nil {
+						t.Fatal(err)
+					}
+					resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+					if err != nil {
+						t.Fatal(err)
+					}
+					_, err = io.Copy(io.Discard, resp.Body)
+					_ = resp.Body.Close()
+					if err != nil || resp.StatusCode != 204 {
+						t.Errorf("response=%d error=%v", resp.StatusCode, err)
+					}
+					if complete {
+						_ = conn.Close()
+					}
+				}
+				duration := <-closeDone
+				bound := 1500 * time.Millisecond
+				if h2 || complete {
+					bound = 500 * time.Millisecond
+				}
+				if duration > bound {
+					t.Errorf("Close waited %s behind Read; bound=%s", duration, bound)
+				}
+				if got := warnings.snapshot(); len(got) != 0 {
+					t.Errorf("disposal generated upload warnings: %+v", got)
+				}
+				uploadRelease(t, listener, start.Add(2*time.Second), transport)
+				t.Logf("concurrent Close returned in %s", duration)
+			})
+		}
 	}
 }
