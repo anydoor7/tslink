@@ -29,6 +29,8 @@ type peopleArguments struct {
 	AckNever   bool              `json:"ack_never,omitempty"`
 	Invite     bool              `json:"invite,omitempty"`
 	PrintLinks bool              `json:"print_links,omitempty"`
+	QR         bool              `json:"qr,omitempty"`
+	QRInvite   string            `json:"qr_invite,omitempty"`
 	Reconcile  map[string]string `json:"reconcile_invites,omitempty"`
 	Replace    map[string]string `json:"replace_invites,omitempty"`
 }
@@ -63,6 +65,11 @@ type PeopleResult struct {
 	Portal            tsruntime.PortalState `json:"portal"`
 	Message           string                `json:"message"`
 	InviteRequirement string                `json:"invite_requirement"`
+	QRPayload         string                `json:"qr_payload,omitempty"`
+	QRTerminal        bool                  `json:"-"`
+	QRWarning         string                `json:"qr_warning,omitempty"`
+	Guide             []string              `json:"guide"`
+	GuideZH           []string              `json:"guide_zh"`
 }
 
 const peopleInviteRequirement = "Device invitations require a stored user-owned Tailscale API access token; OAuth client tokens cannot create them. People already in the tailnet need no token or invite."
@@ -154,6 +161,9 @@ func peopleMessage(p PeopleView, invites []PeopleInviteView, requested, printLin
 }
 
 func changePeople(ctx context.Context, paths sharePaths, args peopleArguments, update bool) (PeopleResult, error) {
+	if args.QRInvite != "" && (!args.QR || !args.PrintLinks) {
+		return PeopleResult{}, output.ErrUsage("--qr-invite requires --qr or --qr-png and --print-links; the QR is a credential")
+	}
 	login, err := registry.NormalizePerson(args.Who)
 	if err != nil {
 		return PeopleResult{}, err
@@ -192,8 +202,8 @@ func changePeople(ctx context.Context, paths sharePaths, args peopleArguments, u
 	if !update && len(args.Apps) == 0 {
 		return PeopleResult{}, output.ErrUsage("--apps is required; use a comma-separated app list or all")
 	}
-	if update && args.Apps == nil && args.For == nil && args.Until == nil && !args.Invite {
-		return PeopleResult{}, output.ErrUsage("update requires --apps, --for, --until or --invite")
+	if update && args.Apps == nil && args.For == nil && args.Until == nil && !args.Invite && !args.QR {
+		return PeopleResult{}, output.ErrUsage("update requires --apps, --for, --until, --invite or --qr")
 	}
 	if args.Apps != nil && len(args.Apps) == 0 {
 		return PeopleResult{}, output.ErrUsage("apps must not be empty")
@@ -261,6 +271,9 @@ func changePeople(ctx context.Context, paths sharePaths, args peopleArguments, u
 		}
 		result.Message += " If you are outside the owner's tailnet, ask the owner to share the home node too; app invitations alone do not provide access to it."
 	}
+	if err := preparePeopleQR(&result, args); err != nil {
+		return result, err
+	}
 	return result, nil
 }
 
@@ -325,6 +338,19 @@ func writePeopleResult(out io.Writer, command string, data any, isJSON bool) {
 	switch d := data.(type) {
 	case PeopleResult:
 		fmt.Fprintln(out, d.Message)
+		if d.QRPayload != "" {
+			if d.QRWarning != "" {
+				fmt.Fprintln(out, d.QRWarning)
+			}
+			if d.QRTerminal {
+				fmt.Fprintln(out, "Scan on your phone (use a light terminal background):")
+				qr, err := terminalQR(d.QRPayload)
+				if err == nil {
+					fmt.Fprint(out, qr)
+				}
+			}
+			fmt.Fprint(out, formatPhoneGuide(d.Guide), formatPhoneGuide(d.GuideZH))
+		}
 		fmt.Fprintln(out, d.InviteRequirement)
 		if !d.Complete {
 			for _, inv := range d.Invites {
@@ -365,8 +391,8 @@ func writePeopleResult(out io.Writer, command string, data any, isJSON bool) {
 func newPeopleCmd() *cobra.Command {
 	group := &cobra.Command{Use: "people", Short: "Share private apps with people, with optional expiry", Args: cobra.NoArgs, RunE: runCommandGroup}
 	for _, update := range []bool{false, true} {
-		var apps, lifetime, until string
-		var invite, printLinks, ackNever bool
+		var apps, lifetime, until, qrFile, qrInvite string
+		var invite, printLinks, ackNever, qr bool
 		var reconcile, replace []string
 		name := "add"
 		if update {
@@ -377,7 +403,10 @@ func newPeopleCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			args := peopleArguments{Who: a[0], Invite: invite, PrintLinks: printLinks, AckNever: ackNever}
+			args := peopleArguments{Who: a[0], Invite: invite, PrintLinks: printLinks, AckNever: ackNever, QR: qr || qrFile != "", QRInvite: qrInvite}
+			if c.Flags().Changed("qr-png") && qrFile == "" {
+				return output.ErrUsage("--qr-png requires a filename")
+			}
 			if len(replace) > 0 {
 				args.Replace = map[string]string{}
 				for _, value := range replace {
@@ -414,6 +443,12 @@ func newPeopleCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if qrFile != "" {
+				if err := qrPNG(result.QRPayload, qrFile); err != nil {
+					return err
+				}
+			}
+			result.QRTerminal = qr
 			writePeopleResult(c.OutOrStdout(), "people "+name, result, jsonOutput(c))
 			return nil
 		}}
@@ -423,6 +458,9 @@ func newPeopleCmd() *cobra.Command {
 		c.Flags().BoolVar(&ackNever, "ack-never", false, "Acknowledge permanent access for a tailnet member; refused for device-invited guests")
 		c.Flags().BoolVar(&invite, "invite", false, "Create or resume single-use per-app device invitations (requires a user-owned API token)")
 		c.Flags().BoolVar(&printLinks, "print-links", false, "Explicitly include bearer invitation links in output and the guide")
+		c.Flags().BoolVar(&qr, "qr", false, "Render the exact portal URL (or first app when portal disabled) as a terminal QR")
+		c.Flags().StringVar(&qrFile, "qr-png", "", "Write a private QR PNG to an existing directory; JSON contains payload text only")
+		c.Flags().StringVar(&qrInvite, "qr-invite", "", "Encode this app's bearer invitation instead; requires --print-links and --qr or --qr-png; QR is a credential")
 		if update {
 			c.Flags().StringArrayVar(&reconcile, "reconcile-invite", nil, "After verifying an unknown POST, associate app=id or confirm app=none; requires --invite")
 			c.Flags().StringArrayVar(&replace, "replace-invite", nil, "Owner-confirmed app=recorded-id replacement after remote absence; preserves grants/deadlines; requires --invite")

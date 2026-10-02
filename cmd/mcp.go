@@ -79,6 +79,7 @@ var mcpSupportedProtocolVersions = []string{
 }
 
 type mcpToolDefinition struct {
+	OwnerOnly    bool           `json:"ownerOnly,omitempty"`
 	Name         string         `json:"name"`
 	Description  string         `json:"description"`
 	InputSchema  map[string]any `json:"inputSchema"`
@@ -279,6 +280,7 @@ var (
 		"next":                     map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 	}, "authenticated", "credential_stored", "node_authorized", "authorized_service_count", "daemon_running", "daemon_state", "service_count")
 	mcpAddOutputSchema = objectSchema(map[string]any{
+		"requestable":       map[string]any{"type": "boolean"},
 		"preserve_host":     map[string]any{"type": "boolean", "default": false, "description": "Proxy only: forward this node's trusted canonical external name in Host and X-Forwarded-Host; fail closed if unavailable. Default false keeps upstream Host rewriting."},
 		"request_limits":    mcpRequestLimitsOutputSchema,
 		"daemon_running":    map[string]any{"type": "boolean"},
@@ -534,6 +536,7 @@ var mcpToolDefinitions = []mcpToolDefinition{
 			"dir":               map[string]any{"type": "string", "description": "Absolute directory path for file. Rejected for proxy and tcp."},
 			"allow":             map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Principals allowed to reach the service over HTTP: email addresses, or tag:<name> ACL tags. Omitting it leaves an HTTP service readable by every member of the user's tailnet. Unsupported for tcp and rejected together with funnel."},
 			"tags":              map[string]any{"type": "array", "items": map[string]any{"type": "string", "pattern": `^tag:`}, "description": "ACL tags applied to the tailnet node, each prefixed tag:. Defaults to the configured default tag."},
+			"requestable":       map[string]any{"type": "boolean", "default": false, "description": "Disclose this private HTTP/file app in the portal request form; default off."},
 			"preserve_host":     map[string]any{"type": "boolean", "default": false, "description": "Proxy only: forward this node's trusted canonical external name in Host and X-Forwarded-Host; fail closed if unavailable. Default false keeps upstream Host rewriting."},
 			"ephemeral":         map[string]any{"type": "boolean", "default": false, "description": "Register an ephemeral tailnet node that disappears on disconnect."},
 			"funnel":            map[string]any{"type": "boolean", "default": false, "description": "Publish to the public internet through Tailscale Funnel. Requires type proxy, public_ack true, no allow entries, and no control_url."},
@@ -694,33 +697,36 @@ var mcpToolDefinitions = []mcpToolDefinition{
 // matching CLI command calls, so the tool surface cannot acquire behaviour the
 // CLI does not have — including its refusals, which stay in the domain layer.
 type mcpActions struct {
-	extend        func(extendArguments) (any, error)
-	portalChange  func(portalArguments, bool) (any, error)
-	peopleChange  func(context.Context, peopleArguments, bool) (any, error)
-	peopleList    func() (any, error)
-	peopleRemove  func(context.Context, string, map[string]string) (any, error)
-	share         func(context.Context, shareRequest) (ShareResult, error)
-	add           func(context.Context, AddParams, bool) (any, error)
-	list          func() (any, error)
-	unshare       func(context.Context, string) (any, error)
-	status        func() (any, error)
-	url           func(context.Context, string, time.Duration) (any, error)
-	tagsList      func() (any, error)
-	tagsSet       func(string, string) (any, error)
-	accessExplain func(string) (any, error)
-	doctor        func(bool) (any, error)
-	logs          func(mcpLogsArguments) (any, error)
-	inviteUser    func(context.Context, string, string, bool) (any, error)
-	inviteDevice  func(context.Context, mcpInviteDeviceArguments) (any, error)
-	inviteList    func(context.Context, bool) (any, error)
-	inviteRevoke  func(context.Context, string, string) (any, error)
-	inviteResend  func(context.Context, string, string) (any, error)
-	appsDetect    func(context.Context) (any, error)
-	recipeList    func() (any, error)
-	recipeApply   func(context.Context, recipeRequest, bool) (any, error)
-	templateList  func() (any, error)
-	templatePlan  func(string) (any, error)
-	templateApply func(context.Context, string, bool) (any, error)
+	requestsList   func(context.Context) (any, error)
+	requestEvents  func() ([]registry.RequestEvent, error)
+	requestsDecide func(context.Context, requestDecisionArguments, bool) (any, error)
+	extend         func(extendArguments) (any, error)
+	portalChange   func(portalArguments, bool) (any, error)
+	peopleChange   func(context.Context, peopleArguments, bool) (any, error)
+	peopleList     func() (any, error)
+	peopleRemove   func(context.Context, string, map[string]string) (any, error)
+	share          func(context.Context, shareRequest) (ShareResult, error)
+	add            func(context.Context, AddParams, bool) (any, error)
+	list           func() (any, error)
+	unshare        func(context.Context, string) (any, error)
+	status         func() (any, error)
+	url            func(context.Context, string, time.Duration) (any, error)
+	tagsList       func() (any, error)
+	tagsSet        func(string, string) (any, error)
+	accessExplain  func(string) (any, error)
+	doctor         func(bool) (any, error)
+	logs           func(mcpLogsArguments) (any, error)
+	inviteUser     func(context.Context, string, string, bool) (any, error)
+	inviteDevice   func(context.Context, mcpInviteDeviceArguments) (any, error)
+	inviteList     func(context.Context, bool) (any, error)
+	inviteRevoke   func(context.Context, string, string) (any, error)
+	inviteResend   func(context.Context, string, string) (any, error)
+	appsDetect     func(context.Context) (any, error)
+	recipeList     func() (any, error)
+	recipeApply    func(context.Context, recipeRequest, bool) (any, error)
+	templateList   func() (any, error)
+	templatePlan   func(string) (any, error)
+	templateApply  func(context.Context, string, bool) (any, error)
 }
 
 // mcpAddArguments is the wire shape of the add tool's arguments.
@@ -734,6 +740,7 @@ type mcpAddArguments struct {
 	Allow           []string                `json:"allow,omitempty"`
 	Tags            []string                `json:"tags,omitempty"`
 	PreserveHost    bool                    `json:"preserve_host,omitempty"`
+	Requestable     bool                    `json:"requestable,omitempty"`
 	Ephemeral       bool                    `json:"ephemeral,omitempty"`
 	Funnel          bool                    `json:"funnel,omitempty"`
 	PublicAck       bool                    `json:"public_ack,omitempty"`
@@ -766,6 +773,7 @@ func addParamsFromMCPArguments(args mcpAddArguments) (AddParams, bool, error) {
 		Name:            args.Name,
 		Ephemeral:       args.Ephemeral,
 		PreserveHost:    args.PreserveHost,
+		Requestable:     args.Requestable,
 		Tags:            strings.Join(args.Tags, ","),
 		Allow:           strings.Join(args.Allow, ","),
 		Funnel:          args.Funnel,
@@ -868,6 +876,29 @@ func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 	durationClock := durationNowFn
 	peopleClock := peopleNowFn
 	return mcpActions{
+		requestEvents: func() ([]registry.RequestEvent, error) {
+			r, err := registry.ListAccessRequests(paths.Registry, peopleClock())
+			if err != nil {
+				return nil, err
+			}
+			events := make([]registry.RequestEvent, 0, len(r))
+			for _, item := range r {
+				events = append(events, item.Event())
+			}
+			return events, nil
+		},
+		requestsList: func(ctx context.Context) (any, error) {
+			if err := requireRequestOwner(ctx, paths.Registry); err != nil {
+				return nil, err
+			}
+			return listRequests(paths.Registry, peopleClock())
+		},
+		requestsDecide: func(ctx context.Context, args requestDecisionArguments, approve bool) (any, error) {
+			if err := requireRequestOwner(ctx, paths.Registry); err != nil {
+				return nil, err
+			}
+			return decideRequest(paths.Registry, args, approve, peopleClock())
+		},
 		extend:       func(args extendArguments) (any, error) { return extendLifetime(paths.Registry, args, durationClock()) },
 		portalChange: func(args portalArguments, enable bool) (any, error) { return changePortal(paths, args, enable) },
 		peopleChange: func(ctx context.Context, args peopleArguments, update bool) (any, error) {
@@ -1590,6 +1621,27 @@ func callMCPTool(ctx context.Context, actions mcpActions, name string, arguments
 			return refusal, nil
 		}
 		data, err = actions.extend(args)
+	case "requests_list":
+		var args struct{}
+		if refusal := mcpArgumentsRefusal(name, decodeMCPArguments(arguments, &args)); refusal != nil {
+			return refusal, nil
+		}
+		data, err = actions.requestsList(ctx)
+	case "requests_approve", "requests_deny":
+		var args requestDecisionArguments
+		required := []mcpRequiredArgument{{"id", args.ID}}
+		decodeErr := decodePeopleMCPArguments(arguments, &args)
+		required[0] = mcpRequiredArgument{"id", args.ID}
+		if name == "requests_approve" {
+			required = append(required, mcpRequiredArgument{"for", args.For})
+		}
+		if refusal := mcpArgumentsRefusal(name, decodeErr, required...); refusal != nil {
+			return refusal, nil
+		}
+		if (name == "requests_deny" && (args.For != "" || args.AckNever)) || (name == "requests_approve" && args.Reason != "") {
+			return makeMCPToolErrorResult(output.ErrUsage("unexpected decision argument")), nil
+		}
+		data, err = actions.requestsDecide(ctx, args, name == "requests_approve")
 	case "portal_enable":
 		var args portalArguments
 		if refusal := mcpArgumentsRefusal(name, decodePeopleMCPArguments(arguments, &args), mcpRequiredArgument{"owner", args.Owner}); refusal != nil {

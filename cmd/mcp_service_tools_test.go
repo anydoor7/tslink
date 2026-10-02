@@ -68,13 +68,16 @@ const mcpJSONFlagExclusion = "MCP tool results are always structured JSON; --jso
 
 // mcpCoveredCommands is the mapping half of the partition.
 var mcpCoveredCommands = map[string]mcpCoveredCommand{
-	"tslink extend":         {Tools: []string{"extend"}, Args: []string{"service"}, Flags: map[string]string{"person": "who", "for": "for", "until": "until", "ack-never": "ack_never", "regrant": "regrant"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
-	"tslink people add":     {Tools: []string{"people_add"}, Args: []string{"who"}, Flags: map[string]string{"apps": "apps", "for": "for", "until": "until", "ack-never": "ack_never", "invite": "invite", "print-links": "print_links"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
-	"tslink people update":  {Tools: []string{"people_update"}, Args: []string{"who"}, Flags: map[string]string{"apps": "apps", "for": "for", "until": "until", "ack-never": "ack_never", "invite": "invite", "print-links": "print_links", "reconcile-invite": "reconcile_invites", "replace-invite": "replace_invites"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
-	"tslink people list":    {Tools: []string{"people_list"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
-	"tslink people remove":  {Tools: []string{"people_remove"}, Args: []string{"who"}, Flags: map[string]string{"reconcile-invite": "reconcile_invites"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
-	"tslink portal enable":  {Tools: []string{"portal_enable"}, Flags: map[string]string{"hostname": "hostname", "owner": "owner", "admins": "admins", "funnel": "funnel"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
-	"tslink portal disable": {Tools: []string{"portal_disable"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
+	"tslink requests list":    {Tools: []string{"requests_list"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
+	"tslink requests approve": {Tools: []string{"requests_approve"}, Args: []string{"id"}, Flags: map[string]string{"for": "for", "ack-never": "ack_never"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
+	"tslink requests deny":    {Tools: []string{"requests_deny"}, Args: []string{"id"}, Flags: map[string]string{"reason": "reason"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
+	"tslink extend":           {Tools: []string{"extend"}, Args: []string{"service"}, Flags: map[string]string{"person": "who", "for": "for", "until": "until", "ack-never": "ack_never", "regrant": "regrant"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
+	"tslink people add":       {Tools: []string{"people_add"}, Args: []string{"who"}, Flags: map[string]string{"apps": "apps", "for": "for", "until": "until", "ack-never": "ack_never", "invite": "invite", "print-links": "print_links", "qr": "qr", "qr-invite": "qr_invite"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion, "qr-png": "Local PNG file output is unavailable over MCP; qr returns payload text."}},
+	"tslink people update":    {Tools: []string{"people_update"}, Args: []string{"who"}, Flags: map[string]string{"apps": "apps", "for": "for", "until": "until", "ack-never": "ack_never", "invite": "invite", "print-links": "print_links", "qr": "qr", "qr-invite": "qr_invite", "reconcile-invite": "reconcile_invites", "replace-invite": "replace_invites"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion, "qr-png": "Local PNG file output is unavailable over MCP; qr returns payload text."}},
+	"tslink people list":      {Tools: []string{"people_list"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
+	"tslink people remove":    {Tools: []string{"people_remove"}, Args: []string{"who"}, Flags: map[string]string{"reconcile-invite": "reconcile_invites"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
+	"tslink portal enable":    {Tools: []string{"portal_enable"}, Flags: map[string]string{"hostname": "hostname", "owner": "owner", "admins": "admins", "funnel": "funnel"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
+	"tslink portal disable":   {Tools: []string{"portal_disable"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
 	"tslink share": {
 		Tools: []string{"share"},
 		Args:  []string{"target"},
@@ -99,6 +102,7 @@ var mcpCoveredCommands = map[string]mcpCoveredCommand{
 		Tools: []string{"add"},
 		Args:  []string{"name", "type"},
 		Flags: map[string]string{
+			"requestable": "requestable",
 			"health-path": "health", "health-body": "health", "health-status-min": "health", "health-status-max": "health", "health-timeout": "health", "health-interval": "health",
 			"max-request-body":           "request_limits.max_body",
 			"ack-unlimited-request-body": "request_limits.unlimited_ack",
@@ -263,6 +267,7 @@ var mcpCoveredCommands = map[string]mcpCoveredCommand{
 // agent does *to a service*; daemon lifecycle, installation, credentials,
 // global configuration and log reading stay on the CLI.
 var mcpUncoveredCommands = map[string]string{
+	"tslink requests":           "command group; all three owner actions are covered",
 	"tslink portal":             "command group; leaf actions have corresponding tools",
 	"tslink people":             "command group; all four leaves are covered",
 	"tslink":                    "the root command carries only the global --json flag and runs no action of its own",

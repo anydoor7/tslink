@@ -56,6 +56,13 @@ type Code struct {
 }
 
 var table = []Code{
+	{"access_request_decided", ExitConflict, Command, "access request already decided; identical retries replay the original result"},
+	{"access_request_duplicate", ExitConflict, Command, "one pending request per visitor and app"},
+	{"access_request_busy", ExitConflict, Command, "request inbox is busy"},
+	{"access_request_unavailable", ExitAuth, Command, "app or visitor cannot request access"},
+	{"access_request_owner_required", ExitAuth, Command, "request management requires the owner"},
+	{"access_request_rate_limited", ExitConflict, Command, "visitor or global request rate limit reached"},
+	{"access_request_capacity", ExitConflict, Command, "bounded request inbox is full"},
 	// Generic classes.
 	{InternalError, ExitError, Command, "unexpected internal failure"},
 	{UsageError, ExitUsage, Command, "invalid command syntax or value"},

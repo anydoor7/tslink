@@ -641,6 +641,17 @@
           "usage": "Maximum time without body read progress, not total upload time (default 30s)"
         },
         {
+          "name": "requestable",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Let human tailnet members ask for this app from the portal; discloses its name; default off",
+          "conflicts": [
+            "--tcp",
+            "--funnel"
+          ]
+        },
+        {
           "name": "tags",
           "type": "string",
           "scope": "local",
@@ -2135,6 +2146,29 @@
           ]
         },
         {
+          "name": "qr",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Render the exact portal URL (or first app when portal disabled) as a terminal QR"
+        },
+        {
+          "name": "qr-invite",
+          "type": "string",
+          "scope": "local",
+          "usage": "Encode this app's bearer invitation instead; requires --print-links and --qr or --qr-png; QR is a credential",
+          "requires": [
+            "--invite",
+            "--print-links"
+          ]
+        },
+        {
+          "name": "qr-png",
+          "type": "string",
+          "scope": "local",
+          "usage": "Write a private QR PNG to an existing directory; JSON contains payload text only"
+        },
+        {
           "name": "until",
           "type": "string",
           "scope": "local",
@@ -2145,6 +2179,14 @@
         "complete": {
           "type": "boolean",
           "description": "False when any requested device invitation failed; local grants remain saved."
+        },
+        "guide": {
+          "type": "array",
+          "description": "Phone-first English onboarding in at most five steps."
+        },
+        "guide_zh": {
+          "type": "array",
+          "description": "Phone-first Chinese onboarding in at most five steps."
         },
         "invite_requirement": {
           "type": "string",
@@ -2165,6 +2207,14 @@
         "portal": {
           "type": "object",
           "description": "Independent home portal state; message includes its exact URL when enabled and ready."
+        },
+        "qr_payload": {
+          "type": "string",
+          "description": "QR URL payload text; bearer invitation requires explicit print-links and qr-invite."
+        },
+        "qr_warning": {
+          "type": "string",
+          "description": "Credential warning for a bearer invitation QR."
         }
       }
     },
@@ -2277,6 +2327,29 @@
           ]
         },
         {
+          "name": "qr",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Render the exact portal URL (or first app when portal disabled) as a terminal QR"
+        },
+        {
+          "name": "qr-invite",
+          "type": "string",
+          "scope": "local",
+          "usage": "Encode this app's bearer invitation instead; requires --print-links and --qr or --qr-png; QR is a credential",
+          "requires": [
+            "--invite",
+            "--print-links"
+          ]
+        },
+        {
+          "name": "qr-png",
+          "type": "string",
+          "scope": "local",
+          "usage": "Write a private QR PNG to an existing directory; JSON contains payload text only"
+        },
+        {
           "name": "reconcile-invite",
           "type": "stringArray",
           "default": "[]",
@@ -2312,6 +2385,14 @@
           "type": "boolean",
           "description": "False when any requested device invitation failed; local grants remain saved."
         },
+        "guide": {
+          "type": "array",
+          "description": "Phone-first English onboarding in at most five steps."
+        },
+        "guide_zh": {
+          "type": "array",
+          "description": "Phone-first Chinese onboarding in at most five steps."
+        },
         "invite_requirement": {
           "type": "string",
           "description": "Explains that invitations require a user-owned API token while tailnet member grants need no token."
@@ -2331,6 +2412,14 @@
         "portal": {
           "type": "object",
           "description": "Independent home portal state; message includes its exact URL when enabled and ready."
+        },
+        "qr_payload": {
+          "type": "string",
+          "description": "QR URL payload text; bearer invitation requires explicit print-links and qr-invite."
+        },
+        "qr_warning": {
+          "type": "string",
+          "description": "Credential warning for a bearer invitation QR."
         }
       }
     },
@@ -2489,6 +2578,103 @@
           "usage": "Return not_found (exit 5) when absent; default is idempotent"
         }
       ]
+    },
+    {
+      "path": "tslink requests",
+      "short": "Review and decide access requests as the owner",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        }
+      ]
+    },
+    {
+      "path": "tslink requests approve",
+      "short": "Decide one request; identical retries replay the original result",
+      "flags": [
+        {
+          "name": "ack-never",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Acknowledge permanent member access; guests remain finite"
+        },
+        {
+          "name": "for",
+          "type": "string",
+          "scope": "local",
+          "usage": "Owner-chosen lifetime; presets 1h, 8h, 24h, 3d, 7d"
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        }
+      ],
+      "json_result_fields": {
+        "changed": {
+          "type": "boolean",
+          "description": "False for an identical idempotent retry."
+        },
+        "request": {
+          "type": "object",
+          "description": "Committed request decision and optional grant."
+        }
+      }
+    },
+    {
+      "path": "tslink requests deny",
+      "short": "Decide one request; identical retries replay the original result",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        },
+        {
+          "name": "reason",
+          "type": "string",
+          "scope": "local",
+          "usage": "Optional reason (500 characters), shown to the visitor"
+        }
+      ],
+      "json_result_fields": {
+        "changed": {
+          "type": "boolean",
+          "description": "False for an identical idempotent retry."
+        },
+        "request": {
+          "type": "object",
+          "description": "Committed request decision and optional grant."
+        }
+      }
+    },
+    {
+      "path": "tslink requests list",
+      "short": "List the durable request inbox",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        }
+      ],
+      "json_result_fields": {
+        "requests": {
+          "type": "array",
+          "description": "Durable pending/approved/denied/expired access requests; notes are untrusted text."
+        }
+      }
     },
     {
       "path": "tslink serve",
@@ -3181,6 +3367,34 @@
     ]
   },
   "error_codes": {
+    "access_request_busy": {
+      "exit_code": 4,
+      "description": "request inbox is busy"
+    },
+    "access_request_capacity": {
+      "exit_code": 4,
+      "description": "bounded request inbox is full"
+    },
+    "access_request_decided": {
+      "exit_code": 4,
+      "description": "access request already decided; identical retries replay the original result"
+    },
+    "access_request_duplicate": {
+      "exit_code": 4,
+      "description": "one pending request per visitor and app"
+    },
+    "access_request_owner_required": {
+      "exit_code": 3,
+      "description": "request management requires the owner"
+    },
+    "access_request_rate_limited": {
+      "exit_code": 4,
+      "description": "visitor or global request rate limit reached"
+    },
+    "access_request_unavailable": {
+      "exit_code": 3,
+      "description": "app or visitor cannot request access"
+    },
     "allow_unsupported_for_tcp": {
       "exit_code": 2,
       "description": "HTTP allow lists do not apply to raw TCP"

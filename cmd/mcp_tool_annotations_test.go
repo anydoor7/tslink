@@ -20,6 +20,7 @@ import (
 // {readOnly, destructive, idempotent, openWorld}. It is written out apart from
 // the product table so a change to either shows here.
 var mcpWantHints = map[string][4]bool{
+	"requests_list": {false, false, true, false}, "requests_approve": {false, true, true, false}, "requests_deny": {false, true, true, false},
 	"extend":         {false, true, false, false},
 	"portal_enable":  {false, false, true, false},
 	"portal_disable": {false, false, true, false},

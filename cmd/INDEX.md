@@ -73,3 +73,11 @@ This index records the app recipe additions; the CLI manifest describes the comp
 - `portal_handoff_unix_test.go`: real pending-offer cancellation after FIFO/symlink replacement.
 - `pending_enrollment_test.go`: reviewer-derived HTTP polling and multi-node pending/terminal controls (`enrollmenttest` tag).
 - `auth_handoff_multi_test.go`: legacy migration, per-node replacement, concurrent files, exact retirement, write failures and complete status projections.
+
+# Access requests and phone onboarding
+
+- `people_qr.go`: phone guides, safe terminal/PNG QR output and explicit bearer consent.
+- `people_qr_test.go, people_qr_unix_test.go`: independent decoding, command and file failure evidence.
+- `requests.go`: owner CLI/actions, terminal filtering and F4 post-decision hook.
+- `requests_test.go`: compiled CLI, MCP listener owner checks and durable decisions.
+- `mcp_requests.go`: owner-only request tool schemas and annotations.

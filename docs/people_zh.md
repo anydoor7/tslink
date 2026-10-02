@@ -1,5 +1,18 @@
 # 按人分享应用
 
+手机引导可在 `people add/update` 后加 `--qr`，或用 `--qr-png <file>` 把私有 PNG 写到已有目录。二维码包含确证的入口 URL；入口关闭时使用第一个有效应用 URL。入口已开启但尚未就绪时不会回退到 app；用 `tslink status --urls` 获取地址后重试 `people update <login> --qr`。UTF-8 半块字符二维码需要浅色终端背景；深色终端难以扫描时请用 PNG。JSON 只包含 `qr_payload` 文本及 `guide`/`guide_zh` 数组，不含图像字节。
+
+邀请 bearer link 仍默认隐藏。仅当 `--invite --print-links --qr-invite <app>` 与 `--qr` 或 `--qr-png` 一起使用时，才把指定应用邀请放入二维码，并提示这是凭据。只发给目标人员。普通地址二维码不包含邀请。PNG 写入失败不会撤回已保存的本地授权。
+
+可将下面的短指南与地址或二维码一起发送：
+
+1. 在手机上安装 Tailscale。
+2. 用主人邀请的账号登录。
+3. 打开主人发来的邀请并接受。
+4. 保持 Tailscale 已连接，扫描二维码、打开地址并收藏。
+
+已加入 tailnet 的人员可在入口[申请另一个应用或更多时间](requests_zh.md)，主人通过一次 CLI/MCP 操作批准并选择期限。
+
 先注册应用并完成节点登录，再用接收者在 Tailscale 客户端里使用的**真实登录名**授权：
 
 ```sh

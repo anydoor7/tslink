@@ -372,7 +372,8 @@ func MCPAuthMiddleware(allowedUsers []string, localClient *LocalClient, next htt
 			mcpDenied(w)
 			return
 		}
-		next.ServeHTTP(w, r)
+		caller := MCPCaller{Login: whois.UserProfile.LoginName, Tags: append([]string(nil), nodeTags...)}
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), mcpCallerKey{}, caller)))
 	})
 }
 

@@ -16,6 +16,7 @@ import (
 // mcpToolMinimalArguments is one valid call per tool, so a test can reach
 // each tool's action.
 var mcpToolMinimalArguments = map[string]string{
+	"requests_list": `{}`, "requests_approve": `{"id":"1","for":"8h"}`, "requests_deny": `{"id":"1"}`,
 	"extend":         `{"service":"web","for":"1h"}`,
 	"portal_enable":  `{"owner":"owner"}`,
 	"portal_disable": `{}`,
@@ -60,6 +61,14 @@ func mcpRefusal(tool string) error {
 
 func refusingMCPActions() mcpActions {
 	return mcpActions{
+		requestsList: func(context.Context) (any, error) { return nil, mcpRefusal("requests_list") },
+		requestsDecide: func(_ context.Context, _ requestDecisionArguments, approve bool) (any, error) {
+			name := "requests_deny"
+			if approve {
+				name = "requests_approve"
+			}
+			return nil, mcpRefusal(name)
+		},
 		extend: func(extendArguments) (any, error) { return nil, mcpRefusal("extend") },
 		portalChange: func(_ portalArguments, enable bool) (any, error) {
 			name := "portal_disable"

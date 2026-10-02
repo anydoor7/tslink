@@ -1,5 +1,18 @@
 # Share apps with a person
 
+For phone onboarding, add `--qr` to `people add/update`, or `--qr-png <file>` to write a private PNG in an existing directory. The QR contains the exact portal URL; when the portal is disabled it contains the first active app URL. An enabled pending portal never falls back to an app. Get its address with `tslink status --urls`, then retry `people update <login> --qr`. UTF-8 half-block output needs a light terminal background; use PNG when scanning a dark terminal is difficult. JSON includes `qr_payload` text and `guide`/`guide_zh` arrays, never image bytes.
+
+Bearer invitations stay masked. Only `--invite --print-links --qr-invite <app>` together with `--qr` or `--qr-png` puts that app's invitation in a QR; output warns that it is a credential. Send it only to the intended person. Generating a normal address QR never includes invitation links. A PNG write failure leaves already-saved local grants intact.
+
+Send this short guide with the address or QR:
+
+1. Install Tailscale on your phone.
+2. Sign in with the account the owner invited.
+3. Open any invitation the owner sent and accept it.
+4. Keep Tailscale connected. Scan the QR, open the address, and bookmark it.
+
+People already in your tailnet can use the portal to [request another app or more time](requests.md). The owner can approve and choose the duration in one CLI/MCP action.
+
 Register and enroll your apps first. Then grant access using the person's **actual Tailscale login** (the account they use in the Tailscale app):
 
 ```sh

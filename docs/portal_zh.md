@@ -27,7 +27,7 @@ tslink portal disable
 
 页面不输出隐藏应用名称、总数、后端地址、邀请 bearer link 或其他人的期限。HTML 和 `GET /api/apps` 使用同一个筛选结果。无效 service 条目不显示；registry 无法读取或格式损坏时拒绝服务，只显示通用的暂不可用提示。可见应用的 canonical 地址尚未就绪时显示 “Address not ready”。健康状态采用 F2 的 `healthy`、`degraded`、`down`、`unknown` 及 status 相同的新鲜度规则。健康表示后端最近一次探测结果，不证明某位访客的网络路径畅通。
 
-入口每次请求重读 grant，不写 registry；截止时间立即生效，expiry latch 由已有 app listener 和 daemon lifecycle 路径持久化。如果这些路径尚未写 latch 时系统时钟回退，入口依照 F1 当前期限规则判定。授权不使用缓存，每次重新调用 WhoIs，查询最多等待五秒。
+入口每次请求重读 grant；申请列表读取可持久化申请过期/保留状态，受保护的 POST 保存新申请；截止时间立即生效，expiry latch 由已有 app listener 和 daemon lifecycle 路径持久化。如果这些路径尚未写 latch 时系统时钟回退，入口依照 F1 当前期限规则判定。授权不使用缓存，每次重新调用 WhoIs，查询最多等待五秒。
 
 HTTPS 应用提供打开链接。TCP 服务显示与 `tslink url` 一致的 `host:port` 连接地址，并提示使用相应客户端；浏览器不能直接打开原始 TCP 服务。
 
@@ -55,6 +55,8 @@ curl https://home.example.ts.net/api/apps
 
 MCP 的 `portal_enable`（必填 `owner`，可选 `hostname`、`admins`、`funnel`）和 `portal_disable` 使用 CLI 的同一实现。`funnel: true`、`tslink portal enable --funnel` 显式返回 `portal_funnel_refused`；持久配置中的 `portal.funnel: true` 也拒绝加载。生产只使用 tsnet `ListenTLS`，没有公开 Funnel 或宿主机网络接口监听器。
 
-页面由服务端渲染，CSS 内嵌，适配手机和系统亮/暗模式，没有脚本、框架、CDN 或外部资源。HTML 全部转义。CSP 只放行内嵌样式的精确 hash，禁止脚本、frame、form 和外部资源。所有响应含 `Cache-Control: private, no-store`、`nosniff` 和 `no-referrer`。Host 必须匹配可信节点 canonical authority，HTTP absolute-form 请求也检查。Origin 如果存在，必须只有一项且为同一 HTTPS origin；opaque、HTTP 或外部 origin 均拒绝。
+页面由服务端渲染，CSS 内嵌，适配手机和系统亮/暗模式，没有脚本、框架、CDN 或外部资源。HTML 全部转义。CSP 只放行内嵌样式的精确 hash，禁止脚本、frame 和外部资源；form 仅允许提交到同一 origin。所有响应含 `Cache-Control: private, no-store`、`nosniff` 和 `no-referrer`。Host 必须匹配可信节点 canonical authority，HTTP absolute-form 请求也检查。Origin 如果存在，必须只有一项且为同一 HTTPS origin；opaque、HTTP 或外部 origin 均拒绝。
 
-只允许 GET 和 HEAD。`/access-requests` 预留，返回 404；没有 POST handler、申请表单或审批动作。独立 HTTP 服务沿用 F8 默认 32 MiB 请求大小上限、10 秒 header 期限、30 秒 body 读取空闲期限、60 秒 keep-alive 空闲超时，以及应用节点相同的 listener/request budget wrapper。入口 registry reader 拒绝符号链接和特殊文件，读取上限为 4 MiB。应用自身登录、浏览器访客链接和多主机发现不在本包范围内。
+GET 和 HEAD 提供目录。`POST /access-requests` 接收最多 8 KiB 的表单，要求 WhoIs 识别的真人 tailnet 成员、匹配的 HTTPS Origin 和绑定身份/host、两小时过期的 CSRF token。表单只列主人显式标记 `requestable` 的应用；隐藏应用以及关闭申请后的旧申请历史均不显示。访客查看自己的申请状态，主人通过 CLI/MCP 一次批准并选择期限，详见[申请文档](requests_zh.md)。独立 HTTP 服务沿用 F8 默认 32 MiB 请求大小上限、10 秒 header 期限、30 秒 body 读取空闲期限、60 秒 keep-alive 空闲超时，以及应用节点相同的 listener/request budget wrapper。入口 registry reader 拒绝符号链接和特殊文件，读取上限为 4 MiB。应用自身登录、浏览器访客链接和多主机发现不在本包范围内。
+
+人员指南支持 `--qr` 和 `--qr-png <file>`，使用入口确证 URL。四步中英手机指南及 bearer link 规则见[人员文档](people_zh.md)。

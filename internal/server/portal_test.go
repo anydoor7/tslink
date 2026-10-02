@@ -346,7 +346,7 @@ func TestPortalSecurityListener(t *testing.T) {
 		{"http-origin", "GET", "/", "home.tailnet.ts.net", "http://home.tailnet.ts.net", 403},
 		{"empty-origin", "GET", "/", "home.tailnet.ts.net", "", 200},
 		{"same-origin", "GET", "/", "home.tailnet.ts.net", "https://home.tailnet.ts.net", 200},
-		{"post", "POST", "/access-requests", "home.tailnet.ts.net", "", 405},
+		{"post", "POST", "/access-requests", "home.tailnet.ts.net", "", 403},
 		{"reserved", "GET", "/access-requests", "home.tailnet.ts.net", "", 404},
 		{"head", "HEAD", "/api/apps", "home.tailnet.ts.net", "", 200},
 	} {
@@ -473,7 +473,7 @@ func TestPortalCSPMatchesRenderedStyle(t *testing.T) {
 	}
 	hash := sha256.Sum256([]byte(css))
 	csp := resp.Header.Get("Content-Security-Policy")
-	for _, directive := range []string{"default-src 'none'", "style-src 'sha256-" + base64.StdEncoding.EncodeToString(hash[:]) + "'", "base-uri 'none'", "frame-ancestors 'none'", "form-action 'none'"} {
+	for _, directive := range []string{"default-src 'none'", "style-src 'sha256-" + base64.StdEncoding.EncodeToString(hash[:]) + "'", "base-uri 'none'", "frame-ancestors 'none'", "form-action 'self'"} {
 		if !strings.Contains(csp, directive) {
 			t.Fatalf("CSP missing %s: %s", directive, csp)
 		}

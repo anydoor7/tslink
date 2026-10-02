@@ -12,3 +12,7 @@ This index records the app recipe pages; existing guides retain their current pa
 - [funnel.md](funnel.md), [funnel_zh.md](funnel_zh.md): public TTL behavior and legacy-state compatibility.
 
 - [portal.md](portal.md), [portal_zh.md](portal_zh.md): one private address per visitor, authorization, enrollment, agent access and safety.
+
+# Access requests and phone onboarding
+
+- `requests.md, requests_zh.md`: request discovery, one-step decisions, privacy, policy and retention.

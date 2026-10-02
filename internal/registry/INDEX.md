@@ -36,3 +36,9 @@ This index records the people sharing lifecycle implementation and regression te
 - `portal.go`: optional schema-2 portal settings, admission, hostname reservation and locked updates.
 - `portal_read.go`, `portal_read_unix.go`, `portal_read_windows.go`: bounded read-only registry reader, special-file refusal.
 - `portal_test.go`, `portal_unix_test.go`: persistence, concurrent writers, hostile configuration and FIFO/symlink tests.
+
+# Access requests and phone onboarding
+
+- `requests.go`: bounded durable request ledger, rate/retention and atomic decisions.
+- `requests_test.go, requests_unix_test.go`: concurrent writers, restart, policy, retention and special files.
+- `people_app.go`: additive F1 single-app lifetime contract, preserving unrelated grants.

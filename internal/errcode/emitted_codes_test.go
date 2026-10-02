@@ -54,8 +54,9 @@ var codeCarriers = map[string]bool{
 // These helpers carry a fallback stable code into a result. Their constant
 // arguments are real emission sites; error-derived codes are forwarded.
 var codeFallbackFunctions = map[string]int{
-	"github.com/anydoor7/tslink/cmd.peopleInviteCode":    1,
-	"github.com/anydoor7/tslink/cmd.peopleInviteFailure": 2,
+	"github.com/anydoor7/tslink/cmd.peopleInviteCode":           1,
+	"github.com/anydoor7/tslink/cmd.peopleInviteFailure":        2,
+	"github.com/anydoor7/tslink/internal/registry.requestError": 0,
 }
 
 // These Code fields describe table metadata or diagnostics, not emitted error
@@ -578,7 +579,7 @@ func TestEveryEmittedCodeIsInTheTable(t *testing.T) {
 	// Control: the scan sees a literal code (cmd/daemon_setup.go), a
 	// constant (registry.CodePathNotFound), a local variable
 	// (tailapi.inviteTargetError) and a StableCode method (config).
-	for _, known := range []string{"daemon_not_running", "path_not_found", InternalError, "legacy_config_dir_present"} {
+	for _, known := range []string{"daemon_not_running", "path_not_found", InternalError, "legacy_config_dir_present", "access_request_decided"} {
 		if len(sites[known]) == 0 {
 			t.Fatalf("scan did not find %s; it is blind", known)
 		}
