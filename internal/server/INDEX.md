@@ -38,3 +38,5 @@ This index covers the recipe integration tests. The repository AGENTS.md describ
 - `registry_watcher_active_removal_test.go`: active removal while another node enrolls.
 - `registry_watcher_long_sync_test.go`: cancellation and callback joins during blocked startup.
 - `registry_watcher_decision_test.go`: generation ordering and lossless pending rechecks.
+
+- `wave1_round2_test.go`: lost-event recovery across health, Host, limits and people configuration.

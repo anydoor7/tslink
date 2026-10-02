@@ -35,3 +35,18 @@ This index records the app recipe additions; the CLI manifest describes the comp
 # Wave-1 integration
 
 - `wave1_integration_test.go`: recipe health/limits overrides, people scope and reuse, combined conflict diagnostics, CLI/MCP projections and doctor canonical Host business probes.
+
+# Windows supervision additions
+
+- [builtin_supervisor_windows.go](builtin_supervisor_windows.go)
+- [builtin_supervisor_windows_test.go](builtin_supervisor_windows_test.go)
+- [serve_shutdown_other.go](serve_shutdown_other.go)
+- [serve_shutdown_windows.go](serve_shutdown_windows.go)
+- [service_manager_guard_windows_test.go](service_manager_guard_windows_test.go)
+- [windows_scheduler_native_test.go](windows_scheduler_native_test.go)
+- [windows_supervision_regression_test.go](windows_supervision_regression_test.go)
+- [windows_task.go](windows_task.go)
+- [windows_task_com_test.go](windows_task_com_test.go)
+- [windows_task_test.go](windows_task_test.go)
+
+- `wave1_round2_test.go`: scheduler installation schemas with recipe, Host and request-limit contracts.
