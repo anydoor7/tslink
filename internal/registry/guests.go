@@ -179,7 +179,7 @@ func CreateGuest(path string, o CreateGuestOptions) (view GuestView, token strin
 	return g.View(o.Now), token, nil
 }
 func ListGuests(path string, now time.Time) ([]GuestView, error) {
-	reg, issues, e := guestPreflight(path)
+	reg, issues, e := readGuestState(path)
 	if os.IsNotExist(e) {
 		return []GuestView{}, nil
 	}
@@ -189,6 +189,7 @@ func ListGuests(path string, now time.Time) ([]GuestView, error) {
 	if len(issues) > 0 {
 		return nil, issues[0]
 	}
+	pendingGuestViews(path, reg)
 	out := make([]GuestView, 0, len(reg.Guests))
 	for _, g := range reg.Guests {
 		out = append(out, g.View(now))
@@ -218,7 +219,11 @@ func RevokeGuest(path, id string, now time.Time) (view GuestView, err error) {
 			if g.ID == id {
 				g.Revoked = true
 				view = g.View(now)
-				return save(path, reg)
+				if e := save(path, reg); e != nil {
+					return e
+				}
+				view = g.View(now)
+				return nil
 			}
 		}
 		return guestError(errcode.NotFound, "guest link not found")
@@ -232,7 +237,7 @@ func FindGuestToken(path, app, token string, now time.Time) (GuestView, string) 
 	if len(token) != 43 {
 		return GuestView{}, "invalid_token"
 	}
-	reg, issues, e := guestPreflight(path)
+	reg, issues, e := readGuestState(path)
 	if e != nil || len(issues) > 0 {
 		return GuestView{}, "unavailable"
 	}
@@ -248,66 +253,60 @@ func FindGuestToken(path, app, token string, now time.Time) (GuestView, string) 
 	return CheckGuest(path, app, id, now, false, false)
 }
 
-// CheckGuest revalidates the grant and current service, under the same writer
-// lock used by revoke. A request authorized before revoke may already be in
-// flight; every request starting after the revoke commit is denied.
+// CheckGuest reads current authorization with a shared lock. Only the first
+// observation of expiry takes the writer lock to persist the rollback latch.
 func CheckGuest(path, app, id string, now time.Time, use, session bool) (view GuestView, reason string) {
-	reason = "unavailable"
-	if _, _, e := guestPreflight(path); e != nil {
-		return view, reason
+	reg, issues, e := readGuestState(path)
+	if e != nil || len(issues) > 0 {
+		return view, "unavailable"
 	}
-	acquired, e := tryWithLock(path, func() error {
-		reg, e := loadForMutation(path)
-		if e != nil {
-			return e
+	gated := false
+	for _, s := range reg.Services {
+		if s.Name == app {
+			gated = s.GuestGate && s.Funnel && s.PublicAck && !FunnelExpiredAt(s, now)
 		}
-		gated := false
-		for _, s := range reg.Services {
-			if s.Name == app {
-				gated = s.GuestGate && s.Funnel && s.PublicAck && !FunnelExpiredAt(s, now)
-			}
-		}
-		for i := range reg.Guests {
-			g := &reg.Guests[i]
-			if g.ID != id || g.App != app {
-				continue
-			}
-			view = g.View(now)
-			switch {
-			case g.Revoked:
-				reason = "revoked"
-			case g.Expired || !now.Before(g.ExpiresAt):
-				reason = "expired"
-				if !g.Expired {
-					g.Expired = true
-					return save(path, reg)
-				}
-			case !gated:
-				reason = "unavailable"
-			default:
-				reason = "allowed"
-				if use {
-					g.Uses++
-					at := now.UTC()
-					g.LastUsedAt = &at
-				}
-				if session {
-					g.Sessions++
-				}
-				view = g.View(now)
-				if use || session {
-					return save(path, reg)
-				}
-			}
-			return nil
-		}
-		reason = "invalid_token"
-		return nil
-	})
-	if e != nil || !acquired {
-		reason = "unavailable"
 	}
-	return
+	for _, g := range reg.Guests {
+		if g.ID != id || g.App != app {
+			continue
+		}
+		view = g.View(now)
+		if g.Revoked {
+			return view, "revoked"
+		}
+		if g.Expired {
+			return view, "expired"
+		}
+		if !now.Before(g.ExpiresAt) {
+			acquired, e := tryWithLock(path, func() error {
+				current, e := loadForMutation(path)
+				if e != nil {
+					return e
+				}
+				for i := range current.Guests {
+					grant := &current.Guests[i]
+					if grant.ID == id && grant.App == app {
+						if !grant.Expired {
+							grant.Expired = true
+							return save(path, current)
+						}
+						return nil
+					}
+				}
+				return fmt.Errorf("guest grant unavailable")
+			})
+			if e != nil || !acquired {
+				return view, "unavailable"
+			}
+			return view, "expired"
+		}
+		if !gated {
+			return view, "mismatched"
+		}
+		addGuestUsage(path, id, now, use, session)
+		return view, "allowed"
+	}
+	return view, "invalid_token"
 }
 
 // CheckGuestPIN is bounded by a persisted per-grant five-attempt/15m window.
@@ -355,6 +354,9 @@ func CheckGuestPIN(path, app, id, pin string, now time.Time) (view GuestView, re
 			} else {
 				reason = "bad_pin"
 				g.PINFailures++
+				if g.PINAttempts >= 5 {
+					reason = "rate_limited"
+				}
 			}
 			view = g.View(now)
 			return save(path, reg)

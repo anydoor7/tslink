@@ -96,6 +96,10 @@ func NewProxyHandlerWithOptions(target string, identity *IdentityResolver, optio
 			response.Header.Del("Set-Cookie")
 			for _, value := range values {
 				name, _, _ := strings.Cut(value, "=")
+				name = strings.TrimSpace(name)
+				if cookie, err := http.ParseSetCookie(value); err == nil {
+					name = cookie.Name
+				}
 				if name != guestCookie && name != guestPINCookie {
 					response.Header.Add("Set-Cookie", value)
 				}

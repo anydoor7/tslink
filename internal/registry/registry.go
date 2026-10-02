@@ -1460,13 +1460,27 @@ func save(path string, reg *Registry) error {
 		}
 	}
 
+	pending := snapshotGuestUsage(path)
+	originalGuests := append([]GuestGrant(nil), reg.Guests...)
+	for i := range reg.Guests {
+		applyGuestUsage(&reg.Guests[i], pending[reg.Guests[i].ID])
+	}
 	data, err := marshalFn(reg, "", "  ")
 	if err != nil {
+		reg.Guests = originalGuests
 		return err
 	}
 	data = append(data, '\n')
-
-	return atomicfile.WriteFile(path, data)
+	err = atomicfile.WriteFile(path, data)
+	if err == nil {
+		acknowledgeGuestUsage(path, pending)
+	} else {
+		reg.Guests = originalGuests
+	}
+	if err == nil {
+		notifyGuestCommit(path, reg.Guests)
+	}
+	return err
 }
 
 func Add(path string, svc Service) (created bool, err error) {

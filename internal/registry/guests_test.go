@@ -68,8 +68,12 @@ func TestGuestGrantPolicyAndPersistence(t *testing.T) {
 	if _, reason = FindGuestToken(path, "photos", strings.Repeat("x", 43), guestTestNow); reason != "invalid_token" {
 		t.Fatal("wrong token", reason)
 	}
-	for range 5 {
-		if _, r := CheckGuestPIN(path, "photos", v.ID, "bad", guestTestNow); r != "bad_pin" {
+	for i := range 5 {
+		want := "bad_pin"
+		if i == 4 {
+			want = "rate_limited"
+		}
+		if _, r := CheckGuestPIN(path, "photos", v.ID, "bad", guestTestNow); r != want {
 			t.Fatal(r)
 		}
 	}
@@ -224,8 +228,11 @@ func TestGuestSaveFailureAndMissingService(t *testing.T) {
 	old := marshalFn
 	marshalFn = func(any, string, string) ([]byte, error) { return nil, fmt.Errorf("injected disk boundary failure") }
 	t.Cleanup(func() { marshalFn = old })
-	if _, r := CheckGuest(path, "photos", v.ID, guestTestNow, true, false); r != "unavailable" {
-		t.Fatal("save failure allowed", r)
+	if _, r := CheckGuest(path, "photos", v.ID, guestTestNow, true, false); r != "allowed" {
+		t.Fatal("counter persistence affected authorization", r)
+	}
+	if e = FlushGuestCounters(path); e == nil {
+		t.Fatal("counter flush failure hidden")
 	}
 	if _, _, e = CreateGuest(path, guestOptions()); e == nil {
 		t.Fatal("failed save created guest")
@@ -238,7 +245,7 @@ func TestGuestSaveFailureAndMissingService(t *testing.T) {
 	if _, e = Remove(path, "photos"); e != nil {
 		t.Fatal(e)
 	}
-	if _, r := FindGuestToken(path, "photos", token, guestTestNow); r != "unavailable" {
+	if _, r := FindGuestToken(path, "photos", token, guestTestNow); r != "mismatched" {
 		t.Fatal("missing service granted", r)
 	}
 	if _, r := CheckGuest(path, "photos", "missing", guestTestNow, false, false); r != "invalid_token" {
@@ -247,7 +254,7 @@ func TestGuestSaveFailureAndMissingService(t *testing.T) {
 	if _, _, e = CreateGuest(path, guestOptions()); e == nil {
 		t.Fatal("missing service created grant")
 	}
-	if _, r := CheckGuestPIN(path, "photos", v.ID, "975310", guestTestNow); r != "unavailable" {
+	if _, r := CheckGuestPIN(path, "photos", v.ID, "975310", guestTestNow); r != "mismatched" {
 		t.Fatal(r)
 	}
 	if _, e = ListGuests(filepath.Join(t.TempDir(), "missing"), guestTestNow); e != nil {

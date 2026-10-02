@@ -172,3 +172,5 @@ Windows `tslink install --startup` 显式选择下次登录启动、无崩溃恢
 ## 浏览器访客链接
 
 `tslink guest create <app> --for <lifetime> [--label "Aunt May"] [--pin] [--public] [--print-link] [--json]` 创建有限期限的单应用浏览器授权。首次开启必须的 Funnel gate 需 `--public`，已有开放 Funnel 须先关闭。PIN 从隐藏终端输入或 stdin 读取。只有 `--print-link` 披露 bearer URL，且需当前精确节点 URL。`guest list`、`guest show <id>`、`guest revoke <id>` 不返回 token hash 或 token。MCP owner-only 工具：`guest_create`、`guest_list`、`guest_show`、`guest_revoke`。稳定字段、迁移、cookie、PIN 限流及与 people grant 的比较见[访客链接](guest-links_zh.md)。
+
+非 JSON 的 guest list/show/revoke 显示 label、app、本地到期时间与具名时区和相对期限、status、uses。revoke 明确确认 ID，create 的发送说明包含易读到期时间。JSON 不变。

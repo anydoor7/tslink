@@ -24,7 +24,7 @@ func TestGuestSpecialRegistryFailsClosed(t *testing.T) {
 	}
 	start := time.Now()
 	r, _ := f.request("GET", "/", "", cookies)
-	if r.StatusCode != 401 || time.Since(start) > time.Second || f.hits.Load() != 0 {
+	if r.StatusCode != 503 || time.Since(start) > time.Second || f.hits.Load() != 0 {
 		t.Fatal("special file blocked gate or reached backend")
 	}
 	if e = os.Remove(f.path); e != nil {

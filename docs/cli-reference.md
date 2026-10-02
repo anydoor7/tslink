@@ -177,3 +177,5 @@ Omitting `--funnel-ttl` when making an existing private service public selects t
 ## Browser guest links
 
 `tslink guest create <app> --for <lifetime> [--label "Aunt May"] [--pin] [--public] [--print-link] [--json]` creates a finite one-app browser grant. First enabling the mandatory Funnel gate requires `--public`; existing open Funnel must first be disabled. PIN comes from hidden terminal input or stdin. Only `--print-link` discloses the bearer URL; it needs a current exact node URL. `guest list`, `guest show <id>` and `guest revoke <id>` never return token hashes or tokens. MCP owner-only tools: `guest_create`, `guest_list`, `guest_show`, `guest_revoke`. See [guest links](guest-links.md) for stable fields, migration, cookies, PIN limits and comparison with people grants.
+
+Human guest list/show/revoke output includes label, app, local expiry with named zone and relative time, status and uses. Revoke confirms the ID; sendable create messages include a readable expiry. JSON is unchanged.

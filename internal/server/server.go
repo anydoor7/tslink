@@ -2407,6 +2407,7 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service, prov
 	limitedHandler := RequestLimitsMiddleware(svc, reportLimit, handler)
 	if svc.GuestGate {
 		handler = newGuestGate(guestPath, svc, serverNowFn, s.accessWriter, RequestLimitsMiddleware(svc, reportLimit, guestPrivate), limitedHandler)
+		handlerCloser = handler.(*guestGate)
 	} else {
 		handler = limitedHandler
 	}
@@ -2733,6 +2734,11 @@ func (s *Server) stopNodeLocked(name string) {
 	}
 
 	node.cancel()
+	if gate, ok := node.handlerCloser.(*guestGate); ok {
+		if err := gate.Close(); err != nil {
+			slog.Warn("guest counters flush failed", "name", name, "error", err)
+		}
+	}
 	if node.httpSrv != nil {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), httpShutdownTimeout)
 		if err := shutdownHTTPServerFn(shutdownCtx, node.httpSrv); err != nil {

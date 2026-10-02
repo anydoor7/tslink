@@ -59,3 +59,10 @@ This index covers the recipe integration tests. The repository AGENTS.md describ
 - guest_test.go: real HTTP/1 and HTTP/2 listener, revocation, expiry, PIN, isolation and privacy.
 
 - `guest_unix_test.go`: real listener FIFO refusal and restored positive control.
+
+- `guest_regression_test.go`: listener regressions for concurrency, stream lifecycle, credential routes and cookie parsing.
+- `guest_lifecycle.go`: grant-scoped request and connection cancellation, counter flush and shutdown.
+- `guest_pages.go`: generic recipient pages and language selection.
+
+- `guest_ux_test.go`: generic pages, retry recovery, periodic and shutdown counters.
+- `guest_idle_test.go`: idle SSE/HTTP2/WebSocket termination, including a separate revoke process.

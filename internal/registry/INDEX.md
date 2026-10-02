@@ -35,3 +35,8 @@ This index records the people sharing lifecycle implementation and regression te
 
 - guests.go: durable browser grants, salted token/PIN hashes, policy, counters and revocation.
 - guests_test.go: persistence, policy, gate migration, lockout and invalid ledger controls.
+
+- `guest_usage.go`: shared authorization reads, batched usage and committed-grant notifications.
+- `guest_crash_test.go`: atomic revoke persistence and restart with killed writers.
+
+- `guest_usage_test.go`: batches, retry, revocation and opportunistic counter persistence.

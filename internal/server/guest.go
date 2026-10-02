@@ -6,15 +6,16 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
-	"html/template"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/anydoor7/tslink/internal/accesslog"
 	"github.com/anydoor7/tslink/internal/registry"
+	"github.com/fsnotify/fsnotify"
 )
 
 const guestCookie = "__Host-TSLinkGuest"
@@ -41,11 +42,26 @@ type guestGate struct {
 	mu                   sync.Mutex
 	sessions, challenges map[[32]byte]guestSession
 	sources              map[string]guestSource
+	flights              map[*guestFlight]struct{}
+	stop, done           chan struct{}
+	unsubscribe          func()
+	closeOnce            sync.Once
+	closed               bool
 }
 
 // Constructed synchronously by startNodeLocked; no goroutine reads clock seams.
 func newGuestGate(path string, svc registry.Service, now func() time.Time, writer accesslog.Writer, private, app http.Handler) http.Handler {
-	return &guestGate{path: path, svc: svc, now: now, writer: writer, private: private, app: app, sessions: map[[32]byte]guestSession{}, challenges: map[[32]byte]guestSession{}, sources: map[string]guestSource{}}
+	g := &guestGate{path: path, svc: svc, now: now, writer: writer, private: private, app: app, sessions: map[[32]byte]guestSession{}, challenges: map[[32]byte]guestSession{}, sources: map[string]guestSource{}, flights: map[*guestFlight]struct{}{}, stop: make(chan struct{}), done: make(chan struct{})}
+	g.unsubscribe = registry.WatchGuestCommits(path, g.observe)
+	watcher, err := fsnotify.NewWatcher()
+	if err == nil {
+		if err = watcher.Add(filepath.Dir(path)); err != nil {
+			_ = watcher.Close()
+			watcher = nil
+		}
+	}
+	go g.monitor(watcher)
+	return g
 }
 func guestNonce() (string, error) {
 	b := make([]byte, 32)
@@ -80,9 +96,15 @@ func (g *guestGate) record(id, decision, reason string, at time.Time) {
 func (g *guestGate) deny(w http.ResponseWriter, r *http.Request, id, reason string, at time.Time) {
 	accessDeny(r, reason)
 	g.record(id, "denied", reason, at)
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.WriteHeader(http.StatusUnauthorized)
-	_, _ = w.Write([]byte("Access unavailable.\n"))
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'")
+	status := http.StatusUnauthorized
+	if reason == "unavailable" {
+		status = http.StatusServiceUnavailable
+		w.Header().Set("Retry-After", "1")
+	}
+	w.WriteHeader(status)
+	_ = guestDeniedPage.Execute(w, guestPageText(r, false, ""))
 }
 func setGuestCookie(w http.ResponseWriter, name, value string, expiry time.Time) {
 	http.SetCookie(w, &http.Cookie{Name: name, Value: value, Path: "/", HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode, Expires: expiry})
@@ -102,6 +124,7 @@ func stripGuestSecrets(r *http.Request) *http.Request {
 		kept := []string{}
 		for _, part := range strings.Split(value, ";") {
 			name, _, _ := strings.Cut(strings.TrimSpace(part), "=")
+			name = strings.TrimSpace(name)
 			if name != guestCookie && name != guestPINCookie {
 				kept = append(kept, part)
 			}
@@ -116,22 +139,16 @@ func stripGuestSecrets(r *http.Request) *http.Request {
 			r.Header.Del(name)
 		}
 	}
-	if public, _ := r.Context().Value(accessFunnelKey{}).(bool); public {
-		r.Header.Del("Referer")
-		q := r.URL.Query()
-		for _, key := range []string{"token", "pin", "guest_token", "guest_pin"} {
-			q.Del(key)
-		}
-		r.URL.RawQuery = q.Encode()
+	r.Header.Del("Referer")
+	q := r.URL.Query()
+	for _, key := range []string{"token", "pin", "guest_token", "guest_pin"} {
+		q.Del(key)
 	}
+	r.URL.RawQuery = q.Encode()
 	return r
 }
 func (g *guestGate) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	public, _ := r.Context().Value(accessFunnelKey{}).(bool)
-	if !public {
-		g.private.ServeHTTP(w, stripGuestSecrets(r))
-		return
-	}
 	ctl := http.NewResponseController(w)
 	if r.ProtoMajor == 1 {
 		_ = ctl.EnableFullDuplex()
@@ -149,6 +166,17 @@ func (g *guestGate) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			_ = budget.Close()
 		}
 	}()
+	if !public {
+		if strings.HasPrefix(r.URL.Path, "/guest/") {
+			w.Header().Set("Referrer-Policy", "no-referrer")
+			w.Header().Set("Cache-Control", "no-store")
+			http.Redirect(w, r, "/", http.StatusSeeOther)
+			return
+		}
+		forwarded = true
+		g.private.ServeHTTP(w, stripGuestSecrets(r))
+		return
+	}
 	at := g.now()
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("Cache-Control", "no-store")
@@ -197,7 +225,7 @@ func (g *guestGate) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			setGuestCookie(w, guestPINCookie, nonce, expiry)
 			// The form action contains neither the link token nor any secret query.
-			g.form(w, csrf)
+			g.form(w, r, csrf, false)
 			return
 		}
 		g.establish(w, r, view, at)
@@ -217,23 +245,23 @@ func (g *guestGate) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		reason = "expired"
 	}
 	if reason != "allowed" {
-		g.mu.Lock()
-		delete(g.sessions, key)
-		g.mu.Unlock()
+		if reason != "unavailable" {
+			g.mu.Lock()
+			delete(g.sessions, key)
+			g.mu.Unlock()
+		}
 		g.deny(w, r, view.ID, reason, at)
 		return
 	}
 	g.record(view.ID, "allowed", "allowed", at)
 	forwarded = true
-	g.app.ServeHTTP(w, stripGuestSecrets(r))
+	g.serveApp(w, r, view)
 }
 
-var guestForm = template.Must(template.New("pin").Parse(`<!doctype html><html lang="en"><meta name="referrer" content="no-referrer"><meta name="viewport" content="width=device-width"><title>Enter PIN</title><form method="post" action="/guest/pin"><input type="hidden" name="csrf" value="{{.}}"><label>PIN <input name="pin" type="password" inputmode="numeric" autocomplete="off" required maxlength="64"></label><button>Open</button></form></html>`))
-
-func (g *guestGate) form(w http.ResponseWriter, csrf string) {
+func (g *guestGate) form(w http.ResponseWriter, r *http.Request, csrf string, retry bool) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
-	_ = guestForm.Execute(w, csrf)
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
+	_ = guestForm.Execute(w, guestPageText(r, retry, csrf))
 }
 func (g *guestGate) pin(w http.ResponseWriter, r *http.Request, at time.Time) {
 	key := guestKey(cookieValue(r, guestPINCookie))
@@ -287,6 +315,11 @@ func (g *guestGate) pin(w http.ResponseWriter, r *http.Request, at time.Time) {
 	}
 	view, reason := registry.CheckGuestPIN(g.path, g.svc.Name, challenge.id, r.PostForm.Get("pin"), at)
 	if reason != "allowed" {
+		if reason == "bad_pin" {
+			g.record(challenge.id, "denied", reason, at)
+			g.form(w, r, r.PostForm.Get("csrf"), true)
+			return
+		}
 		g.deny(w, r, challenge.id, reason, at)
 		return
 	}

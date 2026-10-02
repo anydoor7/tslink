@@ -76,3 +76,5 @@ This index records the app recipe additions; the CLI manifest describes the comp
 - guest_status.go: active grant views and Funnel/expiry diagnosis.
 - mcp_guests.go: owner-only tool registry and schemas.
 - guest_test.go: CLI/MCP masking, policy and diagnosis controls.
+
+- `guest_human_test.go`: human summaries and readable recipient expiry.

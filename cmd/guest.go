@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"text/tabwriter"
 	"time"
 
 	"github.com/anydoor7/tslink/internal/config"
@@ -53,14 +54,14 @@ func createGuest(paths sharePaths, args guestArguments, now time.Time) (guestCre
 	if e != nil {
 		return guestCreateResult{}, e
 	}
-	r := guestCreateResult{Grant: grant, Message: fmt.Sprintf("Open the private link in your browser before %s. You do not need to install anything or create a Tailscale account.", grant.ExpiresAt.Format(time.RFC3339)), EdgeState: "configured; check status for Funnel availability"}
+	r := guestCreateResult{Grant: grant, Message: fmt.Sprintf("Open the private link in your browser. Access ends %s. You do not need to install anything or create a Tailscale account.", guestExpiryDate(grant.ExpiresAt)), EdgeState: "configured; check status for Funnel availability"}
 	if grant.PINRequired {
 		r.Message += " Enter the PIN I send separately."
 	}
 	if args.PrintLink {
 		link := strings.TrimRight(base, "/") + "/guest/" + token
 		r.Link = &link
-		r.Message = "Open " + link + " in your browser. " + r.Message
+		r.Message = strings.Replace(r.Message, "the private link", link, 1)
 	}
 	return r, nil
 }
@@ -110,7 +111,7 @@ func newGuestCmd() *cobra.Command {
 		if jsonOutput(c) {
 			output.WriteJSON(c.OutOrStdout(), output.NewSuccess("guest create", r))
 		} else {
-			fmt.Fprintf(c.OutOrStdout(), "Guest %s for %s until %s\n%s\n", r.Grant.ID, r.Grant.App, r.Grant.ExpiresAt.Format(time.RFC3339), r.Message)
+			fmt.Fprintf(c.OutOrStdout(), "Guest %s for %s until %s\n%s\n", r.Grant.ID, r.Grant.App, guestExpiryDate(r.Grant.ExpiresAt), r.Message)
 			if r.Link == nil {
 				fmt.Fprintln(c.OutOrStdout(), "Link hidden. Tokens cannot be recovered; create with --print-link to deliver a new link.")
 			}
@@ -135,36 +136,92 @@ func newGuestCmd() *cobra.Command {
 				return e
 			}
 			var data any
+			var views []registry.GuestView
+			now := durationNowFn()
 			switch name {
 			case "list":
-				list, e := registry.ListGuests(path, durationNowFn())
+				list, e := registry.ListGuests(path, now)
 				if e != nil {
 					return e
 				}
 				data = map[string]any{"grants": list}
+				views = list
 			case "show":
-				view, e := registry.ShowGuest(path, args[0], durationNowFn())
+				view, e := registry.ShowGuest(path, args[0], now)
 				if e != nil {
 					return e
 				}
 				data = map[string]any{"grant": view}
+				views = []registry.GuestView{view}
 			case "revoke":
-				view, e := registry.RevokeGuest(path, args[0], durationNowFn())
+				view, e := registry.RevokeGuest(path, args[0], now)
 				if e != nil {
 					return e
 				}
 				data = map[string]any{"grant": view}
+				views = []registry.GuestView{view}
 			}
 			if jsonOutput(c) {
 				output.WriteJSON(c.OutOrStdout(), output.NewSuccess("guest "+name, data))
 			} else {
-				fmt.Fprintf(c.OutOrStdout(), "%+v\n", data)
+				if name == "revoke" {
+					fmt.Fprintf(c.OutOrStdout(), "Revoked guest %s.\n", args[0])
+				}
+				writeGuestSummary(c.OutOrStdout(), views, now)
 			}
 			return nil
 		}
 		group.AddCommand(leaf)
 	}
 	return group
+}
+
+func guestExpiryDate(at time.Time) string {
+	local := at.In(time.Local)
+	return local.Format("Jan 2, 2006 at 15:04 MST (UTC-07:00)")
+}
+
+func guestExpiryRelative(at, now time.Time) string {
+	d := at.Sub(now)
+	if d <= 0 {
+		return "expired"
+	}
+	value, unit := int(d.Round(time.Minute)/time.Minute), "minute"
+	if d >= 24*time.Hour {
+		value, unit = int(d.Round(24*time.Hour)/(24*time.Hour)), "day"
+	} else if d >= time.Hour {
+		value, unit = int(d.Round(time.Hour)/time.Hour), "hour"
+	}
+	if value < 1 {
+		return "in less than a minute"
+	}
+	if value != 1 {
+		unit += "s"
+	}
+	return fmt.Sprintf("in %d %s", value, unit)
+}
+
+func writeGuestSummary(out io.Writer, views []registry.GuestView, now time.Time) {
+	if len(views) == 0 {
+		fmt.Fprintln(out, "No guest links.")
+		return
+	}
+	w := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(w, "ID\tLABEL\tAPP\tEXPIRY\tSTATUS\tUSES")
+	for _, view := range views {
+		status := "active"
+		if view.Revoked {
+			status = "revoked"
+		} else if view.Expired {
+			status = "expired"
+		}
+		label := view.Label
+		if label == "" {
+			label = "-"
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s (%s)\t%s\t%d\n", view.ID, label, view.App, guestExpiryDate(view.ExpiresAt), guestExpiryRelative(view.ExpiresAt, now), status, view.Uses)
+	}
+	_ = w.Flush()
 }
 func configSharePaths() (sharePaths, error) {
 	registryPath, e := config.RegistryPath()

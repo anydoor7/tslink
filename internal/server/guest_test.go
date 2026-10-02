@@ -188,7 +188,7 @@ func TestGuestListenerProtocolsAndIsolation(t *testing.T) {
 			f := newGuestFixture(t, "", h2, true)
 			for _, path := range []string{"/", "/private-details", "/guest/" + strings.Repeat("x", 43)} {
 				r, body := f.request("GET", path, "", nil)
-				if r.StatusCode != 401 || body != "Access unavailable.\n" {
+				if r.StatusCode != 401 || !strings.Contains(body, "Reopen the original link") {
 					t.Fatalf("ungated %d %s", r.StatusCode, body)
 				}
 			}
@@ -325,9 +325,13 @@ func TestGuestPINListener(t *testing.T) {
 		}
 	}
 	wrong := url.Values{"csrf": {csrf[1]}, "pin": {"111111"}}.Encode()
-	for range 5 {
+	for i := range 5 {
+		want := 200
+		if i == 4 {
+			want = 401
+		}
 		r, _ := f.request("POST", "/guest/pin", wrong, cookies)
-		if r.StatusCode != 401 {
+		if r.StatusCode != want {
 			t.Fatal("bad PIN allowed")
 		}
 	}
@@ -419,7 +423,7 @@ func TestGuestConcurrentRevokeRequests(t *testing.T) {
 			}
 			io.Copy(io.Discard, response.Body)
 			response.Body.Close()
-			if response.StatusCode != 204 && response.StatusCode != 401 {
+			if response.StatusCode != 204 && response.StatusCode != 401 && response.StatusCode != 503 {
 				t.Error(response.StatusCode)
 			}
 		})
@@ -450,14 +454,14 @@ func TestGuestListenerCorruptAndMissingRegistry(t *testing.T) {
 		t.Fatal(e)
 	}
 	r, _ := f.request("GET", "/", "", cookies)
-	if r.StatusCode != 401 || f.hits.Load() != 0 {
+	if r.StatusCode != 503 || f.hits.Load() != 0 {
 		t.Fatal("corrupt registry fail-open")
 	}
 	if e = os.Remove(f.path); e != nil {
 		t.Fatal(e)
 	}
 	r, _ = f.request("GET", "/", "", cookies)
-	if r.StatusCode != 401 {
+	if r.StatusCode != 503 {
 		t.Fatal("missing registry fail-open")
 	}
 	if e = os.WriteFile(f.path, raw, 0600); e != nil {
@@ -489,13 +493,17 @@ func TestGuestSourceLimitAcrossGrants(t *testing.T) {
 		if i == 2 {
 			attempts = 1
 		}
-		for range attempts {
+		for attempt := range attempts {
 			pin := "111111"
 			if i == 2 {
 				pin = "975310"
 			}
 			r, _ := f.request("POST", "/guest/pin", url.Values{"csrf": {csrf[1]}, "pin": {pin}}.Encode(), form.Cookies())
-			if r.StatusCode != 401 {
+			want := 200
+			if i == 2 || attempt == 4 {
+				want = 401
+			}
+			if r.StatusCode != want {
 				t.Fatal("source limit bypass")
 			}
 		}
@@ -532,7 +540,7 @@ func TestGuestWriterContentionDeniesPromptly(t *testing.T) {
 	}
 	start := time.Now()
 	r, _ := f.request("GET", "/", "", cookies)
-	if r.StatusCode != 401 || time.Since(start) > time.Second || f.hits.Load() != 0 {
+	if r.StatusCode != 503 || time.Since(start) > time.Second || f.hits.Load() != 0 {
 		t.Fatal("registry writer stalled or fail-open")
 	}
 	if e = filelock.Unlock(lock); e != nil {
@@ -603,7 +611,7 @@ func TestGuestUnauthenticatedPartialUploadLanding(t *testing.T) {
 	}
 	defer r.Body.Close()
 	raw, e := io.ReadAll(r.Body)
-	if e != nil || r.StatusCode != 401 || string(raw) != "Access unavailable.\n" || time.Since(start) > time.Second || f.hits.Load() != 0 {
+	if e != nil || r.StatusCode != 401 || !strings.Contains(string(raw), "Reopen the original link") || time.Since(start) > time.Second || f.hits.Load() != 0 {
 		t.Fatal("unauthenticated upload exposed backend/limits or stalled", r.StatusCode, e)
 	}
 }
@@ -622,6 +630,7 @@ func guestMemoryListener(t *testing.T, f *guestFixture) *guestGate {
 	}
 	private := RequestLimitsMiddleware(f.svc, nil, peopleMiddleware(f.path, f.svc, f.fake.LocalClient, clock)(app))
 	gate := newGuestGate(f.path, f.svc, clock, f.store, private, RequestLimitsMiddleware(f.svc, nil, app)).(*guestGate)
+	t.Cleanup(func() { _ = gate.Close() })
 	handler := AccessEventMiddleware(f.svc, accesslog.Options{}, f.store, identity, clock, gate)
 	srv := newHTTPServerFn(handler)
 	configureAccessHTTP(srv)
@@ -741,7 +750,7 @@ func TestGuestSourceUsesTrustedFunnelAddress(t *testing.T) {
 	}
 	io.Copy(io.Discard, response.Body)
 	response.Body.Close()
-	if response.StatusCode != 401 {
+	if response.StatusCode != 200 {
 		t.Fatal("bad PIN allowed")
 	}
 	g.mu.Lock()
