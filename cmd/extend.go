@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"time"
 
 	"github.com/anydoor7/tslink/internal/config"
@@ -35,6 +36,10 @@ func lifetimeArgument(relative, until *string) (*string, error) {
 var durationChangedFn = func(registry.DurationChange) {}
 
 func extendLifetime(path string, args extendArguments, now time.Time) (registry.DurationChange, error) {
+	return extendLifetimeContext(context.Background(), path, args, now)
+}
+
+func extendLifetimeContext(ctx context.Context, path string, args extendArguments, now time.Time) (registry.DurationChange, error) {
 	value, err := lifetimeArgument(args.For, args.Until)
 	if err != nil {
 		return registry.DurationChange{}, err
@@ -46,7 +51,7 @@ func extendLifetime(path string, args extendArguments, now time.Time) (registry.
 	if err != nil {
 		return registry.DurationChange{}, err
 	}
-	result, err := registry.ExtendDuration(path, registry.ExtendOptions{Service: args.Service, Who: args.Who, Value: *value, Regrant: args.Regrant, AckNever: args.AckNever, Policy: policy, Now: now})
+	result, err := registry.ExtendDuration(path, registry.ExtendOptions{Service: args.Service, Who: args.Who, Value: *value, Regrant: args.Regrant, AckNever: args.AckNever, Policy: policy, Now: now, Authorize: peopleMutationAuthorization(ctx)})
 	if err == nil {
 		durationChangedFn(result)
 	}

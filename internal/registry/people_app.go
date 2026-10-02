@@ -34,6 +34,11 @@ func grantPersonApp(reg *Registry, who, app string, options PersonLifetimeOption
 	if err != nil {
 		return DurationChange{}, err
 	}
+	if options.Authorize != nil {
+		if err := options.Authorize(reg, login); err != nil {
+			return DurationChange{}, err
+		}
+	}
 	si := -1
 	for i, svc := range reg.Services {
 		if svc.Name == app {

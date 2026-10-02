@@ -45,3 +45,5 @@ This index records the people sharing lifecycle implementation and regression te
 
 - `portal_authority_test.go`: current-registry authorization under writer contention.
 - `requests_contention_test.go`: expiry maintenance lock failures, rollback and subprocess restart.
+
+- `approval_authority_test.go`: locked pre-mutation authority, canonical targets and authorized inbox failure paths.

@@ -135,6 +135,40 @@ func pruneAccessRequests(reg *Registry, now time.Time) {
 // ListAccessRequests persists expiry/retention lazily, without waiting behind
 // a stalled writer. Changed projections require a successful durable save.
 func ListAccessRequests(path string, now time.Time) ([]AccessRequest, error) {
+	return ListAccessRequestsAuthorized(path, now, nil)
+}
+
+// ListAccessRequestsAuthorized reads and maintains the inbox using current
+// authority under the write lock. Trusted local reads retain the fast path.
+func ListAccessRequestsAuthorized(path string, now time.Time, authorize func(*Registry) error) ([]AccessRequest, error) {
+	if authorize != nil {
+		var result []AccessRequest
+		locked, err := tryWithLock(path, func() error {
+			reg, err := loadRequestRegistry(path)
+			if err != nil {
+				return err
+			}
+			if err := authorize(reg); err != nil {
+				return err
+			}
+			before := append([]AccessRequest{}, reg.Requests...)
+			pruneAccessRequests(reg, now)
+			if !reflect.DeepEqual(before, reg.Requests) {
+				if err := save(path, reg); err != nil {
+					return err
+				}
+			}
+			result = reg.Requests
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+		if !locked {
+			return nil, requestError("access_request_busy", "request inbox is busy; try again")
+		}
+		return result, nil
+	}
 	reg, err := loadRequestRegistry(path)
 	if os.IsNotExist(err) {
 		return []AccessRequest{}, nil
@@ -246,6 +280,12 @@ func SubmitAccessRequest(path, who, app, requested, note string, now time.Time) 
 // Exact retries replay the original result. Different decisions/durations
 // conflict, including stale approval after denial or expiry.
 func DecideAccessRequest(path, id, status, value, reason string, ackNever bool, policy duration.Policy, now time.Time) (result AccessRequest, changed bool, err error) {
+	return DecideAccessRequestAuthorized(path, id, status, value, reason, ackNever, policy, now, nil)
+}
+
+// DecideAccessRequestAuthorized checks authority before expiry, retry lookup,
+// grants or decisions, against the same locked state that will be committed.
+func DecideAccessRequestAuthorized(path, id, status, value, reason string, ackNever bool, policy duration.Policy, now time.Time, authorize func(*Registry) error) (result AccessRequest, changed bool, err error) {
 	if status != RequestApproved && status != RequestDenied {
 		return result, false, requestError("usage_error", "decision must be approved or denied")
 	}
@@ -256,6 +296,11 @@ func DecideAccessRequest(path, id, status, value, reason string, ackNever bool, 
 		reg, err := loadRequestRegistry(path)
 		if err != nil {
 			return err
+		}
+		if authorize != nil {
+			if err := authorize(reg); err != nil {
+				return err
+			}
 		}
 		before := append([]AccessRequest{}, reg.Requests...)
 		pruneAccessRequests(reg, now)

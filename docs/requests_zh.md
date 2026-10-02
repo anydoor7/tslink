@@ -28,6 +28,8 @@ tslink requests deny <id> --reason "Please ask again next week."
 
 agent 可调用仅 owner 的 `requests_list`、`requests_approve`（`id`、`for`，可选 `ack_never`）和 `requests_deny`（`id`，可选 `reason`）。远程调用要求 WhoIs 无 tag 身份精确匹配入口配置的 owner；本地 CLI/stdio MCP 沿用可信 owner 进程约定。入口 admin 不自动获得审批权。HTTP MCP 通过 `portal_enable` 修改入口 owner/admin 设置，也必须是当前 owner；其他调用者返回 `access_request_owner_required`。owner 尚未设置时不能远程认领。本地 CLI 和 stdio MCP 是可信的首次设置与恢复通道，包括替换丢失的 owner login。F6 scope 映射留到集成。
 
+HTTP MCP 在 registry 写事务内检查申请列表、批准和拒绝权限：调用者必须是当前入口 owner，且不带 tag、未被撤销。新增、更新、移除、恢复人员或修改授权时，如果目标是当前 owner 或入口 admin，同样必须由该 owner 操作，并在锁内按变更前状态检查；已撤销的 owner 不能远程恢复自己。拒绝返回 `access_request_owner_required`。本地 CLI 和 stdio MCP 仍是可信恢复通道，普通人员的恢复规则不变。
+
 批准只修改**一个应用授权**，保留其他应用、期限、邀请历史和持久 guest 分类。已撤销人员和不再允许申请的应用会拒绝。增量 F1 `ChangePersonAppWithLifetime` 契约及 F11 策略与申请决定在同一 registry 锁内执行；授权和状态一起提交。相对期限从批准时刻起算，不从提交时刻或旧期限起算。批准显式续授过期 app grant，但不会清除人员撤销 tombstone。
 
 时长使用[F11 语法](durations_zh.md)：`90m`、`36h`、`3d`、`1w`、`1d12h` 或 `until <date/time>`。最短 1h。`durations.public_max` 也约束持久 guest（默认 7d）；成员遵循成员策略。永久成员审批需要 `--for never --ack-never`（MCP `ack_never: true`），guest 始终不能永久授权。访客填写的时长只是建议，最终由主人选择。绝对时长建议保存为 UTC RFC3339，以免重启或时区变化改变含义。

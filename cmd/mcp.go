@@ -700,7 +700,7 @@ type mcpActions struct {
 	requestsList   func(context.Context) (any, error)
 	requestEvents  func() ([]registry.RequestEvent, error)
 	requestsDecide func(context.Context, requestDecisionArguments, bool) (any, error)
-	extend         func(extendArguments) (any, error)
+	extend         func(context.Context, extendArguments) (any, error)
 	portalChange   func(context.Context, portalArguments, bool) (any, error)
 	portalCheck    func(context.Context) error
 	peopleChange   func(context.Context, peopleArguments, bool) (any, error)
@@ -892,15 +892,17 @@ func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 			if err := requireRequestOwner(ctx, paths.Registry); err != nil {
 				return nil, err
 			}
-			return listRequests(paths.Registry, peopleClock())
+			return listRequestsContext(ctx, paths.Registry, peopleClock())
 		},
 		requestsDecide: func(ctx context.Context, args requestDecisionArguments, approve bool) (any, error) {
 			if err := requireRequestOwner(ctx, paths.Registry); err != nil {
 				return nil, err
 			}
-			return decideRequest(paths.Registry, args, approve, peopleClock())
+			return decideRequestContext(ctx, paths.Registry, args, approve, peopleClock())
 		},
-		extend:      func(args extendArguments) (any, error) { return extendLifetime(paths.Registry, args, durationClock()) },
+		extend: func(ctx context.Context, args extendArguments) (any, error) {
+			return extendLifetimeContext(ctx, paths.Registry, args, durationClock())
+		},
 		portalCheck: func(ctx context.Context) error { return requireRequestOwner(ctx, paths.Registry) },
 		portalChange: func(ctx context.Context, args portalArguments, enable bool) (any, error) {
 			return changePortalContext(ctx, paths, args, enable)
@@ -1624,7 +1626,7 @@ func callMCPTool(ctx context.Context, actions mcpActions, name string, arguments
 		if refusal := mcpArgumentsRefusal(name, decodeErr, mcpRequiredArgument{"service", args.Service}); refusal != nil {
 			return refusal, nil
 		}
-		data, err = actions.extend(args)
+		data, err = actions.extend(ctx, args)
 	case "requests_list":
 		var args struct{}
 		if refusal := mcpArgumentsRefusal(name, decodeMCPArguments(arguments, &args)); refusal != nil {

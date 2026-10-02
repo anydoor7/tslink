@@ -64,11 +64,43 @@ func requireRequestOwnerInRegistry(ctx context.Context, reg *registry.Registry) 
 }
 
 func listRequests(path string, now time.Time) (RequestListResult, error) {
-	requests, err := registry.ListAccessRequests(path, now)
+	return listRequestsContext(context.Background(), path, now)
+}
+
+func requestOwnerAuthorization(ctx context.Context) func(*registry.Registry) error {
+	if _, remote := server.MCPCallerFromContext(ctx); !remote {
+		return nil
+	}
+	return func(reg *registry.Registry) error { return requireRequestOwnerInRegistry(ctx, reg) }
+}
+
+// Every remote person writer uses this guard on resolved pre-mutation state.
+// Scope permission cannot authorize changing owner/admin grants or tombstones.
+func peopleMutationAuthorization(ctx context.Context) func(*registry.Registry, string) error {
+	return func(reg *registry.Registry, login string) error {
+		if reg.Portal != nil {
+			protected := login == reg.Portal.Owner
+			for _, admin := range reg.Portal.Admins {
+				protected = protected || login == admin
+			}
+			if protected {
+				return requireRequestOwnerInRegistry(ctx, reg)
+			}
+		}
+		return nil
+	}
+}
+
+func listRequestsContext(ctx context.Context, path string, now time.Time) (RequestListResult, error) {
+	requests, err := registry.ListAccessRequestsAuthorized(path, now, requestOwnerAuthorization(ctx))
 	return RequestListResult{Requests: requests}, err
 }
 
 func decideRequest(path string, args requestDecisionArguments, approve bool, now time.Time) (RequestDecisionResult, error) {
+	return decideRequestContext(context.Background(), path, args, approve, now)
+}
+
+func decideRequestContext(ctx context.Context, path string, args requestDecisionArguments, approve bool, now time.Time) (RequestDecisionResult, error) {
 	status := registry.RequestDenied
 	policy := duration.Policy{}
 	var err error
@@ -79,7 +111,7 @@ func decideRequest(path string, args requestDecisionArguments, approve bool, now
 			return RequestDecisionResult{}, err
 		}
 	}
-	r, changed, err := registry.DecideAccessRequest(path, args.ID, status, args.For, args.Reason, args.AckNever, policy, now)
+	r, changed, err := registry.DecideAccessRequestAuthorized(path, args.ID, status, args.For, args.Reason, args.AckNever, policy, now, requestOwnerAuthorization(ctx))
 	if err == nil && changed {
 		requestDecidedFn(r.Event())
 	}

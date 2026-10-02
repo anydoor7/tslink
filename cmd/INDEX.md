@@ -83,3 +83,6 @@ This index records the app recipe additions; the CLI manifest describes the comp
 - `mcp_requests.go`: owner-only request tool schemas and annotations.
 
 - `portal_authority_test.go`: remote authority denial, local recovery and retryable request-inbox controls.
+
+- `requests_authority_test.go`: ported reviewer authority restoration and in-flight owner replacement probes.
+- `people_authority_test.go`: real HTTP MCP owner/admin/ordinary mutation matrix and compiled local recovery.
