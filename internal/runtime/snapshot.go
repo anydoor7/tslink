@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/anydoor7/tslink/internal/accesslog"
 	"github.com/anydoor7/tslink/internal/health"
 	"github.com/anydoor7/tslink/internal/inspect"
 	"github.com/anydoor7/tslink/internal/registry"
@@ -82,6 +83,7 @@ func (v *SnapshotVersion) UnmarshalJSON(data []byte) error {
 }
 
 type Snapshot struct {
+	AccessLog           *accesslog.Health `json:"access_log,omitempty"`
 	Alerts              health.AlertsView `json:"alerts"`
 	SchemaVersion       SnapshotVersion   `json:"schema_version"`
 	DaemonPID           int               `json:"daemon_pid"`

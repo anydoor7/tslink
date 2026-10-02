@@ -79,10 +79,11 @@ func NewProxyHandlerWithOptions(target string, identity *IdentityResolver, optio
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 			if failure := requestFailure(r, err); failure != nil {
+				accessDeny(r, "limits")
 				http.Error(w, failure.message, failure.status)
 				return
 			}
-			slog.Error("proxy error", "path", r.URL.Path, "error", err)
+			slog.Error("proxy error", "code", "backend_request_failed")
 			if isTimeout(err) {
 				http.Error(w, "Gateway timeout — backend did not respond in time", http.StatusGatewayTimeout)
 			} else {
@@ -99,6 +100,7 @@ func NewProxyHandlerWithOptions(target string, identity *IdentityResolver, optio
 			host = normalizeCanonicalProxyHost(options.CanonicalHost())
 		}
 		if host == "" {
+			accessDeny(r, "preserve_host_unavailable")
 			http.Error(w, "canonical_host_unavailable: node's canonical external name is unavailable", http.StatusServiceUnavailable)
 			return
 		}

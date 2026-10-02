@@ -163,3 +163,8 @@ Windows `tslink install --startup` 显式选择下次登录启动、无崩溃恢
 `tslink extend <service> [--person <login>] (--for <lifetime> | --until <date/time>) [--regrant] [--ack-never]` 修改单个人员授权或 Funnel TTL。相对值从操作时刻起算,可缩短或延长。已过期须 `--regrant`,撤销人员不能恢复。始终输出版本化 JSON envelope。MCP `extend` 使用 `service`、`who`、`for`/`until`、`regrant` 和 `ack_never`。夏令时、配置校验、策略 API 以及健康/超时/keepalive 标志的语法见[时长文档](durations_zh.md),公开期限见[Funnel](funnel_zh.md)。
 
 已有私有服务改为公开时,省略 `--funnel-ttl` 使用有限 24h 默认值。只有已决定的公开期限才会保留,包括历史显式公开 `never`;dry-run 和 MCP add 规则相同。首次 `--invite` 在授权事务中保存持久访客分类,早于远端操作;后续 update/extend 保留访客策略。邀请发送状态转换前发生并发授权变更时返回 `conflict`。
+## 本地访问历史
+
+`tslink access log [--app X] [--who Y] [--since 24h|RFC3339] [--until RFC3339] [--decision allowed|denied] [--limit N] [--json]` 返回倒序事件、按人计数及每个应用最后允许访问时间。默认 limit 100（1–10000），汇总计全部匹配项。标准 envelope 的 `data` 包含 `events`、`summary`、`truncated`。MCP：`access_log`、`access_summary`，均为只读，可授予 viewer scopes。
+
+`tslink access path <app> <prefix|full|off|inherit|true|false>` 设置单应用路径模式，默认 prefix；full 可能保存应用自己的 bearer 路径，off 不记录路径。全局 `config set` key：`access-log-enabled`、`access-log-path`（兼容 boolean），`access-log-path-mode`（prefix/full/off）；`access-log-retention-days`（默认 30）、`access-log-max-bytes`（默认 67108864）、`access-log-queue-size`（默认 1024）。空值恢复默认；全局改动需重启 `serve`。`status`、`doctor` 包含 `access_log` 当前实例健康信息（current、最后写入、drops、size、缺失历史窗口；旧成功快照不能替代当前失败）。严格范围、隐私、持久性及事件计数语义见 [access-log_zh.md](access-log_zh.md)。

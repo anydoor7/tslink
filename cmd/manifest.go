@@ -275,6 +275,11 @@ func commandJSONResultFields(commandPath string) map[string]JSONResultFieldInfo 
 			"regranted":           {Type: "boolean", Description: "True only if this operation explicitly renewed an expired grant."},
 			"changed_at":          {Type: "string", Description: "Operation time in UTC; relative lifetime is measured from this instant."},
 		}
+	case "tslink access log":
+		return map[string]JSONResultFieldInfo{"events": {Type: "array", Description: "Newest-first access events; privacy-preserving schema version 1."}, "summary": {Type: "object", Description: "Counts per person and app with last_seen; includes all matches."}, "truncated": {Type: "boolean", Description: "More events matched than returned."}}
+	case "tslink access path":
+		return map[string]JSONResultFieldInfo{"app": {Type: "string", Description: "App/service name."}, "record_path": {Type: "boolean|null", Description: "Per-service path recording; null inherits global setting."}}
+
 	case "tslink people add", "tslink people update":
 		return map[string]JSONResultFieldInfo{
 			"person":             {Type: "object", Description: "Canonical login, revocation state, per-app absolute deadlines, active decisions and exact URLs when available."},
@@ -319,6 +324,7 @@ func commandJSONResultFields(commandPath string) map[string]JSONResultFieldInfo 
 		return recipeManifestResultFields()
 	case "tslink list":
 		fields := agentServiceRuntimeJSONResultFields()
+		fields["access_log"] = JSONResultFieldInfo{Type: "object", Description: "Local access log health: last_write, drops, size_bytes, enabled, updated_at and error."}
 		fields["services[].state"] = JSONResultFieldInfo{
 			Type:        "string",
 			Description: "Slim list runtime state: exact, pending, or failed.",
@@ -388,6 +394,7 @@ func commandJSONResultFields(commandPath string) map[string]JSONResultFieldInfo 
 		}
 	case "tslink doctor":
 		return map[string]JSONResultFieldInfo{
+			"access_log": {Type: "object", Description: "Local access log health: last_write, drops, size_bytes, enabled, updated_at and error."},
 			"tailscale_ssh.state": {
 				Type:        "string",
 				Description: "Tailscale SSH enablement for this node, read from the local Tailscale client. Informational: it never changes status, health_status, or health_exit_code.",

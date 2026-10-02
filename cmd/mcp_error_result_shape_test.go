@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"github.com/anydoor7/tslink/internal/accesslog"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +18,8 @@ import (
 // each tool's action.
 var mcpToolMinimalArguments = map[string]string{
 	"extend":         `{"service":"web","for":"1h"}`,
+	"access_log":     `{}`,
+	"access_summary": `{}`,
 	"people_add":     `{"who":"alice","apps":["web"]}`,
 	"people_update":  `{"who":"alice","apps":["web"]}`,
 	"people_list":    `{}`,
@@ -59,6 +62,12 @@ func mcpRefusal(tool string) error {
 func refusingMCPActions() mcpActions {
 	return mcpActions{
 		extend: func(extendArguments) (any, error) { return nil, mcpRefusal("extend") },
+		accessLog: func(accessLogArguments) (accesslog.Result, error) {
+			return accesslog.Result{}, mcpRefusal("access_log")
+		},
+		accessSummary: func(accessLogArguments) (accesslog.Summary, error) {
+			return accesslog.Summary{}, mcpRefusal("access_summary")
+		},
 		peopleChange: func(_ context.Context, _ peopleArguments, update bool) (any, error) {
 			name := "people_add"
 			if update {

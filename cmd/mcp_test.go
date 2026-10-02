@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/anydoor7/tslink/internal/accesslog"
 	"io"
 	"os"
 	"path/filepath"
@@ -26,6 +27,12 @@ import (
 
 func fakeMCPActions() mcpActions {
 	return mcpActions{
+		accessLog: func(accessLogArguments) (accesslog.Result, error) {
+			return accesslog.Result{Events: []accesslog.Event{}, Summary: accesslog.Summary{People: []accesslog.Count{}, Apps: []accesslog.Count{}}}, nil
+		},
+		accessSummary: func(accessLogArguments) (accesslog.Summary, error) {
+			return accesslog.Summary{People: []accesslog.Count{}, Apps: []accesslog.Count{}}, nil
+		},
 		peopleChange: func(_ context.Context, args peopleArguments, _ bool) (any, error) {
 			return PeopleResult{Person: PeopleView{Login: args.Who, Grants: []PeopleGrantView{}}, Invites: []PeopleInviteView{}, Complete: true, Message: "guide", InviteRequirement: peopleInviteRequirement}, nil
 		},
@@ -504,6 +511,7 @@ func TestMCPToolSchemasAreClosedAndModelFocused(t *testing.T) {
 		"tags_list", "tags_set", "access_explain", "doctor", "logs",
 		"invite_user", "invite_device", "invite_list", "invite_revoke", "invite_resend",
 		"template_list", "template_plan", "template_apply",
+		"access_log", "access_summary",
 		"apps_detect", "recipe_list", "recipe_plan", "recipe_apply",
 		"extend", "people_add", "people_update", "people_list", "people_remove",
 	}

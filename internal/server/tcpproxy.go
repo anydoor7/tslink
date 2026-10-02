@@ -58,14 +58,18 @@ func serveTCP(ctx context.Context, ln net.Listener, target, name string) {
 			}()
 		default:
 			slog.Warn("tcp connection limit exceeded; closing accepted connection", "name", name, "limit", tcpMaxActiveConnections)
+			_, finish := tcpAccessBegin(ctx, conn, name, "limits")
 			_ = conn.Close()
+			finish()
 		}
 	}
 }
 
 func handleTCPConn(ctx context.Context, clientConn net.Conn, target, name string) {
-	defer clientConn.Close()
 	enableTCPKeepAlive(clientConn)
+	clientConn, finish := tcpAccessBegin(ctx, clientConn, name, "")
+	defer finish()
+	defer clientConn.Close()
 
 	dialCtx, cancel := context.WithTimeout(ctx, tcpBackendDialTimeout)
 	defer cancel()

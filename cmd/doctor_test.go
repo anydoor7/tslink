@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/anydoor7/tslink/internal/accesslog"
 	"github.com/anydoor7/tslink/internal/config"
 	"github.com/anydoor7/tslink/internal/credentials"
 	"github.com/anydoor7/tslink/internal/inspect"
@@ -221,6 +222,7 @@ func (env doctorTestEnv) writeExactSnapshot(t *testing.T) {
 		})
 	}
 	snapshot := tsruntime.NewSnapshot(env.pid, env.startedAt, fingerprint, env.startedAt.Add(time.Second), states)
+	snapshot.AccessLog = &accesslog.Health{Enabled: true, Current: true}
 	if err := tsruntime.Save(env.snapshotPath, snapshot); err != nil {
 		t.Fatalf("runtime.Save: %v", err)
 	}
@@ -439,7 +441,7 @@ func TestDoctorTier1StateMatrix(t *testing.T) {
 			services:     []registry.Service{service},
 			wantCode:     inspect.WarningCodeCredentialTier1,
 			wantSeverity: doctorSeverityInfo,
-			wantExit:     output.ExitSuccess,
+			wantExit:     output.ExitWarning,
 			setup: func(t *testing.T, env doctorTestEnv) {
 				record := newAuthHandoffRecord("web", "https://login.tailscale.com/a/doctor-test", env.pid)
 				if err := saveAuthHandoff(env.authHandoff, record); err != nil {
