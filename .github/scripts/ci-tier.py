@@ -83,6 +83,37 @@ def release_sensitive(repo, ref, entries, files):
     return sensitive
 
 
+def go_referenced_docs(repo, ref, files):
+    """Conservatively catch runtime and test inputs in raw Go Git objects."""
+    sensitive = {}
+    matches = {}
+    for name in files:
+        path = name.removeprefix("./")
+        if not is_docs(path):
+            continue
+        stem = re.split(r"[._]", PurePosixPath(path).name, maxsplit=1)[0]
+        # Every path/basename match also contains its stem. One literal stem
+        # scan therefore covers all three, including dynamically built names.
+        if stem not in matches:
+            if not stem or "\n" in stem:
+                # grep treats newlines as separate patterns even with -F.
+                # Raw matching also finds an empty stem in an empty Go blob.
+                entries = tree_entries(repo, ref)
+                matches[stem] = any(os.fsencode(stem) in git(repo, "show", f"{ref}:{source}")
+                                    for source in entries if source.endswith(".go"))
+            else:
+                result = subprocess.run(
+                    ["git", "-C", str(repo), "grep", "-a", "-q", "-F", "-e", stem,
+                     ref, "--", "*.go"], capture_output=True, check=False, timeout=GIT_TIMEOUT,
+                )
+                if result.returncode not in (0, 1):
+                    raise RuntimeError("cannot inspect Go document references")
+                matches[stem] = result.returncode == 0
+        if matches[stem]:
+            sensitive[name] = f"Go source substring {stem!r} for {path!r} in {ref}"
+    return sensitive
+
+
 def embed_patterns(repo, ref):
     result = subprocess.run(
         ["git", "-C", str(repo), "grep", "-I", "-l", "-z", "-F", "//go:embed", ref, "--", "*.go"],
@@ -212,6 +243,10 @@ def decide(repo, event_name, event, files=None, base=None, head=None):
             dependencies = embed_patterns(repo, ref)
             sensitive.update(name for name in files if entries.get(name) == "100755"
                              or matches_path(name, dependencies))
+        for ref in dict.fromkeys((merge_base, base, head)):
+            referenced = go_referenced_docs(repo, ref, files)
+            if referenced:
+                return "full", referenced[sorted(referenced)[0]]
         return classify(files, special, labels, sensitive=sensitive, mode=mode)
     except (OSError, ValueError, KeyError, RuntimeError, subprocess.SubprocessError):
         return "full", "tree/dependency inspection unavailable: conservative full gate"

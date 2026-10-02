@@ -11,6 +11,7 @@ import runpy
 import subprocess
 import sys
 import tempfile
+import tarfile
 import unittest
 from unittest import mock
 
@@ -386,6 +387,145 @@ class ReviewRegressionTests(unittest.TestCase):
                 self.assertEqual(self.git("rev-parse", base + ":.goreleaser.yml"),
                                  self.git("rev-parse", head + ":.goreleaser.yml"))
                 self.assertEqual(tier.decide(self.repo, "pull_request", self.event(base=base, head=head))[0], "full")
+
+    def test_current_go_document_consumers(self):
+        # Use today's actual Go consumers and release metadata, not invented
+        # path dependencies. The proposed checkout is read only as Git data.
+        archive = subprocess.check_output(["git", "-C", str(ROOT), "archive", "HEAD"])
+        with tarfile.open(fileobj=io.BytesIO(archive)) as source:
+            source.extractall(self.repo, filter="data")
+        base = self.commit("current repository consumers")
+        for path in ("docs/platforms.md", "docs/platforms_zh.md", "AGENTS.md",
+                     "SECURITY.md", "README.md", "README_zh.md", "README.ja.md"):
+            with self.subTest(path=path):
+                self.reset(base)
+                document = self.repo / path
+                original = document.read_text() if document.exists() else "translated README\n"
+                self.write(path, original + "\nDocumentation-only change.\n")
+                head = self.commit("change one document")
+                self.assertEqual(self.git("diff", "--name-only", base, head), path)
+                self.assertEqual(self.git("diff", base, head, "--", "*.go", ".goreleaser*", ".github"), "")
+                for mode in ("tiered", "full"):
+                    with self.subTest(mode=mode), mock.patch.dict(os.environ, {"CI_PR_TIER_MODE": mode}):
+                        selected, reason = tier.decide(self.repo, "pull_request", self.event(base=base, head=head))
+                        self.assertEqual(selected, "full")
+                        self.assertIn("Go source substring", reason)
+
+    def test_unreferenced_markdown_control(self):
+        archive = subprocess.check_output(["git", "-C", str(ROOT), "archive", "HEAD"])
+        with tarfile.open(fileobj=io.BytesIO(archive)) as source:
+            source.extractall(self.repo, filter="data")
+        base = self.commit("current repository control")
+        path = "docs/QuasarUnreferencedGuide.md"
+        # Prove this is genuinely absent in Go objects, with a known-present
+        # README stem as the same grep probe's positive control.
+        for stem, status in (("QuasarUnreferencedGuide", 1), ("README", 0)):
+            probe = subprocess.run(["git", "-C", str(self.repo), "grep", "-a", "-q", "-F",
+                                    "-e", stem, base, "--", "*.go"], capture_output=True)
+            self.assertEqual(probe.returncode, status)
+        self.write(path, "independent documentation\n")
+        head = self.commit("unreferenced documentation")
+        for mode in ("tiered", "full"):
+            with self.subTest(mode=mode), mock.patch.dict(os.environ, {"CI_PR_TIER_MODE": mode}):
+                self.assertEqual(tier.decide(self.repo, "pull_request", self.event(base=base, head=head))[0], "docs")
+
+    def test_raw_go_document_substrings(self):
+        cases = (("docs/QuasarGuide.md", b"prefixdocs/QuasarGuide.mdsuffix", "full"),
+                 ("docs/QuasarGuide.md", b"prefixQuasarGuide.mdsuffix", "full"),
+                 ("docs/QuasarGuide.ja.md", b"prefixQuasarGuidesuffix", "full"),
+                 ("docs/QuasarGuide_zh.md", b"prefixQuasarGuidesuffix", "full"),
+                 ("docs/QuasarGuide_zh.ja.md", b"QuasarGuide", "full"),
+                 ("docs/QuasarGuide.ja_zh.md", b"QuasarGuide", "full"),
+                 ("docs/QuasarGuide.md", b"quasarguide", "docs"),
+                 ("docs/Quasar\nGuide.md", b"Quasar\nGuide", "full"),
+                 ("docs/Quasar\nGuide.md", b"unrelated", "docs"),
+                 ("docs/assets/QuasarImage.ja.png", b"QuasarImage", "full"),
+                 ("docs/QuasarGuide.md", b"unrelated", "docs"),
+                 ("docs/.md", b"anything", "full"))
+        for path, reference, expected in cases:
+            with self.subTest(path=path, reference=reference):
+                self.reset()
+                # NUL and invalid UTF-8 must not suppress raw byte evidence.
+                self.write("cmd/raw.go", "package cmd\n")
+                (self.repo / "cmd/raw.go").write_bytes(b"package cmd\n// \xff\x00" + reference + b"\n")
+                self.write(path, "base\n")
+                base = self.commit("raw Go reference")
+                self.write(path, "head\n")
+                head = self.commit("document only")
+                # Dirty checkout source cannot replace any tree's evidence.
+                (self.repo / "cmd/raw.go").write_bytes(b"package cmd\n// opposite evidence QuasarGuide QuasarImage\n")
+                selected, reason = tier.decide(self.repo, "pull_request", self.event(base=base, head=head))
+                self.assertEqual(selected, expected)
+                if expected == "full" and path != "docs/.md":
+                    self.assertIn("Go source substring", reason)
+        self.reset()
+        self.write("docs/non-go.txt", "QuasarGuide")
+        base = self.commit("non-Go reference")
+        self.write("docs/QuasarGuide.md", "docs\n")
+        head = self.commit("non-Go control")
+        self.assertEqual(tier.decide(self.repo, "pull_request", self.event(base=base, head=head))[0], "docs")
+
+    def test_empty_stem_matches_empty_go_blob(self):
+        self.write("cmd/plain.go", "")
+        self.write("docs/assets/_payload.png", "base\n")
+        base = self.commit("empty Go blob and empty document stem")
+        self.write("docs/assets/_payload.png", "head\n")
+        head = self.commit("image only")
+        selected, reason = tier.decide(self.repo, "pull_request", self.event(base=base, head=head))
+        self.assertEqual(selected, "full")
+        self.assertIn("Go source substring ''", reason)
+
+    def test_go_document_scan_failure_is_full(self):
+        self.write("docs/QuasarGuide.md", "base\n")
+        base = self.commit("document base")
+        self.write("docs/QuasarGuide.md", "head\n")
+        head = self.commit("document head")
+        run = tier.subprocess.run
+        for failure in ("error", "timeout"):
+            with self.subTest(failure=failure):
+                def failed_scan(args, **kwargs):
+                    if "grep" in args and "-a" in args:
+                        if failure == "timeout":
+                            raise subprocess.TimeoutExpired(args, tier.GIT_TIMEOUT)
+                        return subprocess.CompletedProcess(args, 2, b"", b"failed")
+                    return run(args, **kwargs)
+                with mock.patch.object(tier.subprocess, "run", side_effect=failed_scan):
+                    selected, reason = tier.decide(self.repo, "pull_request", self.event(base=base, head=head))
+                self.assertEqual(selected, "full")
+                self.assertIn("inspection unavailable", reason)
+
+    def test_go_document_reference_in_each_tree(self):
+        for location in ("merge-base", "base", "head"):
+            for edit in ("modify", "delete"):
+                with self.subTest(location=location, edit=edit):
+                    self.reset()
+                    path = "docs/QuasarGuide_zh.md"
+                    self.write(path, "base\n")
+                    common = self.commit("common document")
+                    self.write("cmd/reader_darwin_test.go", "package cmd\n// QuasarGuide\n")
+                    referenced = self.commit("Darwin consumer")
+                    if location == "merge-base":
+                        (self.repo / "cmd/reader_darwin_test.go").unlink()
+                        base = self.commit("base removes consumer")
+                        self.reset(referenced)
+                        (self.repo / "cmd/reader_darwin_test.go").unlink()
+                    elif location == "base":
+                        base = referenced
+                        self.reset(common)
+                    else:
+                        base = common
+                    if edit == "delete":
+                        (self.repo / path).unlink()
+                    else:
+                        self.write(path, "head\n")
+                    head = self.commit("document edit")
+                    selected, reason = tier.decide(self.repo, "pull_request", self.event(base=base, head=head))
+                    self.assertEqual(selected, "full")
+                    self.assertIn("Go source substring", reason)
+                    # Explicit leading ./ is normalized by dependency inspection.
+                    selected, reason = tier.decide(self.repo, "pull_request", self.event(base=base, head=head), ["./" + path])
+                    self.assertEqual(selected, "full")
+                    self.assertIn("Go source substring", reason)
 
     def test_review2_unchanged_symlink_target(self):
         self.write("go.mod", "module fixture.invalid/symlink\n\ngo 1.26.6\n")
