@@ -11,15 +11,15 @@ tslink add --recipe home-assistant --proxy 127.0.0.1:8123  # 等价预览
 tslink add family-tv --recipe jellyfin --yes      # 自定义服务名
 ```
 
-Recipe catalog 版本 1，官方文档核对日期为 **2026-10-01**。区分宿主机端口映射和容器端口，用 `--proxy 127.0.0.1:<宿主机端口>` 覆盖。运行 `tslink url <name> --wait=30s` 获得精确 URL，再替换片段中的 `YOUR-TAILNET` 及示例域名，不猜测 tailnet 后缀。合并设置片段，不覆盖整个配置文件。容器中看到的来源可能是网桥网关，只信任实际代理 IP，不信任整个私有网段。
+Recipe catalog 版本 1，官方文档核对日期为 **2026-10-02**。区分宿主机端口映射和容器端口，用 `--proxy 127.0.0.1:<宿主机端口>` 覆盖。运行 `tslink url <name> --wait=30s` 获得精确 URL，再替换片段中的 `YOUR-TAILNET` 及示例域名，不猜测 tailnet 后缀。合并设置片段，不覆盖整个配置文件。容器中看到的来源可能是网桥网关，只信任实际代理 IP，不信任整个私有网段。
 
 `apps share` 和 `add --recipe` 默认给出计划；`--yes` 才应用，`--dry-run` 始终优先。同名服务保留原配置，结果同时提供 `service` 和 `requested`。命令不会安装或配置第三方应用。`--no-daemon-install` 只保存 registry。注册成功不能证明应用已运行或 URL 可访问。
 
-探测使用 macOS lsof、Linux procfs、Windows netstat，只向数字 loopback HTTP 地址发 GET：单请求 700 ms，总预算 15 秒，8 个 worker，最多读取 64 KiB。无凭据、环境 HTTP 代理、Cookie 或重定向。仅 HTTPS、仅 LAN、其他网络 namespace、受认证保护或非典型安装可能无法识别。`high` 是应用端点/正文/响应头指纹，`medium` 是 title 匹配，`low` 仅代表不明 HTML 页面；`complete=false` 表示部分结果。置信度不证明认证、健康或版本兼容，输出只含指纹描述，不含响应正文。
+探测使用 macOS lsof、Linux procfs、Windows GetExtendedTcpTable，只向数字 loopback HTTP 地址发 GET：单请求 700 ms，总预算 15 秒，8 个 worker，最多读取 64 KiB。无凭据、环境 HTTP 代理、Cookie 或重定向。仅 HTTPS、仅 LAN、其他网络 namespace、受认证保护或非典型安装可能无法识别。`high` 是应用端点/正文/响应头指纹，`medium` 是 title 匹配，`low` 仅代表不明 HTML 页面；`complete=false` 表示部分结果。置信度不证明认证、健康或版本兼容，输出只含指纹描述，不含响应正文。
 
 私有访问仍受 tailnet policy 和 `--allow` 影响。Funnel 面向整个互联网：验证应用自身认证后才考虑 `--funnel --public`。`never_public` recipe 会拒绝 Funnel；只有所有者有意传入 **`--force-unsafe-public`** 才能覆盖，可能向所有人暴露主机控制、代码执行、GPU 消耗或私密数据。覆盖不能建立应用认证。`app_login` 也不表示关闭登录或未完成初始化的实例可安全公开。
 
-下方健康路径仅为 catalog 数据，供后续监控使用，本功能不实现健康探针。登录页有响应只能说明 HTTP 可用。TSLink 当前请求体限制为 32 MiB、请求读取超时 30 秒，Immich、Nextcloud、Paperless 和聊天界面的大文件或慢速上传可能失败。现有反向代理支持 WebSocket upgrade，分享前仍需验证真实应用。
+下方健康路径仅为 catalog 数据，供后续监控使用，本功能不实现健康探针。登录页有响应只能说明 HTTP 可用。TSLink 当前请求体限制为 32 MiB、请求读取超时 30 秒，Immich、Nextcloud、Paperless 和聊天界面的大文件或慢速上传可能失败。TSLink 将 Host 改为上游地址，外部域名放在 X-Forwarded-Host，Origin 保留浏览器值；应按下方配置精确域名/origin 及代理信任。Immich 和 Uptime Kuma 需要下方的本地 Nginx 桥接，recipe 使用桥接目标。代理支持 WebSocket upgrade，分享前仍需验证真实应用。
 
 `template list/show/apply` 继续工作：`local-web`、`dev-suite`、`local-ai-suite` 是通用多服务组合，没有 recipe 的安全检查或应用配置建议。需要应用指导时使用 recipe，AI 模板中的 Ollama 也适用。
 
@@ -45,7 +45,7 @@ http:
     - ::1
 ```
 
-[官方文档 1](https://www.home-assistant.io/integrations/http/) (访问于 2026-10-01).
+[官方文档 1](https://www.home-assistant.io/integrations/http/) (访问于 2026-10-02).
 
 ## Jellyfin
 
@@ -64,7 +64,7 @@ Known Proxies: 127.0.0.1, ::1
 Base URL: (empty)
 ```
 
-[官方文档 1](https://jellyfin.org/docs/general/post-install/networking/reverse-proxy/) (访问于 2026-10-01). [官方文档 2](https://jellyfin.org/docs/general/post-install/networking/) (访问于 2026-10-01).
+[官方文档 1](https://jellyfin.org/docs/general/post-install/networking/reverse-proxy/) (访问于 2026-10-02). [官方文档 2](https://jellyfin.org/docs/general/post-install/networking/) (访问于 2026-10-02).
 
 ## Plex
 
@@ -83,11 +83,11 @@ Custom server access URLs: https://plex.YOUR-TAILNET.ts.net:443
 List of IP addresses and networks allowed without auth: (empty)
 ```
 
-[官方文档 1](https://support.plex.tv/articles/200430283-network/) (访问于 2026-10-01). [官方文档 2](https://support.plex.tv/articles/200890058-authentication-for-local-network-access/) (访问于 2026-10-01). [官方文档 3](https://support.plex.tv/articles/200931138-troubleshooting-remote-access/) (访问于 2026-10-01).
+[官方文档 1](https://support.plex.tv/articles/200430283-network/) (访问于 2026-10-02). [官方文档 2](https://support.plex.tv/articles/200890058-authentication-for-local-network-access/) (访问于 2026-10-02). [官方文档 3](https://support.plex.tv/articles/200931138-troubleshooting-remote-access/) (访问于 2026-10-02).
 
 ## Immich
 
-Recipe `immich`；本地端口 **2283**；默认目标 `http://127.0.0.1:2283`；WebSocket：**需要**；建议健康路径 `/api/server/ping`。
+Recipe `immich`；本地端口 **2283**；默认目标 `http://127.0.0.1:12283`；WebSocket：**需要**；建议健康路径 `/api/server/ping`。
 
 安全级别：**app_login**。有应用登录；分享前完成管理员初始化；大文件上传还需网关层支持。
 
@@ -95,13 +95,27 @@ Recipe `immich`；本地端口 **2283**；默认目标 `http://127.0.0.1:2283`�
 tslink apps share immich
 ```
 
-使用独立域名根路径，不能使用子路径。官方要求透传 Host、X-Real-IP、X-Forwarded-Proto、X-Forwarded-For。TSLink 当前改写 Host 且不设置 X-Real-IP，需验证客户端或使用本地兼容代理。TSLink 上传限制为 32 MiB、读取请求超时 30 秒，recipe 本身不能解决大文件或慢速上传。
+将此 server 段合并进本机 Nginx 配置的 http 段，应用 recipe 前先启动或重载代理。TSLink 连接 12283 上的 loopback 桥接，恢复精确外部 Host，并把 WebSocket upgrade 转给 2283 上的应用。域名换成精确 TSLink URL 域名；隔离两个监听器，不需要绕过 Origin 校验。使用独立域名根路径，移动端 URL 为 https://immich.YOUR-TAILNET.ts.net；桥接从 TSLink forwarded 客户端 IP 提供 X-Real-IP。上传仍受 TSLink 32 MiB/30 秒限制，桥接无法消除网关限制。
 
-```text
-Mobile app server URL: https://immich.YOUR-TAILNET.ts.net
+```nginx
+server {
+    listen 127.0.0.1:12283;
+    server_name _;
+    location / {
+        proxy_pass http://127.0.0.1:2283;
+        proxy_http_version 1.1;
+        proxy_set_header Host immich.YOUR-TAILNET.ts.net;
+        proxy_set_header X-Forwarded-Host $http_x_forwarded_host;
+        proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
+        proxy_set_header X-Forwarded-For $http_x_forwarded_for;
+        proxy_set_header X-Real-IP $http_x_forwarded_for;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+}
 ```
 
-[官方文档 1](https://docs.immich.app/administration/reverse-proxy/) (访问于 2026-10-01).
+[官方文档 1](https://docs.immich.app/administration/reverse-proxy/) (访问于 2026-10-02). [官方文档 2](https://nginx.org/en/docs/http/ngx_http_proxy_module.html) (访问于 2026-10-02).
 
 ## Nextcloud
 
@@ -123,7 +137,7 @@ tslink apps share nextcloud
  'overwrite.cli.url' => 'https://nextcloud.YOUR-TAILNET.ts.net',
 ```
 
-[官方文档 1](https://docs.nextcloud.com/server/latest/admin_manual/configuration_server/reverse_proxy_configuration.html) (访问于 2026-10-01). [官方文档 2](https://docs.nextcloud.com/server/latest/admin_manual/configuration_server/config_sample_php_parameters.html) (访问于 2026-10-01). [官方文档 3](https://github.com/nextcloud/docker) (访问于 2026-10-01).
+[官方文档 1](https://docs.nextcloud.com/server/latest/admin_manual/configuration_server/reverse_proxy_configuration.html) (访问于 2026-10-02). [官方文档 2](https://docs.nextcloud.com/server/latest/admin_manual/configuration_server/config_sample_php_parameters.html) (访问于 2026-10-02). [官方文档 3](https://github.com/nextcloud/docker) (访问于 2026-10-02).
 
 ## Open WebUI
 
@@ -146,7 +160,7 @@ WEBUI_SESSION_COOKIE_SECURE=true
 WEBUI_AUTH_COOKIE_SECURE=true
 ```
 
-[官方文档 1](https://docs.openwebui.com/troubleshooting/connection-error/) (访问于 2026-10-01). [官方文档 2](https://docs.openwebui.com/reference/env-configuration/) (访问于 2026-10-01). [官方文档 3](https://docs.openwebui.com/getting-started/quick-start/) (访问于 2026-10-01).
+[官方文档 1](https://docs.openwebui.com/troubleshooting/connection-error/) (访问于 2026-10-02). [官方文档 2](https://docs.openwebui.com/reference/env-configuration/) (访问于 2026-10-02). [官方文档 3](https://docs.openwebui.com/getting-started/quick-start/) (访问于 2026-10-02).
 
 ## Ollama
 
@@ -165,7 +179,7 @@ OLLAMA_HOST=127.0.0.1:11434
 OLLAMA_ORIGINS=https://open-webui.YOUR-TAILNET.ts.net
 ```
 
-[官方文档 1](https://docs.ollama.com/faq) (访问于 2026-10-01). [官方文档 2](https://docs.ollama.com/api/authentication) (访问于 2026-10-01).
+[官方文档 1](https://docs.ollama.com/faq) (访问于 2026-10-02). [官方文档 2](https://docs.ollama.com/api/authentication) (访问于 2026-10-02).
 
 ## ComfyUI
 
@@ -177,13 +191,13 @@ Recipe `comfyui`；本地端口 **8188**；默认目标 `http://127.0.0.1:8188`�
 tslink apps share comfyui
 ```
 
-保持 loopback 绑定。基本服务无需代理信任配置，/ws 必须可用。自定义节点可执行代码；此 recipe 不建立认证层，因此采用禁止公开策略。
+保留 loopback 监听。TSLink 改写 Host 后，ComfyUI 默认 loopback Host/Origin 比较会拒绝外部浏览器请求。--enable-cors-header 必须带精确外部 origin，不能省略参数或填 *。它会选择 CORS middleware 替代默认 Origin 拒绝逻辑，CORS 不等于认证。/ws 必须可用；自定义节点可执行代码，本 recipe 不建立认证层，仍禁止公开。
 
 ```sh
-python main.py --listen 127.0.0.1 --port 8188
+python main.py --listen 127.0.0.1 --port 8188 --enable-cors-header https://comfyui.YOUR-TAILNET.ts.net
 ```
 
-[官方文档 1](https://docs.comfy.org/development/comfyui-server/startup-flags) (访问于 2026-10-01).
+[官方文档 1](https://docs.comfy.org/development/comfyui-server/startup-flags) (访问于 2026-10-02). [官方文档 2](https://github.com/Comfy-Org/ComfyUI/blob/master/server.py) (访问于 2026-10-02).
 
 ## Grafana
 
@@ -207,7 +221,7 @@ root_url = https://grafana.YOUR-TAILNET.ts.net/
 enabled = false
 ```
 
-[官方文档 1](https://grafana.com/tutorials/run-grafana-behind-a-proxy/) (访问于 2026-10-01). [官方文档 2](https://grafana.com/docs/grafana/latest/setup-grafana/configure-grafana/) (访问于 2026-10-01).
+[官方文档 1](https://grafana.com/tutorials/run-grafana-behind-a-proxy/) (访问于 2026-10-02). [官方文档 2](https://grafana.com/docs/grafana/latest/setup-grafana/configure-grafana/) (访问于 2026-10-02).
 
 ## Jupyter
 
@@ -219,20 +233,22 @@ Recipe `jupyter`；本地端口 **8888**；默认目标 `http://127.0.0.1:8888`�
 tslink apps share jupyter
 ```
 
-合并进 jupyter_server_config.py。保留随机 token，或用 jupyter server password 设置密码，不能同时清空二者。Notebook 以所有者权限执行代码，只给可信用户访问；探测无法验证认证，因此 recipe 即使有 token 也禁止公开。
+合并进 jupyter_server_config.py。TSLink 将 Host 改为 loopback 上游，trust_xheaders 不会为 kernel WebSocket origin 检查恢复 Host；allow_origin 必须填精确外部 HTTPS origin。保留随机 token，或用 jupyter server password 设置密码；不能同时清空 token 与密码，不能关闭 XSRF 或使用通配 origin。Notebook 以所有者权限执行代码，只给可信用户；探测无法验证认证，即使有 token 也禁止公开。
 
 ```python
 c.ServerApp.ip = "127.0.0.1"
 c.ServerApp.port = 8888
 c.ServerApp.base_url = "/"
 c.ServerApp.trust_xheaders = True
+c.ServerApp.allow_origin = "https://jupyter.YOUR-TAILNET.ts.net"
+c.ServerApp.disable_check_xsrf = False
 ```
 
-[官方文档 1](https://jupyter-server.readthedocs.io/en/latest/operators/public-server.html) (访问于 2026-10-01). [官方文档 2](https://jupyter-server.readthedocs.io/en/latest/other/full-config.html) (访问于 2026-10-01).
+[官方文档 1](https://jupyter-server.readthedocs.io/en/latest/operators/public-server.html) (访问于 2026-10-02). [官方文档 2](https://jupyter-server.readthedocs.io/en/latest/other/full-config.html) (访问于 2026-10-02). [官方文档 3](https://github.com/jupyter-server/jupyter_server/blob/main/jupyter_server/base/websocket.py) (访问于 2026-10-02).
 
 ## Uptime Kuma
 
-Recipe `uptime-kuma`；本地端口 **3001**；默认目标 `http://127.0.0.1:3001`；WebSocket：**需要**；建议健康路径 `/`。
+Recipe `uptime-kuma`；本地端口 **3001**；默认目标 `http://127.0.0.1:13001`；WebSocket：**需要**；建议健康路径 `/`。
 
 安全级别：**app_login**。初始化后控制台有登录；公开状态页本来就无需登录。
 
@@ -240,14 +256,27 @@ Recipe `uptime-kuma`；本地端口 **3001**；默认目标 `http://127.0.0.1:30
 tslink apps share uptime-kuma
 ```
 
-先在本机建立管理员并保留控制台认证，只公开有意发布的状态页。独立域名无需额外应用代理设置，必须支持 WebSocket。以下为 UI 操作。
+将此 server 段合并进本机 Nginx 配置的 http 段，应用 recipe 前先启动或重载代理。TSLink 连接 13001 上的 loopback 桥接，恢复精确外部 Host，并把 WebSocket upgrade 转给 3001 上的应用。域名换成精确 TSLink URL 域名；隔离两个监听器，不需要绕过 Origin 校验。先在本机建立管理员并保留控制台认证。UPTIME_KUMA_WS_ORIGIN_CHECK 保留默认值，不能 bypass；WebSocket 会比较 Origin 和 Host，trustProxy 分支不使用 X-Forwarded-Host。只公开有意发布的状态页。
 
-```text
-Setup: create administrator locally
-Dashboard authentication: enabled
+```nginx
+server {
+    listen 127.0.0.1:13001;
+    server_name _;
+    location / {
+        proxy_pass http://127.0.0.1:3001;
+        proxy_http_version 1.1;
+        proxy_set_header Host uptime-kuma.YOUR-TAILNET.ts.net;
+        proxy_set_header X-Forwarded-Host $http_x_forwarded_host;
+        proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
+        proxy_set_header X-Forwarded-For $http_x_forwarded_for;
+        proxy_set_header X-Real-IP $http_x_forwarded_for;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+}
 ```
 
-[官方文档 1](https://github.com/louislam/uptime-kuma/wiki/Reverse-Proxy) (访问于 2026-10-01).
+[官方文档 1](https://github.com/louislam/uptime-kuma/wiki/Reverse-Proxy) (访问于 2026-10-02). [官方文档 2](https://nginx.org/en/docs/http/ngx_http_proxy_module.html) (访问于 2026-10-02). [官方文档 3](https://github.com/louislam/uptime-kuma/blob/2.0.2/server/uptime-kuma-server.js) (访问于 2026-10-02).
 
 ## Paperless-ngx
 
@@ -259,15 +288,17 @@ Recipe `paperless-ngx`；本地端口 **8000**；默认目标 `http://127.0.0.1:
 tslink apps share paperless-ngx
 ```
 
-写入 docker-compose.env 或 webserver 环境。PAPERLESS_URL 添加域名、CORS、CSRF 信任，不加尾部斜线；不设置自动登录，密钥由 secret manager 配置。上传仍受 TSLink 32 MiB/30 秒限制。
+写入 docker-compose.env 或 webserver 环境。TSLink 将 Host 改为上游地址，外部域名放在 X-Forwarded-Host；开启 PAPERLESS_USE_X_FORWARD_HOST，只信任实际 TSLink 来源 IP。以下 loopback 值适合宿主机后端；容器网络改变来源时换成实际网桥网关 IP。后端应隔离不可信客户端，Django 选择 forwarded host 本身不受 TRUSTED_PROXIES 限制。PAPERLESS_URL 添加域名、CORS、CSRF 信任，不加尾部斜线；SSL header 恢复外部 HTTPS scheme。保留账号登录，不设置自动登录，密钥由 secret manager 配置。上传仍受 TSLink 32 MiB/30 秒限制。
 
 ```dotenv
 PAPERLESS_URL=https://paperless-ngx.YOUR-TAILNET.ts.net
 PAPERLESS_ALLOWED_HOSTS=paperless-ngx.YOUR-TAILNET.ts.net
+PAPERLESS_USE_X_FORWARD_HOST=true
 PAPERLESS_TRUSTED_PROXIES=127.0.0.1,::1
+PAPERLESS_PROXY_SSL_HEADER=["HTTP_X_FORWARDED_PROTO","https"]
 ```
 
-[官方文档 1](https://docs.paperless-ngx.com/configuration/) (访问于 2026-10-01).
+[官方文档 1](https://docs.paperless-ngx.com/configuration/) (访问于 2026-10-02). [官方文档 2](https://github.com/paperless-ngx/paperless-ngx/blob/main/src/paperless/settings/__init__.py) (访问于 2026-10-02).
 
 ## Vaultwarden
 
@@ -287,7 +318,7 @@ SIGNUPS_ALLOWED=false
 SIGNUPS_DOMAINS_WHITELIST=
 ```
 
-[官方文档 1](https://github.com/dani-garcia/vaultwarden/wiki/Proxy-examples) (访问于 2026-10-01). [官方文档 2](https://github.com/dani-garcia/vaultwarden/wiki/Disable-registration-of-new-users) (访问于 2026-10-01).
+[官方文档 1](https://github.com/dani-garcia/vaultwarden/wiki/Proxy-examples) (访问于 2026-10-02). [官方文档 2](https://github.com/dani-garcia/vaultwarden/wiki/Disable-registration-of-new-users) (访问于 2026-10-02).
 
 ## Syncthing GUI
 
@@ -307,7 +338,7 @@ GUI Authentication User: (choose locally)
 GUI Authentication Password: (set locally)
 ```
 
-[官方文档 1](https://docs.syncthing.net/users/config.html) (访问于 2026-10-01). [官方文档 2](https://docs.syncthing.net/users/reverseproxy.html) (访问于 2026-10-01).
+[官方文档 1](https://docs.syncthing.net/users/config.html) (访问于 2026-10-02). [官方文档 2](https://docs.syncthing.net/users/reverseproxy.html) (访问于 2026-10-02).
 
 ## Portainer
 
@@ -319,14 +350,15 @@ Recipe `portainer`；本地端口 **9443, 9000**；默认目标 `http://127.0.0.
 tslink apps share portainer
 ```
 
-先在本机完成首个管理员设置。默认 9443 为自签名 HTTPS，TSLink 不绕过证书校验。使用 HTTP 时明确仅将旧 9000 端口映射到 loopback，并确认版本启用了 HTTP 监听。不要分享 agent 8000 端口。控制台需 WebSocket；版本相关的 setup token 不能让初始化界面适合分享。
+先在本机完成首个管理员设置。默认 9443 为自签名 HTTPS，TSLink 不绕过证书校验。将以下服务片段合并进 compose：明确开启 HTTP，仅将 9000 映射到 loopback。TSLink 改写 Host，因此当前版本 CSRF 可信 origin 要求完整 scheme://host；旧版本接受纯域名，应按所用版本文档核对。保留 CSRF、登录及 setup-token 保护，不分享 agent 8000 端口。控制台需 WebSocket。
 
 ```yaml
 ports:
   - "127.0.0.1:9000:9000"
+command: ["--http-enabled", "--trusted-origins", "https://portainer.YOUR-TAILNET.ts.net"]
 ```
 
-[官方文档 1](https://docs.portainer.io/start/install-ce/server/docker/linux) (访问于 2026-10-01). [官方文档 2](https://docs.portainer.io/advanced/reverse-proxy/traefik) (访问于 2026-10-01). [官方文档 3](https://docs.portainer.io/start/install/server/setup) (访问于 2026-10-01).
+[官方文档 1](https://docs.portainer.io/start/install-ce/server/docker/linux) (访问于 2026-10-02). [官方文档 2](https://docs.portainer.io/advanced/reverse-proxy/traefik) (访问于 2026-10-02). [官方文档 3](https://docs.portainer.io/start/install/server/setup) (访问于 2026-10-02). [官方文档 4](https://docs.portainer.io/advanced/cli) (访问于 2026-10-02). [官方文档 5](https://github.com/portainer/portainer/blob/develop/api/http/csrf/csrf.go) (访问于 2026-10-02).
 
 ## Generic web app
 
@@ -346,4 +378,4 @@ Authentication: enabled
 Trusted proxy: actual loopback source IP
 ```
 
-[官方文档 1](https://tailscale.com/docs/features/tailscale-funnel) (访问于 2026-10-01).
+[官方文档 1](https://tailscale.com/docs/features/tailscale-funnel) (访问于 2026-10-02).

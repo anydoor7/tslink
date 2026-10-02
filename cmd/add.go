@@ -475,7 +475,7 @@ func resolveAddService(svc registry.Service, p AddParams) (registry.Service, err
 	return svc, nil
 }
 
-// addKeepIfUnchangedFn settles a registration an add left unchanged. Tests
+// addKeepIfUnchangedFn settles a registration an add or recipe reuses. Tests
 // replace it to run a share's rollback first.
 var addKeepIfUnchangedFn = registry.KeepIfUnchanged
 

@@ -17,16 +17,6 @@ func parseLsof(raw string) []Listener {
 	}
 	return result
 }
-func parseNetstat(raw string) []Listener {
-	var result []Listener
-	for _, line := range strings.Split(raw, "\n") {
-		fields := strings.Fields(line)
-		if len(fields) >= 4 && fields[0] == "TCP" && fields[3] == "LISTENING" {
-			result = append(result, loopbackListeners(fields[1])...)
-		}
-	}
-	return result
-}
 func parseProcTCP(raw string) []Listener {
 	var result []Listener
 	for _, line := range strings.Split(raw, "\n") {

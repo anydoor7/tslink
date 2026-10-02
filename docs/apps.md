@@ -11,15 +11,15 @@ tslink add --recipe home-assistant --proxy 127.0.0.1:8123  # equivalent preview
 tslink add family-tv --recipe jellyfin --yes      # optional service name
 ```
 
-Recipe catalog version 1 was checked against official documentation on **2026-10-01**. Ports below distinguish host mappings from container ports. Override a mapping with `--proxy 127.0.0.1:<host-port>`. Replace `YOUR-TAILNET` and example hostnames in snippets with the exact URL from `tslink url <name> --wait=30s`; never guess your tailnet suffix. Merge snippets into your existing settings rather than replacing a full configuration file. Containers may see the host through a bridge gateway: trust only the actual proxy source, not an entire private network.
+Recipe catalog version 1 was checked against official documentation on **2026-10-02**. Ports below distinguish host mappings from container ports. Override a mapping with `--proxy 127.0.0.1:<host-port>`. Replace `YOUR-TAILNET` and example hostnames in snippets with the exact URL from `tslink url <name> --wait=30s`; never guess your tailnet suffix. Merge snippets into your existing settings rather than replacing a full configuration file. Containers may see the host through a bridge gateway: trust only the actual proxy source, not an entire private network.
 
 `apps share` and `add --recipe` default to a plan. `--yes` applies; `--dry-run` always wins. Existing names are left unchanged, and the result shows both `service` and `requested`. Neither path installs or configures the third-party app. `--no-daemon-install` saves only the registry. Recipe registration is not proof of a running app or a reachable URL.
 
-Detection uses macOS lsof, Linux procfs or Windows netstat. It sends only GET requests to numeric loopback HTTP listeners, has a 700 ms request timeout, 15 second overall budget, 8 workers and a 64 KiB body limit, and uses no credentials, environment HTTP proxy, cookies or redirects. HTTPS-only, LAN-only, other-network-namespace, protected and unusual installations may be missed. `high` means an app-specific endpoint/body/header fingerprint; `medium` means a title match; `low` is an unidentified generic HTML title. `complete=false` means partial results. Confidence never proves authentication, health or version compatibility. Detection returns fingerprint descriptions, not response bodies.
+Detection uses macOS lsof, Linux procfs or Windows GetExtendedTcpTable. It sends only GET requests to numeric loopback HTTP listeners, has a 700 ms request timeout, 15 second overall budget, 8 workers and a 64 KiB body limit, and uses no credentials, environment HTTP proxy, cookies or redirects. HTTPS-only, LAN-only, other-network-namespace, protected and unusual installations may be missed. `high` means an app-specific endpoint/body/header fingerprint; `medium` means a title match; `low` is an unidentified generic HTML title. `complete=false` means partial results. Confidence never proves authentication, health or version compatibility. Detection returns fingerprint descriptions, not response bodies.
 
 Private services still depend on tailnet policy and any `--allow` list. Funnel is public internet exposure: use `--funnel --public` only after verifying application authentication. Recipes marked `never_public` refuse it unless the owner deliberately supplies **`--force-unsafe-public`**, which may expose host control, code execution, GPU consumption or private data to everyone. This override does not establish app authentication. A recipe with `app_login` can still be unsafe if its login is disabled or initial setup is unfinished.
 
-Health paths below are recommendations in the catalog for future health monitoring; recipes do not implement probes. A login page proves HTTP response only, not authenticated readiness. TSLink currently limits request bodies to 32 MiB and request reads to 30 seconds; large or slow uploads in Immich, Nextcloud, Paperless and chat interfaces can fail. WebSocket upgrades are forwarded by the existing reverse proxy; validate the actual application before sharing.
+Health paths below are recommendations in the catalog for future health monitoring; recipes do not implement probes. A login page proves HTTP response only, not authenticated readiness. TSLink currently limits request bodies to 32 MiB and request reads to 30 seconds; large or slow uploads in Immich, Nextcloud, Paperless and chat interfaces can fail. TSLink rewrites Host to the upstream address and supplies the external hostname in X-Forwarded-Host; Origin remains the browser origin. Configure exact external hosts/origins and proxy trust as shown below. Immich and Uptime Kuma require the provided local Nginx bridge and use bridge targets. WebSocket upgrades are forwarded; validate the actual application before sharing.
 
 Templates remain available with `template list`, `template show` and `template apply`. They are generic multi-service bundles (`local-web`, `dev-suite`, `local-ai-suite`) and do not provide recipe safety checks or app configuration. Use recipes when application advice is needed, including for Ollama in the AI template.
 
@@ -45,7 +45,7 @@ http:
     - ::1
 ```
 
-[Official documentation 1](https://www.home-assistant.io/integrations/http/) (accessed 2026-10-01).
+[Official documentation 1](https://www.home-assistant.io/integrations/http/) (accessed 2026-10-02).
 
 ## Jellyfin
 
@@ -64,7 +64,7 @@ Known Proxies: 127.0.0.1, ::1
 Base URL: (empty)
 ```
 
-[Official documentation 1](https://jellyfin.org/docs/general/post-install/networking/reverse-proxy/) (accessed 2026-10-01). [Official documentation 2](https://jellyfin.org/docs/general/post-install/networking/) (accessed 2026-10-01).
+[Official documentation 1](https://jellyfin.org/docs/general/post-install/networking/reverse-proxy/) (accessed 2026-10-02). [Official documentation 2](https://jellyfin.org/docs/general/post-install/networking/) (accessed 2026-10-02).
 
 ## Plex
 
@@ -83,11 +83,11 @@ Custom server access URLs: https://plex.YOUR-TAILNET.ts.net:443
 List of IP addresses and networks allowed without auth: (empty)
 ```
 
-[Official documentation 1](https://support.plex.tv/articles/200430283-network/) (accessed 2026-10-01). [Official documentation 2](https://support.plex.tv/articles/200890058-authentication-for-local-network-access/) (accessed 2026-10-01). [Official documentation 3](https://support.plex.tv/articles/200931138-troubleshooting-remote-access/) (accessed 2026-10-01).
+[Official documentation 1](https://support.plex.tv/articles/200430283-network/) (accessed 2026-10-02). [Official documentation 2](https://support.plex.tv/articles/200890058-authentication-for-local-network-access/) (accessed 2026-10-02). [Official documentation 3](https://support.plex.tv/articles/200931138-troubleshooting-remote-access/) (accessed 2026-10-02).
 
 ## Immich
 
-Recipe `immich`; local ports **2283**; target `http://127.0.0.1:2283`; WebSockets: **yes**; health recommendation `/api/server/ping`.
+Recipe `immich`; local ports **2283**; target `http://127.0.0.1:12283`; WebSockets: **yes**; health recommendation `/api/server/ping`. App HTTP port 2283; this recipe targets a required owner-configured loopback Nginx bridge on 12283 to restore the external Host.
 
 Safety: **app_login**. Has its own login. Finish first-admin setup before sharing; large uploads need gateway changes.
 
@@ -95,13 +95,27 @@ Safety: **app_login**. Has its own login. Finish first-admin setup before sharin
 tslink apps share immich
 ```
 
-Use the root of a dedicated hostname, never a subpath. Set the mobile app server URL as below. Official reverse-proxy guidance requires Host, X-Real-IP, X-Forwarded-Proto and X-Forwarded-For. TSLink currently rewrites Host and does not set X-Real-IP; validate clients or use a local compatible proxy in front of Immich. TSLink also caps uploads at 32 MiB and request reads at 30 seconds, so large/slow photo uploads are not supported by this recipe alone.
+Merge this server block into the http block of a local Nginx configuration and start/reload that proxy before applying the recipe. TSLink targets its loopback bridge on 12283, which restores the exact external Host and forwards WebSocket upgrades to the app on 2283. Replace the hostname with the exact TSLink URL hostname. Keep both listeners isolated; no Origin bypass is needed. Use the root of a dedicated hostname and set the mobile server URL to https://immich.YOUR-TAILNET.ts.net. The bridge also supplies X-Real-IP from TSLink forwarded client IP. TSLink still caps uploads at 32 MiB and request reads at 30 seconds; this bridge cannot remove those gateway limits.
 
-```text
-Mobile app server URL: https://immich.YOUR-TAILNET.ts.net
+```nginx
+server {
+    listen 127.0.0.1:12283;
+    server_name _;
+    location / {
+        proxy_pass http://127.0.0.1:2283;
+        proxy_http_version 1.1;
+        proxy_set_header Host immich.YOUR-TAILNET.ts.net;
+        proxy_set_header X-Forwarded-Host $http_x_forwarded_host;
+        proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
+        proxy_set_header X-Forwarded-For $http_x_forwarded_for;
+        proxy_set_header X-Real-IP $http_x_forwarded_for;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+}
 ```
 
-[Official documentation 1](https://docs.immich.app/administration/reverse-proxy/) (accessed 2026-10-01).
+[Official documentation 1](https://docs.immich.app/administration/reverse-proxy/) (accessed 2026-10-02). [Official documentation 2](https://nginx.org/en/docs/http/ngx_http_proxy_module.html) (accessed 2026-10-02).
 
 ## Nextcloud
 
@@ -123,7 +137,7 @@ Merge these entries into existing config/config.php; keep other trusted_domains 
  'overwrite.cli.url' => 'https://nextcloud.YOUR-TAILNET.ts.net',
 ```
 
-[Official documentation 1](https://docs.nextcloud.com/server/latest/admin_manual/configuration_server/reverse_proxy_configuration.html) (accessed 2026-10-01). [Official documentation 2](https://docs.nextcloud.com/server/latest/admin_manual/configuration_server/config_sample_php_parameters.html) (accessed 2026-10-01). [Official documentation 3](https://github.com/nextcloud/docker) (accessed 2026-10-01).
+[Official documentation 1](https://docs.nextcloud.com/server/latest/admin_manual/configuration_server/reverse_proxy_configuration.html) (accessed 2026-10-02). [Official documentation 2](https://docs.nextcloud.com/server/latest/admin_manual/configuration_server/config_sample_php_parameters.html) (accessed 2026-10-02). [Official documentation 3](https://github.com/nextcloud/docker) (accessed 2026-10-02).
 
 ## Open WebUI
 
@@ -146,7 +160,7 @@ WEBUI_SESSION_COOKIE_SECURE=true
 WEBUI_AUTH_COOKIE_SECURE=true
 ```
 
-[Official documentation 1](https://docs.openwebui.com/troubleshooting/connection-error/) (accessed 2026-10-01). [Official documentation 2](https://docs.openwebui.com/reference/env-configuration/) (accessed 2026-10-01). [Official documentation 3](https://docs.openwebui.com/getting-started/quick-start/) (accessed 2026-10-01).
+[Official documentation 1](https://docs.openwebui.com/troubleshooting/connection-error/) (accessed 2026-10-02). [Official documentation 2](https://docs.openwebui.com/reference/env-configuration/) (accessed 2026-10-02). [Official documentation 3](https://docs.openwebui.com/getting-started/quick-start/) (accessed 2026-10-02).
 
 ## Ollama
 
@@ -165,7 +179,7 @@ OLLAMA_HOST=127.0.0.1:11434
 OLLAMA_ORIGINS=https://open-webui.YOUR-TAILNET.ts.net
 ```
 
-[Official documentation 1](https://docs.ollama.com/faq) (accessed 2026-10-01). [Official documentation 2](https://docs.ollama.com/api/authentication) (accessed 2026-10-01).
+[Official documentation 1](https://docs.ollama.com/faq) (accessed 2026-10-02). [Official documentation 2](https://docs.ollama.com/api/authentication) (accessed 2026-10-02).
 
 ## ComfyUI
 
@@ -177,13 +191,13 @@ Safety: **never_public**. Local workflow server: never Funnel. Only share with t
 tslink apps share comfyui
 ```
 
-Keep the server on loopback. No reverse-proxy trust setting is required for the basic server; WebSocket /ws must work. Custom nodes can execute code. TSLink classifies the self-hosted server as never public because this recipe does not establish an authentication layer.
+Keep the server on loopback. TSLink rewrites Host, so ComfyUI default loopback Host/Origin comparison rejects external browser requests. Use the exact external origin with --enable-cors-header (never omit its argument or use *). This selects ComfyUI CORS middleware instead of its default Origin rejection; CORS is not authentication. WebSocket /ws must work. Custom nodes can execute code; this recipe stays never public and does not establish an authentication layer.
 
 ```sh
-python main.py --listen 127.0.0.1 --port 8188
+python main.py --listen 127.0.0.1 --port 8188 --enable-cors-header https://comfyui.YOUR-TAILNET.ts.net
 ```
 
-[Official documentation 1](https://docs.comfy.org/development/comfyui-server/startup-flags) (accessed 2026-10-01).
+[Official documentation 1](https://docs.comfy.org/development/comfyui-server/startup-flags) (accessed 2026-10-02). [Official documentation 2](https://github.com/Comfy-Org/ComfyUI/blob/master/server.py) (accessed 2026-10-02).
 
 ## Grafana
 
@@ -207,7 +221,7 @@ root_url = https://grafana.YOUR-TAILNET.ts.net/
 enabled = false
 ```
 
-[Official documentation 1](https://grafana.com/tutorials/run-grafana-behind-a-proxy/) (accessed 2026-10-01). [Official documentation 2](https://grafana.com/docs/grafana/latest/setup-grafana/configure-grafana/) (accessed 2026-10-01).
+[Official documentation 1](https://grafana.com/tutorials/run-grafana-behind-a-proxy/) (accessed 2026-10-02). [Official documentation 2](https://grafana.com/docs/grafana/latest/setup-grafana/configure-grafana/) (accessed 2026-10-02).
 
 ## Jupyter
 
@@ -219,20 +233,22 @@ Safety: **never_public**. Code execution environment; without token/password the
 tslink apps share jupyter
 ```
 
-Merge into jupyter_server_config.py. Keep generated token authentication, or set a password using jupyter server password. Never clear the token and password. Only trusted users should receive access because notebooks execute code as the owner. This recipe stays never public even when a token is configured; detection cannot verify auth.
+Merge into jupyter_server_config.py. Set allow_origin to the exact external HTTPS origin because TSLink rewrites Host to the loopback upstream; trust_xheaders does not restore Host for kernel WebSocket origin checks. Keep generated token authentication, or set a password using jupyter server password. Never clear both token and password, disable XSRF checks, or use a wildcard origin. Only trusted users should receive access because notebooks execute code as the owner. This recipe stays never public even when a token is configured; detection cannot verify auth.
 
 ```python
 c.ServerApp.ip = "127.0.0.1"
 c.ServerApp.port = 8888
 c.ServerApp.base_url = "/"
 c.ServerApp.trust_xheaders = True
+c.ServerApp.allow_origin = "https://jupyter.YOUR-TAILNET.ts.net"
+c.ServerApp.disable_check_xsrf = False
 ```
 
-[Official documentation 1](https://jupyter-server.readthedocs.io/en/latest/operators/public-server.html) (accessed 2026-10-01). [Official documentation 2](https://jupyter-server.readthedocs.io/en/latest/other/full-config.html) (accessed 2026-10-01).
+[Official documentation 1](https://jupyter-server.readthedocs.io/en/latest/operators/public-server.html) (accessed 2026-10-02). [Official documentation 2](https://jupyter-server.readthedocs.io/en/latest/other/full-config.html) (accessed 2026-10-02). [Official documentation 3](https://github.com/jupyter-server/jupyter_server/blob/main/jupyter_server/base/websocket.py) (accessed 2026-10-02).
 
 ## Uptime Kuma
 
-Recipe `uptime-kuma`; local ports **3001**; target `http://127.0.0.1:3001`; WebSockets: **yes**; health recommendation `/`.
+Recipe `uptime-kuma`; local ports **3001**; target `http://127.0.0.1:13001`; WebSockets: **yes**; health recommendation `/`. App HTTP port 3001; this recipe targets a required owner-configured loopback Nginx bridge on 13001 to restore the external Host.
 
 Safety: **app_login**. Has dashboard login after setup; public status pages are intentionally unauthenticated.
 
@@ -240,14 +256,27 @@ Safety: **app_login**. Has dashboard login after setup; public status pages are 
 tslink apps share uptime-kuma
 ```
 
-Finish administrator setup locally and keep dashboard authentication on. Publish only deliberately public status pages. No app-side proxy config is required at a dedicated hostname; WebSocket upgrades must pass. The following is a UI action, not a file setting.
+Merge this server block into the http block of a local Nginx configuration and start/reload that proxy before applying the recipe. TSLink targets its loopback bridge on 13001, which restores the exact external Host and forwards WebSocket upgrades to the app on 3001. Replace the hostname with the exact TSLink URL hostname. Keep both listeners isolated; no Origin bypass is needed. Finish administrator setup locally and keep dashboard authentication on. Keep UPTIME_KUMA_WS_ORIGIN_CHECK at its default, not bypass: the WebSocket check compares Origin to Host (its trustProxy branch does not use X-Forwarded-Host). Publish only deliberately public status pages.
 
-```text
-Setup: create administrator locally
-Dashboard authentication: enabled
+```nginx
+server {
+    listen 127.0.0.1:13001;
+    server_name _;
+    location / {
+        proxy_pass http://127.0.0.1:3001;
+        proxy_http_version 1.1;
+        proxy_set_header Host uptime-kuma.YOUR-TAILNET.ts.net;
+        proxy_set_header X-Forwarded-Host $http_x_forwarded_host;
+        proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
+        proxy_set_header X-Forwarded-For $http_x_forwarded_for;
+        proxy_set_header X-Real-IP $http_x_forwarded_for;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+}
 ```
 
-[Official documentation 1](https://github.com/louislam/uptime-kuma/wiki/Reverse-Proxy) (accessed 2026-10-01).
+[Official documentation 1](https://github.com/louislam/uptime-kuma/wiki/Reverse-Proxy) (accessed 2026-10-02). [Official documentation 2](https://nginx.org/en/docs/http/ngx_http_proxy_module.html) (accessed 2026-10-02). [Official documentation 3](https://github.com/louislam/uptime-kuma/blob/2.0.2/server/uptime-kuma-server.js) (accessed 2026-10-02).
 
 ## Paperless-ngx
 
@@ -259,15 +288,17 @@ Safety: **app_login**. Has account login; PAPERLESS_AUTO_LOGIN_USERNAME must be 
 tslink apps share paperless-ngx
 ```
 
-Set in docker-compose.env or the webserver environment. PAPERLESS_URL adds host, CORS and CSRF trust; no trailing slash. Keep auto-login unset and configure a secret key through your secret manager. Uploads remain subject to TSLink 32 MiB/30s limits.
+Set in docker-compose.env or the webserver environment. TSLink sends the upstream address as Host and the external hostname as X-Forwarded-Host: enable PAPERLESS_USE_X_FORWARD_HOST and trust only the actual TSLink source IP. The loopback values below are for a host-local backend; replace them with the bridge gateway IP when container networking changes that source. Keep the backend isolated from untrusted clients: Django forwarded-host selection is not itself restricted by TRUSTED_PROXIES. PAPERLESS_URL adds host, CORS and CSRF trust; no trailing slash. The SSL header restores the external HTTPS scheme. Keep auto-login unset and configure a secret key through your secret manager. Uploads remain subject to TSLink 32 MiB/30s limits.
 
 ```dotenv
 PAPERLESS_URL=https://paperless-ngx.YOUR-TAILNET.ts.net
 PAPERLESS_ALLOWED_HOSTS=paperless-ngx.YOUR-TAILNET.ts.net
+PAPERLESS_USE_X_FORWARD_HOST=true
 PAPERLESS_TRUSTED_PROXIES=127.0.0.1,::1
+PAPERLESS_PROXY_SSL_HEADER=["HTTP_X_FORWARDED_PROTO","https"]
 ```
 
-[Official documentation 1](https://docs.paperless-ngx.com/configuration/) (accessed 2026-10-01).
+[Official documentation 1](https://docs.paperless-ngx.com/configuration/) (accessed 2026-10-02). [Official documentation 2](https://github.com/paperless-ngx/paperless-ngx/blob/main/src/paperless/settings/__init__.py) (accessed 2026-10-02).
 
 ## Vaultwarden
 
@@ -287,7 +318,7 @@ SIGNUPS_ALLOWED=false
 SIGNUPS_DOMAINS_WHITELIST=
 ```
 
-[Official documentation 1](https://github.com/dani-garcia/vaultwarden/wiki/Proxy-examples) (accessed 2026-10-01). [Official documentation 2](https://github.com/dani-garcia/vaultwarden/wiki/Disable-registration-of-new-users) (accessed 2026-10-01).
+[Official documentation 1](https://github.com/dani-garcia/vaultwarden/wiki/Proxy-examples) (accessed 2026-10-02). [Official documentation 2](https://github.com/dani-garcia/vaultwarden/wiki/Disable-registration-of-new-users) (accessed 2026-10-02).
 
 ## Syncthing GUI
 
@@ -307,7 +338,7 @@ GUI Authentication User: (choose locally)
 GUI Authentication Password: (set locally)
 ```
 
-[Official documentation 1](https://docs.syncthing.net/users/config.html) (accessed 2026-10-01). [Official documentation 2](https://docs.syncthing.net/users/reverseproxy.html) (accessed 2026-10-01).
+[Official documentation 1](https://docs.syncthing.net/users/config.html) (accessed 2026-10-02). [Official documentation 2](https://docs.syncthing.net/users/reverseproxy.html) (accessed 2026-10-02).
 
 ## Portainer
 
@@ -319,14 +350,15 @@ Safety: **never_public**. Container administrator can control the host. Never Fu
 tslink apps share portainer
 ```
 
-Complete first-admin setup locally before sharing. Default 9443 uses a self-signed certificate which TSLink will not bypass. For loopback HTTP proxying, explicitly publish legacy port 9000 only on loopback as below, and verify your Portainer version enables its HTTP listener. Do not expose agent port 8000. UI sessions and consoles require WebSockets. Setup-token protection is version-dependent; it does not make a setup screen safe to share.
+Complete first-admin setup locally before sharing. Default 9443 uses a self-signed certificate which TSLink will not bypass. Merge this service fragment into compose: explicitly enable HTTP and publish 9000 only on loopback. Current releases require full scheme://host trusted origins for CSRF protection because TSLink rewrites Host; older releases accepted bare hostnames, so check your version documentation. Keep CSRF, login and setup-token protection enabled. Do not expose agent port 8000. UI consoles require WebSockets.
 
 ```yaml
 ports:
   - "127.0.0.1:9000:9000"
+command: ["--http-enabled", "--trusted-origins", "https://portainer.YOUR-TAILNET.ts.net"]
 ```
 
-[Official documentation 1](https://docs.portainer.io/start/install-ce/server/docker/linux) (accessed 2026-10-01). [Official documentation 2](https://docs.portainer.io/advanced/reverse-proxy/traefik) (accessed 2026-10-01). [Official documentation 3](https://docs.portainer.io/start/install/server/setup) (accessed 2026-10-01).
+[Official documentation 1](https://docs.portainer.io/start/install-ce/server/docker/linux) (accessed 2026-10-02). [Official documentation 2](https://docs.portainer.io/advanced/reverse-proxy/traefik) (accessed 2026-10-02). [Official documentation 3](https://docs.portainer.io/start/install/server/setup) (accessed 2026-10-02). [Official documentation 4](https://docs.portainer.io/advanced/cli) (accessed 2026-10-02). [Official documentation 5](https://github.com/portainer/portainer/blob/develop/api/http/csrf/csrf.go) (accessed 2026-10-02).
 
 ## Generic web app
 
@@ -346,4 +378,4 @@ Authentication: enabled
 Trusted proxy: actual loopback source IP
 ```
 
-[Official documentation 1](https://tailscale.com/docs/features/tailscale-funnel) (accessed 2026-10-01).
+[Official documentation 1](https://tailscale.com/docs/features/tailscale-funnel) (accessed 2026-10-02).

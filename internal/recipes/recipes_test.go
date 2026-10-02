@@ -76,7 +76,6 @@ func TestListenerParsers(t *testing.T) {
 		want      []Listener
 	}{
 		{"lsof", "p123\nn127.0.0.1:8123\nn[::1]:8888\nn*:3000\nn192.0.2.4:80\nninvalid\n", parseLsof, []Listener{{"127.0.0.1", 8123}, {"::1", 8888}, {"127.0.0.1", 3000}, {"::1", 3000}}},
-		{"windows", "  TCP  0.0.0.0:8096  0.0.0.0:0  LISTENING  42\r\n TCP [::]:3000 [::]:0 LISTENING 43\n TCP 127.0.0.1:9000 127.0.0.1:12 ESTABLISHED 44\n TCP 192.0.2.1:8080 0.0.0.0:0 LISTENING 5", parseNetstat, []Listener{{"127.0.0.1", 8096}, {"::1", 3000}, {"127.0.0.1", 3000}}},
 		{"linux", " sl local_address rem_address st\n0: 0100007F:1FBB 00000000:0000 0A\n1: 00000000000000000000000001000000:22B8 0:0 0A\n2: 00000000:1F90 0:0 0A\n3: 010200C0:0050 0:0 0A\n4: 0100007F:0050 0:0 01\n5: bad:xx 0:0 0A\n6: 01:0001 0:0 0A\n7: 0100007F:FFFFF 0:0 0A\n8: bad 0:0 0A", parseProcTCP, []Listener{{"127.0.0.1", 8123}, {"::1", 8888}, {"127.0.0.1", 8080}}},
 	}
 	for _, tc := range fixtures {

@@ -133,6 +133,18 @@ func applyRecipe(ctx context.Context, req recipeRequest, regPath string, dryRun 
 	if err != nil {
 		return RecipeResult{}, err
 	}
+	if result.Action == templateActionSkipExisting {
+		// Adopt the exact stored value under the registry lock before reporting
+		// reuse or attempting setup. Its creator may still be waiting on a URL
+		// and compensating a tentative registration on failure.
+		kept, err := addKeepIfUnchangedFn(regPath, persisted)
+		if err != nil {
+			return RecipeResult{}, fmt.Errorf("adopt recipe registration %q: %w", svc.Name, err)
+		}
+		if !kept {
+			return RecipeResult{}, output.ErrConflict(fmt.Sprintf("service %q was deleted or replaced during recipe adoption; preview again before retrying", svc.Name))
+		}
+	}
 	result.Service = inspect.ServiceViewFor(persisted)
 	result.DryRun = false
 	result.Applied = result.Action == templateActionCreated
