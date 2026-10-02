@@ -169,3 +169,55 @@ func TestGuestCounterPrePublishFailure(t *testing.T) {
 	}
 	t.Log("pre-publication failure retains batch and retries exactly once")
 }
+
+func TestGuestExpiryPublishedFailure(t *testing.T) {
+	path := guestRegistry(t)
+	v, _, err := CreateGuest(path, guestOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	o := guestOptions()
+	o.Value = "4h"
+	long, _, err := CreateGuest(path, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, reason := CheckGuest(path, "photos", v.ID, guestTestNow, true, true); reason != "allowed" {
+		t.Fatal(reason)
+	}
+	cause := &os.PathError{Op: "fsync", Path: "/synthetic-private-marker/registry", Err: os.ErrPermission}
+	restore := atomicfile.SetDirectorySyncForTest(func(string) error { return cause })
+	defer restore()
+	_, err = ReadGuestGrants(path, "photos", v.ExpiresAt)
+	var pe *os.PathError
+	if !atomicfile.IsPublished(err) || !errors.Is(err, os.ErrPermission) || !errors.As(err, &pe) || pe != cause {
+		t.Fatal("published cause not retained", err)
+	}
+	reg, _, err := Preflight(path)
+	if err != nil || !reg.Guests[0].Expired || reg.Guests[0].Uses != 1 || reg.Guests[0].Sessions != 1 || reg.Guests[1].Expired {
+		t.Fatal("visible expiry/counters control", err)
+	}
+	if len(snapshotGuestUsage(path)) != 0 {
+		t.Fatal("published expiry reapplies counters")
+	}
+	restore()
+	if _, reason := CheckGuest(path, "photos", v.ID, guestTestNow, false, false); reason != "expired" {
+		t.Fatal("rollback revived expired grant", reason)
+	}
+	if _, reason := CheckGuest(path, "photos", long.ID, guestTestNow, false, false); reason != "allowed" {
+		t.Fatal("long grant denied", reason)
+	}
+	if err := FlushGuestCounters(path); err != nil {
+		t.Fatal(err)
+	}
+	if !atomicfile.IsPublished(GuestCounterError(path)) {
+		t.Fatal("no-op flush cleared durability error")
+	}
+	if _, err := RevokeGuest(path, long.ID, guestTestNow); err != nil {
+		t.Fatal(err)
+	}
+	if GuestCounterError(path) != nil {
+		t.Fatal("actual successful write did not clear error")
+	}
+	t.Log("expiry latch/counters visible after sync error; cause unwraps; rollback denied; no-op preserves warning; later successful write clears")
+}

@@ -1,13 +1,80 @@
 package registry
 
 import (
+	"bytes"
 	"fmt"
+	"log/slog"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/anydoor7/tslink/internal/filelock"
 )
+
+func TestGuestCounterLockFailureWarning(t *testing.T) {
+	path := guestRegistry(t)
+	view, _, err := CreateGuest(path, guestOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, reason := CheckGuest(path, "photos", view.ID, guestTestNow, true, true); reason != "allowed" {
+		t.Fatal(reason)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var logs bytes.Buffer
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	defer slog.SetDefault(old)
+	if err := os.Remove(path + ".lock"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(path+".lock", 0700); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		err := FlushGuestCounters(path)
+		if err == nil {
+			t.Fatal("invalid lock positive control")
+		}
+		if GuestCounterError(path) != err {
+			t.Fatal("lock failure missing from counter warning", err)
+		}
+		pending := snapshotGuestUsage(path)[view.ID]
+		if pending.uses != 1 || pending.sessions != 1 {
+			t.Fatal("failed flush lost pending counters", pending)
+		}
+	}
+	if count := strings.Count(logs.String(), "guest counters persistence failed"); count != 1 {
+		t.Fatal("lock warning not logged exactly once", count)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatal("lock failure changed registry bytes", err)
+	}
+	if err := os.Remove(path + ".lock"); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := FlushGuestCounters(path); err != nil {
+			t.Fatal(err)
+		}
+	}
+	reg, _, err := Preflight(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reg.Guests[0].Uses != 1 || reg.Guests[0].Sessions != 1 || len(snapshotGuestUsage(path)) != 0 {
+		t.Fatal("counter retry did not persist exactly once")
+	}
+	if GuestCounterError(path) != nil {
+		t.Fatal("successful write did not clear warning")
+	}
+	t.Log("lock failure retained 1 use/1 session, logged once; recovery persisted exactly once and cleared warning")
+}
 
 func TestGuestCountersBatchAndRetry(t *testing.T) {
 	path := guestRegistry(t)

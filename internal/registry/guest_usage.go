@@ -142,6 +142,7 @@ func FlushGuestCounters(path string) error {
 		return save(path, reg)
 	})
 	if err != nil {
+		recordGuestCounterError(path, err)
 		return err
 	}
 	if !acquired {

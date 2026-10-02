@@ -55,7 +55,7 @@ tslink access log --app photos --json
 
 handler 完成或中止时释放请求记录并停止期限 timer。成功 hijack 的连接继续登记，直到连接关闭或授权终止；关闭 gate 时清空所有请求与连接。每个 gate 的 50ms 兜底检查使用一次共享 registry 读取来判断全部活跃请求，独立授权 timer 与同进程提交通知也会终止流。
 
-计数记录成功建立的 session 和授权后的应用请求；后端之后失败也计入 `uses`。计数及 last_used_at 按 grant 在内存累积，约每 30 秒、撤销时、优雅关闭时，以及同一进程其他 registry 写入时批量落盘。文件替换前失败的批次保留供重试；替换成功但目录 sync 失败时，新计数已可见，因此确认该批次，重试不会重复计数。daemon log 保留错误，`status` 与 `status urls --json` 在服务 warnings 中报告 `guest_counters_persistence_failed`；成功 registry 写入后清除此告警，无操作的 flush 不能确认持久性。另一进程的 CLI 看到上次已发布批次，同一进程视图包含待落盘计数。**崩溃可能丢失上次确认持久化的 flush 之后的计数，正常情况下最多为最后约 30 秒；目录 sync 失败时，最新发布的持久性仍未确认。** 授权独立于使用计数。创建、撤销、过期和 PIN 写入在持久性未确认时仍返回错误；发布后的错误可能意味着变更已可见，重试创建前先检查 `guest list`。
+计数记录成功建立的 session 和授权后的应用请求；后端之后失败也计入 `uses`。计数及 last_used_at 按 grant 在内存累积，约每 30 秒、撤销时、优雅关闭时，以及同一进程其他 registry 写入时批量落盘。文件替换前失败的批次保留供重试；替换成功但目录 sync 失败时，新计数已可见，因此确认该批次，重试不会重复计数。锁准备和获取失败也进入同一去重告警状态。daemon log 保留错误，`status` 与 `status urls --json` 在服务 warnings 中报告 `guest_counters_persistence_failed`；成功 registry 写入后清除此告警，无操作的 flush 不能确认持久性。另一进程的 CLI 看到上次已发布批次，同一进程视图包含待落盘计数。**崩溃可能丢失上次确认持久化的 flush 之后的计数，正常情况下最多为最后约 30 秒；目录 sync 失败时，最新发布的持久性仍未确认。** 授权独立于使用计数。创建、撤销、过期和 PIN 写入在持久性未确认时仍返回错误；发布后的错误可能意味着变更已可见，重试创建前先检查 `guest list`。
 
 MCP 工具为 `guest_create`、`guest_list`、`guest_show`、`guest_revoke`，登记为 owner-only。当前 MCP principal 均为 owner；集成 F6 reduced scopes 时，必须先映射明确的 owner-only 注册表再授权其他角色。本包不包含 portal 集成。
 

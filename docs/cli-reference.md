@@ -180,4 +180,4 @@ Omitting `--funnel-ttl` when making an existing private service public selects t
 
 Human guest list/show/revoke output includes label, app, local expiry with named zone and relative time, status and uses. Revoke confirms the ID; sendable create messages include a readable expiry. JSON is unchanged.
 
-Guest counter persistence errors appear in daemon logs and service warnings as `guest_counters_persistence_failed` in `status` / `status urls --json`. A post-replacement directory-sync failure leaves visible counts acknowledged and durability unconfirmed; the batch is not applied again. A later successful registry write clears the warning.
+Guest counter persistence errors, including lock preparation and acquisition failures, appear in daemon logs and service warnings as `guest_counters_persistence_failed` in `status` / `status urls --json`. A post-replacement directory-sync failure leaves visible counts acknowledged and durability unconfirmed; the batch is not applied again. A later successful registry write clears the warning.

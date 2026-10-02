@@ -175,4 +175,4 @@ Windows `tslink install --startup` 显式选择下次登录启动、无崩溃恢
 
 非 JSON 的 guest list/show/revoke 显示 label、app、本地到期时间与具名时区和相对期限、status、uses。revoke 明确确认 ID，create 的发送说明包含易读到期时间。JSON 不变。
 
-访客计数持久化错误进入 daemon log，并在 `status` / `status urls --json` 的服务 warnings 中显示为 `guest_counters_persistence_failed`。替换后的目录 sync 失败时，已可见计数的批次被确认，持久性未确认，批次不会重复应用；后续成功 registry 写入会清除此告警。
+访客计数持久化错误（包括锁准备和获取失败）进入 daemon log，并在 `status` / `status urls --json` 的服务 warnings 中显示为 `guest_counters_persistence_failed`。替换后的目录 sync 失败时，已可见计数的批次被确认，持久性未确认，批次不会重复应用；后续成功 registry 写入会清除此告警。

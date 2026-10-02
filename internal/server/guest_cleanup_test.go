@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/anydoor7/tslink/internal/filelock"
+	"github.com/anydoor7/tslink/internal/registry"
 )
 
 func cleanupGate(f *guestFixture) *guestGate { return f.s.nodes["photos"].handlerCloser.(*guestGate) }
@@ -171,23 +172,38 @@ func TestGuestHandlerPanicCleanup(t *testing.T) {
 }
 func TestGuestCloseDrainsFlights(t *testing.T) {
 	f := newGuestFixture(t, "", true, true)
-	var stopped atomic.Int64
+	stopped := make(chan struct{}, 3)
 	replaceGuestBackend(t, f, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		fmt.Fprint(w, "data: ready\n\n")
 		w.(http.Flusher).Flush()
 		<-r.Context().Done()
-		stopped.Add(1)
+		stopped <- struct{}{}
 	}))
+	// Hold a real shared reader throughout shutdown. Neither cancellation nor
+	// monitor termination implies that all registry readers have released it.
+	lock, err := os.OpenFile(f.path+".lock", os.O_RDWR, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
+	if acquired, err := filelock.TryReadLock(lock); err != nil || !acquired {
+		t.Fatal("shared reader control", acquired, err)
+	}
+	defer filelock.Unlock(lock)
 	cookies := f.login()
 	g := cleanupGate(f)
 	// Keep proxy handlers from returning after cancellation. Close must drain
 	// ownership itself, without relying on their deferred cleanup running first.
 	app := g.app
 	handlersDone := make(chan struct{})
+	proxyReturned := make(chan struct{}, 3)
 	defer close(handlersDone)
 	g.app = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		defer func() { <-handlersDone }()
+		defer func() {
+			proxyReturned <- struct{}{}
+			<-handlersDone
+		}()
 		app.ServeHTTP(w, r)
 	})
 	for range 3 {
@@ -205,32 +221,69 @@ func TestGuestCloseDrainsFlights(t *testing.T) {
 	if len(timers) != 3 {
 		t.Fatal("live flight control", len(timers))
 	}
-	if err := g.Close(); err != nil && !strings.Contains(err.Error(), "guest counters: registry writer busy") {
-		t.Fatal(err)
-	}
-	if cleanupFlightCount(g) != 0 {
-		t.Fatal("Close retained flights")
+	for range 2 {
+		start := time.Now()
+		err := g.Close()
+		if err == nil || !strings.Contains(err.Error(), "guest counters: registry writer busy") {
+			t.Fatal("reader-held Close must report busy", err)
+		}
+		if time.Since(start) > time.Second {
+			t.Fatal("busy Close was not bounded")
+		}
+		if cleanupFlightCount(g) != 0 {
+			t.Fatal("Close retained flights")
+		}
+		select {
+		case <-g.done:
+		default:
+			t.Fatal("monitor not joined")
+		}
 	}
 	for _, timer := range timers {
 		if timer == nil || timer.Stop() {
 			t.Fatal("Close retained timer")
 		}
 	}
-	until := time.Now().Add(time.Second)
-	for stopped.Load() != 3 {
-		if time.Now().After(until) {
+	deadline := time.NewTimer(time.Second)
+	defer deadline.Stop()
+	for range 3 {
+		select {
+		case <-stopped:
+		case <-deadline.C:
 			t.Fatal("Close did not cancel backend")
 		}
-		time.Sleep(time.Millisecond)
 	}
-	select {
-	case <-g.done:
-	default:
-		t.Fatal("monitor not joined")
+	// Join each proxy's I/O before retrying, so its final authorization read
+	// cannot race the counter writer. Handler defers are still held above.
+	for range 3 {
+		select {
+		case <-proxyReturned:
+		case <-deadline.C:
+			t.Fatal("proxy I/O did not finish")
+		}
+	}
+	if err := filelock.Unlock(lock); err != nil {
+		t.Fatal(err)
 	}
 	if err := g.Close(); err != nil {
-		t.Fatal("repeat Close", err)
+		t.Fatal("retry after reader release", err)
 	}
+	for range 2 {
+		reg, _, err := registry.Preflight(f.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if reg.Guests[0].Uses != 3 || reg.Guests[0].Sessions != 1 {
+			t.Fatal("retry must persist exactly the observed counters", reg.Guests[0].Uses, reg.Guests[0].Sessions)
+		}
+		if registry.GuestCounterError(f.path) != nil {
+			t.Fatal("successful retry left warning")
+		}
+		if err := g.Close(); err != nil {
+			t.Fatal("repeat successful Close", err)
+		}
+	}
+	t.Log("two reader-held Close calls returned bounded busy; flights=0, timers stopped, backend cancelled, monitor joined; released-reader retry persisted exactly 3 uses/1 session")
 }
 
 func TestGuestCloseBusyCounters(t *testing.T) {
