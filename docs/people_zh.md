@@ -54,6 +54,8 @@ tslink people update alice@example.com --invite --replace-invite photos=12345 --
 
 成功且完整的 devices 列表确认已记录节点及其 hostname 均不存在时,remove 保存终态 `target_gone`,保留旧应用、hostname、node ID、invite ID 和 attempt,此后可重新授权其他应用。失败、截断、格式错误的列表及归属不符仍是未完成,须重试。Terminal attempts 是不可覆盖的历史;同一人员/应用/节点的后继使用递增 `attempt`,省略表示原始 attempt 0。它保留各 attempt 的最终结果,不是每次状态变更的完整事件日志。
 
+缺失证据必须满足 HTTP 200、非空 body 和存在且非 null 的有效数组(设备列表的 `devices`,邀请列表的顶层数组)。204、206、其他 2xx、空/null body 或无效集合都不能证明缺失:不退役旧尝试,不记录终态,不发送替换 POST。这适用于替换、移除清理及显式 `none` 恢复。无 body 的 POST/DELETE 响应保留原有独立处理。
+
 ## 为什么保留按应用邀请
 
 | 设计 | 拥有者与接收者操作 | 应用兼容性 | 撤销 |
@@ -65,9 +67,9 @@ tslink people update alice@example.com --invite --replace-invite photos=12345 --
 
 ## 强制校验与到期
 
-接受任意登录字符串,仅拒绝空字符串、控制字符和内部空白。移除首尾 ASCII 空白(space、tab、CR、LF、VT、FF),只把 ASCII A-Z 转为小写;不进行 Unicode 大小写折叠或 Unicode normalization,逐字节精确比较。支持撇号、`!`、`~`、其他标点及非 ASCII 地址。U+212A KELVIN SIGN 与 `k` 不同,U+0130 dotted capital I 与 `i` 不同,相似字符不能取得另一登录名的授权。未作为人员管理的登录名保留旧 allow 回退,登录规则也使用同样的精确比较。Tagged 设备仍是机器身份,不能使用人员授权。
+接受任意有效 UTF-8 登录字符串,仅拒绝空字符串、控制字符和内部空白。CLI、MCP 和 Store 在修改前以 `usage_error` 拒绝无效 UTF-8;无效 WhoIs 登录名为权威拒绝,不能回退到旧 allow。移除首尾 ASCII 空白(space、tab、CR、LF、VT、FF),只把 ASCII A-Z 转为小写;不进行 Unicode 大小写折叠或 Unicode normalization,逐字节精确比较。支持撇号、`!`、`~`、其他标点及非 ASCII 地址。U+212A KELVIN SIGN 与 `k` 不同,U+0130 dotted capital I 与 `i` 不同,相似字符不能取得另一登录名的授权。未作为人员管理的登录名保留旧 allow 回退,登录规则也使用同样的精确比较。Tagged 设备仍是机器身份,不能使用人员授权。
 
-仅为升级兼容,父版本 schema-2 已保存的登录名(即使含旧版允许的内部 Unicode 空白或 C1 控制字符)仍可加载、按原字节匹配和移除。新输入不能创建这些键;兼容路径不折叠或重写已有字节。
+仅为升级兼容,父版本 schema-2 已保存的登录名(即使含旧版允许的内部 Unicode 空白或 C1 控制字符)仍可加载、按原字节匹配和移除。新输入不能创建这些键;兼容路径不折叠或重写已有字节。父版本 JSON writer 在保存前已将无效 UTF-8 替换为 U+FFFD;读取保留磁盘实际保存的 Unicode 身份,不修复或重写它。
 
 `access explain` 和 MCP `access_explain` 显示脱敏的人员范围、授权/拒绝记录数量及已知登录名覆盖旧规则的语义，并指向 `people list --json` 查看详细策略。完全没有人员策略的服务保留旧解释。
 

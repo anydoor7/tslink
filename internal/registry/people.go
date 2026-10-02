@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/anydoor7/tslink/internal/errcode"
 )
@@ -32,6 +33,9 @@ type PersonGrant struct {
 }
 
 func NormalizePerson(login string) (string, error) {
+	if !utf8.ValidString(login) {
+		return "", CodedError{Code: errcode.UsageError, Message: "person login must be valid UTF-8"}
+	}
 	// Only outer ASCII whitespace and ASCII case are equivalent. Unicode
 	// bytes are preserved, including Kelvin sign and dotted capital I.
 	login = canonicalPersonBytes(login)
@@ -55,7 +59,7 @@ func canonicalPersonBytes(login string) string {
 // controls. Preserve those already-stored keys without applying the parent's
 // Unicode folding. New people input still uses NormalizePerson's strict rule.
 func legacyStoredPersonLogin(login string) bool {
-	return login != "" && login == canonicalPersonBytes(login) && !strings.HasPrefix(login, "tag:") &&
+	return utf8.ValidString(login) && login != "" && login == canonicalPersonBytes(login) && !strings.HasPrefix(login, "tag:") &&
 		!strings.ContainsAny(login, " \t\r\n,\\") && strings.IndexFunc(login, func(r rune) bool { return r < 32 || r == 127 }) < 0
 }
 

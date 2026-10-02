@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/anydoor7/tslink/internal/registry"
 )
@@ -13,6 +14,9 @@ import (
 // matches any entry in the allowedUsers list.
 // If allowedUsers is empty, all callers are allowed (no restriction).
 func isAllowed(login string, nodeTags []string, allowedUsers []string) bool {
+	if !utf8.ValidString(login) {
+		return false
+	}
 	if len(allowedUsers) == 0 {
 		return true
 	}

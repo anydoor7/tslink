@@ -1,5 +1,19 @@
 package cmd
 
+import (
+	"encoding/json"
+	"fmt"
+	"unicode/utf8"
+)
+
+// Reject malformed wire strings before encoding/json can replace their bytes.
+func decodePeopleMCPArguments(raw json.RawMessage, target any) error {
+	if !utf8.ValidString(string(raw)) {
+		return fmt.Errorf("person arguments must be valid UTF-8")
+	}
+	return decodeMCPArguments(raw, target)
+}
+
 func peopleViewSchema() map[string]any {
 	grant := objectSchema(map[string]any{
 		"app":        map[string]any{"type": "string"},
@@ -37,7 +51,7 @@ func init() {
 		mcpToolHints[name] = mcpHints(false, true, false, true)
 		mcpToolDefinitions = append(mcpToolDefinitions, mcpToolDefinition{
 			Name:        name,
-			Description: "Changes local access to private HTTP and file apps for a person, so confirm the person, apps and expiry with the user before calling. This makes newly scoped apps deny callers without a grant or an explicit legacy allow rule. TCP cannot enforce people; public Funnel is refused. Optional invite creates single-use per-app device invitations bundled in one guide, so confirm before creating them. Requires a user-owned API token only for invite; OAuth cannot create device invites. print_links explicitly reveals bearer links. No elevated exit-node, multi-use or tailnet-role permissions are offered; use the existing invite tools and their owner-configured elevated permission guard for those. An incomplete invitation result retains local grants and reports durable state/errors. Update with invite alone resumes unfinished work; unknown POSTs require explicit owner-verified reconcile_invites after remote listing. Completed operations are reused. There is no exactly-once guarantee. Logins accept all nonempty strings without controls or internal whitespace. Trim outer ASCII whitespace and lowercase ASCII A-Z only; compare exact bytes without Unicode folding or normalization. replace_invites explicitly confirms replacement of a disappeared completed ID, retires its attempt, and preserves all grants/deadlines; requires update with invite and no apps/for changes.",
+			Description: "Changes local access to private HTTP and file apps for a person, so confirm the person, apps and expiry with the user before calling. This makes newly scoped apps deny callers without a grant or an explicit legacy allow rule. TCP cannot enforce people; public Funnel is refused. Optional invite creates single-use per-app device invitations bundled in one guide, so confirm before creating them. Requires a user-owned API token only for invite; OAuth cannot create device invites. print_links explicitly reveals bearer links. No elevated exit-node, multi-use or tailnet-role permissions are offered; use the existing invite tools and their owner-configured elevated permission guard for those. An incomplete invitation result retains local grants and reports durable state/errors. Update with invite alone resumes unfinished work; unknown POSTs require explicit owner-verified reconcile_invites after remote listing. Completed operations are reused. There is no exactly-once guarantee. Logins accept all nonempty valid UTF-8 strings without controls or internal whitespace; invalid UTF-8 is a usage_error. Trim outer ASCII whitespace and lowercase ASCII A-Z only; compare exact bytes without Unicode folding or normalization. replace_invites explicitly confirms replacement of a disappeared completed ID, retires its attempt, and preserves all grants/deadlines; requires update with invite and no apps/for changes.",
 			InputSchema: objectSchema(map[string]any{
 				"who":               map[string]any{"type": "string", "minLength": 1},
 				"apps":              map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "string"}, "description": "App names, or [all] for all current private HTTP/file apps. Required on add; omission on update keeps the app set."},

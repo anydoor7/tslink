@@ -1521,7 +1521,7 @@ func callMCPTool(ctx context.Context, actions mcpActions, name string, arguments
 	switch name {
 	case "people_add", "people_update":
 		var args peopleArguments
-		decodeErr := decodeMCPArguments(arguments, &args)
+		decodeErr := decodePeopleMCPArguments(arguments, &args)
 		if refusal := mcpArgumentsRefusal(name, decodeErr, mcpRequiredArgument{"who", args.Who}); refusal != nil {
 			return refusal, nil
 		}
@@ -1537,7 +1537,7 @@ func callMCPTool(ctx context.Context, actions mcpActions, name string, arguments
 			Who       string            `json:"who"`
 			Reconcile map[string]string `json:"reconcile_invites,omitempty"`
 		}
-		decodeErr := decodeMCPArguments(arguments, &args)
+		decodeErr := decodePeopleMCPArguments(arguments, &args)
 		if refusal := mcpArgumentsRefusal(name, decodeErr, mcpRequiredArgument{"who", args.Who}); refusal != nil {
 			return refusal, nil
 		}
