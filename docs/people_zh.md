@@ -13,7 +13,7 @@ tslink people remove alice@example.com
 
 `--apps all` 选取**当前已注册的私有 HTTP 代理和文件服务**，排除 TCP 和公开 Funnel，不自动包括以后新增的应用。显式指定 TCP 或 Funnel 时，以 `people_service_unsupported` 原子拒绝。文件服务，包括单文件分享，使用与代理相同的 HTTP WhoIs 校验。
 
-已有有效人员不能重复 add，请用 update。只更新 `--apps` 时保留继续授权应用的期限，新加入的应用无期限；指定 `--for` 会把新期限用于所有选定授权。只更新 `--for` 时保留应用集合。`--for never` 明确移除期限，并可续期已过期授权。remove 可重复执行；再次 add 是明确的新授权，须先清理或对账未完成邀请操作。
+已有有效人员不能重复 add，请用 update。只更新 `--apps` 时保留继续授权应用的期限，新加入的应用期限为 24h；指定 `--for` 会把新期限用于所有选定授权。只更新 `--for` 时保留应用集合。`--for never --ack-never` 明确移除 tailnet 成员期限;访客不允许永久授权。新授权默认 24h。`--until` 设置绝对日期/时间,`--for` 使用[统一时长语法](durations_zh.md)。`extend photos --person alice@example.com --for 36h` 只修改单个应用;已过期须 `--regrant`,撤销人员不能恢复。remove 可重复执行；再次 add 是明确的新授权，须先清理或对账未完成邀请操作。
 
 ## Tailnet 外的人：一条拥有者命令、一条消息
 
@@ -87,7 +87,7 @@ CLI JSON 使用现有 `schema_version: 1` 结果 envelope。`data.person` 含规
 
 MCP 提供 `people_add`、`people_list`、`people_update`、`people_remove`。变更工具说明须确认人员、应用和期限。add/update 可能缩小旧访问范围，因此是 destructive；续期及邀请非幂等，可选邀请使它们具有 open-world 提示。list 完全只读，包括文件权限；remove 是 destructive、幂等，含可选远端清理，因此有 open-world 提示。update 可只指定 invite 进行重试；update/remove 接受 `reconcile_invites` 应用到 ID（或 `none`）对象，须拥有者明确核对。这里不接受 exit-node、可重复链接或 tailnet 管理角色参数；现有 invite 工具继续使用拥有者配置的 `mcp.allow_elevated_invites` 守卫。
 
-启用人员数据的注册表写入 schema version 2，新增顶层 `people` 和服务字段 `people_scoped`。已有 schema-2 注册表(包括邀请台账前的版本)读取不改字节。人员对象有可选 `invites`;后继记录增加可选 `attempt` 和新终态。不认识字段或状态的旧 reader 会拒绝而非丢弃。Schema version 本身不能协商功能;降级须使用兼容 reader 或另行备份的注册表。旧 version 0/1 可加载且不改变字节，只有服务的普通写入仍保留 version 1，未知字段继续严格拒绝。旧二进制会拒绝 version 2 或未知人员字段，不能静默覆盖丢失数据。降级前先停止新版守护进程，明确决定丢弃人员授权后才恢复另外备份的 version 1 注册表；旧守护进程不能校验这些授权，不能只替换运行中安装的 CLI 二进制。
+启用人员数据的注册表写入 schema version 2，新增顶层 `people` 和服务字段 `people_scoped`。已有 schema-2 注册表(包括邀请台账前的版本)读取不改字节。人员对象有可选 `invites` 和持久可选布尔字段 `guest`,首次邀请的有限授权与 guest 在同一事务中保存,早于远端操作;后继记录增加可选 `attempt` 和新终态。不认识字段或状态的旧 reader 会拒绝而非丢弃。Schema version 本身不能协商功能;降级须使用兼容 reader 或另行备份的注册表。旧 version 0/1 可加载且不改变字节，只有服务的普通写入仍保留 version 1，未知字段继续严格拒绝。旧二进制会拒绝 version 2 或未知人员字段，不能静默覆盖丢失数据。降级前先停止新版守护进程，明确决定丢弃人员授权后才恢复另外备份的 version 1 注册表；旧守护进程不能校验这些授权，不能只替换运行中安装的 CLI 二进制。
 
 输入错误、人员/应用不存在及状态冲突,在 CLI 和 MCP 中一致使用 `usage_error`、`not_found`、`conflict`。
 

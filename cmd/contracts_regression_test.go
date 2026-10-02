@@ -71,7 +71,6 @@ func TestShareReuseHonorsExplicitFunnelDeadline(t *testing.T) {
 	}{
 		{"never-to-one-hour", "never", "1h", true, true},
 		{"long-to-one-hour", "72h", "1h", true, true},
-		{"bounded-to-never", "1h", "never", true, true},
 		{"shorter-to-longer", "1h", "8h", true, false},
 		{"same-duration-repeat", "1h", "1h", true, false},
 		{"default-retains-bounded", "1h", "", false, false},
@@ -81,7 +80,14 @@ func TestShareReuseHonorsExplicitFunnelDeadline(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "registry.json")
-			first := shareIntentForRegression(t, shareRequest{Funnel: true, PublicAck: true, FunnelTTL: tc.firstTTL, FunnelTTLSet: true})
+			ttl := tc.firstTTL
+			if ttl == "never" {
+				ttl = "24h"
+			}
+			first := shareIntentForRegression(t, shareRequest{Funnel: true, PublicAck: true, FunnelTTL: ttl, FunnelTTLSet: true})
+			if tc.firstTTL == "never" {
+				first.Service.FunnelExpiresAt = nil
+			}
 			original, created, err := registerShare(path, first, "")
 			if err != nil || !created {
 				t.Fatalf("initial: %+v created=%v err=%v", original, created, err)

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -49,39 +50,24 @@ func TestRegistryCheckReportsHandWrittenFunnelWithoutExpiry(t *testing.T) {
 		t.Fatalf("failure envelope = %+v, want %s with exit %d", failure, registry.CodeFunnelExpiryRequired, output.ExitUsage)
 	}
 	next := strings.Join(failure.Error.Next, "\n")
-	if !strings.Contains(next, `"funnel_expires_at": "never"`) || !strings.Contains(next, "RFC 3339") {
-		t.Fatalf("next = %q, want both ways to decide the lifetime", next)
+	if !strings.Contains(next, "finite") || !strings.Contains(next, "RFC 3339") {
+		t.Fatalf("next = %q, want finite deadline recovery", next)
 	}
 }
 
-// TestAddFunnelTTLNeverStoresExplicitNever pins the CLI and MCP writers of
-// "never": the stored form is explicit and registry check accepts it.
-func TestAddFunnelTTLNeverStoresExplicitNever(t *testing.T) {
+// New public never is refused on both surfaces without writing a registry.
+func TestAddFunnelTTLRefusesNever(t *testing.T) {
 	regPath := stubAddWritePaths(t)
-	if _, err := runAddCmdOutput(t, []string{"cli-forever"}, map[string]string{
-		"proxy": "localhost:3000", "funnel": "true", "public": "true", "funnel-ttl": "never",
-	}); err != nil {
-		t.Fatalf("add --funnel-ttl never: %v", err)
+	if _, err := runAddCmdOutput(t, []string{"cli-forever"}, map[string]string{"proxy": "localhost:3000", "funnel": "true", "public": "true", "funnel-ttl": "never"}); err == nil || !strings.Contains(err.Error(), "never is allowed only") {
+		t.Fatalf("CLI never: %v", err)
 	}
 	paths := mcpSharePaths(t)
 	paths.Registry = regPath
-	if _, err := defaultMCPActions(paths, io.Discard).add(context.Background(), AddParams{
-		Name: "mcp-forever", Proxy: "localhost:3001", Funnel: true, Public: true,
-		FunnelTTL: "never", FunnelTTLSet: true, NoDaemonInstall: true,
-	}, false); err != nil {
-		t.Fatalf("MCP add funnel_ttl never: %v", err)
+	if _, err := defaultMCPActions(paths, io.Discard).add(context.Background(), AddParams{Name: "mcp-forever", Proxy: "localhost:3001", Funnel: true, Public: true, FunnelTTL: "never", FunnelTTLSet: true, NoDaemonInstall: true}, false); err == nil || !strings.Contains(err.Error(), "never is allowed only") {
+		t.Fatalf("MCP never: %v", err)
 	}
-
-	data, err := os.ReadFile(regPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := strings.Count(string(data), `"funnel_expires_at": "never"`); got != 2 {
-		t.Fatalf("registry.json = %s, want both never entries stored explicitly", data)
-	}
-	result, err := registryCheck(regPath)
-	if err != nil || len(result.Issues) != 0 || result.ValidServices != 2 {
-		t.Fatalf("registryCheck = %+v, %v; want two valid services and no issues", result, err)
+	if _, err := os.Stat(regPath); !os.IsNotExist(err) {
+		t.Fatalf("refused lifetime created registry: %v", err)
 	}
 }
 
@@ -89,10 +75,28 @@ func TestAddFunnelTTLNeverStoresExplicitNever(t *testing.T) {
 // the three exposures an agent has to tell apart: tailnet-only, public until a
 // deadline, and public with no deadline.
 func TestShareResultTellsTheThreeExposuresApart(t *testing.T) {
-	actions, _ := shareMCPWireActions(t)
+	actions, path := shareMCPWireActions(t)
 	tailnet := callMCPShare(t, actions, `{"target":"4000"}`)
 	until := callMCPShare(t, actions, `{"target":"3000","funnel":true,"public_ack":true,"funnel_ttl":"1h"}`)
-	forever := callMCPShare(t, actions, `{"target":"3001","funnel":true,"public_ack":true,"funnel_ttl":"never"}`)
+	// Preserve and project a legacy explicit permanent entry losslessly.
+	legacy := registry.Service{Name: "legacy-public", Type: registry.TypeProxy, Target: "http://localhost:3001", Funnel: true, PublicAck: true}
+	if _, err := registry.Add(path, legacy); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := registry.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var forever map[string]any
+	for _, svc := range stored.Services {
+		if svc.Name == legacy.Name {
+			result := withShareFunnelState(ShareResult{}, shareRegistration{Service: svc})
+			wire, _ := json.Marshal(result)
+			if err := json.Unmarshal(wire, &forever); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
 
 	exposureKind := func(name string, result map[string]any) string {
 		t.Helper()

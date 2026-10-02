@@ -55,7 +55,9 @@ func init() {
 			InputSchema: objectSchema(map[string]any{
 				"who":               map[string]any{"type": "string", "minLength": 1},
 				"apps":              map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "string"}, "description": "App names, or [all] for all current private HTTP/file apps. Required on add; omission on update keeps the app set."},
-				"for":               map[string]any{"type": "string", "description": "Positive duration, e.g. 1h or 7d, or never. Omit on update to preserve expiry."},
+				"for":               lifetimeSchema(false),
+				"until":             map[string]any{"type": "string", "description": "Absolute deadline (RFC3339, YYYY-MM-DD, YYYY-MM-DDTHH:MM); conflicts with for."},
+				"ack_never":         map[string]any{"type": "boolean", "default": false},
 				"invite":            map[string]any{"type": "boolean", "default": false},
 				"print_links":       map[string]any{"type": "boolean", "default": false},
 				"replace_invites":   map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}, "description": "Update with invite only, no apps/for: owner-confirmed app to recorded old invite ID. Requires remote absence before replacement; preserves grants and deadlines."},
@@ -69,7 +71,7 @@ func init() {
 			input["required"] = []string{"who", "apps"}
 		}
 		if name == "people_update" {
-			input["anyOf"] = []any{map[string]any{"required": []string{"apps"}}, map[string]any{"required": []string{"for"}}, map[string]any{"required": []string{"invite"}, "properties": map[string]any{"invite": map[string]any{"const": true}}}}
+			input["anyOf"] = []any{map[string]any{"required": []string{"apps"}}, map[string]any{"required": []string{"for"}}, map[string]any{"required": []string{"until"}}, map[string]any{"required": []string{"invite"}, "properties": map[string]any{"invite": map[string]any{"const": true}}}}
 		}
 	}
 	mcpToolHints["people_list"] = mcpHints(true, false, true, false)

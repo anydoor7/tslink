@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/anydoor7/tslink/internal/inspect"
 	"github.com/anydoor7/tslink/internal/output"
@@ -21,6 +22,7 @@ var appsDetectFn = recipes.Detect
 var recipeAddIfMissingFn = registry.AddIfMissing
 
 type recipeRequest struct {
+	Now               time.Time               `json:"-"`
 	Health            *registry.HealthConfig  `json:"health,omitempty"`
 	RequestLimits     *registry.RequestLimits `json:"request_limits,omitempty"`
 	RecipeID          string                  `json:"recipe_id"`
@@ -85,7 +87,7 @@ func recipeService(req recipeRequest) (recipes.Recipe, registry.Service, error) 
 			health.Path = r.HealthPath
 		}
 	}
-	p := AddParams{Health: &health, RequestLimits: req.RequestLimits, Name: name, Proxy: target, PreserveHost: preserveHost, Allow: req.Allow, Tags: req.Tags, Ephemeral: req.Ephemeral, Funnel: req.Funnel, Public: req.PublicAck, FunnelTTL: ttl, FunnelTTLSet: req.FunnelTTL != nil, NoAutoProvision: req.NoAutoProvision, ControlURL: req.ControlURL}
+	p := AddParams{Now: req.Now, Health: &health, RequestLimits: req.RequestLimits, Name: name, Proxy: target, PreserveHost: preserveHost, Allow: req.Allow, Tags: req.Tags, Ephemeral: req.Ephemeral, Funnel: req.Funnel, Public: req.PublicAck, FunnelTTL: ttl, FunnelTTLSet: req.FunnelTTL != nil, NoAutoProvision: req.NoAutoProvision, ControlURL: req.ControlURL}
 	svc, err := buildService(p)
 	if err != nil {
 		return r, svc, err
@@ -281,7 +283,7 @@ func init() {
 	share.Flags().Bool("ephemeral", false, "Use an ephemeral node")
 	share.Flags().Bool("funnel", false, "Publish on the internet; requires --public and recipe safety review")
 	share.Flags().Bool("public", false, "Acknowledge public internet exposure (requires --funnel)")
-	share.Flags().String("funnel-ttl", "24h", "Public lifetime: 1h, 8h, 24h, 72h, 7d, or never")
+	share.Flags().String("funnel-ttl", "24h", "Public lifetime: relative or until; presets 1h, 8h, 24h, 3d, 7d; min 1h, default max 7d; never refused")
 	share.Flags().Bool("no-auto-provision", false, "Disable automatic Funnel policy provisioning (requires --funnel)")
 	share.Flags().String("control-url", "", "Per-service control server URL")
 	share.Flags().Bool("no-daemon-install", false, "Save configuration only; do not install or start the background service")

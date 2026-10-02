@@ -327,7 +327,7 @@ func TestRecipeCLIOptionsAndDetectionOutput(t *testing.T) {
 		t.Fatalf("CLI overrides: %s %v", out, err)
 	}
 	_, err = runRecipeRoot(t, "apps", "share", "jellyfin", "--funnel", "--public", "--funnel-ttl", "")
-	if err == nil || !strings.Contains(err.Error(), "TTL must be one of") {
+	if err == nil || !strings.Contains(err.Error(), "valid examples:") {
 		t.Fatalf("explicit empty TTL: %v", err)
 	}
 	_, err = runRecipeRoot(t, "apps", "share", "ollama", "--yes", "--funnel", "--public", "--force-unsafe-public", "--no-daemon-install")

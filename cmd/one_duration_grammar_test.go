@@ -64,19 +64,19 @@ func TestDurationGrammarAndFunnelChoices(t *testing.T) {
 		t.Errorf("wait 1d: %v, want the cap named rather than a parse error", err)
 	}
 
-	// MCP funnel_ttl: exactly the five lifetimes and never.
-	for spelling, want := range map[string]time.Duration{"7d": 7 * durationDay, "24h": 24 * time.Hour, "72h": 72 * time.Hour, "1h": time.Hour} {
+	// Funnel accepts flexible relative lifetimes under the shared policy.
+	for spelling, want := range map[string]time.Duration{"7d": 7 * durationDay, "24h": 24 * time.Hour, "72h": 72 * time.Hour, "1h": time.Hour, "2h": 2 * time.Hour, "6d": 6 * durationDay, "167h59m59s": 7*durationDay - time.Second, "168h": 7 * durationDay, "1d": durationDay, "60m": time.Hour} {
 		got, never, err := registry.ParseFunnelTTL(spelling)
 		if err != nil || never || got != want {
 			t.Errorf("funnel_ttl %q = %v never=%v err=%v; want %v", spelling, got, never, err, want)
 		}
 	}
-	for _, refused := range []string{"2h", "6d", "167h59m59s", "soon", "168h", "168h0m0s", "1d", "60m"} {
-		if _, _, err := registry.ParseFunnelTTL(refused); err == nil || !strings.Contains(err.Error(), "must be one of") {
+	for _, refused := range []string{"soon", "7d1s", "59m", "never"} {
+		if _, _, err := registry.ParseFunnelTTL(refused); err == nil || !strings.Contains(err.Error(), "valid examples:") {
 			t.Errorf("funnel_ttl %q: %v, want the list of choices", refused, err)
 		}
 	}
-	if _, never, err := registry.ParseFunnelTTL("never"); err != nil || !never {
+	if _, never, err := registry.ParseFunnelTTL("never"); err == nil || never {
 		t.Errorf("funnel_ttl never = %v, %v", never, err)
 	}
 	// Over the protocol: add with funnel_ttl 7d records a seven-day Funnel.
@@ -116,7 +116,7 @@ func TestDurationGrammarAndFunnelChoices(t *testing.T) {
 	if got, err := parseDuration(*remaining); err != nil || got != 7*durationDay {
 		t.Errorf("printed duration %q = %v, %v; want 7d", *remaining, got, err)
 	}
-	if _, _, err := registry.ParseFunnelTTL(*remaining); err == nil || !strings.Contains(err.Error(), "must be one of") {
+	if got, _, err := registry.ParseFunnelTTL(*remaining); err != nil || got != 7*durationDay {
 		t.Errorf("funnel_ttl %q: %v, want the list of choices", *remaining, err)
 	}
 	if _, err := resolveMCPLogsQuery(mcpLogsArguments{Since: *remaining}); err != nil {
