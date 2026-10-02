@@ -31,6 +31,8 @@ HTTPS apps have an Open link. TCP services show the same `host:port` connection 
 
 When enabled, `tslink people add/update` includes the portal in its plain-language guide. Once its runtime URL is exact, the guide says to bookmark that one address. Before enrollment completes it tells the owner to use `tslink status --urls` to find it.
 
+The guide keeps the address verified before its own grant update, so the first grant includes an already-running home portal link.
+
 Visitors need Tailscale installed, connected and signed in with the granted login. For someone outside your tailnet, **share the home node as well as the app nodes** through Tailscale's Machines page. Per-app invitation links do not make the portal node reachable, and the portal does not send invitations or alter ACLs. Sharing only the portal does not grant network access to its app links. [Tailscale device sharing](https://tailscale.com/docs/features/sharing) grants access only to the shared machine and remains subject to network policy. Tagged machines on another tailnet cannot use user device shares.
 
 ## Agent access and safety

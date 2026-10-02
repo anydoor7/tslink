@@ -204,6 +204,13 @@ func changePeople(ctx context.Context, paths sharePaths, args peopleArguments, u
 	urls := peopleURLs(paths)
 	// Snapshot proof precedes the registry mutation: setting people_scoped
 	// changes its fingerprint but does not replace the existing service node.
+	// Capture the independent home address at the same point so the first
+	// grant does not turn a proven portal URL into a pending guide message.
+	portal := tsruntime.PortalState{State: "disabled"}
+	if reg, _, err := registry.Preflight(paths.Registry); err == nil {
+		pid, _ := inviteReadPIDFn(paths.PID)
+		portal = readPortalView(reg, paths.Registry, inviteIsRunningFn(paths.PID), pid)
+	}
 	targets := map[string]tailapi.DeviceTarget{}
 	if args.Invite {
 		known, err := inviteDeviceTargetsForPaths(paths.Registry, paths.PID, paths.Snapshot)
@@ -223,22 +230,18 @@ func changePeople(ctx context.Context, paths sharePaths, args peopleArguments, u
 			return PeopleResult{}, output.ErrConflict("replace-invite requires an active grant for " + app)
 		}
 	}
-	result := PeopleResult{Person: peopleView(p, urls, now), Invites: []PeopleInviteView{}, Complete: true, InviteRequirement: peopleInviteRequirement}
+	result := PeopleResult{Portal: portal, Person: peopleView(p, urls, now), Invites: []PeopleInviteView{}, Complete: true, InviteRequirement: peopleInviteRequirement}
 	if args.Invite {
 		resumePeopleInvites(ctx, paths.Registry, p, targets, args, &result)
 	}
 	result.Message = peopleMessage(result.Person, result.Invites, args.Invite, args.PrintLinks)
-	if reg, _, err := registry.Preflight(paths.Registry); err == nil {
-		pid, _ := inviteReadPIDFn(paths.PID)
-		result.Portal = readPortalView(reg, paths.Registry, inviteIsRunningFn(paths.PID), pid)
-		if result.Portal.Enabled {
-			if result.Portal.URL != "" {
-				result.Message += "\nYour one home address: open and bookmark " + result.Portal.URL + ". It shows the apps available to you, their health and when access ends."
-			} else {
-				result.Message += "\nYour home page is being prepared. Ask the owner for its address (owner: tslink status --urls). Bookmark that one address for your apps."
-			}
-			result.Message += " If you are outside the owner's tailnet, ask the owner to share the home node too; app invitations alone do not provide access to it."
+	if result.Portal.Enabled {
+		if result.Portal.URL != "" {
+			result.Message += "\nYour one home address: open and bookmark " + result.Portal.URL + ". It shows the apps available to you, their health and when access ends."
+		} else {
+			result.Message += "\nYour home page is being prepared. Ask the owner for its address (owner: tslink status --urls). Bookmark that one address for your apps."
 		}
+		result.Message += " If you are outside the owner's tailnet, ask the owner to share the home node too; app invitations alone do not provide access to it."
 	}
 	return result, nil
 }

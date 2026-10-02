@@ -81,9 +81,6 @@ func TestPortalStatusDoctorAndGuide(t *testing.T) {
 	if _, err := changePortal(paths, portalArguments{Owner: "owner"}, true); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := registry.ChangePerson(paths.Registry, "alice", []string{"photos"}, nil, false, false); err != nil {
-		t.Fatal(err)
-	}
 	reg, _, err := registry.Preflight(paths.Registry)
 	if err != nil {
 		t.Fatal(err)
@@ -127,7 +124,7 @@ func TestPortalStatusDoctorAndGuide(t *testing.T) {
 			t.Fatalf("ready CLI=%s %v", out.String(), err)
 		}
 	}
-	result, err := changePeople(context.Background(), paths, peopleArguments{Who: "alice", Apps: []string{"photos"}}, true)
+	result, err := changePeople(context.Background(), paths, peopleArguments{Who: "alice", Apps: []string{"photos"}}, false)
 	if err != nil || !strings.Contains(result.Message, snapshot.Portal.URL) || !strings.Contains(result.Message, "share the home node") {
 		t.Fatalf("guide=%+v %v", result, err)
 	}

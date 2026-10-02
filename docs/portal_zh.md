@@ -31,6 +31,8 @@ HTTPS 应用提供打开链接。TCP 服务显示与 `tslink url` 一致的 `hos
 
 入口开启后，`tslink people add/update` 的通俗指导会加入 portal。runtime URL 已确证时请访客收藏这一个地址；登录尚未完成时，指导会让 owner 用 `tslink status --urls` 获取地址。
 
+指导保留本次授权更新之前确证的地址，因此首次 grant 也会包含已经运行的 home 入口链接。
+
 访客需要安装并连接 Tailscale，使用获得 grant 的 login 登录。对 Tailnet 之外的人，必须通过 Tailscale Machines 页面 **同时分享 home 节点和各应用节点**。应用邀请不会自动让入口可达，入口也不发送邀请或修改 ACL。只分享入口不会授予其应用链接的网络访问权。[Tailscale 设备分享](https://tailscale.com/docs/features/sharing) 只允许访问被分享的那台机器，并受网络策略约束。另一 Tailnet 中带 tag 的机器不能使用面向用户的设备分享。
 
 ## Agent 访问和安全规则
