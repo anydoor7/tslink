@@ -138,13 +138,13 @@ Itens Em integração, Em revisão ou Planejado não estão incluídos na instal
 | <!-- roadmap:health --> Verifique a saúde dos apps e receba alertas de queda ou expiração por um comando ou webhook opcional. | Em integração |
 | <!-- roadmap:recipes --> Encontre apps compatíveis em loopback e visualize receitas de apps auto-hospedados antes de compartilhar. | Em integração |
 | <!-- roadmap:limits --> Defina o tamanho de upload e os tempos limite de cada app HTTP para uploads grandes e clientes lentos. | Em integração |
-| <!-- roadmap:windows --> Reinicie um daemon do Windows após falha durante uma sessão conectada, com uma tarefa agendada e supervisor integrado. | Em integração |
+| <!-- roadmap:windows --> Reinicie um daemon do Windows após falha enquanto o usuário permanecer com a sessão do Windows iniciada, com uma tarefa agendada e supervisor integrado. | Em integração |
 | <!-- roadmap:access-log --> Veja quem abriu qual app nos logs locais de acesso, com os modos de caminho `prefix`, `full` ou `off`. | Em revisão |
 | <!-- roadmap:portal --> Abra uma página inicial com os apps permitidos e o encaminhamento de registro para proprietários; visitantes ainda precisam do Tailscale. | Em revisão |
 | <!-- roadmap:mcp-scopes --> Defina um papel e um escopo de apps para um agente, com registros de auditoria de suas alterações. | Em revisão |
 | <!-- roadmap:guest-links --> Permita que um convidado abra um app HTTP no navegador sem instalar Tailscale, com link temporário e PIN opcional, por Funnel público com controle de acesso. | Em revisão |
 | <!-- roadmap:durations --> Escolha durações predefinidas ou personalizadas de pelo menos 1 hora, com máximo de 7 dias para convidados por padrão, configurável. | Em revisão |
-| <!-- roadmap:requests --> Ajude usuários de celulares a entrar por QR code e aprove acesso ou tempo extra em uma ação. | Em revisão |
+| <!-- roadmap:requests --> Ajude usuários de celulares a entrar por QR code; permita que o proprietário aprove solicitações de acesso a apps ou de tempo extra em uma ação. | Em revisão |
 | <!-- roadmap:multi-host --> Veja apps de vários hosts em um inventário. | Planejado |
 
 <a id="documentation"></a>

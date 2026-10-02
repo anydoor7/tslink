@@ -144,7 +144,7 @@ Punkter med Under sammenfletning, Under gennemgang eller Planlagt indgår ikke i
 | <!-- roadmap:mcp-scopes --> Giv en agent en rolle og et appområde med revisionskvitteringer for ændringer. | Under gennemgang |
 | <!-- roadmap:guest-links --> Lad en gæst åbne én HTTP-app i browseren uden at installere Tailscale, med et tidsbegrænset link og valgfri PIN via adgangskontrolleret offentlig Funnel. | Under gennemgang |
 | <!-- roadmap:durations --> Vælg forvalg eller egne varigheder på mindst 1 time med en konfigurerbar gæstegrænse på som standard 7 dage. | Under gennemgang |
-| <!-- roadmap:requests --> Hjælp telefonbrugere med at tilslutte sig via QR-kode, og godkend appadgang eller ekstra tid i én handling. | Under gennemgang |
+| <!-- roadmap:requests --> Hjælp telefonbrugere med at tilslutte sig via QR-kode; lad ejeren godkende anmodninger om appadgang eller ekstra tid i én handling. | Under gennemgang |
 | <!-- roadmap:multi-host --> Se apps fra flere værter i én oversigt. | Planlagt |
 
 <a id="documentation"></a>

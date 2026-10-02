@@ -144,7 +144,7 @@ Gli elementi In integrazione, In revisione o Pianificato non sono inclusi nell�
 | <!-- roadmap:mcp-scopes --> Assegna a un agente un ruolo e un ambito di app, con ricevute di audit per le modifiche. | In revisione |
 | <!-- roadmap:guest-links --> Permetti a un ospite di aprire un’app HTTP nel browser senza installare Tailscale, con un link a scadenza e PIN facoltativo, tramite Funnel pubblico con controllo degli accessi. | In revisione |
 | <!-- roadmap:durations --> Scegli durate predefinite o personalizzate di almeno 1 ora, con un massimo ospite predefinito di 7 giorni, configurabile. | In revisione |
-| <!-- roadmap:requests --> Aiuta gli utenti di telefoni a partecipare tramite QR code e approva accesso o tempo aggiuntivo in un’azione. | In revisione |
+| <!-- roadmap:requests --> Aiuta gli utenti di telefoni a partecipare tramite QR code; consenti al proprietario di approvare richieste di accesso alle app o di tempo aggiuntivo in un’azione. | In revisione |
 | <!-- roadmap:multi-host --> Visualizza le app di più host in un inventario. | Pianificato |
 
 <a id="documentation"></a>

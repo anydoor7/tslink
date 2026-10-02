@@ -157,7 +157,7 @@ Items marked Merging, In review or Planned are not included in the source instal
 | <!-- roadmap:mcp-scopes --> Give an agent a role and an app scope, with audit receipts for its mutations. | In review |
 | <!-- roadmap:guest-links --> Let a guest open one HTTP app in a browser without installing Tailscale, using an expiring link and optional PIN through gated public Funnel. | In review |
 | <!-- roadmap:durations --> Choose presets or custom lifetimes of at least 1 hour, with a configurable 7-day guest maximum by default. | In review |
-| <!-- roadmap:requests --> Help phone users join through a QR code and approve app-access or extra-time requests in one action. | In review |
+| <!-- roadmap:requests --> Help phone users join through a QR code; let the owner approve app-access or extra-time requests in one action. | In review |
 | <!-- roadmap:multi-host --> View apps from several hosts in one inventory. | Planned |
 
 <a id="documentation"></a>

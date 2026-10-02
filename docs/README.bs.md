@@ -157,7 +157,7 @@ Stavke U spajanju, Na pregledu ili Planirano nisu uključene u prethodnu instala
 | <!-- roadmap:mcp-scopes --> Dodijelite agentu ulogu i opseg aplikacija, uz revizijske potvrde njegovih izmjena. | Na pregledu |
 | <!-- roadmap:guest-links --> Omogućite gostu da otvori jednu HTTP aplikaciju u pregledniku bez instaliranja Tailscalea, pomoću vremenskog linka i opcionalnog PIN-a kroz javni Funnel s kontrolom pristupa. | Na pregledu |
 | <!-- roadmap:durations --> Izaberite gotova ili vlastita trajanja od najmanje 1 sata, s podesivim maksimumom za goste od 7 dana po zadanim postavkama. | Na pregledu |
-| <!-- roadmap:requests --> Pomozite korisnicima telefona da se pridruže QR kodom i jednim korakom odobrite pristup ili dodatno vrijeme. | Na pregledu |
+| <!-- roadmap:requests --> Pomozite korisnicima telefona da se pridruže QR kodom; omogućite vlasniku da jednim korakom odobri zahtjeve za pristup aplikaciji ili dodatno vrijeme. | Na pregledu |
 | <!-- roadmap:multi-host --> Pogledajte aplikacije s više hostova u jednom popisu. | Planirano |
 
 <a id="documentation"></a>

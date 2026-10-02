@@ -142,7 +142,7 @@ CLI 自動化支援 `--json`，其中 `schema_version` 為 `1`；可用 `tslink 
 | <!-- roadmap:mcp-scopes --> 給 agent 指派角色與應用範圍，並記錄其修改操作的稽核憑據。 | 審&#8288;查&#8288;中 |
 | <!-- roadmap:guest-links --> 讓訪客無須安裝 Tailscale，透過受控的公開 Funnel，在瀏覽器中用限時連結與可選 PIN 開啟一個 HTTP 應用。 | 審&#8288;查&#8288;中 |
 | <!-- roadmap:durations --> 選擇預設或自訂有效期限，最短 1 小時，訪客預設最長 7 天且可設定。 | 審&#8288;查&#8288;中 |
-| <!-- roadmap:requests --> 協助手機使用者透過 QR code 加入，並一步核准應用存取或延長時間請求。 | 審&#8288;查&#8288;中 |
+| <!-- roadmap:requests --> 協助手機使用者透過 QR code 加入，讓擁有者一步核准應用存取或延長時間請求。 | 審&#8288;查&#8288;中 |
 | <!-- roadmap:multi-host --> 在一份清單中查看多台主機上的應用。 | 規&#8288;劃&#8288;中 |
 
 <a id="documentation"></a>

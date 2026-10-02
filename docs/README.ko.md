@@ -142,7 +142,7 @@ CLI 자동화는 `--json`을 지원하며 `schema_version`은 `1`입니다. `tsl
 | <!-- roadmap:mcp-scopes --> 에이전트에 역할과 앱 범위를 지정하고 변경 작업의 감사 기록을 남깁니다. | 검토 중 |
 | <!-- roadmap:guest-links --> 접근을 검사하는 공개 Funnel을 통해 게스트가 만료 링크와 선택적 PIN으로 Tailscale 설치 없이 브라우저에서 HTTP 앱 하나를 열게 합니다. | 검토 중 |
 | <!-- roadmap:durations --> 프리셋이나 사용자 지정 기간을 선택합니다. 최소 1시간이며 게스트 최대 기간은 기본 7일이고 변경할 수 있습니다. | 검토 중 |
-| <!-- roadmap:requests --> 휴대전화 사용자가 QR 코드로 참여하고 앱 접근이나 시간 연장 요청을 한 번에 승인하게 합니다. | 검토 중 |
+| <!-- roadmap:requests --> 휴대전화 사용자가 QR 코드로 참여하도록 돕고, 소유자가 앱 접근 또는 기간 연장 요청을 한 번의 작업으로 승인할 수 있게 합니다. | 검토 중 |
 | <!-- roadmap:multi-host --> 여러 호스트의 앱을 하나의 목록에서 봅니다. | 계획됨 |
 
 <a id="documentation"></a>

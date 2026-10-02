@@ -144,7 +144,7 @@ Les éléments En cours de fusion, En cours de revue ou Prévu ne sont pas inclu
 | <!-- roadmap:mcp-scopes --> Attribuez à un agent un rôle et un périmètre d’applications, avec des reçus d’audit pour ses modifications. | En cours de revue |
 | <!-- roadmap:guest-links --> Laissez un invité ouvrir une application HTTP dans son navigateur sans installer Tailscale, avec un lien temporaire et un PIN facultatif, via Funnel public avec contrôle d’accès. | En cours de revue |
 | <!-- roadmap:durations --> Choisissez des durées prédéfinies ou personnalisées d’au moins 1 heure, avec un maximum invité de 7 jours par défaut, configurable. | En cours de revue |
-| <!-- roadmap:requests --> Aidez les utilisateurs de téléphones à rejoindre via un QR code et approuvez l’accès ou du temps supplémentaire en une action. | En cours de revue |
+| <!-- roadmap:requests --> Aidez les utilisateurs de téléphones à rejoindre via un QR code ; permettez au propriétaire d’approuver les demandes d’accès aux applications ou de temps supplémentaire en une action. | En cours de revue |
 | <!-- roadmap:multi-host --> Consultez les applications de plusieurs hôtes dans un inventaire. | Prévu |
 
 <a id="documentation"></a>

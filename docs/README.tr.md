@@ -155,9 +155,9 @@ Birleştiriliyor, İncelemede veya Planlandı olarak işaretli öğeler yukarıd
 | <!-- roadmap:access-log --> Yerel erişim günlüklerinde kimin hangi uygulamayı açtığını, `prefix`, `full` veya `off` yol kaydıyla görün. | İncelemede |
 | <!-- roadmap:portal --> İzin verilen uygulamaları tek ana sayfada, sahipler için kayıt yönlendirmesiyle açın; ziyaretçiler hâlâ Tailscale kullanmalıdır. | İncelemede |
 | <!-- roadmap:mcp-scopes --> Bir ajana rol ve uygulama kapsamı verip değişiklikleri için denetim kayıtları tutun. | İncelemede |
-| <!-- roadmap:guest-links --> Misafirin süreli bağlantı ve isteğe bağlı PIN ile Tailscale kurmadan tarayıcıda tek HTTP uygulamasını erişim kontrollü genel Funnel üzerinden açmasını sağlayın. | İncelemede |
+| <!-- roadmap:guest-links --> Misafirin süreli bağlantı ve isteğe bağlı PIN ile Tailscale kurmadan tarayıcıda tek HTTP uygulamasını erişim kontrollü, herkese açık Funnel üzerinden açmasını sağlayın. | İncelemede |
 | <!-- roadmap:durations --> En az 1 saatlik hazır veya özel süreler seçin; misafir üst sınırı varsayılan olarak 7 gündür ve değiştirilebilir. | İncelemede |
-| <!-- roadmap:requests --> Telefon kullanıcılarını QR koduyla katılmaya yönlendirin ve erişim ya da ek süre isteklerini tek adımda onaylayın. | İncelemede |
+| <!-- roadmap:requests --> Telefon kullanıcılarını QR koduyla katılmaya yönlendirin; uygulama erişimi ya da ek süre isteklerini sahibin tek adımda onaylamasını sağlayın. | İncelemede |
 | <!-- roadmap:multi-host --> Birden çok ana makinenin uygulamalarını tek listede görün. | Planlandı |
 
 <a id="documentation"></a>

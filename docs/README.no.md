@@ -144,7 +144,7 @@ Punkter merket Under sammenslåing, Til gjennomgang eller Planlagt er ikke med i
 | <!-- roadmap:mcp-scopes --> Gi en agent en rolle og et appomfang med revisjonskvitteringer for endringer. | Til gjennomgang |
 | <!-- roadmap:guest-links --> La en gjest åpne én HTTP-app i nettleseren uten å installere Tailscale, med en tidsbegrenset lenke og valgfri PIN gjennom offentlig Funnel med tilgangskontroll. | Til gjennomgang |
 | <!-- roadmap:durations --> Velg forhåndsinnstillinger eller egne varigheter på minst 1 time, med en konfigurerbar gjestegrense på som standard 7 dager. | Til gjennomgang |
-| <!-- roadmap:requests --> Hjelp telefonbrukere å bli med via QR-kode og godkjenn apptilgang eller ekstra tid i én handling. | Til gjennomgang |
+| <!-- roadmap:requests --> Hjelp telefonbrukere å bli med via QR-kode; la eieren godkjenne forespørsler om apptilgang eller ekstra tid i én handling. | Til gjennomgang |
 | <!-- roadmap:multi-host --> Se apper fra flere verter i én oversikt. | Planlagt |
 
 <a id="documentation"></a>

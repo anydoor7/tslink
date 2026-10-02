@@ -157,7 +157,7 @@ Elementy W trakcie scalania, W przeglądzie lub Planowane nie wchodzą w skład 
 | <!-- roadmap:mcp-scopes --> Nadaj agentowi rolę i zakres aplikacji, z zapisami audytu jego zmian. | W przeglądzie |
 | <!-- roadmap:guest-links --> Pozwól gościowi otworzyć jedną aplikację HTTP w przeglądarce bez instalowania Tailscale, przez wygasający link i opcjonalny PIN, przez publiczny Funnel z kontrolą dostępu. | W przeglądzie |
 | <!-- roadmap:durations --> Wybierz gotowe lub własne okresy od 1 godziny, z konfigurowalnym maksimum dla gości wynoszącym domyślnie 7 dni. | W przeglądzie |
-| <!-- roadmap:requests --> Pomóż użytkownikom telefonów dołączyć przez kod QR i zatwierdź dostęp lub dodatkowy czas jedną czynnością. | W przeglądzie |
+| <!-- roadmap:requests --> Pomóż użytkownikom telefonów dołączyć przez kod QR; pozwól właścicielowi zatwierdzać prośby o dostęp do aplikacji lub dodatkowy czas jedną czynnością. | W przeglądzie |
 | <!-- roadmap:multi-host --> Przeglądaj aplikacje z wielu hostów w jednym spisie. | Planowane |
 
 <a id="documentation"></a>
