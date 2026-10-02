@@ -39,13 +39,27 @@ func TestAccessLogProxyPreservesUpgradeTunnel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	front := httptest.NewServer(AccessLogMiddleware("upgrade", nil, proxy))
+	done := make(chan struct{})
+	chain := AccessLogMiddleware("upgrade", nil, proxy)
+	front := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer close(done)
+		chain.ServeHTTP(w, r)
+	}))
 	t.Cleanup(front.Close)
 	conn, err := net.DialTimeout("tcp", strings.TrimPrefix(front.URL, "http://"), time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close()
+	t.Cleanup(func() {
+		conn.Close()
+		// Server.Close does not join hijacked connections. Join the handler
+		// before another test can replace the process-wide logger.
+		select {
+		case <-done:
+		case <-time.After(3 * time.Second):
+			t.Error("upgrade handler did not finish after connection close")
+		}
+	})
 	if err := conn.SetDeadline(time.Now().Add(3 * time.Second)); err != nil {
 		t.Fatal(err)
 	}

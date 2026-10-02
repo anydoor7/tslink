@@ -78,6 +78,7 @@ func newDoctorTestEnv(t *testing.T, services []registry.Service) doctorTestEnv {
 	doctorStatFn = os.Stat
 	doctorOpenPathFn = func(path string) (io.Closer, error) { return os.Open(path) }
 	doctorProbeTargetFn = func(context.Context, string, time.Duration) error { return nil }
+	doctorHTTPProbeFn = func(context.Context, registry.Service) string { return "" }
 	doctorLoadAuthHandoffFn = loadAuthHandoff
 	// The default fixture keeps Tailscale SSH deterministic and off the
 	// machine's real tailscaled: no test process may perform the local-API
@@ -108,6 +109,7 @@ func resetDoctorSeams(t *testing.T) {
 	oldStat := doctorStatFn
 	oldOpenPath := doctorOpenPathFn
 	oldProbe := doctorProbeTargetFn
+	oldHTTPProbe := doctorHTTPProbeFn
 	oldLoadAuthHandoff := doctorLoadAuthHandoffFn
 	oldIsRunning := isRunningFn
 	oldReadPID := readPIDFn
@@ -136,6 +138,7 @@ func resetDoctorSeams(t *testing.T) {
 		doctorStatFn = oldStat
 		doctorOpenPathFn = oldOpenPath
 		doctorProbeTargetFn = oldProbe
+		doctorHTTPProbeFn = oldHTTPProbe
 		doctorLoadAuthHandoffFn = oldLoadAuthHandoff
 		isRunningFn = oldIsRunning
 		readPIDFn = oldReadPID
@@ -240,6 +243,36 @@ func assertDoctorNoFinding(t *testing.T, result DoctorResult, code string) {
 		if finding.Code == code {
 			t.Fatalf("unexpected finding %s in %+v", code, result.Findings)
 		}
+	}
+}
+
+func TestDoctorSupervisorBreakerVisibleWithEmptyRegistry(t *testing.T) {
+	for _, state := range []string{"circuit_open", "failed"} {
+		t.Run(state, func(t *testing.T) {
+			newDoctorTestEnv(t, nil)
+			isRunningFn = func(string) bool { return false }
+			detectSupervisionFn = func(string, bool, int) Supervision {
+				return Supervision{Manager: "windows-task-scheduler", Installed: true, Autostart: true,
+					RuntimeState: state, FailureReason: "historical_reason"}
+			}
+			var out bytes.Buffer
+			if err := runDoctor(&out, doctorOptions{}, true); output.ExitCode(err) != output.ExitWarning {
+				t.Fatalf("doctor exit=%v output=%s", err, out.String())
+			}
+			var envelope struct {
+				OK   bool         `json:"ok"`
+				Code int          `json:"code"`
+				Data DoctorResult `json:"data"`
+			}
+			if err := json.Unmarshal(out.Bytes(), &envelope); err != nil {
+				t.Fatal(err)
+			}
+			finding := assertDoctorFinding(t, envelope.Data, inspect.WarningCodeDaemonRestartUnavailable)
+			if !envelope.OK || envelope.Code != int(output.ExitWarning) || envelope.Data.Counts.Services != 0 ||
+				envelope.Data.Supervision.RuntimeState != state || !strings.Contains(finding.Message, "historical_reason") {
+				t.Fatalf("doctor terminal evidence=%s", out.String())
+			}
+		})
 	}
 }
 

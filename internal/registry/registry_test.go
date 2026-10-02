@@ -119,8 +119,8 @@ func TestLoadEmpty(t *testing.T) {
 	if len(reg.Services) != 0 {
 		t.Fatalf("expected empty registry, got %d services", len(reg.Services))
 	}
-	if reg.SchemaVersion != CurrentRegistrySchemaVersion {
-		t.Fatalf("schema_version = %d, want %d", reg.SchemaVersion, CurrentRegistrySchemaVersion)
+	if reg.SchemaVersion != LegacyRegistrySchemaVersion {
+		t.Fatalf("schema_version = %d, want %d", reg.SchemaVersion, LegacyRegistrySchemaVersion)
 	}
 }
 
@@ -247,8 +247,8 @@ func TestLoadLegacyRegistryWithoutSchemaVersionThenSaveAddsCurrentVersion(t *tes
 	if err != nil {
 		t.Fatalf("Load() legacy registry error = %v", err)
 	}
-	if reg.SchemaVersion != CurrentRegistrySchemaVersion {
-		t.Fatalf("schema_version = %d, want %d", reg.SchemaVersion, CurrentRegistrySchemaVersion)
+	if reg.SchemaVersion != LegacyRegistrySchemaVersion {
+		t.Fatalf("schema_version = %d, want %d", reg.SchemaVersion, LegacyRegistrySchemaVersion)
 	}
 	if len(reg.Services) != 2 {
 		t.Fatalf("services = %+v, want 2 legacy services intact", reg.Services)
@@ -275,8 +275,8 @@ func TestLoadLegacyRegistryWithoutSchemaVersionThenSaveAddsCurrentVersion(t *tes
 	if err := json.Unmarshal(saved["schema_version"], &version); err != nil {
 		t.Fatalf("schema_version missing or invalid after save: %v\nraw: %s", err, raw)
 	}
-	if version != CurrentRegistrySchemaVersion {
-		t.Fatalf("saved schema_version = %d, want %d", version, CurrentRegistrySchemaVersion)
+	if version != LegacyRegistrySchemaVersion {
+		t.Fatalf("saved schema_version = %d, want %d", version, LegacyRegistrySchemaVersion)
 	}
 	var services []Service
 	if err := json.Unmarshal(saved["services"], &services); err != nil {

@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"github.com/anydoor7/tslink/internal/registry"
 	"io"
 	"net"
 	"net/http"
@@ -41,6 +42,7 @@ func TestLimitedTLSConnectionPreservesForwardedHTTPS(t *testing.T) {
 				ln = newLimitedListener(ln, 256, "http", "audit")
 			}
 			srv := newHTTPServerFn(handler)
+			ln = configureServiceHTTP(srv, registry.Service{Name: "audit", Type: registry.TypeProxy}, ln, nil)
 			done := make(chan struct{})
 			go func() { defer close(done); _ = srv.Serve(ln) }()
 			defer func() { _ = srv.Close(); _ = ln.Close(); <-done }()

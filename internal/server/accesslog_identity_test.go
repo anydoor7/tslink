@@ -400,6 +400,13 @@ func startHTTPNode(t *testing.T, fake *fakeTSNetServer, svc registry.Service) ht
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
+	path, err := registryPathFn()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := registry.Add(path, svc); err != nil {
+		t.Fatal(err)
+	}
 	s, err := New("key", "")
 	if err != nil {
 		t.Fatalf("New() error = %v", err)

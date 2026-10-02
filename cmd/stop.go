@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -16,6 +17,8 @@ var stopDaemonFn = daemon.StopDaemon
 var removePIDFn = daemon.RemovePID // retained as a compatibility test seam; not called on an inconclusive stop path
 var isProcessAbsentFromPIDFileFn = daemon.IsProcessAbsentFromPIDFile
 var pidPathFn = config.PIDPath
+var stopSupervisorFn = func(string) (bool, error) { return false, nil }
+var stopServiceTransactionFn = func(_ context.Context, run func() error) error { return run() }
 
 func commandIsDaemonRunning(pidPath string) bool {
 	if daemon.IsRunning(pidPath) {
@@ -35,15 +38,23 @@ type StopResult struct {
 }
 
 func stopService(pidPath string, isJSON bool, out io.Writer) error {
+	supervised, err := stopSupervisorFn(pidPath)
+	if err != nil {
+		return err
+	}
 	if !isRunningFn(pidPath) {
 		if isProcessAbsentFromPIDFileFn(pidPath) {
 			removePIDFn(pidPath)
 		}
 		if isJSON {
-			output.Success("stop", StopResult{WasRunning: false, Stopped: false})
+			output.Success("stop", StopResult{WasRunning: supervised, Stopped: supervised})
 			return nil
 		}
-		fmt.Fprintln(out, "tslink is not running")
+		if supervised {
+			fmt.Fprintln(out, "tslink stopped")
+		} else {
+			fmt.Fprintln(out, "tslink is not running")
+		}
 		return nil
 	}
 
@@ -68,8 +79,9 @@ func init() {
 
 Reads the PID from ~/.config/tslink/tslink.pid and verifies it still belongs
 to TSLink before stopping it. On macOS/Linux, TSLink sends SIGTERM so the
-daemon can shut down tsnet nodes gracefully. On Windows, TSLink currently uses
-process termination, so stop is not graceful there.
+daemon can shut down tsnet nodes gracefully. On Windows, a current-user named
+event requests the same graceful shutdown. An older daemon without that event
+returns an explicit error; it is never force-terminated by this command.
 
 If TSLink was installed as a macOS LaunchAgent, launchd KeepAlive will restart
 the daemon after 'tslink stop', throttled by ThrottleInterval=30. Run
@@ -79,6 +91,10 @@ restarting.
 If TSLink was installed as a Linux systemd user service, a graceful stop exits
 successfully, so Restart=on-failure leaves it stopped. Run 'tslink install' or
 'systemctl --user start tslink.service' to start the installed service again.
+
+A Windows stop cancels the built-in supervisor, including a pending crash
+backoff, and gracefully stops its child. Run 'tslink install' to start it again.
+Unexpected daemon exits use a 1-to-60-second exponential backoff with a breaker.
 
 If the daemon is not running, a "not running" message is displayed. Stale PID
 identity files are cleaned up only after process absence is confirmed; an
@@ -92,7 +108,9 @@ Examples:
 			if err != nil {
 				return err
 			}
-			return stopService(pidPath, jsonOutput(cmd), cmd.OutOrStdout())
+			return stopServiceTransactionFn(cmd.Context(), func() error {
+				return stopService(pidPath, jsonOutput(cmd), cmd.OutOrStdout())
+			})
 		},
 	}
 

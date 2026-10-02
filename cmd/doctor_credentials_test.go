@@ -97,7 +97,7 @@ func TestDoctorCredentialExpiryMatrix(t *testing.T) {
 		absent       []string
 	}{
 		{"-1 day expired", -1, inspect.WarningCodeCredentialAPITokenExpired, doctorSeverityError, output.ExitCritical, []string{inspect.WarningCodeCredentialAPITokenExpiring}},
-		{"0 days expiring", 0, inspect.WarningCodeCredentialAPITokenExpiring, doctorSeverityWarning, output.ExitWarning, []string{inspect.WarningCodeCredentialAPITokenExpired}},
+		{"0 days expiring", 0, inspect.WarningCodeCredentialAPITokenExpiring, doctorSeverityWarning, output.ExitCritical, []string{inspect.WarningCodeCredentialAPITokenExpired}},
 		{"7 days expiring", 7, inspect.WarningCodeCredentialAPITokenExpiring, doctorSeverityWarning, output.ExitWarning, []string{inspect.WarningCodeCredentialAPITokenExpired}},
 		{"13 days expiring", 13, inspect.WarningCodeCredentialAPITokenExpiring, doctorSeverityWarning, output.ExitWarning, nil},
 		{"14 days expiring (threshold)", 14, inspect.WarningCodeCredentialAPITokenExpiring, doctorSeverityWarning, output.ExitWarning, nil},

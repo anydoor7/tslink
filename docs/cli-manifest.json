@@ -9,7 +9,7 @@
     "linux",
     "windows"
   ],
-  "registry_schema_version": 1,
+  "registry_schema_version": 2,
   "toolchain": {
     "minimum_go_version": "1.26.6"
   },
@@ -24,7 +24,7 @@
     "warning": 64
   },
   "registry_schema": {
-    "version": 1,
+    "version": 2,
     "service_types": [
       "proxy",
       "file",
@@ -437,6 +437,13 @@
       "short": "Register a local service or file directory",
       "flags": [
         {
+          "name": "ack-unlimited-request-body",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Acknowledge removal of the HTTP request body size limit"
+        },
+        {
           "name": "allow",
           "type": "string",
           "scope": "local",
@@ -478,6 +485,18 @@
           "usage": "Register as ephemeral node (removed on disconnect)"
         },
         {
+          "name": "force-unsafe-public",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "DANGER: override a never-public recipe policy (requires --recipe and --funnel)",
+          "requires": [
+            "--recipe",
+            "--funnel",
+            "--public"
+          ]
+        },
+        {
           "name": "funnel",
           "type": "bool",
           "default": "false",
@@ -500,11 +519,63 @@
           "usage": "Public Funnel lifetime: 1h, 8h, 24h, 72h, 7d, or never"
         },
         {
+          "name": "health-body",
+          "type": "string",
+          "scope": "local",
+          "usage": "Expected body substring within first 64 KiB (proxy only; avoid secrets in argv)"
+        },
+        {
+          "name": "health-interval",
+          "type": "string",
+          "default": "1m",
+          "scope": "local",
+          "usage": "Backend probe interval, 10s to 1d"
+        },
+        {
+          "name": "health-path",
+          "type": "string",
+          "scope": "local",
+          "usage": "HTTP business probe path (default /; proxy only)"
+        },
+        {
+          "name": "health-status-max",
+          "type": "int",
+          "default": "299",
+          "scope": "local",
+          "usage": "Highest expected HTTP probe status (proxy only)"
+        },
+        {
+          "name": "health-status-min",
+          "type": "int",
+          "default": "200",
+          "scope": "local",
+          "usage": "Lowest expected HTTP probe status (proxy only)"
+        },
+        {
+          "name": "health-timeout",
+          "type": "string",
+          "default": "5s",
+          "scope": "local",
+          "usage": "Backend probe timeout, 100ms to 30s"
+        },
+        {
+          "name": "idle-timeout",
+          "type": "string",
+          "scope": "local",
+          "usage": "HTTP keep-alive idle timeout (default 60s)"
+        },
+        {
           "name": "json",
           "type": "bool",
           "default": "false",
           "scope": "inherited",
           "usage": "Output as JSON"
+        },
+        {
+          "name": "max-request-body",
+          "type": "string",
+          "scope": "local",
+          "usage": "Maximum HTTP upload size (default 32MiB); unlimited requires --ack-unlimited-request-body"
         },
         {
           "name": "no-auto-provision",
@@ -522,6 +593,13 @@
           "default": "false",
           "scope": "local",
           "usage": "Save configuration only; do not install or start the background service"
+        },
+        {
+          "name": "preserve-host",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Forward this node's canonical external Host (proxy only; recipes choose their default)"
         },
         {
           "name": "proxy",
@@ -543,6 +621,24 @@
           "requires": [
             "--funnel"
           ]
+        },
+        {
+          "name": "recipe",
+          "type": "string",
+          "scope": "local",
+          "usage": "Use an app recipe; preview by default, apply with --yes"
+        },
+        {
+          "name": "request-header-timeout",
+          "type": "string",
+          "scope": "local",
+          "usage": "HTTP header read timeout (default 10s)"
+        },
+        {
+          "name": "request-read-timeout",
+          "type": "string",
+          "scope": "local",
+          "usage": "Maximum time without body read progress, not total upload time (default 30s)"
         },
         {
           "name": "tags",
@@ -567,9 +663,31 @@
           "default": "30s",
           "scope": "local",
           "usage": "Wait for an exact runtime URL or enrollment URL (default 30s; 0 disables waiting)"
+        },
+        {
+          "name": "yes",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Apply a reviewed recipe plan (requires --recipe)",
+          "requires": [
+            "--recipe"
+          ]
         }
       ],
       "json_result_fields": {
+        "action": {
+          "type": "string",
+          "description": "With --recipe: create preview, created, or skip_existing; same-name entries are preserved."
+        },
+        "applied": {
+          "type": "boolean",
+          "description": "With --recipe: true only when this call created a service."
+        },
+        "dry_run": {
+          "type": "boolean",
+          "description": "With --recipe: true unless --yes without --dry-run."
+        },
         "funnel_expires_at": {
           "type": "string",
           "description": "Persisted public Funnel deadline; omitted for tailnet-only services and explicit never."
@@ -578,9 +696,330 @@
           "type": "boolean",
           "description": "True when an expired preserved Funnel deadline was re-armed with the default 24h TTL."
         },
+        "preserve_host": {
+          "type": "boolean",
+          "description": "Ordinary add: whether the proxy forwards this node's trusted canonical external Host; default false. With --recipe, inspect service.preserve_host and requested.preserve_host."
+        },
+        "recipe": {
+          "type": "object",
+          "description": "With --recipe: app-side snippets, safety notes and documentation."
+        },
         "replaced_fields": {
           "type": "array",
           "description": "registry.json fields a replacing add changed or dropped, sorted; empty when the add created the service. Warnings access_changed_on_replace and identity_reset_on_replace flag access and node-identity changes."
+        },
+        "request_limits": {
+          "type": "object",
+          "description": "Effective HTTP limits for proxy/file services; absent for raw TCP."
+        }
+      }
+    },
+    {
+      "path": "tslink apps",
+      "short": "Discover local apps and preview app-specific sharing recipes",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        }
+      ]
+    },
+    {
+      "path": "tslink apps detect",
+      "short": "Fingerprint listening TCP services over loopback HTTP without credentials",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        }
+      ],
+      "json_result_fields": {
+        "complete": {
+          "type": "boolean",
+          "description": "False when cancelled or the 15 second discovery deadline was reached."
+        },
+        "listeners": {
+          "type": "array",
+          "description": "Numeric loopback HTTP probe targets from OS TCP listeners."
+        },
+        "matches": {
+          "type": "array",
+          "description": "Recipe confidence, evidence and registered names; no response bodies."
+        }
+      }
+    },
+    {
+      "path": "tslink apps list",
+      "short": "List the versioned application recipe catalog",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        }
+      ],
+      "json_result_fields": {
+        "catalog_version": {
+          "type": "integer",
+          "description": "Version of app advice and fingerprints."
+        },
+        "recipes": {
+          "type": "array",
+          "description": "Complete recipe catalog with safety levels and dated official documentation."
+        }
+      }
+    },
+    {
+      "path": "tslink apps share",
+      "short": "Preview an app recipe; --yes registers missing services",
+      "flags": [
+        {
+          "name": "ack-unlimited-request-body",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Acknowledge removal of the HTTP request body size limit"
+        },
+        {
+          "name": "allow",
+          "type": "string",
+          "scope": "local",
+          "usage": "Comma-separated private HTTP identities",
+          "conflicts": [
+            "--funnel"
+          ]
+        },
+        {
+          "name": "control-url",
+          "type": "string",
+          "scope": "local",
+          "usage": "Per-service control server URL"
+        },
+        {
+          "name": "dry-run",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Preview without writing, even with --yes"
+        },
+        {
+          "name": "ephemeral",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Use an ephemeral node"
+        },
+        {
+          "name": "force-unsafe-public",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "DANGER: override never-public recipe policy; may expose host control or private data to everyone",
+          "requires": [
+            "--funnel",
+            "--public"
+          ]
+        },
+        {
+          "name": "funnel",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Publish on the internet; requires --public and recipe safety review",
+          "requires": [
+            "--public"
+          ],
+          "conflicts": [
+            "--allow",
+            "--control-url"
+          ]
+        },
+        {
+          "name": "funnel-ttl",
+          "type": "string",
+          "default": "24h",
+          "scope": "local",
+          "usage": "Public lifetime: 1h, 8h, 24h, 72h, 7d, or never",
+          "requires": [
+            "--funnel"
+          ]
+        },
+        {
+          "name": "health-body",
+          "type": "string",
+          "scope": "local",
+          "usage": "Expected body substring within first 64 KiB (proxy only; avoid secrets in argv)"
+        },
+        {
+          "name": "health-interval",
+          "type": "string",
+          "default": "1m",
+          "scope": "local",
+          "usage": "Backend probe interval, 10s to 1d"
+        },
+        {
+          "name": "health-path",
+          "type": "string",
+          "scope": "local",
+          "usage": "HTTP business probe path (default /; proxy only)"
+        },
+        {
+          "name": "health-status-max",
+          "type": "int",
+          "default": "299",
+          "scope": "local",
+          "usage": "Highest expected HTTP probe status (proxy only)"
+        },
+        {
+          "name": "health-status-min",
+          "type": "int",
+          "default": "200",
+          "scope": "local",
+          "usage": "Lowest expected HTTP probe status (proxy only)"
+        },
+        {
+          "name": "health-timeout",
+          "type": "string",
+          "default": "5s",
+          "scope": "local",
+          "usage": "Backend probe timeout, 100ms to 30s"
+        },
+        {
+          "name": "idle-timeout",
+          "type": "string",
+          "scope": "local",
+          "usage": "HTTP keep-alive idle timeout (default 60s)"
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        },
+        {
+          "name": "max-request-body",
+          "type": "string",
+          "scope": "local",
+          "usage": "Maximum HTTP upload size (default 32MiB); unlimited requires --ack-unlimited-request-body"
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "scope": "local",
+          "usage": "Override the recommended service name"
+        },
+        {
+          "name": "no-auto-provision",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Disable automatic Funnel policy provisioning (requires --funnel)",
+          "requires": [
+            "--funnel"
+          ]
+        },
+        {
+          "name": "no-daemon-install",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Save configuration only; do not install or start the background service"
+        },
+        {
+          "name": "preserve-host",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Forward this node's canonical external Host (proxy only; recipes choose their default)"
+        },
+        {
+          "name": "proxy",
+          "type": "string",
+          "scope": "local",
+          "usage": "Override the loopback HTTP(S) target (host port, not container port)"
+        },
+        {
+          "name": "public",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Acknowledge public internet exposure (requires --funnel)",
+          "requires": [
+            "--funnel"
+          ]
+        },
+        {
+          "name": "request-header-timeout",
+          "type": "string",
+          "scope": "local",
+          "usage": "HTTP header read timeout (default 10s)"
+        },
+        {
+          "name": "request-read-timeout",
+          "type": "string",
+          "scope": "local",
+          "usage": "Maximum time without body read progress, not total upload time (default 30s)"
+        },
+        {
+          "name": "tags",
+          "type": "string",
+          "scope": "local",
+          "usage": "Comma-separated ACL tags"
+        },
+        {
+          "name": "yes",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Apply the reviewed recipe plan without replacing existing entries"
+        }
+      ],
+      "json_result_fields": {
+        "action": {
+          "type": "string",
+          "description": "Planned or completed registry action.",
+          "values": [
+            "create",
+            "created",
+            "skip_existing"
+          ]
+        },
+        "applied": {
+          "type": "boolean",
+          "description": "True only when this invocation created the service."
+        },
+        "dry_run": {
+          "type": "boolean",
+          "description": "True for preview; --dry-run wins over --yes."
+        },
+        "recipe": {
+          "type": "object",
+          "description": "App-specific configuration, safety advice and dated official docs."
+        },
+        "requested": {
+          "type": "object",
+          "description": "Requested defaults; compare with service if existing entry is skipped."
+        },
+        "requested.preserve_host": {
+          "type": "boolean",
+          "description": "Recipe default unless explicitly overridden; may differ from an existing service."
+        },
+        "service": {
+          "type": "object",
+          "description": "Effective requested service, or existing service preserved unchanged."
+        },
+        "service.preserve_host": {
+          "type": "boolean",
+          "description": "Effective Host policy of the created or preserved service."
         }
       }
     },
@@ -827,6 +1266,16 @@
           "default": "false",
           "scope": "local",
           "usage": "Install the managed daemon with Funnel policy auto-provisioning disabled"
+        },
+        {
+          "name": "startup",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Use the Windows Startup fallback without crash restart when Task Scheduler is unavailable",
+          "platforms": [
+            "windows"
+          ]
         }
       ],
       "json_result_fields": {
@@ -1134,7 +1583,7 @@
           "name": "fields",
           "type": "string",
           "scope": "local",
-          "usage": "Comma-separated slim fields: name,type,url,url_pending,state,funnel_requested,funnel_active,funnel_state,funnel_expires_at,funnel_remaining,error",
+          "usage": "Comma-separated slim fields: name,type,url,url_pending,state,preserve_host,funnel_requested,funnel_active,funnel_state,funnel_expires_at,funnel_remaining,error",
           "conflicts": [
             "--verbose",
             "--tailnet"
@@ -1263,6 +1712,14 @@
             "listen_failed",
             "startup_timeout"
           ]
+        },
+        "services[].preserve_host": {
+          "type": "boolean",
+          "description": "Configured proxy Host policy; false rewrites Host to the upstream, true forwards this node's trusted canonical external name in Host and X-Forwarded-Host, or returns HTTP 503 canonical_host_unavailable."
+        },
+        "services[].request_limits": {
+          "type": "object",
+          "description": "Effective HTTP limits in status --urls and list --verbose; max_body_bytes is -1 only for explicitly acknowledged unlimited uploads. read_timeout bounds inactivity, not upload duration."
         },
         "services[].state": {
           "type": "string",
@@ -1539,6 +1996,232 @@
       "short": "Run the TSLink MCP server over stdio"
     },
     {
+      "path": "tslink people",
+      "short": "Share private apps with people, with optional expiry",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        }
+      ]
+    },
+    {
+      "path": "tslink people add",
+      "short": "Set a person's apps and expiry",
+      "flags": [
+        {
+          "name": "apps",
+          "type": "string",
+          "scope": "local",
+          "usage": "Comma-separated private HTTP/file apps, or all current supported apps"
+        },
+        {
+          "name": "for",
+          "type": "string",
+          "scope": "local",
+          "usage": "Grant lifetime such as 1h, 7d or never; update omission preserves deadlines"
+        },
+        {
+          "name": "invite",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Create or resume single-use per-app device invitations (requires a user-owned API token)"
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        },
+        {
+          "name": "print-links",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Explicitly include bearer invitation links in output and the guide",
+          "requires": [
+            "--invite"
+          ]
+        }
+      ],
+      "json_result_fields": {
+        "complete": {
+          "type": "boolean",
+          "description": "False when any requested device invitation failed; local grants remain saved."
+        },
+        "invite_requirement": {
+          "type": "string",
+          "description": "Explains that invitations require a user-owned API token while tailnet member grants need no token."
+        },
+        "invites": {
+          "type": "array",
+          "description": "Per-app invitation ID, durable state, reconciliation candidates, remote side effect plan or stable error code. Bearer URLs require --print-links."
+        },
+        "message": {
+          "type": "string",
+          "description": "Plain-language message to send to the person; bearer URLs require --print-links."
+        },
+        "person": {
+          "type": "object",
+          "description": "Canonical login, revocation state, per-app absolute deadlines, active decisions and exact URLs when available."
+        }
+      }
+    },
+    {
+      "path": "tslink people list",
+      "short": "List people, grants and expiry",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        }
+      ],
+      "json_result_fields": {
+        "people": {
+          "type": "array",
+          "description": "People with grants, expiry, active state and revocation tombstones."
+        }
+      }
+    },
+    {
+      "path": "tslink people remove",
+      "short": "Revoke a person locally, then clean up pending device invitations",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        },
+        {
+          "name": "reconcile-invite",
+          "type": "stringArray",
+          "default": "[]",
+          "scope": "local",
+          "usage": "After verifying an unknown POST, associate app=id or confirm app=none before cleanup"
+        }
+      ],
+      "json_result_fields": {
+        "cleanup": {
+          "type": "array",
+          "description": "Per-attempt app, ID, state and stable cleanup code; target_gone preserves evidence of a deleted node and accepted shares may remain."
+        },
+        "complete": {
+          "type": "boolean",
+          "description": "True when all recorded pending invitation cleanup reached a terminal state; local denial can succeed with false."
+        },
+        "login": {
+          "type": "string",
+          "description": "Canonical Tailscale login."
+        },
+        "removed": {
+          "type": "boolean",
+          "description": "True if existing person access or matching legacy allow rules were removed."
+        },
+        "revoked": {
+          "type": "boolean",
+          "description": "True when a durable deny tombstone was stored."
+        }
+      }
+    },
+    {
+      "path": "tslink people update",
+      "short": "Set a person's apps and expiry",
+      "flags": [
+        {
+          "name": "apps",
+          "type": "string",
+          "scope": "local",
+          "usage": "Comma-separated private HTTP/file apps, or all current supported apps"
+        },
+        {
+          "name": "for",
+          "type": "string",
+          "scope": "local",
+          "usage": "Grant lifetime such as 1h, 7d or never; update omission preserves deadlines"
+        },
+        {
+          "name": "invite",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Create or resume single-use per-app device invitations (requires a user-owned API token)"
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        },
+        {
+          "name": "print-links",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Explicitly include bearer invitation links in output and the guide",
+          "requires": [
+            "--invite"
+          ]
+        },
+        {
+          "name": "reconcile-invite",
+          "type": "stringArray",
+          "default": "[]",
+          "scope": "local",
+          "usage": "After verifying an unknown POST, associate app=id or confirm app=none; requires --invite",
+          "requires": [
+            "--invite"
+          ]
+        },
+        {
+          "name": "replace-invite",
+          "type": "stringArray",
+          "default": "[]",
+          "scope": "local",
+          "usage": "Owner-confirmed app=recorded-id replacement after remote absence; preserves grants/deadlines; requires --invite",
+          "requires": [
+            "--invite"
+          ],
+          "conflicts": [
+            "--apps",
+            "--for"
+          ]
+        }
+      ],
+      "json_result_fields": {
+        "complete": {
+          "type": "boolean",
+          "description": "False when any requested device invitation failed; local grants remain saved."
+        },
+        "invite_requirement": {
+          "type": "string",
+          "description": "Explains that invitations require a user-owned API token while tailnet member grants need no token."
+        },
+        "invites": {
+          "type": "array",
+          "description": "Per-app invitation ID, durable state, reconciliation candidates, remote side effect plan or stable error code. Bearer URLs require --print-links."
+        },
+        "message": {
+          "type": "string",
+          "description": "Plain-language message to send to the person; bearer URLs require --print-links."
+        },
+        "person": {
+          "type": "object",
+          "description": "Canonical login, revocation state, per-app absolute deadlines, active decisions and exact URLs when available."
+        }
+      }
+    },
+    {
       "path": "tslink registry",
       "short": "Inspect the local service registry",
       "flags": [
@@ -1649,6 +2332,13 @@
       "short": "Share a local path or web port and print its tailnet URL",
       "flags": [
         {
+          "name": "ack-unlimited-request-body",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Acknowledge removal of the HTTP request body size limit"
+        },
+        {
           "name": "ephemeral",
           "type": "bool",
           "default": "true",
@@ -1656,11 +2346,23 @@
           "usage": "Use an ephemeral tailnet node (set --ephemeral=false for durable state)"
         },
         {
+          "name": "idle-timeout",
+          "type": "string",
+          "scope": "local",
+          "usage": "HTTP keep-alive idle timeout (default 60s)"
+        },
+        {
           "name": "json",
           "type": "bool",
           "default": "false",
           "scope": "inherited",
           "usage": "Output as JSON"
+        },
+        {
+          "name": "max-request-body",
+          "type": "string",
+          "scope": "local",
+          "usage": "Maximum HTTP upload size (default 32MiB); unlimited requires --ack-unlimited-request-body"
         },
         {
           "name": "name",
@@ -1676,13 +2378,42 @@
           "usage": "Require an already running background service; do not install one"
         },
         {
+          "name": "preserve-host",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Forward this node's canonical external Host (proxy only; recipes choose their default)"
+        },
+        {
+          "name": "request-header-timeout",
+          "type": "string",
+          "scope": "local",
+          "usage": "HTTP header read timeout (default 10s)"
+        },
+        {
+          "name": "request-read-timeout",
+          "type": "string",
+          "scope": "local",
+          "usage": "Maximum time without body read progress, not total upload time (default 30s)"
+        },
+        {
           "name": "wait",
           "type": "duration",
           "default": "30s",
           "scope": "local",
           "usage": "Wait for an exact runtime URL (share waits 30s by default; unlike url, no flag is required)"
         }
-      ]
+      ],
+      "json_result_fields": {
+        "preserve_host": {
+          "type": "boolean",
+          "description": "Whether the returned HTTP share forwards this node's trusted canonical external Host. Conflicting reuse is refused."
+        },
+        "request_limits": {
+          "type": "object",
+          "description": "Effective HTTP limits: max_body_bytes (-1 means acknowledged unlimited), header_timeout, read_timeout (idle between body reads), idle_timeout."
+        }
+      }
     },
     {
       "path": "tslink status",
@@ -1792,6 +2523,14 @@
         "services[].ownership_proof": {
           "type": "boolean",
           "description": "True only when the durable ownership ledger contains exact StableNodeID cleanup proof for the service; NodeIDs are never emitted."
+        },
+        "services[].preserve_host": {
+          "type": "boolean",
+          "description": "Configured proxy Host policy; false rewrites Host to the upstream, true forwards this node's trusted canonical external name in Host and X-Forwarded-Host, or returns HTTP 503 canonical_host_unavailable."
+        },
+        "services[].request_limits": {
+          "type": "object",
+          "description": "Effective HTTP limits in status --urls and list --verbose; max_body_bytes is -1 only for explicitly acknowledged unlimited uploads. read_timeout bounds inactivity, not upload duration."
         },
         "services[].runtime_state": {
           "type": "string",
@@ -2291,6 +3030,10 @@
       "exit_code": 1,
       "description": "unexpected internal failure"
     },
+    "invalid_request_limits": {
+      "exit_code": 2,
+      "description": "HTTP request limits are invalid or unlimited uploads lack explicit acknowledgement"
+    },
     "invalid_service_config": {
       "exit_code": 1,
       "description": "a registry.json service entry failed validation for a reason without a more specific code; the daemon isolates it and keeps the others"
@@ -2315,6 +3058,10 @@
       "exit_code": 3,
       "description": "Tailscale rejected the user-owned tskey-api- token as unauthenticated (HTTP 401): expired, revoked, or invalid; next carries the key-bootstrap steps"
     },
+    "invite_cleanup_failed": {
+      "exit_code": 1,
+      "description": "pending device invitation cleanup failed; local person access remains denied"
+    },
     "invite_device_ambiguous": {
       "exit_code": 4,
       "description": "multiple hostname candidates remain after ownership resolution"
@@ -2323,6 +3070,10 @@
       "exit_code": 4,
       "description": "TSLink lacks exact stable nodeId proof for the device"
     },
+    "invite_failed": {
+      "exit_code": 1,
+      "description": "one device invitation in a people bundle failed without a more specific code"
+    },
     "invite_id_invalid": {
       "exit_code": 2,
       "description": "invite ID is not a bare ASCII decimal string"
@@ -2330,6 +3081,10 @@
     "invite_kind_invalid": {
       "exit_code": 2,
       "description": "invite namespace is not explicitly user or device"
+    },
+    "invite_link_unavailable": {
+      "exit_code": 1,
+      "description": "completed invitation link is unavailable; no replacement was created"
     },
     "invite_not_found": {
       "exit_code": 5,
@@ -2342,6 +3097,18 @@
     "invite_recipient_invalid": {
       "exit_code": 2,
       "description": "invite recipient is missing"
+    },
+    "invite_reconciliation_conflict": {
+      "exit_code": 1,
+      "description": "invitation ID is already associated with another person or app operation"
+    },
+    "invite_reconciliation_failed": {
+      "exit_code": 1,
+      "description": "remote invitation listing failed; do not create before reconciling the unknown outcome"
+    },
+    "invite_reconciliation_required": {
+      "exit_code": 1,
+      "description": "unknown invitation POST needs explicit owner-verified app=id or app=none reconciliation"
     },
     "invite_request_invalid": {
       "exit_code": 2,
@@ -2362,6 +3129,10 @@
     "invite_state_conflict": {
       "exit_code": 4,
       "description": "Tailscale rejected the invite operation because current remote state conflicts with it (HTTP 409)"
+    },
+    "invite_state_failed": {
+      "exit_code": 1,
+      "description": "durable people invitation state could not be read or saved; reconcile before sending again"
     },
     "launchctl_domain_unavailable": {
       "exit_code": 1,
@@ -2406,6 +3177,18 @@
     "path_not_found": {
       "exit_code": 2,
       "description": "file service directory does not exist"
+    },
+    "people_invite_busy": {
+      "exit_code": 1,
+      "description": "another owner process is doing remote invitation work; local denial remains saved and remote work is deferred"
+    },
+    "people_service_unsupported": {
+      "exit_code": 2,
+      "description": "person grants require private HTTP proxy or file services; TCP and public Funnel cannot be person-scoped"
+    },
+    "person_grant_inactive": {
+      "exit_code": 1,
+      "description": "person app grant was removed, revoked or expired before sending an invitation"
     },
     "registry_reload_invalid": {
       "exit_code": 1,

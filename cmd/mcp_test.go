@@ -17,6 +17,7 @@ import (
 
 	"github.com/anydoor7/tslink/internal/inspect"
 	"github.com/anydoor7/tslink/internal/output"
+	"github.com/anydoor7/tslink/internal/recipes"
 	"github.com/anydoor7/tslink/internal/registry"
 	tsruntime "github.com/anydoor7/tslink/internal/runtime"
 	"github.com/anydoor7/tslink/internal/tailapi"
@@ -25,6 +26,13 @@ import (
 
 func fakeMCPActions() mcpActions {
 	return mcpActions{
+		peopleChange: func(_ context.Context, args peopleArguments, _ bool) (any, error) {
+			return PeopleResult{Person: PeopleView{Login: args.Who, Grants: []PeopleGrantView{}}, Invites: []PeopleInviteView{}, Complete: true, Message: "guide", InviteRequirement: peopleInviteRequirement}, nil
+		},
+		peopleList: func() (any, error) { return PeopleListResult{People: []PeopleView{}}, nil },
+		peopleRemove: func(_ context.Context, who string, _ map[string]string) (any, error) {
+			return PeopleRemoveResult{Login: who, Removed: true, Revoked: true}, nil
+		},
 		share: func(_ context.Context, req shareRequest) (ShareResult, error) {
 			if req.Target == "error" {
 				return ShareResult{}, output.ErrUsage("share failed")
@@ -100,6 +108,14 @@ func fakeMCPActions() mcpActions {
 		inviteResend: func(_ context.Context, kind, id string) (any, error) {
 			invite := tailapi.Invite{Kind: kind, ID: id, Email: "person@example.com", Emailed: true}
 			return inviteResendResult(invite), nil
+		},
+		appsDetect: func(context.Context) (any, error) {
+			return recipes.Detection{SchemaVersion: 1, Listeners: []recipes.Listener{}, Matches: []recipes.Match{}, Warnings: []string{}, Complete: true}, nil
+		},
+		recipeList: func() (any, error) { return recipes.List(), nil },
+		recipeApply: func(_ context.Context, req recipeRequest, dry bool) (any, error) {
+			result, _, err := planRecipe(req, "/missing/recipe-registry.json")
+			return result, err
 		},
 		templateList: func() (any, error) { return listTemplatesResult(), nil },
 		templatePlan: func(name string) (any, error) {
@@ -488,6 +504,8 @@ func TestMCPToolSchemasAreClosedAndModelFocused(t *testing.T) {
 		"tags_list", "tags_set", "access_explain", "doctor", "logs",
 		"invite_user", "invite_device", "invite_list", "invite_revoke", "invite_resend",
 		"template_list", "template_plan", "template_apply",
+		"apps_detect", "recipe_list", "recipe_plan", "recipe_apply",
+		"people_add", "people_update", "people_list", "people_remove",
 	}
 	if len(mcpToolDefinitions) != len(wantNames) {
 		t.Fatalf("tools = %d, want %d", len(mcpToolDefinitions), len(wantNames))
@@ -518,7 +536,7 @@ func TestMCPToolSchemasAreClosedAndModelFocused(t *testing.T) {
 	shareSchema := mcpToolByName(t, "share").InputSchema
 	required := shareSchema["required"].([]string)
 	properties := shareSchema["properties"].(map[string]any)
-	if len(required) != 1 || required[0] != "target" || len(properties) != 9 {
+	if len(required) != 1 || required[0] != "target" || len(properties) != 11 {
 		t.Fatalf("share schema = %+v", shareSchema)
 	}
 	nameDescription := properties["name"].(map[string]any)["description"].(string)

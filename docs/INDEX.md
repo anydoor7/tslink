@@ -34,6 +34,8 @@
 |---|---|
 | Agents | [agents.md](agents.md) |
 | 面向 Agent | [agents_zh.md](agents_zh.md) |
+| App recipes | [apps.md](apps.md) |
+| 应用配方 | [apps_zh.md](apps_zh.md) |
 | Architecture | [architecture.md](architecture.md) |
 | 架构 | [architecture_zh.md](architecture_zh.md) |
 | Cli Reference | [cli-reference.md](cli-reference.md) |
@@ -44,6 +46,8 @@
 | 守护进程生命周期 | [daemon-lifecycle_zh.md](daemon-lifecycle_zh.md) |
 | Getting Started | [getting-started.md](getting-started.md) |
 | 入门 | [getting-started_zh.md](getting-started_zh.md) |
+| Health and alerts | [health-and-alerts.md](health-and-alerts.md) |
+| 健康检查与告警 | [health-and-alerts_zh.md](health-and-alerts_zh.md) |
 | Json Automation | [json-automation.md](json-automation.md) |
 | JSON 自动化 | [json-automation_zh.md](json-automation_zh.md) |
 | Landscape | [landscape.md](landscape.md) |
@@ -53,6 +57,8 @@
 | Connecting an MCP client | [mcp-clients.md](mcp-clients.md) |
 | Multi Machine | [multi-machine.md](multi-machine.md) |
 | 跨机器操作 | [multi-machine_zh.md](multi-machine_zh.md) |
+| People | [people.md](people.md) |
+| 按人分享 | [people_zh.md](people_zh.md) |
 | Platforms | [platforms.md](platforms.md) |
 | 平台支持 | [platforms_zh.md](platforms_zh.md) |
 | Release Artifacts | [release-artifacts.md](release-artifacts.md) |

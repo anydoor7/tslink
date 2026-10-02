@@ -4,7 +4,10 @@ package cmd
 
 import (
 	"fmt"
+	"github.com/anydoor7/tslink/internal/config"
+	"github.com/anydoor7/tslink/internal/daemon"
 	"os"
+	"time"
 
 	"github.com/anydoor7/tslink/internal/output"
 	"github.com/spf13/cobra"
@@ -19,24 +22,15 @@ type UninstallResult struct {
 
 var uninstallCmd = &cobra.Command{
 	Use:   "uninstall",
-	Short: "Remove from Windows Startup",
-	Long: `Remove the TSLink Startup entry so it no longer launches in the
-background when you sign in.
+	Short: "Remove the Windows scheduled task or Startup fallback",
+	Long: `Disable the current user's TSLink scheduled task, gracefully stop its
+verified daemon, then remove the task and Startup entry. An unverified process
+is never terminated. If shutdown or Task Scheduler inspection fails, retain the
+definition for a later retry. A Startup-only install removes autostart without
+stopping a manual daemon; use 'tslink stop' to stop it.
 
-This command:
-  1. Deletes the VBScript at %APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\tslink.vbs
-
-If the Startup script is not installed, prints a message and exits cleanly.
-
-Note: This only removes the autostart script. If TSLink is currently running,
-use 'tslink stop' first to stop the daemon.
-
-To verify the script was removed:
-  dir "%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\tslink.vbs"
-
-	Examples:
-	  tslink uninstall              Remove the Startup script
-	  tslink stop && tslink uninstall   Stop daemon then remove autostart`,
+Examples:
+  tslink uninstall`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return withSupervisorTransaction(cmd.Context(), func() error {
@@ -47,6 +41,115 @@ To verify the script was removed:
 
 // runUninstallLocked requires the per-user supervisor transaction lock.
 func runUninstallLocked(cmd *cobra.Command, args []string) error {
+	taskPath, err := windowsTaskPath()
+	if err != nil {
+		return err
+	}
+	name, err := windowsTaskName()
+	if err != nil {
+		return err
+	}
+	task, queryErr := windowsSchedulerFn("query", name, nil)
+	if queryErr != nil {
+		if _, statErr := os.Stat(taskPath); !os.IsNotExist(statErr) {
+			return fmt.Errorf("cannot confirm task removal; definition retained: %w", queryErr)
+		}
+	} else if task.Exists {
+		dir, err := absoluteConfigDir()
+		if err != nil {
+			return err
+		}
+		if _, err := windowsTaskSpecFromDefinition([]byte(task.XML), dir); err != nil {
+			return fmt.Errorf("refusing to remove foreign scheduler task: %w", err)
+		}
+		if _, err := windowsSchedulerFn("disable", name, nil); err != nil {
+			return err
+		}
+		pidPath, err := config.PIDPath()
+		if err != nil {
+			return err
+		}
+		if _, err := stopSupervisorFn(pidPath); err != nil {
+			return fmt.Errorf("task disabled; supervisor shutdown failed; definition retained: %w", err)
+		}
+		if isRunningFn(pidPath) {
+			pid, err := readPIDFn(pidPath)
+			if err != nil {
+				return err
+			}
+			spec, err := windowsTaskSpecFromDefinition([]byte(task.XML), dir)
+			if err != nil || !windowsTaskOwnsPIDFn(pid, task.Engines, spec.Executable) {
+				return output.ErrConflict("task disabled, but daemon ownership unverified; definition retained; inspect tslink doctor")
+			}
+			if err := stopDaemonFn(pidPath); err != nil {
+				return fmt.Errorf("task disabled; shutdown failed; definition retained: %w", err)
+			}
+		}
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			current, err := windowsSchedulerFn("query", name, nil)
+			if err != nil {
+				return err
+			}
+			if current.State != 4 && len(current.Engines) == 0 {
+				break
+			}
+			if time.Now().After(deadline) {
+				return fmt.Errorf("task disabled but still running; definition retained")
+			}
+			select {
+			case <-cmd.Context().Done():
+				return cmd.Context().Err()
+			case <-time.After(100 * time.Millisecond):
+			}
+		}
+		if _, err := windowsSchedulerFn("delete", name, nil); err != nil {
+			return err
+		}
+		current, err := windowsSchedulerFn("query", name, nil)
+		if err != nil || current.Exists {
+			return fmt.Errorf("task removal could not be confirmed; definition retained: %v", err)
+		}
+		if err := os.Remove(taskPath); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		if err := clearBuiltinSupervisor(pidPath); err != nil {
+			return err
+		}
+		if daemon.IsProcessAbsentFromPIDFile(pidPath) {
+			daemon.RemovePID(pidPath)
+		}
+		startupPath, _ := windowsStartupScriptPath()
+		if err := os.Remove(startupPath); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		if jsonOutput(cmd) {
+			output.Success("uninstall", UninstallResult{Path: taskPath, Removed: true, ServiceManager: "windows-task-scheduler"})
+			return nil
+		}
+		fmt.Fprintln(cmd.OutOrStdout(), "→ ✓ Task Scheduler task and Startup entry removed")
+		return nil
+	}
+	// Confirmed absent task, or explicit Startup-only fallback on an unavailable
+	// scheduler. Remove stale local task evidence only after confirmed absence.
+	if queryErr == nil {
+		pidPath, err := config.PIDPath()
+		if err != nil {
+			return err
+		}
+		if _, err := stopSupervisorFn(pidPath); err != nil {
+			return err
+		}
+		if err := clearBuiltinSupervisor(pidPath); err != nil {
+			return err
+		}
+		if daemon.IsProcessAbsentFromPIDFile(pidPath) {
+			daemon.RemovePID(pidPath)
+		}
+		if err := os.Remove(taskPath); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
 	startupPath, err := windowsStartupScriptPath()
 	if err != nil {
 		return err

@@ -16,6 +16,10 @@ import (
 // mcpToolMinimalArguments is one valid call per tool, so a test can reach
 // each tool's action.
 var mcpToolMinimalArguments = map[string]string{
+	"people_add":     `{"who":"alice","apps":["web"]}`,
+	"people_update":  `{"who":"alice","apps":["web"]}`,
+	"people_list":    `{}`,
+	"people_remove":  `{"who":"alice"}`,
 	"share":          `{"target":"3000"}`,
 	"add":            `{"name":"web","type":"proxy","target":"http://localhost:3000"}`,
 	"list":           `{}`,
@@ -32,6 +36,10 @@ var mcpToolMinimalArguments = map[string]string{
 	"invite_list":    `{}`,
 	"invite_revoke":  `{"kind":"user","invite_id":"1"}`,
 	"invite_resend":  `{"kind":"user","invite_id":"1"}`,
+	"apps_detect":    `{}`,
+	"recipe_list":    `{}`,
+	"recipe_plan":    `{"recipe_id":"jellyfin"}`,
+	"recipe_apply":   `{"recipe_id":"jellyfin"}`,
 	"template_list":  `{}`,
 	"template_plan":  `{"name":"x"}`,
 	"template_apply": `{"name":"x"}`,
@@ -49,9 +57,18 @@ func mcpRefusal(tool string) error {
 
 func refusingMCPActions() mcpActions {
 	return mcpActions{
-		share: func(context.Context, shareRequest) (ShareResult, error) { return ShareResult{}, mcpRefusal("share") },
-		add:   func(context.Context, AddParams, bool) (any, error) { return nil, mcpRefusal("add") },
-		list:  func() (any, error) { return nil, mcpRefusal("list") },
+		peopleChange: func(_ context.Context, _ peopleArguments, update bool) (any, error) {
+			name := "people_add"
+			if update {
+				name = "people_update"
+			}
+			return nil, mcpRefusal(name)
+		},
+		peopleList:   func() (any, error) { return nil, mcpRefusal("people_list") },
+		peopleRemove: func(context.Context, string, map[string]string) (any, error) { return nil, mcpRefusal("people_remove") },
+		share:        func(context.Context, shareRequest) (ShareResult, error) { return ShareResult{}, mcpRefusal("share") },
+		add:          func(context.Context, AddParams, bool) (any, error) { return nil, mcpRefusal("add") },
+		list:         func() (any, error) { return nil, mcpRefusal("list") },
 		unshare: func(context.Context, string) (any, error) {
 			return nil, mcpRefusal("unshare")
 		},
@@ -73,6 +90,15 @@ func refusingMCPActions() mcpActions {
 		inviteList:   func(context.Context, bool) (any, error) { return nil, mcpRefusal("invite_list") },
 		inviteRevoke: func(context.Context, string, string) (any, error) { return nil, mcpRefusal("invite_revoke") },
 		inviteResend: func(context.Context, string, string) (any, error) { return nil, mcpRefusal("invite_resend") },
+		appsDetect:   func(context.Context) (any, error) { return nil, mcpRefusal("apps_detect") },
+		recipeList:   func() (any, error) { return nil, mcpRefusal("recipe_list") },
+		recipeApply: func(_ context.Context, _ recipeRequest, dry bool) (any, error) {
+			name := "recipe_apply"
+			if dry {
+				name = "recipe_plan"
+			}
+			return nil, mcpRefusal(name)
+		},
 		templateList: func() (any, error) { return nil, mcpRefusal("template_list") },
 		templatePlan: func(string) (any, error) { return nil, mcpRefusal("template_plan") },
 		templateApply: func(context.Context, string, bool) (any, error) {

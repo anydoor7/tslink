@@ -100,15 +100,23 @@ import (
 // zero-argument invocation) and from bare runs under e2eEnv, not inferred from
 // the shape of a command's name.
 var e2eExecutableSafeCommands = map[string]struct{}{
+	"tslink people":        {}, // Group help only; no leaf body.
+	"tslink people add":    {}, // ExactArgs(1), no body on bare invocation.
+	"tslink people update": {}, // ExactArgs(1), no body on bare invocation.
+	"tslink people remove": {}, // ExactArgs(1), no body on bare invocation.
+	"tslink people list":   {}, // Local isolated registry/snapshot reads; no credential or external action.
 	// (a) Command groups. RunE is runCommandGroup: it prints help and exits 0.
 	// No leaf command body runs.
-	"tslink":          {},
-	"tslink access":   {},
-	"tslink config":   {},
-	"tslink invite":   {},
-	"tslink registry": {},
-	"tslink tags":     {},
-	"tslink template": {},
+	"tslink":            {},
+	"tslink access":     {},
+	"tslink apps":       {},
+	"tslink apps list":  {}, // Pure embedded catalog; no OS inventory or network I/O.
+	"tslink apps share": {}, // ExactArgs(1), bare invocation cannot run.
+	"tslink config":     {},
+	"tslink invite":     {},
+	"tslink registry":   {},
+	"tslink tags":       {},
+	"tslink template":   {},
 
 	// (b) Cobra argument validation rejects the bare invocation, so the RunE
 	// body never runs at all and admission costs nothing to establish. Each
@@ -187,6 +195,7 @@ var e2eExecutableSafeCommands = map[string]struct{}{
 // each one is excluded. A command is denied only when running it would escape
 // the test's isolation, never merely because it is inconvenient.
 var e2eNonExecutableCommands = map[string]string{
+	"tslink apps detect":        "probes local HTTP listeners; config isolation cannot isolate other applications, covered with hermetic listeners in recipes tests",
 	"tslink install":            "writes a real LaunchAgent/systemd unit and calls launchctl/systemctl against the operator's live user domain, which TSLINK_CONFIG_DIR does not isolate",
 	"tslink uninstall":          "removes a real LaunchAgent/systemd unit from the operator's live user domain",
 	"tslink serve":              "starts tsnet nodes and contacts the Tailscale control plane",

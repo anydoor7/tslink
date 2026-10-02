@@ -12,7 +12,43 @@
 |------|---------|---------|---------|
 | macOS | `--daemon` | LaunchAgent | SIGTERM 优雅停止 |
 | Linux | `--daemon` | systemd user service | SIGTERM 优雅停止 |
-| Windows | `--daemon` | 启动文件夹 | 强制终止进程 |
+| Windows | `--daemon` | 当前用户的 Task Scheduler（Startup 降级） | 命名事件优雅停止 |
+
+## Windows 无人值守运行
+
+`tslink install` 在 Task Scheduler 注册 `TSLink-<当前用户 SID>`，使用
+`InteractiveToken`、`LeastPrivilege` 和只针对这个用户的登录触发器，并立即启动、验证
+daemon。无需管理员权限，也不存储 Windows 密码。使用已有交互 token 保留当前用户的
+Credential Manager 登录上下文；凭据可用性仍受机器策略影响。用户必须保持登录，锁屏
+可以。它是登录自启动，不能在无人登录时随开机运行，也不能承诺登出后继续工作。
+
+任务启动内置 supervisor，后者等待前台 `serve`，对意外退出执行 1 到 60 秒的指数退避。
+稳定运行 5 分钟重置计数；连续 8 次不稳定运行触发持久断路器。任务层的每 60 秒 / 255 次
+重试设置保留为启动失败的后备措施；VM 未测得它能恢复 daemon 崩溃。检查 `tslink logs`、`tslink doctor`，
+修复原因后重新运行 `tslink install`。任务不设执行时限，忽略重叠启动，也不要求空闲、
+网络可用或接通交流电。睡眠会暂停机器；TSLink 不唤醒它。这些设置支持长时间登录会话，
+但不保证连续数月在线。
+
+| 选项 | 是否需要管理员 | 凭据上下文与取舍 | TSLink 选择 |
+|---|---|---|---|
+| Task Scheduler 交互 token | 当前用户最低权限任务不需要 | 使用已有登录会话；内置 supervisor 在登录期间恢复 daemon 崩溃 | 默认 |
+| Task Scheduler S4U 或密码模式 | S4U 注册可能不需要 | S4U 无法访问网络和加密文件；密码模式存储 Windows 密码并需要 batch-logon 权限；不能承诺同一 Credential Manager 会话 | 不提供 |
+| SCM Windows service，包括 service wrapper | 创建服务通常需要 | Session 0 和独立服务账户/登录上下文；需要额外的凭据及 service 支持才能开机运行 | 未实现 |
+| Startup 文件夹 / HKCU Run | 不需要 | 交互用户上下文；只在登录时启动，无原生崩溃重启 | `tslink install --startup` 降级 |
+| 内置用户 supervisor | 不需要 | 配置目录锁、有上限的退避、持久断路器与优雅停止；supervisor 自身崩溃恢复仍受启动器限制 | 默认任务使用 |
+
+Task Scheduler 或系统 Windows PowerShell 不可用、被策略禁用时，显式使用
+`tslink install --startup`。它注册现有 VBScript 启动器，下次登录才生效；报告
+`windows-startup`、`restart_on_exit:false` 和 doctor 警告，需要 Windows Script Host。
+切换到这个降级前先卸载计划任务。scheduler 失败不会静默降级为看似有崩溃恢复的安装。
+
+Microsoft 文档，访问日期 **2026-10-01**：
+
+- [任务安全上下文](https://learn.microsoft.com/en-us/windows/win32/taskschd/security-contexts-for-running-tasks)：当前用户的交互、最低权限注册无需密码。
+- [任务注册与登录类型](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskfolder-registertask)：交互会话、S4U 限制和 batch logon 选项。
+- [Credential Manager token 上下文](https://learn.microsoft.com/en-us/windows/win32/api/wincred/nf-wincred-credreadw)：凭据集属于 token 的登录会话；上文访问推断依据是使用该已有 token。
+- [重试间隔](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-interval-restarttype-element)、[重试次数](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-restarttype-complextype)、[无执行时限](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-executiontimelimit-settingstype-element)。
+- [SCM 权限](https://learn.microsoft.com/en-us/windows/win32/services/service-security-and-access-rights)、[服务会话隔离](https://learn.microsoft.com/en-us/windows/win32/services/interactive-services)。
 
 配置与状态目录在 macOS 和 Linux 上是 `~/.config/tslink/`，在 Windows 上是 `%AppData%\tslink\`；设置 `TSLINK_CONFIG_DIR` 可以改用其他目录。本 README 其他地方写的 `~/.config/tslink/` 都指这个目录。Windows 上 TSLink 不会移动旧的 `%USERPROFILE%\.config\tslink\`：只有旧目录时，每个命令都以 `legacy_config_dir_present` 停止，并给出要执行的那一条 `move` 命令；两个目录同时存在时，拒绝二选一并报出两个路径。
 

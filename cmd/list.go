@@ -11,6 +11,7 @@ import (
 
 	"github.com/anydoor7/tslink/internal/config"
 	"github.com/anydoor7/tslink/internal/credentials"
+	"github.com/anydoor7/tslink/internal/health"
 	"github.com/anydoor7/tslink/internal/inspect"
 	"github.com/anydoor7/tslink/internal/output"
 	"github.com/anydoor7/tslink/internal/registry"
@@ -69,17 +70,22 @@ const listTailnetCredentialMessage = "listing tailnet devices requires a stored 
 // URL is null until runtime.json contains exact evidence for the current daemon
 // and registry fingerprint.
 type ListServiceSummary struct {
-	Name            string                  `json:"name"`
-	Type            string                  `json:"type"`
-	URL             *string                 `json:"url"`
-	URLPending      bool                    `json:"url_pending"`
-	State           string                  `json:"state"`
-	FunnelRequested bool                    `json:"funnel_requested"`
-	FunnelActive    bool                    `json:"funnel_active"`
-	FunnelState     string                  `json:"funnel_state"`
-	FunnelExpiresAt *time.Time              `json:"funnel_expires_at,omitempty"`
-	FunnelRemaining *string                 `json:"funnel_remaining,omitempty"`
-	Error           *tsruntime.ServiceError `json:"error,omitempty"`
+	RequestLimits   *registry.EffectiveRequestLimits `json:"request_limits,omitempty"`
+	Warnings        []inspect.WarningView            `json:"warnings,omitempty"`
+	Health          health.State                     `json:"health"`
+	NodeKey         health.Expiry                    `json:"node_key"`
+	Name            string                           `json:"name"`
+	Type            string                           `json:"type"`
+	URL             *string                          `json:"url"`
+	URLPending      bool                             `json:"url_pending"`
+	State           string                           `json:"state"`
+	PreserveHost    bool                             `json:"preserve_host"`
+	FunnelRequested bool                             `json:"funnel_requested"`
+	FunnelActive    bool                             `json:"funnel_active"`
+	FunnelState     string                           `json:"funnel_state"`
+	FunnelExpiresAt *time.Time                       `json:"funnel_expires_at,omitempty"`
+	FunnelRemaining *string                          `json:"funnel_remaining,omitempty"`
+	Error           *tsruntime.ServiceError          `json:"error,omitempty"`
 }
 
 // ListResult holds the result for JSON output.
@@ -148,13 +154,14 @@ func validateListOptions(opts listOptions) error {
 		return output.ErrUsage("--verbose conflicts with --fields")
 	}
 	allowed := map[string]bool{
-		"name": true, "type": true, "url": true, "url_pending": true, "state": true,
+		"preserve_host": true,
+		"name":          true, "type": true, "url": true, "url_pending": true, "state": true,
 		"funnel_requested": true, "funnel_active": true, "funnel_state": true,
 		"funnel_expires_at": true, "funnel_remaining": true, "error": true,
 	}
 	for _, field := range opts.Fields {
 		if !allowed[field] {
-			return output.ErrUsage(fmt.Sprintf("unknown --fields value %q; supported: name,type,url,url_pending,state,funnel_requested,funnel_active,funnel_state,funnel_expires_at,funnel_remaining,error", field))
+			return output.ErrUsage(fmt.Sprintf("unknown --fields value %q; supported: name,type,url,url_pending,state,preserve_host,funnel_requested,funnel_active,funnel_state,funnel_expires_at,funnel_remaining,error", field))
 		}
 	}
 	return nil
@@ -192,10 +199,14 @@ func filterStatusServices(result StatusURLsResult, opts listOptions) ([]StatusSe
 
 func listSummary(svc StatusServiceView) ListServiceSummary {
 	summary := ListServiceSummary{
+		RequestLimits: svc.RequestLimits,
+		Warnings:      append([]inspect.WarningView(nil), svc.Warnings...),
+		Health:        svc.Health, NodeKey: svc.NodeKey,
 		Name:            svc.Name,
 		Type:            svc.Type,
 		URLPending:      true,
 		State:           listStatePending,
+		PreserveHost:    svc.PreserveHost,
 		FunnelRequested: svc.FunnelRequested,
 		FunnelActive:    svc.FunnelActive,
 		FunnelState:     svc.FunnelState,
@@ -229,6 +240,8 @@ func selectListFields(summary ListServiceSummary, fields []string) map[string]an
 			selected[field] = summary.URLPending
 		case "state":
 			selected[field] = summary.State
+		case "preserve_host":
+			selected[field] = summary.PreserveHost
 		case "funnel_requested":
 			selected[field] = summary.FunnelRequested
 		case "funnel_active":
@@ -481,8 +494,22 @@ func listServicesWithOptions(regPath string, out io.Writer, opts listOptions) er
 			remaining = *summary.FunnelRemaining
 		}
 		fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", summary.Name, summary.Type, svc.Backend.Display, url, summary.State, funnelExpiresLabel(summary.FunnelExpiresAt, summary.FunnelRemaining), remaining)
+		if opts.Verbose {
+			fmt.Fprintf(writer, "  request limits: %s\n", requestLimitsLabel(svc.RequestLimits))
+			for _, warning := range svc.Warnings {
+				fmt.Fprintf(writer, "  %s: %s\n", warning.Code, warning.Message)
+			}
+		}
 	}
-	return writer.Flush()
+	if err := writer.Flush(); err != nil {
+		return err
+	}
+	if opts.Verbose {
+		for _, svc := range services {
+			formatAppHealth(out, svc.Name, svc.Health, svc.NodeKey)
+		}
+	}
+	return nil
 }
 
 func listServices(regPath string, out io.Writer) error {
@@ -551,7 +578,7 @@ Examples:
 	}
 	listCmd.Flags().String("name", "", "Return only the exact service name")
 	listCmd.Flags().String("type", "", "Filter by service type: proxy, file, or tcp")
-	listCmd.Flags().String("fields", "", "Comma-separated slim fields: name,type,url,url_pending,state,funnel_requested,funnel_active,funnel_state,funnel_expires_at,funnel_remaining,error")
+	listCmd.Flags().String("fields", "", "Comma-separated slim fields: name,type,url,url_pending,state,preserve_host,funnel_requested,funnel_active,funnel_state,funnel_expires_at,funnel_remaining,error")
 	listCmd.Flags().Bool("verbose", false, "Return the complete owner-only diagnostic service view")
 	listCmd.Flags().Bool("tailnet", false, "Read-only: list every TSLink-tagged device in the tailnet, including other machines' services and orphans, instead of this machine's registered services")
 	rootCmd.AddCommand(listCmd)

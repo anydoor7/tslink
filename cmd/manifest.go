@@ -163,7 +163,7 @@ func Manifest() CLIManifest {
 		SchemaVersion:         2,
 		Platform:              PlatformInfo{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH},
 		SupportedPlatforms:    SupportedManifestPlatforms(),
-		RegistrySchemaVersion: registry.CurrentRegistrySchemaVersion,
+		RegistrySchemaVersion: registry.PeopleRegistrySchemaVersion,
 		Toolchain: ToolchainInfo{
 			MinimumGoVersion: "1.26.6",
 		},
@@ -178,7 +178,7 @@ func Manifest() CLIManifest {
 			"critical":  output.ExitCritical,
 		},
 		RegistrySchema: RegistrySchemaInfo{
-			Version:        registry.CurrentRegistrySchemaVersion,
+			Version:        registry.PeopleRegistrySchemaVersion,
 			ServiceTypes:   serviceTypeValues(),
 			RequiredFields: []string{"schema_version", "services[].name", "services[].type"},
 		},
@@ -265,6 +265,18 @@ func Manifest() CLIManifest {
 
 func commandJSONResultFields(commandPath string) map[string]JSONResultFieldInfo {
 	switch commandPath {
+	case "tslink people add", "tslink people update":
+		return map[string]JSONResultFieldInfo{
+			"person":             {Type: "object", Description: "Canonical login, revocation state, per-app absolute deadlines, active decisions and exact URLs when available."},
+			"invites":            {Type: "array", Description: "Per-app invitation ID, durable state, reconciliation candidates, remote side effect plan or stable error code. Bearer URLs require --print-links."},
+			"complete":           {Type: "boolean", Description: "False when any requested device invitation failed; local grants remain saved."},
+			"message":            {Type: "string", Description: "Plain-language message to send to the person; bearer URLs require --print-links."},
+			"invite_requirement": {Type: "string", Description: "Explains that invitations require a user-owned API token while tailnet member grants need no token."},
+		}
+	case "tslink people list":
+		return map[string]JSONResultFieldInfo{"people": {Type: "array", Description: "People with grants, expiry, active state and revocation tombstones."}}
+	case "tslink people remove":
+		return map[string]JSONResultFieldInfo{"login": {Type: "string", Description: "Canonical Tailscale login."}, "removed": {Type: "boolean", Description: "True if existing person access or matching legacy allow rules were removed."}, "revoked": {Type: "boolean", Description: "True when a durable deny tombstone was stored."}, "complete": {Type: "boolean", Description: "True when all recorded pending invitation cleanup reached a terminal state; local denial can succeed with false."}, "cleanup": {Type: "array", Description: "Per-attempt app, ID, state and stable cleanup code; target_gone preserves evidence of a deleted node and accepted shares may remain."}}
 	case "tslink serve":
 		return map[string]JSONResultFieldInfo{
 			"credential_migrated": {
@@ -272,12 +284,29 @@ func commandJSONResultFields(commandPath string) map[string]JSONResultFieldInfo 
 				Description: "True when this invocation migrated a legacy API credential to the system keychain; omitted otherwise.",
 			},
 		}
+	case "tslink share":
+		return map[string]JSONResultFieldInfo{
+			"request_limits": {Type: "object", Description: "Effective HTTP limits: max_body_bytes (-1 means acknowledged unlimited), header_timeout, read_timeout (idle between body reads), idle_timeout."},
+			"preserve_host":  {Type: "boolean", Description: "Whether the returned HTTP share forwards this node's trusted canonical external Host. Conflicting reuse is refused."},
+		}
 	case "tslink add":
 		return map[string]JSONResultFieldInfo{
+			"preserve_host":     {Type: "boolean", Description: "Ordinary add: whether the proxy forwards this node's trusted canonical external Host; default false. With --recipe, inspect service.preserve_host and requested.preserve_host."},
+			"request_limits":    {Type: "object", Description: "Effective HTTP limits for proxy/file services; absent for raw TCP."},
 			"funnel_expires_at": {Type: "string", Description: "Persisted public Funnel deadline; omitted for tailnet-only services and explicit never."},
 			"funnel_rearmed":    {Type: "boolean", Description: "True when an expired preserved Funnel deadline was re-armed with the default 24h TTL."},
+			"recipe":            {Type: "object", Description: "With --recipe: app-side snippets, safety notes and documentation."},
+			"action":            {Type: "string", Description: "With --recipe: create preview, created, or skip_existing; same-name entries are preserved."},
+			"dry_run":           {Type: "boolean", Description: "With --recipe: true unless --yes without --dry-run."},
+			"applied":           {Type: "boolean", Description: "With --recipe: true only when this call created a service."},
 			"replaced_fields":   {Type: "array", Description: "registry.json fields a replacing add changed or dropped, sorted; empty when the add created the service. Warnings access_changed_on_replace and identity_reset_on_replace flag access and node-identity changes."},
 		}
+	case "tslink apps list":
+		return map[string]JSONResultFieldInfo{"catalog_version": {Type: "integer", Description: "Version of app advice and fingerprints."}, "recipes": {Type: "array", Description: "Complete recipe catalog with safety levels and dated official documentation."}}
+	case "tslink apps detect":
+		return map[string]JSONResultFieldInfo{"listeners": {Type: "array", Description: "Numeric loopback HTTP probe targets from OS TCP listeners."}, "matches": {Type: "array", Description: "Recipe confidence, evidence and registered names; no response bodies."}, "complete": {Type: "boolean", Description: "False when cancelled or the 15 second discovery deadline was reached."}}
+	case "tslink apps share":
+		return recipeManifestResultFields()
 	case "tslink list":
 		fields := agentServiceRuntimeJSONResultFields()
 		fields["services[].state"] = JSONResultFieldInfo{
@@ -544,6 +573,8 @@ func commandJSONResultFields(commandPath string) map[string]JSONResultFieldInfo 
 
 func agentServiceRuntimeJSONResultFields() map[string]JSONResultFieldInfo {
 	return map[string]JSONResultFieldInfo{
+		"services[].preserve_host":  {Type: "boolean", Description: "Configured proxy Host policy; false rewrites Host to the upstream, true forwards this node's trusted canonical external name in Host and X-Forwarded-Host, or returns HTTP 503 canonical_host_unavailable."},
+		"services[].request_limits": {Type: "object", Description: "Effective HTTP limits in status --urls and list --verbose; max_body_bytes is -1 only for explicitly acknowledged unlimited uploads. read_timeout bounds inactivity, not upload duration."},
 		"services[].funnel_requested": {
 			Type:        "boolean",
 			Description: "Configuration intent: whether this service requests public Tailscale Funnel exposure.",
@@ -829,6 +860,15 @@ func platformNeutralCommandShort(path, current string) string {
 }
 
 func flagRelationships(commandPath, name string) (oneOf, requires, conflicts []string) {
+	if commandPath == "tslink people update" && (name == "reconcile-invite" || name == "replace-invite") {
+		requires = []string{"--invite"}
+	}
+	if commandPath == "tslink people update" && name == "replace-invite" {
+		conflicts = []string{"--apps", "--for"}
+	}
+	if (commandPath == "tslink people add" || commandPath == "tslink people update") && name == "print-links" {
+		requires = []string{"--invite"}
+	}
 	if commandPath == "tslink add" {
 		switch name {
 		case "proxy", "dir", "tcp":
@@ -842,6 +882,25 @@ func flagRelationships(commandPath, name string) (oneOf, requires, conflicts []s
 			requires = []string{"--funnel"}
 		case "allow":
 			conflicts = []string{"--tcp", "--funnel"}
+		}
+	}
+	if commandPath == "tslink add" && (name == "yes" || name == "force-unsafe-public") {
+		requires = []string{"--recipe"}
+		if name == "force-unsafe-public" {
+			requires = append(requires, "--funnel", "--public")
+		}
+	}
+	if commandPath == "tslink apps share" {
+		switch name {
+		case "funnel":
+			requires = []string{"--public"}
+			conflicts = []string{"--allow", "--control-url"}
+		case "public", "no-auto-provision", "funnel-ttl":
+			requires = []string{"--funnel"}
+		case "force-unsafe-public":
+			requires = []string{"--funnel", "--public"}
+		case "allow":
+			conflicts = []string{"--funnel"}
 		}
 	}
 	if commandPath == "tslink url" && name == "raw" {
@@ -957,4 +1016,17 @@ func init() {
 	}
 	manifestCmd.Flags().Bool("compact", false, "Print only commands, flags, and stable error codes")
 	rootCmd.AddCommand(manifestCmd)
+}
+
+func recipeManifestResultFields() map[string]JSONResultFieldInfo {
+	return map[string]JSONResultFieldInfo{
+		"recipe":                  {Type: "object", Description: "App-specific configuration, safety advice and dated official docs."},
+		"service.preserve_host":   {Type: "boolean", Description: "Effective Host policy of the created or preserved service."},
+		"requested.preserve_host": {Type: "boolean", Description: "Recipe default unless explicitly overridden; may differ from an existing service."},
+		"service":                 {Type: "object", Description: "Effective requested service, or existing service preserved unchanged."},
+		"requested":               {Type: "object", Description: "Requested defaults; compare with service if existing entry is skipped."},
+		"action":                  {Type: "string", Values: []string{"create", "created", "skip_existing"}, Description: "Planned or completed registry action."},
+		"dry_run":                 {Type: "boolean", Description: "True for preview; --dry-run wins over --yes."},
+		"applied":                 {Type: "boolean", Description: "True only when this invocation created the service."},
+	}
 }

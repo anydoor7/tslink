@@ -1,5 +1,8 @@
 # 分享服务
 
+要按期限把多个已注册应用分享给一个人，使用[人员分享](people_zh.md)：`tslink people add alice@example.com --apps photos,finance --for 7d`。已有 tailnet 成员无需 token；对外部人员加 `--invite --print-links` 生成合并多应用设备邀请的消息，创建邀请需要用户拥有的 API token。`people remove` 拒绝该人之后的私有 HTTP/文件请求，即使网络层分享仍已接受。TCP 和公开 Funnel 不能按人授权。原有 `share`、`add --allow`、`invite` 命令继续可用。
+
+人员撤销先保存本地拒绝，再清理记录的未接受邀请；无 token/部分失败明确返回 `complete: false` 和 `cleanup`。邀请重试复用已完成 ID，未知 POST 须明确对账，不承诺 exactly-once。恢复步骤见人员指南。
 ## 一条命令分享
 
 `tslink share` 会判断参数是目录、普通文件、裸端口还是 `host:port`。它会
@@ -36,3 +39,45 @@ TSLink 拒绝服务它自己的配置目录、配置目录里的目录，以及�
 精确的 `tslink url <name> --wait` 后续命令。使用 `--json` 时，这是包含
 `auth_url` 的成功 `status:"needs_login"` 结果，不是认证错误。对同一 target
 重试会复用已有 service，不会持续创建带数字后缀的孤儿 node。
+
+## 照片和视频上传
+
+为完整上传请求选择足够大的有限上限, 包括 multipart 元数据。例如:
+
+```bash
+tslink add photos --proxy localhost:2283 --max-request-body 20GiB --request-read-timeout 2m
+tslink share 2283 --name photos --max-request-body 20GiB --request-read-timeout 2m
+tslink status --urls
+tslink list --verbose
+```
+
+未配置的服务使用 32 MiB 大小上限、10s 请求头超时、30s 上传无进展窗口和
+60s keep-alive 空闲超时。用 `--request-header-timeout` 调整请求头窗口,
+用 `--idle-timeout` 调整 keep-alive。明确选择移除大小上限时, 同时提供
+`--max-request-body unlimited --ack-unlimited-request-body`。
+
+上传通过 reverse proxy 直接流向后端, TSLink 不将整个上传缓存在内存中。
+每次读取请求体时更新无进展 deadline; 等待后端接收上一块数据的时间不计入,
+持续读取成功就可继续上传, 没有总时长截止。响应流和 WebSocket 升级不受上传
+截止时间影响。手机持续发送数据时可以超过 30 秒; proxy 上传停止进展则收到明确的 408。
+大小超限返回 413, 包括长度未知的 chunked 请求。
+HTTP/1 请求头不完整且超时, 在 handler 启动前返回 408。
+handler 拒绝或忽略请求体时, 剩余 HTTP/1 请求体使用最多 1s 的绝对清理期限
+(无进展窗口更短时采用该窗口)。未完成的请求体会使连接关闭; 清理期限不因
+持续发送而延长, 也不对已接受的上传或下载施加总时长超时。
+后端提前拒绝上传时, 正在进行的请求体读取也会被打断: HTTP/1 使用上述清理
+期限, HTTP/2 立即关闭请求体 stream。清理期间完成的读取不能更新清理期限,
+也不会产生上传超时 warning。完整请求体保留正常的连接复用行为。
+
+服务所有者会看到带服务名和限制的结构化日志, `status --urls` 与
+`list --verbose` 显示 runtime warning, `doctor` 指出应调整的标志。
+warning 保留至服务节点重启。修改限制时用完整配置重新执行 add, 因为未重复的
+标志会重置; share 不复用有效限制不同的服务。冲突会列出每项不同限制的当前值、
+请求值及用 add 重新配置的标志。失败上传可能已向后端发送部分
+数据, 后端需要处理它; 应用自身的限制仍然有效。
+
+CLI JSON 返回以字节数和 duration 字符串表示的有效 `request_limits`。
+MCP add/share 接受 `request_limits` 对象, 字段为 `max_body`、`unlimited_ack`、
+`header_timeout`、`read_timeout` 和 `idle_timeout`。
+应用 recipe 可调用 `registry.RecommendedUploadLimits()`, 为 Immich、Nextcloud、
+Jellyfin 推荐 20 GiB 上限和 2m 无进展窗口。recipe 接线独立完成, 仍需考虑应用自身要求。

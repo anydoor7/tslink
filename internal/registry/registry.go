@@ -28,7 +28,8 @@ const (
 	TypeFile  = "file"
 	TypeTCP   = "tcp"
 
-	CurrentRegistrySchemaVersion = 1
+	LegacyRegistrySchemaVersion  = 1
+	CurrentRegistrySchemaVersion = 2
 
 	maxTagLength = 63
 
@@ -486,7 +487,11 @@ type Service struct {
 	Name   string `json:"name"`
 	Type   string `json:"type"`
 	Target string `json:"target,omitempty"`
-	Path   string `json:"path,omitempty"`
+	// PreserveHost forwards the node's canonical external name as Host instead of the target's host.
+	// Absent or false retains the behaviour of existing services and templates.
+	PreserveHost bool          `json:"preserve_host,omitempty"`
+	Health       *HealthConfig `json:"health,omitempty"`
+	Path         string        `json:"path,omitempty"`
 	// File narrows a file service to exactly one name inside Path. It is the
 	// bare file name, never a path. Empty means the whole Path subtree is
 	// served, which is also what every registry written before this field
@@ -496,12 +501,15 @@ type Service struct {
 	Ephemeral       bool       `json:"ephemeral,omitempty"`
 	Tags            []string   `json:"tags,omitempty"`
 	AllowedUsers    []string   `json:"allowed_users,omitempty"`
+	PeopleScoped    bool       `json:"people_scoped,omitempty"`
 	ControlURL      string     `json:"control_url,omitempty"`
 	Funnel          bool       `json:"funnel,omitempty"`
 	FunnelExpiresAt *time.Time `json:"funnel_expires_at,omitempty"`
 	PublicAck       bool       `json:"public_ack,omitempty"`
 	NoAutoProvision bool       `json:"no_auto_provision,omitempty"`
 	CreatedAt       time.Time  `json:"created_at"`
+
+	RequestLimits *RequestLimits `json:"request_limits,omitempty"`
 
 	// funnelExpiryUndecided is set only by UnmarshalJSON, for a Funnel entry
 	// whose stored funnel_expires_at is absent or null. In memory a nil
@@ -630,6 +638,7 @@ func FunnelRemainingAt(svc Service, now time.Time) *string {
 type Registry struct {
 	SchemaVersion int       `json:"schema_version"`
 	Services      []Service `json:"services"`
+	People        []Person  `json:"people,omitempty"`
 }
 
 type RegistryFileState string
@@ -660,6 +669,7 @@ func (i ServiceIssue) Unwrap() error { return i.Err }
 type registryWire struct {
 	SchemaVersion int               `json:"schema_version"`
 	Services      []json.RawMessage `json:"services"`
+	People        []Person          `json:"people,omitempty"`
 }
 
 var unknownJSONFieldRegexp = regexp.MustCompile(`^json: unknown field "([^"]+)"$`)
@@ -719,8 +729,20 @@ func ValidateControlURL(value string) error {
 }
 
 func ValidateService(svc Service) error {
+	if svc.PeopleScoped && !PeopleServiceSupported(svc) {
+		return CodedError{Code: "people_service_unsupported", Message: "person-scoped services must be private HTTP proxies or files; TCP cannot enforce people and Funnel is public"}
+	}
+	if err := ValidateHealthConfig(svc.Type, svc.Health); err != nil {
+		return CodedError{Code: CodeInvalidServiceConfig, Message: err.Error(), Next: []string{"tslink add --help"}}
+	}
 	if err := ValidateName(svc.Name); err != nil {
 		return err
+	}
+	if _, err := ResolveRequestLimits(svc.RequestLimits); err != nil {
+		return err
+	}
+	if svc.Type == TypeTCP && svc.RequestLimits != nil {
+		return CodedError{Code: CodeInvalidRequestLimits, Message: "HTTP request_limits are not supported for tcp services"}
 	}
 	if err := ValidateFunnelGuardrails(svc.Type, svc.Funnel, svc.AllowedUsers, svc.ControlURL, svc.PublicAck); err != nil {
 		return err
@@ -743,6 +765,9 @@ func ValidateService(svc Service) error {
 }
 
 func validateServiceShape(svc Service) error {
+	if svc.PreserveHost && svc.Type != TypeProxy {
+		return fmt.Errorf("%s services do not support preserve_host; only proxy services do", svc.Type)
+	}
 	switch svc.Type {
 	case TypeProxy:
 		if svc.Target == "" {
@@ -1098,8 +1123,11 @@ func decodeForRuntime(data []byte) (*Registry, []ServiceIssue, error) {
 	if err := strictJSONDecode(data, &wire); err != nil {
 		return nil, nil, configDecodeError("registry", err)
 	}
-	reg := &Registry{SchemaVersion: wire.SchemaVersion, Services: make([]Service, 0, len(wire.Services))}
+	reg := &Registry{SchemaVersion: wire.SchemaVersion, Services: make([]Service, 0, len(wire.Services)), People: wire.People}
 	if err := migrate(reg); err != nil {
+		return nil, nil, err
+	}
+	if err := validatePeople(reg.People); err != nil {
 		return nil, nil, err
 	}
 
@@ -1312,18 +1340,18 @@ func loadForMutation(path string) (*Registry, error) {
 }
 
 func emptyRegistry() *Registry {
-	return &Registry{SchemaVersion: CurrentRegistrySchemaVersion, Services: []Service{}}
+	return &Registry{SchemaVersion: LegacyRegistrySchemaVersion, Services: []Service{}}
 }
 
 func migrate(reg *Registry) error {
 	version := reg.SchemaVersion
 	if version == 0 {
-		version = CurrentRegistrySchemaVersion
+		version = LegacyRegistrySchemaVersion
 	}
 
 	switch version {
-	case CurrentRegistrySchemaVersion:
-		reg.SchemaVersion = CurrentRegistrySchemaVersion
+	case LegacyRegistrySchemaVersion, CurrentRegistrySchemaVersion:
+		reg.SchemaVersion = version
 		return nil
 	default:
 		return fmt.Errorf("unsupported registry schema_version: %d", reg.SchemaVersion)
@@ -1402,7 +1430,15 @@ func save(path string, reg *Registry) error {
 	if reg.Services == nil {
 		reg.Services = []Service{}
 	}
-	reg.SchemaVersion = CurrentRegistrySchemaVersion
+	reg.SchemaVersion = LegacyRegistrySchemaVersion
+	if len(reg.People) > 0 {
+		reg.SchemaVersion = PeopleRegistrySchemaVersion
+	}
+	for _, svc := range reg.Services {
+		if svc.PeopleScoped {
+			reg.SchemaVersion = PeopleRegistrySchemaVersion
+		}
+	}
 
 	data, err := marshalFn(reg, "", "  ")
 	if err != nil {
@@ -1526,6 +1562,10 @@ func AddWithOutcome(path string, svc Service, options AddOptions) (outcome AddOu
 			previous := existing
 			outcome.Replaced = &previous
 			svc.CreatedAt = existing.CreatedAt
+			svc.PeopleScoped = svc.PeopleScoped || existing.PeopleScoped
+			if err := ValidateService(svc); err != nil {
+				return err
+			}
 			if options.PreserveFunnelExpiry {
 				if svc.Funnel && existing.FunnelExpiresAt != nil && !existing.FunnelExpiresAt.After(now) {
 					rearmed := now.Add(DefaultFunnelTTL).UTC()
@@ -1646,7 +1686,9 @@ func RemoveAndReturnWithin(path, name string, within func(svc Service, commit fu
 
 			remaining := append(append([]Service{}, reg.Services[:i]...), reg.Services[i+1:]...)
 			commit := func() error {
-				if err := save(path, &Registry{Services: remaining}); err != nil {
+				reg.Services = remaining
+				removeAppGrants(reg, name)
+				if err := save(path, reg); err != nil {
 					return err
 				}
 				removedService, removed = svc, true
@@ -1747,6 +1789,7 @@ func RemoveIfUnchanged(path string, expected Service) (removed bool, err error) 
 				continue
 			}
 			reg.Services = append(reg.Services[:i], reg.Services[i+1:]...)
+			removeAppGrants(reg, expected.Name)
 			if err := save(path, reg); err != nil {
 				return err
 			}

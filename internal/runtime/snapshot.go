@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/anydoor7/tslink/internal/health"
 	"github.com/anydoor7/tslink/internal/inspect"
 	"github.com/anydoor7/tslink/internal/registry"
 )
@@ -81,6 +82,7 @@ func (v *SnapshotVersion) UnmarshalJSON(data []byte) error {
 }
 
 type Snapshot struct {
+	Alerts              health.AlertsView `json:"alerts"`
 	SchemaVersion       SnapshotVersion   `json:"schema_version"`
 	DaemonPID           int               `json:"daemon_pid"`
 	DaemonStartedAt     time.Time         `json:"daemon_started_at"`
@@ -92,6 +94,10 @@ type Snapshot struct {
 }
 
 type ServiceSnapshot struct {
+	Health   health.State          `json:"health"`
+	NodeKey  health.Expiry         `json:"node_key"`
+	Warnings []inspect.WarningView `json:"warnings,omitempty"`
+
 	Name            string               `json:"name"`
 	Type            string               `json:"type"`
 	NodeID          string               `json:"node_id,omitempty"`
@@ -106,6 +112,9 @@ type ServiceSnapshot struct {
 }
 
 type ServiceState struct {
+	Health       health.State
+	NodeKey      health.Expiry
+	Warnings     []inspect.WarningView
 	Service      registry.Service
 	NodeID       string
 	RuntimeHost  string
@@ -221,6 +230,9 @@ func newSnapshot(daemonPID int, daemonStartedAt time.Time, registryFingerprint s
 			serviceError = &copied
 		}
 		services = append(services, ServiceSnapshot{
+			Health:          state.Health,
+			NodeKey:         state.NodeKey,
+			Warnings:        append([]inspect.WarningView(nil), state.Warnings...),
 			Name:            state.Service.Name,
 			Type:            state.Service.Type,
 			NodeID:          state.NodeID,

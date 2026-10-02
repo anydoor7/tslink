@@ -17,7 +17,9 @@ import (
 
 	"github.com/anydoor7/tslink/internal/config"
 	"github.com/anydoor7/tslink/internal/duration"
+	"github.com/anydoor7/tslink/internal/health"
 	"github.com/anydoor7/tslink/internal/output"
+	"github.com/anydoor7/tslink/internal/recipes"
 	"github.com/anydoor7/tslink/internal/registry"
 	"github.com/anydoor7/tslink/internal/tailapi"
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
@@ -139,6 +141,7 @@ var (
 	}, "code", "severity", "message", "source")
 	mcpWarningArraySchema = map[string]any{"type": "array", "items": mcpWarningViewSchema}
 	mcpServiceViewSchema  = objectSchema(map[string]any{
+		"request_limits": mcpRequestLimitsOutputSchema,
 		"schema_version": map[string]any{"type": "integer"},
 		"name":           map[string]any{"type": "string"},
 		"type":           map[string]any{"type": "string", "enum": serviceTypeValues()},
@@ -146,6 +149,7 @@ var (
 		"exposure":       mcpExposureViewSchema,
 		"tags":           mcpSummaryViewSchema,
 		"allow":          mcpSummaryViewSchema,
+		"preserve_host":  map[string]any{"type": "boolean", "default": false, "description": "Proxy only: forward this node's trusted canonical external name in Host and X-Forwarded-Host; fail closed if unavailable. Default false keeps upstream Host rewriting."},
 		"backend":        mcpBackendViewSchema,
 		"funnel":         map[string]any{"type": "boolean"},
 		"warnings":       mcpWarningArraySchema,
@@ -194,7 +198,7 @@ var (
 	}, "code", "message")
 	mcpDaemonInstalledSchema = func() map[string]any {
 		schema := objectSchema(map[string]any{
-			"manager": map[string]any{"type": "string", "enum": []string{"launchd", "systemd", "windows-startup"}, "description": "The supervisor that now starts TSLink at login or boot."},
+			"manager": map[string]any{"type": "string", "enum": []string{"launchd", "systemd", "windows-startup", "windows-task-scheduler"}, "description": "The supervisor that now starts TSLink at login or boot."},
 			"path":    map[string]any{"type": "string", "description": "The supervisor definition this call wrote."},
 			"undo":    map[string]any{"type": "string", "description": "The command that removes it."},
 		}, "manager", "path", "undo")
@@ -202,8 +206,10 @@ var (
 		return schema
 	}()
 	mcpShareOutputSchema = objectSchema(map[string]any{
+		"request_limits":    mcpRequestLimitsOutputSchema,
 		"url":               map[string]any{"type": "string"},
 		"name":              map[string]any{"type": "string"},
+		"preserve_host":     map[string]any{"type": "boolean", "default": false, "description": "Proxy only: forward this node's trusted canonical external name in Host and X-Forwarded-Host; fail closed if unavailable. Default false keeps upstream Host rewriting."},
 		"status":            map[string]any{"type": "string", "enum": []string{shareStatusReady, authStatusNeedsLogin}},
 		"auth_url":          map[string]any{"type": "string"},
 		"funnel_expires_at": map[string]any{"type": "string", "description": "When the public Funnel of this share stops. Absent when exposure.kind is not public_funnel, and absent for a public_funnel share that never expires. A reused share keeps its own deadline, which can be sooner than the funnel_ttl this call asked for."},
@@ -216,11 +222,16 @@ var (
 		"services": map[string]any{
 			"type": "array",
 			"items": objectSchema(map[string]any{
+				"request_limits":   mcpRequestLimitsOutputSchema,
+				"warnings":         mcpWarningArraySchema,
+				"health":           nestedObjectSchema("App health observation without response bodies."),
+				"node_key":         nestedObjectSchema("Reported node-key expiry; an absent deadline is unknown."),
 				"name":             map[string]any{"type": "string"},
 				"type":             map[string]any{"type": "string", "enum": serviceTypeValues()},
 				"url":              map[string]any{"type": []string{"string", "null"}},
 				"url_pending":      map[string]any{"type": "boolean"},
 				"state":            map[string]any{"type": "string", "enum": listStateValues()},
+				"preserve_host":    map[string]any{"type": "boolean", "default": false, "description": "Proxy only: forward this node's trusted canonical external name in Host and X-Forwarded-Host; fail closed if unavailable. Default false keeps upstream Host rewriting."},
 				"funnel_requested": map[string]any{"type": "boolean"},
 				"funnel_active":    map[string]any{"type": "boolean"},
 				"funnel_state":     map[string]any{"type": "string", "enum": funnelStateValues()},
@@ -243,6 +254,17 @@ var (
 		"node_state_kept_reason": map[string]any{"type": "string", "description": "Why the service's local node state was kept when no other field says so: some of its recorded tailnet nodes were neither deleted nor confirmed absent."},
 	}, "name", "removed", "device_cleaned", "device_cleanup_skipped")
 	mcpStatusOutputSchema = objectSchema(map[string]any{
+		"credentials": nestedObjectSchema("Value-free stored expiry metadata and early warnings; assumed expiry remains identified."),
+		"alerts":      nestedObjectSchema("Recent durable alert events; destination is redacted."),
+		"services": map[string]any{"type": "array", "items": objectSchema(map[string]any{
+			"name":           map[string]any{"type": "string"},
+			"status":         map[string]any{"type": "string"},
+			"health":         nestedObjectSchema("App health observation without response bodies."),
+			"node_key":       nestedObjectSchema("Reported node-key expiry."),
+			"preserve_host":  map[string]any{"type": "boolean", "default": false, "description": "Configured canonical Host policy; absent when registry policy is unknown."},
+			"request_limits": mcpRequestLimitsOutputSchema,
+			"warnings":       mcpWarningArraySchema,
+		}, "name", "status", "health", "node_key")},
 		"supervision":              nestedObjectSchema("Verified manager, autostart, restart policy, and diagnostic evidence."),
 		"authenticated":            map[string]any{"type": "boolean", "description": "True when at least one service node is authorized on the tailnet, the same fact as node_authorized and the same meaning as in tslink status --json; a stored credential alone (credential_stored) never makes it true."},
 		"credential_stored":        map[string]any{"type": "boolean"},
@@ -256,6 +278,8 @@ var (
 		"next":                     map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 	}, "authenticated", "credential_stored", "node_authorized", "authorized_service_count", "daemon_running", "daemon_state", "service_count")
 	mcpAddOutputSchema = objectSchema(map[string]any{
+		"preserve_host":     map[string]any{"type": "boolean", "default": false, "description": "Proxy only: forward this node's trusted canonical external name in Host and X-Forwarded-Host; fail closed if unavailable. Default false keeps upstream Host rewriting."},
+		"request_limits":    mcpRequestLimitsOutputSchema,
 		"daemon_running":    map[string]any{"type": "boolean"},
 		"auth_url":          map[string]any{"type": "string"},
 		"next":              map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
@@ -300,6 +324,9 @@ var (
 		"backend_auth_assumption":  nestedObjectSchema("Backend application, database and SSH authentication are outside TSLink and are not proven here."),
 	}, "schema_version", "service", "summary", "tslink_known", "tslink_local_enforcement", "external_policy_unknown", "backend_auth_assumption")
 	mcpDoctorOutputSchema = objectSchema(map[string]any{
+		"node_keys":        map[string]any{"type": []string{"object", "null"}, "additionalProperties": true},
+		"credentials":      nestedObjectSchema("Stored credential expiry with metadata provenance."),
+		"alerts":           nestedObjectSchema("Recent alert events and masked notifier status."),
 		"supervision":      nestedObjectSchema("Verified OS supervision, autostart, restart policy, and diagnostic evidence."),
 		"schema_version":   map[string]any{"type": "integer"},
 		"execution_status": map[string]any{"type": "string"},
@@ -479,9 +506,11 @@ var mcpToolDefinitions = []mcpToolDefinition{
 		Name:        "share",
 		Description: "Setting funnel true on this tool publishes the target to the entire public internet, so ask the user before doing that; with funnel false (the default) it exposes a local directory, one file, or an HTTP port only on the user's private Tailscale network. A directory target serves every file under it and is browsable; a regular-file target serves only that file and answers 404 for its siblings. Without allow, every member of the user's tailnet can read the share; pass allow to restrict it to named principals. Use this after creating a local page or report that the user wants to open on another tailnet device. If status is needs_login, open auth_url in a browser and retry after authorization.",
 		InputSchema: objectSchema(map[string]any{
+			"request_limits":    mcpRequestLimitsInputSchema,
 			"no_daemon_install": map[string]any{"type": "boolean", "description": "Require an already running TSLink service; do not automatically install its background service."},
 			"target":            map[string]any{"type": "string", "minLength": 1, "description": "Existing file or directory path, bare port from 1 to 65535, or host:port HTTP target. A file path shares that one file; a directory path shares everything under it. The daemon will proxy to any address it can reach on its own network; link-local and cloud-metadata addresses are refused only as literal IP addresses (unspecified addresses too) or the metadata.google.internal hostname: hostnames are not resolved and nothing is checked at connect time, so a name that resolves to one of those addresses is accepted."},
 			"name":              map[string]any{"type": "string", "pattern": `^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`, "maxLength": 63, "description": "Optional requested DNS-label service name. A matching target is reused only if it already has this name; unrelated name collisions receive a numeric suffix."},
+			"preserve_host":     map[string]any{"type": "boolean", "default": false, "description": "Proxy only: forward this node's trusted canonical external name in Host and X-Forwarded-Host; fail closed if unavailable. Default false keeps upstream Host rewriting."},
 			"ephemeral":         map[string]any{"type": "boolean", "default": true, "description": "Keep true for temporary shares; set false only when the user wants durable tailnet node state."},
 			"allow":             map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Principals allowed to reach the share over HTTP: email addresses, or tag:<name> ACL tags. Omitting it leaves the share readable by every member of the user's tailnet. Rejected together with funnel."},
 			"tags":              map[string]any{"type": "array", "items": map[string]any{"type": "string", "pattern": `^tag:`}, "description": "ACL tags applied to the tailnet node, each prefixed tag:. Defaults to the configured default tag."},
@@ -495,12 +524,15 @@ var mcpToolDefinitions = []mcpToolDefinition{
 		Name:        "add",
 		Description: "Setting funnel true on this tool publishes the service to the entire public internet, so ask the user before doing that; otherwise it writes a registry entry for a proxy, file, or TCP service reachable on the user's private Tailscale network. Without allow, every member of the user's tailnet can reach an HTTP service. Use this instead of share when the user wants a named, configured service rather than a one-shot share; it installs the background service when absent unless no_daemon_install is true. Installation announcements go to stderr. After setup it returns current URL/enrollment evidence without an additional URL wait; use url to poll pending endpoints.",
 		InputSchema: objectSchema(map[string]any{
+			"health":            healthInputSchema(),
+			"request_limits":    mcpRequestLimitsInputSchema,
 			"name":              map[string]any{"type": "string", "pattern": `^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`, "maxLength": 63, "description": "Registry service name (DNS label). An existing entry with this name is replaced."},
 			"type":              map[string]any{"type": "string", "enum": serviceTypeValues(), "description": "proxy forwards HTTP to target; file serves the directory dir; tcp forwards a raw stream to target."},
 			"target":            map[string]any{"type": "string", "description": "host:port or URL for proxy, host:port for tcp. Rejected for file. The daemon will proxy to any address it can reach on its own network; link-local and cloud-metadata addresses are refused only as literal IP addresses (unspecified addresses too) or the metadata.google.internal hostname: hostnames are not resolved and nothing is checked at connect time, so a name that resolves to one of those addresses is accepted."},
 			"dir":               map[string]any{"type": "string", "description": "Absolute directory path for file. Rejected for proxy and tcp."},
 			"allow":             map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Principals allowed to reach the service over HTTP: email addresses, or tag:<name> ACL tags. Omitting it leaves an HTTP service readable by every member of the user's tailnet. Unsupported for tcp and rejected together with funnel."},
 			"tags":              map[string]any{"type": "array", "items": map[string]any{"type": "string", "pattern": `^tag:`}, "description": "ACL tags applied to the tailnet node, each prefixed tag:. Defaults to the configured default tag."},
+			"preserve_host":     map[string]any{"type": "boolean", "default": false, "description": "Proxy only: forward this node's trusted canonical external name in Host and X-Forwarded-Host; fail closed if unavailable. Default false keeps upstream Host rewriting."},
 			"ephemeral":         map[string]any{"type": "boolean", "default": false, "description": "Register an ephemeral tailnet node that disappears on disconnect."},
 			"funnel":            map[string]any{"type": "boolean", "default": false, "description": "Publish to the public internet through Tailscale Funnel. Requires type proxy, public_ack true, no allow entries, and no control_url."},
 			"public_ack":        map[string]any{"type": "boolean", "default": false, "description": "Explicit acknowledgement that funnel exposes the service publicly. funnel true without it is rejected."},
@@ -660,6 +692,9 @@ var mcpToolDefinitions = []mcpToolDefinition{
 // matching CLI command calls, so the tool surface cannot acquire behaviour the
 // CLI does not have — including its refusals, which stay in the domain layer.
 type mcpActions struct {
+	peopleChange  func(context.Context, peopleArguments, bool) (any, error)
+	peopleList    func() (any, error)
+	peopleRemove  func(context.Context, string, map[string]string) (any, error)
 	share         func(context.Context, shareRequest) (ShareResult, error)
 	add           func(context.Context, AddParams, bool) (any, error)
 	list          func() (any, error)
@@ -676,6 +711,9 @@ type mcpActions struct {
 	inviteList    func(context.Context, bool) (any, error)
 	inviteRevoke  func(context.Context, string, string) (any, error)
 	inviteResend  func(context.Context, string, string) (any, error)
+	appsDetect    func(context.Context) (any, error)
+	recipeList    func() (any, error)
+	recipeApply   func(context.Context, recipeRequest, bool) (any, error)
 	templateList  func() (any, error)
 	templatePlan  func(string) (any, error)
 	templateApply func(context.Context, string, bool) (any, error)
@@ -683,19 +721,22 @@ type mcpActions struct {
 
 // mcpAddArguments is the wire shape of the add tool's arguments.
 type mcpAddArguments struct {
-	Name            string   `json:"name"`
-	Type            string   `json:"type"`
-	Target          string   `json:"target,omitempty"`
-	Dir             string   `json:"dir,omitempty"`
-	Allow           []string `json:"allow,omitempty"`
-	Tags            []string `json:"tags,omitempty"`
-	Ephemeral       bool     `json:"ephemeral,omitempty"`
-	Funnel          bool     `json:"funnel,omitempty"`
-	PublicAck       bool     `json:"public_ack,omitempty"`
-	FunnelTTL       *string  `json:"funnel_ttl,omitempty"`
-	NoAutoProvision bool     `json:"no_auto_provision,omitempty"`
-	NoDaemonInstall bool     `json:"no_daemon_install,omitempty"`
-	ControlURL      string   `json:"control_url,omitempty"`
+	RequestLimits   *registry.RequestLimits `json:"request_limits,omitempty"`
+	Health          *registry.HealthConfig  `json:"health,omitempty"`
+	Name            string                  `json:"name"`
+	Type            string                  `json:"type"`
+	Target          string                  `json:"target,omitempty"`
+	Dir             string                  `json:"dir,omitempty"`
+	Allow           []string                `json:"allow,omitempty"`
+	Tags            []string                `json:"tags,omitempty"`
+	PreserveHost    bool                    `json:"preserve_host,omitempty"`
+	Ephemeral       bool                    `json:"ephemeral,omitempty"`
+	Funnel          bool                    `json:"funnel,omitempty"`
+	PublicAck       bool                    `json:"public_ack,omitempty"`
+	FunnelTTL       *string                 `json:"funnel_ttl,omitempty"`
+	NoAutoProvision bool                    `json:"no_auto_provision,omitempty"`
+	NoDaemonInstall bool                    `json:"no_daemon_install,omitempty"`
+	ControlURL      string                  `json:"control_url,omitempty"`
 }
 
 // mcpInviteDeviceArguments is the wire shape of the invite_device arguments.
@@ -716,8 +757,11 @@ type mcpInviteDeviceArguments struct {
 // --funnel-ttl does.
 func addParamsFromMCPArguments(args mcpAddArguments) (AddParams, bool, error) {
 	params := AddParams{
+		Health:          args.Health,
+		RequestLimits:   args.RequestLimits,
 		Name:            args.Name,
 		Ephemeral:       args.Ephemeral,
+		PreserveHost:    args.PreserveHost,
 		Tags:            strings.Join(args.Tags, ","),
 		Allow:           strings.Join(args.Allow, ","),
 		Funnel:          args.Funnel,
@@ -796,17 +840,20 @@ func parseMCPWait(raw string) (time.Duration, error) {
 type mcpServiceSummary = ListServiceSummary
 
 type mcpStatusSummary struct {
-	Supervision            Supervision `json:"supervision"`
-	Authenticated          bool        `json:"authenticated"`
-	CredentialStored       bool        `json:"credential_stored"`
-	NodeAuthorized         bool        `json:"node_authorized"`
-	AuthorizedServiceCount int         `json:"authorized_service_count"`
-	DaemonRunning          bool        `json:"daemon_running"`
-	DaemonState            string      `json:"daemon_state"`
-	ServiceCount           int         `json:"service_count"`
-	Status                 string      `json:"status,omitempty"`
-	AuthURL                string      `json:"auth_url,omitempty"`
-	Next                   []string    `json:"next,omitempty"`
+	Services               []mcpHealthService `json:"services"`
+	Credentials            StatusCredentials  `json:"credentials"`
+	Alerts                 health.AlertsView  `json:"alerts"`
+	Supervision            Supervision        `json:"supervision"`
+	Authenticated          bool               `json:"authenticated"`
+	CredentialStored       bool               `json:"credential_stored"`
+	NodeAuthorized         bool               `json:"node_authorized"`
+	AuthorizedServiceCount int                `json:"authorized_service_count"`
+	DaemonRunning          bool               `json:"daemon_running"`
+	DaemonState            string             `json:"daemon_state"`
+	ServiceCount           int                `json:"service_count"`
+	Status                 string             `json:"status,omitempty"`
+	AuthURL                string             `json:"auth_url,omitempty"`
+	Next                   []string           `json:"next,omitempty"`
 }
 
 // mcpStatusFn reads what the status tool reports. Like every read-only tool it
@@ -815,6 +862,13 @@ var mcpStatusFn = readOnlyStatus.getPollableStatus
 
 func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 	return mcpActions{
+		peopleChange: func(ctx context.Context, args peopleArguments, update bool) (any, error) {
+			return changePeople(ctx, paths, args, update)
+		},
+		peopleList: func() (any, error) { return listPeople(paths) },
+		peopleRemove: func(ctx context.Context, who string, reconcile map[string]string) (any, error) {
+			return removePeopleContext(ctx, paths.Registry, who, reconcile)
+		},
 		share: func(ctx context.Context, req shareRequest) (ShareResult, error) {
 			return executeShare(ctx, paths, req, defaultURLWait, errOut)
 		},
@@ -859,6 +913,7 @@ func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 				return nil, err
 			}
 			result := mcpStatusSummary{
+				Credentials: status.Credentials, Alerts: status.Alerts, Services: mcpHealthServices(status.Services),
 				Supervision:            status.Supervision,
 				Authenticated:          status.Authenticated,
 				CredentialStored:       status.CredentialStored,
@@ -941,6 +996,11 @@ func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 		inviteResend: func(ctx context.Context, kind, id string) (any, error) {
 			return inviteResendExecute(ctx, staticInvitePaths(paths.Registry, paths.PID, paths.Snapshot), kind, id)
 		},
+		appsDetect: func(ctx context.Context) (any, error) { return detectApps(ctx, paths.Registry) },
+		recipeList: func() (any, error) { return recipes.List(), nil },
+		recipeApply: func(ctx context.Context, req recipeRequest, dryRun bool) (any, error) {
+			return applyRecipe(ctx, req, paths.Registry, dryRun, errOut)
+		},
 		templateList: func() (any, error) {
 			return listTemplatesResult(), nil
 		},
@@ -988,7 +1048,7 @@ const mcpServerName = "tslink"
 // It names the tools whose descriptions carry a confirmation requirement, so a
 // client that reads instructions before tool descriptions still gets the
 // warning.
-const mcpInstructions = "Use share to expose a local page to the private tailnet. A needs_login tool result is successful: open auth_url and retry after authorization. Confirm with the user before any tool whose description says it publishes publicly, deletes, or sends a real invitation: share/add with funnel true, unshare, and invite_user, invite_device, invite_revoke, invite_resend."
+const mcpInstructions = "Use share to expose a local page to the private tailnet. A needs_login tool result is successful: open auth_url and retry after authorization. Confirm with the user before any tool whose description says it publishes publicly, deletes, or sends a real invitation: share/add with funnel true, unshare, people_add, people_update, people_remove, and invite_user, invite_device, invite_revoke, invite_resend."
 
 // mcpServerVersion is the version reported in serverInfo. Unstamped
 // development builds report "dev" rather than an empty string, which some
@@ -1505,31 +1565,58 @@ func callMCPTool(ctx context.Context, actions mcpActions, name string, arguments
 	// is absent; their result reports an install as daemon_installed.
 	var install *daemonInstallRecord
 	switch name {
-	case "share", "add", "template_apply":
+	case "share", "add", "template_apply", "recipe_apply":
 		ctx, install = recordDaemonInstall(ctx)
 	}
 	switch name {
+	case "people_add", "people_update":
+		var args peopleArguments
+		decodeErr := decodePeopleMCPArguments(arguments, &args)
+		if refusal := mcpArgumentsRefusal(name, decodeErr, mcpRequiredArgument{"who", args.Who}); refusal != nil {
+			return refusal, nil
+		}
+		data, err = actions.peopleChange(ctx, args, name == "people_update")
+	case "people_list":
+		var args struct{}
+		if refusal := mcpArgumentsRefusal(name, decodeMCPArguments(arguments, &args)); refusal != nil {
+			return refusal, nil
+		}
+		data, err = actions.peopleList()
+	case "people_remove":
+		var args struct {
+			Who       string            `json:"who"`
+			Reconcile map[string]string `json:"reconcile_invites,omitempty"`
+		}
+		decodeErr := decodePeopleMCPArguments(arguments, &args)
+		if refusal := mcpArgumentsRefusal(name, decodeErr, mcpRequiredArgument{"who", args.Who}); refusal != nil {
+			return refusal, nil
+		}
+		data, err = actions.peopleRemove(ctx, args.Who, args.Reconcile)
 	case "share":
 		var args struct {
-			NoDaemonInstall bool     `json:"no_daemon_install,omitempty"`
-			Target          string   `json:"target"`
-			Name            string   `json:"name,omitempty"`
-			Ephemeral       *bool    `json:"ephemeral,omitempty"`
-			Allow           []string `json:"allow,omitempty"`
-			Tags            []string `json:"tags,omitempty"`
-			Funnel          bool     `json:"funnel,omitempty"`
-			PublicAck       bool     `json:"public_ack,omitempty"`
-			FunnelTTL       *string  `json:"funnel_ttl,omitempty"`
+			RequestLimits   *registry.RequestLimits `json:"request_limits,omitempty"`
+			NoDaemonInstall bool                    `json:"no_daemon_install,omitempty"`
+			Target          string                  `json:"target"`
+			Name            string                  `json:"name,omitempty"`
+			PreserveHost    bool                    `json:"preserve_host,omitempty"`
+			Ephemeral       *bool                   `json:"ephemeral,omitempty"`
+			Allow           []string                `json:"allow,omitempty"`
+			Tags            []string                `json:"tags,omitempty"`
+			Funnel          bool                    `json:"funnel,omitempty"`
+			PublicAck       bool                    `json:"public_ack,omitempty"`
+			FunnelTTL       *string                 `json:"funnel_ttl,omitempty"`
 		}
 		decodeErr := decodeMCPArguments(arguments, &args)
 		if refusal := mcpArgumentsRefusal("share", decodeErr, mcpRequiredArgument{"target", args.Target}); refusal != nil {
 			return refusal, nil
 		}
 		req := shareRequest{
+			RequestLimits:   args.RequestLimits,
 			NoDaemonInstall: args.NoDaemonInstall,
 			Target:          args.Target,
 			Name:            args.Name,
 			Ephemeral:       true,
+			PreserveHost:    args.PreserveHost,
 			Allow:           args.Allow,
 			Tags:            args.Tags,
 			Funnel:          args.Funnel,
@@ -1682,6 +1769,12 @@ func callMCPTool(ctx context.Context, actions mcpActions, name string, arguments
 			return refusal, nil
 		}
 		data, err = actions.inviteResend(ctx, args.Kind, args.InviteID)
+	case "apps_detect", "recipe_list", "recipe_plan", "recipe_apply":
+		var refusal *mcp.CallToolResult
+		data, refusal, err = callRecipeMCPTool(ctx, actions, name, arguments)
+		if refusal != nil {
+			return refusal, nil
+		}
 	case "template_list":
 		var args struct{}
 		decodeErr := decodeMCPArguments(arguments, &args)

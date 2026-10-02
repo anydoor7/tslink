@@ -68,11 +68,22 @@ const mcpJSONFlagExclusion = "MCP tool results are always structured JSON; --jso
 
 // mcpCoveredCommands is the mapping half of the partition.
 var mcpCoveredCommands = map[string]mcpCoveredCommand{
+	"tslink people add":    {Tools: []string{"people_add"}, Args: []string{"who"}, Flags: map[string]string{"apps": "apps", "for": "for", "invite": "invite", "print-links": "print_links"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
+	"tslink people update": {Tools: []string{"people_update"}, Args: []string{"who"}, Flags: map[string]string{"apps": "apps", "for": "for", "invite": "invite", "print-links": "print_links", "reconcile-invite": "reconcile_invites", "replace-invite": "replace_invites"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
+	"tslink people list":   {Tools: []string{"people_list"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
+	"tslink people remove": {Tools: []string{"people_remove"}, Args: []string{"who"}, Flags: map[string]string{"reconcile-invite": "reconcile_invites"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
 	"tslink share": {
 		Tools: []string{"share"},
 		Args:  []string{"target"},
 		Flags: map[string]string{
+			"max-request-body":           "request_limits.max_body",
+			"ack-unlimited-request-body": "request_limits.unlimited_ack",
+			"request-header-timeout":     "request_limits.header_timeout",
+			"request-read-timeout":       "request_limits.read_timeout",
+			"idle-timeout":               "request_limits.idle_timeout",
+
 			"no-daemon-install": "no_daemon_install",
+			"preserve-host":     "preserve_host",
 			"ephemeral":         "ephemeral",
 			"name":              "name",
 		},
@@ -85,9 +96,17 @@ var mcpCoveredCommands = map[string]mcpCoveredCommand{
 		Tools: []string{"add"},
 		Args:  []string{"name", "type"},
 		Flags: map[string]string{
+			"health-path": "health", "health-body": "health", "health-status-min": "health", "health-status-max": "health", "health-timeout": "health", "health-interval": "health",
+			"max-request-body":           "request_limits.max_body",
+			"ack-unlimited-request-body": "request_limits.unlimited_ack",
+			"request-header-timeout":     "request_limits.header_timeout",
+			"request-read-timeout":       "request_limits.read_timeout",
+			"idle-timeout":               "request_limits.idle_timeout",
+
 			"allow":             "allow",
 			"control-url":       "control_url",
 			"dir":               "dir",
+			"preserve-host":     "preserve_host",
 			"ephemeral":         "ephemeral",
 			"funnel":            "funnel",
 			"funnel-ttl":        "funnel_ttl",
@@ -100,9 +119,12 @@ var mcpCoveredCommands = map[string]mcpCoveredCommand{
 		},
 		ExcludedFlags: map[string]string{
 
-			"dry-run": "the add tool has one closed output schema for the write path and does not model the dry-run service preview",
-			"json":    mcpJSONFlagExclusion,
-			"wait":    "the add tool returns immediately with url_pending; an agent polls with the url tool, which takes its own wait",
+			"recipe":              "recipe_id is exposed through recipe_plan and recipe_apply, keeping generic add unchanged",
+			"yes":                 "recipe_apply is the recipe write action",
+			"force-unsafe-public": "force_unsafe_public is exposed only through recipe tools",
+			"dry-run":             "the add tool has one closed output schema for the write path and does not model the dry-run service preview",
+			"json":                mcpJSONFlagExclusion,
+			"wait":                "the add tool returns immediately with url_pending; an agent polls with the url tool, which takes its own wait",
 		},
 	},
 	"tslink list": {
@@ -210,6 +232,12 @@ var mcpCoveredCommands = map[string]mcpCoveredCommand{
 		Flags:         map[string]string{"kind": "kind"},
 		ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion},
 	},
+	"tslink apps list":   {Tools: []string{"recipe_list"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
+	"tslink apps detect": {Tools: []string{"apps_detect"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
+	"tslink apps share": {Tools: []string{"recipe_plan", "recipe_apply"}, Args: []string{"recipe_id"}, Flags: map[string]string{
+		"health-path": "health", "health-body": "health", "health-status-min": "health", "health-status-max": "health", "health-timeout": "health", "health-interval": "health",
+		"max-request-body": "request_limits", "ack-unlimited-request-body": "request_limits", "request-header-timeout": "request_limits", "request-read-timeout": "request_limits", "idle-timeout": "request_limits",
+		"preserve-host": "preserve_host", "name": "name", "proxy": "target", "allow": "allow", "tags": "tags", "ephemeral": "ephemeral", "funnel": "funnel", "public": "public_ack", "funnel-ttl": "funnel_ttl", "no-auto-provision": "no_auto_provision", "no-daemon-install": "no_daemon_install", "control-url": "control_url", "force-unsafe-public": "force_unsafe_public"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion, "dry-run": "recipe_plan is the preview action", "yes": "recipe_apply is the write action"}},
 	"tslink template list": {
 		Tools:         []string{"template_list"},
 		ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion},
@@ -232,7 +260,9 @@ var mcpCoveredCommands = map[string]mcpCoveredCommand{
 // agent does *to a service*; daemon lifecycle, installation, credentials,
 // global configuration and log reading stay on the CLI.
 var mcpUncoveredCommands = map[string]string{
+	"tslink people":             "command group; all four leaves are covered",
 	"tslink":                    "the root command carries only the global --json flag and runs no action of its own",
+	"tslink apps":               "command group; list, detect and share are covered",
 	"tslink access":             "command group; its only leaf, access explain, is covered",
 	"tslink invite":             "command group; every leaf is covered",
 	"tslink tags":               "command group; the covered leaves are tags list and tags set",
@@ -285,10 +315,20 @@ func mcpManifestFixture(t *testing.T) CLIManifest {
 func mcpToolInputProperties(t *testing.T, tools []string) map[string]struct{} {
 	t.Helper()
 	properties := map[string]struct{}{}
-	for _, name := range tools {
-		for property := range mcpToolByName(t, name).InputSchema["properties"].(map[string]any) {
-			properties[property] = struct{}{}
+	var visit func(string, map[string]any)
+	visit = func(prefix string, fields map[string]any) {
+		for property, raw := range fields {
+			key := prefix + property
+			properties[key] = struct{}{}
+			if schema, ok := raw.(map[string]any); ok {
+				if nested, ok := schema["properties"].(map[string]any); ok {
+					visit(key+".", nested)
+				}
+			}
 		}
+	}
+	for _, name := range tools {
+		visit("", mcpToolByName(t, name).InputSchema["properties"].(map[string]any))
 	}
 	return properties
 }
@@ -625,7 +665,7 @@ func TestCompiledCLIAndMCPServiceDataAgree(t *testing.T) {
 		if !mcp.DaemonRunning || mcp.ServiceCount != 2 {
 			t.Fatalf("status projection = %+v, want the seeded daemon and two services", mcp)
 		}
-		if strings.Contains(mcpText, "credentials") || strings.Contains(mcpText, "daemon_pid") {
+		if strings.Contains(mcpText, "daemon_pid") || strings.Contains(mcpText, "ownership_proof") {
 			t.Fatalf("status projection leaked owner-only fields: %s", mcpText)
 		}
 	})

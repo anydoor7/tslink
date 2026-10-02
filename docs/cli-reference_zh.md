@@ -1,5 +1,13 @@
 # CLI 参考
 
+## 按人分享
+
+`tslink people add <login-or-email> --apps photos,finance|all [--for 7d] [--invite] [--print-links]` 授予私有 HTTP/文件访问并生成接收者说明。`all` 选当前私有 HTTP/文件应用，排除 TCP/Funnel。`--for` 接受正时长（含天数）或 `never`，省略时无期限。`--invite` 用用户拥有的 API token 创建每应用单次邀请链接；只有显式 `--print-links` 才输出 bearer 链接。
+
+`tslink people list [--json]` 列人员、应用授权、绝对期限、有效状态和撤销记录。`tslink people update <who> [--apps list|all] [--for duration|never] [--invite] [--print-links]` 至少要求 apps、期限或 invite，省略设置时保留原值（未指定期限的新应用无期限）。`tslink people remove <who>` 在所有私有 HTTP/文件应用撤销该人，包括匹配的旧 allow 条目。所有命令使用现有 JSON envelope；邀请部分失败返回 `data.complete: false`，保留本地授权。身份校验、现有 WebSocket 连接、时钟变化及 schema 2 降级规则见[人员分享](people_zh.md)。
+
+人员登录字符串须为有效 UTF-8,仅拒绝空串、控制字符和内部空白。无效 UTF-8 使用 `usage_error`;无效 WhoIs 身份拒绝访问。移除首尾 ASCII space/tab/CR/LF/VT/FF,只把 ASCII A-Z 转为小写,不折叠或规范化 Unicode,逐字节比较。支持标点及非 ASCII 地址,Unicode 相似字符保持不同。`people update --invite --replace-invite app=已记录旧ID` 明确确认远端缺失后的替换,保留授权和期限,不能同时用 `--apps` 或 `--for`;MCP 使用 `replace_invites`。确认节点已删除时以 `target_gone` 完成清理并保留证据。缺失证据必须来自 HTTP 200、非空 body 及存在且非 null 的设备/邀请数组;其他 2xx、空/null 或畸形列表延后清理和恢复,不退役旧记录,不记录终态,不发送替换 POST。update 可只指定 `--invite` 继续未完成操作。update/remove 支持重复的 `--reconcile-invite app=id|none`，须拥有者核对未知 POST 结果。remove 先保存本地拒绝，再用 `complete`/`cleanup` 报告未接受邀请的远端清理；无 token 延后清理。`access explain`/`access_explain` 显示脱敏的人员策略并指向 `people list`。持久化状态及不承诺 exactly-once 的说明见人员指南。
+
 ## 命令
 
 | 命令 | 描述 |
@@ -42,13 +50,16 @@
 | `tslink config` | 管理全局配置，子命令为 set、get、list |
 | `tslink manifest` | 打印每个命令、flag、退出码和 error code 的机器可读描述 |
 | `tslink registry check [path]` | 严格校验一个 `registry.json`，不做任何修改 |
-| `tslink install` | 开机自启（macOS LaunchAgent / Linux systemd / Windows 启动文件夹） |
+| `tslink install` | 用户登录时自启（macOS LaunchAgent / Linux systemd / Windows Task Scheduler） |
 | `tslink uninstall` | 移除自启 |
 
 首次运行时，默认 registry 文件尚不存在是有效的空状态。显式传入不存在的
 `registry check <path>` 会报 `not_found`（退出码 5）。registry JSON 语法、字段类型
 或尾部数据有误时，会报 `usage_error`（退出码 2），并给出文件路径和修复指引。
 `list`、`status` 和 `doctor` 会在健康服务旁显示有误条目；修改 registry 前应先修复或移除它。
+
+`serve` 首次启动期间，相同 registry 状态的通知会复用正在进行的节点构造。
+状态发生变化时，仍会替代待完成的启动，并在报告就绪前应用更新后的状态。
 
 ### 退出码
 
@@ -65,11 +76,12 @@
 
 ### add 命令标志
 
-对已存在的名字执行 `tslink add` 会替换那个 service：替换只保留这次给出的 flag，没有重复写的 `--allow`、`--tags`、`--funnel` 等都会丢掉。JSON 结果列出 `replaced_fields`，访问权限或 node 身份改变时会给出警告。
+未使用 `--recipe` 时，对已存在的名字执行 `tslink add` 会替换那个 service：替换只保留这次给出的 flag，没有重复写的 `--allow`、`--tags`、`--funnel` 等都会丢掉。JSON 结果列出 `replaced_fields`，访问权限或 node 身份改变时会给出警告。
 
 | 标志 | 描述 |
 |------|------|
 | `--proxy host:port` | 反向代理到本地 HTTP 服务 |
+| `--preserve-host[=false]` | 仅 proxy：转发节点自身可信的外部 canonical Host；普通 add/share 默认 false，recipe 自带默认值；显式 false 可覆盖 recipe。 |
 | `--dir /path` | 文件目录服务 |
 | `--tcp host:port` | 原始 TCP 转发 |
 | `--dry-run` | 校验并打印服务，不写入注册表 |
@@ -82,5 +94,71 @@
 | `--funnel-ttl 1h\|8h\|24h\|72h\|7d\|never` | Funnel 公网期限，默认 `24h`；需要 `--funnel` |
 | `--no-auto-provision` | 关闭该服务的 Funnel policy 自动配置；需要 `--funnel` |
 | `--no-daemon-install` | 只保存配置，不安装或启动 daemon |
+| `--health-path /ready` | 拼接到 proxy backend base path 的 HTTP 业务探针路径，默认 `/` |
+| `--health-status-min N`、`--health-status-max N` | 预期 HTTP 状态范围，默认 200..299，仅 proxy |
+| `--health-body text` | 前 64 KiB 内的预期子串，默认不检查，仅 proxy |
+| `--health-timeout duration` | worker 准入后的 I/O 超时 100ms..30s，默认 `5s` |
+| `--health-interval duration` | 检查间隔 10s..1d 且不小于超时，默认 `1m` |
 | `--wait duration` | 等待 URL 或授权 URL；默认 `30s`，`0` 表示不等待 |
 | `--json` | 打印版本化的结果 envelope |
+
+应用健康 (`healthy`/`degraded`/`down`/`unknown`)、检查时间和连续失败次数出现在 status、list JSON、`list --verbose`、MCP 与 `/events`。节点 key 和凭据采用 14 天/3 天到期预警，提供下一步并保留 metadata 来源。`doctor` 增加实时 HTTP 业务探针，3 天到期预警为 critical (exit 65)。Owner 通知通过 `alerts.json` 显式启用；事件与重启去重状态默认持久化。详见[健康与通知](health-and-alerts_zh.md)。
+
+HTTP/TCP 探针执行 registry 的 target 安全校验。节点到期独立于 `--health-interval` 刷新，替换节点后旧日期立即失效。每 service 每个池最多一个 read；排队另有五秒上限，未尝试不更新失败计数或检查时间。池被卡住时，`alerts.monitor_error=health_monitor_saturated` 与 monitor 饱和/恢复事件分别报告，doctor 为 warning。就绪结果批量落盘，无变化不写。Status 和 doctor 从 durable journal 读取事件和 monitor 状态，snapshot 仅可补充写盘错误。通知采用有界队列；command 的 deadline 为 10 秒，pipe 清理额外最多 250ms，取消计为失败。
+
+### 应用 recipes
+
+| 命令或标志 | 行为 |
+|---|---|
+| `tslink apps list` | 版本化 catalog，包含配置片段、安全策略和带访问日期的官方文档 |
+| `tslink apps detect` | 无凭据地向 OS TCP listener 的 loopback HTTP 发请求，返回置信度及已有注册 |
+| `tslink apps share <id>` | 用建议的名称及目标预览单个 recipe |
+| `tslink add [name] --recipe <id>` | 等价预览，可用位置参数自定义名称 |
+| `--yes` | 应用计划，保留已有同名服务 |
+| `--dry-run` | 只预览，即使同时有 `--yes` |
+| `--proxy host:port` | 覆盖 recipe 的 loopback HTTP(S) 宿主机目标 |
+| `--name name` | `apps share` 的名称覆盖；`add` 用位置参数 |
+| `--force-unsafe-public` | 危险：覆盖 `never_public` 策略；必须有 `--funnel --public`，可能向所有人暴露主机控制或私密数据 |
+
+Recipes 支持 `--allow`、`--tags`、`--ephemeral`、`--control-url`、已有 Funnel 确认/TTL/自动配置标志及 `--no-daemon-install`。`add --recipe` 拒绝 `--dir`、`--tcp`、`--wait`；应用后用 `tslink url` 轮询。无 `--recipe` 的普通 `add` 保留替换行为，拒绝 recipe 专用标志。
+
+计划/应用 JSON data 包含 `recipe`、`requested`、`service`、`action`、`dry_run`、`applied`、`warnings`、`next`。只有此次创建服务才返回 `applied=true`；`skip_existing` 展示保留的实际配置。探测包含 `listeners`、`matches`、`complete`、`warnings`，部分扫描返回 `complete=false`。新建 recipe 服务默认使用 catalog 健康路径；`apps share`、`add --recipe` 支持 `--health-*` 与 request-limit 覆盖，MCP `recipe_plan`/`recipe_apply` 支持 `health`、`request_limits`。复用保留已有配置，包括 people scope 和授权。
+
+MCP 工具为 `recipe_list`、只读 `apps_detect`、`recipe_plan`、`recipe_apply`；计划/应用接收 `recipe_id`、可选 `name`/`target`、字符串 `allow`/`tags` 及上述 flag 的 snake_case 参数。先 plan 后 apply。已有通用 `template` 命令及 `template_list/plan/apply` 工具继续工作。见[应用设置与限制](apps_zh.md)。
+
+`share <port|host:port>` 也支持 `--preserve-host`（默认 false）；文件/目录 share 拒绝 true。启用后，Host 和 X-Forwarded-Host 均使用节点自身的外部 canonical DNS 名称，不使用客户端 authority。优先取 runtime 的第一个证书域名，否则取节点 DNS FQDN，与分享的 HTTPS URL 一致，Funnel 也采用此规则。名称转为小写，去掉末尾点，不带端口。名称缺失或无效时返回 HTTP 503 `canonical_host_unavailable`，不请求后端。客户端别名及其他 authority 均按 canonical 名称转发，不额外返回 421。默认模式保留上游 Host 改写及原有的传入 authority X-Forwarded-Host 行为；两种模式的 X-Forwarded-Proto/For 均来自真实请求，Origin 不变。复用时 Host 策略不同会报冲突。已有服务及通用 templates 保持上游 Host 改写。Registry 的 `preserve_host` 是可选 proxy 布尔字段，缺省为 false；recipe 可通过 `--preserve-host=false` 或 MCP `preserve_host:false` 覆盖。Status/list 服务投影及 `access explain` 显示配置策略；全局失败且 registry 不可读时策略未知，status 省略该字段。
+### HTTP 请求限制 (add 和 share)
+
+| 标志 | 默认值 | 含义 |
+|------|--------|------|
+| `--max-request-body 20GiB` | `32MiB` | 上传大小上限; 支持正整数字节、B、KiB/MiB/GiB/TiB 或十进制 KB/MB/GB/TB |
+| `--ack-unlimited-request-body` | false | 与 `--max-request-body unlimited` 一起使用, 明确确认移除大小上限 |
+| `--request-header-timeout 20s` | `10s` | 接收完整请求头的最长时间 |
+| `--request-read-timeout 2m` | `30s` | 正在读取上传内容时允许无进展的最长时间; 持续上传没有总时长截止 |
+| `--idle-timeout 90s` | `60s` | HTTP keep-alive 请求之间的空闲时间 |
+
+超时必须是正数 Go duration, 例如 `30s` 或 `2m`。适用于 proxy/file 服务;
+raw TCP 不接受 HTTP 请求限制。add 替换同名服务时, 未重复的限制恢复默认值;
+share 只复用有效限制相同的服务。
+HTTP/1 和 HTTP/2 的上传无进展窗口只覆盖正在进行的请求体读取，
+后端反压和慢响应不消耗这个窗口。
+限制冲突会列出不同的标志和当前值、请求值; 用完整服务配置执行 add 进行修改。
+未使用或被拒绝的 HTTP/1 请求体有最多 1s 的绝对清理期限;
+`--request-read-timeout` 小于 1s 时采用该值。清理未完成则关闭连接,
+不会对已接受的上传施加总时长超时。
+
+`add --json`、`share --json`、`status --urls --json` 和 `list --verbose --json`
+在 `request_limits` 中返回 `max_body_bytes`、`header_timeout`、`read_timeout`
+和 `idle_timeout`。`max_body_bytes:-1` 表示已确认的无限制。
+普通 `status --urls` 和 `list --verbose` 也显示有效限制。envelope 保持 schema version 1。
+MCP add/share 接受可选对象 `request_limits: {"max_body":"20GiB","read_timeout":"2m"}`;
+无限制必须提供 `{"max_body":"unlimited","unlimited_ack":true}`。省略的字段使用默认值。
+
+大小超限返回 413; 上传停止进展或请求头未及时完成返回 408。
+结构化日志记录服务名、限制、状态码及 code (`request_body_limit`、
+`request_read_timeout`、`request_header_timeout`)。每类限制首次命中会保留在当前节点
+的 runtime warning 中; status 和 verbose list 显示 warning, doctor 建议对应标志。
+节点重启后清除这些 warning。流式上传拒绝时后端可能已接收部分内容。
+应用后端及公网 relay 自身的限制仍然有效。
+
+Windows `tslink install --startup` 显式选择下次登录启动、无崩溃恢复的 Startup 降级。默认 `install` 使用 Task Scheduler 启动内置 supervisor 并验证立即启动。`stop` 停止两个进程，包括崩溃退避期间；`install` 重置已触发的崩溃循环断路器。见[daemon 生命周期](daemon-lifecycle_zh.md#windows-监管与迁移)。

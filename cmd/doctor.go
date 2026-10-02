@@ -20,6 +20,7 @@ import (
 	"github.com/anydoor7/tslink/internal/config"
 	"github.com/anydoor7/tslink/internal/credentials"
 	"github.com/anydoor7/tslink/internal/daemon"
+	"github.com/anydoor7/tslink/internal/health"
 	"github.com/anydoor7/tslink/internal/inspect"
 	"github.com/anydoor7/tslink/internal/lifecycle"
 	"github.com/anydoor7/tslink/internal/output"
@@ -169,6 +170,10 @@ type doctorOptions struct {
 }
 
 type DoctorResult struct {
+	canonicalHosts  map[string]string
+	NodeKeys        map[string]health.Expiry    `json:"node_keys"`
+	Credentials     StatusCredentials           `json:"credentials"`
+	Alerts          health.AlertsView           `json:"alerts"`
 	Supervision     Supervision                 `json:"supervision"`
 	SchemaVersion   int                         `json:"schema_version"`
 	ExecutionStatus string                      `json:"execution_status"`
@@ -316,6 +321,11 @@ func buildDoctorResult(opts doctorOptions) DoctorResult {
 			reg = loaded
 			registryIssues = issues
 			result.Counts.Services = len(reg.Services)
+			result.NodeKeys = map[string]health.Expiry{}
+			result.Alerts = readAlertsForRegistry(result.Paths.Registry)
+			for _, svc := range reg.Services {
+				result.NodeKeys[svc.Name] = health.Expiry{State: health.Unknown, Source: "unavailable"}
+			}
 			if fp, err := tsruntime.CurrentRegistryFingerprint(result.Paths.Registry); err != nil {
 				result.addFinding(inspect.WarningCodeRegistryLoadFailed, "", "registry", "Registry fingerprint could not be computed.", evidenceError(err))
 			} else {
@@ -330,11 +340,14 @@ func buildDoctorResult(opts doctorOptions) DoctorResult {
 	}
 	diagnoseDaemon(&result, serviceCount)
 	result.Supervision = detectSupervisionFn(result.Paths.PID, result.Daemon.Running, result.Daemon.PID)
+	if result.Supervision.RuntimeState == "circuit_open" || result.Supervision.RuntimeState == "failed" {
+		result.addFinding(inspect.WarningCodeDaemonRestartUnavailable, "", "daemon", "Built-in supervisor stopped crash recovery: "+result.Supervision.FailureReason+". Inspect logs, then run 'tslink install'.", nil)
+	}
 	if serviceCount > 0 && !result.Daemon.IdentityUnverified && (!result.Supervision.Autostart || result.Supervision.Manager == "manual" || result.Supervision.Manager == "none") {
 		result.addFinding(inspect.WarningCodeDaemonUnsupervised, "", "daemon", "Registered services have no verified supervisor/autostart; run 'tslink install'. "+result.Supervision.Detail, nil)
 	}
 	if serviceCount > 0 && result.Supervision.Manager == "windows-startup" && result.Supervision.Autostart && !result.Supervision.RestartOnExit {
-		result.addFinding(inspect.WarningCodeDaemonRestartUnavailable, "", "daemon", "Windows Startup starts TSLink at sign-in but does not restart it after a crash.", nil)
+		result.addFinding(inspect.WarningCodeDaemonRestartUnavailable, "", "daemon", "Windows Startup starts TSLink at sign-in but does not restart it after a crash. Stop the daemon and run 'tslink install' to migrate to Task Scheduler when available.", nil)
 	}
 	invalidServices := make(map[string]bool, len(registryIssues))
 	for _, issue := range registryIssues {
@@ -355,6 +368,14 @@ func buildDoctorResult(opts doctorOptions) DoctorResult {
 		evidence := evidenceError(issue.Err)
 		evidence["valid_services"] = strings.Join(validNames, ", ")
 		result.addFinding(doctorRegistryValidationCode(issue.Service, issue.Err), issue.Name, "registry", issue.Error(), evidence)
+	}
+	// Resolve verified receiving-node names before HTTP business probes.
+	pendingEnrollment := diagnosePendingEnrollment(&result)
+
+	completedEnrollment := false
+	if reg != nil && (serviceCount > 0 || result.Daemon.Running) && result.Paths.RuntimeSnapshot != "" && fingerprint != "" {
+		suppressExpectedMissing := credentialState.CredentialFree && (pendingEnrollment || !result.Daemon.Running)
+		completedEnrollment = diagnoseRuntimeSnapshot(&result, fingerprint, suppressExpectedMissing)
 	}
 	hasFunnel := false
 	if reg != nil {
@@ -380,14 +401,10 @@ func buildDoctorResult(opts doctorOptions) DoctorResult {
 		)
 	}
 
-	pendingEnrollment := diagnosePendingEnrollment(&result)
-
-	completedEnrollment := false
-	if reg != nil && (serviceCount > 0 || result.Daemon.Running) && result.Paths.RuntimeSnapshot != "" && fingerprint != "" {
-		suppressExpectedMissing := credentialState.CredentialFree && (pendingEnrollment || !result.Daemon.Running)
-		completedEnrollment = diagnoseRuntimeSnapshot(&result, fingerprint, suppressExpectedMissing)
-	}
 	diagnoseCredentialTier1(&result, credentialState, pendingEnrollment, completedEnrollment)
+	if result.Alerts.MonitorError != "" {
+		result.addFinding(inspect.WarningCodeHealthMonitorSaturated, "", "health_monitor", "Health monitor slots are stuck; some checks were not attempted. Monitoring recovers when reads finish.", nil)
+	}
 	diagnoseTailscaleSSH(&result)
 
 	result.finalize()
@@ -569,6 +586,9 @@ func diagnoseCredentialExpiry(result *DoctorResult, values credentials.SlotValue
 	}
 	now := doctorNowFn()
 	inventory := doctorCredentialInventoryFn(values, now, !opts.ReadOnly)
+	result.Credentials, _ = statusCredentialsFromInventory(inventory, false)
+	result.Credentials.APIKey.EarlyWarning = credentialEarlyWarning(result.Credentials.APIKey, now)
+	result.Credentials.ClientSecret.EarlyWarning = credentialEarlyWarning(result.Credentials.ClientSecret, now)
 	if inventory.MetadataError != nil {
 		result.addFinding(inspect.WarningCodeCredentialExpiryUnknown, "", "credentials", "", evidenceError(inventory.MetadataError))
 	}
@@ -601,6 +621,12 @@ func diagnoseCredentialExpiry(result *DoctorResult, values credentials.SlotValue
 		}
 		if view.DaysLeft != nil {
 			evidence["days_left"] = strconv.Itoa(*view.DaysLeft)
+		}
+		if view.Metadata != nil {
+			e := health.ExpiryAt(view.Metadata.ExpiresAt, view.Metadata.ExpiresAtSource, now, nil)
+			if e.Warning == "critical_3d" {
+				result.addFinding(inspect.WarningCodeCredentialCritical, "", "credentials", "", evidence)
+			}
 		}
 		switch view.ExpiryState {
 		case credentials.ExpiryStateExpiring:
@@ -801,11 +827,55 @@ func diagnoseRuntimeSnapshot(result *DoctorResult, fingerprint string, suppressM
 	}
 	freshness := tsruntime.Classify(snapshot, loadErr, expected)
 	result.RuntimeSnapshot = runtimeSnapshotResult(snapshot, freshness)
+	if snapshot != nil {
+		result.Alerts = alertsWithSnapshot(result.Alerts, snapshot.Alerts, result.Daemon.Running && snapshotContributesRuntimeEvidence(freshness))
+	}
 	// completedEnrollment mirrors status's per-service evidence rule: only a
 	// snapshot entry that is actually running counts as positive enrollment
 	// evidence. Counting failed or stale entries here would let doctor report
 	// authorized runtime state while status shows nothing up.
 	completedEnrollment := false
+	if snapshotContributesRuntimeEvidence(freshness) && snapshot != nil {
+		for _, service := range snapshot.Services {
+			for _, warning := range service.Warnings {
+				if flag := registry.RequestLimitFlag(warning.Code); flag != "" {
+					result.addFinding(warning.Code, service.Name, "http.request_limits", warning.Message, map[string]string{"suggested_flag": flag})
+				}
+			}
+		}
+		result.canonicalHosts = map[string]string{}
+		for _, svc := range snapshot.Services {
+			if runtimeServiceRunning(svc) && svc.Endpoint.State == inspect.EndpointStateExact {
+				result.canonicalHosts[svc.Name] = registry.CanonicalProxyHost(svc.CertDomains, svc.Endpoint.Host)
+			}
+		}
+
+		if result.NodeKeys == nil {
+			result.NodeKeys = map[string]health.Expiry{}
+		}
+		for _, svc := range snapshot.Services {
+			e := health.ExpiryAt(svc.NodeKey.ExpiresAt, svc.NodeKey.Source, doctorNowFn(), nodeExpiryNext())
+			result.NodeKeys[svc.Name] = e
+			code := inspect.WarningCodeNodeKeyUnknown
+			switch e.Warning {
+			case "warning_14d":
+				code = inspect.WarningCodeNodeKeyExpiring
+			case "critical_3d":
+				code = inspect.WarningCodeNodeKeyCritical
+			case "expired":
+				code = inspect.WarningCodeNodeKeyExpired
+			default:
+				if e.DaysLeft != nil {
+					continue
+				}
+			}
+			evidence := map[string]string{"source": e.Source}
+			if e.DaysLeft != nil {
+				evidence["days_left"] = strconv.Itoa(*e.DaysLeft)
+			}
+			result.addFinding(code, svc.Name, "node_key", "", evidence)
+		}
+	}
 	if snapshotContributesRuntimeEvidence(freshness) && snapshot != nil {
 		for i := range snapshot.Services {
 			state := snapshot.Services[i].RuntimeState
@@ -927,7 +997,14 @@ func diagnoseNetworkTarget(result *DoctorResult, svc registry.Service, opts doct
 	if err := doctorProbeTargetFn(ctx, target.ProbeAddress, doctorProbeTimeout); err != nil {
 		code := classifyProbeError(err)
 		result.addFinding(code, svc.Name, "target_probe", inspect.WarningCodeRegistry[code].Description, nil)
+		return
 	}
+	if svc.Type == registry.TypeProxy {
+		if code := doctorHTTPProbeFn(health.WithCanonicalHost(context.Background(), result.canonicalHosts[svc.Name]), svc); code != "" {
+			result.addFinding(inspect.WarningCodeAppProbeFailed, svc.Name, "app_probe", "", map[string]string{"error_code": code})
+		}
+	}
+
 }
 
 func classifyServiceTarget(svc registry.Service) (doctorTarget, error) {
@@ -1144,6 +1221,18 @@ func doctorExit(result DoctorResult) error {
 }
 
 func formatDoctor(result DoctorResult, out io.Writer) {
+	formatEarlyWarnings(out, result.Credentials)
+	formatAlerts(out, result.Alerts)
+	for name, key := range result.NodeKeys {
+		if key.DaysLeft == nil {
+			fmt.Fprintf(out, "Node %s key expiry: unknown\n", name)
+		} else {
+			fmt.Fprintf(out, "Node %s key expiry: %dd left %s\n", name, *key.DaysLeft, key.Warning)
+		}
+		for _, step := range key.Next {
+			fmt.Fprintf(out, "Next: %s\n", step)
+		}
+	}
 	fmt.Fprintf(
 		out,
 		"TSLink doctor: %s (%d errors, %d warnings, %d info)\n",

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -20,6 +21,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/anydoor7/tslink/internal/authmode"
@@ -29,6 +31,7 @@ import (
 	"github.com/anydoor7/tslink/internal/tailapi"
 	"github.com/anydoor7/tslink/internal/testenv"
 	"github.com/anydoor7/tslink/internal/testenv/localapitest"
+	"github.com/fsnotify/fsnotify"
 	"tailscale.com/ipn"
 	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/tailcfg"
@@ -70,17 +73,19 @@ func startRegistryWatcherTest(t *testing.T, s *Server) func() {
 	t.Helper()
 
 	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		s.watchRegistry(ctx)
-	}()
+	// Add and credential priming must finish before a caller can write. The
+	// product's startup path already provides this synchronous readiness boundary.
+	done, err := s.startRegistryWatcher(ctx)
+	if err != nil {
+		cancel()
+		t.Fatalf("startRegistryWatcher() error = %v", err)
+	}
 
 	stop := func() {
 		cancel()
 		select {
 		case <-done:
-		case <-time.After(2 * time.Second):
+		case <-time.After(10 * time.Second):
 			t.Errorf("watchRegistry() did not return after context cancellation")
 		}
 	}
@@ -88,13 +93,33 @@ func startRegistryWatcherTest(t *testing.T, s *Server) func() {
 	return stop
 }
 
+func waitRegistrySyncTest(t *testing.T, s *Server, generation uint64) syncResult {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	result, err := s.waitForSyncResult(ctx, generation)
+	if err != nil {
+		t.Fatalf("registry sync %d did not complete: %v", generation, err)
+	}
+	return result
+}
+
+func mustContextDeadline(t *testing.T, ctx context.Context) time.Time {
+	t.Helper()
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		t.Fatal("inner operation has no deadline")
+	}
+	return deadline
+}
+
 func TestHTTPResourceBudgetsConfigured(t *testing.T) {
 	srv := newHTTPServerFn(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	if srv.ReadHeaderTimeout != httpReadHeaderTimeout {
 		t.Fatalf("ReadHeaderTimeout = %s, want %s", srv.ReadHeaderTimeout, httpReadHeaderTimeout)
 	}
-	if srv.ReadTimeout != httpReadTimeout {
-		t.Fatalf("ReadTimeout = %s, want %s", srv.ReadTimeout, httpReadTimeout)
+	if srv.ReadTimeout != 0 {
+		t.Fatalf("ReadTimeout = %s, want 0; body middleware owns progress deadlines", srv.ReadTimeout)
 	}
 	if srv.IdleTimeout != httpIdleTimeout {
 		t.Fatalf("IdleTimeout = %s, want %s", srv.IdleTimeout, httpIdleTimeout)
@@ -289,6 +314,7 @@ type fakeTSNetServer struct {
 	localClientCalled      int
 	closeCount             atomic.Int32
 	upContext              context.Context
+	upStarted              time.Time
 	nodeContext            context.Context
 	requireCanceledOnClose bool
 	closeSawActiveContext  atomic.Bool
@@ -314,6 +340,7 @@ func (s *fakeInteractiveTSNetServer) Up(context.Context) (*ipnstate.Status, erro
 type sequenceTSNetStatusClient struct {
 	statuses []*ipnstate.Status
 	calls    int
+	contexts []context.Context
 }
 
 type gatedInteractiveStatusClient struct {
@@ -337,7 +364,8 @@ func (c *gatedInteractiveStatusClient) Status(ctx context.Context) (*ipnstate.St
 	}
 }
 
-func (c *sequenceTSNetStatusClient) Status(context.Context) (*ipnstate.Status, error) {
+func (c *sequenceTSNetStatusClient) Status(ctx context.Context) (*ipnstate.Status, error) {
+	c.contexts = append(c.contexts, ctx)
 	if len(c.statuses) == 0 {
 		return nil, errors.New("no status configured")
 	}
@@ -351,6 +379,7 @@ func (c *sequenceTSNetStatusClient) Status(context.Context) (*ipnstate.Status, e
 
 func (s *fakeTSNetServer) Up(ctx context.Context) (*ipnstate.Status, error) {
 	s.upContext = ctx
+	s.upStarted = time.Now()
 	if s.upWait {
 		<-ctx.Done()
 		return nil, ctx.Err()
@@ -444,17 +473,21 @@ type blockingListenerTSNetServer struct {
 type blockingInteractiveListenerTSNetServer struct {
 	fakeInteractiveTSNetServer
 	listenStarted chan struct{}
+	waitStarted   time.Time
+	waitEnded     time.Time
 	unblock       chan struct{}
 	unblockOnce   sync.Once
 }
 
 func (s *blockingInteractiveListenerTSNetServer) ListenTLS(string, string) (net.Listener, error) {
+	s.waitStarted = time.Now()
 	close(s.listenStarted)
 	<-s.unblock
 	return &fakeListener{}, nil
 }
 
 func (s *blockingInteractiveListenerTSNetServer) Close() error {
+	s.waitEnded = time.Now()
 	s.closeCount.Add(1)
 	s.closed = true
 	s.unblockOnce.Do(func() { close(s.unblock) })
@@ -1113,58 +1146,68 @@ func TestStartNodeLocked_InteractiveAuthorizationOutlivesTechnicalStartupDeadlin
 }
 
 func TestStartNodeLocked_InteractiveListenerUsesIndependentTechnicalDeadline(t *testing.T) {
-	testenv.SetHome(t, t.TempDir())
-	if err := config.EnsureDir(); err != nil {
-		t.Fatalf("EnsureDir() error = %v", err)
-	}
-	s, err := New("", "")
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-	s.SetAuthKeyProvider(func(context.Context, registry.Service) (string, error) { return "", nil })
+	synctest.Test(t, func(t *testing.T) {
+		testenv.SetHome(t, t.TempDir())
+		if err := config.EnsureDir(); err != nil {
+			t.Fatalf("EnsureDir() error = %v", err)
+		}
+		s, err := New("", "")
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+		s.SetAuthKeyProvider(func(context.Context, registry.Service) (string, error) { return "", nil })
 
-	fake := &blockingInteractiveListenerTSNetServer{
-		listenStarted: make(chan struct{}),
-		unblock:       make(chan struct{}),
-	}
-	statusClient := &sequenceTSNetStatusClient{statuses: []*ipnstate.Status{{
-		BackendState: ipn.Running.String(),
-		TailscaleIPs: []netip.Addr{netip.MustParseAddr("100.64.0.3")},
-		Self:         &ipnstate.PeerStatus{DNSName: "interactive-listener.example.ts.net."},
-	}}}
-	oldNew := newTSNetServerFn
-	oldStatusClient := tsnetStatusClientFn
-	oldPoll := interactiveStatusPollInterval
-	oldTimeout := nodeStartupTimeout
-	newTSNetServerFn = func(registry.Service, string, string, string) tsnetServer { return fake }
-	tsnetStatusClientFn = func(tsnetServer) (tsnetStatusClient, error) { return statusClient, nil }
-	interactiveStatusPollInterval = time.Millisecond
-	nodeStartupTimeout = 20 * time.Millisecond
-	t.Cleanup(func() {
-		newTSNetServerFn = oldNew
-		tsnetStatusClientFn = oldStatusClient
-		interactiveStatusPollInterval = oldPoll
-		nodeStartupTimeout = oldTimeout
-		s.closeAllNodes()
+		fake := &blockingInteractiveListenerTSNetServer{
+			listenStarted: make(chan struct{}),
+			unblock:       make(chan struct{}),
+		}
+		statusClient := &sequenceTSNetStatusClient{statuses: []*ipnstate.Status{{
+			BackendState: ipn.Running.String(),
+			TailscaleIPs: []netip.Addr{netip.MustParseAddr("100.64.0.3")},
+			Self:         &ipnstate.PeerStatus{DNSName: "interactive-listener.example.ts.net."},
+		}}}
+		oldNew := newTSNetServerFn
+		oldStatusClient := tsnetStatusClientFn
+		oldPoll := interactiveStatusPollInterval
+		oldTimeout := nodeStartupTimeout
+		newTSNetServerFn = func(registry.Service, string, string, string) tsnetServer { return fake }
+		tsnetStatusClientFn = func(tsnetServer) (tsnetStatusClient, error) { return statusClient, nil }
+		interactiveStatusPollInterval = time.Millisecond
+		nodeStartupTimeout = 20 * time.Millisecond
+		t.Cleanup(func() {
+			newTSNetServerFn = oldNew
+			tsnetStatusClientFn = oldStatusClient
+			interactiveStatusPollInterval = oldPoll
+			nodeStartupTimeout = oldTimeout
+			s.closeAllNodes()
+		})
+
+		// Only a hang guard: virtual time advances once the inner wait blocks.
+		parentCtx, cancelParent := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancelParent()
+		err = s.startNodeLocked(parentCtx, registry.Service{Name: "interactive-listener", Type: registry.TypeFile, Path: t.TempDir()})
+		code, _ := registry.ErrorCode(err)
+		if code != registry.CodeServiceStartTimeout {
+			t.Fatalf("startNodeLocked() error = %v code=%q, want %s", err, code, registry.CodeServiceStartTimeout)
+		}
+		if elapsed := fake.waitEnded.Sub(fake.waitStarted); elapsed != 20*time.Millisecond {
+			t.Fatalf("inner listener wait = %s, want independent 20ms deadline", elapsed)
+		}
+		if parentCtx.Err() != nil {
+			t.Fatalf("listener exhausted parent context: %v", parentCtx.Err())
+		}
+		if len(statusClient.contexts) != 1 {
+			t.Fatalf("interactive status calls = %d, want 1", len(statusClient.contexts))
+		}
+		if got, _ := statusClient.contexts[0].Deadline(); got != mustContextDeadline(t, parentCtx) {
+			t.Fatalf("interactive authorization deadline = %v, want parent deadline", got)
+		}
+		select {
+		case <-fake.listenStarted:
+		default:
+			t.Fatal("interactive path did not reach listener activation")
+		}
 	})
-
-	parentCtx, cancelParent := context.WithTimeout(context.Background(), 300*time.Millisecond)
-	defer cancelParent()
-	started := time.Now()
-	err = s.startNodeLocked(parentCtx, registry.Service{Name: "interactive-listener", Type: registry.TypeFile, Path: t.TempDir()})
-	elapsed := time.Since(started)
-	code, _ := registry.ErrorCode(err)
-	if code != registry.CodeServiceStartTimeout {
-		t.Fatalf("startNodeLocked() error = %v code=%q, want %s", err, code, registry.CodeServiceStartTimeout)
-	}
-	if elapsed >= 150*time.Millisecond {
-		t.Fatalf("interactive listener timeout took %s, want independent %s deadline", elapsed, nodeStartupTimeout)
-	}
-	select {
-	case <-fake.listenStarted:
-	default:
-		t.Fatal("interactive path did not reach listener activation")
-	}
 }
 
 func TestStartNodeLocked_UsesPerServiceAuthKeyProvider(t *testing.T) {
@@ -1533,9 +1576,10 @@ func TestStartNodeLocked_HTTPServerReadHeaderTimeoutClosesSlowClient(t *testing.
 	}
 
 	err = s.startNodeLocked(context.Background(), registry.Service{
-		Name: "files",
-		Type: registry.TypeFile,
-		Path: t.TempDir(),
+		Name:          "files",
+		Type:          registry.TypeFile,
+		Path:          t.TempDir(),
+		RequestLimits: &registry.RequestLimits{HeaderTimeout: "25ms"},
 	})
 	if err != nil {
 		t.Fatalf("startNodeLocked() error = %v", err)
@@ -1557,14 +1601,13 @@ func TestStartNodeLocked_HTTPServerReadHeaderTimeoutClosesSlowClient(t *testing.
 		t.Fatalf("SetReadDeadline() error = %v", err)
 	}
 
-	var b [1]byte
-	_, err = conn.Read(b[:])
-	if err == nil {
-		t.Fatal("partial request unexpectedly received data; want timeout-driven close")
+	response, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		t.Fatalf("header timeout did not return a response: %v", err)
 	}
-	var netErr net.Error
-	if errors.As(err, &netErr) && netErr.Timeout() {
-		t.Fatalf("connection remained open until client read deadline; http.Server ReadHeaderTimeout was not applied: %v", err)
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusRequestTimeout {
+		t.Fatalf("status=%d want 408", response.StatusCode)
 	}
 }
 
@@ -2994,125 +3037,135 @@ func TestStartNode_ReadsServeTCPSeamBeforeSpawningAcceptLoop(t *testing.T) {
 }
 
 func TestSyncNodes_RecoverableAgentFailuresAreBoundedAndVisible(t *testing.T) {
-	testenv.SetHome(t, t.TempDir())
-	if err := config.EnsureDir(); err != nil {
-		t.Fatalf("EnsureDir() error = %v", err)
-	}
-	writeRegistry(t, []registry.Service{
-		{Name: "public-app", Type: registry.TypeProxy, Target: "http://localhost:3000", Tags: []string{"tag:tsmain", registry.FunnelTag}, Funnel: true, PublicAck: true},
-		{Name: "listen-fail", Type: registry.TypeProxy, Target: "http://localhost:3001", Tags: []string{"tag:tsmain", registry.FunnelTag}, Funnel: true, PublicAck: true},
-		{Name: "stuck", Type: registry.TypeFile, Path: t.TempDir()},
-		{Name: "healthy", Type: registry.TypeFile, Path: t.TempDir()},
+	synctest.Test(t, func(t *testing.T) {
+		testenv.SetHome(t, t.TempDir())
+		if err := config.EnsureDir(); err != nil {
+			t.Fatalf("EnsureDir() error = %v", err)
+		}
+		writeRegistry(t, []registry.Service{
+			{Name: "public-app", Type: registry.TypeProxy, Target: "http://localhost:3000", Tags: []string{"tag:tsmain", registry.FunnelTag}, Funnel: true, PublicAck: true},
+			{Name: "listen-fail", Type: registry.TypeProxy, Target: "http://localhost:3001", Tags: []string{"tag:tsmain", registry.FunnelTag}, Funnel: true, PublicAck: true},
+			{Name: "stuck", Type: registry.TypeFile, Path: t.TempDir()},
+			{Name: "healthy", Type: registry.TypeFile, Path: t.TempDir()},
+		})
+
+		servers := map[string]*fakeTSNetServer{}
+		nodeContexts := map[string]context.Context{}
+		oldObserveNodeContext := observeNodeContextFn
+		observeNodeContextFn = func(name string, ctx context.Context) {
+			nodeContexts[name] = ctx
+			if fake := servers[name]; fake != nil {
+				fake.nodeContext = ctx
+			}
+		}
+		t.Cleanup(func() { observeNodeContextFn = oldObserveNodeContext })
+		oldNew := newTSNetServerFn
+		newTSNetServerFn = func(svc registry.Service, stateDir, authKey, controlURL string) tsnetServer {
+			fake := &fakeTSNetServer{}
+			switch svc.Name {
+			case "public-app":
+				fake.status = funnelMissingStatus("public-app.tailnet.ts.net.")
+				fake.requireCanceledOnClose = true
+			case "stuck":
+				fake.upWait = true
+			case "listen-fail":
+				fake.status = funnelEnabledStatus("listen-fail.tailnet.ts.net.")
+				fake.localClient = localapitest.NewClient(nil)
+				fake.listenFunnelErr = errors.New("synthetic Funnel bind failure")
+			case "healthy":
+				fake.certDomains = []string{"healthy.tailnet.ts.net"}
+			}
+			servers[svc.Name] = fake
+			return fake
+		}
+		t.Cleanup(func() { newTSNetServerFn = oldNew })
+
+		oldTimeout := nodeStartupTimeout
+		nodeStartupTimeout = 20 * time.Millisecond
+		t.Cleanup(func() { nodeStartupTimeout = oldTimeout })
+
+		s, err := New("key", "")
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+		t.Cleanup(s.closeAllNodes)
+		s.SetEnsureFunnelAttrFn(func(context.Context, tailapi.FunnelPolicyRequest) (tailapi.PolicyMutationResult, error) {
+			return tailapi.PolicyMutationResult{WriteOutcome: tailapi.PolicyWriteUnchanged}, nil
+		})
+
+		parentCtx, cancelParent := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancelParent()
+		if err := s.syncNodes(parentCtx); err != nil {
+			t.Fatalf("syncNodes() error = %v, want recoverable per-service failures", err)
+		}
+		stuckServer := servers["stuck"]
+		if stuckServer == nil || stuckServer.upContext == nil {
+			t.Fatal("stuck service did not enter Up")
+		}
+		if got := mustContextDeadline(t, stuckServer.upContext).Sub(stuckServer.upStarted); got != 20*time.Millisecond {
+			t.Fatalf("inner Up deadline budget = %s, want 20ms", got)
+		}
+		if !errors.Is(stuckServer.upContext.Err(), context.DeadlineExceeded) || parentCtx.Err() != nil {
+			t.Fatalf("inner Up error = %v, parent error = %v; want independent deadline expiry", stuckServer.upContext.Err(), parentCtx.Err())
+		}
+		if _, ok := s.nodes["healthy"]; !ok {
+			t.Fatal("healthy service did not start after prior service failures")
+		}
+		if _, ok := s.nodes["public-app"]; ok {
+			t.Fatal("Funnel service without capability unexpectedly started")
+		}
+		if servers["public-app"].listenFunnelCalled != 0 {
+			t.Fatal("ListenFunnel was called before the node-specific capability preflight passed")
+		}
+		for _, name := range []string{"public-app", "listen-fail", "stuck"} {
+			if got := servers[name].closeCount.Load(); got != 1 {
+				t.Fatalf("%s Close calls = %d, want exactly 1", name, got)
+			}
+		}
+		select {
+		case <-nodeContexts["public-app"].Done():
+		default:
+			t.Fatal("capability failure left its node context active")
+		}
+		if servers["public-app"].closeSawActiveContext.Load() {
+			t.Fatal("capability failure closed tsnet before canceling its context")
+		}
+
+		snapshotPath, err := config.RuntimeSnapshotPath()
+		if err != nil {
+			t.Fatalf("RuntimeSnapshotPath() error = %v", err)
+		}
+		snapshot, err := runtimesnapshot.Load(snapshotPath)
+		if err != nil {
+			t.Fatalf("runtime Load() error = %v", err)
+		}
+		if snapshot.Partial || len(snapshot.Services) != 4 {
+			t.Fatalf("snapshot = %+v, want exact state for all four services", snapshot)
+		}
+		byName := map[string]runtimesnapshot.ServiceSnapshot{}
+		for _, service := range snapshot.Services {
+			byName[service.Name] = service
+		}
+		publicApp := byName["public-app"]
+		if !publicApp.FunnelRequested || publicApp.FunnelActive || publicApp.FunnelState != runtimesnapshot.FunnelStateCapabilityMissing {
+			t.Fatalf("public-app Funnel state = %+v", publicApp)
+		}
+		if publicApp.RuntimeState != runtimesnapshot.ServiceRuntimeFailed || publicApp.Error == nil || publicApp.Error.Code != registry.CodeFunnelCapabilityMissing || len(publicApp.Error.Next) == 0 {
+			t.Fatalf("public-app failure = %+v, want actionable stable error", publicApp)
+		}
+		listenFail := byName["listen-fail"]
+		if !listenFail.FunnelRequested || listenFail.FunnelActive || listenFail.FunnelState != runtimesnapshot.FunnelStateListenFailed || listenFail.Error == nil || listenFail.Error.Code != registry.CodeFunnelListenFailed {
+			t.Fatalf("listen-fail Funnel state = %+v", listenFail)
+		}
+		stuck := byName["stuck"]
+		if stuck.RuntimeState != runtimesnapshot.ServiceRuntimeFailed || stuck.Error == nil || stuck.Error.Code != registry.CodeServiceStartTimeout {
+			t.Fatalf("stuck failure = %+v, want startup timeout", stuck)
+		}
+		healthy := byName["healthy"]
+		if healthy.RuntimeState != runtimesnapshot.ServiceRuntimeRunning || healthy.FunnelRequested || healthy.FunnelActive || healthy.FunnelState != runtimesnapshot.FunnelStateNotRequested {
+			t.Fatalf("healthy runtime state = %+v", healthy)
+		}
 	})
-
-	servers := map[string]*fakeTSNetServer{}
-	nodeContexts := map[string]context.Context{}
-	oldObserveNodeContext := observeNodeContextFn
-	observeNodeContextFn = func(name string, ctx context.Context) {
-		nodeContexts[name] = ctx
-		if fake := servers[name]; fake != nil {
-			fake.nodeContext = ctx
-		}
-	}
-	t.Cleanup(func() { observeNodeContextFn = oldObserveNodeContext })
-	oldNew := newTSNetServerFn
-	newTSNetServerFn = func(svc registry.Service, stateDir, authKey, controlURL string) tsnetServer {
-		fake := &fakeTSNetServer{}
-		switch svc.Name {
-		case "public-app":
-			fake.status = funnelMissingStatus("public-app.tailnet.ts.net.")
-			fake.requireCanceledOnClose = true
-		case "stuck":
-			fake.upWait = true
-		case "listen-fail":
-			fake.status = funnelEnabledStatus("listen-fail.tailnet.ts.net.")
-			fake.localClient = localapitest.NewClient(nil)
-			fake.listenFunnelErr = errors.New("synthetic Funnel bind failure")
-		case "healthy":
-			fake.certDomains = []string{"healthy.tailnet.ts.net"}
-		}
-		servers[svc.Name] = fake
-		return fake
-	}
-	t.Cleanup(func() { newTSNetServerFn = oldNew })
-
-	oldTimeout := nodeStartupTimeout
-	nodeStartupTimeout = 20 * time.Millisecond
-	t.Cleanup(func() { nodeStartupTimeout = oldTimeout })
-
-	s, err := New("key", "")
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-	t.Cleanup(s.closeAllNodes)
-	s.SetEnsureFunnelAttrFn(func(context.Context, tailapi.FunnelPolicyRequest) (tailapi.PolicyMutationResult, error) {
-		return tailapi.PolicyMutationResult{WriteOutcome: tailapi.PolicyWriteUnchanged}, nil
-	})
-
-	started := time.Now()
-	if err := s.syncNodes(context.Background()); err != nil {
-		t.Fatalf("syncNodes() error = %v, want recoverable per-service failures", err)
-	}
-	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
-		t.Fatalf("syncNodes() took %s, want bounded startup", elapsed)
-	}
-	if _, ok := s.nodes["healthy"]; !ok {
-		t.Fatal("healthy service did not start after prior service failures")
-	}
-	if _, ok := s.nodes["public-app"]; ok {
-		t.Fatal("Funnel service without capability unexpectedly started")
-	}
-	if servers["public-app"].listenFunnelCalled != 0 {
-		t.Fatal("ListenFunnel was called before the node-specific capability preflight passed")
-	}
-	for _, name := range []string{"public-app", "listen-fail", "stuck"} {
-		if got := servers[name].closeCount.Load(); got != 1 {
-			t.Fatalf("%s Close calls = %d, want exactly 1", name, got)
-		}
-	}
-	select {
-	case <-nodeContexts["public-app"].Done():
-	default:
-		t.Fatal("capability failure left its node context active")
-	}
-	if servers["public-app"].closeSawActiveContext.Load() {
-		t.Fatal("capability failure closed tsnet before canceling its context")
-	}
-
-	snapshotPath, err := config.RuntimeSnapshotPath()
-	if err != nil {
-		t.Fatalf("RuntimeSnapshotPath() error = %v", err)
-	}
-	snapshot, err := runtimesnapshot.Load(snapshotPath)
-	if err != nil {
-		t.Fatalf("runtime Load() error = %v", err)
-	}
-	if snapshot.Partial || len(snapshot.Services) != 4 {
-		t.Fatalf("snapshot = %+v, want exact state for all four services", snapshot)
-	}
-	byName := map[string]runtimesnapshot.ServiceSnapshot{}
-	for _, service := range snapshot.Services {
-		byName[service.Name] = service
-	}
-	publicApp := byName["public-app"]
-	if !publicApp.FunnelRequested || publicApp.FunnelActive || publicApp.FunnelState != runtimesnapshot.FunnelStateCapabilityMissing {
-		t.Fatalf("public-app Funnel state = %+v", publicApp)
-	}
-	if publicApp.RuntimeState != runtimesnapshot.ServiceRuntimeFailed || publicApp.Error == nil || publicApp.Error.Code != registry.CodeFunnelCapabilityMissing || len(publicApp.Error.Next) == 0 {
-		t.Fatalf("public-app failure = %+v, want actionable stable error", publicApp)
-	}
-	listenFail := byName["listen-fail"]
-	if !listenFail.FunnelRequested || listenFail.FunnelActive || listenFail.FunnelState != runtimesnapshot.FunnelStateListenFailed || listenFail.Error == nil || listenFail.Error.Code != registry.CodeFunnelListenFailed {
-		t.Fatalf("listen-fail Funnel state = %+v", listenFail)
-	}
-	stuck := byName["stuck"]
-	if stuck.RuntimeState != runtimesnapshot.ServiceRuntimeFailed || stuck.Error == nil || stuck.Error.Code != registry.CodeServiceStartTimeout {
-		t.Fatalf("stuck failure = %+v, want startup timeout", stuck)
-	}
-	healthy := byName["healthy"]
-	if healthy.RuntimeState != runtimesnapshot.ServiceRuntimeRunning || healthy.FunnelRequested || healthy.FunnelActive || healthy.FunnelState != runtimesnapshot.FunnelStateNotRequested {
-		t.Fatalf("healthy runtime state = %+v", healthy)
-	}
 }
 
 func TestStartNodeLocked_VerifiesPreparedFunnelPolicyAndWaitsForNetmap(t *testing.T) {
@@ -3235,57 +3288,74 @@ func TestStartNodeLocked_RuntimeHostComesFromTheNetmapTheFunnelWaitObserved(t *t
 }
 
 func TestStartNodeLocked_AutoProvisionTimeoutIsBoundedAndActionable(t *testing.T) {
-	testenv.SetHome(t, t.TempDir())
-	if err := config.EnsureDir(); err != nil {
-		t.Fatalf("EnsureDir() error = %v", err)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		testenv.SetHome(t, t.TempDir())
+		if err := config.EnsureDir(); err != nil {
+			t.Fatalf("EnsureDir() error = %v", err)
+		}
 
-	s, err := New("key", "")
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-	fake := &fakeTSNetServer{status: funnelMissingStatus("public-app.tailnet.ts.net.")}
-	statusClient := &sequenceTSNetStatusClient{statuses: []*ipnstate.Status{funnelMissingStatus("public-app.tailnet.ts.net.")}}
+		s, err := New("key", "")
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+		fake := &fakeTSNetServer{status: funnelMissingStatus("public-app.tailnet.ts.net.")}
+		statusClient := &sequenceTSNetStatusClient{statuses: []*ipnstate.Status{funnelMissingStatus("public-app.tailnet.ts.net.")}}
 
-	oldNew := newTSNetServerFn
-	oldStatusClient := tsnetStatusClientFn
-	oldPoll := funnelCapabilityPollInterval
-	oldTimeout := funnelCapabilityWaitTimeout
-	newTSNetServerFn = func(registry.Service, string, string, string) tsnetServer { return fake }
-	tsnetStatusClientFn = func(tsnetServer) (tsnetStatusClient, error) { return statusClient, nil }
-	funnelCapabilityPollInterval = 2 * time.Millisecond
-	funnelCapabilityWaitTimeout = 15 * time.Millisecond
-	t.Cleanup(func() {
-		newTSNetServerFn = oldNew
-		tsnetStatusClientFn = oldStatusClient
-		funnelCapabilityPollInterval = oldPoll
-		funnelCapabilityWaitTimeout = oldTimeout
+		oldNew := newTSNetServerFn
+		oldStatusClient := tsnetStatusClientFn
+		oldPoll := funnelCapabilityPollInterval
+		oldTimeout := funnelCapabilityWaitTimeout
+		var waitStarted time.Time
+		newTSNetServerFn = func(registry.Service, string, string, string) tsnetServer { return fake }
+		tsnetStatusClientFn = func(tsnetServer) (tsnetStatusClient, error) {
+			waitStarted = time.Now()
+			return statusClient, nil
+		}
+		funnelCapabilityPollInterval = 2 * time.Millisecond
+		funnelCapabilityWaitTimeout = 15 * time.Millisecond
+		t.Cleanup(func() {
+			newTSNetServerFn = oldNew
+			tsnetStatusClientFn = oldStatusClient
+			funnelCapabilityPollInterval = oldPoll
+			funnelCapabilityWaitTimeout = oldTimeout
+		})
+		parentCtx, cancelParent := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancelParent()
+		err = s.startNodeLocked(parentCtx, registry.Service{
+			Name: "public-app", Type: registry.TypeProxy, Target: "http://localhost:3000",
+			Tags: []string{"tag:public", registry.FunnelTag}, Funnel: true, PublicAck: true,
+		}, registry.ProvisionOutcome{
+			Attempted: true, Target: registry.FunnelTag, Changed: true,
+			Reason: registry.ProvisionReasonPolicyUpdated, WriteOutcome: tailapi.PolicyWriteChanged,
+		})
+		if len(statusClient.contexts) == 0 {
+			t.Fatal("Funnel capability wait never polled status")
+		}
+		waitCtx := statusClient.contexts[0]
+		if got := mustContextDeadline(t, waitCtx).Sub(waitStarted); got != 15*time.Millisecond {
+			t.Fatalf("inner Funnel deadline budget = %s, want 15ms", got)
+		}
+		if mustContextDeadline(t, waitCtx) == mustContextDeadline(t, fake.upContext) {
+			t.Fatal("Funnel wait shared the node startup deadline")
+		}
+		if !errors.Is(waitCtx.Err(), context.DeadlineExceeded) || parentCtx.Err() != nil {
+			t.Fatalf("Funnel wait error = %v, parent error = %v; want independent deadline expiry", waitCtx.Err(), parentCtx.Err())
+		}
+		if code, ok := registry.ErrorCode(err); !ok || code != registry.CodeFunnelCapabilityMissing {
+			t.Fatalf("startNodeLocked() error = %v code=%q, want %s", err, code, registry.CodeFunnelCapabilityMissing)
+		}
+		var recovery interface{ NextCommands() []string }
+		if !errors.As(err, &recovery) {
+			t.Fatalf("error %T does not expose NextCommands", err)
+		}
+		next := strings.Join(recovery.NextCommands(), "\n")
+		if !strings.Contains(err.Error(), "policy is prepared for \"tag:tslink-funnel\"") || !strings.Contains(err.Error(), "actual") {
+			t.Fatalf("error = %q, want prepared-policy and actual-budget evidence", err)
+		}
+		if !strings.Contains(next, "policy is already prepared") || strings.Contains(next, "admin console") {
+			t.Fatalf("next = %q, want wait/restart remedy without an ACL rewrite instruction", next)
+		}
 	})
-	started := time.Now()
-	err = s.startNodeLocked(context.Background(), registry.Service{
-		Name: "public-app", Type: registry.TypeProxy, Target: "http://localhost:3000",
-		Tags: []string{"tag:public", registry.FunnelTag}, Funnel: true, PublicAck: true,
-	}, registry.ProvisionOutcome{
-		Attempted: true, Target: registry.FunnelTag, Changed: true,
-		Reason: registry.ProvisionReasonPolicyUpdated, WriteOutcome: tailapi.PolicyWriteChanged,
-	})
-	if elapsed := time.Since(started); elapsed > 250*time.Millisecond {
-		t.Fatalf("Funnel capability wait took %s, want bounded 15ms wait", elapsed)
-	}
-	if code, ok := registry.ErrorCode(err); !ok || code != registry.CodeFunnelCapabilityMissing {
-		t.Fatalf("startNodeLocked() error = %v code=%q, want %s", err, code, registry.CodeFunnelCapabilityMissing)
-	}
-	var recovery interface{ NextCommands() []string }
-	if !errors.As(err, &recovery) {
-		t.Fatalf("error %T does not expose NextCommands", err)
-	}
-	next := strings.Join(recovery.NextCommands(), "\n")
-	if !strings.Contains(err.Error(), "policy is prepared for \"tag:tslink-funnel\"") || !strings.Contains(err.Error(), "actual") {
-		t.Fatalf("error = %q, want prepared-policy and actual-budget evidence", err)
-	}
-	if !strings.Contains(next, "policy is already prepared") || strings.Contains(next, "admin console") {
-		t.Fatalf("next = %q, want wait/restart remedy without an ACL rewrite instruction", next)
-	}
 }
 
 func TestStartNodeLocked_NoAutoProvisionSkipsMutationAndExplainsOptOut(t *testing.T) {
@@ -5209,21 +5279,16 @@ func TestWatchRegistry_ReactsToCreate(t *testing.T) {
 
 	startRegistryWatcherTest(t, s)
 
-	time.Sleep(150 * time.Millisecond)
 	writeRegistry(t, []registry.Service{})
-
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		s.mu.RLock()
-		_, exists := s.nodes["stale"]
-		s.mu.RUnlock()
-		if !exists {
-			return
-		}
-		time.Sleep(25 * time.Millisecond)
+	if result := waitRegistrySyncTest(t, s, 1); result.err != nil {
+		t.Fatalf("registry create sync failed: %v", result.err)
 	}
-
-	t.Fatal("watchRegistry() did not react to registry create event")
+	s.mu.RLock()
+	_, exists := s.nodes["stale"]
+	s.mu.RUnlock()
+	if exists {
+		t.Fatal("watchRegistry() did not react to registry create event")
+	}
 }
 
 func TestRun(t *testing.T) {
@@ -5239,13 +5304,19 @@ func TestRun(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	go func() {
-		time.Sleep(50 * time.Millisecond)
+	defer cancel()
+	ready := false
+	s.SetReadyFunc(func() error {
+		ready = true
 		cancel()
-	}()
+		return nil
+	})
 
 	if err := s.Run(ctx); err != nil {
 		t.Fatalf("Run() error = %v", err)
+	}
+	if !ready {
+		t.Fatal("Run() exited before watcher setup and initial sync completed")
 	}
 }
 
@@ -5338,61 +5409,175 @@ func TestSyncNodesHandlesMalformedPersistedServicesBeforeTSNetSideEffects(t *tes
 	}
 }
 
+// Ported from the review's slow-first-construction probe. Channels hold the
+// first constructor across a complete watcher decision instead of sleeping.
 func TestRunWatcherReadyBeforeInitialSyncAddConvergesWithoutLaterEvent(t *testing.T) {
+	for _, newer := range []bool{false, true} {
+		name := "redundant"
+		if newer {
+			name = "newer"
+		}
+		t.Run(name, func(t *testing.T) {
+			testenv.SetHome(t, t.TempDir())
+			if err := config.EnsureDir(); err != nil {
+				t.Fatal(err)
+			}
+			synctest.Test(t, func(t *testing.T) {
+				w := installChannelRegistryWatcher(t)
+				regPath, err := config.RegistryPath()
+				if err != nil {
+					t.Fatal(err)
+				}
+				svc := registry.Service{Name: "added", Type: registry.TypeFile, Path: t.TempDir()}
+				oldBefore := beforeInitialSyncFn
+				beforeInitialSyncFn = func(context.Context) error {
+					_, err := registry.Add(regPath, svc)
+					return err
+				}
+				t.Cleanup(func() { beforeInitialSyncFn = oldBefore })
+
+				firstStarted, resume := make(chan struct{}), make(chan struct{})
+				var release sync.Once
+				unblock := func() { release.Do(func() { close(resume) }) }
+				var constructed atomic.Int32
+				oldNew := newTSNetServerFn
+				newTSNetServerFn = func(svc registry.Service, _, _, _ string) tsnetServer {
+					if constructed.Add(1) == 1 {
+						close(firstStarted)
+						<-resume
+					}
+					return &fakeTSNetServer{certDomains: []string{svc.Name + ".tailnet.ts.net"}}
+				}
+				t.Cleanup(func() { newTSNetServerFn = oldNew })
+
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				s, err := New("key", "")
+				if err != nil {
+					t.Fatal(err)
+				}
+				var snapshotServices []runtimesnapshot.ServiceSnapshot
+				var readyPath string
+				s.SetReadyFunc(func() error {
+					snapshotPath, err := runtimeSnapshotPathFn()
+					if err != nil {
+						return err
+					}
+					snapshot, err := runtimesnapshot.Load(snapshotPath)
+					if err != nil {
+						return err
+					}
+					snapshotServices = append([]runtimesnapshot.ServiceSnapshot(nil), snapshot.Services...)
+					s.mu.Lock()
+					if node := s.nodes["added"]; node != nil {
+						readyPath = node.service.Path
+					}
+					s.mu.Unlock()
+					cancel()
+					return nil
+				})
+				done := make(chan error, 1)
+				go func() { done <- s.Run(ctx) }()
+				defer func() { cancel(); unblock(); synctest.Wait() }()
+				select {
+				case <-firstStarted:
+				case <-ctx.Done():
+					t.Fatal("initial construction did not start")
+				}
+				wantConstructions := int32(1)
+				if newer {
+					svc.Path = t.TempDir()
+					writeRegistry(t, []registry.Service{svc})
+					wantConstructions = 2
+				}
+				w.events <- fsnotify.Event{Name: regPath, Op: fsnotify.Write}
+				advanceWatcherTime(200 * time.Millisecond)
+				if got := s.syncGeneration.Load(); got != uint64(wantConstructions) {
+					t.Errorf("in-flight sync generation = %d, want %d", got, wantConstructions)
+				}
+				unblock()
+				if err := <-done; err != nil {
+					t.Fatalf("Run() error = %v", err)
+				}
+				if got := constructed.Load(); got != wantConstructions {
+					t.Fatalf("tsnet constructions = %d, want %d", got, wantConstructions)
+				}
+				if len(snapshotServices) != 1 || snapshotServices[0].Name != "added" || snapshotServices[0].RuntimeState != runtimesnapshot.ServiceRuntimeRunning || readyPath != svc.Path {
+					t.Fatalf("ready snapshot services = %+v, path = %q; want only added at %q", snapshotServices, readyPath, svc.Path)
+				}
+				if s.inFlightWatchTarget != nil {
+					t.Fatal("completed initial sync retained an in-flight target")
+				}
+			})
+		})
+	}
+}
+
+func TestInitialSyncFailureClearsWatcherTargetForRetry(t *testing.T) {
 	testenv.SetHome(t, t.TempDir())
 	if err := config.EnsureDir(); err != nil {
-		t.Fatalf("EnsureDir() error = %v", err)
+		t.Fatal(err)
 	}
-	regPath, err := config.RegistryPath()
-	if err != nil {
-		t.Fatalf("RegistryPath() error = %v", err)
-	}
-
-	svc := registry.Service{Name: "added", Type: registry.TypeFile, Path: t.TempDir()}
-	oldBefore := beforeInitialSyncFn
-	beforeInitialSyncFn = func(context.Context) error {
-		_, err := registry.Add(regPath, svc)
-		return err
-	}
-	t.Cleanup(func() { beforeInitialSyncFn = oldBefore })
-
-	var constructed atomic.Int32
-	oldNew := newTSNetServerFn
-	newTSNetServerFn = func(svc registry.Service, stateDir, authKey, controlURL string) tsnetServer {
-		constructed.Add(1)
-		return &fakeTSNetServer{certDomains: []string{svc.Name + ".tailnet.ts.net"}}
-	}
-	t.Cleanup(func() { newTSNetServerFn = oldNew })
-
-	ctx, cancel := context.WithCancel(context.Background())
+	regPath := writeRegistry(t, []registry.Service{{Name: "retry", Type: registry.TypeFile, Path: t.TempDir()}})
 	s, err := New("key", "")
 	if err != nil {
-		t.Fatalf("New() error = %v", err)
+		t.Fatal(err)
 	}
-	var snapshotServices []runtimesnapshot.ServiceSnapshot
-	s.SetReadyFunc(func() error {
-		snapshotPath, err := runtimeSnapshotPathFn()
-		if err != nil {
-			return err
-		}
-		snapshot, err := runtimesnapshot.Load(snapshotPath)
-		if err != nil {
-			return err
-		}
-		snapshotServices = append([]runtimesnapshot.ServiceSnapshot(nil), snapshot.Services...)
-		cancel()
-		return nil
-	})
+	t.Cleanup(s.closeAllNodes)
+	want := errors.New("synthetic first auth failure")
+	s.SetAuthKeyProvider(func(context.Context, registry.Service) (string, error) { return "", want })
+	if err := s.syncNodesAuthoritative(context.Background()); !errors.Is(err, want) {
+		t.Fatalf("initial sync error = %v, want auth failure", err)
+	}
+	if s.inFlightWatchTarget != nil {
+		t.Fatal("failed initial sync retained an in-flight target")
+	}
+	s.SetAuthKeyProvider(nil)
+	oldNew := newTSNetServerFn
+	newTSNetServerFn = func(registry.Service, string, string, string) tsnetServer { return &fakeTSNetServer{} }
+	t.Cleanup(func() { newTSNetServerFn = oldNew })
+	target := s.decideWatchedRegistry(context.Background(), regPath)
+	if target == nil {
+		t.Fatal("unchanged state was not eligible for retry after initial failure")
+	}
+	s.syncWatchedRegistryTarget(context.Background(), target)
+	if !s.nodeRunning("retry") || s.inFlightWatchTarget != nil {
+		t.Fatal("watcher retry did not commit and clear its target")
+	}
+}
 
-	if err := s.Run(ctx); err != nil {
-		t.Fatalf("Run() error = %v", err)
+func TestInitialSyncTargetDoesNotReplaceNewerWatcherDecision(t *testing.T) {
+	testenv.SetHome(t, t.TempDir())
+	if err := config.EnsureDir(); err != nil {
+		t.Fatal(err)
 	}
-	if got := constructed.Load(); got != 1 {
-		t.Fatalf("tsnet constructions = %d, want 1", got)
+	svc := registry.Service{Name: "latest", Type: registry.TypeFile, Path: t.TempDir()}
+	writeRegistry(t, []registry.Service{svc})
+	s, err := New("key", "")
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	if len(snapshotServices) != 1 || snapshotServices[0].Name != "added" {
-		t.Fatalf("snapshot services = %+v, want only added", snapshotServices)
+	t.Cleanup(s.closeAllNodes)
+	oldLoad := registryLoadRuntimeFn
+	var newer *watchedRegistryTarget
+	registryLoadRuntimeFn = func(path string) (*registry.Registry, []registry.ServiceIssue, error) {
+		reg, issues, err := oldLoad(path)
+		svc.Path = t.TempDir()
+		writeRegistry(t, []registry.Service{svc})
+		newer = s.decideWatchedRegistry(context.Background(), path)
+		return reg, issues, err
+	}
+	t.Cleanup(func() { registryLoadRuntimeFn = oldLoad })
+	oldNew := newTSNetServerFn
+	newTSNetServerFn = func(registry.Service, string, string, string) tsnetServer { return &fakeTSNetServer{} }
+	t.Cleanup(func() { newTSNetServerFn = oldNew })
+	outcome, err := s.syncNodesWithOutcome(context.Background(), true)
+	registryLoadRuntimeFn = oldLoad
+	if err != nil || outcome.committed || newer == nil || s.inFlightWatchTarget != newer {
+		t.Fatalf("stale initial outcome = %+v, error = %v; newer target was replaced or committed over", outcome, err)
+	}
+	s.syncWatchedRegistryTarget(context.Background(), newer)
+	if !s.nodeRunning("latest") || s.nodes["latest"].service.Path != svc.Path || s.inFlightWatchTarget != nil {
+		t.Fatal("newer watcher decision did not commit its state")
 	}
 }
 
@@ -6072,23 +6257,8 @@ func TestWatchRegistry_ContextCancelled(t *testing.T) {
 		t.Fatalf("New() error = %v", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-
-	done := make(chan struct{})
-	go func() {
-		s.watchRegistry(ctx)
-		close(done)
-	}()
-
-	// Give the watcher time to start
-	time.Sleep(100 * time.Millisecond)
-	cancel()
-
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("watchRegistry() did not return after context cancellation")
-	}
+	stop := startRegistryWatcherTest(t, s)
+	stop()
 }
 
 func TestWatchRegistry_BadCfgDir(t *testing.T) {
@@ -6223,44 +6393,39 @@ func TestWatchRegistry_IgnoresNonRegistryFile(t *testing.T) {
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
+	synctest.Test(t, func(t *testing.T) {
+		w := installChannelRegistryWatcher(t)
+		s, err := New("key", "")
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+		// A misrouted event would remove this stale node. Merely keeping a
+		// registered node cannot distinguish an ignored event from a full sync.
+		s.nodes["keep"] = newNode(t, registry.Service{Name: "keep"})
+		t.Cleanup(s.closeAllNodes)
+		regPath := writeRegistry(t, nil)
+		startRegistryWatcherTest(t, s)
 
-	s, err := New("key", "")
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
+		w.events <- fsnotify.Event{Name: filepath.Join(s.cfgDir, "unrelated.tmp"), Op: fsnotify.Write}
+		advanceWatcherTime(time.Second)
+		if count := s.syncGeneration.Load(); count != 0 {
+			t.Fatalf("unrelated event triggered %d registry syncs", count)
+		}
+		if _, exists := s.nodes["keep"]; !exists {
+			t.Fatal("node disappeared after an unrelated event")
+		}
 
-	// Add a node that should NOT be removed by non-registry file changes
-	svc := registry.Service{Name: "keep", Type: registry.TypeProxy, Target: "http://localhost:3000"}
-	s.nodes["keep"] = newNode(t, svc)
-
-	// Write a valid registry that includes the service
-	writeRegistry(t, []registry.Service{svc})
-
-	startRegistryWatcherTest(t, s)
-
-	// Give the watcher time to start
-	time.Sleep(150 * time.Millisecond)
-
-	// Write a non-registry file in the config dir — should trigger the "continue" branch
-	cfgDir, err := config.Dir()
-	if err != nil {
-		t.Fatalf("config.Dir() error = %v", err)
-	}
-	nonRegFile := filepath.Join(cfgDir, "unrelated.tmp")
-	if err := os.WriteFile(nonRegFile, []byte("noise"), 0o600); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
-
-	// Give the watcher time to process the event
-	time.Sleep(200 * time.Millisecond)
-
-	// The "keep" node should still be present (no sync triggered)
-	s.mu.RLock()
-	_, exists := s.nodes["keep"]
-	s.mu.RUnlock()
-	if !exists {
-		t.Fatal("node should still exist after non-registry file change")
-	}
+		// Positive control: the same event loop and clock must process a
+		// registry event and remove the node.
+		w.events <- fsnotify.Event{Name: regPath, Op: fsnotify.Create}
+		advanceWatcherTime(time.Second)
+		if s.syncGeneration.Load() != 1 {
+			t.Fatal("registry event did not trigger the control sync")
+		}
+		if _, exists := s.nodes["keep"]; exists {
+			t.Fatal("control sync did not remove the stale node")
+		}
+	})
 }
 
 func TestWatchRegistry_SyncErrorOnReload(t *testing.T) {
@@ -6276,9 +6441,6 @@ func TestWatchRegistry_SyncErrorOnReload(t *testing.T) {
 
 	stopWatcher := startRegistryWatcherTest(t, s)
 
-	// Give the watcher time to start
-	time.Sleep(150 * time.Millisecond)
-
 	// Write invalid JSON to registry — triggers syncNodes which returns Load error
 	regPath, err := config.RegistryPath()
 	if err != nil {
@@ -6288,13 +6450,14 @@ func TestWatchRegistry_SyncErrorOnReload(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	// Give the watcher time to process the event and log the error
-	time.Sleep(200 * time.Millisecond)
+	// Observe the completed error path, rather than canceling a pending timer.
+	if result := waitRegistrySyncTest(t, s, 1); result.err == nil {
+		t.Fatal("invalid registry did not produce a reload error")
+	}
 
 	// The watcher should still be running (not crashed) — cancel and verify it exits
 	stopWatcher()
 
-	// If we reach here without panic, the error path was handled gracefully
 }
 
 func TestSetEnsureTagsFn(t *testing.T) {
@@ -6467,60 +6630,42 @@ func TestWatchRegistry_DebouncesRapidWrites(t *testing.T) {
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
-
-	// Write initial registry
-	writeRegistry(t, []registry.Service{
-		{Name: "debounce-test", Type: registry.TypeFile, Path: t.TempDir()},
-	})
-
-	var syncCount atomic.Int32
-	oldNew := newTSNetServerFn
-	newTSNetServerFn = func(svc registry.Service, stateDir, authKey, controlURL string) tsnetServer {
-		syncCount.Add(1)
-		return &fakeTSNetServer{}
-	}
-	t.Cleanup(func() { newTSNetServerFn = oldNew })
-
-	s, err := New("key", "")
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-	t.Cleanup(s.closeAllNodes)
-
-	stopWatcher := startRegistryWatcherTest(t, s)
-
-	// Give the watcher time to initialize
-	time.Sleep(50 * time.Millisecond)
-
-	// Write to registry rapidly 5 times within the debounce window (200ms)
-	regPath, err := config.RegistryPath()
-	if err != nil {
-		t.Fatalf("RegistryPath() error = %v", err)
-	}
-	for i := 0; i < 5; i++ {
-		data, _ := json.Marshal(registry.Registry{Services: []registry.Service{
-			{Name: fmt.Sprintf("svc-%d", i), Type: registry.TypeFile, Path: t.TempDir()},
-		}})
-		if err := os.WriteFile(regPath, append(data, '\n'), 0o600); err != nil {
-			t.Fatalf("WriteFile() error = %v", err)
+	synctest.Test(t, func(t *testing.T) {
+		w := installChannelRegistryWatcher(t)
+		var built []string
+		oldNew := newTSNetServerFn
+		newTSNetServerFn = func(svc registry.Service, _, _, _ string) tsnetServer {
+			built = append(built, svc.Name)
+			return &fakeTSNetServer{}
 		}
-		time.Sleep(20 * time.Millisecond) // 20ms apart, well within 200ms debounce
-	}
-
-	// Wait for debounce to fire (200ms) plus some margin
-	time.Sleep(400 * time.Millisecond)
-
-	stopWatcher()
-
-	// With debounce, only the last write should trigger syncNodes (1 sync, not 5).
-	// The sync creates one tsnet server per service in registry.
-	count := syncCount.Load()
-	if count > 2 {
-		t.Fatalf("syncNodes called too many times: got %d tsnet constructions, want <= 2 (debounce should coalesce rapid writes)", count)
-	}
-	if count == 0 {
-		t.Fatal("syncNodes was never called; debounce timer should have fired at least once")
-	}
+		t.Cleanup(func() { newTSNetServerFn = oldNew })
+		s, err := New("key", "")
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+		defer s.closeAllNodes()
+		defer startRegistryWatcherTest(t, s)()
+		for i := 0; i < 5; i++ {
+			regPath := writeRegistry(t, []registry.Service{
+				{Name: fmt.Sprintf("svc-%d", i), Type: registry.TypeFile, Path: t.TempDir()},
+			})
+			w.events <- fsnotify.Event{Name: regPath, Op: fsnotify.Write}
+			if i < 4 {
+				advanceWatcherTime(20 * time.Millisecond)
+			}
+		}
+		advanceWatcherTime(199 * time.Millisecond)
+		if count := s.syncGeneration.Load(); count != 0 {
+			t.Fatalf("debounce fired before 200ms of quiet: %d syncs", count)
+		}
+		advanceWatcherTime(time.Millisecond)
+		if count := s.syncGeneration.Load(); count != 1 {
+			t.Fatalf("debounce produced %d syncs, want exactly 1", count)
+		}
+		if len(built) != 1 || built[0] != "svc-4" {
+			t.Fatalf("built nodes = %v, want only the last written service svc-4", built)
+		}
+	})
 }
 
 func TestRun_MissingRegistryStartsEmpty(t *testing.T) {

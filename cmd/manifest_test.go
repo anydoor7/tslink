@@ -117,25 +117,26 @@ func TestManifestPlatformMarksAreExactAndProseDerived(t *testing.T) {
 			}
 		}
 	}
-	if runtime.GOOS == "darwin" {
-		want := []string{"tslink install --force", "tslink uninstall --force"}
-		if !reflect.DeepEqual(markedFlags, want) {
-			t.Fatalf("marked flags = %v, want exactly %v", markedFlags, want)
-		}
-		for _, key := range want {
-			parts := strings.Split(key, " --")
-			var got FlagInfo
-			for _, flag := range commands[parts[0]].Flags {
-				if flag.Name == parts[1] {
-					got = flag
-				}
+	wantByPlatform := map[string][]string{
+		"darwin":  {"tslink install --force", "tslink uninstall --force"},
+		"linux":   nil,
+		"windows": {"tslink install --startup"},
+	}
+	want := wantByPlatform[runtime.GOOS]
+	if !reflect.DeepEqual(markedFlags, want) {
+		t.Fatalf("%s marked flags = %v, want exactly %v", runtime.GOOS, markedFlags, want)
+	}
+	for _, key := range want {
+		parts := strings.Split(key, " --")
+		var got FlagInfo
+		for _, flag := range commands[parts[0]].Flags {
+			if flag.Name == parts[1] {
+				got = flag
 			}
-			if !reflect.DeepEqual(got.Platforms, []string{"darwin"}) {
-				t.Fatalf("%s platforms = %v, want [darwin]", key, got.Platforms)
-			}
 		}
-	} else if len(markedFlags) != 0 {
-		t.Fatalf("%s manifest unexpectedly carries platform-marked live flags: %v", runtime.GOOS, markedFlags)
+		if !reflect.DeepEqual(got.Platforms, []string{runtime.GOOS}) {
+			t.Fatalf("%s platforms = %v, want [%s]", key, got.Platforms, runtime.GOOS)
+		}
 	}
 
 	for _, flag := range commands["tslink tags delete-remote"].Flags {
@@ -497,6 +498,7 @@ func TestAllManifestValuesMatchProductionOutputSets(t *testing.T) {
 	}
 
 	production := map[string]map[string]struct{}{
+		"tslink apps share/action":              sliceSet([]string{templateActionCreate, templateActionCreated, templateActionSkipExisting}),
 		"tslink status/daemon_state":            sliceSet([]string{daemonStateRunning, daemonStateAbsent, daemonStateUnknown}),
 		"tslink list/services[].state":          listStates,
 		"tslink list/services[].funnel_state":   funnelStates,
@@ -566,6 +568,17 @@ func sortedSet(values map[string]struct{}) []string {
 
 func TestManifestErrorExitTaxonomyMatchesRuntime(t *testing.T) {
 	tests := map[string]error{
+		"people_service_unsupported":            registry.ValidateService(registry.Service{Name: "db", Type: registry.TypeTCP, Target: "localhost:5432", PeopleScoped: true}),
+		"invite_failed":                         registry.CodedError{Code: "invite_failed", Message: "bundle failure"},
+		"invite_state_failed":                   registry.CodedError{Code: "invite_state_failed", Message: "state failure"},
+		"people_invite_busy":                    registry.CodedError{Code: "people_invite_busy", Message: "remote-work contention"},
+		"person_grant_inactive":                 registry.CodedError{Code: "person_grant_inactive", Message: "grant removed"},
+		"invite_reconciliation_failed":          registry.CodedError{Code: "invite_reconciliation_failed", Message: "list failure"},
+		"invite_reconciliation_required":        registry.CodedError{Code: "invite_reconciliation_required", Message: "unknown POST"},
+		"invite_reconciliation_conflict":        registry.CodedError{Code: "invite_reconciliation_conflict", Message: "already associated ID"},
+		"invite_link_unavailable":               registry.CodedError{Code: "invite_link_unavailable", Message: "missing saved link"},
+		"invite_cleanup_failed":                 registry.CodedError{Code: "invite_cleanup_failed", Message: "remote cleanup failure"},
+		registry.CodeInvalidRequestLimits:       registry.CodedError{Code: registry.CodeInvalidRequestLimits, Message: "unlimited requires acknowledgement"},
 		"internal_error":                        errors.New("boom"),
 		"usage_error":                           output.ErrUsage("bad usage"),
 		"auth_error":                            output.ErrAuth("bad auth"),
@@ -956,6 +969,15 @@ func TestManifestFlagsAreSelfDescribingAndRelationshipsAreExplicit(t *testing.T)
 	if _, ok := listFields["device_targets"]; !ok {
 		t.Fatal("invite list manifest missing per-target device check results")
 	}
+	removeFields := commands["tslink people remove"].JSONResultFields
+	if removeFields["complete"].Type != "boolean" || removeFields["cleanup"].Type != "array" {
+		t.Fatal("people remove manifest must expose remote completion and cleanup evidence", removeFields)
+	}
+	for _, name := range []string{"reconcile-invite", "replace-invite"} {
+		if !containsString(flag("tslink people update", name).Requires, "--invite") {
+			t.Fatal("people update recovery flag requires --invite", name)
+		}
+	}
 	resendFields := commands["tslink invite resend"].JSONResultFields
 	if _, ok := resendFields["invite_url"]; ok {
 		t.Fatal("invite resend manifest still advertises invite_url")
@@ -980,8 +1002,10 @@ func TestCompactManifestStaysBelowAgentTokenBudget(t *testing.T) {
 	// up, so it stays and the ceiling moves to 3000. Batch B3 then derived the
 	// map from the one error-code table, which added the ten codes the old map
 	// missed and mcp_elevated_invite_refused: 2860 bytes at the end of B3.
-	if len(data) >= 3000 {
-		t.Fatalf("compact manifest = %d bytes, want < 3000", len(data))
+	// People sharing, health, recipes and request limits expand the compact agent surface.
+	// Keep a bounded budget for the combined command tree.
+	if len(data) >= 4500 {
+		t.Fatalf("compact manifest = %d bytes, want < 4500", len(data))
 	}
 	compact := CompactManifest()
 	if compact.ErrorCodes[registry.CodeURLNotReady] != 5 {
