@@ -11,7 +11,7 @@
 | Go | Linux 原生 build/vet/test/race/coverage/shuffle、gofmt/tidy、三平台 staticcheck、六目标 cross-build 和漏洞扫描、Linux compiled contracts、artifact、GoReleaser 和 manifest 检查,以及独立 policy tests。 |
 | Full | Go tier 全部检查,加 macOS/Windows 原生测试和 compiled contracts、Darwin manifest 严格检查和三平台 manifest 比较。 |
 
-Docs 仅允许根目录或 `docs/` 下的 Markdown,以及 `docs/assets/` 下的图片。由 `.goreleaser*` 和 release presence check 推导的发布 payload、embed 资产、可执行文件、`.gitattributes` 和 runtime/test fixtures 不属于 docs。修改路径在 merge-base、base 或 head tree 中为 symlink 时选择 full。Embed directives 从 base/head Git 数据读取,解析不确定时选择 full。
+Docs 仅允许根目录或 `docs/` 下的 Markdown,以及 `docs/assets/` 下的图片。从 Git 对象读取所有 `.goreleaser*` 文件和 `.github/workflows/release-candidate.yml` 的原始字节。Docs 路径去掉开头的 `./` 后,路径或 basename 在文本中出现就选择 full,包括注释。任一行同时包含 glob 字符 (`*`, `?`, `[`) 和 `docs`、`.md` 或 `files:`、`src:`、`contents:` key 时,所有 docs 候选变更选择 full。Embed 资产、可执行文件、`.gitattributes` 和 runtime/test fixtures 不属于 docs。Merge-base、base 或 head tree 任意位置存在 symlink 时选择 full。Embed directives 从 Git 数据读取并去掉开头的 `./`,检查不确定时选择 full。
 
 平台相关文件及包、install/supervision/daemon、`go.mod`、`go.sum`、`.github/**`、`tools/**` 和生成 manifest 选择 full。旧树、删除路径、base 分支新增的平台证据也会检查。未知路径或读取失败选择 full。`ci:full` label 强制 ready PR 使用 full; draft 仍暂缓重检查。
 

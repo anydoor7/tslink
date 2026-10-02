@@ -357,7 +357,7 @@ class ReviewRegressionTests(unittest.TestCase):
                 if metadata == "check":
                     workflow = (ROOT / ".github/workflows/release-candidate.yml").read_text()
                     self.write(".github/workflows/release-candidate.yml",
-                               workflow.replace("bundled_docs=(", "bundled_docs=(docs/custom-payload.md "))
+                               workflow.replace("bundled_documents=(", "bundled_documents=(docs/custom-payload.md "))
                 else:
                     config = "version: 2\n" + ("archives:\n  - files:\n      - " + payload + "\n" if metadata == "archive"
                         else "nfpms:\n  - contents:\n      - src: " + payload + "\n        dst: /usr/share/doc/custom.md\n")
@@ -366,6 +366,113 @@ class ReviewRegressionTests(unittest.TestCase):
                 base = self.commit("custom payload metadata")
                 self.write(payload, "head payload\n")
                 head = self.commit("custom payload change")
+                self.assertEqual(tier.decide(self.repo, "pull_request", self.event(base=base, head=head))[0], "full")
+
+    def test_review2_payload_spellings(self):
+        spellings = (
+            ("normal list", "    files:\n      - docs/custom-payload.md\n"),
+            ("dot slash", "    files:\n      - ./docs/custom-payload.md\n"),
+            ("indentless list", "    files:\n    - docs/custom-payload.md\n"),
+        )
+        for spelling, files in spellings:
+            with self.subTest(spelling=spelling):
+                self.reset()
+                self.write(".goreleaser.yml", "version: 2\narchives:\n  - id: archive\n" + files)
+                self.write("docs/custom-payload.md", "base payload\n")
+                base = self.commit("payload metadata base")
+                self.write("docs/custom-payload.md", "changed payload\n")
+                head = self.commit("payload only head")
+                self.assertEqual(self.git("diff", "--name-only", base, head), "docs/custom-payload.md")
+                self.assertEqual(self.git("rev-parse", base + ":.goreleaser.yml"),
+                                 self.git("rev-parse", head + ":.goreleaser.yml"))
+                self.assertEqual(tier.decide(self.repo, "pull_request", self.event(base=base, head=head))[0], "full")
+
+    def test_review2_unchanged_symlink_target(self):
+        self.write("go.mod", "module fixture.invalid/symlink\n\ngo 1.26.6\n")
+        self.write("docs/program.md", 'package main\nfunc main() { println("base runtime") }\n')
+        (self.repo / "main.go").symlink_to("docs/program.md")
+        base = self.commit("unchanged source symlink base")
+        self.write("docs/program.md", 'package main\nfunc main() { println("changed runtime") }\n')
+        head = self.commit("target only head")
+        self.assertEqual(self.git("diff", "--name-only", base, head), "docs/program.md")
+        self.assertEqual(self.git("ls-tree", base, "main.go"), self.git("ls-tree", head, "main.go"))
+        self.assertIn("120000", self.git("ls-tree", head, "main.go"))
+        self.assertEqual(tier.decide(self.repo, "pull_request", self.event(base=base, head=head))[0], "full")
+
+    def test_symlink_anywhere_in_each_tree(self):
+        for location in ("merge-base", "base", "head"):
+            with self.subTest(location=location):
+                self.reset()
+                (self.repo / "unrelated-link").symlink_to("README.md")
+                linked = self.commit("unrelated symlink")
+                if location == "merge-base":
+                    (self.repo / "unrelated-link").unlink()
+                    base = self.commit("base removes symlink")
+                    self.reset(linked)
+                    (self.repo / "unrelated-link").unlink()
+                    self.write("docs/guide.md", "changed\n")
+                    head = self.commit("head removes symlink and changes docs")
+                elif location == "base":
+                    base = linked
+                    self.reset()
+                    self.write("docs/guide.md", "changed\n")
+                    head = self.commit("independent docs head")
+                else:
+                    base = self.base
+                    self.write("docs/guide.md", "changed\n")
+                    head = self.commit("head contains symlink")
+                selected, reason = tier.decide(self.repo, "pull_request", self.event(base=base, head=head))
+                self.assertEqual(selected, "full")
+                self.assertIn("symlink exists", reason)
+
+    def test_raw_release_payload_path_and_basename(self):
+        for metadata in (".goreleaser.yml", ".goreleaser.extra.yaml", "nested/.goreleaser.yml",
+                         ".github/workflows/release-candidate.yml"):
+            for reference in ("./docs/custom-payload.md", "/packaged/custom-payload.md", "custom-payload.md"):
+                with self.subTest(metadata=metadata, reference=reference):
+                    self.reset()
+                    original = (self.repo / metadata).read_bytes() if (self.repo / metadata).exists() else b"version: 2\n"
+                    # Invalid UTF-8 in a comment cannot prevent raw-byte matching.
+                    path = self.repo / metadata
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(original + b"\n# \xff referenced " + reference.encode() + b"\n")
+                    self.write("docs/custom-payload.md", "base\n")
+                    base = self.commit("text metadata base")
+                    self.write("docs/custom-payload.md", "head\n")
+                    head = self.commit("payload only")
+                    selected, reason = tier.decide(self.repo, "pull_request", self.event(base=base, head=head))
+                    self.assertEqual(selected, "full")
+                    self.assertIn("release metadata", reason)
+
+    def test_raw_release_globs_promote_all_docs(self):
+        for line in ("# docs *", "# arbitrary.md?", "# docs [ab]", "files: assets/*",
+                     "src: assets/?", "contents: assets/[ab]"):
+            for metadata in (".goreleaser.yml", ".github/workflows/release-candidate.yml"):
+                with self.subTest(line=line, metadata=metadata):
+                    self.reset()
+                    self.write(metadata, (self.repo / metadata).read_text() + "\n" + line + "\n")
+                    self.write("docs/guide.md", "base\n")
+                    base = self.commit("glob metadata base")
+                    self.write("docs/guide.md", "head\n")
+                    head = self.commit("unrelated docs only")
+                    selected, reason = tier.decide(self.repo, "pull_request", self.event(base=base, head=head))
+                    self.assertEqual(selected, "full")
+                    self.assertIn("release metadata", reason)
+
+    def test_embed_dot_slash_normalization(self):
+        for pattern in ("./docs/payload.md", "all:./docs/payload.md"):
+            with self.subTest(pattern=pattern):
+                self.reset()
+                self.write("main.go", "package main\n//go:embed " + pattern + "\n")
+                self.write("docs/payload.md", "base\n")
+                base = self.commit("dot slash embed base")
+                self.write("docs/payload.md", "head\n")
+                head = self.commit("embed payload only")
+                try:
+                    patterns = tier.embed_patterns(self.repo, base)
+                except ValueError as error:
+                    self.fail(f"leading ./ was not normalized: {error}")
+                self.assertEqual(patterns, {"docs/payload.md"})
                 self.assertEqual(tier.decide(self.repo, "pull_request", self.event(base=base, head=head))[0], "full")
 
     def test_uncertain_release_metadata_selects_full(self):
@@ -381,7 +488,7 @@ class ReviewRegressionTests(unittest.TestCase):
             (".goreleaser.yml", "archives:\n  - files:\n      - ../docs/payload.md\n"),
             (".goreleaser.yml", "archives:\n  - files:\n      - 'docs/it''s.md'\n"),
             (".github/workflows/release-candidate.yml", workflow.replace("Required licence and project documents present", "renamed check")),
-            (".github/workflows/release-candidate.yml", workflow.replace("bundled_docs=(COMMERCIAL.md COMMERCIAL_zh.md)", "bundled_docs=$PAYLOADS")),
+            (".github/workflows/release-candidate.yml", workflow.replace("bundled_documents=(COMMERCIAL.md COMMERCIAL_zh.md)", "bundled_documents=$PAYLOADS")),
         ]
         for path, text in cases:
             with self.subTest(path=path, text=text):
@@ -392,7 +499,7 @@ class ReviewRegressionTests(unittest.TestCase):
                 head = self.commit("docs head")
                 selected, reason = tier.decide(self.repo, "pull_request", self.event(base=base, head=head))
                 self.assertEqual(selected, "full")
-                self.assertIn("inspection unavailable", reason)
+                self.assertTrue("inspection unavailable" in reason or "release metadata" in reason, reason)
 
     def test_uncertain_embed_parsing_selects_full(self):
         for directive in (" //go:embed docs/a.md", "//go:embed\t", '//go:embed "docs/a.md"docs/b.md',

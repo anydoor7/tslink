@@ -494,14 +494,14 @@ jobs:
         run: |
           set -euo pipefail
           required_license=(LICENSE NOTICE THIRD_PARTY_NOTICES.md)
-          bundled_docs=(COMMERCIAL.md COMMERCIAL_zh.md)
+          bundled_documents=(COMMERCIAL.md COMMERCIAL_zh.md)
           expected=(darwin-amd64 darwin-arm64 linux-amd64 linux-arm64 windows-amd64 windows-arm64)
           for t in "${expected[@]}"; do
             dir="downloaded/tslink-${t}"
             [ -d "${dir}" ] || { echo "::error::missing artifact ${t}"; exit 1; }
             bin="${dir}/tslink"; [ "${t%-*}" = "windows" ] && bin="${dir}/tslink.exe"
             [ -s "${bin}" ] || { echo "::error::empty binary ${t}"; exit 1; }
-            for f in "${required_license[@]}" "${bundled_docs[@]}"; do
+            for f in "${required_license[@]}" "${bundled_documents[@]}"; do
               [ -s "${dir}/${f}" ] || { echo "::error::missing ${f} in ${t}"; exit 1; }
             done
           done
@@ -534,8 +534,8 @@ jobs:
         run: |
           set -euo pipefail
           required_license=(LICENSE NOTICE THIRD_PARTY_NOTICES.md)
-          bundled_docs=(COMMERCIAL.md COMMERCIAL_zh.md)
-          for f in "${required_license[@]}" "${bundled_docs[@]}"; do
+          bundled_documents=(COMMERCIAL.md COMMERCIAL_zh.md)
+          for f in "${required_license[@]}" "${bundled_documents[@]}"; do
             [ -s "${f}" ] || { echo "::error::missing ${f}"; exit 1; }
           done
       - name: Third-party notice inventory is current

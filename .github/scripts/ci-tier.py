@@ -8,7 +8,6 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import re
-import shlex
 import subprocess
 import sys
 
@@ -52,70 +51,36 @@ def tree_entries(repo, ref):
     return entries
 
 
-def literal_path(value):
-    """Only literal scalar paths are supported; new syntax costs a full gate."""
-    # YAML escaping/comment rules differ from shlex. Reject these forms rather
-    # than accidentally decoding a different path (including doubled quotes).
-    if any(char in value for char in "\\#") or "''" in value:
-        raise ValueError("uncertain release payload quoting")
-    words = shlex.split(value, comments=True)
-    if len(words) != 1 or any(char in words[0] for char in "$`{}[]\\"):
-        raise ValueError("uncertain release payload path")
-    path = words[0]
-    if path.startswith(("!", "&")) or path.startswith("/") or ".." in path.split("/"):
-        raise ValueError("uncertain release payload path")
-    return path
-
-
-def release_payloads(repo, ref, entries):
-    """Derive exclusions from GoReleaser file/src lists and the real presence check.
-
-    This deliberately supports only literal block lists, not arbitrary YAML or
-    shell evaluation. An unsupported representation selects full in decide().
-    """
-    payloads = set()
-    for name in entries:
-        if "/" in name or not name.startswith(".goreleaser"):
-            continue
-        if not name.endswith((".yml", ".yaml")):
-            raise ValueError("uncertain GoReleaser config format")
-        lines = git(repo, "show", f"{ref}:{name}").decode().splitlines()
-        for index, line in enumerate(lines):
-            match = re.fullmatch(r"( *)(?:-\s+)?files\s*:\s*(.*?)\s*", line)
-            if re.search(r"\bfiles[\"']?\s*:", line) and not match:
-                raise ValueError("uncertain GoReleaser files syntax")
-            if match:
-                if match[2] and not match[2].startswith("#"):
-                    raise ValueError("uncertain GoReleaser files list")
-                indent = len(match[1])
-                for child in lines[index + 1:]:
-                    if not child.strip() or child.lstrip().startswith("#"):
-                        continue
-                    if len(child) - len(child.lstrip()) <= indent:
-                        break
-                    item = re.fullmatch(r"\s*-\s+(?:src:\s*)?(.+)", child)
-                    if not item:
-                        raise ValueError("uncertain GoReleaser files entry")
-                    payloads.add(literal_path(item[1]))
-            src = re.fullmatch(r"\s*(?:-\s+)?src:\s*(.+)", line)
-            if re.search(r"\bsrc[\"']?\s*:", line) and not src:
-                raise ValueError("uncertain GoReleaser source syntax")
-            if src:
-                payloads.add(literal_path(src[1]))
+def release_sensitive(repo, ref, entries, files):
+    """Match raw Git bytes, including comments; false positives only cost CI."""
+    candidates = {name.removeprefix("./") for name in files if is_docs(name.removeprefix("./"))}
+    sensitive = {}
     workflow = ".github/workflows/release-candidate.yml"
-    if workflow in entries:
-        source = git(repo, "show", f"{ref}:{workflow}").decode()
-        marker = "      - name: Required licence and project documents present\n"
-        if marker not in source:
+    for name in entries:
+        config = PurePosixPath(name).name.startswith(".goreleaser")
+        if not config and name != workflow:
+            continue
+        source = git(repo, "show", f"{ref}:{name}")
+        # Retain the old fail-closed fixtures with coarse lexical guards, never
+        # by deriving payloads or interpreting YAML indentation/quoting.
+        if config and (not name.endswith((".yml", ".yaml")) or re.search(
+                rb"(?m)^\s*src\s*:[^*?\[\n]*$|^\s*-\s*['\"]?\{\{|\.\./|''", source)):
+            raise ValueError("uncertain release metadata")
+        if name == workflow and (b"Required licence and project documents present" not in source
+                or b"required_license=(" not in source
+                or not re.search(rb"\bbundled_(?:docs|documents)=\(", source)):
             raise ValueError("release payload check unavailable")
-        check = source.split(marker, 1)[1].split("\n      - ", 1)[0]
-        arrays = re.findall(r"^\s*(?:required_license|bundled_docs)=\(([^\n]*)\)\s*$", check, re.M)
-        if len(arrays) != 2:
-            raise ValueError("uncertain release payload check")
-        for array in arrays:
-            for word in shlex.split(array):
-                payloads.add(literal_path(shlex.quote(word)))
-    return payloads
+        for line in source.splitlines():
+            if any(char in line for char in (b"*", b"?", b"[")) and (
+                    b"docs" in line or b".md" in line
+                    or re.search(rb"\b(?:files|src|contents)['\"]?\s*:", line)):
+                sensitive.update((path, f"release metadata glob in {name}: {line!r}") for path in candidates)
+        for path in candidates:
+            for text in (path, PurePosixPath(path).name):
+                if os.fsencode(text) in source:
+                    sensitive[path] = f"release metadata substring {text!r} in {name}"
+                    break
+    return sensitive
 
 
 def embed_patterns(repo, ref):
@@ -151,7 +116,7 @@ def embed_patterns(repo, ref):
                     pattern, text = match[0], text[match.end():]
                 if text and not text[0].isspace():
                     raise ValueError("uncertain embed token boundary")
-                pattern = pattern.removeprefix("all:")
+                pattern = pattern.removeprefix("all:").removeprefix("./")
                 if (not pattern or pattern.startswith("/") or any(part in {"", ".", ".."} for part in pattern.split("/"))
                         or any(char in pattern for char in "[]\\\"`")):
                     raise ValueError("uncertain embed pattern")
@@ -164,7 +129,8 @@ def matches_path(name, patterns):
     # fnmatch's '*' also crosses '/' here: deliberate conservative matching.
     # Matching ancestors accounts for embedded/payload directories recursively,
     # including hidden files regardless of the optional all: prefix.
-    return any(fnmatch.fnmatchcase(str(path), pattern)
+    name = name.removeprefix("./")
+    return any(fnmatch.fnmatchcase(str(path), pattern.removeprefix("./"))
                for path in (PurePosixPath(name), *PurePosixPath(name).parents)
                for pattern in patterns)
 
@@ -236,10 +202,15 @@ def decide(repo, event_name, event, files=None, base=None, head=None):
         special = (platform_files(repo, merge_base) | platform_files(repo, base)
                    | platform_files(repo, head))
         sensitive = set()
-        for ref in {merge_base, base, head}:
+        for ref in dict.fromkeys((merge_base, base, head)):
             entries = tree_entries(repo, ref)
-            dependencies = release_payloads(repo, ref, entries) | embed_patterns(repo, ref)
-            sensitive.update(name for name in files if entries.get(name) in {"120000", "100755"}
+            if "120000" in entries.values():
+                return "full", "symlink exists in merge-base, base or head: conservative full gate"
+            release = release_sensitive(repo, ref, entries, files)
+            if release:
+                return "full", release[sorted(release)[0]]
+            dependencies = embed_patterns(repo, ref)
+            sensitive.update(name for name in files if entries.get(name) == "100755"
                              or matches_path(name, dependencies))
         return classify(files, special, labels, sensitive=sensitive, mode=mode)
     except (OSError, ValueError, KeyError, RuntimeError, subprocess.SubprocessError):
