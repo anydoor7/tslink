@@ -21,3 +21,9 @@ This index records the people sharing lifecycle implementation and regression te
 
 - `preserve_host_test.go`: strict boolean decoding, legacy defaults, persistence and proxy-only admission.
 - `proxy_host.go`: shared trusted canonical name selection for proxy, health monitor and doctor.
+
+# Concurrent registry file access
+
+- `file_io.go`, `file_io_windows.go`, `file_io_other.go`: shared-delete Windows readers and bounded sharing-error retries for registry reads and replacements.
+- `file_io_test.go`, `file_io_windows_test.go`: injected classifier/policy tests and native held-handle, snapshot and failure-cleanup regressions.
+- `concurrent_replace_test.go`: all registry loaders against a concurrent real registry writer, with error counts.

@@ -1080,17 +1080,17 @@ func ValidateTCPTarget(target string) error {
 // every configured service would be torn down". A test has to be able to
 // produce a non-ENOENT read error to hold that line, and on Unix a regular
 // file the caller owns cannot be made unreadable to that caller.
-var readRegistryFile = os.ReadFile
+var readRegistryFile = readRegistryFileOnce
 
 // LoadForRuntime strictly decodes registry.json while isolating errors whose
 // service name remains trustworthy. A malformed top-level document or a
 // service without a usable name is global-invalid because runtime cannot know
 // which existing listener the raw entry was intended to replace.
 func LoadForRuntime(path string) (*Registry, []ServiceIssue, error) {
-	if err := atomicfile.ConvergePrivateFile(path); err != nil {
+	if err := convergeRegistryFile(path); err != nil {
 		return nil, nil, err
 	}
-	data, err := readRegistryFile(path)
+	data, err := readRegistryBytes(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return emptyRegistry(), nil, nil
@@ -1107,7 +1107,7 @@ func LoadForRuntime(path string) (*Registry, []ServiceIssue, error) {
 // Preflight reads and strictly validates a registry copy without changing its
 // mode or contents. It is suitable for compatibility checks before upgrading.
 func Preflight(path string) (*Registry, []ServiceIssue, error) {
-	data, err := os.ReadFile(path)
+	data, err := readRegistryBytes(path)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1262,10 +1262,10 @@ func LoadForDiagnostics(path string) (*Registry, []ServiceIssue, error) {
 // successfully decoded registry. Deletion callers use this distinction to
 // fail closed without treating a valid zero-service registry as corruption.
 func LoadWithFileState(path string) (*Registry, RegistryFileState, error) {
-	if err := atomicfile.ConvergePrivateFile(path); err != nil {
+	if err := convergeRegistryFile(path); err != nil {
 		return nil, "", err
 	}
-	data, err := readRegistryFile(path)
+	data, err := readRegistryBytes(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return emptyRegistry(), RegistryFileMissing, nil
@@ -1312,10 +1312,10 @@ func LoadWithFileState(path string) (*Registry, RegistryFileState, error) {
 }
 
 func loadForMutation(path string) (*Registry, error) {
-	if err := atomicfile.ConvergePrivateFile(path); err != nil {
+	if err := convergeRegistryFile(path); err != nil {
 		return nil, err
 	}
-	data, err := os.ReadFile(path)
+	data, err := readRegistryBytes(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return emptyRegistry(), nil
@@ -1362,7 +1362,7 @@ func withLock(regPath string, fn func() error) error {
 	if err := atomicfile.EnsurePrivateDir(filepath.Dir(regPath)); err != nil {
 		return err
 	}
-	if err := atomicfile.ConvergePrivateFile(regPath + ".lock"); err != nil {
+	if err := convergeRegistryFile(regPath + ".lock"); err != nil {
 		return err
 	}
 
@@ -1386,7 +1386,7 @@ func tryWithLock(regPath string, fn func() error) (bool, error) {
 	if err := atomicfile.EnsurePrivateDir(filepath.Dir(regPath)); err != nil {
 		return false, err
 	}
-	if err := atomicfile.ConvergePrivateFile(regPath + ".lock"); err != nil {
+	if err := convergeRegistryFile(regPath + ".lock"); err != nil {
 		return false, err
 	}
 	lockFile, err := os.OpenFile(regPath+".lock", os.O_CREATE|os.O_RDWR, 0o600)
@@ -1446,7 +1446,7 @@ func save(path string, reg *Registry) error {
 	}
 	data = append(data, '\n')
 
-	return atomicfile.WriteFile(path, data)
+	return writeRegistryFile(path, data)
 }
 
 func Add(path string, svc Service) (created bool, err error) {
@@ -1627,7 +1627,7 @@ func addIfMissing(path string, svc Service, tentative bool) (created bool, err e
 		// The mark goes first, so a registration its creator may still
 		// roll back always carries one; a failed save takes it away again.
 		if tentative {
-			if err := atomicfile.WriteFile(tentativeMarkPath(path, svc.Name), tentativeMark(svc)); err != nil {
+			if err := writeRegistryFile(tentativeMarkPath(path, svc.Name), tentativeMark(svc)); err != nil {
 				return err
 			}
 		}
@@ -1769,7 +1769,7 @@ func KeepIfUnchanged(path string, expected Service) (kept bool, err error) {
 // changed after creation nor one another call has kept since.
 func RemoveIfUnchanged(path string, expected Service) (removed bool, err error) {
 	err = withLock(path, func() error {
-		mark, err := os.ReadFile(tentativeMarkPath(path, expected.Name))
+		mark, err := readRegistryBytes(tentativeMarkPath(path, expected.Name))
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil
 		}
@@ -1827,7 +1827,7 @@ func replaceIfUnchanged(path string, expected, replacement Service, tentative bo
 	err = withLock(path, func() error {
 		var previousMark []byte
 		if tentative {
-			mark, err := os.ReadFile(tentativeMarkPath(path, expected.Name))
+			mark, err := readRegistryBytes(tentativeMarkPath(path, expected.Name))
 			if errors.Is(err, fs.ErrNotExist) {
 				return nil
 			}
@@ -1858,7 +1858,7 @@ func replaceIfUnchanged(path string, expected, replacement Service, tentative bo
 			replaced = true
 			if tentative {
 				if len(previousMark) > 0 {
-					return atomicfile.WriteFile(tentativeMarkPath(path, replacement.Name), previousMark)
+					return writeRegistryFile(tentativeMarkPath(path, replacement.Name), previousMark)
 				}
 				_ = dropTentativeMark(path, expected.Name)
 			}
@@ -1931,7 +1931,7 @@ func mutateService(path, name string, mutate func(Service) (Service, error), ten
 				return err
 			}
 			if tentative {
-				mark, err := os.ReadFile(tentativeMarkPath(path, existing.Name))
+				mark, err := readRegistryBytes(tentativeMarkPath(path, existing.Name))
 				if err != nil && !errors.Is(err, fs.ErrNotExist) {
 					return err
 				}
@@ -1940,7 +1940,7 @@ func mutateService(path, name string, mutate func(Service) (Service, error), ten
 				if bytes.Equal(current, tentativeMark(existing)) {
 					nextMark = append(nextMark, mark...)
 				}
-				if err := atomicfile.WriteFile(tentativeMarkPath(path, next.Name), nextMark); err != nil {
+				if err := writeRegistryFile(tentativeMarkPath(path, next.Name), nextMark); err != nil {
 					return err
 				}
 			}
