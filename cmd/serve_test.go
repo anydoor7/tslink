@@ -214,6 +214,8 @@ func (m *mockServerWithAuthProvider) Run(ctx context.Context) error {
 
 // saveServeState saves all serve function variables and returns a cleanup func.
 func saveServeState(t *testing.T) {
+	oldLoadAll, oldWriteAll := serveLoadAuthHandoffsFn, serveWriteAuthHandoffsFn
+	t.Cleanup(func() { serveLoadAuthHandoffsFn, serveWriteAuthHandoffsFn = oldLoadAll, oldWriteAll })
 	t.Helper()
 	old := struct {
 		ensureDir          func() error

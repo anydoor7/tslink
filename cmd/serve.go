@@ -79,6 +79,8 @@ var (
 	serveRemoveReadyFn         = daemon.RemovePID
 	serveSaveAuthHandoffFn     = saveAuthHandoff
 	serveLoadAuthHandoffFn     = loadAuthHandoff
+	serveLoadAuthHandoffsFn    = loadAuthHandoffs
+	serveWriteAuthHandoffsFn   = writeAuthHandoffs
 	serveRemoveAuthHandoffFn   = removeAuthHandoff
 	serveOpenBrowserFn         = openBrowser
 	serveCIEnvironmentSetFn    = ciEnvironmentSet
@@ -834,7 +836,7 @@ func runForegroundWithOptions(pidPath, authKey, controlURL string, options foreg
 		}
 		var handoffMu sync.Mutex
 		// Capture seams before the async portal worker can publish a handoff.
-		save, load, remove, now := serveSaveAuthHandoffFn, serveLoadAuthHandoffFn, serveRemoveAuthHandoffFn, authHandoffNowFn
+		save, load, write, remove, now := serveSaveAuthHandoffFn, serveLoadAuthHandoffsFn, serveWriteAuthHandoffsFn, serveRemoveAuthHandoffFn, authHandoffNowFn
 		setter.SetAuthHandoffFunc(func(ctx context.Context, handoff server.AuthHandoff) error {
 			handoffMu.Lock()
 			defer handoffMu.Unlock()
@@ -842,15 +844,23 @@ func runForegroundWithOptions(pidPath, authKey, controlURL string, options foreg
 				if options.AuthHandoffPath == "" {
 					return nil
 				}
-				record, err := load(options.AuthHandoffPath)
+				authHandoffFileMu.Lock()
+				defer authHandoffFileMu.Unlock()
+				entries, err := load(options.AuthHandoffPath)
 				if os.IsNotExist(err) {
 					return nil
 				}
-				if err != nil && !errors.Is(err, errAuthHandoffExpired) {
+				if err != nil {
 					return err
 				}
-				if record.DaemonPID == os.Getpid() && record.Service == handoff.Service && record.AuthURL == handoff.AuthURL {
-					return remove(options.AuthHandoffPath)
+				for i, record := range entries {
+					if record.DaemonPID == os.Getpid() && record.Service == handoff.Service && record.AuthURL == handoff.AuthURL {
+						remaining := append(entries[:i], entries[i+1:]...)
+						if len(remaining) == 0 {
+							return remove(options.AuthHandoffPath)
+						}
+						return write(options.AuthHandoffPath, remaining)
+					}
 				}
 				return nil
 			}

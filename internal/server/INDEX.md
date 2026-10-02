@@ -53,3 +53,4 @@ This index covers the recipe integration tests. The repository AGENTS.md describ
 
 - `f5_review_test.go`: ported reviewer lifecycle/auth-error/TCP probes and real-handler browser artifacts.
 - `portal_access_model_test.go`: service-type enforcement/disclosure, tagged/admin/tombstone and cancelled-generation checks.
+- `enrollment_testbridge.go`: build-tagged bridge to the production enrollment loop; excluded from normal builds.

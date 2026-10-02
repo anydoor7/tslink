@@ -269,9 +269,9 @@ func TestPortalHandoffConcurrentPublisher(t *testing.T) {
 	path := filepath.Join(dir, "auth-handoff.json")
 	read, release := make(chan struct{}), make(chan struct{})
 	serveSaveAuthHandoffFn, serveRemoveAuthHandoffFn = saveAuthHandoff, removeAuthHandoff
-	serveLoadAuthHandoffFn = func(path string) (authHandoffRecord, error) {
-		record, err := loadAuthHandoff(path)
-		if record.Service == "home" {
+	serveLoadAuthHandoffsFn = func(path string) ([]authHandoffRecord, error) {
+		record, err := loadAuthHandoffs(path)
+		if len(record) > 0 && record[0].Service == "home" {
 			close(read)
 			<-release
 		}

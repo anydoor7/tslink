@@ -53,6 +53,8 @@ People logins accept any nonempty valid UTF-8 string without control characters 
 | `tslink install` | Auto-start on login (macOS LaunchAgent / Linux systemd / Windows Task Scheduler) |
 | `tslink uninstall` | Remove auto-start |
 
+`status --json` and `status --urls --json` report every pending portal/app enrollment in `data.pending_logins` (`node`, `auth_url`, `expires_at`). Human status lists each node and login URL. The compatibility `auth_url`/`auth_status` fields select the oldest still-pending publication. See [home portal](portal.md).
+
 A missing implicit default registry is valid on first run. An explicit missing
 `registry check <path>` reports `not_found` (exit 5). Malformed registry JSON,
 field types, or trailing data report `usage_error` (exit 2), naming the path

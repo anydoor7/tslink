@@ -13,6 +13,8 @@ tslink portal disable
 
 默认主机名为 `home`。请使用 **status 实际报告的 portal URL**，例如 `https://home.example.ts.net`；重名时 Tailscale 可能重命名节点。enable/disable 只保存配置，运行中的 daemon 自动应用。daemon 未运行时执行 `tslink serve`。新入口节点可能需要独立的浏览器登录，入口注册流程与应用节点独立进行。daemon ready 会保留仍 pending 的入口登录提示；完成或取消只删除匹配本次注册的提示（daemon PID、service 和 auth URL），保留另一节点的待登录提示。确证运行的 portal 快照作为 status 的授权证据，只有入口而没有应用时也适用，但不增加应用数量。`pending` 或 `starting` 不表示地址已经可用。doctor 和两种 status 输出都包含 `portal.enabled`、`hostname`、`state`、`url` 及启动失败代码；daemon 停止、快照过时或不匹配当前 registry 时不提供 URL。
 
+待登录提示按节点名称保存在同一个原子替换的 `auth-handoff.json` 文档中（schema version 2）；发布或移除一个节点的提示不会改变其他节点。旧的单条记录文件仍可读取，下次发布时迁移。`status --json` 和 `status --urls --json` 的 `pending_logins` 列出当前 daemon 所有未过期的待登录项，每项含 `node`、`auth_url` 和 `expires_at`；人类输出列出每个节点和 URL。兼容字段 `auth_url`、`auth_status` 和 `expires_at` 取最早发布且仍待登录的一项；替换同一节点的提示会将其排到最后。当前快照已确证运行的节点不再列为待登录。旧 daemon PID 的记录不参与当前输出，新 daemon 发布时替换旧 PID 记录。ready 不移除待登录项。
+
 入口使用独立节点和 `portal-nodes/<hostname>` 状态目录，不修改应用注册、target、tags、健康设置或请求限制，也不重启已有应用节点。其他应用启动或 auth-key 出错也不会阻止入口关闭或替换。替换前先取消、等待旧 worker 退出并关闭旧节点。更换主机名会保留之前的登录状态。有凭据时入口使用配置的默认 tag，并设置 ephemeral；无凭据时使用持久节点，以便 daemon 重启后保留登录。disable 保留本地节点状态和 owner/admin 身份，不删除远端设备。
 
 ## 哪些人能看到应用？

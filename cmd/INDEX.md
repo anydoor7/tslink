@@ -62,3 +62,5 @@ This index records the app recipe additions; the CLI manifest describes the comp
 - `f5_review_test.go`: independent enrollment regressions, production readiness/handoff cleanup, portal-only status and real-file failure cases.
 - `auth_handoff_read_unix.go`, `auth_handoff_read_windows.go`: bounded regular-file handoff reads; Unix nonblocking/no-follow open.
 - `portal_handoff_unix_test.go`: real pending-offer cancellation after FIFO/symlink replacement.
+- `pending_enrollment_test.go`: reviewer-derived HTTP polling and multi-node pending/terminal controls (`enrollmenttest` tag).
+- `auth_handoff_multi_test.go`: legacy migration, per-node replacement, concurrent files, exact retirement, write failures and complete status projections.

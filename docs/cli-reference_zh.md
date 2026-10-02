@@ -53,6 +53,8 @@
 | `tslink install` | 用户登录时自启（macOS LaunchAgent / Linux systemd / Windows Task Scheduler） |
 | `tslink uninstall` | 移除自启 |
 
+`status --json` 和 `status --urls --json` 通过 `data.pending_logins` 列出所有入口/应用的待登录项（`node`、`auth_url`、`expires_at`）；人类输出逐项显示节点和登录 URL。兼容的 `auth_url`/`auth_status` 取最早发布且仍待登录的一项。见 [home portal](portal_zh.md)。
+
 首次运行时，默认 registry 文件尚不存在是有效的空状态。显式传入不存在的
 `registry check <path>` 会报 `not_found`（退出码 5）。registry JSON 语法、字段类型
 或尾部数据有误时，会报 `usage_error`（退出码 2），并给出文件路径和修复指引。

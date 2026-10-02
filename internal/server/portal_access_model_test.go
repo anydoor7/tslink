@@ -55,6 +55,13 @@ func TestPortalServiceEnforcementModel(t *testing.T) {
 				t.Error("portal did not use shared Funnel decision")
 			}
 			_, html := f.request(t, "GET", "/", "home.tailnet.ts.net", "", nil)
+			if !strings.Contains(html, "If an app is missing or will not open, keep Tailscale connected and ask the owner for help.") {
+				t.Error("plain-language visitor help missing")
+			}
+			note := "Anyone who can reach this device can connect; TSLink can&#39;t limit it per person."
+			if strings.Contains(html, note) != wantVisible {
+				t.Error("connection note must appear only in owner/admin cards")
+			}
 			if !wantVisible && strings.Contains(html, public.Name) {
 				t.Error("public card leaked to visitor")
 			}

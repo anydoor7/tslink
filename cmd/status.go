@@ -29,7 +29,7 @@ var (
 	statusRuntimeSnapshotPathFn = config.RuntimeSnapshotPath
 	statusAuthHandoffPathFn     = config.AuthHandoffPath
 	runtimeLoadSnapshotFn       = tsruntime.Load
-	statusLoadAuthHandoffFn     = loadAuthHandoff
+	statusLoadAuthHandoffFn     = loadAuthHandoffs
 	statusNowFn                 = time.Now
 	statusGetClientSecretFn     = credentials.GetClientSecret
 	// statusCredentialInventoryFn classifies the stored credential slots and,
@@ -58,6 +58,13 @@ const (
 	systemdUserManagerUnavailableMessage  = "systemd user manager unavailable"
 )
 
+// StatusPendingLogin identifies a pending node enrollment.
+type StatusPendingLogin struct {
+	Node      string    `json:"node"`
+	AuthURL   string    `json:"auth_url"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
 // StatusResult holds the status information for display.
 type StatusResult struct {
 	Portal                  tsruntime.PortalState   `json:"portal"`
@@ -74,6 +81,7 @@ type StatusResult struct {
 	NodeAuthorized          bool                    `json:"node_authorized"`
 	AuthorizedServiceCount  int                     `json:"authorized_service_count"`
 	AuthStatus              string                  `json:"auth_status"`
+	PendingLogins           []StatusPendingLogin    `json:"pending_logins,omitempty"`
 	AuthURL                 string                  `json:"auth_url,omitempty"`
 	ExpiresAt               *time.Time              `json:"expires_at,omitempty"`
 	Next                    []string                `json:"next,omitempty"`
@@ -139,6 +147,7 @@ type StatusURLsResult struct {
 	NodeAuthorized          bool                        `json:"node_authorized"`
 	AuthorizedServiceCount  int                         `json:"authorized_service_count"`
 	AuthStatus              string                      `json:"auth_status"`
+	PendingLogins           []StatusPendingLogin        `json:"pending_logins,omitempty"`
 	AuthURL                 string                      `json:"auth_url,omitempty"`
 	ExpiresAt               *time.Time                  `json:"expires_at,omitempty"`
 	Next                    []string                    `json:"next,omitempty"`
@@ -531,33 +540,29 @@ func (s statusRead) getPollableStatus(pidPath, regPath, snapshotPath, authHandof
 		r.NodeAuthorized, r.Authenticated = true, true
 		r.AuthStatus = authStatusAuthenticated
 	}
-	if handoff, err := statusLoadAuthHandoffFn(authHandoffPath); err == nil {
-		currentHandoff := !r.DaemonRunning || handoff.DaemonPID == r.DaemonPID
-		if currentHandoff {
+	if handoffs, err := statusLoadAuthHandoffFn(authHandoffPath); err == nil {
+		for _, handoff := range handoffs {
+			if (r.DaemonRunning && handoff.DaemonPID != r.DaemonPID) || !handoff.ExpiresAt.After(now) {
+				continue
+			}
 			_, handoffServiceUp := up[handoff.Service]
 			if handoffServiceUp || (portalUp && handoff.Service == r.Portal.Hostname) {
-				// The snapshot can briefly win the race with removal of the
-				// completed handoff. Do not regress an already-up service.
-				setStatusContinuation(&r)
-				return r, nil
+				// Snapshot publication can precede exact retirement of an offer.
+				continue
 			}
-			// A pending handoff for one service must not erase the
-			// authorization evidence of the other services this daemon is
-			// already serving. Keep the authorized count and only let the
-			// handoff's own service fall back to needs_login; suppress the
-			// global authenticated flag only when no service is up.
-			if len(up) == 0 && !portalUp {
-				r.Authenticated = false
-				r.NodeAuthorized = false
-			}
-			r.AuthStatus = authStatusNeedsLogin
-			r.AuthURL = handoff.AuthURL
-			expiresAt := handoff.ExpiresAt.UTC()
-			r.ExpiresAt = &expiresAt
+			r.PendingLogins = append(r.PendingLogins, StatusPendingLogin{Node: handoff.Service, AuthURL: handoff.AuthURL, ExpiresAt: handoff.ExpiresAt.UTC()})
 			for i := range r.Services {
 				if r.Services[i].Name == handoff.Service && r.Services[i].Error == nil {
 					r.Services[i].Status = authStatusNeedsLogin
 				}
+			}
+		}
+		if len(r.PendingLogins) > 0 {
+			// Compatibility fields select the oldest still-pending publication.
+			first := r.PendingLogins[0]
+			r.AuthStatus, r.AuthURL, r.ExpiresAt = authStatusNeedsLogin, first.AuthURL, &first.ExpiresAt
+			if len(up) == 0 && !portalUp {
+				r.Authenticated, r.NodeAuthorized = false, false
 			}
 		}
 	}
@@ -650,12 +655,12 @@ func formatStatus(r StatusResult, out io.Writer) {
 		// Authenticated services can coexist with a pending enrollment for a
 		// newly added node; keep that node's login URL visible instead of
 		// hiding it behind the global authenticated state.
-		if r.AuthStatus == authStatusNeedsLogin && r.AuthURL != "" {
+		if r.AuthStatus == authStatusNeedsLogin && r.AuthURL != "" && len(r.PendingLogins) == 0 {
 			fmt.Fprintf(out, "→ pending login URL: %s\n", r.AuthURL)
 		}
 	} else if r.AuthStatus == authStatusNeedsLogin {
 		fmt.Fprintln(out, "→ tailnet: needs login")
-		if r.AuthURL != "" {
+		if r.AuthURL != "" && len(r.PendingLogins) == 0 {
 			fmt.Fprintf(out, "→ login URL: %s\n", r.AuthURL)
 		}
 	} else if noNodes {
@@ -664,6 +669,9 @@ func formatStatus(r StatusResult, out io.Writer) {
 		fmt.Fprintln(out, "→ tailnet: not authenticated; restore the login session described above, or run tslink serve manually to enroll")
 	} else {
 		fmt.Fprintln(out, "→ tailnet: not authenticated (run: tslink install, then tslink status to obtain the login URL)")
+	}
+	for _, pending := range r.PendingLogins {
+		fmt.Fprintf(out, "→ pending login for %s: %s\n", pending.Node, pending.AuthURL)
 	}
 	fmt.Fprintf(out, "→ services: %d registered\n", r.ServiceCount)
 	for _, svc := range r.Services {
@@ -725,6 +733,7 @@ func (s statusRead) getStatusURLsWithAuth(pidPath, regPath, snapshotPath, authHa
 		NodeAuthorized:          status.NodeAuthorized,
 		AuthorizedServiceCount:  status.AuthorizedServiceCount,
 		AuthStatus:              status.AuthStatus,
+		PendingLogins:           status.PendingLogins,
 		AuthURL:                 status.AuthURL,
 		ExpiresAt:               status.ExpiresAt,
 		Next:                    append([]string(nil), status.Next...),
@@ -1005,6 +1014,7 @@ func formatStatusURLs(r StatusURLsResult, out io.Writer) {
 		NodeAuthorized:          r.NodeAuthorized,
 		AuthorizedServiceCount:  r.AuthorizedServiceCount,
 		AuthStatus:              r.AuthStatus,
+		PendingLogins:           r.PendingLogins,
 		AuthURL:                 r.AuthURL,
 		ExpiresAt:               r.ExpiresAt,
 		Next:                    r.Next,
