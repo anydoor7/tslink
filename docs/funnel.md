@@ -28,7 +28,11 @@ The persisted `funnel_expires_at` remains an absolute UTC timestamp. Cleanup
 retains it when downgrading public exposure to private. Historical explicit
 `"never"` entries remain readable and are preserved when no new TTL is supplied;
 `extend` can replace them with a finite deadline. No lossful state migration is
-performed. Existing `add` omission preserves a stored deadline; its expired
+performed. Publishing an existing private service without a TTL uses the finite
+24h default within current policy. Only a previously decided, acknowledged public
+lifetime can be preserved, including a legacy explicit public `never`. CLI dry
+runs and MCP add follow the same rule. The registry checks the final new lifetime
+after preservation, before saving. Existing `add` omission preserves a public deadline; its expired
 deadline retry and repeated `share` renewal keep their existing re-arm behavior,
 subject to the current duration policy.
 

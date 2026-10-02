@@ -20,6 +20,7 @@ import (
 
 	"github.com/anydoor7/tslink/internal/atomicfile"
 	"github.com/anydoor7/tslink/internal/config"
+	"github.com/anydoor7/tslink/internal/duration"
 	"github.com/anydoor7/tslink/internal/filelock"
 )
 
@@ -522,6 +523,12 @@ type Service struct {
 // that records neither a Funnel deadline nor the explicit never.
 func (s Service) FunnelExpiryUndecided() bool {
 	return s.Funnel && s.funnelExpiryUndecided
+}
+
+// HasDecidedPublicLifetime distinguishes an acknowledged public choice from
+// a private service's absent expiry. Expiry reconciliation retains the choice.
+func (s Service) HasDecidedPublicLifetime() bool {
+	return s.PublicAck && !s.FunnelExpiryUndecided() && (s.Funnel || s.FunnelExpiresAt != nil)
 }
 
 // MarshalJSON stores the Funnel lifetime explicitly: an RFC 3339 deadline, or
@@ -1439,9 +1446,12 @@ func Add(path string, svc Service) (created bool, err error) {
 }
 
 type AddOptions struct {
-	// PreserveFunnelExpiry keeps an existing entry's deadline. It is used when
-	// --funnel-ttl was not explicitly supplied, including an explicit never.
+	// PreserveFunnelExpiry keeps a decided public lifetime when the TTL was
+	// omitted. A private service's absent expiry is never a public decision.
 	PreserveFunnelExpiry bool
+	// LifetimePolicy checks the final new public deadline after preservation.
+	// nil retains the trusted raw-store API for existing callers.
+	LifetimePolicy *duration.Policy
 	// Now is injectable for deterministic expiration decisions. Zero uses the
 	// current wall clock.
 	Now time.Time
@@ -1551,14 +1561,21 @@ func AddWithOutcome(path string, svc Service, options AddOptions) (outcome AddOu
 			if err := ValidateService(svc); err != nil {
 				return err
 			}
-			if options.PreserveFunnelExpiry {
+			preservedLifetime := false
+			if options.PreserveFunnelExpiry && existing.HasDecidedPublicLifetime() {
 				if svc.Funnel && existing.FunnelExpiresAt != nil && !existing.FunnelExpiresAt.After(now) {
 					rearmed := now.Add(DefaultFunnelTTL).UTC()
-					svc.FunnelExpiresAt = &rearmed
+					if options.LifetimePolicy == nil {
+						svc.FunnelExpiresAt = &rearmed
+					}
 					outcome.RearmedExpiredFunnel = true
 				} else {
 					svc.FunnelExpiresAt = existing.FunnelExpiresAt
+					preservedLifetime = true
 				}
+			}
+			if err := checkAddedFunnelLifetime(svc, preservedLifetime, options, now); err != nil {
+				return err
 			}
 			reg.Services[i] = svc
 			outcome.Created = false
@@ -1569,6 +1586,9 @@ func AddWithOutcome(path string, svc Service, options AddOptions) (outcome AddOu
 			svc.CreatedAt = time.Now().UTC()
 		}
 
+		if err := checkAddedFunnelLifetime(svc, false, options, now); err != nil {
+			return err
+		}
 		reg.Services = append(reg.Services, svc)
 		outcome.Created = true
 		return save(path, reg)

@@ -890,7 +890,7 @@ func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 			if err != nil {
 				return nil, err
 			}
-			result, _, err := executeAdd(ctx, svc, paths.Registry, paths.PID, paths.Snapshot, preserveFunnelExpiry, 0, func() error {
+			result, _, err := executeAdd(ctx, svc, paths.Registry, paths.PID, paths.Snapshot, preserveFunnelExpiry, 0, params.Now, func() error {
 				return ensureDaemonFn(ctx, errOut, params.NoDaemonInstall)
 			})
 			if err != nil {

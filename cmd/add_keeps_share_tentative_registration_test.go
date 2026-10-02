@@ -91,7 +91,7 @@ func TestIdenticalAddDuringAShareWaitKeepsTheRegistration(t *testing.T) {
 				// The definition the share registered, as tslink add would build it.
 				svc := reg.Services[0]
 				svc.CreatedAt = time.Time{}
-				result, _, err := executeAdd(context.Background(), svc, paths.Registry, paths.PID, paths.Snapshot, true, 0)
+				result, _, err := executeAdd(context.Background(), svc, paths.Registry, paths.PID, paths.Snapshot, true, 0, time.Now())
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -141,7 +141,7 @@ func TestIdenticalAddDoesNotReportARegistrationRolledBackBeforeItsKeep(t *testin
 	}
 	svc := stored
 	svc.CreatedAt = time.Time{}
-	result, _, err := executeAdd(context.Background(), svc, paths.Registry, paths.PID, paths.Snapshot, true, 0)
+	result, _, err := executeAdd(context.Background(), svc, paths.Registry, paths.PID, paths.Snapshot, true, 0, time.Now())
 	if err == nil || !strings.Contains(err.Error(), "persisted service not found after successful add") {
 		t.Fatalf("add = %+v, %v; want it to report the registration missing", result, err)
 	}

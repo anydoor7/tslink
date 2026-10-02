@@ -506,10 +506,16 @@ var addKeepIfUnchangedFn = registry.KeepIfUnchanged
 // tool. The persisted service is returned alongside the result because the
 // human CLI rendering reports fields (TCP target and port) the result does not
 // carry.
-func executeAdd(ctx context.Context, svc registry.Service, regPath, pidPath, snapshotPath string, preserveFunnelExpiry bool, wait time.Duration, afterPersist ...func() error) (AddResult, registry.Service, error) {
+func executeAdd(ctx context.Context, svc registry.Service, regPath, pidPath, snapshotPath string, preserveFunnelExpiry bool, wait time.Duration, now time.Time, afterPersist ...func() error) (AddResult, registry.Service, error) {
 	registryWasAbsent := registryFileAbsent(regPath)
+	policy, err := config.LoadLifetimePolicy()
+	if err != nil {
+		return AddResult{}, registry.Service{}, err
+	}
 	outcome, err := registry.AddWithOutcome(regPath, svc, registry.AddOptions{
 		PreserveFunnelExpiry: preserveFunnelExpiry,
+		LifetimePolicy:       &policy,
+		Now:                  now,
 	})
 	if err != nil {
 		return AddResult{}, registry.Service{}, err
@@ -698,6 +704,7 @@ Examples:
 			dryRun, _ := cmd.Flags().GetBool("dry-run")
 
 			params := AddParams{
+				Now:             durationNowFn(),
 				RequestLimits:   requestLimitsFromFlags(cmd),
 				Name:            args[0],
 				Proxy:           proxyTarget,
@@ -736,7 +743,7 @@ Examples:
 			}
 
 			if dryRun {
-				// Preview the same rule as AddWithOptions: an existing entry's
+				// Preview the same rule as AddWithOptions: a decided public
 				// deadline, or its explicit never, is kept unless the operator
 				// explicitly supplies --funnel-ttl.
 				if !cmd.Flags().Changed("funnel-ttl") {
@@ -749,8 +756,8 @@ Examples:
 						return err
 					}
 					for _, existing := range reg.Services {
-						if existing.Name == svc.Name {
-							if !svc.Funnel || existing.FunnelExpiresAt == nil || existing.FunnelExpiresAt.After(time.Now()) {
+						if existing.Name == svc.Name && existing.HasDecidedPublicLifetime() {
+							if !svc.Funnel || existing.FunnelExpiresAt == nil || existing.FunnelExpiresAt.After(params.Now) {
 								svc.FunnelExpiresAt = existing.FunnelExpiresAt
 							}
 							break
@@ -787,7 +794,7 @@ Examples:
 			if err != nil {
 				return err
 			}
-			result, persisted, err := executeAdd(cmd.Context(), svc, regPath, pidPath, snapshotPath, !cmd.Flags().Changed("funnel-ttl"), wait, func() error {
+			result, persisted, err := executeAdd(cmd.Context(), svc, regPath, pidPath, snapshotPath, !cmd.Flags().Changed("funnel-ttl"), wait, params.Now, func() error {
 				return ensureDaemonFn(cmd.Context(), cmd.ErrOrStderr(), noDaemonInstall)
 			})
 			if err != nil {

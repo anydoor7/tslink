@@ -46,7 +46,7 @@ types and unknown keys are refused on both load and save. Invalid configuration
 fails duration changes; it never silently falls back to 7d. Config changes apply
 to subsequent operations, without retroactively rewriting stored deadlines.
 
-People without device invitation history are owner-designated tailnet-member
+People without a guest marker or device invitation history are owner-designated tailnet-member
 logins. `--invite`, or any recorded device invitation history for that person,
 uses guest policy, including later updates and extensions. This is deliberately
 conservative: membership is not inferred from acceptance of an invite.
@@ -55,7 +55,13 @@ Already persisted permanent state is read and preserved losslessly; new public
 `never` requests are refused. Existing updates that omit expiry retain deadlines,
 including legacy permanent grants; newly added apps get a finite 24h deadline.
 
-The first `--invite` on existing member grants also checks any retained deadlines against guest policy; supply an explicit finite `--for`/`--until` if they were permanent, too long or under 1h remaining. Recorded invitation retries preserve their existing deadlines.
+The first `--invite` on existing member grants also checks retained deadlines
+against guest policy; supply a finite `--for`/`--until` if they were permanent,
+too long or under 1h remaining. Guest classification is saved atomically with
+those grants before remote work, even if an invitation fails or is deferred.
+Later updates and extensions use that durable classification; it survives removal
+and re-addition. Invitation retries preserve existing deadlines. A grant or
+classification change during an invite send transition returns `conflict` before sending.
 
 ## Set a new deadline
 

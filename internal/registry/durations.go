@@ -17,6 +17,18 @@ func personHasGrant(p Person, app string) bool {
 	return false
 }
 
+// Only an unchanged, decided public lifetime is grandfathered. Every new
+// public deadline, including reactivation, is checked after preservation.
+func checkAddedFunnelLifetime(svc Service, preserved bool, options AddOptions, now time.Time) error {
+	if !svc.Funnel || preserved || options.LifetimePolicy == nil {
+		return nil
+	}
+	if err := options.LifetimePolicy.Check(duration.Lifetime{Deadline: svc.FunnelExpiresAt, Never: svc.FunnelExpiresAt == nil}, duration.Public, false, now); err != nil {
+		return CodedError{Code: errcode.UsageError, Message: "stored Funnel lifetime: " + err.Error()}
+	}
+	return nil
+}
+
 func parseFunnelRelative(value string) (time.Duration, bool, error) {
 	now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
 	d, err := duration.ParseRelative(value)
@@ -86,7 +98,7 @@ func ExtendDuration(path string, options ExtendOptions) (result DurationChange, 
 				if p.Login != login || p.Revoked {
 					continue
 				}
-				if len(p.Invites) > 0 {
+				if PersonIsGuest(*p) {
 					result.Audience = duration.Guest
 				}
 				for j := range p.Grants {

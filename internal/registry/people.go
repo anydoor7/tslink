@@ -22,6 +22,13 @@ type Person struct {
 	Grants  []PersonGrant  `json:"grants"`
 	Revoked bool           `json:"revoked,omitempty"`
 	Invites []PersonInvite `json:"invites,omitempty"`
+	// Guest is sticky and committed with the first invitation's finite grants,
+	// before remote work. Invite history remains the legacy classification.
+	Guest bool `json:"guest,omitempty"`
+}
+
+func PersonIsGuest(p Person) bool {
+	return p.Guest || len(p.Invites) > 0
 }
 
 type PersonGrant struct {
@@ -193,7 +200,7 @@ func changePerson(path, who string, apps []string, expiry *time.Time, changeExpi
 		// access. Omitted expiry cannot carry permanent/overlong grants across
 		// that boundary. Invitation retries with recorded history retain F1's
 		// deadline preservation semantics.
-		if options != nil && update && options.Audience == duration.Guest && len(result.Invites) == 0 && options.Value == nil {
+		if options != nil && update && options.Audience == duration.Guest && !PersonIsGuest(result) && options.Value == nil {
 			for _, g := range result.Grants {
 				selected := apps == nil || (len(apps) == 1 && apps[0] == "all")
 				for _, app := range apps {
@@ -223,7 +230,7 @@ func changePerson(path, who string, apps []string, expiry *time.Time, changeExpi
 		}
 		if options != nil && (options.Value != nil || needsDefault) {
 			audience := options.Audience
-			if len(result.Invites) > 0 {
+			if PersonIsGuest(result) {
 				audience = duration.Guest
 			}
 			value := "24h"
@@ -246,7 +253,7 @@ func changePerson(path, who string, apps []string, expiry *time.Time, changeExpi
 					return CodedError{Code: errcode.Conflict, Message: fmt.Sprintf("pending invite cleanup for %s; retry people remove before adding again", login)}
 				}
 			}
-			result = Person{Login: login, Grants: []PersonGrant{}, Invites: result.Invites}
+			result = Person{Login: login, Grants: []PersonGrant{}, Invites: result.Invites, Guest: result.Guest}
 		}
 		if apps != nil {
 			selected := map[string]bool{}
@@ -300,6 +307,9 @@ func changePerson(path, who string, apps []string, expiry *time.Time, changeExpi
 				result.Grants[i].ExpiresAt = expiry
 				result.Grants[i].Expired = false
 			}
+		}
+		if options != nil && options.Audience == duration.Guest {
+			result.Guest = true
 		}
 		// Scope is sticky, including after the final grant is removed. An empty
 		// people list must never turn a formerly private app back into allow-all.

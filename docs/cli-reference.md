@@ -166,3 +166,5 @@ Windows `tslink install --startup` uses the Startup fallback for the next sign-i
 ## Change a deadline
 
 `tslink extend <service> [--person <login>] (--for <lifetime> | --until <date/time>) [--regrant] [--ack-never]` changes one person grant or Funnel TTL. A relative duration is measured from the operation time and can shorten or extend. Expired grants need `--regrant`; revoked people remain revoked. It always returns a versioned JSON envelope. MCP `extend` uses `service`, `who`, `for`/`until`, `regrant` and `ack_never`. See [durations](durations.md) for DST, config validation, policy API and the syntax of health/timeout/keepalive flags, and [Funnel](funnel.md) for public expiry.
+
+Omitting `--funnel-ttl` when making an existing private service public selects the finite 24h default. Only a decided public lifetime is preserved, including historical explicit public `never`; dry-run and MCP add use the same rule. The first `--invite` durably classifies a person as a guest in the grant transaction, before remote work; later updates/extensions retain guest policy. A concurrent grant change before an invite send transition returns `conflict`.

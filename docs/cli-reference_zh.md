@@ -161,3 +161,5 @@ Windows `tslink install --startup` 显式选择下次登录启动、无崩溃恢
 ## 修改期限
 
 `tslink extend <service> [--person <login>] (--for <lifetime> | --until <date/time>) [--regrant] [--ack-never]` 修改单个人员授权或 Funnel TTL。相对值从操作时刻起算,可缩短或延长。已过期须 `--regrant`,撤销人员不能恢复。始终输出版本化 JSON envelope。MCP `extend` 使用 `service`、`who`、`for`/`until`、`regrant` 和 `ack_never`。夏令时、配置校验、策略 API 以及健康/超时/keepalive 标志的语法见[时长文档](durations_zh.md),公开期限见[Funnel](funnel_zh.md)。
+
+已有私有服务改为公开时,省略 `--funnel-ttl` 使用有限 24h 默认值。只有已决定的公开期限才会保留,包括历史显式公开 `never`;dry-run 和 MCP add 规则相同。首次 `--invite` 在授权事务中保存持久访客分类,早于远端操作;后续 update/extend 保留访客策略。邀请发送状态转换前发生并发授权变更时返回 `conflict`。

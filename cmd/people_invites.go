@@ -105,6 +105,13 @@ func resumePeopleInvite(ctx context.Context, path, login string, target tailapi.
 		return peopleInviteFailure(op, nil, registry.CodeInviteOwnershipUnproven)
 	}
 	var expected *registry.PersonInvite
+	var expectedGrant *registry.PersonGrant
+	for _, grant := range p.Grants {
+		if grant.App == target.Service {
+			previous := grant
+			expectedGrant = &previous
+		}
+	}
 	for _, existing := range p.Invites {
 		if existing.App == target.Service && existing.NodeID == target.NodeID && !registry.PersonInviteTerminal(existing) {
 			op = existing
@@ -114,7 +121,7 @@ func resumePeopleInvite(ctx context.Context, path, login string, target tailapi.
 		}
 	}
 	save := func(next registry.PersonInvite, reset bool) error {
-		err := registry.SavePersonInviteWithOptions(path, login, next, registry.PersonInviteSaveOptions{Now: peopleNowFn(), Expected: expected, ResetConfirmed: reset})
+		err := registry.SavePersonInviteWithOptions(path, login, next, registry.PersonInviteSaveOptions{Now: peopleNowFn(), Expected: expected, ResetConfirmed: reset, ExpectedGrant: expectedGrant})
 		if err == nil {
 			previous := next
 			expected = &previous

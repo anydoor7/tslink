@@ -27,4 +27,6 @@ This index records the people sharing lifecycle implementation and regression te
 - `durations.go`: per-app locked expiry changes, audience policy and DurationChange payload.
 - `durations_test.go`: deadline/latch/regrant, malformed input, concurrent writer and save failure evidence.
 - `durations_unix_test.go`: real FIFO, directory and symlink refusal through configuration/registry runtime paths.
-- `people.go`: additive ChangePersonWithLifetime API; F1 trusted store API and persisted schema unchanged.
+- `people.go`: additive ChangePersonWithLifetime API; F1 trusted store API retained; optional sticky guest classification in schema 2.
+
+- `duration_boundary_test.go`: final Funnel policy, guest persistence/re-add and invite grant CAS evidence.
