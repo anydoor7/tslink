@@ -3,6 +3,7 @@ package cmd
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -13,7 +14,11 @@ import (
 func TestMalformedRegistryLoadReportsPathAndUsage(t *testing.T) {
 	for name, raw := range map[string]string{"syntax": "{", "type": `{"services":"wrong"}`, "trailing": `{"services":[]} {}`} {
 		t.Run(name, func(t *testing.T) {
-			dir := t.TempDir()
+			// A backslash also exercises Windows path quoting on Unix runners.
+			dir := filepath.Join(t.TempDir(), `registry\fixture`)
+			if err := os.MkdirAll(dir, 0700); err != nil {
+				t.Fatal(err)
+			}
 			t.Setenv(config.ConfigDirEnv, dir)
 			path := filepath.Join(dir, "registry.json")
 			if err := os.WriteFile(path, []byte(raw), 0600); err != nil {
@@ -29,7 +34,7 @@ func TestMalformedRegistryLoadReportsPathAndUsage(t *testing.T) {
 				t.Run(command, func(t *testing.T) {
 					err := read()
 					result := output.NewFailureForError(command, err)
-					if output.ExitCode(err) != output.ExitUsage || result.Error == nil || result.Error.Code != "usage_error" || !strings.Contains(result.Error.Message, path) {
+					if output.ExitCode(err) != output.ExitUsage || result.Error == nil || result.Error.Code != "usage_error" || !strings.Contains(result.Error.Message, strconv.Quote(path)) {
 						t.Fatalf("invalid registry must be usage-class with path: exit=%d error=%+v", output.ExitCode(err), result.Error)
 					}
 					next := strings.Join(result.Error.Next, " ")
