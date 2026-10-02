@@ -30,3 +30,9 @@ This index records the people sharing lifecycle implementation and regression te
 - `people.go`: additive ChangePersonWithLifetime API; F1 trusted store API retained; optional sticky guest classification in schema 2.
 
 - `duration_boundary_test.go`: final Funnel policy, guest persistence/re-add and invite grant CAS evidence.
+# Home portal configuration
+
+- `people.go`: `ResolvePersonLoginIn` exposes the existing exact legacy-key resolver for one already-read registry.
+- `portal.go`: optional schema-2 portal settings, admission, hostname reservation and locked updates.
+- `portal_read.go`, `portal_read_unix.go`, `portal_read_windows.go`: bounded read-only registry reader, special-file refusal.
+- `portal_test.go`, `portal_unix_test.go`: persistence, concurrent writers, hostile configuration and FIFO/symlink tests.

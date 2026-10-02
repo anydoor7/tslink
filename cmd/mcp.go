@@ -254,6 +254,7 @@ var (
 		"node_state_kept_reason": map[string]any{"type": "string", "description": "Why the service's local node state was kept when no other field says so: some of its recorded tailnet nodes were neither deleted nor confirmed absent."},
 	}, "name", "removed", "device_cleaned", "device_cleanup_skipped")
 	mcpStatusOutputSchema = objectSchema(map[string]any{
+		"portal":      nestedObjectSchema("Home portal state and exact URL."),
 		"credentials": nestedObjectSchema("Value-free stored expiry metadata and early warnings; assumed expiry remains identified."),
 		"alerts":      nestedObjectSchema("Recent durable alert events; destination is redacted."),
 		"services": map[string]any{"type": "array", "items": objectSchema(map[string]any{
@@ -324,6 +325,7 @@ var (
 		"backend_auth_assumption":  nestedObjectSchema("Backend application, database and SSH authentication are outside TSLink and are not proven here."),
 	}, "schema_version", "service", "summary", "tslink_known", "tslink_local_enforcement", "external_policy_unknown", "backend_auth_assumption")
 	mcpDoctorOutputSchema = objectSchema(map[string]any{
+		"portal":           nestedObjectSchema("Home portal state and exact URL."),
 		"node_keys":        map[string]any{"type": []string{"object", "null"}, "additionalProperties": true},
 		"credentials":      nestedObjectSchema("Stored credential expiry with metadata provenance."),
 		"alerts":           nestedObjectSchema("Recent alert events and masked notifier status."),
@@ -693,6 +695,7 @@ var mcpToolDefinitions = []mcpToolDefinition{
 // CLI does not have — including its refusals, which stay in the domain layer.
 type mcpActions struct {
 	extend        func(extendArguments) (any, error)
+	portalChange  func(portalArguments, bool) (any, error)
 	peopleChange  func(context.Context, peopleArguments, bool) (any, error)
 	peopleList    func() (any, error)
 	peopleRemove  func(context.Context, string, map[string]string) (any, error)
@@ -865,7 +868,8 @@ func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 	durationClock := durationNowFn
 	peopleClock := peopleNowFn
 	return mcpActions{
-		extend: func(args extendArguments) (any, error) { return extendLifetime(paths.Registry, args, durationClock()) },
+		extend:       func(args extendArguments) (any, error) { return extendLifetime(paths.Registry, args, durationClock()) },
+		portalChange: func(args portalArguments, enable bool) (any, error) { return changePortal(paths, args, enable) },
 		peopleChange: func(ctx context.Context, args peopleArguments, update bool) (any, error) {
 			args.Now = peopleClock()
 			return changePeople(ctx, paths, args, update)
@@ -1586,6 +1590,18 @@ func callMCPTool(ctx context.Context, actions mcpActions, name string, arguments
 			return refusal, nil
 		}
 		data, err = actions.extend(args)
+	case "portal_enable":
+		var args portalArguments
+		if refusal := mcpArgumentsRefusal(name, decodePeopleMCPArguments(arguments, &args), mcpRequiredArgument{"owner", args.Owner}); refusal != nil {
+			return refusal, nil
+		}
+		data, err = actions.portalChange(args, true)
+	case "portal_disable":
+		var args struct{}
+		if refusal := mcpArgumentsRefusal(name, decodeMCPArguments(arguments, &args)); refusal != nil {
+			return refusal, nil
+		}
+		data, err = actions.portalChange(portalArguments{}, false)
 	case "people_add", "people_update":
 		var args peopleArguments
 		decodeErr := decodePeopleMCPArguments(arguments, &args)

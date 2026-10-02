@@ -1224,6 +1224,10 @@
           "type": "string",
           "description": "The running daemon's own executable path at the moment it wrote its PID/identity sidecar. Informational only; never used to verify process identity, unlike the Go-module comparison identity verification relies on."
         },
+        "portal": {
+          "type": "object",
+          "description": "Independent home portal state and exact URL when running."
+        },
         "tailscale_ssh.acl_rule_required": {
           "type": "boolean",
           "description": "Constant true: enabling Tailscale SSH on the node is not sufficient by itself; the tailnet ACL also needs an ssh rule admitting the caller, which no local check can observe."
@@ -2157,6 +2161,10 @@
         "person": {
           "type": "object",
           "description": "Canonical login, revocation state, per-app absolute deadlines, active decisions and exact URLs when available."
+        },
+        "portal": {
+          "type": "object",
+          "description": "Independent home portal state; message includes its exact URL when enabled and ready."
         }
       }
     },
@@ -2319,6 +2327,120 @@
         "person": {
           "type": "object",
           "description": "Canonical login, revocation state, per-app absolute deadlines, active decisions and exact URLs when available."
+        },
+        "portal": {
+          "type": "object",
+          "description": "Independent home portal state; message includes its exact URL when enabled and ready."
+        }
+      }
+    },
+    {
+      "path": "tslink portal",
+      "short": "Manage the private home page for each visitor",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        }
+      ]
+    },
+    {
+      "path": "tslink portal disable",
+      "short": "Stop the portal without changing app services",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        }
+      ],
+      "json_result_fields": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Configured portal enablement; never public Funnel."
+        },
+        "error": {
+          "type": "string",
+          "description": "Stable portal startup failure code, if any."
+        },
+        "hostname": {
+          "type": "string",
+          "description": "Reserved independent portal node hostname."
+        },
+        "state": {
+          "type": "string",
+          "description": "disabled, pending, starting, running or failed; running requires exact live runtime evidence."
+        },
+        "url": {
+          "type": "string",
+          "description": "Canonical Tailnet HTTPS address; omitted unless the running daemon has exact runtime evidence."
+        }
+      }
+    },
+    {
+      "path": "tslink portal enable",
+      "short": "Enable an independent Tailnet-only portal node",
+      "flags": [
+        {
+          "name": "admins",
+          "type": "stringSlice",
+          "default": "[]",
+          "scope": "local",
+          "usage": "Additional administrator logins; these identities can open every private app"
+        },
+        {
+          "name": "funnel",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Refused: the portal must stay Tailnet-only"
+        },
+        {
+          "name": "hostname",
+          "type": "string",
+          "default": "home",
+          "scope": "local",
+          "usage": "Portal node hostname"
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        },
+        {
+          "name": "owner",
+          "type": "string",
+          "scope": "local",
+          "usage": "Owner's verified Tailscale login (required)"
+        }
+      ],
+      "json_result_fields": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Configured portal enablement; never public Funnel."
+        },
+        "error": {
+          "type": "string",
+          "description": "Stable portal startup failure code, if any."
+        },
+        "hostname": {
+          "type": "string",
+          "description": "Reserved independent portal node hostname."
+        },
+        "state": {
+          "type": "string",
+          "description": "disabled, pending, starting, running or failed; running requires exact live runtime evidence."
+        },
+        "url": {
+          "type": "string",
+          "description": "Canonical Tailnet HTTPS address; omitted unless the running daemon has exact runtime evidence."
         }
       }
     },
@@ -2588,6 +2710,10 @@
         "ownership_proof_available": {
           "type": "boolean",
           "description": "True when the durable ownership ledger was read successfully, allowing false per-service ownership_proof values to mean proof is genuinely absent."
+        },
+        "portal": {
+          "type": "object",
+          "description": "Independent home portal state and exact URL when running; also present with --urls."
         },
         "services[].error": {
           "type": "object",
@@ -3290,6 +3416,18 @@
     "person_grant_inactive": {
       "exit_code": 1,
       "description": "person app grant was removed, revoked or expired before sending an invitation"
+    },
+    "portal_funnel_refused": {
+      "exit_code": 4,
+      "description": "the home portal is Tailnet-only and cannot use Funnel"
+    },
+    "portal_hostname_conflict": {
+      "exit_code": 4,
+      "description": "the portal hostname is reserved or already used by an app"
+    },
+    "portal_identity_invalid": {
+      "exit_code": 2,
+      "description": "portal owner and admins must be canonical Tailscale login identities"
     },
     "registry_reload_invalid": {
       "exit_code": 1,

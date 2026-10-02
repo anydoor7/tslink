@@ -10,3 +10,5 @@ This index records the app recipe pages; existing guides retain their current pa
 - [health-and-alerts.md](health-and-alerts.md), [health-and-alerts_zh.md](health-and-alerts_zh.md): backend probes, expiry, owner alerts and canonical Host/limits integration.
 - [durations.md](durations.md), [durations_zh.md](durations_zh.md): unified lifetime grammar, DST, policy and extend semantics.
 - [funnel.md](funnel.md), [funnel_zh.md](funnel_zh.md): public TTL behavior and legacy-state compatibility.
+
+- [portal.md](portal.md), [portal_zh.md](portal_zh.md): one private address per visitor, authorization, enrollment, agent access and safety.

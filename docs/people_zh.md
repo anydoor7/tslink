@@ -99,3 +99,5 @@ MCP 提供 `people_add`、`people_list`、`people_update`、`people_remove`。�
 - [Tailscale API](https://tailscale.com/api)、[当前 OpenAPI](https://api.tailscale.com/api/v2?outputOpenapiSchema=true)：`POST /device/{deviceId}/device-invites` 不支持 OAuth client 创建，email 可选，另有 `multiUse`/`allowExitNode`、设备邀请列表及 `DELETE /device-invites/{deviceInviteId}`；schema 没有客户端幂等键。
 - [Trust credentials](https://tailscale.com/docs/reference/trust-credentials)：邀请读取/删除 scope 不代表可创建。
 - [Tailscale Serve](https://tailscale.com/docs/features/tailscale-serve)：HTTP 反向代理及来访者身份 header。
+
+开启 home portal 后，生成的指导包含入口确证地址；尚在注册时让 owner 查询 status。Tailnet 外访客还需要通过 Tailscale 分享 home 节点。详见 [portal_zh.md](portal_zh.md)。

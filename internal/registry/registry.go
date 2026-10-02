@@ -628,9 +628,10 @@ func FunnelRemainingAt(svc Service, now time.Time) *string {
 }
 
 type Registry struct {
-	SchemaVersion int       `json:"schema_version"`
-	Services      []Service `json:"services"`
-	People        []Person  `json:"people,omitempty"`
+	SchemaVersion int           `json:"schema_version"`
+	Services      []Service     `json:"services"`
+	People        []Person      `json:"people,omitempty"`
+	Portal        *PortalConfig `json:"portal,omitempty"`
 }
 
 type RegistryFileState string
@@ -662,6 +663,7 @@ type registryWire struct {
 	SchemaVersion int               `json:"schema_version"`
 	Services      []json.RawMessage `json:"services"`
 	People        []Person          `json:"people,omitempty"`
+	Portal        *PortalConfig     `json:"portal,omitempty"`
 }
 
 var unknownJSONFieldRegexp = regexp.MustCompile(`^json: unknown field "([^"]+)"$`)
@@ -1115,7 +1117,7 @@ func decodeForRuntime(data []byte) (*Registry, []ServiceIssue, error) {
 	if err := strictJSONDecode(data, &wire); err != nil {
 		return nil, nil, configDecodeError("registry", err)
 	}
-	reg := &Registry{SchemaVersion: wire.SchemaVersion, Services: make([]Service, 0, len(wire.Services)), People: wire.People}
+	reg := &Registry{SchemaVersion: wire.SchemaVersion, Services: make([]Service, 0, len(wire.Services)), People: wire.People, Portal: wire.Portal}
 	if err := migrate(reg); err != nil {
 		return nil, nil, err
 	}
@@ -1123,6 +1125,9 @@ func decodeForRuntime(data []byte) (*Registry, []ServiceIssue, error) {
 		return nil, nil, err
 	}
 
+	if err := ValidatePortal(reg.Portal); err != nil {
+		return nil, nil, err
+	}
 	issues := make([]ServiceIssue, 0)
 	seenNames := make(map[string]struct{}, len(wire.Services))
 	for index, raw := range wire.Services {
@@ -1138,6 +1143,9 @@ func decodeForRuntime(data []byte) (*Registry, []ServiceIssue, error) {
 		}
 		if _, duplicate := seenNames[name]; duplicate {
 			return nil, nil, fmt.Errorf("registry contains duplicate service name %q", name)
+		}
+		if reg.Portal != nil && name == reg.Portal.Hostname {
+			return nil, nil, portalConflict(name)
 		}
 		seenNames[name] = struct{}{}
 
@@ -1423,7 +1431,7 @@ func save(path string, reg *Registry) error {
 		reg.Services = []Service{}
 	}
 	reg.SchemaVersion = LegacyRegistrySchemaVersion
-	if len(reg.People) > 0 {
+	if len(reg.People) > 0 || reg.Portal != nil {
 		reg.SchemaVersion = PeopleRegistrySchemaVersion
 	}
 	for _, svc := range reg.Services {
@@ -1547,6 +1555,9 @@ func AddWithOutcome(path string, svc Service, options AddOptions) (outcome AddOu
 		reg, err := loadForMutation(path)
 		if err != nil {
 			return err
+		}
+		if reg.Portal != nil && svc.Name == reg.Portal.Hostname {
+			return portalConflict(svc.Name)
 		}
 
 		for i, existing := range reg.Services {

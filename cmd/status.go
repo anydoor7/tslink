@@ -29,7 +29,7 @@ var (
 	statusRuntimeSnapshotPathFn = config.RuntimeSnapshotPath
 	statusAuthHandoffPathFn     = config.AuthHandoffPath
 	runtimeLoadSnapshotFn       = tsruntime.Load
-	statusLoadAuthHandoffFn     = loadAuthHandoff
+	statusLoadAuthHandoffFn     = loadAuthHandoffs
 	statusNowFn                 = time.Now
 	statusGetClientSecretFn     = credentials.GetClientSecret
 	// statusCredentialInventoryFn classifies the stored credential slots and,
@@ -58,8 +58,16 @@ const (
 	systemdUserManagerUnavailableMessage  = "systemd user manager unavailable"
 )
 
+// StatusPendingLogin identifies a pending node enrollment.
+type StatusPendingLogin struct {
+	Node      string    `json:"node"`
+	AuthURL   string    `json:"auth_url"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
 // StatusResult holds the status information for display.
 type StatusResult struct {
+	Portal                  tsruntime.PortalState   `json:"portal"`
 	Alerts                  health.AlertsView       `json:"alerts"`
 	Supervision             Supervision             `json:"supervision"`
 	DaemonRunning           bool                    `json:"daemon_running"`
@@ -73,6 +81,7 @@ type StatusResult struct {
 	NodeAuthorized          bool                    `json:"node_authorized"`
 	AuthorizedServiceCount  int                     `json:"authorized_service_count"`
 	AuthStatus              string                  `json:"auth_status"`
+	PendingLogins           []StatusPendingLogin    `json:"pending_logins,omitempty"`
 	AuthURL                 string                  `json:"auth_url,omitempty"`
 	ExpiresAt               *time.Time              `json:"expires_at,omitempty"`
 	Next                    []string                `json:"next,omitempty"`
@@ -123,6 +132,7 @@ type StatusServiceState struct {
 }
 
 type StatusURLsResult struct {
+	Portal                  tsruntime.PortalState       `json:"portal"`
 	Alerts                  health.AlertsView           `json:"alerts"`
 	Supervision             Supervision                 `json:"supervision"`
 	SchemaVersion           int                         `json:"schema_version"`
@@ -137,6 +147,7 @@ type StatusURLsResult struct {
 	NodeAuthorized          bool                        `json:"node_authorized"`
 	AuthorizedServiceCount  int                         `json:"authorized_service_count"`
 	AuthStatus              string                      `json:"auth_status"`
+	PendingLogins           []StatusPendingLogin        `json:"pending_logins,omitempty"`
 	AuthURL                 string                      `json:"auth_url,omitempty"`
 	ExpiresAt               *time.Time                  `json:"expires_at,omitempty"`
 	Next                    []string                    `json:"next,omitempty"`
@@ -207,6 +218,7 @@ func (s statusRead) getStatus(pidPath, regPath string) (StatusResult, error) {
 		return StatusResult{}, err
 	}
 	issueErrors := diagnosticServiceErrors(issues)
+	r.Portal = readPortalView(reg, regPath, r.DaemonRunning, r.DaemonPID)
 	r.Alerts = readAlertsForRegistry(regPath)
 	r.ServiceCount = len(reg.Services)
 	r.Services = make([]StatusServiceState, 0, len(reg.Services))
@@ -441,9 +453,11 @@ func (s statusRead) getPollableStatus(pidPath, regPath, snapshotPath, authHandof
 		return StatusResult{}, err
 	}
 	expiredByName := make(map[string]bool, len(reg.Services))
+	currentByName := make(map[string]registry.Service, len(reg.Services))
 	now := statusNowFn()
 	for _, svc := range reg.Services {
 		expiredByName[svc.Name] = registry.FunnelExpiredAt(svc, now)
+		currentByName[svc.Name] = svc
 	}
 	// getStatus may have sampled the clock just before a deadline. Normalize
 	// every Funnel field to this later effective time before applying runtime
@@ -484,7 +498,10 @@ func (s statusRead) getPollableStatus(pidPath, regPath, snapshotPath, authHandof
 			snapshotServices[svc.Name] = svc
 		}
 		for i := range r.Services {
-			if r.Services[i].Error != nil {
+			// Another writer can remove or reorder services between our
+			// registry reads. Join by name and withhold removed services.
+			current, present := currentByName[r.Services[i].Name]
+			if !present || r.Services[i].Error != nil {
 				continue
 			}
 			if runtimeService, ok := snapshotServices[r.Services[i].Name]; ok {
@@ -495,7 +512,7 @@ func (s statusRead) getPollableStatus(pidPath, regPath, snapshotPath, authHandof
 				}
 				r.Services[i].Warnings = append([]inspect.WarningView(nil), runtimeService.Warnings...)
 				r.Services[i].Error = runtimeService.Error
-				r.Services[i].Health = currentHealth(runtimeService.Health, reg.Services[i], now)
+				r.Services[i].Health = currentHealth(runtimeService.Health, current, now)
 				r.Services[i].NodeKey = health.ExpiryAt(runtimeService.NodeKey.ExpiresAt, runtimeService.NodeKey.Source, now, nodeExpiryNext())
 				if runtimeService.RuntimeState == tsruntime.ServiceRuntimeFailed {
 					r.Services[i].Status = tsruntime.ServiceRuntimeFailed
@@ -518,33 +535,34 @@ func (s statusRead) getPollableStatus(pidPath, regPath, snapshotPath, authHandof
 		}
 	}
 
-	if handoff, err := statusLoadAuthHandoffFn(authHandoffPath); err == nil {
-		currentHandoff := !r.DaemonRunning || handoff.DaemonPID == r.DaemonPID
-		if currentHandoff {
+	portalUp := r.DaemonRunning && r.Portal.Enabled && r.Portal.State == "running" && r.Portal.URL != ""
+	if portalUp {
+		r.NodeAuthorized, r.Authenticated = true, true
+		r.AuthStatus = authStatusAuthenticated
+	}
+	if handoffs, err := statusLoadAuthHandoffFn(authHandoffPath); err == nil {
+		for _, handoff := range handoffs {
+			if (r.DaemonRunning && handoff.DaemonPID != r.DaemonPID) || !handoff.ExpiresAt.After(now) {
+				continue
+			}
 			_, handoffServiceUp := up[handoff.Service]
-			if handoffServiceUp {
-				// The snapshot can briefly win the race with removal of the
-				// completed handoff. Do not regress an already-up service.
-				setStatusContinuation(&r)
-				return r, nil
+			if handoffServiceUp || (portalUp && handoff.Service == r.Portal.Hostname) {
+				// Snapshot publication can precede exact retirement of an offer.
+				continue
 			}
-			// A pending handoff for one service must not erase the
-			// authorization evidence of the other services this daemon is
-			// already serving. Keep the authorized count and only let the
-			// handoff's own service fall back to needs_login; suppress the
-			// global authenticated flag only when no service is up.
-			if len(up) == 0 {
-				r.Authenticated = false
-				r.NodeAuthorized = false
-			}
-			r.AuthStatus = authStatusNeedsLogin
-			r.AuthURL = handoff.AuthURL
-			expiresAt := handoff.ExpiresAt.UTC()
-			r.ExpiresAt = &expiresAt
+			r.PendingLogins = append(r.PendingLogins, StatusPendingLogin{Node: handoff.Service, AuthURL: handoff.AuthURL, ExpiresAt: handoff.ExpiresAt.UTC()})
 			for i := range r.Services {
 				if r.Services[i].Name == handoff.Service && r.Services[i].Error == nil {
 					r.Services[i].Status = authStatusNeedsLogin
 				}
+			}
+		}
+		if len(r.PendingLogins) > 0 {
+			// Compatibility fields select the oldest still-pending publication.
+			first := r.PendingLogins[0]
+			r.AuthStatus, r.AuthURL, r.ExpiresAt = authStatusNeedsLogin, first.AuthURL, &first.ExpiresAt
+			if len(up) == 0 && !portalUp {
+				r.Authenticated, r.NodeAuthorized = false, false
 			}
 		}
 	}
@@ -602,6 +620,7 @@ func cloneServiceError(source *tsruntime.ServiceError) *tsruntime.ServiceError {
 }
 
 func formatStatus(r StatusResult, out io.Writer) {
+	formatPortal(out, r.Portal)
 	userManagerUnavailable := strings.Contains(r.Supervision.Detail, systemdUserManagerUnavailableMessage)
 	noNodes := false
 	if r.ServiceCount == 0 {
@@ -636,12 +655,12 @@ func formatStatus(r StatusResult, out io.Writer) {
 		// Authenticated services can coexist with a pending enrollment for a
 		// newly added node; keep that node's login URL visible instead of
 		// hiding it behind the global authenticated state.
-		if r.AuthStatus == authStatusNeedsLogin && r.AuthURL != "" {
+		if r.AuthStatus == authStatusNeedsLogin && r.AuthURL != "" && len(r.PendingLogins) == 0 {
 			fmt.Fprintf(out, "→ pending login URL: %s\n", r.AuthURL)
 		}
 	} else if r.AuthStatus == authStatusNeedsLogin {
 		fmt.Fprintln(out, "→ tailnet: needs login")
-		if r.AuthURL != "" {
+		if r.AuthURL != "" && len(r.PendingLogins) == 0 {
 			fmt.Fprintf(out, "→ login URL: %s\n", r.AuthURL)
 		}
 	} else if noNodes {
@@ -650,6 +669,9 @@ func formatStatus(r StatusResult, out io.Writer) {
 		fmt.Fprintln(out, "→ tailnet: not authenticated; restore the login session described above, or run tslink serve manually to enroll")
 	} else {
 		fmt.Fprintln(out, "→ tailnet: not authenticated (run: tslink install, then tslink status to obtain the login URL)")
+	}
+	for _, pending := range r.PendingLogins {
+		fmt.Fprintf(out, "→ pending login for %s: %s\n", pending.Node, pending.AuthURL)
 	}
 	fmt.Fprintf(out, "→ services: %d registered\n", r.ServiceCount)
 	for _, svc := range r.Services {
@@ -696,6 +718,7 @@ func (s statusRead) getStatusURLsWithAuth(pidPath, regPath, snapshotPath, authHa
 	freshness := tsruntime.Classify(snapshot, loadErr, expected)
 
 	result := StatusURLsResult{
+		Portal:                  status.Portal,
 		SchemaVersion:           inspect.SchemaVersion,
 		Alerts:                  status.Alerts,
 		Supervision:             status.Supervision,
@@ -710,6 +733,7 @@ func (s statusRead) getStatusURLsWithAuth(pidPath, regPath, snapshotPath, authHa
 		NodeAuthorized:          status.NodeAuthorized,
 		AuthorizedServiceCount:  status.AuthorizedServiceCount,
 		AuthStatus:              status.AuthStatus,
+		PendingLogins:           status.PendingLogins,
 		AuthURL:                 status.AuthURL,
 		ExpiresAt:               status.ExpiresAt,
 		Next:                    append([]string(nil), status.Next...),
@@ -976,6 +1000,7 @@ func appendStatusWarning(warnings []inspect.WarningView, code, message string) [
 
 func formatStatusURLs(r StatusURLsResult, out io.Writer) {
 	formatStatus(StatusResult{
+		Portal:                  r.Portal,
 		Alerts:                  r.Alerts,
 		Supervision:             r.Supervision,
 		DaemonRunning:           r.DaemonRunning,
@@ -989,6 +1014,7 @@ func formatStatusURLs(r StatusURLsResult, out io.Writer) {
 		NodeAuthorized:          r.NodeAuthorized,
 		AuthorizedServiceCount:  r.AuthorizedServiceCount,
 		AuthStatus:              r.AuthStatus,
+		PendingLogins:           r.PendingLogins,
 		AuthURL:                 r.AuthURL,
 		ExpiresAt:               r.ExpiresAt,
 		Next:                    r.Next,

@@ -275,8 +275,17 @@ func commandJSONResultFields(commandPath string) map[string]JSONResultFieldInfo 
 			"regranted":           {Type: "boolean", Description: "True only if this operation explicitly renewed an expired grant."},
 			"changed_at":          {Type: "string", Description: "Operation time in UTC; relative lifetime is measured from this instant."},
 		}
+	case "tslink portal enable", "tslink portal disable":
+		return map[string]JSONResultFieldInfo{
+			"enabled":  {Type: "boolean", Description: "Configured portal enablement; never public Funnel."},
+			"hostname": {Type: "string", Description: "Reserved independent portal node hostname."},
+			"state":    {Type: "string", Description: "disabled, pending, starting, running or failed; running requires exact live runtime evidence."},
+			"url":      {Type: "string", Description: "Canonical Tailnet HTTPS address; omitted unless the running daemon has exact runtime evidence."},
+			"error":    {Type: "string", Description: "Stable portal startup failure code, if any."},
+		}
 	case "tslink people add", "tslink people update":
 		return map[string]JSONResultFieldInfo{
+			"portal":             {Type: "object", Description: "Independent home portal state; message includes its exact URL when enabled and ready."},
 			"person":             {Type: "object", Description: "Canonical login, revocation state, per-app absolute deadlines, active decisions and exact URLs when available."},
 			"invites":            {Type: "array", Description: "Per-app invitation ID, durable state, reconciliation candidates, remote side effect plan or stable error code. Bearer URLs require --print-links."},
 			"complete":           {Type: "boolean", Description: "False when any requested device invitation failed; local grants remain saved."},
@@ -388,6 +397,7 @@ func commandJSONResultFields(commandPath string) map[string]JSONResultFieldInfo 
 		}
 	case "tslink doctor":
 		return map[string]JSONResultFieldInfo{
+			"portal": {Type: "object", Description: "Independent home portal state and exact URL when running."},
 			"tailscale_ssh.state": {
 				Type:        "string",
 				Description: "Tailscale SSH enablement for this node, read from the local Tailscale client. Informational: it never changes status, health_status, or health_exit_code.",
@@ -412,6 +422,7 @@ func commandJSONResultFields(commandPath string) map[string]JSONResultFieldInfo 
 		}
 	case "tslink status":
 		fields := agentServiceRuntimeJSONResultFields()
+		fields["portal"] = JSONResultFieldInfo{Type: "object", Description: "Independent home portal state and exact URL when running; also present with --urls."}
 		fields["credential_expiry_state"] = JSONResultFieldInfo{
 			Type:        "string",
 			Description: "Worst per-slot credential expiry state; expiring means the api-key slot has 14 days or fewer left, and next then carries the key-bootstrap steps.",

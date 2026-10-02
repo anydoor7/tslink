@@ -17,6 +17,8 @@ import (
 // each tool's action.
 var mcpToolMinimalArguments = map[string]string{
 	"extend":         `{"service":"web","for":"1h"}`,
+	"portal_enable":  `{"owner":"owner"}`,
+	"portal_disable": `{}`,
 	"people_add":     `{"who":"alice","apps":["web"]}`,
 	"people_update":  `{"who":"alice","apps":["web"]}`,
 	"people_list":    `{}`,
@@ -59,6 +61,13 @@ func mcpRefusal(tool string) error {
 func refusingMCPActions() mcpActions {
 	return mcpActions{
 		extend: func(extendArguments) (any, error) { return nil, mcpRefusal("extend") },
+		portalChange: func(_ portalArguments, enable bool) (any, error) {
+			name := "portal_disable"
+			if enable {
+				name = "portal_enable"
+			}
+			return nil, mcpRefusal(name)
+		},
 		peopleChange: func(_ context.Context, _ peopleArguments, update bool) (any, error) {
 			name := "people_add"
 			if update {

@@ -53,6 +53,8 @@ People logins accept any nonempty valid UTF-8 string without control characters 
 | `tslink install` | Auto-start on login (macOS LaunchAgent / Linux systemd / Windows Task Scheduler) |
 | `tslink uninstall` | Remove auto-start |
 
+`status --json` and `status --urls --json` report every pending portal/app enrollment in `data.pending_logins` (`node`, `auth_url`, `expires_at`). Human status lists each node and login URL. The compatibility `auth_url`/`auth_status` fields select the oldest still-pending publication. See [home portal](portal.md).
+
 A missing implicit default registry is valid on first run. An explicit missing
 `registry check <path>` reports `not_found` (exit 5). Malformed registry JSON,
 field types, or trailing data report `usage_error` (exit 2), naming the path
@@ -168,3 +170,8 @@ Windows `tslink install --startup` uses the Startup fallback for the next sign-i
 `tslink extend <service> [--person <login>] (--for <lifetime> | --until <date/time>) [--regrant] [--ack-never]` changes one person grant or Funnel TTL. A relative duration is measured from the operation time and can shorten or extend. Expired grants need `--regrant`; revoked people remain revoked. It always returns a versioned JSON envelope. MCP `extend` uses `service`, `who`, `for`/`until`, `regrant` and `ack_never`. See [durations](durations.md) for DST, config validation, policy API and the syntax of health/timeout/keepalive flags, and [Funnel](funnel.md) for public expiry.
 
 Omitting `--funnel-ttl` when making an existing private service public selects the finite 24h default. Only a decided public lifetime is preserved, including historical explicit public `never`; dry-run and MCP add use the same rule. The first `--invite` durably classifies a person as a guest in the grant transaction, before remote work; later updates/extensions retain guest policy. A concurrent grant change before an invite send transition returns `conflict`.
+## Home portal
+
+`tslink portal enable --owner <login> [--hostname home] [--admins <login,...>]` saves an independent Tailnet-only home portal. `tslink portal disable` closes only its listener. `--funnel` is explicitly refused. The running daemon applies changes; status/doctor report `portal` state and its exact URL when ready. People guides point to the portal when enabled. MCP equivalents: `portal_enable`, `portal_disable`. See [portal.md](portal.md) for authorization, network reachability and JSON details.
+
+Daemon readiness preserves pending portal enrollment; completed portal runtime evidence prevents a stale login prompt. Private HTTP/file entries match their enforced access. Raw TCP/public Funnel entries are an owner/admin inventory with a per-person enforcement note; omission does not deny visitor connectivity.

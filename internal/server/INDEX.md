@@ -44,3 +44,14 @@ This index covers the recipe integration tests. The repository AGENTS.md describ
 - Watcher fixtures stop and join their workers, then close file nodes before temporary directory cleanup on Windows.
 
 - `duration_guest_policy_test.go`: first guest grant enforced by real HTTP proxy before invite history; restart/rollback latch.
+# Home portal
+
+- `app_access.go`: shared private app/portal authorization decision; F1 deadlines and tombstones, legacy rules and explicit owner/admin identities.
+- `portal.go`: read-only HTML/JSON, trusted Host/Origin and CSP/cache headers; reserved access-request route.
+- `portal_node.go`: independent tsnet lifecycle, bounded startup, retry and runtime observations.
+- `portal_test.go`, `portal_node_test.go`: real HTTP/TLS listener, identity, expiry, isolation, headers and failure-path tests.
+- `testdata/INDEX.md`: rendered HTML golden snapshots.
+
+- `f5_review_test.go`: ported reviewer lifecycle/auth-error/TCP probes and real-handler browser artifacts.
+- `portal_access_model_test.go`: service-type enforcement/disclosure, tagged/admin/tombstone and cancelled-generation checks.
+- `enrollment_testbridge.go`: build-tagged bridge to the production enrollment loop; excluded from normal builds.

@@ -53,6 +53,8 @@
 | `tslink install` | 用户登录时自启（macOS LaunchAgent / Linux systemd / Windows Task Scheduler） |
 | `tslink uninstall` | 移除自启 |
 
+`status --json` 和 `status --urls --json` 通过 `data.pending_logins` 列出所有入口/应用的待登录项（`node`、`auth_url`、`expires_at`）；人类输出逐项显示节点和登录 URL。兼容的 `auth_url`/`auth_status` 取最早发布且仍待登录的一项。见 [home portal](portal_zh.md)。
+
 首次运行时，默认 registry 文件尚不存在是有效的空状态。显式传入不存在的
 `registry check <path>` 会报 `not_found`（退出码 5）。registry JSON 语法、字段类型
 或尾部数据有误时，会报 `usage_error`（退出码 2），并给出文件路径和修复指引。
@@ -163,3 +165,8 @@ Windows `tslink install --startup` 显式选择下次登录启动、无崩溃恢
 `tslink extend <service> [--person <login>] (--for <lifetime> | --until <date/time>) [--regrant] [--ack-never]` 修改单个人员授权或 Funnel TTL。相对值从操作时刻起算,可缩短或延长。已过期须 `--regrant`,撤销人员不能恢复。始终输出版本化 JSON envelope。MCP `extend` 使用 `service`、`who`、`for`/`until`、`regrant` 和 `ack_never`。夏令时、配置校验、策略 API 以及健康/超时/keepalive 标志的语法见[时长文档](durations_zh.md),公开期限见[Funnel](funnel_zh.md)。
 
 已有私有服务改为公开时,省略 `--funnel-ttl` 使用有限 24h 默认值。只有已决定的公开期限才会保留,包括历史显式公开 `never`;dry-run 和 MCP add 规则相同。首次 `--invite` 在授权事务中保存持久访客分类,早于远端操作;后续 update/extend 保留访客策略。邀请发送状态转换前发生并发授权变更时返回 `conflict`。
+## 应用总入口
+
+`tslink portal enable --owner <login> [--hostname home] [--admins <login,...>]` 保存独立的 Tailnet-only 入口配置；`tslink portal disable` 只关闭入口监听器。`--funnel` 显式拒绝。运行中的 daemon 自动应用，status/doctor 显示 `portal` 状态和确证 URL，开启后 people 指导会指向入口。MCP 对应工具：`portal_enable`、`portal_disable`。授权、网络可达性和 JSON 说明见 [portal_zh.md](portal_zh.md)。
+
+daemon ready 保留 pending 的入口注册提示，已完成的入口快照避免陈旧登录提示。私有 HTTP/file 条目遵循实际授权；raw TCP/公共 Funnel 仅在 owner/admin 服务清单中显示，并注明无法按人限制，省略不代表访客不能连接。

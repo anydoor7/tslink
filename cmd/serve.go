@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -78,6 +79,8 @@ var (
 	serveRemoveReadyFn         = daemon.RemovePID
 	serveSaveAuthHandoffFn     = saveAuthHandoff
 	serveLoadAuthHandoffFn     = loadAuthHandoff
+	serveLoadAuthHandoffsFn    = loadAuthHandoffs
+	serveWriteAuthHandoffsFn   = writeAuthHandoffs
 	serveRemoveAuthHandoffFn   = removeAuthHandoff
 	serveOpenBrowserFn         = openBrowser
 	serveCIEnvironmentSetFn    = ciEnvironmentSet
@@ -831,10 +834,39 @@ func runForegroundWithOptions(pidPath, authKey, controlURL string, options foreg
 		if !ok {
 			return fmt.Errorf("server does not support interactive auth handoff")
 		}
+		var handoffMu sync.Mutex
+		// Capture seams before the async portal worker can publish a handoff.
+		save, load, write, remove, now := serveSaveAuthHandoffFn, serveLoadAuthHandoffsFn, serveWriteAuthHandoffsFn, serveRemoveAuthHandoffFn, authHandoffNowFn
 		setter.SetAuthHandoffFunc(func(ctx context.Context, handoff server.AuthHandoff) error {
-			record := newAuthHandoffRecord(handoff.Service, handoff.AuthURL, os.Getpid())
+			handoffMu.Lock()
+			defer handoffMu.Unlock()
+			if handoff.State == "complete" || handoff.State == "cancelled" {
+				if options.AuthHandoffPath == "" {
+					return nil
+				}
+				authHandoffFileMu.Lock()
+				defer authHandoffFileMu.Unlock()
+				entries, err := load(options.AuthHandoffPath)
+				if os.IsNotExist(err) {
+					return nil
+				}
+				if err != nil {
+					return err
+				}
+				for i, record := range entries {
+					if record.DaemonPID == os.Getpid() && record.Service == handoff.Service && record.AuthURL == handoff.AuthURL {
+						remaining := append(entries[:i], entries[i+1:]...)
+						if len(remaining) == 0 {
+							return remove(options.AuthHandoffPath)
+						}
+						return write(options.AuthHandoffPath, remaining)
+					}
+				}
+				return nil
+			}
+			record := newAuthHandoffRecordAt(handoff.Service, handoff.AuthURL, os.Getpid(), now())
 			if options.AuthHandoffPath != "" {
-				if err := serveSaveAuthHandoffFn(options.AuthHandoffPath, record); err != nil {
+				if err := save(options.AuthHandoffPath, record); err != nil {
 					return err
 				}
 			}
@@ -866,11 +898,6 @@ func runForegroundWithOptions(pidPath, authKey, controlURL string, options foreg
 		setter.SetReadyFunc(func() error {
 			if err := serveWriteReadyFn(options.ReadyPath, os.Getpid()); err != nil {
 				return err
-			}
-			if options.AuthHandoffPath != "" {
-				if err := serveRemoveAuthHandoffFn(options.AuthHandoffPath); err != nil {
-					slog.Warn("failed to remove completed auth handoff", "error", err)
-				}
 			}
 			return nil
 		})
