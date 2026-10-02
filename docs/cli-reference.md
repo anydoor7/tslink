@@ -83,5 +83,12 @@ healthy services; fix or remove bad entries before changing the registry.
 | `--funnel-ttl 1h\|8h\|24h\|72h\|7d\|never` | Public Funnel lifetime; default `24h`; requires `--funnel` |
 | `--no-auto-provision` | Disable Funnel policy provisioning for this service; requires `--funnel` |
 | `--no-daemon-install` | Save configuration without installing or starting the daemon |
+| `--health-path /ready` | HTTP business probe path joined to the proxy backend base path (default `/`) |
+| `--health-status-min N`, `--health-status-max N` | Expected HTTP status range; default 200..299, proxy only |
+| `--health-body text` | Expected substring in first 64 KiB; proxy only, omitted by default |
+| `--health-timeout duration` | Probe timeout, 100ms..30s; default `5s` |
+| `--health-interval duration` | Probe interval, 10s..1d and at least timeout; default `1m` |
 | `--wait duration` | Wait for a URL or enrollment URL; default `30s`, `0` disables waiting |
 | `--json` | Print the versioned result envelope |
+
+App health (`healthy`/`degraded`/`down`/`unknown`), observation timestamps and consecutive failures appear in status, list JSON, `list --verbose`, MCP and `/events`. Node-key and credential expiry warnings use 14-day and 3-day thresholds with next steps; metadata sources remain explicit. `doctor` adds a fresh HTTP business probe and makes the 3-day expiry warning critical (exit 65). Owner notifications are opt-in through `alerts.json`; events and restart dedup state are persisted by default. See [health and alerts](health-and-alerts.md).

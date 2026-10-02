@@ -17,6 +17,7 @@ import (
 
 	"github.com/anydoor7/tslink/internal/config"
 	"github.com/anydoor7/tslink/internal/duration"
+	"github.com/anydoor7/tslink/internal/health"
 	"github.com/anydoor7/tslink/internal/output"
 	"github.com/anydoor7/tslink/internal/registry"
 	"github.com/anydoor7/tslink/internal/tailapi"
@@ -216,6 +217,8 @@ var (
 		"services": map[string]any{
 			"type": "array",
 			"items": objectSchema(map[string]any{
+				"health":           nestedObjectSchema("App health observation without response bodies."),
+				"node_key":         nestedObjectSchema("Reported node-key expiry; an absent deadline is unknown."),
 				"name":             map[string]any{"type": "string"},
 				"type":             map[string]any{"type": "string", "enum": serviceTypeValues()},
 				"url":              map[string]any{"type": []string{"string", "null"}},
@@ -243,6 +246,9 @@ var (
 		"node_state_kept_reason": map[string]any{"type": "string", "description": "Why the service's local node state was kept when no other field says so: some of its recorded tailnet nodes were neither deleted nor confirmed absent."},
 	}, "name", "removed", "device_cleaned", "device_cleanup_skipped")
 	mcpStatusOutputSchema = objectSchema(map[string]any{
+		"credentials":              nestedObjectSchema("Value-free stored expiry metadata and early warnings; assumed expiry remains identified."),
+		"alerts":                   nestedObjectSchema("Recent durable alert events; destination is redacted."),
+		"services":                 map[string]any{"type": "array", "items": nestedObjectSchema("App health observations and node-key expiry warnings.")},
 		"supervision":              nestedObjectSchema("Verified manager, autostart, restart policy, and diagnostic evidence."),
 		"authenticated":            map[string]any{"type": "boolean", "description": "True when at least one service node is authorized on the tailnet, the same fact as node_authorized and the same meaning as in tslink status --json; a stored credential alone (credential_stored) never makes it true."},
 		"credential_stored":        map[string]any{"type": "boolean"},
@@ -300,6 +306,9 @@ var (
 		"backend_auth_assumption":  nestedObjectSchema("Backend application, database and SSH authentication are outside TSLink and are not proven here."),
 	}, "schema_version", "service", "summary", "tslink_known", "tslink_local_enforcement", "external_policy_unknown", "backend_auth_assumption")
 	mcpDoctorOutputSchema = objectSchema(map[string]any{
+		"node_keys":        map[string]any{"type": []string{"object", "null"}, "additionalProperties": true},
+		"credentials":      nestedObjectSchema("Stored credential expiry with metadata provenance."),
+		"alerts":           nestedObjectSchema("Recent alert events and masked notifier status."),
 		"supervision":      nestedObjectSchema("Verified OS supervision, autostart, restart policy, and diagnostic evidence."),
 		"schema_version":   map[string]any{"type": "integer"},
 		"execution_status": map[string]any{"type": "string"},
@@ -495,6 +504,14 @@ var mcpToolDefinitions = []mcpToolDefinition{
 		Name:        "add",
 		Description: "Setting funnel true on this tool publishes the service to the entire public internet, so ask the user before doing that; otherwise it writes a registry entry for a proxy, file, or TCP service reachable on the user's private Tailscale network. Without allow, every member of the user's tailnet can reach an HTTP service. Use this instead of share when the user wants a named, configured service rather than a one-shot share; it installs the background service when absent unless no_daemon_install is true. Installation announcements go to stderr. After setup it returns current URL/enrollment evidence without an additional URL wait; use url to poll pending endpoints.",
 		InputSchema: objectSchema(map[string]any{
+			"health": objectSchema(map[string]any{
+				"path":          map[string]any{"type": "string", "description": "HTTP business path joined to backend base path; default /."},
+				"status_min":    map[string]any{"type": "integer", "minimum": 100, "maximum": 599},
+				"status_max":    map[string]any{"type": "integer", "minimum": 100, "maximum": 599},
+				"body_contains": map[string]any{"type": "string", "maxLength": 4096},
+				"timeout":       map[string]any{"type": "string", "description": "100ms..30s; default 5s."},
+				"interval":      map[string]any{"type": "string", "description": "10s..1d; default 1m."},
+			}),
 			"name":              map[string]any{"type": "string", "pattern": `^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`, "maxLength": 63, "description": "Registry service name (DNS label). An existing entry with this name is replaced."},
 			"type":              map[string]any{"type": "string", "enum": serviceTypeValues(), "description": "proxy forwards HTTP to target; file serves the directory dir; tcp forwards a raw stream to target."},
 			"target":            map[string]any{"type": "string", "description": "host:port or URL for proxy, host:port for tcp. Rejected for file. The daemon will proxy to any address it can reach on its own network; link-local and cloud-metadata addresses are refused only as literal IP addresses (unspecified addresses too) or the metadata.google.internal hostname: hostnames are not resolved and nothing is checked at connect time, so a name that resolves to one of those addresses is accepted."},
@@ -683,19 +700,20 @@ type mcpActions struct {
 
 // mcpAddArguments is the wire shape of the add tool's arguments.
 type mcpAddArguments struct {
-	Name            string   `json:"name"`
-	Type            string   `json:"type"`
-	Target          string   `json:"target,omitempty"`
-	Dir             string   `json:"dir,omitempty"`
-	Allow           []string `json:"allow,omitempty"`
-	Tags            []string `json:"tags,omitempty"`
-	Ephemeral       bool     `json:"ephemeral,omitempty"`
-	Funnel          bool     `json:"funnel,omitempty"`
-	PublicAck       bool     `json:"public_ack,omitempty"`
-	FunnelTTL       *string  `json:"funnel_ttl,omitempty"`
-	NoAutoProvision bool     `json:"no_auto_provision,omitempty"`
-	NoDaemonInstall bool     `json:"no_daemon_install,omitempty"`
-	ControlURL      string   `json:"control_url,omitempty"`
+	Health          *registry.HealthConfig `json:"health,omitempty"`
+	Name            string                 `json:"name"`
+	Type            string                 `json:"type"`
+	Target          string                 `json:"target,omitempty"`
+	Dir             string                 `json:"dir,omitempty"`
+	Allow           []string               `json:"allow,omitempty"`
+	Tags            []string               `json:"tags,omitempty"`
+	Ephemeral       bool                   `json:"ephemeral,omitempty"`
+	Funnel          bool                   `json:"funnel,omitempty"`
+	PublicAck       bool                   `json:"public_ack,omitempty"`
+	FunnelTTL       *string                `json:"funnel_ttl,omitempty"`
+	NoAutoProvision bool                   `json:"no_auto_provision,omitempty"`
+	NoDaemonInstall bool                   `json:"no_daemon_install,omitempty"`
+	ControlURL      string                 `json:"control_url,omitempty"`
 }
 
 // mcpInviteDeviceArguments is the wire shape of the invite_device arguments.
@@ -716,6 +734,7 @@ type mcpInviteDeviceArguments struct {
 // --funnel-ttl does.
 func addParamsFromMCPArguments(args mcpAddArguments) (AddParams, bool, error) {
 	params := AddParams{
+		Health:          args.Health,
 		Name:            args.Name,
 		Ephemeral:       args.Ephemeral,
 		Tags:            strings.Join(args.Tags, ","),
@@ -796,17 +815,20 @@ func parseMCPWait(raw string) (time.Duration, error) {
 type mcpServiceSummary = ListServiceSummary
 
 type mcpStatusSummary struct {
-	Supervision            Supervision `json:"supervision"`
-	Authenticated          bool        `json:"authenticated"`
-	CredentialStored       bool        `json:"credential_stored"`
-	NodeAuthorized         bool        `json:"node_authorized"`
-	AuthorizedServiceCount int         `json:"authorized_service_count"`
-	DaemonRunning          bool        `json:"daemon_running"`
-	DaemonState            string      `json:"daemon_state"`
-	ServiceCount           int         `json:"service_count"`
-	Status                 string      `json:"status,omitempty"`
-	AuthURL                string      `json:"auth_url,omitempty"`
-	Next                   []string    `json:"next,omitempty"`
+	Services               []mcpHealthService `json:"services"`
+	Credentials            StatusCredentials  `json:"credentials"`
+	Alerts                 health.AlertsView  `json:"alerts"`
+	Supervision            Supervision        `json:"supervision"`
+	Authenticated          bool               `json:"authenticated"`
+	CredentialStored       bool               `json:"credential_stored"`
+	NodeAuthorized         bool               `json:"node_authorized"`
+	AuthorizedServiceCount int                `json:"authorized_service_count"`
+	DaemonRunning          bool               `json:"daemon_running"`
+	DaemonState            string             `json:"daemon_state"`
+	ServiceCount           int                `json:"service_count"`
+	Status                 string             `json:"status,omitempty"`
+	AuthURL                string             `json:"auth_url,omitempty"`
+	Next                   []string           `json:"next,omitempty"`
 }
 
 // mcpStatusFn reads what the status tool reports. Like every read-only tool it
@@ -859,6 +881,7 @@ func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 				return nil, err
 			}
 			result := mcpStatusSummary{
+				Credentials: status.Credentials, Alerts: status.Alerts, Services: mcpHealthServices(status.Services),
 				Supervision:            status.Supervision,
 				Authenticated:          status.Authenticated,
 				CredentialStored:       status.CredentialStored,

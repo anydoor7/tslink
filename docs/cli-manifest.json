@@ -500,6 +500,46 @@
           "usage": "Public Funnel lifetime: 1h, 8h, 24h, 72h, 7d, or never"
         },
         {
+          "name": "health-body",
+          "type": "string",
+          "scope": "local",
+          "usage": "Expected body substring within first 64 KiB (proxy only; avoid secrets in argv)"
+        },
+        {
+          "name": "health-interval",
+          "type": "string",
+          "default": "1m",
+          "scope": "local",
+          "usage": "Backend probe interval, 10s to 1d"
+        },
+        {
+          "name": "health-path",
+          "type": "string",
+          "scope": "local",
+          "usage": "HTTP business probe path (default /; proxy only)"
+        },
+        {
+          "name": "health-status-max",
+          "type": "int",
+          "default": "299",
+          "scope": "local",
+          "usage": "Highest expected HTTP probe status (proxy only)"
+        },
+        {
+          "name": "health-status-min",
+          "type": "int",
+          "default": "200",
+          "scope": "local",
+          "usage": "Lowest expected HTTP probe status (proxy only)"
+        },
+        {
+          "name": "health-timeout",
+          "type": "string",
+          "default": "5s",
+          "scope": "local",
+          "usage": "Backend probe timeout, 100ms to 30s"
+        },
+        {
           "name": "json",
           "type": "bool",
           "default": "false",

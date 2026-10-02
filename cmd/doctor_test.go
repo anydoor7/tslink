@@ -78,6 +78,7 @@ func newDoctorTestEnv(t *testing.T, services []registry.Service) doctorTestEnv {
 	doctorStatFn = os.Stat
 	doctorOpenPathFn = func(path string) (io.Closer, error) { return os.Open(path) }
 	doctorProbeTargetFn = func(context.Context, string, time.Duration) error { return nil }
+	doctorHTTPProbeFn = func(context.Context, registry.Service) string { return "" }
 	doctorLoadAuthHandoffFn = loadAuthHandoff
 	// The default fixture keeps Tailscale SSH deterministic and off the
 	// machine's real tailscaled: no test process may perform the local-API
@@ -108,6 +109,7 @@ func resetDoctorSeams(t *testing.T) {
 	oldStat := doctorStatFn
 	oldOpenPath := doctorOpenPathFn
 	oldProbe := doctorProbeTargetFn
+	oldHTTPProbe := doctorHTTPProbeFn
 	oldLoadAuthHandoff := doctorLoadAuthHandoffFn
 	oldIsRunning := isRunningFn
 	oldReadPID := readPIDFn
@@ -136,6 +138,7 @@ func resetDoctorSeams(t *testing.T) {
 		doctorStatFn = oldStat
 		doctorOpenPathFn = oldOpenPath
 		doctorProbeTargetFn = oldProbe
+		doctorHTTPProbeFn = oldHTTPProbe
 		doctorLoadAuthHandoffFn = oldLoadAuthHandoff
 		isRunningFn = oldIsRunning
 		readPIDFn = oldReadPID

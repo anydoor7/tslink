@@ -96,6 +96,7 @@ func invalidAllowEntries(allowedUsers []string) []string {
 
 // AddParams holds parsed flags for the add command.
 type AddParams struct {
+	Health          *registry.HealthConfig
 	Name            string
 	Proxy           string
 	Dir             string
@@ -218,6 +219,9 @@ func buildService(p AddParams) (registry.Service, error) {
 		modes++
 		svcType = registry.TypeTCP
 	}
+	if err := registry.ValidateHealthConfig(svcType, p.Health); err != nil {
+		return registry.Service{}, output.ErrUsage(err.Error())
+	}
 	if modes != 1 {
 		return registry.Service{}, registry.ServiceTypeAmbiguousError()
 	}
@@ -277,7 +281,7 @@ func buildService(p AddParams) (registry.Service, error) {
 			return registry.Service{}, output.ErrUsage(fmt.Sprintf("invalid port: %s", portStr))
 		}
 		return registry.Service{
-			Name: p.Name, Type: registry.TypeTCP,
+			Health: p.Health, Name: p.Name, Type: registry.TypeTCP,
 			Target: net.JoinHostPort(host, portStr), Port: port,
 			Ephemeral: p.Ephemeral, Tags: tags, AllowedUsers: allowedUsers,
 			ControlURL: p.ControlURL,
@@ -295,7 +299,7 @@ func buildService(p AddParams) (registry.Service, error) {
 			target = "http://" + target
 		}
 		return registry.Service{
-			Name: p.Name, Type: registry.TypeProxy, Target: target,
+			Health: p.Health, Name: p.Name, Type: registry.TypeProxy, Target: target,
 			Ephemeral: p.Ephemeral, Tags: tags, AllowedUsers: allowedUsers,
 			Funnel: p.Funnel, PublicAck: p.Public, NoAutoProvision: p.NoAutoProvision,
 			FunnelExpiresAt: funnelExpiresAt,
@@ -305,7 +309,7 @@ func buildService(p AddParams) (registry.Service, error) {
 
 	// Dir mode — path validation is done in RunE (needs filesystem)
 	return registry.Service{
-		Name: p.Name, Type: registry.TypeFile,
+		Health: p.Health, Name: p.Name, Type: registry.TypeFile,
 		Ephemeral: p.Ephemeral, Tags: tags, AllowedUsers: allowedUsers,
 		ControlURL: p.ControlURL,
 	}, nil
@@ -669,6 +673,7 @@ Examples:
 				NoAutoProvision: noAutoProvision,
 				ControlURL:      controlURL,
 			}
+			params.Health = healthConfigFromFlags(cmd)
 			svc, err := buildService(params)
 			if err != nil {
 				return err
@@ -815,5 +820,11 @@ Examples:
 	addCmd.Flags().Lookup("wait").NoOptDefVal = defaultURLWait.String()
 	addCmd.Flags().Bool("dry-run", false, "Validate and print the service JSON without writing registry.json")
 	addCmd.Flags().Bool("no-daemon-install", false, "Save configuration only; do not install or start the background service")
+	addCmd.Flags().String("health-path", "", "HTTP business probe path (default /; proxy only)")
+	addCmd.Flags().Int("health-status-min", 200, "Lowest expected HTTP probe status (proxy only)")
+	addCmd.Flags().Int("health-status-max", 299, "Highest expected HTTP probe status (proxy only)")
+	addCmd.Flags().String("health-body", "", "Expected body substring within first 64 KiB (proxy only; avoid secrets in argv)")
+	addCmd.Flags().String("health-timeout", "5s", "Backend probe timeout, 100ms to 30s")
+	addCmd.Flags().String("health-interval", "1m", "Backend probe interval, 10s to 1d")
 	rootCmd.AddCommand(addCmd)
 }

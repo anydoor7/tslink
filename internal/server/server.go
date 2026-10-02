@@ -20,6 +20,7 @@ import (
 	"github.com/anydoor7/tslink/internal/authmode"
 	"github.com/anydoor7/tslink/internal/config"
 	"github.com/anydoor7/tslink/internal/errcode"
+	"github.com/anydoor7/tslink/internal/health"
 	"github.com/anydoor7/tslink/internal/logging"
 	"github.com/anydoor7/tslink/internal/registry"
 	runtimesnapshot "github.com/anydoor7/tslink/internal/runtime"
@@ -371,6 +372,7 @@ type Server struct {
 	startupCancel           context.CancelFunc
 	startupGeneration       uint64
 	lastRegistryFingerprint string
+	lastSnapshotComplete    bool
 	syncResultMu            sync.Mutex
 	latestSyncResult        syncResult
 	syncResultChanged       chan struct{}
@@ -392,6 +394,8 @@ type Server struct {
 	credentialStateMu     sync.Mutex
 	credentialStateKnown  bool
 	credentialStateDigest string
+	healthStates          map[string]serviceHealth
+	alerts                health.AlertsView
 }
 
 // New creates a new multi-node server.
@@ -560,11 +564,13 @@ func (s *Server) Run(ctx context.Context) error {
 		}
 	}
 	lifecycleDone := s.startLifecycleTicker(watchCtx)
+	healthDone := s.startHealthMonitor(watchCtx)
 
 	<-ctx.Done()
 	s.beginShutdown()
 	cancelWatch()
 	<-lifecycleDone
+	<-healthDone
 	<-watchDone
 	s.closeAllNodes()
 	return nil
@@ -934,6 +940,8 @@ func (s *Server) syncNodesWithOutcome(ctx context.Context, startup bool) (outcom
 		} else if serviceChangedWithFallback(node.service, svc, s.controlURL) {
 			slog.Info("restarting node", "name", name, "auth_identity_changed", s.authIdentityChanged(node.service, svc))
 			s.stopNodeLocked(name)
+		} else {
+			node.service = svc // Health-only edits do not restart an enrolled node.
 		}
 	}
 	// Prune records of removed services whose state is already gone. State of
@@ -1823,6 +1831,7 @@ func (s *Server) cleanupAuthIdentityNodes(ctx context.Context, targets []tailapi
 }
 
 func (s *Server) writeRuntimeSnapshotLocked(registryFingerprint string, complete bool) {
+	s.lastSnapshotComplete = complete
 	path, err := runtimeSnapshotPathFn()
 	if err != nil {
 		slog.Warn("runtime snapshot path unavailable", "error", err)
@@ -1860,11 +1869,21 @@ func (s *Server) writeRuntimeSnapshotLocked(registryFingerprint string, complete
 		})
 	}
 	var snapshot runtimesnapshot.Snapshot
+	for i := range states {
+		if observed, ok := s.healthStates[states[i].Service.Name]; ok && observed.Identity == healthIdentity(states[i].Service) {
+			states[i].Health = observed.Health
+			states[i].NodeKey = observed.NodeKey
+		} else {
+			states[i].Health = health.Unchecked(states[i].Service.Type)
+			states[i].NodeKey = nodeKeyExpiry(nil, s.daemonStartedAt)
+		}
+	}
 	if complete {
 		snapshot = runtimesnapshot.NewSnapshot(s.daemonPID, s.daemonStartedAt, registryFingerprint, time.Now().UTC(), states)
 	} else {
 		snapshot = runtimesnapshot.NewPartialSnapshot(s.daemonPID, s.daemonStartedAt, registryFingerprint, time.Now().UTC(), states)
 	}
+	snapshot.Alerts = s.alerts
 	if s.globalFailure != nil {
 		globalFailure := *s.globalFailure
 		globalFailure.Next = append([]string(nil), s.globalFailure.Next...)
