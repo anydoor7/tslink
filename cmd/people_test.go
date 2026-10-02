@@ -174,6 +174,11 @@ func TestPeopleBundledInvitesUseFakeRESTAndMaskLinks(t *testing.T) {
 func TestPeoplePartialInviteFailureKeepsLocalGrants(t *testing.T) {
 	paths := peopleTestPaths(t)
 	restoreInviteCommandSeams(t)
+	now := peopleNowFn()
+	inviteIsRunningFn = func(string) bool { return true }
+	inviteReadPIDFn = func(string) (int, error) { return 42, nil }
+	invitePIDModTimeFn = func(string) (time.Time, error) { return now, nil }
+	reviewRefreshProof(t, paths)
 	inviteCreateDeviceFn = func(_ context.Context, target tailapi.DeviceTarget, _ string, print, multi, exit bool) (tailapi.Invite, error) {
 		if !print || multi || exit {
 			t.Fatal("email or elevated invite")
@@ -199,6 +204,7 @@ func TestPeoplePartialInviteFailureKeepsLocalGrants(t *testing.T) {
 	inviteCreateDeviceFn = func(context.Context, tailapi.DeviceTarget, string, bool, bool, bool) (tailapi.Invite, error) {
 		return tailapi.Invite{}, errors.New("opaque backend error")
 	}
+	reviewRefreshProof(t, paths)
 	result, err = changePeople(context.Background(), paths, peopleArguments{Who: "bob", Apps: []string{"photos"}, Invite: true}, false)
 	if err != nil || result.Invites[0].Code != "invite_failed" {
 		t.Fatal(result, err)

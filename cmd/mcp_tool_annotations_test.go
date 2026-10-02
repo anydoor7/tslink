@@ -23,7 +23,7 @@ var mcpWantHints = map[string][4]bool{
 	"people_add":     {false, true, false, true},
 	"people_update":  {false, true, false, true},
 	"people_list":    {true, false, true, false},
-	"people_remove":  {false, true, true, false},
+	"people_remove":  {false, true, true, true},
 	"share":          {false, false, false, true},
 	"add":            {false, true, false, true},
 	"list":           {true, false, true, false},

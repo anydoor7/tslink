@@ -19,11 +19,12 @@ import (
 var peopleNowFn = time.Now
 
 type peopleArguments struct {
-	Who        string   `json:"who"`
-	Apps       []string `json:"apps,omitempty"`
-	For        *string  `json:"for,omitempty"`
-	Invite     bool     `json:"invite,omitempty"`
-	PrintLinks bool     `json:"print_links,omitempty"`
+	Who        string            `json:"who"`
+	Apps       []string          `json:"apps,omitempty"`
+	For        *string           `json:"for,omitempty"`
+	Invite     bool              `json:"invite,omitempty"`
+	PrintLinks bool              `json:"print_links,omitempty"`
+	Reconcile  map[string]string `json:"reconcile_invites,omitempty"`
 }
 
 type PeopleGrantView struct {
@@ -33,9 +34,10 @@ type PeopleGrantView struct {
 }
 
 type PeopleView struct {
-	Login   string            `json:"login"`
-	Revoked bool              `json:"revoked"`
-	Grants  []PeopleGrantView `json:"grants"`
+	Login   string                  `json:"login"`
+	Revoked bool                    `json:"revoked"`
+	Grants  []PeopleGrantView       `json:"grants"`
+	Invites []registry.PersonInvite `json:"invites,omitempty"`
 }
 
 type PeopleInviteView struct {
@@ -44,6 +46,8 @@ type PeopleInviteView struct {
 	InviteURL            string                         `json:"invite_url,omitempty"`
 	Code                 string                         `json:"code,omitempty"`
 	RemoteSideEffectPlan *security.RemoteSideEffectPlan `json:"remote_side_effect_plan,omitempty"`
+	State                string                         `json:"state,omitempty"`
+	ReconcileIDs         []string                       `json:"reconcile_ids,omitempty"`
 }
 
 type PeopleResult struct {
@@ -57,12 +61,24 @@ type PeopleResult struct {
 const peopleInviteRequirement = "Device invitations require a stored user-owned Tailscale API access token; OAuth client tokens cannot create them. People already in the tailnet need no token or invite."
 
 func peopleURLs(paths sharePaths) map[string]string {
+	reg, issues, err := registry.Preflight(paths.Registry)
+	if err != nil {
+		return map[string]string{}
+	}
+	return peopleURLsFromRegistry(paths, reg, issues)
+}
+
+func peopleURLsFromRegistry(paths sharePaths, reg *registry.Registry, issues []registry.ServiceIssue) map[string]string {
 	urls := map[string]string{}
 	snapshot, err := tsruntime.Load(paths.Snapshot)
 	if err != nil || !inviteIsRunningFn(paths.PID) {
 		return urls
 	}
-	expected := tsruntime.ExpectedRuntime{CurrentRegistryFingerprint: currentRegistryFingerprint(paths.Registry)}
+	fingerprint, err := tsruntime.RegistryFingerprint(reg, issues)
+	if err != nil {
+		return urls
+	}
+	expected := tsruntime.ExpectedRuntime{CurrentRegistryFingerprint: fingerprint}
 	if pid, err := inviteReadPIDFn(paths.PID); err == nil {
 		expected.DaemonPID = pid
 	} else {
@@ -85,7 +101,7 @@ func peopleURLs(paths sharePaths) map[string]string {
 }
 
 func peopleView(p registry.Person, urls map[string]string, now time.Time) PeopleView {
-	v := PeopleView{Login: p.Login, Revoked: p.Revoked, Grants: []PeopleGrantView{}}
+	v := PeopleView{Login: p.Login, Revoked: p.Revoked, Grants: []PeopleGrantView{}, Invites: p.Invites}
 	for _, g := range p.Grants {
 		v.Grants = append(v.Grants, PeopleGrantView{PersonGrant: g, Active: registry.PersonGrantActiveAt(p, g.App, now), URL: urls[g.App]})
 	}
@@ -93,6 +109,9 @@ func peopleView(p registry.Person, urls map[string]string, now time.Time) People
 }
 
 func peopleMessage(p PeopleView, invites []PeopleInviteView, requested, printLinks bool) string {
+	if p.Revoked {
+		return fmt.Sprintf("Access for %s is revoked. The owner should retry tslink people remove %s to finish pending invitation cleanup; accepted network shares may remain.", p.Login, p.Login)
+	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "Install Tailscale from https://tailscale.com/download on your phone or computer. Open it, sign in as %s, and keep it connected.\n", p.Login)
 	if requested {
@@ -131,11 +150,24 @@ func changePeople(ctx context.Context, paths sharePaths, args peopleArguments, u
 	if args.PrintLinks && !args.Invite {
 		return PeopleResult{}, output.ErrUsage("--print-links requires --invite")
 	}
+	if len(args.Reconcile) > 0 && (!update || !args.Invite) {
+		return PeopleResult{}, output.ErrUsage("reconcile-invite requires people update --invite")
+	}
+	for app, id := range args.Reconcile {
+		if err := registry.ValidateName(app); err != nil {
+			return PeopleResult{}, output.ErrUsage(err.Error())
+		}
+		if id != "none" {
+			if err := tailapi.ValidateInviteID(id); err != nil {
+				return PeopleResult{}, err
+			}
+		}
+	}
 	if !update && len(args.Apps) == 0 {
 		return PeopleResult{}, output.ErrUsage("--apps is required; use a comma-separated app list or all")
 	}
-	if update && args.Apps == nil && args.For == nil {
-		return PeopleResult{}, output.ErrUsage("update requires --apps or --for")
+	if update && args.Apps == nil && args.For == nil && !args.Invite {
+		return PeopleResult{}, output.ErrUsage("update requires --apps, --for or --invite")
 	}
 	if args.Apps != nil && len(args.Apps) == 0 {
 		return PeopleResult{}, output.ErrUsage("apps must not be empty")
@@ -168,27 +200,7 @@ func changePeople(ctx context.Context, paths sharePaths, args peopleArguments, u
 	}
 	result := PeopleResult{Person: peopleView(p, urls, now), Invites: []PeopleInviteView{}, Complete: true, InviteRequirement: peopleInviteRequirement}
 	if args.Invite {
-		for _, g := range p.Grants {
-			// Link mode asks Tailscale to send no email; no elevated exit-node
-			// or multi-use invitation can be requested through this surface.
-			invite, err := inviteCreateDeviceFn(ctx, targets[g.App], p.Login, true, false, false)
-			v := PeopleInviteView{App: g.App, Code: "invite_failed"}
-			if err != nil {
-				result.Complete = false
-				if code, ok := registry.ErrorCode(err); ok {
-					v.Code = code
-				}
-			} else {
-				v.Code = ""
-				v.ID = invite.ID
-				plan := invitePlan(invite, "create")
-				v.RemoteSideEffectPlan = &plan
-				if args.PrintLinks {
-					v.InviteURL = invite.InviteURL
-				}
-			}
-			result.Invites = append(result.Invites, v)
-		}
+		resumePeopleInvites(ctx, paths.Registry, p, targets, args, &result)
 	}
 	result.Message = peopleMessage(result.Person, result.Invites, args.Invite, args.PrintLinks)
 	return result, nil
@@ -198,9 +210,11 @@ type PeopleListResult struct {
 	People []PeopleView `json:"people"`
 }
 type PeopleRemoveResult struct {
-	Login   string `json:"login"`
-	Removed bool   `json:"removed"`
-	Revoked bool   `json:"revoked"`
+	Login    string             `json:"login"`
+	Removed  bool               `json:"removed"`
+	Revoked  bool               `json:"revoked"`
+	Complete bool               `json:"complete"`
+	Cleanup  []PeopleInviteView `json:"cleanup"`
 }
 
 func listPeople(paths sharePaths) (PeopleListResult, error) {
@@ -216,7 +230,7 @@ func listPeople(paths sharePaths) (PeopleListResult, error) {
 	if len(issues) > 0 {
 		return result, issues[0]
 	}
-	urls, now := peopleURLs(paths), peopleNowFn()
+	urls, now := peopleURLsFromRegistry(paths, reg, issues), peopleNowFn()
 	for _, p := range reg.People {
 		result.People = append(result.People, peopleView(p, urls, now))
 	}
@@ -224,12 +238,25 @@ func listPeople(paths sharePaths) (PeopleListResult, error) {
 }
 
 func removePeople(path, who string) (PeopleRemoveResult, error) {
+	return removePeopleContext(context.Background(), path, who)
+}
+
+func removePeopleContext(ctx context.Context, path, who string, reconcile ...map[string]string) (PeopleRemoveResult, error) {
 	login, err := registry.NormalizePerson(who)
 	if err != nil {
 		return PeopleRemoveResult{}, err
 	}
 	removed, err := registry.RemovePerson(path, login)
-	return PeopleRemoveResult{Login: login, Removed: removed, Revoked: true}, err
+	if err != nil {
+		return PeopleRemoveResult{}, err
+	}
+	result := PeopleRemoveResult{Login: login, Removed: removed, Revoked: true, Complete: true, Cleanup: []PeopleInviteView{}}
+	var resolved map[string]string
+	if len(reconcile) > 0 {
+		resolved = reconcile[0]
+	}
+	cleanupPeopleInvites(ctx, path, &result, resolved)
+	return result, nil
 }
 
 func writePeopleResult(out io.Writer, command string, data any, isJSON bool) {
@@ -247,7 +274,7 @@ func writePeopleResult(out io.Writer, command string, data any, isJSON bool) {
 					fmt.Fprintf(out, "Invitation for %s: %s\n", inv.App, inv.Code)
 				}
 			}
-			fmt.Fprintln(out, "Local access saved; some invitations failed. Inspect the per-app errors and retry invitations with tslink invite device.")
+			fmt.Fprintln(out, "Local access saved; invitation work remains. Retry with tslink people update <login> --invite. Unknown POST outcomes require listing and explicit --reconcile-invite app=id (or app=none after verifying absence); never blindly create another invitation.")
 		}
 	case PeopleListResult:
 		for _, p := range d.People {
@@ -259,12 +286,21 @@ func writePeopleResult(out io.Writer, command string, data any, isJSON bool) {
 				}
 				fmt.Fprintf(out, "  %s active=%t expires=%s\n", g.App, g.Active, deadline)
 			}
+			for _, op := range p.Invites {
+				fmt.Fprintf(out, "  invite %s id=%s state=%s\n", op.App, op.ID, op.State)
+			}
 		}
 		if len(d.People) == 0 {
 			fmt.Fprintln(out, "No people configured.")
 		}
 	case PeopleRemoveResult:
 		fmt.Fprintf(out, "Revoked %s across all private HTTP and file services. Accepted network shares may remain; TCP and public Funnel are outside person enforcement.\n", d.Login)
+		for _, inv := range d.Cleanup {
+			fmt.Fprintf(out, "Invitation cleanup for %s (%s): state=%s code=%s\n", inv.App, inv.ID, inv.State, inv.Code)
+		}
+		if !d.Complete {
+			fmt.Fprintln(out, "Local denial is saved. Remote cleanup is deferred or incomplete; restore the user-owned API token, reconcile unknown outcomes, and retry people remove.")
+		}
 	}
 }
 
@@ -273,6 +309,7 @@ func newPeopleCmd() *cobra.Command {
 	for _, update := range []bool{false, true} {
 		var apps, duration string
 		var invite, printLinks bool
+		var reconcile []string
 		name := "add"
 		if update {
 			name = "update"
@@ -283,6 +320,16 @@ func newPeopleCmd() *cobra.Command {
 				return err
 			}
 			args := peopleArguments{Who: a[0], Invite: invite, PrintLinks: printLinks}
+			if len(reconcile) > 0 {
+				args.Reconcile = map[string]string{}
+				for _, value := range reconcile {
+					app, id, ok := strings.Cut(value, "=")
+					if !ok || app == "" || id == "" || args.Reconcile[app] != "" {
+						return output.ErrUsage("reconcile-invite must be a unique app=id or app=none")
+					}
+					args.Reconcile[app] = id
+				}
+			}
 			if c.Flags().Changed("apps") {
 				args.Apps = strings.Split(apps, ",")
 				for i := range args.Apps {
@@ -301,8 +348,11 @@ func newPeopleCmd() *cobra.Command {
 		}}
 		c.Flags().StringVar(&apps, "apps", "", "Comma-separated private HTTP/file apps, or all current supported apps")
 		c.Flags().StringVar(&duration, "for", "", "Grant lifetime such as 1h, 7d or never; update omission preserves deadlines")
-		c.Flags().BoolVar(&invite, "invite", false, "Create one single-use device invite per app and bundle a guide (requires a user-owned API token)")
+		c.Flags().BoolVar(&invite, "invite", false, "Create or resume single-use per-app device invitations (requires a user-owned API token)")
 		c.Flags().BoolVar(&printLinks, "print-links", false, "Explicitly include bearer invitation links in output and the guide")
+		if update {
+			c.Flags().StringArrayVar(&reconcile, "reconcile-invite", nil, "After verifying an unknown POST, associate app=id or confirm app=none; requires --invite")
+		}
 		group.AddCommand(c)
 	}
 	group.AddCommand(&cobra.Command{Use: "list", Short: "List people, grants and expiry", Args: cobra.NoArgs, RunE: func(c *cobra.Command, _ []string) error {
@@ -317,18 +367,29 @@ func newPeopleCmd() *cobra.Command {
 		writePeopleResult(c.OutOrStdout(), "people list", result, jsonOutput(c))
 		return nil
 	}})
-	group.AddCommand(&cobra.Command{Use: "remove <login-or-email>", Short: "Revoke a person everywhere in private HTTP/file services", Args: cobra.ExactArgs(1), RunE: func(c *cobra.Command, a []string) error {
+	var removeReconcile []string
+	removeCmd := &cobra.Command{Use: "remove <login-or-email>", Short: "Revoke a person locally, then clean up pending device invitations", Args: cobra.ExactArgs(1), RunE: func(c *cobra.Command, a []string) error {
 		path, err := inviteRegistryPathFn()
 		if err != nil {
 			return err
 		}
-		result, err := removePeople(path, a[0])
+		resolved := map[string]string{}
+		for _, value := range removeReconcile {
+			app, id, ok := strings.Cut(value, "=")
+			if !ok || app == "" || id == "" || resolved[app] != "" {
+				return output.ErrUsage("reconcile-invite must be a unique app=id or app=none")
+			}
+			resolved[app] = id
+		}
+		result, err := removePeopleContext(c.Context(), path, a[0], resolved)
 		if err != nil {
 			return err
 		}
 		writePeopleResult(c.OutOrStdout(), "people remove", result, jsonOutput(c))
 		return nil
-	}})
+	}}
+	removeCmd.Flags().StringArrayVar(&removeReconcile, "reconcile-invite", nil, "After verifying an unknown POST, associate app=id or confirm app=none before cleanup")
+	group.AddCommand(removeCmd)
 	return group
 }
 

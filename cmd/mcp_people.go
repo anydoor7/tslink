@@ -11,6 +11,9 @@ func peopleViewSchema() map[string]any {
 	return objectSchema(map[string]any{
 		"login": map[string]any{"type": "string"}, "revoked": map[string]any{"type": "boolean"},
 		"grants": map[string]any{"type": "array", "items": grant},
+		"invites": map[string]any{"type": "array", "items": objectSchema(map[string]any{
+			"app": map[string]any{"type": "string"}, "hostname": map[string]any{"type": "string"}, "node_id": map[string]any{"type": "string"}, "id": map[string]any{"type": "string"}, "state": map[string]any{"type": "string"},
+		}, "app", "hostname", "node_id", "state")},
 	}, "login", "revoked", "grants")
 }
 
@@ -24,6 +27,7 @@ func peopleResultSchema() map[string]any {
 			"app": map[string]any{"type": "string"}, "id": map[string]any{"type": "string"},
 			"invite_url": map[string]any{"type": "string"}, "code": map[string]any{"type": "string"},
 			"remote_side_effect_plan": mcpRemoteSideEffectPlanSchema,
+			"state":                   map[string]any{"type": "string"}, "reconcile_ids": stringArraySchema(),
 		}, "app")},
 	}, "person", "complete", "message", "invite_requirement", "invites")
 }
@@ -33,25 +37,27 @@ func init() {
 		mcpToolHints[name] = mcpHints(false, true, false, true)
 		mcpToolDefinitions = append(mcpToolDefinitions, mcpToolDefinition{
 			Name:        name,
-			Description: "Changes local access to private HTTP and file apps for a person, so confirm the person, apps and expiry with the user before calling. This makes newly scoped apps deny callers without a grant or an explicit legacy allow rule. TCP cannot enforce people; public Funnel is refused. Optional invite creates single-use per-app device invitations bundled in one guide, so confirm before creating them. Requires a user-owned API token only for invite; OAuth cannot create device invites. print_links explicitly reveals bearer links. No elevated exit-node, multi-use or tailnet-role permissions are offered; use the existing invite tools and their owner-configured elevated permission guard for those. An incomplete invitation result retains local grants and reports each app's error.",
+			Description: "Changes local access to private HTTP and file apps for a person, so confirm the person, apps and expiry with the user before calling. This makes newly scoped apps deny callers without a grant or an explicit legacy allow rule. TCP cannot enforce people; public Funnel is refused. Optional invite creates single-use per-app device invitations bundled in one guide, so confirm before creating them. Requires a user-owned API token only for invite; OAuth cannot create device invites. print_links explicitly reveals bearer links. No elevated exit-node, multi-use or tailnet-role permissions are offered; use the existing invite tools and their owner-configured elevated permission guard for those. An incomplete invitation result retains local grants and reports durable state/errors. Update with invite alone resumes unfinished work; unknown POSTs require explicit owner-verified reconcile_invites after remote listing. Completed operations are reused. There is no exactly-once guarantee. People identities support ASCII [A-Za-z0-9@._+-]+ only.",
 			InputSchema: objectSchema(map[string]any{
-				"who":         map[string]any{"type": "string", "minLength": 1},
-				"apps":        map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "string"}, "description": "App names, or [all] for all current private HTTP/file apps. Required on add; omission on update keeps the app set."},
-				"for":         map[string]any{"type": "string", "description": "Positive duration, e.g. 1h or 7d, or never. Omit on update to preserve expiry."},
-				"invite":      map[string]any{"type": "boolean", "default": false},
-				"print_links": map[string]any{"type": "boolean", "default": false},
+				"who":               map[string]any{"type": "string", "minLength": 1},
+				"apps":              map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "string"}, "description": "App names, or [all] for all current private HTTP/file apps. Required on add; omission on update keeps the app set."},
+				"for":               map[string]any{"type": "string", "description": "Positive duration, e.g. 1h or 7d, or never. Omit on update to preserve expiry."},
+				"invite":            map[string]any{"type": "boolean", "default": false},
+				"print_links":       map[string]any{"type": "boolean", "default": false},
+				"reconcile_invites": map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}, "description": "Update --invite only: owner-verified app to invite ID mapping, or none after checking absence. Unknown POSTs cannot be retried blindly."},
 			}, "who"), OutputSchema: peopleResultSchema(),
 		})
 		input := mcpToolDefinitions[len(mcpToolDefinitions)-1].InputSchema
 		if name == "people_add" {
+			delete(input["properties"].(map[string]any), "reconcile_invites")
 			input["required"] = []string{"who", "apps"}
 		}
 		if name == "people_update" {
-			input["anyOf"] = []any{map[string]any{"required": []string{"apps"}}, map[string]any{"required": []string{"for"}}}
+			input["anyOf"] = []any{map[string]any{"required": []string{"apps"}}, map[string]any{"required": []string{"for"}}, map[string]any{"required": []string{"invite"}, "properties": map[string]any{"invite": map[string]any{"const": true}}}}
 		}
 	}
 	mcpToolHints["people_list"] = mcpHints(true, false, true, false)
 	mcpToolDefinitions = append(mcpToolDefinitions, mcpToolDefinition{Name: "people_list", Description: "Read people, their app grants, absolute deadlines and revocation tombstones from local files. No credential is needed; sends no invitations and writes nothing.", InputSchema: objectSchema(map[string]any{}), OutputSchema: objectSchema(map[string]any{"people": map[string]any{"type": "array", "items": peopleViewSchema()}}, "people")})
-	mcpToolHints["people_remove"] = mcpHints(false, true, true, false)
-	mcpToolDefinitions = append(mcpToolDefinitions, mcpToolDefinition{Name: "people_remove", Description: "Revokes a person across every private HTTP/file service in one local action, so confirm with the user before calling. Removes matching legacy allow entries and retains a deny tombstone, even if a network share remains accepted. No API token is needed. TCP and public Funnel are outside person enforcement. Existing in-flight downloads and WebSockets finish; all subsequent HTTP requests and WebSocket upgrades are denied.", InputSchema: objectSchema(map[string]any{"who": map[string]any{"type": "string", "minLength": 1}}, "who"), OutputSchema: objectSchema(map[string]any{"login": map[string]any{"type": "string"}, "removed": map[string]any{"type": "boolean"}, "revoked": map[string]any{"type": "boolean"}}, "login", "removed", "revoked")})
+	mcpToolHints["people_remove"] = mcpHints(false, true, true, true)
+	mcpToolDefinitions = append(mcpToolDefinitions, mcpToolDefinition{Name: "people_remove", Description: "Revokes a person locally across private HTTP/file services before cleaning up pending device invitations, so confirm with the user before calling. Retains a deny tombstone. Local denial needs no token; remote cleanup needs a user-owned API token and reports deferred or partial work in complete/cleanup. Retry resumes cleanup. Unknown POSTs require explicit owner-verified reconcile_invites app=id or app=none, with remote listing. Accepted network shares may remain. TCP/Funnel are outside person enforcement; in-flight streams finish.", InputSchema: objectSchema(map[string]any{"who": map[string]any{"type": "string", "minLength": 1}, "reconcile_invites": map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}}}, "who"), OutputSchema: objectSchema(map[string]any{"login": map[string]any{"type": "string"}, "removed": map[string]any{"type": "boolean"}, "revoked": map[string]any{"type": "boolean"}, "complete": map[string]any{"type": "boolean"}, "cleanup": peopleResultSchema()["properties"].(map[string]any)["invites"]}, "login", "removed", "revoked", "complete", "cleanup")})
 }

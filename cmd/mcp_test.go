@@ -29,7 +29,7 @@ func fakeMCPActions() mcpActions {
 			return PeopleResult{Person: PeopleView{Login: args.Who, Grants: []PeopleGrantView{}}, Invites: []PeopleInviteView{}, Complete: true, Message: "guide", InviteRequirement: peopleInviteRequirement}, nil
 		},
 		peopleList: func() (any, error) { return PeopleListResult{People: []PeopleView{}}, nil },
-		peopleRemove: func(who string) (any, error) {
+		peopleRemove: func(_ context.Context, who string, _ map[string]string) (any, error) {
 			return PeopleRemoveResult{Login: who, Removed: true, Revoked: true}, nil
 		},
 		share: func(_ context.Context, req shareRequest) (ShareResult, error) {

@@ -657,7 +657,7 @@ func CreateDeviceInvite(ctx context.Context, target DeviceTarget, email string, 
 	}
 	responses, err := client.CreateDeviceInvites(ctx, device.NodeID, []deviceInviteRequest{request})
 	if err != nil {
-		return Invite{}, inviteAPIError("create device invite", err)
+		return Invite{}, &DeviceInviteOutcomeUnknown{Err: inviteAPIError("create device invite", err)}
 	}
 	inviteID, inviteURL := "", ""
 	inviteIDs := make([]string, 0, len(responses))
@@ -670,7 +670,7 @@ func CreateDeviceInvite(ctx context.Context, target DeviceTarget, email string, 
 	// Keep the audit structurally before all post-create validation failures.
 	slog.Warn("security.remote_invite_created", "kind", InviteKindDevice, "invite_id", inviteID, "invite_ids", inviteIDs, "response_count", len(responses), "service", target.Service, "device_node_id", device.NodeID, "recipient", email, "emailed", !printLink)
 	if err := validateCreatedInvite(InviteKindDevice, printLink, len(responses), inviteID, inviteURL); err != nil {
-		return Invite{}, err
+		return Invite{}, &DeviceInviteOutcomeUnknown{Err: err}
 	}
 	result := deviceInvite(responses[0], target.Service, email, !printLink)
 	return result, nil

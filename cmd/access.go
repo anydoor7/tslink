@@ -64,6 +64,15 @@ type AccessExplainLocalEnforcement struct {
 	FailureMode    string                      `json:"failure_mode,omitempty"`
 	PublicExposure AccessExplainPublicExposure `json:"public_exposure"`
 	Notes          []string                    `json:"notes"`
+	People         *AccessExplainPeople        `json:"people,omitempty"`
+}
+
+type AccessExplainPeople struct {
+	Scoped         bool   `json:"scoped"`
+	KnownLogins    int    `json:"known_logins"`
+	Grants         int    `json:"grants"`
+	Tombstones     int    `json:"tombstones"`
+	DetailsCommand string `json:"details_command"`
 }
 
 type AccessExplainPublicExposure struct {
@@ -102,7 +111,7 @@ func accessExplainResultForPath(regPath, serviceName string) (AccessExplainResul
 		if svc.Name != serviceName {
 			continue
 		}
-		return buildAccessExplainResult(svc), nil
+		return buildAccessExplainResult(svc, reg.People...), nil
 	}
 	return AccessExplainResult{}, output.ErrNotFound(fmt.Sprintf("service not found: %s", serviceName))
 }
@@ -124,7 +133,7 @@ func runAccessExplain(serviceName string, out io.Writer, isJSON bool) error {
 	return nil
 }
 
-func buildAccessExplainResult(svc registry.Service) AccessExplainResult {
+func buildAccessExplainResult(svc registry.Service, people ...registry.Person) AccessExplainResult {
 	view := inspect.ServiceViewFor(svc)
 	view.Backend = accessSafeBackendView(view.Backend)
 
@@ -139,6 +148,34 @@ func buildAccessExplainResult(svc registry.Service) AccessExplainResult {
 		TargetLoopbackClassification: accessTargetClassificationFor(svc),
 	}
 	enforcement := accessLocalEnforcementFor(svc, view)
+	if registry.PeopleServiceSupported(svc) && (svc.PeopleScoped || len(people) > 0) {
+		details := &AccessExplainPeople{Scoped: svc.PeopleScoped, KnownLogins: len(people), DetailsCommand: "tslink people list --json"}
+		for _, p := range people {
+			if p.Revoked {
+				details.Tombstones++
+			}
+			for _, g := range p.Grants {
+				if g.App == svc.Name {
+					details.Grants++
+				}
+			}
+		}
+		enforcement.Kind, enforcement.Applies = "http_people", true
+		enforcement.People = details
+		enforcement.FailureMode = accessIdentityFailureModeDenyWhenUnresolved
+		enforcement.Summary = "TSLink checks people grants, expiry and revocation tombstones on each HTTP request. Known untagged logins override legacy allow rules; inspect tslink people list --json."
+		enforcement.Notes = []string{
+			"Known untagged people need an active app grant even on unscoped apps; revoked, expired and unassigned logins are denied.",
+			"On people-scoped apps, unknown callers require an explicit legacy allow rule; an empty legacy list denies them. Tagged machines cannot use person grants.",
+			"On unscoped apps, other callers retain legacy rules. Identity failures deny; principals remain redacted here. See tslink people list --json for detailed local policy.",
+		}
+		if svc.PeopleScoped {
+			enforcement.AllowList.Mode = "people_scoped"
+		} else {
+			enforcement.AllowList.Mode = "people_override"
+		}
+		known.Allow = enforcement.AllowList
+	}
 	externalUnknown := accessExternalPolicyUnknown(view)
 	backendAuth := accessBackendAuthAssumption()
 
@@ -269,6 +306,8 @@ func accessExplainSummary(result AccessExplainResult) string {
 		)
 	}
 	switch result.TSLinkLocalEnforcement.Kind {
+	case "http_people":
+		return fmt.Sprintf("TSLink knows service %q with local people grant, expiry and tombstone enforcement; see tslink people list --json. External policy and backend authentication are not evaluated.", result.Service)
 	case "http_allow_list":
 		return fmt.Sprintf(
 			"TSLink knows service %q as a %s service with local HTTP allow-list enforcement for %d redacted principal(s); external policy and backend authentication are not evaluated.",

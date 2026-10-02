@@ -61,7 +61,7 @@ func refusingMCPActions() mcpActions {
 			return nil, mcpRefusal(name)
 		},
 		peopleList:   func() (any, error) { return nil, mcpRefusal("people_list") },
-		peopleRemove: func(string) (any, error) { return nil, mcpRefusal("people_remove") },
+		peopleRemove: func(context.Context, string, map[string]string) (any, error) { return nil, mcpRefusal("people_remove") },
 		share:        func(context.Context, shareRequest) (ShareResult, error) { return ShareResult{}, mcpRefusal("share") },
 		add:          func(context.Context, AddParams, bool) (any, error) { return nil, mcpRefusal("add") },
 		list:         func() (any, error) { return nil, mcpRefusal("list") },

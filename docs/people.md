@@ -9,11 +9,11 @@ tslink people update alice@example.com --apps photos --for 1h
 tslink people remove alice@example.com
 ```
 
-These commands only change local authorization. They need no stored credential and do not install or start the daemon. Existing tailnet members can use their grants immediately when the daemon runs this version and their tailnet policy permits reaching the app. The output includes a message you can send to the person; an exact app address appears when a current running-daemon snapshot proves it. Otherwise the message asks the owner to get it with `tslink status --urls` after enrollment finishes.
+Grant changes are local; removal also attempts pending-invitation cleanup after saving local denial. They need no stored credential and do not install or start the daemon. Existing tailnet members can use their grants immediately when the daemon runs this version and their tailnet policy permits reaching the app. The output includes a message you can send to the person; an exact app address appears when a current running-daemon snapshot proves it. Otherwise the message asks the owner to get it with `tslink status --urls` after enrollment finishes.
 
 `--apps all` selects every **currently registered private HTTP proxy and file service**. It excludes TCP and public Funnel and does not automatically include future apps. Explicitly naming a TCP or Funnel service fails atomically with `people_service_unsupported`. File services enforce the same HTTP WhoIs authorization as proxies, including single-file shares.
 
-Adding an existing active person refuses; use `update`. An update with only `--apps` preserves deadlines for retained apps and gives newly added apps no deadline. Specify `--for` to apply the chosen lifetime to every selected grant. An update with only `--for` keeps the app set. `--for never` explicitly removes deadlines and renews expired grants. Removing a person is idempotent, and adding them again is an explicit new grant.
+Adding an existing active person refuses; use `update`. An update with only `--apps` preserves deadlines for retained apps and gives newly added apps no deadline. Specify `--for` to apply the chosen lifetime to every selected grant. An update with only `--for` keeps the app set. `--for never` explicitly removes deadlines and renews expired grants. Removing a person is idempotent. Adding them again is an explicit new grant and refuses until outstanding invite operations are cleaned up or reconciled.
 
 ## Outsiders: one owner command and one message
 
@@ -29,7 +29,22 @@ Device invitation creation requires a stored **user-owned API access token**. OA
 
 No invitation is created unless `--invite` is supplied. Invitation URLs are bearer capabilities. They appear only with explicit `--print-links`; otherwise the result contains IDs and says the links are hidden. Recover hidden links through `tslink invite list --show-urls`, which is also an explicit disclosure. Links are never stored in the people registry or written to TSLink's invitation audit logs.
 
-An invitation bundle can partially fail. JSON reports `complete: false`, a per-app stable `code`, and successful invitation IDs and side-effect plans. **Local grants remain saved.** Read these fields even when the command's envelope is successful. Resolve the error and use `tslink invite device <app> <login> --print-link` for each missing link; repeating a people update with `--invite` creates new invitations for its selected apps.
+An invitation bundle can partially fail. JSON reports `complete: false`, per-app `code` and durable `state`, successful IDs and side-effect plans. **Local grants remain saved.** Read these fields even when the command envelope succeeds. Resume with `tslink people update <login> --invite`: completed operations reuse their IDs, and only unfinished operations are sent. Add `--print-links` to retrieve existing links explicitly; an unavailable link is reported rather than recreated.
+
+The registry stores non-secret person/app/node associations and operation states (`pending`, `sending`, `unknown`, `complete`, `revoked`, `accepted`, `cancelled`), never URLs or tokens. TSLink saves `sending` before POST. A crash, timeout, failed POST response or invalid response requires remote reconciliation before another create. A device-invite list has no recipient metadata for link-mode invitations; TSLink never automatically assigns an unaddressed link, even when only one is listed. Inspect `tslink invite list --json` (or `--show-urls` to reveal links), verify the app and intended invitation, then explicitly resolve:
+
+```sh
+# Associate an owner-verified, existing invite ID; no new POST for that app.
+tslink people update alice@example.com --invite --reconcile-invite photos=12345
+# After verifying no invitation was created: requires an empty device invite list.
+tslink people update alice@example.com --invite --reconcile-invite photos=none
+# Resolve an unknown operation while keeping the person revoked, then clean up.
+tslink people remove alice@example.com --reconcile-invite photos=12345
+```
+
+`--reconcile-invite` can be repeated for different apps. `none` is an explicit owner assertion plus a remote-list check, not an exactly-once guarantee. The API provides no idempotency key or proof that an absent result cannot appear later. TSLink **does not promise exactly-once delivery**. Do not use standalone `invite device` as recovery for a people operation; that separate command intentionally creates a new invitation. Local remote-work locking prevents simultaneous owner processes from sending the same operation; contention reports `people_invite_busy` and asks for retry. Each bundle's remote work is bounded to 15 seconds, or an earlier caller deadline.
+
+`people remove` commits the deny tombstone and removes grants first, then revokes every recorded pending invite on its proven app node. JSON includes `complete` and per-app `cleanup` states/codes; human output reports deferred/partial remote cleanup. Without a token it still denies locally and retains the invite IDs for later cleanup. Retry removal after restoring the user-owned token. Completed cleanup is skipped; missing remote IDs are treated as already cleaned up. Accepted invitations are reported as `accepted`; accepted network shares may remain and need separate Tailscale management. If a concurrent create is still running, removal reports deferred cleanup immediately; retry removal to clean up its recorded outcome. Removing an app does not discard its invitation ledger.
 
 ## Why per-app invitations
 
@@ -42,6 +57,10 @@ The bundled design preserves the existing per-app transport isolation and avoids
 
 ## Enforcement and expiry
 
+Supported people identities match ASCII `[A-Za-z0-9@._+-]+`. Only ASCII A-Z case folding and outer ASCII space/tab/CR/LF removal are supported. Unicode, including U+212A KELVIN SIGN and U+0130 dotted capital I, is rejected at CLI/store boundaries and denied at the people WhoIs gate; it cannot fall back to legacy authorization. This grammar covers ASCII login names and emails, not every identity provider spelling.
+
+`access explain` and MCP `access_explain` report redacted people scope, grant/tombstone counts and the known-login override, and point to `people list --json` for detailed policy. Services with no people policy retain the legacy explanation.
+
 The first people grant makes the app `people_scoped`. This marker stays after grants are removed. Unknown callers then need either an active grant or a named legacy `--allow` rule; an empty legacy allow list no longer means allow-all on that app. Existing explicit allow users/tags remain usable. For a known untagged login, the person's app set is authoritative and overrides legacy allow rules: losing an app, expiry and revocation all deny access. Tagged machines cannot impersonate people.
 
 `people remove` removes matching legacy allow entries across apps and keeps a deny tombstone. This also denies that login on formerly unrestricted private HTTP/file apps. Removing a service removes its grants while preserving other people data; recreating that app does not restore old grants. Ordinary `add` preserves `people_scoped` and refuses conversion of a scoped app to public Funnel or TCP. Other people and legacy explicitly allowed accounts continue to work. Network policy still controls reachability; this feature does not edit remote ACLs, delete accepted device shares, revoke tailnet membership, or enforce raw TCP/public Funnel access.
@@ -52,17 +71,17 @@ HTTP requests and WebSocket upgrades are checked individually. Already accepted 
 
 ## JSON, MCP and registry compatibility
 
-All CLI JSON uses the existing `schema_version: 1` result envelope. `data.person` contains canonical `login`, `revoked` and `grants`; each grant has `app`, optional `expires_at`/`expired`, `active`, and optional exact `url`. Add/update also return `invites`, `complete`, `message` and `invite_requirement`. List returns `data.people`, including tombstones. Remove returns `login`, `removed`, `revoked`.
+All CLI JSON uses the existing `schema_version: 1` result envelope. `data.person` contains canonical `login`, `revoked` and `grants`; each grant has `app`, optional `expires_at`/`expired`, `active`, and optional exact `url`. Add/update also return `invites`, `complete`, `message` and `invite_requirement`. List returns `data.people`, including tombstones. People views also include non-secret `invites` operation records. Remove returns `login`, `removed`, `revoked`, `complete`, `cleanup`. Add/update invite views include `state` and optional candidate `reconcile_ids`; candidates are evidence, not recipient attribution.
 
-MCP provides `people_add`, `people_list`, `people_update`, `people_remove`. Mutation tools describe confirmation requirements. Add/update are destructive (they can narrow existing app exposure), non-idempotent with renewal/invites, and open-world because invites are optional; list is read-only; remove is local, destructive and idempotent. Elevated exit-node, reusable-link and tailnet-role invitation arguments are not accepted here. The existing invite tools retain their `mcp.allow_elevated_invites` owner-configured guard.
+MCP provides `people_add`, `people_list`, `people_update`, `people_remove`. Mutation tools describe confirmation requirements. Add/update are destructive (they can narrow existing app exposure), non-idempotent with renewal/invites, and open-world because invites are optional; list is read-only, including file modes; remove is destructive and idempotent with optional remote cleanup (open-world). Update accepts an invite-only retry; update/remove accept `reconcile_invites`, an app-to-ID (or `none`) object requiring explicit owner verification. Elevated exit-node, reusable-link and tailnet-role invitation arguments are not accepted here. The existing invite tools retain their `mcp.allow_elevated_invites` owner-configured guard.
 
-People-enabled registries write schema version 2, with top-level `people` and per-service `people_scoped`. Existing version 0/1 registries load without changing bytes; ordinary services-only writes retain version 1. Unknown fields remain strictly refused. An older binary rejects version 2 or the unknown people fields rather than silently rewriting them away. Before downgrade, stop the new daemon and restore a separately backed-up version 1 registry only after intentionally deciding to discard people authorization. An older daemon cannot enforce grants; do not downgrade a running sharing installation by just swapping the CLI binary.
+People-enabled registries write schema version 2, with top-level `people` and per-service `people_scoped`. The person object now has optional `invites`; earlier builds that do not understand this field refuse it through strict decoding. Existing version 0/1 registries load without changing bytes; ordinary services-only writes retain version 1. Unknown fields remain strictly refused. An older binary rejects version 2 or the unknown people fields rather than silently rewriting them away. Before downgrade, stop the new daemon and restore a separately backed-up version 1 registry only after intentionally deciding to discard people authorization. An older daemon cannot enforce grants; do not downgrade a running sharing installation by just swapping the CLI binary.
 
 The exported `registry.Person`, `PersonGrant`, `PersonGrantActiveAt`, and read-only `registry.Preflight` form the extension point for future lifecycle and audit packages.
 
-Official sources checked 2026-10-01:
+Official invite API and sharing sources checked 2026-10-02 (other sources checked 2026-10-01):
 
 - [Sharing machines](https://tailscale.com/docs/features/sharing): recipient account, full hostnames, bearer links and separate network revocation.
-- [Tailscale API](https://tailscale.com/api), [current OpenAPI document](https://api.tailscale.com/api/v2?outputOpenapiSchema=true): `POST /device/{deviceId}/device-invites`, no OAuth-client creation, optional email and `multiUse`/`allowExitNode`.
+- [Tailscale API](https://tailscale.com/api), [current OpenAPI document](https://api.tailscale.com/api/v2?outputOpenapiSchema=true): `POST /device/{deviceId}/device-invites`, no OAuth-client creation, optional email and `multiUse`/`allowExitNode`, device invite listing and `DELETE /device-invites/{deviceInviteId}`. The schema supplies no client idempotency key.
 - [Trust credentials](https://tailscale.com/docs/reference/trust-credentials): invitation read/delete scopes do not imply create support.
 - [Tailscale Serve](https://tailscale.com/docs/features/tailscale-serve): HTTP reverse proxy and caller identity headers.

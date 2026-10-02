@@ -14,9 +14,10 @@ import (
 const PeopleRegistrySchemaVersion = CurrentRegistrySchemaVersion
 
 type Person struct {
-	Login   string        `json:"login"`
-	Grants  []PersonGrant `json:"grants"`
-	Revoked bool          `json:"revoked,omitempty"`
+	Login   string         `json:"login"`
+	Grants  []PersonGrant  `json:"grants"`
+	Revoked bool           `json:"revoked,omitempty"`
+	Invites []PersonInvite `json:"invites,omitempty"`
 }
 
 type PersonGrant struct {
@@ -28,11 +29,21 @@ type PersonGrant struct {
 }
 
 func NormalizePerson(login string) (string, error) {
-	login = strings.ToLower(strings.TrimSpace(login))
-	if login == "" || strings.HasPrefix(login, "tag:") || strings.ContainsAny(login, " \t\r\n,\\") || strings.IndexFunc(login, func(r rune) bool { return r < 32 || r == 127 }) >= 0 {
-		return "", fmt.Errorf("person must be a Tailscale login or email, not a tag or blank")
+	// Supported logins are ASCII [A-Za-z0-9@._+-]+. ASCII outer whitespace
+	// and ASCII case are the only equivalences; never fold Unicode identities.
+	login = strings.Trim(login, " \t\r\n")
+	if login == "" {
+		return "", fmt.Errorf("person must be an ASCII Tailscale login or email")
 	}
-	return login, nil
+	canonical := []byte(login)
+	for i, c := range canonical {
+		if c >= 'A' && c <= 'Z' {
+			canonical[i] = c + ('a' - 'A')
+		} else if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || strings.ContainsRune("@._+-", rune(c))) {
+			return "", fmt.Errorf("person must match ASCII [A-Za-z0-9@._+-]+ (outer ASCII whitespace is allowed)")
+		}
+	}
+	return string(canonical), nil
 }
 
 // ParsePersonExpiry stores UTC wall time, never a restart-relative duration.
@@ -66,6 +77,9 @@ func validatePeople(people []Person) error {
 			return fmt.Errorf("invalid or duplicate person login %q", p.Login)
 		}
 		seen[login] = true
+		if err := validatePersonInvites(p.Invites); err != nil {
+			return err
+		}
 		apps := map[string]bool{}
 		for _, g := range p.Grants {
 			if err := ValidateName(g.App); err != nil {
@@ -128,7 +142,12 @@ func ChangePerson(path, who string, apps []string, expiry *time.Time, changeExpi
 		}
 		previous := result.Grants
 		if !update {
-			result = Person{Login: login, Grants: []PersonGrant{}}
+			for _, op := range result.Invites {
+				if !PersonInviteTerminal(op) {
+					return fmt.Errorf("pending invite cleanup for %s; retry people remove before adding again", login)
+				}
+			}
+			result = Person{Login: login, Grants: []PersonGrant{}, Invites: result.Invites}
 		}
 		if apps != nil {
 			selected := map[string]bool{}
@@ -230,7 +249,7 @@ func RemovePerson(path, who string) (removed bool, err error) {
 		for i := range reg.Services {
 			var allow []string
 			for _, entry := range reg.Services[i].AllowedUsers {
-				if strings.EqualFold(strings.TrimSpace(entry), login) {
+				if canonical, e := NormalizePerson(entry); e == nil && canonical == login {
 					removed = true
 					reg.Services[i].PeopleScoped = true
 				} else {
@@ -300,7 +319,13 @@ func ExpirePeople(path string, now time.Time) (changed bool, err error) {
 // PeopleAccessAt returns an authoritative decision for known logins or scoped
 // services. Callers may use the legacy ACL only when authoritative is false.
 func PeopleAccessAt(reg *Registry, svc Service, login string, tags []string, now time.Time) (allowed, authoritative bool) {
-	login = strings.ToLower(strings.TrimSpace(login))
+	var err error
+	login, err = NormalizePerson(login)
+	if err != nil {
+		// Do not let unsupported identities fall through to legacy Unicode
+		// folding in services participating in the people authorization chain.
+		return false, true
+	}
 	for _, p := range reg.People {
 		// Tags represent machines, never a person, even with a matching profile.
 		if login != "" && p.Login == login && len(tags) == 0 {

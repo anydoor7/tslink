@@ -662,7 +662,7 @@ var mcpToolDefinitions = []mcpToolDefinition{
 type mcpActions struct {
 	peopleChange  func(context.Context, peopleArguments, bool) (any, error)
 	peopleList    func() (any, error)
-	peopleRemove  func(string) (any, error)
+	peopleRemove  func(context.Context, string, map[string]string) (any, error)
 	share         func(context.Context, shareRequest) (ShareResult, error)
 	add           func(context.Context, AddParams, bool) (any, error)
 	list          func() (any, error)
@@ -821,8 +821,10 @@ func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 		peopleChange: func(ctx context.Context, args peopleArguments, update bool) (any, error) {
 			return changePeople(ctx, paths, args, update)
 		},
-		peopleList:   func() (any, error) { return listPeople(paths) },
-		peopleRemove: func(who string) (any, error) { return removePeople(paths.Registry, who) },
+		peopleList: func() (any, error) { return listPeople(paths) },
+		peopleRemove: func(ctx context.Context, who string, reconcile map[string]string) (any, error) {
+			return removePeopleContext(ctx, paths.Registry, who, reconcile)
+		},
 		share: func(ctx context.Context, req shareRequest) (ShareResult, error) {
 			return executeShare(ctx, paths, req, defaultURLWait, errOut)
 		},
@@ -1532,13 +1534,14 @@ func callMCPTool(ctx context.Context, actions mcpActions, name string, arguments
 		data, err = actions.peopleList()
 	case "people_remove":
 		var args struct {
-			Who string `json:"who"`
+			Who       string            `json:"who"`
+			Reconcile map[string]string `json:"reconcile_invites,omitempty"`
 		}
 		decodeErr := decodeMCPArguments(arguments, &args)
 		if refusal := mcpArgumentsRefusal(name, decodeErr, mcpRequiredArgument{"who", args.Who}); refusal != nil {
 			return refusal, nil
 		}
-		data, err = actions.peopleRemove(args.Who)
+		data, err = actions.peopleRemove(ctx, args.Who, args.Reconcile)
 	case "share":
 		var args struct {
 			NoDaemonInstall bool     `json:"no_daemon_install,omitempty"`

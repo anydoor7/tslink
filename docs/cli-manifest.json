@@ -1572,7 +1572,7 @@
           "type": "bool",
           "default": "false",
           "scope": "local",
-          "usage": "Create one single-use device invite per app and bundle a guide (requires a user-owned API token)"
+          "usage": "Create or resume single-use per-app device invitations (requires a user-owned API token)"
         },
         {
           "name": "json",
@@ -1636,7 +1636,7 @@
     },
     {
       "path": "tslink people remove",
-      "short": "Revoke a person everywhere in private HTTP/file services",
+      "short": "Revoke a person locally, then clean up pending device invitations",
       "flags": [
         {
           "name": "json",
@@ -1644,6 +1644,13 @@
           "default": "false",
           "scope": "inherited",
           "usage": "Output as JSON"
+        },
+        {
+          "name": "reconcile-invite",
+          "type": "stringArray",
+          "default": "[]",
+          "scope": "local",
+          "usage": "After verifying an unknown POST, associate app=id or confirm app=none before cleanup"
         }
       ],
       "json_result_fields": {
@@ -1682,7 +1689,7 @@
           "type": "bool",
           "default": "false",
           "scope": "local",
-          "usage": "Create one single-use device invite per app and bundle a guide (requires a user-owned API token)"
+          "usage": "Create or resume single-use per-app device invitations (requires a user-owned API token)"
         },
         {
           "name": "json",
@@ -1700,6 +1707,13 @@
           "requires": [
             "--invite"
           ]
+        },
+        {
+          "name": "reconcile-invite",
+          "type": "stringArray",
+          "default": "[]",
+          "scope": "local",
+          "usage": "After verifying an unknown POST, associate app=id or confirm app=none; requires --invite"
         }
       ],
       "json_result_fields": {
@@ -2502,6 +2516,10 @@
       "exit_code": 3,
       "description": "Tailscale rejected the user-owned tskey-api- token as unauthenticated (HTTP 401): expired, revoked, or invalid; next carries the key-bootstrap steps"
     },
+    "invite_cleanup_failed": {
+      "exit_code": 1,
+      "description": "pending device invitation cleanup failed; local person access remains denied"
+    },
     "invite_device_ambiguous": {
       "exit_code": 4,
       "description": "multiple hostname candidates remain after ownership resolution"
@@ -2522,6 +2540,10 @@
       "exit_code": 2,
       "description": "invite namespace is not explicitly user or device"
     },
+    "invite_link_unavailable": {
+      "exit_code": 1,
+      "description": "completed invitation link is unavailable; no replacement was created"
+    },
     "invite_not_found": {
       "exit_code": 5,
       "description": "invite or matching service device was not found"
@@ -2533,6 +2555,18 @@
     "invite_recipient_invalid": {
       "exit_code": 2,
       "description": "invite recipient is missing"
+    },
+    "invite_reconciliation_conflict": {
+      "exit_code": 1,
+      "description": "invitation ID is already associated with another person or app operation"
+    },
+    "invite_reconciliation_failed": {
+      "exit_code": 1,
+      "description": "remote invitation listing failed; do not create before reconciling the unknown outcome"
+    },
+    "invite_reconciliation_required": {
+      "exit_code": 1,
+      "description": "unknown invitation POST needs explicit owner-verified app=id or app=none reconciliation"
     },
     "invite_request_invalid": {
       "exit_code": 2,
@@ -2553,6 +2587,10 @@
     "invite_state_conflict": {
       "exit_code": 4,
       "description": "Tailscale rejected the invite operation because current remote state conflicts with it (HTTP 409)"
+    },
+    "invite_state_failed": {
+      "exit_code": 1,
+      "description": "durable people invitation state could not be read or saved; reconcile before sending again"
     },
     "launchctl_domain_unavailable": {
       "exit_code": 1,
@@ -2598,9 +2636,17 @@
       "exit_code": 2,
       "description": "file service directory does not exist"
     },
+    "people_invite_busy": {
+      "exit_code": 1,
+      "description": "another owner process is doing remote invitation work; local denial remains saved and remote work is deferred"
+    },
     "people_service_unsupported": {
       "exit_code": 2,
       "description": "person grants require private HTTP proxy or file services; TCP and public Funnel cannot be person-scoped"
+    },
+    "person_grant_inactive": {
+      "exit_code": 1,
+      "description": "person app grant was removed, revoked or expired before sending an invitation"
     },
     "registry_reload_invalid": {
       "exit_code": 1,

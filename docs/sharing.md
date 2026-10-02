@@ -2,6 +2,7 @@
 
 For sharing several registered apps with a person for a chosen time, use [people](people.md): `tslink people add alice@example.com --apps photos,finance --for 7d`. Existing tailnet members need no token. Add `--invite --print-links` for a single message containing per-app device invites for an outsider; invitation creation requires a user-owned API token. `people remove` denies that login on subsequent private HTTP/file requests even if accepted network shares remain. TCP and public Funnel cannot be person-scoped. Existing `share`, `add --allow` and `invite` commands remain available.
 
+People removal saves local denial before cleaning up recorded pending invitations; no-token or partial cleanup reports `complete: false` and `cleanup`. Invitation retries reuse completed IDs; unknown POST outcomes require explicit reconciliation, with no exactly-once guarantee. See the people guide for recovery.
 ## Share in one command
 
 `tslink share` infers whether its argument is a directory, a regular file, a
