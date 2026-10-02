@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -55,7 +56,7 @@ type Result struct {
 }
 
 func (f Filter) matches(e Event) bool {
-	if f.App != "" && e.App != f.App {
+	if f.App != "" && e.App != f.App && (e.MCP == nil || !slices.Contains(e.MCP.Apps, f.App)) {
 		return false
 	}
 	if f.Decision != "" && e.Decision != f.Decision {
@@ -69,6 +70,9 @@ func (f Filter) matches(e Event) bool {
 	}
 	if f.Who != "" {
 		match := asciiLogin(e.Identity.Login) == asciiLogin(f.Who) || e.Identity.Node == f.Who
+		if e.MCP != nil {
+			match = match || asciiLogin(e.MCP.Principal) == asciiLogin(f.Who)
+		}
 		for _, tag := range e.Identity.Tags {
 			match = match || tag == f.Who
 		}
@@ -166,6 +170,9 @@ func Query(configDir string, f Filter) (Result, error) {
 				r.Summary.Allowed++
 			}
 			who := e.Identity.Login
+			if e.MCP != nil {
+				who = e.MCP.Principal
+			}
 			if who == "" {
 				who = e.Identity.Node
 			}
@@ -173,7 +180,17 @@ func Query(configDir string, f Filter) (Result, error) {
 				who = "unknown"
 			}
 			addCount(people, who, e)
-			addCount(apps, e.App, e)
+			if e.MCP != nil {
+				seen := map[string]bool{}
+				for _, app := range e.MCP.Apps {
+					if !seen[app] {
+						addCount(apps, app, e)
+						seen[app] = true
+					}
+				}
+			} else {
+				addCount(apps, e.App, e)
+			}
 			at := sort.Search(len(r.Events), func(i int) bool { return !r.Events[i].Time.After(e.Time) })
 			if at < limit {
 				r.Events = append(r.Events, Event{})

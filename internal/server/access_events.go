@@ -153,9 +153,8 @@ func AccessEventMiddleware(svc registry.Service, opts accesslog.Options, writer 
 			}
 			known := observation.known
 			observation.mu.Unlock()
-			if opts.PathsEnabled(svc.AccessLogPath) {
-				e.Path = accesslog.SafePath(r.URL.EscapedPath())
-			}
+			e.PathMode = opts.ModeFor(svc.AccessLogPathMode, svc.AccessLogPath)
+			e.Path = accesslog.PathForMode(r.URL.EscapedPath(), e.PathMode)
 			public, _ := r.Context().Value(accessFunnelKey{}).(bool)
 			if svc.Funnel && public {
 				e.Identity = accesslog.Identity{Login: "public", Tags: []string{}}

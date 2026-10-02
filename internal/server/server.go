@@ -339,9 +339,10 @@ type LifecycleReconcileFunc func(context.Context, time.Time) (bool, error)
 
 // Server manages multiple tsnet nodes, one per registered service.
 type Server struct {
-	accessWriter  accesslog.Writer
-	accessOptions accesslog.Options
-	nodes         map[string]*ServiceNode
+	accessWriter     accesslog.Writer
+	accessOptions    accesslog.Options
+	lastAccessHealth accesslog.Health
+	nodes            map[string]*ServiceNode
 	// stateReservations counts, per service, the startups in progress that
 	// may write into its tsnet state directory; see reserveNodeState. It is
 	// guarded by mu, like nodes.
@@ -557,24 +558,21 @@ func (s *Server) Run(ctx context.Context) error {
 		return fmt.Errorf("registry watcher setup failed: %w", err)
 	}
 
-	store, logErr := accesslog.New(s.cfgDir, s.accessOptions, serverNowFn)
-	if logErr != nil {
-		slog.Warn("access log unavailable", "code", "access_log_init_failed")
-	} else {
-		s.mu.Lock()
-		s.accessWriter = store
-		s.mu.Unlock()
-		defer func() {
-			store.Close()
-			timer := time.NewTimer(time.Second)
-			defer timer.Stop()
-			select {
-			case <-store.Done():
-			case <-timer.C:
-				slog.Warn("access log drain timed out")
-			}
-		}()
-	}
+	writer := accesslog.NewLifecycle(s.cfgDir, s.accessOptions, serverNowFn)
+	s.mu.Lock()
+	s.accessWriter = writer
+	s.writeRuntimeSnapshotLocked(s.lastRegistryFingerprint, false)
+	s.mu.Unlock()
+	defer func() {
+		writer.Close()
+		timer := time.NewTimer(time.Second)
+		defer timer.Stop()
+		select {
+		case <-writer.Done():
+		case <-timer.C:
+			slog.Warn("access log drain timed out")
+		}
+	}()
 
 	if err := beforeInitialSyncFn(ctx); err != nil {
 		s.beginShutdown()
@@ -647,6 +645,9 @@ func (s *Server) startLifecycleTicker(ctx context.Context) <-chan struct{} {
 				return
 			case <-ticker.C:
 				now := nowFn()
+				if writer, ok := s.AccessLogWriter().(*accesslog.Lifecycle); ok {
+					writer.Retry(now)
+				}
 				if peoplePath != "" {
 					if _, err := registry.ExpirePeople(peoplePath, now); err != nil {
 						slog.Warn("people expiry reconciliation failed", "error", err)
@@ -1606,7 +1607,7 @@ func serviceChangedWithFallback(old, new registry.Service, fallbackControlURL st
 	if old.Type != new.Type || old.Target != new.Target || old.Path != new.Path || old.File != new.File {
 		return true
 	}
-	if !reflect.DeepEqual(old.AccessLogPath, new.AccessLogPath) || old.PreserveHost != new.PreserveHost {
+	if old.AccessLogPathMode != new.AccessLogPathMode || !reflect.DeepEqual(old.AccessLogPath, new.AccessLogPath) || old.PreserveHost != new.PreserveHost {
 		return true
 	}
 	if old.Port != new.Port || old.Ephemeral != new.Ephemeral || old.Funnel != new.Funnel || old.PublicAck != new.PublicAck || old.NoAutoProvision != new.NoAutoProvision {
@@ -1971,6 +1972,10 @@ func (s *Server) writeRuntimeSnapshotLocked(registryFingerprint string, complete
 		snapshot = runtimesnapshot.NewPartialSnapshot(s.daemonPID, s.daemonStartedAt, registryFingerprint, time.Now().UTC(), states)
 	}
 	snapshot.Alerts = s.alerts
+	if writer, ok := s.accessWriter.(interface{ Health() accesslog.Health }); ok {
+		h := writer.Health()
+		snapshot.AccessLog = &h
+	}
 	if s.globalFailure != nil {
 		globalFailure := *s.globalFailure
 		globalFailure.Next = append([]string(nil), s.globalFailure.Next...)
@@ -1981,6 +1986,9 @@ func (s *Server) writeRuntimeSnapshotLocked(registryFingerprint string, complete
 		slog.Warn("runtime snapshot write failed; continuing with running services", "path", path, "error", err)
 	} else {
 		s.runtimeSnapshotDirty = false
+		if snapshot.AccessLog != nil {
+			s.lastAccessHealth = *snapshot.AccessLog
+		}
 	}
 	// Publish after the write, never before: an event stream rebuilds its
 	// payload by reading runtime.json back, so notifying first would hand a

@@ -14,6 +14,8 @@ func updateAccessLogOption(cfg *config.GlobalConfig, key, value string) error {
 	}
 	o := cfg.AccessLog
 	switch key {
+	case "access-log-path-mode":
+		o.PathMode = value
 	case "access-log-enabled", "access-log-path":
 		var v *bool
 		if value != "" {
@@ -62,6 +64,10 @@ func accessLogOptionValue(cfg config.GlobalConfig, key string) (string, bool) {
 	}
 	o := cfg.AccessLog
 	switch key {
+	case "access-log-path-mode":
+		if o.PathMode != "" {
+			return o.PathMode, true
+		}
 	case "access-log-enabled":
 		if o.Enabled != nil {
 			return strconv.FormatBool(*o.Enabled), true

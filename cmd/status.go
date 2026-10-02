@@ -205,7 +205,7 @@ func getStatus(pidPath, regPath string) (StatusResult, error) {
 
 func (s statusRead) getStatus(pidPath, regPath string) (StatusResult, error) {
 	r := s.baseStatus(pidPath)
-	r.AccessLog = accessHealthForRegistry(regPath)
+	r.AccessLog = accessHealthForRegistry(regPath, pidPath, filepath.Join(filepath.Dir(regPath), "runtime.json"))
 	reg, issues, err := registry.LoadForDiagnostics(regPath)
 	if err != nil {
 		return StatusResult{}, err
@@ -701,7 +701,7 @@ func (s statusRead) getStatusURLsWithAuth(pidPath, regPath, snapshotPath, authHa
 	freshness := tsruntime.Classify(snapshot, loadErr, expected)
 
 	result := StatusURLsResult{
-		AccessLog:               accessHealthForRegistry(regPath),
+		AccessLog:               accessHealthForRegistry(regPath, pidPath, snapshotPath),
 		SchemaVersion:           inspect.SchemaVersion,
 		Alerts:                  status.Alerts,
 		Supervision:             status.Supervision,

@@ -295,8 +295,8 @@ func buildDoctorResult(opts doctorOptions) DoctorResult {
 	}
 
 	pathsOK := discoverDoctorPaths(&result, opts)
-	if dir, err := config.Dir(); err == nil {
-		result.AccessLog = accesslog.ReadHealth(dir)
+	if pathsOK {
+		result.AccessLog = accessHealthForRegistry(result.Paths.Registry, result.Paths.PID, result.Paths.RuntimeSnapshot)
 	}
 	credentialState := diagnoseCredentials(&result, opts)
 
@@ -410,7 +410,7 @@ func buildDoctorResult(opts doctorOptions) DoctorResult {
 	if result.Alerts.MonitorError != "" {
 		result.addFinding(inspect.WarningCodeHealthMonitorSaturated, "", "health_monitor", "Health monitor slots are stuck; some checks were not attempted. Monitoring recovers when reads finish.", nil)
 	}
-	if result.AccessLog.Drops > 0 {
+	if result.AccessLog.Drops > 0 || len(result.AccessLog.MissingHistory) > 0 {
 		result.addFinding(inspect.WarningCodeAccessLogDrops, "", "access_log", "Access records were dropped; history is incomplete.", nil)
 	}
 	if result.AccessLog.Error != "" && result.AccessLog.Error != "access_log_not_started" {

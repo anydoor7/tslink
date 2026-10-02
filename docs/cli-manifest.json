@@ -498,7 +498,7 @@
     },
     {
       "path": "tslink access path",
-      "short": "Set per-app access path recording (global opt-out takes precedence)",
+      "short": "Set per-app access path mode (global opt-out takes precedence)",
       "flags": [
         {
           "name": "json",

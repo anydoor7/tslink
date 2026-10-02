@@ -68,6 +68,9 @@ func readAccessLogAt(dir string, a accessLogArguments) (accesslog.Result, error)
 func formatAccessLog(r accesslog.Result, out io.Writer) {
 	for _, e := range r.Events {
 		who := e.Identity.Login
+		if e.MCP != nil {
+			who = e.MCP.Principal
+		}
 		if who == "" {
 			who = e.Identity.Node
 		}
@@ -88,15 +91,35 @@ func formatAccessLog(r accesslog.Result, out io.Writer) {
 		fmt.Fprintf(out, "app %s: %d events, last seen %s\n", a.Key, a.Count, last)
 	}
 }
-func accessHealthForRegistry(path string) accesslog.Health {
-	return accesslog.ReadHealth(filepath.Dir(path))
+func accessHealthForRegistry(path, pidPath, snapshotPath string) accesslog.Health {
+	h := accesslog.ReadHealth(filepath.Dir(path))
+	h.Current = false // the disk journal snapshot is historical evidence only
+	if !isRunningFn(pidPath) {
+		return h
+	}
+	snapshot, err := runtimeLoadSnapshotFn(snapshotPath)
+	pid, pidErr := readPIDFn(pidPath)
+	lowerBound, timeErr := pidFileModTimeFn(pidPath)
+	if err != nil || pidErr != nil || timeErr != nil || snapshot == nil || pid <= 0 || lowerBound.IsZero() || snapshot.DaemonPID != pid || snapshot.DaemonStartedAt.Before(lowerBound) || snapshot.UpdatedAt.Before(lowerBound) || snapshot.AccessLog == nil {
+		return accesslog.Health{Enabled: true, Error: "access_log_runtime_unavailable"}
+	}
+	h = *snapshot.AccessLog
+	h.Current = true
+	return h
 }
 func formatAccessHealth(h accesslog.Health, out io.Writer) {
 	last := "never"
 	if h.LastWrite != nil {
 		last = h.LastWrite.Format(time.RFC3339)
 	}
-	fmt.Fprintf(out, "Access log: enabled=%t last_write=%s drops=%d size=%d %s\n", h.Enabled, last, h.Drops, h.Size, h.Error)
+	fmt.Fprintf(out, "Access log: current=%t enabled=%t last_write=%s drops=%d size=%d %s\n", h.Current, h.Enabled, last, h.Drops, h.Size, h.Error)
+	for _, gap := range h.MissingHistory {
+		end := "ongoing"
+		if gap.End != nil {
+			end = gap.End.Format(time.RFC3339Nano)
+		}
+		fmt.Fprintf(out, "Missing access history: %s to %s (%s)\n", gap.Start.Format(time.RFC3339Nano), end, gap.Reason)
+	}
 }
 func init() {
 	var a accessLogArguments
@@ -138,28 +161,36 @@ func accessLogOutputSchema(name string) map[string]any {
 }
 
 func init() {
-	cmd := &cobra.Command{Use: "path <app> <true|false|inherit>", Short: "Set per-app access path recording (global opt-out takes precedence)", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
+	cmd := &cobra.Command{Use: "path <app> <prefix|full|off|inherit|true|false>", Short: "Set per-app access path mode (global opt-out takes precedence)", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
 		var value *bool
+		var mode string
 		switch args[1] {
 		case "true", "false":
 			b := args[1] == "true"
 			value = &b
+		case "prefix", "full", "off":
+			mode = args[1]
 		case "inherit":
 		default:
-			return output.ErrUsage("path must be true, false or inherit")
+			return output.ErrUsage("path must be prefix, full, off, inherit, true or false")
 		}
 		path, err := config.RegistryPath()
 		if err != nil {
 			return err
 		}
-		svc, err := registry.MutateService(path, args[0], func(svc registry.Service) (registry.Service, error) { svc.AccessLogPath = value; return svc, nil })
+		svc, err := registry.MutateService(path, args[0], func(svc registry.Service) (registry.Service, error) {
+			svc.AccessLogPath = value
+			svc.AccessLogPathMode = mode
+			return svc, nil
+		})
 		if err != nil {
 			return err
 		}
 		result := struct {
 			App        string `json:"app"`
 			RecordPath *bool  `json:"record_path"`
-		}{svc.Name, svc.AccessLogPath}
+			PathMode   string `json:"path_mode"`
+		}{svc.Name, svc.AccessLogPath, svc.AccessLogPathMode}
 		if jsonOutput(cmd) {
 			output.Success("access path", result)
 		} else {

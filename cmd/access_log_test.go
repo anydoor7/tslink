@@ -68,7 +68,7 @@ func TestAccessLogCLIAndMCP(t *testing.T) {
 	if !bytes.Equal(a, b) {
 		t.Fatal("read-only access tools mutated files")
 	}
-	h := accessHealthForRegistry(paths.Registry)
+	h := accessHealthForRegistry(paths.Registry, filepath.Join(dir, "tslink.pid"), filepath.Join(dir, "runtime.json"))
 	if h.Size <= 0 || h.LastWrite == nil || h.Drops != 0 {
 		t.Fatalf("status health %+v", h)
 	}
@@ -95,7 +95,7 @@ func TestAccessLogArgumentValidation(t *testing.T) {
 func TestAccessLogConfigStrictAndCLI(t *testing.T) {
 	testenv.SetHome(t, t.TempDir())
 	var out bytes.Buffer
-	for key, value := range map[string]string{"access-log-enabled": "false", "access-log-path": "false", "access-log-retention-days": "7", "access-log-max-bytes": "65536", "access-log-queue-size": "1"} {
+	for key, value := range map[string]string{"access-log-enabled": "false", "access-log-path": "false", "access-log-path-mode": "full", "access-log-retention-days": "7", "access-log-max-bytes": "65536", "access-log-queue-size": "1"} {
 		if err := configSet(key, value, &out, false); err != nil {
 			t.Fatal(err)
 		}
@@ -125,7 +125,7 @@ func TestAccessLogConfigStrictAndCLI(t *testing.T) {
 		}
 	}
 	path, _ := config.ConfigPath()
-	for _, raw := range []string{`{"access_log":{"unknown":true}}`, `{"access_log":{"queue_size":-1}}`, `{"access_log":{"max_bytes":1}}`, `{"access_log":{"retention_days":3651}}`, `{"access_log":{"record_path":"false"}}`} {
+	for _, raw := range []string{`{"access_log":{"path_mode":"unsafe"}}`, `{"access_log":{"path_mode":false}}`, `{"access_log":{"unknown":true}}`, `{"access_log":{"queue_size":-1}}`, `{"access_log":{"max_bytes":1}}`, `{"access_log":{"retention_days":3651}}`, `{"access_log":{"record_path":"false"}}`} {
 		if err := os.WriteFile(path, []byte(raw), 0600); err != nil {
 			t.Fatal(err)
 		}
@@ -233,8 +233,8 @@ func TestAccessTextUnknownDeniedAndOptionUnknown(t *testing.T) {
 		t.Fatal("absent access config reported an explicit path setting")
 	}
 	var out bytes.Buffer
-	formatAccessLog(accesslog.Result{Events: []accesslog.Event{{Kind: "tcp_close", Identity: accesslog.Identity{Node: "node"}}, {Kind: "guest", Identity: accesslog.Identity{Remote: "192.168.1.0/24"}}}, Summary: accesslog.Summary{Apps: []accesslog.Count{{Key: "app", Denied: 1}}}}, &out)
-	if !strings.Contains(out.String(), "node") || !strings.Contains(out.String(), "192.168.1.0/24") || !strings.Contains(out.String(), "last seen never") {
+	formatAccessLog(accesslog.Result{Events: []accesslog.Event{{Kind: "tcp_close", Identity: accesslog.Identity{Node: "node"}}, {Kind: "guest", Identity: accesslog.Identity{Remote: "192.168.1.0/24"}}, {Kind: "mcp", MCP: &accesslog.MCPAudit{Principal: "osuser:operator"}}}, Summary: accesslog.Summary{Apps: []accesslog.Count{{Key: "app", Denied: 1}}}}, &out)
+	if !strings.Contains(out.String(), "node") || !strings.Contains(out.String(), "192.168.1.0/24") || !strings.Contains(out.String(), "osuser:operator") || !strings.Contains(out.String(), "last seen never") {
 		t.Fatal(out.String())
 	}
 	if err := updateAccessLogOption(&config.GlobalConfig{}, "unknown", "value"); err == nil {

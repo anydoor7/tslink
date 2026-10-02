@@ -24,13 +24,20 @@ const maxRecordBytes = 32768
 
 var segmentName = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}-\d{6}\.jsonl$`)
 
+type HistoryWindow struct {
+	Start  time.Time  `json:"start"`
+	End    *time.Time `json:"end,omitempty"` // absent while history is unavailable
+	Reason string     `json:"reason"`
+}
 type Health struct {
-	Enabled   bool       `json:"enabled"`
-	LastWrite *time.Time `json:"last_write"`
-	Drops     uint64     `json:"drops"`
-	Size      int64      `json:"size_bytes"`
-	Error     string     `json:"error,omitempty"`
-	UpdatedAt time.Time  `json:"updated_at"`
+	Current        bool            `json:"current"`
+	MissingHistory []HistoryWindow `json:"missing_history,omitempty"`
+	Enabled        bool            `json:"enabled"`
+	LastWrite      *time.Time      `json:"last_write"`
+	Drops          uint64          `json:"drops"`
+	Size           int64           `json:"size_bytes"`
+	Error          string          `json:"error,omitempty"`
+	UpdatedAt      time.Time       `json:"updated_at"`
 }
 
 // Store owns one bounded queue and one worker. File operations and fsync never
@@ -40,19 +47,20 @@ type queuedEvent struct {
 	resolve func() Identity
 }
 type Store struct {
-	dir     string
-	opts    Options
-	now     func() time.Time
-	queue   chan queuedEvent
-	active  atomic.Int64
-	stop    chan struct{}
-	done    chan struct{}
-	closing atomic.Bool
-	once    sync.Once
-	drops   atomic.Uint64
-	mu      sync.RWMutex
-	health  Health
-	lock    *os.File
+	dir          string
+	opts         Options
+	now          func() time.Time
+	queue        chan queuedEvent
+	active       atomic.Int64
+	stop         chan struct{}
+	done         chan struct{}
+	closing      atomic.Bool
+	once         sync.Once
+	drops        atomic.Uint64
+	initialDrops uint64
+	mu           sync.RWMutex
+	health       Health
+	lock         *os.File
 	// beforeAppend is injected before worker startup in tests to stall disk I/O.
 	beforeAppend func()
 }
@@ -87,6 +95,7 @@ func newStore(configDir string, opts Options, now func() time.Time, before func(
 	}
 	s.lock = f
 	previous := ReadHealth(configDir)
+	s.initialDrops = previous.Drops
 	s.drops.Store(previous.Drops)
 	s.health.LastWrite = previous.LastWrite
 	go s.run()
@@ -109,10 +118,8 @@ func (s *Store) RecordResolved(e Event, resolve func() Identity) bool {
 	if e.Time.IsZero() {
 		e.Time = s.now().UTC()
 	}
+	e.Path = PathForMode(e.Path, s.opts.ModeFor(e.PathMode, nil))
 	e = sanitize(e)
-	if !s.opts.PathsEnabled(nil) {
-		e.Path = ""
-	}
 	select {
 	case s.queue <- queuedEvent{e, resolve}:
 		return true
@@ -147,8 +154,10 @@ func (s *Store) setError(err error) {
 	}
 }
 func (s *Store) publish() {
+	s.mu.Lock()
+	s.health.UpdatedAt = s.now().UTC()
+	s.mu.Unlock()
 	h := s.Health()
-	h.UpdatedAt = s.now().UTC()
 	data, err := json.Marshal(h)
 	if err == nil {
 		err = atomicfile.WriteFile(filepath.Join(s.dir, "health.json"), append(data, '\n'))

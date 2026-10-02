@@ -140,7 +140,8 @@ func TestRetentionAndSizeEviction(t *testing.T) {
 	if e != nil || len(r.Events) != 1 || r.Events[0].App != "new" {
 		t.Fatalf("retention %+v %v", r, e)
 	}
-	s = newTestStore(t, dir, Options{MaxBytes: 65536, QueueSize: 1024}, now)
+	// Exercise size eviction with deliberately large, explicitly opted-in full paths.
+	s = newTestStore(t, dir, Options{PathMode: "full", MaxBytes: 65536, QueueSize: 1024}, now)
 	for i := 0; i < 96; i++ {
 		ev := event("new", "alice", "/"+strings.Repeat(strings.Repeat("a", 30)+"/", 50))
 		ev.Time = now().Add(time.Duration(i) * time.Second)

@@ -38,7 +38,7 @@ type ConfigItem struct {
 }
 
 // validConfigKeys lists all supported global config keys.
-var validConfigKeys = []string{"control-url", "access-log-enabled", "access-log-path", "access-log-retention-days", "access-log-max-bytes", "access-log-queue-size"}
+var validConfigKeys = []string{"control-url", "access-log-enabled", "access-log-path", "access-log-path-mode", "access-log-retention-days", "access-log-max-bytes", "access-log-queue-size"}
 
 // configUpdateGlobalFn is the locked read-modify-write of config.json.
 var configUpdateGlobalFn = config.UpdateGlobalConfig
@@ -46,7 +46,7 @@ var configUpdateGlobalFn = config.UpdateGlobalConfig
 // configSet persists a key-value pair to global config.
 func configSet(key, value string, out io.Writer, isJSON bool) error {
 	switch key {
-	case "access-log-enabled", "access-log-path", "access-log-retention-days", "access-log-max-bytes", "access-log-queue-size":
+	case "access-log-enabled", "access-log-path", "access-log-path-mode", "access-log-retention-days", "access-log-max-bytes", "access-log-queue-size":
 		if err := updateAccessLogOption(&config.GlobalConfig{}, key, value); err != nil {
 			return output.ErrUsage(err.Error())
 		}
@@ -90,7 +90,7 @@ func configGet(key string, out io.Writer, isJSON bool) error {
 	}
 
 	switch key {
-	case "access-log-enabled", "access-log-path", "access-log-retention-days", "access-log-max-bytes", "access-log-queue-size":
+	case "access-log-enabled", "access-log-path", "access-log-path-mode", "access-log-retention-days", "access-log-max-bytes", "access-log-queue-size":
 		value, set := accessLogOptionValue(cfg, key)
 		if isJSON {
 			output.Success("config get", ConfigGetResult{Key: key, Value: value, IsSet: set})
@@ -175,7 +175,8 @@ Examples:
 Available keys:
 
   access-log-enabled         true or false (default true)
-  access-log-path            true or false (default true)
+  access-log-path            legacy true (inherit) or false (off)
+  access-log-path-mode       prefix, full or off (default prefix)
   access-log-retention-days  1..3650 (default 30)
   access-log-max-bytes       65536..1073741824 (default 67108864)
   access-log-queue-size      1..65536 (default 1024)
@@ -210,7 +211,7 @@ Examples:
 		Long: `Read a global configuration value. If the key has not been set,
 prints "(not set, using default Tailscale)" for control-url.
 
-Available keys: control-url, access-log-enabled, access-log-path, access-log-retention-days, access-log-max-bytes, access-log-queue-size
+Available keys: control-url, access-log-enabled, access-log-path, access-log-path-mode, access-log-retention-days, access-log-max-bytes, access-log-queue-size
 
 Examples:
   tslink config get control-url`,

@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/anydoor7/tslink/internal/accesslog"
 	"github.com/anydoor7/tslink/internal/credentials"
 	"github.com/anydoor7/tslink/internal/health"
 	"github.com/anydoor7/tslink/internal/registry"
@@ -300,7 +301,11 @@ func (s *Server) healthCycle(ctx context.Context, r *health.Recorder, now time.T
 		events := append(pendingEvents, r.ObserveMonitor(probeSlots.saturated() || nodeSlots.saturated(), now)...)
 		s.mu.Lock()
 		changed := !reflect.DeepEqual(s.alerts, r.View())
-		retry := s.runtimeSnapshotDirty && !published
+		accessChanged := false
+		if writer, ok := s.accessWriter.(interface{ Health() accesslog.Health }); ok {
+			accessChanged = !reflect.DeepEqual(s.lastAccessHealth, writer.Health())
+		}
+		retry := (s.runtimeSnapshotDirty || accessChanged) && !published
 		aged := false
 		for _, target := range targets {
 			name := target.Service.Name
