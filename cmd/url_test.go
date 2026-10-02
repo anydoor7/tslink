@@ -138,7 +138,7 @@ func TestResolveServiceEndpointOnceRejectsHandoffForDifferentService(t *testing.
 		t.Fatalf("saveAuthHandoff: %v", err)
 	}
 
-	_, err := resolveServiceEndpointOnce(pidPath, regPath, snapshotPath, "newapp")
+	_, err := resolveServiceEndpointOnce(context.Background(), pidPath, regPath, snapshotPath, "newapp")
 	code, ok := registry.ErrorCode(err)
 	if !ok || code != registry.CodeURLNotReady {
 		t.Fatalf("err = %v code=%q, want %s for a handoff naming another service", err, code, registry.CodeURLNotReady)
@@ -148,7 +148,7 @@ func TestResolveServiceEndpointOnceRejectsHandoffForDifferentService(t *testing.
 	if err := saveAuthHandoff(filepath.Join(dir, "auth-handoff.json"), handoff); err != nil {
 		t.Fatalf("saveAuthHandoff: %v", err)
 	}
-	_, err = resolveServiceEndpointOnce(pidPath, regPath, snapshotPath, "newapp")
+	_, err = resolveServiceEndpointOnce(context.Background(), pidPath, regPath, snapshotPath, "newapp")
 	if code, _ := registry.ErrorCode(err); code != "enrollment_required" {
 		t.Fatalf("err = %v code=%q, want enrollment_required for the matching service", err, code)
 	}

@@ -66,7 +66,7 @@ func TestDoctorCredentialPostureFindings(t *testing.T) {
 			doctorGetClientSecretFn = func() (string, error) { return tc.clientSecret, nil }
 
 			var buf bytes.Buffer
-			err := runDoctor(&buf, doctorOptions{}, true)
+			err := runDoctor(context.Background(), &buf, doctorOptions{}, true)
 			if got := output.ExitCode(err); got != tc.wantExit {
 				t.Fatalf("ExitCode = %d, want %d; output=%s", got, tc.wantExit, buf.String())
 			}
@@ -110,7 +110,7 @@ func TestDoctorCredentialExpiryMatrix(t *testing.T) {
 			doctorCredentialInventoryFn = doctorInventoryAt(tc.daysLeft, true)
 
 			var buf bytes.Buffer
-			err := runDoctor(&buf, doctorOptions{}, true)
+			err := runDoctor(context.Background(), &buf, doctorOptions{}, true)
 			if got := output.ExitCode(err); got != tc.wantExit {
 				t.Fatalf("ExitCode = %d, want %d; output=%s", got, tc.wantExit, buf.String())
 			}
@@ -139,7 +139,7 @@ func TestDoctorCredentialMetadataStates(t *testing.T) {
 		env := newDoctorTestEnv(t, nil)
 		env.writeExactSnapshot(t)
 		doctorCredentialInventoryFn = doctorInventoryAt(60, false)
-		result := buildDoctorResult(doctorOptions{})
+		result := buildDoctorResult(context.Background(), doctorOptions{})
 		finding := assertDoctorFinding(t, result, inspect.WarningCodeCredentialRemoteUnverified)
 		if finding.Severity != doctorSeverityInfo || !strings.Contains(finding.Evidence["slots"], credentials.SlotAPIKey) || !strings.Contains(finding.Evidence["slots"], credentials.SlotClientSecret) {
 			t.Fatalf("finding = %+v, want info naming both slots", finding)
@@ -154,7 +154,7 @@ func TestDoctorCredentialMetadataStates(t *testing.T) {
 		doctorCredentialInventoryFn = func(values credentials.SlotValues, now time.Time, _ bool) credentials.Inventory {
 			return credentials.DescribeSlotsWithMetadata(values, credentials.Metadata{}, nil, now)
 		}
-		result := buildDoctorResult(doctorOptions{})
+		result := buildDoctorResult(context.Background(), doctorOptions{})
 		finding := assertDoctorFinding(t, result, inspect.WarningCodeCredentialMetaBackfilled)
 		if finding.Severity != doctorSeverityInfo || finding.Evidence["slots"] != credentials.SlotAPIKey+","+credentials.SlotClientSecret {
 			t.Fatalf("finding = %+v", finding)
@@ -169,7 +169,7 @@ func TestDoctorCredentialMetadataStates(t *testing.T) {
 			return credentials.DescribeSlotsWithMetadata(values, credentials.Metadata{}, errors.New("credential metadata file is unreadable or malformed: token tskey-api-FAKE-inside-error"), now)
 		}
 		var buf bytes.Buffer
-		err := runDoctor(&buf, doctorOptions{}, true)
+		err := runDoctor(context.Background(), &buf, doctorOptions{}, true)
 		if got := output.ExitCode(err); got != output.ExitWarning {
 			t.Fatalf("ExitCode = %d, want warning", got)
 		}
@@ -189,7 +189,7 @@ func TestDoctorCredentialMetadataStates(t *testing.T) {
 			inv.BackfillError = errors.New("read-only filesystem")
 			return inv
 		}
-		result := buildDoctorResult(doctorOptions{})
+		result := buildDoctorResult(context.Background(), doctorOptions{})
 		finding := assertDoctorFinding(t, result, inspect.WarningCodeCredentialExpiryUnknown)
 		if !strings.Contains(finding.Message, "could not be persisted") {
 			t.Fatalf("finding = %+v", finding)
@@ -203,7 +203,7 @@ func TestDoctorCredentialMetadataStates(t *testing.T) {
 			t.Fatal("inventory ran without any stored credential")
 			return credentials.Inventory{}
 		}
-		result := buildDoctorResult(doctorOptions{})
+		result := buildDoctorResult(context.Background(), doctorOptions{})
 		for _, code := range []string{inspect.WarningCodeCredentialExpiryUnknown, inspect.WarningCodeCredentialRemoteUnverified, inspect.WarningCodeCredentialMetaBackfilled, inspect.WarningCodeCredentialMixedRecommended} {
 			assertDoctorNoFinding(t, result, code)
 		}
@@ -245,7 +245,7 @@ func TestDoctorProbeRemoteRecordsEachSlotOutcome(t *testing.T) {
 			}
 
 			var buf bytes.Buffer
-			err := runDoctor(&buf, doctorOptions{ProbeRemote: true}, true)
+			err := runDoctor(context.Background(), &buf, doctorOptions{ProbeRemote: true}, true)
 			if got := output.ExitCode(err); got != tc.wantExit {
 				t.Fatalf("ExitCode = %d, want %d; output=%s", got, tc.wantExit, buf.String())
 			}
@@ -287,7 +287,7 @@ func TestDoctorProbeRemoteSkipsAbsentSlotsAndReportsReadFailures(t *testing.T) {
 		}
 		return credentials.ProbeOutcome{}, errors.New("keyring unavailable")
 	}
-	result := buildDoctorResult(doctorOptions{ProbeRemote: true})
+	result := buildDoctorResult(context.Background(), doctorOptions{ProbeRemote: true})
 	if calls != 1 {
 		t.Fatalf("probe calls = %d, want 1", calls)
 	}

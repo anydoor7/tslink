@@ -182,7 +182,7 @@ func TestBuiltinSupervisorStatusRestartingAndBreaker(t *testing.T) {
 			readBuiltinSupervisorFn = func(string) (builtinSupervisorRecord, error) {
 				return builtinSupervisorRecord{Version: 1, ConfigDir: dir, Instance: daemon.SupervisorInstance{PID: 43, Executable: spec.Executable}, SupervisorState: daemon.SupervisorState{State: state, Reason: "fixture_reason", Failures: 8}}, nil
 			}
-			got := detectSupervision(pidPath, false, 0)
+			got := detectSupervision(context.Background(), pidPath, false, 0)
 			if got.Manager != "windows-task-scheduler" || got.RuntimeState != state || got.RestartOnExit != alive || got.FailureReason != "fixture_reason" {
 				t.Fatalf("supervision=%+v", got)
 			}
@@ -195,7 +195,7 @@ func TestBuiltinSupervisorStatusRestartingAndBreaker(t *testing.T) {
 	readBuiltinSupervisorFn = func(string) (builtinSupervisorRecord, error) {
 		return builtinSupervisorRecord{Version: 1, ConfigDir: dir, Instance: daemon.SupervisorInstance{PID: 43, Executable: spec.Executable}, SupervisorState: daemon.SupervisorState{State: "restarting"}}, nil
 	}
-	if got := detectSupervision(pidPath, false, 0); got.Manager != "none" || !strings.Contains(got.Detail, "ownership unverified") {
+	if got := detectSupervision(context.Background(), pidPath, false, 0); got.Manager != "none" || !strings.Contains(got.Detail, "ownership unverified") {
 		t.Fatalf("identity accepted=%+v", got)
 	}
 }
@@ -227,7 +227,7 @@ func TestBuiltinSupervisorTerminalPIDReusePreservesHistoryAndDoesNotSignal(t *te
 				t.Fatal(err)
 			}
 			readBuiltinSupervisorFn = readBuiltinSupervisor
-			got := detectSupervision(pidPath, false, 0)
+			got := detectSupervision(context.Background(), pidPath, false, 0)
 			if got.Manager != "windows-task-scheduler" || got.RuntimeState != state || got.FailureReason != "historical_reason" || got.SupervisorPID != 0 || got.RestartOnExit {
 				t.Fatalf("terminal history=%+v", got)
 			}

@@ -709,7 +709,7 @@ func TestMCPSharePersistsAllowListAndTags(t *testing.T) {
 	restoreShareSeams(t)
 	paths := mcpSharePaths(t)
 	shareIsRunningFn = func(string) bool { return true }
-	shareResolveEndpointOnceFn = func(_, _, _, name string) (serviceURLResolution, error) {
+	shareResolveEndpointOnceFn = func(_ context.Context, _, _, _, name string) (serviceURLResolution, error) {
 		return serviceURLResolution{Result: URLResult{Name: name, URL: "https://" + name + ".tail.ts.net", State: inspect.EndpointStateExact}}, nil
 	}
 	actions := defaultMCPActions(paths, io.Discard)
@@ -786,7 +786,7 @@ func TestMCPShareFunnelGuardrailsStayInTheDomainLayer(t *testing.T) {
 			restoreShareSeams(t)
 			paths := mcpSharePaths(t)
 			shareIsRunningFn = func(string) bool { return true }
-			shareResolveEndpointOnceFn = func(_, _, _, name string) (serviceURLResolution, error) {
+			shareResolveEndpointOnceFn = func(_ context.Context, _, _, _, name string) (serviceURLResolution, error) {
 				return serviceURLResolution{Result: URLResult{Name: name, URL: "https://" + name + ".tail.ts.net"}}, nil
 			}
 			_, err := defaultMCPActions(paths, io.Discard).share(context.Background(), tc.request)
@@ -866,7 +866,7 @@ func TestMCPShareFunnelTTLReachesTheRegistry(t *testing.T) {
 	restoreShareSeams(t)
 	paths := mcpSharePaths(t)
 	shareIsRunningFn = func(string) bool { return true }
-	shareResolveEndpointOnceFn = func(_, _, _, name string) (serviceURLResolution, error) {
+	shareResolveEndpointOnceFn = func(_ context.Context, _, _, _, name string) (serviceURLResolution, error) {
 		return serviceURLResolution{Result: URLResult{Name: name, URL: "https://" + name + ".tail.ts.net"}}, nil
 	}
 	before := time.Now().UTC()
@@ -1088,7 +1088,7 @@ func TestMCPLocalToolsReadAndWriteTheGivenRegistry(t *testing.T) {
 		t.Fatal("access_explain on an absent service was accepted")
 	}
 
-	doctorValue, err := actions.doctor(false)
+	doctorValue, err := actions.doctor(context.Background(), false)
 	if err != nil {
 		t.Fatalf("doctor: %v", err)
 	}
@@ -1335,7 +1335,7 @@ func TestMCPToolOutputSchemasAcceptRealPayloads(t *testing.T) {
 		{"tags_list", TagsListResult{Services: []TagsServiceEntry{{Name: "web", Tags: []string{"tag:tsmain"}}, {Name: "bare", Tags: nil}}}},
 		{"tags_set", TagsSetResult{Service: "web", Tags: []string{"tag:tsmain"}}},
 		{"access_explain", buildAccessExplainResult(svc)},
-		{"doctor", buildDoctorResult(doctorOptions{RegistryPath: filepath.Join(t.TempDir(), "registry.json")})},
+		{"doctor", buildDoctorResult(context.Background(), doctorOptions{RegistryPath: filepath.Join(t.TempDir(), "registry.json")})},
 		{"invite_user", InviteMutationResult{Invite: invite, RemoteSideEffectPlan: invitePlan(invite, "create")}},
 		{"invite_device", InviteMutationResult{Invite: invite, RemoteSideEffectPlan: invitePlan(invite, "create")}},
 		{"invite_list", tailapi.InviteList{

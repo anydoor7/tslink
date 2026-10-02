@@ -134,3 +134,7 @@ log。时长解析集中在 `internal/mcpscope.ParseDuration`，便于替换公�
 审计用 `identity.login`、`identity.node` 记录调用者，用 `principal` 记录匹配的授权对象。`kind=mcp`、`role`、`tool`、`apps`、`result`、`phase` 是类型化元数据。share intent 只记录显式请求的名字；尚未分配时 app 清单为空。completion 记录实际生成或复用的名字，包括并发分配结果。不记录原始参数、target、邀请链接或 secret。
 
 Daemon bootstrap 在 scope 检查、安装冲突检查、安装前后的 supervision 检查、定义文件写入和 manager 命令中保留调用者会话。每次 manager 查询前检查会话，并在调用者 context 上追加原有超时，因此取消会中止正在查询的子进程。恢复已有安装和失败清理可以在取消或过期后继续，仍有超时限制。旧日志的 `who`/`scope` 按 `principal`/`role` 读取，不推断缺失的调用者身份；日志读取拒绝父目录链中任何普通文件阻塞。
+
+共享 status 读取在 MCP `status`、`health`、owner 与受限 `doctor`、`list`、`url`、share/add 结果轮询及 owner event snapshot 中保留调用者 context。取消会中止 supervision 查询，每次启动查询子进程前也会检查会话过期。受限 doctor 从共享 status reader 投影 app 观察值；reader 同时检查 supervision 和已存凭证，不运行完整 doctor 的主机发现或外部探针。MCP 检查拒绝保留 `mcp_scope_denied`；没有 MCP 会话的调用者在 setup 检查失败（包括取消）时，保留 `daemon_setup_failed` 和恢复指引。
+
+有时限的 manager 补偿从调用者派生 context，保留身份与 scope。只有恢复已捕获的既有状态和禁用不确定替换任务使用独立生命周期；正常 manager 读取和替换任务激活仍受请求取消与过期约束。

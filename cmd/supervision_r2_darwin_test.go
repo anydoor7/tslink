@@ -73,7 +73,7 @@ func TestBootstrapLaunchctlRealFixture(t *testing.T) {
 		if err := os.WriteFile(path, content, 0600); err != nil {
 			t.Fatal(err)
 		}
-		s := detectSupervision(filepath.Join(dir, "tslink.pid"), true, 41564)
+		s := detectSupervision(context.Background(), filepath.Join(dir, "tslink.pid"), true, 41564)
 		if s.Manager != "launchd" || s.Autostart != runAtLoad || !s.RestartOnExit {
 			t.Fatalf("RunAtLoad=%t supervision=%+v", runAtLoad, s)
 		}
@@ -152,7 +152,7 @@ func TestBootstrapDoctorMissingPIDWithLiveManagerKeepsProbes(t *testing.T) {
 	}
 	probes := 0
 	doctorProbeTargetFn = func(context.Context, string, time.Duration) error { probes++; return syscall.ECONNREFUSED }
-	result := buildDoctorResult(doctorOptions{})
+	result := buildDoctorResult(context.Background(), doctorOptions{})
 	if probes != 1 || !result.Daemon.IdentityUnverified {
 		t.Fatalf("missing pid hid live manager: probes=%d daemon=%+v", probes, result.Daemon)
 	}

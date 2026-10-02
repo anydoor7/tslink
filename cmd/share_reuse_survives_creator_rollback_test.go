@@ -25,10 +25,12 @@ func TestShareReusedByAnIdenticalCallSurvivesTheCreatorsCancellation(t *testing.
 	t.Setenv(config.ConfigDirEnv, dir)
 	paths := sharePaths{Registry: filepath.Join(dir, "registry.json")}
 	shareIsRunningFn = func(string) bool { return true }
-	sharePollableStatusFn = func(string, string, string, string) (StatusResult, error) { return StatusResult{}, nil }
+	sharePollableStatusFn = func(context.Context, string, string, string, string) (StatusResult, error) {
+		return StatusResult{}, nil
+	}
 	entered, release := make(chan struct{}), make(chan struct{})
 	var calls atomic.Int32
-	shareResolveEndpointOnceFn = func(_, _, _, name string) (serviceURLResolution, error) {
+	shareResolveEndpointOnceFn = func(_ context.Context, _, _, _, name string) (serviceURLResolution, error) {
 		if calls.Add(1) == 1 {
 			close(entered)
 			<-release
@@ -77,7 +79,7 @@ func TestShareThatSucceedsSettlesTheRegistrationItCreated(t *testing.T) {
 	t.Setenv(config.ConfigDirEnv, dir)
 	paths := sharePaths{Registry: filepath.Join(dir, "registry.json")}
 	shareIsRunningFn = func(string) bool { return true }
-	shareResolveEndpointOnceFn = func(_, _, _, name string) (serviceURLResolution, error) {
+	shareResolveEndpointOnceFn = func(_ context.Context, _, _, _, name string) (serviceURLResolution, error) {
 		return serviceURLResolution{Result: URLResult{Name: name, URL: "https://share.example.invalid", State: "exact"}}, nil
 	}
 	var created registry.Service

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -27,9 +28,12 @@ func TestMalformedRegistryLoadReportsPathAndUsage(t *testing.T) {
 			pid, snapshot := filepath.Join(dir, "tslink.pid"), filepath.Join(dir, "runtime.json")
 			for command, read := range map[string]func() error{
 				"registry check": func() error { _, err := registryCheck(path); return err },
-				"list":           func() error { _, err := loadListResultForPaths(path, pid, snapshot, listOptions{}); return err },
-				"status":         func() error { _, err := getStatus(pid, path); return err },
-				"status --urls":  func() error { _, err := getStatusURLs(pid, path, snapshot); return err },
+				"list": func() error {
+					_, err := loadListResultForPaths(context.Background(), path, pid, snapshot, listOptions{})
+					return err
+				},
+				"status":        func() error { _, err := getStatus(context.Background(), pid, path); return err },
+				"status --urls": func() error { _, err := getStatusURLs(context.Background(), pid, path, snapshot); return err },
 			} {
 				t.Run(command, func(t *testing.T) {
 					err := read()

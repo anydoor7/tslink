@@ -87,7 +87,7 @@ func TestLinuxSupervisionReportsAutostartScopeFromLinger(t *testing.T) {
 				loginctlCalls = append(loginctlCalls, strings.Join(args, " "))
 				return scripted(ctx, args...)
 			}
-			s := detectSupervision("", false, 0)
+			s := detectSupervision(context.Background(), "", false, 0)
 			if s.Manager != "systemd" || !s.Autostart {
 				t.Fatalf("fixture did not verify: %+v", s)
 			}
@@ -125,7 +125,7 @@ func TestLinuxSupervisionReportsAutostartScopeFromLinger(t *testing.T) {
 func TestLinuxSupervisionDistinguishesUnreachableManagerFromMissingUnit(t *testing.T) {
 	t.Run("installed_but_manager_unreachable", func(t *testing.T) {
 		path := installLinuxUnitFixture(t, "", "no\n", nil)
-		s := detectSupervision("", false, 0)
+		s := detectSupervision(context.Background(), "", false, 0)
 		if s.Manager != "none" || s.Autostart {
 			t.Fatalf("unreachable manager must not claim supervision: %+v", s)
 		}
@@ -144,7 +144,7 @@ func TestLinuxSupervisionDistinguishesUnreachableManagerFromMissingUnit(t *testi
 		if err := os.Remove(path); err != nil {
 			t.Fatal(err)
 		}
-		s := detectSupervision("", false, 0)
+		s := detectSupervision(context.Background(), "", false, 0)
 		if s.Manager != "none" || !strings.Contains(s.Detail, "No systemd user unit is installed") || !strings.Contains(s.Detail, "Run: tslink install") {
 			t.Fatalf("missing unit detail=%q manager=%q", s.Detail, s.Manager)
 		}
@@ -152,7 +152,7 @@ func TestLinuxSupervisionDistinguishesUnreachableManagerFromMissingUnit(t *testi
 
 	t.Run("installed_but_not_loaded", func(t *testing.T) {
 		installLinuxUnitFixture(t, "LoadState=not-found\nMainPID=0\n", "no\n", nil)
-		s := detectSupervision("", false, 0)
+		s := detectSupervision(context.Background(), "", false, 0)
 		if s.Manager != "none" || !strings.Contains(s.Detail, "systemctl --user daemon-reload") {
 			t.Fatalf("unloaded detail=%q", s.Detail)
 		}

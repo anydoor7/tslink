@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 	"time"
@@ -24,7 +25,7 @@ func TestStatusSnapshotRespectsFunnelExpiry(t *testing.T) {
 	oldNow := statusNowFn
 	statusNowFn = func() time.Time { return deadline.Add(time.Second) }
 	t.Cleanup(func() { statusNowFn = oldNow })
-	urls, err := getStatusURLs(pidPath, regPath, snapshotPath)
+	urls, err := getStatusURLs(context.Background(), pidPath, regPath, snapshotPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +33,7 @@ func TestStatusSnapshotRespectsFunnelExpiry(t *testing.T) {
 	if url.FunnelRequested || url.FunnelActive || url.FunnelState != tsruntime.FunnelStateNotRequested {
 		t.Fatalf("URL expiry control: %+v", url)
 	}
-	ordinary, err := getPollableStatus(pidPath, regPath, snapshotPath, filepath.Join(dir, "auth-handoff.json"))
+	ordinary, err := getPollableStatus(context.Background(), pidPath, regPath, snapshotPath, filepath.Join(dir, "auth-handoff.json"))
 	if err != nil || len(ordinary.Services) != 1 {
 		t.Fatalf("ordinary status: %+v err=%v", ordinary, err)
 	}
@@ -61,11 +62,11 @@ func TestStatusSnapshotBeforeExpiryAndPrivateControls(t *testing.T) {
 	oldNow := statusNowFn
 	statusNowFn = func() time.Time { return now }
 	t.Cleanup(func() { statusNowFn = oldNow })
-	ordinary, err := getPollableStatus(pidPath, regPath, snapshotPath, filepath.Join(dir, "auth-handoff.json"))
+	ordinary, err := getPollableStatus(context.Background(), pidPath, regPath, snapshotPath, filepath.Join(dir, "auth-handoff.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	urls, err := getStatusURLs(pidPath, regPath, snapshotPath)
+	urls, err := getStatusURLs(context.Background(), pidPath, regPath, snapshotPath)
 	if err != nil {
 		t.Fatal(err)
 	}

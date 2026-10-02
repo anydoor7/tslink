@@ -170,3 +170,5 @@ Operator/people-manager 可用 `--max-duration`（默认 24h）；viewer 可显�
 受限人员授权要求人员已存在（`mcp_person_owner_required`：先请 owner 添加人员）；撤销未知 login 是 no-op。审计区分调用者 `identity.login/node` 与 `principal`，包含 `role`、`phase`，并在完成时记录实际 share app。旧与 scoped 配置中匹配多个 MCP tag principal 时返回 HTTP 403，显式 login binding 优先。
 
 MCP 工具 bootstrap daemon 时，会话过期或取消会阻止后续定义写入和 manager 命令。Manager 子进程继承取消；有超时限制的安装恢复与清理可以继续。读取旧审计的 `who`/`scope` 时将其保留为 `principal`/`role`。
+
+MCP 共享读取（`status`、`health`、`doctor`、`list`、`url`、share/add 轮询及 owner event snapshot）将调用者 context 传给 supervision 查询。取消会中止正在执行的 manager 查询，过期会话不能启动下一次查询。无 MCP 会话的 setup 检查失败保留 `daemon_setup_failed`，包括命令 context 取消；MCP 拒绝使用 `mcp_scope_denied`。

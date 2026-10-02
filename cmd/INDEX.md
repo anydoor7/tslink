@@ -63,8 +63,11 @@ This index records the app recipe additions; the CLI manifest describes the comp
 - `mcp_install_darwin_test.go`, `mcp_install_linux_test.go`, `mcp_install_windows_test.go`: real MCP/bootstrap/definition paths with fake manager boundaries and active/expired/cancelled controls.
 - `mcp_manager_context_test.go`: real bounded subprocess cancellation and expiry probes.
 - `service_manager_context_test.go`: context seam adapter retaining the service-manager guard restoration check.
-- `supervision_unix.go`: checked Unix manager query adapter and default-context command wrapper.
+- `supervision_unix.go`: checked Unix manager query adapter and caller-context command adapter.
 - `bootstrap_queries_unix_test.go`, `bootstrap_queries_windows_test.go`: caller session checks at query boundaries with active, expired and cancelled controls.
 - `bootstrap_query_process_test.go`: cancellation after a real query subprocess reports readiness.
 - `bootstrap_inspection_test.go`: existing definitions, installer inspection and supervision context propagation.
 - `bootstrap_install_context_darwin_test.go`, `bootstrap_install_context_linux_test.go`: isolated prior-definition inspection adapters.
+
+- `read_manager_context_test.go`: ported shared-read session, subprocess cancellation and setup error-code fixtures; bounded compensation provenance; additional list, URL, share and event snapshot callers.
+- `manager_inventory_test.go`: all-platform AST inventory and transitive MCP manager context checks, with explicit compensation and CLI classifications.

@@ -85,7 +85,7 @@ func TestBoundedManagerCommandReleasesAPipeHeldByAGrandchild(t *testing.T) {
 	done := make(chan boundedCallResult, 1)
 	start := time.Now()
 	go func() {
-		out, err := runBoundedManagerCommand("/bin/sh", budget, "-c", "/bin/sleep 30 & echo $!; wait")
+		out, err := runBoundedManagerCommand(context.Background(), "/bin/sh", budget, "-c", "/bin/sleep 30 & echo $!; wait")
 		done <- boundedCallResult{out: out, err: err}
 	}()
 	limit := budget + time.Second

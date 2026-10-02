@@ -215,12 +215,12 @@ func TestRepairRollbackWaitsForAbsence(t *testing.T) {
 			target := launchctlServiceTargetForDomain(launchctlDomain())
 			if restore {
 				previous := launchAgentPreviousState{Existed: true, Plist: []byte("old definition"), Mode: 0600, Domain: launchctlDomain(), Target: target}
-				_, err := restorePreviousLaunchAgent(previous, launchctlLoadResult{Bootstrapped: true, Target: target}, path)
+				_, err := restorePreviousLaunchAgent(context.Background(), previous, launchctlLoadResult{Bootstrapped: true, Target: target}, path)
 				if err != nil || !loaded || early {
 					t.Fatalf("restore: %v loaded=%t early=%t", err, loaded, early)
 				}
 			} else {
-				if err := rollbackNewLaunchAgent(target, path); err != nil {
+				if err := rollbackNewLaunchAgent(context.Background(), target, path); err != nil {
 					t.Fatal(err)
 				}
 			}

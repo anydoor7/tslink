@@ -258,22 +258,34 @@ func TestPeopleRemovalDuringStalledPostAndConcurrentRetry(t *testing.T) {
 func TestPeopleInviteContextCancellationBeforeAndAfterPOST(t *testing.T) {
 	paths := peopleTestPaths(t)
 	reviewPeopleAPI(t, paths)
-	entered := make(chan struct{}, 1)
+	entered := make(chan struct{})
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "GET" {
 			io.WriteString(w, `{"devices":[{"nodeId":"n1","hostname":"photos"}]}`)
 			return
 		}
-		entered <- struct{}{}
 		w.WriteHeader(200)
 		w.(http.Flusher).Flush()
+		close(entered)
 		<-r.Context().Done()
 	}))
 	defer api.Close()
 	t.Setenv(tailapi.APIBaseURLEnv, api.URL)
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	// Bound a stalled fixture, but trigger cancellation from real POST
+	// readiness rather than including registry/API setup in a 100 ms budget.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	cancelled := make(chan struct{})
+	go func() {
+		defer close(cancelled)
+		select {
+		case <-entered:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
 	result, e := changePeople(ctx, paths, peopleArguments{Who: "alice", Apps: []string{"photos"}, Invite: true}, false)
+	<-cancelled
 	if e != nil || result.Complete || result.Invites[0].State != registry.PersonInviteUnknown {
 		t.Fatal(result, e)
 	}

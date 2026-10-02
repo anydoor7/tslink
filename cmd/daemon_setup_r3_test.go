@@ -38,7 +38,7 @@ func TestBootstrapDoctorForeignPIDIsAStoppedDaemon(t *testing.T) {
 		t.Fatal("a daemon proven stopped must not be probed as if it might be serving")
 		return nil
 	}
-	result := buildDoctorResult(doctorOptions{})
+	result := buildDoctorResult(context.Background(), doctorOptions{})
 	if result.Daemon.IdentityUnverified {
 		t.Fatalf("foreign PID reported as unverified identity: %+v", result.Daemon)
 	}

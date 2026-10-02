@@ -147,7 +147,7 @@ func TestSupervisionLoadedPolicyMatrix(t *testing.T) {
 				output = withEnvironment
 			}
 			queries := loadedPolicyManager(t, output, nil, "disabled services = {\n}\n", nil)
-			s := detectSupervision("", true, 4242)
+			s := detectSupervision(context.Background(), "", true, 4242)
 			if *queries != 2 || s.Manager != "launchd" || !s.Installed || s.Path != path || !s.Autostart || s.AutostartScope != autostartScopeLogin {
 				t.Fatalf("ownership/future-login control failed: queries=%d supervision=%+v", *queries, s)
 			}
@@ -204,7 +204,7 @@ func TestSupervisionLoadedPolicyOwnershipDomains(t *testing.T) {
 				}
 				return manager(ctx, name, args...)
 			}
-			s := detectSupervision("", true, 4242)
+			s := detectSupervision(context.Background(), "", true, 4242)
 			if s.Manager != tc.wantManager || s.RestartOnExit != tc.wantRestart || s.Autostart != (tc.wantManager == "launchd") {
 				t.Fatalf("ownership-domain policy assertion: %+v", s)
 			}
@@ -271,7 +271,7 @@ func TestSupervisionLoadedPolicyPreservesBoundaries(t *testing.T) {
 				// Even recognizable output accompanying an error is not proof.
 				managerOutputFn = func(context.Context, string, ...string) ([]byte, error) { return output, errors.New("access denied") }
 			}
-			s := detectSupervision("", running, 4242)
+			s := detectSupervision(context.Background(), "", running, 4242)
 			if (s.Manager == "launchd") != wantOwned || s.Autostart != wantAutostart || s.RestartOnExit != wantRestart || (s.AutostartScope == autostartScopeLogin) != wantAutostart {
 				t.Fatalf("boundary assertion: %+v owned=%t autostart=%t restart=%t", s, wantOwned, wantAutostart, wantRestart)
 			}

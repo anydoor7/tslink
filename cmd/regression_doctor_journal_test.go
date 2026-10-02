@@ -25,7 +25,7 @@ func TestReReviewDoctorDoesNotHideDurableJournal(t *testing.T) {
 	if len(readAlertsForRegistry(env.regPath).Events) != 1 {
 		t.Fatal("durable journal control")
 	}
-	result := buildDoctorResult(doctorOptions{ReadOnly: true})
+	result := buildDoctorResult(context.Background(), doctorOptions{ReadOnly: true})
 	t.Logf("durable journal events=1 doctor events=%d daemon=%+v snapshot=%+v", len(result.Alerts.Events), result.Daemon, result.RuntimeSnapshot)
 	if len(result.Alerts.Events) != 1 {
 		t.Error("doctor hid a durably committed event behind an older exact runtime snapshot")
@@ -38,7 +38,7 @@ func TestReReviewDoctorDoesNotHideDurableJournal(t *testing.T) {
 	if err := tsruntime.Save(env.snapshotPath, *snapshot); err != nil {
 		t.Fatal(err)
 	}
-	result = buildDoctorResult(doctorOptions{ReadOnly: true})
+	result = buildDoctorResult(context.Background(), doctorOptions{ReadOnly: true})
 	if result.Alerts.Error != "" {
 		t.Error("old snapshot error replaced a valid current journal", result.Alerts.Error)
 	}
@@ -46,7 +46,7 @@ func TestReReviewDoctorDoesNotHideDurableJournal(t *testing.T) {
 	if err := tsruntime.Save(env.snapshotPath, *snapshot); err != nil {
 		t.Fatal(err)
 	}
-	result = buildDoctorResult(doctorOptions{ReadOnly: true})
+	result = buildDoctorResult(context.Background(), doctorOptions{ReadOnly: true})
 	if result.Alerts.Error != "alert_state_write_failed" {
 		t.Error("unpersistable write error was not supplemented", result.Alerts.Error)
 	}
@@ -56,7 +56,7 @@ func TestReReviewDoctorDoesNotHideDurableJournal(t *testing.T) {
 	if readAlertsForRegistry(env.regPath).Error != "alert_state_invalid" {
 		t.Fatal("invalid journal control")
 	}
-	result = buildDoctorResult(doctorOptions{ReadOnly: true})
+	result = buildDoctorResult(context.Background(), doctorOptions{ReadOnly: true})
 	t.Logf("journal error=alert_state_invalid doctor error=%q", result.Alerts.Error)
 	if result.Alerts.Error != "alert_state_invalid" {
 		t.Error("doctor hid current journal corruption")
@@ -82,7 +82,7 @@ func TestReReviewStatusGlobalFailureKeepsJournalAuthority(t *testing.T) {
 	if err := os.WriteFile(env.regPath, []byte(`{`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	got, err := readOnlyStatus.getPollableStatus(env.pidPath, env.regPath, env.snapshotPath, filepath.Join(env.dir, "auth-handoff.json"))
+	got, err := readOnlyStatus.getPollableStatus(context.Background(), env.pidPath, env.regPath, env.snapshotPath, filepath.Join(env.dir, "auth-handoff.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +92,7 @@ func TestReReviewStatusGlobalFailureKeepsJournalAuthority(t *testing.T) {
 	if err := os.WriteFile(r.Path, []byte(`{`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	got, err = readOnlyStatus.getPollableStatus(env.pidPath, env.regPath, env.snapshotPath, filepath.Join(env.dir, "auth-handoff.json"))
+	got, err = readOnlyStatus.getPollableStatus(context.Background(), env.pidPath, env.regPath, env.snapshotPath, filepath.Join(env.dir, "auth-handoff.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ func TestReReviewDoctorProjectsDurableMonitorSaturation(t *testing.T) {
 	if err := os.WriteFile(p, b, 0600); err != nil {
 		t.Fatal(err)
 	}
-	result := buildDoctorResult(doctorOptions{ReadOnly: true})
+	result := buildDoctorResult(context.Background(), doctorOptions{ReadOnly: true})
 	b, err = json.Marshal(result.Alerts)
 	if err != nil {
 		t.Fatal(err)

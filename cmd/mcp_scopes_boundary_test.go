@@ -152,7 +152,7 @@ func TestMCPScopedReadEndsAtBindingExpiry(t *testing.T) {
 	expiry := time.Now().Add(300 * time.Millisecond)
 	entered, release := make(chan struct{}), make(chan struct{})
 	original := a.list
-	a.list = func() (any, error) { close(entered); <-release; return original() }
+	a.list = func(ctx context.Context) (any, error) { close(entered); <-release; return original(ctx) }
 	cp := &server.MCPControlPlane{Bindings: []mcpscope.Binding{{Principal: "reader", Scope: testRoleScope("viewer"), ExpiresAt: &expiry}}, Handler: newMCPStreamableHandler(a)}
 	h := httptest.NewServer(server.NewMCPControlPlaneHandler(cp, mcpHTTPWhoIsClient(t, "reader")))
 	defer h.Close()

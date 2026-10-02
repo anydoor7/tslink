@@ -176,7 +176,7 @@ func TestWindowsTaskSupervisionLoadedPolicyAndOwnership(t *testing.T) {
 	}
 	task := windowsSchedulerStatus{Exists: true, Enabled: true, State: 4, Engines: []int{42}, XML: string(data)}
 	windowsSchedulerFn = func(context.Context, string, string, []byte) (windowsSchedulerStatus, error) { return task, nil }
-	good := detectSupervision("isolated.pid", true, 4242)
+	good := detectSupervision(context.Background(), "isolated.pid", true, 4242)
 	if good.Manager != "windows-task-scheduler" || !good.RestartOnExit || !good.Autostart || good.AutostartScope != "login" {
 		t.Fatalf("positive control=%+v", good)
 	}
@@ -204,7 +204,7 @@ func TestWindowsTaskSupervisionLoadedPolicyAndOwnership(t *testing.T) {
 				copy.State = 3
 			}
 			windowsSchedulerFn = func(context.Context, string, string, []byte) (windowsSchedulerStatus, error) { return copy, nil }
-			got := detectSupervision("isolated.pid", true, 4242)
+			got := detectSupervision(context.Background(), "isolated.pid", true, 4242)
 			if got.Manager != "manual" || got.Autostart || got.RestartOnExit {
 				t.Fatalf("unverified supervision accepted=%+v", got)
 			}

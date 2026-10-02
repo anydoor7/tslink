@@ -706,14 +706,14 @@ type mcpActions struct {
 	peopleRemove  func(context.Context, string, map[string]string) (any, error)
 	share         func(context.Context, shareRequest) (ShareResult, error)
 	add           func(context.Context, AddParams, bool) (any, error)
-	list          func() (any, error)
+	list          func(context.Context) (any, error)
 	unshare       func(context.Context, string) (any, error)
-	status        func() (any, error)
+	status        func(context.Context) (any, error)
 	url           func(context.Context, string, time.Duration) (any, error)
 	tagsList      func() (any, error)
 	tagsSet       func(context.Context, string, string) (any, error)
 	accessExplain func(string) (any, error)
-	doctor        func(bool) (any, error)
+	doctor        func(context.Context, bool) (any, error)
 	logs          func(mcpLogsArguments) (any, error)
 	inviteUser    func(context.Context, string, string, bool) (any, error)
 	inviteDevice  func(context.Context, mcpInviteDeviceArguments) (any, error)
@@ -916,8 +916,8 @@ func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 			}
 			return result, nil
 		},
-		list: func() (any, error) {
-			result, err := readOnlyStatus.loadListResultForPaths(paths.Registry, paths.PID, paths.Snapshot, listOptions{})
+		list: func(ctx context.Context) (any, error) {
+			result, err := readOnlyStatus.loadListResultForPaths(ctx, paths.Registry, paths.PID, paths.Snapshot, listOptions{})
 			if err != nil {
 				return nil, err
 			}
@@ -934,8 +934,8 @@ func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 		unshare: func(ctx context.Context, name string) (any, error) {
 			return unshareMCPService(ctx, paths, name)
 		},
-		status: func() (any, error) {
-			status, err := mcpStatusFn(paths.PID, paths.Registry, paths.Snapshot, paths.AuthHandoff)
+		status: func(ctx context.Context) (any, error) {
+			status, err := mcpStatusFn(ctx, paths.PID, paths.Registry, paths.Snapshot, paths.AuthHandoff)
 			if err != nil {
 				return nil, err
 			}
@@ -974,8 +974,8 @@ func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 		accessExplain: func(service string) (any, error) {
 			return accessExplainResultForPath(paths.Registry, service)
 		},
-		doctor: func(probeExternal bool) (any, error) {
-			return buildDoctorResult(doctorOptions{
+		doctor: func(ctx context.Context, probeExternal bool) (any, error) {
+			return buildDoctorResult(ctx, doctorOptions{
 				ProbeExternal:       probeExternal,
 				RegistryPath:        paths.Registry,
 				PIDPath:             paths.PID,
@@ -1634,7 +1634,7 @@ func executeMCPTool(ctx context.Context, actions mcpActions, name string, argume
 		if refusal := mcpArgumentsRefusal(name, decodeMCPArguments(arguments, &args)); refusal != nil {
 			return refusal, nil
 		}
-		data, err = actions.status()
+		data, err = actions.status(ctx)
 		if err == nil {
 			var summary mcpStatusSummary
 			err = reprojectJSON(data, &summary)
@@ -1719,7 +1719,7 @@ func executeMCPTool(ctx context.Context, actions mcpActions, name string, argume
 		if refusal := mcpArgumentsRefusal("list", decodeErr); refusal != nil {
 			return refusal, nil
 		}
-		data, err = actions.list()
+		data, err = actions.list(ctx)
 	case "unshare":
 		var args struct {
 			Name string `json:"name"`
@@ -1735,7 +1735,7 @@ func executeMCPTool(ctx context.Context, actions mcpActions, name string, argume
 		if refusal := mcpArgumentsRefusal("status", decodeErr); refusal != nil {
 			return refusal, nil
 		}
-		data, err = actions.status()
+		data, err = actions.status(ctx)
 	case "url":
 		var args struct {
 			Name string `json:"name"`
@@ -1785,7 +1785,7 @@ func executeMCPTool(ctx context.Context, actions mcpActions, name string, argume
 		if refusal := mcpArgumentsRefusal("doctor", decodeErr); refusal != nil {
 			return refusal, nil
 		}
-		data, err = actions.doctor(args.ProbeExternal)
+		data, err = actions.doctor(ctx, args.ProbeExternal)
 	case "logs":
 		var args mcpLogsArguments
 		decodeErr := decodeMCPArguments(arguments, &args)

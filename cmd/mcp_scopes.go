@@ -251,7 +251,7 @@ func callMCPTool(ctx context.Context, actions mcpActions, name string, raw json.
 		if args.ProbeExternal {
 			return makeMCPToolErrorResult(mcpscope.Denied{}), nil
 		}
-		data, callErr := mcpScopedDoctor(actions, session.Scope)
+		data, callErr := mcpScopedDoctor(ctx, actions, session.Scope)
 		result = makeMCPToolResult(data, callErr)
 	} else {
 		result, err = executeMCPTool(ctx, actions, name, raw)
@@ -437,10 +437,11 @@ func mcpScopedPerson(p PeopleView, scope mcpscope.Scope) PeopleView {
 	return out
 }
 
-// Reduced doctor reads app observations without running global credential,
-// supervisor, host-discovery, or external probes.
-func mcpScopedDoctor(actions mcpActions, scope mcpscope.Scope) (any, error) {
-	data, err := actions.status()
+// Reduced doctor projects app observations from the shared read-only status
+// reader, including caller-bound supervision and credential inspection. It
+// avoids the full doctor host-discovery and external probes.
+func mcpScopedDoctor(ctx context.Context, actions mcpActions, scope mcpscope.Scope) (any, error) {
+	data, err := actions.status(ctx)
 	if err != nil {
 		return nil, err
 	}

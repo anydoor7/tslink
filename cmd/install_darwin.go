@@ -379,7 +379,7 @@ func runInstallLocked(cmd *cobra.Command, args []string) error {
 			warning = launchctlWarning("LaunchAgent plist installed but the service did not reach running state", loadResult.Err, []byte(loadResult.Output))
 		}
 		if previousState.Existed {
-			restoreResult, restoreErr := restorePreviousLaunchAgent(previousState, loadResult, plistPath)
+			restoreResult, restoreErr := restorePreviousLaunchAgent(ctx, previousState, loadResult, plistPath)
 			if restoreErr != nil {
 				status := "the previous plist could not be restored"
 				if restoreResult.PlistRestored {
@@ -395,7 +395,7 @@ func runInstallLocked(cmd *cobra.Command, args []string) error {
 			return installCommandFailure(cmd, loadResult, plistPath, failure)
 		}
 		if loadResult.Bootstrapped {
-			if rollbackErr := rollbackNewLaunchAgent(loadResult.Target, plistPath); rollbackErr != nil {
+			if rollbackErr := rollbackNewLaunchAgent(ctx, loadResult.Target, plistPath); rollbackErr != nil {
 				return fmt.Errorf("%s; automatic rollback was incomplete: %v; the plist was kept at %s so 'tslink uninstall' can retry bootout; %s", warning, rollbackErr, plistPath, retryAdvice)
 			}
 			return fmt.Errorf("%s; the new installation was rolled back by booting out %s and removing %s; %s", warning, loadResult.Target, plistPath, retryAdvice)
@@ -784,8 +784,9 @@ func waitLaunchAgentAbsent(ctx context.Context, target string, allowUnavailableD
 
 // Compensation restores an already-started installation; it may finish after
 // caller cancellation/expiry and retains the existing per-command bounds.
-func rollbackNewLaunchAgent(target, plistPath string) error {
-	if err := bootoutLaunchAgentTarget(context.Background(), target); err != nil {
+func rollbackNewLaunchAgent(ctx context.Context, target, plistPath string) error {
+	ctx = managerCompensationContext(ctx)
+	if err := bootoutLaunchAgentTarget(ctx, target); err != nil {
 		return err
 	}
 	if err := os.Remove(plistPath); err != nil && !os.IsNotExist(err) {
@@ -794,11 +795,12 @@ func rollbackNewLaunchAgent(target, plistPath string) error {
 	return nil
 }
 
-func restorePreviousLaunchAgent(previous launchAgentPreviousState, loadResult launchctlLoadResult, plistPath string) (launchAgentRestoreResult, error) {
+func restorePreviousLaunchAgent(ctx context.Context, previous launchAgentPreviousState, loadResult launchctlLoadResult, plistPath string) (launchAgentRestoreResult, error) {
+	ctx = managerCompensationContext(ctx)
 	result := launchAgentRestoreResult{}
 	var restoreErrs []error
 	if loadResult.Bootstrapped {
-		if err := bootoutLaunchAgentTarget(context.Background(), loadResult.Target); err != nil {
+		if err := bootoutLaunchAgentTarget(ctx, loadResult.Target); err != nil {
 			restoreErrs = append(restoreErrs, err)
 		}
 	}
@@ -812,11 +814,11 @@ func restorePreviousLaunchAgent(previous launchAgentPreviousState, loadResult la
 		return result, errors.Join(restoreErrs...)
 	}
 
-	bootstrapOutput, err := launchctlCombinedOutput(context.Background(), "bootstrap", previous.Domain, plistPath)
+	bootstrapOutput, err := launchctlCombinedOutput(ctx, "bootstrap", previous.Domain, plistPath)
 	if err != nil {
 		return result, errors.New(launchctlWarning("restore previous LaunchAgent with bootstrap "+previous.Domain, err, bootstrapOutput))
 	}
-	verificationOutput, err := verifyLaunchAgentRunning(context.Background(), previous.Target)
+	verificationOutput, err := verifyLaunchAgentRunning(ctx, previous.Target)
 	if err != nil {
 		detail := strings.TrimSpace(string(verificationOutput))
 		if detail != "" {

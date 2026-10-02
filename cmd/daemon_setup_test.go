@@ -528,7 +528,7 @@ func TestBootstrapDoctorCauseAndProbePositiveControl(t *testing.T) {
 	running, probes := false, 0
 	isRunningFn = func(string) bool { return running }
 	doctorProbeTargetFn = func(context.Context, string, time.Duration) error { probes++; return syscall.ECONNREFUSED }
-	stopped := buildDoctorResult(doctorOptions{})
+	stopped := buildDoctorResult(context.Background(), doctorOptions{})
 	if probes != 0 || stopped.Counts.Services != 1 || stopped.Counts.Errors < 2 {
 		t.Fatalf("stopped=%+v probes=%d", stopped, probes)
 	}
@@ -541,7 +541,7 @@ func TestBootstrapDoctorCauseAndProbePositiveControl(t *testing.T) {
 	assertDoctorNoFinding(t, stopped, inspect.WarningCodeTargetProbeRefused)
 	// Prove that the same scanner/probe really can produce the finding.
 	running = true
-	live := buildDoctorResult(doctorOptions{})
+	live := buildDoctorResult(context.Background(), doctorOptions{})
 	if probes != 1 || live.Counts.Services != 1 {
 		t.Fatalf("positive control did not probe: %d %+v", probes, live)
 	}
@@ -569,7 +569,7 @@ func TestBootstrapStatusSupervisionBothFormats(t *testing.T) {
 	detectSupervisionFn = func(context.Context, string, bool, int) Supervision {
 		return Supervision{Manager: "launchd", Installed: true, Autostart: true, RestartOnExit: true, Detail: "fixture"}
 	}
-	r, err := getStatusURLs(pidPath, regPath, snapshotPath)
+	r, err := getStatusURLs(context.Background(), pidPath, regPath, snapshotPath)
 	if err != nil {
 		t.Fatal(err)
 	}

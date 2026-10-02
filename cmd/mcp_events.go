@@ -68,12 +68,12 @@ func mcpEventsSnapshotFn(actions mcpActions) func(context.Context) (any, error) 
 	if actions.list == nil || actions.status == nil {
 		return nil
 	}
-	return func(context.Context) (any, error) {
-		listValue, err := actions.list()
+	return func(ctx context.Context) (any, error) {
+		listValue, err := actions.list(ctx)
 		if err != nil {
 			return nil, sanitizedSnapshotError(err)
 		}
-		statusValue, err := actions.status()
+		statusValue, err := actions.status(ctx)
 		if err != nil {
 			return nil, sanitizedSnapshotError(err)
 		}

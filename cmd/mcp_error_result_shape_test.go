@@ -83,18 +83,18 @@ func refusingMCPActions() mcpActions {
 		peopleRemove: func(context.Context, string, map[string]string) (any, error) { return nil, mcpRefusal("people_remove") },
 		share:        func(context.Context, shareRequest) (ShareResult, error) { return ShareResult{}, mcpRefusal("share") },
 		add:          func(context.Context, AddParams, bool) (any, error) { return nil, mcpRefusal("add") },
-		list:         func() (any, error) { return nil, mcpRefusal("list") },
+		list:         func(ctx context.Context) (any, error) { return nil, mcpRefusal("list") },
 		unshare: func(context.Context, string) (any, error) {
 			return nil, mcpRefusal("unshare")
 		},
-		status: func() (any, error) { return nil, mcpRefusal("status") },
+		status: func(ctx context.Context) (any, error) { return nil, mcpRefusal("status") },
 		url: func(context.Context, string, time.Duration) (any, error) {
 			return nil, mcpRefusal("url")
 		},
 		tagsList:      func() (any, error) { return nil, mcpRefusal("tags_list") },
 		tagsSet:       func(context.Context, string, string) (any, error) { return nil, mcpRefusal("tags_set") },
 		accessExplain: func(string) (any, error) { return nil, mcpRefusal("access_explain") },
-		doctor:        func(bool) (any, error) { return nil, mcpRefusal("doctor") },
+		doctor:        func(context.Context, bool) (any, error) { return nil, mcpRefusal("doctor") },
 		logs:          func(mcpLogsArguments) (any, error) { return nil, mcpRefusal("logs") },
 		inviteUser: func(context.Context, string, string, bool) (any, error) {
 			return nil, mcpRefusal("invite_user")

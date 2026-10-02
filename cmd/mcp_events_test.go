@@ -188,9 +188,9 @@ func TestMCPEventsSnapshotFnRunsTheListAndStatusActions(t *testing.T) {
 	listCalls, statusCalls := 0, 0
 	actions := fakeMCPActions()
 	baseList := actions.list
-	actions.list = func() (any, error) { listCalls++; return baseList() }
+	actions.list = func(ctx context.Context) (any, error) { listCalls++; return baseList(ctx) }
 	baseStatus := actions.status
-	actions.status = func() (any, error) { statusCalls++; return baseStatus() }
+	actions.status = func(ctx context.Context) (any, error) { statusCalls++; return baseStatus(ctx) }
 
 	snapshot := mcpEventsSnapshotFn(actions)
 	if snapshot == nil {

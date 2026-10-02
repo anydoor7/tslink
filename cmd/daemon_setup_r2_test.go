@@ -166,7 +166,7 @@ func TestBootstrapDoctorUnverifiedIdentityKeepsProbes(t *testing.T) {
 			detectSupervisionFn = func(context.Context, string, bool, int) Supervision { return unmanagedSupervision(false, "test") }
 			probes := 0
 			doctorProbeTargetFn = func(context.Context, string, time.Duration) error { probes++; return syscall.ECONNREFUSED }
-			result := buildDoctorResult(doctorOptions{})
+			result := buildDoctorResult(context.Background(), doctorOptions{})
 			if !result.Daemon.IdentityUnverified || probes != 1 {
 				t.Fatalf("uncertain=%t probes=%d", result.Daemon.IdentityUnverified, probes)
 			}
@@ -182,7 +182,7 @@ func TestBootstrapDoctorUnverifiedIdentityKeepsProbes(t *testing.T) {
 			if err := os.Remove(env.pidPath); err != nil {
 				t.Fatal(err)
 			}
-			stopped := buildDoctorResult(doctorOptions{})
+			stopped := buildDoctorResult(context.Background(), doctorOptions{})
 			assertDoctorFinding(t, stopped, inspect.WarningCodeDaemonNotRunning)
 			if probes != 1 {
 				t.Fatalf("stopped branch probed again: %d", probes)
@@ -196,7 +196,7 @@ func TestBootstrapWindowsStartupDoctorContract(t *testing.T) {
 	old := detectSupervisionFn
 	t.Cleanup(func() { detectSupervisionFn = old })
 	detectSupervisionFn = func(context.Context, string, bool, int) Supervision { return windowsStartupSupervision("fixture.vbs") }
-	result := buildDoctorResult(doctorOptions{})
+	result := buildDoctorResult(context.Background(), doctorOptions{})
 	if result.Supervision.Manager != "windows-startup" || !result.Supervision.Autostart || !result.Supervision.Installed || result.Supervision.RestartOnExit {
 		t.Fatalf("startup=%+v", result.Supervision)
 	}

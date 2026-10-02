@@ -16,6 +16,6 @@ func managerOutputChecked(ctx context.Context, name string, args ...string) ([]b
 	return managerOutputFn(ctx, name, args...)
 }
 
-func runBoundedManagerCommand(name string, timeout time.Duration, args ...string) ([]byte, error) {
-	return runBoundedManagerCommandContext(context.Background(), name, timeout, args...)
+func runBoundedManagerCommand(ctx context.Context, name string, timeout time.Duration, args ...string) ([]byte, error) {
+	return runBoundedManagerCommandContext(ctx, name, timeout, args...)
 }

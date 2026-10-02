@@ -66,11 +66,11 @@ Examples:
 
 // runInstallLocked requires the per-user supervisor transaction lock.
 func runInstallLocked(cmd *cobra.Command, args []string) error {
-	ctx := cmd.Context()
-	// Direct CLI/test callers may have no context; MCP always supplies its session.
-	if ctx == nil {
-		ctx = context.Background()
+	// A direct CLI invocation may precede Cobra context initialization.
+	if cmd.Context() == nil {
+		cmd.SetContext(context.Background())
 	}
+	ctx := cmd.Context()
 	noAutoProvision, err := cmd.Flags().GetBool("no-auto-provision")
 	if err != nil {
 		return fmt.Errorf("read --no-auto-provision: %w", err)
@@ -174,10 +174,6 @@ func init() {
 
 func installWindowsTask(cmd *cobra.Command, noAutoProvision bool) error {
 	ctx := cmd.Context()
-	// Direct CLI/test callers may have no context; MCP always supplies its session.
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	name, err := windowsTaskName()
 	if err != nil {
 		return err
@@ -295,7 +291,7 @@ func installWindowsTask(cmd *cobra.Command, noAutoProvision bool) error {
 	if !installed.Exists || !installed.Enabled || !windowsTaskMatches([]byte(installed.XML), spec) {
 		// Disabling an uncertain replacement is compensation, permitted after expiry.
 		if installed.Exists {
-			_, _ = windowsSchedulerFn(context.Background(), "disable", name, nil)
+			_, _ = windowsSchedulerFn(managerCompensationContext(ctx), "disable", name, nil)
 		}
 		return fmt.Errorf("loaded scheduler definition verification failed; definition retained at %s", path)
 	}
@@ -307,7 +303,7 @@ func installWindowsTask(cmd *cobra.Command, noAutoProvision bool) error {
 	// permitted after cancellation/expiry; starting the replacement is checked below.
 	if err := os.Remove(startupPath); err != nil && !os.IsNotExist(err) {
 		// Disable is compensation for the failed migration.
-		_, disableErr := windowsSchedulerFn(context.Background(), "disable", name, nil)
+		_, disableErr := windowsSchedulerFn(managerCompensationContext(ctx), "disable", name, nil)
 		return fmt.Errorf("startup migration cleanup failed; task not started; disable result=%v; inspect before next sign-in: %w", disableErr, err)
 	}
 	if _, err := windowsSchedulerChecked(ctx, "run", name, nil); err != nil {

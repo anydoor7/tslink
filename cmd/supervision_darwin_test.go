@@ -53,7 +53,7 @@ func TestBootstrapLaunchdOwnershipMatrix(t *testing.T) {
 				}
 				return launchctlFixture(t, tc.state, tc.managerPID), nil
 			}
-			s := detectSupervision(filepath.Join(dir, "tslink.pid"), tc.running, 4242)
+			s := detectSupervision(context.Background(), filepath.Join(dir, "tslink.pid"), tc.running, 4242)
 			if s.Manager != tc.want || queries == 0 {
 				t.Fatalf("supervision=%+v queries=%d", s, queries)
 			}
@@ -105,7 +105,7 @@ func TestBootstrapLaunchdDisabledOverride(t *testing.T) {
 		}
 		return []byte("state = running\npid = 4242\nproperties = keepalive | runatload\n"), nil
 	}
-	s := detectSupervision(filepath.Join(dir, "tslink.pid"), true, 4242)
+	s := detectSupervision(context.Background(), filepath.Join(dir, "tslink.pid"), true, 4242)
 	// Autostart is disabled, so there is nothing to scope. An empty scope is
 	// how the renderer knows to print no boot-versus-login answer at all,
 	// rather than a login answer that would not happen.

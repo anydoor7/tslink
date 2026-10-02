@@ -49,7 +49,7 @@ func TestMCPFiniteEOFCRJoinedRecordsAnswerEveryCall(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			actions := fakeMCPActions()
-			actions.status = func() (any, error) {
+			actions.status = func(ctx context.Context) (any, error) {
 				time.Sleep(5 * time.Millisecond)
 				return mcpStatusSummary{DaemonRunning: true, ServiceCount: 7}, nil
 			}

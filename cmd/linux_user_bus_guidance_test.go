@@ -55,7 +55,7 @@ func TestLinuxUserBusFailureInstallStatusAndDoctorGuidance(t *testing.T) {
 			if output.ExitCode(err) != output.ExitConflict || !strings.Contains(err.Error(), "--no-daemon-install") {
 				t.Fatalf("install must refuse with a manual route: %v", err)
 			}
-			r := StatusResult{Supervision: detectSupervision(pid, false, 0), ServiceCount: 1, AuthStatus: authStatusNotAuthenticated}
+			r := StatusResult{Supervision: detectSupervision(context.Background(), pid, false, 0), ServiceCount: 1, AuthStatus: authStatusNotAuthenticated}
 			setStatusContinuation(&r)
 			var out bytes.Buffer
 			formatStatus(r, &out)
@@ -68,7 +68,7 @@ func TestLinuxUserBusFailureInstallStatusAndDoctorGuidance(t *testing.T) {
 				}
 			}
 			d := DoctorResult{Paths: DoctorPaths{PID: pid}}
-			diagnoseDaemon(&d, 1)
+			diagnoseDaemon(context.Background(), &d, 1)
 			if len(d.Findings) != 1 || !strings.Contains(d.Findings[0].Message, "XDG_RUNTIME_DIR") {
 				t.Fatalf("doctor lost user-bus prerequisite: %+v", d.Findings)
 			}

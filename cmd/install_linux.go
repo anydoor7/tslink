@@ -168,7 +168,7 @@ func runInstallLocked(cmd *cobra.Command, args []string) error {
 		if !previousState.Existed {
 			return installErr
 		}
-		restoreResult, restoreErr := restorePreviousSystemdUnit(previousState, servicePath)
+		restoreResult, restoreErr := restorePreviousSystemdUnit(ctx, previousState, servicePath)
 		if restoreErr != nil {
 			status := "the previous systemd user unit could not be restored"
 			if restoreResult.UnitRestored {
@@ -259,10 +259,11 @@ func activateSystemdService(ctx context.Context) (bool, error) {
 
 // Compensation restores the prior unit/job, rather than starting new work.
 // It may finish after caller cancellation/expiry, with bounded manager calls.
-func restorePreviousSystemdUnit(previous systemdPreviousState, servicePath string) (systemdRestoreResult, error) {
+func restorePreviousSystemdUnit(ctx context.Context, previous systemdPreviousState, servicePath string) (systemdRestoreResult, error) {
+	ctx = managerCompensationContext(ctx)
 	result := systemdRestoreResult{}
 	var restoreErrs []error
-	if commandOutput, err := systemctlCombinedOutput(context.Background(), "--user", "stop", systemdServiceName); err != nil {
+	if commandOutput, err := systemctlCombinedOutput(ctx, "--user", "stop", systemdServiceName); err != nil {
 		restoreErrs = append(restoreErrs, fmt.Errorf("stop failed upgraded systemd user service: %w%s", err, commandOutputSuffix(commandOutput)))
 	}
 	if err := atomicfile.WriteFileInExistingDir(servicePath, previous.Unit, secureSystemdUnitMode(previous.Mode)); err != nil {
@@ -270,7 +271,7 @@ func restorePreviousSystemdUnit(previous systemdPreviousState, servicePath strin
 		return result, errors.Join(restoreErrs...)
 	}
 	result.UnitRestored = true
-	if commandOutput, err := systemctlCombinedOutput(context.Background(), "--user", "daemon-reload"); err != nil {
+	if commandOutput, err := systemctlCombinedOutput(ctx, "--user", "daemon-reload"); err != nil {
 		restoreErrs = append(restoreErrs, fmt.Errorf("reload restored systemd user unit: %w%s", err, commandOutputSuffix(commandOutput)))
 	}
 	if len(restoreErrs) > 0 || !previous.OwnedRunning {
@@ -278,16 +279,16 @@ func restorePreviousSystemdUnit(previous systemdPreviousState, servicePath strin
 	}
 	// The failed upgrade may have exhausted the budget too. Only reset once
 	// the previous bytes are restored and reloaded, and only if restarting.
-	if commandOutput, err := systemctlCombinedOutput(context.Background(), "--user", "reset-failed", systemdServiceName); err != nil {
+	if commandOutput, err := systemctlCombinedOutput(ctx, "--user", "reset-failed", systemdServiceName); err != nil {
 		return result, fmt.Errorf("reset restored systemd user service start limit: %w%s", err, commandOutputSuffix(commandOutput))
 	}
-	if commandOutput, err := systemctlCombinedOutput(context.Background(), "--user", "restart", systemdServiceName); err != nil {
+	if commandOutput, err := systemctlCombinedOutput(ctx, "--user", "restart", systemdServiceName); err != nil {
 		return result, fmt.Errorf("restart restored systemd user service: %w%s", err, commandOutputSuffix(commandOutput))
 	}
 	// The restore path already returns an error the operator will read, and
 	// systemdSettleError folds the degradation notice into that text, so the
 	// notice is not propagated separately here.
-	if _, err := verifySystemdServiceRunning(context.Background()); err != nil {
+	if _, err := verifySystemdServiceRunning(ctx); err != nil {
 		return result, fmt.Errorf("verify restored systemd user service: %w", err)
 	}
 	result.Restarted = true

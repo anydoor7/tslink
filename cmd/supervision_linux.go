@@ -172,6 +172,6 @@ func linuxLingerState(ctx context.Context) lingerState {
 	}
 }
 
-func detectSupervision(pidPath string, running bool, pid int) Supervision {
-	return detectSupervisionContext(context.Background(), pidPath, running, pid)
+func detectSupervision(ctx context.Context, pidPath string, running bool, pid int) Supervision {
+	return detectSupervisionContext(ctx, pidPath, running, pid)
 }

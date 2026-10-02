@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"testing"
@@ -32,7 +33,7 @@ func TestDoctorEnvelopeCodeIsTheExitCode(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			setup(t)
 			var out bytes.Buffer
-			err := runDoctor(&out, doctorOptions{}, true)
+			err := runDoctor(context.Background(), &out, doctorOptions{}, true)
 			exit := output.ExitCode(err)
 			var envelope struct {
 				OK   bool `json:"ok"`

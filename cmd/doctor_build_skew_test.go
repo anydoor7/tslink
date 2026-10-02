@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -50,7 +51,7 @@ func writeRealDaemonSidecar(t *testing.T, targetPIDPath string, withBuildIdentit
 func TestDoctorBuildSkew_NoSidecarAtAllProducesNoFindingByDefault(t *testing.T) {
 	newDoctorTestEnv(t, []registry.Service{{Name: "web", Type: registry.TypeProxy, Target: "http://localhost:3000"}})
 
-	result := buildDoctorResult(doctorOptions{})
+	result := buildDoctorResult(context.Background(), doctorOptions{})
 	assertDoctorCodesRegistered(t, result)
 	assertDoctorNoFinding(t, result, inspect.WarningCodeDaemonBuildSkew)
 	if result.Daemon.BuildSkew {
@@ -74,7 +75,7 @@ func TestDoctorBuildSkew_BothSidesUnmeasuredProducesNoFinding(t *testing.T) {
 	t.Cleanup(func() { Version, Commit = oldVersion, oldCommit })
 	Version, Commit = developmentVersionUnmeasured, ""
 
-	result := buildDoctorResult(doctorOptions{})
+	result := buildDoctorResult(context.Background(), doctorOptions{})
 	assertDoctorCodesRegistered(t, result)
 	assertDoctorNoFinding(t, result, inspect.WarningCodeDaemonBuildSkew)
 	if result.Daemon.BuildSkew {
@@ -95,7 +96,7 @@ func TestDoctorBuildSkew_MatchingBuildsProduceNoFinding(t *testing.T) {
 
 	writeRealDaemonSidecar(t, env.pidPath, true, selfBuildIdentity())
 
-	result := buildDoctorResult(doctorOptions{})
+	result := buildDoctorResult(context.Background(), doctorOptions{})
 	assertDoctorCodesRegistered(t, result)
 	assertDoctorNoFinding(t, result, inspect.WarningCodeDaemonBuildSkew)
 	if result.Daemon.BuildSkew {
@@ -119,7 +120,7 @@ func TestDoctorBuildSkew_DifferingBuildsWarnWithBothValues(t *testing.T) {
 	t.Cleanup(func() { Version, Commit = oldVersion, oldCommit })
 	Version, Commit = "v2.0.0", "bbbbbbbbbbbb"
 
-	result := buildDoctorResult(doctorOptions{})
+	result := buildDoctorResult(context.Background(), doctorOptions{})
 	assertDoctorCodesRegistered(t, result)
 
 	finding := assertDoctorFinding(t, result, inspect.WarningCodeDaemonBuildSkew)
@@ -183,7 +184,7 @@ func TestDoctorBuildSkew_MissingSidecarFieldsStillWarnsAsUnknown(t *testing.T) {
 	t.Cleanup(func() { Version, Commit = oldVersion, oldCommit })
 	Version, Commit = "v2.0.0", "bbbbbbbbbbbb"
 
-	result := buildDoctorResult(doctorOptions{})
+	result := buildDoctorResult(context.Background(), doctorOptions{})
 	assertDoctorCodesRegistered(t, result)
 
 	finding := assertDoctorFinding(t, result, inspect.WarningCodeDaemonBuildSkew)
@@ -221,7 +222,7 @@ func TestDoctorBuildSkew_UnmeasurableCLIAgainstMeasuredDaemonStillWarns(t *testi
 		t.Fatalf("fixture did not verify: selfBuildIdentity() = %q, want the unmeasured empty string", got)
 	}
 
-	result := buildDoctorResult(doctorOptions{})
+	result := buildDoctorResult(context.Background(), doctorOptions{})
 	assertDoctorCodesRegistered(t, result)
 
 	finding := assertDoctorFinding(t, result, inspect.WarningCodeDaemonBuildSkew)
@@ -267,7 +268,7 @@ func TestDoctorBuildSkew_ExecutableIsAlwaysReportedIndependentlyOfBuildVersion(t
 	t.Cleanup(func() { Version, Commit = oldVersion, oldCommit })
 	Version, Commit = developmentVersionUnmeasured, ""
 
-	result := buildDoctorResult(doctorOptions{})
+	result := buildDoctorResult(context.Background(), doctorOptions{})
 	assertDoctorNoFinding(t, result, inspect.WarningCodeDaemonBuildSkew)
 	if result.Daemon.Executable == "" {
 		t.Fatal("Daemon.Executable = \"\", want the sidecar's resolved executable path even when BuildVersion is empty")

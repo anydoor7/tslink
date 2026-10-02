@@ -261,15 +261,15 @@ func selectListFields(summary ListServiceSummary, fields []string) map[string]an
 	return selected
 }
 
-func loadListResultForPaths(regPath, pidPath, snapshotPath string, opts listOptions) (ListResult, error) {
-	return commandStatus.loadListResultForPaths(regPath, pidPath, snapshotPath, opts)
+func loadListResultForPaths(ctx context.Context, regPath, pidPath, snapshotPath string, opts listOptions) (ListResult, error) {
+	return commandStatus.loadListResultForPaths(ctx, regPath, pidPath, snapshotPath, opts)
 }
 
-func (s statusRead) loadListResultForPaths(regPath, pidPath, snapshotPath string, opts listOptions) (ListResult, error) {
+func (s statusRead) loadListResultForPaths(ctx context.Context, regPath, pidPath, snapshotPath string, opts listOptions) (ListResult, error) {
 	if err := validateListOptions(opts); err != nil {
 		return ListResult{}, err
 	}
-	status, err := s.getStatusURLs(pidPath, regPath, snapshotPath)
+	status, err := s.getStatusURLs(ctx, pidPath, regPath, snapshotPath)
 	if err != nil {
 		return ListResult{}, err
 	}
@@ -455,7 +455,7 @@ func listTailnetDevices(ctx context.Context, regPath string, out io.Writer, isJS
 	return writeTailnetDevices(out, result)
 }
 
-func listServicesWithOptions(regPath string, out io.Writer, opts listOptions) error {
+func listServicesWithOptions(ctx context.Context, regPath string, out io.Writer, opts listOptions) error {
 	pidPath, err := listPIDPathFn()
 	if err != nil {
 		return err
@@ -464,7 +464,7 @@ func listServicesWithOptions(regPath string, out io.Writer, opts listOptions) er
 	if err != nil {
 		return err
 	}
-	result, err := loadListResultForPaths(regPath, pidPath, snapshotPath, opts)
+	result, err := loadListResultForPaths(ctx, regPath, pidPath, snapshotPath, opts)
 	if err != nil {
 		return err
 	}
@@ -473,7 +473,7 @@ func listServicesWithOptions(regPath string, out io.Writer, opts listOptions) er
 		return nil
 	}
 
-	status, err := getStatusURLs(pidPath, regPath, snapshotPath)
+	status, err := getStatusURLs(ctx, pidPath, regPath, snapshotPath)
 	if err != nil {
 		return err
 	}
@@ -512,8 +512,8 @@ func listServicesWithOptions(regPath string, out io.Writer, opts listOptions) er
 	return nil
 }
 
-func listServices(regPath string, out io.Writer) error {
-	return listServicesWithOptions(regPath, out, listOptions{})
+func listServices(ctx context.Context, regPath string, out io.Writer) error {
+	return listServicesWithOptions(ctx, regPath, out, listOptions{})
 }
 
 func init() {
@@ -566,14 +566,14 @@ Examples:
 				if err != nil {
 					return err
 				}
-				result, err := loadListResultForPaths(regPath, pidPath, snapshotPath, opts)
+				result, err := loadListResultForPaths(cmd.Context(), regPath, pidPath, snapshotPath, opts)
 				if err != nil {
 					return err
 				}
 				output.Success("list", result)
 				return nil
 			}
-			return listServicesWithOptions(regPath, cmd.OutOrStdout(), opts)
+			return listServicesWithOptions(cmd.Context(), regPath, cmd.OutOrStdout(), opts)
 		},
 	}
 	listCmd.Flags().String("name", "", "Return only the exact service name")

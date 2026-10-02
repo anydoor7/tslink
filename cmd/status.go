@@ -199,12 +199,12 @@ var (
 	readOnlyStatus = statusRead{readOnly: true}
 )
 
-func getStatus(pidPath, regPath string) (StatusResult, error) {
-	return commandStatus.getStatus(pidPath, regPath)
+func getStatus(ctx context.Context, pidPath, regPath string) (StatusResult, error) {
+	return commandStatus.getStatus(ctx, pidPath, regPath)
 }
 
-func (s statusRead) getStatus(pidPath, regPath string) (StatusResult, error) {
-	r := s.baseStatus(pidPath)
+func (s statusRead) getStatus(ctx context.Context, pidPath, regPath string) (StatusResult, error) {
+	r := s.baseStatus(ctx, pidPath)
 	reg, issues, err := registry.LoadForDiagnostics(regPath)
 	if err != nil {
 		return StatusResult{}, err
@@ -268,7 +268,7 @@ func ownershipProofsForRegistry(_ string) (map[string]bool, bool) {
 	return proofs, true
 }
 
-func (s statusRead) baseStatus(pidPath string) StatusResult {
+func (s statusRead) baseStatus(ctx context.Context, pidPath string) StatusResult {
 	r := StatusResult{DaemonState: daemonStateUnknown, AuthStatus: authStatusNotAuthenticated, Services: []StatusServiceState{}}
 	r.MCPBindings = mcpBindingViews(statusNowFn())
 	if isRunningFn(pidPath) {
@@ -281,7 +281,7 @@ func (s statusRead) baseStatus(pidPath string) StatusResult {
 		// leaves the state unknown.
 		r.DaemonState = daemonStateAbsent
 	}
-	r.Supervision = detectSupervisionFn(context.Background(), pidPath, r.DaemonRunning, r.DaemonPID)
+	r.Supervision = detectSupervisionFn(ctx, pidPath, r.DaemonRunning, r.DaemonPID)
 	values := credentials.SlotValues{}
 	values.APIKey, _ = getAPIKeyFn()
 	hasClientSecret := hasClientSecretFn()
@@ -426,17 +426,17 @@ func currentRegistryFingerprint(regPath string) string {
 	return fingerprint
 }
 
-func getPollableStatus(pidPath, regPath, snapshotPath, authHandoffPath string) (StatusResult, error) {
-	return commandStatus.getPollableStatus(pidPath, regPath, snapshotPath, authHandoffPath)
+func getPollableStatus(ctx context.Context, pidPath, regPath, snapshotPath, authHandoffPath string) (StatusResult, error) {
+	return commandStatus.getPollableStatus(ctx, pidPath, regPath, snapshotPath, authHandoffPath)
 }
 
-func (s statusRead) getPollableStatus(pidPath, regPath, snapshotPath, authHandoffPath string) (StatusResult, error) {
-	r, err := s.getStatus(pidPath, regPath)
+func (s statusRead) getPollableStatus(ctx context.Context, pidPath, regPath, snapshotPath, authHandoffPath string) (StatusResult, error) {
+	r, err := s.getStatus(ctx, pidPath, regPath)
 	if err != nil {
 		snapshot, snapshotErr := runtimeLoadSnapshotFn(snapshotPath)
 		if snapshotErr == nil && snapshot != nil && snapshot.GlobalError != nil {
 			ownershipProofs, ownershipProofAvailable := ownershipProofsForRegistry(regPath)
-			return s.statusFromGlobalFailure(pidPath, regPath, snapshot, ownershipProofs, ownershipProofAvailable), nil
+			return s.statusFromGlobalFailure(ctx, pidPath, regPath, snapshot, ownershipProofs, ownershipProofAvailable), nil
 		}
 		return StatusResult{}, err
 	}
@@ -556,8 +556,8 @@ func (s statusRead) getPollableStatus(pidPath, regPath, snapshotPath, authHandof
 	return r, nil
 }
 
-func (s statusRead) statusFromGlobalFailure(pidPath, regPath string, snapshot *tsruntime.Snapshot, ownershipProofs map[string]bool, ownershipProofAvailable bool) StatusResult {
-	r := s.baseStatus(pidPath)
+func (s statusRead) statusFromGlobalFailure(ctx context.Context, pidPath, regPath string, snapshot *tsruntime.Snapshot, ownershipProofs map[string]bool, ownershipProofAvailable bool) StatusResult {
+	r := s.baseStatus(ctx, pidPath)
 	r.OwnershipProofAvailable = ownershipProofAvailable
 	r.GlobalError = cloneServiceError(snapshot.GlobalError)
 	// The registry cannot be read, so this snapshot cannot be verified as
@@ -666,20 +666,20 @@ func formatStatus(r StatusResult, out io.Writer) {
 	formatAlerts(out, r.Alerts)
 }
 
-func getStatusURLs(pidPath, regPath, snapshotPath string) (StatusURLsResult, error) {
-	return commandStatus.getStatusURLs(pidPath, regPath, snapshotPath)
+func getStatusURLs(ctx context.Context, pidPath, regPath, snapshotPath string) (StatusURLsResult, error) {
+	return commandStatus.getStatusURLs(ctx, pidPath, regPath, snapshotPath)
 }
 
-func (s statusRead) getStatusURLs(pidPath, regPath, snapshotPath string) (StatusURLsResult, error) {
-	return s.getStatusURLsWithAuth(pidPath, regPath, snapshotPath, filepath.Join(filepath.Dir(snapshotPath), "auth-handoff.json"))
+func (s statusRead) getStatusURLs(ctx context.Context, pidPath, regPath, snapshotPath string) (StatusURLsResult, error) {
+	return s.getStatusURLsWithAuth(ctx, pidPath, regPath, snapshotPath, filepath.Join(filepath.Dir(snapshotPath), "auth-handoff.json"))
 }
 
-func getStatusURLsWithAuth(pidPath, regPath, snapshotPath, authHandoffPath string) (StatusURLsResult, error) {
-	return commandStatus.getStatusURLsWithAuth(pidPath, regPath, snapshotPath, authHandoffPath)
+func getStatusURLsWithAuth(ctx context.Context, pidPath, regPath, snapshotPath, authHandoffPath string) (StatusURLsResult, error) {
+	return commandStatus.getStatusURLsWithAuth(ctx, pidPath, regPath, snapshotPath, authHandoffPath)
 }
 
-func (s statusRead) getStatusURLsWithAuth(pidPath, regPath, snapshotPath, authHandoffPath string) (StatusURLsResult, error) {
-	status, err := s.getPollableStatus(pidPath, regPath, snapshotPath, authHandoffPath)
+func (s statusRead) getStatusURLsWithAuth(ctx context.Context, pidPath, regPath, snapshotPath, authHandoffPath string) (StatusURLsResult, error) {
+	status, err := s.getPollableStatus(ctx, pidPath, regPath, snapshotPath, authHandoffPath)
 	if err != nil {
 		return StatusURLsResult{}, err
 	}
@@ -1134,7 +1134,7 @@ Output lines:
 			if err != nil {
 				return err
 			}
-			r, err := getStatusURLsWithAuth(pidPath, regPath, snapshotPath, authHandoffPath)
+			r, err := getStatusURLsWithAuth(cmd.Context(), pidPath, regPath, snapshotPath, authHandoffPath)
 			if err != nil {
 				return err
 			}
@@ -1167,7 +1167,7 @@ Output lines:
 		if err != nil {
 			return err
 		}
-		r, err := getPollableStatus(pidPath, regPath, snapshotPath, authHandoffPath)
+		r, err := getPollableStatus(cmd.Context(), pidPath, regPath, snapshotPath, authHandoffPath)
 		if err != nil {
 			return err
 		}

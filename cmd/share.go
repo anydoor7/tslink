@@ -581,8 +581,8 @@ func shareEnrollmentPendingCode(code string) bool {
 	return code == registry.CodeURLNotReady || code == registry.CodeEnrollmentRequired
 }
 
-func shareOutcomeOnce(paths sharePaths, name, fileName string) (ShareResult, bool, error) {
-	resolution, err := shareResolveEndpointOnceFn(paths.PID, paths.Registry, paths.Snapshot, name)
+func shareOutcomeOnce(ctx context.Context, paths sharePaths, name, fileName string) (ShareResult, bool, error) {
+	resolution, err := shareResolveEndpointOnceFn(ctx, paths.PID, paths.Registry, paths.Snapshot, name)
 	if err == nil {
 		endpoint, err := directFileURL(resolution.Result.URL, fileName)
 		if err != nil {
@@ -593,7 +593,7 @@ func shareOutcomeOnce(paths sharePaths, name, fileName string) (ShareResult, boo
 	if code, ok := registry.ErrorCode(err); !ok || !shareEnrollmentPendingCode(code) {
 		return ShareResult{}, false, err
 	}
-	status, err := sharePollableStatusFn(paths.PID, paths.Registry, paths.Snapshot, paths.AuthHandoff)
+	status, err := sharePollableStatusFn(ctx, paths.PID, paths.Registry, paths.Snapshot, paths.AuthHandoff)
 	if err != nil {
 		return ShareResult{}, false, err
 	}
@@ -604,7 +604,7 @@ func shareOutcomeOnce(paths sharePaths, name, fileName string) (ShareResult, boo
 }
 
 func waitForShareOutcome(ctx context.Context, paths sharePaths, name, fileName string, wait time.Duration) (ShareResult, error) {
-	result, done, err := shareOutcomeOnce(paths, name, fileName)
+	result, done, err := shareOutcomeOnce(ctx, paths, name, fileName)
 	if err != nil || done {
 		return result, err
 	}
@@ -622,7 +622,7 @@ func waitForShareOutcome(ctx context.Context, paths sharePaths, name, fileName s
 		case <-timer.C:
 			return ShareResult{}, registry.URLNotReadyError(name)
 		case <-ticker.C:
-			result, done, err = shareOutcomeOnce(paths, name, fileName)
+			result, done, err = shareOutcomeOnce(ctx, paths, name, fileName)
 			if err != nil || done {
 				return result, err
 			}

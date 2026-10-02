@@ -190,7 +190,7 @@ func TestWindowsTaskDisabledFailureThenRetry(t *testing.T) {
 				if _, err := os.Stat(path); err != nil {
 					t.Fatal("failure discarded retry evidence")
 				}
-				if s := detectSupervision("isolated.pid", f.running, 4242); s.Autostart || s.RestartOnExit {
+				if s := detectSupervision(context.Background(), "isolated.pid", f.running, 4242); s.Autostart || s.RestartOnExit {
 					t.Fatalf("disabled task earned healthy supervision: %+v", s)
 				}
 				f.fail, f.calls = "", nil
@@ -232,7 +232,7 @@ func TestWindowsTaskDisabledOwnershipAndPolicyRepair(t *testing.T) {
 			if (err != nil) != foreign {
 				t.Fatalf("ownership classification %s: %v", variant, err)
 			}
-			if s := detectSupervision("isolated.pid", false, 0); s.Autostart || s.RestartOnExit {
+			if s := detectSupervision(context.Background(), "isolated.pid", false, 0); s.Autostart || s.RestartOnExit {
 				t.Fatalf("disabled/broken policy earned supervision: %+v", s)
 			}
 			err = runInstallLocked(windowsTestCommand(), nil)

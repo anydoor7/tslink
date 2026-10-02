@@ -1372,13 +1372,13 @@ func TestRestorePreviousLaunchAgentDoesNotClaimReloadedWhenBootstrapFails(t *tes
 		return nil, nil
 	})
 
-	result, err := restorePreviousLaunchAgent(
+	result, err := restorePreviousLaunchAgent(context.Background(),
 		launchAgentPreviousState{Existed: true, Plist: []byte("old plist"), Mode: 0o644, Domain: "gui/501", Target: previousTarget},
 		launchctlLoadResult{Target: previousTarget, Bootstrapped: true},
 		plistPath,
 	)
 	if err == nil || !strings.Contains(err.Error(), "bootstrap failed") || !strings.Contains(err.Error(), "bootstrap denied") {
-		t.Fatalf("restorePreviousLaunchAgent() error = %v, want surfaced bootstrap failure", err)
+		t.Fatalf("restorePreviousLaunchAgent(context.Background(), ) error = %v, want surfaced bootstrap failure", err)
 	}
 	if !result.PlistRestored || result.Reloaded {
 		t.Fatalf("restore result = %+v, want restored bytes and Reloaded=false", result)
@@ -1553,7 +1553,7 @@ func TestRestorePreviousLaunchAgentSupportsSymlinkedLaunchAgentsDirectoryWithout
 		t.Fatalf("WriteFile(new plist) error = %v", err)
 	}
 
-	result, err := restorePreviousLaunchAgent(
+	result, err := restorePreviousLaunchAgent(context.Background(),
 		launchAgentPreviousState{Existed: true, Plist: []byte("old plist"), Mode: 0o644},
 		launchctlLoadResult{},
 		plistPath,
@@ -1588,13 +1588,13 @@ func TestRestorePreviousLaunchAgentAtomicWriteRejectsReplacementSymlink(t *testi
 		t.Fatalf("Symlink() error = %v", err)
 	}
 
-	result, err := restorePreviousLaunchAgent(
+	result, err := restorePreviousLaunchAgent(context.Background(),
 		launchAgentPreviousState{Existed: true, Plist: []byte("old plist"), Mode: 0o600},
 		launchctlLoadResult{},
 		plistPath,
 	)
 	if err == nil || !strings.Contains(err.Error(), "symlink") {
-		t.Fatalf("restorePreviousLaunchAgent() error = %v, want atomic writer symlink rejection", err)
+		t.Fatalf("restorePreviousLaunchAgent(context.Background(), ) error = %v, want atomic writer symlink rejection", err)
 	}
 	if result.PlistRestored || result.Reloaded {
 		t.Fatalf("restore result = %+v, want no claimed restoration", result)

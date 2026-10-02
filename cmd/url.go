@@ -56,15 +56,15 @@ func exactServiceURL(result StatusURLsResult, name string) (serviceURLResolution
 	return serviceURLResolution{Result: URLResult{Name: name}}, false, false
 }
 
-func resolveServiceEndpointOnce(pidPath, regPath, snapshotPath, name string) (serviceURLResolution, error) {
-	return commandStatus.resolveServiceEndpointOnce(pidPath, regPath, snapshotPath, name)
+func resolveServiceEndpointOnce(ctx context.Context, pidPath, regPath, snapshotPath, name string) (serviceURLResolution, error) {
+	return commandStatus.resolveServiceEndpointOnce(ctx, pidPath, regPath, snapshotPath, name)
 }
 
-func (s statusRead) resolveServiceEndpointOnce(pidPath, regPath, snapshotPath, name string) (serviceURLResolution, error) {
+func (s statusRead) resolveServiceEndpointOnce(ctx context.Context, pidPath, regPath, snapshotPath, name string) (serviceURLResolution, error) {
 	if err := registry.ValidateName(name); err != nil {
 		return serviceURLResolution{}, err
 	}
-	status, err := s.getStatusURLs(pidPath, regPath, snapshotPath)
+	status, err := s.getStatusURLs(ctx, pidPath, regPath, snapshotPath)
 	if err != nil {
 		return serviceURLResolution{}, err
 	}
@@ -82,7 +82,7 @@ func (s statusRead) resolveServiceEndpointOnce(pidPath, regPath, snapshotPath, n
 }
 
 func (s statusRead) resolveServiceEndpoint(ctx context.Context, pidPath, regPath, snapshotPath, name string, wait time.Duration) (serviceURLResolution, error) {
-	result, err := s.resolveServiceEndpointOnce(pidPath, regPath, snapshotPath, name)
+	result, err := s.resolveServiceEndpointOnce(ctx, pidPath, regPath, snapshotPath, name)
 	if err == nil || wait <= 0 {
 		return result, err
 	}
@@ -101,7 +101,7 @@ func (s statusRead) resolveServiceEndpoint(ctx context.Context, pidPath, regPath
 		case <-timer.C:
 			return serviceURLResolution{}, registry.URLNotReadyError(name)
 		case <-ticker.C:
-			result, err = s.resolveServiceEndpointOnce(pidPath, regPath, snapshotPath, name)
+			result, err = s.resolveServiceEndpointOnce(ctx, pidPath, regPath, snapshotPath, name)
 			if err == nil {
 				return result, nil
 			}

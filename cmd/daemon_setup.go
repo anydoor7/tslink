@@ -106,6 +106,19 @@ func runBoundedManagerCommandContext(ctx context.Context, name string, timeout t
 	return output, err
 }
 
+// managerCompensationContext retains caller attribution for bounded restoration
+// of captured prior state and disabling an uncertain replacement. These private
+// compensation paths already outlive request cancellation/expiry; they must not
+// use this context to install or activate a new replacement.
+func managerCompensationContext(ctx context.Context) context.Context {
+	ctx = context.WithoutCancel(ctx)
+	if session, ok := mcpscope.FromContext(ctx); ok {
+		session.ExpiresAt = nil
+		ctx = mcpscope.WithSession(ctx, session)
+	}
+	return ctx
+}
+
 func unmanagedSupervision(running bool, detail string) Supervision {
 	manager := "none"
 	if running {
@@ -258,7 +271,11 @@ func ensureDaemon(ctx context.Context, out io.Writer, noInstall bool) error {
 			return registry.CodedError{Code: "daemon_supervision_unverified", Message: fmt.Sprintf("running daemon cannot be reused safely (%v); inspect with 'tslink doctor' and resolve the reported supervisor issue. For a manual daemon, run 'tslink stop', then 'tslink install'; no process was taken over", err), Next: []string{"tslink doctor", "tslink stop", "tslink install"}}
 		}
 		if err := checkBootstrapScope(ctx, path); err != nil {
-			if sessionErr := mcpscope.CheckEffect(ctx); sessionErr != nil {
+			var denial mcpscope.Denied
+			if errors.As(err, &denial) {
+				return err
+			}
+			if sessionErr := mcpscope.CheckEffect(ctx); errors.As(sessionErr, &denial) {
 				return sessionErr
 			}
 			return daemonSetupError(err)

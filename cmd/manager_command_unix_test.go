@@ -12,16 +12,16 @@ import (
 )
 
 func TestBoundedManagerCommandUsesRealSubprocessAndFiniteDeadline(t *testing.T) {
-	out, err := runBoundedManagerCommand("/bin/sh", time.Second, "-c", "printf ready")
+	out, err := runBoundedManagerCommand(context.Background(), "/bin/sh", time.Second, "-c", "printf ready")
 	if err != nil || string(out) != "ready" {
 		t.Fatalf("successful helper output = %q, err=%v", out, err)
 	}
-	out, err = runBoundedManagerCommand("/bin/sh", time.Second, "-c", "printf rejected >&2; exit 7")
+	out, err = runBoundedManagerCommand(context.Background(), "/bin/sh", time.Second, "-c", "printf rejected >&2; exit 7")
 	if err == nil || string(out) != "rejected" {
 		t.Fatalf("failed helper output = %q, err=%v", out, err)
 	}
 	start := time.Now()
-	_, err = runBoundedManagerCommand("/bin/sleep", 40*time.Millisecond, "30")
+	_, err = runBoundedManagerCommand(context.Background(), "/bin/sleep", 40*time.Millisecond, "30")
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("blocked helper error = %v, want deadline exceeded", err)
 	}
@@ -37,7 +37,7 @@ func TestBoundedManagerCommandUsesRealSubprocessAndFiniteDeadline(t *testing.T) 
 func TestBoundedManagerTimeoutReleasesSupervisorTransaction(t *testing.T) {
 	testenv.SetHome(t, t.TempDir())
 	err := withSupervisorTransaction(context.Background(), func() error {
-		_, err := runBoundedManagerCommand("/bin/sleep", 40*time.Millisecond, "30")
+		_, err := runBoundedManagerCommand(context.Background(), "/bin/sleep", 40*time.Millisecond, "30")
 		return err
 	})
 	if !errors.Is(err, context.DeadlineExceeded) {

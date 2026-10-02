@@ -80,13 +80,13 @@ func TestMCPScopeProjectionAndMalformedInputs(t *testing.T) {
 		}
 	}
 	for _, value := range []any{nil, "bad"} {
-		a.status = func() (any, error) {
+		a.status = func(ctx context.Context) (any, error) {
 			if value == nil {
 				return nil, errors.New("status unavailable")
 			}
 			return value, nil
 		}
-		if _, err := mcpScopedDoctor(a, scope); err == nil {
+		if _, err := mcpScopedDoctor(context.Background(), a, scope); err == nil {
 			t.Fatal("bad status accepted")
 		}
 	}
@@ -266,10 +266,10 @@ func TestMCPAuthorizationMatrix(t *testing.T) {
 
 func scopeFixtureActions() mcpActions {
 	a := fakeMCPActions()
-	a.list = func() (any, error) {
+	a.list = func(ctx context.Context) (any, error) {
 		return map[string]any{"services": []ListServiceSummary{{Name: "photos", Type: registry.TypeProxy, State: "exact", FunnelState: "not_requested"}, {Name: "finance", Type: registry.TypeProxy, State: "failed", FunnelState: "not_requested"}}}, nil
 	}
-	a.status = func() (any, error) {
+	a.status = func(ctx context.Context) (any, error) {
 		return mcpStatusSummary{DaemonState: "absent", ServiceCount: 99, AuthorizedServiceCount: 99, AuthURL: "secret-enrollment", Next: []string{"finance"}, Credentials: StatusCredentials{MetadataError: "finance-secret"}, MCPBindings: []mcpBindingView{{Binding: mcpscope.Binding{Principal: "finance-owner", Scope: mcpscope.Scope{Role: "owner"}}}}, Services: []mcpHealthService{{Name: "photos", Status: "up", Health: health.State{State: health.Degraded}}, {Name: "finance", Status: "up", Health: health.State{State: health.Down}}}}, nil
 	}
 	a.tagsList = func() (any, error) {

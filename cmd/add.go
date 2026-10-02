@@ -449,7 +449,7 @@ func buildAddResult(ctx context.Context, svc registry.Service, created bool, pid
 func resolveAddEndpoint(ctx context.Context, pidPath, regPath, snapshotPath, name string, wait time.Duration) (serviceURLResolution, string, error) {
 	deadline := time.Now().Add(wait)
 	for {
-		resolution, err := resolveServiceEndpointOnce(pidPath, regPath, snapshotPath, name)
+		resolution, err := resolveServiceEndpointOnce(ctx, pidPath, regPath, snapshotPath, name)
 		if err == nil {
 			return resolution, "", nil
 		}

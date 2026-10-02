@@ -957,7 +957,7 @@ func TestRestorePreviousSystemdUnitReportsAccurateProgress(t *testing.T) {
 			return nil, nil
 		}
 
-		result, err := restorePreviousSystemdUnit(
+		result, err := restorePreviousSystemdUnit(context.Background(),
 			systemdPreviousState{Existed: true, Unit: []byte("old unit"), Mode: 0o644, OwnedRunning: true},
 			servicePath,
 		)
@@ -1011,7 +1011,7 @@ func TestRestorePreviousSystemdUnitReportsAccurateProgress(t *testing.T) {
 				return nil, nil
 			}
 
-			result, err := restorePreviousSystemdUnit(
+			result, err := restorePreviousSystemdUnit(context.Background(),
 				systemdPreviousState{Existed: true, Unit: []byte("old unit"), Mode: 0o644, OwnedRunning: true},
 				servicePath,
 			)
@@ -1565,7 +1565,7 @@ func TestLinuxRestoreResetsOnlyAfterRestoredReload(t *testing.T) {
 				}
 				return nil, nil
 			}
-			result, err := restorePreviousSystemdUnit(previous, path)
+			result, err := restorePreviousSystemdUnit(context.Background(), previous, path)
 			want := "stop daemon-reload"
 			switch mode {
 			case "limited":
