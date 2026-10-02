@@ -64,16 +64,17 @@ type WarningView struct {
 }
 
 type ServiceView struct {
-	SchemaVersion int           `json:"schema_version"`
-	Name          string        `json:"name"`
-	Type          string        `json:"type"`
-	Endpoint      EndpointView  `json:"endpoint"`
-	Exposure      ExposureView  `json:"exposure"`
-	Tags          SummaryView   `json:"tags"`
-	Allow         SummaryView   `json:"allow"`
-	Backend       BackendView   `json:"backend"`
-	Funnel        bool          `json:"funnel,omitempty"`
-	Warnings      []WarningView `json:"warnings,omitempty"`
+	RequestLimits *registry.EffectiveRequestLimits `json:"request_limits,omitempty"`
+	SchemaVersion int                              `json:"schema_version"`
+	Name          string                           `json:"name"`
+	Type          string                           `json:"type"`
+	Endpoint      EndpointView                     `json:"endpoint"`
+	Exposure      ExposureView                     `json:"exposure"`
+	Tags          SummaryView                      `json:"tags"`
+	Allow         SummaryView                      `json:"allow"`
+	Backend       BackendView                      `json:"backend"`
+	Funnel        bool                             `json:"funnel,omitempty"`
+	Warnings      []WarningView                    `json:"warnings,omitempty"`
 }
 
 func ServiceViews(services []registry.Service) []ServiceView {
@@ -86,6 +87,7 @@ func ServiceViews(services []registry.Service) []ServiceView {
 
 func ServiceViewFor(svc registry.Service) ServiceView {
 	view := ServiceView{
+		RequestLimits: svc.EffectiveRequestLimits(),
 		SchemaVersion: SchemaVersion,
 		Name:          svc.Name,
 		Type:          svc.Type,

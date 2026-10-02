@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -93,8 +94,8 @@ func TestHTTPResourceBudgetsConfigured(t *testing.T) {
 	if srv.ReadHeaderTimeout != httpReadHeaderTimeout {
 		t.Fatalf("ReadHeaderTimeout = %s, want %s", srv.ReadHeaderTimeout, httpReadHeaderTimeout)
 	}
-	if srv.ReadTimeout != httpReadTimeout {
-		t.Fatalf("ReadTimeout = %s, want %s", srv.ReadTimeout, httpReadTimeout)
+	if srv.ReadTimeout != 0 {
+		t.Fatalf("ReadTimeout = %s, want 0; body middleware owns progress deadlines", srv.ReadTimeout)
 	}
 	if srv.IdleTimeout != httpIdleTimeout {
 		t.Fatalf("IdleTimeout = %s, want %s", srv.IdleTimeout, httpIdleTimeout)
@@ -1533,9 +1534,10 @@ func TestStartNodeLocked_HTTPServerReadHeaderTimeoutClosesSlowClient(t *testing.
 	}
 
 	err = s.startNodeLocked(context.Background(), registry.Service{
-		Name: "files",
-		Type: registry.TypeFile,
-		Path: t.TempDir(),
+		Name:          "files",
+		Type:          registry.TypeFile,
+		Path:          t.TempDir(),
+		RequestLimits: &registry.RequestLimits{HeaderTimeout: "25ms"},
 	})
 	if err != nil {
 		t.Fatalf("startNodeLocked() error = %v", err)
@@ -1557,14 +1559,13 @@ func TestStartNodeLocked_HTTPServerReadHeaderTimeoutClosesSlowClient(t *testing.
 		t.Fatalf("SetReadDeadline() error = %v", err)
 	}
 
-	var b [1]byte
-	_, err = conn.Read(b[:])
-	if err == nil {
-		t.Fatal("partial request unexpectedly received data; want timeout-driven close")
+	response, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		t.Fatalf("header timeout did not return a response: %v", err)
 	}
-	var netErr net.Error
-	if errors.As(err, &netErr) && netErr.Timeout() {
-		t.Fatalf("connection remained open until client read deadline; http.Server ReadHeaderTimeout was not applied: %v", err)
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusRequestTimeout {
+		t.Fatalf("status=%d want 408", response.StatusCode)
 	}
 }
 

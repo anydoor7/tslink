@@ -81,6 +81,10 @@ type WarningCodeMeta struct {
 }
 
 var WarningCodeRegistry = map[string]WarningCodeMeta{
+	registry.CodeRequestBodyLimit:     {Severity: "warning", Source: "http.request_limits", Description: "An HTTP upload exceeded this service's body size limit; adjust --max-request-body."},
+	registry.CodeRequestReadTimeout:   {Severity: "warning", Source: "http.request_limits", Description: "An HTTP upload stopped making progress; adjust --request-read-timeout."},
+	registry.CodeRequestHeaderTimeout: {Severity: "warning", Source: "http.request_limits", Description: "An HTTP request exceeded the header timeout; adjust --request-header-timeout."},
+	registry.CodeInvalidRequestLimits: {Severity: "error", Source: "service.request_limits", Description: "HTTP request limits are invalid."},
 	WarningCodeTCPHTTPACLNotApplicable: {
 		Severity:    "warning",
 		Source:      "service.type",

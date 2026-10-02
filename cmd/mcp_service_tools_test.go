@@ -72,6 +72,12 @@ var mcpCoveredCommands = map[string]mcpCoveredCommand{
 		Tools: []string{"share"},
 		Args:  []string{"target"},
 		Flags: map[string]string{
+			"max-request-body":           "request_limits.max_body",
+			"ack-unlimited-request-body": "request_limits.unlimited_ack",
+			"request-header-timeout":     "request_limits.header_timeout",
+			"request-read-timeout":       "request_limits.read_timeout",
+			"idle-timeout":               "request_limits.idle_timeout",
+
 			"no-daemon-install": "no_daemon_install",
 			"ephemeral":         "ephemeral",
 			"name":              "name",
@@ -85,6 +91,12 @@ var mcpCoveredCommands = map[string]mcpCoveredCommand{
 		Tools: []string{"add"},
 		Args:  []string{"name", "type"},
 		Flags: map[string]string{
+			"max-request-body":           "request_limits.max_body",
+			"ack-unlimited-request-body": "request_limits.unlimited_ack",
+			"request-header-timeout":     "request_limits.header_timeout",
+			"request-read-timeout":       "request_limits.read_timeout",
+			"idle-timeout":               "request_limits.idle_timeout",
+
 			"allow":             "allow",
 			"control-url":       "control_url",
 			"dir":               "dir",
@@ -285,10 +297,20 @@ func mcpManifestFixture(t *testing.T) CLIManifest {
 func mcpToolInputProperties(t *testing.T, tools []string) map[string]struct{} {
 	t.Helper()
 	properties := map[string]struct{}{}
-	for _, name := range tools {
-		for property := range mcpToolByName(t, name).InputSchema["properties"].(map[string]any) {
-			properties[property] = struct{}{}
+	var visit func(string, map[string]any)
+	visit = func(prefix string, fields map[string]any) {
+		for property, raw := range fields {
+			key := prefix + property
+			properties[key] = struct{}{}
+			if schema, ok := raw.(map[string]any); ok {
+				if nested, ok := schema["properties"].(map[string]any); ok {
+					visit(key+".", nested)
+				}
+			}
 		}
+	}
+	for _, name := range tools {
+		visit("", mcpToolByName(t, name).InputSchema["properties"].(map[string]any))
 	}
 	return properties
 }

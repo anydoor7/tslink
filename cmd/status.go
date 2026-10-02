@@ -148,22 +148,23 @@ type StatusRuntimeSnapshotResult struct {
 }
 
 type StatusServiceView struct {
-	Name            string                  `json:"name"`
-	Type            string                  `json:"type"`
-	RuntimeState    string                  `json:"runtime_state"`
-	OwnershipProof  bool                    `json:"ownership_proof"`
-	Endpoint        inspect.EndpointView    `json:"endpoint"`
-	Exposure        inspect.ExposureView    `json:"exposure"`
-	FunnelRequested bool                    `json:"funnel_requested"`
-	FunnelActive    bool                    `json:"funnel_active"`
-	FunnelState     string                  `json:"funnel_state"`
-	FunnelExpiresAt *time.Time              `json:"funnel_expires_at,omitempty"`
-	FunnelRemaining *string                 `json:"funnel_remaining,omitempty"`
-	Error           *tsruntime.ServiceError `json:"error,omitempty"`
-	Allow           inspect.SummaryView     `json:"allow"`
-	Tags            inspect.SummaryView     `json:"tags"`
-	Backend         inspect.BackendView     `json:"backend"`
-	Warnings        []inspect.WarningView   `json:"warnings,omitempty"`
+	RequestLimits   *registry.EffectiveRequestLimits `json:"request_limits,omitempty"`
+	Name            string                           `json:"name"`
+	Type            string                           `json:"type"`
+	RuntimeState    string                           `json:"runtime_state"`
+	OwnershipProof  bool                             `json:"ownership_proof"`
+	Endpoint        inspect.EndpointView             `json:"endpoint"`
+	Exposure        inspect.ExposureView             `json:"exposure"`
+	FunnelRequested bool                             `json:"funnel_requested"`
+	FunnelActive    bool                             `json:"funnel_active"`
+	FunnelState     string                           `json:"funnel_state"`
+	FunnelExpiresAt *time.Time                       `json:"funnel_expires_at,omitempty"`
+	FunnelRemaining *string                          `json:"funnel_remaining,omitempty"`
+	Error           *tsruntime.ServiceError          `json:"error,omitempty"`
+	Allow           inspect.SummaryView              `json:"allow"`
+	Tags            inspect.SummaryView              `json:"tags"`
+	Backend         inspect.BackendView              `json:"backend"`
+	Warnings        []inspect.WarningView            `json:"warnings,omitempty"`
 }
 
 // statusRead is how a caller reads status. The commands that report status
@@ -712,6 +713,7 @@ func (s statusRead) getStatusURLsWithAuth(pidPath, regPath, snapshotPath, authHa
 			Tags:            view.Tags,
 			Backend:         view.Backend,
 			Warnings:        append([]inspect.WarningView(nil), view.Warnings...),
+			RequestLimits:   svc.EffectiveRequestLimits(),
 		}
 		snapshotService, snapshotServiceOK := snapshotServices[svc.Name]
 		if snapshotContributesRuntimeEvidence(freshness) && snapshotServiceOK {
@@ -722,6 +724,7 @@ func (s statusRead) getStatusURLsWithAuth(pidPath, regPath, snapshotPath, authHa
 				service.FunnelState = snapshotService.FunnelState
 			}
 			service.Error = snapshotService.Error
+			service.Warnings = append(service.Warnings, snapshotService.Warnings...)
 		}
 
 		switch {
@@ -963,7 +966,7 @@ func formatStatusURLs(r StatusURLsResult, out io.Writer) {
 
 	fmt.Fprintln(out)
 	writer := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(writer, "NAME\tTYPE\tENDPOINT\tSTATE\tEXPOSURE\tFUNNEL EXPIRES\tFUNNEL TTL\tALLOW\tTAGS\tBACKEND\tWARNINGS")
+	fmt.Fprintln(writer, "NAME\tTYPE\tENDPOINT\tSTATE\tEXPOSURE\tFUNNEL EXPIRES\tFUNNEL TTL\tALLOW\tTAGS\tBACKEND\tWARNINGS\tREQUEST LIMITS")
 	for _, svc := range r.Services {
 		remaining := "-"
 		if svc.FunnelRemaining != nil {
@@ -971,7 +974,7 @@ func formatStatusURLs(r StatusURLsResult, out io.Writer) {
 		}
 		fmt.Fprintf(
 			writer,
-			"%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			"%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			svc.Name,
 			svc.Type,
 			emptyDash(svc.Endpoint.Display),
@@ -983,6 +986,7 @@ func formatStatusURLs(r StatusURLsResult, out io.Writer) {
 			summaryLabel(svc.Tags),
 			emptyDash(svc.Backend.Display),
 			warningCodes(svc.Warnings),
+			requestLimitsLabel(svc.RequestLimits),
 		)
 	}
 	_ = writer.Flush()

@@ -31,10 +31,11 @@ const (
 )
 
 type ShareResult struct {
-	URL     string `json:"url,omitempty"`
-	Name    string `json:"name,omitempty"`
-	Status  string `json:"status"`
-	AuthURL string `json:"auth_url,omitempty"`
+	RequestLimits *registry.EffectiveRequestLimits `json:"request_limits,omitempty"`
+	URL           string                           `json:"url,omitempty"`
+	Name          string                           `json:"name,omitempty"`
+	Status        string                           `json:"status"`
+	AuthURL       string                           `json:"auth_url,omitempty"`
 	// FunnelExpiresAt is the deadline of the Funnel share this call returned.
 	// A reused share keeps its own, which can be sooner than the one asked
 	// for, so it is reported rather than implied by the request.
@@ -67,6 +68,7 @@ type shareTargetSpec struct {
 // which runs registry.ValidateService and therefore
 // registry.ValidateFunnelGuardrails.
 type shareRequest struct {
+	RequestLimits   *registry.RequestLimits
 	Target          string
 	Name            string
 	Ephemeral       bool
@@ -208,6 +210,10 @@ func inferShareTarget(target string, ephemeral bool) (shareTargetSpec, error) {
 // the two surfaces. It deliberately does not re-check the Funnel guardrails:
 // registry.ValidateService is the enforcement point and runs on the write.
 func applyShareExposure(spec shareTargetSpec, req shareRequest) (shareTargetSpec, error) {
+	if _, err := registry.ResolveRequestLimits(req.RequestLimits); err != nil {
+		return shareTargetSpec{}, err
+	}
+	spec.Service.RequestLimits = req.RequestLimits
 	if err := funnelOptionRequiresFunnel("public_ack", "funnel", req.PublicAck, req.Funnel); err != nil {
 		return shareTargetSpec{}, err
 	}
@@ -303,6 +309,7 @@ func sameShareBackend(existing, candidate registry.Service) bool {
 
 func sameShareTarget(existing, candidate registry.Service) bool {
 	return sameShareBackend(existing, candidate) &&
+		sameEffectiveRequestLimits(existing, candidate) &&
 		existing.Funnel == candidate.Funnel &&
 		existing.PublicAck == candidate.PublicAck &&
 		slices.Equal(existing.AllowedUsers, candidate.AllowedUsers) &&
@@ -673,6 +680,7 @@ func withShareFunnelState(result ShareResult, registration shareRegistration) Sh
 		result.FunnelExpiresAt = cloneTimePointer(registration.Service.FunnelExpiresAt)
 	}
 	result.FunnelRearmed = registration.FunnelRearmed
+	result.RequestLimits = registration.Service.EffectiveRequestLimits()
 	result.Exposure = inspect.ServiceViewFor(registry.EffectiveServiceAt(registration.Service, time.Now())).Exposure
 	if warning, ok := homeDirectoryShareWarning(registration.Service, "cmd.share"); ok {
 		result.Warnings = append(result.Warnings, warning)
@@ -716,6 +724,7 @@ The next two examples need a local app already listening on the given port:
 			wait, _ := cmd.Flags().GetDuration("wait")
 			noDaemonInstall, _ := cmd.Flags().GetBool("no-daemon-install")
 			result, err := executeShare(cmd.Context(), paths, shareRequest{
+				RequestLimits:   requestLimitsFromFlags(cmd),
 				Target:          args[0],
 				Name:            name,
 				Ephemeral:       ephemeral,
@@ -738,6 +747,7 @@ The next two examples need a local app already listening on the given port:
 		},
 	}
 	shareCmd.Flags().String("name", "", "Requested service name (DNS label); a matching target must already use it, while unrelated name collisions receive a numeric suffix")
+	addRequestLimitFlags(shareCmd)
 	shareCmd.Flags().Bool("ephemeral", true, "Use an ephemeral tailnet node (set --ephemeral=false for durable state)")
 	shareCmd.Flags().Bool("no-daemon-install", false, "Require an already running background service; do not install one")
 	shareCmd.Flags().Var(duration.NewValue(defaultURLWait), "wait", "Wait for an exact runtime URL (share waits 30s by default; unlike url, no flag is required)")

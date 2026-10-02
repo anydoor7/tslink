@@ -59,6 +59,10 @@ func NewProxyHandler(target string, identity *IdentityResolver) (http.Handler, e
 			}
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+			if failure := requestFailure(r, err); failure != nil {
+				http.Error(w, failure.message, failure.status)
+				return
+			}
 			slog.Error("proxy error", "path", r.URL.Path, "error", err)
 			if isTimeout(err) {
 				http.Error(w, "Gateway timeout — backend did not respond in time", http.StatusGatewayTimeout)

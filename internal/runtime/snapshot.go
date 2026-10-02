@@ -92,6 +92,8 @@ type Snapshot struct {
 }
 
 type ServiceSnapshot struct {
+	Warnings []inspect.WarningView `json:"warnings,omitempty"`
+
 	Name            string               `json:"name"`
 	Type            string               `json:"type"`
 	NodeID          string               `json:"node_id,omitempty"`
@@ -106,6 +108,7 @@ type ServiceSnapshot struct {
 }
 
 type ServiceState struct {
+	Warnings     []inspect.WarningView
 	Service      registry.Service
 	NodeID       string
 	RuntimeHost  string
@@ -221,6 +224,7 @@ func newSnapshot(daemonPID int, daemonStartedAt time.Time, registryFingerprint s
 			serviceError = &copied
 		}
 		services = append(services, ServiceSnapshot{
+			Warnings:        append([]inspect.WarningView(nil), state.Warnings...),
 			Name:            state.Service.Name,
 			Type:            state.Service.Type,
 			NodeID:          state.NodeID,

@@ -85,3 +85,34 @@ healthy services; fix or remove bad entries before changing the registry.
 | `--no-daemon-install` | Save configuration without installing or starting the daemon |
 | `--wait duration` | Wait for a URL or enrollment URL; default `30s`, `0` disables waiting |
 | `--json` | Print the versioned result envelope |
+
+### HTTP request limits (add and share)
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--max-request-body 20GiB` | `32MiB` | Maximum upload size; accepts positive integer bytes, B, KiB/MiB/GiB/TiB or decimal KB/MB/GB/TB |
+| `--ack-unlimited-request-body` | false | Required with `--max-request-body unlimited`; explicitly removes the body cap |
+| `--request-header-timeout 20s` | `10s` | Maximum time to receive request headers |
+| `--request-read-timeout 2m` | `30s` | Maximum inactivity while reading an upload; continuing uploads have no total-duration deadline |
+| `--idle-timeout 90s` | `60s` | Idle time between HTTP keep-alive requests |
+
+All timeout overrides are positive Go durations (for example `30s`, `2m`).
+Settings apply to proxy and file services; raw TCP rejects HTTP request limits.
+An add replacing a name resets omitted limits to defaults, like other add flags.
+A share only reuses a service with equivalent effective limits.
+
+`add --json`, `share --json`, `status --urls --json` and `list --verbose --json`
+report `request_limits` with `max_body_bytes`, `header_timeout`, `read_timeout`
+and `idle_timeout`. `max_body_bytes:-1` means acknowledged unlimited.
+Human `status --urls` and `list --verbose` show the effective limits too.
+The envelope remains schema version 1. MCP add/share accept the optional object
+`request_limits: {"max_body":"20GiB","read_timeout":"2m"}`; unlimited requires
+`{"max_body":"unlimited","unlimited_ack":true}`. Omitted fields inherit defaults.
+
+Body limits return 413; stalled uploads or incomplete headers return 408.
+Structured logs name the service, limit, status and code (`request_body_limit`,
+`request_read_timeout`, `request_header_timeout`). The first hit of each limit
+is retained in the current node's runtime warnings; status and verbose list show
+it, and doctor suggests the corresponding flag. Warnings reset when that node
+restarts. A backend may already have received part of a rejected streaming body.
+Its own upload limits and any public relay limits still apply.

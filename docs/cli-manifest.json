@@ -437,6 +437,13 @@
       "short": "Register a local service or file directory",
       "flags": [
         {
+          "name": "ack-unlimited-request-body",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Acknowledge removal of the HTTP request body size limit"
+        },
+        {
           "name": "allow",
           "type": "string",
           "scope": "local",
@@ -500,11 +507,23 @@
           "usage": "Public Funnel lifetime: 1h, 8h, 24h, 72h, 7d, or never"
         },
         {
+          "name": "idle-timeout",
+          "type": "string",
+          "scope": "local",
+          "usage": "HTTP keep-alive idle timeout (default 60s)"
+        },
+        {
           "name": "json",
           "type": "bool",
           "default": "false",
           "scope": "inherited",
           "usage": "Output as JSON"
+        },
+        {
+          "name": "max-request-body",
+          "type": "string",
+          "scope": "local",
+          "usage": "Maximum HTTP upload size (default 32MiB); unlimited requires --ack-unlimited-request-body"
         },
         {
           "name": "no-auto-provision",
@@ -545,6 +564,18 @@
           ]
         },
         {
+          "name": "request-header-timeout",
+          "type": "string",
+          "scope": "local",
+          "usage": "HTTP header read timeout (default 10s)"
+        },
+        {
+          "name": "request-read-timeout",
+          "type": "string",
+          "scope": "local",
+          "usage": "Maximum time without body read progress, not total upload time (default 30s)"
+        },
+        {
           "name": "tags",
           "type": "string",
           "scope": "local",
@@ -581,6 +612,10 @@
         "replaced_fields": {
           "type": "array",
           "description": "registry.json fields a replacing add changed or dropped, sorted; empty when the add created the service. Warnings access_changed_on_replace and identity_reset_on_replace flag access and node-identity changes."
+        },
+        "request_limits": {
+          "type": "object",
+          "description": "Effective HTTP limits for proxy/file services; absent for raw TCP."
         }
       }
     },
@@ -1264,6 +1299,10 @@
             "startup_timeout"
           ]
         },
+        "services[].request_limits": {
+          "type": "object",
+          "description": "Effective HTTP limits in status --urls and list --verbose; max_body_bytes is -1 only for explicitly acknowledged unlimited uploads. read_timeout bounds inactivity, not upload duration."
+        },
         "services[].state": {
           "type": "string",
           "description": "Slim list runtime state: exact, pending, or failed.",
@@ -1649,6 +1688,13 @@
       "short": "Share a local path or web port and print its tailnet URL",
       "flags": [
         {
+          "name": "ack-unlimited-request-body",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Acknowledge removal of the HTTP request body size limit"
+        },
+        {
           "name": "ephemeral",
           "type": "bool",
           "default": "true",
@@ -1656,11 +1702,23 @@
           "usage": "Use an ephemeral tailnet node (set --ephemeral=false for durable state)"
         },
         {
+          "name": "idle-timeout",
+          "type": "string",
+          "scope": "local",
+          "usage": "HTTP keep-alive idle timeout (default 60s)"
+        },
+        {
           "name": "json",
           "type": "bool",
           "default": "false",
           "scope": "inherited",
           "usage": "Output as JSON"
+        },
+        {
+          "name": "max-request-body",
+          "type": "string",
+          "scope": "local",
+          "usage": "Maximum HTTP upload size (default 32MiB); unlimited requires --ack-unlimited-request-body"
         },
         {
           "name": "name",
@@ -1676,13 +1734,31 @@
           "usage": "Require an already running background service; do not install one"
         },
         {
+          "name": "request-header-timeout",
+          "type": "string",
+          "scope": "local",
+          "usage": "HTTP header read timeout (default 10s)"
+        },
+        {
+          "name": "request-read-timeout",
+          "type": "string",
+          "scope": "local",
+          "usage": "Maximum time without body read progress, not total upload time (default 30s)"
+        },
+        {
           "name": "wait",
           "type": "duration",
           "default": "30s",
           "scope": "local",
           "usage": "Wait for an exact runtime URL (share waits 30s by default; unlike url, no flag is required)"
         }
-      ]
+      ],
+      "json_result_fields": {
+        "request_limits": {
+          "type": "object",
+          "description": "Effective HTTP limits: max_body_bytes (-1 means acknowledged unlimited), header_timeout, read_timeout (idle between body reads), idle_timeout."
+        }
+      }
     },
     {
       "path": "tslink status",
@@ -1792,6 +1868,10 @@
         "services[].ownership_proof": {
           "type": "boolean",
           "description": "True only when the durable ownership ledger contains exact StableNodeID cleanup proof for the service; NodeIDs are never emitted."
+        },
+        "services[].request_limits": {
+          "type": "object",
+          "description": "Effective HTTP limits in status --urls and list --verbose; max_body_bytes is -1 only for explicitly acknowledged unlimited uploads. read_timeout bounds inactivity, not upload duration."
         },
         "services[].runtime_state": {
           "type": "string",
@@ -2290,6 +2370,10 @@
     "internal_error": {
       "exit_code": 1,
       "description": "unexpected internal failure"
+    },
+    "invalid_request_limits": {
+      "exit_code": 2,
+      "description": "HTTP request limits are invalid or unlimited uploads lack explicit acknowledgement"
     },
     "invalid_service_config": {
       "exit_code": 1,

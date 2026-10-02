@@ -566,6 +566,7 @@ func sortedSet(values map[string]struct{}) []string {
 
 func TestManifestErrorExitTaxonomyMatchesRuntime(t *testing.T) {
 	tests := map[string]error{
+		registry.CodeInvalidRequestLimits:       registry.CodedError{Code: registry.CodeInvalidRequestLimits, Message: "unlimited requires acknowledgement"},
 		"internal_error":                        errors.New("boom"),
 		"usage_error":                           output.ErrUsage("bad usage"),
 		"auth_error":                            output.ErrAuth("bad auth"),
@@ -980,8 +981,10 @@ func TestCompactManifestStaysBelowAgentTokenBudget(t *testing.T) {
 	// up, so it stays and the ceiling moves to 3000. Batch B3 then derived the
 	// map from the one error-code table, which added the ten codes the old map
 	// missed and mcp_elevated_invite_refused: 2860 bytes at the end of B3.
-	if len(data) >= 3000 {
-		t.Fatalf("compact manifest = %d bytes, want < 3000", len(data))
+	// Per-service upload limits add five flags to both add and share plus one
+	// stable admission error. Preserve that discoverable surface: 3123 bytes.
+	if len(data) >= 3300 {
+		t.Fatalf("compact manifest = %d bytes, want < 3300", len(data))
 	}
 	compact := CompactManifest()
 	if compact.ErrorCodes[registry.CodeURLNotReady] != 5 {

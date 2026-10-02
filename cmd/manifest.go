@@ -272,8 +272,13 @@ func commandJSONResultFields(commandPath string) map[string]JSONResultFieldInfo 
 				Description: "True when this invocation migrated a legacy API credential to the system keychain; omitted otherwise.",
 			},
 		}
+	case "tslink share":
+		return map[string]JSONResultFieldInfo{
+			"request_limits": {Type: "object", Description: "Effective HTTP limits: max_body_bytes (-1 means acknowledged unlimited), header_timeout, read_timeout (idle between body reads), idle_timeout."},
+		}
 	case "tslink add":
 		return map[string]JSONResultFieldInfo{
+			"request_limits":    {Type: "object", Description: "Effective HTTP limits for proxy/file services; absent for raw TCP."},
 			"funnel_expires_at": {Type: "string", Description: "Persisted public Funnel deadline; omitted for tailnet-only services and explicit never."},
 			"funnel_rearmed":    {Type: "boolean", Description: "True when an expired preserved Funnel deadline was re-armed with the default 24h TTL."},
 			"replaced_fields":   {Type: "array", Description: "registry.json fields a replacing add changed or dropped, sorted; empty when the add created the service. Warnings access_changed_on_replace and identity_reset_on_replace flag access and node-identity changes."},
@@ -544,6 +549,7 @@ func commandJSONResultFields(commandPath string) map[string]JSONResultFieldInfo 
 
 func agentServiceRuntimeJSONResultFields() map[string]JSONResultFieldInfo {
 	return map[string]JSONResultFieldInfo{
+		"services[].request_limits": {Type: "object", Description: "Effective HTTP limits in status --urls and list --verbose; max_body_bytes is -1 only for explicitly acknowledged unlimited uploads. read_timeout bounds inactivity, not upload duration."},
 		"services[].funnel_requested": {
 			Type:        "boolean",
 			Description: "Configuration intent: whether this service requests public Tailscale Funnel exposure.",

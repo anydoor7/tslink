@@ -68,6 +68,7 @@ var table = []Code{
 	{"service_type_ambiguous", ExitUsage, Command, "exactly one service type is required"},
 	{"invalid_service_name", ExitUsage, Service, "service name is not a valid DNS label"},
 	{"invalid_tag", ExitUsage, Service, "ACL tag is invalid"},
+	{"invalid_request_limits", ExitUsage, Service, "HTTP request limits are invalid or unlimited uploads lack explicit acknowledgement"},
 	{"allow_unsupported_for_tcp", ExitUsage, Service, "HTTP allow lists do not apply to raw TCP"},
 	{"path_must_be_absolute", ExitUsage, Service, "file service path must be absolute"},
 	{"path_not_found", ExitUsage, Service, "file service directory does not exist"},
