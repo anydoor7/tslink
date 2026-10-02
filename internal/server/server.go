@@ -20,6 +20,7 @@ import (
 	"github.com/anydoor7/tslink/internal/authmode"
 	"github.com/anydoor7/tslink/internal/config"
 	"github.com/anydoor7/tslink/internal/errcode"
+	"github.com/anydoor7/tslink/internal/health"
 	"github.com/anydoor7/tslink/internal/logging"
 	"github.com/anydoor7/tslink/internal/registry"
 	runtimesnapshot "github.com/anydoor7/tslink/internal/runtime"
@@ -371,6 +372,7 @@ type Server struct {
 	startupCancel           context.CancelFunc
 	startupGeneration       uint64
 	lastRegistryFingerprint string
+	lastSnapshotComplete    bool
 	syncResultMu            sync.Mutex
 	latestSyncResult        syncResult
 	syncResultChanged       chan struct{}
@@ -392,6 +394,11 @@ type Server struct {
 	credentialStateMu     sync.Mutex
 	credentialStateKnown  bool
 	credentialStateDigest string
+	healthStates          map[string]serviceHealth
+	healthProbePool       *healthReadPool
+	healthNodePool        *healthReadPool
+	alerts                health.AlertsView
+	runtimeSnapshotDirty  bool
 }
 
 // New creates a new multi-node server.
@@ -565,11 +572,13 @@ func (s *Server) Run(ctx context.Context) error {
 		}
 	}
 	lifecycleDone := s.startLifecycleTicker(watchCtx)
+	healthDone := s.startHealthMonitor(watchCtx)
 
 	<-ctx.Done()
 	s.beginShutdown()
 	cancelWatch()
 	<-lifecycleDone
+	<-healthDone
 	<-watchDone
 	s.closeAllNodes()
 	return nil
@@ -945,6 +954,8 @@ func (s *Server) syncNodesWithOutcome(ctx context.Context, startup bool) (outcom
 		} else if serviceChangedWithFallback(node.service, svc, s.controlURL) {
 			slog.Info("restarting node", "name", name, "auth_identity_changed", s.authIdentityChanged(node.service, svc))
 			s.stopNodeLocked(name)
+		} else {
+			node.service = svc // Health-only edits do not restart an enrolled node.
 		}
 	}
 	// Prune records of removed services whose state is already gone. State of
@@ -1834,6 +1845,10 @@ func (s *Server) cleanupAuthIdentityNodes(ctx context.Context, targets []tailapi
 }
 
 func (s *Server) writeRuntimeSnapshotLocked(registryFingerprint string, complete bool) {
+	// Retain failed publications for a later monitor cycle, even if the next
+	// observations are identical to the values already held in memory.
+	s.runtimeSnapshotDirty = true
+	s.lastSnapshotComplete = complete
 	path, err := runtimeSnapshotPathFn()
 	if err != nil {
 		slog.Warn("runtime snapshot path unavailable", "error", err)
@@ -1871,11 +1886,23 @@ func (s *Server) writeRuntimeSnapshotLocked(registryFingerprint string, complete
 		})
 	}
 	var snapshot runtimesnapshot.Snapshot
+	for i := range states {
+		states[i].NodeKey = nodeKeyExpiry(nil, s.daemonStartedAt)
+		if observed, ok := s.healthStates[states[i].Service.Name]; ok && observed.Identity == healthIdentity(states[i].Service) {
+			states[i].Health = observed.Health
+			if node := s.nodes[states[i].Service.Name]; node != nil && node == observed.Node {
+				states[i].NodeKey = observed.NodeKey
+			}
+		} else {
+			states[i].Health = health.Unchecked(states[i].Service.Type)
+		}
+	}
 	if complete {
 		snapshot = runtimesnapshot.NewSnapshot(s.daemonPID, s.daemonStartedAt, registryFingerprint, time.Now().UTC(), states)
 	} else {
 		snapshot = runtimesnapshot.NewPartialSnapshot(s.daemonPID, s.daemonStartedAt, registryFingerprint, time.Now().UTC(), states)
 	}
+	snapshot.Alerts = s.alerts
 	if s.globalFailure != nil {
 		globalFailure := *s.globalFailure
 		globalFailure.Next = append([]string(nil), s.globalFailure.Next...)
@@ -1884,15 +1911,17 @@ func (s *Server) writeRuntimeSnapshotLocked(registryFingerprint string, complete
 	}
 	if err := runtimeSaveSnapshotFn(path, snapshot); err != nil {
 		slog.Warn("runtime snapshot write failed; continuing with running services", "path", path, "error", err)
+	} else {
+		s.runtimeSnapshotDirty = false
 	}
 	// Publish after the write, never before: an event stream rebuilds its
 	// payload by reading runtime.json back, so notifying first would hand a
 	// client the state it already had and call it fresh.
 	//
-	// This is also the whole of the event source. Every path that changes what
-	// a client can observe — a registry edit picked up by the fsnotify watcher,
+	// Runtime changes — a registry edit picked up by the fsnotify watcher,
 	// a lifecycle tick that expires a Funnel, a service that failed to start —
-	// ends in this function, so no separate goroutine polls anything.
+	// end in this function. The health monitor also notifies when an observation
+	// ages to unknown; that projection change needs no snapshot write.
 	s.events.publish()
 }
 

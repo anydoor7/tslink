@@ -11,6 +11,7 @@ import (
 
 	"github.com/anydoor7/tslink/internal/config"
 	"github.com/anydoor7/tslink/internal/credentials"
+	"github.com/anydoor7/tslink/internal/health"
 	"github.com/anydoor7/tslink/internal/inspect"
 	"github.com/anydoor7/tslink/internal/output"
 	"github.com/anydoor7/tslink/internal/registry"
@@ -69,6 +70,8 @@ const listTailnetCredentialMessage = "listing tailnet devices requires a stored 
 // URL is null until runtime.json contains exact evidence for the current daemon
 // and registry fingerprint.
 type ListServiceSummary struct {
+	Health          health.State            `json:"health"`
+	NodeKey         health.Expiry           `json:"node_key"`
 	Name            string                  `json:"name"`
 	Type            string                  `json:"type"`
 	URL             *string                 `json:"url"`
@@ -192,6 +195,7 @@ func filterStatusServices(result StatusURLsResult, opts listOptions) ([]StatusSe
 
 func listSummary(svc StatusServiceView) ListServiceSummary {
 	summary := ListServiceSummary{
+		Health: svc.Health, NodeKey: svc.NodeKey,
 		Name:            svc.Name,
 		Type:            svc.Type,
 		URLPending:      true,
@@ -482,7 +486,15 @@ func listServicesWithOptions(regPath string, out io.Writer, opts listOptions) er
 		}
 		fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", summary.Name, summary.Type, svc.Backend.Display, url, summary.State, funnelExpiresLabel(summary.FunnelExpiresAt, summary.FunnelRemaining), remaining)
 	}
-	return writer.Flush()
+	if err := writer.Flush(); err != nil {
+		return err
+	}
+	if opts.Verbose {
+		for _, svc := range services {
+			formatAppHealth(out, svc.Name, svc.Health, svc.NodeKey)
+		}
+	}
+	return nil
 }
 
 func listServices(regPath string, out io.Writer) error {

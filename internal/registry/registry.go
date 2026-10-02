@@ -484,10 +484,11 @@ var (
 )
 
 type Service struct {
-	Name   string `json:"name"`
-	Type   string `json:"type"`
-	Target string `json:"target,omitempty"`
-	Path   string `json:"path,omitempty"`
+	Name   string        `json:"name"`
+	Type   string        `json:"type"`
+	Target string        `json:"target,omitempty"`
+	Health *HealthConfig `json:"health,omitempty"`
+	Path   string        `json:"path,omitempty"`
 	// File narrows a file service to exactly one name inside Path. It is the
 	// bare file name, never a path. Empty means the whole Path subtree is
 	// served, which is also what every registry written before this field
@@ -725,6 +726,9 @@ func ValidateControlURL(value string) error {
 func ValidateService(svc Service) error {
 	if svc.PeopleScoped && !PeopleServiceSupported(svc) {
 		return CodedError{Code: "people_service_unsupported", Message: "person-scoped services must be private HTTP proxies or files; TCP cannot enforce people and Funnel is public"}
+	}
+	if err := ValidateHealthConfig(svc.Type, svc.Health); err != nil {
+		return CodedError{Code: CodeInvalidServiceConfig, Message: err.Error(), Next: []string{"tslink add --help"}}
 	}
 	if err := ValidateName(svc.Name); err != nil {
 		return err

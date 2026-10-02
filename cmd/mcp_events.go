@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/anydoor7/tslink/internal/health"
 	"github.com/anydoor7/tslink/internal/inspect"
 	tsruntime "github.com/anydoor7/tslink/internal/runtime"
 )
@@ -43,16 +44,18 @@ type mcpEventState struct {
 // mcpEventStatus is the status tool's payload minus auth_url. Field names and
 // JSON tags match mcpStatusSummary so a client parses one shape.
 type mcpEventStatus struct {
-	Supervision            Supervision `json:"supervision"`
-	Authenticated          bool        `json:"authenticated"`
-	CredentialStored       bool        `json:"credential_stored"`
-	NodeAuthorized         bool        `json:"node_authorized"`
-	AuthorizedServiceCount int         `json:"authorized_service_count"`
-	DaemonRunning          bool        `json:"daemon_running"`
-	DaemonState            string      `json:"daemon_state"`
-	ServiceCount           int         `json:"service_count"`
-	Status                 string      `json:"status,omitempty"`
-	Next                   []string    `json:"next,omitempty"`
+	Credentials            StatusCredentials `json:"credentials"`
+	Alerts                 health.AlertsView `json:"alerts"`
+	Supervision            Supervision       `json:"supervision"`
+	Authenticated          bool              `json:"authenticated"`
+	CredentialStored       bool              `json:"credential_stored"`
+	NodeAuthorized         bool              `json:"node_authorized"`
+	AuthorizedServiceCount int               `json:"authorized_service_count"`
+	DaemonRunning          bool              `json:"daemon_running"`
+	DaemonState            string            `json:"daemon_state"`
+	ServiceCount           int               `json:"service_count"`
+	Status                 string            `json:"status,omitempty"`
+	Next                   []string          `json:"next,omitempty"`
 }
 
 // mcpEventsSnapshotFn returns the snapshot builder the daemon hands to the

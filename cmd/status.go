@@ -12,6 +12,7 @@ import (
 	"github.com/anydoor7/tslink/internal/config"
 	"github.com/anydoor7/tslink/internal/credentials"
 	"github.com/anydoor7/tslink/internal/daemon"
+	"github.com/anydoor7/tslink/internal/health"
 	"github.com/anydoor7/tslink/internal/inspect"
 	"github.com/anydoor7/tslink/internal/output"
 	"github.com/anydoor7/tslink/internal/registry"
@@ -59,6 +60,7 @@ const (
 
 // StatusResult holds the status information for display.
 type StatusResult struct {
+	Alerts                  health.AlertsView       `json:"alerts"`
 	Supervision             Supervision             `json:"supervision"`
 	DaemonRunning           bool                    `json:"daemon_running"`
 	DaemonState             string                  `json:"daemon_state"`
@@ -91,18 +93,21 @@ type StatusCredentials struct {
 
 // StatusCredentialSlot describes one credential slot.
 type StatusCredentialSlot struct {
-	Present            bool       `json:"present"`
-	Fingerprint        string     `json:"fingerprint,omitempty"`
-	StoredAt           *time.Time `json:"stored_at,omitempty"`
-	ExpiresAt          *time.Time `json:"expires_at,omitempty"`
-	ExpiresAtSource    string     `json:"expires_at_source,omitempty"`
-	DaysLeft           *int       `json:"days_left,omitempty"`
-	ExpiryState        string     `json:"expiry_state"`
-	LastVerifiedAt     *time.Time `json:"last_verified_at,omitempty"`
-	LastVerifiedResult string     `json:"last_verified_result,omitempty"`
+	Present            bool          `json:"present"`
+	Fingerprint        string        `json:"fingerprint,omitempty"`
+	StoredAt           *time.Time    `json:"stored_at,omitempty"`
+	ExpiresAt          *time.Time    `json:"expires_at,omitempty"`
+	ExpiresAtSource    string        `json:"expires_at_source,omitempty"`
+	DaysLeft           *int          `json:"days_left,omitempty"`
+	ExpiryState        string        `json:"expiry_state"`
+	LastVerifiedAt     *time.Time    `json:"last_verified_at,omitempty"`
+	LastVerifiedResult string        `json:"last_verified_result,omitempty"`
+	EarlyWarning       health.Expiry `json:"early_warning"`
 }
 
 type StatusServiceState struct {
+	Health          health.State            `json:"health"`
+	NodeKey         health.Expiry           `json:"node_key"`
 	Name            string                  `json:"name"`
 	Status          string                  `json:"status"`
 	OwnershipProof  bool                    `json:"ownership_proof"`
@@ -115,6 +120,7 @@ type StatusServiceState struct {
 }
 
 type StatusURLsResult struct {
+	Alerts                  health.AlertsView           `json:"alerts"`
 	Supervision             Supervision                 `json:"supervision"`
 	SchemaVersion           int                         `json:"schema_version"`
 	DaemonRunning           bool                        `json:"daemon_running"`
@@ -148,6 +154,8 @@ type StatusRuntimeSnapshotResult struct {
 }
 
 type StatusServiceView struct {
+	Health          health.State            `json:"health"`
+	NodeKey         health.Expiry           `json:"node_key"`
 	Name            string                  `json:"name"`
 	Type            string                  `json:"type"`
 	RuntimeState    string                  `json:"runtime_state"`
@@ -194,6 +202,7 @@ func (s statusRead) getStatus(pidPath, regPath string) (StatusResult, error) {
 		return StatusResult{}, err
 	}
 	issueErrors := diagnosticServiceErrors(issues)
+	r.Alerts = readAlertsForRegistry(regPath)
 	r.ServiceCount = len(reg.Services)
 	r.Services = make([]StatusServiceState, 0, len(reg.Services))
 	ownershipProofs, ownershipProofAvailable := ownershipProofsForRegistry(regPath)
@@ -203,6 +212,8 @@ func (s statusRead) getStatus(pidPath, regPath string) (StatusResult, error) {
 		effective := registry.EffectiveServiceAt(svc, now)
 		r.Services = append(r.Services, StatusServiceState{
 			Name:            svc.Name,
+			Health:          health.Unchecked(svc.Type),
+			NodeKey:         health.Expiry{State: health.Unknown, Source: "unavailable"},
 			Status:          "down",
 			Error:           issueErrors[svc.Name],
 			OwnershipProof:  ownershipProofs[svc.Name],
@@ -291,6 +302,7 @@ func statusCredentialSlot(view credentials.SlotView) StatusCredentialSlot {
 		days := *view.DaysLeft
 		slot.DaysLeft = &days
 	}
+	slot.EarlyWarning = credentialEarlyWarning(slot, statusNowFn())
 	return slot
 }
 
@@ -413,7 +425,7 @@ func (s statusRead) getPollableStatus(pidPath, regPath, snapshotPath, authHandof
 		snapshot, snapshotErr := runtimeLoadSnapshotFn(snapshotPath)
 		if snapshotErr == nil && snapshot != nil && snapshot.GlobalError != nil {
 			ownershipProofs, ownershipProofAvailable := ownershipProofsForRegistry(regPath)
-			return s.statusFromGlobalFailure(pidPath, snapshot, ownershipProofs, ownershipProofAvailable), nil
+			return s.statusFromGlobalFailure(pidPath, regPath, snapshot, ownershipProofs, ownershipProofAvailable), nil
 		}
 		return StatusResult{}, err
 	}
@@ -452,6 +464,11 @@ func (s statusRead) getPollableStatus(pidPath, regPath, snapshotPath, authHandof
 		}
 	}
 	freshness := tsruntime.Classify(snapshot, loadErr, expected)
+	// Events always come from the durable journal. A live, fresh snapshot may
+	// additionally report a write failure that could not itself be persisted.
+	if snapshot != nil {
+		r.Alerts = alertsWithSnapshot(r.Alerts, snapshot.Alerts, r.DaemonRunning && snapshotContributesRuntimeEvidence(freshness))
+	}
 	up := make(map[string]struct{})
 	if snapshotContributesRuntimeEvidence(freshness) && snapshot != nil {
 		up = make(map[string]struct{}, len(snapshot.Services))
@@ -470,6 +487,8 @@ func (s statusRead) getPollableStatus(pidPath, regPath, snapshotPath, authHandof
 					r.Services[i].FunnelState = runtimeService.FunnelState
 				}
 				r.Services[i].Error = runtimeService.Error
+				r.Services[i].Health = currentHealth(runtimeService.Health, reg.Services[i], now)
+				r.Services[i].NodeKey = health.ExpiryAt(runtimeService.NodeKey.ExpiresAt, runtimeService.NodeKey.Source, now, nodeExpiryNext())
 				if runtimeService.RuntimeState == tsruntime.ServiceRuntimeFailed {
 					r.Services[i].Status = tsruntime.ServiceRuntimeFailed
 				}
@@ -525,10 +544,13 @@ func (s statusRead) getPollableStatus(pidPath, regPath, snapshotPath, authHandof
 	return r, nil
 }
 
-func (s statusRead) statusFromGlobalFailure(pidPath string, snapshot *tsruntime.Snapshot, ownershipProofs map[string]bool, ownershipProofAvailable bool) StatusResult {
+func (s statusRead) statusFromGlobalFailure(pidPath, regPath string, snapshot *tsruntime.Snapshot, ownershipProofs map[string]bool, ownershipProofAvailable bool) StatusResult {
 	r := s.baseStatus(pidPath)
 	r.OwnershipProofAvailable = ownershipProofAvailable
 	r.GlobalError = cloneServiceError(snapshot.GlobalError)
+	// The registry cannot be read, so this snapshot cannot be verified as
+	// current. Journal authority still holds on the global-failure path.
+	r.Alerts = alertsWithSnapshot(readAlertsForRegistry(regPath), snapshot.Alerts, false)
 	r.ServiceCount = len(snapshot.Services)
 	r.Services = make([]StatusServiceState, 0, len(snapshot.Services))
 	for _, service := range snapshot.Services {
@@ -622,6 +644,11 @@ func formatStatus(r StatusResult, out io.Writer) {
 		fmt.Fprintln(out, "→ tailnet: not authenticated (run: tslink install, then tslink status to obtain the login URL)")
 	}
 	fmt.Fprintf(out, "→ services: %d registered\n", r.ServiceCount)
+	for _, svc := range r.Services {
+		formatAppHealth(out, svc.Name, svc.Health, svc.NodeKey)
+	}
+	formatEarlyWarnings(out, r.Credentials)
+	formatAlerts(out, r.Alerts)
 }
 
 func getStatusURLs(pidPath, regPath, snapshotPath string) (StatusURLsResult, error) {
@@ -662,6 +689,7 @@ func (s statusRead) getStatusURLsWithAuth(pidPath, regPath, snapshotPath, authHa
 
 	result := StatusURLsResult{
 		SchemaVersion:           inspect.SchemaVersion,
+		Alerts:                  status.Alerts,
 		Supervision:             status.Supervision,
 		DaemonRunning:           status.DaemonRunning,
 		DaemonState:             status.DaemonState,
@@ -699,6 +727,8 @@ func (s statusRead) getStatusURLsWithAuth(pidPath, regPath, snapshotPath, authHa
 		view := inspect.ServiceViewFor(effective)
 		service := StatusServiceView{
 			Name:            view.Name,
+			Health:          health.Unchecked(svc.Type),
+			NodeKey:         health.Expiry{State: health.Unknown, Source: "unavailable"},
 			Type:            view.Type,
 			RuntimeState:    "unknown",
 			OwnershipProof:  ownershipProofs[svc.Name],
@@ -722,6 +752,8 @@ func (s statusRead) getStatusURLsWithAuth(pidPath, regPath, snapshotPath, authHa
 				service.FunnelState = snapshotService.FunnelState
 			}
 			service.Error = snapshotService.Error
+			service.Health = currentHealth(snapshotService.Health, svc, now)
+			service.NodeKey = health.ExpiryAt(snapshotService.NodeKey.ExpiresAt, snapshotService.NodeKey.Source, now, nodeExpiryNext())
 		}
 
 		switch {
@@ -933,6 +965,7 @@ func appendStatusWarning(warnings []inspect.WarningView, code, message string) [
 
 func formatStatusURLs(r StatusURLsResult, out io.Writer) {
 	formatStatus(StatusResult{
+		Alerts:                  r.Alerts,
 		Supervision:             r.Supervision,
 		DaemonRunning:           r.DaemonRunning,
 		DaemonState:             r.DaemonState,
@@ -986,6 +1019,9 @@ func formatStatusURLs(r StatusURLsResult, out io.Writer) {
 		)
 	}
 	_ = writer.Flush()
+	for _, svc := range r.Services {
+		formatAppHealth(out, svc.Name, svc.Health, svc.NodeKey)
+	}
 }
 
 func summaryLabel(summary inspect.SummaryView) string {

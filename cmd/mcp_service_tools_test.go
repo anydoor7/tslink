@@ -89,6 +89,7 @@ var mcpCoveredCommands = map[string]mcpCoveredCommand{
 		Tools: []string{"add"},
 		Args:  []string{"name", "type"},
 		Flags: map[string]string{
+			"health-path": "health", "health-body": "health", "health-status-min": "health", "health-status-max": "health", "health-timeout": "health", "health-interval": "health",
 			"allow":             "allow",
 			"control-url":       "control_url",
 			"dir":               "dir",
@@ -630,7 +631,7 @@ func TestCompiledCLIAndMCPServiceDataAgree(t *testing.T) {
 		if !mcp.DaemonRunning || mcp.ServiceCount != 2 {
 			t.Fatalf("status projection = %+v, want the seeded daemon and two services", mcp)
 		}
-		if strings.Contains(mcpText, "credentials") || strings.Contains(mcpText, "daemon_pid") {
+		if strings.Contains(mcpText, "daemon_pid") || strings.Contains(mcpText, "ownership_proof") {
 			t.Fatalf("status projection leaked owner-only fields: %s", mcpText)
 		}
 	})
