@@ -1,6 +1,6 @@
 # Local models and private-data workflows
 
-[English](local-ai.md) · [简体中文](local-ai_zh.md) · [README](../README.md)
+[README](../README.md)
 
 TSLink can give an existing local model HTTP API a named HTTPS address inside your
 Tailscale network. A permitted device can then use that API from an application or agent.

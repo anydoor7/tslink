@@ -45,7 +45,6 @@ archives:
       - NOTICE
       - THIRD_PARTY_NOTICES.md
       - COMMERCIAL.md
-      - COMMERCIAL_zh.md
 
 checksum:
   name_template: "checksums.txt"
@@ -122,10 +121,6 @@ nfpms:
           mode: 0644
       - src: COMMERCIAL.md
         dst: /usr/share/doc/tslink/COMMERCIAL.md
-        file_info:
-          mode: 0644
-      - src: COMMERCIAL_zh.md
-        dst: /usr/share/doc/tslink/COMMERCIAL_zh.md
         file_info:
           mode: 0644
       - src: NOTICE

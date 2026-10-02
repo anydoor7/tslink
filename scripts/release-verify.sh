@@ -61,7 +61,7 @@ if [ -d "$DIST_DIR" ]; then
   [ -f "$DIST_DIR/checksums.txt" ] && pass "checksums.txt present" || fail "checksums.txt missing"
   # Every archive must carry the licence files and project documents.
   required_license=(LICENSE NOTICE THIRD_PARTY_NOTICES.md)
-  bundled_docs=(COMMERCIAL.md COMMERCIAL_zh.md)
+  bundled_docs=(COMMERCIAL.md)
   # With no archives the loop checks nothing: bash >= 4.4 would report a
   # vacuous pass, and bash 3.2 dies on the empty array under set -u.
   if [ "${#archives[@]}" -gt 0 ]; then

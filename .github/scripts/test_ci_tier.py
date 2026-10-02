@@ -300,6 +300,21 @@ class ReviewRegressionTests(unittest.TestCase):
                 self.commit("review fixture")
                 self.assertEqual(tier.decide(self.repo, "pull_request", self.event())[0], "full")
 
+    def test_chinese_duplicate_runs_documentation_contract(self):
+        with mock.patch.dict(os.environ, {"CI_PR_TIER_MODE": "tiered"}):
+            for path in ("QuasarPolicy_zh.md", "docs/QuasarPolicy_zh.md"):
+                with self.subTest(path=path):
+                    self.reset()
+                    self.write(path, "duplicate guide\n")
+                    self.commit("duplicate documentation")
+                    selected, reason = tier.decide(self.repo, "pull_request", self.event())
+                    self.assertEqual(selected, "full")
+                    self.assertIn("English-only documentation contract", reason)
+            self.reset()
+            self.write("docs/README.zh-CN.md", "homepage translation\n")
+            self.commit("allowed homepage translation")
+            self.assertEqual(tier.decide(self.repo, "pull_request", self.event())[0], "docs")
+
     def test_reviewer_symlink_fixture_and_old_base_modes(self):
         link = self.repo / "cmd/platform_test.go"
         link.symlink_to("../docs/platform-test.txt")
@@ -395,8 +410,8 @@ class ReviewRegressionTests(unittest.TestCase):
         with tarfile.open(fileobj=io.BytesIO(archive)) as source:
             source.extractall(self.repo, filter="data")
         base = self.commit("current repository consumers")
-        for path in ("docs/platforms.md", "docs/platforms_zh.md", "AGENTS.md",
-                     "SECURITY.md", "README.md", "README_zh.md", "README.ja.md"):
+        for path in ("docs/platforms.md", "AGENTS.md",
+                     "SECURITY.md", "README.md", "docs/README.zh-CN.md", "docs/README.ja.md"):
             with self.subTest(path=path):
                 self.reset(base)
                 document = self.repo / path
@@ -433,9 +448,9 @@ class ReviewRegressionTests(unittest.TestCase):
         cases = (("docs/QuasarGuide.md", b"prefixdocs/QuasarGuide.mdsuffix", "full"),
                  ("docs/QuasarGuide.md", b"prefixQuasarGuide.mdsuffix", "full"),
                  ("docs/QuasarGuide.ja.md", b"prefixQuasarGuidesuffix", "full"),
-                 ("docs/QuasarGuide_zh.md", b"prefixQuasarGuidesuffix", "full"),
-                 ("docs/QuasarGuide_zh.ja.md", b"QuasarGuide", "full"),
-                 ("docs/QuasarGuide.ja_zh.md", b"QuasarGuide", "full"),
+                 ("docs/QuasarGuide_extra.md", b"prefixQuasarGuidesuffix", "full"),
+                 ("docs/QuasarGuide_extra.ja.md", b"QuasarGuide", "full"),
+                 ("docs/QuasarGuide.ja_extra.md", b"QuasarGuide", "full"),
                  ("docs/QuasarGuide.md", b"quasarguide", "docs"),
                  ("docs/Quasar\nGuide.md", b"Quasar\nGuide", "full"),
                  ("docs/Quasar\nGuide.md", b"unrelated", "docs"),
@@ -499,7 +514,7 @@ class ReviewRegressionTests(unittest.TestCase):
             for edit in ("modify", "delete"):
                 with self.subTest(location=location, edit=edit):
                     self.reset()
-                    path = "docs/QuasarGuide_zh.md"
+                    path = "docs/QuasarGuide_extra.md"
                     self.write(path, "base\n")
                     common = self.commit("common document")
                     self.write("cmd/reader_darwin_test.go", "package cmd\n// QuasarGuide\n")
@@ -628,7 +643,7 @@ class ReviewRegressionTests(unittest.TestCase):
             (".goreleaser.yml", "archives:\n  - files:\n      - ../docs/payload.md\n"),
             (".goreleaser.yml", "archives:\n  - files:\n      - 'docs/it''s.md'\n"),
             (".github/workflows/release-candidate.yml", workflow.replace("Required licence and project documents present", "renamed check")),
-            (".github/workflows/release-candidate.yml", workflow.replace("bundled_documents=(COMMERCIAL.md COMMERCIAL_zh.md)", "bundled_documents=$PAYLOADS")),
+            (".github/workflows/release-candidate.yml", workflow.replace("bundled_documents=(COMMERCIAL.md)", "bundled_documents=$PAYLOADS")),
         ]
         for path, text in cases:
             with self.subTest(path=path, text=text):
@@ -854,7 +869,7 @@ if tool == "go":
                         compiler.write_text(stub)
                         compiler.chmod(0o700)
                         trace = repo / "trace"
-                        for name in ("LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md", "COMMERCIAL.md", "COMMERCIAL_zh.md"):
+                        for name in ("LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md", "COMMERCIAL.md"):
                             (repo / name).write_text("fixture payload")
                         env = dict(os.environ, PATH=str(bindir) + os.pathsep + os.environ["PATH"],
                                    MOCK_GOPATH=str(repo / "gopath"), MOCK_TRACE=str(trace), MOCK_FAIL_TARGET=failure,
@@ -871,7 +886,7 @@ if tool == "go":
                         if job == "cross-build" and not failure:
                             for target in targets:
                                 directory = repo / "dist/cross" / f"tslink-{target.replace('/', '-')}"
-                                self.assertEqual(len(list(directory.iterdir())), 6)
+                                self.assertEqual(len(list(directory.iterdir())), 5)
 
 
 if __name__ == "__main__":

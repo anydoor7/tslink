@@ -437,7 +437,7 @@ jobs:
             out="dist/cross/tslink-${target%/*}-${target#*/}"
             mkdir -p "${out}"
             if GOOS="${target%/*}" GOARCH="${target#*/}" CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.commit=${GITHUB_SHA}" -o "${out}/tslink${ext}" .; then
-              cp LICENSE NOTICE THIRD_PARTY_NOTICES.md COMMERCIAL.md COMMERCIAL_zh.md "${out}/"
+              cp LICENSE NOTICE THIRD_PARTY_NOTICES.md COMMERCIAL.md "${out}/"
             else
               failed=$?
             fi
@@ -498,7 +498,7 @@ jobs:
         run: |
           set -euo pipefail
           required_license=(LICENSE NOTICE THIRD_PARTY_NOTICES.md)
-          bundled_documents=(COMMERCIAL.md COMMERCIAL_zh.md)
+          bundled_documents=(COMMERCIAL.md)
           expected=(darwin-amd64 darwin-arm64 linux-amd64 linux-arm64 windows-amd64 windows-arm64)
           for t in "${expected[@]}"; do
             dir="downloaded/tslink-${t}"
@@ -538,7 +538,7 @@ jobs:
         run: |
           set -euo pipefail
           required_license=(LICENSE NOTICE THIRD_PARTY_NOTICES.md)
-          bundled_documents=(COMMERCIAL.md COMMERCIAL_zh.md)
+          bundled_documents=(COMMERCIAL.md)
           for f in "${required_license[@]}" "${bundled_documents[@]}"; do
             [ -s "${f}" ] || { echo "::error::missing ${f}"; exit 1; }
           done

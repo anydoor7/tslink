@@ -105,7 +105,7 @@ broad dark source. `img` provides a fallback for renderers without `picture`.
 Suggested adjacent caption: "Four service examples, each with its own name and
 node in the same tailnet. Access follows your tailnet policy."
 
-Suggested Chinese alt text: "服务示意图：应用、文档、数据库和本地模型 API 分别对应同一 tailnet 中的独立命名节点。HTTP 服务使用 HTTPS，数据库使用私有 TCP；访问受 tailnet 策略约束。"
+Suggested alt text: "Service map: apps, documents, databases, and local model APIs each have a separately named node in the same tailnet. HTTP services use HTTPS; databases use private TCP. Tailnet policy controls access."
 
 ```html
 <picture>
@@ -119,7 +119,7 @@ Suggested Chinese alt text: "服务示意图：应用、文档、数据库和本
 Suggested adjacent caption: "Example deployment: configure your app to use
 local documents and a local model; TSLink provides the private connection."
 
-Suggested Chinese alt text: "本地 AI 部署示例：获准设备通过加密 tailnet 连接到本机的 TSLink HTTPS 节点，再由用户配置的本地应用读取文档、调用本地模型并返回结果。"
+Suggested alt text: "Local AI deployment example: a permitted device connects to a local TSLink HTTPS node through encrypted tailnet transport. A separately configured local app reads documents, calls a local model, and returns the result."
 
 Keep both images' essential meanings and configuration conditions in surrounding
 README prose so they remain available to readers who cannot view the diagrams.

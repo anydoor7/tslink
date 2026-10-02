@@ -18,9 +18,9 @@ This index records the people sharing lifecycle implementation and regression te
 
 # Recipe proxy configuration checks
 
-> **定位**: Recipe integration tests against the real reverse proxy.
-> **下一跳**: `recipe_proxy_test.go` and `proxy_preserve_host_test.go`.
-> **边界**: Server architecture is described in the repository `AGENTS.md`.
+> **Purpose**: Recipe integration tests against the real reverse proxy.
+> **Next**: `recipe_proxy_test.go` and `proxy_preserve_host_test.go`.
+> **Boundary**: Server architecture is described in the repository `AGENTS.md`.
 
 - `recipe_proxy_test.go`: real `NewProxyHandler` headers and Host/Origin-sensitive catalog settings; optional receipts for disposable upstream consumer validation.
 

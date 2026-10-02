@@ -31,7 +31,7 @@ func TestReleaseVerifyScriptFailsWithoutArchives(t *testing.T) {
 		t.Logf("bash: %s", strings.SplitN(string(version), "\n", 2)[0])
 	}
 	script := filepath.Join(repoRoot(t), "scripts", "release-verify.sh")
-	required := []string{"LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md", "COMMERCIAL.md", "COMMERCIAL_zh.md"}
+	required := []string{"LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md", "COMMERCIAL.md"}
 
 	for _, tc := range []struct {
 		name     string
@@ -44,8 +44,11 @@ func TestReleaseVerifyScriptFailsWithoutArchives(t *testing.T) {
 			wantNone: []string{releaseVerifyDocsPassLine, "unbound variable"}},
 		{name: "one complete archive", archive: required,
 			want: []string{releaseVerifyDocsPassLine, "Summary:"}},
-		{name: "archive missing NOTICE", archive: []string{"LICENSE", "THIRD_PARTY_NOTICES.md", "COMMERCIAL.md", "COMMERCIAL_zh.md"},
+		{name: "archive missing NOTICE", archive: []string{"LICENSE", "THIRD_PARTY_NOTICES.md", "COMMERCIAL.md"},
 			want:     []string{"missing NOTICE in tslink_0.0.0_linux_arm64.tar.gz", "[BLOCKED] a licence file or project document is missing from some archive", "Summary:"},
+			wantNone: []string{releaseVerifyDocsPassLine}},
+		{name: "archive missing COMMERCIAL.md", archive: []string{"LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md"},
+			want:     []string{"missing COMMERCIAL.md in tslink_0.0.0_linux_arm64.tar.gz", "[BLOCKED] a licence file or project document is missing from some archive", "Summary:"},
 			wantNone: []string{releaseVerifyDocsPassLine}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

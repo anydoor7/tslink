@@ -179,6 +179,8 @@ def classify(files, special=(), labels=(), draft=False, sensitive=(), mode="tier
         path = PurePosixPath(name)
         if path.is_absolute() or ".." in path.parts:
             return "full", "unrecognized path: conservative full gate"
+        if name.endswith("_zh.md"):
+            return "full", f"English-only documentation contract: {name}"
         if name in sensitive:
             return "full", f"symlink, executable, release payload or embedded asset changed: {name}"
         if name in {"go.mod", "go.sum", "docs/cli-manifest.json"}:

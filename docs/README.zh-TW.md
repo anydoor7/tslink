@@ -15,7 +15,7 @@
 <p align="center">
   <a href="../LICENSE"><img src="assets/badge-license.svg" alt="授權：Apache 2.0"></a>
   <a href="../go.mod"><img src="assets/badge-go.svg" alt="Go 1.26.6 或更新版本"></a>
-  <a href="architecture_zh.md"><img src="assets/badge-tsnet.svg" alt="Tailscale：內嵌 tsnet 節點"></a>
+  <a href="architecture.md"><img src="assets/badge-tsnet.svg" alt="Tailscale：內嵌 tsnet 節點"></a>
   <a href="#agents"><img src="assets/badge-mcp.svg" alt="MCP：19 個工具"></a>
 </p>
 
@@ -31,7 +31,7 @@
 
 ## 安裝
 
-需要 **Go 1.26.6+** 與 Git。尚未發布預先建置的安裝包或 Homebrew cask，請從原始碼安裝。範例使用 **bash 或 zsh**；Windows 與背景服務需求見[平台支援](platforms_zh.md)。中文詳細指南目前使用簡體中文。
+需要 **Go 1.26.6+** 與 Git。尚未發布預先建置的安裝包或 Homebrew cask，請從原始碼安裝。範例使用 **bash 或 zsh**；Windows 與背景服務需求見[平台支援](platforms.md)。中文詳細指南目前使用簡體中文。
 
 ```bash
 git clone https://github.com/anydoor7/tslink.git
@@ -58,7 +58,7 @@ tslink share ./tslink-demo --name demo
 tslink url demo --wait
 ```
 
-在獲准裝置上開啟傳回的 URL。首次分享不需要 API token。[完整設定與生命週期說明 →](getting-started_zh.md)
+在獲准裝置上開啟傳回的 URL。首次分享不需要 API token。[完整設定與生命週期說明 →](getting-started.md)
 
 <a id="use-cases"></a>
 
@@ -74,7 +74,7 @@ tslink url demo --wait
 | 透過 TCP 連線至本機資料庫 | `tslink add database --tcp localhost:5432` |
 | 呼叫 Ollama 等本機模型 HTTP API | `tslink add model --proxy localhost:11434` |
 
-使用 Ollama 時，先用 `tslink url model --wait` 取得確切 URL；OpenAI API 相容用戶端的 `baseURL` 是該 URL 加上 `/v1`。[本機模型與私有資料工作流程（簡體中文）→](local-ai_zh.md)
+使用 Ollama 時，先用 `tslink url model --wait` 取得確切 URL；OpenAI API 相容用戶端的 `baseURL` 是該 URL 加上 `/v1`。[本機模型與私有資料工作流程（簡體中文）→](local-ai.md)
 
 在一台主機上管理多個應用時，TSLink 提供命名服務節點、HTTP 身分允許名單、Funnel 有效期限與 MCP 管理。若只在自己的裝置間存取一個應用，[Tailscale Serve](https://tailscale.com/docs/reference/tailscale-cli/serve) 可能已經足夠。
 
@@ -89,17 +89,17 @@ tslink url demo --wait
   <img src="assets/service-map-light.svg" alt="服務關係範例：App、Docs、Database 與 Model 是同一個 tailnet 內各自獨立的具名節點。應用程式、檔案與模型 API 使用 HTTPS，資料庫使用私有 TCP。" width="960">
 </picture>
 
-**一個 tailnet，多個服務節點。** 共用的守護程序為每個服務執行內嵌 tsnet 節點，轉發 HTTP、提供檔案存取或代理 TCP。登錄資料的變更會在執行期間生效。每個節點有自己的網路身分，服務共用發布端主機。[架構詳解 →](architecture_zh.md)
+**一個 tailnet，多個服務節點。** 共用的守護程序為每個服務執行內嵌 tsnet 節點，轉發 HTTP、提供檔案存取或代理 TCP。登錄資料的變更會在執行期間生效。每個節點有自己的網路身分，服務共用發布端主機。[架構詳解 →](architecture.md)
 
 | 技術 | 用途 |
 |---|---|
 | [Go](../go.mod) | 原生命令列程式 |
-| [Tailscale tsnet](architecture_zh.md) | 服務節點與 tailnet 傳輸 |
+| [Tailscale tsnet](architecture.md) | 服務節點與 tailnet 傳輸 |
 | [Cobra](https://github.com/spf13/cobra) | 指令與說明 |
 | [MCP Go SDK](https://github.com/modelcontextprotocol/go-sdk) | Agent 傳輸 |
 | 系統鑰匙圈與使用者服務管理器 | 選用的憑證儲存與背景執行 |
 
-服務僅在 tailnet 內提供存取，除非你明確啟用[公開 Funnel](getting-started_zh.md#更多示例)。HTTP/檔案服務支援依身分設定允許清單 （`WhoIs`、`--allow`）；原始 TCP 依賴 tailnet 原則與後端本身的驗證。詳見[分享範圍](sharing_zh.md)。
+服務僅在 tailnet 內提供存取，除非你明確啟用[公開 Funnel](getting-started.md#more-examples)。HTTP/檔案服務支援依身分設定允許清單 （`WhoIs`、`--allow`）；原始 TCP 依賴 tailnet 原則與後端本身的驗證。詳見[分享範圍](sharing.md)。
 
 TSLink 不安裝應用、不執行模型、不隔離主機程序，也不彙整多台主機。網路傳輸、加密與 HTTPS 由 Tailscale 提供；TSLink 是獨立專案。
 
@@ -120,9 +120,9 @@ TSLink 不安裝應用、不執行模型、不隔離主機程序，也不彙整�
 }
 ```
 
-MCP 管理 TSLink；應用程式使用模型 HTTP API 進行推論。設定與自動化方法見 [MCP 用戶端](mcp-clients.md)、[遠端 MCP](remote-mcp_zh.md)與 [agent 操作指南](../AGENTS.md)。
+MCP 管理 TSLink；應用程式使用模型 HTTP API 進行推論。設定與自動化方法見 [MCP 用戶端](mcp-clients.md)、[遠端 MCP](remote-mcp.md)與 [agent 操作指南](../AGENTS.md)。
 
-CLI 自動化支援 `--json`，其中 `schema_version` 為 `1`；可用 `tslink status --urls --json` 查看。本機 MCP 使用 stdio 上的 JSON-RPC。詳見 [JSON 自動化](json-automation_zh.md)。
+CLI 自動化支援 `--json`，其中 `schema_version` 為 `1`；可用 `tslink status --urls --json` 查看。本機 MCP 使用 stdio 上的 JSON-RPC。詳見 [JSON 自動化](json-automation.md)。
 
 <a id="roadmap"></a>
 
@@ -149,8 +149,8 @@ CLI 自動化支援 `--json`，其中 `schema_version` 為 `1`；可用 `tslink 
 
 ## 文件與授權
 
-[入門](getting-started_zh.md) · [本機模型](local-ai_zh.md) · [CLI 參考](cli-reference_zh.md) · [平台](platforms_zh.md) · [路線圖](roadmap_zh.md)
+[入門](getting-started.md) · [本機模型](local-ai.md) · [CLI 參考](cli-reference.md) · [平台](platforms.md) · [路線圖](roadmap.md)
 
 貢獻方式見 [CONTRIBUTING.md](../CONTRIBUTING.md)；漏洞報告請使用 [SECURITY.md](../SECURITY.md) 中的管道。
 
-TSLink 使用未經修改的 [Apache License 2.0](../LICENSE)，允許依該授權用於商業用途。散布時請保留適用的 [NOTICE](../NOTICE) 與[第三方聲明](../THIRD_PARTY_NOTICES.md)。[商業合作](../COMMERCIAL_zh.md)完全自願，不增加授權條件。Tailscale 服務條款與方案另行適用。
+TSLink 使用未經修改的 [Apache License 2.0](../LICENSE)，允許依該授權用於商業用途。散布時請保留適用的 [NOTICE](../NOTICE) 與[第三方聲明](../THIRD_PARTY_NOTICES.md)。[商業合作](../COMMERCIAL.md)完全自願，不增加授權條件。Tailscale 服務條款與方案另行適用。
