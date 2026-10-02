@@ -1,6 +1,6 @@
 # Application recipes
 
-- `catalog.json`: versioned app advice, default host targets, safety policies, fingerprints and dated official sources.
+- `catalog.json`: versioned English app advice, default host targets, safety policies, fingerprints and dated official sources.
 - `catalog.go`: immutable-copy catalog API, validation and `Recipe.HealthPath` defaults consumed by recipe registration; probes are implemented in ../health.
 - `detect.go`: bounded credential-free loopback HTTP discovery and registry correlation.
 - `listen_parse.go`: portable macOS/Linux output parsers.

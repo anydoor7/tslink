@@ -19,7 +19,6 @@ type Source struct {
 }
 type Note struct {
 	Text    string   `json:"text"`
-	TextZH  string   `json:"text_zh"`
 	Snippet string   `json:"snippet"`
 	Format  string   `json:"format"`
 	Sources []Source `json:"sources"`
@@ -45,7 +44,6 @@ type Recipe struct {
 	Fingerprints    []Fingerprint `json:"fingerprints"`
 	SafetyLevel     string        `json:"safety_level"`
 	SafetyNote      string        `json:"safety_note"`
-	SafetyNoteZH    string        `json:"safety_note_zh"`
 	Notes           []Note        `json:"notes"`
 }
 type Catalog struct {

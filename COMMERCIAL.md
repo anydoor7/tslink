@@ -4,7 +4,7 @@ TSLink is licensed under the standard [Apache License 2.0](LICENSE).
 Individuals and organizations of any size may use, modify, and redistribute
 it, including commercially, subject to that license. There is no TSLink
 license fee, registration, usage-reporting requirement, or revenue/headcount
-threshold. [中文说明](COMMERCIAL_zh.md).
+threshold.
 
 ## Supporting the project
 

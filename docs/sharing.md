@@ -24,7 +24,7 @@ The two path forms differ in reachable surface, and the difference is the
 service's own boundary rather than a listing preference. A directory target
 serves every file under it and directories without an `index.html` render a
 listing. A regular-file target serves that one file: its URL is the file, the
-service root redirects to it, and every other path answers 404, including the
+service root redirects to it with HTTP 302, and every other path answers 404, including the
 file's siblings in the same directory. The registry records the narrowing in
 the file service's `file` field; an entry without that field is a directory
 share.

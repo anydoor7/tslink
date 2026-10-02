@@ -7,6 +7,10 @@ Human contributors should start from [CONTRIBUTING.md](CONTRIBUTING.md).
 
 TSLink is a private Tailscale gateway that exposes local proxy, file, and TCP services through embedded tsnet nodes. It implements the shipped core with per-service microsegmentation, identity-aware HTTP proxying, WireGuard encryption, registry-backed hot reload, and system keychain credential storage. Admin, Docker discovery, middleware, cluster sync, custom-domain ACME, and an exposed `/metrics` endpoint are roadmap items with no shipped package.
 
+## Documentation policy
+
+Documentation is English-only. The only translations are the homepage READMEs in `docs/README.<lang>.md`.
+
 ## Build & Development
 
 ```bash
@@ -355,4 +359,4 @@ which is a different counter from the per-stream `sequence` -- deduplicate on
 
 ## Licensing boundary
 
-`LICENSE` is the unmodified Apache License 2.0. All organization sizes may use TSLink commercially under its terms; do not add mandatory fees, registration, notification, telemetry, or revenue/headcount thresholds in documentation. `COMMERCIAL.md` and `COMMERCIAL_zh.md` describe voluntary cooperation and must remain equivalent. Preserve attribution, third-party notices, previously granted rights, and the contributor rights policy in CONTRIBUTING.md. Code licensing does not grant Tailscale service or resale rights.
+`LICENSE` is the unmodified Apache License 2.0. All organization sizes may use TSLink commercially under its terms; do not add mandatory fees, registration, notification, telemetry, or revenue/headcount thresholds in documentation. `COMMERCIAL.md` describes voluntary cooperation. Preserve attribution, third-party notices, previously granted rights, and the contributor rights policy in CONTRIBUTING.md. Code licensing does not grant Tailscale service or resale rights.

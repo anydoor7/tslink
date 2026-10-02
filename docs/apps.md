@@ -242,7 +242,7 @@ Proxy Host: **preserved external** (`preserve_host=true`).
 tslink apps share jupyter
 ```
 
-Merge into jupyter_server_config.py. The recipe preserves the external Host: add only its exact hostname to local_hostnames so the DNS-rebinding Host check stays enabled. Same-host WebSocket Origin checking needs no allow_origin override. trust_xheaders restores HTTPS for HTTP XSRF checks. Keep generated token authentication, or set a password using jupyter server password. Never clear both token and password, disable XSRF checks, allow all remote Hosts or use a wildcard origin. Only trusted users should receive notebook access; this recipe stays never public.
+Merge into jupyter_server_config.py. The recipe preserves the external Host: add only its exact hostname to local_hostnames so the DNS-rebinding Host check stays enabled. Same-host WebSocket Origin checking needs no allow_origin override. trust_xheaders restores HTTPS for HTTP XSRF checks. Keep generated token authentication, or set a password using jupyter server password. Never clear both token and password, disable XSRF checks, allow all remote Hosts or use a wildcard origin. Notebooks execute code with the owner's permissions. Only trusted users should receive notebook access; this recipe stays never public.
 
 ```python
 c.ServerApp.ip = "127.0.0.1"

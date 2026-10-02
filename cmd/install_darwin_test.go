@@ -2170,7 +2170,7 @@ func TestDocumentationDoesNotConflateSSHWithLaunchdGUIDomain(t *testing.T) {
 		t.Fatal("runtime.Caller() did not return this test file")
 	}
 	repoRoot := filepath.Join(filepath.Dir(filename), "..")
-	for _, name := range []string{"docs/platforms_zh.md", "AGENTS.md"} {
+	for _, name := range []string{"docs/platforms.md", "AGENTS.md"} {
 		contents, err := os.ReadFile(filepath.Join(repoRoot, name))
 		if err != nil {
 			t.Fatalf("ReadFile(%s): %v", name, err)

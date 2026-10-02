@@ -117,6 +117,26 @@ func TestRepositoryPinsLFLineEndings(t *testing.T) {
 	}
 }
 
+func TestDocumentationHasNoChineseDuplicates(t *testing.T) {
+	cmd := exec.Command("git", "-C", repoRoot(t), "ls-files", "-z", "--", "*.md")
+	tracked, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("enumerate tracked Markdown: %v", err)
+	}
+	foundHomepage := false
+	for _, name := range strings.Split(string(tracked), "\x00") {
+		if name == "README.md" {
+			foundHomepage = true
+		}
+		if strings.HasSuffix(name, "_zh.md") {
+			t.Errorf("tracked Chinese duplicate %q: documentation is English-only; only docs/README.<lang>.md translations are allowed", name)
+		}
+	}
+	if !foundHomepage {
+		t.Fatal("tracked Markdown enumeration did not include README.md")
+	}
+}
+
 // TestEveryActionPinnedToSHA proves no workflow references a mutable action tag.
 func TestEveryActionPinnedToSHA(t *testing.T) {
 	for name, body := range readWorkflows(t) {
@@ -613,7 +633,7 @@ func TestArtifactVerifyChecksEveryBundledDocument(t *testing.T) {
 		t.Fatal("artifact-verify Bash step is missing")
 	}
 
-	var expectedFiles = []string{"LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md", "COMMERCIAL.md", "COMMERCIAL_zh.md"}
+	var expectedFiles = []string{"LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md", "COMMERCIAL.md"}
 	var targets = []string{"darwin-amd64", "darwin-arm64", "linux-amd64", "linux-arm64", "windows-amd64", "windows-arm64"}
 	makeFixture := func(t *testing.T) string {
 		t.Helper()
