@@ -2,11 +2,15 @@
 """Choose a PR tier from immutable Git trees; uncertainty costs a full gate."""
 
 import argparse
+import fnmatch
+import html
 import json
 import os
 from pathlib import Path, PurePosixPath
 import re
+import shlex
 import subprocess
+import sys
 
 
 # Include all Go OS names, the conventional unix/bsd suffixes, and legacy tags.
@@ -39,7 +43,133 @@ def platform_files(repo, ref):
     return special
 
 
-def classify(files, special=(), labels=(), draft=False):
+def tree_entries(repo, ref):
+    entries = {}
+    for record in git(repo, "ls-tree", "-r", "-z", ref).decode().split("\0"):
+        if record:
+            metadata, name = record.split("\t", 1)
+            entries[name] = metadata.split()[0]
+    return entries
+
+
+def literal_path(value):
+    """Only literal scalar paths are supported; new syntax costs a full gate."""
+    # YAML escaping/comment rules differ from shlex. Reject these forms rather
+    # than accidentally decoding a different path (including doubled quotes).
+    if any(char in value for char in "\\#") or "''" in value:
+        raise ValueError("uncertain release payload quoting")
+    words = shlex.split(value, comments=True)
+    if len(words) != 1 or any(char in words[0] for char in "$`{}[]\\"):
+        raise ValueError("uncertain release payload path")
+    path = words[0]
+    if path.startswith(("!", "&")) or path.startswith("/") or ".." in path.split("/"):
+        raise ValueError("uncertain release payload path")
+    return path
+
+
+def release_payloads(repo, ref, entries):
+    """Derive exclusions from GoReleaser file/src lists and the real presence check.
+
+    This deliberately supports only literal block lists, not arbitrary YAML or
+    shell evaluation. An unsupported representation selects full in decide().
+    """
+    payloads = set()
+    for name in entries:
+        if "/" in name or not name.startswith(".goreleaser"):
+            continue
+        if not name.endswith((".yml", ".yaml")):
+            raise ValueError("uncertain GoReleaser config format")
+        lines = git(repo, "show", f"{ref}:{name}").decode().splitlines()
+        for index, line in enumerate(lines):
+            match = re.fullmatch(r"( *)(?:-\s+)?files\s*:\s*(.*?)\s*", line)
+            if re.search(r"\bfiles[\"']?\s*:", line) and not match:
+                raise ValueError("uncertain GoReleaser files syntax")
+            if match:
+                if match[2] and not match[2].startswith("#"):
+                    raise ValueError("uncertain GoReleaser files list")
+                indent = len(match[1])
+                for child in lines[index + 1:]:
+                    if not child.strip() or child.lstrip().startswith("#"):
+                        continue
+                    if len(child) - len(child.lstrip()) <= indent:
+                        break
+                    item = re.fullmatch(r"\s*-\s+(?:src:\s*)?(.+)", child)
+                    if not item:
+                        raise ValueError("uncertain GoReleaser files entry")
+                    payloads.add(literal_path(item[1]))
+            src = re.fullmatch(r"\s*(?:-\s+)?src:\s*(.+)", line)
+            if re.search(r"\bsrc[\"']?\s*:", line) and not src:
+                raise ValueError("uncertain GoReleaser source syntax")
+            if src:
+                payloads.add(literal_path(src[1]))
+    workflow = ".github/workflows/release-candidate.yml"
+    if workflow in entries:
+        source = git(repo, "show", f"{ref}:{workflow}").decode()
+        marker = "      - name: Required licence and project documents present\n"
+        if marker not in source:
+            raise ValueError("release payload check unavailable")
+        check = source.split(marker, 1)[1].split("\n      - ", 1)[0]
+        arrays = re.findall(r"^\s*(?:required_license|bundled_docs)=\(([^\n]*)\)\s*$", check, re.M)
+        if len(arrays) != 2:
+            raise ValueError("uncertain release payload check")
+        for array in arrays:
+            for word in shlex.split(array):
+                payloads.add(literal_path(shlex.quote(word)))
+    return payloads
+
+
+def embed_patterns(repo, ref):
+    result = subprocess.run(
+        ["git", "-C", str(repo), "grep", "-I", "-l", "-z", "-F", "//go:embed", ref, "--", "*.go"],
+        capture_output=True, check=False, timeout=GIT_TIMEOUT,
+    )
+    if result.returncode not in (0, 1):
+        raise RuntimeError("cannot inspect embed directives")
+    patterns = set()
+    for entry in result.stdout.decode().split("\0"):
+        if not entry:
+            continue
+        name = entry.split(":", 1)[1]
+        source = git(repo, "show", f"{ref}:{name}").decode()
+        for line in source.splitlines():
+            if "//go:embed" not in line:
+                continue
+            if not line.startswith("//go:embed ") and not line.startswith("//go:embed\t"):
+                raise ValueError("uncertain embed directive")
+            text = line[len("//go:embed"):].strip()
+            if not text:
+                raise ValueError("empty embed directive")
+            while text:
+                if text.startswith('"'):
+                    pattern, end = json.JSONDecoder().raw_decode(text)
+                    text = text[end:]
+                elif text.startswith("`"):
+                    end = text.index("`", 1)
+                    pattern, text = text[1:end], text[end + 1:]
+                else:
+                    match = re.match(r"\S+", text)
+                    pattern, text = match[0], text[match.end():]
+                if text and not text[0].isspace():
+                    raise ValueError("uncertain embed token boundary")
+                pattern = pattern.removeprefix("all:")
+                if (not pattern or pattern.startswith("/") or any(part in {"", ".", ".."} for part in pattern.split("/"))
+                        or any(char in pattern for char in "[]\\\"`")):
+                    raise ValueError("uncertain embed pattern")
+                patterns.add(str(PurePosixPath(name).parent / pattern))
+                text = text.strip()
+    return patterns
+
+
+def matches_path(name, patterns):
+    # fnmatch's '*' also crosses '/' here: deliberate conservative matching.
+    # Matching ancestors accounts for embedded/payload directories recursively,
+    # including hidden files regardless of the optional all: prefix.
+    return any(fnmatch.fnmatchcase(str(path), pattern)
+               for path in (PurePosixPath(name), *PurePosixPath(name).parents)
+               for pattern in patterns)
+
+
+def classify(files, special=(), labels=(), draft=False, sensitive=(), mode="tiered"):
     if draft:
         return "draft", "draft PR: heavy checks deferred until ready for review"
     if "ci:full" in labels:
@@ -52,6 +182,8 @@ def classify(files, special=(), labels=(), draft=False):
         path = PurePosixPath(name)
         if path.is_absolute() or ".." in path.parts:
             return "full", "unrecognized path: conservative full gate"
+        if name in sensitive:
+            return "full", f"symlink, executable, release payload or embedded asset changed: {name}"
         if name in {"go.mod", "go.sum", "docs/cli-manifest.json"}:
             return "full", f"module or generated manifest changed: {name}"
         if name.startswith((".github/", "tools/", "internal/daemon/", "cmd/install_",
@@ -62,22 +194,29 @@ def classify(files, special=(), labels=(), draft=False):
         if name.startswith("internal/") and any(str(parent) in packages for parent in path.parents):
             return "full", f"package has OS-specific files in base or head: {name}"
     if all(is_docs(name) for name in files):
-        return "docs", "only markdown, docs, images or assets changed"
+        return "docs", "only allowlisted documentation changed"
+    if mode == "full":
+        return "full", "CI_PR_TIER_MODE=full: ready non-documentation PR"
     if all(is_docs(name) or name.endswith(".go") for name in files):
         return "go", "ordinary Go change: all Linux-hosted checks, including foreign targets"
     return "full", "unrecognized non-documentation change: conservative full gate"
 
 
 def is_docs(name):
-    if name.endswith(".go"):
+    path = PurePosixPath(name)
+    if path.name == ".gitattributes" or "testdata" in path.parts or name.startswith(("internal/", "cmd/")):
         return False
-    return (name.endswith(".md") or name.startswith(("docs/", "images/", "assets/"))
-            or PurePosixPath(name).suffix.lower() in IMAGES)
+    return ((name.endswith(".md") and (len(path.parts) == 1 or name.startswith("docs/")))
+            or (name.startswith("docs/assets/") and path.suffix.lower() in IMAGES))
 
 
 def decide(repo, event_name, event, files=None, base=None, head=None):
     if event_name != "pull_request":
         return "full", f"{event_name}: main and tag callers always use the full gate"
+    mode = os.environ.get("CI_PR_TIER_MODE", "tiered")
+    if mode not in {"tiered", "full"}:
+        print(f"WARNING: invalid CI_PR_TIER_MODE {mode!r}; selecting full", file=sys.stderr)
+        return "full", "invalid CI_PR_TIER_MODE: conservative full gate"
     pr = event["pull_request"]
     labels = [label["name"] for label in pr.get("labels", [])]
     if pr.get("draft") or "ci:full" in labels:
@@ -96,9 +235,15 @@ def decide(repo, event_name, event, files=None, base=None, head=None):
         # Union catches deletions, renames and removal of the final OS file/tag.
         special = (platform_files(repo, merge_base) | platform_files(repo, base)
                    | platform_files(repo, head))
-        return classify(files, special, labels)
+        sensitive = set()
+        for ref in {merge_base, base, head}:
+            entries = tree_entries(repo, ref)
+            dependencies = release_payloads(repo, ref, entries) | embed_patterns(repo, ref)
+            sensitive.update(name for name in files if entries.get(name) in {"120000", "100755"}
+                             or matches_path(name, dependencies))
+        return classify(files, special, labels, sensitive=sensitive, mode=mode)
     except (OSError, ValueError, KeyError, RuntimeError, subprocess.SubprocessError):
-        return "full", "diff/build-constraint inspection unavailable: conservative full gate"
+        return "full", "tree/dependency inspection unavailable: conservative full gate"
 
 
 def main():
@@ -116,7 +261,8 @@ def main():
             output.write(f"tier={tier}\nrunners={json.dumps(runners)}\n")
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
-            summary.write(f"## CI tier: {tier}\n\nReason: {reason}\n")
+            safe_reason = html.escape(json.dumps(reason, ensure_ascii=True)[1:-1])
+            summary.write(f"## CI tier: {tier}\n\nReason: <code>{safe_reason}</code>\n")
 
 
 if __name__ == "__main__":

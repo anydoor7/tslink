@@ -406,6 +406,7 @@ func TestCandidateDeclaresRequiredGates(t *testing.T) {
 	wf := parse(t, candidateWorkflow, body)
 	required := []string{
 		"tier",                   // conservative PR classification; main/tags always full
+		"policy-tests",           // proposed policy tested separately from trusted classification
 		"gate",                   // aggregate fails on unexpected skips/failures/cancellation
 		"native",                 // 3-OS build/vet/test/race/shuffle/smoke
 		"manifest-platform-diff", // downloaded native manifests prove mark completeness

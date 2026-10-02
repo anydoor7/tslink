@@ -1,7 +1,7 @@
 name: CI
 
 # Main and tags (via release.yml) run the full exact-SHA candidate gate.
-# PRs run a tier chosen from changed paths, with a ci:full label override;
+# PRs use trusted-base path classification, CI_PR_TIER_MODE and ci:full;
 # draft PRs defer heavy checks. All paths finish at the aggregate gate.
 
 on:

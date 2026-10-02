@@ -1,6 +1,6 @@
 name: Release Candidate
 
-# Reusable exact-SHA quality gate: main/tags are full; PRs are tiered.
+# Reusable exact-SHA gate: main/tags are full; PR policy comes from the base.
 # Called by ci.yml on pull requests and pushes to main, and by release.yml on
 # tags.
 
@@ -42,9 +42,42 @@ jobs:
           ref: ${{ inputs.ref }}
           fetch-depth: 0
           persist-credentials: false
+          path: pr-data
+      - name: Check out trusted base policy
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+          path: trusted-base
       - name: Classify immutable PR base/head trees
         id: classify
-        run: python3 .github/scripts/ci-tier.py
+        env:
+          CI_PR_TIER_MODE: ${{ vars.CI_PR_TIER_MODE || 'tiered' }}
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME}" = pull_request ] && [ -f "${GITHUB_WORKSPACE}/trusted-base/.github/scripts/ci-tier.py" ]; then
+            python3 -I "${GITHUB_WORKSPACE}/trusted-base/.github/scripts/ci-tier.py" --repo "${GITHUB_WORKSPACE}/pr-data"
+          else
+            # Bootstrap has no base policy yet; main and tags are always full.
+            echo '{"tier":"full","reason":"main/tag or trusted base policy unavailable","runners":["ubuntu-latest","macos-latest","windows-latest"]}'
+            echo 'tier=full' >> "${GITHUB_OUTPUT}"
+            echo 'runners=["ubuntu-latest","macos-latest","windows-latest"]' >> "${GITHUB_OUTPUT}"
+            echo '## CI tier: full' >> "${GITHUB_STEP_SUMMARY}"
+            echo 'Reason: main/tag or trusted base policy unavailable.' >> "${GITHUB_STEP_SUMMARY}"
+          fi
+
+  policy-tests:
+    name: Test proposed CI policy (non-authoritative)
+    runs-on: ubuntu-latest
+    needs: tier
+    if: needs.tier.outputs.tier == 'go' || needs.tier.outputs.tier == 'full'
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
       - name: Test CI policy without Go or network
         run: python3 -m unittest discover -s .github/scripts -p 'test_ci_tier.py' -v
 
@@ -525,7 +558,7 @@ jobs:
     name: gate
     if: always()
     runs-on: ubuntu-latest
-    needs: [tier, native, manifest-platform-diff, machine-contract, staticcheck, govulncheck-main, govulncheck-repo, reproducible-source, cross-build, artifact-verify, release-config]
+    needs: [tier, policy-tests, native, manifest-platform-diff, machine-contract, staticcheck, govulncheck-main, govulncheck-repo, reproducible-source, cross-build, artifact-verify, release-config]
     steps:
       # Inline and checkout-free: a failed/cancelled classification or checkout
       # must still produce a failing aggregate, not suppress the required check.
@@ -539,7 +572,7 @@ jobs:
           import sys
 
           needs = json.loads(os.environ["NEEDS_JSON"])
-          core = {"native", "machine-contract", "staticcheck", "govulncheck-main",
+          core = {"policy-tests", "native", "machine-contract", "staticcheck", "govulncheck-main",
                   "govulncheck-repo", "reproducible-source", "cross-build",
                   "artifact-verify", "release-config"}
           expected = core | {"tier", "manifest-platform-diff"}

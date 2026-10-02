@@ -28,7 +28,10 @@ WORKFLOW_TARGETS = re.search(r'TSLINK_RELEASE_TARGETS: "([^"]+)"', WORKFLOW).gro
 def run_block(job, step):
     """Extract a literal block; actionlint separately validates the YAML graph."""
     section = re.split(r"\n  [a-z][a-z-]*:\n", WORKFLOW.split(f"\n  {job}:\n", 1)[1], maxsplit=1)[0]
-    block = section.split(f"      - name: {step}\n", 1)[1].split("        run: |\n", 1)[1]
+    run = section.split(f"      - name: {step}\n", 1)[1].split("        run: ", 1)[1]
+    if not run.startswith("|\n"):
+        return run.splitlines()[0] + "\n"
+    block = run[2:]
     lines = []
     for line in block.splitlines():
         if line and not line.startswith("          "):
@@ -96,8 +99,14 @@ elif "ls-tree" in args:
     def test_fixture_lists(self):
         cases = [
             ("22 readmes", [f"README.{n}.md" for n in range(22)], (), (), False, "docs"),
-            ("nested markdown", ["guide/intro.md"], (), (), False, "docs"),
-            ("docs assets", ["docs/guide.txt", "assets/style.css", "images/photo.png"], (), (), False, "docs"),
+            ("nested markdown", ["guide/intro.md"], (), (), False, "full"),
+            ("unknown assets", ["docs/guide.txt", "assets/style.css", "images/photo.png"], (), (), False, "full"),
+            ("allowlisted images", ["docs/assets/photo.png"], (), (), False, "docs"),
+            ("docs markdown", ["docs/guide.md"], (), (), False, "docs"),
+            ("root fixture", ["testdata/input.md"], (), (), False, "full"),
+            ("cmd markdown", ["cmd/guide.md"], (), (), False, "full"),
+            ("root attributes", [".gitattributes"], (), (), False, "full"),
+            ("image attributes", ["docs/assets/.gitattributes"], (), (), False, "full"),
             ("go only", ["cmd/list.go"], (), (), False, "go"),
             ("mixed docs Go", ["docs/guide.md", "cmd/list.go"], (), (), False, "go"),
             ("internal portable", ["internal/portable/store.go"], (), (), False, "go"),
@@ -234,6 +243,257 @@ elif "ls-tree" in args:
             self.assertEqual(tier.decide(Path("/nonexistent"), "push", event)[0], "full")
 
 
+class ReviewRegressionTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.top = Path(self.tmp.name)
+        self.repo = self.top / "pr-data"
+        self.repo.mkdir()
+        self.git("init", "-q")
+        for key, value in (("core.hooksPath", "/dev/null"), ("commit.gpgSign", "false"),
+                           ("user.name", "Fixture"), ("user.email", "fixture@example.invalid")):
+            self.git("config", key, value)
+        self.write("README.md", "docs\n")
+        self.write("cmd/plain.go", "package cmd\n")
+        self.write("docs/platform-test.txt", '//go:build windows\n\npackage cmd\nimport "testing"\n'
+                   'func TestPlatformRegression(t *testing.T) { t.Fatal("Windows regression") }\n')
+        self.write("THIRD_PARTY_NOTICES.md", "generated inventory\n")
+        # Use the actual release metadata, rather than a second payload list.
+        for path in (".goreleaser.yml", ".github/workflows/release-candidate.yml"):
+            self.write(path, (ROOT / path).read_text())
+        self.base = self.commit("base")
+
+    def git(self, *args):
+        return subprocess.check_output(["git", "-C", str(self.repo), *args], stderr=subprocess.PIPE).decode().strip()
+
+    def write(self, name, content):
+        path = self.repo / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content)
+
+    def commit(self, message):
+        self.git("add", "-A")
+        self.git("commit", "-qm", message)
+        return self.git("rev-parse", "HEAD")
+
+    def reset(self, ref=None):
+        self.git("reset", "--hard", ref or self.base)
+        self.git("clean", "-fdq")
+
+    def event(self, base=None, head=None, **kwargs):
+        return {"number": 999, "pull_request": {"base": {"sha": base or self.base},
+                "head": {"sha": head or self.git("rev-parse", "HEAD")}, **kwargs}}
+
+    def test_reviewer_docs_fixtures(self):
+        for name, contents in (("THIRD_PARTY_NOTICES.md", None),
+                               ("internal/portable/testdata/input.md", "fixture\n"),
+                               ("docs/.gitattributes", "* -text\n"),
+                               ("docs/bootstrap.sh", "#!/bin/sh\nexit 1\n")):
+            with self.subTest(path=name):
+                self.reset()
+                if contents is None:
+                    (self.repo / name).unlink()
+                else:
+                    self.write(name, contents)
+                self.commit("review fixture")
+                self.assertEqual(tier.decide(self.repo, "pull_request", self.event())[0], "full")
+
+    def test_reviewer_symlink_fixture_and_old_base_modes(self):
+        link = self.repo / "cmd/platform_test.go"
+        link.symlink_to("../docs/platform-test.txt")
+        symlink_head = self.commit("symlinked Windows test")
+        self.assertIn("120000", self.git("ls-tree", symlink_head, "cmd/platform_test.go"))
+        self.assertEqual(tier.decide(self.repo, "pull_request", self.event())[0], "full")
+        for edit in ("remove", "replace", "retarget"):
+            with self.subTest(edit=edit):
+                self.reset(symlink_head)
+                link.unlink()
+                if edit == "replace":
+                    link.write_text("package cmd\n")
+                elif edit == "retarget":
+                    link.symlink_to("../README.md")
+                head = self.commit(edit)
+                self.assertEqual(tier.decide(self.repo, "pull_request", self.event(base=symlink_head, head=head))[0], "full")
+        # Current base introduces a symlink at the path independently changed by head.
+        self.reset()
+        self.write("docs/guide.md", "head\n")
+        head = self.commit("head docs")
+        self.reset()
+        (self.repo / "docs/guide.md").symlink_to("../README.md")
+        advanced_base = self.commit("base symlink")
+        self.assertEqual(tier.decide(self.repo, "pull_request", self.event(base=advanced_base, head=head))[0], "full")
+
+    def test_reviewer_embed_asset_and_allowlisted_embed(self):
+        for pattern, asset in (("docs/payload.txt", "docs/payload.txt"),
+                               ('"docs/space payload.md"', "docs/space payload.md"),
+                               ("`docs/*.md`", "docs/payload.md"),
+                               ("all:docs/assets", "docs/assets/.hidden/payload.png")):
+            with self.subTest(pattern=pattern):
+                self.reset()
+                self.write("main.go", 'package main\nimport "embed"\n//go:embed ' + pattern + '\nvar data embed.FS\n')
+                self.write(asset, "base payload\n")
+                base = self.commit("embed base")
+                self.write(asset, "changed payload\n")
+                head = self.commit("embed asset")
+                self.assertEqual(tier.decide(self.repo, "pull_request", self.event(base=base, head=head))[0], "full")
+                # Removing a directive cannot hide dependencies from the trusted base.
+                self.write("main.go", "package main\n")
+                head = self.commit("remove embed directive")
+                self.assertEqual(tier.decide(self.repo, "pull_request", self.event(base=base, head=head))[0], "full")
+        self.reset()
+        self.write("main.go", 'package main\n//go:embed "unterminated\n')
+        self.write("docs/guide.md", "docs\n")
+        self.commit("uncertain embed")
+        selected, reason = tier.decide(self.repo, "pull_request", self.event())
+        self.assertEqual(selected, "full")
+        self.assertIn("inspection unavailable", reason)
+
+    def test_payloads_derive_from_release_metadata(self):
+        for metadata in ("archive", "package", "check"):
+            with self.subTest(metadata=metadata):
+                self.reset()
+                payload = "docs/custom-payload.md"
+                if metadata == "check":
+                    workflow = (ROOT / ".github/workflows/release-candidate.yml").read_text()
+                    self.write(".github/workflows/release-candidate.yml",
+                               workflow.replace("bundled_docs=(", "bundled_docs=(docs/custom-payload.md "))
+                else:
+                    config = "version: 2\n" + ("archives:\n  - files:\n      - " + payload + "\n" if metadata == "archive"
+                        else "nfpms:\n  - contents:\n      - src: " + payload + "\n        dst: /usr/share/doc/custom.md\n")
+                    self.write(".goreleaser.yml", config)
+                self.write(payload, "base payload\n")
+                base = self.commit("custom payload metadata")
+                self.write(payload, "head payload\n")
+                head = self.commit("custom payload change")
+                self.assertEqual(tier.decide(self.repo, "pull_request", self.event(base=base, head=head))[0], "full")
+
+    def test_uncertain_release_metadata_selects_full(self):
+        workflow = (ROOT / ".github/workflows/release-candidate.yml").read_text()
+        cases = [
+            (".goreleaser.json", '{"archives": [{"files": ["docs/payload.md"]}]}'),
+            (".goreleaser.yml", "archives: [{files: [docs/payload.md]}]\n"),
+            (".goreleaser.yml", '{"archives": [{"files": ["docs/payload.md"]}]}\n'),
+            (".goreleaser.yml", "archives:\n  - files: [docs/payload.md]\n"),
+            (".goreleaser.yml", "archives:\n  - files:\n      src: docs/payload.md\n"),
+            (".goreleaser.yml", "nfpms:\n  - contents: [{src: docs/payload.md}]\n"),
+            (".goreleaser.yml", "archives:\n  - files:\n      - '{{ .Payload }}'\n"),
+            (".goreleaser.yml", "archives:\n  - files:\n      - ../docs/payload.md\n"),
+            (".goreleaser.yml", "archives:\n  - files:\n      - 'docs/it''s.md'\n"),
+            (".github/workflows/release-candidate.yml", workflow.replace("Required licence and project documents present", "renamed check")),
+            (".github/workflows/release-candidate.yml", workflow.replace("bundled_docs=(COMMERCIAL.md COMMERCIAL_zh.md)", "bundled_docs=$PAYLOADS")),
+        ]
+        for path, text in cases:
+            with self.subTest(path=path, text=text):
+                self.reset()
+                self.write(path, text)
+                base = self.commit("uncertain metadata base")
+                self.write("docs/guide.md", "docs\n")
+                head = self.commit("docs head")
+                selected, reason = tier.decide(self.repo, "pull_request", self.event(base=base, head=head))
+                self.assertEqual(selected, "full")
+                self.assertIn("inspection unavailable", reason)
+
+    def test_uncertain_embed_parsing_selects_full(self):
+        for directive in (" //go:embed docs/a.md", "//go:embed\t", '//go:embed "docs/a.md"docs/b.md',
+                          "//go:embed ../docs/a.md", "//go:embed docs/[ab].md"):
+            with self.subTest(directive=directive):
+                self.reset()
+                self.write("main.go", "package main\n" + directive + "\n")
+                base = self.commit("uncertain embed base")
+                self.write("docs/a.md", "docs\n")
+                head = self.commit("docs head")
+                selected, reason = tier.decide(self.repo, "pull_request", self.event(base=base, head=head))
+                self.assertEqual(selected, "full")
+                self.assertIn("inspection unavailable", reason)
+        with mock.patch.object(tier.subprocess, "run", return_value=subprocess.CompletedProcess([], 2, b"", b"failed")):
+            with self.assertRaisesRegex(RuntimeError, "cannot inspect embed directives"):
+                tier.embed_patterns(self.repo, self.base)
+
+    def test_executable_docs_and_head_only_embed(self):
+        self.write("docs/guide.md", "#!/bin/sh\nexit 1\n")
+        (self.repo / "docs/guide.md").chmod(0o755)
+        self.commit("executable markdown")
+        self.assertEqual(tier.decide(self.repo, "pull_request", self.event())[0], "full")
+        self.reset()
+        self.write("main.go", 'package main\n//go:embed\tdocs/a.md "docs/b.md"\n')
+        self.write("docs/a.md", "a\n")
+        self.write("docs/b.md", "b\n")
+        self.commit("head-only embed dependencies")
+        self.assertEqual(tier.decide(self.repo, "pull_request", self.event())[0], "full")
+
+    def test_both_repository_modes(self):
+        for mode in ("tiered", "full"):
+            for path, expected in (("README.md", "docs"), ("cmd/plain.go", "go" if mode == "tiered" else "full"),
+                                   ("cmd/platform_windows.go", "full")):
+                with self.subTest(mode=mode, path=path):
+                    self.reset()
+                    self.write(path, "changed\n")
+                    self.commit("mode fixture")
+                    with mock.patch.dict(os.environ, {"CI_PR_TIER_MODE": mode}):
+                        self.assertEqual(tier.decide(self.repo, "pull_request", self.event())[0], expected)
+                        self.assertEqual(tier.decide(self.repo, "pull_request", self.event(draft=True))[0], "draft")
+                        self.assertEqual(tier.decide(self.repo, "pull_request", self.event(labels=[{"name": "ci:full"}]))[0], "full")
+                        for ref in ("refs/heads/main", "refs/tags/v1.0.0"):
+                            self.assertEqual(tier.decide(self.repo, "push", {"ref": ref})[0], "full")
+        with mock.patch.dict(os.environ, {"CI_PR_TIER_MODE": "invalid\n## forged"}), contextlib.redirect_stderr(io.StringIO()) as warning:
+            self.assertEqual(tier.decide(self.repo, "pull_request", self.event())[0], "full")
+        self.assertIn("WARNING", warning.getvalue())
+
+    def test_summary_newline_heading_injection(self):
+        injected = "internal/sensitive/\n\n## Forged review message\n[Example](https://example.invalid)\n<script>`injected`\n.md"
+        self.write("internal/sensitive/file_windows.go", "package sensitive\n")
+        base = self.commit("sensitive base")
+        self.write(injected, "fixture\n")
+        head = self.commit("summary fixture")
+        event = self.top / "event.json"
+        event.write_text(json.dumps(self.event(base=base, head=head)))
+        summary = self.top / "summary"
+        p = subprocess.run([sys.executable, "-I", str(ROOT / ".github/scripts/ci-tier.py"),
+                            "--repo", str(self.repo), "--event", str(event), "--event-name", "pull_request"],
+                           env=dict(os.environ, GITHUB_STEP_SUMMARY=str(summary)), capture_output=True, text=True)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        actual_name = self.git("diff", "--name-only", "-z", base, head).rstrip("\0")
+        self.assertIn(actual_name, json.loads(p.stdout)["reason"])
+        text = summary.read_text()
+        self.assertEqual([line for line in text.splitlines() if line.startswith("## ")], ["## CI tier: full"])
+        self.assertIn("Forged review message", text)
+        self.assertIn("&lt;script&gt;", text)
+        self.assertNotIn("<script>", text)
+
+    def test_pr_modified_classifier_cannot_downgrade(self):
+        source = (ROOT / ".github/scripts/ci-tier.py").read_text()
+        self.write(".github/scripts/ci-tier.py", source)
+        base = self.commit("trusted policy")
+        trusted = self.top / "trusted-base"
+        self.git("worktree", "add", "--detach", str(trusted), base)
+        needle = '    runners = RUNNERS if tier == "full" else RUNNERS[:1]'
+        poisoned = source.replace(needle, '    if args.event_name == "pull_request" and event.get("number") == 999:\n'
+                                  '        tier, reason = "docs", "only markdown changed"\n' + needle)
+        self.assertNotEqual(source, poisoned)
+        self.write(".github/scripts/ci-tier.py", poisoned)
+        self.write("cmd/platform_windows.go", "package cmd\n")
+        self.commit("PR downgrade")
+        event = self.top / "event.json"
+        event.write_text(json.dumps(self.event(base=base)))
+        env = dict(os.environ, GITHUB_WORKSPACE=str(self.top), GITHUB_EVENT_PATH=str(event),
+                   GITHUB_EVENT_NAME="pull_request", GITHUB_OUTPUT=str(self.top / "output"),
+                   GITHUB_STEP_SUMMARY=str(self.top / "summary"), CI_PR_TIER_MODE="tiered")
+        control = subprocess.run([sys.executable, "-I", str(self.repo / ".github/scripts/ci-tier.py"),
+                                  "--repo", str(self.repo)], env=env, capture_output=True, text=True)
+        self.assertEqual(json.loads(control.stdout)["tier"], "docs")
+        p = subprocess.run(["bash", "-c", run_block("tier", "Classify immutable PR base/head trees")],
+                           cwd=self.repo, env=env, capture_output=True, text=True)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(json.loads(p.stdout)["tier"], "full")
+        # Bootstrap must ignore the malicious PR copy when base has no policy.
+        (trusted / ".github/scripts/ci-tier.py").unlink()
+        p = subprocess.run(["bash", "-c", run_block("tier", "Classify immutable PR base/head trees")],
+                           cwd=self.repo, env=env, capture_output=True, text=True)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(json.loads(p.stdout)["tier"], "full")
+
+
 class GateTests(unittest.TestCase):
     def test_workflow_wiring(self):
         jobs = WORKFLOW.split("\njobs:\n", 1)[1]
@@ -246,6 +506,14 @@ class GateTests(unittest.TestCase):
         self.assertEqual(WORKFLOW.count("os: ${{ fromJSON(needs.tier.outputs.runners) }}"), 2)
         self.assertEqual(WORKFLOW.count("name: cli-manifest-${{ matrix.os }}"), 1)
         self.assertEqual(WORKFLOW.count("cache-dependency-path: go.sum"), WORKFLOW.count("uses: actions/setup-go@"))
+        trusted = WORKFLOW.split("      - name: Check out trusted base policy\n", 1)[1].split("      - name:", 1)[0]
+        self.assertIn("ref: ${{ github.event.pull_request.base.sha }}", trusted)
+        self.assertIn("persist-credentials: false", trusted)
+        self.assertIn("path: trusted-base", trusted)
+        self.assertIn("CI_PR_TIER_MODE: ${{ vars.CI_PR_TIER_MODE || 'tiered' }}", WORKFLOW)
+        tier_section = jobs.split("  tier:\n", 1)[1].split("\n  policy-tests:", 1)[0]
+        self.assertNotIn("unittest", tier_section)
+        self.assertNotIn("pull_request_target", (ROOT / ".github/workflows/ci.yml").read_text())
         for target in TARGETS:
             self.assertIn(f"name: tslink-{target.replace('/', '-')}\n", WORKFLOW)
             self.assertIn(f"name: govulncheck-repo-{target.replace('/', '-')}\n", WORKFLOW)
@@ -262,7 +530,7 @@ class GateTests(unittest.TestCase):
 
     def test_success_skips_failure_and_cancellation(self):
         script = run_block("gate", "Require every selected job to succeed")
-        core = ["native", "machine-contract", "staticcheck", "govulncheck-main",
+        core = ["policy-tests", "native", "machine-contract", "staticcheck", "govulncheck-main",
                 "govulncheck-repo", "reproducible-source", "cross-build", "artifact-verify", "release-config"]
         def execute(needs):
             return subprocess.run(["bash", "-c", script], capture_output=True, text=True,
