@@ -437,6 +437,13 @@
       "short": "Register a local service or file directory",
       "flags": [
         {
+          "name": "ack-unlimited-request-body",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Acknowledge removal of the HTTP request body size limit"
+        },
+        {
           "name": "allow",
           "type": "string",
           "scope": "local",
@@ -552,11 +559,23 @@
           "usage": "Backend probe timeout, 100ms to 30s"
         },
         {
+          "name": "idle-timeout",
+          "type": "string",
+          "scope": "local",
+          "usage": "HTTP keep-alive idle timeout (default 60s)"
+        },
+        {
           "name": "json",
           "type": "bool",
           "default": "false",
           "scope": "inherited",
           "usage": "Output as JSON"
+        },
+        {
+          "name": "max-request-body",
+          "type": "string",
+          "scope": "local",
+          "usage": "Maximum HTTP upload size (default 32MiB); unlimited requires --ack-unlimited-request-body"
         },
         {
           "name": "no-auto-provision",
@@ -608,6 +627,18 @@
           "type": "string",
           "scope": "local",
           "usage": "Use an app recipe; preview by default, apply with --yes"
+        },
+        {
+          "name": "request-header-timeout",
+          "type": "string",
+          "scope": "local",
+          "usage": "HTTP header read timeout (default 10s)"
+        },
+        {
+          "name": "request-read-timeout",
+          "type": "string",
+          "scope": "local",
+          "usage": "Maximum time without body read progress, not total upload time (default 30s)"
         },
         {
           "name": "tags",
@@ -676,6 +707,10 @@
         "replaced_fields": {
           "type": "array",
           "description": "registry.json fields a replacing add changed or dropped, sorted; empty when the add created the service. Warnings access_changed_on_replace and identity_reset_on_replace flag access and node-identity changes."
+        },
+        "request_limits": {
+          "type": "object",
+          "description": "Effective HTTP limits for proxy/file services; absent for raw TCP."
         }
       }
     },
@@ -1601,6 +1636,10 @@
           "type": "boolean",
           "description": "Configured proxy Host policy; false rewrites Host to the upstream, true forwards this node's trusted canonical external name in Host and X-Forwarded-Host, or returns HTTP 503 canonical_host_unavailable."
         },
+        "services[].request_limits": {
+          "type": "object",
+          "description": "Effective HTTP limits in status --urls and list --verbose; max_body_bytes is -1 only for explicitly acknowledged unlimited uploads. read_timeout bounds inactivity, not upload duration."
+        },
         "services[].state": {
           "type": "string",
           "description": "Slim list runtime state: exact, pending, or failed.",
@@ -2212,6 +2251,13 @@
       "short": "Share a local path or web port and print its tailnet URL",
       "flags": [
         {
+          "name": "ack-unlimited-request-body",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Acknowledge removal of the HTTP request body size limit"
+        },
+        {
           "name": "ephemeral",
           "type": "bool",
           "default": "true",
@@ -2219,11 +2265,23 @@
           "usage": "Use an ephemeral tailnet node (set --ephemeral=false for durable state)"
         },
         {
+          "name": "idle-timeout",
+          "type": "string",
+          "scope": "local",
+          "usage": "HTTP keep-alive idle timeout (default 60s)"
+        },
+        {
           "name": "json",
           "type": "bool",
           "default": "false",
           "scope": "inherited",
           "usage": "Output as JSON"
+        },
+        {
+          "name": "max-request-body",
+          "type": "string",
+          "scope": "local",
+          "usage": "Maximum HTTP upload size (default 32MiB); unlimited requires --ack-unlimited-request-body"
         },
         {
           "name": "name",
@@ -2246,6 +2304,18 @@
           "usage": "Forward this node's canonical external Host (proxy only; recipes choose their default)"
         },
         {
+          "name": "request-header-timeout",
+          "type": "string",
+          "scope": "local",
+          "usage": "HTTP header read timeout (default 10s)"
+        },
+        {
+          "name": "request-read-timeout",
+          "type": "string",
+          "scope": "local",
+          "usage": "Maximum time without body read progress, not total upload time (default 30s)"
+        },
+        {
           "name": "wait",
           "type": "duration",
           "default": "30s",
@@ -2257,6 +2327,10 @@
         "preserve_host": {
           "type": "boolean",
           "description": "Whether the returned HTTP share forwards this node's trusted canonical external Host. Conflicting reuse is refused."
+        },
+        "request_limits": {
+          "type": "object",
+          "description": "Effective HTTP limits: max_body_bytes (-1 means acknowledged unlimited), header_timeout, read_timeout (idle between body reads), idle_timeout."
         }
       }
     },
@@ -2372,6 +2446,10 @@
         "services[].preserve_host": {
           "type": "boolean",
           "description": "Configured proxy Host policy; false rewrites Host to the upstream, true forwards this node's trusted canonical external name in Host and X-Forwarded-Host, or returns HTTP 503 canonical_host_unavailable."
+        },
+        "services[].request_limits": {
+          "type": "object",
+          "description": "Effective HTTP limits in status --urls and list --verbose; max_body_bytes is -1 only for explicitly acknowledged unlimited uploads. read_timeout bounds inactivity, not upload duration."
         },
         "services[].runtime_state": {
           "type": "string",
@@ -2870,6 +2948,10 @@
     "internal_error": {
       "exit_code": 1,
       "description": "unexpected internal failure"
+    },
+    "invalid_request_limits": {
+      "exit_code": 2,
+      "description": "HTTP request limits are invalid or unlimited uploads lack explicit acknowledgement"
     },
     "invalid_service_config": {
       "exit_code": 1,

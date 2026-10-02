@@ -577,6 +577,7 @@ func TestManifestErrorExitTaxonomyMatchesRuntime(t *testing.T) {
 		"invite_reconciliation_conflict":        registry.CodedError{Code: "invite_reconciliation_conflict", Message: "already associated ID"},
 		"invite_link_unavailable":               registry.CodedError{Code: "invite_link_unavailable", Message: "missing saved link"},
 		"invite_cleanup_failed":                 registry.CodedError{Code: "invite_cleanup_failed", Message: "remote cleanup failure"},
+		registry.CodeInvalidRequestLimits:       registry.CodedError{Code: registry.CodeInvalidRequestLimits, Message: "unlimited requires acknowledgement"},
 		"internal_error":                        errors.New("boom"),
 		"usage_error":                           output.ErrUsage("bad usage"),
 		"auth_error":                            output.ErrAuth("bad auth"),
@@ -1000,10 +1001,10 @@ func TestCompactManifestStaysBelowAgentTokenBudget(t *testing.T) {
 	// up, so it stays and the ceiling moves to 3000. Batch B3 then derived the
 	// map from the one error-code table, which added the ten codes the old map
 	// missed and mcp_elevated_invite_refused: 2860 bytes at the end of B3.
-	// People sharing and application recipes expand the compact agent surface.
+	// People sharing, health, recipes and request limits expand the compact agent surface.
 	// Keep a bounded budget for the combined command tree.
-	if len(data) >= 4000 {
-		t.Fatalf("compact manifest = %d bytes, want < 4000", len(data))
+	if len(data) >= 4500 {
+		t.Fatalf("compact manifest = %d bytes, want < 4500", len(data))
 	}
 	compact := CompactManifest()
 	if compact.ErrorCodes[registry.CodeURLNotReady] != 5 {

@@ -3,6 +3,7 @@ package server
 import (
 	"bufio"
 	"fmt"
+	"github.com/anydoor7/tslink/internal/registry"
 	"io"
 	"log/slog"
 	"net"
@@ -44,12 +45,16 @@ func TestServiceHandlerChainHijackedUpgradeRecordedAs101(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	chain := instrumentServiceHandler("ws", nil, proxy)
+	svc := registry.Service{Name: "ws", Type: registry.TypeProxy, RequestLimits: &registry.RequestLimits{MaxBody: "1GiB", ReadTimeout: "30ms"}}
+	chain := AccessLogMiddleware("ws", nil, RequestLimitsMiddleware(svc, nil, proxy))
 	done := make(chan struct{})
-	front := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	front := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer close(done)
 		chain.ServeHTTP(w, r)
 	}))
+	front.Config = newHTTPServerFn(front.Config.Handler)
+	front.Listener = configureServiceHTTP(front.Config, svc, front.Listener, nil)
+	front.Start()
 	t.Cleanup(front.Close)
 
 	conn, err := net.DialTimeout("tcp", strings.TrimPrefix(front.URL, "http://"), time.Second)
@@ -78,6 +83,7 @@ func TestServiceHandlerChainHijackedUpgradeRecordedAs101(t *testing.T) {
 			break
 		}
 	}
+	time.Sleep(80 * time.Millisecond) // Beyond the upload idle window; upgrade must survive.
 	if _, err := conn.Write([]byte("PING")); err != nil {
 		t.Fatal(err)
 	}

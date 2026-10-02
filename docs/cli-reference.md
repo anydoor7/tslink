@@ -125,3 +125,38 @@ The plan/apply JSON data includes `recipe`, `requested`, `service`, `action`, `d
 MCP tools: `recipe_list`, read-only `apps_detect`, `recipe_plan` and `recipe_apply`; plan/apply take `recipe_id`, optional `name`/`target`, string `allow`/`tags`, and snake_case counterparts of the flags above. Call the plan before apply. Existing generic `template` commands and `template_list/plan/apply` tools continue to work. See [application setup and limitations](apps.md).
 
 `share <port|host:port>` also accepts `--preserve-host` (default false); file/directory shares reject true. With preservation enabled, Host and X-Forwarded-Host use this node's canonical external DNS name, never a client-supplied authority. The first runtime certificate domain takes precedence over the node's DNS FQDN, matching the shared HTTPS URL, including Funnel. The name is lowercase with no terminal dot or port. If it is unavailable or invalid, HTTP 503 returns `canonical_host_unavailable` without contacting the backend. Client aliases and unexpected authorities are forwarded under the canonical name, with no 421 rejection. Default mode keeps upstream Host rewriting and its existing incoming-authority X-Forwarded-Host behavior. X-Forwarded-Proto/For come from the actual request in both modes; Origin is unchanged. Reuse with a different Host policy reports a conflict. Existing services and generic templates keep upstream Host rewriting. Registry `preserve_host` is an optional proxy boolean; absent means false. Recipes can be overridden with `--preserve-host=false` or MCP `preserve_host:false`. Status/list service projections and `access explain` report the configured policy. In global-failure status without a readable registry, the Host policy is unknown and omitted.
+### HTTP request limits (add and share)
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--max-request-body 20GiB` | `32MiB` | Maximum upload size; accepts positive integer bytes, B, KiB/MiB/GiB/TiB or decimal KB/MB/GB/TB |
+| `--ack-unlimited-request-body` | false | Required with `--max-request-body unlimited`; explicitly removes the body cap |
+| `--request-header-timeout 20s` | `10s` | Maximum time to receive request headers |
+| `--request-read-timeout 2m` | `30s` | Maximum inactivity while reading an upload; continuing uploads have no total-duration deadline |
+| `--idle-timeout 90s` | `60s` | Idle time between HTTP keep-alive requests |
+
+All timeout overrides are positive Go durations (for example `30s`, `2m`).
+Settings apply to proxy and file services; raw TCP rejects HTTP request limits.
+An add replacing a name resets omitted limits to defaults, like other add flags.
+A share only reuses a service with equivalent effective limits.
+Limit conflicts name the differing flags and their existing/requested values;
+use add with the complete service configuration to reconfigure them.
+Unused or rejected HTTP/1 bodies have an absolute cleanup deadline of at most
+1s, shortened by `--request-read-timeout` when below 1s. Incomplete cleanup closes
+the connection without imposing a total timeout on accepted uploads.
+
+`add --json`, `share --json`, `status --urls --json` and `list --verbose --json`
+report `request_limits` with `max_body_bytes`, `header_timeout`, `read_timeout`
+and `idle_timeout`. `max_body_bytes:-1` means acknowledged unlimited.
+Human `status --urls` and `list --verbose` show the effective limits too.
+The envelope remains schema version 1. MCP add/share accept the optional object
+`request_limits: {"max_body":"20GiB","read_timeout":"2m"}`; unlimited requires
+`{"max_body":"unlimited","unlimited_ack":true}`. Omitted fields inherit defaults.
+
+Body limits return 413; stalled uploads or incomplete headers return 408.
+Structured logs name the service, limit, status and code (`request_body_limit`,
+`request_read_timeout`, `request_header_timeout`). The first hit of each limit
+is retained in the current node's runtime warnings; status and verbose list show
+it, and doctor suggests the corresponding flag. Warnings reset when that node
+restarts. A backend may already have received part of a rejected streaming body.
+Its own upload limits and any public relay limits still apply.

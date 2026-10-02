@@ -831,6 +831,13 @@ func diagnoseRuntimeSnapshot(result *DoctorResult, fingerprint string, suppressM
 	// authorized runtime state while status shows nothing up.
 	completedEnrollment := false
 	if snapshotContributesRuntimeEvidence(freshness) && snapshot != nil {
+		for _, service := range snapshot.Services {
+			for _, warning := range service.Warnings {
+				if flag := registry.RequestLimitFlag(warning.Code); flag != "" {
+					result.addFinding(warning.Code, service.Name, "http.request_limits", warning.Message, map[string]string{"suggested_flag": flag})
+				}
+			}
+		}
 		if result.NodeKeys == nil {
 			result.NodeKeys = map[string]health.Expiry{}
 		}

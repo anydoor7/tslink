@@ -9,6 +9,7 @@ import (
 
 	"github.com/anydoor7/tslink/internal/credentials"
 	"github.com/anydoor7/tslink/internal/health"
+	"github.com/anydoor7/tslink/internal/inspect"
 	"github.com/anydoor7/tslink/internal/registry"
 	"github.com/spf13/cobra"
 )
@@ -146,17 +147,19 @@ func readAlertsForRegistry(regPath string) health.AlertsView {
 }
 
 type mcpHealthService struct {
-	PreserveHost *bool         `json:"preserve_host,omitempty"`
-	Name         string        `json:"name"`
-	Status       string        `json:"status"`
-	Health       health.State  `json:"health"`
-	NodeKey      health.Expiry `json:"node_key"`
+	RequestLimits *registry.EffectiveRequestLimits `json:"request_limits,omitempty"`
+	Warnings      []inspect.WarningView            `json:"warnings,omitempty"`
+	PreserveHost  *bool                            `json:"preserve_host,omitempty"`
+	Name          string                           `json:"name"`
+	Status        string                           `json:"status"`
+	Health        health.State                     `json:"health"`
+	NodeKey       health.Expiry                    `json:"node_key"`
 }
 
 func mcpHealthServices(states []StatusServiceState) []mcpHealthService {
 	services := make([]mcpHealthService, 0, len(states))
 	for _, s := range states {
-		services = append(services, mcpHealthService{PreserveHost: s.PreserveHost, Name: s.Name, Status: s.Status, Health: s.Health, NodeKey: s.NodeKey})
+		services = append(services, mcpHealthService{RequestLimits: s.RequestLimits, Warnings: s.Warnings, PreserveHost: s.PreserveHost, Name: s.Name, Status: s.Status, Health: s.Health, NodeKey: s.NodeKey})
 	}
 	return services
 }

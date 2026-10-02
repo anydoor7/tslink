@@ -106,18 +106,20 @@ type StatusCredentialSlot struct {
 }
 
 type StatusServiceState struct {
-	Health          health.State            `json:"health"`
-	NodeKey         health.Expiry           `json:"node_key"`
-	Name            string                  `json:"name"`
-	Status          string                  `json:"status"`
-	OwnershipProof  bool                    `json:"ownership_proof"`
-	PreserveHost    *bool                   `json:"preserve_host,omitempty"`
-	FunnelRequested bool                    `json:"funnel_requested"`
-	FunnelActive    bool                    `json:"funnel_active"`
-	FunnelState     string                  `json:"funnel_state"`
-	FunnelExpiresAt *time.Time              `json:"funnel_expires_at,omitempty"`
-	FunnelRemaining *string                 `json:"funnel_remaining,omitempty"`
-	Error           *tsruntime.ServiceError `json:"error,omitempty"`
+	RequestLimits   *registry.EffectiveRequestLimits `json:"request_limits,omitempty"`
+	Warnings        []inspect.WarningView            `json:"warnings,omitempty"`
+	Health          health.State                     `json:"health"`
+	NodeKey         health.Expiry                    `json:"node_key"`
+	Name            string                           `json:"name"`
+	Status          string                           `json:"status"`
+	OwnershipProof  bool                             `json:"ownership_proof"`
+	PreserveHost    *bool                            `json:"preserve_host,omitempty"`
+	FunnelRequested bool                             `json:"funnel_requested"`
+	FunnelActive    bool                             `json:"funnel_active"`
+	FunnelState     string                           `json:"funnel_state"`
+	FunnelExpiresAt *time.Time                       `json:"funnel_expires_at,omitempty"`
+	FunnelRemaining *string                          `json:"funnel_remaining,omitempty"`
+	Error           *tsruntime.ServiceError          `json:"error,omitempty"`
 }
 
 type StatusURLsResult struct {
@@ -155,25 +157,26 @@ type StatusRuntimeSnapshotResult struct {
 }
 
 type StatusServiceView struct {
-	Health          health.State            `json:"health"`
-	NodeKey         health.Expiry           `json:"node_key"`
-	Name            string                  `json:"name"`
-	Type            string                  `json:"type"`
-	RuntimeState    string                  `json:"runtime_state"`
-	OwnershipProof  bool                    `json:"ownership_proof"`
-	Endpoint        inspect.EndpointView    `json:"endpoint"`
-	Exposure        inspect.ExposureView    `json:"exposure"`
-	PreserveHost    bool                    `json:"preserve_host"`
-	FunnelRequested bool                    `json:"funnel_requested"`
-	FunnelActive    bool                    `json:"funnel_active"`
-	FunnelState     string                  `json:"funnel_state"`
-	FunnelExpiresAt *time.Time              `json:"funnel_expires_at,omitempty"`
-	FunnelRemaining *string                 `json:"funnel_remaining,omitempty"`
-	Error           *tsruntime.ServiceError `json:"error,omitempty"`
-	Allow           inspect.SummaryView     `json:"allow"`
-	Tags            inspect.SummaryView     `json:"tags"`
-	Backend         inspect.BackendView     `json:"backend"`
-	Warnings        []inspect.WarningView   `json:"warnings,omitempty"`
+	RequestLimits   *registry.EffectiveRequestLimits `json:"request_limits,omitempty"`
+	Health          health.State                     `json:"health"`
+	NodeKey         health.Expiry                    `json:"node_key"`
+	Name            string                           `json:"name"`
+	Type            string                           `json:"type"`
+	RuntimeState    string                           `json:"runtime_state"`
+	OwnershipProof  bool                             `json:"ownership_proof"`
+	Endpoint        inspect.EndpointView             `json:"endpoint"`
+	Exposure        inspect.ExposureView             `json:"exposure"`
+	PreserveHost    bool                             `json:"preserve_host"`
+	FunnelRequested bool                             `json:"funnel_requested"`
+	FunnelActive    bool                             `json:"funnel_active"`
+	FunnelState     string                           `json:"funnel_state"`
+	FunnelExpiresAt *time.Time                       `json:"funnel_expires_at,omitempty"`
+	FunnelRemaining *string                          `json:"funnel_remaining,omitempty"`
+	Error           *tsruntime.ServiceError          `json:"error,omitempty"`
+	Allow           inspect.SummaryView              `json:"allow"`
+	Tags            inspect.SummaryView              `json:"tags"`
+	Backend         inspect.BackendView              `json:"backend"`
+	Warnings        []inspect.WarningView            `json:"warnings,omitempty"`
 }
 
 // statusRead is how a caller reads status. The commands that report status
@@ -220,6 +223,7 @@ func (s statusRead) getStatus(pidPath, regPath string) (StatusResult, error) {
 			Error:           issueErrors[svc.Name],
 			OwnershipProof:  ownershipProofs[svc.Name],
 			PreserveHost:    &effective.PreserveHost,
+			RequestLimits:   svc.EffectiveRequestLimits(),
 			FunnelRequested: effective.Funnel,
 			FunnelState:     configuredFunnelState(effective.Funnel),
 			FunnelExpiresAt: cloneTimePointer(svc.FunnelExpiresAt),
@@ -489,6 +493,7 @@ func (s statusRead) getPollableStatus(pidPath, regPath, snapshotPath, authHandof
 					r.Services[i].FunnelActive = runtimeService.FunnelActive
 					r.Services[i].FunnelState = runtimeService.FunnelState
 				}
+				r.Services[i].Warnings = append([]inspect.WarningView(nil), runtimeService.Warnings...)
 				r.Services[i].Error = runtimeService.Error
 				r.Services[i].Health = currentHealth(runtimeService.Health, reg.Services[i], now)
 				r.Services[i].NodeKey = health.ExpiryAt(runtimeService.NodeKey.ExpiresAt, runtimeService.NodeKey.Source, now, nodeExpiryNext())
@@ -746,6 +751,7 @@ func (s statusRead) getStatusURLsWithAuth(pidPath, regPath, snapshotPath, authHa
 			Tags:            view.Tags,
 			Backend:         view.Backend,
 			Warnings:        append([]inspect.WarningView(nil), view.Warnings...),
+			RequestLimits:   svc.EffectiveRequestLimits(),
 		}
 		snapshotService, snapshotServiceOK := snapshotServices[svc.Name]
 		if snapshotContributesRuntimeEvidence(freshness) && snapshotServiceOK {
@@ -758,6 +764,7 @@ func (s statusRead) getStatusURLsWithAuth(pidPath, regPath, snapshotPath, authHa
 			service.Error = snapshotService.Error
 			service.Health = currentHealth(snapshotService.Health, svc, now)
 			service.NodeKey = health.ExpiryAt(snapshotService.NodeKey.ExpiresAt, snapshotService.NodeKey.Source, now, nodeExpiryNext())
+			service.Warnings = append(service.Warnings, snapshotService.Warnings...)
 		}
 
 		switch {
@@ -1000,7 +1007,7 @@ func formatStatusURLs(r StatusURLsResult, out io.Writer) {
 
 	fmt.Fprintln(out)
 	writer := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(writer, "NAME\tTYPE\tENDPOINT\tSTATE\tEXPOSURE\tFUNNEL EXPIRES\tFUNNEL TTL\tALLOW\tTAGS\tBACKEND\tWARNINGS")
+	fmt.Fprintln(writer, "NAME\tTYPE\tENDPOINT\tSTATE\tEXPOSURE\tFUNNEL EXPIRES\tFUNNEL TTL\tALLOW\tTAGS\tBACKEND\tWARNINGS\tREQUEST LIMITS")
 	for _, svc := range r.Services {
 		remaining := "-"
 		if svc.FunnelRemaining != nil {
@@ -1008,7 +1015,7 @@ func formatStatusURLs(r StatusURLsResult, out io.Writer) {
 		}
 		fmt.Fprintf(
 			writer,
-			"%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			"%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			svc.Name,
 			svc.Type,
 			emptyDash(svc.Endpoint.Display),
@@ -1020,6 +1027,7 @@ func formatStatusURLs(r StatusURLsResult, out io.Writer) {
 			summaryLabel(svc.Tags),
 			emptyDash(svc.Backend.Display),
 			warningCodes(svc.Warnings),
+			requestLimitsLabel(svc.RequestLimits),
 		)
 	}
 	_ = writer.Flush()

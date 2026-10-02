@@ -284,9 +284,15 @@ func commandJSONResultFields(commandPath string) map[string]JSONResultFieldInfo 
 				Description: "True when this invocation migrated a legacy API credential to the system keychain; omitted otherwise.",
 			},
 		}
+	case "tslink share":
+		return map[string]JSONResultFieldInfo{
+			"request_limits": {Type: "object", Description: "Effective HTTP limits: max_body_bytes (-1 means acknowledged unlimited), header_timeout, read_timeout (idle between body reads), idle_timeout."},
+			"preserve_host":  {Type: "boolean", Description: "Whether the returned HTTP share forwards this node's trusted canonical external Host. Conflicting reuse is refused."},
+		}
 	case "tslink add":
 		return map[string]JSONResultFieldInfo{
 			"preserve_host":     {Type: "boolean", Description: "Ordinary add: whether the proxy forwards this node's trusted canonical external Host; default false. With --recipe, inspect service.preserve_host and requested.preserve_host."},
+			"request_limits":    {Type: "object", Description: "Effective HTTP limits for proxy/file services; absent for raw TCP."},
 			"funnel_expires_at": {Type: "string", Description: "Persisted public Funnel deadline; omitted for tailnet-only services and explicit never."},
 			"funnel_rearmed":    {Type: "boolean", Description: "True when an expired preserved Funnel deadline was re-armed with the default 24h TTL."},
 			"recipe":            {Type: "object", Description: "With --recipe: app-side snippets, safety notes and documentation."},
@@ -295,8 +301,6 @@ func commandJSONResultFields(commandPath string) map[string]JSONResultFieldInfo 
 			"applied":           {Type: "boolean", Description: "With --recipe: true only when this call created a service."},
 			"replaced_fields":   {Type: "array", Description: "registry.json fields a replacing add changed or dropped, sorted; empty when the add created the service. Warnings access_changed_on_replace and identity_reset_on_replace flag access and node-identity changes."},
 		}
-	case "tslink share":
-		return map[string]JSONResultFieldInfo{"preserve_host": {Type: "boolean", Description: "Whether the returned HTTP share forwards this node's trusted canonical external Host. Conflicting reuse is refused."}}
 	case "tslink apps list":
 		return map[string]JSONResultFieldInfo{"catalog_version": {Type: "integer", Description: "Version of app advice and fingerprints."}, "recipes": {Type: "array", Description: "Complete recipe catalog with safety levels and dated official documentation."}}
 	case "tslink apps detect":
@@ -569,7 +573,8 @@ func commandJSONResultFields(commandPath string) map[string]JSONResultFieldInfo 
 
 func agentServiceRuntimeJSONResultFields() map[string]JSONResultFieldInfo {
 	return map[string]JSONResultFieldInfo{
-		"services[].preserve_host": {Type: "boolean", Description: "Configured proxy Host policy; false rewrites Host to the upstream, true forwards this node's trusted canonical external name in Host and X-Forwarded-Host, or returns HTTP 503 canonical_host_unavailable."},
+		"services[].preserve_host":  {Type: "boolean", Description: "Configured proxy Host policy; false rewrites Host to the upstream, true forwards this node's trusted canonical external name in Host and X-Forwarded-Host, or returns HTTP 503 canonical_host_unavailable."},
+		"services[].request_limits": {Type: "object", Description: "Effective HTTP limits in status --urls and list --verbose; max_body_bytes is -1 only for explicitly acknowledged unlimited uploads. read_timeout bounds inactivity, not upload duration."},
 		"services[].funnel_requested": {
 			Type:        "boolean",
 			Description: "Configuration intent: whether this service requests public Tailscale Funnel exposure.",

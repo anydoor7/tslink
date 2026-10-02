@@ -141,6 +141,7 @@ var (
 	}, "code", "severity", "message", "source")
 	mcpWarningArraySchema = map[string]any{"type": "array", "items": mcpWarningViewSchema}
 	mcpServiceViewSchema  = objectSchema(map[string]any{
+		"request_limits": mcpRequestLimitsOutputSchema,
 		"schema_version": map[string]any{"type": "integer"},
 		"name":           map[string]any{"type": "string"},
 		"type":           map[string]any{"type": "string", "enum": serviceTypeValues()},
@@ -205,6 +206,7 @@ var (
 		return schema
 	}()
 	mcpShareOutputSchema = objectSchema(map[string]any{
+		"request_limits":    mcpRequestLimitsOutputSchema,
 		"url":               map[string]any{"type": "string"},
 		"name":              map[string]any{"type": "string"},
 		"preserve_host":     map[string]any{"type": "boolean", "default": false, "description": "Proxy only: forward this node's trusted canonical external name in Host and X-Forwarded-Host; fail closed if unavailable. Default false keeps upstream Host rewriting."},
@@ -267,6 +269,7 @@ var (
 	}, "authenticated", "credential_stored", "node_authorized", "authorized_service_count", "daemon_running", "daemon_state", "service_count")
 	mcpAddOutputSchema = objectSchema(map[string]any{
 		"preserve_host":     map[string]any{"type": "boolean", "default": false, "description": "Proxy only: forward this node's trusted canonical external name in Host and X-Forwarded-Host; fail closed if unavailable. Default false keeps upstream Host rewriting."},
+		"request_limits":    mcpRequestLimitsOutputSchema,
 		"daemon_running":    map[string]any{"type": "boolean"},
 		"auth_url":          map[string]any{"type": "string"},
 		"next":              map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
@@ -493,6 +496,7 @@ var mcpToolDefinitions = []mcpToolDefinition{
 		Name:        "share",
 		Description: "Setting funnel true on this tool publishes the target to the entire public internet, so ask the user before doing that; with funnel false (the default) it exposes a local directory, one file, or an HTTP port only on the user's private Tailscale network. A directory target serves every file under it and is browsable; a regular-file target serves only that file and answers 404 for its siblings. Without allow, every member of the user's tailnet can read the share; pass allow to restrict it to named principals. Use this after creating a local page or report that the user wants to open on another tailnet device. If status is needs_login, open auth_url in a browser and retry after authorization.",
 		InputSchema: objectSchema(map[string]any{
+			"request_limits":    mcpRequestLimitsInputSchema,
 			"no_daemon_install": map[string]any{"type": "boolean", "description": "Require an already running TSLink service; do not automatically install its background service."},
 			"target":            map[string]any{"type": "string", "minLength": 1, "description": "Existing file or directory path, bare port from 1 to 65535, or host:port HTTP target. A file path shares that one file; a directory path shares everything under it. The daemon will proxy to any address it can reach on its own network; link-local and cloud-metadata addresses are refused only as literal IP addresses (unspecified addresses too) or the metadata.google.internal hostname: hostnames are not resolved and nothing is checked at connect time, so a name that resolves to one of those addresses is accepted."},
 			"name":              map[string]any{"type": "string", "pattern": `^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`, "maxLength": 63, "description": "Optional requested DNS-label service name. A matching target is reused only if it already has this name; unrelated name collisions receive a numeric suffix."},
@@ -518,6 +522,7 @@ var mcpToolDefinitions = []mcpToolDefinition{
 				"timeout":       map[string]any{"type": "string", "description": "100ms..30s; default 5s."},
 				"interval":      map[string]any{"type": "string", "description": "10s..1d; default 1m."},
 			}),
+			"request_limits":    mcpRequestLimitsInputSchema,
 			"name":              map[string]any{"type": "string", "pattern": `^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`, "maxLength": 63, "description": "Registry service name (DNS label). An existing entry with this name is replaced."},
 			"type":              map[string]any{"type": "string", "enum": serviceTypeValues(), "description": "proxy forwards HTTP to target; file serves the directory dir; tcp forwards a raw stream to target."},
 			"target":            map[string]any{"type": "string", "description": "host:port or URL for proxy, host:port for tcp. Rejected for file. The daemon will proxy to any address it can reach on its own network; link-local and cloud-metadata addresses are refused only as literal IP addresses (unspecified addresses too) or the metadata.google.internal hostname: hostnames are not resolved and nothing is checked at connect time, so a name that resolves to one of those addresses is accepted."},
@@ -713,21 +718,22 @@ type mcpActions struct {
 
 // mcpAddArguments is the wire shape of the add tool's arguments.
 type mcpAddArguments struct {
-	Health          *registry.HealthConfig `json:"health,omitempty"`
-	Name            string                 `json:"name"`
-	Type            string                 `json:"type"`
-	Target          string                 `json:"target,omitempty"`
-	Dir             string                 `json:"dir,omitempty"`
-	Allow           []string               `json:"allow,omitempty"`
-	Tags            []string               `json:"tags,omitempty"`
-	PreserveHost    bool                   `json:"preserve_host,omitempty"`
-	Ephemeral       bool                   `json:"ephemeral,omitempty"`
-	Funnel          bool                   `json:"funnel,omitempty"`
-	PublicAck       bool                   `json:"public_ack,omitempty"`
-	FunnelTTL       *string                `json:"funnel_ttl,omitempty"`
-	NoAutoProvision bool                   `json:"no_auto_provision,omitempty"`
-	NoDaemonInstall bool                   `json:"no_daemon_install,omitempty"`
-	ControlURL      string                 `json:"control_url,omitempty"`
+	RequestLimits   *registry.RequestLimits `json:"request_limits,omitempty"`
+	Health          *registry.HealthConfig  `json:"health,omitempty"`
+	Name            string                  `json:"name"`
+	Type            string                  `json:"type"`
+	Target          string                  `json:"target,omitempty"`
+	Dir             string                  `json:"dir,omitempty"`
+	Allow           []string                `json:"allow,omitempty"`
+	Tags            []string                `json:"tags,omitempty"`
+	PreserveHost    bool                    `json:"preserve_host,omitempty"`
+	Ephemeral       bool                    `json:"ephemeral,omitempty"`
+	Funnel          bool                    `json:"funnel,omitempty"`
+	PublicAck       bool                    `json:"public_ack,omitempty"`
+	FunnelTTL       *string                 `json:"funnel_ttl,omitempty"`
+	NoAutoProvision bool                    `json:"no_auto_provision,omitempty"`
+	NoDaemonInstall bool                    `json:"no_daemon_install,omitempty"`
+	ControlURL      string                  `json:"control_url,omitempty"`
 }
 
 // mcpInviteDeviceArguments is the wire shape of the invite_device arguments.
@@ -749,6 +755,7 @@ type mcpInviteDeviceArguments struct {
 func addParamsFromMCPArguments(args mcpAddArguments) (AddParams, bool, error) {
 	params := AddParams{
 		Health:          args.Health,
+		RequestLimits:   args.RequestLimits,
 		Name:            args.Name,
 		Ephemeral:       args.Ephemeral,
 		PreserveHost:    args.PreserveHost,
@@ -1584,22 +1591,24 @@ func callMCPTool(ctx context.Context, actions mcpActions, name string, arguments
 		data, err = actions.peopleRemove(ctx, args.Who, args.Reconcile)
 	case "share":
 		var args struct {
-			NoDaemonInstall bool     `json:"no_daemon_install,omitempty"`
-			Target          string   `json:"target"`
-			Name            string   `json:"name,omitempty"`
-			PreserveHost    bool     `json:"preserve_host,omitempty"`
-			Ephemeral       *bool    `json:"ephemeral,omitempty"`
-			Allow           []string `json:"allow,omitempty"`
-			Tags            []string `json:"tags,omitempty"`
-			Funnel          bool     `json:"funnel,omitempty"`
-			PublicAck       bool     `json:"public_ack,omitempty"`
-			FunnelTTL       *string  `json:"funnel_ttl,omitempty"`
+			RequestLimits   *registry.RequestLimits `json:"request_limits,omitempty"`
+			NoDaemonInstall bool                    `json:"no_daemon_install,omitempty"`
+			Target          string                  `json:"target"`
+			Name            string                  `json:"name,omitempty"`
+			PreserveHost    bool                    `json:"preserve_host,omitempty"`
+			Ephemeral       *bool                   `json:"ephemeral,omitempty"`
+			Allow           []string                `json:"allow,omitempty"`
+			Tags            []string                `json:"tags,omitempty"`
+			Funnel          bool                    `json:"funnel,omitempty"`
+			PublicAck       bool                    `json:"public_ack,omitempty"`
+			FunnelTTL       *string                 `json:"funnel_ttl,omitempty"`
 		}
 		decodeErr := decodeMCPArguments(arguments, &args)
 		if refusal := mcpArgumentsRefusal("share", decodeErr, mcpRequiredArgument{"target", args.Target}); refusal != nil {
 			return refusal, nil
 		}
 		req := shareRequest{
+			RequestLimits:   args.RequestLimits,
 			NoDaemonInstall: args.NoDaemonInstall,
 			Target:          args.Target,
 			Name:            args.Name,

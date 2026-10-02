@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -21,6 +22,7 @@ import (
 	"github.com/anydoor7/tslink/internal/config"
 	"github.com/anydoor7/tslink/internal/errcode"
 	"github.com/anydoor7/tslink/internal/health"
+	"github.com/anydoor7/tslink/internal/inspect"
 	"github.com/anydoor7/tslink/internal/logging"
 	"github.com/anydoor7/tslink/internal/registry"
 	runtimesnapshot "github.com/anydoor7/tslink/internal/runtime"
@@ -164,7 +166,7 @@ var newHTTPServerFn = func(handler http.Handler) *http.Server {
 	return &http.Server{
 		Handler:           handler,
 		ReadHeaderTimeout: httpReadHeaderTimeout,
-		ReadTimeout:       httpReadTimeout,
+		ReadTimeout:       0,
 		IdleTimeout:       httpIdleTimeout,
 		MaxHeaderBytes:    httpMaxHeaderBytes,
 	}
@@ -249,16 +251,7 @@ func (c *limitedTLSConn) ConnectionState() tls.ConnectionState {
 }
 
 func ResourceBudgetMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.ContentLength > httpMaxRequestBytes {
-			http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
-			return
-		}
-		if r.Body != nil {
-			r.Body = http.MaxBytesReader(w, r.Body, httpMaxRequestBytes)
-		}
-		next.ServeHTTP(w, r)
-	})
+	return RequestLimitsMiddleware(registry.Service{Type: registry.TypeProxy}, nil, next)
 }
 
 // instrumentServiceHandler applies the per-request wrappers every HTTP node
@@ -298,6 +291,7 @@ var newRegistryWatcherFn = func() (registryWatcher, error) {
 
 // ServiceNode represents a single tsnet node serving one service.
 type ServiceNode struct {
+	limitWarnings        *serviceLimitWarnings
 	tsnetSrv             tsnetServer
 	service              registry.Service
 	nodeID               string
@@ -1536,6 +1530,9 @@ func serviceChanged(old, new registry.Service) bool {
 }
 
 func serviceChangedWithFallback(old, new registry.Service, fallbackControlURL string) bool {
+	if oldLimits, newLimits := old.EffectiveRequestLimits(), new.EffectiveRequestLimits(); !reflect.DeepEqual(oldLimits, newLimits) {
+		return true
+	}
 	// File is part of this comparison because dropping it widens a single-file
 	// share back to its whole parent directory. A change the daemon does not
 	// notice here is a node that keeps serving the previous reachable surface.
@@ -1880,6 +1877,7 @@ func (s *Server) writeRuntimeSnapshotLocked(registryFingerprint string, complete
 			certDomains = node.tsnetSrv.CertDomains()
 		}
 		states = append(states, runtimesnapshot.ServiceState{
+			Warnings:     node.limitWarnings.snapshot(),
 			Service:      node.service,
 			NodeID:       node.nodeID,
 			RuntimeHost:  node.runtimeHost,
@@ -2314,7 +2312,17 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service, prov
 		}
 	}
 
-	handler = instrumentServiceHandler(svc.Name, identity, handler)
+	limitWarnings := &serviceLimitWarnings{}
+	reportLimit := func(warning inspect.WarningView) {
+		if limitWarnings.add(warning) {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			if node := s.nodes[svc.Name]; node != nil && node.limitWarnings == limitWarnings {
+				s.writeRuntimeSnapshotLocked(s.lastRegistryFingerprint, s.lastSnapshotComplete)
+			}
+		}
+	}
+	handler = AccessLogMiddleware(svc.Name, identity, RequestLimitsMiddleware(svc, reportLimit, handler))
 
 	var ln net.Listener
 	funnelListenerActive := false
@@ -2350,6 +2358,7 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service, prov
 	ln = newLimitedListener(ln, httpMaxActiveConns, "http", svc.Name)
 
 	httpSrv := newHTTPServerFn(handler)
+	ln = configureServiceHTTP(httpSrv, svc, ln, reportLimit)
 
 	node := &ServiceNode{
 		tsnetSrv:             tsnetSrv,
@@ -2359,6 +2368,7 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service, prov
 		funnelListenerActive: funnelListenerActive,
 		listener:             ln,
 		httpSrv:              httpSrv,
+		limitWarnings:        limitWarnings,
 		handlerCloser:        handlerCloser,
 		cancel:               cancelAll,
 	}

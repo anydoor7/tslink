@@ -490,6 +490,12 @@ func listServicesWithOptions(regPath string, out io.Writer, opts listOptions) er
 			remaining = *summary.FunnelRemaining
 		}
 		fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", summary.Name, summary.Type, svc.Backend.Display, url, summary.State, funnelExpiresLabel(summary.FunnelExpiresAt, summary.FunnelRemaining), remaining)
+		if opts.Verbose {
+			fmt.Fprintf(writer, "  request limits: %s\n", requestLimitsLabel(svc.RequestLimits))
+			for _, warning := range svc.Warnings {
+				fmt.Fprintf(writer, "  %s: %s\n", warning.Code, warning.Message)
+			}
+		}
 	}
 	if err := writer.Flush(); err != nil {
 		return err

@@ -68,6 +68,7 @@ var table = []Code{
 	{"service_type_ambiguous", ExitUsage, Command, "exactly one service type is required"},
 	{"invalid_service_name", ExitUsage, Service, "service name is not a valid DNS label"},
 	{"invalid_tag", ExitUsage, Service, "ACL tag is invalid"},
+	{"invalid_request_limits", ExitUsage, Service, "HTTP request limits are invalid or unlimited uploads lack explicit acknowledgement"},
 	{"allow_unsupported_for_tcp", ExitUsage, Service, "HTTP allow lists do not apply to raw TCP"},
 	{"people_service_unsupported", ExitUsage, Service, "person grants require private HTTP proxy or file services; TCP and public Funnel cannot be person-scoped"},
 	{"invite_failed", ExitError, Command, "one device invitation in a people bundle failed without a more specific code"},

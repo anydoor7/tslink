@@ -509,6 +509,8 @@ type Service struct {
 	NoAutoProvision bool       `json:"no_auto_provision,omitempty"`
 	CreatedAt       time.Time  `json:"created_at"`
 
+	RequestLimits *RequestLimits `json:"request_limits,omitempty"`
+
 	// funnelExpiryUndecided is set only by UnmarshalJSON, for a Funnel entry
 	// whose stored funnel_expires_at is absent or null. In memory a nil
 	// FunnelExpiresAt on a Funnel service means never; this marker is what
@@ -735,6 +737,12 @@ func ValidateService(svc Service) error {
 	}
 	if err := ValidateName(svc.Name); err != nil {
 		return err
+	}
+	if _, err := ResolveRequestLimits(svc.RequestLimits); err != nil {
+		return err
+	}
+	if svc.Type == TypeTCP && svc.RequestLimits != nil {
+		return CodedError{Code: CodeInvalidRequestLimits, Message: "HTTP request_limits are not supported for tcp services"}
 	}
 	if err := ValidateFunnelGuardrails(svc.Type, svc.Funnel, svc.AllowedUsers, svc.ControlURL, svc.PublicAck); err != nil {
 		return err

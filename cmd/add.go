@@ -25,10 +25,11 @@ import (
 
 // AddResult is the JSON data for the add command.
 type AddResult struct {
-	Name         string `json:"name"`
-	Type         string `json:"type"`
-	Created      bool   `json:"created"`
-	PreserveHost bool   `json:"preserve_host"`
+	RequestLimits *registry.EffectiveRequestLimits `json:"request_limits,omitempty"`
+	Name          string                           `json:"name"`
+	Type          string                           `json:"type"`
+	Created       bool                             `json:"created"`
+	PreserveHost  bool                             `json:"preserve_host"`
 	// ReplacedFields names the registry.json fields an add of an existing
 	// service changed or dropped; empty when the add created the service.
 	ReplacedFields  fieldList             `json:"replaced_fields"`
@@ -98,6 +99,7 @@ func invalidAllowEntries(allowedUsers []string) []string {
 // AddParams holds parsed flags for the add command.
 type AddParams struct {
 	Health          *registry.HealthConfig
+	RequestLimits   *registry.RequestLimits
 	Name            string
 	Proxy           string
 	PreserveHost    bool
@@ -230,6 +232,12 @@ func buildService(p AddParams) (registry.Service, error) {
 	if p.PreserveHost && svcType != registry.TypeProxy {
 		return registry.Service{}, output.ErrUsage("--preserve-host requires --proxy")
 	}
+	if _, err := registry.ResolveRequestLimits(p.RequestLimits); err != nil {
+		return registry.Service{}, err
+	}
+	if svcType == registry.TypeTCP && p.RequestLimits != nil {
+		return registry.Service{}, output.ErrUsage("HTTP request limits are not supported for tcp services")
+	}
 	if p.Proxy, err = barePortTarget("proxy", p.Proxy); err != nil {
 		return registry.Service{}, err
 	}
@@ -305,7 +313,8 @@ func buildService(p AddParams) (registry.Service, error) {
 		}
 		return registry.Service{
 			Health: p.Health, Name: p.Name, Type: registry.TypeProxy, Target: target, PreserveHost: p.PreserveHost,
-			Ephemeral: p.Ephemeral, Tags: tags, AllowedUsers: allowedUsers,
+			RequestLimits: p.RequestLimits,
+			Ephemeral:     p.Ephemeral, Tags: tags, AllowedUsers: allowedUsers,
 			Funnel: p.Funnel, PublicAck: p.Public, NoAutoProvision: p.NoAutoProvision,
 			FunnelExpiresAt: funnelExpiresAt,
 			ControlURL:      p.ControlURL,
@@ -315,7 +324,8 @@ func buildService(p AddParams) (registry.Service, error) {
 	// Dir mode — path validation is done in RunE (needs filesystem)
 	return registry.Service{
 		Health: p.Health, Name: p.Name, Type: registry.TypeFile,
-		Ephemeral: p.Ephemeral, Tags: tags, AllowedUsers: allowedUsers,
+		RequestLimits: p.RequestLimits,
+		Ephemeral:     p.Ephemeral, Tags: tags, AllowedUsers: allowedUsers,
 		ControlURL: p.ControlURL,
 	}, nil
 }
@@ -398,6 +408,7 @@ func intersectFields(fields, wanted []string) []string {
 func buildAddResult(ctx context.Context, svc registry.Service, created bool, pidPath, regPath, snapshotPath string, wait time.Duration) (AddResult, error) {
 	view := inspect.ServiceViewFor(registry.EffectiveServiceAt(svc, time.Now()))
 	result := AddResult{
+		RequestLimits:   svc.EffectiveRequestLimits(),
 		Name:            svc.Name,
 		Type:            svc.Type,
 		Created:         created,
@@ -686,6 +697,7 @@ Examples:
 			dryRun, _ := cmd.Flags().GetBool("dry-run")
 
 			params := AddParams{
+				RequestLimits:   requestLimitsFromFlags(cmd),
 				Name:            args[0],
 				Proxy:           proxyTarget,
 				PreserveHost:    preserveHost,
@@ -835,6 +847,7 @@ Examples:
 
 	addCmd.Flags().Bool("preserve-host", false, "Forward this node's canonical external Host (proxy only; recipes choose their default)")
 	addCmd.Flags().String("proxy", "", "Proxy target in host:port or URL form")
+	addRequestLimitFlags(addCmd)
 	addCmd.Flags().String("dir", "", "Directory to expose")
 	addCmd.Flags().String("tcp", "", "TCP proxy target in host:port form")
 	addCmd.Flags().Bool("ephemeral", false, "Register as ephemeral node (removed on disconnect)")

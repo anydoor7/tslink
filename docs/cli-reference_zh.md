@@ -124,3 +124,34 @@ Recipes 支持 `--allow`、`--tags`、`--ephemeral`、`--control-url`、已有 F
 MCP 工具为 `recipe_list`、只读 `apps_detect`、`recipe_plan`、`recipe_apply`；计划/应用接收 `recipe_id`、可选 `name`/`target`、字符串 `allow`/`tags` 及上述 flag 的 snake_case 参数。先 plan 后 apply。已有通用 `template` 命令及 `template_list/plan/apply` 工具继续工作。见[应用设置与限制](apps_zh.md)。
 
 `share <port|host:port>` 也支持 `--preserve-host`（默认 false）；文件/目录 share 拒绝 true。启用后，Host 和 X-Forwarded-Host 均使用节点自身的外部 canonical DNS 名称，不使用客户端 authority。优先取 runtime 的第一个证书域名，否则取节点 DNS FQDN，与分享的 HTTPS URL 一致，Funnel 也采用此规则。名称转为小写，去掉末尾点，不带端口。名称缺失或无效时返回 HTTP 503 `canonical_host_unavailable`，不请求后端。客户端别名及其他 authority 均按 canonical 名称转发，不额外返回 421。默认模式保留上游 Host 改写及原有的传入 authority X-Forwarded-Host 行为；两种模式的 X-Forwarded-Proto/For 均来自真实请求，Origin 不变。复用时 Host 策略不同会报冲突。已有服务及通用 templates 保持上游 Host 改写。Registry 的 `preserve_host` 是可选 proxy 布尔字段，缺省为 false；recipe 可通过 `--preserve-host=false` 或 MCP `preserve_host:false` 覆盖。Status/list 服务投影及 `access explain` 显示配置策略；全局失败且 registry 不可读时策略未知，status 省略该字段。
+### HTTP 请求限制 (add 和 share)
+
+| 标志 | 默认值 | 含义 |
+|------|--------|------|
+| `--max-request-body 20GiB` | `32MiB` | 上传大小上限; 支持正整数字节、B、KiB/MiB/GiB/TiB 或十进制 KB/MB/GB/TB |
+| `--ack-unlimited-request-body` | false | 与 `--max-request-body unlimited` 一起使用, 明确确认移除大小上限 |
+| `--request-header-timeout 20s` | `10s` | 接收完整请求头的最长时间 |
+| `--request-read-timeout 2m` | `30s` | 正在读取上传内容时允许无进展的最长时间; 持续上传没有总时长截止 |
+| `--idle-timeout 90s` | `60s` | HTTP keep-alive 请求之间的空闲时间 |
+
+超时必须是正数 Go duration, 例如 `30s` 或 `2m`。适用于 proxy/file 服务;
+raw TCP 不接受 HTTP 请求限制。add 替换同名服务时, 未重复的限制恢复默认值;
+share 只复用有效限制相同的服务。
+限制冲突会列出不同的标志和当前值、请求值; 用完整服务配置执行 add 进行修改。
+未使用或被拒绝的 HTTP/1 请求体有最多 1s 的绝对清理期限;
+`--request-read-timeout` 小于 1s 时采用该值。清理未完成则关闭连接,
+不会对已接受的上传施加总时长超时。
+
+`add --json`、`share --json`、`status --urls --json` 和 `list --verbose --json`
+在 `request_limits` 中返回 `max_body_bytes`、`header_timeout`、`read_timeout`
+和 `idle_timeout`。`max_body_bytes:-1` 表示已确认的无限制。
+普通 `status --urls` 和 `list --verbose` 也显示有效限制。envelope 保持 schema version 1。
+MCP add/share 接受可选对象 `request_limits: {"max_body":"20GiB","read_timeout":"2m"}`;
+无限制必须提供 `{"max_body":"unlimited","unlimited_ack":true}`。省略的字段使用默认值。
+
+大小超限返回 413; 上传停止进展或请求头未及时完成返回 408。
+结构化日志记录服务名、限制、状态码及 code (`request_body_limit`、
+`request_read_timeout`、`request_header_timeout`)。每类限制首次命中会保留在当前节点
+的 runtime warning 中; status 和 verbose list 显示 warning, doctor 建议对应标志。
+节点重启后清除这些 warning。流式上传拒绝时后端可能已接收部分内容。
+应用后端及公网 relay 自身的限制仍然有效。
