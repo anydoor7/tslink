@@ -8,149 +8,131 @@
 <h1 align="center">TSLink</h1>
 
 <p align="center">
-  <strong>ให้แอป โมเดล และไฟล์ในเครื่องมีที่อยู่ส่วนตัวของตัวเอง</strong><br>
-  เข้าถึงจากอุปกรณ์อื่นที่ได้รับอนุญาตในเครือข่าย Tailscale ของคุณ
+  <strong>แชร์แอปบนคอมพิวเตอร์ให้คนที่คุณเลือก นานเท่าที่คุณต้องการ</strong><br>
+  แต่ละแอปมีที่อยู่ส่วนตัวของตัวเองบนเครือข่าย Tailscale ของคุณ ดูได้ว่าใครมีสิทธิ์เข้าถึง และถอนสิทธิ์ได้
 </p>
 
 <p align="center">
-  <a href="../LICENSE"><img src="assets/badge-license.svg" alt="สัญญาอนุญาต: Apache 2.0"></a>
-  <a href="../go.mod"><img src="assets/badge-go.svg" alt="Go 1.26.6 ขึ้นไป"></a>
-  <a href="architecture.md"><img src="assets/badge-tsnet.svg" alt="Tailscale: โหนด tsnet ในตัว"></a>
-  <a href="#agents"><img src="assets/badge-mcp.svg" alt="MCP: 19 เครื่องมือ"></a>
+  <a href="#quickstart">เริ่มต้นอย่างรวดเร็ว</a> · <a href="#agents">สำหรับเอเจนต์</a> · <a href="getting-started.md">เอกสาร</a> ·
+  <strong>ไทย</strong> · <a href="../README.md">English</a> · <a href="INDEX.md#translated-homepages">ทุกภาษา</a>
 </p>
 
-<p align="center">
-  <a href="../README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.zh-TW.md">繁體中文</a> · <a href="README.ko.md">한국어</a> · <a href="README.de.md">Deutsch</a><br>
-  <a href="README.es.md">Español</a> · <a href="README.fr.md">Français</a> · <a href="README.it.md">Italiano</a> · <a href="README.da.md">Dansk</a> · <a href="README.ja.md">日本語</a><br>
-  <a href="README.pl.md">Polski</a> · <a href="README.ru.md">Русский</a> · <a href="README.bs.md">Bosanski</a> · <a href="README.ar.md">العربية</a> · <a href="README.no.md">Norsk</a><br>
-  <a href="README.pt-BR.md">Português (Brasil)</a> · <strong>ไทย</strong> · <a href="README.tr.md">Türkçe</a> · <a href="README.uk.md">Українська</a><br>
-  <a href="README.bn.md">বাংলা</a> · <a href="README.el.md">Ελληνικά</a> · <a href="README.vi.md">Tiếng Việt</a>
-</p>
+## ผู้คนใช้ทำอะไร
 
-<a id="installation"></a>
+- **เปิดผลงานของคุณบนมือถือ** ไม่ว่าจะเป็นรายงานจากสคริปต์ เซิร์ฟเวอร์พัฒนา โน้ตบุ๊ก หรือ API ของโมเดลในเครื่อง ก็เข้าถึงได้ผ่านที่อยู่ HTTPS ส่วนตัวจากอุปกรณ์ที่ได้รับอนุญาต
+- **ให้คนหนึ่งใช้แอปหนึ่งเป็นการชั่วคราว** ให้คู่ของคุณใช้คลังภาพหนึ่งสัปดาห์ หรือให้เพื่อนร่วมงานลองเวอร์ชันตัวอย่างสามวัน สิทธิ์จะหมดอายุเอง และคุณยุติก่อนกำหนดได้
+- **ให้เอเจนต์จัดการการแชร์** เอเจนต์เขียนโค้ดเพิ่งสร้างแดชบอร์ดเสร็จ คุณขอให้แชร์กับคุณและเพื่อนร่วมทีมจนถึงวันศุกร์ได้ เอเจนต์ยังบอกได้ว่ากำลังแชร์อะไรอยู่และถอนการแชร์ได้ด้วย
 
-## การติดตั้ง
+แอปยังทำงานอยู่ที่เดิม TSLink จัดการว่าใครเข้าถึงแต่ละแอปได้ และเก็บรายการเดียวว่าแชร์อะไร กับใคร และถึงเมื่อไร
 
-ต้องมี **Go 1.26.6 ขึ้นไป** และ Git ยังไม่มีรุ่นไบนารีที่สร้างไว้ล่วงหน้าหรือ Homebrew cask จึงต้องติดตั้งจากซอร์ส ตัวอย่างใช้ **bash หรือ zsh** ดูข้อกำหนดของ Windows และบริการเบื้องหลังได้ที่ [การรองรับแพลตฟอร์ม](platforms.md) คู่มือโดยละเอียดเป็นภาษาอังกฤษ
+<a id="quickstart"></a>
+
+## เริ่มต้นอย่างรวดเร็ว
+
+คุณต้องมี **Go 1.26.6+**, Git และบัญชี Tailscale ที่[เปิด MagicDNS และ HTTPS](https://tailscale.com/docs/how-to/set-up-https-certificates) ยังไม่มีรุ่นที่คอมไพล์แล้วเผยแพร่ จึงต้องติดตั้งจากซอร์สโค้ด:
 
 ```bash
 git clone https://github.com/anydoor7/tslink.git
-cd tslink
-go install .
+cd tslink && go install .
 export PATH="$PATH:$(go env GOPATH)/bin"
 ```
 
-ใช้บัญชี Tailscale ที่[เปิด MagicDNS และ HTTPS แล้ว](https://tailscale.com/docs/how-to/set-up-https-certificates) อุปกรณ์ที่จะเข้าถึงบริการต้องลงชื่อเข้าใช้เครือข่าย Tailscale ของคุณ (**tailnet**) และนโยบายเครือข่ายต้องอนุญาตให้เชื่อมต่อกับบริการ TSLink มี Tailscale ในตัวบนเครื่องที่ให้บริการ
-
-### แชร์หน้าแรกของคุณ
-
-สร้างหน้าเว็บ แล้วให้ TSLink ให้บริการไฟล์โดยตรง พร้อมเริ่มบริการเบื้องหลังเมื่อจำเป็น:
+แชร์หน้าเว็บ:
 
 ```bash
-mkdir -p tslink-demo
-printf '<h1>Hello from TSLink</h1>\n' > tslink-demo/index.html
+mkdir -p tslink-demo && printf '<h1>Hello from TSLink</h1>\n' > tslink-demo/index.html
 tslink share ./tslink-demo --name demo
-```
-
-หาก TSLink แสดง URL สำหรับลงทะเบียนโหนด ให้เปิด URL เพื่ออนุญาตโหนด tailnet ของคุณอาจต้องให้ผู้ดูแลระบบอนุมัติอุปกรณ์ด้วย จากนั้นรับที่อยู่จริงของบริการ:
-
-```bash
 tslink url demo --wait
 ```
 
-เปิด URL ที่ได้รับบนอุปกรณ์ที่ได้รับอนุญาต การแชร์ครั้งแรกไม่ต้องใช้ API token [รายละเอียดการตั้งค่าและวงจรการทำงาน →](getting-started.md)
+ครั้งแรก TSLink จะแสดงลิงก์เข้าสู่ระบบเพื่อลงทะเบียนโหนดบริการใหม่ และ tailnet อาจต้องให้ผู้ดูแลอนุมัติอุปกรณ์ด้วย หลังลงทะเบียน ให้เปิด URL ของบริการบนอุปกรณ์ที่ได้รับอนุญาตและเข้าสู่ระบบ tailnet ของคุณแล้ว ไม่ต้องใช้โทเค็น API
 
-<a id="use-cases"></a>
+ตรวจสอบสิ่งที่แชร์ แล้วลบตัวอย่าง:
 
-## คุณอยากแชร์อะไร?
+```bash
+tslink status --urls
+tslink remove demo
+```
 
-ต้องมีไฟล์อยู่ก่อนแล้ว ส่วนแอป ฐานข้อมูล และระบบโมเดลเบื้องหลังต้องทำงานบนพอร์ตที่ระบุอยู่แล้ว
+เมื่อระบบเบื้องหลังทำงานแล้ว คุณยังแชร์สิ่งเหล่านี้ได้:
 
-| การใช้งาน | คำสั่ง |
+| สิ่งที่แชร์ | คำสั่ง |
 |---|---|
-| เปิดแอปในเครื่องจากอุปกรณ์อื่น | `tslink share 3000` |
-| เรียกดูไฟล์ในไดเรกทอรี | `tslink share ./public --name files` |
-| อ่านรายงาน HTML ที่สร้างไว้บนโทรศัพท์ | `tslink share ./report.html --name report` |
-| เชื่อมต่อฐานข้อมูลในเครื่องผ่าน TCP | `tslink add database --tcp localhost:5432` |
-| ใช้ HTTP API ของโมเดลในเครื่อง เช่น Ollama | `tslink add model --proxy localhost:11434` |
+| เว็บแอปในเครื่อง | `tslink share 3000` |
+| โฟลเดอร์ไฟล์ | `tslink share ./public --name files` |
+| API โมเดลในเครื่อง เช่น Ollama | `tslink add model --proxy localhost:11434` |
+| ฐานข้อมูลผ่าน TCP ส่วนตัว | `tslink add database --tcp localhost:5432` |
+| แอปที่โฮสต์เองซึ่งรองรับ (Jellyfin, Immich, Home Assistant และอีก 13 แอป) | `tslink apps detect` แล้วตามด้วย `tslink apps share jellyfin --yes` |
 
-สำหรับ Ollama ให้ใช้ `tslink url model --wait` เพื่อรับ URL จริง ส่วน `baseURL` ของไคลเอนต์ที่รองรับ OpenAI API คือ URL นั้นต่อท้ายด้วย `/v1` [โมเดลในเครื่องและการทำงานกับข้อมูลส่วนตัว →](local-ai.md)
+[เริ่มต้น แพลตฟอร์ม และบริการเบื้องหลัง →](getting-started.md)
 
-สำหรับหลายแอปบนโฮสต์เดียว TSLink รวมโหนดบริการที่มีชื่อ รายการอนุญาตตามตัวตนสำหรับ HTTP วันหมดอายุของ Funnel และการจัดการ MCP ไว้ด้วยกัน [Tailscale Serve](https://tailscale.com/docs/reference/tailscale-cli/serve) อาจเพียงพอสำหรับแอปเดียวบนอุปกรณ์ของคุณเอง
+## เลือกว่าใครเปิดได้
 
-<a id="architecture"></a>
+| กลุ่มผู้ใช้ | สิ่งที่ผู้รับต้องมี | ตัวตน | สิ้นสุดเมื่อ |
+|---|---|---|---|
+| **อุปกรณ์ของคุณเอง** | เข้าสู่ระบบ tailnet ของคุณ | บัญชี Tailscale ที่ตรวจสอบแล้ว | เมื่อคุณลบแอป |
+| **คนที่ระบุชื่อ** (HTTP/ไฟล์ส่วนตัว) | บัญชี Tailscale; คนนอกยอมรับคำเชิญแต่ละแอป | บัญชี Tailscale ที่ตรวจสอบแล้ว | ครบกำหนดที่ตั้งไว้ (`--for 7d`) หรือใช้ `tslink people remove` |
+| **ใครก็ตามที่มี URL** (Funnel) | เบราว์เซอร์ | ใครก็ได้ แต่ยังต้องทำตามเงื่อนไขเข้าสู่ระบบของแอป | ค่าเริ่มต้นคือหลัง 24 ชั่วโมง (`--funnel-ttl`) |
+| **ลิงก์ผู้เยี่ยมชมผ่านเบราว์เซอร์** *(กำลังจะมา)* | เบราว์เซอร์และ PIN ถ้ากำหนดไว้ | ผู้ที่มีลิงก์ | ครบกำหนดของลิงก์หรือถูกเพิกถอน |
 
-## สถาปัตยกรรม
+```bash
+tslink people add alice@example.com --apps photos --for 7d
+tslink people list
+tslink people remove alice@example.com
+```
 
-<picture>
-  <source media="(max-width: 600px) and (prefers-color-scheme: dark)" srcset="assets/service-map-dark-mobile.svg">
-  <source media="(max-width: 600px)" srcset="assets/service-map-light-mobile.svg">
-  <source media="(prefers-color-scheme: dark)" srcset="assets/service-map-dark.svg">
-  <img src="assets/service-map-light.svg" alt="ตัวอย่างแผนผังบริการ: App, Docs, Database และ Model เป็นโหนดที่มีชื่อแยกกันใน tailnet เดียว แอป ไฟล์ และ API ของโมเดลใช้ HTTPS ส่วนฐานข้อมูลใช้ TCP ภายในเครือข่ายส่วนตัว" width="960">
-</picture>
-
-**หนึ่ง tailnet หลายโหนดบริการ** เดมอนร่วมกันหนึ่งตัวทำงานด้วยโหนด tsnet ในตัวแยกสำหรับแต่ละบริการ เพื่อส่งต่อ HTTP ให้บริการไฟล์ หรือพร็อกซี TCP การเปลี่ยนแปลงทะเบียนบริการมีผลระหว่างการทำงาน แต่ละโหนดมีตัวตนบนเครือข่ายของตัวเอง และทุกบริการใช้เครื่องที่ให้บริการร่วมกัน [รายละเอียดสถาปัตยกรรม →](architecture.md)
-
-| องค์ประกอบ | หน้าที่ |
-|---|---|
-| [Go](../go.mod) | โปรแกรมบรรทัดคำสั่งแบบเนทีฟ |
-| [Tailscale tsnet](architecture.md) | โหนดบริการและการรับส่งผ่าน tailnet |
-| [Cobra](https://github.com/spf13/cobra) | คำสั่งและความช่วยเหลือ |
-| [MCP Go SDK](https://github.com/modelcontextprotocol/go-sdk) | ช่องทางรับส่งของเอเจนต์ |
-| พวงกุญแจของระบบปฏิบัติการและตัวจัดการบริการผู้ใช้ | การเก็บข้อมูลรับรองแบบเลือกใช้และการทำงานเบื้องหลัง |
-
-บริการอยู่ภายใน tailnet เว้นแต่คุณจะเปิด [Funnel สาธารณะ](getting-started.md#more-examples) อย่างชัดเจน บริการ HTTP และไฟล์รองรับรายการอนุญาตตามตัวตน (`WhoIs`, `--allow`) ส่วน TCP ใช้นโยบาย tailnet และการยืนยันตัวตนของระบบเบื้องหลังเอง ดู [ขอบเขตการแชร์](sharing.md)
-
-TSLink ไม่ติดตั้งแอป ไม่รันโมเดล ไม่แยกโปรเซสของโฮสต์ และไม่รวมหลายโฮสต์ เครือข่าย การเข้ารหัสและ HTTPS มาจาก Tailscale โดย TSLink เป็นโครงการอิสระ
+การแชร์ HTTP และไฟล์ส่วนตัวจะตรวจสอบกำหนดเวลาทุกคำขอ การถอนสิทธิ์หยุดคำขอใหม่ แต่เรียกคืนข้อมูลที่ดาวน์โหลดแล้วหรือปิดสตรีมและการเชื่อมต่อ WebSocket ที่รับไว้แล้วไม่ได้ [แชร์ให้แต่ละคน →](people.md) · [ขอบเขตการแชร์ →](sharing.md)
 
 <a id="agents"></a>
 
 ## สำหรับเอเจนต์
 
-**เครื่องมือ MCP ทั้ง 19 ตัว** ช่วยให้เอเจนต์แชร์รายงาน จัดการบริการ รับ URL และตรวจสอบการตั้งค่า เชื่อมต่อไคลเอนต์ MCP ในเครื่องกับโปรแกรมที่ติดตั้งแล้ว:
+TSLink มีเซิร์ฟเวอร์ MCP ให้เอเจนต์แชร์ แสดงรายการ อธิบาย และลบการแชร์ได้เหมือนคุณ เพิ่มลงในไคลเอนต์ MCP ในเครื่อง:
 
 ```json
 {
   "mcpServers": {
-    "tslink": {
-      "command": "tslink",
-      "args": ["mcp"]
-    }
+    "tslink": { "command": "tslink", "args": ["mcp"] }
   }
 }
 ```
 
-MCP ใช้จัดการ TSLink ส่วนแอปใช้ HTTP API ของโมเดลสำหรับการอนุมาน ดูการตั้งค่าและระบบอัตโนมัติที่ [ไคลเอนต์ MCP](mcp-clients.md), [MCP ระยะไกล](remote-mcp.md) และ [คู่มือการทำงานของเอเจนต์](../AGENTS.md)
+- **ผลลัพธ์ที่แน่นอน** การทำงานอัตโนมัติผ่าน CLI รองรับ `--json` พร้อม `schema_version: 1` และรหัสข้อผิดพลาดที่คงที่ ส่วน `tslink mcp` ใช้ JSON-RPC โดย `tslink manifest` อธิบายทุกคำสั่งและแฟล็ก เอเจนต์ควรดึง URL จริงด้วย `tslink url <name> --wait` แทนการประกอบเอง
+- **แจ้งสถานะรอตามจริง** โหนดใหม่ที่ยังต้องให้คนเข้าสู่ระบบจะรายงาน `needs_login` แทนการแสดงว่าพร้อมแล้ว
+- **สิทธิ์** MCP ในเครื่องทำงานด้วยสิทธิ์ผู้ใช้ของคุณ MCP ระยะไกลต้องเปิดใช้งานเอง เข้าถึงได้เฉพาะใน tailnet และจำกัดเฉพาะบัญชีหรือแท็กที่ระบุ บทบาทรายเอเจนต์ ขอบเขตแอป และใบรับรองการดำเนินการ*กำลังจะมา*
 
-การทำงานอัตโนมัติผ่าน CLI รองรับ `--json` โดย `schema_version` เป็น `1` ดูได้ด้วย `tslink status --urls --json` ส่วน MCP ในเครื่องใช้ JSON-RPC ผ่าน stdio ดู [การทำงานอัตโนมัติด้วย JSON](json-automation.md)
+MCP ของ TSLink ใช้ควบคุม TSLink เอง หากเผยแพร่เซิร์ฟเวอร์ MCP อื่นผ่าน TSLink เซิร์ฟเวอร์นั้นยังต้องมีสิทธิ์เครื่องมือของตัวเอง
+[คู่มือเอเจนต์ →](agents.md) · [ไคลเอนต์ MCP →](mcp-clients.md) · [MCP ระยะไกล →](remote-mcp.md) · [ระบบอัตโนมัติ JSON →](json-automation.md)
 
-<a id="roadmap"></a>
+## เมื่อไรควรใช้เครื่องมืออื่น
 
-## สิ่งที่จะมา
-
-รายการที่ระบุว่ากำลังรวม อยู่ระหว่างตรวจทาน หรือวางแผนไว้ ยังไม่รวมในการติดตั้งจากซอร์สด้านบน
-
-| กรณีใช้งาน | สถานะ |
+| ถ้าคุณต้องการ | ลองพิจารณา |
 |---|---|
-| <!-- roadmap:people --> ให้ญาติเข้าถึงแอป HTTP/ไฟล์ส่วนตัวเป็นเวลา 3 วัน พร้อมรวมคำเชิญของแต่ละแอปในข้อความเดียว โดยผู้รับยังต้องใช้ Tailscale | กำลังรวม |
-| <!-- roadmap:health --> ตรวจสุขภาพแอปและรับแจ้งเตือนเมื่อขัดข้องหรือหมดอายุผ่านคำสั่งหรือ webhook ที่เลือกเปิดใช้ | กำลังรวม |
-| <!-- roadmap:recipes --> ค้นหาแอป loopback ที่รองรับและดูสูตรสำหรับแอปที่โฮสต์เองก่อนแชร์ | กำลังรวม |
-| <!-- roadmap:limits --> ตั้งขนาดอัปโหลดและเวลารอคำขอของแต่ละแอป HTTP สำหรับไฟล์ใหญ่และไคลเอนต์ที่ช้า | กำลังรวม |
-| <!-- roadmap:windows --> เริ่ม daemon ของ Windows ใหม่หลังขัดข้องขณะที่ผู้ใช้ยังอยู่ในเซสชันที่ลงชื่อเข้าใช้แล้ว โดยใช้งานตามกำหนดเวลาและตัวควบคุมในตัว | กำลังรวม |
-| <!-- roadmap:access-log --> ดูว่าใครเปิดแอปใดในบันทึกการเข้าถึงในเครื่อง โดยเลือกโหมดบันทึกเส้นทาง `prefix`, `full` หรือ `off` | อยู่ระหว่างตรวจทาน |
-| <!-- roadmap:portal --> เปิดหน้าแรกเดียวที่แสดงแอปที่อนุญาต พร้อมข้อมูลส่งต่อการลงทะเบียนให้เจ้าของ โดยผู้เยี่ยมชมยังต้องใช้ Tailscale | อยู่ระหว่างตรวจทาน |
-| <!-- roadmap:mcp-scopes --> กำหนดบทบาทและขอบเขตแอปให้เอเจนต์ พร้อมบันทึกตรวจสอบการเปลี่ยนแปลงของเอเจนต์ | อยู่ระหว่างตรวจทาน |
-| <!-- roadmap:guest-links --> ให้ผู้เยี่ยมชมเปิดแอป HTTP หนึ่งแอปในเบราว์เซอร์โดยไม่ต้องติดตั้ง Tailscale ด้วยลิงก์หมดอายุและ PIN ที่เลือกใช้ได้ ผ่าน Funnel สาธารณะที่มีการควบคุมการเข้าถึง | อยู่ระหว่างตรวจทาน |
-| <!-- roadmap:durations --> เลือกช่วงเวลาสำเร็จรูปหรือกำหนดเองอย่างน้อย 1 ชั่วโมง โดยเวลาสูงสุดของผู้เยี่ยมชมเป็น 7 วันตามค่าเริ่มต้นและปรับได้ | อยู่ระหว่างตรวจทาน |
-| <!-- roadmap:requests --> ช่วยผู้ใช้โทรศัพท์เข้าร่วมด้วย QR code และให้เจ้าของอนุมัติคำขอเข้าถึงแอปหรือขอเวลาเพิ่มในครั้งเดียว | อยู่ระหว่างตรวจทาน |
-| <!-- roadmap:multi-host --> ดูแอปจากหลายโฮสต์ในรายการเดียว | วางแผนไว้ |
+| บริการในเครื่องหนึ่งรายการบนอุปกรณ์ของคุณ โดยใช้ไคลเอนต์ Tailscale ที่เปิดอยู่แล้ว | [`tailscale serve`](https://tailscale.com/docs/reference/tailscale-cli/serve) |
+| บริการที่ผู้ดูแลจัดการและมีชื่อคงที่บนหลายโฮสต์ | [Tailscale Services](https://tailscale.com/docs/features/tailscale-services) |
+| URL สาธารณะสำหรับ webhook หรือสาธิต API โดยไม่ต้องมีบัญชี Tailscale | [ngrok](https://ngrok.com/docs/start) หรือ [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/) |
+| ติดตั้งและรันแอปที่โฮสต์เอง นอกเหนือจากแชร์แอป | [Umbrel](https://umbrel.com) หรือ [Coolify](https://coolify.io) |
+| แพลตฟอร์มเข้าถึงตามตัวตนสำหรับทั้งองค์กร | [Pangolin](https://github.com/fosrl/pangolin) หรือ [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/) |
 
-<a id="documentation"></a>
+TSLink เหมาะเมื่อคนหนึ่งรันหลายแอปและต้องการสิทธิ์ที่มีระยะเวลากำหนด แยกตามแอปและคน ซึ่งทั้งเจ้าของและเอเจนต์ตรวจสอบได้
+
+## ทำงานอย่างไร
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/service-map-dark.svg">
+  <img src="assets/service-map-light.svg" alt="App, Docs, Database และ Model เป็นโหนดที่มีชื่อแยกกันใน tailnet เดียว รันโดยเดมอน TSLink หนึ่งตัวบนคอมพิวเตอร์ที่เผยแพร่บริการ" width="720">
+</picture>
+
+เดมอนเบื้องหลังหนึ่งตัวรันโหนด Tailscale แบบฝังตัวให้แต่ละแอป จึงมีชื่อและที่อยู่ของตัวเอง สำหรับ HTTP และไฟล์ส่วนตัว `WhoIs` และสิทธิ์รายบุคคลหรือกฎ `--allow` จะควบคุมการเข้าถึง โดยตรวจสอบกำหนดเวลารายบุคคลทุกคำขอ TCP แบบดิบใช้ข้อกำหนด tailnet และการยืนยันตัวตนของระบบเบื้องหลัง Tailscale ให้การรับส่งผ่าน tailnet การเข้ารหัส และใบรับรอง ส่วน TSLink เป็นโครงการอิสระ ทุกแอปใช้คอมพิวเตอร์ที่เผยแพร่ร่วมกัน ดังนั้น TSLink ไม่ได้แยกแอปออกจากกัน [สถาปัตยกรรม →](architecture.md)
+
+## สถานะ
+
+ใช้ได้แล้ว: ที่อยู่ส่วนตัวรายแอป สิทธิ์รายบุคคลพร้อมกำหนดเวลาและชุดคำเชิญ Funnel สาธารณะที่หมดอายุได้ การตรวจสอบสุขภาพแอปและแจ้งเตือน สูตรสำหรับแอปที่โฮสต์เอง ขีดจำกัดคำขอรายแอป การเริ่มใหม่หลังขัดข้องบน Windows, CLI และ MCP
+
+กำลังจะมา: ลิงก์ผู้เยี่ยมชมผ่านเบราว์เซอร์ ระยะเวลาที่ยืดหยุ่น บันทึกการเข้าถึง หน้าแรกของแอป บทบาทเอเจนต์ที่จำกัดขอบเขต การเริ่มใช้งานผ่าน QR และคำขอเข้าถึง การดูหลายคอมพิวเตอร์ในรายการเดียวอยู่ในแผน [แผนพัฒนา →](roadmap.md)
 
 ## เอกสารและสัญญาอนุญาต
 
-[เริ่มต้นใช้งาน](getting-started.md) · [โมเดลในเครื่อง](local-ai.md) · [คู่มือ CLI](cli-reference.md) · [แพลตฟอร์ม](platforms.md) · [แผนการพัฒนา](roadmap.md)
+[เริ่มต้น](getting-started.md) · [อ้างอิง CLI](cli-reference.md) · [แพลตฟอร์ม](platforms.md) · [โมเดลในเครื่อง](local-ai.md) · [ร่วมพัฒนา](../CONTRIBUTING.md) · [ความปลอดภัย](../SECURITY.md)
 
-ดูวิธีร่วมพัฒนาที่ [CONTRIBUTING.md](../CONTRIBUTING.md) และรายงานช่องโหว่ผ่านช่องทางใน [SECURITY.md](../SECURITY.md)
-
-TSLink ใช้ [Apache License 2.0](../LICENSE) โดยไม่มีการแก้ไข และอนุญาตให้ใช้เชิงพาณิชย์ตามสัญญาอนุญาตนี้ เมื่อแจกจ่ายต่อ ให้เก็บ [NOTICE](../NOTICE) และ [ประกาศของบุคคลที่สาม](../THIRD_PARTY_NOTICES.md) ที่เกี่ยวข้องไว้ [ความร่วมมือเชิงพาณิชย์](../COMMERCIAL.md) เป็นเรื่องสมัครใจและไม่เพิ่มเงื่อนไขสัญญาอนุญาต ข้อกำหนดและแพ็กเกจบริการของ Tailscale มีผลแยกต่างหาก
+ใช้ Apache License 2.0 รวมถึงการใช้เชิงพาณิชย์ เมื่อแจกจ่ายต่อให้เก็บ [NOTICE](../NOTICE) และ[ประกาศของบุคคลที่สาม](../THIRD_PARTY_NOTICES.md) ไว้ ข้อกำหนดและแผนบริการของ Tailscale มีผลแยกต่างหาก

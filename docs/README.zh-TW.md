@@ -8,149 +8,131 @@
 <h1 align="center">TSLink</h1>
 
 <p align="center">
-  <strong>讓本機應用程式、模型與檔案擁有各自的私有位址。</strong><br>
-  從 Tailscale 網路中的另一台獲准裝置存取它們。
+  <strong>把電腦上的應用程式分享給你選擇的人，分享多久由你決定。</strong><br>
+  每個應用程式在你的 Tailscale 網路中都有獨立的私人位址。查看誰能存取，也能隨時收回權限。
 </p>
 
 <p align="center">
-  <a href="../LICENSE"><img src="assets/badge-license.svg" alt="授權：Apache 2.0"></a>
-  <a href="../go.mod"><img src="assets/badge-go.svg" alt="Go 1.26.6 或更新版本"></a>
-  <a href="architecture.md"><img src="assets/badge-tsnet.svg" alt="Tailscale：內嵌 tsnet 節點"></a>
-  <a href="#agents"><img src="assets/badge-mcp.svg" alt="MCP：19 個工具"></a>
+  <a href="#quickstart">快速開始</a> · <a href="#agents">給代理</a> · <a href="getting-started.md">文件</a> ·
+  <strong>繁體中文</strong> · <a href="../README.md">English</a> · <a href="INDEX.md#translated-homepages">所有語言</a>
 </p>
 
-<p align="center">
-  <a href="../README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <strong>繁體中文</strong> · <a href="README.ko.md">한국어</a> · <a href="README.de.md">Deutsch</a><br>
-  <a href="README.es.md">Español</a> · <a href="README.fr.md">Français</a> · <a href="README.it.md">Italiano</a> · <a href="README.da.md">Dansk</a> · <a href="README.ja.md">日本語</a><br>
-  <a href="README.pl.md">Polski</a> · <a href="README.ru.md">Русский</a> · <a href="README.bs.md">Bosanski</a> · <a href="README.ar.md">العربية</a> · <a href="README.no.md">Norsk</a><br>
-  <a href="README.pt-BR.md">Português (Brasil)</a> · <a href="README.th.md">ไทย</a> · <a href="README.tr.md">Türkçe</a> · <a href="README.uk.md">Українська</a><br>
-  <a href="README.bn.md">বাংলা</a> · <a href="README.el.md">Ελληνικά</a> · <a href="README.vi.md">Tiếng Việt</a>
-</p>
+## 大家用它做什麼
 
-<a id="installation"></a>
+- **在手機上開啟自己的工作成果。** 腳本產生的報告、開發伺服器、筆記本或本機模型 API，都能透過私人 HTTPS 位址，在獲准的裝置上存取。
+- **把一個應用程式暫時分享給一個人。** 讓伴侶使用相片庫一週，或讓同事試用預覽版三天。存取權限會自動到期，你也能提前結束。
+- **讓代理幫你分享。** 程式開發代理剛做出一個儀表板，你可以請它分享給你和隊友，開放到週五。它也能告訴你目前分享了什麼，並收回分享。
 
-## 安裝
+應用程式繼續在原本的地方執行。TSLink 管理各個應用程式的存取權限，並用一份清單記錄分享了什麼、分享給誰、到什麼時候。
 
-需要 **Go 1.26.6+** 與 Git。尚未發布預先建置的安裝包或 Homebrew cask，請從原始碼安裝。範例使用 **bash 或 zsh**；Windows 與背景服務需求見[平台支援](platforms.md)。中文詳細指南目前使用簡體中文。
+<a id="quickstart"></a>
+
+## 快速開始
+
+你需要 **Go 1.26.6+**、Git，以及一個[已啟用 MagicDNS 和 HTTPS](https://tailscale.com/docs/how-to/set-up-https-certificates) 的 Tailscale 帳戶。目前尚未發布預先編譯的版本，請從原始碼安裝：
 
 ```bash
 git clone https://github.com/anydoor7/tslink.git
-cd tslink
-go install .
+cd tslink && go install .
 export PATH="$PATH:$(go env GOPATH)/bin"
 ```
 
-使用已[啟用 MagicDNS 與 HTTPS](https://tailscale.com/docs/how-to/set-up-https-certificates) 的 Tailscale 帳號。接收端裝置需登入你的 Tailscale 網路（**tailnet**），並由網路原則允許存取服務。發布端的 TSLink 已內嵌 Tailscale。
-
-### 分享你的第一個網頁
-
-建立一個網頁，TSLink 會直接提供存取，並在需要時啟動背景服務：
+分享一個頁面：
 
 ```bash
-mkdir -p tslink-demo
-printf '<h1>Hello from TSLink</h1>\n' > tslink-demo/index.html
+mkdir -p tslink-demo && printf '<h1>Hello from TSLink</h1>\n' > tslink-demo/index.html
 tslink share ./tslink-demo --name demo
-```
-
-若 TSLink 輸出節點授權 URL，開啟它完成授權；tailnet 可能還要求管理員核准裝置。接著取得確切位址：
-
-```bash
 tslink url demo --wait
 ```
 
-在獲准裝置上開啟傳回的 URL。首次分享不需要 API token。[完整設定與生命週期說明 →](getting-started.md)
+首次使用時，TSLink 會輸出登入連結，用來註冊新的服務節點；你的 tailnet 也可能要求管理員核准裝置。註冊完成後，在已登入你的 tailnet 且獲准存取的裝置上開啟服務 URL。不需要 API 權杖。
 
-<a id="use-cases"></a>
+查看目前的分享，再移除示範服務：
 
-## 你想分享什麼？
+```bash
+tslink status --urls
+tslink remove demo
+```
 
-檔案需要事先存在；應用程式、資料庫與模型後端需要已執行並接聽指定連接埠。
+後端啟動後，你還能分享這些內容：
 
-| 使用情境 | 指令 |
+| 內容 | 指令 |
 |---|---|
-| 從另一台裝置開啟本機應用程式 | `tslink share 3000` |
-| 瀏覽目錄中的檔案 | `tslink share ./public --name files` |
-| 在手機閱讀產生的 HTML 報告 | `tslink share ./report.html --name report` |
-| 透過 TCP 連線至本機資料庫 | `tslink add database --tcp localhost:5432` |
-| 呼叫 Ollama 等本機模型 HTTP API | `tslink add model --proxy localhost:11434` |
+| 本機 Web 應用程式 | `tslink share 3000` |
+| 檔案資料夾 | `tslink share ./public --name files` |
+| 本機模型 API，例如 Ollama | `tslink add model --proxy localhost:11434` |
+| 透過私人 TCP 存取的資料庫 | `tslink add database --tcp localhost:5432` |
+| 已支援的自架應用程式（Jellyfin、Immich、Home Assistant 等，共 16 種） | `tslink apps detect`，接著執行 `tslink apps share jellyfin --yes` |
 
-使用 Ollama 時，先用 `tslink url model --wait` 取得確切 URL；OpenAI API 相容用戶端的 `baseURL` 是該 URL 加上 `/v1`。[本機模型與私有資料工作流程（簡體中文）→](local-ai.md)
+[入門、平台與背景服務 →](getting-started.md)
 
-在一台主機上管理多個應用時，TSLink 提供命名服務節點、HTTP 身分允許名單、Funnel 有效期限與 MCP 管理。若只在自己的裝置間存取一個應用，[Tailscale Serve](https://tailscale.com/docs/reference/tailscale-cli/serve) 可能已經足夠。
+## 選擇誰能開啟
 
-<a id="architecture"></a>
+| 存取對象 | 接收者需要什麼 | 身分依據 | 何時結束 |
+|---|---|---|---|
+| **你自己的裝置** | 已登入你的 tailnet | 經驗證的 Tailscale 登入身分 | 移除應用程式時 |
+| **指定的人**（私人 HTTP/檔案） | Tailscale 登入帳戶；網路外的人須逐一接受應用程式邀請 | 經驗證的 Tailscale 登入身分 | 你設定的期限到達時（`--for 7d`），或執行 `tslink people remove` |
+| **任何持有 URL 的人**（Funnel） | 瀏覽器 | 任何人；仍需遵守應用程式本身的登入要求 | 預設 24 小時後（`--funnel-ttl`） |
+| **瀏覽器訪客連結** *（即將推出）* | 瀏覽器，以及選用的 PIN | 連結持有者 | 連結到期或被撤銷時 |
 
-## 架構
+```bash
+tslink people add alice@example.com --apps photos --for 7d
+tslink people list
+tslink people remove alice@example.com
+```
 
-<picture>
-  <source media="(max-width: 600px) and (prefers-color-scheme: dark)" srcset="assets/service-map-dark-mobile.svg">
-  <source media="(max-width: 600px)" srcset="assets/service-map-light-mobile.svg">
-  <source media="(prefers-color-scheme: dark)" srcset="assets/service-map-dark.svg">
-  <img src="assets/service-map-light.svg" alt="服務關係範例：App、Docs、Database 與 Model 是同一個 tailnet 內各自獨立的具名節點。應用程式、檔案與模型 API 使用 HTTPS，資料庫使用私有 TCP。" width="960">
-</picture>
-
-**一個 tailnet，多個服務節點。** 共用的守護程序為每個服務執行內嵌 tsnet 節點，轉發 HTTP、提供檔案存取或代理 TCP。登錄資料的變更會在執行期間生效。每個節點有自己的網路身分，服務共用發布端主機。[架構詳解 →](architecture.md)
-
-| 技術 | 用途 |
-|---|---|
-| [Go](../go.mod) | 原生命令列程式 |
-| [Tailscale tsnet](architecture.md) | 服務節點與 tailnet 傳輸 |
-| [Cobra](https://github.com/spf13/cobra) | 指令與說明 |
-| [MCP Go SDK](https://github.com/modelcontextprotocol/go-sdk) | Agent 傳輸 |
-| 系統鑰匙圈與使用者服務管理器 | 選用的憑證儲存與背景執行 |
-
-服務僅在 tailnet 內提供存取，除非你明確啟用[公開 Funnel](getting-started.md#more-examples)。HTTP/檔案服務支援依身分設定允許清單 （`WhoIs`、`--allow`）；原始 TCP 依賴 tailnet 原則與後端本身的驗證。詳見[分享範圍](sharing.md)。
-
-TSLink 不安裝應用、不執行模型、不隔離主機程序，也不彙整多台主機。網路傳輸、加密與 HTTPS 由 Tailscale 提供；TSLink 是獨立專案。
+私人 HTTP 和檔案分享會在每次請求時檢查期限。撤銷權限會阻止新請求；它無法收回已下載的資料，也不會關閉已接受的資料串流和 WebSocket 連線。[依對象分享 →](people.md) · [分享邊界 →](sharing.md)
 
 <a id="agents"></a>
 
-## 提供給 agent
+## 給代理
 
-**19 個 MCP 工具**讓 agent 分享報告、管理服務、取得 URL 與檢查設定。本機 MCP 用戶端可以這樣連線至已安裝的程式：
+TSLink 內建 MCP 伺服器，代理能像你一樣分享、列出、解釋和移除分享。在本機 MCP 用戶端中加入：
 
 ```json
 {
   "mcpServers": {
-    "tslink": {
-      "command": "tslink",
-      "args": ["mcp"]
-    }
+    "tslink": { "command": "tslink", "args": ["mcp"] }
   }
 }
 ```
 
-MCP 管理 TSLink；應用程式使用模型 HTTP API 進行推論。設定與自動化方法見 [MCP 用戶端](mcp-clients.md)、[遠端 MCP](remote-mcp.md)與 [agent 操作指南](../AGENTS.md)。
+- **準確的結果。** CLI 自動化支援 `--json`，使用 `schema_version: 1` 和穩定的錯誤碼；`tslink mcp` 則使用 JSON-RPC。`tslink manifest` 描述每個指令和參數。代理應透過 `tslink url <name> --wait` 取得真正的 URL，而不要自行組合。
+- **如實回報等待狀態。** 新節點若還需要人完成登入，就會回報 `needs_login`，不會假裝已經就緒。
+- **操作權限。** 本機 MCP 以你的使用者權限執行。遠端 MCP 須主動啟用，只能在 tailnet 內存取，且僅允許你列出的登入身分或標籤。個別代理的角色、應用程式範圍和操作收據*即將推出*。
 
-CLI 自動化支援 `--json`，其中 `schema_version` 為 `1`；可用 `tslink status --urls --json` 查看。本機 MCP 使用 stdio 上的 JSON-RPC。詳見 [JSON 自動化](json-automation.md)。
+TSLink 的 MCP 用來操作 TSLink 本身。如果你透過 TSLink 發布其他 MCP 伺服器，該伺服器仍需要自己的工具權限控制。
+[代理指南 →](agents.md) · [MCP 用戶端 →](mcp-clients.md) · [遠端 MCP →](remote-mcp.md) · [JSON 自動化 →](json-automation.md)
 
-<a id="roadmap"></a>
+## 何時選擇其他工具
 
-## 即將推出
-
-標為合併中、審查中或規劃中的項目尚未包含在上面的原始碼安裝中。
-
-| 使用情境 | 狀&#8288;態 |
+| 你的需求 | 可以考慮 |
 |---|---|
-| <!-- roadmap:people --> 給親友 3 天的私有 HTTP/檔案應用存取權限，並將各應用邀請合成一則訊息；接收者仍需 Tailscale。 | 合&#8288;併&#8288;中 |
-| <!-- roadmap:health --> 檢查應用健康狀態，並透過可選的命令或 webhook 接收離線或到期提醒。 | 合&#8288;併&#8288;中 |
-| <!-- roadmap:recipes --> 探索支援的回環位址應用，並在分享前預覽自架應用配方。 | 合&#8288;併&#8288;中 |
-| <!-- roadmap:limits --> 為每個 HTTP 應用設定上傳大小與請求逾時，以支援大檔案上傳與慢速用戶端。 | 合&#8288;併&#8288;中 |
-| <!-- roadmap:windows --> 透過排程工作與內建監護程序，在使用者已登入 Windows 時重新啟動當機的守護程序。 | 合&#8288;併&#8288;中 |
-| <!-- roadmap:access-log --> 透過本機存取紀錄查看誰開啟了哪個應用，並選擇 `prefix`、`full` 或 `off` 路徑紀錄模式。 | 審&#8288;查&#8288;中 |
-| <!-- roadmap:portal --> 用一個首頁列出訪客獲准存取的應用，並向擁有者提供節點授權交接資訊；訪客仍需 Tailscale。 | 審&#8288;查&#8288;中 |
-| <!-- roadmap:mcp-scopes --> 給 agent 指派角色與應用範圍，並記錄其修改操作的稽核憑據。 | 審&#8288;查&#8288;中 |
-| <!-- roadmap:guest-links --> 讓訪客無須安裝 Tailscale，透過受控的公開 Funnel，在瀏覽器中用限時連結與可選 PIN 開啟一個 HTTP 應用。 | 審&#8288;查&#8288;中 |
-| <!-- roadmap:durations --> 選擇預設或自訂有效期限，最短 1 小時，訪客預設最長 7 天且可設定。 | 審&#8288;查&#8288;中 |
-| <!-- roadmap:requests --> 協助手機使用者透過 QR code 加入，讓擁有者一步核准應用存取或延長時間請求。 | 審&#8288;查&#8288;中 |
-| <!-- roadmap:multi-host --> 在一份清單中查看多台主機上的應用。 | 規&#8288;劃&#8288;中 |
+| 使用現有的 Tailscale 用戶端，在自己的裝置上存取一個本機服務 | [`tailscale serve`](https://tailscale.com/docs/reference/tailscale-cli/serve) |
+| 由管理員管理、跨多台主機使用固定名稱的服務 | [Tailscale Services](https://tailscale.com/docs/features/tailscale-services) |
+| 不需要 Tailscale 帳戶的 webhook 或 API 示範公開 URL | [ngrok](https://ngrok.com/docs/start) 或 [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/) |
+| 安裝並執行自架應用程式，而不只是分享 | [Umbrel](https://umbrel.com) 或 [Coolify](https://coolify.io) |
+| 涵蓋整個組織、依身分控制存取的平台 | [Pangolin](https://github.com/fosrl/pangolin) 或 [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/) |
 
-<a id="documentation"></a>
+如果一個人執行著多個應用程式，想依應用程式、依對象設定有期限的存取權限，並讓自己和代理都能查看，TSLink 就適合這種情境。
+
+## 運作原理
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/service-map-dark.svg">
+  <img src="assets/service-map-light.svg" alt="App、Docs、Database 和 Model 是同一 tailnet 中獨立命名的節點，由發布端電腦上的一個 TSLink 背景程序執行。" width="720">
+</picture>
+
+一個背景程序為每個應用程式執行一個嵌入式 Tailscale 節點，讓每個應用程式都有自己的名稱和位址。私人 HTTP 和檔案分享透過 `WhoIs`、依對象授權或 `--allow` 規則控制存取，每次請求都會檢查依對象授權的期限。原始 TCP 使用 tailnet 政策和後端本身的驗證。Tailscale 提供 tailnet 傳輸、加密和憑證；TSLink 是獨立專案。所有應用程式共用發布端電腦，TSLink 不會將它們彼此隔離。[架構 →](architecture.md)
+
+## 目前狀態
+
+現已可用：各應用程式的私人位址、附期限和邀請組合的依對象分享、會到期的公開 Funnel、應用程式健康檢查與警示、自架應用程式配方、各應用程式的請求限制、Windows 當機重啟、CLI 和 MCP。
+
+即將推出：瀏覽器訪客連結、彈性的時長、存取紀錄、應用程式首頁、限定範圍的代理角色、QR 掃碼引導和存取申請。將多台電腦的應用程式彙整到同一份清單仍在規劃中。[路線圖 →](roadmap.md)
 
 ## 文件與授權
 
-[入門](getting-started.md) · [本機模型](local-ai.md) · [CLI 參考](cli-reference.md) · [平台](platforms.md) · [路線圖](roadmap.md)
+[入門](getting-started.md) · [CLI 參考](cli-reference.md) · [平台](platforms.md) · [本機模型](local-ai.md) · [貢獻](../CONTRIBUTING.md) · [安全](../SECURITY.md)
 
-貢獻方式見 [CONTRIBUTING.md](../CONTRIBUTING.md)；漏洞報告請使用 [SECURITY.md](../SECURITY.md) 中的管道。
-
-TSLink 使用未經修改的 [Apache License 2.0](../LICENSE)，允許依該授權用於商業用途。散布時請保留適用的 [NOTICE](../NOTICE) 與[第三方聲明](../THIRD_PARTY_NOTICES.md)。[商業合作](../COMMERCIAL.md)完全自願，不增加授權條件。Tailscale 服務條款與方案另行適用。
+採用 Apache License 2.0，允許商業使用。重新散布時請保留 [NOTICE](../NOTICE) 和[第三方聲明](../THIRD_PARTY_NOTICES.md)。Tailscale 的服務條款與方案另行適用。

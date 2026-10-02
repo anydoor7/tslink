@@ -8,149 +8,131 @@
 <h1 align="center">TSLink</h1>
 
 <p align="center">
-  <strong>আপনার কম্পিউটারের অ্যাপ, মডেল ও ফাইলকে নিজস্ব ব্যক্তিগত নেটওয়ার্ক ঠিকানা দিন।</strong><br>
-  আপনার Tailscale নেটওয়ার্কের অন্য অনুমোদিত ডিভাইস থেকে এগুলো ব্যবহার করুন।
+  <strong>আপনার কম্পিউটারের অ্যাপ নিজের পছন্দের মানুষের সঙ্গে, নিজের পছন্দের সময়ের জন্য শেয়ার করুন।</strong><br>
+  প্রতিটি অ্যাপ আপনার Tailscale নেটওয়ার্কে আলাদা ব্যক্তিগত ঠিকানা পায়। কার প্রবেশাধিকার আছে দেখুন এবং তা ফিরিয়ে নিন।
 </p>
 
 <p align="center">
-  <a href="../LICENSE"><img src="assets/badge-license.svg" alt="লাইসেন্স: Apache 2.0"></a>
-  <a href="../go.mod"><img src="assets/badge-go.svg" alt="Go 1.26.6 বা পরবর্তী সংস্করণ"></a>
-  <a href="architecture.md"><img src="assets/badge-tsnet.svg" alt="Tailscale: অন্তর্নির্মিত tsnet নোড"></a>
-  <a href="#agents"><img src="assets/badge-mcp.svg" alt="MCP: ১৯টি টুল"></a>
+  <a href="#quickstart">দ্রুত শুরু</a> · <a href="#agents">এজেন্টদের জন্য</a> · <a href="getting-started.md">নথি</a> ·
+  <strong>বাংলা</strong> · <a href="../README.md">English</a> · <a href="INDEX.md#translated-homepages">সব ভাষা</a>
 </p>
 
-<p align="center">
-  <a href="../README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.zh-TW.md">繁體中文</a> · <a href="README.ko.md">한국어</a> · <a href="README.de.md">Deutsch</a><br>
-  <a href="README.es.md">Español</a> · <a href="README.fr.md">Français</a> · <a href="README.it.md">Italiano</a> · <a href="README.da.md">Dansk</a> · <a href="README.ja.md">日本語</a><br>
-  <a href="README.pl.md">Polski</a> · <a href="README.ru.md">Русский</a> · <a href="README.bs.md">Bosanski</a> · <a href="README.ar.md">العربية</a> · <a href="README.no.md">Norsk</a><br>
-  <a href="README.pt-BR.md">Português (Brasil)</a> · <a href="README.th.md">ไทย</a> · <a href="README.tr.md">Türkçe</a> · <a href="README.uk.md">Українська</a><br>
-  <strong>বাংলা</strong> · <a href="README.el.md">Ελληνικά</a> · <a href="README.vi.md">Tiếng Việt</a>
-</p>
+## মানুষ এটি কী কাজে ব্যবহার করে
 
-<a id="installation"></a>
+- **ফোনে নিজের কাজ খুলুন।** স্ক্রিপ্টের তৈরি প্রতিবেদন, ডেভেলপমেন্ট সার্ভার, নোটবুক বা স্থানীয় মডেলের API, অনুমোদিত ডিভাইস থেকে ব্যক্তিগত HTTPS ঠিকানায় ব্যবহার করুন।
+- **একজনকে একটি অ্যাপ কিছু সময়ের জন্য দিন।** আপনার সঙ্গীকে এক সপ্তাহ ছবির লাইব্রেরি ব্যবহার করতে দিন, বা সহকর্মীকে তিন দিন প্রিভিউ পরীক্ষা করতে দিন। প্রবেশাধিকার নিজে থেকেই শেষ হবে; আগেও শেষ করতে পারেন।
+- **শেয়ার করার দায়িত্ব এজেন্টকে দিন।** আপনার কোডিং এজেন্ট এইমাত্র একটি ড্যাশবোর্ড বানিয়েছে। সেটি শুক্রবার পর্যন্ত আপনার ও সতীর্থের সঙ্গে শেয়ার করতে বলুন। এখন কী শেয়ার করা আছে তা জানাতেও এবং শেয়ার বন্ধ করতেও পারে।
 
-## ইনস্টলেশন
+অ্যাপ যেখানে চলছে সেখানেই চলতে থাকে। TSLink প্রতিটি অ্যাপে কে পৌঁছাতে পারবে তা নিয়ন্ত্রণ করে এবং কী, কার সঙ্গে, কত দিন শেয়ার করা আছে তার একটি তালিকা রাখে।
 
-প্রয়োজন **Go 1.26.6 বা পরবর্তী সংস্করণ** এবং Git। আগে থেকে কম্পাইল করা রিলিজ বা Homebrew cask এখনো প্রকাশিত হয়নি, তাই সোর্স থেকে ইনস্টল করুন। উদাহরণগুলো **bash বা zsh** ব্যবহার করে। Windows ও ব্যাকগ্রাউন্ড সার্ভিসের শর্তের জন্য [প্ল্যাটফর্ম সমর্থন](platforms.md) দেখুন। বিস্তারিত নির্দেশিকা ইংরেজিতে দেওয়া আছে।
+<a id="quickstart"></a>
+
+## দ্রুত শুরু
+
+আপনার দরকার **Go 1.26.6+**, Git এবং [MagicDNS ও HTTPS চালু করা](https://tailscale.com/docs/how-to/set-up-https-certificates) Tailscale অ্যাকাউন্ট। আগে থেকে কম্পাইল করা সংস্করণ এখনও প্রকাশিত হয়নি, তাই সোর্স থেকে ইনস্টল করুন:
 
 ```bash
 git clone https://github.com/anydoor7/tslink.git
-cd tslink
-go install .
+cd tslink && go install .
 export PATH="$PATH:$(go env GOPATH)/bin"
 ```
 
-[MagicDNS ও HTTPS চালু করা](https://tailscale.com/docs/how-to/set-up-https-certificates) Tailscale অ্যাকাউন্ট ব্যবহার করুন। যে ডিভাইস থেকে সার্ভিসে সংযোগ করবেন, সেটি আপনার Tailscale নেটওয়ার্কে (**tailnet**) লগইন করা থাকতে হবে এবং নেটওয়ার্ক নীতি অনুযায়ী সার্ভিসে প্রবেশের অনুমতি থাকতে হবে। সার্ভিস প্রকাশকারী কম্পিউটারে TSLink-এর মধ্যেই Tailscale অন্তর্ভুক্ত থাকে।
-
-### প্রথম পেজ শেয়ার করুন
-
-একটি পেজ তৈরি করুন; TSLink সরাসরি সেটি পরিবেশন করে এবং প্রয়োজন হলে ব্যাকগ্রাউন্ড সার্ভিস চালু করে:
+একটি পৃষ্ঠা শেয়ার করুন:
 
 ```bash
-mkdir -p tslink-demo
-printf '<h1>Hello from TSLink</h1>\n' > tslink-demo/index.html
+mkdir -p tslink-demo && printf '<h1>Hello from TSLink</h1>\n' > tslink-demo/index.html
 tslink share ./tslink-demo --name demo
-```
-
-TSLink নোড নিবন্ধনের URL দেখালে সেটি খুলে নোডকে অনুমোদন দিন। আপনার tailnet-এ প্রশাসকের ডিভাইস অনুমোদনও প্রয়োজন হতে পারে। এরপর সঠিক ঠিকানা নিন:
-
-```bash
 tslink url demo --wait
 ```
 
-অনুমোদিত ডিভাইসে ফেরত পাওয়া URL খুলুন। প্রথমবার শেয়ার করতে API token লাগে না। [সম্পূর্ণ সেটআপ ও সার্ভিসের জীবনচক্র →](getting-started.md)
+প্রথমবার TSLink নতুন সার্ভিস নোড নিবন্ধনের জন্য সাইন-ইন লিংক দেখায়; আপনার tailnet-এ প্রশাসকের ডিভাইস অনুমোদনও লাগতে পারে। নিবন্ধনের পর আপনার tailnet-এ সাইন-ইন করা অনুমোদিত ডিভাইসে সার্ভিসের URL খুলুন। API টোকেন লাগে না।
 
-<a id="use-cases"></a>
+কী শেয়ার করা আছে দেখুন, তারপর ডেমো সরিয়ে দিন:
 
-## কী শেয়ার করতে চান?
+```bash
+tslink status --urls
+tslink remove demo
+```
 
-ফাইল আগে থেকেই থাকতে হবে; অ্যাপ, ডেটাবেস ও মডেলের ব্যাকএন্ড নির্দিষ্ট পোর্টে চালু থাকতে হবে।
+ব্যাকএন্ড চালু থাকলে এগুলোও শেয়ার করতে পারেন:
 
-| ব্যবহার | কমান্ড |
+| বিষয় | কমান্ড |
 |---|---|
-| অন্য ডিভাইস থেকে কম্পিউটারের অ্যাপ খুলুন | `tslink share 3000` |
-| একটি ডিরেক্টরির ফাইল দেখুন | `tslink share ./public --name files` |
-| তৈরি করা HTML রিপোর্ট ফোনে পড়ুন | `tslink share ./report.html --name report` |
-| TCP দিয়ে কম্পিউটারের ডেটাবেসে সংযোগ করুন | `tslink add database --tcp localhost:5432` |
-| Ollama-র মতো কম্পিউটারে চলা মডেলের HTTP API ব্যবহার করুন | `tslink add model --proxy localhost:11434` |
+| স্থানীয় ওয়েব অ্যাপ | `tslink share 3000` |
+| ফাইলের ফোল্ডার | `tslink share ./public --name files` |
+| Ollama-র মতো স্থানীয় মডেলের API | `tslink add model --proxy localhost:11434` |
+| ব্যক্তিগত TCP দিয়ে ডেটাবেস | `tslink add database --tcp localhost:5432` |
+| পরিচিত স্ব-হোস্ট করা অ্যাপ (Jellyfin, Immich, Home Assistant এবং আরও ১৩টি) | `tslink apps detect`, তারপর `tslink apps share jellyfin --yes` |
 
-Ollama-র জন্য `tslink url model --wait` দিয়ে সঠিক URL নিন। OpenAI API-সামঞ্জস্যপূর্ণ ক্লায়েন্টের `baseURL` হবে সেই URL-এর শেষে `/v1` যোগ করা ঠিকানা। [লোকাল মডেল ও ব্যক্তিগত তথ্যের কর্মপ্রবাহ →](local-ai.md)
+[শুরু করা, প্ল্যাটফর্ম ও ব্যাকগ্রাউন্ড সার্ভিস →](getting-started.md)
 
-এক হোস্টে একাধিক অ্যাপের জন্য TSLink নামযুক্ত সার্ভিস নোড, HTTP পরিচয় অনুমোদন তালিকা, Funnel মেয়াদ ও MCP ব্যবস্থাপনা একসঙ্গে দেয়। নিজের ডিভাইসে একটি অ্যাপের জন্য [Tailscale Serve](https://tailscale.com/docs/reference/tailscale-cli/serve) যথেষ্ট হতে পারে।
+## কে খুলতে পারবে বেছে নিন
 
-<a id="architecture"></a>
+| ব্যবহারকারী | প্রাপকের কী দরকার | পরিচয় | শেষ হবে |
+|---|---|---|---|
+| **নিজের ডিভাইস** | আপনার tailnet-এ সাইন-ইন | যাচাইকৃত Tailscale পরিচয় | অ্যাপ সরালে |
+| **নির্দিষ্ট মানুষ** (ব্যক্তিগত HTTP/ফাইল) | Tailscale অ্যাকাউন্ট; বাইরের মানুষ প্রতিটি অ্যাপের জন্য একটি আমন্ত্রণ গ্রহণ করেন | যাচাইকৃত Tailscale পরিচয় | আপনার নির্ধারিত সময়ে (`--for 7d`) বা `tslink people remove` দিয়ে |
+| **URL থাকা যে কেউ** (Funnel) | ব্রাউজার | যে কেউ; অ্যাপের নিজস্ব লগইন শর্ত বহাল থাকে | ডিফল্ট হিসেবে ২৪ ঘণ্টা পর (`--funnel-ttl`) |
+| **ব্রাউজারের অতিথি লিংক** *(আসছে)* | ব্রাউজার এবং ঐচ্ছিক PIN | যার কাছে লিংক আছে | লিংকের মেয়াদ শেষে বা বাতিল করলে |
 
-## স্থাপত্য
+```bash
+tslink people add alice@example.com --apps photos --for 7d
+tslink people list
+tslink people remove alice@example.com
+```
 
-<picture>
-  <source media="(max-width: 600px) and (prefers-color-scheme: dark)" srcset="assets/service-map-dark-mobile.svg">
-  <source media="(max-width: 600px)" srcset="assets/service-map-light-mobile.svg">
-  <source media="(prefers-color-scheme: dark)" srcset="assets/service-map-dark.svg">
-  <img src="assets/service-map-light.svg" alt="সার্ভিসের উদাহরণচিত্র: App, Docs, Database ও Model একই tailnet-এর আলাদা নামযুক্ত নোড। অ্যাপ, ফাইল ও মডেলের API HTTPS ব্যবহার করে; ডেটাবেস ব্যক্তিগত TCP সংযোগ ব্যবহার করে।" width="960">
-</picture>
-
-**একটি tailnet, আলাদা সার্ভিস নোড।** একটি শেয়ার করা ডেমন প্রতিটি সার্ভিসের জন্য অন্তর্নির্মিত tsnet নোড চালায়, HTTP অনুরোধ পাঠায়, ফাইল পরিবেশন করে বা TCP প্রক্সি হিসেবে কাজ করে। চলার সময়ই সার্ভিস রেজিস্ট্রির পরিবর্তন কার্যকর হয়। প্রতিটি নোডের নিজস্ব নেটওয়ার্ক পরিচয় থাকে; সার্ভিসগুলো একই প্রকাশকারী কম্পিউটারে চলে। [স্থাপত্যের বিস্তারিত →](architecture.md)
-
-| উপাদান | ভূমিকা |
-|---|---|
-| [Go](../go.mod) | নেটিভ কমান্ড-লাইন প্রোগ্রাম |
-| [Tailscale tsnet](architecture.md) | সার্ভিস নোড ও tailnet-এ তথ্য পরিবহন |
-| [Cobra](https://github.com/spf13/cobra) | কমান্ড ও সহায়তা |
-| [MCP Go SDK](https://github.com/modelcontextprotocol/go-sdk) | এজেন্টের যোগাযোগ ব্যবস্থা |
-| অপারেটিং সিস্টেমের কিচেইন ও ব্যবহারকারীর সার্ভিস ম্যানেজার | ঐচ্ছিক প্রমাণীকরণ তথ্য সংরক্ষণ ও ব্যাকগ্রাউন্ডে চালানো |
-
-স্পষ্টভাবে [পাবলিক Funnel](getting-started.md#more-examples) চালু না করলে সার্ভিসগুলো tailnet-এর মধ্যেই থাকে। HTTP ও ফাইল সার্ভিস পরিচয়ভিত্তিক অনুমোদিত তালিকা সমর্থন করে (`WhoIs`, `--allow`); TCP নির্ভর করে tailnet নীতি ও ব্যাকএন্ডের নিজস্ব পরিচয় যাচাইয়ের ওপর। [শেয়ার করার সীমা](sharing.md) দেখুন।
-
-TSLink অ্যাপ ইনস্টল, মডেল চালানো, হোস্টের প্রক্রিয়া বিচ্ছিন্ন করা বা একাধিক হোস্ট একত্র করা করে না। নেটওয়ার্ক, এনক্রিপশন ও HTTPS দেয় Tailscale; TSLink একটি স্বতন্ত্র প্রকল্প।
+ব্যক্তিগত HTTP ও ফাইল শেয়ারের সময়সীমা প্রতিটি অনুরোধে পরীক্ষা করা হয়। প্রবেশাধিকার বাতিল করলে নতুন অনুরোধ বন্ধ হয়; ডাউনলোড করা তথ্য ফিরিয়ে নেওয়া বা আগে গ্রহণ করা স্ট্রিম ও WebSocket সংযোগ বন্ধ করা যায় না। [মানুষের সঙ্গে শেয়ার →](people.md) · [শেয়ারের সীমা →](sharing.md)
 
 <a id="agents"></a>
 
-## এজেন্টের জন্য
+## এজেন্টদের জন্য
 
-**১৯টি MCP টুল** দিয়ে এজেন্ট রিপোর্ট শেয়ার করতে, সার্ভিস পরিচালনা করতে, URL নিতে ও সেটআপ পরীক্ষা করতে পারে। কম্পিউটারের MCP ক্লায়েন্টকে ইনস্টল করা প্রোগ্রামের সঙ্গে যুক্ত করুন:
+TSLink-এ MCP সার্ভার আছে, তাই এজেন্ট আপনার মতোই শেয়ার করতে, তালিকা দেখতে, ব্যাখ্যা করতে এবং শেয়ার সরাতে পারে। স্থানীয় MCP ক্লায়েন্টে যোগ করুন:
 
 ```json
 {
   "mcpServers": {
-    "tslink": {
-      "command": "tslink",
-      "args": ["mcp"]
-    }
+    "tslink": { "command": "tslink", "args": ["mcp"] }
   }
 }
 ```
 
-MCP দিয়ে TSLink পরিচালনা করা হয়; মডেলের অনুমান প্রক্রিয়ার জন্য অ্যাপ HTTP API ব্যবহার করে। কনফিগারেশন ও স্বয়ংক্রিয় ব্যবহারের নির্দেশনা পেতে [MCP ক্লায়েন্ট](mcp-clients.md), [দূরবর্তী MCP](remote-mcp.md) ও [এজেন্ট পরিচালনার নির্দেশিকা](../AGENTS.md) দেখুন।
+- **নির্ভুল ফলাফল।** CLI অটোমেশন `--json`, `schema_version: 1` এবং স্থায়ী ত্রুটি কোড সমর্থন করে; `tslink mcp` এর বদলে JSON-RPC ব্যবহার করে। `tslink manifest` প্রতিটি কমান্ড ও ফ্ল্যাগ ব্যাখ্যা করে। এজেন্টের উচিত URL বানানোর বদলে `tslink url <name> --wait` দিয়ে আসল URL নেওয়া।
+- **অপেক্ষার অবস্থা স্পষ্ট।** নতুন নোডে এখনও মানুষের সাইন-ইন দরকার হলে প্রস্তুত দেখানোর বদলে `needs_login` জানায়।
+- **ক্ষমতা।** স্থানীয় MCP আপনার ব্যবহারকারীর অধিকার নিয়ে চলে। দূরবর্তী MCP আলাদাভাবে চালু করতে হয়, কেবল tailnet-এ পৌঁছানো যায় এবং আপনার তালিকার লগইন পরিচয় বা ট্যাগেই সীমিত থাকে। এজেন্টভিত্তিক ভূমিকা, অ্যাপের পরিসর ও কাজের রসিদ *আসছে*।
 
-CLI অটোমেশন `--json` সমর্থন করে, যেখানে `schema_version` হলো `1`; দেখুন `tslink status --urls --json`। স্থানীয় MCP stdio-তে JSON-RPC ব্যবহার করে। দেখুন [JSON অটোমেশন](json-automation.md)।
+TSLink-এর MCP দিয়ে TSLink নিজেকেই পরিচালনা করা হয়। TSLink দিয়ে অন্য MCP সার্ভার প্রকাশ করলে সেই সার্ভারের নিজস্ব টুল অনুমতি এখনও দরকার।
+[এজেন্ট নির্দেশিকা →](agents.md) · [MCP ক্লায়েন্ট →](mcp-clients.md) · [দূরবর্তী MCP →](remote-mcp.md) · [JSON অটোমেশন →](json-automation.md)
 
-<a id="roadmap"></a>
+## কখন অন্য টুল ব্যবহার করবেন
 
-## যা আসছে
-
-মার্জ চলছে, পর্যালোচনাধীন বা পরিকল্পিত লেখা বিষয়গুলো উপরের সোর্স ইনস্টলে অন্তর্ভুক্ত নয়।
-
-| ব্যবহার | অবস্থা |
+| আপনার প্রয়োজন | বিবেচনা করুন |
 |---|---|
-| <!-- roadmap:people --> আত্মীয়কে ব্যক্তিগত HTTP/ফাইল অ্যাপে ৩ দিনের প্রবেশাধিকার দিন এবং অ্যাপের আমন্ত্রণ একটি বার্তায় একত্র করুন; প্রাপকের এখনও Tailscale লাগবে। | মার্জ চলছে |
-| <!-- roadmap:health --> অ্যাপের স্বাস্থ্য পরীক্ষা করুন এবং ঐচ্ছিক কমান্ড বা webhook-এ বিভ্রাট বা মেয়াদ শেষের সতর্কতা পান। | মার্জ চলছে |
-| <!-- roadmap:recipes --> সমর্থিত loopback অ্যাপ খুঁজুন এবং শেয়ারের আগে নিজে হোস্ট করা অ্যাপের রেসিপি দেখুন। | মার্জ চলছে |
-| <!-- roadmap:limits --> বড় আপলোড ও ধীর ক্লায়েন্টের জন্য প্রতিটি HTTP অ্যাপের আপলোডের আকার ও অনুরোধের সময়সীমা ঠিক করুন। | মার্জ চলছে |
-| <!-- roadmap:windows --> Windows-এ লগইন থাকা অবস্থায় নির্ধারিত টাস্ক ও অন্তর্নির্মিত সুপারভাইজার দিয়ে ক্র্যাশ করা daemon আবার চালু করুন। | মার্জ চলছে |
-| <!-- roadmap:access-log --> স্থানীয় প্রবেশ লগে কে কোন অ্যাপ খুলেছে দেখুন, `prefix`, `full` বা `off` পাথ রেকর্ডিং দিয়ে। | পর্যালোচনাধীন |
-| <!-- roadmap:portal --> অনুমোদিত অ্যাপের একটি হোম পেজ খুলুন, মালিকের জন্য নোড নিবন্ধনের হস্তান্তরসহ; দর্শকের এখনও Tailscale লাগবে। | পর্যালোচনাধীন |
-| <!-- roadmap:mcp-scopes --> এজেন্টকে ভূমিকা ও অ্যাপের পরিধি দিন, তার পরিবর্তনের অডিট রসিদসহ। | পর্যালোচনাধীন |
-| <!-- roadmap:guest-links --> নিয়ন্ত্রিত পাবলিক Funnel দিয়ে অতিথিকে মেয়াদযুক্ত লিংক ও ঐচ্ছিক PIN ব্যবহার করে Tailscale ইনস্টল না করে ব্রাউজারে একটি HTTP অ্যাপ খুলতে দিন। | পর্যালোচনাধীন |
-| <!-- roadmap:durations --> প্রিসেট বা নিজস্ব মেয়াদ বাছুন, সর্বনিম্ন ১ ঘণ্টা এবং অতিথির জন্য ডিফল্ট সর্বোচ্চ ৭ দিন, যা বদলানো যায়। | পর্যালোচনাধীন |
-| <!-- roadmap:requests --> ফোন ব্যবহারকারীকে QR কোড দিয়ে যোগ দিতে সাহায্য করুন; মালিককে এক ধাপে অ্যাপে প্রবেশাধিকার বা বাড়তি সময়ের অনুরোধ অনুমোদন করতে দিন। | পর্যালোচনাধীন |
-| <!-- roadmap:multi-host --> এক তালিকায় একাধিক হোস্টের অ্যাপ দেখুন। | পরিকল্পিত |
+| আগে থেকেই চালু Tailscale ক্লায়েন্ট দিয়ে নিজের ডিভাইসে একটি স্থানীয় সার্ভিস | [`tailscale serve`](https://tailscale.com/docs/reference/tailscale-cli/serve) |
+| একাধিক হোস্টে স্থায়ী নামসহ প্রশাসক-পরিচালিত সার্ভিস | [Tailscale Services](https://tailscale.com/docs/features/tailscale-services) |
+| Tailscale অ্যাকাউন্ট ছাড়া webhook বা API ডেমোর প্রকাশ্য URL | [ngrok](https://ngrok.com/docs/start) বা [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/) |
+| স্ব-হোস্ট করা অ্যাপ শেয়ারের পাশাপাশি ইনস্টল ও চালু করা | [Umbrel](https://umbrel.com) বা [Coolify](https://coolify.io) |
+| পুরো প্রতিষ্ঠানের জন্য পরিচয়ভিত্তিক প্রবেশাধিকার প্ল্যাটফর্ম | [Pangolin](https://github.com/fosrl/pangolin) বা [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/) |
 
-<a id="documentation"></a>
+একজন মানুষ একাধিক অ্যাপ চালিয়ে অ্যাপ ও ব্যক্তিভেদে সময়সীমাসহ প্রবেশাধিকার দিতে চাইলে, যা তিনি ও তাঁর এজেন্ট দুজনেই পরীক্ষা করতে পারেন, TSLink উপযুক্ত।
 
-## ডকুমেন্টেশন ও লাইসেন্স
+## যেভাবে কাজ করে
 
-[শুরু করুন](getting-started.md) · [লোকাল মডেল](local-ai.md) · [CLI রেফারেন্স](cli-reference.md) · [প্ল্যাটফর্ম](platforms.md) · [রোডম্যাপ](roadmap.md)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/service-map-dark.svg">
+  <img src="assets/service-map-light.svg" alt="App, Docs, Database ও Model একই tailnet-এ আলাদা নামের নোড; প্রকাশকারী কম্পিউটারে একটি TSLink ডেমন এগুলো চালায়।" width="720">
+</picture>
 
-অবদান রাখার জন্য [CONTRIBUTING.md](../CONTRIBUTING.md) দেখুন; নিরাপত্তা দুর্বলতা জানাতে [SECURITY.md](../SECURITY.md)-এর নির্দেশিত মাধ্যম ব্যবহার করুন।
+একটি ব্যাকগ্রাউন্ড ডেমন প্রতিটি অ্যাপের জন্য এমবেড করা Tailscale নোড চালায়, তাই প্রত্যেকের নিজস্ব নাম ও ঠিকানা থাকে। ব্যক্তিগত HTTP ও ফাইল শেয়ারে `WhoIs` এবং ব্যক্তিভিত্তিক অনুমতি বা `--allow` নিয়ম প্রবেশাধিকার নিয়ন্ত্রণ করে; ব্যক্তির সময়সীমা প্রতিটি অনুরোধে পরীক্ষা হয়। সরাসরি TCP-তে tailnet নীতি ও ব্যাকএন্ডের প্রমাণীকরণ ব্যবহৃত হয়। Tailscale দেয় tailnet পরিবহন, এনক্রিপশন ও সার্টিফিকেট; TSLink একটি স্বাধীন প্রকল্প। সব অ্যাপ একই প্রকাশকারী কম্পিউটার ব্যবহার করে, তাই TSLink তাদের পরস্পর থেকে আলাদা করে না। [স্থাপত্য →](architecture.md)
 
-TSLink অপরিবর্তিত [Apache License 2.0](../LICENSE) ব্যবহার করে, যার শর্ত মেনে বাণিজ্যিক ব্যবহারও করা যায়। পুনর্বিতরণের সময় প্রযোজ্য [NOTICE](../NOTICE) ও [তৃতীয় পক্ষের বিজ্ঞপ্তি](../THIRD_PARTY_NOTICES.md) রাখুন। [বাণিজ্যিক সহযোগিতা](../COMMERCIAL.md) স্বেচ্ছামূলক এবং লাইসেন্সে কোনো নতুন শর্ত যোগ করে না। Tailscale-এর পরিষেবার শর্ত ও প্যাকেজ আলাদাভাবে প্রযোজ্য।
+## অবস্থা
+
+এখন পাওয়া যায়: অ্যাপভিত্তিক ব্যক্তিগত ঠিকানা, সময়সীমা ও আমন্ত্রণের গুচ্ছসহ নির্দিষ্ট মানুষকে প্রবেশাধিকার, মেয়াদসহ প্রকাশ্য Funnel, অ্যাপের স্বাস্থ্য পরীক্ষা ও সতর্কতা, স্ব-হোস্ট করা অ্যাপের রেসিপি, অ্যাপভিত্তিক অনুরোধের সীমা, Windows-এ ক্র্যাশের পর পুনরায় চালু হওয়া, CLI ও MCP।
+
+আসছে: ব্রাউজারের অতিথি লিংক, নমনীয় সময়কাল, প্রবেশের লগ, অ্যাপগুলোর হোম পৃষ্ঠা, সীমিত পরিসরের এজেন্ট ভূমিকা, QR দিয়ে যোগদান ও প্রবেশাধিকার অনুরোধ। এক তালিকায় একাধিক কম্পিউটার দেখার পরিকল্পনা আছে। [পরিকল্পনা →](roadmap.md)
+
+## নথি ও লাইসেন্স
+
+[শুরু করা](getting-started.md) · [CLI রেফারেন্স](cli-reference.md) · [প্ল্যাটফর্ম](platforms.md) · [স্থানীয় মডেল](local-ai.md) · [অবদান](../CONTRIBUTING.md) · [নিরাপত্তা](../SECURITY.md)
+
+বাণিজ্যিক ব্যবহারসহ Apache License 2.0 প্রযোজ্য। পুনর্বিতরণে [NOTICE](../NOTICE) ও [তৃতীয় পক্ষের বিজ্ঞপ্তি](../THIRD_PARTY_NOTICES.md) রাখুন। Tailscale-এর শর্ত ও পরিকল্পনা আলাদাভাবে প্রযোজ্য।
