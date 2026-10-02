@@ -34,6 +34,8 @@ This index covers the recipe integration tests. The repository AGENTS.md describ
 
 # Registry watcher reconciliation
 
+- `server.go`, `server_test.go`: initial-sync in-flight target coalescing, newer-state supersession, failure/retry cleanup, and inner startup deadline assertions using virtual time.
+
 - `registry_watcher_test.go`: periodic and overflow reconciliation with real registry files.
 - `registry_watcher_active_removal_test.go`: active removal while another node enrolls.
 - `registry_watcher_long_sync_test.go`: cancellation and callback joins during blocked startup.

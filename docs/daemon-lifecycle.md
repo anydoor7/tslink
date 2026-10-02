@@ -1,5 +1,11 @@
 # Daemon Lifecycle
 
+The registry watcher is active before the initial authoritative sync. While a
+node is being constructed, notifications for the same registry state reuse that
+startup. A newer state supersedes it; readiness describes the state that was
+successfully applied. A failed initial sync releases its pending target so a
+later attempt can reconcile the same state.
+
 ## From nothing to a URL
 
 Create a demo page and share it without an API token:

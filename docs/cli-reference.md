@@ -59,6 +59,10 @@ field types, or trailing data report `usage_error` (exit 2), naming the path
 and repair guidance. `list`, `status`, and `doctor` show bad entries beside
 healthy services; fix or remove bad entries before changing the registry.
 
+During initial `serve` startup, a registry notification for the same state
+reuses the pending node construction. A changed state still supersedes the
+pending startup and is applied before readiness is reported.
+
 ### Exit Codes
 
 | Code | Meaning |

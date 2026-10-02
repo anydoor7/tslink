@@ -817,6 +817,23 @@ func (s *Server) syncNodesAtGeneration(ctx context.Context, startup bool, genera
 	}
 	outcome.registryFingerprint = registryFingerprint
 	watchFingerprint := watchedRegistryFingerprint(registryFingerprint, registryIssues)
+	if startup {
+		// Initial enrollment is also an in-flight watcher target. A queued
+		// event for this exact state must not cancel its first construction.
+		target := &watchedRegistryTarget{fingerprint: watchFingerprint, file: watchFile, generation: generation}
+		s.mu.Lock()
+		if generation == s.syncGeneration.Load() {
+			s.inFlightWatchTarget = target
+		}
+		s.mu.Unlock()
+		defer func() {
+			s.mu.Lock()
+			if s.inFlightWatchTarget == target {
+				s.inFlightWatchTarget = nil
+			}
+			s.mu.Unlock()
+		}()
+	}
 
 	// Build desired state
 	desired := make(map[string]registry.Service, len(reg.Services))
