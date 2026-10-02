@@ -131,6 +131,45 @@ func TestRequestLimitsShareReuseAndOutput(t *testing.T) {
 	}
 }
 
+func TestRequestLimitsShareConflictDiagnostic(t *testing.T) {
+	for _, tc := range []struct {
+		name, flag, before, after string
+		limits                    registry.RequestLimits
+	}{
+		{"body", "--max-request-body", "33554432B", "21474836480B", registry.RequestLimits{MaxBody: "20GiB"}},
+		{"header", "--request-header-timeout", "10s", "15s", registry.RequestLimits{HeaderTimeout: "15s"}},
+		{"read", "--request-read-timeout", "30s", "2m0s", registry.RequestLimits{ReadTimeout: "2m"}},
+		{"idle", "--idle-timeout", "1m0s", "1m30s", registry.RequestLimits{IdleTimeout: "90s"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Setenv(config.ConfigDirEnv, dir)
+			regPath := filepath.Join(dir, "registry.json")
+			original := registry.Service{Name: "photos", Type: registry.TypeProxy, Target: "http://localhost:2283"}
+			if _, err := registry.Add(regPath, original); err != nil {
+				t.Fatal(err)
+			}
+			candidate := original
+			candidate.RequestLimits = &registry.RequestLimits{MaxBody: "32MiB", ReadTimeout: "30s", HeaderTimeout: "10s", IdleTimeout: "60s"}
+			control, err := registerShareWithOutcome(regPath, shareTargetSpec{NameBase: "photos", Service: candidate}, "photos")
+			if err != nil || control.Service.Name != "photos" || control.Created {
+				t.Fatalf("equivalent effective limits did not reuse: %+v %v", control, err)
+			}
+			candidate.RequestLimits = &tc.limits
+			_, err = registerShareWithOutcome(regPath, shareTargetSpec{NameBase: "photos", Service: candidate}, "photos")
+			if err == nil {
+				t.Fatal("different limits accepted")
+			}
+			for _, text := range []string{"request limits", tc.flag, tc.before, tc.after, "reconfigure"} {
+				if !strings.Contains(err.Error(), text) {
+					t.Errorf("conflict %q omits %q", err, text)
+				}
+			}
+			t.Log(err)
+		})
+	}
+}
+
 func TestRequestLimitsStatusListAndDoctorWarnings(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv(config.ConfigDirEnv, dir)

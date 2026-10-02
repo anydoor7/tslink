@@ -67,15 +67,21 @@ whole upload in memory. Each body read has a fresh inactivity deadline. Time
 spent waiting for the backend to accept the preceding bytes is excluded, and
 successful reads let an upload continue indefinitely. Response streams and
 WebSocket upgrades have no upload deadline. A phone sending data regularly can
-therefore take longer than 30 seconds; a stalled phone receives a clear 408.
+therefore take longer than 30 seconds; a stalled proxy upload receives a clear 408.
 Oversized bodies receive 413, including unknown-length chunked uploads. An
 incomplete HTTP/1 request header receives 408 before the handler starts.
+If a handler rejects or ignores a body, its remaining HTTP/1 body is discarded
+with an absolute deadline of at most 1s (or the shorter read inactivity window).
+An unfinished body then closes the connection; this cleanup does not extend for
+progress and does not impose a total timeout on accepted uploads or downloads.
 
 The owner gets a structured service/limit log and a runtime warning in
 `status --urls` and `list --verbose`; `doctor` points to the flag to adjust.
 Warnings last until the service node restarts. Re-run add with the complete
 service configuration when changing limits, because omitted add flags reset.
 A share will not reuse an existing service with different effective limits.
+The conflict lists each differing limit, its existing/requested value and the
+flag to use when reconfiguring with add.
 Backends must handle partial uploads on failure; their own limits still apply.
 
 For agents, the CLI JSON results expose effective `request_limits` in bytes

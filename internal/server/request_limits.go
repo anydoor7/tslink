@@ -74,25 +74,33 @@ func RequestLimitsMiddleware(service registry.Service, report func(inspect.Warni
 		}
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if limits.MaxBodyBytes >= 0 && r.ContentLength > limits.MaxBodyBytes {
-			e := &requestLimitError{code: registry.CodeRequestBodyLimit, message: fmt.Sprintf("service %s: request body exceeds %d bytes; adjust --max-request-body", service.Name, limits.MaxBodyBytes), limit: fmt.Sprint(limits.MaxBodyBytes), status: http.StatusRequestEntityTooLarge}
-			reject(e)
-			http.Error(w, e.message, e.status)
-			return
-		}
 		if r.Body == nil || r.Body == http.NoBody {
 			next.ServeHTTP(w, r)
 			return
 		}
 		ctl := http.NewResponseController(w)
+		if r.ProtoMajor == 1 {
+			// Otherwise Go can drain the original body during Write/Flush,
+			// before our deferred disposal deadline has been installed.
+			_ = ctl.EnableFullDuplex()
+		}
 		state := &requestBudgetState{}
 		r = r.WithContext(context.WithValue(r.Context(), requestBudgetKey{}, state))
 		body := r.Body
 		if limits.MaxBodyBytes >= 0 {
 			body = http.MaxBytesReader(w, body, limits.MaxBodyBytes)
 		}
-		r.Body = &progressBody{ReadCloser: body, ctl: ctl, idle: readIdle, state: state, service: service.Name, reject: reject}
-		defer ctl.SetReadDeadline(time.Time{})
+		wrapped := &progressBody{ReadCloser: body, ctl: ctl, idle: readIdle, state: state, service: service.Name, reject: reject}
+		r.Body = wrapped
+		// Go's post-handler drain uses its original body, bypassing Read.
+		// Bound that disposal even for file handlers, ACL denial and early 413.
+		defer wrapped.disposalDeadline()
+		if limits.MaxBodyBytes >= 0 && r.ContentLength > limits.MaxBodyBytes {
+			e := &requestLimitError{code: registry.CodeRequestBodyLimit, message: fmt.Sprintf("service %s: request body exceeds %d bytes; adjust --max-request-body", service.Name, limits.MaxBodyBytes), limit: fmt.Sprint(limits.MaxBodyBytes), status: http.StatusRequestEntityTooLarge}
+			reject(e)
+			http.Error(w, e.message, e.status)
+			return
+		}
 		next.ServeHTTP(w, r)
 	})
 }
@@ -104,6 +112,33 @@ type progressBody struct {
 	state   *requestBudgetState
 	service string
 	reject  func(*requestLimitError)
+	eof     bool // protected by state.mu, including transport Read/Close
+}
+
+// Disposal is no longer an upload: a steady drip must not prolong it. Give
+// small, already-sent bodies a chance to drain/reuse the connection, but never
+// wait longer than one second (or the owner's shorter inactivity window).
+func (b *progressBody) disposalDeadline() {
+	b.state.mu.Lock()
+	defer b.state.mu.Unlock()
+	b.disposalDeadlineLocked()
+}
+
+func (b *progressBody) disposalDeadlineLocked() {
+	deadline := time.Time{}
+	if !b.eof {
+		deadline = time.Now().Add(min(b.idle, time.Second))
+	}
+	_ = b.ctl.SetReadDeadline(deadline)
+}
+
+func (b *progressBody) Close() error {
+	// The proxy transport may close before the handler returns. Close itself
+	// can drain the original body, so install its deadline before invoking it.
+	b.state.mu.Lock()
+	defer b.state.mu.Unlock()
+	b.disposalDeadlineLocked()
+	return b.ReadCloser.Close()
 }
 
 func (b *progressBody) Read(p []byte) (int, error) {
@@ -115,6 +150,9 @@ func (b *progressBody) Read(p []byte) (int, error) {
 		return 0, err
 	}
 	n, err := b.ReadCloser.Read(p)
+	if err == io.EOF {
+		b.eof = true
+	}
 	var tooLarge *http.MaxBytesError
 	var failure *requestLimitError
 	if errors.As(err, &tooLarge) {

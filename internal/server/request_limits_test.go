@@ -3,6 +3,7 @@ package server
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -10,6 +11,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -40,6 +43,264 @@ func uploadProxy(t *testing.T, backend *httptest.Server) http.Handler {
 		t.Fatal(err)
 	}
 	return h
+}
+
+// Exercise the same TLS -> connection cap -> header budget -> access log ->
+// request limits chain as startNodeLocked, without any tailnet or owner state.
+func uploadTLSFront(t *testing.T, svc registry.Service, handler http.Handler, h2 bool) (string, *limitedListener) {
+	t.Helper()
+	cert := httptest.NewTLSServer(http.NotFoundHandler())
+	t.Cleanup(cert.Close)
+	tlsConfig := cert.TLS.Clone()
+	if h2 {
+		tlsConfig.NextProtos = []string{"h2", "http/1.1"}
+	}
+	raw, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	limited := newLimitedListener(tls.NewListener(raw, tlsConfig), 1, "http", svc.Name).(*limitedListener)
+	srv := newHTTPServerFn(AccessLogMiddleware(svc.Name, nil, RequestLimitsMiddleware(svc, nil, handler)))
+	ln := configureServiceHTTP(srv, svc, limited, nil)
+	done := make(chan error, 1)
+	go func() { done <- srv.Serve(ln) }()
+	t.Cleanup(func() {
+		_ = srv.Close()
+		if err := <-done; err != nil && !errors.Is(err, http.ErrServerClosed) {
+			t.Error(err)
+		}
+	})
+	return raw.Addr().String(), limited
+}
+
+func TestRequestLimitsTLSUnconsumedBodyDrain(t *testing.T) {
+	for _, path := range []string{"file", "file_flush", "acl_denied", "body_limit", "body_close"} {
+		for _, chunked := range []bool{false, true} {
+			for _, complete := range []bool{true, false} {
+				t.Run(fmt.Sprintf("%s/chunked=%v/complete=%v", path, chunked, complete), func(t *testing.T) {
+					t.Setenv(config.ConfigDirEnv, t.TempDir())
+					// Allow Go's additional 500ms TCP reset-avoidance close
+					// grace after our 100ms drain deadline has expired.
+					const bound = time.Second
+					svc := registry.Service{Name: "drain", Type: registry.TypeFile, RequestLimits: &registry.RequestLimits{ReadTimeout: "100ms", IdleTimeout: "5s"}}
+					dir := t.TempDir()
+					urlPath := "/"
+					if path == "file_flush" {
+						if err := os.WriteFile(filepath.Join(dir, "large.txt"), []byte(strings.Repeat("x", 16<<10)), 0600); err != nil {
+							t.Fatal(err)
+						}
+						urlPath = "/large.txt"
+					}
+					file, err := NewFileHandler(dir)
+					if err != nil {
+						t.Fatal(err)
+					}
+					t.Cleanup(func() { _ = file.Close() })
+					var handler http.Handler = file
+					want := http.StatusOK
+					switch path {
+					case "acl_denied":
+						handler = ACLMiddleware([]string{"blocked@example.invalid"}, nil)(handler)
+						want = http.StatusForbidden
+					case "body_limit":
+						svc.RequestLimits.MaxBody = "8B"
+						want = http.StatusRequestEntityTooLarge
+						// A chunked body has no known length: it must cross the
+						// streaming cap before 413, then stall before its terminator.
+						backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+							_, _ = io.Copy(io.Discard, r.Body)
+							w.WriteHeader(http.StatusNoContent)
+						}))
+						t.Cleanup(backend.Close)
+						handler = uploadProxy(t, backend)
+					case "body_close":
+						want = http.StatusNoContent
+						handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+							_, _ = r.Body.Read(make([]byte, 1))
+							_ = r.Body.Close()
+							w.WriteHeader(want)
+						})
+					}
+					addr, limited := uploadTLSFront(t, svc, handler, false)
+					conn, err := tls.Dial("tcp", addr, &tls.Config{InsecureSkipVerify: true})
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer conn.Close()
+					// Prove that the slot was acquired; a zero-only assertion
+					// could otherwise pass without observing the limited listener.
+					if got := len(limited.sem); got != 1 {
+						t.Fatalf("active connections=%d, want 1", got)
+					}
+					start := time.Now()
+					deadline := start.Add(bound)
+					_ = conn.SetDeadline(deadline)
+					body := "x"
+					if complete || (path == "body_limit" && chunked) {
+						body = "123456789"
+					}
+					framing := "Content-Length: 9\r\n"
+					if chunked {
+						framing = "Transfer-Encoding: chunked\r\n"
+						body = fmt.Sprintf("%x\r\n%s\r\n", len(body), body)
+						if complete {
+							body += "0\r\n\r\n"
+						}
+					}
+					if _, err := fmt.Fprintf(conn, "POST %s HTTP/1.1\r\nHost: drain\r\n%s\r\n%s", urlPath, framing, body); err != nil {
+						t.Fatal(err)
+					}
+					resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+					if err != nil {
+						if complete || !errors.Is(err, io.EOF) {
+							t.Errorf("no response or EOF within %s: %v", bound, err)
+						}
+					} else {
+						if resp.StatusCode != want {
+							t.Errorf("status=%d, want %d", resp.StatusCode, want)
+						}
+						if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+							t.Errorf("incomplete response: %v", err)
+						}
+						_ = resp.Body.Close()
+					}
+					if complete {
+						_ = conn.Close()
+					}
+					// For partial bodies the client stays open: server-side
+					// disposal, rather than test cleanup, must release the slot.
+					for len(limited.sem) != 0 && time.Now().Before(deadline) {
+						time.Sleep(time.Millisecond)
+					}
+					if got := len(limited.sem); got != 0 {
+						t.Errorf("connection slot still held after %s: active=%d", bound, got)
+					}
+					t.Logf("response/EOF and slot check after %s; complete=%v", time.Since(start), complete)
+				})
+			}
+		}
+	}
+}
+
+func TestRequestLimitsTLSProgressAndStall(t *testing.T) {
+	for _, h2 := range []bool{false, true} {
+		for _, progress := range []bool{false, true} {
+			t.Run(fmt.Sprintf("http2=%v/progress=%v", h2, progress), func(t *testing.T) {
+				backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if _, err := io.Copy(io.Discard, r.Body); err != nil {
+						return
+					}
+					w.WriteHeader(http.StatusNoContent)
+				}))
+				t.Cleanup(backend.Close)
+				svc := registry.Service{Name: "tls-upload", Type: registry.TypeProxy, RequestLimits: &registry.RequestLimits{ReadTimeout: "200ms"}}
+				addr, _ := uploadTLSFront(t, svc, uploadProxy(t, backend), h2)
+				tr := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, ForceAttemptHTTP2: h2}
+				defer tr.CloseIdleConnections()
+				reader, writer := io.Pipe()
+				done := make(chan struct{})
+				go func() {
+					defer close(done)
+					defer writer.Close()
+					_, _ = writer.Write([]byte("a"))
+					if progress {
+						for i := 0; i < 9; i++ {
+							time.Sleep(50 * time.Millisecond)
+							if _, err := writer.Write([]byte("a")); err != nil {
+								return
+							}
+						}
+					} else {
+						time.Sleep(700 * time.Millisecond)
+					}
+				}()
+				defer func() { reader.Close(); writer.Close(); <-done }()
+				req, _ := http.NewRequest("POST", "https://"+addr, reader)
+				req.ContentLength = 10
+				client := &http.Client{Transport: tr, Timeout: 3 * time.Second}
+				resp, err := client.Do(req)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer resp.Body.Close()
+				body, _ := io.ReadAll(resp.Body)
+				want := http.StatusRequestTimeout
+				if progress {
+					want = http.StatusNoContent
+				}
+				if resp.StatusCode != want || (!progress && !strings.Contains(string(body), "--request-read-timeout")) {
+					t.Fatalf("status=%d body=%q, want %d", resp.StatusCode, body, want)
+				}
+				if h2 && resp.ProtoMajor != 2 {
+					t.Fatalf("HTTP/2 control negotiated %s", resp.Proto)
+				}
+			})
+		}
+	}
+}
+
+func TestRequestLimitsTLSDisposalAbsoluteDeadline(t *testing.T) {
+	for _, idle := range []string{"100ms", "2m"} {
+		t.Run(idle, func(t *testing.T) {
+			file, err := NewFileHandler(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = file.Close() })
+			svc := registry.Service{Name: "drip", Type: registry.TypeFile, RequestLimits: &registry.RequestLimits{ReadTimeout: idle, IdleTimeout: "5s"}}
+			addr, limited := uploadTLSFront(t, svc, file, false)
+			conn, err := tls.Dial("tcp", addr, &tls.Config{InsecureSkipVerify: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer conn.Close()
+			if len(limited.sem) != 1 {
+				t.Fatal("connection slot was not acquired")
+			}
+			// Keep sending chunked bytes every 25ms. This is disposal after
+			// an unused body, so progress must not renew the absolute deadline.
+			const bound = 2 * time.Second
+			deadline := time.Now().Add(bound)
+			_ = conn.SetDeadline(deadline)
+			if _, err := fmt.Fprint(conn, "POST / HTTP/1.1\r\nHost: drip\r\nTransfer-Encoding: chunked\r\n\r\n1\r\nx\r\n"); err != nil {
+				t.Fatal(err)
+			}
+			stop := make(chan struct{})
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				ticker := time.NewTicker(25 * time.Millisecond)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-stop:
+						return
+					case <-ticker.C:
+						if _, err := fmt.Fprint(conn, "1\r\nx\r\n"); err != nil {
+							return
+						}
+					}
+				}
+			}()
+			defer func() { close(stop); <-done }()
+			resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+			if err != nil {
+				t.Errorf("no bounded response: %v", err)
+			} else {
+				_, err := io.Copy(io.Discard, resp.Body)
+				_ = resp.Body.Close()
+				if resp.StatusCode != http.StatusOK || err != nil {
+					t.Errorf("status=%d body read=%v", resp.StatusCode, err)
+				}
+			}
+			for len(limited.sem) != 0 && time.Now().Before(deadline) {
+				time.Sleep(time.Millisecond)
+			}
+			if len(limited.sem) != 0 {
+				t.Errorf("dripping client retained slot beyond %s with read timeout %s", bound, idle)
+			}
+		})
+	}
 }
 
 type uploadZeros struct{}

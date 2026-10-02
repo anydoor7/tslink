@@ -100,6 +100,11 @@ All timeout overrides are positive Go durations (for example `30s`, `2m`).
 Settings apply to proxy and file services; raw TCP rejects HTTP request limits.
 An add replacing a name resets omitted limits to defaults, like other add flags.
 A share only reuses a service with equivalent effective limits.
+Limit conflicts name the differing flags and their existing/requested values;
+use add with the complete service configuration to reconfigure them.
+Unused or rejected HTTP/1 bodies have an absolute cleanup deadline of at most
+1s, shortened by `--request-read-timeout` when below 1s. Incomplete cleanup closes
+the connection without imposing a total timeout on accepted uploads.
 
 `add --json`, `share --json`, `status --urls --json` and `list --verbose --json`
 report `request_limits` with `max_body_bytes`, `header_timeout`, `read_timeout`

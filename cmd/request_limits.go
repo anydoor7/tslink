@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"reflect"
+	"strings"
 
 	"github.com/anydoor7/tslink/internal/registry"
 	"github.com/spf13/cobra"
@@ -36,13 +37,34 @@ func requestLimitsFromFlags(cmd *cobra.Command) *registry.RequestLimits {
 func sameEffectiveRequestLimits(a, b registry.Service) bool {
 	return reflect.DeepEqual(a.EffectiveRequestLimits(), b.EffectiveRequestLimits())
 }
+
+func requestLimitDifferences(a, b registry.Service) string {
+	first, _ := registry.ResolveRequestLimits(a.RequestLimits)
+	second, _ := registry.ResolveRequestLimits(b.RequestLimits)
+	var differences []string
+	for _, field := range []struct{ flag, existing, requested string }{
+		{"--max-request-body", requestBodyLimitLabel(first.MaxBodyBytes), requestBodyLimitLabel(second.MaxBodyBytes)},
+		{"--request-header-timeout", first.HeaderTimeout, second.HeaderTimeout},
+		{"--request-read-timeout", first.ReadTimeout, second.ReadTimeout},
+		{"--idle-timeout", first.IdleTimeout, second.IdleTimeout},
+	} {
+		if field.existing != field.requested {
+			differences = append(differences, fmt.Sprintf("%s: existing=%s, requested=%s", field.flag, field.existing, field.requested))
+		}
+	}
+	return strings.Join(differences, "; ")
+}
+
+func requestBodyLimitLabel(bytes int64) string {
+	if bytes < 0 {
+		return "unlimited"
+	}
+	return fmt.Sprintf("%dB", bytes)
+}
+
 func requestLimitsLabel(l *registry.EffectiveRequestLimits) string {
 	if l == nil {
 		return "-"
 	}
-	max := fmt.Sprintf("%dB", l.MaxBodyBytes)
-	if l.MaxBodyBytes < 0 {
-		max = "unlimited"
-	}
-	return fmt.Sprintf("body=%s header=%s read-idle=%s idle=%s", max, l.HeaderTimeout, l.ReadTimeout, l.IdleTimeout)
+	return fmt.Sprintf("body=%s header=%s read-idle=%s idle=%s", requestBodyLimitLabel(l.MaxBodyBytes), l.HeaderTimeout, l.ReadTimeout, l.IdleTimeout)
 }

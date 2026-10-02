@@ -98,6 +98,10 @@
 超时必须是正数 Go duration, 例如 `30s` 或 `2m`。适用于 proxy/file 服务;
 raw TCP 不接受 HTTP 请求限制。add 替换同名服务时, 未重复的限制恢复默认值;
 share 只复用有效限制相同的服务。
+限制冲突会列出不同的标志和当前值、请求值; 用完整服务配置执行 add 进行修改。
+未使用或被拒绝的 HTTP/1 请求体有最多 1s 的绝对清理期限;
+`--request-read-timeout` 小于 1s 时采用该值。清理未完成则关闭连接,
+不会对已接受的上传施加总时长超时。
 
 `add --json`、`share --json`、`status --urls --json` 和 `list --verbose --json`
 在 `request_limits` 中返回 `max_body_bytes`、`header_timeout`、`read_timeout`
