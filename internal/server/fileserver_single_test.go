@@ -297,6 +297,13 @@ func TestStartNodeDispatchesFileServiceOnTheRegistryFileField(t *testing.T) {
 			if err := registry.ValidateService(svc); err != nil {
 				t.Fatalf("ValidateService() error = %v", err)
 			}
+			path, err := registryPathFn()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := registry.Add(path, svc); err != nil {
+				t.Fatal(err)
+			}
 			if err := s.startNodeLocked(context.Background(), svc); err != nil {
 				t.Fatalf("startNodeLocked() error = %v", err)
 			}

@@ -1,0 +1,66 @@
+# 按人分享应用
+
+先注册应用并完成节点登录，再用接收者在 Tailscale 客户端里使用的**真实登录名**授权：
+
+```sh
+tslink people add alice@example.com --apps photos,finance --for 7d
+tslink people list --json
+tslink people update alice@example.com --apps photos --for 1h
+tslink people remove alice@example.com
+```
+
+这些命令只改本地授权，不需要存储凭据，也不会安装或启动守护进程。守护进程运行本版本、网络策略允许访问时，已有 tailnet 成员可立即使用授权。输出含可转发给对方的消息；只有当前运行快照能证明地址时才包含准确 URL。否则消息提示拥有者在节点登录完成后用 `tslink status --urls` 取得地址。
+
+`--apps all` 选取**当前已注册的私有 HTTP 代理和文件服务**，排除 TCP 和公开 Funnel，不自动包括以后新增的应用。显式指定 TCP 或 Funnel 时，以 `people_service_unsupported` 原子拒绝。文件服务，包括单文件分享，使用与代理相同的 HTTP WhoIs 校验。
+
+已有有效人员不能重复 add，请用 update。只更新 `--apps` 时保留继续授权应用的期限，新加入的应用无期限；指定 `--for` 会把新期限用于所有选定授权。只更新 `--for` 时保留应用集合。`--for never` 明确移除期限，并可续期已过期授权。remove 可重复执行；再次 add 是明确的新授权。
+
+## Tailnet 外的人：一条拥有者命令、一条消息
+
+```sh
+tslink people add alice@example.com --apps photos,finance --for 7d --invite --print-links
+```
+
+此命令先保存授权，再为每个应用生成一个单次设备邀请，并合成一条消息。TSLink 请求链接，**Tailscale 不发送邮件**，由你转发消息。对方安装 Tailscale，用指定账号登录，逐个接受应用邀请，保持连接，然后打开应用地址。Tailscale 允许用不同于收件邮箱的账号接受设备邀请；但 TSLink 授权绑定 WhoIs 验证的登录名，其他账号即使拿到链接也会被拒绝。
+
+创建设备邀请需要存储的**用户拥有的 API access token**，OAuth client token 不能创建。使用现有的 stdin 登录方式存储 token，不把凭据放进 argv。没有 token 时，普通 `people add` 仍可授权已有成员；也可在 Tailscale Machines 页面手动生成应用设备的分享链接，再附在无需 token 的消息里。
+
+只有显式指定 `--invite` 才创建邀请。邀请链接是 bearer capability，只在显式 `--print-links` 时输出；否则返回 ID 并提示链接隐藏。可用 `tslink invite list --show-urls` 显式取回隐藏链接。人员注册表和 TSLink 邀请审计日志均不保存链接。
+
+邀请可能部分失败。JSON 返回 `complete: false`、每个失败应用的稳定 `code`，以及成功邀请的 ID 和副作用计划。**本地授权仍已保存**；即使外层 envelope 成功，也必须读取这些字段。解决原因后用 `tslink invite device <app> <login> --print-link` 补齐缺失链接。再次 update 并指定 `--invite` 会为该人员选定的全部应用创建新邀请。
+
+## 为什么保留按应用邀请
+
+| 设计 | 拥有者与接收者操作 | 应用兼容性 | 撤销 |
+| --- | --- | --- | --- |
+| 每个应用独立节点，合并链接（已实现） | 每人一条拥有者命令和消息；N 个应用仍需 N 次 API 创建、N 次接收者接受 | 保持根 URL、Host、跳转、Cookie 和现有 WebSocket 代理 | 本地 WhoIs 授权拒绝后续请求，即使设备分享仍已接受 |
+| 只分享一个 home/gateway 节点 | 每人一次邀请和接受 | 路径前缀需要应用 base-path 配置或重写根路径资源、跳转、Cookie、WebSocket URL；每应用主机名需要接收者 tailnet 可达的 DNS 和证书，仅分享网关不会让其他应用节点自动可达 | 同样需要本地身份校验，并防止绕过网关直连应用 |
+
+合并链接保留现有的每应用网络隔离，也不要求改造任意应用。它消除的是 N×M **拥有者 CLI 操作**，仍有 N×M 底层邀请和接收者接受。只接受一次的网关仍是未来设计，本包不声称已实现。Tailscale 文档说明外部人员只看到被分享的设备，访问共享设备须使用完整 tailnet 域名。
+
+## 强制校验与到期
+
+首次 people 授权会为应用设置 `people_scoped`，即使撤销所有授权也保留标记。之后未知来访者须有有效授权或显式旧 `--allow` 规则；空旧 allow 列表不再使此应用对所有人开放。显式 allow 用户或 tag 继续可用。但对于已登记的非 tagged 登录名，该人员的应用集合是最终依据，覆盖旧 allow 规则：移出应用、到期或撤销均拒绝。Tagged 设备不能冒充人员。
+
+remove 会删除所有应用中匹配的旧 allow 条目，并保留拒绝记录，也拒绝该账号访问原先无限制的私有 HTTP/文件应用。删除服务会清除其授权，保留其他人员数据；重建同名应用不会恢复旧授权。普通 add 保留 `people_scoped`，拒绝把已按人授权的服务转成公开 Funnel 或 TCP。其他人员及显式 allow 的旧账号继续可用。网络策略仍决定可达性；本功能不修改远端 ACL、不删除已接受的设备分享、不撤销 tailnet 成员资格，也不能限制原始 TCP 或公开 Funnel。
+
+授权保存绝对 UTC `expires_at`。请求时间达到期限即拒绝，无需等待 30 秒周期检查。启动、周期检查及请求都会保存 `expired` 标记。时钟前跳可能提前到期；在期限尚未被观察到时回拨时钟，可能延长实际经过的访问时间。一旦到期被观察并保存，回拨和重启不能恢复，须明确 update `--for` 续期。注册表读失败或到期写失败时拒绝请求。恢复旧配置备份仍可能恢复旧授权，这与其他本地策略文件相同。
+
+逐个 HTTP 请求和 WebSocket upgrade 会校验；已接受的下载、响应流和 WebSocket 连接可以继续完成。撤销不会收回已交付的数据，也不强制关闭已升级连接；撤销或到期后重新连接会失败。
+
+## JSON、MCP 与注册表兼容性
+
+CLI JSON 使用现有 `schema_version: 1` 结果 envelope。`data.person` 含规范化 `login`、`revoked`、`grants`；每个授权含 `app`、可选 `expires_at`/`expired`、`active`、可选准确 `url`。add/update 另含 `invites`、`complete`、`message`、`invite_requirement`；list 返回 `data.people`，包括拒绝记录；remove 返回 `login`、`removed`、`revoked`。
+
+MCP 提供 `people_add`、`people_list`、`people_update`、`people_remove`。变更工具说明须确认人员、应用和期限。add/update 可能缩小旧访问范围，因此是 destructive；续期及邀请非幂等，可选邀请使它们具有 open-world 提示。list 是只读；remove 是本地、destructive、幂等。这里不接受 exit-node、可重复链接或 tailnet 管理角色参数；现有 invite 工具继续使用拥有者配置的 `mcp.allow_elevated_invites` 守卫。
+
+启用人员数据的注册表写入 schema version 2，新增顶层 `people` 和服务字段 `people_scoped`。旧 version 0/1 可加载且不改变字节，只有服务的普通写入仍保留 version 1，未知字段继续严格拒绝。旧二进制会拒绝 version 2 或未知人员字段，不能静默覆盖丢失数据。降级前先停止新版守护进程，明确决定丢弃人员授权后才恢复另外备份的 version 1 注册表；旧守护进程不能校验这些授权，不能只替换运行中安装的 CLI 二进制。
+
+导出的 `registry.Person`、`PersonGrant`、`PersonGrantActiveAt` 及只读 `registry.Preflight` 是后续生命周期和审计功能的扩展点。
+
+2026-10-01 核对的官方来源：
+
+- [设备分享](https://tailscale.com/docs/features/sharing)：接收者账号、完整主机名、bearer 链接及网络层撤销。
+- [Tailscale API](https://tailscale.com/api)、[当前 OpenAPI](https://api.tailscale.com/api/v2?outputOpenapiSchema=true)：`POST /device/{deviceId}/device-invites` 不支持 OAuth client 创建，email 可选，另有 `multiUse`/`allowExitNode`。
+- [Trust credentials](https://tailscale.com/docs/reference/trust-credentials)：邀请读取/删除 scope 不代表可创建。
+- [Tailscale Serve](https://tailscale.com/docs/features/tailscale-serve)：HTTP 反向代理及来访者身份 header。

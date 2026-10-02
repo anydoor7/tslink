@@ -34,6 +34,7 @@ import (
 // codeCarriers are the struct types whose Code field is a stable error code
 // an agent or script can read.
 var codeCarriers = map[string]bool{
+	"github.com/anydoor7/tslink/cmd.PeopleInviteView":               true,
 	"github.com/anydoor7/tslink/internal/registry.CodedError":       true,
 	"github.com/anydoor7/tslink/internal/registry.StableCodeError":  true,
 	"github.com/anydoor7/tslink/internal/runtime.SnapshotError":     true,

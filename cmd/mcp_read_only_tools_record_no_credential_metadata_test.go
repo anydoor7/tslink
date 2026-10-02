@@ -126,7 +126,7 @@ func TestMCPReadOnlyToolsDescribeAStoredCredentialWithoutRecordingIt(t *testing.
 			}
 		})
 	}
-	if readOnly != 10 {
+	if readOnly != 11 {
 		t.Fatalf("%d tools are marked read-only, want the 10 that only read", readOnly)
 	}
 	t.Run("event stream", func(t *testing.T) {

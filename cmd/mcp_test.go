@@ -25,6 +25,13 @@ import (
 
 func fakeMCPActions() mcpActions {
 	return mcpActions{
+		peopleChange: func(_ context.Context, args peopleArguments, _ bool) (any, error) {
+			return PeopleResult{Person: PeopleView{Login: args.Who, Grants: []PeopleGrantView{}}, Invites: []PeopleInviteView{}, Complete: true, Message: "guide", InviteRequirement: peopleInviteRequirement}, nil
+		},
+		peopleList: func() (any, error) { return PeopleListResult{People: []PeopleView{}}, nil },
+		peopleRemove: func(who string) (any, error) {
+			return PeopleRemoveResult{Login: who, Removed: true, Revoked: true}, nil
+		},
 		share: func(_ context.Context, req shareRequest) (ShareResult, error) {
 			if req.Target == "error" {
 				return ShareResult{}, output.ErrUsage("share failed")
@@ -488,6 +495,7 @@ func TestMCPToolSchemasAreClosedAndModelFocused(t *testing.T) {
 		"tags_list", "tags_set", "access_explain", "doctor", "logs",
 		"invite_user", "invite_device", "invite_list", "invite_revoke", "invite_resend",
 		"template_list", "template_plan", "template_apply",
+		"people_add", "people_update", "people_list", "people_remove",
 	}
 	if len(mcpToolDefinitions) != len(wantNames) {
 		t.Fatalf("tools = %d, want %d", len(mcpToolDefinitions), len(wantNames))

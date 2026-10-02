@@ -9,7 +9,7 @@
     "linux",
     "windows"
   ],
-  "registry_schema_version": 1,
+  "registry_schema_version": 2,
   "toolchain": {
     "minimum_go_version": "1.26.6"
   },
@@ -24,7 +24,7 @@
     "warning": 64
   },
   "registry_schema": {
-    "version": 1,
+    "version": 2,
     "service_types": [
       "proxy",
       "file",
@@ -1539,6 +1539,193 @@
       "short": "Run the TSLink MCP server over stdio"
     },
     {
+      "path": "tslink people",
+      "short": "Share private apps with people, with optional expiry",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        }
+      ]
+    },
+    {
+      "path": "tslink people add",
+      "short": "Set a person's apps and expiry",
+      "flags": [
+        {
+          "name": "apps",
+          "type": "string",
+          "scope": "local",
+          "usage": "Comma-separated private HTTP/file apps, or all current supported apps"
+        },
+        {
+          "name": "for",
+          "type": "string",
+          "scope": "local",
+          "usage": "Grant lifetime such as 1h, 7d or never; update omission preserves deadlines"
+        },
+        {
+          "name": "invite",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Create one single-use device invite per app and bundle a guide (requires a user-owned API token)"
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        },
+        {
+          "name": "print-links",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Explicitly include bearer invitation links in output and the guide",
+          "requires": [
+            "--invite"
+          ]
+        }
+      ],
+      "json_result_fields": {
+        "complete": {
+          "type": "boolean",
+          "description": "False when any requested device invitation failed; local grants remain saved."
+        },
+        "invite_requirement": {
+          "type": "string",
+          "description": "Explains that invitations require a user-owned API token while tailnet member grants need no token."
+        },
+        "invites": {
+          "type": "array",
+          "description": "Per-app invite id, remote side effect plan or stable error code. Bearer URLs require --print-links."
+        },
+        "message": {
+          "type": "string",
+          "description": "Plain-language message to send to the person; bearer URLs require --print-links."
+        },
+        "person": {
+          "type": "object",
+          "description": "Canonical login, revocation state, per-app absolute deadlines, active decisions and exact URLs when available."
+        }
+      }
+    },
+    {
+      "path": "tslink people list",
+      "short": "List people, grants and expiry",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        }
+      ],
+      "json_result_fields": {
+        "people": {
+          "type": "array",
+          "description": "People with grants, expiry, active state and revocation tombstones."
+        }
+      }
+    },
+    {
+      "path": "tslink people remove",
+      "short": "Revoke a person everywhere in private HTTP/file services",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        }
+      ],
+      "json_result_fields": {
+        "login": {
+          "type": "string",
+          "description": "Canonical Tailscale login."
+        },
+        "removed": {
+          "type": "boolean",
+          "description": "True if existing person access or matching legacy allow rules were removed."
+        },
+        "revoked": {
+          "type": "boolean",
+          "description": "True when a durable deny tombstone was stored."
+        }
+      }
+    },
+    {
+      "path": "tslink people update",
+      "short": "Set a person's apps and expiry",
+      "flags": [
+        {
+          "name": "apps",
+          "type": "string",
+          "scope": "local",
+          "usage": "Comma-separated private HTTP/file apps, or all current supported apps"
+        },
+        {
+          "name": "for",
+          "type": "string",
+          "scope": "local",
+          "usage": "Grant lifetime such as 1h, 7d or never; update omission preserves deadlines"
+        },
+        {
+          "name": "invite",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Create one single-use device invite per app and bundle a guide (requires a user-owned API token)"
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        },
+        {
+          "name": "print-links",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Explicitly include bearer invitation links in output and the guide",
+          "requires": [
+            "--invite"
+          ]
+        }
+      ],
+      "json_result_fields": {
+        "complete": {
+          "type": "boolean",
+          "description": "False when any requested device invitation failed; local grants remain saved."
+        },
+        "invite_requirement": {
+          "type": "string",
+          "description": "Explains that invitations require a user-owned API token while tailnet member grants need no token."
+        },
+        "invites": {
+          "type": "array",
+          "description": "Per-app invite id, remote side effect plan or stable error code. Bearer URLs require --print-links."
+        },
+        "message": {
+          "type": "string",
+          "description": "Plain-language message to send to the person; bearer URLs require --print-links."
+        },
+        "person": {
+          "type": "object",
+          "description": "Canonical login, revocation state, per-app absolute deadlines, active decisions and exact URLs when available."
+        }
+      }
+    },
+    {
       "path": "tslink registry",
       "short": "Inspect the local service registry",
       "flags": [
@@ -2323,6 +2510,10 @@
       "exit_code": 4,
       "description": "TSLink lacks exact stable nodeId proof for the device"
     },
+    "invite_failed": {
+      "exit_code": 1,
+      "description": "one device invitation in a people bundle failed without a more specific code"
+    },
     "invite_id_invalid": {
       "exit_code": 2,
       "description": "invite ID is not a bare ASCII decimal string"
@@ -2406,6 +2597,10 @@
     "path_not_found": {
       "exit_code": 2,
       "description": "file service directory does not exist"
+    },
+    "people_service_unsupported": {
+      "exit_code": 2,
+      "description": "person grants require private HTTP proxy or file services; TCP and public Funnel cannot be person-scoped"
     },
     "registry_reload_invalid": {
       "exit_code": 1,

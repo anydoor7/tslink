@@ -69,6 +69,8 @@ var table = []Code{
 	{"invalid_service_name", ExitUsage, Service, "service name is not a valid DNS label"},
 	{"invalid_tag", ExitUsage, Service, "ACL tag is invalid"},
 	{"allow_unsupported_for_tcp", ExitUsage, Service, "HTTP allow lists do not apply to raw TCP"},
+	{"people_service_unsupported", ExitUsage, Service, "person grants require private HTTP proxy or file services; TCP and public Funnel cannot be person-scoped"},
+	{"invite_failed", ExitError, Command, "one device invitation in a people bundle failed without a more specific code"},
 	{"path_must_be_absolute", ExitUsage, Service, "file service path must be absolute"},
 	{"path_not_found", ExitUsage, Service, "file service directory does not exist"},
 	{"path_not_directory", ExitUsage, Service, "file service path is not a directory"},

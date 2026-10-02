@@ -1,5 +1,11 @@
 # CLI 参考
 
+## 按人分享
+
+`tslink people add <login-or-email> --apps photos,finance|all [--for 7d] [--invite] [--print-links]` 授予私有 HTTP/文件访问并生成接收者说明。`all` 选当前私有 HTTP/文件应用，排除 TCP/Funnel。`--for` 接受正时长（含天数）或 `never`，省略时无期限。`--invite` 用用户拥有的 API token 创建每应用单次邀请链接；只有显式 `--print-links` 才输出 bearer 链接。
+
+`tslink people list [--json]` 列人员、应用授权、绝对期限、有效状态和撤销记录。`tslink people update <who> [--apps list|all] [--for duration|never] [--invite] [--print-links]` 至少要求 apps 或期限，省略设置时保留原值（未指定期限的新应用无期限）。`tslink people remove <who>` 在所有私有 HTTP/文件应用撤销该人，包括匹配的旧 allow 条目。所有命令使用现有 JSON envelope；邀请部分失败返回 `data.complete: false`，保留本地授权。身份校验、现有 WebSocket 连接、时钟变化及 schema 2 降级规则见[人员分享](people_zh.md)。
+
 ## 命令
 
 | 命令 | 描述 |

@@ -566,6 +566,8 @@ func sortedSet(values map[string]struct{}) []string {
 
 func TestManifestErrorExitTaxonomyMatchesRuntime(t *testing.T) {
 	tests := map[string]error{
+		"people_service_unsupported":            registry.ValidateService(registry.Service{Name: "db", Type: registry.TypeTCP, Target: "localhost:5432", PeopleScoped: true}),
+		"invite_failed":                         registry.CodedError{Code: "invite_failed", Message: "bundle failure"},
 		"internal_error":                        errors.New("boom"),
 		"usage_error":                           output.ErrUsage("bad usage"),
 		"auth_error":                            output.ErrAuth("bad auth"),
@@ -980,8 +982,10 @@ func TestCompactManifestStaysBelowAgentTokenBudget(t *testing.T) {
 	// up, so it stays and the ceiling moves to 3000. Batch B3 then derived the
 	// map from the one error-code table, which added the ten codes the old map
 	// missed and mcp_elevated_invite_refused: 2860 bytes at the end of B3.
-	if len(data) >= 3000 {
-		t.Fatalf("compact manifest = %d bytes, want < 3000", len(data))
+	// The people group, four leaves, four flags and two stable codes expand
+	// the compact surface to 3064 bytes. Retain a bounded agent-facing budget.
+	if len(data) >= 3500 {
+		t.Fatalf("compact manifest = %d bytes, want < 3500", len(data))
 	}
 	compact := CompactManifest()
 	if compact.ErrorCodes[registry.CodeURLNotReady] != 5 {

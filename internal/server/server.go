@@ -506,6 +506,11 @@ func staticAuthKeyProvider(authKey string) AuthKeyProvider {
 // Run starts all registered service nodes and watches for registry changes.
 func (s *Server) Run(ctx context.Context) error {
 	s.shuttingDown.Store(false)
+	if path, err := registryPathFn(); err == nil {
+		if _, err := registry.ExpirePeople(path, serverNowFn()); err != nil {
+			slog.Warn("initial people expiry reconciliation failed", "error", err)
+		}
+	}
 	if s.lifecycleReconcileFn != nil {
 		if _, err := s.lifecycleReconcileFn(ctx, serverNowFn()); err != nil {
 			s.beginShutdown()
@@ -580,6 +585,7 @@ func (s *Server) startLifecycleTicker(ctx context.Context) <-chan struct{} {
 	// requires the tick to carry the value captured here. Capturing the function
 	// value costs nothing: production assigns this variable once, at init.
 	nowFn := serverNowFn
+	peoplePath, _ := registryPathFn()
 	go func() {
 		defer close(done)
 		ticker := time.NewTicker(lifecycleTickerInterval)
@@ -591,6 +597,11 @@ func (s *Server) startLifecycleTicker(ctx context.Context) <-chan struct{} {
 				return
 			case <-ticker.C:
 				now := nowFn()
+				if peoplePath != "" {
+					if _, err := registry.ExpirePeople(peoplePath, now); err != nil {
+						slog.Warn("people expiry reconciliation failed", "error", err)
+					}
+				}
 				shouldSync := s.lifecycleReconcileFn == nil
 				if s.lifecycleReconcileFn != nil {
 					changed, err := s.lifecycleReconcileFn(ctx, now)
@@ -2226,7 +2237,7 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service, prov
 	}
 
 	// ACL middleware: enforce per-service access control
-	if len(svc.AllowedUsers) > 0 {
+	if len(svc.AllowedUsers) > 0 && !svc.PeopleScoped {
 		if lc == nil {
 			var err2 error
 			lc, err2 = tsnetSrv.LocalClient()
@@ -2234,7 +2245,13 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service, prov
 				return fmt.Errorf("local client for %q (acl): %w", svc.Name, err2)
 			}
 		}
-		handler = ACLMiddleware(svc.AllowedUsers, lc)(handler)
+	}
+	if !svc.Funnel {
+		peoplePath, err := registryPathFn()
+		if err != nil {
+			return err
+		}
+		handler = peopleMiddleware(peoplePath, svc, tsnetSrv.LocalClient, serverNowFn)(handler)
 	}
 
 	if identity == nil {

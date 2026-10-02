@@ -36,7 +36,7 @@ services are private tailnet TCP routes without TSLink HTTP identity
 middleware or TLS termination.
 
 WhoIs identity headers are best-effort for proxy requests and are enforced
-only when HTTP --allow is configured for proxy/file services. Public Funnel
+when HTTP --allow or people grants are configured for proxy/file services. Public Funnel
 exposure is off by default and requires explicit acknowledgement.
 
 Supported on macOS, Linux, and Windows.

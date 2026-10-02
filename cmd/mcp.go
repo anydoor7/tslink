@@ -660,6 +660,9 @@ var mcpToolDefinitions = []mcpToolDefinition{
 // matching CLI command calls, so the tool surface cannot acquire behaviour the
 // CLI does not have — including its refusals, which stay in the domain layer.
 type mcpActions struct {
+	peopleChange  func(context.Context, peopleArguments, bool) (any, error)
+	peopleList    func() (any, error)
+	peopleRemove  func(string) (any, error)
 	share         func(context.Context, shareRequest) (ShareResult, error)
 	add           func(context.Context, AddParams, bool) (any, error)
 	list          func() (any, error)
@@ -815,6 +818,11 @@ var mcpStatusFn = readOnlyStatus.getPollableStatus
 
 func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 	return mcpActions{
+		peopleChange: func(ctx context.Context, args peopleArguments, update bool) (any, error) {
+			return changePeople(ctx, paths, args, update)
+		},
+		peopleList:   func() (any, error) { return listPeople(paths) },
+		peopleRemove: func(who string) (any, error) { return removePeople(paths.Registry, who) },
 		share: func(ctx context.Context, req shareRequest) (ShareResult, error) {
 			return executeShare(ctx, paths, req, defaultURLWait, errOut)
 		},
@@ -988,7 +996,7 @@ const mcpServerName = "tslink"
 // It names the tools whose descriptions carry a confirmation requirement, so a
 // client that reads instructions before tool descriptions still gets the
 // warning.
-const mcpInstructions = "Use share to expose a local page to the private tailnet. A needs_login tool result is successful: open auth_url and retry after authorization. Confirm with the user before any tool whose description says it publishes publicly, deletes, or sends a real invitation: share/add with funnel true, unshare, and invite_user, invite_device, invite_revoke, invite_resend."
+const mcpInstructions = "Use share to expose a local page to the private tailnet. A needs_login tool result is successful: open auth_url and retry after authorization. Confirm with the user before any tool whose description says it publishes publicly, deletes, or sends a real invitation: share/add with funnel true, unshare, people_add, people_update, people_remove, and invite_user, invite_device, invite_revoke, invite_resend."
 
 // mcpServerVersion is the version reported in serverInfo. Unstamped
 // development builds report "dev" rather than an empty string, which some
@@ -1509,6 +1517,28 @@ func callMCPTool(ctx context.Context, actions mcpActions, name string, arguments
 		ctx, install = recordDaemonInstall(ctx)
 	}
 	switch name {
+	case "people_add", "people_update":
+		var args peopleArguments
+		decodeErr := decodeMCPArguments(arguments, &args)
+		if refusal := mcpArgumentsRefusal(name, decodeErr, mcpRequiredArgument{"who", args.Who}); refusal != nil {
+			return refusal, nil
+		}
+		data, err = actions.peopleChange(ctx, args, name == "people_update")
+	case "people_list":
+		var args struct{}
+		if refusal := mcpArgumentsRefusal(name, decodeMCPArguments(arguments, &args)); refusal != nil {
+			return refusal, nil
+		}
+		data, err = actions.peopleList()
+	case "people_remove":
+		var args struct {
+			Who string `json:"who"`
+		}
+		decodeErr := decodeMCPArguments(arguments, &args)
+		if refusal := mcpArgumentsRefusal(name, decodeErr, mcpRequiredArgument{"who", args.Who}); refusal != nil {
+			return refusal, nil
+		}
+		data, err = actions.peopleRemove(args.Who)
 	case "share":
 		var args struct {
 			NoDaemonInstall bool     `json:"no_daemon_install,omitempty"`
