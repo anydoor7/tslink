@@ -17,6 +17,8 @@ import (
 // mcpToolMinimalArguments is one valid call per tool, so a test can reach
 // each tool's action.
 var mcpToolMinimalArguments = map[string]string{
+	"guest_create": `{"app":"web","for":"1h"}`, "guest_list": `{}`, "guest_show": `{"id":"guest-id"}`, "guest_revoke": `{"id":"guest-id"}`,
+
 	"extend":         `{"service":"web","for":"1h"}`,
 	"access_log":     `{}`,
 	"access_summary": `{}`,
@@ -61,6 +63,7 @@ func mcpRefusal(tool string) error {
 
 func refusingMCPActions() mcpActions {
 	return mcpActions{
+		guest:  func(name string, _ guestArguments) (any, error) { return nil, mcpRefusal(name) },
 		extend: func(extendArguments) (any, error) { return nil, mcpRefusal("extend") },
 		accessLog: func(accessLogArguments) (accesslog.Result, error) {
 			return accesslog.Result{}, mcpRefusal("access_log")

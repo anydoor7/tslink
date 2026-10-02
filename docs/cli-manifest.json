@@ -1315,6 +1315,10 @@
           "type": "string",
           "description": "The running daemon's own executable path at the moment it wrote its PID/identity sidecar. Informational only; never used to verify process identity, unlike the Go-module comparison identity verification relies on."
         },
+        "guest_links": {
+          "type": "array",
+          "description": "Active guest grants without bearer secrets."
+        },
         "tailscale_ssh.acl_rule_required": {
           "type": "boolean",
           "description": "Constant true: enabling Tailscale SSH on the node is not sufficient by itself; the tailnet ACL also needs an ssh rule admitting the caller, which no local check can observe."
@@ -1402,6 +1406,140 @@
         "who": {
           "type": "string",
           "description": "Canonical person login; absent for Funnel."
+        }
+      }
+    },
+    {
+      "path": "tslink guest",
+      "short": "Share one app through a time-limited browser link",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        }
+      ]
+    },
+    {
+      "path": "tslink guest create",
+      "short": "Create an owner-only guest link; acknowledge Funnel with --public",
+      "flags": [
+        {
+          "name": "for",
+          "type": "string",
+          "scope": "local",
+          "usage": "Lifetime: 1h, 8h, 24h, 3d, 7d; never refused"
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        },
+        {
+          "name": "label",
+          "type": "string",
+          "scope": "local",
+          "usage": "Owner's label for this link"
+        },
+        {
+          "name": "pin",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Read a PIN from hidden terminal input or stdin; never pass it in argv"
+        },
+        {
+          "name": "print-link",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Explicitly return the one-time bearer link and sendable message"
+        },
+        {
+          "name": "public",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Acknowledge public internet reachability through Funnel with mandatory guest authentication"
+        }
+      ],
+      "json_result_fields": {
+        "edge_state": {
+          "type": "string",
+          "description": "Configured state; verify Funnel through status."
+        },
+        "grant": {
+          "type": "object",
+          "description": "Nonsecret guest grant, expiry and use counters."
+        },
+        "link": {
+          "type": "string|null",
+          "description": "Bearer link only with explicit print-link; otherwise null."
+        },
+        "message": {
+          "type": "string",
+          "description": "Plain-language message for the recipient."
+        }
+      }
+    },
+    {
+      "path": "tslink guest list",
+      "short": "Owner-only: list guest grants without bearer tokens",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        }
+      ],
+      "json_result_fields": {
+        "grants": {
+          "type": "array",
+          "description": "Nonsecret guest grants."
+        }
+      }
+    },
+    {
+      "path": "tslink guest revoke",
+      "short": "Owner-only: revoke guest grants without bearer tokens",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        }
+      ],
+      "json_result_fields": {
+        "grant": {
+          "type": "object",
+          "description": "Nonsecret guest grant."
+        }
+      }
+    },
+    {
+      "path": "tslink guest show",
+      "short": "Owner-only: show guest grants without bearer tokens",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        }
+      ],
+      "json_result_fields": {
+        "grant": {
+          "type": "object",
+          "description": "Nonsecret guest grant."
         }
       }
     },
@@ -1846,6 +1984,10 @@
         "devices[].tags": {
           "type": "array",
           "description": "--tailnet only: the device's tailnet ACL tags, at least one of which matched the TSLink tag filter."
+        },
+        "guest_links": {
+          "type": "array",
+          "description": "Active guest grants without bearer secrets."
         },
         "registered_count": {
           "type": "integer",

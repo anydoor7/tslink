@@ -127,8 +127,8 @@ func TestMCPReadOnlyToolsDescribeAStoredCredentialWithoutRecordingIt(t *testing.
 			}
 		})
 	}
-	if readOnly != 16 {
-		t.Fatalf("%d tools are marked read-only, want the 16 that only read", readOnly)
+	if readOnly != 18 {
+		t.Fatalf("%d tools are marked read-only, want the 18 that only read", readOnly)
 	}
 	t.Run("event stream", func(t *testing.T) {
 		_, paths, roots := readOnlyCredentialFixture(t)

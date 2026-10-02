@@ -11,3 +11,7 @@ This index records the app recipe pages; existing guides retain their current pa
 - [durations.md](durations.md), [durations_zh.md](durations_zh.md): unified lifetime grammar, DST, policy and extend semantics.
 - [funnel.md](funnel.md), [funnel_zh.md](funnel_zh.md): public TTL behavior and legacy-state compatibility.
 - [access-log.md](access-log.md), [access-log_zh.md](access-log_zh.md): local bounded access history, privacy, CLI/MCP queries and writer contract.
+
+# Browser guest links
+
+- [guest-links.md](guest-links.md), [guest-links_zh.md](guest-links_zh.md): finite browser guest grants and mandatory Funnel gate.

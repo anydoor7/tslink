@@ -61,6 +61,7 @@ const (
 
 // StatusResult holds the status information for display.
 type StatusResult struct {
+	GuestLinks              []registry.GuestView    `json:"guest_links"`
 	AccessLog               accesslog.Health        `json:"access_log"`
 	Alerts                  health.AlertsView       `json:"alerts"`
 	Supervision             Supervision             `json:"supervision"`
@@ -125,6 +126,7 @@ type StatusServiceState struct {
 }
 
 type StatusURLsResult struct {
+	GuestLinks              []registry.GuestView        `json:"guest_links"`
 	AccessLog               accesslog.Health            `json:"access_log"`
 	Alerts                  health.AlertsView           `json:"alerts"`
 	Supervision             Supervision                 `json:"supervision"`
@@ -212,6 +214,7 @@ func (s statusRead) getStatus(pidPath, regPath string) (StatusResult, error) {
 	}
 	issueErrors := diagnosticServiceErrors(issues)
 	r.Alerts = readAlertsForRegistry(regPath)
+	r.GuestLinks = activeGuestViews(reg, statusNowFn())
 	r.ServiceCount = len(reg.Services)
 	r.Services = make([]StatusServiceState, 0, len(reg.Services))
 	ownershipProofs, ownershipProofAvailable := ownershipProofsForRegistry(regPath)
@@ -606,6 +609,7 @@ func cloneServiceError(source *tsruntime.ServiceError) *tsruntime.ServiceError {
 }
 
 func formatStatus(r StatusResult, out io.Writer) {
+	formatGuestViews(out, r.GuestLinks)
 	formatAccessHealth(r.AccessLog, out)
 	userManagerUnavailable := strings.Contains(r.Supervision.Detail, systemdUserManagerUnavailableMessage)
 	noNodes := false
@@ -701,6 +705,7 @@ func (s statusRead) getStatusURLsWithAuth(pidPath, regPath, snapshotPath, authHa
 	freshness := tsruntime.Classify(snapshot, loadErr, expected)
 
 	result := StatusURLsResult{
+		GuestLinks:              activeGuestViews(reg, statusNowFn()),
 		AccessLog:               accessHealthForRegistry(regPath, pidPath, snapshotPath),
 		SchemaVersion:           inspect.SchemaVersion,
 		Alerts:                  status.Alerts,
@@ -982,6 +987,7 @@ func appendStatusWarning(warnings []inspect.WarningView, code, message string) [
 
 func formatStatusURLs(r StatusURLsResult, out io.Writer) {
 	formatStatus(StatusResult{
+		GuestLinks:              r.GuestLinks,
 		AccessLog:               r.AccessLog,
 		Alerts:                  r.Alerts,
 		Supervision:             r.Supervision,

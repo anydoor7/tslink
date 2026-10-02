@@ -30,3 +30,8 @@ This index records the people sharing lifecycle implementation and regression te
 - `people.go`: additive ChangePersonWithLifetime API; F1 trusted store API retained; optional sticky guest classification in schema 2.
 
 - `duration_boundary_test.go`: final Funnel policy, guest persistence/re-add and invite grant CAS evidence.
+
+# Browser guest links
+
+- guests.go: durable browser grants, salted token/PIN hashes, policy, counters and revocation.
+- guests_test.go: persistence, policy, gate migration, lockout and invalid ledger controls.

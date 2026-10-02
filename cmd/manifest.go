@@ -265,6 +265,12 @@ func Manifest() CLIManifest {
 
 func commandJSONResultFields(commandPath string) map[string]JSONResultFieldInfo {
 	switch commandPath {
+	case "tslink guest create":
+		return map[string]JSONResultFieldInfo{"grant": {Type: "object", Description: "Nonsecret guest grant, expiry and use counters."}, "link": {Type: "string|null", Description: "Bearer link only with explicit print-link; otherwise null."}, "message": {Type: "string", Description: "Plain-language message for the recipient."}, "edge_state": {Type: "string", Description: "Configured state; verify Funnel through status."}}
+	case "tslink guest list":
+		return map[string]JSONResultFieldInfo{"grants": {Type: "array", Description: "Nonsecret guest grants."}}
+	case "tslink guest show", "tslink guest revoke":
+		return map[string]JSONResultFieldInfo{"grant": {Type: "object", Description: "Nonsecret guest grant."}}
 	case "tslink extend":
 		return map[string]JSONResultFieldInfo{
 			"service":             {Type: "string", Description: "App whose person grant or Funnel deadline was changed."},
@@ -324,6 +330,7 @@ func commandJSONResultFields(commandPath string) map[string]JSONResultFieldInfo 
 		return recipeManifestResultFields()
 	case "tslink list":
 		fields := agentServiceRuntimeJSONResultFields()
+		fields["guest_links"] = JSONResultFieldInfo{Type: "array", Description: "Active guest grants without bearer secrets."}
 		fields["access_log"] = JSONResultFieldInfo{Type: "object", Description: "Local access log health: last_write, drops, size_bytes, enabled, updated_at and error."}
 		fields["services[].state"] = JSONResultFieldInfo{
 			Type:        "string",
@@ -394,7 +401,8 @@ func commandJSONResultFields(commandPath string) map[string]JSONResultFieldInfo 
 		}
 	case "tslink doctor":
 		return map[string]JSONResultFieldInfo{
-			"access_log": {Type: "object", Description: "Local access log health: last_write, drops, size_bytes, enabled, updated_at and error."},
+			"guest_links": {Type: "array", Description: "Active guest grants without bearer secrets."},
+			"access_log":  {Type: "object", Description: "Local access log health: last_write, drops, size_bytes, enabled, updated_at and error."},
 			"tailscale_ssh.state": {
 				Type:        "string",
 				Description: "Tailscale SSH enablement for this node, read from the local Tailscale client. Informational: it never changes status, health_status, or health_exit_code.",

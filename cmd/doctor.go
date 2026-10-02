@@ -171,7 +171,8 @@ type doctorOptions struct {
 }
 
 type DoctorResult struct {
-	AccessLog       accesslog.Health `json:"access_log"`
+	GuestLinks      []registry.GuestView `json:"guest_links"`
+	AccessLog       accesslog.Health     `json:"access_log"`
 	canonicalHosts  map[string]string
 	NodeKeys        map[string]health.Expiry    `json:"node_keys"`
 	Credentials     StatusCredentials           `json:"credentials"`
@@ -394,6 +395,7 @@ func buildDoctorResult(opts doctorOptions) DoctorResult {
 		}
 	}
 	if reg != nil {
+		diagnoseGuests(&result, reg, doctorNowFn())
 		diagnoseDeviceCleanupBlocked(&result)
 	}
 	if cfgOK && cfg.ControlURL != "" && hasFunnel {

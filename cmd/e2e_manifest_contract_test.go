@@ -100,6 +100,12 @@ import (
 // zero-argument invocation) and from bare runs under e2eEnv, not inferred from
 // the shape of a command's name.
 var e2eExecutableSafeCommands = map[string]struct{}{
+	"tslink guest":        {}, // Bare invocation renders group help.
+	"tslink guest create": {}, // ExactArgs stops before writes or URL lookup.
+	"tslink guest list":   {}, // Local registry read only.
+	"tslink guest show":   {}, // ExactArgs stops before local reads.
+	"tslink guest revoke": {}, // ExactArgs stops before local writes.
+
 	"tslink extend":        {}, // ExactArgs(1), no body on bare invocation.
 	"tslink access log":    {}, // Local file reads only, no credentials, socket or writes.
 	"tslink access path":   {}, // Bare invocation fails positional validation before mutation.

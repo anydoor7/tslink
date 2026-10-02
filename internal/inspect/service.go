@@ -27,6 +27,7 @@ const (
 	ExposureTailnet      = "tailnet"
 	ExposureTailnetAllow = "tailnet_allow"
 	ExposurePublicFunnel = "public_funnel"
+	ExposureGuestFunnel  = "guest_funnel"
 	ExposureUnknown      = "unknown"
 )
 
@@ -138,6 +139,9 @@ func endpointFor(svc registry.Service) EndpointView {
 }
 
 func exposureFor(svc registry.Service) ExposureView {
+	if svc.GuestGate && svc.Funnel {
+		return ExposureView{Kind: ExposureGuestFunnel, Display: "Funnel with mandatory guest authentication", Public: true}
+	}
 	if svc.Funnel {
 		return ExposureView{
 			Kind:    ExposurePublicFunnel,

@@ -52,3 +52,10 @@ This index covers the recipe integration tests. The repository AGENTS.md describ
 
 - `access_privacy_regression_test.go`: real listener encoded capability replay and path-mode controls.
 - `access_lifecycle_regression_test.go`: active daemon init failure and existing-listener recovery.
+
+# Browser guest links
+
+- guest.go: trusted Funnel guest gate, bounded sessions/challenges, CSRF and source rate limits.
+- guest_test.go: real HTTP/1 and HTTP/2 listener, revocation, expiry, PIN, isolation and privacy.
+
+- `guest_unix_test.go`: real listener FIFO refusal and restored positive control.

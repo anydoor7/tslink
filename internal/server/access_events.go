@@ -19,14 +19,15 @@ import (
 
 type accessObservationKey struct{}
 type accessFunnelKey struct{}
+type guestSourceKey struct{}
 
 // ListenFunnel accepts both tailnet and public connections. Only the trusted
 // transport marker denotes public ingress; request headers cannot attest it.
-func isAccessFunnelConn(c net.Conn) bool {
+func accessFunnelConn(c net.Conn) *ipn.FunnelConn {
 	for c != nil {
 		switch conn := c.(type) {
 		case *ipn.FunnelConn:
-			return true
+			return conn
 		case *tls.Conn:
 			c = conn.NetConn()
 		case *limitedTLSConn:
@@ -36,11 +37,13 @@ func isAccessFunnelConn(c net.Conn) bool {
 		case interface{ budgetConn() *headerBudgetConn }:
 			c = conn.budgetConn().Conn
 		default:
-			return false
+			return nil
 		}
 	}
-	return false
+	return nil
 }
+
+func isAccessFunnelConn(c net.Conn) bool { return accessFunnelConn(c) != nil }
 
 func configureAccessHTTP(srv *http.Server) {
 	prior := srv.ConnContext
@@ -48,7 +51,15 @@ func configureAccessHTTP(srv *http.Server) {
 		if prior != nil {
 			ctx = prior(ctx, c)
 		}
-		return context.WithValue(ctx, accessFunnelKey{}, isAccessFunnelConn(c))
+		funnel := accessFunnelConn(c)
+		if funnel != nil {
+			source := "unknown"
+			if funnel.Src.IsValid() {
+				source = funnel.Src.Addr().Unmap().String()
+			}
+			ctx = context.WithValue(ctx, guestSourceKey{}, source)
+		}
+		return context.WithValue(ctx, accessFunnelKey{}, funnel != nil)
 	}
 }
 

@@ -256,6 +256,7 @@ var (
 		"node_state_kept_reason": map[string]any{"type": "string", "description": "Why the service's local node state was kept when no other field says so: some of its recorded tailnet nodes were neither deleted nor confirmed absent."},
 	}, "name", "removed", "device_cleaned", "device_cleanup_skipped")
 	mcpStatusOutputSchema = objectSchema(map[string]any{
+		"guest_links": map[string]any{"type": "array", "items": map[string]any{"type": "object"}},
 		"access_log":  nestedObjectSchema("Local access-log health: last_write, drops, size_bytes and error."),
 		"credentials": nestedObjectSchema("Value-free stored expiry metadata and early warnings; assumed expiry remains identified."),
 		"alerts":      nestedObjectSchema("Recent durable alert events; destination is redacted."),
@@ -327,6 +328,7 @@ var (
 		"backend_auth_assumption":  nestedObjectSchema("Backend application, database and SSH authentication are outside TSLink and are not proven here."),
 	}, "schema_version", "service", "summary", "tslink_known", "tslink_local_enforcement", "external_policy_unknown", "backend_auth_assumption")
 	mcpDoctorOutputSchema = objectSchema(map[string]any{
+		"guest_links":      map[string]any{"type": "array", "items": map[string]any{"type": "object"}},
 		"access_log":       nestedObjectSchema("Local access-log health: last_write, drops, size_bytes and error."),
 		"node_keys":        map[string]any{"type": []string{"object", "null"}, "additionalProperties": true},
 		"credentials":      nestedObjectSchema("Stored credential expiry with metadata provenance."),
@@ -696,6 +698,7 @@ var mcpToolDefinitions = []mcpToolDefinition{
 // matching CLI command calls, so the tool surface cannot acquire behaviour the
 // CLI does not have — including its refusals, which stay in the domain layer.
 type mcpActions struct {
+	guest         func(string, guestArguments) (any, error)
 	extend        func(extendArguments) (any, error)
 	accessLog     func(accessLogArguments) (accesslog.Result, error)
 	accessSummary func(accessLogArguments) (accesslog.Summary, error)
@@ -847,21 +850,22 @@ func parseMCPWait(raw string) (time.Duration, error) {
 type mcpServiceSummary = ListServiceSummary
 
 type mcpStatusSummary struct {
-	AccessLog              accesslog.Health   `json:"access_log"`
-	Services               []mcpHealthService `json:"services"`
-	Credentials            StatusCredentials  `json:"credentials"`
-	Alerts                 health.AlertsView  `json:"alerts"`
-	Supervision            Supervision        `json:"supervision"`
-	Authenticated          bool               `json:"authenticated"`
-	CredentialStored       bool               `json:"credential_stored"`
-	NodeAuthorized         bool               `json:"node_authorized"`
-	AuthorizedServiceCount int                `json:"authorized_service_count"`
-	DaemonRunning          bool               `json:"daemon_running"`
-	DaemonState            string             `json:"daemon_state"`
-	ServiceCount           int                `json:"service_count"`
-	Status                 string             `json:"status,omitempty"`
-	AuthURL                string             `json:"auth_url,omitempty"`
-	Next                   []string           `json:"next,omitempty"`
+	GuestLinks             []registry.GuestView `json:"guest_links"`
+	AccessLog              accesslog.Health     `json:"access_log"`
+	Services               []mcpHealthService   `json:"services"`
+	Credentials            StatusCredentials    `json:"credentials"`
+	Alerts                 health.AlertsView    `json:"alerts"`
+	Supervision            Supervision          `json:"supervision"`
+	Authenticated          bool                 `json:"authenticated"`
+	CredentialStored       bool                 `json:"credential_stored"`
+	NodeAuthorized         bool                 `json:"node_authorized"`
+	AuthorizedServiceCount int                  `json:"authorized_service_count"`
+	DaemonRunning          bool                 `json:"daemon_running"`
+	DaemonState            string               `json:"daemon_state"`
+	ServiceCount           int                  `json:"service_count"`
+	Status                 string               `json:"status,omitempty"`
+	AuthURL                string               `json:"auth_url,omitempty"`
+	Next                   []string             `json:"next,omitempty"`
 }
 
 // mcpStatusFn reads what the status tool reports. Like every read-only tool it
@@ -872,6 +876,22 @@ func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 	durationClock := durationNowFn
 	peopleClock := peopleNowFn
 	return mcpActions{
+		guest: func(name string, a guestArguments) (any, error) {
+			switch name {
+			case "guest_create":
+				return createGuest(paths, a, durationClock())
+			case "guest_list":
+				list, e := registry.ListGuests(paths.Registry, durationClock())
+				return map[string]any{"grants": list}, e
+			case "guest_show":
+				view, e := registry.ShowGuest(paths.Registry, a.ID, durationClock())
+				return map[string]any{"grant": view}, e
+			case "guest_revoke":
+				view, e := registry.RevokeGuest(paths.Registry, a.ID, durationClock())
+				return map[string]any{"grant": view}, e
+			}
+			return nil, output.ErrUsage("unknown guest action")
+		},
 		extend: func(args extendArguments) (any, error) { return extendLifetime(paths.Registry, args, durationClock()) },
 		accessLog: func(a accessLogArguments) (accesslog.Result, error) {
 			return readAccessLogAt(filepath.Dir(paths.Registry), a)
@@ -936,6 +956,7 @@ func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 				return nil, err
 			}
 			result := mcpStatusSummary{
+				GuestLinks:  status.GuestLinks,
 				AccessLog:   status.AccessLog,
 				Credentials: status.Credentials, Alerts: status.Alerts, Services: mcpHealthServices(status.Services),
 				Supervision:            status.Supervision,
@@ -1594,6 +1615,20 @@ func callMCPTool(ctx context.Context, actions mcpActions, name string, arguments
 		ctx, install = recordDaemonInstall(ctx)
 	}
 	switch name {
+	case "guest_create", "guest_list", "guest_show", "guest_revoke":
+		var args guestArguments
+		decodeErr := decodePeopleMCPArguments(arguments, &args)
+		required := []mcpRequiredArgument{}
+		if name == "guest_create" {
+			required = append(required, mcpRequiredArgument{"app", args.App}, mcpRequiredArgument{"for", args.For})
+		}
+		if name == "guest_show" || name == "guest_revoke" {
+			required = append(required, mcpRequiredArgument{"id", args.ID})
+		}
+		if refusal := mcpArgumentsRefusal(name, decodeErr, required...); refusal != nil {
+			return refusal, nil
+		}
+		data, err = actions.guest(name, args)
 	case "extend":
 		var args extendArguments
 		decodeErr := decodeExtendMCPArguments(arguments, &args)

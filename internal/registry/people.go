@@ -145,7 +145,7 @@ func PersonGrantActiveAt(p Person, app string, now time.Time) bool {
 }
 
 func PeopleServiceSupported(svc Service) bool {
-	return !svc.Funnel && (svc.Type == TypeProxy || svc.Type == TypeFile)
+	return (!svc.Funnel || svc.GuestGate) && (svc.Type == TypeProxy || svc.Type == TypeFile)
 }
 
 // ChangePerson atomically replaces the named person's grants. nil apps keeps

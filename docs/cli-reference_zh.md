@@ -168,3 +168,7 @@ Windows `tslink install --startup` 显式选择下次登录启动、无崩溃恢
 `tslink access log [--app X] [--who Y] [--since 24h|RFC3339] [--until RFC3339] [--decision allowed|denied] [--limit N] [--json]` 返回倒序事件、按人计数及每个应用最后允许访问时间。默认 limit 100（1–10000），汇总计全部匹配项。标准 envelope 的 `data` 包含 `events`、`summary`、`truncated`。MCP：`access_log`、`access_summary`，均为只读，可授予 viewer scopes。
 
 `tslink access path <app> <prefix|full|off|inherit|true|false>` 设置单应用路径模式，默认 prefix；full 可能保存应用自己的 bearer 路径，off 不记录路径。全局 `config set` key：`access-log-enabled`、`access-log-path`（兼容 boolean），`access-log-path-mode`（prefix/full/off）；`access-log-retention-days`（默认 30）、`access-log-max-bytes`（默认 67108864）、`access-log-queue-size`（默认 1024）。空值恢复默认；全局改动需重启 `serve`。`status`、`doctor` 包含 `access_log` 当前实例健康信息（current、最后写入、drops、size、缺失历史窗口；旧成功快照不能替代当前失败）。严格范围、隐私、持久性及事件计数语义见 [access-log_zh.md](access-log_zh.md)。
+
+## 浏览器访客链接
+
+`tslink guest create <app> --for <lifetime> [--label "Aunt May"] [--pin] [--public] [--print-link] [--json]` 创建有限期限的单应用浏览器授权。首次开启必须的 Funnel gate 需 `--public`，已有开放 Funnel 须先关闭。PIN 从隐藏终端输入或 stdin 读取。只有 `--print-link` 披露 bearer URL，且需当前精确节点 URL。`guest list`、`guest show <id>`、`guest revoke <id>` 不返回 token hash 或 token。MCP owner-only 工具：`guest_create`、`guest_list`、`guest_show`、`guest_revoke`。稳定字段、迁移、cookie、PIN 限流及与 people grant 的比较见[访客链接](guest-links_zh.md)。

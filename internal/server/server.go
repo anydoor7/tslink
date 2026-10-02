@@ -1607,7 +1607,7 @@ func serviceChangedWithFallback(old, new registry.Service, fallbackControlURL st
 	if old.Type != new.Type || old.Target != new.Target || old.Path != new.Path || old.File != new.File {
 		return true
 	}
-	if old.AccessLogPathMode != new.AccessLogPathMode || !reflect.DeepEqual(old.AccessLogPath, new.AccessLogPath) || old.PreserveHost != new.PreserveHost {
+	if old.AccessLogPathMode != new.AccessLogPathMode || !reflect.DeepEqual(old.AccessLogPath, new.AccessLogPath) || old.GuestGate != new.GuestGate || old.PreserveHost != new.PreserveHost {
 		return true
 	}
 	if old.Port != new.Port || old.Ephemeral != new.Ephemeral || old.Funnel != new.Funnel || old.PublicAck != new.PublicAck || old.NoAutoProvision != new.NoAutoProvision {
@@ -2350,6 +2350,9 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service, prov
 		return fmt.Errorf("unknown service type %q", svc.Type)
 	}
 
+	var guestPrivate http.Handler
+	var guestPath string
+
 	// ACL middleware: enforce per-service access control
 	if len(svc.AllowedUsers) > 0 && !svc.PeopleScoped {
 		if lc == nil {
@@ -2360,12 +2363,17 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service, prov
 			}
 		}
 	}
-	if !svc.Funnel {
+	if !svc.Funnel || svc.GuestGate {
 		peoplePath, err := registryPathFn()
 		if err != nil {
 			return err
 		}
-		handler = peopleMiddleware(peoplePath, svc, tsnetSrv.LocalClient, serverNowFn)(handler)
+		if svc.GuestGate {
+			guestPrivate = peopleMiddleware(peoplePath, svc, tsnetSrv.LocalClient, serverNowFn)(handler)
+			guestPath = peoplePath
+		} else {
+			handler = peopleMiddleware(peoplePath, svc, tsnetSrv.LocalClient, serverNowFn)(handler)
+		}
 	}
 
 	if identity == nil {
@@ -2396,7 +2404,13 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service, prov
 			}
 		}
 	}
-	handler = AccessEventMiddleware(svc, s.accessOptions, s.accessWriter, identity, serverNowFn, RequestLimitsMiddleware(svc, reportLimit, handler))
+	limitedHandler := RequestLimitsMiddleware(svc, reportLimit, handler)
+	if svc.GuestGate {
+		handler = newGuestGate(guestPath, svc, serverNowFn, s.accessWriter, RequestLimitsMiddleware(svc, reportLimit, guestPrivate), limitedHandler)
+	} else {
+		handler = limitedHandler
+	}
+	handler = AccessEventMiddleware(svc, s.accessOptions, s.accessWriter, identity, serverNowFn, handler)
 
 	var ln net.Listener
 	funnelListenerActive := false
