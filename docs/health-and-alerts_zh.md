@@ -15,14 +15,19 @@ tslink doctor --json
 HTTP 默认 GET `/`、预期状态 200 到 299、不检查正文、5 秒超时、每分钟一次。
 路径按 reverse proxy 的规则拼接到 backend base path，保留 backend query。
 探针直接访问同一个 backend，不注入 Tailscale 调用者身份，也不跟随重定向。
+HTTP/TCP 在任何 I/O 前执行 registry 的 target 安全校验，被拒绝的 target
+不会进入调度；enrollment 或 policy 失败的 service 仍检查 backend。
 应用有重定向时，应调整预期状态范围或选择适当的 endpoint。需要调用者认证的
 应用可能需要独立的本地 readiness endpoint。这些检查不能证明远端访问、ACL
 或 Tailscale frontend 的 TLS 可用。
 
 `--health-body` 检查前 64 KiB 内的子串。超时范围 100ms 到 30s，间隔范围
 10s 到 1d，且不得小于超时。HTTP 路径、状态和正文选项只用于 proxy；TCP
-仍检查连接，file 检查目录或单个文件能否打开且类型正确。超时和间隔也适用于
-TCP/file，但本地文件系统调用受 OS 影响，不能中断正在执行的 system call。
+仍检查连接，file 在打开前检查类型，打开后重新检查对象类型和文件身份。
+Unix 使用非阻塞 open 拒绝替换成 FIFO 的对象；Windows 拒绝 device handle
+和被替换的 reparse point。超时和间隔也适用于 TCP/file。无法中断的文件系统
+调用会占用 worker slot，但不会阻止其他结果发布或 monitor 退出；跨调度周期
+最多保留四个仍在执行的 backend 调用。
 路径不能包含 query、fragment 或其他 host。子串应使用非敏感内容，不要把
 secret 放进 argv。Registry 的 `health` 与 MCP `add` 接受相同字段：`path`、
 `status_min`、`status_max`、`body_contains`、`timeout`、`interval`。
@@ -35,7 +40,7 @@ secret 放进 argv。Registry 的 `health` 与 MCP `add` 接受相同字段：`p
 授权、URL 就绪与应用健康分别报告。`doctor` 保留 TCP 检查，并额外运行一次
 HTTP 业务探针，外部 target 仍要求现有的显式 opt-in。后台最多四个并行 worker，
 在首次 registry 同步后启动。每 10 秒调度到期检查，所以实际间隔可能多出最多
-10 秒；大量慢 backend 会进一步延长这一间隔。
+10 秒；大量慢 backend 会进一步延长这一间隔。已完成的检查独立发布。
 
 ## 到期预警
 
@@ -44,6 +49,10 @@ HTTP 业务探针，外部 target 仍要求现有的显式 opt-in。后台最多
 寿命推算。阈值按剩余时长判断：14 天为 `warning_14d`，3 天为 `critical_3d`，
 截止时间为 `expired`。节点 14 天预警使 `doctor` 返回 exit 64，3 天或过期
 返回 exit 65。`status` 保持信息查询语义。
+
+节点到期每分钟刷新，独立于 backend 的 health interval，LocalAPI 使用另一组
+最多四个并行调用。替换 service 节点立即使旧日期失效，直到新节点报告日期前
+保持 unknown。Sharing 编辑保留 backend 的连续失败计数。
 
 Pinned `tailscale.com v1.102.4` 的字段是
 [`PeerStatus.KeyExpiry`，ipn/ipnstate/ipnstate.go:336-338](https://github.com/tailscale/tailscale/blob/v1.102.4/ipn/ipnstate/ipnstate.go#L336-L338)。
@@ -77,7 +86,8 @@ console 检查 service 节点，或使用
 默认没有外部 notifier。Down、recovery 和到期阈值事件仍记录在
 `health-alert-state.json`，并出现在 status JSON、MCP 和 `/events` 的
 snapshot/update 中。文件保留最近 100 个事件及去重状态；daemon 停止后
-status 仍可读取事件。事件流需要现有显式启用的 MCP control plane，并沿用
+status 读取 durable journal，daemon 停止或 runtime snapshot 落后时也一样。
+事件流需要现有显式启用的 MCP control plane，并沿用
 其身份授权；通知不会新开 listener。
 
 需要通知时，在 TSLink config 目录创建由 owner 控制的 `alerts.json`
@@ -96,15 +106,25 @@ status 仍可读取事件。事件流需要现有显式启用的 MCP control pla
 Command 直接执行 argv，不经过 shell；事件 JSON 通过 stdin 与
 `TSLINK_ALERT_JSON` 提供，并设置 `TSLINK_ALERT_KIND`、
 `TSLINK_ALERT_SERVICE`。Command 继承 daemon 的环境与权限。Webhook
-接收 JSON POST，`Content-Type: application/json`，不跟随重定向。每次调用
-最多 10 秒；command 输出与 webhook response body 丢弃。诊断中 destination
+接收 JSON POST，`Content-Type: application/json`，不跟随重定向。投递由一个
+worker 执行，队列最多 16 个事件，monitor 不等待 notifier。每次调用的 I/O
+deadline 为 10 秒；command 的 pipe 清理额外最多 250ms。Unix command 使用
+独立进程组，取消或直接 command 退出后终止该组。Windows 取消时终止直接
+command；后代可能继续运行，但输出直接进入 null device，不会占住输出 pipe。
+主动离开 Unix 进程组的后代也可能继续运行。取消（包括 daemon 退出）计为发送
+失败。Command 输出与 webhook response body 丢弃。诊断中 destination
 为 `[redacted]`，通知错误仅有稳定码。Config 和 command 参数仍是磁盘上的
 私密输入，后者也存在于所启动进程的 argv 中。
+
+退出时最多等待已取消的 delivery worker 一秒。OS 调用无法中断时，monitor
+仍可退出；worker 的迟到结果不能修改 journal 或把已取消事件改成 sent。
 
 所有状态转换进入本地 journal；外部发送全局最多每分钟一次，同一个
 service/event-kind/subject 最多每五分钟一次。抑制的发送标记为
 `rate_limited`，不排队、不重试。持续 down 不生成新 down 事件；每个日期和
 来源的每个 expiry 阈值只生成一次。更新日期后开始新的到期周期。
+允许投递的事件先为 `pending`，完成后为 `sent` 或 `failed`；队列已满或
+退出时取消的投递记为 `failed`，不会重试。
 事件和发送占位先落盘再发送，重启不会重发已提交告警。外部通知是 best effort、
 at most once：落盘到发送之间崩溃可能丢失一次通知。状态文件不可写时禁止外发，
 报告 `alert_state_write_failed`。Notifier 配置错误时关闭 notifier 并显示

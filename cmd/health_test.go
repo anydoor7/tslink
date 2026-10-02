@@ -34,6 +34,16 @@ func TestStatusListMCPAndEventsExposeAppHealthAndExpiry(t *testing.T) {
 	h := health.Result(health.State{ConsecutiveFailures: 2}, "proxy", "health_status_mismatch", now)
 	snapshot := tsruntime.NewSnapshot(4242, now.Add(-time.Hour), statusRegistryFingerprint(t, regPath), now, []tsruntime.ServiceState{{Service: svc, RuntimeHost: "app.tailnet.ts.net", Health: h, NodeKey: health.ExpiryAt(&expiry, "localclient", now, nil)}})
 	snapshot.Alerts = health.AlertsView{Notifier: "webhook", Destination: "[redacted]", Events: []health.Event{{ID: 1, Kind: "app_down", At: now, Service: "app"}}}
+	// Status projects committed events from the journal, even if runtime
+	// snapshot publication lags. Populate the actual durable source as well.
+	recorder := health.NewRecorder(filepath.Join(dir, health.StateFile), health.NotifierConfig{})
+	recorder.Commit(context.Background(), snapshot.Alerts.Events, now)
+	if recorder.Error != "" {
+		t.Fatal(recorder.Error)
+	}
+	if err := os.WriteFile(filepath.Join(dir, health.ConfigFile), []byte(`{"webhook":"https://notifier.invalid/private"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
 	if err := tsruntime.Save(snapshotPath, snapshot); err != nil {
 		t.Fatal(err)
 	}

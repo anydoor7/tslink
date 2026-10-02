@@ -105,11 +105,12 @@ type AlertsView struct {
 // notifier invocation: restart never redelivers a committed event. Delivery is
 // best effort and at most once, including a crash after saving but before send.
 type Recorder struct {
-	Path   string
-	Config NotifierConfig
-	State  AlertState
-	Error  string
-	Send   func(context.Context, NotifierConfig, Event) error
+	Path     string
+	Config   NotifierConfig
+	State    AlertState
+	Error    string
+	Send     func(context.Context, NotifierConfig, Event) error
+	delivery *deliveryWorker
 }
 
 func NewRecorder(path string, c NotifierConfig) *Recorder {
@@ -196,6 +197,7 @@ func (r *Recorder) ObserveExpiry(service, subject string, e Expiry, now time.Tim
 // Commit records all transitions; only external delivery is rate limited.
 // Per kind/subject: 5 minutes. Across all services: one delivery per minute.
 func (r *Recorder) Commit(ctx context.Context, events []Event, now time.Time) {
+	r.DrainDelivery()
 	var send []int
 	for _, e := range events {
 		r.State.NextID++
@@ -232,7 +234,20 @@ func (r *Recorder) Commit(ctx context.Context, events []Event, now time.Time) {
 			continue
 		}
 		e := &r.State.Events[i]
-		if r.Send(ctx, r.Config, *e) != nil {
+		if r.delivery != nil {
+			select {
+			case <-ctx.Done():
+				e.Delivery = "failed"
+			default:
+				select {
+				case r.delivery.queue <- *e:
+				default:
+					e.Delivery = "failed"
+				}
+			}
+			continue
+		}
+		if r.Send(ctx, r.Config, *e) != nil || ctx.Err() != nil {
 			e.Delivery = "failed"
 		} else {
 			e.Delivery = "sent"
@@ -263,10 +278,14 @@ func Notify(ctx context.Context, c NotifierConfig, e Event) error {
 	switch c.Kind() {
 	case "command":
 		cmd := exec.CommandContext(ctx, c.Command[0], c.Command[1:]...)
+		cmd.WaitDelay = 250 * time.Millisecond
+		cleanup := configureNotifierCommand(cmd)
+		defer cleanup()
 		cmd.Env = append(os.Environ(), "TSLINK_ALERT_KIND="+e.Kind, "TSLINK_ALERT_SERVICE="+e.Service, "TSLINK_ALERT_JSON="+string(b))
 		cmd.Stdin = bytes.NewReader(append(b, '\n'))
-		cmd.Stdout, cmd.Stderr = io.Discard, io.Discard
-		if cmd.Run() != nil {
+		// Nil stdout/stderr connect directly to the null device: descendants
+		// cannot hold an os/exec output-copy pipe open after the parent exits.
+		if cmd.Run() != nil || ctx.Err() != nil {
 			return errors.New("alert_command_failed")
 		}
 	case "webhook":
@@ -283,7 +302,7 @@ func Notify(ctx context.Context, c NotifierConfig, e Event) error {
 			return errors.New("alert_webhook_failed")
 		}
 		defer resp.Body.Close()
-		if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		if resp.StatusCode < 200 || resp.StatusCode > 299 || ctx.Err() != nil {
 			return errors.New("alert_webhook_failed")
 		}
 	}

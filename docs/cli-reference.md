@@ -92,3 +92,5 @@ healthy services; fix or remove bad entries before changing the registry.
 | `--json` | Print the versioned result envelope |
 
 App health (`healthy`/`degraded`/`down`/`unknown`), observation timestamps and consecutive failures appear in status, list JSON, `list --verbose`, MCP and `/events`. Node-key and credential expiry warnings use 14-day and 3-day thresholds with next steps; metadata sources remain explicit. `doctor` adds a fresh HTTP business probe and makes the 3-day expiry warning critical (exit 65). Owner notifications are opt-in through `alerts.json`; events and restart dedup state are persisted by default. See [health and alerts](health-and-alerts.md).
+
+HTTP/TCP health checks enforce the registry's target-safety rules. Node-key expiry refreshes independently of `--health-interval` and is invalidated when a node is replaced. Status reads alert events from the durable journal. Notification delivery uses a bounded queue; commands have a 10-second deadline plus up to 250 ms of pipe cleanup, and cancellation counts as failure.

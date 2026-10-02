@@ -50,7 +50,10 @@ func TestProbeHTTPUsesProxyTargetAndBusinessBody(t *testing.T) {
 
 func TestProbeHTTPBoundedNoRedirects(t *testing.T) {
 	requests := 0
-	app := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { requests++; http.Redirect(w, r, "/secret", 302) }))
+	app := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		http.Redirect(w, r, "/secret", http.StatusFound)
+	}))
 	defer app.Close()
 	svc := registry.Service{Type: registry.TypeProxy, Target: app.URL}
 	if code := Probe(context.Background(), svc); code != "health_status_mismatch" || requests != 1 {

@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -38,6 +37,9 @@ func Unchecked(kind string) State { return State{State: Unknown, Kind: kind} }
 func Probe(ctx context.Context, svc registry.Service) string {
 	if registry.ValidateHealthConfig(svc.Type, svc.Health) != nil {
 		return "health_config_invalid"
+	}
+	if !TargetSafe(svc) {
+		return "health_target_invalid"
 	}
 	c := registry.HealthConfig{}
 	if svc.Health != nil {
@@ -95,19 +97,26 @@ func Probe(ctx context.Context, svc registry.Service) string {
 		if svc.File != "" {
 			path = filepath.Join(path, svc.File)
 		}
-		f, err := os.Open(path)
-		if err != nil {
-			return "health_file_unavailable"
-		}
-		defer f.Close()
-		info, err := f.Stat()
-		if err != nil || (svc.File == "" && !info.IsDir()) || (svc.File != "" && !info.Mode().IsRegular()) {
-			return "health_file_invalid"
-		}
+		return probeFile(ctx, path, svc.File == "")
 	default:
 		return "health_target_invalid"
 	}
 	return ""
+}
+
+// TargetSafe shares the registry's outbound refusal boundary. It performs no
+// network or filesystem I/O, so the scheduler can reject targets before work.
+func TargetSafe(svc registry.Service) bool {
+	switch svc.Type {
+	case registry.TypeProxy:
+		return registry.ValidateProxyTarget(svc.Target) == nil
+	case registry.TypeTCP:
+		return registry.ValidateTCPTarget(svc.Target) == nil
+	case registry.TypeFile:
+		return true
+	default:
+		return false
+	}
 }
 
 func Result(previous State, kind, errorCode string, now time.Time) State {

@@ -91,3 +91,5 @@
 | `--json` | 打印版本化的结果 envelope |
 
 应用健康 (`healthy`/`degraded`/`down`/`unknown`)、检查时间和连续失败次数出现在 status、list JSON、`list --verbose`、MCP 与 `/events`。节点 key 和凭据采用 14 天/3 天到期预警，提供下一步并保留 metadata 来源。`doctor` 增加实时 HTTP 业务探针，3 天到期预警为 critical (exit 65)。Owner 通知通过 `alerts.json` 显式启用；事件与重启去重状态默认持久化。详见[健康与通知](health-and-alerts_zh.md)。
+
+HTTP/TCP 探针执行 registry 的 target 安全校验。节点到期独立于 `--health-interval` 刷新，替换节点后旧日期立即失效。Status 从 durable journal 读取事件。通知采用有界队列；command 的 deadline 为 10 秒，pipe 清理额外最多 250ms，取消计为失败。

@@ -395,6 +395,8 @@ type Server struct {
 	credentialStateKnown  bool
 	credentialStateDigest string
 	healthStates          map[string]serviceHealth
+	healthProbeSlots      chan struct{}
+	healthNodeSlots       chan struct{}
 	alerts                health.AlertsView
 }
 
@@ -1870,12 +1872,14 @@ func (s *Server) writeRuntimeSnapshotLocked(registryFingerprint string, complete
 	}
 	var snapshot runtimesnapshot.Snapshot
 	for i := range states {
+		states[i].NodeKey = nodeKeyExpiry(nil, s.daemonStartedAt)
 		if observed, ok := s.healthStates[states[i].Service.Name]; ok && observed.Identity == healthIdentity(states[i].Service) {
 			states[i].Health = observed.Health
-			states[i].NodeKey = observed.NodeKey
+			if node := s.nodes[states[i].Service.Name]; node != nil && node == observed.Node {
+				states[i].NodeKey = observed.NodeKey
+			}
 		} else {
 			states[i].Health = health.Unchecked(states[i].Service.Type)
-			states[i].NodeKey = nodeKeyExpiry(nil, s.daemonStartedAt)
 		}
 	}
 	if complete {

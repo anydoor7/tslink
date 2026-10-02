@@ -16,7 +16,10 @@ tslink doctor --json
 HTTP defaults are GET `/`, status 200 through 299, no body assertion, 5-second
 timeout and a 1-minute interval. The path is joined to the backend base path
 with the same rules as the reverse proxy; any backend query is preserved. The
-probe uses that backend directly, without Tailscale caller identity. Redirects
+probe uses that backend directly, without Tailscale caller identity. HTTP and
+TCP probes enforce the registry's target-safety refusals before doing any I/O;
+refused targets are excluded from scheduling. Enrollment and policy failures
+still permit backend checks. Redirects
 are not followed: configure the expected range or a suitable endpoint if the
 app redirects. An endpoint requiring caller authentication may need a separate
 local readiness path. This observation does not prove remote access, ACLs or
@@ -26,9 +29,13 @@ TLS on the Tailscale frontend.
 100ms through 30s; interval must be 10s through 1d and at least the timeout.
 HTTP path/status/body options are valid only for proxy services. TCP services
 keep TCP connection checks, and file services check that the registered
-directory or single file can be opened with the expected type. Timeout and
-interval options also apply to those services; local filesystem calls depend
-on the OS and cannot be interrupted mid-system-call. Paths may not contain a
+directory or single file can be opened with the expected type. File checks
+inspect the type before opening, then verify the opened object's type and
+identity. Unix opens use nonblocking mode to reject FIFO replacements; Windows
+opens reject device handles and substituted reparse points. Timeout and interval
+options also apply to those services. Uninterruptible filesystem calls retain a
+worker slot, but cannot hold up other results or monitor shutdown; at most four
+backend calls can remain in progress across cycles. Paths may not contain a
 query, fragment or another host. Use a non-sensitive substring; secrets do not
 belong in CLI arguments. Registry `health` and the MCP `add` tool accept the
 same settings (`path`, `status_min`, `status_max`, `body_contains`, `timeout`,
@@ -45,7 +52,8 @@ business check in addition to its TCP connection check, with its existing
 external-target opt-in. Background checks use up to four concurrent workers
 and start after the initial registry synchronization. A 10-second scheduler
 selects due checks, so the effective interval can be up to 10 seconds longer,
-and longer while a large batch of slow backends is being checked.
+and longer while a large batch of slow backends is being checked. Completed
+checks are published independently of slow checks.
 
 ## Expiry early warning
 
@@ -56,6 +64,12 @@ lifetime. Warnings use the remaining duration: `warning_14d` at 14 days,
 `critical_3d` at 3 days, and `expired` at the deadline. `doctor` returns warning
 exit 64 for the 14-day node warning and critical exit 65 for the 3-day or
 expired node warning. `status` remains an informational command.
+
+Node deadlines are refreshed once per minute, independently of the backend
+health interval, with a separate pool of up to four LocalAPI calls. Replacing
+a service node immediately invalidates its cached deadline; it remains unknown
+until the new node reports its own deadline. Sharing edits retain the backend's
+failure streak.
 
 The pinned `tailscale.com v1.102.4` exposes
 [`PeerStatus.KeyExpiry` in ipn/ipnstate/ipnstate.go:336-338](https://github.com/tailscale/tailscale/blob/v1.102.4/ipn/ipnstate/ipnstate.go#L336-L338).
@@ -91,8 +105,9 @@ auth key's expiry is distinct from the enrolled node's expiry
 There is no external notifier by default. Down, recovery and expiry-threshold
 events are still recorded in `health-alert-state.json` and exposed in
 `status` JSON, MCP and `/events` snapshots/updates. The file retains the latest
-100 events plus dedup state. Status can read these events after the daemon
-stops. The event stream requires the existing opt-in MCP control plane and its
+100 events plus dedup state. Status reads the durable journal, including when
+the daemon stops or its runtime snapshot is older than the journal. The event
+stream requires the existing opt-in MCP control plane and its
 authorization rules; notifications do not create a new network listener.
 
 To opt in, create an owner-controlled `alerts.json` in TSLink's config directory
@@ -112,14 +127,29 @@ Commands run directly as argv, without a shell. They receive the event JSON
 on stdin and in `TSLINK_ALERT_JSON`, plus `TSLINK_ALERT_KIND` and
 `TSLINK_ALERT_SERVICE`; they run with the daemon's environment and permissions.
 Webhooks receive a JSON POST with `Content-Type: application/json`. Redirects
-are refused, and each invocation has a 10-second timeout. Command output and
-webhook response bodies are discarded. Destinations are `[redacted]` in
+are refused. Delivery runs on one worker with a queue of up to 16 events, so
+monitoring does not wait for a notifier. Each invocation has a 10-second I/O
+deadline; commands allow up to another 250 ms to finish pipe cleanup. Unix
+commands run in a separate process group, which is killed on cancellation and
+after the direct command exits. On Windows, cancellation terminates the direct
+command; descendants may continue, but cannot hold an output pipe open because
+output goes directly to the null device. A child that deliberately leaves its
+Unix process group can also outlive the command. Cancellation is a failed
+delivery, including during daemon shutdown. Command output and webhook response
+bodies are discarded. Destinations are `[redacted]` in
 diagnostics; notification errors contain stable codes only. Config and command
 arguments remain private input on disk and in the launched process's argv.
+
+Shutdown allows one second for the canceled delivery worker to finish. If an
+OS call cannot be interrupted, monitoring can still stop; a late worker return
+cannot change the journal or mark the canceled event sent.
 
 All transitions enter the local journal. External delivery is limited to one
 per minute globally and one per service/event-kind/subject per five minutes.
 Suppressed deliveries are marked `rate_limited`; they are not queued or retried.
+Eligible deliveries remain `pending` until completed, then become `sent` or
+`failed`. Queue saturation and shutdown cancellation are recorded as `failed`;
+these deliveries are not retried.
 Repeated down checks do not create another down event, and each expiry
 threshold emits once per recorded deadline/source. A renewed deadline starts a
 new expiry cycle. Events and delivery reservations are saved before invocation,

@@ -455,7 +455,6 @@ func (s statusRead) getPollableStatus(pidPath, regPath, snapshotPath, authHandof
 	snapshot, loadErr := runtimeLoadSnapshotFn(snapshotPath)
 	if snapshot != nil {
 		r.GlobalError = cloneServiceError(snapshot.GlobalError)
-		r.Alerts = snapshot.Alerts
 	}
 	expected := tsruntime.ExpectedRuntime{CurrentRegistryFingerprint: fingerprint}
 	if r.DaemonRunning {
@@ -465,6 +464,11 @@ func (s statusRead) getPollableStatus(pidPath, regPath, snapshotPath, authHandof
 		}
 	}
 	freshness := tsruntime.Classify(snapshot, loadErr, expected)
+	// Events always come from the durable journal. A live, fresh snapshot may
+	// additionally report a write failure that could not itself be persisted.
+	if r.DaemonRunning && snapshotContributesRuntimeEvidence(freshness) && snapshot != nil && r.Alerts.Error == "" {
+		r.Alerts.Error = snapshot.Alerts.Error
+	}
 	up := make(map[string]struct{})
 	if snapshotContributesRuntimeEvidence(freshness) && snapshot != nil {
 		up = make(map[string]struct{}, len(snapshot.Services))

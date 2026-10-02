@@ -193,6 +193,10 @@ func TestHealthTransitionsArriveOnEventsStream(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		s.healthCycle(ctx, r, now.Add(time.Duration(i)*time.Minute), func(context.Context, registry.Service) string { return "health_status_mismatch" })
 		frame := readMCPEventFrame(t, reader)
+		// Node expiry and app checks publish independently as they finish.
+		for !strings.Contains(frame.Data, `"consecutive_failures":`+fmt.Sprint(i+1)) {
+			frame = readMCPEventFrame(t, reader)
+		}
 		if frame.Event != MCPEventUpdate || !strings.Contains(frame.Data, `"consecutive_failures":`+fmt.Sprint(i+1)) {
 			t.Fatal(frame)
 		}
@@ -202,6 +206,9 @@ func TestHealthTransitionsArriveOnEventsStream(t *testing.T) {
 	}
 	s.healthCycle(ctx, r, now.Add(3*time.Minute), func(context.Context, registry.Service) string { return "" })
 	frame := readMCPEventFrame(t, reader)
+	for !strings.Contains(frame.Data, `"kind":"app_recovered"`) {
+		frame = readMCPEventFrame(t, reader)
+	}
 	if frame.Event != MCPEventUpdate || !strings.Contains(frame.Data, `"kind":"app_recovered"`) {
 		t.Fatal(frame)
 	}
