@@ -24,9 +24,12 @@ Credential Manager logon context; credential availability still depends on the
 host's policies. Keep the user signed in (locking the desktop is fine). This is
 login autostart, not boot before login or operation after logout.
 
-The task waits for foreground `serve` and propagates its exit code. A nonzero exit
-retries after a fixed 60-second backoff, up to 255 attempts, the scheduler schema's
-maximum. Continuous crash loops eventually stop; inspect `tslink logs` and
+The task launches a built-in supervisor, which waits for foreground `serve` and
+restarts unexpected daemon exits with a 1-to-60-second exponential backoff.
+Five minutes of stable runtime reset the counter; eight consecutive unstable
+runs open a persistent breaker. Task-level 60-second / 255-attempt retry settings
+remain a launcher backstop; VM tests did not show them recovering daemon crashes.
+Inspect `tslink logs` and
 `tslink doctor`, fix the cause, and run `tslink install` again. The task has no
 execution time limit, ignores overlapping starts, and does not require idle,
 network availability, or AC power. Sleep suspends the host; TSLink does not wake it.
@@ -34,11 +37,11 @@ These settings support long sessions, and do not guarantee months of uptime.
 
 | Option | Admin needed | Credential context / trade-off | TSLink choice |
 |---|---|---|---|
-| Task Scheduler with interactive token | No, for your own least privilege task | Existing user's logon session; available only while signed in; crash retry settings | Default |
+| Task Scheduler with interactive token | No, for your own least privilege task | Existing user's logon session; built-in supervisor recovers daemon crashes while signed in | Default |
 | Task Scheduler with S4U or password | S4U registration may avoid admin | S4U lacks network/encrypted-file access; password mode stores a Windows password and needs batch-logon rights; cannot promise the same Credential Manager session | Not offered |
 | SCM Windows service (including service wrappers) | Normally yes to create the service | Session 0 and a separate service account/logon context; suitable for machine boot only with separate credential and service support | Not implemented |
 | Startup folder / HKCU Run | No | Interactive user context; login launch only, no native crash restart | `tslink install --startup` fallback |
-| Custom per-user watchdog | No | Can retry indefinitely, but another process and shutdown protocol must themselves be supervised | Not added |
+| Built-in per-user supervisor | No | Config lock, bounded backoff, persistent breaker and graceful stop; supervisor crash recovery remains a launcher limitation | Used by the default task |
 
 When Task Scheduler or built-in Windows PowerShell is unavailable or blocked by
 policy, explicitly choose `tslink install --startup`. It registers the existing

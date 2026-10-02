@@ -43,6 +43,9 @@ type Supervision struct {
 	RestartOnExit  bool   `json:"restart_on_exit"`
 	Path           string `json:"path,omitempty"`
 	Detail         string `json:"detail"`
+	SupervisorPID  int    `json:"supervisor_pid,omitempty"`
+	RuntimeState   string `json:"runtime_state,omitempty"`
+	FailureReason  string `json:"failure_reason,omitempty"`
 }
 
 const (

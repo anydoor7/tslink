@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"github.com/anydoor7/tslink/internal/daemon"
 	"io"
 	"os"
 	"path/filepath"
@@ -20,9 +21,11 @@ func isolateWindowsTask(t *testing.T) (string, windowsTaskSpec) {
 	dir := isolateBootstrap(t)
 	oldCall, oldSID, oldOwn, oldDaemon := windowsSchedulerFn, windowsSIDFn, windowsTaskOwnsPIDFn, windowsDaemonRunningFn
 	oldExe, oldEval := windowsExecutablePathFn, windowsEvalSymlinksFn
+	oldRead, oldAlive := readBuiltinSupervisorFn, builtinSupervisorAliveFn
 	t.Cleanup(func() {
 		windowsSchedulerFn, windowsSIDFn, windowsTaskOwnsPIDFn, windowsDaemonRunningFn = oldCall, oldSID, oldOwn, oldDaemon
 		windowsExecutablePathFn, windowsEvalSymlinksFn = oldExe, oldEval
+		readBuiltinSupervisorFn, builtinSupervisorAliveFn = oldRead, oldAlive
 	})
 	windowsSIDFn = func() (string, error) { return fixtureTaskSpec().SID, nil }
 	windowsExecutablePathFn = func() (string, error) { return fixtureTaskSpec().Executable, nil }
@@ -33,6 +36,10 @@ func isolateWindowsTask(t *testing.T) (string, windowsTaskSpec) {
 	spec := fixtureTaskSpec()
 	spec.ConfigDir = dir
 	spec.PowerShell = windowsPowerShellPath()
+	readBuiltinSupervisorFn = func(string) (builtinSupervisorRecord, error) {
+		return builtinSupervisorRecord{Version: 1, ConfigDir: dir, Instance: daemon.SupervisorInstance{PID: 43, Executable: spec.Executable}, SupervisorState: daemon.SupervisorState{State: "running", DaemonPID: 4242}}, nil
+	}
+	builtinSupervisorAliveFn = func(daemon.SupervisorInstance) (bool, error) { return true, nil }
 	return dir, spec
 }
 

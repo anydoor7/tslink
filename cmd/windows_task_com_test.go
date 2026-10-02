@@ -27,8 +27,11 @@ func TestWindowsSchedulerCOMUnicodeCapture(t *testing.T) {
 	spec := fixtureTaskSpec()
 	spec.ConfigDir = `C:\Windows\Temp\tslink-f9-fix1\家人 & O'Brien`
 	spec.Executable = spec.ConfigDir + `\tslink.exe`
-	if !s.Exists || !s.Enabled || !windowsTaskMatches([]byte(s.XML), spec) {
-		t.Fatal("real COM definition lost ownership, Unicode paths or healthy policy")
+	if !s.Exists || !s.Enabled || !windowsTaskOwned([]byte(s.XML), spec) {
+		t.Fatal("real COM definition lost ownership or Unicode paths")
+	}
+	if windowsTaskMatches([]byte(s.XML), spec) {
+		t.Fatal("legacy direct-daemon capture incorrectly promises crash recovery")
 	}
 	definition, err := parseWindowsTask([]byte(s.XML))
 	if err != nil || definition.Actions.Exec[0].WorkingDirectory != spec.ConfigDir {

@@ -35,8 +35,12 @@ var installCmd = &cobra.Command{
 	Short: "Install a per-user Windows scheduled task",
 	Long: `Install and start TSLink using Task Scheduler at user sign-in, with
 least privilege and access to the current user's Credential Manager. No
-administrator rights or stored Windows password are required. A failed daemon
-is retried every 60 seconds, up to 255 times. A graceful stop stays stopped.
+administrator rights or stored Windows password are required. The built-in
+supervisor restarts unexpected daemon exits with a 1-to-60-second exponential
+backoff, resetting after 5 minutes. Eight consecutive unstable runs stop crash
+recovery; inspect status/doctor and logs, then run install to reset the breaker.
+A graceful stop stops both processes and stays stopped. Task restart settings
+are a launcher backstop; they did not recover daemon crashes in VM measurements.
 The user must remain signed in; this does not run before sign-in or after logout.
 
 Re-running install updates the executable and gracefully restarts an identified
@@ -189,14 +193,21 @@ func installWindowsTask(cmd *cobra.Command, noAutoProvision bool) error {
 		if !old.Exists || !windowsDaemonRunningFn(pidPath) || old.State != 4 || !windowsTaskOwnsPIDFn(pid, old.Engines, oldSpec.Executable) {
 			return output.ErrConflict("daemon already running without verified Task Scheduler ownership; run tslink stop, then tslink install")
 		}
+	} else if !daemon.IsPIDFileMissing(pidPath) && !daemon.IsProcessAbsentFromPIDFile(pidPath) && !daemon.IsForeignProcessFromPIDFile(pidPath) {
+		return output.ErrConflict("daemon PID identity is unverified; inspect tslink doctor before install")
+	}
+	if old.State == 4 || len(old.Engines) > 0 || isRunningFn(pidPath) {
 		if _, err := windowsSchedulerFn("disable", name, nil); err != nil {
 			return err
 		}
-		if err := stopDaemonFn(pidPath); err != nil {
-			return fmt.Errorf("task disabled; graceful stop failed (definition retained): %w", err)
+		if _, err := stopSupervisorFn(pidPath); err != nil {
+			return fmt.Errorf("task disabled; supervisor stop failed (definition retained): %w", err)
 		}
-	} else if !daemon.IsPIDFileMissing(pidPath) && !daemon.IsProcessAbsentFromPIDFile(pidPath) && !daemon.IsForeignProcessFromPIDFile(pidPath) {
-		return output.ErrConflict("daemon PID identity is unverified; inspect tslink doctor before install")
+		if isRunningFn(pidPath) {
+			if err := stopDaemonFn(pidPath); err != nil {
+				return fmt.Errorf("task disabled; graceful stop failed (definition retained): %w", err)
+			}
+		}
 	}
 	if old.State == 4 || len(old.Engines) > 0 {
 		current, err := windowsSchedulerFn("query", name, nil)
@@ -232,6 +243,9 @@ func installWindowsTask(cmd *cobra.Command, noAutoProvision bool) error {
 		return err
 	}
 	if err := config.EnsureDir(); err != nil {
+		return err
+	}
+	if err := clearBuiltinSupervisor(pidPath); err != nil {
 		return err
 	}
 	// Retain evidence before mutation: a timed-out COM call may have committed.

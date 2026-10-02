@@ -22,19 +22,20 @@ daemon。无需管理员权限，也不存储 Windows 密码。使用已有交�
 Credential Manager 登录上下文；凭据可用性仍受机器策略影响。用户必须保持登录，锁屏
 可以。它是登录自启动，不能在无人登录时随开机运行，也不能承诺登出后继续工作。
 
-任务启动器等待前台 `serve` 并传递退出码。非零退出后固定等待 60 秒再重试，最多 255 次，
-这是 scheduler schema 的上限。持续崩溃最终会停下；检查 `tslink logs`、`tslink doctor`，
+任务启动内置 supervisor，后者等待前台 `serve`，对意外退出执行 1 到 60 秒的指数退避。
+稳定运行 5 分钟重置计数；连续 8 次不稳定运行触发持久断路器。任务层的每 60 秒 / 255 次
+重试设置保留为启动失败的后备措施；VM 未测得它能恢复 daemon 崩溃。检查 `tslink logs`、`tslink doctor`，
 修复原因后重新运行 `tslink install`。任务不设执行时限，忽略重叠启动，也不要求空闲、
 网络可用或接通交流电。睡眠会暂停机器；TSLink 不唤醒它。这些设置支持长时间登录会话，
 但不保证连续数月在线。
 
 | 选项 | 是否需要管理员 | 凭据上下文与取舍 | TSLink 选择 |
 |---|---|---|---|
-| Task Scheduler 交互 token | 当前用户最低权限任务不需要 | 使用已有登录会话；只在登录期间可用；支持失败重试 | 默认 |
+| Task Scheduler 交互 token | 当前用户最低权限任务不需要 | 使用已有登录会话；内置 supervisor 在登录期间恢复 daemon 崩溃 | 默认 |
 | Task Scheduler S4U 或密码模式 | S4U 注册可能不需要 | S4U 无法访问网络和加密文件；密码模式存储 Windows 密码并需要 batch-logon 权限；不能承诺同一 Credential Manager 会话 | 不提供 |
 | SCM Windows service，包括 service wrapper | 创建服务通常需要 | Session 0 和独立服务账户/登录上下文；需要额外的凭据及 service 支持才能开机运行 | 未实现 |
 | Startup 文件夹 / HKCU Run | 不需要 | 交互用户上下文；只在登录时启动，无原生崩溃重启 | `tslink install --startup` 降级 |
-| 自定义用户 watchdog | 不需要 | 可无限重试，但多一个需要监管的进程和停止协议 | 不增加 |
+| 内置用户 supervisor | 不需要 | 配置目录锁、有上限的退避、持久断路器与优雅停止；supervisor 自身崩溃恢复仍受启动器限制 | 默认任务使用 |
 
 Task Scheduler 或系统 Windows PowerShell 不可用、被策略禁用时，显式使用
 `tslink install --startup`。它注册现有 VBScript 启动器，下次登录才生效；报告

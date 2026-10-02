@@ -1,6 +1,6 @@
 param(
     [string]$Binary,
-    [int]$RestartTimeoutSeconds = 100
+    [int]$RestartTimeoutSeconds = 30
 )
 # Run in a clean, disposable Windows user session. No elevation, prompts,
 # credentials, tailnet nodes or network services are used. Existing installations
@@ -37,6 +37,11 @@ function Wait-Daemon([int]$DifferentFrom = 0, [int]$Seconds = 30) {
         }
         Start-Sleep -Milliseconds 500
     } while ([DateTime]::UtcNow -lt $deadline)
+    Write-Output ('WAIT_TIMEOUT_STATUS ' + ($s | ConvertTo-Json -Compress -Depth 5))
+    foreach ($name in @('runtime.json','supervisor.json')) {
+        $path = Join-Path $env:TSLINK_CONFIG_DIR $name
+        if (Test-Path $path) { Write-Output ('WAIT_TIMEOUT_' + $name + ' ' + [IO.File]::ReadAllText($path).Trim()) }
+    }
     throw 'Verified daemon and matching runtime artifact did not appear before deadline'
 }
 try {
@@ -44,7 +49,7 @@ try {
     if (-not $Binary -or -not $env:APPDATA) { throw 'Binary argument and APPDATA are required' }
     $startup = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Startup\tslink.vbs'
     $definition = Join-Path $env:APPDATA 'tslink-supervisor\task.xml'
-    if ($RestartTimeoutSeconds -lt 75) { throw 'Restart deadline must allow the 60-second backoff' }
+    if ($RestartTimeoutSeconds -lt 5) { throw 'Restart deadline must allow the first 1-second backoff and initialization' }
     $Binary = (Resolve-Path $Binary).Path
     $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
     $taskName = 'TSLink-' + $sid
@@ -80,22 +85,38 @@ try {
     if ($install.service_manager -ne 'windows-task-scheduler' -or -not $install.started) { throw 'Install did not verify Task Scheduler ownership' }
     $first = Wait-Daemon
     $killedAt = [DateTime]::UtcNow
-    Stop-Process -Id $first -Force
+    & "$env:SystemRoot\System32\taskkill.exe" /PID $first /F
+    if ($LASTEXITCODE -ne 0) { throw 'taskkill did not kill the daemon' }
+    $pidDeadline = $killedAt.AddSeconds($RestartTimeoutSeconds)
+    $newPID = 0
+    do {
+        $pidPath = Join-Path $scratch 'tslink.pid'
+        if (Test-Path $pidPath) {
+            $text = [IO.File]::ReadAllText($pidPath).Trim()
+            if ($text -match '^\d+$' -and [int]$text -ne $first) { $newPID = [int]$text; break }
+        }
+        Start-Sleep -Milliseconds 25
+    } while ([DateTime]::UtcNow -lt $pidDeadline)
+    if (-not $newPID) { throw 'New daemon PID did not appear within the first crash backoff bound' }
+    $pidRestartSeconds = ([DateTime]::UtcNow - $killedAt).TotalSeconds
     $second = Wait-Daemon -DifferentFrom $first -Seconds $RestartTimeoutSeconds
-    if (([DateTime]::UtcNow - $killedAt).TotalSeconds -lt 50) { throw 'Crash restarted before the configured backoff' }
-    Write-Output "PASS crash restart: $first -> $second"
+    $restartSeconds = ([DateTime]::UtcNow - $killedAt).TotalSeconds
+    if ($second -ne $newPID -or $pidRestartSeconds -lt 1 -or $restartSeconds -gt $RestartTimeoutSeconds) { throw 'Crash restart outside the first backoff/initialization bound' }
+    Write-Output "PASS crash restart: $first -> $second; new PID in $pidRestartSeconds seconds; verified runtime/ownership in $restartSeconds seconds (first backoff 1s)"
     $stop = Invoke-TSLink -Arguments @('stop','--json')
     if (-not $stop.stopped) { throw 'Graceful stop did not report success' }
     Start-Sleep -Seconds 65
     $s = Invoke-TSLink -Arguments @('status','--json')
-    if ($s.daemon_running) { throw 'Graceful successful stop unexpectedly restarted' }
+    Write-Output ('STOP_STATUS ' + ($s | ConvertTo-Json -Compress -Depth 5))
+    Write-Output ('STOP_SUPERVISOR ' + [IO.File]::ReadAllText((Join-Path $scratch 'supervisor.json')).Trim())
+    if ($s.daemon_running -or $s.supervision.supervisor_pid -or $s.supervision.runtime_state -ne 'stopped') { throw 'Graceful successful stop unexpectedly restarted or left a supervisor' }
     $null = Invoke-TSLink -Arguments @('install','--json')
     $null = Wait-Daemon
     $uninstall = Invoke-TSLink -Arguments @('uninstall','--json')
     if (-not $uninstall.removed) { throw 'Uninstall did not remove task' }
     $installed = $false
     $s = Invoke-TSLink -Arguments @('status','--json')
-    if ($s.daemon_running -or $s.supervision.installed -or (Test-Path $definition)) { throw 'Uninstall left daemon or supervision' }
+    if ($s.daemon_running -or $s.supervision.installed -or (Test-Path $definition) -or (Test-Path (Join-Path $scratch 'supervisor.json'))) { throw 'Uninstall left daemon or supervision' }
     $exitCode = 0
 } catch {
     Write-Output ('FAIL Windows supervision: ' + $_.Exception.Message)

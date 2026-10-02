@@ -101,28 +101,30 @@ func windowsTaskSpecFromDefinition(data []byte, dir string) (windowsTaskSpec, er
 	if len(t.Actions.Exec) != 1 {
 		return windowsTaskSpec{}, fmt.Errorf("unexpected task action")
 	}
-	for _, noAuto := range []bool{false, true} {
-		// Decode only the launcher shape emitted by this installer.
-		prefix := "-NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -EncodedCommand "
-		encoded := strings.TrimPrefix(t.Actions.Exec[0].Arguments, prefix)
-		script, err := decodePowerShell(encoded)
-		if err != nil {
-			continue
-		}
-		start := "$ErrorActionPreference='Stop'; $env:TSLINK_CONFIG_DIR=" + powershellLiteral(dir) + "; $env:TSLINK_MANAGED_LOGS='1'; & '"
-		end := "' serve --no-browser"
-		if noAuto {
-			end += " --no-auto-provision"
-		}
-		end += "; exit $LASTEXITCODE"
-		if !strings.HasPrefix(script, start) || !strings.HasSuffix(script, end) {
-			continue
-		}
-		exe := strings.TrimSuffix(strings.TrimPrefix(script, start), end)
-		exe = strings.ReplaceAll(exe, "''", "'")
-		spec := windowsTaskSpec{sid, exe, dir, windowsPowerShellPath(), noAuto}
-		if windowsTaskOwned(data, spec) {
-			return spec, nil
+	for _, mode := range []string{"supervise", "serve --no-browser"} {
+		for _, noAuto := range []bool{false, true} {
+			// Decode only the launcher shape emitted by this installer.
+			prefix := "-NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -EncodedCommand "
+			encoded := strings.TrimPrefix(t.Actions.Exec[0].Arguments, prefix)
+			script, err := decodePowerShell(encoded)
+			if err != nil {
+				continue
+			}
+			start := "$ErrorActionPreference='Stop'; $env:TSLINK_CONFIG_DIR=" + powershellLiteral(dir) + "; $env:TSLINK_MANAGED_LOGS='1'; & '"
+			end := "' " + mode
+			if noAuto {
+				end += " --no-auto-provision"
+			}
+			end += "; exit $LASTEXITCODE"
+			if !strings.HasPrefix(script, start) || !strings.HasSuffix(script, end) {
+				continue
+			}
+			exe := strings.TrimSuffix(strings.TrimPrefix(script, start), end)
+			exe = strings.ReplaceAll(exe, "''", "'")
+			spec := windowsTaskSpec{sid, exe, dir, windowsPowerShellPath(), noAuto}
+			if windowsTaskOwned(data, spec) {
+				return spec, nil
+			}
 		}
 	}
 	return windowsTaskSpec{}, fmt.Errorf("task definition does not match TSLink user/config/action ownership")
@@ -238,8 +240,41 @@ func detectSupervision(pidPath string, running bool, pid int) Supervision {
 			return unmanagedSupervision(true, "Task Scheduler does not own the verified daemon PID; inspect tslink doctor before reinstalling")
 		}
 		path, _ := windowsTaskPath()
-		return Supervision{Manager: "windows-task-scheduler", Installed: true, Autostart: true, AutostartScope: autostartScopeLogin,
-			RestartOnExit: true, Path: path, Detail: fmt.Sprintf("Task %s uses this user's interactive session; crash retry every 60s, up to 255 attempts; graceful stop stays stopped. No boot before sign-in or survival after logout. State=%d, last_result=%d. Undo: tslink uninstall", name, s.State, s.LastResult)}
+		result := Supervision{Manager: "windows-task-scheduler", Installed: true, Autostart: true, AutostartScope: autostartScopeLogin,
+			Path: path, Detail: fmt.Sprintf("Task %s launches the built-in supervisor at sign-in. Daemon crash backoff: 1s doubling to 60s; reset after 5 minutes; breaker after 8 consecutive unstable runs. Task RestartOnFailure (60s/255) is a launcher backstop, not verified supervisor crash recovery. No boot before sign-in or survival after logout. State=%d, last_result=%d. Undo: tslink uninstall", name, s.State, s.LastResult)}
+		record, recordErr := readBuiltinSupervisorFn(pidPath)
+		if recordErr != nil {
+			result.Detail += "; built-in supervisor state unavailable; run tslink install"
+			if running {
+				return unmanagedSupervision(true, result.Detail)
+			}
+			return result
+		}
+		result.RuntimeState, result.FailureReason = record.State, record.Reason
+		alive, identityErr := builtinSupervisorAliveFn(record.Instance)
+		if identityErr != nil && builtinSupervisorTerminal(record.State) {
+			// Retain the historical terminal reason without claiming a live PID.
+			// The task definition was independently verified above.
+			alive, identityErr = false, nil
+		}
+		if identityErr != nil || (alive && (!strings.EqualFold(record.Instance.Executable, spec.Executable) || s.State != 4 || !windowsTaskOwnsPIDFn(record.Instance.PID, s.Engines, spec.Executable))) {
+			return unmanagedSupervision(running, "Built-in supervisor identity/task ownership unverified; inspect tslink doctor")
+		}
+		if alive {
+			result.SupervisorPID = record.Instance.PID
+			result.RestartOnExit = record.State == "running" || record.State == "starting" || record.State == "restarting"
+		}
+		if running && (!alive || record.State != "running" || record.DaemonPID != pid || !windowsTaskOwnsPIDFn(pid, []int{record.Instance.PID}, spec.Executable)) {
+			return unmanagedSupervision(true, "Built-in supervisor does not own the verified daemon PID; inspect tslink doctor")
+		}
+		result.Detail += fmt.Sprintf("; supervisor=%s, failures=%d, reason=%s", record.State, record.Failures, record.Reason)
+		if record.State == "restarting" {
+			result.Detail += fmt.Sprintf(", next_start=%s", record.NextStart.UTC().Format(time.RFC3339))
+		}
+		if record.State == "circuit_open" || record.State == "failed" {
+			result.Detail += "; crash recovery stopped; inspect logs, then run tslink install"
+		}
+		return result
 	}
 	if fallback, ok := detectWindowsStartup(); ok {
 		return fallback

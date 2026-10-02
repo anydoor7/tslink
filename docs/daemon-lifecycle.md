@@ -88,8 +88,9 @@ node to enroll.
 On macOS this installs a LaunchAgent that starts at user login; on Linux it enables
 a systemd user unit. For Linux boot before login and survival after logout, run
 `loginctl enable-linger "$USER"` once. Windows Task Scheduler starts immediately and at later sign-ins, with a
-60-second crash retry delay (up to 255 attempts), but requires the user to remain
-signed in. `--startup` is a fallback without crash restart or live PID ownership
+Windows-only built-in supervisor, but requires the user to remain signed in.
+It restarts daemon crashes with bounded exponential backoff; `--startup` is a
+fallback without crash restart or live PID ownership
 proof. The backend application must also start after reboot, and first-time Tailscale
 enrollment still requires authorization. Each installed definition binds the absolute
 `TSLINK_CONFIG_DIR`; automatic setup refuses to overwrite another config's manager.
@@ -99,10 +100,27 @@ Homebrew does not install a second service manager.
 
 The default Windows manager is `windows-task-scheduler`; `supervision` reports
 `autostart_scope:login` and `restart_on_exit:true` only after checking the loaded
-user, config, action, enabled state and restart policy. For a running daemon it
-also checks its executable and process ancestry against the task's engine PIDs.
+user, config, action, enabled state, restart policy and live built-in supervisor.
+For a running daemon it also checks its own PID identity and executable, its
+ancestry to that supervisor, and the supervisor's ancestry to the task engine.
 An unknown or mismatched state stays `manual`/`none` with diagnostic detail.
-This is failure restart: a successful graceful stop is intentionally left stopped.
+The scheduled task is a logon launcher. In a Windows VM, neither killing the
+direct daemon nor an independent exit-1 control caused Task Scheduler to relaunch
+it. `RestartOnFailure` remains configured at 60 seconds / 255 attempts as a
+launcher backstop; recovery after a supervisor crash is not proven by that setting.
+
+The hidden Windows supervisor starts a foreground `serve` child with the same
+environment and config directory. The daemon continues to publish its own PID.
+A config-directory lock prevents duplicate supervisors; a Windows Job Object
+terminates assigned children if their supervisor disappears. Unexpected daemon
+exits (including zero) retry after 1, 2, 4, 8, 16, 32, then at most 60 seconds.
+A run lasting at least five minutes resets the failure counter. Eight consecutive
+unstable runs open the breaker and stop recovery with a successful supervisor
+exit, so task retries cannot undo it. The breaker persists across sign-in; inspect
+logs, then run `tslink install` to reset it. `status` and `doctor` expose
+`supervisor_pid`, `runtime_state` (`starting`, `running`, `restarting`, `stopped`,
+`circuit_open`, or `failed`) and `failure_reason`. A missing daemon during backoff
+is distinct from a missing supervisor; the next start time appears in the detail.
 
 To migrate a Startup install, stop its daemon, then run `tslink install`. For an
 older binary without a shutdown event, the new `stop` returns an explicit error;
@@ -117,15 +135,19 @@ An owned task remains repairable with `tslink install` and removable with
 `tslink uninstall` when disabled or when its restart settings need repair. A
 disabled task never reports healthy supervision. After a stop or deletion error,
 resolve the reported cause and retry either command; ownership still requires
-the same user, config and exact foreground action. A missing PID file after a
+the same user, config and exact launcher action. Legacy direct-daemon tasks are
+repairable/removable, but cannot report verified crash recovery. A missing PID file after a
 clean stop is accepted; malformed or unreadable PID evidence is still refused.
 
 `tslink stop` verifies process identity and sets a Windows named shutdown event
-whose DACL admits only the current user and SYSTEM. The daemon cancels the same
-context used by the normal tsnet cleanup path. No console window, port, admin
-rights or force termination are used. It waits up to five seconds; a timeout or
-missing listener is an error and retains PID evidence. `tslink uninstall` disables
-the task first, gracefully stops its verified daemon, confirms no running task
+whose DACL admits only the current user and SYSTEM. It first stops the supervisor,
+including a pending backoff with no daemon PID. The supervisor cancels recovery
+and asks its direct child to run the normal tsnet cleanup path. A manual daemon
+uses the existing named event. No console window, port or admin rights are needed.
+Child shutdown waits up to five seconds (plus a bounded startup-event wait);
+supervisor shutdown waits up to ten seconds. Failures retain inspection evidence;
+the Job Object reclaims assigned children if the supervisor exits after a failure.
+`tslink uninstall` disables the task first, stops both processes, confirms no running task
 instance, deletes the task, then removes the local definition. Inspection,
 ownership or stop failures retain the definition; the task may be disabled.
 Startup-only uninstall removes autostart without taking ownership of a process.
@@ -145,11 +167,13 @@ It refuses existing TSLink supervisor files/tasks and credentials, uses an isola
 empty registry, and creates no Tailscale nodes. It checks a matching daemon runtime
 artifact, kills the daemon, observes restart after the backoff, verifies that
 graceful stop stays stopped, reinstalls, then uninstalls. It prints explicit
-`PASS`/`FAIL` and exits 0/1; budget roughly three minutes. The Windows CI job runs
+`PASS`/`FAIL` and exits 0/1; budget roughly two minutes. The Windows CI job runs
 this smoke and the native unit/race tests. A normal admin-capable CI user does not
 by itself prove standard-user install; run the same smoke as a standard user on a VM.
 
-Microsoft references, accessed **2026-10-01**:
+Microsoft references, accessed **2026-10-02**:
+[RestartOnFailure scope](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-tsch/2ff4aa5a-7bc4-449f-bbb1-27475645867f),
+[Job Objects](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects),
 [task instance engines](https://learn.microsoft.com/en-us/windows/win32/taskschd/runningtask-enginepid),
 [running instances](https://learn.microsoft.com/en-us/windows/win32/taskschd/registeredtask-getinstances),
 [named events and security](https://learn.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-createeventw),

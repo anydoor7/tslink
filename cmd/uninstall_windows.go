@@ -5,6 +5,7 @@ package cmd
 import (
 	"fmt"
 	"github.com/anydoor7/tslink/internal/config"
+	"github.com/anydoor7/tslink/internal/daemon"
 	"os"
 	"time"
 
@@ -68,6 +69,9 @@ func runUninstallLocked(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
+		if _, err := stopSupervisorFn(pidPath); err != nil {
+			return fmt.Errorf("task disabled; supervisor shutdown failed; definition retained: %w", err)
+		}
 		if isRunningFn(pidPath) {
 			pid, err := readPIDFn(pidPath)
 			if err != nil {
@@ -109,6 +113,12 @@ func runUninstallLocked(cmd *cobra.Command, args []string) error {
 		if err := os.Remove(taskPath); err != nil && !os.IsNotExist(err) {
 			return err
 		}
+		if err := clearBuiltinSupervisor(pidPath); err != nil {
+			return err
+		}
+		if daemon.IsProcessAbsentFromPIDFile(pidPath) {
+			daemon.RemovePID(pidPath)
+		}
 		startupPath, _ := windowsStartupScriptPath()
 		if err := os.Remove(startupPath); err != nil && !os.IsNotExist(err) {
 			return err
@@ -123,6 +133,19 @@ func runUninstallLocked(cmd *cobra.Command, args []string) error {
 	// Confirmed absent task, or explicit Startup-only fallback on an unavailable
 	// scheduler. Remove stale local task evidence only after confirmed absence.
 	if queryErr == nil {
+		pidPath, err := config.PIDPath()
+		if err != nil {
+			return err
+		}
+		if _, err := stopSupervisorFn(pidPath); err != nil {
+			return err
+		}
+		if err := clearBuiltinSupervisor(pidPath); err != nil {
+			return err
+		}
+		if daemon.IsProcessAbsentFromPIDFile(pidPath) {
+			daemon.RemovePID(pidPath)
+		}
 		if err := os.Remove(taskPath); err != nil && !os.IsNotExist(err) {
 			return err
 		}

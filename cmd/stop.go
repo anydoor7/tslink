@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -16,6 +17,8 @@ var stopDaemonFn = daemon.StopDaemon
 var removePIDFn = daemon.RemovePID // retained as a compatibility test seam; not called on an inconclusive stop path
 var isProcessAbsentFromPIDFileFn = daemon.IsProcessAbsentFromPIDFile
 var pidPathFn = config.PIDPath
+var stopSupervisorFn = func(string) (bool, error) { return false, nil }
+var stopServiceTransactionFn = func(_ context.Context, run func() error) error { return run() }
 
 func commandIsDaemonRunning(pidPath string) bool {
 	if daemon.IsRunning(pidPath) {
@@ -35,15 +38,23 @@ type StopResult struct {
 }
 
 func stopService(pidPath string, isJSON bool, out io.Writer) error {
+	supervised, err := stopSupervisorFn(pidPath)
+	if err != nil {
+		return err
+	}
 	if !isRunningFn(pidPath) {
 		if isProcessAbsentFromPIDFileFn(pidPath) {
 			removePIDFn(pidPath)
 		}
 		if isJSON {
-			output.Success("stop", StopResult{WasRunning: false, Stopped: false})
+			output.Success("stop", StopResult{WasRunning: supervised, Stopped: supervised})
 			return nil
 		}
-		fmt.Fprintln(out, "tslink is not running")
+		if supervised {
+			fmt.Fprintln(out, "tslink stopped")
+		} else {
+			fmt.Fprintln(out, "tslink is not running")
+		}
 		return nil
 	}
 
@@ -81,8 +92,9 @@ If TSLink was installed as a Linux systemd user service, a graceful stop exits
 successfully, so Restart=on-failure leaves it stopped. Run 'tslink install' or
 'systemctl --user start tslink.service' to start the installed service again.
 
-A Windows scheduled task likewise leaves a successful graceful stop stopped;
-run 'tslink install' to start it again. Crash restart uses a 60-second delay.
+A Windows stop cancels the built-in supervisor, including a pending crash
+backoff, and gracefully stops its child. Run 'tslink install' to start it again.
+Unexpected daemon exits use a 1-to-60-second exponential backoff with a breaker.
 
 If the daemon is not running, a "not running" message is displayed. Stale PID
 identity files are cleaned up only after process absence is confirmed; an
@@ -96,7 +108,9 @@ Examples:
 			if err != nil {
 				return err
 			}
-			return stopService(pidPath, jsonOutput(cmd), cmd.OutOrStdout())
+			return stopServiceTransactionFn(cmd.Context(), func() error {
+				return stopService(pidPath, jsonOutput(cmd), cmd.OutOrStdout())
+			})
 		},
 	}
 

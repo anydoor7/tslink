@@ -74,7 +74,7 @@ func TestWindowsTaskEscapingAndForegroundExit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "$ErrorActionPreference='Stop'; $env:TSLINK_CONFIG_DIR='C:\\Users\\A < B & 家人\\'; $env:TSLINK_MANAGED_LOGS='1'; & 'C:\\O''Brien & 家人\\tslink.exe' serve --no-browser --no-auto-provision; exit $LASTEXITCODE"
+	want := "$ErrorActionPreference='Stop'; $env:TSLINK_CONFIG_DIR='C:\\Users\\A < B & 家人\\'; $env:TSLINK_MANAGED_LOGS='1'; & 'C:\\O''Brien & 家人\\tslink.exe' supervise --no-auto-provision; exit $LASTEXITCODE"
 	if script != want {
 		t.Fatalf("foreground launcher = %q, want %q", script, want)
 	}

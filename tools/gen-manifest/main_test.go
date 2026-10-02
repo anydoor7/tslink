@@ -349,11 +349,27 @@ func platformSpecificFlagRegistrations(t *testing.T) []platformFlagRegistration 
 			t.Fatalf("parse %s: %v", path, err)
 		}
 		flagSets := map[string]string{}
+		hiddenCommands := map[string]bool{}
 		ast.Inspect(file, func(node ast.Node) bool {
 			bind := func(left ast.Expr, right ast.Expr) {
 				variable, ok := left.(*ast.Ident)
 				if !ok {
 					return
+				}
+				if pointer, ok := right.(*ast.UnaryExpr); ok {
+					if literal, ok := pointer.X.(*ast.CompositeLit); ok {
+						if typ, ok := literal.Type.(*ast.SelectorExpr); ok && typ.Sel.Name == "Command" {
+							for _, element := range literal.Elts {
+								if field, ok := element.(*ast.KeyValueExpr); ok {
+									key, keyOK := field.Key.(*ast.Ident)
+									value, valueOK := field.Value.(*ast.Ident)
+									if keyOK && valueOK && key.Name == "Hidden" && value.Name == "true" {
+										hiddenCommands[variable.Name] = true
+									}
+								}
+							}
+						}
+					}
 				}
 				command, isFlagSet, valid := flagSetCommand(right)
 				if !isFlagSet {
@@ -412,6 +428,11 @@ func platformSpecificFlagRegistrations(t *testing.T) []platformFlagRegistration 
 					return true
 				}
 			default:
+				return true
+			}
+			// The public manifest omits hidden commands. Detect their explicit
+			// Cobra declaration rather than exempting a filename or flag name.
+			if hiddenCommands[commandName] {
 				return true
 			}
 			if method.Sel.Name != "Bool" || len(call.Args) < 2 {

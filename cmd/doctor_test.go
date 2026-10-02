@@ -243,6 +243,36 @@ func assertDoctorNoFinding(t *testing.T, result DoctorResult, code string) {
 	}
 }
 
+func TestDoctorSupervisorBreakerVisibleWithEmptyRegistry(t *testing.T) {
+	for _, state := range []string{"circuit_open", "failed"} {
+		t.Run(state, func(t *testing.T) {
+			newDoctorTestEnv(t, nil)
+			isRunningFn = func(string) bool { return false }
+			detectSupervisionFn = func(string, bool, int) Supervision {
+				return Supervision{Manager: "windows-task-scheduler", Installed: true, Autostart: true,
+					RuntimeState: state, FailureReason: "historical_reason"}
+			}
+			var out bytes.Buffer
+			if err := runDoctor(&out, doctorOptions{}, true); output.ExitCode(err) != output.ExitWarning {
+				t.Fatalf("doctor exit=%v output=%s", err, out.String())
+			}
+			var envelope struct {
+				OK   bool         `json:"ok"`
+				Code int          `json:"code"`
+				Data DoctorResult `json:"data"`
+			}
+			if err := json.Unmarshal(out.Bytes(), &envelope); err != nil {
+				t.Fatal(err)
+			}
+			finding := assertDoctorFinding(t, envelope.Data, inspect.WarningCodeDaemonRestartUnavailable)
+			if !envelope.OK || envelope.Code != int(output.ExitWarning) || envelope.Data.Counts.Services != 0 ||
+				envelope.Data.Supervision.RuntimeState != state || !strings.Contains(finding.Message, "historical_reason") {
+				t.Fatalf("doctor terminal evidence=%s", out.String())
+			}
+		})
+	}
+}
+
 func assertDoctorCodesRegistered(t *testing.T, result DoctorResult) {
 	t.Helper()
 	for _, finding := range result.Findings {

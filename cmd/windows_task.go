@@ -43,10 +43,17 @@ func decodePowerShell(encoded string) (string, error) {
 }
 
 func (s windowsTaskSpec) arguments() string {
-	// Wait for the foreground daemon and propagate its exit code. Detaching here
-	// would make a crash look like a successful task and defeat restart-on-failure.
+	return s.launchArguments("supervise")
+}
+
+func (s windowsTaskSpec) launchArguments(mode string) string {
+	// Task Scheduler launches the supervisor at logon. TSLink owns daemon
+	// crash recovery; task restart settings are only a launcher backstop.
 	script := "$ErrorActionPreference='Stop'; $env:TSLINK_CONFIG_DIR=" + powershellLiteral(s.ConfigDir) +
-		"; $env:TSLINK_MANAGED_LOGS='1'; & " + powershellLiteral(s.Executable) + " serve --no-browser"
+		"; $env:TSLINK_MANAGED_LOGS='1'; & " + powershellLiteral(s.Executable) + " " + mode
+	if mode == "serve" {
+		script += " --no-browser"
+	}
 	if s.NoAutoProvision {
 		script += " --no-auto-provision"
 	}
@@ -185,7 +192,8 @@ func windowsTaskOwned(data []byte, s windowsTaskSpec) bool {
 		return false
 	}
 	a := t.Actions.Exec[0]
-	return strings.EqualFold(a.Command, s.PowerShell) && a.Arguments == s.arguments() && a.WorkingDirectory == s.ConfigDir
+	return strings.EqualFold(a.Command, s.PowerShell) &&
+		(a.Arguments == s.arguments() || a.Arguments == s.launchArguments("serve")) && a.WorkingDirectory == s.ConfigDir
 }
 
 func windowsTaskMatches(data []byte, s windowsTaskSpec) bool {
@@ -193,6 +201,9 @@ func windowsTaskMatches(data []byte, s windowsTaskSpec) bool {
 		return false
 	}
 	t, _ := parseWindowsTask(data)
+	if t.Actions.Exec[0].Arguments != s.arguments() {
+		return false // Legacy direct-daemon tasks can be repaired, but cannot supervise crashes.
+	}
 	p := t.Settings
 	return boolIs(t.Triggers.Items[0].Enabled, true) &&
 		p.MultipleInstances == "IgnoreNew" && boolIs(p.DisallowBattery, false) && boolIs(p.StopBattery, false) &&

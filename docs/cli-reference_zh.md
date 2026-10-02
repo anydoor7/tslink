@@ -85,4 +85,4 @@
 | `--wait duration` | 等待 URL 或授权 URL；默认 `30s`，`0` 表示不等待 |
 | `--json` | 打印版本化的结果 envelope |
 
-Windows `tslink install --startup` 显式选择下次登录启动、无崩溃恢复的 Startup 降级。默认 `install` 使用 Task Scheduler 并验证立即启动。见[daemon 生命周期](daemon-lifecycle_zh.md#windows-监管与迁移)。
+Windows `tslink install --startup` 显式选择下次登录启动、无崩溃恢复的 Startup 降级。默认 `install` 使用 Task Scheduler 启动内置 supervisor 并验证立即启动。`stop` 停止两个进程，包括崩溃退避期间；`install` 重置已触发的崩溃循环断路器。见[daemon 生命周期](daemon-lifecycle_zh.md#windows-监管与迁移)。

@@ -330,6 +330,9 @@ func buildDoctorResult(opts doctorOptions) DoctorResult {
 	}
 	diagnoseDaemon(&result, serviceCount)
 	result.Supervision = detectSupervisionFn(result.Paths.PID, result.Daemon.Running, result.Daemon.PID)
+	if result.Supervision.RuntimeState == "circuit_open" || result.Supervision.RuntimeState == "failed" {
+		result.addFinding(inspect.WarningCodeDaemonRestartUnavailable, "", "daemon", "Built-in supervisor stopped crash recovery: "+result.Supervision.FailureReason+". Inspect logs, then run 'tslink install'.", nil)
+	}
 	if serviceCount > 0 && !result.Daemon.IdentityUnverified && (!result.Supervision.Autostart || result.Supervision.Manager == "manual" || result.Supervision.Manager == "none") {
 		result.addFinding(inspect.WarningCodeDaemonUnsupervised, "", "daemon", "Registered services have no verified supervisor/autostart; run 'tslink install'. "+result.Supervision.Detail, nil)
 	}
