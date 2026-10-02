@@ -113,6 +113,12 @@ daemon is a conflict and is never taken over. Task registration/start/settle
 failures retain `%APPDATA%\tslink-supervisor\task.xml` for inspection and retry.
 Windows upgrades do not restore the previous task or a replaced executable after
 failure; a stopped/disabled task may need a successful reinstall to resume.
+An owned task remains repairable with `tslink install` and removable with
+`tslink uninstall` when disabled or when its restart settings need repair. A
+disabled task never reports healthy supervision. After a stop or deletion error,
+resolve the reported cause and retry either command; ownership still requires
+the same user, config and exact foreground action. A missing PID file after a
+clean stop is accepted; malformed or unreadable PID evidence is still refused.
 
 `tslink stop` verifies process identity and sets a Windows named shutdown event
 whose DACL admits only the current user and SYSTEM. The daemon cancels the same

@@ -110,11 +110,15 @@ func TestWindowsTaskPolicyMutations(t *testing.T) {
 		{"actionContext", `Context="User"`, `Context="Other"`},
 		{"workingDirectory", "<WorkingDirectory>C:", "<WorkingDirectory>D:"},
 		{"launcher", "-NoProfile", "-Profile"},
-		{"missingEnabled", "<Enabled>true</Enabled>", ""},
 		{"idle", "<RunOnlyIfIdle>false", "<RunOnlyIfIdle>true"},
 		{"network", "<RunOnlyIfNetworkAvailable>false", "<RunOnlyIfNetworkAvailable>true"},
 		{"demand", "<AllowStartOnDemand>true", "<AllowStartOnDemand>false"},
 		{"available", "<StartWhenAvailable>true", "<StartWhenAvailable>false"},
+		{"missingBatteryStart", "<DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>", ""},
+		{"missingBatteryStop", "<StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>", ""},
+		{"missingHardTerminate", "<AllowHardTerminate>false</AllowHardTerminate>", ""},
+		{"missingStartAvailable", "<StartWhenAvailable>true</StartWhenAvailable>", ""},
+		{"missingTimeLimit", "<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			changed := bytes.Replace(data, []byte(tc.from), []byte(tc.to), 1)
@@ -149,8 +153,8 @@ func TestWindowsSchedulerStatusFixtures(t *testing.T) {
 			if s.Exists != tc.exists || s.Enabled != tc.enabled || s.State != tc.state || len(s.Engines) != tc.engines {
 				t.Fatalf("status = %+v", s)
 			}
-			if s.Exists && !windowsTaskMatches([]byte(s.XML), fixtureTaskSpec()) {
-				t.Fatal("loaded XML not verified")
+			if s.Exists && (!windowsTaskOwned([]byte(s.XML), fixtureTaskSpec()) || windowsTaskMatches([]byte(s.XML), fixtureTaskSpec()) != tc.enabled) {
+				t.Fatal("loaded XML ownership/health does not match enabled state")
 			}
 		})
 	}

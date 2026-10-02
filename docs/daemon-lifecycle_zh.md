@@ -86,6 +86,10 @@ Windows 默认监管器是 `windows-task-scheduler`。只有加载的用户、�
 手动或无关 daemon 被视为冲突，不会接管。注册、启动或稳定性校验失败时保留
 `%APPDATA%\tslink-supervisor\task.xml`，用于检查和重试。Windows 升级失败不会恢复旧任务
 或已替换的程序；停止/禁用的任务可能需要成功重新安装才能恢复运行。
+属于 TSLink 的任务即使被禁用或重启设置需要修复，仍可用 `tslink install` 修复，或用
+`tslink uninstall` 移除。禁用任务不会报告健康监管。停止或删除报错后，解决报告的原因，
+再重试任一命令；归属仍要求同一用户、配置和精确的前台动作。优雅停止后 PID 文件缺失
+是合法状态；格式错误或不可读的 PID 证据仍会阻止安装。
 
 `tslink stop` 先验证进程身份，再设置只允许当前用户和 SYSTEM 访问的 Windows 命名停止
 事件。daemon 取消正常 tsnet 清理流程所用的 context，无需控制台、端口、管理员权限或

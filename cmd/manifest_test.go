@@ -117,25 +117,26 @@ func TestManifestPlatformMarksAreExactAndProseDerived(t *testing.T) {
 			}
 		}
 	}
-	if runtime.GOOS == "darwin" {
-		want := []string{"tslink install --force", "tslink uninstall --force"}
-		if !reflect.DeepEqual(markedFlags, want) {
-			t.Fatalf("marked flags = %v, want exactly %v", markedFlags, want)
-		}
-		for _, key := range want {
-			parts := strings.Split(key, " --")
-			var got FlagInfo
-			for _, flag := range commands[parts[0]].Flags {
-				if flag.Name == parts[1] {
-					got = flag
-				}
+	wantByPlatform := map[string][]string{
+		"darwin":  {"tslink install --force", "tslink uninstall --force"},
+		"linux":   nil,
+		"windows": {"tslink install --startup"},
+	}
+	want := wantByPlatform[runtime.GOOS]
+	if !reflect.DeepEqual(markedFlags, want) {
+		t.Fatalf("%s marked flags = %v, want exactly %v", runtime.GOOS, markedFlags, want)
+	}
+	for _, key := range want {
+		parts := strings.Split(key, " --")
+		var got FlagInfo
+		for _, flag := range commands[parts[0]].Flags {
+			if flag.Name == parts[1] {
+				got = flag
 			}
-			if !reflect.DeepEqual(got.Platforms, []string{"darwin"}) {
-				t.Fatalf("%s platforms = %v, want [darwin]", key, got.Platforms)
-			}
 		}
-	} else if len(markedFlags) != 0 {
-		t.Fatalf("%s manifest unexpectedly carries platform-marked live flags: %v", runtime.GOOS, markedFlags)
+		if !reflect.DeepEqual(got.Platforms, []string{runtime.GOOS}) {
+			t.Fatalf("%s platforms = %v, want [%s]", key, got.Platforms, runtime.GOOS)
+		}
 	}
 
 	for _, flag := range commands["tslink tags delete-remote"].Flags {

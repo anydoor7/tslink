@@ -164,22 +164,11 @@ func keepOtherPlatformFlags(fixture *cmd.CLIManifest, committed cmd.CLIManifest,
 	}
 }
 
-// insertFlag places entry where the manifest lists it on its own platform:
-// local, then inherited, then persistent flags, each sorted by name.
+// insertFlag uses the native manifest's canonical name ordering across scopes.
 func insertFlag(flags []cmd.FlagInfo, entry cmd.FlagInfo) []cmd.FlagInfo {
-	rank := func(scope string) int {
-		switch scope {
-		case "local":
-			return 0
-		case "inherited":
-			return 1
-		default:
-			return 2
-		}
-	}
 	at := len(flags)
 	for i, f := range flags {
-		if rank(f.Scope) > rank(entry.Scope) || rank(f.Scope) == rank(entry.Scope) && f.Name > entry.Name {
+		if f.Name > entry.Name {
 			at = i
 			break
 		}

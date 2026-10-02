@@ -815,16 +815,6 @@
           ]
         },
         {
-          "name": "startup",
-          "type": "bool",
-          "default": "false",
-          "scope": "local",
-          "usage": "Use the Windows Startup fallback without crash restart when Task Scheduler is unavailable",
-          "platforms": [
-            "windows"
-          ]
-        },
-        {
           "name": "json",
           "type": "bool",
           "default": "false",
@@ -837,6 +827,16 @@
           "default": "false",
           "scope": "local",
           "usage": "Install the managed daemon with Funnel policy auto-provisioning disabled"
+        },
+        {
+          "name": "startup",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Use the Windows Startup fallback without crash restart when Task Scheduler is unavailable",
+          "platforms": [
+            "windows"
+          ]
         }
       ],
       "json_result_fields": {

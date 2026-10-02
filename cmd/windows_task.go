@@ -30,8 +30,6 @@ func powershellEncoded(s string) string {
 	return base64.StdEncoding.EncodeToString(data)
 }
 
-func base64UTF8(data []byte) string { return base64.StdEncoding.EncodeToString(data) }
-
 func decodePowerShell(encoded string) (string, error) {
 	data, err := base64.StdEncoding.DecodeString(encoded)
 	if err != nil || len(data)%2 != 0 {
@@ -131,6 +129,39 @@ func renderWindowsTask(s windowsTaskSpec) ([]byte, error) {
 func parseWindowsTask(data []byte) (windowsTaskXML, error) {
 	var task windowsTaskXML
 	err := xml.Unmarshal(data, &task)
+	if err == nil {
+		// RegisteredTask.XML omits default-valued elements. Apply only the
+		// published Task Scheduler defaults, never our desired restart policy.
+		// https://learn.microsoft.com/windows/win32/taskschd/task-scheduler-schema
+		defaultBool := func(p **bool, value bool) {
+			if *p == nil {
+				*p = &value
+			}
+		}
+		for i := range task.Triggers.Items {
+			defaultBool(&task.Triggers.Items[i].Enabled, true)
+		}
+		for i := range task.Principals {
+			if task.Principals[i].RunLevel == "" {
+				task.Principals[i].RunLevel = "LeastPrivilege"
+			}
+		}
+		p := &task.Settings
+		defaultBool(&p.AllowDemand, true)
+		defaultBool(&p.Enabled, true)
+		defaultBool(&p.OnlyIdle, false)
+		defaultBool(&p.OnlyNetwork, false)
+		defaultBool(&p.DisallowBattery, true)
+		defaultBool(&p.StopBattery, true)
+		defaultBool(&p.HardTerminate, true)
+		defaultBool(&p.StartAvailable, false)
+		if p.MultipleInstances == "" {
+			p.MultipleInstances = "IgnoreNew"
+		}
+		if p.TimeLimit == "" {
+			p.TimeLimit = "PT72H"
+		}
+	}
 	return task, err
 }
 
@@ -141,22 +172,47 @@ func windowsTaskConfigMatches(data []byte, dir string) bool {
 
 func boolIs(p *bool, v bool) bool { return p != nil && *p == v }
 
-func windowsTaskMatches(data []byte, s windowsTaskSpec) bool {
+// Ownership depends on the principal, exact foreground action and config, not
+// mutable scheduler health. A disabled task or damaged restart policy can be
+// repaired or removed without trusting a different user's task or arbitrary code.
+func windowsTaskOwned(data []byte, s windowsTaskSpec) bool {
 	t, err := parseWindowsTask(data)
 	if err != nil || t.Version != "1.2" || !windowsTaskConfigMatches(data, s.ConfigDir) ||
-		len(t.Triggers.Items) != 1 || t.Triggers.Items[0].XMLName.Local != "LogonTrigger" || t.Triggers.Items[0].UserID != s.SID || !boolIs(t.Triggers.Items[0].Enabled, true) ||
+		len(t.Triggers.Items) != 1 || t.Triggers.Items[0].XMLName.Local != "LogonTrigger" || t.Triggers.Items[0].UserID != s.SID ||
 		len(t.Principals) != 1 || t.Principals[0].ID != "User" || t.Principals[0].UserID != s.SID ||
 		t.Principals[0].LogonType != "InteractiveToken" || t.Principals[0].RunLevel != "LeastPrivilege" ||
 		t.Actions.Context != "User" || len(t.Actions.Exec) != 1 || t.Actions.Exec[0].XMLName.Local != "Exec" {
 		return false
 	}
 	a := t.Actions.Exec[0]
+	return strings.EqualFold(a.Command, s.PowerShell) && a.Arguments == s.arguments() && a.WorkingDirectory == s.ConfigDir
+}
+
+func windowsTaskMatches(data []byte, s windowsTaskSpec) bool {
+	if !windowsTaskOwned(data, s) {
+		return false
+	}
+	t, _ := parseWindowsTask(data)
 	p := t.Settings
-	return strings.EqualFold(a.Command, s.PowerShell) && a.Arguments == s.arguments() && a.WorkingDirectory == s.ConfigDir &&
+	return boolIs(t.Triggers.Items[0].Enabled, true) &&
 		p.MultipleInstances == "IgnoreNew" && boolIs(p.DisallowBattery, false) && boolIs(p.StopBattery, false) &&
 		boolIs(p.HardTerminate, false) && boolIs(p.StartAvailable, true) && boolIs(p.Enabled, true) &&
 		boolIs(p.AllowDemand, true) && boolIs(p.OnlyIdle, false) && boolIs(p.OnlyNetwork, false) &&
 		p.TimeLimit == "PT0S" && p.Restart.Interval == "PT1M" && p.Restart.Count == 255
+}
+
+// Task Scheduler receives and returns Unicode COM strings. Their declarations
+// describe neither the renderer's UTF-8 file bytes nor the Go string obtained
+// after JSON decoding. Remove only the leading XML declaration at this string
+// boundary; the file parser continues to enforce the file's declared encoding.
+func windowsTaskCOMString(s string) string {
+	s = strings.TrimPrefix(strings.TrimSpace(s), "\ufeff")
+	if strings.HasPrefix(s, "<?xml") && len(s) > 5 && strings.ContainsRune(" \t\r\n", rune(s[5])) {
+		if end := strings.Index(s, "?>"); end >= 0 {
+			return s[end+2:]
+		}
+	}
+	return s
 }
 
 type windowsSchedulerStatus struct {
@@ -190,7 +246,8 @@ func parseWindowsSchedulerStatus(data []byte) (windowsSchedulerStatus, error) {
 	if wire.XML == nil || wire.Enabled == nil || wire.State == nil || wire.Engines == nil || wire.LastResult == nil || *wire.State < 0 || *wire.State > 4 {
 		return windowsSchedulerStatus{}, fmt.Errorf("scheduler status missing/invalid task fields")
 	}
-	if _, err := parseWindowsTask([]byte(*wire.XML)); err != nil {
+	xmlString := windowsTaskCOMString(*wire.XML)
+	if _, err := parseWindowsTask([]byte(xmlString)); err != nil {
 		return windowsSchedulerStatus{}, fmt.Errorf("scheduler task XML: %w", err)
 	}
 	for _, pid := range *wire.Engines {
@@ -198,5 +255,5 @@ func parseWindowsSchedulerStatus(data []byte) (windowsSchedulerStatus, error) {
 			return windowsSchedulerStatus{}, fmt.Errorf("scheduler status invalid engine PID")
 		}
 	}
-	return windowsSchedulerStatus{true, *wire.XML, *wire.Enabled, *wire.State, *wire.Engines, *wire.LastResult}, nil
+	return windowsSchedulerStatus{true, xmlString, *wire.Enabled, *wire.State, *wire.Engines, *wire.LastResult}, nil
 }

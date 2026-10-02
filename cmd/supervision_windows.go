@@ -5,6 +5,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"os"
@@ -120,11 +121,11 @@ func windowsTaskSpecFromDefinition(data []byte, dir string) (windowsTaskSpec, er
 		exe := strings.TrimSuffix(strings.TrimPrefix(script, start), end)
 		exe = strings.ReplaceAll(exe, "''", "'")
 		spec := windowsTaskSpec{sid, exe, dir, windowsPowerShellPath(), noAuto}
-		if windowsTaskMatches(data, spec) {
+		if windowsTaskOwned(data, spec) {
 			return spec, nil
 		}
 	}
-	return windowsTaskSpec{}, fmt.Errorf("task definition does not match TSLink user/config/action/restart policy")
+	return windowsTaskSpec{}, fmt.Errorf("task definition does not match TSLink user/config/action ownership")
 }
 
 func windowsConfigEnvironment(dir string) string {
@@ -230,7 +231,7 @@ func detectSupervision(pidPath string, running bool, pid int) Supervision {
 			return unmanagedSupervision(running, err.Error())
 		}
 		spec, err := windowsTaskSpecFromDefinition([]byte(s.XML), dir)
-		if err != nil || !s.Enabled || s.State == 0 || s.State == 1 {
+		if err != nil || !s.Enabled || s.State == 0 || s.State == 1 || !windowsTaskMatches([]byte(s.XML), spec) {
 			return unmanagedSupervision(running, "Task Scheduler user/config/action/restart policy or enabled state is unverified; run tslink install")
 		}
 		if running && (!windowsDaemonRunningFn(pidPath) || s.State != 4 || !windowsTaskOwnsPIDFn(pid, s.Engines, spec.Executable)) {
@@ -260,10 +261,13 @@ func detectWindowsStartup() (Supervision, bool) {
 }
 
 func callWindowsScheduler(operation, name string, definition []byte) (windowsSchedulerStatus, error) {
-	script := "$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); " +
+	// EncodedCommand serializes module-loading progress as CLIXML on stderr.
+	// Keep the successful COM/JSON response clean without suppressing errors.
+	script := "$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; [Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); " +
 		"$svc=New-Object -ComObject 'Schedule.Service'; $svc.Connect(); $folder=$svc.GetFolder('\\'); $name=" + powershellLiteral(name) + "; "
 	if operation == "register" {
-		script += "$xml=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(" + powershellLiteral(base64UTF8(definition)) + ")); " +
+		xmlString := windowsTaskCOMString(string(definition))
+		script += "$xml=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(" + powershellLiteral(base64.StdEncoding.EncodeToString([]byte(xmlString))) + ")); " +
 			"$null=$folder.RegisterTask($name,$xml,6,$null,$null,3,$null); "
 	}
 	// Only a precise HRESULT proves absence. Localized schtasks text and all
@@ -280,8 +284,13 @@ func callWindowsScheduler(operation, name string, definition []byte) (windowsSch
 	default:
 		return windowsSchedulerStatus{}, fmt.Errorf("unknown scheduler operation %q", operation)
 	}
-	script += "$engines=@($task.GetInstances(0) | ForEach-Object { [int]$_.EnginePID }); " +
-		"@{exists=$true; xml=[string]$task.Xml; enabled=[bool]$task.Enabled; state=[int]$task.State; engines=$engines; last_result=[long]$task.LastTaskResult} | ConvertTo-Json -Compress -Depth 4"
+	// The scheduler may expand a SID to DOMAIN\name. Resolve those identifiers
+	// back to SIDs before ownership checks; failed translations remain errors.
+	script += "$xml=[xml]$task.Xml; $ns=[Xml.XmlNamespaceManager]::new($xml.NameTable); $ns.AddNamespace('t'," + powershellLiteral(windowsTaskNamespace) + "); " +
+		"foreach ($n in $xml.SelectNodes('/t:Task/t:Principals/t:Principal/t:UserId | /t:Task/t:Triggers/t:LogonTrigger/t:UserId',$ns)) { " +
+		"if ($n.InnerText -notmatch '^S-\\d(-\\d+)+$') { $n.InnerText=([Security.Principal.NTAccount]::new($n.InnerText)).Translate([Security.Principal.SecurityIdentifier]).Value } }; " +
+		"$engines=@($task.GetInstances(0) | ForEach-Object { [int]$_.EnginePID }); " +
+		"@{exists=$true; xml=[string]$xml.OuterXml; enabled=[bool]$task.Enabled; state=[int]$task.State; engines=$engines; last_result=[long]$task.LastTaskResult} | ConvertTo-Json -Compress -Depth 4"
 	var data []byte
 	var err error
 	args := []string{"-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", powershellEncoded(script)}
@@ -291,7 +300,7 @@ func callWindowsScheduler(operation, name string, definition []byte) (windowsSch
 		data, err = runBoundedManagerCommand(windowsPowerShellPath(), 20*time.Second, args...)
 	}
 	if err != nil {
-		return windowsSchedulerStatus{}, fmt.Errorf("Task Scheduler %s failed: %w", operation, err)
+		return windowsSchedulerStatus{}, fmt.Errorf("task scheduler %s failed: %w", operation, err)
 	}
 	return parseWindowsSchedulerStatus(data)
 }

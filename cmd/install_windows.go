@@ -162,14 +162,16 @@ func installWindowsTask(cmd *cobra.Command, noAutoProvision bool) error {
 	}
 	old, err := windowsSchedulerFn("query", name, nil)
 	if err != nil {
-		return fmt.Errorf("Task Scheduler unavailable (fallback: tslink install --startup): %w", err)
+		return fmt.Errorf("task scheduler unavailable (fallback: tslink install --startup): %w", err)
 	}
 	dir, err := absoluteConfigDir()
 	if err != nil {
 		return err
 	}
+	var oldSpec windowsTaskSpec
 	if old.Exists {
-		if _, err := windowsTaskSpecFromDefinition([]byte(old.XML), dir); err != nil {
+		oldSpec, err = windowsTaskSpecFromDefinition([]byte(old.XML), dir)
+		if err != nil {
 			return fmt.Errorf("refusing to replace foreign scheduler task: %w", err)
 		}
 	}
@@ -182,8 +184,9 @@ func installWindowsTask(cmd *cobra.Command, noAutoProvision bool) error {
 		if err != nil {
 			return err
 		}
-		s := detectSupervisionFn(pidPath, true, pid)
-		if s.Manager != "windows-task-scheduler" || !verifiedDaemonSupervision(s) {
+		// Reinstall repairs health, including a task left disabled after a
+		// failed stop. Prove process ownership independently of enabled/restart.
+		if !old.Exists || !windowsDaemonRunningFn(pidPath) || old.State != 4 || !windowsTaskOwnsPIDFn(pid, old.Engines, oldSpec.Executable) {
 			return output.ErrConflict("daemon already running without verified Task Scheduler ownership; run tslink stop, then tslink install")
 		}
 		if _, err := windowsSchedulerFn("disable", name, nil); err != nil {
@@ -192,7 +195,7 @@ func installWindowsTask(cmd *cobra.Command, noAutoProvision bool) error {
 		if err := stopDaemonFn(pidPath); err != nil {
 			return fmt.Errorf("task disabled; graceful stop failed (definition retained): %w", err)
 		}
-	} else if !daemon.IsProcessAbsentFromPIDFile(pidPath) && !daemon.IsForeignProcessFromPIDFile(pidPath) {
+	} else if !daemon.IsPIDFileMissing(pidPath) && !daemon.IsProcessAbsentFromPIDFile(pidPath) && !daemon.IsForeignProcessFromPIDFile(pidPath) {
 		return output.ErrConflict("daemon PID identity is unverified; inspect tslink doctor before install")
 	}
 	if old.State == 4 || len(old.Engines) > 0 {
@@ -251,7 +254,7 @@ func installWindowsTask(cmd *cobra.Command, noAutoProvision bool) error {
 	}
 	if err := os.Remove(startupPath); err != nil && !os.IsNotExist(err) {
 		_, disableErr := windowsSchedulerFn("disable", name, nil)
-		return fmt.Errorf("Startup migration cleanup failed; task not started; disable result=%v; inspect before next sign-in: %w", disableErr, err)
+		return fmt.Errorf("startup migration cleanup failed; task not started; disable result=%v; inspect before next sign-in: %w", disableErr, err)
 	}
 	if _, err := windowsSchedulerFn("run", name, nil); err != nil {
 		return fmt.Errorf("task registered but could not start: %w", err)

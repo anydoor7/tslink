@@ -115,21 +115,33 @@ func TestWindowsTaskInstallFailurePreservesMigrationEvidence(t *testing.T) {
 				t.Fatal(err)
 			}
 			var task windowsSchedulerStatus
+			var calls []string
 			windowsSchedulerFn = func(op, name string, data []byte) (windowsSchedulerStatus, error) {
+				calls = append(calls, op)
 				if op == failure {
 					return windowsSchedulerStatus{}, errors.New("injected " + failure)
 				}
 				if op == "register" {
 					task = windowsSchedulerStatus{Exists: true, Enabled: true, XML: string(data), State: 3}
 					if failure == "verify" {
-						task.Enabled = false
+						setFakeWindowsTaskEnabled(t, &task, false)
 					}
+				}
+				if op == "disable" {
+					setFakeWindowsTaskEnabled(t, &task, false)
 				}
 				return task, nil
 			}
 			err := runInstallLocked(windowsTestCommand(), nil)
 			if err == nil {
 				t.Fatal("injected failure accepted")
+			}
+			wantError := "injected " + failure
+			if failure == "verify" {
+				wantError = "loaded scheduler definition verification failed"
+			}
+			if !strings.Contains(err.Error(), wantError) {
+				t.Fatalf("failed before intended %s mutation: %v; calls=%v", failure, err, calls)
 			}
 			if failure != "run" {
 				got, readErr := os.ReadFile(path)
@@ -159,7 +171,7 @@ func TestWindowsTaskSupervisionLoadedPolicyAndOwnership(t *testing.T) {
 	if good.Manager != "windows-task-scheduler" || !good.RestartOnExit || !good.Autostart || good.AutostartScope != "login" {
 		t.Fatalf("positive control=%+v", good)
 	}
-	for _, variant := range []string{"disabled", "policy", "ownership", "identity", "state"} {
+	for _, variant := range []string{"disabled", "xml-disabled", "policy", "ownership", "identity", "state"} {
 		t.Run(variant, func(t *testing.T) {
 			copy := task
 			oldOwn, oldDaemon := windowsTaskOwnsPIDFn, windowsDaemonRunningFn
@@ -169,7 +181,10 @@ func TestWindowsTaskSupervisionLoadedPolicyAndOwnership(t *testing.T) {
 			})
 			switch variant {
 			case "disabled":
-				copy.Enabled = false
+				setFakeWindowsTaskEnabled(t, &copy, false)
+			case "xml-disabled":
+				setFakeWindowsTaskEnabled(t, &copy, false)
+				copy.Enabled = true // Inconsistent COM fields must also fail closed.
 			case "policy":
 				copy.XML = strings.Replace(copy.XML, "PT1M", "PT1S", 1)
 			case "ownership":
@@ -205,7 +220,7 @@ func TestWindowsTaskUninstallDisablesStopsThenDeletes(t *testing.T) {
 	windowsSchedulerFn = func(op, name string, data []byte) (windowsSchedulerStatus, error) {
 		calls = append(calls, op)
 		if op == "disable" {
-			task.Enabled = false
+			setFakeWindowsTaskEnabled(t, &task, false)
 		}
 		if op == "delete" {
 			task = windowsSchedulerStatus{}
@@ -254,6 +269,9 @@ func TestWindowsTaskUninstallRefusesUncertainOrForeignTask(t *testing.T) {
 				if op == "delete" {
 					deleted = true
 					task = windowsSchedulerStatus{}
+				}
+				if op == "disable" {
+					setFakeWindowsTaskEnabled(t, &task, false)
 				}
 				return task, nil
 			}
