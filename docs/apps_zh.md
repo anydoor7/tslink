@@ -15,7 +15,7 @@ Recipe catalog 版本 2，官方文档核对日期为 **2026-10-02**。区分宿
 
 `apps share` 和 `add --recipe` 默认给出计划；`--yes` 才应用，`--dry-run` 始终优先。同名服务保留原配置，结果同时提供 `service` 和 `requested`。命令不会安装或配置第三方应用。`--no-daemon-install` 只保存 registry。注册成功不能证明应用已运行或 URL 可访问。
 
-`preserve_host=true` 向应用转发接收节点自身的外部 canonical 名称，Host 和 X-Forwarded-Host 均不受客户端 authority 或端口影响。优先取 runtime 第一个证书域名，与 `tslink url` 一致；否则使用 runtime DNS FQDN。Funnel 使用相同规则。名称转为小写，去掉末尾点，不带端口。名称缺失或无效时返回 HTTP 503 `canonical_host_unavailable`，不连接应用。别名仍可访问，均按 canonical 名称转发，不额外返回 421。Origin 不变，保留各应用的精确 Origin 校验。默认模式保留原有的 X-Forwarded-Host 行为。
+`preserve_host=true` 向应用转发接收节点自身的外部 canonical 名称，Host 和 X-Forwarded-Host 均不受客户端 authority 或端口影响。优先取 runtime 第一个证书域名，与 `tslink url` 一致；否则使用 runtime DNS FQDN。Funnel 使用相同规则。名称转为小写，去掉末尾点，不带端口。名称缺失或无效时返回 HTTP 503 `canonical_host_unavailable`，不连接应用。通过别名发来的请求仍会到达 TSLink，并按 canonical 名称转发，不额外返回 421。但浏览器的 Origin 是别名，应用可能因此拒绝请求，所以请使用 `tslink url` 给出的精确地址；重命名后同步更新应用的主机名和 Origin 设置。Origin 不变，保留各应用的精确 Origin 校验。默认模式保留原有的 X-Forwarded-Host 行为。
 
 探测使用 macOS lsof、Linux procfs、Windows GetExtendedTcpTable，只向数字 loopback HTTP 地址发 GET：单请求 700 ms，总预算 15 秒，8 个 worker，最多读取 64 KiB。无凭据、环境 HTTP 代理、Cookie 或重定向。仅 HTTPS、仅 LAN、其他网络 namespace、受认证保护或非典型安装可能无法识别。`high` 是应用端点/正文/响应头指纹，`medium` 是 title 匹配，`low` 仅代表不明 HTML 页面；`complete=false` 表示部分结果。置信度不证明认证、健康或版本兼容，输出只含指纹描述，不含响应正文。
 

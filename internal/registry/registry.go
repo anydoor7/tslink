@@ -486,7 +486,7 @@ type Service struct {
 	Name   string `json:"name"`
 	Type   string `json:"type"`
 	Target string `json:"target,omitempty"`
-	// PreserveHost forwards the incoming HTTP Host instead of the target's host.
+	// PreserveHost forwards the node's canonical external name as Host instead of the target's host.
 	// Absent or false retains the behaviour of existing services and templates.
 	PreserveHost bool   `json:"preserve_host,omitempty"`
 	Path         string `json:"path,omitempty"`
