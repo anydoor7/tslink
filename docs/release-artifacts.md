@@ -18,4 +18,10 @@ brew install --cask anydoor7/tap/tslink
 
 Release assets are side-by-side files, not files embedded inside the archives. GoReleaser uploads installable archives/packages, `checksums.txt`, CycloneDX SBOM sidecars for archives, and keyless Sigstore bundle signatures for `checksums.txt` and SBOM sidecars. The signed `checksums.txt` covers both installable artifacts and SBOM sidecars. The release workflow also publishes GitHub artifact attestations for the installable artifacts and supply-chain sidecars.
 
+### CI tiers and the release gate
+
+Pushes to `main` and tags always run the full exact-SHA three-OS Release Candidate gate; `release.yml` publishes only after it succeeds. PRs choose a tier from changed paths: drafts defer heavy checks, docs-only changes run no Go jobs, ordinary Go changes run all Linux-hosted checks, and platform-sensitive changes also run macOS/Windows native tests and compiled contracts. The `ci:full` label forces the full tier on ready PRs. The tier job summary states the tier and reason. Unknown paths or missing diff evidence choose full; deleting OS files or build constraints also chooses full.
+
+All release targets still receive static analysis, cross-build and vulnerability checks. Consolidated jobs preserve each target's failure and existing artifact names. The always-running `gate` aggregate rejects failures, cancellations and unexpected skips; only checks excluded by the selected tier may be skipped. After the repository becomes public, branch protection should require this single aggregate check (verify the reusable caller's displayed `Release candidate gate / gate` context on a hosted run). This workflow change does not configure protection. See [Contributing](../CONTRIBUTING.md#continuous-integration) for the classification rules and local policy tests.
+
 See [Verify a release](verify-release.md) for artifact, checksum, signature, SBOM, and attestation checks.

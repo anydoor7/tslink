@@ -1,16 +1,15 @@
 name: CI
 
-# PR and main run the exact-SHA release candidate gate defined in
-# release-candidate.yml. There is no separate, weaker CI path: the same
-# reusable workflow gates every trigger, so a commit that cannot pass the
-# release gate cannot land on main either, and the invariant "PR/main and the
-# tag path consume the same gate" holds for all three trigger paths at once.
+# Main and tags (via release.yml) run the full exact-SHA candidate gate.
+# PRs run a tier chosen from changed paths, with a ci:full label override;
+# draft PRs defer heavy checks. All paths finish at the aggregate gate.
 
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
+    types: [opened, synchronize, reopened, edited, ready_for_review, converted_to_draft, labeled, unlabeled]
 
 # Least privilege: the reusable candidate gate only reads the repository.
 permissions:

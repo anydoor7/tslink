@@ -1,7 +1,7 @@
 name: Release
 
-# A v* tag runs the SAME reusable release-candidate gate as PR/main and only
-# then publishes. The publish job `needs: candidate`, so a tag cannot publish
+# A v* tag runs the FULL reusable release-candidate gate, as main does, and only
+# then publishes. PRs are tiered. The publish job `needs: candidate`, so a tag cannot publish
 # signed/attested artifacts from a commit that failed Windows compilation,
 # staticcheck, either govulncheck, cross-build, or artifact verification
 # locally. Elevated write/id-token/attestations permissions are granted only
@@ -53,6 +53,8 @@ jobs:
         with:
           go-version-file: go.mod
           check-latest: true
+          cache: true
+          cache-dependency-path: go.sum
       - name: Require Homebrew tap token for stable tags
         if: ${{ !contains(github.ref_name, '-') }}
         env:

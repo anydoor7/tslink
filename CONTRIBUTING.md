@@ -116,7 +116,22 @@ value or a config-dir override proves there was no side effect.
 
 ### Continuous integration
 
-`ci.yml` runs the reusable Release Candidate gate on every pull request and on every push to `main`; `release.yml` runs the same gate on tags. Dependabot is active. A Go dependency bump changes the module versions pinned in `THIRD_PARTY_NOTICES.md`, so the gate's `go run ./tools/gen-notices -check` fails on every Dependabot `gomod` pull request until someone runs `go run ./tools/gen-notices` and pushes the regenerated file onto that branch. CodeQL scanning is not enabled; to add it, commit a CodeQL workflow and enable code scanning for the repository. Running the local checks above before opening a pull request is still the fastest way to find a failure.
+`ci.yml` calls the exact-SHA Release Candidate workflow for PRs and pushes to `main`; `release.yml` calls it for tags. Main and tags always run the full three-OS gate. PRs choose a tier from the changed paths against the merge base:
+
+| PR tier | Checks |
+|---|---|
+| Draft | Classification and aggregate only; heavy checks wait until ready for review. |
+| Docs | Classification and aggregate only; no Go jobs. |
+| Go | Ubuntu native build/vet/test/race/coverage/shuffle, gofmt/tidy, staticcheck for three OSes, all six cross-builds and target vulnerability scans, Ubuntu compiled contracts, artifact verification, GoReleaser and manifest checks. |
+| Full | All Go-tier checks plus macOS/Windows native and compiled contracts, strict Darwin manifest check and three-platform manifest comparison. |
+
+Docs means markdown, `docs/**` except `docs/cli-manifest.json`, images and assets. Platform/gate paths take precedence: OS-suffixed or build-tagged Go files, install/supervision/daemon code, files in an `internal/` package with OS-specific files, `go.mod`, `go.sum`, `.github/**` and `tools/**` select full. Both old and new trees are inspected, including deleted files. Unknown paths or unavailable diff evidence select full. Add `ci:full` to force full on a ready PR; drafts still defer heavy checks. Draft transitions and label changes rerun classification. The tier job summary explains the decision.
+
+The always-running aggregate job is named `gate`: required jobs must succeed, only legitimate tier skips pass, and failures/cancellations fail it. When configuring branch protection after the repository becomes public, require this single aggregate check, rather than individual matrix jobs. GitHub prefixes reusable jobs with the caller name, so verify the emitted context (`Release candidate gate / gate`) on the first hosted run before selecting it. This change does not configure branch protection. Staticcheck and cross-build targets each share one Linux job; vulnerability scanning uses two independent Linux jobs (main module and six-target repository loop), preserving per-target reports and artifact names. Each loop runs all targets and propagates any target failure.
+
+`setup-go` explicitly caches downloaded modules and build outputs using `go.sum`. Tests deliberately use `-count=1` so cached test results cannot replace execution. Run the hermetic CI policy checks with `python3 -m unittest discover -s .github/scripts -p 'test_ci_tier.py' -v`.
+
+ Dependabot is active. A Go dependency bump changes the module versions pinned in `THIRD_PARTY_NOTICES.md`, so the gate's `go run ./tools/gen-notices -check` fails on every Dependabot `gomod` pull request until someone runs `go run ./tools/gen-notices` and pushes the regenerated file onto that branch. CodeQL scanning is not enabled; to add it, commit a CodeQL workflow and enable code scanning for the repository. Running the local checks above before opening a pull request is still the fastest way to find a failure.
 
 ### Maintainer Release Notes
 

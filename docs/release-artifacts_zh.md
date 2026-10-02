@@ -17,4 +17,10 @@ brew install --cask anydoor7/tap/tslink
 
 发布产物是并列的 release assets，不是嵌入归档内部的文件。GoReleaser 会上传可安装归档/包、`checksums.txt`、归档对应的 CycloneDX SBOM sidecar，以及 `checksums.txt` 和 SBOM sidecar 的 keyless Sigstore bundle 签名。签名后的 `checksums.txt` 覆盖可安装产物和 SBOM sidecar。release workflow 还会为可安装产物和供应链 sidecar 发布 GitHub artifact attestations。
 
+### CI 分层与发布门槛
+
+推送到 `main` 和 tag 始终运行基于精确 SHA 的完整三平台 Release Candidate gate；`release.yml` 只有在它成功后才发布。PR 根据修改路径选择 tier：draft 暂缓重检查，纯文档修改不运行 Go jobs，普通 Go 修改运行所有 Linux 托管的检查，平台敏感修改还运行 macOS/Windows 原生测试与编译后二进制契约。`ci:full` label 强制非 draft PR 使用 full tier。tier job summary 会列出选择及原因。未知路径或缺少 diff 证据时选择 full；删除平台文件或 build constraints 也选择 full。
+
+所有发布目标仍接受静态分析、交叉编译与漏洞检查。合并 jobs 后，各目标的失败仍会让 job 失败，artifact 名称保持一致。始终运行的 `gate` 汇总会拒绝失败、取消和意外跳过，只有当前 tier 排除的检查可以跳过。仓库公开后，branch protection 应只要求这个汇总 check（先在 hosted run 核实 reusable caller 显示的 `Release candidate gate / gate` context）。本次 workflow 修改不配置 branch protection。分类规则和本地策略测试见 [Contributing](../CONTRIBUTING.md#continuous-integration)。
+
 发布产物、checksum、签名、SBOM 和 attestation 的验证步骤见[验证发布产物](verify-release_zh.md)。
