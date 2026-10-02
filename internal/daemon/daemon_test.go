@@ -3,6 +3,7 @@ package daemon
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -51,6 +52,11 @@ func blockTestHelper(ignoreTerm bool) {
 	// Registering with os/signal keeps a runtime signal goroutine alive, so the
 	// helper cannot trip Go's "all goroutines are asleep" deadlock detector.
 	signal.Notify(ch)
+	if os.Getenv("TSLINK_HELPER_READY") == "1" {
+		if _, err := io.WriteString(os.Stdout, "ready\n"); err != nil {
+			os.Exit(1)
+		}
+	}
 	for sig := range ch {
 		if ignoreTerm && sig == syscall.SIGTERM {
 			continue
@@ -932,13 +938,40 @@ func startCopiedHelperProcessWithArgs(t *testing.T, executablePath string, args 
 	} else {
 		cmd.Env = append(os.Environ(), "TSLINK_HELPER_PROCESS=1")
 	}
+	cmd.Env = append(cmd.Env, "TSLINK_HELPER_READY=1")
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatalf("copied helper stdout: %v", err)
+	}
 	if err := cmd.Start(); err != nil {
+		_ = stdout.Close()
 		t.Fatalf("start copied helper %q: %v", executablePath, err)
 	}
 	t.Cleanup(func() {
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
+		_ = stdout.Close()
 	})
+	// Start can return during exec, before Linux exposes the child's cmdline.
+	// Wait for the child to enter its signal loop, not for an identity check to
+	// eventually pass. The bound only prevents a broken helper hanging tests.
+	ready := make(chan error, 1)
+	go func() {
+		marker := make([]byte, len("ready\n"))
+		_, err := io.ReadFull(stdout, marker)
+		if err == nil && string(marker) != "ready\n" {
+			err = errors.New("unexpected copied helper readiness marker")
+		}
+		ready <- err
+	}()
+	select {
+	case err := <-ready:
+		if err != nil {
+			t.Fatalf("copied helper did not become ready: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("copied helper did not become ready within 10s")
+	}
 	return cmd
 }
 
@@ -1536,6 +1569,15 @@ func TestIsRunningAcceptsVerifiedServeProcess(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 	stubProcessExecutableForPID(t, os.Getpid())
+	// This legacy PID artifact represents publication when the process started,
+	// even when a high-count run has kept this test binary alive for minutes.
+	started, err := processStartTime(os.Getpid())
+	if err != nil {
+		t.Fatalf("processStartTime() error = %v", err)
+	}
+	if err := os.Chtimes(path, started, started); err != nil {
+		t.Fatalf("Chtimes() error = %v", err)
+	}
 
 	if !IsRunning(path) {
 		t.Fatal("IsRunning() = false for a verified live serve process")

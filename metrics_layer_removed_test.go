@@ -21,7 +21,9 @@ func TestBinaryDoesNotLinkPrometheus(t *testing.T) {
 	for _, goos := range []string{"darwin", "linux", "windows"} {
 		t.Run(goos, func(t *testing.T) {
 			cmd := exec.Command("go", "list", "-deps", ".")
-			cmd.Env = append(os.Environ(), "GOOS="+goos, "GOFLAGS=-mod=readonly", "GOPROXY=off")
+			// Native builds do not cache other platforms' dependencies. Inherit
+			// GOPROXY so go list can fetch them without changing go.mod or go.sum.
+			cmd.Env = append(os.Environ(), "GOOS="+goos, "GOFLAGS=-mod=readonly")
 			var stderr bytes.Buffer
 			cmd.Stderr = &stderr
 			out, err := cmd.Output()
