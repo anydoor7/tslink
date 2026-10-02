@@ -1057,7 +1057,7 @@ func TestMCPLocalToolsReadAndWriteTheGivenRegistry(t *testing.T) {
 		t.Fatalf("tags_list = %+v", tags)
 	}
 
-	setValue, err := actions.tagsSet("web", "tag:replaced")
+	setValue, err := actions.tagsSet(context.Background(), "web", "tag:replaced")
 	if err != nil {
 		t.Fatalf("tags_set: %v", err)
 	}
@@ -1067,12 +1067,12 @@ func TestMCPLocalToolsReadAndWriteTheGivenRegistry(t *testing.T) {
 	if svc := mcpLoadService(t, paths.Registry, "web"); len(svc.Tags) != 1 || svc.Tags[0] != "tag:replaced" {
 		t.Fatalf("persisted tags = %v", svc.Tags)
 	}
-	if _, err := actions.tagsSet("absent", "tag:x"); err == nil {
+	if _, err := actions.tagsSet(context.Background(), "absent", "tag:x"); err == nil {
 		t.Fatal("tags_set on an absent service was accepted")
 	} else if failure := output.NewFailureForError("", err); failure.Code != output.ExitNotFound || failure.Error.Code != output.StableErrorCode(output.ExitNotFound) {
 		t.Fatalf("tags_set error = %v, envelope = %+v; want the not_found code the CLI --json path reports", err, failure.Error)
 	}
-	if _, err := actions.tagsSet("web", "not-a-tag"); err == nil {
+	if _, err := actions.tagsSet(context.Background(), "web", "not-a-tag"); err == nil {
 		t.Fatal("tags_set accepted a tag without the tag: prefix")
 	}
 

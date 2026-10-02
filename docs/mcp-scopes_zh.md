@@ -77,13 +77,15 @@ case folding。tag 使用精确的 `tag:` 前缀，名称大小写保持不变�
 解析，并锚定到这个时间，重启不会续期。也可直接用 RFC3339 `expires_at`，
 它与 `issued_at`/`for` 互斥。两种期限都省略表示无限期绑定。过期绑定拒绝新请求；
 已放行 HTTP 请求/流在剩余期限结束时取消。期限到达不回滚已开始的远端副作用。
-人员写入在取得锁后再次检查权限和期限。
+每个 MCP 变更都在锁等待结束后的事务或副作用边界重新检查会话期限和取消状态。
+取消请求可回滚已经开始的 share 中本次精确的 tentative 注册；补偿仍在锁内检查 binding 期限。过期后可能保留已开始的注册，owner 可根据审计回执检查。
 
 每个 HTTP 请求都会先执行 WhoIs，再路由工具。tag principal 只匹配 node tags，
-不会匹配拼写相同的登录名。显式 login binding 优先于 tag
-binding；旧 `allow` 的匹配仍保留 owner 权限。多个 scoped tag 同时匹配会拒绝，
-不合并成更大的角色。旧 owner tag 对每个带此 tag 的设备都开放广泛权限；迁移
-到受限角色时移除它。Doctor 对所有 owner tag 和过期 binding 发出 warning。
+不会匹配拼写相同的登录名。显式 login binding（包括旧 login 条目）优先。
+否则合并检查 `bindings` 和旧 `allow` 中所有匹配的 tag principal；匹配多个 tag
+就返回 HTTP 403。单个旧 allow 条目仍表示 owner。旧 owner tag 对每个带此 tag 的设备都开放广泛权限；迁移
+到受限角色时移除它。Doctor 对所有 owner tag、过期 binding，以及含多个不同 tag principal、可能
+同时匹配同一 node 的配置发出 warning；它不会查询实时 node tags。
 
 ## 本地受限会话
 
@@ -126,3 +128,7 @@ log。时长解析集中在 `internal/mcpscope.ParseDuration`，便于替换公�
 
 2026-10-02 查阅的 Tailscale 文档：[tsnet LocalClient 与 WhoIs](https://tailscale.com/docs/reference/tsnet-server-api)
 和[设备 tag](https://tailscale.com/docs/features/tags)。
+
+受限 operator 和 manager 只能修改 people store 中已存在人员的授权。只有 owner 可以创建人员；稳定码 `mcp_person_owner_required` 提示先请 owner 添加人员。撤销未知 login 是 no-op，不创建人员，也不改变其它 app。
+
+审计用 `identity.login`、`identity.node` 记录调用者，用 `principal` 记录匹配的授权对象。`kind=mcp`、`role`、`tool`、`apps`、`result`、`phase` 是类型化元数据。share intent 只记录显式请求的名字；尚未分配时 app 清单为空。completion 记录实际生成或复用的名字，包括并发分配结果。不记录原始参数、target、邀请链接或 secret。

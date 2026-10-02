@@ -14,6 +14,7 @@ import (
 
 	"github.com/anydoor7/tslink/internal/config"
 	"github.com/anydoor7/tslink/internal/filelock"
+	"github.com/anydoor7/tslink/internal/mcpscope"
 	"github.com/anydoor7/tslink/internal/registry"
 	tsruntime "github.com/anydoor7/tslink/internal/runtime"
 	"github.com/spf13/cobra"
@@ -269,6 +270,9 @@ func ensureDaemon(ctx context.Context, out io.Writer, noInstall bool) error {
 		// Promising reboot survival here contradicted that renderer within the
 		// same command on any host without systemd lingering.
 		fmt.Fprintf(out, "Installing TSLink background service (%s): %s\nConfig: %s\nUndo with: tslink uninstall. Autostart scope is not known before this host is inspected; 'tslink status' reports whether it returns at boot or only at sign-in.\n", supervisorName(), path, dir)
+		if err := mcpscope.CheckEffect(ctx); err != nil {
+			return err
+		}
 		if err := installDaemonFn(ctx, out); err != nil {
 			return daemonSetupError(err)
 		}
@@ -503,6 +507,9 @@ func withSupervisorTransaction(ctx context.Context, fn func() error) error {
 	}
 	defer filelock.Unlock(f)
 	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := mcpscope.CheckEffect(ctx); err != nil {
 		return err
 	}
 	return fn()

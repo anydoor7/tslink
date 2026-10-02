@@ -63,7 +63,7 @@ func fakeMCPActions() mcpActions {
 		tagsList: func() (any, error) {
 			return TagsListResult{Services: []TagsServiceEntry{{Name: "demo", Tags: []string{"tag:tslink"}}}}, nil
 		},
-		tagsSet: func(service, tag string) (any, error) {
+		tagsSet: func(ctx context.Context, service, tag string) (any, error) {
 			return TagsSetResult{Service: service, Tags: []string{tag}}, nil
 		},
 		accessExplain: func(service string) (any, error) {

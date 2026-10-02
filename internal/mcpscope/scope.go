@@ -33,7 +33,15 @@ type Binding struct {
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 }
 
+// Identity retains the authenticated caller separately from the binding principal.
+// Only bounded login/node identifiers are carried; no transport arguments.
+type Identity struct {
+	Login string `json:"login"`
+	Node  string `json:"node"`
+}
+
 type Session struct {
+	Identity  Identity
 	Who       string
 	Scope     Scope
 	ExpiresAt *time.Time
@@ -255,24 +263,37 @@ func Resolve(login string, tags, allow []string, bindings []Binding, now time.Ti
 	for _, b := range bindings {
 		if !strings.HasPrefix(b.Principal, "tag:") && b.Principal == p {
 			deadline, _ := b.Deadline()
-			s := Session{Who: p, Scope: b.Scope, ExpiresAt: deadline}
+			s := Session{Who: p, Identity: Identity{Login: p}, Scope: b.Scope, ExpiresAt: deadline}
 			if !s.Active(now) {
 				return Session{}, Denied{}
 			}
 			return s, nil
 		}
 	}
+	// A legacy login entry is also an explicit login binding.
 	for _, raw := range allow {
 		principal, e := Principal(raw)
-		if e == nil && match(principal) {
-			return Session{Who: principal, Scope: Scope{Role: "owner"}}, nil
+		if e == nil && !strings.HasPrefix(principal, "tag:") && principal == p {
+			return Session{Who: principal, Identity: Identity{Login: p}, Scope: Scope{Role: "owner"}}, nil
 		}
 	}
 	var resolved *Session
+	seen := map[string]bool{}
+	for _, raw := range allow {
+		principal, e := Principal(raw)
+		if e == nil && strings.HasPrefix(principal, "tag:") && match(principal) && !seen[principal] {
+			if resolved != nil {
+				return Session{}, Denied{}
+			}
+			s := Session{Who: principal, Identity: Identity{Login: p}, Scope: Scope{Role: "owner"}}
+			resolved = &s
+			seen[principal] = true
+		}
+	}
 	for _, b := range bindings {
 		if match(b.Principal) {
 			deadline, _ := b.Deadline()
-			s := Session{Who: b.Principal, Scope: b.Scope, ExpiresAt: deadline}
+			s := Session{Who: b.Principal, Identity: Identity{Login: p}, Scope: b.Scope, ExpiresAt: deadline}
 			if resolved != nil || !s.Active(now) {
 				return Session{}, Denied{}
 			}
@@ -293,4 +314,39 @@ func WithSession(ctx context.Context, s Session) context.Context {
 func FromContext(ctx context.Context) (Session, bool) {
 	s, ok := ctx.Value(contextKey{}).(Session)
 	return s, ok
+}
+
+// NodeIdentity accepts only a bounded non-secret node identifier.
+func NodeIdentity(raw string) string {
+	if len(raw) > 256 || !utf8.ValidString(raw) || strings.Contains(raw, "://") || strings.Contains(raw, "tskey-") || strings.Contains(raw, "Bearer ") || strings.IndexFunc(raw, unicode.IsControl) >= 0 {
+		return ""
+	}
+	return raw
+}
+
+type clockKey struct{}
+
+// WithClock captures the policy clock once at dispatch for downstream writers.
+func WithClock(ctx context.Context, now func() time.Time) context.Context {
+	return context.WithValue(ctx, clockKey{}, now)
+}
+
+// CheckEffect is repeated after waits at transaction and external-effect boundaries.
+// Audit completion uses a different context and cannot grant mutation authority.
+func CheckEffect(ctx context.Context) error {
+	s, ok := FromContext(ctx)
+	if ctx.Err() != nil {
+		if ok {
+			return Denied{}
+		}
+		return ctx.Err()
+	}
+	now := time.Now
+	if clock, ok := ctx.Value(clockKey{}).(func() time.Time); ok {
+		now = clock
+	}
+	if ok && !s.Active(now()) {
+		return Denied{}
+	}
+	return nil
 }

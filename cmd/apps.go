@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/anydoor7/tslink/internal/inspect"
+	"github.com/anydoor7/tslink/internal/mcpscope"
 	"github.com/anydoor7/tslink/internal/output"
 	"github.com/anydoor7/tslink/internal/recipes"
 	"github.com/anydoor7/tslink/internal/registry"
@@ -132,7 +133,13 @@ func applyRecipe(ctx context.Context, req recipeRequest, regPath string, dryRun 
 		return RecipeResult{}, err
 	}
 	if result.Action != templateActionSkipExisting {
-		created, err := recipeAddIfMissingFn(regPath, svc)
+		add := recipeAddIfMissingFn
+		if _, scoped := mcpscope.FromContext(ctx); scoped {
+			add = func(path string, svc registry.Service) (bool, error) {
+				return registry.AddIfMissingContext(ctx, path, svc)
+			}
+		}
+		created, err := add(regPath, svc)
 		if err != nil {
 			return RecipeResult{}, err
 		}
@@ -151,7 +158,13 @@ func applyRecipe(ctx context.Context, req recipeRequest, regPath string, dryRun 
 		// Adopt the exact stored value under the registry lock before reporting
 		// reuse or attempting setup. Its creator may still be waiting on a URL
 		// and compensating a tentative registration on failure.
-		kept, err := addKeepIfUnchangedFn(regPath, persisted)
+		keep := addKeepIfUnchangedFn
+		if _, scoped := mcpscope.FromContext(ctx); scoped {
+			keep = func(path string, svc registry.Service) (bool, error) {
+				return registry.KeepIfUnchangedContext(ctx, path, svc)
+			}
+		}
+		kept, err := keep(regPath, persisted)
 		if err != nil {
 			return RecipeResult{}, fmt.Errorf("adopt recipe registration %q: %w", svc.Name, err)
 		}

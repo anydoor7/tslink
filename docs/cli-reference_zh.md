@@ -166,3 +166,5 @@ Operator/people-manager 可用 `--max-duration`（默认 24h）；viewer 可显�
 旧 `mcp.allow` 保留 owner。`mcp-audit [--json]` 读取有界持久变更日志。Status
 包含 `mcp_bindings`；doctor 用 `mcp_owner_tag`、`mcp_binding_expired` 报告风险。
 见 [MCP 作用域](mcp-scopes_zh.md)。
+
+受限人员授权要求人员已存在（`mcp_person_owner_required`：先请 owner 添加人员）；撤销未知 login 是 no-op。审计区分调用者 `identity.login/node` 与 `principal`，包含 `role`、`phase`，并在完成时记录实际 share app。旧与 scoped 配置中匹配多个 MCP tag principal 时返回 HTTP 403，显式 login binding 优先。

@@ -17,6 +17,7 @@ import (
 	"github.com/anydoor7/tslink/internal/config"
 	"github.com/anydoor7/tslink/internal/duration"
 	"github.com/anydoor7/tslink/internal/inspect"
+	"github.com/anydoor7/tslink/internal/mcpscope"
 	"github.com/anydoor7/tslink/internal/output"
 	"github.com/anydoor7/tslink/internal/registry"
 	tsruntime "github.com/anydoor7/tslink/internal/runtime"
@@ -508,6 +509,7 @@ var addKeepIfUnchangedFn = registry.KeepIfUnchanged
 func executeAdd(ctx context.Context, svc registry.Service, regPath, pidPath, snapshotPath string, preserveFunnelExpiry bool, wait time.Duration, afterPersist ...func() error) (AddResult, registry.Service, error) {
 	registryWasAbsent := registryFileAbsent(regPath)
 	outcome, err := registry.AddWithOutcome(regPath, svc, registry.AddOptions{
+		Context:              ctx,
 		PreserveFunnelExpiry: preserveFunnelExpiry,
 	})
 	if err != nil {
@@ -528,7 +530,13 @@ func executeAdd(ctx context.Context, svc registry.Service, regPath, pidPath, sna
 			// rollback of a share still waiting on the registration it
 			// created. One gone by now was rolled back before this add could
 			// keep it, and is reported missing rather than present.
-			kept, err := addKeepIfUnchangedFn(regPath, persisted)
+			keep := addKeepIfUnchangedFn
+			if _, scoped := mcpscope.FromContext(ctx); scoped {
+				keep = func(path string, svc registry.Service) (bool, error) {
+					return registry.KeepIfUnchangedContext(ctx, path, svc)
+				}
+			}
+			kept, err := keep(regPath, persisted)
 			if err != nil {
 				return AddResult{}, registry.Service{}, err
 			}

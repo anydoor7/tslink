@@ -138,6 +138,7 @@ var table = []Code{
 	{"invite_request_invalid", ExitUsage, Command, "Tailscale rejected the invite request as another 4xx input error"},
 	{"invite_response_invalid", ExitError, Command, "Tailscale returned an invalid invite wire response"},
 	{"mcp_elevated_invite_refused", ExitAuth, Command, "through MCP, a user invitation with a role other than member or a device invitation that allows exit-node use needs the owner's opt-in (mcp.allow_elevated_invites in config.json); next names the CLI command a person can run instead"},
+	{"mcp_person_owner_required", ExitAuth, Command, "The owner must add the person before a reduced MCP scope can grant access"},
 	{"mcp_scope_denied", ExitAuth, Command, "MCP identity scope refuses this app, tool, duration or expired binding"},
 	{"mcp_audit_unavailable", ExitError, Command, "MCP mutation intent could not be journaled, or its completion receipt failed; completion failures explicitly retain an unknown outcome"},
 }

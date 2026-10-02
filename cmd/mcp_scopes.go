@@ -24,9 +24,13 @@ import (
 
 func mcpSession(a mcpActions) mcpscope.Session {
 	if a.session != nil {
-		return *a.session
+		s := *a.session
+		if s.Identity.Login == "" && !strings.HasPrefix(s.Who, "tag:") {
+			s.Identity.Login = s.Who
+		}
+		return s
 	}
-	return mcpscope.Session{Who: mcpLocalActor(), Scope: mcpscope.Scope{Role: "owner"}}
+	return mcpscope.Session{Who: mcpLocalActor(), Identity: mcpscope.Identity{Login: mcpLocalActor()}, Scope: mcpscope.Scope{Role: "owner"}}
 }
 
 func mcpLocalActor() string {
@@ -121,7 +125,7 @@ func mcpCallApps(a mcpActions, tool string, raw json.RawMessage) ([]string, erro
 	if a.registryPath != "" && mcpMutatingTool(tool) {
 		reg, _, err := registry.Preflight(a.registryPath)
 		if err == nil {
-			if tool == "share" && args.Name == "" || tool == "invite_user" || tool == "invite_revoke" || tool == "invite_resend" {
+			if tool == "invite_user" || tool == "invite_revoke" || tool == "invite_resend" {
 				for _, svc := range reg.Services {
 					apps = append(apps, svc.Name)
 				}
@@ -186,7 +190,10 @@ func callMCPTool(ctx context.Context, actions mcpActions, name string, raw json.
 	}
 	apps, authErr := mcpCallApps(actions, name, raw)
 	if authErr == nil {
-		authErr = session.Authorize(name, apps, mcpNow(actions))
+		authErr = mcpscope.CheckEffect(ctx)
+		if authErr == nil {
+			authErr = session.Authorize(name, apps, mcpNow(actions))
+		}
 	}
 	if authErr == nil && name == "people_grant" {
 		var args struct {
@@ -197,7 +204,7 @@ func callMCPTool(ctx context.Context, actions mcpActions, name string, raw json.
 		}
 	}
 	mutating := mcpMutatingTool(name)
-	entry := mcpaudit.Entry{Time: mcpNow(actions).UTC(), Who: session.Who, Scope: session.Scope.Role, Capabilities: session.Scope, ScopeExpiresAt: session.ExpiresAt, Tool: name, Apps: apps, Result: "started"}
+	entry := mcpaudit.Entry{Kind: "mcp", Time: mcpNow(actions).UTC(), Identity: session.Identity, Principal: session.Who, Role: session.Scope.Role, Phase: "intent", Capabilities: session.Scope, ScopeExpiresAt: session.ExpiresAt, Tool: name, Apps: apps, Result: "started"}
 	if mutating && actions.audit != nil {
 		entry.ID = rand.Text()
 		if authErr != nil {
@@ -210,9 +217,12 @@ func callMCPTool(ctx context.Context, actions mcpActions, name string, raw json.
 	// Journal lock waiting must not extend an expiring capability. Recheck at
 	// dispatch, and close the intent receipt without calling the domain action.
 	if authErr == nil {
-		authErr = session.Authorize(name, apps, mcpNow(actions))
+		authErr = mcpscope.CheckEffect(ctx)
+		if authErr == nil {
+			authErr = session.Authorize(name, apps, mcpNow(actions))
+		}
 		if authErr != nil && mutating && actions.audit != nil {
-			entry.Time, entry.Result = mcpNow(actions).UTC(), "denied"
+			entry.Time, entry.Result, entry.Phase = mcpNow(actions).UTC(), "denied", "completion"
 			if err := actions.audit(context.WithoutCancel(ctx), entry); err != nil {
 				return makeMCPToolErrorResult(mcpAuditUnavailable(false)), nil
 			}
@@ -221,7 +231,14 @@ func callMCPTool(ctx context.Context, actions mcpActions, name string, raw json.
 	if authErr != nil {
 		return makeMCPToolErrorResult(authErr), nil
 	}
-	ctx = mcpscope.WithSession(ctx, session)
+	ctx = mcpscope.WithClock(mcpscope.WithSession(ctx, session), func() time.Time { return mcpNow(actions) })
+	if session.ExpiresAt != nil {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, session.ExpiresAt.Sub(mcpNow(actions)))
+		defer cancel()
+	}
+	affected := &mcpAffectedApps{apps: []string{}}
+	ctx = context.WithValue(ctx, mcpAffectedKey{}, affected)
 	var result *mcp.CallToolResult
 	var err error
 	if name == "doctor" && session.Scope.Role != "owner" {
@@ -251,7 +268,10 @@ func callMCPTool(ctx context.Context, actions mcpActions, name string, raw json.
 		}
 	}
 	if mutating && actions.audit != nil {
-		entry.Time, entry.Result = mcpNow(actions).UTC(), mcpResultCode(result, err)
+		entry.Time, entry.Result, entry.Phase = mcpNow(actions).UTC(), mcpResultCode(result, err), "completion"
+		if name == "share" {
+			entry.Apps = affected.apps
+		}
 		// A cancelled client cannot suppress its completion receipt.
 		if recordErr := actions.audit(context.WithoutCancel(ctx), entry); recordErr != nil {
 			return makeMCPToolErrorResult(mcpAuditUnavailable(true)), nil
@@ -262,6 +282,9 @@ func callMCPTool(ctx context.Context, actions mcpActions, name string, raw json.
 
 // The code is forwarded from a domain result, never constructed from arguments.
 func mcpScopedFailure(code string) *mcp.CallToolResult {
+	if code == "mcp_person_owner_required" {
+		return makeMCPToolErrorResult(registry.CodedError{Code: code, Message: "The owner must add the person first"})
+	}
 	return makeMCPToolErrorResult(registry.CodedError{Code: code, Message: "Scoped MCP call failed; ask the owner to inspect the app"})
 }
 
@@ -476,6 +499,15 @@ func diagnoseMCPBindings(result *DoctorResult, cfg config.GlobalConfig, now time
 			bindings = append(bindings, mcpscope.Binding{Principal: p, Scope: mcpscope.Scope{Role: "owner"}})
 		}
 	}
+	tags := map[string]bool{}
+	for _, b := range bindings {
+		if strings.HasPrefix(b.Principal, "tag:") {
+			tags[b.Principal] = true
+		}
+	}
+	if len(tags) > 1 {
+		result.Findings = append(result.Findings, DoctorFinding{Code: "mcp_multiple_tags", Severity: doctorSeverityWarning, Area: "mcp", Message: "A node carrying multiple configured MCP tags is denied unless an explicit login binding matches"})
+	}
 	for _, b := range bindings {
 		if b.Role == "owner" && strings.HasPrefix(b.Principal, "tag:") {
 			result.Findings = append(result.Findings, DoctorFinding{Code: "mcp_owner_tag", Severity: doctorSeverityWarning, Area: "mcp", Message: "Every device carrying this tag has owner MCP authority", Evidence: map[string]string{"principal": b.Principal}})
@@ -496,7 +528,7 @@ func init() {
 			required = append(required, "for")
 		}
 		mcpToolHints[tool] = mcpHints(false, true, tool == "people_revoke", false)
-		mcpToolDefinitions = append(mcpToolDefinitions, mcpToolDefinition{Name: tool, Description: "Change one person's grant for one private HTTP/file app. Preserves all other grants and invites; cannot clear an owner revocation. Creates no network invitation. A revoke denies HTTP access but leaves accepted network shares and in-flight streams; ask the owner to clean up invitations.", InputSchema: objectSchema(props, required...), OutputSchema: objectSchema(map[string]any{"person": peopleViewSchema(), "app": map[string]any{"type": "string"}, "revoked": map[string]any{"type": "boolean"}}, "person", "app", "revoked")})
+		mcpToolDefinitions = append(mcpToolDefinitions, mcpToolDefinition{Name: tool, Description: "Change one person's grant for one private HTTP/file app. Reduced scopes require an existing person; only the owner can create one. Revoking an unknown login is a no-op. Preserves all other grants and invites; cannot clear an owner revocation. Creates no network invitation. A revoke denies HTTP access but leaves accepted network shares and in-flight streams; ask the owner to clean up invitations.", InputSchema: objectSchema(props, required...), OutputSchema: objectSchema(map[string]any{"person": peopleViewSchema(), "app": map[string]any{"type": "string"}, "revoked": map[string]any{"type": "boolean"}}, "person", "app", "revoked")})
 	}
 	mcpToolHints["app_restart"] = mcpHints(false, true, false, false)
 	mcpToolDefinitions = append(mcpToolDefinitions, mcpToolDefinition{Name: "app_restart", Description: "Queue restart of this app's TSLink gateway node on daemon reconciliation. Keeps the enrolled identity and other apps; does not restart the third-party app process or install a daemon. queued is not evidence that reconciliation finished. Reduced operators cannot restart a public Funnel app.", InputSchema: objectSchema(map[string]any{"app": map[string]any{"type": "string"}}, "app"), OutputSchema: objectSchema(map[string]any{"app": map[string]any{"type": "string"}, "queued": map[string]any{"type": "boolean"}, "restart_generation": map[string]any{"type": "integer"}}, "app", "queued", "restart_generation")})
@@ -518,9 +550,19 @@ func init() {
 			return json.NewEncoder(cmd.OutOrStdout()).Encode(output.NewSuccess("mcp-audit", map[string]any{"entries": entries}))
 		}
 		for _, e := range entries {
-			fmt.Fprintf(cmd.OutOrStdout(), "%s %s %s %s %v %s\n", e.Time.Format(time.RFC3339), e.Who, e.Scope, e.Tool, e.Apps, e.Result)
+			fmt.Fprintf(cmd.OutOrStdout(), "%s %s %s %s %v %s\n", e.Time.Format(time.RFC3339), e.Principal, e.Role, e.Tool, e.Apps, e.Result)
 		}
 		return nil
 	}}
 	rootCmd.AddCommand(mcpAuditCmd)
+}
+
+type mcpAffectedKey struct{}
+type mcpAffectedApps struct{ apps []string }
+
+// Share allocation reports its transaction outcome, never a predicted name or inventory.
+func recordMCPShareApp(ctx context.Context, app string) {
+	if affected, ok := ctx.Value(mcpAffectedKey{}).(*mcpAffectedApps); ok && registry.ValidateName(app) == nil {
+		affected.apps = []string{app}
+	}
 }

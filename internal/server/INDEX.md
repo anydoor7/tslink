@@ -46,3 +46,5 @@ This index covers the recipe integration tests. The repository AGENTS.md describ
 # Scoped MCP control plane
 
 - `mcp_scopes_test.go`: WhoIs-bound expiry and real gateway reconciliation without changing other nodes.
+
+- `mcp_scopes_boundary_test.go`: MCP transaction, identity and app attribution correctness tests.

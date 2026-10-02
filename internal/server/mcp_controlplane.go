@@ -383,6 +383,9 @@ func mcpScopeAuthMiddleware(allowedUsers []string, bindings []mcpscope.Binding, 
 			mcpDenied(w)
 			return
 		}
+		if whois.Node != nil {
+			session.Identity.Node = mcpscope.NodeIdentity(whois.Node.Name)
+		}
 		ctx := mcpscope.WithSession(r.Context(), session)
 		if session.ExpiresAt != nil {
 			var cancel context.CancelFunc

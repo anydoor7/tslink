@@ -568,6 +568,7 @@ func sortedSet(values map[string]struct{}) []string {
 
 func TestManifestErrorExitTaxonomyMatchesRuntime(t *testing.T) {
 	tests := map[string]error{
+		"mcp_person_owner_required":             registry.CodedError{Code: "mcp_person_owner_required", Message: "The owner must add the person first"},
 		"mcp_scope_denied":                      registry.CodedError{Code: "mcp_scope_denied", Message: "scope refusal"},
 		"mcp_audit_unavailable":                 mcpAuditUnavailable(false),
 		"people_service_unsupported":            registry.ValidateService(registry.Service{Name: "db", Type: registry.TypeTCP, Target: "localhost:5432", PeopleScoped: true}),

@@ -1,6 +1,7 @@
 package registry
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"sort"
@@ -162,6 +163,10 @@ func PeopleServiceSupported(svc Service) bool {
 // the set on update; nil expiry keeps deadlines unless changeExpiry is true.
 // all selects the current private HTTP/file services, not future additions.
 func ChangePerson(path, who string, apps []string, expiry *time.Time, changeExpiry, update bool) (result Person, err error) {
+	return ChangePersonContext(context.Background(), path, who, apps, expiry, changeExpiry, update)
+}
+
+func ChangePersonContext(ctx context.Context, path, who string, apps []string, expiry *time.Time, changeExpiry, update bool) (result Person, err error) {
 	if !update && len(apps) == 0 {
 		return result, CodedError{Code: errcode.UsageError, Message: "apps must include at least one private HTTP or file service"}
 	}
@@ -169,7 +174,7 @@ func ChangePerson(path, who string, apps []string, expiry *time.Time, changeExpi
 	if err != nil {
 		return result, err
 	}
-	err = withLock(path, func() error {
+	err = withLockContext(ctx, path, func() error {
 		reg, err := loadForMutation(path)
 		if err != nil {
 			return err
@@ -273,11 +278,15 @@ func ChangePerson(path, who string, apps []string, expiry *time.Time, changeExpi
 // RemovePerson retains a deny tombstone so a legacy empty allow-list, a tag
 // rule or an accepted device share cannot restore this login's HTTP access.
 func RemovePerson(path, who string) (removed bool, err error) {
+	return RemovePersonContext(context.Background(), path, who)
+}
+
+func RemovePersonContext(ctx context.Context, path, who string) (removed bool, err error) {
 	login, err := ResolvePersonLogin(path, who)
 	if err != nil {
 		return false, err
 	}
-	err = withLock(path, func() error {
+	err = withLockContext(ctx, path, func() error {
 		reg, err := loadForMutation(path)
 		if err != nil {
 			return err

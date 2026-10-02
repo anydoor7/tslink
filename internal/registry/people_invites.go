@@ -1,6 +1,7 @@
 package registry
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -91,6 +92,7 @@ func TryPeopleInviteWork(path string, fn func() error) (bool, error) {
 // proved no POST was attempted or explicitly reconciled an empty remote list.
 // Callers must hold TryPeopleInviteWork across remote proof and transitions.
 type PersonInviteSaveOptions struct {
+	Context        context.Context
 	Now            time.Time
 	Expected       *PersonInvite
 	ResetConfirmed bool
@@ -115,7 +117,7 @@ func SavePersonInviteWithOptions(path, who string, op PersonInvite, opts PersonI
 	if opts.Now.IsZero() {
 		return CodedError{Code: errcode.UsageError, Message: "invite transition requires a clock"}
 	}
-	return withLock(path, func() error {
+	return withLockContext(mutationContext(opts.Context), path, func() error {
 		reg, err := loadForMutation(path)
 		if err != nil {
 			return err

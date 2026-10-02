@@ -20,6 +20,7 @@ import (
 	"github.com/anydoor7/tslink/internal/daemon"
 	"github.com/anydoor7/tslink/internal/duration"
 	"github.com/anydoor7/tslink/internal/inspect"
+	"github.com/anydoor7/tslink/internal/mcpscope"
 	"github.com/anydoor7/tslink/internal/output"
 	"github.com/anydoor7/tslink/internal/registry"
 	"github.com/spf13/cobra"
@@ -400,8 +401,12 @@ func shareFunnelRearmable(existing registry.Service, spec shareTargetSpec, now t
 // exactly what was read. ok is false when it changed or disappeared meanwhile,
 // and the caller reads the registry again.
 func rearmShareFunnel(regPath string, existing registry.Service, deadline time.Time) (rearmed registry.Service, ok bool, err error) {
+	return rearmShareFunnelContext(context.Background(), regPath, existing, deadline)
+}
+
+func rearmShareFunnelContext(ctx context.Context, regPath string, existing registry.Service, deadline time.Time) (rearmed registry.Service, ok bool, err error) {
 	errChanged := errors.New("share changed since it was read")
-	rearmed, err = registry.MutateServiceTentative(regPath, existing.Name, func(stored registry.Service) (registry.Service, error) {
+	rearmed, err = registry.MutateServiceTentativeContext(ctx, regPath, existing.Name, func(stored registry.Service) (registry.Service, error) {
 		if !reflect.DeepEqual(stored, existing) {
 			return registry.Service{}, errChanged
 		}
@@ -431,6 +436,10 @@ func registerShare(regPath string, spec shareTargetSpec, requestedName string) (
 }
 
 func registerShareWithOutcome(regPath string, spec shareTargetSpec, requestedName string) (shareRegistration, error) {
+	return registerShareWithOutcomeContext(context.Background(), regPath, spec, requestedName)
+}
+
+func registerShareWithOutcomeContext(ctx context.Context, regPath string, spec shareTargetSpec, requestedName string) (shareRegistration, error) {
 	// Tags take part in reuse only when the caller asked for them. `tslink
 	// share` has no way to, so matching its request against the default tag
 	// would turn a retry into a conflict as soon as the default tag, or the
@@ -469,7 +478,7 @@ retries:
 							"cannot reuse service %q for this funnel deadline: existing deadline is %s, requested deadline is %s; remove or reconfigure the existing service before retrying",
 							existing.Name, shareFunnelDeadlineDescription(existing.FunnelExpiresAt), shareFunnelDeadlineDescription(spec.Service.FunnelExpiresAt)))
 					}
-					rearmed, ok, err := rearmShareFunnel(regPath, existing, *spec.Service.FunnelExpiresAt)
+					rearmed, ok, err := rearmShareFunnelContext(ctx, regPath, existing, *spec.Service.FunnelExpiresAt)
 					// MutateService may return an error after atomic rename (directory
 					// sync). Preserve the exact expected and prior values so the
 					// caller can compensate even though registration returned error.
@@ -487,7 +496,7 @@ retries:
 				// A share still waiting on the registration it created
 				// removes it if that wait fails. Keeping it here, as stored,
 				// takes that rollback away before this call relies on it.
-				kept, err := registry.KeepIfUnchanged(regPath, existing)
+				kept, err := registry.KeepIfUnchangedContext(ctx, regPath, existing)
 				if err != nil {
 					return shareRegistration{}, err
 				}
@@ -531,7 +540,13 @@ retries:
 		}
 		svc.Name = name
 		svc.CreatedAt = time.Now().UTC()
-		created, err := shareAddIfMissingFn(regPath, svc)
+		add := shareAddIfMissingFn
+		if _, scoped := mcpscope.FromContext(ctx); scoped {
+			add = func(path string, svc registry.Service) (bool, error) {
+				return registry.AddTentativeContext(ctx, path, svc)
+			}
+		}
+		created, err := add(regPath, svc)
 		if err != nil {
 			if created {
 				return shareRegistration{Service: svc, Created: true}, err
@@ -635,22 +650,39 @@ func executeShare(ctx context.Context, paths sharePaths, req shareRequest, wait 
 		return ShareResult{}, daemonNotRunningError()
 	}
 	registryWasAbsent := registryFileAbsent(paths.Registry)
-	registration, err := registerShareWithOutcome(paths.Registry, spec, req.Name)
+	registration, err := registerShareWithOutcomeContext(ctx, paths.Registry, spec, req.Name)
 	svc, created := registration.Service, registration.Created
+	if svc.Name != "" {
+		recordMCPShareApp(ctx, svc.Name)
+	}
 	defer func() {
 		if err == nil {
 			if created || registration.FunnelRearmed {
-				_, _ = registry.KeepIfUnchanged(paths.Registry, svc)
+				_, _ = registry.KeepIfUnchangedContext(ctx, paths.Registry, svc)
 			}
 			return
 		}
 		if created {
+			// Compensation uses the exact tentative transaction. Cancellation may
+			// unwind it, but the binding deadline is still checked under lock.
 			// A concurrent caller may have kept this tentative registration.
-			if _, rollbackErr := registry.RemoveIfUnchanged(paths.Registry, svc); rollbackErr != nil {
+			remove := registry.RemoveIfUnchanged
+			if _, scoped := mcpscope.FromContext(ctx); scoped {
+				remove = func(path string, svc registry.Service) (bool, error) {
+					return registry.RemoveIfUnchangedContext(context.WithoutCancel(ctx), path, svc)
+				}
+			}
+			if _, rollbackErr := remove(paths.Registry, svc); rollbackErr != nil {
 				err = errors.Join(err, fmt.Errorf("roll back share %q: %w", svc.Name, rollbackErr))
 			}
 		} else if registration.FunnelRearmed {
-			restored, rollbackErr := shareReplaceIfUnchangedFn(paths.Registry, svc, registration.Previous)
+			restore := shareReplaceIfUnchangedFn
+			if _, scoped := mcpscope.FromContext(ctx); scoped {
+				restore = func(path string, svc, previous registry.Service) (bool, error) {
+					return registry.RestoreTentativeIfUnchangedContext(context.WithoutCancel(ctx), path, svc, previous)
+				}
+			}
+			restored, rollbackErr := restore(paths.Registry, svc, registration.Previous)
 			switch {
 			case rollbackErr != nil:
 				err = output.ErrConflict(fmt.Sprintf("share %q failed: %v; rearm rollback failed and public authorization may remain enabled: %v; inspect with `tslink list`", svc.Name, err, rollbackErr))
@@ -668,6 +700,9 @@ func executeShare(ctx context.Context, paths sharePaths, req shareRequest, wait 
 		}
 	}
 	if !shareIsRunningFn(paths.PID) {
+		if err := mcpscope.CheckEffect(ctx); err != nil {
+			return ShareResult{}, err
+		}
 		startup, err := shareStartDaemonFn(ctx, errOut)
 		if err != nil {
 			return ShareResult{}, err

@@ -2,15 +2,19 @@ package runtime
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
 	goruntime "runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/anydoor7/tslink/internal/filelock"
+	"github.com/anydoor7/tslink/internal/mcpscope"
 	"github.com/anydoor7/tslink/internal/registry"
 )
 
@@ -326,5 +330,93 @@ func TestOwnershipWriteRefusesZeroRecordedAtRetirementInsteadOfWritingUnreadable
 	}
 	if _, err := LoadOwnership(path); err != nil {
 		t.Fatalf("LoadOwnership() after refused write = %v, want still readable", err)
+	}
+}
+
+func TestMCPOwnershipWritersRecheckAfterLockWait(t *testing.T) {
+	for _, operation := range []string{"retire", "forget"} {
+		for _, state := range []string{"active", "expired", "cancelled"} {
+			t.Run(operation+"/"+state, func(t *testing.T) {
+				path := filepath.Join(t.TempDir(), "ownership.json")
+				now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+				expiry := now.Add(time.Hour)
+				if err := RecordOwnedNode(path, "photos", "n1", now); err != nil {
+					t.Fatal(err)
+				}
+				before, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				lock, err := os.OpenFile(path+".lock", os.O_RDWR, 0600)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer lock.Close()
+				if err := filelock.Lock(lock); err != nil {
+					t.Fatal(err)
+				}
+				defer filelock.Unlock(lock)
+				var expired atomic.Bool
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				ctx = mcpscope.WithClock(mcpscope.WithSession(ctx, mcpscope.Session{Scope: mcpscope.Scope{Role: "owner"}, ExpiresAt: &expiry}), func() time.Time {
+					if expired.Load() {
+						return expiry
+					}
+					return now
+				})
+				entered, done := make(chan struct{}), make(chan error, 1)
+				var commits atomic.Int32
+				go func() {
+					close(entered)
+					if operation == "retire" {
+						_, err := RetireServiceNodesContext(ctx, path, "photos", now.Add(time.Minute), func() error { commits.Add(1); return nil })
+						done <- err
+					} else {
+						done <- RemoveOwnedNodeIDsContext(ctx, path, []string{"n1"})
+					}
+				}()
+				<-entered
+				select {
+				case err := <-done:
+					t.Fatalf("writer completed while lock held: %v", err)
+				case <-time.After(30 * time.Millisecond):
+				}
+				if state == "expired" {
+					expired.Store(true)
+				}
+				if state == "cancelled" {
+					cancel()
+				}
+				if err := filelock.Unlock(lock); err != nil {
+					t.Fatal(err)
+				}
+				select {
+				case err := <-done:
+					if state == "active" {
+						if err != nil {
+							t.Fatal(err)
+						}
+					} else {
+						if code, _ := registry.ErrorCode(err); code != mcpscope.DeniedCode {
+							t.Fatalf("code=%q err=%v", code, err)
+						}
+					}
+				case <-time.After(2 * time.Second):
+					t.Fatal("ownership writer did not finish")
+				}
+				after, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if state == "active" {
+					if bytes.Equal(before, after) {
+						t.Error("active writer did not update ownership")
+					}
+				} else if !bytes.Equal(before, after) || commits.Load() != 0 {
+					t.Error("inactive writer changed ownership or committed removal")
+				}
+			})
+		}
 	}
 }

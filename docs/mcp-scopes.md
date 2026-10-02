@@ -89,15 +89,17 @@ it. Alternatively use an RFC3339 `expires_at` timestamp; it excludes
 `issued_at`/`for`. Omitting both expiry forms makes the binding indefinite.
 Expired bindings deny new requests; an admitted HTTP request/stream is cancelled
 at its remaining deadline. In-progress remote effects are not rolled back by
-expiry. People writers recheck permission and deadlines inside their lock.
+expiry. Every MCP mutation rechecks session lifetime and cancellation after lock waits at its transaction or side-effect boundary. Cancellation can unwind only the exact tentative registration from an already-started share. Compensation retains and rechecks the binding deadline under its lock; after expiry it may leave that registration for the owner to inspect using the audit receipt.
 
 WhoIs is resolved on every HTTP request, before tools are routed. A tag principal
 matches node tags only, never a login with the same spelling. Explicit login
-bindings take precedence over tag bindings; legacy matching `allow` entries
-retain owner authority. Multiple matching scoped tags are ambiguous and denied,
-not merged into a broader role. Treat a legacy owner tag as broad authority over
+bindings (including legacy login entries) take precedence. Otherwise all matching
+tag principals in `bindings` and legacy `allow` are evaluated together. More than
+one matching tag is denied with HTTP 403. A single legacy entry retains owner authority. Treat a legacy owner tag as broad authority over
 every device carrying it; remove it when migrating those devices to reduced
-roles. Doctor warns about every owner tag and every expired binding.
+roles. Doctor warns about every owner tag, every expired binding and configurations
+with multiple distinct tag principals that could match the same node. It does
+not inspect live node tags.
 
 ## Reduced local sessions
 
@@ -147,3 +149,7 @@ with the general access log. Duration parsing is isolated at
 
 Tailscale references checked 2026-10-02: [tsnet LocalClient and WhoIs](https://tailscale.com/docs/reference/tsnet-server-api)
 and [device tags](https://tailscale.com/docs/features/tags).
+
+Reduced operators and managers can change grants only for people already in the people store. Creating a person is owner-only; `mcp_person_owner_required` tells the caller to ask the owner to add the person first. Revoking an unknown login is a no-op and does not create a person or alter other apps.
+
+Audit entries separate `identity.login` and `identity.node` from the matched `principal`. The `kind=mcp`, `role`, `tool`, `apps`, `result` and `phase` fields are typed metadata. Share intent records the explicit requested name, or no app when allocation is pending; completion records the actual generated or reused name, including concurrent allocation results. Raw arguments, targets, invitation links and secrets are excluded.

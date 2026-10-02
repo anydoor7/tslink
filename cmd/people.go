@@ -213,7 +213,7 @@ func changePeople(ctx context.Context, paths sharePaths, args peopleArguments, u
 			targets[target.Service] = target
 		}
 	}
-	p, err := registry.ChangePerson(paths.Registry, args.Who, args.Apps, expires, args.For != nil, update)
+	p, err := registry.ChangePersonContext(peopleMutationContext(ctx), paths.Registry, args.Who, args.Apps, expires, args.For != nil, update)
 	if err != nil {
 		return PeopleResult{}, err
 	}
@@ -270,7 +270,7 @@ func removePeopleContext(ctx context.Context, path, who string, reconcile ...map
 	if err != nil {
 		return PeopleRemoveResult{}, err
 	}
-	removed, err := registry.RemovePerson(path, login)
+	removed, err := registry.RemovePersonContext(peopleMutationContext(ctx), path, login)
 	if err != nil {
 		return PeopleRemoveResult{}, err
 	}

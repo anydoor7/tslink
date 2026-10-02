@@ -2,6 +2,7 @@ package registry
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,6 +22,7 @@ import (
 	"github.com/anydoor7/tslink/internal/atomicfile"
 	"github.com/anydoor7/tslink/internal/config"
 	"github.com/anydoor7/tslink/internal/filelock"
+	"github.com/anydoor7/tslink/internal/mcpscope"
 )
 
 const (
@@ -1360,6 +1362,10 @@ func migrate(reg *Registry) error {
 }
 
 func withLock(regPath string, fn func() error) error {
+	return withLockContext(context.Background(), regPath, fn)
+}
+
+func withLockContext(ctx context.Context, regPath string, fn func() error) error {
 	if err := atomicfile.EnsurePrivateDir(filepath.Dir(regPath)); err != nil {
 		return err
 	}
@@ -1377,7 +1383,9 @@ func withLock(regPath string, fn func() error) error {
 		return err
 	}
 	defer unlockFn(lockFile)
-
+	if err := mcpscope.CheckEffect(ctx); err != nil {
+		return err
+	}
 	return fn()
 }
 
@@ -1455,6 +1463,7 @@ func Add(path string, svc Service) (created bool, err error) {
 }
 
 type AddOptions struct {
+	Context context.Context
 	// PreserveFunnelExpiry keeps an existing entry's deadline. It is used when
 	// --funnel-ttl was not explicitly supplied, including an explicit never.
 	PreserveFunnelExpiry bool
@@ -1549,7 +1558,7 @@ func AddWithOutcome(path string, svc Service, options AddOptions) (outcome AddOu
 		now = time.Now().UTC()
 	}
 
-	err = withLock(path, func() error {
+	err = withLockContext(mutationContext(options.Context), path, func() error {
 		reg, err := loadForMutation(path)
 		if err != nil {
 			return err
@@ -1593,22 +1602,22 @@ func AddWithOutcome(path string, svc Service, options AddOptions) (outcome AddOu
 }
 
 func AddIfMissing(path string, svc Service) (created bool, err error) {
-	return addIfMissing(path, svc, false)
+	return addIfMissing(context.Background(), path, svc, false)
 }
 
 // AddTentative is AddIfMissing for a caller that may still undo the creation
 // with RemoveIfUnchanged: the service it creates stays tentative until the
 // caller, or anyone else relying on it, settles it with KeepIfUnchanged.
 func AddTentative(path string, svc Service) (created bool, err error) {
-	return addIfMissing(path, svc, true)
+	return addIfMissing(context.Background(), path, svc, true)
 }
 
-func addIfMissing(path string, svc Service, tentative bool) (created bool, err error) {
+func addIfMissing(ctx context.Context, path string, svc Service, tentative bool) (created bool, err error) {
 	if err := ValidateService(svc); err != nil {
 		return false, err
 	}
 
-	err = withLock(path, func() error {
+	err = withLockContext(ctx, path, func() error {
 		reg, err := loadForMutation(path)
 		if err != nil {
 			return err
@@ -1674,7 +1683,11 @@ func RemoveAndReturn(path, name string) (removedService Service, removed bool, e
 // succeeds. Nothing can add, change or remove the service between the lookup
 // and the commit.
 func RemoveAndReturnWithin(path, name string, within func(svc Service, commit func() error) error) (removedService Service, removed bool, err error) {
-	err = withLock(path, func() error {
+	return RemoveAndReturnWithinContext(context.Background(), path, name, within)
+}
+
+func RemoveAndReturnWithinContext(ctx context.Context, path, name string, within func(svc Service, commit func() error) error) (removedService Service, removed bool, err error) {
+	err = withLockContext(ctx, path, func() error {
 		reg, err := loadForMutation(path)
 		if err != nil {
 			return err
@@ -1687,6 +1700,9 @@ func RemoveAndReturnWithin(path, name string, within func(svc Service, commit fu
 
 			remaining := append(append([]Service{}, reg.Services[:i]...), reg.Services[i+1:]...)
 			commit := func() error {
+				if err := mcpscope.CheckEffect(ctx); err != nil {
+					return err
+				}
 				reg.Services = remaining
 				removeAppGrants(reg, name)
 				if err := save(path, reg); err != nil {
@@ -1744,7 +1760,11 @@ func dropTentativeMark(regPath, name string) error {
 // reports false, and settles nothing, when the stored service changed or is
 // gone.
 func KeepIfUnchanged(path string, expected Service) (kept bool, err error) {
-	err = withLock(path, func() error {
+	return KeepIfUnchangedContext(context.Background(), path, expected)
+}
+
+func KeepIfUnchangedContext(ctx context.Context, path string, expected Service) (kept bool, err error) {
+	err = withLockContext(ctx, path, func() error {
 		reg, err := Load(path)
 		if err != nil {
 			return err
@@ -1769,7 +1789,11 @@ func KeepIfUnchanged(path string, expected Service) (kept bool, err error) {
 // tentative mark of its creation. It deletes neither a service another process
 // changed after creation nor one another call has kept since.
 func RemoveIfUnchanged(path string, expected Service) (removed bool, err error) {
-	err = withLock(path, func() error {
+	return RemoveIfUnchangedContext(context.Background(), path, expected)
+}
+
+func RemoveIfUnchangedContext(ctx context.Context, path string, expected Service) (removed bool, err error) {
+	err = withLockContext(ctx, path, func() error {
 		mark, err := os.ReadFile(tentativeMarkPath(path, expected.Name))
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil
@@ -1809,23 +1833,23 @@ func RemoveIfUnchanged(path string, expected Service) (removed bool, err error) 
 // value still equals expected. It keeps a compensating write from clobbering
 // another process's registry edit or resurrecting a removed service.
 func ReplaceIfUnchanged(path string, expected, replacement Service) (replaced bool, err error) {
-	return replaceIfUnchanged(path, expected, replacement, false)
+	return replaceIfUnchanged(context.Background(), path, expected, replacement, false)
 }
 
 // RestoreTentativeIfUnchanged compensates a tentative mutation only while no
 // other caller has kept the resulting registration.
 func RestoreTentativeIfUnchanged(path string, expected, replacement Service) (bool, error) {
-	return replaceIfUnchanged(path, expected, replacement, true)
+	return replaceIfUnchanged(context.Background(), path, expected, replacement, true)
 }
 
-func replaceIfUnchanged(path string, expected, replacement Service, tentative bool) (replaced bool, err error) {
+func replaceIfUnchanged(ctx context.Context, path string, expected, replacement Service, tentative bool) (replaced bool, err error) {
 	if expected.Name != replacement.Name {
 		return false, fmt.Errorf("replacement service name differs from expected name")
 	}
 	if err := ValidateService(replacement); err != nil {
 		return false, err
 	}
-	err = withLock(path, func() error {
+	err = withLockContext(ctx, path, func() error {
 		var previousMark []byte
 		if tentative {
 			mark, err := os.ReadFile(tentativeMarkPath(path, expected.Name))
@@ -1895,18 +1919,18 @@ func DowngradeExpiredFunnels(path string, now time.Time, dryRun bool) (expired [
 }
 
 func MutateService(path, name string, mutate func(Service) (Service, error)) (Service, error) {
-	return mutateService(path, name, mutate, false)
+	return mutateService(context.Background(), path, name, mutate, false)
 }
 
 // MutateServiceTentative marks the new value before publishing it so a failed
 // caller can restore the previous value unless another caller keeps it first.
 func MutateServiceTentative(path, name string, mutate func(Service) (Service, error)) (Service, error) {
-	return mutateService(path, name, mutate, true)
+	return mutateService(context.Background(), path, name, mutate, true)
 }
 
-func mutateService(path, name string, mutate func(Service) (Service, error), tentative bool) (Service, error) {
+func mutateService(ctx context.Context, path, name string, mutate func(Service) (Service, error), tentative bool) (Service, error) {
 	var updated Service
-	err := withLock(path, func() error {
+	err := withLockContext(ctx, path, func() error {
 		reg, err := loadForMutation(path)
 		if err != nil {
 			return err
@@ -1952,4 +1976,25 @@ func mutateService(path, name string, mutate func(Service) (Service, error), ten
 		return fmt.Errorf("service not found: %s", name)
 	})
 	return updated, err
+}
+
+func mutationContext(ctx context.Context) context.Context {
+	if ctx == nil {
+		return context.Background()
+	}
+	return ctx
+}
+
+func AddTentativeContext(ctx context.Context, path string, svc Service) (bool, error) {
+	return addIfMissing(ctx, path, svc, true)
+}
+func AddIfMissingContext(ctx context.Context, path string, svc Service) (bool, error) {
+	return addIfMissing(ctx, path, svc, false)
+}
+func MutateServiceTentativeContext(ctx context.Context, path, name string, mutate func(Service) (Service, error)) (Service, error) {
+	return mutateService(ctx, path, name, mutate, true)
+}
+
+func RestoreTentativeIfUnchangedContext(ctx context.Context, path string, expected, replacement Service) (bool, error) {
+	return replaceIfUnchanged(ctx, path, expected, replacement, true)
 }

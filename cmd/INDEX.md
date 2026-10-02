@@ -57,3 +57,5 @@ This index records the app recipe additions; the CLI manifest describes the comp
 
 - `mcp_scopes.go`: shared tool authorization, output filtering, reduced stdio launch and owner audit CLI.
 - `mcp_scopes_test.go`: complete role/tool/app matrix, real HTTP and stdio sessions, audit and expiry probes.
+
+- `mcp_scopes_boundary_test.go`: MCP transaction, identity and app attribution correctness tests.

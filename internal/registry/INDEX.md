@@ -26,3 +26,5 @@ This index records the people sharing lifecycle implementation and regression te
 
 - `mcp_actions.go`: locked single-app grants, revocation and gateway restart requests.
 - `mcp_actions_test.go`: unrelated app preservation, expiry, tombstones and failed writes.
+
+- `mcp_boundary_test.go`: real lock tests for session expiry/cancellation across mutation writers and owner-only person creation.

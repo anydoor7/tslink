@@ -43,6 +43,9 @@ func TestScopedPeoplePreserveOtherAppsAndOwnerTombstone(t *testing.T) {
 			}
 		}
 	}
+	if _, err := ChangePerson(path, "bob", []string{"finance"}, nil, false, false); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := ChangePersonApp(path, s, "bob", "photos", "1h", false, clock); err != nil {
 		t.Fatal(err)
 	}
@@ -61,6 +64,9 @@ func TestScopedPeoplePreserveOtherAppsAndOwnerTombstone(t *testing.T) {
 
 func TestScopedRegistryDenialsAndExpiryInsideLock(t *testing.T) {
 	path := peopleFixture(t)
+	if _, err := ChangePerson(path, "alice", []string{"finance"}, nil, false, false); err != nil {
+		t.Fatal(err)
+	}
 	now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
 	s := mcpscope.Session{Who: "agent", Scope: mcpscope.Scope{Role: "people-manager", Apps: []string{"photos", "db", "pub", "missing"}, MaxDuration: "2h"}}
 	for _, tc := range []struct {

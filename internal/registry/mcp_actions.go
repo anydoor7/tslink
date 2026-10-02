@@ -1,6 +1,7 @@
 package registry
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"sort"
@@ -14,7 +15,7 @@ import (
 // Revoke retains an expired grant to keep the per-person denial authoritative.
 // Authorization and deadline checks are repeated inside the writer lock so a
 // caller cannot wait out its binding or race a service becoming public.
-func ChangePersonApp(path string, session mcpscope.Session, who, app, lifetime string, revoke bool, nowFn func() time.Time) (person Person, err error) {
+func ChangePersonApp(path string, session mcpscope.Session, who, app, lifetime string, revoke bool, nowFn func() time.Time, contexts ...context.Context) (person Person, err error) {
 	login, err := NormalizePerson(who)
 	if err != nil {
 		return person, err
@@ -23,7 +24,7 @@ func ChangePersonApp(path string, session mcpscope.Session, who, app, lifetime s
 	if revoke {
 		tool = "people_revoke"
 	}
-	err = withLock(path, func() error {
+	err = withLockContext(optionalMutationContext(contexts), path, func() error {
 		now := nowFn()
 		if err := session.Authorize(tool, []string{app}, now); err != nil {
 			return err
@@ -63,6 +64,12 @@ func ChangePersonApp(path string, session mcpscope.Session, who, app, lifetime s
 			return mcpscope.Denied{}
 		}
 		if index < 0 {
+			if revoke {
+				return nil
+			}
+			if session.Scope.Role != "owner" {
+				return CodedError{Code: "mcp_person_owner_required", Message: "The owner must add the person first"}
+			}
 			person = Person{Login: login, Grants: []PersonGrant{}}
 		}
 		grant := PersonGrant{App: app, ExpiresAt: expiry}
@@ -94,8 +101,8 @@ func ChangePersonApp(path string, session mcpscope.Session, who, app, lifetime s
 
 // RequestAppRestart queues gateway-node reconciliation, preserving enrolled
 // identity and configuration. It does not restart the third-party app process.
-func RequestAppRestart(path string, session mcpscope.Session, app string, nowFn func() time.Time) (generation uint64, err error) {
-	err = withLock(path, func() error {
+func RequestAppRestart(path string, session mcpscope.Session, app string, nowFn func() time.Time, contexts ...context.Context) (generation uint64, err error) {
+	err = withLockContext(optionalMutationContext(contexts), path, func() error {
 		if err := session.Authorize("app_restart", []string{app}, nowFn()); err != nil {
 			return err
 		}
@@ -120,4 +127,11 @@ func RequestAppRestart(path string, session mcpscope.Session, app string, nowFn 
 		return CodedError{Code: "not_found", Message: "app not found"}
 	})
 	return generation, err
+}
+
+func optionalMutationContext(contexts []context.Context) context.Context {
+	if len(contexts) > 0 {
+		return mutationContext(contexts[0])
+	}
+	return context.Background()
 }

@@ -23,15 +23,18 @@ const MaxBytes = 1024 * 1024
 // Entry contains identifiers and stable results only: never raw arguments,
 // errors, invitation links, targets, tokens, or response bodies.
 type Entry struct {
-	ID             string         `json:"id"`
-	Time           time.Time      `json:"time"`
-	Who            string         `json:"who"`
-	Scope          string         `json:"scope"`
-	Capabilities   mcpscope.Scope `json:"capabilities"`
-	ScopeExpiresAt *time.Time     `json:"scope_expires_at,omitempty"`
-	Tool           string         `json:"tool"`
-	Apps           []string       `json:"apps"`
-	Result         string         `json:"result"`
+	Kind           string            `json:"kind"`
+	ID             string            `json:"id"`
+	Time           time.Time         `json:"time"`
+	Identity       mcpscope.Identity `json:"identity"`
+	Principal      string            `json:"principal"`
+	Role           string            `json:"role"`
+	Phase          string            `json:"phase"`
+	Capabilities   mcpscope.Scope    `json:"capabilities"`
+	ScopeExpiresAt *time.Time        `json:"scope_expires_at,omitempty"`
+	Tool           string            `json:"tool"`
+	Apps           []string          `json:"apps"`
+	Result         string            `json:"result"`
 }
 
 type Journal struct{ Path string }

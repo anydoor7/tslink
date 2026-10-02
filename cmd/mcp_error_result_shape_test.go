@@ -92,7 +92,7 @@ func refusingMCPActions() mcpActions {
 			return nil, mcpRefusal("url")
 		},
 		tagsList:      func() (any, error) { return nil, mcpRefusal("tags_list") },
-		tagsSet:       func(string, string) (any, error) { return nil, mcpRefusal("tags_set") },
+		tagsSet:       func(context.Context, string, string) (any, error) { return nil, mcpRefusal("tags_set") },
 		accessExplain: func(string) (any, error) { return nil, mcpRefusal("access_explain") },
 		doctor:        func(bool) (any, error) { return nil, mcpRefusal("doctor") },
 		logs:          func(mcpLogsArguments) (any, error) { return nil, mcpRefusal("logs") },

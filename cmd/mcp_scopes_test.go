@@ -135,7 +135,7 @@ func TestMCPScopeAuditCLIAndIndirectAttribution(t *testing.T) {
 		tool, raw string
 		apps      []string
 	}{
-		{"share", `{}`, []string{"finance", "photos"}},
+		{"share", `{}`, []string{}},
 		{"invite_revoke", `{"invite_id":"id"}`, []string{"finance", "photos"}},
 		{"people_remove", `{"who":"alice"}`, []string{"finance"}},
 		{"people_update", `{"who":"alice","apps":["all"],"replace_invites":{"photos":"id"},"reconcile_invites":{"finance":"id"}}`, []string{"finance", "photos"}},
@@ -162,7 +162,7 @@ func TestMCPScopeAuditCLIAndIndirectAttribution(t *testing.T) {
 		t.Fatal("global selector omitted registered app named all", apps, err)
 	}
 	j := mcpaudit.Journal{Path: mcpAuditPath(path)}
-	if err := j.Record(context.Background(), mcpaudit.Entry{ID: "test", Time: time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC), Who: "family-agent", Scope: "people-manager", Tool: "people_grant", Apps: []string{"photos"}, Result: "ok"}); err != nil {
+	if err := j.Record(context.Background(), mcpaudit.Entry{ID: "test", Time: time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC), Principal: "family-agent", Role: "people-manager", Tool: "people_grant", Apps: []string{"photos"}, Result: "ok"}); err != nil {
 		t.Fatal(err)
 	}
 	command, _, err := rootCmd.Find([]string{"mcp-audit"})
@@ -472,6 +472,9 @@ func TestMCPScopeMutationAuditAndDuration(t *testing.T) {
 		}
 	}
 	a := defaultMCPActions(sharePaths{Registry: path}, io.Discard)
+	if _, err := registry.ChangePerson(path, "alice", []string{"finance"}, nil, false, false); err != nil {
+		t.Fatal(err)
+	}
 	s := mcpscope.Session{Who: "agent@example.com", Scope: testRoleScope("people-manager")}
 	a.session = &s
 	for _, tc := range []struct{ app, lifetime, code string }{{"photos", "1h", "ok"}, {"finance", "1h", "mcp_scope_denied"}, {"photos", "never", "mcp_scope_denied"}, {"photos", "3h", "mcp_scope_denied"}} {
@@ -493,7 +496,7 @@ func TestMCPScopeMutationAuditAndDuration(t *testing.T) {
 		t.Fatal(len(entries), err)
 	}
 	for _, e := range entries {
-		if e.Who != "agent@example.com" || e.Scope != "people-manager" || e.Time.IsZero() || e.Tool == "" || len(e.Apps) != 1 {
+		if e.Principal != "agent@example.com" || e.Role != "people-manager" || e.Time.IsZero() || e.Tool == "" || len(e.Apps) != 1 {
 			t.Fatal(e)
 		}
 	}

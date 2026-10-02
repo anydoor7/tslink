@@ -81,6 +81,7 @@ func TestScopeResolveIdentityAndCompatibility(t *testing.T) {
 		{"agent", nil, nil, bindings, "viewer"}, {"bob", []string{"tag:helper"}, nil, bindings, "viewer"},
 		{"tag:helper", nil, nil, bindings, ""},
 		{"Owner", nil, []string{" owner "}, nil, "owner"}, {"bob", []string{"tag:admin"}, []string{"tag:admin"}, nil, "owner"},
+		{"bob", []string{"tag:admin", "tag:other"}, []string{"tag:admin", "tag:other"}, nil, ""},
 		{"nobody", nil, nil, bindings, ""}, {"bad user", []string{"tag:helper"}, nil, bindings, ""},
 		{"bob", []string{"tag:helper", "tag:other"}, nil, append(append([]Binding{}, bindings...), Binding{Principal: "tag:other", Scope: viewer}), ""},
 		{"agent", []string{"tag:admin"}, []string{"tag:admin"}, bindings, "viewer"},
@@ -209,5 +210,40 @@ func TestScopeToolAllowlistAndGrantDeadline(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestEffectClockCancellationAndCallerMetadata(t *testing.T) {
+	expiry := testNow.Add(time.Hour)
+	s := Session{Scope: Scope{Role: "owner"}, ExpiresAt: &expiry}
+	if err := CheckEffect(WithClock(WithSession(context.Background(), s), func() time.Time { return testNow })); err != nil {
+		t.Fatal(err)
+	}
+	if code := CheckEffect(WithClock(WithSession(context.Background(), s), func() time.Time { return expiry })); code == nil {
+		t.Fatal("expired effect allowed")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := CheckEffect(ctx); err != context.Canceled {
+		t.Fatal(err)
+	}
+	if err := CheckEffect(WithSession(ctx, s)); err != (Denied{}) {
+		t.Fatal(err)
+	}
+	if err := CheckEffect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckEffect(WithSession(context.Background(), Session{})); err != nil {
+		t.Fatal(err)
+	}
+	for _, raw := range []string{"alice-agent", "", strings.Repeat("n", 256)} {
+		if NodeIdentity(raw) != raw {
+			t.Errorf("node identity changed %q", raw)
+		}
+	}
+	for _, raw := range []string{strings.Repeat("n", 257), "bad\nnode", "https://token.invalid", "tskey-secret", "Bearer secret", string([]byte{0xff})} {
+		if NodeIdentity(raw) != "" {
+			t.Error("unsafe node identifier retained")
+		}
 	}
 }

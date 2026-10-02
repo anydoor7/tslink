@@ -12,7 +12,7 @@ import (
 )
 
 func auditFixture() Entry {
-	return Entry{ID: "call-1", Time: time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC), Who: "agent", Scope: "app-operator", Tool: "people_grant", Apps: []string{"photos"}, Result: "ok"}
+	return Entry{ID: "call-1", Time: time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC), Principal: "agent", Role: "app-operator", Tool: "people_grant", Apps: []string{"photos"}, Result: "ok"}
 }
 
 func TestJournalDurableAndConcurrent(t *testing.T) {
@@ -32,7 +32,7 @@ func TestJournalDurableAndConcurrent(t *testing.T) {
 	}
 	wg.Wait()
 	v, err := (Journal{Path: j.Path}).Read()
-	if err != nil || len(v) != 24 || v[0].Who != "agent" || !v[0].Time.Equal(auditFixture().Time) {
+	if err != nil || len(v) != 24 || v[0].Principal != "agent" || !v[0].Time.Equal(auditFixture().Time) {
 		t.Fatal(v, err)
 	}
 	info, _ := os.Stat(j.Path)
@@ -60,7 +60,7 @@ func TestJournalBounds(t *testing.T) {
 		t.Fatal(len(v), err)
 	}
 	for i := range seed {
-		seed[i].Who = strings.Repeat("a", 900)
+		seed[i].Principal = strings.Repeat("a", 900)
 	}
 	data, _ = json.Marshal(seed[:900])
 	if len(data) > 1024*1024 {
@@ -70,7 +70,7 @@ func TestJournalBounds(t *testing.T) {
 		t.Fatal(err)
 	}
 	e := auditFixture()
-	e.Who = strings.Repeat("x", 15000)
+	e.Principal = strings.Repeat("x", 15000)
 	for i := 0; i < 20; i++ {
 		if err := j.Record(context.Background(), e); err != nil {
 			t.Fatal(err)
@@ -81,7 +81,7 @@ func TestJournalBounds(t *testing.T) {
 		t.Fatal("journal exceeded byte bound")
 	}
 	v, err = j.Read()
-	if err != nil || len(v) >= 920 || v[len(v)-1].Who != e.Who {
+	if err != nil || len(v) >= 920 || v[len(v)-1].Principal != e.Principal {
 		t.Fatal(len(v), err)
 	}
 }
@@ -127,7 +127,7 @@ func TestJournalFailurePathsPreserveState(t *testing.T) {
 	}
 	j = Journal{Path: filepath.Join(t.TempDir(), "audit.json")}
 	e := auditFixture()
-	e.Who = strings.Repeat("x", 20000)
+	e.Principal = strings.Repeat("x", 20000)
 	if err := j.Record(context.Background(), e); err == nil {
 		t.Fatal("accepted oversized entry")
 	}

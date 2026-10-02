@@ -711,7 +711,7 @@ type mcpActions struct {
 	status        func() (any, error)
 	url           func(context.Context, string, time.Duration) (any, error)
 	tagsList      func() (any, error)
-	tagsSet       func(string, string) (any, error)
+	tagsSet       func(context.Context, string, string) (any, error)
 	accessExplain func(string) (any, error)
 	doctor        func(bool) (any, error)
 	logs          func(mcpLogsArguments) (any, error)
@@ -878,7 +878,7 @@ func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 		audit:        journal.Record, auditRead: journal.Read, nowFn: nowFn,
 		personApp: func(ctx context.Context, who, app, lifetime string, revoke bool) (any, error) {
 			session, _ := mcpscope.FromContext(ctx)
-			p, err := registry.ChangePersonApp(paths.Registry, session, who, app, lifetime, revoke, nowFn)
+			p, err := registry.ChangePersonApp(paths.Registry, session, who, app, lifetime, revoke, nowFn, ctx)
 			if err != nil {
 				return nil, err
 			}
@@ -886,7 +886,7 @@ func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 		},
 		appRestart: func(ctx context.Context, app string) (any, error) {
 			session, _ := mcpscope.FromContext(ctx)
-			generation, err := registry.RequestAppRestart(paths.Registry, session, app, nowFn)
+			generation, err := registry.RequestAppRestart(paths.Registry, session, app, nowFn, ctx)
 			return map[string]any{"app": app, "restart_generation": generation, "queued": err == nil}, err
 		},
 		peopleChange: func(ctx context.Context, args peopleArguments, update bool) (any, error) {
@@ -964,8 +964,8 @@ func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 		tagsList: func() (any, error) {
 			return tagsListResultForPath(paths.Registry)
 		},
-		tagsSet: func(service, tag string) (any, error) {
-			result, err := tagsSetForPath(paths.Registry, service, tag)
+		tagsSet: func(ctx context.Context, service, tag string) (any, error) {
+			result, err := tagsSetForPathContext(ctx, paths.Registry, service, tag)
 			if err != nil {
 				return nil, tagsServiceError(err)
 			}
@@ -1036,7 +1036,7 @@ func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 			return applyTemplate(name, paths.Registry, true)
 		},
 		templateApply: func(ctx context.Context, name string, noInstall bool) (any, error) {
-			result, err := applyTemplate(name, paths.Registry, false)
+			result, err := applyTemplateContext(ctx, name, paths.Registry, false)
 			if err != nil {
 				return nil, err
 			}
@@ -1767,7 +1767,7 @@ func executeMCPTool(ctx context.Context, actions mcpActions, name string, argume
 		if refusal := mcpArgumentsRefusal("tags_set", decodeErr, mcpRequiredArgument{"service", args.Service}, mcpRequiredArgument{"tag", args.Tag}); refusal != nil {
 			return refusal, nil
 		}
-		data, err = actions.tagsSet(args.Service, args.Tag)
+		data, err = actions.tagsSet(ctx, args.Service, args.Tag)
 	case "access_explain":
 		var args struct {
 			Service string `json:"service"`
