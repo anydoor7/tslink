@@ -265,6 +265,16 @@ func Manifest() CLIManifest {
 
 func commandJSONResultFields(commandPath string) map[string]JSONResultFieldInfo {
 	switch commandPath {
+	case "tslink extend":
+		return map[string]JSONResultFieldInfo{
+			"service":             {Type: "string", Description: "App whose person grant or Funnel deadline was changed."},
+			"who":                 {Type: "string", Description: "Canonical person login; absent for Funnel."},
+			"audience":            {Type: "string", Description: "tailnet_member, guest or public, used for policy checks."},
+			"previous_expires_at": {Type: "string|null", Description: "Previous UTC deadline; null for legacy permanent access."},
+			"expires_at":          {Type: "string|null", Description: "New UTC deadline; null for acknowledged permanent member access."},
+			"regranted":           {Type: "boolean", Description: "True only if this operation explicitly renewed an expired grant."},
+			"changed_at":          {Type: "string", Description: "Operation time in UTC; relative lifetime is measured from this instant."},
+		}
 	case "tslink people add", "tslink people update":
 		return map[string]JSONResultFieldInfo{
 			"person":             {Type: "object", Description: "Canonical login, revocation state, per-app absolute deadlines, active decisions and exact URLs when available."},

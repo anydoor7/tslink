@@ -26,9 +26,10 @@ var (
 
 // GlobalConfig holds tslink-wide settings persisted in config.json.
 type GlobalConfig struct {
-	ControlURL string     `json:"control_url,omitempty"`
-	DefaultTag string     `json:"default_tag,omitempty"`
-	MCP        *MCPConfig `json:"mcp,omitempty"`
+	Durations  *DurationPolicyConfig `json:"durations,omitempty"`
+	ControlURL string                `json:"control_url,omitempty"`
+	DefaultTag string                `json:"default_tag,omitempty"`
+	MCP        *MCPConfig            `json:"mcp,omitempty"`
 }
 
 // MCPConfig configures the optional remote MCP control plane the daemon can
@@ -109,7 +110,7 @@ func (e *ConfigLoadError) StableCode() string { return CodeConfigLoadFailed }
 // NextCommands returns the recovery steps for a config.json TSLink refuses.
 func (e *ConfigLoadError) NextCommands() []string {
 	return []string{
-		fmt.Sprintf("Fix %s: %s (known keys: control_url, default_tag, mcp)", e.Path, e.Problem),
+		fmt.Sprintf("Fix %s: %s (known keys: control_url, default_tag, mcp, durations)", e.Path, e.Problem),
 		"tslink doctor --json",
 	}
 }
@@ -160,6 +161,9 @@ func loadGlobalConfig(strict bool) (GlobalConfig, error) {
 	}
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return GlobalConfig{}, &ConfigLoadError{Path: path, Problem: "unexpected data after the JSON object"}
+	}
+	if _, err := cfg.LifetimePolicy(); err != nil {
+		return GlobalConfig{}, &ConfigLoadError{Path: path, Problem: err.Error()}
 	}
 	return cfg, nil
 }
@@ -225,6 +229,9 @@ func UpdateGlobalConfig(mutate func(*GlobalConfig) error) error {
 
 // SaveGlobalConfig writes the global config to disk.
 func SaveGlobalConfig(cfg GlobalConfig) error {
+	if _, err := cfg.LifetimePolicy(); err != nil {
+		return err
+	}
 	path, err := ConfigPath()
 	if err != nil {
 		return err

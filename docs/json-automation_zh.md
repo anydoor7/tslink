@@ -78,8 +78,7 @@ macOS 上，`launchctl_domain_unavailable` 是 TSLink 无法证明 install / uni
 
 MCP `logs` 的 `since`、MCP `url` 的 `wait`、`login --expires-in` 和
 `mcp.events_keepalive` 接受 Go duration 语法及表示天数的 `d`，各自仍有范围限制。
-MCP `funnel_ttl` 和 CLI `--funnel-ttl` 只接受 `1h`、`8h`、`24h`、`72h`、`7d`
-或 `never`，会拒绝 `168h`。CLI `add --wait`、`share --wait` 和 `url --wait`
+MCP `funnel_ttl` 和 CLI `--funnel-ttl` 使用[统一期限语法](durations_zh.md),包括 `90m`、`36h`、`3d`、`1w` 及 `until <日期/时间>`;最短 1h,访客/公开默认上限 7d,公开访问拒绝 `never`。CLI `add --wait`、`share --wait` 和 `url --wait`
 接受 Go duration 语法，也接受用 `d` 表示的分数天数及组合时长。
 
-`--json` 只改变输出格式。`tslink add --json` 与人类路径使用同一套安全护栏：Funnel 服务必须传 `--public`；TCP 服务会拒绝 `--allow`，因为 TSLink 不会对原始 TCP 字节流应用 HTTP 身份检查。
+`--json` 只改变输出格式(`extend` 始终输出 JSON)。`tslink add --json` 与人类路径使用同一套安全护栏：Funnel 服务必须传 `--public`；TCP 服务会拒绝 `--allow`，因为 TSLink 不会对原始 TCP 字节流应用 HTTP 身份检查。

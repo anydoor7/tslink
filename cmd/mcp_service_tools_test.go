@@ -68,8 +68,9 @@ const mcpJSONFlagExclusion = "MCP tool results are always structured JSON; --jso
 
 // mcpCoveredCommands is the mapping half of the partition.
 var mcpCoveredCommands = map[string]mcpCoveredCommand{
-	"tslink people add":    {Tools: []string{"people_add"}, Args: []string{"who"}, Flags: map[string]string{"apps": "apps", "for": "for", "invite": "invite", "print-links": "print_links"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
-	"tslink people update": {Tools: []string{"people_update"}, Args: []string{"who"}, Flags: map[string]string{"apps": "apps", "for": "for", "invite": "invite", "print-links": "print_links", "reconcile-invite": "reconcile_invites", "replace-invite": "replace_invites"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
+	"tslink extend":        {Tools: []string{"extend"}, Args: []string{"service"}, Flags: map[string]string{"person": "who", "for": "for", "until": "until", "ack-never": "ack_never", "regrant": "regrant"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
+	"tslink people add":    {Tools: []string{"people_add"}, Args: []string{"who"}, Flags: map[string]string{"apps": "apps", "for": "for", "until": "until", "ack-never": "ack_never", "invite": "invite", "print-links": "print_links"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
+	"tslink people update": {Tools: []string{"people_update"}, Args: []string{"who"}, Flags: map[string]string{"apps": "apps", "for": "for", "until": "until", "ack-never": "ack_never", "invite": "invite", "print-links": "print_links", "reconcile-invite": "reconcile_invites", "replace-invite": "replace_invites"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
 	"tslink people list":   {Tools: []string{"people_list"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
 	"tslink people remove": {Tools: []string{"people_remove"}, Args: []string{"who"}, Flags: map[string]string{"reconcile-invite": "reconcile_invites"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
 	"tslink share": {
@@ -887,11 +888,12 @@ func TestMCPShareFunnelTTLReachesTheRegistry(t *testing.T) {
 	if _, err := defaultMCPActions(paths, io.Discard).share(context.Background(), shareRequest{
 		Target: "3001", Name: "forever", Ephemeral: true,
 		Funnel: true, PublicAck: true, FunnelTTL: "never", FunnelTTLSet: true,
-	}); err != nil {
-		t.Fatalf("never share: %v", err)
+	}); err == nil || !strings.Contains(err.Error(), "never is allowed only") {
+		t.Fatalf("never share was admitted: %v", err)
 	}
-	if svc := mcpLoadService(t, paths.Registry, "forever"); svc.FunnelExpiresAt != nil {
-		t.Fatalf("funnel_ttl never persisted expiry %v", svc.FunnelExpiresAt)
+	reg, err := registry.Load(paths.Registry)
+	if err != nil || len(reg.Services) != 1 {
+		t.Fatalf("refused Funnel wrote state: %+v %v", reg, err)
 	}
 }
 

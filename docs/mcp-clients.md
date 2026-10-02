@@ -146,7 +146,7 @@ later failures carry it in `data`. The read-only `list`, `status`, `url`, and
 `doctor` tools describe missing credential metadata without recording it or
 creating `credential-meta.json` or `credentials.lock`.
 MCP `logs` `since` and `url` `wait` accept Go durations plus `d` for days;
-MCP `funnel_ttl` accepts only `1h`, `8h`, `24h`, `72h`, `7d`, or `never`.
+MCP `funnel_ttl` uses the [unified duration grammar](durations.md): relative or `until <date/time>`, min 1h, default max 7d; public `never` is refused. Presets: 1h, 8h, 24h, 3d, 7d. MCP `extend` changes a person grant or Funnel TTL and requires `regrant` for expired grants.
 
 ## Redaction is not a boundary
 

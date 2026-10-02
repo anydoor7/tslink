@@ -42,7 +42,7 @@ func TestAddFunnel_WithProxy_Persisted(t *testing.T) {
 	}
 }
 
-func TestBuildServiceFunnelTTLDefaultsTo24HoursAndSupportsNever(t *testing.T) {
+func TestBuildServiceFunnelTTLDefaultsTo24HoursAndRefusesNever(t *testing.T) {
 	testenv.SetHome(t, t.TempDir())
 	now := time.Date(2026, 8, 31, 10, 0, 0, 0, time.UTC)
 	base := AddParams{Name: "public", Proxy: ":3000", Funnel: true, Public: true, Now: now}
@@ -63,7 +63,7 @@ func TestBuildServiceFunnelTTLDefaultsTo24HoursAndSupportsNever(t *testing.T) {
 
 	base.FunnelTTL = "never"
 	svc, err = buildService(base)
-	if err != nil || svc.FunnelExpiresAt != nil {
+	if err == nil || !strings.Contains(err.Error(), "never is allowed only") {
 		t.Fatalf("never service expiry = %v, err=%v", svc.FunnelExpiresAt, err)
 	}
 }
@@ -196,7 +196,7 @@ func TestBuildServiceRejectsExplicitEmptyFunnelTTL(t *testing.T) {
 		Name: "public", Proxy: ":3000", Funnel: true, Public: true,
 		FunnelTTL: "", FunnelTTLSet: true,
 	})
-	if err == nil || !strings.Contains(err.Error(), "funnel TTL must be one of") {
+	if err == nil || !strings.Contains(err.Error(), "valid examples:") {
 		t.Fatalf("error = %v, want strict empty TTL rejection", err)
 	}
 }

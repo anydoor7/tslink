@@ -97,3 +97,7 @@ and duration strings. MCP add/share accept `request_limits` with `max_body`,
 Application recipes can call `registry.RecommendedUploadLimits()` to recommend
 20 GiB and a 2m inactivity window for Immich, Nextcloud or Jellyfin; recipe
 wiring is separate from these limits and must retain the app's own requirements.
+
+## Share for a chosen time
+
+People `--for`/`--until`, Funnel `--funnel-ttl` and `extend` use the [unified durations](durations.md). Minimum 1h; guest/public maximum defaults to 7d. New grants default to 24h. `never` needs `--ack-never` and a tailnet-member login. Use `tslink extend photos --person alice@example.com --for 36h` for one app, or omit `--person` for a [Funnel TTL](funnel.md). Expired grants require explicit `--regrant`.

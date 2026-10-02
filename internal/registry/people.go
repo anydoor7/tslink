@@ -4,12 +4,12 @@ import (
 	"fmt"
 	"os"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/anydoor7/tslink/internal/duration"
 	"github.com/anydoor7/tslink/internal/errcode"
 )
 
@@ -22,6 +22,13 @@ type Person struct {
 	Grants  []PersonGrant  `json:"grants"`
 	Revoked bool           `json:"revoked,omitempty"`
 	Invites []PersonInvite `json:"invites,omitempty"`
+	// Guest is sticky and committed with the first invitation's finite grants,
+	// before remote work. Invite history remains the legacy classification.
+	Guest bool `json:"guest,omitempty"`
+}
+
+func PersonIsGuest(p Person) bool {
+	return p.Guest || len(p.Invites) > 0
 }
 
 type PersonGrant struct {
@@ -93,25 +100,8 @@ func ResolvePersonLogin(path, who string) (string, error) {
 
 // ParsePersonExpiry stores UTC wall time, never a restart-relative duration.
 func ParsePersonExpiry(value string, now time.Time) (*time.Time, error) {
-	if value == "never" {
-		return nil, nil
-	}
-	var d time.Duration
-	var err error
-	if strings.HasSuffix(value, "d") {
-		n, e := strconv.ParseInt(strings.TrimSuffix(value, "d"), 10, 32)
-		if e != nil || n <= 0 || n > 36500 {
-			return nil, fmt.Errorf("expiry must be a positive duration (such as 1h or 7d), or never")
-		}
-		d = time.Duration(n) * 24 * time.Hour
-	} else {
-		d, err = time.ParseDuration(value)
-	}
-	if err != nil || d <= 0 {
-		return nil, fmt.Errorf("expiry must be a positive duration (such as 1h or 7d), or never")
-	}
-	t := now.Add(d).UTC()
-	return &t, nil
+	l, err := (duration.Policy{}).Resolve(value, duration.TailnetMember, false, now, time.Local)
+	return l.Deadline, err
 }
 
 func validatePeople(people []Person) error {
@@ -162,6 +152,24 @@ func PeopleServiceSupported(svc Service) bool {
 // the set on update; nil expiry keeps deadlines unless changeExpiry is true.
 // all selects the current private HTTP/file services, not future additions.
 func ChangePerson(path, who string, apps []string, expiry *time.Time, changeExpiry, update bool) (result Person, err error) {
+	return changePerson(path, who, apps, expiry, changeExpiry, update, nil)
+}
+
+// ChangePersonWithLifetime preserves the F1 store contract, but resolves user
+// lifetimes under the same lock as the grants. Omitted add/new-app expiry is 24h.
+func ChangePersonWithLifetime(path, who string, apps []string, update bool, options PersonLifetimeOptions) (Person, error) {
+	return changePerson(path, who, apps, nil, options.Value != nil, update, &options)
+}
+
+type PersonLifetimeOptions struct {
+	Value    *string
+	Policy   duration.Policy
+	Audience duration.Audience
+	AckNever bool
+	Now      time.Time
+}
+
+func changePerson(path, who string, apps []string, expiry *time.Time, changeExpiry, update bool, options *PersonLifetimeOptions) (result Person, err error) {
 	if !update && len(apps) == 0 {
 		return result, CodedError{Code: errcode.UsageError, Message: "apps must include at least one private HTTP or file service"}
 	}
@@ -188,6 +196,56 @@ func ChangePerson(path, who string, apps []string, expiry *time.Time, changeExpi
 		if !update && index >= 0 && !result.Revoked {
 			return CodedError{Code: errcode.Conflict, Message: fmt.Sprintf("person already exists: %s; use people update", login)}
 		}
+		// The first device invite turns member-designated access into guest
+		// access. Omitted expiry cannot carry permanent/overlong grants across
+		// that boundary. Invitation retries with recorded history retain F1's
+		// deadline preservation semantics.
+		if options != nil && update && options.Audience == duration.Guest && !PersonIsGuest(result) && options.Value == nil {
+			for _, g := range result.Grants {
+				selected := apps == nil || (len(apps) == 1 && apps[0] == "all")
+				for _, app := range apps {
+					selected = selected || app == g.App
+				}
+				if selected {
+					if err := options.Policy.Check(duration.Lifetime{Deadline: g.ExpiresAt, Never: g.ExpiresAt == nil}, duration.Guest, false, options.Now); err != nil {
+						return CodedError{Code: errcode.UsageError, Message: "first guest invitation requires --for/--until within guest policy: " + err.Error()}
+					}
+				}
+			}
+		}
+		var newAppExpiry *time.Time
+		needsDefault := !update
+		if options != nil && update && apps != nil {
+			for _, app := range apps {
+				if app == "all" {
+					for _, svc := range reg.Services {
+						if PeopleServiceSupported(svc) && !personHasGrant(result, svc.Name) {
+							needsDefault = true
+						}
+					}
+				} else if !personHasGrant(result, app) {
+					needsDefault = true
+				}
+			}
+		}
+		if options != nil && (options.Value != nil || needsDefault) {
+			audience := options.Audience
+			if PersonIsGuest(result) {
+				audience = duration.Guest
+			}
+			value := "24h"
+			if options.Value != nil {
+				value = *options.Value
+			}
+			l, err := options.Policy.Resolve(value, audience, options.AckNever, options.Now, time.Local)
+			if err != nil {
+				return CodedError{Code: errcode.UsageError, Message: err.Error()}
+			}
+			newAppExpiry = l.Deadline
+			if changeExpiry || !update {
+				expiry, changeExpiry = l.Deadline, true
+			}
+		}
 		previous := result.Grants
 		if !update {
 			for _, op := range result.Invites {
@@ -195,7 +253,7 @@ func ChangePerson(path, who string, apps []string, expiry *time.Time, changeExpi
 					return CodedError{Code: errcode.Conflict, Message: fmt.Sprintf("pending invite cleanup for %s; retry people remove before adding again", login)}
 				}
 			}
-			result = Person{Login: login, Grants: []PersonGrant{}, Invites: result.Invites}
+			result = Person{Login: login, Grants: []PersonGrant{}, Invites: result.Invites, Guest: result.Guest}
 		}
 		if apps != nil {
 			selected := map[string]bool{}
@@ -231,7 +289,7 @@ func ChangePerson(path, who string, apps []string, expiry *time.Time, changeExpi
 			}
 			result.Grants = []PersonGrant{}
 			for app := range selected {
-				g := PersonGrant{App: app}
+				g := PersonGrant{App: app, ExpiresAt: newAppExpiry}
 				if update {
 					for _, old := range previous {
 						if old.App == app {
@@ -249,6 +307,9 @@ func ChangePerson(path, who string, apps []string, expiry *time.Time, changeExpi
 				result.Grants[i].ExpiresAt = expiry
 				result.Grants[i].Expired = false
 			}
+		}
+		if options != nil && options.Audience == duration.Guest {
+			result.Guest = true
 		}
 		// Scope is sticky, including after the final grant is removed. An empty
 		// people list must never turn a formerly private app back into allow-all.

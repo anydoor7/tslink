@@ -81,3 +81,7 @@ MCP add/share 接受 `request_limits` 对象, 字段为 `max_body`、`unlimited_
 `header_timeout`、`read_timeout` 和 `idle_timeout`。
 应用 recipe 可调用 `registry.RecommendedUploadLimits()`, 为 Immich、Nextcloud、
 Jellyfin 推荐 20 GiB 上限和 2m 无进展窗口。recipe 接线独立完成, 仍需考虑应用自身要求。
+
+## 按期限分享
+
+people `--for`/`--until`、Funnel `--funnel-ttl` 及 `extend` 使用[统一时长](durations_zh.md)。最短 1h,访客/公开默认最长 7d。新授权默认 24h。`never` 须 `--ack-never`,仅限 tailnet 成员。用 `tslink extend photos --person alice@example.com --for 36h` 修改单个应用;省略 `--person` 修改 [Funnel TTL](funnel_zh.md)。已过期须显式 `--regrant`。
