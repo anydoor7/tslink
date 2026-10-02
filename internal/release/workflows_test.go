@@ -405,6 +405,9 @@ func TestCandidateDeclaresRequiredGates(t *testing.T) {
 	}
 	wf := parse(t, candidateWorkflow, body)
 	required := []string{
+		"tier",                   // conservative PR classification; main/tags always full
+		"policy-tests",           // proposed policy tested separately from trusted classification
+		"gate",                   // aggregate fails on unexpected skips/failures/cancellation
 		"native",                 // 3-OS build/vet/test/race/shuffle/smoke
 		"manifest-platform-diff", // downloaded native manifests prove mark completeness
 		"machine-contract",       // compiled-binary contracts
@@ -430,29 +433,25 @@ func TestGovulncheckRepoCoversReleaseTargets(t *testing.T) {
 	if !ok {
 		t.Fatal("govulncheck-repo job is missing")
 	}
-	osTargets := job.Strategy.Matrix.GOOS
-	archTargets := job.Strategy.Matrix.GOARCH
-	if len(osTargets) != 3 || len(archTargets) != 2 {
-		t.Fatalf("govulncheck-repo matrix = %v x %v, want 3 OS x 2 architectures", osTargets, archTargets)
+	targets := strings.Fields(wf.Env["TSLINK_RELEASE_TARGETS"])
+	wantTargets := []string{"darwin/amd64", "darwin/arm64", "linux/amd64", "linux/arm64", "windows/amd64", "windows/arm64"}
+	if len(targets) != len(wantTargets) {
+		t.Fatalf("govulncheck targets = %v, want exactly six", targets)
 	}
-	for _, target := range []string{"darwin", "linux", "windows"} {
-		if !containsString(osTargets, target) {
+	for _, target := range wantTargets {
+		if !containsString(targets, target) {
 			t.Errorf("govulncheck-repo omits %s", target)
 		}
-	}
-	for _, target := range []string{"amd64", "arm64"} {
-		if !containsString(archTargets, target) {
-			t.Errorf("govulncheck-repo omits %s", target)
+		wantArtifact := "govulncheck-repo-" + strings.ReplaceAll(target, "/", "-")
+		artifact := false
+		for _, step := range job.Steps {
+			if step.With["name"] == wantArtifact && step.With["path"] == wantArtifact+".txt" {
+				artifact = true
+			}
 		}
-	}
-	artifact := false
-	for _, step := range job.Steps {
-		if step.With["name"] == "govulncheck-repo-${{ matrix.goos }}-${{ matrix.goarch }}" {
-			artifact = true
+		if !artifact {
+			t.Errorf("govulncheck-repo has no unique report artifact for %s", target)
 		}
-	}
-	if !artifact {
-		t.Fatal("govulncheck-repo has no unique target artifact")
 	}
 }
 
@@ -478,8 +477,8 @@ func TestGovulncheckRepoExecutesHostToolForForeignTarget(t *testing.T) {
 	if runtime.GOARCH == targetArch {
 		targetArch = "arm64"
 	}
-	if !containsString(job.Strategy.Matrix.GOOS, targetOS) || !containsString(job.Strategy.Matrix.GOARCH, targetArch) {
-		t.Fatalf("foreign target %s/%s is absent from matrix", targetOS, targetArch)
+	if !containsString(strings.Fields(wf.Env["TSLINK_RELEASE_TARGETS"]), targetOS+"/"+targetArch) {
+		t.Fatalf("foreign target %s/%s is absent from loop", targetOS, targetArch)
 	}
 	stepRun = strings.ReplaceAll(stepRun, "${{ matrix.goos }}", targetOS)
 	stepRun = strings.ReplaceAll(stepRun, "${{ matrix.goarch }}", targetArch)
@@ -517,7 +516,7 @@ cp "$MOCK_SCANNER" "$MOCK_GOPATH/bin/govulncheck"
 `
 			scanner := `#!/usr/bin/env bash
 set -euo pipefail
-printf '%s/%s/%s:%s\n' "${GOOS:-}" "${GOARCH:-}" "${CGO_ENABLED:-}" "$*" > "$MOCK_SCAN_TRACE"
+printf '%s/%s/%s:%s\n' "${GOOS:-}" "${GOARCH:-}" "${CGO_ENABLED:-}" "$*" >> "$MOCK_SCAN_TRACE"
 printf 'raw advisory warning for %s/%s\n' "$GOOS" "$GOARCH"
 exit "$MOCK_SCAN_EXIT"
 `
@@ -566,13 +565,17 @@ exit "$MOCK_SCAN_EXIT"
 				}
 				return
 			}
-			wantScan := targetOS + "/" + targetArch + "/0:-show verbose ./...\n"
-			if got, err := os.ReadFile(scanTrace); err != nil || string(got) != wantScan {
-				t.Fatalf("target scanner invocation = %q, %v; want %q", got, err, wantScan)
+			var wantScan strings.Builder
+			for _, target := range strings.Fields(wf.Env["TSLINK_RELEASE_TARGETS"]) {
+				wantScan.WriteString(target + "/0:-show verbose ./...\n")
+				wantWarning := "raw advisory warning for " + target + "\n"
+				path := filepath.Join(dir, "govulncheck-repo-"+strings.ReplaceAll(target, "/", "-")+".txt")
+				if got, err := os.ReadFile(path); err != nil || string(got) != wantWarning || !strings.Contains(string(output), wantWarning) {
+					t.Fatalf("raw warning lost for %s: artifact %q, err %v, output %q", target, got, err, output)
+				}
 			}
-			wantWarning := "raw advisory warning for " + targetOS + "/" + targetArch + "\n"
-			if got, err := os.ReadFile(filepath.Join(dir, "govulncheck-repo.txt")); err != nil || string(got) != wantWarning || !strings.Contains(string(output), wantWarning) {
-				t.Fatalf("raw warning lost from artifact or output: artifact %q, err %v, output %q", got, err, output)
+			if got, err := os.ReadFile(scanTrace); err != nil || string(got) != wantScan.String() {
+				t.Fatalf("target scanner invocations = %q, %v; want %q", got, err, wantScan.String())
 			}
 		})
 	}

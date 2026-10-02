@@ -111,7 +111,7 @@ exit status 69` — a build failure with no obvious connection to Xcode.
 
 ## For AI Agents: Self-Installation & Usage Guide
 
-This section teaches an agent how to install, configure, and operate tslink without human intervention.
+This section teaches an agent how to install, configure, and operate tslink. The default credential-free path requires a person to complete browser enrollment for each fresh node; tailnet device approval may also apply.
 
 ### Prerequisites
 
@@ -188,12 +188,13 @@ tslink logs --last 20 --level error
 
 ### Step 5: Access from Other Devices
 
-Each service gets its own hostname: `https://<service-name>.<tailnet-name>.ts.net`
+Retrieve the service's exact URL after completing any required enrollment:
 
-To find the exact URL, check the daemon log output for lines like:
+```bash
+tslink url myapp --wait
 ```
-node "myapp" ready: https://myapp.tail12345.ts.net
-```
+
+Open the returned URL from a permitted tailnet device; do not construct a hostname from the service name.
 
 ### Common Operations
 
@@ -213,7 +214,7 @@ tslink stop && tslink logout
 
 ### JSON Output & Exit Codes
 
-All commands support `--json` for structured output:
+CLI commands support `--json` for structured output except `tslink mcp`, which reserves stdout for JSON-RPC and rejects `--json`:
 
 ```bash
 tslink status --json | jq .

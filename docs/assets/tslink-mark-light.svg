@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
+  <title id="title">TSLink</title>
+  <desc id="desc">An open amber door with a link leading to one service node. Light theme.</desc>
+  <path d="M24 96V28a8 8 0 0 1 8-8h44a8 8 0 0 1 8 8v20m0 44v8H60" fill="none" stroke="#59402b" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M24 24 56 36v72L24 96Z" fill="#d99a52" stroke="#59402b" stroke-width="8" stroke-linejoin="round"/>
+  <path d="M56 70h48" fill="none" stroke="#9f5b2e" stroke-width="8" stroke-linecap="round"/>
+  <rect x="96" y="60" width="20" height="20" rx="5" fill="#9f5b2e"/>
+</svg>

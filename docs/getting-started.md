@@ -1,29 +1,48 @@
 # Getting Started
 
+## Before you begin
+
+You need Go 1.26.6+, Git, a Tailscale account with
+[MagicDNS and HTTPS enabled](https://tailscale.com/docs/how-to/set-up-https-certificates),
+and a receiving device signed into your tailnet. Tailnet policy must allow the connection.
+TSLink embeds Tailscale on the publishing host, so no separate Tailscale installation is needed there.
+
 ## Install
 
-Requires Go 1.26.6 or newer.
+The installation and page-creation examples below use **bash or zsh**.
+For Windows requirements, see [platform support](platforms.md).
+
+Prebuilt releases and a Homebrew cask
+have not been published; install from source:
 
 ```bash
-go install github.com/anydoor7/tslink@latest
-
-# The binary lands in $(go env GOPATH)/bin, which is not on PATH by default:
+git clone https://github.com/anydoor7/tslink.git
+cd tslink
+go install .
 export PATH="$PATH:$(go env GOPATH)/bin"
 ```
 
-Homebrew and prebuilt archives arrive with the first tagged release. Until then,
-installing from source is the supported path. Building from a clone works too:
+## Share your first page
+
+TSLink can serve this page directly, without a separate web server:
 
 ```bash
-git clone https://github.com/anydoor7/tslink.git && cd tslink && go install .
-```
-
-To share a page after installation:
-
-```bash
-mkdir -p tslink-demo && printf '<h1>TSLink demo</h1>\n' > tslink-demo/index.html
+mkdir -p tslink-demo
+printf '<h1>Hello from TSLink</h1>\n' > tslink-demo/index.html
 tslink share ./tslink-demo --name demo
 ```
+
+On first use, `share` may print a Tailscale enrollment URL. Open it to authorize the node.
+If the tailnet requires device approval, an administrator must also approve it.
+Then retrieve the service URL and open it on a permitted tailnet device:
+
+```bash
+tslink url demo --wait
+```
+
+No API token is required for this first share. `share` installs and starts the background
+service when needed. Linux requires a working systemd user manager; see
+[daemon lifecycle](daemon-lifecycle.md) for manual operation.
 
 ## More Examples
 
