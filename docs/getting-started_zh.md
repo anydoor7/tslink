@@ -43,7 +43,7 @@ tslink add demo --proxy localhost:8080 --ephemeral
 tslink add internal --proxy localhost:9090 --allow user@example.com,tag:admin
 
 # 通过 Tailscale Funnel 公开暴露（必须显式确认）。
-# 默认公开 24h；--funnel-ttl 1h|8h|24h|72h|7d|never
+# 默认公开 24h；--funnel-ttl 90m 或 until 2030-06-01T18:00:00Z;推荐 1h、8h、24h、3d、7d
 # （never 在 registry 里存为 "funnel_expires_at": "never"）
 tslink add public --proxy localhost:3000 --funnel --public
 

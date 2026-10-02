@@ -13,7 +13,7 @@ tslink people remove alice@example.com
 
 `--apps all` 选取**当前已注册的私有 HTTP 代理和文件服务**，排除 TCP 和公开 Funnel，不自动包括以后新增的应用。显式指定 TCP 或 Funnel 时，以 `people_service_unsupported` 原子拒绝。文件服务，包括单文件分享，使用与代理相同的 HTTP WhoIs 校验。
 
-已有有效人员不能重复 add，请用 update。只更新 `--apps` 时保留继续授权应用的期限，新加入的应用无期限；指定 `--for` 会把新期限用于所有选定授权。只更新 `--for` 时保留应用集合。`--for never` 明确移除期限，并可续期已过期授权。remove 可重复执行；再次 add 是明确的新授权，须先清理或对账未完成邀请操作。
+已有有效人员不能重复 add，请用 update。只更新 `--apps` 时保留继续授权应用的期限，新加入的应用期限为 24h；指定 `--for` 会把新期限用于所有选定授权。只更新 `--for` 时保留应用集合。`--for never --ack-never` 明确移除 tailnet 成员期限;访客不允许永久授权。新授权默认 24h。`--until` 设置绝对日期/时间,`--for` 使用[统一时长语法](durations_zh.md)。`extend photos --person alice@example.com --for 36h` 只修改单个应用;已过期须 `--regrant`,撤销人员不能恢复。remove 可重复执行；再次 add 是明确的新授权，须先清理或对账未完成邀请操作。
 
 ## Tailnet 外的人：一条拥有者命令、一条消息
 

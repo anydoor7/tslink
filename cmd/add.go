@@ -155,8 +155,9 @@ func funnelOptionRequiresFunnel(option, funnelOption string, set, funnel bool) e
 	return nil
 }
 
-// resolveFunnelExpiry turns a Funnel TTL selection into a stored deadline.
-// A nil deadline with a nil error means "never". Callers must have already
+var durationNowFn = time.Now
+
+// resolveFunnelExpiry turns a lifetime into a UTC deadline. Callers have already
 // rejected a TTL supplied without Funnel; see funnelOptionRequiresFunnel.
 func resolveFunnelExpiry(funnel bool, ttl string, ttlSet bool, now time.Time) (*time.Time, error) {
 	if !funnel {
@@ -164,22 +165,22 @@ func resolveFunnelExpiry(funnel bool, ttl string, ttlSet bool, now time.Time) (*
 	}
 	if ttl == "" {
 		if ttlSet {
-			return nil, output.ErrUsage("funnel TTL must be one of: 1h, 8h, 24h, 72h, 7d, never")
+			return nil, output.ErrUsage("empty Funnel lifetime; valid examples: " + duration.Examples)
 		}
 		ttl = "24h"
 	}
-	duration, never, err := registry.ParseFunnelTTL(ttl)
+	if now.IsZero() {
+		now = durationNowFn()
+	}
+	policy, err := config.LoadLifetimePolicy()
+	if err != nil {
+		return nil, err
+	}
+	lifetime, err := policy.Resolve(ttl, duration.Public, false, now, time.Local)
 	if err != nil {
 		return nil, output.ErrUsage(err.Error())
 	}
-	if never {
-		return nil, nil
-	}
-	if now.IsZero() {
-		now = time.Now()
-	}
-	expiresAt := now.UTC().Add(duration)
-	return &expiresAt, nil
+	return lifetime.Deadline, nil
 }
 
 // barePortTarget reads a digits-only proxy or tcp target the way `tslink share`
@@ -853,7 +854,7 @@ Examples:
 	addCmd.Flags().Bool("ephemeral", false, "Register as ephemeral node (removed on disconnect)")
 	addCmd.Flags().String("tags", "", "Comma-separated ACL tags (e.g., tag:web,tag:internal)")
 	addCmd.Flags().Bool("funnel", false, "Expose publicly via Tailscale Funnel (proxy only, requires --public)")
-	addCmd.Flags().String("funnel-ttl", "24h", "Public Funnel lifetime: 1h, 8h, 24h, 72h, 7d, or never")
+	addCmd.Flags().String("funnel-ttl", "24h", "Public lifetime: relative or 'until <date/time>'; presets "+duration.Suggestions+"; min 1h, default max 7d; never refused")
 	addCmd.Flags().Bool("public", false, "Acknowledge public internet exposure for --funnel (only valid with --funnel)")
 	addCmd.Flags().Bool("no-auto-provision", false, "Disable automatic Funnel policy provisioning (only valid with --funnel)")
 	addCmd.Flags().String("allow", "", "Comma-separated allowed identities (e.g., user@example.com,tag:admin)")

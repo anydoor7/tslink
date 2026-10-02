@@ -505,7 +505,7 @@ func TestMCPToolSchemasAreClosedAndModelFocused(t *testing.T) {
 		"invite_user", "invite_device", "invite_list", "invite_revoke", "invite_resend",
 		"template_list", "template_plan", "template_apply",
 		"apps_detect", "recipe_list", "recipe_plan", "recipe_apply",
-		"people_add", "people_update", "people_list", "people_remove",
+		"extend", "people_add", "people_update", "people_list", "people_remove",
 	}
 	if len(mcpToolDefinitions) != len(wantNames) {
 		t.Fatalf("tools = %d, want %d", len(mcpToolDefinitions), len(wantNames))

@@ -173,13 +173,13 @@ func TestPeopleValidationAndLegacyRevocation(t *testing.T) {
 			t.Fatal("accepted invalid login", login)
 		}
 	}
-	for _, duration := range []string{"", "0h", "-1h", "xd", "0d", "36501d", "neverx"} {
+	for _, duration := range []string{"", "0h", "-1h", "xd", "0d", "999999999999999999999d", "neverx"} {
 		if _, err := ParsePersonExpiry(duration, time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)); err == nil {
 			t.Fatal("accepted expiry", duration)
 		}
 	}
-	if e, err := ParsePersonExpiry("never", time.Time{}); err != nil || e != nil {
-		t.Fatal(e, err)
+	if e, err := ParsePersonExpiry("never", time.Time{}); err == nil || e != nil {
+		t.Fatal("never needs acknowledgement", e, err)
 	}
 	if _, err := ParsePersonExpiry("90m", time.Time{}); err != nil {
 		t.Fatal(err)

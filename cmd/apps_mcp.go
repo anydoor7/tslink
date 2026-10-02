@@ -20,7 +20,7 @@ func recipeInputSchema() map[string]any {
 		"ephemeral":           map[string]any{"type": "boolean"},
 		"funnel":              map[string]any{"type": "boolean", "description": "PUBLIC INTERNET exposure: review app authentication with the owner first."},
 		"public_ack":          map[string]any{"type": "boolean", "description": "Required acknowledgement when funnel is true."},
-		"funnel_ttl":          map[string]any{"type": "string", "enum": []string{"1h", "8h", "24h", "72h", "7d", "never"}},
+		"funnel_ttl":          lifetimeSchema(true),
 		"no_auto_provision":   map[string]any{"type": "boolean"},
 		"no_daemon_install":   map[string]any{"type": "boolean"},
 		"control_url":         map[string]any{"type": "string"},

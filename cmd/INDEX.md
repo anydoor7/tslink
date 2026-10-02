@@ -52,3 +52,9 @@ This index records the app recipe additions; the CLI manifest describes the comp
 - `wave1_round2_test.go`: scheduler installation schemas with recipe, Host and request-limit contracts.
 
 - `json_test.go`: concurrently drains captured CLI output; `wave1_round2_test.go` covers output larger than the OS pipe buffer.
+
+# Unified lifetime additions
+
+- `extend.go`: JSON-only per-app person/Funnel deadline changes and synchronous post-save event hook.
+- `mcp_durations.go`: lifetime suggestions and extend tool registry/schema.
+- `durations_test.go`: CLI/MCP, policy configuration and captured clock evidence.

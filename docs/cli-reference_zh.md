@@ -2,9 +2,9 @@
 
 ## 按人分享
 
-`tslink people add <login-or-email> --apps photos,finance|all [--for 7d] [--invite] [--print-links]` 授予私有 HTTP/文件访问并生成接收者说明。`all` 选当前私有 HTTP/文件应用，排除 TCP/Funnel。`--for` 接受正时长（含天数）或 `never`，省略时无期限。`--invite` 用用户拥有的 API token 创建每应用单次邀请链接；只有显式 `--print-links` 才输出 bearer 链接。
+`tslink people add <login-or-email> --apps photos,finance|all [--for 7d] [--invite] [--print-links]` 授予私有 HTTP/文件访问并生成接收者说明。`all` 选当前私有 HTTP/文件应用，排除 TCP/Funnel。`--for` 使用[统一时长语法](durations_zh.md),`--until` 设置绝对期限。新授权默认 24h;`never` 须 `--ack-never` 且限 tailnet 成员。`--invite` 用用户拥有的 API token 创建每应用单次邀请链接；只有显式 `--print-links` 才输出 bearer 链接。
 
-`tslink people list [--json]` 列人员、应用授权、绝对期限、有效状态和撤销记录。`tslink people update <who> [--apps list|all] [--for duration|never] [--invite] [--print-links]` 至少要求 apps、期限或 invite，省略设置时保留原值（未指定期限的新应用无期限）。`tslink people remove <who>` 在所有私有 HTTP/文件应用撤销该人，包括匹配的旧 allow 条目。所有命令使用现有 JSON envelope；邀请部分失败返回 `data.complete: false`，保留本地授权。身份校验、现有 WebSocket 连接、时钟变化及 schema 2 降级规则见[人员分享](people_zh.md)。
+`tslink people list [--json]` 列人员、应用授权、绝对期限、有效状态和撤销记录。`tslink people update <who> [--apps list|all] [--for duration|never] [--invite] [--print-links]` 至少要求 apps、期限或 invite，省略设置时保留原值（未指定期限的新应用默认 24h）。`tslink people remove <who>` 在所有私有 HTTP/文件应用撤销该人，包括匹配的旧 allow 条目。所有命令使用现有 JSON envelope；邀请部分失败返回 `data.complete: false`，保留本地授权。身份校验、现有 WebSocket 连接、时钟变化及 schema 2 降级规则见[人员分享](people_zh.md)。
 
 人员登录字符串须为有效 UTF-8,仅拒绝空串、控制字符和内部空白。无效 UTF-8 使用 `usage_error`;无效 WhoIs 身份拒绝访问。移除首尾 ASCII space/tab/CR/LF/VT/FF,只把 ASCII A-Z 转为小写,不折叠或规范化 Unicode,逐字节比较。支持标点及非 ASCII 地址,Unicode 相似字符保持不同。`people update --invite --replace-invite app=已记录旧ID` 明确确认远端缺失后的替换,保留授权和期限,不能同时用 `--apps` 或 `--for`;MCP 使用 `replace_invites`。确认节点已删除时以 `target_gone` 完成清理并保留证据。缺失证据必须来自 HTTP 200、非空 body 及存在且非 null 的设备/邀请数组;其他 2xx、空/null 或畸形列表延后清理和恢复,不退役旧记录,不记录终态,不发送替换 POST。update 可只指定 `--invite` 继续未完成操作。update/remove 支持重复的 `--reconcile-invite app=id|none`，须拥有者核对未知 POST 结果。remove 先保存本地拒绝，再用 `complete`/`cleanup` 报告未接受邀请的远端清理；无 token 延后清理。`access explain`/`access_explain` 显示脱敏的人员策略并指向 `people list`。持久化状态及不承诺 exactly-once 的说明见人员指南。
 
@@ -88,7 +88,7 @@
 | `--control-url URL` | 服务级控制服务器覆盖，例如 Headscale。用已存储的 Tailscale 凭证铸造的 auth key 只发给 Tailscale 自己的控制服务器；存有这类凭证时，TSLink 以 `credential_control_url_mismatch` 拒绝指向其他控制服务器的 service |
 | `--funnel` | 通过 Tailscale Funnel 暴露到公网（仅限 proxy，必须同时传 `--public`） |
 | `--public` | 显式确认 `--funnel` 的公网暴露；没有 `--funnel` 时无效 |
-| `--funnel-ttl 1h\|8h\|24h\|72h\|7d\|never` | Funnel 公网期限，默认 `24h`；需要 `--funnel` |
+| `--funnel-ttl <lifetime>` | 相对值或 `until <日期/时间>`;推荐 1h、8h、24h、3d、7d;最短 1h,默认 24h,默认上限 7d;拒绝 never;需要 `--funnel` |
 | `--no-auto-provision` | 关闭该服务的 Funnel policy 自动配置；需要 `--funnel` |
 | `--no-daemon-install` | 只保存配置，不安装或启动 daemon |
 | `--health-path /ready` | 拼接到 proxy backend base path 的 HTTP 业务探针路径，默认 `/` |
@@ -157,3 +157,7 @@ MCP add/share 接受可选对象 `request_limits: {"max_body":"20GiB","read_time
 应用后端及公网 relay 自身的限制仍然有效。
 
 Windows `tslink install --startup` 显式选择下次登录启动、无崩溃恢复的 Startup 降级。默认 `install` 使用 Task Scheduler 启动内置 supervisor 并验证立即启动。`stop` 停止两个进程，包括崩溃退避期间；`install` 重置已触发的崩溃循环断路器。见[daemon 生命周期](daemon-lifecycle_zh.md#windows-监管与迁移)。
+
+## 修改期限
+
+`tslink extend <service> [--person <login>] (--for <lifetime> | --until <date/time>) [--regrant] [--ack-never]` 修改单个人员授权或 Funnel TTL。相对值从操作时刻起算,可缩短或延长。已过期须 `--regrant`,撤销人员不能恢复。始终输出版本化 JSON envelope。MCP `extend` 使用 `service`、`who`、`for`/`until`、`regrant` 和 `ack_never`。夏令时、配置校验、策略 API 以及健康/超时/keepalive 标志的语法见[时长文档](durations_zh.md),公开期限见[Funnel](funnel_zh.md)。

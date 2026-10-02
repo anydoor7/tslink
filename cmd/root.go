@@ -110,7 +110,7 @@ func init() {
 // Safe to call after rootCmd.Execute() returns.
 func WasJSONRequested() bool {
 	v, _ := rootCmd.PersistentFlags().GetBool("json")
-	return v || argsContainJSON(os.Args[1:])
+	return v || argsContainJSON(os.Args[1:]) || lastCommandName == "extend"
 }
 
 func Execute() error {

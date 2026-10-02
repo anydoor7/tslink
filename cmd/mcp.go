@@ -516,7 +516,7 @@ var mcpToolDefinitions = []mcpToolDefinition{
 			"tags":              map[string]any{"type": "array", "items": map[string]any{"type": "string", "pattern": `^tag:`}, "description": "ACL tags applied to the tailnet node, each prefixed tag:. Defaults to the configured default tag."},
 			"funnel":            map[string]any{"type": "boolean", "default": false, "description": "Publish to the public internet through Tailscale Funnel. Requires public_ack true, an HTTP port target, and no allow entries."},
 			"public_ack":        map[string]any{"type": "boolean", "default": false, "description": "Explicit acknowledgement that funnel exposes the target publicly. funnel true without it is rejected."},
-			"funnel_ttl":        map[string]any{"type": "string", "enum": []string{"1h", "8h", "24h", "72h", "7d", "never"}, "description": "Public Funnel lifetime; defaults to 24h. Only valid with funnel true. A share reused for the same target keeps its own deadline, reported as funnel_expires_at; one that has already expired is re-armed with this lifetime."},
+			"funnel_ttl":        lifetimeSchema(true),
 		}, "target"),
 		OutputSchema: mcpShareOutputSchema,
 	},
@@ -536,7 +536,7 @@ var mcpToolDefinitions = []mcpToolDefinition{
 			"ephemeral":         map[string]any{"type": "boolean", "default": false, "description": "Register an ephemeral tailnet node that disappears on disconnect."},
 			"funnel":            map[string]any{"type": "boolean", "default": false, "description": "Publish to the public internet through Tailscale Funnel. Requires type proxy, public_ack true, no allow entries, and no control_url."},
 			"public_ack":        map[string]any{"type": "boolean", "default": false, "description": "Explicit acknowledgement that funnel exposes the service publicly. funnel true without it is rejected."},
-			"funnel_ttl":        map[string]any{"type": "string", "enum": []string{"1h", "8h", "24h", "72h", "7d", "never"}, "description": "Public Funnel lifetime; defaults to 24h on a new entry. Omitting it preserves an existing entry's deadline. Only valid with funnel true."},
+			"funnel_ttl":        lifetimeSchema(true),
 			"no_daemon_install": map[string]any{"type": "boolean", "description": "Save configuration without installing the background service."},
 			"no_auto_provision": map[string]any{"type": "boolean", "default": false, "description": "Disable automatic Funnel policy provisioning. Only valid with funnel true."},
 			"control_url":       map[string]any{"type": "string", "description": "Per-service custom control server URL, for example a Headscale deployment. A custom control server never receives the stored Tailscale credential or an auth key minted with it: while a credential is stored the daemon does not start such a service (credential_control_url_mismatch), and without one the node enrolls interactively on that server. Rejected together with funnel."},
@@ -692,6 +692,7 @@ var mcpToolDefinitions = []mcpToolDefinition{
 // matching CLI command calls, so the tool surface cannot acquire behaviour the
 // CLI does not have — including its refusals, which stay in the domain layer.
 type mcpActions struct {
+	extend        func(extendArguments) (any, error)
 	peopleChange  func(context.Context, peopleArguments, bool) (any, error)
 	peopleList    func() (any, error)
 	peopleRemove  func(context.Context, string, map[string]string) (any, error)
@@ -808,7 +809,7 @@ func addParamsFromMCPArguments(args mcpAddArguments) (AddParams, bool, error) {
 // durationDay is the length of the d unit parseDuration adds to Go's syntax.
 const durationDay = 24 * time.Hour
 
-// parseDuration is TSLink's one duration grammar for what an agent or a person
+// parseDuration is the operational duration grammar for what an agent or a person
 // types: Go's time.ParseDuration syntax (300ms, 1.5h, 2h45m) plus d for days
 // of 24 hours (7d, 1d12h, 1.5d); surrounding space is ignored. The MCP logs
 // since, the url wait, login --expires-in and the event
@@ -861,8 +862,12 @@ type mcpStatusSummary struct {
 var mcpStatusFn = readOnlyStatus.getPollableStatus
 
 func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
+	durationClock := durationNowFn
+	peopleClock := peopleNowFn
 	return mcpActions{
+		extend: func(args extendArguments) (any, error) { return extendLifetime(paths.Registry, args, durationClock()) },
 		peopleChange: func(ctx context.Context, args peopleArguments, update bool) (any, error) {
+			args.Now = peopleClock()
 			return changePeople(ctx, paths, args, update)
 		},
 		peopleList: func() (any, error) { return listPeople(paths) },
@@ -870,9 +875,13 @@ func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 			return removePeopleContext(ctx, paths.Registry, who, reconcile)
 		},
 		share: func(ctx context.Context, req shareRequest) (ShareResult, error) {
+			req.Now = durationClock()
 			return executeShare(ctx, paths, req, defaultURLWait, errOut)
 		},
 		add: func(ctx context.Context, params AddParams, preserveFunnelExpiry bool) (any, error) {
+			if params.Now.IsZero() {
+				params.Now = durationClock()
+			}
 			svc, err := buildService(params)
 			if err != nil {
 				return nil, err
@@ -999,6 +1008,7 @@ func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 		appsDetect: func(ctx context.Context) (any, error) { return detectApps(ctx, paths.Registry) },
 		recipeList: func() (any, error) { return recipes.List(), nil },
 		recipeApply: func(ctx context.Context, req recipeRequest, dryRun bool) (any, error) {
+			req.Now = durationClock()
 			return applyRecipe(ctx, req, paths.Registry, dryRun, errOut)
 		},
 		templateList: func() (any, error) {
@@ -1569,6 +1579,13 @@ func callMCPTool(ctx context.Context, actions mcpActions, name string, arguments
 		ctx, install = recordDaemonInstall(ctx)
 	}
 	switch name {
+	case "extend":
+		var args extendArguments
+		decodeErr := decodeExtendMCPArguments(arguments, &args)
+		if refusal := mcpArgumentsRefusal(name, decodeErr, mcpRequiredArgument{"service", args.Service}); refusal != nil {
+			return refusal, nil
+		}
+		data, err = actions.extend(args)
 	case "people_add", "people_update":
 		var args peopleArguments
 		decodeErr := decodePeopleMCPArguments(arguments, &args)
