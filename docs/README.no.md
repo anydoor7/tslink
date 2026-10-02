@@ -134,18 +134,18 @@ Punkter merket Under sammenslåing, Til gjennomgang eller Planlagt er ikke med i
 
 | Bruksområde | Status |
 |---|---|
-| F1. Gi en slektning 3 dagers tilgang til private HTTP-/filapper og samle appinvitasjonene i én melding; mottakeren trenger fortsatt Tailscale. | Under sammenslåing |
-| F2. Sjekk appenes helse og motta varsler om nedetid eller utløp via en valgfri kommando eller webhook. | Under sammenslåing |
-| F3. Finn støttede loopback-apper og forhåndsvis oppskrifter for selvhostede apper før deling. | Under sammenslåing |
-| F8. Angi opplastingsstørrelse og tidsgrenser per HTTP-app for store opplastinger og trege klienter. | Under sammenslåing |
-| F9. Start en krasjet Windows-daemon på nytt mens brukeren er innlogget, med en planlagt oppgave og innebygd supervisor. | Under sammenslåing |
-| F4. Se hvem som åpnet hvilken app i lokale tilgangslogger med stimodusene `prefix`, `full` eller `off`. | Til gjennomgang |
-| F5. Åpne én startside med tillatte apper og registreringsoverføring for eiere; besøkende trenger fortsatt Tailscale. | Til gjennomgang |
-| F6. Gi en agent en rolle og et appomfang med revisjonskvitteringer for endringer. | Til gjennomgang |
-| F10. La en gjest åpne én HTTP-app i nettleseren uten å installere Tailscale, med en tidsbegrenset lenke og valgfri PIN gjennom offentlig Funnel med tilgangskontroll. | Til gjennomgang |
-| F11. Velg forhåndsinnstillinger eller egne varigheter på minst 1 time, med en konfigurerbar gjestegrense på som standard 7 dager. | Til gjennomgang |
-| F12. Hjelp telefonbrukere å bli med via QR-kode og godkjenn apptilgang eller ekstra tid i én handling. | Til gjennomgang |
-| F7. Se apper fra flere verter i én oversikt. | Planlagt |
+| <!-- roadmap:people --> Gi en slektning 3 dagers tilgang til private HTTP-/filapper og samle appinvitasjonene i én melding; mottakeren trenger fortsatt Tailscale. | Under sammenslåing |
+| <!-- roadmap:health --> Sjekk appenes helse og motta varsler om nedetid eller utløp via en valgfri kommando eller webhook. | Under sammenslåing |
+| <!-- roadmap:recipes --> Finn støttede loopback-apper og forhåndsvis oppskrifter for selvhostede apper før deling. | Under sammenslåing |
+| <!-- roadmap:limits --> Angi opplastingsstørrelse og tidsgrenser per HTTP-app for store opplastinger og trege klienter. | Under sammenslåing |
+| <!-- roadmap:windows --> Start en krasjet Windows-daemon på nytt mens brukeren er innlogget, med en planlagt oppgave og innebygd supervisor. | Under sammenslåing |
+| <!-- roadmap:access-log --> Se hvem som åpnet hvilken app i lokale tilgangslogger med stimodusene `prefix`, `full` eller `off`. | Til gjennomgang |
+| <!-- roadmap:portal --> Åpne én startside med tillatte apper og registreringsoverføring for eiere; besøkende trenger fortsatt Tailscale. | Til gjennomgang |
+| <!-- roadmap:mcp-scopes --> Gi en agent en rolle og et appomfang med revisjonskvitteringer for endringer. | Til gjennomgang |
+| <!-- roadmap:guest-links --> La en gjest åpne én HTTP-app i nettleseren uten å installere Tailscale, med en tidsbegrenset lenke og valgfri PIN gjennom offentlig Funnel med tilgangskontroll. | Til gjennomgang |
+| <!-- roadmap:durations --> Velg forhåndsinnstillinger eller egne varigheter på minst 1 time, med en konfigurerbar gjestegrense på som standard 7 dager. | Til gjennomgang |
+| <!-- roadmap:requests --> Hjelp telefonbrukere å bli med via QR-kode og godkjenn apptilgang eller ekstra tid i én handling. | Til gjennomgang |
+| <!-- roadmap:multi-host --> Se apper fra flere verter i én oversikt. | Planlagt |
 
 <a id="documentation"></a>
 

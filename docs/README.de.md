@@ -134,18 +134,18 @@ Einträge mit Wird zusammengeführt, In Prüfung oder Geplant sind in der obigen
 
 | Anwendungsfall | Status |
 |---|---|
-| F1. Gib Angehörigen 3 Tage Zugriff auf private HTTP-/Datei-Apps und bündle die App-Einladungen in einer Nachricht; Empfänger brauchen weiterhin Tailscale. | Wird zusammengeführt |
-| F2. Prüfe den App-Zustand und erhalte Ausfall- oder Ablaufwarnungen über einen optionalen Befehl oder Webhook. | Wird zusammengeführt |
-| F3. Finde unterstützte Loopback-Apps und prüfe Rezepte für selbst gehostete Apps vor der Freigabe. | Wird zusammengeführt |
-| F8. Lege Upload-Größe und Anfragezeitlimits je HTTP-App für große Uploads und langsame Clients fest. | Wird zusammengeführt |
-| F9. Starte einen abgestürzten Windows-Daemon während der Anmeldung über eine geplante Aufgabe und einen eingebauten Supervisor neu. | Wird zusammengeführt |
-| F4. Sieh in lokalen Zugriffsprotokollen, wer welche App geöffnet hat, mit den Pfadmodi `prefix`, `full` oder `off`. | In Prüfung |
-| F5. Öffne eine Startseite mit erlaubten Apps und Registrierungshinweisen für Eigentümer; Besucher brauchen weiterhin Tailscale. | In Prüfung |
-| F6. Gib einem Agenten eine Rolle und einen App-Bereich mit Prüfbelegen für seine Änderungen. | In Prüfung |
-| F10. Lass Gäste eine HTTP-App im Browser ohne Tailscale-Installation über einen befristeten Link und eine optionale PIN durch zugangsgeschütztes öffentliches Funnel öffnen. | In Prüfung |
-| F11. Wähle Vorgaben oder eigene Laufzeiten ab 1 Stunde, mit standardmäßig höchstens 7 Tagen für Gäste, konfigurierbar. | In Prüfung |
-| F12. Hilf Handynutzern beim Beitritt per QR-Code und genehmige App-Zugriff oder mehr Zeit in einem Schritt. | In Prüfung |
-| F7. Sieh Apps mehrerer Hosts in einem Verzeichnis. | Geplant |
+| <!-- roadmap:people --> Gib Angehörigen 3 Tage Zugriff auf private HTTP-/Datei-Apps und bündle die App-Einladungen in einer Nachricht; Empfänger brauchen weiterhin Tailscale. | Wird zusammengeführt |
+| <!-- roadmap:health --> Prüfe den App-Zustand und erhalte Ausfall- oder Ablaufwarnungen über einen optionalen Befehl oder Webhook. | Wird zusammengeführt |
+| <!-- roadmap:recipes --> Finde unterstützte Loopback-Apps und prüfe Rezepte für selbst gehostete Apps vor der Freigabe. | Wird zusammengeführt |
+| <!-- roadmap:limits --> Lege Upload-Größe und Anfragezeitlimits je HTTP-App für große Uploads und langsame Clients fest. | Wird zusammengeführt |
+| <!-- roadmap:windows --> Starte einen abgestürzten Windows-Daemon während der Anmeldung über eine geplante Aufgabe und einen eingebauten Supervisor neu. | Wird zusammengeführt |
+| <!-- roadmap:access-log --> Sieh in lokalen Zugriffsprotokollen, wer welche App geöffnet hat, mit den Pfadmodi `prefix`, `full` oder `off`. | In Prüfung |
+| <!-- roadmap:portal --> Öffne eine Startseite mit erlaubten Apps und Registrierungshinweisen für Eigentümer; Besucher brauchen weiterhin Tailscale. | In Prüfung |
+| <!-- roadmap:mcp-scopes --> Gib einem Agenten eine Rolle und einen App-Bereich mit Prüfbelegen für seine Änderungen. | In Prüfung |
+| <!-- roadmap:guest-links --> Lass Gäste eine HTTP-App im Browser ohne Tailscale-Installation über einen befristeten Link und eine optionale PIN durch zugangsgeschütztes öffentliches Funnel öffnen. | In Prüfung |
+| <!-- roadmap:durations --> Wähle Vorgaben oder eigene Laufzeiten ab 1 Stunde, mit standardmäßig höchstens 7 Tagen für Gäste, konfigurierbar. | In Prüfung |
+| <!-- roadmap:requests --> Hilf Handynutzern beim Beitritt per QR-Code und genehmige App-Zugriff oder mehr Zeit in einem Schritt. | In Prüfung |
+| <!-- roadmap:multi-host --> Sieh Apps mehrerer Hosts in einem Verzeichnis. | Geplant |
 
 <a id="documentation"></a>
 

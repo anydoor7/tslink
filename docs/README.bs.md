@@ -147,18 +147,18 @@ Stavke U spajanju, Na pregledu ili Planirano nisu uključene u prethodnu instala
 
 | Namjena | Status |
 |---|---|
-| F1. Dajte rođaku 3 dana pristupa privatnim HTTP/datotečnim aplikacijama i objedinite pozivnice u jednoj poruci; primalac i dalje treba Tailscale. | U spajanju |
-| F2. Provjeravajte zdravlje aplikacija i primajte upozorenja o prekidu ili isteku preko opcionalne komande ili webhooka. | U spajanju |
-| F3. Pronađite podržane loopback aplikacije i pregledajte recepte za samostalno hostane aplikacije prije dijeljenja. | U spajanju |
-| F8. Postavite veličinu otpremanja i vremenska ograničenja zahtjeva po HTTP aplikaciji za velike datoteke i spore klijente. | U spajanju |
-| F9. Ponovo pokrenite srušeni Windows daemon tokom prijavljene sesije pomoću zakazanog zadatka i ugrađenog nadzornika. | U spajanju |
-| F4. Pogledajte ko je otvorio koju aplikaciju u lokalnim zapisima pristupa, uz režime putanje `prefix`, `full` ili `off`. | Na pregledu |
-| F5. Otvorite jednu početnu stranicu s dozvoljenim aplikacijama i uputama za registraciju vlasnika; posjetioci i dalje trebaju Tailscale. | Na pregledu |
-| F6. Dodijelite agentu ulogu i opseg aplikacija, uz revizijske potvrde njegovih izmjena. | Na pregledu |
-| F10. Omogućite gostu da otvori jednu HTTP aplikaciju u pregledniku bez instaliranja Tailscalea, pomoću vremenskog linka i opcionalnog PIN-a kroz javni Funnel s kontrolom pristupa. | Na pregledu |
-| F11. Izaberite gotova ili vlastita trajanja od najmanje 1 sata, s podesivim maksimumom za goste od 7 dana po zadanim postavkama. | Na pregledu |
-| F12. Pomozite korisnicima telefona da se pridruže QR kodom i jednim korakom odobrite pristup ili dodatno vrijeme. | Na pregledu |
-| F7. Pogledajte aplikacije s više hostova u jednom popisu. | Planirano |
+| <!-- roadmap:people --> Dajte rođaku 3 dana pristupa privatnim HTTP/datotečnim aplikacijama i objedinite pozivnice u jednoj poruci; primalac i dalje treba Tailscale. | U spajanju |
+| <!-- roadmap:health --> Provjeravajte zdravlje aplikacija i primajte upozorenja o prekidu ili isteku preko opcionalne komande ili webhooka. | U spajanju |
+| <!-- roadmap:recipes --> Pronađite podržane loopback aplikacije i pregledajte recepte za samostalno hostane aplikacije prije dijeljenja. | U spajanju |
+| <!-- roadmap:limits --> Postavite veličinu otpremanja i vremenska ograničenja zahtjeva po HTTP aplikaciji za velike datoteke i spore klijente. | U spajanju |
+| <!-- roadmap:windows --> Ponovo pokrenite srušeni Windows daemon tokom prijavljene sesije pomoću zakazanog zadatka i ugrađenog nadzornika. | U spajanju |
+| <!-- roadmap:access-log --> Pogledajte ko je otvorio koju aplikaciju u lokalnim zapisima pristupa, uz režime putanje `prefix`, `full` ili `off`. | Na pregledu |
+| <!-- roadmap:portal --> Otvorite jednu početnu stranicu s dozvoljenim aplikacijama i uputama za registraciju vlasnika; posjetioci i dalje trebaju Tailscale. | Na pregledu |
+| <!-- roadmap:mcp-scopes --> Dodijelite agentu ulogu i opseg aplikacija, uz revizijske potvrde njegovih izmjena. | Na pregledu |
+| <!-- roadmap:guest-links --> Omogućite gostu da otvori jednu HTTP aplikaciju u pregledniku bez instaliranja Tailscalea, pomoću vremenskog linka i opcionalnog PIN-a kroz javni Funnel s kontrolom pristupa. | Na pregledu |
+| <!-- roadmap:durations --> Izaberite gotova ili vlastita trajanja od najmanje 1 sata, s podesivim maksimumom za goste od 7 dana po zadanim postavkama. | Na pregledu |
+| <!-- roadmap:requests --> Pomozite korisnicima telefona da se pridruže QR kodom i jednim korakom odobrite pristup ili dodatno vrijeme. | Na pregledu |
+| <!-- roadmap:multi-host --> Pogledajte aplikacije s više hostova u jednom popisu. | Planirano |
 
 <a id="documentation"></a>
 

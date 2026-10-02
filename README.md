@@ -147,18 +147,18 @@ Items marked Merging, In review or Planned are not included in the source instal
 
 | Use case | Status |
 |---|---|
-| F1. Give a relative private HTTP/file app access for 3 days, with a message bundling app invitations; the recipient still needs Tailscale. | Merging |
-| F2. Check app health and receive outage or expiry alerts through an optional command or webhook. | Merging |
-| F3. Find supported loopback apps and preview self-hosted app recipes before sharing. | Merging |
-| F8. Set each HTTP app's upload size and request timeouts for large uploads and slow clients. | Merging |
-| F9. Restart a crashed Windows daemon while signed in, using a scheduled task and built-in supervisor. | Merging |
-| F4. See who opened which app in local access logs, with `prefix`, `full` or `off` path recording. | In review |
-| F5. Open one home page listing permitted apps, with enrollment handoff for owners; visitors still need Tailscale. | In review |
-| F6. Give an agent a role and an app scope, with audit receipts for its mutations. | In review |
-| F10. Let a guest open one HTTP app in a browser without installing Tailscale, using an expiring link and optional PIN through gated public Funnel. | In review |
-| F11. Choose presets or custom lifetimes of at least 1 hour, with a configurable 7-day guest maximum by default. | In review |
-| F12. Help phone users join through a QR code and approve app-access or extra-time requests in one action. | In review |
-| F7. View apps from several hosts in one inventory. | Planned |
+| <!-- roadmap:people --> Give a relative private HTTP/file app access for 3 days, with a message bundling app invitations; the recipient still needs Tailscale. | Merging |
+| <!-- roadmap:health --> Check app health and receive outage or expiry alerts through an optional command or webhook. | Merging |
+| <!-- roadmap:recipes --> Find supported loopback apps and preview self-hosted app recipes before sharing. | Merging |
+| <!-- roadmap:limits --> Set each HTTP app's upload size and request timeouts for large uploads and slow clients. | Merging |
+| <!-- roadmap:windows --> Restart a crashed Windows daemon while signed in, using a scheduled task and built-in supervisor. | Merging |
+| <!-- roadmap:access-log --> See who opened which app in local access logs, with `prefix`, `full` or `off` path recording. | In review |
+| <!-- roadmap:portal --> Open one home page listing permitted apps, with enrollment handoff for owners; visitors still need Tailscale. | In review |
+| <!-- roadmap:mcp-scopes --> Give an agent a role and an app scope, with audit receipts for its mutations. | In review |
+| <!-- roadmap:guest-links --> Let a guest open one HTTP app in a browser without installing Tailscale, using an expiring link and optional PIN through gated public Funnel. | In review |
+| <!-- roadmap:durations --> Choose presets or custom lifetimes of at least 1 hour, with a configurable 7-day guest maximum by default. | In review |
+| <!-- roadmap:requests --> Help phone users join through a QR code and approve app-access or extra-time requests in one action. | In review |
+| <!-- roadmap:multi-host --> View apps from several hosts in one inventory. | Planned |
 
 <a id="documentation"></a>
 

@@ -134,18 +134,18 @@ Les éléments En cours de fusion, En cours de revue ou Prévu ne sont pas inclu
 
 | Cas d’usage | État |
 |---|---|
-| F1. Donnez à un proche 3 jours d’accès aux applications HTTP/fichiers privées, avec leurs invitations dans un message ; le destinataire a toujours besoin de Tailscale. | En cours de fusion |
-| F2. Vérifiez l’état des applications et recevez des alertes de panne ou d’expiration par une commande ou un webhook facultatif. | En cours de fusion |
-| F3. Détectez les applications compatibles sur loopback et prévisualisez les recettes d’applications auto-hébergées avant de les partager. | En cours de fusion |
-| F8. Réglez la taille des téléversements et les délais des requêtes de chaque application HTTP pour les gros fichiers et les clients lents. | En cours de fusion |
-| F9. Redémarrez un daemon Windows après un plantage pendant une session ouverte, avec une tâche planifiée et un superviseur intégré. | En cours de fusion |
-| F4. Consultez qui a ouvert quelle application dans les journaux locaux, avec les modes de chemin `prefix`, `full` ou `off`. | En cours de revue |
-| F5. Ouvrez une page d’accueil listant les applications autorisées et les liens d’inscription pour les propriétaires ; les visiteurs ont toujours besoin de Tailscale. | En cours de revue |
-| F6. Attribuez à un agent un rôle et un périmètre d’applications, avec des reçus d’audit pour ses modifications. | En cours de revue |
-| F10. Laissez un invité ouvrir une application HTTP dans son navigateur sans installer Tailscale, avec un lien temporaire et un PIN facultatif, via Funnel public avec contrôle d’accès. | En cours de revue |
-| F11. Choisissez des durées prédéfinies ou personnalisées d’au moins 1 heure, avec un maximum invité de 7 jours par défaut, configurable. | En cours de revue |
-| F12. Aidez les utilisateurs de téléphones à rejoindre via un QR code et approuvez l’accès ou du temps supplémentaire en une action. | En cours de revue |
-| F7. Consultez les applications de plusieurs hôtes dans un inventaire. | Prévu |
+| <!-- roadmap:people --> Donnez à un proche 3 jours d’accès aux applications HTTP/fichiers privées, avec leurs invitations dans un message ; le destinataire a toujours besoin de Tailscale. | En cours de fusion |
+| <!-- roadmap:health --> Vérifiez l’état des applications et recevez des alertes de panne ou d’expiration par une commande ou un webhook facultatif. | En cours de fusion |
+| <!-- roadmap:recipes --> Détectez les applications compatibles sur loopback et prévisualisez les recettes d’applications auto-hébergées avant de les partager. | En cours de fusion |
+| <!-- roadmap:limits --> Réglez la taille des téléversements et les délais des requêtes de chaque application HTTP pour les gros fichiers et les clients lents. | En cours de fusion |
+| <!-- roadmap:windows --> Redémarrez un daemon Windows après un plantage pendant une session ouverte, avec une tâche planifiée et un superviseur intégré. | En cours de fusion |
+| <!-- roadmap:access-log --> Consultez qui a ouvert quelle application dans les journaux locaux, avec les modes de chemin `prefix`, `full` ou `off`. | En cours de revue |
+| <!-- roadmap:portal --> Ouvrez une page d’accueil listant les applications autorisées et les liens d’inscription pour les propriétaires ; les visiteurs ont toujours besoin de Tailscale. | En cours de revue |
+| <!-- roadmap:mcp-scopes --> Attribuez à un agent un rôle et un périmètre d’applications, avec des reçus d’audit pour ses modifications. | En cours de revue |
+| <!-- roadmap:guest-links --> Laissez un invité ouvrir une application HTTP dans son navigateur sans installer Tailscale, avec un lien temporaire et un PIN facultatif, via Funnel public avec contrôle d’accès. | En cours de revue |
+| <!-- roadmap:durations --> Choisissez des durées prédéfinies ou personnalisées d’au moins 1 heure, avec un maximum invité de 7 jours par défaut, configurable. | En cours de revue |
+| <!-- roadmap:requests --> Aidez les utilisateurs de téléphones à rejoindre via un QR code et approuvez l’accès ou du temps supplémentaire en une action. | En cours de revue |
+| <!-- roadmap:multi-host --> Consultez les applications de plusieurs hôtes dans un inventaire. | Prévu |
 
 <a id="documentation"></a>
 

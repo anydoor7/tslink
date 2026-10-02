@@ -132,18 +132,18 @@ Các mục Đang hợp nhất, Đang xét duyệt hoặc Dự kiến chưa có t
 
 | Trường hợp sử dụng | Trạng thái |
 |---|---|
-| F1. Cho người thân truy cập ứng dụng HTTP/tệp riêng tư trong 3 ngày và gộp lời mời vào một tin nhắn; người nhận vẫn cần Tailscale. | Đang hợp nhất |
-| F2. Kiểm tra sức khỏe ứng dụng và nhận cảnh báo ngừng hoạt động hoặc hết hạn qua lệnh hay webhook tùy chọn. | Đang hợp nhất |
-| F3. Tìm ứng dụng loopback được hỗ trợ và xem trước công thức cho ứng dụng tự lưu trữ trước khi chia sẻ. | Đang hợp nhất |
-| F8. Đặt kích thước tải lên và thời gian chờ yêu cầu cho từng ứng dụng HTTP để hỗ trợ tệp lớn và máy khách chậm. | Đang hợp nhất |
-| F9. Khởi động lại daemon Windows bị lỗi khi người dùng đang đăng nhập bằng tác vụ theo lịch và bộ giám sát tích hợp. | Đang hợp nhất |
-| F4. Xem ai mở ứng dụng nào trong nhật ký truy cập cục bộ, với chế độ đường dẫn `prefix`, `full` hoặc `off`. | Đang xét duyệt |
-| F5. Mở một trang chủ liệt kê ứng dụng được phép và chuyển tiếp đăng ký cho chủ sở hữu; khách vẫn cần Tailscale. | Đang xét duyệt |
-| F6. Gán vai trò và phạm vi ứng dụng cho agent, kèm biên nhận kiểm toán các thay đổi. | Đang xét duyệt |
-| F10. Cho khách mở một ứng dụng HTTP trong trình duyệt mà không cài Tailscale, bằng liên kết có hạn và PIN tùy chọn qua Funnel công khai có kiểm soát truy cập. | Đang xét duyệt |
-| F11. Chọn thời hạn đặt sẵn hoặc tùy chỉnh ít nhất 1 giờ, với tối đa mặc định 7 ngày cho khách và có thể cấu hình. | Đang xét duyệt |
-| F12. Giúp người dùng điện thoại tham gia bằng mã QR và duyệt yêu cầu truy cập hoặc thêm thời gian trong một thao tác. | Đang xét duyệt |
-| F7. Xem ứng dụng từ nhiều máy chủ trong một danh sách. | Dự kiến |
+| <!-- roadmap:people --> Cho người thân truy cập ứng dụng HTTP/tệp riêng tư trong 3 ngày và gộp lời mời vào một tin nhắn; người nhận vẫn cần Tailscale. | Đang hợp nhất |
+| <!-- roadmap:health --> Kiểm tra sức khỏe ứng dụng và nhận cảnh báo ngừng hoạt động hoặc hết hạn qua lệnh hay webhook tùy chọn. | Đang hợp nhất |
+| <!-- roadmap:recipes --> Tìm ứng dụng loopback được hỗ trợ và xem trước công thức cho ứng dụng tự lưu trữ trước khi chia sẻ. | Đang hợp nhất |
+| <!-- roadmap:limits --> Đặt kích thước tải lên và thời gian chờ yêu cầu cho từng ứng dụng HTTP để hỗ trợ tệp lớn và máy khách chậm. | Đang hợp nhất |
+| <!-- roadmap:windows --> Khởi động lại daemon Windows bị lỗi khi người dùng đang đăng nhập bằng tác vụ theo lịch và bộ giám sát tích hợp. | Đang hợp nhất |
+| <!-- roadmap:access-log --> Xem ai mở ứng dụng nào trong nhật ký truy cập cục bộ, với chế độ đường dẫn `prefix`, `full` hoặc `off`. | Đang xét duyệt |
+| <!-- roadmap:portal --> Mở một trang chủ liệt kê ứng dụng được phép và chuyển tiếp đăng ký cho chủ sở hữu; khách vẫn cần Tailscale. | Đang xét duyệt |
+| <!-- roadmap:mcp-scopes --> Gán vai trò và phạm vi ứng dụng cho agent, kèm biên nhận kiểm toán các thay đổi. | Đang xét duyệt |
+| <!-- roadmap:guest-links --> Cho khách mở một ứng dụng HTTP trong trình duyệt mà không cài Tailscale, bằng liên kết có hạn và PIN tùy chọn qua Funnel công khai có kiểm soát truy cập. | Đang xét duyệt |
+| <!-- roadmap:durations --> Chọn thời hạn đặt sẵn hoặc tùy chỉnh ít nhất 1 giờ, với tối đa mặc định 7 ngày cho khách và có thể cấu hình. | Đang xét duyệt |
+| <!-- roadmap:requests --> Giúp người dùng điện thoại tham gia bằng mã QR và duyệt yêu cầu truy cập hoặc thêm thời gian trong một thao tác. | Đang xét duyệt |
+| <!-- roadmap:multi-host --> Xem ứng dụng từ nhiều máy chủ trong một danh sách. | Dự kiến |
 
 <a id="documentation"></a>
 

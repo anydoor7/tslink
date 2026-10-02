@@ -134,18 +134,18 @@ Los elementos En integración, En revisión o Planificado no se incluyen en la i
 
 | Caso de uso | Estado |
 |---|---|
-| F1. Da a un familiar acceso a apps HTTP/archivos privadas durante 3 días y reúne las invitaciones en un mensaje; el destinatario sigue necesitando Tailscale. | En integración |
-| F2. Comprueba la salud de las apps y recibe alertas de caída o caducidad mediante un comando o webhook opcional. | En integración |
-| F3. Encuentra apps compatibles en loopback y revisa recetas de apps autoalojadas antes de compartirlas. | En integración |
-| F8. Configura el tamaño de subida y los tiempos de espera de cada app HTTP para cargas grandes y clientes lentos. | En integración |
-| F9. Reinicia un daemon de Windows tras una caída mientras haya sesión iniciada, con una tarea programada y un supervisor integrado. | En integración |
-| F4. Consulta quién abrió cada app en registros locales, con modos de ruta `prefix`, `full` u `off`. | En revisión |
-| F5. Abre una página de inicio con las apps permitidas y el enlace de registro para propietarios; los visitantes siguen necesitando Tailscale. | En revisión |
-| F6. Asigna a un agente un rol y un ámbito de apps, con registros de auditoría de sus cambios. | En revisión |
-| F10. Permite a un invitado abrir una app HTTP en el navegador sin instalar Tailscale, con un enlace temporal y PIN opcional, mediante Funnel público con control de acceso. | En revisión |
-| F11. Elige duraciones predefinidas o personalizadas de al menos 1 hora, con un máximo para invitados de 7 días por defecto, configurable. | En revisión |
-| F12. Ayuda a usuarios de móviles a unirse con un código QR y aprueba acceso a apps o más tiempo en una acción. | En revisión |
-| F7. Consulta apps de varios hosts en un inventario. | Planificado |
+| <!-- roadmap:people --> Da a un familiar acceso a apps HTTP/archivos privadas durante 3 días y reúne las invitaciones en un mensaje; el destinatario sigue necesitando Tailscale. | En integración |
+| <!-- roadmap:health --> Comprueba la salud de las apps y recibe alertas de caída o caducidad mediante un comando o webhook opcional. | En integración |
+| <!-- roadmap:recipes --> Encuentra apps compatibles en loopback y revisa recetas de apps autoalojadas antes de compartirlas. | En integración |
+| <!-- roadmap:limits --> Configura el tamaño de subida y los tiempos de espera de cada app HTTP para cargas grandes y clientes lentos. | En integración |
+| <!-- roadmap:windows --> Reinicia un daemon de Windows tras una caída mientras haya sesión iniciada, con una tarea programada y un supervisor integrado. | En integración |
+| <!-- roadmap:access-log --> Consulta quién abrió cada app en registros locales, con modos de ruta `prefix`, `full` u `off`. | En revisión |
+| <!-- roadmap:portal --> Abre una página de inicio con las apps permitidas y el enlace de registro para propietarios; los visitantes siguen necesitando Tailscale. | En revisión |
+| <!-- roadmap:mcp-scopes --> Asigna a un agente un rol y un ámbito de apps, con registros de auditoría de sus cambios. | En revisión |
+| <!-- roadmap:guest-links --> Permite a un invitado abrir una app HTTP en el navegador sin instalar Tailscale, con un enlace temporal y PIN opcional, mediante Funnel público con control de acceso. | En revisión |
+| <!-- roadmap:durations --> Elige duraciones predefinidas o personalizadas de al menos 1 hora, con un máximo para invitados de 7 días por defecto, configurable. | En revisión |
+| <!-- roadmap:requests --> Ayuda a usuarios de móviles a unirse con un código QR y aprueba acceso a apps o más tiempo en una acción. | En revisión |
+| <!-- roadmap:multi-host --> Consulta apps de varios hosts en un inventario. | Planificado |
 
 <a id="documentation"></a>
 

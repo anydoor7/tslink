@@ -134,18 +134,18 @@ Gli elementi In integrazione, In revisione o Pianificato non sono inclusi nell�
 
 | Caso d’uso | Stato |
 |---|---|
-| F1. Concedi a un parente 3 giorni di accesso ad app HTTP/file private e raccogli gli inviti in un messaggio; il destinatario necessita ancora di Tailscale. | In integrazione |
-| F2. Controlla lo stato delle app e ricevi avvisi di interruzione o scadenza tramite un comando o webhook facoltativo. | In integrazione |
-| F3. Trova app compatibili su loopback e visualizza le ricette per app self-hosted prima di condividerle. | In integrazione |
-| F8. Imposta dimensione degli upload e timeout delle richieste per ciascuna app HTTP per file grandi e client lenti. | In integrazione |
-| F9. Riavvia un daemon Windows dopo un arresto anomalo durante una sessione attiva, con un’attività pianificata e un supervisore integrato. | In integrazione |
-| F4. Scopri chi ha aperto quale app nei log locali, con modalità di percorso `prefix`, `full` o `off`. | In revisione |
-| F5. Apri una pagina iniziale con le app consentite e il passaggio di registrazione per i proprietari; i visitatori necessitano ancora di Tailscale. | In revisione |
-| F6. Assegna a un agente un ruolo e un ambito di app, con ricevute di audit per le modifiche. | In revisione |
-| F10. Permetti a un ospite di aprire un’app HTTP nel browser senza installare Tailscale, con un link a scadenza e PIN facoltativo, tramite Funnel pubblico con controllo degli accessi. | In revisione |
-| F11. Scegli durate predefinite o personalizzate di almeno 1 ora, con un massimo ospite predefinito di 7 giorni, configurabile. | In revisione |
-| F12. Aiuta gli utenti di telefoni a partecipare tramite QR code e approva accesso o tempo aggiuntivo in un’azione. | In revisione |
-| F7. Visualizza le app di più host in un inventario. | Pianificato |
+| <!-- roadmap:people --> Concedi a un parente 3 giorni di accesso ad app HTTP/file private e raccogli gli inviti in un messaggio; il destinatario necessita ancora di Tailscale. | In integrazione |
+| <!-- roadmap:health --> Controlla lo stato delle app e ricevi avvisi di interruzione o scadenza tramite un comando o webhook facoltativo. | In integrazione |
+| <!-- roadmap:recipes --> Trova app compatibili su loopback e visualizza le ricette per app self-hosted prima di condividerle. | In integrazione |
+| <!-- roadmap:limits --> Imposta dimensione degli upload e timeout delle richieste per ciascuna app HTTP per file grandi e client lenti. | In integrazione |
+| <!-- roadmap:windows --> Riavvia un daemon Windows dopo un arresto anomalo durante una sessione attiva, con un’attività pianificata e un supervisore integrato. | In integrazione |
+| <!-- roadmap:access-log --> Scopri chi ha aperto quale app nei log locali, con modalità di percorso `prefix`, `full` o `off`. | In revisione |
+| <!-- roadmap:portal --> Apri una pagina iniziale con le app consentite e il passaggio di registrazione per i proprietari; i visitatori necessitano ancora di Tailscale. | In revisione |
+| <!-- roadmap:mcp-scopes --> Assegna a un agente un ruolo e un ambito di app, con ricevute di audit per le modifiche. | In revisione |
+| <!-- roadmap:guest-links --> Permetti a un ospite di aprire un’app HTTP nel browser senza installare Tailscale, con un link a scadenza e PIN facoltativo, tramite Funnel pubblico con controllo degli accessi. | In revisione |
+| <!-- roadmap:durations --> Scegli durate predefinite o personalizzate di almeno 1 ora, con un massimo ospite predefinito di 7 giorni, configurabile. | In revisione |
+| <!-- roadmap:requests --> Aiuta gli utenti di telefoni a partecipare tramite QR code e approva accesso o tempo aggiuntivo in un’azione. | In revisione |
+| <!-- roadmap:multi-host --> Visualizza le app di più host in un inventario. | Pianificato |
 
 <a id="documentation"></a>
 

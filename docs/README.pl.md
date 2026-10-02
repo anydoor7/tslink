@@ -147,18 +147,18 @@ Elementy W trakcie scalania, W przeglądzie lub Planowane nie wchodzą w skład 
 
 | Zastosowanie | Status |
 |---|---|
-| F1. Przyznaj krewnemu dostęp do prywatnych aplikacji HTTP/plikowych na 3 dni i zbierz zaproszenia w jednej wiadomości; odbiorca nadal potrzebuje Tailscale. | W trakcie scalania |
-| F2. Sprawdzaj stan aplikacji i odbieraj alerty awarii lub wygaśnięcia przez opcjonalne polecenie albo webhook. | W trakcie scalania |
-| F3. Znajdź obsługiwane aplikacje na loopback i obejrzyj receptury aplikacji self-hosted przed udostępnieniem. | W trakcie scalania |
-| F8. Ustaw wielkość wysyłania i limity czasu żądań każdej aplikacji HTTP dla dużych plików i wolnych klientów. | W trakcie scalania |
-| F9. Uruchom ponownie demona Windows po awarii w trakcie zalogowanej sesji, korzystając z zaplanowanego zadania i wbudowanego nadzorcy. | W trakcie scalania |
-| F4. Sprawdź, kto otworzył którą aplikację w lokalnych logach dostępu, z trybami ścieżki `prefix`, `full` lub `off`. | W przeglądzie |
-| F5. Otwórz jedną stronę główną z dozwolonymi aplikacjami i przekazaniem rejestracji właścicielom; odwiedzający nadal potrzebują Tailscale. | W przeglądzie |
-| F6. Nadaj agentowi rolę i zakres aplikacji, z zapisami audytu jego zmian. | W przeglądzie |
-| F10. Pozwól gościowi otworzyć jedną aplikację HTTP w przeglądarce bez instalowania Tailscale, przez wygasający link i opcjonalny PIN, przez publiczny Funnel z kontrolą dostępu. | W przeglądzie |
-| F11. Wybierz gotowe lub własne okresy od 1 godziny, z konfigurowalnym maksimum dla gości wynoszącym domyślnie 7 dni. | W przeglądzie |
-| F12. Pomóż użytkownikom telefonów dołączyć przez kod QR i zatwierdź dostęp lub dodatkowy czas jedną czynnością. | W przeglądzie |
-| F7. Przeglądaj aplikacje z wielu hostów w jednym spisie. | Planowane |
+| <!-- roadmap:people --> Przyznaj krewnemu dostęp do prywatnych aplikacji HTTP/plikowych na 3 dni i zbierz zaproszenia w jednej wiadomości; odbiorca nadal potrzebuje Tailscale. | W trakcie scalania |
+| <!-- roadmap:health --> Sprawdzaj stan aplikacji i odbieraj alerty awarii lub wygaśnięcia przez opcjonalne polecenie albo webhook. | W trakcie scalania |
+| <!-- roadmap:recipes --> Znajdź obsługiwane aplikacje na loopback i obejrzyj receptury aplikacji self-hosted przed udostępnieniem. | W trakcie scalania |
+| <!-- roadmap:limits --> Ustaw wielkość wysyłania i limity czasu żądań każdej aplikacji HTTP dla dużych plików i wolnych klientów. | W trakcie scalania |
+| <!-- roadmap:windows --> Uruchom ponownie demona Windows po awarii w trakcie zalogowanej sesji, korzystając z zaplanowanego zadania i wbudowanego nadzorcy. | W trakcie scalania |
+| <!-- roadmap:access-log --> Sprawdź, kto otworzył którą aplikację w lokalnych logach dostępu, z trybami ścieżki `prefix`, `full` lub `off`. | W przeglądzie |
+| <!-- roadmap:portal --> Otwórz jedną stronę główną z dozwolonymi aplikacjami i przekazaniem rejestracji właścicielom; odwiedzający nadal potrzebują Tailscale. | W przeglądzie |
+| <!-- roadmap:mcp-scopes --> Nadaj agentowi rolę i zakres aplikacji, z zapisami audytu jego zmian. | W przeglądzie |
+| <!-- roadmap:guest-links --> Pozwól gościowi otworzyć jedną aplikację HTTP w przeglądarce bez instalowania Tailscale, przez wygasający link i opcjonalny PIN, przez publiczny Funnel z kontrolą dostępu. | W przeglądzie |
+| <!-- roadmap:durations --> Wybierz gotowe lub własne okresy od 1 godziny, z konfigurowalnym maksimum dla gości wynoszącym domyślnie 7 dni. | W przeglądzie |
+| <!-- roadmap:requests --> Pomóż użytkownikom telefonów dołączyć przez kod QR i zatwierdź dostęp lub dodatkowy czas jedną czynnością. | W przeglądzie |
+| <!-- roadmap:multi-host --> Przeglądaj aplikacje z wielu hostów w jednym spisie. | Planowane |
 
 <a id="documentation"></a>
 

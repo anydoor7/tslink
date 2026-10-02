@@ -134,18 +134,18 @@ Punkter med Under sammenfletning, Under gennemgang eller Planlagt indgår ikke i
 
 | Anvendelse | Status |
 |---|---|
-| F1. Giv et familiemedlem 3 dages adgang til private HTTP-/filapps, og saml invitationerne i én besked; modtageren skal stadig bruge Tailscale. | Under sammenfletning |
-| F2. Kontrollér appens tilstand, og modtag nedbruds- eller udløbsadvarsler via en valgfri kommando eller webhook. | Under sammenfletning |
-| F3. Find understøttede loopback-apps, og se opskrifter til selvhostede apps før deling. | Under sammenfletning |
-| F8. Indstil uploadstørrelse og forespørgselsfrister pr. HTTP-app til store uploads og langsomme klienter. | Under sammenfletning |
-| F9. Genstart en nedbrudt Windows-daemon, mens brugeren er logget ind, med en planlagt opgave og indbygget supervisor. | Under sammenfletning |
-| F4. Se hvem der åbnede hvilken app i lokale adgangslogfiler med stitilstandene `prefix`, `full` eller `off`. | Under gennemgang |
-| F5. Åbn én startside med tilladte apps og tilmeldingshenvisning for ejere; besøgende skal stadig bruge Tailscale. | Under gennemgang |
-| F6. Giv en agent en rolle og et appområde med revisionskvitteringer for ændringer. | Under gennemgang |
-| F10. Lad en gæst åbne én HTTP-app i browseren uden at installere Tailscale, med et tidsbegrænset link og valgfri PIN via adgangskontrolleret offentlig Funnel. | Under gennemgang |
-| F11. Vælg forvalg eller egne varigheder på mindst 1 time med en konfigurerbar gæstegrænse på som standard 7 dage. | Under gennemgang |
-| F12. Hjælp telefonbrugere med at tilslutte sig via QR-kode, og godkend appadgang eller ekstra tid i én handling. | Under gennemgang |
-| F7. Se apps fra flere værter i én oversigt. | Planlagt |
+| <!-- roadmap:people --> Giv et familiemedlem 3 dages adgang til private HTTP-/filapps, og saml invitationerne i én besked; modtageren skal stadig bruge Tailscale. | Under sammenfletning |
+| <!-- roadmap:health --> Kontrollér appens tilstand, og modtag nedbruds- eller udløbsadvarsler via en valgfri kommando eller webhook. | Under sammenfletning |
+| <!-- roadmap:recipes --> Find understøttede loopback-apps, og se opskrifter til selvhostede apps før deling. | Under sammenfletning |
+| <!-- roadmap:limits --> Indstil uploadstørrelse og forespørgselsfrister pr. HTTP-app til store uploads og langsomme klienter. | Under sammenfletning |
+| <!-- roadmap:windows --> Genstart en nedbrudt Windows-daemon, mens brugeren er logget ind, med en planlagt opgave og indbygget supervisor. | Under sammenfletning |
+| <!-- roadmap:access-log --> Se hvem der åbnede hvilken app i lokale adgangslogfiler med stitilstandene `prefix`, `full` eller `off`. | Under gennemgang |
+| <!-- roadmap:portal --> Åbn én startside med tilladte apps og tilmeldingshenvisning for ejere; besøgende skal stadig bruge Tailscale. | Under gennemgang |
+| <!-- roadmap:mcp-scopes --> Giv en agent en rolle og et appområde med revisionskvitteringer for ændringer. | Under gennemgang |
+| <!-- roadmap:guest-links --> Lad en gæst åbne én HTTP-app i browseren uden at installere Tailscale, med et tidsbegrænset link og valgfri PIN via adgangskontrolleret offentlig Funnel. | Under gennemgang |
+| <!-- roadmap:durations --> Vælg forvalg eller egne varigheder på mindst 1 time med en konfigurerbar gæstegrænse på som standard 7 dage. | Under gennemgang |
+| <!-- roadmap:requests --> Hjælp telefonbrugere med at tilslutte sig via QR-kode, og godkend appadgang eller ekstra tid i én handling. | Under gennemgang |
+| <!-- roadmap:multi-host --> Se apps fra flere værter i én oversigt. | Planlagt |
 
 <a id="documentation"></a>
 

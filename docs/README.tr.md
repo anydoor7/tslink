@@ -147,18 +147,18 @@ Birleştiriliyor, İncelemede veya Planlandı olarak işaretli öğeler yukarıd
 
 | Kullanım | Durum |
 |---|---|
-| F1. Bir yakınınıza özel HTTP/dosya uygulamalarına 3 günlük erişim verip davetleri tek mesajda toplayın; alıcı hâlâ Tailscale kullanmalıdır. | Birleştiriliyor |
-| F2. Uygulama sağlığını kontrol edip isteğe bağlı komut veya webhook ile kesinti ya da süre sonu uyarıları alın. | Birleştiriliyor |
-| F3. Desteklenen loopback uygulamalarını bulup paylaşmadan önce kendi barındırdığınız uygulamaların tariflerini önizleyin. | Birleştiriliyor |
-| F8. Büyük yüklemeler ve yavaş istemciler için her HTTP uygulamasının yükleme boyutunu ve istek zaman aşımını ayarlayın. | Birleştiriliyor |
-| F9. Windows oturumu açıkken çöken daemon’ı zamanlanmış görev ve yerleşik gözeticiyle yeniden başlatın. | Birleştiriliyor |
-| F4. Yerel erişim günlüklerinde kimin hangi uygulamayı açtığını, `prefix`, `full` veya `off` yol kaydıyla görün. | İncelemede |
-| F5. İzin verilen uygulamaları tek ana sayfada, sahipler için kayıt yönlendirmesiyle açın; ziyaretçiler hâlâ Tailscale kullanmalıdır. | İncelemede |
-| F6. Bir ajana rol ve uygulama kapsamı verip değişiklikleri için denetim kayıtları tutun. | İncelemede |
-| F10. Misafirin süreli bağlantı ve isteğe bağlı PIN ile Tailscale kurmadan tarayıcıda tek HTTP uygulamasını erişim kontrollü genel Funnel üzerinden açmasını sağlayın. | İncelemede |
-| F11. En az 1 saatlik hazır veya özel süreler seçin; misafir üst sınırı varsayılan olarak 7 gündür ve değiştirilebilir. | İncelemede |
-| F12. Telefon kullanıcılarını QR koduyla katılmaya yönlendirin ve erişim ya da ek süre isteklerini tek adımda onaylayın. | İncelemede |
-| F7. Birden çok ana makinenin uygulamalarını tek listede görün. | Planlandı |
+| <!-- roadmap:people --> Bir yakınınıza özel HTTP/dosya uygulamalarına 3 günlük erişim verip davetleri tek mesajda toplayın; alıcı hâlâ Tailscale kullanmalıdır. | Birleştiriliyor |
+| <!-- roadmap:health --> Uygulama sağlığını kontrol edip isteğe bağlı komut veya webhook ile kesinti ya da süre sonu uyarıları alın. | Birleştiriliyor |
+| <!-- roadmap:recipes --> Desteklenen loopback uygulamalarını bulup paylaşmadan önce kendi barındırdığınız uygulamaların tariflerini önizleyin. | Birleştiriliyor |
+| <!-- roadmap:limits --> Büyük yüklemeler ve yavaş istemciler için her HTTP uygulamasının yükleme boyutunu ve istek zaman aşımını ayarlayın. | Birleştiriliyor |
+| <!-- roadmap:windows --> Windows oturumu açıkken çöken daemon’ı zamanlanmış görev ve yerleşik gözeticiyle yeniden başlatın. | Birleştiriliyor |
+| <!-- roadmap:access-log --> Yerel erişim günlüklerinde kimin hangi uygulamayı açtığını, `prefix`, `full` veya `off` yol kaydıyla görün. | İncelemede |
+| <!-- roadmap:portal --> İzin verilen uygulamaları tek ana sayfada, sahipler için kayıt yönlendirmesiyle açın; ziyaretçiler hâlâ Tailscale kullanmalıdır. | İncelemede |
+| <!-- roadmap:mcp-scopes --> Bir ajana rol ve uygulama kapsamı verip değişiklikleri için denetim kayıtları tutun. | İncelemede |
+| <!-- roadmap:guest-links --> Misafirin süreli bağlantı ve isteğe bağlı PIN ile Tailscale kurmadan tarayıcıda tek HTTP uygulamasını erişim kontrollü genel Funnel üzerinden açmasını sağlayın. | İncelemede |
+| <!-- roadmap:durations --> En az 1 saatlik hazır veya özel süreler seçin; misafir üst sınırı varsayılan olarak 7 gündür ve değiştirilebilir. | İncelemede |
+| <!-- roadmap:requests --> Telefon kullanıcılarını QR koduyla katılmaya yönlendirin ve erişim ya da ek süre isteklerini tek adımda onaylayın. | İncelemede |
+| <!-- roadmap:multi-host --> Birden çok ana makinenin uygulamalarını tek listede görün. | Planlandı |
 
 <a id="documentation"></a>
 
