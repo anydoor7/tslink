@@ -139,10 +139,17 @@ func TestSecurityCriticalClaimsStayWithinCapabilityManifest(t *testing.T) {
 	root := repoRoot(t)
 	paths := []string{
 		filepath.Join(root, "README.md"),
-		filepath.Join(root, "README_zh.md"),
 		filepath.Join(root, "SECURITY.md"),
 		filepath.Join(root, "cmd", "root.go"),
 	}
+	translations, err := filepath.Glob(filepath.Join(root, "docs", "README.*.md"))
+	if err != nil {
+		t.Fatalf("Glob translated READMEs: %v", err)
+	}
+	if len(translations) != 21 {
+		t.Fatalf("translated README count = %d, want 21", len(translations))
+	}
+	paths = append(paths, translations...)
 	banned := []string{
 		"end-to-end encrypted",
 		"e2e encrypted",
@@ -156,7 +163,7 @@ func TestSecurityCriticalClaimsStayWithinCapabilityManifest(t *testing.T) {
 		"mandatory identity",
 		"always verify",
 	}
-	required := []string{
+	englishRequired := []string{
 		"tailnet transport",
 		"raw tcp",
 		"whois",
@@ -173,6 +180,12 @@ func TestSecurityCriticalClaimsStayWithinCapabilityManifest(t *testing.T) {
 			if strings.Contains(lower, phrase) {
 				t.Fatalf("%s contains unsupported absolute %q", path, phrase)
 			}
+		}
+		required := englishRequired
+		if filepath.Dir(path) == filepath.Join(root, "docs") {
+			// Translated prose keeps the actual API/flag names. English-only
+			// phrases such as "raw TCP" are localized in these editions.
+			required = []string{"tailnet", "tcp", "whois", "--allow"}
 		}
 		for _, phrase := range required {
 			if !strings.Contains(lower, phrase) {
