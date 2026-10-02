@@ -6475,8 +6475,8 @@ func TestWatchRegistry_DebouncesRapidWrites(t *testing.T) {
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
 		}
-		t.Cleanup(s.closeAllNodes)
-		startRegistryWatcherTest(t, s)
+		defer s.closeAllNodes()
+		defer startRegistryWatcherTest(t, s)()
 		for i := 0; i < 5; i++ {
 			regPath := writeRegistry(t, []registry.Service{
 				{Name: fmt.Sprintf("svc-%d", i), Type: registry.TypeFile, Path: t.TempDir()},

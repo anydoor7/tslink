@@ -50,3 +50,5 @@ This index records the app recipe additions; the CLI manifest describes the comp
 - [windows_task_test.go](windows_task_test.go)
 
 - `wave1_round2_test.go`: scheduler installation schemas with recipe, Host and request-limit contracts.
+
+- `json_test.go`: concurrently drains captured CLI output; `wave1_round2_test.go` covers output larger than the OS pipe buffer.

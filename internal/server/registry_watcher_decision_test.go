@@ -23,6 +23,7 @@ func TestWatchRegistry_RevertingToAppliedStateSupersedesPendingTarget(t *testing
 	synctest.Test(t, func(t *testing.T) {
 		w := installChannelRegistryWatcher(t)
 		s := newLossRecoveryServer(t)
+		defer s.closeAllNodes()
 		regPath := writeRegistry(t, nil)
 		if err := s.syncNodes(context.Background()); err != nil {
 			t.Fatal(err)
@@ -82,6 +83,7 @@ func TestWatchRegistry_DelayedOlderDecisionCannotCancelNewTarget(t *testing.T) {
 	}
 	synctest.Test(t, func(t *testing.T) {
 		s := newLossRecoveryServer(t)
+		defer s.closeAllNodes()
 		regPath := writeRegistry(t, nil)
 		if err := s.syncNodes(context.Background()); err != nil {
 			t.Fatal(err)
@@ -136,6 +138,7 @@ func TestWatchRegistry_OverlappingDecisionsDoNotQueueCallbacks(t *testing.T) {
 	}
 	synctest.Test(t, func(t *testing.T) {
 		s := newLossRecoveryServer(t)
+		defer s.closeAllNodes()
 		regPath := writeRegistry(t, nil)
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
@@ -174,6 +177,7 @@ func TestReviewOrdinaryEditDuringDecisionIsPrompt(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		w := installChannelRegistryWatcher(t)
 		s := newLossRecoveryServer(t)
+		defer s.closeAllNodes()
 		svc := registry.Service{Name: "active", Type: registry.TypeFile, Path: t.TempDir()}
 		path := writeRegistry(t, []registry.Service{svc})
 		if err := s.syncNodes(context.Background()); err != nil {
@@ -250,6 +254,7 @@ func TestWatchRegistry_BusyDecisionCoalescesOneFreshRead(t *testing.T) {
 	}
 	synctest.Test(t, func(t *testing.T) {
 		s := newLossRecoveryServer(t)
+		defer s.closeAllNodes()
 		regPath := writeRegistry(t, nil)
 		if err := s.syncNodes(context.Background()); err != nil {
 			t.Fatal(err)
@@ -307,6 +312,7 @@ func TestWatchRegistry_PendingRecheckPrecedesRemoteSync(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		w := installChannelRegistryWatcher(t)
 		s := newLossRecoveryServer(t)
+		defer s.closeAllNodes()
 		active := registry.Service{Name: "active", Type: registry.TypeFile, Path: t.TempDir()}
 		path := writeRegistry(t, []registry.Service{active})
 		if err := s.syncNodes(context.Background()); err != nil {

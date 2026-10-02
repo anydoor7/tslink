@@ -2,11 +2,31 @@ package cmd
 
 import (
 	"encoding/json"
+	"io"
+	"os"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/anydoor7/tslink/internal/inspect"
 	"github.com/anydoor7/tslink/internal/registry"
 )
+
+func TestWave1Round2CaptureLargeOutput(t *testing.T) {
+	wanted := strings.Repeat("recipe catalog output\n", 8192)
+	var writeErr error
+	actual := captureStdout(t, func() {
+		pipe := os.Stdout
+		// A broken capture is unblocked through this test-owned pipe, so the
+		// regression reports a write/assertion error instead of hanging the suite.
+		guard := time.AfterFunc(time.Second, func() { pipe.Close() })
+		defer guard.Stop()
+		_, writeErr = io.WriteString(pipe, wanted)
+	})
+	if writeErr != nil || actual != wanted {
+		t.Fatalf("output capture blocked or truncated: bytes=%d want=%d write=%v", len(actual), len(wanted), writeErr)
+	}
+}
 
 func TestWave1Round2InstallationSchemas(t *testing.T) {
 	installed := &DaemonInstalled{Manager: "windows-task-scheduler", Path: "isolated/task", Undo: "tslink uninstall"}

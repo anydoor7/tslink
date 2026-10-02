@@ -253,11 +253,12 @@ func TestWatchRegistry_RecoversDroppedFinalWritesOnError(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				w := installChannelRegistryWatcher(t)
 				s := newLossRecoveryServer(t)
+				defer s.closeAllNodes()
 				regPath := writeRegistry(t, []registry.Service{{Name: "stale", Type: registry.TypeFile, Path: t.TempDir()}})
 				if err := s.syncNodes(context.Background()); err != nil {
 					t.Fatal(err)
 				}
-				startRegistryWatcherTest(t, s)
+				defer startRegistryWatcherTest(t, s)()
 				generation := s.syncGeneration.Load()
 				changed, release := s.events.subscribe()
 				defer release()
@@ -299,7 +300,8 @@ func TestWatchRegistry_PeriodicCheckRecoversCreateWatchGap(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		w := installChannelRegistryWatcher(t)
 		s := newLossRecoveryServer(t)
-		startRegistryWatcherTest(t, s)
+		defer s.closeAllNodes()
+		defer startRegistryWatcherTest(t, s)()
 		changed, release := s.events.subscribe()
 		defer release()
 		regPath := writeRegistry(t, []registry.Service{{Name: "stale", Type: registry.TypeFile, Path: t.TempDir()}})
@@ -350,6 +352,7 @@ func TestWatchRegistry_UnchangedPeriodicChecksDoNoRemoteWork(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		installChannelRegistryWatcher(t)
 		s := newLossRecoveryServer(t)
+		defer s.closeAllNodes()
 		writeRegistry(t, []registry.Service{{Name: "keep", Type: registry.TypeFile, Path: t.TempDir(), Tags: []string{"tag:test"}}})
 		var tagChecks int
 		s.SetEnsureTagsFn(func(context.Context, []string) error {
@@ -359,7 +362,7 @@ func TestWatchRegistry_UnchangedPeriodicChecksDoNoRemoteWork(t *testing.T) {
 		if err := s.syncNodes(context.Background()); err != nil {
 			t.Fatal(err)
 		}
-		startRegistryWatcherTest(t, s)
+		defer startRegistryWatcherTest(t, s)()
 		changed, release := s.events.subscribe()
 		defer release()
 		generation := s.syncGeneration.Load()
@@ -381,11 +384,12 @@ func TestWatchRegistry_PeriodicCheckSharesInFlightDebounce(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		w := installChannelRegistryWatcher(t)
 		s := newLossRecoveryServer(t)
+		defer s.closeAllNodes()
 		regPath := writeRegistry(t, []registry.Service{{Name: "stale", Type: registry.TypeFile, Path: t.TempDir()}})
 		if err := s.syncNodes(context.Background()); err != nil {
 			t.Fatal(err)
 		}
-		startRegistryWatcherTest(t, s)
+		defer startRegistryWatcherTest(t, s)()
 		previous := afterDesiredLoadedFn
 		loaded, resume := make(chan struct{}, 1), make(chan struct{})
 		afterDesiredLoadedFn = func(context.Context, uint64) error {
@@ -430,11 +434,12 @@ func TestWatchRegistry_PeriodicCheckSurvivesClosedChannels(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		w := installChannelRegistryWatcher(t)
 		s := newLossRecoveryServer(t)
+		defer s.closeAllNodes()
 		writeRegistry(t, []registry.Service{{Name: "stale", Type: registry.TypeFile, Path: t.TempDir()}})
 		if err := s.syncNodes(context.Background()); err != nil {
 			t.Fatal(err)
 		}
-		startRegistryWatcherTest(t, s)
+		defer startRegistryWatcherTest(t, s)()
 		close(w.events)
 		close(w.errors)
 		synctest.Wait()
@@ -457,11 +462,12 @@ func TestWatchRegistry_PeriodicCheckRetriesFailedSync(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		w := installChannelRegistryWatcher(t)
 		s := newLossRecoveryServer(t)
+		defer s.closeAllNodes()
 		writeRegistry(t, nil)
 		if err := s.syncNodes(context.Background()); err != nil {
 			t.Fatal(err)
 		}
-		startRegistryWatcherTest(t, s)
+		defer startRegistryWatcherTest(t, s)()
 		var attempts int
 		s.SetEnsureTagsFn(func(context.Context, []string) error {
 			attempts++
@@ -496,6 +502,7 @@ func TestWatchRegistry_PeriodicCheckAppliesRepairedDecodeIssue(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		installChannelRegistryWatcher(t)
 		s := newLossRecoveryServer(t)
+		defer s.closeAllNodes()
 		regPath := writeRegistry(t, []registry.Service{{Name: "repaired", Type: registry.TypeFile, Path: t.TempDir()}})
 		valid, err := os.ReadFile(regPath)
 		if err != nil {
@@ -511,7 +518,7 @@ func TestWatchRegistry_PeriodicCheckAppliesRepairedDecodeIssue(t *testing.T) {
 		if s.nodeRunning("repaired") || s.serviceFailures["repaired"].Error == nil {
 			t.Fatal("invalid fixture: unknown key did not isolate the service")
 		}
-		startRegistryWatcherTest(t, s)
+		defer startRegistryWatcherTest(t, s)()
 		if err := os.WriteFile(regPath, valid, 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -530,13 +537,14 @@ func TestWatchRegistry_PeriodicCheckRehashesSameSizeWrites(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		installChannelRegistryWatcher(t)
 		s := newLossRecoveryServer(t)
+		defer s.closeAllNodes()
 		regPath := writeRegistry(t, []registry.Service{{Name: "stale", Type: registry.TypeFile, Path: t.TempDir()}})
 		credentialPath := filepath.Join(s.cfgDir, config.CredentialMetaFileName)
 		writeCredentialFile(t, s.cfgDir, config.CredentialMetaFileName, "first")
 		if err := s.syncNodes(context.Background()); err != nil {
 			t.Fatal(err)
 		}
-		startRegistryWatcherTest(t, s)
+		defer startRegistryWatcherTest(t, s)()
 		data, err := os.ReadFile(regPath)
 		if err != nil {
 			t.Fatal(err)

@@ -40,3 +40,5 @@ This index covers the recipe integration tests. The repository AGENTS.md describ
 - `registry_watcher_decision_test.go`: generation ordering and lossless pending rechecks.
 
 - `wave1_round2_test.go`: lost-event recovery across health, Host, limits and people configuration.
+
+- Watcher fixtures stop and join their workers, then close file nodes before temporary directory cleanup on Windows.

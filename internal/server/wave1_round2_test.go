@@ -23,6 +23,7 @@ func TestWave1Round2WatcherPreservesExtendedService(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				installChannelRegistryWatcher(t)
 				s := newLossRecoveryServer(t)
+				defer s.closeAllNodes()
 				newTSNetServerFn = func(registry.Service, string, string, string) tsnetServer {
 					return &fakeTSNetServer{localClient: localapitest.NewClient(nil)}
 				}
@@ -31,7 +32,7 @@ func TestWave1Round2WatcherPreservesExtendedService(t *testing.T) {
 				if err := s.syncNodes(context.Background()); err != nil {
 					t.Fatal(err)
 				}
-				startRegistryWatcherTest(t, s)
+				defer startRegistryWatcherTest(t, s)()
 				generation := s.syncGeneration.Load()
 				switch field {
 				case "health":

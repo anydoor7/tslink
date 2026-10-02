@@ -81,6 +81,7 @@ func TestReviewWatcherCancellationJoinsQueuedChecks(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		w := installChannelRegistryWatcher(t)
 		s := newLossRecoveryServer(t)
+		defer s.closeAllNodes()
 		writeRegistry(t, nil)
 		if err := s.syncNodes(context.Background()); err != nil {
 			t.Fatal(err)

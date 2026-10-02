@@ -22,13 +22,30 @@ import (
 func captureStdout(t *testing.T, fn func()) string {
 	t.Helper()
 	old := os.Stdout
-	r, w, _ := os.Pipe()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	var readErr error
+	drained := make(chan struct{})
+	go func() {
+		defer close(drained)
+		defer r.Close()
+		_, readErr = io.Copy(&buf, r)
+	}()
 	os.Stdout = w
+	defer func() {
+		os.Stdout = old
+		w.Close()
+		<-drained
+	}()
 	fn()
 	w.Close()
-	os.Stdout = old
-	var buf bytes.Buffer
-	io.Copy(&buf, r)
+	<-drained
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
 	return buf.String()
 }
 
