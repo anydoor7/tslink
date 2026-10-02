@@ -271,20 +271,41 @@ func TestPeopleInviteContextCancellationBeforeAndAfterPOST(t *testing.T) {
 	}))
 	defer api.Close()
 	t.Setenv(tailapi.APIBaseURLEnv, api.URL)
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
-	result, e := changePeople(ctx, paths, peopleArguments{Who: "alice", Apps: []string{"photos"}, Invite: true}, false)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	var result PeopleResult
+	var e error
+	go func() {
+		defer close(done)
+		result, e = changePeople(ctx, paths, peopleArguments{Who: "alice", Apps: []string{"photos"}, Invite: true}, false)
+	}()
+	defer func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Error("cancelled invitation operation did not finish")
+		}
+	}()
+	// Reach POST before cancellation; load must not move the test into the
+	// distinct pre-POST failure path.
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("invitation operation did not reach POST")
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("cancelled POST did not finish")
+	}
 	if e != nil || result.Complete || result.Invites[0].State != registry.PersonInviteUnknown {
 		t.Fatal(result, e)
 	}
-	select {
-	case <-entered:
-	default:
-		t.Fatal("timeout never reached POST")
-	}
 	p, e := readPerson(paths.Registry, "alice")
 	if e != nil || p.Invites[0].State != registry.PersonInviteUnknown {
-		t.Fatal("timeout outcome not durable", p, e)
+		t.Fatal("cancelled POST outcome not durable", p, e)
 	}
 	reviewRefreshProof(t, paths)
 	before, stop := context.WithCancel(context.Background())

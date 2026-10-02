@@ -43,7 +43,8 @@ directory or single file can be opened with the expected type. File checks
 inspect the type before opening, then verify the opened object's type and
 identity. Unix opens use nonblocking mode to reject FIFO replacements; Windows
 opens follow supported directory junctions and symlinks as registry admission
-does, reject other irregular objects/device handles, and compare identities
+does, including junctions and mount points reported as irregular by the OS
+when they resolve to readable directories. They reject other irregular objects/device handles and compare identities
 captured from handles before and after opening to reject replacements. Timeout and interval
 options also apply to those services. Uninterruptible filesystem calls retain a
 worker slot, but cannot hold up other results or monitor shutdown; at most four

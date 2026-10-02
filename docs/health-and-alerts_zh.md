@@ -35,6 +35,7 @@ GET，符合所有合法请求体上限。客户端上传、header 和 idle 限�
 Unix 使用非阻塞 open 拒绝替换成 FIFO 的对象；Windows 拒绝 device handle
 与无法解析成普通文件/目录的 irregular 对象；已有的受支持目录 junction
 和 symlink 按 registry 的 Stat 规则解析，打开前后通过 handle 捕获并比较身份，
+操作系统标记为 irregular 的 junction 和 mount point 只要解析到可读目录也能通过检查，
 拒绝路径替换。超时和间隔也适用于 TCP/file。无法中断的文件系统
 调用会占用 worker slot，但不会阻止其他结果发布或 monitor 退出；跨调度周期
 最多保留四个仍在执行的 backend 调用。

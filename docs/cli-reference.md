@@ -137,6 +137,8 @@ MCP tools: `recipe_list`, read-only `apps_detect`, `recipe_plan` and `recipe_app
 
 All timeout overrides are positive Go durations (for example `30s`, `2m`).
 Settings apply to proxy and file services; raw TCP rejects HTTP request limits.
+The upload inactivity window covers active body reads on HTTP/1 and HTTP/2;
+backend backpressure and slow responses do not consume it.
 An add replacing a name resets omitted limits to defaults, like other add flags.
 A share only reuses a service with equivalent effective limits.
 Limit conflicts name the differing flags and their existing/requested values;

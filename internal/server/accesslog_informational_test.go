@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestAccessLogProxyInformationalThenFinalStatus(t *testing.T) {
@@ -32,7 +33,12 @@ func TestAccessLogProxyInformationalThenFinalStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	front := httptest.NewServer(AccessLogMiddleware("probe", nil, proxy))
+	completed := make(chan struct{}, 1)
+	chain := AccessLogMiddleware("probe", nil, proxy)
+	front := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		chain.ServeHTTP(w, r)
+		completed <- struct{}{}
+	}))
 	t.Cleanup(front.Close)
 
 	for i, tc := range []struct {
@@ -59,10 +65,21 @@ func TestAccessLogProxyInformationalThenFinalStatus(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			// Receiving the response can precede the access-log write, especially
+			// for HEAD and 204. Wait for this request's handler to finish.
+			select {
+			case <-completed:
+			case <-time.After(3 * time.Second):
+				t.Fatal("request handler did not finish")
+			}
 			if resp.StatusCode != tc.wantStatus || string(body) != tc.wantBody {
 				t.Fatalf("response = %d %q, want %d %q", resp.StatusCode, body, tc.wantStatus, tc.wantBody)
 			}
-			if got := logs.attrMap(t, i)["status"]; got != int64(tc.wantStatus) {
+			attrs := logs.attrMap(t, i)
+			if attrs["service"] != "probe" || attrs["method"] != tc.method || attrs["path"] != tc.path {
+				t.Fatalf("log attributed to a different request: %v", attrs)
+			}
+			if got := attrs["status"]; got != int64(tc.wantStatus) {
 				t.Fatalf("logged final status = %v, want %d", got, tc.wantStatus)
 			}
 		})

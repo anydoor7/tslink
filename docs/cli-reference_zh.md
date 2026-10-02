@@ -137,6 +137,8 @@ MCP 工具为 `recipe_list`、只读 `apps_detect`、`recipe_plan`、`recipe_app
 超时必须是正数 Go duration, 例如 `30s` 或 `2m`。适用于 proxy/file 服务;
 raw TCP 不接受 HTTP 请求限制。add 替换同名服务时, 未重复的限制恢复默认值;
 share 只复用有效限制相同的服务。
+HTTP/1 和 HTTP/2 的上传无进展窗口只覆盖正在进行的请求体读取，
+后端反压和慢响应不消耗这个窗口。
 限制冲突会列出不同的标志和当前值、请求值; 用完整服务配置执行 add 进行修改。
 未使用或被拒绝的 HTTP/1 请求体有最多 1s 的绝对清理期限;
 `--request-read-timeout` 小于 1s 时采用该值。清理未完成则关闭连接,

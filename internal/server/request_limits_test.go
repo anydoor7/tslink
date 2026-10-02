@@ -1163,6 +1163,9 @@ func TestRequestLimitsWarningsAreBounded(t *testing.T) {
 }
 
 func TestRequestLimitsUnlimitedAndSlowResponse(t *testing.T) {
+	// Allow scheduling of a large race-instrumented upload. Backend pauses
+	// still exceed the read-idle budget, so they cannot count as client stalls.
+	const idle = time.Second
 	for _, h2 := range []bool{false, true} {
 		t.Run(fmt.Sprintf("http2=%v", h2), func(t *testing.T) {
 			backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1171,17 +1174,17 @@ func TestRequestLimitsUnlimitedAndSlowResponse(t *testing.T) {
 				if _, err := io.ReadFull(r.Body, make([]byte, 1)); err != nil {
 					return
 				}
-				time.Sleep(250 * time.Millisecond)
+				time.Sleep(5 * idle / 2)
 				n, err := io.Copy(io.Discard, r.Body)
 				if err != nil {
 					return
 				}
-				time.Sleep(200 * time.Millisecond)
+				time.Sleep(2 * idle)
 				w.Header().Set("Upload-Bytes", strconv.FormatInt(n+1, 10))
 				w.WriteHeader(204)
 			}))
 			defer backend.Close()
-			svc := registry.Service{Name: "video", Type: registry.TypeProxy, RequestLimits: &registry.RequestLimits{MaxBody: "unlimited", UnlimitedAck: true, ReadTimeout: "100ms"}}
+			svc := registry.Service{Name: "video", Type: registry.TypeProxy, RequestLimits: &registry.RequestLimits{MaxBody: "unlimited", UnlimitedAck: true, ReadTimeout: idle.String()}}
 			var front *httptest.Server
 			if h2 {
 				front = httptest.NewUnstartedServer(AccessLogMiddleware(svc.Name, nil, RequestLimitsMiddleware(svc, nil, uploadProxy(t, backend))))

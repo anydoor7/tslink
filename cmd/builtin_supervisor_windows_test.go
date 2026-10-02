@@ -32,17 +32,14 @@ func TestBuiltinSupervisorStateFilesFailClosed(t *testing.T) {
 	if got, err := readBuiltinSupervisor(pidPath); err != nil || got.State != "restarting" {
 		t.Fatalf("control=%+v,%v", got, err)
 	}
-	workingDir, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	relativePID, err := filepath.Rel(workingDir, pidPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got, err := readBuiltinSupervisor(relativePID); err != nil || got.State != "restarting" {
-		t.Fatalf("relative config=%+v,%v", got, err)
-	}
+	t.Run("relative_config", func(t *testing.T) {
+		// TEMP and the checkout can be on different volumes. Resolve this
+		// relative fixture from its own directory, as a caller would.
+		t.Chdir(dir)
+		if got, err := readBuiltinSupervisor("tslink.pid"); err != nil || got.State != "restarting" {
+			t.Fatalf("relative config=%+v,%v", got, err)
+		}
+	})
 	for _, tc := range []struct {
 		name   string
 		data   []byte

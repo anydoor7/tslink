@@ -94,6 +94,7 @@ func RequestLimitsMiddleware(service registry.Service, report func(inspect.Warni
 			body = http.MaxBytesReader(w, body, limits.MaxBodyBytes)
 		}
 		wrapped := &progressBody{ReadCloser: body, ctl: ctl, idle: readIdle, state: state, service: service.Name, reject: reject}
+		wrapped.http2 = r.ProtoMajor == 2
 		if r.ProtoMajor == 1 {
 			wrapped.conn, _ = r.Context().Value(requestConnKey{}).(*headerBudgetConn)
 		}
@@ -120,6 +121,7 @@ type progressBody struct {
 	reject  func(*requestLimitError)
 	eof     bool // protected by state.mu
 	conn    *headerBudgetConn
+	http2   bool
 }
 
 // Disposal is no longer an upload: a steady drip must not prolong it. Give
@@ -162,17 +164,32 @@ func (b *progressBody) Read(p []byte) (int, error) {
 	}
 	// A ResponseRecorder has no deadline API; real HTTP servers do. Error paths
 	// are handled by the underlying read, preserving httptest handler tests.
-	if err := b.ctl.SetReadDeadline(time.Now().Add(b.idle)); err != nil && !errors.Is(err, http.ErrNotSupported) {
-		b.state.mu.Unlock()
-		return 0, err
+	if !b.http2 {
+		if err := b.ctl.SetReadDeadline(time.Now().Add(b.idle)); err != nil && !errors.Is(err, http.ErrNotSupported) {
+			b.state.mu.Unlock()
+			return 0, err
+		}
 	}
 	done := make(chan struct{})
 	b.state.readDone = done
+	var timer *time.Timer
+	if b.http2 {
+		// HTTP/2 queues future deadline updates and cancellation on its
+		// server loop. A delayed cancellation can expire a completed Read
+		// during backend work. Own the timer here, and interrupt the stream
+		// synchronously with a past deadline only while this Read is active.
+		timer = time.AfterFunc(b.idle, func() {
+			b.expireRead(done)
+		})
+	}
 	b.state.mu.Unlock()
 	n, err := b.ReadCloser.Read(p)
 	b.state.mu.Lock()
 	defer b.state.mu.Unlock()
 	defer close(done)
+	if timer != nil {
+		timer.Stop()
+	}
 	b.state.readDone = nil
 	if err == io.EOF {
 		b.eof = true
@@ -198,8 +215,18 @@ func (b *progressBody) Read(p []byte) (int, error) {
 	}
 	// Remove the read deadline while the proxy is writing to a slow backend or
 	// streaming its response. In particular, upgrades must inherit no deadline.
-	_ = b.ctl.SetReadDeadline(time.Time{})
+	if !b.http2 {
+		_ = b.ctl.SetReadDeadline(time.Time{})
+	}
 	return n, err
+}
+
+func (b *progressBody) expireRead(done chan struct{}) {
+	b.state.mu.Lock()
+	defer b.state.mu.Unlock()
+	if b.state.readDone == done && !b.state.closing {
+		_ = b.ctl.SetReadDeadline(time.Now().Add(-time.Nanosecond))
+	}
 }
 
 func requestFailure(r *http.Request, err error) *requestLimitError {
