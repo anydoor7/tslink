@@ -122,6 +122,7 @@ var (
 	serverNowFn             = time.Now
 	beforeInitialSyncFn     = func(context.Context) error { return nil }
 	registryLoadRuntimeFn   = registry.LoadForRuntime
+	registryWatchLoadFn     = registry.LoadForRuntime
 	afterDesiredLoadedFn    = func(context.Context, uint64) error { return nil }
 	observeNodeContextFn    = func(string, context.Context) {}
 	serveTCPFn              = serveTCP
@@ -377,7 +378,7 @@ type Server struct {
 	appliedWatchFingerprint string
 	appliedWatchFile        os.FileInfo
 	inFlightWatchTarget     *watchedRegistryTarget
-	registryWatchGate       chan struct{}
+	registryWatchGate       atomic.Uint32
 	syncResultMu            sync.Mutex
 	latestSyncResult        syncResult
 	syncResultChanged       chan struct{}
@@ -411,7 +412,6 @@ func New(authKey, controlURL string) (*Server, error) {
 		nodes:               make(map[string]*ServiceNode),
 		serviceFailures:     make(map[string]runtimesnapshot.ServiceState),
 		reconcileGate:       make(chan struct{}, 1),
-		registryWatchGate:   make(chan struct{}, 1),
 		syncResultChanged:   make(chan struct{}),
 		authKey:             authKey,
 		authKeyProvider:     staticAuthKeyProvider(authKey),
@@ -2674,22 +2674,47 @@ type watchedRegistryTarget struct {
 	generation  uint64
 }
 
+const (
+	registryWatchDecisionOwned uint32 = 1 << iota
+	registryWatchDecisionDirty
+)
+
 func (s *Server) decideWatchedRegistry(ctx context.Context, regPath string) *watchedRegistryTarget {
-	// Only one local decision may run. Overlapping callbacks coalesce rather
-	// than queue behind it; the periodic check also repairs a racing file edit.
-	select {
-	case s.registryWatchGate <- struct{}{}:
-		defer func() { <-s.registryWatchGate }()
-	case <-ctx.Done():
-		return nil
-	default:
+	if ctx.Err() != nil {
 		return nil
 	}
+	// Claim ownership and record one wakeup in the same atomic operation.
+	// A callback racing release either dirties this owner or becomes the next
+	// owner; it never waits for the local decision or queues its own work.
+	if s.registryWatchGate.Or(registryWatchDecisionOwned|registryWatchDecisionDirty)&registryWatchDecisionOwned != 0 {
+		return nil
+	}
+	var target *watchedRegistryTarget
+	for {
+		// Consume the pending wakeup before reading fresh state. Notifications
+		// arriving during this decision set it again, including unchanged reads.
+		s.registryWatchGate.And(^registryWatchDecisionDirty)
+		if next := s.readWatchedRegistryDecision(ctx, regPath); next != nil {
+			target = next
+		}
+		if s.registryWatchGate.CompareAndSwap(registryWatchDecisionOwned, 0) {
+			return target
+		}
+		if ctx.Err() != nil {
+			s.registryWatchGate.Store(0)
+			return nil
+		}
+		// Retain ownership for a fresh local decision before starting any remote
+		// sync. Only the latest reserved target needs to be applied afterwards.
+	}
+}
+
+func (s *Server) readWatchedRegistryDecision(ctx context.Context, regPath string) *watchedRegistryTarget {
 	if s.ensureRunning(ctx) != nil {
 		return nil
 	}
 	watchFile, statErr := os.Stat(regPath)
-	reg, issues, err := registry.LoadForRuntime(regPath)
+	reg, issues, err := registryWatchLoadFn(regPath)
 	target := &watchedRegistryTarget{file: watchFile}
 	if err == nil {
 		fingerprint, fingerprintErr := runtimesnapshot.RegistryFingerprint(reg, issues)
