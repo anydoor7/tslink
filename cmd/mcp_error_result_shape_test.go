@@ -70,7 +70,7 @@ func refusingMCPActions() mcpActions {
 			return nil, mcpRefusal(name)
 		},
 		extend: func(extendArguments) (any, error) { return nil, mcpRefusal("extend") },
-		portalChange: func(_ portalArguments, enable bool) (any, error) {
+		portalChange: func(_ context.Context, _ portalArguments, enable bool) (any, error) {
 			name := "portal_disable"
 			if enable {
 				name = "portal_enable"

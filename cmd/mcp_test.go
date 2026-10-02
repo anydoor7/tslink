@@ -26,7 +26,7 @@ import (
 
 func fakeMCPActions() mcpActions {
 	return mcpActions{
-		portalChange: func(args portalArguments, enable bool) (any, error) {
+		portalChange: func(_ context.Context, args portalArguments, enable bool) (any, error) {
 			return map[string]any{"enabled": enable, "state": "pending", "hostname": args.Hostname}, nil
 		},
 		peopleChange: func(_ context.Context, args peopleArguments, _ bool) (any, error) {

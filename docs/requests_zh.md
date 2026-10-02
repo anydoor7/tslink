@@ -13,7 +13,7 @@ tslink portal enable --owner owner@example.com
 
 替换已有注册时保留原 target 和其他设置；`add` 会替换注册。`--requestable=false` 从申请表单隐藏应用，也隐藏访客的旧申请记录。其他无权访问的应用仍隐藏：名称、数量、URL 和后端观察结果都不输出。只有私有 HTTP proxy/file 应用可供申请；TCP 和公共 Funnel 拒绝此标志。它公开名称，不公开 URL，也不授予权限。
 
-访客保持 Tailscale 已连接，打开入口地址，选择应用，可选填写时长和短备注，点击 **Send request**。已有应用也可用同一表单申请更多时间。页面显示等待、批准、拒绝或超时状态。批准后，授权有效时会显示应用；地址可能仍需完成注册。访客可以没有任何已有 TSLink 授权；批准会创建本地人员记录。
+访客保持 Tailscale 已连接，打开入口地址，选择应用，可从带标签的选项中选择 1 小时、1 天、3 天、7 天，或由主人选择，并可填写短备注，点击 **Send request**。已有应用也可用同一表单申请更多时间。页面显示等待、批准、拒绝或超时状态。批准后，授权有效时会显示应用；地址可能仍需完成注册。访客可以没有任何已有 TSLink 授权；批准会创建本地人员记录。
 
 仅限真人 tailnet 成员。带 tag 的机器、shared-in peer、WhoIs 身份缺失或异常、已撤销人员，以及 F11 持久化分类为 guest 的人员，均不能提交。tailnet 外的设备共享接收者不在范围内。不会根据一次申请推断人员已升级为成员。没有 OIDC 或访客 bearer link。
 
@@ -26,7 +26,7 @@ tslink requests approve <id> --for 3d
 tslink requests deny <id> --reason "Please ask again next week."
 ```
 
-agent 可调用仅 owner 的 `requests_list`、`requests_approve`（`id`、`for`，可选 `ack_never`）和 `requests_deny`（`id`，可选 `reason`）。远程调用要求 WhoIs 无 tag 身份精确匹配入口配置的 owner；本地 CLI/stdio MCP 沿用可信 owner 进程约定。入口 admin 不自动获得审批权。F6 scope 映射留到集成。
+agent 可调用仅 owner 的 `requests_list`、`requests_approve`（`id`、`for`，可选 `ack_never`）和 `requests_deny`（`id`，可选 `reason`）。远程调用要求 WhoIs 无 tag 身份精确匹配入口配置的 owner；本地 CLI/stdio MCP 沿用可信 owner 进程约定。入口 admin 不自动获得审批权。HTTP MCP 通过 `portal_enable` 修改入口 owner/admin 设置，也必须是当前 owner；其他调用者返回 `access_request_owner_required`。owner 尚未设置时不能远程认领。本地 CLI 和 stdio MCP 是可信的首次设置与恢复通道，包括替换丢失的 owner login。F6 scope 映射留到集成。
 
 批准只修改**一个应用授权**，保留其他应用、期限、邀请历史和持久 guest 分类。已撤销人员和不再允许申请的应用会拒绝。增量 F1 `ChangePersonAppWithLifetime` 契约及 F11 策略与申请决定在同一 registry 锁内执行；授权和状态一起提交。相对期限从批准时刻起算，不从提交时刻或旧期限起算。批准显式续授过期 app grant，但不会清除人员撤销 tombstone。
 
@@ -42,7 +42,7 @@ agent 可调用仅 owner 的 `requests_list`、`requests_approve`（`id`、`for`
 
 同一人员/app 只允许一个 pending 申请，每人每小时最多 5 个新申请，全局每小时最多 100 个。检查在锁内进行并跨重启保留；重复申请不生成记录、不发送通知。备注和拒绝理由最多 500 个 Unicode 字符，时长最多 128 bytes，表单最多 8 KiB，并受 F8 listener limits 保护。POST 同时要求匹配的 HTTPS Origin，以及绑定 WhoIs 身份和 canonical host、两小时过期的 HMAC 表单 token。入口重启或 token 过期后须重新加载表单。
 
-pending 申请 7 天后过期。决定从决定时刻保留 30 天（expired 从七天截止点起算）。读取、提交和审批时应用保留规则；观察到的过期状态会持久锁存，陈旧批准也会锁存。队列有界：最多 1,000 条，registry reader/writer 上限为 4 MiB。容量不足时拒绝新增，没有部分状态。无需独立申请数据库、worker 或 timer。
+pending 申请 7 天后过期。决定从决定时刻保留 30 天（expired 从七天截止点起算）。读取、提交和审批时应用保留规则；成功返回的过期状态会持久锁存，陈旧批准也会锁存。维护拿不到写锁时，列表返回可重试的 `access_request_busy`（exit 4），不返回未落盘的 expired 状态；等待写入完成后重试。入口继续显示普通可访问应用，并提示申请暂不可用，重新加载成功后恢复。队列有界：最多 1,000 条，registry reader/writer 上限为 4 MiB。容量不足时拒绝新增，没有部分状态。无需独立申请数据库、worker 或 timer。
 
 基线没有 F4。集成可接入提交后的 `internal/server.accessRequestRecordedFn` 和决定后的 `cmd.requestDecidedFn`。两者接收窄 `registry.RequestEvent`，在成功保存后同步执行，默认无动作。本包不声称已保存 access-log records。
 

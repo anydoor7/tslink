@@ -133,7 +133,7 @@ func pruneAccessRequests(reg *Registry, now time.Time) {
 }
 
 // ListAccessRequests persists expiry/retention lazily, without waiting behind
-// a stalled writer. The returned projection expires stale entries even if busy.
+// a stalled writer. Changed projections require a successful durable save.
 func ListAccessRequests(path string, now time.Time) ([]AccessRequest, error) {
 	reg, err := loadRequestRegistry(path)
 	if os.IsNotExist(err) {
@@ -145,7 +145,7 @@ func ListAccessRequests(path string, now time.Time) ([]AccessRequest, error) {
 	before := append([]AccessRequest{}, reg.Requests...)
 	pruneAccessRequests(reg, now)
 	if !reflect.DeepEqual(before, reg.Requests) {
-		_, err = tryWithLock(path, func() error {
+		locked, err := tryWithLock(path, func() error {
 			current, err := loadRequestRegistry(path)
 			if err != nil {
 				return err
@@ -155,6 +155,9 @@ func ListAccessRequests(path string, now time.Time) ([]AccessRequest, error) {
 		})
 		if err != nil {
 			return nil, err
+		}
+		if !locked {
+			return nil, requestError("access_request_busy", "request inbox is busy; try again")
 		}
 	}
 	return reg.Requests, nil

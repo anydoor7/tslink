@@ -81,3 +81,5 @@ This index records the app recipe additions; the CLI manifest describes the comp
 - `requests.go`: owner CLI/actions, terminal filtering and F4 post-decision hook.
 - `requests_test.go`: compiled CLI, MCP listener owner checks and durable decisions.
 - `mcp_requests.go`: owner-only request tool schemas and annotations.
+
+- `portal_authority_test.go`: remote authority denial, local recovery and retryable request-inbox controls.

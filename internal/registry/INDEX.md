@@ -42,3 +42,6 @@ This index records the people sharing lifecycle implementation and regression te
 - `requests.go`: bounded durable request ledger, rate/retention and atomic decisions.
 - `requests_test.go, requests_unix_test.go`: concurrent writers, restart, policy, retention and special files.
 - `people_app.go`: additive F1 single-app lifetime contract, preserving unrelated grants.
+
+- `portal_authority_test.go`: current-registry authorization under writer contention.
+- `requests_contention_test.go`: expiry maintenance lock failures, rollback and subprocess restart.

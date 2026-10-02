@@ -261,8 +261,10 @@ func TestAccessRequestListenerRateAndExpiry(t *testing.T) {
 
 func TestAccessRequestHumanMembersOnly(t *testing.T) {
 	f := newPortalFixture(t)
+	f.who.Store(requestMember("alice"))
 	requestableApp(t, f, "secret-payroll", true)
-	for _, kind := range []string{"tag", "sharee", "sharer", "missing node", "invalid login"} {
+	token, _ := requestForm(t, f)
+	for _, kind := range []string{"tag", "sharee", "sharer", "missing hostinfo", "missing node", "invalid login"} {
 		t.Run(kind, func(t *testing.T) {
 			who := requestMember("alice")
 			switch kind {
@@ -274,18 +276,19 @@ func TestAccessRequestHumanMembersOnly(t *testing.T) {
 				who.Node.Sharer = 42
 			case "missing node":
 				who.Node = nil
+			case "missing hostinfo":
+				who.Node.Hostinfo = tailcfg.HostinfoView{}
 			case "invalid login":
 				who.UserProfile.LoginName = "bad\x1b"
 			}
 			f.who.Store(who)
-			code, b, _ := requestPost(t, f, url.Values{"app": {"secret-payroll"}}, "https://home.tailnet.ts.net")
-			if code != 403 {
+			code, b, _ := requestPost(t, f, url.Values{"csrf": {token}, "app": {"secret-payroll"}}, "https://home.tailnet.ts.net")
+			if code != 403 || !strings.Contains(b, "tailnet members only") {
 				t.Fatal(code, b)
 			}
 		})
 	}
 	f.who.Store(requestMember("alice"))
-	token, _ := requestForm(t, f)
 	code, b, _ := requestPost(t, f, url.Values{"csrf": {token}, "app": {"secret-payroll"}}, "https://home.tailnet.ts.net")
 	if code != 303 {
 		t.Fatal(code, b)

@@ -167,7 +167,7 @@ Windows `tslink install --startup` 显式选择下次登录启动、无崩溃恢
 已有私有服务改为公开时,省略 `--funnel-ttl` 使用有限 24h 默认值。只有已决定的公开期限才会保留,包括历史显式公开 `never`;dry-run 和 MCP add 规则相同。首次 `--invite` 在授权事务中保存持久访客分类,早于远端操作;后续 update/extend 保留访客策略。邀请发送状态转换前发生并发授权变更时返回 `conflict`。
 ## 应用总入口
 
-`tslink portal enable --owner <login> [--hostname home] [--admins <login,...>]` 保存独立的 Tailnet-only 入口配置；`tslink portal disable` 只关闭入口监听器。`--funnel` 显式拒绝。运行中的 daemon 自动应用，status/doctor 显示 `portal` 状态和确证 URL，开启后 people 指导会指向入口。MCP 对应工具：`portal_enable`、`portal_disable`。授权、网络可达性和 JSON 说明见 [portal_zh.md](portal_zh.md)。
+`tslink portal enable --owner <login> [--hostname home] [--admins <login,...>]` 保存独立的 Tailnet-only 入口配置；`tslink portal disable` 只关闭入口监听器。`--funnel` 显式拒绝。运行中的 daemon 自动应用，status/doctor 显示 `portal` 状态和确证 URL，开启后 people 指导会指向入口。MCP 对应工具：`portal_enable`、`portal_disable`。HTTP MCP 的 `portal_enable` 修改 owner/admin 设置要求当前精确匹配的入口 owner；其他调用者返回 `access_request_owner_required`。本地 CLI/stdio MCP 支持首次 owner 设置和丢失身份后的恢复。授权、网络可达性和 JSON 说明见 [portal_zh.md](portal_zh.md)。
 
 daemon ready 保留 pending 的入口注册提示，已完成的入口快照避免陈旧登录提示。私有 HTTP/file 条目遵循实际授权；raw TCP/公共 Funnel 仅在 owner/admin 服务清单中显示，并注明无法按人限制，省略不代表访客不能连接。
 
@@ -175,4 +175,4 @@ daemon ready 保留 pending 的入口注册提示，已完成的入口快照避�
 
 `tslink add <name> ... --requestable` 允许在入口发现并申请私有 HTTP/file 应用（默认关闭，`--requestable=false` 隐藏）。`tslink people add/update <login> ... --qr` 打印终端二维码，`--qr-png <file>` 写入私有 PNG。payload 为确证入口 URL；入口关闭时用第一个有效应用 URL。邀请二维码需要 `--invite --print-links --qr-invite <app>` 与 `--qr`/`--qr-png`，并提示这是凭据。JSON 含 `qr_payload`、`qr_warning`、四步 `guide` 和 `guide_zh`，不含图片字节。MCP people 工具支持 `qr`/`qr_invite` 并返回 payload 文本；PNG 仅限 CLI。
 
-`tslink requests list`、`tslink requests approve <id> --for <lifetime> [--ack-never]`、`tslink requests deny <id> [--reason <text>]` 管理持久化收件箱。三个仅 owner 的 MCP 工具为 `requests_list`、`requests_approve`、`requests_deny`。批准保留其他 app grant，并使用 F11 持久 member/guest 策略。相同重试返回原结果；陈旧或不同决定返回 `access_request_decided`（exit 4）。详见[申请](requests_zh.md)和[人员](people_zh.md)。
+`tslink requests list`、`tslink requests approve <id> --for <lifetime> [--ack-never]`、`tslink requests deny <id> [--reason <text>]` 管理持久化收件箱。三个仅 owner 的 MCP 工具为 `requests_list`、`requests_approve`、`requests_deny`。过期或保留维护拿不到写锁时，列表返回可重试的 `access_request_busy`（exit 4）。批准保留其他 app grant，并使用 F11 持久 member/guest 策略。相同重试返回原结果；陈旧或不同决定返回 `access_request_decided`（exit 4）。详见[申请](requests_zh.md)和[人员](people_zh.md)。

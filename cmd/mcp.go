@@ -701,7 +701,8 @@ type mcpActions struct {
 	requestEvents  func() ([]registry.RequestEvent, error)
 	requestsDecide func(context.Context, requestDecisionArguments, bool) (any, error)
 	extend         func(extendArguments) (any, error)
-	portalChange   func(portalArguments, bool) (any, error)
+	portalChange   func(context.Context, portalArguments, bool) (any, error)
+	portalCheck    func(context.Context) error
 	peopleChange   func(context.Context, peopleArguments, bool) (any, error)
 	peopleList     func() (any, error)
 	peopleRemove   func(context.Context, string, map[string]string) (any, error)
@@ -899,8 +900,11 @@ func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 			}
 			return decideRequest(paths.Registry, args, approve, peopleClock())
 		},
-		extend:       func(args extendArguments) (any, error) { return extendLifetime(paths.Registry, args, durationClock()) },
-		portalChange: func(args portalArguments, enable bool) (any, error) { return changePortal(paths, args, enable) },
+		extend:      func(args extendArguments) (any, error) { return extendLifetime(paths.Registry, args, durationClock()) },
+		portalCheck: func(ctx context.Context) error { return requireRequestOwner(ctx, paths.Registry) },
+		portalChange: func(ctx context.Context, args portalArguments, enable bool) (any, error) {
+			return changePortalContext(ctx, paths, args, enable)
+		},
 		peopleChange: func(ctx context.Context, args peopleArguments, update bool) (any, error) {
 			args.Now = peopleClock()
 			return changePeople(ctx, paths, args, update)
@@ -1643,17 +1647,22 @@ func callMCPTool(ctx context.Context, actions mcpActions, name string, arguments
 		}
 		data, err = actions.requestsDecide(ctx, args, name == "requests_approve")
 	case "portal_enable":
+		if actions.portalCheck != nil {
+			if err := actions.portalCheck(ctx); err != nil {
+				return makeMCPToolErrorResult(err), nil
+			}
+		}
 		var args portalArguments
 		if refusal := mcpArgumentsRefusal(name, decodePeopleMCPArguments(arguments, &args), mcpRequiredArgument{"owner", args.Owner}); refusal != nil {
 			return refusal, nil
 		}
-		data, err = actions.portalChange(args, true)
+		data, err = actions.portalChange(ctx, args, true)
 	case "portal_disable":
 		var args struct{}
 		if refusal := mcpArgumentsRefusal(name, decodeMCPArguments(arguments, &args)); refusal != nil {
 			return refusal, nil
 		}
-		data, err = actions.portalChange(portalArguments{}, false)
+		data, err = actions.portalChange(ctx, portalArguments{}, false)
 	case "people_add", "people_update":
 		var args peopleArguments
 		decodeErr := decodePeopleMCPArguments(arguments, &args)

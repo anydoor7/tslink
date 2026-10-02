@@ -53,10 +53,10 @@ curl https://home.example.ts.net/api/apps
 {"type":"tslink.result","ok":true,"schema_version":1,"command":"portal apps","code":0,"data":{"apps":[{"name":"photos","url":"https://photos.example.ts.net","health":"healthy","expires_at":"2030-01-02T12:00:00Z","expiry":"Access ends January 2, 2030 at 12:00 UTC."}]}}
 ```
 
-MCP 的 `portal_enable`（必填 `owner`，可选 `hostname`、`admins`、`funnel`）和 `portal_disable` 使用 CLI 的同一实现。`funnel: true`、`tslink portal enable --funnel` 显式返回 `portal_funnel_refused`；持久配置中的 `portal.funnel: true` 也拒绝加载。生产只使用 tsnet `ListenTLS`，没有公开 Funnel 或宿主机网络接口监听器。
+MCP 的 `portal_enable`（必填 `owner`，可选 `hostname`、`admins`、`funnel`）和 `portal_disable` 使用 CLI 的同一实现。HTTP MCP 只有当前入口 owner 能启用或替换入口配置，包括 owner 和 admin 身份。它复用申请工具的精确 WhoIs owner 检查：不能带 tag，也不能已撤销；写入前在 registry 锁内再次检查。其他调用者设置、清空、替换 owner 或修改 admins，均返回 `access_request_owner_required`。未设置 owner 时也不能远程认领。首次设置或恢复丢失的 owner 身份，请使用本地 `tslink portal enable --owner <login>` 或 stdio MCP。disable 保留 owner/admin 身份。`funnel: true`、`tslink portal enable --funnel` 显式返回 `portal_funnel_refused`；持久配置中的 `portal.funnel: true` 也拒绝加载。生产只使用 tsnet `ListenTLS`，没有公开 Funnel 或宿主机网络接口监听器。
 
 页面由服务端渲染，CSS 内嵌，适配手机和系统亮/暗模式，没有脚本、框架、CDN 或外部资源。HTML 全部转义。CSP 只放行内嵌样式的精确 hash，禁止脚本、frame 和外部资源；form 仅允许提交到同一 origin。所有响应含 `Cache-Control: private, no-store`、`nosniff` 和 `no-referrer`。Host 必须匹配可信节点 canonical authority，HTTP absolute-form 请求也检查。Origin 如果存在，必须只有一项且为同一 HTTPS origin；opaque、HTTP 或外部 origin 均拒绝。
 
-GET 和 HEAD 提供目录。`POST /access-requests` 接收最多 8 KiB 的表单，要求 WhoIs 识别的真人 tailnet 成员、匹配的 HTTPS Origin 和绑定身份/host、两小时过期的 CSRF token。表单只列主人显式标记 `requestable` 的应用；隐藏应用以及关闭申请后的旧申请历史均不显示。访客查看自己的申请状态，主人通过 CLI/MCP 一次批准并选择期限，详见[申请文档](requests_zh.md)。独立 HTTP 服务沿用 F8 默认 32 MiB 请求大小上限、10 秒 header 期限、30 秒 body 读取空闲期限、60 秒 keep-alive 空闲超时，以及应用节点相同的 listener/request budget wrapper。入口 registry reader 拒绝符号链接和特殊文件，读取上限为 4 MiB。应用自身登录、浏览器访客链接和多主机发现不在本包范围内。
+GET 和 HEAD 提供目录。`POST /access-requests` 接收最多 8 KiB 的表单，要求 WhoIs 识别的真人 tailnet 成员、匹配的 HTTPS Origin 和绑定身份/host、两小时过期的 CSRF token。表单只列主人显式标记 `requestable` 的应用；隐藏应用以及关闭申请后的旧申请历史均不显示。访客查看自己的申请状态，可从中英双语选项中选择 1 小时、1 天、3 天、7 天，或由主人选择。主人通过 CLI/MCP 一次批准并选择期限。过期维护拿不到 registry 锁时，页面继续显示可访问应用，并提示申请暂不可用；重新加载即可重试。详见[申请文档](requests_zh.md)。独立 HTTP 服务沿用 F8 默认 32 MiB 请求大小上限、10 秒 header 期限、30 秒 body 读取空闲期限、60 秒 keep-alive 空闲超时，以及应用节点相同的 listener/request budget wrapper。入口 registry reader 拒绝符号链接和特殊文件，读取上限为 4 MiB。应用自身登录、浏览器访客链接和多主机发现不在本包范围内。
 
 人员指南支持 `--qr` 和 `--qr-png <file>`，使用入口确证 URL。四步中英手机指南及 bearer link 规则见[人员文档](people_zh.md)。

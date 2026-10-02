@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -54,6 +55,15 @@ func readPortalView(reg *registry.Registry, regPath string, running bool, pid in
 }
 
 func changePortal(paths sharePaths, args portalArguments, enable bool) (tsRuntime.PortalState, error) {
+	return changePortalContext(context.Background(), paths, args, enable)
+}
+
+func changePortalContext(ctx context.Context, paths sharePaths, args portalArguments, enable bool) (tsRuntime.PortalState, error) {
+	if enable {
+		if err := requireRequestOwner(ctx, paths.Registry); err != nil {
+			return tsRuntime.PortalState{}, err
+		}
+	}
 	if args.Funnel {
 		return tsRuntime.PortalState{}, registry.CodedError{Code: registry.CodePortalFunnelRefused, Message: "the portal is Tailnet-only and cannot use Funnel"}
 	}
@@ -85,7 +95,9 @@ func changePortal(paths sharePaths, args portalArguments, enable bool) (tsRuntim
 				return tsRuntime.PortalState{}, output.ErrConflict("portal hostname is already used by the MCP node")
 			}
 		}
-		if err := registry.SetPortal(paths.Registry, &registry.PortalConfig{Enabled: true, Hostname: args.Hostname, Owner: args.Owner, Admins: args.Admins}); err != nil {
+		if err := registry.SetPortalAuthorized(paths.Registry, &registry.PortalConfig{Enabled: true, Hostname: args.Hostname, Owner: args.Owner, Admins: args.Admins}, func(reg *registry.Registry) error {
+			return requireRequestOwnerInRegistry(ctx, reg)
+		}); err != nil {
 			return tsRuntime.PortalState{}, err
 		}
 	} else if err := registry.DisablePortal(paths.Registry); err != nil {

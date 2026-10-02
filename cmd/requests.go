@@ -34,13 +34,25 @@ type RequestDecisionResult struct {
 var requestDecidedFn = func(registry.RequestEvent) {}
 
 func requireRequestOwner(ctx context.Context, path string) error {
-	caller, remote := server.MCPCallerFromContext(ctx)
+	_, remote := server.MCPCallerFromContext(ctx)
 	if !remote {
 		return nil
 	}
 	reg, _, err := registry.PortalPreflight(path)
+	if err != nil {
+		return registry.CodedError{Code: "access_request_owner_required", Message: "access requests require the portal owner; local owner CLI/MCP is also available"}
+	}
+	return requireRequestOwnerInRegistry(ctx, reg)
+}
+
+// Authority mutations use the same owner decision against the locked registry.
+func requireRequestOwnerInRegistry(ctx context.Context, reg *registry.Registry) error {
+	caller, remote := server.MCPCallerFromContext(ctx)
+	if !remote {
+		return nil
+	}
 	login, e := registry.NormalizePerson(caller.Login)
-	if err != nil || e != nil || len(caller.Tags) > 0 || reg.Portal == nil || login != reg.Portal.Owner {
+	if e != nil || len(caller.Tags) > 0 || reg == nil || reg.Portal == nil || reg.Portal.Owner == "" || login != reg.Portal.Owner {
 		return registry.CodedError{Code: "access_request_owner_required", Message: "access requests require the portal owner; local owner CLI/MCP is also available"}
 	}
 	for _, p := range reg.People {
