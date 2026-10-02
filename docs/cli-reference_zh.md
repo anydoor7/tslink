@@ -70,7 +70,7 @@
 | 标志 | 描述 |
 |------|------|
 | `--proxy host:port` | 反向代理到本地 HTTP 服务 |
-| `--preserve-host[=false]` | 仅 proxy：保留传入 Host；普通 add/share 默认 false，recipe 自带默认值；显式 false 可覆盖 recipe。 |
+| `--preserve-host[=false]` | 仅 proxy：转发节点自身可信的外部 canonical Host；普通 add/share 默认 false，recipe 自带默认值；显式 false 可覆盖 recipe。 |
 | `--dir /path` | 文件目录服务 |
 | `--tcp host:port` | 原始 TCP 转发 |
 | `--dry-run` | 校验并打印服务，不写入注册表 |
@@ -106,4 +106,4 @@ Recipes 支持 `--allow`、`--tags`、`--ephemeral`、`--control-url`、已有 F
 
 MCP 工具为 `recipe_list`、只读 `apps_detect`、`recipe_plan`、`recipe_apply`；计划/应用接收 `recipe_id`、可选 `name`/`target`、字符串 `allow`/`tags` 及上述 flag 的 snake_case 参数。先 plan 后 apply。已有通用 `template` 命令及 `template_list/plan/apply` 工具继续工作。见[应用设置与限制](apps_zh.md)。
 
-`share <port|host:port>` 也支持 `--preserve-host`（默认 false）；文件/目录 share 拒绝 true。两种模式均从真实请求重新生成 X-Forwarded-Host/Proto/For，复用时 Host 策略不同会报冲突。已有服务及通用 templates 保持上游 Host 改写。Registry 的 `preserve_host` 是可选 proxy 布尔字段，缺省为 false；recipe 可通过 `--preserve-host=false` 或 MCP `preserve_host:false` 覆盖。Status/list 服务投影及 `access explain` 显示配置策略；全局失败且 registry 不可读时策略未知，status 省略该字段。
+`share <port|host:port>` 也支持 `--preserve-host`（默认 false）；文件/目录 share 拒绝 true。启用后，Host 和 X-Forwarded-Host 均使用节点自身的外部 canonical DNS 名称，不使用客户端 authority。优先取 runtime 的第一个证书域名，否则取节点 DNS FQDN，与分享的 HTTPS URL 一致，Funnel 也采用此规则。名称转为小写，去掉末尾点，不带端口。名称缺失或无效时返回 HTTP 503 `canonical_host_unavailable`，不请求后端。客户端别名及其他 authority 均按 canonical 名称转发，不额外返回 421。默认模式保留上游 Host 改写及原有的传入 authority X-Forwarded-Host 行为；两种模式的 X-Forwarded-Proto/For 均来自真实请求，Origin 不变。复用时 Host 策略不同会报冲突。已有服务及通用 templates 保持上游 Host 改写。Registry 的 `preserve_host` 是可选 proxy 布尔字段，缺省为 false；recipe 可通过 `--preserve-host=false` 或 MCP `preserve_host:false` 覆盖。Status/list 服务投影及 `access explain` 显示配置策略；全局失败且 registry 不可读时策略未知，status 省略该字段。

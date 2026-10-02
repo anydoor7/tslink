@@ -540,7 +540,7 @@
           "type": "bool",
           "default": "false",
           "scope": "local",
-          "usage": "Preserve the incoming HTTP Host (proxy only; recipes choose their default)"
+          "usage": "Forward this node's canonical external Host (proxy only; recipes choose their default)"
         },
         {
           "name": "proxy",
@@ -627,7 +627,7 @@
         },
         "preserve_host": {
           "type": "boolean",
-          "description": "Ordinary add: whether the proxy forwards the incoming Host; default false. With --recipe, inspect service.preserve_host and requested.preserve_host."
+          "description": "Ordinary add: whether the proxy forwards this node's trusted canonical external Host; default false. With --recipe, inspect service.preserve_host and requested.preserve_host."
         },
         "recipe": {
           "type": "object",
@@ -805,7 +805,7 @@
           "type": "bool",
           "default": "false",
           "scope": "local",
-          "usage": "Preserve the incoming HTTP Host (proxy only; recipes choose their default)"
+          "usage": "Forward this node's canonical external Host (proxy only; recipes choose their default)"
         },
         {
           "name": "proxy",
@@ -1559,7 +1559,7 @@
         },
         "services[].preserve_host": {
           "type": "boolean",
-          "description": "Configured proxy Host policy; false rewrites Host to the upstream, true preserves the real incoming Host. X-Forwarded-* is regenerated in either mode."
+          "description": "Configured proxy Host policy; false rewrites Host to the upstream, true forwards this node's trusted canonical external name in Host and X-Forwarded-Host, or returns HTTP 503 canonical_host_unavailable."
         },
         "services[].state": {
           "type": "string",
@@ -1977,7 +1977,7 @@
           "type": "bool",
           "default": "false",
           "scope": "local",
-          "usage": "Preserve the incoming HTTP Host (proxy only; recipes choose their default)"
+          "usage": "Forward this node's canonical external Host (proxy only; recipes choose their default)"
         },
         {
           "name": "wait",
@@ -1990,7 +1990,7 @@
       "json_result_fields": {
         "preserve_host": {
           "type": "boolean",
-          "description": "Whether the returned HTTP share preserves the incoming Host. Conflicting reuse is refused."
+          "description": "Whether the returned HTTP share forwards this node's trusted canonical external Host. Conflicting reuse is refused."
         }
       }
     },
@@ -2105,7 +2105,7 @@
         },
         "services[].preserve_host": {
           "type": "boolean",
-          "description": "Configured proxy Host policy; false rewrites Host to the upstream, true preserves the real incoming Host. X-Forwarded-* is regenerated in either mode."
+          "description": "Configured proxy Host policy; false rewrites Host to the upstream, true forwards this node's trusted canonical external name in Host and X-Forwarded-Host, or returns HTTP 503 canonical_host_unavailable."
         },
         "services[].runtime_state": {
           "type": "string",

@@ -15,11 +15,13 @@ Recipe catalog 版本 2，官方文档核对日期为 **2026-10-02**。区分宿
 
 `apps share` 和 `add --recipe` 默认给出计划；`--yes` 才应用，`--dry-run` 始终优先。同名服务保留原配置，结果同时提供 `service` 和 `requested`。命令不会安装或配置第三方应用。`--no-daemon-install` 只保存 registry。注册成功不能证明应用已运行或 URL 可访问。
 
+`preserve_host=true` 向应用转发接收节点自身的外部 canonical 名称，Host 和 X-Forwarded-Host 均不受客户端 authority 或端口影响。优先取 runtime 第一个证书域名，与 `tslink url` 一致；否则使用 runtime DNS FQDN。Funnel 使用相同规则。名称转为小写，去掉末尾点，不带端口。名称缺失或无效时返回 HTTP 503 `canonical_host_unavailable`，不连接应用。别名仍可访问，均按 canonical 名称转发，不额外返回 421。Origin 不变，保留各应用的精确 Origin 校验。默认模式保留原有的 X-Forwarded-Host 行为。
+
 探测使用 macOS lsof、Linux procfs、Windows GetExtendedTcpTable，只向数字 loopback HTTP 地址发 GET：单请求 700 ms，总预算 15 秒，8 个 worker，最多读取 64 KiB。无凭据、环境 HTTP 代理、Cookie 或重定向。仅 HTTPS、仅 LAN、其他网络 namespace、受认证保护或非典型安装可能无法识别。`high` 是应用端点/正文/响应头指纹，`medium` 是 title 匹配，`low` 仅代表不明 HTML 页面；`complete=false` 表示部分结果。置信度不证明认证、健康或版本兼容，输出只含指纹描述，不含响应正文。
 
 私有访问仍受 tailnet policy 和 `--allow` 影响。Funnel 面向整个互联网：验证应用自身认证后才考虑 `--funnel --public`。`never_public` recipe 会拒绝 Funnel；只有所有者有意传入 **`--force-unsafe-public`** 才能覆盖，可能向所有人暴露主机控制、代码执行、GPU 消耗或私密数据。覆盖不能建立应用认证。`app_login` 也不表示关闭登录或未完成初始化的实例可安全公开。
 
-下方健康路径仅为 catalog 数据，供后续监控使用，本功能不实现健康探针。登录页有响应只能说明 HTTP 可用。TSLink 当前请求体限制为 32 MiB、请求读取超时 30 秒，Immich、Nextcloud、Paperless 和聊天界面的大文件或慢速上传可能失败。Recipes 各自选择下方显示的 Host 策略：大多数保留真实传入 Host；Ollama、Syncthing 为满足本地 Host 防护继续改写；generic-web 未核对前默认改写。普通 add/share 和已有服务、templates 仍默认改写。用 `--preserve-host` 或 `--preserve-host=false` 覆盖 recipe（MCP 为显式布尔 `preserve_host`），省略则使用 recipe 默认值。两种模式均从真实请求重新生成 X-Forwarded-Host/Proto/For，忽略伪造的 forwarded 头；Origin 不变。Immich 和 Uptime Kuma 直接连接原生 HTTP 端口。代理支持 WebSocket upgrade，分享前仍需验证真实应用。
+下方健康路径仅为 catalog 数据，供后续监控使用，本功能不实现健康探针。登录页有响应只能说明 HTTP 可用。TSLink 当前请求体限制为 32 MiB、请求读取超时 30 秒，Immich、Nextcloud、Paperless 和聊天界面的大文件或慢速上传可能失败。Recipes 各自选择下方显示的 Host 策略：大多数转发节点自身的外部 canonical Host；Ollama、Syncthing 为满足本地 Host 防护继续改写；generic-web 未核对前默认改写。普通 add/share 和已有服务、templates 仍默认改写。用 `--preserve-host` 或 `--preserve-host=false` 覆盖 recipe（MCP 为显式布尔 `preserve_host`），省略则使用 recipe 默认值。Preserve 模式的 Host 和 X-Forwarded-Host 均使用 canonical 名称；两种模式均从真实请求重新生成 X-Forwarded-Proto/For，忽略伪造的 forwarded 头；Origin 不变。Immich 和 Uptime Kuma 直接连接原生 HTTP 端口。代理支持 WebSocket upgrade，分享前仍需验证真实应用。
 
 `template list/show/apply` 继续工作：`local-web`、`dev-suite`、`local-ai-suite` 是通用多服务组合，没有 recipe 的安全检查或应用配置建议。需要应用指导时使用 recipe，AI 模板中的 Ollama 也适用。
 

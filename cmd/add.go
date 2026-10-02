@@ -828,7 +828,7 @@ Examples:
 		},
 	}
 
-	addCmd.Flags().Bool("preserve-host", false, "Preserve the incoming HTTP Host (proxy only; recipes choose their default)")
+	addCmd.Flags().Bool("preserve-host", false, "Forward this node's canonical external Host (proxy only; recipes choose their default)")
 	addCmd.Flags().String("proxy", "", "Proxy target in host:port or URL form")
 	addCmd.Flags().String("dir", "", "Directory to expose")
 	addCmd.Flags().String("tcp", "", "TCP proxy target in host:port form")

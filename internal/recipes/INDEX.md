@@ -6,5 +6,5 @@
 - `listen_parse.go`: portable macOS/Linux output parsers.
 - `listen_tcp_table.go`, `listen_tcp_table_test.go`: locale-independent Windows TCP table decoding and bounded API reads, tested on every OS.
 - `listen_darwin.go`, `listen_linux.go`, `listen_windows.go`, `listen_other.go`: build-tagged OS inventory adapters.
-- `recipes_test.go`, `listen_darwin_test.go`, `listen_linux_test.go`, `listen_windows_test.go`: controlled HTTP, listener, catalog and safety tests; Windows uses iphlpapi rather than netstat text.
+- `recipes_test.go`, `listen_darwin_test.go`, `listen_linux_test.go`, `listen_windows_test.go`: controlled HTTP, listener, catalog and safety tests; Windows uses iphlpapi rather than netstat text, checks actual syscall arguments below the inventory seam, and discovers real IPv4/IPv6 loopback listeners.
 - `testmain_test.go`: shared isolated test environment.

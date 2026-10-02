@@ -153,7 +153,7 @@ func TestPreserveHostProjections(t *testing.T) {
 			}
 			var out bytes.Buffer
 			formatAccessExplain(explain, &out)
-			if !strings.Contains(out.String(), fmt.Sprintf("Preserve incoming Host: %t", preserve)) {
+			if !strings.Contains(out.String(), fmt.Sprintf("Use canonical external Host: %t", preserve)) {
 				t.Fatal(out.String())
 			}
 			old := mcpStatusFn

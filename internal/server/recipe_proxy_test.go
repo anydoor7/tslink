@@ -30,11 +30,11 @@ func TestRecipeProxyConfiguration(t *testing.T) {
 				w.WriteHeader(http.StatusOK)
 			}))
 			defer backend.Close()
-			proxy, err := NewProxyHandlerWithOptions(backend.URL, nil, ProxyOptions{PreserveHost: r.PreserveHost})
+			externalHost := id + ".review.example"
+			proxy, err := NewProxyHandlerWithOptions(backend.URL, nil, ProxyOptions{PreserveHost: r.PreserveHost, CanonicalHost: func() string { return externalHost }})
 			if err != nil {
 				t.Fatal(err)
 			}
-			externalHost := id + ".review.example"
 			origin := "https://" + externalHost
 			if id == "ollama" {
 				origin = "https://open-webui.review.example"

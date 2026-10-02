@@ -460,7 +460,7 @@ func formatAccessExplain(result AccessExplainResult, out io.Writer) {
 	fmt.Fprintf(out, "  Tags: %s\n", summaryLabel(known.Tags))
 	fmt.Fprintf(out, "  Allow: %s\n", summaryLabel(known.Allow))
 	if known.ServiceType == registry.TypeProxy {
-		fmt.Fprintf(out, "  Preserve incoming Host: %t\n", known.PreserveHost)
+		fmt.Fprintf(out, "  Use canonical external Host: %t\n", known.PreserveHost)
 	}
 	fmt.Fprintf(out, "  Backend: %s (%s)\n", emptyDash(known.Backend.Display), emptyDash(known.Backend.Kind))
 	fmt.Fprintf(out, "  Target classification: %s - %s\n", known.TargetLoopbackClassification.Classification, known.TargetLoopbackClassification.Summary)

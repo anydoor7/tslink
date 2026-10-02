@@ -748,7 +748,7 @@ The next two examples need a local app already listening on the given port:
 		},
 	}
 	shareCmd.Flags().String("name", "", "Requested service name (DNS label); a matching target must already use it, while unrelated name collisions receive a numeric suffix")
-	shareCmd.Flags().Bool("preserve-host", false, "Preserve the incoming HTTP Host (proxy only; recipes choose their default)")
+	shareCmd.Flags().Bool("preserve-host", false, "Forward this node's canonical external Host (proxy only; recipes choose their default)")
 	shareCmd.Flags().Bool("ephemeral", true, "Use an ephemeral tailnet node (set --ephemeral=false for durable state)")
 	shareCmd.Flags().Bool("no-daemon-install", false, "Require an already running background service; do not install one")
 	shareCmd.Flags().Var(duration.NewValue(defaultURLWait), "wait", "Wait for an exact runtime URL (share waits 30s by default; unlike url, no flag is required)")

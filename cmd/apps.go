@@ -174,7 +174,7 @@ func detectApps(ctx context.Context, regPath string) (recipes.Detection, error) 
 }
 func renderRecipe(out io.Writer, result RecipeResult) {
 	fmt.Fprintf(out, "%s: %s -> %s (%s)\n", result.Recipe.DisplayName, result.Service.Name, result.Service.Backend.Display, result.Action)
-	fmt.Fprintf(out, "Preserve incoming Host: %t (recipe default: %t).\n", result.Service.PreserveHost, result.Recipe.PreserveHost)
+	fmt.Fprintf(out, "Use canonical external Host: %t (recipe default: %t).\n", result.Service.PreserveHost, result.Recipe.PreserveHost)
 	fmt.Fprintf(out, "Ports: %v. %s\nWebSockets: %t; recommended health path: %s (data only).\n", result.Recipe.DefaultPorts, result.Recipe.PortNote, result.Recipe.WebSockets, result.Recipe.HealthPath)
 	for _, w := range result.Warnings {
 		fmt.Fprintf(out, "Warning: %s\n", w)
@@ -263,7 +263,7 @@ func init() {
 		return runRecipeCLI(cmd, recipeRequestFromCLI(cmd, args[0], name), "apps share")
 	}}
 	share.Flags().String("name", "", "Override the recommended service name")
-	share.Flags().Bool("preserve-host", false, "Preserve the incoming HTTP Host (proxy only; recipes choose their default)")
+	share.Flags().Bool("preserve-host", false, "Forward this node's canonical external Host (proxy only; recipes choose their default)")
 	share.Flags().String("proxy", "", "Override the loopback HTTP(S) target (host port, not container port)")
 	share.Flags().String("allow", "", "Comma-separated private HTTP identities")
 	share.Flags().String("tags", "", "Comma-separated ACL tags")

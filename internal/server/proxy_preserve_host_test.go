@@ -80,7 +80,7 @@ func TestProxyPreserveHost(t *testing.T) {
 						}
 					}))
 					defer backend.Close()
-					proxy, err := NewProxyHandlerWithOptions(backend.URL, nil, ProxyOptions{PreserveHost: preserve})
+					proxy, err := NewProxyHandlerWithOptions(backend.URL, nil, ProxyOptions{PreserveHost: preserve, CanonicalHost: func() string { return "app.review.example" }})
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -109,7 +109,7 @@ func TestProxyPreserveHost(t *testing.T) {
 					u, _ := url.Parse(backend.URL)
 					wantHost, wantProto := u.Host, "http"
 					if preserve {
-						wantHost = host
+						wantHost = "app.review.example"
 					}
 					if secure {
 						wantProto = "https"
@@ -117,8 +117,12 @@ func TestProxyPreserveHost(t *testing.T) {
 					if res.Header.Get("Seen-Host") != wantHost {
 						t.Errorf("Host=%q want %q", res.Header.Get("Seen-Host"), wantHost)
 					}
-					if res.Header.Get("Seen-X-Forwarded-Host") != host {
-						t.Errorf("forwarded host=%q want real %q", res.Header.Get("Seen-X-Forwarded-Host"), host)
+					wantXFH := host
+					if preserve {
+						wantXFH = "app.review.example"
+					}
+					if res.Header.Get("Seen-X-Forwarded-Host") != wantXFH {
+						t.Errorf("forwarded host=%q want real %q", res.Header.Get("Seen-X-Forwarded-Host"), wantXFH)
 					}
 					if res.Header.Get("Seen-X-Forwarded-Proto") != wantProto {
 						t.Errorf("forwarded proto=%q want %q", res.Header.Get("Seen-X-Forwarded-Proto"), wantProto)

@@ -19,6 +19,9 @@ type LocalClient = local.Client
 
 type ProxyOptions struct {
 	PreserveHost bool
+	// CanonicalHost reads the receiving node's trusted runtime name. It must
+	// never derive a name from a request, TLS SNI, or registry service name.
+	CanonicalHost func() string
 }
 
 // NewProxyHandler returns the reverse proxy for one proxy service. identity
@@ -48,10 +51,12 @@ func NewProxyHandlerWithOptions(target string, identity *IdentityResolver, optio
 		Transport: transport,
 		Rewrite: func(r *httputil.ProxyRequest) {
 			r.SetURL(targetURL)
-			if options.PreserveHost {
-				r.Out.Host = r.In.Host
-			}
 			r.SetXForwarded()
+			if options.PreserveHost {
+				host := r.In.Context().Value(canonicalProxyHostKey{}).(string)
+				r.Out.Host = host
+				r.Out.Header.Set("X-Forwarded-Host", host)
+			}
 			// Strip both identity namespaces, including CGI-equivalent spellings.
 			for key := range r.In.Header {
 				normalized := strings.ToLower(strings.ReplaceAll(key, "_", "-"))
@@ -80,7 +85,42 @@ func NewProxyHandlerWithOptions(target string, identity *IdentityResolver, optio
 			}
 		},
 	}
-	return proxy, nil
+	if !options.PreserveHost {
+		return proxy, nil
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var host string
+		if options.CanonicalHost != nil {
+			host = normalizeCanonicalProxyHost(options.CanonicalHost())
+		}
+		if host == "" {
+			http.Error(w, "canonical_host_unavailable: node's canonical external name is unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		proxy.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), canonicalProxyHostKey{}, host)))
+	}), nil
+}
+
+type canonicalProxyHostKey struct{}
+
+// A canonical authority is a DNS name without a port, normalized to lowercase
+// with no terminal root dot. Invalid runtime metadata fails closed as missing.
+func normalizeCanonicalProxyHost(host string) string {
+	host = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(host), "."))
+	if len(host) > 253 || !strings.Contains(host, ".") || net.ParseIP(host) != nil {
+		return ""
+	}
+	for label := range strings.SplitSeq(host, ".") {
+		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return ""
+		}
+		for _, c := range label {
+			if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-') {
+				return ""
+			}
+		}
+	}
+	return host
 }
 
 func isTimeout(err error) bool {

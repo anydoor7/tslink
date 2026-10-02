@@ -8,3 +8,6 @@
 
 This index covers the recipe integration tests. The repository AGENTS.md describes the server architecture.
 - `proxy_preserve_host_test.go`: real HTTP/TLS Host forwarding, regenerated forwarded headers and hot-reload policy changes.
+
+- `host_authority_test.go`: reviewer-derived real TLS, HTTP/1 absolute-form and HTTP/2 cross-node virtual-host regressions.
+- `canonical_host_test.go`: trusted runtime name selection, normalization, missing-name refusal and recovery.

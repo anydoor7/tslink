@@ -2203,7 +2203,17 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service, prov
 			return fmt.Errorf("local client for %q: %w", svc.Name, err2)
 		}
 		identity = NewStaticIdentityResolver(lc)
-		h, err2 := NewProxyHandlerWithOptions(svc.Target, identity, ProxyOptions{PreserveHost: svc.PreserveHost})
+		h, err2 := NewProxyHandlerWithOptions(svc.Target, identity, ProxyOptions{
+			PreserveHost: svc.PreserveHost,
+			CanonicalHost: func() string {
+				// Match the owner-facing HTTPS URL in the runtime snapshot. This
+				// also chooses the public certificate name for a Funnel listener.
+				if domains := tsnetSrv.CertDomains(); len(domains) > 0 {
+					return domains[0]
+				}
+				return runtimeHost
+			},
+		})
 		if err2 != nil {
 			return fmt.Errorf("proxy handler for %q: %w", svc.Name, err2)
 		}
