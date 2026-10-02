@@ -31,7 +31,7 @@ func setupRepairManager(t *testing.T, gate func()) {
 	detectSupervisionFn = func(string, bool, int) Supervision {
 		return Supervision{Manager: "launchd", Installed: true, Autostart: true, RestartOnExit: true}
 	}
-	launchctlCombinedOutput = func(args ...string) ([]byte, error) {
+	launchctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
 		gate()
 		switch args[0] {
 		case "bootout":
@@ -69,7 +69,7 @@ func TestRepairBootoutWaitsForAbsence(t *testing.T) {
 			prints := 0
 			bootstrapped := false
 			early := false
-			launchctlCombinedOutput = func(args ...string) ([]byte, error) {
+			launchctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
 				switch args[0] {
 				case "bootout":
 					if args[1] == launchctlServiceTargetForDomain(launchctlUserDomain()) {
@@ -95,7 +95,7 @@ func TestRepairBootoutWaitsForAbsence(t *testing.T) {
 				}
 				return nil, errors.New("unexpected command")
 			}
-			result := reinstallLaunchAgent("/fixture.plist")
+			result := reinstallLaunchAgent(context.Background(), "/fixture.plist")
 			if result.Err != nil || early || prints != 3 || !bootstrapped {
 				t.Fatalf("absence barrier failed: err=%v early=%t prints=%d bootstrapped=%t", result.Err, early, prints, bootstrapped)
 			}
@@ -124,7 +124,7 @@ func TestRepairUninstallWaitsAndKeepsDefinitionOnTimeout(t *testing.T) {
 			launchAgentBootoutTimeout = 2 * time.Millisecond
 			launchAgentBootoutPollInterval = 0
 			prints := 0
-			launchctlCombinedOutput = func(args ...string) ([]byte, error) {
+			launchctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
 				if args[1] == launchctlServiceTargetForDomain(launchctlUserDomain()) {
 					return []byte("Could not find service"), errors.New("absent")
 				}
@@ -189,7 +189,7 @@ func TestRepairRollbackWaitsForAbsence(t *testing.T) {
 			prints := 0
 			loaded := false
 			early := false
-			launchctlCombinedOutput = func(args ...string) ([]byte, error) {
+			launchctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
 				switch args[0] {
 				case "bootout":
 					return nil, nil
@@ -244,7 +244,7 @@ func TestRepairBootoutSuccessPolicy(t *testing.T) {
 				launchAgentBootoutTimeout = time.Millisecond
 				launchAgentBootoutPollInterval = 0
 				prints := 0
-				launchctlCombinedOutput = func(args ...string) ([]byte, error) {
+				launchctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
 					if args[0] == "bootout" {
 						return nil, nil
 					}
@@ -260,7 +260,7 @@ func TestRepairBootoutSuccessPolicy(t *testing.T) {
 						return []byte("state = SIGTERMed"), nil
 					}
 				}
-				err := bootoutLaunchAgentTargetWithPolicy("gui/501/com.tslink.daemon", allow)
+				err := bootoutLaunchAgentTargetWithPolicy(context.Background(), "gui/501/com.tslink.daemon", allow)
 				wantOK := mode == "absent" || (mode == "domain" && allow)
 				if (err == nil) != wantOK || prints == 0 {
 					t.Fatalf("mode=%s allow=%t prints=%d err=%v", mode, allow, prints, err)
@@ -279,7 +279,7 @@ func TestRepairFailedInstallRollbackCannotUndoPeer(t *testing.T) {
 	active := false
 	fail := true
 	bootouts := 0
-	launchctlCombinedOutput = func(args ...string) ([]byte, error) {
+	launchctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
 		switch args[0] {
 		case "bootout":
 			bootouts++
@@ -341,7 +341,7 @@ func TestRepairUninstallDomainLostAfterAcceptedBootout(t *testing.T) {
 				t.Fatal(err)
 			}
 			path, _ := supervisorPath()
-			launchctlCombinedOutput = func(args ...string) ([]byte, error) {
+			launchctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
 				if args[1] == launchctlServiceTargetForDomain(launchctlUserDomain()) {
 					return []byte("Could not find service"), errors.New("absent")
 				}

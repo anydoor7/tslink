@@ -127,7 +127,7 @@ func TestBootstrapExplicitInstallRefusesUnverifiedManagerPID(t *testing.T) {
 	}
 	managerOutputFn = func(string, ...string) ([]byte, error) { return launchctlFixture(t, "running", 41564), nil }
 	// capture is invoked before any bootout or plist replacement in install.
-	if _, err := captureLaunchAgentPreviousState(path); err == nil || !strings.Contains(err.Error(), "unverified") {
+	if _, err := captureLaunchAgentPreviousState(context.Background(), path); err == nil || !strings.Contains(err.Error(), "unverified") {
 		t.Fatalf("unverified live supervisor accepted: %v", err)
 	}
 	after, err := os.ReadFile(path)

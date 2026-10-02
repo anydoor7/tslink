@@ -2,7 +2,10 @@
 
 package cmd
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 // TestSystemctlSeamIsBoundedAgainstABlockedManager pins the systemctl seam's
 // default implementation to runBoundedManagerCommand. A seam reverted to an
@@ -11,6 +14,6 @@ import "testing"
 func TestSystemctlSeamIsBoundedAgainstABlockedManager(t *testing.T) {
 	installBlockingManagerShim(t, "systemctl")
 	requireSeamReturnsWithinBudget(t, "systemctl", func() ([]byte, error) {
-		return systemctlCombinedOutput("--user", "show", "tslink-bounded-seam-probe.invalid.service")
+		return systemctlCombinedOutput(context.Background(), "--user", "show", "tslink-bounded-seam-probe.invalid.service")
 	})
 }

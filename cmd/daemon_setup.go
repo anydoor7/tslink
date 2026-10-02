@@ -92,7 +92,14 @@ func boundedManagerOutput(name string, args ...string) ([]byte, error) {
 // Each manager process has a finite bound. The settle windows around repeated
 // queries do not interrupt a single blocked CombinedOutput call on their own.
 func runBoundedManagerCommand(name string, timeout time.Duration, args ...string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	return runBoundedManagerCommandContext(context.Background(), name, timeout, args...)
+}
+
+func runBoundedManagerCommandContext(ctx context.Context, name string, timeout time.Duration, args ...string) ([]byte, error) {
+	if err := mcpscope.CheckEffect(ctx); err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.WaitDelay = managerWaitDelay

@@ -3,6 +3,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -47,7 +48,7 @@ func installLinuxUnitFixture(t *testing.T, properties string, loginctlOut string
 		}
 		return []byte(properties), nil
 	}
-	loginctlCombinedOutputFn = func(...string) ([]byte, error) { return []byte(loginctlOut), loginctlErr }
+	loginctlCombinedOutputFn = func(context.Context, ...string) ([]byte, error) { return []byte(loginctlOut), loginctlErr }
 	return path
 }
 
@@ -82,9 +83,9 @@ func TestLinuxSupervisionReportsAutostartScopeFromLinger(t *testing.T) {
 			// exactly as long as the subtest.
 			var loginctlCalls []string
 			scripted := loginctlCombinedOutputFn
-			loginctlCombinedOutputFn = func(args ...string) ([]byte, error) {
+			loginctlCombinedOutputFn = func(ctx context.Context, args ...string) ([]byte, error) {
 				loginctlCalls = append(loginctlCalls, strings.Join(args, " "))
-				return scripted(args...)
+				return scripted(ctx, args...)
 			}
 			s := detectSupervision("", false, 0)
 			if s.Manager != "systemd" || !s.Autostart {

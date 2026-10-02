@@ -51,7 +51,7 @@ func TestDarwinInstallOwnershipTreatsQueryTimeoutAsUnknown(t *testing.T) {
 			readPIDFn = func(string) (int, error) { return 1775, nil }
 			installDaemonArtifactConflictFn = func() error { return errManualDaemonConflict }
 			guiCalls := 0
-			launchctlCombinedOutput = func(args ...string) ([]byte, error) {
+			launchctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
 				if args[0] != "print" {
 					t.Fatalf("ownership read ran a non-read verb: %v", args)
 				}
@@ -67,10 +67,10 @@ func TestDarwinInstallOwnershipTreatsQueryTimeoutAsUnknown(t *testing.T) {
 				return []byte(tc.guiState), nil
 			}
 
-			state, err := captureLaunchAgentPreviousState(plist)
+			state, err := captureLaunchAgentPreviousState(context.Background(), plist)
 			if tc.wantErr == "" {
 				if err != nil || state.Target != gui {
-					t.Fatalf("captureLaunchAgentPreviousState() target=%q err=%v, want owned by %s after one retried timeout", state.Target, err, gui)
+					t.Fatalf("captureLaunchAgentPreviousState(context.Background(), ) target=%q err=%v, want owned by %s after one retried timeout", state.Target, err, gui)
 				}
 				if guiCalls != tc.wantGUICall {
 					t.Fatalf("launchctl print %s calls = %d, want %d", gui, guiCalls, tc.wantGUICall)
@@ -78,10 +78,10 @@ func TestDarwinInstallOwnershipTreatsQueryTimeoutAsUnknown(t *testing.T) {
 				return
 			}
 			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
-				t.Fatalf("captureLaunchAgentPreviousState() err=%v, want %q", err, tc.wantErr)
+				t.Fatalf("captureLaunchAgentPreviousState(context.Background(), ) err=%v, want %q", err, tc.wantErr)
 			}
 			if tc.wantErr != errManualDaemonConflict.Error() && (errors.Is(err, errManualDaemonConflict) || !errors.Is(err, context.DeadlineExceeded)) {
-				t.Fatalf("captureLaunchAgentPreviousState() err=%v, want an unknown-ownership timeout, not the manual-daemon conflict", err)
+				t.Fatalf("captureLaunchAgentPreviousState(context.Background(), ) err=%v, want an unknown-ownership timeout, not the manual-daemon conflict", err)
 			}
 			if guiCalls != tc.wantGUICall {
 				t.Fatalf("launchctl print %s calls = %d, want %d", gui, guiCalls, tc.wantGUICall)
@@ -102,14 +102,14 @@ func TestDarwinInstallVerificationRetriesOneQueryTimeout(t *testing.T) {
 
 	t.Run("one timeout between healthy samples", func(t *testing.T) {
 		calls := 0
-		launchctlCombinedOutput = func(args ...string) ([]byte, error) {
+		launchctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
 			calls++
 			if calls == 2 {
 				return nil, managerQueryTimeoutError("launchctl")
 			}
 			return runningLaunchAgentState(), nil
 		}
-		if _, err := verifyLaunchAgentRunning("gui/501/" + plistLabel); err != nil {
+		if _, err := verifyLaunchAgentRunning(context.Background(), "gui/501/"+plistLabel); err != nil {
 			t.Fatalf("verify error = %v after one timed-out print of a running job, want success", err)
 		}
 	})
@@ -118,28 +118,28 @@ func TestDarwinInstallVerificationRetriesOneQueryTimeout(t *testing.T) {
 	// still just "not running yet" and polling continues, as it always did.
 	t.Run("timeouts before the job is seen keep polling", func(t *testing.T) {
 		calls := 0
-		launchctlCombinedOutput = func(args ...string) ([]byte, error) {
+		launchctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
 			calls++
 			if calls <= 2 {
 				return nil, managerQueryTimeoutError("launchctl")
 			}
 			return runningLaunchAgentState(), nil
 		}
-		if _, err := verifyLaunchAgentRunning("gui/501/" + plistLabel); err != nil || calls != 4 {
+		if _, err := verifyLaunchAgentRunning(context.Background(), "gui/501/"+plistLabel); err != nil || calls != 4 {
 			t.Fatalf("verify err=%v calls=%d, want success once the job answers", err, calls)
 		}
 	})
 
 	t.Run("two timeouts in a row fail as unknown", func(t *testing.T) {
 		calls := 0
-		launchctlCombinedOutput = func(args ...string) ([]byte, error) {
+		launchctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
 			calls++
 			if calls == 1 {
 				return runningLaunchAgentState(), nil
 			}
 			return nil, managerQueryTimeoutError("launchctl")
 		}
-		_, err := verifyLaunchAgentRunning("gui/501/" + plistLabel)
+		_, err := verifyLaunchAgentRunning(context.Background(), "gui/501/"+plistLabel)
 		if !errors.Is(err, context.DeadlineExceeded) || calls != 3 || strings.Contains(err.Error(), "PID/state changed") {
 			t.Fatalf("verify err=%v calls=%d, want the timeout reported after exactly one retry, not a PID/state change", err, calls)
 		}

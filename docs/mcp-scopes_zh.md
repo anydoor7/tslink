@@ -132,3 +132,5 @@ log。时长解析集中在 `internal/mcpscope.ParseDuration`，便于替换公�
 受限 operator 和 manager 只能修改 people store 中已存在人员的授权。只有 owner 可以创建人员；稳定码 `mcp_person_owner_required` 提示先请 owner 添加人员。撤销未知 login 是 no-op，不创建人员，也不改变其它 app。
 
 审计用 `identity.login`、`identity.node` 记录调用者，用 `principal` 记录匹配的授权对象。`kind=mcp`、`role`、`tool`、`apps`、`result`、`phase` 是类型化元数据。share intent 只记录显式请求的名字；尚未分配时 app 清单为空。completion 记录实际生成或复用的名字，包括并发分配结果。不记录原始参数、target、邀请链接或 secret。
+
+Daemon bootstrap 在定义文件写入和每条 manager 命令前继续检查同一会话；取消也会中止 manager 子进程。恢复已有安装和失败清理可以在取消或过期后继续，仍有超时限制。旧日志的 `who`/`scope` 按 `principal`/`role` 读取，不推断缺失的调用者身份。

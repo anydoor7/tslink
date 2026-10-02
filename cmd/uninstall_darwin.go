@@ -3,6 +3,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -172,11 +173,11 @@ func bootoutLaunchAgent(force bool) launchctlBootoutResult {
 	var firstRealError *launchctlBootoutResult
 	var firstUnavailable *launchctlBootoutResult
 	for _, target := range targets {
-		output, err := launchctlCombinedOutput("bootout", target)
+		output, err := launchctlCombinedOutput(context.Background(), "bootout", target)
 		if err == nil || launchctlOperationInProgress(output, err) {
 			// Preserve uninstall's unavailable-domain/force aggregation while
 			// sharing the same absence barrier used by install and rollback.
-			err = waitLaunchAgentAbsent(target, false)
+			err = waitLaunchAgentAbsent(context.Background(), target, false)
 		}
 		text := strings.TrimSpace(string(output))
 		if text != "" {

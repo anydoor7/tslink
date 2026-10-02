@@ -174,7 +174,7 @@ func TestBuiltinSupervisorStatusRestartingAndBreaker(t *testing.T) {
 	pidPath := filepath.Join(dir, "tslink.pid")
 	data, _ := renderWindowsTask(spec)
 	task := windowsSchedulerStatus{Exists: true, Enabled: true, State: 4, Engines: []int{42}, XML: string(data)}
-	windowsSchedulerFn = func(string, string, []byte) (windowsSchedulerStatus, error) { return task, nil }
+	windowsSchedulerFn = func(context.Context, string, string, []byte) (windowsSchedulerStatus, error) { return task, nil }
 	for _, state := range []string{"restarting", "starting", "stopped", "circuit_open", "failed"} {
 		t.Run(state, func(t *testing.T) {
 			alive := state == "restarting" || state == "starting"
@@ -207,7 +207,7 @@ func TestBuiltinSupervisorTerminalPIDReusePreservesHistoryAndDoesNotSignal(t *te
 	}
 	pidPath := filepath.Join(dir, "tslink.pid")
 	data, _ := renderWindowsTask(spec)
-	windowsSchedulerFn = func(string, string, []byte) (windowsSchedulerStatus, error) {
+	windowsSchedulerFn = func(context.Context, string, string, []byte) (windowsSchedulerStatus, error) {
 		return windowsSchedulerStatus{Exists: true, Enabled: true, State: 3, XML: string(data)}, nil
 	}
 	// Reuse a real live PID with deliberately stale launch identity. No seam

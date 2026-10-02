@@ -3,6 +3,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"github.com/anydoor7/tslink/internal/config"
 	"github.com/anydoor7/tslink/internal/daemon"
@@ -49,7 +50,7 @@ func runUninstallLocked(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	task, queryErr := windowsSchedulerFn("query", name, nil)
+	task, queryErr := windowsSchedulerFn(context.Background(), "query", name, nil)
 	if queryErr != nil {
 		if _, statErr := os.Stat(taskPath); !os.IsNotExist(statErr) {
 			return fmt.Errorf("cannot confirm task removal; definition retained: %w", queryErr)
@@ -62,7 +63,7 @@ func runUninstallLocked(cmd *cobra.Command, args []string) error {
 		if _, err := windowsTaskSpecFromDefinition([]byte(task.XML), dir); err != nil {
 			return fmt.Errorf("refusing to remove foreign scheduler task: %w", err)
 		}
-		if _, err := windowsSchedulerFn("disable", name, nil); err != nil {
+		if _, err := windowsSchedulerFn(context.Background(), "disable", name, nil); err != nil {
 			return err
 		}
 		pidPath, err := config.PIDPath()
@@ -87,7 +88,7 @@ func runUninstallLocked(cmd *cobra.Command, args []string) error {
 		}
 		deadline := time.Now().Add(5 * time.Second)
 		for {
-			current, err := windowsSchedulerFn("query", name, nil)
+			current, err := windowsSchedulerFn(context.Background(), "query", name, nil)
 			if err != nil {
 				return err
 			}
@@ -103,10 +104,10 @@ func runUninstallLocked(cmd *cobra.Command, args []string) error {
 			case <-time.After(100 * time.Millisecond):
 			}
 		}
-		if _, err := windowsSchedulerFn("delete", name, nil); err != nil {
+		if _, err := windowsSchedulerFn(context.Background(), "delete", name, nil); err != nil {
 			return err
 		}
-		current, err := windowsSchedulerFn("query", name, nil)
+		current, err := windowsSchedulerFn(context.Background(), "query", name, nil)
 		if err != nil || current.Exists {
 			return fmt.Errorf("task removal could not be confirmed; definition retained: %v", err)
 		}

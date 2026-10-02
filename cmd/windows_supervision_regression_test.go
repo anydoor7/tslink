@@ -62,7 +62,7 @@ func fakeWindowsLifecycle(t *testing.T) (string, windowsTaskSpec, *fakeWindowsTa
 	}
 	isRunningFn = func(string) bool { return f.running }
 	detectSupervisionFn = detectSupervision
-	windowsSchedulerFn = func(op, name string, data []byte) (windowsSchedulerStatus, error) {
+	windowsSchedulerFn = func(ctx context.Context, op, name string, data []byte) (windowsSchedulerStatus, error) {
 		f.calls = append(f.calls, op)
 		if op == f.fail {
 			return windowsSchedulerStatus{}, errors.New("injected " + op)

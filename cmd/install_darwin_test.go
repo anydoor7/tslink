@@ -4,6 +4,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -753,7 +754,7 @@ func TestInstallCommandDoesNotWritePlistWhenExecutablePathHasIllegalXMLBytes(t *
 	userHomeDirFn = func() (string, error) { return home, nil }
 	executablePathFn = func() (string, error) { return "/opt/ts\x01link/tslink", nil }
 	evalSymlinksFn = func(path string) (string, error) { return path, nil }
-	launchctlCombinedOutput = func(args ...string) ([]byte, error) {
+	launchctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
 		t.Fatalf("launchctl called after a rejected illegal-byte executable path: %v", args)
 		return nil, nil
 	}
@@ -1197,7 +1198,7 @@ func TestInstallCommandRefusesRunningDaemonBeforeWritingPlist(t *testing.T) {
 	pidPathFn = func() (string, error) { return filepath.Join(home, "tslink.pid"), nil }
 	isRunningFn = func(string) bool { return true }
 	readPIDFn = func(string) (int, error) { return 1676, nil }
-	launchctlCombinedOutput = func(args ...string) ([]byte, error) {
+	launchctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
 		t.Fatalf("launchctl called during daemon conflict: %v", args)
 		return nil, nil
 	}
@@ -1404,7 +1405,7 @@ func TestInstallCommandAtomicWriteRejectsExistingPlistSymlink(t *testing.T) {
 	})
 	userHomeDirFn = func() (string, error) { return home, nil }
 	installDaemonArtifactConflictFn = func() error { return nil }
-	launchctlCombinedOutput = func(args ...string) ([]byte, error) {
+	launchctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
 		t.Fatalf("launchctl called after unsafe plist target: %v", args)
 		return nil, nil
 	}
@@ -1508,7 +1509,7 @@ func TestInstallCommandGroupWritableLaunchAgentsErrorIncludesRemedy(t *testing.T
 	userHomeDirFn = func() (string, error) { return home, nil }
 	executablePathFn = func() (string, error) { return "/Applications/TSLink App/tslink", nil }
 	evalSymlinksFn = func(path string) (string, error) { return path, nil }
-	launchctlCombinedOutput = func(args ...string) ([]byte, error) {
+	launchctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
 		t.Fatalf("launchctl called after unsafe parent rejection: %q", args)
 		return nil, nil
 	}
@@ -1704,7 +1705,7 @@ func TestWaitForLaunchAgentRunningSettlesAfterTransientWaiting(t *testing.T) {
 	t.Cleanup(func() { launchctlCombinedOutput = oldLaunchctl })
 
 	printCalls := 0
-	launchctlCombinedOutput = func(args ...string) ([]byte, error) {
+	launchctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
 		printCalls++
 		if printCalls < 3 {
 			return []byte("state = waiting\npid = 0\n"), nil
@@ -1712,9 +1713,9 @@ func TestWaitForLaunchAgentRunningSettlesAfterTransientWaiting(t *testing.T) {
 		return runningLaunchAgentState(), nil
 	}
 
-	output, err := waitForLaunchAgentRunning("gui/501/"+plistLabel, time.Second, 0)
+	output, err := waitForLaunchAgentRunning(context.Background(), "gui/501/"+plistLabel, time.Second, 0)
 	if err != nil {
-		t.Fatalf("waitForLaunchAgentRunning() error = %v", err)
+		t.Fatalf("waitForLaunchAgentRunning(context.Background(), ) error = %v", err)
 	}
 	if printCalls != 4 {
 		t.Fatalf("launchctl print calls = %d, want 4", printCalls)
@@ -1743,7 +1744,7 @@ func TestReinstallLaunchAgentWaitsForInProgressBootout(t *testing.T) {
 	guiTarget := "gui/501/" + plistLabel
 	bootoutPrintCalls := 0
 	bootstrapCalls := 0
-	launchctlCombinedOutput = func(args ...string) ([]byte, error) {
+	launchctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
 		if len(args) == 0 {
 			return nil, nil
 		}
@@ -1772,9 +1773,9 @@ func TestReinstallLaunchAgentWaitsForInProgressBootout(t *testing.T) {
 		return nil, nil
 	}
 
-	result := reinstallLaunchAgent("/tmp/com.tslink.daemon.plist")
+	result := reinstallLaunchAgent(context.Background(), "/tmp/com.tslink.daemon.plist")
 	if result.Err != nil || !result.Bootstrapped {
-		t.Fatalf("reinstallLaunchAgent() = %+v", result)
+		t.Fatalf("reinstallLaunchAgent(context.Background(), ) = %+v", result)
 	}
 	if bootstrapCalls != 1 || bootoutPrintCalls != 3 {
 		t.Fatalf("bootstrap/poll calls = %d/%d, want 1/3", bootstrapCalls, bootoutPrintCalls)
@@ -1797,7 +1798,7 @@ func TestReinstallLaunchAgentDoesNotBootstrapWhenInProgressBootoutTimesOut(t *te
 	launchAgentBootoutPollInterval = 0
 
 	bootstrapCalls := 0
-	launchctlCombinedOutput = func(args ...string) ([]byte, error) {
+	launchctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
 		if len(args) == 0 {
 			return nil, nil
 		}
@@ -1812,38 +1813,38 @@ func TestReinstallLaunchAgentDoesNotBootstrapWhenInProgressBootoutTimesOut(t *te
 		return nil, nil
 	}
 
-	result := reinstallLaunchAgent("/tmp/com.tslink.daemon.plist")
+	result := reinstallLaunchAgent(context.Background(), "/tmp/com.tslink.daemon.plist")
 	if result.Err == nil || !strings.Contains(result.Err.Error(), "remained in progress") {
-		t.Fatalf("reinstallLaunchAgent() error = %v, want bounded bootout timeout", result.Err)
+		t.Fatalf("reinstallLaunchAgent(context.Background(), ) error = %v, want bounded bootout timeout", result.Err)
 	}
 	if result.Bootstrapped || bootstrapCalls != 0 {
-		t.Fatalf("reinstallLaunchAgent() bootstrapped = %v, calls = %d", result.Bootstrapped, bootstrapCalls)
+		t.Fatalf("reinstallLaunchAgent(context.Background(), ) bootstrapped = %v, calls = %d", result.Bootstrapped, bootstrapCalls)
 	}
 }
 
 func TestWaitForLaunchAgentRunningRejectsRunningWithoutPID(t *testing.T) {
 	oldLaunchctl := launchctlCombinedOutput
 	t.Cleanup(func() { launchctlCombinedOutput = oldLaunchctl })
-	launchctlCombinedOutput = func(args ...string) ([]byte, error) {
+	launchctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
 		return []byte("state = running\n"), nil
 	}
 
-	_, err := waitForLaunchAgentRunning("gui/501/"+plistLabel, 0, 0)
+	_, err := waitForLaunchAgentRunning(context.Background(), "gui/501/"+plistLabel, 0, 0)
 	if err == nil || !strings.Contains(err.Error(), `state="running"`) || !strings.Contains(err.Error(), "pid=0") {
-		t.Fatalf("waitForLaunchAgentRunning() error = %v, want running-without-pid failure", err)
+		t.Fatalf("waitForLaunchAgentRunning(context.Background(), ) error = %v, want running-without-pid failure", err)
 	}
 }
 
 func TestWaitForLaunchAgentRunningRejectsWaitingWithStalePID(t *testing.T) {
 	oldLaunchctl := launchctlCombinedOutput
 	t.Cleanup(func() { launchctlCombinedOutput = oldLaunchctl })
-	launchctlCombinedOutput = func(args ...string) ([]byte, error) {
+	launchctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
 		return []byte("state = waiting\npid = 1775\n"), nil
 	}
 
-	_, err := waitForLaunchAgentRunning("gui/501/"+plistLabel, 0, 0)
+	_, err := waitForLaunchAgentRunning(context.Background(), "gui/501/"+plistLabel, 0, 0)
 	if err == nil || !strings.Contains(err.Error(), `state="waiting"`) || !strings.Contains(err.Error(), "pid=1775") {
-		t.Fatalf("waitForLaunchAgentRunning() error = %v, want waiting-with-stale-pid failure", err)
+		t.Fatalf("waitForLaunchAgentRunning(context.Background(), ) error = %v, want waiting-with-stale-pid failure", err)
 	}
 }
 
@@ -1949,7 +1950,7 @@ func TestUninstallCommandJSONDistinguishesNotInstalledWithoutLaunchctlGuess(t *t
 		launchctlCombinedOutput = oldLaunchctl
 	})
 	userHomeDirFn = func() (string, error) { return home, nil }
-	launchctlCombinedOutput = func(args ...string) ([]byte, error) {
+	launchctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
 		t.Fatalf("launchctl called for not-installed uninstall: %v", args)
 		return nil, nil
 	}
@@ -2212,7 +2213,7 @@ func TestUninstallCommandKeepsPlistWhenLaunchctlDomainIsUnavailable(t *testing.T
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 	callIndex := 0
-	launchctlCombinedOutput = func(args ...string) ([]byte, error) {
+	launchctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
 		callIndex++
 		if callIndex == 1 {
 			return []byte("Could not find domain for: " + args[1]), errors.New("exit status 112")
@@ -2418,7 +2419,7 @@ func TestBootoutLaunchAgentRetainsFirstOfTwoDifferentRealErrors(t *testing.T) {
 	firstErr := errors.New("gui denied")
 	secondErr := errors.New("user I/O failure")
 	callIndex := 0
-	launchctlCombinedOutput = func(args ...string) ([]byte, error) {
+	launchctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
 		callIndex++
 		if callIndex == 1 {
 			return []byte("gui permission denied"), firstErr
@@ -2544,7 +2545,7 @@ func TestUninstallCommandBootoutsLaunchAgentAndSurfacesOutput(t *testing.T) {
 	}
 
 	var gotCalls []string
-	launchctlCombinedOutput = func(args ...string) ([]byte, error) {
+	launchctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
 		gotCalls = append(gotCalls, strings.Join(args, "\x00"))
 		return []byte("bootout stderr"), errors.New("bootout failed")
 	}
@@ -2596,7 +2597,7 @@ func TestUninstallCommandJSONReportsRemovedFalseWhenBootoutFails(t *testing.T) {
 	if err := os.WriteFile(plistPath, []byte("plist"), 0o600); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
-	launchctlCombinedOutput = func(args ...string) ([]byte, error) {
+	launchctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
 		return []byte("bootout stderr"), errors.New("bootout failed")
 	}
 	setRootJSONFlag(t, true)
@@ -2645,7 +2646,7 @@ func TestUninstallCommandRemovesPlistWhenLaunchAgentTargetsAreAlreadyAbsent(t *t
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 	var calls []string
-	launchctlCombinedOutput = func(args ...string) ([]byte, error) {
+	launchctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
 		calls = append(calls, strings.Join(args, "\x00"))
 		return []byte("Boot-out failed: 3: No such process"), errors.New("exit status 3")
 	}
@@ -2677,7 +2678,7 @@ func TestBootoutLaunchAgentDoesNotHideRealErrorBehindAbsentTarget(t *testing.T) 
 	for _, realErrorIndex := range []int{0, 1} {
 		t.Run(fmt.Sprintf("real-error-target-%d", realErrorIndex), func(t *testing.T) {
 			callIndex := 0
-			launchctlCombinedOutput = func(args ...string) ([]byte, error) {
+			launchctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
 				current := callIndex
 				callIndex++
 				if current == realErrorIndex {
@@ -2719,22 +2720,22 @@ func TestLaunchAgentTargetForRunningDaemonRequiresRunningStateAndPositivePID(t *
 
 	t.Run("non-positive daemon pid", func(t *testing.T) {
 		readPIDFn = func(string) (int, error) { return 0, nil }
-		launchctlCombinedOutput = func(args ...string) ([]byte, error) {
+		launchctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
 			t.Fatalf("launchctl called with non-positive daemon PID: %v", args)
 			return nil, nil
 		}
-		if _, _, owned, err := launchAgentTargetForRunningDaemon(); owned || err != nil {
-			t.Fatalf("launchAgentTargetForRunningDaemon() owned=%v err=%v for PID 0", owned, err)
+		if _, _, owned, err := launchAgentTargetForRunningDaemon(context.Background()); owned || err != nil {
+			t.Fatalf("launchAgentTargetForRunningDaemon(context.Background(), ) owned=%v err=%v for PID 0", owned, err)
 		}
 	})
 
 	t.Run("matching stale pid without running state", func(t *testing.T) {
 		readPIDFn = func(string) (int, error) { return 1775, nil }
-		launchctlCombinedOutput = func(args ...string) ([]byte, error) {
+		launchctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
 			return []byte("state = waiting\npid = 1775\n"), nil
 		}
-		if _, _, owned, err := launchAgentTargetForRunningDaemon(); owned || err != nil {
-			t.Fatalf("launchAgentTargetForRunningDaemon() owned=%v err=%v for waiting state", owned, err)
+		if _, _, owned, err := launchAgentTargetForRunningDaemon(context.Background()); owned || err != nil {
+			t.Fatalf("launchAgentTargetForRunningDaemon(context.Background(), ) owned=%v err=%v for waiting state", owned, err)
 		}
 	})
 }
@@ -2742,9 +2743,9 @@ func TestLaunchAgentTargetForRunningDaemonRequiresRunningStateAndPositivePID(t *
 // Existing tests model immediate bootout completion. Supply the newly required
 // print observation without consuming the fixture's subsequent bootstrap or
 // running-state samples. Async removal is tested separately with raw seams.
-func settledBootoutFixture(next func(...string) ([]byte, error)) func(...string) ([]byte, error) {
+func settledBootoutFixture(next func(...string) ([]byte, error)) func(context.Context, ...string) ([]byte, error) {
 	gone := map[string]bool{}
-	return func(args ...string) ([]byte, error) {
+	return func(_ context.Context, args ...string) ([]byte, error) {
 		if len(args) >= 2 && args[0] == "print" && gone[args[1]] {
 			return []byte("Could not find service"), errors.New("service absent")
 		}

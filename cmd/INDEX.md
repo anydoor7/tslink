@@ -59,3 +59,7 @@ This index records the app recipe additions; the CLI manifest describes the comp
 - `mcp_scopes_test.go`: complete role/tool/app matrix, real HTTP and stdio sessions, audit and expiry probes.
 
 - `mcp_scopes_boundary_test.go`: MCP transaction, identity and app attribution correctness tests.
+
+- `mcp_install_darwin_test.go`, `mcp_install_linux_test.go`, `mcp_install_windows_test.go`: real MCP/bootstrap/definition paths with fake manager boundaries and active/expired/cancelled controls.
+- `mcp_manager_context_test.go`: real bounded subprocess cancellation and expiry probes.
+- `service_manager_context_test.go`: context seam adapter retaining the service-manager guard restoration check.

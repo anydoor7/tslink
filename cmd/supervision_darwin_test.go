@@ -175,7 +175,7 @@ func TestBootstrapLaunchdInstallSettles(t *testing.T) {
 		t.Run(tc.scenario, func(t *testing.T) {
 			launchAgentSettleWindow = tc.settle
 			calls := 0
-			launchctlCombinedOutput = func(...string) ([]byte, error) {
+			launchctlCombinedOutput = func(context.Context, ...string) ([]byte, error) {
 				calls++
 				if calls > 2 {
 					if tc.scenario == "dies" {
@@ -187,7 +187,7 @@ func TestBootstrapLaunchdInstallSettles(t *testing.T) {
 				}
 				return []byte("state = running\npid = 42\n"), nil
 			}
-			_, err := waitForLaunchAgentRunning("user/fixture/com.tslink.daemon", tc.timeout, time.Millisecond)
+			_, err := waitForLaunchAgentRunning(context.Background(), "user/fixture/com.tslink.daemon", tc.timeout, time.Millisecond)
 			switch {
 			case tc.wantErr == "" && err != nil:
 				t.Fatalf("scenario=%s err=%v, want success (calls=%d)", tc.scenario, err, calls)

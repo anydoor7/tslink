@@ -39,9 +39,35 @@ type Entry struct {
 
 type Journal struct{ Path string }
 
+// UnmarshalJSON preserves attribution from the development journal format.
+// Historical principal tags do not establish a missing caller identity.
+func (e *Entry) UnmarshalJSON(data []byte) error {
+	type entry Entry
+	var decoded struct {
+		entry
+		Who   string `json:"who"`
+		Scope string `json:"scope"`
+	}
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	if decoded.Principal == "" {
+		decoded.Principal = decoded.Who
+	}
+	if decoded.Role == "" {
+		decoded.Role = decoded.Scope
+	}
+	*e = Entry(decoded.entry)
+	return nil
+}
+
 func (j Journal) Read() ([]Entry, error) {
 	info, err := os.Lstat(j.Path)
 	if os.IsNotExist(err) {
+		// Windows also reports not-exist for a path below a regular file.
+		if parent, parentErr := os.Stat(filepath.Dir(j.Path)); parentErr == nil && !parent.IsDir() {
+			return nil, fmt.Errorf("MCP journal parent is not a directory")
+		}
 		return []Entry{}, nil
 	}
 	if err != nil {

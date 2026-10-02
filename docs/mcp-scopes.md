@@ -153,3 +153,5 @@ and [device tags](https://tailscale.com/docs/features/tags).
 Reduced operators and managers can change grants only for people already in the people store. Creating a person is owner-only; `mcp_person_owner_required` tells the caller to ask the owner to add the person first. Revoking an unknown login is a no-op and does not create a person or alter other apps.
 
 Audit entries separate `identity.login` and `identity.node` from the matched `principal`. The `kind=mcp`, `role`, `tool`, `apps`, `result` and `phase` fields are typed metadata. Share intent records the explicit requested name, or no app when allocation is pending; completion records the actual generated or reused name, including concurrent allocation results. Raw arguments, targets, invitation links and secrets are excluded.
+
+Daemon bootstrap keeps the same session through definition writes and each manager command. Cancellation also stops manager subprocesses; bounded restoration of a prior installation and failure cleanup may finish after cancellation or expiry. Legacy journal `who`/`scope` fields are read as `principal`/`role`, without inferring missing caller identity.

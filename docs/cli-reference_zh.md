@@ -168,3 +168,5 @@ Operator/people-manager 可用 `--max-duration`（默认 24h）；viewer 可显�
 见 [MCP 作用域](mcp-scopes_zh.md)。
 
 受限人员授权要求人员已存在（`mcp_person_owner_required`：先请 owner 添加人员）；撤销未知 login 是 no-op。审计区分调用者 `identity.login/node` 与 `principal`，包含 `role`、`phase`，并在完成时记录实际 share app。旧与 scoped 配置中匹配多个 MCP tag principal 时返回 HTTP 403，显式 login binding 优先。
+
+MCP 工具 bootstrap daemon 时，会话过期或取消会阻止后续定义写入和 manager 命令。Manager 子进程继承取消；有超时限制的安装恢复与清理可以继续。读取旧审计的 `who`/`scope` 时将其保留为 `principal`/`role`。

@@ -174,3 +174,5 @@ WhoIs-bound roles with optional anchored expiry. Legacy `mcp.allow` remains owne
 See [MCP scopes](mcp-scopes.md).
 
 Scoped people grants require an existing person (`mcp_person_owner_required`: ask the owner to add the person first); revoking an unknown login is a no-op. Audit keeps caller `identity.login/node` separate from `principal`, with `role` and `phase`, and records the actual share app at completion. Multiple matching MCP tag principals across legacy and scoped config return HTTP 403 unless an explicit login binding wins.
+
+When MCP tools bootstrap a daemon, session expiry or cancellation blocks later definition writes and manager commands. Manager subprocesses inherit cancellation; bounded installation restoration and cleanup may continue. Reading legacy audit `who`/`scope` preserves them as `principal`/`role`.

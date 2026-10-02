@@ -3,6 +3,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -86,13 +87,13 @@ func runUninstallLocked(cmd *cobra.Command, args []string) error {
 	}
 
 	var warnings []string
-	if output, err := systemctlCombinedOutput("--user", "stop", systemdServiceName); err != nil {
+	if output, err := systemctlCombinedOutput(context.Background(), "--user", "stop", systemdServiceName); err != nil {
 		if stateErr := confirmSystemdStoppedAfterError(servicePath); stateErr != nil {
 			return fmt.Errorf("stop systemd user service: %w%s; unit retained because shutdown could not be confirmed: %v", err, commandOutputSuffix(output), stateErr)
 		}
 		warnings = append(warnings, fmt.Sprintf("stop systemd user service: %v%s", err, commandOutputSuffix(output)))
 	}
-	if output, err := systemctlCombinedOutput("--user", "disable", systemdServiceName); err != nil {
+	if output, err := systemctlCombinedOutput(context.Background(), "--user", "disable", systemdServiceName); err != nil {
 		warnings = append(warnings, fmt.Sprintf("disable systemd user service: %v%s", err, commandOutputSuffix(output)))
 	}
 
@@ -105,7 +106,7 @@ func runUninstallLocked(cmd *cobra.Command, args []string) error {
 	if warning := resetFailedSystemdServiceWarning(); warning != "" {
 		warnings = append(warnings, warning)
 	}
-	if output, err := systemctlCombinedOutput("--user", "daemon-reload"); err != nil {
+	if output, err := systemctlCombinedOutput(context.Background(), "--user", "daemon-reload"); err != nil {
 		return fmt.Errorf("reload systemd user daemon: %w%s", err, commandOutputSuffix(output))
 	}
 
@@ -130,7 +131,7 @@ func runUninstallLocked(cmd *cobra.Command, args []string) error {
 // A failed stop may still have stopped the unit. Only an explicit inactive or
 // failed state with no MainPID lets uninstall continue and remove its definition.
 func confirmSystemdStoppedAfterError(servicePath string) error {
-	output, err := systemctlCombinedOutput("--user", "show", systemdServiceName,
+	output, err := systemctlCombinedOutput(context.Background(), "--user", "show", systemdServiceName,
 		"--property=ActiveState", "--property=MainPID", "--no-pager")
 	if err != nil {
 		return fmt.Errorf("inspect systemd service state: %w%s; %s", err, commandOutputSuffix(output), systemdUserManagerRemedy(servicePath))
@@ -150,7 +151,7 @@ func confirmSystemdStoppedAfterError(servicePath string) error {
 // reached is evidence of neither, and keeps the plain "not installed" answer.
 func systemdUnitLeftBehind(servicePath string) error {
 	var problems []string
-	output, err := systemctlCombinedOutput("--user", "show", systemdServiceName,
+	output, err := systemctlCombinedOutput(context.Background(), "--user", "show", systemdServiceName,
 		"--property=LoadState", "--property=ActiveState", "--property=MainPID", "--no-pager")
 	if err == nil {
 		state := parseSystemdProperties(output)
@@ -178,11 +179,11 @@ func systemdUserManagerRemedy(servicePath string) string {
 }
 
 func resetFailedSystemdServiceWarning() string {
-	output, err := systemctlCombinedOutput("--user", "reset-failed", systemdServiceName)
+	output, err := systemctlCombinedOutput(context.Background(), "--user", "reset-failed", systemdServiceName)
 	if err == nil {
 		return ""
 	}
-	stateOutput, stateErr := systemctlCombinedOutput(
+	stateOutput, stateErr := systemctlCombinedOutput(context.Background(),
 		"--user", "show", systemdServiceName,
 		"--property=LoadState", "--property=ActiveState", "--no-pager",
 	)

@@ -48,7 +48,7 @@ func TestLinuxInstallOwnershipTreatsQueryTimeoutAsUnknown(t *testing.T) {
 			readPIDFn = func(string) (int, error) { return 1775, nil }
 			installDaemonArtifactConflictFn = func() error { return errManualDaemonConflict }
 			calls := 0
-			systemctlCombinedOutput = func(args ...string) ([]byte, error) {
+			systemctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
 				if args[1] != "show" {
 					t.Fatalf("ownership read ran a non-read verb: %v", args)
 				}
@@ -63,10 +63,10 @@ func TestLinuxInstallOwnershipTreatsQueryTimeoutAsUnknown(t *testing.T) {
 				return []byte("MainPID=1888\n"), nil
 			}
 
-			state, err := captureSystemdPreviousState(servicePath)
+			state, err := captureSystemdPreviousState(context.Background(), servicePath)
 			if tc.wantErr == "" {
 				if err != nil || !state.OwnedRunning {
-					t.Fatalf("captureSystemdPreviousState() owned=%v err=%v, want owned after one retried timeout", state.OwnedRunning, err)
+					t.Fatalf("captureSystemdPreviousState(context.Background(), ) owned=%v err=%v, want owned after one retried timeout", state.OwnedRunning, err)
 				}
 				if calls != tc.wantCalls {
 					t.Fatalf("systemctl show calls = %d, want %d", calls, tc.wantCalls)
@@ -74,10 +74,10 @@ func TestLinuxInstallOwnershipTreatsQueryTimeoutAsUnknown(t *testing.T) {
 				return
 			}
 			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
-				t.Fatalf("captureSystemdPreviousState() err=%v, want %q", err, tc.wantErr)
+				t.Fatalf("captureSystemdPreviousState(context.Background(), ) err=%v, want %q", err, tc.wantErr)
 			}
 			if tc.wantErr != errManualDaemonConflict.Error() && (errors.Is(err, errManualDaemonConflict) || !errors.Is(err, context.DeadlineExceeded)) {
-				t.Fatalf("captureSystemdPreviousState() err=%v, want an unknown-ownership timeout, not the manual-daemon conflict", err)
+				t.Fatalf("captureSystemdPreviousState(context.Background(), ) err=%v, want an unknown-ownership timeout, not the manual-daemon conflict", err)
 			}
 			if calls != tc.wantCalls {
 				t.Fatalf("systemctl show calls = %d, want %d", calls, tc.wantCalls)
@@ -96,25 +96,25 @@ func TestLinuxInstallVerificationRetriesOneQueryTimeout(t *testing.T) {
 
 	t.Run("one timeout then healthy", func(t *testing.T) {
 		calls := 0
-		systemctlCombinedOutput = func(args ...string) ([]byte, error) {
+		systemctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
 			calls++
 			if calls == 1 {
 				return nil, managerQueryTimeoutError("systemctl")
 			}
 			return runningSystemdState(), nil
 		}
-		if _, err := verifySystemdServiceRunning(); err != nil {
+		if _, err := verifySystemdServiceRunning(context.Background()); err != nil {
 			t.Fatalf("verify error = %v after one timed-out sample of a healthy unit, want success", err)
 		}
 	})
 
 	t.Run("two timeouts in a row fail", func(t *testing.T) {
 		calls := 0
-		systemctlCombinedOutput = func(args ...string) ([]byte, error) {
+		systemctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
 			calls++
 			return nil, managerQueryTimeoutError("systemctl")
 		}
-		_, err := verifySystemdServiceRunning()
+		_, err := verifySystemdServiceRunning(context.Background())
 		if !errors.Is(err, context.DeadlineExceeded) || calls != 2 {
 			t.Fatalf("verify err=%v calls=%d, want the timeout reported after exactly one retry", err, calls)
 		}

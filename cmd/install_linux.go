@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/anydoor7/tslink/internal/atomicfile"
+	"github.com/anydoor7/tslink/internal/mcpscope"
 	"github.com/anydoor7/tslink/internal/output"
 	"github.com/spf13/cobra"
 )
@@ -32,15 +33,17 @@ var (
 	installDaemonArtifactConflictFn = func() error {
 		return detectInstallDaemonConflict("a systemd user unit is installed, but TSLink could not confirm that systemd owns the running daemon; stop the manual daemon with 'tslink stop' and retry 'tslink install'; keep the existing unit installed")
 	}
-	systemctlCombinedOutput = func(args ...string) ([]byte, error) {
-		return runBoundedManagerCommand("systemctl", managerCommandTimeout(args...), args...)
+	systemctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
+		return runBoundedManagerCommandContext(ctx, "systemctl", managerCommandTimeout(args...), args...)
 	}
 	systemdSettleTimeout  = 3 * time.Second
 	systemdSettleInterval = 250 * time.Millisecond
 	systemdStableWindow   = daemonSettleWindow
 	// Bounded like every other manager query: supervision detection now reads
 	// lingering on the status path, where an unbounded exec would be a hang.
-	loginctlCombinedOutputFn = func(args ...string) ([]byte, error) { return boundedManagerOutput("loginctl", args...) }
+	loginctlCombinedOutputFn = func(ctx context.Context, args ...string) ([]byte, error) {
+		return runBoundedManagerCommandContext(ctx, "loginctl", managerQueryTimeout, args...)
+	}
 )
 
 type InstallResult struct {
@@ -113,6 +116,11 @@ If lingering was enabled only for TSLink, disable it after uninstall:
 
 // runInstallLocked requires the per-user supervisor transaction lock.
 func runInstallLocked(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
+	// Direct CLI/test callers may have no context; MCP always supplies its session.
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	noAutoProvision, err := cmd.Flags().GetBool("no-auto-provision")
 	if err != nil {
 		return fmt.Errorf("read --no-auto-provision: %w", err)
@@ -121,7 +129,7 @@ func runInstallLocked(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	previousState, err := captureSystemdPreviousState(servicePath)
+	previousState, err := captureSystemdPreviousState(ctx, servicePath)
 	if err != nil {
 		return err
 	}
@@ -135,6 +143,10 @@ func runInstallLocked(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("resolve executable path: %w", err)
 	}
 
+	if err := mcpscope.CheckEffect(ctx); err != nil {
+		return err
+	}
+
 	if err := os.MkdirAll(filepath.Dir(servicePath), 0o755); err != nil {
 		return fmt.Errorf("create systemd user dir: %w", err)
 	}
@@ -144,11 +156,14 @@ func runInstallLocked(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	service := strings.Replace(systemdServiceContents(exe, noAutoProvision), "[Service]\n", "[Service]\n"+systemdConfigEnvironment(configDir)+"\n", 1)
+	if err := mcpscope.CheckEffect(ctx); err != nil {
+		return err
+	}
 	if err := atomicfile.WriteFileInExistingDir(servicePath, []byte(service), atomicfile.PrivateFileMode); err != nil {
 		return fmt.Errorf("write systemd service: %w", err)
 	}
 
-	verifyDegraded, installErr := activateSystemdService()
+	verifyDegraded, installErr := activateSystemdService(ctx)
 	if installErr != nil {
 		if !previousState.Existed {
 			return installErr
@@ -167,7 +182,7 @@ func runInstallLocked(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("%v; upgrade failed, so the previous systemd user unit was restored; no prior systemd-owned running daemon was identified, so no service was restarted; fix the reported cause and re-run 'tslink install'", installErr)
 	}
 
-	warning := joinInstallWarnings(linuxLingerWarning(), systemdVerifyDegradedWarning(verifyDegraded))
+	warning := joinInstallWarnings(linuxLingerWarning(ctx), systemdVerifyDegradedWarning(verifyDegraded))
 	if jsonOutput(cmd) {
 		output.Success("install", InstallResult{
 			Path:           servicePath,
@@ -187,7 +202,7 @@ func runInstallLocked(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func captureSystemdPreviousState(servicePath string) (systemdPreviousState, error) {
+func captureSystemdPreviousState(ctx context.Context, servicePath string) (systemdPreviousState, error) {
 	info, err := os.Stat(servicePath)
 	if err != nil {
 		if !os.IsNotExist(err) {
@@ -203,7 +218,7 @@ func captureSystemdPreviousState(servicePath string) (systemdPreviousState, erro
 	if err != nil {
 		return systemdPreviousState{}, fmt.Errorf("read existing systemd user unit before upgrade: %w", err)
 	}
-	owned, err := systemdOwnsRunningDaemon()
+	owned, err := systemdOwnsRunningDaemon(ctx)
 	if err != nil {
 		return systemdPreviousState{}, fmt.Errorf("could not tell whether systemd owns the running TSLink daemon: %w; nothing was changed, retry 'tslink install'", err)
 	}
@@ -223,29 +238,31 @@ func captureSystemdPreviousState(servicePath string) (systemdPreviousState, erro
 
 // activateSystemdService returns the same degradation notice as
 // verifySystemdServiceRunning so the install command can surface it on success.
-func activateSystemdService() (bool, error) {
-	if commandOutput, err := systemctlCombinedOutput("--user", "daemon-reload"); err != nil {
+func activateSystemdService(ctx context.Context) (bool, error) {
+	if commandOutput, err := systemctlCombinedOutputChecked(ctx, "--user", "daemon-reload"); err != nil {
 		return false, fmt.Errorf("reload systemd user daemon: %w%s", err, commandOutputSuffix(commandOutput))
 	}
-	if commandOutput, err := systemctlCombinedOutput("--user", "enable", systemdServiceName); err != nil {
+	if commandOutput, err := systemctlCombinedOutputChecked(ctx, "--user", "enable", systemdServiceName); err != nil {
 		return false, fmt.Errorf("enable systemd user service: %w%s", err, commandOutputSuffix(commandOutput))
 	}
 	// Explicit installation starts a new operator-requested attempt. Normal
 	// installs also consume systemd's start budget; discard that old history
 	// only here, before restart and before the unchanged stability gate.
-	if commandOutput, err := systemctlCombinedOutput("--user", "reset-failed", systemdServiceName); err != nil {
+	if commandOutput, err := systemctlCombinedOutputChecked(ctx, "--user", "reset-failed", systemdServiceName); err != nil {
 		return false, fmt.Errorf("reset systemd user service start limit before install: %w%s", err, commandOutputSuffix(commandOutput))
 	}
-	if commandOutput, err := systemctlCombinedOutput("--user", "restart", systemdServiceName); err != nil {
+	if commandOutput, err := systemctlCombinedOutputChecked(ctx, "--user", "restart", systemdServiceName); err != nil {
 		return false, fmt.Errorf("restart systemd user service: %w%s", err, commandOutputSuffix(commandOutput))
 	}
-	return verifySystemdServiceRunning()
+	return verifySystemdServiceRunning(ctx)
 }
 
+// Compensation restores the prior unit/job, rather than starting new work.
+// It may finish after caller cancellation/expiry, with bounded manager calls.
 func restorePreviousSystemdUnit(previous systemdPreviousState, servicePath string) (systemdRestoreResult, error) {
 	result := systemdRestoreResult{}
 	var restoreErrs []error
-	if commandOutput, err := systemctlCombinedOutput("--user", "stop", systemdServiceName); err != nil {
+	if commandOutput, err := systemctlCombinedOutput(context.Background(), "--user", "stop", systemdServiceName); err != nil {
 		restoreErrs = append(restoreErrs, fmt.Errorf("stop failed upgraded systemd user service: %w%s", err, commandOutputSuffix(commandOutput)))
 	}
 	if err := atomicfile.WriteFileInExistingDir(servicePath, previous.Unit, secureSystemdUnitMode(previous.Mode)); err != nil {
@@ -253,7 +270,7 @@ func restorePreviousSystemdUnit(previous systemdPreviousState, servicePath strin
 		return result, errors.Join(restoreErrs...)
 	}
 	result.UnitRestored = true
-	if commandOutput, err := systemctlCombinedOutput("--user", "daemon-reload"); err != nil {
+	if commandOutput, err := systemctlCombinedOutput(context.Background(), "--user", "daemon-reload"); err != nil {
 		restoreErrs = append(restoreErrs, fmt.Errorf("reload restored systemd user unit: %w%s", err, commandOutputSuffix(commandOutput)))
 	}
 	if len(restoreErrs) > 0 || !previous.OwnedRunning {
@@ -261,16 +278,16 @@ func restorePreviousSystemdUnit(previous systemdPreviousState, servicePath strin
 	}
 	// The failed upgrade may have exhausted the budget too. Only reset once
 	// the previous bytes are restored and reloaded, and only if restarting.
-	if commandOutput, err := systemctlCombinedOutput("--user", "reset-failed", systemdServiceName); err != nil {
+	if commandOutput, err := systemctlCombinedOutput(context.Background(), "--user", "reset-failed", systemdServiceName); err != nil {
 		return result, fmt.Errorf("reset restored systemd user service start limit: %w%s", err, commandOutputSuffix(commandOutput))
 	}
-	if commandOutput, err := systemctlCombinedOutput("--user", "restart", systemdServiceName); err != nil {
+	if commandOutput, err := systemctlCombinedOutput(context.Background(), "--user", "restart", systemdServiceName); err != nil {
 		return result, fmt.Errorf("restart restored systemd user service: %w%s", err, commandOutputSuffix(commandOutput))
 	}
 	// The restore path already returns an error the operator will read, and
 	// systemdSettleError folds the degradation notice into that text, so the
 	// notice is not propagated separately here.
-	if _, err := verifySystemdServiceRunning(); err != nil {
+	if _, err := verifySystemdServiceRunning(context.Background()); err != nil {
 		return result, fmt.Errorf("verify restored systemd user service: %w", err)
 	}
 	result.Restarted = true
@@ -287,7 +304,7 @@ func secureSystemdUnitMode(mode os.FileMode) os.FileMode {
 // systemdOwnsRunningDaemon returns an error only when systemd could not be
 // asked at all within two query budgets: ownership is then unknown, which is
 // neither "owned" nor "not owned".
-func systemdOwnsRunningDaemon() (bool, error) {
+func systemdOwnsRunningDaemon(ctx context.Context) (bool, error) {
 	pidPath, err := pidPathFn()
 	if err != nil || !isRunningFn(pidPath) {
 		return false, nil
@@ -298,7 +315,7 @@ func systemdOwnsRunningDaemon() (bool, error) {
 	}
 
 	stateOutput, err := retryManagerQueryOnTimeout(func() ([]byte, error) {
-		return systemctlCombinedOutput(
+		return systemctlCombinedOutputChecked(ctx,
 			"--user",
 			"show",
 			systemdServiceName,
@@ -323,7 +340,7 @@ func systemdOwnsRunningDaemon() (bool, error) {
 // tell the operator that one of the four criteria was unavailable. Returning it
 // only inside the error text would leave the successful path silent, which is
 // the one path where nobody would otherwise find out.
-func verifySystemdServiceRunning() (bool, error) {
+func verifySystemdServiceRunning(ctx context.Context) (bool, error) {
 	deadline := time.Now().Add(systemdSettleTimeout)
 	var lastProperties map[string]string
 	var previousGoodPID int
@@ -338,7 +355,7 @@ func verifySystemdServiceRunning() (bool, error) {
 
 	for {
 		output, err := retryManagerQueryOnTimeout(func() ([]byte, error) {
-			return systemctlCombinedOutput(
+			return systemctlCombinedOutputChecked(ctx,
 				"--user",
 				"show",
 				systemdServiceName,
@@ -528,14 +545,17 @@ func defaultLinuxUserName() string {
 	return strconv.Itoa(linuxUserIDFn())
 }
 
-func linuxLingerWarning() string {
+func linuxLingerWarning(ctx context.Context) string {
+	if err := mcpscope.CheckEffect(ctx); err != nil {
+		return "systemd lingering query skipped: " + err.Error()
+	}
 	user := linuxUserNameFn()
 	guidance := `run 'loginctl enable-linger "$USER"' so the user service can survive logout; after uninstall, run 'loginctl disable-linger "$USER"' if lingering was enabled only for TSLink`
 	if user == "" {
 		return "could not check systemd lingering because USER is not set; " + guidance
 	}
 
-	output, err := loginctlCombinedOutputFn("show-user", user, "--property=Linger", "--value")
+	output, err := loginctlCombinedOutputFn(ctx, "show-user", user, "--property=Linger", "--value")
 	if err != nil {
 		return fmt.Sprintf("could not check systemd lingering with loginctl: %v%s; %s", err, commandOutputSuffix(output), guidance)
 	}
@@ -570,4 +590,11 @@ func systemdServicePath() (string, error) {
 func init() {
 	installCmd.Flags().Bool("no-auto-provision", false, "Install the managed daemon with Funnel policy auto-provisioning disabled")
 	rootCmd.AddCommand(installCmd)
+}
+
+func systemctlCombinedOutputChecked(ctx context.Context, args ...string) ([]byte, error) {
+	if err := mcpscope.CheckEffect(ctx); err != nil {
+		return nil, err
+	}
+	return systemctlCombinedOutput(ctx, args...)
 }

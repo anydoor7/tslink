@@ -153,7 +153,7 @@ func linuxLingerState() lingerState {
 	if user == "" {
 		return lingerUnknown
 	}
-	output, err := loginctlCombinedOutputFn("show-user", user, "--property=Linger", "--value")
+	output, err := loginctlCombinedOutputFn(context.Background(), "show-user", user, "--property=Linger", "--value")
 	if err != nil {
 		return lingerUnknown
 	}
