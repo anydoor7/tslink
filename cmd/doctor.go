@@ -397,6 +397,9 @@ func buildDoctorResult(opts doctorOptions) DoctorResult {
 		completedEnrollment = diagnoseRuntimeSnapshot(&result, fingerprint, suppressExpectedMissing)
 	}
 	diagnoseCredentialTier1(&result, credentialState, pendingEnrollment, completedEnrollment)
+	if result.Alerts.MonitorError != "" {
+		result.addFinding(inspect.WarningCodeHealthMonitorSaturated, "", "health_monitor", "Health monitor slots are stuck; some checks were not attempted. Monitoring recovers when reads finish.", nil)
+	}
 	diagnoseTailscaleSSH(&result)
 
 	result.finalize()
@@ -819,13 +822,15 @@ func diagnoseRuntimeSnapshot(result *DoctorResult, fingerprint string, suppressM
 	}
 	freshness := tsruntime.Classify(snapshot, loadErr, expected)
 	result.RuntimeSnapshot = runtimeSnapshotResult(snapshot, freshness)
+	if snapshot != nil {
+		result.Alerts = alertsWithSnapshot(result.Alerts, snapshot.Alerts, result.Daemon.Running && snapshotContributesRuntimeEvidence(freshness))
+	}
 	// completedEnrollment mirrors status's per-service evidence rule: only a
 	// snapshot entry that is actually running counts as positive enrollment
 	// evidence. Counting failed or stale entries here would let doctor report
 	// authorized runtime state while status shows nothing up.
 	completedEnrollment := false
 	if snapshotContributesRuntimeEvidence(freshness) && snapshot != nil {
-		result.Alerts = snapshot.Alerts
 		if result.NodeKeys == nil {
 			result.NodeKeys = map[string]health.Expiry{}
 		}

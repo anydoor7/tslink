@@ -60,21 +60,22 @@ func TestHealthCyclePublishesOtherResultsAndCancelsWithStuckProbe(t *testing.T) 
 }
 
 func TestBoundedHealthReadRetainsSlotAcrossTimeouts(t *testing.T) {
-	slots := make(chan struct{}, 1)
+	slots := newHealthReadPool()
+	slots.slots = make(chan struct{}, 1)
 	started, release, exited := make(chan struct{}), make(chan struct{}), make(chan struct{})
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
-	got := boundedHealthRead(ctx, slots, "timeout", func(context.Context) string { close(started); <-release; close(exited); return "late" })
+	got, attempted := boundedHealthRead(ctx, slots, "stuck", 50*time.Millisecond, "timeout", func(context.Context) string { close(started); <-release; close(exited); return "late" })
 	t.Cleanup(func() { close(release); <-exited })
 	<-started
-	if got != "timeout" {
+	if got != "timeout" || !attempted {
 		t.Fatal(got)
 	}
 	ctx2, cancel2 := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel2()
-	got = boundedHealthRead(ctx2, slots, "timeout", func(context.Context) string { return "unbounded extra worker" })
-	if got != "timeout" || len(slots) != 1 {
-		t.Fatal("lost persistent worker bound", got, len(slots))
+	got, attempted = boundedHealthRead(ctx2, slots, "other", 50*time.Millisecond, "timeout", func(context.Context) string { return "unbounded extra worker" })
+	if got != "timeout" || attempted || len(slots.slots) != 1 {
+		t.Fatal("lost persistent worker bound", got, len(slots.slots))
 	}
 }
 

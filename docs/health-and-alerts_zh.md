@@ -25,7 +25,9 @@ HTTP/TCP 在任何 I/O 前执行 registry 的 target 安全校验，被拒绝的
 10s 到 1d，且不得小于超时。HTTP 路径、状态和正文选项只用于 proxy；TCP
 仍检查连接，file 在打开前检查类型，打开后重新检查对象类型和文件身份。
 Unix 使用非阻塞 open 拒绝替换成 FIFO 的对象；Windows 拒绝 device handle
-和被替换的 reparse point。超时和间隔也适用于 TCP/file。无法中断的文件系统
+与无法解析成普通文件/目录的 irregular 对象；已有的受支持目录 junction
+和 symlink 按 registry 的 Stat 规则解析，打开前后通过 handle 捕获并比较身份，
+拒绝路径替换。超时和间隔也适用于 TCP/file。无法中断的文件系统
 调用会占用 worker slot，但不会阻止其他结果发布或 monitor 退出；跨调度周期
 最多保留四个仍在执行的 backend 调用。
 路径不能包含 query、fragment 或其他 host。子串应使用非敏感内容，不要把
@@ -40,7 +42,21 @@ secret 放进 argv。Registry 的 `health` 与 MCP `add` 接受相同字段：`p
 授权、URL 就绪与应用健康分别报告。`doctor` 保留 TCP 检查，并额外运行一次
 HTTP 业务探针，外部 target 仍要求现有的显式 opt-in。后台最多四个并行 worker，
 在首次 registry 同步后启动。每 10 秒调度到期检查，所以实际间隔可能多出最多
-10 秒；大量慢 backend 会进一步延长这一间隔。已完成的检查独立发布。
+10 秒；大量慢 backend 会进一步延长这一间隔。已完成的结果按就绪批次发布，最多用 50ms 收集
+一个批次，慢检查继续执行。每批最多提交一次 journal、发布一次 snapshot；
+状态没有变化时不写盘。
+
+每个 service 同时最多一个真实 backend read。拿到 worker slot 后才开始 I/O
+超时；排队另有五秒准入上限。没有容量、排队超时、或上一次 read 尚未退出时，
+结果为未尝试（not attempted）：保留失败计数和 `last_checked`。已经准入的
+read 超过 I/O 预算才算 checked timeout；无法中断的调用在真正退出前保留 slot，
+迟到结果不能发布。
+
+任一池的四个 slot 全部被已超时调用占用时，`alerts.monitor_error` 显示
+`health_monitor_saturated`。Journal 每次饱和只记一次 monitor 级
+`monitor_saturated`，容量释放后记一次 `monitor_recovered`。Doctor 返回
+warning（没有其他 critical 时 exit 64）。池满会暂停该池的新读取，不会把
+未尝试的应用检查记成 down。
 
 ## 到期预警
 
@@ -51,7 +67,9 @@ HTTP 业务探针，外部 target 仍要求现有的显式 opt-in。后台最多
 返回 exit 65。`status` 保持信息查询语义。
 
 节点到期每分钟刷新，独立于 backend 的 health interval，LocalAPI 使用另一组
-最多四个并行调用。替换 service 节点立即使旧日期失效，直到新节点报告日期前
+最多四个并行调用。该池同样使用每 service 的 in-flight guard 与独立的
+五秒排队上限；准入后享有完整五秒 I/O 预算。未尝试时保留缓存日期和轮询时间，
+已经尝试但失败才报告 unknown。替换 service 节点立即使旧日期失效，直到新节点报告日期前
 保持 unknown。Sharing 编辑保留 backend 的连续失败计数。
 
 Pinned `tailscale.com v1.102.4` 的字段是
@@ -85,8 +103,10 @@ console 检查 service 节点，或使用
 
 默认没有外部 notifier。Down、recovery 和到期阈值事件仍记录在
 `health-alert-state.json`，并出现在 status JSON、MCP 和 `/events` 的
-snapshot/update 中。文件保留最近 100 个事件及去重状态；daemon 停止后
-status 读取 durable journal，daemon 停止或 runtime snapshot 落后时也一样。
+snapshot/update 中。文件保留最近 100 个事件、去重及 monitor 状态。Status 和 doctor
+都以 durable journal 为准，daemon 停止或 runtime snapshot 落后时也一样。
+运行中可用的 snapshot 只能补充未能落盘的写入错误，不能覆盖持久化事件、
+monitor 状态或当前 journal 错误。
 事件流需要现有显式启用的 MCP control plane，并沿用
 其身份授权；通知不会新开 listener。
 

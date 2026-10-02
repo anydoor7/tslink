@@ -85,11 +85,11 @@
 | `--health-path /ready` | 拼接到 proxy backend base path 的 HTTP 业务探针路径，默认 `/` |
 | `--health-status-min N`、`--health-status-max N` | 预期 HTTP 状态范围，默认 200..299，仅 proxy |
 | `--health-body text` | 前 64 KiB 内的预期子串，默认不检查，仅 proxy |
-| `--health-timeout duration` | 探针超时 100ms..30s，默认 `5s` |
+| `--health-timeout duration` | worker 准入后的 I/O 超时 100ms..30s，默认 `5s` |
 | `--health-interval duration` | 检查间隔 10s..1d 且不小于超时，默认 `1m` |
 | `--wait duration` | 等待 URL 或授权 URL；默认 `30s`，`0` 表示不等待 |
 | `--json` | 打印版本化的结果 envelope |
 
 应用健康 (`healthy`/`degraded`/`down`/`unknown`)、检查时间和连续失败次数出现在 status、list JSON、`list --verbose`、MCP 与 `/events`。节点 key 和凭据采用 14 天/3 天到期预警，提供下一步并保留 metadata 来源。`doctor` 增加实时 HTTP 业务探针，3 天到期预警为 critical (exit 65)。Owner 通知通过 `alerts.json` 显式启用；事件与重启去重状态默认持久化。详见[健康与通知](health-and-alerts_zh.md)。
 
-HTTP/TCP 探针执行 registry 的 target 安全校验。节点到期独立于 `--health-interval` 刷新，替换节点后旧日期立即失效。Status 从 durable journal 读取事件。通知采用有界队列；command 的 deadline 为 10 秒，pipe 清理额外最多 250ms，取消计为失败。
+HTTP/TCP 探针执行 registry 的 target 安全校验。节点到期独立于 `--health-interval` 刷新，替换节点后旧日期立即失效。每 service 每个池最多一个 read；排队另有五秒上限，未尝试不更新失败计数或检查时间。池被卡住时，`alerts.monitor_error=health_monitor_saturated` 与 monitor 饱和/恢复事件分别报告，doctor 为 warning。就绪结果批量落盘，无变化不写。Status 和 doctor 从 durable journal 读取事件和 monitor 状态，snapshot 仅可补充写盘错误。通知采用有界队列；command 的 deadline 为 10 秒，pipe 清理额外最多 250ms，取消计为失败。

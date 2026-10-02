@@ -395,8 +395,8 @@ type Server struct {
 	credentialStateKnown  bool
 	credentialStateDigest string
 	healthStates          map[string]serviceHealth
-	healthProbeSlots      chan struct{}
-	healthNodeSlots       chan struct{}
+	healthProbePool       *healthReadPool
+	healthNodePool        *healthReadPool
 	alerts                health.AlertsView
 }
 

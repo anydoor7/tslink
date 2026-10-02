@@ -34,3 +34,20 @@ func openProbeFile(path string) (*os.File, error) {
 	}
 	return os.NewFile(uintptr(h), path), nil
 }
+
+// Stat follows supported name-surrogate reparse points, including junctions,
+// just as registry admission does. Reject other irregular objects in the
+// common shape check. Capture the pre-open identity via fstat: Windows Stat
+// can otherwise load its file ID lazily from a path replaced after this check.
+func statProbeFile(path string) (os.FileInfo, error) {
+	info, err := os.Stat(path)
+	if err != nil || (!info.IsDir() && !info.Mode().IsRegular()) {
+		return info, err
+	}
+	f, err := openProbeFile(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return f.Stat()
+}

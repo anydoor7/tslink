@@ -86,11 +86,11 @@ healthy services; fix or remove bad entries before changing the registry.
 | `--health-path /ready` | HTTP business probe path joined to the proxy backend base path (default `/`) |
 | `--health-status-min N`, `--health-status-max N` | Expected HTTP status range; default 200..299, proxy only |
 | `--health-body text` | Expected substring in first 64 KiB; proxy only, omitted by default |
-| `--health-timeout duration` | Probe timeout, 100ms..30s; default `5s` |
+| `--health-timeout duration` | I/O timeout after worker admission, 100ms..30s; default `5s` |
 | `--health-interval duration` | Probe interval, 10s..1d and at least timeout; default `1m` |
 | `--wait duration` | Wait for a URL or enrollment URL; default `30s`, `0` disables waiting |
 | `--json` | Print the versioned result envelope |
 
 App health (`healthy`/`degraded`/`down`/`unknown`), observation timestamps and consecutive failures appear in status, list JSON, `list --verbose`, MCP and `/events`. Node-key and credential expiry warnings use 14-day and 3-day thresholds with next steps; metadata sources remain explicit. `doctor` adds a fresh HTTP business probe and makes the 3-day expiry warning critical (exit 65). Owner notifications are opt-in through `alerts.json`; events and restart dedup state are persisted by default. See [health and alerts](health-and-alerts.md).
 
-HTTP/TCP health checks enforce the registry's target-safety rules. Node-key expiry refreshes independently of `--health-interval` and is invalidated when a node is replaced. Status reads alert events from the durable journal. Notification delivery uses a bounded queue; commands have a 10-second deadline plus up to 250 ms of pipe cleanup, and cancellation counts as failure.
+HTTP/TCP health checks enforce the registry's target-safety rules. Node-key expiry refreshes independently of `--health-interval` and is invalidated when a node is replaced. Each service has one read per pool; queue admission has a separate five-second bound, and unattempted checks preserve failure counts and observation timestamps. Stuck pools report `alerts.monitor_error=health_monitor_saturated` with monitor saturation/recovery events and a doctor warning. Ready results persist in batches; unchanged state does not write. Status and doctor read events and monitor state from the durable journal; snapshots may only supplement write errors. Notification delivery uses a bounded queue; commands have a 10-second deadline plus up to 250 ms of pipe cleanup, and cancellation counts as failure.

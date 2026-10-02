@@ -92,6 +92,9 @@ func formatAlerts(out io.Writer, a health.AlertsView) {
 	if a.Error != "" {
 		fmt.Fprintf(out, " error=%s", a.Error)
 	}
+	if a.MonitorError != "" {
+		fmt.Fprintf(out, " monitor_error=%s", a.MonitorError)
+	}
 	fmt.Fprintln(out)
 }
 
@@ -122,6 +125,15 @@ func healthConfigFromFlags(cmd *cobra.Command) *registry.HealthConfig {
 }
 
 var doctorHTTPProbeFn = func(ctx context.Context, svc registry.Service) string { return health.Probe(ctx, svc) }
+
+// The journal owns events, monitor state and current read/config errors. Only
+// a live, usable snapshot can supplement an error that could not be persisted.
+func alertsWithSnapshot(journal health.AlertsView, snapshot health.AlertsView, live bool) health.AlertsView {
+	if live && journal.Error == "" && snapshot.Error == "alert_state_write_failed" {
+		journal.Error = snapshot.Error
+	}
+	return journal
+}
 
 func readAlertsForRegistry(regPath string) health.AlertsView {
 	dir := filepath.Dir(regPath)

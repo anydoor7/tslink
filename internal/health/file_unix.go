@@ -12,3 +12,5 @@ func openProbeFile(path string) (*os.File, error) {
 	// waiting for a writer; the common fstat check rejects the replacement.
 	return os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 }
+
+func statProbeFile(path string) (os.FileInfo, error) { return os.Stat(path) }

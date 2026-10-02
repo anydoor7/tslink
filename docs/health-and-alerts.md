@@ -32,7 +32,9 @@ keep TCP connection checks, and file services check that the registered
 directory or single file can be opened with the expected type. File checks
 inspect the type before opening, then verify the opened object's type and
 identity. Unix opens use nonblocking mode to reject FIFO replacements; Windows
-opens reject device handles and substituted reparse points. Timeout and interval
+opens follow supported directory junctions and symlinks as registry admission
+does, reject other irregular objects/device handles, and compare identities
+captured from handles before and after opening to reject replacements. Timeout and interval
 options also apply to those services. Uninterruptible filesystem calls retain a
 worker slot, but cannot hold up other results or monitor shutdown; at most four
 backend calls can remain in progress across cycles. Paths may not contain a
@@ -53,7 +55,24 @@ external-target opt-in. Background checks use up to four concurrent workers
 and start after the initial registry synchronization. A 10-second scheduler
 selects due checks, so the effective interval can be up to 10 seconds longer,
 and longer while a large batch of slow backends is being checked. Completed
-checks are published independently of slow checks.
+checks are published in batches of ready results, with up to 50 ms to collect
+a batch, while slow checks continue. Each batch commits the journal and
+publishes the snapshot at most once; unchanged state causes no writes.
+
+Each service has at most one actual backend read in flight. The I/O timeout
+starts after acquiring a worker slot. Queue admission has a separate five-second
+limit. A check that cannot acquire capacity, times out in the queue, or still
+has a previous read in flight is **not attempted**: it preserves the failure
+streak and `last_checked`. An admitted read that exceeds its I/O budget is a
+checked timeout; an uninterruptible call retains its slot until it actually
+exits and cannot publish a late result.
+
+If all four slots in either pool are retained by timed-out calls,
+`alerts.monitor_error` reports `health_monitor_saturated`. The journal records
+one monitor-level `monitor_saturated` event per episode and `monitor_recovered`
+when capacity returns. `doctor` reports a warning (exit 64 unless another
+finding is critical). A full pool prevents more reads in that pool; it never
+turns an unattempted app check into a down alert.
 
 ## Expiry early warning
 
@@ -66,7 +85,10 @@ exit 64 for the 14-day node warning and critical exit 65 for the 3-day or
 expired node warning. `status` remains an informational command.
 
 Node deadlines are refreshed once per minute, independently of the backend
-health interval, with a separate pool of up to four LocalAPI calls. Replacing
+health interval, with a separate pool of up to four LocalAPI calls. The same
+per-service guard and separate queue-admission limit apply; admitted LocalAPI
+reads have a full five-second I/O budget. Unattempted reads preserve the cached
+deadline and polling timestamp; an attempted failed read reports unknown. Replacing
 a service node immediately invalidates its cached deadline; it remains unknown
 until the new node reports its own deadline. Sharing edits retain the backend's
 failure streak.
@@ -105,8 +127,11 @@ auth key's expiry is distinct from the enrolled node's expiry
 There is no external notifier by default. Down, recovery and expiry-threshold
 events are still recorded in `health-alert-state.json` and exposed in
 `status` JSON, MCP and `/events` snapshots/updates. The file retains the latest
-100 events plus dedup state. Status reads the durable journal, including when
-the daemon stops or its runtime snapshot is older than the journal. The event
+100 events plus dedup and monitor state. Status and doctor read the durable
+journal, including when
+the daemon stops or its runtime snapshot is older than the journal. A live,
+usable snapshot can supplement a journal write error that could not be saved;
+it cannot replace durable events, monitor state or current journal errors. The event
 stream requires the existing opt-in MCP control plane and its
 authorization rules; notifications do not create a new network listener.
 

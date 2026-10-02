@@ -5,14 +5,16 @@ import (
 	"time"
 )
 
-type deliveryResult struct {
+type DeliveryResult struct {
 	id     uint64
 	failed bool
 }
 
+type deliveryResult = DeliveryResult
+
 type deliveryWorker struct {
 	queue   chan Event
-	results chan deliveryResult
+	results chan DeliveryResult
 	done    chan struct{}
 	cancel  context.CancelFunc
 	startID uint64
@@ -25,7 +27,7 @@ func (r *Recorder) StartDelivery(ctx context.Context) {
 		return
 	}
 	ctx, cancel := context.WithCancel(ctx)
-	w := &deliveryWorker{queue: make(chan Event, 16), results: make(chan deliveryResult, 17), done: make(chan struct{}), cancel: cancel}
+	w := &deliveryWorker{queue: make(chan Event, 16), results: make(chan DeliveryResult, 17), done: make(chan struct{}), cancel: cancel}
 	r.delivery = w
 	w.startID = r.State.NextID
 	send, config := r.Send, r.Config
@@ -40,7 +42,7 @@ func (r *Recorder) StartDelivery(ctx context.Context) {
 					return
 				}
 				err := send(ctx, config, event)
-				result := deliveryResult{event.ID, err != nil || ctx.Err() != nil}
+				result := DeliveryResult{event.ID, err != nil || ctx.Err() != nil}
 				select {
 				case w.results <- result:
 				case <-ctx.Done():
@@ -53,7 +55,7 @@ func (r *Recorder) StartDelivery(ctx context.Context) {
 
 // DeliveryReady wakes the monitor so delivery changes can be published without
 // waiting for another backend check. A nil channel disables this select case.
-func (r *Recorder) DeliveryReady() <-chan deliveryResult {
+func (r *Recorder) DeliveryReady() <-chan DeliveryResult {
 	if r.delivery == nil {
 		return nil
 	}
@@ -62,29 +64,46 @@ func (r *Recorder) DeliveryReady() <-chan deliveryResult {
 
 // CompleteDelivery is called only by the recorder's owner, including when a
 // select receives the first completion. Event IDs survive journal truncation.
-func (r *Recorder) CompleteDelivery(result deliveryResult) {
+func (r *Recorder) CompleteDelivery(results ...DeliveryResult) bool {
+	oldError := r.Error
+	for _, result := range results {
+		r.completeDelivery(result)
+	}
+	changed := r.dirty
+	if r.save() != nil {
+		r.Error = "alert_state_write_failed"
+	}
+	return changed || oldError != r.Error
+}
+
+func (r *Recorder) completeDelivery(result DeliveryResult) {
 	for i := range r.State.Events {
 		if r.State.Events[i].ID == result.id && r.State.Events[i].Delivery == "pending" {
 			r.State.Events[i].Delivery = "sent"
 			if result.failed {
 				r.State.Events[i].Delivery = "failed"
 			}
-			if r.save() != nil {
-				r.Error = "alert_state_write_failed"
-			}
+			r.dirty = true
+			return
+		}
+	}
+}
+
+func (r *Recorder) drainDelivery() {
+	for {
+		select {
+		case result := <-r.DeliveryReady():
+			r.completeDelivery(result)
+		default:
 			return
 		}
 	}
 }
 
 func (r *Recorder) DrainDelivery() {
-	for {
-		select {
-		case result := <-r.DeliveryReady():
-			r.CompleteDelivery(result)
-		default:
-			return
-		}
+	r.drainDelivery()
+	if r.save() != nil {
+		r.Error = "alert_state_write_failed"
 	}
 }
 
@@ -103,15 +122,14 @@ func (r *Recorder) StopDelivery() {
 	case <-r.delivery.done:
 	case <-timer.C:
 	}
-	r.DrainDelivery()
-	changed := false
+	r.drainDelivery()
 	for i := range r.State.Events {
 		if r.State.Events[i].ID > r.delivery.startID && r.State.Events[i].Delivery == "pending" {
 			r.State.Events[i].Delivery = "failed"
-			changed = true
+			r.dirty = true
 		}
 	}
-	if changed && r.save() != nil {
+	if r.save() != nil {
 		r.Error = "alert_state_write_failed"
 	}
 	r.delivery = nil

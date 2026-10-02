@@ -6,7 +6,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"path/filepath"
+	"reflect"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/anydoor7/tslink/internal/credentials"
@@ -72,16 +74,23 @@ func (s *Server) startHealthMonitor(ctx context.Context) <-chan struct{} {
 	go func() {
 		defer close(done)
 		r.StartDelivery(ctx)
-		defer func() { r.StopDelivery(); s.publishHealth(r) }()
+		defer func() {
+			r.StopDelivery()
+			s.mu.RLock()
+			changed := !reflect.DeepEqual(s.alerts, r.View())
+			s.mu.RUnlock()
+			if changed {
+				s.publishHealth(r)
+			}
+		}()
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		var credentialChecked time.Time
 		for {
 			now := nowFn()
-			s.healthCycle(ctx, r, now, probeFn)
+			var events []health.Event
 			if credentialChecked.IsZero() || now.Sub(credentialChecked) >= time.Minute {
 				inventory := inventoryFn(now)
-				var events []health.Event
 				for _, slot := range []credentials.SlotView{inventory.APIKey, inventory.ClientSecret} {
 					if !slot.Present || slot.Metadata == nil {
 						continue
@@ -89,18 +98,29 @@ func (s *Server) startHealthMonitor(ctx context.Context) <-chan struct{} {
 					e := health.ExpiryAt(slot.Metadata.ExpiresAt, slot.Metadata.ExpiresAtSource, now, credentials.NextAPIKeyBootstrap())
 					events = append(events, r.ObserveExpiry("", slot.Slot, e, now)...)
 				}
-				r.Commit(ctx, events, now)
 				credentialChecked = now
-				s.publishHealth(r)
 			}
+			s.healthCycle(ctx, r, now, probeFn, events...)
+
 		wait:
 			for {
 				select {
 				case <-ctx.Done():
 					return
 				case result := <-r.DeliveryReady():
-					r.CompleteDelivery(result)
-					s.publishHealth(r)
+					batch := []health.DeliveryResult{result}
+				drain:
+					for {
+						select {
+						case next := <-r.DeliveryReady():
+							batch = append(batch, next)
+						default:
+							break drain
+						}
+					}
+					if r.CompleteDelivery(batch...) {
+						s.publishHealth(r)
+					}
 				case <-ticker.C:
 					break wait
 				}
@@ -110,13 +130,13 @@ func (s *Server) startHealthMonitor(ctx context.Context) <-chan struct{} {
 	return done
 }
 
-func (s *Server) healthCycle(ctx context.Context, r *health.Recorder, now time.Time, probe func(context.Context, registry.Service) string) {
+func (s *Server) healthCycle(ctx context.Context, r *health.Recorder, now time.Time, probe func(context.Context, registry.Service) string, pendingEvents ...health.Event) {
 	s.mu.Lock()
-	if s.healthProbeSlots == nil {
-		s.healthProbeSlots = make(chan struct{}, 4)
-		s.healthNodeSlots = make(chan struct{}, 4)
+	if s.healthProbePool == nil {
+		s.healthProbePool = newHealthReadPool()
+		s.healthNodePool = newHealthReadPool()
 	}
-	probeSlots, nodeSlots := s.healthProbeSlots, s.healthNodeSlots
+	probeSlots, nodeSlots := s.healthProbePool, s.healthNodePool
 	var targets []healthTarget
 	for _, node := range s.nodes {
 		if health.TargetSafe(node.service) {
@@ -156,12 +176,14 @@ func (s *Server) healthCycle(ctx context.Context, r *health.Recorder, now time.T
 		if !exists || previous.LastChecked == nil || now.Sub(*previous.LastChecked) >= interval {
 			jobs++
 			go func() {
-				probeCtx, cancel := context.WithTimeout(ctx, timeout)
-				defer cancel()
 				// Enrollment/policy failures still get backend observations.
-				code := boundedHealthRead(probeCtx, probeSlots, "health_timeout", func(ctx context.Context) string { return probe(ctx, target.Service) })
-				h := health.Result(previous, target.Service.Type, code, now)
-				results <- result{target: target, identity: identity, health: &h}
+				code, attempted := boundedHealthRead(ctx, probeSlots, target.Service.Name, timeout, "health_timeout", func(ctx context.Context) string { return probe(ctx, target.Service) })
+				var h *health.State
+				if attempted {
+					value := health.Result(previous, target.Service.Type, code, now)
+					h = &value
+				}
+				results <- result{target: target, identity: identity, health: h}
 			}()
 		}
 		// The LocalAPI cadence belongs to the node, not health.interval. A new
@@ -169,9 +191,7 @@ func (s *Server) healthCycle(ctx context.Context, r *health.Recorder, now time.T
 		if !exists || observed.Node != target.Node || observed.NodeChecked.IsZero() || now.Sub(observed.NodeChecked) >= time.Minute {
 			jobs++
 			go func() {
-				pollCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-				defer cancel()
-				e := boundedHealthRead(pollCtx, nodeSlots, nodeKeyExpiry(nil, now), func(ctx context.Context) health.Expiry {
+				e, attempted := boundedHealthRead(ctx, nodeSlots, target.Service.Name, 5*time.Second, nodeKeyExpiry(nil, now), func(ctx context.Context) health.Expiry {
 					if target.Node != nil && target.Node.tsnetSrv != nil {
 						if lc, err := target.Node.tsnetSrv.LocalClient(); err == nil && lc != nil {
 							if st, err := lc.StatusWithoutPeers(ctx); err == nil {
@@ -181,84 +201,169 @@ func (s *Server) healthCycle(ctx context.Context, r *health.Recorder, now time.T
 					}
 					return nodeKeyExpiry(nil, now)
 				})
-				results <- result{target: target, identity: identity, expiry: &e}
+				var expiry *health.Expiry
+				if attempted {
+					expiry = &e
+				}
+				results <- result{target: target, identity: identity, expiry: expiry}
 			}()
 		}
 	}
-	published := false
-	for range jobs {
-		result := <-results // bounded wrappers finish even if their I/O is stuck
+	// Gather ready results for a short bounded window. Fast observations are
+	// published while slow reads continue; an immediate batch writes once.
+	for jobs > 0 {
+		batch := []result{<-results}
+		jobs--
+		timer := time.NewTimer(50 * time.Millisecond)
+	collect:
+		for jobs > 0 {
+			select {
+			case value := <-results:
+				batch = append(batch, value)
+				jobs--
+			case <-timer.C:
+				break collect
+			case <-ctx.Done():
+				break collect
+			}
+		}
+		timer.Stop()
 		if ctx.Err() != nil {
 			continue
 		}
-		s.mu.Lock()
-		name := result.target.Service.Name
-		current, running := s.nodes[name]
-		if result.target.Node != nil && (!running || current != result.target.Node || healthIdentity(current.service) != result.identity) {
-			s.mu.Unlock()
-			continue
-		}
-		if result.target.Failed {
-			failure, failed := s.serviceFailures[name]
-			if running || !failed || healthIdentity(failure.Service) != result.identity {
+		changed := false
+		events := pendingEvents
+		pendingEvents = nil
+		for _, result := range batch {
+			if result.health == nil && result.expiry == nil {
+				continue
+			} // not attempted
+			s.mu.Lock()
+			name := result.target.Service.Name
+			current, running := s.nodes[name]
+			if result.target.Node != nil && (!running || current != result.target.Node || healthIdentity(current.service) != result.identity) {
 				s.mu.Unlock()
 				continue
 			}
+			if result.target.Failed {
+				failure, failed := s.serviceFailures[name]
+				if running || !failed || healthIdentity(failure.Service) != result.identity {
+					s.mu.Unlock()
+					continue
+				}
+			}
+			if s.healthStates == nil {
+				s.healthStates = map[string]serviceHealth{}
+			}
+			observed := s.healthStates[name]
+			if observed.Identity != result.identity {
+				observed = serviceHealth{Identity: result.identity, Health: health.Unchecked(result.target.Service.Type)}
+			}
+			if result.health != nil {
+				changed = changed || !reflect.DeepEqual(observed.Health, *result.health)
+				observed.Health = *result.health
+				events = append(events, r.ObserveHealth(name, result.identity, *result.health, now)...)
+			}
+			if result.expiry != nil {
+				changed = changed || observed.Node != result.target.Node || !reflect.DeepEqual(observed.NodeKey, *result.expiry)
+				observed.NodeKey, observed.Node, observed.NodeChecked = *result.expiry, result.target.Node, now
+				events = append(events, r.ObserveExpiry(name, "node_key", *result.expiry, now)...)
+			}
+			s.healthStates[name] = observed
+			s.mu.Unlock()
 		}
-		if s.healthStates == nil {
-			s.healthStates = map[string]serviceHealth{}
+		events = append(events, r.ObserveMonitor(probeSlots.saturated() || nodeSlots.saturated(), now)...)
+		if changed || len(events) > 0 {
+			r.Commit(ctx, events, now)
+			s.publishHealth(r)
 		}
-		observed := s.healthStates[name]
-		if observed.Identity != result.identity {
-			observed = serviceHealth{Identity: result.identity, Health: health.Unchecked(result.target.Service.Type)}
-		}
-		var events []health.Event
-		if result.health != nil {
-			observed.Health = *result.health
-			events = append(events, r.ObserveHealth(name, result.identity, *result.health, now)...)
-		}
-		if result.expiry != nil {
-			observed.NodeKey, observed.Node, observed.NodeChecked = *result.expiry, result.target.Node, now
-			events = append(events, r.ObserveExpiry(name, "node_key", *result.expiry, now)...)
-		}
-		s.healthStates[name] = observed
-		s.mu.Unlock()
-		r.Commit(ctx, events, now)
-		s.publishHealth(r)
-		published = true
 	}
-	if !published && ctx.Err() == nil {
-		r.Commit(ctx, nil, now)
-		s.publishHealth(r)
+	// Pool recovery can happen between cycles even when no app check is due.
+	if ctx.Err() == nil {
+		events := append(pendingEvents, r.ObserveMonitor(probeSlots.saturated() || nodeSlots.saturated(), now)...)
+		s.mu.RLock()
+		changed := !reflect.DeepEqual(s.alerts, r.View())
+		s.mu.RUnlock()
+		if r.Commit(ctx, events, now) || changed {
+			s.publishHealth(r)
+		}
 	}
 }
 
-// A stuck kernel call cannot be canceled by Go. Its slot stays occupied across
-// cycles, bounding abandoned I/O to four calls per pool, while the wrapper and
-// monitor can finish. Workers only return values; they never publish late data.
-func boundedHealthRead[T any](ctx context.Context, slots chan struct{}, fallback T, read func(context.Context) T) T {
-	if ctx.Err() != nil {
-		return fallback
+// Each pool bounds real reads, including uninterruptible calls after timeout.
+// flights guards service names until the actual read exits, even after removal
+// or replacement. A true value means an admitted read outlived its I/O budget.
+type healthReadPool struct {
+	mu      sync.Mutex
+	slots   chan struct{}
+	flights map[string]bool
+}
+
+func newHealthReadPool() *healthReadPool {
+	return &healthReadPool{slots: make(chan struct{}, 4), flights: map[string]bool{}}
+}
+
+func (p *healthReadPool) saturated() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	stuck := 0
+	for _, timedOut := range p.flights {
+		if timedOut {
+			stuck++
+		}
+	}
+	return stuck == cap(p.slots)
+}
+
+// Queue admission has its own five-second bound. No slot, an existing read,
+// canceled admission or queue timeout means not attempted. Only an admitted
+// read can return a checked timeout; its I/O budget starts after admission.
+func boundedHealthRead[T any](ctx context.Context, pool *healthReadPool, name string, timeout time.Duration, fallback T, read func(context.Context) T) (T, bool) {
+	pool.mu.Lock()
+	if _, busy := pool.flights[name]; busy || ctx.Err() != nil {
+		pool.mu.Unlock()
+		return fallback, false
+	}
+	pool.flights[name] = false
+	pool.mu.Unlock()
+	release := func() { pool.mu.Lock(); delete(pool.flights, name); pool.mu.Unlock() }
+	queueTimer := time.NewTimer(5 * time.Second)
+	defer queueTimer.Stop()
+	if pool.saturated() {
+		release()
+		return fallback, false
 	}
 	select {
-	case slots <- struct{}{}:
+	case pool.slots <- struct{}{}:
+	case <-queueTimer.C:
+		release()
+		return fallback, false
 	case <-ctx.Done():
-		return fallback
+		release()
+		return fallback, false
 	}
 	if ctx.Err() != nil {
-		<-slots
-		return fallback
+		<-pool.slots
+		release()
+		return fallback, false
 	}
+	ioCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 	result := make(chan T, 1)
 	go func() {
-		defer func() { <-slots }()
-		result <- read(ctx)
+		defer func() { <-pool.slots; release() }()
+		result <- read(ioCtx)
 	}()
 	select {
 	case value := <-result:
-		return value
-	case <-ctx.Done():
-		return fallback
+		return value, true
+	case <-ioCtx.Done():
+		pool.mu.Lock()
+		if _, exists := pool.flights[name]; exists {
+			pool.flights[name] = true
+		}
+		pool.mu.Unlock()
+		return fallback, true
 	}
 }
 

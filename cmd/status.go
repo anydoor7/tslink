@@ -425,7 +425,7 @@ func (s statusRead) getPollableStatus(pidPath, regPath, snapshotPath, authHandof
 		snapshot, snapshotErr := runtimeLoadSnapshotFn(snapshotPath)
 		if snapshotErr == nil && snapshot != nil && snapshot.GlobalError != nil {
 			ownershipProofs, ownershipProofAvailable := ownershipProofsForRegistry(regPath)
-			return s.statusFromGlobalFailure(pidPath, snapshot, ownershipProofs, ownershipProofAvailable), nil
+			return s.statusFromGlobalFailure(pidPath, regPath, snapshot, ownershipProofs, ownershipProofAvailable), nil
 		}
 		return StatusResult{}, err
 	}
@@ -466,8 +466,8 @@ func (s statusRead) getPollableStatus(pidPath, regPath, snapshotPath, authHandof
 	freshness := tsruntime.Classify(snapshot, loadErr, expected)
 	// Events always come from the durable journal. A live, fresh snapshot may
 	// additionally report a write failure that could not itself be persisted.
-	if r.DaemonRunning && snapshotContributesRuntimeEvidence(freshness) && snapshot != nil && r.Alerts.Error == "" {
-		r.Alerts.Error = snapshot.Alerts.Error
+	if snapshot != nil {
+		r.Alerts = alertsWithSnapshot(r.Alerts, snapshot.Alerts, r.DaemonRunning && snapshotContributesRuntimeEvidence(freshness))
 	}
 	up := make(map[string]struct{})
 	if snapshotContributesRuntimeEvidence(freshness) && snapshot != nil {
@@ -544,11 +544,13 @@ func (s statusRead) getPollableStatus(pidPath, regPath, snapshotPath, authHandof
 	return r, nil
 }
 
-func (s statusRead) statusFromGlobalFailure(pidPath string, snapshot *tsruntime.Snapshot, ownershipProofs map[string]bool, ownershipProofAvailable bool) StatusResult {
+func (s statusRead) statusFromGlobalFailure(pidPath, regPath string, snapshot *tsruntime.Snapshot, ownershipProofs map[string]bool, ownershipProofAvailable bool) StatusResult {
 	r := s.baseStatus(pidPath)
 	r.OwnershipProofAvailable = ownershipProofAvailable
 	r.GlobalError = cloneServiceError(snapshot.GlobalError)
-	r.Alerts = snapshot.Alerts
+	// The registry cannot be read, so this snapshot cannot be verified as
+	// current. Journal authority still holds on the global-failure path.
+	r.Alerts = alertsWithSnapshot(readAlertsForRegistry(regPath), snapshot.Alerts, false)
 	r.ServiceCount = len(snapshot.Services)
 	r.Services = make([]StatusServiceState, 0, len(snapshot.Services))
 	for _, service := range snapshot.Services {
