@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="708" viewBox="0 0 960 708" fill="none" role="img" aria-labelledby="title desc">
+<title id="title">TSLink: distinct services, distinct nodes, one tailnet</title>
+<desc id="desc">Illustrative TSLink service map. Four local services have distinct icons, colors, and named embedded Tailscale nodes within the same tailnet: App becomes app over HTTPS; Docs becomes docs over HTTPS; Database becomes database over private TCP; Model API becomes model over HTTPS. Phone, laptop, and agent clients connect as permitted by tailnet policy. Node names and localhost ports are examples. Separate nodes do not imply isolated host processes.</desc>
+<g font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Arial, sans-serif">
+<rect x="0.5" y="0.5" width="959" height="707" rx="24" fill="#0B1423" stroke="#2C3E57" stroke-width="1"/>
+<text x="48" y="72" fill="#EDF4FF" font-size="36" font-weight="700" text-anchor="start">Your tools. Their own addresses.</text>
+<text x="48" y="111" fill="#A6B7CE" font-size="22" font-weight="400" text-anchor="start">Distinct nodes. One private Tailscale network.</text>
+<rect x="851" y="58" width="14" height="14" rx="4" fill="#65D5E9" stroke="none" stroke-width="1"/>
+<rect x="875" y="58" width="14" height="14" rx="4" fill="#F2C064" stroke="none" stroke-width="1"/>
+<rect x="851" y="82" width="14" height="14" rx="4" fill="#C1A2FF" stroke="none" stroke-width="1"/>
+<rect x="875" y="82" width="14" height="14" rx="4" fill="#72D5A4" stroke="none" stroke-width="1"/>
+<rect x="24" y="147" width="912" height="184" rx="20" fill="#152236" stroke="#2C3E57" stroke-width="1"/>
+<text x="48" y="179" fill="#A6B7CE" font-size="15" font-weight="650" text-anchor="start" letter-spacing="1.5">ON YOUR MACHINE</text>
+<text x="912" y="179" fill="#A6B7CE" font-size="18" font-weight="400" text-anchor="end">Existing local services</text>
+<rect x="24" y="416" width="912" height="244" rx="20" fill="#101C2E" stroke="#2C3E57" stroke-width="1"/>
+<g transform="translate(45 430) scale(0.6)" stroke="#A6B7CE" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="17" width="24" height="20" rx="5"/><path d="M13 17v-6a7 7 0 0 1 14 0v6m-7 9v5"/></g>
+<text x="80" y="451" fill="#EDF4FF" font-size="16" font-weight="650" text-anchor="start" letter-spacing="1.3">ONE TAILNET</text>
+<text x="912" y="451" fill="#A6B7CE" font-size="18" font-weight="400" text-anchor="end">A separate name for every service</text>
+<rect x="48" y="200" width="192" height="108" rx="15" fill="#143647" stroke="#295967" stroke-width="1"/>
+<g transform="translate(64 218) scale(0.85)" stroke="#65D5E9" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="34" height="30" rx="5"/><path d="M3 14h34M9 9.5h1m5 0h1"/><rect x="9" y="20" width="8" height="9" rx="1.5"/><path d="M23 21h8m-8 6h8"/></g>
+<text x="109" y="243" fill="#65D5E9" font-size="21" font-weight="650" text-anchor="start">App</text>
+<text x="64" y="282" fill="#A6B7CE" font-size="17.5" font-weight="400" text-anchor="start">localhost:3000</text>
+<path d="M144 331v15" stroke="#65D5E9" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M144 389v18m-6-7 6 7 6-7" stroke="#65D5E9" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="48" y="477" width="192" height="107" rx="15" fill="#152236" stroke="#295967" stroke-width="1"/>
+<g transform="translate(65 495) scale(0.775)" stroke="#65D5E9" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="34" height="30" rx="5"/><path d="M3 14h34M9 9.5h1m5 0h1"/><rect x="9" y="20" width="8" height="9" rx="1.5"/><path d="M23 21h8m-8 6h8"/></g>
+<text x="109" y="520" fill="#65D5E9" font-size="24" font-weight="650" text-anchor="start">app</text>
+<text x="65" y="557" fill="#A6B7CE" font-size="19" font-weight="550" text-anchor="start">HTTPS</text>
+<rect x="272" y="200" width="192" height="108" rx="15" fill="#3B2F1E" stroke="#6B552D" stroke-width="1"/>
+<g transform="translate(288 218) scale(0.85)" stroke="#F2C064" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M10 4h14l9 9v23H10Z"/><path d="M24 4v9h9M16 20h11m-11 6h11M5 9v26a5 5 0 0 0 5 5"/></g>
+<text x="333" y="243" fill="#F2C064" font-size="21" font-weight="650" text-anchor="start">Docs</text>
+<text x="288" y="282" fill="#A6B7CE" font-size="17.5" font-weight="400" text-anchor="start">A file or folder</text>
+<path d="M368 331v15" stroke="#F2C064" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M368 389v18m-6-7 6 7 6-7" stroke="#F2C064" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="272" y="477" width="192" height="107" rx="15" fill="#152236" stroke="#6B552D" stroke-width="1"/>
+<g transform="translate(289 495) scale(0.775)" stroke="#F2C064" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M10 4h14l9 9v23H10Z"/><path d="M24 4v9h9M16 20h11m-11 6h11M5 9v26a5 5 0 0 0 5 5"/></g>
+<text x="333" y="520" fill="#F2C064" font-size="24" font-weight="650" text-anchor="start">docs</text>
+<text x="289" y="557" fill="#A6B7CE" font-size="19" font-weight="550" text-anchor="start">HTTPS</text>
+<rect x="496" y="200" width="192" height="108" rx="15" fill="#2C2347" stroke="#554276" stroke-width="1"/>
+<g transform="translate(512 218) scale(0.85)" stroke="#C1A2FF" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="20" cy="8" rx="15" ry="6"/><path d="M5 8v23c0 3.3 6.7 6 15 6s15-2.7 15-6V8M5 19c0 3.3 6.7 6 15 6s15-2.7 15-6M5 30c0 3.3 6.7 6 15 6s15-2.7 15-6"/></g>
+<text x="557" y="243" fill="#C1A2FF" font-size="21" font-weight="650" text-anchor="start">Database</text>
+<text x="512" y="282" fill="#A6B7CE" font-size="17.5" font-weight="400" text-anchor="start">localhost:5432</text>
+<path d="M592 331v15" stroke="#C1A2FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M592 389v18m-6-7 6 7 6-7" stroke="#C1A2FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="496" y="477" width="192" height="107" rx="15" fill="#152236" stroke="#554276" stroke-width="1"/>
+<g transform="translate(513 495) scale(0.775)" stroke="#C1A2FF" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="20" cy="8" rx="15" ry="6"/><path d="M5 8v23c0 3.3 6.7 6 15 6s15-2.7 15-6V8M5 19c0 3.3 6.7 6 15 6s15-2.7 15-6M5 30c0 3.3 6.7 6 15 6s15-2.7 15-6"/></g>
+<text x="557" y="520" fill="#C1A2FF" font-size="24" font-weight="650" text-anchor="start">database</text>
+<text x="513" y="557" fill="#A6B7CE" font-size="19" font-weight="550" text-anchor="start">Private TCP</text>
+<rect x="720" y="200" width="192" height="108" rx="15" fill="#173A30" stroke="#2D614D" stroke-width="1"/>
+<g transform="translate(736 218) scale(0.85)" stroke="#72D5A4" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="8" width="24" height="24" rx="6"/><path d="M14 2v6m12-6v6M14 32v6m12-6v6M2 14h6m-6 12h6m24-12h6m-6 12h6"/><circle cx="15" cy="17" r="2"/><circle cx="25" cy="15" r="2"/><circle cx="23" cy="25" r="2"/><path d="m17 17 6-2m-7 4 6 5m3-7-1 6"/></g>
+<text x="781" y="243" fill="#72D5A4" font-size="21" font-weight="650" text-anchor="start">Model API</text>
+<text x="736" y="282" fill="#A6B7CE" font-size="17.5" font-weight="400" text-anchor="start">localhost:11434</text>
+<path d="M816 331v15" stroke="#72D5A4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M816 389v18m-6-7 6 7 6-7" stroke="#72D5A4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="720" y="477" width="192" height="107" rx="15" fill="#152236" stroke="#2D614D" stroke-width="1"/>
+<g transform="translate(737 495) scale(0.775)" stroke="#72D5A4" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="8" width="24" height="24" rx="6"/><path d="M14 2v6m12-6v6M14 32v6m12-6v6M2 14h6m-6 12h6m24-12h6m-6 12h6"/><circle cx="15" cy="17" r="2"/><circle cx="25" cy="15" r="2"/><circle cx="23" cy="25" r="2"/><path d="m17 17 6-2m-7 4 6 5m3-7-1 6"/></g>
+<text x="781" y="520" fill="#72D5A4" font-size="24" font-weight="650" text-anchor="start">model</text>
+<text x="737" y="557" fill="#A6B7CE" font-size="19" font-weight="550" text-anchor="start">HTTPS</text>
+<rect x="24" y="348" width="912" height="39" rx="12" fill="#152236" stroke="#2C3E57" stroke-width="1"/>
+<rect x="39" y="352" width="31" height="31" rx="7" fill="#14223A" stroke="none" stroke-width="1"/>
+<g transform="translate(43 356) scale(0.575)" stroke="#F2C064" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8H6v24h6m16-24h6v24h-6"/><path d="m22 4-9 18h9l-4 14 11-20h-9Z"/></g>
+<text x="82" y="376" fill="#EDF4FF" font-size="23" font-weight="650" text-anchor="start">TSLink</text>
+<text x="912" y="374" fill="#A6B7CE" font-size="19" font-weight="400" text-anchor="end">One embedded node per service</text>
+<text x="48" y="629" fill="#A6B7CE" font-size="14" font-weight="650" text-anchor="start" letter-spacing="1.1">REACH THEM FROM</text>
+<g transform="translate(258 601) scale(0.775)" stroke="#A6B7CE" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><rect x="10" y="3" width="20" height="34" rx="5"/><path d="M17 8h6m-5 24h4"/></g>
+<text x="299" y="625" fill="#EDF4FF" font-size="19" font-weight="500" text-anchor="start">Phone</text>
+<g transform="translate(422 601) scale(0.775)" stroke="#A6B7CE" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="5" width="28" height="23" rx="3"/><path d="M6 28 2 34h36l-4-6M16 33h8"/></g>
+<text x="463" y="625" fill="#EDF4FF" font-size="19" font-weight="500" text-anchor="start">Laptop</text>
+<g transform="translate(602 601) scale(0.775)" stroke="#A6B7CE" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="10" width="30" height="25" rx="8"/><path d="M20 10V5M10 22h1m18 0h1M15 29h10M1 20v7m38-7v7"/><circle cx="20" cy="4" r="2"/></g>
+<text x="643" y="625" fill="#EDF4FF" font-size="19" font-weight="500" text-anchor="start">Agent / API client</text>
+<text x="480" y="687" fill="#A6B7CE" font-size="18" font-weight="400" text-anchor="middle">Access follows your tailnet policy.</text>
+</g>
+</svg>

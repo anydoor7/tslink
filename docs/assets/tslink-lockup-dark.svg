@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="472" height="128" viewBox="0 0 472 128" role="img" aria-labelledby="title desc">
+  <title id="title">TSLink</title>
+  <desc id="desc">TSLink: an open amber door linked to one service node, beside an original outlined TSLink wordmark. Dark theme.</desc>
+  <path d="M24 96V28a8 8 0 0 1 8-8h44a8 8 0 0 1 8 8v20m0 44v8H60" fill="none" stroke="#e9d9bd" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M24 24 56 36v72L24 96Z" fill="#aa723c" stroke="#e9d9bd" stroke-width="8" stroke-linejoin="round"/>
+  <path d="M56 70h48" fill="none" stroke="#e3a265" stroke-width="8" stroke-linecap="round"/>
+  <rect x="96" y="60" width="20" height="20" rx="5" fill="#e3a265"/>
+  <path fill="#f1e5d1" d="M148 34h48v11h-18v49h-12V45h-18Z M249 48c-6-4-12-6-19-6-8 0-12 3-12 7 0 5 5 7 15 10 14 4 21 9 21 19 0 11-9 18-24 18-11 0-20-3-27-9l7-9c6 5 13 7 20 7 8 0 13-2 13-7 0-4-4-6-14-9-15-4-22-9-22-20 0-10 9-17 23-17 10 0 18 3 25 8Z M268 34h12v49h29v11h-41Z M321 52h11v42h-11Z M326.5 33a6.5 6.5 0 1 1 0 13 6.5 6.5 0 1 1 0-13Z M346 52h11v6c3-5 8-7 14-7 12 0 19 8 19 20v23h-11V72c0-8-3-12-10-12-7 0-12 5-12 12v22h-11Z M404 34h11v35l17-17h14l-20 20 22 22h-15l-18-19v19h-11Z"/>
+</svg>

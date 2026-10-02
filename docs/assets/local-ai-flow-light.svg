@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="598" viewBox="0 0 960 598" fill="none" role="img" aria-labelledby="title desc">
+<title id="title">TSLink local AI deployment example: your local model, within reach</title>
+<desc id="desc">Local AI deployment example. A permitted phone, laptop, or agent sends requests and receives responses through encrypted tailnet transport and a TSLink HTTPS node. On the publishing machine, a separately configured local AI app reads local documents and calls a local model. TSLink provides the connection; the chosen application provides document handling and model inference. This example is conditional on configuring that application to use local data and a local model, and does not imply egress blocking or that a raw model API reads documents automatically.</desc>
+<g font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Arial, sans-serif">
+<rect x="0.5" y="0.5" width="959" height="597" rx="24" fill="#F5F8FC" stroke="#D7E0EC" stroke-width="1"/>
+<text x="48" y="72" fill="#12213A" font-size="36" font-weight="700" text-anchor="start">Your local model, within reach.</text>
+<text x="48" y="111" fill="#536580" font-size="21" font-weight="400" text-anchor="start">Ask questions of documents with an app that runs on your machine.</text>
+<rect x="268" y="164" width="660" height="370" rx="22" fill="#EAF0F7" stroke="#D7E0EC" stroke-width="1"/>
+<text x="292" y="199" fill="#536580" font-size="15" font-weight="650" text-anchor="start" letter-spacing="1.4">ON YOUR MACHINE</text>
+<rect x="32" y="244" width="206" height="167" rx="18" fill="#FFFFFF" stroke="#D7E0EC" stroke-width="1"/>
+<g transform="translate(57 264) scale(1.05)" stroke="#087D98" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="5" width="28" height="23" rx="3"/><path d="M6 28 2 34h36l-4-6M16 33h8"/></g>
+<g transform="translate(95 274) scale(0.7)" stroke="#087D98" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><rect x="10" y="3" width="20" height="34" rx="5"/><path d="M17 8h6m-5 24h4"/></g>
+<text x="52" y="338" fill="#12213A" font-size="20" font-weight="650" text-anchor="start">Permitted device</text>
+<text x="52" y="369" fill="#536580" font-size="17" font-weight="400" text-anchor="start">Phone · laptop · agent</text>
+<text x="135" y="223" fill="#536580" font-size="15" font-weight="650" text-anchor="middle" letter-spacing="1.4">YOUR TAILNET</text>
+<path d="M238 287h43m-6-6 6 6-6 6" stroke="#087D98" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M443 287h59m-6-6 6 6-6 6" stroke="#087D98" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M281 319h-43m6-6-6 6 6 6" stroke="#1C7952" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M502 319h-59m6-6-6 6 6 6" stroke="#1C7952" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="283" y="258" width="158" height="86" rx="17" fill="#FFFFFF" stroke="#D7E0EC" stroke-width="1"/>
+<rect x="297" y="270" width="32" height="32" rx="8" fill="#14223A" stroke="none" stroke-width="1"/>
+<g transform="translate(301 274) scale(0.6)" stroke="#F2C064" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8H6v24h6m16-24h6v24h-6"/><path d="m22 4-9 18h9l-4 14 11-20h-9Z"/></g>
+<text x="340" y="294" fill="#12213A" font-size="23" font-weight="650" text-anchor="start">TSLink</text>
+<text x="362" y="328" fill="#536580" font-size="17" font-weight="400" text-anchor="middle">HTTPS node</text>
+<text x="135" y="445" fill="#536580" font-size="17.5" font-weight="400" text-anchor="middle">Encrypted tailnet</text>
+<text x="135" y="474" fill="#536580" font-size="17.5" font-weight="400" text-anchor="middle">Request / response</text>
+<rect x="502" y="242" width="400" height="99" rx="17" fill="#E8F7FB" stroke="#A9D8E4" stroke-width="1"/>
+<g transform="translate(522 260) scale(0.975)" stroke="#087D98" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="34" height="30" rx="5"/><path d="M3 14h34M9 9.5h1m5 0h1"/><rect x="9" y="20" width="8" height="9" rx="1.5"/><path d="M23 21h8m-8 6h8"/></g>
+<text x="579" y="282" fill="#087D98" font-size="27" font-weight="650" text-anchor="start">Your local AI app</text>
+<text x="579" y="314" fill="#536580" font-size="19" font-weight="400" text-anchor="start">Configured by you</text>
+<path d="M597 397v-48m-6 7 6-7 6 7" stroke="#986000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="615" y="376" fill="#536580" font-size="17" font-weight="400" text-anchor="start">Context</text>
+<path d="M805 349v48m-6-7 6 7 6-7m-6-48-6 7m6-7 6 7" stroke="#1C7952" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="823" y="376" fill="#536580" font-size="17" font-weight="400" text-anchor="start">Inference</text>
+<rect x="502" y="406" width="190" height="102" rx="15" fill="#FFF5DD" stroke="#E9CE91" stroke-width="1"/>
+<g transform="translate(579 417) scale(0.9)" stroke="#986000" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M10 4h14l9 9v23H10Z"/><path d="M24 4v9h9M16 20h11m-11 6h11M5 9v26a5 5 0 0 0 5 5"/></g>
+<text x="597" y="487" fill="#986000" font-size="21" font-weight="650" text-anchor="middle">Local documents</text>
+<rect x="712" y="406" width="190" height="102" rx="15" fill="#E8F6EE" stroke="#AED9C0" stroke-width="1"/>
+<g transform="translate(789 417) scale(0.9)" stroke="#1C7952" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="8" width="24" height="24" rx="6"/><path d="M14 2v6m12-6v6M14 32v6m12-6v6M2 14h6m-6 12h6m24-12h6m-6 12h6"/><circle cx="15" cy="17" r="2"/><circle cx="25" cy="15" r="2"/><circle cx="23" cy="25" r="2"/><path d="m17 17 6-2m-7 4 6 5m3-7-1 6"/></g>
+<text x="807" y="487" fill="#1C7952" font-size="21" font-weight="650" text-anchor="middle">Local model</text>
+<text x="48" y="568" fill="#536580" font-size="14" font-weight="650" text-anchor="start" letter-spacing="1.1">LOCAL AI EXAMPLE</text>
+<text x="267" y="568" fill="#536580" font-size="19" font-weight="400" text-anchor="start">Your app reads the documents and calls the model.</text>
+</g>
+</svg>
