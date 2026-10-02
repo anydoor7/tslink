@@ -24,7 +24,7 @@ import (
 func stubDarwinInstallDaemonStopped(t *testing.T) {
 	t.Helper()
 	oldConflict := installDaemonConflictFn
-	installDaemonConflictFn = func() error { return nil }
+	installDaemonConflictFn = func(context.Context) error { return nil }
 	t.Cleanup(func() { installDaemonConflictFn = oldConflict })
 }
 
@@ -1006,7 +1006,7 @@ func TestInstallUpgradeDoesNotBootstrapFallbackWhenGUIDomainBootoutIsUnavailable
 	executablePathFn = func() (string, error) { return "/Applications/TSLink App/tslink", nil }
 	evalSymlinksFn = func(path string) (string, error) { return path, nil }
 	userUIDFn = func() int { return 501 }
-	installDaemonArtifactConflictFn = func() error { return nil }
+	installDaemonArtifactConflictFn = func(context.Context) error { return nil }
 
 	plistPath := filepath.Join(home, "Library", "LaunchAgents", plistLabel+".plist")
 	if err := os.MkdirAll(filepath.Dir(plistPath), 0o755); err != nil {
@@ -1111,7 +1111,7 @@ func TestInstallForceRecoversHeadlessUpgradeStatesDAndE(t *testing.T) {
 			executablePathFn = func() (string, error) { return "/Applications/TSLink.app/tslink", nil }
 			evalSymlinksFn = func(path string) (string, error) { return path, nil }
 			userUIDFn = func() int { return 501 }
-			installDaemonArtifactConflictFn = func() error { return nil }
+			installDaemonArtifactConflictFn = func(context.Context) error { return nil }
 			pidPathFn = func() (string, error) { return filepath.Join(home, "tslink.pid"), nil }
 			isRunningFn = func(string) bool { return tc.userLoaded }
 			readPIDFn = func(string) (int, error) { return 1775, nil }
@@ -1404,7 +1404,7 @@ func TestInstallCommandAtomicWriteRejectsExistingPlistSymlink(t *testing.T) {
 		launchctlCombinedOutput = oldLaunchctl
 	})
 	userHomeDirFn = func() (string, error) { return home, nil }
-	installDaemonArtifactConflictFn = func() error { return nil }
+	installDaemonArtifactConflictFn = func(context.Context) error { return nil }
 	launchctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
 		t.Fatalf("launchctl called after unsafe plist target: %v", args)
 		return nil, nil
@@ -2337,7 +2337,7 @@ func TestUninstallThenInstallCannotCreateSecondDaemonWithoutForce(t *testing.T) 
 	executablePathFn = func() (string, error) { return "/Applications/TSLink.app/tslink", nil }
 	evalSymlinksFn = func(path string) (string, error) { return path, nil }
 	userUIDFn = func() int { return 501 }
-	installDaemonArtifactConflictFn = func() error { return nil }
+	installDaemonArtifactConflictFn = func(context.Context) error { return nil }
 	pidPathFn = func() (string, error) { return filepath.Join(home, "tslink.pid"), nil }
 	isRunningFn = func(string) bool { return false }
 	readPIDFn = func(string) (int, error) { return 0, nil }

@@ -55,11 +55,11 @@ var (
 	executablePathFn        = os.Executable
 	evalSymlinksFn          = filepath.EvalSymlinks
 	userUIDFn               = os.Getuid
-	installDaemonConflictFn = func() error {
-		return detectInstallDaemonConflict("no LaunchAgent plist is installed, so stop the manual daemon with 'tslink stop' and retry 'tslink install'; if launchd owns it, run 'tslink uninstall' first so KeepAlive cannot restart it")
+	installDaemonConflictFn = func(ctx context.Context) error {
+		return detectInstallDaemonConflict(ctx, "no LaunchAgent plist is installed, so stop the manual daemon with 'tslink stop' and retry 'tslink install'; if launchd owns it, run 'tslink uninstall' first so KeepAlive cannot restart it")
 	}
-	installDaemonArtifactConflictFn = func() error {
-		return detectInstallDaemonConflict("a LaunchAgent plist is installed, but TSLink could not confirm that launchd owns the running daemon; stop the manual daemon with 'tslink stop' and retry 'tslink install'; keep the existing plist installed")
+	installDaemonArtifactConflictFn = func(ctx context.Context) error {
+		return detectInstallDaemonConflict(ctx, "a LaunchAgent plist is installed, but TSLink could not confirm that launchd owns the running daemon; stop the manual daemon with 'tslink stop' and retry 'tslink install'; keep the existing plist installed")
 	}
 	errLaunchctlDomainUnavailable  = errors.New("launchctl domain unavailable")
 	launchAgentVerifyTimeout       = launchAgentStartupTimeout
@@ -459,7 +459,7 @@ func captureLaunchAgentPreviousState(ctx context.Context, plistPath string) (lau
 		if !os.IsNotExist(err) {
 			return launchAgentPreviousState{}, fmt.Errorf("inspect existing LaunchAgent plist: %w", err)
 		}
-		if err := installDaemonConflictFn(); err != nil {
+		if err := installDaemonConflictFn(ctx); err != nil {
 			return launchAgentPreviousState{}, err
 		}
 		return launchAgentPreviousState{}, nil
@@ -484,7 +484,7 @@ func captureLaunchAgentPreviousState(ctx context.Context, plistPath string) (lau
 		state.Target = target
 		return state, nil
 	}
-	if err := installDaemonArtifactConflictFn(); err != nil {
+	if err := installDaemonArtifactConflictFn(ctx); err != nil {
 		return launchAgentPreviousState{}, err
 	}
 	return state, nil

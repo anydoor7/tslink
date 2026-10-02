@@ -341,7 +341,7 @@ func TestWindowsDirectTransactionsCancelAndPreserveFinalState(t *testing.T) {
 						return err
 					}
 					isRunningFn = func(string) bool { return true }
-					detectSupervisionFn = func(string, bool, int) Supervision { return windowsStartupSupervision(path) }
+					detectSupervisionFn = func(context.Context, string, bool, int) Supervision { return windowsStartupSupervision(path) }
 					return nil
 				}
 			}

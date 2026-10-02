@@ -10,6 +10,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/anydoor7/tslink/internal/mcpscope"
 )
 
 func supervisorPath() (string, error)                       { return systemdServicePath() }
@@ -27,8 +29,8 @@ func supervisorConfigMatches(data []byte, dir string) bool {
 	return bytes.Contains(data, []byte("\n"+systemdConfigEnvironment(dir)+"\n"))
 }
 
-func systemdObservation() (map[string]string, error) {
-	data, err := managerOutputFn("systemctl", "--user", "show", systemdServiceName,
+func systemdObservation(ctx context.Context) (map[string]string, error) {
+	data, err := managerOutputChecked(ctx, "systemctl", "--user", "show", systemdServiceName,
 		"--property=LoadState,ActiveState,SubState,MainPID,UnitFileState,Restart,FragmentPath", "--no-pager")
 	if err != nil {
 		if len(data) > 4096 {
@@ -46,8 +48,8 @@ func systemdObservation() (map[string]string, error) {
 	return parseSystemdProperties(data), nil
 }
 
-func checkUnregisteredSupervisor() error {
-	p, err := systemdObservation()
+func checkUnregisteredSupervisor(ctx context.Context) error {
+	p, err := systemdObservation(ctx)
 	if err != nil {
 		return err
 	}
@@ -57,8 +59,8 @@ func checkUnregisteredSupervisor() error {
 	return nil
 }
 
-func checkSupervisorProcessScope() error {
-	p, err := systemdObservation()
+func checkSupervisorProcessScope(ctx context.Context) error {
+	p, err := systemdObservation(ctx)
 	if err != nil {
 		return err
 	}
@@ -73,7 +75,7 @@ func checkSupervisorProcessScope() error {
 // manager cannot be asked about: reinstalling rewrites the same file and
 // changes neither lingering nor the missing session, so sending the operator
 // to 'tslink install' there is sending them at the wrong thing.
-func detectSupervision(_ string, running bool, pid int) Supervision {
+func detectSupervisionContext(ctx context.Context, _ string, running bool, pid int) Supervision {
 	path, err := systemdServicePath()
 	if err != nil {
 		return unmanagedSupervision(running, "No systemd ownership/autostart could be verified: the unit path could not be resolved ("+err.Error()+"). Run: tslink install")
@@ -81,14 +83,14 @@ func detectSupervision(_ string, running bool, pid int) Supervision {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			if _, managerErr := systemdObservation(); managerErr != nil {
+			if _, managerErr := systemdObservation(ctx); managerErr != nil {
 				return unmanagedSupervision(running, "No systemd user unit is installed at "+path+". "+managerErr.Error()+". After establishing that login session, Run: tslink install")
 			}
 			return unmanagedSupervision(running, "No systemd user unit is installed at "+path+". Run: tslink install")
 		}
 		return unmanagedSupervision(running, "The systemd user unit at "+path+" exists but could not be read ("+err.Error()+"). Inspect it before running: tslink install")
 	}
-	observed, err := systemdObservation()
+	observed, err := systemdObservation(ctx)
 	if err != nil {
 		return unmanagedSupervision(running, "A systemd user unit is installed at "+path+", but the systemd user manager could not be queried ("+err.Error()+"). The unit file is already in place, so this is usually a missing login session or disabled lingering rather than a missing install, and reinstalling changes neither. For a host with no interactive login run: loginctl enable-linger \"$USER\". Then confirm with: systemctl --user status "+systemdServiceName)
 	}
@@ -112,7 +114,7 @@ func detectSupervision(_ string, running bool, pid int) Supervision {
 		}
 	}
 	autostart := observed["UnitFileState"] == "enabled"
-	scope, scopeDetail := linuxAutostartScope(autostart)
+	scope, scopeDetail := linuxAutostartScope(ctx, autostart)
 	return Supervision{Manager: "systemd", Installed: true, Path: path,
 		Autostart: autostart, AutostartScope: scope, RestartOnExit: observed["Restart"] == "always" || observed["Restart"] == "on-failure",
 		Detail: "systemd user unit verified; " + scopeDetail + " Undo: tslink uninstall"}
@@ -124,11 +126,11 @@ func detectSupervision(_ string, running bool, pid int) Supervision {
 // logs into the unit does not come back after a reboot. Enabling lingering
 // affects every service this user owns, which makes it the user's decision;
 // this reports the state and the exact command instead of performing it.
-func linuxAutostartScope(autostart bool) (string, string) {
+func linuxAutostartScope(ctx context.Context, autostart bool) (string, string) {
 	if !autostart {
 		return "", "the unit file is not enabled, so systemd does not start it on its own. Enable it with: tslink install."
 	}
-	switch linuxLingerState() {
+	switch linuxLingerState(ctx) {
 	case lingerEnabled:
 		return autostartScopeBoot, "systemd lingering is enabled for this user, so it starts at boot and survives logout."
 	case lingerDisabled:
@@ -148,12 +150,15 @@ const (
 
 // linuxLingerState reads the same property, through the same seam, as the
 // install-time warning, so the two never disagree about what loginctl said.
-func linuxLingerState() lingerState {
+func linuxLingerState(ctx context.Context) lingerState {
 	user := linuxUserNameFn()
 	if user == "" {
 		return lingerUnknown
 	}
-	output, err := loginctlCombinedOutputFn(context.Background(), "show-user", user, "--property=Linger", "--value")
+	if err := mcpscope.CheckEffect(ctx); err != nil {
+		return lingerUnknown
+	}
+	output, err := loginctlCombinedOutputFn(ctx, "show-user", user, "--property=Linger", "--value")
 	if err != nil {
 		return lingerUnknown
 	}
@@ -165,4 +170,8 @@ func linuxLingerState() lingerState {
 	default:
 		return lingerUnknown
 	}
+}
+
+func detectSupervision(pidPath string, running bool, pid int) Supervision {
+	return detectSupervisionContext(context.Background(), pidPath, running, pid)
 }

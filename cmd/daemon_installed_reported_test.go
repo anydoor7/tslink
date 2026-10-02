@@ -21,7 +21,7 @@ func TestEnsureDaemonNotesTheInstallItPerformed(t *testing.T) {
 	dir := isolateBootstrap(t)
 	installDaemonFn = func(context.Context, io.Writer) error {
 		isRunningFn = func(string) bool { return true }
-		detectSupervisionFn = func(string, bool, int) Supervision {
+		detectSupervisionFn = func(context.Context, string, bool, int) Supervision {
 			return Supervision{Manager: supervisorName(), Installed: true, RestartOnExit: true, Autostart: true}
 		}
 		return tsruntime.Save(filepath.Join(dir, "runtime.json"), tsruntime.NewSnapshot(4242, time.Now(), "fixture", time.Now(), nil))

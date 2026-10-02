@@ -65,14 +65,14 @@ func runCmdTests(run func() int) int {
 	// Registry-focused unit tests never install OS services. Bootstrap tests
 	// explicitly exercise ensureDaemon with isolated manager/installer seams.
 	// All supervisor reads are isolated too. Individual manager tests replace this seam.
-	managerOutputFn = func(name string, args ...string) ([]byte, error) {
+	managerOutputFn = func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		if name == "systemctl" {
 			return []byte("LoadState=not-found\nMainPID=0\n"), nil
 		}
 		return []byte("Could not find service\n"), fmt.Errorf("not found")
 	}
 	ensureDaemonFn = func(context.Context, io.Writer, bool) error { return nil }
-	detectSupervisionFn = func(_ string, running bool, _ int) Supervision {
+	detectSupervisionFn = func(ctx context.Context, _ string, running bool, _ int) Supervision {
 		return unmanagedSupervision(running, "isolated unit test")
 	}
 	installRefusingHostSeams()

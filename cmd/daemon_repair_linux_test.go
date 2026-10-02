@@ -24,13 +24,13 @@ func setupRepairManager(t *testing.T, gate func()) {
 		installDaemonConflictFn = oldConflict
 		installDaemonArtifactConflictFn = oldArtifact
 	})
-	installDaemonConflictFn = func() error { return nil }
-	installDaemonArtifactConflictFn = func() error { return nil }
+	installDaemonConflictFn = func(context.Context) error { return nil }
+	installDaemonArtifactConflictFn = func(context.Context) error { return nil }
 	loginctlCombinedOutputFn = func(context.Context, ...string) ([]byte, error) { return []byte("yes"), nil }
 	var running atomic.Bool
 	isRunningFn = func(string) bool { return running.Load() }
 	installDaemonFn = installDaemonLocked
-	detectSupervisionFn = func(string, bool, int) Supervision {
+	detectSupervisionFn = func(context.Context, string, bool, int) Supervision {
 		return Supervision{Manager: "systemd", Installed: true, Autostart: true, RestartOnExit: true}
 	}
 	systemctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {

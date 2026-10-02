@@ -38,7 +38,7 @@ func newDoctorTestEnv(t *testing.T, services []registry.Service) doctorTestEnv {
 	resetDoctorSeams(t)
 	oldSupervision := detectSupervisionFn
 	t.Cleanup(func() { detectSupervisionFn = oldSupervision })
-	detectSupervisionFn = func(string, bool, int) Supervision {
+	detectSupervisionFn = func(context.Context, string, bool, int) Supervision {
 		return Supervision{Manager: "systemd", Autostart: true, RestartOnExit: true, Detail: "isolated managed fixture"}
 	}
 
@@ -251,7 +251,7 @@ func TestDoctorSupervisorBreakerVisibleWithEmptyRegistry(t *testing.T) {
 		t.Run(state, func(t *testing.T) {
 			newDoctorTestEnv(t, nil)
 			isRunningFn = func(string) bool { return false }
-			detectSupervisionFn = func(string, bool, int) Supervision {
+			detectSupervisionFn = func(context.Context, string, bool, int) Supervision {
 				return Supervision{Manager: "windows-task-scheduler", Installed: true, Autostart: true,
 					RuntimeState: state, FailureReason: "historical_reason"}
 			}

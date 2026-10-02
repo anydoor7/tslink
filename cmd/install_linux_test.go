@@ -22,7 +22,7 @@ func stubLinuxInstallDaemonStopped(t *testing.T) {
 	t.Helper()
 	stubFastSystemdSettle(t)
 	oldConflict := installDaemonConflictFn
-	installDaemonConflictFn = func() error { return nil }
+	installDaemonConflictFn = func(context.Context) error { return nil }
 	t.Cleanup(func() { installDaemonConflictFn = oldConflict })
 }
 

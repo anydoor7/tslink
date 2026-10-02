@@ -31,7 +31,7 @@ func TestBootstrapDoctorForeignPIDIsAStoppedDaemon(t *testing.T) {
 	isRunningFn = func(string) bool { return false }
 	oldDetect := detectSupervisionFn
 	t.Cleanup(func() { detectSupervisionFn = oldDetect })
-	detectSupervisionFn = func(_ string, running bool, _ int) Supervision {
+	detectSupervisionFn = func(ctx context.Context, _ string, running bool, _ int) Supervision {
 		return unmanagedSupervision(running, "test")
 	}
 	doctorProbeTargetFn = func(context.Context, string, time.Duration) error {
@@ -117,7 +117,7 @@ func TestBootstrapInstallBannerRoutesTheScopeQuestion(t *testing.T) {
 	dir := isolateBootstrap(t)
 	installDaemonFn = func(context.Context, io.Writer) error {
 		isRunningFn = func(string) bool { return true }
-		detectSupervisionFn = func(string, bool, int) Supervision {
+		detectSupervisionFn = func(context.Context, string, bool, int) Supervision {
 			return Supervision{Manager: "systemd", Installed: true, RestartOnExit: true, Autostart: true, AutostartScope: autostartScopeLogin}
 		}
 		return nil

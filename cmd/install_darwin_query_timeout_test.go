@@ -49,7 +49,7 @@ func TestDarwinInstallOwnershipTreatsQueryTimeoutAsUnknown(t *testing.T) {
 			pidPathFn = func() (string, error) { return filepath.Join(dir, "tslink.pid"), nil }
 			isRunningFn = func(string) bool { return true }
 			readPIDFn = func(string) (int, error) { return 1775, nil }
-			installDaemonArtifactConflictFn = func() error { return errManualDaemonConflict }
+			installDaemonArtifactConflictFn = func(context.Context) error { return errManualDaemonConflict }
 			guiCalls := 0
 			launchctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
 				if args[0] != "print" {

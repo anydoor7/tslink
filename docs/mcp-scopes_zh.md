@@ -133,4 +133,4 @@ log。时长解析集中在 `internal/mcpscope.ParseDuration`，便于替换公�
 
 审计用 `identity.login`、`identity.node` 记录调用者，用 `principal` 记录匹配的授权对象。`kind=mcp`、`role`、`tool`、`apps`、`result`、`phase` 是类型化元数据。share intent 只记录显式请求的名字；尚未分配时 app 清单为空。completion 记录实际生成或复用的名字，包括并发分配结果。不记录原始参数、target、邀请链接或 secret。
 
-Daemon bootstrap 在定义文件写入和每条 manager 命令前继续检查同一会话；取消也会中止 manager 子进程。恢复已有安装和失败清理可以在取消或过期后继续，仍有超时限制。旧日志的 `who`/`scope` 按 `principal`/`role` 读取，不推断缺失的调用者身份。
+Daemon bootstrap 在 scope 检查、安装冲突检查、安装前后的 supervision 检查、定义文件写入和 manager 命令中保留调用者会话。每次 manager 查询前检查会话，并在调用者 context 上追加原有超时，因此取消会中止正在查询的子进程。恢复已有安装和失败清理可以在取消或过期后继续，仍有超时限制。旧日志的 `who`/`scope` 按 `principal`/`role` 读取，不推断缺失的调用者身份；日志读取拒绝父目录链中任何普通文件阻塞。

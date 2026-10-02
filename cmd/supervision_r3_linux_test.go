@@ -42,7 +42,7 @@ func installLinuxUnitFixture(t *testing.T, properties string, loginctlOut string
 		managerOutputFn, loginctlCombinedOutputFn, linuxUserNameFn = oldManager, oldLoginctl, oldUser
 	})
 	linuxUserNameFn = func() string { return "tester" }
-	managerOutputFn = func(string, ...string) ([]byte, error) {
+	managerOutputFn = func(context.Context, string, ...string) ([]byte, error) {
 		if properties == "" {
 			return []byte("Failed to connect to bus: No such file or directory\n"), errors.New("exit status 1")
 		}
@@ -75,7 +75,7 @@ func TestLinuxSupervisionReportsAutostartScopeFromLinger(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			path := installLinuxUnitFixture(t, "", tc.out, tc.err)
-			managerOutputFn = func(string, ...string) ([]byte, error) {
+			managerOutputFn = func(context.Context, string, ...string) ([]byte, error) {
 				return []byte(strings.Replace(linuxStoppedUnitProperties, "%s", path, 1)), nil
 			}
 			// Record what detection actually asks loginctl to do. The

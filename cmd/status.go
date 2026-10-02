@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -280,7 +281,7 @@ func (s statusRead) baseStatus(pidPath string) StatusResult {
 		// leaves the state unknown.
 		r.DaemonState = daemonStateAbsent
 	}
-	r.Supervision = detectSupervisionFn(pidPath, r.DaemonRunning, r.DaemonPID)
+	r.Supervision = detectSupervisionFn(context.Background(), pidPath, r.DaemonRunning, r.DaemonPID)
 	values := credentials.SlotValues{}
 	values.APIKey, _ = getAPIKeyFn()
 	hasClientSecret := hasClientSecretFn()

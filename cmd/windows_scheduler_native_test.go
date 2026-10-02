@@ -96,7 +96,7 @@ func TestWindowsTaskInstallMigratesAndStarts(t *testing.T) {
 		}
 		return task, nil
 	}
-	detectSupervisionFn = detectSupervision
+	detectSupervisionFn = detectSupervisionContext
 	if err := runInstallLocked(windowsTestCommand(), nil); err != nil {
 		t.Fatal(err)
 	}

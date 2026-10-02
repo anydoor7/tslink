@@ -46,7 +46,7 @@ func TestLinuxInstallOwnershipTreatsQueryTimeoutAsUnknown(t *testing.T) {
 			pidPathFn = func() (string, error) { return filepath.Join(dir, "tslink.pid"), nil }
 			isRunningFn = func(string) bool { return true }
 			readPIDFn = func(string) (int, error) { return 1775, nil }
-			installDaemonArtifactConflictFn = func() error { return errManualDaemonConflict }
+			installDaemonArtifactConflictFn = func(context.Context) error { return errManualDaemonConflict }
 			calls := 0
 			systemctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
 				if args[1] != "show" {

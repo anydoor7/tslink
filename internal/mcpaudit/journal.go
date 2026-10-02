@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 
 	"github.com/anydoor7/tslink/internal/atomicfile"
@@ -65,8 +66,17 @@ func (j Journal) Read() ([]Entry, error) {
 	info, err := os.Lstat(j.Path)
 	if os.IsNotExist(err) {
 		// Windows also reports not-exist for a path below a regular file.
-		if parent, parentErr := os.Stat(filepath.Dir(j.Path)); parentErr == nil && !parent.IsDir() {
-			return nil, fmt.Errorf("MCP journal parent is not a directory")
+		for dir := filepath.Dir(j.Path); ; dir = filepath.Dir(dir) {
+			parent, parentErr := os.Stat(dir)
+			if parentErr == nil {
+				if !parent.IsDir() {
+					return nil, fmt.Errorf("MCP journal parent is not a directory")
+				}
+				break
+			}
+			if runtime.GOOS != "windows" || !os.IsNotExist(parentErr) || filepath.Dir(dir) == dir {
+				break
+			}
 		}
 		return []Entry{}, nil
 	}

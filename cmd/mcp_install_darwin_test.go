@@ -32,7 +32,7 @@ func TestReview2InstallRechecksAfterPreparation(t *testing.T) {
 			})
 			userHomeDirFn = func() (string, error) { return home, nil }
 			userUIDFn = func() int { return 99991 }
-			installDaemonConflictFn = func() error { return nil }
+			installDaemonConflictFn = func(context.Context) error { return nil }
 			evalSymlinksFn = func(path string) (string, error) { return path, nil }
 			installDaemonFn = installDaemonLocked
 			now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -94,7 +94,7 @@ func TestReview2InstallRechecksAfterManagerWait(t *testing.T) {
 			})
 			userHomeDirFn = func() (string, error) { return home, nil }
 			userUIDFn = func() int { return 99991 }
-			installDaemonConflictFn = func() error { return nil }
+			installDaemonConflictFn = func(context.Context) error { return nil }
 			evalSymlinksFn = func(path string) (string, error) { return path, nil }
 			installDaemonFn = installDaemonLocked
 			now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)

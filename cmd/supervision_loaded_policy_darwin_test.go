@@ -76,7 +76,7 @@ func loadedPolicyPrint(t *testing.T, state string, pid int, properties string) [
 func loadedPolicyManager(t *testing.T, gui, user []byte, disabled string, disabledErr error) *int {
 	t.Helper()
 	queries := new(int)
-	managerOutputFn = func(name string, args ...string) ([]byte, error) {
+	managerOutputFn = func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		if name != "launchctl" || len(args) != 2 {
 			t.Fatalf("unexpected manager call %s %v", name, args)
 		}
@@ -192,7 +192,7 @@ func TestSupervisionLoadedPolicyOwnershipDomains(t *testing.T) {
 			}
 			loadedPolicyManager(t, printFor(tc.guiPID, tc.guiKeep), printFor(tc.userPID, tc.userKeep), "disabled services = {\n}\n", nil)
 			manager := managerOutputFn
-			managerOutputFn = func(name string, args ...string) ([]byte, error) {
+			managerOutputFn = func(ctx context.Context, name string, args ...string) ([]byte, error) {
 				if args[0] == "print-disabled" {
 					wantDomain := "gui/501"
 					if tc.userPID == 4242 {
@@ -202,7 +202,7 @@ func TestSupervisionLoadedPolicyOwnershipDomains(t *testing.T) {
 						t.Fatalf("disabled query escaped owning domain: %v want %s", args, wantDomain)
 					}
 				}
-				return manager(name, args...)
+				return manager(ctx, name, args...)
 			}
 			s := detectSupervision("", true, 4242)
 			if s.Manager != tc.wantManager || s.RestartOnExit != tc.wantRestart || s.Autostart != (tc.wantManager == "launchd") {
@@ -269,7 +269,7 @@ func TestSupervisionLoadedPolicyPreservesBoundaries(t *testing.T) {
 			loadedPolicyManager(t, output, nil, disabled, disabledErr)
 			if scenario == "print_error" {
 				// Even recognizable output accompanying an error is not proof.
-				managerOutputFn = func(string, ...string) ([]byte, error) { return output, errors.New("access denied") }
+				managerOutputFn = func(context.Context, string, ...string) ([]byte, error) { return output, errors.New("access denied") }
 			}
 			s := detectSupervision("", running, 4242)
 			if (s.Manager == "launchd") != wantOwned || s.Autostart != wantAutostart || s.RestartOnExit != wantRestart || (s.AutostartScope == autostartScopeLogin) != wantAutostart {
@@ -302,7 +302,7 @@ func TestSupervisionLoadedPolicyFastPathRealDetect(t *testing.T) {
 					}
 					queries := loadedPolicyManager(t, gui, user, "disabled services = {\n}\n", nil)
 					isRunningFn = func(string) bool { return true }
-					detectSupervisionFn = detectSupervision // Real detector, not a Supervision stub.
+					detectSupervisionFn = detectSupervisionContext // Real detector, not a Supervision stub.
 					var out string
 					if entry == "ensure" {
 						err = ensureDaemon(context.Background(), io.Discard, false)

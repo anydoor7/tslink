@@ -27,11 +27,11 @@ var (
 	linuxEvalSymlinksFn     = filepath.EvalSymlinks
 	linuxUserNameFn         = defaultLinuxUserName
 	linuxUserIDFn           = os.Getuid
-	installDaemonConflictFn = func() error {
-		return detectInstallDaemonConflict("no systemd user unit is installed, so stop the manual daemon with 'tslink stop' and retry 'tslink install'")
+	installDaemonConflictFn = func(ctx context.Context) error {
+		return detectInstallDaemonConflict(ctx, "no systemd user unit is installed, so stop the manual daemon with 'tslink stop' and retry 'tslink install'")
 	}
-	installDaemonArtifactConflictFn = func() error {
-		return detectInstallDaemonConflict("a systemd user unit is installed, but TSLink could not confirm that systemd owns the running daemon; stop the manual daemon with 'tslink stop' and retry 'tslink install'; keep the existing unit installed")
+	installDaemonArtifactConflictFn = func(ctx context.Context) error {
+		return detectInstallDaemonConflict(ctx, "a systemd user unit is installed, but TSLink could not confirm that systemd owns the running daemon; stop the manual daemon with 'tslink stop' and retry 'tslink install'; keep the existing unit installed")
 	}
 	systemctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
 		return runBoundedManagerCommandContext(ctx, "systemctl", managerCommandTimeout(args...), args...)
@@ -208,7 +208,7 @@ func captureSystemdPreviousState(ctx context.Context, servicePath string) (syste
 		if !os.IsNotExist(err) {
 			return systemdPreviousState{}, fmt.Errorf("inspect existing systemd user unit: %w", err)
 		}
-		if err := installDaemonConflictFn(); err != nil {
+		if err := installDaemonConflictFn(ctx); err != nil {
 			return systemdPreviousState{}, err
 		}
 		return systemdPreviousState{}, nil
@@ -229,7 +229,7 @@ func captureSystemdPreviousState(ctx context.Context, servicePath string) (syste
 		OwnedRunning: owned,
 	}
 	if !state.OwnedRunning {
-		if err := installDaemonArtifactConflictFn(); err != nil {
+		if err := installDaemonArtifactConflictFn(ctx); err != nil {
 			return systemdPreviousState{}, err
 		}
 	}

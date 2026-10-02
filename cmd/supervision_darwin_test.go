@@ -43,7 +43,7 @@ func TestBootstrapLaunchdOwnershipMatrix(t *testing.T) {
 				t.Fatal(err)
 			}
 			queries := 0
-			managerOutputFn = func(_ string, args ...string) ([]byte, error) {
+			managerOutputFn = func(ctx context.Context, _ string, args ...string) ([]byte, error) {
 				queries++
 				if tc.readError {
 					return nil, errors.New("manager unavailable")
@@ -83,8 +83,8 @@ func TestBootstrapLaunchdDisabledOverride(t *testing.T) {
 		{"disabled services = {\n \"com.tslink.daemon\" => disabled\n}\n", false},
 		{"unreadable format", false},
 	} {
-		managerOutputFn = func(string, ...string) ([]byte, error) { return []byte(tc.output), nil }
-		if got := launchdAutostartEnabled("user/fixture"); got != tc.want {
+		managerOutputFn = func(context.Context, string, ...string) ([]byte, error) { return []byte(tc.output), nil }
+		if got := launchdAutostartEnabled(context.Background(), "user/fixture"); got != tc.want {
 			t.Fatalf("output=%q enabled=%t want=%t", tc.output, got, tc.want)
 		}
 	}
@@ -99,7 +99,7 @@ func TestBootstrapLaunchdDisabledOverride(t *testing.T) {
 	if err := os.WriteFile(path, plist.Bytes(), 0600); err != nil {
 		t.Fatal(err)
 	}
-	managerOutputFn = func(_ string, args ...string) ([]byte, error) {
+	managerOutputFn = func(ctx context.Context, _ string, args ...string) ([]byte, error) {
 		if args[0] == "print-disabled" {
 			return []byte("disabled services = {\n \"com.tslink.daemon\" => disabled\n}\n"), nil
 		}
@@ -123,11 +123,13 @@ func TestBootstrapLaunchdConfigAndSideEffects(t *testing.T) {
 	if !supervisorConfigMatches(plist.Bytes(), dir) || supervisorConfigMatches(plist.Bytes(), dir+"-other") {
 		t.Fatalf("config did not round-trip escaped XML: %s", &plist)
 	}
-	managerOutputFn = func(string, ...string) ([]byte, error) { return []byte("state = running\npid = 41564\n"), nil }
-	if err := checkUnregisteredSupervisor(); err == nil {
+	managerOutputFn = func(context.Context, string, ...string) ([]byte, error) {
+		return []byte("state = running\npid = 41564\n"), nil
+	}
+	if err := checkUnregisteredSupervisor(context.Background()); err == nil {
 		t.Fatal("accepted a loaded job with no plist")
 	}
-	if err := checkSupervisorProcessScope(); err == nil {
+	if err := checkSupervisorProcessScope(context.Background()); err == nil {
 		t.Fatal("accepted a supervisor PID from another config")
 	}
 }
@@ -208,7 +210,7 @@ func TestBootstrapInstallerUsesExistingConflictGuard(t *testing.T) {
 	oldGuard := installDaemonConflictFn
 	t.Cleanup(func() { installDaemonConflictFn = oldGuard })
 	guardCalls := 0
-	installDaemonConflictFn = func() error { guardCalls++; return errors.New("existing conflict guard marker") }
+	installDaemonConflictFn = func(context.Context) error { guardCalls++; return errors.New("existing conflict guard marker") }
 	var out bytes.Buffer
 	err := installDaemonLocked(context.Background(), &out)
 	if err == nil || !strings.Contains(err.Error(), "existing conflict guard marker") || guardCalls != 1 {

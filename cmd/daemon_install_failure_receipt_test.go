@@ -84,7 +84,7 @@ func TestB3ARealShareKeepsInstallAfterEndpointFailure(t *testing.T) {
 			return err
 		}
 		isRunningFn = func(string) bool { return true }
-		detectSupervisionFn = func(string, bool, int) Supervision {
+		detectSupervisionFn = func(context.Context, string, bool, int) Supervision {
 			return Supervision{Manager: supervisorName(), Installed: true, RestartOnExit: true, Autostart: true}
 		}
 		return tsruntime.Save(filepath.Join(dir, "runtime.json"), tsruntime.NewSnapshot(4242, time.Now(), "fixture", time.Now(), nil))

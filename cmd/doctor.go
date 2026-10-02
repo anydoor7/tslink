@@ -340,7 +340,7 @@ func buildDoctorResult(opts doctorOptions) DoctorResult {
 		serviceCount = len(reg.Services)
 	}
 	diagnoseDaemon(&result, serviceCount)
-	result.Supervision = detectSupervisionFn(result.Paths.PID, result.Daemon.Running, result.Daemon.PID)
+	result.Supervision = detectSupervisionFn(context.Background(), result.Paths.PID, result.Daemon.Running, result.Daemon.PID)
 	if result.Supervision.RuntimeState == "circuit_open" || result.Supervision.RuntimeState == "failed" {
 		result.addFinding(inspect.WarningCodeDaemonRestartUnavailable, "", "daemon", "Built-in supervisor stopped crash recovery: "+result.Supervision.FailureReason+". Inspect logs, then run 'tslink install'.", nil)
 	}
@@ -705,7 +705,7 @@ func diagnoseDaemon(result *DoctorResult, serviceCount int) {
 		// daemon_unsupervised behind an unverifiable-identity note. Only
 		// evidence that is merely inconclusive (a sidecar from another build, a
 		// timestamp outside tolerance) still earns the conservative treatment.
-		scopeErr := checkSupervisorProcessScope()
+		scopeErr := checkSupervisorProcessScope(context.Background())
 		if _, err := os.Stat(result.Paths.PID); (!os.IsNotExist(err) && !daemon.IsProcessAbsentFromPIDFile(result.Paths.PID) && !daemon.IsForeignProcessFromPIDFile(result.Paths.PID)) || scopeErr != nil {
 			result.Daemon.IdentityUnverified = true
 			message := "Daemon identity could not be verified; the process may still be serving (including a different TSLink build). Inspect the PID file, running binary and supervisor with 'tslink status --json' and 'tslink logs' before any install/restart. Backend probes remain enabled."

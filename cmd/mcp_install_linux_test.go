@@ -30,7 +30,7 @@ func TestReview2LinuxInstallEffectBoundaries(t *testing.T) {
 				})
 				linuxUserHomeDirFn = func() (string, error) { return home, nil }
 				linuxEvalSymlinksFn = func(p string) (string, error) { return p, nil }
-				installDaemonConflictFn = func() error { return nil }
+				installDaemonConflictFn = func(context.Context) error { return nil }
 				installDaemonFn = installDaemonLocked
 				current := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
 				expiry := current.Add(time.Hour)

@@ -139,12 +139,12 @@ func supervisorConfigMatches(data []byte, dir string) bool {
 	return windowsTaskConfigMatches(data, dir) || bytes.Contains(data, []byte(windowsConfigEnvironment(dir)+"\r\n"))
 }
 
-func checkUnregisteredSupervisor() error {
+func checkUnregisteredSupervisor(ctx context.Context) error {
 	name, err := windowsTaskName()
 	if err != nil {
 		return err
 	}
-	s, err := windowsSchedulerFn(context.Background(), "query", name, nil)
+	s, err := windowsSchedulerChecked(ctx, "query", name, nil)
 	if err != nil {
 		return fmt.Errorf("inspect Task Scheduler (fallback: tslink install --startup): %w", err)
 	}
@@ -172,12 +172,12 @@ func checkUnregisteredSupervisor() error {
 	return nil
 }
 
-func checkSupervisorProcessScope() error {
+func checkSupervisorProcessScope(ctx context.Context) error {
 	name, err := windowsTaskName()
 	if err != nil {
 		return err
 	}
-	s, err := windowsSchedulerFn(context.Background(), "query", name, nil)
+	s, err := windowsSchedulerChecked(ctx, "query", name, nil)
 	if err != nil {
 		if _, ok := detectWindowsStartup(); ok {
 			return nil
