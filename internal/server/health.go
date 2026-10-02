@@ -33,6 +33,7 @@ type serviceHealth struct {
 	NodeKey     health.Expiry
 	Node        *ServiceNode
 	NodeChecked time.Time
+	Stale       bool // Last freshness projection announced to event clients.
 }
 type healthTarget struct {
 	Service registry.Service
@@ -211,6 +212,8 @@ func (s *Server) healthCycle(ctx context.Context, r *health.Recorder, now time.T
 	}
 	// Gather ready results for a short bounded window. Fast observations are
 	// published while slow reads continue; an immediate batch writes once.
+	generation := s.events.currentGeneration()
+	published := false
 	for jobs > 0 {
 		batch := []result{<-results}
 		jobs--
@@ -276,16 +279,41 @@ func (s *Server) healthCycle(ctx context.Context, r *health.Recorder, now time.T
 		if changed || len(events) > 0 {
 			r.Commit(ctx, events, now)
 			s.publishHealth(r)
+			published = true
 		}
 	}
 	// Pool recovery can happen between cycles even when no app check is due.
 	if ctx.Err() == nil {
 		events := append(pendingEvents, r.ObserveMonitor(probeSlots.saturated() || nodeSlots.saturated(), now)...)
-		s.mu.RLock()
+		s.mu.Lock()
 		changed := !reflect.DeepEqual(s.alerts, r.View())
-		s.mu.RUnlock()
-		if r.Commit(ctx, events, now) || changed {
+		retry := s.runtimeSnapshotDirty && !published
+		aged := false
+		for _, target := range targets {
+			name := target.Service.Name
+			observed, ok := s.healthStates[name]
+			if !ok || observed.Identity != healthIdentity(target.Service) || observed.Health.LastChecked == nil {
+				continue
+			}
+			cfg := registry.HealthConfig{}
+			if target.Service.Health != nil {
+				cfg = *target.Service.Health
+			}
+			timeout, interval := cfg.Durations()
+			stale := now.Sub(*observed.Health.LastChecked) > 2*interval+timeout
+			aged = aged || stale != observed.Stale
+			observed.Stale = stale
+			s.healthStates[name] = observed
+		}
+		s.mu.Unlock()
+		if r.Commit(ctx, events, now) || changed || retry {
 			s.publishHealth(r)
+		}
+		if aged && s.events.currentGeneration() == generation {
+			// Consumers age the raw observation when rebuilding the projection.
+			// Path resolution may prevent a snapshot attempt from notifying them.
+			// Wake once per boundary without another disk write.
+			s.events.publish()
 		}
 	}
 }

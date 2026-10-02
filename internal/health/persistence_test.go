@@ -2,6 +2,7 @@ package health
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -60,5 +61,38 @@ func TestRecorderCoalescesDeliveryAndSkipsUnchangedWrites(t *testing.T) {
 	r.Commit(context.Background(), nil, now)
 	if writes != 0 {
 		t.Errorf("unchanged journal wrote %d times", writes)
+	}
+}
+
+func TestRecorderRetainsDirtyUntilWriteSucceeds(t *testing.T) {
+	path := filepath.Join(t.TempDir(), StateFile)
+	r := NewRecorder(path, NotifierConfig{})
+	// The real atomic writer rejects a directory at the file path.
+	if err := os.Mkdir(path, 0700); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	h := Result(Unchecked("proxy"), "proxy", "", now)
+	writes := 0
+	write := r.WriteFile
+	r.WriteFile = func(path string, data []byte) error { writes++; return write(path, data) }
+	for i := 0; i < 2; i++ {
+		events := r.ObserveHealth("app", "backend", h, now)
+		if !r.Commit(context.Background(), events, now) || r.Error != "alert_state_write_failed" || writes != i+1 {
+			t.Fatal("failed journal did not remain dirty", r.Error, writes)
+		}
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if !r.Commit(context.Background(), r.ObserveHealth("app", "backend", h, now), now) {
+		t.Error("identical observation did not retry the pending journal")
+	}
+	disk := NewRecorder(path, r.Config)
+	if disk.Error != "" || disk.Previous("app", "backend").State != Healthy || writes != 3 {
+		t.Fatal("journal recovery did not persist the observation", disk.Error, disk.State, writes)
+	}
+	if r.Commit(context.Background(), nil, now) || writes != 3 {
+		t.Error("unchanged journal kept writing after successful recovery", writes)
 	}
 }

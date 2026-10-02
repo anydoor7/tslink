@@ -48,7 +48,9 @@ A successful check is `healthy`. One or two consecutive failures are
 `health` includes `last_checked`, `last_error` (a stable code), and
 `consecutive_failures` in CLI JSON, MCP `status`/`list`, and `/events` state.
 An absent check is `unknown`; an observation older than twice its configured
-interval plus its timeout is shown as unknown. Node authorization and endpoint
+interval plus its timeout is shown as unknown. The monitor wakes connected
+`/events` clients when an observation crosses that boundary, even if no new
+check can be attempted. Node authorization and endpoint
 readiness remain separate from app health. `doctor` performs a fresh HTTP
 business check in addition to its TCP connection check, with its existing
 external-target opt-in. Background checks use up to four concurrent workers
@@ -57,7 +59,9 @@ selects due checks, so the effective interval can be up to 10 seconds longer,
 and longer while a large batch of slow backends is being checked. Completed
 checks are published in batches of ready results, with up to 50 ms to collect
 a batch, while slow checks continue. Each batch commits the journal and
-publishes the snapshot at most once; unchanged state causes no writes.
+publishes the snapshot at most once. Failed writes remain pending and retry on
+a later scheduler cycle, including when no new check is due. Once persistence
+succeeds, unchanged state causes no writes.
 
 Each service has at most one actual backend read in flight. The I/O timeout
 starts after acquiring a worker slot. Queue admission has a separate five-second

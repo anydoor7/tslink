@@ -398,6 +398,7 @@ type Server struct {
 	healthProbePool       *healthReadPool
 	healthNodePool        *healthReadPool
 	alerts                health.AlertsView
+	runtimeSnapshotDirty  bool
 }
 
 // New creates a new multi-node server.
@@ -1833,6 +1834,9 @@ func (s *Server) cleanupAuthIdentityNodes(ctx context.Context, targets []tailapi
 }
 
 func (s *Server) writeRuntimeSnapshotLocked(registryFingerprint string, complete bool) {
+	// Retain failed publications for a later monitor cycle, even if the next
+	// observations are identical to the values already held in memory.
+	s.runtimeSnapshotDirty = true
 	s.lastSnapshotComplete = complete
 	path, err := runtimeSnapshotPathFn()
 	if err != nil {
@@ -1896,15 +1900,17 @@ func (s *Server) writeRuntimeSnapshotLocked(registryFingerprint string, complete
 	}
 	if err := runtimeSaveSnapshotFn(path, snapshot); err != nil {
 		slog.Warn("runtime snapshot write failed; continuing with running services", "path", path, "error", err)
+	} else {
+		s.runtimeSnapshotDirty = false
 	}
 	// Publish after the write, never before: an event stream rebuilds its
 	// payload by reading runtime.json back, so notifying first would hand a
 	// client the state it already had and call it fresh.
 	//
-	// This is also the whole of the event source. Every path that changes what
-	// a client can observe — a registry edit picked up by the fsnotify watcher,
+	// Runtime changes — a registry edit picked up by the fsnotify watcher,
 	// a lifecycle tick that expires a Funnel, a service that failed to start —
-	// ends in this function, so no separate goroutine polls anything.
+	// end in this function. The health monitor also notifies when an observation
+	// ages to unknown; that projection change needs no snapshot write.
 	s.events.publish()
 }
 

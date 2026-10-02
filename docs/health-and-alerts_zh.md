@@ -38,13 +38,15 @@ secret 放进 argv。Registry 的 `health` 与 MCP `add` 接受相同字段：`p
 检查成功为 `healthy`；连续失败一到两次为 `degraded`，三次为 `down`，成功
 即清零失败次数。CLI JSON、MCP `status`/`list` 和 `/events` 的 `health`
 包含 `last_checked`、稳定错误码 `last_error` 和 `consecutive_failures`。
-没有检查结果为 `unknown`；结果超过两倍间隔加超时，也显示 unknown。节点
+没有检查结果为 `unknown`；结果超过两倍间隔加超时，也显示 unknown。Monitor
+会在结果越过该边界时唤醒已连接的 `/events` 客户端，即使无法尝试新的检查。节点
 授权、URL 就绪与应用健康分别报告。`doctor` 保留 TCP 检查，并额外运行一次
 HTTP 业务探针，外部 target 仍要求现有的显式 opt-in。后台最多四个并行 worker，
 在首次 registry 同步后启动。每 10 秒调度到期检查，所以实际间隔可能多出最多
 10 秒；大量慢 backend 会进一步延长这一间隔。已完成的结果按就绪批次发布，最多用 50ms 收集
 一个批次，慢检查继续执行。每批最多提交一次 journal、发布一次 snapshot；
-状态没有变化时不写盘。
+写入失败时保留待保存状态，在后续调度周期重试，即使没有新检查到期。
+持久化成功后，状态没有变化时不写盘。
 
 每个 service 同时最多一个真实 backend read。拿到 worker slot 后才开始 I/O
 超时；排队另有五秒准入上限。没有容量、排队超时、或上一次 read 尚未退出时，
