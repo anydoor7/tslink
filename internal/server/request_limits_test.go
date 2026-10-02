@@ -25,6 +25,7 @@ import (
 	"github.com/anydoor7/tslink/internal/inspect"
 	"github.com/anydoor7/tslink/internal/registry"
 	tsRuntime "github.com/anydoor7/tslink/internal/runtime"
+	"tailscale.com/client/local"
 )
 
 func uploadFront(t *testing.T, service registry.Service, report func(inspect.WarningView), handler http.Handler) *httptest.Server {
@@ -140,6 +141,257 @@ func TestRequestLimitsTLSHandshakeLifecycle(t *testing.T) {
 				}
 				tr.CloseIdleConnections()
 				uploadRelease(t, limited, time.Now().Add(time.Second), tr)
+			}
+		})
+	}
+}
+
+// Joining preparation is test cleanup, not part of listener Close. The caller
+// must close the listener first so acceptLoop cannot add another worker.
+func uploadJoinPreparation(t *testing.T, ln *headerBudgetListener) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() { ln.workers.Wait(); close(done) }()
+	uploadWait(t, done, time.Second, "preparation workers did not exit")
+}
+
+type uploadJoinedAcceptListener struct {
+	*headerBudgetListener
+	acceptDone chan struct{}
+}
+
+func (l *uploadJoinedAcceptListener) Accept() (net.Conn, error) {
+	// Serve registers its listener before calling Accept. Starting here keeps
+	// that production ordering while allowing the test to join the accept loop.
+	l.once.Do(func() { go func() { l.acceptLoop(); close(l.acceptDone) }() })
+	return l.headerBudgetListener.Accept()
+}
+
+// Port the review's stop controls through the actual pinned SDK callback and a
+// loopback LocalAPI. GetCertificate owns a background context, so closing the
+// TLS connection and expiring HandshakeContext cannot release this dependency.
+func TestRequestLimitsTLSCertificateLookupStop(t *testing.T) {
+	for _, capped := range []bool{false, true} {
+		for _, stop := range []string{"listener_close", "server_close", "shutdown_100ms", "shutdown_production_budget"} {
+			t.Run(fmt.Sprintf("capped=%v/%s", capped, stop), func(t *testing.T) {
+				entered, release, lookupDone := make(chan struct{}), make(chan struct{}), make(chan struct{})
+				var once sync.Once
+				unblock := func() { once.Do(func() { close(release) }) }
+				backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.URL.Path != "/localapi/v0/cert/share.example.invalid" {
+						t.Errorf("unexpected LocalAPI path: %s", r.URL.Path)
+					}
+					close(entered)
+					<-release
+					http.Error(w, "injected delayed certificate lookup", http.StatusServiceUnavailable)
+				}))
+				defer backend.Close()
+				defer unblock()
+				tr := &http.Transport{DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+					return (&net.Dialer{}).DialContext(ctx, "tcp", backend.Listener.Addr().String())
+				}}
+				defer tr.CloseIdleConnections()
+				lc := &local.Client{Transport: tr, OmitAuth: true}
+				cfg := &tls.Config{GetCertificate: func(hi *tls.ClientHelloInfo) (*tls.Certificate, error) {
+					defer close(lookupDone)
+					return lc.GetCertificate(hi)
+				}}
+				raw, err := net.Listen("tcp", "127.0.0.1:0")
+				if err != nil {
+					t.Fatal(err)
+				}
+				var transport net.Listener = tls.NewListener(raw, cfg)
+				var limited *limitedListener
+				if capped {
+					limited = newLimitedListener(transport, 1, "http", "certificate").(*limitedListener)
+					transport = limited
+				}
+				srv := newHTTPServerFn(http.NotFoundHandler())
+				ln := configureServiceHTTP(srv, registry.Service{Type: registry.TypeFile, RequestLimits: &registry.RequestLimits{HeaderTimeout: "100ms"}}, transport, nil).(*headerBudgetListener)
+				acceptDone := make(chan struct{})
+				served := make(chan error, 1)
+				go func() {
+					served <- srv.Serve(&uploadJoinedAcceptListener{headerBudgetListener: ln, acceptDone: acceptDone})
+				}()
+				connected := make(chan error, 1)
+				connectedDone := make(chan struct{})
+				go func() {
+					defer close(connectedDone)
+					c, err := tls.DialWithDialer(&net.Dialer{Timeout: 10 * time.Second}, "tcp", raw.Addr().String(), &tls.Config{InsecureSkipVerify: true, ServerName: "share.example.invalid"})
+					if c != nil {
+						_ = c.Close()
+					}
+					connected <- err
+				}()
+				defer func() {
+					unblock()
+					_ = srv.Close()
+					select {
+					case err := <-served:
+						if !errors.Is(err, http.ErrServerClosed) && !errors.Is(err, net.ErrClosed) {
+							t.Error(err)
+						}
+					case <-time.After(time.Second):
+						t.Error("Serve did not exit")
+					}
+					uploadWait(t, acceptDone, time.Second, "accept loop did not exit")
+					uploadWait(t, connectedDone, time.Second, "TLS client did not exit")
+					uploadJoinPreparation(t, ln)
+				}()
+				uploadWait(t, entered, time.Second, "actual GetCertificate was not reached")
+				if capped && len(limited.sem) != 1 {
+					t.Fatal("handshake did not acquire cap")
+				}
+				budget, bound := 100*time.Millisecond, 400*time.Millisecond
+				if stop == "shutdown_production_budget" {
+					budget, bound = httpShutdownTimeout, 6*time.Second
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), budget)
+				defer cancel()
+				stopped := make(chan error, 1)
+				stopDone := make(chan struct{})
+				defer func() { unblock(); uploadWait(t, stopDone, time.Second, "stop goroutine did not exit") }()
+				start := time.Now()
+				go func() {
+					defer close(stopDone)
+					switch stop {
+					case "listener_close":
+						stopped <- ln.Close()
+					case "server_close":
+						stopped <- srv.Close()
+					default:
+						stopped <- srv.Shutdown(ctx)
+					}
+				}()
+				select {
+				case err := <-stopped:
+					if err != nil {
+						t.Errorf("stop returned %v", err)
+					}
+					t.Logf("stop returned in %s with provider still blocked (budget %s)", time.Since(start), budget)
+				case <-time.After(bound):
+					t.Errorf("stop blocked for %s behind GetCertificate; shutdown context=%v", time.Since(start), ctx.Err())
+					unblock()
+					select {
+					case <-stopped:
+					case <-time.After(time.Second):
+						t.Fatal("stop did not finish after provider release")
+					}
+				}
+				select {
+				case err := <-connected:
+					if err == nil {
+						t.Error("closed raw transport completed TLS")
+					}
+				case <-time.After(time.Second):
+					t.Error("raw transport survived stop")
+					unblock()
+					<-connected
+				}
+				if capped {
+					if len(limited.sem) != 0 {
+						t.Fatal("stop retained the connection cap")
+					}
+					// Reuse the released slot before the worker finishes. A second
+					// release would consume this token or block forever.
+					limited.sem <- struct{}{}
+				}
+				unblock()
+				uploadWait(t, lookupDone, time.Second, "certificate provider did not exit")
+				uploadJoinPreparation(t, ln)
+				if capped && len(limited.sem) != 1 {
+					t.Error("late worker released the cap twice")
+				}
+				if capped && len(limited.sem) == 1 {
+					<-limited.sem // remove the test's replacement token
+				}
+				ln.mu.Lock()
+				pending := len(ln.pending)
+				ln.mu.Unlock()
+				tracked := 0
+				ln.tlsSlots.Range(func(_, _ any) bool { tracked++; return true })
+				if pending != 0 || tracked != 0 {
+					t.Errorf("late preparation leaked: pending=%d tracked=%d", pending, tracked)
+				}
+				if c, err := ln.Accept(); c != nil || !errors.Is(err, net.ErrClosed) {
+					t.Errorf("closed listener returned late handoff: %v, %v", c, err)
+				}
+			})
+		}
+	}
+}
+
+func TestRequestLimitsTLSLateHandoff(t *testing.T) {
+	for _, capped := range []bool{false, true} {
+		t.Run(fmt.Sprintf("capped=%v", capped), func(t *testing.T) {
+			cert := httptest.NewTLSServer(http.NotFoundHandler())
+			defer cert.Close()
+			cfg := cert.TLS.Clone()
+			cfg.NextProtos = []string{"h2"}
+			cfg.MaxVersion, cfg.SessionTicketsDisabled = tls.VersionTLS12, true
+			raw, peer := net.Pipe()
+			defer raw.Close()
+			defer peer.Close()
+			native := tls.Server(raw, cfg)
+			client := tls.Client(peer, &tls.Config{InsecureSkipVerify: true, NextProtos: []string{"h2"}, MaxVersion: tls.VersionTLS12})
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			handshaken := make(chan error, 1)
+			go func() { handshaken <- native.HandshakeContext(ctx) }()
+			if err := client.HandshakeContext(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if err := <-handshaken; err != nil {
+				t.Fatal(err)
+			}
+			if native.ConnectionState().NegotiatedProtocol != "h2" {
+				t.Fatal("late-handoff control did not negotiate h2")
+			}
+			var original net.Conn = native
+			slots := make(chan struct{}, 1)
+			if capped {
+				slots <- struct{}{}
+				original = &limitedTLSConn{limitedConn: &limitedConn{Conn: native, release: func() { <-slots }}, tlsConn: native}
+			}
+			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			ln := configureServiceHTTP(newHTTPServerFn(http.NotFoundHandler()), registry.Service{Type: registry.TypeFile}, listener, nil).(*headerBudgetListener)
+			ln.once.Do(func() {})
+			// Model a worker admitted before Close whose handshake is already
+			// complete, but which resumes the handoff only after Close returns.
+			ln.pending[original] = struct{}{}
+			ln.workers.Add(1)
+			resume := make(chan struct{})
+			var once sync.Once
+			unblock := func() { once.Do(func() { close(resume) }) }
+			go func() { <-resume; ln.prepare(original) }()
+			defer func() { unblock(); _ = ln.Close(); uploadJoinPreparation(t, ln) }()
+			closed := make(chan error, 1)
+			go func() { closed <- ln.Close() }()
+			select {
+			case err := <-closed:
+				if err != nil {
+					t.Fatal(err)
+				}
+			case <-time.After(400 * time.Millisecond):
+				t.Error("Close waited for a worker before its late handoff")
+				unblock()
+				<-closed
+			}
+			unblock()
+			uploadJoinPreparation(t, ln)
+			ln.mu.Lock()
+			pending := len(ln.pending)
+			ln.mu.Unlock()
+			tracked := 0
+			ln.tlsSlots.Range(func(_, _ any) bool { tracked++; return true })
+			if pending != 0 || tracked != 0 || len(slots) != 0 {
+				t.Errorf("late h2 handoff leaked: pending=%d tracked=%d slots=%d", pending, tracked, len(slots))
+			}
+			if c, err := ln.Accept(); c != nil || !errors.Is(err, net.ErrClosed) {
+				t.Errorf("closed listener delivered late h2 handoff: %v, %v", c, err)
 			}
 		})
 	}
@@ -278,6 +530,7 @@ func TestRequestLimitsTLSPendingHandoffClosed(t *testing.T) {
 			if err := ln.Close(); err != nil {
 				t.Fatal(err)
 			}
+			uploadJoinPreparation(t, ln)
 			_ = peer.SetReadDeadline(deadline)
 			if _, err := peer.Read(make([]byte, 1)); err == nil || isTimeout(err) {
 				t.Fatalf("completed but unserved TLS connection survived Close: %v", err)

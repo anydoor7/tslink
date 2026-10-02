@@ -390,7 +390,11 @@ func (l *headerBudgetListener) Close() error {
 	for _, c := range pending {
 		closeUnservedHTTPConn(c)
 	}
-	l.workers.Wait()
+	// A certificate provider may ignore HandshakeContext cancellation and
+	// continue its own lookup after the raw transport is closed. Do not join
+	// preparation here: net/http closes listeners synchronously, before it
+	// observes Shutdown's context. Each worker retains ownership until it
+	// either hands off through Accept or cleans up after seeing l.done.
 	return err
 }
 func (c *headerBudgetConn) budgetConn() *headerBudgetConn { return c }
