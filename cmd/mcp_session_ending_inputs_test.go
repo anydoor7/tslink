@@ -2,7 +2,9 @@ package cmd
 
 import (
 	"context"
+	"io"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -32,11 +34,6 @@ func TestMCPHelpDocumentsSessionEndingInputs(t *testing.T) {
 
 	slow := `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"status","arguments":{}}}`
 	after := `{"jsonrpc":"2.0","id":10,"method":"ping"}`
-	actions := fakeMCPActions()
-	actions.status = func() (any, error) {
-		time.Sleep(300 * time.Millisecond)
-		return mcpStatusSummary{}, nil
-	}
 	for name, bad := range map[string]string{
 		"malformed JSON":  "this is not json",
 		"not JSON-RPC":    `{"hello":1}`,
@@ -46,13 +43,64 @@ func TestMCPHelpDocumentsSessionEndingInputs(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
+			started, stopped := make(chan struct{}), make(chan struct{})
+			watching, release := make(chan struct{}), make(chan struct{})
+			actions := fakeMCPActions()
+			actions.status = func() (any, error) {
+				close(started)
+				<-release
+				close(stopped)
+				return mcpStatusSummary{}, nil
+			}
+			// Observe SDK cancellation through a context-aware call, then let
+			// status return its normal answer. Status itself ignores cancellation,
+			// so the test still checks that its answer is dropped by the transport.
+			actions.url = func(ctx context.Context, _ string, _ time.Duration) (any, error) {
+				close(watching)
+				<-ctx.Done()
+				close(release)
+				return nil, ctx.Err()
+			}
+			in, input := io.Pipe()
+			defer in.Close()
+			defer input.Close()
 			var stdout strings.Builder
-			err := runMCPStdio(ctx, strings.NewReader(initializedMCPInput(slow)+bad+"\n"+after+"\n"), &stdout, actions)
+			done := make(chan error, 1)
+			go func() {
+				err := runMCPStdio(ctx, in, &stdout, actions)
+				_ = in.CloseWithError(err)
+				done <- err
+			}()
+			observer := `{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"url","arguments":{"name":"web"}}}`
+			if _, err := io.WriteString(input, initializedMCPInput(slow+"\n"+observer)); err != nil {
+				t.Fatalf("write active call: %v", err)
+			}
+			// Establish an actual in-flight call before sending the bad input.
+			// It stays in flight until session cancellation, however long the
+			// race detector takes to scan an oversize record under load.
+			select {
+			case <-started:
+			case <-ctx.Done():
+				t.Fatal("call did not start before the session-ending input")
+			}
+			select {
+			case <-watching:
+			case <-ctx.Done():
+				t.Fatal("cancellation observer did not start")
+			}
+			// Refusing the input can close the pipe before this write finishes.
+			_, _ = io.WriteString(input, bad+"\n"+after+"\n")
+			err := <-done
 			if err == nil || ctx.Err() != nil {
 				t.Fatalf("session error = %v, want the input to end the session", err)
 			}
+			select {
+			case <-stopped:
+			default:
+				t.Fatal("session-ending input did not release the active call")
+			}
 			for _, frame := range decodeMCPResponses(t, stdout.String()) {
-				if frame["id"] == float64(2) || frame["id"] == float64(10) {
+				if frame["id"] == float64(2) || frame["id"] == float64(9) || frame["id"] == float64(10) {
 					t.Fatalf("answer survived a session-ending input: %+v", frame)
 				}
 			}
@@ -60,7 +108,25 @@ func TestMCPHelpDocumentsSessionEndingInputs(t *testing.T) {
 	}
 
 	t.Run("duplicate in-flight id", func(t *testing.T) {
-		stdout := runMCPSession(t, initializedMCPInput(slow+"\n"+slow), actions)
+		release := make(chan struct{})
+		var calls atomic.Int32
+		actions := fakeMCPActions()
+		actions.status = func() (any, error) {
+			calls.Add(1)
+			<-release
+			return mcpStatusSummary{}, nil
+		}
+		// The SDK accepts messages in order. A later url call releases the
+		// first call only after the duplicate was checked while still in flight.
+		actions.url = func(context.Context, string, time.Duration) (any, error) {
+			close(release)
+			return URLResult{}, nil
+		}
+		barrier := `{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"url","arguments":{"name":"web"}}}`
+		stdout := runMCPSession(t, initializedMCPInput(slow+"\n"+slow+"\n"+barrier), actions)
+		if got := calls.Load(); got != 1 {
+			t.Fatalf("duplicate in-flight id dispatched %d calls, want 1", got)
+		}
 		answers := 0
 		for _, frame := range decodeMCPResponses(t, stdout) {
 			if frame["id"] == float64(2) {
