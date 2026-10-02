@@ -1,8 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
-  <title id="title">TSLink</title>
-  <desc id="desc">An open amber door with a link leading to one service node. Dark theme.</desc>
-  <path d="M24 96V28a8 8 0 0 1 8-8h44a8 8 0 0 1 8 8v20m0 44v8H60" fill="none" stroke="#e9d9bd" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M24 24 56 36v72L24 96Z" fill="#aa723c" stroke="#e9d9bd" stroke-width="8" stroke-linejoin="round"/>
-  <path d="M56 70h48" fill="none" stroke="#e3a265" stroke-width="8" stroke-linecap="round"/>
-  <rect x="96" y="60" width="20" height="20" rx="5" fill="#e3a265"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160" viewBox="0 0 160 160" role="img" aria-labelledby="title desc">
+  <title id="title">TSLink symbol</title>
+  <desc id="desc">TSLink split link. Artwork for dark backgrounds; transparent canvas.</desc>
+  <path fill="#EDF4EA" d="M136 16H60C35.699 16 16 35.699 16 60V64C16 79.464 28.536 92 44 92H68V68H44C41.791 68 40 66.209 40 64V60C40 48.954 48.954 40 60 40H136Z"/><path fill="#9BDCAB" d="M136 16H60C35.699 16 16 35.699 16 60V64C16 79.464 28.536 92 44 92H68V68H44C41.791 68 40 66.209 40 64V60C40 48.954 48.954 40 60 40H136Z" transform="rotate(180 80 80)"/>
 </svg>
