@@ -176,24 +176,16 @@ func TestCredentialFileChangeNotifiesThroughTheWatcher(t *testing.T) {
 	defer release()
 
 	startRegistryWatcherTest(t, srv)
-	// The watcher registers its directory before the goroutine it hands off to
-	// starts reading; give it a beat so the write below is observed.
-	time.Sleep(150 * time.Millisecond)
 
 	writeCredentialFile(t, cfgDir, config.CredentialMetaFileName, `{"slots":{"api_key":{"fingerprint":"abc"}}}`)
 
-	deadline := time.Now().Add(5 * time.Second)
-	for !drained(changed) {
-		if time.Now().After(deadline) {
-			t.Fatal("a credential metadata write produced no event frame")
-		}
-		time.Sleep(5 * time.Millisecond)
+	select {
+	case <-changed:
+	case <-time.After(10 * time.Second):
+		t.Fatal("a credential metadata write produced no event frame")
 	}
 
-	srv.mu.RLock()
-	nodes := len(srv.nodes)
-	srv.mu.RUnlock()
-	if nodes != 0 {
-		t.Fatalf("a credential write started %d nodes; it must not trigger a registry sync", nodes)
+	if count := srv.syncGeneration.Load(); count != 0 {
+		t.Fatalf("a credential write triggered %d registry syncs", count)
 	}
 }

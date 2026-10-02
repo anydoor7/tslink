@@ -31,3 +31,10 @@ This index covers the recipe integration tests. The repository AGENTS.md describ
 - `canonical_host_test.go`: trusted runtime name selection, normalization, missing-name refusal and recovery.
 
 - `wave1_integration_test.go`: real proxy and health Host agreement, rename/refusal/recovery, snapshot health, request limits and immediate people revocation.
+
+# Registry watcher reconciliation
+
+- `registry_watcher_test.go`: periodic and overflow reconciliation with real registry files.
+- `registry_watcher_active_removal_test.go`: active removal while another node enrolls.
+- `registry_watcher_long_sync_test.go`: cancellation and callback joins during blocked startup.
+- `registry_watcher_decision_test.go`: generation ordering and lossless pending rechecks.

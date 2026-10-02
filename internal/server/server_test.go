@@ -21,6 +21,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/anydoor7/tslink/internal/authmode"
@@ -30,6 +31,7 @@ import (
 	"github.com/anydoor7/tslink/internal/tailapi"
 	"github.com/anydoor7/tslink/internal/testenv"
 	"github.com/anydoor7/tslink/internal/testenv/localapitest"
+	"github.com/fsnotify/fsnotify"
 	"tailscale.com/ipn"
 	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/tailcfg"
@@ -71,22 +73,35 @@ func startRegistryWatcherTest(t *testing.T, s *Server) func() {
 	t.Helper()
 
 	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		s.watchRegistry(ctx)
-	}()
+	// Add and credential priming must finish before a caller can write. The
+	// product's startup path already provides this synchronous readiness boundary.
+	done, err := s.startRegistryWatcher(ctx)
+	if err != nil {
+		cancel()
+		t.Fatalf("startRegistryWatcher() error = %v", err)
+	}
 
 	stop := func() {
 		cancel()
 		select {
 		case <-done:
-		case <-time.After(2 * time.Second):
+		case <-time.After(10 * time.Second):
 			t.Errorf("watchRegistry() did not return after context cancellation")
 		}
 	}
 	t.Cleanup(stop)
 	return stop
+}
+
+func waitRegistrySyncTest(t *testing.T, s *Server, generation uint64) syncResult {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	result, err := s.waitForSyncResult(ctx, generation)
+	if err != nil {
+		t.Fatalf("registry sync %d did not complete: %v", generation, err)
+	}
+	return result
 }
 
 func TestHTTPResourceBudgetsConfigured(t *testing.T) {
@@ -5210,21 +5225,16 @@ func TestWatchRegistry_ReactsToCreate(t *testing.T) {
 
 	startRegistryWatcherTest(t, s)
 
-	time.Sleep(150 * time.Millisecond)
 	writeRegistry(t, []registry.Service{})
-
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		s.mu.RLock()
-		_, exists := s.nodes["stale"]
-		s.mu.RUnlock()
-		if !exists {
-			return
-		}
-		time.Sleep(25 * time.Millisecond)
+	if result := waitRegistrySyncTest(t, s, 1); result.err != nil {
+		t.Fatalf("registry create sync failed: %v", result.err)
 	}
-
-	t.Fatal("watchRegistry() did not react to registry create event")
+	s.mu.RLock()
+	_, exists := s.nodes["stale"]
+	s.mu.RUnlock()
+	if exists {
+		t.Fatal("watchRegistry() did not react to registry create event")
+	}
 }
 
 func TestRun(t *testing.T) {
@@ -5240,13 +5250,19 @@ func TestRun(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	go func() {
-		time.Sleep(50 * time.Millisecond)
+	defer cancel()
+	ready := false
+	s.SetReadyFunc(func() error {
+		ready = true
 		cancel()
-	}()
+		return nil
+	})
 
 	if err := s.Run(ctx); err != nil {
 		t.Fatalf("Run() error = %v", err)
+	}
+	if !ready {
+		t.Fatal("Run() exited before watcher setup and initial sync completed")
 	}
 }
 
@@ -6073,23 +6089,8 @@ func TestWatchRegistry_ContextCancelled(t *testing.T) {
 		t.Fatalf("New() error = %v", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-
-	done := make(chan struct{})
-	go func() {
-		s.watchRegistry(ctx)
-		close(done)
-	}()
-
-	// Give the watcher time to start
-	time.Sleep(100 * time.Millisecond)
-	cancel()
-
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("watchRegistry() did not return after context cancellation")
-	}
+	stop := startRegistryWatcherTest(t, s)
+	stop()
 }
 
 func TestWatchRegistry_BadCfgDir(t *testing.T) {
@@ -6224,44 +6225,39 @@ func TestWatchRegistry_IgnoresNonRegistryFile(t *testing.T) {
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
+	synctest.Test(t, func(t *testing.T) {
+		w := installChannelRegistryWatcher(t)
+		s, err := New("key", "")
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+		// A misrouted event would remove this stale node. Merely keeping a
+		// registered node cannot distinguish an ignored event from a full sync.
+		s.nodes["keep"] = newNode(t, registry.Service{Name: "keep"})
+		t.Cleanup(s.closeAllNodes)
+		regPath := writeRegistry(t, nil)
+		startRegistryWatcherTest(t, s)
 
-	s, err := New("key", "")
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
+		w.events <- fsnotify.Event{Name: filepath.Join(s.cfgDir, "unrelated.tmp"), Op: fsnotify.Write}
+		advanceWatcherTime(time.Second)
+		if count := s.syncGeneration.Load(); count != 0 {
+			t.Fatalf("unrelated event triggered %d registry syncs", count)
+		}
+		if _, exists := s.nodes["keep"]; !exists {
+			t.Fatal("node disappeared after an unrelated event")
+		}
 
-	// Add a node that should NOT be removed by non-registry file changes
-	svc := registry.Service{Name: "keep", Type: registry.TypeProxy, Target: "http://localhost:3000"}
-	s.nodes["keep"] = newNode(t, svc)
-
-	// Write a valid registry that includes the service
-	writeRegistry(t, []registry.Service{svc})
-
-	startRegistryWatcherTest(t, s)
-
-	// Give the watcher time to start
-	time.Sleep(150 * time.Millisecond)
-
-	// Write a non-registry file in the config dir — should trigger the "continue" branch
-	cfgDir, err := config.Dir()
-	if err != nil {
-		t.Fatalf("config.Dir() error = %v", err)
-	}
-	nonRegFile := filepath.Join(cfgDir, "unrelated.tmp")
-	if err := os.WriteFile(nonRegFile, []byte("noise"), 0o600); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
-
-	// Give the watcher time to process the event
-	time.Sleep(200 * time.Millisecond)
-
-	// The "keep" node should still be present (no sync triggered)
-	s.mu.RLock()
-	_, exists := s.nodes["keep"]
-	s.mu.RUnlock()
-	if !exists {
-		t.Fatal("node should still exist after non-registry file change")
-	}
+		// Positive control: the same event loop and clock must process a
+		// registry event and remove the node.
+		w.events <- fsnotify.Event{Name: regPath, Op: fsnotify.Create}
+		advanceWatcherTime(time.Second)
+		if s.syncGeneration.Load() != 1 {
+			t.Fatal("registry event did not trigger the control sync")
+		}
+		if _, exists := s.nodes["keep"]; exists {
+			t.Fatal("control sync did not remove the stale node")
+		}
+	})
 }
 
 func TestWatchRegistry_SyncErrorOnReload(t *testing.T) {
@@ -6277,9 +6273,6 @@ func TestWatchRegistry_SyncErrorOnReload(t *testing.T) {
 
 	stopWatcher := startRegistryWatcherTest(t, s)
 
-	// Give the watcher time to start
-	time.Sleep(150 * time.Millisecond)
-
 	// Write invalid JSON to registry — triggers syncNodes which returns Load error
 	regPath, err := config.RegistryPath()
 	if err != nil {
@@ -6289,13 +6282,14 @@ func TestWatchRegistry_SyncErrorOnReload(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	// Give the watcher time to process the event and log the error
-	time.Sleep(200 * time.Millisecond)
+	// Observe the completed error path, rather than canceling a pending timer.
+	if result := waitRegistrySyncTest(t, s, 1); result.err == nil {
+		t.Fatal("invalid registry did not produce a reload error")
+	}
 
 	// The watcher should still be running (not crashed) — cancel and verify it exits
 	stopWatcher()
 
-	// If we reach here without panic, the error path was handled gracefully
 }
 
 func TestSetEnsureTagsFn(t *testing.T) {
@@ -6468,60 +6462,42 @@ func TestWatchRegistry_DebouncesRapidWrites(t *testing.T) {
 	if err := config.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
-
-	// Write initial registry
-	writeRegistry(t, []registry.Service{
-		{Name: "debounce-test", Type: registry.TypeFile, Path: t.TempDir()},
-	})
-
-	var syncCount atomic.Int32
-	oldNew := newTSNetServerFn
-	newTSNetServerFn = func(svc registry.Service, stateDir, authKey, controlURL string) tsnetServer {
-		syncCount.Add(1)
-		return &fakeTSNetServer{}
-	}
-	t.Cleanup(func() { newTSNetServerFn = oldNew })
-
-	s, err := New("key", "")
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-	t.Cleanup(s.closeAllNodes)
-
-	stopWatcher := startRegistryWatcherTest(t, s)
-
-	// Give the watcher time to initialize
-	time.Sleep(50 * time.Millisecond)
-
-	// Write to registry rapidly 5 times within the debounce window (200ms)
-	regPath, err := config.RegistryPath()
-	if err != nil {
-		t.Fatalf("RegistryPath() error = %v", err)
-	}
-	for i := 0; i < 5; i++ {
-		data, _ := json.Marshal(registry.Registry{Services: []registry.Service{
-			{Name: fmt.Sprintf("svc-%d", i), Type: registry.TypeFile, Path: t.TempDir()},
-		}})
-		if err := os.WriteFile(regPath, append(data, '\n'), 0o600); err != nil {
-			t.Fatalf("WriteFile() error = %v", err)
+	synctest.Test(t, func(t *testing.T) {
+		w := installChannelRegistryWatcher(t)
+		var built []string
+		oldNew := newTSNetServerFn
+		newTSNetServerFn = func(svc registry.Service, _, _, _ string) tsnetServer {
+			built = append(built, svc.Name)
+			return &fakeTSNetServer{}
 		}
-		time.Sleep(20 * time.Millisecond) // 20ms apart, well within 200ms debounce
-	}
-
-	// Wait for debounce to fire (200ms) plus some margin
-	time.Sleep(400 * time.Millisecond)
-
-	stopWatcher()
-
-	// With debounce, only the last write should trigger syncNodes (1 sync, not 5).
-	// The sync creates one tsnet server per service in registry.
-	count := syncCount.Load()
-	if count > 2 {
-		t.Fatalf("syncNodes called too many times: got %d tsnet constructions, want <= 2 (debounce should coalesce rapid writes)", count)
-	}
-	if count == 0 {
-		t.Fatal("syncNodes was never called; debounce timer should have fired at least once")
-	}
+		t.Cleanup(func() { newTSNetServerFn = oldNew })
+		s, err := New("key", "")
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+		t.Cleanup(s.closeAllNodes)
+		startRegistryWatcherTest(t, s)
+		for i := 0; i < 5; i++ {
+			regPath := writeRegistry(t, []registry.Service{
+				{Name: fmt.Sprintf("svc-%d", i), Type: registry.TypeFile, Path: t.TempDir()},
+			})
+			w.events <- fsnotify.Event{Name: regPath, Op: fsnotify.Write}
+			if i < 4 {
+				advanceWatcherTime(20 * time.Millisecond)
+			}
+		}
+		advanceWatcherTime(199 * time.Millisecond)
+		if count := s.syncGeneration.Load(); count != 0 {
+			t.Fatalf("debounce fired before 200ms of quiet: %d syncs", count)
+		}
+		advanceWatcherTime(time.Millisecond)
+		if count := s.syncGeneration.Load(); count != 1 {
+			t.Fatalf("debounce produced %d syncs, want exactly 1", count)
+		}
+		if len(built) != 1 || built[0] != "svc-4" {
+			t.Fatalf("built nodes = %v, want only the last written service svc-4", built)
+		}
+	})
 }
 
 func TestRun_MissingRegistryStartsEmpty(t *testing.T) {

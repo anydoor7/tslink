@@ -21,8 +21,8 @@ import (
 // Remove plus Chmod, and `tslink login` touches the value file and the metadata
 // file as one transaction. Answering each event separately would push several
 // frames for one logical change; waiting a beat and then asking what the state
-// is now answers it once. The delay is started by an event and never by a
-// clock, so nothing here polls.
+// is now answers it once. Errors and periodic loss recovery use the same digest
+// comparison without waiting for this debounce.
 const credentialStateDebounce = 200 * time.Millisecond
 
 // credentialStatePaths are the config-directory files whose contents decide the
@@ -101,9 +101,8 @@ func credentialStateDigest(paths map[string]struct{}) string {
 // before the watcher starts so the first real change is the first frame, and a
 // spurious event at startup is not.
 func (s *Server) primeCredentialState() {
-	digest := credentialStateDigest(s.credentialStatePaths())
 	s.credentialStateMu.Lock()
-	s.credentialStateDigest = digest
+	s.credentialStateDigest = credentialStateDigest(s.credentialStatePaths())
 	s.credentialStateKnown = true
 	s.credentialStateMu.Unlock()
 }
@@ -115,8 +114,10 @@ func (s *Server) primeCredentialState() {
 // and "a frame nobody can distinguish from the last one" look the same from
 // outside.
 func (s *Server) notifyCredentialStateChanged() bool {
-	digest := credentialStateDigest(s.credentialStatePaths())
 	s.credentialStateMu.Lock()
+	// Hash under the comparison lock too. Otherwise an older debounce read can
+	// overwrite the newer digest recorded by a concurrent loss-recovery check.
+	digest := credentialStateDigest(s.credentialStatePaths())
 	unchanged := s.credentialStateKnown && s.credentialStateDigest == digest
 	s.credentialStateDigest = digest
 	s.credentialStateKnown = true
