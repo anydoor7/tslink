@@ -2,7 +2,7 @@ package server
 
 import (
 	"context"
-	"reflect"
+	"encoding/json"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -61,7 +61,12 @@ func TestWave1Round2WatcherPreservesExtendedService(t *testing.T) {
 					observed = node.service
 				}
 				s.mu.RUnlock()
-				if !reflect.DeepEqual(observed, loaded.Services[0]) {
+				actual, actualErr := json.Marshal(observed)
+				wanted, wantedErr := json.Marshal(loaded.Services[0])
+				if actualErr != nil || wantedErr != nil {
+					t.Fatalf("service JSON: %v %v", actualErr, wantedErr)
+				}
+				if string(actual) != string(wanted) {
 					t.Fatalf("watcher lost extended service fields: got=%+v want=%+v", observed, loaded.Services[0])
 				}
 				advanceWatcherTime(2 * registryStateCheckInterval)
