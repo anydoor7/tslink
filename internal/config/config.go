@@ -12,6 +12,7 @@ import (
 
 	"github.com/anydoor7/tslink/internal/atomicfile"
 	"github.com/anydoor7/tslink/internal/filelock"
+	"github.com/anydoor7/tslink/internal/mcpscope"
 )
 
 // ConfigDirEnv overrides the default per-user configuration directory. It is
@@ -40,9 +41,10 @@ type GlobalConfig struct {
 // the security boundary of the whole control plane: an empty list is a refusal
 // to start, never an invitation to everyone.
 type MCPConfig struct {
-	Enabled  bool     `json:"enabled,omitempty"`
-	Allow    []string `json:"allow,omitempty"`
-	NodeName string   `json:"node_name,omitempty"`
+	Enabled  bool               `json:"enabled,omitempty"`
+	Allow    []string           `json:"allow,omitempty"`
+	Bindings []mcpscope.Binding `json:"bindings,omitempty"`
+	NodeName string             `json:"node_name,omitempty"`
 	// EventsKeepalive is the event stream's heartbeat period as a Go duration
 	// string, for example "20s". Empty means the daemon's default. It is
 	// configuration rather than a flag because it is a property of the
@@ -161,6 +163,11 @@ func loadGlobalConfig(strict bool) (GlobalConfig, error) {
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return GlobalConfig{}, &ConfigLoadError{Path: path, Problem: "unexpected data after the JSON object"}
 	}
+	if cfg.MCP != nil {
+		if err := mcpscope.ValidateBindings(cfg.MCP.Allow, cfg.MCP.Bindings); err != nil {
+			return GlobalConfig{}, &ConfigLoadError{Path: path, Problem: err.Error()}
+		}
+	}
 	return cfg, nil
 }
 
@@ -225,6 +232,11 @@ func UpdateGlobalConfig(mutate func(*GlobalConfig) error) error {
 
 // SaveGlobalConfig writes the global config to disk.
 func SaveGlobalConfig(cfg GlobalConfig) error {
+	if cfg.MCP != nil {
+		if err := mcpscope.ValidateBindings(cfg.MCP.Allow, cfg.MCP.Bindings); err != nil {
+			return err
+		}
+	}
 	path, err := ConfigPath()
 	if err != nil {
 		return err

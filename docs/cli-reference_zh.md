@@ -157,3 +157,12 @@ MCP add/share 接受可选对象 `request_limits: {"max_body":"20GiB","read_time
 应用后端及公网 relay 自身的限制仍然有效。
 
 Windows `tslink install --startup` 显式选择下次登录启动、无崩溃恢复的 Startup 降级。默认 `install` 使用 Task Scheduler 启动内置 supervisor 并验证立即启动。`stop` 停止两个进程，包括崩溃退避期间；`install` 重置已触发的崩溃循环断路器。见[daemon 生命周期](daemon-lifecycle_zh.md#windows-监管与迁移)。
+
+## MCP 作用域与审计
+
+`mcp --scope viewer --apps photos` 降低本地会话权限，默认角色是 owner。
+Operator/people-manager 可用 `--max-duration`（默认 24h）；viewer 可显式
+使用 `--inventory`。远程 `mcp.bindings` 将角色绑定到 WhoIs，并可带固定期限。
+旧 `mcp.allow` 保留 owner。`mcp-audit [--json]` 读取有界持久变更日志。Status
+包含 `mcp_bindings`；doctor 用 `mcp_owner_tag`、`mcp_binding_expired` 报告风险。
+见 [MCP 作用域](mcp-scopes_zh.md)。

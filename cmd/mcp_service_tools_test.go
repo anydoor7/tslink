@@ -68,6 +68,8 @@ const mcpJSONFlagExclusion = "MCP tool results are always structured JSON; --jso
 
 // mcpCoveredCommands is the mapping half of the partition.
 var mcpCoveredCommands = map[string]mcpCoveredCommand{
+	"tslink mcp":           {Tools: []string{"people_grant", "people_revoke", "app_restart", "health"}, ExcludedFlags: map[string]string{"scope": "trusted transport launch option, not a tool argument", "apps": "trusted transport app restriction", "inventory": "trusted transport inventory opt-in", "max-duration": "trusted transport lifetime limit"}},
+	"tslink mcp-audit":     {Tools: []string{"mcp_audit"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
 	"tslink people add":    {Tools: []string{"people_add"}, Args: []string{"who"}, Flags: map[string]string{"apps": "apps", "for": "for", "invite": "invite", "print-links": "print_links"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
 	"tslink people update": {Tools: []string{"people_update"}, Args: []string{"who"}, Flags: map[string]string{"apps": "apps", "for": "for", "invite": "invite", "print-links": "print_links", "reconcile-invite": "reconcile_invites", "replace-invite": "replace_invites"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
 	"tslink people list":   {Tools: []string{"people_list"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
@@ -281,7 +283,6 @@ var mcpUncoveredCommands = map[string]string{
 	"tslink cleanup":            "reconciles and can delete real tailnet devices; excluded from this tool surface by the owner",
 	"tslink registry check":     "registry file forensics; excluded from this tool surface by the owner. The doctor tool reports registry health",
 	"tslink manifest":           "describes the CLI itself; the MCP client reads tools/list instead",
-	"tslink mcp":                "this server itself",
 	"tslink tags add":           "not requested for this surface; tags_list plus tags_set reach the same end state, and set is the operation that can change reachability",
 	"tslink tags set-default":   "changes the global default tag rather than one service",
 	"tslink tags pull":          "reads the remote Tailscale ACL policy",

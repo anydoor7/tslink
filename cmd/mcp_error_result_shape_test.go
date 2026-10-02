@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/anydoor7/tslink/internal/errcode"
+	"github.com/anydoor7/tslink/internal/mcpaudit"
 	"github.com/anydoor7/tslink/internal/output"
 	"github.com/anydoor7/tslink/internal/registry"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -16,6 +17,11 @@ import (
 // mcpToolMinimalArguments is one valid call per tool, so a test can reach
 // each tool's action.
 var mcpToolMinimalArguments = map[string]string{
+	"people_grant":   `{"who":"alice","app":"web","for":"1h"}`,
+	"people_revoke":  `{"who":"alice","app":"web"}`,
+	"app_restart":    `{"app":"web"}`,
+	"health":         `{}`,
+	"mcp_audit":      `{}`,
 	"people_add":     `{"who":"alice","apps":["web"]}`,
 	"people_update":  `{"who":"alice","apps":["web"]}`,
 	"people_list":    `{}`,
@@ -57,6 +63,15 @@ func mcpRefusal(tool string) error {
 
 func refusingMCPActions() mcpActions {
 	return mcpActions{
+		personApp: func(_ context.Context, _, _, _ string, revoke bool) (any, error) {
+			name := "people_grant"
+			if revoke {
+				name = "people_revoke"
+			}
+			return nil, mcpRefusal(name)
+		},
+		appRestart: func(context.Context, string) (any, error) { return nil, mcpRefusal("app_restart") },
+		auditRead:  func() ([]mcpaudit.Entry, error) { return nil, mcpRefusal("mcp_audit") },
 		peopleChange: func(_ context.Context, _ peopleArguments, update bool) (any, error) {
 			name := "people_add"
 			if update {
@@ -180,16 +195,20 @@ func TestMCPRefusalsReachEveryClientIntact(t *testing.T) {
 		}
 		t.Run(tool.Name, func(t *testing.T) {
 			failure := mcpToolErrorFailure(t, tool.Name, arguments, actions)
+			refusalTool := tool.Name
+			if refusalTool == "health" {
+				refusalTool = "status"
+			}
 			if failure["code"] != registry.CodeURLNotReady {
 				t.Fatalf("failure code = %v, want %s: %v", failure["code"], registry.CodeURLNotReady, failure)
 			}
-			if message, _ := failure["message"].(string); !strings.Contains(message, "refused by "+tool.Name) {
+			if message, _ := failure["message"].(string); !strings.Contains(message, "refused by "+refusalTool) {
 				t.Fatalf("failure message = %v", failure["message"])
 			}
 			if next, _ := failure["next"].([]any); len(next) != 1 || next[0] != "tslink status --json" {
 				t.Fatalf("failure next = %v", failure["next"])
 			}
-			if data, _ := failure["data"].(map[string]any); data["tool"] != tool.Name {
+			if data, _ := failure["data"].(map[string]any); data["tool"] != refusalTool {
 				t.Fatalf("failure data = %v", failure["data"])
 			}
 		})

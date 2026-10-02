@@ -148,6 +148,7 @@ var e2eExecutableSafeCommands = map[string]struct{}{
 	// nodes/, logs/ and certs/ subdirectories — inside TSLINK_CONFIG_DIR, which
 	// is what criterion 2 permits.
 	"tslink manifest":       {}, // exit 0. Builds the manifest in process; opens no file.
+	"tslink mcp-audit":      {}, // exit 0. Reads only the isolated journal; no process or network work.
 	"tslink template list":  {}, // exit 0. Enumerates built-in templates in process.
 	"tslink config list":    {}, // exit 0. Reads the isolated config; keyring suppressed.
 	"tslink list":           {}, // exit 0. Reads the isolated registry/PID/snapshot; absent registry => empty list.

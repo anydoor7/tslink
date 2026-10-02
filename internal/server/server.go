@@ -1558,6 +1558,9 @@ func serviceChanged(old, new registry.Service) bool {
 }
 
 func serviceChangedWithFallback(old, new registry.Service, fallbackControlURL string) bool {
+	if old.RestartGeneration != new.RestartGeneration {
+		return true
+	}
 	if oldLimits, newLimits := old.EffectiveRequestLimits(), new.EffectiveRequestLimits(); !reflect.DeepEqual(oldLimits, newLimits) {
 		return true
 	}

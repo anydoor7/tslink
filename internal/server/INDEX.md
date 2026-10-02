@@ -42,3 +42,7 @@ This index covers the recipe integration tests. The repository AGENTS.md describ
 - `wave1_round2_test.go`: lost-event recovery across health, Host, limits and people configuration.
 
 - Watcher fixtures stop and join their workers, then close file nodes before temporary directory cleanup on Windows.
+
+# Scoped MCP control plane
+
+- `mcp_scopes_test.go`: WhoIs-bound expiry and real gateway reconciliation without changing other nodes.

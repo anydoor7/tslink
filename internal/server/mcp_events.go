@@ -13,6 +13,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/anydoor7/tslink/internal/mcpscope"
 )
 
 // MCPEventsPath is the control plane's server-sent event stream.
@@ -359,6 +361,12 @@ func newMCPEventsHandler(cp *MCPControlPlane, hub *eventHub) http.Handler {
 	// entire point.
 	cache := newEventStateCache(cp.EventsSnapshot, nowFn)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The cache is global and includes owner inventory. Reduced clients use
+		// scoped list/status polling instead of receiving this owner's stream.
+		if session, ok := mcpscope.FromContext(r.Context()); ok && session.Scope.Role != "owner" {
+			http.NotFound(w, r)
+			return
+		}
 		if r.Method != http.MethodGet {
 			w.Header().Set("Allow", http.MethodGet)
 			mcpEventsError(w, http.StatusMethodNotAllowed, "event stream accepts GET only")

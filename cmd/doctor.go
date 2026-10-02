@@ -304,6 +304,7 @@ func buildDoctorResult(opts doctorOptions) DoctorResult {
 		} else {
 			cfg = loaded
 			cfgOK = true
+			diagnoseMCPBindings(&result, cfg, doctorNowFn())
 			if err := registry.ValidateControlURL(cfg.ControlURL); err != nil {
 				result.addFinding(inspect.WarningCodeControlURLInvalid, "", "config", "Global control_url is invalid.", evidenceControlURLInvalid())
 			}

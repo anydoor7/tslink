@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/anydoor7/tslink/internal/inspect"
+	"github.com/anydoor7/tslink/internal/mcpaudit"
 	"github.com/anydoor7/tslink/internal/output"
 	"github.com/anydoor7/tslink/internal/recipes"
 	"github.com/anydoor7/tslink/internal/registry"
@@ -26,6 +27,13 @@ import (
 
 func fakeMCPActions() mcpActions {
 	return mcpActions{
+		personApp: func(_ context.Context, who, app, lifetime string, revoke bool) (any, error) {
+			return map[string]any{"person": PeopleView{Login: who, Grants: []PeopleGrantView{{PersonGrant: registry.PersonGrant{App: app}, Active: !revoke}}}, "app": app, "revoked": revoke}, nil
+		},
+		appRestart: func(_ context.Context, app string) (any, error) {
+			return map[string]any{"app": app, "queued": true, "restart_generation": 1}, nil
+		},
+		auditRead: func() ([]mcpaudit.Entry, error) { return []mcpaudit.Entry{}, nil },
 		peopleChange: func(_ context.Context, args peopleArguments, _ bool) (any, error) {
 			return PeopleResult{Person: PeopleView{Login: args.Who, Grants: []PeopleGrantView{}}, Invites: []PeopleInviteView{}, Complete: true, Message: "guide", InviteRequirement: peopleInviteRequirement}, nil
 		},
@@ -506,6 +514,7 @@ func TestMCPToolSchemasAreClosedAndModelFocused(t *testing.T) {
 		"template_list", "template_plan", "template_apply",
 		"apps_detect", "recipe_list", "recipe_plan", "recipe_apply",
 		"people_add", "people_update", "people_list", "people_remove",
+		"people_grant", "people_revoke", "app_restart", "health", "mcp_audit",
 	}
 	if len(mcpToolDefinitions) != len(wantNames) {
 		t.Fatalf("tools = %d, want %d", len(mcpToolDefinitions), len(wantNames))

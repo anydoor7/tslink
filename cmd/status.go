@@ -60,6 +60,7 @@ const (
 
 // StatusResult holds the status information for display.
 type StatusResult struct {
+	MCPBindings             []mcpBindingView        `json:"mcp_bindings,omitempty"`
 	Alerts                  health.AlertsView       `json:"alerts"`
 	Supervision             Supervision             `json:"supervision"`
 	DaemonRunning           bool                    `json:"daemon_running"`
@@ -123,6 +124,7 @@ type StatusServiceState struct {
 }
 
 type StatusURLsResult struct {
+	MCPBindings             []mcpBindingView            `json:"mcp_bindings,omitempty"`
 	Alerts                  health.AlertsView           `json:"alerts"`
 	Supervision             Supervision                 `json:"supervision"`
 	SchemaVersion           int                         `json:"schema_version"`
@@ -267,6 +269,7 @@ func ownershipProofsForRegistry(_ string) (map[string]bool, bool) {
 
 func (s statusRead) baseStatus(pidPath string) StatusResult {
 	r := StatusResult{DaemonState: daemonStateUnknown, AuthStatus: authStatusNotAuthenticated, Services: []StatusServiceState{}}
+	r.MCPBindings = mcpBindingViews(statusNowFn())
 	if isRunningFn(pidPath) {
 		r.DaemonRunning = true
 		r.DaemonState = daemonStateRunning
@@ -602,6 +605,9 @@ func cloneServiceError(source *tsruntime.ServiceError) *tsruntime.ServiceError {
 }
 
 func formatStatus(r StatusResult, out io.Writer) {
+	for _, b := range r.MCPBindings {
+		fmt.Fprintf(out, "→ MCP scope: %s role=%s apps=%v inventory=%t expired=%t legacy=%t\n", b.Principal, b.Role, b.Apps, b.Inventory, b.Expired, b.Legacy)
+	}
 	userManagerUnavailable := strings.Contains(r.Supervision.Detail, systemdUserManagerUnavailableMessage)
 	noNodes := false
 	if r.ServiceCount == 0 {
@@ -696,6 +702,7 @@ func (s statusRead) getStatusURLsWithAuth(pidPath, regPath, snapshotPath, authHa
 	freshness := tsruntime.Classify(snapshot, loadErr, expected)
 
 	result := StatusURLsResult{
+		MCPBindings:             status.MCPBindings,
 		SchemaVersion:           inspect.SchemaVersion,
 		Alerts:                  status.Alerts,
 		Supervision:             status.Supervision,
@@ -976,6 +983,7 @@ func appendStatusWarning(warnings []inspect.WarningView, code, message string) [
 
 func formatStatusURLs(r StatusURLsResult, out io.Writer) {
 	formatStatus(StatusResult{
+		MCPBindings:             r.MCPBindings,
 		Alerts:                  r.Alerts,
 		Supervision:             r.Supervision,
 		DaemonRunning:           r.DaemonRunning,

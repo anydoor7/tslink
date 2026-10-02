@@ -151,7 +151,7 @@
       "required_flags": [
         "--mcp"
       ],
-      "boundary": "off unless --mcp or config.json mcp.enabled; every authorized tailnet peer reaching https://\u003cnode\u003e.\u003ctailnet\u003e.ts.net/mcp can register and remove services, publish Funnel and send or revoke invitations; authorization against config.json mcp.allow is mandatory and an empty list refuses startup; never published through Funnel and never bound to a host interface; node lifetime depends on the login path: with a stored credential the derived auth key carries the ephemeral capability and tsnet logs in ephemeral, so a clean daemon stop removes the node from the tailnet and no cleanup ledger entry is needed, while after a crash the node waits for Tailscale's ephemeral garbage collection; with zero credentials the node is persistent and user-owned, one browser authorization survives restarts, and disabling --mcp leaves a device to delete by hand in the Tailscale admin console"
+      "boundary": "off unless --mcp or config.json mcp.enabled; WhoIs authorization against config.json mcp.bindings or legacy mcp.allow is mandatory; bindings restrict tools, apps and lifetime, while legacy mcp.allow retains owner authority; no principals refuses startup; service deletion, Funnel and network invitations remain owner-only; never published through Funnel and never bound to a host interface; node lifetime depends on the login path: with a stored credential the derived auth key carries the ephemeral capability and tsnet logs in ephemeral, so a clean daemon stop removes the node from the tailnet and no cleanup ledger entry is needed, while after a crash the node waits for Tailscale's ephemeral garbage collection; with zero credentials the node is persistent and user-owned, one browser authorization survives restarts, and disabling --mcp leaves a device to delete by hand in the Tailscale admin console"
     },
     {
       "command": "tslink cleanup",
@@ -194,7 +194,7 @@
       "operation": "MCP unshare tool: the tslink remove deletion",
       "default": "enabled",
       "required_flags": [],
-      "boundary": "the same removal and exact NodeID-proven device and node-state deletion as tslink remove, with the same result; any client of tslink mcp and, under serve --mcp, every authorized peer of the remote control plane can call it; the tool is annotated destructive and the server instructions ask the client to confirm it with the user"
+      "boundary": "the same removal and exact NodeID-proven device and node-state deletion as tslink remove, with the same result; only owner-scoped stdio clients and, under serve --mcp, owner-authorized peers of the remote control plane can call it; the tool is annotated destructive and the server instructions ask the client to confirm it with the user"
     },
     {
       "command": "tslink serve",
@@ -1993,7 +1993,48 @@
     },
     {
       "path": "tslink mcp",
-      "short": "Run the TSLink MCP server over stdio"
+      "short": "Run the TSLink MCP server over stdio",
+      "flags": [
+        {
+          "name": "apps",
+          "type": "string",
+          "scope": "local",
+          "usage": "Comma-separated apps visible to the reduced MCP session"
+        },
+        {
+          "name": "inventory",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Explicitly allow a viewer to read all app inventory"
+        },
+        {
+          "name": "max-duration",
+          "type": "string",
+          "scope": "local",
+          "usage": "Maximum per-app people grant duration (reduced operator default: 24h)"
+        },
+        {
+          "name": "scope",
+          "type": "string",
+          "default": "owner",
+          "scope": "local",
+          "usage": "MCP role: owner, viewer, app-operator or people-manager"
+        }
+      ]
+    },
+    {
+      "path": "tslink mcp-audit",
+      "short": "Read the owner's bounded MCP mutation journal",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        }
+      ]
     },
     {
       "path": "tslink people",
@@ -3150,9 +3191,17 @@
       "exit_code": 1,
       "description": "login could not verify the candidate credential against Tailscale for a reason other than HTTP 401/403; the previous credential was kept"
     },
+    "mcp_audit_unavailable": {
+      "exit_code": 1,
+      "description": "MCP mutation intent could not be journaled, or its completion receipt failed; completion failures explicitly retain an unknown outcome"
+    },
     "mcp_elevated_invite_refused": {
       "exit_code": 3,
       "description": "through MCP, a user invitation with a role other than member or a device invitation that allows exit-node use needs the owner's opt-in (mcp.allow_elevated_invites in config.json); next names the CLI command a person can run instead"
+    },
+    "mcp_scope_denied": {
+      "exit_code": 3,
+      "description": "MCP identity scope refuses this app, tool, duration or expired binding"
     },
     "not_found": {
       "exit_code": 5,

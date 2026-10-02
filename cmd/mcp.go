@@ -18,6 +18,8 @@ import (
 	"github.com/anydoor7/tslink/internal/config"
 	"github.com/anydoor7/tslink/internal/duration"
 	"github.com/anydoor7/tslink/internal/health"
+	"github.com/anydoor7/tslink/internal/mcpaudit"
+	"github.com/anydoor7/tslink/internal/mcpscope"
 	"github.com/anydoor7/tslink/internal/output"
 	"github.com/anydoor7/tslink/internal/recipes"
 	"github.com/anydoor7/tslink/internal/registry"
@@ -689,9 +691,16 @@ var mcpToolDefinitions = []mcpToolDefinition{
 
 // mcpActions is the seam between the JSON-RPC layer and the command
 // implementations. Every field forwards to the same internal function the
-// matching CLI command calls, so the tool surface cannot acquire behaviour the
-// CLI does not have — including its refusals, which stay in the domain layer.
+// matching CLI command calls. Reduced single-app mutations call the shared
+// registry operations; their refusals also stay in the domain layer.
 type mcpActions struct {
+	session       *mcpscope.Session
+	nowFn         func() time.Time
+	audit         func(context.Context, mcpaudit.Entry) error
+	auditRead     func() ([]mcpaudit.Entry, error)
+	registryPath  string
+	personApp     func(context.Context, string, string, string, bool) (any, error)
+	appRestart    func(context.Context, string) (any, error)
 	peopleChange  func(context.Context, peopleArguments, bool) (any, error)
 	peopleList    func() (any, error)
 	peopleRemove  func(context.Context, string, map[string]string) (any, error)
@@ -840,6 +849,7 @@ func parseMCPWait(raw string) (time.Duration, error) {
 type mcpServiceSummary = ListServiceSummary
 
 type mcpStatusSummary struct {
+	MCPBindings            []mcpBindingView   `json:"mcp_bindings,omitempty"`
 	Services               []mcpHealthService `json:"services"`
 	Credentials            StatusCredentials  `json:"credentials"`
 	Alerts                 health.AlertsView  `json:"alerts"`
@@ -861,7 +871,24 @@ type mcpStatusSummary struct {
 var mcpStatusFn = readOnlyStatus.getPollableStatus
 
 func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
+	journal := mcpaudit.Journal{Path: mcpAuditPath(paths.Registry)}
+	nowFn := time.Now
 	return mcpActions{
+		registryPath: paths.Registry,
+		audit:        journal.Record, auditRead: journal.Read, nowFn: nowFn,
+		personApp: func(ctx context.Context, who, app, lifetime string, revoke bool) (any, error) {
+			session, _ := mcpscope.FromContext(ctx)
+			p, err := registry.ChangePersonApp(paths.Registry, session, who, app, lifetime, revoke, nowFn)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{"person": peopleView(p, peopleURLs(paths), nowFn()), "app": app, "revoked": revoke}, nil
+		},
+		appRestart: func(ctx context.Context, app string) (any, error) {
+			session, _ := mcpscope.FromContext(ctx)
+			generation, err := registry.RequestAppRestart(paths.Registry, session, app, nowFn)
+			return map[string]any{"app": app, "restart_generation": generation, "queued": err == nil}, err
+		},
 		peopleChange: func(ctx context.Context, args peopleArguments, update bool) (any, error) {
 			return changePeople(ctx, paths, args, update)
 		},
@@ -913,6 +940,7 @@ func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 				return nil, err
 			}
 			result := mcpStatusSummary{
+				MCPBindings: status.MCPBindings,
 				Credentials: status.Credentials, Alerts: status.Alerts, Services: mcpHealthServices(status.Services),
 				Supervision:            status.Supervision,
 				Authenticated:          status.Authenticated,
@@ -1083,6 +1111,9 @@ func newMCPServer(actions mcpActions) *mcp.Server {
 		},
 	)
 	for _, definition := range mcpToolDefinitions {
+		if !mcpSession(actions).Scope.ToolAllowed(definition.Name) {
+			continue
+		}
 		server.AddTool(&mcp.Tool{
 			Name:         definition.Name,
 			Description:  definition.Description,
@@ -1558,7 +1589,7 @@ func mcpArgumentsRefusal(tool string, decodeErr error, required ...mcpRequiredAr
 // invents a parameter is told so instead of having it silently dropped — which
 // for a parameter like allow would mean a share exposed more widely than the
 // caller asked for.
-func callMCPTool(ctx context.Context, actions mcpActions, name string, arguments json.RawMessage) (*mcp.CallToolResult, error) {
+func executeMCPTool(ctx context.Context, actions mcpActions, name string, arguments json.RawMessage) (*mcp.CallToolResult, error) {
 	var data any
 	var err error
 	// share, add and template_apply install the background service when it
@@ -1569,6 +1600,46 @@ func callMCPTool(ctx context.Context, actions mcpActions, name string, arguments
 		ctx, install = recordDaemonInstall(ctx)
 	}
 	switch name {
+	case "people_grant", "people_revoke":
+		var args struct {
+			Who string `json:"who"`
+			App string `json:"app"`
+			For string `json:"for,omitempty"`
+		}
+		if refusal := mcpArgumentsRefusal(name, decodePeopleMCPArguments(arguments, &args), mcpRequiredArgument{"who", args.Who}, mcpRequiredArgument{"app", args.App}); refusal != nil {
+			return refusal, nil
+		}
+		if name == "people_revoke" && args.For != "" {
+			return makeMCPToolErrorResult(output.ErrUsage("people_revoke does not accept for")), nil
+		}
+		data, err = actions.personApp(ctx, args.Who, args.App, args.For, name == "people_revoke")
+	case "app_restart":
+		var args struct {
+			App string `json:"app"`
+		}
+		if refusal := mcpArgumentsRefusal(name, decodeMCPArguments(arguments, &args), mcpRequiredArgument{"app", args.App}); refusal != nil {
+			return refusal, nil
+		}
+		data, err = actions.appRestart(ctx, args.App)
+	case "mcp_audit":
+		var args struct{}
+		if refusal := mcpArgumentsRefusal(name, decodeMCPArguments(arguments, &args)); refusal != nil {
+			return refusal, nil
+		}
+		var entries []mcpaudit.Entry
+		entries, err = actions.auditRead()
+		data = map[string]any{"entries": entries}
+	case "health":
+		var args struct{}
+		if refusal := mcpArgumentsRefusal(name, decodeMCPArguments(arguments, &args)); refusal != nil {
+			return refusal, nil
+		}
+		data, err = actions.status()
+		if err == nil {
+			var summary mcpStatusSummary
+			err = reprojectJSON(data, &summary)
+			data = map[string]any{"services": summary.Services}
+		}
 	case "people_add", "people_update":
 		var args peopleArguments
 		decodeErr := decodePeopleMCPArguments(arguments, &args)
@@ -1902,6 +1973,8 @@ func makeMCPToolErrorResult(err error, installed ...DaemonInstalled) *mcp.CallTo
 }
 
 func init() {
+	var scopeRole, scopeApps, scopeMax string
+	var scopeInventory bool
 	mcpCmd := &cobra.Command{
 		Use:   "mcp",
 		Short: "Run the TSLink MCP server over stdio",
@@ -1934,6 +2007,13 @@ its user first. Every tool declares readOnlyHint, destructiveHint,
 idempotentHint and openWorldHint. Protocol frames are written only to stdout;
 diagnostics and logs are written only to stderr.
 
+The local OS user is owner by default. Use --scope viewer --apps photos for a
+reduced session, or --scope app-operator/people-manager with --apps and optional
+--max-duration (default 24h). A viewer may explicitly opt into --inventory.
+Tool arguments cannot widen a session. These flags restrict MCP, not an agent's
+shell or filesystem. See docs/mcp-scopes.md. Mutations create durable receipts
+readable by the owner through mcp_audit or tslink mcp-audit --json.
+
 When stdin closes, requests already read still get their answers before the
 server exits. The url tool's wait is capped at ` + mcpMaxURLWait.String() + `, and a call still
 running ` + mcpEOFWatchdogDelay.String() + ` after stdin closed is cancelled and the command exits
@@ -1957,9 +2037,19 @@ A request that reuses the id of a call still in flight gets no answer.`,
 			if err != nil {
 				return err
 			}
-			return runMCPCommand(cmd.Context(), cmd.InOrStdin(), cmd.OutOrStdout(), defaultMCPActions(paths, cmd.ErrOrStderr()))
+			session, err := mcpStdioScope(scopeRole, scopeApps, scopeMax, scopeInventory)
+			if err != nil {
+				return output.ErrUsage(err.Error())
+			}
+			actions := defaultMCPActions(paths, cmd.ErrOrStderr())
+			actions.session = &session
+			return runMCPCommand(cmd.Context(), cmd.InOrStdin(), cmd.OutOrStdout(), actions)
 		},
 	}
+	mcpCmd.Flags().StringVar(&scopeRole, "scope", "owner", "MCP role: owner, viewer, app-operator or people-manager")
+	mcpCmd.Flags().StringVar(&scopeApps, "apps", "", "Comma-separated apps visible to the reduced MCP session")
+	mcpCmd.Flags().StringVar(&scopeMax, "max-duration", "", "Maximum per-app people grant duration (reduced operator default: 24h)")
+	mcpCmd.Flags().BoolVar(&scopeInventory, "inventory", false, "Explicitly allow a viewer to read all app inventory")
 	rootCmd.AddCommand(mcpCmd)
 }
 

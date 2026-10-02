@@ -21,3 +21,8 @@ This index records the people sharing lifecycle implementation and regression te
 
 - `preserve_host_test.go`: strict boolean decoding, legacy defaults, persistence and proxy-only admission.
 - `proxy_host.go`: shared trusted canonical name selection for proxy, health monitor and doctor.
+
+# Scoped MCP registry operations
+
+- `mcp_actions.go`: locked single-app grants, revocation and gateway restart requests.
+- `mcp_actions_test.go`: unrelated app preservation, expiry, tombstones and failed writes.

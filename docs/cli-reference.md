@@ -162,3 +162,13 @@ restarts. A backend may already have received part of a rejected streaming body.
 Its own upload limits and any public relay limits still apply.
 
 Windows `tslink install --startup` uses the Startup fallback for the next sign-in, without crash restart. Default `install` uses Task Scheduler to launch a built-in supervisor and verifies immediate startup. `stop` stops both processes, including during crash backoff; `install` resets a tripped crash-loop breaker. See [daemon lifecycle](daemon-lifecycle.md#windows-supervision-and-migration).
+
+## MCP scopes and audit
+
+`mcp --scope viewer --apps photos` reduces a local session; owner is the default.
+Operator/people-manager sessions accept `--max-duration` (default 24h). A viewer
+may explicitly use `--inventory`. Remote `mcp.bindings` provide equivalent
+WhoIs-bound roles with optional anchored expiry. Legacy `mcp.allow` remains owner.
+`mcp-audit [--json]` reads the bounded durable mutation journal. Status includes
+`mcp_bindings`; doctor warns with `mcp_owner_tag` and `mcp_binding_expired`.
+See [MCP scopes](mcp-scopes.md).
