@@ -172,6 +172,7 @@ var mcpCoveredCommands = map[string]mcpCoveredCommand{
 		Args:          []string{"service", "tag"},
 		ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion},
 	},
+	"tslink access log": {Tools: []string{"access_log", "access_summary"}, Flags: map[string]string{"app": "app", "who": "who", "since": "since", "until": "until", "decision": "decision", "limit": "limit"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
 	"tslink access explain": {
 		Tools:         []string{"access_explain"},
 		Args:          []string{"service"},
@@ -260,6 +261,7 @@ var mcpCoveredCommands = map[string]mcpCoveredCommand{
 // agent does *to a service*; daemon lifecycle, installation, credentials,
 // global configuration and log reading stay on the CLI.
 var mcpUncoveredCommands = map[string]string{
+	"tslink access path":        "Changes per-app path privacy settings; owner CLI only.",
 	"tslink people":             "command group; all four leaves are covered",
 	"tslink":                    "the root command carries only the global --json flag and runs no action of its own",
 	"tslink apps":               "command group; list, detect and share are covered",

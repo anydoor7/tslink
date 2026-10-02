@@ -22,4 +22,4 @@ TSLink 为每个注册的服务创建一个专用的 [tsnet](https://tailscale.c
 - **基于文件的注册表**：服务在 `~/.config/tslink/registry.json` 中持久化，跨重启保存
 - **热重载**：注册表文件监听意味着 `tslink add` 无需重启服务即可生效
 - **基于 PID 的生命周期**：通过进程身份检查管理守护进程，并按平台明确停止行为
-- **结构化日志**：基于 slog 的结构化日志 + 访问日志
+- **结构化日志**：slog 诊断日志与有界异步本地访问历史，覆盖 HTTP/文件请求和 TCP 连接，见 [access-log_zh.md](access-log_zh.md)

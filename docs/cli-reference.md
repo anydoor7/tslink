@@ -162,3 +162,9 @@ restarts. A backend may already have received part of a rejected streaming body.
 Its own upload limits and any public relay limits still apply.
 
 Windows `tslink install --startup` uses the Startup fallback for the next sign-in, without crash restart. Default `install` uses Task Scheduler to launch a built-in supervisor and verifies immediate startup. `stop` stops both processes, including during crash backoff; `install` resets a tripped crash-loop breaker. See [daemon lifecycle](daemon-lifecycle.md#windows-supervision-and-migration).
+
+## Local access history
+
+`tslink access log [--app X] [--who Y] [--since 24h|RFC3339] [--until RFC3339] [--decision allowed|denied] [--limit N] [--json]` returns newest-first events plus counts per person and last allowed access per app. The default limit is 100 (1–10000); summaries count all matches. `data` contains `events`, `summary`, and `truncated` in the standard envelope. MCP: `access_log`, `access_summary` (both read-only, suitable for viewer scopes).
+
+`tslink access path <app> <true|false|inherit>` controls per-app path recording. Global `config set` keys: `access-log-enabled`, `access-log-path` (booleans); `access-log-retention-days` (default 30), `access-log-max-bytes` (default 67108864), `access-log-queue-size` (default 1024). Empty values reset defaults; restart `serve` for global changes. `status` and `doctor` include `access_log` health (last write, drops, size). See [access-log.md](access-log.md) for strict ranges, privacy, durability and event-count semantics.

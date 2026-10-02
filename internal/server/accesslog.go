@@ -2,7 +2,10 @@ package server
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
+	"github.com/anydoor7/tslink/internal/accesslog"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -12,9 +15,12 @@ import (
 // responseWriter wraps http.ResponseWriter to capture status code and bytes written.
 type responseWriter struct {
 	http.ResponseWriter
-	status      int
-	bytes       int64
-	wroteHeader bool
+	status         int
+	bytes          int64
+	wroteHeader    bool
+	countHijack    bool
+	hijacked       *accessTCPConn
+	hijackBuffered int64
 }
 
 func (rw *responseWriter) WriteHeader(code int) {
@@ -69,6 +75,18 @@ func (rw *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 		rw.status = http.StatusSwitchingProtocols
 		rw.wroteHeader = true
 	}
+	if err == nil && rw.countHijack {
+		counted := &accessTCPConn{Conn: conn}
+		rw.hijacked = counted
+		buffered := brw.Reader.Buffered()
+		initial := make([]byte, buffered)
+		if buffered > 0 {
+			_, _ = io.ReadFull(brw.Reader, initial)
+			rw.hijackBuffered = int64(buffered)
+		}
+		conn = counted
+		brw = bufio.NewReadWriter(bufio.NewReader(io.MultiReader(bytes.NewReader(initial), counted)), bufio.NewWriter(counted))
+	}
 	return conn, brw, err
 }
 
@@ -109,18 +127,22 @@ func AccessLogMiddleware(serviceName string, identity *IdentityResolver, next ht
 		login, node := identity.Principal(r.Context(), r.RemoteAddr)
 
 		next.ServeHTTP(rw, r)
+		remote := ""
+		if login == "" && node == "" {
+			remote = accesslog.CoarseRemote(r.RemoteAddr)
+		}
 
 		durationMs := float64(time.Since(start).Nanoseconds()) / 1e6
 
 		slog.Info("access",
 			"service", serviceName,
 			"method", r.Method,
-			"path", r.URL.Path,
+			"path", accesslog.SafePath(r.URL.EscapedPath()),
 			"status", rw.status,
 			"duration_ms", durationMs,
 			"bytes", rw.bytes,
-			"remote_addr", r.RemoteAddr,
-			"user_agent", r.UserAgent(),
+			"remote_addr", remote,
+
 			"login", login,
 			"node", node,
 		)

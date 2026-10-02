@@ -157,3 +157,9 @@ MCP add/share 接受可选对象 `request_limits: {"max_body":"20GiB","read_time
 应用后端及公网 relay 自身的限制仍然有效。
 
 Windows `tslink install --startup` 显式选择下次登录启动、无崩溃恢复的 Startup 降级。默认 `install` 使用 Task Scheduler 启动内置 supervisor 并验证立即启动。`stop` 停止两个进程，包括崩溃退避期间；`install` 重置已触发的崩溃循环断路器。见[daemon 生命周期](daemon-lifecycle_zh.md#windows-监管与迁移)。
+
+## 本地访问历史
+
+`tslink access log [--app X] [--who Y] [--since 24h|RFC3339] [--until RFC3339] [--decision allowed|denied] [--limit N] [--json]` 返回倒序事件、按人计数及每个应用最后允许访问时间。默认 limit 100（1–10000），汇总计全部匹配项。标准 envelope 的 `data` 包含 `events`、`summary`、`truncated`。MCP：`access_log`、`access_summary`，均为只读，可授予 viewer scopes。
+
+`tslink access path <app> <true|false|inherit>` 设置单应用路径记录。全局 `config set` key：`access-log-enabled`、`access-log-path`（boolean）；`access-log-retention-days`（默认 30）、`access-log-max-bytes`（默认 67108864）、`access-log-queue-size`（默认 1024）。空值恢复默认；全局改动需重启 `serve`。`status`、`doctor` 包含 `access_log` 健康信息（最后写入、drops、size）。严格范围、隐私、持久性及事件计数语义见 [access-log_zh.md](access-log_zh.md)。

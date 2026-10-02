@@ -38,7 +38,7 @@ type ConfigItem struct {
 }
 
 // validConfigKeys lists all supported global config keys.
-var validConfigKeys = []string{"control-url"}
+var validConfigKeys = []string{"control-url", "access-log-enabled", "access-log-path", "access-log-retention-days", "access-log-max-bytes", "access-log-queue-size"}
 
 // configUpdateGlobalFn is the locked read-modify-write of config.json.
 var configUpdateGlobalFn = config.UpdateGlobalConfig
@@ -46,6 +46,10 @@ var configUpdateGlobalFn = config.UpdateGlobalConfig
 // configSet persists a key-value pair to global config.
 func configSet(key, value string, out io.Writer, isJSON bool) error {
 	switch key {
+	case "access-log-enabled", "access-log-path", "access-log-retention-days", "access-log-max-bytes", "access-log-queue-size":
+		if err := updateAccessLogOption(&config.GlobalConfig{}, key, value); err != nil {
+			return output.ErrUsage(err.Error())
+		}
 	case "control-url":
 		if err := registry.ValidateControlURL(value); err != nil {
 			return output.ErrUsage(err.Error())
@@ -55,7 +59,11 @@ func configSet(key, value string, out io.Writer, isJSON bool) error {
 	}
 
 	if err := configUpdateGlobalFn(func(cfg *config.GlobalConfig) error {
-		cfg.ControlURL = value
+		if key == "control-url" {
+			cfg.ControlURL = value
+		} else {
+			return updateAccessLogOption(cfg, key, value)
+		}
 		return nil
 	}); err != nil {
 		return err
@@ -82,6 +90,17 @@ func configGet(key string, out io.Writer, isJSON bool) error {
 	}
 
 	switch key {
+	case "access-log-enabled", "access-log-path", "access-log-retention-days", "access-log-max-bytes", "access-log-queue-size":
+		value, set := accessLogOptionValue(cfg, key)
+		if isJSON {
+			output.Success("config get", ConfigGetResult{Key: key, Value: value, IsSet: set})
+		} else {
+			if !set {
+				value = "(default)"
+			}
+			fmt.Fprintln(out, value)
+		}
+		return nil
 	case "control-url":
 		if isJSON {
 			output.Success("config get", ConfigGetResult{Key: key, Value: cfg.ControlURL, IsSet: cfg.ControlURL != ""})
@@ -109,6 +128,10 @@ func configList(out io.Writer, isJSON bool) error {
 		items := []ConfigItem{
 			{Key: "control-url", Value: cfg.ControlURL, IsSet: cfg.ControlURL != ""},
 		}
+		for _, key := range validConfigKeys[1:] {
+			value, set := accessLogOptionValue(cfg, key)
+			items = append(items, ConfigItem{Key: key, Value: value, IsSet: set})
+		}
 		output.Success("config list", ConfigListResult{Items: items})
 		return nil
 	}
@@ -118,6 +141,13 @@ func configList(out io.Writer, isJSON bool) error {
 		controlURL = "(not set)"
 	}
 	fmt.Fprintf(out, "control-url = %s\n", controlURL)
+	for _, key := range validConfigKeys[1:] {
+		value, set := accessLogOptionValue(cfg, key)
+		if !set {
+			value = "(default)"
+		}
+		fmt.Fprintf(out, "%s = %s\n", key, value)
+	}
 	return nil
 }
 
@@ -143,6 +173,13 @@ Examples:
 ~/.config/tslink/config.json and persist across sessions.
 
 Available keys:
+
+  access-log-enabled         true or false (default true)
+  access-log-path            true or false (default true)
+  access-log-retention-days  1..3650 (default 30)
+  access-log-max-bytes       65536..1073741824 (default 67108864)
+  access-log-queue-size      1..65536 (default 1024)
+  Empty values reset the access-log option. Restart serve after changing these.
 
   control-url    Custom Tailscale control server URL (e.g. Headscale).
                  Must be a valid URL. Set to "" to clear and use the
@@ -173,7 +210,7 @@ Examples:
 		Long: `Read a global configuration value. If the key has not been set,
 prints "(not set, using default Tailscale)" for control-url.
 
-Available keys: control-url
+Available keys: control-url, access-log-enabled, access-log-path, access-log-retention-days, access-log-max-bytes, access-log-queue-size
 
 Examples:
   tslink config get control-url`,

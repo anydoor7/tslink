@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/anydoor7/tslink/internal/accesslog"
 	"github.com/anydoor7/tslink/internal/config"
 	"github.com/anydoor7/tslink/internal/credentials"
 	"github.com/anydoor7/tslink/internal/daemon"
@@ -170,6 +171,7 @@ type doctorOptions struct {
 }
 
 type DoctorResult struct {
+	AccessLog       accesslog.Health `json:"access_log"`
 	canonicalHosts  map[string]string
 	NodeKeys        map[string]health.Expiry    `json:"node_keys"`
 	Credentials     StatusCredentials           `json:"credentials"`
@@ -293,6 +295,9 @@ func buildDoctorResult(opts doctorOptions) DoctorResult {
 	}
 
 	pathsOK := discoverDoctorPaths(&result, opts)
+	if dir, err := config.Dir(); err == nil {
+		result.AccessLog = accesslog.ReadHealth(dir)
+	}
 	credentialState := diagnoseCredentials(&result, opts)
 
 	var cfg config.GlobalConfig
@@ -404,6 +409,12 @@ func buildDoctorResult(opts doctorOptions) DoctorResult {
 	diagnoseCredentialTier1(&result, credentialState, pendingEnrollment, completedEnrollment)
 	if result.Alerts.MonitorError != "" {
 		result.addFinding(inspect.WarningCodeHealthMonitorSaturated, "", "health_monitor", "Health monitor slots are stuck; some checks were not attempted. Monitoring recovers when reads finish.", nil)
+	}
+	if result.AccessLog.Drops > 0 {
+		result.addFinding(inspect.WarningCodeAccessLogDrops, "", "access_log", "Access records were dropped; history is incomplete.", nil)
+	}
+	if result.AccessLog.Error != "" && result.AccessLog.Error != "access_log_not_started" {
+		result.addFinding(inspect.WarningCodeAccessLogUnavailable, "", "access_log", "Access logging is unavailable.", nil)
 	}
 	diagnoseTailscaleSSH(&result)
 
@@ -1221,6 +1232,7 @@ func doctorExit(result DoctorResult) error {
 }
 
 func formatDoctor(result DoctorResult, out io.Writer) {
+	formatAccessHealth(result.AccessLog, out)
 	formatEarlyWarnings(out, result.Credentials)
 	formatAlerts(out, result.Alerts)
 	for name, key := range result.NodeKeys {

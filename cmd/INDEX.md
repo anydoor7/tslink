@@ -52,3 +52,9 @@ This index records the app recipe additions; the CLI manifest describes the comp
 - `wave1_round2_test.go`: scheduler installation schemas with recipe, Host and request-limit contracts.
 
 - `json_test.go`: concurrently drains captured CLI output; `wave1_round2_test.go` covers output larger than the OS pipe buffer.
+
+# Access history commands
+
+- `access_log.go`: access log/path CLI, read-only access_log/access_summary MCP tools and schemas, health formatting.
+- `access_log_config.go`: validated global CLI option set/get.
+- `access_log_test.go`: CLI/envelope, MCP read-only protocol, filters, strict configuration and doctor health.

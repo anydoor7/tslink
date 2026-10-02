@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/anydoor7/tslink/internal/accesslog"
 	"github.com/anydoor7/tslink/internal/authmode"
 	"github.com/anydoor7/tslink/internal/config"
 	"github.com/anydoor7/tslink/internal/errcode"
@@ -293,6 +294,7 @@ var newRegistryWatcherFn = func() (registryWatcher, error) {
 
 // ServiceNode represents a single tsnet node serving one service.
 type ServiceNode struct {
+	tcpDone              <-chan struct{}
 	limitWarnings        *serviceLimitWarnings
 	tsnetSrv             tsnetServer
 	service              registry.Service
@@ -337,7 +339,9 @@ type LifecycleReconcileFunc func(context.Context, time.Time) (bool, error)
 
 // Server manages multiple tsnet nodes, one per registered service.
 type Server struct {
-	nodes map[string]*ServiceNode
+	accessWriter  accesslog.Writer
+	accessOptions accesslog.Options
+	nodes         map[string]*ServiceNode
 	// stateReservations counts, per service, the startups in progress that
 	// may write into its tsnet state directory; see reserveNodeState. It is
 	// guarded by mu, like nodes.
@@ -429,6 +433,14 @@ func New(authKey, controlURL string) (*Server, error) {
 	}, nil
 }
 
+// AccessLogWriter returns the owning daemon's typed nonblocking writer. It is
+// nil before Run has initialized storage or when local storage is unavailable.
+func (s *Server) AccessLogWriter() accesslog.Writer {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.accessWriter
+}
+
 // SetEnsureTagsFn sets the function called to ensure ACL tags before starting nodes.
 func (s *Server) SetEnsureTagsFn(fn EnsureTagsFunc) {
 	s.ensureTagsFn = fn
@@ -515,6 +527,14 @@ func staticAuthKeyProvider(authKey string) AuthKeyProvider {
 // Run starts all registered service nodes and watches for registry changes.
 func (s *Server) Run(ctx context.Context) error {
 	s.shuttingDown.Store(false)
+	cfg, cfgErr := config.LoadGlobalConfig()
+	if cfgErr != nil {
+		return cfgErr
+	}
+	if cfg.AccessLog != nil {
+		s.accessOptions = *cfg.AccessLog
+	}
+
 	if path, err := registryPathFn(); err == nil {
 		if _, err := registry.ExpirePeople(path, serverNowFn()); err != nil {
 			slog.Warn("initial people expiry reconciliation failed", "error", err)
@@ -535,6 +555,25 @@ func (s *Server) Run(ctx context.Context) error {
 		s.beginShutdown()
 		s.closeAllNodes()
 		return fmt.Errorf("registry watcher setup failed: %w", err)
+	}
+
+	store, logErr := accesslog.New(s.cfgDir, s.accessOptions, serverNowFn)
+	if logErr != nil {
+		slog.Warn("access log unavailable", "code", "access_log_init_failed")
+	} else {
+		s.mu.Lock()
+		s.accessWriter = store
+		s.mu.Unlock()
+		defer func() {
+			store.Close()
+			timer := time.NewTimer(time.Second)
+			defer timer.Stop()
+			select {
+			case <-store.Done():
+			case <-timer.C:
+				slog.Warn("access log drain timed out")
+			}
+		}()
 	}
 
 	if err := beforeInitialSyncFn(ctx); err != nil {
@@ -1567,7 +1606,7 @@ func serviceChangedWithFallback(old, new registry.Service, fallbackControlURL st
 	if old.Type != new.Type || old.Target != new.Target || old.Path != new.Path || old.File != new.File {
 		return true
 	}
-	if old.PreserveHost != new.PreserveHost {
+	if !reflect.DeepEqual(old.AccessLogPath, new.AccessLogPath) || old.PreserveHost != new.PreserveHost {
 		return true
 	}
 	if old.Port != new.Port || old.Ephemeral != new.Ephemeral || old.Funnel != new.Funnel || old.PublicAck != new.PublicAck || old.NoAutoProvision != new.NoAutoProvision {
@@ -2236,8 +2275,12 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service, prov
 		// every later write of serveTCPFn -- and tests swap that seam (and restore
 		// it from t.Cleanup) between test functions.
 		serveTCP := serveTCPFn
+		tcpAccess := &tcpAccessOptions{writer: s.accessWriter, identity: NewIdentityResolver(tsnetSrv.LocalClient), now: serverNowFn}
+		tcpDone := make(chan struct{})
+		node.tcpDone = tcpDone
 		go func() {
-			serveTCP(serveCtx, ln, svc.Target, svc.Name)
+			defer close(tcpDone)
+			serveTCP(context.WithValue(serveCtx, tcpAccessKey{}, tcpAccess), ln, svc.Target, svc.Name)
 		}()
 
 		slog.Info("tcp node ready", "name", svc.Name, "target", svc.Target, "port", port)
@@ -2345,7 +2388,7 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service, prov
 			}
 		}
 	}
-	handler = AccessLogMiddleware(svc.Name, identity, RequestLimitsMiddleware(svc, reportLimit, handler))
+	handler = AccessEventMiddleware(svc, s.accessOptions, s.accessWriter, identity, serverNowFn, RequestLimitsMiddleware(svc, reportLimit, handler))
 
 	var ln net.Listener
 	funnelListenerActive := false
@@ -2381,6 +2424,7 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service, prov
 	ln = newLimitedListener(ln, httpMaxActiveConns, "http", svc.Name)
 
 	httpSrv := newHTTPServerFn(handler)
+	configureAccessHTTP(httpSrv)
 	ln = configureServiceHTTP(httpSrv, svc, ln, reportLimit)
 
 	node := &ServiceNode{
@@ -2684,6 +2728,15 @@ func (s *Server) stopNodeLocked(name string) {
 	}
 	if node.tsnetSrv != nil {
 		node.tsnetSrv.Close()
+	}
+	if node.tcpDone != nil {
+		timer := time.NewTimer(httpShutdownTimeout)
+		defer timer.Stop()
+		select {
+		case <-node.tcpDone:
+		case <-timer.C:
+			slog.Warn("TCP access close records may be incomplete", "code", "access_log_tcp_drain_timeout", "name", name)
+		}
 	}
 	if node.handlerCloser != nil {
 		_ = node.handlerCloser.Close()

@@ -8,3 +8,4 @@ This index records the app recipe pages; existing guides retain their current pa
 - [cli-manifest.json](cli-manifest.json): generated command and result contract.
 - [people.md](people.md), [people_zh.md](people_zh.md): people grants, request-time authorization and invitation ledger.
 - [health-and-alerts.md](health-and-alerts.md), [health-and-alerts_zh.md](health-and-alerts_zh.md): backend probes, expiry, owner alerts and canonical Host/limits integration.
+- [access-log.md](access-log.md), [access-log_zh.md](access-log_zh.md): local bounded access history, privacy, CLI/MCP queries and writer contract.

@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/anydoor7/tslink/internal/accesslog"
 	"github.com/anydoor7/tslink/internal/registry"
 )
 
@@ -29,6 +30,7 @@ func peopleMiddleware(path string, initial registry.Service, provide func() (*Lo
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			reg, issues, err := registry.Preflight(path)
 			if unavailable(err, issues) {
+				accessDeny(r, "people")
 				writeAccessDenied(w, "access denied: people registry unavailable")
 				return
 			}
@@ -59,6 +61,7 @@ func peopleMiddleware(path string, initial registry.Service, provide func() (*Lo
 			}
 			if needsLatch {
 				if _, err := expire(path, t); err != nil {
+					accessDeny(r, "people")
 					writeAccessDenied(w, "access denied: cannot persist expiry")
 					return
 				}
@@ -66,17 +69,20 @@ func peopleMiddleware(path string, initial registry.Service, provide func() (*Lo
 				// have removed or changed the person while we were waiting.
 				reg, issues, err = registry.Preflight(path)
 				if unavailable(err, issues) {
+					accessDeny(r, "people")
 					writeAccessDenied(w, "access denied: people registry unavailable")
 					return
 				}
 			}
 			lc, err := provide()
 			if err != nil || lc == nil {
+				accessDeny(r, "people")
 				writeAccessDenied(w, "access denied: unable to identify caller")
 				return
 			}
 			who, err := lc.WhoIs(r.Context(), r.RemoteAddr)
 			if err != nil || who == nil || who.UserProfile == nil {
+				accessDeny(r, "people")
 				writeAccessDenied(w, "access denied: unable to identify caller")
 				return
 			}
@@ -88,7 +94,17 @@ func peopleMiddleware(path string, initial registry.Service, provide func() (*Lo
 			if !authoritative {
 				allowed = isAllowed(who.UserProfile.LoginName, tags, svc.AllowedUsers)
 			}
+			var grant *accesslog.Grant
+			reason := "people"
+			if authoritative {
+				grant, reason = personDecision(reg, svc, who.UserProfile.LoginName, tags, t)
+			} else {
+				grant = matchedLegacy(who.UserProfile.LoginName, tags, svc.AllowedUsers)
+				reason = "acl"
+			}
+			accessAttest(r, who, grant)
 			if !allowed {
+				accessDeny(r, reason)
 				writeAccessDenied(w, "access denied")
 				return
 			}

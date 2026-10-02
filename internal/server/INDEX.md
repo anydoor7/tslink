@@ -42,3 +42,9 @@ This index covers the recipe integration tests. The repository AGENTS.md describ
 - `wave1_round2_test.go`: lost-event recovery across health, Host, limits and people configuration.
 
 - Watcher fixtures stop and join their workers, then close file nodes before temporary directory cleanup on Windows.
+
+# Access history
+
+- `access_events.go`: HTTP completion events, connection-level Funnel identity, fresh authorization decisions/grants, async identity enrichment.
+- `access_tcp.go`: connection open/close events and stream-byte counting.
+- `access_events_test.go`: real tsnet-fake listeners for HTTP/file/Funnel/TCP, expiry, limits, privacy, health exclusion and saturation.

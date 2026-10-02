@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/anydoor7/tslink/internal/accesslog"
 	"github.com/anydoor7/tslink/internal/config"
 	"github.com/anydoor7/tslink/internal/duration"
 	"github.com/anydoor7/tslink/internal/health"
@@ -25,6 +26,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/spf13/cobra"
+	"path/filepath"
 )
 
 const (
@@ -254,6 +256,7 @@ var (
 		"node_state_kept_reason": map[string]any{"type": "string", "description": "Why the service's local node state was kept when no other field says so: some of its recorded tailnet nodes were neither deleted nor confirmed absent."},
 	}, "name", "removed", "device_cleaned", "device_cleanup_skipped")
 	mcpStatusOutputSchema = objectSchema(map[string]any{
+		"access_log":  nestedObjectSchema("Local access-log health: last_write, drops, size_bytes and error."),
 		"credentials": nestedObjectSchema("Value-free stored expiry metadata and early warnings; assumed expiry remains identified."),
 		"alerts":      nestedObjectSchema("Recent durable alert events; destination is redacted."),
 		"services": map[string]any{"type": "array", "items": objectSchema(map[string]any{
@@ -324,6 +327,7 @@ var (
 		"backend_auth_assumption":  nestedObjectSchema("Backend application, database and SSH authentication are outside TSLink and are not proven here."),
 	}, "schema_version", "service", "summary", "tslink_known", "tslink_local_enforcement", "external_policy_unknown", "backend_auth_assumption")
 	mcpDoctorOutputSchema = objectSchema(map[string]any{
+		"access_log":       nestedObjectSchema("Local access-log health: last_write, drops, size_bytes and error."),
 		"node_keys":        map[string]any{"type": []string{"object", "null"}, "additionalProperties": true},
 		"credentials":      nestedObjectSchema("Stored credential expiry with metadata provenance."),
 		"alerts":           nestedObjectSchema("Recent alert events and masked notifier status."),
@@ -692,6 +696,8 @@ var mcpToolDefinitions = []mcpToolDefinition{
 // matching CLI command calls, so the tool surface cannot acquire behaviour the
 // CLI does not have — including its refusals, which stay in the domain layer.
 type mcpActions struct {
+	accessLog     func(accessLogArguments) (accesslog.Result, error)
+	accessSummary func(accessLogArguments) (accesslog.Summary, error)
 	peopleChange  func(context.Context, peopleArguments, bool) (any, error)
 	peopleList    func() (any, error)
 	peopleRemove  func(context.Context, string, map[string]string) (any, error)
@@ -840,6 +846,7 @@ func parseMCPWait(raw string) (time.Duration, error) {
 type mcpServiceSummary = ListServiceSummary
 
 type mcpStatusSummary struct {
+	AccessLog              accesslog.Health   `json:"access_log"`
 	Services               []mcpHealthService `json:"services"`
 	Credentials            StatusCredentials  `json:"credentials"`
 	Alerts                 health.AlertsView  `json:"alerts"`
@@ -862,6 +869,13 @@ var mcpStatusFn = readOnlyStatus.getPollableStatus
 
 func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 	return mcpActions{
+		accessLog: func(a accessLogArguments) (accesslog.Result, error) {
+			return readAccessLogAt(filepath.Dir(paths.Registry), a)
+		},
+		accessSummary: func(a accessLogArguments) (accesslog.Summary, error) {
+			r, e := readAccessLogAt(filepath.Dir(paths.Registry), a)
+			return r.Summary, e
+		},
 		peopleChange: func(ctx context.Context, args peopleArguments, update bool) (any, error) {
 			return changePeople(ctx, paths, args, update)
 		},
@@ -913,6 +927,7 @@ func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 				return nil, err
 			}
 			result := mcpStatusSummary{
+				AccessLog:   status.AccessLog,
 				Credentials: status.Credentials, Alerts: status.Alerts, Services: mcpHealthServices(status.Services),
 				Supervision:            status.Supervision,
 				Authenticated:          status.Authenticated,
@@ -1576,6 +1591,16 @@ func callMCPTool(ctx context.Context, actions mcpActions, name string, arguments
 			return refusal, nil
 		}
 		data, err = actions.peopleChange(ctx, args, name == "people_update")
+	case "access_log", "access_summary":
+		var args accessLogArguments
+		if refusal := mcpArgumentsRefusal(name, decodeMCPArguments(arguments, &args)); refusal != nil {
+			return refusal, nil
+		}
+		if name == "access_log" {
+			data, err = actions.accessLog(args)
+		} else {
+			data, err = actions.accessSummary(args)
+		}
 	case "people_list":
 		var args struct{}
 		if refusal := mcpArgumentsRefusal(name, decodeMCPArguments(arguments, &args)); refusal != nil {
@@ -1908,6 +1933,7 @@ func init() {
 		Long: `Run a local Model Context Protocol server using newline-delimited JSON-RPC
 over stdin/stdout. The server exposes the per-service surface of the CLI:
 share, add, list, unshare, status, url, tags_list, tags_set, access_explain,
+access_log, access_summary,
 doctor, logs, invite_user, invite_device, invite_list, invite_revoke,
 invite_resend, template_list, template_plan, and template_apply. Run
 "tslink mcp" and send a tools/list request to see the current set.

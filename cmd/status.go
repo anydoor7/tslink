@@ -9,6 +9,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/anydoor7/tslink/internal/accesslog"
 	"github.com/anydoor7/tslink/internal/config"
 	"github.com/anydoor7/tslink/internal/credentials"
 	"github.com/anydoor7/tslink/internal/daemon"
@@ -60,6 +61,7 @@ const (
 
 // StatusResult holds the status information for display.
 type StatusResult struct {
+	AccessLog               accesslog.Health        `json:"access_log"`
 	Alerts                  health.AlertsView       `json:"alerts"`
 	Supervision             Supervision             `json:"supervision"`
 	DaemonRunning           bool                    `json:"daemon_running"`
@@ -123,6 +125,7 @@ type StatusServiceState struct {
 }
 
 type StatusURLsResult struct {
+	AccessLog               accesslog.Health            `json:"access_log"`
 	Alerts                  health.AlertsView           `json:"alerts"`
 	Supervision             Supervision                 `json:"supervision"`
 	SchemaVersion           int                         `json:"schema_version"`
@@ -202,6 +205,7 @@ func getStatus(pidPath, regPath string) (StatusResult, error) {
 
 func (s statusRead) getStatus(pidPath, regPath string) (StatusResult, error) {
 	r := s.baseStatus(pidPath)
+	r.AccessLog = accessHealthForRegistry(regPath)
 	reg, issues, err := registry.LoadForDiagnostics(regPath)
 	if err != nil {
 		return StatusResult{}, err
@@ -602,6 +606,7 @@ func cloneServiceError(source *tsruntime.ServiceError) *tsruntime.ServiceError {
 }
 
 func formatStatus(r StatusResult, out io.Writer) {
+	formatAccessHealth(r.AccessLog, out)
 	userManagerUnavailable := strings.Contains(r.Supervision.Detail, systemdUserManagerUnavailableMessage)
 	noNodes := false
 	if r.ServiceCount == 0 {
@@ -696,6 +701,7 @@ func (s statusRead) getStatusURLsWithAuth(pidPath, regPath, snapshotPath, authHa
 	freshness := tsruntime.Classify(snapshot, loadErr, expected)
 
 	result := StatusURLsResult{
+		AccessLog:               accessHealthForRegistry(regPath),
 		SchemaVersion:           inspect.SchemaVersion,
 		Alerts:                  status.Alerts,
 		Supervision:             status.Supervision,
@@ -976,6 +982,7 @@ func appendStatusWarning(warnings []inspect.WarningView, code, message string) [
 
 func formatStatusURLs(r StatusURLsResult, out io.Writer) {
 	formatStatus(StatusResult{
+		AccessLog:               r.AccessLog,
 		Alerts:                  r.Alerts,
 		Supervision:             r.Supervision,
 		DaemonRunning:           r.DaemonRunning,
