@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"errors"
 	"fmt"
@@ -371,6 +372,11 @@ type Server struct {
 	startupCancel           context.CancelFunc
 	startupGeneration       uint64
 	lastRegistryFingerprint string
+	// Watcher callbacks compare against the exact state of a successful sync,
+	// including isolated decode errors. A partial or failed sync is not applied.
+	appliedWatchFingerprint string
+	appliedWatchFile        os.FileInfo
+	registryWatchGate       chan struct{}
 	syncResultMu            sync.Mutex
 	latestSyncResult        syncResult
 	syncResultChanged       chan struct{}
@@ -404,6 +410,7 @@ func New(authKey, controlURL string) (*Server, error) {
 		nodes:               make(map[string]*ServiceNode),
 		serviceFailures:     make(map[string]runtimesnapshot.ServiceState),
 		reconcileGate:       make(chan struct{}, 1),
+		registryWatchGate:   make(chan struct{}, 1),
 		syncResultChanged:   make(chan struct{}),
 		authKey:             authKey,
 		authKeyProvider:     staticAuthKeyProvider(authKey),
@@ -769,6 +776,10 @@ func (s *Server) syncNodesWithOutcome(ctx context.Context, startup bool) (outcom
 		return outcome, err
 	}
 
+	// Capture file identity before reading. If a replacement races the load,
+	// recording the older identity makes the next check reconcile again rather
+	// than declaring a later, unread replacement applied.
+	watchFile, _ := os.Stat(regPath)
 	reg, registryIssues, err := loadRegistryForRuntimeSettled(generationCtx, regPath)
 	if err != nil {
 		s.failClosedGlobalRegistryError(generation, err)
@@ -779,6 +790,7 @@ func (s *Server) syncNodesWithOutcome(ctx context.Context, startup bool) (outcom
 		return outcome, fmt.Errorf("runtime snapshot registry fingerprint: %w", err)
 	}
 	outcome.registryFingerprint = registryFingerprint
+	watchFingerprint := watchedRegistryFingerprint(registryFingerprint, registryIssues)
 
 	// Build desired state
 	desired := make(map[string]registry.Service, len(reg.Services))
@@ -1055,6 +1067,10 @@ func (s *Server) syncNodesWithOutcome(ctx context.Context, startup bool) (outcom
 	// that required no starts still publish authoritative runtime evidence.
 	s.mu.Lock()
 	s.writeRuntimeSnapshotLocked(registryFingerprint, true)
+	if generation == s.syncGeneration.Load() {
+		s.appliedWatchFingerprint = watchFingerprint
+		s.appliedWatchFile = watchFile
+	}
 	s.mu.Unlock()
 	outcome.committed = true
 	return outcome, nil
@@ -2619,6 +2635,62 @@ func (s *Server) watchRegistry(ctx context.Context) {
 	<-done
 }
 
+const registryStateCheckInterval = 30 * time.Second
+
+// The runtime snapshot fingerprint includes recognized service fields. Include
+// decode errors too: removing an unknown key can make an isolated service valid
+// without changing any of those fields, and must trigger a fresh sync.
+func watchedRegistryFingerprint(runtimeFingerprint string, issues []registry.ServiceIssue) string {
+	var state strings.Builder
+	state.WriteString(runtimeFingerprint)
+	for _, issue := range issues {
+		fmt.Fprintf(&state, "\x00%d\x00%q", issue.Index, issue.Err.Error())
+	}
+	return fmt.Sprintf("sha256:%x", sha256.Sum256([]byte(state.String())))
+}
+
+func sameWatchedRegistryFile(a, b os.FileInfo) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return os.SameFile(a, b) && a.Size() == b.Size() && a.ModTime().Equal(b.ModTime())
+}
+
+func (s *Server) reconcileWatchedRegistry(ctx context.Context, regPath string) {
+	// A tick or error can coincide with an already-running debounce callback.
+	// Serialize the comparison and sync so both observe the same applied state.
+	select {
+	case s.registryWatchGate <- struct{}{}:
+		defer func() { <-s.registryWatchGate }()
+	case <-ctx.Done():
+		return
+	}
+	if s.ensureRunning(ctx) != nil {
+		return
+	}
+	watchFile, statErr := os.Stat(regPath)
+	reg, issues, err := registry.LoadForRuntime(regPath)
+	if err == nil {
+		fingerprint, fingerprintErr := runtimesnapshot.RegistryFingerprint(reg, issues)
+		if fingerprintErr == nil {
+			watchFingerprint := watchedRegistryFingerprint(fingerprint, issues)
+			s.mu.RLock()
+			unchanged := s.appliedWatchFingerprint == watchFingerprint &&
+				sameWatchedRegistryFile(s.appliedWatchFile, watchFile) &&
+				(statErr == nil || errors.Is(statErr, os.ErrNotExist))
+			s.mu.RUnlock()
+			if unchanged && !s.lastSyncFailed.Load() {
+				return
+			}
+		}
+	}
+	// Use the existing settled load, fail-closed handling and retry bookkeeping
+	// on changed or unreadable input. The check above does only local file work.
+	if err := s.syncNodes(ctx); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, errServerShuttingDown) {
+		slog.Warn("reload registry failed", "error", err)
+	}
+}
+
 func (s *Server) startRegistryWatcher(ctx context.Context) (<-chan struct{}, error) {
 	regPath, err := registryPathFn()
 	if err != nil {
@@ -2650,6 +2722,10 @@ func (s *Server) startRegistryWatcher(ctx context.Context) (<-chan struct{}, err
 }
 
 func (s *Server) runRegistryWatcher(ctx context.Context, watcher registryWatcher, regPath string) {
+	// Notifications accelerate state reconciliation; periodic checks repair
+	// lost final events (including kqueue's Create-to-per-file-watch gap).
+	ticker := time.NewTicker(registryStateCheckInterval)
+	defer ticker.Stop()
 	var debounce *time.Timer
 	var debounceCallbacks sync.WaitGroup
 	stopDebounce := func() {
@@ -2673,19 +2749,46 @@ func (s *Server) runRegistryWatcher(ctx context.Context, watcher registryWatcher
 			credentialDebounce = nil
 		}
 	}
+	scheduleRegistry := func(delay time.Duration) {
+		stopDebounce()
+		debounceCallbacks.Add(1)
+		debounce = time.AfterFunc(delay, func() {
+			defer debounceCallbacks.Done()
+			s.reconcileWatchedRegistry(ctx, regPath)
+		})
+	}
+	scheduleCredentials := func(delay time.Duration) {
+		stopCredentialDebounce()
+		debounceCallbacks.Add(1)
+		credentialDebounce = time.AfterFunc(delay, func() {
+			defer debounceCallbacks.Done()
+			if ctx.Err() == nil {
+				s.notifyCredentialStateChanged()
+			}
+		})
+	}
+	reconcileBoth := func() {
+		scheduleRegistry(0)
+		scheduleCredentials(0)
+	}
 	defer func() {
 		stopDebounce()
 		stopCredentialDebounce()
 		debounceCallbacks.Wait()
 	}()
 
+	events, watcherErrors := watcher.Events(), watcher.Errors()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case event, ok := <-watcher.Events():
+		case <-ticker.C:
+			reconcileBoth()
+		case event, ok := <-events:
 			if !ok {
-				return
+				events = nil
+				reconcileBoth()
+				continue
 			}
 			if err := s.ensureRunning(ctx); err != nil {
 				return
@@ -2697,36 +2800,25 @@ func (s *Server) runRegistryWatcher(ctx context.Context, watcher registryWatcher
 				// of the two stale beliefs.
 				if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) ||
 					event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename) {
-					stopCredentialDebounce()
-					debounceCallbacks.Add(1)
-					credentialDebounce = time.AfterFunc(credentialStateDebounce, func() {
-						defer debounceCallbacks.Done()
-						s.notifyCredentialStateChanged()
-					})
+					scheduleCredentials(credentialStateDebounce)
 				}
 				continue
 			}
 			if name != regPath {
 				continue
 			}
-			if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) {
-				stopDebounce()
-				debounceCallbacks.Add(1)
-				debounce = time.AfterFunc(200*time.Millisecond, func() {
-					defer debounceCallbacks.Done()
-					if err := s.syncNodes(ctx); err != nil {
-						if errors.Is(err, context.Canceled) || errors.Is(err, errServerShuttingDown) {
-							return
-						}
-						slog.Warn("reload registry failed", "error", err)
-					}
-				})
+			if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) ||
+				event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename) {
+				scheduleRegistry(200 * time.Millisecond)
 			}
-		case err, ok := <-watcher.Errors():
+		case err, ok := <-watcherErrors:
 			if !ok {
-				return
+				watcherErrors = nil
+				reconcileBoth()
+				continue
 			}
 			slog.Error("fsnotify error", "error", err)
+			reconcileBoth()
 		}
 	}
 }
