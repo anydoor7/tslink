@@ -2,8 +2,18 @@ package tailapi
 
 import (
 	"context"
+	"errors"
 	"fmt"
+
+	"github.com/anydoor7/tslink/internal/registry"
 )
+
+// PeopleInviteTargetGone is evidence from a successful device listing that
+// the recorded node and hostname are absent. Lookup failures and ownership
+// mismatches never produce this terminal evidence.
+type PeopleInviteTargetGone struct{ Target DeviceTarget }
+
+func (e *PeopleInviteTargetGone) Error() string { return "recorded people invite target is gone" }
 
 // DeviceInviteOutcomeUnknown means POST was attempted; even an HTTP refusal
 // or unreadable response does not prove the remote side effect absent.
@@ -27,8 +37,24 @@ func listPeopleDeviceInvites(ctx context.Context, client inviteAPI, target Devic
 	if err != nil {
 		return nil, inviteAPIError("list devices for people invite proof", err)
 	}
+	for _, d := range devices {
+		if d.NodeID == "" || d.Hostname == "" {
+			return nil, fmt.Errorf("device listing lacks node ownership evidence")
+		}
+	}
 	device, err := resolveOwnedDevice(devices, target)
 	if err != nil {
+		if target.NodeID != "" {
+			absent := true
+			for _, d := range devices {
+				if d.NodeID == target.NodeID || hostnameMatchesCleanupTarget(d.Hostname, target.Hostname) {
+					absent = false
+				}
+			}
+			if absent {
+				return nil, &PeopleInviteTargetGone{Target: target}
+			}
+		}
 		return nil, err
 	}
 	responses, err := client.ListDeviceInvites(ctx, device.NodeID)
@@ -57,6 +83,10 @@ func RevokePendingDeviceInvite(ctx context.Context, target DeviceTarget, id stri
 	}
 	invites, err := listPeopleDeviceInvites(ctx, client, target)
 	if err != nil {
+		var gone *PeopleInviteTargetGone
+		if errors.As(err, &gone) {
+			return registry.PersonInviteTargetGone, nil
+		}
 		return "", err
 	}
 	for _, inv := range invites {

@@ -4,3 +4,4 @@ This index records the people sharing lifecycle implementation and regression te
 
 - [people.go](people.go)
 - [people_review_regression_test.go](people_review_regression_test.go)
+- [rereview_identity_test.go](rereview_identity_test.go): ported independent re-review fixtures.

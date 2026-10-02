@@ -966,6 +966,15 @@ func TestManifestFlagsAreSelfDescribingAndRelationshipsAreExplicit(t *testing.T)
 	if _, ok := listFields["device_targets"]; !ok {
 		t.Fatal("invite list manifest missing per-target device check results")
 	}
+	removeFields := commands["tslink people remove"].JSONResultFields
+	if removeFields["complete"].Type != "boolean" || removeFields["cleanup"].Type != "array" {
+		t.Fatal("people remove manifest must expose remote completion and cleanup evidence", removeFields)
+	}
+	for _, name := range []string{"reconcile-invite", "replace-invite"} {
+		if !containsString(flag("tslink people update", name).Requires, "--invite") {
+			t.Fatal("people update recovery flag requires --invite", name)
+		}
+	}
 	resendFields := commands["tslink invite resend"].JSONResultFields
 	if _, ok := resendFields["invite_url"]; ok {
 		t.Fatal("invite resend manifest still advertises invite_url")

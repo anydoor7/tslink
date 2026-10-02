@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+
+	"github.com/anydoor7/tslink/internal/registry"
 )
 
 // isAllowed checks whether a caller (identified by login and node tags)
@@ -15,7 +17,7 @@ func isAllowed(login string, nodeTags []string, allowedUsers []string) bool {
 		return true
 	}
 
-	normalizedLogin := strings.ToLower(strings.TrimSpace(login))
+	normalizedLogin, loginErr := registry.NormalizePerson(login)
 	for _, entry := range allowedUsers {
 		entry = strings.TrimSpace(entry)
 		// Check tag match: entry is "tag:xxx" and caller's node has that tag
@@ -29,7 +31,8 @@ func isAllowed(login string, nodeTags []string, allowedUsers []string) bool {
 		}
 
 		// Check email/login match
-		if normalizedLogin == strings.ToLower(entry) {
+		canonical, err := registry.NormalizePerson(entry)
+		if loginErr == nil && err == nil && normalizedLogin == canonical {
 			return true
 		}
 	}

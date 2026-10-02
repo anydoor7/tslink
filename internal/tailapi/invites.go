@@ -339,6 +339,9 @@ func (c *inviteHTTPClient) ListDevices(ctx context.Context) ([]inviteDevice, err
 		Devices []inviteDevice `json:"devices"`
 	}
 	err := c.do(ctx, http.MethodGet, []string{"tailnet", "-", "devices"}, nil, &response)
+	if err == nil && response.Devices == nil {
+		err = fmt.Errorf("device listing omitted devices array")
+	}
 	return response.Devices, err
 }
 

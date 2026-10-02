@@ -1,0 +1,22 @@
+{
+  "schema_version": 2,
+  "services": [
+    {
+      "name": "photos",
+      "type": "proxy",
+      "target": "http://localhost:3000",
+      "people_scoped": true,
+      "created_at": "0001-01-01T00:00:00Z"
+    }
+  ],
+  "people": [
+    {
+      "login": "o'connor@example.com",
+      "grants": [
+        {
+          "app": "photos"
+        }
+      ]
+    }
+  ]
+}

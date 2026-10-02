@@ -31,7 +31,7 @@ No invitation is created unless `--invite` is supplied. Invitation URLs are bear
 
 An invitation bundle can partially fail. JSON reports `complete: false`, per-app `code` and durable `state`, successful IDs and side-effect plans. **Local grants remain saved.** Read these fields even when the command envelope succeeds. Resume with `tslink people update <login> --invite`: completed operations reuse their IDs, and only unfinished operations are sent. Add `--print-links` to retrieve existing links explicitly; an unavailable link is reported rather than recreated.
 
-The registry stores non-secret person/app/node associations and operation states (`pending`, `sending`, `unknown`, `complete`, `revoked`, `accepted`, `cancelled`), never URLs or tokens. TSLink saves `sending` before POST. A crash, timeout, failed POST response or invalid response requires remote reconciliation before another create. A device-invite list has no recipient metadata for link-mode invitations; TSLink never automatically assigns an unaddressed link, even when only one is listed. Inspect `tslink invite list --json` (or `--show-urls` to reveal links), verify the app and intended invitation, then explicitly resolve:
+The registry stores non-secret person/app/node associations and operation states (`pending`, `sending`, `unknown`, `complete`, `revoked`, `accepted`, `cancelled`, `target_gone`, `replaced`), never URLs or tokens. TSLink saves `sending` before POST. A crash, timeout, failed POST response or invalid response requires remote reconciliation before another create. A device-invite list has no recipient metadata for link-mode invitations; TSLink never automatically assigns an unaddressed link, even when only one is listed. Inspect `tslink invite list --json` (or `--show-urls` to reveal links), verify the app and intended invitation, then explicitly resolve:
 
 ```sh
 # Associate an owner-verified, existing invite ID; no new POST for that app.
@@ -46,6 +46,16 @@ tslink people remove alice@example.com --reconcile-invite photos=12345
 
 `people remove` commits the deny tombstone and removes grants first, then revokes every recorded pending invite on its proven app node. JSON includes `complete` and per-app `cleanup` states/codes; human output reports deferred/partial remote cleanup. Without a token it still denies locally and retains the invite IDs for later cleanup. Retry removal after restoring the user-owned token. Completed cleanup is skipped; missing remote IDs are treated as already cleaned up. Accepted invitations are reported as `accepted`; accepted network shares may remain and need separate Tailscale management. If a concurrent create is still running, removal reports deferred cleanup immediately; retry removal to clean up its recorded outcome. Removing an app does not discard its invitation ledger.
 
+If a recorded completed invitation disappears or expires, confirm replacement explicitly:
+
+```sh
+tslink people update alice@example.com --invite --replace-invite photos=12345 --print-links
+```
+
+The value is the **recorded old ID**, not a new ID. TSLink verifies the same owned node, lists its invitations and refuses while that ID is still present (including accepted invitations). It retires the old attempt as `replaced` before creating a successor and preserves every grant and deadline. Do not supply `--apps` or `--for` with replacement. Repeat the flag for different apps; MCP uses `people_update` with `invite: true` and `replace_invites: {"photos":"12345"}`. A retry bound to that old ID resumes/reuses its successor instead of replacing it again. An indeterminate successor still requires reconciliation. For compatibility, explicit `--reconcile-invite app=none` on a completed record also confirms replacement, but additionally requires the entire device invite list to be empty. Ordinary retries never replace automatically.
+
+When a successful complete devices listing confirms both the recorded node and its hostname are absent, removal records terminal `target_gone`. The old app, hostname, node ID, invite ID and attempt remain in the ledger, and re-adding the person to another app works. Failed, partial or malformed listings and ownership mismatches remain incomplete and require retry. Terminal attempts are immutable history; successors use an increasing `attempt` number per person/app/node (omitted means the original attempt zero). This retains attempt outcomes, not a full event log of every transition.
+
 ## Why per-app invitations
 
 | Design | Owner and recipient work | App compatibility | Revocation |
@@ -57,7 +67,9 @@ The bundled design preserves the existing per-app transport isolation and avoids
 
 ## Enforcement and expiry
 
-Supported people identities match ASCII `[A-Za-z0-9@._+-]+`. Only ASCII A-Z case folding and outer ASCII space/tab/CR/LF removal are supported. Unicode, including U+212A KELVIN SIGN and U+0130 dotted capital I, is rejected at CLI/store boundaries and denied at the people WhoIs gate; it cannot fall back to legacy authorization. This grammar covers ASCII login names and emails, not every identity provider spelling.
+Accept any login string except an empty string, control characters, or internal whitespace. Trim outer ASCII whitespace (space, tab, CR, LF, VT and FF). Lowercase ASCII A-Z only; apply no Unicode case folding or Unicode normalization, and compare the resulting bytes exactly. Apostrophes, `!`, `~`, other punctuation and non-ASCII addresses are supported. U+212A KELVIN SIGN stays distinct from `k`, and U+0130 dotted capital I stays distinct from `i`; lookalikes cannot acquire another login's grant. Unmanaged people retain legacy allow fallback, with the same exact comparison for login rules. Tagged machines remain machine identities and cannot use a person's grant.
+
+For upgrade compatibility only, a login already stored by parent schema-2 writers remains loadable, exactly matchable and removable even if it contains legacy internal Unicode whitespace or C1 controls. New input cannot create such keys; this exception never folds or rewrites existing bytes.
 
 `access explain` and MCP `access_explain` report redacted people scope, grant/tombstone counts and the known-login override, and point to `people list --json` for detailed policy. Services with no people policy retain the legacy explanation.
 
@@ -75,7 +87,9 @@ All CLI JSON uses the existing `schema_version: 1` result envelope. `data.person
 
 MCP provides `people_add`, `people_list`, `people_update`, `people_remove`. Mutation tools describe confirmation requirements. Add/update are destructive (they can narrow existing app exposure), non-idempotent with renewal/invites, and open-world because invites are optional; list is read-only, including file modes; remove is destructive and idempotent with optional remote cleanup (open-world). Update accepts an invite-only retry; update/remove accept `reconcile_invites`, an app-to-ID (or `none`) object requiring explicit owner verification. Elevated exit-node, reusable-link and tailnet-role invitation arguments are not accepted here. The existing invite tools retain their `mcp.allow_elevated_invites` owner-configured guard.
 
-People-enabled registries write schema version 2, with top-level `people` and per-service `people_scoped`. The person object now has optional `invites`; earlier builds that do not understand this field refuse it through strict decoding. Existing version 0/1 registries load without changing bytes; ordinary services-only writes retain version 1. Unknown fields remain strictly refused. An older binary rejects version 2 or the unknown people fields rather than silently rewriting them away. Before downgrade, stop the new daemon and restore a separately backed-up version 1 registry only after intentionally deciding to discard people authorization. An older daemon cannot enforce grants; do not downgrade a running sharing installation by just swapping the CLI binary.
+People-enabled registries write schema version 2, with top-level `people` and per-service `people_scoped`. Existing schema-2 registries, including those written before the invitation ledger, load without rewriting bytes. The person object has optional `invites`; successor records add optional `attempt` and new terminal states. Earlier readers that do not understand these fields or states refuse rather than discard them. The schema version alone is not feature negotiation; use a compatible reader or restore a separately backed-up registry for downgrade. Existing version 0/1 registries load without changing bytes; ordinary services-only writes retain version 1. Unknown fields remain strictly refused. An older binary rejects version 2 or the unknown people fields rather than silently rewriting them away. Before downgrade, stop the new daemon and restore a separately backed-up version 1 registry only after intentionally deciding to discard people authorization. An older daemon cannot enforce grants; do not downgrade a running sharing installation by just swapping the CLI binary.
+
+Expected input, missing-person/app and state conflicts use `usage_error`, `not_found` and `conflict` consistently in CLI and MCP.
 
 The exported `registry.Person`, `PersonGrant`, `PersonGrantActiveAt`, and read-only `registry.Preflight` form the extension point for future lifecycle and audit packages.
 

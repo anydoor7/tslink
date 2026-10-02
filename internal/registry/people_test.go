@@ -168,7 +168,7 @@ func TestPeopleAllAndUnsupportedServices(t *testing.T) {
 
 func TestPeopleValidationAndLegacyRevocation(t *testing.T) {
 	path := peopleFixture(t)
-	for _, login := range []string{"", "tag:admin", "a\nb", "a b", "a,b", "a\x7fb"} {
+	for _, login := range []string{"", "bad login", "a\nb", "a b", "a\x7fb"} {
 		if _, err := NormalizePerson(login); err == nil {
 			t.Fatal("accepted invalid login", login)
 		}
@@ -259,8 +259,8 @@ func TestPeopleRegistryStrictVersionAndMigration(t *testing.T) {
 
 func TestPeopleStoreFailuresDoNotAdmitInvalidState(t *testing.T) {
 	path := peopleFixture(t)
-	if _, err := ChangePerson(path, "tag:admin", []string{"photos"}, nil, false, false); err == nil {
-		t.Fatal("tag identity accepted")
+	if _, err := ChangePerson(path, "bad login", []string{"photos"}, nil, false, false); err == nil {
+		t.Fatal("malformed login accepted")
 	}
 	if _, err := RemovePerson(path, ""); err == nil {
 		t.Fatal("empty revocation accepted")

@@ -19,7 +19,7 @@ func TestReviewPeopleDistinctUnicodeLogins(t *testing.T) {
 			dir := t.TempDir()
 			t.Setenv(config.ConfigDirEnv, dir)
 			path := filepath.Join(dir, "registry.json")
-			svc := registry.Service{Name: "photos", Type: registry.TypeProxy, Target: "http://localhost:3000"}
+			svc := registry.Service{Name: "photos", Type: registry.TypeProxy, Target: "http://localhost:3000", AllowedUsers: []string{tc.grant}}
 			if _, err := registry.Add(path, svc); err != nil {
 				t.Fatal(err)
 			}

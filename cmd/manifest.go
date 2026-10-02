@@ -268,7 +268,7 @@ func commandJSONResultFields(commandPath string) map[string]JSONResultFieldInfo 
 	case "tslink people add", "tslink people update":
 		return map[string]JSONResultFieldInfo{
 			"person":             {Type: "object", Description: "Canonical login, revocation state, per-app absolute deadlines, active decisions and exact URLs when available."},
-			"invites":            {Type: "array", Description: "Per-app invite id, remote side effect plan or stable error code. Bearer URLs require --print-links."},
+			"invites":            {Type: "array", Description: "Per-app invitation ID, durable state, reconciliation candidates, remote side effect plan or stable error code. Bearer URLs require --print-links."},
 			"complete":           {Type: "boolean", Description: "False when any requested device invitation failed; local grants remain saved."},
 			"message":            {Type: "string", Description: "Plain-language message to send to the person; bearer URLs require --print-links."},
 			"invite_requirement": {Type: "string", Description: "Explains that invitations require a user-owned API token while tailnet member grants need no token."},
@@ -276,7 +276,7 @@ func commandJSONResultFields(commandPath string) map[string]JSONResultFieldInfo 
 	case "tslink people list":
 		return map[string]JSONResultFieldInfo{"people": {Type: "array", Description: "People with grants, expiry, active state and revocation tombstones."}}
 	case "tslink people remove":
-		return map[string]JSONResultFieldInfo{"login": {Type: "string", Description: "Canonical Tailscale login."}, "removed": {Type: "boolean", Description: "True if existing person access or matching legacy allow rules were removed."}, "revoked": {Type: "boolean", Description: "True when a durable deny tombstone was stored."}}
+		return map[string]JSONResultFieldInfo{"login": {Type: "string", Description: "Canonical Tailscale login."}, "removed": {Type: "boolean", Description: "True if existing person access or matching legacy allow rules were removed."}, "revoked": {Type: "boolean", Description: "True when a durable deny tombstone was stored."}, "complete": {Type: "boolean", Description: "True when all recorded pending invitation cleanup reached a terminal state; local denial can succeed with false."}, "cleanup": {Type: "array", Description: "Per-attempt app, ID, state and stable cleanup code; target_gone preserves evidence of a deleted node and accepted shares may remain."}}
 	case "tslink serve":
 		return map[string]JSONResultFieldInfo{
 			"credential_migrated": {
@@ -841,6 +841,12 @@ func platformNeutralCommandShort(path, current string) string {
 }
 
 func flagRelationships(commandPath, name string) (oneOf, requires, conflicts []string) {
+	if commandPath == "tslink people update" && (name == "reconcile-invite" || name == "replace-invite") {
+		requires = []string{"--invite"}
+	}
+	if commandPath == "tslink people update" && name == "replace-invite" {
+		conflicts = []string{"--apps", "--for"}
+	}
 	if (commandPath == "tslink people add" || commandPath == "tslink people update") && name == "print-links" {
 		requires = []string{"--invite"}
 	}

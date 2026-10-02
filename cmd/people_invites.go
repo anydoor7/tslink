@@ -79,31 +79,98 @@ func resumePeopleInvites(ctx context.Context, path string, p registry.Person, ta
 	}
 }
 
+// nextPeopleInvite retains every terminal attempt for this app/node. Zero is
+// the original schema-2 slot; later attempts get increasing local generations.
+func nextPeopleInvite(p registry.Person, target tailapi.DeviceTarget) registry.PersonInvite {
+	op := registry.PersonInvite{App: target.Service, Hostname: target.Hostname, NodeID: target.NodeID, State: registry.PersonInvitePending}
+	for _, old := range p.Invites {
+		if old.App == op.App && old.NodeID == op.NodeID && old.Attempt >= op.Attempt {
+			op.Attempt = old.Attempt + 1
+		}
+	}
+	return op
+}
+
 func resumePeopleInvite(ctx context.Context, path, login string, target tailapi.DeviceTarget, args peopleArguments) PeopleInviteView {
 	v := PeopleInviteView{App: target.Service}
-	op := registry.PersonInvite{App: target.Service, Hostname: target.Hostname, NodeID: target.NodeID, State: registry.PersonInvitePending}
 	p, err := readPerson(path, login)
 	if err != nil {
-		return peopleInviteFailure(op, err, "invite_state_failed")
+		return peopleInviteFailure(registry.PersonInvite{App: target.Service}, err, "invite_state_failed")
 	}
+	op := nextPeopleInvite(p, target)
 	if p.Revoked || !registry.PersonGrantActiveAt(p, target.Service, peopleNowFn()) {
 		return peopleInviteFailure(op, nil, "person_grant_inactive")
 	}
 	if target.NodeID == "" {
 		return peopleInviteFailure(op, nil, registry.CodeInviteOwnershipUnproven)
 	}
+	var expected *registry.PersonInvite
 	for _, existing := range p.Invites {
 		if existing.App == target.Service && existing.NodeID == target.NodeID && !registry.PersonInviteTerminal(existing) {
 			op = existing
+			previous := existing
+			expected = &previous
 			break
 		}
 	}
-	if id := args.Reconcile[target.Service]; id != "" && op.State != registry.PersonInviteSending && op.State != registry.PersonInviteUnknown && !(op.State == registry.PersonInviteComplete && id == op.ID) {
+	save := func(next registry.PersonInvite, reset bool) error {
+		err := registry.SavePersonInviteWithOptions(path, login, next, registry.PersonInviteSaveOptions{Now: peopleNowFn(), Expected: expected, ResetConfirmed: reset})
+		if err == nil {
+			previous := next
+			expected = &previous
+		}
+		return err
+	}
+	// Replacement is bound to the old ID, so retrying the same owner request
+	// can never replace its newly created successor a second time.
+	replaceID := args.Replace[target.Service]
+	replace := replaceID != "" && op.State == registry.PersonInviteComplete && op.ID == replaceID
+	if replaceID != "" && !replace {
+		retired := false
+		for _, old := range p.Invites {
+			if old.App == op.App && old.NodeID == op.NodeID && old.ID == replaceID && old.State == registry.PersonInviteReplaced {
+				retired = true
+			}
+		}
+		if !retired {
+			return peopleInviteFailure(op, nil, "conflict")
+		}
+	}
+	reconcileID := args.Reconcile[target.Service]
+	// Explicit complete+none is a compatibility spelling of replacement. It
+	// additionally requires the whole device invite list to be empty.
+	replaceAbsent := op.State == registry.PersonInviteComplete && reconcileID == "none"
+	if replace || replaceAbsent {
+		invites, err := tailapi.ListDeviceInvitesForTarget(ctx, target)
+		if err != nil {
+			return peopleInviteFailure(op, err, "invite_reconciliation_failed")
+		}
+		for _, inv := range invites {
+			if inv.ID == op.ID || replaceAbsent {
+				return peopleInviteFailure(op, nil, "conflict")
+			}
+		}
+		retired := op
+		retired.State = registry.PersonInviteReplaced
+		if err := save(retired, false); err != nil {
+			return peopleInviteFailure(op, err, "invite_state_failed")
+		}
+		p.Invites = append(p.Invites, retired)
+		op = nextPeopleInvite(p, target)
+		expected = nil
+		// Preserve the new pending attempt before POST. A crash here is resumable
+		// without changing grants or forgetting the retired ID/node evidence.
+		if err := save(op, false); err != nil {
+			return peopleInviteFailure(op, err, "invite_state_failed")
+		}
+		reconcileID = ""
+	}
+	if reconcileID != "" && op.State != registry.PersonInviteSending && op.State != registry.PersonInviteUnknown && !(op.State == registry.PersonInviteComplete && reconcileID == op.ID) {
 		return peopleInviteFailure(op, nil, "invite_reconciliation_required")
 	}
 	var invites []tailapi.Invite
 	if op.State == registry.PersonInviteSending || op.State == registry.PersonInviteUnknown {
-		op, invites, err = reconcilePeopleInvite(ctx, path, login, op, args.Reconcile[target.Service])
+		op, invites, err = reconcilePeopleInvite(ctx, path, login, op, reconcileID)
 		for _, inv := range invites {
 			v.ReconcileIDs = append(v.ReconcileIDs, inv.ID)
 		}
@@ -112,7 +179,7 @@ func resumePeopleInvite(ctx context.Context, path, login string, target tailapi.
 			failure.ReconcileIDs = v.ReconcileIDs
 			return failure
 		}
-		if err := registry.SavePersonInvite(path, login, op); err != nil {
+		if err := save(op, op.State == registry.PersonInvitePending); err != nil {
 			return peopleInviteFailure(op, err, "invite_state_failed")
 		}
 	} else if op.State == registry.PersonInviteComplete && args.PrintLinks {
@@ -138,7 +205,7 @@ func resumePeopleInvite(ctx context.Context, path, login string, target tailapi.
 	}
 	// Commit BEFORE POST; process death leaves sending, an unknown outcome.
 	op.State = registry.PersonInviteSending
-	if err := registry.SavePersonInvite(path, login, op); err != nil {
+	if err := save(op, false); err != nil {
 		return peopleInviteFailure(op, err, "invite_state_failed")
 	}
 	inv, createErr := inviteCreateDeviceFn(ctx, target, login, true, false, false)
@@ -148,13 +215,13 @@ func resumePeopleInvite(ctx context.Context, path, login string, target tailapi.
 		if errors.As(createErr, &unknown) {
 			op.State = registry.PersonInviteUnknown
 		}
-		if err := registry.SavePersonInvite(path, login, op); err != nil {
+		if err := save(op, op.State == registry.PersonInvitePending); err != nil {
 			return peopleInviteFailure(op, err, "invite_state_failed")
 		}
 		return peopleInviteFailure(op, createErr, "invite_failed")
 	}
 	op.State, op.ID = registry.PersonInviteComplete, inv.ID
-	if err := registry.SavePersonInvite(path, login, op); err != nil {
+	if err := save(op, false); err != nil {
 		return PeopleInviteView{App: op.App, ID: op.ID, State: registry.PersonInviteUnknown, Code: "invite_state_failed"}
 	}
 	v.ID, v.State = inv.ID, op.State
@@ -206,7 +273,12 @@ func cleanupPeopleInvites(ctx context.Context, path string, result *PeopleRemove
 							v.ReconcileIDs = append(v.ReconcileIDs, inv.ID)
 						}
 						if e != nil {
-							v.Code = peopleInviteCode(e, "invite_reconciliation_failed")
+							var gone *tailapi.PeopleInviteTargetGone
+							if errors.As(e, &gone) {
+								op.State = registry.PersonInviteTargetGone
+							} else {
+								v.Code = peopleInviteCode(e, "invite_reconciliation_failed")
+							}
 						} else {
 							op = resolved
 							// Persist association before DELETE for crash recovery.
@@ -218,7 +290,7 @@ func cleanupPeopleInvites(ctx context.Context, path string, result *PeopleRemove
 							}
 						}
 					}
-					if v.Code == "" && op.ID != "" {
+					if v.Code == "" && op.ID != "" && !registry.PersonInviteTerminal(op) {
 						state, e := tailapi.RevokePendingDeviceInvite(ctx, personInviteTarget(op), op.ID)
 						if e != nil {
 							v.Code = peopleInviteCode(e, "invite_cleanup_failed")
@@ -276,7 +348,7 @@ func reconcilePeopleInvite(ctx context.Context, path, login string, op registry.
 		}
 		for _, other := range reg.People {
 			for _, old := range other.Invites {
-				if old.ID == id && (other.Login != login || old.App != op.App || old.NodeID != op.NodeID) {
+				if old.ID == id && (other.Login != login || old.App != op.App || old.NodeID != op.NodeID || old.Attempt != op.Attempt) {
 					return op, invites, registry.CodedError{Code: "invite_reconciliation_conflict", Message: "Invite ID already belongs to another person/app operation"}
 				}
 			}

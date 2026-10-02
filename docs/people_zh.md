@@ -29,7 +29,7 @@ tslink people add alice@example.com --apps photos,finance --for 7d --invite --pr
 
 邀请可能部分失败。JSON 返回 `complete: false`、每应用的 `code` 和持久化 `state`，以及成功邀请 ID 和副作用计划。**本地授权仍已保存**，即使外层 envelope 成功也必须读取这些字段。用 `tslink people update <login> --invite` 继续：已完成操作复用 ID，只执行未完成操作。加 `--print-links` 可显式取回现有链接；链接不可用时报告错误，不重新创建。
 
-注册表保存非秘密的人员/应用/节点关联及操作状态（`pending`、`sending`、`unknown`、`complete`、`revoked`、`accepted`、`cancelled`），从不保存 URL 或 token。POST 前保存 `sending`；崩溃、超时、POST 失败响应或无效响应都须先远端对账。链接模式的设备邀请列表没有收件人信息，因此即使只有一个候选，也不会自动归属。先用 `tslink invite list --json` 检查（`--show-urls` 会显式显示链接），确认应用和邀请，再明确处理：
+注册表保存非秘密的人员/应用/节点关联及操作状态（`pending`、`sending`、`unknown`、`complete`、`revoked`、`accepted`、`cancelled`、`target_gone`、`replaced`），从不保存 URL 或 token。POST 前保存 `sending`；崩溃、超时、POST 失败响应或无效响应都须先远端对账。链接模式的设备邀请列表没有收件人信息，因此即使只有一个候选，也不会自动归属。先用 `tslink invite list --json` 检查（`--show-urls` 会显式显示链接），确认应用和邀请，再明确处理：
 
 ```sh
 # 关联拥有者已核对的现有邀请 ID，不为此应用再次 POST。
@@ -44,6 +44,16 @@ tslink people remove alice@example.com --reconcile-invite photos=12345
 
 remove 先保存拒绝记录并移除授权，再按已记录的应用节点证明撤销所有未接受邀请。JSON 含 `complete` 和每应用 `cleanup` 状态/错误；人类输出明确说明部分或延后清理。没有 token 仍能本地拒绝，并保留邀请 ID；恢复用户拥有的 token 后重试 remove。已完成清理不重复执行，远端 ID 已不存在视为清理完成。已接受邀请标为 `accepted`，网络分享可能仍存在，须单独在 Tailscale 管理。若创建仍在并发执行，remove 立即报告延后清理；随后重试 remove 清理记录的结果。删除应用不会丢弃其邀请台账。
 
+已记录的 completed 邀请消失或过期时,须由拥有者明确确认替换:
+
+```sh
+tslink people update alice@example.com --invite --replace-invite photos=12345 --print-links
+```
+
+参数是**已记录的旧 ID**,不是新 ID。TSLink 核对同一个节点的归属并列出邀请;旧 ID 仍存在时(包括已接受)拒绝替换。创建后继前先把旧 attempt 标为 `replaced`,完整保留所有授权和期限。替换不能同时指定 `--apps` 或 `--for`。不同应用可重复指定标志;MCP 使用 `people_update`、`invite: true` 和 `replace_invites: {"photos":"12345"}`。重试同一个旧 ID 会继续或复用其后继,不会再次替换;后继结果未知仍须对账。为兼容,completed 记录上的显式 `--reconcile-invite app=none` 也确认替换,但额外要求此设备的整个邀请列表为空。普通重试不会自动替换。
+
+成功且完整的 devices 列表确认已记录节点及其 hostname 均不存在时,remove 保存终态 `target_gone`,保留旧应用、hostname、node ID、invite ID 和 attempt,此后可重新授权其他应用。失败、截断、格式错误的列表及归属不符仍是未完成,须重试。Terminal attempts 是不可覆盖的历史;同一人员/应用/节点的后继使用递增 `attempt`,省略表示原始 attempt 0。它保留各 attempt 的最终结果,不是每次状态变更的完整事件日志。
+
 ## 为什么保留按应用邀请
 
 | 设计 | 拥有者与接收者操作 | 应用兼容性 | 撤销 |
@@ -55,7 +65,9 @@ remove 先保存拒绝记录并移除授权，再按已记录的应用节点证�
 
 ## 强制校验与到期
 
-支持的人员身份为 ASCII `[A-Za-z0-9@._+-]+`。仅折叠 ASCII A-Z 大小写和移除首尾 ASCII 空格/tab/CR/LF；CLI/store 拒绝 Unicode（包括 U+212A KELVIN SIGN 和 U+0130 dotted capital I），people WhoIs 校验直接拒绝，不能回退到旧规则。这覆盖 ASCII 登录名和邮箱，不代表支持所有身份提供者的拼写。
+接受任意登录字符串,仅拒绝空字符串、控制字符和内部空白。移除首尾 ASCII 空白(space、tab、CR、LF、VT、FF),只把 ASCII A-Z 转为小写;不进行 Unicode 大小写折叠或 Unicode normalization,逐字节精确比较。支持撇号、`!`、`~`、其他标点及非 ASCII 地址。U+212A KELVIN SIGN 与 `k` 不同,U+0130 dotted capital I 与 `i` 不同,相似字符不能取得另一登录名的授权。未作为人员管理的登录名保留旧 allow 回退,登录规则也使用同样的精确比较。Tagged 设备仍是机器身份,不能使用人员授权。
+
+仅为升级兼容,父版本 schema-2 已保存的登录名(即使含旧版允许的内部 Unicode 空白或 C1 控制字符)仍可加载、按原字节匹配和移除。新输入不能创建这些键;兼容路径不折叠或重写已有字节。
 
 `access explain` 和 MCP `access_explain` 显示脱敏的人员范围、授权/拒绝记录数量及已知登录名覆盖旧规则的语义，并指向 `people list --json` 查看详细策略。完全没有人员策略的服务保留旧解释。
 
@@ -73,7 +85,9 @@ CLI JSON 使用现有 `schema_version: 1` 结果 envelope。`data.person` 含规
 
 MCP 提供 `people_add`、`people_list`、`people_update`、`people_remove`。变更工具说明须确认人员、应用和期限。add/update 可能缩小旧访问范围，因此是 destructive；续期及邀请非幂等，可选邀请使它们具有 open-world 提示。list 完全只读，包括文件权限；remove 是 destructive、幂等，含可选远端清理，因此有 open-world 提示。update 可只指定 invite 进行重试；update/remove 接受 `reconcile_invites` 应用到 ID（或 `none`）对象，须拥有者明确核对。这里不接受 exit-node、可重复链接或 tailnet 管理角色参数；现有 invite 工具继续使用拥有者配置的 `mcp.allow_elevated_invites` 守卫。
 
-启用人员数据的注册表写入 schema version 2，新增顶层 `people` 和服务字段 `people_scoped`。人员对象新增可选 `invites`；不认识此字段的早期版本会通过严格解码拒绝。旧 version 0/1 可加载且不改变字节，只有服务的普通写入仍保留 version 1，未知字段继续严格拒绝。旧二进制会拒绝 version 2 或未知人员字段，不能静默覆盖丢失数据。降级前先停止新版守护进程，明确决定丢弃人员授权后才恢复另外备份的 version 1 注册表；旧守护进程不能校验这些授权，不能只替换运行中安装的 CLI 二进制。
+启用人员数据的注册表写入 schema version 2，新增顶层 `people` 和服务字段 `people_scoped`。已有 schema-2 注册表(包括邀请台账前的版本)读取不改字节。人员对象有可选 `invites`;后继记录增加可选 `attempt` 和新终态。不认识字段或状态的旧 reader 会拒绝而非丢弃。Schema version 本身不能协商功能;降级须使用兼容 reader 或另行备份的注册表。旧 version 0/1 可加载且不改变字节，只有服务的普通写入仍保留 version 1，未知字段继续严格拒绝。旧二进制会拒绝 version 2 或未知人员字段，不能静默覆盖丢失数据。降级前先停止新版守护进程，明确决定丢弃人员授权后才恢复另外备份的 version 1 注册表；旧守护进程不能校验这些授权，不能只替换运行中安装的 CLI 二进制。
+
+输入错误、人员/应用不存在及状态冲突,在 CLI 和 MCP 中一致使用 `usage_error`、`not_found`、`conflict`。
 
 导出的 `registry.Person`、`PersonGrant`、`PersonGrantActiveAt` 及只读 `registry.Preflight` 是后续生命周期和审计功能的扩展点。
 

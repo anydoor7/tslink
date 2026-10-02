@@ -7,6 +7,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+
+	"github.com/anydoor7/tslink/internal/errcode"
 )
 
 // PeopleRegistrySchemaVersion is deliberately unsupported by older binaries.
@@ -29,21 +32,59 @@ type PersonGrant struct {
 }
 
 func NormalizePerson(login string) (string, error) {
-	// Supported logins are ASCII [A-Za-z0-9@._+-]+. ASCII outer whitespace
-	// and ASCII case are the only equivalences; never fold Unicode identities.
-	login = strings.Trim(login, " \t\r\n")
-	if login == "" {
-		return "", fmt.Errorf("person must be an ASCII Tailscale login or email")
+	// Only outer ASCII whitespace and ASCII case are equivalent. Unicode
+	// bytes are preserved, including Kelvin sign and dotted capital I.
+	login = canonicalPersonBytes(login)
+	if login == "" || strings.IndexFunc(login, func(r rune) bool { return unicode.IsControl(r) || unicode.IsSpace(r) }) >= 0 {
+		return "", CodedError{Code: errcode.UsageError, Message: "person login must be nonempty and contain no controls or internal whitespace"}
 	}
-	canonical := []byte(login)
+	return login, nil
+}
+
+func canonicalPersonBytes(login string) string {
+	canonical := []byte(strings.Trim(login, " \t\r\n\v\f"))
 	for i, c := range canonical {
 		if c >= 'A' && c <= 'Z' {
 			canonical[i] = c + ('a' - 'A')
-		} else if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || strings.ContainsRune("@._+-", rune(c))) {
-			return "", fmt.Errorf("person must match ASCII [A-Za-z0-9@._+-]+ (outer ASCII whitespace is allowed)")
 		}
 	}
-	return string(canonical), nil
+	return string(canonical)
+}
+
+// Parent schema-2 writers admitted internal Unicode whitespace and C1
+// controls. Preserve those already-stored keys without applying the parent's
+// Unicode folding. New people input still uses NormalizePerson's strict rule.
+func legacyStoredPersonLogin(login string) bool {
+	return login != "" && login == canonicalPersonBytes(login) && !strings.HasPrefix(login, "tag:") &&
+		!strings.ContainsAny(login, " \t\r\n,\\") && strings.IndexFunc(login, func(r rune) bool { return r < 32 || r == 127 }) < 0
+}
+
+func normalizePersonFromRegistry(reg *Registry, who string) (string, error) {
+	login, err := NormalizePerson(who)
+	if err == nil {
+		return login, nil
+	}
+	candidate := canonicalPersonBytes(who)
+	for _, p := range reg.People {
+		if p.Login == candidate && legacyStoredPersonLogin(candidate) {
+			return candidate, nil
+		}
+	}
+	return "", err
+}
+
+// ResolvePersonLogin adds only exact matching of existing legacy schema-2
+// keys to the new-input grammar. Reads never rewrite or normalize stored data.
+func ResolvePersonLogin(path, who string) (string, error) {
+	login, inputErr := NormalizePerson(who)
+	if inputErr == nil {
+		return login, nil
+	}
+	reg, _, err := Preflight(path)
+	if err != nil {
+		return "", inputErr
+	}
+	return normalizePersonFromRegistry(reg, who)
 }
 
 // ParsePersonExpiry stores UTC wall time, never a restart-relative duration.
@@ -73,6 +114,9 @@ func validatePeople(people []Person) error {
 	seen := map[string]bool{}
 	for _, p := range people {
 		login, err := NormalizePerson(p.Login)
+		if err != nil && legacyStoredPersonLogin(p.Login) {
+			login, err = p.Login, nil
+		}
 		if err != nil || login != p.Login || seen[login] {
 			return fmt.Errorf("invalid or duplicate person login %q", p.Login)
 		}
@@ -115,7 +159,7 @@ func PeopleServiceSupported(svc Service) bool {
 // all selects the current private HTTP/file services, not future additions.
 func ChangePerson(path, who string, apps []string, expiry *time.Time, changeExpiry, update bool) (result Person, err error) {
 	if !update && len(apps) == 0 {
-		return result, fmt.Errorf("apps must include at least one private HTTP or file service")
+		return result, CodedError{Code: errcode.UsageError, Message: "apps must include at least one private HTTP or file service"}
 	}
 	login, err := NormalizePerson(who)
 	if err != nil {
@@ -135,16 +179,16 @@ func ChangePerson(path, who string, apps []string, expiry *time.Time, changeExpi
 			}
 		}
 		if update && (index < 0 || result.Revoked) {
-			return fmt.Errorf("person not found: %s", login)
+			return CodedError{Code: errcode.NotFound, Message: fmt.Sprintf("person not found: %s", login)}
 		}
 		if !update && index >= 0 && !result.Revoked {
-			return fmt.Errorf("person already exists: %s; use people update", login)
+			return CodedError{Code: errcode.Conflict, Message: fmt.Sprintf("person already exists: %s; use people update", login)}
 		}
 		previous := result.Grants
 		if !update {
 			for _, op := range result.Invites {
 				if !PersonInviteTerminal(op) {
-					return fmt.Errorf("pending invite cleanup for %s; retry people remove before adding again", login)
+					return CodedError{Code: errcode.Conflict, Message: fmt.Sprintf("pending invite cleanup for %s; retry people remove before adding again", login)}
 				}
 			}
 			result = Person{Login: login, Grants: []PersonGrant{}, Invites: result.Invites}
@@ -164,7 +208,7 @@ func ChangePerson(path, who string, apps []string, expiry *time.Time, changeExpi
 				}
 			}
 			if len(selected) == 0 {
-				return fmt.Errorf("apps must include at least one private HTTP or file service")
+				return CodedError{Code: errcode.UsageError, Message: "apps must include at least one private HTTP or file service"}
 			}
 			for app := range selected {
 				found := false
@@ -178,7 +222,7 @@ func ChangePerson(path, who string, apps []string, expiry *time.Time, changeExpi
 					}
 				}
 				if !found {
-					return fmt.Errorf("service not found: %s", app)
+					return CodedError{Code: errcode.NotFound, Message: fmt.Sprintf("service not found: %s", app)}
 				}
 			}
 			result.Grants = []PersonGrant{}
@@ -225,7 +269,7 @@ func ChangePerson(path, who string, apps []string, expiry *time.Time, changeExpi
 // RemovePerson retains a deny tombstone so a legacy empty allow-list, a tag
 // rule or an accepted device share cannot restore this login's HTTP access.
 func RemovePerson(path, who string) (removed bool, err error) {
-	login, err := NormalizePerson(who)
+	login, err := ResolvePersonLogin(path, who)
 	if err != nil {
 		return false, err
 	}
@@ -320,10 +364,9 @@ func ExpirePeople(path string, now time.Time) (changed bool, err error) {
 // services. Callers may use the legacy ACL only when authoritative is false.
 func PeopleAccessAt(reg *Registry, svc Service, login string, tags []string, now time.Time) (allowed, authoritative bool) {
 	var err error
-	login, err = NormalizePerson(login)
+	login, err = normalizePersonFromRegistry(reg, login)
 	if err != nil {
-		// Do not let unsupported identities fall through to legacy Unicode
-		// folding in services participating in the people authorization chain.
+		// Malformed WhoIs identities cannot participate in authorization.
 		return false, true
 	}
 	for _, p := range reg.People {

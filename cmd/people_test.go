@@ -253,8 +253,8 @@ func TestPeopleInputRefusalsAndReadOnlyMissing(t *testing.T) {
 	if _, err := changePeople(context.Background(), paths, peopleArguments{Who: "alice"}, true); err == nil || !strings.Contains(err.Error(), "update requires") {
 		t.Fatal(err)
 	}
-	if _, err := removePeople(paths.Registry, "tag:admin"); err == nil {
-		t.Fatal("tag accepted")
+	if _, err := removePeople(paths.Registry, "bad login"); err == nil {
+		t.Fatal("malformed login accepted")
 	}
 	if _, err := listPeople(sharePaths{Registry: filepath.Join(t.TempDir(), "missing")}); err != nil {
 		t.Fatal(err)
@@ -288,7 +288,7 @@ func TestPeopleCLISuccessAndFailurePaths(t *testing.T) {
 			t.Fatal(args, err)
 		}
 	}
-	for _, args := range [][]string{{"add", "alice", "--apps", "missing"}, {"update", "missing", "--for", "never"}, {"remove", "tag:admin"}} {
+	for _, args := range [][]string{{"add", "alice", "--apps", "missing"}, {"update", "missing", "--for", "never"}, {"remove", "bad login"}} {
 		if err := run(args...); err == nil {
 			t.Fatal("invalid command accepted", args)
 		}
@@ -325,7 +325,7 @@ func TestPeopleRemainingViewAndValidationPaths(t *testing.T) {
 	if _, err := changePeople(context.Background(), paths, args, true); err == nil || !strings.Contains(err.Error(), "apps must not") {
 		t.Fatal(err)
 	}
-	if _, err := changePeople(context.Background(), paths, peopleArguments{Who: "tag:admin", Apps: []string{"photos"}}, false); err == nil {
+	if _, err := changePeople(context.Background(), paths, peopleArguments{Who: "bad login", Apps: []string{"photos"}}, false); err == nil {
 		t.Fatal("bad login accepted")
 	}
 	if _, err := changePeople(context.Background(), sharePaths{Registry: filepath.Join(t.TempDir(), "bad")}, peopleArguments{Who: "alice", Apps: []string{"photos"}, Invite: true}, false); err == nil {

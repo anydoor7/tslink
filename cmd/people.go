@@ -25,6 +25,7 @@ type peopleArguments struct {
 	Invite     bool              `json:"invite,omitempty"`
 	PrintLinks bool              `json:"print_links,omitempty"`
 	Reconcile  map[string]string `json:"reconcile_invites,omitempty"`
+	Replace    map[string]string `json:"replace_invites,omitempty"`
 }
 
 type PeopleGrantView struct {
@@ -147,11 +148,30 @@ func peopleMessage(p PeopleView, invites []PeopleInviteView, requested, printLin
 }
 
 func changePeople(ctx context.Context, paths sharePaths, args peopleArguments, update bool) (PeopleResult, error) {
+	login, err := registry.NormalizePerson(args.Who)
+	if err != nil {
+		return PeopleResult{}, err
+	}
+	args.Who = login
 	if args.PrintLinks && !args.Invite {
 		return PeopleResult{}, output.ErrUsage("--print-links requires --invite")
 	}
 	if len(args.Reconcile) > 0 && (!update || !args.Invite) {
 		return PeopleResult{}, output.ErrUsage("reconcile-invite requires people update --invite")
+	}
+	if len(args.Replace) > 0 && (!update || !args.Invite || args.Apps != nil || args.For != nil) {
+		return PeopleResult{}, output.ErrUsage("replace-invite requires people update --invite without --apps or --for; grants and deadlines are preserved")
+	}
+	for app, id := range args.Replace {
+		if err := registry.ValidateName(app); err != nil {
+			return PeopleResult{}, output.ErrUsage(err.Error())
+		}
+		if err := tailapi.ValidateInviteID(id); err != nil {
+			return PeopleResult{}, err
+		}
+		if _, ok := args.Reconcile[app]; ok {
+			return PeopleResult{}, output.ErrUsage("cannot replace and reconcile the same app")
+		}
 	}
 	for app, id := range args.Reconcile {
 		if err := registry.ValidateName(app); err != nil {
@@ -174,7 +194,6 @@ func changePeople(ctx context.Context, paths sharePaths, args peopleArguments, u
 	}
 	now := peopleNowFn()
 	var expires *time.Time
-	var err error
 	if args.For != nil {
 		expires, err = registry.ParsePersonExpiry(*args.For, now)
 		if err != nil {
@@ -197,6 +216,11 @@ func changePeople(ctx context.Context, paths sharePaths, args peopleArguments, u
 	p, err := registry.ChangePerson(paths.Registry, args.Who, args.Apps, expires, args.For != nil, update)
 	if err != nil {
 		return PeopleResult{}, err
+	}
+	for app := range args.Replace {
+		if !registry.PersonGrantActiveAt(p, app, now) {
+			return PeopleResult{}, output.ErrConflict("replace-invite requires an active grant for " + app)
+		}
 	}
 	result := PeopleResult{Person: peopleView(p, urls, now), Invites: []PeopleInviteView{}, Complete: true, InviteRequirement: peopleInviteRequirement}
 	if args.Invite {
@@ -242,7 +266,7 @@ func removePeople(path, who string) (PeopleRemoveResult, error) {
 }
 
 func removePeopleContext(ctx context.Context, path, who string, reconcile ...map[string]string) (PeopleRemoveResult, error) {
-	login, err := registry.NormalizePerson(who)
+	login, err := registry.ResolvePersonLogin(path, who)
 	if err != nil {
 		return PeopleRemoveResult{}, err
 	}
@@ -309,7 +333,7 @@ func newPeopleCmd() *cobra.Command {
 	for _, update := range []bool{false, true} {
 		var apps, duration string
 		var invite, printLinks bool
-		var reconcile []string
+		var reconcile, replace []string
 		name := "add"
 		if update {
 			name = "update"
@@ -320,6 +344,16 @@ func newPeopleCmd() *cobra.Command {
 				return err
 			}
 			args := peopleArguments{Who: a[0], Invite: invite, PrintLinks: printLinks}
+			if len(replace) > 0 {
+				args.Replace = map[string]string{}
+				for _, value := range replace {
+					app, id, ok := strings.Cut(value, "=")
+					if !ok || app == "" || id == "" || args.Replace[app] != "" {
+						return output.ErrUsage("replace-invite must be a unique app=recorded-id")
+					}
+					args.Replace[app] = id
+				}
+			}
 			if len(reconcile) > 0 {
 				args.Reconcile = map[string]string{}
 				for _, value := range reconcile {
@@ -352,6 +386,7 @@ func newPeopleCmd() *cobra.Command {
 		c.Flags().BoolVar(&printLinks, "print-links", false, "Explicitly include bearer invitation links in output and the guide")
 		if update {
 			c.Flags().StringArrayVar(&reconcile, "reconcile-invite", nil, "After verifying an unknown POST, associate app=id or confirm app=none; requires --invite")
+			c.Flags().StringArrayVar(&replace, "replace-invite", nil, "Owner-confirmed app=recorded-id replacement after remote absence; preserves grants/deadlines; requires --invite")
 		}
 		group.AddCommand(c)
 	}

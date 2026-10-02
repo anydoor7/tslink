@@ -1603,7 +1603,7 @@
         },
         "invites": {
           "type": "array",
-          "description": "Per-app invite id, remote side effect plan or stable error code. Bearer URLs require --print-links."
+          "description": "Per-app invitation ID, durable state, reconciliation candidates, remote side effect plan or stable error code. Bearer URLs require --print-links."
         },
         "message": {
           "type": "string",
@@ -1654,6 +1654,14 @@
         }
       ],
       "json_result_fields": {
+        "cleanup": {
+          "type": "array",
+          "description": "Per-attempt app, ID, state and stable cleanup code; target_gone preserves evidence of a deleted node and accepted shares may remain."
+        },
+        "complete": {
+          "type": "boolean",
+          "description": "True when all recorded pending invitation cleanup reached a terminal state; local denial can succeed with false."
+        },
         "login": {
           "type": "string",
           "description": "Canonical Tailscale login."
@@ -1713,7 +1721,24 @@
           "type": "stringArray",
           "default": "[]",
           "scope": "local",
-          "usage": "After verifying an unknown POST, associate app=id or confirm app=none; requires --invite"
+          "usage": "After verifying an unknown POST, associate app=id or confirm app=none; requires --invite",
+          "requires": [
+            "--invite"
+          ]
+        },
+        {
+          "name": "replace-invite",
+          "type": "stringArray",
+          "default": "[]",
+          "scope": "local",
+          "usage": "Owner-confirmed app=recorded-id replacement after remote absence; preserves grants/deadlines; requires --invite",
+          "requires": [
+            "--invite"
+          ],
+          "conflicts": [
+            "--apps",
+            "--for"
+          ]
         }
       ],
       "json_result_fields": {
@@ -1727,7 +1752,7 @@
         },
         "invites": {
           "type": "array",
-          "description": "Per-app invite id, remote side effect plan or stable error code. Bearer URLs require --print-links."
+          "description": "Per-app invitation ID, durable state, reconciliation candidates, remote side effect plan or stable error code. Bearer URLs require --print-links."
         },
         "message": {
           "type": "string",

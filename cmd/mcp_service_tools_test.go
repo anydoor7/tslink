@@ -69,7 +69,7 @@ const mcpJSONFlagExclusion = "MCP tool results are always structured JSON; --jso
 // mcpCoveredCommands is the mapping half of the partition.
 var mcpCoveredCommands = map[string]mcpCoveredCommand{
 	"tslink people add":    {Tools: []string{"people_add"}, Args: []string{"who"}, Flags: map[string]string{"apps": "apps", "for": "for", "invite": "invite", "print-links": "print_links"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
-	"tslink people update": {Tools: []string{"people_update"}, Args: []string{"who"}, Flags: map[string]string{"apps": "apps", "for": "for", "invite": "invite", "print-links": "print_links", "reconcile-invite": "reconcile_invites"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
+	"tslink people update": {Tools: []string{"people_update"}, Args: []string{"who"}, Flags: map[string]string{"apps": "apps", "for": "for", "invite": "invite", "print-links": "print_links", "reconcile-invite": "reconcile_invites", "replace-invite": "replace_invites"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
 	"tslink people list":   {Tools: []string{"people_list"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
 	"tslink people remove": {Tools: []string{"people_remove"}, Args: []string{"who"}, Flags: map[string]string{"reconcile-invite": "reconcile_invites"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
 	"tslink share": {

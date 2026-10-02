@@ -8,3 +8,5 @@ This index records the people sharing lifecycle implementation and regression te
 - [people_invites_test.go](people_invites_test.go)
 - [people_invites_unix_test.go](people_invites_unix_test.go)
 - [people_review_regression_test.go](people_review_regression_test.go)
+- [rereview_store_test.go](rereview_store_test.go): ported independent re-review fixtures.
+- [testdata/INDEX.md](testdata/INDEX.md): parent registry upgrade provenance.

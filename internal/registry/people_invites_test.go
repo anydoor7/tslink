@@ -42,12 +42,23 @@ func TestPeopleInviteLedgerAndValidation(t *testing.T) {
 	if e != nil || p.Revoked || len(p.Invites) != 1 || p.Invites[0].ID != "1001" {
 		t.Fatal("terminal history lost", p, e)
 	}
-	for _, state := range []string{PersonInvitePending, PersonInviteSending, PersonInviteUnknown, PersonInviteComplete, PersonInviteAccepted, PersonInviteRevoked, PersonInviteCancelled} {
+	op.Attempt = 1
+	op.ID = ""
+	for _, state := range []string{PersonInvitePending, PersonInviteSending, PersonInviteUnknown, PersonInviteComplete, PersonInviteAccepted} {
 		op.State = state
+		if state == PersonInviteComplete {
+			op.ID = "1002"
+		}
 		if e := SavePersonInvite(path, "alice", op); e != nil {
 			t.Fatal(state, e)
 		}
 	}
+	// Terminal attempts are immutable; new cancellations get their own generation.
+	op = PersonInvite{App: "photos", Hostname: "photos", NodeID: "n1", State: PersonInviteCancelled, Attempt: 2}
+	if e := SavePersonInvite(path, "alice", op); e != nil {
+		t.Fatal(e)
+	}
+
 	for _, bad := range []PersonInvite{
 		{App: "bad/", Hostname: "photos", NodeID: "n", State: PersonInviteUnknown},
 		{App: "photos", Hostname: "bad/", NodeID: "n", State: PersonInviteUnknown},

@@ -154,7 +154,18 @@ func TestPeopleUnknownPostReconciliationAndCrashRecovery(t *testing.T) {
 	op := p.Invites[0]
 	op.ID = ""
 	op.State = registry.PersonInviteSending
-	if e := registry.SavePersonInvite(paths.Registry, "alice", op); e != nil {
+	// Crash fixture rewinds the disk directly; the guarded Store API now
+	// correctly refuses erasing a recorded successful ID.
+	reg, _, e := registry.Preflight(paths.Registry)
+	if e != nil {
+		t.Fatal(e)
+	}
+	reg.People[0].Invites[0] = op
+	fixture, e := json.Marshal(reg)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if e := os.WriteFile(paths.Registry, fixture, 0600); e != nil {
 		t.Fatal(e)
 	}
 	args.Reconcile = nil
