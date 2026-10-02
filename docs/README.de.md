@@ -127,7 +127,7 @@ Ein Hintergrund-Daemon betreibt für jede App einen eingebetteten Tailscale-Knot
 
 ## Stand
 
-Jetzt verfügbar: private Adressen pro App, Personenfreigaben mit Fristen und gebündelten Einladungen, öffentliches Funnel mit Ablaufdatum, App-Gesundheitsprüfungen und Warnungen, Rezepte für selbst gehostete Apps, Anfragegrenzen pro App, Neustart nach Windows-Abstürzen, CLI und MCP.
+Jetzt verfügbar: private Adressen pro App, Personenfreigaben mit Fristen und gebündelten Einladungen, öffentliches Funnel mit Ablaufdatum, App-Gesundheitsprüfungen und Warnungen, Rezepte für selbst gehostete Apps, Anfragegrenzen pro App, automatischer Neustart des Daemons nach Abstürzen unter Windows, CLI und MCP.
 
 Als Nächstes: Browser-Gastlinks, flexible Laufzeiten, ein Zugriffsprotokoll, eine Startseite deiner Apps, begrenzte Agentenrollen, QR-Einrichtung und Zugriffsanfragen. Eine gemeinsame Liste für mehrere Computer ist geplant. [Roadmap →](roadmap.md)
 
