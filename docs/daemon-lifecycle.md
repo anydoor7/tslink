@@ -112,7 +112,9 @@ launcher backstop; recovery after a supervisor crash is not proven by that setti
 The hidden Windows supervisor starts a foreground `serve` child with the same
 environment and config directory. The daemon continues to publish its own PID.
 A config-directory lock prevents duplicate supervisors; a Windows Job Object
-terminates assigned children if their supervisor disappears. Unexpected daemon
+contains each child at process creation and terminates its process tree if the
+supervisor disappears, including before startup completes. This requires Windows
+10 or newer. Unexpected daemon
 exits (including zero) retry after 1, 2, 4, 8, 16, 32, then at most 60 seconds.
 A run lasting at least five minutes resets the failure counter. Eight consecutive
 unstable runs open the breaker and stop recovery with a successful supervisor
@@ -139,7 +141,8 @@ the same user, config and exact launcher action. Legacy direct-daemon tasks are
 repairable/removable, but cannot report verified crash recovery. A missing PID file after a
 clean stop is accepted; malformed or unreadable PID evidence is still refused.
 
-`tslink stop` verifies process identity and sets a Windows named shutdown event
+`tslink stop` retains the process handle while verifying identity and signaling;
+the shutdown event is bound to that instance's recorded creation time. It sets a Windows named shutdown event
 whose DACL admits only the current user and SYSTEM. It first stops the supervisor,
 including a pending backoff with no daemon PID. The supervisor cancels recovery
 and asks its direct child to run the normal tsnet cleanup path. A manual daemon

@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"syscall"
 	"time"
 	"unsafe"
 
@@ -34,17 +33,33 @@ func CurrentSupervisorInstance() (SupervisorInstance, error) {
 // SupervisorAlive never grants ownership on unavailable identity. PID reuse,
 // another TSLink subcommand, and a different binary all fail closed.
 func SupervisorAlive(instance SupervisorInstance) (bool, error) {
+	handle, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION|windows.SYNCHRONIZE, false, uint32(instance.PID))
+	if errors.Is(err, windows.ERROR_INVALID_PARAMETER) && instance.PID > 0 {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	defer windows.CloseHandle(handle)
+	return supervisorAliveFromHandle(instance, handle)
+}
+
+func supervisorAliveFromHandle(instance SupervisorInstance, handle windows.Handle) (bool, error) {
 	if instance.PID <= 0 || instance.StartUnixNano <= 0 || instance.Executable == "" {
 		return false, fmt.Errorf("invalid supervisor identity")
 	}
-	if inspectProcessLiveness(instance.PID) == processLivenessAbsent {
+	result, err := windows.WaitForSingleObject(handle, 0)
+	if err != nil {
+		return false, err
+	}
+	if result == windows.WAIT_OBJECT_0 {
 		return false, nil
 	}
-	started, err := defaultProcessStartTime(instance.PID)
+	started, err := processStartTimeFromHandle(handle)
 	if err != nil || started.UnixNano() != instance.StartUnixNano {
 		return false, fmt.Errorf("supervisor start identity unverified")
 	}
-	exe, err := defaultProcessExecutable(instance.PID)
+	exe, err := processExecutableFromHandle(handle)
 	if err != nil || !strings.EqualFold(exe, instance.Executable) {
 		return false, fmt.Errorf("supervisor executable unverified")
 	}
@@ -52,7 +67,7 @@ func SupervisorAlive(instance SupervisorInstance) (bool, error) {
 	if err != nil || info.Main.Path != processProductID {
 		return false, fmt.Errorf("supervisor product unverified")
 	}
-	args, err := defaultProcessArguments(instance.PID)
+	args, err := processArgumentsFromHandle(handle)
 	if err != nil || len(args) < 2 || args[1] != "supervise" ||
 		(len(args) != 2 && (len(args) != 3 || args[2] != "--no-auto-provision")) {
 		return false, fmt.Errorf("supervisor command unverified")
@@ -61,19 +76,34 @@ func SupervisorAlive(instance SupervisorInstance) (bool, error) {
 }
 
 func StopSupervisor(instance SupervisorInstance) error {
-	alive, err := SupervisorAlive(instance)
-	if err != nil || !alive {
-		return err
+	return stopSupervisor(instance, nil)
+}
+
+// afterVerified is a scheduling seam, passed synchronously rather than read
+// from a mutable global. The handle spans validation, signaling and waiting.
+func stopSupervisor(instance SupervisorInstance, afterVerified func(windows.Handle)) error {
+	if instance.PID <= 0 || instance.StartUnixNano <= 0 || instance.Executable == "" {
+		return fmt.Errorf("invalid supervisor identity")
 	}
-	proc, err := os.FindProcess(instance.PID)
+	handle, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION|windows.SYNCHRONIZE, false, uint32(instance.PID))
+	if errors.Is(err, windows.ERROR_INVALID_PARAMETER) {
+		return nil
+	}
 	if err != nil {
 		return err
 	}
-	defer proc.Release()
-	if err := requestGracefulWindowsStop(instance.PID); err != nil {
+	defer windows.CloseHandle(handle)
+	alive, err := supervisorAliveFromHandle(instance, handle)
+	if err != nil || !alive {
 		return err
 	}
-	return waitForProcessExit(proc, 10*time.Second)
+	if afterVerified != nil {
+		afterVerified(handle)
+	}
+	if err := requestGracefulWindowsStopInstance(instance.PID, instance.StartUnixNano); err != nil {
+		return err
+	}
+	return waitForWindowsHandleExit(handle, 10*time.Second)
 }
 
 // ChildJob prevents an unexpected supervisor exit from orphaning its children.
@@ -98,39 +128,78 @@ func NewChildJob() (*ChildJob, error) {
 func (job *ChildJob) Close() { _ = windows.CloseHandle(job.handle) }
 
 func (job *ChildJob) Start(command *exec.Cmd) (SupervisorChild, error) {
-	command.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x08000000} // CREATE_NO_WINDOW
-	if err := command.Start(); err != nil {
+	return job.start(command, nil)
+}
+
+func (job *ChildJob) start(command *exec.Cmd, afterCreated func(uint32)) (SupervisorChild, error) {
+	proc, err := startJobProcess(job.handle, command, afterCreated)
+	if err != nil {
 		return SupervisorChild{}, err
 	}
-	var assignErr error
-	err := command.Process.WithHandle(func(h uintptr) {
-		assignErr = windows.AssignProcessToJobObject(job.handle, windows.Handle(h))
-	})
-	if err != nil || assignErr != nil {
-		_ = command.Process.Kill()
-		_ = command.Wait()
-		return SupervisorChild{}, fmt.Errorf("assign child job: %w", errors.Join(err, assignErr))
-	}
-	pid := command.Process.Pid
-	return SupervisorChild{PID: pid, Wait: command.Wait, Stop: func() error {
+	waitDone := make(chan struct{})
+	return SupervisorChild{PID: proc.Pid, Wait: func() error {
+		state, err := proc.Wait()
+		close(waitDone)
+		if err == nil && !state.Success() {
+			err = &exec.ExitError{ProcessState: state}
+		}
+		return err
+	}, Stop: func() error { return stopJobProcess(proc, waitDone, nil) }}, nil
+}
+
+func stopJobProcess(proc *os.Process, waitDone <-chan struct{}, afterPinned func(windows.Handle)) error {
+	var stopErr error
+	err := proc.WithHandle(func(h uintptr) {
+		handle := windows.Handle(h)
+		if afterPinned != nil {
+			afterPinned(handle)
+		}
+		started, err := processStartTimeFromHandle(handle)
+		if err != nil {
+			stopErr = err
+			return
+		}
 		// The child may still be initializing before its shutdown event exists.
 		// Hold its real process handle throughout; no PID-file or PID-reuse race.
 		deadline := time.Now().Add(5 * time.Second)
 		for {
-			if inspectProcessLiveness(pid) == processLivenessAbsent {
-				return nil
+			result, err := windows.WaitForSingleObject(handle, 0)
+			if err != nil || result == windows.WAIT_OBJECT_0 {
+				stopErr = err
+				return
 			}
-			err := requestGracefulWindowsStop(pid)
+			err = requestGracefulWindowsStopInstance(proc.Pid, started.UnixNano())
 			if err == nil {
-				waitErr := waitForProcessExit(command.Process, windowsStopTimeout)
-				if errors.Is(waitErr, os.ErrProcessDone) {
-					return nil
-				}
-				return waitErr
+				stopErr = waitForWindowsHandleExit(handle, windowsStopTimeout)
+				return
 			}
 			if !errors.Is(err, windows.ERROR_FILE_NOT_FOUND) || time.Now().After(deadline) {
-				return fmt.Errorf("direct child graceful stop unavailable")
+				stopErr = fmt.Errorf("direct child graceful stop unavailable: %w", err)
+				return
 			}
 		}
-	}}, nil
+	})
+	// Only our Wait owns release of this process. If WithHandle cannot acquire
+	// it, Wait has released it; join the completion notification rather than
+	// depending on Go's unexported, version-dependent "released" error. No PID
+	// lookup is permitted in either ordering of Wait and Stop.
+	if err != nil {
+		<-waitDone
+		return nil
+	}
+	return stopErr
+}
+
+func waitForWindowsHandleExit(handle windows.Handle, timeout time.Duration) error {
+	result, err := windows.WaitForSingleObject(handle, uint32(timeout/time.Millisecond))
+	if err != nil {
+		return err
+	}
+	if result == windows.WAIT_OBJECT_0 {
+		return nil
+	}
+	if result == uint32(windows.WAIT_TIMEOUT) {
+		return errProcessWaitTimeout
+	}
+	return fmt.Errorf("WaitForSingleObject returned unexpected result %d", result)
 }

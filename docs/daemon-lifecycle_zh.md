@@ -88,7 +88,8 @@ Windows 默认监管器是 `windows-task-scheduler`。只有加载的用户、�
 
 隐藏的 Windows supervisor 用完全相同的环境和配置目录启动前台 `serve` 子进程，daemon
 继续发布自己的 PID。配置目录锁阻止重复 supervisor；Windows Job Object 在 supervisor
-消失时终止已归入它的子进程。daemon 意外退出（包括退出码 0）后按 1、2、4、8、16、32
+在创建子进程时就将它归入 job；supervisor 消失时会终止整个子进程树，即使启动尚未完成。
+此机制要求 Windows 10 或更新版本。daemon 意外退出（包括退出码 0）后按 1、2、4、8、16、32
 秒退避，最高 60 秒。一次运行至少 5 分钟会重置失败计数。连续 8 次不稳定运行触发断路器，
 停止恢复并让 supervisor 成功退出，任务重试无法撤销断路器。断路器跨登录保留；检查日志
 后运行 `tslink install` 重置。`status` 和 `doctor` 显示 `supervisor_pid`、`runtime_state`
@@ -107,7 +108,8 @@ Windows 默认监管器是 `windows-task-scheduler`。只有加载的用户、�
 任务可修复和移除，但不报告已验证的崩溃恢复。优雅停止后 PID 文件缺失
 是合法状态；格式错误或不可读的 PID 证据仍会阻止安装。
 
-`tslink stop` 先验证进程身份，再设置只允许当前用户和 SYSTEM 访问的 Windows 命名停止
+`tslink stop` 在验证身份和发送停止请求期间始终保留进程句柄，停止事件绑定到该实例记录的
+创建时间。它设置只允许当前用户和 SYSTEM 访问的 Windows 命名停止
 事件。它先停止 supervisor，包括 daemon PID 不存在时的退避等待；supervisor 取消恢复，
 并请求直接子进程执行正常 tsnet 清理。手动 daemon 沿用既有停止事件。无需控制台、端口
 或管理员权限。子进程停止最多等待 5 秒（另加有上限的启动事件等待），supervisor 停止最多

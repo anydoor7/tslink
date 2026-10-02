@@ -15,17 +15,21 @@ import (
 )
 
 func shutdownEventName(pid int) (string, error) {
-	u, err := windows.GetCurrentProcessToken().GetTokenUser()
+	started, err := defaultProcessStartTime(pid)
 	if err != nil {
 		return "", err
 	}
-	started, err := defaultProcessStartTime(pid)
+	return shutdownEventNameForInstance(pid, started.UnixNano())
+}
+
+func shutdownEventNameForInstance(pid int, startUnixNano int64) (string, error) {
+	u, err := windows.GetCurrentProcessToken().GetTokenUser()
 	if err != nil {
 		return "", err
 	}
 	// Bind to the real process instance, not a reusable PID. Global events need
 	// no SeCreateGlobalPrivilege (that requirement is for file mappings/symlinks).
-	return fmt.Sprintf(`Global\TSLink-stop-%s-%d-%d`, u.User.Sid.String(), pid, started.UnixNano()), nil
+	return fmt.Sprintf(`Global\TSLink-stop-%s-%d-%d`, u.User.Sid.String(), pid, startUnixNano), nil
 }
 
 // ShutdownContext turns a user-restricted named event into context cancellation.
@@ -76,7 +80,22 @@ func ShutdownContext(parent context.Context) (context.Context, context.CancelFun
 }
 
 func requestGracefulWindowsStop(pid int) error {
-	name, err := shutdownEventName(pid)
+	// Retain a handle even for the manual-daemon path. All signaling authority
+	// below is captured from this process object, never refreshed from its PID.
+	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
+	if err != nil {
+		return err
+	}
+	defer windows.CloseHandle(h)
+	started, err := processStartTimeFromHandle(h)
+	if err != nil {
+		return err
+	}
+	return requestGracefulWindowsStopInstance(pid, started.UnixNano())
+}
+
+func requestGracefulWindowsStopInstance(pid int, startUnixNano int64) error {
+	name, err := shutdownEventNameForInstance(pid, startUnixNano)
 	if err != nil {
 		return err
 	}

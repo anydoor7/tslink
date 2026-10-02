@@ -21,6 +21,22 @@ function Invoke-TSLink([string[]]$Arguments) {
     if (-not $result.ok -or $result.schema_version -ne 1) { throw 'Invalid TSLink result envelope' }
     return $result.data
 }
+function Write-FailureEvidence {
+    # Capture before uninstall removes the process/state that explains failure.
+    if (-not $script:scratch -or $env:TSLINK_CONFIG_DIR -ne $script:scratch) {
+        Write-Output 'FAILURE_EVIDENCE unavailable before isolated config setup'
+        return
+    }
+    try { Write-Output ('FAILURE_STATUS ' + ((& $script:Binary status --json) -join "`n")) }
+    catch { Write-Output ('FAILURE_STATUS_ERROR ' + $_.Exception.Message) }
+    foreach ($name in @('supervisor.json','runtime.json','logs\tslink.err.log','logs\tslink.out.log')) {
+        try {
+            $path = Join-Path $env:TSLINK_CONFIG_DIR $name
+            if (Test-Path $path) { Write-Output ('FAILURE_' + $name + ' ' + [IO.File]::ReadAllText($path)) }
+            else { Write-Output ('FAILURE_' + $name + ' absent') }
+        } catch { Write-Output ('FAILURE_' + $name + '_ERROR ' + $_.Exception.Message) }
+    }
+}
 function Wait-Daemon([int]$DifferentFrom = 0, [int]$Seconds = 30) {
     $deadline = [DateTime]::UtcNow.AddSeconds($Seconds)
     do {
@@ -120,6 +136,7 @@ try {
     $exitCode = 0
 } catch {
     Write-Output ('FAIL Windows supervision: ' + $_.Exception.Message)
+    Write-FailureEvidence
 } finally {
     if ($installed) {
         try { $null = Invoke-TSLink -Arguments @('uninstall','--json'); $installed = $false }
