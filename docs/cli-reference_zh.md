@@ -157,3 +157,7 @@ MCP add/share 接受可选对象 `request_limits: {"max_body":"20GiB","read_time
 应用后端及公网 relay 自身的限制仍然有效。
 
 Windows `tslink install --startup` 显式选择下次登录启动、无崩溃恢复的 Startup 降级。默认 `install` 使用 Task Scheduler 启动内置 supervisor 并验证立即启动。`stop` 停止两个进程，包括崩溃退避期间；`install` 重置已触发的崩溃循环断路器。见[daemon 生命周期](daemon-lifecycle_zh.md#windows-监管与迁移)。
+
+## 应用总入口
+
+`tslink portal enable --owner <login> [--hostname home] [--admins <login,...>]` 保存独立的 Tailnet-only 入口配置；`tslink portal disable` 只关闭入口监听器。`--funnel` 显式拒绝。运行中的 daemon 自动应用，status/doctor 显示 `portal` 状态和确证 URL，开启后 people 指导会指向入口。MCP 对应工具：`portal_enable`、`portal_disable`。授权、网络可达性和 JSON 说明见 [portal_zh.md](portal_zh.md)。

@@ -52,3 +52,9 @@ This index records the app recipe additions; the CLI manifest describes the comp
 - `wave1_round2_test.go`: scheduler installation schemas with recipe, Host and request-limit contracts.
 
 - `json_test.go`: concurrently drains captured CLI output; `wave1_round2_test.go` covers output larger than the OS pipe buffer.
+
+# Home portal commands
+
+- `portal.go`: enable/disable CLI and shared MCP actions; exact status view.
+- `mcp_portal.go`: tool schemas, annotations and registry entries.
+- `portal_test.go`: CLI/MCP, status, doctor and people-guide contract tests.

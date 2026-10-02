@@ -99,3 +99,5 @@ Official invite API and sharing sources checked 2026-10-02 (other sources checke
 - [Tailscale API](https://tailscale.com/api), [current OpenAPI document](https://api.tailscale.com/api/v2?outputOpenapiSchema=true): `POST /device/{deviceId}/device-invites`, no OAuth-client creation, optional email and `multiUse`/`allowExitNode`, device invite listing and `DELETE /device-invites/{deviceInviteId}`. The schema supplies no client idempotency key.
 - [Trust credentials](https://tailscale.com/docs/reference/trust-credentials): invitation read/delete scopes do not imply create support.
 - [Tailscale Serve](https://tailscale.com/docs/features/tailscale-serve): HTTP reverse proxy and caller identity headers.
+
+When the home portal is enabled, the generated guide includes its exact address (or asks the owner to check status while enrollment is pending). Outside-tailnet visitors also need the home node shared through Tailscale. See [portal.md](portal.md).

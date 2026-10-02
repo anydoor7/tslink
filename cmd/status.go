@@ -60,6 +60,7 @@ const (
 
 // StatusResult holds the status information for display.
 type StatusResult struct {
+	Portal                  tsruntime.PortalState   `json:"portal"`
 	Alerts                  health.AlertsView       `json:"alerts"`
 	Supervision             Supervision             `json:"supervision"`
 	DaemonRunning           bool                    `json:"daemon_running"`
@@ -123,6 +124,7 @@ type StatusServiceState struct {
 }
 
 type StatusURLsResult struct {
+	Portal                  tsruntime.PortalState       `json:"portal"`
 	Alerts                  health.AlertsView           `json:"alerts"`
 	Supervision             Supervision                 `json:"supervision"`
 	SchemaVersion           int                         `json:"schema_version"`
@@ -207,6 +209,7 @@ func (s statusRead) getStatus(pidPath, regPath string) (StatusResult, error) {
 		return StatusResult{}, err
 	}
 	issueErrors := diagnosticServiceErrors(issues)
+	r.Portal = readPortalView(reg, regPath, r.DaemonRunning, r.DaemonPID)
 	r.Alerts = readAlertsForRegistry(regPath)
 	r.ServiceCount = len(reg.Services)
 	r.Services = make([]StatusServiceState, 0, len(reg.Services))
@@ -441,9 +444,11 @@ func (s statusRead) getPollableStatus(pidPath, regPath, snapshotPath, authHandof
 		return StatusResult{}, err
 	}
 	expiredByName := make(map[string]bool, len(reg.Services))
+	currentByName := make(map[string]registry.Service, len(reg.Services))
 	now := statusNowFn()
 	for _, svc := range reg.Services {
 		expiredByName[svc.Name] = registry.FunnelExpiredAt(svc, now)
+		currentByName[svc.Name] = svc
 	}
 	// getStatus may have sampled the clock just before a deadline. Normalize
 	// every Funnel field to this later effective time before applying runtime
@@ -484,7 +489,10 @@ func (s statusRead) getPollableStatus(pidPath, regPath, snapshotPath, authHandof
 			snapshotServices[svc.Name] = svc
 		}
 		for i := range r.Services {
-			if r.Services[i].Error != nil {
+			// Another writer can remove or reorder services between our
+			// registry reads. Join by name and withhold removed services.
+			current, present := currentByName[r.Services[i].Name]
+			if !present || r.Services[i].Error != nil {
 				continue
 			}
 			if runtimeService, ok := snapshotServices[r.Services[i].Name]; ok {
@@ -495,7 +503,7 @@ func (s statusRead) getPollableStatus(pidPath, regPath, snapshotPath, authHandof
 				}
 				r.Services[i].Warnings = append([]inspect.WarningView(nil), runtimeService.Warnings...)
 				r.Services[i].Error = runtimeService.Error
-				r.Services[i].Health = currentHealth(runtimeService.Health, reg.Services[i], now)
+				r.Services[i].Health = currentHealth(runtimeService.Health, current, now)
 				r.Services[i].NodeKey = health.ExpiryAt(runtimeService.NodeKey.ExpiresAt, runtimeService.NodeKey.Source, now, nodeExpiryNext())
 				if runtimeService.RuntimeState == tsruntime.ServiceRuntimeFailed {
 					r.Services[i].Status = tsruntime.ServiceRuntimeFailed
@@ -602,6 +610,7 @@ func cloneServiceError(source *tsruntime.ServiceError) *tsruntime.ServiceError {
 }
 
 func formatStatus(r StatusResult, out io.Writer) {
+	formatPortal(out, r.Portal)
 	userManagerUnavailable := strings.Contains(r.Supervision.Detail, systemdUserManagerUnavailableMessage)
 	noNodes := false
 	if r.ServiceCount == 0 {
@@ -696,6 +705,7 @@ func (s statusRead) getStatusURLsWithAuth(pidPath, regPath, snapshotPath, authHa
 	freshness := tsruntime.Classify(snapshot, loadErr, expected)
 
 	result := StatusURLsResult{
+		Portal:                  status.Portal,
 		SchemaVersion:           inspect.SchemaVersion,
 		Alerts:                  status.Alerts,
 		Supervision:             status.Supervision,
@@ -976,6 +986,7 @@ func appendStatusWarning(warnings []inspect.WarningView, code, message string) [
 
 func formatStatusURLs(r StatusURLsResult, out io.Writer) {
 	formatStatus(StatusResult{
+		Portal:                  r.Portal,
 		Alerts:                  r.Alerts,
 		Supervision:             r.Supervision,
 		DaemonRunning:           r.DaemonRunning,

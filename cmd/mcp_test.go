@@ -26,6 +26,9 @@ import (
 
 func fakeMCPActions() mcpActions {
 	return mcpActions{
+		portalChange: func(args portalArguments, enable bool) (any, error) {
+			return map[string]any{"enabled": enable, "state": "pending", "hostname": args.Hostname}, nil
+		},
 		peopleChange: func(_ context.Context, args peopleArguments, _ bool) (any, error) {
 			return PeopleResult{Person: PeopleView{Login: args.Who, Grants: []PeopleGrantView{}}, Invites: []PeopleInviteView{}, Complete: true, Message: "guide", InviteRequirement: peopleInviteRequirement}, nil
 		},
@@ -506,6 +509,7 @@ func TestMCPToolSchemasAreClosedAndModelFocused(t *testing.T) {
 		"template_list", "template_plan", "template_apply",
 		"apps_detect", "recipe_list", "recipe_plan", "recipe_apply",
 		"people_add", "people_update", "people_list", "people_remove",
+		"portal_enable", "portal_disable",
 	}
 	if len(mcpToolDefinitions) != len(wantNames) {
 		t.Fatalf("tools = %d, want %d", len(mcpToolDefinitions), len(wantNames))

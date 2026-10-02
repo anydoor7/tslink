@@ -77,6 +77,13 @@ func normalizePersonFromRegistry(reg *Registry, who string) (string, error) {
 	return "", err
 }
 
+// ResolvePersonLoginIn resolves WhoIs against one already-read registry. It
+// preserves the same exact legacy-key compatibility as ResolvePersonLogin,
+// without another file read or any change to identity semantics.
+func ResolvePersonLoginIn(reg *Registry, who string) (string, error) {
+	return normalizePersonFromRegistry(reg, who)
+}
+
 // ResolvePersonLogin adds only exact matching of existing legacy schema-2
 // keys to the new-input grammar. Reads never rewrite or normalize stored data.
 func ResolvePersonLogin(path, who string) (string, error) {

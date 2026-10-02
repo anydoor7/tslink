@@ -162,3 +162,7 @@ restarts. A backend may already have received part of a rejected streaming body.
 Its own upload limits and any public relay limits still apply.
 
 Windows `tslink install --startup` uses the Startup fallback for the next sign-in, without crash restart. Default `install` uses Task Scheduler to launch a built-in supervisor and verifies immediate startup. `stop` stops both processes, including during crash backoff; `install` resets a tripped crash-loop breaker. See [daemon lifecycle](daemon-lifecycle.md#windows-supervision-and-migration).
+
+## Home portal
+
+`tslink portal enable --owner <login> [--hostname home] [--admins <login,...>]` saves an independent Tailnet-only home portal. `tslink portal disable` closes only its listener. `--funnel` is explicitly refused. The running daemon applies changes; status/doctor report `portal` state and its exact URL when ready. People guides point to the portal when enabled. MCP equivalents: `portal_enable`, `portal_disable`. See [portal.md](portal.md) for authorization, network reachability and JSON details.

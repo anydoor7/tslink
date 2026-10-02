@@ -21,3 +21,10 @@ This index records the people sharing lifecycle implementation and regression te
 
 - `preserve_host_test.go`: strict boolean decoding, legacy defaults, persistence and proxy-only admission.
 - `proxy_host.go`: shared trusted canonical name selection for proxy, health monitor and doctor.
+
+# Home portal configuration
+
+- `people.go`: `ResolvePersonLoginIn` exposes the existing exact legacy-key resolver for one already-read registry.
+- `portal.go`: optional schema-2 portal settings, admission, hostname reservation and locked updates.
+- `portal_read.go`, `portal_read_unix.go`, `portal_read_windows.go`: bounded read-only registry reader, special-file refusal.
+- `portal_test.go`, `portal_unix_test.go`: persistence, concurrent writers, hostile configuration and FIFO/symlink tests.

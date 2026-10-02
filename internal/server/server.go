@@ -383,6 +383,11 @@ type Server struct {
 	readyFn                 func() error
 	mcpControlPlane         *MCPControlPlane
 	mcpNode                 *mcpControlPlaneNode
+	portalLifecycleMu       sync.Mutex
+	portalRun               *portalRun
+	portalRoot              context.Context
+	portalState             runtimesnapshot.PortalState
+	portalRetryPending      atomic.Bool
 	// events fans runtime-state changes out to open control-plane event
 	// streams. It is always present so publishing is unconditional and cannot
 	// be skipped by a code path that forgot to check whether anyone is
@@ -515,6 +520,7 @@ func staticAuthKeyProvider(authKey string) AuthKeyProvider {
 // Run starts all registered service nodes and watches for registry changes.
 func (s *Server) Run(ctx context.Context) error {
 	s.shuttingDown.Store(false)
+	s.portalRoot = ctx
 	if path, err := registryPathFn(); err == nil {
 		if _, err := registry.ExpirePeople(path, serverNowFn()); err != nil {
 			slog.Warn("initial people expiry reconciliation failed", "error", err)
@@ -619,7 +625,7 @@ func (s *Server) startLifecycleTicker(ctx context.Context) <-chan struct{} {
 					// Counted on every tick, so the backoff measures ticks since the
 					// latest sync whatever made this one run.
 					policyRetryDue := s.policyRetry.tick(maxPolicyRetryWaitTicks)
-					shouldSync = changed || err != nil || s.lastSyncFailed.Load() || s.identityRetryPending.Load() || policyRetryDue
+					shouldSync = changed || err != nil || s.lastSyncFailed.Load() || s.identityRetryPending.Load() || policyRetryDue || s.portalRetryPending.Load()
 					if err != nil {
 						slog.Warn("lifecycle reconciliation failed; applying in-memory wall-clock guard", "error", err)
 					}
@@ -1090,6 +1096,8 @@ func (s *Server) syncNodesAtGeneration(ctx context.Context, startup bool, genera
 		s.removeRuntimeSnapshot()
 		return outcome, syncErr
 	}
+
+	s.syncPortal(ctx, reg.Portal)
 
 	// Re-write after a fully successful sync so an empty registry and a sync
 	// that required no starts still publish authoritative runtime evidence.
@@ -1932,6 +1940,8 @@ func (s *Server) writeRuntimeSnapshotLocked(registryFingerprint string, complete
 		snapshot = runtimesnapshot.NewPartialSnapshot(s.daemonPID, s.daemonStartedAt, registryFingerprint, time.Now().UTC(), states)
 	}
 	snapshot.Alerts = s.alerts
+	s.refreshPortalURLLocked()
+	snapshot.Portal = s.portalState
 	if s.globalFailure != nil {
 		globalFailure := *s.globalFailure
 		globalFailure.Next = append([]string(nil), s.globalFailure.Next...)
@@ -2694,6 +2704,7 @@ func (s *Server) stopNodeLocked(name string) {
 
 func (s *Server) closeAllNodes() {
 	s.closeMCPControlPlane()
+	s.closePortal()
 	s.mu.Lock()
 	for name := range s.nodes {
 		s.stopNodeLocked(name)

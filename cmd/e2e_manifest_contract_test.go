@@ -100,11 +100,14 @@ import (
 // zero-argument invocation) and from bare runs under e2eEnv, not inferred from
 // the shape of a command's name.
 var e2eExecutableSafeCommands = map[string]struct{}{
-	"tslink people":        {}, // Group help only; no leaf body.
-	"tslink people add":    {}, // ExactArgs(1), no body on bare invocation.
-	"tslink people update": {}, // ExactArgs(1), no body on bare invocation.
-	"tslink people remove": {}, // ExactArgs(1), no body on bare invocation.
-	"tslink people list":   {}, // Local isolated registry/snapshot reads; no credential or external action.
+	"tslink portal":         {}, // Group help; no listener or network action.
+	"tslink portal enable":  {}, // Missing owner is refused before mutation.
+	"tslink portal disable": {}, // Local isolated registry update only; never starts a node.
+	"tslink people":         {}, // Group help only; no leaf body.
+	"tslink people add":     {}, // ExactArgs(1), no body on bare invocation.
+	"tslink people update":  {}, // ExactArgs(1), no body on bare invocation.
+	"tslink people remove":  {}, // ExactArgs(1), no body on bare invocation.
+	"tslink people list":    {}, // Local isolated registry/snapshot reads; no credential or external action.
 	// (a) Command groups. RunE is runCommandGroup: it prints help and exits 0.
 	// No leaf command body runs.
 	"tslink":            {},

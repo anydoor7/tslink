@@ -42,3 +42,11 @@ This index covers the recipe integration tests. The repository AGENTS.md describ
 - `wave1_round2_test.go`: lost-event recovery across health, Host, limits and people configuration.
 
 - Watcher fixtures stop and join their workers, then close file nodes before temporary directory cleanup on Windows.
+
+# Home portal
+
+- `app_access.go`: shared private app/portal authorization decision; F1 deadlines and tombstones, legacy rules and explicit owner/admin identities.
+- `portal.go`: read-only HTML/JSON, trusted Host/Origin and CSP/cache headers; reserved access-request route.
+- `portal_node.go`: independent tsnet lifecycle, bounded startup, retry and runtime observations.
+- `portal_test.go`, `portal_node_test.go`: real HTTP/TLS listener, identity, expiry, isolation, headers and failure-path tests.
+- `testdata/INDEX.md`: rendered HTML golden snapshots.
