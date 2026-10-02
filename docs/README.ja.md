@@ -8,149 +8,131 @@
 <h1 align="center">TSLink</h1>
 
 <p align="center">
-  <strong>ローカルのアプリ、モデル、ファイルに、それぞれ専用のプライベートアドレスを。</strong><br>
-  Tailscale ネットワーク内の、アクセスを許可された別の端末から利用できます。
+  <strong>パソコン上のアプリを、選んだ相手に、選んだ期間だけ共有できます。</strong><br>
+  各アプリに、Tailscale ネットワーク内の専用のプライベートアドレスが付きます。誰がアクセスできるか確認し、権限を取り消せます。
 </p>
 
 <p align="center">
-  <a href="../LICENSE"><img src="assets/badge-license.svg" alt="ライセンス：Apache 2.0"></a>
-  <a href="../go.mod"><img src="assets/badge-go.svg" alt="Go 1.26.6 以降"></a>
-  <a href="architecture.md"><img src="assets/badge-tsnet.svg" alt="Tailscale：組み込み tsnet ノード"></a>
-  <a href="#agents"><img src="assets/badge-mcp.svg" alt="MCP：19 のツール"></a>
+  <a href="#quickstart">クイックスタート</a> · <a href="#agents">エージェント向け</a> · <a href="getting-started.md">ドキュメント</a> ·
+  <strong>日本語</strong> · <a href="../README.md">English</a> · <a href="INDEX.md#translated-homepages">すべての言語</a>
 </p>
 
-<p align="center">
-  <a href="../README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.zh-TW.md">繁體中文</a> · <a href="README.ko.md">한국어</a> · <a href="README.de.md">Deutsch</a><br>
-  <a href="README.es.md">Español</a> · <a href="README.fr.md">Français</a> · <a href="README.it.md">Italiano</a> · <a href="README.da.md">Dansk</a> · <strong>日本語</strong><br>
-  <a href="README.pl.md">Polski</a> · <a href="README.ru.md">Русский</a> · <a href="README.bs.md">Bosanski</a> · <a href="README.ar.md">العربية</a> · <a href="README.no.md">Norsk</a><br>
-  <a href="README.pt-BR.md">Português (Brasil)</a> · <a href="README.th.md">ไทย</a> · <a href="README.tr.md">Türkçe</a> · <a href="README.uk.md">Українська</a><br>
-  <a href="README.bn.md">বাংলা</a> · <a href="README.el.md">Ελληνικά</a> · <a href="README.vi.md">Tiếng Việt</a>
-</p>
+## こんな場面で使えます
 
-<a id="installation"></a>
+- **自分の成果物をスマートフォンで開く。** スクリプトが生成したレポート、開発サーバー、ノートブック、ローカルモデルの API に、許可された端末からプライベートな HTTPS アドレスでアクセスできます。
+- **一人に一つのアプリを期間限定で渡す。** パートナーに写真ライブラリを一週間、同僚にプレビュー版を三日間公開できます。アクセス権は自動で期限切れになり、早めに取り消すこともできます。
+- **共有をエージェントに任せる。** コーディングエージェントがダッシュボードを作ったら、自分とチームメイトに金曜日まで共有するよう頼めます。現在の共有状況を確認したり、共有を取り消したりすることもできます。
 
-## インストール
+アプリは元の場所で動き続けます。TSLink は各アプリへのアクセスを管理し、何を、誰に、いつまで共有しているかを一つの一覧に記録します。
 
-**Go 1.26.6 以降** と Gitが必要です。ビルド済みリリースや Homebrew cask はまだ公開されていないため、ソースからインストールします。例は **bash または zsh** 用です。Windows とバックグラウンドサービスの要件は[プラットフォーム対応](platforms.md)を参照してください。詳細ガイドは英語です。
+<a id="quickstart"></a>
+
+## クイックスタート
+
+**Go 1.26.6+**、Git、[MagicDNS と HTTPS を有効にした](https://tailscale.com/docs/how-to/set-up-https-certificates) Tailscale アカウントが必要です。ビルド済みリリースはまだ公開されていないため、ソースからインストールします。
 
 ```bash
 git clone https://github.com/anydoor7/tslink.git
-cd tslink
-go install .
+cd tslink && go install .
 export PATH="$PATH:$(go env GOPATH)/bin"
 ```
 
-[MagicDNS と HTTPS を有効にした](https://tailscale.com/docs/how-to/set-up-https-certificates) Tailscale アカウントを使います。アクセスする端末は、自分の Tailscale ネットワーク（**tailnet**）にログインし、ポリシーでサービスへの接続を許可されている必要があります。配信側では TSLink が Tailscale を組み込んでいます。
-
-### 最初のページを共有する
-
-ページを作ると、TSLink が直接配信し、必要に応じてバックグラウンドサービスを起動します。
+ページを共有します。
 
 ```bash
-mkdir -p tslink-demo
-printf '<h1>Hello from TSLink</h1>\n' > tslink-demo/index.html
+mkdir -p tslink-demo && printf '<h1>Hello from TSLink</h1>\n' > tslink-demo/index.html
 tslink share ./tslink-demo --name demo
-```
-
-ノード認証の URL が表示されたら、開いて認証します。tailnet によっては管理者のデバイス承認も必要です。その後、正確なアドレスを取得します。
-
-```bash
 tslink url demo --wait
 ```
 
-許可された端末で、返された URL を開いてください。最初の共有に API トークンは不要です。[詳しい設定とライフサイクル →](getting-started.md)
+初回は、新しいサービスノードを登録するためのサインインリンクを TSLink が表示します。tailnet によっては管理者による端末承認も必要です。登録後、その tailnet にサインインした許可済み端末でサービス URL を開きます。API トークンは不要です。
 
-<a id="use-cases"></a>
+共有状況を確認し、デモを削除します。
 
-## 何を共有しますか？
+```bash
+tslink status --urls
+tslink remove demo
+```
 
-ファイルは事前に用意してください。アプリ、データベース、モデルのバックエンドは、指定ポートで動作している必要があります。
+バックエンドが動作していれば、次のものも共有できます。
 
-| 利用例 | コマンド |
+| 共有するもの | コマンド |
 |---|---|
-| 別の端末でローカルアプリを開く | `tslink share 3000` |
-| ディレクトリ内のファイルを閲覧する | `tslink share ./public --name files` |
-| 生成した HTML レポートをスマートフォンで読む | `tslink share ./report.html --name report` |
-| TCP でローカルのデータベースに接続する | `tslink add database --tcp localhost:5432` |
-| Ollama などのローカルモデル HTTP API を使う | `tslink add model --proxy localhost:11434` |
+| ローカル Web アプリ | `tslink share 3000` |
+| ファイルフォルダー | `tslink share ./public --name files` |
+| Ollama などのローカルモデル API | `tslink add model --proxy localhost:11434` |
+| プライベート TCP 接続のデータベース | `tslink add database --tcp localhost:5432` |
+| 対応するセルフホストアプリ（Jellyfin、Immich、Home Assistant とほか 13 種） | `tslink apps detect`、続いて `tslink apps share jellyfin --yes` |
 
-Ollama では `tslink url model --wait` で正確な URL を取得します。OpenAI API 互換クライアントの `baseURL` は、その URL に `/v1` を付けたものです。[ローカルモデルと非公開データの処理 →](local-ai.md)
+[導入、プラットフォーム、バックグラウンドサービス →](getting-started.md)
 
-1 台のホストで複数のアプリを管理するために、TSLink は名前付きサービスノード、HTTP の ID 許可リスト、Funnel の有効期限、MCP 管理をまとめて提供します。自分のデバイス間で 1 つのアプリを使うだけなら、[Tailscale Serve](https://tailscale.com/docs/reference/tailscale-cli/serve) で足りる場合があります。
+## アクセスできる相手を選ぶ
 
-<a id="architecture"></a>
+| 対象 | 相手に必要なもの | 確認する身元 | 終了時点 |
+|---|---|---|---|
+| **自分の端末** | 自分の tailnet へのサインイン | 検証済みの Tailscale ログイン | アプリを削除したとき |
+| **指定した人**（プライベート HTTP/ファイル） | Tailscale ログイン。外部の人はアプリごとに招待を承諾 | 検証済みの Tailscale ログイン | 設定した期限（`--for 7d`）または `tslink people remove` の実行時 |
+| **URL を持つ誰でも**（Funnel） | ブラウザー | 誰でも。アプリ自体のログイン要件は有効 | 既定で 24 時間後（`--funnel-ttl`） |
+| **ブラウザー用ゲストリンク** *（近日対応）* | ブラウザーと任意の PIN | リンクを持つ人 | リンクの期限切れまたは取り消し時 |
 
-## アーキテクチャ
+```bash
+tslink people add alice@example.com --apps photos --for 7d
+tslink people list
+tslink people remove alice@example.com
+```
 
-<picture>
-  <source media="(max-width: 600px) and (prefers-color-scheme: dark)" srcset="assets/service-map-dark-mobile.svg">
-  <source media="(max-width: 600px)" srcset="assets/service-map-light-mobile.svg">
-  <source media="(prefers-color-scheme: dark)" srcset="assets/service-map-dark.svg">
-  <img src="assets/service-map-light.svg" alt="サービス構成の例：App、Docs、Database、Model は、同じ tailnet 内の別々の名前付きノードです。アプリ、ファイル、モデル API は HTTPS、データベースはプライベート TCP を使います。" width="960">
-</picture>
-
-**ひとつの tailnet に、用途ごとのサービスノード。** 共通のデーモンがサービスごとに組み込み tsnet ノードを動かし、HTTP の転送、ファイル配信、TCP の中継を行います。レジストリの変更は稼働中に反映されます。ノードごとに独立したネットワーク識別情報を持ちますが、サービスが動くホストは共通です。[アーキテクチャの詳細 →](architecture.md)
-
-| 技術 | 役割 |
-|---|---|
-| [Go](../go.mod) | ネイティブのコマンドラインプログラム |
-| [Tailscale tsnet](architecture.md) | サービスノードと tailnet 通信 |
-| [Cobra](https://github.com/spf13/cobra) | コマンドとヘルプ |
-| [MCP Go SDK](https://github.com/modelcontextprotocol/go-sdk) | エージェント用トランスポート |
-| OS キーチェーンとユーザーサービス管理 | 任意の認証情報保存とバックグラウンド動作 |
-
-[公開 Funnel](getting-started.md#more-examples) を明示的に有効にしない限り、サービスは tailnet 内で提供します。HTTP・ファイルサービスでは識別情報に応じた許可リストを使えます（`WhoIs`、`--allow`）。TCP は tailnet ポリシーとバックエンド自身の認証に依存します。[共有の範囲](sharing.md)を参照してください。
-
-TSLink はアプリのインストール、モデルの実行、ホストプロセスの隔離、複数ホストの集約を行いません。ネットワーク、暗号化、HTTPS は Tailscale が提供します。TSLink は独立したプロジェクトです。
+プライベート HTTP とファイル共有では、リクエストのたびに期限を確認します。権限の取り消しは新しいリクエストを止めますが、ダウンロード済みのデータを回収したり、受け入れ済みのストリームや WebSocket 接続を閉じたりはしません。[人への共有 →](people.md) · [共有の境界 →](sharing.md)
 
 <a id="agents"></a>
 
-## エージェントから使う
+## エージェント向け
 
-**19 の MCP ツール**で、エージェントがレポートの共有、サービス管理、URL 取得、設定確認を行えます。ローカルの MCP クライアントを、インストール済みのプログラムに接続します。
+TSLink は MCP サーバーを備えており、エージェントもユーザーと同様に共有、一覧表示、説明、削除を行えます。ローカル MCP クライアントに次を追加してください。
 
 ```json
 {
   "mcpServers": {
-    "tslink": {
-      "command": "tslink",
-      "args": ["mcp"]
-    }
+    "tslink": { "command": "tslink", "args": ["mcp"] }
   }
 }
 ```
 
-MCP は TSLink を管理し、アプリの推論にはモデル HTTP API を使います。設定と自動化は [MCP クライアント](mcp-clients.md)、[リモート MCP](remote-mcp.md)、[エージェント運用ガイド](../AGENTS.md)を参照してください。
+- **正確な結果。** CLI 自動化は `--json`、`schema_version: 1`、安定したエラーコードに対応し、`tslink mcp` は JSON-RPC を使います。`tslink manifest` はすべてのコマンドとフラグを説明します。エージェントは URL を組み立てず、`tslink url <name> --wait` で実際の URL を取得してください。
+- **待機状態を正しく伝える。** 人によるサインインが必要な新しいノードは、準備済みと装わず `needs_login` を返します。
+- **権限。** ローカル MCP は実行ユーザーの権限で動作します。リモート MCP は明示的に有効にする tailnet 専用エンドポイントで、指定したログインまたはタグだけを許可します。エージェント別のロール、アプリ範囲、操作記録は*近日対応*です。
 
-CLI の自動化では `--json` を使えます。`schema_version` は `1` です。`tslink status --urls --json` で確認できます。ローカル MCP は stdio 上の JSON-RPC を使います。[JSON 自動化](json-automation.md)を参照してください。
+TSLink の MCP は TSLink 自体を操作します。別の MCP サーバーを TSLink 経由で公開する場合、そのサーバーには独自のツール権限管理が引き続き必要です。
+[エージェントガイド →](agents.md) · [MCP クライアント →](mcp-clients.md) · [リモート MCP →](remote-mcp.md) · [JSON 自動化 →](json-automation.md)
 
-<a id="roadmap"></a>
+## 別のツールが向いている場合
 
-## 今後の予定
-
-マージ中、レビュー中、計画中の項目は、上記のソースインストールには含まれません。
-
-| 用途 | 状&#8288;態 |
+| 目的 | 検討するツール |
 |---|---|
-| <!-- roadmap:people --> 親族にプライベート HTTP/ファイルアプリへの 3 日間のアクセスを与え、各アプリの招待を 1 通にまとめます。受信者には Tailscale が必要です。 | マ&#8288;ー&#8288;ジ&#8288;中 |
-| <!-- roadmap:health --> アプリの正常性を確認し、任意のコマンドまたは webhook で停止や期限の通知を受け取ります。 | マ&#8288;ー&#8288;ジ&#8288;中 |
-| <!-- roadmap:recipes --> 対応するループバックアプリを検出し、共有前にセルフホストアプリのレシピをプレビューします。 | マ&#8288;ー&#8288;ジ&#8288;中 |
-| <!-- roadmap:limits --> 大容量アップロードや低速クライアントに合わせて、HTTP アプリごとにアップロードサイズとリクエストのタイムアウトを設定します。 | マ&#8288;ー&#8288;ジ&#8288;中 |
-| <!-- roadmap:windows --> Windows にユーザーがサインインしている間、スケジュールされたタスクと内蔵スーパーバイザーで停止したデーモンを再起動します。 | マ&#8288;ー&#8288;ジ&#8288;中 |
-| <!-- roadmap:access-log --> ローカルアクセスログで誰がどのアプリを開いたか確認し、パス記録を `prefix`、`full`、`off` から選びます。 | レ&#8288;ビ&#8288;ュ&#8288;ー&#8288;中 |
-| <!-- roadmap:portal --> 許可されたアプリを 1 つのホームページに表示し、所有者にノード登録の引き継ぎ情報を示します。訪問者には Tailscale が必要です。 | レ&#8288;ビ&#8288;ュ&#8288;ー&#8288;中 |
-| <!-- roadmap:mcp-scopes --> エージェントにロールとアプリの範囲を与え、変更操作の監査記録を残します。 | レ&#8288;ビ&#8288;ュ&#8288;ー&#8288;中 |
-| <!-- roadmap:guest-links --> ゲート付き公開 Funnel を通じて、有効期限付きリンクと任意の PIN でゲストがTailscale をインストールせずブラウザーから 1 つの HTTP アプリを開けるようにします。 | レ&#8288;ビ&#8288;ュ&#8288;ー&#8288;中 |
-| <!-- roadmap:durations --> プリセットまたは任意の期間を選びます。最短は 1 時間、ゲストの最長は既定で 7 日間で変更可能です。 | レ&#8288;ビ&#8288;ュ&#8288;ー&#8288;中 |
-| <!-- roadmap:requests --> スマートフォンのユーザーが QR コードで参加できるようにし、所有者がアプリへのアクセスや期間延長のリクエストを 1 回の操作で承認できるようにします。 | レ&#8288;ビ&#8288;ュ&#8288;ー&#8288;中 |
-| <!-- roadmap:multi-host --> 複数ホストのアプリを 1 つの一覧で確認します。 | 計&#8288;画&#8288;中 |
+| すでに動いている Tailscale クライアントで、自分の端末から一つのローカルサービスを使う | [`tailscale serve`](https://tailscale.com/docs/reference/tailscale-cli/serve) |
+| 複数ホストにまたがる、安定した名前を持つ管理者運用のサービス | [Tailscale Services](https://tailscale.com/docs/features/tailscale-services) |
+| Tailscale アカウント不要の webhook や API デモ用公開 URL | [ngrok](https://ngrok.com/docs/start) または [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/) |
+| セルフホストアプリの共有に加え、インストールと実行も行う | [Umbrel](https://umbrel.com) または [Coolify](https://coolify.io) |
+| 組織全体で使う、身元に基づくアクセス管理基盤 | [Pangolin](https://github.com/fosrl/pangolin) または [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/) |
 
-<a id="documentation"></a>
+一人が複数のアプリを運用し、アプリごと、相手ごとに期限付きアクセスを設定して、自分とエージェントが確認したい場合に TSLink が適しています。
+
+## 仕組み
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/service-map-dark.svg">
+  <img src="assets/service-map-light.svg" alt="App、Docs、Database、Model は一つの tailnet 内にある個別の名前付きノードで、公開元のパソコン上の一つの TSLink デーモンが実行します。" width="720">
+</picture>
+
+一つのバックグラウンドデーモンがアプリごとに組み込み Tailscale ノードを動かすため、各アプリに固有の名前とアドレスが付きます。プライベート HTTP とファイル共有では、`WhoIs` と人への許可、または `--allow` ルールでアクセスを制御し、各リクエストで許可期限を確認します。生の TCP は tailnet ポリシーとバックエンドの認証を使います。Tailscale が tailnet 通信、暗号化、証明書を提供し、TSLink は独立したプロジェクトです。全アプリが公開元のパソコンを共用するため、TSLink はアプリ同士を隔離しません。[アーキテクチャ →](architecture.md)
+
+## 現在の状況
+
+利用可能：アプリごとのプライベートアドレス、期限と招待のまとめを備えた人別共有、期限付き公開 Funnel、アプリのヘルスチェックと通知、セルフホストアプリのレシピ、アプリごとのリクエスト制限、Windows のクラッシュ後の再起動、CLI と MCP。
+
+今後対応：ブラウザー用ゲストリンク、柔軟な期間設定、アクセスログ、アプリのホームページ、範囲を限定したエージェントロール、QR による導入、アクセス申請。複数のパソコンを一つの一覧にまとめる機能は計画中です。[ロードマップ →](roadmap.md)
 
 ## ドキュメントとライセンス
 
-[はじめに](getting-started.md) · [ローカルモデル](local-ai.md) · [CLI リファレンス](cli-reference.md) · [プラットフォーム](platforms.md) · [ロードマップ](roadmap.md)
+[導入](getting-started.md) · [CLI リファレンス](cli-reference.md) · [プラットフォーム](platforms.md) · [ローカルモデル](local-ai.md) · [貢献](../CONTRIBUTING.md) · [セキュリティ](../SECURITY.md)
 
-貢献方法は [CONTRIBUTING.md](../CONTRIBUTING.md)を参照してください。脆弱性の報告には [SECURITY.md](../SECURITY.md)の窓口を使ってください。
-
-TSLink は変更を加えていない [Apache License 2.0](../LICENSE)を採用し、同ライセンスに従って商用利用できます。再配布時には、適用される [NOTICE](../NOTICE)と[第三者の通知](../THIRD_PARTY_NOTICES.md)を保持してください。[商業協力](../COMMERCIAL.md)は任意であり、追加のライセンス条件はありません。Tailscale のサービス条件とプランは別途適用されます。
+商用利用を含め Apache License 2.0 が適用されます。再配布時には [NOTICE](../NOTICE) と[第三者の通知](../THIRD_PARTY_NOTICES.md)を保持してください。Tailscale の規約とプランは別途適用されます。

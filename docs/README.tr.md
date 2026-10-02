@@ -8,169 +8,131 @@
 <h1 align="center">TSLink</h1>
 
 <p align="center">
-  <strong>Yerel uygulamalarınıza, modellerinize ve dosyalarınıza kendilerine ait özel bir adres verin.</strong><br>
-  Tailscale ağınızdaki erişim izni olan başka bir cihazdan açın.
+  <strong>Bilgisayarınızdaki uygulamaları seçtiğiniz kişilerle, seçtiğiniz süre boyunca paylaşın.</strong><br>
+  Her uygulama Tailscale ağınızda kendi özel adresini alır. Kimin erişimi olduğunu görün ve erişimi geri alın.
 </p>
 
 <p align="center">
-  <a href="../LICENSE"><img src="assets/badge-license.svg" alt="Lisans: Apache 2.0"></a>
-  <a href="../go.mod"><img src="assets/badge-go.svg" alt="Go 1.26.6 veya üzeri"></a>
-  <a href="architecture.md"><img src="assets/badge-tsnet.svg" alt="Tailscale: gömülü tsnet düğümleri"></a>
-  <a href="#agents"><img src="assets/badge-mcp.svg" alt="MCP: 19 araç"></a>
+  <a href="#quickstart">Hızlı başlangıç</a> · <a href="#agents">Ajanlar için</a> · <a href="getting-started.md">Belgeler</a> ·
+  <strong>Türkçe</strong> · <a href="../README.md">English</a> · <a href="INDEX.md#translated-homepages">Tüm diller</a>
 </p>
 
-<p align="center">
-  <a href="../README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.zh-TW.md">繁體中文</a> · <a href="README.ko.md">한국어</a> · <a href="README.de.md">Deutsch</a><br>
-  <a href="README.es.md">Español</a> · <a href="README.fr.md">Français</a> · <a href="README.it.md">Italiano</a> · <a href="README.da.md">Dansk</a> · <a href="README.ja.md">日本語</a><br>
-  <a href="README.pl.md">Polski</a> · <a href="README.ru.md">Русский</a> · <a href="README.bs.md">Bosanski</a> · <a href="README.ar.md">العربية</a> · <a href="README.no.md">Norsk</a><br>
-  <a href="README.pt-BR.md">Português (Brasil)</a> · <a href="README.th.md">ไทย</a> · <strong>Türkçe</strong> · <a href="README.uk.md">Українська</a><br>
-  <a href="README.bn.md">বাংলা</a> · <a href="README.el.md">Ελληνικά</a> · <a href="README.vi.md">Tiếng Việt</a>
-</p>
+## Ne için kullanılıyor
 
-<a id="installation"></a>
+- **Çalışmanızı telefonunuzdan açın.** Betiğinizin oluşturduğu rapor, geliştirme sunucusu, not defteri veya yerel model API'si, izinli cihazların ulaşabildiği özel bir HTTPS adresinde.
+- **Bir kişiye bir uygulamayı bir süreliğine açın.** Partneriniz fotoğraf arşivini bir hafta kullansın veya iş arkadaşınız önizlemeyi üç gün denesin. Erişim kendiliğinden sona erer; daha erken de bitirebilirsiniz.
+- **Paylaşımı ajanınıza bırakın.** Kodlama ajanınız az önce bir pano oluşturdu. Bunu sizinle ve ekip arkadaşınızla cumaya kadar paylaşmasını isteyin. Şu anda nelerin paylaşıldığını da söyleyebilir ve paylaşımı geri alabilir.
 
-## Kurulum
+Uygulamalarınız çalıştıkları yerde çalışmaya devam eder. TSLink her birine kimin ulaşabileceğini yönetir; neyin, kiminle ve ne zamana kadar paylaşıldığını tek listede tutar.
 
-**Go 1.26.6+** ve Git gerekir. Hazır derlemeler ve
-Homebrew cask yayımlanmamıştır; kaynak koddan kurun. Bu örneklerde
-**bash veya zsh** kullanılır; Windows ve arka plan hizmeti gereksinimleri için [platform desteğine](platforms.md) bakın.
+<a id="quickstart"></a>
+
+## Hızlı başlangıç
+
+**Go 1.26.6+**, Git ve [MagicDNS ile HTTPS etkin](https://tailscale.com/docs/how-to/set-up-https-certificates) bir Tailscale hesabı gerekir. Hazır derlenmiş sürümler henüz yayımlanmadığından kaynak koddan kurun:
 
 ```bash
 git clone https://github.com/anydoor7/tslink.git
-cd tslink
-go install .
+cd tslink && go install .
 export PATH="$PATH:$(go env GOPATH)/bin"
 ```
 
-[MagicDNS ve HTTPS etkin](https://tailscale.com/docs/how-to/set-up-https-certificates) bir Tailscale hesabı kullanın.
-Erişecek cihaz Tailscale ağınızda (**tailnet**) oturum açmış olmalı ve ağ politikası
-hizmete erişmesine izin vermelidir. TSLink, hizmeti yayımlayan makinede Tailscale'i gömülü olarak çalıştırır.
-
-### İlk sayfanızı paylaşın
-
-Bir sayfa oluşturun; TSLink bunu doğrudan sunar ve gerektiğinde arka plan hizmetini başlatır:
+Bir sayfa paylaşın:
 
 ```bash
-mkdir -p tslink-demo
-printf '<h1>Hello from TSLink</h1>\n' > tslink-demo/index.html
+mkdir -p tslink-demo && printf '<h1>Hello from TSLink</h1>\n' > tslink-demo/index.html
 tslink share ./tslink-demo --name demo
-```
-
-TSLink bir kayıt URL'si yazdırırsa düğümü yetkilendirmek için açın; tailnet'iniz ayrıca
-cihaz için yönetici onayı gerektirebilir. Ardından tam adresi alın:
-
-```bash
 tslink url demo --wait
 ```
 
-Bu URL'yi erişim izni olan bir cihazda açın. İlk paylaşım için API belirteci gerekmez.
-[Tüm kurulum ve yaşam döngüsü ayrıntıları →](getting-started.md)
+İlk kullanımda TSLink yeni hizmet düğümünü kaydetmek için bir giriş bağlantısı gösterir; tailnet ayrıca yönetici cihaz onayı isteyebilir. Kayıttan sonra hizmet URL'sini tailnet ağınıza giriş yapmış izinli bir cihazda açın. API belirteci gerekmez.
 
-<a id="use-cases"></a>
+Paylaşılanları kontrol edip demoyu kaldırın:
 
-## Neyi paylaşacaksınız?
+```bash
+tslink status --urls
+tslink remove demo
+```
 
-Dosyalar mevcut olmalıdır; uygulama, veritabanı ve model arka uçları belirtilen bağlantı noktalarında zaten çalışıyor olmalıdır.
+Arka uçları çalışıyorsa şunları da paylaşabilirsiniz:
 
-| Kullanım senaryosu | Komut |
+| İçerik | Komut |
 |---|---|
-| Yerel bir uygulamayı başka bir cihazdan açın | `tslink share 3000` |
-| Bir dosya dizinine göz atın | `tslink share ./public --name files` |
-| Oluşturulan HTML raporunu telefonunuzda okuyun | `tslink share ./report.html --name report` |
-| Yerel bir veritabanına TCP üzerinden bağlanın | `tslink add database --tcp localhost:5432` |
-| Ollama gibi yerel bir modelin HTTP API'sini kullanın | `tslink add model --proxy localhost:11434` |
+| Yerel bir web uygulaması | `tslink share 3000` |
+| Dosya klasörü | `tslink share ./public --name files` |
+| Ollama gibi yerel model API'si | `tslink add model --proxy localhost:11434` |
+| Özel TCP üzerinden veritabanı | `tslink add database --tcp localhost:5432` |
+| Bilinen bir kendi barındırdığınız uygulama (Jellyfin, Immich, Home Assistant ve 13 diğer uygulama) | `tslink apps detect`, ardından `tslink apps share jellyfin --yes` |
 
-Ollama için tam URL'yi `tslink url model --wait` ile alın; OpenAI uyumlu bir istemcinin
-`baseURL` değeri, bu URL'ye `/v1` eklenerek oluşturulur. [Yerel modeller ve özel verilerle çalışma akışları →](local-ai.md)
+[Başlangıç, platformlar ve arka plan hizmeti →](getting-started.md)
 
-Tek ana makinede birden çok uygulama için TSLink adlandırılmış düğümleri, HTTP kimlik izin listelerini, Funnel süre sonunu ve MCP yönetimini bir araya getirir. Kendi cihazlarınızdaki tek uygulama için [Tailscale Serve](https://tailscale.com/docs/reference/tailscale-cli/serve) yeterli olabilir.
+## Kimin açabileceğini seçin
 
-<a id="architecture"></a>
+| Kitle | Alıcıya gereken | Kimlik | Bitiş |
+|---|---|---|---|
+| **Kendi cihazlarınız** | tailnet ağınıza giriş | Doğrulanmış Tailscale hesabı | Uygulamayı kaldırdığınızda |
+| **Belirlenen kişiler** (özel HTTP/dosyalar) | Tailscale hesabı; dışarıdakiler uygulama başına bir davet kabul eder | Doğrulanmış Tailscale hesabı | Belirlediğiniz son tarihte (`--for 7d`) veya `tslink people remove` ile |
+| **URL'ye sahip herkes** (Funnel) | Tarayıcı | Herkes; uygulamanın kendi giriş koşulu geçerlidir | Varsayılan olarak 24 saat sonra (`--funnel-ttl`) |
+| **Tarayıcı misafir bağlantısı** *(yakında)* | Tarayıcı ve isteğe bağlı PIN | Bağlantıyı elinde tutan kişi | Kendi süresi dolduğunda veya iptal edilince |
 
-## Mimari
+```bash
+tslink people add alice@example.com --apps photos --for 7d
+tslink people list
+tslink people remove alice@example.com
+```
 
-<picture>
-  <source media="(max-width: 600px) and (prefers-color-scheme: dark)" srcset="assets/service-map-dark-mobile.svg">
-  <source media="(max-width: 600px)" srcset="assets/service-map-light-mobile.svg">
-  <source media="(prefers-color-scheme: dark)" srcset="assets/service-map-dark.svg">
-  <img src="assets/service-map-light.svg" alt="Örnek hizmet haritası: App, Docs, Database ve Model, tek bir tailnet içinde ayrı adlandırılmış düğümlerdir. Uygulamalar, dosyalar ve model API’leri HTTPS kullanır; veritabanı özel TCP kullanır." width="960">
-</picture>
-
-**Tek tailnet, ayrı hizmet düğümleri.** Ortak bir arka plan süreci her hizmet için gömülü bir tsnet düğümü
-çalıştırır; HTTP'yi yönlendirir, dosyaları sunar veya TCP'ye aracılık eder. Kayıt defteri değişiklikleri süreç
-çalışırken uygulanır. Her düğümün kendi ağ kimliği vardır; hizmetler aynı yayımlayıcı makineyi paylaşır.
-[Mimari ayrıntıları →](architecture.md)
-
-| Bileşen | Rolü |
-|---|---|
-| [Go](../go.mod) | Yerel komut satırı programı |
-| [Tailscale tsnet](architecture.md) | Hizmet düğümleri ve tailnet aktarımı |
-| [Cobra](https://github.com/spf13/cobra) | Komutlar ve yardım |
-| [MCP Go SDK](https://github.com/modelcontextprotocol/go-sdk) | Ajan iletişim taşıma katmanları |
-| İşletim sistemi anahtar zinciri ve kullanıcı hizmet yöneticisi | İsteğe bağlı kimlik bilgileri ve arka planda çalışma |
-
-Siz açıkça [genel erişime açık Funnel](getting-started.md#more-examples) özelliğini etkinleştirmedikçe hizmetler tailnet'inizde kalır.
-HTTP ve dosya hizmetleri kimliğe göre izin listelerini destekler (`WhoIs`, `--allow`); TCP, tailnet politikasını ve arka ucun
-kendi kimlik doğrulamasını kullanır. [Paylaşım sınırlarına](sharing.md) bakın.
-
-TSLink uygulama kurmaz, model çalıştırmaz, ana makine süreçlerini yalıtmaz ve birden çok ana makineyi birleştirmez. Ağ, şifreleme ve HTTPS Tailscale tarafından sağlanır; TSLink bağımsız bir projedir.
+Özel HTTP ve dosya paylaşımlarında son tarihler her istekte kontrol edilir. Erişimi geri almak yeni istekleri durdurur; indirilmiş verileri geri getiremez ve kabul edilmiş akışları veya WebSocket bağlantılarını kapatmaz. [Kişilerle paylaşım →](people.md) · [Paylaşım sınırları →](sharing.md)
 
 <a id="agents"></a>
 
 ## Ajanlar için
 
-**19 MCP aracı**, bir ajanın rapor paylaşmasını, hizmetleri yönetmesini, URL'leri almasını ve kurulumu
-incelemesini sağlar. Yerel bir MCP istemcisini kurulu programa bağlayın:
+TSLink bir MCP sunucusu içerir; ajan da sizin gibi paylaşabilir, listeleyebilir, açıklayabilir ve paylaşımları kaldırabilir. Yerel bir MCP istemcisine ekleyin:
 
 ```json
 {
   "mcpServers": {
-    "tslink": {
-      "command": "tslink",
-      "args": ["mcp"]
-    }
+    "tslink": { "command": "tslink", "args": ["mcp"] }
   }
 }
 ```
 
-MCP, TSLink'i yönetir; uygulamalar çıkarım için modelin HTTP API'sini kullanır.
-Yapılandırma ve otomasyon için [MCP istemcilerine](mcp-clients.md), [uzak MCP'ye](remote-mcp.md) ve
-[ajan kullanım kılavuzuna](../AGENTS.md) bakın.
+- **Kesin sonuçlar.** CLI otomasyonu `--json`, `schema_version: 1` ve kararlı hata kodlarını destekler; `tslink mcp` ise JSON-RPC kullanır. `tslink manifest` her komutu ve bayrağı açıklar. Ajanlar URL'leri oluşturmak yerine `tslink url <name> --wait` ile gerçek URL'leri almalıdır.
+- **Açık bekleme durumları.** İnsan girişi gerektiren yeni bir düğüm hazırmış gibi davranmak yerine `needs_login` bildirir.
+- **Yetki.** Yerel MCP kullanıcınızın yetkileriyle çalışır. Uzak MCP isteğe bağlı açılır, yalnızca tailnet içinden erişilir ve belirttiğiniz hesaplarla ya da etiketlerle sınırlıdır. Ajan rolleri, uygulama kapsamları ve işlem makbuzları *yakında* gelecek.
 
-CLI otomasyonu `--json` çıktısını destekler; `schema_version` değeri `1` olur; `tslink status --urls --json` kullanın. Yerel MCP, stdio üzerinden JSON-RPC kullanır. [JSON otomasyonuna](json-automation.md) bakın.
+TSLink MCP, TSLink uygulamasının kendisini yönetir. TSLink üzerinden başka bir MCP sunucusu yayımlarsanız onun araç izinlerini ayrıca yönetmeniz gerekir.
+[Ajan rehberi →](agents.md) · [MCP istemcileri →](mcp-clients.md) · [Uzak MCP →](remote-mcp.md) · [JSON otomasyonu →](json-automation.md)
 
-<a id="roadmap"></a>
+## Ne zaman başka araç kullanılmalı
 
-## Yakında
-
-Birleştiriliyor, İncelemede veya Planlandı olarak işaretli öğeler yukarıdaki kaynak kurulumuna dahil değildir.
-
-| Kullanım | Durum |
+| İstediğiniz | Düşünebileceğiniz araç |
 |---|---|
-| <!-- roadmap:people --> Bir yakınınıza özel HTTP/dosya uygulamalarına 3 günlük erişim verip davetleri tek mesajda toplayın; alıcı hâlâ Tailscale kullanmalıdır. | Birleştiriliyor |
-| <!-- roadmap:health --> Uygulama sağlığını kontrol edip isteğe bağlı komut veya webhook ile kesinti ya da süre sonu uyarıları alın. | Birleştiriliyor |
-| <!-- roadmap:recipes --> Desteklenen loopback uygulamalarını bulup paylaşmadan önce kendi barındırdığınız uygulamaların tariflerini önizleyin. | Birleştiriliyor |
-| <!-- roadmap:limits --> Büyük yüklemeler ve yavaş istemciler için her HTTP uygulamasının yükleme boyutunu ve istek zaman aşımını ayarlayın. | Birleştiriliyor |
-| <!-- roadmap:windows --> Windows oturumu açıkken çöken daemon’ı zamanlanmış görev ve yerleşik gözeticiyle yeniden başlatın. | Birleştiriliyor |
-| <!-- roadmap:access-log --> Yerel erişim günlüklerinde kimin hangi uygulamayı açtığını, `prefix`, `full` veya `off` yol kaydıyla görün. | İncelemede |
-| <!-- roadmap:portal --> İzin verilen uygulamaları tek ana sayfada, sahipler için kayıt yönlendirmesiyle açın; ziyaretçiler hâlâ Tailscale kullanmalıdır. | İncelemede |
-| <!-- roadmap:mcp-scopes --> Bir ajana rol ve uygulama kapsamı verip değişiklikleri için denetim kayıtları tutun. | İncelemede |
-| <!-- roadmap:guest-links --> Misafirin süreli bağlantı ve isteğe bağlı PIN ile Tailscale kurmadan tarayıcıda tek HTTP uygulamasını erişim kontrollü, herkese açık Funnel üzerinden açmasını sağlayın. | İncelemede |
-| <!-- roadmap:durations --> En az 1 saatlik hazır veya özel süreler seçin; misafir üst sınırı varsayılan olarak 7 gündür ve değiştirilebilir. | İncelemede |
-| <!-- roadmap:requests --> Telefon kullanıcılarını QR koduyla katılmaya yönlendirin; uygulama erişimi ya da ek süre isteklerini sahibin tek adımda onaylamasını sağlayın. | İncelemede |
-| <!-- roadmap:multi-host --> Birden çok ana makinenin uygulamalarını tek listede görün. | Planlandı |
+| Zaten çalışan Tailscale istemcisiyle kendi cihazlarınızda tek yerel hizmet | [`tailscale serve`](https://tailscale.com/docs/reference/tailscale-cli/serve) |
+| Birçok sunucuda kararlı adlara sahip, yönetici tarafından yönetilen hizmetler | [Tailscale Services](https://tailscale.com/docs/features/tailscale-services) |
+| Tailscale hesabı olmadan webhook veya API demosu için herkese açık URL | [ngrok](https://ngrok.com/docs/start) veya [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/) |
+| Kendi barındırdığınız uygulamaları paylaşmanın yanında kurup çalıştırmak | [Umbrel](https://umbrel.com) veya [Coolify](https://coolify.io) |
+| Kuruluş genelinde kimliğe dayalı erişim platformu | [Pangolin](https://github.com/fosrl/pangolin) veya [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/) |
 
-<a id="documentation"></a>
+Bir kişi birden fazla uygulama çalıştırıyor ve kendisinin de ajanının da inceleyebileceği, uygulama ve kişi başına süreli erişim istiyorsa TSLink uygundur.
+
+## Nasıl çalışır
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/service-map-dark.svg">
+  <img src="assets/service-map-light.svg" alt="App, Docs, Database ve Model tek bir tailnet içindeki ayrı adlandırılmış düğümlerdir; hizmetleri yayımlayan bilgisayarda tek TSLink arka plan süreci tarafından çalıştırılır." width="720">
+</picture>
+
+Tek bir arka plan süreci her uygulama için gömülü Tailscale düğümü çalıştırır, böylece her uygulama kendi adına ve adresine sahip olur. Özel HTTP ve dosya paylaşımlarında `WhoIs` ile kişi izinleri veya `--allow` kuralları erişimi denetler; kişi süreleri her istekte kontrol edilir. Ham TCP, tailnet ilkelerini ve arka uç kimlik doğrulamasını kullanır. Tailscale, tailnet aktarımını, şifrelemeyi ve sertifikaları sağlar; TSLink bağımsız bir projedir. Tüm uygulamalar yayımlayan bilgisayarı paylaşır; TSLink onları birbirinden yalıtmaz. [Mimari →](architecture.md)
+
+## Durum
+
+Şimdi kullanılabilir: uygulama başına özel adresler, süreli kişi izinleri ve davet paketleri, süreli herkese açık Funnel, uygulama sağlık kontrolleri ve uyarılar, kendi barındırdığınız uygulamalar için tarifler, uygulama başına istek sınırları, Windows çökme sonrası yeniden başlatma, CLI ve MCP.
+
+Yakında: tarayıcı misafir bağlantıları, esnek süreler, erişim günlüğü, uygulama ana sayfası, kapsamı sınırlı ajan rolleri, QR ile katılım ve erişim istekleri. Birden fazla bilgisayarı tek listede görüntüleme planlanıyor. [Yol haritası →](roadmap.md)
 
 ## Belgeler ve lisans
 
-[Başlangıç](getting-started.md) · [Yerel modeller](local-ai.md) ·
-[CLI başvuru kaynağı](cli-reference.md) · [Platformlar](platforms.md) · [Yol haritası](roadmap.md)
+[Başlangıç](getting-started.md) · [CLI başvurusu](cli-reference.md) · [Platformlar](platforms.md) · [Yerel modeller](local-ai.md) · [Katkıda bulunma](../CONTRIBUTING.md) · [Güvenlik](../SECURITY.md)
 
-[CONTRIBUTING.md](../CONTRIBUTING.md) üzerinden katkıda bulunun; güvenlik açıklarını
-[SECURITY.md](../SECURITY.md) yönergeleriyle bildirin.
-
-TSLink, ticari kullanım da dahil olmak üzere değiştirilmemiş [Apache Lisansı 2.0](../LICENSE) kullanır.
-Yeniden dağıtırken geçerli [NOTICE](../NOTICE) ve [üçüncü taraf bildirimlerini](../THIRD_PARTY_NOTICES.md) koruyun.
-[Ticari iş birliği](../COMMERCIAL.md) isteğe bağlıdır ve ek bir lisans koşulu getirmez.
-Tailscale hizmet koşulları ve planları ayrı olarak uygulanır.
+Ticari kullanım dahil Apache License 2.0 geçerlidir. Yeniden dağıtırken [NOTICE](../NOTICE) ve [üçüncü taraf bildirimlerini](../THIRD_PARTY_NOTICES.md) koruyun. Tailscale şartları ve planları ayrıca geçerlidir.
