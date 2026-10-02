@@ -1,6 +1,6 @@
 # 一个地址，找到可用的应用
 
-TSLink works with Tailscale, independent project（与 Tailscale 配合使用的独立项目）。可选的 home portal 给每位访客一个可收藏的地址，页面只列出其当前 Tailscale 身份能打开的应用，并显示应用地址、最近健康状态和访问期限。
+TSLink works with Tailscale, independent project（与 Tailscale 配合使用的独立项目）。可选的 home portal 给每位访客一个可收藏的地址，页面按其当前 Tailscale 身份的实际授权列出私有 HTTP/file 应用，并显示应用地址、最近健康状态和访问期限。
 
 ```sh
 tslink portal enable --owner you@example.com
@@ -11,21 +11,25 @@ tslink status --urls
 tslink portal disable
 ```
 
-默认主机名为 `home`。请使用 **status 实际报告的 portal URL**，例如 `https://home.example.ts.net`；重名时 Tailscale 可能重命名节点。enable/disable 只保存配置，运行中的 daemon 自动应用。daemon 未运行时执行 `tslink serve`。新入口节点可能需要独立的浏览器登录，入口注册流程与应用节点独立进行。`pending` 或 `starting` 不表示地址已经可用。doctor 和两种 status 输出都包含 `portal.enabled`、`hostname`、`state`、`url` 及启动失败代码；daemon 停止、快照过时或不匹配当前 registry 时不提供 URL。
+默认主机名为 `home`。请使用 **status 实际报告的 portal URL**，例如 `https://home.example.ts.net`；重名时 Tailscale 可能重命名节点。enable/disable 只保存配置，运行中的 daemon 自动应用。daemon 未运行时执行 `tslink serve`。新入口节点可能需要独立的浏览器登录，入口注册流程与应用节点独立进行。daemon ready 会保留仍 pending 的入口登录提示；完成或取消只删除匹配本次注册的提示（daemon PID、service 和 auth URL），保留另一节点的待登录提示。确证运行的 portal 快照作为 status 的授权证据，只有入口而没有应用时也适用，但不增加应用数量。`pending` 或 `starting` 不表示地址已经可用。doctor 和两种 status 输出都包含 `portal.enabled`、`hostname`、`state`、`url` 及启动失败代码；daemon 停止、快照过时或不匹配当前 registry 时不提供 URL。
 
-入口使用独立节点和 `portal-nodes/<hostname>` 状态目录，不修改应用注册、target、tags、健康设置或请求限制，也不重启已有应用节点。更换主机名会保留之前的登录状态。有凭据时入口使用配置的默认 tag，并设置 ephemeral；无凭据时使用持久节点，以便 daemon 重启后保留登录。disable 保留本地节点状态和 owner/admin 身份，不删除远端设备。
+入口使用独立节点和 `portal-nodes/<hostname>` 状态目录，不修改应用注册、target、tags、健康设置或请求限制，也不重启已有应用节点。其他应用启动或 auth-key 出错也不会阻止入口关闭或替换。替换前先取消、等待旧 worker 退出并关闭旧节点。更换主机名会保留之前的登录状态。有凭据时入口使用配置的默认 tag，并设置 ephemeral；无凭据时使用持久节点，以便 daemon 重启后保留登录。disable 保留本地节点状态和 owner/admin 身份，不删除远端设备。
 
 ## 哪些人能看到应用？
 
-入口和私有 HTTP/file 应用监听器调用同一个 `AppAccessAt`。grant 使用 F1 的 `PeopleAccessAt` 和 `PersonGrantActiveAt`：到截止时刻立即结束，已持久化的 expiry latch 继续拒绝，tombstone 优先于旧 allow 规则，撤销的人看不到任何应用。未登记的人沿用 service allow list；未 scoped 且 allow list 为空的应用向 Tailnet 对等节点开放。带 tag 的机器只按显式 tag allow 规则判定，不继承 UserProfile 中人类身份的 grant 或管理员权限。
+入口和私有 HTTP/file 应用监听器使用同一个 `AppAccessDecisionAt` 模型（`AppAccessAt` 提供其中的监听器放行结果），分别表达实际执行、目录可见性和 grant 期限。grant 使用 F1 的 `PeopleAccessAt` 和 `PersonGrantActiveAt`：到截止时刻立即结束，已持久化的 expiry latch 继续拒绝，tombstone 优先于旧 allow 规则，撤销的人看不到任何应用。未登记的人沿用 service allow list；未 scoped 且 allow list 为空的应用向 Tailnet 对等节点开放。带 tag 的机器只按显式 tag allow 规则判定，不继承 UserProfile 中人类身份的 grant 或管理员权限。
 
-`--owner` 必须是维护应用的人的实际 Tailscale login，必须明确填写，因为 WhoIs 不告诉入口访客在 Tailscale 控制台的 owner/admin 角色。`--admins` 指定额外的 **TSLink 应用管理员**，这些身份可以打开所有私有 HTTP/file 应用，并在入口看到全部已注册应用。这是一项授权选择，请认真核对身份。disable 保留这些角色，people 的撤销 tombstone 仍优先。角色不绕过 Tailscale 网络策略或应用自身登录。TCP 和公共 Funnel 继续沿用原有网络/公共访问语义，person grant 不能保护它们。
+`--owner` 必须是维护应用的人的实际 Tailscale login，必须明确填写，因为 WhoIs 不告诉入口访客在 Tailscale 控制台的 owner/admin 角色。`--admins` 指定额外的 **TSLink 应用管理员**，这些身份可以打开所有私有 HTTP/file 应用，并在入口看到全部已注册应用。这是一项授权选择，请认真核对身份。disable 保留这些角色，people 的撤销 tombstone 仍优先。角色不绕过 Tailscale 网络策略或应用自身登录。raw TCP 不执行 `allow` 或 WhoIs；registry 拒绝 TCP 的 `allowed_users`。公共 Funnel 跳过私有身份检查。这些服务无法由 TSLink 按人限制，所以卡片**只在 owner/admin 的目录中列出**，作为服务清单，并显示："Anyone who can reach this device can connect; TSLink can't limit it per person."（能到达此设备的人都能连接，TSLink 无法按人限制。）其他访客的目录省略这些卡片，不判断或否定他们的网络/公共访问能力。私有 HTTP 和 file 的卡片严格遵循同一执行判定，包括旧 allow 规则、grant、截止时刻、tag 和 tombstone。
+
+先筛选目录授权，再读取可见项的 runtime 和 health；registry 解析工作量仍随文件大小变化，不承诺恒定时间或已排除远程 timing 侧信道。
 
 页面不输出隐藏应用名称、总数、后端地址、邀请 bearer link 或其他人的期限。HTML 和 `GET /api/apps` 使用同一个筛选结果。无效 service 条目不显示；registry 无法读取或格式损坏时拒绝服务，只显示通用的暂不可用提示。可见应用的 canonical 地址尚未就绪时显示 “Address not ready”。健康状态采用 F2 的 `healthy`、`degraded`、`down`、`unknown` 及 status 相同的新鲜度规则。健康表示后端最近一次探测结果，不证明某位访客的网络路径畅通。
 
 入口每次请求重读 grant，不写 registry；截止时间立即生效，expiry latch 由已有 app listener 和 daemon lifecycle 路径持久化。如果这些路径尚未写 latch 时系统时钟回退，入口依照 F1 当前期限规则判定。授权不使用缓存，每次重新调用 WhoIs，查询最多等待五秒。
 
 HTTPS 应用提供打开链接。TCP 服务显示与 `tslink url` 一致的 `host:port` 连接地址，并提示使用相应客户端；浏览器不能直接打开原始 TCP 服务。
+
+Funnel 到期按 effective service 类型判定：恢复私有监听器后，即使 registry 尚保留旧 Funnel 标记，也执行同一私有身份规则。handoff 只读取最多 64 KiB 的普通文件；Unix 拒绝 symlink 并使用 nonblocking open，避免 FIFO 阻塞取消流程。
 
 ## 发给访客一个地址
 

@@ -323,6 +323,8 @@ type AuthKeyProvider func(ctx context.Context, svc registry.Service) (string, er
 type AuthHandoff struct {
 	Service string
 	AuthURL string
+	// State is pending, complete or cancelled. Empty means pending for older callers.
+	State string
 }
 
 // AuthHandoffFunc receives credential-free interactive enrollment events.
@@ -876,6 +878,15 @@ func (s *Server) syncNodesAtGeneration(ctx context.Context, startup bool, genera
 		}
 		return outcome, generationCtx.Err()
 	}
+	if err := s.ensureRunning(generationCtx); err != nil {
+		return outcome, err
+	}
+	if generation != s.syncGeneration.Load() {
+		return outcome, nil
+	}
+	// Apply portal disable/replacement before any app startup or policy I/O
+	// can fail or wait for interactive enrollment.
+	s.syncPortal(generationCtx, reg.Portal)
 	// An already-running node can predate the identity record (for example,
 	// during an in-process upgrade). Capture the service used to construct it
 	// before any preflight path can withdraw its listener.
@@ -1096,8 +1107,6 @@ func (s *Server) syncNodesAtGeneration(ctx context.Context, startup bool, genera
 		s.removeRuntimeSnapshot()
 		return outcome, syncErr
 	}
-
-	s.syncPortal(ctx, reg.Portal)
 
 	// Re-write after a fully successful sync so an empty registry and a sync
 	// that required no starts still publish authoritative runtime evidence.
@@ -2597,7 +2606,7 @@ func activateListener(listenerCtx, parentCtx context.Context, closeResources fun
 	}
 }
 
-func (s *Server) waitForInteractiveNode(ctx context.Context, srv tsnetServer, service string) (*ipnstate.Status, error) {
+func (s *Server) waitForInteractiveNode(ctx context.Context, srv tsnetServer, service string) (result *ipnstate.Status, resultErr error) {
 	starter, ok := srv.(tsnetStarter)
 	if !ok {
 		return nil, fmt.Errorf("tsnet interactive start for %q is unavailable", service)
@@ -2612,6 +2621,19 @@ func (s *Server) waitForInteractiveNode(ctx context.Context, srv tsnetServer, se
 	}
 
 	var publishedURL string
+	handoff := s.authHandoffFn
+	defer func() {
+		if publishedURL != "" && handoff != nil {
+			state := "cancelled"
+			if resultErr == nil {
+				state = "complete"
+			}
+			// A cancelled enrollment still owns cleanup of its published offer.
+			if err := handoff(context.WithoutCancel(ctx), AuthHandoff{Service: service, AuthURL: publishedURL, State: state}); err != nil {
+				resultErr = errors.Join(resultErr, fmt.Errorf("finish interactive login for %q: %w", service, err))
+			}
+		}
+	}()
 	for {
 		status, err := lc.Status(ctx)
 		if err != nil {
@@ -2623,8 +2645,8 @@ func (s *Server) waitForInteractiveNode(ctx context.Context, srv tsnetServer, se
 			}
 			authURL := strings.TrimSpace(status.AuthURL)
 			if authURL != "" && authURL != publishedURL {
-				if s.authHandoffFn != nil {
-					if err := s.authHandoffFn(ctx, AuthHandoff{Service: service, AuthURL: authURL}); err != nil {
+				if handoff != nil {
+					if err := handoff(ctx, AuthHandoff{Service: service, AuthURL: authURL, State: "pending"}); err != nil {
 						return nil, fmt.Errorf("publish interactive login for %q: %w", service, err)
 					}
 				}

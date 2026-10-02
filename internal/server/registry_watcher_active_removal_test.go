@@ -57,7 +57,12 @@ func TestReviewPendingEnrollmentMustNotPreventActiveServiceRemoval(t *testing.T)
 		lifecycleDone := s.startLifecycleTicker(ctx)
 		defer func() { cancel(); <-done; <-lifecycleDone }()
 		handoff := make(chan struct{}, 1)
-		s.SetAuthHandoffFunc(func(context.Context, AuthHandoff) error { handoff <- struct{}{}; return nil })
+		s.SetAuthHandoffFunc(func(_ context.Context, event AuthHandoff) error {
+			if event.State == "pending" {
+				handoff <- struct{}{}
+			}
+			return nil
+		})
 		path := writeRegistry(t, []registry.Service{keep, {Name: "pending", Type: registry.TypeFile, Path: t.TempDir()}})
 		w.events <- fsnotify.Event{Name: path, Op: fsnotify.Write}
 		advanceWatcherTime(200 * time.Millisecond)

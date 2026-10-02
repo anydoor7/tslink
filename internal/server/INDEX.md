@@ -50,3 +50,6 @@ This index covers the recipe integration tests. The repository AGENTS.md describ
 - `portal_node.go`: independent tsnet lifecycle, bounded startup, retry and runtime observations.
 - `portal_test.go`, `portal_node_test.go`: real HTTP/TLS listener, identity, expiry, isolation, headers and failure-path tests.
 - `testdata/INDEX.md`: rendered HTML golden snapshots.
+
+- `f5_review_test.go`: ported reviewer lifecycle/auth-error/TCP probes and real-handler browser artifacts.
+- `portal_access_model_test.go`: service-type enforcement/disclosure, tagged/admin/tombstone and cancelled-generation checks.

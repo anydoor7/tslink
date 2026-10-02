@@ -526,11 +526,16 @@ func (s statusRead) getPollableStatus(pidPath, regPath, snapshotPath, authHandof
 		}
 	}
 
+	portalUp := r.DaemonRunning && r.Portal.Enabled && r.Portal.State == "running" && r.Portal.URL != ""
+	if portalUp {
+		r.NodeAuthorized, r.Authenticated = true, true
+		r.AuthStatus = authStatusAuthenticated
+	}
 	if handoff, err := statusLoadAuthHandoffFn(authHandoffPath); err == nil {
 		currentHandoff := !r.DaemonRunning || handoff.DaemonPID == r.DaemonPID
 		if currentHandoff {
 			_, handoffServiceUp := up[handoff.Service]
-			if handoffServiceUp {
+			if handoffServiceUp || (portalUp && handoff.Service == r.Portal.Hostname) {
 				// The snapshot can briefly win the race with removal of the
 				// completed handoff. Do not regress an already-up service.
 				setStatusContinuation(&r)
@@ -541,7 +546,7 @@ func (s statusRead) getPollableStatus(pidPath, regPath, snapshotPath, authHandof
 			// already serving. Keep the authorized count and only let the
 			// handoff's own service fall back to needs_login; suppress the
 			// global authenticated flag only when no service is up.
-			if len(up) == 0 {
+			if len(up) == 0 && !portalUp {
 				r.Authenticated = false
 				r.NodeAuthorized = false
 			}

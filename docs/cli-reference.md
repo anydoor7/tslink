@@ -166,3 +166,5 @@ Windows `tslink install --startup` uses the Startup fallback for the next sign-i
 ## Home portal
 
 `tslink portal enable --owner <login> [--hostname home] [--admins <login,...>]` saves an independent Tailnet-only home portal. `tslink portal disable` closes only its listener. `--funnel` is explicitly refused. The running daemon applies changes; status/doctor report `portal` state and its exact URL when ready. People guides point to the portal when enabled. MCP equivalents: `portal_enable`, `portal_disable`. See [portal.md](portal.md) for authorization, network reachability and JSON details.
+
+Daemon readiness preserves pending portal enrollment; completed portal runtime evidence prevents a stale login prompt. Private HTTP/file entries match their enforced access. Raw TCP/public Funnel entries are an owner/admin inventory with a per-person enforcement note; omission does not deny visitor connectivity.

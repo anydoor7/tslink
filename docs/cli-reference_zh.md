@@ -161,3 +161,5 @@ Windows `tslink install --startup` 显式选择下次登录启动、无崩溃恢
 ## 应用总入口
 
 `tslink portal enable --owner <login> [--hostname home] [--admins <login,...>]` 保存独立的 Tailnet-only 入口配置；`tslink portal disable` 只关闭入口监听器。`--funnel` 显式拒绝。运行中的 daemon 自动应用，status/doctor 显示 `portal` 状态和确证 URL，开启后 people 指导会指向入口。MCP 对应工具：`portal_enable`、`portal_disable`。授权、网络可达性和 JSON 说明见 [portal_zh.md](portal_zh.md)。
+
+daemon ready 保留 pending 的入口注册提示，已完成的入口快照避免陈旧登录提示。私有 HTTP/file 条目遵循实际授权；raw TCP/公共 Funnel 仅在 owner/admin 服务清单中显示，并注明无法按人限制，省略不代表访客不能连接。

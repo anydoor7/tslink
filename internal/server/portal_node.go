@@ -28,6 +28,9 @@ type portalRun struct {
 func (s *Server) syncPortal(ctx context.Context, cfg *registry.PortalConfig) {
 	s.portalLifecycleMu.Lock()
 	defer s.portalLifecycleMu.Unlock()
+	if ctx.Err() != nil {
+		return
+	}
 	s.mu.Lock()
 	old := s.portalRun
 	if cfg != nil && cfg.Enabled && old != nil && reflect.DeepEqual(old.config, *cfg) && s.portalState.State != "failed" {
@@ -45,7 +48,7 @@ func (s *Server) syncPortal(ctx context.Context, cfg *registry.PortalConfig) {
 			old.node.close()
 		}
 	}
-	if cfg == nil || !cfg.Enabled || s.shuttingDown.Load() {
+	if cfg == nil || !cfg.Enabled || ctx.Err() != nil || s.shuttingDown.Load() {
 		return
 	}
 	root := s.portalRoot
@@ -170,6 +173,7 @@ func (s *Server) portalApps(reg *registry.Registry, now time.Time) map[string]Po
 	defer s.mu.Unlock()
 	result := make(map[string]PortalApp, len(reg.Services))
 	for _, svc := range reg.Services {
+		svc = registry.EffectiveServiceAt(svc, now)
 		app := PortalApp{Name: svc.Name, Health: health.Unknown}
 		if node := s.nodes[svc.Name]; node != nil && !serviceChangedWithFallback(node.service, svc, s.controlURL) {
 			host := canonicalHostFor(node.tsnetSrv, node.runtimeHost)

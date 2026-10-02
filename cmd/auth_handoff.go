@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"os/exec"
@@ -29,6 +30,8 @@ const (
 
 var authHandoffNowFn = func() time.Time { return time.Now().UTC() }
 
+var errAuthHandoffExpired = errors.New("auth handoff expired")
+
 type authHandoffRecord struct {
 	SchemaVersion int       `json:"schema_version"`
 	Status        string    `json:"status"`
@@ -48,7 +51,10 @@ type serveAuthResult struct {
 }
 
 func newAuthHandoffRecord(service, authURL string, daemonPID int) authHandoffRecord {
-	now := authHandoffNowFn()
+	return newAuthHandoffRecordAt(service, authURL, daemonPID, authHandoffNowFn())
+}
+
+func newAuthHandoffRecordAt(service, authURL string, daemonPID int, now time.Time) authHandoffRecord {
 	return authHandoffRecord{
 		SchemaVersion: authHandoffSchemaVersion,
 		Status:        authStatusNeedsLogin,
@@ -82,9 +88,25 @@ func saveAuthHandoff(path string, record authHandoffRecord) error {
 }
 
 func loadAuthHandoff(path string) (authHandoffRecord, error) {
-	data, err := os.ReadFile(path)
+	f, err := openAuthHandoff(path)
 	if err != nil {
 		return authHandoffRecord{}, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return authHandoffRecord{}, err
+	}
+	const maxHandoffBytes = 64 << 10
+	if !info.Mode().IsRegular() || info.Size() > maxHandoffBytes {
+		return authHandoffRecord{}, errors.New("auth handoff must be a regular file of at most 64 KiB")
+	}
+	data, err := io.ReadAll(io.LimitReader(f, maxHandoffBytes+1))
+	if err != nil {
+		return authHandoffRecord{}, err
+	}
+	if len(data) > maxHandoffBytes {
+		return authHandoffRecord{}, errors.New("auth handoff exceeds 64 KiB")
 	}
 	var record authHandoffRecord
 	if err := json.Unmarshal(data, &record); err != nil {
@@ -97,7 +119,7 @@ func loadAuthHandoff(path string) (authHandoffRecord, error) {
 		return authHandoffRecord{}, errors.New("invalid auth handoff record")
 	}
 	if !record.ExpiresAt.After(authHandoffNowFn()) {
-		return authHandoffRecord{}, errors.New("auth handoff expired")
+		return record, errAuthHandoffExpired
 	}
 	return record, nil
 }

@@ -26,6 +26,7 @@ type PortalApp struct {
 	Health     string     `json:"health"`
 	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
 	ExpiryText string     `json:"expiry"`
+	AccessNote string     `json:"access_note,omitempty"`
 }
 
 // BrowserLink keeps TCP connection addresses as text, matching tslink url.
@@ -45,13 +46,13 @@ type PortalHandler struct {
 	Now           func() time.Time
 }
 
-const portalCSS = `:root{color-scheme:light dark;--bg:#f6f7fb;--card:#fff;--text:#192336;--muted:#526078;--line:#dbe1eb;--accent:#2556b8}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.55 system-ui,sans-serif}main{max-width:1000px;margin:auto;padding:48px 24px}header{margin-bottom:32px}.eyebrow{color:var(--accent);font-weight:700;letter-spacing:.08em;font-size:.8rem}h1{font-size:clamp(2rem,6vw,3rem);line-height:1.15;margin:12px 0}p{margin:8px 0;color:var(--muted)}.apps{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:16px;list-style:none;padding:0}.app,.help,.empty{border:1px solid var(--line);border-radius:16px;background:var(--card);padding:24px}.app h2{font-size:1.25rem;margin:0 0 12px;overflow-wrap:anywhere}.app a{color:var(--accent);display:block;font-weight:650;overflow-wrap:anywhere;padding:8px 0}.app a:focus-visible{outline:3px solid var(--accent);outline-offset:4px}.status{font-size:.9rem;font-weight:650}.expiry{font-size:.9rem;margin-top:16px}.help{margin-top:32px}.help h2,.empty h2{font-size:1.15rem;margin:0 0 8px}footer{font-size:.8rem;margin-top:28px;color:var(--muted)}@media(max-width:480px){main{padding:28px 16px}.app,.help,.empty{padding:20px}}@media(prefers-color-scheme:dark){:root{--bg:#101723;--card:#192333;--text:#edf1fa;--muted:#b2bfd3;--line:#334259;--accent:#9bbcff}}`
+const portalCSS = `:root{color-scheme:light dark;--bg:#f6f7fb;--card:#fff;--text:#192336;--muted:#526078;--line:#dbe1eb;--accent:#2556b8}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.55 system-ui,sans-serif}main{max-width:1000px;margin:auto;padding:48px 24px}header{margin-bottom:32px}.eyebrow{color:var(--accent);font-weight:700;letter-spacing:.08em;font-size:.8rem}h1{font-size:clamp(2rem,6vw,3rem);line-height:1.15;margin:12px 0}p{margin:8px 0;color:var(--muted)}.apps{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:16px;list-style:none;padding:0}.app,.help,.empty{border:1px solid var(--line);border-radius:16px;background:var(--card);padding:24px}.app .address{overflow-wrap:anywhere}.app h2{font-size:1.25rem;margin:0 0 12px;overflow-wrap:anywhere}.app a{color:var(--accent);display:block;font-weight:650;overflow-wrap:anywhere;padding:8px 0}.app a:focus-visible{outline:3px solid var(--accent);outline-offset:4px}.status{font-size:.9rem;font-weight:650}.expiry{font-size:.9rem;margin-top:16px}.help{margin-top:32px}.help h2,.empty h2{font-size:1.15rem;margin:0 0 8px}footer{font-size:.8rem;margin-top:28px;color:var(--muted)}@media(max-width:480px){main{padding:28px 16px}.app,.help,.empty{padding:20px}}@media(prefers-color-scheme:dark){:root{--bg:#101723;--card:#192333;--text:#edf1fa;--muted:#b2bfd3;--line:#334259;--accent:#9bbcff}}`
 
 var portalTemplate = template.Must(template.New("portal").Parse(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Your apps · TSLink</title><style>` + portalCSS + `</style></head>
 <body><main><header><div class="eyebrow">HOME · PRIVATE APPS</div><h1>Your apps, in one place.</h1><p>Bookmark this page. Keep Tailscale connected, then choose an app below.</p></header>
-{{if .Apps}}<ul class="apps">{{range .Apps}}<li class="app"><h2>{{.Name}}</h2><div class="status">Status: {{.Health}}</div>{{if .URL}}{{if .BrowserLink}}<a href="{{.URL}}">Open {{.Name}} <span aria-hidden="true">↗</span></a><p>{{.URL}}</p>{{else}}<p>Connect using your app:</p><p>{{.URL}}</p>{{end}}{{else}}<p>Address not ready. Ask the owner for help.</p>{{end}}<p class="expiry">{{.ExpiryText}}</p></li>{{end}}</ul>{{else}}<section class="empty" aria-labelledby="empty-title"><h2 id="empty-title">No apps available yet</h2><p>Ask the owner to share an app with the account you use in Tailscale. If access ended, the owner can renew it.</p></section>{{end}}
-<aside class="help" aria-labelledby="help-title"><h2 id="help-title">Need a hand?</h2><p>Open Tailscale on your phone or computer and make sure it says connected. Sign in with the account the owner invited.</p><p>Healthy means the app responded to its last check. Degraded means it had a recent problem. Down means repeated checks failed. Unknown means there is no recent check.</p><p>If a link will not open, keep Tailscale connected and ask the owner for help. This page only shows apps available to your account.</p></aside><footer>TSLink works with Tailscale, independent project.</footer></main></body></html>
+{{if .Apps}}<ul class="apps">{{range .Apps}}<li class="app"><h2>{{.Name}}</h2><div class="status">Status: {{.Health}}</div>{{if .URL}}{{if .BrowserLink}}<a href="{{.URL}}">Open {{.Name}} <span aria-hidden="true">↗</span></a><p class="address">{{.URL}}</p>{{else}}<p>Connect using your app:</p><p class="address">{{.URL}}</p>{{end}}{{else}}<p>Address not ready. Ask the owner for help.</p>{{end}}{{if .AccessNote}}<p>{{.AccessNote}}</p>{{end}}<p class="expiry">{{.ExpiryText}}</p></li>{{end}}</ul>{{else}}<section class="empty" aria-labelledby="empty-title"><h2 id="empty-title">No apps available yet</h2><p>Ask the owner to share an app with the account you use in Tailscale. If access ended, the owner can renew it.</p></section>{{end}}
+<aside class="help" aria-labelledby="help-title"><h2 id="help-title">Need a hand?</h2><p>Open Tailscale on your phone or computer and make sure it says connected. Sign in with the account the owner invited.</p><p>Healthy means the app responded to its last check. Degraded means it had a recent problem. Down means repeated checks failed. Unknown means there is no recent check.</p><p>If a link will not open, keep Tailscale connected and ask the owner for help. This page lists private apps available to your account. The owner and administrators also see TCP and public services; those services are omitted from other visitors’ directories without deciding whether they can connect.</p></aside><footer>TSLink works with Tailscale, independent project.</footer></main></body></html>
 `))
 
 func portalCSP() string {
@@ -101,18 +102,31 @@ func (h PortalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		tags = who.Node.Tags
 	}
 	now := h.Now()
-	observed := h.Apps(reg, now)
-	page := portalPage{Apps: []PortalApp{}}
+	visible := *reg
+	visible.Services = nil
+	decisions := make(map[string]AppAccessDecision)
 	for _, svc := range reg.Services {
-		allowed, expiry := AppAccessAt(reg, svc, who.UserProfile.LoginName, tags, now)
-		if !allowed {
-			continue
+		decision := AppAccessDecisionAt(reg, svc, who.UserProfile.LoginName, tags, now)
+		if decision.DirectoryVisible {
+			visible.Services = append(visible.Services, svc)
+			decisions[svc.Name] = decision
 		}
+	}
+	// Only observe authorized directory entries; hidden nodes are never probed.
+	observed := h.Apps(&visible, now)
+	page := portalPage{Apps: []PortalApp{}}
+	for _, svc := range visible.Services {
+		decision := decisions[svc.Name]
+		expiry := decision.ExpiresAt
 		app, ok := observed[svc.Name]
 		if !ok {
 			app = PortalApp{Health: health.Unknown}
 		}
 		app.Name, app.ExpiresAt = svc.Name, expiry
+		app.AccessNote = ""
+		if !decision.IdentityEnforced {
+			app.AccessNote = "Anyone who can reach this device can connect; TSLink can't limit it per person."
+		}
 		app.ExpiryText = "No scheduled expiry."
 		if expiry != nil {
 			app.ExpiryText = "Access ends " + expiry.UTC().Format("January 2, 2006 at 15:04 UTC") + "."
