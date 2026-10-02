@@ -16,6 +16,10 @@ import (
 // mcpToolMinimalArguments is one valid call per tool, so a test can reach
 // each tool's action.
 var mcpToolMinimalArguments = map[string]string{
+	"people_add":     `{"who":"alice","apps":["web"]}`,
+	"people_update":  `{"who":"alice","apps":["web"]}`,
+	"people_list":    `{}`,
+	"people_remove":  `{"who":"alice"}`,
 	"share":          `{"target":"3000"}`,
 	"add":            `{"name":"web","type":"proxy","target":"http://localhost:3000"}`,
 	"list":           `{}`,
@@ -49,9 +53,18 @@ func mcpRefusal(tool string) error {
 
 func refusingMCPActions() mcpActions {
 	return mcpActions{
-		share: func(context.Context, shareRequest) (ShareResult, error) { return ShareResult{}, mcpRefusal("share") },
-		add:   func(context.Context, AddParams, bool) (any, error) { return nil, mcpRefusal("add") },
-		list:  func() (any, error) { return nil, mcpRefusal("list") },
+		peopleChange: func(_ context.Context, _ peopleArguments, update bool) (any, error) {
+			name := "people_add"
+			if update {
+				name = "people_update"
+			}
+			return nil, mcpRefusal(name)
+		},
+		peopleList:   func() (any, error) { return nil, mcpRefusal("people_list") },
+		peopleRemove: func(context.Context, string, map[string]string) (any, error) { return nil, mcpRefusal("people_remove") },
+		share:        func(context.Context, shareRequest) (ShareResult, error) { return ShareResult{}, mcpRefusal("share") },
+		add:          func(context.Context, AddParams, bool) (any, error) { return nil, mcpRefusal("add") },
+		list:         func() (any, error) { return nil, mcpRefusal("list") },
 		unshare: func(context.Context, string) (any, error) {
 			return nil, mcpRefusal("unshare")
 		},

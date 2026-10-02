@@ -34,6 +34,7 @@ import (
 // codeCarriers are the struct types whose Code field is a stable error code
 // an agent or script can read.
 var codeCarriers = map[string]bool{
+	"github.com/anydoor7/tslink/cmd.PeopleInviteView":               true,
 	"github.com/anydoor7/tslink/internal/registry.CodedError":       true,
 	"github.com/anydoor7/tslink/internal/registry.StableCodeError":  true,
 	"github.com/anydoor7/tslink/internal/runtime.SnapshotError":     true,
@@ -48,6 +49,13 @@ var codeCarriers = map[string]bool{
 	// registrations do not admit a same-named type in any other package.
 	"example.com/control.CodedError": true,
 	"example.com/m/p.CodedError":     true,
+}
+
+// These helpers carry a fallback stable code into a result. Their constant
+// arguments are real emission sites; error-derived codes are forwarded.
+var codeFallbackFunctions = map[string]int{
+	"github.com/anydoor7/tslink/cmd.peopleInviteCode":    1,
+	"github.com/anydoor7/tslink/cmd.peopleInviteFailure": 2,
 }
 
 // These Code fields describe table metadata or diagnostics, not emitted error
@@ -299,6 +307,10 @@ func (s *moduleScanner) codeValue(pkgPath string, file *ast.File, fn *ast.FuncDe
 		}
 		return
 	case *ast.CallExpr:
+		if index, ok := codeFallbackFunctions[s.carrierIdentity(pkgPath, file, e.Fun)]; ok && index < len(e.Args) {
+			s.codeValue(pkgPath, file, fn, e.Args[index], seen)
+			return
+		}
 		if sel, ok := e.Fun.(*ast.SelectorExpr); ok && (sel.Sel.Name == "StableCode" || sel.Sel.Name == "ErrorCode" || sel.Sel.Name == "StableErrorCode") {
 			// Forwarded, or one of the generic per-exit codes.
 			return
@@ -493,6 +505,11 @@ func (s *moduleScanner) collect() {
 					})
 				}
 				ast.Inspect(decl, func(n ast.Node) bool {
+					if call, ok := n.(*ast.CallExpr); ok {
+						if index, registered := codeFallbackFunctions[s.carrierIdentity(path, file, call.Fun)]; registered && index < len(call.Args) {
+							s.codeValue(path, file, fn, call.Args[index], map[string]bool{})
+						}
+					}
 					if ret, ok := n.(*ast.ReturnStmt); ok {
 						for _, result := range ret.Results {
 							// A named code returned directly is an emission, unlike

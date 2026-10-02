@@ -281,6 +281,20 @@ func (c *inviteHTTPClient) endpoint(parts ...string) (string, error) {
 }
 
 func (c *inviteHTTPClient) do(ctx context.Context, method string, parts []string, body, out any) error {
+	return c.doResponse(ctx, method, parts, body, out, false)
+}
+
+// Lists are absence evidence only with the endpoint's complete-success status
+// and a nonempty JSON body. Mutation responses retain their separate contract.
+func (c *inviteHTTPClient) doList(ctx context.Context, parts []string, out any) error {
+	return c.doResponse(ctx, http.MethodGet, parts, nil, out, true)
+}
+
+func invalidInviteListing(message string) error {
+	return registry.CodedError{Code: registry.CodeInviteResponseInvalid, Message: message, MessageOnly: true}
+}
+
+func (c *inviteHTTPClient) doResponse(ctx context.Context, method string, parts []string, body, out any, list bool) error {
 	var reader io.Reader
 	if body != nil {
 		encoded, err := json.Marshal(body)
@@ -322,6 +336,12 @@ func (c *inviteHTTPClient) do(ctx context.Context, method string, parts []string
 		}
 	}
 	if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
+		if list && resp.StatusCode != http.StatusOK {
+			return invalidInviteListing(fmt.Sprintf("Tailscale listing returned HTTP %d; expected complete HTTP 200", resp.StatusCode))
+		}
+		if list && len(bytes.TrimSpace(data)) == 0 {
+			return invalidInviteListing("Tailscale listing returned an empty body; absence is unproven")
+		}
 		if out == nil || len(bytes.TrimSpace(data)) == 0 {
 			return nil
 		}
@@ -338,7 +358,10 @@ func (c *inviteHTTPClient) ListDevices(ctx context.Context) ([]inviteDevice, err
 	var response struct {
 		Devices []inviteDevice `json:"devices"`
 	}
-	err := c.do(ctx, http.MethodGet, []string{"tailnet", "-", "devices"}, nil, &response)
+	err := c.doList(ctx, []string{"tailnet", "-", "devices"}, &response)
+	if err == nil && response.Devices == nil {
+		err = invalidInviteListing("device listing omitted a non-null devices array")
+	}
 	return response.Devices, err
 }
 
@@ -350,7 +373,10 @@ func (c *inviteHTTPClient) CreateUserInvites(ctx context.Context, body []userInv
 
 func (c *inviteHTTPClient) ListUserInvites(ctx context.Context) ([]userInviteResponse, error) {
 	var response []userInviteResponse
-	err := c.do(ctx, http.MethodGet, []string{"tailnet", "-", "user-invites"}, nil, &response)
+	err := c.doList(ctx, []string{"tailnet", "-", "user-invites"}, &response)
+	if err == nil && response == nil {
+		err = invalidInviteListing("user invite listing omitted a non-null array")
+	}
 	return response, err
 }
 
@@ -376,7 +402,10 @@ func (c *inviteHTTPClient) CreateDeviceInvites(ctx context.Context, deviceID str
 
 func (c *inviteHTTPClient) ListDeviceInvites(ctx context.Context, deviceID string) ([]deviceInviteResponse, error) {
 	var response []deviceInviteResponse
-	err := c.do(ctx, http.MethodGet, []string{"device", deviceID, "device-invites"}, nil, &response)
+	err := c.doList(ctx, []string{"device", deviceID, "device-invites"}, &response)
+	if err == nil && response == nil {
+		err = invalidInviteListing("device invite listing omitted a non-null array")
+	}
 	return response, err
 }
 
@@ -657,7 +686,7 @@ func CreateDeviceInvite(ctx context.Context, target DeviceTarget, email string, 
 	}
 	responses, err := client.CreateDeviceInvites(ctx, device.NodeID, []deviceInviteRequest{request})
 	if err != nil {
-		return Invite{}, inviteAPIError("create device invite", err)
+		return Invite{}, &DeviceInviteOutcomeUnknown{Err: inviteAPIError("create device invite", err)}
 	}
 	inviteID, inviteURL := "", ""
 	inviteIDs := make([]string, 0, len(responses))
@@ -670,7 +699,7 @@ func CreateDeviceInvite(ctx context.Context, target DeviceTarget, email string, 
 	// Keep the audit structurally before all post-create validation failures.
 	slog.Warn("security.remote_invite_created", "kind", InviteKindDevice, "invite_id", inviteID, "invite_ids", inviteIDs, "response_count", len(responses), "service", target.Service, "device_node_id", device.NodeID, "recipient", email, "emailed", !printLink)
 	if err := validateCreatedInvite(InviteKindDevice, printLink, len(responses), inviteID, inviteURL); err != nil {
-		return Invite{}, err
+		return Invite{}, &DeviceInviteOutcomeUnknown{Err: err}
 	}
 	result := deviceInvite(responses[0], target.Service, email, !printLink)
 	return result, nil

@@ -566,6 +566,16 @@ func sortedSet(values map[string]struct{}) []string {
 
 func TestManifestErrorExitTaxonomyMatchesRuntime(t *testing.T) {
 	tests := map[string]error{
+		"people_service_unsupported":            registry.ValidateService(registry.Service{Name: "db", Type: registry.TypeTCP, Target: "localhost:5432", PeopleScoped: true}),
+		"invite_failed":                         registry.CodedError{Code: "invite_failed", Message: "bundle failure"},
+		"invite_state_failed":                   registry.CodedError{Code: "invite_state_failed", Message: "state failure"},
+		"people_invite_busy":                    registry.CodedError{Code: "people_invite_busy", Message: "remote-work contention"},
+		"person_grant_inactive":                 registry.CodedError{Code: "person_grant_inactive", Message: "grant removed"},
+		"invite_reconciliation_failed":          registry.CodedError{Code: "invite_reconciliation_failed", Message: "list failure"},
+		"invite_reconciliation_required":        registry.CodedError{Code: "invite_reconciliation_required", Message: "unknown POST"},
+		"invite_reconciliation_conflict":        registry.CodedError{Code: "invite_reconciliation_conflict", Message: "already associated ID"},
+		"invite_link_unavailable":               registry.CodedError{Code: "invite_link_unavailable", Message: "missing saved link"},
+		"invite_cleanup_failed":                 registry.CodedError{Code: "invite_cleanup_failed", Message: "remote cleanup failure"},
 		"internal_error":                        errors.New("boom"),
 		"usage_error":                           output.ErrUsage("bad usage"),
 		"auth_error":                            output.ErrAuth("bad auth"),
@@ -956,6 +966,15 @@ func TestManifestFlagsAreSelfDescribingAndRelationshipsAreExplicit(t *testing.T)
 	if _, ok := listFields["device_targets"]; !ok {
 		t.Fatal("invite list manifest missing per-target device check results")
 	}
+	removeFields := commands["tslink people remove"].JSONResultFields
+	if removeFields["complete"].Type != "boolean" || removeFields["cleanup"].Type != "array" {
+		t.Fatal("people remove manifest must expose remote completion and cleanup evidence", removeFields)
+	}
+	for _, name := range []string{"reconcile-invite", "replace-invite"} {
+		if !containsString(flag("tslink people update", name).Requires, "--invite") {
+			t.Fatal("people update recovery flag requires --invite", name)
+		}
+	}
 	resendFields := commands["tslink invite resend"].JSONResultFields
 	if _, ok := resendFields["invite_url"]; ok {
 		t.Fatal("invite resend manifest still advertises invite_url")
@@ -980,8 +999,10 @@ func TestCompactManifestStaysBelowAgentTokenBudget(t *testing.T) {
 	// up, so it stays and the ceiling moves to 3000. Batch B3 then derived the
 	// map from the one error-code table, which added the ten codes the old map
 	// missed and mcp_elevated_invite_refused: 2860 bytes at the end of B3.
-	if len(data) >= 3000 {
-		t.Fatalf("compact manifest = %d bytes, want < 3000", len(data))
+	// The people group, four leaves, four flags and two stable codes expand
+	// the compact surface to 3064 bytes. Retain a bounded agent-facing budget.
+	if len(data) >= 3500 {
+		t.Fatalf("compact manifest = %d bytes, want < 3500", len(data))
 	}
 	compact := CompactManifest()
 	if compact.ErrorCodes[registry.CodeURLNotReady] != 5 {

@@ -20,6 +20,10 @@ import (
 // {readOnly, destructive, idempotent, openWorld}. It is written out apart from
 // the product table so a change to either shows here.
 var mcpWantHints = map[string][4]bool{
+	"people_add":     {false, true, false, true},
+	"people_update":  {false, true, false, true},
+	"people_list":    {true, false, true, false},
+	"people_remove":  {false, true, true, true},
 	"share":          {false, false, false, true},
 	"add":            {false, true, false, true},
 	"list":           {true, false, true, false},
@@ -173,7 +177,7 @@ func TestMCPReadOnlyToolsWriteNothing(t *testing.T) {
 			}
 		}
 	}
-	if readOnly != 10 {
+	if readOnly != 11 {
 		t.Fatalf("%d tools are marked read-only, want the 10 that only read", readOnly)
 	}
 

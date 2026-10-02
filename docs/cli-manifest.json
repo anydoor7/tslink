@@ -9,7 +9,7 @@
     "linux",
     "windows"
   ],
-  "registry_schema_version": 1,
+  "registry_schema_version": 2,
   "toolchain": {
     "minimum_go_version": "1.26.6"
   },
@@ -24,7 +24,7 @@
     "warning": 64
   },
   "registry_schema": {
-    "version": 1,
+    "version": 2,
     "service_types": [
       "proxy",
       "file",
@@ -1539,6 +1539,232 @@
       "short": "Run the TSLink MCP server over stdio"
     },
     {
+      "path": "tslink people",
+      "short": "Share private apps with people, with optional expiry",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        }
+      ]
+    },
+    {
+      "path": "tslink people add",
+      "short": "Set a person's apps and expiry",
+      "flags": [
+        {
+          "name": "apps",
+          "type": "string",
+          "scope": "local",
+          "usage": "Comma-separated private HTTP/file apps, or all current supported apps"
+        },
+        {
+          "name": "for",
+          "type": "string",
+          "scope": "local",
+          "usage": "Grant lifetime such as 1h, 7d or never; update omission preserves deadlines"
+        },
+        {
+          "name": "invite",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Create or resume single-use per-app device invitations (requires a user-owned API token)"
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        },
+        {
+          "name": "print-links",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Explicitly include bearer invitation links in output and the guide",
+          "requires": [
+            "--invite"
+          ]
+        }
+      ],
+      "json_result_fields": {
+        "complete": {
+          "type": "boolean",
+          "description": "False when any requested device invitation failed; local grants remain saved."
+        },
+        "invite_requirement": {
+          "type": "string",
+          "description": "Explains that invitations require a user-owned API token while tailnet member grants need no token."
+        },
+        "invites": {
+          "type": "array",
+          "description": "Per-app invitation ID, durable state, reconciliation candidates, remote side effect plan or stable error code. Bearer URLs require --print-links."
+        },
+        "message": {
+          "type": "string",
+          "description": "Plain-language message to send to the person; bearer URLs require --print-links."
+        },
+        "person": {
+          "type": "object",
+          "description": "Canonical login, revocation state, per-app absolute deadlines, active decisions and exact URLs when available."
+        }
+      }
+    },
+    {
+      "path": "tslink people list",
+      "short": "List people, grants and expiry",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        }
+      ],
+      "json_result_fields": {
+        "people": {
+          "type": "array",
+          "description": "People with grants, expiry, active state and revocation tombstones."
+        }
+      }
+    },
+    {
+      "path": "tslink people remove",
+      "short": "Revoke a person locally, then clean up pending device invitations",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        },
+        {
+          "name": "reconcile-invite",
+          "type": "stringArray",
+          "default": "[]",
+          "scope": "local",
+          "usage": "After verifying an unknown POST, associate app=id or confirm app=none before cleanup"
+        }
+      ],
+      "json_result_fields": {
+        "cleanup": {
+          "type": "array",
+          "description": "Per-attempt app, ID, state and stable cleanup code; target_gone preserves evidence of a deleted node and accepted shares may remain."
+        },
+        "complete": {
+          "type": "boolean",
+          "description": "True when all recorded pending invitation cleanup reached a terminal state; local denial can succeed with false."
+        },
+        "login": {
+          "type": "string",
+          "description": "Canonical Tailscale login."
+        },
+        "removed": {
+          "type": "boolean",
+          "description": "True if existing person access or matching legacy allow rules were removed."
+        },
+        "revoked": {
+          "type": "boolean",
+          "description": "True when a durable deny tombstone was stored."
+        }
+      }
+    },
+    {
+      "path": "tslink people update",
+      "short": "Set a person's apps and expiry",
+      "flags": [
+        {
+          "name": "apps",
+          "type": "string",
+          "scope": "local",
+          "usage": "Comma-separated private HTTP/file apps, or all current supported apps"
+        },
+        {
+          "name": "for",
+          "type": "string",
+          "scope": "local",
+          "usage": "Grant lifetime such as 1h, 7d or never; update omission preserves deadlines"
+        },
+        {
+          "name": "invite",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Create or resume single-use per-app device invitations (requires a user-owned API token)"
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        },
+        {
+          "name": "print-links",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Explicitly include bearer invitation links in output and the guide",
+          "requires": [
+            "--invite"
+          ]
+        },
+        {
+          "name": "reconcile-invite",
+          "type": "stringArray",
+          "default": "[]",
+          "scope": "local",
+          "usage": "After verifying an unknown POST, associate app=id or confirm app=none; requires --invite",
+          "requires": [
+            "--invite"
+          ]
+        },
+        {
+          "name": "replace-invite",
+          "type": "stringArray",
+          "default": "[]",
+          "scope": "local",
+          "usage": "Owner-confirmed app=recorded-id replacement after remote absence; preserves grants/deadlines; requires --invite",
+          "requires": [
+            "--invite"
+          ],
+          "conflicts": [
+            "--apps",
+            "--for"
+          ]
+        }
+      ],
+      "json_result_fields": {
+        "complete": {
+          "type": "boolean",
+          "description": "False when any requested device invitation failed; local grants remain saved."
+        },
+        "invite_requirement": {
+          "type": "string",
+          "description": "Explains that invitations require a user-owned API token while tailnet member grants need no token."
+        },
+        "invites": {
+          "type": "array",
+          "description": "Per-app invitation ID, durable state, reconciliation candidates, remote side effect plan or stable error code. Bearer URLs require --print-links."
+        },
+        "message": {
+          "type": "string",
+          "description": "Plain-language message to send to the person; bearer URLs require --print-links."
+        },
+        "person": {
+          "type": "object",
+          "description": "Canonical login, revocation state, per-app absolute deadlines, active decisions and exact URLs when available."
+        }
+      }
+    },
+    {
       "path": "tslink registry",
       "short": "Inspect the local service registry",
       "flags": [
@@ -2315,6 +2541,10 @@
       "exit_code": 3,
       "description": "Tailscale rejected the user-owned tskey-api- token as unauthenticated (HTTP 401): expired, revoked, or invalid; next carries the key-bootstrap steps"
     },
+    "invite_cleanup_failed": {
+      "exit_code": 1,
+      "description": "pending device invitation cleanup failed; local person access remains denied"
+    },
     "invite_device_ambiguous": {
       "exit_code": 4,
       "description": "multiple hostname candidates remain after ownership resolution"
@@ -2323,6 +2553,10 @@
       "exit_code": 4,
       "description": "TSLink lacks exact stable nodeId proof for the device"
     },
+    "invite_failed": {
+      "exit_code": 1,
+      "description": "one device invitation in a people bundle failed without a more specific code"
+    },
     "invite_id_invalid": {
       "exit_code": 2,
       "description": "invite ID is not a bare ASCII decimal string"
@@ -2330,6 +2564,10 @@
     "invite_kind_invalid": {
       "exit_code": 2,
       "description": "invite namespace is not explicitly user or device"
+    },
+    "invite_link_unavailable": {
+      "exit_code": 1,
+      "description": "completed invitation link is unavailable; no replacement was created"
     },
     "invite_not_found": {
       "exit_code": 5,
@@ -2342,6 +2580,18 @@
     "invite_recipient_invalid": {
       "exit_code": 2,
       "description": "invite recipient is missing"
+    },
+    "invite_reconciliation_conflict": {
+      "exit_code": 1,
+      "description": "invitation ID is already associated with another person or app operation"
+    },
+    "invite_reconciliation_failed": {
+      "exit_code": 1,
+      "description": "remote invitation listing failed; do not create before reconciling the unknown outcome"
+    },
+    "invite_reconciliation_required": {
+      "exit_code": 1,
+      "description": "unknown invitation POST needs explicit owner-verified app=id or app=none reconciliation"
     },
     "invite_request_invalid": {
       "exit_code": 2,
@@ -2362,6 +2612,10 @@
     "invite_state_conflict": {
       "exit_code": 4,
       "description": "Tailscale rejected the invite operation because current remote state conflicts with it (HTTP 409)"
+    },
+    "invite_state_failed": {
+      "exit_code": 1,
+      "description": "durable people invitation state could not be read or saved; reconcile before sending again"
     },
     "launchctl_domain_unavailable": {
       "exit_code": 1,
@@ -2406,6 +2660,18 @@
     "path_not_found": {
       "exit_code": 2,
       "description": "file service directory does not exist"
+    },
+    "people_invite_busy": {
+      "exit_code": 1,
+      "description": "another owner process is doing remote invitation work; local denial remains saved and remote work is deferred"
+    },
+    "people_service_unsupported": {
+      "exit_code": 2,
+      "description": "person grants require private HTTP proxy or file services; TCP and public Funnel cannot be person-scoped"
+    },
+    "person_grant_inactive": {
+      "exit_code": 1,
+      "description": "person app grant was removed, revoked or expired before sending an invitation"
     },
     "registry_reload_invalid": {
       "exit_code": 1,

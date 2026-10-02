@@ -198,12 +198,20 @@ func TestStartNodeLocked_AssemblesAllowedUsersACL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
-	if err := s.startNodeLocked(context.Background(), registry.Service{
+	svc := registry.Service{
 		Name:         "x",
 		Type:         registry.TypeFile,
 		Path:         t.TempDir(),
 		AllowedUsers: []string{"authorized@example.com"},
-	}); err != nil {
+	}
+	path, err := registryPathFn()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := registry.Add(path, svc); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.startNodeLocked(context.Background(), svc); err != nil {
 		t.Fatalf("startNodeLocked() error = %v", err)
 	}
 	t.Cleanup(func() { s.stopNodeLocked("x") })

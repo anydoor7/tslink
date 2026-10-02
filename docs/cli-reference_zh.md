@@ -1,5 +1,13 @@
 # CLI 参考
 
+## 按人分享
+
+`tslink people add <login-or-email> --apps photos,finance|all [--for 7d] [--invite] [--print-links]` 授予私有 HTTP/文件访问并生成接收者说明。`all` 选当前私有 HTTP/文件应用，排除 TCP/Funnel。`--for` 接受正时长（含天数）或 `never`，省略时无期限。`--invite` 用用户拥有的 API token 创建每应用单次邀请链接；只有显式 `--print-links` 才输出 bearer 链接。
+
+`tslink people list [--json]` 列人员、应用授权、绝对期限、有效状态和撤销记录。`tslink people update <who> [--apps list|all] [--for duration|never] [--invite] [--print-links]` 至少要求 apps、期限或 invite，省略设置时保留原值（未指定期限的新应用无期限）。`tslink people remove <who>` 在所有私有 HTTP/文件应用撤销该人，包括匹配的旧 allow 条目。所有命令使用现有 JSON envelope；邀请部分失败返回 `data.complete: false`，保留本地授权。身份校验、现有 WebSocket 连接、时钟变化及 schema 2 降级规则见[人员分享](people_zh.md)。
+
+人员登录字符串须为有效 UTF-8,仅拒绝空串、控制字符和内部空白。无效 UTF-8 使用 `usage_error`;无效 WhoIs 身份拒绝访问。移除首尾 ASCII space/tab/CR/LF/VT/FF,只把 ASCII A-Z 转为小写,不折叠或规范化 Unicode,逐字节比较。支持标点及非 ASCII 地址,Unicode 相似字符保持不同。`people update --invite --replace-invite app=已记录旧ID` 明确确认远端缺失后的替换,保留授权和期限,不能同时用 `--apps` 或 `--for`;MCP 使用 `replace_invites`。确认节点已删除时以 `target_gone` 完成清理并保留证据。缺失证据必须来自 HTTP 200、非空 body 及存在且非 null 的设备/邀请数组;其他 2xx、空/null 或畸形列表延后清理和恢复,不退役旧记录,不记录终态,不发送替换 POST。update 可只指定 `--invite` 继续未完成操作。update/remove 支持重复的 `--reconcile-invite app=id|none`，须拥有者核对未知 POST 结果。remove 先保存本地拒绝，再用 `complete`/`cleanup` 报告未接受邀请的远端清理；无 token 延后清理。`access explain`/`access_explain` 显示脱敏的人员策略并指向 `people list`。持久化状态及不承诺 exactly-once 的说明见人员指南。
+
 ## 命令
 
 | 命令 | 描述 |

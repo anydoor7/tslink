@@ -1,5 +1,8 @@
 # 分享服务
 
+要按期限把多个已注册应用分享给一个人，使用[人员分享](people_zh.md)：`tslink people add alice@example.com --apps photos,finance --for 7d`。已有 tailnet 成员无需 token；对外部人员加 `--invite --print-links` 生成合并多应用设备邀请的消息，创建邀请需要用户拥有的 API token。`people remove` 拒绝该人之后的私有 HTTP/文件请求，即使网络层分享仍已接受。TCP 和公开 Funnel 不能按人授权。原有 `share`、`add --allow`、`invite` 命令继续可用。
+
+人员撤销先保存本地拒绝，再清理记录的未接受邀请；无 token/部分失败明确返回 `complete: false` 和 `cleanup`。邀请重试复用已完成 ID，未知 POST 须明确对账，不承诺 exactly-once。恢复步骤见人员指南。
 ## 一条命令分享
 
 `tslink share` 会判断参数是目录、普通文件、裸端口还是 `host:port`。它会

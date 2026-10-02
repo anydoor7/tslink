@@ -727,7 +727,8 @@ func TestInviteHTTPResponseLimitUsesStableWireCode(t *testing.T) {
 				if req.URL.Path != "/api/v2/tailnet/-/user-invites" {
 					t.Fatalf("unexpected path %s", req.URL.Path)
 				}
-				io.WriteString(w, strings.Repeat(" ", tc.bodyBytes))
+				// Pad a valid empty list; whitespace alone cannot prove absence.
+				io.WriteString(w, "[]"+strings.Repeat(" ", tc.bodyBytes-2))
 			})
 			_, err := ListInvites(context.Background(), nil)
 			if !tc.wantError {

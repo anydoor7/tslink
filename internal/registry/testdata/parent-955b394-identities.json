@@ -1,0 +1,54 @@
+{
+  "schema_version": 2,
+  "services": [
+    {
+      "name": "photos",
+      "type": "proxy",
+      "target": "http://localhost:3000",
+      "people_scoped": true,
+      "created_at": "0001-01-01T00:00:00Z"
+    }
+  ],
+  "people": [
+    {
+      "login": "alice~team@",
+      "grants": [
+        {
+          "app": "photos"
+        }
+      ]
+    },
+    {
+      "login": "aliceteam@",
+      "grants": [
+        {
+          "app": "photos"
+        }
+      ]
+    },
+    {
+      "login": "alice team@",
+      "grants": [
+        {
+          "app": "photos"
+        }
+      ]
+    },
+    {
+      "login": "ops!team@",
+      "grants": [
+        {
+          "app": "photos"
+        }
+      ]
+    },
+    {
+      "login": "张三@例子.公司",
+      "grants": [
+        {
+          "app": "photos"
+        }
+      ]
+    }
+  ]
+}
