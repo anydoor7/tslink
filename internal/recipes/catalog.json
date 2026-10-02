@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "catalog_version": 1,
+  "catalog_version": 2,
   "recipes": [
     {
       "id": "home-assistant",
@@ -38,7 +38,8 @@
             }
           ]
         }
-      ]
+      ],
+      "preserve_host": true
     },
     {
       "id": "jellyfin",
@@ -88,7 +89,8 @@
             }
           ]
         }
-      ]
+      ],
+      "preserve_host": true
     },
     {
       "id": "plex",
@@ -133,7 +135,8 @@
             }
           ]
         }
-      ]
+      ],
+      "preserve_host": true
     },
     {
       "id": "immich",
@@ -141,8 +144,8 @@
       "default_ports": [
         2283
       ],
-      "default_target": "http://127.0.0.1:12283",
-      "port_note": "App HTTP port 2283; this recipe targets a required owner-configured loopback Nginx bridge on 12283 to restore the external Host.",
+      "default_target": "http://127.0.0.1:2283",
+      "port_note": "Native HTTP port 2283; use the actual loopback host mapping.",
       "recommended_name": "immich",
       "websockets": true,
       "health_path": "/api/server/ping",
@@ -167,10 +170,10 @@
       "safety_note_zh": "有应用登录；分享前完成管理员初始化；大文件上传还需网关层支持。",
       "notes": [
         {
-          "text": "Merge this server block into the http block of a local Nginx configuration and start/reload that proxy before applying the recipe. TSLink targets its loopback bridge on 12283, which restores the exact external Host and forwards WebSocket upgrades to the app on 2283. Replace the hostname with the exact TSLink URL hostname. Keep both listeners isolated; no Origin bypass is needed. Use the root of a dedicated hostname and set the mobile server URL to https://immich.YOUR-TAILNET.ts.net. The bridge also supplies X-Real-IP from TSLink forwarded client IP. TSLink still caps uploads at 32 MiB and request reads at 30 seconds; this bridge cannot remove those gateway limits.",
-          "text_zh": "将此 server 段合并进本机 Nginx 配置的 http 段，应用 recipe 前先启动或重载代理。TSLink 连接 12283 上的 loopback 桥接，恢复精确外部 Host，并把 WebSocket upgrade 转给 2283 上的应用。域名换成精确 TSLink URL 域名；隔离两个监听器，不需要绕过 Origin 校验。使用独立域名根路径，移动端 URL 为 https://immich.YOUR-TAILNET.ts.net；桥接从 TSLink forwarded 客户端 IP 提供 X-Real-IP。上传仍受 TSLink 32 MiB/30 秒限制，桥接无法消除网关限制。",
-          "snippet": "server {\n    listen 127.0.0.1:12283;\n    server_name _;\n    location / {\n        proxy_pass http://127.0.0.1:2283;\n        proxy_http_version 1.1;\n        proxy_set_header Host immich.YOUR-TAILNET.ts.net;\n        proxy_set_header X-Forwarded-Host $http_x_forwarded_host;\n        proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;\n        proxy_set_header X-Forwarded-For $http_x_forwarded_for;\n        proxy_set_header X-Real-IP $http_x_forwarded_for;\n        proxy_set_header Upgrade $http_upgrade;\n        proxy_set_header Connection \"upgrade\";\n    }\n}",
-          "format": "nginx",
+          "text": "Use the root of a dedicated hostname. The recipe preserves the external Host and forwards X-Forwarded-Host/Proto/For directly to native HTTP port 2283. Set the mobile server URL to https://immich.YOUR-TAILNET.ts.net and finish administrator setup locally. Bind the host mapping to loopback as below. TSLink still caps uploads at 32 MiB and request reads at 30 seconds; large or slow uploads can fail. Client IP is provided in X-Forwarded-For; TSLink does not synthesize X-Real-IP.",
+          "text_zh": "使用独立域名的根路径。Recipe 保留外部 Host，直接向原生 HTTP 2283 转发 X-Forwarded-Host/Proto/For。移动客户端服务器 URL 设为 https://immich.YOUR-TAILNET.ts.net，先在本地完成管理员初始化；宿主机映射仅绑定 loopback。TSLink 请求体仍限 32 MiB、请求读取仍限 30 秒，大文件或慢速上传可能失败。客户端 IP 通过 X-Forwarded-For 提供，TSLink 不生成 X-Real-IP。",
+          "snippet": "ports:\n  - \"127.0.0.1:2283:2283\"",
+          "format": "yaml",
           "sources": [
             {
               "url": "https://docs.immich.app/administration/reverse-proxy/",
@@ -182,7 +185,8 @@
             }
           ]
         }
-      ]
+      ],
+      "preserve_host": true
     },
     {
       "id": "nextcloud",
@@ -230,7 +234,8 @@
             }
           ]
         }
-      ]
+      ],
+      "preserve_host": true
     },
     {
       "id": "open-webui",
@@ -276,7 +281,8 @@
             }
           ]
         }
-      ]
+      ],
+      "preserve_host": true
     },
     {
       "id": "ollama",
@@ -302,8 +308,8 @@
       "safety_note_zh": "本地 API 无认证，禁止 Funnel；请求可消耗 GPU 并调用已配置的云模型。",
       "notes": [
         {
-          "text": "Local Ollama API has no authentication. Keep binding on loopback. If a browser must call it directly, allow only the exact browser origin, never *. Platform environment-variable setup is in the FAQ.",
-          "text_zh": "本地 Ollama API 没有认证。保留 loopback 绑定；浏览器直接调用时只允许精确 origin，禁止 *。各平台环境变量设置见 FAQ。",
+          "text": "Host preservation stays off: the loopback listener rejects an external .ts.net Host to protect against DNS rebinding, even if OLLAMA_ORIGINS allows that Origin. Local Ollama API has no authentication. Keep binding on loopback. If a browser must call it directly, allow only the exact browser origin, never *. Platform environment-variable setup is in the FAQ.",
+          "text_zh": "保持 Host 改写：loopback listener 为防 DNS rebinding 拒绝外部 .ts.net Host，即使 OLLAMA_ORIGINS 已允许该 Origin。本地 Ollama API 没有认证。保留 loopback 绑定；浏览器直接调用时只允许精确 origin，禁止 *。各平台环境变量设置见 FAQ。",
           "snippet": "OLLAMA_HOST=127.0.0.1:11434\nOLLAMA_ORIGINS=https://open-webui.YOUR-TAILNET.ts.net",
           "format": "dotenv",
           "sources": [
@@ -317,7 +323,8 @@
             }
           ]
         }
-      ]
+      ],
+      "preserve_host": false
     },
     {
       "id": "comfyui",
@@ -351,9 +358,9 @@
       "safety_note_zh": "本地工作流服务禁止 Funnel；只分享给可被授权运行工作流及自定义节点的人。",
       "notes": [
         {
-          "text": "Keep the server on loopback. TSLink rewrites Host, so ComfyUI default loopback Host/Origin comparison rejects external browser requests. Use the exact external origin with --enable-cors-header (never omit its argument or use *). This selects ComfyUI CORS middleware instead of its default Origin rejection; CORS is not authentication. WebSocket /ws must work. Custom nodes can execute code; this recipe stays never public and does not establish an authentication layer.",
-          "text_zh": "保留 loopback 监听。TSLink 改写 Host 后，ComfyUI 默认 loopback Host/Origin 比较会拒绝外部浏览器请求。--enable-cors-header 必须带精确外部 origin，不能省略参数或填 *。它会选择 CORS middleware 替代默认 Origin 拒绝逻辑，CORS 不等于认证。/ws 必须可用；自定义节点可执行代码，本 recipe 不建立认证层，仍禁止公开。",
-          "snippet": "python main.py --listen 127.0.0.1 --port 8188 --enable-cors-header https://comfyui.YOUR-TAILNET.ts.net",
+          "text": "Keep the server on loopback. The recipe preserves the external Host, so the default Host/Origin middleware accepts same-origin browser requests; no --enable-cors-header override is needed. Keep the default Origin and Sec-Fetch-Site protections. WebSocket /ws must work. Custom nodes can execute code; this recipe stays never public and does not establish an authentication layer.",
+          "text_zh": "服务只绑定 loopback。Recipe 保留外部 Host，默认 Host/Origin middleware 可接受同域浏览器请求，无需 --enable-cors-header。保留默认 Origin 和 Sec-Fetch-Site 防护，确认 /ws WebSocket 可用。Custom nodes 可执行代码；此 recipe 始终 never public，不能建立认证层。",
+          "snippet": "python main.py --listen 127.0.0.1 --port 8188",
           "format": "sh",
           "sources": [
             {
@@ -366,7 +373,8 @@
             }
           ]
         }
-      ]
+      ],
+      "preserve_host": true
     },
     {
       "id": "grafana",
@@ -407,7 +415,8 @@
             }
           ]
         }
-      ]
+      ],
+      "preserve_host": true
     },
     {
       "id": "jupyter",
@@ -433,9 +442,9 @@
       "safety_note_zh": "代码执行环境；无 token/密码即无保护，默认禁止 Funnel。",
       "notes": [
         {
-          "text": "Merge into jupyter_server_config.py. Set allow_origin to the exact external HTTPS origin because TSLink rewrites Host to the loopback upstream; trust_xheaders does not restore Host for kernel WebSocket origin checks. Keep generated token authentication, or set a password using jupyter server password. Never clear both token and password, disable XSRF checks, or use a wildcard origin. Only trusted users should receive access because notebooks execute code as the owner. This recipe stays never public even when a token is configured; detection cannot verify auth.",
-          "text_zh": "合并进 jupyter_server_config.py。TSLink 将 Host 改为 loopback 上游，trust_xheaders 不会为 kernel WebSocket origin 检查恢复 Host；allow_origin 必须填精确外部 HTTPS origin。保留随机 token，或用 jupyter server password 设置密码；不能同时清空 token 与密码，不能关闭 XSRF 或使用通配 origin。Notebook 以所有者权限执行代码，只给可信用户；探测无法验证认证，即使有 token 也禁止公开。",
-          "snippet": "c.ServerApp.ip = \"127.0.0.1\"\nc.ServerApp.port = 8888\nc.ServerApp.base_url = \"/\"\nc.ServerApp.trust_xheaders = True\nc.ServerApp.allow_origin = \"https://jupyter.YOUR-TAILNET.ts.net\"\nc.ServerApp.disable_check_xsrf = False",
+          "text": "Merge into jupyter_server_config.py. The recipe preserves the external Host: add only its exact hostname to local_hostnames so the DNS-rebinding Host check stays enabled. Same-host WebSocket Origin checking needs no allow_origin override. trust_xheaders restores HTTPS for HTTP XSRF checks. Keep generated token authentication, or set a password using jupyter server password. Never clear both token and password, disable XSRF checks, allow all remote Hosts or use a wildcard origin. Only trusted users should receive notebook access; this recipe stays never public.",
+          "text_zh": "合并到 jupyter_server_config.py。Recipe 保留外部 Host，把精确域名加入 local_hostnames，保留防 DNS rebinding 的 Host 检查。同域 WebSocket Origin 检查无需 allow_origin 覆盖；trust_xheaders 恢复 HTTP XSRF 检查所需 HTTPS scheme。保留生成的 token 或通过 jupyter server password 设置密码。不要同时清空 token 和密码、禁用 XSRF、允许所有远程 Host 或使用通配 origin。Notebook 执行所有者权限代码，只给可信用户访问，本 recipe 始终 never public。",
+          "snippet": "c.ServerApp.ip = \"127.0.0.1\"\nc.ServerApp.port = 8888\nc.ServerApp.local_hostnames = [\"localhost\", \"jupyter.YOUR-TAILNET.ts.net\"]\nc.ServerApp.trust_xheaders = True\nc.ServerApp.disable_check_xsrf = False",
           "format": "python",
           "sources": [
             {
@@ -452,7 +461,8 @@
             }
           ]
         }
-      ]
+      ],
+      "preserve_host": true
     },
     {
       "id": "uptime-kuma",
@@ -460,8 +470,8 @@
       "default_ports": [
         3001
       ],
-      "default_target": "http://127.0.0.1:13001",
-      "port_note": "App HTTP port 3001; this recipe targets a required owner-configured loopback Nginx bridge on 13001 to restore the external Host.",
+      "default_target": "http://127.0.0.1:3001",
+      "port_note": "Native HTTP port 3001; use the actual loopback host mapping.",
       "recommended_name": "uptime-kuma",
       "websockets": true,
       "health_path": "/",
@@ -478,10 +488,10 @@
       "safety_note_zh": "初始化后控制台有登录；公开状态页本来就无需登录。",
       "notes": [
         {
-          "text": "Merge this server block into the http block of a local Nginx configuration and start/reload that proxy before applying the recipe. TSLink targets its loopback bridge on 13001, which restores the exact external Host and forwards WebSocket upgrades to the app on 3001. Replace the hostname with the exact TSLink URL hostname. Keep both listeners isolated; no Origin bypass is needed. Finish administrator setup locally and keep dashboard authentication on. Keep UPTIME_KUMA_WS_ORIGIN_CHECK at its default, not bypass: the WebSocket check compares Origin to Host (its trustProxy branch does not use X-Forwarded-Host). Publish only deliberately public status pages.",
-          "text_zh": "将此 server 段合并进本机 Nginx 配置的 http 段，应用 recipe 前先启动或重载代理。TSLink 连接 13001 上的 loopback 桥接，恢复精确外部 Host，并把 WebSocket upgrade 转给 3001 上的应用。域名换成精确 TSLink URL 域名；隔离两个监听器，不需要绕过 Origin 校验。先在本机建立管理员并保留控制台认证。UPTIME_KUMA_WS_ORIGIN_CHECK 保留默认值，不能 bypass；WebSocket 会比较 Origin 和 Host，trustProxy 分支不使用 X-Forwarded-Host。只公开有意发布的状态页。",
-          "snippet": "server {\n    listen 127.0.0.1:13001;\n    server_name _;\n    location / {\n        proxy_pass http://127.0.0.1:3001;\n        proxy_http_version 1.1;\n        proxy_set_header Host uptime-kuma.YOUR-TAILNET.ts.net;\n        proxy_set_header X-Forwarded-Host $http_x_forwarded_host;\n        proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;\n        proxy_set_header X-Forwarded-For $http_x_forwarded_for;\n        proxy_set_header X-Real-IP $http_x_forwarded_for;\n        proxy_set_header Upgrade $http_upgrade;\n        proxy_set_header Connection \"upgrade\";\n    }\n}",
-          "format": "nginx",
+          "text": "The recipe preserves the external Host and targets native HTTP port 3001. The default WebSocket validator can compare the browser Origin with that Host without extra proxy configuration. Finish administrator setup locally and keep dashboard login on. Keep UPTIME_KUMA_WS_ORIGIN_CHECK at its default, never bypass. Bind the host mapping to loopback. Publish only deliberately public status pages.",
+          "text_zh": "Recipe 保留外部 Host，直接连接原生 HTTP 3001；默认 WebSocket 校验可比较浏览器 Origin 和 Host，无需额外代理配置。先在本地完成管理员初始化，保留控制台登录；UPTIME_KUMA_WS_ORIGIN_CHECK 保持默认，不设 bypass。宿主机映射只绑定 loopback，只公开有意公开的状态页。",
+          "snippet": "ports:\n  - \"127.0.0.1:3001:3001\"",
+          "format": "yaml",
           "sources": [
             {
               "url": "https://github.com/louislam/uptime-kuma/wiki/Reverse-Proxy",
@@ -497,7 +507,8 @@
             }
           ]
         }
-      ]
+      ],
+      "preserve_host": true
     },
     {
       "id": "paperless-ngx",
@@ -523,10 +534,10 @@
       "safety_note_zh": "有账号登录；暴露前必须取消 PAPERLESS_AUTO_LOGIN_USERNAME。",
       "notes": [
         {
-          "text": "Set in docker-compose.env or the webserver environment. TSLink sends the upstream address as Host and the external hostname as X-Forwarded-Host: enable PAPERLESS_USE_X_FORWARD_HOST and trust only the actual TSLink source IP. The loopback values below are for a host-local backend; replace them with the bridge gateway IP when container networking changes that source. Keep the backend isolated from untrusted clients: Django forwarded-host selection is not itself restricted by TRUSTED_PROXIES. PAPERLESS_URL adds host, CORS and CSRF trust; no trailing slash. The SSL header restores the external HTTPS scheme. Keep auto-login unset and configure a secret key through your secret manager. Uploads remain subject to TSLink 32 MiB/30s limits.",
-          "text_zh": "写入 docker-compose.env 或 webserver 环境。TSLink 将 Host 改为上游地址，外部域名放在 X-Forwarded-Host；开启 PAPERLESS_USE_X_FORWARD_HOST，只信任实际 TSLink 来源 IP。以下 loopback 值适合宿主机后端；容器网络改变来源时换成实际网桥网关 IP。后端应隔离不可信客户端，Django 选择 forwarded host 本身不受 TRUSTED_PROXIES 限制。PAPERLESS_URL 添加域名、CORS、CSRF 信任，不加尾部斜线；SSL header 恢复外部 HTTPS scheme。保留账号登录，不设置自动登录，密钥由 secret manager 配置。上传仍受 TSLink 32 MiB/30 秒限制。",
-          "snippet": "PAPERLESS_URL=https://paperless-ngx.YOUR-TAILNET.ts.net\nPAPERLESS_ALLOWED_HOSTS=paperless-ngx.YOUR-TAILNET.ts.net\nPAPERLESS_USE_X_FORWARD_HOST=true\nPAPERLESS_TRUSTED_PROXIES=127.0.0.1,::1\nPAPERLESS_PROXY_SSL_HEADER=[\"HTTP_X_FORWARDED_PROTO\",\"https\"]",
-          "format": "dotenv",
+          "text": "Set in docker-compose.env or the webserver environment. With the external Host preserved, PAPERLESS_URL supplies the allowed hostname and exact CSRF/CORS origin; no forwarded-host override is needed. The SSL header restores the external HTTPS scheme. Keep the backend isolated so only TSLink can supply this trusted header. Keep auto-login unset and configure a secret key through your secret manager. Uploads remain subject to TSLink 32 MiB/30s limits.",
+          "text_zh": "写入 docker-compose.env 或 webserver 环境。外部 Host 保留后，PAPERLESS_URL 同时提供允许的域名和精确 CSRF/CORS origin，无需 forwarded-host 覆盖。SSL header 恢复外部 HTTPS scheme；隔离后端，确保只有 TSLink 能提供此信任头。不要设置自动登录，密钥通过 secret manager 配置。上传仍受 TSLink 32 MiB/30 秒限制。",
+          "snippet": "PAPERLESS_URL=https://paperless-ngx.YOUR-TAILNET.ts.net\nPAPERLESS_PROXY_SSL_HEADER=[\"HTTP_X_FORWARDED_PROTO\",\"https\"]",
+          "format": "sh",
           "sources": [
             {
               "url": "https://docs.paperless-ngx.com/configuration/",
@@ -538,7 +549,8 @@
             }
           ]
         }
-      ]
+      ],
+      "preserve_host": true
     },
     {
       "id": "vaultwarden",
@@ -586,7 +598,8 @@
             }
           ]
         }
-      ]
+      ],
+      "preserve_host": true
     },
     {
       "id": "syncthing",
@@ -619,8 +632,8 @@
       "safety_note_zh": "GUI 认证可选且能管理文件同步，禁止 Funnel。",
       "notes": [
         {
-          "text": "Settings > GUI: set a GUI username and password first and retain loopback binding. TSLink uses an upstream loopback Host, so keep host checking enabled. No insecureSkipHostcheck bypass is required. GUI settings below are UI values. This shares the management GUI, not file-sync port 22000.",
-          "text_zh": "先在 Settings > GUI 设置用户名及密码并保留 loopback 绑定。TSLink 使用上游 loopback Host，应保留 Host 校验，不需要 insecureSkipHostcheck。以下为 UI 值；分享的是管理界面，不是 22000 文件同步端口。",
+          "text": "Host preservation stays off so the default loopback Host guard continues to work. Settings > GUI: set a GUI username and password first and retain loopback binding. TSLink uses an upstream loopback Host, so keep host checking enabled. No insecureSkipHostcheck bypass is required. GUI settings below are UI values. This shares the management GUI, not file-sync port 22000.",
+          "text_zh": "保持 Host 改写，使默认 loopback Host 防护继续工作。先在 Settings > GUI 设置用户名及密码并保留 loopback 绑定。TSLink 使用上游 loopback Host，应保留 Host 校验，不需要 insecureSkipHostcheck。以下为 UI 值；分享的是管理界面，不是 22000 文件同步端口。",
           "snippet": "GUI Listen Address: 127.0.0.1:8384\nGUI Authentication User: (choose locally)\nGUI Authentication Password: (set locally)",
           "format": "text",
           "sources": [
@@ -634,7 +647,8 @@
             }
           ]
         }
-      ]
+      ],
+      "preserve_host": false
     },
     {
       "id": "portainer",
@@ -661,9 +675,9 @@
       "safety_note_zh": "容器管理员可控制主机，禁止 Funnel，尤其禁止公开初始化界面。",
       "notes": [
         {
-          "text": "Complete first-admin setup locally before sharing. Default 9443 uses a self-signed certificate which TSLink will not bypass. Merge this service fragment into compose: explicitly enable HTTP and publish 9000 only on loopback. Current releases require full scheme://host trusted origins for CSRF protection because TSLink rewrites Host; older releases accepted bare hostnames, so check your version documentation. Keep CSRF, login and setup-token protection enabled. Do not expose agent port 8000. UI consoles require WebSockets.",
-          "text_zh": "先在本机完成首个管理员设置。默认 9443 为自签名 HTTPS，TSLink 不绕过证书校验。将以下服务片段合并进 compose：明确开启 HTTP，仅将 9000 映射到 loopback。TSLink 改写 Host，因此当前版本 CSRF 可信 origin 要求完整 scheme://host；旧版本接受纯域名，应按所用版本文档核对。保留 CSRF、登录及 setup-token 保护，不分享 agent 8000 端口。控制台需 WebSocket。",
-          "snippet": "ports:\n  - \"127.0.0.1:9000:9000\"\ncommand: [\"--http-enabled\", \"--trusted-origins\", \"https://portainer.YOUR-TAILNET.ts.net\"]",
+          "text": "Complete first-admin setup locally before sharing. Default 9443 uses a self-signed certificate which TSLink will not bypass. Merge this service fragment into compose: explicitly enable HTTP and publish 9000 only on loopback. The recipe preserves the external Host, so current Portainer CSRF protection accepts the same-origin browser without --trusted-origins. Keep CSRF, login and setup-token protection enabled. Do not expose agent port 8000. UI consoles require WebSockets.",
+          "text_zh": "先在本地完成首次管理员设置。默认 9443 使用自签名证书，TSLink 不绕过校验。合并此 compose 片段，显式启用 HTTP，9000 只映射到 loopback。Recipe 保留外部 Host，当前 Portainer CSRF 防护可接受同域浏览器，无需 --trusted-origins。保留 CSRF、登录和 setup-token 防护；不暴露 agent 8000，控制台需要 WebSocket。",
+          "snippet": "ports:\n  - \"127.0.0.1:9000:9000\"\ncommand: [\"--http-enabled\"]",
           "format": "yaml",
           "sources": [
             {
@@ -688,7 +702,8 @@
             }
           ]
         }
-      ]
+      ],
+      "preserve_host": true
     },
     {
       "id": "generic-web",
@@ -716,8 +731,8 @@
       "safety_note_zh": "无法判定认证，所有者审查具体应用前禁止 Funnel。",
       "notes": [
         {
-          "text": "Inspect the application documentation for its exact external URL, allowed hosts/origins and proxy trust settings. There is no universal config snippet. Keep its own authentication enabled and use a dedicated hostname. TSLink policy keeps unknown apps private; GET / with a nonempty HTML title identifies only a generic web response.",
-          "text_zh": "检查具体应用文档中的外部 URL、可信域名/origin 和代理 IP；没有通用配置文件片段。保留认证并使用独立域名。未知应用保持私有；根路径非空 HTML title 只能说明是通用网页。",
+          "text": "Host preservation defaults off because the app is unknown; use --preserve-host only after checking its Host/Origin rules. Inspect the application documentation for its exact external URL, allowed hosts/origins and proxy trust settings. There is no universal config snippet. Keep its own authentication enabled and use a dedicated hostname. TSLink policy keeps unknown apps private; GET / with a nonempty HTML title identifies only a generic web response.",
+          "text_zh": "应用未知，默认改写 Host；核对应用 Host/Origin 规则后才使用 --preserve-host。检查具体应用文档中的外部 URL、可信域名/origin 和代理 IP；没有通用配置文件片段。保留认证并使用独立域名。未知应用保持私有；根路径非空 HTML title 只能说明是通用网页。",
           "snippet": "External URL: https://generic-web.YOUR-TAILNET.ts.net\nAuthentication: enabled\nTrusted proxy: actual loopback source IP",
           "format": "text",
           "sources": [
@@ -727,7 +742,8 @@
             }
           ]
         }
-      ]
+      ],
+      "preserve_host": false
     }
   ]
 }

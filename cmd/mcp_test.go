@@ -528,7 +528,7 @@ func TestMCPToolSchemasAreClosedAndModelFocused(t *testing.T) {
 	shareSchema := mcpToolByName(t, "share").InputSchema
 	required := shareSchema["required"].([]string)
 	properties := shareSchema["properties"].(map[string]any)
-	if len(required) != 1 || required[0] != "target" || len(properties) != 9 {
+	if len(required) != 1 || required[0] != "target" || len(properties) != 10 {
 		t.Fatalf("share schema = %+v", shareSchema)
 	}
 	nameDescription := properties["name"].(map[string]any)["description"].(string)

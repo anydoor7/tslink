@@ -37,6 +37,7 @@ type Recipe struct {
 	DisplayName     string        `json:"display_name"`
 	DefaultPorts    []int         `json:"default_ports"`
 	DefaultTarget   string        `json:"default_target"`
+	PreserveHost    bool          `json:"preserve_host"`
 	PortNote        string        `json:"port_note"`
 	RecommendedName string        `json:"recommended_name"`
 	WebSockets      bool          `json:"websockets"`

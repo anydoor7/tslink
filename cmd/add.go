@@ -25,9 +25,10 @@ import (
 
 // AddResult is the JSON data for the add command.
 type AddResult struct {
-	Name    string `json:"name"`
-	Type    string `json:"type"`
-	Created bool   `json:"created"`
+	Name         string `json:"name"`
+	Type         string `json:"type"`
+	Created      bool   `json:"created"`
+	PreserveHost bool   `json:"preserve_host"`
 	// ReplacedFields names the registry.json fields an add of an existing
 	// service changed or dropped; empty when the add created the service.
 	ReplacedFields  fieldList             `json:"replaced_fields"`
@@ -98,6 +99,7 @@ func invalidAllowEntries(allowedUsers []string) []string {
 type AddParams struct {
 	Name            string
 	Proxy           string
+	PreserveHost    bool
 	Dir             string
 	TCP             string
 	Ephemeral       bool
@@ -221,6 +223,9 @@ func buildService(p AddParams) (registry.Service, error) {
 	if modes != 1 {
 		return registry.Service{}, registry.ServiceTypeAmbiguousError()
 	}
+	if p.PreserveHost && svcType != registry.TypeProxy {
+		return registry.Service{}, output.ErrUsage("--preserve-host requires --proxy")
+	}
 	if p.Proxy, err = barePortTarget("proxy", p.Proxy); err != nil {
 		return registry.Service{}, err
 	}
@@ -295,7 +300,7 @@ func buildService(p AddParams) (registry.Service, error) {
 			target = "http://" + target
 		}
 		return registry.Service{
-			Name: p.Name, Type: registry.TypeProxy, Target: target,
+			Name: p.Name, Type: registry.TypeProxy, Target: target, PreserveHost: p.PreserveHost,
 			Ephemeral: p.Ephemeral, Tags: tags, AllowedUsers: allowedUsers,
 			Funnel: p.Funnel, PublicAck: p.Public, NoAutoProvision: p.NoAutoProvision,
 			FunnelExpiresAt: funnelExpiresAt,
@@ -392,6 +397,7 @@ func buildAddResult(ctx context.Context, svc registry.Service, created bool, pid
 		Name:            svc.Name,
 		Type:            svc.Type,
 		Created:         created,
+		PreserveHost:    svc.PreserveHost,
 		FunnelExpiresAt: cloneTimePointer(svc.FunnelExpiresAt),
 		URLPending:      true,
 		Endpoint:        view.Endpoint,
@@ -660,6 +666,7 @@ Examples:
 			if cmd.Flags().Changed("yes") || cmd.Flags().Changed("force-unsafe-public") {
 				return output.ErrUsage("--yes and --force-unsafe-public require --recipe")
 			}
+			preserveHost, _ := cmd.Flags().GetBool("preserve-host")
 			proxyTarget, _ := cmd.Flags().GetString("proxy")
 			dirPath, _ := cmd.Flags().GetString("dir")
 			tcpTarget, _ := cmd.Flags().GetString("tcp")
@@ -677,6 +684,7 @@ Examples:
 			params := AddParams{
 				Name:            args[0],
 				Proxy:           proxyTarget,
+				PreserveHost:    preserveHost,
 				Dir:             dirPath,
 				TCP:             tcpTarget,
 				Ephemeral:       ephemeral,
@@ -820,6 +828,7 @@ Examples:
 		},
 	}
 
+	addCmd.Flags().Bool("preserve-host", false, "Preserve the incoming HTTP Host (proxy only; recipes choose their default)")
 	addCmd.Flags().String("proxy", "", "Proxy target in host:port or URL form")
 	addCmd.Flags().String("dir", "", "Directory to expose")
 	addCmd.Flags().String("tcp", "", "TCP proxy target in host:port form")

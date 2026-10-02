@@ -37,6 +37,7 @@ type AccessExplainResult struct {
 }
 
 type AccessExplainKnown struct {
+	PreserveHost                 bool                              `json:"preserve_host"`
 	ServiceType                  string                            `json:"service_type"`
 	Endpoint                     inspect.EndpointView              `json:"endpoint"`
 	Exposure                     inspect.ExposureView              `json:"exposure"`
@@ -130,6 +131,7 @@ func buildAccessExplainResult(svc registry.Service) AccessExplainResult {
 
 	known := AccessExplainKnown{
 		ServiceType:                  view.Type,
+		PreserveHost:                 view.PreserveHost,
 		Endpoint:                     view.Endpoint,
 		Exposure:                     view.Exposure,
 		Tags:                         view.Tags,
@@ -457,6 +459,9 @@ func formatAccessExplain(result AccessExplainResult, out io.Writer) {
 	fmt.Fprintf(out, "  Exposure: %s, public=%t\n", emptyDash(known.Exposure.Kind), known.Exposure.Public)
 	fmt.Fprintf(out, "  Tags: %s\n", summaryLabel(known.Tags))
 	fmt.Fprintf(out, "  Allow: %s\n", summaryLabel(known.Allow))
+	if known.ServiceType == registry.TypeProxy {
+		fmt.Fprintf(out, "  Preserve incoming Host: %t\n", known.PreserveHost)
+	}
 	fmt.Fprintf(out, "  Backend: %s (%s)\n", emptyDash(known.Backend.Display), emptyDash(known.Backend.Kind))
 	fmt.Fprintf(out, "  Target classification: %s - %s\n", known.TargetLoopbackClassification.Classification, known.TargetLoopbackClassification.Summary)
 	if len(known.Warnings) > 0 {

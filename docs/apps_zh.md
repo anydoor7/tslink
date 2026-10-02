@@ -11,7 +11,7 @@ tslink add --recipe home-assistant --proxy 127.0.0.1:8123  # 等价预览
 tslink add family-tv --recipe jellyfin --yes      # 自定义服务名
 ```
 
-Recipe catalog 版本 1，官方文档核对日期为 **2026-10-02**。区分宿主机端口映射和容器端口，用 `--proxy 127.0.0.1:<宿主机端口>` 覆盖。运行 `tslink url <name> --wait=30s` 获得精确 URL，再替换片段中的 `YOUR-TAILNET` 及示例域名，不猜测 tailnet 后缀。合并设置片段，不覆盖整个配置文件。容器中看到的来源可能是网桥网关，只信任实际代理 IP，不信任整个私有网段。
+Recipe catalog 版本 2，官方文档核对日期为 **2026-10-02**。区分宿主机端口映射和容器端口，用 `--proxy 127.0.0.1:<宿主机端口>` 覆盖。运行 `tslink url <name> --wait=30s` 获得精确 URL，再替换片段中的 `YOUR-TAILNET` 及示例域名，不猜测 tailnet 后缀。合并设置片段，不覆盖整个配置文件。容器中看到的来源可能是网桥网关，只信任实际代理 IP，不信任整个私有网段。
 
 `apps share` 和 `add --recipe` 默认给出计划；`--yes` 才应用，`--dry-run` 始终优先。同名服务保留原配置，结果同时提供 `service` 和 `requested`。命令不会安装或配置第三方应用。`--no-daemon-install` 只保存 registry。注册成功不能证明应用已运行或 URL 可访问。
 
@@ -19,7 +19,7 @@ Recipe catalog 版本 1，官方文档核对日期为 **2026-10-02**。区分宿
 
 私有访问仍受 tailnet policy 和 `--allow` 影响。Funnel 面向整个互联网：验证应用自身认证后才考虑 `--funnel --public`。`never_public` recipe 会拒绝 Funnel；只有所有者有意传入 **`--force-unsafe-public`** 才能覆盖，可能向所有人暴露主机控制、代码执行、GPU 消耗或私密数据。覆盖不能建立应用认证。`app_login` 也不表示关闭登录或未完成初始化的实例可安全公开。
 
-下方健康路径仅为 catalog 数据，供后续监控使用，本功能不实现健康探针。登录页有响应只能说明 HTTP 可用。TSLink 当前请求体限制为 32 MiB、请求读取超时 30 秒，Immich、Nextcloud、Paperless 和聊天界面的大文件或慢速上传可能失败。TSLink 将 Host 改为上游地址，外部域名放在 X-Forwarded-Host，Origin 保留浏览器值；应按下方配置精确域名/origin 及代理信任。Immich 和 Uptime Kuma 需要下方的本地 Nginx 桥接，recipe 使用桥接目标。代理支持 WebSocket upgrade，分享前仍需验证真实应用。
+下方健康路径仅为 catalog 数据，供后续监控使用，本功能不实现健康探针。登录页有响应只能说明 HTTP 可用。TSLink 当前请求体限制为 32 MiB、请求读取超时 30 秒，Immich、Nextcloud、Paperless 和聊天界面的大文件或慢速上传可能失败。Recipes 各自选择下方显示的 Host 策略：大多数保留真实传入 Host；Ollama、Syncthing 为满足本地 Host 防护继续改写；generic-web 未核对前默认改写。普通 add/share 和已有服务、templates 仍默认改写。用 `--preserve-host` 或 `--preserve-host=false` 覆盖 recipe（MCP 为显式布尔 `preserve_host`），省略则使用 recipe 默认值。两种模式均从真实请求重新生成 X-Forwarded-Host/Proto/For，忽略伪造的 forwarded 头；Origin 不变。Immich 和 Uptime Kuma 直接连接原生 HTTP 端口。代理支持 WebSocket upgrade，分享前仍需验证真实应用。
 
 `template list/show/apply` 继续工作：`local-web`、`dev-suite`、`local-ai-suite` 是通用多服务组合，没有 recipe 的安全检查或应用配置建议。需要应用指导时使用 recipe，AI 模板中的 Ollama 也适用。
 
@@ -30,6 +30,8 @@ Agent 可依次调用 `recipe_list`、`apps_detect`、`recipe_plan`、`recipe_ap
 Recipe `home-assistant`；本地端口 **8123, 80**；默认目标 `http://127.0.0.1:8123`；WebSocket：**需要**；建议健康路径 `/`。
 
 安全级别：**app_login**。保留应用登录，禁止用 trusted_networks 为代理流量绕过认证。
+
+代理 Host：**保留外部域名**（`preserve_host=true`）。
 
 ```sh
 tslink apps share home-assistant
@@ -53,6 +55,8 @@ Recipe `jellyfin`；本地端口 **8096, 8920**；默认目标 `http://127.0.0.1
 
 安全级别：**app_login**。完成初始化后有用户登录；公网暴露前验证家人的账号。
 
+代理 Host：**保留外部域名**（`preserve_host=true`）。
+
 ```sh
 tslink apps share jellyfin
 ```
@@ -72,6 +76,8 @@ Recipe `plex`；本地端口 **32400**；默认目标 `http://127.0.0.1:32400`�
 
 安全级别：**app_login**。先认领服务器并使用 Plex 账号；不要为 loopback 来源豁免认证。
 
+代理 Host：**保留外部域名**（`preserve_host=true`）。
+
 ```sh
 tslink apps share plex
 ```
@@ -87,32 +93,21 @@ List of IP addresses and networks allowed without auth: (empty)
 
 ## Immich
 
-Recipe `immich`；本地端口 **2283**；默认目标 `http://127.0.0.1:12283`；WebSocket：**需要**；建议健康路径 `/api/server/ping`。
+Recipe `immich`；本地端口 **2283**；默认目标 `http://127.0.0.1:2283`；WebSocket：**需要**；建议健康路径 `/api/server/ping`。
 
 安全级别：**app_login**。有应用登录；分享前完成管理员初始化；大文件上传还需网关层支持。
+
+代理 Host：**保留外部域名**（`preserve_host=true`）。
 
 ```sh
 tslink apps share immich
 ```
 
-将此 server 段合并进本机 Nginx 配置的 http 段，应用 recipe 前先启动或重载代理。TSLink 连接 12283 上的 loopback 桥接，恢复精确外部 Host，并把 WebSocket upgrade 转给 2283 上的应用。域名换成精确 TSLink URL 域名；隔离两个监听器，不需要绕过 Origin 校验。使用独立域名根路径，移动端 URL 为 https://immich.YOUR-TAILNET.ts.net；桥接从 TSLink forwarded 客户端 IP 提供 X-Real-IP。上传仍受 TSLink 32 MiB/30 秒限制，桥接无法消除网关限制。
+使用独立域名的根路径。Recipe 保留外部 Host，直接向原生 HTTP 2283 转发 X-Forwarded-Host/Proto/For。移动客户端服务器 URL 设为 https://immich.YOUR-TAILNET.ts.net，先在本地完成管理员初始化；宿主机映射仅绑定 loopback。TSLink 请求体仍限 32 MiB、请求读取仍限 30 秒，大文件或慢速上传可能失败。客户端 IP 通过 X-Forwarded-For 提供，TSLink 不生成 X-Real-IP。
 
-```nginx
-server {
-    listen 127.0.0.1:12283;
-    server_name _;
-    location / {
-        proxy_pass http://127.0.0.1:2283;
-        proxy_http_version 1.1;
-        proxy_set_header Host immich.YOUR-TAILNET.ts.net;
-        proxy_set_header X-Forwarded-Host $http_x_forwarded_host;
-        proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
-        proxy_set_header X-Forwarded-For $http_x_forwarded_for;
-        proxy_set_header X-Real-IP $http_x_forwarded_for;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-    }
-}
+```yaml
+ports:
+  - "127.0.0.1:2283:2283"
 ```
 
 [官方文档 1](https://docs.immich.app/administration/reverse-proxy/) (访问于 2026-10-02). [官方文档 2](https://nginx.org/en/docs/http/ngx_http_proxy_module.html) (访问于 2026-10-02).
@@ -122,6 +117,8 @@ server {
 Recipe `nextcloud`；本地端口 **8080, 80**；默认目标 `http://127.0.0.1:8080`；WebSocket：**核心应用不需要**；建议健康路径 `/status.php`。
 
 安全级别：**app_login**。有账号登录；先完成安装；分享网关不会创建 Nextcloud 账号。
+
+代理 Host：**保留外部域名**（`preserve_host=true`）。
 
 ```sh
 tslink apps share nextcloud
@@ -144,6 +141,8 @@ tslink apps share nextcloud
 Recipe `open-webui`；本地端口 **3000, 8080**；默认目标 `http://127.0.0.1:3000`；WebSocket：**需要**；建议健康路径 `/health`。
 
 安全级别：**app_login**。WEBUI_AUTH 开启时有登录；关闭认证的实例及首个管理员注册页面应保持私有。
+
+代理 Host：**保留外部域名**（`preserve_host=true`）。
 
 ```sh
 tslink apps share open-webui
@@ -168,11 +167,13 @@ Recipe `ollama`；本地端口 **11434**；默认目标 `http://127.0.0.1:11434`
 
 安全级别：**never_public**。本地 API 无认证，禁止 Funnel；请求可消耗 GPU 并调用已配置的云模型。
 
+代理 Host：**改写为上游地址**（`preserve_host=false`）。
+
 ```sh
 tslink apps share ollama
 ```
 
-本地 Ollama API 没有认证。保留 loopback 绑定；浏览器直接调用时只允许精确 origin，禁止 *。各平台环境变量设置见 FAQ。
+保持 Host 改写：loopback listener 为防 DNS rebinding 拒绝外部 .ts.net Host，即使 OLLAMA_ORIGINS 已允许该 Origin。本地 Ollama API 没有认证。保留 loopback 绑定；浏览器直接调用时只允许精确 origin，禁止 *。各平台环境变量设置见 FAQ。
 
 ```dotenv
 OLLAMA_HOST=127.0.0.1:11434
@@ -187,14 +188,16 @@ Recipe `comfyui`；本地端口 **8188**；默认目标 `http://127.0.0.1:8188`�
 
 安全级别：**never_public**。本地工作流服务禁止 Funnel；只分享给可被授权运行工作流及自定义节点的人。
 
+代理 Host：**保留外部域名**（`preserve_host=true`）。
+
 ```sh
 tslink apps share comfyui
 ```
 
-保留 loopback 监听。TSLink 改写 Host 后，ComfyUI 默认 loopback Host/Origin 比较会拒绝外部浏览器请求。--enable-cors-header 必须带精确外部 origin，不能省略参数或填 *。它会选择 CORS middleware 替代默认 Origin 拒绝逻辑，CORS 不等于认证。/ws 必须可用；自定义节点可执行代码，本 recipe 不建立认证层，仍禁止公开。
+服务只绑定 loopback。Recipe 保留外部 Host，默认 Host/Origin middleware 可接受同域浏览器请求，无需 --enable-cors-header。保留默认 Origin 和 Sec-Fetch-Site 防护，确认 /ws WebSocket 可用。Custom nodes 可执行代码；此 recipe 始终 never public，不能建立认证层。
 
 ```sh
-python main.py --listen 127.0.0.1 --port 8188 --enable-cors-header https://comfyui.YOUR-TAILNET.ts.net
+python main.py --listen 127.0.0.1 --port 8188
 ```
 
 [官方文档 1](https://docs.comfy.org/development/comfyui-server/startup-flags) (访问于 2026-10-02). [官方文档 2](https://github.com/Comfy-Org/ComfyUI/blob/master/server.py) (访问于 2026-10-02).
@@ -204,6 +207,8 @@ python main.py --listen 127.0.0.1 --port 8188 --enable-cors-header https://comfy
 Recipe `grafana`；本地端口 **3000**；默认目标 `http://127.0.0.1:3000`；WebSocket：**需要**；建议健康路径 `/api/health`。
 
 安全级别：**app_login**。禁用匿名访问后有登录；更换初始管理员密码。
+
+代理 Host：**保留外部域名**（`preserve_host=true`）。
 
 ```sh
 tslink apps share grafana
@@ -229,18 +234,19 @@ Recipe `jupyter`；本地端口 **8888**；默认目标 `http://127.0.0.1:8888`�
 
 安全级别：**never_public**。代码执行环境；无 token/密码即无保护，默认禁止 Funnel。
 
+代理 Host：**保留外部域名**（`preserve_host=true`）。
+
 ```sh
 tslink apps share jupyter
 ```
 
-合并进 jupyter_server_config.py。TSLink 将 Host 改为 loopback 上游，trust_xheaders 不会为 kernel WebSocket origin 检查恢复 Host；allow_origin 必须填精确外部 HTTPS origin。保留随机 token，或用 jupyter server password 设置密码；不能同时清空 token 与密码，不能关闭 XSRF 或使用通配 origin。Notebook 以所有者权限执行代码，只给可信用户；探测无法验证认证，即使有 token 也禁止公开。
+合并到 jupyter_server_config.py。Recipe 保留外部 Host，把精确域名加入 local_hostnames，保留防 DNS rebinding 的 Host 检查。同域 WebSocket Origin 检查无需 allow_origin 覆盖；trust_xheaders 恢复 HTTP XSRF 检查所需 HTTPS scheme。保留生成的 token 或通过 jupyter server password 设置密码。不要同时清空 token 和密码、禁用 XSRF、允许所有远程 Host 或使用通配 origin。Notebook 执行所有者权限代码，只给可信用户访问，本 recipe 始终 never public。
 
 ```python
 c.ServerApp.ip = "127.0.0.1"
 c.ServerApp.port = 8888
-c.ServerApp.base_url = "/"
+c.ServerApp.local_hostnames = ["localhost", "jupyter.YOUR-TAILNET.ts.net"]
 c.ServerApp.trust_xheaders = True
-c.ServerApp.allow_origin = "https://jupyter.YOUR-TAILNET.ts.net"
 c.ServerApp.disable_check_xsrf = False
 ```
 
@@ -248,32 +254,21 @@ c.ServerApp.disable_check_xsrf = False
 
 ## Uptime Kuma
 
-Recipe `uptime-kuma`；本地端口 **3001**；默认目标 `http://127.0.0.1:13001`；WebSocket：**需要**；建议健康路径 `/`。
+Recipe `uptime-kuma`；本地端口 **3001**；默认目标 `http://127.0.0.1:3001`；WebSocket：**需要**；建议健康路径 `/`。
 
 安全级别：**app_login**。初始化后控制台有登录；公开状态页本来就无需登录。
+
+代理 Host：**保留外部域名**（`preserve_host=true`）。
 
 ```sh
 tslink apps share uptime-kuma
 ```
 
-将此 server 段合并进本机 Nginx 配置的 http 段，应用 recipe 前先启动或重载代理。TSLink 连接 13001 上的 loopback 桥接，恢复精确外部 Host，并把 WebSocket upgrade 转给 3001 上的应用。域名换成精确 TSLink URL 域名；隔离两个监听器，不需要绕过 Origin 校验。先在本机建立管理员并保留控制台认证。UPTIME_KUMA_WS_ORIGIN_CHECK 保留默认值，不能 bypass；WebSocket 会比较 Origin 和 Host，trustProxy 分支不使用 X-Forwarded-Host。只公开有意发布的状态页。
+Recipe 保留外部 Host，直接连接原生 HTTP 3001；默认 WebSocket 校验可比较浏览器 Origin 和 Host，无需额外代理配置。先在本地完成管理员初始化，保留控制台登录；UPTIME_KUMA_WS_ORIGIN_CHECK 保持默认，不设 bypass。宿主机映射只绑定 loopback，只公开有意公开的状态页。
 
-```nginx
-server {
-    listen 127.0.0.1:13001;
-    server_name _;
-    location / {
-        proxy_pass http://127.0.0.1:3001;
-        proxy_http_version 1.1;
-        proxy_set_header Host uptime-kuma.YOUR-TAILNET.ts.net;
-        proxy_set_header X-Forwarded-Host $http_x_forwarded_host;
-        proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
-        proxy_set_header X-Forwarded-For $http_x_forwarded_for;
-        proxy_set_header X-Real-IP $http_x_forwarded_for;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-    }
-}
+```yaml
+ports:
+  - "127.0.0.1:3001:3001"
 ```
 
 [官方文档 1](https://github.com/louislam/uptime-kuma/wiki/Reverse-Proxy) (访问于 2026-10-02). [官方文档 2](https://nginx.org/en/docs/http/ngx_http_proxy_module.html) (访问于 2026-10-02). [官方文档 3](https://github.com/louislam/uptime-kuma/blob/2.0.2/server/uptime-kuma-server.js) (访问于 2026-10-02).
@@ -284,17 +279,16 @@ Recipe `paperless-ngx`；本地端口 **8000**；默认目标 `http://127.0.0.1:
 
 安全级别：**app_login**。有账号登录；暴露前必须取消 PAPERLESS_AUTO_LOGIN_USERNAME。
 
+代理 Host：**保留外部域名**（`preserve_host=true`）。
+
 ```sh
 tslink apps share paperless-ngx
 ```
 
-写入 docker-compose.env 或 webserver 环境。TSLink 将 Host 改为上游地址，外部域名放在 X-Forwarded-Host；开启 PAPERLESS_USE_X_FORWARD_HOST，只信任实际 TSLink 来源 IP。以下 loopback 值适合宿主机后端；容器网络改变来源时换成实际网桥网关 IP。后端应隔离不可信客户端，Django 选择 forwarded host 本身不受 TRUSTED_PROXIES 限制。PAPERLESS_URL 添加域名、CORS、CSRF 信任，不加尾部斜线；SSL header 恢复外部 HTTPS scheme。保留账号登录，不设置自动登录，密钥由 secret manager 配置。上传仍受 TSLink 32 MiB/30 秒限制。
+写入 docker-compose.env 或 webserver 环境。外部 Host 保留后，PAPERLESS_URL 同时提供允许的域名和精确 CSRF/CORS origin，无需 forwarded-host 覆盖。SSL header 恢复外部 HTTPS scheme；隔离后端，确保只有 TSLink 能提供此信任头。不要设置自动登录，密钥通过 secret manager 配置。上传仍受 TSLink 32 MiB/30 秒限制。
 
-```dotenv
+```sh
 PAPERLESS_URL=https://paperless-ngx.YOUR-TAILNET.ts.net
-PAPERLESS_ALLOWED_HOSTS=paperless-ngx.YOUR-TAILNET.ts.net
-PAPERLESS_USE_X_FORWARD_HOST=true
-PAPERLESS_TRUSTED_PROXIES=127.0.0.1,::1
 PAPERLESS_PROXY_SSL_HEADER=["HTTP_X_FORWARDED_PROTO","https"]
 ```
 
@@ -305,6 +299,8 @@ PAPERLESS_PROXY_SSL_HEADER=["HTTP_X_FORWARDED_PROTO","https"]
 Recipe `vaultwarden`；本地端口 **80, 8080**；默认目标 `http://127.0.0.1:80`；WebSocket：**需要**；建议健康路径 `/alive`。
 
 安全级别：**never_public**。有密码库登录但内容高度敏感；TSLink 策略禁止公开。
+
+代理 Host：**保留外部域名**（`preserve_host=true`）。
 
 ```sh
 tslink apps share vaultwarden
@@ -326,11 +322,13 @@ Recipe `syncthing`；本地端口 **8384**；默认目标 `http://127.0.0.1:8384
 
 安全级别：**never_public**。GUI 认证可选且能管理文件同步，禁止 Funnel。
 
+代理 Host：**改写为上游地址**（`preserve_host=false`）。
+
 ```sh
 tslink apps share syncthing
 ```
 
-先在 Settings > GUI 设置用户名及密码并保留 loopback 绑定。TSLink 使用上游 loopback Host，应保留 Host 校验，不需要 insecureSkipHostcheck。以下为 UI 值；分享的是管理界面，不是 22000 文件同步端口。
+保持 Host 改写，使默认 loopback Host 防护继续工作。先在 Settings > GUI 设置用户名及密码并保留 loopback 绑定。TSLink 使用上游 loopback Host，应保留 Host 校验，不需要 insecureSkipHostcheck。以下为 UI 值；分享的是管理界面，不是 22000 文件同步端口。
 
 ```text
 GUI Listen Address: 127.0.0.1:8384
@@ -346,16 +344,18 @@ Recipe `portainer`；本地端口 **9443, 9000**；默认目标 `http://127.0.0.
 
 安全级别：**never_public**。容器管理员可控制主机，禁止 Funnel，尤其禁止公开初始化界面。
 
+代理 Host：**保留外部域名**（`preserve_host=true`）。
+
 ```sh
 tslink apps share portainer
 ```
 
-先在本机完成首个管理员设置。默认 9443 为自签名 HTTPS，TSLink 不绕过证书校验。将以下服务片段合并进 compose：明确开启 HTTP，仅将 9000 映射到 loopback。TSLink 改写 Host，因此当前版本 CSRF 可信 origin 要求完整 scheme://host；旧版本接受纯域名，应按所用版本文档核对。保留 CSRF、登录及 setup-token 保护，不分享 agent 8000 端口。控制台需 WebSocket。
+先在本地完成首次管理员设置。默认 9443 使用自签名证书，TSLink 不绕过校验。合并此 compose 片段，显式启用 HTTP，9000 只映射到 loopback。Recipe 保留外部 Host，当前 Portainer CSRF 防护可接受同域浏览器，无需 --trusted-origins。保留 CSRF、登录和 setup-token 防护；不暴露 agent 8000，控制台需要 WebSocket。
 
 ```yaml
 ports:
   - "127.0.0.1:9000:9000"
-command: ["--http-enabled", "--trusted-origins", "https://portainer.YOUR-TAILNET.ts.net"]
+command: ["--http-enabled"]
 ```
 
 [官方文档 1](https://docs.portainer.io/start/install-ce/server/docker/linux) (访问于 2026-10-02). [官方文档 2](https://docs.portainer.io/advanced/reverse-proxy/traefik) (访问于 2026-10-02). [官方文档 3](https://docs.portainer.io/start/install/server/setup) (访问于 2026-10-02). [官方文档 4](https://docs.portainer.io/advanced/cli) (访问于 2026-10-02). [官方文档 5](https://github.com/portainer/portainer/blob/develop/api/http/csrf/csrf.go) (访问于 2026-10-02).
@@ -366,11 +366,13 @@ Recipe `generic-web`；本地端口 **8080, 3000, 8000**；默认目标 `http://
 
 安全级别：**never_public**。无法判定认证，所有者审查具体应用前禁止 Funnel。
 
+代理 Host：**改写为上游地址**（`preserve_host=false`）。
+
 ```sh
 tslink apps share generic-web
 ```
 
-检查具体应用文档中的外部 URL、可信域名/origin 和代理 IP；没有通用配置文件片段。保留认证并使用独立域名。未知应用保持私有；根路径非空 HTML title 只能说明是通用网页。
+应用未知，默认改写 Host；核对应用 Host/Origin 规则后才使用 --preserve-host。检查具体应用文档中的外部 URL、可信域名/origin 和代理 IP；没有通用配置文件片段。保留认证并使用独立域名。未知应用保持私有；根路径非空 HTML title 只能说明是通用网页。
 
 ```text
 External URL: https://generic-web.YOUR-TAILNET.ts.net

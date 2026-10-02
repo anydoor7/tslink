@@ -73,6 +73,7 @@ var mcpCoveredCommands = map[string]mcpCoveredCommand{
 		Args:  []string{"target"},
 		Flags: map[string]string{
 			"no-daemon-install": "no_daemon_install",
+			"preserve-host":     "preserve_host",
 			"ephemeral":         "ephemeral",
 			"name":              "name",
 		},
@@ -88,6 +89,7 @@ var mcpCoveredCommands = map[string]mcpCoveredCommand{
 			"allow":             "allow",
 			"control-url":       "control_url",
 			"dir":               "dir",
+			"preserve-host":     "preserve_host",
 			"ephemeral":         "ephemeral",
 			"funnel":            "funnel",
 			"funnel-ttl":        "funnel_ttl",
@@ -216,7 +218,7 @@ var mcpCoveredCommands = map[string]mcpCoveredCommand{
 	"tslink apps list":   {Tools: []string{"recipe_list"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
 	"tslink apps detect": {Tools: []string{"apps_detect"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
 	"tslink apps share": {Tools: []string{"recipe_plan", "recipe_apply"}, Args: []string{"recipe_id"}, Flags: map[string]string{
-		"name": "name", "proxy": "target", "allow": "allow", "tags": "tags", "ephemeral": "ephemeral", "funnel": "funnel", "public": "public_ack", "funnel-ttl": "funnel_ttl", "no-auto-provision": "no_auto_provision", "no-daemon-install": "no_daemon_install", "control-url": "control_url", "force-unsafe-public": "force_unsafe_public"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion, "dry-run": "recipe_plan is the preview action", "yes": "recipe_apply is the write action"}},
+		"preserve-host": "preserve_host", "name": "name", "proxy": "target", "allow": "allow", "tags": "tags", "ephemeral": "ephemeral", "funnel": "funnel", "public": "public_ack", "funnel-ttl": "funnel_ttl", "no-auto-provision": "no_auto_provision", "no-daemon-install": "no_daemon_install", "control-url": "control_url", "force-unsafe-public": "force_unsafe_public"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion, "dry-run": "recipe_plan is the preview action", "yes": "recipe_apply is the write action"}},
 	"tslink template list": {
 		Tools:         []string{"template_list"},
 		ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion},

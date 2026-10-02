@@ -1520,6 +1520,9 @@ func serviceChangedWithFallback(old, new registry.Service, fallbackControlURL st
 	if old.Type != new.Type || old.Target != new.Target || old.Path != new.Path || old.File != new.File {
 		return true
 	}
+	if old.PreserveHost != new.PreserveHost {
+		return true
+	}
 	if old.Port != new.Port || old.Ephemeral != new.Ephemeral || old.Funnel != new.Funnel || old.PublicAck != new.PublicAck || old.NoAutoProvision != new.NoAutoProvision {
 		return true
 	}
@@ -2200,7 +2203,7 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service, prov
 			return fmt.Errorf("local client for %q: %w", svc.Name, err2)
 		}
 		identity = NewStaticIdentityResolver(lc)
-		h, err2 := NewProxyHandler(svc.Target, identity)
+		h, err2 := NewProxyHandlerWithOptions(svc.Target, identity, ProxyOptions{PreserveHost: svc.PreserveHost})
 		if err2 != nil {
 			return fmt.Errorf("proxy handler for %q: %w", svc.Name, err2)
 		}

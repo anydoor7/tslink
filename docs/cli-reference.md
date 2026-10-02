@@ -71,6 +71,7 @@ Without `--recipe`, `tslink add` with an existing name replaces that service: fl
 | Flag | Description |
 |------|-------------|
 | `--proxy host:port` | Reverse proxy to a local HTTP service |
+| `--preserve-host[=false]` | Proxy only: preserve incoming Host; ordinary add/share default false, recipes supply their own default. Explicit false overrides a recipe. |
 | `--dir /path` | Serve a local file directory |
 | `--tcp host:port` | Raw TCP forwarding |
 | `--dry-run` | Validate and print the service without saving it |
@@ -105,3 +106,5 @@ Recipes support `--allow`, `--tags`, `--ephemeral`, `--control-url`, the existin
 The plan/apply JSON data includes `recipe`, `requested`, `service`, `action`, `dry_run`, `applied`, `warnings` and `next`. `applied=true` means this invocation created the service; `skip_existing` reports its preserved configuration. Detection includes `listeners`, `matches`, `complete` and `warnings`. A partial scan sets `complete=false`. App health paths are recommendation data only.
 
 MCP tools: `recipe_list`, read-only `apps_detect`, `recipe_plan` and `recipe_apply`; plan/apply take `recipe_id`, optional `name`/`target`, string `allow`/`tags`, and snake_case counterparts of the flags above. Call the plan before apply. Existing generic `template` commands and `template_list/plan/apply` tools continue to work. See [application setup and limitations](apps.md).
+
+`share <port|host:port>` also accepts `--preserve-host` (default false); file/directory shares reject true. Both Host modes regenerate X-Forwarded-Host/Proto/For from the actual incoming request. Reuse with a different Host policy reports a conflict. Existing services and generic templates keep upstream Host rewriting. Registry `preserve_host` is an optional proxy boolean; absent means false. Recipes can be overridden with `--preserve-host=false` or MCP `preserve_host:false`. Status/list service projections and `access explain` report the configured policy. In global-failure status without a readable registry, the Host policy is unknown and omitted.

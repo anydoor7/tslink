@@ -106,6 +106,7 @@ type StatusServiceState struct {
 	Name            string                  `json:"name"`
 	Status          string                  `json:"status"`
 	OwnershipProof  bool                    `json:"ownership_proof"`
+	PreserveHost    *bool                   `json:"preserve_host,omitempty"`
 	FunnelRequested bool                    `json:"funnel_requested"`
 	FunnelActive    bool                    `json:"funnel_active"`
 	FunnelState     string                  `json:"funnel_state"`
@@ -154,6 +155,7 @@ type StatusServiceView struct {
 	OwnershipProof  bool                    `json:"ownership_proof"`
 	Endpoint        inspect.EndpointView    `json:"endpoint"`
 	Exposure        inspect.ExposureView    `json:"exposure"`
+	PreserveHost    bool                    `json:"preserve_host"`
 	FunnelRequested bool                    `json:"funnel_requested"`
 	FunnelActive    bool                    `json:"funnel_active"`
 	FunnelState     string                  `json:"funnel_state"`
@@ -206,6 +208,7 @@ func (s statusRead) getStatus(pidPath, regPath string) (StatusResult, error) {
 			Status:          "down",
 			Error:           issueErrors[svc.Name],
 			OwnershipProof:  ownershipProofs[svc.Name],
+			PreserveHost:    &effective.PreserveHost,
 			FunnelRequested: effective.Funnel,
 			FunnelState:     configuredFunnelState(effective.Funnel),
 			FunnelExpiresAt: cloneTimePointer(svc.FunnelExpiresAt),
@@ -704,6 +707,7 @@ func (s statusRead) getStatusURLsWithAuth(pidPath, regPath, snapshotPath, authHa
 			OwnershipProof:  ownershipProofs[svc.Name],
 			Endpoint:        view.Endpoint,
 			Exposure:        view.Exposure,
+			PreserveHost:    effective.PreserveHost,
 			FunnelRequested: effective.Funnel,
 			FunnelState:     configuredFunnelState(effective.Funnel),
 			FunnelExpiresAt: cloneTimePointer(svc.FunnelExpiresAt),

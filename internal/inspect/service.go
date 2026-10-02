@@ -72,6 +72,7 @@ type ServiceView struct {
 	Tags          SummaryView   `json:"tags"`
 	Allow         SummaryView   `json:"allow"`
 	Backend       BackendView   `json:"backend"`
+	PreserveHost  bool          `json:"preserve_host"`
 	Funnel        bool          `json:"funnel,omitempty"`
 	Warnings      []WarningView `json:"warnings,omitempty"`
 }
@@ -95,6 +96,7 @@ func ServiceViewFor(svc registry.Service) ServiceView {
 		Allow:         allowSummary(svc),
 		Backend:       backendFor(svc),
 		Funnel:        svc.Funnel,
+		PreserveHost:  svc.PreserveHost,
 	}
 	view.Warnings = warningsFor(svc)
 	return view

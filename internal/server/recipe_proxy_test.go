@@ -18,7 +18,7 @@ import (
 // hand-authored Host fixture. These are configuration contracts; the optional
 // header receipt is also consumed by the upstream Django/Jupyter/ComfyUI checks.
 func TestRecipeProxyConfiguration(t *testing.T) {
-	for _, id := range []string{"home-assistant", "jellyfin", "immich", "nextcloud", "open-webui", "ollama", "comfyui", "grafana", "jupyter", "uptime-kuma", "paperless-ngx", "vaultwarden", "syncthing", "portainer", "generic-web"} {
+	for _, id := range []string{"home-assistant", "jellyfin", "plex", "immich", "nextcloud", "open-webui", "ollama", "comfyui", "grafana", "jupyter", "uptime-kuma", "paperless-ngx", "vaultwarden", "syncthing", "portainer", "generic-web"} {
 		t.Run(id, func(t *testing.T) {
 			r, ok := recipes.Lookup(id)
 			if !ok {
@@ -26,11 +26,11 @@ func TestRecipeProxyConfiguration(t *testing.T) {
 			}
 			var got map[string]string
 			backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-				got = map[string]string{"host": req.Host, "forwarded_host": req.Header.Get("X-Forwarded-Host"), "forwarded_proto": req.Header.Get("X-Forwarded-Proto"), "forwarded_for": req.Header.Get("X-Forwarded-For"), "origin": req.Header.Get("Origin"), "source": req.RemoteAddr}
+				got = map[string]string{"host": req.Host, "forwarded_host": req.Header.Get("X-Forwarded-Host"), "forwarded_proto": req.Header.Get("X-Forwarded-Proto"), "forwarded_for": req.Header.Get("X-Forwarded-For"), "origin": req.Header.Get("Origin"), "source": req.RemoteAddr, "upstream_host": req.URL.Host, "sec_fetch_site": req.Header.Get("Sec-Fetch-Site")}
 				w.WriteHeader(http.StatusOK)
 			}))
 			defer backend.Close()
-			proxy, err := NewProxyHandler(backend.URL, nil)
+			proxy, err := NewProxyHandlerWithOptions(backend.URL, nil, ProxyOptions{PreserveHost: r.PreserveHost})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -41,13 +41,19 @@ func TestRecipeProxyConfiguration(t *testing.T) {
 			}
 			req := httptest.NewRequest(http.MethodPost, "https://"+externalHost+"/", nil)
 			req.Header.Set("Origin", origin)
+			req.Header.Set("Sec-Fetch-Site", "same-origin")
 			// Forged forwarded headers must not influence the recipe consumer.
 			req.Header.Set("X-Forwarded-Host", "attacker.invalid")
 			req.Header.Set("X-Forwarded-Proto", "http")
 			rec := httptest.NewRecorder()
 			proxy.ServeHTTP(rec, req)
 			upstream, _ := url.Parse(backend.URL)
-			if rec.Code != http.StatusOK || got["host"] != upstream.Host || got["forwarded_host"] != externalHost || got["forwarded_proto"] != "https" || got["origin"] != origin {
+			got["upstream_host"] = upstream.Host
+			expectedHost := upstream.Host
+			if r.PreserveHost {
+				expectedHost = externalHost
+			}
+			if rec.Code != http.StatusOK || got["host"] != expectedHost || got["forwarded_host"] != externalHost || got["forwarded_proto"] != "https" || got["origin"] != origin {
 				t.Fatalf("real proxy headers: %d %v", rec.Code, got)
 			}
 			snippet := ""
@@ -68,17 +74,18 @@ func TestRecipeProxyConfiguration(t *testing.T) {
 			case "jellyfin":
 				require("Known Proxies: 127.0.0.1")
 			case "immich", "uptime-kuma":
-				require("proxy_set_header Host " + got["forwarded_host"] + ";")
-				require("proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;")
-				require("proxy_set_header Upgrade $http_upgrade;")
-				if id == "immich" {
-					require("proxy_set_header X-Real-IP $http_x_forwarded_for;")
+				if !r.PreserveHost {
+					t.Fatal("native app requires the external Host")
 				}
-				bridge, err := url.Parse(r.DefaultTarget)
-				if err != nil {
-					t.Fatal(err)
+				target, _ := url.Parse(r.DefaultTarget)
+				port := "2283"
+				if id == "uptime-kuma" {
+					port = "3001"
 				}
-				require("listen " + bridge.Host + ";")
+				if target.Host != "127.0.0.1:"+port {
+					t.Fatalf("native target: %s", r.DefaultTarget)
+				}
+				require("127.0.0.1:" + port + ":" + port)
 			case "nextcloud":
 				require("'overwritehost' => '" + got["forwarded_host"] + "'")
 				require("'overwriteprotocol' => '" + got["forwarded_proto"] + "'")
@@ -89,17 +96,15 @@ func TestRecipeProxyConfiguration(t *testing.T) {
 				require("OLLAMA_ORIGINS=" + got["origin"])
 				require("OLLAMA_HOST=127.0.0.1:11434")
 			case "comfyui":
-				require("--enable-cors-header " + got["origin"])
+				require("--listen 127.0.0.1 --port 8188")
 			case "grafana":
 				require("root_url = " + got["origin"] + "/")
 				require("enabled = false")
 			case "jupyter":
-				require("c.ServerApp.allow_origin = \"" + got["origin"] + "\"")
+				require("c.ServerApp.local_hostnames = [\"localhost\", \"" + got["host"] + "\"]")
 				require("c.ServerApp.disable_check_xsrf = False")
 			case "paperless-ngx":
-				require("PAPERLESS_USE_X_FORWARD_HOST=true")
-				require("PAPERLESS_ALLOWED_HOSTS=" + got["forwarded_host"])
-				require("PAPERLESS_TRUSTED_PROXIES=127.0.0.1,::1")
+				require("PAPERLESS_URL=" + got["origin"])
 				require("PAPERLESS_PROXY_SSL_HEADER=[\"HTTP_X_FORWARDED_PROTO\",\"https\"]")
 			case "vaultwarden":
 				require("DOMAIN=" + got["origin"])
@@ -110,20 +115,12 @@ func TestRecipeProxyConfiguration(t *testing.T) {
 				}
 				require("GUI Listen Address: 127.0.0.1:8384")
 			case "portainer":
-				require("\"--trusted-origins\", \"" + got["origin"] + "\"")
-				// Current Portainer uses this standard-library consumer for CSRF.
+				require("command: [\"--http-enabled\"]")
+				// Portainer's actual stdlib CSRF consumer accepts matching Host.
 				guard := http.NewCrossOriginProtection()
 				proxied := httptest.NewRequest(http.MethodPost, "http://"+got["host"]+"/", nil)
 				proxied.Host = got["host"]
 				proxied.Header.Set("Origin", got["origin"])
-				if err := guard.Check(proxied); err == nil {
-					t.Fatal("unconfigured Origin rejection control did not reject")
-				}
-				if strings.Contains(snippet, "\"--trusted-origins\", \""+got["origin"]+"\"") {
-					if err := guard.AddTrustedOrigin(got["origin"]); err != nil {
-						t.Fatal(err)
-					}
-				}
 				if err := guard.Check(proxied); err != nil {
 					t.Fatalf("configured Portainer Origin rejected: %v", err)
 				}

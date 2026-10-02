@@ -24,6 +24,7 @@ type recipeRequest struct {
 	RecipeID          string  `json:"recipe_id"`
 	Name              string  `json:"name,omitempty"`
 	Target            string  `json:"target,omitempty"`
+	PreserveHost      *bool   `json:"preserve_host,omitempty"`
 	Allow             string  `json:"allow,omitempty"`
 	Tags              string  `json:"tags,omitempty"`
 	Ephemeral         bool    `json:"ephemeral,omitempty"`
@@ -71,7 +72,11 @@ func recipeService(req recipeRequest) (recipes.Recipe, registry.Service, error) 
 	if req.FunnelTTL != nil {
 		ttl = *req.FunnelTTL
 	}
-	p := AddParams{Name: name, Proxy: target, Allow: req.Allow, Tags: req.Tags, Ephemeral: req.Ephemeral, Funnel: req.Funnel, Public: req.PublicAck, FunnelTTL: ttl, FunnelTTLSet: req.FunnelTTL != nil, NoAutoProvision: req.NoAutoProvision, ControlURL: req.ControlURL}
+	preserveHost := r.PreserveHost
+	if req.PreserveHost != nil {
+		preserveHost = *req.PreserveHost
+	}
+	p := AddParams{Name: name, Proxy: target, PreserveHost: preserveHost, Allow: req.Allow, Tags: req.Tags, Ephemeral: req.Ephemeral, Funnel: req.Funnel, Public: req.PublicAck, FunnelTTL: ttl, FunnelTTLSet: req.FunnelTTL != nil, NoAutoProvision: req.NoAutoProvision, ControlURL: req.ControlURL}
 	svc, err := buildService(p)
 	if err != nil {
 		return r, svc, err
@@ -169,6 +174,7 @@ func detectApps(ctx context.Context, regPath string) (recipes.Detection, error) 
 }
 func renderRecipe(out io.Writer, result RecipeResult) {
 	fmt.Fprintf(out, "%s: %s -> %s (%s)\n", result.Recipe.DisplayName, result.Service.Name, result.Service.Backend.Display, result.Action)
+	fmt.Fprintf(out, "Preserve incoming Host: %t (recipe default: %t).\n", result.Service.PreserveHost, result.Recipe.PreserveHost)
 	fmt.Fprintf(out, "Ports: %v. %s\nWebSockets: %t; recommended health path: %s (data only).\n", result.Recipe.DefaultPorts, result.Recipe.PortNote, result.Recipe.WebSockets, result.Recipe.HealthPath)
 	for _, w := range result.Warnings {
 		fmt.Fprintf(out, "Warning: %s\n", w)
@@ -191,7 +197,12 @@ func recipeRequestFromCLI(cmd *cobra.Command, id, name string) recipeRequest {
 		value := str("funnel-ttl")
 		ttl = &value
 	}
-	return recipeRequest{RecipeID: id, Name: name, Target: str("proxy"), Allow: str("allow"), Tags: str("tags"), Ephemeral: b("ephemeral"), Funnel: b("funnel"), PublicAck: b("public"), FunnelTTL: ttl, NoAutoProvision: b("no-auto-provision"), NoDaemonInstall: b("no-daemon-install"), ControlURL: str("control-url"), ForceUnsafePublic: b("force-unsafe-public")}
+	var preserveHost *bool
+	if cmd.Flags().Changed("preserve-host") {
+		value := b("preserve-host")
+		preserveHost = &value
+	}
+	return recipeRequest{PreserveHost: preserveHost, RecipeID: id, Name: name, Target: str("proxy"), Allow: str("allow"), Tags: str("tags"), Ephemeral: b("ephemeral"), Funnel: b("funnel"), PublicAck: b("public"), FunnelTTL: ttl, NoAutoProvision: b("no-auto-provision"), NoDaemonInstall: b("no-daemon-install"), ControlURL: str("control-url"), ForceUnsafePublic: b("force-unsafe-public")}
 }
 func runRecipeCLI(cmd *cobra.Command, req recipeRequest, command string) error {
 	dry, _ := cmd.Flags().GetBool("dry-run")
@@ -252,6 +263,7 @@ func init() {
 		return runRecipeCLI(cmd, recipeRequestFromCLI(cmd, args[0], name), "apps share")
 	}}
 	share.Flags().String("name", "", "Override the recommended service name")
+	share.Flags().Bool("preserve-host", false, "Preserve the incoming HTTP Host (proxy only; recipes choose their default)")
 	share.Flags().String("proxy", "", "Override the loopback HTTP(S) target (host port, not container port)")
 	share.Flags().String("allow", "", "Comma-separated private HTTP identities")
 	share.Flags().String("tags", "", "Comma-separated ACL tags")

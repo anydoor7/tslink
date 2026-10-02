@@ -74,6 +74,7 @@ type ListServiceSummary struct {
 	URL             *string                 `json:"url"`
 	URLPending      bool                    `json:"url_pending"`
 	State           string                  `json:"state"`
+	PreserveHost    bool                    `json:"preserve_host"`
 	FunnelRequested bool                    `json:"funnel_requested"`
 	FunnelActive    bool                    `json:"funnel_active"`
 	FunnelState     string                  `json:"funnel_state"`
@@ -148,13 +149,14 @@ func validateListOptions(opts listOptions) error {
 		return output.ErrUsage("--verbose conflicts with --fields")
 	}
 	allowed := map[string]bool{
-		"name": true, "type": true, "url": true, "url_pending": true, "state": true,
+		"preserve_host": true,
+		"name":          true, "type": true, "url": true, "url_pending": true, "state": true,
 		"funnel_requested": true, "funnel_active": true, "funnel_state": true,
 		"funnel_expires_at": true, "funnel_remaining": true, "error": true,
 	}
 	for _, field := range opts.Fields {
 		if !allowed[field] {
-			return output.ErrUsage(fmt.Sprintf("unknown --fields value %q; supported: name,type,url,url_pending,state,funnel_requested,funnel_active,funnel_state,funnel_expires_at,funnel_remaining,error", field))
+			return output.ErrUsage(fmt.Sprintf("unknown --fields value %q; supported: name,type,url,url_pending,state,preserve_host,funnel_requested,funnel_active,funnel_state,funnel_expires_at,funnel_remaining,error", field))
 		}
 	}
 	return nil
@@ -196,6 +198,7 @@ func listSummary(svc StatusServiceView) ListServiceSummary {
 		Type:            svc.Type,
 		URLPending:      true,
 		State:           listStatePending,
+		PreserveHost:    svc.PreserveHost,
 		FunnelRequested: svc.FunnelRequested,
 		FunnelActive:    svc.FunnelActive,
 		FunnelState:     svc.FunnelState,
@@ -229,6 +232,8 @@ func selectListFields(summary ListServiceSummary, fields []string) map[string]an
 			selected[field] = summary.URLPending
 		case "state":
 			selected[field] = summary.State
+		case "preserve_host":
+			selected[field] = summary.PreserveHost
 		case "funnel_requested":
 			selected[field] = summary.FunnelRequested
 		case "funnel_active":
@@ -551,7 +556,7 @@ Examples:
 	}
 	listCmd.Flags().String("name", "", "Return only the exact service name")
 	listCmd.Flags().String("type", "", "Filter by service type: proxy, file, or tcp")
-	listCmd.Flags().String("fields", "", "Comma-separated slim fields: name,type,url,url_pending,state,funnel_requested,funnel_active,funnel_state,funnel_expires_at,funnel_remaining,error")
+	listCmd.Flags().String("fields", "", "Comma-separated slim fields: name,type,url,url_pending,state,preserve_host,funnel_requested,funnel_active,funnel_state,funnel_expires_at,funnel_remaining,error")
 	listCmd.Flags().Bool("verbose", false, "Return the complete owner-only diagnostic service view")
 	listCmd.Flags().Bool("tailnet", false, "Read-only: list every TSLink-tagged device in the tailnet, including other machines' services and orphans, instead of this machine's registered services")
 	rootCmd.AddCommand(listCmd)

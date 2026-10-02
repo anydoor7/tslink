@@ -536,6 +536,13 @@
           "usage": "Save configuration only; do not install or start the background service"
         },
         {
+          "name": "preserve-host",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Preserve the incoming HTTP Host (proxy only; recipes choose their default)"
+        },
+        {
           "name": "proxy",
           "type": "string",
           "scope": "local",
@@ -617,6 +624,10 @@
         "funnel_rearmed": {
           "type": "boolean",
           "description": "True when an expired preserved Funnel deadline was re-armed with the default 24h TTL."
+        },
+        "preserve_host": {
+          "type": "boolean",
+          "description": "Ordinary add: whether the proxy forwards the incoming Host; default false. With --recipe, inspect service.preserve_host and requested.preserve_host."
         },
         "recipe": {
           "type": "object",
@@ -790,6 +801,13 @@
           "usage": "Save configuration only; do not install or start the background service"
         },
         {
+          "name": "preserve-host",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Preserve the incoming HTTP Host (proxy only; recipes choose their default)"
+        },
+        {
           "name": "proxy",
           "type": "string",
           "scope": "local",
@@ -845,9 +863,17 @@
           "type": "object",
           "description": "Requested defaults; compare with service if existing entry is skipped."
         },
+        "requested.preserve_host": {
+          "type": "boolean",
+          "description": "Recipe default unless explicitly overridden; may differ from an existing service."
+        },
         "service": {
           "type": "object",
           "description": "Effective requested service, or existing service preserved unchanged."
+        },
+        "service.preserve_host": {
+          "type": "boolean",
+          "description": "Effective Host policy of the created or preserved service."
         }
       }
     },
@@ -1401,7 +1427,7 @@
           "name": "fields",
           "type": "string",
           "scope": "local",
-          "usage": "Comma-separated slim fields: name,type,url,url_pending,state,funnel_requested,funnel_active,funnel_state,funnel_expires_at,funnel_remaining,error",
+          "usage": "Comma-separated slim fields: name,type,url,url_pending,state,preserve_host,funnel_requested,funnel_active,funnel_state,funnel_expires_at,funnel_remaining,error",
           "conflicts": [
             "--verbose",
             "--tailnet"
@@ -1530,6 +1556,10 @@
             "listen_failed",
             "startup_timeout"
           ]
+        },
+        "services[].preserve_host": {
+          "type": "boolean",
+          "description": "Configured proxy Host policy; false rewrites Host to the upstream, true preserves the real incoming Host. X-Forwarded-* is regenerated in either mode."
         },
         "services[].state": {
           "type": "string",
@@ -1943,13 +1973,26 @@
           "usage": "Require an already running background service; do not install one"
         },
         {
+          "name": "preserve-host",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Preserve the incoming HTTP Host (proxy only; recipes choose their default)"
+        },
+        {
           "name": "wait",
           "type": "duration",
           "default": "30s",
           "scope": "local",
           "usage": "Wait for an exact runtime URL (share waits 30s by default; unlike url, no flag is required)"
         }
-      ]
+      ],
+      "json_result_fields": {
+        "preserve_host": {
+          "type": "boolean",
+          "description": "Whether the returned HTTP share preserves the incoming Host. Conflicting reuse is refused."
+        }
+      }
     },
     {
       "path": "tslink status",
@@ -2059,6 +2102,10 @@
         "services[].ownership_proof": {
           "type": "boolean",
           "description": "True only when the durable ownership ledger contains exact StableNodeID cleanup proof for the service; NodeIDs are never emitted."
+        },
+        "services[].preserve_host": {
+          "type": "boolean",
+          "description": "Configured proxy Host policy; false rewrites Host to the upstream, true preserves the real incoming Host. X-Forwarded-* is regenerated in either mode."
         },
         "services[].runtime_state": {
           "type": "string",

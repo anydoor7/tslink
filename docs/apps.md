@@ -11,7 +11,7 @@ tslink add --recipe home-assistant --proxy 127.0.0.1:8123  # equivalent preview
 tslink add family-tv --recipe jellyfin --yes      # optional service name
 ```
 
-Recipe catalog version 1 was checked against official documentation on **2026-10-02**. Ports below distinguish host mappings from container ports. Override a mapping with `--proxy 127.0.0.1:<host-port>`. Replace `YOUR-TAILNET` and example hostnames in snippets with the exact URL from `tslink url <name> --wait=30s`; never guess your tailnet suffix. Merge snippets into your existing settings rather than replacing a full configuration file. Containers may see the host through a bridge gateway: trust only the actual proxy source, not an entire private network.
+Recipe catalog version 2 was checked against official documentation on **2026-10-02**. Ports below distinguish host mappings from container ports. Override a mapping with `--proxy 127.0.0.1:<host-port>`. Replace `YOUR-TAILNET` and example hostnames in snippets with the exact URL from `tslink url <name> --wait=30s`; never guess your tailnet suffix. Merge snippets into your existing settings rather than replacing a full configuration file. Containers may see the host through a bridge gateway: trust only the actual proxy source, not an entire private network.
 
 `apps share` and `add --recipe` default to a plan. `--yes` applies; `--dry-run` always wins. Existing names are left unchanged, and the result shows both `service` and `requested`. Neither path installs or configures the third-party app. `--no-daemon-install` saves only the registry. Recipe registration is not proof of a running app or a reachable URL.
 
@@ -19,7 +19,7 @@ Detection uses macOS lsof, Linux procfs or Windows GetExtendedTcpTable. It sends
 
 Private services still depend on tailnet policy and any `--allow` list. Funnel is public internet exposure: use `--funnel --public` only after verifying application authentication. Recipes marked `never_public` refuse it unless the owner deliberately supplies **`--force-unsafe-public`**, which may expose host control, code execution, GPU consumption or private data to everyone. This override does not establish app authentication. A recipe with `app_login` can still be unsafe if its login is disabled or initial setup is unfinished.
 
-Health paths below are recommendations in the catalog for future health monitoring; recipes do not implement probes. A login page proves HTTP response only, not authenticated readiness. TSLink currently limits request bodies to 32 MiB and request reads to 30 seconds; large or slow uploads in Immich, Nextcloud, Paperless and chat interfaces can fail. TSLink rewrites Host to the upstream address and supplies the external hostname in X-Forwarded-Host; Origin remains the browser origin. Configure exact external hosts/origins and proxy trust as shown below. Immich and Uptime Kuma require the provided local Nginx bridge and use bridge targets. WebSocket upgrades are forwarded; validate the actual application before sharing.
+Health paths below are recommendations in the catalog for future health monitoring; recipes do not implement probes. A login page proves HTTP response only, not authenticated readiness. TSLink currently limits request bodies to 32 MiB and request reads to 30 seconds; large or slow uploads in Immich, Nextcloud, Paperless and chat interfaces can fail. Recipes choose their own Host policy (shown below). Most preserve the real incoming Host, while Ollama and Syncthing keep rewriting it to satisfy their local Host guards; generic-web defaults off until checked. Ordinary add/share and all existing services/templates still default to rewriting Host. Override a recipe with `--preserve-host` or `--preserve-host=false` (MCP: explicit boolean `preserve_host`); omitting it uses the recipe default. Both modes regenerate X-Forwarded-Host/Proto/For from the incoming request, ignoring forged forwarded headers; Origin is unchanged. Immich and Uptime Kuma target their native HTTP ports directly. WebSocket upgrades are forwarded; validate the actual application before sharing.
 
 Templates remain available with `template list`, `template show` and `template apply`. They are generic multi-service bundles (`local-web`, `dev-suite`, `local-ai-suite`) and do not provide recipe safety checks or app configuration. Use recipes when application advice is needed, including for Ollama in the AI template.
 
@@ -30,6 +30,8 @@ Agents can use `recipe_list`, `apps_detect`, `recipe_plan` then `recipe_apply`. 
 Recipe `home-assistant`; local ports **8123, 80**; target `http://127.0.0.1:8123`; WebSockets: **yes**; health recommendation `/`. 8123: Container and older installs; 80: HA OS default since 2026.8. Override the host port when needed.
 
 Safety: **app_login**. Keep Home Assistant login enabled; never use trusted_networks to bypass authentication for proxy traffic.
+
+Proxy Host: **preserved external** (`preserve_host=true`).
 
 ```sh
 tslink apps share home-assistant
@@ -53,6 +55,8 @@ Recipe `jellyfin`; local ports **8096, 8920**; target `http://127.0.0.1:8096`; W
 
 Safety: **app_login**. Has user login after setup. Verify every family account before public exposure.
 
+Proxy Host: **preserved external** (`preserve_host=true`).
+
 ```sh
 tslink apps share jellyfin
 ```
@@ -72,6 +76,8 @@ Recipe `plex`; local ports **32400**; target `http://127.0.0.1:32400`; WebSocket
 
 Safety: **app_login**. Requires a claimed server and Plex accounts. Loopback must not be exempted from authentication.
 
+Proxy Host: **preserved external** (`preserve_host=true`).
+
 ```sh
 tslink apps share plex
 ```
@@ -87,32 +93,21 @@ List of IP addresses and networks allowed without auth: (empty)
 
 ## Immich
 
-Recipe `immich`; local ports **2283**; target `http://127.0.0.1:12283`; WebSockets: **yes**; health recommendation `/api/server/ping`. App HTTP port 2283; this recipe targets a required owner-configured loopback Nginx bridge on 12283 to restore the external Host.
+Recipe `immich`; local ports **2283**; target `http://127.0.0.1:2283`; WebSockets: **yes**; health recommendation `/api/server/ping`. Native HTTP port 2283; use the actual loopback host mapping.
 
 Safety: **app_login**. Has its own login. Finish first-admin setup before sharing; large uploads need gateway changes.
+
+Proxy Host: **preserved external** (`preserve_host=true`).
 
 ```sh
 tslink apps share immich
 ```
 
-Merge this server block into the http block of a local Nginx configuration and start/reload that proxy before applying the recipe. TSLink targets its loopback bridge on 12283, which restores the exact external Host and forwards WebSocket upgrades to the app on 2283. Replace the hostname with the exact TSLink URL hostname. Keep both listeners isolated; no Origin bypass is needed. Use the root of a dedicated hostname and set the mobile server URL to https://immich.YOUR-TAILNET.ts.net. The bridge also supplies X-Real-IP from TSLink forwarded client IP. TSLink still caps uploads at 32 MiB and request reads at 30 seconds; this bridge cannot remove those gateway limits.
+Use the root of a dedicated hostname. The recipe preserves the external Host and forwards X-Forwarded-Host/Proto/For directly to native HTTP port 2283. Set the mobile server URL to https://immich.YOUR-TAILNET.ts.net and finish administrator setup locally. Bind the host mapping to loopback as below. TSLink still caps uploads at 32 MiB and request reads at 30 seconds; large or slow uploads can fail. Client IP is provided in X-Forwarded-For; TSLink does not synthesize X-Real-IP.
 
-```nginx
-server {
-    listen 127.0.0.1:12283;
-    server_name _;
-    location / {
-        proxy_pass http://127.0.0.1:2283;
-        proxy_http_version 1.1;
-        proxy_set_header Host immich.YOUR-TAILNET.ts.net;
-        proxy_set_header X-Forwarded-Host $http_x_forwarded_host;
-        proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
-        proxy_set_header X-Forwarded-For $http_x_forwarded_for;
-        proxy_set_header X-Real-IP $http_x_forwarded_for;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-    }
-}
+```yaml
+ports:
+  - "127.0.0.1:2283:2283"
 ```
 
 [Official documentation 1](https://docs.immich.app/administration/reverse-proxy/) (accessed 2026-10-02). [Official documentation 2](https://nginx.org/en/docs/http/ngx_http_proxy_module.html) (accessed 2026-10-02).
@@ -122,6 +117,8 @@ server {
 Recipe `nextcloud`; local ports **8080, 80**; target `http://127.0.0.1:8080`; WebSockets: **no (core app)**; health recommendation `/status.php`. 8080 host port in official Docker example; container Apache uses 80. FPM 9000 is not HTTP.
 
 Safety: **app_login**. Has account login; complete installation first. Sharing the gateway does not create Nextcloud accounts.
+
+Proxy Host: **preserved external** (`preserve_host=true`).
 
 ```sh
 tslink apps share nextcloud
@@ -144,6 +141,8 @@ Merge these entries into existing config/config.php; keep other trusted_domains 
 Recipe `open-webui`; local ports **3000, 8080**; target `http://127.0.0.1:3000`; WebSockets: **yes**; health recommendation `/health`. 3000 host port in Docker quick start (maps to 8080); native server commonly 8080.
 
 Safety: **app_login**. Has login when WEBUI_AUTH is enabled. Auth-disabled installs and the first-admin signup screen must stay private.
+
+Proxy Host: **preserved external** (`preserve_host=true`).
 
 ```sh
 tslink apps share open-webui
@@ -168,11 +167,13 @@ Recipe `ollama`; local ports **11434**; target `http://127.0.0.1:11434`; WebSock
 
 Safety: **never_public**. No local API auth: never Funnel. Requests can consume GPU resources and invoke configured cloud models.
 
+Proxy Host: **rewritten upstream** (`preserve_host=false`).
+
 ```sh
 tslink apps share ollama
 ```
 
-Local Ollama API has no authentication. Keep binding on loopback. If a browser must call it directly, allow only the exact browser origin, never *. Platform environment-variable setup is in the FAQ.
+Host preservation stays off: the loopback listener rejects an external .ts.net Host to protect against DNS rebinding, even if OLLAMA_ORIGINS allows that Origin. Local Ollama API has no authentication. Keep binding on loopback. If a browser must call it directly, allow only the exact browser origin, never *. Platform environment-variable setup is in the FAQ.
 
 ```dotenv
 OLLAMA_HOST=127.0.0.1:11434
@@ -187,14 +188,16 @@ Recipe `comfyui`; local ports **8188**; target `http://127.0.0.1:8188`; WebSocke
 
 Safety: **never_public**. Local workflow server: never Funnel. Only share with trusted people who may run workflows and custom nodes.
 
+Proxy Host: **preserved external** (`preserve_host=true`).
+
 ```sh
 tslink apps share comfyui
 ```
 
-Keep the server on loopback. TSLink rewrites Host, so ComfyUI default loopback Host/Origin comparison rejects external browser requests. Use the exact external origin with --enable-cors-header (never omit its argument or use *). This selects ComfyUI CORS middleware instead of its default Origin rejection; CORS is not authentication. WebSocket /ws must work. Custom nodes can execute code; this recipe stays never public and does not establish an authentication layer.
+Keep the server on loopback. The recipe preserves the external Host, so the default Host/Origin middleware accepts same-origin browser requests; no --enable-cors-header override is needed. Keep the default Origin and Sec-Fetch-Site protections. WebSocket /ws must work. Custom nodes can execute code; this recipe stays never public and does not establish an authentication layer.
 
 ```sh
-python main.py --listen 127.0.0.1 --port 8188 --enable-cors-header https://comfyui.YOUR-TAILNET.ts.net
+python main.py --listen 127.0.0.1 --port 8188
 ```
 
 [Official documentation 1](https://docs.comfy.org/development/comfyui-server/startup-flags) (accessed 2026-10-02). [Official documentation 2](https://github.com/Comfy-Org/ComfyUI/blob/master/server.py) (accessed 2026-10-02).
@@ -204,6 +207,8 @@ python main.py --listen 127.0.0.1 --port 8188 --enable-cors-header https://comfy
 Recipe `grafana`; local ports **3000**; target `http://127.0.0.1:3000`; WebSockets: **yes**; health recommendation `/api/health`.
 
 Safety: **app_login**. Has login when anonymous access is disabled; rotate the initial admin password.
+
+Proxy Host: **preserved external** (`preserve_host=true`).
 
 ```sh
 tslink apps share grafana
@@ -229,18 +234,19 @@ Recipe `jupyter`; local ports **8888**; target `http://127.0.0.1:8888`; WebSocke
 
 Safety: **never_public**. Code execution environment; without token/password there is no protection. Never Funnel by default.
 
+Proxy Host: **preserved external** (`preserve_host=true`).
+
 ```sh
 tslink apps share jupyter
 ```
 
-Merge into jupyter_server_config.py. Set allow_origin to the exact external HTTPS origin because TSLink rewrites Host to the loopback upstream; trust_xheaders does not restore Host for kernel WebSocket origin checks. Keep generated token authentication, or set a password using jupyter server password. Never clear both token and password, disable XSRF checks, or use a wildcard origin. Only trusted users should receive access because notebooks execute code as the owner. This recipe stays never public even when a token is configured; detection cannot verify auth.
+Merge into jupyter_server_config.py. The recipe preserves the external Host: add only its exact hostname to local_hostnames so the DNS-rebinding Host check stays enabled. Same-host WebSocket Origin checking needs no allow_origin override. trust_xheaders restores HTTPS for HTTP XSRF checks. Keep generated token authentication, or set a password using jupyter server password. Never clear both token and password, disable XSRF checks, allow all remote Hosts or use a wildcard origin. Only trusted users should receive notebook access; this recipe stays never public.
 
 ```python
 c.ServerApp.ip = "127.0.0.1"
 c.ServerApp.port = 8888
-c.ServerApp.base_url = "/"
+c.ServerApp.local_hostnames = ["localhost", "jupyter.YOUR-TAILNET.ts.net"]
 c.ServerApp.trust_xheaders = True
-c.ServerApp.allow_origin = "https://jupyter.YOUR-TAILNET.ts.net"
 c.ServerApp.disable_check_xsrf = False
 ```
 
@@ -248,32 +254,21 @@ c.ServerApp.disable_check_xsrf = False
 
 ## Uptime Kuma
 
-Recipe `uptime-kuma`; local ports **3001**; target `http://127.0.0.1:13001`; WebSockets: **yes**; health recommendation `/`. App HTTP port 3001; this recipe targets a required owner-configured loopback Nginx bridge on 13001 to restore the external Host.
+Recipe `uptime-kuma`; local ports **3001**; target `http://127.0.0.1:3001`; WebSockets: **yes**; health recommendation `/`. Native HTTP port 3001; use the actual loopback host mapping.
 
 Safety: **app_login**. Has dashboard login after setup; public status pages are intentionally unauthenticated.
+
+Proxy Host: **preserved external** (`preserve_host=true`).
 
 ```sh
 tslink apps share uptime-kuma
 ```
 
-Merge this server block into the http block of a local Nginx configuration and start/reload that proxy before applying the recipe. TSLink targets its loopback bridge on 13001, which restores the exact external Host and forwards WebSocket upgrades to the app on 3001. Replace the hostname with the exact TSLink URL hostname. Keep both listeners isolated; no Origin bypass is needed. Finish administrator setup locally and keep dashboard authentication on. Keep UPTIME_KUMA_WS_ORIGIN_CHECK at its default, not bypass: the WebSocket check compares Origin to Host (its trustProxy branch does not use X-Forwarded-Host). Publish only deliberately public status pages.
+The recipe preserves the external Host and targets native HTTP port 3001. The default WebSocket validator can compare the browser Origin with that Host without extra proxy configuration. Finish administrator setup locally and keep dashboard login on. Keep UPTIME_KUMA_WS_ORIGIN_CHECK at its default, never bypass. Bind the host mapping to loopback. Publish only deliberately public status pages.
 
-```nginx
-server {
-    listen 127.0.0.1:13001;
-    server_name _;
-    location / {
-        proxy_pass http://127.0.0.1:3001;
-        proxy_http_version 1.1;
-        proxy_set_header Host uptime-kuma.YOUR-TAILNET.ts.net;
-        proxy_set_header X-Forwarded-Host $http_x_forwarded_host;
-        proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
-        proxy_set_header X-Forwarded-For $http_x_forwarded_for;
-        proxy_set_header X-Real-IP $http_x_forwarded_for;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-    }
-}
+```yaml
+ports:
+  - "127.0.0.1:3001:3001"
 ```
 
 [Official documentation 1](https://github.com/louislam/uptime-kuma/wiki/Reverse-Proxy) (accessed 2026-10-02). [Official documentation 2](https://nginx.org/en/docs/http/ngx_http_proxy_module.html) (accessed 2026-10-02). [Official documentation 3](https://github.com/louislam/uptime-kuma/blob/2.0.2/server/uptime-kuma-server.js) (accessed 2026-10-02).
@@ -284,17 +279,16 @@ Recipe `paperless-ngx`; local ports **8000**; target `http://127.0.0.1:8000`; We
 
 Safety: **app_login**. Has account login; PAPERLESS_AUTO_LOGIN_USERNAME must be unset before exposure.
 
+Proxy Host: **preserved external** (`preserve_host=true`).
+
 ```sh
 tslink apps share paperless-ngx
 ```
 
-Set in docker-compose.env or the webserver environment. TSLink sends the upstream address as Host and the external hostname as X-Forwarded-Host: enable PAPERLESS_USE_X_FORWARD_HOST and trust only the actual TSLink source IP. The loopback values below are for a host-local backend; replace them with the bridge gateway IP when container networking changes that source. Keep the backend isolated from untrusted clients: Django forwarded-host selection is not itself restricted by TRUSTED_PROXIES. PAPERLESS_URL adds host, CORS and CSRF trust; no trailing slash. The SSL header restores the external HTTPS scheme. Keep auto-login unset and configure a secret key through your secret manager. Uploads remain subject to TSLink 32 MiB/30s limits.
+Set in docker-compose.env or the webserver environment. With the external Host preserved, PAPERLESS_URL supplies the allowed hostname and exact CSRF/CORS origin; no forwarded-host override is needed. The SSL header restores the external HTTPS scheme. Keep the backend isolated so only TSLink can supply this trusted header. Keep auto-login unset and configure a secret key through your secret manager. Uploads remain subject to TSLink 32 MiB/30s limits.
 
-```dotenv
+```sh
 PAPERLESS_URL=https://paperless-ngx.YOUR-TAILNET.ts.net
-PAPERLESS_ALLOWED_HOSTS=paperless-ngx.YOUR-TAILNET.ts.net
-PAPERLESS_USE_X_FORWARD_HOST=true
-PAPERLESS_TRUSTED_PROXIES=127.0.0.1,::1
 PAPERLESS_PROXY_SSL_HEADER=["HTTP_X_FORWARDED_PROTO","https"]
 ```
 
@@ -305,6 +299,8 @@ PAPERLESS_PROXY_SSL_HEADER=["HTTP_X_FORWARDED_PROTO","https"]
 Recipe `vaultwarden`; local ports **80, 8080**; target `http://127.0.0.1:80`; WebSockets: **yes**; health recommendation `/alive`. Container listens on 80; 8080 is a common owner-selected host mapping, not a universal default.
 
 Safety: **never_public**. Has vault login, but contains high-value secrets. TSLink policy: never public.
+
+Proxy Host: **preserved external** (`preserve_host=true`).
 
 ```sh
 tslink apps share vaultwarden
@@ -326,11 +322,13 @@ Recipe `syncthing`; local ports **8384**; target `http://127.0.0.1:8384`; WebSoc
 
 Safety: **never_public**. GUI auth is optional and controls file synchronization. Never Funnel.
 
+Proxy Host: **rewritten upstream** (`preserve_host=false`).
+
 ```sh
 tslink apps share syncthing
 ```
 
-Settings > GUI: set a GUI username and password first and retain loopback binding. TSLink uses an upstream loopback Host, so keep host checking enabled. No insecureSkipHostcheck bypass is required. GUI settings below are UI values. This shares the management GUI, not file-sync port 22000.
+Host preservation stays off so the default loopback Host guard continues to work. Settings > GUI: set a GUI username and password first and retain loopback binding. TSLink uses an upstream loopback Host, so keep host checking enabled. No insecureSkipHostcheck bypass is required. GUI settings below are UI values. This shares the management GUI, not file-sync port 22000.
 
 ```text
 GUI Listen Address: 127.0.0.1:8384
@@ -346,16 +344,18 @@ Recipe `portainer`; local ports **9443, 9000**; target `http://127.0.0.1:9000`; 
 
 Safety: **never_public**. Container administrator can control the host. Never Funnel, especially the setup screen.
 
+Proxy Host: **preserved external** (`preserve_host=true`).
+
 ```sh
 tslink apps share portainer
 ```
 
-Complete first-admin setup locally before sharing. Default 9443 uses a self-signed certificate which TSLink will not bypass. Merge this service fragment into compose: explicitly enable HTTP and publish 9000 only on loopback. Current releases require full scheme://host trusted origins for CSRF protection because TSLink rewrites Host; older releases accepted bare hostnames, so check your version documentation. Keep CSRF, login and setup-token protection enabled. Do not expose agent port 8000. UI consoles require WebSockets.
+Complete first-admin setup locally before sharing. Default 9443 uses a self-signed certificate which TSLink will not bypass. Merge this service fragment into compose: explicitly enable HTTP and publish 9000 only on loopback. The recipe preserves the external Host, so current Portainer CSRF protection accepts the same-origin browser without --trusted-origins. Keep CSRF, login and setup-token protection enabled. Do not expose agent port 8000. UI consoles require WebSockets.
 
 ```yaml
 ports:
   - "127.0.0.1:9000:9000"
-command: ["--http-enabled", "--trusted-origins", "https://portainer.YOUR-TAILNET.ts.net"]
+command: ["--http-enabled"]
 ```
 
 [Official documentation 1](https://docs.portainer.io/start/install-ce/server/docker/linux) (accessed 2026-10-02). [Official documentation 2](https://docs.portainer.io/advanced/reverse-proxy/traefik) (accessed 2026-10-02). [Official documentation 3](https://docs.portainer.io/start/install/server/setup) (accessed 2026-10-02). [Official documentation 4](https://docs.portainer.io/advanced/cli) (accessed 2026-10-02). [Official documentation 5](https://github.com/portainer/portainer/blob/develop/api/http/csrf/csrf.go) (accessed 2026-10-02).
@@ -366,11 +366,13 @@ Recipe `generic-web`; local ports **8080, 3000, 8000**; target `http://127.0.0.1
 
 Safety: **never_public**. Authentication unknown: never Funnel until the owner has reviewed the application.
 
+Proxy Host: **rewritten upstream** (`preserve_host=false`).
+
 ```sh
 tslink apps share generic-web
 ```
 
-Inspect the application documentation for its exact external URL, allowed hosts/origins and proxy trust settings. There is no universal config snippet. Keep its own authentication enabled and use a dedicated hostname. TSLink policy keeps unknown apps private; GET / with a nonempty HTML title identifies only a generic web response.
+Host preservation defaults off because the app is unknown; use --preserve-host only after checking its Host/Origin rules. Inspect the application documentation for its exact external URL, allowed hosts/origins and proxy trust settings. There is no universal config snippet. Keep its own authentication enabled and use a dedicated hostname. TSLink policy keeps unknown apps private; GET / with a nonempty HTML title identifies only a generic web response.
 
 ```text
 External URL: https://generic-web.YOUR-TAILNET.ts.net

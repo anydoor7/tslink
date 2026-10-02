@@ -138,7 +138,7 @@ func TestDetectionHTTPBoundary(t *testing.T) {
 		}
 		switch r.URL.Path {
 		case "/":
-			http.Redirect(w, r, trap.URL, 302)
+			http.Redirect(w, r, trap.URL, http.StatusFound)
 		case "/System/Info/Public":
 			fmt.Fprint(w, `{"ProductName":"Jellyfin","Secret":"do-not-emit"}`)
 		default:

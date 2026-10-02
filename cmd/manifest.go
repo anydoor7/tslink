@@ -274,6 +274,7 @@ func commandJSONResultFields(commandPath string) map[string]JSONResultFieldInfo 
 		}
 	case "tslink add":
 		return map[string]JSONResultFieldInfo{
+			"preserve_host":     {Type: "boolean", Description: "Ordinary add: whether the proxy forwards the incoming Host; default false. With --recipe, inspect service.preserve_host and requested.preserve_host."},
 			"funnel_expires_at": {Type: "string", Description: "Persisted public Funnel deadline; omitted for tailnet-only services and explicit never."},
 			"funnel_rearmed":    {Type: "boolean", Description: "True when an expired preserved Funnel deadline was re-armed with the default 24h TTL."},
 			"recipe":            {Type: "object", Description: "With --recipe: app-side snippets, safety notes and documentation."},
@@ -282,6 +283,8 @@ func commandJSONResultFields(commandPath string) map[string]JSONResultFieldInfo 
 			"applied":           {Type: "boolean", Description: "With --recipe: true only when this call created a service."},
 			"replaced_fields":   {Type: "array", Description: "registry.json fields a replacing add changed or dropped, sorted; empty when the add created the service. Warnings access_changed_on_replace and identity_reset_on_replace flag access and node-identity changes."},
 		}
+	case "tslink share":
+		return map[string]JSONResultFieldInfo{"preserve_host": {Type: "boolean", Description: "Whether the returned HTTP share preserves the incoming Host. Conflicting reuse is refused."}}
 	case "tslink apps list":
 		return map[string]JSONResultFieldInfo{"catalog_version": {Type: "integer", Description: "Version of app advice and fingerprints."}, "recipes": {Type: "array", Description: "Complete recipe catalog with safety levels and dated official documentation."}}
 	case "tslink apps detect":
@@ -554,6 +557,7 @@ func commandJSONResultFields(commandPath string) map[string]JSONResultFieldInfo 
 
 func agentServiceRuntimeJSONResultFields() map[string]JSONResultFieldInfo {
 	return map[string]JSONResultFieldInfo{
+		"services[].preserve_host": {Type: "boolean", Description: "Configured proxy Host policy; false rewrites Host to the upstream, true preserves the real incoming Host. X-Forwarded-* is regenerated in either mode."},
 		"services[].funnel_requested": {
 			Type:        "boolean",
 			Description: "Configuration intent: whether this service requests public Tailscale Funnel exposure.",
@@ -990,11 +994,13 @@ func init() {
 
 func recipeManifestResultFields() map[string]JSONResultFieldInfo {
 	return map[string]JSONResultFieldInfo{
-		"recipe":    {Type: "object", Description: "App-specific configuration, safety advice and dated official docs."},
-		"service":   {Type: "object", Description: "Effective requested service, or existing service preserved unchanged."},
-		"requested": {Type: "object", Description: "Requested defaults; compare with service if existing entry is skipped."},
-		"action":    {Type: "string", Values: []string{"create", "created", "skip_existing"}, Description: "Planned or completed registry action."},
-		"dry_run":   {Type: "boolean", Description: "True for preview; --dry-run wins over --yes."},
-		"applied":   {Type: "boolean", Description: "True only when this invocation created the service."},
+		"recipe":                  {Type: "object", Description: "App-specific configuration, safety advice and dated official docs."},
+		"service.preserve_host":   {Type: "boolean", Description: "Effective Host policy of the created or preserved service."},
+		"requested.preserve_host": {Type: "boolean", Description: "Recipe default unless explicitly overridden; may differ from an existing service."},
+		"service":                 {Type: "object", Description: "Effective requested service, or existing service preserved unchanged."},
+		"requested":               {Type: "object", Description: "Requested defaults; compare with service if existing entry is skipped."},
+		"action":                  {Type: "string", Values: []string{"create", "created", "skip_existing"}, Description: "Planned or completed registry action."},
+		"dry_run":                 {Type: "boolean", Description: "True for preview; --dry-run wins over --yes."},
+		"applied":                 {Type: "boolean", Description: "True only when this invocation created the service."},
 	}
 }

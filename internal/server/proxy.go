@@ -17,10 +17,20 @@ import (
 
 type LocalClient = local.Client
 
+type ProxyOptions struct {
+	PreserveHost bool
+}
+
 // NewProxyHandler returns the reverse proxy for one proxy service. identity
 // may be nil, in which case no X-Tailscale-* identity is injected; it is shared
 // with the node's access log so one caller costs one WhoIs.
 func NewProxyHandler(target string, identity *IdentityResolver) (http.Handler, error) {
+	return NewProxyHandlerWithOptions(target, identity, ProxyOptions{})
+}
+
+// NewProxyHandlerWithOptions configures per-service HTTP forwarding. The
+// default constructor retains target Host rewriting for existing callers.
+func NewProxyHandlerWithOptions(target string, identity *IdentityResolver, options ProxyOptions) (http.Handler, error) {
 	targetURL, err := url.Parse(target)
 	if err != nil {
 		return nil, fmt.Errorf("parse target URL %q: %w", target, err)
@@ -38,6 +48,9 @@ func NewProxyHandler(target string, identity *IdentityResolver) (http.Handler, e
 		Transport: transport,
 		Rewrite: func(r *httputil.ProxyRequest) {
 			r.SetURL(targetURL)
+			if options.PreserveHost {
+				r.Out.Host = r.In.Host
+			}
 			r.SetXForwarded()
 			// Strip both identity namespaces, including CGI-equivalent spellings.
 			for key := range r.In.Header {

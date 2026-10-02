@@ -70,6 +70,7 @@
 | 标志 | 描述 |
 |------|------|
 | `--proxy host:port` | 反向代理到本地 HTTP 服务 |
+| `--preserve-host[=false]` | 仅 proxy：保留传入 Host；普通 add/share 默认 false，recipe 自带默认值；显式 false 可覆盖 recipe。 |
 | `--dir /path` | 文件目录服务 |
 | `--tcp host:port` | 原始 TCP 转发 |
 | `--dry-run` | 校验并打印服务，不写入注册表 |
@@ -104,3 +105,5 @@ Recipes 支持 `--allow`、`--tags`、`--ephemeral`、`--control-url`、已有 F
 计划/应用 JSON data 包含 `recipe`、`requested`、`service`、`action`、`dry_run`、`applied`、`warnings`、`next`。只有此次创建服务才返回 `applied=true`；`skip_existing` 展示保留的实际配置。探测包含 `listeners`、`matches`、`complete`、`warnings`，部分扫描返回 `complete=false`。健康路径只是建议数据。
 
 MCP 工具为 `recipe_list`、只读 `apps_detect`、`recipe_plan`、`recipe_apply`；计划/应用接收 `recipe_id`、可选 `name`/`target`、字符串 `allow`/`tags` 及上述 flag 的 snake_case 参数。先 plan 后 apply。已有通用 `template` 命令及 `template_list/plan/apply` 工具继续工作。见[应用设置与限制](apps_zh.md)。
+
+`share <port|host:port>` 也支持 `--preserve-host`（默认 false）；文件/目录 share 拒绝 true。两种模式均从真实请求重新生成 X-Forwarded-Host/Proto/For，复用时 Host 策略不同会报冲突。已有服务及通用 templates 保持上游 Host 改写。Registry 的 `preserve_host` 是可选 proxy 布尔字段，缺省为 false；recipe 可通过 `--preserve-host=false` 或 MCP `preserve_host:false` 覆盖。Status/list 服务投影及 `access explain` 显示配置策略；全局失败且 registry 不可读时策略未知，status 省略该字段。

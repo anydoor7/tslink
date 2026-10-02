@@ -486,7 +486,10 @@ type Service struct {
 	Name   string `json:"name"`
 	Type   string `json:"type"`
 	Target string `json:"target,omitempty"`
-	Path   string `json:"path,omitempty"`
+	// PreserveHost forwards the incoming HTTP Host instead of the target's host.
+	// Absent or false retains the behaviour of existing services and templates.
+	PreserveHost bool   `json:"preserve_host,omitempty"`
+	Path         string `json:"path,omitempty"`
 	// File narrows a file service to exactly one name inside Path. It is the
 	// bare file name, never a path. Empty means the whole Path subtree is
 	// served, which is also what every registry written before this field
@@ -743,6 +746,9 @@ func ValidateService(svc Service) error {
 }
 
 func validateServiceShape(svc Service) error {
+	if svc.PreserveHost && svc.Type != TypeProxy {
+		return fmt.Errorf("%s services do not support preserve_host; only proxy services do", svc.Type)
+	}
 	switch svc.Type {
 	case TypeProxy:
 		if svc.Target == "" {

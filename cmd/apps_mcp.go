@@ -14,6 +14,7 @@ func recipeInputSchema() map[string]any {
 		"target":              map[string]any{"type": "string", "description": "Optional loopback HTTP(S) target override; use the host port."},
 		"allow":               map[string]any{"type": "string", "description": "Comma-separated private HTTP identities."},
 		"tags":                map[string]any{"type": "string", "description": "Comma-separated tags."},
+		"preserve_host":       map[string]any{"type": "boolean", "description": "Override the recipe Host forwarding default; omitted uses recipe.preserve_host. False explicitly restores upstream Host rewriting."},
 		"ephemeral":           map[string]any{"type": "boolean"},
 		"funnel":              map[string]any{"type": "boolean", "description": "PUBLIC INTERNET exposure: review app authentication with the owner first."},
 		"public_ack":          map[string]any{"type": "boolean", "description": "Required acknowledgement when funnel is true."},
@@ -24,12 +25,22 @@ func recipeInputSchema() map[string]any {
 		"force_unsafe_public": map[string]any{"type": "boolean", "description": "DANGER: overrides never-public recipe policy, potentially exposing host control, code execution or secrets to everyone. Requires funnel and public_ack."},
 	}, "recipe_id")
 }
+
+func recipeCatalogSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"preserve_host": map[string]any{"type": "boolean", "description": "Default Host forwarding policy for this recipe."},
+		},
+	}
+}
+
 func recipeOutputSchema() map[string]any {
 	return objectSchema(map[string]any{
 		"schema_version": map[string]any{"type": "integer"}, "catalog_version": map[string]any{"type": "integer"},
-		"recipe":    nestedObjectSchema("App advice, snippets and official documentation with access dates."),
-		"service":   nestedObjectSchema("Service view that will be created, or the existing service left unchanged."),
-		"requested": nestedObjectSchema("Requested recipe service view; compare with service when skipped."),
+		"recipe":    recipeCatalogSchema(),
+		"service":   mcpServiceViewSchema,
+		"requested": mcpServiceViewSchema,
 		"action":    map[string]any{"type": "string", "enum": []string{templateActionCreate, templateActionCreated, templateActionSkipExisting}},
 		"dry_run":   map[string]any{"type": "boolean"}, "applied": map[string]any{"type": "boolean"},
 		"warnings": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
@@ -56,7 +67,7 @@ func init() {
 		}, "schema_version", "listeners", "matches", "complete", "warnings")},
 		mcpToolDefinition{Name: "recipe_list", Description: "List the versioned app recipe catalog including ports, WebSocket requirements, recommended health paths (data only), app-side snippets, safety levels and dated official documentation. Templates remain generic multi-service stacks.", InputSchema: objectSchema(map[string]any{}), OutputSchema: objectSchema(map[string]any{
 			"schema_version": map[string]any{"type": "integer"}, "catalog_version": map[string]any{"type": "integer"},
-			"recipes": map[string]any{"type": "array", "items": nestedObjectSchema("Application recipe.")},
+			"recipes": map[string]any{"type": "array", "items": recipeCatalogSchema()},
 		}, "schema_version", "catalog_version", "recipes")},
 		mcpToolDefinition{Name: "recipe_plan", Description: "Preview a single-app recipe with owner configuration, safety warnings and existing service comparison; writes nothing. Use before recipe_apply. Discovery never proves app authentication.", InputSchema: recipeInputSchema(), OutputSchema: recipeOutputSchema()},
 		mcpToolDefinition{Name: "recipe_apply", Description: "Apply a reviewed recipe plan to the registry, then ensure the background service unless no_daemon_install is true. Call recipe_plan first. Leaves existing names unchanged. Never-public apps refuse Funnel unless the owner explicitly accepts force_unsafe_public and public_ack. Does not configure, install or probe the third-party app.", InputSchema: recipeInputSchema(), OutputSchema: recipeApplyOutputSchema()},
