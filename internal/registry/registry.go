@@ -1468,17 +1468,21 @@ func save(path string, reg *Registry) error {
 	data, err := marshalFn(reg, "", "  ")
 	if err != nil {
 		reg.Guests = originalGuests
+		if len(pending) > 0 {
+			recordGuestCounterError(path, err)
+		}
 		return err
 	}
 	data = append(data, '\n')
 	err = atomicfile.WriteFile(path, data)
-	if err == nil {
+	if len(pending) > 0 || GuestCounterError(path) != nil {
+		recordGuestCounterError(path, err)
+	}
+	if err == nil || atomicfile.IsPublished(err) {
 		acknowledgeGuestUsage(path, pending)
+		notifyGuestCommit(path, reg.Guests)
 	} else {
 		reg.Guests = originalGuests
-	}
-	if err == nil {
-		notifyGuestCommit(path, reg.Guests)
 	}
 	return err
 }

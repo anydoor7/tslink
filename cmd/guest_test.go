@@ -142,6 +142,16 @@ func TestGuestStatusAndDoctorViews(t *testing.T) {
 	}
 }
 
+func TestGuestCounterWarningHumanStatus(t *testing.T) {
+	guestCommandPaths(t)
+	const message = "Guest counters were published; durability is unconfirmed."
+	var out bytes.Buffer
+	formatStatus(StatusResult{ServiceCount: 1, Services: []StatusServiceState{{Name: "photos", Warnings: []inspect.WarningView{{Code: inspect.WarningCodeGuestCounters, Message: message}}}}}, &out)
+	if !strings.Contains(out.String(), message) || !strings.Contains(out.String(), inspect.WarningCodeGuestCounters) {
+		t.Fatal("counter warning missing from human status", out.String())
+	}
+}
+
 func TestGuestExplicitDisclosureAndMCPDispatch(t *testing.T) {
 	paths := guestCommandPaths(t)
 	now := time.Date(2030, 7, 10, 12, 0, 0, 0, time.UTC)

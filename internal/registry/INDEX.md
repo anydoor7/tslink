@@ -40,3 +40,7 @@ This index records the people sharing lifecycle implementation and regression te
 - `guest_crash_test.go`: atomic revoke persistence and restart with killed writers.
 
 - `guest_usage_test.go`: batches, retry, revocation and opportunistic counter persistence.
+
+- `guest_monitor.go`: one shared grant snapshot per gate tick and batched expiry latching.
+- `guest_monitor_test.go`: snapshot, expiry rollback, other-grant and unreadable-registry controls.
+- `guest_publication_test.go`: before/after publication errors and interleaved counter observations.

@@ -305,7 +305,8 @@ func (s *Server) healthCycle(ctx context.Context, r *health.Recorder, now time.T
 		if writer, ok := s.accessWriter.(interface{ Health() accesslog.Health }); ok {
 			accessChanged = !reflect.DeepEqual(s.lastAccessHealth, writer.Health())
 		}
-		retry := (s.runtimeSnapshotDirty || accessChanged) && !published
+		guestChanged := !reflect.DeepEqual(s.lastGuestCounterWarnings, s.guestCounterWarningsLocked())
+		retry := (s.runtimeSnapshotDirty || accessChanged || guestChanged) && !published
 		aged := false
 		for _, target := range targets {
 			name := target.Service.Name

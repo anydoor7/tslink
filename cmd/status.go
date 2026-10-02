@@ -663,6 +663,11 @@ func formatStatus(r StatusResult, out io.Writer) {
 	fmt.Fprintf(out, "→ services: %d registered\n", r.ServiceCount)
 	for _, svc := range r.Services {
 		formatAppHealth(out, svc.Name, svc.Health, svc.NodeKey)
+		for _, warning := range svc.Warnings {
+			if warning.Code == inspect.WarningCodeGuestCounters {
+				fmt.Fprintf(out, "→ %s: %s (%s)\n", svc.Name, warning.Message, warning.Code)
+			}
+		}
 	}
 	formatEarlyWarnings(out, r.Credentials)
 	formatAlerts(out, r.Alerts)

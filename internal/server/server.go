@@ -339,10 +339,11 @@ type LifecycleReconcileFunc func(context.Context, time.Time) (bool, error)
 
 // Server manages multiple tsnet nodes, one per registered service.
 type Server struct {
-	accessWriter     accesslog.Writer
-	accessOptions    accesslog.Options
-	lastAccessHealth accesslog.Health
-	nodes            map[string]*ServiceNode
+	accessWriter             accesslog.Writer
+	accessOptions            accesslog.Options
+	lastAccessHealth         accesslog.Health
+	lastGuestCounterWarnings map[string]inspect.WarningView
+	nodes                    map[string]*ServiceNode
 	// stateReservations counts, per service, the startups in progress that
 	// may write into its tsnet state directory; see reserveNodeState. It is
 	// guarded by mu, like nodes.
@@ -1933,6 +1934,7 @@ func (s *Server) writeRuntimeSnapshotLocked(registryFingerprint string, complete
 	}
 	sort.Strings(names)
 
+	guestWarnings := s.guestCounterWarningsLocked()
 	states := make([]runtimesnapshot.ServiceState, 0, len(names))
 	for _, name := range names {
 		if failure, failed := s.serviceFailures[name]; failed {
@@ -1944,8 +1946,12 @@ func (s *Server) writeRuntimeSnapshotLocked(registryFingerprint string, complete
 		if node.tsnetSrv != nil {
 			certDomains = node.tsnetSrv.CertDomains()
 		}
+		warnings := node.limitWarnings.snapshot()
+		if warning, ok := guestWarnings[name]; ok {
+			warnings = append(warnings, warning)
+		}
 		states = append(states, runtimesnapshot.ServiceState{
-			Warnings:     node.limitWarnings.snapshot(),
+			Warnings:     warnings,
 			Service:      node.service,
 			NodeID:       node.nodeID,
 			RuntimeHost:  node.runtimeHost,
@@ -1986,6 +1992,7 @@ func (s *Server) writeRuntimeSnapshotLocked(registryFingerprint string, complete
 		slog.Warn("runtime snapshot write failed; continuing with running services", "path", path, "error", err)
 	} else {
 		s.runtimeSnapshotDirty = false
+		s.lastGuestCounterWarnings = guestWarnings
 		if snapshot.AccessLog != nil {
 			s.lastAccessHealth = *snapshot.AccessLog
 		}
