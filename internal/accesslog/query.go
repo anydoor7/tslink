@@ -71,7 +71,14 @@ func (f Filter) matches(e Event) bool {
 	if f.Who != "" {
 		match := asciiLogin(e.Identity.Login) == asciiLogin(f.Who) || e.Identity.Node == f.Who
 		if e.MCP != nil {
-			match = match || asciiLogin(e.MCP.Principal) == asciiLogin(f.Who)
+			principalMatch := e.MCP.Principal == f.Who
+			if !strings.HasPrefix(e.MCP.Principal, "tag:") {
+				principalMatch = asciiLogin(e.MCP.Principal) == asciiLogin(f.Who)
+			}
+			match = match || principalMatch
+			if e.MCP.Identity != nil {
+				match = match || asciiLogin(e.MCP.Identity.Login) == asciiLogin(f.Who) || e.MCP.Identity.Node == f.Who
+			}
 		}
 		for _, tag := range e.Identity.Tags {
 			match = match || tag == f.Who

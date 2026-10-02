@@ -9,3 +9,5 @@
 - `audit.go`: typed MCP and guest identifier/code sanitization.
 - `lifecycle.go`: daemon-owned stable writer, initialization retry and missing-history windows.
 - `audit_roundtrip_test.go`, `path_policy_test.go`, `lifecycle_test.go`: audit round-trips, mode/escape regression, failure/recovery and single-writer controls.
+
+- `query_identity_test.go`: MCP nested identity and case-sensitive tag query regression.
