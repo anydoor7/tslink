@@ -24,14 +24,15 @@ var (
 	readPIDFn          = daemon.ReadPID
 	isPIDFileMissingFn = daemon.IsPIDFileMissing
 
-	statusPIDPathFn             = config.PIDPath
-	statusRegistryPathFn        = config.RegistryPath
-	statusRuntimeSnapshotPathFn = config.RuntimeSnapshotPath
-	statusAuthHandoffPathFn     = config.AuthHandoffPath
-	runtimeLoadSnapshotFn       = tsruntime.Load
-	statusLoadAuthHandoffFn     = loadAuthHandoff
-	statusNowFn                 = time.Now
-	statusGetClientSecretFn     = credentials.GetClientSecret
+	statusPIDPathFn              = config.PIDPath
+	statusRegistryPathFn         = config.RegistryPath
+	statusRuntimeSnapshotPathFn  = config.RuntimeSnapshotPath
+	statusAuthHandoffPathFn      = config.AuthHandoffPath
+	runtimeLoadSnapshotFn        = tsruntime.Load
+	pollableStatusLoadRegistryFn = registry.LoadForDiagnostics
+	statusLoadAuthHandoffFn      = loadAuthHandoff
+	statusNowFn                  = time.Now
+	statusGetClientSecretFn      = credentials.GetClientSecret
 	// statusCredentialInventoryFn classifies the stored credential slots and,
 	// with persist, records any missing value-free metadata (backfill). Tests
 	// replace it to stay off the filesystem.
@@ -436,14 +437,16 @@ func (s statusRead) getPollableStatus(pidPath, regPath, snapshotPath, authHandof
 		}
 		return StatusResult{}, err
 	}
-	reg, _, err := registry.LoadForDiagnostics(regPath)
+	reg, _, err := pollableStatusLoadRegistryFn(regPath)
 	if err != nil {
 		return StatusResult{}, err
 	}
 	expiredByName := make(map[string]bool, len(reg.Services))
+	registryServices := make(map[string]registry.Service, len(reg.Services))
 	now := statusNowFn()
 	for _, svc := range reg.Services {
 		expiredByName[svc.Name] = registry.FunnelExpiredAt(svc, now)
+		registryServices[svc.Name] = svc
 	}
 	// getStatus may have sampled the clock just before a deadline. Normalize
 	// every Funnel field to this later effective time before applying runtime
@@ -495,7 +498,11 @@ func (s statusRead) getPollableStatus(pidPath, regPath, snapshotPath, authHandof
 				}
 				r.Services[i].Warnings = append([]inspect.WarningView(nil), runtimeService.Warnings...)
 				r.Services[i].Error = runtimeService.Error
-				r.Services[i].Health = currentHealth(runtimeService.Health, reg.Services[i], now)
+				// The registry may change between reads. A removed service keeps
+				// its unchecked health; only a named match supplies probe config.
+				if svc, ok := registryServices[r.Services[i].Name]; ok {
+					r.Services[i].Health = currentHealth(runtimeService.Health, svc, now)
+				}
 				r.Services[i].NodeKey = health.ExpiryAt(runtimeService.NodeKey.ExpiresAt, runtimeService.NodeKey.Source, now, nodeExpiryNext())
 				if runtimeService.RuntimeState == tsruntime.ServiceRuntimeFailed {
 					r.Services[i].Status = tsruntime.ServiceRuntimeFailed
