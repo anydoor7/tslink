@@ -152,7 +152,7 @@ func Daemonize(outLog, errLog, controlURL string, manageACL, noAutoProvision, mc
 	return pid, nil
 }
 
-// StopDaemon terminates the daemon process and waits up to 5 seconds for exit.
+// StopDaemon requests graceful shutdown and waits up to 5 seconds for exit.
 func StopDaemon(pidPath string) error {
 	pid, err := ReadPID(pidPath)
 	if err != nil {
@@ -183,18 +183,13 @@ func StopDaemon(pidPath string) error {
 		return fmt.Errorf("refusing to stop process from PID file: %w", err)
 	}
 
-	// On Windows there is no SIGTERM; use Kill (TerminateProcess).
-	if err := proc.Kill(); err != nil {
-		if errors.Is(err, os.ErrProcessDone) {
-			RemovePID(pidPath)
-			return nil
-		}
-		return fmt.Errorf("terminate process %d: %w", pid, err)
+	if err := requestGracefulWindowsStop(pid); err != nil {
+		return fmt.Errorf("request graceful shutdown of process %d (process and PID evidence retained): %w", pid, err)
 	}
 
 	if err := waitForProcessExit(proc, windowsStopTimeout); err != nil {
 		if errors.Is(err, errProcessWaitTimeout) {
-			return fmt.Errorf("process %d did not exit after termination", pid)
+			return fmt.Errorf("process %d did not exit after graceful shutdown; process and PID evidence retained", pid)
 		}
 		return fmt.Errorf("confirm process %d exit: %w", pid, err)
 	}
@@ -232,7 +227,10 @@ func defaultProcessExecutable(pid int) (string, error) {
 		return "", err
 	}
 	defer windows.CloseHandle(handle)
+	return processExecutableFromHandle(handle)
+}
 
+func processExecutableFromHandle(handle windows.Handle) (string, error) {
 	buffer := make([]uint16, 32768)
 	size := uint32(len(buffer))
 	if err := windows.QueryFullProcessImageName(handle, 0, &buffer[0], &size); err != nil {
@@ -247,7 +245,10 @@ func defaultProcessStartTime(pid int) (time.Time, error) {
 		return time.Time{}, err
 	}
 	defer windows.CloseHandle(handle)
+	return processStartTimeFromHandle(handle)
+}
 
+func processStartTimeFromHandle(handle windows.Handle) (time.Time, error) {
 	var creation, exit, kernel, user windows.Filetime
 	if err := windows.GetProcessTimes(handle, &creation, &exit, &kernel, &user); err != nil {
 		return time.Time{}, err
@@ -261,11 +262,14 @@ func defaultProcessArguments(pid int) ([]string, error) {
 		return nil, err
 	}
 	defer windows.CloseHandle(handle)
+	return processArgumentsFromHandle(handle)
+}
 
+func processArgumentsFromHandle(handle windows.Handle) ([]string, error) {
 	var size uint32
 	_ = windows.NtQueryInformationProcess(handle, windows.ProcessCommandLineInformation, nil, 0, &size)
 	if size < uint32(unsafe.Sizeof(windows.NTUnicodeString{})) {
-		return nil, fmt.Errorf("query process %d command line size returned %d bytes", pid, size)
+		return nil, fmt.Errorf("query process command line size returned %d bytes", size)
 	}
 	buffer := make([]byte, size)
 	if err := windows.NtQueryInformationProcess(handle, windows.ProcessCommandLineInformation, unsafe.Pointer(&buffer[0]), size, &size); err != nil {
@@ -273,7 +277,7 @@ func defaultProcessArguments(pid int) ([]string, error) {
 	}
 	commandLine := (*windows.NTUnicodeString)(unsafe.Pointer(&buffer[0]))
 	if commandLine.Buffer == nil || commandLine.Length == 0 || commandLine.Length%2 != 0 {
-		return nil, fmt.Errorf("process %d returned an invalid command line", pid)
+		return nil, fmt.Errorf("process returned an invalid command line")
 	}
 	units := unsafe.Slice(commandLine.Buffer, int(commandLine.Length/2))
 	return windows.DecomposeCommandLine(windows.UTF16ToString(units))

@@ -10,7 +10,8 @@ import (
 
 func TestBootstrapWindowsStartupRegistration(t *testing.T) {
 	dir := isolateBootstrap(t)
-	path, err := supervisorPath()
+	isolateWindowsStartupInstall(t)
+	path, err := windowsStartupScriptPath()
 	if err != nil {
 		t.Fatal(err)
 	}

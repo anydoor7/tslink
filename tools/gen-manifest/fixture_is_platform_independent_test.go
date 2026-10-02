@@ -84,7 +84,11 @@ func TestFixtureIsTheSameOnEveryPlatform(t *testing.T) {
 	if !hasFlag(darwin, "tslink install", "force") || !hasFlag(darwin, "tslink uninstall", "force") {
 		t.Fatal("fixture: the darwin manifest lacks install/uninstall --force")
 	}
-	reference, err := fixtureBytes(darwin, nil, "darwin")
+	previous, err := json.Marshal(committedFixture(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reference, err := fixtureBytes(darwin, previous, "darwin")
 	if err != nil {
 		t.Fatal(err)
 	}

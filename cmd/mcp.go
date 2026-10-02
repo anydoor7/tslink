@@ -198,7 +198,7 @@ var (
 	}, "code", "message")
 	mcpDaemonInstalledSchema = func() map[string]any {
 		schema := objectSchema(map[string]any{
-			"manager": map[string]any{"type": "string", "enum": []string{"launchd", "systemd", "windows-startup"}, "description": "The supervisor that now starts TSLink at login or boot."},
+			"manager": map[string]any{"type": "string", "enum": []string{"launchd", "systemd", "windows-startup", "windows-task-scheduler"}, "description": "The supervisor that now starts TSLink at login or boot."},
 			"path":    map[string]any{"type": "string", "description": "The supervisor definition this call wrote."},
 			"undo":    map[string]any{"type": "string", "description": "The command that removes it."},
 		}, "manager", "path", "undo")

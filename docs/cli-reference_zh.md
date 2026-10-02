@@ -50,7 +50,7 @@
 | `tslink config` | 管理全局配置，子命令为 set、get、list |
 | `tslink manifest` | 打印每个命令、flag、退出码和 error code 的机器可读描述 |
 | `tslink registry check [path]` | 严格校验一个 `registry.json`，不做任何修改 |
-| `tslink install` | 开机自启（macOS LaunchAgent / Linux systemd / Windows 启动文件夹） |
+| `tslink install` | 用户登录时自启（macOS LaunchAgent / Linux systemd / Windows Task Scheduler） |
 | `tslink uninstall` | 移除自启 |
 
 首次运行时，默认 registry 文件尚不存在是有效的空状态。显式传入不存在的
@@ -155,3 +155,5 @@ MCP add/share 接受可选对象 `request_limits: {"max_body":"20GiB","read_time
 的 runtime warning 中; status 和 verbose list 显示 warning, doctor 建议对应标志。
 节点重启后清除这些 warning。流式上传拒绝时后端可能已接收部分内容。
 应用后端及公网 relay 自身的限制仍然有效。
+
+Windows `tslink install --startup` 显式选择下次登录启动、无崩溃恢复的 Startup 降级。默认 `install` 使用 Task Scheduler 启动内置 supervisor 并验证立即启动。`stop` 停止两个进程，包括崩溃退避期间；`install` 重置已触发的崩溃循环断路器。见[daemon 生命周期](daemon-lifecycle_zh.md#windows-监管与迁移)。

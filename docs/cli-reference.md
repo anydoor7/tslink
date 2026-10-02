@@ -50,7 +50,7 @@ People logins accept any nonempty valid UTF-8 string without control characters 
 | `tslink config` | Manage global configuration (set/get/list) |
 | `tslink manifest` | Print the machine-readable description of every command, flag, exit code, and error code |
 | `tslink registry check [path]` | Strictly validate a `registry.json` without modifying it |
-| `tslink install` | Auto-start on login (macOS LaunchAgent / Linux systemd / Windows Startup) |
+| `tslink install` | Auto-start on login (macOS LaunchAgent / Linux systemd / Windows Task Scheduler) |
 | `tslink uninstall` | Remove auto-start |
 
 A missing implicit default registry is valid on first run. An explicit missing
@@ -160,3 +160,5 @@ is retained in the current node's runtime warnings; status and verbose list show
 it, and doctor suggests the corresponding flag. Warnings reset when that node
 restarts. A backend may already have received part of a rejected streaming body.
 Its own upload limits and any public relay limits still apply.
+
+Windows `tslink install --startup` uses the Startup fallback for the next sign-in, without crash restart. Default `install` uses Task Scheduler to launch a built-in supervisor and verifies immediate startup. `stop` stops both processes, including during crash backoff; `install` resets a tripped crash-loop breaker. See [daemon lifecycle](daemon-lifecycle.md#windows-supervision-and-migration).
