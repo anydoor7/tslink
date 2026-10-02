@@ -6,8 +6,11 @@ or live service status. Node names, localhost ports, and client types are exampl
 
 | Asset | Use |
 |---|---|
-| `tslink-mark-light.svg` / `tslink-mark-dark.svg` | TSLink mark: an open door with a link to one service node, 128 x 128 |
-| `tslink-lockup-light.svg` / `tslink-lockup-dark.svg` | Mark plus outlined TSLink wordmark, 472 x 128 |
+| `tslink-mark-light.svg` / `tslink-mark-dark.svg` | TSLink mark "Split link": two identical hooks, one rotated 180 degrees, forming an S around a gap; 160 x 160. Light is for light backgrounds |
+| `tslink-lockup-light.svg` / `tslink-lockup-dark.svg` | Mark plus the TSLink wordmark outlined from Lato SemiBold (SIL OFL 1.1), 576 x 160 |
+| `favicon.ico` | 16, 32 and 48 px favicon frames |
+| `social-preview.png` / `social-preview.svg` | 1280 x 640 social card with the mark, wordmark and tagline; the PNG is uploaded as the GitHub social preview |
+| `FONT-NOTICE.md` / `LICENSE-Lato.txt` | Provenance of the outlined Lato glyphs and the unmodified SIL Open Font License text |
 | `service-map-light.svg` / `service-map-dark.svg` | Four service types and their nodes, wide layout, 960 x 708 |
 | `service-map-light-mobile.svg` / `service-map-dark-mobile.svg` | The same mapping in a narrow layout, 400 x 823 |
 | `local-ai-flow-light.svg` / `local-ai-flow-dark.svg` | A local app, documents, model, and remote client, wide layout, 960 x 598 |
@@ -19,7 +22,7 @@ or live service status. Node names, localhost ports, and client types are exampl
 | `badge-tsnet.svg` | Tailscale / tsnet with an original network glyph |
 | `badge-mcp.svg` | MCP / 19 tools with an original connector glyph |
 
-The illustrations use SVG shapes and system-font text, with no remote assets,
+The logo files contain only outlined paths; their wordmark glyphs come from Lato, an SIL OFL 1.1 font (see `FONT-NOTICE.md`). The illustrations use SVG shapes and system-font text, with no remote assets,
 scripts, custom fonts, or embedded HTML. Light and dark versions have equivalent
 content. The narrow layouts reorganize the flow instead of shrinking the desktop
 image. Essential labels are checked at an actual 838 px wide desktop rendering
