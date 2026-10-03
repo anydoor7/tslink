@@ -51,23 +51,42 @@ func TestScript(t *testing.T) {
 // Multiple writes to a file with the same fd.
 func TestWatchMultipleWrite(t *testing.T) {
 	t.Parallel()
-	w := newCollector(t)
-	w.collect(t)
 	tmp := t.TempDir()
+	w := newWatcher(t)
+	defer w.Close()
+	waitWrite := func(which string) {
+		t.Helper()
+		timer := time.NewTimer(5 * time.Second)
+		defer timer.Stop()
+		select {
+		case e, ok := <-w.Events:
+			want := Event{Name: join(tmp, "file"), Op: Write}
+			if !ok || e != want {
+				t.Fatalf("%s write: got %v (open=%v), want %v", which, e, ok, want)
+			}
+		case err, ok := <-w.Errors:
+			t.Fatalf("%s write: watcher error %v (open=%v)", which, err, ok)
+		case <-timer.C:
+			t.Fatalf("%s write: timed out waiting for WRITE", which)
+		}
+	}
 
 	echoAppend(t, "data", tmp, "file")
-	addWatch(t, w.w, tmp)
+	addWatch(t, w, tmp)
 	fp, err := os.OpenFile(join(tmp, "file"), os.O_RDWR, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer fp.Close()
 	if _, err := fp.Write([]byte("X")); err != nil {
 		t.Fatal(err)
 	}
 	if err := fp.Sync(); err != nil {
 		t.Fatal(err)
 	}
-	eventSeparator()
+	// Identical unread inotify events can coalesce. Observe the first write
+	// before issuing the second; elapsed time does not establish that barrier.
+	waitWrite("first")
 	if _, err := fp.Write([]byte("Y")); err != nil {
 		t.Fatal(err)
 	}
@@ -75,10 +94,7 @@ func TestWatchMultipleWrite(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cmpEvents(t, tmp, w.stop(t), newEvents(t, `
-		write  /file  # write X
-		write  /file  # write Y
-	`))
+	waitWrite("second")
 }
 
 // Remove watched file with open fd

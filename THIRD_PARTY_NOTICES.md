@@ -398,7 +398,9 @@ Local changes (2026-10-03):
   removal/Close, concurrent and repeated Close, public Add/Remove concurrency,
   retained descriptors/state, and registration failure ownership.
 - fsnotify_test.go excludes only INDEX.md inventory documentation from the
-  script fixture enumeration. All upstream test scripts are retained.
+  script fixture enumeration. TestWatchMultipleWrite observes the first WRITE
+  before writing again on the same descriptor, avoiding unread-event coalescing
+  without relying on a scheduling delay. All upstream test scripts are retained.
 - INDEX.md inventories are local documentation.
 
 Public signatures are unchanged. On kqueue, Close now waits for watch disposal,
