@@ -13,10 +13,6 @@
 <text x="40" y="233" font-size="19" font-weight="600" fill="#17253A">Browser visitors • optional</text>
 <text x="40" y="259" font-size="17" font-weight="400" fill="#976400">Public HTTPS / Tailscale Funnel</text>
 <text x="40" y="284" font-size="16" font-weight="400" fill="#4A6078">Guest link + optional PIN, or open URL</text>
-<polyline points="376,136 389,136 389,455 366,455" fill="none" stroke="#087E98" stroke-width="2"/>
-<polyline points="372,450 366,455 372,460" fill="none" stroke="#087E98" stroke-width="2"/>
-<polyline points="24,257 11,257 11,592 34,592" fill="none" stroke="#976400" stroke-width="2"/>
-<polyline points="28,587 34,592 28,597" fill="none" stroke="#976400" stroke-width="2"/>
 <rect x="24" y="340" width="352" height="520" rx="12" fill="#FFFFFF" stroke="#CDD9E6" stroke-width="1.5"/>
 <text x="40" y="371" font-size="15" font-weight="700" fill="#4A6078">ONE APP HOST</text>
 <text x="40" y="400" font-size="19" font-weight="600" fill="#17253A">Your PC, server or cloud machine</text>
@@ -42,4 +38,8 @@
 <polyline points="195,869 200,863 205,869" fill="none" stroke="#4A6078" stroke-width="2"/>
 <text x="24" y="1030" font-size="16" font-weight="400" fill="#4A6078">Repeat per host; no combined inventory.</text>
 <text x="24" y="1056" font-size="15" font-weight="400" fill="#4A6078">Solid: access   Dashed: management</text>
+<polyline points="376,136 389,136 389,455 366,455" fill="none" stroke="#087E98" stroke-width="2"/>
+<polyline points="372,450 366,455 372,460" fill="none" stroke="#087E98" stroke-width="2"/>
+<polyline points="24,257 11,257 11,592 34,592" fill="none" stroke="#976400" stroke-width="2"/>
+<polyline points="28,587 34,592 28,597" fill="none" stroke="#976400" stroke-width="2"/>
 </g></svg>
