@@ -375,7 +375,8 @@ func TestARootIsNotReclaimedBeforeItsOwnerLocksIt(t *testing.T) {
 }
 
 // TestConcurrentReclaimsAreHarmless: several sweeps of one directory at once
-// remove every abandoned root, report nothing, and leave a live root alone.
+// eventually remove every abandoned root and leave a live root alone. A
+// competing probe can hold a marker open or locked until the sweeps finish.
 func TestConcurrentReclaimsAreHarmless(t *testing.T) {
 	dir := t.TempDir()
 	var abandoned []string
@@ -387,17 +388,87 @@ func TestConcurrentReclaimsAreHarmless(t *testing.T) {
 		t.Fatalf("createRoot() error = %v", err)
 	}
 	t.Cleanup(func() { _ = removeRoot(live, marker) })
+	canary := filepath.Join(live, "live-data")
+	if err := os.WriteFile(canary, []byte("live"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Pause a competing probe while it holds a real marker lock. This makes
+	// at least one deferred root deterministic on every platform.
+	reader, err := os.OpenFile(filepath.Join(abandoned[0], rootMarker), os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = reader.Close() })
+	if err := filelock.Lock(reader); err != nil {
+		t.Fatal(err)
+	}
 
 	var wg sync.WaitGroup
 	for range 4 {
 		wg.Go(func() { reclaimStaleRoots(dir) })
 	}
 	wg.Wait()
+	requireExists(t, canary, "concurrent sweeps must preserve a live owner's data")
+	if err := filelock.Unlock(reader); err != nil {
+		t.Fatal(err)
+	}
+	if err := reader.Close(); err != nil {
+		t.Fatal(err)
+	}
 
+	if !eventually(func() bool {
+		reclaimStaleRoots(dir)
+		for _, root := range abandoned {
+			if _, err := os.Lstat(root); !os.IsNotExist(err) {
+				return false
+			}
+		}
+		return true
+	}) {
+		t.Fatal("deferred roots were not reclaimed within 10s after competing probes closed")
+	}
 	for _, root := range abandoned {
 		requireGone(t, root, "every abandoned root must be removed")
 	}
+	requireExists(t, canary, "settling sweeps must preserve a live owner's data")
 	if state := rootMarkerState(live); state != markerHeld {
 		t.Fatalf("marker state of the live root after the sweeps = %d, want markerHeld (%d)", state, markerHeld)
 	}
+}
+
+// A failed removal is deferred, not successful. Use real filesystem failures:
+// Windows refuses to delete a marker with an open reader; Unix refuses to
+// unlink entries in a directory without write permission.
+func TestReclaimStaleRootsRetriesDeferredRemoval(t *testing.T) {
+	if runtime.GOOS != "windows" && os.Geteuid() == 0 {
+		t.Skip("root bypasses the directory permissions needed to block removal")
+	}
+	dir := t.TempDir()
+	root := plantRoot(t, dir, RootPrefix+"deferred", "4242\n")
+	var release func()
+	if runtime.GOOS == "windows" {
+		reader, err := os.OpenFile(filepath.Join(root, rootMarker), os.O_RDWR, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		release = func() { _ = reader.Close() }
+	} else {
+		if err := os.Chmod(root, 0o500); err != nil {
+			t.Fatal(err)
+		}
+		release = func() { _ = os.Chmod(root, 0o700) }
+	}
+	t.Cleanup(release)
+	if state := rootMarkerState(root); state != markerAbandoned {
+		t.Fatalf("blocked root marker state = %d, want markerAbandoned", state)
+	}
+	if deferred := reclaimStaleRoots(dir); deferred != 1 {
+		t.Fatalf("deferred removals = %d, want 1 while deletion is blocked", deferred)
+	}
+	requireExists(t, filepath.Join(root, rootMarker), "a blocked marker must remain available to the next sweep")
+	release()
+	if deferred := reclaimStaleRoots(dir); deferred != 0 {
+		t.Fatalf("deferred removals after release = %d, want 0", deferred)
+	}
+	requireGone(t, root, "a later sweep must finish deferred removal after the blocker is released")
 }
