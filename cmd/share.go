@@ -33,7 +33,7 @@ const (
 type ShareResult struct {
 	RequestLimits *registry.EffectiveRequestLimits `json:"request_limits,omitempty"`
 	URL           string                           `json:"url,omitempty"`
-	Name          string                           `json:"name,omitempty"`
+	Name          string                           `json:"name"`
 	Status        string                           `json:"status"`
 	PreserveHost  bool                             `json:"preserve_host"`
 	AuthURL       string                           `json:"auth_url,omitempty"`
@@ -583,7 +583,7 @@ func shareOutcomeOnce(paths sharePaths, name, fileName string) (ShareResult, boo
 		return ShareResult{}, false, err
 	}
 	if status.AuthStatus == authStatusNeedsLogin && status.AuthURL != "" {
-		return ShareResult{Status: authStatusNeedsLogin, AuthURL: status.AuthURL, serviceName: name}, true, nil
+		return ShareResult{Name: name, Status: authStatusNeedsLogin, AuthURL: status.AuthURL, serviceName: name}, true, nil
 	}
 	return ShareResult{}, false, nil
 }
@@ -673,7 +673,7 @@ func executeShare(ctx context.Context, paths sharePaths, req shareRequest, wait 
 			return ShareResult{}, err
 		}
 		if startup.Status == authStatusNeedsLogin && startup.AuthURL != "" {
-			return withShareFunnelState(ShareResult{Status: authStatusNeedsLogin, AuthURL: startup.AuthURL, serviceName: svc.Name}, registration), nil
+			return withShareFunnelState(ShareResult{Name: svc.Name, Status: authStatusNeedsLogin, AuthURL: startup.AuthURL, serviceName: svc.Name}, registration), nil
 		}
 	}
 	// svc, not spec: when registerShare reused an existing service, the URL has

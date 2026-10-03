@@ -294,7 +294,7 @@ PAPERLESS_URL=https://paperless-ngx.YOUR-TAILNET.ts.net
 PAPERLESS_PROXY_SSL_HEADER=["HTTP_X_FORWARDED_PROTO","https"]
 ```
 
-[Official documentation 1](https://docs.paperless-ngx.com/configuration/) (accessed 2026-10-02). [Official documentation 2](https://github.com/paperless-ngx/paperless-ngx/blob/main/src/paperless/settings/__init__.py) (accessed 2026-10-02).
+[Official configuration documentation source](https://github.com/paperless-ngx/paperless-ngx/blob/main/docs/configuration.md) (accessed 2026-10-02). [Official documentation 2](https://github.com/paperless-ngx/paperless-ngx/blob/main/src/paperless/settings/__init__.py) (accessed 2026-10-02).
 
 ## Vaultwarden
 

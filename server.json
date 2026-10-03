@@ -1,0 +1,24 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.anydoor7/tslink",
+  "title": "TSLink",
+  "description": "Share existing local apps and files over Tailscale; inspect and remove shares through MCP.",
+  "repository": {
+    "url": "https://github.com/anydoor7/tslink",
+    "source": "github"
+  },
+  "version": "dev",
+  "_meta": {
+    "io.modelcontextprotocol.registry/publisher-provided": {
+      "preparation": {
+        "status": "not-ready-for-publication",
+        "accessDate": "2026-10-02",
+        "reason": "No documented Registry package type represents this Go source-only install. No distributable package or public remote endpoint is declared.",
+        "installationGuide": "https://github.com/anydoor7/tslink/blob/main/docs/getting-started.md",
+        "localCommand": "tslink",
+        "localArguments": ["mcp"],
+        "versionNote": "Development source-build version, not a published release. Recheck before any owner-authorized publication."
+      }
+    }
+  }
+}

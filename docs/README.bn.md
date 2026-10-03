@@ -133,6 +133,8 @@ TSLink-এর MCP দিয়ে TSLink নিজেকেই পরিচা�
 
 ## নথি ও লাইসেন্স
 
+[llms.txt](../llms.txt) · [এজেন্টদের জন্য দ্রুত শুরু](agent-quickstart.md) · [শেয়ার করার টুল বেছে নিন](comparison.md)
+
 [শুরু করা](getting-started.md) · [CLI রেফারেন্স](cli-reference.md) · [প্ল্যাটফর্ম](platforms.md) · [স্থানীয় মডেল](local-ai.md) · [অবদান](../CONTRIBUTING.md) · [নিরাপত্তা](../SECURITY.md)
 
 বাণিজ্যিক ব্যবহারসহ Apache License 2.0 প্রযোজ্য। পুনর্বিতরণে [NOTICE](../NOTICE) ও [তৃতীয় পক্ষের বিজ্ঞপ্তি](../THIRD_PARTY_NOTICES.md) রাখুন। Tailscale-এর শর্ত ও পরিকল্পনা আলাদাভাবে প্রযোজ্য।

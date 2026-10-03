@@ -1,0 +1,37 @@
+# Choose a sharing tool
+
+Primary sources accessed **2026-10-02**. The choices below are judgments about
+workflow fit, based on those sources and this version's TSLink documentation;
+they are not performance benchmarks or a claim that other tools lack features.
+Recheck current plans, platform support, and security requirements before choosing.
+
+TSLink fits when one person already runs several apps and wants separate private
+addresses, named-person deadlines for HTTP/files, and an inspect/remove workflow
+through CLI or MCP. It works with Tailscale, independent project. See
+[Sharing](sharing.md), [People](people.md), and [Agents](agents.md).
+
+| Choose | When it fits or wins | What to account for |
+|---|---|---|
+| **Tailscale Serve** | You already run the Tailscale client and want to expose a local web service, file/directory, or TCP forwarder inside your tailnet. Reusing that daemon is a simpler starting point for a single service. [Serve CLI](https://tailscale.com/docs/reference/tailscale-cli/serve) | Serve supports multiple targets and service configuration; TSLink's separate embedded node per app is a different operating model. macOS file serving depends on the Tailscale client variant. |
+| **Tailscale Services** | You administer resources across hosts and need a stable service name while moving hosts, adding redundant hosts, or steering traffic. This wins over TSLink's single-publishing-host availability model. [Services](https://tailscale.com/docs/features/tailscale-services) | Services decouple resource addresses from hosting devices, with granular access control and approval workflows. Follow its service-host and tailnet-policy setup; TSLink is not a replacement for that multi-host routing layer. |
+| **ngrok** | You need a public localhost URL for a webhook, API demo, or preview, or want its managed gateway/Traffic Policy workflow. [Get started](https://ngrok.com/docs/start) | Its docs include authentication, traffic policy, observability, and MCP connectivity. Choose based on endpoint policy and deployment needs, not an assumption that public tunnels cannot authenticate users. |
+| **Cloudflare Tunnel** | You want origins connected to Cloudflare's network through outbound-only `cloudflared` connections, including apps behind a firewall. [Tunnel](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/) | Tunnel supplies connectivity; decide separately which applications are public and which need Access policies. Its network/account setup differs from private tailnet enrollment. |
+| **Pangolin** | You want a self-hostable or managed identity-aware access platform across sites/resources, with roles and audit trails; or need expiring, revocable browser access links now. [Introduction](https://docs.pangolin.net/), [Access links](https://docs.pangolin.net/manage/access-control/links) | This overlaps TSLink's access workflow. Choose the platform/deployment model that fits; TSLink's browser guest links and scoped agent roles are not shipped in this version. |
+| **Cloudflare Access** | Your organization needs an identity-aware proxy with IdP and device-posture policy, or temporary access approvals. [Web applications](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/), [Temporary authentication](https://developers.cloudflare.com/cloudflare-one/access-controls/policies/temporary-auth/) | Access checks requests against policies; Tunnel and Access can be composed. Choose this for its organizational policy workflow rather than treating temporary authorization as unique to TSLink. |
+| **Umbrel** | You want a home-server OS that installs and runs apps, with household accounts/app sharing and an agent connection. [umbrelOS](https://umbrel.com/umbrelos), [Sharing with users](https://umbrel.com/support/basics/sharing-your-umbrel-with-other-users), [AI agents](https://umbrel.com/support/advanced/connecting-ai-agents) | Umbrel already offers sharing and MCP. It wins when app installation and home-server management are the task. TSLink publishes apps you already operate and does not replace their runtime or accounts. |
+| **Coolify** | You want to build, deploy, and operate applications/databases on your servers through a dashboard/API, using Git, Dockerfiles, Compose, or images. [What is Coolify](https://coolify.io/docs/core/what-is-coolify), [MCP](https://coolify.io/docs/mcp/what-is-mcp) | Coolify handles deployment, domains, HTTPS, and operations. Its [security model](https://coolify.io/docs/core/security-model) distinguishes infrastructure administration from app security. Keep visitor authorization explicit when composing it with an access gateway. |
+| **TSLink** | Your apps should keep running where they are, while you or your agent manage per-app publication and private HTTP/file people grants with deadlines. [Quickstart](getting-started.md), [Agent quickstart](agent-quickstart.md) | Source installation needs Go/Git; fresh nodes need browser enrollment and possibly device approval. All service nodes share one daemon/host. Raw TCP access uses tailnet policy and backend authentication. |
+
+## Boundaries that matter more than a feature score
+
+TSLink does not install apps, isolate workloads, or provide multi-host failover.
+Private recipients need Tailscale access; Funnel is public, and browser guest
+links are not shipped in this version. People revocation/expiry denies new
+requests, but cannot recall delivered data or close already accepted streams.
+Gateway policy covers traffic through TSLink, so a directly reachable backend or
+another public route needs its own protection. Application logins and upstream
+MCP tool permissions remain the application's responsibility.
+
+These products can complement each other: run an app with Umbrel or Coolify,
+then choose the ingress and identity layer for its actual audience. Verify the
+recipient's path, existing public routes, and the backend's login/session behavior.
