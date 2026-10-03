@@ -57,6 +57,7 @@ Documentation is English-only. The only translations are the homepage READMEs in
 | Platforms | [platforms.md](platforms.md) |
 | Release Artifacts | [release-artifacts.md](release-artifacts.md) |
 | Remote Mcp | [remote-mcp.md](remote-mcp.md) |
+| Access requests | [requests.md](requests.md) |
 | Roadmap | [roadmap.md](roadmap.md) |
 | Sharing | [sharing.md](sharing.md) |
 | Verify a TSLink release | [verify-release.md](verify-release.md) |

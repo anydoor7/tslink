@@ -148,7 +148,12 @@ func (s *Server) startPortalNode(ctx context.Context, run *portalRun, factory fu
 		return state, err
 	}
 	node.listener = newLimitedListener(ln, httpMaxActiveConns, "http", svc.Name)
-	h := PortalHandler{RegistryPath: filepath.Join(s.cfgDir, "registry.json"), LocalClient: lc, CanonicalHost: func() string { return canonicalHostFor(node.tsnetSrv, runtimeHost) }, Apps: s.portalApps, Now: now}
+	c, configErr := health.LoadNotifier(filepath.Join(s.cfgDir, health.ConfigFile))
+	requests, err := newPortalRequests(c, configErr, s.events.publish)
+	if err != nil {
+		return state, err
+	}
+	h := PortalHandler{RegistryPath: filepath.Join(s.cfgDir, "registry.json"), LocalClient: lc, CanonicalHost: func() string { return canonicalHostFor(node.tsnetSrv, runtimeHost) }, Apps: s.portalApps, Now: now, Requests: requests}
 	node.httpSrv = newHTTPServerFn(portalSecurityMiddleware(RequestLimitsMiddleware(svc, nil, h)))
 	node.listener = configureServiceHTTP(node.httpSrv, svc, node.listener, nil)
 	if err := ctx.Err(); err != nil {

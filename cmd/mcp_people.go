@@ -33,7 +33,8 @@ func peopleViewSchema() map[string]any {
 
 func peopleResultSchema() map[string]any {
 	return objectSchema(map[string]any{
-		"person":             peopleViewSchema(),
+		"person":     peopleViewSchema(),
+		"qr_payload": map[string]any{"type": "string"}, "qr_warning": map[string]any{"type": "string"}, "guide": stringArraySchema(), "guide_zh": stringArraySchema(),
 		"portal":             nestedObjectSchema("Independent home portal configuration and exact runtime address when available."),
 		"complete":           map[string]any{"type": "boolean"},
 		"message":            map[string]any{"type": "string"},
@@ -61,6 +62,8 @@ func init() {
 				"ack_never":         map[string]any{"type": "boolean", "default": false},
 				"invite":            map[string]any{"type": "boolean", "default": false},
 				"print_links":       map[string]any{"type": "boolean", "default": false},
+				"qr":                map[string]any{"type": "boolean", "default": false, "description": "Return QR payload text only; never image bytes."},
+				"qr_invite":         map[string]any{"type": "string", "description": "App invitation QR; requires qr and print_links. Treat as a credential."},
 				"replace_invites":   map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}, "description": "Update with invite only, no apps/for: owner-confirmed app to recorded old invite ID. Requires remote absence before replacement; preserves grants and deadlines."},
 				"reconcile_invites": map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}, "description": "Update --invite only: owner-verified app to invite ID mapping, or none after checking absence. Unknown POSTs cannot be retried blindly."},
 			}, "who"), OutputSchema: peopleResultSchema(),
@@ -72,7 +75,7 @@ func init() {
 			input["required"] = []string{"who", "apps"}
 		}
 		if name == "people_update" {
-			input["anyOf"] = []any{map[string]any{"required": []string{"apps"}}, map[string]any{"required": []string{"for"}}, map[string]any{"required": []string{"until"}}, map[string]any{"required": []string{"invite"}, "properties": map[string]any{"invite": map[string]any{"const": true}}}}
+			input["anyOf"] = []any{map[string]any{"required": []string{"qr"}, "properties": map[string]any{"qr": map[string]any{"const": true}}}, map[string]any{"required": []string{"apps"}}, map[string]any{"required": []string{"for"}}, map[string]any{"required": []string{"until"}}, map[string]any{"required": []string{"invite"}, "properties": map[string]any{"invite": map[string]any{"const": true}}}}
 		}
 	}
 	mcpToolHints["people_list"] = mcpHints(true, false, true, false)

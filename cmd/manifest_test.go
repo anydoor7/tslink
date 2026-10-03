@@ -568,6 +568,13 @@ func sortedSet(values map[string]struct{}) []string {
 
 func TestManifestErrorExitTaxonomyMatchesRuntime(t *testing.T) {
 	tests := map[string]error{
+		"access_request_busy":                   registry.CodedError{Code: "access_request_busy", Message: "request writer busy"},
+		"access_request_capacity":               registry.CodedError{Code: "access_request_capacity", Message: "bounded inbox full"},
+		"access_request_decided":                registry.CodedError{Code: "access_request_decided", Message: "request already decided"},
+		"access_request_duplicate":              registry.CodedError{Code: "access_request_duplicate", Message: "request already pending"},
+		"access_request_rate_limited":           registry.CodedError{Code: "access_request_rate_limited", Message: "submission rate exceeded"},
+		"access_request_unavailable":            registry.CodedError{Code: "access_request_unavailable", Message: "app unavailable"},
+		"access_request_owner_required":         registry.CodedError{Code: "access_request_owner_required", Message: "owner required"},
 		"portal_funnel_refused":                 registry.ValidatePortal(&registry.PortalConfig{Enabled: true, Hostname: "home", Owner: "owner", Funnel: true}),
 		"portal_identity_invalid":               registry.ValidatePortal(&registry.PortalConfig{Hostname: "home", Owner: "Owner"}),
 		"portal_hostname_conflict":              registry.CodedError{Code: "portal_hostname_conflict", Message: "hostname collision"},
@@ -1010,9 +1017,10 @@ func TestCompactManifestStaysBelowAgentTokenBudget(t *testing.T) {
 	// missed and mcp_elevated_invite_refused: 2860 bytes at the end of B3.
 	// People sharing, health, recipes and request limits expand the compact agent surface.
 	// Keep a bounded budget for the combined command tree.
-	// Guest CRUD adds a namespace and PIN/disclosure flags (4528 bytes at introduction).
-	if len(data) >= 4800 {
-		t.Fatalf("compact manifest = %d bytes, want < 4800", len(data))
+	// QR flags, the request commands and seven request codes bring the complete
+	// compact contract to 4854 bytes. Preserve all flags/codes within 5000 bytes.
+	if len(data) >= 5000 {
+		t.Fatalf("compact manifest = %d bytes, want < 5000", len(data))
 	}
 	compact := CompactManifest()
 	if compact.ErrorCodes[registry.CodeURLNotReady] != 5 {

@@ -392,6 +392,8 @@ func mcpScopeAuthMiddleware(allowedUsers []string, bindings []mcpscope.Binding, 
 			ctx, cancel = context.WithTimeout(ctx, session.ExpiresAt.Sub(nowFn()))
 			defer cancel()
 		}
+		caller := MCPCaller{Login: whois.UserProfile.LoginName, Tags: append([]string(nil), nodeTags...)}
+		ctx = context.WithValue(ctx, mcpCallerKey{}, caller)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

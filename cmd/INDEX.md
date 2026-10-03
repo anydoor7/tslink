@@ -108,3 +108,16 @@ This index records the app recipe additions; the CLI manifest describes the comp
 - guest_test.go: CLI/MCP masking, policy and diagnosis controls.
 
 - `guest_human_test.go`: human summaries and readable recipient expiry.
+
+# Access requests and phone onboarding
+
+- `people_qr.go`: phone guides, safe terminal/PNG QR output and explicit bearer consent.
+- `people_qr_test.go, people_qr_unix_test.go`: independent decoding, command and file failure evidence.
+- `requests.go`: owner CLI/actions, terminal filtering and F4 post-decision hook.
+- `requests_test.go`: compiled CLI, MCP listener owner checks and durable decisions.
+- `mcp_requests.go`: owner-only request tool schemas and annotations.
+
+- `portal_authority_test.go`: remote authority denial, local recovery and retryable request-inbox controls.
+
+- `requests_authority_test.go`: ported reviewer authority restoration and in-flight owner replacement probes.
+- `people_authority_test.go`: real HTTP MCP owner/admin/ordinary mutation matrix and compiled local recovery.

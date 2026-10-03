@@ -271,6 +271,11 @@ func commandJSONResultFields(commandPath string) map[string]JSONResultFieldInfo 
 		return map[string]JSONResultFieldInfo{"grants": {Type: "array", Description: "Nonsecret guest grants."}}
 	case "tslink guest show", "tslink guest revoke":
 		return map[string]JSONResultFieldInfo{"grant": {Type: "object", Description: "Nonsecret guest grant."}}
+	case "tslink requests list":
+		return map[string]JSONResultFieldInfo{"requests": {Type: "array", Description: "Durable pending/approved/denied/expired access requests; notes are untrusted text."}}
+	case "tslink requests approve", "tslink requests deny":
+		return map[string]JSONResultFieldInfo{"request": {Type: "object", Description: "Committed request decision and optional grant."}, "changed": {Type: "boolean", Description: "False for an identical idempotent retry."}}
+
 	case "tslink extend":
 		return map[string]JSONResultFieldInfo{
 			"service":             {Type: "string", Description: "App whose person grant or Funnel deadline was changed."},
@@ -296,6 +301,10 @@ func commandJSONResultFields(commandPath string) map[string]JSONResultFieldInfo 
 		}
 	case "tslink people add", "tslink people update":
 		return map[string]JSONResultFieldInfo{
+			"qr_payload":         {Type: "string", Description: "QR URL payload text; bearer invitation requires explicit print-links and qr-invite."},
+			"qr_warning":         {Type: "string", Description: "Credential warning for a bearer invitation QR."},
+			"guide":              {Type: "array", Description: "Phone-first English onboarding in at most five steps."},
+			"guide_zh":           {Type: "array", Description: "Phone-first Chinese onboarding in at most five steps."},
 			"portal":             {Type: "object", Description: "Independent home portal state; message includes its exact URL when enabled and ready."},
 			"person":             {Type: "object", Description: "Canonical login, revocation state, per-app absolute deadlines, active decisions and exact URLs when available."},
 			"invites":            {Type: "array", Description: "Per-app invitation ID, durable state, reconciliation candidates, remote side effect plan or stable error code. Bearer URLs require --print-links."},
@@ -905,6 +914,9 @@ func flagRelationships(commandPath, name string) (oneOf, requires, conflicts []s
 	if (commandPath == "tslink people add" || commandPath == "tslink people update") && name == "print-links" {
 		requires = []string{"--invite"}
 	}
+	if (commandPath == "tslink people add" || commandPath == "tslink people update") && name == "qr-invite" {
+		requires = []string{"--invite", "--print-links"}
+	}
 	if commandPath == "tslink add" {
 		switch name {
 		case "proxy", "dir", "tcp":
@@ -917,6 +929,8 @@ func flagRelationships(commandPath, name string) (oneOf, requires, conflicts []s
 		case "no-auto-provision":
 			requires = []string{"--funnel"}
 		case "allow":
+			conflicts = []string{"--tcp", "--funnel"}
+		case "requestable":
 			conflicts = []string{"--tcp", "--funnel"}
 		}
 	}

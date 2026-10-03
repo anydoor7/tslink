@@ -56,3 +56,14 @@ This index records the people sharing lifecycle implementation and regression te
 - `guest_monitor.go`: one shared grant snapshot per gate tick and batched expiry latching.
 - `guest_monitor_test.go`: snapshot, expiry rollback, other-grant and unreadable-registry controls.
 - `guest_publication_test.go`: before/after publication errors and interleaved counter observations.
+
+# Access requests and phone onboarding
+
+- `requests.go`: bounded durable request ledger, rate/retention and atomic decisions.
+- `requests_test.go, requests_unix_test.go`: concurrent writers, restart, policy, retention and special files.
+- `people_app.go`: additive F1 single-app lifetime contract, preserving unrelated grants.
+
+- `portal_authority_test.go`: current-registry authorization under writer contention.
+- `requests_contention_test.go`: expiry maintenance lock failures, rollback and subprocess restart.
+
+- `approval_authority_test.go`: locked pre-mutation authority, canonical targets and authorized inbox failure paths.

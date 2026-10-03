@@ -31,6 +31,7 @@ type AddResult struct {
 	Type          string                           `json:"type"`
 	Created       bool                             `json:"created"`
 	PreserveHost  bool                             `json:"preserve_host"`
+	Requestable   bool                             `json:"requestable"`
 	// ReplacedFields names the registry.json fields an add of an existing
 	// service changed or dropped; empty when the add created the service.
 	ReplacedFields  fieldList             `json:"replaced_fields"`
@@ -104,6 +105,7 @@ type AddParams struct {
 	Name            string
 	Proxy           string
 	PreserveHost    bool
+	Requestable     bool
 	Dir             string
 	TCP             string
 	Ephemeral       bool
@@ -231,6 +233,9 @@ func buildService(p AddParams) (registry.Service, error) {
 	if modes != 1 {
 		return registry.Service{}, registry.ServiceTypeAmbiguousError()
 	}
+	if p.Requestable && (p.Funnel || svcType == registry.TypeTCP) {
+		return registry.Service{}, output.ErrUsage("--requestable requires a private HTTP/file app")
+	}
 	if p.PreserveHost && svcType != registry.TypeProxy {
 		return registry.Service{}, output.ErrUsage("--preserve-host requires --proxy")
 	}
@@ -314,7 +319,7 @@ func buildService(p AddParams) (registry.Service, error) {
 			target = "http://" + target
 		}
 		return registry.Service{
-			Health: p.Health, Name: p.Name, Type: registry.TypeProxy, Target: target, PreserveHost: p.PreserveHost,
+			Health: p.Health, Requestable: p.Requestable, Name: p.Name, Type: registry.TypeProxy, Target: target, PreserveHost: p.PreserveHost,
 			RequestLimits: p.RequestLimits,
 			Ephemeral:     p.Ephemeral, Tags: tags, AllowedUsers: allowedUsers,
 			Funnel: p.Funnel, PublicAck: p.Public, NoAutoProvision: p.NoAutoProvision,
@@ -325,7 +330,7 @@ func buildService(p AddParams) (registry.Service, error) {
 
 	// Dir mode — path validation is done in RunE (needs filesystem)
 	return registry.Service{
-		Health: p.Health, Name: p.Name, Type: registry.TypeFile,
+		Health: p.Health, Requestable: p.Requestable, Name: p.Name, Type: registry.TypeFile,
 		RequestLimits: p.RequestLimits,
 		Ephemeral:     p.Ephemeral, Tags: tags, AllowedUsers: allowedUsers,
 		ControlURL: p.ControlURL,
@@ -415,6 +420,7 @@ func buildAddResult(ctx context.Context, svc registry.Service, created bool, pid
 		Type:            svc.Type,
 		Created:         created,
 		PreserveHost:    svc.PreserveHost,
+		Requestable:     svc.Requestable,
 		FunnelExpiresAt: cloneTimePointer(svc.FunnelExpiresAt),
 		URLPending:      true,
 		Endpoint:        view.Endpoint,
@@ -697,6 +703,7 @@ Examples:
 				return output.ErrUsage("--yes and --force-unsafe-public require --recipe")
 			}
 			preserveHost, _ := cmd.Flags().GetBool("preserve-host")
+			requestable, _ := cmd.Flags().GetBool("requestable")
 			proxyTarget, _ := cmd.Flags().GetString("proxy")
 			dirPath, _ := cmd.Flags().GetString("dir")
 			tcpTarget, _ := cmd.Flags().GetString("tcp")
@@ -717,6 +724,7 @@ Examples:
 				Name:            args[0],
 				Proxy:           proxyTarget,
 				PreserveHost:    preserveHost,
+				Requestable:     requestable,
 				Dir:             dirPath,
 				TCP:             tcpTarget,
 				Ephemeral:       ephemeral,
@@ -861,6 +869,7 @@ Examples:
 		},
 	}
 
+	addCmd.Flags().Bool("requestable", false, "Let human tailnet members ask for this app from the portal; discloses its name; default off")
 	addCmd.Flags().Bool("preserve-host", false, "Forward this node's canonical external Host (proxy only; recipes choose their default)")
 	addCmd.Flags().String("proxy", "", "Proxy target in host:port or URL form")
 	addRequestLimitFlags(addCmd)

@@ -510,6 +510,7 @@ type Service struct {
 	AllowedUsers    []string   `json:"allowed_users,omitempty"`
 	GuestGate       bool       `json:"guest_gate,omitempty"`
 	PeopleScoped    bool       `json:"people_scoped,omitempty"`
+	Requestable     bool       `json:"requestable,omitempty"`
 	ControlURL      string     `json:"control_url,omitempty"`
 	Funnel          bool       `json:"funnel,omitempty"`
 	FunnelExpiresAt *time.Time `json:"funnel_expires_at,omitempty"`
@@ -635,11 +636,12 @@ func FunnelRemainingAt(svc Service, now time.Time) *string {
 }
 
 type Registry struct {
-	SchemaVersion int           `json:"schema_version"`
-	Services      []Service     `json:"services"`
-	People        []Person      `json:"people,omitempty"`
-	Portal        *PortalConfig `json:"portal,omitempty"`
-	Guests        []GuestGrant  `json:"guests,omitempty"`
+	SchemaVersion int             `json:"schema_version"`
+	Services      []Service       `json:"services"`
+	People        []Person        `json:"people,omitempty"`
+	Portal        *PortalConfig   `json:"portal,omitempty"`
+	Guests        []GuestGrant    `json:"guests,omitempty"`
+	Requests      []AccessRequest `json:"access_requests,omitempty"`
 }
 
 type RegistryFileState string
@@ -673,6 +675,7 @@ type registryWire struct {
 	People        []Person          `json:"people,omitempty"`
 	Portal        *PortalConfig     `json:"portal,omitempty"`
 	Guests        []GuestGrant      `json:"guests,omitempty"`
+	Requests      []AccessRequest   `json:"access_requests,omitempty"`
 }
 
 var unknownJSONFieldRegexp = regexp.MustCompile(`^json: unknown field "([^"]+)"$`)
@@ -732,6 +735,9 @@ func ValidateControlURL(value string) error {
 }
 
 func ValidateService(svc Service) error {
+	if svc.Requestable && !PeopleServiceSupported(svc) {
+		return CodedError{Code: "usage_error", Message: "requestable apps must be private HTTP/file services"}
+	}
 	if svc.PeopleScoped && !PeopleServiceSupported(svc) {
 		return CodedError{Code: "people_service_unsupported", Message: "person-scoped services must be private HTTP proxies or files; TCP cannot enforce people and Funnel is public"}
 	}
@@ -1136,7 +1142,7 @@ func decodeForRuntime(data []byte) (*Registry, []ServiceIssue, error) {
 	if err := strictJSONDecode(data, &wire); err != nil {
 		return nil, nil, configDecodeError("registry", err)
 	}
-	reg := &Registry{SchemaVersion: wire.SchemaVersion, Services: make([]Service, 0, len(wire.Services)), People: wire.People, Portal: wire.Portal, Guests: wire.Guests}
+	reg := &Registry{SchemaVersion: wire.SchemaVersion, Services: make([]Service, 0, len(wire.Services)), People: wire.People, Portal: wire.Portal, Guests: wire.Guests, Requests: wire.Requests}
 	if err := migrate(reg); err != nil {
 		return nil, nil, err
 	}
@@ -1148,6 +1154,9 @@ func decodeForRuntime(data []byte) (*Registry, []ServiceIssue, error) {
 		return nil, nil, err
 	}
 	if err := validateGuests(reg.Guests); err != nil {
+		return nil, nil, err
+	}
+	if err := validateAccessRequests(reg.Requests); err != nil {
 		return nil, nil, err
 	}
 	issues := make([]ServiceIssue, 0)
@@ -1468,11 +1477,11 @@ func save(path string, reg *Registry) error {
 		reg.Services = []Service{}
 	}
 	reg.SchemaVersion = LegacyRegistrySchemaVersion
-	if len(reg.People) > 0 || reg.Portal != nil || len(reg.Guests) > 0 {
+	if len(reg.People) > 0 || reg.Portal != nil || len(reg.Guests) > 0 || len(reg.Requests) > 0 {
 		reg.SchemaVersion = PeopleRegistrySchemaVersion
 	}
 	for _, svc := range reg.Services {
-		if svc.PeopleScoped {
+		if svc.PeopleScoped || svc.Requestable {
 			reg.SchemaVersion = PeopleRegistrySchemaVersion
 		}
 	}
@@ -1491,6 +1500,10 @@ func save(path string, reg *Registry) error {
 		return err
 	}
 	data = append(data, '\n')
+	if len(reg.Requests) > 0 && len(data) > 4<<20 {
+		return requestError("access_request_capacity", "request registry exceeds 4 MiB")
+	}
+
 	err = atomicfile.WriteFile(path, data)
 	if len(pending) > 0 || GuestCounterError(path) != nil {
 		recordGuestCounterError(path, err)

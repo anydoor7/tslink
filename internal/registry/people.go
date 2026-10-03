@@ -170,15 +170,21 @@ func ChangePersonWithLifetime(path, who string, apps []string, update bool, opti
 }
 
 type PersonLifetimeOptions struct {
-	Context  context.Context
-	Value    *string
-	Policy   duration.Policy
-	Audience duration.Audience
-	AckNever bool
-	Now      time.Time
+	Context context.Context
+	// Authorize runs against pre-mutation state under the registry write lock.
+	Authorize func(*Registry, string) error
+	Value     *string
+	Policy    duration.Policy
+	Audience  duration.Audience
+	AckNever  bool
+	Now       time.Time
 }
 
-func changePerson(path, who string, apps []string, expiry *time.Time, changeExpiry, update bool, options *PersonLifetimeOptions) (result Person, err error) {
+func ChangePersonContext(ctx context.Context, path, who string, apps []string, expiry *time.Time, changeExpiry, update bool) (Person, error) {
+	return changePerson(ctx, path, who, apps, expiry, changeExpiry, update, nil)
+}
+
+func changePerson(ctx context.Context, path, who string, apps []string, expiry *time.Time, changeExpiry, update bool, options *PersonLifetimeOptions) (result Person, err error) {
 	if !update && len(apps) == 0 {
 		return result, CodedError{Code: errcode.UsageError, Message: "apps must include at least one private HTTP or file service"}
 	}
@@ -190,6 +196,11 @@ func changePerson(path, who string, apps []string, expiry *time.Time, changeExpi
 		reg, err := loadForMutation(path)
 		if err != nil {
 			return err
+		}
+		if options != nil && options.Authorize != nil {
+			if err := options.Authorize(reg, login); err != nil {
+				return err
+			}
 		}
 		index := -1
 		for i, p := range reg.People {
@@ -343,10 +354,19 @@ func changePerson(path, who string, apps []string, expiry *time.Time, changeExpi
 // RemovePerson retains a deny tombstone so a legacy empty allow-list, a tag
 // rule or an accepted device share cannot restore this login's HTTP access.
 func RemovePerson(path, who string) (removed bool, err error) {
-	return RemovePersonContext(context.Background(), path, who)
+	return RemovePersonAuthorizedContext(context.Background(), path, who, nil)
 }
 
-func RemovePersonContext(ctx context.Context, path, who string) (removed bool, err error) {
+func RemovePersonContext(ctx context.Context, path, who string) (bool, error) {
+	return RemovePersonAuthorizedContext(ctx, path, who, nil)
+}
+
+func RemovePersonAuthorized(path, who string, authorize func(*Registry, string) error) (bool, error) {
+	return RemovePersonAuthorizedContext(context.Background(), path, who, authorize)
+}
+
+// RemovePersonAuthorizedContext checks authority and session under the write lock.
+func RemovePersonAuthorizedContext(ctx context.Context, path, who string, authorize func(*Registry, string) error) (removed bool, err error) {
 	login, err := ResolvePersonLogin(path, who)
 	if err != nil {
 		return false, err
@@ -355,6 +375,11 @@ func RemovePersonContext(ctx context.Context, path, who string) (removed bool, e
 		reg, err := loadForMutation(path)
 		if err != nil {
 			return err
+		}
+		if authorize != nil {
+			if err := authorize(reg, login); err != nil {
+				return err
+			}
 		}
 		found := false
 		for i := range reg.People {

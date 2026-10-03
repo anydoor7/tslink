@@ -8,6 +8,7 @@ import (
 
 	"github.com/anydoor7/tslink/internal/health"
 	"github.com/anydoor7/tslink/internal/inspect"
+	"github.com/anydoor7/tslink/internal/registry"
 	tsruntime "github.com/anydoor7/tslink/internal/runtime"
 )
 
@@ -36,9 +37,10 @@ import (
 // later is dropped here by construction; a blacklist would have to be updated
 // by whoever added it, and would not be.
 type mcpEventState struct {
-	SchemaVersion int                  `json:"schema_version"`
-	Services      []ListServiceSummary `json:"services"`
-	Status        mcpEventStatus       `json:"status"`
+	AccessRequests []registry.RequestEvent `json:"access_requests,omitempty"`
+	SchemaVersion  int                     `json:"schema_version"`
+	Services       []ListServiceSummary    `json:"services"`
+	Status         mcpEventStatus          `json:"status"`
 }
 
 // mcpEventStatus is the status tool's payload minus auth_url. Field names and
@@ -80,6 +82,12 @@ func mcpEventsSnapshotFn(actions mcpActions) func(context.Context) (any, error) 
 		state, err := buildMCPEventState(listValue, statusValue)
 		if err != nil {
 			return nil, sanitizedSnapshotError(err)
+		}
+		if actions.requestEvents != nil {
+			state.AccessRequests, err = actions.requestEvents()
+			if err != nil {
+				return nil, sanitizedSnapshotError(err)
+			}
 		}
 		return state, nil
 	}

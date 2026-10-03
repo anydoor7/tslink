@@ -90,3 +90,10 @@ This index covers the recipe integration tests. The repository AGENTS.md describ
 - `guest_cleanup_test.go`: HTTP/1.1 and HTTP/2 aborted-stream, panic, timer and shutdown cleanup controls.
 - `guest_counter_status.go`: counter persistence warnings for runtime status, with generic public messages.
 - `guest_counter_status_test.go`: real registry publication failures, logs, status refresh and recovery.
+
+# Access requests and phone onboarding
+
+- `portal_requests.go`: WhoIs member gate, stateless CSRF, POST, F2 notification and F4 hook.
+- `portal_requests_test.go`: real listener, command, webhook, SSE, partial body and lifecycle evidence.
+
+- `portal_requests_regression_test.go`: labelled duration POSTs, app access during maintenance failure and browser fixtures.

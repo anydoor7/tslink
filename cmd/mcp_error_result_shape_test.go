@@ -29,6 +29,7 @@ var mcpToolMinimalArguments = map[string]string{
 	"health":         `{}`,
 	"mcp_audit":      `{}`,
 	"guest_create":   `{"app":"web","for":"1h"}`, "guest_list": `{}`, "guest_show": `{"id":"guest-id"}`, "guest_revoke": `{"id":"guest-id"}`,
+	"requests_list": `{}`, "requests_approve": `{"id":"1","for":"8h"}`, "requests_deny": `{"id":"1"}`,
 	"people_add":     `{"who":"alice","apps":["web"]}`,
 	"people_update":  `{"who":"alice","apps":["web"]}`,
 	"people_list":    `{}`,
@@ -70,15 +71,23 @@ func mcpRefusal(tool string) error {
 
 func refusingMCPActions() mcpActions {
 	return mcpActions{
-		guest:  func(name string, _ guestArguments) (any, error) { return nil, mcpRefusal(name) },
-		extend: func(extendArguments) (any, error) { return nil, mcpRefusal("extend") },
+		guest: func(name string, _ guestArguments) (any, error) { return nil, mcpRefusal(name) },
 		accessLog: func(accessLogArguments) (accesslog.Result, error) {
 			return accesslog.Result{}, mcpRefusal("access_log")
 		},
 		accessSummary: func(accessLogArguments) (accesslog.Summary, error) {
 			return accesslog.Summary{}, mcpRefusal("access_summary")
 		},
-		portalChange: func(_ portalArguments, enable bool) (any, error) {
+		requestsList: func(context.Context) (any, error) { return nil, mcpRefusal("requests_list") },
+		requestsDecide: func(_ context.Context, _ requestDecisionArguments, approve bool) (any, error) {
+			name := "requests_deny"
+			if approve {
+				name = "requests_approve"
+			}
+			return nil, mcpRefusal(name)
+		},
+		extend: func(context.Context, extendArguments) (any, error) { return nil, mcpRefusal("extend") },
+		portalChange: func(_ context.Context, _ portalArguments, enable bool) (any, error) {
 			name := "portal_disable"
 			if enable {
 				name = "portal_enable"

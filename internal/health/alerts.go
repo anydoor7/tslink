@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/anydoor7/tslink/internal/atomicfile"
+	"github.com/anydoor7/tslink/internal/registry"
 )
 
 const ConfigFile = "alerts.json"
@@ -28,12 +29,33 @@ type NotifierConfig struct {
 }
 
 func LoadNotifier(path string) (NotifierConfig, error) {
-	b, err := os.ReadFile(path)
+	// Bounded/nonblocking read: the portal must never stall on a FIFO or an
+	// oversized alert configuration. Refuse path replacement after lstat.
+	before, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return NotifierConfig{}, nil
 	}
 	if err != nil {
 		return NotifierConfig{}, errors.New("alert_config_unreadable")
+	}
+	if !before.Mode().IsRegular() {
+		return NotifierConfig{}, errors.New("alert_config_unreadable")
+	}
+	if before.Size() > 64<<10 {
+		return NotifierConfig{}, errors.New("alert_config_invalid")
+	}
+	f, err := openProbeFile(path)
+	if err != nil {
+		return NotifierConfig{}, errors.New("alert_config_unreadable")
+	}
+	defer f.Close()
+	after, err := f.Stat()
+	if err != nil || !after.Mode().IsRegular() || !os.SameFile(before, after) {
+		return NotifierConfig{}, errors.New("alert_config_invalid")
+	}
+	b, err := io.ReadAll(io.LimitReader(f, (64<<10)+1))
+	if err != nil || len(b) > 64<<10 {
+		return NotifierConfig{}, errors.New("alert_config_invalid")
 	}
 	var c NotifierConfig
 	d := json.NewDecoder(bytes.NewReader(b))
@@ -67,14 +89,15 @@ func (c NotifierConfig) Kind() string {
 }
 
 type Event struct {
-	ID       uint64    `json:"id"`
-	At       time.Time `json:"at"`
-	Kind     string    `json:"kind"`
-	Service  string    `json:"service,omitempty"`
-	Subject  string    `json:"subject,omitempty"`
-	Health   *State    `json:"health,omitempty"`
-	Expiry   *Expiry   `json:"expiry,omitempty"`
-	Delivery string    `json:"delivery"`
+	ID       uint64                 `json:"id"`
+	At       time.Time              `json:"at"`
+	Kind     string                 `json:"kind"`
+	Service  string                 `json:"service,omitempty"`
+	Subject  string                 `json:"subject,omitempty"`
+	Health   *State                 `json:"health,omitempty"`
+	Expiry   *Expiry                `json:"expiry,omitempty"`
+	Delivery string                 `json:"delivery"`
+	Request  *registry.RequestEvent `json:"request,omitempty"`
 }
 
 type alertService struct {

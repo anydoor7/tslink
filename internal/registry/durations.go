@@ -41,13 +41,15 @@ func parseFunnelRelative(value string) (time.Duration, bool, error) {
 }
 
 type ExtendOptions struct {
-	Service  string
-	Who      string // Empty selects Funnel; otherwise selects this person's app grant.
-	Value    string
-	Regrant  bool
-	AckNever bool
-	Policy   duration.Policy
-	Now      time.Time
+	// Authorize checks the resolved person before any grant change under lock.
+	Authorize func(*Registry, string) error
+	Service   string
+	Who       string // Empty selects Funnel; otherwise selects this person's app grant.
+	Value     string
+	Regrant   bool
+	AckNever  bool
+	Policy    duration.Policy
+	Now       time.Time
 }
 
 // DurationChange is also the narrow payload for a future access-log event.
@@ -91,6 +93,11 @@ func ExtendDuration(path string, options ExtendOptions) (result DurationChange, 
 			login, err := normalizePersonFromRegistry(reg, options.Who)
 			if err != nil {
 				return err
+			}
+			if options.Authorize != nil {
+				if err := options.Authorize(reg, login); err != nil {
+					return err
+				}
 			}
 			result.Who, result.Audience = login, duration.TailnetMember
 			for i := range reg.People {

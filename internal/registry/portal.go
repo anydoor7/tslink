@@ -45,6 +45,12 @@ func ValidatePortal(p *PortalConfig) error {
 // SetPortal serializes with all registry writers and preserves app and people
 // state. Disabling preserves identities and hostname for a later enable.
 func SetPortal(path string, p *PortalConfig) error {
+	return SetPortalAuthorized(path, p, nil)
+}
+
+// SetPortalAuthorized checks the current authority under the same lock as the
+// update. Local owner processes can use SetPortal without a remote check.
+func SetPortalAuthorized(path string, p *PortalConfig, authorize func(*Registry) error) error {
 	if err := ValidatePortal(p); err != nil {
 		return err
 	}
@@ -52,6 +58,11 @@ func SetPortal(path string, p *PortalConfig) error {
 		reg, err := loadForMutation(path)
 		if err != nil {
 			return err
+		}
+		if authorize != nil {
+			if err := authorize(reg); err != nil {
+				return err
+			}
 		}
 		if p != nil {
 			for _, svc := range reg.Services {

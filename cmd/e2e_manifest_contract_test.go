@@ -100,22 +100,26 @@ import (
 // zero-argument invocation) and from bare runs under e2eEnv, not inferred from
 // the shape of a command's name.
 var e2eExecutableSafeCommands = map[string]struct{}{
-	"tslink extend":         {}, // ExactArgs(1), no body on bare invocation.
-	"tslink access log":     {}, // Local file reads only, no credentials, socket or writes.
-	"tslink access path":    {}, // Bare invocation fails positional validation before mutation.
-	"tslink people":         {}, // Group help only; no leaf body.
-	"tslink people add":     {}, // ExactArgs(1), no body on bare invocation.
-	"tslink people update":  {}, // ExactArgs(1), no body on bare invocation.
-	"tslink people remove":  {}, // ExactArgs(1), no body on bare invocation.
-	"tslink people list":    {}, // Local isolated registry/snapshot reads; no credential or external action.
-	"tslink portal":         {}, // Group help; no listener or network action.
-	"tslink portal enable":  {}, // Missing owner is refused before mutation.
-	"tslink portal disable": {}, // Local isolated registry update only; never starts a node.
-	"tslink guest":          {}, // Bare invocation renders group help.
-	"tslink guest create":   {}, // ExactArgs stops before writes or URL lookup.
-	"tslink guest list":     {}, // Local registry read only.
-	"tslink guest show":     {}, // ExactArgs stops before local reads.
-	"tslink guest revoke":   {}, // ExactArgs stops before local writes.
+	"tslink extend":           {}, // ExactArgs(1), no body on bare invocation.
+	"tslink access log":       {}, // Local file reads only, no credentials, socket or writes.
+	"tslink access path":      {}, // Bare invocation fails positional validation before mutation.
+	"tslink people":           {}, // Group help only; no leaf body.
+	"tslink people add":       {}, // ExactArgs(1), no body on bare invocation.
+	"tslink people update":    {}, // ExactArgs(1), no body on bare invocation.
+	"tslink people remove":    {}, // ExactArgs(1), no body on bare invocation.
+	"tslink people list":      {}, // Local isolated registry/snapshot reads; no credential or external action.
+	"tslink portal":           {}, // Group help; no listener or network action.
+	"tslink portal enable":    {}, // Missing owner is refused before mutation.
+	"tslink portal disable":   {}, // Local isolated registry update only; never starts a node.
+	"tslink guest":            {}, // Bare invocation renders group help.
+	"tslink guest create":     {}, // ExactArgs stops before writes or URL lookup.
+	"tslink guest list":       {}, // Local registry read only.
+	"tslink guest show":       {}, // ExactArgs stops before local reads.
+	"tslink guest revoke":     {}, // ExactArgs stops before local writes.
+	"tslink requests":         {}, // Group help only.
+	"tslink requests list":    {}, // Isolated local registry, no credentials or external action.
+	"tslink requests approve": {}, // ExactArgs(1), no body when bare.
+	"tslink requests deny":    {}, // ExactArgs(1), no body when bare.
 	// (a) Command groups. RunE is runCommandGroup: it prints help and exits 0.
 	// No leaf command body runs.
 	"tslink":            {},

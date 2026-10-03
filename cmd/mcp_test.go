@@ -34,7 +34,7 @@ func fakeMCPActions() mcpActions {
 		accessSummary: func(accessLogArguments) (accesslog.Summary, error) {
 			return accesslog.Summary{People: []accesslog.Count{}, Apps: []accesslog.Count{}}, nil
 		},
-		portalChange: func(args portalArguments, enable bool) (any, error) {
+		portalChange: func(_ context.Context, args portalArguments, enable bool) (any, error) {
 			return map[string]any{"enabled": enable, "state": "pending", "hostname": args.Hostname}, nil
 		},
 		personApp: func(_ context.Context, who, app, lifetime string, revoke bool) (any, error) {
@@ -528,6 +528,7 @@ func TestMCPToolSchemasAreClosedAndModelFocused(t *testing.T) {
 		"portal_enable", "portal_disable",
 		"people_grant", "people_revoke", "app_restart", "health", "mcp_audit",
 		"guest_create", "guest_list", "guest_show", "guest_revoke",
+		"requests_list", "requests_approve", "requests_deny",
 	}
 	if len(mcpToolDefinitions) != len(wantNames) {
 		t.Fatalf("tools = %d, want %d", len(mcpToolDefinitions), len(wantNames))
