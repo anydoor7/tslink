@@ -13,6 +13,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/anydoor7/tslink/internal/inspect"
@@ -184,60 +185,51 @@ func TestBootstrapEvidenceGateFailsOnlyWhenProcessGoesAway(t *testing.T) {
 		{"replaced", true, 4343, "verified process was replaced (4242 -> 4343) after supervision confirmed it"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			isRunningFn = func(string) bool { return tc.running }
-			readPIDFn = func(string) (int, error) { return tc.pid, nil }
-			ready, err := waitDaemonEvidence(context.Background(), pidPath, snapshotPath, 4242)
-			if ready || err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("ready=%t err=%v", ready, err)
-			}
+			synctest.Test(t, func(t *testing.T) {
+				isRunningFn = func(string) bool { return tc.running }
+				readPIDFn = func(string) (int, error) { return tc.pid, nil }
+				ready, err := waitDaemonEvidence(context.Background(), pidPath, snapshotPath, 4242)
+				if ready || err == nil || !strings.Contains(err.Error(), tc.want) {
+					t.Fatalf("ready=%t err=%v", ready, err)
+				}
+			})
 		})
 	}
 
 	t.Run("absent_evidence_is_not_an_error", func(t *testing.T) {
-		isRunningFn = func(string) bool { return true }
-		readPIDFn = func(string) (int, error) { return 4242, nil }
-		start := time.Now()
-		ready, err := waitDaemonEvidence(context.Background(), pidPath, snapshotPath, 4242)
-		if ready || err != nil {
-			t.Fatalf("ready=%t err=%v", ready, err)
-		}
-		if elapsed := time.Since(start); elapsed < bootstrapEvidenceTimeout {
-			t.Fatalf("returned after %s, before the budget elapsed", elapsed)
-		}
+		synctest.Test(t, func(t *testing.T) {
+			isRunningFn = func(string) bool { return true }
+			readPIDFn = func(string) (int, error) { return 4242, nil }
+			start := time.Now()
+			ready, err := waitDaemonEvidence(context.Background(), pidPath, snapshotPath, 4242)
+			if ready || err != nil {
+				t.Fatalf("ready=%t err=%v", ready, err)
+			}
+			if elapsed := time.Since(start); elapsed < bootstrapEvidenceTimeout {
+				t.Fatalf("returned after %s, before the budget elapsed", elapsed)
+			}
+		})
 	})
 
 	t.Run("late_evidence_is_picked_up", func(t *testing.T) {
-		isRunningFn = func(string) bool { return true }
-		readPIDFn = func(string) (int, error) { return 4242, nil }
-		// What this subtest asserts is that evidence appearing *after* the wait
-		// has already started still gets picked up. How fast that happens is not
-		// under test here, so the budget must not be tight enough to race it:
-		// with the 20ms shared by the subtests above, a 2ms goroutine wake plus a
-		// file write plus a poll can exceed the budget under load, and the failure
-		// then reports machine business rather than code. Measured on 2026-09-08:
-		// idle 0/20 failures, but 1/12 while a full `go test ./...` ran alongside
-		// (2/5 on another machine under heavier concurrent load).
-		// A generous budget costs nothing in wall-clock: the wait returns as soon
-		// as the artifact lands (~2-3ms), not when the budget expires, and a
-		// regression that stops picking up late evidence still fails here because
-		// it then has to burn the whole budget and return ready=false.
-		bootstrapEvidenceTimeout = 2 * time.Second
-		go func() {
-			time.Sleep(2 * time.Millisecond)
-			_ = saveAuthHandoff(filepath.Join(dir, "auth-handoff.json"), newAuthHandoffRecord("myapp", "https://login.tailscale.com/a/late", 4242))
-		}()
-		start := time.Now()
-		ready, err := waitDaemonEvidence(context.Background(), pidPath, snapshotPath, 4242)
-		if !ready || err != nil {
-			t.Fatalf("ready=%t err=%v", ready, err)
-		}
-		// Positive assertion that the pickup was event-driven, not budget-driven:
-		// returning only once the budget elapsed would mean the poll never saw the
-		// artifact land. Half the budget is far above the ~2-3ms this really takes
-		// and far below the 2s a broken implementation would burn.
-		if elapsed := time.Since(start); elapsed > bootstrapEvidenceTimeout/2 {
-			t.Fatalf("late evidence took %s, i.e. it was not picked up while waiting", elapsed)
-		}
+		synctest.Test(t, func(t *testing.T) {
+			isRunningFn = func(string) bool { return true }
+			readPIDFn = func(string) (int, error) { return 4242, nil }
+			bootstrapEvidenceTimeout = 2 * time.Second
+			go func() {
+				time.Sleep(2 * time.Millisecond)
+				_ = saveAuthHandoff(filepath.Join(dir, "auth-handoff.json"), newAuthHandoffRecord("myapp", "https://login.tailscale.com/a/late", 4242))
+			}()
+			start := time.Now()
+			ready, err := waitDaemonEvidence(context.Background(), pidPath, snapshotPath, 4242)
+			if !ready || err != nil {
+				t.Fatalf("ready=%t err=%v", ready, err)
+			}
+			if elapsed := time.Since(start); elapsed >= bootstrapEvidenceTimeout {
+				t.Fatalf("evidence was not picked up before virtual deadline: %s", elapsed)
+			}
+
+		})
 	})
 }
 
@@ -495,24 +487,26 @@ func TestBootstrapOfflineAddNoGreenCheck(t *testing.T) {
 }
 
 func TestBootstrapURLRecoveryDoesNotLoop(t *testing.T) {
-	isolateBootstrap(t)
-	cmd, _, _ := rootCmd.Find([]string{"url"})
-	resetCommandLocalFlags(t, cmd)
-	if err := cmd.Flags().Set("wait", "30s"); err != nil {
-		t.Fatal(err)
-	}
-	start := time.Now()
-	err := cmd.RunE(cmd, []string{"myapp"})
-	if err == nil || time.Since(start) > time.Second {
-		t.Fatalf("err=%v elapsed=%s", err, time.Since(start))
-	}
-	var next interface{ NextCommands() []string }
-	if !errors.As(err, &next) || !reflect.DeepEqual(next.NextCommands(), []string{"tslink install"}) {
-		t.Fatalf("non-repair next: %v", err)
-	}
-	if output.ExitCode(err) == 0 {
-		t.Fatal("offline URL returned success")
-	}
+	synctest.Test(t, func(t *testing.T) {
+		isolateBootstrap(t)
+		cmd, _, _ := rootCmd.Find([]string{"url"})
+		resetCommandLocalFlags(t, cmd)
+		if err := cmd.Flags().Set("wait", "30s"); err != nil {
+			t.Fatal(err)
+		}
+		start := time.Now()
+		err := cmd.RunE(cmd, []string{"myapp"})
+		if err == nil || time.Since(start) != 0 {
+			t.Fatalf("err=%v elapsed=%s", err, time.Since(start))
+		}
+		var next interface{ NextCommands() []string }
+		if !errors.As(err, &next) || !reflect.DeepEqual(next.NextCommands(), []string{"tslink install"}) {
+			t.Fatalf("non-repair next: %v", err)
+		}
+		if output.ExitCode(err) == 0 {
+			t.Fatal("offline URL returned success")
+		}
+	})
 }
 
 func TestBootstrapDoctorCauseAndProbePositiveControl(t *testing.T) {

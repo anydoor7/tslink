@@ -15,6 +15,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	runtimesnapshot "github.com/anydoor7/tslink/internal/runtime"
@@ -434,29 +435,36 @@ func TestMCPEventStreamReleasesItsSubscriberOnDisconnect(t *testing.T) {
 // under Server.mu, so a client that stopped reading must not be able to reach
 // it. A stalled subscriber's notifications coalesce instead of queueing.
 func TestMCPEventPublishDoesNotBlockOnAStalledSubscriber(t *testing.T) {
-	hub := newEventHub()
-	stalled, releaseStalled := hub.subscribe()
-	defer releaseStalled()
-	healthy, releaseHealthy := hub.subscribe()
-	defer releaseHealthy()
+	synctest.Test(t, func(t *testing.T) {
+		hub := newEventHub()
+		stalled, releaseStalled := hub.subscribe()
+		defer releaseStalled()
+		healthy, releaseHealthy := hub.subscribe()
+		defer releaseHealthy()
 
-	start := time.Now()
-	for i := 0; i < 1000; i++ {
-		hub.publish()
-	}
-	if elapsed := time.Since(start); elapsed > time.Second {
-		t.Fatalf("1000 publishes with a stalled subscriber took %s, want a non-blocking fan-out", elapsed)
-	}
+		done := make(chan struct{})
+		go func() {
+			for i := 0; i < 1000; i++ {
+				hub.publish()
+			}
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("publish blocked on an unread subscriber")
+		}
 
-	// The stalled subscriber holds exactly one pending notification, not 1000.
-	if len(stalled) != 1 {
-		t.Fatalf("stalled subscriber queue = %d, want 1 coalesced notification", len(stalled))
-	}
-	select {
-	case <-healthy:
-	default:
-		t.Fatal("healthy subscriber received nothing")
-	}
+		// The stalled subscriber holds exactly one pending notification, not 1000.
+		if len(stalled) != 1 {
+			t.Fatalf("stalled subscriber queue = %d, want 1 coalesced notification", len(stalled))
+		}
+		select {
+		case <-healthy:
+		default:
+			t.Fatal("healthy subscriber received nothing")
+		}
+	})
 }
 
 // TestMCPEventStreamRefusesBeyondTheConcurrentLimit proves the bound exists and
@@ -1002,6 +1010,11 @@ func TestMCPEventStateCacheReleasesWaitersWhenABuildPanics(t *testing.T) {
 func TestMCPEventStreamSurvivesAPanickingBuilderEndToEnd(t *testing.T) {
 	setEventStateMaxAge(t, time.Millisecond)
 
+	var clock atomic.Int64
+	clock.Store(time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC).UnixNano())
+	oldNow := serverNowFn
+	serverNowFn = func() time.Time { return time.Unix(0, clock.Load()) }
+	t.Cleanup(func() { serverNowFn = oldNow })
 	var explode atomic.Bool
 	explode.Store(true)
 	hub := newEventHub()
@@ -1020,7 +1033,7 @@ func TestMCPEventStreamSurvivesAPanickingBuilderEndToEnd(t *testing.T) {
 
 	// The slot and the subscription are both back, so a healthy stream opens.
 	explode.Store(false)
-	time.Sleep(5 * time.Millisecond) // let the poisoned entry age out
+	clock.Add(int64(5 * time.Millisecond))
 	reader, closeStream := mcpEventsOpenStream(t, srv)
 	defer closeStream()
 	frame := readMCPEventFrame(t, reader)

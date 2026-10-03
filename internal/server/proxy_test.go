@@ -11,6 +11,7 @@ import (
 	"net/http/httputil"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"tailscale.com/client/tailscale/apitype"
@@ -430,30 +431,33 @@ func TestProxyRewrite_NilLocalClient(t *testing.T) {
 }
 
 func TestWhoisCache_BasicTTL(t *testing.T) {
-	cache := newWhoisCache(50 * time.Millisecond)
+	synctest.Test(t, func(t *testing.T) {
+		cache := newWhoisCache(50 * time.Millisecond)
 
-	resp := &apitype.WhoIsResponse{
-		UserProfile: &tailcfg.UserProfile{LoginName: "cached@example.com"},
-	}
+		resp := &apitype.WhoIsResponse{
+			UserProfile: &tailcfg.UserProfile{LoginName: "cached@example.com"},
+		}
 
-	// Initially empty
-	if got := cache.get("100.64.0.1"); got != nil {
-		t.Fatal("expected nil from empty cache")
-	}
+		// Initially empty
+		if got := cache.get("100.64.0.1"); got != nil {
+			t.Fatal("expected nil from empty cache")
+		}
 
-	// Store and retrieve
-	cache.set("100.64.0.1", resp)
-	if got := cache.get("100.64.0.1"); got == nil {
-		t.Fatal("expected cached response")
-	} else if got.UserProfile.LoginName != "cached@example.com" {
-		t.Fatalf("LoginName = %q, want %q", got.UserProfile.LoginName, "cached@example.com")
-	}
+		// Store and retrieve
+		cache.set("100.64.0.1", resp)
+		if got := cache.get("100.64.0.1"); got == nil {
+			t.Fatal("expected cached response")
+		} else if got.UserProfile.LoginName != "cached@example.com" {
+			t.Fatalf("LoginName = %q, want %q", got.UserProfile.LoginName, "cached@example.com")
+		}
 
-	// After TTL expires, entry should be gone
-	time.Sleep(60 * time.Millisecond)
-	if got := cache.get("100.64.0.1"); got != nil {
-		t.Fatal("expected nil after TTL expiry")
-	}
+		// After TTL expires, entry should be gone
+		time.Sleep(50*time.Millisecond + time.Nanosecond)
+		synctest.Wait()
+		if got := cache.get("100.64.0.1"); got != nil {
+			t.Fatal("expected nil after TTL expiry")
+		}
+	})
 }
 
 func TestWhoisCache_DifferentIPsIndependent(t *testing.T) {

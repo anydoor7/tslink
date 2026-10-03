@@ -4,6 +4,7 @@ package daemon
 
 import (
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -33,33 +34,42 @@ func stubStopProcessLookupError(t *testing.T) {
 }
 
 func TestStopDaemonWindowsReportsSuccessAfterGracefulShutdown(t *testing.T) {
-	cmd := exec.Command(os.Args[0])
-	cmd.Env = append(os.Environ(), "TSLINK_HELPER_PROCESS=1")
+	cmd := exec.CommandContext(t.Context(), os.Args[0])
+	cmd.Env = append(os.Environ(), "TSLINK_HELPER_PROCESS=1", "TSLINK_HELPER_READY=1")
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("Start() error = %v", err)
 	}
 	stubProcessExecutableForPID(t, cmd.Process.Pid)
-	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
+	var exited chan struct{}
 	t.Cleanup(func() {
 		_ = cmd.Process.Kill()
-		select {
-		case <-done:
-		default:
+		if exited == nil {
+			_ = cmd.Wait()
+		} else {
+			<-exited
 		}
 	})
+	// The helper emits readiness after ShutdownContext creates the event.
+	// Startup scheduling is not part of StopDaemon's graceful-stop contract.
+	ready := make([]byte, len("ready\n"))
+	if _, err := io.ReadFull(stdout, ready); err != nil || string(ready) != "ready\n" {
+		t.Fatalf("helper shutdown event was not ready: event=%q err=%v", ready, err)
+	}
+	done := make(chan error, 1)
+	exited = make(chan struct{})
+	go func() { done <- cmd.Wait(); close(exited) }()
 
 	pidPath := filepath.Join(t.TempDir(), "tslink.pid")
 	if err := os.WriteFile(pidPath, []byte(strconv.Itoa(cmd.Process.Pid)+"\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	started := time.Now()
 	if err := StopDaemon(pidPath); err != nil {
 		t.Fatalf("StopDaemon() error = %v", err)
-	}
-	if elapsed := time.Since(started); elapsed >= windowsStopTimeout {
-		t.Fatalf("StopDaemon() took %s, want less than %s", elapsed, windowsStopTimeout)
 	}
 
 	select {

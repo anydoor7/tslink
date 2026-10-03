@@ -7,6 +7,7 @@ import (
 	"net"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/anydoor7/tslink/internal/registry"
@@ -311,31 +312,41 @@ func (l *errorListener) Close() error {
 func (l *errorListener) Addr() net.Addr { return &net.TCPAddr{} }
 
 func TestServeTCP_AcceptError_NonClosed(t *testing.T) {
-	el := &errorListener{
-		errors: make(chan error, 1),
-		closed: make(chan struct{}),
-	}
+	synctest.Test(t, func(t *testing.T) {
+		el := &errorListener{
+			errors: make(chan error, 1),
+			closed: make(chan struct{}),
+		}
 
-	// Send a non-closed error; serveTCP should log it and continue.
-	el.errors <- errors.New("temporary accept failure")
+		// Send a non-closed error; serveTCP should log it and continue.
+		el.errors <- errors.New("temporary accept failure")
 
-	done := make(chan struct{})
-	go func() {
-		serveTCP(context.Background(), el, "127.0.0.1:1", "test-err")
-		close(done)
-	}()
+		done := make(chan struct{})
+		go func() {
+			serveTCP(context.Background(), el, "127.0.0.1:1", "test-err")
+			close(done)
+		}()
 
-	// Give serveTCP time to process the error and loop back to Accept.
-	time.Sleep(50 * time.Millisecond)
+		// Give serveTCP time to process the error and loop back to Accept.
+		synctest.Wait()
+		if len(el.errors) != 0 {
+			t.Fatal("serveTCP did not consume the accept error")
+		}
+		select {
+		case <-done:
+			t.Fatal("serveTCP returned on a temporary error")
+		default:
+		}
 
-	// Close the listener to stop the loop.
-	el.Close()
+		// Close the listener to stop the loop.
+		el.Close()
 
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("serveTCP did not return after closing errorListener")
-	}
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatal("serveTCP did not return after closing errorListener")
+		}
+	})
 }
 
 type deadlineRecordingConn struct {

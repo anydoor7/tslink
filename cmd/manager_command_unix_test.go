@@ -20,13 +20,15 @@ func TestBoundedManagerCommandUsesRealSubprocessAndFiniteDeadline(t *testing.T) 
 	if err == nil || string(out) != "rejected" {
 		t.Fatalf("failed helper output = %q, err=%v", out, err)
 	}
-	start := time.Now()
-	_, err = runBoundedManagerCommand("/bin/sleep", 40*time.Millisecond, "30")
+	done := make(chan error, 1)
+	go func() { _, err := runBoundedManagerCommand("/bin/sleep", 40*time.Millisecond, "30"); done <- err }()
+	select {
+	case err = <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("manager command ignored its deadline")
+	}
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("blocked helper error = %v, want deadline exceeded", err)
-	}
-	if elapsed := time.Since(start); elapsed > 2*time.Second {
-		t.Fatalf("blocked helper took %s despite 40ms command budget", elapsed)
 	}
 	if managerCommandTimeout("--user", "show", "tslink.service") != managerQueryTimeout ||
 		managerCommandTimeout("bootout", "gui/501/com.tslink.daemon") != managerMutationTimeout {

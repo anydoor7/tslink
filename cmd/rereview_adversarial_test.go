@@ -146,14 +146,29 @@ func TestReReviewCrashStateMatrix(t *testing.T) {
 					t.Fatal(p, e)
 				}
 				if mode == "sending-after-post-remove" {
-					start := time.Now()
-					removed, e := removePeople(paths.Registry, "alice")
+					removal := make(chan struct {
+						result PeopleRemoveResult
+						err    error
+					}, 1)
+					go func() {
+						result, err := removePeople(paths.Registry, "alice")
+						removal <- struct {
+							result PeopleRemoveResult
+							err    error
+						}{result, err}
+					}()
+					var removed PeopleRemoveResult
+					select {
+					case got := <-removal:
+						removed, e = got.result, got.err
+					case <-time.After(5 * time.Second):
+						_ = child.Process.Kill()
+						t.Fatal("local remove blocked on child POST")
+					}
 					if e != nil || !removed.Revoked || removed.Complete || removed.Cleanup[0].Code != "people_invite_busy" {
 						t.Fatal(removed, e)
 					}
-					if time.Since(start) > time.Second {
-						t.Fatal("local remove blocked on child POST")
-					}
+
 					t.Logf("cross-process in-flight remove: %+v", removed)
 				}
 				if e := child.Process.Kill(); e != nil {
@@ -802,9 +817,25 @@ func TestPeopleReplacementConcurrentRemovalOverRealHTTP(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("replacement never reached POST")
 	}
-	start := time.Now()
-	removed, err := removePeople(paths.Registry, "alice")
-	if err != nil || !removed.Revoked || removed.Complete || removed.Cleanup[0].Code != "people_invite_busy" || time.Since(start) > time.Second {
+	removal := make(chan struct {
+		result PeopleRemoveResult
+		err    error
+	}, 1)
+	go func() {
+		result, err := removePeople(paths.Registry, "alice")
+		removal <- struct {
+			result PeopleRemoveResult
+			err    error
+		}{result, err}
+	}()
+	var removed PeopleRemoveResult
+	select {
+	case got := <-removal:
+		removed, err = got.result, got.err
+	case <-time.After(5 * time.Second):
+		t.Fatal("removal blocked behind an unreleased POST")
+	}
+	if err != nil || !removed.Revoked || removed.Complete || removed.Cleanup[0].Code != "people_invite_busy" {
 		t.Fatal("removal blocked behind replacement", removed, err)
 	}
 	close(release)

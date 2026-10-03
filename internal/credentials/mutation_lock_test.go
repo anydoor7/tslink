@@ -1,13 +1,15 @@
 package credentials
 
 import (
-	"context"
+	"bufio"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -211,14 +213,22 @@ func TestCredentialMutationLockChild(t *testing.T) {
 	if os.Getenv("TSLINK_TEST_CREDENTIAL_LOCK_FILE_ONLY") != "1" {
 		credentialMutationLockPathFunc = func() (string, error) { return path, nil }
 	}
-	if err := os.WriteFile(path+".attempt", nil, 0o600); err != nil {
-		t.Fatal(err)
+	oldTry := tryLockCredentialFileFunc
+	var blocked sync.Once
+	tryLockCredentialFileFunc = func(f *os.File) (bool, error) {
+		locked, err := oldTry(f)
+		if !locked && err == nil {
+			blocked.Do(func() { fmt.Println("blocked") })
+		}
+		return locked, err
 	}
+	t.Cleanup(func() { tryLockCredentialFileFunc = oldTry })
 	unlock, err := acquireCredentialMutationLock()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer unlock()
+	fmt.Println("acquired")
 	if err := os.WriteFile(path+".acquired", nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -246,12 +256,15 @@ func assertCredentialMutationLockCrossProcess(t *testing.T, childFileOnly bool) 
 		t.Fatal(err)
 	}
 	locked := true
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestCredentialMutationLockChild$")
+	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestCredentialMutationLockChild$")
 	cmd.Env = append(os.Environ(), "TSLINK_TEST_CREDENTIAL_LOCK_CHILD="+path, "TSLINK_TEST_CREDENTIAL_LOCK_CONFIG_DIR="+configDir)
 	if childFileOnly {
 		cmd.Env = append(cmd.Env, "TSLINK_TEST_CREDENTIAL_LOCK_FILE_ONLY=1", "TSLINK_DISABLE_KEYRING=1")
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		unlock()
+		t.Fatal(err)
 	}
 	if err := cmd.Start(); err != nil {
 		unlock()
@@ -261,23 +274,23 @@ func assertCredentialMutationLockCrossProcess(t *testing.T, childFileOnly bool) 
 		if locked {
 			unlock()
 		}
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
 	}()
-	deadline := time.Now().Add(3 * time.Second)
-	for {
-		if _, err := os.Stat(path + ".attempt"); err == nil {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("child never attempted to acquire credential lock")
-		}
-		time.Sleep(10 * time.Millisecond)
+	// The first event must come from a failed OS lock attempt, independent of
+	// how long child startup takes. A skipped lock reports "acquired" instead.
+	reader := bufio.NewReader(stdout)
+	if event, err := reader.ReadString('\n'); err != nil || event != "blocked\n" {
+		t.Fatalf("child did not observe the held credential lock: event=%q err=%v", event, err)
 	}
-	time.Sleep(100 * time.Millisecond)
 	if _, err := os.Stat(path + ".acquired"); !os.IsNotExist(err) {
 		t.Fatalf("child acquired credential lock before release: %v", err)
 	}
 	unlock()
 	locked = false
+	if event, err := reader.ReadString('\n'); err != nil || event != "acquired\n" {
+		t.Fatalf("child did not acquire released credential lock: event=%q err=%v", event, err)
+	}
 	if err := cmd.Wait(); err != nil {
 		t.Fatalf("child failed after lock release: %v", err)
 	}
