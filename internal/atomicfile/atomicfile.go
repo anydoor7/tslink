@@ -22,7 +22,7 @@ var (
 	statFn       = os.Stat
 	chmodFn      = os.Chmod
 	openFileFn   = os.OpenFile
-	renameFn     = os.Rename
+	renameFn     = renameFile
 	removeFn     = os.Remove
 	randomReadFn = rand.Read
 	writeAllFn   = writeAll

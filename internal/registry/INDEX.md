@@ -67,3 +67,6 @@ This index records the people sharing lifecycle implementation and regression te
 - `requests_contention_test.go`: expiry maintenance lock failures, rollback and subprocess restart.
 
 - `approval_authority_test.go`: locked pre-mutation authority, canonical targets and authorized inbox failure paths.
+
+- `lifetime_scope.go`: locked session and duration authorization shared by lifetime mutations.
+- `lifecycle_audit.go`: post-commit expiry receipts outside the registry lock.

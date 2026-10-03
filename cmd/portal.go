@@ -97,10 +97,10 @@ func changePortalContext(ctx context.Context, paths sharePaths, args portalArgum
 		}
 		if err := registry.SetPortalAuthorized(paths.Registry, &registry.PortalConfig{Enabled: true, Hostname: args.Hostname, Owner: args.Owner, Admins: args.Admins}, func(reg *registry.Registry) error {
 			return requireRequestOwnerInRegistry(ctx, reg)
-		}); err != nil {
+		}, ctx); err != nil {
 			return tsRuntime.PortalState{}, err
 		}
-	} else if err := registry.DisablePortal(paths.Registry); err != nil {
+	} else if err := registry.DisablePortalContext(ctx, paths.Registry); err != nil {
 		return tsRuntime.PortalState{}, err
 	}
 	reg, _, err := registry.Preflight(paths.Registry)

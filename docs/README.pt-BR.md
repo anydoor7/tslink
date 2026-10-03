@@ -127,9 +127,9 @@ Um daemon em segundo plano executa um nó Tailscale integrado por app, dando a c
 
 ## Estado
 
-Disponível agora: endereços privados por app, pessoas com prazos e pacotes de convites, Funnel público com expiração, verificações de saúde e alertas, receitas de apps auto-hospedados, limites de requisições por app, reinício após falhas no Windows, CLI e MCP.
+Disponível agora: endereços privados por app, pessoas com prazos e pacotes de convites, Funnel público com expiração, verificações de saúde e alertas, receitas de apps auto-hospedados, limites de requisições por app, reinício após falhas no Windows, CLI e MCP. Também disponíveis: links de visitantes pelo navegador, durações flexíveis, registro de acesso, página inicial dos apps, papéis limitados de agentes, integração por QR e solicitações de acesso.
 
-Em breve: links de visitantes pelo navegador, durações flexíveis, registro de acesso, página inicial dos apps, papéis limitados de agentes, integração por QR e solicitações de acesso. Uma lista única para vários computadores está planejada. [Plano de desenvolvimento →](roadmap.md)
+Uma lista única para vários computadores está planejada. [Plano de desenvolvimento →](roadmap.md)
 
 ## Documentação e licença
 

@@ -377,7 +377,7 @@ func TestMCPPersonCreationHintAndUnknownRevoke(t *testing.T) {
 			if !reflect.DeepEqual(before, after) {
 				t.Fatal("unknown revoke altered registry")
 			}
-			r, err = callMCPTool(context.Background(), a, "people_grant", json.RawMessage(`{"who":"alice","app":"photos","for":"30m"}`))
+			r, err = callMCPTool(context.Background(), a, "people_grant", json.RawMessage(`{"who":"alice","app":"photos","for":"1h"}`))
 			if role == "owner" {
 				if err != nil || r.IsError {
 					t.Fatal(r, err)
@@ -397,7 +397,7 @@ func TestMCPPersonCreationHintAndUnknownRevoke(t *testing.T) {
 				if _, err := registry.ChangePerson(path, "alice", []string{"photos"}, nil, false, false); err != nil {
 					t.Fatal(err)
 				}
-				r, err = callMCPTool(context.Background(), a, "people_grant", json.RawMessage(`{"who":"alice","app":"photos","for":"30m"}`))
+				r, err = callMCPTool(context.Background(), a, "people_grant", json.RawMessage(`{"who":"alice","app":"photos","for":"1h"}`))
 				if err != nil || r.IsError {
 					t.Fatalf("existing person control=%v err=%v", r, err)
 				}
@@ -499,7 +499,7 @@ func TestMCPDefaultMutationsRecheckRegistrySession(t *testing.T) {
 		{"share", `{"target":"3001"}`}, {"add", `{"name":"new-app","type":"proxy","target":"http://localhost:3001","no_daemon_install":true}`},
 		{"template_apply", `{"name":"local-web","no_daemon_install":true}`}, {"recipe_apply", `{"recipe_id":"immich","no_daemon_install":true}`},
 		{"people_add", `{"who":"bob","apps":["photos"]}`}, {"people_update", `{"who":"alice","apps":["photos"]}`}, {"people_remove", `{"who":"alice"}`},
-		{"people_grant", `{"who":"alice","app":"photos","for":"30m"}`}, {"people_revoke", `{"who":"alice","app":"photos"}`},
+		{"people_grant", `{"who":"alice","app":"photos","for":"1h"}`}, {"people_revoke", `{"who":"alice","app":"photos"}`},
 		{"app_restart", `{"app":"photos"}`}, {"tags_set", `{"service":"photos","tag":"tag:updated"}`}, {"unshare", `{"name":"photos"}`},
 	} {
 		for _, state := range []string{"active", "expired", "cancelled"} {

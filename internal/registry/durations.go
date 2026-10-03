@@ -1,11 +1,13 @@
 package registry
 
 import (
+	"context"
 	"fmt"
 	"time"
 
 	"github.com/anydoor7/tslink/internal/duration"
 	"github.com/anydoor7/tslink/internal/errcode"
+	"github.com/anydoor7/tslink/internal/mcpscope"
 )
 
 func personHasGrant(p Person, app string) bool {
@@ -41,6 +43,7 @@ func parseFunnelRelative(value string) (time.Duration, bool, error) {
 }
 
 type ExtendOptions struct {
+	Context context.Context
 	// Authorize checks the resolved person before any grant change under lock.
 	Authorize func(*Registry, string) error
 	Service   string
@@ -70,7 +73,7 @@ func ExtendDuration(path string, options ExtendOptions) (result DurationChange, 
 	if err := ValidateName(options.Service); err != nil {
 		return result, err
 	}
-	err = withLock(path, func() error {
+	err = withLockContext(mutationContext(options.Context), path, func() error {
 		reg, err := loadForMutation(path)
 		if err != nil {
 			return err
@@ -124,6 +127,9 @@ func ExtendDuration(path string, options ExtendOptions) (result DurationChange, 
 			result.PreviousExpiresAt = grant.ExpiresAt
 			expired = grant.Expired || (grant.ExpiresAt != nil && !options.Now.Before(*grant.ExpiresAt))
 		} else {
+			if session, ok := mcpscope.FromContext(mutationContext(options.Context)); ok && session.Scope.Role != "owner" {
+				return mcpscope.Denied{}
+			}
 			if !svc.PublicAck || svc.FunnelExpiryUndecided() || (!svc.Funnel && (svc.FunnelExpiresAt == nil || svc.FunnelExpiresAt.After(options.Now))) {
 				return CodedError{Code: errcode.UsageError, Message: "service has no active or expired acknowledged Funnel TTL"}
 			}
@@ -136,6 +142,9 @@ func ExtendDuration(path string, options ExtendOptions) (result DurationChange, 
 		l, err := options.Policy.Resolve(options.Value, result.Audience, options.AckNever, options.Now, time.Local)
 		if err != nil {
 			return CodedError{Code: errcode.UsageError, Message: err.Error()}
+		}
+		if err := authorizeLifetime(options.Context, "extend", svc.Name, l, options.Now); err != nil {
+			return err
 		}
 		result.ExpiresAt, result.Regranted = l.Deadline, expired
 		if grant != nil {

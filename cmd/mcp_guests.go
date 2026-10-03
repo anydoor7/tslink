@@ -1,7 +1,6 @@
 package cmd
 
-// All current MCP principals are owners. This explicit registry is the
-// extension point consumed when reduced F6 scopes are integrated.
+// Guest browser grants remain owner-only when reduced scopes are enabled.
 var mcpOwnerOnlyGuestTools = map[string]bool{"guest_create": true, "guest_list": true, "guest_show": true, "guest_revoke": true}
 
 func init() {

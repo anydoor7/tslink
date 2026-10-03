@@ -7,6 +7,8 @@ import (
 	"sort"
 	"time"
 
+	"github.com/anydoor7/tslink/internal/config"
+	"github.com/anydoor7/tslink/internal/duration"
 	"github.com/anydoor7/tslink/internal/mcpscope"
 )
 
@@ -16,6 +18,12 @@ import (
 // Authorization and deadline checks are repeated inside the writer lock so a
 // caller cannot wait out its binding or race a service becoming public.
 func ChangePersonApp(path string, session mcpscope.Session, who, app, lifetime string, revoke bool, nowFn func() time.Time, contexts ...context.Context) (person Person, err error) {
+	return ChangePersonAppAuthorized(path, session, who, app, lifetime, revoke, nowFn, nil, contexts...)
+}
+
+// ChangePersonAppAuthorized composes scope and current-owner checks in the
+// same transaction, using the person's persisted audience for lifetime policy.
+func ChangePersonAppAuthorized(path string, session mcpscope.Session, who, app, lifetime string, revoke bool, nowFn func() time.Time, authorize func(*Registry, string) error, contexts ...context.Context) (person Person, err error) {
 	login, err := NormalizePerson(who)
 	if err != nil {
 		return person, err
@@ -41,6 +49,11 @@ func ChangePersonApp(path string, session mcpscope.Session, who, app, lifetime s
 		if err != nil {
 			return err
 		}
+		if authorize != nil {
+			if err := authorize(reg, login); err != nil {
+				return err
+			}
+		}
 		svcIndex := -1
 		for i, svc := range reg.Services {
 			if svc.Name == app {
@@ -62,6 +75,19 @@ func ChangePersonApp(path string, session mcpscope.Session, who, app, lifetime s
 		}
 		if person.Revoked {
 			return mcpscope.Denied{}
+		}
+		if !revoke {
+			policy, err := config.LoadLifetimePolicy()
+			if err != nil {
+				return err
+			}
+			audience := duration.TailnetMember
+			if PersonIsGuest(person) {
+				audience = duration.Guest
+			}
+			if err := policy.Check(duration.Lifetime{Deadline: expiry}, audience, false, now); err != nil {
+				return CodedError{Code: "usage_error", Message: err.Error()}
+			}
 		}
 		if index < 0 {
 			if revoke {

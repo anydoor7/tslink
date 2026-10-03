@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/anydoor7/tslink/internal/mcpaudit"
 	"io"
 	"io/fs"
 	"net"
@@ -1993,6 +1994,13 @@ func DowngradeExpiredFunnels(path string, now time.Time, dryRun bool) (expired [
 		}
 		return save(path, reg)
 	})
+	if err == nil && !dryRun {
+		for _, svc := range expired {
+			if err = recordExpiry(path, now, mcpaudit.Change{Action: "funnel_expired", App: svc.Name, ExpiresAt: svc.FunnelExpiresAt}); err != nil {
+				break
+			}
+		}
+	}
 	return expired, err
 }
 

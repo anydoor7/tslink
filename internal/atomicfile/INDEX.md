@@ -8,3 +8,5 @@
 - `atomicfile_parent_unix_test.go`, `atomicfile_parent_windows_test.go`: platform parent permissions.
 - `atomicfile_parent_junction_test.go`, `atomicfile_parent_junction_windows_test.go`: symlink and junction validation.
 - `testmain_test.go`: isolated test process setup.
+- `rename_unix.go`, `rename_windows.go`: bounded Windows retries for transient replacement sharing failures.
+- `rename_windows_test.go`: real held-reader replacement, persistent failure preservation and exact retry bounds.

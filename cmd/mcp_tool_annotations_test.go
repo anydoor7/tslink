@@ -194,8 +194,8 @@ func TestMCPReadOnlyToolsWriteNothing(t *testing.T) {
 			}
 		}
 	}
-	if readOnly != 18 {
-		t.Fatalf("%d tools are marked read-only, want the 18 that only read", readOnly)
+	if readOnly != 20 {
+		t.Fatalf("%d tools are marked read-only, want the 20 that only read", readOnly)
 	}
 
 	// Control: add is a write tool. With the daemon reported running it reads

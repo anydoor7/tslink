@@ -1,5 +1,4 @@
-// Package mcpaudit is the small MCP mutation journal adapter. A future general
-// access log can consume Entry and replace Journal.Record without tool changes.
+// Package mcpaudit stores bounded mutation receipts consumed by the access log.
 package mcpaudit
 
 import (
@@ -36,6 +35,8 @@ type Entry struct {
 	Tool           string            `json:"tool"`
 	Apps           []string          `json:"apps"`
 	Result         string            `json:"result"`
+	Surface        string            `json:"surface,omitempty"`
+	Changes        []Change          `json:"changes,omitempty"`
 }
 
 type Journal struct{ Path string }

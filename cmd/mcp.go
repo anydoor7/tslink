@@ -24,6 +24,7 @@ import (
 	"github.com/anydoor7/tslink/internal/output"
 	"github.com/anydoor7/tslink/internal/recipes"
 	"github.com/anydoor7/tslink/internal/registry"
+	tsRuntime "github.com/anydoor7/tslink/internal/runtime"
 	"github.com/anydoor7/tslink/internal/tailapi"
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -716,7 +717,7 @@ type mcpActions struct {
 	registryPath   string
 	personApp      func(context.Context, string, string, string, bool) (any, error)
 	appRestart     func(context.Context, string) (any, error)
-	guest          func(string, guestArguments) (any, error)
+	guest          func(context.Context, string, guestArguments) (any, error)
 	peopleChange   func(context.Context, peopleArguments, bool) (any, error)
 	peopleList     func() (any, error)
 	peopleRemove   func(context.Context, string, map[string]string) (any, error)
@@ -871,23 +872,24 @@ func parseMCPWait(raw string) (time.Duration, error) {
 type mcpServiceSummary = ListServiceSummary
 
 type mcpStatusSummary struct {
-	AccessLog              accesslog.Health     `json:"access_log"`
-	MCPBindings            []mcpBindingView     `json:"mcp_bindings,omitempty"`
-	Services               []mcpHealthService   `json:"services"`
-	Credentials            StatusCredentials    `json:"credentials"`
-	Alerts                 health.AlertsView    `json:"alerts"`
-	Supervision            Supervision          `json:"supervision"`
-	Authenticated          bool                 `json:"authenticated"`
-	CredentialStored       bool                 `json:"credential_stored"`
-	NodeAuthorized         bool                 `json:"node_authorized"`
-	AuthorizedServiceCount int                  `json:"authorized_service_count"`
-	DaemonRunning          bool                 `json:"daemon_running"`
-	DaemonState            string               `json:"daemon_state"`
-	ServiceCount           int                  `json:"service_count"`
-	Status                 string               `json:"status,omitempty"`
-	AuthURL                string               `json:"auth_url,omitempty"`
-	Next                   []string             `json:"next,omitempty"`
-	GuestLinks             []registry.GuestView `json:"guest_links"`
+	Portal                 *tsRuntime.PortalState `json:"portal,omitempty"`
+	AccessLog              accesslog.Health       `json:"access_log"`
+	MCPBindings            []mcpBindingView       `json:"mcp_bindings,omitempty"`
+	Services               []mcpHealthService     `json:"services"`
+	Credentials            StatusCredentials      `json:"credentials"`
+	Alerts                 health.AlertsView      `json:"alerts"`
+	Supervision            Supervision            `json:"supervision"`
+	Authenticated          bool                   `json:"authenticated"`
+	CredentialStored       bool                   `json:"credential_stored"`
+	NodeAuthorized         bool                   `json:"node_authorized"`
+	AuthorizedServiceCount int                    `json:"authorized_service_count"`
+	DaemonRunning          bool                   `json:"daemon_running"`
+	DaemonState            string                 `json:"daemon_state"`
+	ServiceCount           int                    `json:"service_count"`
+	Status                 string                 `json:"status,omitempty"`
+	AuthURL                string                 `json:"auth_url,omitempty"`
+	Next                   []string               `json:"next,omitempty"`
+	GuestLinks             []registry.GuestView   `json:"guest_links"`
 }
 
 // mcpStatusFn reads what the status tool reports. Like every read-only tool it
@@ -900,10 +902,10 @@ func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 	journal := mcpaudit.Journal{Path: mcpAuditPath(paths.Registry)}
 	nowFn := time.Now
 	return mcpActions{
-		guest: func(name string, a guestArguments) (any, error) {
+		guest: func(ctx context.Context, name string, a guestArguments) (any, error) {
 			switch name {
 			case "guest_create":
-				return createGuest(paths, a, durationClock())
+				return createGuestContext(ctx, paths, a, durationClock())
 			case "guest_list":
 				list, e := registry.ListGuests(paths.Registry, durationClock())
 				return map[string]any{"grants": list}, e
@@ -911,7 +913,7 @@ func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 				view, e := registry.ShowGuest(paths.Registry, a.ID, durationClock())
 				return map[string]any{"grant": view}, e
 			case "guest_revoke":
-				view, e := registry.RevokeGuest(paths.Registry, a.ID, durationClock())
+				view, e := registry.RevokeGuestContext(ctx, paths.Registry, a.ID, durationClock())
 				return map[string]any{"grant": view}, e
 			}
 			return nil, output.ErrUsage("unknown guest action")
@@ -927,7 +929,7 @@ func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 		audit:        journal.Record, auditRead: journal.Read, nowFn: nowFn,
 		personApp: func(ctx context.Context, who, app, lifetime string, revoke bool) (any, error) {
 			session, _ := mcpscope.FromContext(ctx)
-			p, err := registry.ChangePersonApp(paths.Registry, session, who, app, lifetime, revoke, nowFn, ctx)
+			p, err := registry.ChangePersonAppAuthorized(paths.Registry, session, who, app, lifetime, revoke, nowFn, peopleMutationAuthorization(ctx), ctx)
 			if err != nil {
 				return nil, err
 			}
@@ -1024,6 +1026,7 @@ func defaultMCPActions(paths sharePaths, errOut io.Writer) mcpActions {
 				return nil, err
 			}
 			result := mcpStatusSummary{
+				Portal:      &status.Portal,
 				GuestLinks:  status.GuestLinks,
 				AccessLog:   status.AccessLog,
 				MCPBindings: status.MCPBindings,
@@ -1700,7 +1703,7 @@ func executeMCPTool(ctx context.Context, actions mcpActions, name string, argume
 		if refusal := mcpArgumentsRefusal(name, decodeErr, required...); refusal != nil {
 			return refusal, nil
 		}
-		data, err = actions.guest(name, args)
+		data, err = actions.guest(ctx, name, args)
 	case "extend":
 		var args extendArguments
 		decodeErr := decodeExtendMCPArguments(arguments, &args)
@@ -1797,6 +1800,9 @@ func executeMCPTool(ctx context.Context, actions mcpActions, name string, argume
 		var args accessLogArguments
 		if refusal := mcpArgumentsRefusal(name, decodeMCPArguments(arguments, &args)); refusal != nil {
 			return refusal, nil
+		}
+		if session, ok := mcpscope.FromContext(ctx); ok && session.Scope.Role != "owner" {
+			args.allowedApps = append([]string{}, session.Scope.Apps...)
 		}
 		if name == "access_log" {
 			data, err = actions.accessLog(args)

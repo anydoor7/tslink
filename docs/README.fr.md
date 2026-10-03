@@ -127,9 +127,9 @@ Un daemon en arrière-plan exécute un nœud Tailscale embarqué par application
 
 ## État du projet
 
-Disponible : adresses privées par application, personnes avec échéances et invitations groupées, Funnel public avec expiration, contrôles de santé et alertes, recettes d'applications auto-hébergées, limites de requêtes par application, redémarrage après plantage sous Windows, CLI et MCP.
+Disponible : adresses privées par application, personnes avec échéances et invitations groupées, Funnel public avec expiration, contrôles de santé et alertes, recettes d'applications auto-hébergées, limites de requêtes par application, redémarrage après plantage sous Windows, CLI et MCP. Également disponibles : liens invités pour navigateur, durées flexibles, journal d'accès, page d'accueil des applications, rôles d'agent limités, inscription par QR et demandes d'accès.
 
-À venir : liens invités pour navigateur, durées flexibles, journal d'accès, page d'accueil des applications, rôles d'agent limités, inscription par QR et demandes d'accès. L'affichage de plusieurs ordinateurs dans une liste commune est prévu. [Feuille de route →](roadmap.md)
+L'affichage de plusieurs ordinateurs dans une liste commune est prévu. [Feuille de route →](roadmap.md)
 
 ## Documentation et licence
 

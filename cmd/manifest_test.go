@@ -1018,9 +1018,10 @@ func TestCompactManifestStaysBelowAgentTokenBudget(t *testing.T) {
 	// People sharing, health, recipes and request limits expand the compact agent surface.
 	// Keep a bounded budget for the combined command tree.
 	// QR flags, the request commands and seven request codes bring the complete
-	// compact contract to 4854 bytes. Preserve all flags/codes within 5000 bytes.
-	if len(data) >= 5000 {
-		t.Fatalf("compact manifest = %d bytes, want < 5000", len(data))
+	// compact contract past 5000 bytes with scopes, guests and audit.
+	// Preserve every merged command and error code within a 5500-byte budget.
+	if len(data) >= 5500 {
+		t.Fatalf("compact manifest = %d bytes, want < 5500", len(data))
 	}
 	compact := CompactManifest()
 	if compact.ErrorCodes[registry.CodeURLNotReady] != 5 {

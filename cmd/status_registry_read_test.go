@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -96,7 +97,7 @@ func TestPollableStatusHealthUsesNamedRegistryService(t *testing.T) {
 						}
 						return registry.LoadForDiagnostics(path)
 					}
-					got, err := reader.read.getPollableStatus(pidPath, regPath, snapshotPath, filepath.Join(dir, "auth-handoff.json"))
+					got, err := reader.read.getPollableStatus(context.Background(), pidPath, regPath, snapshotPath, filepath.Join(dir, "auth-handoff.json"))
 					if err != nil {
 						t.Fatalf("getPollableStatus: %v", err)
 					}

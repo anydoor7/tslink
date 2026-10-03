@@ -270,7 +270,7 @@ func TestPortalStatusDuringRegistryRemoval(t *testing.T) {
 		}
 		return tsRuntime.Load(path)
 	}
-	result, err := readOnlyStatus.getPollableStatus(paths.PID, paths.Registry, paths.Snapshot, paths.AuthHandoff)
+	result, err := readOnlyStatus.getPollableStatus(context.Background(), paths.PID, paths.Registry, paths.Snapshot, paths.AuthHandoff)
 	if err != nil || !removed || result.AuthorizedServiceCount != 1 || result.Portal.URL != "" {
 		t.Fatalf("concurrent registry removal=%+v %v", result, err)
 	}

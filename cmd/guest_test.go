@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -61,7 +62,7 @@ func TestGuestCommandAndMCP(t *testing.T) {
 	actions := defaultMCPActions(paths, &bytes.Buffer{})
 	for _, name := range []string{"guest_list", "guest_show", "guest_revoke"} {
 		args := guestArguments{ID: result.Grant.ID}
-		v, e := actions.guest(name, args)
+		v, e := actions.guest(context.Background(), name, args)
 		if e != nil || v == nil {
 			t.Fatal(name, v, e)
 		}

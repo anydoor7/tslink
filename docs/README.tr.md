@@ -127,9 +127,9 @@ Tek bir arka plan süreci her uygulama için gömülü Tailscale düğümü çal
 
 ## Durum
 
-Şimdi kullanılabilir: uygulama başına özel adresler, süreli kişi izinleri ve davet paketleri, süreli herkese açık Funnel, uygulama sağlık kontrolleri ve uyarılar, kendi barındırdığınız uygulamalar için tarifler, uygulama başına istek sınırları, Windows çökme sonrası yeniden başlatma, CLI ve MCP.
+Şimdi kullanılabilir: uygulama başına özel adresler, süreli kişi izinleri ve davet paketleri, süreli herkese açık Funnel, uygulama sağlık kontrolleri ve uyarılar, kendi barındırdığınız uygulamalar için tarifler, uygulama başına istek sınırları, Windows çökme sonrası yeniden başlatma, CLI ve MCP. Ayrıca kullanılabilir: tarayıcı misafir bağlantıları, esnek süreler, erişim günlüğü, uygulama ana sayfası, kapsamı sınırlı ajan rolleri, QR ile katılım ve erişim istekleri.
 
-Yakında: tarayıcı misafir bağlantıları, esnek süreler, erişim günlüğü, uygulama ana sayfası, kapsamı sınırlı ajan rolleri, QR ile katılım ve erişim istekleri. Birden fazla bilgisayarı tek listede görüntüleme planlanıyor. [Yol haritası →](roadmap.md)
+Birden fazla bilgisayarı tek listede görüntüleme planlanıyor. [Yol haritası →](roadmap.md)
 
 ## Belgeler ve lisans
 

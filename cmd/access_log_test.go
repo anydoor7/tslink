@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -218,7 +219,7 @@ func TestAccessCommandsThroughCobra(t *testing.T) {
 	os.MkdirAll(filepath.Join(dir, "access-log"), 0700)
 	os.WriteFile(filepath.Join(dir, "access-log", "health.json"), []byte(`{"enabled":true,"last_write":null,"drops":3,"size_bytes":42,"updated_at":"2030-01-01T00:00:00Z","error":"access_log_io_failed"}`), 0600)
 	opts := doctorOptions{}
-	r := buildDoctorResult(opts)
+	r := buildDoctorResult(context.Background(), opts)
 	hasDrop, hasUnavailable := false, false
 	for _, f := range r.Findings {
 		hasDrop = hasDrop || f.Code == inspect.WarningCodeAccessLogDrops

@@ -8,9 +8,9 @@ whole control plane. Tailscale still controls which devices can reach the node.
 
 | Role | Capabilities | App boundary |
 |---|---|---|
-| `viewer` | `list`, `status`, `health`, `doctor`, `url`, `tags_list`, `access_explain`, `people_list`; static `recipe_list` and `template_list` catalogs | Explicit `apps`, or explicit `inventory: true` for all app inventory |
-| `app-operator` | Viewer capabilities plus `app_restart`, `people_grant`, `people_revoke` | Listed apps only; a positive `max_duration` is required |
-| `people-manager` | Viewer capabilities plus `people_grant`, `people_revoke` | Listed apps only; a positive `max_duration` is required |
+| `viewer` | `list`, `status`, `health`, `doctor`, `url`, `tags_list`, `access_explain`, `access_log`, `access_summary`, `people_list`; static `recipe_list` and `template_list` catalogs | Explicit `apps`, or explicit `inventory: true` for all app inventory |
+| `app-operator` | Viewer capabilities plus `app_restart`, `people_grant`, `people_revoke`, person `extend` | Listed apps only; a positive `max_duration` is required |
+| `people-manager` | Viewer capabilities plus `people_grant`, `people_revoke`, person `extend`, and owner-approved `requests_list`/`requests_approve`/`requests_deny` | Listed apps only; a positive `max_duration` is required |
 | `owner` | Every shipped tool, including `mcp_audit` | Unrestricted; cannot carry app or duration restrictions |
 
 Reduced roles cannot register/delete services, use Funnel, change tags/global
@@ -24,11 +24,11 @@ administration stays in the owner's configuration, outside MCP.
 `people_revoke` takes `{"who":"alice@example.com","app":"photos"}`. They change
 one private HTTP/file grant and preserve other apps, deadlines and invitation
 history. They cannot undo a whole-person owner revocation. `for` must be a
-positive duration within `max_duration` and cannot outlive the binding. `never`
+duration of at least 1h within audience policy and `max_duration` and cannot outlive the binding. `never`
 is refused. These tools create no Tailscale invitations: people already on the
 tailnet need none; the owner handles network invitations separately. Revocation
 denies future HTTP requests; accepted network shares and in-flight streams may
-remain. TCP and public Funnel services cannot carry people grants.
+remain. TCP and ungated public Funnel services cannot carry people grants. Gated guest apps retain people enforcement on their private listener.
 
 `app_restart` takes `{"app":"photos"}` and queues restart of that app's TSLink
 gateway node. It preserves enrolled node identity and other apps. It does not
@@ -66,8 +66,7 @@ not itself grant permission to open photos; manage app access separately.
 `mcp.allow` remains an owner allowlist. To reduce an existing login's authority,
 remove it from `allow` and add one binding; a duplicate principal across the two
 lists is refused. A binding's login must be canonical: outer ASCII whitespace
-removed and ASCII A-Z lowercased, without Unicode case folding. Tags use
-Tags use the exact `tag:` prefix and preserve their name's case, including legacy
+removed and ASCII A-Z lowercased, without Unicode case folding. Tags use the exact `tag:` prefix and preserve their name's case, including legacy
 uppercase names; case folding never turns them into a broader grant.
 Unknown fields/roles, duplicate binding principals/apps, invalid
 names, `all` app selectors, missing app lists and invalid lifetimes fail closed.
@@ -143,9 +142,13 @@ have occurred. Concurrent writers serialize through a file lock; lock waiting is
 bounded. Partial/corrupt, special-file or oversized journals are preserved and
 refused. `status` shows value-free bindings; `doctor` reports risky bindings.
 
-The adapter is `internal/mcpaudit.Journal.Record(ctx, Entry)`, ready for integration
-with the general access log. Duration parsing is isolated at
-`internal/mcpscope.ParseDuration`.
+`access_log` and `access_summary` combine the mutation journal with daemon access events, filtering before aggregation and truncation. Reduced roles need explicit app grants; inventory alone does not expose history. The shared duration parser accepts `90m`, `1d12h` and `until <date/time>` with presets `1h`, `8h`, `24h`, `3d`, `7d`. Guest/public defaults remain bounded to 7d; configured audience limits, `max_duration` and binding expiry all apply. Capability-binding lifetimes may be shorter than the 1h grant minimum.
+
+`guest_create`, `guest_list`, `guest_show` and `guest_revoke` remain owner-role tools; creating a guest cannot outlive an expiring owner binding. `people_add`/`people_update`, including their QR arguments, also remain owner-role tools. `extend` permits operators/managers to change an in-scope person's grant; only an owner can select Funnel. Reduced roles cannot change protected portal-owner/admin people records.
+
+Request decisions require an owner or people-manager role. Remote calls additionally require the current unrevoked human portal owner, checked under the same registry lock as the decision. A tagged principal cannot approve. A people-manager binding can further restrict that owner to listed apps and finite durations; an unrelated manager does not gain approval rights. Local scoped stdio retains the trusted host identity but still applies role, app and duration restrictions. Listing is annotated mutating because expiry/retention maintenance can write the request ledger. Guest list/show and access-log queries remain read-only.
+
+See [access history](access-log.md) for the receipt field mapping, surfaces, independent bounds and post-commit audit failure semantics.
 
 Tailscale references checked 2026-10-02: [tsnet LocalClient and WhoIs](https://tailscale.com/docs/reference/tsnet-server-api)
 and [device tags](https://tailscale.com/docs/features/tags).

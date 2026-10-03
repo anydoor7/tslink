@@ -2,6 +2,7 @@ package registry
 
 import (
 	"fmt"
+	"github.com/anydoor7/tslink/internal/mcpaudit"
 	"time"
 )
 
@@ -29,6 +30,7 @@ func ReadGuestGrants(path, app string, now time.Time) ([]GuestGrant, error) {
 		}
 	}
 	if overdue {
+		var expired []mcpaudit.Change
 		acquired, err := tryWithLock(path, func() error {
 			current, err := loadForMutation(path)
 			if err != nil {
@@ -38,6 +40,7 @@ func ReadGuestGrants(path, app string, now time.Time) ([]GuestGrant, error) {
 			for i := range current.Guests {
 				grant := &current.Guests[i]
 				if grant.App == app && !grant.Revoked && !grant.Expired && !now.Before(grant.ExpiresAt) {
+					expired = append(expired, mcpaudit.Change{Action: "guest_expired", App: grant.App, ID: grant.ID, ExpiresAt: &grant.ExpiresAt})
 					grant.Expired = true
 					changed = true
 				}
@@ -52,6 +55,11 @@ func ReadGuestGrants(path, app string, now time.Time) ([]GuestGrant, error) {
 		}
 		if !acquired {
 			return nil, fmt.Errorf("guest expiry: registry writer busy")
+		}
+		for _, change := range expired {
+			if err := recordExpiry(path, now, change); err != nil {
+				return nil, err
+			}
 		}
 	}
 	return grants, nil

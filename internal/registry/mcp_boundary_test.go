@@ -166,7 +166,7 @@ func TestMCPPersonCreationRequiresOwner(t *testing.T) {
 				s := mcpscope.Session{Scope: mcpscope.Scope{Role: role, Apps: []string{"photos"}, MaxDuration: "1h"}}
 				now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
 				before, _ := os.ReadFile(path)
-				p, err := ChangePersonApp(path, s, "alice", "photos", "30m", revoke, func() time.Time { return now })
+				p, err := ChangePersonApp(path, s, "alice", "photos", "1h", revoke, func() time.Time { return now })
 				if !revoke && role != "owner" {
 					if code, _ := ErrorCode(err); code != "mcp_person_owner_required" {
 						t.Fatalf("code=%q err=%v", code, err)

@@ -127,6 +127,20 @@ func (g *guestGate) monitor(watcher *fsnotify.Watcher) {
 	}
 }
 
+// Expiry checks may commit a registry latch and its audit receipt even after a
+// hijacked socket closes. Join those operations before shutdown releases state.
+func (g *guestGate) grantState(read func() (registry.GuestView, string)) (registry.GuestView, string) {
+	g.mu.Lock()
+	if g.closed {
+		g.mu.Unlock()
+		return registry.GuestView{}, "unavailable"
+	}
+	g.stateReads.Add(1)
+	g.mu.Unlock()
+	defer g.stateReads.Done()
+	return read()
+}
+
 func (g *guestGate) Close() error {
 	g.closeOnce.Do(func() {
 		close(g.stop)
@@ -142,6 +156,7 @@ func (g *guestGate) Close() error {
 			f.end()
 		}
 		<-g.done
+		g.stateReads.Wait()
 	})
 	return registry.FlushGuestCounters(g.path)
 }
@@ -182,7 +197,9 @@ func (g *guestGate) serveApp(w http.ResponseWriter, r *http.Request, view regist
 		// Panics, including http.ErrAbortHandler, propagate through this defer.
 	}()
 	// Register before the final state check so no commit can miss this flight.
-	_, reason := registry.CheckGuest(g.path, g.svc.Name, view.ID, g.now(), false, false)
+	_, reason := g.grantState(func() (registry.GuestView, string) {
+		return registry.CheckGuest(g.path, g.svc.Name, view.ID, g.now(), false, false)
+	})
 	if reason != "allowed" {
 		flight.end()
 		g.deny(w, r, view.ID, reason, g.now())
@@ -191,7 +208,9 @@ func (g *guestGate) serveApp(w http.ResponseWriter, r *http.Request, view regist
 		if !flight.ended {
 			flight.timer = time.AfterFunc(view.ExpiresAt.Sub(g.now()), func() {
 				// Persist the expiry latch as well as ending the existing connection.
-				_, _ = registry.CheckGuest(g.path, g.svc.Name, view.ID, g.now(), false, false)
+				_, _ = g.grantState(func() (registry.GuestView, string) {
+					return registry.CheckGuest(g.path, g.svc.Name, view.ID, g.now(), false, false)
+				})
 				flight.end()
 			})
 		}
@@ -224,7 +243,9 @@ func (w *guestResponse) Write(data []byte) (int, error) {
 	return w.ResponseWriter.Write(data)
 }
 func (w *guestResponse) authorized() bool {
-	_, reason := registry.CheckGuest(w.gate.path, w.gate.svc.Name, w.flight.id, w.gate.now(), false, false)
+	_, reason := w.gate.grantState(func() (registry.GuestView, string) {
+		return registry.CheckGuest(w.gate.path, w.gate.svc.Name, w.flight.id, w.gate.now(), false, false)
+	})
 	if reason != "allowed" {
 		w.flight.end()
 		return false

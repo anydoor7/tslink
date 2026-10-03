@@ -121,3 +121,5 @@ This index records the app recipe additions; the CLI manifest describes the comp
 
 - `requests_authority_test.go`: ported reviewer authority restoration and in-flight owner replacement probes.
 - `people_authority_test.go`: real HTTP MCP owner/admin/ordinary mutation matrix and compiled local recovery.
+
+- `wave2_integration_test.go`: real MCP role/app boundaries, owner approval, shared lifetimes and lifecycle audit integration.

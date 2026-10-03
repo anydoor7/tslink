@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"github.com/anydoor7/tslink/internal/mcpaudit"
 	"time"
 
 	"github.com/anydoor7/tslink/internal/config"
@@ -51,9 +52,10 @@ func extendLifetimeContext(ctx context.Context, path string, args extendArgument
 	if err != nil {
 		return registry.DurationChange{}, err
 	}
-	result, err := registry.ExtendDuration(path, registry.ExtendOptions{Service: args.Service, Who: args.Who, Value: *value, Regrant: args.Regrant, AckNever: args.AckNever, Policy: policy, Now: now, Authorize: peopleMutationAuthorization(ctx)})
+	result, err := registry.ExtendDuration(path, registry.ExtendOptions{Context: ctx, Service: args.Service, Who: args.Who, Value: *value, Regrant: args.Regrant, AckNever: args.AckNever, Policy: policy, Now: now, Authorize: peopleMutationAuthorization(ctx)})
 	if err == nil {
 		durationChangedFn(result)
+		err = mcpaudit.RecordChange(ctx, path, mcpaudit.Surface(ctx), mcpLocalActor(), now, mcpaudit.Change{Action: "extended", App: result.Service, Subject: result.Who, PreviousExpiresAt: result.PreviousExpiresAt, ExpiresAt: result.ExpiresAt})
 	}
 	return result, err
 }

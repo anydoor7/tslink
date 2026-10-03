@@ -1,12 +1,15 @@
 package registry
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"github.com/anydoor7/tslink/internal/mcpaudit"
+	"github.com/anydoor7/tslink/internal/mcpscope"
 	"io"
 	"os"
 	"strings"
@@ -98,6 +101,7 @@ func validGuestLabel(s string) bool {
 }
 
 type CreateGuestOptions struct {
+	Context                context.Context
 	App, Label, Value, PIN string
 	PublicAck              bool
 	Policy                 duration.Policy
@@ -135,7 +139,10 @@ func CreateGuest(path string, o CreateGuestOptions) (view GuestView, token strin
 	if o.PIN != "" {
 		g.PINHash = guestPINHash(salt, o.PIN)
 	}
-	err = withLock(path, func() error {
+	err = withLockContext(mutationContext(o.Context), path, func() error {
+		if err := authorizeLifetime(o.Context, "guest_create", o.App, l, o.Now); err != nil {
+			return err
+		}
 		reg, e := loadForMutation(path)
 		if e != nil {
 			return e
@@ -209,7 +216,12 @@ func ShowGuest(path, id string, now time.Time) (GuestView, error) {
 	return GuestView{}, guestError(errcode.NotFound, "guest link not found")
 }
 func RevokeGuest(path, id string, now time.Time) (view GuestView, err error) {
-	err = withLock(path, func() error {
+	return RevokeGuestContext(context.Background(), path, id, now)
+}
+
+func RevokeGuestContext(ctx context.Context, path, id string, now time.Time) (view GuestView, err error) {
+	changed := false
+	err = withLockContext(ctx, path, func() error {
 		reg, e := loadForMutation(path)
 		if e != nil {
 			return e
@@ -217,6 +229,12 @@ func RevokeGuest(path, id string, now time.Time) (view GuestView, err error) {
 		for i := range reg.Guests {
 			g := &reg.Guests[i]
 			if g.ID == id {
+				if session, ok := mcpscope.FromContext(ctx); ok {
+					if e := session.Authorize("guest_revoke", []string{g.App}, now); e != nil {
+						return e
+					}
+				}
+				changed = !g.Revoked
 				g.Revoked = true
 				view = g.View(now)
 				if e := save(path, reg); e != nil {
@@ -228,6 +246,9 @@ func RevokeGuest(path, id string, now time.Time) (view GuestView, err error) {
 		}
 		return guestError(errcode.NotFound, "guest link not found")
 	})
+	if err == nil && changed {
+		err = mcpaudit.RecordChange(ctx, path, mcpaudit.Surface(ctx), mcpaudit.LocalActor(), now, mcpaudit.Change{Action: "guest_revoked", App: view.App, ID: view.ID, ExpiresAt: &view.ExpiresAt})
+	}
 	return
 }
 
@@ -278,6 +299,7 @@ func CheckGuest(path, app, id string, now time.Time, use, session bool) (view Gu
 			return view, "expired"
 		}
 		if !now.Before(g.ExpiresAt) {
+			expired := false
 			acquired, e := tryWithLock(path, func() error {
 				current, e := loadForMutation(path)
 				if e != nil {
@@ -288,6 +310,7 @@ func CheckGuest(path, app, id string, now time.Time, use, session bool) (view Gu
 					if grant.ID == id && grant.App == app {
 						if !grant.Expired {
 							grant.Expired = true
+							expired = true
 							return save(path, current)
 						}
 						return nil
@@ -297,6 +320,11 @@ func CheckGuest(path, app, id string, now time.Time, use, session bool) (view Gu
 			})
 			if e != nil || !acquired {
 				return view, "unavailable"
+			}
+			if expired {
+				if err := recordExpiry(path, now, mcpaudit.Change{Action: "guest_expired", App: app, ID: id, ExpiresAt: &g.ExpiresAt}); err != nil {
+					return view, "unavailable"
+				}
 			}
 			return view, "expired"
 		}

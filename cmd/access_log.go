@@ -14,18 +14,19 @@ import (
 )
 
 type accessLogArguments struct {
-	App      string `json:"app,omitempty"`
-	Who      string `json:"who,omitempty"`
-	Since    string `json:"since,omitempty"`
-	Until    string `json:"until,omitempty"`
-	Decision string `json:"decision,omitempty"`
-	Limit    int    `json:"limit,omitempty"`
+	allowedApps []string
+	App         string `json:"app,omitempty"`
+	Who         string `json:"who,omitempty"`
+	Since       string `json:"since,omitempty"`
+	Until       string `json:"until,omitempty"`
+	Decision    string `json:"decision,omitempty"`
+	Limit       int    `json:"limit,omitempty"`
 }
 
 var accessLogNowFn = time.Now
 
 func accessLogFilter(a accessLogArguments, now time.Time) (accesslog.Filter, error) {
-	f := accesslog.Filter{App: a.App, Who: a.Who, Decision: a.Decision, Limit: a.Limit}
+	f := accesslog.Filter{AllowedApps: a.allowedApps, App: a.App, Who: a.Who, Decision: a.Decision, Limit: a.Limit}
 	if a.Since != "" {
 		at, err := time.Parse(time.RFC3339Nano, a.Since)
 		if err != nil {

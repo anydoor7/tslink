@@ -127,9 +127,9 @@ One background daemon runs an embedded Tailscale node for each app, so each app 
 
 ## Status
 
-Available now: private per-app addresses, named people with deadlines and invitation bundles, public Funnel with expiry, app health checks and alerts, self-hosted app recipes, per-app request limits, Windows crash restart, the CLI and MCP.
+Available now: private per-app addresses, named people with deadlines and invitation bundles, public Funnel with expiry, app health checks and alerts, self-hosted app recipes, per-app request limits, Windows crash restart, the CLI and MCP. Also available: browser guest links, flexible durations, an access log, a home page of your apps, scoped agent roles, QR onboarding and access requests.
 
-Coming next: browser guest links, flexible durations, an access log, a home page of your apps, scoped agent roles, QR onboarding and access requests. Viewing several computers in one list is planned. [Roadmap →](docs/roadmap.md)
+Viewing several computers in one list is planned. [Roadmap →](docs/roadmap.md)
 
 ## Documentation and license
 

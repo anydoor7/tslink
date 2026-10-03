@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/anydoor7/tslink/internal/mcpaudit"
 )
 
 const SchemaVersion = 1
@@ -66,24 +68,26 @@ type GuestDecision struct {
 	Reason   string `json:"reason"`
 }
 type Event struct {
-	SchemaVersion int            `json:"schema_version"`
-	Time          time.Time      `json:"time"`
-	Kind          string         `json:"kind"` // http, tcp_open, tcp_close, mcp, guest
-	App           string         `json:"app"`
-	Identity      Identity       `json:"identity"`
-	Method        string         `json:"method,omitempty"`
-	Path          string         `json:"path,omitempty"`
-	Status        int            `json:"status"`
-	BytesIn       int64          `json:"bytes_in"`
-	BytesOut      int64          `json:"bytes_out"`
-	DurationMS    float64        `json:"duration_ms"`
-	Decision      string         `json:"decision"`
-	Reason        string         `json:"reason,omitempty"`
-	Grant         *Grant         `json:"grant,omitempty"`
-	Connection    string         `json:"connection,omitempty"`
-	MCP           *MCPAudit      `json:"mcp,omitempty"`
-	Guest         *GuestDecision `json:"guest,omitempty"`
-	PathMode      string         `json:"-"` // selected per-service policy; not HTTP metadata
+	Surface       string            `json:"surface,omitempty"`
+	Changes       []mcpaudit.Change `json:"changes,omitempty"`
+	SchemaVersion int               `json:"schema_version"`
+	Time          time.Time         `json:"time"`
+	Kind          string            `json:"kind"` // http, tcp_open, tcp_close, mcp, guest
+	App           string            `json:"app"`
+	Identity      Identity          `json:"identity"`
+	Method        string            `json:"method,omitempty"`
+	Path          string            `json:"path,omitempty"`
+	Status        int               `json:"status"`
+	BytesIn       int64             `json:"bytes_in"`
+	BytesOut      int64             `json:"bytes_out"`
+	DurationMS    float64           `json:"duration_ms"`
+	Decision      string            `json:"decision"`
+	Reason        string            `json:"reason,omitempty"`
+	Grant         *Grant            `json:"grant,omitempty"`
+	Connection    string            `json:"connection,omitempty"`
+	MCP           *MCPAudit         `json:"mcp,omitempty"`
+	Guest         *GuestDecision    `json:"guest,omitempty"`
+	PathMode      string            `json:"-"` // selected per-service policy; not HTTP metadata
 }
 
 type Options struct {
@@ -252,7 +256,7 @@ func sanitize(e Event) Event {
 	e.SchemaVersion = SchemaVersion
 	e.Time = e.Time.UTC()
 	switch e.Kind {
-	case "http", "tcp_open", "tcp_close", "mcp", "guest":
+	case "http", "tcp_open", "tcp_close", "mcp", "guest", "lifecycle":
 	default:
 		e.Kind = "unknown"
 	}

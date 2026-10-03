@@ -51,6 +51,22 @@ MCP is a management interface, not a hop in ordinary service requests. Local
 MCP uses stdio; optional [remote MCP](remote-mcp.md) has its own dedicated
 node and explicit caller configuration.
 
+People grants, guest grants, access requests and portal configuration share the
+atomic registry. Scoped MCP mutations combine role, app and lifetime checks with
+the current portal-owner check inside the writer transaction. The shared duration
+policy applies to people, guest links, approvals and extensions.
+
+The private home portal shows each visitor's permitted apps and offers requests
+only for explicitly requestable private HTTP/file apps. Browser guest links use
+a bearer gate on the public Funnel listener; private traffic to the same app
+still passes through people authorization. Guest apps are not requestable.
+
+Mutation intent/completion receipts and committed lifecycle changes use a
+separately bounded, locked journal. Access-log queries combine that journal with
+daemon-owned HTTP/TCP/guest-use segments, applying app scopes before aggregation.
+Registry writes and lifecycle receipts are separate commits; see
+[access history](access-log.md) for audit gaps and retention boundaries.
+
 ## Operational details
 
 - Credentials use the system keychain. On macOS/Linux, restricted-permission

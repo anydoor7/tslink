@@ -64,6 +64,7 @@ func mcpStdioScope(role, apps, max string, inventory bool) (mcpscope.Session, er
 // field from this document can change the authenticated Session.
 func mcpCallApps(a mcpActions, tool string, raw json.RawMessage) ([]string, error) {
 	var args struct {
+		ID        string            `json:"id"`
 		App       string            `json:"app"`
 		Name      string            `json:"name"`
 		Service   string            `json:"service"`
@@ -83,14 +84,38 @@ func mcpCallApps(a mcpActions, tool string, raw json.RawMessage) ([]string, erro
 	}
 	apps := []string{}
 	switch tool {
-	case "app_restart", "people_grant", "people_revoke":
+	case "app_restart", "people_grant", "people_revoke", "guest_create":
 		apps = append(apps, args.App)
+	case "access_log", "access_summary":
+		if args.App != "" {
+			apps = append(apps, args.App)
+		}
 	case "url", "unshare", "add", "share":
 		if args.Name != "" {
 			apps = append(apps, args.Name)
 		}
-	case "tags_set", "access_explain", "invite_device":
+	case "tags_set", "access_explain", "invite_device", "extend":
 		apps = append(apps, args.Service)
+	case "guest_show", "guest_revoke", "requests_approve", "requests_deny":
+		if a.registryPath != "" {
+			reg, _, err := registry.PortalPreflight(a.registryPath)
+			if err != nil {
+				return nil, err
+			}
+			if strings.HasPrefix(tool, "guest_") {
+				for _, grant := range reg.Guests {
+					if grant.ID == args.ID {
+						apps = append(apps, grant.App)
+					}
+				}
+			} else {
+				for _, request := range reg.Requests {
+					if request.ID == args.ID {
+						apps = append(apps, request.App)
+					}
+				}
+			}
+		}
 	case "recipe_apply", "recipe_plan":
 		name := args.Name
 		if name == "" {
@@ -188,7 +213,14 @@ func callMCPTool(ctx context.Context, actions mcpActions, name string, raw json.
 	if !session.Scope.ToolAllowed(name) {
 		return nil, mcpUnknownToolError(name)
 	}
-	apps, authErr := mcpCallApps(actions, name, raw)
+	var apps []string
+	var authErr error
+	if strings.HasPrefix(name, "requests_") && actions.registryPath != "" {
+		authErr = requireRequestOwner(ctx, actions.registryPath)
+	}
+	if authErr == nil {
+		apps, authErr = mcpCallApps(actions, name, raw)
+	}
 	if authErr == nil {
 		authErr = mcpscope.CheckEffect(ctx)
 		if authErr == nil {
@@ -204,7 +236,12 @@ func callMCPTool(ctx context.Context, actions mcpActions, name string, raw json.
 		}
 	}
 	mutating := mcpMutatingTool(name)
-	entry := mcpaudit.Entry{Kind: "mcp", Time: mcpNow(actions).UTC(), Identity: session.Identity, Principal: session.Who, Role: session.Scope.Role, Phase: "intent", Capabilities: session.Scope, ScopeExpiresAt: session.ExpiresAt, Tool: name, Apps: apps, Result: "started"}
+	entry := mcpaudit.Entry{Surface: func() string {
+		if session.Scope.Role == "owner" {
+			return "mcp"
+		}
+		return "scoped_mcp"
+	}(), Kind: "mcp", Time: mcpNow(actions).UTC(), Identity: session.Identity, Principal: session.Who, Role: session.Scope.Role, Phase: "intent", Capabilities: session.Scope, ScopeExpiresAt: session.ExpiresAt, Tool: name, Apps: apps, Result: "started"}
 	if mutating && actions.audit != nil {
 		entry.ID = rand.Text()
 		if authErr != nil {
@@ -237,6 +274,7 @@ func callMCPTool(ctx context.Context, actions mcpActions, name string, raw json.
 		ctx, cancel = context.WithTimeout(ctx, session.ExpiresAt.Sub(mcpNow(actions)))
 		defer cancel()
 	}
+	ctx, changes := mcpaudit.Collect(ctx)
 	affected := &mcpAffectedApps{apps: []string{}}
 	ctx = context.WithValue(ctx, mcpAffectedKey{}, affected)
 	var result *mcp.CallToolResult
@@ -269,6 +307,7 @@ func callMCPTool(ctx context.Context, actions mcpActions, name string, raw json.
 	}
 	if mutating && actions.audit != nil {
 		entry.Time, entry.Result, entry.Phase = mcpNow(actions).UTC(), mcpResultCode(result, err), "completion"
+		entry.Changes = *changes
 		if name == "share" {
 			entry.Apps = affected.apps
 		}
@@ -322,6 +361,18 @@ func mcpAuditUnavailable(effected bool) error {
 // appearing in a reduced client's context. App fields use the existing views.
 func mcpProject(tool string, data any, scope mcpscope.Scope) (any, error) {
 	switch tool {
+	case "requests_list":
+		var v RequestListResult
+		if err := reprojectJSON(data, &v); err != nil {
+			return nil, err
+		}
+		out := RequestListResult{Requests: []registry.AccessRequest{}}
+		for _, request := range v.Requests {
+			if scope.AllowsApp(request.App) {
+				out.Requests = append(out.Requests, request)
+			}
+		}
+		return out, nil
 	case "list":
 		var v struct {
 			Services []ListServiceSummary `json:"services"`
@@ -347,7 +398,7 @@ func mcpProject(tool string, data any, scope mcpscope.Scope) (any, error) {
 		if err := reprojectJSON(data, &v); err != nil {
 			return nil, err
 		}
-		out := mcpStatusSummary{Services: []mcpHealthService{}, DaemonRunning: v.DaemonRunning, DaemonState: v.DaemonState}
+		out := mcpStatusSummary{GuestLinks: []registry.GuestView{}, Services: []mcpHealthService{}, DaemonRunning: v.DaemonRunning, DaemonState: v.DaemonState}
 		for _, svc := range v.Services {
 			if scope.AllowsApp(svc.Name) {
 				svc.Warnings = nil
@@ -455,7 +506,7 @@ func mcpScopedDoctor(ctx context.Context, actions mcpActions, scope mcpscope.Sco
 	if err := reprojectJSON(data, &v); err != nil {
 		return nil, err
 	}
-	result := DoctorResult{SchemaVersion: 1, ExecutionStatus: doctorExecutionCompleted, Findings: []DoctorFinding{}}
+	result := DoctorResult{GuestLinks: []registry.GuestView{}, SchemaVersion: 1, ExecutionStatus: doctorExecutionCompleted, Findings: []DoctorFinding{}}
 	result.Counts.Services = len(v.Services)
 	for _, svc := range v.Services {
 		if svc.Health.State == health.Down || svc.Health.State == health.Degraded {
@@ -525,7 +576,8 @@ func init() {
 		props := map[string]any{"who": map[string]any{"type": "string"}, "app": map[string]any{"type": "string"}}
 		required := []string{"who", "app"}
 		if tool == "people_grant" {
-			props["for"] = map[string]any{"type": "string", "description": "Positive lifetime within the scope maximum and binding expiry; never is refused."}
+			props["for"] = lifetimeSchema(true)
+			props["for"].(map[string]any)["description"] = "Lifetime of at least 1h using the shared grammar and presets, within audience policy, scope maximum and binding expiry; never is refused."
 			required = append(required, "for")
 		}
 		mcpToolHints[tool] = mcpHints(false, true, tool == "people_revoke", false)

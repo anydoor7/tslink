@@ -40,6 +40,7 @@ type guestGate struct {
 	writer               accesslog.Writer
 	private, app         http.Handler
 	mu                   sync.Mutex
+	stateReads           sync.WaitGroup
 	sessions, challenges map[[32]byte]guestSession
 	sources              map[string]guestSource
 	flights              map[*guestFlight]struct{}
@@ -90,7 +91,7 @@ func (g *guestGate) prune(at time.Time) {
 }
 func (g *guestGate) record(id, decision, reason string, at time.Time) {
 	if g.writer != nil {
-		g.writer.Record(accesslog.Event{Time: at.UTC(), Kind: "guest", App: g.svc.Name, Guest: &accesslog.GuestDecision{LinkID: id, App: g.svc.Name, Decision: decision, Reason: reason}, Decision: decision, Reason: reason})
+		g.writer.Record(accesslog.Event{Time: at.UTC(), Kind: "guest", Surface: "guest", App: g.svc.Name, Guest: &accesslog.GuestDecision{LinkID: id, App: g.svc.Name, Decision: decision, Reason: reason}, Decision: decision, Reason: reason})
 	}
 }
 func (g *guestGate) deny(w http.ResponseWriter, r *http.Request, id, reason string, at time.Time) {
@@ -192,7 +193,7 @@ func (g *guestGate) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		token := strings.TrimPrefix(r.URL.Path, "/guest/")
-		view, reason := registry.FindGuestToken(g.path, g.svc.Name, token, at)
+		view, reason := g.grantState(func() (registry.GuestView, string) { return registry.FindGuestToken(g.path, g.svc.Name, token, at) })
 		if reason != "allowed" {
 			g.deny(w, r, view.ID, reason, at)
 			return
@@ -240,7 +241,9 @@ func (g *guestGate) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Grant expiry takes priority, preserving the reason even at cookie expiry.
-	view, reason := registry.CheckGuest(g.path, g.svc.Name, session.id, at, true, false)
+	view, reason := g.grantState(func() (registry.GuestView, string) {
+		return registry.CheckGuest(g.path, g.svc.Name, session.id, at, true, false)
+	})
 	if reason == "allowed" && !at.Before(session.expiry) {
 		reason = "expired"
 	}
@@ -313,7 +316,9 @@ func (g *guestGate) pin(w http.ResponseWriter, r *http.Request, at time.Time) {
 		g.deny(w, r, challenge.id, "rate_limited", at)
 		return
 	}
-	view, reason := registry.CheckGuestPIN(g.path, g.svc.Name, challenge.id, r.PostForm.Get("pin"), at)
+	view, reason := g.grantState(func() (registry.GuestView, string) {
+		return registry.CheckGuestPIN(g.path, g.svc.Name, challenge.id, r.PostForm.Get("pin"), at)
+	})
 	if reason != "allowed" {
 		if reason == "bad_pin" {
 			g.record(challenge.id, "denied", reason, at)
@@ -347,7 +352,9 @@ func (g *guestGate) establish(w http.ResponseWriter, r *http.Request, view regis
 	}
 	// Reserve capacity before recording a successful session; no cookie exposes
 	// the random nonce until the final grant check and durable write succeed.
-	view, reason := registry.CheckGuest(g.path, g.svc.Name, view.ID, at, false, true)
+	view, reason := g.grantState(func() (registry.GuestView, string) {
+		return registry.CheckGuest(g.path, g.svc.Name, view.ID, at, false, true)
+	})
 	g.mu.Lock()
 	if reason == "allowed" {
 		g.sessions[guestKey(nonce)] = guestSession{id: view.ID, expiry: view.ExpiresAt}

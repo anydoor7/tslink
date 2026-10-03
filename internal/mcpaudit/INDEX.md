@@ -6,3 +6,5 @@
 - `journal_parent_test.go`: absent directories and regular-file ancestor read/write boundaries.
 
 - `testmain_test.go`: shared isolated test environment.
+
+- `lifecycle.go`: typed authority changes, per-invocation MCP collection and CLI/lifecycle receipts.

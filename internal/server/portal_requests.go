@@ -145,7 +145,7 @@ func (p *PortalRequests) post(w http.ResponseWriter, r *http.Request, path, logi
 func (p *PortalRequests) page(reg *registry.Registry, path, login, host string, now time.Time) ([]string, []registry.AccessRequest, string, error) {
 	apps := []string{}
 	for _, svc := range reg.Services {
-		if svc.Requestable && registry.PeopleServiceSupported(svc) {
+		if registry.ServiceRequestable(svc) {
 			apps = append(apps, svc.Name)
 		}
 	}

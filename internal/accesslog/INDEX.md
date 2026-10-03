@@ -11,3 +11,5 @@
 - `audit_roundtrip_test.go`, `path_policy_test.go`, `lifecycle_test.go`: audit round-trips, mode/escape regression, failure/recovery and single-writer controls.
 
 - `query_identity_test.go`: MCP nested identity and case-sensitive tag query regression.
+
+- `query_receipt_test.go`: legacy MCP journal projection, scoped metadata and read-only history preservation.

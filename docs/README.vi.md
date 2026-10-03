@@ -127,9 +127,9 @@ Một daemon nền chạy nút Tailscale nhúng cho mỗi ứng dụng, giúp t�
 
 ## Trạng thái
 
-Đã có: địa chỉ riêng theo ứng dụng, người được chỉ định với thời hạn và gói lời mời, Funnel công khai có hết hạn, kiểm tra sức khỏe và cảnh báo, công thức ứng dụng tự lưu trữ, giới hạn yêu cầu theo ứng dụng, khởi động lại sau sự cố trên Windows, CLI và MCP.
+Đã có: địa chỉ riêng theo ứng dụng, người được chỉ định với thời hạn và gói lời mời, Funnel công khai có hết hạn, kiểm tra sức khỏe và cảnh báo, công thức ứng dụng tự lưu trữ, giới hạn yêu cầu theo ứng dụng, khởi động lại sau sự cố trên Windows, CLI và MCP. Cũng đã có: liên kết khách qua trình duyệt, thời lượng linh hoạt, nhật ký truy cập, trang chủ ứng dụng, vai trò tác tử giới hạn phạm vi, hướng dẫn tham gia bằng QR và yêu cầu truy cập.
 
-Sắp có: liên kết khách qua trình duyệt, thời lượng linh hoạt, nhật ký truy cập, trang chủ ứng dụng, vai trò tác tử giới hạn phạm vi, hướng dẫn tham gia bằng QR và yêu cầu truy cập. Danh sách chung cho nhiều máy tính đang được lên kế hoạch. [Lộ trình →](roadmap.md)
+Danh sách chung cho nhiều máy tính đang được lên kế hoạch. [Lộ trình →](roadmap.md)
 
 ## Tài liệu và giấy phép
 

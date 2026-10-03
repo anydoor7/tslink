@@ -127,9 +127,9 @@ Jeden demon w tle uruchamia wbudowany węzeł Tailscale dla każdej aplikacji, n
 
 ## Stan
 
-Już dostępne: prywatne adresy aplikacji, wskazane osoby z terminami i pakietami zaproszeń, publiczny Funnel z wygaśnięciem, sprawdzanie kondycji aplikacji i alerty, przepisy dla aplikacji hostowanych samodzielnie, limity żądań dla aplikacji, restart po awarii w Windows, CLI i MCP.
+Już dostępne: prywatne adresy aplikacji, wskazane osoby z terminami i pakietami zaproszeń, publiczny Funnel z wygaśnięciem, sprawdzanie kondycji aplikacji i alerty, przepisy dla aplikacji hostowanych samodzielnie, limity żądań dla aplikacji, restart po awarii w Windows, CLI i MCP. Dostępne są też: linki gościnne do przeglądarki, elastyczne okresy, dziennik dostępu, strona główna aplikacji, ograniczone role agentów, wdrażanie przez QR i wnioski o dostęp.
 
-Wkrótce: linki gościnne do przeglądarki, elastyczne okresy, dziennik dostępu, strona główna aplikacji, ograniczone role agentów, wdrażanie przez QR i wnioski o dostęp. Wspólna lista dla wielu komputerów jest planowana. [Plan rozwoju →](roadmap.md)
+Wspólna lista dla wielu komputerów jest planowana. [Plan rozwoju →](roadmap.md)
 
 ## Dokumentacja i licencja
 

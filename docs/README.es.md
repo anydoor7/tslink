@@ -127,9 +127,9 @@ Un daemon en segundo plano ejecuta un nodo Tailscale integrado por aplicación, 
 
 ## Estado
 
-Ya disponible: direcciones privadas por aplicación, personas con plazos y paquetes de invitaciones, Funnel público con caducidad, comprobaciones de salud y alertas, recetas de aplicaciones autoalojadas, límites de solicitudes por aplicación, reinicio tras fallos en Windows, CLI y MCP.
+Ya disponible: direcciones privadas por aplicación, personas con plazos y paquetes de invitaciones, Funnel público con caducidad, comprobaciones de salud y alertas, recetas de aplicaciones autoalojadas, límites de solicitudes por aplicación, reinicio tras fallos en Windows, CLI y MCP. También disponibles: enlaces de invitado para navegador, duraciones flexibles, registro de acceso, una página principal de tus aplicaciones, roles de agente limitados, incorporación mediante QR y solicitudes de acceso.
 
-Próximamente: enlaces de invitado para navegador, duraciones flexibles, registro de acceso, una página principal de tus aplicaciones, roles de agente limitados, incorporación mediante QR y solicitudes de acceso. Está previsto reunir varios ordenadores en una lista. [Hoja de ruta →](roadmap.md)
+Está previsto reunir varios ordenadores en una lista. [Hoja de ruta →](roadmap.md)
 
 ## Documentación y licencia
 

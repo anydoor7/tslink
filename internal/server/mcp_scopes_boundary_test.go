@@ -76,7 +76,7 @@ func TestMCPScopedPeoplePreservesOtherAppAccess(t *testing.T) {
 					}
 					session := mcpscope.Session{Who: "manager", Scope: mcpscope.Scope{Role: "people-manager", Apps: []string{"photos"}, MaxDuration: "1h"}}
 					now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
-					_, changeErr := registry.ChangePersonApp(path, session, "alice", "photos", "30m", revoke, func() time.Time { return now })
+					_, changeErr := registry.ChangePersonApp(path, session, "alice", "photos", "1h", revoke, func() time.Time { return now })
 					if !known && !revoke {
 						if code, _ := registry.ErrorCode(changeErr); code != "mcp_person_owner_required" {
 							t.Errorf("new person grant code=%q want=mcp_person_owner_required", code)

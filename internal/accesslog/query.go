@@ -11,15 +11,20 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/anydoor7/tslink/internal/mcpaudit"
 )
 
 type Filter struct {
-	App      string     `json:"app,omitempty"`
-	Who      string     `json:"who,omitempty"`
-	Since    *time.Time `json:"since,omitempty"`
-	Until    *time.Time `json:"until,omitempty"`
-	Decision string     `json:"decision,omitempty"`
-	Limit    int        `json:"limit,omitempty"`
+	// AllowedApps is an authority filter applied before counts and truncation.
+	// nil is unrestricted; an empty non-nil list authorizes no records.
+	AllowedApps []string   `json:"-"`
+	App         string     `json:"app,omitempty"`
+	Who         string     `json:"who,omitempty"`
+	Since       *time.Time `json:"since,omitempty"`
+	Until       *time.Time `json:"until,omitempty"`
+	Decision    string     `json:"decision,omitempty"`
+	Limit       int        `json:"limit,omitempty"`
 }
 
 func (f Filter) Validate() error {
@@ -56,6 +61,20 @@ type Result struct {
 }
 
 func (f Filter) matches(e Event) bool {
+	if f.AllowedApps != nil {
+		apps := []string{e.App}
+		if e.MCP != nil {
+			apps = e.MCP.Apps
+		}
+		if len(apps) == 0 {
+			return false
+		}
+		for _, app := range apps {
+			if !slices.Contains(f.AllowedApps, app) {
+				return false
+			}
+		}
+	}
 	if f.App != "" && e.App != f.App && (e.MCP == nil || !slices.Contains(e.MCP.Apps, f.App)) {
 		return false
 	}
@@ -137,6 +156,58 @@ func Query(configDir string, f Filter) (Result, error) {
 	}
 	people := map[string]*Count{}
 	apps := map[string]*Count{}
+	consume := func(e Event) {
+		if !f.matches(e) {
+			return
+		}
+		if f.AllowedApps != nil && e.MCP != nil {
+			m := *e.MCP
+			m.Capabilities.Apps = nil
+			for _, app := range e.MCP.Capabilities.Apps {
+				if slices.Contains(f.AllowedApps, app) {
+					m.Capabilities.Apps = append(m.Capabilities.Apps, app)
+				}
+			}
+			e.MCP = &m
+		}
+		r.Summary.Count++
+		if e.Decision == "denied" {
+			r.Summary.Denied++
+		} else {
+			r.Summary.Allowed++
+		}
+		who := e.Identity.Login
+		if e.MCP != nil {
+			who = e.MCP.Principal
+		}
+		if who == "" {
+			who = e.Identity.Node
+		}
+		if who == "" {
+			who = "unknown"
+		}
+		addCount(people, who, e)
+		if e.MCP != nil {
+			seen := map[string]bool{}
+			for _, app := range e.MCP.Apps {
+				if !seen[app] {
+					addCount(apps, app, e)
+					seen[app] = true
+				}
+			}
+		} else {
+			addCount(apps, e.App, e)
+		}
+		at := sort.Search(len(r.Events), func(i int) bool { return !r.Events[i].Time.After(e.Time) })
+		if at < limit {
+			r.Events = append(r.Events, Event{})
+			copy(r.Events[at+1:], r.Events[at:])
+			r.Events[at] = e
+			if len(r.Events) > limit {
+				r.Events = r.Events[:limit]
+			}
+		}
+	}
 	// Newest segments first; bounded insertion also supports injected clock
 	// rollback and multiple event producers whose timestamps arrive out of order.
 	for i := len(files) - 1; i >= 0; i-- {
@@ -167,48 +238,16 @@ func Query(configDir string, f Filter) (Result, error) {
 				file.Close()
 				return r, fmt.Errorf("unsupported access log schema")
 			}
-			if !f.matches(e) {
-				continue
-			}
-			r.Summary.Count++
-			if e.Decision == "denied" {
-				r.Summary.Denied++
-			} else {
-				r.Summary.Allowed++
-			}
-			who := e.Identity.Login
-			if e.MCP != nil {
-				who = e.MCP.Principal
-			}
-			if who == "" {
-				who = e.Identity.Node
-			}
-			if who == "" {
-				who = "unknown"
-			}
-			addCount(people, who, e)
-			if e.MCP != nil {
-				seen := map[string]bool{}
-				for _, app := range e.MCP.Apps {
-					if !seen[app] {
-						addCount(apps, app, e)
-						seen[app] = true
-					}
-				}
-			} else {
-				addCount(apps, e.App, e)
-			}
-			at := sort.Search(len(r.Events), func(i int) bool { return !r.Events[i].Time.After(e.Time) })
-			if at < limit {
-				r.Events = append(r.Events, Event{})
-				copy(r.Events[at+1:], r.Events[at:])
-				r.Events[at] = e
-				if len(r.Events) > limit {
-					r.Events = r.Events[:limit]
-				}
-			}
+			consume(e)
 		}
 		file.Close()
+	}
+	entries, err := (mcpaudit.Journal{Path: filepath.Join(configDir, "mcp-audit.json")}).Read()
+	if err != nil {
+		return r, err
+	}
+	for _, entry := range entries {
+		consume(fromReceipt(entry))
 	}
 	r.Summary.People = counts(people)
 	r.Summary.Apps = counts(apps)

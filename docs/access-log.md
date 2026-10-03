@@ -10,11 +10,11 @@ tslink access log --since 2030-01-01T00:00:00Z --until 2030-01-02T00:00:00Z --js
 
 `--who` matches an account login (ASCII case-insensitive), an exact node name, or a tag. `--since` accepts a positive Go duration such as `24h`, or an RFC3339 timestamp; `--until` accepts RFC3339. Both timestamp bounds are inclusive. Events are returned newest first. The default limit is 100, with a maximum of 10,000. Summaries cover every matching retained event, even if the returned list is truncated. They include counts per person and per app, allowed/denied counts, and each app's last allowed access. A denial does not advance last seen. TCP contributes two events per connection; counts are event counts, not unique people or visits.
 
-The CLI uses the usual versioned result envelope, with `events`, `summary`, and `truncated` under `data`. The read-only MCP tools `access_log` and `access_summary` accept the same filters and return these payloads directly. Both declare `readOnlyHint`; they require no credential, contact no remote service, and create no files or locks. F6 can grant these named tools to `viewer`.
+The CLI uses the usual versioned result envelope, with `events`, `summary`, and `truncated` under `data`. The read-only MCP tools `access_log` and `access_summary` accept the same filters and return these payloads directly. Both declare `readOnlyHint`; they require no credential, contact no remote service, and create no files or locks. Viewer, app-operator and people-manager scopes may query explicit permitted apps. Filtering happens before counts and event limits. Inventory-only viewers have no access-history app grants. Global or mixed-app receipts are omitted unless every affected app is in scope.
 
 ## Recorded metadata and privacy
 
-Each HTTP request that reaches the service handler produces one `kind: http` event. File services use the same chain. TCP emits `tcp_open` and `tcp_close`, with a connection ID, timestamps, identity and byte counts. Events carry schema version 1, UTC time, app/service, method, status, bytes in/out, duration in milliseconds, allowed/denied decision, optional denial reason and optional matched grant (`person` or `legacy_allow`). The shared typed writer also accepts `mcp` and `guest` kinds for future audit producers.
+Each HTTP request that reaches the service handler produces one `kind: http` event. File services use the same chain. TCP emits `tcp_open` and `tcp_close`, with a connection ID, timestamps, identity and byte counts. Events carry schema version 1, UTC time, app/service, method, status, bytes in/out, duration in milliseconds, allowed/denied decision, optional denial reason and optional matched grant (`person` or `legacy_allow`). The combined query also includes `mcp` mutation receipts, `lifecycle` authority changes and `guest` link decisions.
 
 Identity is attested by WhoIs: account login, node name and tags. Tagged nodes have no account login. Public Funnel connections use the `public` login and never retain an IP address. Tailnet connections to the same listener retain their WhoIs identity. Classification uses the trusted `ipn.FunnelConn` transport marker, including TLS/HTTP2 and TSLink connection wrappers; headers cannot select an identity. An unknown private caller has only a coarse IPv4 /24 or IPv6 /48 prefix. Identity enrichment for otherwise unprotected requests occurs in the background with a 250 ms lookup budget; logging does not add an identity lookup to request serving. People/ACL decisions supply their fresh authorization identity to the record.
 
@@ -32,7 +32,7 @@ tslink config set access-log-path-mode prefix
 
 Service JSON uses `access_log_path_mode`; global JSON uses `access_log.path_mode`. Modes are `prefix`, `full`, and `off`. A service mode overrides an inherited global `prefix` or `full`; global `off` is a hard opt-out. Legacy keys still work: global `record_path: false` / `config set access-log-path false`, or service `access_log_path: false` / `access path <app> false`, map to `off` and take precedence over modes. Legacy `true` and omitted/null inherit the new mode, defaulting to `prefix`; they do not implicitly opt into `full`. `access path <app> inherit` clears both service keys; explicit mode commands clear the legacy service boolean.
 
-Per-app changes reconcile through the registry watcher; global options take effect after restarting `serve`. Disable the entire writer with `tslink config set access-log-enabled false`. Existing retained history remains queryable until it is evicted.
+Per-app changes reconcile through the registry watcher; global options take effect after restarting `serve`. Disable HTTP/TCP/guest-use recording with `tslink config set access-log-enabled false`. Existing retained history remains queryable until it is evicted. Mutation receipts remain enabled independently; their bounded journal is required for MCP authority changes.
 
 `acl` denotes TSLink's legacy HTTP allow-list; `people` denotes people authorization or an unavailable people registry/identity; `expired` denotes a matched person's expired grant; `limits` denotes HTTP upload/read protections or a TCP connection-cap refusal; `preserve_host_unavailable` denotes the canonical-host refusal. An app's own 403 is still an allowed gateway request. Tailnet-policy packets and incomplete headers rejected before HTTP handler dispatch cannot become HTTP request records. F2 health probes contact the local backend directly and do not enter this chain; a person opening `/health` through the gateway is logged normally.
 
@@ -76,10 +76,11 @@ F6's `mcpaudit.Entry` maps without reusing HTTP/identity fields:
 
 | F6 entry | Shared event |
 |---|---|
-| `Kind` | `kind` (`mcp`) |
+| `Kind` | `kind` (`mcp` or `lifecycle`) |
+| `Surface`, `Changes` | `surface`, `changes` (typed action, app, subject, request/link ID, previous/new expiry) |
 | `ID`, `Time`, `Principal`, `Role` | `mcp.id`, `time`, `mcp.principal`, `mcp.role` |
 | `Identity`, `Phase` | `mcp.identity` (login/node), `mcp.phase` (intent/completion) |
-| legacy `Who`, `Scope` | `mcp.principal`, `mcp.scope` |
+| legacy `Who`, `Scope` | `mcp.principal`, `mcp.role` |
 | `Capabilities`, `ScopeExpiresAt` | `mcp.capabilities`, `mcp.scope_expires_at` |
 | `Tool`, `Apps` | `mcp.tool`, `mcp.apps` |
 | `Result == ok` | `mcp.result = {status: ok, code: ok}` |
@@ -88,4 +89,8 @@ F6's `mcpaudit.Entry` maps without reusing HTTP/identity fields:
 | `Result == started` | `mcp.phase = intent` (legacy started), `mcp.result = {status: ok, code: started}` (intent, not completed success) |
 | other `Result` stable code | `mcp.result = {status: error, code: <original code>}` |
 
-Integration constraint: **a separate stdio MCP process must never open a second access-log writer on the daemon's directory**. Until a daemon event handoff exists, stdio audit continues exclusively in F6's bounded, locked `mcpaudit.Journal`; access-log queries do not automatically import that journal. In-daemon producers may call `Server.AccessLogWriter().Record`; a future transport adapter must hand typed events to that owning writer, with acknowledged delivery and deduplication by the non-secret audit ID, before replacing the stdio journal. This change defines the shared contract and does not implement F6/F10 producers or a daemon transport.
+`Query` reads both access-log segments and the bounded `mcp-audit.json` journal. CLI and stdio processes write only to the journal; they never open a second daemon access-log writer. Each intent and completion remains a separate event, correlated by `mcp.id`. Summary counts include lifecycle receipts and intents, so they are not visit counts or counts of successful mutations.
+
+Approvals and denials record `request_approved`/`request_denied`; extensions record `extended` with old/new deadlines. Expiry latches record `grant_expired`, `guest_expired` or `funnel_expired` once after a successful registry write. Guest use goes through the owning daemon writer with the non-secret `guest.link_id`; revocation records `guest_revoked`. The surface is `cli`, `mcp`, `scoped_mcp`, `guest` or `lifecycle`. CLI actors are `local-user:<OS user>` and expiry uses `system:expiry`. MCP changes are attached to the existing completion receipt, preserving the authenticated caller, effective scope and correlation ID. No visitor note, owner reason, PIN, token or link is copied into a change record.
+
+The mutation journal rotates separately at 1,024 entries or 1 MiB. Its retention does not follow the HTTP log's day/byte settings. It uses bounded lock waits and atomic replacement; corrupt or unsafe journals cause an explicit query error. Registry publication and its lifecycle receipt are separate commits. A post-commit audit failure reports that the authority change committed; it does not undo that change. A crash between those commits can leave an audit gap. An MCP intent without completion likewise means an unknown outcome. Daemon access-log health describes its own queue/segments, not this separate mutation journal.

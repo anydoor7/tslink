@@ -127,9 +127,9 @@ Jedan pozadinski daemon pokreće ugrađeni Tailscale čvor za svaku aplikaciju, 
 
 ## Stanje
 
-Dostupno: privatne adrese po aplikaciji, imenovane osobe s rokovima i paketima poziva, javni Funnel s istekom, provjere zdravlja i upozorenja, recepti za samostalno hostovane aplikacije, ograničenja zahtjeva po aplikaciji, ponovno pokretanje nakon pada na Windows, CLI i MCP.
+Dostupno: privatne adrese po aplikaciji, imenovane osobe s rokovima i paketima poziva, javni Funnel s istekom, provjere zdravlja i upozorenja, recepti za samostalno hostovane aplikacije, ograničenja zahtjeva po aplikaciji, ponovno pokretanje nakon pada na Windows, CLI i MCP. Dostupni su i: gostujuće poveznice za preglednik, fleksibilna trajanja, dnevnik pristupa, početna stranica aplikacija, ograničene uloge agenata, QR uvođenje i zahtjevi za pristup.
 
-Uskoro: gostujuće poveznice za preglednik, fleksibilna trajanja, dnevnik pristupa, početna stranica aplikacija, ograničene uloge agenata, QR uvođenje i zahtjevi za pristup. Zajednički spisak za više računara je planiran. [Plan razvoja →](roadmap.md)
+Zajednički spisak za više računara je planiran. [Plan razvoja →](roadmap.md)
 
 ## Dokumentacija i licenca
 

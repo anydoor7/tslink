@@ -127,9 +127,9 @@ TSLink passer når én person kjører flere apper og ønsker tidsbegrenset tilga
 
 ## Status
 
-Tilgjengelig nå: private adresser per app, personer med frister og samlede invitasjoner, offentlig Funnel med utløp, helsesjekker og varsler, oppskrifter for selvhostede apper, forespørselsgrenser per app, omstart etter krasj i Windows, CLI og MCP.
+Tilgjengelig nå: private adresser per app, personer med frister og samlede invitasjoner, offentlig Funnel med utløp, helsesjekker og varsler, oppskrifter for selvhostede apper, forespørselsgrenser per app, omstart etter krasj i Windows, CLI og MCP. Også tilgjengelig: gjestelenker i nettleseren, fleksible varigheter, tilgangslogg, en startside for appene, avgrensede agentroller, QR-oppstart og tilgangsforespørsler.
 
-På vei: gjestelenker i nettleseren, fleksible varigheter, tilgangslogg, en startside for appene, avgrensede agentroller, QR-oppstart og tilgangsforespørsler. En felles liste for flere datamaskiner er planlagt. [Utviklingsplan →](roadmap.md)
+En felles liste for flere datamaskiner er planlagt. [Utviklingsplan →](roadmap.md)
 
 ## Dokumentasjon og lisens
 

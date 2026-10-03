@@ -28,6 +28,18 @@ import (
 
 func fakeMCPActions() mcpActions {
 	return mcpActions{
+		extend: func(_ context.Context, args extendArguments) (any, error) {
+			return registry.DurationChange{Service: args.Service, Who: args.Who, Audience: "tailnet_member"}, nil
+		},
+		guest: func(_ context.Context, name string, args guestArguments) (any, error) {
+			return map[string]any{"grant": registry.GuestView{}, "grants": []registry.GuestView{}, "link": nil, "message": "guide", "edge_state": "pending"}, nil
+		},
+		requestsList: func(context.Context) (any, error) {
+			return RequestListResult{Requests: []registry.AccessRequest{}}, nil
+		},
+		requestsDecide: func(_ context.Context, args requestDecisionArguments, approve bool) (any, error) {
+			return RequestDecisionResult{Request: registry.AccessRequest{Status: "approved"}}, nil
+		},
 		accessLog: func(accessLogArguments) (accesslog.Result, error) {
 			return accesslog.Result{Events: []accesslog.Event{}, Summary: accesslog.Summary{People: []accesslog.Count{}, Apps: []accesslog.Count{}}}, nil
 		},
@@ -65,7 +77,7 @@ func fakeMCPActions() mcpActions {
 		},
 		unshare: func(_ context.Context, name string) (any, error) { return map[string]any{"ok": name == "demo"}, nil },
 		status: func(ctx context.Context) (any, error) {
-			return mcpStatusSummary{Authenticated: false, DaemonRunning: true, ServiceCount: 1, Status: authStatusNeedsLogin, AuthURL: "https://login.tailscale.com/a/mcp"}, nil
+			return mcpStatusSummary{GuestLinks: []registry.GuestView{}, Authenticated: false, DaemonRunning: true, ServiceCount: 1, Status: authStatusNeedsLogin, AuthURL: "https://login.tailscale.com/a/mcp"}, nil
 		},
 		url: func(_ context.Context, name string, _ time.Duration) (any, error) {
 			return URLResult{Name: name, URL: "https://" + name + ".tail.ts.net", State: inspect.EndpointStateExact}, nil
@@ -80,7 +92,7 @@ func fakeMCPActions() mcpActions {
 			return buildAccessExplainResult(registry.Service{Name: service, Type: registry.TypeProxy, Target: "http://localhost:3000"}), nil
 		},
 		doctor: func(context.Context, bool) (any, error) {
-			return DoctorResult{
+			return DoctorResult{GuestLinks: []registry.GuestView{},
 				SchemaVersion:   inspect.SchemaVersion,
 				ExecutionStatus: doctorExecutionCompleted,
 				Status:          doctorStatusOK,
@@ -524,11 +536,11 @@ func TestMCPToolSchemasAreClosedAndModelFocused(t *testing.T) {
 		"template_list", "template_plan", "template_apply",
 		"access_log", "access_summary",
 		"apps_detect", "recipe_list", "recipe_plan", "recipe_apply",
-		"extend", "people_add", "people_update", "people_list", "people_remove",
+		"extend", "guest_create", "guest_list", "guest_show", "guest_revoke",
+		"people_add", "people_update", "people_list", "people_remove",
 		"portal_enable", "portal_disable",
-		"people_grant", "people_revoke", "app_restart", "health", "mcp_audit",
-		"guest_create", "guest_list", "guest_show", "guest_revoke",
 		"requests_list", "requests_approve", "requests_deny",
+		"people_grant", "people_revoke", "app_restart", "health", "mcp_audit",
 	}
 	if len(mcpToolDefinitions) != len(wantNames) {
 		t.Fatalf("tools = %d, want %d", len(mcpToolDefinitions), len(wantNames))

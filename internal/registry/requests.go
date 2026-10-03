@@ -1,6 +1,7 @@
 package registry
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -12,6 +13,12 @@ import (
 
 	"github.com/anydoor7/tslink/internal/duration"
 )
+
+// Request eligibility is narrower than people enforcement: a gated public
+// guest app can enforce people on its private listener but cannot solicit requests.
+func ServiceRequestable(svc Service) bool {
+	return svc.Requestable && !svc.Funnel && !svc.GuestGate && PeopleServiceSupported(svc)
+}
 
 const (
 	RequestPending         = "pending"
@@ -214,6 +221,11 @@ func SubmitAccessRequest(path, who, app, requested, note string, now time.Time) 
 		if err != nil {
 			return result, requestError("usage_error", err.Error())
 		}
+		// Only members can submit. "never" is a preference here; approval
+		// still needs the owner's separate acknowledgement and actual policy.
+		if err := (duration.Policy{}).Check(lifetime, duration.TailnetMember, true, now); err != nil {
+			return result, requestError("usage_error", err.Error())
+		}
 		if strings.HasPrefix(requested, "until ") {
 			requested = "until " + lifetime.Deadline.UTC().Format(time.RFC3339Nano)
 		}
@@ -228,7 +240,7 @@ func SubmitAccessRequest(path, who, app, requested, note string, now time.Time) 
 		}
 		found := false
 		for _, s := range reg.Services {
-			if s.Name == app && s.Requestable && PeopleServiceSupported(s) {
+			if s.Name == app && ServiceRequestable(s) {
 				found = true
 			}
 		}
@@ -285,14 +297,14 @@ func DecideAccessRequest(path, id, status, value, reason string, ackNever bool, 
 
 // DecideAccessRequestAuthorized checks authority before expiry, retry lookup,
 // grants or decisions, against the same locked state that will be committed.
-func DecideAccessRequestAuthorized(path, id, status, value, reason string, ackNever bool, policy duration.Policy, now time.Time, authorize func(*Registry) error) (result AccessRequest, changed bool, err error) {
+func DecideAccessRequestAuthorized(path, id, status, value, reason string, ackNever bool, policy duration.Policy, now time.Time, authorize func(*Registry) error, contexts ...context.Context) (result AccessRequest, changed bool, err error) {
 	if status != RequestApproved && status != RequestDenied {
 		return result, false, requestError("usage_error", "decision must be approved or denied")
 	}
 	if !requestTextValid(reason) || len(value) > 128 || (status == RequestApproved && value == "") {
 		return result, false, requestError("usage_error", "approve requires --for; reason is limited to 500 characters")
 	}
-	err = withLock(path, func() error {
+	err = withLockContext(optionalMutationContext(contexts), path, func() error {
 		reg, err := loadRequestRegistry(path)
 		if err != nil {
 			return err
@@ -323,7 +335,7 @@ func DecideAccessRequestAuthorized(path, id, status, value, reason string, ackNe
 			if status == RequestApproved {
 				eligible := false
 				for _, svc := range reg.Services {
-					if svc.Name == r.App && svc.Requestable && PeopleServiceSupported(svc) {
+					if svc.Name == r.App && ServiceRequestable(svc) {
 						eligible = true
 					}
 				}

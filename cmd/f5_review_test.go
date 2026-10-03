@@ -115,7 +115,7 @@ func TestF5ReviewCompletedPortalHandoff(t *testing.T) {
 			if err := saveAuthHandoff(paths.AuthHandoff, newAuthHandoffRecord(name, "https://login.example.invalid/fixture", 42)); err != nil {
 				t.Fatal(err)
 			}
-			result, err := readOnlyStatus.getPollableStatus(paths.PID, paths.Registry, paths.Snapshot, paths.AuthHandoff)
+			result, err := readOnlyStatus.getPollableStatus(context.Background(), paths.PID, paths.Registry, paths.Snapshot, paths.AuthHandoff)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -243,7 +243,7 @@ func TestF5ReviewPortalOnlyStatus(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			result, err := readOnlyStatus.getPollableStatus(paths.PID, paths.Registry, paths.Snapshot, paths.AuthHandoff)
+			result, err := readOnlyStatus.getPollableStatus(context.Background(), paths.PID, paths.Registry, paths.Snapshot, paths.AuthHandoff)
 			if err != nil {
 				t.Fatal(err)
 			}

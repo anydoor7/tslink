@@ -230,7 +230,7 @@ func TestStatusListsEveryPendingLogin(t *testing.T) {
 	}
 	assert := func(want []string) {
 		t.Helper()
-		result, err := readOnlyStatus.getPollableStatus(paths.PID, paths.Registry, paths.Snapshot, paths.AuthHandoff)
+		result, err := readOnlyStatus.getPollableStatus(context.Background(), paths.PID, paths.Registry, paths.Snapshot, paths.AuthHandoff)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -246,7 +246,7 @@ func TestStatusListsEveryPendingLogin(t *testing.T) {
 		if !reflect.DeepEqual(names, want) || result.AuthURL != "https://login.example.invalid/"+want[0] || result.AuthStatus != authStatusNeedsLogin {
 			t.Fatalf("pending list/oldest compatibility: %+v want %v", result, want)
 		}
-		urls, err := readOnlyStatus.getStatusURLsWithAuth(paths.PID, paths.Registry, paths.Snapshot, paths.AuthHandoff)
+		urls, err := readOnlyStatus.getStatusURLsWithAuth(context.Background(), paths.PID, paths.Registry, paths.Snapshot, paths.AuthHandoff)
 		if err != nil || !reflect.DeepEqual(urls.PendingLogins, result.PendingLogins) {
 			t.Fatalf("URL status lost pending entries: %+v %v", urls, err)
 		}

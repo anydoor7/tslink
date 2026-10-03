@@ -97,3 +97,5 @@ This index covers the recipe integration tests. The repository AGENTS.md describ
 - `portal_requests_test.go`: real listener, command, webhook, SSE, partial body and lifecycle evidence.
 
 - `portal_requests_regression_test.go`: labelled duration POSTs, app access during maintenance failure and browser fixtures.
+
+- `wave2_integration_test.go`: portal guest request eligibility, private people enforcement, guest use/revoke audit.

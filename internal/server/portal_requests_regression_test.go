@@ -56,12 +56,12 @@ func TestPortalRequestBrowserFixtures(t *testing.T) {
 func TestPortalRequestDurationOptions(t *testing.T) {
 	f := newPortalFixture(t)
 	f.who.Store(requestMember("alice"))
-	for _, value := range []string{"1h", "1d", "3d", "7d"} {
+	for _, value := range []string{"1h", "8h", "24h", "3d", "7d"} {
 		requestableApp(t, f, "request-"+value, true)
 	}
 	token, body := requestForm(t, f)
 	for _, option := range []struct{ value, label string }{
-		{"1h", "1 hour / 1 小时"}, {"1d", "1 day / 1 天"}, {"3d", "3 days / 3 天"}, {"7d", "7 days / 7 天"},
+		{"1h", "1 hour / 1 小时"}, {"8h", "8 hours / 8 小时"}, {"24h", "1 day / 1 天"}, {"3d", "3 days / 3 天"}, {"7d", "7 days / 7 天"},
 	} {
 		t.Run(option.value, func(t *testing.T) {
 			if !strings.Contains(body, `<option value="`+option.value+`">`+option.label+`</option>`) {
@@ -74,10 +74,10 @@ func TestPortalRequestDurationOptions(t *testing.T) {
 		})
 	}
 	rows, err := registry.ListAccessRequests(f.path, time.Unix(0, f.now.Load()))
-	if err != nil || len(rows) != 4 {
+	if err != nil || len(rows) != 5 {
 		t.Fatal(rows, err)
 	}
-	for i, value := range []string{"1h", "1d", "3d", "7d"} {
+	for i, value := range []string{"1h", "8h", "24h", "3d", "7d"} {
 		if rows[i].RequestedDuration != value {
 			t.Fatal(rows)
 		}

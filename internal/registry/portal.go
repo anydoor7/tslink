@@ -1,6 +1,7 @@
 package registry
 
 import (
+	"context"
 	"fmt"
 	"strings"
 )
@@ -50,11 +51,11 @@ func SetPortal(path string, p *PortalConfig) error {
 
 // SetPortalAuthorized checks the current authority under the same lock as the
 // update. Local owner processes can use SetPortal without a remote check.
-func SetPortalAuthorized(path string, p *PortalConfig, authorize func(*Registry) error) error {
+func SetPortalAuthorized(path string, p *PortalConfig, authorize func(*Registry) error, contexts ...context.Context) error {
 	if err := ValidatePortal(p); err != nil {
 		return err
 	}
-	return withLock(path, func() error {
+	return withLockContext(optionalMutationContext(contexts), path, func() error {
 		reg, err := loadForMutation(path)
 		if err != nil {
 			return err
@@ -77,7 +78,11 @@ func SetPortalAuthorized(path string, p *PortalConfig, authorize func(*Registry)
 }
 
 func DisablePortal(path string) error {
-	return withLock(path, func() error {
+	return DisablePortalContext(context.Background(), path)
+}
+
+func DisablePortalContext(ctx context.Context, path string) error {
+	return withLockContext(ctx, path, func() error {
 		reg, err := loadForMutation(path)
 		if err != nil {
 			return err

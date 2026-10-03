@@ -95,10 +95,7 @@ represents permanent access. Errors use existing stable codes (`usage_error`,
 accepts `service`, optional `who`, exactly one of `for`/`until`, and optional
 `regrant`/`ack_never`. Its output data has the same fields.
 
-The registry resolves and saves changes under its existing lock. The
-post-save `DurationChange` payload is the hook for future access-log integration;
-there is no access-log dependency or new timer. Enforcement remains the existing
-request-time person expiry and Funnel lifecycle reconciliation.
+The registry resolves and saves changes under its existing lock. Successful extensions record the typed `DurationChange` in [access history](access-log.md); MCP changes attach to their completion receipt. People, guest and Funnel expiry latches also record committed transitions. Registry publication and the audit receipt are separate commits, so a crash can leave an audit gap. Enforcement remains the existing request-time person expiry and Funnel lifecycle reconciliation. Scoped grants and extensions additionally obey the scope maximum and binding expiry.
 
 ## Which syntax belongs to which flag
 

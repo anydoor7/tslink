@@ -3,6 +3,7 @@ package registry
 import (
 	"context"
 	"fmt"
+	"github.com/anydoor7/tslink/internal/mcpaudit"
 	"os"
 	"sort"
 	"strings"
@@ -166,7 +167,7 @@ func ChangePerson(path, who string, apps []string, expiry *time.Time, changeExpi
 // ChangePersonWithLifetime preserves the F1 store contract, but resolves user
 // lifetimes under the same lock as the grants. Omitted add/new-app expiry is 24h.
 func ChangePersonWithLifetime(path, who string, apps []string, update bool, options PersonLifetimeOptions) (Person, error) {
-	return changePerson(options.Context, path, who, apps, nil, options.Value != nil, update, &options)
+	return changePerson(mutationContext(options.Context), path, who, apps, nil, options.Value != nil, update, &options)
 }
 
 type PersonLifetimeOptions struct {
@@ -328,6 +329,19 @@ func changePerson(ctx context.Context, path, who string, apps []string, expiry *
 				result.Grants[i].Expired = false
 			}
 		}
+		if options != nil {
+			tool := "people_add"
+			if update {
+				tool = "people_update"
+			}
+			for _, grant := range result.Grants {
+				if changeExpiry || !personHasGrant(Person{Grants: previous}, grant.App) {
+					if err := authorizeLifetime(ctx, tool, grant.App, duration.Lifetime{Deadline: grant.ExpiresAt, Never: grant.ExpiresAt == nil}, options.Now); err != nil {
+						return err
+					}
+				}
+			}
+		}
 		if options != nil && options.Audience == duration.Guest {
 			result.Guest = true
 		}
@@ -449,10 +463,18 @@ func ExpirePeople(path string, now time.Time) (changed bool, err error) {
 	if !latchPeopleExpiry(observed, now) {
 		return false, nil
 	}
+	var expired []mcpaudit.Change
 	err = withLock(path, func() error {
 		reg, err := loadForMutation(path)
 		if err != nil {
 			return err
+		}
+		for _, person := range reg.People {
+			for _, grant := range person.Grants {
+				if !grant.Expired && grant.ExpiresAt != nil && !now.Before(*grant.ExpiresAt) {
+					expired = append(expired, mcpaudit.Change{Action: "grant_expired", App: grant.App, Subject: person.Login, ExpiresAt: grant.ExpiresAt})
+				}
+			}
 		}
 		changed = latchPeopleExpiry(reg, now)
 		if changed {
@@ -460,6 +482,13 @@ func ExpirePeople(path string, now time.Time) (changed bool, err error) {
 		}
 		return nil
 	})
+	if err == nil {
+		for _, change := range expired {
+			if err = recordExpiry(path, now, change); err != nil {
+				break
+			}
+		}
+	}
 	return changed, err
 }
 

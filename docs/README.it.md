@@ -127,9 +127,9 @@ Un daemon in background esegue un nodo Tailscale integrato per ogni app, con nom
 
 ## Stato
 
-Disponibili: indirizzi privati per app, persone con scadenze e inviti raggruppati, Funnel pubblico con scadenza, controlli di salute e avvisi, ricette per app self-hosted, limiti delle richieste per app, riavvio dopo crash su Windows, CLI e MCP.
+Disponibili: indirizzi privati per app, persone con scadenze e inviti raggruppati, Funnel pubblico con scadenza, controlli di salute e avvisi, ricette per app self-hosted, limiti delle richieste per app, riavvio dopo crash su Windows, CLI e MCP. Disponibili anche: link ospite per browser, durate flessibili, registro degli accessi, pagina iniziale delle app, ruoli limitati per agenti, onboarding tramite QR e richieste di accesso.
 
-In arrivo: link ospite per browser, durate flessibili, registro degli accessi, pagina iniziale delle app, ruoli limitati per agenti, onboarding tramite QR e richieste di accesso. È prevista una lista unica per più computer. [Tabella di marcia →](roadmap.md)
+È prevista una lista unica per più computer. [Tabella di marcia →](roadmap.md)
 
 ## Documentazione e licenza
 

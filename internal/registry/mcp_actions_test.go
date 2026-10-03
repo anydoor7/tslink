@@ -87,15 +87,15 @@ func TestScopedRegistryDenialsAndExpiryInsideLock(t *testing.T) {
 			t.Fatal("denial mutated file")
 		}
 	}
-	exp := now.Add(30 * time.Minute)
+	exp := now.Add(90 * time.Minute)
 	s.ExpiresAt = &exp
-	if _, err := ChangePersonApp(path, s, "alice", "photos", "1h", false, func() time.Time { return now }); err == nil {
+	if _, err := ChangePersonApp(path, s, "alice", "photos", "2h", false, func() time.Time { return now }); err == nil {
 		t.Fatal("grant outlived binding")
 	}
 	if _, err := ChangePersonApp(path, s, "alice", "photos", "10m", false, func() time.Time { return exp }); err == nil {
 		t.Fatal("writer clock did not recheck binding")
 	}
-	if _, err := ChangePersonApp(path, s, "alice", "photos", "10m", false, func() time.Time { return now }); err != nil {
+	if _, err := ChangePersonApp(path, s, "alice", "photos", "1h", false, func() time.Time { return now }); err != nil {
 		t.Fatal("positive expiry control", err)
 	}
 }

@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"github.com/anydoor7/tslink/internal/mcpaudit"
 	"io"
 	"strings"
 	"time"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/anydoor7/tslink/internal/config"
 	"github.com/anydoor7/tslink/internal/duration"
+	"github.com/anydoor7/tslink/internal/mcpscope"
 	"github.com/anydoor7/tslink/internal/output"
 	"github.com/anydoor7/tslink/internal/registry"
 	"github.com/anydoor7/tslink/internal/server"
@@ -68,10 +70,57 @@ func listRequests(path string, now time.Time) (RequestListResult, error) {
 }
 
 func requestOwnerAuthorization(ctx context.Context) func(*registry.Registry) error {
-	if _, remote := server.MCPCallerFromContext(ctx); !remote {
+	_, scoped := mcpscope.FromContext(ctx)
+	if _, remote := server.MCPCallerFromContext(ctx); !remote && !scoped {
 		return nil
 	}
-	return func(reg *registry.Registry) error { return requireRequestOwnerInRegistry(ctx, reg) }
+	return func(reg *registry.Registry) error {
+		if err := mcpscope.CheckEffect(ctx); err != nil {
+			return err
+		}
+		if session, ok := mcpscope.FromContext(ctx); ok && !session.Scope.ToolAllowed("requests_list") {
+			return mcpscope.Denied{}
+		}
+		return requireRequestOwnerInRegistry(ctx, reg)
+	}
+}
+
+// The callback receives the very registry that the decision will update.
+// Re-resolve its app here, not from a preflight snapshot supplied by a caller.
+func requestDecisionAuthorization(ctx context.Context, args requestDecisionArguments, approve bool, now time.Time) func(*registry.Registry) error {
+	return func(reg *registry.Registry) error {
+		if err := mcpscope.CheckEffect(ctx); err != nil {
+			return err
+		}
+		if err := requireRequestOwnerInRegistry(ctx, reg); err != nil {
+			return err
+		}
+		session, scoped := mcpscope.FromContext(ctx)
+		if !scoped {
+			return nil
+		}
+		tool := "requests_deny"
+		if approve {
+			tool = "requests_approve"
+		}
+		for _, request := range reg.Requests {
+			if request.ID != args.ID {
+				continue
+			}
+			if err := session.Authorize(tool, []string{request.App}, now); err != nil {
+				return err
+			}
+			if approve {
+				lifetime, err := duration.ParseLifetime(args.For, now, time.Local)
+				if err != nil {
+					return output.ErrUsage(err.Error())
+				}
+				return session.CheckLifetime(lifetime, now)
+			}
+			return nil
+		}
+		return session.Authorize(tool, nil, now)
+	}
 }
 
 // Every remote person writer uses this guard on resolved pre-mutation state.
@@ -84,6 +133,9 @@ func peopleMutationAuthorization(ctx context.Context) func(*registry.Registry, s
 				protected = protected || login == admin
 			}
 			if protected {
+				if session, scoped := mcpscope.FromContext(ctx); scoped && session.Scope.Role != "owner" {
+					return mcpscope.Denied{}
+				}
 				return requireRequestOwnerInRegistry(ctx, reg)
 			}
 		}
@@ -111,9 +163,14 @@ func decideRequestContext(ctx context.Context, path string, args requestDecision
 			return RequestDecisionResult{}, err
 		}
 	}
-	r, changed, err := registry.DecideAccessRequestAuthorized(path, args.ID, status, args.For, args.Reason, args.AckNever, policy, now, requestOwnerAuthorization(ctx))
+	r, changed, err := registry.DecideAccessRequestAuthorized(path, args.ID, status, args.For, args.Reason, args.AckNever, policy, now, requestDecisionAuthorization(ctx, args, approve, now), ctx)
 	if err == nil && changed {
 		requestDecidedFn(r.Event())
+		change := mcpaudit.Change{Action: "request_" + r.Status, App: r.App, Subject: r.Who, ID: r.ID}
+		if r.Grant != nil {
+			change.ExpiresAt, change.PreviousExpiresAt = r.Grant.ExpiresAt, r.Grant.PreviousExpiresAt
+		}
+		err = mcpaudit.RecordChange(ctx, path, mcpaudit.Surface(ctx), mcpLocalActor(), now, change)
 	}
 	return RequestDecisionResult{Request: r, Changed: changed}, err
 }

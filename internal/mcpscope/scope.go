@@ -86,7 +86,7 @@ func Principal(raw string) (string, error) {
 
 // ParseDuration is the sole scope-duration adapter for the shared grammar.
 func ParseDuration(raw string) (time.Duration, error) {
-	d, err := duration.Parse(raw)
+	d, err := duration.ParseRelative(raw)
 	if err != nil || d <= 0 {
 		return 0, fmt.Errorf("scope duration must be positive")
 	}
@@ -196,10 +196,12 @@ func (s Scope) ToolAllowed(tool string) bool {
 		return true
 	}
 	switch tool {
-	case "list", "status", "url", "health", "doctor", "access_explain", "tags_list", "people_list", "recipe_list", "template_list":
+	case "list", "status", "url", "health", "doctor", "access_explain", "access_log", "access_summary", "tags_list", "people_list", "recipe_list", "template_list":
 		return s.Role == "viewer" || s.Role == "app-operator" || s.Role == "people-manager"
-	case "people_grant", "people_revoke":
+	case "people_grant", "people_revoke", "extend":
 		return s.Role == "app-operator" || s.Role == "people-manager"
+	case "requests_list", "requests_approve", "requests_deny":
+		return s.Role == "people-manager"
 	case "app_restart":
 		return s.Role == "app-operator"
 	}
@@ -221,21 +223,32 @@ func (s Session) Authorize(tool string, apps []string, now time.Time) error {
 // GrantDeadline bounds a people grant by both capability lifetime and binding
 // expiry. Registry writers reuse this after acquiring their lock.
 func (s Session) GrantDeadline(lifetime string, now time.Time) (*time.Time, error) {
-	d, err := ParseDuration(lifetime)
+	l, err := (duration.Policy{}).Resolve(lifetime, duration.TailnetMember, false, now, time.Local)
 	if err != nil {
 		return nil, Denied{}
 	}
+	if err := s.CheckLifetime(l, now); err != nil {
+		return nil, err
+	}
+	return l.Deadline, nil
+}
+
+// CheckLifetime adds the capability ceiling to a lifetime already resolved by
+// the common audience policy. Binding expiry also bounds owner sessions.
+func (s Session) CheckLifetime(l duration.Lifetime, now time.Time) error {
+	if !s.Active(now) || l.Deadline == nil && (!l.Never || s.Scope.Role != "owner" || s.ExpiresAt != nil) {
+		return Denied{}
+	}
 	if s.Scope.Role != "owner" {
 		max, err := ParseDuration(s.Scope.MaxDuration)
-		if err != nil || d > max {
-			return nil, Denied{}
+		if err != nil || l.Deadline == nil || l.Deadline.Sub(now) > max {
+			return Denied{}
 		}
 	}
-	t := now.Add(d).UTC()
-	if !s.Active(now) || s.ExpiresAt != nil && t.After(*s.ExpiresAt) {
-		return nil, Denied{}
+	if l.Deadline != nil && (l.Deadline.Sub(now) < time.Hour || s.ExpiresAt != nil && l.Deadline.After(*s.ExpiresAt)) {
+		return Denied{}
 	}
-	return &t, nil
+	return nil
 }
 
 // Resolve never unions roles. An explicit login binding wins over tag

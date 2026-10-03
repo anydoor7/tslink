@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"net/url"
@@ -34,6 +35,10 @@ type guestCreateResult struct {
 }
 
 func createGuest(paths sharePaths, args guestArguments, now time.Time) (guestCreateResult, error) {
+	return createGuestContext(context.Background(), paths, args, now)
+}
+
+func createGuestContext(ctx context.Context, paths sharePaths, args guestArguments, now time.Time) (guestCreateResult, error) {
 	if args.App == "" || args.For == "" {
 		return guestCreateResult{}, output.ErrUsage("guest create requires app and --for")
 	}
@@ -50,7 +55,7 @@ func createGuest(paths sharePaths, args guestArguments, now time.Time) (guestCre
 			return guestCreateResult{}, registry.URLNotReadyError(args.App)
 		}
 	}
-	grant, token, e := registry.CreateGuest(paths.Registry, registry.CreateGuestOptions{App: args.App, Label: args.Label, Value: args.For, PIN: args.PIN, PublicAck: args.Public, Policy: policy, Now: now})
+	grant, token, e := registry.CreateGuest(paths.Registry, registry.CreateGuestOptions{Context: ctx, App: args.App, Label: args.Label, Value: args.For, PIN: args.PIN, PublicAck: args.Public, Policy: policy, Now: now})
 	if e != nil {
 		return guestCreateResult{}, e
 	}

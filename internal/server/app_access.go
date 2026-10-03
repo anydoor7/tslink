@@ -24,13 +24,18 @@ func AppAccessAt(reg *registry.Registry, svc registry.Service, login string, tag
 
 func AppAccessDecisionAt(reg *registry.Registry, svc registry.Service, login string, tags []string, now time.Time) AppAccessDecision {
 	svc = registry.EffectiveServiceAt(svc, now)
-	enforced := !svc.Funnel && (svc.Type == registry.TypeProxy || svc.Type == registry.TypeFile)
+	enforced := (!svc.Funnel || svc.GuestGate) && (svc.Type == registry.TypeProxy || svc.Type == registry.TypeFile)
 	if !enforced && svc.Type != registry.TypeTCP && !svc.Funnel {
 		return AppAccessDecision{}
 	}
 	allowed, expiry, administrator := privateAppAccessAt(reg, svc, login, tags, now)
 	if !enforced {
 		return AppAccessDecision{Allowed: true, DirectoryVisible: administrator}
+	}
+	if svc.Funnel {
+		// Guest authentication belongs to the public listener. Tailnet requests
+		// still use people rules; public apps remain an owner/admin inventory.
+		return AppAccessDecision{Allowed: allowed, IdentityEnforced: true, DirectoryVisible: administrator, ExpiresAt: expiry}
 	}
 	return AppAccessDecision{Allowed: allowed, IdentityEnforced: true, DirectoryVisible: allowed, ExpiresAt: expiry}
 }

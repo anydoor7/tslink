@@ -135,7 +135,14 @@ func oneAccess(t *testing.T, dir string, store *accesslog.Store) accesslog.Event
 	t.Helper()
 	drainAccess(t, store)
 	r, err := accesslog.Query(dir, accesslog.Filter{})
-	if err != nil || len(r.Events) != 1 {
+	// Query also returns committed expiry receipts; this helper inspects HTTP.
+	httpEvents := []accesslog.Event{}
+	for _, event := range r.Events {
+		if event.Kind == "http" {
+			httpEvents = append(httpEvents, event)
+		}
+	}
+	if err != nil || len(httpEvents) != 1 {
 		t.Fatalf("events %+v %v", r, err)
 	}
 	b, _ := json.Marshal(r)
@@ -152,7 +159,7 @@ func oneAccess(t *testing.T, dir string, store *accesslog.Store) accesslog.Event
 			t.Fatalf("privacy leak %s", b)
 		}
 	}
-	return r.Events[0]
+	return httpEvents[0]
 }
 func TestAccessRealListenerDecisions(t *testing.T) {
 	for _, tc := range []struct {

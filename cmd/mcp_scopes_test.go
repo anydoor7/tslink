@@ -37,6 +37,10 @@ var scopeExpected = map[string]string{
 	"template_list": "read", "template_plan": "owner", "template_apply": "owner", "apps_detect": "owner",
 	"recipe_list": "read", "recipe_plan": "owner", "recipe_apply": "owner", "people_add": "owner", "people_update": "owner",
 	"people_list": "read", "people_remove": "owner", "people_grant": "manage-app", "people_revoke": "manage-app",
+	"portal_enable": "owner", "portal_disable": "owner", "extend": "manage-app",
+	"guest_create": "owner", "guest_list": "owner", "guest_show": "owner", "guest_revoke": "owner",
+	"requests_list": "requests", "requests_approve": "requests", "requests_deny": "requests",
+	"access_log": "read", "access_summary": "read",
 	"app_restart": "operate-app", "health": "read", "mcp_audit": "owner",
 }
 
@@ -228,6 +232,8 @@ func expectedScopeTool(role, tool string) bool {
 		return true
 	case "manage-app":
 		return role == "app-operator" || role == "people-manager"
+	case "requests":
+		return role == "people-manager"
 	case "operate-app":
 		return role == "app-operator"
 	}
@@ -270,7 +276,7 @@ func scopeFixtureActions() mcpActions {
 		return map[string]any{"services": []ListServiceSummary{{Name: "photos", Type: registry.TypeProxy, State: "exact", FunnelState: "not_requested"}, {Name: "finance", Type: registry.TypeProxy, State: "failed", FunnelState: "not_requested"}}}, nil
 	}
 	a.status = func(ctx context.Context) (any, error) {
-		return mcpStatusSummary{DaemonState: "absent", ServiceCount: 99, AuthorizedServiceCount: 99, AuthURL: "secret-enrollment", Next: []string{"finance"}, Credentials: StatusCredentials{MetadataError: "finance-secret"}, MCPBindings: []mcpBindingView{{Binding: mcpscope.Binding{Principal: "finance-owner", Scope: mcpscope.Scope{Role: "owner"}}}}, Services: []mcpHealthService{{Name: "photos", Status: "up", Health: health.State{State: health.Degraded}}, {Name: "finance", Status: "up", Health: health.State{State: health.Down}}}}, nil
+		return mcpStatusSummary{GuestLinks: []registry.GuestView{}, DaemonState: "absent", ServiceCount: 99, AuthorizedServiceCount: 99, AuthURL: "secret-enrollment", Next: []string{"finance"}, Credentials: StatusCredentials{MetadataError: "finance-secret"}, MCPBindings: []mcpBindingView{{Binding: mcpscope.Binding{Principal: "finance-owner", Scope: mcpscope.Scope{Role: "owner"}}}}, Services: []mcpHealthService{{Name: "photos", Status: "up", Health: health.State{State: health.Degraded}}, {Name: "finance", Status: "up", Health: health.State{State: health.Down}}}}, nil
 	}
 	a.tagsList = func() (any, error) {
 		return TagsListResult{Services: []TagsServiceEntry{{Name: "photos", Tags: []string{"tag:photos"}}, {Name: "finance", Tags: []string{"tag:finance"}}}}, nil

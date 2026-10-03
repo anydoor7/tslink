@@ -71,7 +71,7 @@ func mcpRefusal(tool string) error {
 
 func refusingMCPActions() mcpActions {
 	return mcpActions{
-		guest: func(name string, _ guestArguments) (any, error) { return nil, mcpRefusal(name) },
+		guest: func(_ context.Context, name string, _ guestArguments) (any, error) { return nil, mcpRefusal(name) },
 		accessLog: func(accessLogArguments) (accesslog.Result, error) {
 			return accesslog.Result{}, mcpRefusal("access_log")
 		},

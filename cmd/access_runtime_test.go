@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,7 +31,7 @@ func TestAccessCurrentInstanceHealth(t *testing.T) {
 		t.Fatal(got)
 	}
 	// Actual doctor and status consume the runtime file, never the old success.
-	doctor := buildDoctorResult(doctorOptions{})
+	doctor := buildDoctorResult(context.Background(), doctorOptions{})
 	hasFailure, hasMissing := false, false
 	for _, finding := range doctor.Findings {
 		hasFailure = hasFailure || finding.Code == inspect.WarningCodeAccessLogUnavailable
@@ -39,7 +40,7 @@ func TestAccessCurrentInstanceHealth(t *testing.T) {
 	if !doctor.AccessLog.Current || doctor.AccessLog.Drops != 3 || !hasFailure || !hasMissing {
 		t.Fatal(doctor.AccessLog, doctor.Findings)
 	}
-	status, err := getStatusURLs(env.pidPath, env.regPath, env.snapshotPath)
+	status, err := getStatusURLs(context.Background(), env.pidPath, env.regPath, env.snapshotPath)
 	if err != nil || !status.AccessLog.Current || status.AccessLog.Drops != 3 {
 		t.Fatal(status.AccessLog, err)
 	}
@@ -54,7 +55,7 @@ func TestAccessCurrentInstanceHealth(t *testing.T) {
 	h.Drops = 0
 	snapshot.AccessLog = &h
 	tsruntime.Save(env.snapshotPath, snapshot)
-	recovered := buildDoctorResult(doctorOptions{})
+	recovered := buildDoctorResult(context.Background(), doctorOptions{})
 	hasMissing = false
 	for _, finding := range recovered.Findings {
 		hasMissing = hasMissing || finding.Code == inspect.WarningCodeAccessLogDrops
