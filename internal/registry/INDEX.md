@@ -42,3 +42,17 @@ This index records the people sharing lifecycle implementation and regression te
 - `mcp_actions_test.go`: unrelated app preservation, expiry, tombstones and failed writes.
 
 - `mcp_boundary_test.go`: real lock tests for session expiry/cancellation across mutation writers and owner-only person creation.
+
+# Browser guest links
+
+- guests.go: durable browser grants, salted token/PIN hashes, policy, counters and revocation.
+- guests_test.go: persistence, policy, gate migration, lockout and invalid ledger controls.
+
+- `guest_usage.go`: shared authorization reads, batched usage and committed-grant notifications.
+- `guest_crash_test.go`: atomic revoke persistence and restart with killed writers.
+
+- `guest_usage_test.go`: batches, retry, revocation and opportunistic counter persistence.
+
+- `guest_monitor.go`: one shared grant snapshot per gate tick and batched expiry latching.
+- `guest_monitor_test.go`: snapshot, expiry rollback, other-grant and unreadable-registry controls.
+- `guest_publication_test.go`: before/after publication errors and interleaved counter observations.

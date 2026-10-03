@@ -30,6 +30,7 @@ var mcpWantHints = map[string][4]bool{
 	"app_restart":    {false, true, false, false},
 	"health":         {true, false, true, false},
 	"mcp_audit":      {true, false, true, false},
+	"guest_create":   {false, false, false, false}, "guest_list": {true, false, true, false}, "guest_show": {true, false, true, false}, "guest_revoke": {false, true, true, false},
 	"people_add":     {false, true, false, true},
 	"people_update":  {false, true, false, true},
 	"people_list":    {true, false, true, false},
@@ -192,8 +193,8 @@ func TestMCPReadOnlyToolsWriteNothing(t *testing.T) {
 			}
 		}
 	}
-	if readOnly != 16 {
-		t.Fatalf("%d tools are marked read-only, want the 16 that only read", readOnly)
+	if readOnly != 18 {
+		t.Fatalf("%d tools are marked read-only, want the 18 that only read", readOnly)
 	}
 
 	// Control: add is a write tool. With the daemon reported running it reads

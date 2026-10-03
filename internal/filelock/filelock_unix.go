@@ -23,3 +23,11 @@ func tryLock(f *os.File) (bool, error) {
 	}
 	return err == nil, err
 }
+
+func tryReadLock(f *os.File) (bool, error) {
+	err := syscall.Flock(int(f.Fd()), syscall.LOCK_SH|syscall.LOCK_NB)
+	if errors.Is(err, syscall.EWOULDBLOCK) {
+		return false, nil
+	}
+	return err == nil, err
+}

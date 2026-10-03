@@ -72,3 +72,21 @@ This index covers the recipe integration tests. The repository AGENTS.md describ
 - `mcp_scopes_test.go`: WhoIs-bound expiry and real gateway reconciliation without changing other nodes.
 
 - `mcp_scopes_boundary_test.go`: MCP transaction, identity and app attribution correctness tests.
+
+# Browser guest links
+
+- guest.go: trusted Funnel guest gate, bounded sessions/challenges, CSRF and source rate limits.
+- guest_test.go: real HTTP/1 and HTTP/2 listener, revocation, expiry, PIN, isolation and privacy.
+
+- `guest_unix_test.go`: real listener FIFO refusal and restored positive control.
+
+- `guest_regression_test.go`: listener regressions for concurrency, stream lifecycle, credential routes and cookie parsing.
+- `guest_lifecycle.go`: grant-scoped request and connection cancellation, counter flush and shutdown.
+- `guest_pages.go`: generic recipient pages and language selection.
+
+- `guest_ux_test.go`: generic pages, retry recovery, periodic and shutdown counters.
+- `guest_idle_test.go`: idle SSE/HTTP2/WebSocket termination, including a separate revoke process.
+
+- `guest_cleanup_test.go`: HTTP/1.1 and HTTP/2 aborted-stream, panic, timer and shutdown cleanup controls.
+- `guest_counter_status.go`: counter persistence warnings for runtime status, with generic public messages.
+- `guest_counter_status_test.go`: real registry publication failures, logs, status refresh and recovery.

@@ -28,6 +28,7 @@ var mcpToolMinimalArguments = map[string]string{
 	"app_restart":    `{"app":"web"}`,
 	"health":         `{}`,
 	"mcp_audit":      `{}`,
+	"guest_create":   `{"app":"web","for":"1h"}`, "guest_list": `{}`, "guest_show": `{"id":"guest-id"}`, "guest_revoke": `{"id":"guest-id"}`,
 	"people_add":     `{"who":"alice","apps":["web"]}`,
 	"people_update":  `{"who":"alice","apps":["web"]}`,
 	"people_list":    `{}`,
@@ -69,6 +70,7 @@ func mcpRefusal(tool string) error {
 
 func refusingMCPActions() mcpActions {
 	return mcpActions{
+		guest:  func(name string, _ guestArguments) (any, error) { return nil, mcpRefusal(name) },
 		extend: func(extendArguments) (any, error) { return nil, mcpRefusal("extend") },
 		accessLog: func(accessLogArguments) (accesslog.Result, error) {
 			return accesslog.Result{}, mcpRefusal("access_log")

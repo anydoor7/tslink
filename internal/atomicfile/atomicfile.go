@@ -31,6 +31,21 @@ var (
 	closeFileFn  = func(f *os.File) error { return f.Close() }
 )
 
+// PublishedError means replacement succeeded, but its directory sync failed.
+// The new bytes are visible; their durability across a crash is unconfirmed.
+type PublishedError struct{ Err error }
+
+func (e *PublishedError) Error() string {
+	return "file published; directory sync failed: " + e.Err.Error()
+}
+func (e *PublishedError) Unwrap() error { return e.Err }
+
+// IsPublished distinguishes a post-rename failure from an unpublished write.
+func IsPublished(err error) bool {
+	var published *PublishedError
+	return errors.As(err, &published)
+}
+
 // EnsurePrivateDir creates dir if needed and converges existing directories to
 // owner-only permissions where POSIX modes are meaningful. It rejects symlinks,
 // non-directories, and unsafe owner conditions when the platform exposes them.
@@ -175,7 +190,10 @@ func writeFile(path string, data []byte, mode os.FileMode) error {
 		return err
 	}
 	renamed = true
-	return syncDirFn(dir)
+	if err := syncDirFn(dir); err != nil {
+		return &PublishedError{Err: err}
+	}
+	return nil
 }
 
 func validateReplaceTarget(path string) error {

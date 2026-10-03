@@ -44,6 +44,7 @@ Documentation is English-only. The only translations are the homepage READMEs in
 | Durations | [durations.md](durations.md) |
 | Funnel | [funnel.md](funnel.md) |
 | Getting Started | [getting-started.md](getting-started.md) |
+| Guest links | [guest-links.md](guest-links.md) |
 | Health and alerts | [health-and-alerts.md](health-and-alerts.md) |
 | Json Automation | [json-automation.md](json-automation.md) |
 | Landscape | [landscape.md](landscape.md) |

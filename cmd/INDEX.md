@@ -99,3 +99,12 @@ This index records the app recipe additions; the CLI manifest describes the comp
 
 - `read_manager_context_test.go`: ported shared-read session, subprocess cancellation and setup error-code fixtures; bounded compensation provenance; additional list, URL, share and event snapshot callers.
 - `manager_inventory_test.go`: all-platform AST inventory and transitive MCP manager context checks, with explicit compensation and CLI classifications.
+
+# Browser guest links
+
+- guest.go: owner guest CRUD, explicit bearer disclosure and stdin PIN.
+- guest_status.go: active grant views and Funnel/expiry diagnosis.
+- mcp_guests.go: owner-only tool registry and schemas.
+- guest_test.go: CLI/MCP masking, policy and diagnosis controls.
+
+- `guest_human_test.go`: human summaries and readable recipient expiry.

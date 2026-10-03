@@ -508,6 +508,7 @@ type Service struct {
 	Ephemeral       bool       `json:"ephemeral,omitempty"`
 	Tags            []string   `json:"tags,omitempty"`
 	AllowedUsers    []string   `json:"allowed_users,omitempty"`
+	GuestGate       bool       `json:"guest_gate,omitempty"`
 	PeopleScoped    bool       `json:"people_scoped,omitempty"`
 	ControlURL      string     `json:"control_url,omitempty"`
 	Funnel          bool       `json:"funnel,omitempty"`
@@ -638,6 +639,7 @@ type Registry struct {
 	Services      []Service     `json:"services"`
 	People        []Person      `json:"people,omitempty"`
 	Portal        *PortalConfig `json:"portal,omitempty"`
+	Guests        []GuestGrant  `json:"guests,omitempty"`
 }
 
 type RegistryFileState string
@@ -670,6 +672,7 @@ type registryWire struct {
 	Services      []json.RawMessage `json:"services"`
 	People        []Person          `json:"people,omitempty"`
 	Portal        *PortalConfig     `json:"portal,omitempty"`
+	Guests        []GuestGrant      `json:"guests,omitempty"`
 }
 
 var unknownJSONFieldRegexp = regexp.MustCompile(`^json: unknown field "([^"]+)"$`)
@@ -744,7 +747,14 @@ func ValidateService(svc Service) error {
 	if svc.Type == TypeTCP && svc.RequestLimits != nil {
 		return CodedError{Code: CodeInvalidRequestLimits, Message: "HTTP request_limits are not supported for tcp services"}
 	}
-	if err := ValidateFunnelGuardrails(svc.Type, svc.Funnel, svc.AllowedUsers, svc.ControlURL, svc.PublicAck); err != nil {
+	allow := svc.AllowedUsers
+	if svc.GuestGate {
+		allow = nil
+		if svc.Type != TypeProxy || !svc.PublicAck || svc.ControlURL != "" {
+			return guestError("usage_error", "guest gate requires an acknowledged proxy on the default control server")
+		}
+	}
+	if err := ValidateFunnelGuardrails(svc.Type, svc.Funnel, allow, svc.ControlURL, svc.PublicAck); err != nil {
 		return err
 	}
 	if svc.FunnelExpiryUndecided() {
@@ -1126,7 +1136,7 @@ func decodeForRuntime(data []byte) (*Registry, []ServiceIssue, error) {
 	if err := strictJSONDecode(data, &wire); err != nil {
 		return nil, nil, configDecodeError("registry", err)
 	}
-	reg := &Registry{SchemaVersion: wire.SchemaVersion, Services: make([]Service, 0, len(wire.Services)), People: wire.People, Portal: wire.Portal}
+	reg := &Registry{SchemaVersion: wire.SchemaVersion, Services: make([]Service, 0, len(wire.Services)), People: wire.People, Portal: wire.Portal, Guests: wire.Guests}
 	if err := migrate(reg); err != nil {
 		return nil, nil, err
 	}
@@ -1135,6 +1145,9 @@ func decodeForRuntime(data []byte) (*Registry, []ServiceIssue, error) {
 	}
 
 	if err := ValidatePortal(reg.Portal); err != nil {
+		return nil, nil, err
+	}
+	if err := validateGuests(reg.Guests); err != nil {
 		return nil, nil, err
 	}
 	issues := make([]ServiceIssue, 0)
@@ -1168,6 +1181,10 @@ func decodeForRuntime(data []byte) (*Registry, []ServiceIssue, error) {
 			continue
 		}
 		if err := ValidateService(svc); err != nil {
+			issues = append(issues, ServiceIssue{Index: index, Name: name, Service: svc, Err: err})
+			continue
+		}
+		if err := guestServiceError(svc, reg.Guests); err != nil {
 			issues = append(issues, ServiceIssue{Index: index, Name: name, Service: svc, Err: err})
 			continue
 		}
@@ -1442,11 +1459,16 @@ func TryWithLockedFileState(path string, fn func(*Registry, RegistryFileState) e
 }
 
 func save(path string, reg *Registry) error {
+	for _, svc := range reg.Services {
+		if e := guestServiceError(svc, reg.Guests); e != nil {
+			return e
+		}
+	}
 	if reg.Services == nil {
 		reg.Services = []Service{}
 	}
 	reg.SchemaVersion = LegacyRegistrySchemaVersion
-	if len(reg.People) > 0 || reg.Portal != nil {
+	if len(reg.People) > 0 || reg.Portal != nil || len(reg.Guests) > 0 {
 		reg.SchemaVersion = PeopleRegistrySchemaVersion
 	}
 	for _, svc := range reg.Services {
@@ -1455,13 +1477,31 @@ func save(path string, reg *Registry) error {
 		}
 	}
 
+	pending := snapshotGuestUsage(path)
+	originalGuests := append([]GuestGrant(nil), reg.Guests...)
+	for i := range reg.Guests {
+		applyGuestUsage(&reg.Guests[i], pending[reg.Guests[i].ID])
+	}
 	data, err := marshalFn(reg, "", "  ")
 	if err != nil {
+		reg.Guests = originalGuests
+		if len(pending) > 0 {
+			recordGuestCounterError(path, err)
+		}
 		return err
 	}
 	data = append(data, '\n')
-
-	return atomicfile.WriteFile(path, data)
+	err = atomicfile.WriteFile(path, data)
+	if len(pending) > 0 || GuestCounterError(path) != nil {
+		recordGuestCounterError(path, err)
+	}
+	if err == nil || atomicfile.IsPublished(err) {
+		acknowledgeGuestUsage(path, pending)
+		notifyGuestCommit(path, reg.Guests)
+	} else {
+		reg.Guests = originalGuests
+	}
+	return err
 }
 
 func Add(path string, svc Service) (created bool, err error) {
@@ -1584,6 +1624,9 @@ func AddWithOutcome(path string, svc Service, options AddOptions) (outcome AddOu
 			previous := existing
 			outcome.Replaced = &previous
 			svc.CreatedAt = existing.CreatedAt
+			if existing.GuestGate && !svc.GuestGate {
+				return guestError("conflict", "guest gate is sticky; remove and re-add the service to disable it")
+			}
 			svc.PeopleScoped = svc.PeopleScoped || existing.PeopleScoped
 			if err := ValidateService(svc); err != nil {
 				return err

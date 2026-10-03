@@ -1010,8 +1010,9 @@ func TestCompactManifestStaysBelowAgentTokenBudget(t *testing.T) {
 	// missed and mcp_elevated_invite_refused: 2860 bytes at the end of B3.
 	// People sharing, health, recipes and request limits expand the compact agent surface.
 	// Keep a bounded budget for the combined command tree.
-	if len(data) >= 4500 {
-		t.Fatalf("compact manifest = %d bytes, want < 4500", len(data))
+	// Guest CRUD adds a namespace and PIN/disclosure flags (4528 bytes at introduction).
+	if len(data) >= 4800 {
+		t.Fatalf("compact manifest = %d bytes, want < 4800", len(data))
 	}
 	compact := CompactManifest()
 	if compact.ErrorCodes[registry.CodeURLNotReady] != 5 {

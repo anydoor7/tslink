@@ -70,6 +70,7 @@ type StatusPendingLogin struct {
 
 // StatusResult holds the status information for display.
 type StatusResult struct {
+	GuestLinks              []registry.GuestView    `json:"guest_links"`
 	AccessLog               accesslog.Health        `json:"access_log"`
 	Portal                  tsruntime.PortalState   `json:"portal"`
 	MCPBindings             []mcpBindingView        `json:"mcp_bindings,omitempty"`
@@ -137,6 +138,7 @@ type StatusServiceState struct {
 }
 
 type StatusURLsResult struct {
+	GuestLinks              []registry.GuestView        `json:"guest_links"`
 	AccessLog               accesslog.Health            `json:"access_log"`
 	Portal                  tsruntime.PortalState       `json:"portal"`
 	MCPBindings             []mcpBindingView            `json:"mcp_bindings,omitempty"`
@@ -228,6 +230,7 @@ func (s statusRead) getStatus(ctx context.Context, pidPath, regPath string) (Sta
 	issueErrors := diagnosticServiceErrors(issues)
 	r.Portal = readPortalView(reg, regPath, r.DaemonRunning, r.DaemonPID)
 	r.Alerts = readAlertsForRegistry(regPath)
+	r.GuestLinks = activeGuestViews(reg, statusNowFn())
 	r.ServiceCount = len(reg.Services)
 	r.Services = make([]StatusServiceState, 0, len(reg.Services))
 	ownershipProofs, ownershipProofAvailable := ownershipProofsForRegistry(regPath)
@@ -629,6 +632,7 @@ func cloneServiceError(source *tsruntime.ServiceError) *tsruntime.ServiceError {
 }
 
 func formatStatus(r StatusResult, out io.Writer) {
+	formatGuestViews(out, r.GuestLinks)
 	formatAccessHealth(r.AccessLog, out)
 	formatPortal(out, r.Portal)
 	for _, b := range r.MCPBindings {
@@ -689,6 +693,11 @@ func formatStatus(r StatusResult, out io.Writer) {
 	fmt.Fprintf(out, "→ services: %d registered\n", r.ServiceCount)
 	for _, svc := range r.Services {
 		formatAppHealth(out, svc.Name, svc.Health, svc.NodeKey)
+		for _, warning := range svc.Warnings {
+			if warning.Code == inspect.WarningCodeGuestCounters {
+				fmt.Fprintf(out, "→ %s: %s (%s)\n", svc.Name, warning.Message, warning.Code)
+			}
+		}
 	}
 	formatEarlyWarnings(out, r.Credentials)
 	formatAlerts(out, r.Alerts)
@@ -731,6 +740,7 @@ func (s statusRead) getStatusURLsWithAuth(ctx context.Context, pidPath, regPath,
 	freshness := tsruntime.Classify(snapshot, loadErr, expected)
 
 	result := StatusURLsResult{
+		GuestLinks:              activeGuestViews(reg, statusNowFn()),
 		AccessLog:               accessHealthForRegistry(regPath, pidPath, snapshotPath),
 		Portal:                  status.Portal,
 		MCPBindings:             status.MCPBindings,
@@ -1015,6 +1025,7 @@ func appendStatusWarning(warnings []inspect.WarningView, code, message string) [
 
 func formatStatusURLs(r StatusURLsResult, out io.Writer) {
 	formatStatus(StatusResult{
+		GuestLinks:              r.GuestLinks,
 		AccessLog:               r.AccessLog,
 		Portal:                  r.Portal,
 		MCPBindings:             r.MCPBindings,

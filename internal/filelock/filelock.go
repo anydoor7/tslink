@@ -21,3 +21,6 @@ func Unlock(f *os.File) error {
 func TryLock(f *os.File) (bool, error) {
 	return tryLock(f)
 }
+
+// TryReadLock acquires a shared lock without waiting for a writer.
+func TryReadLock(f *os.File) (bool, error) { return tryReadLock(f) }

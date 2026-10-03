@@ -341,10 +341,11 @@ type LifecycleReconcileFunc func(context.Context, time.Time) (bool, error)
 
 // Server manages multiple tsnet nodes, one per registered service.
 type Server struct {
-	accessWriter     accesslog.Writer
-	accessOptions    accesslog.Options
-	lastAccessHealth accesslog.Health
-	nodes            map[string]*ServiceNode
+	accessWriter             accesslog.Writer
+	accessOptions            accesslog.Options
+	lastAccessHealth         accesslog.Health
+	lastGuestCounterWarnings map[string]inspect.WarningView
+	nodes                    map[string]*ServiceNode
 	// stateReservations counts, per service, the startups in progress that
 	// may write into its tsnet state directory; see reserveNodeState. It is
 	// guarded by mu, like nodes.
@@ -1644,7 +1645,7 @@ func serviceChangedWithFallback(old, new registry.Service, fallbackControlURL st
 	if old.Type != new.Type || old.Target != new.Target || old.Path != new.Path || old.File != new.File {
 		return true
 	}
-	if old.AccessLogPathMode != new.AccessLogPathMode || !reflect.DeepEqual(old.AccessLogPath, new.AccessLogPath) || old.PreserveHost != new.PreserveHost {
+	if old.AccessLogPathMode != new.AccessLogPathMode || !reflect.DeepEqual(old.AccessLogPath, new.AccessLogPath) || old.GuestGate != new.GuestGate || old.PreserveHost != new.PreserveHost {
 		return true
 	}
 	if old.Port != new.Port || old.Ephemeral != new.Ephemeral || old.Funnel != new.Funnel || old.PublicAck != new.PublicAck || old.NoAutoProvision != new.NoAutoProvision {
@@ -1970,6 +1971,7 @@ func (s *Server) writeRuntimeSnapshotLocked(registryFingerprint string, complete
 	}
 	sort.Strings(names)
 
+	guestWarnings := s.guestCounterWarningsLocked()
 	states := make([]runtimesnapshot.ServiceState, 0, len(names))
 	for _, name := range names {
 		if failure, failed := s.serviceFailures[name]; failed {
@@ -1981,8 +1983,12 @@ func (s *Server) writeRuntimeSnapshotLocked(registryFingerprint string, complete
 		if node.tsnetSrv != nil {
 			certDomains = node.tsnetSrv.CertDomains()
 		}
+		warnings := node.limitWarnings.snapshot()
+		if warning, ok := guestWarnings[name]; ok {
+			warnings = append(warnings, warning)
+		}
 		states = append(states, runtimesnapshot.ServiceState{
-			Warnings:     node.limitWarnings.snapshot(),
+			Warnings:     warnings,
 			Service:      node.service,
 			NodeID:       node.nodeID,
 			RuntimeHost:  node.runtimeHost,
@@ -2025,6 +2031,7 @@ func (s *Server) writeRuntimeSnapshotLocked(registryFingerprint string, complete
 		slog.Warn("runtime snapshot write failed; continuing with running services", "path", path, "error", err)
 	} else {
 		s.runtimeSnapshotDirty = false
+		s.lastGuestCounterWarnings = guestWarnings
 		if snapshot.AccessLog != nil {
 			s.lastAccessHealth = *snapshot.AccessLog
 		}
@@ -2389,6 +2396,9 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service, prov
 		return fmt.Errorf("unknown service type %q", svc.Type)
 	}
 
+	var guestPrivate http.Handler
+	var guestPath string
+
 	// ACL middleware: enforce per-service access control
 	if len(svc.AllowedUsers) > 0 && !svc.PeopleScoped {
 		if lc == nil {
@@ -2399,12 +2409,17 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service, prov
 			}
 		}
 	}
-	if !svc.Funnel {
+	if !svc.Funnel || svc.GuestGate {
 		peoplePath, err := registryPathFn()
 		if err != nil {
 			return err
 		}
-		handler = peopleMiddleware(peoplePath, svc, tsnetSrv.LocalClient, serverNowFn)(handler)
+		if svc.GuestGate {
+			guestPrivate = peopleMiddleware(peoplePath, svc, tsnetSrv.LocalClient, serverNowFn)(handler)
+			guestPath = peoplePath
+		} else {
+			handler = peopleMiddleware(peoplePath, svc, tsnetSrv.LocalClient, serverNowFn)(handler)
+		}
 	}
 
 	if identity == nil {
@@ -2435,7 +2450,14 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service, prov
 			}
 		}
 	}
-	handler = AccessEventMiddleware(svc, s.accessOptions, s.accessWriter, identity, serverNowFn, RequestLimitsMiddleware(svc, reportLimit, handler))
+	limitedHandler := RequestLimitsMiddleware(svc, reportLimit, handler)
+	if svc.GuestGate {
+		handler = newGuestGate(guestPath, svc, serverNowFn, s.accessWriter, RequestLimitsMiddleware(svc, reportLimit, guestPrivate), limitedHandler)
+		handlerCloser = handler.(*guestGate)
+	} else {
+		handler = limitedHandler
+	}
+	handler = AccessEventMiddleware(svc, s.accessOptions, s.accessWriter, identity, serverNowFn, handler)
 
 	var ln net.Listener
 	funnelListenerActive := false
@@ -2771,6 +2793,11 @@ func (s *Server) stopNodeLocked(name string) {
 	}
 
 	node.cancel()
+	if gate, ok := node.handlerCloser.(*guestGate); ok {
+		if err := gate.Close(); err != nil {
+			slog.Warn("guest counters flush failed", "name", name, "error", err)
+		}
+	}
 	if node.httpSrv != nil {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), httpShutdownTimeout)
 		if err := shutdownHTTPServerFn(shutdownCtx, node.httpSrv); err != nil {

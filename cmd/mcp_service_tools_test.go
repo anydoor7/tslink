@@ -244,6 +244,11 @@ var mcpCoveredCommands = map[string]mcpCoveredCommand{
 		"health-path": "health", "health-body": "health", "health-status-min": "health", "health-status-max": "health", "health-timeout": "health", "health-interval": "health",
 		"max-request-body": "request_limits", "ack-unlimited-request-body": "request_limits", "request-header-timeout": "request_limits", "request-read-timeout": "request_limits", "idle-timeout": "request_limits",
 		"preserve-host": "preserve_host", "name": "name", "proxy": "target", "allow": "allow", "tags": "tags", "ephemeral": "ephemeral", "funnel": "funnel", "public": "public_ack", "funnel-ttl": "funnel_ttl", "no-auto-provision": "no_auto_provision", "no-daemon-install": "no_daemon_install", "control-url": "control_url", "force-unsafe-public": "force_unsafe_public"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion, "dry-run": "recipe_plan is the preview action", "yes": "recipe_apply is the write action"}},
+
+	"tslink guest create": {Tools: []string{"guest_create"}, Args: []string{"app"}, Flags: map[string]string{"for": "for", "label": "label", "pin": "pin", "public": "public", "print-link": "print_link"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
+	"tslink guest list":   {Tools: []string{"guest_list"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
+	"tslink guest show":   {Tools: []string{"guest_show"}, Args: []string{"id"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
+	"tslink guest revoke": {Tools: []string{"guest_revoke"}, Args: []string{"id"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
 	"tslink template list": {
 		Tools:         []string{"template_list"},
 		ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion},
@@ -268,6 +273,7 @@ var mcpCoveredCommands = map[string]mcpCoveredCommand{
 var mcpUncoveredCommands = map[string]string{
 	"tslink access path":        "Changes per-app path privacy settings; owner CLI only.",
 	"tslink portal":             "command group; leaf actions have corresponding tools",
+	"tslink guest":              "command group; all guest leaves are covered",
 	"tslink people":             "command group; all four leaves are covered",
 	"tslink":                    "the root command carries only the global --json flag and runs no action of its own",
 	"tslink apps":               "command group; list, detect and share are covered",

@@ -201,3 +201,11 @@ Scoped people grants require an existing person (`mcp_person_owner_required`: as
 When MCP tools bootstrap a daemon, session expiry or cancellation blocks later definition writes and manager commands. Manager subprocesses inherit cancellation; bounded installation restoration and cleanup may continue. Reading legacy audit `who`/`scope` preserves them as `principal`/`role`.
 
 MCP shared reads (`status`, `health`, `doctor`, `list`, `url`, share/add polling and owner event snapshots) pass the caller context to supervision queries. Cancellation interrupts an in-flight manager query; expired sessions cannot start another query. Setup inspection failures without an MCP session retain `daemon_setup_failed`, including a cancelled command context; MCP denials use `mcp_scope_denied`.
+
+## Browser guest links
+
+`tslink guest create <app> --for <lifetime> [--label "Aunt May"] [--pin] [--public] [--print-link] [--json]` creates a finite one-app browser grant. First enabling the mandatory Funnel gate requires `--public`; existing open Funnel must first be disabled. PIN comes from hidden terminal input or stdin. Only `--print-link` discloses the bearer URL; it needs a current exact node URL. `guest list`, `guest show <id>` and `guest revoke <id>` never return token hashes or tokens. MCP owner-only tools: `guest_create`, `guest_list`, `guest_show`, `guest_revoke`. See [guest links](guest-links.md) for stable fields, migration, cookies, PIN limits and comparison with people grants.
+
+Human guest list/show/revoke output includes label, app, local expiry with named zone and relative time, status and uses. Revoke confirms the ID; sendable create messages include a readable expiry. JSON is unchanged.
+
+Guest counter persistence errors, including lock preparation and acquisition failures, appear in daemon logs and service warnings as `guest_counters_persistence_failed` in `status` / `status urls --json`. A post-replacement directory-sync failure leaves visible counts acknowledged and durability unconfirmed; the batch is not applied again. A later successful registry write clears the warning.

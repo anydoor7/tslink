@@ -111,6 +111,11 @@ var e2eExecutableSafeCommands = map[string]struct{}{
 	"tslink portal":         {}, // Group help; no listener or network action.
 	"tslink portal enable":  {}, // Missing owner is refused before mutation.
 	"tslink portal disable": {}, // Local isolated registry update only; never starts a node.
+	"tslink guest":          {}, // Bare invocation renders group help.
+	"tslink guest create":   {}, // ExactArgs stops before writes or URL lookup.
+	"tslink guest list":     {}, // Local registry read only.
+	"tslink guest show":     {}, // ExactArgs stops before local reads.
+	"tslink guest revoke":   {}, // ExactArgs stops before local writes.
 	// (a) Command groups. RunE is runCommandGroup: it prints help and exits 0.
 	// No leaf command body runs.
 	"tslink":            {},
