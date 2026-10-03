@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -27,7 +28,7 @@ func TestNotifierCommandCancellation(t *testing.T) {
 		done <- Notify(ctx, NotifierConfig{Command: []string{os.Args[0], "-test.run=^TestNotifierCommandCancellation$"}}, Event{Kind: "app_down"})
 	}()
 	t.Cleanup(func() { cancel() })
-	deadline := time.After(3 * time.Second)
+	deadline := time.After(5 * time.Second)
 	for {
 		if _, err := os.Stat(ready); err == nil {
 			break
@@ -44,7 +45,7 @@ func TestNotifierCommandCancellation(t *testing.T) {
 		if err == nil || err.Error() != "alert_command_failed" {
 			t.Fatal("cancellation counted as success", err)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("canceled command did not return")
 	}
 }
@@ -63,7 +64,7 @@ func TestDeliveryQueueBoundDedupAndShutdown(t *testing.T) {
 	r.Commit(context.Background(), []Event{{Kind: "app_down", Service: "app"}}, now)
 	select {
 	case <-started:
-	case <-time.After(time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("no worker")
 	}
 	// The in-flight delivery must not hold Commit or grow an unbounded queue.
@@ -100,7 +101,7 @@ func TestDeliveryCompletionUsesEventIDAndPersists(t *testing.T) {
 	select {
 	case result := <-r.DeliveryReady():
 		r.CompleteDelivery(result)
-	case <-time.After(time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("no completion")
 	}
 	if got := NewRecorder(r.Path, r.Config).State.Events[0].Delivery; got != "sent" {
@@ -114,30 +115,51 @@ func TestDeliveryCompletionUsesEventIDAndPersists(t *testing.T) {
 }
 
 func TestDeliveryShutdownBoundWithUninterruptibleSend(t *testing.T) {
-	r := NewRecorder(filepath.Join(t.TempDir(), StateFile), NotifierConfig{Command: []string{"/private/notifier"}})
-	started, release := make(chan struct{}), make(chan struct{})
-	var releaseOnce sync.Once
-	finish := func() { releaseOnce.Do(func() { close(release) }) }
-	r.Send = func(context.Context, NotifierConfig, Event) error { close(started); <-release; return nil }
-	r.StartDelivery(context.Background())
-	w := r.delivery
-	r.Commit(context.Background(), []Event{{Kind: "app_down"}}, time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC))
-	<-started
-	done := make(chan struct{})
-	go func() { r.StopDelivery(); close(done) }()
-	t.Cleanup(func() { finish(); <-w.done; <-done })
-	select {
-	case <-done:
-	case <-time.After(1500 * time.Millisecond):
-		t.Fatal("uninterruptible send blocked shutdown")
-	}
-	if r.State.Events[0].Delivery != "failed" {
-		t.Fatal(r.State.Events)
-	}
-	// The late successful return has no recorder access and cannot undo failure.
-	finish()
-	<-w.done
-	if r.State.Events[0].Delivery != "failed" {
-		t.Fatal("late return overwrote cancellation", r.State.Events)
-	}
+	dir := t.TempDir()
+	// Virtual time pins the product's one-second join bound exactly, without a
+	// wall-clock budget that slow CI runners can exceed.
+	synctest.Test(t, func(t *testing.T) {
+		r := NewRecorder(filepath.Join(dir, StateFile), NotifierConfig{Command: []string{"/private/notifier"}})
+		started, release := make(chan struct{}), make(chan struct{})
+		var releaseOnce sync.Once
+		finish := func() { releaseOnce.Do(func() { close(release) }) }
+		r.Send = func(context.Context, NotifierConfig, Event) error { close(started); <-release; return nil }
+		r.StartDelivery(context.Background())
+		w := r.delivery
+		r.Commit(context.Background(), []Event{{Kind: "app_down"}}, time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC))
+		<-started
+		begin := time.Now()
+		done := make(chan struct{})
+		go func() { r.StopDelivery(); close(done) }()
+		synctest.Wait()
+		select {
+		case <-done:
+			finish()
+			<-w.done
+			t.Fatal("shutdown returned before the join bound while the send was still blocked")
+		default:
+		}
+		time.Sleep(time.Second)
+		synctest.Wait()
+		select {
+		case <-done:
+		default:
+			finish()
+			<-w.done
+			<-done
+			t.Fatal("uninterruptible send blocked shutdown past its one-second bound")
+		}
+		if got := time.Since(begin); got != time.Second {
+			t.Fatalf("shutdown bound = %v, want exactly 1s", got)
+		}
+		if r.State.Events[0].Delivery != "failed" {
+			t.Fatal(r.State.Events)
+		}
+		// The late successful return has no recorder access and cannot undo failure.
+		finish()
+		<-w.done
+		if r.State.Events[0].Delivery != "failed" {
+			t.Fatal("late return overwrote cancellation", r.State.Events)
+		}
+	})
 }

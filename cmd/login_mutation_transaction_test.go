@@ -33,7 +33,7 @@ func TestLoginRollbackCannotOverwriteConcurrentCredentialWriter(t *testing.T) {
 	}()
 	select {
 	case <-metadataReached:
-	case <-time.After(3 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("login did not reach the metadata failure boundary")
 	}
 	writerDone := make(chan error, 1)
@@ -53,7 +53,7 @@ func TestLoginRollbackCannotOverwriteConcurrentCredentialWriter(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "synthetic metadata write failure") {
 			t.Fatalf("login did not fail through the intended rollback path: %v", err)
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("login rollback did not finish")
 	}
 	select {
@@ -61,7 +61,7 @@ func TestLoginRollbackCannotOverwriteConcurrentCredentialWriter(t *testing.T) {
 		if err != nil {
 			t.Fatalf("concurrent credential writer failed after rollback: %v", err)
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("concurrent credential writer remained blocked")
 	}
 	stored, err := credentials.GetAPIKey()

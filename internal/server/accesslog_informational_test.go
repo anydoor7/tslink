@@ -69,7 +69,7 @@ func TestAccessLogProxyInformationalThenFinalStatus(t *testing.T) {
 			// for HEAD and 204. Wait for this request's handler to finish.
 			select {
 			case <-completed:
-			case <-time.After(3 * time.Second):
+			case <-time.After(5 * time.Second):
 				t.Fatal("request handler did not finish")
 			}
 			if resp.StatusCode != tc.wantStatus || string(body) != tc.wantBody {

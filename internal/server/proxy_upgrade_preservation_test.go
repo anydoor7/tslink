@@ -46,7 +46,7 @@ func TestAccessLogProxyPreservesUpgradeTunnel(t *testing.T) {
 		chain.ServeHTTP(w, r)
 	}))
 	t.Cleanup(front.Close)
-	conn, err := net.DialTimeout("tcp", strings.TrimPrefix(front.URL, "http://"), time.Second)
+	conn, err := net.DialTimeout("tcp", strings.TrimPrefix(front.URL, "http://"), 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,11 +56,11 @@ func TestAccessLogProxyPreservesUpgradeTunnel(t *testing.T) {
 		// before another test can replace the process-wide logger.
 		select {
 		case <-done:
-		case <-time.After(3 * time.Second):
+		case <-time.After(5 * time.Second):
 			t.Error("upgrade handler did not finish after connection close")
 		}
 	})
-	if err := conn.SetDeadline(time.Now().Add(3 * time.Second)); err != nil {
+	if err := conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	_, _ = fmt.Fprint(conn, "GET / HTTP/1.1\r\nHost: example.test\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n")

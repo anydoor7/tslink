@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/anydoor7/tslink/internal/registry"
@@ -47,24 +48,32 @@ func registerRemovableService(t *testing.T) (regPath, ownershipPath string) {
 }
 
 func TestRemoveDeviceCleanupStopsWhenItsContextIsCancelled(t *testing.T) {
-	regPath, ownershipPath := registerRemovableService(t)
-	started, _ := blockingDeleteDevices(t)
-	ctx, cancel := context.WithCancel(context.Background())
-	go func() {
-		<-started
-		cancel()
-	}()
-	begin := time.Now()
-	result, err := removeServiceResultContext(ctx, regPath, ownershipPath, "web")
-	if err != nil {
-		t.Fatalf("remove error = %v", err)
-	}
-	if took := time.Since(begin); took > 2*time.Second {
-		t.Fatalf("device cleanup ran %v after its context was cancelled", took)
-	}
-	if !result.Removed || !strings.Contains(result.DeviceWarning, context.Canceled.Error()) {
-		t.Fatalf("result = %+v, want the service removed and the cancelled cleanup reported", result)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		regPath, ownershipPath := registerRemovableService(t)
+		started, cancelled := blockingDeleteDevices(t)
+		ctx, cancel := context.WithCancel(context.Background())
+		go func() {
+			<-started
+			cancel()
+		}()
+		begin := time.Now()
+		result, err := removeServiceResultContext(ctx, regPath, ownershipPath, "web")
+		if err != nil {
+			t.Fatalf("remove error = %v", err)
+		}
+		select {
+		case <-cancelled:
+		default:
+			t.Fatal("cleanup did not observe request cancellation")
+		}
+		if time.Since(begin) != 0 {
+			t.Fatal("cleanup waited after cancellation")
+		}
+
+		if !result.Removed || !strings.Contains(result.DeviceWarning, context.Canceled.Error()) {
+			t.Fatalf("result = %+v, want the service removed and the cancelled cleanup reported", result)
+		}
+	})
 }
 
 // The MCP unshare tool must hand the request's context to device cleanup, so
@@ -92,7 +101,7 @@ func TestMCPUnshareDeviceCleanupSeesSessionCancellation(t *testing.T) {
 		cancel()
 		select {
 		case <-cancelled:
-		case <-time.After(2 * time.Second):
+		case <-time.After(5 * time.Second):
 			t.Fatal("device cleanup did not see the session's cancellation")
 		}
 		if err := <-done; !errors.Is(err, context.Canceled) {

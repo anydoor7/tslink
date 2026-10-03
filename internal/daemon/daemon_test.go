@@ -352,7 +352,7 @@ func TestWithPIDLockSerializes(t *testing.T) {
 
 	select {
 	case <-firstEntered:
-	case <-time.After(2 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("first lock holder did not enter")
 	}
 
@@ -377,7 +377,7 @@ func TestWithPIDLockSerializes(t *testing.T) {
 	}
 	select {
 	case <-secondEntered:
-	case <-time.After(2 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("second lock holder did not enter after release")
 	}
 	if err := <-secondDone; err != nil {

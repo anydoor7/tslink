@@ -1275,13 +1275,13 @@ func TestMCPCancelInterruptsActiveTool(t *testing.T) {
 			}()
 			select {
 			case <-started:
-			case <-time.After(3 * time.Second):
+			case <-time.After(5 * time.Second):
 				t.Fatal("tool was not dispatched")
 			}
 			cancel()
 			select {
 			case <-stopped:
-			case <-time.After(time.Second):
+			case <-time.After(5 * time.Second):
 				t.Fatal("context-aware tool kept running after caller cancellation")
 			}
 			select {
@@ -1289,7 +1289,7 @@ func TestMCPCancelInterruptsActiveTool(t *testing.T) {
 				if !errors.Is(err, context.Canceled) {
 					t.Fatalf("session cancellation error = %v", err)
 				}
-			case <-time.After(time.Second):
+			case <-time.After(5 * time.Second):
 				t.Fatal("MCP session did not return after cancellation")
 			}
 		})
@@ -1313,7 +1313,7 @@ func TestMCPFiniteEOFBoundaryCases(t *testing.T) {
 		{"duplicate request ID", `{"jsonrpc":"2.0","id":7,"method":"ping"}` + "\n" + `{"jsonrpc":"2.0","id":7,"method":"ping"}` + "\n", 7, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			var stdout bytes.Buffer
 			err := runMCPStdio(ctx, strings.NewReader(tc.input), &stdout, fakeMCPActions())

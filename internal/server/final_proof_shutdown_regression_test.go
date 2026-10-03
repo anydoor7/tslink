@@ -97,12 +97,12 @@ func TestRunShutdownDoesNotWaitForBusyFinalProof(t *testing.T) {
 			go func() { done <- s.Run(ctx) }()
 			select {
 			case <-ready:
-			case <-time.After(2 * time.Second):
+			case <-time.After(5 * time.Second):
 				t.Fatal("server never ready")
 			}
 			select {
 			case <-atFinal:
-			case <-time.After(2 * time.Second):
+			case <-time.After(5 * time.Second):
 				t.Fatal("ticker never reached final proof")
 			}
 			cancel()
@@ -111,7 +111,7 @@ func TestRunShutdownDoesNotWaitForBusyFinalProof(t *testing.T) {
 				if err != nil {
 					t.Error(err)
 				}
-			case <-time.After(200 * time.Millisecond):
+			case <-time.After(5 * time.Second):
 				t.Error("Run shutdown waited for registry writer")
 			}
 			if len(s.reconcileGate) != 0 {

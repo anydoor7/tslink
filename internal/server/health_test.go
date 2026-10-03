@@ -103,7 +103,7 @@ func TestHealthMonitorCapturesClockAndFunctionsBeforeSpawning(t *testing.T) {
 	serverNowFn = func() time.Time { panic("uncaptured clock") }
 	healthProbeFn = func(context.Context, registry.Service) string { panic("uncaptured probe") }
 	healthCredentialInventoryFn = func(time.Time) credentials.Inventory { panic("uncaptured credentials") }
-	deadline := time.After(3 * time.Second)
+	deadline := time.After(5 * time.Second)
 	for {
 		snapshot, err := tsruntime.Load(filepath.Join(dir, "runtime.json"))
 		if err == nil && len(snapshot.Services) > 0 && snapshot.Services[0].Health.LastChecked != nil {
@@ -172,7 +172,7 @@ func TestHealthTransitionsArriveOnEventsStream(t *testing.T) {
 	s.writeRuntimeSnapshotLocked("health-fixture", true)
 	s.mu.Unlock()
 	srv := mcpEventsTestServer(t, s.events, func(context.Context) (any, error) { return tsruntime.Load(filepath.Join(dir, "runtime.json")) })
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+MCPEventsPath, nil)
 	if err != nil {
@@ -235,7 +235,7 @@ func TestHealthMonitorCredentialExpiryAndInvalidNotifier(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := s.startHealthMonitor(ctx)
 	t.Cleanup(func() { cancel(); <-done })
-	deadline := time.After(3 * time.Second)
+	deadline := time.After(5 * time.Second)
 	for {
 		s.mu.RLock()
 		alerts := s.alerts

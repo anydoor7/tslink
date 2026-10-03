@@ -242,9 +242,13 @@ func TestDetectionTimeoutAndBodyBound(t *testing.T) {
 	}
 	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { <-r.Context().Done() }))
 	defer slow.Close()
-	start := time.Now()
-	got = detectListeners(context.Background(), []Listener{listenerFor(t, slow)}, nil)
-	if len(got.Matches) != 0 || time.Since(start) > 2*time.Second {
+	if got := probeClient().Timeout; got != 700*time.Millisecond {
+		t.Fatalf("probe request timeout = %s, want 700ms", got)
+	}
+	parent, stop := context.WithTimeout(context.Background(), 5*time.Second)
+	defer stop()
+	got = detectListeners(parent, []Listener{listenerFor(t, slow)}, nil)
+	if len(got.Matches) != 0 || !got.Complete || parent.Err() != nil {
 		t.Fatalf("short timeout failed: %v", got)
 	}
 	// A known closed numeric loopback port proves connection failure is tolerated.
@@ -318,7 +322,7 @@ func TestOSInventoryFindsFixture(t *testing.T) {
 	}
 	defer listener.Close()
 	port := listener.Addr().(*net.TCPAddr).Port
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	got, err := listeningTCP(ctx)
 	if err != nil {

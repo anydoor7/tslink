@@ -77,7 +77,7 @@ func TestRepairFailedInstallRollbackCannotUndoPeer(t *testing.T) {
 	go func() { first <- repairOperation(context.Background(), "install") }()
 	select {
 	case <-entered:
-	case <-time.After(time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("rollback never entered")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)

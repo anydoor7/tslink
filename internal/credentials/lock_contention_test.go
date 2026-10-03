@@ -57,7 +57,7 @@ func holdCredentialTransaction(t *testing.T) {
 	}()
 	select {
 	case <-held:
-	case <-time.After(3 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("holder transaction never acquired the credential lock")
 	}
 	t.Cleanup(func() {

@@ -75,7 +75,7 @@ func TestLifecycleTickerRetriesPolicyBlockedPublicServiceAfterOutage(t *testing.
 	t.Cleanup(func() { lifecycleTickerInterval = oldInterval })
 	ctx, cancel := context.WithCancel(context.Background())
 	done := s.startLifecycleTicker(ctx)
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(5 * time.Second)
 	for constructs.Load() == 0 && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
 	}

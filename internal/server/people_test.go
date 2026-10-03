@@ -176,7 +176,7 @@ func TestPeopleLifecycleTickExpiresDurably(t *testing.T) {
 	t.Cleanup(func() { cancel(); <-done })
 	select {
 	case <-tickCompleted:
-	case <-time.After(time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("tick did not complete")
 	}
 	// Join the writer before checking durability, including on test failure.

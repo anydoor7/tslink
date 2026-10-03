@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/anydoor7/tslink/internal/output"
@@ -553,108 +554,122 @@ func TestLinuxInstallDoesNotClaimSuccessWhenServiceDiesDuringSettlement(t *testi
 
 func TestVerifySystemdServiceRunningSettlement(t *testing.T) {
 	t.Run("main pid drift fails", func(t *testing.T) {
-		calls := stubSystemdStateSequence(t,
-			[]byte("ActiveState=active\nSubState=running\nMainPID=100\nNRestarts=0\n"),
-			[]byte("ActiveState=active\nSubState=running\nMainPID=200\nNRestarts=0\n"),
-		)
-		_, err := verifySystemdServiceRunning()
-		if err == nil || !strings.Contains(err.Error(), `MainPID="200"`) {
-			t.Fatalf("verify error = %v, want PID drift failure with last observation", err)
-		}
-		if *calls < 2 {
-			t.Fatalf("verify show calls = %d, want at least 2", *calls)
-		}
+		synctest.Test(t, func(t *testing.T) {
+			calls := stubSystemdStateSequence(t,
+				[]byte("ActiveState=active\nSubState=running\nMainPID=100\nNRestarts=0\n"),
+				[]byte("ActiveState=active\nSubState=running\nMainPID=200\nNRestarts=0\n"),
+			)
+			_, err := verifySystemdServiceRunning()
+			if err == nil || !strings.Contains(err.Error(), `MainPID="200"`) {
+				t.Fatalf("verify error = %v, want PID drift failure with last observation", err)
+			}
+			if *calls < 2 {
+				t.Fatalf("verify show calls = %d, want at least 2", *calls)
+			}
+		})
 	})
 
 	t.Run("nrestarts increase fails with reset guidance", func(t *testing.T) {
-		stubSystemdStateSequence(t,
-			[]byte("ActiveState=active\nSubState=running\nMainPID=100\nNRestarts=0\n"),
-			[]byte("ActiveState=active\nSubState=running\nMainPID=100\nNRestarts=1\n"),
-		)
-		_, err := verifySystemdServiceRunning()
-		if err == nil || !strings.Contains(err.Error(), `NRestarts="1"`) || !strings.Contains(err.Error(), "systemctl --user reset-failed tslink.service") {
-			t.Fatalf("verify error = %v, want restart growth failure with reset-failed guidance", err)
-		}
+		synctest.Test(t, func(t *testing.T) {
+			stubSystemdStateSequence(t,
+				[]byte("ActiveState=active\nSubState=running\nMainPID=100\nNRestarts=0\n"),
+				[]byte("ActiveState=active\nSubState=running\nMainPID=100\nNRestarts=1\n"),
+			)
+			_, err := verifySystemdServiceRunning()
+			if err == nil || !strings.Contains(err.Error(), `NRestarts="1"`) || !strings.Contains(err.Error(), "systemctl --user reset-failed tslink.service") {
+				t.Fatalf("verify error = %v, want restart growth failure with reset-failed guidance", err)
+			}
+		})
 	})
 
 	t.Run("two stable healthy samples succeed after one interval", func(t *testing.T) {
-		calls := stubSystemdStateSequence(t, runningSystemdState(), runningSystemdState())
-		started := time.Now()
-		degraded, err := verifySystemdServiceRunning()
-		if err != nil {
-			t.Fatalf("verify error = %v, want stable success", err)
-		}
-		if degraded {
-			t.Fatalf("verify reported degraded = true, want false when NRestarts is present")
-		}
-		elapsed := time.Since(started)
-		if *calls != 2 {
-			t.Fatalf("verify show calls = %d, want 2", *calls)
-		}
-		if elapsed < systemdSettleInterval || elapsed >= systemdSettleTimeout {
-			t.Fatalf("verify elapsed = %v, want one interval (%v) and less than timeout (%v)", elapsed, systemdSettleInterval, systemdSettleTimeout)
-		}
+		synctest.Test(t, func(t *testing.T) {
+			calls := stubSystemdStateSequence(t, runningSystemdState(), runningSystemdState())
+			started := time.Now()
+			degraded, err := verifySystemdServiceRunning()
+			if err != nil {
+				t.Fatalf("verify error = %v, want stable success", err)
+			}
+			if degraded {
+				t.Fatalf("verify reported degraded = true, want false when NRestarts is present")
+			}
+			elapsed := time.Since(started)
+			if *calls != 2 {
+				t.Fatalf("verify show calls = %d, want 2", *calls)
+			}
+			if elapsed != systemdSettleInterval {
+				t.Fatalf("verify elapsed = %v, want one interval (%v) and less than timeout (%v)", elapsed, systemdSettleInterval, systemdSettleTimeout)
+			}
+		})
 	})
 
 	t.Run("initial auto-restart fails immediately", func(t *testing.T) {
-		calls := stubSystemdStateSequence(t, []byte("ActiveState=activating\nSubState=auto-restart\nMainPID=0\nNRestarts=1\n"))
-		_, err := verifySystemdServiceRunning()
-		if err == nil || !strings.Contains(err.Error(), "auto-restart") {
-			t.Fatalf("verify error = %v, want auto-restart failure", err)
-		}
-		if *calls != 1 {
-			t.Fatalf("verify show calls = %d, want immediate single-sample failure", *calls)
-		}
+		synctest.Test(t, func(t *testing.T) {
+			calls := stubSystemdStateSequence(t, []byte("ActiveState=activating\nSubState=auto-restart\nMainPID=0\nNRestarts=1\n"))
+			_, err := verifySystemdServiceRunning()
+			if err == nil || !strings.Contains(err.Error(), "auto-restart") {
+				t.Fatalf("verify error = %v, want auto-restart failure", err)
+			}
+			if *calls != 1 {
+				t.Fatalf("verify show calls = %d, want immediate single-sample failure", *calls)
+			}
+		})
 	})
 
 	t.Run("initial failed state fails immediately", func(t *testing.T) {
-		calls := stubSystemdStateSequence(t, []byte("ActiveState=failed\nSubState=failed\nMainPID=0\nNRestarts=5\n"))
-		_, err := verifySystemdServiceRunning()
-		if err == nil || !strings.Contains(err.Error(), `ActiveState="failed"`) || !strings.Contains(err.Error(), "systemctl --user reset-failed tslink.service") {
-			t.Fatalf("verify error = %v, want failed-state error with reset-failed guidance", err)
-		}
-		if *calls != 1 {
-			t.Fatalf("verify show calls = %d, want immediate single-sample failure", *calls)
-		}
+		synctest.Test(t, func(t *testing.T) {
+			calls := stubSystemdStateSequence(t, []byte("ActiveState=failed\nSubState=failed\nMainPID=0\nNRestarts=5\n"))
+			_, err := verifySystemdServiceRunning()
+			if err == nil || !strings.Contains(err.Error(), `ActiveState="failed"`) || !strings.Contains(err.Error(), "systemctl --user reset-failed tslink.service") {
+				t.Fatalf("verify error = %v, want failed-state error with reset-failed guidance", err)
+			}
+			if *calls != 1 {
+				t.Fatalf("verify show calls = %d, want immediate single-sample failure", *calls)
+			}
+		})
 	})
 
 	t.Run("activating throughout times out with last observation", func(t *testing.T) {
-		calls := stubSystemdStateSequence(t,
-			[]byte("ActiveState=activating\nSubState=start\nMainPID=0\nNRestarts=3\n"),
-			[]byte("ActiveState=activating\nSubState=start-post\nMainPID=321\nNRestarts=3\n"),
-		)
-		_, err := verifySystemdServiceRunning()
-		for _, want := range []string{`ActiveState="activating"`, `SubState="start-post"`, `MainPID="321"`, `NRestarts="3"`} {
-			if err == nil || !strings.Contains(err.Error(), want) {
-				t.Fatalf("verify error = %v, want timeout containing %s", err, want)
+		synctest.Test(t, func(t *testing.T) {
+			calls := stubSystemdStateSequence(t,
+				[]byte("ActiveState=activating\nSubState=start\nMainPID=0\nNRestarts=3\n"),
+				[]byte("ActiveState=activating\nSubState=start-post\nMainPID=321\nNRestarts=3\n"),
+			)
+			_, err := verifySystemdServiceRunning()
+			for _, want := range []string{`ActiveState="activating"`, `SubState="start-post"`, `MainPID="321"`, `NRestarts="3"`} {
+				if err == nil || !strings.Contains(err.Error(), want) {
+					t.Fatalf("verify error = %v, want timeout containing %s", err, want)
+				}
 			}
-		}
-		if *calls < 2 {
-			t.Fatalf("verify show calls = %d, want multiple samples through timeout", *calls)
-		}
+			if *calls < 2 {
+				t.Fatalf("verify show calls = %d, want multiple samples through timeout", *calls)
+			}
+		})
 	})
 
 	t.Run("missing nrestarts degrades to healthy state checks", func(t *testing.T) {
-		calls := stubSystemdStateSequence(t,
-			[]byte("ActiveState=active\nSubState=running\nMainPID=100\n"),
-			[]byte("ActiveState=active\nSubState=running\nMainPID=100\n"),
-		)
-		degraded, err := verifySystemdServiceRunning()
-		if err != nil {
-			t.Fatalf("verify error = %v, want success without NRestarts", err)
-		}
-		// Degrading is correct; degrading silently is not. The success path is the
-		// only one where the operator would otherwise never learn that one of the
-		// four criteria was unavailable.
-		if !degraded {
-			t.Fatalf("verify reported degraded = false, want true so the caller can warn")
-		}
-		if systemdVerifyDegradedWarning(degraded) == "" {
-			t.Fatalf("degraded verification produced no operator-visible warning")
-		}
-		if *calls != 2 {
-			t.Fatalf("verify show calls = %d, want 2", *calls)
-		}
+		synctest.Test(t, func(t *testing.T) {
+			calls := stubSystemdStateSequence(t,
+				[]byte("ActiveState=active\nSubState=running\nMainPID=100\n"),
+				[]byte("ActiveState=active\nSubState=running\nMainPID=100\n"),
+			)
+			degraded, err := verifySystemdServiceRunning()
+			if err != nil {
+				t.Fatalf("verify error = %v, want success without NRestarts", err)
+			}
+			// Degrading is correct; degrading silently is not. The success path is the
+			// only one where the operator would otherwise never learn that one of the
+			// four criteria was unavailable.
+			if !degraded {
+				t.Fatalf("verify reported degraded = false, want true so the caller can warn")
+			}
+			if systemdVerifyDegradedWarning(degraded) == "" {
+				t.Fatalf("degraded verification produced no operator-visible warning")
+			}
+			if *calls != 2 {
+				t.Fatalf("verify show calls = %d, want 2", *calls)
+			}
+		})
 	})
 
 	// The state real systemd was actually observed in during the crash loop that
@@ -663,30 +678,34 @@ func TestVerifySystemdServiceRunningSettlement(t *testing.T) {
 	// `failed || nRestartsIncreased`, so this exact state -- the only one that has
 	// ever occurred in practice -- was the one that got no recovery step.
 	t.Run("observed crash-loop shape carries reset-failed guidance", func(t *testing.T) {
-		stubSystemdStateSequence(t, []byte("ActiveState=activating\nSubState=auto-restart\nMainPID=0\nNRestarts=0\n"))
-		_, err := verifySystemdServiceRunning()
-		if err == nil {
-			t.Fatalf("verify error = nil, want auto-restart failure")
-		}
-		for _, want := range []string{`SubState="auto-restart"`, `NRestarts="0"`, "systemctl --user reset-failed tslink.service"} {
-			if !strings.Contains(err.Error(), want) {
-				t.Fatalf("verify error = %v, want it to contain %s", err, want)
+		synctest.Test(t, func(t *testing.T) {
+			stubSystemdStateSequence(t, []byte("ActiveState=activating\nSubState=auto-restart\nMainPID=0\nNRestarts=0\n"))
+			_, err := verifySystemdServiceRunning()
+			if err == nil {
+				t.Fatalf("verify error = nil, want auto-restart failure")
 			}
-		}
+			for _, want := range []string{`SubState="auto-restart"`, `NRestarts="0"`, "systemctl --user reset-failed tslink.service"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("verify error = %v, want it to contain %s", err, want)
+				}
+			}
+		})
 	})
 
 	// MainPID drift means the unit restarted inside the window, which is on the
 	// same path to the start-limit lockout as a rising NRestarts, so it earns the
 	// same guidance.
 	t.Run("pid drift timeout carries reset-failed guidance", func(t *testing.T) {
-		stubSystemdStateSequence(t,
-			[]byte("ActiveState=active\nSubState=running\nMainPID=100\nNRestarts=0\n"),
-			[]byte("ActiveState=active\nSubState=running\nMainPID=200\nNRestarts=0\n"),
-		)
-		_, err := verifySystemdServiceRunning()
-		if err == nil || !strings.Contains(err.Error(), "systemctl --user reset-failed tslink.service") {
-			t.Fatalf("verify error = %v, want PID drift failure with reset-failed guidance", err)
-		}
+		synctest.Test(t, func(t *testing.T) {
+			stubSystemdStateSequence(t,
+				[]byte("ActiveState=active\nSubState=running\nMainPID=100\nNRestarts=0\n"),
+				[]byte("ActiveState=active\nSubState=running\nMainPID=200\nNRestarts=0\n"),
+			)
+			_, err := verifySystemdServiceRunning()
+			if err == nil || !strings.Contains(err.Error(), "systemctl --user reset-failed tslink.service") {
+				t.Fatalf("verify error = %v, want PID drift failure with reset-failed guidance", err)
+			}
+		})
 	})
 }
 

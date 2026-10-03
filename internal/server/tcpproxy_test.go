@@ -7,6 +7,7 @@ import (
 	"net"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/anydoor7/tslink/internal/registry"
@@ -93,7 +94,7 @@ func TestHandleTCPConn_Bidirectional(t *testing.T) {
 
 	select {
 	case <-done:
-	case <-time.After(2 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("handleTCPConn did not return")
 	}
 }
@@ -115,7 +116,7 @@ func TestServeTCP_ClosedListener(t *testing.T) {
 
 	select {
 	case <-done:
-	case <-time.After(2 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("serveTCP did not return for closed listener")
 	}
 }
@@ -140,7 +141,7 @@ func TestServeTCP_ForwardsToBackend(t *testing.T) {
 		_ = proxyLn.Close()
 		select {
 		case <-serveDone:
-		case <-time.After(2 * time.Second):
+		case <-time.After(5 * time.Second):
 			t.Error("serveTCP did not stop during cleanup")
 		}
 	})
@@ -174,7 +175,7 @@ func TestServeTCP_ForwardsToBackend(t *testing.T) {
 	}
 	select {
 	case <-serveDone:
-	case <-time.After(2 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("serveTCP did not wait for its connection handler")
 	}
 }
@@ -228,13 +229,13 @@ func TestStopNodeLocked_ClosesInFlightTCPConnection(t *testing.T) {
 	select {
 	case backendConn := <-backendAccepted:
 		defer backendConn.Close()
-	case <-time.After(2 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("backend did not receive in-flight proxy connection")
 	}
 
 	s.stopNodeLocked("db")
 
-	if err := clientConn.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+	if err := clientConn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
 		t.Fatalf("SetReadDeadline() error = %v", err)
 	}
 	if _, err := clientConn.Read(make([]byte, 1)); err == nil {
@@ -248,7 +249,7 @@ func TestStopNodeLocked_ClosesInFlightTCPConnection(t *testing.T) {
 
 	select {
 	case <-serveDone:
-	case <-time.After(2 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("serveTCP did not return after node stop")
 	}
 }
@@ -279,7 +280,7 @@ func TestServeTCP_NonFatalAcceptError(t *testing.T) {
 
 	select {
 	case <-done:
-	case <-time.After(3 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("serveTCP did not return")
 	}
 }
@@ -311,31 +312,41 @@ func (l *errorListener) Close() error {
 func (l *errorListener) Addr() net.Addr { return &net.TCPAddr{} }
 
 func TestServeTCP_AcceptError_NonClosed(t *testing.T) {
-	el := &errorListener{
-		errors: make(chan error, 1),
-		closed: make(chan struct{}),
-	}
+	synctest.Test(t, func(t *testing.T) {
+		el := &errorListener{
+			errors: make(chan error, 1),
+			closed: make(chan struct{}),
+		}
 
-	// Send a non-closed error; serveTCP should log it and continue.
-	el.errors <- errors.New("temporary accept failure")
+		// Send a non-closed error; serveTCP should log it and continue.
+		el.errors <- errors.New("temporary accept failure")
 
-	done := make(chan struct{})
-	go func() {
-		serveTCP(context.Background(), el, "127.0.0.1:1", "test-err")
-		close(done)
-	}()
+		done := make(chan struct{})
+		go func() {
+			serveTCP(context.Background(), el, "127.0.0.1:1", "test-err")
+			close(done)
+		}()
 
-	// Give serveTCP time to process the error and loop back to Accept.
-	time.Sleep(50 * time.Millisecond)
+		// Give serveTCP time to process the error and loop back to Accept.
+		synctest.Wait()
+		if len(el.errors) != 0 {
+			t.Fatal("serveTCP did not consume the accept error")
+		}
+		select {
+		case <-done:
+			t.Fatal("serveTCP returned on a temporary error")
+		default:
+		}
 
-	// Close the listener to stop the loop.
-	el.Close()
+		// Close the listener to stop the loop.
+		el.Close()
 
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("serveTCP did not return after closing errorListener")
-	}
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatal("serveTCP did not return after closing errorListener")
+		}
+	})
 }
 
 type deadlineRecordingConn struct {
@@ -427,7 +438,7 @@ func TestHandleTCPConn_DialsBackendWithTimeoutContext(t *testing.T) {
 
 	select {
 	case <-done:
-	case <-time.After(2 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("handleTCPConn did not return after dial error")
 	}
 	if !seenDeadline {

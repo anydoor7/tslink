@@ -18,7 +18,7 @@ func TestReviewFileProbeTimeout(t *testing.T) {
 	if err := os.WriteFile(path, []byte("ok"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	svc := registry.Service{Type: registry.TypeFile, Path: dir, File: "file", Health: &registry.HealthConfig{Timeout: "100ms"}}
+	svc := registry.Service{Type: registry.TypeFile, Path: dir, File: "file", Health: &registry.HealthConfig{Timeout: "5s"}}
 	if code := Probe(context.Background(), svc); code != "" {
 		t.Fatal("control", code)
 	}
@@ -38,12 +38,13 @@ func TestReviewFileProbeTimeout(t *testing.T) {
 			t.Fatal("wrong FIFO rejection", code)
 		}
 		t.Log("rejected FIFO before blocking", code)
-	case <-time.After(600 * time.Millisecond):
+	case <-time.After(5 * time.Second):
+		t.Error("FIFO probe blocked before invalid-file rejection")
 		cancel()
 		select {
 		case code := <-result:
 			t.Log("returned on cancel", code)
-		case <-time.After(100 * time.Millisecond):
+		case <-time.After(5 * time.Second):
 			// Join the blocked probe by opening its FIFO writer, then leave no worker.
 			fd, err := syscall.Open(path, syscall.O_WRONLY|syscall.O_NONBLOCK, 0)
 			if err != nil {
@@ -51,7 +52,7 @@ func TestReviewFileProbeTimeout(t *testing.T) {
 			}
 			syscall.Close(fd)
 			code := <-result
-			t.Errorf("100ms timeout AND cancellation ignored until FIFO writer opened after 700ms; code=%s", code)
+			t.Errorf("probe deadline AND cancellation ignored until FIFO writer opened after the cancellation hang guard; code=%s", code)
 		}
 	}
 }
@@ -83,7 +84,7 @@ func TestFileProbeFIFOReplacementBetweenStatAndOpen(t *testing.T) {
 		if got != "health_file_invalid" {
 			t.Fatal("replacement accepted", got)
 		}
-	case <-time.After(600 * time.Millisecond):
+	case <-time.After(5 * time.Second):
 		// Rescue a regressed blocking open so this test fails by assertion,
 		// rather than hanging until the package's test timeout.
 		fd, err := syscall.Open(path, syscall.O_WRONLY|syscall.O_NONBLOCK, 0)

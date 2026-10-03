@@ -102,15 +102,12 @@ func TestLoginLogoutAndLogoutKindCompleteWithoutLockTimeout(t *testing.T) {
 	dir := setupLoginTest(t)
 	useRealLoginTransaction(t)
 	mockAPIKeySuccess(t)
-	const budget = 2500 * time.Millisecond // half the 5 s lock timeout
 	step := func(name string, fn func() error) {
 		t.Helper()
-		start := time.Now()
+		// A nested acquisition returns ErrMutationLockBusy. Require success,
+		// regardless of filesystem and scheduler latency outside the lock.
 		if err := fn(); err != nil {
 			t.Fatalf("%s: %v", name, err)
-		}
-		if elapsed := time.Since(start); elapsed > budget {
-			t.Fatalf("%s took %v, want well under the 5 s lock timeout", name, elapsed)
 		}
 	}
 	login := func() error {

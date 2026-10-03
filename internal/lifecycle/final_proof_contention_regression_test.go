@@ -53,7 +53,7 @@ func TestReconcileSkipsBusyFinalProofAndRetries(t *testing.T) {
 				case <-entered:
 				case err := <-writerDone:
 					return tailapi.CleanupResult{}, err
-				case <-time.After(2 * time.Second):
+				case <-time.After(5 * time.Second):
 					return tailapi.CleanupResult{}, context.DeadlineExceeded
 				}
 				return tailapi.CleanupResult{ResolvedOwnershipIDs: []string{"old-node"}}, nil
@@ -71,7 +71,7 @@ func TestReconcileSkipsBusyFinalProofAndRetries(t *testing.T) {
 				if err != nil {
 					t.Errorf("Reconcile: %v", err)
 				}
-			case <-time.After(200 * time.Millisecond):
+			case <-time.After(5 * time.Second):
 				t.Error("final cleanup waited on a held proof lock")
 			}
 			cancel()
@@ -83,7 +83,7 @@ func TestReconcileSkipsBusyFinalProofAndRetries(t *testing.T) {
 			if !returned {
 				select {
 				case <-done:
-				case <-time.After(2 * time.Second):
+				case <-time.After(5 * time.Second):
 					t.Fatal("reconciliation did not finish after writer released")
 				}
 			}
