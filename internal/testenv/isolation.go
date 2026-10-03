@@ -267,8 +267,11 @@ var rootOwnedByThisUser = ownedByThisUser
 // marker is abandoned (see rootMarkerState). Nothing else is touched: another
 // user's entry, an entry without a marker, a symlink, a root whose owner still
 // holds its lock, and a root whose marker is still empty. Two binaries that
-// reclaim the same root at once both just remove it.
-func reclaimStaleRoots(dir string) {
+// reclaim the same root at once may defer removal: on Windows, a concurrent
+// marker probe can keep RemoveAll from deleting the marker. A later sweep
+// retries it after that handle closes. The return value counts failed removal
+// attempts, not live or unrecognized roots; startup does not wait for them.
+func reclaimStaleRoots(dir string) (deferred int) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return
@@ -287,9 +290,12 @@ func reclaimStaleRoots(dir string) {
 			continue
 		}
 		if rootMarkerState(root) == markerAbandoned {
-			_ = os.RemoveAll(root)
+			if err := os.RemoveAll(root); err != nil {
+				deferred++
+			}
 		}
 	}
+	return deferred
 }
 
 // markerState is what a root's marker says about the binary that owns it.
