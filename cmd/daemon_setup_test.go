@@ -666,7 +666,7 @@ func TestManagerQueryDeadlineIsTwoSeconds(t *testing.T) {
 			// real child, and the assertion above observes its actual context.
 			return exec.CommandContext(ctx, os.Args[0], "-test.run=^$")
 		}
-		if _, err := boundedManagerOutput("manager-deadline-probe"); err != nil {
+		if _, err := boundedManagerOutput(context.Background(), "manager-deadline-probe"); err != nil {
 			t.Fatal(err)
 		}
 		if !observed {

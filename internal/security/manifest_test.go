@@ -181,10 +181,14 @@ func TestSecurityCriticalClaimsStayWithinCapabilityManifest(t *testing.T) {
 			}
 		}
 		required := englishRequired
-		if filepath.Dir(path) == filepath.Join(root, "docs") {
-			// Translated prose keeps the actual API/flag names. English-only
-			// phrases such as "raw TCP" are localized in these editions.
-			required = []string{"tailnet", "tcp", "whois", "--allow"}
+		if filepath.Base(path) == "README.md" {
+			// The homepage summarizes the boundaries and links to the detailed
+			// authorization guides; SECURITY and CLI help retain API/flag names.
+			required = []string{"tailnet", "raw tcp", "docs/architecture.md", "docs/people.md", "docs/guest-links.md"}
+		} else if filepath.Dir(path) == filepath.Join(root, "docs") {
+			// Translations localize the boundary prose but keep protocol names
+			// and the same detailed authorization destinations.
+			required = []string{"tailnet", "tcp", "architecture.md", "people.md", "guest-links.md"}
 		}
 		for _, phrase := range required {
 			if !strings.Contains(lower, phrase) {
