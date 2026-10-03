@@ -54,7 +54,7 @@ func TestDoctorTailscaleSSHIsInformationalInEveryOutcome(t *testing.T) {
 			env.writeExactSnapshot(t)
 			stubDoctorTailscaleSSH(t, tc.enabled, tc.probeErr)
 
-			result := buildDoctorResult(doctorOptions{})
+			result := buildDoctorResult(context.Background(), doctorOptions{})
 			if result.TailscaleSSH.State != tc.wantState {
 				t.Fatalf("tailscale_ssh.state = %q, want %q", result.TailscaleSSH.State, tc.wantState)
 			}
@@ -95,7 +95,7 @@ func TestDoctorTailscaleSSHFindingsCarryActionableEvidence(t *testing.T) {
 	env.writeExactSnapshot(t)
 
 	stubDoctorTailscaleSSH(t, false, nil)
-	disabled := assertDoctorFinding(t, buildDoctorResult(doctorOptions{}), inspect.WarningCodeTailscaleSSHDisabled)
+	disabled := assertDoctorFinding(t, buildDoctorResult(context.Background(), doctorOptions{}), inspect.WarningCodeTailscaleSSHDisabled)
 	if disabled.Evidence["enable"] != "tailscale set --ssh" {
 		t.Fatalf("disabled evidence = %v, want the exact enabling command", disabled.Evidence)
 	}
@@ -107,7 +107,7 @@ func TestDoctorTailscaleSSHFindingsCarryActionableEvidence(t *testing.T) {
 	}
 
 	stubDoctorTailscaleSSH(t, true, nil)
-	enabled := assertDoctorFinding(t, buildDoctorResult(doctorOptions{}), inspect.WarningCodeTailscaleSSHEnabled)
+	enabled := assertDoctorFinding(t, buildDoctorResult(context.Background(), doctorOptions{}), inspect.WarningCodeTailscaleSSHEnabled)
 	if !strings.Contains(enabled.Evidence["remote_command"], "tailscale ssh") || !strings.Contains(enabled.Evidence["remote_command"], "tslink") {
 		t.Fatalf("enabled evidence = %v, want the concrete remote invocation", enabled.Evidence)
 	}
@@ -121,7 +121,7 @@ func TestDoctorTailscaleSSHUnknownRedactsProbeEvidence(t *testing.T) {
 	stubDoctorTailscaleSSH(t, false, errors.New(`local api https://user:pass@127.0.0.1:1/localapi?token=tskey-api-secret-value failed`))
 
 	var buf bytes.Buffer
-	if err := runDoctor(&buf, doctorOptions{}, true); err != nil {
+	if err := runDoctor(context.Background(), &buf, doctorOptions{}, true); err != nil {
 		t.Fatalf("runDoctor = %v, want nil for info-only findings", err)
 	}
 	assertDoctorOutputOmits(t, buf.String(), []string{"tskey-api-secret-value", "user:pass@"})
@@ -138,7 +138,7 @@ func TestDoctorTailscaleSSHAppearsInHumanAndJSONOutput(t *testing.T) {
 	stubDoctorTailscaleSSH(t, true, nil)
 
 	var humanBuf bytes.Buffer
-	if err := runDoctor(&humanBuf, doctorOptions{}, false); err != nil {
+	if err := runDoctor(context.Background(), &humanBuf, doctorOptions{}, false); err != nil {
 		t.Fatalf("runDoctor human = %v", err)
 	}
 	if !strings.Contains(humanBuf.String(), "Tailscale SSH (this node): enabled") {
@@ -146,7 +146,7 @@ func TestDoctorTailscaleSSHAppearsInHumanAndJSONOutput(t *testing.T) {
 	}
 
 	var jsonBuf bytes.Buffer
-	if err := runDoctor(&jsonBuf, doctorOptions{}, true); err != nil {
+	if err := runDoctor(context.Background(), &jsonBuf, doctorOptions{}, true); err != nil {
 		t.Fatalf("runDoctor json = %v", err)
 	}
 	result := decodeDoctorJSON(t, jsonBuf.String())
@@ -174,7 +174,7 @@ func TestDoctorTailscaleSSHProbeIsBounded(t *testing.T) {
 		return false, nil
 	}
 
-	buildDoctorResult(doctorOptions{})
+	buildDoctorResult(context.Background(), doctorOptions{})
 	if !hasDeadline {
 		t.Fatal("Tailscale SSH probe received a context with no deadline")
 	}

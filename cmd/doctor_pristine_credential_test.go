@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"testing"
 
@@ -23,7 +24,7 @@ func TestDoctorPristineDefaultTierIsHealthy(t *testing.T) {
 	isRunningFn = func(string) bool { return false }
 
 	var buf bytes.Buffer
-	if err := runDoctor(&buf, doctorOptions{}, true); output.ExitCode(err) != output.ExitSuccess {
+	if err := runDoctor(context.Background(), &buf, doctorOptions{}, true); output.ExitCode(err) != output.ExitSuccess {
 		t.Fatalf("pristine doctor ExitCode = %d (err=%v), want %d\n%s", output.ExitCode(err), err, output.ExitSuccess, buf.String())
 	}
 	result := decodeDoctorJSON(t, buf.String())

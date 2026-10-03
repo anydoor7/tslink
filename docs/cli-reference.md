@@ -2,9 +2,9 @@
 
 ## People
 
-`tslink people add <login-or-email> --apps photos,finance|all [--for 7d] [--invite] [--print-links]` grants private HTTP/file access and produces a recipient guide. `all` selects current private HTTP/file apps, excluding TCP/Funnel. `--for` accepts a positive duration (including days) or `never`; omission creates no expiry. `--invite` creates single-use per-app device invite links, requiring a user-owned API token. Links are masked unless explicitly requested with `--print-links`.
+`tslink people add <login-or-email> --apps photos,finance|all [--for 7d] [--invite] [--print-links]` grants private HTTP/file access and produces a recipient guide. `all` selects current private HTTP/file apps, excluding TCP/Funnel. `--for` uses the [unified duration grammar](durations.md); `--until` sets an absolute deadline. New grants default to 24h. `never` requires `--ack-never` and a tailnet-member login. `--invite` creates single-use per-app device invite links, requiring a user-owned API token. Links are masked unless explicitly requested with `--print-links`.
 
-`tslink people list [--json]` reports people, app grants, absolute expiry, active state and revoked tombstones. `tslink people update <who> [--apps list|all] [--for duration|never] [--invite] [--print-links]` requires apps, expiry or invite; omitted values retain their current setting (new apps have no expiry unless specified). `tslink people remove <who>` revokes local HTTP/file access everywhere, including matching legacy allow entries. All use the versioned JSON envelope; add/update return partial invitation failure as `data.complete: false` without discarding grants. See [people](people.md) for enforcement, existing WebSocket connections, clock changes and schema 2 downgrade rules.
+`tslink people list [--json]` reports people, app grants, absolute expiry, active state and revoked tombstones. `tslink people update <who> [--apps list|all] [--for duration|never] [--invite] [--print-links]` requires apps, expiry or invite; omitted values retain their current setting (new apps default to 24h). `tslink people remove <who>` revokes local HTTP/file access everywhere, including matching legacy allow entries. All use the versioned JSON envelope; add/update return partial invitation failure as `data.complete: false` without discarding grants. See [people](people.md) for enforcement, existing WebSocket connections, clock changes and schema 2 downgrade rules.
 
 People logins accept any nonempty valid UTF-8 string without control characters or internal whitespace. Invalid UTF-8 uses `usage_error`; malformed WhoIs identities deny access. Trim outer ASCII space/tab/CR/LF/VT/FF; lowercase ASCII A-Z only, without Unicode folding or normalization, and compare bytes exactly. Punctuation and non-ASCII addresses work; Unicode lookalikes stay distinct. `people update --invite --replace-invite app=recorded-old-id` confirms replacement after remote absence, preserves grants/deadlines, and cannot combine with `--apps` or `--for`; MCP uses `replace_invites`. Confirmed deleted nodes end cleanup as `target_gone`, preserving evidence. Absence requires HTTP 200 with a nonempty body and a present non-null device/invite array; other 2xx, blank/null and malformed lists defer cleanup/reconciliation, retire nothing and send no replacement POST. Update accepts `--invite` alone to resume unfinished work. Update/remove accept repeatable `--reconcile-invite app=id|none` after owner verification of an unknown POST outcome. Removal saves local denial first, then reports `complete`/`cleanup` for remote pending invites; no-token removal defers cleanup. `access explain`/`access_explain` include redacted people policy and point to `people list`. See the people guide for durable states and the absence of an exactly-once guarantee.
 
@@ -53,6 +53,8 @@ People logins accept any nonempty valid UTF-8 string without control characters 
 | `tslink install` | Auto-start on login (macOS LaunchAgent / Linux systemd / Windows Task Scheduler) |
 | `tslink uninstall` | Remove auto-start |
 
+`status --json` and `status --urls --json` report every pending portal/app enrollment in `data.pending_logins` (`node`, `auth_url`, `expires_at`). Human status lists each node and login URL. The compatibility `auth_url`/`auth_status` fields select the oldest still-pending publication. See [home portal](portal.md).
+
 A missing implicit default registry is valid on first run. An explicit missing
 `registry check <path>` reports `not_found` (exit 5). Malformed registry JSON,
 field types, or trailing data report `usage_error` (exit 2), naming the path
@@ -99,7 +101,7 @@ Without `--recipe`, `tslink add` with an existing name replaces that service: fl
 | `--control-url URL` | Per-service control server override, e.g. Headscale. TSLink never sends an auth key minted from a stored Tailscale credential to another control server: with such a credential stored, the service is refused with `credential_control_url_mismatch` |
 | `--funnel` | Expose via Tailscale Funnel (public internet, proxy only, requires `--public`) |
 | `--public` | Explicitly acknowledge public internet exposure for `--funnel`; invalid without `--funnel` |
-| `--funnel-ttl 1h\|8h\|24h\|72h\|7d\|never` | Public Funnel lifetime; default `24h`; requires `--funnel` |
+| `--funnel-ttl <lifetime>` | Relative or `until <date/time>`; presets 1h, 8h, 24h, 3d, 7d; min 1h, default 24h, default max 7d; never refused; requires `--funnel` |
 | `--no-auto-provision` | Disable Funnel policy provisioning for this service; requires `--funnel` |
 | `--no-daemon-install` | Save configuration without installing or starting the daemon |
 | `--health-path /ready` | HTTP business probe path joined to the proxy backend base path (default `/`) |
@@ -174,3 +176,56 @@ restarts. A backend may already have received part of a rejected streaming body.
 Its own upload limits and any public relay limits still apply.
 
 Windows `tslink install --startup` uses the Startup fallback for the next sign-in, without crash restart. Default `install` uses Task Scheduler to launch a built-in supervisor and verifies immediate startup. `stop` stops both processes, including during crash backoff; `install` resets a tripped crash-loop breaker. See [daemon lifecycle](daemon-lifecycle.md#windows-supervision-and-migration).
+
+## Change a deadline
+
+`tslink extend <service> [--person <login>] (--for <lifetime> | --until <date/time>) [--regrant] [--ack-never]` changes one person grant or Funnel TTL. A relative duration is measured from the operation time and can shorten or extend. Expired grants need `--regrant`; revoked people remain revoked. It always returns a versioned JSON envelope. MCP `extend` uses `service`, `who`, `for`/`until`, `regrant` and `ack_never`. See [durations](durations.md) for DST, config validation, policy API and the syntax of health/timeout/keepalive flags, and [Funnel](funnel.md) for public expiry.
+
+Omitting `--funnel-ttl` when making an existing private service public selects the finite 24h default. Only a decided public lifetime is preserved, including historical explicit public `never`; dry-run and MCP add use the same rule. The first `--invite` durably classifies a person as a guest in the grant transaction, before remote work; later updates/extensions retain guest policy. A concurrent grant change before an invite send transition returns `conflict`.
+## Local access history
+
+`tslink access log [--app X] [--who Y] [--since 24h|RFC3339] [--until RFC3339] [--decision allowed|denied] [--limit N] [--json]` returns newest-first events plus counts per person and last allowed access per app. The default limit is 100 (1–10000); summaries count all matches. `data` contains `events`, `summary`, and `truncated` in the standard envelope. MCP: `access_log`, `access_summary` (both read-only, suitable for viewer scopes).
+
+`tslink access path <app> <prefix|full|off|inherit|true|false>` controls per-app path mode: prefix by default, full may retain app-specific bearer paths, off omits paths. Global `config set` keys: `access-log-enabled`, `access-log-path` (compatible booleans), `access-log-path-mode` (prefix/full/off); `access-log-retention-days` (default 30), `access-log-max-bytes` (default 67108864), `access-log-queue-size` (default 1024). Empty values reset defaults; restart `serve` for global changes. `status` and `doctor` include `access_log` current-instance health (current, last write, drops, size, missing-history windows; old successful snapshots never replace current failures). See [access-log.md](access-log.md) for strict ranges, privacy, durability and event-count semantics.
+## Home portal
+
+`tslink portal enable --owner <login> [--hostname home] [--admins <login,...>]` saves an independent Tailnet-only home portal. `tslink portal disable` closes only its listener. `--funnel` is explicitly refused. The running daemon applies changes; status/doctor report `portal` state and its exact URL when ready. People guides point to the portal when enabled. MCP equivalents: `portal_enable`, `portal_disable`. HTTP MCP `portal_enable` requires the current exact portal owner to change owner/admin settings; other callers receive `access_request_owner_required`. Local CLI/stdio MCP supports first-owner bootstrap and lost-owner recovery. See [portal.md](portal.md) for authorization, network reachability and JSON details.
+
+Daemon readiness preserves pending portal enrollment; completed portal runtime evidence prevents a stale login prompt. Private HTTP/file entries match their enforced access. Raw TCP/public Funnel entries are an owner/admin inventory with a per-person enforcement note; omission does not deny visitor connectivity.
+## MCP scopes and audit
+
+`mcp --scope viewer --apps photos` reduces a local session; owner is the default.
+Operator/people-manager sessions accept `--max-duration` (default 24h). A viewer
+may explicitly use `--inventory`. Remote `mcp.bindings` provide equivalent
+WhoIs-bound roles with optional anchored expiry. Legacy `mcp.allow` remains owner.
+`mcp-audit [--json]` reads the bounded durable mutation journal. Status includes
+`mcp_bindings`; doctor warns with `mcp_owner_tag` and `mcp_binding_expired`.
+See [MCP scopes](mcp-scopes.md).
+
+Scoped people grants require an existing person (`mcp_person_owner_required`: ask the owner to add the person first); revoking an unknown login is a no-op. Audit keeps caller `identity.login/node` separate from `principal`, with `role` and `phase`, and records the actual share app at completion. Multiple matching MCP tag principals across legacy and scoped config return HTTP 403 unless an explicit login binding wins.
+
+When MCP tools bootstrap a daemon, session expiry or cancellation blocks later definition writes and manager commands. Manager subprocesses inherit cancellation; bounded installation restoration and cleanup may continue. Reading legacy audit `who`/`scope` preserves them as `principal`/`role`.
+
+MCP shared reads (`status`, `health`, `doctor`, `list`, `url`, share/add polling and owner event snapshots) pass the caller context to supervision queries. Cancellation interrupts an in-flight manager query; expired sessions cannot start another query. Setup inspection failures without an MCP session retain `daemon_setup_failed`, including a cancelled command context; MCP denials use `mcp_scope_denied`.
+
+## Browser guest links
+
+`tslink guest create <app> --for <lifetime> [--label "Aunt May"] [--pin] [--public] [--print-link] [--json]` creates a finite one-app browser grant. First enabling the mandatory Funnel gate requires `--public`; existing open Funnel must first be disabled. PIN comes from hidden terminal input or stdin. Only `--print-link` discloses the bearer URL; it needs a current exact node URL. `guest list`, `guest show <id>` and `guest revoke <id>` never return token hashes or tokens. MCP owner-only tools: `guest_create`, `guest_list`, `guest_show`, `guest_revoke`. See [guest links](guest-links.md) for stable fields, migration, cookies, PIN limits and comparison with people grants.
+
+Human guest list/show/revoke output includes label, app, local expiry with named zone and relative time, status and uses. Revoke confirms the ID; sendable create messages include a readable expiry. JSON is unchanged.
+
+Guest counter persistence errors, including lock preparation and acquisition failures, appear in daemon logs and service warnings as `guest_counters_persistence_failed` in `status` / `status urls --json`. A post-replacement directory-sync failure leaves visible counts acknowledged and durability unconfirmed; the batch is not applied again. A later successful registry write clears the warning.
+
+## Access requests and onboarding QR
+
+`tslink add <name> ... --requestable` opts a private HTTP/file app into portal request discovery (default off; use `--requestable=false` to hide it). `tslink people add/update <login> ... --qr` prints a terminal QR; `--qr-png <file>` writes a private PNG. The payload is the exact portal URL, or first active app URL when the portal is disabled. An invitation QR requires `--invite --print-links --qr-invite <app>` and `--qr`/`--qr-png`, with a credential warning. JSON contains `qr_payload`, `qr_warning`, four-step `guide` and `guide_zh`; it never embeds images. MCP people tools accept `qr`/`qr_invite` and return payload text; PNG is CLI-only.
+
+`tslink requests list`, `tslink requests approve <id> --for <lifetime> [--ack-never]`, and `tslink requests deny <id> [--reason <text>]` manage the durable inbox. The three owner-only MCP tools are `requests_list`, `requests_approve` and `requests_deny`. When expiry/retention maintenance cannot acquire the writer lock, listing returns retryable `access_request_busy` (exit 4). Approval preserves other app grants and uses persisted F11 member/guest policy. Exact retries replay; stale or different decisions return `access_request_decided` (exit 4). See [requests](requests.md) and [people](people.md).
+
+## Integrated authority and audit
+
+`extend` and request approvals use the same duration parser and audience policy as people and guest grants. Grants require at least 1h; presets are `1h`, `8h`, `24h`, `3d`, `7d`. MCP scopes further bound app selection, `max_duration` and binding expiry. Person extensions permit app-operator/people-manager roles; Funnel extensions, guest tools and QR-bearing whole-person tools require owner role. Remote request list/approve/deny also require the current unrevoked human portal owner; a people-manager binding can narrow that owner to explicit apps and durations. Request listing may write expiry/retention maintenance and is annotated mutating.
+
+Access-log queries read both daemon segments and the bounded mutation journal. Approval grants, extensions, expiry latches and guest revocations carry typed `changes`; guest uses carry `guest.link_id`. `surface` identifies CLI, MCP, scoped MCP, guest or lifecycle processing. Reduced-role history filtering runs before summaries and truncation. See [MCP scopes](mcp-scopes.md) and [access history](access-log.md) for the complete boundaries and audit durability limits.
+
+The portal offers access-request entry points only for requestable private HTTP/file apps, excluding both public Funnel and gated guest apps. Guest apps retain people enforcement for private tailnet traffic; guest bearer authorization applies to their public listener.

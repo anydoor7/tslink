@@ -1,9 +1,15 @@
 module github.com/anydoor7/tslink
 
+// Scoped fsnotify v1.10.1 kqueue ownership repair; provenance and removal criteria
+// are recorded in third_party/fsnotify/NOTICE.tslink.
+replace github.com/fsnotify/fsnotify => ./third_party/fsnotify
+
 go 1.26.6
 
 require (
+	github.com/makiuchi-d/gozxing v0.1.1
 	github.com/modelcontextprotocol/go-sdk v1.8.0
+	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	github.com/spf13/cobra v1.10.2
 	github.com/tailscale/hujson v0.0.0-20260302212456-ecc657c15afd
 	go.yaml.in/yaml/v2 v2.4.4
@@ -16,13 +22,14 @@ require (
 	github.com/segmentio/asm v1.1.3 // indirect
 	github.com/segmentio/encoding v0.5.4 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
+	golang.org/x/xerrors v0.0.0-20240716161551-93cc26a95ae9 // indirect
 )
 
 require (
 	filippo.io/edwards25519 v1.2.0 // indirect
 	github.com/akutz/memconn v0.1.0 // indirect
 	github.com/alexbrainman/sspi v0.0.0-20231016080023-1a75b4708caa // indirect
-	github.com/coder/websocket v1.8.14 // indirect
+	github.com/coder/websocket v1.8.14
 	github.com/creachadair/msync v0.8.1 // indirect
 	github.com/danieljoos/wincred v1.2.3 // indirect
 	github.com/dblohm7/wingoes v0.0.0-20240119213807-a09d6be7affa // indirect
@@ -50,14 +57,14 @@ require (
 	github.com/zalando/go-keyring v0.2.8
 	go4.org/mem v0.0.0-20240501181205-ae6ca9944745 // indirect
 	go4.org/netipx v0.0.0-20231129151722-fdeea329fbba // indirect
-	golang.org/x/crypto v0.57.0 // indirect
+	golang.org/x/crypto v0.57.0
 	golang.org/x/exp v0.0.0-20260410095643-746e56fc9e2f // indirect
 	golang.org/x/net v0.58.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sync v0.23.0 // indirect
 	golang.org/x/sys v0.48.0
 	golang.org/x/term v0.46.0
-	golang.org/x/text v0.42.0 // indirect
+	golang.org/x/text v0.42.0
 	golang.org/x/time v0.15.0 // indirect
 	golang.zx2c4.com/wintun v0.0.0-20230126152724-0fa3db229ce2 // indirect
 	golang.zx2c4.com/wireguard/windows v0.5.3 // indirect

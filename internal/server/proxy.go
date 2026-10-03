@@ -14,6 +14,7 @@ import (
 
 	"github.com/anydoor7/tslink/internal/registry"
 	"tailscale.com/client/local"
+	"tailscale.com/client/tailscale/apitype"
 )
 
 type LocalClient = local.Client
@@ -66,7 +67,13 @@ func NewProxyHandlerWithOptions(target string, identity *IdentityResolver, optio
 				}
 			}
 			// Inject caller identity
-			if whois := identity.whoIs(r.In.Context(), r.In.RemoteAddr); whois != nil && whois.UserProfile != nil {
+			public, _ := r.In.Context().Value(accessFunnelKey{}).(bool)
+			var whois *apitype.WhoIsResponse
+			gated, _ := r.In.Context().Value(guestProxyKey{}).(bool)
+			if !public || !gated {
+				whois = identity.whoIs(r.In.Context(), r.In.RemoteAddr)
+			}
+			if whois != nil && whois.UserProfile != nil {
 				r.Out.Header.Set("X-Tailscale-User-Login", whois.UserProfile.LoginName)
 				r.Out.Header.Set("X-Tailscale-User-Name", whois.UserProfile.DisplayName)
 				if whois.Node != nil {
@@ -77,12 +84,35 @@ func NewProxyHandlerWithOptions(target string, identity *IdentityResolver, optio
 				}
 			}
 		},
+		ModifyResponse: func(response *http.Response) error {
+			gated, _ := response.Request.Context().Value(guestProxyKey{}).(bool)
+			if !gated {
+				return nil
+			}
+			if public, _ := response.Request.Context().Value(accessFunnelKey{}).(bool); public {
+				response.Header.Set("Referrer-Policy", "no-referrer")
+			}
+			values := response.Header.Values("Set-Cookie")
+			response.Header.Del("Set-Cookie")
+			for _, value := range values {
+				name, _, _ := strings.Cut(value, "=")
+				name = strings.TrimSpace(name)
+				if cookie, err := http.ParseSetCookie(value); err == nil {
+					name = cookie.Name
+				}
+				if name != guestCookie && name != guestPINCookie {
+					response.Header.Add("Set-Cookie", value)
+				}
+			}
+			return nil
+		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 			if failure := requestFailure(r, err); failure != nil {
+				accessDeny(r, "limits")
 				http.Error(w, failure.message, failure.status)
 				return
 			}
-			slog.Error("proxy error", "path", r.URL.Path, "error", err)
+			slog.Error("proxy error", "code", "backend_request_failed")
 			if isTimeout(err) {
 				http.Error(w, "Gateway timeout — backend did not respond in time", http.StatusGatewayTimeout)
 			} else {
@@ -99,6 +129,7 @@ func NewProxyHandlerWithOptions(target string, identity *IdentityResolver, optio
 			host = normalizeCanonicalProxyHost(options.CanonicalHost())
 		}
 		if host == "" {
+			accessDeny(r, "preserve_host_unavailable")
 			http.Error(w, "canonical_host_unavailable: node's canonical external name is unavailable", http.StatusServiceUnavailable)
 			return
 		}

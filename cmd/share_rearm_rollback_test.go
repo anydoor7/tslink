@@ -97,10 +97,10 @@ func TestShareRearmOutcomeAndRollbackBoundaries(t *testing.T) {
 		paths, req, before := expiredFunnelShareFixture(t)
 		restoreShareSeams(t)
 		shareIsRunningFn = func(string) bool { return true }
-		shareResolveEndpointOnceFn = func(_, _, _, name string) (serviceURLResolution, error) {
+		shareResolveEndpointOnceFn = func(_ context.Context, _, _, _, name string) (serviceURLResolution, error) {
 			return serviceURLResolution{}, registry.URLNotReadyError(name)
 		}
-		sharePollableStatusFn = func(_, _, _, _ string) (StatusResult, error) { return StatusResult{}, nil }
+		sharePollableStatusFn = func(_ context.Context, _, _, _, _ string) (StatusResult, error) { return StatusResult{}, nil }
 		_, err := executeShare(context.Background(), paths, req, 0, io.Discard)
 		if code, ok := registry.ErrorCode(err); !ok || code != registry.CodeURLNotReady {
 			t.Fatalf("wait error=%v", err)

@@ -15,6 +15,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/anydoor7/tslink/internal/accesslog"
+	"github.com/anydoor7/tslink/internal/atomicfile"
 	"github.com/anydoor7/tslink/internal/health"
 	"github.com/anydoor7/tslink/internal/inspect"
 	"github.com/anydoor7/tslink/internal/registry"
@@ -56,8 +58,8 @@ const (
 
 var (
 	jsonMarshalIndent = json.MarshalIndent
-	readFile          = os.ReadFile
-	renameFile        = os.Rename
+	readFile          = atomicfile.ReadFile
+	renameFile        = atomicfile.ReplaceFile
 )
 
 // SnapshotVersion is runtime.json's schema_version. It reads the string
@@ -81,7 +83,18 @@ func (v *SnapshotVersion) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// PortalState is runtime evidence for the independent Tailnet portal node.
+type PortalState struct {
+	Enabled  bool   `json:"enabled"`
+	Hostname string `json:"hostname,omitempty"`
+	State    string `json:"state"`
+	URL      string `json:"url,omitempty"`
+	Error    string `json:"error,omitempty"`
+}
+
 type Snapshot struct {
+	AccessLog           *accesslog.Health `json:"access_log,omitempty"`
+	Portal              PortalState       `json:"portal"`
 	Alerts              health.AlertsView `json:"alerts"`
 	SchemaVersion       SnapshotVersion   `json:"schema_version"`
 	DaemonPID           int               `json:"daemon_pid"`
@@ -198,9 +211,14 @@ func newSnapshot(daemonPID int, daemonStartedAt time.Time, registryFingerprint s
 		view := inspect.ServiceViewFor(state.Service)
 		endpoint := view.Endpoint
 		endpoint = applyRuntimeHost(endpoint, state.Service, state.RuntimeHost)
-		if len(state.CertDomains) > 0 && (state.Service.Type == registry.TypeProxy || state.Service.Type == registry.TypeFile) {
-			endpoint.Display = "https://" + state.CertDomains[0]
-			endpoint.Host = state.CertDomains[0]
+		if state.Service.Type == registry.TypeProxy || state.Service.Type == registry.TypeFile {
+			if host := registry.CanonicalProxyHost(state.CertDomains, state.RuntimeHost); host != "" {
+				endpoint.Display = "https://" + host
+				endpoint.Host = host
+			} else if len(state.CertDomains) > 0 {
+				endpoint.Display = ""
+				endpoint.Host = ""
+			}
 		}
 		endpoint.State = endpointState(endpoint)
 		runtimeState := state.RuntimeState
@@ -274,6 +292,9 @@ func RegistryFingerprint(reg *registry.Registry, issues []registry.ServiceIssue)
 	isolated := append([]registry.ServiceIssue(nil), issues...)
 	sort.SliceStable(isolated, func(i, j int) bool { return isolated[i].Index < isolated[j].Index })
 	canonical := registry.Registry{Services: make([]registry.Service, 0, len(valid)+len(isolated))}
+	if reg != nil {
+		canonical.Portal = reg.Portal
+	}
 	for len(valid) > 0 || len(isolated) > 0 {
 		if len(isolated) > 0 && (len(valid) == 0 || isolated[0].Index <= len(canonical.Services)) {
 			canonical.Services = append(canonical.Services, isolated[0].Service)
@@ -315,34 +336,9 @@ func Save(path string, snapshot Snapshot) error {
 	}
 	data = append(data, '\n')
 
-	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*.tmp")
-	if err != nil {
-		return err
-	}
-	tmpPath := tmp.Name()
-	cleanup := true
-	defer func() {
-		if cleanup {
-			_ = os.Remove(tmpPath)
-		}
-	}()
-
-	if err := tmp.Chmod(0o600); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if err := renameFile(tmpPath, path); err != nil {
-		return err
-	}
-	cleanup = false
-	return nil
+	return atomicfile.WriteFileWithReplace(path, data, func(source, target string) error {
+		return atomicfile.RetryFileOperation(func() error { return renameFile(source, target) })
+	})
 }
 
 func Load(path string) (*Snapshot, error) {

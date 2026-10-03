@@ -1,140 +1,91 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/tslink-mark-dark.svg">
-    <img src="assets/tslink-mark-light.svg" width="88" height="88" alt="TSLink 로고">
+    <img src="assets/tslink-mark-light.svg" width="88" height="88" alt="TSLink logo">
   </picture>
 </p>
-
 <h1 align="center">TSLink</h1>
+<p align="center"><strong>어디서든 내 앱에 접속하고 관리하세요.<br>비공개로 사용하거나 원하는 조건으로 공유하세요.</strong></p>
 
+내 컴퓨터나 클라우드 서버의 앱을 암호화된 사설 네트워크로 이용하세요. 필요하면 브라우저 게스트 링크나 공개 접속을 직접 선택할 수 있습니다. 사람이 직접 또는 에이전트를 통해 관리할 수 있습니다.
+
+<p align="center"><a href="#quickstart">빠른 시작</a> · <a href="#agents">에이전트 안내</a> · <a href="#documentation">문서</a></p>
 <p align="center">
-  <strong>컴퓨터의 앱을 원하는 사람에게, 원하는 기간만큼 공유하세요.</strong><br>
-  각 앱은 Tailscale 네트워크에서 독립된 비공개 주소를 갖습니다. 누가 접근할 수 있는지 확인하고 권한을 회수하세요.
+<a href="../README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.zh-TW.md">繁體中文</a> · <strong>한국어</strong> · <a href="README.de.md">Deutsch</a> · <a href="README.es.md">Español</a> · <a href="README.fr.md">Français</a> · <a href="README.it.md">Italiano</a> · <a href="README.da.md">Dansk</a> · <a href="README.ja.md">日本語</a> · <a href="README.pl.md">Polski</a> · <a href="README.ru.md">Русский</a> · <a href="README.bs.md">Bosanski</a> · <a href="README.ar.md">العربية</a> · <a href="README.no.md">Norsk</a> · <a href="README.pt-BR.md">Português (Brasil)</a> · <a href="README.th.md">ไทย</a> · <a href="README.tr.md">Türkçe</a> · <a href="README.uk.md">Українська</a> · <a href="README.bn.md">বাংলা</a> · <a href="README.el.md">Ελληνικά</a> · <a href="README.vi.md">Tiếng Việt</a>
 </p>
 
-<p align="center">
-  <a href="#quickstart">빠른 시작</a> · <a href="#agents">에이전트용</a> · <a href="getting-started.md">문서</a> ·
-  <strong>한국어</strong> · <a href="../README.md">English</a> · <a href="INDEX.md#translated-homepages">모든 언어</a>
-</p>
+<a id="use-cases"></a>
 
-## 이렇게 사용합니다
+## 내 앱을 더 가까이
 
-- **휴대폰에서 작업 결과를 여세요.** 스크립트가 만든 보고서, 개발 서버, 노트북, 로컬 모델 API를 허용된 기기에서 비공개 HTTPS 주소로 이용할 수 있습니다.
-- **한 사람에게 한 앱을 잠시 공유하세요.** 파트너에게 사진 라이브러리를 일주일 동안, 동료에게 미리 보기 앱을 사흘 동안 열어 주세요. 접근 권한은 자동으로 만료되며 더 일찍 종료할 수도 있습니다.
-- **에이전트에게 공유를 맡기세요.** 코딩 에이전트가 방금 대시보드를 만들었다면, 금요일까지 나와 팀원에게 공유해 달라고 요청하세요. 현재 공유 중인 항목을 확인하거나 공유를 취소할 수도 있습니다.
+| 필요한 일 | TSLink의 기능 |
+|---|---|
+| 여러 기기에서 내 앱 사용 | PC나 서버의 홈 대시보드, 로컬 전용 웹 페이지, 파일, 모델 API, TCP 서비스에 비공개 주소를 제공합니다. |
+| 지정한 사람에게 공유 | HTTP/파일 앱별로 만료와 철회를 설정하고 Tailscale 로그인 신원을 확인합니다. 받는 사람도 Tailscale이 필요합니다.[사용자 공유](people.md) |
+| 브라우저로 방문 허용 | HTTP 프록시 앱에 만료되는 게스트 링크와 선택적 PIN을 제공하거나 Funnel 공개 HTTPS를 명시적으로 켭니다. 링크는 전달할 수 있으며 방문자의 신원을 증명하지 않습니다.[게스트 링크](guest-links.md) |
+| 여러 앱을 꾸준히 관리 | 호스트별 앱 목록, 비공개 포털, 상태 점검과 알림, 접속 이력, CLI/MCP 권한 관리. 에이전트 역할, 앱 범위 제한, 감사 기록도 지원합니다.[포털](portal.md) · [MCP 권한](mcp-scopes.md) |
 
-앱은 원래 실행되던 곳에서 계속 실행됩니다. TSLink는 각 앱의 접근 대상을 관리하고, 무엇을 누구에게 언제까지 공유했는지 하나의 목록에 기록합니다.
+[앱 구성 레시피](apps.md), [업로드 제한](sharing.md), [유연한 유효 기간](durations.md), [QR 안내와 접근 요청](requests.md)도 현재 소스에 포함되어 있습니다.
 
+<a id="installation"></a>
 <a id="quickstart"></a>
 
 ## 빠른 시작
 
-**Go 1.26.6+**, Git, [MagicDNS와 HTTPS를 활성화한](https://tailscale.com/docs/how-to/set-up-https-certificates) Tailscale 계정이 필요합니다. 아직 빌드된 릴리스를 배포하지 않으므로 소스에서 설치하세요.
+**Git과 Go 1.26.6+**로 소스에서 설치합니다. 사전 빌드 릴리스와 Homebrew는 아직 배포되지 않았습니다. 아래 명령은 bash/zsh용입니다.[macOS, Linux, Windows 설정](platforms.md)
 
 ```bash
 git clone https://github.com/anydoor7/tslink.git
-cd tslink && go install .
+cd tslink
+go install .
 export PATH="$PATH:$(go env GOPATH)/bin"
 ```
 
-페이지를 공유하세요.
+저장소 접근 권한, **Tailscale 계정**, [MagicDNS와 HTTPS](https://tailscale.com/docs/how-to/set-up-https-certificates)가 필요합니다. 비공개 접속 기기는 Tailscale과 네트워크 정책의 허용이 필요합니다. 앱 호스트에는 TSLink가 Tailscale을 내장합니다.
+
+앱이 이미 3000 포트에서 실행 중이라면:
 
 ```bash
-mkdir -p tslink-demo && printf '<h1>Hello from TSLink</h1>\n' > tslink-demo/index.html
-tslink share ./tslink-demo --name demo
-tslink url demo --wait
+tslink share 3000 --name myapp
+tslink url myapp --wait
 ```
 
-처음에는 TSLink가 새 서비스 노드를 등록할 로그인 링크를 출력합니다. tailnet 설정에 따라 관리자의 기기 승인도 필요할 수 있습니다. 등록을 마친 뒤 해당 tailnet에 로그인한 허용 기기에서 서비스 URL을 여세요. API 토큰은 필요 없습니다.
+사용하지 않는 이름을 지정하세요. `share`가 다른 이름을 반환하면 `url`에도 그 이름을 사용하세요. 표시된 브라우저 등록과 기기 승인을 먼저 완료하고, 허용된 기기에서 정확한 앱 URL을 여세요. `share`는 필요할 때 백그라운드 서비스를 시작합니다. 첫 비공개 사용에는 관리자 API 토큰이 필요 없습니다. 파일은 `tslink share ./report.html`로 공유합니다. 앱은 실행 중이어야 하고 파일은 존재해야 합니다.[전체 설정](getting-started.md)
 
-공유 항목을 확인한 다음 데모를 제거하세요.
+잘 사용하고 있다면 [TSLink에 Star](https://github.com/anydoor7/tslink)를 남겨 다른 사람이 발견하도록 도와주세요. 전적으로 선택 사항입니다.
 
-```bash
-tslink status --urls
-tslink remove demo
-```
+<a id="architecture"></a>
 
-백엔드가 실행 중이라면 다음 항목도 공유할 수 있습니다.
+## 동작 방식
 
-| 공유 대상 | 명령 |
-|---|---|
-| 로컬 웹 앱 | `tslink share 3000` |
-| 파일 폴더 | `tslink share ./public --name files` |
-| Ollama 같은 로컬 모델 API | `tslink add model --proxy localhost:11434` |
-| 비공개 TCP로 연결하는 데이터베이스 | `tslink add database --tcp localhost:5432` |
-| 지원되는 자체 호스팅 앱(Jellyfin, Immich, Home Assistant 외 13개) | `tslink apps detect`, 이어서 `tslink apps share jellyfin --yes` |
+<picture>
+  <source media="(max-width: 600px) and (prefers-color-scheme: dark)" srcset="assets/service-map-dark-mobile.svg">
+  <source media="(max-width: 600px)" srcset="assets/service-map-light-mobile.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="assets/service-map-dark.svg">
+  <img src="assets/service-map-light.svg" alt="PC 또는 클라우드 호스트 하나에서 CLI/MCP가 공용 데몬과 앱별 노드를 관리합니다. 비공개 기기는 Tailscale 암호화 경로로, 선택적 공개 HTTPS/Funnel은 게스트 인증 또는 명시적 공개 설정을 통해 HTTP 앱에 연결됩니다." width="960">
+</picture>
 
-[시작 안내, 플랫폼 및 백그라운드 서비스 →](getting-started.md)
+앱으로 이어지는 암호화된 사설 경로라고 생각하세요. **Tailscale은 네트워크 전송과 HTTPS를, TSLink는 호스트별 앱 접근 관리를 담당합니다.** 하나의 데몬이 서비스마다 별도의 내장 노드를 실행합니다. 비공개 포털에는 허용된 앱을 표시하며 상태와 접속 이력으로 유지 관리를 돕습니다.
 
-## 접근할 사람을 선택하세요
-
-| 대상 | 받는 사람에게 필요한 것 | 확인하는 신원 | 종료 시점 |
-|---|---|---|---|
-| **내 기기** | 내 tailnet에 로그인 | 검증된 Tailscale 로그인 신원 | 앱을 제거할 때 |
-| **지정한 사람**(비공개 HTTP/파일) | Tailscale 계정, 외부인은 앱마다 초대 수락 | 검증된 Tailscale 로그인 신원 | 설정한 기한(`--for 7d`) 또는 `tslink people remove` 실행 시 |
-| **URL을 가진 누구나**(Funnel) | 브라우저 | 누구나, 앱 자체의 로그인은 그대로 적용 | 기본 24시간 후(`--funnel-ttl`) |
-| **브라우저 게스트 링크** *(예정)* | 브라우저와 선택적 PIN | 링크를 가진 사람 | 링크 만료 또는 취소 시 |
-
-```bash
-tslink people add alice@example.com --apps photos --for 7d
-tslink people list
-tslink people remove alice@example.com
-```
-
-비공개 HTTP 및 파일 공유는 요청마다 기한을 확인합니다. 권한을 회수하면 새 요청이 차단되지만, 이미 다운로드한 데이터를 되돌리거나 수락된 스트림과 WebSocket 연결을 닫지는 못합니다. [사람별 공유 →](people.md) · [공유의 경계 →](sharing.md)
+공개 접속은 직접 켜야 합니다. 게스트는 링크와 선택적 PIN이 필요하며, 개방형 Funnel은 URL을 가진 누구나 접속할 수 있습니다. 두 방식 모두 공개 HTTPS를 사용하며 비공개 사용자 신원 인증과 다릅니다. 원시 TCP는 비공개로 유지되고 tailnet 정책과 백엔드 인증에 의존합니다. TSLink는 앱 설치, 호스트 프로세스 격리, 클라우드 VPC 생성, 다중 호스트 통합을 하지 않습니다. Tailscale과 함께 쓰는 독립 프로젝트입니다.[구조와 경계](architecture.md)
 
 <a id="agents"></a>
 
-## 에이전트용
+## 에이전트 안내
 
-TSLink에는 MCP 서버가 포함되어 있어 에이전트도 사용자처럼 공유하고, 목록을 보고, 공유 상태를 설명하고, 제거할 수 있습니다. 로컬 MCP 클라이언트에 다음을 추가하세요.
+CLI/MCP로 목록, 상태, URL, 접근 권한을 관리하세요.[에이전트 빠른 시작](agent-quickstart.md)을 읽고 실제 도구 스키마를 확인한 뒤 앱 접속을 검증해야 성공으로 보고할 수 있습니다.
 
 ```json
-{
-  "mcpServers": {
-    "tslink": { "command": "tslink", "args": ["mcp"] }
-  }
-}
+{"mcpServers":{"tslink":{"command":"tslink","args":["mcp"]}}}
 ```
 
-- **정확한 결과.** CLI 자동화는 `--json`, `schema_version: 1`, 안정적인 오류 코드를 지원하며, `tslink mcp`는 JSON-RPC를 사용합니다. `tslink manifest`는 모든 명령과 플래그를 설명합니다. 에이전트는 URL을 조합하지 말고 `tslink url <name> --wait`로 실제 URL을 가져와야 합니다.
-- **대기 상태를 명확하게.** 새 노드에 사람의 로그인이 필요하면 준비된 것처럼 표시하지 않고 `needs_login`을 보고합니다.
-- **권한.** 로컬 MCP는 사용자의 권한으로 실행됩니다. 원격 MCP는 명시적으로 켜야 하는 tailnet 전용 엔드포인트이며, 지정한 로그인 신원이나 태그만 허용합니다. 에이전트별 역할, 앱 범위 및 작업 영수증은 *예정*입니다.
+CLI 자동화는 `--json`, MCP는 stdio 기반 JSON-RPC를 사용합니다.[클라이언트 설정](mcp-clients.md) · [원격 MCP](remote-mcp.md) · [역할과 앱 범위](mcp-scopes.md)
 
-TSLink의 MCP는 TSLink 자체를 조작합니다. TSLink를 통해 다른 MCP 서버를 공개하더라도 해당 서버에는 별도의 도구 권한 관리가 필요합니다.
-[에이전트 안내 →](agents.md) · [MCP 클라이언트 →](mcp-clients.md) · [원격 MCP →](remote-mcp.md) · [JSON 자동화 →](json-automation.md)
-
-## 다른 도구를 선택할 때
-
-| 원하는 작업 | 고려할 도구 |
-|---|---|
-| 이미 사용하는 Tailscale 클라이언트로 내 기기에서 로컬 서비스 하나에 접근 | [`tailscale serve`](https://tailscale.com/docs/reference/tailscale-cli/serve) |
-| 여러 호스트에서 고정된 이름을 쓰는 관리자 운영 서비스 | [Tailscale Services](https://tailscale.com/docs/features/tailscale-services) |
-| Tailscale 계정 없이 사용할 webhook 또는 API 데모의 공개 URL | [ngrok](https://ngrok.com/docs/start) 또는 [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/) |
-| 자체 호스팅 앱을 공유하는 데 더해 설치하고 실행 | [Umbrel](https://umbrel.com) 또는 [Coolify](https://coolify.io) |
-| 조직 전체의 신원 기반 접근 플랫폼 | [Pangolin](https://github.com/fosrl/pangolin) 또는 [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/) |
-
-한 사람이 여러 앱을 운영하면서 앱별, 사람별로 기한이 있는 접근 권한을 설정하고, 자신과 에이전트가 이를 확인하려는 경우 TSLink가 잘 맞습니다.
-
-## 작동 방식
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/service-map-dark.svg">
-  <img src="assets/service-map-light.svg" alt="App, Docs, Database, Model은 하나의 tailnet에 있는 별도로 이름 붙인 노드이며, 서비스를 공개하는 컴퓨터의 TSLink 데몬 하나가 실행합니다." width="720">
-</picture>
-
-백그라운드 데몬 하나가 앱마다 내장 Tailscale 노드를 실행하므로 각 앱에 고유한 이름과 주소가 생깁니다. 비공개 HTTP 및 파일 공유의 접근은 `WhoIs`와 사람별 권한 또는 `--allow` 규칙으로 제어하며, 사람별 기한은 요청마다 확인합니다. 원시 TCP는 tailnet 정책과 백엔드 인증을 사용합니다. Tailscale은 tailnet 전송, 암호화 및 인증서를 제공하며 TSLink는 독립 프로젝트입니다. 모든 앱은 공개용 컴퓨터를 함께 사용하므로 TSLink가 앱을 서로 격리하지는 않습니다. [아키텍처 →](architecture.md)
-
-## 현재 상태
-
-현재 제공: 앱별 비공개 주소, 기한과 초대 묶음을 갖춘 사람별 공유, 만료되는 공개 Funnel, 앱 상태 확인과 알림, 자체 호스팅 앱 레시피, 앱별 요청 제한, Windows 충돌 후 재시작, CLI 및 MCP.
-
-예정: 브라우저 게스트 링크, 유연한 기간, 접근 로그, 앱 홈 화면, 범위가 제한된 에이전트 역할, QR 온보딩 및 접근 요청. 여러 컴퓨터를 한 목록에서 보는 기능은 계획 중입니다. [로드맵 →](roadmap.md)
+<a id="roadmap"></a>
+<a id="documentation"></a>
 
 ## 문서와 라이선스
 
-[llms.txt](../llms.txt) · [에이전트 빠른 시작](agent-quickstart.md) · [공유 도구 선택](comparison.md)
+[전체 가이드](INDEX.md) · [CLI 참조](cli-reference.md) · [로컬 AI](local-ai.md) · [상태 점검](health-and-alerts.md) · [접속 이력](access-log.md) · [로드맵](roadmap.md)
 
-[시작 안내](getting-started.md) · [CLI 참조](cli-reference.md) · [플랫폼](platforms.md) · [로컬 모델](local-ai.md) · [기여](../CONTRIBUTING.md) · [보안](../SECURITY.md)
-
-상업적 사용을 포함해 Apache License 2.0을 적용합니다. 재배포 시 [NOTICE](../NOTICE) 및 [타사 고지](../THIRD_PARTY_NOTICES.md)를 보존하세요. Tailscale의 약관과 요금제는 별도로 적용됩니다.
+다중 호스트 목록은 계획 중입니다.[기여](../CONTRIBUTING.md)와 [보안 제보](../SECURITY.md)를 환영합니다.[Apache 2.0](../LICENSE)은 상업적 사용을 허용합니다. 재배포 시 [NOTICE](../NOTICE)와 [타사 고지](../THIRD_PARTY_NOTICES.md)를 유지하세요.[상업적 협력](../COMMERCIAL.md)은 자발적입니다. Tailscale 약관과 요금제는 별도로 적용됩니다.

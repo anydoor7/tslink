@@ -151,7 +151,7 @@
       "required_flags": [
         "--mcp"
       ],
-      "boundary": "off unless --mcp or config.json mcp.enabled; every authorized tailnet peer reaching https://\u003cnode\u003e.\u003ctailnet\u003e.ts.net/mcp can register and remove services, publish Funnel and send or revoke invitations; authorization against config.json mcp.allow is mandatory and an empty list refuses startup; never published through Funnel and never bound to a host interface; node lifetime depends on the login path: with a stored credential the derived auth key carries the ephemeral capability and tsnet logs in ephemeral, so a clean daemon stop removes the node from the tailnet and no cleanup ledger entry is needed, while after a crash the node waits for Tailscale's ephemeral garbage collection; with zero credentials the node is persistent and user-owned, one browser authorization survives restarts, and disabling --mcp leaves a device to delete by hand in the Tailscale admin console"
+      "boundary": "off unless --mcp or config.json mcp.enabled; WhoIs authorization against config.json mcp.bindings or legacy mcp.allow is mandatory; bindings restrict tools, apps and lifetime, while legacy mcp.allow retains owner authority; no principals refuses startup; service deletion, Funnel and network invitations remain owner-only; never published through Funnel and never bound to a host interface; node lifetime depends on the login path: with a stored credential the derived auth key carries the ephemeral capability and tsnet logs in ephemeral, so a clean daemon stop removes the node from the tailnet and no cleanup ledger entry is needed, while after a crash the node waits for Tailscale's ephemeral garbage collection; with zero credentials the node is persistent and user-owned, one browser authorization survives restarts, and disabling --mcp leaves a device to delete by hand in the Tailscale admin console"
     },
     {
       "command": "tslink cleanup",
@@ -194,7 +194,7 @@
       "operation": "MCP unshare tool: the tslink remove deletion",
       "default": "enabled",
       "required_flags": [],
-      "boundary": "the same removal and exact NodeID-proven device and node-state deletion as tslink remove, with the same result; any client of tslink mcp and, under serve --mcp, every authorized peer of the remote control plane can call it; the tool is annotated destructive and the server instructions ask the client to confirm it with the user"
+      "boundary": "the same removal and exact NodeID-proven device and node-state deletion as tslink remove, with the same result; only owner-scoped stdio clients and, under serve --mcp, owner-authorized peers of the remote control plane can call it; the tool is annotated destructive and the server instructions ask the client to confirm it with the user"
     },
     {
       "command": "tslink serve",
@@ -433,6 +433,93 @@
       ]
     },
     {
+      "path": "tslink access log",
+      "short": "Read local app access history and summaries",
+      "flags": [
+        {
+          "name": "app",
+          "type": "string",
+          "scope": "local",
+          "usage": "Filter by app/service"
+        },
+        {
+          "name": "decision",
+          "type": "string",
+          "scope": "local",
+          "usage": "Filter allowed or denied"
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        },
+        {
+          "name": "limit",
+          "type": "int",
+          "default": "100",
+          "scope": "local",
+          "usage": "Maximum returned events (1..10000); summaries cover all matches"
+        },
+        {
+          "name": "since",
+          "type": "string",
+          "scope": "local",
+          "usage": "Positive duration (24h) or RFC3339 lower bound"
+        },
+        {
+          "name": "until",
+          "type": "string",
+          "scope": "local",
+          "usage": "RFC3339 upper bound (inclusive)"
+        },
+        {
+          "name": "who",
+          "type": "string",
+          "scope": "local",
+          "usage": "Filter by login, node name or tag"
+        }
+      ],
+      "json_result_fields": {
+        "events": {
+          "type": "array",
+          "description": "Newest-first access events; privacy-preserving schema version 1."
+        },
+        "summary": {
+          "type": "object",
+          "description": "Counts per person and app with last_seen; includes all matches."
+        },
+        "truncated": {
+          "type": "boolean",
+          "description": "More events matched than returned."
+        }
+      }
+    },
+    {
+      "path": "tslink access path",
+      "short": "Set per-app access path mode (global opt-out takes precedence)",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        }
+      ],
+      "json_result_fields": {
+        "app": {
+          "type": "string",
+          "description": "App/service name."
+        },
+        "record_path": {
+          "type": "boolean|null",
+          "description": "Per-service path recording; null inherits global setting."
+        }
+      }
+    },
+    {
       "path": "tslink add",
       "short": "Register a local service or file directory",
       "flags": [
@@ -516,7 +603,7 @@
           "type": "string",
           "default": "24h",
           "scope": "local",
-          "usage": "Public Funnel lifetime: 1h, 8h, 24h, 72h, 7d, or never"
+          "usage": "Public lifetime: relative or 'until \u003cdate/time\u003e'; presets 1h, 8h, 24h, 3d, 7d; min 1h, default max 7d; never refused"
         },
         {
           "name": "health-body",
@@ -639,6 +726,17 @@
           "type": "string",
           "scope": "local",
           "usage": "Maximum time without body read progress, not total upload time (default 30s)"
+        },
+        {
+          "name": "requestable",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Let human tailnet members ask for this app from the portal; discloses its name; default off",
+          "conflicts": [
+            "--tcp",
+            "--funnel"
+          ]
         },
         {
           "name": "tags",
@@ -847,7 +945,7 @@
           "type": "string",
           "default": "24h",
           "scope": "local",
-          "usage": "Public lifetime: 1h, 8h, 24h, 72h, 7d, or never",
+          "usage": "Public lifetime: relative or until; presets 1h, 8h, 24h, 3d, 7d; min 1h, default max 7d; never refused",
           "requires": [
             "--funnel"
           ]
@@ -1212,6 +1310,10 @@
         }
       ],
       "json_result_fields": {
+        "access_log": {
+          "type": "object",
+          "description": "Local access log health: last_write, drops, size_bytes, enabled, updated_at and error."
+        },
         "daemon.build_skew": {
           "type": "boolean",
           "description": "True when the running daemon's reported build differs from this CLI invocation's own build, or one side could determine its build and the other could not. False, including when neither side could determine its own build. Never changes daemon.running, health_status, or health_exit_code beyond the daemon_build_skew warning itself."
@@ -1223,6 +1325,14 @@
         "daemon.executable": {
           "type": "string",
           "description": "The running daemon's own executable path at the moment it wrote its PID/identity sidecar. Informational only; never used to verify process identity, unlike the Go-module comparison identity verification relies on."
+        },
+        "guest_links": {
+          "type": "array",
+          "description": "Active guest grants without bearer secrets."
+        },
+        "portal": {
+          "type": "object",
+          "description": "Independent home portal state and exact URL when running."
         },
         "tailscale_ssh.acl_rule_required": {
           "type": "boolean",
@@ -1236,6 +1346,215 @@
             "disabled",
             "unknown"
           ]
+        }
+      }
+    },
+    {
+      "path": "tslink extend",
+      "short": "Set a person grant or Funnel TTL deadline; always returns JSON",
+      "flags": [
+        {
+          "name": "ack-never",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Acknowledge permanent tailnet-member access; never refused for public/guest"
+        },
+        {
+          "name": "for",
+          "type": "string",
+          "scope": "local",
+          "usage": "New lifetime from now; presets 1h, 8h, 24h, 3d, 7d; relative or 'until \u003cdate/time\u003e'"
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        },
+        {
+          "name": "person",
+          "type": "string",
+          "scope": "local",
+          "usage": "Person login whose grant for this service is changed; omit for Funnel"
+        },
+        {
+          "name": "regrant",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Explicitly reactivate an expired grant or Funnel TTL; revoked people stay revoked"
+        },
+        {
+          "name": "until",
+          "type": "string",
+          "scope": "local",
+          "usage": "Absolute deadline: RFC3339, YYYY-MM-DD or YYYY-MM-DDTHH:MM; local unless offset supplied"
+        }
+      ],
+      "json_result_fields": {
+        "audience": {
+          "type": "string",
+          "description": "tailnet_member, guest or public, used for policy checks."
+        },
+        "changed_at": {
+          "type": "string",
+          "description": "Operation time in UTC; relative lifetime is measured from this instant."
+        },
+        "expires_at": {
+          "type": "string|null",
+          "description": "New UTC deadline; null for acknowledged permanent member access."
+        },
+        "previous_expires_at": {
+          "type": "string|null",
+          "description": "Previous UTC deadline; null for legacy permanent access."
+        },
+        "regranted": {
+          "type": "boolean",
+          "description": "True only if this operation explicitly renewed an expired grant."
+        },
+        "service": {
+          "type": "string",
+          "description": "App whose person grant or Funnel deadline was changed."
+        },
+        "who": {
+          "type": "string",
+          "description": "Canonical person login; absent for Funnel."
+        }
+      }
+    },
+    {
+      "path": "tslink guest",
+      "short": "Share one app through a time-limited browser link",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        }
+      ]
+    },
+    {
+      "path": "tslink guest create",
+      "short": "Create an owner-only guest link; acknowledge Funnel with --public",
+      "flags": [
+        {
+          "name": "for",
+          "type": "string",
+          "scope": "local",
+          "usage": "Lifetime: 1h, 8h, 24h, 3d, 7d; never refused"
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        },
+        {
+          "name": "label",
+          "type": "string",
+          "scope": "local",
+          "usage": "Owner's label for this link"
+        },
+        {
+          "name": "pin",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Read a PIN from hidden terminal input or stdin; never pass it in argv"
+        },
+        {
+          "name": "print-link",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Explicitly return the one-time bearer link and sendable message"
+        },
+        {
+          "name": "public",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Acknowledge public internet reachability through Funnel with mandatory guest authentication"
+        }
+      ],
+      "json_result_fields": {
+        "edge_state": {
+          "type": "string",
+          "description": "Configured state; verify Funnel through status."
+        },
+        "grant": {
+          "type": "object",
+          "description": "Nonsecret guest grant, expiry and use counters."
+        },
+        "link": {
+          "type": "string|null",
+          "description": "Bearer link only with explicit print-link; otherwise null."
+        },
+        "message": {
+          "type": "string",
+          "description": "Plain-language message for the recipient."
+        }
+      }
+    },
+    {
+      "path": "tslink guest list",
+      "short": "Owner-only: list guest grants without bearer tokens",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        }
+      ],
+      "json_result_fields": {
+        "grants": {
+          "type": "array",
+          "description": "Nonsecret guest grants."
+        }
+      }
+    },
+    {
+      "path": "tslink guest revoke",
+      "short": "Owner-only: revoke guest grants without bearer tokens",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        }
+      ],
+      "json_result_fields": {
+        "grant": {
+          "type": "object",
+          "description": "Nonsecret guest grant."
+        }
+      }
+    },
+    {
+      "path": "tslink guest show",
+      "short": "Owner-only: show guest grants without bearer tokens",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        }
+      ],
+      "json_result_fields": {
+        "grant": {
+          "type": "object",
+          "description": "Nonsecret guest grant."
         }
       }
     },
@@ -1640,6 +1959,10 @@
         }
       ],
       "json_result_fields": {
+        "access_log": {
+          "type": "object",
+          "description": "Local access log health: last_write, drops, size_bytes, enabled, updated_at and error."
+        },
         "cleanup_authority": {
           "type": "string",
           "description": "--tailnet only: constant statement that device deletion is authorized solely by an exact NodeID recorded in this machine's local node-ownership.json, so unregistered rows cannot be cleaned up from here."
@@ -1676,6 +1999,10 @@
         "devices[].tags": {
           "type": "array",
           "description": "--tailnet only: the device's tailnet ACL tags, at least one of which matched the TSLink tag filter."
+        },
+        "guest_links": {
+          "type": "array",
+          "description": "Active guest grants without bearer secrets."
         },
         "registered_count": {
           "type": "integer",
@@ -1993,7 +2320,48 @@
     },
     {
       "path": "tslink mcp",
-      "short": "Run the TSLink MCP server over stdio"
+      "short": "Run the TSLink MCP server over stdio",
+      "flags": [
+        {
+          "name": "apps",
+          "type": "string",
+          "scope": "local",
+          "usage": "Comma-separated apps visible to the reduced MCP session"
+        },
+        {
+          "name": "inventory",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Explicitly allow a viewer to read all app inventory"
+        },
+        {
+          "name": "max-duration",
+          "type": "string",
+          "scope": "local",
+          "usage": "Maximum per-app people grant duration (reduced operator default: 24h)"
+        },
+        {
+          "name": "scope",
+          "type": "string",
+          "default": "owner",
+          "scope": "local",
+          "usage": "MCP role: owner, viewer, app-operator or people-manager"
+        }
+      ]
+    },
+    {
+      "path": "tslink mcp-audit",
+      "short": "Read the owner's bounded MCP mutation journal",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        }
+      ]
     },
     {
       "path": "tslink people",
@@ -2013,6 +2381,13 @@
       "short": "Set a person's apps and expiry",
       "flags": [
         {
+          "name": "ack-never",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Acknowledge permanent access for a tailnet member; refused for device-invited guests"
+        },
+        {
           "name": "apps",
           "type": "string",
           "scope": "local",
@@ -2022,7 +2397,7 @@
           "name": "for",
           "type": "string",
           "scope": "local",
-          "usage": "Grant lifetime such as 1h, 7d or never; update omission preserves deadlines"
+          "usage": "Grant lifetime; presets 1h, 8h, 24h, 3d, 7d; relative, 'until \u003cdate/time\u003e', or never with --ack-never; default 24h, update omission preserves deadlines"
         },
         {
           "name": "invite",
@@ -2047,12 +2422,49 @@
           "requires": [
             "--invite"
           ]
+        },
+        {
+          "name": "qr",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Render the exact portal URL (or first app when portal disabled) as a terminal QR"
+        },
+        {
+          "name": "qr-invite",
+          "type": "string",
+          "scope": "local",
+          "usage": "Encode this app's bearer invitation instead; requires --print-links and --qr or --qr-png; QR is a credential",
+          "requires": [
+            "--invite",
+            "--print-links"
+          ]
+        },
+        {
+          "name": "qr-png",
+          "type": "string",
+          "scope": "local",
+          "usage": "Write a private QR PNG to an existing directory; JSON contains payload text only"
+        },
+        {
+          "name": "until",
+          "type": "string",
+          "scope": "local",
+          "usage": "Absolute grant deadline: RFC3339, YYYY-MM-DD or YYYY-MM-DDTHH:MM (local without offset); conflicts with --for"
         }
       ],
       "json_result_fields": {
         "complete": {
           "type": "boolean",
           "description": "False when any requested device invitation failed; local grants remain saved."
+        },
+        "guide": {
+          "type": "array",
+          "description": "Phone-first English onboarding in at most five steps."
+        },
+        "guide_zh": {
+          "type": "array",
+          "description": "Phone-first Chinese onboarding in at most five steps."
         },
         "invite_requirement": {
           "type": "string",
@@ -2069,6 +2481,18 @@
         "person": {
           "type": "object",
           "description": "Canonical login, revocation state, per-app absolute deadlines, active decisions and exact URLs when available."
+        },
+        "portal": {
+          "type": "object",
+          "description": "Independent home portal state; message includes its exact URL when enabled and ready."
+        },
+        "qr_payload": {
+          "type": "string",
+          "description": "QR URL payload text; bearer invitation requires explicit print-links and qr-invite."
+        },
+        "qr_warning": {
+          "type": "string",
+          "description": "Credential warning for a bearer invitation QR."
         }
       }
     },
@@ -2138,6 +2562,13 @@
       "short": "Set a person's apps and expiry",
       "flags": [
         {
+          "name": "ack-never",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Acknowledge permanent access for a tailnet member; refused for device-invited guests"
+        },
+        {
           "name": "apps",
           "type": "string",
           "scope": "local",
@@ -2147,7 +2578,7 @@
           "name": "for",
           "type": "string",
           "scope": "local",
-          "usage": "Grant lifetime such as 1h, 7d or never; update omission preserves deadlines"
+          "usage": "Grant lifetime; presets 1h, 8h, 24h, 3d, 7d; relative, 'until \u003cdate/time\u003e', or never with --ack-never; default 24h, update omission preserves deadlines"
         },
         {
           "name": "invite",
@@ -2174,6 +2605,29 @@
           ]
         },
         {
+          "name": "qr",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Render the exact portal URL (or first app when portal disabled) as a terminal QR"
+        },
+        {
+          "name": "qr-invite",
+          "type": "string",
+          "scope": "local",
+          "usage": "Encode this app's bearer invitation instead; requires --print-links and --qr or --qr-png; QR is a credential",
+          "requires": [
+            "--invite",
+            "--print-links"
+          ]
+        },
+        {
+          "name": "qr-png",
+          "type": "string",
+          "scope": "local",
+          "usage": "Write a private QR PNG to an existing directory; JSON contains payload text only"
+        },
+        {
           "name": "reconcile-invite",
           "type": "stringArray",
           "default": "[]",
@@ -2196,12 +2650,26 @@
             "--apps",
             "--for"
           ]
+        },
+        {
+          "name": "until",
+          "type": "string",
+          "scope": "local",
+          "usage": "Absolute grant deadline: RFC3339, YYYY-MM-DD or YYYY-MM-DDTHH:MM (local without offset); conflicts with --for"
         }
       ],
       "json_result_fields": {
         "complete": {
           "type": "boolean",
           "description": "False when any requested device invitation failed; local grants remain saved."
+        },
+        "guide": {
+          "type": "array",
+          "description": "Phone-first English onboarding in at most five steps."
+        },
+        "guide_zh": {
+          "type": "array",
+          "description": "Phone-first Chinese onboarding in at most five steps."
         },
         "invite_requirement": {
           "type": "string",
@@ -2218,6 +2686,128 @@
         "person": {
           "type": "object",
           "description": "Canonical login, revocation state, per-app absolute deadlines, active decisions and exact URLs when available."
+        },
+        "portal": {
+          "type": "object",
+          "description": "Independent home portal state; message includes its exact URL when enabled and ready."
+        },
+        "qr_payload": {
+          "type": "string",
+          "description": "QR URL payload text; bearer invitation requires explicit print-links and qr-invite."
+        },
+        "qr_warning": {
+          "type": "string",
+          "description": "Credential warning for a bearer invitation QR."
+        }
+      }
+    },
+    {
+      "path": "tslink portal",
+      "short": "Manage the private home page for each visitor",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        }
+      ]
+    },
+    {
+      "path": "tslink portal disable",
+      "short": "Stop the portal without changing app services",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        }
+      ],
+      "json_result_fields": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Configured portal enablement; never public Funnel."
+        },
+        "error": {
+          "type": "string",
+          "description": "Stable portal startup failure code, if any."
+        },
+        "hostname": {
+          "type": "string",
+          "description": "Reserved independent portal node hostname."
+        },
+        "state": {
+          "type": "string",
+          "description": "disabled, pending, starting, running or failed; running requires exact live runtime evidence."
+        },
+        "url": {
+          "type": "string",
+          "description": "Canonical Tailnet HTTPS address; omitted unless the running daemon has exact runtime evidence."
+        }
+      }
+    },
+    {
+      "path": "tslink portal enable",
+      "short": "Enable an independent Tailnet-only portal node",
+      "flags": [
+        {
+          "name": "admins",
+          "type": "stringSlice",
+          "default": "[]",
+          "scope": "local",
+          "usage": "Additional administrator logins; these identities can open every private app"
+        },
+        {
+          "name": "funnel",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Refused: the portal must stay Tailnet-only"
+        },
+        {
+          "name": "hostname",
+          "type": "string",
+          "default": "home",
+          "scope": "local",
+          "usage": "Portal node hostname"
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        },
+        {
+          "name": "owner",
+          "type": "string",
+          "scope": "local",
+          "usage": "Owner's verified Tailscale login (required)"
+        }
+      ],
+      "json_result_fields": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Configured portal enablement; never public Funnel."
+        },
+        "error": {
+          "type": "string",
+          "description": "Stable portal startup failure code, if any."
+        },
+        "hostname": {
+          "type": "string",
+          "description": "Reserved independent portal node hostname."
+        },
+        "state": {
+          "type": "string",
+          "description": "disabled, pending, starting, running or failed; running requires exact live runtime evidence."
+        },
+        "url": {
+          "type": "string",
+          "description": "Canonical Tailnet HTTPS address; omitted unless the running daemon has exact runtime evidence."
         }
       }
     },
@@ -2266,6 +2856,103 @@
           "usage": "Return not_found (exit 5) when absent; default is idempotent"
         }
       ]
+    },
+    {
+      "path": "tslink requests",
+      "short": "Review and decide access requests as the owner",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        }
+      ]
+    },
+    {
+      "path": "tslink requests approve",
+      "short": "Decide one request; identical retries replay the original result",
+      "flags": [
+        {
+          "name": "ack-never",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Acknowledge permanent member access; guests remain finite"
+        },
+        {
+          "name": "for",
+          "type": "string",
+          "scope": "local",
+          "usage": "Owner-chosen lifetime; presets 1h, 8h, 24h, 3d, 7d"
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        }
+      ],
+      "json_result_fields": {
+        "changed": {
+          "type": "boolean",
+          "description": "False for an identical idempotent retry."
+        },
+        "request": {
+          "type": "object",
+          "description": "Committed request decision and optional grant."
+        }
+      }
+    },
+    {
+      "path": "tslink requests deny",
+      "short": "Decide one request; identical retries replay the original result",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        },
+        {
+          "name": "reason",
+          "type": "string",
+          "scope": "local",
+          "usage": "Optional reason (500 characters), shown to the visitor"
+        }
+      ],
+      "json_result_fields": {
+        "changed": {
+          "type": "boolean",
+          "description": "False for an identical idempotent retry."
+        },
+        "request": {
+          "type": "object",
+          "description": "Committed request decision and optional grant."
+        }
+      }
+    },
+    {
+      "path": "tslink requests list",
+      "short": "List the durable request inbox",
+      "flags": [
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        }
+      ],
+      "json_result_fields": {
+        "requests": {
+          "type": "array",
+          "description": "Durable pending/approved/denied/expired access requests; notes are untrusted text."
+        }
+      }
     },
     {
       "path": "tslink serve",
@@ -2491,6 +3178,10 @@
         "ownership_proof_available": {
           "type": "boolean",
           "description": "True when the durable ownership ledger was read successfully, allowing false per-service ownership_proof values to mean proof is genuinely absent."
+        },
+        "portal": {
+          "type": "object",
+          "description": "Independent home portal state and exact URL when running; also present with --urls."
         },
         "services[].error": {
           "type": "object",
@@ -2905,8 +3596,8 @@
         "whois_cache": "60s_by_source_ip_shared_by_headers_and_access_log",
         "allow_authorization": "http_fail_closed_when_configured",
         "public_exposure": "private_by_default_funnel_requires_explicit_public_ack",
-        "log_sink": "process_slog",
-        "log_schema": "access_v2_whois_attested_login_and_node",
+        "log_sink": "local_async_bounded_jsonl_access_store",
+        "log_schema": "access_v1_http_attested_identity_privacy_preserving",
         "host_isolation": "not_provided",
         "compliance_status": "not_certified"
       },
@@ -2920,8 +3611,8 @@
         "whois_cache": "60s_by_source_ip_resolved_on_first_request_not_at_startup",
         "allow_authorization": "http_fail_closed_when_configured",
         "public_exposure": "private_tailnet_only",
-        "log_sink": "process_slog",
-        "log_schema": "access_v2_whois_attested_login_and_node",
+        "log_sink": "local_async_bounded_jsonl_access_store",
+        "log_schema": "access_v1_http_attested_identity_privacy_preserving",
         "host_isolation": "not_provided",
         "compliance_status": "not_certified"
       },
@@ -2931,12 +3622,12 @@
         "tailnet_transport": "tailscale_wireguard_to_service_node",
         "tslink_tls_termination": "none_raw_tcp_stream",
         "backend_hop": "plain_tcp_to_configured_target",
-        "whois_propagation": "not_applicable",
-        "whois_cache": "not_applicable",
+        "whois_propagation": "connection_access_log_only_no_protocol_headers",
+        "whois_cache": "60s_by_source_ip_async_observation_only",
         "allow_authorization": "not_applicable_rejected_for_tcp",
         "public_exposure": "private_tailnet_only",
-        "log_sink": "process_slog",
-        "log_schema": "tcp_events_no_http_identity_fields",
+        "log_sink": "local_async_bounded_jsonl_access_store",
+        "log_schema": "access_v1_tcp_open_close_attested_identity",
         "host_isolation": "not_provided",
         "compliance_status": "not_certified"
       },
@@ -2947,17 +3638,45 @@
         "tslink_tls_termination": "tailscale_funnel_listener",
         "backend_hop": "plain_http_or_https_as_configured_by_proxy_target",
         "whois_propagation": "not_treated_as_tslink_enforced_tailscale_user_authentication",
-        "whois_cache": "60s_by_source_ip_public_callers_resolve_to_no_identity",
+        "whois_cache": "not_applicable_public_identity",
         "allow_authorization": "not_supported_with_funnel_public_exposure",
         "public_exposure": "public_internet_after_explicit_ack",
-        "log_sink": "process_slog",
-        "log_schema": "access_v2_whois_attested_login_and_node_empty_for_public_callers",
+        "log_sink": "local_async_bounded_jsonl_access_store",
+        "log_schema": "access_v1_http_public_identity",
         "host_isolation": "not_provided",
         "compliance_status": "not_certified"
       }
     ]
   },
   "error_codes": {
+    "access_request_busy": {
+      "exit_code": 4,
+      "description": "request inbox is busy"
+    },
+    "access_request_capacity": {
+      "exit_code": 4,
+      "description": "bounded request inbox is full"
+    },
+    "access_request_decided": {
+      "exit_code": 4,
+      "description": "access request already decided; identical retries replay the original result"
+    },
+    "access_request_duplicate": {
+      "exit_code": 4,
+      "description": "one pending request per visitor and app"
+    },
+    "access_request_owner_required": {
+      "exit_code": 3,
+      "description": "request management requires the owner"
+    },
+    "access_request_rate_limited": {
+      "exit_code": 4,
+      "description": "visitor or global request rate limit reached"
+    },
+    "access_request_unavailable": {
+      "exit_code": 3,
+      "description": "app or visitor cannot request access"
+    },
     "allow_unsupported_for_tcp": {
       "exit_code": 2,
       "description": "HTTP allow lists do not apply to raw TCP"
@@ -3154,9 +3873,21 @@
       "exit_code": 1,
       "description": "login could not verify the candidate credential against Tailscale for a reason other than HTTP 401/403; the previous credential was kept"
     },
+    "mcp_audit_unavailable": {
+      "exit_code": 1,
+      "description": "MCP mutation intent could not be journaled, or its completion receipt failed; completion failures explicitly retain an unknown outcome"
+    },
     "mcp_elevated_invite_refused": {
       "exit_code": 3,
       "description": "through MCP, a user invitation with a role other than member or a device invitation that allows exit-node use needs the owner's opt-in (mcp.allow_elevated_invites in config.json); next names the CLI command a person can run instead"
+    },
+    "mcp_person_owner_required": {
+      "exit_code": 3,
+      "description": "The owner must add the person before a reduced MCP scope can grant access"
+    },
+    "mcp_scope_denied": {
+      "exit_code": 3,
+      "description": "MCP identity scope refuses this app, tool, duration or expired binding"
     },
     "not_found": {
       "exit_code": 5,
@@ -3193,6 +3924,18 @@
     "person_grant_inactive": {
       "exit_code": 1,
       "description": "person app grant was removed, revoked or expired before sending an invitation"
+    },
+    "portal_funnel_refused": {
+      "exit_code": 4,
+      "description": "the home portal is Tailnet-only and cannot use Funnel"
+    },
+    "portal_hostname_conflict": {
+      "exit_code": 4,
+      "description": "the portal hostname is reserved or already used by an app"
+    },
+    "portal_identity_invalid": {
+      "exit_code": 2,
+      "description": "portal owner and admins must be canonical Tailscale login identities"
     },
     "registry_reload_invalid": {
       "exit_code": 1,

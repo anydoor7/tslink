@@ -2,7 +2,7 @@
 
 ## Roadmap
 
-These features are not part of the shipped runtime:
+The home portal, access requests, browser guest links, flexible durations, access history, scoped MCP roles and QR onboarding are available. The remaining areas below are planned or limited as indicated:
 
 | Area | Current status |
 |---|---|
@@ -12,7 +12,7 @@ These features are not part of the shipped runtime:
 | Prometheus `/metrics` | Not implemented; there is no request instrumentation and no scrape endpoint. |
 | Custom domain / ACME | Not implemented; there are no registry fields or flags for it yet. |
 | Cluster sync | Not implemented. |
-| Member portal or service directory | Not implemented. |
+| Multi-host app directory | Planned. The single-host home portal is available. |
 | Marketplace or third-party template registry | Not implemented. |
 | Docker image | Not published. |
 | Headscale end-to-end validation | Pending. |

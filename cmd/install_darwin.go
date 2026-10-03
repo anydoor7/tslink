@@ -18,6 +18,7 @@ import (
 
 	"github.com/anydoor7/tslink/internal/atomicfile"
 	"github.com/anydoor7/tslink/internal/config"
+	"github.com/anydoor7/tslink/internal/mcpscope"
 	"github.com/anydoor7/tslink/internal/output"
 	"github.com/anydoor7/tslink/internal/registry"
 	"github.com/spf13/cobra"
@@ -54,11 +55,11 @@ var (
 	executablePathFn        = os.Executable
 	evalSymlinksFn          = filepath.EvalSymlinks
 	userUIDFn               = os.Getuid
-	installDaemonConflictFn = func() error {
-		return detectInstallDaemonConflict("no LaunchAgent plist is installed, so stop the manual daemon with 'tslink stop' and retry 'tslink install'; if launchd owns it, run 'tslink uninstall' first so KeepAlive cannot restart it")
+	installDaemonConflictFn = func(ctx context.Context) error {
+		return detectInstallDaemonConflict(ctx, "no LaunchAgent plist is installed, so stop the manual daemon with 'tslink stop' and retry 'tslink install'; if launchd owns it, run 'tslink uninstall' first so KeepAlive cannot restart it")
 	}
-	installDaemonArtifactConflictFn = func() error {
-		return detectInstallDaemonConflict("a LaunchAgent plist is installed, but TSLink could not confirm that launchd owns the running daemon; stop the manual daemon with 'tslink stop' and retry 'tslink install'; keep the existing plist installed")
+	installDaemonArtifactConflictFn = func(ctx context.Context) error {
+		return detectInstallDaemonConflict(ctx, "a LaunchAgent plist is installed, but TSLink could not confirm that launchd owns the running daemon; stop the manual daemon with 'tslink stop' and retry 'tslink install'; keep the existing plist installed")
 	}
 	errLaunchctlDomainUnavailable  = errors.New("launchctl domain unavailable")
 	launchAgentVerifyTimeout       = launchAgentStartupTimeout
@@ -66,8 +67,8 @@ var (
 	launchAgentSettleWindow        = daemonSettleWindow
 	launchAgentBootoutTimeout      = launchAgentShutdownTimeout
 	launchAgentBootoutPollInterval = launchAgentStartupPollInterval
-	launchctlCombinedOutput        = func(args ...string) ([]byte, error) {
-		return runBoundedManagerCommand("launchctl", managerCommandTimeout(args...), args...)
+	launchctlCombinedOutput        = func(ctx context.Context, args ...string) ([]byte, error) {
+		return runBoundedManagerCommandContext(ctx, "launchctl", managerCommandTimeout(args...), args...)
 	}
 )
 
@@ -280,6 +281,11 @@ Desktop-session caveat:
 
 // runInstallLocked requires the per-user supervisor transaction lock.
 func runInstallLocked(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
+	// Direct CLI/test callers may have no context; MCP always supplies its session.
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	force, err := cmd.Flags().GetBool("force")
 	if err != nil {
 		return fmt.Errorf("read --force: %w", err)
@@ -292,8 +298,12 @@ func runInstallLocked(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	previousState, err := captureLaunchAgentPreviousState(plistPath)
+	previousState, err := captureLaunchAgentPreviousState(ctx, plistPath)
 	if err != nil {
+		return err
+	}
+
+	if err := mcpscope.CheckEffect(ctx); err != nil {
 		return err
 	}
 
@@ -313,6 +323,10 @@ func runInstallLocked(cmd *cobra.Command, args []string) error {
 	logDir, _ := config.LogDir()
 	outLog := filepath.Join(logDir, "tslink.out.log")
 	errLog := filepath.Join(logDir, "tslink.err.log")
+
+	if err := mcpscope.CheckEffect(ctx); err != nil {
+		return err
+	}
 
 	if err := os.MkdirAll(filepath.Dir(plistPath), 0o755); err != nil {
 		return fmt.Errorf("create LaunchAgents directory: %w", err)
@@ -335,6 +349,9 @@ func runInstallLocked(cmd *cobra.Command, args []string) error {
 	if err := plistTemplate.Execute(&plist, data); err != nil {
 		return fmt.Errorf("write plist: %w", err)
 	}
+	if err := mcpscope.CheckEffect(ctx); err != nil {
+		return err
+	}
 	if err := atomicfile.WriteFileInExistingDir(plistPath, plist.Bytes(), atomicfile.PrivateFileMode); err != nil {
 		return fmt.Errorf("write plist: %w", err)
 	}
@@ -342,15 +359,15 @@ func runInstallLocked(cmd *cobra.Command, args []string) error {
 	var loadResult launchctlLoadResult
 	if previousState.Existed {
 		if force {
-			loadResult = loadLaunchAgent(plistPath, false)
+			loadResult = loadLaunchAgent(ctx, plistPath, false)
 			if loadResult.Err == nil && loadResult.Warning != "" {
 				loadResult.Warning += "; --force proceeded without confirming that every prior launchd job was unloaded; a second daemon may still be running in the unavailable domain"
 			}
 		} else {
-			loadResult = reinstallLaunchAgent(plistPath)
+			loadResult = reinstallLaunchAgent(ctx, plistPath)
 		}
 	} else {
-		loadResult = loadLaunchAgent(plistPath, false)
+		loadResult = loadLaunchAgent(ctx, plistPath, false)
 	}
 	if loadResult.Err != nil {
 		retryAdvice := installRetryAdvice(loadResult.Err)
@@ -362,7 +379,7 @@ func runInstallLocked(cmd *cobra.Command, args []string) error {
 			warning = launchctlWarning("LaunchAgent plist installed but the service did not reach running state", loadResult.Err, []byte(loadResult.Output))
 		}
 		if previousState.Existed {
-			restoreResult, restoreErr := restorePreviousLaunchAgent(previousState, loadResult, plistPath)
+			restoreResult, restoreErr := restorePreviousLaunchAgent(ctx, previousState, loadResult, plistPath)
 			if restoreErr != nil {
 				status := "the previous plist could not be restored"
 				if restoreResult.PlistRestored {
@@ -378,7 +395,7 @@ func runInstallLocked(cmd *cobra.Command, args []string) error {
 			return installCommandFailure(cmd, loadResult, plistPath, failure)
 		}
 		if loadResult.Bootstrapped {
-			if rollbackErr := rollbackNewLaunchAgent(loadResult.Target, plistPath); rollbackErr != nil {
+			if rollbackErr := rollbackNewLaunchAgent(ctx, loadResult.Target, plistPath); rollbackErr != nil {
 				return fmt.Errorf("%s; automatic rollback was incomplete: %v; the plist was kept at %s so 'tslink uninstall' can retry bootout; %s", warning, rollbackErr, plistPath, retryAdvice)
 			}
 			return fmt.Errorf("%s; the new installation was rolled back by booting out %s and removing %s; %s", warning, loadResult.Target, plistPath, retryAdvice)
@@ -436,13 +453,13 @@ func installCommandFailure(cmd *cobra.Command, loadResult launchctlLoadResult, p
 	return output.SilentExit(output.ExitError)
 }
 
-func captureLaunchAgentPreviousState(plistPath string) (launchAgentPreviousState, error) {
+func captureLaunchAgentPreviousState(ctx context.Context, plistPath string) (launchAgentPreviousState, error) {
 	info, err := os.Stat(plistPath)
 	if err != nil {
 		if !os.IsNotExist(err) {
 			return launchAgentPreviousState{}, fmt.Errorf("inspect existing LaunchAgent plist: %w", err)
 		}
-		if err := installDaemonConflictFn(); err != nil {
+		if err := installDaemonConflictFn(ctx); err != nil {
 			return launchAgentPreviousState{}, err
 		}
 		return launchAgentPreviousState{}, nil
@@ -458,7 +475,7 @@ func captureLaunchAgentPreviousState(plistPath string) (launchAgentPreviousState
 		Mode:    info.Mode().Perm(),
 	}
 
-	domain, target, owned, err := launchAgentTargetForRunningDaemon()
+	domain, target, owned, err := launchAgentTargetForRunningDaemon(ctx)
 	if err != nil {
 		return launchAgentPreviousState{}, fmt.Errorf("could not tell whether launchd owns the running TSLink daemon: %w; nothing was changed, retry 'tslink install'", err)
 	}
@@ -467,7 +484,7 @@ func captureLaunchAgentPreviousState(plistPath string) (launchAgentPreviousState
 		state.Target = target
 		return state, nil
 	}
-	if err := installDaemonArtifactConflictFn(); err != nil {
+	if err := installDaemonArtifactConflictFn(ctx); err != nil {
 		return launchAgentPreviousState{}, err
 	}
 	return state, nil
@@ -476,7 +493,7 @@ func captureLaunchAgentPreviousState(plistPath string) (launchAgentPreviousState
 // launchAgentTargetForRunningDaemon returns an error only when no domain
 // proved ownership and at least one could not be asked within two query
 // budgets: ownership is then unknown, which is neither "owned" nor "not owned".
-func launchAgentTargetForRunningDaemon() (string, string, bool, error) {
+func launchAgentTargetForRunningDaemon(ctx context.Context) (string, string, bool, error) {
 	pidPath, err := pidPathFn()
 	if err != nil || !isRunningFn(pidPath) {
 		return "", "", false, nil
@@ -490,7 +507,7 @@ func launchAgentTargetForRunningDaemon() (string, string, bool, error) {
 	for _, domain := range []string{launchctlDomain(), launchctlUserDomain()} {
 		target := launchctlServiceTargetForDomain(domain)
 		stateOutput, printErr := retryManagerQueryOnTimeout(func() ([]byte, error) {
-			return launchctlCombinedOutput("print", target)
+			return launchctlCombinedOutputChecked(ctx, "print", target)
 		})
 		if errors.Is(printErr, context.DeadlineExceeded) {
 			unknown = printErr
@@ -527,18 +544,18 @@ func launchctlServiceTargetForDomain(domain string) string {
 	return domain + "/" + plistLabel
 }
 
-func reinstallLaunchAgent(plistPath string) launchctlLoadResult {
-	return loadLaunchAgent(plistPath, true)
+func reinstallLaunchAgent(ctx context.Context, plistPath string) launchctlLoadResult {
+	return loadLaunchAgent(ctx, plistPath, true)
 }
 
-func loadLaunchAgent(plistPath string, replacingExisting bool) launchctlLoadResult {
+func loadLaunchAgent(ctx context.Context, plistPath string, replacingExisting bool) launchctlLoadResult {
 	guiDomain := launchctlDomain()
 	userDomain := launchctlUserDomain()
 	var bootoutErr error
 	if replacingExisting {
-		bootoutErr = bootoutLaunchAgentTargetsForUpgrade(guiDomain, userDomain)
+		bootoutErr = bootoutLaunchAgentTargetsForUpgrade(ctx, guiDomain, userDomain)
 	} else {
-		bootoutErr = bootoutLaunchAgentTargets(guiDomain, userDomain)
+		bootoutErr = bootoutLaunchAgentTargets(ctx, guiDomain, userDomain)
 	}
 	if bootoutErr != nil {
 		domain := guiDomain
@@ -556,10 +573,10 @@ func loadLaunchAgent(plistPath string, replacingExisting bool) launchctlLoadResu
 		}
 	}
 
-	output, err := launchctlCombinedOutput("bootstrap", guiDomain, plistPath)
+	output, err := launchctlCombinedOutputChecked(ctx, "bootstrap", guiDomain, plistPath)
 	if err == nil {
 		target := launchctlServiceTargetForDomain(guiDomain)
-		verificationOutput, verifyErr := verifyLaunchAgentRunning(target)
+		verificationOutput, verifyErr := verifyLaunchAgentRunning(ctx, target)
 		combinedOutput := strings.TrimSpace(string(output))
 		if verifyErr != nil {
 			combinedOutput = combineLaunchctlOutput(output, verificationOutput)
@@ -581,7 +598,7 @@ func loadLaunchAgent(plistPath string, replacingExisting bool) launchctlLoadResu
 		}
 	}
 
-	fallbackOutput, fallbackErr := launchctlCombinedOutput("bootstrap", userDomain, plistPath)
+	fallbackOutput, fallbackErr := launchctlCombinedOutputChecked(ctx, "bootstrap", userDomain, plistPath)
 	combinedOutput := combineLaunchctlOutput(output, fallbackOutput)
 	warning := fmt.Sprintf("launchctl %s is unavailable because no desktop session exists for this user; tried %s fallback", guiDomain, userDomain)
 	if fallbackErr != nil {
@@ -594,7 +611,7 @@ func loadLaunchAgent(plistPath string, replacingExisting bool) launchctlLoadResu
 		}
 	}
 	target := launchctlServiceTargetForDomain(userDomain)
-	verificationOutput, verifyErr := verifyLaunchAgentRunning(target)
+	verificationOutput, verifyErr := verifyLaunchAgentRunning(ctx, target)
 	if verifyErr != nil {
 		combinedOutput = combineLaunchctlOutput([]byte(combinedOutput), verificationOutput)
 	}
@@ -608,17 +625,17 @@ func loadLaunchAgent(plistPath string, replacingExisting bool) launchctlLoadResu
 	}
 }
 
-func verifyLaunchAgentRunning(target string) ([]byte, error) {
-	return waitForLaunchAgentRunning(target, launchAgentVerifyTimeout, launchAgentVerifyPollInterval)
+func verifyLaunchAgentRunning(ctx context.Context, target string) ([]byte, error) {
+	return waitForLaunchAgentRunning(ctx, target, launchAgentVerifyTimeout, launchAgentVerifyPollInterval)
 }
 
-func waitForLaunchAgentRunning(target string, timeout, pollInterval time.Duration) ([]byte, error) {
+func waitForLaunchAgentRunning(ctx context.Context, target string, timeout, pollInterval time.Duration) ([]byte, error) {
 	var lastOutput []byte
 	seenRunning := false
-	_, err := waitStableDaemon(context.Background(), func() (int, error) {
+	_, err := waitStableDaemon(ctx, func() (int, error) {
 		var printErr error
 		lastOutput, printErr = retryManagerQueryOnTimeout(func() ([]byte, error) {
-			return launchctlCombinedOutput("print", target)
+			return launchctlCombinedOutputChecked(ctx, "print", target)
 		})
 		if seenRunning && errors.Is(printErr, context.DeadlineExceeded) {
 			// Unknown, not "not running": once the job was seen, reporting 0
@@ -643,10 +660,13 @@ func waitForLaunchAgentRunning(target string, timeout, pollInterval time.Duratio
 	return lastOutput, nil
 }
 
-func pollLaunchAgent(target string, timeout, pollInterval time.Duration, done func([]byte, error) bool) ([]byte, error, bool) {
+func pollLaunchAgent(ctx context.Context, target string, timeout, pollInterval time.Duration, done func([]byte, error) bool) ([]byte, error, bool) {
 	deadline := time.Now().Add(timeout)
 	for {
-		output, err := launchctlCombinedOutput("print", target)
+		if err := mcpscope.CheckEffect(ctx); err != nil {
+			return nil, err, false
+		}
+		output, err := launchctlCombinedOutputChecked(ctx, "print", target)
 		if done(output, err) {
 			return output, err, true
 		}
@@ -681,19 +701,19 @@ func parseLaunchAgentState(output []byte) (string, int) {
 	return state, pid
 }
 
-func bootoutLaunchAgentTargets(domains ...string) error {
+func bootoutLaunchAgentTargets(ctx context.Context, domains ...string) error {
 	for _, domain := range domains {
-		if err := bootoutLaunchAgentTarget(launchctlServiceTargetForDomain(domain)); err != nil {
+		if err := bootoutLaunchAgentTarget(ctx, launchctlServiceTargetForDomain(domain)); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func bootoutLaunchAgentTargetsForUpgrade(domains ...string) error {
+func bootoutLaunchAgentTargetsForUpgrade(ctx context.Context, domains ...string) error {
 	var firstUnavailable error
 	for _, domain := range domains {
-		err := bootoutLaunchAgentTargetForUpgrade(launchctlServiceTargetForDomain(domain))
+		err := bootoutLaunchAgentTargetForUpgrade(ctx, launchctlServiceTargetForDomain(domain))
 		if err == nil {
 			continue
 		}
@@ -708,16 +728,16 @@ func bootoutLaunchAgentTargetsForUpgrade(domains ...string) error {
 	return firstUnavailable
 }
 
-func bootoutLaunchAgentTarget(target string) error {
-	return bootoutLaunchAgentTargetWithPolicy(target, true)
+func bootoutLaunchAgentTarget(ctx context.Context, target string) error {
+	return bootoutLaunchAgentTargetWithPolicy(ctx, target, true)
 }
 
-func bootoutLaunchAgentTargetForUpgrade(target string) error {
-	return bootoutLaunchAgentTargetWithPolicy(target, false)
+func bootoutLaunchAgentTargetForUpgrade(ctx context.Context, target string) error {
+	return bootoutLaunchAgentTargetWithPolicy(ctx, target, false)
 }
 
-func bootoutLaunchAgentTargetWithPolicy(target string, allowUnavailableDomain bool) error {
-	output, err := launchctlCombinedOutput("bootout", target)
+func bootoutLaunchAgentTargetWithPolicy(ctx context.Context, target string, allowUnavailableDomain bool) error {
+	output, err := launchctlCombinedOutputChecked(ctx, "bootout", target)
 	if launchctlServiceNotFound(output, err) {
 		return nil
 	}
@@ -734,12 +754,12 @@ func bootoutLaunchAgentTargetWithPolicy(target string, allowUnavailableDomain bo
 		return errors.New(launchctlWarning("bootout "+target, err, output))
 	}
 
-	return waitLaunchAgentAbsent(target, allowUnavailableDomain)
+	return waitLaunchAgentAbsent(ctx, target, allowUnavailableDomain)
 }
 
 // bootout acceptance (including rc=0) precedes asynchronous job removal.
-func waitLaunchAgentAbsent(target string, allowUnavailableDomain bool) error {
-	lastOutput, lastErr, gone := pollLaunchAgent(
+func waitLaunchAgentAbsent(ctx context.Context, target string, allowUnavailableDomain bool) error {
+	lastOutput, lastErr, gone := pollLaunchAgent(ctx,
 		target,
 		launchAgentBootoutTimeout,
 		launchAgentBootoutPollInterval,
@@ -762,8 +782,11 @@ func waitLaunchAgentAbsent(target string, allowUnavailableDomain bool) error {
 	return fmt.Errorf("launchctl bootout remained in progress after %s: %s", launchAgentBootoutTimeout, detail)
 }
 
-func rollbackNewLaunchAgent(target, plistPath string) error {
-	if err := bootoutLaunchAgentTarget(target); err != nil {
+// Compensation restores an already-started installation; it may finish after
+// caller cancellation/expiry and retains the existing per-command bounds.
+func rollbackNewLaunchAgent(ctx context.Context, target, plistPath string) error {
+	ctx = managerCompensationContext(ctx)
+	if err := bootoutLaunchAgentTarget(ctx, target); err != nil {
 		return err
 	}
 	if err := os.Remove(plistPath); err != nil && !os.IsNotExist(err) {
@@ -772,11 +795,12 @@ func rollbackNewLaunchAgent(target, plistPath string) error {
 	return nil
 }
 
-func restorePreviousLaunchAgent(previous launchAgentPreviousState, loadResult launchctlLoadResult, plistPath string) (launchAgentRestoreResult, error) {
+func restorePreviousLaunchAgent(ctx context.Context, previous launchAgentPreviousState, loadResult launchctlLoadResult, plistPath string) (launchAgentRestoreResult, error) {
+	ctx = managerCompensationContext(ctx)
 	result := launchAgentRestoreResult{}
 	var restoreErrs []error
 	if loadResult.Bootstrapped {
-		if err := bootoutLaunchAgentTarget(loadResult.Target); err != nil {
+		if err := bootoutLaunchAgentTarget(ctx, loadResult.Target); err != nil {
 			restoreErrs = append(restoreErrs, err)
 		}
 	}
@@ -790,11 +814,11 @@ func restorePreviousLaunchAgent(previous launchAgentPreviousState, loadResult la
 		return result, errors.Join(restoreErrs...)
 	}
 
-	bootstrapOutput, err := launchctlCombinedOutput("bootstrap", previous.Domain, plistPath)
+	bootstrapOutput, err := launchctlCombinedOutput(ctx, "bootstrap", previous.Domain, plistPath)
 	if err != nil {
 		return result, errors.New(launchctlWarning("restore previous LaunchAgent with bootstrap "+previous.Domain, err, bootstrapOutput))
 	}
-	verificationOutput, err := verifyLaunchAgentRunning(previous.Target)
+	verificationOutput, err := verifyLaunchAgentRunning(ctx, previous.Target)
 	if err != nil {
 		detail := strings.TrimSpace(string(verificationOutput))
 		if detail != "" {
@@ -886,4 +910,11 @@ func init() {
 	installCmd.Flags().Bool("no-auto-provision", false, "Install the managed daemon with Funnel policy auto-provisioning disabled")
 	mustMarkFlagPlatforms(installCmd, "force", "darwin")
 	rootCmd.AddCommand(installCmd)
+}
+
+func launchctlCombinedOutputChecked(ctx context.Context, args ...string) ([]byte, error) {
+	if err := mcpscope.CheckEffect(ctx); err != nil {
+		return nil, err
+	}
+	return launchctlCombinedOutput(ctx, args...)
 }

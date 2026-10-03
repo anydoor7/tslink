@@ -185,7 +185,7 @@ func TestRequestLimitsStatusListAndDoctorWarnings(t *testing.T) {
 		t.Fatal(err)
 	}
 	withStatusURLSeams(t, true, 4242, started)
-	got, err := getStatusURLs(pidPath, regPath, snapshotPath)
+	got, err := getStatusURLs(context.Background(), pidPath, regPath, snapshotPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +198,7 @@ func TestRequestLimitsStatusListAndDoctorWarnings(t *testing.T) {
 	if !strings.Contains(human.String(), "read-idle=2m0s") || !strings.Contains(human.String(), registry.CodeRequestBodyLimit) {
 		t.Fatalf("status human=%s", human.String())
 	}
-	result, err := loadListResultForPaths(regPath, pidPath, snapshotPath, listOptions{Verbose: true})
+	result, err := loadListResultForPaths(context.Background(), regPath, pidPath, snapshotPath, listOptions{Verbose: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +207,7 @@ func TestRequestLimitsStatusListAndDoctorWarnings(t *testing.T) {
 		t.Fatalf("list JSON=%s", raw)
 	}
 	human.Reset()
-	if err := listServicesWithOptions(regPath, &human, listOptions{Verbose: true}); err != nil {
+	if err := listServicesWithOptions(context.Background(), regPath, &human, listOptions{Verbose: true}); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(human.String(), "read-idle=2m0s") || !strings.Contains(human.String(), "--max-request-body") {

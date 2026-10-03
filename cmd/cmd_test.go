@@ -83,7 +83,7 @@ func runAddCmd(t *testing.T, args []string, flags map[string]string) error {
 
 	resetCommandLocalFlags(t, addCmd)
 	_ = addCmd.Flags().Set("wait", "0")
-	addCmd.SetContext(context.Background())
+	setCommandTestContext(t, addCmd)
 
 	for k, v := range flags {
 		addCmd.Flags().Set(k, v)
@@ -106,7 +106,7 @@ func runAddCmdOutput(t *testing.T, args []string, flags map[string]string) (stri
 
 	resetCommandLocalFlags(t, addCmd)
 	_ = addCmd.Flags().Set("wait", "0")
-	addCmd.SetContext(context.Background())
+	setCommandTestContext(t, addCmd)
 
 	for k, v := range flags {
 		addCmd.Flags().Set(k, v)
@@ -600,7 +600,7 @@ func TestListServices_Empty(t *testing.T) {
 	dir := t.TempDir()
 	regPath := filepath.Join(dir, "registry.json")
 	var buf bytes.Buffer
-	if err := listServices(regPath, &buf); err != nil {
+	if err := listServices(context.Background(), regPath, &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !strings.Contains(buf.String(), "No services") {
@@ -616,7 +616,7 @@ func TestListServices_WithServices(t *testing.T) {
 	_, _ = registry.Add(regPath, registry.Service{Name: "docs", Type: registry.TypeFile, Path: docsDir})
 
 	var buf bytes.Buffer
-	if err := listServices(regPath, &buf); err != nil {
+	if err := listServices(context.Background(), regPath, &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
@@ -633,7 +633,7 @@ func TestListServices_InvalidRegistry(t *testing.T) {
 	regPath := filepath.Join(dir, "registry.json")
 	os.WriteFile(regPath, []byte("{bad"), 0o600)
 	var buf bytes.Buffer
-	if err := listServices(regPath, &buf); err == nil {
+	if err := listServices(context.Background(), regPath, &buf); err == nil {
 		t.Fatal("expected error for invalid registry")
 	}
 }
@@ -644,9 +644,9 @@ func TestGetStatus_NotRunning(t *testing.T) {
 	dir := t.TempDir()
 	pidPath := filepath.Join(dir, "tslink.pid")
 	regPath := filepath.Join(dir, "registry.json")
-	r, err := getStatus(pidPath, regPath)
+	r, err := getStatus(context.Background(), pidPath, regPath)
 	if err != nil {
-		t.Fatalf("getStatus() error = %v", err)
+		t.Fatalf("getStatus(context.Background(), ) error = %v", err)
 	}
 	if r.DaemonRunning {
 		t.Error("expected not running")
@@ -661,9 +661,9 @@ func TestGetStatus_WithServices(t *testing.T) {
 	pidPath := filepath.Join(dir, "tslink.pid")
 	regPath := filepath.Join(dir, "registry.json")
 	_, _ = registry.Add(regPath, registry.Service{Name: "a", Type: registry.TypeProxy, Target: "http://localhost:3000"})
-	r, err := getStatus(pidPath, regPath)
+	r, err := getStatus(context.Background(), pidPath, regPath)
 	if err != nil {
-		t.Fatalf("getStatus() error = %v", err)
+		t.Fatalf("getStatus(context.Background(), ) error = %v", err)
 	}
 	if r.ServiceCount != 1 {
 		t.Errorf("expected 1 service, got %d", r.ServiceCount)
@@ -1198,9 +1198,9 @@ func TestGetStatus_Running_CredentialStoredIsNotAuthenticated(t *testing.T) {
 	regPath := filepath.Join(dir, "registry.json")
 	_, _ = registry.Add(regPath, registry.Service{Name: "a", Type: registry.TypeProxy, Target: "http://localhost:3000"})
 
-	r, err := getStatus(filepath.Join(dir, "pid"), regPath)
+	r, err := getStatus(context.Background(), filepath.Join(dir, "pid"), regPath)
 	if err != nil {
-		t.Fatalf("getStatus() error = %v", err)
+		t.Fatalf("getStatus(context.Background(), ) error = %v", err)
 	}
 	if !r.DaemonRunning {
 		t.Error("expected running")
@@ -1227,9 +1227,9 @@ func TestGetStatus_ClientSecretIsStoredNotAuthenticated(t *testing.T) {
 	hasClientSecretFn = func() bool { return true }
 
 	dir := t.TempDir()
-	r, err := getStatus(filepath.Join(dir, "pid"), filepath.Join(dir, "registry.json"))
+	r, err := getStatus(context.Background(), filepath.Join(dir, "pid"), filepath.Join(dir, "registry.json"))
 	if err != nil {
-		t.Fatalf("getStatus() error = %v", err)
+		t.Fatalf("getStatus(context.Background(), ) error = %v", err)
 	}
 	if !r.CredentialStored || r.Authenticated {
 		t.Errorf("credential_stored=%v authenticated=%v, want a stored client secret that is not authenticated", r.CredentialStored, r.Authenticated)

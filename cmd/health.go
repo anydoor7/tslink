@@ -19,19 +19,7 @@ func nodeExpiryNext() []string {
 }
 
 func currentHealth(h health.State, svc registry.Service, now time.Time) health.State {
-	cfg := registry.HealthConfig{}
-	if svc.Health != nil {
-		cfg = *svc.Health
-	}
-	timeout, interval := cfg.Durations()
-	if h.LastChecked == nil {
-		return health.Unchecked(svc.Type)
-	}
-	if now.Sub(*h.LastChecked) > 2*interval+timeout {
-		h.State = health.Unknown
-		h.LastError = "health_observation_stale"
-	}
-	return h
+	return health.CurrentAt(h, svc, now)
 }
 
 func formatAppHealth(out io.Writer, name string, h health.State, e health.Expiry) {

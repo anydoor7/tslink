@@ -4,12 +4,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/anydoor7/tslink/internal/atomicfile"
@@ -28,6 +30,20 @@ const (
 )
 
 var authHandoffNowFn = func() time.Time { return time.Now().UTC() }
+
+var errAuthHandoffExpired = errors.New("auth handoff expired")
+
+// Serialize read/modify/write operations from all publishers in this daemon.
+var authHandoffFileMu sync.Mutex
+
+const maxHandoffBytes = 64 << 10
+
+// Entries are unique by Service and ordered by publication. Replacing an
+// offer moves that node to the end; legacy consumers get the oldest offer.
+type authHandoffDocument struct {
+	SchemaVersion int                 `json:"schema_version"`
+	Entries       []authHandoffRecord `json:"entries"`
+}
 
 type authHandoffRecord struct {
 	SchemaVersion int       `json:"schema_version"`
@@ -48,7 +64,10 @@ type serveAuthResult struct {
 }
 
 func newAuthHandoffRecord(service, authURL string, daemonPID int) authHandoffRecord {
-	now := authHandoffNowFn()
+	return newAuthHandoffRecordAt(service, authURL, daemonPID, authHandoffNowFn())
+}
+
+func newAuthHandoffRecordAt(service, authURL string, daemonPID int, now time.Time) authHandoffRecord {
 	return authHandoffRecord{
 		SchemaVersion: authHandoffSchemaVersion,
 		Status:        authStatusNeedsLogin,
@@ -70,11 +89,31 @@ func (r authHandoffRecord) serveResult() serveAuthResult {
 }
 
 func saveAuthHandoff(path string, record authHandoffRecord) error {
-	data, err := json.MarshalIndent(record, "", "  ")
+	authHandoffFileMu.Lock()
+	defer authHandoffFileMu.Unlock()
+	entries, err := loadAuthHandoffs(path)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	kept := make([]authHandoffRecord, 0, len(entries)+1)
+	for _, entry := range entries {
+		if entry.DaemonPID == record.DaemonPID && entry.Service != record.Service {
+			kept = append(kept, entry)
+		}
+	}
+	return writeAuthHandoffs(path, append(kept, record))
+}
+
+// Caller holds authHandoffFileMu when modifying an existing document.
+func writeAuthHandoffs(path string, entries []authHandoffRecord) error {
+	data, err := json.MarshalIndent(authHandoffDocument{SchemaVersion: 2, Entries: entries}, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode auth handoff: %w", err)
 	}
 	data = append(data, '\n')
+	if len(data) > maxHandoffBytes {
+		return errors.New("auth handoff exceeds 64 KiB")
+	}
 	if err := atomicfile.WriteFile(path, data); err != nil {
 		return fmt.Errorf("write auth handoff: %w", err)
 	}
@@ -82,24 +121,78 @@ func saveAuthHandoff(path string, record authHandoffRecord) error {
 }
 
 func loadAuthHandoff(path string) (authHandoffRecord, error) {
-	data, err := os.ReadFile(path)
+	entries, err := loadAuthHandoffs(path)
 	if err != nil {
 		return authHandoffRecord{}, err
 	}
-	var record authHandoffRecord
-	if err := json.Unmarshal(data, &record); err != nil {
-		return authHandoffRecord{}, fmt.Errorf("decode auth handoff: %w", err)
+	for _, entry := range entries {
+		if entry.ExpiresAt.After(authHandoffNowFn()) {
+			return entry, nil
+		}
 	}
-	if record.SchemaVersion != authHandoffSchemaVersion {
-		return authHandoffRecord{}, fmt.Errorf("unsupported auth handoff schema_version %d", record.SchemaVersion)
+	return entries[0], errAuthHandoffExpired
+}
+
+// Read expired records too: a terminal event must still retire its exact offer.
+// Readers select unexpired entries using their own captured clock.
+func loadAuthHandoffs(path string) ([]authHandoffRecord, error) {
+	var entries []authHandoffRecord
+	err := atomicfile.ReadSettled(path, func() error {
+		return atomicfile.RetryFileOperation(func() error {
+			var err error
+			entries, err = loadAuthHandoffsOnce(path)
+			return err
+		})
+	})
+	return entries, err
+}
+
+func loadAuthHandoffsOnce(path string) ([]authHandoffRecord, error) {
+	f, err := openAuthHandoff(path)
+	if err != nil {
+		return nil, err
 	}
-	if record.Status != authStatusNeedsLogin || strings.TrimSpace(record.AuthURL) == "" || record.DaemonPID <= 0 {
-		return authHandoffRecord{}, errors.New("invalid auth handoff record")
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
 	}
-	if !record.ExpiresAt.After(authHandoffNowFn()) {
-		return authHandoffRecord{}, errors.New("auth handoff expired")
+	if !info.Mode().IsRegular() || info.Size() > maxHandoffBytes {
+		return nil, errors.New("auth handoff must be a regular file of at most 64 KiB")
 	}
-	return record, nil
+	data, err := io.ReadAll(io.LimitReader(f, maxHandoffBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxHandoffBytes {
+		return nil, errors.New("auth handoff exceeds 64 KiB")
+	}
+	var document authHandoffDocument
+	if err := json.Unmarshal(data, &document); err != nil {
+		return nil, fmt.Errorf("decode auth handoff: %w", err)
+	}
+	switch document.SchemaVersion {
+	case authHandoffSchemaVersion:
+		var record authHandoffRecord
+		if err := json.Unmarshal(data, &record); err != nil {
+			return nil, fmt.Errorf("decode legacy auth handoff: %w", err)
+		}
+		document.Entries = []authHandoffRecord{record}
+	case 2:
+	default:
+		return nil, fmt.Errorf("unsupported auth handoff schema_version %d", document.SchemaVersion)
+	}
+	if len(document.Entries) == 0 {
+		return nil, errors.New("empty auth handoff document")
+	}
+	seen := make(map[string]bool, len(document.Entries))
+	for _, record := range document.Entries {
+		if record.SchemaVersion != authHandoffSchemaVersion || record.Status != authStatusNeedsLogin || strings.TrimSpace(record.AuthURL) == "" || record.DaemonPID <= 0 || seen[record.Service] {
+			return nil, errors.New("invalid auth handoff record")
+		}
+		seen[record.Service] = true
+	}
+	return document.Entries, nil
 }
 
 func removeAuthHandoff(path string) error {
@@ -110,9 +203,8 @@ func removeAuthHandoff(path string) error {
 }
 
 // authHandoffMatchesService reports whether an interactive-enrollment handoff
-// describes the queried service. The handoff file is a daemon-wide singleton:
-// when several services are enrolling, a query for a different service must not
-// be handed the first service's authorization URL. A handoff with no service
+// describes the queried service. A query for a different service must not
+// be handed another service's authorization URL. A handoff with no service
 // recorded is treated as unbound and may satisfy any query.
 func authHandoffMatchesService(handoff authHandoffRecord, name string) bool {
 	return handoff.Service == "" || handoff.Service == name
@@ -124,18 +216,17 @@ func authHandoffMatchesService(handoff authHandoffRecord, name string) bool {
 // queried service or be unbound. Callers use the returned record for the
 // enrollment URL; ok=false means fall through to the plain url_not_ready path.
 func validAuthHandoffForService(pidPath, name string) (authHandoffRecord, bool) {
-	handoff, loadErr := loadAuthHandoff(filepath.Join(filepath.Dir(pidPath), "auth-handoff.json"))
+	entries, loadErr := loadAuthHandoffs(filepath.Join(filepath.Dir(pidPath), "auth-handoff.json"))
 	if loadErr != nil {
 		return authHandoffRecord{}, false
 	}
 	pid, _ := readPIDFn(pidPath)
-	if pid <= 0 || handoff.DaemonPID != pid || !handoff.ExpiresAt.After(time.Now()) {
-		return authHandoffRecord{}, false
+	for _, handoff := range entries {
+		if pid > 0 && handoff.DaemonPID == pid && handoff.ExpiresAt.After(authHandoffNowFn()) && authHandoffMatchesService(handoff, name) {
+			return handoff, true
+		}
 	}
-	if !authHandoffMatchesService(handoff, name) {
-		return authHandoffRecord{}, false
-	}
-	return handoff, true
+	return authHandoffRecord{}, false
 }
 
 func openBrowser(authURL string) error {

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"sort"
@@ -41,7 +42,7 @@ func TestDoctorReportsDeviceCleanupBlockedPerService(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result := buildDoctorResult(doctorOptions{})
+	result := buildDoctorResult(context.Background(), doctorOptions{})
 	if got := strings.Join(deviceCleanupBlockedServices(result), ","); got != "alpha,handedited" {
 		t.Fatalf("device_cleanup_blocked services = %q, want alpha,handedited; findings = %+v", got, result.Findings)
 	}
@@ -67,14 +68,14 @@ func TestDoctorDeviceCleanupBlockedControls(t *testing.T) {
 		if err := tsruntime.MarkOwnedNodeIDsRetired(ownershipPath, []string{"n-removed"}, now); err != nil {
 			t.Fatal(err)
 		}
-		assertDoctorNoFinding(t, buildDoctorResult(doctorOptions{}), inspect.WarningCodeDeviceCleanupBlocked)
+		assertDoctorNoFinding(t, buildDoctorResult(context.Background(), doctorOptions{}), inspect.WarningCodeDeviceCleanupBlocked)
 	})
 	t.Run("ledger unreadable", func(t *testing.T) {
 		env := newDoctorTestEnv(t, nil)
 		if err := os.WriteFile(filepath.Join(env.dir, "node-ownership.json"), []byte("{ not json"), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		result := buildDoctorResult(doctorOptions{})
+		result := buildDoctorResult(context.Background(), doctorOptions{})
 		finding := assertDoctorFinding(t, result, inspect.WarningCodeDeviceCleanupBlocked)
 		if finding.Service != "" || finding.Evidence["error"] == "" {
 			t.Fatalf("finding = %+v, want one install-wide finding with the ledger error", finding)

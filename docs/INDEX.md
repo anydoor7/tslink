@@ -36,6 +36,7 @@ Documentation is English-only. The only translations are the homepage READMEs in
 
 | Guide | File |
 |---|---|
+| Access log | [access-log.md](access-log.md) |
 | Agent quickstart | [agent-quickstart.md](agent-quickstart.md) |
 | Agents | [agents.md](agents.md) |
 | App recipes | [apps.md](apps.md) |
@@ -44,17 +45,23 @@ Documentation is English-only. The only translations are the homepage READMEs in
 | Comparison | [comparison.md](comparison.md) |
 | Credentials And Tags | [credentials-and-tags.md](credentials-and-tags.md) |
 | Daemon Lifecycle | [daemon-lifecycle.md](daemon-lifecycle.md) |
+| Durations | [durations.md](durations.md) |
+| Funnel | [funnel.md](funnel.md) |
 | Getting Started | [getting-started.md](getting-started.md) |
+| Guest links | [guest-links.md](guest-links.md) |
 | Health and alerts | [health-and-alerts.md](health-and-alerts.md) |
 | Json Automation | [json-automation.md](json-automation.md) |
 | Landscape | [landscape.md](landscape.md) |
 | Local models and private-data workflows | [local-ai.md](local-ai.md) |
 | Connecting an MCP client | [mcp-clients.md](mcp-clients.md) |
+| MCP scopes | [mcp-scopes.md](mcp-scopes.md) |
 | Multi Machine | [multi-machine.md](multi-machine.md) |
 | People | [people.md](people.md) |
+| Portal | [portal.md](portal.md) |
 | Platforms | [platforms.md](platforms.md) |
 | Release Artifacts | [release-artifacts.md](release-artifacts.md) |
 | Remote Mcp | [remote-mcp.md](remote-mcp.md) |
+| Access requests | [requests.md](requests.md) |
 | Roadmap | [roadmap.md](roadmap.md) |
 | Sharing | [sharing.md](sharing.md) |
 | Verify a TSLink release | [verify-release.md](verify-release.md) |

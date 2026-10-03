@@ -1,5 +1,7 @@
 # People sharing files
 
+- `command_context_test.go`: direct Cobra handler context initialization and exact cleanup isolation controls.
+
 This index records the people sharing lifecycle implementation and regression tests in this directory. Other package files are described by the repository architecture guide.
 
 - [people.go](people.go)
@@ -54,4 +56,77 @@ This index records the app recipe additions; the CLI manifest describes the comp
 
 - `json_test.go`: concurrently drains captured CLI output; `wave1_round2_test.go` covers output larger than the OS pipe buffer.
 
+# Unified lifetime additions
+
+- `extend.go`: JSON-only per-app person/Funnel deadline changes and synchronous post-save event hook.
+- `mcp_durations.go`: lifetime suggestions and extend tool registry/schema.
+- `durations_test.go`: CLI/MCP, policy configuration and captured clock evidence.
+
+- `duration_public_default_test.go`: compiled CLI private-to-public default and legacy controls.
+- `duration_guest_atomic_test.go`: deterministic first-invitation interleaving through hermetic REST.
+- `duration_entrypaths_test.go`: compiled dry-run, MCP add and share/recipe/extend posture controls.
+# Access history commands
+
+- `access_log.go`: access log/path CLI, read-only access_log/access_summary MCP tools and schemas, health formatting.
+- `access_log_config.go`: validated global CLI option set/get.
+- `access_log_test.go`: CLI/envelope, MCP read-only protocol, filters, strict configuration and doctor health.
+
+- `access_runtime_test.go`: current-instance status/doctor health, stale-state refusal and path mode commands.
+# Home portal commands
+
+- `portal.go`: enable/disable CLI and shared MCP actions; exact status view.
+- `mcp_portal.go`: tool schemas, annotations and registry entries.
+- `portal_test.go`: CLI/MCP, status, doctor and people-guide contract tests.
+
+- `f5_review_test.go`: independent enrollment regressions, production readiness/handoff cleanup, portal-only status and real-file failure cases.
+- `auth_handoff_read_unix.go`, `auth_handoff_read_windows.go`: bounded regular-file handoff reads; Unix nonblocking/no-follow open.
+- `portal_handoff_unix_test.go`: real pending-offer cancellation after FIFO/symlink replacement.
+- `pending_enrollment_test.go`: reviewer-derived HTTP polling and multi-node pending/terminal controls (`enrollmenttest` tag).
+- `auth_handoff_multi_test.go`: legacy migration, per-node replacement, concurrent files, exact retirement, write failures and complete status projections.
+# Scoped MCP permissions
+
+- `mcp_scopes.go`: shared tool authorization, output filtering, reduced stdio launch and owner audit CLI.
+- `mcp_scopes_test.go`: complete role/tool/app matrix, real HTTP and stdio sessions, audit and expiry probes.
+
+- `mcp_scopes_boundary_test.go`: MCP transaction, identity and app attribution correctness tests.
+
+- `mcp_install_darwin_test.go`, `mcp_install_linux_test.go`, `mcp_install_windows_test.go`: real MCP/bootstrap/definition paths with fake manager boundaries and active/expired/cancelled controls.
+- `mcp_manager_context_test.go`: real bounded subprocess cancellation and expiry probes.
+- `service_manager_context_test.go`: context seam adapter retaining the service-manager guard restoration check.
+- `supervision_unix.go`: checked Unix manager query adapter and caller-context command adapter.
+- `bootstrap_queries_unix_test.go`, `bootstrap_queries_windows_test.go`: caller session checks at query boundaries with active, expired and cancelled controls.
+- `bootstrap_query_process_test.go`: cancellation after a real query subprocess reports readiness.
+- `bootstrap_inspection_test.go`: existing definitions, installer inspection and supervision context propagation.
+- `bootstrap_install_context_darwin_test.go`, `bootstrap_install_context_linux_test.go`: isolated prior-definition inspection adapters.
+
+- `read_manager_context_test.go`: ported shared-read session, subprocess cancellation and setup error-code fixtures; bounded compensation provenance; additional list, URL, share and event snapshot callers.
+- `manager_inventory_test.go`: all-platform AST inventory and transitive MCP manager context checks, with explicit compensation and CLI classifications.
+
+# Browser guest links
+
+- guest.go: owner guest CRUD, explicit bearer disclosure and stdin PIN.
+- guest_status.go: active grant views and Funnel/expiry diagnosis.
+- mcp_guests.go: owner-only tool registry and schemas.
+- guest_test.go: CLI/MCP masking, policy and diagnosis controls.
+
+- `guest_human_test.go`: human summaries and readable recipient expiry.
+
+# Access requests and phone onboarding
+
+- `people_qr.go`: phone guides, safe terminal/PNG QR output and explicit bearer consent.
+- `people_qr_test.go, people_qr_unix_test.go`: independent decoding, command and file failure evidence.
+- `requests.go`: owner CLI/actions, terminal filtering and F4 post-decision hook.
+- `requests_test.go`: compiled CLI, MCP listener owner checks and durable decisions.
+- `mcp_requests.go`: owner-only request tool schemas and annotations.
+
+- `portal_authority_test.go`: remote authority denial, local recovery and retryable request-inbox controls.
+
+- `requests_authority_test.go`: ported reviewer authority restoration and in-flight owner replacement probes.
+- `people_authority_test.go`: real HTTP MCP owner/admin/ordinary mutation matrix and compiled local recovery.
+
+- `wave2_integration_test.go`: real MCP role/app boundaries, owner approval, shared lifetimes and lifecycle audit integration.
 - `share_registered_name_test.go`: real registry collisions and reuse through CLI JSON and MCP wire output, including both enrollment paths and the required name schema.
+
+- Auth handoff readers preserve regular-file/size checks while using shared Windows reads and common replacement settling.
+
+- `windows_scheduler_native_test.go`: migration/install readiness uses synctest so filesystem latency cannot consume the fixture's 20 ms settle budget.

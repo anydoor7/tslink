@@ -10,8 +10,10 @@ import (
 	"path/filepath"
 	"regexp"
 
+	"github.com/anydoor7/tslink/internal/accesslog"
 	"github.com/anydoor7/tslink/internal/atomicfile"
 	"github.com/anydoor7/tslink/internal/filelock"
+	"github.com/anydoor7/tslink/internal/mcpscope"
 )
 
 // ConfigDirEnv overrides the default per-user configuration directory. It is
@@ -26,9 +28,11 @@ var (
 
 // GlobalConfig holds tslink-wide settings persisted in config.json.
 type GlobalConfig struct {
-	ControlURL string     `json:"control_url,omitempty"`
-	DefaultTag string     `json:"default_tag,omitempty"`
-	MCP        *MCPConfig `json:"mcp,omitempty"`
+	Durations  *DurationPolicyConfig `json:"durations,omitempty"`
+	ControlURL string                `json:"control_url,omitempty"`
+	DefaultTag string                `json:"default_tag,omitempty"`
+	MCP        *MCPConfig            `json:"mcp,omitempty"`
+	AccessLog  *accesslog.Options    `json:"access_log,omitempty"`
 }
 
 // MCPConfig configures the optional remote MCP control plane the daemon can
@@ -40,9 +44,10 @@ type GlobalConfig struct {
 // the security boundary of the whole control plane: an empty list is a refusal
 // to start, never an invitation to everyone.
 type MCPConfig struct {
-	Enabled  bool     `json:"enabled,omitempty"`
-	Allow    []string `json:"allow,omitempty"`
-	NodeName string   `json:"node_name,omitempty"`
+	Enabled  bool               `json:"enabled,omitempty"`
+	Allow    []string           `json:"allow,omitempty"`
+	Bindings []mcpscope.Binding `json:"bindings,omitempty"`
+	NodeName string             `json:"node_name,omitempty"`
 	// EventsKeepalive is the event stream's heartbeat period as a Go duration
 	// string, for example "20s". Empty means the daemon's default. It is
 	// configuration rather than a flag because it is a property of the
@@ -109,7 +114,7 @@ func (e *ConfigLoadError) StableCode() string { return CodeConfigLoadFailed }
 // NextCommands returns the recovery steps for a config.json TSLink refuses.
 func (e *ConfigLoadError) NextCommands() []string {
 	return []string{
-		fmt.Sprintf("Fix %s: %s (known keys: control_url, default_tag, mcp)", e.Path, e.Problem),
+		fmt.Sprintf("Fix %s: %s (known keys: control_url, default_tag, mcp, durations, access_log)", e.Path, e.Problem),
 		"tslink doctor --json",
 	}
 }
@@ -139,7 +144,7 @@ func loadGlobalConfig(strict bool) (GlobalConfig, error) {
 	if err := atomicfile.ConvergePrivateFile(path); err != nil {
 		return GlobalConfig{}, err
 	}
-	data, err := os.ReadFile(path)
+	data, err := atomicfile.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return GlobalConfig{}, nil
@@ -160,6 +165,19 @@ func loadGlobalConfig(strict bool) (GlobalConfig, error) {
 	}
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return GlobalConfig{}, &ConfigLoadError{Path: path, Problem: "unexpected data after the JSON object"}
+	}
+	if _, err := cfg.LifetimePolicy(); err != nil {
+		return GlobalConfig{}, &ConfigLoadError{Path: path, Problem: err.Error()}
+	}
+	if cfg.AccessLog != nil {
+		if err := cfg.AccessLog.Validate(); err != nil {
+			return GlobalConfig{}, &ConfigLoadError{Path: path, Problem: err.Error()}
+		}
+	}
+	if cfg.MCP != nil {
+		if err := mcpscope.ValidateBindings(cfg.MCP.Allow, cfg.MCP.Bindings); err != nil {
+			return GlobalConfig{}, &ConfigLoadError{Path: path, Problem: err.Error()}
+		}
 	}
 	return cfg, nil
 }
@@ -225,6 +243,19 @@ func UpdateGlobalConfig(mutate func(*GlobalConfig) error) error {
 
 // SaveGlobalConfig writes the global config to disk.
 func SaveGlobalConfig(cfg GlobalConfig) error {
+	if _, err := cfg.LifetimePolicy(); err != nil {
+		return err
+	}
+	if cfg.AccessLog != nil {
+		if err := cfg.AccessLog.Validate(); err != nil {
+			return err
+		}
+	}
+	if cfg.MCP != nil {
+		if err := mcpscope.ValidateBindings(cfg.MCP.Allow, cfg.MCP.Bindings); err != nil {
+			return err
+		}
+	}
 	path, err := ConfigPath()
 	if err != nil {
 		return err

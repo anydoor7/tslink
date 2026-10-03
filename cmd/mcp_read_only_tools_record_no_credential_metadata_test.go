@@ -127,8 +127,8 @@ func TestMCPReadOnlyToolsDescribeAStoredCredentialWithoutRecordingIt(t *testing.
 			}
 		})
 	}
-	if readOnly != 14 {
-		t.Fatalf("%d tools are marked read-only, want the 14 that only read", readOnly)
+	if readOnly != 20 {
+		t.Fatalf("%d tools are marked read-only, want the 20 that only read", readOnly)
 	}
 	t.Run("event stream", func(t *testing.T) {
 		_, paths, roots := readOnlyCredentialFixture(t)
@@ -166,15 +166,15 @@ func TestStatusReportingCommandsStillRecordTheBackfill(t *testing.T) {
 		read func(sharePaths) error
 	}{
 		{"tslink status", func(p sharePaths) error {
-			_, err := getPollableStatus(p.PID, p.Registry, p.Snapshot, p.AuthHandoff)
+			_, err := getPollableStatus(context.Background(), p.PID, p.Registry, p.Snapshot, p.AuthHandoff)
 			return err
 		}},
 		{"tslink status --urls", func(p sharePaths) error {
-			_, err := getStatusURLsWithAuth(p.PID, p.Registry, p.Snapshot, p.AuthHandoff)
+			_, err := getStatusURLsWithAuth(context.Background(), p.PID, p.Registry, p.Snapshot, p.AuthHandoff)
 			return err
 		}},
 		{"tslink doctor", func(p sharePaths) error {
-			buildDoctorResult(doctorOptions{RegistryPath: p.Registry, PIDPath: p.PID, RuntimeSnapshotPath: p.Snapshot, AuthHandoffPath: p.AuthHandoff})
+			buildDoctorResult(context.Background(), doctorOptions{RegistryPath: p.Registry, PIDPath: p.PID, RuntimeSnapshotPath: p.Snapshot, AuthHandoffPath: p.AuthHandoff})
 			return nil
 		}},
 	} {

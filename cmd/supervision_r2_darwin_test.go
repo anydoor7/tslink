@@ -52,7 +52,7 @@ func TestBootstrapLaunchctlRealFixture(t *testing.T) {
 	if err := os.WriteFile(path, plist.Bytes(), 0600); err != nil {
 		t.Fatal(err)
 	}
-	managerOutputFn = func(_ string, args ...string) ([]byte, error) {
+	managerOutputFn = func(ctx context.Context, _ string, args ...string) ([]byte, error) {
 		if args[0] == "print-disabled" {
 			return disabled, nil
 		}
@@ -73,7 +73,7 @@ func TestBootstrapLaunchctlRealFixture(t *testing.T) {
 		if err := os.WriteFile(path, content, 0600); err != nil {
 			t.Fatal(err)
 		}
-		s := detectSupervision(filepath.Join(dir, "tslink.pid"), true, 41564)
+		s := detectSupervision(context.Background(), filepath.Join(dir, "tslink.pid"), true, 41564)
 		if s.Manager != "launchd" || s.Autostart != runAtLoad || !s.RestartOnExit {
 			t.Fatalf("RunAtLoad=%t supervision=%+v", runAtLoad, s)
 		}
@@ -103,9 +103,11 @@ func TestBootstrapLaunchctlRealDisabledFormat(t *testing.T) {
 			if !changed {
 				t.Fatal("real fixture has no overrides")
 			}
-			managerOutputFn = func(string, ...string) ([]byte, error) { return []byte(strings.Join(variant, "\n")), nil }
+			managerOutputFn = func(context.Context, string, ...string) ([]byte, error) {
+				return []byte(strings.Join(variant, "\n")), nil
+			}
 			want := value == "enabled" || value == "false"
-			if got := launchdAutostartEnabled("gui/fixture"); got != want {
+			if got := launchdAutostartEnabled(context.Background(), "gui/fixture"); got != want {
 				t.Fatalf("real format %s enabled=%t want=%t", value, got, want)
 			}
 		})
@@ -125,9 +127,11 @@ func TestBootstrapExplicitInstallRefusesUnverifiedManagerPID(t *testing.T) {
 	if err := os.WriteFile(path, plist.Bytes(), 0600); err != nil {
 		t.Fatal(err)
 	}
-	managerOutputFn = func(string, ...string) ([]byte, error) { return launchctlFixture(t, "running", 41564), nil }
+	managerOutputFn = func(context.Context, string, ...string) ([]byte, error) {
+		return launchctlFixture(t, "running", 41564), nil
+	}
 	// capture is invoked before any bootout or plist replacement in install.
-	if _, err := captureLaunchAgentPreviousState(path); err == nil || !strings.Contains(err.Error(), "unverified") {
+	if _, err := captureLaunchAgentPreviousState(context.Background(), path); err == nil || !strings.Contains(err.Error(), "unverified") {
 		t.Fatalf("unverified live supervisor accepted: %v", err)
 	}
 	after, err := os.ReadFile(path)
@@ -143,10 +147,12 @@ func TestBootstrapDoctorMissingPIDWithLiveManagerKeepsProbes(t *testing.T) {
 		t.Fatal("PID must be absent")
 	}
 	isRunningFn = func(string) bool { return false }
-	managerOutputFn = func(string, ...string) ([]byte, error) { return launchctlFixture(t, "running", 41564), nil }
+	managerOutputFn = func(context.Context, string, ...string) ([]byte, error) {
+		return launchctlFixture(t, "running", 41564), nil
+	}
 	probes := 0
 	doctorProbeTargetFn = func(context.Context, string, time.Duration) error { probes++; return syscall.ECONNREFUSED }
-	result := buildDoctorResult(doctorOptions{})
+	result := buildDoctorResult(context.Background(), doctorOptions{})
 	if probes != 1 || !result.Daemon.IdentityUnverified {
 		t.Fatalf("missing pid hid live manager: probes=%d daemon=%+v", probes, result.Daemon)
 	}

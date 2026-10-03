@@ -2,9 +2,11 @@ package registry
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/anydoor7/tslink/internal/mcpaudit"
 	"io"
 	"io/fs"
 	"net"
@@ -18,9 +20,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/anydoor7/tslink/internal/accesslog"
 	"github.com/anydoor7/tslink/internal/atomicfile"
 	"github.com/anydoor7/tslink/internal/config"
+	"github.com/anydoor7/tslink/internal/duration"
 	"github.com/anydoor7/tslink/internal/filelock"
+	"github.com/anydoor7/tslink/internal/mcpscope"
 )
 
 const (
@@ -111,7 +116,7 @@ const (
 	ProvisionReasonPortUnsupported     = "port_unsupported"
 
 	ErrFunnelAllowedUsers = "funnel services do not support allowed_users; public Funnel cannot be combined with TSLink allow lists"
-	ErrFunnelPublicAck    = "funnel services require recorded public acknowledgement; re-run `tslink add ... --funnel --public` or set public_ack:true and funnel_expires_at (an RFC 3339 deadline or \"never\") after confirming public internet exposure"
+	ErrFunnelPublicAck    = "funnel services require recorded public acknowledgement; re-run `tslink add ... --funnel --public` or set public_ack:true and funnel_expires_at (a finite RFC 3339 deadline) after confirming public internet exposure"
 	ErrFunnelControlURL   = "funnel services do not support per-service control_url; use the default Tailscale control server or disable funnel"
 	ErrFunnelTypeConflict = "funnel can only be used with proxy services; public Funnel is not supported for file or tcp services"
 )
@@ -209,11 +214,11 @@ func FunnelPublicAckError() error {
 func FunnelExpiryRequiredError(serviceName string) error {
 	return CodedError{
 		Code:    CodeFunnelExpiryRequired,
-		Message: fmt.Sprintf("funnel service %q records no funnel_expires_at; set an RFC 3339 deadline or \"never\" to decide how long it stays public", serviceName),
+		Message: fmt.Sprintf("funnel service %q records no funnel_expires_at; set a finite RFC 3339 deadline to decide how long it stays public", serviceName),
 		// Only a hand edit fixes it: like every other entry issue, it makes
 		// the registry refuse typed rewrites until it is resolved.
 		Next: []string{
-			fmt.Sprintf(`Edit registry.json: on service %q set "funnel_expires_at" to the RFC 3339 time the Funnel should stop, such as "funnel_expires_at": "2030-01-01T00:00:00Z", or set "funnel_expires_at": "never" to keep it public with no deadline`, serviceName),
+			fmt.Sprintf(`Edit registry.json: on service %q set "funnel_expires_at" to the RFC 3339 time the Funnel should stop, such as "funnel_expires_at": "2030-01-01T00:00:00Z"; new public lifetimes must be finite (minimum 1h; default maximum 7d)`, serviceName),
 			"tslink registry check --json",
 		},
 		MessageOnly: true,
@@ -484,14 +489,17 @@ var (
 )
 
 type Service struct {
-	Name   string `json:"name"`
-	Type   string `json:"type"`
-	Target string `json:"target,omitempty"`
+	RestartGeneration uint64 `json:"restart_generation,omitempty"`
+	Name              string `json:"name"`
+	Type              string `json:"type"`
+	Target            string `json:"target,omitempty"`
 	// PreserveHost forwards the node's canonical external name as Host instead of the target's host.
 	// Absent or false retains the behaviour of existing services and templates.
-	PreserveHost bool          `json:"preserve_host,omitempty"`
-	Health       *HealthConfig `json:"health,omitempty"`
-	Path         string        `json:"path,omitempty"`
+	AccessLogPathMode string        `json:"access_log_path_mode,omitempty"`
+	AccessLogPath     *bool         `json:"access_log_path,omitempty"`
+	PreserveHost      bool          `json:"preserve_host,omitempty"`
+	Health            *HealthConfig `json:"health,omitempty"`
+	Path              string        `json:"path,omitempty"`
 	// File narrows a file service to exactly one name inside Path. It is the
 	// bare file name, never a path. Empty means the whole Path subtree is
 	// served, which is also what every registry written before this field
@@ -501,7 +509,9 @@ type Service struct {
 	Ephemeral       bool       `json:"ephemeral,omitempty"`
 	Tags            []string   `json:"tags,omitempty"`
 	AllowedUsers    []string   `json:"allowed_users,omitempty"`
+	GuestGate       bool       `json:"guest_gate,omitempty"`
 	PeopleScoped    bool       `json:"people_scoped,omitempty"`
+	Requestable     bool       `json:"requestable,omitempty"`
 	ControlURL      string     `json:"control_url,omitempty"`
 	Funnel          bool       `json:"funnel,omitempty"`
 	FunnelExpiresAt *time.Time `json:"funnel_expires_at,omitempty"`
@@ -522,6 +532,12 @@ type Service struct {
 // that records neither a Funnel deadline nor the explicit never.
 func (s Service) FunnelExpiryUndecided() bool {
 	return s.Funnel && s.funnelExpiryUndecided
+}
+
+// HasDecidedPublicLifetime distinguishes an acknowledged public choice from
+// a private service's absent expiry. Expiry reconciliation retains the choice.
+func (s Service) HasDecidedPublicLifetime() bool {
+	return s.PublicAck && !s.FunnelExpiryUndecided() && (s.Funnel || s.FunnelExpiresAt != nil)
 }
 
 // MarshalJSON stores the Funnel lifetime explicitly: an RFC 3339 deadline, or
@@ -580,25 +596,10 @@ func (s *Service) UnmarshalJSON(data []byte) error {
 	return expiryErr
 }
 
-// ParseFunnelTTL accepts only the public CLI contract. In particular, Go's
-// time.ParseDuration does not understand days, so 7d is mapped explicitly.
+// ParseFunnelTTL is the relative-only compatibility adapter. User-facing
+// callers use Policy.Resolve, which also handles absolute deadlines.
 func ParseFunnelTTL(value string) (duration time.Duration, never bool, err error) {
-	switch value {
-	case "1h":
-		return time.Hour, false, nil
-	case "8h":
-		return 8 * time.Hour, false, nil
-	case "24h":
-		return DefaultFunnelTTL, false, nil
-	case "72h":
-		return 72 * time.Hour, false, nil
-	case "7d":
-		return 7 * 24 * time.Hour, false, nil
-	case "never":
-		return 0, true, nil
-	default:
-		return 0, false, fmt.Errorf("funnel TTL must be one of: 1h, 8h, 24h, 72h, 7d, never")
-	}
+	return parseFunnelRelative(value)
 }
 
 // FunnelExpiredAt reads wall-clock state. A nil deadline on a decided Funnel is
@@ -636,9 +637,12 @@ func FunnelRemainingAt(svc Service, now time.Time) *string {
 }
 
 type Registry struct {
-	SchemaVersion int       `json:"schema_version"`
-	Services      []Service `json:"services"`
-	People        []Person  `json:"people,omitempty"`
+	SchemaVersion int             `json:"schema_version"`
+	Services      []Service       `json:"services"`
+	People        []Person        `json:"people,omitempty"`
+	Portal        *PortalConfig   `json:"portal,omitempty"`
+	Guests        []GuestGrant    `json:"guests,omitempty"`
+	Requests      []AccessRequest `json:"access_requests,omitempty"`
 }
 
 type RegistryFileState string
@@ -670,6 +674,9 @@ type registryWire struct {
 	SchemaVersion int               `json:"schema_version"`
 	Services      []json.RawMessage `json:"services"`
 	People        []Person          `json:"people,omitempty"`
+	Portal        *PortalConfig     `json:"portal,omitempty"`
+	Guests        []GuestGrant      `json:"guests,omitempty"`
+	Requests      []AccessRequest   `json:"access_requests,omitempty"`
 }
 
 var unknownJSONFieldRegexp = regexp.MustCompile(`^json: unknown field "([^"]+)"$`)
@@ -729,6 +736,9 @@ func ValidateControlURL(value string) error {
 }
 
 func ValidateService(svc Service) error {
+	if svc.Requestable && !PeopleServiceSupported(svc) {
+		return CodedError{Code: "usage_error", Message: "requestable apps must be private HTTP/file services"}
+	}
 	if svc.PeopleScoped && !PeopleServiceSupported(svc) {
 		return CodedError{Code: "people_service_unsupported", Message: "person-scoped services must be private HTTP proxies or files; TCP cannot enforce people and Funnel is public"}
 	}
@@ -744,7 +754,14 @@ func ValidateService(svc Service) error {
 	if svc.Type == TypeTCP && svc.RequestLimits != nil {
 		return CodedError{Code: CodeInvalidRequestLimits, Message: "HTTP request_limits are not supported for tcp services"}
 	}
-	if err := ValidateFunnelGuardrails(svc.Type, svc.Funnel, svc.AllowedUsers, svc.ControlURL, svc.PublicAck); err != nil {
+	allow := svc.AllowedUsers
+	if svc.GuestGate {
+		allow = nil
+		if svc.Type != TypeProxy || !svc.PublicAck || svc.ControlURL != "" {
+			return guestError("usage_error", "guest gate requires an acknowledged proxy on the default control server")
+		}
+	}
+	if err := ValidateFunnelGuardrails(svc.Type, svc.Funnel, allow, svc.ControlURL, svc.PublicAck); err != nil {
 		return err
 	}
 	if svc.FunnelExpiryUndecided() {
@@ -765,6 +782,9 @@ func ValidateService(svc Service) error {
 }
 
 func validateServiceShape(svc Service) error {
+	if err := accesslog.ValidatePathMode(svc.AccessLogPathMode); err != nil {
+		return err
+	}
 	if svc.PreserveHost && svc.Type != TypeProxy {
 		return fmt.Errorf("%s services do not support preserve_host; only proxy services do", svc.Type)
 	}
@@ -1123,7 +1143,7 @@ func decodeForRuntime(data []byte) (*Registry, []ServiceIssue, error) {
 	if err := strictJSONDecode(data, &wire); err != nil {
 		return nil, nil, configDecodeError("registry", err)
 	}
-	reg := &Registry{SchemaVersion: wire.SchemaVersion, Services: make([]Service, 0, len(wire.Services)), People: wire.People}
+	reg := &Registry{SchemaVersion: wire.SchemaVersion, Services: make([]Service, 0, len(wire.Services)), People: wire.People, Portal: wire.Portal, Guests: wire.Guests, Requests: wire.Requests}
 	if err := migrate(reg); err != nil {
 		return nil, nil, err
 	}
@@ -1131,6 +1151,15 @@ func decodeForRuntime(data []byte) (*Registry, []ServiceIssue, error) {
 		return nil, nil, err
 	}
 
+	if err := ValidatePortal(reg.Portal); err != nil {
+		return nil, nil, err
+	}
+	if err := validateGuests(reg.Guests); err != nil {
+		return nil, nil, err
+	}
+	if err := validateAccessRequests(reg.Requests); err != nil {
+		return nil, nil, err
+	}
 	issues := make([]ServiceIssue, 0)
 	seenNames := make(map[string]struct{}, len(wire.Services))
 	for index, raw := range wire.Services {
@@ -1147,6 +1176,9 @@ func decodeForRuntime(data []byte) (*Registry, []ServiceIssue, error) {
 		if _, duplicate := seenNames[name]; duplicate {
 			return nil, nil, fmt.Errorf("registry contains duplicate service name %q", name)
 		}
+		if reg.Portal != nil && name == reg.Portal.Hostname {
+			return nil, nil, portalConflict(name)
+		}
 		seenNames[name] = struct{}{}
 
 		var svc Service
@@ -1159,6 +1191,10 @@ func decodeForRuntime(data []byte) (*Registry, []ServiceIssue, error) {
 			continue
 		}
 		if err := ValidateService(svc); err != nil {
+			issues = append(issues, ServiceIssue{Index: index, Name: name, Service: svc, Err: err})
+			continue
+		}
+		if err := guestServiceError(svc, reg.Guests); err != nil {
 			issues = append(issues, ServiceIssue{Index: index, Name: name, Service: svc, Err: err})
 			continue
 		}
@@ -1359,6 +1395,10 @@ func migrate(reg *Registry) error {
 }
 
 func withLock(regPath string, fn func() error) error {
+	return withLockContext(context.Background(), regPath, fn)
+}
+
+func withLockContext(ctx context.Context, regPath string, fn func() error) error {
 	if err := atomicfile.EnsurePrivateDir(filepath.Dir(regPath)); err != nil {
 		return err
 	}
@@ -1376,7 +1416,9 @@ func withLock(regPath string, fn func() error) error {
 		return err
 	}
 	defer unlockFn(lockFile)
-
+	if err := mcpscope.CheckEffect(ctx); err != nil {
+		return err
+	}
 	return fn()
 }
 
@@ -1427,26 +1469,53 @@ func TryWithLockedFileState(path string, fn func(*Registry, RegistryFileState) e
 }
 
 func save(path string, reg *Registry) error {
+	for _, svc := range reg.Services {
+		if e := guestServiceError(svc, reg.Guests); e != nil {
+			return e
+		}
+	}
 	if reg.Services == nil {
 		reg.Services = []Service{}
 	}
 	reg.SchemaVersion = LegacyRegistrySchemaVersion
-	if len(reg.People) > 0 {
+	if len(reg.People) > 0 || reg.Portal != nil || len(reg.Guests) > 0 || len(reg.Requests) > 0 {
 		reg.SchemaVersion = PeopleRegistrySchemaVersion
 	}
 	for _, svc := range reg.Services {
-		if svc.PeopleScoped {
+		if svc.PeopleScoped || svc.Requestable {
 			reg.SchemaVersion = PeopleRegistrySchemaVersion
 		}
 	}
 
+	pending := snapshotGuestUsage(path)
+	originalGuests := append([]GuestGrant(nil), reg.Guests...)
+	for i := range reg.Guests {
+		applyGuestUsage(&reg.Guests[i], pending[reg.Guests[i].ID])
+	}
 	data, err := marshalFn(reg, "", "  ")
 	if err != nil {
+		reg.Guests = originalGuests
+		if len(pending) > 0 {
+			recordGuestCounterError(path, err)
+		}
 		return err
 	}
 	data = append(data, '\n')
+	if len(reg.Requests) > 0 && len(data) > 4<<20 {
+		return requestError("access_request_capacity", "request registry exceeds 4 MiB")
+	}
 
-	return writeRegistryFile(path, data)
+	err = writeRegistryFile(path, data)
+	if len(pending) > 0 || GuestCounterError(path) != nil {
+		recordGuestCounterError(path, err)
+	}
+	if err == nil || atomicfile.IsPublished(err) {
+		acknowledgeGuestUsage(path, pending)
+		notifyGuestCommit(path, reg.Guests)
+	} else {
+		reg.Guests = originalGuests
+	}
+	return err
 }
 
 func Add(path string, svc Service) (created bool, err error) {
@@ -1454,9 +1523,13 @@ func Add(path string, svc Service) (created bool, err error) {
 }
 
 type AddOptions struct {
-	// PreserveFunnelExpiry keeps an existing entry's deadline. It is used when
-	// --funnel-ttl was not explicitly supplied, including an explicit never.
+	Context context.Context
+	// PreserveFunnelExpiry keeps a decided public lifetime when the TTL was
+	// omitted. A private service's absent expiry is never a public decision.
 	PreserveFunnelExpiry bool
+	// LifetimePolicy checks the final new public deadline after preservation.
+	// nil retains the trusted raw-store API for existing callers.
+	LifetimePolicy *duration.Policy
 	// Now is injectable for deterministic expiration decisions. Zero uses the
 	// current wall clock.
 	Now time.Time
@@ -1548,10 +1621,13 @@ func AddWithOutcome(path string, svc Service, options AddOptions) (outcome AddOu
 		now = time.Now().UTC()
 	}
 
-	err = withLock(path, func() error {
+	err = withLockContext(mutationContext(options.Context), path, func() error {
 		reg, err := loadForMutation(path)
 		if err != nil {
 			return err
+		}
+		if reg.Portal != nil && svc.Name == reg.Portal.Hostname {
+			return portalConflict(svc.Name)
 		}
 
 		for i, existing := range reg.Services {
@@ -1562,18 +1638,28 @@ func AddWithOutcome(path string, svc Service, options AddOptions) (outcome AddOu
 			previous := existing
 			outcome.Replaced = &previous
 			svc.CreatedAt = existing.CreatedAt
+			if existing.GuestGate && !svc.GuestGate {
+				return guestError("conflict", "guest gate is sticky; remove and re-add the service to disable it")
+			}
 			svc.PeopleScoped = svc.PeopleScoped || existing.PeopleScoped
 			if err := ValidateService(svc); err != nil {
 				return err
 			}
-			if options.PreserveFunnelExpiry {
+			preservedLifetime := false
+			if options.PreserveFunnelExpiry && existing.HasDecidedPublicLifetime() {
 				if svc.Funnel && existing.FunnelExpiresAt != nil && !existing.FunnelExpiresAt.After(now) {
 					rearmed := now.Add(DefaultFunnelTTL).UTC()
-					svc.FunnelExpiresAt = &rearmed
+					if options.LifetimePolicy == nil {
+						svc.FunnelExpiresAt = &rearmed
+					}
 					outcome.RearmedExpiredFunnel = true
 				} else {
 					svc.FunnelExpiresAt = existing.FunnelExpiresAt
+					preservedLifetime = true
 				}
+			}
+			if err := checkAddedFunnelLifetime(svc, preservedLifetime, options, now); err != nil {
+				return err
 			}
 			reg.Services[i] = svc
 			outcome.Created = false
@@ -1584,6 +1670,9 @@ func AddWithOutcome(path string, svc Service, options AddOptions) (outcome AddOu
 			svc.CreatedAt = time.Now().UTC()
 		}
 
+		if err := checkAddedFunnelLifetime(svc, false, options, now); err != nil {
+			return err
+		}
 		reg.Services = append(reg.Services, svc)
 		outcome.Created = true
 		return save(path, reg)
@@ -1592,22 +1681,22 @@ func AddWithOutcome(path string, svc Service, options AddOptions) (outcome AddOu
 }
 
 func AddIfMissing(path string, svc Service) (created bool, err error) {
-	return addIfMissing(path, svc, false)
+	return addIfMissing(context.Background(), path, svc, false)
 }
 
 // AddTentative is AddIfMissing for a caller that may still undo the creation
 // with RemoveIfUnchanged: the service it creates stays tentative until the
 // caller, or anyone else relying on it, settles it with KeepIfUnchanged.
 func AddTentative(path string, svc Service) (created bool, err error) {
-	return addIfMissing(path, svc, true)
+	return addIfMissing(context.Background(), path, svc, true)
 }
 
-func addIfMissing(path string, svc Service, tentative bool) (created bool, err error) {
+func addIfMissing(ctx context.Context, path string, svc Service, tentative bool) (created bool, err error) {
 	if err := ValidateService(svc); err != nil {
 		return false, err
 	}
 
-	err = withLock(path, func() error {
+	err = withLockContext(ctx, path, func() error {
 		reg, err := loadForMutation(path)
 		if err != nil {
 			return err
@@ -1673,7 +1762,11 @@ func RemoveAndReturn(path, name string) (removedService Service, removed bool, e
 // succeeds. Nothing can add, change or remove the service between the lookup
 // and the commit.
 func RemoveAndReturnWithin(path, name string, within func(svc Service, commit func() error) error) (removedService Service, removed bool, err error) {
-	err = withLock(path, func() error {
+	return RemoveAndReturnWithinContext(context.Background(), path, name, within)
+}
+
+func RemoveAndReturnWithinContext(ctx context.Context, path, name string, within func(svc Service, commit func() error) error) (removedService Service, removed bool, err error) {
+	err = withLockContext(ctx, path, func() error {
 		reg, err := loadForMutation(path)
 		if err != nil {
 			return err
@@ -1686,6 +1779,9 @@ func RemoveAndReturnWithin(path, name string, within func(svc Service, commit fu
 
 			remaining := append(append([]Service{}, reg.Services[:i]...), reg.Services[i+1:]...)
 			commit := func() error {
+				if err := mcpscope.CheckEffect(ctx); err != nil {
+					return err
+				}
 				reg.Services = remaining
 				removeAppGrants(reg, name)
 				if err := save(path, reg); err != nil {
@@ -1743,7 +1839,11 @@ func dropTentativeMark(regPath, name string) error {
 // reports false, and settles nothing, when the stored service changed or is
 // gone.
 func KeepIfUnchanged(path string, expected Service) (kept bool, err error) {
-	err = withLock(path, func() error {
+	return KeepIfUnchangedContext(context.Background(), path, expected)
+}
+
+func KeepIfUnchangedContext(ctx context.Context, path string, expected Service) (kept bool, err error) {
+	err = withLockContext(ctx, path, func() error {
 		reg, err := Load(path)
 		if err != nil {
 			return err
@@ -1768,7 +1868,11 @@ func KeepIfUnchanged(path string, expected Service) (kept bool, err error) {
 // tentative mark of its creation. It deletes neither a service another process
 // changed after creation nor one another call has kept since.
 func RemoveIfUnchanged(path string, expected Service) (removed bool, err error) {
-	err = withLock(path, func() error {
+	return RemoveIfUnchangedContext(context.Background(), path, expected)
+}
+
+func RemoveIfUnchangedContext(ctx context.Context, path string, expected Service) (removed bool, err error) {
+	err = withLockContext(ctx, path, func() error {
 		mark, err := readRegistryBytes(tentativeMarkPath(path, expected.Name))
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil
@@ -1808,23 +1912,23 @@ func RemoveIfUnchanged(path string, expected Service) (removed bool, err error) 
 // value still equals expected. It keeps a compensating write from clobbering
 // another process's registry edit or resurrecting a removed service.
 func ReplaceIfUnchanged(path string, expected, replacement Service) (replaced bool, err error) {
-	return replaceIfUnchanged(path, expected, replacement, false)
+	return replaceIfUnchanged(context.Background(), path, expected, replacement, false)
 }
 
 // RestoreTentativeIfUnchanged compensates a tentative mutation only while no
 // other caller has kept the resulting registration.
 func RestoreTentativeIfUnchanged(path string, expected, replacement Service) (bool, error) {
-	return replaceIfUnchanged(path, expected, replacement, true)
+	return replaceIfUnchanged(context.Background(), path, expected, replacement, true)
 }
 
-func replaceIfUnchanged(path string, expected, replacement Service, tentative bool) (replaced bool, err error) {
+func replaceIfUnchanged(ctx context.Context, path string, expected, replacement Service, tentative bool) (replaced bool, err error) {
 	if expected.Name != replacement.Name {
 		return false, fmt.Errorf("replacement service name differs from expected name")
 	}
 	if err := ValidateService(replacement); err != nil {
 		return false, err
 	}
-	err = withLock(path, func() error {
+	err = withLockContext(ctx, path, func() error {
 		var previousMark []byte
 		if tentative {
 			mark, err := readRegistryBytes(tentativeMarkPath(path, expected.Name))
@@ -1890,22 +1994,29 @@ func DowngradeExpiredFunnels(path string, now time.Time, dryRun bool) (expired [
 		}
 		return save(path, reg)
 	})
+	if err == nil && !dryRun {
+		for _, svc := range expired {
+			if err = recordExpiry(path, now, mcpaudit.Change{Action: "funnel_expired", App: svc.Name, ExpiresAt: svc.FunnelExpiresAt}); err != nil {
+				break
+			}
+		}
+	}
 	return expired, err
 }
 
 func MutateService(path, name string, mutate func(Service) (Service, error)) (Service, error) {
-	return mutateService(path, name, mutate, false)
+	return mutateService(context.Background(), path, name, mutate, false)
 }
 
 // MutateServiceTentative marks the new value before publishing it so a failed
 // caller can restore the previous value unless another caller keeps it first.
 func MutateServiceTentative(path, name string, mutate func(Service) (Service, error)) (Service, error) {
-	return mutateService(path, name, mutate, true)
+	return mutateService(context.Background(), path, name, mutate, true)
 }
 
-func mutateService(path, name string, mutate func(Service) (Service, error), tentative bool) (Service, error) {
+func mutateService(ctx context.Context, path, name string, mutate func(Service) (Service, error), tentative bool) (Service, error) {
 	var updated Service
-	err := withLock(path, func() error {
+	err := withLockContext(ctx, path, func() error {
 		reg, err := loadForMutation(path)
 		if err != nil {
 			return err
@@ -1951,4 +2062,25 @@ func mutateService(path, name string, mutate func(Service) (Service, error), ten
 		return fmt.Errorf("service not found: %s", name)
 	})
 	return updated, err
+}
+
+func mutationContext(ctx context.Context) context.Context {
+	if ctx == nil {
+		return context.Background()
+	}
+	return ctx
+}
+
+func AddTentativeContext(ctx context.Context, path string, svc Service) (bool, error) {
+	return addIfMissing(ctx, path, svc, true)
+}
+func AddIfMissingContext(ctx context.Context, path string, svc Service) (bool, error) {
+	return addIfMissing(ctx, path, svc, false)
+}
+func MutateServiceTentativeContext(ctx context.Context, path, name string, mutate func(Service) (Service, error)) (Service, error) {
+	return mutateService(ctx, path, name, mutate, true)
+}
+
+func RestoreTentativeIfUnchangedContext(ctx context.Context, path string, expected, replacement Service) (bool, error) {
+	return replaceIfUnchanged(ctx, path, expected, replacement, true)
 }

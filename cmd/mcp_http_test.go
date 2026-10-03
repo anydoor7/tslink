@@ -55,9 +55,9 @@ func mcpHTTPWhoIsClient(t *testing.T, login string) *server.LocalClient {
 func mcpHTTPCountingActions(calls *int) mcpActions {
 	actions := fakeMCPActions()
 	base := actions.list
-	actions.list = func() (any, error) {
+	actions.list = func(ctx context.Context) (any, error) {
 		*calls++
-		return base()
+		return base(ctx)
 	}
 	baseUnshare := actions.unshare
 	actions.unshare = func(ctx context.Context, name string) (any, error) {

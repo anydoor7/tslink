@@ -76,7 +76,7 @@ func loadedPolicyPrint(t *testing.T, state string, pid int, properties string) [
 func loadedPolicyManager(t *testing.T, gui, user []byte, disabled string, disabledErr error) *int {
 	t.Helper()
 	queries := new(int)
-	managerOutputFn = func(name string, args ...string) ([]byte, error) {
+	managerOutputFn = func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		if name != "launchctl" || len(args) != 2 {
 			t.Fatalf("unexpected manager call %s %v", name, args)
 		}
@@ -147,7 +147,7 @@ func TestSupervisionLoadedPolicyMatrix(t *testing.T) {
 				output = withEnvironment
 			}
 			queries := loadedPolicyManager(t, output, nil, "disabled services = {\n}\n", nil)
-			s := detectSupervision("", true, 4242)
+			s := detectSupervision(context.Background(), "", true, 4242)
 			if *queries != 2 || s.Manager != "launchd" || !s.Installed || s.Path != path || !s.Autostart || s.AutostartScope != autostartScopeLogin {
 				t.Fatalf("ownership/future-login control failed: queries=%d supervision=%+v", *queries, s)
 			}
@@ -192,7 +192,7 @@ func TestSupervisionLoadedPolicyOwnershipDomains(t *testing.T) {
 			}
 			loadedPolicyManager(t, printFor(tc.guiPID, tc.guiKeep), printFor(tc.userPID, tc.userKeep), "disabled services = {\n}\n", nil)
 			manager := managerOutputFn
-			managerOutputFn = func(name string, args ...string) ([]byte, error) {
+			managerOutputFn = func(ctx context.Context, name string, args ...string) ([]byte, error) {
 				if args[0] == "print-disabled" {
 					wantDomain := "gui/501"
 					if tc.userPID == 4242 {
@@ -202,9 +202,9 @@ func TestSupervisionLoadedPolicyOwnershipDomains(t *testing.T) {
 						t.Fatalf("disabled query escaped owning domain: %v want %s", args, wantDomain)
 					}
 				}
-				return manager(name, args...)
+				return manager(ctx, name, args...)
 			}
-			s := detectSupervision("", true, 4242)
+			s := detectSupervision(context.Background(), "", true, 4242)
 			if s.Manager != tc.wantManager || s.RestartOnExit != tc.wantRestart || s.Autostart != (tc.wantManager == "launchd") {
 				t.Fatalf("ownership-domain policy assertion: %+v", s)
 			}
@@ -269,9 +269,9 @@ func TestSupervisionLoadedPolicyPreservesBoundaries(t *testing.T) {
 			loadedPolicyManager(t, output, nil, disabled, disabledErr)
 			if scenario == "print_error" {
 				// Even recognizable output accompanying an error is not proof.
-				managerOutputFn = func(string, ...string) ([]byte, error) { return output, errors.New("access denied") }
+				managerOutputFn = func(context.Context, string, ...string) ([]byte, error) { return output, errors.New("access denied") }
 			}
-			s := detectSupervision("", running, 4242)
+			s := detectSupervision(context.Background(), "", running, 4242)
 			if (s.Manager == "launchd") != wantOwned || s.Autostart != wantAutostart || s.RestartOnExit != wantRestart || (s.AutostartScope == autostartScopeLogin) != wantAutostart {
 				t.Fatalf("boundary assertion: %+v owned=%t autostart=%t restart=%t", s, wantOwned, wantAutostart, wantRestart)
 			}
@@ -302,7 +302,7 @@ func TestSupervisionLoadedPolicyFastPathRealDetect(t *testing.T) {
 					}
 					queries := loadedPolicyManager(t, gui, user, "disabled services = {\n}\n", nil)
 					isRunningFn = func(string) bool { return true }
-					detectSupervisionFn = detectSupervision // Real detector, not a Supervision stub.
+					detectSupervisionFn = detectSupervisionContext // Real detector, not a Supervision stub.
 					var out string
 					if entry == "ensure" {
 						err = ensureDaemon(context.Background(), io.Discard, false)

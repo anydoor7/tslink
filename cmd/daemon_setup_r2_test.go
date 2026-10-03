@@ -42,7 +42,7 @@ func TestBootstrapConcurrentEnsureInstallsOnce(t *testing.T) {
 			running.Store(true)
 			return nil
 		}
-		detectSupervisionFn = func(string, bool, int) Supervision {
+		detectSupervisionFn = func(context.Context, string, bool, int) Supervision {
 			return Supervision{Manager: "launchd", Installed: true, Autostart: true, RestartOnExit: true}
 		}
 		var wg sync.WaitGroup
@@ -166,10 +166,10 @@ func TestBootstrapDoctorUnverifiedIdentityKeepsProbes(t *testing.T) {
 			isRunningFn = func(string) bool { return false }
 			oldDetect := detectSupervisionFn
 			t.Cleanup(func() { detectSupervisionFn = oldDetect })
-			detectSupervisionFn = func(string, bool, int) Supervision { return unmanagedSupervision(false, "test") }
+			detectSupervisionFn = func(context.Context, string, bool, int) Supervision { return unmanagedSupervision(false, "test") }
 			probes := 0
 			doctorProbeTargetFn = func(context.Context, string, time.Duration) error { probes++; return syscall.ECONNREFUSED }
-			result := buildDoctorResult(doctorOptions{})
+			result := buildDoctorResult(context.Background(), doctorOptions{})
 			if !result.Daemon.IdentityUnverified || probes != 1 {
 				t.Fatalf("uncertain=%t probes=%d", result.Daemon.IdentityUnverified, probes)
 			}
@@ -185,7 +185,7 @@ func TestBootstrapDoctorUnverifiedIdentityKeepsProbes(t *testing.T) {
 			if err := os.Remove(env.pidPath); err != nil {
 				t.Fatal(err)
 			}
-			stopped := buildDoctorResult(doctorOptions{})
+			stopped := buildDoctorResult(context.Background(), doctorOptions{})
 			assertDoctorFinding(t, stopped, inspect.WarningCodeDaemonNotRunning)
 			if probes != 1 {
 				t.Fatalf("stopped branch probed again: %d", probes)
@@ -198,8 +198,8 @@ func TestBootstrapWindowsStartupDoctorContract(t *testing.T) {
 	newDoctorTestEnv(t, []registry.Service{{Name: "app", Type: registry.TypeProxy, Target: "http://localhost:3000"}})
 	old := detectSupervisionFn
 	t.Cleanup(func() { detectSupervisionFn = old })
-	detectSupervisionFn = func(string, bool, int) Supervision { return windowsStartupSupervision("fixture.vbs") }
-	result := buildDoctorResult(doctorOptions{})
+	detectSupervisionFn = func(context.Context, string, bool, int) Supervision { return windowsStartupSupervision("fixture.vbs") }
+	result := buildDoctorResult(context.Background(), doctorOptions{})
 	if result.Supervision.Manager != "windows-startup" || !result.Supervision.Autostart || !result.Supervision.Installed || result.Supervision.RestartOnExit {
 		t.Fatalf("startup=%+v", result.Supervision)
 	}

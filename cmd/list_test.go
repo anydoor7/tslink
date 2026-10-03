@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -63,7 +64,7 @@ func TestListServices_TCPTextUsesTypedEndpoint(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	if err := listServices(regPath, &buf); err != nil {
+	if err := listServices(context.Background(), regPath, &buf); err != nil {
 		t.Fatalf("listServices: %v", err)
 	}
 	out := buf.String()
@@ -84,18 +85,18 @@ func TestListRejectsRemovedMiddlewareKey(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	err := listServices(regPath, &buf)
+	err := listServices(context.Background(), regPath, &buf)
 	if err == nil {
-		t.Fatal("listServices() error = nil, want the removed middleware key refused")
+		t.Fatal("listServices(context.Background(), ) error = nil, want the removed middleware key refused")
 	}
 	if code, _ := registry.ErrorCode(err); code != registry.CodeUnknownConfigKey || !strings.Contains(err.Error(), `"middleware"`) {
-		t.Fatalf("listServices() error = %v, want %s naming middleware", err, registry.CodeUnknownConfigKey)
+		t.Fatalf("listServices(context.Background(), ) error = %v, want %s naming middleware", err, registry.CodeUnknownConfigKey)
 	}
 	if strings.Contains(err.Error(), "user:pass") {
-		t.Fatalf("listServices() error leaked credential: %v", err)
+		t.Fatalf("listServices(context.Background(), ) error leaked credential: %v", err)
 	}
 	if strings.Contains(buf.String(), "user:pass") {
-		t.Fatalf("listServices() output leaked credential: %s", buf.String())
+		t.Fatalf("listServices(context.Background(), ) output leaked credential: %s", buf.String())
 	}
 }
 
@@ -173,7 +174,7 @@ func TestListFiltersAndFieldProjection(t *testing.T) {
 	}
 	withStatusURLSeams(t, false, 0, time.Time{})
 
-	result, err := loadListResultForPaths(regPath, pidPath, snapshotPath, listOptions{
+	result, err := loadListResultForPaths(context.Background(), regPath, pidPath, snapshotPath, listOptions{
 		Name:   "web",
 		Fields: []string{"name", "url"},
 	})
@@ -188,7 +189,7 @@ func TestListFiltersAndFieldProjection(t *testing.T) {
 		t.Fatalf("projected row = %#v, want only pending name/url", rows[0])
 	}
 
-	tcp, err := loadListResultForPaths(regPath, pidPath, snapshotPath, listOptions{Type: registry.TypeTCP})
+	tcp, err := loadListResultForPaths(context.Background(), regPath, pidPath, snapshotPath, listOptions{Type: registry.TypeTCP})
 	if err != nil {
 		t.Fatalf("type filter: %v", err)
 	}

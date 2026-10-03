@@ -56,6 +56,13 @@ type Code struct {
 }
 
 var table = []Code{
+	{"access_request_decided", ExitConflict, Command, "access request already decided; identical retries replay the original result"},
+	{"access_request_duplicate", ExitConflict, Command, "one pending request per visitor and app"},
+	{"access_request_busy", ExitConflict, Command, "request inbox is busy"},
+	{"access_request_unavailable", ExitAuth, Command, "app or visitor cannot request access"},
+	{"access_request_owner_required", ExitAuth, Command, "request management requires the owner"},
+	{"access_request_rate_limited", ExitConflict, Command, "visitor or global request rate limit reached"},
+	{"access_request_capacity", ExitConflict, Command, "bounded request inbox is full"},
 	// Generic classes.
 	{InternalError, ExitError, Command, "unexpected internal failure"},
 	{UsageError, ExitUsage, Command, "invalid command syntax or value"},
@@ -70,6 +77,9 @@ var table = []Code{
 	{"invalid_tag", ExitUsage, Service, "ACL tag is invalid"},
 	{"invalid_request_limits", ExitUsage, Service, "HTTP request limits are invalid or unlimited uploads lack explicit acknowledgement"},
 	{"allow_unsupported_for_tcp", ExitUsage, Service, "HTTP allow lists do not apply to raw TCP"},
+	{"portal_funnel_refused", ExitConflict, Command, "the home portal is Tailnet-only and cannot use Funnel"},
+	{"portal_hostname_conflict", ExitConflict, Command, "the portal hostname is reserved or already used by an app"},
+	{"portal_identity_invalid", ExitUsage, Command, "portal owner and admins must be canonical Tailscale login identities"},
 	{"people_service_unsupported", ExitUsage, Service, "person grants require private HTTP proxy or file services; TCP and public Funnel cannot be person-scoped"},
 	{"invite_failed", ExitError, Command, "one device invitation in a people bundle failed without a more specific code"},
 	{"invite_state_failed", ExitError, Command, "durable people invitation state could not be read or saved; reconcile before sending again"},
@@ -138,6 +148,9 @@ var table = []Code{
 	{"invite_request_invalid", ExitUsage, Command, "Tailscale rejected the invite request as another 4xx input error"},
 	{"invite_response_invalid", ExitError, Command, "Tailscale returned an invalid invite wire response"},
 	{"mcp_elevated_invite_refused", ExitAuth, Command, "through MCP, a user invitation with a role other than member or a device invitation that allows exit-node use needs the owner's opt-in (mcp.allow_elevated_invites in config.json); next names the CLI command a person can run instead"},
+	{"mcp_person_owner_required", ExitAuth, Command, "The owner must add the person before a reduced MCP scope can grant access"},
+	{"mcp_scope_denied", ExitAuth, Command, "MCP identity scope refuses this app, tool, duration or expired binding"},
+	{"mcp_audit_unavailable", ExitError, Command, "MCP mutation intent could not be journaled, or its completion receipt failed; completion failures explicitly retain an unknown outcome"},
 }
 
 var byCode = func() map[string]Code {

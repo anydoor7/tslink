@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"io"
 	"sync/atomic"
@@ -57,7 +58,7 @@ func TestMCPSessionRefusesABatchAfterAnEscapedString(t *testing.T) {
 			t.Run(version+"/"+tc.name, func(t *testing.T) {
 				var listed atomic.Bool
 				actions := fakeMCPActions()
-				actions.list = func() (any, error) {
+				actions.list = func(ctx context.Context) (any, error) {
 					listed.Store(true)
 					return map[string]any{"services": []mcpServiceSummary{}}, nil
 				}

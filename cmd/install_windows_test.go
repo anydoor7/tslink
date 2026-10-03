@@ -24,7 +24,9 @@ var _ func(string, bool) string = windowsStartupScript
 func isolateWindowsStartupInstall(t *testing.T) {
 	t.Helper()
 	old := windowsSchedulerFn
-	windowsSchedulerFn = func(string, string, []byte) (windowsSchedulerStatus, error) { return windowsSchedulerStatus{}, nil }
+	windowsSchedulerFn = func(context.Context, string, string, []byte) (windowsSchedulerStatus, error) {
+		return windowsSchedulerStatus{}, nil
+	}
 	if err := installCmd.Flags().Set("startup", "true"); err != nil {
 		t.Fatal(err)
 	}
@@ -264,7 +266,9 @@ func TestWindowsDirectTransactionsCancelAndPreserveFinalState(t *testing.T) {
 	for _, op := range []string{"install", "uninstall", "auto"} {
 		t.Run(op, func(t *testing.T) {
 			isolateBootstrap(t)
-			windowsSchedulerFn = func(string, string, []byte) (windowsSchedulerStatus, error) { return windowsSchedulerStatus{}, nil }
+			windowsSchedulerFn = func(context.Context, string, string, []byte) (windowsSchedulerStatus, error) {
+				return windowsSchedulerStatus{}, nil
+			}
 			oldExe, oldEval := windowsExecutablePathFn, windowsEvalSymlinksFn
 			t.Cleanup(func() { windowsExecutablePathFn, windowsEvalSymlinksFn = oldExe, oldEval })
 			var mutations atomic.Int32
@@ -337,7 +341,7 @@ func TestWindowsDirectTransactionsCancelAndPreserveFinalState(t *testing.T) {
 						return err
 					}
 					isRunningFn = func(string) bool { return true }
-					detectSupervisionFn = func(string, bool, int) Supervision { return windowsStartupSupervision(path) }
+					detectSupervisionFn = func(context.Context, string, bool, int) Supervision { return windowsStartupSupervision(path) }
 					return nil
 				}
 			}

@@ -33,7 +33,7 @@ func TestReviewDurableAlertsBeatStaleSnapshot(t *testing.T) {
 		t.Fatal("invalid fixture", durable)
 	}
 	withStatusURLSeams(t, false, 0, time.Time{})
-	got, err := readOnlyStatus.getPollableStatus(pidPath, regPath, snapPath, filepath.Join(dir, "auth-handoff.json"))
+	got, err := readOnlyStatus.getPollableStatus(context.Background(), pidPath, regPath, snapPath, filepath.Join(dir, "auth-handoff.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +44,7 @@ func TestReviewDurableAlertsBeatStaleSnapshot(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, health.StateFile), []byte(`{"version":2}`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	got, err = readOnlyStatus.getPollableStatus(pidPath, regPath, snapPath, filepath.Join(dir, "auth-handoff.json"))
+	got, err = readOnlyStatus.getPollableStatus(context.Background(), pidPath, regPath, snapPath, filepath.Join(dir, "auth-handoff.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -83,7 +83,24 @@ func TestWindowsGracefulStopWithoutListenerPreservesProcessAndPID(t *testing.T) 
 	if err := os.WriteFile(path, []byte(strconv.Itoa(os.Getpid())+"\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	err := StopDaemon(path)
+	started, err := processStartTime(os.Getpid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The fixture represents a PID file published at process startup, even
+	// after count-10 execution has kept this test binary alive for minutes.
+	// First prove that a mismatched timestamp cannot reach the stop signal.
+	stale := started.Add(2 * legacyPIDStartTolerance)
+	if err := os.Chtimes(path, stale, stale); err != nil {
+		t.Fatal(err)
+	}
+	if err := StopDaemon(path); !errors.Is(err, errIdentityMismatch) {
+		t.Fatalf("stale PID timestamp control: %v", err)
+	}
+	if err := os.Chtimes(path, started, started); err != nil {
+		t.Fatal(err)
+	}
+	err = StopDaemon(path)
 	if err == nil || !strings.Contains(err.Error(), "open shutdown event") {
 		t.Fatalf("missing listener error=%v", err)
 	}

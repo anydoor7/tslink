@@ -3,6 +3,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -27,7 +28,7 @@ func TestDetectInstallDaemonConflictNamesPIDAndResolution(t *testing.T) {
 	isRunningFn = func(path string) bool { return path == "/tmp/tslink-test.pid" }
 	readPIDFn = func(path string) (int, error) { return 1676, nil }
 
-	err := detectInstallDaemonConflict("run 'tslink stop' and retry 'tslink install'")
+	err := detectInstallDaemonConflict(context.Background(), "run 'tslink stop' and retry 'tslink install'")
 	if output.ExitCode(err) != output.ExitConflict {
 		t.Fatalf("ExitCode = %d, want %d: %v", output.ExitCode(err), output.ExitConflict, err)
 	}
@@ -64,7 +65,7 @@ func TestBootstrapInstallAcceptsForeignPIDAndRefusesUnverifiableOne(t *testing.T
 			if err := os.WriteFile(pidPath, []byte(tc.contents), 0600); err != nil {
 				t.Fatal(err)
 			}
-			err := detectInstallDaemonConflict("run 'tslink stop' and retry 'tslink install'")
+			err := detectInstallDaemonConflict(context.Background(), "run 'tslink stop' and retry 'tslink install'")
 			if tc.conflict {
 				if output.ExitCode(err) != output.ExitConflict || !strings.Contains(err.Error(), "process identity is unverified") {
 					t.Fatalf("want unverified-identity conflict, got %v", err)

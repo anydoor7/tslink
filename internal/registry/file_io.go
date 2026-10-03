@@ -1,11 +1,8 @@
 package registry
 
 import (
-	"errors"
 	"io"
 	"os"
-	"runtime"
-	"syscall"
 	"time"
 
 	"github.com/anydoor7/tslink/internal/atomicfile"
@@ -16,27 +13,18 @@ import (
 // total); permanent access denial still returns the last error. File operations
 // themselves and OS scheduling are not bounded by this sleep budget.
 func retryRegistryFileOperation(operation func() error) error {
-	if runtime.GOOS != "windows" {
-		return operation()
-	}
-	return retryRegistrySharingViolation(operation, time.Sleep)
+	return atomicfile.RetryFileOperation(operation)
 }
 
 func isWindowsSharingError(err error) bool {
 	// Win32 ERROR_SHARING_VIOLATION (32) and ERROR_ACCESS_DENIED (5).
 	// Numeric Errno values let the injected policy tests run on every OS;
 	// retryRegistryFileOperation enables this classifier only on Windows.
-	return errors.Is(err, syscall.Errno(32)) || errors.Is(err, syscall.Errno(5))
+	return atomicfile.IsWindowsSharingError(err)
 }
 
 func retryRegistrySharingViolation(operation func() error, sleep func(time.Duration)) error {
-	for attempt := 0; ; attempt++ {
-		err := operation()
-		if err == nil || !isWindowsSharingError(err) || attempt == 6 {
-			return err
-		}
-		sleep(time.Millisecond << attempt)
-	}
+	return atomicfile.RetrySharingViolation(operation, sleep)
 }
 
 // Registry readers allow delete sharing and replacements use POSIX semantics

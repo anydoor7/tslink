@@ -3,182 +3,93 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/tslink-mark-dark.svg">
-    <img src="assets/tslink-mark-light.svg" width="88" height="88" alt="شعار TSLink">
+    <img src="assets/tslink-mark-light.svg" width="88" height="88" alt="TSLink logo">
   </picture>
 </p>
-
 <h1 align="center">TSLink</h1>
+<p align="center"><strong>صل إلى تطبيقاتك وأدرها من أي مكان.<br>أبقها خاصة أو شاركها بشروطك.</strong></p>
 
+تطبيقاتك على حاسوبك أو خادمك السحابي: صل إليها عبر شبكة خاصة مشفرة، أو اختر روابط ضيوف للمتصفح أو وصولا عاما. أدرها بنفسك أو بواسطة وكيل.
+
+<p align="center"><a href="#quickstart">البدء السريع</a> · <a href="#agents">للوكلاء</a> · <a href="#documentation">الوثائق</a></p>
 <p align="center">
-  <strong>شارك تطبيقات حاسوبك مع الأشخاص الذين تختارهم، للمدة التي تختارها.</strong><br>
-  يحصل كل تطبيق على عنوان خاص به داخل شبكة Tailscale لديك. اعرف من يملك حق الوصول واسحبه متى شئت.
+<a href="../README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.zh-TW.md">繁體中文</a> · <a href="README.ko.md">한국어</a> · <a href="README.de.md">Deutsch</a> · <a href="README.es.md">Español</a> · <a href="README.fr.md">Français</a> · <a href="README.it.md">Italiano</a> · <a href="README.da.md">Dansk</a> · <a href="README.ja.md">日本語</a> · <a href="README.pl.md">Polski</a> · <a href="README.ru.md">Русский</a> · <a href="README.bs.md">Bosanski</a> · <strong>العربية</strong> · <a href="README.no.md">Norsk</a> · <a href="README.pt-BR.md">Português (Brasil)</a> · <a href="README.th.md">ไทย</a> · <a href="README.tr.md">Türkçe</a> · <a href="README.uk.md">Українська</a> · <a href="README.bn.md">বাংলা</a> · <a href="README.el.md">Ελληνικά</a> · <a href="README.vi.md">Tiếng Việt</a>
 </p>
 
-<p align="center" dir="ltr">
-  <a href="#quickstart">البدء السريع</a> · <a href="#agents">للوكلاء</a> · <a href="getting-started.md">الوثائق</a> ·
-  <strong>العربية</strong> · <a href="../README.md">English</a> · <a href="INDEX.md#translated-homepages">جميع اللغات</a>
-</p>
+<a id="use-cases"></a>
 
-## كيف يستخدمه الناس
+## تطبيقاتك في متناولك
 
-- **افتح عملك على هاتفك.** تقرير أنشأه سكربت، أو خادم تطوير، أو دفتر ملاحظات، أو API لنموذج محلي، عبر عنوان HTTPS خاص تصل إليه الأجهزة المسموح لها.
-- **امنح شخصًا واحدًا تطبيقًا واحدًا لفترة محددة.** دع شريكك يستخدم مكتبة الصور لأسبوع، أو زميلك يجرب النسخة الأولية لثلاثة أيام. ينتهي الوصول تلقائيًا، ويمكنك إنهاؤه مبكرًا.
-- **دع وكيلك يتولى المشاركة.** أنشأ وكيل البرمجة للتو لوحة معلومات. اطلب منه مشاركتها معك ومع زميلك حتى الجمعة. يمكنه أيضًا إخبارك بما هو مشارك حاليًا وسحب المشاركة.
+| ما تحتاجه | ما يقدمه TSLink |
+|---|---|
+| استخدام تطبيقاتك عبر الأجهزة | عناوين خاصة للوحات المنزل وصفحات الويب المحلية والملفات وواجهات نماذج الذكاء الاصطناعي وخدمات TCP على الحاسوب أو الخادم. |
+| المشاركة مع أشخاص محددين | تطبيقات HTTP/ملفات مختارة، وهوية Tailscale موثقة، وانتهاء صلاحية وإلغاء وصول. يحتاج المستلمون إلى Tailscale. [الأشخاص](people.md) |
+| استقبال زائر من المتصفح | روابط مؤقتة مع PIN اختياري لتطبيقات وكيل HTTP، أو HTTPS عام عبر Funnel بتفعيل صريح. يمكن إعادة إرسال الروابط؛ وهي لا تثبت هوية الشخص. [روابط الضيوف](guest-links.md) |
+| إدارة مجموعة تطبيقات | قائمة لكل مضيف، وبوابة خاصة، وفحوص صحة وتنبيهات، وسجل وصول، وإدارة CLI/MCP بأدوار للوكلاء ونطاقات تطبيقات وسجلات تدقيق. [البوابة](portal.md) · [صلاحيات MCP](mcp-scopes.md) |
 
-تستمر تطبيقاتك في العمل حيث تعمل أصلًا. يتحكم TSLink في من يصل إلى كل تطبيق، ويحتفظ بقائمة واحدة لما تمت مشاركته، ومع من، وحتى متى.
+تسهل [وصفات التطبيقات](apps.md) و[حدود الرفع](sharing.md) و[المدد المرنة](durations.md) و[إرشادات QR وطلبات الوصول](requests.md) الصيانة اليومية. هذه الميزات موجودة في الشفرة الحالية.
 
+<a id="installation"></a>
 <a id="quickstart"></a>
 
 ## البدء السريع
 
-تحتاج إلى **Go 1.26.6+** وGit وحساب Tailscale مع [تفعيل MagicDNS وHTTPS](https://tailscale.com/docs/how-to/set-up-https-certificates). لم تُنشر إصدارات جاهزة بعد، لذا ثبّت من المصدر:
-
-</div>
-
-<div dir="ltr">
+ثبت من المصدر باستخدام **Git وGo 1.26.6+**؛ لم تنشر بعد إصدارات مبنية مسبقا أو Homebrew. الأوامر تستخدم bash/zsh. [إعداد macOS وLinux وWindows](platforms.md)
 
 ```bash
 git clone https://github.com/anydoor7/tslink.git
-cd tslink && go install .
+cd tslink
+go install .
 export PATH="$PATH:$(go env GOPATH)/bin"
 ```
 
-</div>
+تحتاج إلى إذن للوصول إلى المستودع، و**حساب Tailscale**، و[MagicDNS وHTTPS](https://tailscale.com/docs/how-to/set-up-https-certificates). أجهزة الوصول الخاص تحتاج Tailscale وإذن سياسة الشبكة. يدمج TSLink برنامج Tailscale في مضيف التطبيقات.
 
-<div dir="rtl">
-
-شارك صفحة:
-
-</div>
-
-<div dir="ltr">
+إذا كان تطبيقك يعمل بالفعل على المنفذ 3000:
 
 ```bash
-mkdir -p tslink-demo && printf '<h1>Hello from TSLink</h1>\n' > tslink-demo/index.html
-tslink share ./tslink-demo --name demo
-tslink url demo --wait
+tslink share 3000 --name myapp
+tslink url myapp --wait
 ```
 
-</div>
+اختر اسما غير مستخدم؛ إذا أعاد `share` اسما آخر فاستخدمه في `url`. أكمل أولا تسجيل المتصفح والموافقة على الجهاز إن طلبا، ثم افتح عنوان التطبيق الدقيق من جهاز مسموح. يبدأ `share` الخدمة الخلفية عند الحاجة. لا يتطلب هذا الاستخدام الخاص الأول رمز API إداريا. شارك الملفات باستخدام `tslink share ./report.html`؛ يجب أن تكون موجودة وأن تكون التطبيقات قيد التشغيل. [الإعداد الكامل](getting-started.md)
 
-<div dir="rtl">
+بعد نجاح الاستخدام، يمكنك [منح TSLink نجمة](https://github.com/anydoor7/tslink) ليسهل على الآخرين اكتشافه. الأمر اختياري تماما.
 
-في المرة الأولى، يطبع TSLink رابط تسجيل دخول لإلحاق عقدة الخدمة الجديدة؛ وقد تتطلب شبكة tailnet لديك موافقة مسؤول على الجهاز أيضًا. بعد التسجيل، افتح عنوان الخدمة على جهاز مسموح له بالدخول ومسجّل في شبكة tailnet لديك. لا تحتاج إلى رمز API.
+<a id="architecture"></a>
 
-تحقق مما هو مشارك، ثم أزل المثال:
+## كيف تعمل الأجزاء معا
 
-</div>
+<picture>
+  <source media="(max-width: 600px) and (prefers-color-scheme: dark)" srcset="assets/service-map-dark-mobile.svg">
+  <source media="(max-width: 600px)" srcset="assets/service-map-light-mobile.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="assets/service-map-dark.svg">
+  <img src="assets/service-map-light.svg" alt="حاسوب أو خادم سحابي واحد: تدير CLI/MCP عملية خلفية مشتركة وعقدة لكل تطبيق. تتصل الأجهزة الخاصة عبر Tailscale المشفر، ويصل HTTPS/Funnel العام الاختياري إلى تطبيقات HTTP عبر بوابة ضيوف أو نشر مفتوح صريح." width="960">
+</picture>
 
-<div dir="ltr">
+تصور مسارا خاصا مشفرا إلى تطبيقاتك. **يوفر Tailscale نقل الشبكة وHTTPS؛ ويدير TSLink الوصول إلى التطبيقات على كل مضيف.** تشغل عملية خلفية واحدة عقدة مدمجة مستقلة لكل خدمة. تعرض البوابة الخاصة التطبيقات المسموح بها؛ وتساعد الصحة وسجلات الوصول في صيانتها.
 
-```bash
-tslink status --urls
-tslink remove demo
-```
-
-</div>
-
-<div dir="rtl">
-
-يمكنك أيضًا مشاركة ما يلي بعد تشغيل خدمته الخلفية:
-
-| المحتوى | الأمر |
-|---|---|
-| تطبيق ويب محلي | <span dir="ltr">`tslink share 3000`</span> |
-| مجلد ملفات | <span dir="ltr">`tslink share ./public --name files`</span> |
-| API لنموذج محلي مثل Ollama | <span dir="ltr">`tslink add model --proxy localhost:11434`</span> |
-| قاعدة بيانات عبر TCP خاص | <span dir="ltr">`tslink add database --tcp localhost:5432`</span> |
-| تطبيق معروف باستضافة ذاتية (Jellyfin وImmich وHome Assistant و13 تطبيقًا آخر) | <span dir="ltr">`tslink apps detect`</span>، ثم <span dir="ltr">`tslink apps share jellyfin --yes`</span> |
-
-[البدء والمنصات والخدمة الخلفية →](getting-started.md)
-
-## اختر من يمكنه فتح التطبيق
-
-| الجمهور | ما يحتاجه المستلم | الهوية | انتهاء الوصول |
-|---|---|---|---|
-| **أجهزتك الخاصة** | تسجيل الدخول إلى شبكة tailnet لديك | هوية Tailscale موثّقة | عند إزالة التطبيق |
-| **أشخاص محددون** (HTTP وملفات خاصة) | حساب Tailscale؛ يقبل الأشخاص خارج الشبكة دعوة لكل تطبيق | هوية Tailscale موثّقة | في الموعد الذي تحدده (<span dir="ltr">`--for 7d`</span>) أو باستخدام <span dir="ltr">`tslink people remove`</span> |
-| **أي شخص يحمل العنوان** (Funnel) | متصفح | أي شخص؛ يبقى تسجيل دخول التطبيق نفسه ساريًا | بعد 24 ساعة افتراضيًا (<span dir="ltr">`--funnel-ttl`</span>) |
-| **رابط ضيف للمتصفح** *(قريبًا)* | متصفح وPIN اختياري | من يحمل الرابط | عند انتهاء مدته أو إلغائه |
-
-</div>
-
-<div dir="ltr">
-
-```bash
-tslink people add alice@example.com --apps photos --for 7d
-tslink people list
-tslink people remove alice@example.com
-```
-
-</div>
-
-<div dir="rtl">
-
-تُفحص المواعيد النهائية في كل طلب لمشاركات HTTP والملفات الخاصة. سحب الوصول يوقف الطلبات الجديدة؛ ولا يسترجع البيانات التي تم تنزيلها ولا يغلق التدفقات واتصالات WebSocket المقبولة مسبقًا. [المشاركة مع أشخاص →](people.md) · [حدود المشاركة →](sharing.md)
+الوصول العام اختياري: يحتاج الضيف الرابط وPIN إن كان مفعلا؛ أما Funnel المفتوح فيمكن لأي حامل للعنوان الوصول إليه. كلاهما يستخدم HTTPS عاما، لا هوية مستخدم خاصة. يبقى TCP الخام خاصا ويعتمد على سياسة tailnet ومصادقة الخدمة الخلفية. لا يثبت TSLink التطبيقات ولا يعزل العمليات ولا ينشئ VPC سحابية ولا يجمع عدة مضيفين. مشروع مستقل يعمل مع Tailscale. [البنية والحدود](architecture.md)
 
 <a id="agents"></a>
 
 ## للوكلاء
 
-يتضمن TSLink خادم MCP ليتمكن الوكيل من المشاركة والسرد والشرح وإزالة المشاركات كما تفعل أنت. أضفه إلى عميل MCP محلي:
-
-</div>
-
-<div dir="ltr">
+أدر القوائم والصحة والعناوين والوصول عبر CLI/MCP. ابدأ بـ[دليل الوكلاء](agent-quickstart.md)، واقرأ مخططات الأدوات الحالية، وتحقق من الوصول الفعلي قبل إعلان النجاح.
 
 ```json
-{
-  "mcpServers": {
-    "tslink": { "command": "tslink", "args": ["mcp"] }
-  }
-}
+{"mcpServers":{"tslink":{"command":"tslink","args":["mcp"]}}}
 ```
 
-</div>
+تستخدم أتمتة CLI الخيار `--json`؛ ويستخدم MCP بروتوكول JSON-RPC عبر stdio. [العملاء](mcp-clients.md) · [MCP البعيد](remote-mcp.md) · [الأدوار والنطاقات](mcp-scopes.md)
 
-<div dir="rtl">
-
-- **نتائج دقيقة.** تدعم أتمتة CLI الخيار <span dir="ltr">`--json`</span> مع <span dir="ltr">`schema_version: 1`</span> ورموز أخطاء ثابتة؛ ويستخدم <span dir="ltr">`tslink mcp`</span> بروتوكول JSON-RPC بدلًا منه. يصف <span dir="ltr">`tslink manifest`</span> كل أمر وخيار. على الوكلاء جلب العناوين الفعلية باستخدام <span dir="ltr">`tslink url <name> --wait`</span> بدلًا من تركيبها.
-- **حالات انتظار صريحة.** تعلن العقدة الجديدة التي لا تزال بحاجة إلى تسجيل دخول بشري عن <span dir="ltr">`needs_login`</span> بدلًا من الادعاء بأنها جاهزة.
-- **الصلاحيات.** يعمل MCP المحلي بصلاحيات مستخدمك. أما MCP البعيد فهو نقطة اتصال تُفعّل اختياريًا، متاحة داخل tailnet فقط، ومقصورة على هويات الدخول أو الوسوم التي تحددها. أدوار كل وكيل ونطاقات التطبيقات وإيصالات الإجراءات ستأتي *قريبًا*.
-
-يتحكم MCP الخاص بـ TSLink في TSLink نفسه. إذا نشرت خادم MCP آخر عبر TSLink، فسيظل بحاجة إلى صلاحيات أدوات خاصة به.
-[دليل الوكلاء →](agents.md) · [عملاء MCP →](mcp-clients.md) · [MCP البعيد →](remote-mcp.md) · [أتمتة JSON →](json-automation.md)
-
-## متى تستخدم أداة أخرى
-
-| إذا أردت | فكّر في |
-|---|---|
-| خدمة محلية واحدة على أجهزتك باستخدام عميل Tailscale الذي تشغله بالفعل | [<span dir="ltr">`tailscale serve`</span>](https://tailscale.com/docs/reference/tailscale-cli/serve) |
-| خدمات يديرها مسؤول بأسماء ثابتة عبر مضيفين متعددين | [Tailscale Services](https://tailscale.com/docs/features/tailscale-services) |
-| عنوانًا عامًا لـ webhook أو تجربة API دون حساب Tailscale | [ngrok](https://ngrok.com/docs/start) أو [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/) |
-| تثبيت وتشغيل تطبيقات باستضافة ذاتية إلى جانب مشاركتها | [Umbrel](https://umbrel.com) أو [Coolify](https://coolify.io) |
-| منصة وصول تعتمد على الهوية للمؤسسة بأكملها | [Pangolin](https://github.com/fosrl/pangolin) أو [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/) |
-
-يناسب TSLink شخصًا يشغّل تطبيقات متعددة ويريد وصولًا محدد المدة لكل تطبيق ولكل شخص، يمكنه هو ووكيله فحصه.
-
-## كيف يعمل
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/service-map-dark.svg">
-  <img src="assets/service-map-light.svg" alt="App وDocs وDatabase وModel عُقد منفصلة ذات أسماء في شبكة tailnet واحدة، يشغّلها برنامج خلفي واحد من TSLink على الحاسوب الذي ينشر الخدمات." width="720">
-</picture>
-
-يشغّل برنامج خلفي واحد عقدة Tailscale مضمّنة لكل تطبيق، فيحصل كل تطبيق على اسمه وعنوانه. في مشاركات HTTP والملفات الخاصة، تتحكم <span dir="ltr">`WhoIs`</span> ومنح الوصول للأشخاص أو قواعد <span dir="ltr">`--allow`</span> في الوصول، وتُفحص مواعيد الأشخاص في كل طلب. يستخدم TCP الخام سياسة tailnet ومصادقة الخدمة الخلفية. يوفر Tailscale نقل tailnet والتشفير والشهادات؛ TSLink مشروع مستقل. تشترك جميع التطبيقات في حاسوب النشر، لذلك لا يعزلها TSLink عن بعضها. [البنية →](architecture.md)
-
-## الحالة
-
-متاح الآن: عناوين خاصة لكل تطبيق، أشخاص بمواعيد انتهاء وحزم دعوات، Funnel عام مع انتهاء الصلاحية، فحوص صحة التطبيقات والتنبيهات، وصفات لتطبيقات الاستضافة الذاتية، حدود طلبات لكل تطبيق، إعادة تشغيل بعد التعطل في Windows، وCLI وMCP.
-
-قادم: روابط ضيوف للمتصفح، مدد مرنة، سجل وصول، صفحة رئيسية للتطبيقات، أدوار وكلاء محددة النطاق، انضمام عبر QR وطلبات وصول. عرض عدة حواسيب في قائمة واحدة مخطط له. [خارطة الطريق →](roadmap.md)
+<a id="roadmap"></a>
+<a id="documentation"></a>
 
 ## الوثائق والترخيص
 
-[llms.txt](../llms.txt) · [دليل البدء السريع للوكلاء](agent-quickstart.md) · [اختيار أداة للمشاركة](comparison.md)
+[كل الأدلة](INDEX.md) · [مرجع CLI](cli-reference.md) · [الذكاء الاصطناعي المحلي](local-ai.md) · [الصحة](health-and-alerts.md) · [سجل الوصول](access-log.md) · [خطة التطوير](roadmap.md)
 
-[البدء](getting-started.md) · [مرجع CLI](cli-reference.md) · [المنصات](platforms.md) · [النماذج المحلية](local-ai.md) · [المساهمة](../CONTRIBUTING.md) · [الأمان](../SECURITY.md)
-
-Apache License 2.0، بما في ذلك الاستخدام التجاري. احتفظ بملف [NOTICE](../NOTICE) و[إشعارات الجهات الخارجية](../THIRD_PARTY_NOTICES.md) عند إعادة التوزيع. تُطبّق شروط Tailscale وخططه بصورة منفصلة.
+قائمة التطبيقات المشتركة بين عدة مضيفين مخطط لها. نرحب بـ[المساهمات](../CONTRIBUTING.md) و[تقارير الأمان](../SECURITY.md). يسمح [Apache 2.0](../LICENSE) بالاستخدام التجاري؛ احتفظ بـ[NOTICE](../NOTICE) و[إشعارات الأطراف الثالثة](../THIRD_PARTY_NOTICES.md) عند إعادة التوزيع. [التعاون التجاري](../COMMERCIAL.md) طوعي. تنطبق شروط Tailscale وخططه بشكل مستقل.
 
 </div>

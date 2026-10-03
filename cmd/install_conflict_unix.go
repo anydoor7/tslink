@@ -3,6 +3,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"github.com/anydoor7/tslink/internal/daemon"
 	"os"
@@ -11,7 +12,7 @@ import (
 	"github.com/anydoor7/tslink/internal/output"
 )
 
-func detectInstallDaemonConflict(recovery string) error {
+func detectInstallDaemonConflict(ctx context.Context, recovery string) error {
 	pidPath, err := pidPathFn()
 	if err != nil {
 		return fmt.Errorf("find daemon PID file before install: %w", err)
@@ -26,7 +27,7 @@ func detectInstallDaemonConflict(recovery string) error {
 		if _, statErr := os.Stat(pidPath); !os.IsNotExist(statErr) && !daemon.IsProcessAbsentFromPIDFile(pidPath) && !daemon.IsForeignProcessFromPIDFile(pidPath) {
 			return output.ErrConflict("daemon PID artifact exists but process identity is unverified; inspect the running binary and supervisor before install/restart")
 		}
-		if err := checkSupervisorProcessScope(); err != nil {
+		if err := checkSupervisorProcessScope(ctx); err != nil {
 			if strings.Contains(err.Error(), systemdUserManagerUnavailableMessage) {
 				return output.ErrConflict(err.Error())
 			}

@@ -2,7 +2,10 @@
 
 package cmd
 
-import "github.com/anydoor7/tslink/internal/testenv"
+import (
+	"context"
+	"github.com/anydoor7/tslink/internal/testenv"
+)
 
 // osServiceManagerSeams lists every launchd process exit this package owns.
 // launchctl writes (bootout/bootstrap) address gui/<uid>, a namespace shared
@@ -11,11 +14,9 @@ import "github.com/anydoor7/tslink/internal/testenv"
 // testenv.ErrServiceManagerBlocked for the incident.
 func osServiceManagerSeams() []testenv.ServiceManagerSeam {
 	return []testenv.ServiceManagerSeam{
-		{
-			Manager: "launchctl",
-			Get:     func() testenv.ServiceManagerCall { return launchctlCombinedOutput },
-			Set:     func(fn testenv.ServiceManagerCall) { launchctlCombinedOutput = fn },
-		},
+		contextManagerSeam("launchctl",
+			func() func(context.Context, ...string) ([]byte, error) { return launchctlCombinedOutput },
+			func(fn func(context.Context, ...string) ([]byte, error)) { launchctlCombinedOutput = fn }),
 	}
 }
 
@@ -24,5 +25,5 @@ func osServiceManagerSeams() []testenv.ServiceManagerSeam {
 // exist and the verb is read-only, so even a probe that escaped the guard
 // could not mutate the operator's launchd domain.
 func serviceManagerGuardProbe() ([]byte, error) {
-	return launchctlCombinedOutput("print", launchctlDomain()+"/com.tslink.guard-probe.invalid")
+	return launchctlCombinedOutput(context.Background(), "print", launchctlDomain()+"/com.tslink.guard-probe.invalid")
 }

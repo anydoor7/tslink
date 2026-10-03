@@ -3,11 +3,13 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"github.com/anydoor7/tslink/internal/accesslog"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/anydoor7/tslink/internal/errcode"
+	"github.com/anydoor7/tslink/internal/mcpaudit"
 	"github.com/anydoor7/tslink/internal/output"
 	"github.com/anydoor7/tslink/internal/registry"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -16,6 +18,18 @@ import (
 // mcpToolMinimalArguments is one valid call per tool, so a test can reach
 // each tool's action.
 var mcpToolMinimalArguments = map[string]string{
+	"extend":         `{"service":"web","for":"1h"}`,
+	"access_log":     `{}`,
+	"access_summary": `{}`,
+	"portal_enable":  `{"owner":"owner"}`,
+	"portal_disable": `{}`,
+	"people_grant":   `{"who":"alice","app":"web","for":"1h"}`,
+	"people_revoke":  `{"who":"alice","app":"web"}`,
+	"app_restart":    `{"app":"web"}`,
+	"health":         `{}`,
+	"mcp_audit":      `{}`,
+	"guest_create":   `{"app":"web","for":"1h"}`, "guest_list": `{}`, "guest_show": `{"id":"guest-id"}`, "guest_revoke": `{"id":"guest-id"}`,
+	"requests_list": `{}`, "requests_approve": `{"id":"1","for":"8h"}`, "requests_deny": `{"id":"1"}`,
 	"people_add":     `{"who":"alice","apps":["web"]}`,
 	"people_update":  `{"who":"alice","apps":["web"]}`,
 	"people_list":    `{}`,
@@ -57,6 +71,38 @@ func mcpRefusal(tool string) error {
 
 func refusingMCPActions() mcpActions {
 	return mcpActions{
+		guest: func(_ context.Context, name string, _ guestArguments) (any, error) { return nil, mcpRefusal(name) },
+		accessLog: func(accessLogArguments) (accesslog.Result, error) {
+			return accesslog.Result{}, mcpRefusal("access_log")
+		},
+		accessSummary: func(accessLogArguments) (accesslog.Summary, error) {
+			return accesslog.Summary{}, mcpRefusal("access_summary")
+		},
+		requestsList: func(context.Context) (any, error) { return nil, mcpRefusal("requests_list") },
+		requestsDecide: func(_ context.Context, _ requestDecisionArguments, approve bool) (any, error) {
+			name := "requests_deny"
+			if approve {
+				name = "requests_approve"
+			}
+			return nil, mcpRefusal(name)
+		},
+		extend: func(context.Context, extendArguments) (any, error) { return nil, mcpRefusal("extend") },
+		portalChange: func(_ context.Context, _ portalArguments, enable bool) (any, error) {
+			name := "portal_disable"
+			if enable {
+				name = "portal_enable"
+			}
+			return nil, mcpRefusal(name)
+		},
+		personApp: func(_ context.Context, _, _, _ string, revoke bool) (any, error) {
+			name := "people_grant"
+			if revoke {
+				name = "people_revoke"
+			}
+			return nil, mcpRefusal(name)
+		},
+		appRestart: func(context.Context, string) (any, error) { return nil, mcpRefusal("app_restart") },
+		auditRead:  func() ([]mcpaudit.Entry, error) { return nil, mcpRefusal("mcp_audit") },
 		peopleChange: func(_ context.Context, _ peopleArguments, update bool) (any, error) {
 			name := "people_add"
 			if update {
@@ -68,18 +114,18 @@ func refusingMCPActions() mcpActions {
 		peopleRemove: func(context.Context, string, map[string]string) (any, error) { return nil, mcpRefusal("people_remove") },
 		share:        func(context.Context, shareRequest) (ShareResult, error) { return ShareResult{}, mcpRefusal("share") },
 		add:          func(context.Context, AddParams, bool) (any, error) { return nil, mcpRefusal("add") },
-		list:         func() (any, error) { return nil, mcpRefusal("list") },
+		list:         func(ctx context.Context) (any, error) { return nil, mcpRefusal("list") },
 		unshare: func(context.Context, string) (any, error) {
 			return nil, mcpRefusal("unshare")
 		},
-		status: func() (any, error) { return nil, mcpRefusal("status") },
+		status: func(ctx context.Context) (any, error) { return nil, mcpRefusal("status") },
 		url: func(context.Context, string, time.Duration) (any, error) {
 			return nil, mcpRefusal("url")
 		},
 		tagsList:      func() (any, error) { return nil, mcpRefusal("tags_list") },
-		tagsSet:       func(string, string) (any, error) { return nil, mcpRefusal("tags_set") },
+		tagsSet:       func(context.Context, string, string) (any, error) { return nil, mcpRefusal("tags_set") },
 		accessExplain: func(string) (any, error) { return nil, mcpRefusal("access_explain") },
-		doctor:        func(bool) (any, error) { return nil, mcpRefusal("doctor") },
+		doctor:        func(context.Context, bool) (any, error) { return nil, mcpRefusal("doctor") },
 		logs:          func(mcpLogsArguments) (any, error) { return nil, mcpRefusal("logs") },
 		inviteUser: func(context.Context, string, string, bool) (any, error) {
 			return nil, mcpRefusal("invite_user")
@@ -180,16 +226,20 @@ func TestMCPRefusalsReachEveryClientIntact(t *testing.T) {
 		}
 		t.Run(tool.Name, func(t *testing.T) {
 			failure := mcpToolErrorFailure(t, tool.Name, arguments, actions)
+			refusalTool := tool.Name
+			if refusalTool == "health" {
+				refusalTool = "status"
+			}
 			if failure["code"] != registry.CodeURLNotReady {
 				t.Fatalf("failure code = %v, want %s: %v", failure["code"], registry.CodeURLNotReady, failure)
 			}
-			if message, _ := failure["message"].(string); !strings.Contains(message, "refused by "+tool.Name) {
+			if message, _ := failure["message"].(string); !strings.Contains(message, "refused by "+refusalTool) {
 				t.Fatalf("failure message = %v", failure["message"])
 			}
 			if next, _ := failure["next"].([]any); len(next) != 1 || next[0] != "tslink status --json" {
 				t.Fatalf("failure next = %v", failure["next"])
 			}
-			if data, _ := failure["data"].(map[string]any); data["tool"] != tool.Name {
+			if data, _ := failure["data"].(map[string]any); data["tool"] != refusalTool {
 				t.Fatalf("failure data = %v", failure["data"])
 			}
 		})

@@ -8,3 +8,12 @@
 - `regression_junction_windows_test.go`: native Windows directory-junction compatibility fixture.
 - `persistence_test.go`: batched delivery persistence and unchanged-state write counts.
 - `wave1_integration_test.go`: bodyless real HTTP probes under finite/unlimited request limits and invalid-limit refusal before backend I/O.
+
+- `current.go`, `current_test.go`: shared freshness projection for status and portal; exact stale boundary checks.
+
+# Access requests and phone onboarding
+
+- `alerts.go`: typed access-request notification and bounded notifier config reads.
+- `alerts_file_unix_test.go`: real FIFO, symlink, directory, oversized and partial notifier configuration probes.
+
+- Alert state reads use the shared state-file read/retry/settle helpers.

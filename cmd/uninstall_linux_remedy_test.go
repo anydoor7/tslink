@@ -4,6 +4,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -50,7 +51,7 @@ func TestLinuxUninstallRefusalNamesUserManagerRemedy(t *testing.T) {
 			if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			systemctlCombinedOutput = func(args ...string) ([]byte, error) {
+			systemctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
 				switch args[1] {
 				case "stop":
 					return []byte(tc.stopOut), tc.stopErr

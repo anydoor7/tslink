@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"io"
 	"path/filepath"
 	"testing"
@@ -33,14 +34,14 @@ func TestAuthenticatedMeansANodeIsAuthorizedOnEverySurface(t *testing.T) {
 	sharePollableStatusFn = getPollableStatus
 	mcpStatus := func() mcpStatusSummary {
 		t.Helper()
-		value, err := defaultMCPActions(paths, io.Discard).status()
+		value, err := defaultMCPActions(paths, io.Discard).status(context.Background())
 		if err != nil {
 			t.Fatal(err)
 		}
 		return value.(mcpStatusSummary)
 	}
 
-	cli, err := getPollableStatus(paths.PID, paths.Registry, paths.Snapshot, paths.AuthHandoff)
+	cli, err := getPollableStatus(context.Background(), paths.PID, paths.Registry, paths.Snapshot, paths.AuthHandoff)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +63,7 @@ func TestAuthenticatedMeansANodeIsAuthorizedOnEverySurface(t *testing.T) {
 	if err := tsruntime.Save(paths.Snapshot, snapshot); err != nil {
 		t.Fatal(err)
 	}
-	cli, err = getPollableStatus(paths.PID, paths.Registry, paths.Snapshot, paths.AuthHandoff)
+	cli, err = getPollableStatus(context.Background(), paths.PID, paths.Registry, paths.Snapshot, paths.AuthHandoff)
 	if err != nil {
 		t.Fatal(err)
 	}

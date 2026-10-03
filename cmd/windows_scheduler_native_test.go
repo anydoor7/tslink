@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/synctest"
 
 	"github.com/spf13/cobra"
 )
@@ -32,7 +33,9 @@ func isolateWindowsTask(t *testing.T) (string, windowsTaskSpec) {
 	windowsEvalSymlinksFn = func(p string) (string, error) { return p, nil }
 	windowsTaskOwnsPIDFn = func(int, []int, string) bool { return true }
 	windowsDaemonRunningFn = func(string) bool { return true }
-	windowsSchedulerFn = func(string, string, []byte) (windowsSchedulerStatus, error) { return windowsSchedulerStatus{}, nil }
+	windowsSchedulerFn = func(context.Context, string, string, []byte) (windowsSchedulerStatus, error) {
+		return windowsSchedulerStatus{}, nil
+	}
 	spec := fixtureTaskSpec()
 	spec.ConfigDir = dir
 	spec.PowerShell = windowsPowerShellPath()
@@ -72,43 +75,46 @@ func TestWindowsTaskDefinitionRoundTrip(t *testing.T) {
 }
 
 func TestWindowsTaskInstallMigratesAndStarts(t *testing.T) {
-	_, spec := isolateWindowsTask(t)
-	path, _ := windowsStartupScriptPath()
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte(windowsConfigEnvironment(spec.ConfigDir)+"\r\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	var calls []string
-	var task windowsSchedulerStatus
-	windowsSchedulerFn = func(op, name string, data []byte) (windowsSchedulerStatus, error) {
-		calls = append(calls, op)
-		if op == "register" {
-			task = windowsSchedulerStatus{Exists: true, Enabled: true, XML: string(data), State: 3}
+	// Installation and file I/O must not spend the fixture's 20 ms clock budget.
+	synctest.Test(t, func(t *testing.T) {
+		_, spec := isolateWindowsTask(t)
+		path, _ := windowsStartupScriptPath()
+		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+			t.Fatal(err)
 		}
-		if op == "run" {
-			isRunningFn = func(string) bool { return true }
-			task.State = 4
-			task.Engines = []int{42}
+		if err := os.WriteFile(path, []byte(windowsConfigEnvironment(spec.ConfigDir)+"\r\n"), 0600); err != nil {
+			t.Fatal(err)
 		}
-		return task, nil
-	}
-	detectSupervisionFn = detectSupervision
-	if err := runInstallLocked(windowsTestCommand(), nil); err != nil {
-		t.Fatal(err)
-	}
-	if got := strings.Join(calls, ","); !strings.HasPrefix(got, "query,register,run,query") {
-		t.Fatalf("operations=%s", got)
-	}
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Fatalf("Startup entry remains: %v", err)
-	}
-	definition, _ := windowsTaskPath()
-	data, err := os.ReadFile(definition)
-	if err != nil || !windowsTaskMatches(data, spec) {
-		t.Fatalf("local task=%s,%v", data, err)
-	}
+		var calls []string
+		var task windowsSchedulerStatus
+		windowsSchedulerFn = func(ctx context.Context, op, name string, data []byte) (windowsSchedulerStatus, error) {
+			calls = append(calls, op)
+			if op == "register" {
+				task = windowsSchedulerStatus{Exists: true, Enabled: true, XML: string(data), State: 3}
+			}
+			if op == "run" {
+				isRunningFn = func(string) bool { return true }
+				task.State = 4
+				task.Engines = []int{42}
+			}
+			return task, nil
+		}
+		detectSupervisionFn = detectSupervisionContext
+		if err := runInstallLocked(windowsTestCommand(), nil); err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.Join(calls, ","); !strings.HasPrefix(got, "query,register,run,query") {
+			t.Fatalf("operations=%s", got)
+		}
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("Startup entry remains: %v", err)
+		}
+		definition, _ := windowsTaskPath()
+		data, err := os.ReadFile(definition)
+		if err != nil || !windowsTaskMatches(data, spec) {
+			t.Fatalf("local task=%s,%v", data, err)
+		}
+	})
 }
 
 func TestWindowsTaskInstallFailurePreservesMigrationEvidence(t *testing.T) {
@@ -123,7 +129,7 @@ func TestWindowsTaskInstallFailurePreservesMigrationEvidence(t *testing.T) {
 			}
 			var task windowsSchedulerStatus
 			var calls []string
-			windowsSchedulerFn = func(op, name string, data []byte) (windowsSchedulerStatus, error) {
+			windowsSchedulerFn = func(ctx context.Context, op, name string, data []byte) (windowsSchedulerStatus, error) {
 				calls = append(calls, op)
 				if op == failure {
 					return windowsSchedulerStatus{}, errors.New("injected " + failure)
@@ -173,8 +179,8 @@ func TestWindowsTaskSupervisionLoadedPolicyAndOwnership(t *testing.T) {
 		t.Fatal(err)
 	}
 	task := windowsSchedulerStatus{Exists: true, Enabled: true, State: 4, Engines: []int{42}, XML: string(data)}
-	windowsSchedulerFn = func(string, string, []byte) (windowsSchedulerStatus, error) { return task, nil }
-	good := detectSupervision("isolated.pid", true, 4242)
+	windowsSchedulerFn = func(context.Context, string, string, []byte) (windowsSchedulerStatus, error) { return task, nil }
+	good := detectSupervision(context.Background(), "isolated.pid", true, 4242)
 	if good.Manager != "windows-task-scheduler" || !good.RestartOnExit || !good.Autostart || good.AutostartScope != "login" {
 		t.Fatalf("positive control=%+v", good)
 	}
@@ -184,7 +190,7 @@ func TestWindowsTaskSupervisionLoadedPolicyAndOwnership(t *testing.T) {
 			oldOwn, oldDaemon := windowsTaskOwnsPIDFn, windowsDaemonRunningFn
 			t.Cleanup(func() {
 				windowsTaskOwnsPIDFn, windowsDaemonRunningFn = oldOwn, oldDaemon
-				windowsSchedulerFn = func(string, string, []byte) (windowsSchedulerStatus, error) { return task, nil }
+				windowsSchedulerFn = func(context.Context, string, string, []byte) (windowsSchedulerStatus, error) { return task, nil }
 			})
 			switch variant {
 			case "disabled":
@@ -201,8 +207,8 @@ func TestWindowsTaskSupervisionLoadedPolicyAndOwnership(t *testing.T) {
 			case "state":
 				copy.State = 3
 			}
-			windowsSchedulerFn = func(string, string, []byte) (windowsSchedulerStatus, error) { return copy, nil }
-			got := detectSupervision("isolated.pid", true, 4242)
+			windowsSchedulerFn = func(context.Context, string, string, []byte) (windowsSchedulerStatus, error) { return copy, nil }
+			got := detectSupervision(context.Background(), "isolated.pid", true, 4242)
 			if got.Manager != "manual" || got.Autostart || got.RestartOnExit {
 				t.Fatalf("unverified supervision accepted=%+v", got)
 			}
@@ -224,7 +230,7 @@ func TestWindowsTaskUninstallDisablesStopsThenDeletes(t *testing.T) {
 	t.Cleanup(func() { stopDaemonFn = oldStop })
 	var calls []string
 	stopDaemonFn = func(string) error { calls = append(calls, "stop"); task.State = 3; task.Engines = []int{}; return nil }
-	windowsSchedulerFn = func(op, name string, data []byte) (windowsSchedulerStatus, error) {
+	windowsSchedulerFn = func(ctx context.Context, op, name string, data []byte) (windowsSchedulerStatus, error) {
 		calls = append(calls, op)
 		if op == "disable" {
 			setFakeWindowsTaskEnabled(t, &task, false)
@@ -269,7 +275,7 @@ func TestWindowsTaskUninstallRefusesUncertainOrForeignTask(t *testing.T) {
 				windowsTaskOwnsPIDFn = func(int, []int, string) bool { return false }
 			}
 			deleted := false
-			windowsSchedulerFn = func(op, name string, data []byte) (windowsSchedulerStatus, error) {
+			windowsSchedulerFn = func(ctx context.Context, op, name string, data []byte) (windowsSchedulerStatus, error) {
 				if op == variant || op == "query" && deleted && variant == "confirm" {
 					return windowsSchedulerStatus{}, errors.New("injected " + variant)
 				}

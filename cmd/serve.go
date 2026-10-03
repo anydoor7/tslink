@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -78,6 +79,8 @@ var (
 	serveRemoveReadyFn         = daemon.RemovePID
 	serveSaveAuthHandoffFn     = saveAuthHandoff
 	serveLoadAuthHandoffFn     = loadAuthHandoff
+	serveLoadAuthHandoffsFn    = loadAuthHandoffs
+	serveWriteAuthHandoffsFn   = writeAuthHandoffs
 	serveRemoveAuthHandoffFn   = removeAuthHandoff
 	serveOpenBrowserFn         = openBrowser
 	serveCIEnvironmentSetFn    = ciEnvironmentSet
@@ -236,22 +239,23 @@ returns a needs_login record immediately. --json, --no-browser, CI, and
 non-terminal sessions never try to open a browser.
 
 MCP control plane (off by default):
-  --mcp, or "mcp": {"enabled": true} in config.json, serves the same 19 MCP
-  tools "tslink mcp" exposes over stdio on a dedicated tailnet-only node at
+  --mcp, or "mcp": {"enabled": true} in config.json, serves the same MCP
+  tool registry as "tslink mcp", filtered by the caller's scope, over HTTPS
+  on a dedicated tailnet-only node at
   https://<node>.<tailnet>.ts.net/mcp. This is a control plane, not a page:
-  every authorized tailnet peer that reaches it can register and remove
-  services, publish a service to the public internet with Funnel, and send or
-  revoke real Tailscale invitations. It is never published through Funnel and
-  never binds a host interface or 0.0.0.0.
+  owner entries can register and remove services, publish apps through Funnel
+  to the public internet, and send or revoke invitations. Reduced roles receive
+  only their tools and apps. The control plane is never published through Funnel
+  and never binds a host interface or 0.0.0.0.
 
   Authorization is mandatory. The endpoint answers only callers whose Tailscale
-  identity matches mcp.allow in config.json, a list of login emails and/or
-  "tag:..." entries. An empty list is not "everyone": serve refuses to start
+  identity matches mcp.allow (legacy owner entries) or mcp.bindings (scoped
+  login/tag roles) in config.json. Empty authorization refuses to start
   and says so.
 
   The same node also serves a read-only server-sent event stream at
   https://<node>.<tailnet>.ts.net/events, behind the identical Origin and
-  mcp.allow authorization. It pushes the list and status views on every runtime
+  authorization, and is owner-only; reduced clients poll scoped tools. It pushes the list and status views on every runtime
   change and on every credential-state change — including a "tslink login" or
   "tslink logout" run from another process — so a client stops polling, and
   sends a heartbeat so a silent stream can be told from a dead one. Set
@@ -831,10 +835,39 @@ func runForegroundWithOptions(pidPath, authKey, controlURL string, options foreg
 		if !ok {
 			return fmt.Errorf("server does not support interactive auth handoff")
 		}
+		var handoffMu sync.Mutex
+		// Capture seams before the async portal worker can publish a handoff.
+		save, load, write, remove, now := serveSaveAuthHandoffFn, serveLoadAuthHandoffsFn, serveWriteAuthHandoffsFn, serveRemoveAuthHandoffFn, authHandoffNowFn
 		setter.SetAuthHandoffFunc(func(ctx context.Context, handoff server.AuthHandoff) error {
-			record := newAuthHandoffRecord(handoff.Service, handoff.AuthURL, os.Getpid())
+			handoffMu.Lock()
+			defer handoffMu.Unlock()
+			if handoff.State == "complete" || handoff.State == "cancelled" {
+				if options.AuthHandoffPath == "" {
+					return nil
+				}
+				authHandoffFileMu.Lock()
+				defer authHandoffFileMu.Unlock()
+				entries, err := load(options.AuthHandoffPath)
+				if os.IsNotExist(err) {
+					return nil
+				}
+				if err != nil {
+					return err
+				}
+				for i, record := range entries {
+					if record.DaemonPID == os.Getpid() && record.Service == handoff.Service && record.AuthURL == handoff.AuthURL {
+						remaining := append(entries[:i], entries[i+1:]...)
+						if len(remaining) == 0 {
+							return remove(options.AuthHandoffPath)
+						}
+						return write(options.AuthHandoffPath, remaining)
+					}
+				}
+				return nil
+			}
+			record := newAuthHandoffRecordAt(handoff.Service, handoff.AuthURL, os.Getpid(), now())
 			if options.AuthHandoffPath != "" {
-				if err := serveSaveAuthHandoffFn(options.AuthHandoffPath, record); err != nil {
+				if err := save(options.AuthHandoffPath, record); err != nil {
 					return err
 				}
 			}
@@ -866,11 +899,6 @@ func runForegroundWithOptions(pidPath, authKey, controlURL string, options foreg
 		setter.SetReadyFunc(func() error {
 			if err := serveWriteReadyFn(options.ReadyPath, os.Getpid()); err != nil {
 				return err
-			}
-			if options.AuthHandoffPath != "" {
-				if err := serveRemoveAuthHandoffFn(options.AuthHandoffPath); err != nil {
-					slog.Warn("failed to remove completed auth handoff", "error", err)
-				}
 			}
 			return nil
 		})

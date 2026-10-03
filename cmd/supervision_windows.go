@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/anydoor7/tslink/internal/daemon"
+	"github.com/anydoor7/tslink/internal/mcpscope"
 	"golang.org/x/sys/windows"
 )
 
@@ -138,12 +139,12 @@ func supervisorConfigMatches(data []byte, dir string) bool {
 	return windowsTaskConfigMatches(data, dir) || bytes.Contains(data, []byte(windowsConfigEnvironment(dir)+"\r\n"))
 }
 
-func checkUnregisteredSupervisor() error {
+func checkUnregisteredSupervisor(ctx context.Context) error {
 	name, err := windowsTaskName()
 	if err != nil {
 		return err
 	}
-	s, err := windowsSchedulerFn("query", name, nil)
+	s, err := windowsSchedulerChecked(ctx, "query", name, nil)
 	if err != nil {
 		return fmt.Errorf("inspect Task Scheduler (fallback: tslink install --startup): %w", err)
 	}
@@ -171,12 +172,12 @@ func checkUnregisteredSupervisor() error {
 	return nil
 }
 
-func checkSupervisorProcessScope() error {
+func checkSupervisorProcessScope(ctx context.Context) error {
 	name, err := windowsTaskName()
 	if err != nil {
 		return err
 	}
-	s, err := windowsSchedulerFn("query", name, nil)
+	s, err := windowsSchedulerChecked(ctx, "query", name, nil)
 	if err != nil {
 		if _, ok := detectWindowsStartup(); ok {
 			return nil
@@ -190,7 +191,7 @@ func checkSupervisorProcessScope() error {
 }
 
 func startInstalledDaemon(ctx context.Context, out io.Writer) error {
-	if err := ctx.Err(); err != nil {
+	if err := mcpscope.CheckEffect(ctx); err != nil {
 		return err
 	}
 	path, _ := windowsTaskPath()
@@ -199,11 +200,14 @@ func startInstalledDaemon(ctx context.Context, out io.Writer) error {
 		if err != nil {
 			return err
 		}
-		_, err = windowsSchedulerFn("run", name, nil)
+		_, err = windowsSchedulerChecked(ctx, "run", name, nil)
 		return err
 	}
 	path, err := windowsStartupScriptPath()
 	if err != nil {
+		return err
+	}
+	if err := mcpscope.CheckEffect(ctx); err != nil {
 		return err
 	}
 	command := exec.CommandContext(ctx, "wscript.exe", path)
@@ -211,12 +215,16 @@ func startInstalledDaemon(ctx context.Context, out io.Writer) error {
 	return command.Run()
 }
 
-func detectSupervision(pidPath string, running bool, pid int) Supervision {
+func detectSupervision(ctx context.Context, pidPath string, running bool, pid int) Supervision {
+	return detectSupervisionContext(ctx, pidPath, running, pid)
+}
+
+func detectSupervisionContext(ctx context.Context, pidPath string, running bool, pid int) Supervision {
 	name, err := windowsTaskName()
 	if err != nil {
 		return unmanagedSupervision(running, "Cannot inspect Windows user SID: "+err.Error())
 	}
-	s, err := windowsSchedulerFn("query", name, nil)
+	s, err := windowsSchedulerChecked(ctx, "query", name, nil)
 	if err != nil {
 		path, _ := windowsTaskPath()
 		if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
@@ -295,7 +303,7 @@ func detectWindowsStartup() (Supervision, bool) {
 	return windowsStartupSupervision(path), true
 }
 
-func callWindowsScheduler(operation, name string, definition []byte) (windowsSchedulerStatus, error) {
+func callWindowsScheduler(ctx context.Context, operation, name string, definition []byte) (windowsSchedulerStatus, error) {
 	// EncodedCommand serializes module-loading progress as CLIXML on stderr.
 	// Keep the successful COM/JSON response clean without suppressing errors.
 	script := "$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; [Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); " +
@@ -330,9 +338,9 @@ func callWindowsScheduler(operation, name string, definition []byte) (windowsSch
 	var err error
 	args := []string{"-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", powershellEncoded(script)}
 	if operation == "query" {
-		data, err = managerOutputFn(windowsPowerShellPath(), args...)
+		data, err = runBoundedManagerCommandContext(ctx, windowsPowerShellPath(), managerQueryTimeout, args...)
 	} else {
-		data, err = runBoundedManagerCommand(windowsPowerShellPath(), 20*time.Second, args...)
+		data, err = runBoundedManagerCommandContext(ctx, windowsPowerShellPath(), 20*time.Second, args...)
 	}
 	if err != nil {
 		return windowsSchedulerStatus{}, fmt.Errorf("task scheduler %s failed: %w", operation, err)

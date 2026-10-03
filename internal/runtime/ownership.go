@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/anydoor7/tslink/internal/atomicfile"
 	"github.com/anydoor7/tslink/internal/filelock"
+	"github.com/anydoor7/tslink/internal/mcpscope"
 	"github.com/anydoor7/tslink/internal/registry"
 )
 
@@ -64,7 +66,7 @@ func LoadOwnership(path string) (OwnershipLedger, error) {
 	if err := atomicfile.ConvergePrivateFile(path); err != nil {
 		return OwnershipLedger{}, ownershipLoadError(path, err)
 	}
-	data, err := os.ReadFile(path)
+	data, err := atomicfile.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return emptyOwnershipLedger(), nil
@@ -402,8 +404,15 @@ func MarkOwnedNodeIDsRetired(path string, nodeIDs []string, retiredAt time.Time)
 // waited is retired with the others instead of keeping a row without
 // retired_at, which would withhold its device deletion for good.
 func RetireServiceNodes(path, serviceName string, retiredAt time.Time, commit func() error) ([]OwnedNode, error) {
+	return RetireServiceNodesContext(context.Background(), path, serviceName, retiredAt, commit)
+}
+
+func RetireServiceNodesContext(ctx context.Context, path, serviceName string, retiredAt time.Time, commit func() error) ([]OwnedNode, error) {
 	var owned []OwnedNode
 	err := withOwnershipLock(path, func() error {
+		if err := mcpscope.CheckEffect(ctx); err != nil {
+			return err
+		}
 		ledger, err := LoadOwnership(path)
 		if err != nil {
 			return err
@@ -439,10 +448,19 @@ func RetireServiceNodes(path, serviceName string, retiredAt time.Time, commit fu
 // RemoveOwnedNodeIDs forgets only ownership IDs that remote reconciliation has
 // proved deleted or already absent.
 func RemoveOwnedNodeIDs(path string, nodeIDs []string) error {
+	return RemoveOwnedNodeIDsContext(context.Background(), path, nodeIDs)
+}
+
+func RemoveOwnedNodeIDsContext(ctx context.Context, path string, nodeIDs []string) error {
 	if len(nodeIDs) == 0 {
 		return nil
 	}
-	return withOwnershipLock(path, removeOwnedNodeIDsAction(path, nodeIDs))
+	return withOwnershipLock(path, func() error {
+		if err := mcpscope.CheckEffect(ctx); err != nil {
+			return err
+		}
+		return removeOwnedNodeIDsAction(path, nodeIDs)()
+	})
 }
 
 // TryRemoveOwnedNodesIfUnchanged clears only the exact rows that were proved

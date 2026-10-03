@@ -11,8 +11,8 @@ or live service status. Node names, localhost ports, and client types are exampl
 | `favicon.ico` | 16, 32 and 48 px favicon frames |
 | `social-preview.png` / `social-preview.svg` | 1280 x 640 social card with the mark, wordmark and tagline; the PNG is uploaded as the GitHub social preview |
 | `FONT-NOTICE.md` / `LICENSE-Lato.txt` | Provenance of the outlined Lato glyphs and the unmodified SIL Open Font License text |
-| `service-map-light.svg` / `service-map-dark.svg` | Four service types and their nodes, wide layout, 960 x 708 |
-| `service-map-light-mobile.svg` / `service-map-dark-mobile.svg` | The same mapping in a narrow layout, 400 x 823 |
+| `service-map-light.svg` / `service-map-dark.svg` | Per-host private/public access and CLI/MCP management, wide layout, 960 x 700 |
+| `service-map-light-mobile.svg` / `service-map-dark-mobile.svg` | The same boundaries in a vertical layout, 400 x 1080 |
 | `local-ai-flow-light.svg` / `local-ai-flow-dark.svg` | A local app, documents, model, and remote client, wide layout, 960 x 598 |
 | `local-ai-flow-light-mobile.svg` / `local-ai-flow-dark-mobile.svg` | The same local AI workflow in a narrow layout, 400 x 880 |
 | `system-architecture-light.svg` / `system-architecture-dark.svg` | Configuration and request paths for the architecture guides, 960 x 714 |
@@ -20,36 +20,35 @@ or live service status. Node names, localhost ports, and client types are exampl
 | `badge-license.svg` | Apache 2.0 license with an original document glyph |
 | `badge-go.svg` | Go 1.26.6+ with an original terminal glyph |
 | `badge-tsnet.svg` | Tailscale / tsnet with an original network glyph |
-| `badge-mcp.svg` | MCP / 19 tools with an original connector glyph |
+| `badge-mcp.svg` | MCP / scoped with an original connector glyph; tool availability depends on the session |
 
 The logo files contain only outlined paths; their wordmark glyphs come from Lato, an SIL OFL 1.1 font (see `FONT-NOTICE.md`). The illustrations use SVG shapes and system-font text, with no remote assets,
 scripts, custom fonts, or embedded HTML. Light and dark versions have equivalent
 content. The narrow layouts reorganize the flow instead of shrinking the desktop
-image. Essential labels are checked at an actual 838 px wide desktop rendering
-and a 324 px wide mobile rendering.
+image. The refreshed service-map labels were checked at 960 px desktop and
+358 px mobile image widths in Chromium, in both color schemes.
 
-## Service identities
+## Service access and management
 
-The same color and purpose-specific glyph identify a service on both sides:
+The service map shows one PC, server or cloud machine. Cyan routes are private
+Tailscale access; amber routes are optional public HTTPS/Funnel. Each row is an
+example service, not a different host. Private HTTP/file access includes app
+permissions and verified login where required; raw TCP relies on tailnet policy
+and backend authentication. Public HTTP proxy apps use either a guest gate with
+an expiring link and optional PIN, or an explicitly open publication. These are
+distinct configurations, not a fallback around the guest gate.
 
-| Service | Example node | Visual identity | Tailnet connection |
-|---|---|---|---|
-| App | `app` | Cyan browser window | HTTPS |
-| Docs | `docs` | Amber folded document | HTTPS |
-| Database | `database` | Violet database cylinder | Private TCP |
-| Model API | `model` | Green model chip | HTTPS |
+Each service has its own embedded tsnet node. The shared daemon and app processes
+remain on the same host, without process isolation. The dashed CLI/MCP path
+represents configuration and inspection through the registry/watcher; it is not
+in the ordinary request path. The private portal, health/alerts, access history
+and mutation audit support per-host operation, not a combined multi-host view.
 
-Each registered service receives its own embedded tsnet node **in the same
-tailnet**. The shared tailnet boundary contains all four node examples. They are
-separate names and network identities, not separate tailnets, virtual machines,
-or isolated host processes. HTTP proxy and file services use HTTPS; raw TCP
-forwards a private stream. Ordinary services are tailnet-private, and access
-follows tailnet policy. See [Architecture](../architecture.md) and
-[Sharing](../sharing.md).
-
-The diagram omits setup steps: a Tailscale account, enrollment of each fresh
-node on the default path, and policy allowing the recipient to connect. Explicit
-public Funnel exposure is optional and limited to HTTP proxies; it is not shown.
+Tailscale supplies encrypted private transport and HTTPS. Setup still requires
+an account, fresh-node enrollment, permissions and public Funnel enablement when
+chosen. See [Architecture](../architecture.md), [Sharing](../sharing.md) and
+[Guest links](../guest-links.md). Sources: `internal/server/server.go`,
+`guest.go`, `portal.go`, `people.go`, and `cmd/mcp_scopes.go`.
 
 ## Local AI example
 
@@ -101,14 +100,12 @@ broad dark source. `img` provides a fallback for renderers without `picture`.
   <source media="(max-width: 600px) and (prefers-color-scheme: dark)" srcset="docs/assets/service-map-dark-mobile.svg">
   <source media="(max-width: 600px)" srcset="docs/assets/service-map-light-mobile.svg">
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/service-map-dark.svg">
-  <img src="docs/assets/service-map-light.svg" alt="Illustrative service map: apps, documents, databases, and local model APIs each have a distinct named node in the same tailnet. HTTP services use HTTPS; databases use private TCP. Access follows tailnet policy." width="960">
+  <img src="docs/assets/service-map-light.svg" alt="One app host with private Tailscale access, optional public HTTPS/Funnel, per-service nodes and CLI/MCP management." width="960">
 </picture>
 ```
 
-Suggested adjacent caption: "Four service examples, each with its own name and
-node in the same tailnet. Access follows your tailnet policy."
-
-Suggested alt text: "Service map: apps, documents, databases, and local model APIs each have a separately named node in the same tailnet. HTTP services use HTTPS; databases use private TCP. Tailnet policy controls access."
+Suggested caption: "One host, separate service nodes. Private access by default;
+public HTTPS only by choice. Manage each host independently."
 
 ```html
 <picture>
@@ -129,8 +126,9 @@ README prose so they remain available to readers who cannot view the diagrams.
 
 ## System architecture diagrams
 
-The `system-architecture-*` family is for the architecture guides, rather than
-the compact README. Dashed amber arrows show service-management changes from
+The `system-architecture-*` family remains a detailed private-only reference;
+the README and architecture guide now use the private/public `service-map-*`
+family above. In the private-only reference, dashed amber arrows show changes from
 CLI/MCP through `registry.json` to the daemon's registry watcher. Solid lines
 show the private request path through tailnet policy and separate service nodes
 to local app, file, database, and model targets. One shared daemon contains the

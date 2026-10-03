@@ -23,7 +23,7 @@ func stubLinuxInstallDaemonStopped(t *testing.T) {
 	t.Helper()
 	stubFastSystemdSettle(t)
 	oldConflict := installDaemonConflictFn
-	installDaemonConflictFn = func() error { return nil }
+	installDaemonConflictFn = func(context.Context) error { return nil }
 	t.Cleanup(func() { installDaemonConflictFn = oldConflict })
 }
 
@@ -51,7 +51,7 @@ func stubSystemdStateSequence(t *testing.T, states ...[]byte) *int {
 	stubFastSystemdSettle(t)
 	oldSystemctl := systemctlCombinedOutput
 	calls := 0
-	systemctlCombinedOutput = func(args ...string) ([]byte, error) {
+	systemctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
 		want := []string{
 			"--user",
 			"show",
@@ -109,7 +109,7 @@ func runLinuxInstallGuardTruthCase(t *testing.T, unitPresent, daemonRunning bool
 	linuxExecutablePathFn = func() (string, error) { return "/new/tslink", nil }
 	linuxEvalSymlinksFn = func(path string) (string, error) { return path, nil }
 	linuxUserNameFn = func() string { return "alice" }
-	loginctlCombinedOutputFn = func(args ...string) ([]byte, error) { return []byte("yes\n"), nil }
+	loginctlCombinedOutputFn = func(ctx context.Context, args ...string) ([]byte, error) { return []byte("yes\n"), nil }
 
 	path := filepath.Join(home, ".config", "systemd", "user", systemdServiceName)
 	if unitPresent {
@@ -140,7 +140,7 @@ func runLinuxInstallGuardTruthCase(t *testing.T, unitPresent, daemonRunning bool
 	systemctlCalls := 0
 	restartCalls := 0
 	mutatingSystemctlCalls := 0
-	systemctlCombinedOutput = func(args ...string) ([]byte, error) {
+	systemctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
 		systemctlCalls++
 		if len(args) > 1 && args[1] == "show" {
 			pid := systemdPID
@@ -301,12 +301,12 @@ func TestLinuxInstallCommandRunsSystemctlAndWarnsAboutLinger(t *testing.T) {
 	linuxExecutablePathFn = func() (string, error) { return "/opt/My App/tslink", nil }
 	linuxEvalSymlinksFn = func(path string) (string, error) { return path, nil }
 	linuxUserNameFn = func() string { return "alice" }
-	loginctlCombinedOutputFn = func(args ...string) ([]byte, error) {
+	loginctlCombinedOutputFn = func(ctx context.Context, args ...string) ([]byte, error) {
 		return []byte("no\n"), nil
 	}
 
 	var systemctlCalls []string
-	systemctlCombinedOutput = func(args ...string) ([]byte, error) {
+	systemctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
 		systemctlCalls = append(systemctlCalls, strings.Join(args, "\x00"))
 		if len(args) > 1 && args[1] == "show" {
 			return runningSystemdState(), nil
@@ -376,8 +376,8 @@ func TestLinuxInstallJSONEnvelope(t *testing.T) {
 	linuxExecutablePathFn = func() (string, error) { return "/opt/tslink", nil }
 	linuxEvalSymlinksFn = func(path string) (string, error) { return path, nil }
 	linuxUserNameFn = func() string { return "alice" }
-	loginctlCombinedOutputFn = func(args ...string) ([]byte, error) { return []byte("yes\n"), nil }
-	systemctlCombinedOutput = func(args ...string) ([]byte, error) {
+	loginctlCombinedOutputFn = func(ctx context.Context, args ...string) ([]byte, error) { return []byte("yes\n"), nil }
+	systemctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
 		if len(args) > 1 && args[1] == "show" {
 			return runningSystemdState(), nil
 		}
@@ -421,7 +421,7 @@ func TestLinuxInstallSurfacesSystemctlOutput(t *testing.T) {
 	linuxUserHomeDirFn = func() (string, error) { return home, nil }
 	linuxExecutablePathFn = func() (string, error) { return "/opt/tslink", nil }
 	linuxEvalSymlinksFn = func(path string) (string, error) { return path, nil }
-	systemctlCombinedOutput = func(args ...string) ([]byte, error) {
+	systemctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
 		return []byte("systemctl stderr"), errors.New("systemctl failed")
 	}
 
@@ -453,7 +453,7 @@ func TestLinuxInstallRefusesRunningDaemonBeforeWritingUnit(t *testing.T) {
 	pidPathFn = func() (string, error) { return filepath.Join(home, "tslink.pid"), nil }
 	isRunningFn = func(string) bool { return true }
 	readPIDFn = func(string) (int, error) { return 1676, nil }
-	systemctlCombinedOutput = func(args ...string) ([]byte, error) {
+	systemctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
 		t.Fatalf("systemctl called during daemon conflict: %v", args)
 		return nil, nil
 	}
@@ -485,7 +485,7 @@ func TestLinuxInstallDoesNotClaimSuccessWhenServiceIsAutoRestarting(t *testing.T
 	linuxUserHomeDirFn = func() (string, error) { return home, nil }
 	linuxExecutablePathFn = func() (string, error) { return "/opt/tslink", nil }
 	linuxEvalSymlinksFn = func(path string) (string, error) { return path, nil }
-	systemctlCombinedOutput = func(args ...string) ([]byte, error) {
+	systemctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
 		if len(args) > 1 && args[1] == "show" {
 			return []byte("ActiveState=activating\nSubState=auto-restart\nMainPID=0\n"), nil
 		}
@@ -525,9 +525,9 @@ func TestLinuxInstallDoesNotClaimSuccessWhenServiceDiesDuringSettlement(t *testi
 	linuxExecutablePathFn = func() (string, error) { return "/opt/tslink", nil }
 	linuxEvalSymlinksFn = func(path string) (string, error) { return path, nil }
 	linuxUserNameFn = func() string { return "alice" }
-	loginctlCombinedOutputFn = func(args ...string) ([]byte, error) { return []byte("yes\n"), nil }
+	loginctlCombinedOutputFn = func(ctx context.Context, args ...string) ([]byte, error) { return []byte("yes\n"), nil }
 	showCalls := 0
-	systemctlCombinedOutput = func(args ...string) ([]byte, error) {
+	systemctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
 		if len(args) > 1 && args[1] == "show" {
 			showCalls++
 			if showCalls == 1 {
@@ -559,7 +559,7 @@ func TestVerifySystemdServiceRunningSettlement(t *testing.T) {
 				[]byte("ActiveState=active\nSubState=running\nMainPID=100\nNRestarts=0\n"),
 				[]byte("ActiveState=active\nSubState=running\nMainPID=200\nNRestarts=0\n"),
 			)
-			_, err := verifySystemdServiceRunning()
+			_, err := verifySystemdServiceRunning(context.Background())
 			if err == nil || !strings.Contains(err.Error(), `MainPID="200"`) {
 				t.Fatalf("verify error = %v, want PID drift failure with last observation", err)
 			}
@@ -575,7 +575,7 @@ func TestVerifySystemdServiceRunningSettlement(t *testing.T) {
 				[]byte("ActiveState=active\nSubState=running\nMainPID=100\nNRestarts=0\n"),
 				[]byte("ActiveState=active\nSubState=running\nMainPID=100\nNRestarts=1\n"),
 			)
-			_, err := verifySystemdServiceRunning()
+			_, err := verifySystemdServiceRunning(context.Background())
 			if err == nil || !strings.Contains(err.Error(), `NRestarts="1"`) || !strings.Contains(err.Error(), "systemctl --user reset-failed tslink.service") {
 				t.Fatalf("verify error = %v, want restart growth failure with reset-failed guidance", err)
 			}
@@ -586,7 +586,7 @@ func TestVerifySystemdServiceRunningSettlement(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			calls := stubSystemdStateSequence(t, runningSystemdState(), runningSystemdState())
 			started := time.Now()
-			degraded, err := verifySystemdServiceRunning()
+			degraded, err := verifySystemdServiceRunning(context.Background())
 			if err != nil {
 				t.Fatalf("verify error = %v, want stable success", err)
 			}
@@ -606,7 +606,7 @@ func TestVerifySystemdServiceRunningSettlement(t *testing.T) {
 	t.Run("initial auto-restart fails immediately", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			calls := stubSystemdStateSequence(t, []byte("ActiveState=activating\nSubState=auto-restart\nMainPID=0\nNRestarts=1\n"))
-			_, err := verifySystemdServiceRunning()
+			_, err := verifySystemdServiceRunning(context.Background())
 			if err == nil || !strings.Contains(err.Error(), "auto-restart") {
 				t.Fatalf("verify error = %v, want auto-restart failure", err)
 			}
@@ -619,7 +619,7 @@ func TestVerifySystemdServiceRunningSettlement(t *testing.T) {
 	t.Run("initial failed state fails immediately", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			calls := stubSystemdStateSequence(t, []byte("ActiveState=failed\nSubState=failed\nMainPID=0\nNRestarts=5\n"))
-			_, err := verifySystemdServiceRunning()
+			_, err := verifySystemdServiceRunning(context.Background())
 			if err == nil || !strings.Contains(err.Error(), `ActiveState="failed"`) || !strings.Contains(err.Error(), "systemctl --user reset-failed tslink.service") {
 				t.Fatalf("verify error = %v, want failed-state error with reset-failed guidance", err)
 			}
@@ -635,7 +635,7 @@ func TestVerifySystemdServiceRunningSettlement(t *testing.T) {
 				[]byte("ActiveState=activating\nSubState=start\nMainPID=0\nNRestarts=3\n"),
 				[]byte("ActiveState=activating\nSubState=start-post\nMainPID=321\nNRestarts=3\n"),
 			)
-			_, err := verifySystemdServiceRunning()
+			_, err := verifySystemdServiceRunning(context.Background())
 			for _, want := range []string{`ActiveState="activating"`, `SubState="start-post"`, `MainPID="321"`, `NRestarts="3"`} {
 				if err == nil || !strings.Contains(err.Error(), want) {
 					t.Fatalf("verify error = %v, want timeout containing %s", err, want)
@@ -653,7 +653,7 @@ func TestVerifySystemdServiceRunningSettlement(t *testing.T) {
 				[]byte("ActiveState=active\nSubState=running\nMainPID=100\n"),
 				[]byte("ActiveState=active\nSubState=running\nMainPID=100\n"),
 			)
-			degraded, err := verifySystemdServiceRunning()
+			degraded, err := verifySystemdServiceRunning(context.Background())
 			if err != nil {
 				t.Fatalf("verify error = %v, want success without NRestarts", err)
 			}
@@ -680,7 +680,7 @@ func TestVerifySystemdServiceRunningSettlement(t *testing.T) {
 	t.Run("observed crash-loop shape carries reset-failed guidance", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			stubSystemdStateSequence(t, []byte("ActiveState=activating\nSubState=auto-restart\nMainPID=0\nNRestarts=0\n"))
-			_, err := verifySystemdServiceRunning()
+			_, err := verifySystemdServiceRunning(context.Background())
 			if err == nil {
 				t.Fatalf("verify error = nil, want auto-restart failure")
 			}
@@ -701,7 +701,7 @@ func TestVerifySystemdServiceRunningSettlement(t *testing.T) {
 				[]byte("ActiveState=active\nSubState=running\nMainPID=100\nNRestarts=0\n"),
 				[]byte("ActiveState=active\nSubState=running\nMainPID=200\nNRestarts=0\n"),
 			)
-			_, err := verifySystemdServiceRunning()
+			_, err := verifySystemdServiceRunning(context.Background())
 			if err == nil || !strings.Contains(err.Error(), "systemctl --user reset-failed tslink.service") {
 				t.Fatalf("verify error = %v, want PID drift failure with reset-failed guidance", err)
 			}
@@ -749,8 +749,8 @@ func TestLinuxInstallSurfacesDegradedVerificationInWarning(t *testing.T) {
 	linuxEvalSymlinksFn = func(path string) (string, error) { return path, nil }
 	linuxUserNameFn = func() string { return "alice" }
 	// Linger enabled, so the only warning available is the degradation notice.
-	loginctlCombinedOutputFn = func(args ...string) ([]byte, error) { return []byte("yes\n"), nil }
-	systemctlCombinedOutput = func(args ...string) ([]byte, error) {
+	loginctlCombinedOutputFn = func(ctx context.Context, args ...string) ([]byte, error) { return []byte("yes\n"), nil }
+	systemctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
 		if len(args) > 1 && args[1] == "show" {
 			// Healthy, but this systemd does not expose NRestarts.
 			return []byte("ActiveState=active\nSubState=running\nMainPID=4242\n"), nil
@@ -816,7 +816,7 @@ func TestLinuxInstallDoesNotClaimRestoredServiceRestartedWhenItDiesDuringSettlem
 
 	daemonReloadCalls := 0
 	verifyCalls := 0
-	systemctlCombinedOutput = func(args ...string) ([]byte, error) {
+	systemctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
 		if len(args) < 2 {
 			t.Fatalf("malformed systemctl call: %q", args)
 		}
@@ -896,7 +896,7 @@ func TestLinuxInstallRestoresPreviousUnitAfterUpgradeFailures(t *testing.T) {
 
 			failed := false
 			var calls []string
-			systemctlCombinedOutput = func(args ...string) ([]byte, error) {
+			systemctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
 				call := strings.Join(args, "\x00")
 				calls = append(calls, call)
 				if len(args) < 2 {
@@ -971,12 +971,12 @@ func TestRestorePreviousSystemdUnitReportsAccurateProgress(t *testing.T) {
 		oldSystemctl := systemctlCombinedOutput
 		t.Cleanup(func() { systemctlCombinedOutput = oldSystemctl })
 		var calls []string
-		systemctlCombinedOutput = func(args ...string) ([]byte, error) {
+		systemctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
 			calls = append(calls, strings.Join(args, "\x00"))
 			return nil, nil
 		}
 
-		result, err := restorePreviousSystemdUnit(
+		result, err := restorePreviousSystemdUnit(context.Background(),
 			systemdPreviousState{Existed: true, Unit: []byte("old unit"), Mode: 0o644, OwnedRunning: true},
 			servicePath,
 		)
@@ -1021,7 +1021,7 @@ func TestRestorePreviousSystemdUnitReportsAccurateProgress(t *testing.T) {
 			oldSystemctl := systemctlCombinedOutput
 			t.Cleanup(func() { systemctlCombinedOutput = oldSystemctl })
 			var calls []string
-			systemctlCombinedOutput = func(args ...string) ([]byte, error) {
+			systemctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
 				call := strings.Join(args, "\x00")
 				calls = append(calls, call)
 				if len(args) > 1 && args[1] == tc.failOp {
@@ -1030,7 +1030,7 @@ func TestRestorePreviousSystemdUnitReportsAccurateProgress(t *testing.T) {
 				return nil, nil
 			}
 
-			result, err := restorePreviousSystemdUnit(
+			result, err := restorePreviousSystemdUnit(context.Background(),
 				systemdPreviousState{Existed: true, Unit: []byte("old unit"), Mode: 0o644, OwnedRunning: true},
 				servicePath,
 			)
@@ -1075,8 +1075,8 @@ func TestLinuxInstallSupportsSymlinkedSystemdUserDirectoryWithoutChangingMode(t 
 	linuxExecutablePathFn = func() (string, error) { return "/opt/tslink", nil }
 	linuxEvalSymlinksFn = func(path string) (string, error) { return path, nil }
 	linuxUserNameFn = func() string { return "alice" }
-	loginctlCombinedOutputFn = func(args ...string) ([]byte, error) { return []byte("yes\n"), nil }
-	systemctlCombinedOutput = func(args ...string) ([]byte, error) {
+	loginctlCombinedOutputFn = func(ctx context.Context, args ...string) ([]byte, error) { return []byte("yes\n"), nil }
+	systemctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
 		if len(args) > 1 && args[1] == "show" {
 			return runningSystemdState(), nil
 		}
@@ -1126,22 +1126,22 @@ func TestSystemdOwnsRunningDaemonRequiresPositivePIDAndMatchingMainPID(t *testin
 
 	t.Run("non-positive daemon pid", func(t *testing.T) {
 		readPIDFn = func(string) (int, error) { return 0, nil }
-		systemctlCombinedOutput = func(args ...string) ([]byte, error) {
+		systemctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
 			t.Fatalf("systemctl called with non-positive daemon PID: %v", args)
 			return nil, nil
 		}
-		if owned, err := systemdOwnsRunningDaemon(); owned || err != nil {
-			t.Fatalf("systemdOwnsRunningDaemon() = %v, %v for PID 0", owned, err)
+		if owned, err := systemdOwnsRunningDaemon(context.Background()); owned || err != nil {
+			t.Fatalf("systemdOwnsRunningDaemon(context.Background(), ) = %v, %v for PID 0", owned, err)
 		}
 	})
 
 	t.Run("mismatched main pid", func(t *testing.T) {
 		readPIDFn = func(string) (int, error) { return 1775, nil }
-		systemctlCombinedOutput = func(args ...string) ([]byte, error) {
+		systemctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
 			return []byte("MainPID=1888\n"), nil
 		}
-		if owned, err := systemdOwnsRunningDaemon(); owned || err != nil {
-			t.Fatalf("systemdOwnsRunningDaemon() = %v, %v for mismatched MainPID", owned, err)
+		if owned, err := systemdOwnsRunningDaemon(context.Background()); owned || err != nil {
+			t.Fatalf("systemdOwnsRunningDaemon(context.Background(), ) = %v, %v for mismatched MainPID", owned, err)
 		}
 	})
 }
@@ -1168,7 +1168,7 @@ func TestLinuxUninstallRunsSystemctlPathsAndSurfacesWarnings(t *testing.T) {
 	}
 
 	var systemctlCalls []string
-	systemctlCombinedOutput = func(args ...string) ([]byte, error) {
+	systemctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
 		systemctlCalls = append(systemctlCalls, strings.Join(args, "\x00"))
 		if len(args) == 3 && args[1] == "stop" {
 			return []byte("stop stderr"), errors.New("stop failed")
@@ -1233,7 +1233,7 @@ func TestLinuxUninstallPreservesUnitWhenFailedStopCannotProveAbsence(t *testing.
 				t.Fatal(err)
 			}
 			var calls []string
-			systemctlCombinedOutput = func(args ...string) ([]byte, error) {
+			systemctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
 				calls = append(calls, args[1])
 				switch args[1] {
 				case "stop":
@@ -1284,7 +1284,7 @@ func TestLinuxUninstallJSONEnvelope(t *testing.T) {
 	if err := os.WriteFile(servicePath, []byte("unit"), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
-	systemctlCombinedOutput = func(args ...string) ([]byte, error) { return nil, nil }
+	systemctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) { return nil, nil }
 	setRootJSONFlag(t, true)
 
 	got := captureStdout(t, func() {
@@ -1315,7 +1315,7 @@ func TestLinuxUninstallAbsentUnitStillResetsFailedStateBestEffort(t *testing.T) 
 
 	linuxUserHomeDirFn = func() (string, error) { return home, nil }
 	var calls []string
-	systemctlCombinedOutput = func(args ...string) ([]byte, error) {
+	systemctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
 		calls = append(calls, strings.Join(args, "\x00"))
 		if len(args) > 1 && args[1] == "show" {
 			return []byte("LoadState=not-found\nActiveState=inactive\n"), nil
@@ -1361,7 +1361,7 @@ func TestLinuxUninstallResetFailedFailureIsNonFatal(t *testing.T) {
 	if err := os.WriteFile(servicePath, []byte("unit"), 0o600); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
-	systemctlCombinedOutput = func(args ...string) ([]byte, error) {
+	systemctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
 		if len(args) > 1 && args[1] == "reset-failed" {
 			return []byte("reset stderr"), errors.New("reset failed")
 		}
@@ -1395,7 +1395,7 @@ func TestLinuxUninstallDaemonReloadEmptyOutputHasNoTrailingSeparator(t *testing.
 	if err := os.WriteFile(servicePath, []byte("unit"), 0o600); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
-	systemctlCombinedOutput = func(args ...string) ([]byte, error) {
+	systemctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
 		if len(args) > 1 && args[1] == "daemon-reload" {
 			return nil, errors.New("reload failed")
 		}
@@ -1421,11 +1421,11 @@ func TestLinuxLingerWarningWhenLoginctlUnavailable(t *testing.T) {
 	})
 
 	linuxUserNameFn = func() string { return "alice" }
-	loginctlCombinedOutputFn = func(args ...string) ([]byte, error) {
+	loginctlCombinedOutputFn = func(ctx context.Context, args ...string) ([]byte, error) {
 		return []byte("loginctl missing"), errors.New("exec: loginctl: not found")
 	}
 
-	warning := linuxLingerWarning()
+	warning := linuxLingerWarning(context.Background())
 	for _, want := range []string{"loginctl missing", `loginctl enable-linger "$USER"`, `loginctl disable-linger "$USER"`} {
 		if !strings.Contains(warning, want) {
 			t.Fatalf("warning = %q, want %q", warning, want)
@@ -1456,7 +1456,7 @@ func TestLinuxExplicitInstallClearsPriorStartBudget(t *testing.T) {
 	setupRepairManager(t, func() {})
 	original := systemctlCombinedOutput
 	starts, resets := 5, 0
-	systemctlCombinedOutput = func(args ...string) ([]byte, error) {
+	systemctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
 		switch args[1] {
 		case "reset-failed":
 			starts = 0
@@ -1467,7 +1467,7 @@ func TestLinuxExplicitInstallClearsPriorStartBudget(t *testing.T) {
 			}
 			starts++
 		}
-		return original(args...)
+		return original(ctx, args...)
 	}
 	for i := 0; i < 8; i++ {
 		if err := repairOperation(context.Background(), "install"); err != nil {
@@ -1479,11 +1479,11 @@ func TestLinuxExplicitInstallClearsPriorStartBudget(t *testing.T) {
 	}
 	// Unattended starts still hit the original budget: no implicit reset path.
 	for i := 0; i < 4; i++ {
-		if _, err := systemctlCombinedOutput("--user", "restart", systemdServiceName); err != nil {
+		if _, err := systemctlCombinedOutput(context.Background(), "--user", "restart", systemdServiceName); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if _, err := systemctlCombinedOutput("--user", "restart", systemdServiceName); err == nil {
+	if _, err := systemctlCombinedOutput(context.Background(), "--user", "restart", systemdServiceName); err == nil {
 		t.Fatal("background start budget disabled")
 	}
 	unit := systemdServiceContents("/test/tslink", false)
@@ -1501,7 +1501,7 @@ func TestLinuxExplicitResetFailureAndBadBuildStayFailures(t *testing.T) {
 			old := systemctlCombinedOutput
 			t.Cleanup(func() { systemctlCombinedOutput = old })
 			var calls []string
-			systemctlCombinedOutput = func(args ...string) ([]byte, error) {
+			systemctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
 				calls = append(calls, args[1])
 				if args[1] == "reset-failed" && mode == "reset-error" {
 					return []byte("access denied"), errors.New("reset rejected")
@@ -1514,7 +1514,7 @@ func TestLinuxExplicitResetFailureAndBadBuildStayFailures(t *testing.T) {
 				}
 				return nil, nil
 			}
-			_, err := activateSystemdService()
+			_, err := activateSystemdService(context.Background())
 			if err == nil {
 				t.Fatal("failure hidden")
 			}
@@ -1549,7 +1549,7 @@ func TestLinuxRestoreResetsOnlyAfterRestoredReload(t *testing.T) {
 			t.Cleanup(func() { systemctlCombinedOutput = old })
 			limited := true
 			var calls []string
-			systemctlCombinedOutput = func(args ...string) ([]byte, error) {
+			systemctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
 				op := args[1]
 				calls = append(calls, op)
 				if op != "stop" {
@@ -1584,7 +1584,7 @@ func TestLinuxRestoreResetsOnlyAfterRestoredReload(t *testing.T) {
 				}
 				return nil, nil
 			}
-			result, err := restorePreviousSystemdUnit(previous, path)
+			result, err := restorePreviousSystemdUnit(context.Background(), previous, path)
 			want := "stop daemon-reload"
 			switch mode {
 			case "limited":

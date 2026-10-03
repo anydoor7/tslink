@@ -4,6 +4,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -51,7 +52,7 @@ func TestLinuxUninstallStoppedPredicateNeedsBothHalves(t *testing.T) {
 				t.Fatal(err)
 			}
 			var calls []string
-			systemctlCombinedOutput = func(args ...string) ([]byte, error) {
+			systemctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
 				calls = append(calls, args[1])
 				switch args[1] {
 				case "stop":

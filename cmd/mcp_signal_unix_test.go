@@ -38,10 +38,10 @@ func runMCPSignalChild(mode, dir string) {
 		// The real share path, with only the daemon and URL seams stubbed: the
 		// share is registered, then waits for a URL that never comes.
 		shareIsRunningFn = func(string) bool { return true }
-		shareResolveEndpointOnceFn = func(_, _, _, name string) (serviceURLResolution, error) {
+		shareResolveEndpointOnceFn = func(_ context.Context, _, _, _, name string) (serviceURLResolution, error) {
 			return serviceURLResolution{}, registry.URLNotReadyError(name)
 		}
-		sharePollableStatusFn = func(_, _, _, _ string) (StatusResult, error) { return StatusResult{}, nil }
+		sharePollableStatusFn = func(_ context.Context, _, _, _, _ string) (StatusResult, error) { return StatusResult{}, nil }
 		actions = defaultMCPActions(sharePaths{
 			Registry:    filepath.Join(dir, "registry.json"),
 			Ownership:   filepath.Join(dir, "node-ownership.json"),

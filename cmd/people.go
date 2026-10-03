@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/anydoor7/tslink/internal/config"
+	"github.com/anydoor7/tslink/internal/duration"
 	"github.com/anydoor7/tslink/internal/output"
 	"github.com/anydoor7/tslink/internal/registry"
 	tsruntime "github.com/anydoor7/tslink/internal/runtime"
@@ -19,11 +21,16 @@ import (
 var peopleNowFn = time.Now
 
 type peopleArguments struct {
+	Now        time.Time         `json:"-"`
 	Who        string            `json:"who"`
 	Apps       []string          `json:"apps,omitempty"`
 	For        *string           `json:"for,omitempty"`
+	Until      *string           `json:"until,omitempty"`
+	AckNever   bool              `json:"ack_never,omitempty"`
 	Invite     bool              `json:"invite,omitempty"`
 	PrintLinks bool              `json:"print_links,omitempty"`
+	QR         bool              `json:"qr,omitempty"`
+	QRInvite   string            `json:"qr_invite,omitempty"`
 	Reconcile  map[string]string `json:"reconcile_invites,omitempty"`
 	Replace    map[string]string `json:"replace_invites,omitempty"`
 }
@@ -52,11 +59,17 @@ type PeopleInviteView struct {
 }
 
 type PeopleResult struct {
-	Person            PeopleView         `json:"person"`
-	Invites           []PeopleInviteView `json:"invites"`
-	Complete          bool               `json:"complete"`
-	Message           string             `json:"message"`
-	InviteRequirement string             `json:"invite_requirement"`
+	Person            PeopleView            `json:"person"`
+	Invites           []PeopleInviteView    `json:"invites"`
+	Complete          bool                  `json:"complete"`
+	Portal            tsruntime.PortalState `json:"portal"`
+	Message           string                `json:"message"`
+	InviteRequirement string                `json:"invite_requirement"`
+	QRPayload         string                `json:"qr_payload,omitempty"`
+	QRTerminal        bool                  `json:"-"`
+	QRWarning         string                `json:"qr_warning,omitempty"`
+	Guide             []string              `json:"guide"`
+	GuideZH           []string              `json:"guide_zh"`
 }
 
 const peopleInviteRequirement = "Device invitations require a stored user-owned Tailscale API access token; OAuth client tokens cannot create them. People already in the tailnet need no token or invite."
@@ -148,6 +161,9 @@ func peopleMessage(p PeopleView, invites []PeopleInviteView, requested, printLin
 }
 
 func changePeople(ctx context.Context, paths sharePaths, args peopleArguments, update bool) (PeopleResult, error) {
+	if args.QRInvite != "" && (!args.QR || !args.PrintLinks) {
+		return PeopleResult{}, output.ErrUsage("--qr-invite requires --qr or --qr-png and --print-links; the QR is a credential")
+	}
 	login, err := registry.NormalizePerson(args.Who)
 	if err != nil {
 		return PeopleResult{}, err
@@ -159,7 +175,7 @@ func changePeople(ctx context.Context, paths sharePaths, args peopleArguments, u
 	if len(args.Reconcile) > 0 && (!update || !args.Invite) {
 		return PeopleResult{}, output.ErrUsage("reconcile-invite requires people update --invite")
 	}
-	if len(args.Replace) > 0 && (!update || !args.Invite || args.Apps != nil || args.For != nil) {
+	if len(args.Replace) > 0 && (!update || !args.Invite || args.Apps != nil || args.For != nil || args.Until != nil || args.AckNever) {
 		return PeopleResult{}, output.ErrUsage("replace-invite requires people update --invite without --apps or --for; grants and deadlines are preserved")
 	}
 	for app, id := range args.Replace {
@@ -186,23 +202,43 @@ func changePeople(ctx context.Context, paths sharePaths, args peopleArguments, u
 	if !update && len(args.Apps) == 0 {
 		return PeopleResult{}, output.ErrUsage("--apps is required; use a comma-separated app list or all")
 	}
-	if update && args.Apps == nil && args.For == nil && !args.Invite {
-		return PeopleResult{}, output.ErrUsage("update requires --apps, --for or --invite")
+	if update && args.Apps == nil && args.For == nil && args.Until == nil && !args.Invite && !args.QR {
+		return PeopleResult{}, output.ErrUsage("update requires --apps, --for, --until, --invite or --qr")
 	}
 	if args.Apps != nil && len(args.Apps) == 0 {
 		return PeopleResult{}, output.ErrUsage("apps must not be empty")
 	}
-	now := peopleNowFn()
-	var expires *time.Time
-	if args.For != nil {
-		expires, err = registry.ParsePersonExpiry(*args.For, now)
-		if err != nil {
+	now := args.Now
+	if now.IsZero() {
+		now = peopleNowFn()
+	}
+	value, err := lifetimeArgument(args.For, args.Until)
+	if err != nil {
+		return PeopleResult{}, err
+	}
+	policy, err := config.LoadLifetimePolicy()
+	if err != nil {
+		return PeopleResult{}, err
+	}
+	audience := duration.TailnetMember
+	if args.Invite {
+		audience = duration.Guest
+	}
+	if value != nil {
+		if _, err := policy.Resolve(*value, audience, args.AckNever, now, time.Local); err != nil {
 			return PeopleResult{}, output.ErrUsage(err.Error())
 		}
 	}
 	urls := peopleURLs(paths)
 	// Snapshot proof precedes the registry mutation: setting people_scoped
 	// changes its fingerprint but does not replace the existing service node.
+	// Capture the independent home address at the same point so the first
+	// grant does not turn a proven portal URL into a pending guide message.
+	portal := tsruntime.PortalState{State: "disabled"}
+	if reg, _, err := registry.Preflight(paths.Registry); err == nil {
+		pid, _ := inviteReadPIDFn(paths.PID)
+		portal = readPortalView(reg, paths.Registry, inviteIsRunningFn(paths.PID), pid)
+	}
 	targets := map[string]tailapi.DeviceTarget{}
 	if args.Invite {
 		known, err := inviteDeviceTargetsForPaths(paths.Registry, paths.PID, paths.Snapshot)
@@ -213,7 +249,7 @@ func changePeople(ctx context.Context, paths sharePaths, args peopleArguments, u
 			targets[target.Service] = target
 		}
 	}
-	p, err := registry.ChangePerson(paths.Registry, args.Who, args.Apps, expires, args.For != nil, update)
+	p, err := registry.ChangePersonWithLifetime(paths.Registry, args.Who, args.Apps, update, registry.PersonLifetimeOptions{Context: peopleMutationContext(ctx), Value: value, Policy: policy, Audience: audience, AckNever: args.AckNever, Now: now, Authorize: peopleMutationAuthorization(ctx)})
 	if err != nil {
 		return PeopleResult{}, err
 	}
@@ -222,11 +258,22 @@ func changePeople(ctx context.Context, paths sharePaths, args peopleArguments, u
 			return PeopleResult{}, output.ErrConflict("replace-invite requires an active grant for " + app)
 		}
 	}
-	result := PeopleResult{Person: peopleView(p, urls, now), Invites: []PeopleInviteView{}, Complete: true, InviteRequirement: peopleInviteRequirement}
+	result := PeopleResult{Portal: portal, Person: peopleView(p, urls, now), Invites: []PeopleInviteView{}, Complete: true, InviteRequirement: peopleInviteRequirement}
 	if args.Invite {
 		resumePeopleInvites(ctx, paths.Registry, p, targets, args, &result)
 	}
 	result.Message = peopleMessage(result.Person, result.Invites, args.Invite, args.PrintLinks)
+	if result.Portal.Enabled {
+		if result.Portal.URL != "" {
+			result.Message += "\nYour one home address: open and bookmark " + result.Portal.URL + ". It shows the apps available to you, their health and when access ends."
+		} else {
+			result.Message += "\nYour home page is being prepared. Ask the owner for its address (owner: tslink status --urls). Bookmark that one address for your apps."
+		}
+		result.Message += " If you are outside the owner's tailnet, ask the owner to share the home node too; app invitations alone do not provide access to it."
+	}
+	if err := preparePeopleQR(&result, args); err != nil {
+		return result, err
+	}
 	return result, nil
 }
 
@@ -270,7 +317,7 @@ func removePeopleContext(ctx context.Context, path, who string, reconcile ...map
 	if err != nil {
 		return PeopleRemoveResult{}, err
 	}
-	removed, err := registry.RemovePerson(path, login)
+	removed, err := registry.RemovePersonAuthorizedContext(peopleMutationContext(ctx), path, login, peopleMutationAuthorization(ctx))
 	if err != nil {
 		return PeopleRemoveResult{}, err
 	}
@@ -291,6 +338,19 @@ func writePeopleResult(out io.Writer, command string, data any, isJSON bool) {
 	switch d := data.(type) {
 	case PeopleResult:
 		fmt.Fprintln(out, d.Message)
+		if d.QRPayload != "" {
+			if d.QRWarning != "" {
+				fmt.Fprintln(out, d.QRWarning)
+			}
+			if d.QRTerminal {
+				fmt.Fprintln(out, "Scan on your phone (use a light terminal background):")
+				qr, err := terminalQR(d.QRPayload)
+				if err == nil {
+					fmt.Fprint(out, qr)
+				}
+			}
+			fmt.Fprint(out, formatPhoneGuide(d.Guide), formatPhoneGuide(d.GuideZH))
+		}
 		fmt.Fprintln(out, d.InviteRequirement)
 		if !d.Complete {
 			for _, inv := range d.Invites {
@@ -331,8 +391,8 @@ func writePeopleResult(out io.Writer, command string, data any, isJSON bool) {
 func newPeopleCmd() *cobra.Command {
 	group := &cobra.Command{Use: "people", Short: "Share private apps with people, with optional expiry", Args: cobra.NoArgs, RunE: runCommandGroup}
 	for _, update := range []bool{false, true} {
-		var apps, duration string
-		var invite, printLinks bool
+		var apps, lifetime, until, qrFile, qrInvite string
+		var invite, printLinks, ackNever, qr bool
 		var reconcile, replace []string
 		name := "add"
 		if update {
@@ -343,7 +403,10 @@ func newPeopleCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			args := peopleArguments{Who: a[0], Invite: invite, PrintLinks: printLinks}
+			args := peopleArguments{Who: a[0], Invite: invite, PrintLinks: printLinks, AckNever: ackNever, QR: qr || qrFile != "", QRInvite: qrInvite}
+			if c.Flags().Changed("qr-png") && qrFile == "" {
+				return output.ErrUsage("--qr-png requires a filename")
+			}
 			if len(replace) > 0 {
 				args.Replace = map[string]string{}
 				for _, value := range replace {
@@ -371,19 +434,33 @@ func newPeopleCmd() *cobra.Command {
 				}
 			}
 			if c.Flags().Changed("for") {
-				args.For = &duration
+				args.For = &lifetime
+			}
+			if c.Flags().Changed("until") {
+				args.Until = &until
 			}
 			result, err := changePeople(c.Context(), sharePaths{Registry: reg, PID: pid, Snapshot: snap}, args, update)
 			if err != nil {
 				return err
 			}
+			if qrFile != "" {
+				if err := qrPNG(result.QRPayload, qrFile); err != nil {
+					return err
+				}
+			}
+			result.QRTerminal = qr
 			writePeopleResult(c.OutOrStdout(), "people "+name, result, jsonOutput(c))
 			return nil
 		}}
 		c.Flags().StringVar(&apps, "apps", "", "Comma-separated private HTTP/file apps, or all current supported apps")
-		c.Flags().StringVar(&duration, "for", "", "Grant lifetime such as 1h, 7d or never; update omission preserves deadlines")
+		c.Flags().StringVar(&lifetime, "for", "", "Grant lifetime; presets "+duration.Suggestions+"; relative, 'until <date/time>', or never with --ack-never; default 24h, update omission preserves deadlines")
+		c.Flags().StringVar(&until, "until", "", "Absolute grant deadline: RFC3339, YYYY-MM-DD or YYYY-MM-DDTHH:MM (local without offset); conflicts with --for")
+		c.Flags().BoolVar(&ackNever, "ack-never", false, "Acknowledge permanent access for a tailnet member; refused for device-invited guests")
 		c.Flags().BoolVar(&invite, "invite", false, "Create or resume single-use per-app device invitations (requires a user-owned API token)")
 		c.Flags().BoolVar(&printLinks, "print-links", false, "Explicitly include bearer invitation links in output and the guide")
+		c.Flags().BoolVar(&qr, "qr", false, "Render the exact portal URL (or first app when portal disabled) as a terminal QR")
+		c.Flags().StringVar(&qrFile, "qr-png", "", "Write a private QR PNG to an existing directory; JSON contains payload text only")
+		c.Flags().StringVar(&qrInvite, "qr-invite", "", "Encode this app's bearer invitation instead; requires --print-links and --qr or --qr-png; QR is a credential")
 		if update {
 			c.Flags().StringArrayVar(&reconcile, "reconcile-invite", nil, "After verifying an unknown POST, associate app=id or confirm app=none; requires --invite")
 			c.Flags().StringArrayVar(&replace, "replace-invite", nil, "Owner-confirmed app=recorded-id replacement after remote absence; preserves grants/deadlines; requires --invite")

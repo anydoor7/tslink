@@ -1,0 +1,33 @@
+# Remove nested directory
+require recurse
+
+# TODO: (very) flaky on Windows, frequently misses one or more files. I'm not
+# sure if we can improve on that or if that's just what Windows sends? But test
+# should be reliable.
+skip windows
+
+mkdir -p /sub/dir
+watch /...
+
+echo asd >/sub/dir/file
+rm -r /sub
+
+Output:
+	create   /sub/dir/file
+	write    /sub/dir/file
+
+	write  /sub
+	write  /sub/dir
+	remove /sub/dir/file
+	write  /sub/dir
+	remove /sub/dir
+	write  /sub
+	remove /sub
+
+	linux:  # Same as Windows, but without those stupid dir writes Windows sends.
+		create   /sub/dir/file
+		write    /sub/dir/file
+
+		remove /sub/dir/file
+		remove /sub/dir
+		remove /sub

@@ -3,6 +3,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"github.com/anydoor7/tslink/internal/atomicfile"
 	"github.com/anydoor7/tslink/internal/config"
 	"github.com/anydoor7/tslink/internal/daemon"
+	"github.com/anydoor7/tslink/internal/mcpscope"
 	"github.com/anydoor7/tslink/internal/output"
 	"github.com/spf13/cobra"
 )
@@ -64,6 +66,11 @@ Examples:
 
 // runInstallLocked requires the per-user supervisor transaction lock.
 func runInstallLocked(cmd *cobra.Command, args []string) error {
+	// A direct CLI invocation may precede Cobra context initialization.
+	if cmd.Context() == nil {
+		cmd.SetContext(context.Background())
+	}
+	ctx := cmd.Context()
 	noAutoProvision, err := cmd.Flags().GetBool("no-auto-provision")
 	if err != nil {
 		return fmt.Errorf("read --no-auto-provision: %w", err)
@@ -88,7 +95,7 @@ func runInstallLocked(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if existing, queryErr := windowsSchedulerFn("query", name, nil); queryErr == nil && existing.Exists {
+	if existing, queryErr := windowsSchedulerChecked(ctx, "query", name, nil); queryErr == nil && existing.Exists {
 		return fmt.Errorf("scheduled task exists; run tslink uninstall before choosing --startup")
 	}
 	exe, err := windowsExecutablePathFn()
@@ -104,6 +111,9 @@ func runInstallLocked(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := mcpscope.CheckEffect(ctx); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(startupPath), 0o755); err != nil {
 		return fmt.Errorf("create Startup directory: %w", err)
 	}
@@ -113,6 +123,9 @@ func runInstallLocked(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	script := "Set shell = CreateObject(\"Wscript.Shell\")\r\n" + windowsConfigEnvironment(configDir) + "\r\n" + windowsStartupScript(exe, noAutoProvision)
+	if err := mcpscope.CheckEffect(ctx); err != nil {
+		return err
+	}
 	if err := atomicfile.WriteFileInExistingDir(startupPath, []byte(script), atomicfile.PrivateFileMode); err != nil {
 		return fmt.Errorf("write Startup script: %w", err)
 	}
@@ -160,11 +173,12 @@ func init() {
 }
 
 func installWindowsTask(cmd *cobra.Command, noAutoProvision bool) error {
+	ctx := cmd.Context()
 	name, err := windowsTaskName()
 	if err != nil {
 		return err
 	}
-	old, err := windowsSchedulerFn("query", name, nil)
+	old, err := windowsSchedulerChecked(ctx, "query", name, nil)
 	if err != nil {
 		return fmt.Errorf("task scheduler unavailable (fallback: tslink install --startup): %w", err)
 	}
@@ -197,20 +211,26 @@ func installWindowsTask(cmd *cobra.Command, noAutoProvision bool) error {
 		return output.ErrConflict("daemon PID identity is unverified; inspect tslink doctor before install")
 	}
 	if old.State == 4 || len(old.Engines) > 0 || isRunningFn(pidPath) {
-		if _, err := windowsSchedulerFn("disable", name, nil); err != nil {
+		if _, err := windowsSchedulerChecked(ctx, "disable", name, nil); err != nil {
+			return err
+		}
+		if err := mcpscope.CheckEffect(ctx); err != nil {
 			return err
 		}
 		if _, err := stopSupervisorFn(pidPath); err != nil {
 			return fmt.Errorf("task disabled; supervisor stop failed (definition retained): %w", err)
 		}
 		if isRunningFn(pidPath) {
+			if err := mcpscope.CheckEffect(ctx); err != nil {
+				return err
+			}
 			if err := stopDaemonFn(pidPath); err != nil {
 				return fmt.Errorf("task disabled; graceful stop failed (definition retained): %w", err)
 			}
 		}
 	}
 	if old.State == 4 || len(old.Engines) > 0 {
-		current, err := windowsSchedulerFn("query", name, nil)
+		current, err := windowsSchedulerChecked(ctx, "query", name, nil)
 		if err != nil {
 			return err
 		}
@@ -239,26 +259,39 @@ func installWindowsTask(cmd *cobra.Command, noAutoProvision bool) error {
 	if err != nil {
 		return err
 	}
+	if err := mcpscope.CheckEffect(ctx); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
 	}
+	if err := mcpscope.CheckEffect(ctx); err != nil {
+		return err
+	}
 	if err := config.EnsureDir(); err != nil {
+		return err
+	}
+	if err := mcpscope.CheckEffect(ctx); err != nil {
 		return err
 	}
 	if err := clearBuiltinSupervisor(pidPath); err != nil {
 		return err
 	}
 	// Retain evidence before mutation: a timed-out COM call may have committed.
+	if err := mcpscope.CheckEffect(ctx); err != nil {
+		return err
+	}
 	if err := atomicfile.WriteFileInExistingDir(path, definition, atomicfile.PrivateFileMode); err != nil {
 		return err
 	}
-	installed, err := windowsSchedulerFn("register", name, definition)
+	installed, err := windowsSchedulerChecked(ctx, "register", name, definition)
 	if err != nil {
 		return fmt.Errorf("scheduler registration uncertain; definition retained at %s; inspect doctor/uninstall before retry: %w", path, err)
 	}
 	if !installed.Exists || !installed.Enabled || !windowsTaskMatches([]byte(installed.XML), spec) {
+		// Disabling an uncertain replacement is compensation, permitted after expiry.
 		if installed.Exists {
-			_, _ = windowsSchedulerFn("disable", name, nil)
+			_, _ = windowsSchedulerFn(managerCompensationContext(ctx), "disable", name, nil)
 		}
 		return fmt.Errorf("loaded scheduler definition verification failed; definition retained at %s", path)
 	}
@@ -266,11 +299,14 @@ func installWindowsTask(cmd *cobra.Command, noAutoProvision bool) error {
 	if err != nil {
 		return err
 	}
+	// Removing the superseded Startup registration is migration cleanup,
+	// permitted after cancellation/expiry; starting the replacement is checked below.
 	if err := os.Remove(startupPath); err != nil && !os.IsNotExist(err) {
-		_, disableErr := windowsSchedulerFn("disable", name, nil)
+		// Disable is compensation for the failed migration.
+		_, disableErr := windowsSchedulerFn(managerCompensationContext(ctx), "disable", name, nil)
 		return fmt.Errorf("startup migration cleanup failed; task not started; disable result=%v; inspect before next sign-in: %w", disableErr, err)
 	}
-	if _, err := windowsSchedulerFn("run", name, nil); err != nil {
+	if _, err := windowsSchedulerChecked(ctx, "run", name, nil); err != nil {
 		return fmt.Errorf("task registered but could not start: %w", err)
 	}
 	if _, err := waitStableDaemon(cmd.Context(), func() (int, error) {
@@ -281,7 +317,7 @@ func installWindowsTask(cmd *cobra.Command, noAutoProvision bool) error {
 		if err != nil {
 			return 0, err
 		}
-		if s := detectSupervisionFn(pidPath, true, pid); s.Manager != "windows-task-scheduler" || !verifiedDaemonSupervision(s) {
+		if s := detectSupervisionContext(ctx, pidPath, true, pid); s.Manager != "windows-task-scheduler" || !verifiedDaemonSupervision(s) {
 			return 0, fmt.Errorf("scheduler ownership/restart policy unverified: %s", s.Detail)
 		}
 		return pid, nil
@@ -294,4 +330,11 @@ func installWindowsTask(cmd *cobra.Command, noAutoProvision bool) error {
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "→ ✓ Task Scheduler task installed and start requested: %s\nDefinition: %s\n", name, path)
 	return nil
+}
+
+func windowsSchedulerChecked(ctx context.Context, operation, name string, definition []byte) (windowsSchedulerStatus, error) {
+	if err := mcpscope.CheckEffect(ctx); err != nil {
+		return windowsSchedulerStatus{}, err
+	}
+	return windowsSchedulerFn(ctx, operation, name, definition)
 }

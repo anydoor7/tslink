@@ -1,5 +1,18 @@
 # Share apps with a person
 
+For phone onboarding, add `--qr` to `people add/update`, or `--qr-png <file>` to write a private PNG in an existing directory. The QR contains the exact portal URL; when the portal is disabled it contains the first active app URL. An enabled pending portal never falls back to an app. Get its address with `tslink status --urls`, then retry `people update <login> --qr`. UTF-8 half-block output needs a light terminal background; use PNG when scanning a dark terminal is difficult. JSON includes `qr_payload` text and `guide`/`guide_zh` arrays, never image bytes.
+
+Bearer invitations stay masked. Only `--invite --print-links --qr-invite <app>` together with `--qr` or `--qr-png` puts that app's invitation in a QR; output warns that it is a credential. Send it only to the intended person. Generating a normal address QR never includes invitation links. A PNG write failure leaves already-saved local grants intact.
+
+Send this short guide with the address or QR:
+
+1. Install Tailscale on your phone.
+2. Sign in with the account the owner invited.
+3. Open any invitation the owner sent and accept it.
+4. Keep Tailscale connected. Scan the QR, open the address, and bookmark it.
+
+People already in your tailnet can use the portal to [request another app or more time](requests.md). The owner can approve and choose the duration in one CLI/MCP action.
+
 Register and enroll your apps first. Then grant access using the person's **actual Tailscale login** (the account they use in the Tailscale app):
 
 ```sh
@@ -13,7 +26,7 @@ Grant changes are local; removal also attempts pending-invitation cleanup after 
 
 `--apps all` selects every **currently registered private HTTP proxy and file service**. It excludes TCP and public Funnel and does not automatically include future apps. Explicitly naming a TCP or Funnel service fails atomically with `people_service_unsupported`. File services enforce the same HTTP WhoIs authorization as proxies, including single-file shares.
 
-Adding an existing active person refuses; use `update`. An update with only `--apps` preserves deadlines for retained apps and gives newly added apps no deadline. Specify `--for` to apply the chosen lifetime to every selected grant. An update with only `--for` keeps the app set. `--for never` explicitly removes deadlines and renews expired grants. Removing a person is idempotent. Adding them again is an explicit new grant and refuses until outstanding invite operations are cleaned up or reconciled.
+Adding an existing active person refuses; use `update`. An update with only `--apps` preserves deadlines for retained apps and gives newly added apps a 24h deadline. Specify `--for` to apply the chosen lifetime to every selected grant. An update with only `--for` keeps the app set. `--for never --ack-never` explicitly removes deadlines for tailnet-member logins; guests cannot use it. New grants default to 24h. Use `--until` for an absolute date/time or `--for` for the [unified duration grammar](durations.md). `extend photos --person alice@example.com --for 36h` changes one app; expired grants require `--regrant` and revoked people remain revoked. Removing a person is idempotent. Adding them again is an explicit new grant and refuses until outstanding invite operations are cleaned up or reconciled.
 
 ## Outsiders: one owner command and one message
 
@@ -87,7 +100,7 @@ All CLI JSON uses the existing `schema_version: 1` result envelope. `data.person
 
 MCP provides `people_add`, `people_list`, `people_update`, `people_remove`. Mutation tools describe confirmation requirements. Add/update are destructive (they can narrow existing app exposure), non-idempotent with renewal/invites, and open-world because invites are optional; list is read-only, including file modes; remove is destructive and idempotent with optional remote cleanup (open-world). Update accepts an invite-only retry; update/remove accept `reconcile_invites`, an app-to-ID (or `none`) object requiring explicit owner verification. Elevated exit-node, reusable-link and tailnet-role invitation arguments are not accepted here. The existing invite tools retain their `mcp.allow_elevated_invites` owner-configured guard.
 
-People-enabled registries write schema version 2, with top-level `people` and per-service `people_scoped`. Existing schema-2 registries, including those written before the invitation ledger, load without rewriting bytes. The person object has optional `invites`; successor records add optional `attempt` and new terminal states. Earlier readers that do not understand these fields or states refuse rather than discard them. The schema version alone is not feature negotiation; use a compatible reader or restore a separately backed-up registry for downgrade. Existing version 0/1 registries load without changing bytes; ordinary services-only writes retain version 1. Unknown fields remain strictly refused. An older binary rejects version 2 or the unknown people fields rather than silently rewriting them away. Before downgrade, stop the new daemon and restore a separately backed-up version 1 registry only after intentionally deciding to discard people authorization. An older daemon cannot enforce grants; do not downgrade a running sharing installation by just swapping the CLI binary.
+People-enabled registries write schema version 2, with top-level `people` and per-service `people_scoped`. Existing schema-2 registries, including those written before the invitation ledger, load without rewriting bytes. The person object has optional `invites` and a sticky optional `guest` boolean saved with the first finite invitation grant before remote work; successor records add optional `attempt` and new terminal states. Earlier readers that do not understand these fields or states refuse rather than discard them. The schema version alone is not feature negotiation; use a compatible reader or restore a separately backed-up registry for downgrade. Existing version 0/1 registries load without changing bytes; ordinary services-only writes retain version 1. Unknown fields remain strictly refused. An older binary rejects version 2 or the unknown people fields rather than silently rewriting them away. Before downgrade, stop the new daemon and restore a separately backed-up version 1 registry only after intentionally deciding to discard people authorization. An older daemon cannot enforce grants; do not downgrade a running sharing installation by just swapping the CLI binary.
 
 Expected input, missing-person/app and state conflicts use `usage_error`, `not_found` and `conflict` consistently in CLI and MCP.
 
@@ -99,3 +112,5 @@ Official invite API and sharing sources checked 2026-10-02 (other sources checke
 - [Tailscale API](https://tailscale.com/api), [current OpenAPI document](https://api.tailscale.com/api/v2?outputOpenapiSchema=true): `POST /device/{deviceId}/device-invites`, no OAuth-client creation, optional email and `multiUse`/`allowExitNode`, device invite listing and `DELETE /device-invites/{deviceInviteId}`. The schema supplies no client idempotency key.
 - [Trust credentials](https://tailscale.com/docs/reference/trust-credentials): invitation read/delete scopes do not imply create support.
 - [Tailscale Serve](https://tailscale.com/docs/features/tailscale-serve): HTTP reverse proxy and caller identity headers.
+
+When the home portal is enabled, the generated guide includes its exact address (or asks the owner to check status while enrollment is pending). Outside-tailnet visitors also need the home node shared through Tailscale. See [portal.md](portal.md).

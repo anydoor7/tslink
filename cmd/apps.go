@@ -7,8 +7,10 @@ import (
 	"net"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/anydoor7/tslink/internal/inspect"
+	"github.com/anydoor7/tslink/internal/mcpscope"
 	"github.com/anydoor7/tslink/internal/output"
 	"github.com/anydoor7/tslink/internal/recipes"
 	"github.com/anydoor7/tslink/internal/registry"
@@ -21,6 +23,7 @@ var appsDetectFn = recipes.Detect
 var recipeAddIfMissingFn = registry.AddIfMissing
 
 type recipeRequest struct {
+	Now               time.Time               `json:"-"`
 	Health            *registry.HealthConfig  `json:"health,omitempty"`
 	RequestLimits     *registry.RequestLimits `json:"request_limits,omitempty"`
 	RecipeID          string                  `json:"recipe_id"`
@@ -85,7 +88,7 @@ func recipeService(req recipeRequest) (recipes.Recipe, registry.Service, error) 
 			health.Path = r.HealthPath
 		}
 	}
-	p := AddParams{Health: &health, RequestLimits: req.RequestLimits, Name: name, Proxy: target, PreserveHost: preserveHost, Allow: req.Allow, Tags: req.Tags, Ephemeral: req.Ephemeral, Funnel: req.Funnel, Public: req.PublicAck, FunnelTTL: ttl, FunnelTTLSet: req.FunnelTTL != nil, NoAutoProvision: req.NoAutoProvision, ControlURL: req.ControlURL}
+	p := AddParams{Now: req.Now, Health: &health, RequestLimits: req.RequestLimits, Name: name, Proxy: target, PreserveHost: preserveHost, Allow: req.Allow, Tags: req.Tags, Ephemeral: req.Ephemeral, Funnel: req.Funnel, Public: req.PublicAck, FunnelTTL: ttl, FunnelTTLSet: req.FunnelTTL != nil, NoAutoProvision: req.NoAutoProvision, ControlURL: req.ControlURL}
 	svc, err := buildService(p)
 	if err != nil {
 		return r, svc, err
@@ -132,7 +135,13 @@ func applyRecipe(ctx context.Context, req recipeRequest, regPath string, dryRun 
 		return RecipeResult{}, err
 	}
 	if result.Action != templateActionSkipExisting {
-		created, err := recipeAddIfMissingFn(regPath, svc)
+		add := recipeAddIfMissingFn
+		if _, scoped := mcpscope.FromContext(ctx); scoped {
+			add = func(path string, svc registry.Service) (bool, error) {
+				return registry.AddIfMissingContext(ctx, path, svc)
+			}
+		}
+		created, err := add(regPath, svc)
 		if err != nil {
 			return RecipeResult{}, err
 		}
@@ -151,7 +160,13 @@ func applyRecipe(ctx context.Context, req recipeRequest, regPath string, dryRun 
 		// Adopt the exact stored value under the registry lock before reporting
 		// reuse or attempting setup. Its creator may still be waiting on a URL
 		// and compensating a tentative registration on failure.
-		kept, err := addKeepIfUnchangedFn(regPath, persisted)
+		keep := addKeepIfUnchangedFn
+		if _, scoped := mcpscope.FromContext(ctx); scoped {
+			keep = func(path string, svc registry.Service) (bool, error) {
+				return registry.KeepIfUnchangedContext(ctx, path, svc)
+			}
+		}
+		kept, err := keep(regPath, persisted)
 		if err != nil {
 			return RecipeResult{}, fmt.Errorf("adopt recipe registration %q: %w", svc.Name, err)
 		}
@@ -281,7 +296,7 @@ func init() {
 	share.Flags().Bool("ephemeral", false, "Use an ephemeral node")
 	share.Flags().Bool("funnel", false, "Publish on the internet; requires --public and recipe safety review")
 	share.Flags().Bool("public", false, "Acknowledge public internet exposure (requires --funnel)")
-	share.Flags().String("funnel-ttl", "24h", "Public lifetime: 1h, 8h, 24h, 72h, 7d, or never")
+	share.Flags().String("funnel-ttl", "24h", "Public lifetime: relative or until; presets 1h, 8h, 24h, 3d, 7d; min 1h, default max 7d; never refused")
 	share.Flags().Bool("no-auto-provision", false, "Disable automatic Funnel policy provisioning (requires --funnel)")
 	share.Flags().String("control-url", "", "Per-service control server URL")
 	share.Flags().Bool("no-daemon-install", false, "Save configuration only; do not install or start the background service")

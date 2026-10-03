@@ -50,7 +50,7 @@ func TestFunnelWithoutDecidedExpiryIsAServiceIssue(t *testing.T) {
 			t.Fatalf("%s issue carries no next: %v", name, issues[0].Err)
 		}
 		next := strings.Join(recovery.NextCommands(), "\n")
-		for _, want := range []string{`"funnel_expires_at": "never"`, "RFC 3339", "tslink registry check"} {
+		for _, want := range []string{"finite", "RFC 3339", "tslink registry check"} {
 			if !strings.Contains(next, want) {
 				t.Fatalf("%s next = %q, want it to mention %s", name, next, want)
 			}

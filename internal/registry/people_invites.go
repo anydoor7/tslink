@@ -1,6 +1,7 @@
 package registry
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -91,9 +92,13 @@ func TryPeopleInviteWork(path string, fn func() error) (bool, error) {
 // proved no POST was attempted or explicitly reconciled an empty remote list.
 // Callers must hold TryPeopleInviteWork across remote proof and transitions.
 type PersonInviteSaveOptions struct {
+	Context        context.Context
 	Now            time.Time
 	Expected       *PersonInvite
 	ResetConfirmed bool
+	// ExpectedGrant optionally binds a pending/send transition to the exact
+	// grant observed before remote work. Late outcomes can still be recorded.
+	ExpectedGrant *PersonGrant
 }
 
 // SavePersonInvite retains the compatibility signature and uses wall time.
@@ -115,7 +120,7 @@ func SavePersonInviteWithOptions(path, who string, op PersonInvite, opts PersonI
 	if opts.Now.IsZero() {
 		return CodedError{Code: errcode.UsageError, Message: "invite transition requires a clock"}
 	}
-	return withLock(path, func() error {
+	return withLockContext(mutationContext(opts.Context), path, func() error {
 		reg, err := loadForMutation(path)
 		if err != nil {
 			return err
@@ -128,6 +133,19 @@ func SavePersonInviteWithOptions(path, who string, op PersonInvite, opts PersonI
 			if op.State == PersonInvitePending || op.State == PersonInviteSending {
 				if !PersonGrantActiveAt(*p, op.App, opts.Now) {
 					return CodedError{Code: errcode.Conflict, Message: "person grant removed or expired before invite send"}
+				}
+				if opts.ExpectedGrant != nil {
+					matched := false
+					for _, g := range p.Grants {
+						want := opts.ExpectedGrant
+						if g.App == op.App && g.App == want.App && g.Expired == want.Expired &&
+							((g.ExpiresAt == nil && want.ExpiresAt == nil) || (g.ExpiresAt != nil && want.ExpiresAt != nil && g.ExpiresAt.Equal(*want.ExpiresAt))) {
+							matched = true
+						}
+					}
+					if !PersonIsGuest(*p) || !matched {
+						return CodedError{Code: errcode.Conflict, Message: "person classification or grant changed before invite send"}
+					}
 				}
 			}
 			found := false

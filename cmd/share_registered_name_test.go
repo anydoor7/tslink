@@ -36,6 +36,7 @@ func TestShareRegisteredNameJSONAndMCP(t *testing.T) {
 								if err != nil {
 									t.Fatal(err)
 								}
+								setCommandTestContext(t, command)
 								for flag, value := range map[string]string{"name": requestedName, "ephemeral": "true", "wait": "0s"} {
 									old := command.Flags().Lookup(flag).Value.String()
 									t.Cleanup(func() { _ = command.Flags().Set(flag, old) })
@@ -127,13 +128,13 @@ func registeredNameFixture(t *testing.T, mode string) sharePaths {
 	shareStartDaemonFn = func(context.Context, io.Writer) (shareDaemonStart, error) {
 		return shareDaemonStart{Status: authStatusNeedsLogin, AuthURL: "https://example.invalid/enroll-fixture"}, nil
 	}
-	shareResolveEndpointOnceFn = func(_, _, _, name string) (serviceURLResolution, error) {
+	shareResolveEndpointOnceFn = func(_ context.Context, _, _, _, name string) (serviceURLResolution, error) {
 		if mode != "ready" {
 			return serviceURLResolution{}, registry.URLNotReadyError(name)
 		}
 		return serviceURLResolution{Result: URLResult{Name: name, URL: "https://" + name + ".example.invalid"}}, nil
 	}
-	sharePollableStatusFn = func(_, _, _, _ string) (StatusResult, error) {
+	sharePollableStatusFn = func(_ context.Context, _, _, _, _ string) (StatusResult, error) {
 		return StatusResult{AuthStatus: authStatusNeedsLogin, AuthURL: "https://example.invalid/enroll-fixture"}, nil
 	}
 	return paths

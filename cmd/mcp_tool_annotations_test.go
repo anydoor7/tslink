@@ -20,6 +20,18 @@ import (
 // {readOnly, destructive, idempotent, openWorld}. It is written out apart from
 // the product table so a change to either shows here.
 var mcpWantHints = map[string][4]bool{
+	"extend":         {false, true, false, false},
+	"access_log":     {true, false, true, false},
+	"access_summary": {true, false, true, false},
+	"portal_enable":  {false, false, true, false},
+	"portal_disable": {false, false, true, false},
+	"people_grant":   {false, true, false, false},
+	"people_revoke":  {false, true, true, false},
+	"app_restart":    {false, true, false, false},
+	"health":         {true, false, true, false},
+	"mcp_audit":      {true, false, true, false},
+	"guest_create":   {false, false, false, false}, "guest_list": {true, false, true, false}, "guest_show": {true, false, true, false}, "guest_revoke": {false, true, true, false},
+	"requests_list": {false, false, true, false}, "requests_approve": {false, true, true, false}, "requests_deny": {false, true, true, false},
 	"people_add":     {false, true, false, true},
 	"people_update":  {false, true, false, true},
 	"people_list":    {true, false, true, false},
@@ -182,8 +194,8 @@ func TestMCPReadOnlyToolsWriteNothing(t *testing.T) {
 			}
 		}
 	}
-	if readOnly != 14 {
-		t.Fatalf("%d tools are marked read-only, want the 14 that only read", readOnly)
+	if readOnly != 20 {
+		t.Fatalf("%d tools are marked read-only, want the 20 that only read", readOnly)
 	}
 
 	// Control: add is a write tool. With the daemon reported running it reads

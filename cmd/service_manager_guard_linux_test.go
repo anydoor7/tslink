@@ -2,7 +2,10 @@
 
 package cmd
 
-import "github.com/anydoor7/tslink/internal/testenv"
+import (
+	"context"
+	"github.com/anydoor7/tslink/internal/testenv"
+)
 
 // osServiceManagerSeams lists every systemd process exit this package owns.
 // systemctl --user writes against the caller's live user manager, which no
@@ -11,16 +14,12 @@ import "github.com/anydoor7/tslink/internal/testenv"
 // testenv.ErrServiceManagerBlocked for the incident this mirrors on darwin.
 func osServiceManagerSeams() []testenv.ServiceManagerSeam {
 	return []testenv.ServiceManagerSeam{
-		{
-			Manager: "systemctl",
-			Get:     func() testenv.ServiceManagerCall { return systemctlCombinedOutput },
-			Set:     func(fn testenv.ServiceManagerCall) { systemctlCombinedOutput = fn },
-		},
-		{
-			Manager: "loginctl",
-			Get:     func() testenv.ServiceManagerCall { return loginctlCombinedOutputFn },
-			Set:     func(fn testenv.ServiceManagerCall) { loginctlCombinedOutputFn = fn },
-		},
+		contextManagerSeam("systemctl",
+			func() func(context.Context, ...string) ([]byte, error) { return systemctlCombinedOutput },
+			func(fn func(context.Context, ...string) ([]byte, error)) { systemctlCombinedOutput = fn }),
+		contextManagerSeam("loginctl",
+			func() func(context.Context, ...string) ([]byte, error) { return loginctlCombinedOutputFn },
+			func(fn func(context.Context, ...string) ([]byte, error)) { loginctlCombinedOutputFn = fn }),
 	}
 }
 
@@ -29,5 +28,5 @@ func osServiceManagerSeams() []testenv.ServiceManagerSeam {
 // exist and `show` is read-only, so even a probe that escaped the guard could
 // not mutate the caller's systemd user manager.
 func serviceManagerGuardProbe() ([]byte, error) {
-	return systemctlCombinedOutput("--user", "show", "tslink-guard-probe-invalid.service", "--property=LoadState")
+	return systemctlCombinedOutput(context.Background(), "--user", "show", "tslink-guard-probe-invalid.service", "--property=LoadState")
 }

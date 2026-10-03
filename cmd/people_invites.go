@@ -7,6 +7,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/anydoor7/tslink/internal/mcpscope"
 	"github.com/anydoor7/tslink/internal/registry"
 	"github.com/anydoor7/tslink/internal/tailapi"
 )
@@ -105,6 +106,13 @@ func resumePeopleInvite(ctx context.Context, path, login string, target tailapi.
 		return peopleInviteFailure(op, nil, registry.CodeInviteOwnershipUnproven)
 	}
 	var expected *registry.PersonInvite
+	var expectedGrant *registry.PersonGrant
+	for _, grant := range p.Grants {
+		if grant.App == target.Service {
+			previous := grant
+			expectedGrant = &previous
+		}
+	}
 	for _, existing := range p.Invites {
 		if existing.App == target.Service && existing.NodeID == target.NodeID && !registry.PersonInviteTerminal(existing) {
 			op = existing
@@ -114,7 +122,7 @@ func resumePeopleInvite(ctx context.Context, path, login string, target tailapi.
 		}
 	}
 	save := func(next registry.PersonInvite, reset bool) error {
-		err := registry.SavePersonInviteWithOptions(path, login, next, registry.PersonInviteSaveOptions{Now: peopleNowFn(), Expected: expected, ResetConfirmed: reset})
+		err := registry.SavePersonInviteWithOptions(path, login, next, registry.PersonInviteSaveOptions{Context: peopleMutationContext(ctx), Now: peopleNowFn(), Expected: expected, ResetConfirmed: reset, ExpectedGrant: expectedGrant})
 		if err == nil {
 			previous := next
 			expected = &previous
@@ -285,7 +293,7 @@ func cleanupPeopleInvites(ctx context.Context, path string, result *PeopleRemove
 							if op.State == registry.PersonInvitePending {
 								op.State = registry.PersonInviteCancelled
 							}
-							if e := registry.SavePersonInvite(path, result.Login, op); e != nil {
+							if e := registry.SavePersonInviteWithOptions(path, result.Login, op, registry.PersonInviteSaveOptions{Context: peopleMutationContext(ctx), Now: peopleNowFn()}); e != nil {
 								v.Code = peopleInviteCode(e, "invite_state_failed")
 							}
 						}
@@ -300,7 +308,7 @@ func cleanupPeopleInvites(ctx context.Context, path string, result *PeopleRemove
 					}
 				}
 				if v.Code == "" {
-					if e := registry.SavePersonInvite(path, result.Login, op); e != nil {
+					if e := registry.SavePersonInviteWithOptions(path, result.Login, op, registry.PersonInviteSaveOptions{Context: peopleMutationContext(ctx), Now: peopleNowFn()}); e != nil {
 						v.Code = peopleInviteCode(e, "invite_state_failed")
 					}
 				}
@@ -361,4 +369,13 @@ func reconcilePeopleInvite(ctx context.Context, path, login string, op registry.
 
 func peopleInviteFailure(op registry.PersonInvite, err error, fallback string) PeopleInviteView {
 	return PeopleInviteView{App: op.App, State: op.State, ID: op.ID, Code: peopleInviteCode(err, fallback)}
+}
+
+// CLI invitation bookkeeping retains late outcomes. MCP writers retain the
+// authenticated session so cancellation/expiry cannot authorize a new write.
+func peopleMutationContext(ctx context.Context) context.Context {
+	if _, scoped := mcpscope.FromContext(ctx); scoped {
+		return ctx
+	}
+	return context.Background()
 }

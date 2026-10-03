@@ -63,8 +63,10 @@ func TestMCPEventsSnapshotFnSanitizesActionErrors(t *testing.T) {
 			name: "list action fails",
 			build: func() mcpActions {
 				return mcpActions{
-					list:   func() (any, error) { return nil, fmt.Errorf("list: %s expired", snapshotErrorSentinel) },
-					status: func() (any, error) { return map[string]any{}, nil },
+					list: func(ctx context.Context) (any, error) {
+						return nil, fmt.Errorf("list: %s expired", snapshotErrorSentinel)
+					},
+					status: func(ctx context.Context) (any, error) { return map[string]any{}, nil },
 				}
 			},
 		},
@@ -72,8 +74,10 @@ func TestMCPEventsSnapshotFnSanitizesActionErrors(t *testing.T) {
 			name: "status action fails",
 			build: func() mcpActions {
 				return mcpActions{
-					list:   func() (any, error) { return map[string]any{}, nil },
-					status: func() (any, error) { return nil, fmt.Errorf("status: %s expired", snapshotErrorSentinel) },
+					list: func(ctx context.Context) (any, error) { return map[string]any{}, nil },
+					status: func(ctx context.Context) (any, error) {
+						return nil, fmt.Errorf("status: %s expired", snapshotErrorSentinel)
+					},
 				}
 			},
 		},

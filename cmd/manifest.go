@@ -207,12 +207,12 @@ func Manifest() CLIManifest {
 			{Command: "tslink login", Operation: "remote ACL tag-owner mutation", Default: "disabled", RequiredFlags: []string{"--manage-acl"}, Boundary: "default login does not rewrite shared tailnet ACL policy"},
 			{Command: "tslink serve", Operation: "startup ordinary remote ACL tag ensure", Default: "disabled", RequiredFlags: []string{"--manage-acl"}, Boundary: "ordinary tagOwners creation remains disabled without --manage-acl; acknowledged Funnel services use the separately audited plan"},
 			{Command: "tslink serve", Operation: "Funnel shared tag owner and exact nodeAttrs auto-provisioning", Default: "enabled", RequiredFlags: []string{}, Boundary: "default-on only for acknowledged Funnel services; disable process-wide with --no-auto-provision or per service with no_auto_provision"},
-			{Command: "tslink serve", Operation: "remote MCP control plane on a dedicated tailnet-only node", Default: "disabled", RequiredFlags: []string{"--mcp"}, Boundary: "off unless --mcp or config.json mcp.enabled; every authorized tailnet peer reaching https://<node>.<tailnet>.ts.net/mcp can register and remove services, publish Funnel and send or revoke invitations; authorization against config.json mcp.allow is mandatory and an empty list refuses startup; never published through Funnel and never bound to a host interface; node lifetime depends on the login path: with a stored credential the derived auth key carries the ephemeral capability and tsnet logs in ephemeral, so a clean daemon stop removes the node from the tailnet and no cleanup ledger entry is needed, while after a crash the node waits for Tailscale's ephemeral garbage collection; with zero credentials the node is persistent and user-owned, one browser authorization survives restarts, and disabling --mcp leaves a device to delete by hand in the Tailscale admin console"},
+			{Command: "tslink serve", Operation: "remote MCP control plane on a dedicated tailnet-only node", Default: "disabled", RequiredFlags: []string{"--mcp"}, Boundary: "off unless --mcp or config.json mcp.enabled; WhoIs authorization against config.json mcp.bindings or legacy mcp.allow is mandatory; bindings restrict tools, apps and lifetime, while legacy mcp.allow retains owner authority; no principals refuses startup; service deletion, Funnel and network invitations remain owner-only; never published through Funnel and never bound to a host interface; node lifetime depends on the login path: with a stored credential the derived auth key carries the ephemeral capability and tsnet logs in ephemeral, so a clean daemon stop removes the node from the tailnet and no cleanup ledger entry is needed, while after a crash the node waits for Tailscale's ephemeral garbage collection; with zero credentials the node is persistent and user-owned, one browser authorization survives restarts, and disabling --mcp leaves a device to delete by hand in the Tailscale admin console"},
 			{Command: "tslink cleanup", Operation: "owned device deletion", Default: "dry-run", RequiredFlags: []string{"--dry-run=false"}, Boundary: "device deletion requires durable exact NodeID proof; hostname is discovery-only"},
 			{Command: "tslink cleanup", Operation: "legacy device ownership adoption", Default: "disabled", RequiredFlags: []string{"--adopt", "--force", "--dry-run=false"}, Boundary: "preview is read-only and simulates reconciliation; writing requires one literal hostname with exactly one TSLink-tagged remote match; a service absent from registry.json records reviewed retired_at provenance for its exact NodeID proof, while a currently registered service records active proof without retired_at"},
 			{Command: "tslink cleanup", Operation: "shared Funnel ACL status", Default: "disabled", RequiredFlags: []string{"--manage-acl"}, Boundary: "reports local use or skips; local absence never authorizes tailnet-wide grant deletion"},
 			{Command: "tslink remove", Operation: "service removal with tailnet device and local node state deletion", Default: "enabled", RequiredFlags: []string{}, Boundary: "removes the registry entry, then deletes the service's tailnet devices through the Tailscale API only by exact recorded NodeID proof (a hostname match without proof is protected and reported as device_cleanup_skipped), and deletes the local tsnet state once no remote identity of the service survives; with a daemon running, the daemon's reconciliation deletes that state instead; without an API credential nothing remote is deleted; idempotent: an absent service succeeds with removed false"},
-			{Command: "tslink mcp", Operation: "MCP unshare tool: the tslink remove deletion", Default: "enabled", RequiredFlags: []string{}, Boundary: "the same removal and exact NodeID-proven device and node-state deletion as tslink remove, with the same result; any client of tslink mcp and, under serve --mcp, every authorized peer of the remote control plane can call it; the tool is annotated destructive and the server instructions ask the client to confirm it with the user"},
+			{Command: "tslink mcp", Operation: "MCP unshare tool: the tslink remove deletion", Default: "enabled", RequiredFlags: []string{}, Boundary: "the same removal and exact NodeID-proven device and node-state deletion as tslink remove, with the same result; only owner-scoped stdio clients and, under serve --mcp, owner-authorized peers of the remote control plane can call it; the tool is annotated destructive and the server instructions ask the client to confirm it with the user"},
 			{Command: "tslink serve", Operation: "lifecycle reconciliation deletion of removed services' devices and node state", Default: "enabled", RequiredFlags: []string{}, Boundary: "at startup and every 30 seconds the daemon deletes, through the Tailscale API, only devices whose exact NodeID is recorded with retired_at provenance for a service absent from registry.json (hostname is discovery-only; a record without retired_at stays dormant), and deletes such a service's local tsnet state once its remote nodes are proven gone and no node in the daemon holds it; an untrusted registry.json or unreadable ownership ledger disables deletion; without an API credential nothing remote is deleted"},
 			{Command: "tslink tags delete-remote", Operation: "remote ACL tag-owner deletion", Default: "disabled", RequiredFlags: []string{"--force", "--manage-acl"}, Boundary: "requires destructive confirmation and explicit remote ACL opt-in"},
 			{Command: "tslink invite user", Operation: "tailnet user invitation", Default: "explicit named recipient", Boundary: "requires a user-owned tskey-api- token; --print-link selects self-delivery"},
@@ -265,8 +265,47 @@ func Manifest() CLIManifest {
 
 func commandJSONResultFields(commandPath string) map[string]JSONResultFieldInfo {
 	switch commandPath {
+	case "tslink guest create":
+		return map[string]JSONResultFieldInfo{"grant": {Type: "object", Description: "Nonsecret guest grant, expiry and use counters."}, "link": {Type: "string|null", Description: "Bearer link only with explicit print-link; otherwise null."}, "message": {Type: "string", Description: "Plain-language message for the recipient."}, "edge_state": {Type: "string", Description: "Configured state; verify Funnel through status."}}
+	case "tslink guest list":
+		return map[string]JSONResultFieldInfo{"grants": {Type: "array", Description: "Nonsecret guest grants."}}
+	case "tslink guest show", "tslink guest revoke":
+		return map[string]JSONResultFieldInfo{"grant": {Type: "object", Description: "Nonsecret guest grant."}}
+	case "tslink requests list":
+		return map[string]JSONResultFieldInfo{"requests": {Type: "array", Description: "Durable pending/approved/denied/expired access requests; notes are untrusted text."}}
+	case "tslink requests approve", "tslink requests deny":
+		return map[string]JSONResultFieldInfo{"request": {Type: "object", Description: "Committed request decision and optional grant."}, "changed": {Type: "boolean", Description: "False for an identical idempotent retry."}}
+
+	case "tslink extend":
+		return map[string]JSONResultFieldInfo{
+			"service":             {Type: "string", Description: "App whose person grant or Funnel deadline was changed."},
+			"who":                 {Type: "string", Description: "Canonical person login; absent for Funnel."},
+			"audience":            {Type: "string", Description: "tailnet_member, guest or public, used for policy checks."},
+			"previous_expires_at": {Type: "string|null", Description: "Previous UTC deadline; null for legacy permanent access."},
+			"expires_at":          {Type: "string|null", Description: "New UTC deadline; null for acknowledged permanent member access."},
+			"regranted":           {Type: "boolean", Description: "True only if this operation explicitly renewed an expired grant."},
+			"changed_at":          {Type: "string", Description: "Operation time in UTC; relative lifetime is measured from this instant."},
+		}
+	case "tslink access log":
+		return map[string]JSONResultFieldInfo{"events": {Type: "array", Description: "Newest-first access events; privacy-preserving schema version 1."}, "summary": {Type: "object", Description: "Counts per person and app with last_seen; includes all matches."}, "truncated": {Type: "boolean", Description: "More events matched than returned."}}
+	case "tslink access path":
+		return map[string]JSONResultFieldInfo{"app": {Type: "string", Description: "App/service name."}, "record_path": {Type: "boolean|null", Description: "Per-service path recording; null inherits global setting."}}
+
+	case "tslink portal enable", "tslink portal disable":
+		return map[string]JSONResultFieldInfo{
+			"enabled":  {Type: "boolean", Description: "Configured portal enablement; never public Funnel."},
+			"hostname": {Type: "string", Description: "Reserved independent portal node hostname."},
+			"state":    {Type: "string", Description: "disabled, pending, starting, running or failed; running requires exact live runtime evidence."},
+			"url":      {Type: "string", Description: "Canonical Tailnet HTTPS address; omitted unless the running daemon has exact runtime evidence."},
+			"error":    {Type: "string", Description: "Stable portal startup failure code, if any."},
+		}
 	case "tslink people add", "tslink people update":
 		return map[string]JSONResultFieldInfo{
+			"qr_payload":         {Type: "string", Description: "QR URL payload text; bearer invitation requires explicit print-links and qr-invite."},
+			"qr_warning":         {Type: "string", Description: "Credential warning for a bearer invitation QR."},
+			"guide":              {Type: "array", Description: "Phone-first English onboarding in at most five steps."},
+			"guide_zh":           {Type: "array", Description: "Phone-first Chinese onboarding in at most five steps."},
+			"portal":             {Type: "object", Description: "Independent home portal state; message includes its exact URL when enabled and ready."},
 			"person":             {Type: "object", Description: "Canonical login, revocation state, per-app absolute deadlines, active decisions and exact URLs when available."},
 			"invites":            {Type: "array", Description: "Per-app invitation ID, durable state, reconciliation candidates, remote side effect plan or stable error code. Bearer URLs require --print-links."},
 			"complete":           {Type: "boolean", Description: "False when any requested device invitation failed; local grants remain saved."},
@@ -310,6 +349,8 @@ func commandJSONResultFields(commandPath string) map[string]JSONResultFieldInfo 
 		return recipeManifestResultFields()
 	case "tslink list":
 		fields := agentServiceRuntimeJSONResultFields()
+		fields["guest_links"] = JSONResultFieldInfo{Type: "array", Description: "Active guest grants without bearer secrets."}
+		fields["access_log"] = JSONResultFieldInfo{Type: "object", Description: "Local access log health: last_write, drops, size_bytes, enabled, updated_at and error."}
 		fields["services[].state"] = JSONResultFieldInfo{
 			Type:        "string",
 			Description: "Slim list runtime state: exact, pending, or failed.",
@@ -379,6 +420,9 @@ func commandJSONResultFields(commandPath string) map[string]JSONResultFieldInfo 
 		}
 	case "tslink doctor":
 		return map[string]JSONResultFieldInfo{
+			"access_log":  {Type: "object", Description: "Local access log health: last_write, drops, size_bytes, enabled, updated_at and error."},
+			"portal":      {Type: "object", Description: "Independent home portal state and exact URL when running."},
+			"guest_links": {Type: "array", Description: "Active guest grants without bearer secrets."},
 			"tailscale_ssh.state": {
 				Type:        "string",
 				Description: "Tailscale SSH enablement for this node, read from the local Tailscale client. Informational: it never changes status, health_status, or health_exit_code.",
@@ -403,6 +447,7 @@ func commandJSONResultFields(commandPath string) map[string]JSONResultFieldInfo 
 		}
 	case "tslink status":
 		fields := agentServiceRuntimeJSONResultFields()
+		fields["portal"] = JSONResultFieldInfo{Type: "object", Description: "Independent home portal state and exact URL when running; also present with --urls."}
 		fields["credential_expiry_state"] = JSONResultFieldInfo{
 			Type:        "string",
 			Description: "Worst per-slot credential expiry state; expiring means the api-key slot has 14 days or fewer left, and next then carries the key-bootstrap steps.",
@@ -870,6 +915,9 @@ func flagRelationships(commandPath, name string) (oneOf, requires, conflicts []s
 	if (commandPath == "tslink people add" || commandPath == "tslink people update") && name == "print-links" {
 		requires = []string{"--invite"}
 	}
+	if (commandPath == "tslink people add" || commandPath == "tslink people update") && name == "qr-invite" {
+		requires = []string{"--invite", "--print-links"}
+	}
 	if commandPath == "tslink add" {
 		switch name {
 		case "proxy", "dir", "tcp":
@@ -882,6 +930,8 @@ func flagRelationships(commandPath, name string) (oneOf, requires, conflicts []s
 		case "no-auto-provision":
 			requires = []string{"--funnel"}
 		case "allow":
+			conflicts = []string{"--tcp", "--funnel"}
+		case "requestable":
 			conflicts = []string{"--tcp", "--funnel"}
 		}
 	}

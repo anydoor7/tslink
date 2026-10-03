@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -38,7 +39,7 @@ func TestStatusNextNamesACommandThatDoesWhatItSays(t *testing.T) {
 				addStatusTestService(t, regPath, registry.Service{Name: "web", Type: registry.TypeProxy, Target: "http://localhost:3000"})
 			}
 			withStatusURLSeams(t, tc.running, 4242, time.Time{})
-			status, err := getPollableStatus(filepath.Join(dir, "tslink.pid"), regPath, filepath.Join(dir, "runtime.json"), filepath.Join(dir, "auth-handoff.json"))
+			status, err := getPollableStatus(context.Background(), filepath.Join(dir, "tslink.pid"), regPath, filepath.Join(dir, "runtime.json"), filepath.Join(dir, "auth-handoff.json"))
 			if err != nil {
 				t.Fatal(err)
 			}

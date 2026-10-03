@@ -51,14 +51,14 @@ func TestStatusListMCPAndEventsExposeAppHealthAndExpiry(t *testing.T) {
 	oldNow := statusNowFn
 	statusNowFn = func() time.Time { return now }
 	t.Cleanup(func() { statusNowFn = oldNow })
-	ordinary, err := getPollableStatus(pidPath, regPath, snapshotPath, handoff)
+	ordinary, err := getPollableStatus(context.Background(), pidPath, regPath, snapshotPath, handoff)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if ordinary.Services[0].Health.State != health.Down || ordinary.Services[0].NodeKey.Warning != "critical_3d" || len(ordinary.Services[0].NodeKey.Next) == 0 {
 		t.Fatalf("%+v", ordinary)
 	}
-	urls, err := getStatusURLs(pidPath, regPath, snapshotPath)
+	urls, err := getStatusURLs(context.Background(), pidPath, regPath, snapshotPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func TestStatusListMCPAndEventsExposeAppHealthAndExpiry(t *testing.T) {
 		t.Fatalf("%+v", urls.Services[0])
 	}
 	for _, verbose := range []bool{false, true} {
-		listed, err := loadListResultForPaths(regPath, pidPath, snapshotPath, listOptions{Verbose: verbose})
+		listed, err := loadListResultForPaths(context.Background(), regPath, pidPath, snapshotPath, listOptions{Verbose: verbose})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -76,11 +76,11 @@ func TestStatusListMCPAndEventsExposeAppHealthAndExpiry(t *testing.T) {
 		}
 	}
 	actions := defaultMCPActions(sharePaths{Registry: regPath, PID: pidPath, Snapshot: snapshotPath, AuthHandoff: handoff}, io.Discard)
-	status, err := actions.status()
+	status, err := actions.status(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	listed, err := actions.list()
+	listed, err := actions.list(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +109,7 @@ func TestDoctorBusinessProbeDetectsListeningBrokenApp(t *testing.T) {
 	defer app.Close()
 	newDoctorTestEnv(t, []registry.Service{{Name: "app", Type: registry.TypeProxy, Target: app.URL}})
 	doctorHTTPProbeFn = defaultProbe
-	result := buildDoctorResult(doctorOptions{})
+	result := buildDoctorResult(context.Background(), doctorOptions{})
 	finding := assertDoctorFinding(t, result, inspect.WarningCodeAppProbeFailed)
 	if finding.Evidence["error_code"] != "health_status_mismatch" {
 		t.Fatal(finding)
@@ -143,7 +143,7 @@ func TestDoctorNodeKeyThresholdWarningsAndNextSteps(t *testing.T) {
 			if err := tsruntime.Save(env.snapshotPath, *snapshot); err != nil {
 				t.Fatal(err)
 			}
-			result := buildDoctorResult(doctorOptions{})
+			result := buildDoctorResult(context.Background(), doctorOptions{})
 			if tc.code != "" {
 				assertDoctorFinding(t, result, tc.code)
 			} else {
@@ -177,7 +177,7 @@ func TestStatusReadOnlySeesPersistedAlertsWithoutDaemon(t *testing.T) {
 	r := health.NewRecorder(filepath.Join(dir, health.StateFile), health.NotifierConfig{})
 	r.Commit(context.Background(), []health.Event{{Kind: "app_down", Service: "app", At: now}}, now)
 	withStatusURLSeams(t, false, 0, time.Time{})
-	got, err := readOnlyStatus.getPollableStatus(filepath.Join(dir, "tslink.pid"), regPath, filepath.Join(dir, "runtime.json"), filepath.Join(dir, "auth-handoff.json"))
+	got, err := readOnlyStatus.getPollableStatus(context.Background(), filepath.Join(dir, "tslink.pid"), regPath, filepath.Join(dir, "runtime.json"), filepath.Join(dir, "auth-handoff.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -11,6 +11,7 @@ import (
 
 	"github.com/anydoor7/tslink/internal/config"
 	"github.com/anydoor7/tslink/internal/daemon"
+	"github.com/anydoor7/tslink/internal/mcpscope"
 	"github.com/anydoor7/tslink/internal/output"
 	"github.com/anydoor7/tslink/internal/registry"
 	tsruntime "github.com/anydoor7/tslink/internal/runtime"
@@ -176,6 +177,9 @@ func inviteUserCreate(ctx context.Context, email, role string, printLink bool) (
 	if err := tailapi.ValidateInviteRole(role); err != nil {
 		return tailapi.Invite{}, err
 	}
+	if err := mcpscope.CheckEffect(ctx); err != nil {
+		return tailapi.Invite{}, err
+	}
 	return inviteCreateUserFn(ctx, email, role, printLink)
 }
 
@@ -190,6 +194,9 @@ func inviteDeviceCreate(ctx context.Context, regPath, pidPath, snapshotPath, ser
 	}
 	target, err := inviteDeviceTargetForService(regPath, pidPath, snapshotPath, service)
 	if err != nil {
+		return tailapi.Invite{}, err
+	}
+	if err := mcpscope.CheckEffect(ctx); err != nil {
 		return tailapi.Invite{}, err
 	}
 	return inviteCreateDeviceFn(ctx, target, email, printLink, multiUse, allowExitNode)

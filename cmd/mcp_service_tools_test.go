@@ -68,10 +68,18 @@ const mcpJSONFlagExclusion = "MCP tool results are always structured JSON; --jso
 
 // mcpCoveredCommands is the mapping half of the partition.
 var mcpCoveredCommands = map[string]mcpCoveredCommand{
-	"tslink people add":    {Tools: []string{"people_add"}, Args: []string{"who"}, Flags: map[string]string{"apps": "apps", "for": "for", "invite": "invite", "print-links": "print_links"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
-	"tslink people update": {Tools: []string{"people_update"}, Args: []string{"who"}, Flags: map[string]string{"apps": "apps", "for": "for", "invite": "invite", "print-links": "print_links", "reconcile-invite": "reconcile_invites", "replace-invite": "replace_invites"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
-	"tslink people list":   {Tools: []string{"people_list"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
-	"tslink people remove": {Tools: []string{"people_remove"}, Args: []string{"who"}, Flags: map[string]string{"reconcile-invite": "reconcile_invites"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
+	"tslink requests list":    {Tools: []string{"requests_list"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
+	"tslink requests approve": {Tools: []string{"requests_approve"}, Args: []string{"id"}, Flags: map[string]string{"for": "for", "ack-never": "ack_never"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
+	"tslink requests deny":    {Tools: []string{"requests_deny"}, Args: []string{"id"}, Flags: map[string]string{"reason": "reason"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
+	"tslink extend":           {Tools: []string{"extend"}, Args: []string{"service"}, Flags: map[string]string{"person": "who", "for": "for", "until": "until", "ack-never": "ack_never", "regrant": "regrant"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
+	"tslink people add":       {Tools: []string{"people_add"}, Args: []string{"who"}, Flags: map[string]string{"apps": "apps", "for": "for", "until": "until", "ack-never": "ack_never", "invite": "invite", "print-links": "print_links", "qr": "qr", "qr-invite": "qr_invite"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion, "qr-png": "Local PNG file output is unavailable over MCP; qr returns payload text."}},
+	"tslink people update":    {Tools: []string{"people_update"}, Args: []string{"who"}, Flags: map[string]string{"apps": "apps", "for": "for", "until": "until", "ack-never": "ack_never", "invite": "invite", "print-links": "print_links", "qr": "qr", "qr-invite": "qr_invite", "reconcile-invite": "reconcile_invites", "replace-invite": "replace_invites"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion, "qr-png": "Local PNG file output is unavailable over MCP; qr returns payload text."}},
+	"tslink people list":      {Tools: []string{"people_list"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
+	"tslink people remove":    {Tools: []string{"people_remove"}, Args: []string{"who"}, Flags: map[string]string{"reconcile-invite": "reconcile_invites"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
+	"tslink portal enable":    {Tools: []string{"portal_enable"}, Flags: map[string]string{"hostname": "hostname", "owner": "owner", "admins": "admins", "funnel": "funnel"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
+	"tslink portal disable":   {Tools: []string{"portal_disable"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
+	"tslink mcp":              {Tools: []string{"people_grant", "people_revoke", "app_restart", "health"}, ExcludedFlags: map[string]string{"scope": "trusted transport launch option, not a tool argument", "apps": "trusted transport app restriction", "inventory": "trusted transport inventory opt-in", "max-duration": "trusted transport lifetime limit"}},
+	"tslink mcp-audit":        {Tools: []string{"mcp_audit"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
 	"tslink share": {
 		Tools: []string{"share"},
 		Args:  []string{"target"},
@@ -96,6 +104,7 @@ var mcpCoveredCommands = map[string]mcpCoveredCommand{
 		Tools: []string{"add"},
 		Args:  []string{"name", "type"},
 		Flags: map[string]string{
+			"requestable": "requestable",
 			"health-path": "health", "health-body": "health", "health-status-min": "health", "health-status-max": "health", "health-timeout": "health", "health-interval": "health",
 			"max-request-body":           "request_limits.max_body",
 			"ack-unlimited-request-body": "request_limits.unlimited_ack",
@@ -172,6 +181,7 @@ var mcpCoveredCommands = map[string]mcpCoveredCommand{
 		Args:          []string{"service", "tag"},
 		ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion},
 	},
+	"tslink access log": {Tools: []string{"access_log", "access_summary"}, Flags: map[string]string{"app": "app", "who": "who", "since": "since", "until": "until", "decision": "decision", "limit": "limit"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
 	"tslink access explain": {
 		Tools:         []string{"access_explain"},
 		Args:          []string{"service"},
@@ -238,6 +248,11 @@ var mcpCoveredCommands = map[string]mcpCoveredCommand{
 		"health-path": "health", "health-body": "health", "health-status-min": "health", "health-status-max": "health", "health-timeout": "health", "health-interval": "health",
 		"max-request-body": "request_limits", "ack-unlimited-request-body": "request_limits", "request-header-timeout": "request_limits", "request-read-timeout": "request_limits", "idle-timeout": "request_limits",
 		"preserve-host": "preserve_host", "name": "name", "proxy": "target", "allow": "allow", "tags": "tags", "ephemeral": "ephemeral", "funnel": "funnel", "public": "public_ack", "funnel-ttl": "funnel_ttl", "no-auto-provision": "no_auto_provision", "no-daemon-install": "no_daemon_install", "control-url": "control_url", "force-unsafe-public": "force_unsafe_public"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion, "dry-run": "recipe_plan is the preview action", "yes": "recipe_apply is the write action"}},
+
+	"tslink guest create": {Tools: []string{"guest_create"}, Args: []string{"app"}, Flags: map[string]string{"for": "for", "label": "label", "pin": "pin", "public": "public", "print-link": "print_link"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
+	"tslink guest list":   {Tools: []string{"guest_list"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
+	"tslink guest show":   {Tools: []string{"guest_show"}, Args: []string{"id"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
+	"tslink guest revoke": {Tools: []string{"guest_revoke"}, Args: []string{"id"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
 	"tslink template list": {
 		Tools:         []string{"template_list"},
 		ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion},
@@ -260,6 +275,10 @@ var mcpCoveredCommands = map[string]mcpCoveredCommand{
 // agent does *to a service*; daemon lifecycle, installation, credentials,
 // global configuration and log reading stay on the CLI.
 var mcpUncoveredCommands = map[string]string{
+	"tslink access path":        "Changes per-app path privacy settings; owner CLI only.",
+	"tslink requests":           "command group; all three owner actions are covered",
+	"tslink portal":             "command group; leaf actions have corresponding tools",
+	"tslink guest":              "command group; all guest leaves are covered",
 	"tslink people":             "command group; all four leaves are covered",
 	"tslink":                    "the root command carries only the global --json flag and runs no action of its own",
 	"tslink apps":               "command group; list, detect and share are covered",
@@ -281,7 +300,6 @@ var mcpUncoveredCommands = map[string]string{
 	"tslink cleanup":            "reconciles and can delete real tailnet devices; excluded from this tool surface by the owner",
 	"tslink registry check":     "registry file forensics; excluded from this tool surface by the owner. The doctor tool reports registry health",
 	"tslink manifest":           "describes the CLI itself; the MCP client reads tools/list instead",
-	"tslink mcp":                "this server itself",
 	"tslink tags add":           "not requested for this surface; tags_list plus tags_set reach the same end state, and set is the operation that can change reachability",
 	"tslink tags set-default":   "changes the global default tag rather than one service",
 	"tslink tags pull":          "reads the remote Tailscale ACL policy",
@@ -708,7 +726,7 @@ func TestMCPSharePersistsAllowListAndTags(t *testing.T) {
 	restoreShareSeams(t)
 	paths := mcpSharePaths(t)
 	shareIsRunningFn = func(string) bool { return true }
-	shareResolveEndpointOnceFn = func(_, _, _, name string) (serviceURLResolution, error) {
+	shareResolveEndpointOnceFn = func(_ context.Context, _, _, _, name string) (serviceURLResolution, error) {
 		return serviceURLResolution{Result: URLResult{Name: name, URL: "https://" + name + ".tail.ts.net", State: inspect.EndpointStateExact}}, nil
 	}
 	actions := defaultMCPActions(paths, io.Discard)
@@ -785,7 +803,7 @@ func TestMCPShareFunnelGuardrailsStayInTheDomainLayer(t *testing.T) {
 			restoreShareSeams(t)
 			paths := mcpSharePaths(t)
 			shareIsRunningFn = func(string) bool { return true }
-			shareResolveEndpointOnceFn = func(_, _, _, name string) (serviceURLResolution, error) {
+			shareResolveEndpointOnceFn = func(_ context.Context, _, _, _, name string) (serviceURLResolution, error) {
 				return serviceURLResolution{Result: URLResult{Name: name, URL: "https://" + name + ".tail.ts.net"}}, nil
 			}
 			_, err := defaultMCPActions(paths, io.Discard).share(context.Background(), tc.request)
@@ -865,7 +883,7 @@ func TestMCPShareFunnelTTLReachesTheRegistry(t *testing.T) {
 	restoreShareSeams(t)
 	paths := mcpSharePaths(t)
 	shareIsRunningFn = func(string) bool { return true }
-	shareResolveEndpointOnceFn = func(_, _, _, name string) (serviceURLResolution, error) {
+	shareResolveEndpointOnceFn = func(_ context.Context, _, _, _, name string) (serviceURLResolution, error) {
 		return serviceURLResolution{Result: URLResult{Name: name, URL: "https://" + name + ".tail.ts.net"}}, nil
 	}
 	before := time.Now().UTC()
@@ -887,11 +905,12 @@ func TestMCPShareFunnelTTLReachesTheRegistry(t *testing.T) {
 	if _, err := defaultMCPActions(paths, io.Discard).share(context.Background(), shareRequest{
 		Target: "3001", Name: "forever", Ephemeral: true,
 		Funnel: true, PublicAck: true, FunnelTTL: "never", FunnelTTLSet: true,
-	}); err != nil {
-		t.Fatalf("never share: %v", err)
+	}); err == nil || !strings.Contains(err.Error(), "never is allowed only") {
+		t.Fatalf("never share was admitted: %v", err)
 	}
-	if svc := mcpLoadService(t, paths.Registry, "forever"); svc.FunnelExpiresAt != nil {
-		t.Fatalf("funnel_ttl never persisted expiry %v", svc.FunnelExpiresAt)
+	reg, err := registry.Load(paths.Registry)
+	if err != nil || len(reg.Services) != 1 {
+		t.Fatalf("refused Funnel wrote state: %+v %v", reg, err)
 	}
 }
 
@@ -1056,7 +1075,7 @@ func TestMCPLocalToolsReadAndWriteTheGivenRegistry(t *testing.T) {
 		t.Fatalf("tags_list = %+v", tags)
 	}
 
-	setValue, err := actions.tagsSet("web", "tag:replaced")
+	setValue, err := actions.tagsSet(context.Background(), "web", "tag:replaced")
 	if err != nil {
 		t.Fatalf("tags_set: %v", err)
 	}
@@ -1066,12 +1085,12 @@ func TestMCPLocalToolsReadAndWriteTheGivenRegistry(t *testing.T) {
 	if svc := mcpLoadService(t, paths.Registry, "web"); len(svc.Tags) != 1 || svc.Tags[0] != "tag:replaced" {
 		t.Fatalf("persisted tags = %v", svc.Tags)
 	}
-	if _, err := actions.tagsSet("absent", "tag:x"); err == nil {
+	if _, err := actions.tagsSet(context.Background(), "absent", "tag:x"); err == nil {
 		t.Fatal("tags_set on an absent service was accepted")
 	} else if failure := output.NewFailureForError("", err); failure.Code != output.ExitNotFound || failure.Error.Code != output.StableErrorCode(output.ExitNotFound) {
 		t.Fatalf("tags_set error = %v, envelope = %+v; want the not_found code the CLI --json path reports", err, failure.Error)
 	}
-	if _, err := actions.tagsSet("web", "not-a-tag"); err == nil {
+	if _, err := actions.tagsSet(context.Background(), "web", "not-a-tag"); err == nil {
 		t.Fatal("tags_set accepted a tag without the tag: prefix")
 	}
 
@@ -1087,7 +1106,7 @@ func TestMCPLocalToolsReadAndWriteTheGivenRegistry(t *testing.T) {
 		t.Fatal("access_explain on an absent service was accepted")
 	}
 
-	doctorValue, err := actions.doctor(false)
+	doctorValue, err := actions.doctor(context.Background(), false)
 	if err != nil {
 		t.Fatalf("doctor: %v", err)
 	}
@@ -1334,7 +1353,7 @@ func TestMCPToolOutputSchemasAcceptRealPayloads(t *testing.T) {
 		{"tags_list", TagsListResult{Services: []TagsServiceEntry{{Name: "web", Tags: []string{"tag:tsmain"}}, {Name: "bare", Tags: nil}}}},
 		{"tags_set", TagsSetResult{Service: "web", Tags: []string{"tag:tsmain"}}},
 		{"access_explain", buildAccessExplainResult(svc)},
-		{"doctor", buildDoctorResult(doctorOptions{RegistryPath: filepath.Join(t.TempDir(), "registry.json")})},
+		{"doctor", buildDoctorResult(context.Background(), doctorOptions{RegistryPath: filepath.Join(t.TempDir(), "registry.json")})},
 		{"invite_user", InviteMutationResult{Invite: invite, RemoteSideEffectPlan: invitePlan(invite, "create")}},
 		{"invite_device", InviteMutationResult{Invite: invite, RemoteSideEffectPlan: invitePlan(invite, "create")}},
 		{"invite_list", tailapi.InviteList{

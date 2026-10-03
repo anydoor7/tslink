@@ -85,7 +85,7 @@ func TestBoundedManagerCommandReleasesAPipeHeldByAGrandchild(t *testing.T) {
 	done := make(chan boundedCallResult, 1)
 
 	go func() {
-		out, err := runBoundedManagerCommand("/bin/sh", budget, "-c", "/bin/sleep 30 & echo $!; wait")
+		out, err := runBoundedManagerCommand(context.Background(), "/bin/sh", budget, "-c", "/bin/sleep 30 & echo $!; wait")
 		done <- boundedCallResult{out: out, err: err}
 	}()
 	limit := 5 * time.Second // hang guard; error and pipe release are the assertions

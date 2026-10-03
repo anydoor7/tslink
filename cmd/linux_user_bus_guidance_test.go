@@ -4,6 +4,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -15,10 +16,10 @@ import (
 
 func TestLinuxUserBusFailurePreservesActionableBoundedStderr(t *testing.T) {
 	installLinuxUnitFixture(t, "", "no\n", nil)
-	managerOutputFn = func(string, ...string) ([]byte, error) {
+	managerOutputFn = func(context.Context, string, ...string) ([]byte, error) {
 		return []byte("Failed to connect to user scope bus: No such file or directory\n" + strings.Repeat("x", 8000)), errors.New("exit status 1")
 	}
-	_, err := systemdObservation()
+	_, err := systemdObservation(context.Background())
 	if err == nil {
 		t.Fatal("missing bus must be refused")
 	}
@@ -50,11 +51,11 @@ func TestLinuxUserBusFailureInstallStatusAndDoctorGuidance(t *testing.T) {
 			t.Cleanup(func() { pidPathFn, isRunningFn = oldPID, oldRunning })
 			pidPathFn = func() (string, error) { return pid, nil }
 			isRunningFn = func(string) bool { return false }
-			err := detectInstallDaemonConflict("retry install")
+			err := detectInstallDaemonConflict(context.Background(), "retry install")
 			if output.ExitCode(err) != output.ExitConflict || !strings.Contains(err.Error(), "--no-daemon-install") {
 				t.Fatalf("install must refuse with a manual route: %v", err)
 			}
-			r := StatusResult{Supervision: detectSupervision(pid, false, 0), ServiceCount: 1, AuthStatus: authStatusNotAuthenticated}
+			r := StatusResult{Supervision: detectSupervision(context.Background(), pid, false, 0), ServiceCount: 1, AuthStatus: authStatusNotAuthenticated}
 			setStatusContinuation(&r)
 			var out bytes.Buffer
 			formatStatus(r, &out)
@@ -67,7 +68,7 @@ func TestLinuxUserBusFailureInstallStatusAndDoctorGuidance(t *testing.T) {
 				}
 			}
 			d := DoctorResult{Paths: DoctorPaths{PID: pid}}
-			diagnoseDaemon(&d, 1)
+			diagnoseDaemon(context.Background(), &d, 1)
 			if len(d.Findings) != 1 || !strings.Contains(d.Findings[0].Message, "XDG_RUNTIME_DIR") {
 				t.Fatalf("doctor lost user-bus prerequisite: %+v", d.Findings)
 			}

@@ -8,3 +8,9 @@
 - `owner_*.go`: platform ownership, permissions and directory-sync behavior.
 - `settle.go`: `ReadSettled` rereads a Windows not-exist result while this package's temporary file for the target is present (a replacement is in progress), bounded at 255 ms of sleep; `ReplacementInProgress` recognises only `randomTempName` temporaries.
 - `settle_test.go`: genuine absence, in-progress wait, reappeared target, stale-temporary bound and unchanged non-not-exist errors, all with injected sleeps; `ConvergePrivateFile` treats a name that vanishes between Lstat and chmod as missing.
+
+- `publication_test.go`, `sync_test_seam.go`: typed post-publication failures and isolated directory-sync injection.
+- `shared_io.go`: shared state reads and main's bounded Windows 32/5 retry policy; all default atomic writers use `ReplaceFile`.
+- `testmain_test.go`: isolated test process setup.
+
+- `shared_io_test.go`, `shared_io_windows_test.go`: snapshot/error controls, default atomic publication with a held Windows snapshot, and exclusive-handle retry using synctest.

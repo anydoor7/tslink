@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/anydoor7/tslink/internal/accesslog"
 	"github.com/anydoor7/tslink/internal/config"
 	"github.com/anydoor7/tslink/internal/credentials"
 	"github.com/anydoor7/tslink/internal/daemon"
@@ -30,7 +32,7 @@ var (
 	statusAuthHandoffPathFn      = config.AuthHandoffPath
 	runtimeLoadSnapshotFn        = tsruntime.Load
 	pollableStatusLoadRegistryFn = registry.LoadForDiagnostics
-	statusLoadAuthHandoffFn      = loadAuthHandoff
+	statusLoadAuthHandoffFn      = loadAuthHandoffs
 	statusNowFn                  = time.Now
 	statusGetClientSecretFn      = credentials.GetClientSecret
 	// statusCredentialInventoryFn classifies the stored credential slots and,
@@ -59,8 +61,19 @@ const (
 	systemdUserManagerUnavailableMessage  = "systemd user manager unavailable"
 )
 
+// StatusPendingLogin identifies a pending node enrollment.
+type StatusPendingLogin struct {
+	Node      string    `json:"node"`
+	AuthURL   string    `json:"auth_url"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
 // StatusResult holds the status information for display.
 type StatusResult struct {
+	GuestLinks              []registry.GuestView    `json:"guest_links"`
+	AccessLog               accesslog.Health        `json:"access_log"`
+	Portal                  tsruntime.PortalState   `json:"portal"`
+	MCPBindings             []mcpBindingView        `json:"mcp_bindings,omitempty"`
 	Alerts                  health.AlertsView       `json:"alerts"`
 	Supervision             Supervision             `json:"supervision"`
 	DaemonRunning           bool                    `json:"daemon_running"`
@@ -74,6 +87,7 @@ type StatusResult struct {
 	NodeAuthorized          bool                    `json:"node_authorized"`
 	AuthorizedServiceCount  int                     `json:"authorized_service_count"`
 	AuthStatus              string                  `json:"auth_status"`
+	PendingLogins           []StatusPendingLogin    `json:"pending_logins,omitempty"`
 	AuthURL                 string                  `json:"auth_url,omitempty"`
 	ExpiresAt               *time.Time              `json:"expires_at,omitempty"`
 	Next                    []string                `json:"next,omitempty"`
@@ -124,6 +138,10 @@ type StatusServiceState struct {
 }
 
 type StatusURLsResult struct {
+	GuestLinks              []registry.GuestView        `json:"guest_links"`
+	AccessLog               accesslog.Health            `json:"access_log"`
+	Portal                  tsruntime.PortalState       `json:"portal"`
+	MCPBindings             []mcpBindingView            `json:"mcp_bindings,omitempty"`
 	Alerts                  health.AlertsView           `json:"alerts"`
 	Supervision             Supervision                 `json:"supervision"`
 	SchemaVersion           int                         `json:"schema_version"`
@@ -138,6 +156,7 @@ type StatusURLsResult struct {
 	NodeAuthorized          bool                        `json:"node_authorized"`
 	AuthorizedServiceCount  int                         `json:"authorized_service_count"`
 	AuthStatus              string                      `json:"auth_status"`
+	PendingLogins           []StatusPendingLogin        `json:"pending_logins,omitempty"`
 	AuthURL                 string                      `json:"auth_url,omitempty"`
 	ExpiresAt               *time.Time                  `json:"expires_at,omitempty"`
 	Next                    []string                    `json:"next,omitempty"`
@@ -197,18 +216,21 @@ var (
 	readOnlyStatus = statusRead{readOnly: true}
 )
 
-func getStatus(pidPath, regPath string) (StatusResult, error) {
-	return commandStatus.getStatus(pidPath, regPath)
+func getStatus(ctx context.Context, pidPath, regPath string) (StatusResult, error) {
+	return commandStatus.getStatus(ctx, pidPath, regPath)
 }
 
-func (s statusRead) getStatus(pidPath, regPath string) (StatusResult, error) {
-	r := s.baseStatus(pidPath)
+func (s statusRead) getStatus(ctx context.Context, pidPath, regPath string) (StatusResult, error) {
+	r := s.baseStatus(ctx, pidPath)
+	r.AccessLog = accessHealthForRegistry(regPath, pidPath, filepath.Join(filepath.Dir(regPath), "runtime.json"))
 	reg, issues, err := registry.LoadForDiagnostics(regPath)
 	if err != nil {
 		return StatusResult{}, err
 	}
 	issueErrors := diagnosticServiceErrors(issues)
+	r.Portal = readPortalView(reg, regPath, r.DaemonRunning, r.DaemonPID)
 	r.Alerts = readAlertsForRegistry(regPath)
+	r.GuestLinks = activeGuestViews(reg, statusNowFn())
 	r.ServiceCount = len(reg.Services)
 	r.Services = make([]StatusServiceState, 0, len(reg.Services))
 	ownershipProofs, ownershipProofAvailable := ownershipProofsForRegistry(regPath)
@@ -266,8 +288,9 @@ func ownershipProofsForRegistry(_ string) (map[string]bool, bool) {
 	return proofs, true
 }
 
-func (s statusRead) baseStatus(pidPath string) StatusResult {
+func (s statusRead) baseStatus(ctx context.Context, pidPath string) StatusResult {
 	r := StatusResult{DaemonState: daemonStateUnknown, AuthStatus: authStatusNotAuthenticated, Services: []StatusServiceState{}}
+	r.MCPBindings = mcpBindingViews(statusNowFn())
 	if isRunningFn(pidPath) {
 		r.DaemonRunning = true
 		r.DaemonState = daemonStateRunning
@@ -278,7 +301,7 @@ func (s statusRead) baseStatus(pidPath string) StatusResult {
 		// leaves the state unknown.
 		r.DaemonState = daemonStateAbsent
 	}
-	r.Supervision = detectSupervisionFn(pidPath, r.DaemonRunning, r.DaemonPID)
+	r.Supervision = detectSupervisionFn(ctx, pidPath, r.DaemonRunning, r.DaemonPID)
 	values := credentials.SlotValues{}
 	values.APIKey, _ = getAPIKeyFn()
 	hasClientSecret := hasClientSecretFn()
@@ -423,17 +446,17 @@ func currentRegistryFingerprint(regPath string) string {
 	return fingerprint
 }
 
-func getPollableStatus(pidPath, regPath, snapshotPath, authHandoffPath string) (StatusResult, error) {
-	return commandStatus.getPollableStatus(pidPath, regPath, snapshotPath, authHandoffPath)
+func getPollableStatus(ctx context.Context, pidPath, regPath, snapshotPath, authHandoffPath string) (StatusResult, error) {
+	return commandStatus.getPollableStatus(ctx, pidPath, regPath, snapshotPath, authHandoffPath)
 }
 
-func (s statusRead) getPollableStatus(pidPath, regPath, snapshotPath, authHandoffPath string) (StatusResult, error) {
-	r, err := s.getStatus(pidPath, regPath)
+func (s statusRead) getPollableStatus(ctx context.Context, pidPath, regPath, snapshotPath, authHandoffPath string) (StatusResult, error) {
+	r, err := s.getStatus(ctx, pidPath, regPath)
 	if err != nil {
 		snapshot, snapshotErr := runtimeLoadSnapshotFn(snapshotPath)
 		if snapshotErr == nil && snapshot != nil && snapshot.GlobalError != nil {
 			ownershipProofs, ownershipProofAvailable := ownershipProofsForRegistry(regPath)
-			return s.statusFromGlobalFailure(pidPath, regPath, snapshot, ownershipProofs, ownershipProofAvailable), nil
+			return s.statusFromGlobalFailure(ctx, pidPath, regPath, snapshot, ownershipProofs, ownershipProofAvailable), nil
 		}
 		return StatusResult{}, err
 	}
@@ -442,11 +465,11 @@ func (s statusRead) getPollableStatus(pidPath, regPath, snapshotPath, authHandof
 		return StatusResult{}, err
 	}
 	expiredByName := make(map[string]bool, len(reg.Services))
-	registryServices := make(map[string]registry.Service, len(reg.Services))
+	currentByName := make(map[string]registry.Service, len(reg.Services))
 	now := statusNowFn()
 	for _, svc := range reg.Services {
 		expiredByName[svc.Name] = registry.FunnelExpiredAt(svc, now)
-		registryServices[svc.Name] = svc
+		currentByName[svc.Name] = svc
 	}
 	// getStatus may have sampled the clock just before a deadline. Normalize
 	// every Funnel field to this later effective time before applying runtime
@@ -487,7 +510,10 @@ func (s statusRead) getPollableStatus(pidPath, regPath, snapshotPath, authHandof
 			snapshotServices[svc.Name] = svc
 		}
 		for i := range r.Services {
-			if r.Services[i].Error != nil {
+			// Another writer can remove or reorder services between our
+			// registry reads. Join by name and withhold removed services.
+			current, present := currentByName[r.Services[i].Name]
+			if !present || r.Services[i].Error != nil {
 				continue
 			}
 			if runtimeService, ok := snapshotServices[r.Services[i].Name]; ok {
@@ -498,11 +524,7 @@ func (s statusRead) getPollableStatus(pidPath, regPath, snapshotPath, authHandof
 				}
 				r.Services[i].Warnings = append([]inspect.WarningView(nil), runtimeService.Warnings...)
 				r.Services[i].Error = runtimeService.Error
-				// The registry may change between reads. A removed service keeps
-				// its unchecked health; only a named match supplies probe config.
-				if svc, ok := registryServices[r.Services[i].Name]; ok {
-					r.Services[i].Health = currentHealth(runtimeService.Health, svc, now)
-				}
+				r.Services[i].Health = currentHealth(runtimeService.Health, current, now)
 				r.Services[i].NodeKey = health.ExpiryAt(runtimeService.NodeKey.ExpiresAt, runtimeService.NodeKey.Source, now, nodeExpiryNext())
 				if runtimeService.RuntimeState == tsruntime.ServiceRuntimeFailed {
 					r.Services[i].Status = tsruntime.ServiceRuntimeFailed
@@ -525,33 +547,34 @@ func (s statusRead) getPollableStatus(pidPath, regPath, snapshotPath, authHandof
 		}
 	}
 
-	if handoff, err := statusLoadAuthHandoffFn(authHandoffPath); err == nil {
-		currentHandoff := !r.DaemonRunning || handoff.DaemonPID == r.DaemonPID
-		if currentHandoff {
+	portalUp := r.DaemonRunning && r.Portal.Enabled && r.Portal.State == "running" && r.Portal.URL != ""
+	if portalUp {
+		r.NodeAuthorized, r.Authenticated = true, true
+		r.AuthStatus = authStatusAuthenticated
+	}
+	if handoffs, err := statusLoadAuthHandoffFn(authHandoffPath); err == nil {
+		for _, handoff := range handoffs {
+			if (r.DaemonRunning && handoff.DaemonPID != r.DaemonPID) || !handoff.ExpiresAt.After(now) {
+				continue
+			}
 			_, handoffServiceUp := up[handoff.Service]
-			if handoffServiceUp {
-				// The snapshot can briefly win the race with removal of the
-				// completed handoff. Do not regress an already-up service.
-				setStatusContinuation(&r)
-				return r, nil
+			if handoffServiceUp || (portalUp && handoff.Service == r.Portal.Hostname) {
+				// Snapshot publication can precede exact retirement of an offer.
+				continue
 			}
-			// A pending handoff for one service must not erase the
-			// authorization evidence of the other services this daemon is
-			// already serving. Keep the authorized count and only let the
-			// handoff's own service fall back to needs_login; suppress the
-			// global authenticated flag only when no service is up.
-			if len(up) == 0 {
-				r.Authenticated = false
-				r.NodeAuthorized = false
-			}
-			r.AuthStatus = authStatusNeedsLogin
-			r.AuthURL = handoff.AuthURL
-			expiresAt := handoff.ExpiresAt.UTC()
-			r.ExpiresAt = &expiresAt
+			r.PendingLogins = append(r.PendingLogins, StatusPendingLogin{Node: handoff.Service, AuthURL: handoff.AuthURL, ExpiresAt: handoff.ExpiresAt.UTC()})
 			for i := range r.Services {
 				if r.Services[i].Name == handoff.Service && r.Services[i].Error == nil {
 					r.Services[i].Status = authStatusNeedsLogin
 				}
+			}
+		}
+		if len(r.PendingLogins) > 0 {
+			// Compatibility fields select the oldest still-pending publication.
+			first := r.PendingLogins[0]
+			r.AuthStatus, r.AuthURL, r.ExpiresAt = authStatusNeedsLogin, first.AuthURL, &first.ExpiresAt
+			if len(up) == 0 && !portalUp {
+				r.Authenticated, r.NodeAuthorized = false, false
 			}
 		}
 	}
@@ -559,8 +582,8 @@ func (s statusRead) getPollableStatus(pidPath, regPath, snapshotPath, authHandof
 	return r, nil
 }
 
-func (s statusRead) statusFromGlobalFailure(pidPath, regPath string, snapshot *tsruntime.Snapshot, ownershipProofs map[string]bool, ownershipProofAvailable bool) StatusResult {
-	r := s.baseStatus(pidPath)
+func (s statusRead) statusFromGlobalFailure(ctx context.Context, pidPath, regPath string, snapshot *tsruntime.Snapshot, ownershipProofs map[string]bool, ownershipProofAvailable bool) StatusResult {
+	r := s.baseStatus(ctx, pidPath)
 	r.OwnershipProofAvailable = ownershipProofAvailable
 	r.GlobalError = cloneServiceError(snapshot.GlobalError)
 	// The registry cannot be read, so this snapshot cannot be verified as
@@ -609,6 +632,12 @@ func cloneServiceError(source *tsruntime.ServiceError) *tsruntime.ServiceError {
 }
 
 func formatStatus(r StatusResult, out io.Writer) {
+	formatGuestViews(out, r.GuestLinks)
+	formatAccessHealth(r.AccessLog, out)
+	formatPortal(out, r.Portal)
+	for _, b := range r.MCPBindings {
+		fmt.Fprintf(out, "→ MCP scope: %s role=%s apps=%v inventory=%t expired=%t legacy=%t\n", b.Principal, b.Role, b.Apps, b.Inventory, b.Expired, b.Legacy)
+	}
 	userManagerUnavailable := strings.Contains(r.Supervision.Detail, systemdUserManagerUnavailableMessage)
 	noNodes := false
 	if r.ServiceCount == 0 {
@@ -643,12 +672,12 @@ func formatStatus(r StatusResult, out io.Writer) {
 		// Authenticated services can coexist with a pending enrollment for a
 		// newly added node; keep that node's login URL visible instead of
 		// hiding it behind the global authenticated state.
-		if r.AuthStatus == authStatusNeedsLogin && r.AuthURL != "" {
+		if r.AuthStatus == authStatusNeedsLogin && r.AuthURL != "" && len(r.PendingLogins) == 0 {
 			fmt.Fprintf(out, "→ pending login URL: %s\n", r.AuthURL)
 		}
 	} else if r.AuthStatus == authStatusNeedsLogin {
 		fmt.Fprintln(out, "→ tailnet: needs login")
-		if r.AuthURL != "" {
+		if r.AuthURL != "" && len(r.PendingLogins) == 0 {
 			fmt.Fprintf(out, "→ login URL: %s\n", r.AuthURL)
 		}
 	} else if noNodes {
@@ -658,28 +687,36 @@ func formatStatus(r StatusResult, out io.Writer) {
 	} else {
 		fmt.Fprintln(out, "→ tailnet: not authenticated (run: tslink install, then tslink status to obtain the login URL)")
 	}
+	for _, pending := range r.PendingLogins {
+		fmt.Fprintf(out, "→ pending login for %s: %s\n", pending.Node, pending.AuthURL)
+	}
 	fmt.Fprintf(out, "→ services: %d registered\n", r.ServiceCount)
 	for _, svc := range r.Services {
 		formatAppHealth(out, svc.Name, svc.Health, svc.NodeKey)
+		for _, warning := range svc.Warnings {
+			if warning.Code == inspect.WarningCodeGuestCounters {
+				fmt.Fprintf(out, "→ %s: %s (%s)\n", svc.Name, warning.Message, warning.Code)
+			}
+		}
 	}
 	formatEarlyWarnings(out, r.Credentials)
 	formatAlerts(out, r.Alerts)
 }
 
-func getStatusURLs(pidPath, regPath, snapshotPath string) (StatusURLsResult, error) {
-	return commandStatus.getStatusURLs(pidPath, regPath, snapshotPath)
+func getStatusURLs(ctx context.Context, pidPath, regPath, snapshotPath string) (StatusURLsResult, error) {
+	return commandStatus.getStatusURLs(ctx, pidPath, regPath, snapshotPath)
 }
 
-func (s statusRead) getStatusURLs(pidPath, regPath, snapshotPath string) (StatusURLsResult, error) {
-	return s.getStatusURLsWithAuth(pidPath, regPath, snapshotPath, filepath.Join(filepath.Dir(snapshotPath), "auth-handoff.json"))
+func (s statusRead) getStatusURLs(ctx context.Context, pidPath, regPath, snapshotPath string) (StatusURLsResult, error) {
+	return s.getStatusURLsWithAuth(ctx, pidPath, regPath, snapshotPath, filepath.Join(filepath.Dir(snapshotPath), "auth-handoff.json"))
 }
 
-func getStatusURLsWithAuth(pidPath, regPath, snapshotPath, authHandoffPath string) (StatusURLsResult, error) {
-	return commandStatus.getStatusURLsWithAuth(pidPath, regPath, snapshotPath, authHandoffPath)
+func getStatusURLsWithAuth(ctx context.Context, pidPath, regPath, snapshotPath, authHandoffPath string) (StatusURLsResult, error) {
+	return commandStatus.getStatusURLsWithAuth(ctx, pidPath, regPath, snapshotPath, authHandoffPath)
 }
 
-func (s statusRead) getStatusURLsWithAuth(pidPath, regPath, snapshotPath, authHandoffPath string) (StatusURLsResult, error) {
-	status, err := s.getPollableStatus(pidPath, regPath, snapshotPath, authHandoffPath)
+func (s statusRead) getStatusURLsWithAuth(ctx context.Context, pidPath, regPath, snapshotPath, authHandoffPath string) (StatusURLsResult, error) {
+	status, err := s.getPollableStatus(ctx, pidPath, regPath, snapshotPath, authHandoffPath)
 	if err != nil {
 		return StatusURLsResult{}, err
 	}
@@ -703,6 +740,10 @@ func (s statusRead) getStatusURLsWithAuth(pidPath, regPath, snapshotPath, authHa
 	freshness := tsruntime.Classify(snapshot, loadErr, expected)
 
 	result := StatusURLsResult{
+		GuestLinks:              activeGuestViews(reg, statusNowFn()),
+		AccessLog:               accessHealthForRegistry(regPath, pidPath, snapshotPath),
+		Portal:                  status.Portal,
+		MCPBindings:             status.MCPBindings,
 		SchemaVersion:           inspect.SchemaVersion,
 		Alerts:                  status.Alerts,
 		Supervision:             status.Supervision,
@@ -717,6 +758,7 @@ func (s statusRead) getStatusURLsWithAuth(pidPath, regPath, snapshotPath, authHa
 		NodeAuthorized:          status.NodeAuthorized,
 		AuthorizedServiceCount:  status.AuthorizedServiceCount,
 		AuthStatus:              status.AuthStatus,
+		PendingLogins:           status.PendingLogins,
 		AuthURL:                 status.AuthURL,
 		ExpiresAt:               status.ExpiresAt,
 		Next:                    append([]string(nil), status.Next...),
@@ -983,6 +1025,10 @@ func appendStatusWarning(warnings []inspect.WarningView, code, message string) [
 
 func formatStatusURLs(r StatusURLsResult, out io.Writer) {
 	formatStatus(StatusResult{
+		GuestLinks:              r.GuestLinks,
+		AccessLog:               r.AccessLog,
+		Portal:                  r.Portal,
+		MCPBindings:             r.MCPBindings,
 		Alerts:                  r.Alerts,
 		Supervision:             r.Supervision,
 		DaemonRunning:           r.DaemonRunning,
@@ -996,6 +1042,7 @@ func formatStatusURLs(r StatusURLsResult, out io.Writer) {
 		NodeAuthorized:          r.NodeAuthorized,
 		AuthorizedServiceCount:  r.AuthorizedServiceCount,
 		AuthStatus:              r.AuthStatus,
+		PendingLogins:           r.PendingLogins,
 		AuthURL:                 r.AuthURL,
 		ExpiresAt:               r.ExpiresAt,
 		Next:                    r.Next,
@@ -1132,7 +1179,7 @@ Output lines:
 			if err != nil {
 				return err
 			}
-			r, err := getStatusURLsWithAuth(pidPath, regPath, snapshotPath, authHandoffPath)
+			r, err := getStatusURLsWithAuth(cmd.Context(), pidPath, regPath, snapshotPath, authHandoffPath)
 			if err != nil {
 				return err
 			}
@@ -1165,7 +1212,7 @@ Output lines:
 		if err != nil {
 			return err
 		}
-		r, err := getPollableStatus(pidPath, regPath, snapshotPath, authHandoffPath)
+		r, err := getPollableStatus(cmd.Context(), pidPath, regPath, snapshotPath, authHandoffPath)
 		if err != nil {
 			return err
 		}

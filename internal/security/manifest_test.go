@@ -44,25 +44,24 @@ func TestCapabilityManifestDeclaresTheAccessLogIdentitySchema(t *testing.T) {
 		t.Fatalf("LoadCapabilityManifest() error = %v", err)
 	}
 	for _, cap := range manifest.Capabilities {
-		// TCP carries no HTTP request and reaches no access-log middleware.
-		// It is the control for the rows below: an assertion that every
-		// capability claims an identity-bearing log schema would pass on a
-		// build that had wired identity into a raw TCP stream.
+		expected := "access_v1_http_attested_identity_privacy_preserving"
 		if cap.ServiceType == "tcp" {
-			if cap.LogSchema != "tcp_events_no_http_identity_fields" {
-				t.Fatalf("tcp log schema = %q, want the no-HTTP-identity schema", cap.LogSchema)
+			expected = "access_v1_tcp_open_close_attested_identity"
+		}
+		if cap.ServiceType == "funnel" {
+			expected = "access_v1_http_public_identity"
+		}
+		if cap.LogSchema != expected || cap.LogSink != "local_async_bounded_jsonl_access_store" {
+			t.Fatalf("%s schema/sink = %s/%s", cap.ID, cap.LogSchema, cap.LogSink)
+		}
+		if cap.ServiceType == "funnel" {
+			if cap.WhoIsCache != "not_applicable_public_identity" {
+				t.Fatal(cap.WhoIsCache)
 			}
-			if cap.WhoIsCache != "not_applicable" {
-				t.Fatalf("tcp whois cache = %q, want not_applicable", cap.WhoIsCache)
-			}
-			continue
+		} else if !strings.HasPrefix(cap.WhoIsCache, "60s_by_source_ip") {
+			t.Fatal(cap.WhoIsCache)
 		}
-		if !strings.HasPrefix(cap.LogSchema, "access_v2_whois_attested_login_and_node") {
-			t.Fatalf("%s log schema = %q, want the WhoIs-attested access schema", cap.ID, cap.LogSchema)
-		}
-		if !strings.HasPrefix(cap.WhoIsCache, "60s_by_source_ip") {
-			t.Fatalf("%s whois cache = %q, want the shared 60s source-address cache", cap.ID, cap.WhoIsCache)
-		}
+
 	}
 }
 
@@ -182,10 +181,14 @@ func TestSecurityCriticalClaimsStayWithinCapabilityManifest(t *testing.T) {
 			}
 		}
 		required := englishRequired
-		if filepath.Dir(path) == filepath.Join(root, "docs") {
-			// Translated prose keeps the actual API/flag names. English-only
-			// phrases such as "raw TCP" are localized in these editions.
-			required = []string{"tailnet", "tcp", "whois", "--allow"}
+		if filepath.Base(path) == "README.md" {
+			// The homepage summarizes the boundaries and links to the detailed
+			// authorization guides; SECURITY and CLI help retain API/flag names.
+			required = []string{"tailnet", "raw tcp", "docs/architecture.md", "docs/people.md", "docs/guest-links.md"}
+		} else if filepath.Dir(path) == filepath.Join(root, "docs") {
+			// Translations localize the boundary prose but keep protocol names
+			// and the same detailed authorization destinations.
+			required = []string{"tailnet", "tcp", "architecture.md", "people.md", "guest-links.md"}
 		}
 		for _, phrase := range required {
 			if !strings.Contains(lower, phrase) {

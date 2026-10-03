@@ -79,12 +79,11 @@ file gives `absent`. MCP `status` and its event stream use the same state field.
 
 MCP `logs` `since`, MCP `url` `wait`, `login --expires-in`, and
 `mcp.events_keepalive` accept Go duration syntax plus `d` for days, with their
-own bounds. MCP `funnel_ttl` and CLI `--funnel-ttl` accept only `1h`, `8h`,
-`24h`, `72h`, `7d`, or `never`; `168h` is refused. CLI `add --wait`,
+own bounds. MCP `funnel_ttl` and CLI `--funnel-ttl` use the [unified lifetime grammar](durations.md), including `90m`, `36h`, `3d`, `1w` and `until <date/time>`; min 1h, default public/guest max 7d, no public `never`. CLI `add --wait`,
 `share --wait`, and `url --wait` accept Go duration syntax plus fractional
 or composite days using `d`.
 
-`--json` changes only the output format. `tslink add --json` follows the same safety guardrails as the human path: Funnel services require `--public`; TCP services reject `--allow` because TSLink does not apply HTTP identity checks to raw TCP streams.
+`--json` changes only the output format (the `extend` command always emits JSON). `tslink add --json` follows the same safety guardrails as the human path: Funnel services require `--public`; TCP services reject `--allow` because TSLink does not apply HTTP identity checks to raw TCP streams.
 
 Every successful `share --json` result includes a nonempty `data.name`: the
 actually registered service name, including a collision suffix or a reused

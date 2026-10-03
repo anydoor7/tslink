@@ -56,6 +56,12 @@ func TestEveryTestPackageRunsTheSharedIsolation(t *testing.T) {
 		}
 		var testFiles []string
 		for _, entry := range entries {
+			// Match Go's module boundary: scoped third-party modules have
+			// their own native test job and cannot import TSLink's internal
+			// testenv. They are not binaries built by this module's ./....
+			if path != root && !entry.IsDir() && entry.Name() == "go.mod" {
+				return filepath.SkipDir
+			}
 			if !entry.IsDir() && strings.HasSuffix(entry.Name(), "_test.go") {
 				testFiles = append(testFiles, entry.Name())
 			}

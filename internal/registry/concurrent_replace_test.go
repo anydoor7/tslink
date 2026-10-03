@@ -45,6 +45,8 @@ func TestRegistryConcurrentReplacementReaders(t *testing.T) {
 		}},
 		{"LoadForDiagnostics", func() error { got, _, err := LoadForDiagnostics(path); return check(got, err) }},
 		{"Preflight", func() error { got, _, err := Preflight(path); return check(got, err) }},
+		{"PortalPreflight", func() error { got, _, err := PortalPreflight(path); return check(got, err) }},
+		{"guestPreflight", func() error { got, _, err := guestPreflight(path); return check(got, err) }},
 		{"loadForMutation", func() error { return check(loadForMutation(path)) }},
 	}
 	type result struct {

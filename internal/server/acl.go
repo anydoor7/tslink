@@ -57,19 +57,22 @@ func ACLMiddleware(allowedUsers []string, localClient *LocalClient) func(http.Ha
 			}
 
 			if localClient == nil {
-				slog.Warn("acl: no local client available", "remote_addr", r.RemoteAddr)
+				slog.Warn("acl: no local client available")
+				accessDeny(r, "acl")
 				writeAccessDenied(w, "access denied: unable to identify caller")
 				return
 			}
 
 			whois, err := localClient.WhoIs(r.Context(), r.RemoteAddr)
 			if err != nil {
-				slog.Warn("acl: failed to identify caller", "remote_addr", r.RemoteAddr, "error", err)
+				slog.Warn("acl: failed to identify caller", "error", err)
+				accessDeny(r, "acl")
 				writeAccessDenied(w, "access denied: unable to identify caller")
 				return
 			}
 			if whois == nil || whois.UserProfile == nil {
-				slog.Warn("acl: caller identity missing user profile", "remote_addr", r.RemoteAddr)
+				slog.Warn("acl: caller identity missing user profile")
+				accessDeny(r, "acl")
 				writeAccessDenied(w, "access denied: unable to identify caller")
 				return
 			}
@@ -80,8 +83,10 @@ func ACLMiddleware(allowedUsers []string, localClient *LocalClient) func(http.Ha
 				nodeTags = whois.Node.Tags
 			}
 
+			accessAttest(r, whois, matchedLegacy(login, nodeTags, allowedUsers))
 			if !isAllowed(login, nodeTags, allowedUsers) {
-				slog.Info("acl: access denied", "login", login, "remote_addr", r.RemoteAddr)
+				slog.Info("acl: access denied", "login", login)
+				accessDeny(r, "acl")
 				writeAccessDenied(w, "access denied")
 				return
 			}

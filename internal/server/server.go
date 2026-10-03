@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/anydoor7/tslink/internal/accesslog"
 	"github.com/anydoor7/tslink/internal/authmode"
 	"github.com/anydoor7/tslink/internal/config"
 	"github.com/anydoor7/tslink/internal/errcode"
@@ -293,6 +294,7 @@ var newRegistryWatcherFn = func() (registryWatcher, error) {
 
 // ServiceNode represents a single tsnet node serving one service.
 type ServiceNode struct {
+	tcpDone              <-chan struct{}
 	limitWarnings        *serviceLimitWarnings
 	tsnetSrv             tsnetServer
 	service              registry.Service
@@ -323,6 +325,8 @@ type AuthKeyProvider func(ctx context.Context, svc registry.Service) (string, er
 type AuthHandoff struct {
 	Service string
 	AuthURL string
+	// State is pending, complete or cancelled. Empty means pending for older callers.
+	State string
 }
 
 // AuthHandoffFunc receives credential-free interactive enrollment events.
@@ -337,7 +341,11 @@ type LifecycleReconcileFunc func(context.Context, time.Time) (bool, error)
 
 // Server manages multiple tsnet nodes, one per registered service.
 type Server struct {
-	nodes map[string]*ServiceNode
+	accessWriter             accesslog.Writer
+	accessOptions            accesslog.Options
+	lastAccessHealth         accesslog.Health
+	lastGuestCounterWarnings map[string]inspect.WarningView
+	nodes                    map[string]*ServiceNode
 	// stateReservations counts, per service, the startups in progress that
 	// may write into its tsnet state directory; see reserveNodeState. It is
 	// guarded by mu, like nodes.
@@ -383,6 +391,11 @@ type Server struct {
 	readyFn                 func() error
 	mcpControlPlane         *MCPControlPlane
 	mcpNode                 *mcpControlPlaneNode
+	portalLifecycleMu       sync.Mutex
+	portalRun               *portalRun
+	portalRoot              context.Context
+	portalState             runtimesnapshot.PortalState
+	portalRetryPending      atomic.Bool
 	// events fans runtime-state changes out to open control-plane event
 	// streams. It is always present so publishing is unconditional and cannot
 	// be skipped by a code path that forgot to check whether anyone is
@@ -427,6 +440,14 @@ func New(authKey, controlURL string) (*Server, error) {
 		daemonStartedAt:     time.Now().UTC(),
 		events:              newEventHub(),
 	}, nil
+}
+
+// AccessLogWriter returns the owning daemon's typed nonblocking writer. It is
+// nil before Run has initialized storage or when local storage is unavailable.
+func (s *Server) AccessLogWriter() accesslog.Writer {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.accessWriter
 }
 
 // SetEnsureTagsFn sets the function called to ensure ACL tags before starting nodes.
@@ -515,6 +536,15 @@ func staticAuthKeyProvider(authKey string) AuthKeyProvider {
 // Run starts all registered service nodes and watches for registry changes.
 func (s *Server) Run(ctx context.Context) error {
 	s.shuttingDown.Store(false)
+	cfg, cfgErr := config.LoadGlobalConfig()
+	if cfgErr != nil {
+		return cfgErr
+	}
+	if cfg.AccessLog != nil {
+		s.accessOptions = *cfg.AccessLog
+	}
+
+	s.portalRoot = ctx
 	if path, err := registryPathFn(); err == nil {
 		if _, err := registry.ExpirePeople(path, serverNowFn()); err != nil {
 			slog.Warn("initial people expiry reconciliation failed", "error", err)
@@ -536,6 +566,22 @@ func (s *Server) Run(ctx context.Context) error {
 		s.closeAllNodes()
 		return fmt.Errorf("registry watcher setup failed: %w", err)
 	}
+
+	writer := accesslog.NewLifecycle(s.cfgDir, s.accessOptions, serverNowFn)
+	s.mu.Lock()
+	s.accessWriter = writer
+	s.writeRuntimeSnapshotLocked(s.lastRegistryFingerprint, false)
+	s.mu.Unlock()
+	defer func() {
+		writer.Close()
+		timer := time.NewTimer(time.Second)
+		defer timer.Stop()
+		select {
+		case <-writer.Done():
+		case <-timer.C:
+			slog.Warn("access log drain timed out")
+		}
+	}()
 
 	if err := beforeInitialSyncFn(ctx); err != nil {
 		s.beginShutdown()
@@ -608,6 +654,9 @@ func (s *Server) startLifecycleTicker(ctx context.Context) <-chan struct{} {
 				return
 			case <-ticker.C:
 				now := nowFn()
+				if writer, ok := s.AccessLogWriter().(*accesslog.Lifecycle); ok {
+					writer.Retry(now)
+				}
 				if peoplePath != "" {
 					if _, err := registry.ExpirePeople(peoplePath, now); err != nil {
 						slog.Warn("people expiry reconciliation failed", "error", err)
@@ -619,7 +668,7 @@ func (s *Server) startLifecycleTicker(ctx context.Context) <-chan struct{} {
 					// Counted on every tick, so the backoff measures ticks since the
 					// latest sync whatever made this one run.
 					policyRetryDue := s.policyRetry.tick(maxPolicyRetryWaitTicks)
-					shouldSync = changed || err != nil || s.lastSyncFailed.Load() || s.identityRetryPending.Load() || policyRetryDue
+					shouldSync = changed || err != nil || s.lastSyncFailed.Load() || s.identityRetryPending.Load() || policyRetryDue || s.portalRetryPending.Load()
 					if err != nil {
 						slog.Warn("lifecycle reconciliation failed; applying in-memory wall-clock guard", "error", err)
 					}
@@ -887,6 +936,15 @@ func (s *Server) syncNodesAtGeneration(ctx context.Context, startup bool, genera
 		}
 		return outcome, generationCtx.Err()
 	}
+	if err := s.ensureRunning(generationCtx); err != nil {
+		return outcome, err
+	}
+	if generation != s.syncGeneration.Load() {
+		return outcome, nil
+	}
+	// Apply portal disable/replacement before any app startup or policy I/O
+	// can fail or wait for interactive enrollment.
+	s.syncPortal(generationCtx, reg.Portal)
 	// An already-running node can predate the identity record (for example,
 	// during an in-process upgrade). Capture the service used to construct it
 	// before any preflight path can withdraw its listener.
@@ -1575,6 +1633,9 @@ func serviceChanged(old, new registry.Service) bool {
 }
 
 func serviceChangedWithFallback(old, new registry.Service, fallbackControlURL string) bool {
+	if old.RestartGeneration != new.RestartGeneration {
+		return true
+	}
 	if oldLimits, newLimits := old.EffectiveRequestLimits(), new.EffectiveRequestLimits(); !reflect.DeepEqual(oldLimits, newLimits) {
 		return true
 	}
@@ -1584,7 +1645,7 @@ func serviceChangedWithFallback(old, new registry.Service, fallbackControlURL st
 	if old.Type != new.Type || old.Target != new.Target || old.Path != new.Path || old.File != new.File {
 		return true
 	}
-	if old.PreserveHost != new.PreserveHost {
+	if old.AccessLogPathMode != new.AccessLogPathMode || !reflect.DeepEqual(old.AccessLogPath, new.AccessLogPath) || old.GuestGate != new.GuestGate || old.PreserveHost != new.PreserveHost {
 		return true
 	}
 	if old.Port != new.Port || old.Ephemeral != new.Ephemeral || old.Funnel != new.Funnel || old.PublicAck != new.PublicAck || old.NoAutoProvision != new.NoAutoProvision {
@@ -1910,6 +1971,7 @@ func (s *Server) writeRuntimeSnapshotLocked(registryFingerprint string, complete
 	}
 	sort.Strings(names)
 
+	guestWarnings := s.guestCounterWarningsLocked()
 	states := make([]runtimesnapshot.ServiceState, 0, len(names))
 	for _, name := range names {
 		if failure, failed := s.serviceFailures[name]; failed {
@@ -1921,8 +1983,12 @@ func (s *Server) writeRuntimeSnapshotLocked(registryFingerprint string, complete
 		if node.tsnetSrv != nil {
 			certDomains = node.tsnetSrv.CertDomains()
 		}
+		warnings := node.limitWarnings.snapshot()
+		if warning, ok := guestWarnings[name]; ok {
+			warnings = append(warnings, warning)
+		}
 		states = append(states, runtimesnapshot.ServiceState{
-			Warnings:     node.limitWarnings.snapshot(),
+			Warnings:     warnings,
 			Service:      node.service,
 			NodeID:       node.nodeID,
 			RuntimeHost:  node.runtimeHost,
@@ -1949,6 +2015,12 @@ func (s *Server) writeRuntimeSnapshotLocked(registryFingerprint string, complete
 		snapshot = runtimesnapshot.NewPartialSnapshot(s.daemonPID, s.daemonStartedAt, registryFingerprint, time.Now().UTC(), states)
 	}
 	snapshot.Alerts = s.alerts
+	if writer, ok := s.accessWriter.(interface{ Health() accesslog.Health }); ok {
+		h := writer.Health()
+		snapshot.AccessLog = &h
+	}
+	s.refreshPortalURLLocked()
+	snapshot.Portal = s.portalState
 	if s.globalFailure != nil {
 		globalFailure := *s.globalFailure
 		globalFailure.Next = append([]string(nil), s.globalFailure.Next...)
@@ -1959,6 +2031,10 @@ func (s *Server) writeRuntimeSnapshotLocked(registryFingerprint string, complete
 		slog.Warn("runtime snapshot write failed; continuing with running services", "path", path, "error", err)
 	} else {
 		s.runtimeSnapshotDirty = false
+		s.lastGuestCounterWarnings = guestWarnings
+		if snapshot.AccessLog != nil {
+			s.lastAccessHealth = *snapshot.AccessLog
+		}
 	}
 	// Publish after the write, never before: an event stream rebuilds its
 	// payload by reading runtime.json back, so notifying first would hand a
@@ -2253,8 +2329,12 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service, prov
 		// every later write of serveTCPFn -- and tests swap that seam (and restore
 		// it from t.Cleanup) between test functions.
 		serveTCP := serveTCPFn
+		tcpAccess := &tcpAccessOptions{writer: s.accessWriter, identity: NewIdentityResolver(tsnetSrv.LocalClient), now: serverNowFn}
+		tcpDone := make(chan struct{})
+		node.tcpDone = tcpDone
 		go func() {
-			serveTCP(serveCtx, ln, svc.Target, svc.Name)
+			defer close(tcpDone)
+			serveTCP(context.WithValue(serveCtx, tcpAccessKey{}, tcpAccess), ln, svc.Target, svc.Name)
 		}()
 
 		slog.Info("tcp node ready", "name", svc.Name, "target", svc.Target, "port", port)
@@ -2316,6 +2396,9 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service, prov
 		return fmt.Errorf("unknown service type %q", svc.Type)
 	}
 
+	var guestPrivate http.Handler
+	var guestPath string
+
 	// ACL middleware: enforce per-service access control
 	if len(svc.AllowedUsers) > 0 && !svc.PeopleScoped {
 		if lc == nil {
@@ -2326,12 +2409,17 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service, prov
 			}
 		}
 	}
-	if !svc.Funnel {
+	if !svc.Funnel || svc.GuestGate {
 		peoplePath, err := registryPathFn()
 		if err != nil {
 			return err
 		}
-		handler = peopleMiddleware(peoplePath, svc, tsnetSrv.LocalClient, serverNowFn)(handler)
+		if svc.GuestGate {
+			guestPrivate = peopleMiddleware(peoplePath, svc, tsnetSrv.LocalClient, serverNowFn)(handler)
+			guestPath = peoplePath
+		} else {
+			handler = peopleMiddleware(peoplePath, svc, tsnetSrv.LocalClient, serverNowFn)(handler)
+		}
 	}
 
 	if identity == nil {
@@ -2362,7 +2450,14 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service, prov
 			}
 		}
 	}
-	handler = AccessLogMiddleware(svc.Name, identity, RequestLimitsMiddleware(svc, reportLimit, handler))
+	limitedHandler := RequestLimitsMiddleware(svc, reportLimit, handler)
+	if svc.GuestGate {
+		handler = newGuestGate(guestPath, svc, serverNowFn, s.accessWriter, RequestLimitsMiddleware(svc, reportLimit, guestPrivate), limitedHandler)
+		handlerCloser = handler.(*guestGate)
+	} else {
+		handler = limitedHandler
+	}
+	handler = AccessEventMiddleware(svc, s.accessOptions, s.accessWriter, identity, serverNowFn, handler)
 
 	var ln net.Listener
 	funnelListenerActive := false
@@ -2398,6 +2493,7 @@ func (s *Server) startNodeLocked(ctx context.Context, svc registry.Service, prov
 	ln = newLimitedListener(ln, httpMaxActiveConns, "http", svc.Name)
 
 	httpSrv := newHTTPServerFn(handler)
+	configureAccessHTTP(httpSrv)
 	ln = configureServiceHTTP(httpSrv, svc, ln, reportLimit)
 
 	node := &ServiceNode{
@@ -2604,7 +2700,7 @@ func activateListener(listenerCtx, parentCtx context.Context, closeResources fun
 	}
 }
 
-func (s *Server) waitForInteractiveNode(ctx context.Context, srv tsnetServer, service string) (*ipnstate.Status, error) {
+func (s *Server) waitForInteractiveNode(ctx context.Context, srv tsnetServer, service string) (result *ipnstate.Status, resultErr error) {
 	starter, ok := srv.(tsnetStarter)
 	if !ok {
 		return nil, fmt.Errorf("tsnet interactive start for %q is unavailable", service)
@@ -2619,6 +2715,19 @@ func (s *Server) waitForInteractiveNode(ctx context.Context, srv tsnetServer, se
 	}
 
 	var publishedURL string
+	handoff := s.authHandoffFn
+	defer func() {
+		if publishedURL != "" && handoff != nil {
+			state := "cancelled"
+			if resultErr == nil {
+				state = "complete"
+			}
+			// A cancelled enrollment still owns cleanup of its published offer.
+			if err := handoff(context.WithoutCancel(ctx), AuthHandoff{Service: service, AuthURL: publishedURL, State: state}); err != nil {
+				resultErr = errors.Join(resultErr, fmt.Errorf("finish interactive login for %q: %w", service, err))
+			}
+		}
+	}()
 	for {
 		status, err := lc.Status(ctx)
 		if err != nil {
@@ -2630,8 +2739,8 @@ func (s *Server) waitForInteractiveNode(ctx context.Context, srv tsnetServer, se
 			}
 			authURL := strings.TrimSpace(status.AuthURL)
 			if authURL != "" && authURL != publishedURL {
-				if s.authHandoffFn != nil {
-					if err := s.authHandoffFn(ctx, AuthHandoff{Service: service, AuthURL: authURL}); err != nil {
+				if handoff != nil {
+					if err := handoff(ctx, AuthHandoff{Service: service, AuthURL: authURL, State: "pending"}); err != nil {
 						return nil, fmt.Errorf("publish interactive login for %q: %w", service, err)
 					}
 				}
@@ -2684,6 +2793,11 @@ func (s *Server) stopNodeLocked(name string) {
 	}
 
 	node.cancel()
+	if gate, ok := node.handlerCloser.(*guestGate); ok {
+		if err := gate.Close(); err != nil {
+			slog.Warn("guest counters flush failed", "name", name, "error", err)
+		}
+	}
 	if node.httpSrv != nil {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), httpShutdownTimeout)
 		if err := shutdownHTTPServerFn(shutdownCtx, node.httpSrv); err != nil {
@@ -2702,6 +2816,15 @@ func (s *Server) stopNodeLocked(name string) {
 	if node.tsnetSrv != nil {
 		node.tsnetSrv.Close()
 	}
+	if node.tcpDone != nil {
+		timer := time.NewTimer(httpShutdownTimeout)
+		defer timer.Stop()
+		select {
+		case <-node.tcpDone:
+		case <-timer.C:
+			slog.Warn("TCP access close records may be incomplete", "code", "access_log_tcp_drain_timeout", "name", name)
+		}
+	}
 	if node.handlerCloser != nil {
 		_ = node.handlerCloser.Close()
 	}
@@ -2711,6 +2834,7 @@ func (s *Server) stopNodeLocked(name string) {
 
 func (s *Server) closeAllNodes() {
 	s.closeMCPControlPlane()
+	s.closePortal()
 	s.mu.Lock()
 	for name := range s.nodes {
 		s.stopNodeLocked(name)

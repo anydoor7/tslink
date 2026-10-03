@@ -17,6 +17,7 @@ import (
 	"github.com/anydoor7/tslink/internal/config"
 	"github.com/anydoor7/tslink/internal/duration"
 	"github.com/anydoor7/tslink/internal/inspect"
+	"github.com/anydoor7/tslink/internal/mcpscope"
 	"github.com/anydoor7/tslink/internal/output"
 	"github.com/anydoor7/tslink/internal/registry"
 	tsruntime "github.com/anydoor7/tslink/internal/runtime"
@@ -30,6 +31,7 @@ type AddResult struct {
 	Type          string                           `json:"type"`
 	Created       bool                             `json:"created"`
 	PreserveHost  bool                             `json:"preserve_host"`
+	Requestable   bool                             `json:"requestable"`
 	// ReplacedFields names the registry.json fields an add of an existing
 	// service changed or dropped; empty when the add created the service.
 	ReplacedFields  fieldList             `json:"replaced_fields"`
@@ -103,6 +105,7 @@ type AddParams struct {
 	Name            string
 	Proxy           string
 	PreserveHost    bool
+	Requestable     bool
 	Dir             string
 	TCP             string
 	Ephemeral       bool
@@ -155,8 +158,9 @@ func funnelOptionRequiresFunnel(option, funnelOption string, set, funnel bool) e
 	return nil
 }
 
-// resolveFunnelExpiry turns a Funnel TTL selection into a stored deadline.
-// A nil deadline with a nil error means "never". Callers must have already
+var durationNowFn = time.Now
+
+// resolveFunnelExpiry turns a lifetime into a UTC deadline. Callers have already
 // rejected a TTL supplied without Funnel; see funnelOptionRequiresFunnel.
 func resolveFunnelExpiry(funnel bool, ttl string, ttlSet bool, now time.Time) (*time.Time, error) {
 	if !funnel {
@@ -164,22 +168,22 @@ func resolveFunnelExpiry(funnel bool, ttl string, ttlSet bool, now time.Time) (*
 	}
 	if ttl == "" {
 		if ttlSet {
-			return nil, output.ErrUsage("funnel TTL must be one of: 1h, 8h, 24h, 72h, 7d, never")
+			return nil, output.ErrUsage("empty Funnel lifetime; valid examples: " + duration.Examples)
 		}
 		ttl = "24h"
 	}
-	duration, never, err := registry.ParseFunnelTTL(ttl)
+	if now.IsZero() {
+		now = durationNowFn()
+	}
+	policy, err := config.LoadLifetimePolicy()
+	if err != nil {
+		return nil, err
+	}
+	lifetime, err := policy.Resolve(ttl, duration.Public, false, now, time.Local)
 	if err != nil {
 		return nil, output.ErrUsage(err.Error())
 	}
-	if never {
-		return nil, nil
-	}
-	if now.IsZero() {
-		now = time.Now()
-	}
-	expiresAt := now.UTC().Add(duration)
-	return &expiresAt, nil
+	return lifetime.Deadline, nil
 }
 
 // barePortTarget reads a digits-only proxy or tcp target the way `tslink share`
@@ -228,6 +232,9 @@ func buildService(p AddParams) (registry.Service, error) {
 	}
 	if modes != 1 {
 		return registry.Service{}, registry.ServiceTypeAmbiguousError()
+	}
+	if p.Requestable && (p.Funnel || svcType == registry.TypeTCP) {
+		return registry.Service{}, output.ErrUsage("--requestable requires a private HTTP/file app")
 	}
 	if p.PreserveHost && svcType != registry.TypeProxy {
 		return registry.Service{}, output.ErrUsage("--preserve-host requires --proxy")
@@ -312,7 +319,7 @@ func buildService(p AddParams) (registry.Service, error) {
 			target = "http://" + target
 		}
 		return registry.Service{
-			Health: p.Health, Name: p.Name, Type: registry.TypeProxy, Target: target, PreserveHost: p.PreserveHost,
+			Health: p.Health, Requestable: p.Requestable, Name: p.Name, Type: registry.TypeProxy, Target: target, PreserveHost: p.PreserveHost,
 			RequestLimits: p.RequestLimits,
 			Ephemeral:     p.Ephemeral, Tags: tags, AllowedUsers: allowedUsers,
 			Funnel: p.Funnel, PublicAck: p.Public, NoAutoProvision: p.NoAutoProvision,
@@ -323,7 +330,7 @@ func buildService(p AddParams) (registry.Service, error) {
 
 	// Dir mode — path validation is done in RunE (needs filesystem)
 	return registry.Service{
-		Health: p.Health, Name: p.Name, Type: registry.TypeFile,
+		Health: p.Health, Requestable: p.Requestable, Name: p.Name, Type: registry.TypeFile,
 		RequestLimits: p.RequestLimits,
 		Ephemeral:     p.Ephemeral, Tags: tags, AllowedUsers: allowedUsers,
 		ControlURL: p.ControlURL,
@@ -413,6 +420,7 @@ func buildAddResult(ctx context.Context, svc registry.Service, created bool, pid
 		Type:            svc.Type,
 		Created:         created,
 		PreserveHost:    svc.PreserveHost,
+		Requestable:     svc.Requestable,
 		FunnelExpiresAt: cloneTimePointer(svc.FunnelExpiresAt),
 		URLPending:      true,
 		Endpoint:        view.Endpoint,
@@ -448,7 +456,7 @@ func buildAddResult(ctx context.Context, svc registry.Service, created bool, pid
 func resolveAddEndpoint(ctx context.Context, pidPath, regPath, snapshotPath, name string, wait time.Duration) (serviceURLResolution, string, error) {
 	deadline := time.Now().Add(wait)
 	for {
-		resolution, err := resolveServiceEndpointOnce(pidPath, regPath, snapshotPath, name)
+		resolution, err := resolveServiceEndpointOnce(ctx, pidPath, regPath, snapshotPath, name)
 		if err == nil {
 			return resolution, "", nil
 		}
@@ -505,10 +513,17 @@ var addKeepIfUnchangedFn = registry.KeepIfUnchanged
 // tool. The persisted service is returned alongside the result because the
 // human CLI rendering reports fields (TCP target and port) the result does not
 // carry.
-func executeAdd(ctx context.Context, svc registry.Service, regPath, pidPath, snapshotPath string, preserveFunnelExpiry bool, wait time.Duration, afterPersist ...func() error) (AddResult, registry.Service, error) {
+func executeAdd(ctx context.Context, svc registry.Service, regPath, pidPath, snapshotPath string, preserveFunnelExpiry bool, wait time.Duration, now time.Time, afterPersist ...func() error) (AddResult, registry.Service, error) {
 	registryWasAbsent := registryFileAbsent(regPath)
+	policy, err := config.LoadLifetimePolicy()
+	if err != nil {
+		return AddResult{}, registry.Service{}, err
+	}
 	outcome, err := registry.AddWithOutcome(regPath, svc, registry.AddOptions{
+		Context:              ctx,
 		PreserveFunnelExpiry: preserveFunnelExpiry,
+		LifetimePolicy:       &policy,
+		Now:                  now,
 	})
 	if err != nil {
 		return AddResult{}, registry.Service{}, err
@@ -528,7 +543,13 @@ func executeAdd(ctx context.Context, svc registry.Service, regPath, pidPath, sna
 			// rollback of a share still waiting on the registration it
 			// created. One gone by now was rolled back before this add could
 			// keep it, and is reported missing rather than present.
-			kept, err := addKeepIfUnchangedFn(regPath, persisted)
+			keep := addKeepIfUnchangedFn
+			if _, scoped := mcpscope.FromContext(ctx); scoped {
+				keep = func(path string, svc registry.Service) (bool, error) {
+					return registry.KeepIfUnchangedContext(ctx, path, svc)
+				}
+			}
+			kept, err := keep(regPath, persisted)
 			if err != nil {
 				return AddResult{}, registry.Service{}, err
 			}
@@ -682,6 +703,7 @@ Examples:
 				return output.ErrUsage("--yes and --force-unsafe-public require --recipe")
 			}
 			preserveHost, _ := cmd.Flags().GetBool("preserve-host")
+			requestable, _ := cmd.Flags().GetBool("requestable")
 			proxyTarget, _ := cmd.Flags().GetString("proxy")
 			dirPath, _ := cmd.Flags().GetString("dir")
 			tcpTarget, _ := cmd.Flags().GetString("tcp")
@@ -697,10 +719,12 @@ Examples:
 			dryRun, _ := cmd.Flags().GetBool("dry-run")
 
 			params := AddParams{
+				Now:             durationNowFn(),
 				RequestLimits:   requestLimitsFromFlags(cmd),
 				Name:            args[0],
 				Proxy:           proxyTarget,
 				PreserveHost:    preserveHost,
+				Requestable:     requestable,
 				Dir:             dirPath,
 				TCP:             tcpTarget,
 				Ephemeral:       ephemeral,
@@ -735,7 +759,7 @@ Examples:
 			}
 
 			if dryRun {
-				// Preview the same rule as AddWithOptions: an existing entry's
+				// Preview the same rule as AddWithOptions: a decided public
 				// deadline, or its explicit never, is kept unless the operator
 				// explicitly supplies --funnel-ttl.
 				if !cmd.Flags().Changed("funnel-ttl") {
@@ -748,8 +772,8 @@ Examples:
 						return err
 					}
 					for _, existing := range reg.Services {
-						if existing.Name == svc.Name {
-							if !svc.Funnel || existing.FunnelExpiresAt == nil || existing.FunnelExpiresAt.After(time.Now()) {
+						if existing.Name == svc.Name && existing.HasDecidedPublicLifetime() {
+							if !svc.Funnel || existing.FunnelExpiresAt == nil || existing.FunnelExpiresAt.After(params.Now) {
 								svc.FunnelExpiresAt = existing.FunnelExpiresAt
 							}
 							break
@@ -786,7 +810,7 @@ Examples:
 			if err != nil {
 				return err
 			}
-			result, persisted, err := executeAdd(cmd.Context(), svc, regPath, pidPath, snapshotPath, !cmd.Flags().Changed("funnel-ttl"), wait, func() error {
+			result, persisted, err := executeAdd(cmd.Context(), svc, regPath, pidPath, snapshotPath, !cmd.Flags().Changed("funnel-ttl"), wait, params.Now, func() error {
 				return ensureDaemonFn(cmd.Context(), cmd.ErrOrStderr(), noDaemonInstall)
 			})
 			if err != nil {
@@ -845,6 +869,7 @@ Examples:
 		},
 	}
 
+	addCmd.Flags().Bool("requestable", false, "Let human tailnet members ask for this app from the portal; discloses its name; default off")
 	addCmd.Flags().Bool("preserve-host", false, "Forward this node's canonical external Host (proxy only; recipes choose their default)")
 	addCmd.Flags().String("proxy", "", "Proxy target in host:port or URL form")
 	addRequestLimitFlags(addCmd)
@@ -853,7 +878,7 @@ Examples:
 	addCmd.Flags().Bool("ephemeral", false, "Register as ephemeral node (removed on disconnect)")
 	addCmd.Flags().String("tags", "", "Comma-separated ACL tags (e.g., tag:web,tag:internal)")
 	addCmd.Flags().Bool("funnel", false, "Expose publicly via Tailscale Funnel (proxy only, requires --public)")
-	addCmd.Flags().String("funnel-ttl", "24h", "Public Funnel lifetime: 1h, 8h, 24h, 72h, 7d, or never")
+	addCmd.Flags().String("funnel-ttl", "24h", "Public lifetime: relative or 'until <date/time>'; presets "+duration.Suggestions+"; min 1h, default max 7d; never refused")
 	addCmd.Flags().Bool("public", false, "Acknowledge public internet exposure for --funnel (only valid with --funnel)")
 	addCmd.Flags().Bool("no-auto-provision", false, "Disable automatic Funnel policy provisioning (only valid with --funnel)")
 	addCmd.Flags().String("allow", "", "Comma-separated allowed identities (e.g., user@example.com,tag:admin)")
