@@ -214,11 +214,20 @@ func TestCredentialMutationLockChild(t *testing.T) {
 		credentialMutationLockPathFunc = func() (string, error) { return path, nil }
 	}
 	oldTry := tryLockCredentialFileFunc
-	var blocked sync.Once
+	blocked := 0
+	var blockedFile *os.File
 	tryLockCredentialFileFunc = func(f *os.File) (bool, error) {
 		locked, err := oldTry(f)
 		if !locked && err == nil {
-			blocked.Do(func() { fmt.Println("blocked") })
+			if blockedFile == nil {
+				blockedFile = f
+			}
+			// Keyring-enabled writers take two different files. Only retries
+			// on the first contended descriptor prove continued exclusion.
+			if f == blockedFile && blocked < 2 {
+				blocked++
+				fmt.Println("blocked")
+			}
 		}
 		return locked, err
 	}
@@ -270,29 +279,70 @@ func assertCredentialMutationLockCrossProcess(t *testing.T, childFileOnly bool) 
 		unlock()
 		t.Fatal(err)
 	}
+	const hangGuard = 5 * time.Second
+	joined := make(chan struct{})
+	var waitErr error
+	startWait := sync.OnceFunc(func() {
+		go func() { waitErr = cmd.Wait(); close(joined) }()
+	})
+	killAndJoin := func() {
+		_ = cmd.Process.Kill()
+		startWait()
+		select {
+		case <-joined:
+		case <-time.After(hangGuard):
+			t.Error("credential child did not exit after kill within the hang guard")
+		}
+	}
 	defer func() {
+		killAndJoin()
 		if locked {
 			unlock()
 		}
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
 	}()
-	// The first event must come from a failed OS lock attempt, independent of
-	// how long child startup takes. A skipped lock reports "acquired" instead.
 	reader := bufio.NewReader(stdout)
-	if event, err := reader.ReadString('\n'); err != nil || event != "blocked\n" {
-		t.Fatalf("child did not observe the held credential lock: event=%q err=%v", event, err)
+	readEvent := func(want string) {
+		t.Helper()
+		type result struct {
+			event string
+			err   error
+		}
+		read := make(chan result, 1)
+		go func() { event, err := reader.ReadString('\n'); read <- result{event, err} }()
+		select {
+		case got := <-read:
+			if got.err != nil || got.event != want {
+				t.Fatalf("credential child event=%q err=%v, want %q", got.event, got.err, want)
+			}
+		case <-time.After(hangGuard):
+			killAndJoin()
+			select {
+			case <-read:
+			case <-time.After(hangGuard):
+				t.Fatal("credential IPC reader did not exit after child kill")
+			}
+			t.Fatalf("credential child did not report %q within the hang guard; killed and joined child", want)
+		}
 	}
+	// Two failed OS attempts prove exclusion across a retry. A child that
+	// ignores the first TryLock result reports "acquired" before the second.
+	readEvent("blocked\n")
+	readEvent("blocked\n")
 	if _, err := os.Stat(path + ".acquired"); !os.IsNotExist(err) {
 		t.Fatalf("child acquired credential lock before release: %v", err)
 	}
 	unlock()
 	locked = false
-	if event, err := reader.ReadString('\n'); err != nil || event != "acquired\n" {
-		t.Fatalf("child did not acquire released credential lock: event=%q err=%v", event, err)
+	readEvent("acquired\n")
+	startWait()
+	select {
+	case <-joined:
+	case <-time.After(hangGuard):
+		killAndJoin()
+		t.Fatal("credential child did not exit after lock release within the hang guard")
 	}
-	if err := cmd.Wait(); err != nil {
-		t.Fatalf("child failed after lock release: %v", err)
+	if waitErr != nil {
+		t.Fatalf("child failed after lock release: %v", waitErr)
 	}
 	if _, err := os.Stat(path + ".acquired"); err != nil {
 		t.Fatalf("child did not acquire lock after release: %v", err)

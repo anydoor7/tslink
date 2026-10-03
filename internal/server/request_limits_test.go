@@ -18,6 +18,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -90,6 +91,27 @@ func uploadTLSFrontServer(t *testing.T, svc registry.Service, handler http.Handl
 
 func TestRequestLimitsTLSHandshakeLifecycle(t *testing.T) {
 	t.Run("handshake_deadline", assertTLSHandshakeDeadline)
+	t.Run("configured_timeout", func(t *testing.T) {
+		svc := registry.Service{Name: "handshake-timeout", Type: registry.TypeFile, RequestLimits: &registry.RequestLimits{HeaderTimeout: "1s"}}
+		addr, limited, _ := uploadTLSFrontServer(t, svc, http.NotFoundHandler(), false, nil, 1)
+		client, err := net.Dial("tcp", addr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer client.Close()
+		deadline := time.Now().Add(5 * time.Second)
+		for len(limited.sem) != 1 && time.Now().Before(deadline) {
+			time.Sleep(time.Millisecond)
+		}
+		if len(limited.sem) != 1 {
+			t.Fatal("stalled handshake did not acquire its connection slot")
+		}
+		_ = client.SetReadDeadline(deadline)
+		if _, err := client.Read(make([]byte, 1)); !errors.Is(err, io.EOF) && !errors.Is(err, syscall.ECONNRESET) {
+			t.Fatalf("configured header timeout did not close stalled TLS handshake with EOF or reset: %v", err)
+		}
+		uploadRelease(t, limited, deadline)
+	})
 	for _, path := range []string{"client_close", "invalid", "close", "shutdown"} {
 		t.Run(path, func(t *testing.T) {
 			// The virtual subtest pins the short inner timer. Real socket
@@ -247,7 +269,9 @@ func TestRequestLimitsTLSCertificateLookupStop(t *testing.T) {
 				if capped && len(limited.sem) != 1 {
 					t.Fatal("handshake did not acquire cap")
 				}
-				budget, bound := 100*time.Millisecond, 400*time.Millisecond
+				// Completion while the provider is still blocked is the contract.
+				// Socket scheduling is bounded only by a loose hang guard.
+				budget, bound := 100*time.Millisecond, 5*time.Second
 				if stop == "shutdown_production_budget" {
 					budget, bound = httpShutdownTimeout, 6*time.Second
 				}
@@ -719,7 +743,7 @@ func TestRequestLimitsTLSUnconsumedBodyDrain(t *testing.T) {
 						})
 					}
 					closed := make(chan struct{})
-					addr, limited, _ := uploadTLSFrontServer(t, svc, handler, false, nil, 1, func(srv *http.Server) {
+					addr, limited, srv := uploadTLSFrontServer(t, svc, handler, false, nil, 1, func(srv *http.Server) {
 						prior := srv.ConnState
 						srv.ConnState = func(conn net.Conn, state http.ConnState) {
 							prior(conn, state)
@@ -777,7 +801,18 @@ func TestRequestLimitsTLSUnconsumedBodyDrain(t *testing.T) {
 					// disposal, rather than test cleanup, must release the slot.
 					// StateClosed follows connection close and the production
 					// slot release. Join that event instead of polling a clock.
-					<-closed
+					select {
+					case <-closed:
+					case <-time.After(time.Until(deadline)):
+						_ = conn.Close()
+						_ = srv.Close()
+						select {
+						case <-closed:
+						case <-time.After(bound):
+							t.Fatal("connection-close join did not finish after forced transport shutdown")
+						}
+						t.Fatal("server did not dispose of the request body and close the connection before the hang guard")
+					}
 					if got := len(limited.sem); got != 0 {
 						t.Errorf("closed connection still holds its slot: active=%d", got)
 					}
@@ -1837,7 +1872,12 @@ func assertTLSHandshakeDeadline(t *testing.T) {
 		serverConn, clientConn := net.Pipe()
 		defer clientConn.Close()
 		native := tls.Server(serverConn, &tls.Config{})
-		ln := &headerBudgetListener{timeout: "200ms", pending: map[net.Conn]struct{}{native: {}}, ready: make(chan preparedHTTPConn), done: make(chan struct{})}
+		svc := registry.Service{Name: "handshake-deadline", Type: registry.TypeFile, RequestLimits: &registry.RequestLimits{HeaderTimeout: "200ms"}}
+		ln := configureServiceHTTP(&http.Server{}, svc, nil, nil).(*headerBudgetListener)
+		if ln.timeout != svc.RequestLimits.HeaderTimeout {
+			t.Errorf("listener header timeout=%q, want configured %q", ln.timeout, svc.RequestLimits.HeaderTimeout)
+		}
+		ln.pending[native] = struct{}{}
 		ln.workers.Add(1)
 		finished := make(chan struct{})
 		started := time.Now()
