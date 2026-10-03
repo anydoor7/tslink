@@ -193,8 +193,12 @@ func TestAStaleRootIsReclaimedOnlyOnceItsOwnerIsGone(t *testing.T) {
 		return
 	}
 
+	parent := privateRootParent(t)
 	owner := startRootOwner(t, t.Name())
 	root := owner.root
+	if filepath.Dir(root) != parent {
+		t.Fatalf("owner root = %q, want it under private parent %q", root, parent)
+	}
 	home := filepath.Join(root, "home")
 	requireExists(t, home, "the owner's root must exist while it runs")
 	if state := rootMarkerState(root); state != markerHeld {
@@ -212,6 +216,9 @@ func TestAStaleRootIsReclaimedOnlyOnceItsOwnerIsGone(t *testing.T) {
 	if !eventually(func() bool { return inheritedRoot() == "" }) {
 		t.Fatalf("inheritedRoot() = %q 10s after its owner was killed, want \"\"", inheritedRoot())
 	}
+	if state := rootMarkerState(root); state != markerAbandoned {
+		t.Fatalf("marker state after the owner's death = %d, want markerAbandoned (%d)", state, markerAbandoned)
+	}
 
 	// The same kind of child as TestMainKeepsTestChosenTSLinkEnvInAChildOfAnIsolatedBinary,
 	// whose live parent root keeps this canary; this root's owner is dead.
@@ -219,6 +226,9 @@ func TestAStaleRootIsReclaimedOnlyOnceItsOwnerIsGone(t *testing.T) {
 	code, out, report := runIsolationProbe(t, t.Name(), env, "")
 	if code != 0 || report == nil {
 		t.Fatalf("next run: exit %d, report %v\n%s", code, report, out)
+	}
+	if filepath.Dir(report.Root) != parent || report.Root == root {
+		t.Fatalf("next run root = %q, want a fresh root under private parent %q", report.Root, parent)
 	}
 	if got, ok := report.Env["TSLINK_TEST_HELPER_CANARY"]; ok {
 		t.Fatalf("a binary started with %s naming a root whose owner is dead kept TSLINK_TEST_HELPER_CANARY=%q; that root must not be honoured", RootEnv, got)
