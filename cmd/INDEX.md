@@ -63,3 +63,10 @@ This index records the app recipe additions; the CLI manifest describes the comp
 - `duration_public_default_test.go`: compiled CLI private-to-public default and legacy controls.
 - `duration_guest_atomic_test.go`: deterministic first-invitation interleaving through hermetic REST.
 - `duration_entrypaths_test.go`: compiled dry-run, MCP add and share/recipe/extend posture controls.
+# Access history commands
+
+- `access_log.go`: access log/path CLI, read-only access_log/access_summary MCP tools and schemas, health formatting.
+- `access_log_config.go`: validated global CLI option set/get.
+- `access_log_test.go`: CLI/envelope, MCP read-only protocol, filters, strict configuration and doctor health.
+
+- `access_runtime_test.go`: current-instance status/doctor health, stale-state refusal and path mode commands.

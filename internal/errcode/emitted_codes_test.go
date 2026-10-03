@@ -62,9 +62,10 @@ var codeFallbackFunctions = map[string]int{
 // codes. Keep the exceptions qualified and explicit so a new carrier cannot
 // silently escape the registration check.
 var nonErrorCodeFields = map[string]string{
-	"internal/errcode.Code":        "the table itself, not an emission",
-	"internal/inspect.WarningView": "warning namespace, not error exits",
-	"cmd.DoctorFinding":            "doctor diagnostics, not error exits",
+	"internal/accesslog.AuditResult": "audit outcomes include success and intent, not command error exits",
+	"internal/errcode.Code":          "the table itself, not an emission",
+	"internal/inspect.WarningView":   "warning namespace, not error exits",
+	"cmd.DoctorFinding":              "doctor diagnostics, not error exits",
 }
 
 var codeConstName = regexp.MustCompile(`^Code[A-Z]`)

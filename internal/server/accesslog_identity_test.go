@@ -3,7 +3,9 @@ package server
 import (
 	"encoding/json"
 	"errors"
+	"github.com/anydoor7/tslink/internal/accesslog"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -305,7 +307,7 @@ func TestSecuritySemantics_AccessLogRecordSchema(t *testing.T) {
 		t.Fatalf("log message = %q, want access", msg)
 	}
 	attrs := accessRecord(t, ch, 0)
-	for _, key := range []string{"service", "method", "path", "status", "duration_ms", "bytes", "remote_addr", "user_agent", "login", "node"} {
+	for _, key := range []string{"service", "method", "path", "status", "duration_ms", "bytes", "remote_addr", "login", "node"} {
 		if _, ok := attrs[key]; !ok {
 			t.Fatalf("access log missing %q in %+v", key, attrs)
 		}
@@ -315,11 +317,11 @@ func TestSecuritySemantics_AccessLogRecordSchema(t *testing.T) {
 			t.Fatalf("access log invented identity field %q in %+v", key, attrs)
 		}
 	}
-	if len(attrs) != 10 {
-		t.Fatalf("access log has %d fields in %+v, want exactly the 10 documented ones", len(attrs), attrs)
+	if len(attrs) != 9 {
+		t.Fatalf("access log has %d fields in %+v, want exactly the 9 privacy-preserving fields", len(attrs), attrs)
 	}
 	if attrs["service"] != "svc" || attrs["method"] != http.MethodPost || attrs["path"] != "/submit" ||
-		attrs["remote_addr"] != "100.64.0.1:1234" || attrs["user_agent"] != "tslink-test" ||
+		attrs["remote_addr"] != "" ||
 		attrs["login"] != "alice@example.com" || attrs["node"] != "alice-laptop" {
 		t.Fatalf("access log attrs = %+v, want documented schema values", attrs)
 	}
@@ -411,6 +413,7 @@ func startHTTPNode(t *testing.T, fake *fakeTSNetServer, svc registry.Service) ht
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
+	s.accessWriter = legacyAccessCapture{}
 	oldNew := newTSNetServerFn
 	newTSNetServerFn = func(registry.Service, string, string, string) tsnetServer { return fake }
 	t.Cleanup(func() { newTSNetServerFn = oldNew })
@@ -515,4 +518,17 @@ func TestStartNodeLocked_ProxyShareSharesOneWhoIsWithItsAccessLog(t *testing.T) 
 	if got := calls.Load(); got != 1 {
 		t.Fatalf("WhoIs calls = %d for one proxied request, want the access log and the proxy to share 1", got)
 	}
+}
+
+// This synchronous in-memory writer preserves the original chain attribution
+// assertions. New real-listener tests separately verify the asynchronous store.
+type legacyAccessCapture struct{}
+
+func (legacyAccessCapture) Record(e accesslog.Event) bool {
+	slog.Info("access", "service", e.App, "method", e.Method, "path", e.Path, "status", e.Status, "duration_ms", e.DurationMS, "bytes", e.BytesOut, "remote_addr", e.Identity.Remote, "login", e.Identity.Login, "node", e.Identity.Node)
+	return true
+}
+func (w legacyAccessCapture) RecordResolved(e accesslog.Event, resolve func() accesslog.Identity) bool {
+	e.Identity = resolve()
+	return w.Record(e)
 }

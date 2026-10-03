@@ -101,6 +101,8 @@ import (
 // the shape of a command's name.
 var e2eExecutableSafeCommands = map[string]struct{}{
 	"tslink extend":        {}, // ExactArgs(1), no body on bare invocation.
+	"tslink access log":    {}, // Local file reads only, no credentials, socket or writes.
+	"tslink access path":   {}, // Bare invocation fails positional validation before mutation.
 	"tslink people":        {}, // Group help only; no leaf body.
 	"tslink people add":    {}, // ExactArgs(1), no body on bare invocation.
 	"tslink people update": {}, // ExactArgs(1), no body on bare invocation.

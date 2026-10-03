@@ -48,3 +48,11 @@ This index covers the recipe integration tests. The repository AGENTS.md describ
 - Watcher fixtures stop and join their workers, then close file nodes before temporary directory cleanup on Windows.
 
 - `duration_guest_policy_test.go`: first guest grant enforced by real HTTP proxy before invite history; restart/rollback latch.
+# Access history
+
+- `access_events.go`: HTTP completion events, connection-level Funnel identity, fresh authorization decisions/grants, async identity enrichment.
+- `access_tcp.go`: connection open/close events and stream-byte counting.
+- `access_events_test.go`: real tsnet-fake listeners for HTTP/file/Funnel/TCP, expiry, limits, privacy, health exclusion and saturation.
+
+- `access_privacy_regression_test.go`: real listener encoded capability replay and path-mode controls.
+- `access_lifecycle_regression_test.go`: active daemon init failure and existing-listener recovery.

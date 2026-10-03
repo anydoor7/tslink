@@ -58,4 +58,5 @@ node and explicit caller configuration.
   or cleared.
 - Daemon lifecycle uses PID and process-identity checks, with platform-specific
   stop behavior. See [daemon lifecycle](daemon-lifecycle.md).
-- Structured logging uses `slog`, including access logs.
+- Structured logging uses `slog` for diagnostics and bounded asynchronous local
+  access history for HTTP/file requests and TCP connections. See [access log](access-log.md).

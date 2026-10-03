@@ -34,6 +34,7 @@ Documentation is English-only. The only translations are the homepage READMEs in
 
 | Guide | File |
 |---|---|
+| Access log | [access-log.md](access-log.md) |
 | Agents | [agents.md](agents.md) |
 | App recipes | [apps.md](apps.md) |
 | Architecture | [architecture.md](architecture.md) |

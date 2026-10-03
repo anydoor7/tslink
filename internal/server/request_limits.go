@@ -66,6 +66,7 @@ func RequestLimitsMiddleware(service registry.Service, report func(inspect.Warni
 	limits, err := registry.ResolveRequestLimits(service.RequestLimits)
 	if err != nil {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			accessDeny(r, "limits")
 			http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		})
 	}
@@ -105,6 +106,7 @@ func RequestLimitsMiddleware(service registry.Service, report func(inspect.Warni
 		if limits.MaxBodyBytes >= 0 && r.ContentLength > limits.MaxBodyBytes {
 			e := &requestLimitError{code: registry.CodeRequestBodyLimit, message: fmt.Sprintf("service %s: request body exceeds %d bytes; adjust --max-request-body", service.Name, limits.MaxBodyBytes), limit: fmt.Sprint(limits.MaxBodyBytes), status: http.StatusRequestEntityTooLarge}
 			reject(e)
+			accessDeny(r, "limits")
 			http.Error(w, e.message, e.status)
 			return
 		}
