@@ -133,6 +133,8 @@ Birden fazla bilgisayarı tek listede görüntüleme planlanıyor. [Yol haritas�
 
 ## Belgeler ve lisans
 
+[llms.txt](../llms.txt) · [Ajanlar için hızlı başlangıç](agent-quickstart.md) · [Paylaşım aracı seçimi](comparison.md)
+
 [Başlangıç](getting-started.md) · [CLI başvurusu](cli-reference.md) · [Platformlar](platforms.md) · [Yerel modeller](local-ai.md) · [Katkıda bulunma](../CONTRIBUTING.md) · [Güvenlik](../SECURITY.md)
 
 Ticari kullanım dahil Apache License 2.0 geçerlidir. Yeniden dağıtırken [NOTICE](../NOTICE) ve [üçüncü taraf bildirimlerini](../THIRD_PARTY_NOTICES.md) koruyun. Tailscale şartları ve planları ayrıca geçerlidir.

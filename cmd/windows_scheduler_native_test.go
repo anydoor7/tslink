@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/synctest"
 
 	"github.com/spf13/cobra"
 )
@@ -74,43 +75,46 @@ func TestWindowsTaskDefinitionRoundTrip(t *testing.T) {
 }
 
 func TestWindowsTaskInstallMigratesAndStarts(t *testing.T) {
-	_, spec := isolateWindowsTask(t)
-	path, _ := windowsStartupScriptPath()
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte(windowsConfigEnvironment(spec.ConfigDir)+"\r\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	var calls []string
-	var task windowsSchedulerStatus
-	windowsSchedulerFn = func(ctx context.Context, op, name string, data []byte) (windowsSchedulerStatus, error) {
-		calls = append(calls, op)
-		if op == "register" {
-			task = windowsSchedulerStatus{Exists: true, Enabled: true, XML: string(data), State: 3}
+	// Installation and file I/O must not spend the fixture's 20 ms clock budget.
+	synctest.Test(t, func(t *testing.T) {
+		_, spec := isolateWindowsTask(t)
+		path, _ := windowsStartupScriptPath()
+		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+			t.Fatal(err)
 		}
-		if op == "run" {
-			isRunningFn = func(string) bool { return true }
-			task.State = 4
-			task.Engines = []int{42}
+		if err := os.WriteFile(path, []byte(windowsConfigEnvironment(spec.ConfigDir)+"\r\n"), 0600); err != nil {
+			t.Fatal(err)
 		}
-		return task, nil
-	}
-	detectSupervisionFn = detectSupervisionContext
-	if err := runInstallLocked(windowsTestCommand(), nil); err != nil {
-		t.Fatal(err)
-	}
-	if got := strings.Join(calls, ","); !strings.HasPrefix(got, "query,register,run,query") {
-		t.Fatalf("operations=%s", got)
-	}
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Fatalf("Startup entry remains: %v", err)
-	}
-	definition, _ := windowsTaskPath()
-	data, err := os.ReadFile(definition)
-	if err != nil || !windowsTaskMatches(data, spec) {
-		t.Fatalf("local task=%s,%v", data, err)
-	}
+		var calls []string
+		var task windowsSchedulerStatus
+		windowsSchedulerFn = func(ctx context.Context, op, name string, data []byte) (windowsSchedulerStatus, error) {
+			calls = append(calls, op)
+			if op == "register" {
+				task = windowsSchedulerStatus{Exists: true, Enabled: true, XML: string(data), State: 3}
+			}
+			if op == "run" {
+				isRunningFn = func(string) bool { return true }
+				task.State = 4
+				task.Engines = []int{42}
+			}
+			return task, nil
+		}
+		detectSupervisionFn = detectSupervisionContext
+		if err := runInstallLocked(windowsTestCommand(), nil); err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.Join(calls, ","); !strings.HasPrefix(got, "query,register,run,query") {
+			t.Fatalf("operations=%s", got)
+		}
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("Startup entry remains: %v", err)
+		}
+		definition, _ := windowsTaskPath()
+		data, err := os.ReadFile(definition)
+		if err != nil || !windowsTaskMatches(data, spec) {
+			t.Fatalf("local task=%s,%v", data, err)
+		}
+	})
 }
 
 func TestWindowsTaskInstallFailurePreservesMigrationEvidence(t *testing.T) {

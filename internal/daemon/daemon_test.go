@@ -53,7 +53,9 @@ func blockTestHelper(ignoreTerm bool) {
 	ch := make(chan os.Signal, 1)
 	// Registering with os/signal keeps a runtime signal goroutine alive, so the
 	// helper cannot trip Go's "all goroutines are asleep" deadlock detector.
+	// SIGURG belongs to Go's asynchronous preemption, not helper shutdown.
 	signal.Notify(ch, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(ch)
 	if os.Getenv("TSLINK_HELPER_READY") == "1" {
 		if _, err := io.WriteString(os.Stdout, "ready\n"); err != nil {
 			os.Exit(1)

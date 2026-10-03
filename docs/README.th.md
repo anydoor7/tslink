@@ -133,6 +133,8 @@ TSLink เหมาะเมื่อคนหนึ่งรันหลาย�
 
 ## เอกสารและสัญญาอนุญาต
 
+[llms.txt](../llms.txt) · [เริ่มต้นใช้งานสำหรับเอเจนต์](agent-quickstart.md) · [เลือกเครื่องมือสำหรับการแชร์](comparison.md)
+
 [เริ่มต้น](getting-started.md) · [อ้างอิง CLI](cli-reference.md) · [แพลตฟอร์ม](platforms.md) · [โมเดลในเครื่อง](local-ai.md) · [ร่วมพัฒนา](../CONTRIBUTING.md) · [ความปลอดภัย](../SECURITY.md)
 
 ใช้ Apache License 2.0 รวมถึงการใช้เชิงพาณิชย์ เมื่อแจกจ่ายต่อให้เก็บ [NOTICE](../NOTICE) และ[ประกาศของบุคคลที่สาม](../THIRD_PARTY_NOTICES.md) ไว้ ข้อกำหนดและแผนบริการของ Tailscale มีผลแยกต่างหาก

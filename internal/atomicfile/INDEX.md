@@ -1,14 +1,16 @@
-# Atomic file writes
+# Atomic file persistence
 
-- `atomicfile.go`: private state-file validation, atomic replacement and typed post-publication errors.
-- `atomicfile_test.go`: real files, pre-publication failures, cleanup and permissions.
-- `publication_test.go`: published bytes, wrapped sync errors and durable recovery.
-- `sync_test_seam.go`: isolated directory-sync failure injection.
-- `owner_unix.go`, `owner_windows.go`: platform ownership validation.
-- `atomicfile_parent_unix_test.go`, `atomicfile_parent_windows_test.go`: platform parent permissions.
-- `atomicfile_parent_junction_test.go`, `atomicfile_parent_junction_windows_test.go`: symlink and junction validation.
+- `atomicfile.go`: permission checks, exclusive temporary files, write/sync/close, replace and cleanup; `WriteFileWithReplace` retries the same prepared source using the caller's bounded policy.
+- `replace_retry_test.go`: prepared-source reuse, caller policy invocation, durable replacement and preparation failure.
+- `shared_windows.go`, `shared_other.go`: `OpenSharedRead` (read/write/delete sharing on Windows) and `ReplaceFile` (`FileRenameInfoEx` with POSIX semantics, `os.Rename` fallback); shared by the registry and the Windows supervisor state writer. `WriteFileInExistingDirWithReplace` in `atomicfile.go` pairs parent validation with a caller-owned replace step.
+- `shared_test.go`, `shared_windows_test.go`: caller retry of one prepared source, failure preservation, held-snapshot replacement with an `os.Rename` control, legacy-reader blocking, unsupported-class fallback and long Unicode paths.
+- `atomicfile_test.go`, `atomicfile_parent*_test.go`: existing I/O failure, permissions, symlink and junction tests.
+- `owner_*.go`: platform ownership, permissions and directory-sync behavior.
+- `settle.go`: `ReadSettled` rereads a Windows not-exist result while this package's temporary file for the target is present (a replacement is in progress), bounded at 255 ms of sleep; `ReplacementInProgress` recognises only `randomTempName` temporaries.
+- `settle_test.go`: genuine absence, in-progress wait, reappeared target, stale-temporary bound and unchanged non-not-exist errors, all with injected sleeps; `ConvergePrivateFile` treats a name that vanishes between Lstat and chmod as missing.
+
+- `publication_test.go`, `sync_test_seam.go`: typed post-publication failures and isolated directory-sync injection.
+- `shared_io.go`: shared state reads and main's bounded Windows 32/5 retry policy; all default atomic writers use `ReplaceFile`.
 - `testmain_test.go`: isolated test process setup.
-- `rename_unix.go`, `rename_windows.go`: bounded Windows retries for transient replacement sharing failures.
-- `rename_windows_test.go`: real held-reader replacement, persistent failure preservation and exact retry bounds.
-- `read_unix.go`, `read_windows.go`: snapshot reads with bounded Windows sharing retries.
-- `read_windows_test.go`: real exclusive-handle read failure and recovery, permanent errors and retry bounds.
+
+- `shared_io_test.go`, `shared_io_windows_test.go`: snapshot/error controls, default atomic publication with a held Windows snapshot, and exclusive-handle retry using synctest.

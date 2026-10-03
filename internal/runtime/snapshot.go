@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/anydoor7/tslink/internal/accesslog"
+	"github.com/anydoor7/tslink/internal/atomicfile"
 	"github.com/anydoor7/tslink/internal/health"
 	"github.com/anydoor7/tslink/internal/inspect"
 	"github.com/anydoor7/tslink/internal/registry"
@@ -57,8 +58,8 @@ const (
 
 var (
 	jsonMarshalIndent = json.MarshalIndent
-	readFile          = os.ReadFile
-	renameFile        = os.Rename
+	readFile          = atomicfile.ReadFile
+	renameFile        = atomicfile.ReplaceFile
 )
 
 // SnapshotVersion is runtime.json's schema_version. It reads the string
@@ -335,34 +336,9 @@ func Save(path string, snapshot Snapshot) error {
 	}
 	data = append(data, '\n')
 
-	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*.tmp")
-	if err != nil {
-		return err
-	}
-	tmpPath := tmp.Name()
-	cleanup := true
-	defer func() {
-		if cleanup {
-			_ = os.Remove(tmpPath)
-		}
-	}()
-
-	if err := tmp.Chmod(0o600); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if err := renameFile(tmpPath, path); err != nil {
-		return err
-	}
-	cleanup = false
-	return nil
+	return atomicfile.WriteFileWithReplace(path, data, func(source, target string) error {
+		return atomicfile.RetryFileOperation(func() error { return renameFile(source, target) })
+	})
 }
 
 func Load(path string) (*Snapshot, error) {

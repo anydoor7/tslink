@@ -144,7 +144,7 @@ func loadGlobalConfig(strict bool) (GlobalConfig, error) {
 	if err := atomicfile.ConvergePrivateFile(path); err != nil {
 		return GlobalConfig{}, err
 	}
-	data, err := os.ReadFile(path)
+	data, err := atomicfile.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return GlobalConfig{}, nil

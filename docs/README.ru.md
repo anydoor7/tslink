@@ -133,6 +133,8 @@ TSLink подходит, когда один человек запускает �
 
 ## Документация и лицензия
 
+[llms.txt](../llms.txt) · [Быстрый старт для агентов](agent-quickstart.md) · [Выбор инструмента для общего доступа](comparison.md)
+
 [Начало работы](getting-started.md) · [Справочник CLI](cli-reference.md) · [Платформы](platforms.md) · [Локальные модели](local-ai.md) · [Участие](../CONTRIBUTING.md) · [Безопасность](../SECURITY.md)
 
 Apache License 2.0, включая коммерческое использование. При распространении сохраняйте [NOTICE](../NOTICE) и [уведомления третьих сторон](../THIRD_PARTY_NOTICES.md). Условия и тарифы Tailscale применяются отдельно.

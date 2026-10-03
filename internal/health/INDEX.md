@@ -15,3 +15,5 @@
 
 - `alerts.go`: typed access-request notification and bounded notifier config reads.
 - `alerts_file_unix_test.go`: real FIFO, symlink, directory, oversized and partial notifier configuration probes.
+
+- Alert state reads use the shared state-file read/retry/settle helpers.

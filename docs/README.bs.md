@@ -133,6 +133,8 @@ Zajednički spisak za više računara je planiran. [Plan razvoja →](roadmap.md
 
 ## Dokumentacija i licenca
 
+[llms.txt](../llms.txt) · [Brzi početak za agente](agent-quickstart.md) · [Odabir alata za dijeljenje](comparison.md)
+
 [Prvi koraci](getting-started.md) · [CLI referenca](cli-reference.md) · [Platforme](platforms.md) · [Lokalni modeli](local-ai.md) · [Doprinosi](../CONTRIBUTING.md) · [Sigurnost](../SECURITY.md)
 
 Apache License 2.0, uključujući komercijalnu upotrebu. Pri redistribuciji zadržite [NOTICE](../NOTICE) i [obavijesti trećih strana](../THIRD_PARTY_NOTICES.md). Uslovi i paketi usluge Tailscale primjenjuju se zasebno.

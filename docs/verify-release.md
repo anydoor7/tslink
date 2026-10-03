@@ -4,7 +4,7 @@
 
 These commands require `gh` 2.49 or newer with `gh attestation verify`, `cosign` with `verify-blob --bundle` support, and either `sha256sum` or `shasum`. Use a tag such as `<version>` and an asset name such as `<artifact>` from the GitHub Release.
 
-The Sigstore certificate trust root is the [GitHub Actions OIDC issuer](https://token.actions.githubusercontent.com). Verification pins this repository's exact release workflow identity for the requested tag (constructed from `$repo` and `$version` in the command below) and the GitHub attestation signer workflow `github.com/anydoor7/tslink/.github/workflows/release.yml`. The tag ref binding means a matching signature or attestation must come from this repository's release workflow for the requested tag.
+Verification pins the [GitHub Actions OIDC issuer](https://docs.github.com/en/actions/concepts/security/openid-connect), `https://token.actions.githubusercontent.com`, this repository's exact release workflow identity for the requested tag (constructed from `$repo` and `$version` in the command below), and the GitHub attestation signer workflow `github.com/anydoor7/tslink/.github/workflows/release.yml`. The tag ref binding means a matching signature or attestation must come from this repository's release workflow for the requested tag.
 
 ```bash
 set -euo pipefail

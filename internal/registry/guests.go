@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"github.com/anydoor7/tslink/internal/atomicfile"
 	"github.com/anydoor7/tslink/internal/mcpaudit"
 	"github.com/anydoor7/tslink/internal/mcpscope"
 	"io"
@@ -400,6 +401,19 @@ func CheckGuestPIN(path, app, id, pin string, now time.Time) (view GuestView, re
 // Guest reads refuse special files and oversized input before reading. The
 // private registry is owner-controlled; atomic replacement remains the writer.
 func guestPreflight(path string) (*Registry, []ServiceIssue, error) {
+	var reg *Registry
+	var issues []ServiceIssue
+	err := atomicfile.ReadSettled(path, func() error {
+		return retryRegistryFileOperation(func() error {
+			var err error
+			reg, issues, err = guestPreflightOnce(path)
+			return err
+		})
+	})
+	return reg, issues, err
+}
+
+func guestPreflightOnce(path string) (*Registry, []ServiceIssue, error) {
 	info, e := os.Lstat(path)
 	if e != nil {
 		return nil, nil, e
@@ -407,7 +421,7 @@ func guestPreflight(path string) (*Registry, []ServiceIssue, error) {
 	if !info.Mode().IsRegular() || info.Size() > 16<<20 {
 		return nil, nil, fmt.Errorf("unsafe guest registry file")
 	}
-	f, e := os.Open(path)
+	f, e := openPortalRegistry(path)
 	if e != nil {
 		return nil, nil, e
 	}

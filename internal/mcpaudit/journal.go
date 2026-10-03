@@ -64,6 +64,21 @@ func (e *Entry) UnmarshalJSON(data []byte) error {
 }
 
 func (j Journal) Read() ([]Entry, error) {
+	var entries []Entry
+	err := atomicfile.ReadSettled(j.Path, func() error {
+		return atomicfile.RetryFileOperation(func() error {
+			var err error
+			entries, err = j.readOnce()
+			return err
+		})
+	})
+	if os.IsNotExist(err) {
+		return []Entry{}, nil
+	}
+	return entries, err
+}
+
+func (j Journal) readOnce() ([]Entry, error) {
 	info, err := os.Lstat(j.Path)
 	if os.IsNotExist(err) {
 		// Windows also reports not-exist for a path below a regular file.
@@ -79,7 +94,7 @@ func (j Journal) Read() ([]Entry, error) {
 				break
 			}
 		}
-		return []Entry{}, nil
+		return nil, err
 	}
 	if err != nil {
 		return nil, err
@@ -87,7 +102,7 @@ func (j Journal) Read() ([]Entry, error) {
 	if !info.Mode().IsRegular() || info.Size() > MaxBytes {
 		return nil, fmt.Errorf("unsafe or oversized MCP journal")
 	}
-	f, err := os.Open(j.Path)
+	f, err := atomicfile.OpenSharedRead(j.Path)
 	if err != nil {
 		return nil, err
 	}

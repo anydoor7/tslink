@@ -427,17 +427,37 @@ func (s *Store) append(e Event) error {
 func ReadHealth(configDir string) Health {
 	h := Health{Enabled: true}
 	path := filepath.Join(configDir, "access-log", "health.json")
-	info, err := os.Lstat(path)
+	var data []byte
+	err := atomicfile.ReadSettled(path, func() error {
+		return atomicfile.RetryFileOperation(func() error {
+			info, err := os.Lstat(path)
+			if err != nil {
+				return err
+			}
+			if !info.Mode().IsRegular() || info.Size() > 4096 {
+				return errors.New("unsafe access log health file")
+			}
+			f, err := atomicfile.OpenSharedRead(path)
+			if err != nil {
+				return err
+			}
+			defer f.Close()
+			data, err = io.ReadAll(io.LimitReader(f, 4097))
+			if err == nil && len(data) > 4096 {
+				return errors.New("oversized access log health file")
+			}
+			return err
+		})
+	})
 	if os.IsNotExist(err) {
 		h.Error = "access_log_not_started"
 		return h
 	}
-	if err != nil || !info.Mode().IsRegular() || info.Size() > 4096 {
+	if err != nil {
 		h.Error = "access_log_health_unavailable"
 		return h
 	}
-	data, err := os.ReadFile(path)
-	if err != nil || json.Unmarshal(data, &h) != nil {
+	if json.Unmarshal(data, &h) != nil {
 		h.Error = "access_log_health_unavailable"
 	}
 	return h

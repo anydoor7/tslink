@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/anydoor7/tslink/internal/atomicfile"
 	"github.com/anydoor7/tslink/internal/mcpaudit"
 )
 
@@ -212,7 +213,7 @@ func Query(configDir string, f Filter) (Result, error) {
 	// rollback and multiple event producers whose timestamps arrive out of order.
 	for i := len(files) - 1; i >= 0; i-- {
 		entry := files[i]
-		file, err := os.Open(filepath.Join(dir, entry.name))
+		file, err := atomicfile.OpenSharedRead(filepath.Join(dir, entry.name))
 		if err != nil {
 			if os.IsNotExist(err) {
 				continue

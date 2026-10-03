@@ -133,6 +133,8 @@ TSLink의 MCP는 TSLink 자체를 조작합니다. TSLink를 통해 다른 MCP �
 
 ## 문서와 라이선스
 
+[llms.txt](../llms.txt) · [에이전트 빠른 시작](agent-quickstart.md) · [공유 도구 선택](comparison.md)
+
 [시작 안내](getting-started.md) · [CLI 참조](cli-reference.md) · [플랫폼](platforms.md) · [로컬 모델](local-ai.md) · [기여](../CONTRIBUTING.md) · [보안](../SECURITY.md)
 
 상업적 사용을 포함해 Apache License 2.0을 적용합니다. 재배포 시 [NOTICE](../NOTICE) 및 [타사 고지](../THIRD_PARTY_NOTICES.md)를 보존하세요. Tailscale의 약관과 요금제는 별도로 적용됩니다.

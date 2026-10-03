@@ -133,6 +133,8 @@ TSLink 的 MCP 用來操作 TSLink 本身。如果你透過 TSLink 發布其他 
 
 ## 文件與授權
 
+[llms.txt](../llms.txt) · [代理程式快速入門](agent-quickstart.md) · [如何選擇分享工具](comparison.md)
+
 [入門](getting-started.md) · [CLI 參考](cli-reference.md) · [平台](platforms.md) · [本機模型](local-ai.md) · [貢獻](../CONTRIBUTING.md) · [安全](../SECURITY.md)
 
 採用 Apache License 2.0，允許商業使用。重新散布時請保留 [NOTICE](../NOTICE) 和[第三方聲明](../THIRD_PARTY_NOTICES.md)。Tailscale 的服務條款與方案另行適用。

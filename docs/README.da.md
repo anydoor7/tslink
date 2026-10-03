@@ -133,6 +133,8 @@ En fælles liste for flere computere er planlagt. [Udviklingsplan →](roadmap.m
 
 ## Dokumentation og licens
 
+[llms.txt](../llms.txt) · [Hurtig start for agenter](agent-quickstart.md) · [Vælg et værktøj til deling](comparison.md)
+
 [Introduktion](getting-started.md) · [CLI-reference](cli-reference.md) · [Platforme](platforms.md) · [Lokale modeller](local-ai.md) · [Bidrag](../CONTRIBUTING.md) · [Sikkerhed](../SECURITY.md)
 
 Apache License 2.0, også til kommerciel brug. Bevar [NOTICE](../NOTICE) og [tredjepartsmeddelelser](../THIRD_PARTY_NOTICES.md) ved videredistribution. Vilkår for Tailscale og abonnementer gælder separat.

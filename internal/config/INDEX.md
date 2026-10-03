@@ -8,3 +8,5 @@
 
 - `config.go`: shared configuration and strict MCP binding validation.
 - `mcp_scopes_test.go`: invalid bindings, unknown fields and legacy owner round trips.
+
+- Global configuration reads use the shared state-file read/retry/settle helpers.

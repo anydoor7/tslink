@@ -2931,7 +2931,7 @@ func (s *Server) readWatchedRegistryDecision(ctx context.Context, regPath string
 		// Invalid input still has a target: do not repeatedly cancel the settled
 		// load for identical malformed bytes. Failed syncs clear this target and
 		// remain eligible for a later retry.
-		data, readErr := os.ReadFile(regPath)
+		data, readErr := registry.ReadFile(regPath)
 		target.fingerprint = fmt.Sprintf("unreadable:%x:%v", sha256.Sum256(data), readErr)
 	}
 	s.mu.Lock()

@@ -150,6 +150,9 @@ elif "ls-tree" in args:
             git("init", "-q")
             git("config", "core.hooksPath", "/dev/null")
             git("config", "commit.gpgSign", "false")
+            # No detached auto-maintenance may outlive the fixture; see setUp below.
+            git("config", "maintenance.auto", "false")
+            git("config", "gc.auto", "0")
             git("config", "user.name", "fixture")
             git("config", "user.email", "fixture@example.invalid")
             initial = {"README.md": "docs\n", "cmd/list.go": "package cmd\n",
@@ -252,7 +255,12 @@ class ReviewRegressionTests(unittest.TestCase):
         self.repo = self.top / "pr-data"
         self.repo.mkdir()
         self.git("init", "-q")
+        # Every commit otherwise starts a detached `git maintenance run --auto`.
+        # On fixtures with hundreds of loose objects it repacks in the
+        # background and can recreate files while TemporaryDirectory cleanup
+        # removes this tree: OSError "Directory not empty: 'pr-data'".
         for key, value in (("core.hooksPath", "/dev/null"), ("commit.gpgSign", "false"),
+                           ("maintenance.auto", "false"), ("gc.auto", "0"),
                            ("user.name", "Fixture"), ("user.email", "fixture@example.invalid")):
             self.git("config", key, value)
         self.write("README.md", "docs\n")

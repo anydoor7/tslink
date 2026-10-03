@@ -133,6 +133,8 @@ L'affichage de plusieurs ordinateurs dans une liste commune est prévu. [Feuille
 
 ## Documentation et licence
 
+[llms.txt](../llms.txt) · [Démarrage rapide pour les agents](agent-quickstart.md) · [Choisir un outil de partage](comparison.md)
+
 [Premiers pas](getting-started.md) · [Référence CLI](cli-reference.md) · [Plateformes](platforms.md) · [Modèles locaux](local-ai.md) · [Contribuer](../CONTRIBUTING.md) · [Sécurité](../SECURITY.md)
 
 Apache License 2.0, y compris pour un usage commercial. Conservez [NOTICE](../NOTICE) et les [mentions de tiers](../THIRD_PARTY_NOTICES.md) lors de la redistribution. Les conditions et offres de Tailscale s'appliquent séparément.

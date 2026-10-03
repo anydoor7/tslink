@@ -2,6 +2,7 @@ package registry
 
 import (
 	"fmt"
+	"github.com/anydoor7/tslink/internal/atomicfile"
 	"io"
 )
 
@@ -9,6 +10,19 @@ import (
 // files before reading and uses a nonblocking open on Unix to avoid FIFO stalls
 // even if a concurrent writer replaces the path between checks.
 func PortalPreflight(path string) (*Registry, []ServiceIssue, error) {
+	var reg *Registry
+	var issues []ServiceIssue
+	err := atomicfile.ReadSettled(path, func() error {
+		return retryRegistryFileOperation(func() error {
+			var err error
+			reg, issues, err = portalPreflightOnce(path)
+			return err
+		})
+	})
+	return reg, issues, err
+}
+
+func portalPreflightOnce(path string) (*Registry, []ServiceIssue, error) {
 	f, err := openPortalRegistry(path)
 	if err != nil {
 		return nil, nil, err

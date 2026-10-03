@@ -120,7 +120,7 @@ func inviteDeviceTargetsForPaths(regPath, pidPath, snapshotPath string) ([]taila
 }
 
 func inviteDeviceTargetsForListPaths(regPath, pidPath, snapshotPath string) ([]tailapi.DeviceTarget, error) {
-	registryData, err := os.ReadFile(regPath)
+	registryData, err := registry.ReadFile(regPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, output.ErrConflict("registry.json is missing; invite completeness cannot be established")

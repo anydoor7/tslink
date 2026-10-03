@@ -133,6 +133,8 @@ tslink people remove alice@example.com
 
 ## Τεκμηρίωση και άδεια
 
+[llms.txt](../llms.txt) · [Γρήγορη εκκίνηση για πράκτορες](agent-quickstart.md) · [Επιλογή εργαλείου κοινής χρήσης](comparison.md)
+
 [Πρώτα βήματα](getting-started.md) · [Αναφορά CLI](cli-reference.md) · [Πλατφόρμες](platforms.md) · [Τοπικά μοντέλα](local-ai.md) · [Συνεισφορά](../CONTRIBUTING.md) · [Ασφάλεια](../SECURITY.md)
 
 Apache License 2.0, συμπεριλαμβανομένης της εμπορικής χρήσης. Διατηρήστε το [NOTICE](../NOTICE) και τις [ειδοποιήσεις τρίτων](../THIRD_PARTY_NOTICES.md) κατά την αναδιανομή. Οι όροι και τα πακέτα του Tailscale ισχύουν χωριστά.

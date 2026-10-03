@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/anydoor7/tslink/internal/filelock"
 	"github.com/anydoor7/tslink/internal/registry"
 )
 
@@ -95,6 +96,18 @@ func TestGuestRecipientPages(t *testing.T) {
 
 func TestGuestReadFailureRetainsSession(t *testing.T) {
 	f := newGuestFixture(t, "", true, true)
+	// Keep the background counter writer out of this read-failure experiment.
+	// Requests can share this lock; a restore notification cannot start a flush
+	// between restoring valid bytes and checking the original session.
+	lock, err := os.OpenFile(f.path+".lock", os.O_RDWR, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
+	if ok, err := filelock.TryReadLock(lock); err != nil || !ok {
+		t.Fatalf("read-failure fixture lock: acquired=%t err=%v", ok, err)
+	}
+	defer filelock.Unlock(lock)
 	cookies := f.login()
 	raw, err := os.ReadFile(f.path)
 	if err != nil {
@@ -103,9 +116,10 @@ func TestGuestReadFailureRetainsSession(t *testing.T) {
 	if err = os.WriteFile(f.path, []byte(`{"guests":`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	start := time.Now()
 	resp, body := f.request("GET", "/", "", cookies)
-	if resp.StatusCode != 503 || resp.Header.Get("Retry-After") != "1" || time.Since(start) > time.Second || strings.Contains(body, "photos") || f.hits.Load() != 0 {
+	// The response-time contract is checked with virtual time in
+	// TestGuestReadFailureVirtualBoundAndSessionRecovery.
+	if resp.StatusCode != 503 || resp.Header.Get("Retry-After") != "1" || strings.Contains(body, "photos") || f.hits.Load() != 0 {
 		t.Fatal("temporary read failure response")
 	}
 	if err = os.WriteFile(f.path, raw, 0600); err != nil {

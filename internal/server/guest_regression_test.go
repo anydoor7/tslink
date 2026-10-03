@@ -430,7 +430,11 @@ func TestGuestWriterLatency(t *testing.T) {
 	if elapsed < 0 {
 		t.Fatal("writer failed")
 	}
-	after, e := guestRequest(f.client, f.base, "/after", cookies)
+	// A background usage flush can briefly hold the registry writer lock after
+	// the unrelated revoke. A 503 preserves this session; a 401 must still fail.
+	after, e := awaitGuestRecovery(func() (int, error) {
+		return guestRequest(f.client, f.base, "/after", cookies)
+	})
 	if e != nil {
 		t.Fatal(e)
 	}

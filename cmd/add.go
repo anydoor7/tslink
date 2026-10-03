@@ -585,7 +585,7 @@ func executeAdd(ctx context.Context, svc registry.Service, regPath, pidPath, sna
 // registryFileAbsent reports whether registry.json is missing or blank, the
 // states in which a write creates a new registry.
 func registryFileAbsent(regPath string) bool {
-	data, err := os.ReadFile(regPath)
+	data, err := registry.ReadFile(regPath)
 	if err != nil {
 		return os.IsNotExist(err)
 	}

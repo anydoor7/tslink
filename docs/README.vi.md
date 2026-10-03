@@ -133,6 +133,8 @@ Danh sách chung cho nhiều máy tính đang được lên kế hoạch. [Lộ 
 
 ## Tài liệu và giấy phép
 
+[llms.txt](../llms.txt) · [Bắt đầu nhanh cho tác tử](agent-quickstart.md) · [Chọn công cụ chia sẻ](comparison.md)
+
 [Bắt đầu](getting-started.md) · [Tham chiếu CLI](cli-reference.md) · [Nền tảng](platforms.md) · [Mô hình cục bộ](local-ai.md) · [Đóng góp](../CONTRIBUTING.md) · [Bảo mật](../SECURITY.md)
 
 Apache License 2.0 cho phép cả sử dụng thương mại. Giữ [NOTICE](../NOTICE) và [thông báo của bên thứ ba](../THIRD_PARTY_NOTICES.md) khi phân phối lại. Điều khoản và gói dịch vụ của Tailscale áp dụng riêng.

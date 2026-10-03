@@ -84,3 +84,13 @@ own bounds. MCP `funnel_ttl` and CLI `--funnel-ttl` use the [unified lifetime gr
 or composite days using `d`.
 
 `--json` changes only the output format (the `extend` command always emits JSON). `tslink add --json` follows the same safety guardrails as the human path: Funnel services require `--public`; TCP services reject `--allow` because TSLink does not apply HTTP identity checks to raw TCP streams.
+
+Every successful `share --json` result includes a nonempty `data.name`: the
+actually registered service name, including a collision suffix or a reused
+service's name. This also applies to pending `status: "needs_login"` results;
+their `auth_url` is for human enrollment, not recipient access. MCP `share`
+includes the same `name` in both structured content and JSON text, and its
+output schema requires it. Use the returned name for `url`, `status --urls
+--name`, and `remove` (MCP `unshare`). Never guess or fall back to the requested
+name. If it is missing, stop and check the installed version and contract.
+See [Agent quickstart](agent-quickstart.md) for the complete handoff and undo flow.

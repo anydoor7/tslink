@@ -136,6 +136,18 @@ func loadAuthHandoff(path string) (authHandoffRecord, error) {
 // Read expired records too: a terminal event must still retire its exact offer.
 // Readers select unexpired entries using their own captured clock.
 func loadAuthHandoffs(path string) ([]authHandoffRecord, error) {
+	var entries []authHandoffRecord
+	err := atomicfile.ReadSettled(path, func() error {
+		return atomicfile.RetryFileOperation(func() error {
+			var err error
+			entries, err = loadAuthHandoffsOnce(path)
+			return err
+		})
+	})
+	return entries, err
+}
+
+func loadAuthHandoffsOnce(path string) ([]authHandoffRecord, error) {
 	f, err := openAuthHandoff(path)
 	if err != nil {
 		return nil, err

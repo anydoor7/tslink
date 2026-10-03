@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"errors"
+	"github.com/anydoor7/tslink/internal/atomicfile"
 	"os"
 )
 
@@ -13,5 +14,5 @@ func openAuthHandoff(path string) (*os.File, error) {
 	if !info.Mode().IsRegular() {
 		return nil, errors.New("auth handoff must be a regular file")
 	}
-	return os.Open(path)
+	return atomicfile.OpenSharedRead(path)
 }

@@ -66,7 +66,7 @@ func LoadOwnership(path string) (OwnershipLedger, error) {
 	if err := atomicfile.ConvergePrivateFile(path); err != nil {
 		return OwnershipLedger{}, ownershipLoadError(path, err)
 	}
-	data, err := os.ReadFile(path)
+	data, err := atomicfile.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return emptyOwnershipLedger(), nil

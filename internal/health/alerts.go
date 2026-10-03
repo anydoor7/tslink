@@ -143,7 +143,7 @@ type Recorder struct {
 
 func NewRecorder(path string, c NotifierConfig) *Recorder {
 	r := &Recorder{Path: path, Config: c, Send: Notify, WriteFile: atomicfile.WriteFile}
-	b, err := os.ReadFile(path)
+	b, err := atomicfile.ReadFile(path)
 	if err == nil {
 		if json.Unmarshal(b, &r.State) != nil || r.State.Version != 1 {
 			r.Error = "alert_state_invalid"

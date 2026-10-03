@@ -8,3 +8,5 @@
 - `testmain_test.go`: shared isolated test environment.
 
 - `lifecycle.go`: typed authority changes, per-invocation MCP collection and CLI/lifecycle receipts.
+
+- Journal reads settle/retry before interpreting absence, and use shared-delete snapshots with the existing size bound.

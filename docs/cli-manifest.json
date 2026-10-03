@@ -3092,6 +3092,10 @@
         }
       ],
       "json_result_fields": {
+        "name": {
+          "type": "string",
+          "description": "Actually registered service name, always present on success, including needs_login. Use this name for continuation and removal; never guess or fall back to the requested name."
+        },
         "preserve_host": {
           "type": "boolean",
           "description": "Whether the returned HTTP share forwards this node's trusted canonical external Host. Conflicting reuse is refused."

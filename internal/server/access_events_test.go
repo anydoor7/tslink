@@ -108,11 +108,10 @@ func setupAccessNode(t *testing.T, svc registry.Service, who *apitype.WhoIsRespo
 func drainAccess(t *testing.T, store *accesslog.Store) {
 	t.Helper()
 	store.Close()
-	select {
-	case <-store.Done():
-	case <-time.After(5 * time.Second):
-		t.Fatal("access writer drain stalled")
-	}
+	// Join the worker before querying or deleting its files. Fsync duration is
+	// not a five-second service contract; the test process timeout still catches
+	// a deadlock. The delayed-worker regression pins this join with synctest.
+	<-store.Done()
 }
 func requestAccess(t *testing.T, url, method, body string) int {
 	t.Helper()

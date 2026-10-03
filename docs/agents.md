@@ -23,8 +23,11 @@ MCP client to launch the installed `tslink` command with the single argument
 ```
 
 The `share` tool accepts the same path/port/host:port targets as the CLI. When
-authorization is pending it returns `{"status":"needs_login","auth_url":"..."}`
-as a normal tool result so an agent can open the URL and retry. Credential
+authorization is pending, its normal successful result includes
+`{"name":"preview-2","status":"needs_login","auth_url":"..."}`. Every
+successful share returns its actually registered `name`. After human enrollment,
+pass that name to `url`; use it for `unshare` to undo. Never guess or fall back to
+the requested name. Credential
 values are never returned through MCP. The same tools can also be served to
 other machines on your tailnet; see [Remote MCP Control Plane](remote-mcp.md).
 
