@@ -278,10 +278,23 @@ func TestGuestStreams(t *testing.T) {
 						continued = e == nil && string(msg) == "after"
 					}
 				}
-				next, e := guestRequest(f.client, f.base, "/next", cookies)
-				if e != nil {
-					t.Fatal(e)
+				// Expiry persistence and counter flushing may still hold the writer
+				// lock after stream cancellation. The documented bounded reader
+				// returns 503 during that interval and preserves sessions for retry.
+				// Only retry this temporary refusal; every other status is asserted
+				// immediately, and a persistent outage still fails within five seconds.
+				settledRequest := func(path string, cookies []*http.Cookie) *http.Response {
+					deadline := time.Now().Add(5 * time.Second)
+					for {
+						resp, _ := f.request("GET", path, "", cookies)
+						if resp.StatusCode != http.StatusServiceUnavailable || !time.Now().Before(deadline) {
+							return resp
+						}
+						t.Log("retrying temporary registry refusal after stream termination")
+						time.Sleep(50 * time.Millisecond)
+					}
 				}
+				next := settledRequest("/next", cookies).StatusCode
 				t.Logf("continued_after_%s=%t next_http_status=%d", end, continued, next)
 				if next != 401 {
 					t.Error("new request must be denied")
@@ -289,12 +302,12 @@ func TestGuestStreams(t *testing.T) {
 				if continued {
 					t.Error("stream still transfers application data after grant ends")
 				}
-				resp, _ := f.request("GET", "/guest/"+longerToken, "", nil)
+				resp := settledRequest("/guest/"+longerToken, nil)
 				if resp.StatusCode != 303 {
 					t.Fatal("longer grant lost access", resp.StatusCode)
 				}
-				if status, e := guestRequest(f.client, f.base, "/longer", resp.Cookies()); e != nil || status != 204 {
-					t.Fatal("longer grant app access", status, e)
+				if status := settledRequest("/longer", resp.Cookies()).StatusCode; status != 204 {
+					t.Fatal("longer grant app access", status)
 				}
 			})
 		}
