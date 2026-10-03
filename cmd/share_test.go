@@ -670,6 +670,7 @@ func TestResolveSharePathsAndCommandOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	setCommandTestContext(t, shareCmd)
 	t.Cleanup(func() {
 		shareCmd.SetOut(nil)
 		shareCmd.SetErr(nil)

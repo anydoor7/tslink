@@ -395,7 +395,7 @@ func TestBootstrapAddSucceedsWhenEnrollmentURLArrivesLate(t *testing.T) {
 		t.Fatal(err)
 	}
 	resetCommandLocalFlags(t, addCmd)
-	addCmd.SetContext(context.Background())
+	setCommandTestContext(t, addCmd)
 	addCmd.SetErr(&stderr)
 	var stdout bytes.Buffer
 	addCmd.SetOut(&stdout)

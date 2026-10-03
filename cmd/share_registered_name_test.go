@@ -36,9 +36,7 @@ func TestShareRegisteredNameJSONAndMCP(t *testing.T) {
 								if err != nil {
 									t.Fatal(err)
 								}
-								oldContext := command.Context()
-								command.SetContext(t.Context())
-								t.Cleanup(func() { command.SetContext(oldContext) })
+								setCommandTestContext(t, command)
 								for flag, value := range map[string]string{"name": requestedName, "ephemeral": "true", "wait": "0s"} {
 									old := command.Flags().Lookup(flag).Value.String()
 									t.Cleanup(func() { _ = command.Flags().Set(flag, old) })

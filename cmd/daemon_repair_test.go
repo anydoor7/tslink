@@ -170,7 +170,7 @@ func TestRepairSavedConfigurationRefusal(t *testing.T) {
 					t.Fatal(err)
 				}
 				resetCommandLocalFlags(t, command)
-				command.SetContext(context.Background())
+				setCommandTestContext(t, command)
 				if err := command.Flags().Set("yes", "true"); err != nil {
 					t.Fatal(err)
 				}
@@ -287,7 +287,7 @@ func TestRepairShareRefusalDoesNotClaimSavedConfiguration(t *testing.T) {
 					t.Fatal(err)
 				}
 				resetCommandLocalFlags(t, command)
-				command.SetContext(context.Background())
+				setCommandTestContext(t, command)
 				err = command.RunE(command, []string{"3000"})
 				if code, _ := registry.ErrorCode(err); code != wantCode {
 					t.Fatalf("err=%v", err)

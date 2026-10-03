@@ -1,5 +1,7 @@
 # People sharing files
 
+- `command_context_test.go`: direct Cobra handler context initialization and exact cleanup isolation controls.
+
 This index records the people sharing lifecycle implementation and regression tests in this directory. Other package files are described by the repository architecture guide.
 
 - [people.go](people.go)
