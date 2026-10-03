@@ -133,6 +133,8 @@ Em breve: links de visitantes pelo navegador, durações flexíveis, registro de
 
 ## Documentação e licença
 
+[llms.txt](../llms.txt) · [Início rápido para agentes](agent-quickstart.md) · [Escolha uma ferramenta de compartilhamento](comparison.md)
+
 [Primeiros passos](getting-started.md) · [Referência CLI](cli-reference.md) · [Plataformas](platforms.md) · [Modelos locais](local-ai.md) · [Contribuições](../CONTRIBUTING.md) · [Segurança](../SECURITY.md)
 
 Apache License 2.0, incluindo uso comercial. Mantenha [NOTICE](../NOTICE) e os [avisos de terceiros](../THIRD_PARTY_NOTICES.md) ao redistribuir. Os termos e planos do Tailscale se aplicam separadamente.

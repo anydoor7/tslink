@@ -175,6 +175,8 @@ tslink people remove alice@example.com
 
 ## الوثائق والترخيص
 
+[llms.txt](../llms.txt) · [دليل البدء السريع للوكلاء](agent-quickstart.md) · [اختيار أداة للمشاركة](comparison.md)
+
 [البدء](getting-started.md) · [مرجع CLI](cli-reference.md) · [المنصات](platforms.md) · [النماذج المحلية](local-ai.md) · [المساهمة](../CONTRIBUTING.md) · [الأمان](../SECURITY.md)
 
 Apache License 2.0، بما في ذلك الاستخدام التجاري. احتفظ بملف [NOTICE](../NOTICE) و[إشعارات الجهات الخارجية](../THIRD_PARTY_NOTICES.md) عند إعادة التوزيع. تُطبّق شروط Tailscale وخططه بصورة منفصلة.

@@ -133,6 +133,8 @@ Coming next: browser guest links, flexible durations, an access log, a home page
 
 ## Documentation and license
 
+[llms.txt](llms.txt) · [Agent quickstart](docs/agent-quickstart.md) · [Choose a sharing tool](docs/comparison.md)
+
 [Getting started](docs/getting-started.md) · [CLI reference](docs/cli-reference.md) · [Platforms](docs/platforms.md) · [Local models](docs/local-ai.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md)
 
 Apache License 2.0, including commercial use. Keep [NOTICE](NOTICE) and [third-party notices](THIRD_PARTY_NOTICES.md) when redistributing. Tailscale's terms and plans apply separately.

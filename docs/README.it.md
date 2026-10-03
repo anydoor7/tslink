@@ -133,6 +133,8 @@ In arrivo: link ospite per browser, durate flessibili, registro degli accessi, p
 
 ## Documentazione e licenza
 
+[llms.txt](../llms.txt) · [Guida rapida per agenti](agent-quickstart.md) · [Scegliere uno strumento di condivisione](comparison.md)
+
 [Primi passi](getting-started.md) · [Riferimento CLI](cli-reference.md) · [Piattaforme](platforms.md) · [Modelli locali](local-ai.md) · [Contribuire](../CONTRIBUTING.md) · [Sicurezza](../SECURITY.md)
 
 Apache License 2.0, anche per uso commerciale. Conserva [NOTICE](../NOTICE) e gli [avvisi di terze parti](../THIRD_PARTY_NOTICES.md) durante la ridistribuzione. Termini e piani Tailscale si applicano separatamente.
