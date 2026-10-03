@@ -94,7 +94,7 @@ func TestHandleTCPConn_Bidirectional(t *testing.T) {
 
 	select {
 	case <-done:
-	case <-time.After(2 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("handleTCPConn did not return")
 	}
 }
@@ -116,7 +116,7 @@ func TestServeTCP_ClosedListener(t *testing.T) {
 
 	select {
 	case <-done:
-	case <-time.After(2 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("serveTCP did not return for closed listener")
 	}
 }
@@ -141,7 +141,7 @@ func TestServeTCP_ForwardsToBackend(t *testing.T) {
 		_ = proxyLn.Close()
 		select {
 		case <-serveDone:
-		case <-time.After(2 * time.Second):
+		case <-time.After(5 * time.Second):
 			t.Error("serveTCP did not stop during cleanup")
 		}
 	})
@@ -175,7 +175,7 @@ func TestServeTCP_ForwardsToBackend(t *testing.T) {
 	}
 	select {
 	case <-serveDone:
-	case <-time.After(2 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("serveTCP did not wait for its connection handler")
 	}
 }
@@ -229,13 +229,13 @@ func TestStopNodeLocked_ClosesInFlightTCPConnection(t *testing.T) {
 	select {
 	case backendConn := <-backendAccepted:
 		defer backendConn.Close()
-	case <-time.After(2 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("backend did not receive in-flight proxy connection")
 	}
 
 	s.stopNodeLocked("db")
 
-	if err := clientConn.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+	if err := clientConn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
 		t.Fatalf("SetReadDeadline() error = %v", err)
 	}
 	if _, err := clientConn.Read(make([]byte, 1)); err == nil {
@@ -249,7 +249,7 @@ func TestStopNodeLocked_ClosesInFlightTCPConnection(t *testing.T) {
 
 	select {
 	case <-serveDone:
-	case <-time.After(2 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("serveTCP did not return after node stop")
 	}
 }
@@ -280,7 +280,7 @@ func TestServeTCP_NonFatalAcceptError(t *testing.T) {
 
 	select {
 	case <-done:
-	case <-time.After(3 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("serveTCP did not return")
 	}
 }
@@ -438,7 +438,7 @@ func TestHandleTCPConn_DialsBackendWithTimeoutContext(t *testing.T) {
 
 	select {
 	case <-done:
-	case <-time.After(2 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("handleTCPConn did not return after dial error")
 	}
 	if !seenDeadline {

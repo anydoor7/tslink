@@ -77,7 +77,7 @@ func TestWave1HealthCanonicalHostAndPeople(t *testing.T) {
 		t.Helper()
 		req, _ := http.NewRequest(http.MethodGet, "http://"+ln.Addr().String()+"/ready", nil)
 		req.Host = "admin.attacker.example"
-		resp, err := (&http.Client{Timeout: time.Second}).Do(req)
+		resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
 		if err != nil {
 			t.Fatal(err)
 		}

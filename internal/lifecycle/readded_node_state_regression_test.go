@@ -124,7 +124,7 @@ func TestReconcileSerializesFinalRemovalWithReadd(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("re-add remained blocked after cleanup")
 	}
 	data, err := os.ReadFile(statePath)
@@ -177,7 +177,7 @@ func TestReconcileWaitsForInProgressStartupBeforeRemovingState(t *testing.T) {
 			}()
 			select {
 			case <-attempted:
-			case <-time.After(2 * time.Second):
+			case <-time.After(5 * time.Second):
 				t.Fatal("cleanup never reached startup gate")
 			}
 			if readd {
@@ -198,7 +198,7 @@ func TestReconcileWaitsForInProgressStartupBeforeRemovingState(t *testing.T) {
 				if outcome.err != nil || len(outcome.result.Warnings) != 0 {
 					t.Fatalf("cleanup error=%v warnings=%v", outcome.err, outcome.result.Warnings)
 				}
-			case <-time.After(2 * time.Second):
+			case <-time.After(5 * time.Second):
 				t.Fatal("cleanup did not resume after startup")
 			}
 			data, err := os.ReadFile(statePath)

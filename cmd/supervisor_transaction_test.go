@@ -40,7 +40,7 @@ func repairAwait(t *testing.T, ch <-chan error) error {
 	select {
 	case err := <-ch:
 		return err
-	case <-time.After(3 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("transaction deadlocked")
 		return nil
 	}
@@ -70,12 +70,12 @@ func TestRepairSupervisorTransactions(t *testing.T) {
 			}
 			armed.Store(true)
 			first := make(chan error, 1)
-			firstCtx, firstCancel := context.WithTimeout(context.Background(), 2*time.Second)
+			firstCtx, firstCancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer firstCancel()
 			go func() { first <- repairOperation(firstCtx, pair[0]) }()
 			select {
 			case <-entered:
-			case <-time.After(3 * time.Second):
+			case <-time.After(5 * time.Second):
 				t.Fatal("first did not enter manager")
 			}
 			path, _ := supervisorPath()
@@ -88,7 +88,7 @@ func TestRepairSupervisorTransactions(t *testing.T) {
 			timedOut := false
 			select {
 			case err = <-second:
-			case <-time.After(time.Second):
+			case <-time.After(5 * time.Second):
 				timedOut = true
 			}
 			cancel()
@@ -162,7 +162,7 @@ func TestRepairBootstrapRechecksLiveDaemonInsideLock(t *testing.T) {
 		if !errors.Is(err, context.DeadlineExceeded) {
 			t.Errorf("waiter: %v", err)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(5 * time.Second):
 		t.Error("waiter ignored cancellation")
 	}
 	cancel()

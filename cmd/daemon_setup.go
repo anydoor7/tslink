@@ -26,6 +26,8 @@ const (
 	managerWaitDelay    = 500 * time.Millisecond
 )
 
+var managerCommandContextFn = exec.CommandContext
+
 // Supervision separates current liveness from verified restart configuration.
 // Unknown ownership falls back to manual/none, with a diagnostic, never a
 // promise that this process will survive a reboot.
@@ -93,7 +95,7 @@ func boundedManagerOutput(name string, args ...string) ([]byte, error) {
 func runBoundedManagerCommand(name string, timeout time.Duration, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd := managerCommandContextFn(ctx, name, args...)
 	cmd.WaitDelay = managerWaitDelay
 	output, err := cmd.CombinedOutput()
 	if ctx.Err() != nil {

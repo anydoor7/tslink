@@ -46,7 +46,7 @@ func TestBoundedManagerTimeoutReleasesSupervisorTransaction(t *testing.T) {
 		t.Fatalf("blocked helper transaction error = %v", err)
 	}
 	entered := false
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := withSupervisorTransaction(ctx, func() error { entered = true; return nil }); err != nil || !entered {
 		t.Fatalf("next transaction could not acquire released lock: entered=%v err=%v", entered, err)

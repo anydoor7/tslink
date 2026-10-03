@@ -113,7 +113,7 @@ func TestBootstrapEnrollmentAcrossServices(t *testing.T) {
 			// the wait comes back as context.DeadlineExceeded; a call that
 			// short-circuited comes back as the enrollment error. Those are
 			// disjoint values, not two points on a timeline.
-			ctxBudget := 1500 * time.Millisecond
+			ctxBudget := 5 * time.Second
 			if valid && ctxBudget >= wait {
 				t.Fatalf("the context budget (%s) must stay below the wait (%s), or a call that sat in the "+
 					"wait loop would return the not-ready error instead of a deadline and this assertion would stop discriminating",

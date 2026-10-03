@@ -38,7 +38,7 @@ func TestMigrationSerializesConcurrentLogin(t *testing.T) {
 	go func() { migrated <- MigrateFromLegacy() }()
 	select {
 	case <-readSnapshot:
-	case <-time.After(3 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("migration did not reach the absent-slot keyring read")
 	}
 	loginDone := make(chan error, 1)
@@ -58,7 +58,7 @@ func TestMigrationSerializesConcurrentLogin(t *testing.T) {
 		if !ok {
 			t.Fatal("migration did not complete after releasing its read")
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("migration did not finish")
 	}
 	select {
@@ -66,7 +66,7 @@ func TestMigrationSerializesConcurrentLogin(t *testing.T) {
 		if err != nil {
 			t.Fatalf("login failed after migration: %v", err)
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("login remained blocked after migration")
 	}
 	stored, err := keyring.Get(keychainService, keychainAPIKey)
@@ -101,7 +101,7 @@ func TestMigrationDoesNotDeleteConcurrentFallback(t *testing.T) {
 	go func() { migrated <- MigrateFromLegacy() }()
 	select {
 	case <-readSnapshot:
-	case <-time.After(3 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("migration did not reach keyring read")
 	}
 	loginDone := make(chan error, 1)
@@ -124,7 +124,7 @@ func TestMigrationDoesNotDeleteConcurrentFallback(t *testing.T) {
 		if !ok {
 			t.Fatal("migration did not finish")
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("migration remained blocked")
 	}
 	select {
@@ -138,7 +138,7 @@ func TestMigrationDoesNotDeleteConcurrentFallback(t *testing.T) {
 		if err != nil {
 			t.Fatalf("fallback login failed: %v", err)
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("fallback login remained blocked")
 	}
 	stored, err := os.ReadFile(path)

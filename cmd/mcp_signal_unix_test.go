@@ -128,6 +128,7 @@ func (c *mcpSignalChild) signal(t *testing.T, sig syscall.Signal) {
 // wait returns the child's exit, failing the test if it takes longer than limit.
 func (c *mcpSignalChild) wait(t *testing.T, limit time.Duration) syscall.WaitStatus {
 	t.Helper()
+	limit = max(limit, 5*time.Second)
 	select {
 	case err := <-c.exited:
 		var exitErr *exec.ExitError

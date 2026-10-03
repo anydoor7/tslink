@@ -12,6 +12,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/anydoor7/tslink/internal/health"
@@ -66,7 +67,7 @@ func TestReReviewSaturationPreservesUnattemptedHealthAndRecovers(t *testing.T) {
 	var hits atomic.Int32
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { hits.Add(1); w.WriteHeader(200) }))
 	defer backend.Close()
-	svc := registry.Service{Name: "healthy", Type: registry.TypeProxy, Target: backend.URL, Health: &registry.HealthConfig{Timeout: "100ms"}}
+	svc := registry.Service{Name: "healthy", Type: registry.TypeProxy, Target: backend.URL, Health: &registry.HealthConfig{Timeout: "5s"}}
 	if got := health.Probe(context.Background(), svc); got != "" || hits.Load() != 1 {
 		t.Fatal("HTTP control", got, hits.Load())
 	}
@@ -165,7 +166,7 @@ func TestReReviewLocalAPIPoolGuardSaturationAndRecovery(t *testing.T) {
 		}
 	}
 	finish()
-	deadline := time.Now().Add(time.Second)
+	deadline := time.Now().Add(5 * time.Second)
 	for reads.Load() < 8 && time.Now().Before(deadline) {
 		s.healthCycle(context.Background(), r, now.Add(4*time.Minute), probe)
 		time.Sleep(time.Millisecond)
@@ -210,39 +211,46 @@ func TestReReviewSingleLocalAPIReadSurvivesCyclesWithoutDuplication(t *testing.T
 }
 
 func TestReReviewLocalAPIQueueGetsFullIOBudget(t *testing.T) {
-	s, dir := healthTestServer(t)
-	now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
-	expires := now.Add(20 * 24 * time.Hour)
-	body, _ := json.Marshal(ipnstate.Status{Self: &ipnstate.PeerStatus{KeyExpiry: &expires}})
-	var reads atomic.Int32
-	newClient := func() *local.Client {
-		return localapitest.NewClient(localapitest.RoundTripFunc(func(req *http.Request) (*http.Response, error) {
-			reads.Add(1)
-			select {
-			case <-time.After(3 * time.Second):
-				return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(string(body)))}, nil
-			case <-req.Context().Done():
-				return nil, req.Context().Err()
-			}
-		}))
-	}
-	st, err := newClient().StatusWithoutPeers(context.Background())
-	if err != nil || st.Self == nil || st.Self.KeyExpiry == nil {
-		t.Fatal("real decoder positive control", st, err)
-	}
-	reads.Store(0)
-	for i := 0; i < 6; i++ {
-		svc := registry.Service{Name: fmt.Sprint("node", i), Type: registry.TypeProxy, Target: "http://localhost:1234"}
-		s.nodes[svc.Name] = &ServiceNode{service: svc, tsnetSrv: &fakeTSNetServer{localClient: newClient()}}
-	}
-	r := health.NewRecorder(filepath.Join(dir, health.StateFile), health.NotifierConfig{})
-	s.healthCycle(context.Background(), r, now, func(context.Context, registry.Service) string { return "" })
-	if reads.Load() != 6 {
-		t.Error("missing admitted LocalAPI reads", reads.Load())
-	}
-	for name, observed := range s.healthStates {
-		if observed.NodeKey.ExpiresAt == nil || !observed.NodeKey.ExpiresAt.Equal(expires) {
-			t.Errorf("queued healthy LocalAPI lost deadline: %s %+v", name, observed.NodeKey)
+	synctest.Test(t, func(t *testing.T) {
+		s, dir := healthTestServer(t)
+		now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+		expires := now.Add(20 * 24 * time.Hour)
+		body, _ := json.Marshal(ipnstate.Status{Self: &ipnstate.PeerStatus{KeyExpiry: &expires}})
+		var reads atomic.Int32
+		newClient := func() *local.Client {
+			return localapitest.NewClient(localapitest.RoundTripFunc(func(req *http.Request) (*http.Response, error) {
+				reads.Add(1)
+				if deadline, ok := req.Context().Deadline(); !ok || time.Until(deadline) != 5*time.Second {
+					t.Errorf("installed LocalAPI I/O budget = %v (present=%v), want exactly 5s", time.Until(deadline), ok)
+				}
+				select {
+				case <-time.After(3 * time.Second):
+					return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(string(body)))}, nil
+				case <-req.Context().Done():
+					return nil, req.Context().Err()
+				}
+			}))
 		}
-	}
+		controlCtx, cancelControl := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancelControl()
+		st, err := newClient().StatusWithoutPeers(controlCtx)
+		if err != nil || st.Self == nil || st.Self.KeyExpiry == nil {
+			t.Fatal("real decoder positive control", st, err)
+		}
+		reads.Store(0)
+		for i := 0; i < 6; i++ {
+			svc := registry.Service{Name: fmt.Sprint("node", i), Type: registry.TypeProxy, Target: "http://localhost:1234"}
+			s.nodes[svc.Name] = &ServiceNode{service: svc, tsnetSrv: &fakeTSNetServer{localClient: newClient()}}
+		}
+		r := health.NewRecorder(filepath.Join(dir, health.StateFile), health.NotifierConfig{})
+		s.healthCycle(context.Background(), r, now, func(context.Context, registry.Service) string { return "" })
+		if reads.Load() != 6 {
+			t.Error("missing admitted LocalAPI reads", reads.Load())
+		}
+		for name, observed := range s.healthStates {
+			if observed.NodeKey.ExpiresAt == nil || !observed.NodeKey.ExpiresAt.Equal(expires) {
+				t.Errorf("queued healthy LocalAPI lost deadline: %s %+v", name, observed.NodeKey)
+			}
+		}
+	})
 }

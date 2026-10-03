@@ -51,19 +51,23 @@ func installBlockingManagerShim(t *testing.T, manager string) {
 // requireSeamReturnsWithinBudget calls a manager seam whose child never
 // answers. The seam must give up at its own query budget with a deadline
 // error. An unbounded CombinedOutput would sit on the child for 30 seconds;
-// the test stops waiting one second past the budget and says so.
+// Pin the query's own deadline independently of the wall-clock hang guard.
 func requireSeamReturnsWithinBudget(t *testing.T, manager string, call func() ([]byte, error)) {
 	t.Helper()
+	const queryBudget = 2 * time.Second
+	if managerQueryTimeout != queryBudget || managerCommandTimeout("show") != queryBudget || managerCommandTimeout("print") != queryBudget {
+		t.Fatalf("manager query deadline = %v, want 2s", managerQueryTimeout)
+	}
 	done := make(chan boundedCallResult, 1)
 	go func() {
 		out, err := call()
 		done <- boundedCallResult{out: out, err: err}
 	}()
-	limit := managerQueryTimeout + time.Second
+	limit := 5 * time.Second // real subprocess hang guard
 	select {
 	case result := <-done:
 
-		if !errors.Is(result.err, context.DeadlineExceeded) || !strings.Contains(result.err.Error(), manager+" command exceeded "+managerQueryTimeout.String()) {
+		if !errors.Is(result.err, context.DeadlineExceeded) || !strings.Contains(result.err.Error(), manager+" command exceeded "+queryBudget.String()) {
 			t.Fatalf("%s seam against a manager that never answers returned err=%v, want the bounded-command deadline error", manager, result.err)
 		}
 	case <-time.After(limit):

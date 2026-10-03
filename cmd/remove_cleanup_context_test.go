@@ -101,7 +101,7 @@ func TestMCPUnshareDeviceCleanupSeesSessionCancellation(t *testing.T) {
 		cancel()
 		select {
 		case <-cancelled:
-		case <-time.After(2 * time.Second):
+		case <-time.After(5 * time.Second):
 			t.Fatal("device cleanup did not see the session's cancellation")
 		}
 		if err := <-done; !errors.Is(err, context.Canceled) {

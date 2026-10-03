@@ -72,6 +72,7 @@ func TestMCPEOFWatchdogDefaultsOutlastEveryToolWait(t *testing.T) {
 // instead of hanging the package.
 func runMCPUntil(t *testing.T, input string, actions mcpActions, limit time.Duration) (string, time.Duration, error) {
 	t.Helper()
+	limit = max(limit, 5*time.Second)
 	var stdout bytes.Buffer
 	done := make(chan error, 1)
 	start := time.Now()

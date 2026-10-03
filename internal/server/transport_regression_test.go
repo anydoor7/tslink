@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 )
@@ -47,7 +48,7 @@ func TestLimitedTLSConnectionPreservesForwardedHTTPS(t *testing.T) {
 			go func() { defer close(done); _ = srv.Serve(ln) }()
 			defer func() { _ = srv.Close(); _ = ln.Close(); <-done }()
 			client := certServer.Client()
-			client.Timeout = 2 * time.Second
+			client.Timeout = 5 * time.Second
 			resp, err := client.Get("https://" + raw.Addr().String())
 			if err != nil {
 				t.Fatal(err)
@@ -99,7 +100,7 @@ func TestLimitedTLSConnectionRetainsCapAndReleasesSlot(t *testing.T) {
 	case firstServer = <-accepted:
 	case err := <-acceptErr:
 		t.Fatal(err)
-	case <-time.After(2 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("first accept timed out")
 	}
 	if _, ok := firstServer.(*limitedTLSConn); !ok {
@@ -113,7 +114,7 @@ func TestLimitedTLSConnectionRetainsCapAndReleasesSlot(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer secondClient.Close()
-	_ = secondClient.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_ = secondClient.SetReadDeadline(time.Now().Add(5 * time.Second))
 	buf := make([]byte, 1)
 	if _, err := secondClient.Read(buf); err == nil {
 		t.Fatal("over-cap connection remained open")
@@ -137,7 +138,7 @@ func TestLimitedTLSConnectionRetainsCapAndReleasesSlot(t *testing.T) {
 		_ = thirdServer.Close()
 	case err := <-acceptErr:
 		t.Fatal(err)
-	case <-time.After(2 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("slot was not reusable")
 	}
 }
@@ -146,19 +147,64 @@ func TestLimitedTLSConnectionRetainsCapAndReleasesSlot(t *testing.T) {
 // without being the host kernel's concrete *net.TCPConn.
 type auditHalfCloseConn struct{ *net.TCPConn }
 
+type streamDeadlineConn struct {
+	net.Conn
+	mu            sync.Mutex
+	writeDeadline time.Time
+}
+
+func (c *streamDeadlineConn) SetDeadline(deadline time.Time) error {
+	c.mu.Lock()
+	c.writeDeadline = deadline
+	c.mu.Unlock()
+	return c.Conn.SetDeadline(deadline)
+}
+
+func (c *streamDeadlineConn) SetWriteDeadline(deadline time.Time) error {
+	c.mu.Lock()
+	c.writeDeadline = deadline
+	c.mu.Unlock()
+	return c.Conn.SetWriteDeadline(deadline)
+}
+
+func (c *streamDeadlineConn) responseDeadline() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.writeDeadline
+}
+
+type streamDeadlineListener struct {
+	net.Listener
+	accepted chan *streamDeadlineConn
+}
+
+func (l *streamDeadlineListener) Accept() (net.Conn, error) {
+	c, err := l.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	recorded := &streamDeadlineConn{Conn: c}
+	l.accepted <- recorded
+	return recorded, nil
+}
+
 func TestProxyResponseStreamOutlivesRequestReadBudget(t *testing.T) {
-	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = io.WriteString(w, "first\n")
-		w.(http.Flusher).Flush()
-		time.Sleep(100 * time.Millisecond)
-		_, _ = io.WriteString(w, "last\n")
-	}))
-	defer backend.Close()
 	certServer := httptest.NewTLSServer(http.NotFoundHandler())
 	defer certServer.Close()
 	for _, useTLS := range []bool{false, true} {
 		t.Run(fmt.Sprintf("tls_limited=%v", useTLS), func(t *testing.T) {
+			release := make(chan struct{})
+			var releaseOnce sync.Once
+			finish := func() { releaseOnce.Do(func() { close(release) }) }
+			backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				_, _ = io.WriteString(w, "first\n")
+				w.(http.Flusher).Flush()
+				<-release
+				_, _ = io.WriteString(w, "last\n")
+			}))
+			defer backend.Close()
+			defer finish()
 			h, err := NewProxyHandler(backend.URL, nil)
 			if err != nil {
 				t.Fatal(err)
@@ -167,18 +213,20 @@ func TestProxyResponseStreamOutlivesRequestReadBudget(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			var ln net.Listener = raw
+			recorded := &streamDeadlineListener{Listener: raw, accepted: make(chan *streamDeadlineConn, 1)}
+			var ln net.Listener = recorded
 			scheme := "http://"
-			client := &http.Client{Timeout: 2 * time.Second}
+			client := &http.Client{Timeout: 5 * time.Second}
 			if useTLS {
-				ln = newLimitedListener(tls.NewListener(raw, certServer.TLS.Clone()), 256, "http", "stream")
+				ln = newLimitedListener(tls.NewListener(recorded, certServer.TLS.Clone()), 256, "http", "stream")
 				scheme = "https://"
 				client = certServer.Client()
-				client.Timeout = 2 * time.Second
+				client.Timeout = 5 * time.Second
 			}
 			srv := newHTTPServerFn(ResourceBudgetMiddleware(h))
-			// Scale the request read budget down; never cap response duration.
-			srv.ReadTimeout = 25 * time.Millisecond
+			// Request/handshake scheduling gets a wall hang guard. Pin the
+			// response's actual inner deadline while the backend is still held.
+			srv.ReadTimeout = 5 * time.Second
 			done := make(chan struct{})
 			go func() { defer close(done); _ = srv.Serve(ln) }()
 			defer func() { _ = srv.Close(); _ = ln.Close(); <-done }()
@@ -187,9 +235,22 @@ func TestProxyResponseStreamOutlivesRequestReadBudget(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer resp.Body.Close()
-			body, err := io.ReadAll(resp.Body)
-			if err != nil || string(body) != "first\nlast\n" {
-				t.Fatalf("stream truncated: %q error=%v", body, err)
+			first := make([]byte, len("first\n"))
+			if _, err := io.ReadFull(resp.Body, first); err != nil || string(first) != "first\n" {
+				t.Fatalf("initial stream chunk: %q error=%v", first, err)
+			}
+			select {
+			case c := <-recorded.accepted:
+				if deadline := c.responseDeadline(); !deadline.IsZero() {
+					t.Fatalf("active response write deadline = %v, want none", deadline)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("stream did not expose its server connection")
+			}
+			finish()
+			last, err := io.ReadAll(resp.Body)
+			if err != nil || string(last) != "last\n" {
+				t.Fatalf("stream truncated after first chunk: %q error=%v", last, err)
 			}
 		})
 	}
@@ -236,7 +297,7 @@ func TestTCPBackendHalfCloseReachesTsnetShapedClient(t *testing.T) {
 			done := make(chan struct{})
 			go func() { defer close(done); handleTCPConn(ctx, conn, backend.Addr().String(), "audit") }()
 			defer func() { cancel(); _ = client.Close(); <-done; <-backendDone }()
-			_ = client.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+			_ = client.SetReadDeadline(time.Now().Add(5 * time.Second))
 			body, err := io.ReadAll(client)
 			t.Logf("backend sent FIN; wrapped=%v body=%q readError=%v", wrapped, body, err)
 			if string(body) != "response" {
@@ -264,7 +325,7 @@ func TestTCPClientHalfCloseReachesWrappedBackend(t *testing.T) {
 			return
 		}
 		defer conn.Close()
-		_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 		body, err := io.ReadAll(conn)
 		if err != nil {
 			backendResult <- err.Error()
@@ -307,7 +368,7 @@ func TestTCPClientHalfCloseReachesWrappedBackend(t *testing.T) {
 	if err := client.(*net.TCPConn).CloseWrite(); err != nil {
 		t.Fatal(err)
 	}
-	_ = client.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_ = client.SetReadDeadline(time.Now().Add(5 * time.Second))
 	response, err := io.ReadAll(client)
 	if err != nil || string(response) != "ack" {
 		t.Fatalf("response = %q, error = %v, want ack and EOF", response, err)

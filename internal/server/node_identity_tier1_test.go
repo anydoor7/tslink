@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/anydoor7/tslink/internal/authmode"
@@ -158,7 +159,7 @@ func mustRegistryPath(t *testing.T) string {
 // it is ready.
 func runDaemonStart(t *testing.T, s *Server) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	ready := false
 	s.SetReadyFunc(func() error {
@@ -169,6 +170,21 @@ func runDaemonStart(t *testing.T, s *Server) {
 	if err := s.Run(ctx); err != nil || !ready {
 		t.Fatalf("daemon start: err=%v ready=%v", err, ready)
 	}
+}
+
+// The startup fixture includes registry, identity and OS scheduling work.
+// Pin Funnel's inner policy independently of that fixture's hang guard.
+func TestFunnelWaitKeepsIndependentTenSecondDeadline(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		parent, cancelParent := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancelParent()
+		wait, cancel, budget := boundedFunnelWait(parent, funnelCapabilityWaitTimeout)
+		defer cancel()
+		deadline, ok := wait.Deadline()
+		if !ok || time.Until(deadline) != 10*time.Second || budget != 10*time.Second {
+			t.Fatalf("installed Funnel wait = %v (present=%v, reported=%v), want exactly 10s", time.Until(deadline), ok, budget)
+		}
+	})
 }
 
 // markEnrolled writes the file tsnet keeps its enrollment in, as a completed

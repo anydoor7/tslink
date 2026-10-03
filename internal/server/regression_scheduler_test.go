@@ -10,45 +10,73 @@ import (
 	"path/filepath"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
 func TestReReviewQueueWaitDoesNotConsumeProbeBudget(t *testing.T) {
-	s, dir := healthTestServer(t)
-	var requests atomic.Int32
-	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests.Add(1)
-		select {
-		case <-time.After(300 * time.Millisecond):
-			w.WriteHeader(200)
-		case <-r.Context().Done():
+	t.Run("real_http", func(t *testing.T) {
+		s, dir := healthTestServer(t)
+		var requests atomic.Int32
+		backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { requests.Add(1); w.WriteHeader(200) }))
+		defer backend.Close()
+		svc := registry.Service{Name: "control", Type: registry.TypeProxy, Target: backend.URL, Health: &registry.HealthConfig{Timeout: "5s"}}
+		if code := health.Probe(context.Background(), svc); code != "" {
+			t.Fatal("real HTTP control", code)
 		}
-	}))
-	defer backend.Close()
-	svc := registry.Service{Name: "control", Type: registry.TypeProxy, Target: backend.URL, Health: &registry.HealthConfig{Timeout: "500ms"}}
-	if code := health.Probe(context.Background(), svc); code != "" {
-		t.Fatal("real HTTP control", code)
-	}
-	requests.Store(0)
-	for i := 0; i < 12; i++ {
-		v := svc
-		v.Name = fmt.Sprintf("app%02d", i)
-		s.nodes[v.Name] = &ServiceNode{service: v}
-	}
-	r := health.NewRecorder(filepath.Join(dir, health.StateFile), health.NotifierConfig{})
-	start := time.Now()
-	s.healthCycle(context.Background(), r, time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC), health.Probe)
-	failed := 0
-	for name, state := range s.healthStates {
-		if state.Health.State != health.Healthy {
-			failed++
-			t.Logf("%s: %+v", name, state.Health)
+		requests.Store(0)
+		for i := 0; i < 12; i++ {
+			v := svc
+			v.Name = fmt.Sprintf("app%02d", i)
+			s.nodes[v.Name] = &ServiceNode{service: v}
 		}
-	}
-	t.Logf("healthy HTTP control=300ms timeout=500ms services=12 requests=%d failed=%d cycle=%s", requests.Load(), failed, time.Since(start))
-	if failed != 0 {
-		t.Errorf("worker-queue wait created %d false backend failures", failed)
-	}
+		recorder := health.NewRecorder(filepath.Join(dir, health.StateFile), health.NotifierConfig{})
+		s.healthCycle(context.Background(), recorder, time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC), health.Probe)
+		if requests.Load() != 12 {
+			t.Fatalf("real HTTP reads = %d, want 12", requests.Load())
+		}
+		for name, state := range s.healthStates {
+			if state.Health.State != health.Healthy {
+				t.Errorf("real HTTP %s: %+v", name, state.Health)
+			}
+		}
+	})
+	t.Run("virtual_queue", func(t *testing.T) {
+		s, dir := healthTestServer(t)
+		for i := 0; i < 12; i++ {
+			name := fmt.Sprintf("app%02d", i)
+			s.nodes[name] = &ServiceNode{service: registry.Service{Name: name, Type: registry.TypeProxy, Target: "http://127.0.0.1:1", Health: &registry.HealthConfig{Timeout: "500ms"}}}
+		}
+		recorder := health.NewRecorder(filepath.Join(dir, health.StateFile), health.NotifierConfig{})
+		synctest.Test(t, func(t *testing.T) {
+			var reads atomic.Int32
+			start := time.Now()
+			s.healthCycle(context.Background(), recorder, time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC), func(ctx context.Context, _ registry.Service) string {
+				if deadline, ok := ctx.Deadline(); !ok || time.Until(deadline) != 500*time.Millisecond {
+					t.Errorf("installed queued probe budget = %v (present=%v), want exactly 500ms", time.Until(deadline), ok)
+					return "health_timeout"
+				}
+				reads.Add(1)
+				select {
+				case <-time.After(300 * time.Millisecond):
+					return ""
+				case <-ctx.Done():
+					return "health_timeout"
+				}
+			})
+			if reads.Load() != 12 {
+				t.Fatalf("admitted probes = %d, want 12", reads.Load())
+			}
+			for name, state := range s.healthStates {
+				if state.Health.State != health.Healthy {
+					t.Errorf("virtual queued %s: %+v", name, state.Health)
+				}
+			}
+			if elapsed := time.Since(start); elapsed != 900*time.Millisecond {
+				t.Fatalf("virtual queue duration = %v, want three 300ms batches", elapsed)
+			}
+		})
+	})
 }
 
 func TestReReviewStuckPoolDoesNotDisableHealthyApps(t *testing.T) {
@@ -82,7 +110,7 @@ func TestReReviewStuckPoolDoesNotDisableHealthyApps(t *testing.T) {
 	var hits atomic.Int32
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hits.Add(1); w.WriteHeader(200) }))
 	defer backend.Close()
-	good := registry.Service{Name: "healthy", Type: registry.TypeProxy, Target: backend.URL, Health: &registry.HealthConfig{Timeout: "100ms"}}
+	good := registry.Service{Name: "healthy", Type: registry.TypeProxy, Target: backend.URL, Health: &registry.HealthConfig{Timeout: "5s"}}
 	if code := health.Probe(context.Background(), good); code != "" || hits.Load() != 1 {
 		t.Fatal("real HTTP positive control", code, hits.Load())
 	}

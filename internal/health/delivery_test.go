@@ -28,7 +28,7 @@ func TestNotifierCommandCancellation(t *testing.T) {
 		done <- Notify(ctx, NotifierConfig{Command: []string{os.Args[0], "-test.run=^TestNotifierCommandCancellation$"}}, Event{Kind: "app_down"})
 	}()
 	t.Cleanup(func() { cancel() })
-	deadline := time.After(3 * time.Second)
+	deadline := time.After(5 * time.Second)
 	for {
 		if _, err := os.Stat(ready); err == nil {
 			break
@@ -45,7 +45,7 @@ func TestNotifierCommandCancellation(t *testing.T) {
 		if err == nil || err.Error() != "alert_command_failed" {
 			t.Fatal("cancellation counted as success", err)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("canceled command did not return")
 	}
 }
@@ -64,7 +64,7 @@ func TestDeliveryQueueBoundDedupAndShutdown(t *testing.T) {
 	r.Commit(context.Background(), []Event{{Kind: "app_down", Service: "app"}}, now)
 	select {
 	case <-started:
-	case <-time.After(time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("no worker")
 	}
 	// The in-flight delivery must not hold Commit or grow an unbounded queue.
@@ -101,7 +101,7 @@ func TestDeliveryCompletionUsesEventIDAndPersists(t *testing.T) {
 	select {
 	case result := <-r.DeliveryReady():
 		r.CompleteDelivery(result)
-	case <-time.After(time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("no completion")
 	}
 	if got := NewRecorder(r.Path, r.Config).State.Events[0].Delivery; got != "sent" {

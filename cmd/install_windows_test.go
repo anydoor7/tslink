@@ -341,7 +341,7 @@ func TestWindowsDirectTransactionsCancelAndPreserveFinalState(t *testing.T) {
 					return nil
 				}
 			}
-			ctx, cancel = context.WithTimeout(context.Background(), time.Second)
+			ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			if err := operation(ctx); err != nil {
 				t.Fatalf("positive control after unlock (nested lock?): %v", err)

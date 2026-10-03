@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -641,4 +642,31 @@ func TestBootstrapMCPShareOptOutIsForwarded(t *testing.T) {
 	if _, err := callMCPTool(context.Background(), actions, "share", json.RawMessage(`{"target":"localhost:3000","no_daemon_install":true}`)); err != nil || calls != 1 {
 		t.Fatalf("calls=%d err=%v", calls, err)
 	}
+}
+
+func TestManagerQueryDeadlineIsTwoSeconds(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		oldCommand := managerCommandContextFn
+		defer func() { managerCommandContextFn = oldCommand }()
+		observed := false
+		managerCommandContextFn = func(ctx context.Context, name string, args ...string) *exec.Cmd {
+			observed = true
+			deadline, ok := ctx.Deadline()
+			if !ok || time.Until(deadline) != 2*time.Second {
+				t.Errorf("installed manager query deadline = %v, want exactly 2s", time.Until(deadline))
+			}
+			if name != "manager-deadline-probe" {
+				t.Errorf("query constructed command %q", name)
+			}
+			// Run this test binary without selecting a test: it is a harmless
+			// real child, and the assertion above observes its actual context.
+			return exec.CommandContext(ctx, os.Args[0], "-test.run=^$")
+		}
+		if _, err := boundedManagerOutput("manager-deadline-probe"); err != nil {
+			t.Fatal(err)
+		}
+		if !observed {
+			t.Fatal("manager query did not construct a bounded command")
+		}
+	})
 }
