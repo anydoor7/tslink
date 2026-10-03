@@ -3,12 +3,16 @@ package mcpaudit
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
+
+	"github.com/anydoor7/tslink/internal/filelock"
 )
 
 func auditFixture() Entry {
@@ -16,28 +20,124 @@ func auditFixture() Entry {
 }
 
 func TestJournalDurableAndConcurrent(t *testing.T) {
+	// Real filesystem calls and try-locks are not durably blocked in a bubble:
+	// host I/O latency cannot consume the separate product lock-wait budget.
+	synctest.Test(t, testJournalDurableAndConcurrent)
+}
+
+func testJournalDurableAndConcurrent(t *testing.T) {
 	j := Journal{Path: filepath.Join(t.TempDir(), "audit.json")}
 	if v, err := j.Read(); err != nil || len(v) != 0 {
 		t.Fatal(v, err)
 	}
 	var wg sync.WaitGroup
+	start := make(chan struct{})
 	for i := 0; i < 24; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if err := j.Record(context.Background(), auditFixture()); err != nil {
-				t.Error(err)
+			<-start
+			entry := auditFixture()
+			entry.ID = fmt.Sprintf("call-%02d", i)
+			if err := j.Record(context.Background(), entry); err != nil {
+				t.Errorf("%s: %v", entry.ID, err)
 			}
 		}()
 	}
+	close(start)
 	wg.Wait()
 	v, err := (Journal{Path: j.Path}).Read()
 	if err != nil || len(v) != 24 || v[0].Principal != "agent" || !v[0].Time.Equal(auditFixture().Time) {
 		t.Fatal(v, err)
 	}
+	seen := make(map[string]int)
+	for _, entry := range v {
+		seen[entry.ID]++
+		if entry.Principal != "agent" || !entry.Time.Equal(auditFixture().Time) {
+			t.Fatalf("damaged entry %s", entry.ID)
+		}
+	}
+	for i := 0; i < 24; i++ {
+		id := fmt.Sprintf("call-%02d", i)
+		if seen[id] != 1 {
+			t.Errorf("persisted %s %d times, want exactly once", id, seen[id])
+		}
+	}
 	info, _ := os.Stat(j.Path)
 	if info.Mode().Perm()&0077 != 0 && os.PathSeparator != '\\' {
 		t.Fatal("journal is not private")
+	}
+}
+
+func TestJournalRecordLockWaitBudget(t *testing.T) {
+	for _, parentCancel := range []bool{false, true} {
+		t.Run(fmt.Sprintf("parent-cancel=%t", parentCancel), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				j := Journal{Path: filepath.Join(t.TempDir(), "audit.json")}
+				if err := j.Record(context.Background(), auditFixture()); err != nil {
+					t.Fatal(err)
+				}
+				before, err := os.ReadFile(j.Path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				lock, err := os.OpenFile(j.Path+".lock", os.O_RDWR, 0600)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer lock.Close()
+				if err := filelock.Lock(lock); err != nil {
+					t.Fatal(err)
+				}
+				defer filelock.Unlock(lock)
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				budget, want := 2*time.Second, context.DeadlineExceeded
+				if parentCancel {
+					budget, want = 250*time.Millisecond, context.Canceled
+				}
+				entry := auditFixture()
+				entry.ID = "blocked"
+				done := make(chan error, 1)
+				go func() { done <- j.Record(ctx, entry) }()
+				synctest.Wait()
+				time.Sleep(budget - time.Millisecond)
+				synctest.Wait()
+				select {
+				case err := <-done:
+					t.Fatalf("Record returned before budget: %v", err)
+				default:
+				}
+				time.Sleep(time.Millisecond)
+				if parentCancel {
+					cancel()
+				}
+				synctest.Wait()
+				select {
+				case err := <-done:
+					if err != want {
+						t.Fatalf("Record error=%v, want %v", err, want)
+					}
+				default:
+					t.Fatal("Record exceeded lock-wait budget")
+				}
+				after, err := os.ReadFile(j.Path)
+				if err != nil || string(after) != string(before) {
+					t.Fatal("failed Record changed durable state", err)
+				}
+				if err := filelock.Unlock(lock); err != nil {
+					t.Fatal(err)
+				}
+				entry.ID = "released"
+				if err := j.Record(context.Background(), entry); err != nil {
+					t.Fatal(err)
+				}
+				entries, err := (Journal{Path: j.Path}).Read()
+				if err != nil || len(entries) != 2 || entries[0].ID != "call-1" || entries[1].ID != "released" {
+					t.Fatal("release-success control", entries, err)
+				}
+			})
+		})
 	}
 }
 

@@ -182,6 +182,34 @@ func (f *guestFixture) login() []*http.Cookie {
 	}
 	return cookies
 }
+
+// Acquire and retain a shared registry lock: this joins an active counter
+// writer and excludes future flushes throughout a read-only assertion window.
+// The real monitor keeps running, and requests still perform every grant read.
+func (f *guestFixture) holdCounterFlush() func() {
+	f.t.Helper()
+	lock, err := os.OpenFile(f.path+".lock", os.O_RDWR, 0600)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	deadline := time.After(5 * time.Second)
+	for {
+		acquired, err := filelock.TryReadLock(lock)
+		if err != nil {
+			lock.Close()
+			f.t.Fatal(err)
+		}
+		if acquired {
+			return func() { filelock.Unlock(lock); lock.Close() }
+		}
+		select {
+		case <-deadline:
+			lock.Close()
+			f.t.Fatal("counter writer did not release the fixture registry")
+		case <-time.After(time.Millisecond):
+		}
+	}
+}
 func TestGuestListenerProtocolsAndIsolation(t *testing.T) {
 	for _, h2 := range []bool{false, true} {
 		t.Run(fmt.Sprintf("http2=%t", h2), func(t *testing.T) {
@@ -351,9 +379,11 @@ func TestGuestPINListener(t *testing.T) {
 	if r.StatusCode != 303 {
 		t.Fatal("correct PIN denied after lockout", r.StatusCode)
 	}
+	release := f.holdCounterFlush()
+	defer release()
 	r, _ = f.request("GET", "/", "", r.Cookies())
 	if r.StatusCode != 204 || f.hits.Load() != 1 {
-		t.Fatal("PIN session denied")
+		t.Fatalf("PIN session denied: status=%d backend-hits=%d", r.StatusCode, f.hits.Load())
 	}
 	drainAccess(t, f.store)
 	log, e := accesslog.Query(f.dir, accesslog.Filter{})
@@ -446,6 +476,7 @@ func TestGuestConcurrentRevokeRequests(t *testing.T) {
 func TestGuestListenerCorruptAndMissingRegistry(t *testing.T) {
 	f := newGuestFixture(t, "", false, true)
 	cookies := f.login()
+	defer f.holdCounterFlush()()
 	raw, e := os.ReadFile(f.path)
 	if e != nil {
 		t.Fatal(e)
@@ -467,10 +498,10 @@ func TestGuestListenerCorruptAndMissingRegistry(t *testing.T) {
 	if e = os.WriteFile(f.path, raw, 0600); e != nil {
 		t.Fatal(e)
 	}
-	cookies = f.login() // An unavailable ledger invalidates the old session.
+	// Temporary unavailability preserves the original session; no re-login.
 	r, _ = f.request("GET", "/", "", cookies)
-	if r.StatusCode != 204 {
-		t.Fatal("restored control denied")
+	if r.StatusCode != 204 || f.hits.Load() != 1 {
+		t.Fatalf("restored original session denied: status=%d backend-hits=%d", r.StatusCode, f.hits.Load())
 	}
 }
 

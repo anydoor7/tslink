@@ -2,8 +2,6 @@ package server
 
 import (
 	"context"
-	"encoding/json"
-	"os"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
@@ -13,6 +11,7 @@ import (
 	"github.com/anydoor7/tslink/internal/credentials"
 	"github.com/anydoor7/tslink/internal/health"
 	"github.com/anydoor7/tslink/internal/registry"
+	tsruntime "github.com/anydoor7/tslink/internal/runtime"
 )
 
 func TestHealthCyclePublishesOtherResultsAndCancelsWithStuckProbe(t *testing.T) {
@@ -81,21 +80,7 @@ func TestBoundedHealthReadRetainsSlotAcrossTimeouts(t *testing.T) {
 }
 
 func TestHealthMonitorProgressWhileNotifierRuns(t *testing.T) {
-	if os.Getenv("TSLINK_HEALTH_MONITOR_NOTIFIER_CHILD") == "1" {
-		if os.WriteFile(os.Getenv("TSLINK_HEALTH_MONITOR_NOTIFIER_READY"), []byte("ready"), 0600) != nil {
-			os.Exit(2)
-		}
-		time.Sleep(30 * time.Second)
-		os.Exit(0)
-	}
 	s, dir := healthTestServer(t)
-	t.Setenv("TSLINK_HEALTH_MONITOR_NOTIFIER_CHILD", "1")
-	ready := filepath.Join(dir, "notifier-ready")
-	t.Setenv("TSLINK_HEALTH_MONITOR_NOTIFIER_READY", ready)
-	config, _ := json.Marshal(health.NotifierConfig{Command: []string{os.Args[0], "-test.run=^TestHealthMonitorProgressWhileNotifierRuns$"}})
-	if err := os.WriteFile(filepath.Join(dir, health.ConfigFile), config, 0600); err != nil {
-		t.Fatal(err)
-	}
 	s.nodes["app"] = &ServiceNode{service: registry.Service{Name: "app", Type: registry.TypeProxy, Target: "http://localhost:1234"}}
 	oldNow, oldProbe, oldInventory, oldInterval := serverNowFn, healthProbeFn, healthCredentialInventoryFn, healthTickInterval
 	t.Cleanup(func() {
@@ -107,34 +92,61 @@ func TestHealthMonitorProgressWhileNotifierRuns(t *testing.T) {
 	healthProbeFn = func(context.Context, registry.Service) string { probes.Add(1); return "health_status_mismatch" }
 	healthCredentialInventoryFn = func(time.Time) credentials.Inventory { return credentials.Inventory{} }
 	healthTickInterval = 5 * time.Millisecond
-	ctx, cancel := context.WithCancel(context.Background())
-	done := s.startHealthMonitor(ctx)
-	t.Cleanup(func() { cancel(); <-done })
-	deadline := time.After(5 * time.Second)
-	for {
-		if _, err := os.Stat(ready); err == nil && probes.Load() >= 6 {
-			break
+	synctest.Test(t, func(t *testing.T) {
+		r := health.NewRecorder(filepath.Join(dir, health.StateFile), health.NotifierConfig{Command: []string{"/private/notifier"}})
+		started, exited := make(chan struct{}), make(chan struct{})
+		r.Send = func(ctx context.Context, _ health.NotifierConfig, _ health.Event) error {
+			close(started)
+			<-ctx.Done()
+			close(exited)
+			return ctx.Err()
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		done := s.startHealthMonitorWithRecorder(ctx, r)
+		defer func() { cancel(); <-done }()
+		time.Sleep(30 * time.Millisecond)
+		synctest.Wait()
+		select {
+		case <-started:
+		default:
+			t.Fatal("monitor never started delivery")
+		}
+		s.mu.RLock()
+		before := s.healthStates["app"].Health.LastChecked
+		s.mu.RUnlock()
+		generation, count := s.events.currentGeneration(), probes.Load()
+		if before == nil {
+			t.Fatal("no initial health observation")
+		}
+		time.Sleep(healthTickInterval)
+		synctest.Wait()
+		s.mu.RLock()
+		after := s.healthStates["app"].Health.LastChecked
+		s.mu.RUnlock()
+		if after == nil || !after.After(*before) || probes.Load() <= count || s.events.currentGeneration() <= generation {
+			t.Fatal("blocked delivery stopped subsequent probe or published observation")
+		}
+		snapshot, err := tsruntime.Load(filepath.Join(dir, "runtime.json"))
+		if err != nil || len(snapshot.Services) != 1 || snapshot.Services[0].Health.LastChecked == nil || !snapshot.Services[0].Health.LastChecked.Equal(*after) {
+			t.Fatal("subsequent observation was not published to the runtime snapshot", err)
 		}
 		select {
-		case <-deadline:
-			t.Fatal("slow delivery stopped health observations", probes.Load())
-		case <-time.After(5 * time.Millisecond):
+		case <-exited:
+			t.Fatal("delivery ended before progress assertion")
+		default:
 		}
-	}
-	cancel()
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("notifier blocked shutdown")
-	}
-	r := health.NewRecorder(filepath.Join(dir, health.StateFile), health.NotifierConfig{})
-	if len(r.State.Events) != 1 || r.State.Events[0].Delivery != "failed" {
-		t.Fatal("cancellation not journaled as failure", r.State.Events)
-	}
+		cancel()
+		<-done
+		<-exited
+		reopened := health.NewRecorder(r.Path, r.Config)
+		if len(reopened.State.Events) != 1 || reopened.State.Events[0].Delivery != "failed" {
+			t.Fatal("cancellation not durably journaled as failure", reopened.State.Events)
+		}
+	})
 }
 
 // Pin the monitor's own join path while Send ignores cancellation. The real
-// command/progress test above keeps OS scheduling outside this virtual bound.
+// command cancellation contract is covered by health.TestNotifierCommandCancellation.
 func TestHealthMonitorShutdownJoinBound(t *testing.T) {
 	s, dir := healthTestServer(t)
 	s.nodes["app"] = &ServiceNode{service: registry.Service{Name: "app", Type: registry.TypeProxy, Target: "http://localhost:1234"}}

@@ -11,7 +11,7 @@ This index records the people sharing lifecycle implementation and regression te
 
 - `server.go`: node lifecycle and runtime snapshot publication; see repository `AGENTS.md` for the other server modules.
 - `health.go`: backend scheduling, independent node-expiry refresh and monitor shutdown.
-- `health_test.go`, `health_isolation_test.go`: monitor, event stream, worker isolation and notifier progress tests.
+- `health_test.go`, `health_isolation_test.go`: monitor, event stream, worker isolation and causal published-observation progress during blocked notifier delivery.
 - `regression_refused_target_test.go`, `regression_node_replacement_test.go`: reviewer target-safety and node-incarnation regressions.
 - `regression_scheduler_test.go`, `regression_refresh_cost_test.go`, `regression_pool_test.go`, `health_pool_test.go`: scheduler budgets, retained reads, saturation/recovery and write-count regressions.
 - `regression_snapshot_retry_test.go`, `regression_stream_aging_test.go`: failed snapshot retry and connected event-stream health aging regressions.
@@ -77,6 +77,7 @@ This index covers the recipe integration tests. The repository AGENTS.md describ
 
 - guest.go: trusted Funnel guest gate, bounded sessions/challenges, CSRF and source rate limits.
 - guest_test.go: real HTTP/1 and HTTP/2 listener, revocation, expiry, PIN, isolation and privacy.
+- `guest_timing_test.go`: read budgets, real monitor counter-flush ownership, fixture shared-lock barriers and original-session recovery.
 
 - `guest_unix_test.go`: real listener FIFO refusal and restored positive control.
 
