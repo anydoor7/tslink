@@ -4,6 +4,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -60,7 +61,7 @@ func TestLinuxUninstallMissingUnitFileStillLoadedIsNotReportedAbsent(t *testing.
 				}
 			}
 			var mutations []string
-			systemctlCombinedOutput = func(args ...string) ([]byte, error) {
+			systemctlCombinedOutput = func(ctx context.Context, args ...string) ([]byte, error) {
 				if args[1] == "show" {
 					if tc.showErr != nil {
 						return []byte("Failed to connect to user scope bus"), tc.showErr

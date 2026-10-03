@@ -13,9 +13,12 @@ import (
 	"net/url"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/anydoor7/tslink/internal/credentials"
+	"github.com/anydoor7/tslink/internal/mcpscope"
 	"github.com/anydoor7/tslink/internal/registry"
 	"github.com/anydoor7/tslink/internal/testenv"
 	tailscale "tailscale.com/client/tailscale/v2"
@@ -1255,5 +1258,146 @@ func TestInviteMutationsEmitSecurityLogsWithoutInviteURL(t *testing.T) {
 	}
 	if strings.Contains(text, "must-not-be-logged") || strings.Contains(text, "tskey-") {
 		t.Fatalf("logs leaked invite URL or credential-shaped material: %q", text)
+	}
+}
+
+func TestMCPInviteEffectsRecheckAfterRemoteProof(t *testing.T) {
+	for _, operation := range []string{"create-user", "create-device", "revoke-user", "revoke-device", "resend-user", "resend-device", "transport"} {
+		for _, state := range []string{"active", "expired"} {
+			t.Run(operation+"/"+state, func(t *testing.T) {
+				var expired atomic.Bool
+				var writes atomic.Int32
+				var reads atomic.Int32
+				withInviteServer(t, func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					if r.Method == http.MethodGet {
+						reads.Add(1)
+						if state == "expired" {
+							expired.Store(true)
+						}
+						if strings.HasSuffix(r.URL.Path, "/devices") {
+							io.WriteString(w, `{"devices":[{"id":"1","nodeId":"n1","hostname":"photos"}]}`)
+						} else {
+							io.WriteString(w, `{"id":"1001","email":"alice@example.com","deviceId":1,"inviteUrl":"https://login.example.invalid/invite"}`)
+						}
+						return
+					}
+					writes.Add(1)
+					if operation == "create-user" || operation == "create-device" || operation == "transport" {
+						io.WriteString(w, `[{"id":"1001","inviteUrl":"https://login.example.invalid/invite"}]`)
+					} else {
+						w.WriteHeader(http.StatusOK)
+					}
+				})
+				originalClient := inviteClientFn
+				if operation == "create-user" || operation == "transport" {
+					inviteClientFn = func() (inviteAPI, error) {
+						client, err := originalClient()
+						if state == "expired" {
+							expired.Store(true)
+						}
+						return client, err
+					}
+					defer func() { inviteClientFn = originalClient }()
+				}
+				now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+				expiry := now.Add(time.Hour)
+				ctx := mcpscope.WithClock(mcpscope.WithSession(context.Background(), mcpscope.Session{Scope: mcpscope.Scope{Role: "owner"}, ExpiresAt: &expiry}), func() time.Time {
+					if expired.Load() {
+						return expiry
+					}
+					return now
+				})
+				target := DeviceTarget{Service: "photos", Hostname: "photos", NodeID: "n1"}
+				var err error
+				switch operation {
+				case "create-user":
+					_, err = CreateUserInvite(ctx, "alice@example.com", "member", true)
+				case "create-device":
+					_, err = CreateDeviceInvite(ctx, target, "alice@example.com", true, false, false)
+				case "revoke-user":
+					_, err = RevokeInvite(ctx, "user", "1001", nil)
+				case "revoke-device":
+					_, err = RevokeInvite(ctx, "device", "1001", []DeviceTarget{target})
+				case "resend-user":
+					_, err = ResendInvite(ctx, "user", "1001", nil)
+				case "resend-device":
+					_, err = ResendInvite(ctx, "device", "1001", []DeviceTarget{target})
+				case "transport":
+					client, clientErr := inviteClientFn()
+					if clientErr != nil {
+						t.Fatal(clientErr)
+					}
+					_, err = client.CreateUserInvites(ctx, []userInviteRequest{{Role: "member"}})
+				}
+				if state == "active" {
+					if err != nil || writes.Load() != 1 {
+						t.Fatalf("active effect err=%v writes=%d", err, writes.Load())
+					}
+				} else {
+					if code, _ := registry.ErrorCode(err); code != mcpscope.DeniedCode || writes.Load() != 0 {
+						t.Fatalf("expired effect code=%q err=%v writes=%d", code, err, writes.Load())
+					}
+					if operation != "create-user" && operation != "transport" && reads.Load() == 0 {
+						t.Fatal("proof read did not execute")
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestMCPDeviceCleanupRechecksAfterRemoteList(t *testing.T) {
+	for _, expire := range []bool{false, true} {
+		state := "active"
+		if expire {
+			state = "expired"
+		}
+		t.Run(state, func(t *testing.T) {
+			testenv.SetHome(t, t.TempDir())
+			t.Setenv("TSLINK_DISABLE_KEYRING", "1")
+			t.Setenv("TSLINK_API_KEY", "test-placeholder")
+			var expired atomic.Bool
+			var reads, writes atomic.Int32
+			h := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch r.Method + " " + r.URL.Path {
+				case "GET /api/v2/tailnet/-/devices":
+					reads.Add(1)
+					if expire {
+						expired.Store(true)
+					}
+					_, _ = io.WriteString(w, `{"devices":[{"id":"1","nodeId":"node-photos","hostname":"photos"}]}`)
+				case "DELETE /api/v2/device/node-photos":
+					writes.Add(1)
+					_, _ = io.WriteString(w, `{}`)
+				default:
+					t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+					http.Error(w, "unexpected", http.StatusBadRequest)
+				}
+			}))
+			defer h.Close()
+			t.Setenv(APIBaseURLEnv, h.URL)
+			now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+			deadline := now.Add(time.Hour)
+			ctx := mcpscope.WithClock(mcpscope.WithSession(context.Background(), mcpscope.Session{Who: "owner", Scope: mcpscope.Scope{Role: "owner"}, ExpiresAt: &deadline}), func() time.Time {
+				if expired.Load() {
+					return deadline
+				}
+				return now
+			})
+			_, err := CleanupStaleNodesResult(ctx, []CleanupTarget{{Hostname: "photos", NodeIDs: []string{"node-photos"}}})
+			if reads.Load() != 1 {
+				t.Fatalf("remote list calls=%d", reads.Load())
+			}
+			if expire {
+				var denied mcpscope.Denied
+				if !errors.As(err, &denied) || writes.Load() != 0 {
+					t.Fatalf("err=%v remote writes=%d", err, writes.Load())
+				}
+			} else if err != nil || writes.Load() != 1 {
+				t.Fatalf("active err=%v remote writes=%d", err, writes.Load())
+			}
+		})
 	}
 }

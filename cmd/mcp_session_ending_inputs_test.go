@@ -46,7 +46,7 @@ func TestMCPHelpDocumentsSessionEndingInputs(t *testing.T) {
 			started, stopped := make(chan struct{}), make(chan struct{})
 			watching, release := make(chan struct{}), make(chan struct{})
 			actions := fakeMCPActions()
-			actions.status = func() (any, error) {
+			actions.status = func(ctx context.Context) (any, error) {
 				close(started)
 				<-release
 				close(stopped)
@@ -111,7 +111,7 @@ func TestMCPHelpDocumentsSessionEndingInputs(t *testing.T) {
 		release := make(chan struct{})
 		var calls atomic.Int32
 		actions := fakeMCPActions()
-		actions.status = func() (any, error) {
+		actions.status = func(ctx context.Context) (any, error) {
 			calls.Add(1)
 			<-release
 			return mcpStatusSummary{}, nil

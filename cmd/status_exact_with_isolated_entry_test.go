@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -67,7 +68,7 @@ func TestStatusTreatsTheDaemonsSnapshotAsExactWithAnIsolatedEntry(t *testing.T) 
 	}
 	withStatusURLSeams(t, true, 4242, startedAt)
 
-	result, err := getStatusURLs(pidPath, regPath, snapshotPath)
+	result, err := getStatusURLs(context.Background(), pidPath, regPath, snapshotPath)
 	if err != nil {
 		t.Fatalf("getStatusURLs: %v", err)
 	}
@@ -86,10 +87,10 @@ func TestDoctorTreatsTheDaemonsSnapshotAsExactWithAnIsolatedEntry(t *testing.T) 
 		}
 	}
 	write("sha256:another-registry")
-	assertDoctorFinding(t, buildDoctorResult(doctorOptions{}), inspect.WarningCodeRuntimeSnapshotStale)
+	assertDoctorFinding(t, buildDoctorResult(context.Background(), doctorOptions{}), inspect.WarningCodeRuntimeSnapshotStale)
 
 	write(fingerprint)
-	result := buildDoctorResult(doctorOptions{})
+	result := buildDoctorResult(context.Background(), doctorOptions{})
 	for _, finding := range result.Findings {
 		if finding.Code == inspect.WarningCodeRuntimeSnapshotStale {
 			t.Fatalf("doctor reports %+v for the snapshot the daemon wrote for this registry", finding)
@@ -104,7 +105,7 @@ func TestDoctorReportsARegistryTheDaemonCannotLoad(t *testing.T) {
 	if err := os.WriteFile(env.regPath, []byte("  \n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	finding := assertDoctorFinding(t, buildDoctorResult(doctorOptions{}), inspect.WarningCodeRegistryLoadFailed)
+	finding := assertDoctorFinding(t, buildDoctorResult(context.Background(), doctorOptions{}), inspect.WarningCodeRegistryLoadFailed)
 	if finding.Area != "registry" {
 		t.Fatalf("finding = %+v, want the registry named", finding)
 	}

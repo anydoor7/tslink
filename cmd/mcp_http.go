@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/anydoor7/tslink/internal/config"
+	"github.com/anydoor7/tslink/internal/mcpscope"
 	"github.com/anydoor7/tslink/internal/output"
 	"github.com/anydoor7/tslink/internal/registry"
 	"github.com/anydoor7/tslink/internal/server"
@@ -27,9 +28,14 @@ import (
 // bookkeeping entirely, and matches the sessionless direction of the current
 // spec revision. In this mode the SDK answers GET and DELETE with 405.
 func newMCPStreamableHandler(actions mcpActions) http.Handler {
-	srv := newMCPServer(actions)
 	return mcp.NewStreamableHTTPHandler(
-		func(*http.Request) *mcp.Server { return srv },
+		func(r *http.Request) *mcp.Server {
+			requestActions := actions
+			if session, ok := mcpscope.FromContext(r.Context()); ok {
+				requestActions.session = &session
+			}
+			return newMCPServer(requestActions)
+		},
 		&mcp.StreamableHTTPOptions{
 			Stateless: true,
 			// Match the stdio transport's per-record bound so one oversized
@@ -44,6 +50,7 @@ func newMCPStreamableHandler(actions mcpActions) http.Handler {
 type mcpControlPlaneSettings struct {
 	Enabled         bool
 	Allow           []string
+	Bindings        []mcpscope.Binding
 	NodeName        string
 	EventsKeepalive string
 }
@@ -57,6 +64,7 @@ func resolveMCPControlPlaneSettings(flagEnabled bool, cfg config.GlobalConfig) m
 			settings.Enabled = true
 		}
 		settings.Allow = append([]string(nil), cfg.MCP.Allow...)
+		settings.Bindings = append([]mcpscope.Binding(nil), cfg.MCP.Bindings...)
 		settings.NodeName = cfg.MCP.NodeName
 		settings.EventsKeepalive = cfg.MCP.EventsKeepalive
 	}
@@ -118,6 +126,7 @@ func buildMCPControlPlane(settings mcpControlPlaneSettings, actions mcpActions, 
 		NodeName:     settings.NodeName,
 		Tags:         append([]string(nil), tags...),
 		AllowedUsers: append([]string(nil), settings.Allow...),
+		Bindings:     append([]mcpscope.Binding(nil), settings.Bindings...),
 		Handler:      newMCPStreamableHandler(actions),
 		// The event stream is mounted only because this is non-nil. It reuses
 		// the control plane's own Origin and authorization middleware; there is

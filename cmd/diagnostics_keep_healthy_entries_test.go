@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"strings"
@@ -33,7 +34,7 @@ func TestDiagnosticsKeepHealthyEntriesBesideUnknownField(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Run("status", func(t *testing.T) {
-		result, err := getPollableStatus(env.pidPath, env.regPath, env.snapshotPath, env.authHandoff)
+		result, err := getPollableStatus(context.Background(), env.pidPath, env.regPath, env.snapshotPath, env.authHandoff)
 		if err != nil {
 			t.Fatalf("status hides healthy entry: %v", err)
 		}
@@ -42,7 +43,7 @@ func TestDiagnosticsKeepHealthyEntriesBesideUnknownField(t *testing.T) {
 		}
 	})
 	t.Run("list and URLs", func(t *testing.T) {
-		result, err := loadListResultForPaths(env.regPath, env.pidPath, env.snapshotPath, listOptions{})
+		result, err := loadListResultForPaths(context.Background(), env.regPath, env.pidPath, env.snapshotPath, listOptions{})
 		if err != nil {
 			t.Fatalf("list hides healthy entry: %v", err)
 		}
@@ -57,7 +58,7 @@ func TestDiagnosticsKeepHealthyEntriesBesideUnknownField(t *testing.T) {
 		}
 	})
 	t.Run("doctor", func(t *testing.T) {
-		result := buildDoctorResult(doctorOptions{})
+		result := buildDoctorResult(context.Background(), doctorOptions{})
 		found := false
 		for _, finding := range result.Findings {
 			if finding.Service == "bad" && finding.Code == registry.CodeUnknownConfigKey && finding.Evidence["valid_services"] == "good" {

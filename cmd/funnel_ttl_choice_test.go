@@ -28,7 +28,7 @@ func TestMCPFunnelTTLMatchesPublishedChoices(t *testing.T) {
 					t.Cleanup(func() { ensureDaemonFn = oldEnsure })
 					ensureDaemonFn = func(context.Context, io.Writer, bool) error { return nil }
 					shareIsRunningFn = func(string) bool { return true }
-					shareResolveEndpointOnceFn = func(_, _, _, name string) (serviceURLResolution, error) {
+					shareResolveEndpointOnceFn = func(_ context.Context, _, _, _, name string) (serviceURLResolution, error) {
 						return serviceURLResolution{Result: URLResult{Name: name, URL: "https://" + name + ".tail.ts.net"}}, nil
 					}
 					args := map[string]any{"name": "pub", "target": "localhost:3000", "funnel": true, "public_ack": true, "funnel_ttl": ttl}

@@ -186,3 +186,18 @@ Omitting `--funnel-ttl` when making an existing private service public selects t
 `tslink portal enable --owner <login> [--hostname home] [--admins <login,...>]` saves an independent Tailnet-only home portal. `tslink portal disable` closes only its listener. `--funnel` is explicitly refused. The running daemon applies changes; status/doctor report `portal` state and its exact URL when ready. People guides point to the portal when enabled. MCP equivalents: `portal_enable`, `portal_disable`. See [portal.md](portal.md) for authorization, network reachability and JSON details.
 
 Daemon readiness preserves pending portal enrollment; completed portal runtime evidence prevents a stale login prompt. Private HTTP/file entries match their enforced access. Raw TCP/public Funnel entries are an owner/admin inventory with a per-person enforcement note; omission does not deny visitor connectivity.
+## MCP scopes and audit
+
+`mcp --scope viewer --apps photos` reduces a local session; owner is the default.
+Operator/people-manager sessions accept `--max-duration` (default 24h). A viewer
+may explicitly use `--inventory`. Remote `mcp.bindings` provide equivalent
+WhoIs-bound roles with optional anchored expiry. Legacy `mcp.allow` remains owner.
+`mcp-audit [--json]` reads the bounded durable mutation journal. Status includes
+`mcp_bindings`; doctor warns with `mcp_owner_tag` and `mcp_binding_expired`.
+See [MCP scopes](mcp-scopes.md).
+
+Scoped people grants require an existing person (`mcp_person_owner_required`: ask the owner to add the person first); revoking an unknown login is a no-op. Audit keeps caller `identity.login/node` separate from `principal`, with `role` and `phase`, and records the actual share app at completion. Multiple matching MCP tag principals across legacy and scoped config return HTTP 403 unless an explicit login binding wins.
+
+When MCP tools bootstrap a daemon, session expiry or cancellation blocks later definition writes and manager commands. Manager subprocesses inherit cancellation; bounded installation restoration and cleanup may continue. Reading legacy audit `who`/`scope` preserves them as `principal`/`role`.
+
+MCP shared reads (`status`, `health`, `doctor`, `list`, `url`, share/add polling and owner event snapshots) pass the caller context to supervision queries. Cancellation interrupts an in-flight manager query; expired sessions cannot start another query. Setup inspection failures without an MCP session retain `daemon_setup_failed`, including a cancelled command context; MCP denials use `mcp_scope_denied`.

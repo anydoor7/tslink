@@ -9,6 +9,7 @@ import (
 
 	"github.com/anydoor7/tslink/internal/config"
 	"github.com/anydoor7/tslink/internal/credentials"
+	"github.com/anydoor7/tslink/internal/mcpscope"
 	"github.com/anydoor7/tslink/internal/registry"
 )
 
@@ -224,6 +225,9 @@ func CleanupStaleNodesResultWithDryRun(ctx context.Context, targets []CleanupTar
 			if dryRun {
 				result.WouldDelete = append(result.WouldDelete, d.Hostname)
 				continue
+			}
+			if err := mcpscope.CheckEffect(ctx); err != nil {
+				return result, err
 			}
 			if err := client.Devices().Delete(ctx, d.NodeID); err != nil {
 				return result, errors.New("delete TSLink-owned device failed")

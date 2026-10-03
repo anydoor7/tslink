@@ -21,10 +21,12 @@ import (
 func shareWaitingOnItsRegistration(t *testing.T, paths sharePaths, req shareRequest) (cancel func(), done <-chan error) {
 	t.Helper()
 	shareIsRunningFn = func(string) bool { return true }
-	sharePollableStatusFn = func(string, string, string, string) (StatusResult, error) { return StatusResult{}, nil }
+	sharePollableStatusFn = func(context.Context, string, string, string, string) (StatusResult, error) {
+		return StatusResult{}, nil
+	}
 	entered, release := make(chan struct{}), make(chan struct{})
 	var calls atomic.Int32
-	shareResolveEndpointOnceFn = func(_, _, _, name string) (serviceURLResolution, error) {
+	shareResolveEndpointOnceFn = func(_ context.Context, _, _, _, name string) (serviceURLResolution, error) {
 		if calls.Add(1) == 1 {
 			close(entered)
 			<-release

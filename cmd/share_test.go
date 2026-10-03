@@ -65,14 +65,14 @@ func runCmdTests(run func() int) int {
 	// Registry-focused unit tests never install OS services. Bootstrap tests
 	// explicitly exercise ensureDaemon with isolated manager/installer seams.
 	// All supervisor reads are isolated too. Individual manager tests replace this seam.
-	managerOutputFn = func(name string, args ...string) ([]byte, error) {
+	managerOutputFn = func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		if name == "systemctl" {
 			return []byte("LoadState=not-found\nMainPID=0\n"), nil
 		}
 		return []byte("Could not find service\n"), fmt.Errorf("not found")
 	}
 	ensureDaemonFn = func(context.Context, io.Writer, bool) error { return nil }
-	detectSupervisionFn = func(_ string, running bool, _ int) Supervision {
+	detectSupervisionFn = func(ctx context.Context, _ string, running bool, _ int) Supervision {
 		return unmanagedSupervision(running, "isolated unit test")
 	}
 	installRefusingHostSeams()
@@ -382,10 +382,10 @@ func TestExecuteShareNeedsLoginRetriesReuseSingleService(t *testing.T) {
 		daemonUp = true
 		return shareDaemonStart{Status: authStatusNeedsLogin, AuthURL: "https://login.tailscale.com/a/retry"}, nil
 	}
-	shareResolveEndpointOnceFn = func(_, _, _, name string) (serviceURLResolution, error) {
+	shareResolveEndpointOnceFn = func(_ context.Context, _, _, _, name string) (serviceURLResolution, error) {
 		return serviceURLResolution{}, registry.URLNotReadyError(name)
 	}
-	sharePollableStatusFn = func(_, _, _, _ string) (StatusResult, error) {
+	sharePollableStatusFn = func(_ context.Context, _, _, _, _ string) (StatusResult, error) {
 		return StatusResult{AuthStatus: authStatusNeedsLogin, AuthURL: "https://login.tailscale.com/a/retry"}, nil
 	}
 
@@ -487,10 +487,10 @@ func TestShareDaemonStartIsGatedOnTheRunningPredicate(t *testing.T) {
 			starts++
 			return shareDaemonStart{}, nil
 		}
-		shareResolveEndpointOnceFn = func(_, _, _, name string) (serviceURLResolution, error) {
+		shareResolveEndpointOnceFn = func(_ context.Context, _, _, _, name string) (serviceURLResolution, error) {
 			return serviceURLResolution{}, registry.URLNotReadyError(name)
 		}
-		sharePollableStatusFn = func(_, _, _, _ string) (StatusResult, error) { return StatusResult{}, nil }
+		sharePollableStatusFn = func(_ context.Context, _, _, _, _ string) (StatusResult, error) { return StatusResult{}, nil }
 
 		const invocations = 5
 		for attempt := 1; attempt <= invocations; attempt++ {
@@ -517,10 +517,10 @@ func TestExecuteShareSurfacesEnrollmentRequiredAsNeedsLogin(t *testing.T) {
 		AuthHandoff: filepath.Join(dir, "auth-handoff.json"),
 	}
 	shareIsRunningFn = func(string) bool { return true }
-	shareResolveEndpointOnceFn = func(_, _, _, name string) (serviceURLResolution, error) {
+	shareResolveEndpointOnceFn = func(_ context.Context, _, _, _, name string) (serviceURLResolution, error) {
 		return serviceURLResolution{}, registry.CodedError{Code: "enrollment_required", Message: "Authorize TSLink before waiting for a service URL"}
 	}
-	sharePollableStatusFn = func(_, _, _, _ string) (StatusResult, error) {
+	sharePollableStatusFn = func(_ context.Context, _, _, _, _ string) (StatusResult, error) {
 		return StatusResult{AuthStatus: authStatusNeedsLogin, AuthURL: "https://login.tailscale.com/a/enroll"}, nil
 	}
 
@@ -560,10 +560,10 @@ func TestExecuteShareFailuresRollBackNewRegistration(t *testing.T) {
 		dir := t.TempDir()
 		paths := sharePaths{Registry: filepath.Join(dir, "registry.json"), PID: filepath.Join(dir, "pid")}
 		shareIsRunningFn = func(string) bool { return true }
-		shareResolveEndpointOnceFn = func(_, _, _, name string) (serviceURLResolution, error) {
+		shareResolveEndpointOnceFn = func(_ context.Context, _, _, _, name string) (serviceURLResolution, error) {
 			return serviceURLResolution{}, registry.URLNotReadyError(name)
 		}
-		sharePollableStatusFn = func(_, _, _, _ string) (StatusResult, error) { return StatusResult{}, nil }
+		sharePollableStatusFn = func(_ context.Context, _, _, _, _ string) (StatusResult, error) { return StatusResult{}, nil }
 		if _, err := executeShare(context.Background(), paths, shareRequest{Target: "3000", Ephemeral: true}, 0, io.Discard); codeOf(err) != registry.CodeURLNotReady {
 			t.Fatalf("URL timeout err = %v", err)
 		}
@@ -583,7 +583,7 @@ func TestExecuteShareRunningReturnsExactFileURL(t *testing.T) {
 	}
 	paths := sharePaths{Registry: filepath.Join(dir, "registry.json")}
 	shareIsRunningFn = func(string) bool { return true }
-	shareResolveEndpointOnceFn = func(_, _, _, name string) (serviceURLResolution, error) {
+	shareResolveEndpointOnceFn = func(_ context.Context, _, _, _, name string) (serviceURLResolution, error) {
 		return serviceURLResolution{Result: URLResult{Name: name, URL: "https://" + name + ".tail.ts.net", State: "exact"}}, nil
 	}
 	result, err := executeShare(context.Background(), paths, shareRequest{Target: file, Name: "preview"}, time.Second, io.Discard)
@@ -600,23 +600,23 @@ func TestWaitForShareOutcomePollsAndHandlesLoginTimeoutAndContext(t *testing.T) 
 	restoreShareSeams(t)
 	paths := sharePaths{}
 	calls := 0
-	shareResolveEndpointOnceFn = func(_, _, _, name string) (serviceURLResolution, error) {
+	shareResolveEndpointOnceFn = func(_ context.Context, _, _, _, name string) (serviceURLResolution, error) {
 		calls++
 		if calls < 2 {
 			return serviceURLResolution{}, registry.URLNotReadyError(name)
 		}
 		return serviceURLResolution{Result: URLResult{Name: name, URL: "https://ready.tail.ts.net"}}, nil
 	}
-	sharePollableStatusFn = func(_, _, _, _ string) (StatusResult, error) { return StatusResult{}, nil }
+	sharePollableStatusFn = func(_ context.Context, _, _, _, _ string) (StatusResult, error) { return StatusResult{}, nil }
 	result, err := waitForShareOutcome(context.Background(), paths, "ready", "", 500*time.Millisecond)
 	if err != nil || result.URL != "https://ready.tail.ts.net" || calls < 2 {
 		t.Fatalf("result = %+v calls=%d err=%v", result, calls, err)
 	}
 
-	shareResolveEndpointOnceFn = func(_, _, _, name string) (serviceURLResolution, error) {
+	shareResolveEndpointOnceFn = func(_ context.Context, _, _, _, name string) (serviceURLResolution, error) {
 		return serviceURLResolution{}, registry.URLNotReadyError(name)
 	}
-	sharePollableStatusFn = func(_, _, _, _ string) (StatusResult, error) {
+	sharePollableStatusFn = func(_ context.Context, _, _, _, _ string) (StatusResult, error) {
 		return StatusResult{AuthStatus: authStatusNeedsLogin, AuthURL: "https://login.tailscale.com/a/poll"}, nil
 	}
 	result, err = waitForShareOutcome(context.Background(), paths, "login", "", time.Second)
@@ -624,7 +624,7 @@ func TestWaitForShareOutcomePollsAndHandlesLoginTimeoutAndContext(t *testing.T) 
 		t.Fatalf("login result = %+v err=%v", result, err)
 	}
 
-	sharePollableStatusFn = func(_, _, _, _ string) (StatusResult, error) { return StatusResult{}, nil }
+	sharePollableStatusFn = func(_ context.Context, _, _, _, _ string) (StatusResult, error) { return StatusResult{}, nil }
 	if _, err := waitForShareOutcome(context.Background(), paths, "timeout", "", 0); codeOf(err) != registry.CodeURLNotReady {
 		t.Fatalf("zero wait err = %v", err)
 	}
@@ -658,7 +658,7 @@ func TestResolveSharePathsAndCommandOutput(t *testing.T) {
 	shareSnapshotPathFn = func() (string, error) { return paths.Snapshot, nil }
 	shareAuthHandoffPathFn = func() (string, error) { return paths.AuthHandoff, nil }
 	shareIsRunningFn = func(string) bool { return true }
-	shareResolveEndpointOnceFn = func(_, _, _, name string) (serviceURLResolution, error) {
+	shareResolveEndpointOnceFn = func(_ context.Context, _, _, _, name string) (serviceURLResolution, error) {
 		return serviceURLResolution{Result: URLResult{Name: name, URL: "https://" + name + ".tail.ts.net"}}, nil
 	}
 
@@ -739,17 +739,19 @@ func TestShareErrorPaths(t *testing.T) {
 		t.Fatalf("daemon err = %v", err)
 	}
 
-	shareResolveEndpointOnceFn = func(_, _, _, _ string) (serviceURLResolution, error) {
+	shareResolveEndpointOnceFn = func(_ context.Context, _, _, _, _ string) (serviceURLResolution, error) {
 		return serviceURLResolution{}, errors.New("resolve failed")
 	}
-	if _, _, err := shareOutcomeOnce(paths, "demo", ""); err == nil || !strings.Contains(err.Error(), "resolve failed") {
+	if _, _, err := shareOutcomeOnce(context.Background(), paths, "demo", ""); err == nil || !strings.Contains(err.Error(), "resolve failed") {
 		t.Fatalf("resolve err = %v", err)
 	}
-	shareResolveEndpointOnceFn = func(_, _, _, name string) (serviceURLResolution, error) {
+	shareResolveEndpointOnceFn = func(_ context.Context, _, _, _, name string) (serviceURLResolution, error) {
 		return serviceURLResolution{}, registry.URLNotReadyError(name)
 	}
-	sharePollableStatusFn = func(_, _, _, _ string) (StatusResult, error) { return StatusResult{}, errors.New("status failed") }
-	if _, _, err := shareOutcomeOnce(paths, "demo", ""); err == nil || !strings.Contains(err.Error(), "status failed") {
+	sharePollableStatusFn = func(_ context.Context, _, _, _, _ string) (StatusResult, error) {
+		return StatusResult{}, errors.New("status failed")
+	}
+	if _, _, err := shareOutcomeOnce(context.Background(), paths, "demo", ""); err == nil || !strings.Contains(err.Error(), "status failed") {
 		t.Fatalf("status err = %v", err)
 	}
 

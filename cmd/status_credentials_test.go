@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"path/filepath"
@@ -115,7 +116,7 @@ func TestStatusCredentialExpiryMatrix(t *testing.T) {
 			pidPath, regPath, snapshotPath, handoffPath := statusTestPaths(t)
 			withStatusCredentialSeams(t, tc.apiKey, tc.clientSecret, statusInventoryAt(tc.daysLeft, true))
 
-			status, err := getPollableStatus(pidPath, regPath, snapshotPath, handoffPath)
+			status, err := getPollableStatus(context.Background(), pidPath, regPath, snapshotPath, handoffPath)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -177,7 +178,7 @@ func TestStatusCredentialExpiryMatrix(t *testing.T) {
 			}
 
 			// status --urls carries the identical credential block.
-			urls, err := getStatusURLsWithAuth(pidPath, regPath, snapshotPath, handoffPath)
+			urls, err := getStatusURLsWithAuth(context.Background(), pidPath, regPath, snapshotPath, handoffPath)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -201,7 +202,7 @@ func TestStatusCredentialUnknownStatesAndMetadataError(t *testing.T) {
 		withStatusCredentialSeams(t, statusFixtureAPIKey, "", func(values credentials.SlotValues, now time.Time, _ bool) credentials.Inventory {
 			return credentials.DescribeSlotsWithMetadata(values, credentials.Metadata{}, errors.New("credential metadata file is unreadable or malformed: tskey-api-FAKE-in-error"), now)
 		})
-		status, err := getPollableStatus(pidPath, regPath, snapshotPath, handoffPath)
+		status, err := getPollableStatus(context.Background(), pidPath, regPath, snapshotPath, handoffPath)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -225,7 +226,7 @@ func TestStatusCredentialUnknownStatesAndMetadataError(t *testing.T) {
 		withStatusCredentialSeams(t, "", "", nil)
 		hasClientSecretFn = func() bool { return true }
 		statusGetClientSecretFn = func() (string, error) { return "", errors.New("keyring read failed") }
-		status, err := getPollableStatus(pidPath, regPath, snapshotPath, handoffPath)
+		status, err := getPollableStatus(context.Background(), pidPath, regPath, snapshotPath, handoffPath)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -251,7 +252,7 @@ func TestStatusCredentialsDefaultInventoryPersistsBackfillInConfigDir(t *testing
 		}
 	})
 	withStatusCredentialSeams(t, statusFixtureAPIKey, "", nil)
-	status, err := getPollableStatus(pidPath, regPath, snapshotPath, handoffPath)
+	status, err := getPollableStatus(context.Background(), pidPath, regPath, snapshotPath, handoffPath)
 	if err != nil {
 		t.Fatal(err)
 	}

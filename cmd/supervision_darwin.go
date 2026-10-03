@@ -84,22 +84,22 @@ func supervisorConfigMatches(data []byte, dir string) bool {
 	return ok && env["TSLINK_CONFIG_DIR"] == dir
 }
 
-func launchdObservations() ([]byte, string, error) {
+func launchdObservations(ctx context.Context) ([]byte, string, error) {
 	for _, domain := range []string{launchctlDomain(), launchctlUserDomain()} {
 		target := launchctlServiceTargetForDomain(domain)
-		data, err := managerOutputFn("launchctl", "print", target)
+		data, err := managerOutputChecked(ctx, "launchctl", "print", target)
 		if err == nil {
 			return data, target, nil
 		}
 		if !launchctlTargetNotFound(data, err) {
-			return nil, "", fmt.Errorf("cannot inspect launchd target %s", target)
+			return nil, "", fmt.Errorf("cannot inspect launchd target %s: %w", target, err)
 		}
 	}
 	return nil, "", nil
 }
 
-func checkUnregisteredSupervisor() error {
-	data, _, err := launchdObservations()
+func checkUnregisteredSupervisor(ctx context.Context) error {
+	data, _, err := launchdObservations(ctx)
 	if err != nil {
 		return err
 	}
@@ -109,11 +109,11 @@ func checkUnregisteredSupervisor() error {
 	return nil
 }
 
-func checkSupervisorProcessScope() error {
+func checkSupervisorProcessScope(ctx context.Context) error {
 	for _, domain := range []string{launchctlDomain(), launchctlUserDomain()} {
-		data, err := managerOutputFn("launchctl", "print", launchctlServiceTargetForDomain(domain))
+		data, err := managerOutputChecked(ctx, "launchctl", "print", launchctlServiceTargetForDomain(domain))
 		if err != nil && !launchctlTargetNotFound(data, err) {
-			return fmt.Errorf("cannot inspect launchd domain %s", domain)
+			return fmt.Errorf("cannot inspect launchd domain %s: %w", domain, err)
 		}
 		_, pid := parseLaunchAgentState(data)
 		if pid > 0 {
@@ -123,7 +123,7 @@ func checkSupervisorProcessScope() error {
 	return nil
 }
 
-func detectSupervision(_ string, running bool, pid int) Supervision {
+func detectSupervisionContext(ctx context.Context, _ string, running bool, pid int) Supervision {
 	s := unmanagedSupervision(running, "No launchd ownership/autostart could be verified. Run: tslink install")
 	path, err := plistPath()
 	if err != nil {
@@ -147,7 +147,7 @@ func detectSupervision(_ string, running bool, pid int) Supervision {
 	matchedDomain := ""
 	restartOnExit := false
 	for _, domain := range []string{launchctlDomain(), launchctlUserDomain()} {
-		output, err := managerOutputFn("launchctl", "print", launchctlServiceTargetForDomain(domain))
+		output, err := managerOutputChecked(ctx, "launchctl", "print", launchctlServiceTargetForDomain(domain))
 		if err != nil {
 			continue
 		}
@@ -166,7 +166,7 @@ func detectSupervision(_ string, running bool, pid int) Supervision {
 	if !matched {
 		return s
 	}
-	autostart := values["RunAtLoad"] == true && values["Disabled"] != true && launchdAutostartEnabled(matchedDomain)
+	autostart := values["RunAtLoad"] == true && values["Disabled"] != true && launchdAutostartEnabled(ctx, matchedDomain)
 	// A LaunchAgent is a per-user job: launchd loads it when this user's
 	// session starts, so it returns at login rather than at boot. Saying so
 	// keeps the field comparable with the systemd side, where the same
@@ -213,8 +213,8 @@ func launchdLoadedKeepAlive(output []byte) bool {
 	return keepAlive
 }
 
-func launchdAutostartEnabled(domain string) bool {
-	data, err := managerOutputFn("launchctl", "print-disabled", domain)
+func launchdAutostartEnabled(ctx context.Context, domain string) bool {
+	data, err := managerOutputChecked(ctx, "launchctl", "print-disabled", domain)
 	if err != nil || !strings.Contains(string(data), "disabled services = {") {
 		return false
 	}
@@ -226,4 +226,8 @@ func launchdAutostartEnabled(domain string) bool {
 		}
 	}
 	return true
+}
+
+func detectSupervision(ctx context.Context, pidPath string, running bool, pid int) Supervision {
+	return detectSupervisionContext(ctx, pidPath, running, pid)
 }

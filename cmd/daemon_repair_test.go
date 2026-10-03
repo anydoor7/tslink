@@ -36,7 +36,7 @@ func TestRepairLiveDaemonRequiresSupervision(t *testing.T) {
 			isolateBootstrap(t)
 			isRunningFn = func(string) bool { return true }
 			inspected := 0
-			detectSupervisionFn = func(string, bool, int) Supervision { inspected++; return tc.s }
+			detectSupervisionFn = func(context.Context, string, bool, int) Supervision { inspected++; return tc.s }
 			err := ensureDaemon(context.Background(), io.Discard, false)
 			if tc.ok {
 				if err != nil {
@@ -63,7 +63,10 @@ func TestRepairLiveDaemonRequiresSupervision(t *testing.T) {
 func TestRepairOptOutDoesNotClaimSupervision(t *testing.T) {
 	isolateBootstrap(t)
 	isRunningFn = func(string) bool { return true }
-	detectSupervisionFn = func(string, bool, int) Supervision { t.Fatal("opt-out inspected supervisor"); return Supervision{} }
+	detectSupervisionFn = func(context.Context, string, bool, int) Supervision {
+		t.Fatal("opt-out inspected supervisor")
+		return Supervision{}
+	}
 	if err := ensureDaemon(context.Background(), io.Discard, true); err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +83,7 @@ func TestRepairLiveDaemonRejectsUnreadablePID(t *testing.T) {
 				}
 				return 0, errors.New("PID unreadable")
 			}
-			detectSupervisionFn = func(string, bool, int) Supervision {
+			detectSupervisionFn = func(context.Context, string, bool, int) Supervision {
 				t.Error("invalid PID reached ownership detector")
 				return Supervision{}
 			}
@@ -135,7 +138,7 @@ func TestRepairSavedConfigurationRefusal(t *testing.T) {
 					t.Fatalf("supervision checked before persistence: %+v, %v", reg, err)
 				}
 			}
-			detectSupervisionFn = func(string, bool, int) Supervision {
+			detectSupervisionFn = func(context.Context, string, bool, int) Supervision {
 				checkPersisted()
 				return unmanagedSupervision(true, "fixture manager does not own PID 4242")
 			}

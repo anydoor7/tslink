@@ -11,3 +11,4 @@
 - [supervisor_windows.go](supervisor_windows.go)
 - [task_process_windows.go](task_process_windows.go)
 - [task_process_windows_test.go](task_process_windows_test.go)
+- [helper_signal_unix_test.go](helper_signal_unix_test.go): copied helper ignores non-termination signals and exits on SIGTERM.

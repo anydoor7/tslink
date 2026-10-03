@@ -18,7 +18,7 @@ import (
 // (isolateBootstrap fails the test on any install).
 func TestLinuxBootstrapWithoutAUserBusNamesTheLoginSessionRoute(t *testing.T) {
 	isolateBootstrap(t)
-	managerOutputFn = func(name string, args ...string) ([]byte, error) {
+	managerOutputFn = func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		if name != "systemctl" {
 			t.Fatalf("unexpected manager %s %v", name, args)
 		}

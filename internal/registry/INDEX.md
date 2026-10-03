@@ -36,3 +36,9 @@ This index records the people sharing lifecycle implementation and regression te
 - `portal.go`: optional schema-2 portal settings, admission, hostname reservation and locked updates.
 - `portal_read.go`, `portal_read_unix.go`, `portal_read_windows.go`: bounded read-only registry reader, special-file refusal.
 - `portal_test.go`, `portal_unix_test.go`: persistence, concurrent writers, hostile configuration and FIFO/symlink tests.
+# Scoped MCP registry operations
+
+- `mcp_actions.go`: locked single-app grants, revocation and gateway restart requests.
+- `mcp_actions_test.go`: unrelated app preservation, expiry, tombstones and failed writes.
+
+- `mcp_boundary_test.go`: real lock tests for session expiry/cancellation across mutation writers and owner-only person creation.

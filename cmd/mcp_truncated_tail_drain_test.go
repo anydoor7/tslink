@@ -30,7 +30,7 @@ func TestMCPTruncatedFinalRecordStillAnswersEarlierRequests(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			actions := fakeMCPActions()
-			actions.status = func() (any, error) {
+			actions.status = func(ctx context.Context) (any, error) {
 				time.Sleep(tc.slow)
 				return mcpStatusSummary{DaemonRunning: true, ServiceCount: 7}, nil
 			}

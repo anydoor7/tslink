@@ -14,6 +14,7 @@ import (
 
 	"github.com/anydoor7/tslink/internal/config"
 	"github.com/anydoor7/tslink/internal/filelock"
+	"github.com/anydoor7/tslink/internal/mcpscope"
 	"github.com/anydoor7/tslink/internal/registry"
 	tsruntime "github.com/anydoor7/tslink/internal/runtime"
 	"github.com/spf13/cobra"
@@ -61,7 +62,7 @@ const (
 )
 
 var (
-	detectSupervisionFn = detectSupervision
+	detectSupervisionFn = detectSupervisionContext
 	ensureDaemonFn      = ensureDaemon
 	// installDaemonFn is called only while the supervisor transaction is locked.
 	installDaemonFn   = installDaemonLocked
@@ -84,14 +85,17 @@ var (
 	bootstrapNowFn = time.Now
 )
 
-func boundedManagerOutput(name string, args ...string) ([]byte, error) {
-	return runBoundedManagerCommand(name, managerQueryTimeout, args...)
+func boundedManagerOutput(ctx context.Context, name string, args ...string) ([]byte, error) {
+	return runBoundedManagerCommandContext(ctx, name, managerQueryTimeout, args...)
 }
 
 // Each manager process has a finite bound. The settle windows around repeated
 // queries do not interrupt a single blocked CombinedOutput call on their own.
-func runBoundedManagerCommand(name string, timeout time.Duration, args ...string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+func runBoundedManagerCommandContext(ctx context.Context, name string, timeout time.Duration, args ...string) ([]byte, error) {
+	if err := mcpscope.CheckEffect(ctx); err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.WaitDelay = managerWaitDelay
@@ -100,6 +104,19 @@ func runBoundedManagerCommand(name string, timeout time.Duration, args ...string
 		return output, fmt.Errorf("%s command exceeded %s: %w", name, timeout, ctx.Err())
 	}
 	return output, err
+}
+
+// managerCompensationContext retains caller attribution for bounded restoration
+// of captured prior state and disabling an uncertain replacement. These private
+// compensation paths already outlive request cancellation/expiry; they must not
+// use this context to install or activate a new replacement.
+func managerCompensationContext(ctx context.Context) context.Context {
+	ctx = context.WithoutCancel(ctx)
+	if session, ok := mcpscope.FromContext(ctx); ok {
+		session.ExpiresAt = nil
+		ctx = mcpscope.WithSession(ctx, session)
+	}
+	return ctx
 }
 
 func unmanagedSupervision(running bool, detail string) Supervision {
@@ -245,7 +262,7 @@ func ensureDaemon(ctx context.Context, out io.Writer, noInstall bool) error {
 				err = fmt.Errorf("invalid daemon PID %d", pid)
 			}
 			if err == nil && pid > 0 {
-				s := detectSupervisionFn(pidPath, true, pid)
+				s := detectSupervisionFn(ctx, pidPath, true, pid)
 				if verifiedDaemonSupervision(s) {
 					return nil
 				}
@@ -253,7 +270,14 @@ func ensureDaemon(ctx context.Context, out io.Writer, noInstall bool) error {
 			}
 			return registry.CodedError{Code: "daemon_supervision_unverified", Message: fmt.Sprintf("running daemon cannot be reused safely (%v); inspect with 'tslink doctor' and resolve the reported supervisor issue. For a manual daemon, run 'tslink stop', then 'tslink install'; no process was taken over", err), Next: []string{"tslink doctor", "tslink stop", "tslink install"}}
 		}
-		if err := checkBootstrapScope(path); err != nil {
+		if err := checkBootstrapScope(ctx, path); err != nil {
+			var denial mcpscope.Denied
+			if errors.As(err, &denial) {
+				return err
+			}
+			if sessionErr := mcpscope.CheckEffect(ctx); errors.As(sessionErr, &denial) {
+				return sessionErr
+			}
 			return daemonSetupError(err)
 		}
 		dir, err := config.Dir()
@@ -269,6 +293,9 @@ func ensureDaemon(ctx context.Context, out io.Writer, noInstall bool) error {
 		// Promising reboot survival here contradicted that renderer within the
 		// same command on any host without systemd lingering.
 		fmt.Fprintf(out, "Installing TSLink background service (%s): %s\nConfig: %s\nUndo with: tslink uninstall. Autostart scope is not known before this host is inspected; 'tslink status' reports whether it returns at boot or only at sign-in.\n", supervisorName(), path, dir)
+		if err := mcpscope.CheckEffect(ctx); err != nil {
+			return err
+		}
 		if err := installDaemonFn(ctx, out); err != nil {
 			return daemonSetupError(err)
 		}
@@ -291,7 +318,7 @@ func ensureDaemon(ctx context.Context, out io.Writer, noInstall bool) error {
 			if err != nil {
 				return 0, err
 			}
-			s := detectSupervisionFn(pidPath, true, pid)
+			s := detectSupervisionFn(ctx, pidPath, true, pid)
 			if !verifiedDaemonSupervision(s) {
 				return 0, fmt.Errorf("supervisor ownership/autostart unconfirmed (including restart policy): %s", s.Detail)
 			}
@@ -426,10 +453,10 @@ func absoluteConfigDir() (string, error) {
 
 // Existing definitions may have been authored externally or refer to another
 // config. Autoinstall only replaces a definition whose binding we can prove.
-func checkBootstrapScope(path string) error {
+func checkBootstrapScope(ctx context.Context, path string) error {
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
-		return checkUnregisteredSupervisor()
+		return checkUnregisteredSupervisor(ctx)
 	}
 	if err != nil {
 		return err
@@ -441,7 +468,7 @@ func checkBootstrapScope(path string) error {
 	if !supervisorConfigMatches(data, dir) {
 		return fmt.Errorf("existing supervisor at %s is not bound to config %s; automatic replacement refused; inspect it before explicitly running 'tslink install'", path, dir)
 	}
-	return checkSupervisorProcessScope()
+	return checkSupervisorProcessScope(ctx)
 }
 
 // A detected launchd/systemd owner must include the restart policy promised by
@@ -503,6 +530,9 @@ func withSupervisorTransaction(ctx context.Context, fn func() error) error {
 	}
 	defer filelock.Unlock(f)
 	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := mcpscope.CheckEffect(ctx); err != nil {
 		return err
 	}
 	return fn()

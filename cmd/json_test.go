@@ -104,9 +104,9 @@ func TestStatusJSON(t *testing.T) {
 	regPath := filepath.Join(dir, "registry.json")
 	_, _ = registry.Add(regPath, registry.Service{Name: "a", Type: registry.TypeProxy, Target: "http://localhost:3000"})
 
-	r, err := getStatus(filepath.Join(dir, "pid"), regPath)
+	r, err := getStatus(context.Background(), filepath.Join(dir, "pid"), regPath)
 	if err != nil {
-		t.Fatalf("getStatus() error = %v", err)
+		t.Fatalf("getStatus(context.Background(), ) error = %v", err)
 	}
 
 	got := captureStdout(t, func() {

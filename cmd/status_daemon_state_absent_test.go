@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"io"
 	"os"
 	"path/filepath"
@@ -32,14 +33,14 @@ func TestNeverStartedInstallReportsDaemonAbsentOnEverySurface(t *testing.T) {
 		t.Fatalf("fixture has a PID file (%v)", err)
 	}
 
-	cli, err := getPollableStatus(paths.PID, paths.Registry, paths.Snapshot, paths.AuthHandoff)
+	cli, err := getPollableStatus(context.Background(), paths.PID, paths.Registry, paths.Snapshot, paths.AuthHandoff)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if cli.DaemonRunning || cli.DaemonState != daemonStateAbsent {
 		t.Fatalf("CLI status daemon_running=%v daemon_state=%q, want false and absent", cli.DaemonRunning, cli.DaemonState)
 	}
-	value, err := defaultMCPActions(paths, io.Discard).status()
+	value, err := defaultMCPActions(paths, io.Discard).status(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +61,7 @@ func TestNeverStartedInstallReportsDaemonAbsentOnEverySurface(t *testing.T) {
 	if err := os.WriteFile(paths.PID, []byte("not a pid\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cli, err = getPollableStatus(paths.PID, paths.Registry, paths.Snapshot, paths.AuthHandoff)
+	cli, err = getPollableStatus(context.Background(), paths.PID, paths.Registry, paths.Snapshot, paths.AuthHandoff)
 	if err != nil {
 		t.Fatal(err)
 	}

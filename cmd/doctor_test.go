@@ -39,7 +39,7 @@ func newDoctorTestEnv(t *testing.T, services []registry.Service) doctorTestEnv {
 	resetDoctorSeams(t)
 	oldSupervision := detectSupervisionFn
 	t.Cleanup(func() { detectSupervisionFn = oldSupervision })
-	detectSupervisionFn = func(string, bool, int) Supervision {
+	detectSupervisionFn = func(context.Context, string, bool, int) Supervision {
 		return Supervision{Manager: "systemd", Autostart: true, RestartOnExit: true, Detail: "isolated managed fixture"}
 	}
 
@@ -253,12 +253,12 @@ func TestDoctorSupervisorBreakerVisibleWithEmptyRegistry(t *testing.T) {
 		t.Run(state, func(t *testing.T) {
 			newDoctorTestEnv(t, nil)
 			isRunningFn = func(string) bool { return false }
-			detectSupervisionFn = func(string, bool, int) Supervision {
+			detectSupervisionFn = func(context.Context, string, bool, int) Supervision {
 				return Supervision{Manager: "windows-task-scheduler", Installed: true, Autostart: true,
 					RuntimeState: state, FailureReason: "historical_reason"}
 			}
 			var out bytes.Buffer
-			if err := runDoctor(&out, doctorOptions{}, true); output.ExitCode(err) != output.ExitWarning {
+			if err := runDoctor(context.Background(), &out, doctorOptions{}, true); output.ExitCode(err) != output.ExitWarning {
 				t.Fatalf("doctor exit=%v output=%s", err, out.String())
 			}
 			var envelope struct {
@@ -342,7 +342,7 @@ func decodeDoctorJSON(t *testing.T, raw string) DoctorResult {
 func TestDoctorExitCodes(t *testing.T) {
 	env := newDoctorTestEnv(t, nil)
 	env.writeExactSnapshot(t)
-	if err := runDoctor(io.Discard, doctorOptions{}, false); err != nil {
+	if err := runDoctor(context.Background(), io.Discard, doctorOptions{}, false); err != nil {
 		t.Fatalf("healthy runDoctor error = %v", err)
 	}
 
@@ -351,7 +351,7 @@ func TestDoctorExitCodes(t *testing.T) {
 		t.Fatalf("write authkey: %v", err)
 	}
 	var warningBuf bytes.Buffer
-	err := runDoctor(&warningBuf, doctorOptions{}, true)
+	err := runDoctor(context.Background(), &warningBuf, doctorOptions{}, true)
 	if output.ExitCode(err) != output.ExitWarning {
 		t.Fatalf("legacy authkey ExitCode = %d, want %d", output.ExitCode(err), output.ExitWarning)
 	}
@@ -369,7 +369,7 @@ func TestDoctorExitCodes(t *testing.T) {
 	doctorGetAPIKeyFn = func() (string, error) { return "", errors.New("credential backend unavailable") }
 	doctorReadFileFn = func(string) ([]byte, error) { return nil, os.ErrNotExist }
 	var criticalBuf bytes.Buffer
-	err = runDoctor(&criticalBuf, doctorOptions{}, true)
+	err = runDoctor(context.Background(), &criticalBuf, doctorOptions{}, true)
 	if output.ExitCode(err) != output.ExitCritical {
 		t.Fatalf("credential read failure ExitCode = %d, want %d", output.ExitCode(err), output.ExitCritical)
 	}
@@ -395,11 +395,11 @@ func TestDoctorMissingCredentialsFindingIsInfo(t *testing.T) {
 	isRunningFn = func(string) bool { return false }
 
 	var buf bytes.Buffer
-	err := runDoctor(&buf, doctorOptions{}, false)
+	err := runDoctor(context.Background(), &buf, doctorOptions{}, false)
 	if output.ExitCode(err) != output.ExitSuccess {
 		t.Fatalf("ExitCode = %d, want %d", output.ExitCode(err), output.ExitSuccess)
 	}
-	result := buildDoctorResult(doctorOptions{})
+	result := buildDoctorResult(context.Background(), doctorOptions{})
 	finding := assertDoctorFinding(t, result, inspect.WarningCodeCredentialNone)
 	if finding.Severity != doctorSeverityInfo {
 		t.Fatalf("credential_none severity = %q, want info", finding.Severity)
@@ -471,7 +471,7 @@ func TestDoctorTier1StateMatrix(t *testing.T) {
 				tc.setup(t, env)
 			}
 
-			result := buildDoctorResult(doctorOptions{})
+			result := buildDoctorResult(context.Background(), doctorOptions{})
 			if result.CredentialTier != doctorCredentialTier1 || result.CredentialMode != doctorCredentialNone {
 				t.Fatalf("credential state = %s/%s, want tier1/none", result.CredentialTier, result.CredentialMode)
 			}
@@ -499,7 +499,7 @@ func TestDoctorTier1RunningWithoutEnrollmentWarns(t *testing.T) {
 	doctorGetClientSecretFn = func() (string, error) { return "", nil }
 	doctorReadFileFn = func(string) ([]byte, error) { return nil, os.ErrNotExist }
 
-	result := buildDoctorResult(doctorOptions{})
+	result := buildDoctorResult(context.Background(), doctorOptions{})
 	tierFinding := assertDoctorFinding(t, result, inspect.WarningCodeCredentialTier1)
 	if tierFinding.Severity != doctorSeverityInfo {
 		t.Fatalf("credential_tier1 severity = %q, want %q", tierFinding.Severity, doctorSeverityInfo)
@@ -521,7 +521,7 @@ func TestDoctorTier1CompletedEnrollmentMessage(t *testing.T) {
 	doctorReadFileFn = func(string) ([]byte, error) { return nil, os.ErrNotExist }
 	env.writeExactSnapshot(t)
 
-	result := buildDoctorResult(doctorOptions{})
+	result := buildDoctorResult(context.Background(), doctorOptions{})
 	finding := assertDoctorFinding(t, result, inspect.WarningCodeCredentialTier1)
 	if !strings.Contains(finding.Message, "has produced authorized runtime state") {
 		t.Fatalf("credential_tier1 message = %q, want completed-enrollment evidence", finding.Message)
@@ -546,7 +546,7 @@ func TestDoctorTier1CompletedEnrollmentOutranksStaleHandoff(t *testing.T) {
 		t.Fatalf("saveAuthHandoff: %v", err)
 	}
 
-	result := buildDoctorResult(doctorOptions{})
+	result := buildDoctorResult(context.Background(), doctorOptions{})
 	finding := assertDoctorFinding(t, result, inspect.WarningCodeCredentialTier1)
 	if !strings.Contains(finding.Message, "has produced authorized runtime state") {
 		t.Fatalf("credential_tier1 message = %q, want completed-enrollment evidence despite lingering handoff", finding.Message)
@@ -562,7 +562,7 @@ func TestDoctorCredentialBackendFailureClassifiesTierUnknown(t *testing.T) {
 	doctorGetClientSecretFn = func() (string, error) { return "", nil }
 	doctorReadFileFn = func(string) ([]byte, error) { return nil, os.ErrNotExist }
 
-	result := buildDoctorResult(doctorOptions{})
+	result := buildDoctorResult(context.Background(), doctorOptions{})
 	if result.CredentialTier != doctorCredentialTierUnknown {
 		t.Fatalf("credential tier = %q, want %q", result.CredentialTier, doctorCredentialTierUnknown)
 	}
@@ -583,7 +583,7 @@ func TestDoctorLegacyAuthKeyWarning(t *testing.T) {
 		t.Fatalf("write authkey: %v", err)
 	}
 
-	result := buildDoctorResult(doctorOptions{})
+	result := buildDoctorResult(context.Background(), doctorOptions{})
 	if result.CredentialMode != doctorCredentialLegacyAuthKey {
 		t.Fatalf("credential mode = %q, want %q", result.CredentialMode, doctorCredentialLegacyAuthKey)
 	}
@@ -603,7 +603,7 @@ func TestDoctorHealthyLoopbackCanExitZero(t *testing.T) {
 	}})
 	env.writeExactSnapshot(t)
 
-	result := buildDoctorResult(doctorOptions{})
+	result := buildDoctorResult(context.Background(), doctorOptions{})
 	assertDoctorCodesRegistered(t, result)
 	if result.Status != doctorStatusOK || result.Counts.Warnings != 0 || result.Counts.Errors != 0 || result.Counts.Critical != 0 {
 		t.Fatalf("doctor result = %+v, want clean ok", result)
@@ -623,7 +623,7 @@ func TestDoctorJSONSchemaCountsAndRedaction(t *testing.T) {
 	env.writeExactSnapshot(t)
 
 	var buf bytes.Buffer
-	if err := runDoctor(&buf, doctorOptions{}, true); err != nil {
+	if err := runDoctor(context.Background(), &buf, doctorOptions{}, true); err != nil {
 		t.Fatalf("runDoctor JSON returned %v, want nil for info-only findings", err)
 	}
 	raw := buf.String()
@@ -711,7 +711,7 @@ func TestDoctorRuntimeSnapshotWarnings(t *testing.T) {
 			if tc.setup != nil {
 				tc.setup(t, env)
 			}
-			result := buildDoctorResult(doctorOptions{})
+			result := buildDoctorResult(context.Background(), doctorOptions{})
 			assertDoctorFinding(t, result, tc.code)
 			assertDoctorCodesRegistered(t, result)
 			if err := doctorExit(result); output.ExitCode(err) != output.ExitWarning {
@@ -731,7 +731,7 @@ func TestDoctorTCPBoundaryWarning(t *testing.T) {
 	env.writeExactSnapshot(t)
 
 	var buf bytes.Buffer
-	err := runDoctor(&buf, doctorOptions{}, false)
+	err := runDoctor(context.Background(), &buf, doctorOptions{}, false)
 	if output.ExitCode(err) != output.ExitWarning {
 		t.Fatalf("ExitCode = %d, want warning", output.ExitCode(err))
 	}
@@ -739,7 +739,7 @@ func TestDoctorTCPBoundaryWarning(t *testing.T) {
 	if strings.Contains(raw, "HTTP ACL applies") {
 		t.Fatalf("doctor output overclaimed TCP ACL behavior: %s", raw)
 	}
-	result := buildDoctorResult(doctorOptions{})
+	result := buildDoctorResult(context.Background(), doctorOptions{})
 	assertDoctorFinding(t, result, inspect.WarningCodeTCPHTTPACLNotApplicable)
 	assertDoctorCodesRegistered(t, result)
 }
@@ -781,7 +781,7 @@ func TestDoctorExternalTargetsSkipByDefaultAndProbeWhenRequested(t *testing.T) {
 				return nil
 			}
 
-			result := buildDoctorResult(doctorOptions{})
+			result := buildDoctorResult(context.Background(), doctorOptions{})
 			if called != 0 {
 				t.Fatalf("probe called by default for external target")
 			}
@@ -790,7 +790,7 @@ func TestDoctorExternalTargetsSkipByDefaultAndProbeWhenRequested(t *testing.T) {
 			assertDoctorCodesRegistered(t, result)
 
 			called = 0
-			result = buildDoctorResult(doctorOptions{ProbeExternal: true})
+			result = buildDoctorResult(context.Background(), doctorOptions{ProbeExternal: true})
 			if called != 1 {
 				t.Fatalf("probe calls with --probe-external = %d, want 1", called)
 			}
@@ -825,7 +825,7 @@ func TestDoctorProbeFailureCodes(t *testing.T) {
 			doctorProbeTargetFn = func(context.Context, string, time.Duration) error {
 				return tc.err
 			}
-			result := buildDoctorResult(doctorOptions{})
+			result := buildDoctorResult(context.Background(), doctorOptions{})
 			assertDoctorFinding(t, result, tc.code)
 			assertDoctorCodesRegistered(t, result)
 			if err := doctorExit(result); output.ExitCode(err) != output.ExitCritical {
@@ -848,7 +848,7 @@ func TestDoctorFunnelGlobalControlURLWarning(t *testing.T) {
 		return config.GlobalConfig{ControlURL: "https://headscale.example.com"}, nil
 	}
 
-	result := buildDoctorResult(doctorOptions{})
+	result := buildDoctorResult(context.Background(), doctorOptions{})
 	assertDoctorFinding(t, result, inspect.WarningCodeFunnelGlobalControlURLUnknownCompat)
 	assertDoctorCodesRegistered(t, result)
 	if err := doctorExit(result); output.ExitCode(err) != output.ExitWarning {
@@ -901,7 +901,7 @@ func TestDoctorFunnelGuardrailValidationCodes(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			env := newDoctorTestEnv(t, []registry.Service{tc.svc})
 			env.writeExactSnapshot(t)
-			result := buildDoctorResult(doctorOptions{})
+			result := buildDoctorResult(context.Background(), doctorOptions{})
 			assertDoctorFinding(t, result, tc.code)
 			assertDoctorCodesRegistered(t, result)
 			if err := doctorExit(result); output.ExitCode(err) != output.ExitCritical {
@@ -923,7 +923,7 @@ func TestDoctorInvalidControlURLs(t *testing.T) {
 		return config.GlobalConfig{ControlURL: "ftp://headscale.example.com"}, nil
 	}
 
-	result := buildDoctorResult(doctorOptions{})
+	result := buildDoctorResult(context.Background(), doctorOptions{})
 	assertDoctorFinding(t, result, inspect.WarningCodeControlURLInvalid)
 	assertDoctorCodesRegistered(t, result)
 	if err := doctorExit(result); output.ExitCode(err) != output.ExitCritical {
@@ -950,7 +950,7 @@ func TestDoctorGlobalInvalidControlURLRedactsRawOutputs(t *testing.T) {
 	}
 
 	var jsonBuf bytes.Buffer
-	err := runDoctor(&jsonBuf, doctorOptions{}, true)
+	err := runDoctor(context.Background(), &jsonBuf, doctorOptions{}, true)
 	if output.ExitCode(err) != output.ExitCritical {
 		t.Fatalf("JSON ExitCode = %d, want %d", output.ExitCode(err), output.ExitCritical)
 	}
@@ -966,7 +966,7 @@ func TestDoctorGlobalInvalidControlURLRedactsRawOutputs(t *testing.T) {
 	assertDoctorCodesRegistered(t, result)
 
 	var humanBuf bytes.Buffer
-	err = runDoctor(&humanBuf, doctorOptions{}, false)
+	err = runDoctor(context.Background(), &humanBuf, doctorOptions{}, false)
 	if output.ExitCode(err) != output.ExitCritical {
 		t.Fatalf("human ExitCode = %d, want %d", output.ExitCode(err), output.ExitCritical)
 	}
@@ -981,7 +981,7 @@ func TestDoctorFileServicePathChecks(t *testing.T) {
 	}})
 	env.writeExactSnapshot(t)
 
-	result := buildDoctorResult(doctorOptions{})
+	result := buildDoctorResult(context.Background(), doctorOptions{})
 	assertDoctorFinding(t, result, inspect.WarningCodeFilePathMissing)
 	assertDoctorCodesRegistered(t, result)
 	if err := doctorExit(result); output.ExitCode(err) != output.ExitCritical {
@@ -1178,7 +1178,7 @@ func TestDoctorTier1CompletedEnrollmentUnderRegistryMismatch(t *testing.T) {
 		t.Fatalf("saveAuthHandoff: %v", err)
 	}
 
-	result := buildDoctorResult(doctorOptions{})
+	result := buildDoctorResult(context.Background(), doctorOptions{})
 	finding := assertDoctorFinding(t, result, inspect.WarningCodeCredentialTier1)
 	if !strings.Contains(finding.Message, "has produced authorized runtime state") {
 		t.Fatalf("credential_tier1 message = %q, want completed-enrollment evidence despite registry mismatch + lingering handoff", finding.Message)
@@ -1209,7 +1209,7 @@ func TestDoctorTier1FailedSnapshotIsNotCompletedEnrollment(t *testing.T) {
 		t.Fatalf("runtime.Save: %v", err)
 	}
 
-	result := buildDoctorResult(doctorOptions{})
+	result := buildDoctorResult(context.Background(), doctorOptions{})
 	finding := assertDoctorFinding(t, result, inspect.WarningCodeCredentialTier1)
 	if strings.Contains(finding.Message, "has produced authorized runtime state") {
 		t.Fatalf("credential_tier1 message = %q, failed service must not count as completed enrollment", finding.Message)

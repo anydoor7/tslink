@@ -49,6 +49,7 @@ Documentation is English-only. The only translations are the homepage READMEs in
 | Landscape | [landscape.md](landscape.md) |
 | Local models and private-data workflows | [local-ai.md](local-ai.md) |
 | Connecting an MCP client | [mcp-clients.md](mcp-clients.md) |
+| MCP scopes | [mcp-scopes.md](mcp-scopes.md) |
 | Multi Machine | [multi-machine.md](multi-machine.md) |
 | People | [people.md](people.md) |
 | Portal | [portal.md](portal.md) |

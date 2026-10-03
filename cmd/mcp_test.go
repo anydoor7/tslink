@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/anydoor7/tslink/internal/inspect"
+	"github.com/anydoor7/tslink/internal/mcpaudit"
 	"github.com/anydoor7/tslink/internal/output"
 	"github.com/anydoor7/tslink/internal/recipes"
 	"github.com/anydoor7/tslink/internal/registry"
@@ -36,6 +37,13 @@ func fakeMCPActions() mcpActions {
 		portalChange: func(args portalArguments, enable bool) (any, error) {
 			return map[string]any{"enabled": enable, "state": "pending", "hostname": args.Hostname}, nil
 		},
+		personApp: func(_ context.Context, who, app, lifetime string, revoke bool) (any, error) {
+			return map[string]any{"person": PeopleView{Login: who, Grants: []PeopleGrantView{{PersonGrant: registry.PersonGrant{App: app}, Active: !revoke}}}, "app": app, "revoked": revoke}, nil
+		},
+		appRestart: func(_ context.Context, app string) (any, error) {
+			return map[string]any{"app": app, "queued": true, "restart_generation": 1}, nil
+		},
+		auditRead: func() ([]mcpaudit.Entry, error) { return []mcpaudit.Entry{}, nil },
 		peopleChange: func(_ context.Context, args peopleArguments, _ bool) (any, error) {
 			return PeopleResult{Person: PeopleView{Login: args.Who, Grants: []PeopleGrantView{}}, Invites: []PeopleInviteView{}, Complete: true, Message: "guide", InviteRequirement: peopleInviteRequirement}, nil
 		},
@@ -52,11 +60,11 @@ func fakeMCPActions() mcpActions {
 		add: func(_ context.Context, params AddParams, _ bool) (any, error) {
 			return AddResult{Name: params.Name, Type: registry.TypeProxy, Created: true, URLPending: true}, nil
 		},
-		list: func() (any, error) {
+		list: func(ctx context.Context) (any, error) {
 			return map[string]any{"services": []mcpServiceSummary{{Name: "demo", Type: registry.TypeProxy, State: "pending"}}}, nil
 		},
 		unshare: func(_ context.Context, name string) (any, error) { return map[string]any{"ok": name == "demo"}, nil },
-		status: func() (any, error) {
+		status: func(ctx context.Context) (any, error) {
 			return mcpStatusSummary{Authenticated: false, DaemonRunning: true, ServiceCount: 1, Status: authStatusNeedsLogin, AuthURL: "https://login.tailscale.com/a/mcp"}, nil
 		},
 		url: func(_ context.Context, name string, _ time.Duration) (any, error) {
@@ -65,13 +73,13 @@ func fakeMCPActions() mcpActions {
 		tagsList: func() (any, error) {
 			return TagsListResult{Services: []TagsServiceEntry{{Name: "demo", Tags: []string{"tag:tslink"}}}}, nil
 		},
-		tagsSet: func(service, tag string) (any, error) {
+		tagsSet: func(ctx context.Context, service, tag string) (any, error) {
 			return TagsSetResult{Service: service, Tags: []string{tag}}, nil
 		},
 		accessExplain: func(service string) (any, error) {
 			return buildAccessExplainResult(registry.Service{Name: service, Type: registry.TypeProxy, Target: "http://localhost:3000"}), nil
 		},
-		doctor: func(bool) (any, error) {
+		doctor: func(context.Context, bool) (any, error) {
 			return DoctorResult{
 				SchemaVersion:   inspect.SchemaVersion,
 				ExecutionStatus: doctorExecutionCompleted,
@@ -375,7 +383,7 @@ func TestMCPStdioAnswersEveryRequestBeforeEndOfInput(t *testing.T) {
 // to the answer.
 func TestMCPStdioWaitsForAToolThatOutlivesItsInput(t *testing.T) {
 	actions := fakeMCPActions()
-	actions.status = func() (any, error) {
+	actions.status = func(ctx context.Context) (any, error) {
 		time.Sleep(300 * time.Millisecond)
 		return mcpStatusSummary{DaemonRunning: true, ServiceCount: 7}, nil
 	}
@@ -518,6 +526,7 @@ func TestMCPToolSchemasAreClosedAndModelFocused(t *testing.T) {
 		"apps_detect", "recipe_list", "recipe_plan", "recipe_apply",
 		"extend", "people_add", "people_update", "people_list", "people_remove",
 		"portal_enable", "portal_disable",
+		"people_grant", "people_revoke", "app_restart", "health", "mcp_audit",
 	}
 	if len(mcpToolDefinitions) != len(wantNames) {
 		t.Fatalf("tools = %d, want %d", len(mcpToolDefinitions), len(wantNames))
@@ -850,7 +859,7 @@ func TestMCPProtocolErrorsAndLifecycle(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			called := false
 			actions := fakeMCPActions()
-			actions.status = func() (any, error) {
+			actions.status = func(ctx context.Context) (any, error) {
 				called = true
 				return mcpStatusSummary{}, nil
 			}
@@ -1007,7 +1016,7 @@ func TestDefaultMCPActionsUseLocalRegistryAndRedactedStatus(t *testing.T) {
 	}
 	oldMCPStatus := mcpStatusFn
 	t.Cleanup(func() { mcpStatusFn = oldMCPStatus })
-	mcpStatusFn = func(_, _, _, _ string) (StatusResult, error) {
+	mcpStatusFn = func(_ context.Context, _, _, _, _ string) (StatusResult, error) {
 		return StatusResult{DaemonRunning: true, CredentialStored: true, AuthStatus: authStatusNeedsLogin, AuthURL: "https://login.tailscale.com/a/status", ServiceCount: 1}, nil
 	}
 	oldDelete := deleteDevicesFn
@@ -1016,7 +1025,7 @@ func TestDefaultMCPActionsUseLocalRegistryAndRedactedStatus(t *testing.T) {
 		return tailapi.CleanupResult{Deleted: []string{target.Hostname}}, nil
 	}
 	shareIsRunningFn = func(string) bool { return true }
-	shareResolveEndpointOnceFn = func(_, _, _, name string) (serviceURLResolution, error) {
+	shareResolveEndpointOnceFn = func(_ context.Context, _, _, _, name string) (serviceURLResolution, error) {
 		return serviceURLResolution{Result: URLResult{Name: name, URL: "https://" + name + ".tail.ts.net"}}, nil
 	}
 	actions := defaultMCPActions(paths, os.Stderr)
@@ -1024,7 +1033,7 @@ func TestDefaultMCPActionsUseLocalRegistryAndRedactedStatus(t *testing.T) {
 	if err != nil || shared.URL != "https://port-3000.tail.ts.net" {
 		t.Fatalf("share = %+v err=%v", shared, err)
 	}
-	listValue, err := actions.list()
+	listValue, err := actions.list(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1032,7 +1041,7 @@ func TestDefaultMCPActionsUseLocalRegistryAndRedactedStatus(t *testing.T) {
 	if len(listed) != 2 || listed[0].Name != "demo" || listed[0].URL != nil {
 		t.Fatalf("list = %+v", listValue)
 	}
-	statusValue, err := actions.status()
+	statusValue, err := actions.status(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1063,7 +1072,7 @@ func TestDefaultMCPActionsUseLocalRegistryAndRedactedStatus(t *testing.T) {
 	if _, err := actions.unshare(context.Background(), "Bad_Name"); err == nil {
 		t.Fatal("invalid name accepted")
 	}
-	listValue, err = actions.list()
+	listValue, err = actions.list(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1184,7 +1193,7 @@ func TestMCPToolResultMarshalFailureAndCodedErrors(t *testing.T) {
 func TestMCPOversizeRecordIsBounded(t *testing.T) {
 	called := false
 	actions := fakeMCPActions()
-	actions.status = func() (any, error) {
+	actions.status = func(ctx context.Context) (any, error) {
 		called = true
 		return mcpStatusSummary{}, nil
 	}
@@ -1382,7 +1391,7 @@ func TestMCPMalformedRequestsAreNeverAnsweredAsCalls(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			called := false
 			actions := fakeMCPActions()
-			actions.status = func() (any, error) {
+			actions.status = func(ctx context.Context) (any, error) {
 				called = true
 				return mcpStatusSummary{}, nil
 			}

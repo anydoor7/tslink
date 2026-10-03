@@ -133,11 +133,11 @@ func TestPreserveHostProjections(t *testing.T) {
 			if inspect.ServiceViewFor(svc).PreserveHost != preserve {
 				t.Fatal("service view lost policy")
 			}
-			status, err := readOnlyStatus.getStatus(filepath.Join(dir, "pid"), path)
+			status, err := readOnlyStatus.getStatus(context.Background(), filepath.Join(dir, "pid"), path)
 			if err != nil || len(status.Services) != 1 || status.Services[0].PreserveHost == nil || *status.Services[0].PreserveHost != preserve {
 				t.Fatalf("status=%+v err=%v", status, err)
 			}
-			urls, err := readOnlyStatus.getStatusURLs(filepath.Join(dir, "pid"), path, filepath.Join(dir, "runtime.json"))
+			urls, err := readOnlyStatus.getStatusURLs(context.Background(), filepath.Join(dir, "pid"), path, filepath.Join(dir, "runtime.json"))
 			if err != nil || len(urls.Services) != 1 || urls.Services[0].PreserveHost != preserve || listSummary(urls.Services[0]).PreserveHost != preserve {
 				t.Fatalf("status/list projection=%+v %v", urls, err)
 			}
@@ -158,7 +158,7 @@ func TestPreserveHostProjections(t *testing.T) {
 			}
 			old := mcpStatusFn
 			t.Cleanup(func() { mcpStatusFn = old })
-			mcpStatusFn = func(string, string, string, string) (StatusResult, error) { return status, nil }
+			mcpStatusFn = func(context.Context, string, string, string, string) (StatusResult, error) { return status, nil }
 			result, err := callMCPTool(context.Background(), defaultMCPActions(sharePaths{Registry: path}, io.Discard), "status", json.RawMessage(`{}`))
 			if err != nil || result.IsError {
 				t.Fatalf("MCP status=%+v %v", result, err)
@@ -191,7 +191,7 @@ func TestSharePreserveHostCLI(t *testing.T) {
 			oldRunning, oldResolve := shareIsRunningFn, shareResolveEndpointOnceFn
 			t.Cleanup(func() { shareIsRunningFn = oldRunning; shareResolveEndpointOnceFn = oldResolve })
 			shareIsRunningFn = func(string) bool { return true }
-			shareResolveEndpointOnceFn = func(string, string, string, string) (serviceURLResolution, error) {
+			shareResolveEndpointOnceFn = func(context.Context, string, string, string, string) (serviceURLResolution, error) {
 				return serviceURLResolution{Result: URLResult{URL: "https://app.review.example/"}}, nil
 			}
 			out, err := runRecipeRoot(t, "share", "8080", fmt.Sprintf("--preserve-host=%t", preserve), "--json")

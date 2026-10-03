@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/anydoor7/tslink/internal/config"
+	"github.com/anydoor7/tslink/internal/mcpscope"
 	"github.com/anydoor7/tslink/internal/output"
 	"github.com/anydoor7/tslink/internal/registry"
 	"github.com/anydoor7/tslink/internal/security"
@@ -120,10 +121,17 @@ func tagsListResultForPath(regPath string) (TagsListResult, error) {
 // tagsSetForPath replaces one service's tags in one registry.
 // `tslink tags set` and the MCP tags_set tool share it.
 func tagsSetForPath(regPath, serviceName, tag string) (TagsSetResult, error) {
+	return tagsSetForPathContext(context.Background(), regPath, serviceName, tag)
+}
+
+func tagsSetForPathContext(ctx context.Context, regPath, serviceName, tag string) (TagsSetResult, error) {
 	if err := validateTagPrefix(tag); err != nil {
 		return TagsSetResult{}, err
 	}
 	if _, err := tagsMutateServiceFn(regPath, serviceName, func(svc registry.Service) (registry.Service, error) {
+		if err := mcpscope.CheckEffect(ctx); err != nil {
+			return registry.Service{}, err
+		}
 		svc.Tags = []string{tag}
 		return svc, nil
 	}); err != nil {

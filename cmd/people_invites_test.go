@@ -258,15 +258,15 @@ func TestPeopleRemovalDuringStalledPostAndConcurrentRetry(t *testing.T) {
 func TestPeopleInviteContextCancellationBeforeAndAfterPOST(t *testing.T) {
 	paths := peopleTestPaths(t)
 	reviewPeopleAPI(t, paths)
-	entered := make(chan struct{}, 1)
+	entered := make(chan struct{})
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "GET" {
 			io.WriteString(w, `{"devices":[{"nodeId":"n1","hostname":"photos"}]}`)
 			return
 		}
-		entered <- struct{}{}
 		w.WriteHeader(200)
 		w.(http.Flusher).Flush()
+		close(entered)
 		<-r.Context().Done()
 	}))
 	defer api.Close()

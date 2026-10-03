@@ -39,7 +39,7 @@ func isolateBootstrap(t *testing.T) string {
 	readPIDFn = func(string) (int, error) { return 4242, nil }
 	ensureDaemonFn = ensureDaemon
 	bootstrapTimeout, bootstrapInterval, bootstrapSettle, bootstrapEvidenceTimeout = 20*time.Millisecond, time.Millisecond, 2*time.Millisecond, 20*time.Millisecond
-	managerOutputFn = func(name string, args ...string) ([]byte, error) {
+	managerOutputFn = func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		if name == "systemctl" {
 			return []byte("LoadState=not-found\n"), nil
 		}
@@ -50,7 +50,9 @@ func isolateBootstrap(t *testing.T) string {
 		return nil, errors.New("unexpected manager")
 	}
 	installDaemonFn = func(context.Context, io.Writer) error { t.Fatal("unexpected install"); return nil }
-	detectSupervisionFn = func(_ string, running bool, _ int) Supervision { return unmanagedSupervision(running, "test") }
+	detectSupervisionFn = func(ctx context.Context, _ string, running bool, _ int) Supervision {
+		return unmanagedSupervision(running, "test")
+	}
 	return dir
 }
 
@@ -59,7 +61,7 @@ func TestBootstrapOptOutAndAlreadyRunning(t *testing.T) {
 		t.Run(fmt.Sprint(running), func(t *testing.T) {
 			isolateBootstrap(t)
 			isRunningFn = func(string) bool { return running }
-			detectSupervisionFn = func(string, bool, int) Supervision {
+			detectSupervisionFn = func(context.Context, string, bool, int) Supervision {
 				return Supervision{Manager: "launchd", Installed: true, Autostart: true, RestartOnExit: true}
 			}
 			var log bytes.Buffer
@@ -91,7 +93,7 @@ func TestBootstrapSucceedsWhenEvidenceLagsControlPlane(t *testing.T) {
 			installDaemonFn = func(context.Context, io.Writer) error {
 				installs++
 				isRunningFn = func(string) bool { return true }
-				detectSupervisionFn = func(string, bool, int) Supervision {
+				detectSupervisionFn = func(context.Context, string, bool, int) Supervision {
 					samples++
 					return Supervision{Manager: "systemd", Installed: true, RestartOnExit: true, Autostart: true}
 				}
@@ -149,7 +151,7 @@ func TestBootstrapFailsWhenSupervisionNeverSettles(t *testing.T) {
 	isolateBootstrap(t)
 	installDaemonFn = func(context.Context, io.Writer) error {
 		isRunningFn = func(string) bool { return true }
-		detectSupervisionFn = func(_ string, running bool, _ int) Supervision {
+		detectSupervisionFn = func(ctx context.Context, _ string, running bool, _ int) Supervision {
 			return unmanagedSupervision(running, "no manager owns this process")
 		}
 		return nil
@@ -353,7 +355,7 @@ func TestBootstrapAddWritesBeforeInstallThenReturnsURL(t *testing.T) {
 			t.Fatalf("daemon cannot see the saved service during installation: %+v err=%v", reg, err)
 		}
 		isRunningFn = func(string) bool { return true }
-		detectSupervisionFn = func(string, bool, int) Supervision {
+		detectSupervisionFn = func(context.Context, string, bool, int) Supervision {
 			return Supervision{Manager: "launchd", Installed: true, Autostart: true, RestartOnExit: true}
 		}
 		fp, _ := tsruntime.RegistryFingerprint(reg, nil)
@@ -383,7 +385,7 @@ func TestBootstrapAddSucceedsWhenEnrollmentURLArrivesLate(t *testing.T) {
 	record := newAuthHandoffRecord("myapp", "https://login.tailscale.com/a/late-fixture", 4242)
 	installDaemonFn = func(context.Context, io.Writer) error {
 		isRunningFn = func(string) bool { return true }
-		detectSupervisionFn = func(string, bool, int) Supervision {
+		detectSupervisionFn = func(context.Context, string, bool, int) Supervision {
 			return Supervision{Manager: "systemd", Installed: true, RestartOnExit: true, Autostart: true}
 		}
 		// Nothing to show for it yet, and nothing to show for it for longer
@@ -520,11 +522,13 @@ func TestBootstrapDoctorCauseAndProbePositiveControl(t *testing.T) {
 	_ = env
 	oldDetect := detectSupervisionFn
 	t.Cleanup(func() { detectSupervisionFn = oldDetect })
-	detectSupervisionFn = func(_ string, running bool, _ int) Supervision { return unmanagedSupervision(running, "fixture") }
+	detectSupervisionFn = func(ctx context.Context, _ string, running bool, _ int) Supervision {
+		return unmanagedSupervision(running, "fixture")
+	}
 	running, probes := false, 0
 	isRunningFn = func(string) bool { return running }
 	doctorProbeTargetFn = func(context.Context, string, time.Duration) error { probes++; return syscall.ECONNREFUSED }
-	stopped := buildDoctorResult(doctorOptions{})
+	stopped := buildDoctorResult(context.Background(), doctorOptions{})
 	if probes != 0 || stopped.Counts.Services != 1 || stopped.Counts.Errors < 2 {
 		t.Fatalf("stopped=%+v probes=%d", stopped, probes)
 	}
@@ -537,7 +541,7 @@ func TestBootstrapDoctorCauseAndProbePositiveControl(t *testing.T) {
 	assertDoctorNoFinding(t, stopped, inspect.WarningCodeTargetProbeRefused)
 	// Prove that the same scanner/probe really can produce the finding.
 	running = true
-	live := buildDoctorResult(doctorOptions{})
+	live := buildDoctorResult(context.Background(), doctorOptions{})
 	if probes != 1 || live.Counts.Services != 1 {
 		t.Fatalf("positive control did not probe: %d %+v", probes, live)
 	}
@@ -562,10 +566,10 @@ func TestBootstrapStatusSupervisionBothFormats(t *testing.T) {
 	pidPath, regPath, snapshotPath := writeExactURLFixture(t, "myapp")
 	oldDetect := detectSupervisionFn
 	t.Cleanup(func() { detectSupervisionFn = oldDetect })
-	detectSupervisionFn = func(string, bool, int) Supervision {
+	detectSupervisionFn = func(context.Context, string, bool, int) Supervision {
 		return Supervision{Manager: "launchd", Installed: true, Autostart: true, RestartOnExit: true, Detail: "fixture"}
 	}
-	r, err := getStatusURLs(pidPath, regPath, snapshotPath)
+	r, err := getStatusURLs(context.Background(), pidPath, regPath, snapshotPath)
 	if err != nil {
 		t.Fatal(err)
 	}

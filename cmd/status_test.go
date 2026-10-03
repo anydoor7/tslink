@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -48,7 +49,7 @@ func TestStatusJSONReportsOwnershipProofWithoutNodeID(t *testing.T) {
 	pidPath := filepath.Join(dir, "tslink.pid")
 	addStatusTestService(t, regPath, registry.Service{Name: "private", Type: registry.TypeProxy, Target: "http://localhost:3000"})
 
-	result, err := getStatus(pidPath, regPath)
+	result, err := getStatus(context.Background(), pidPath, regPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +68,7 @@ func TestStatusJSONReportsOwnershipProofWithoutNodeID(t *testing.T) {
 	if err := tsruntime.RecordOwnedNode(ledgerPath, "private", "node-status-proof-fixture", time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	result, err = getStatus(pidPath, regPath)
+	result, err = getStatus(context.Background(), pidPath, regPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +123,7 @@ func TestStatusDaemonStateIsAdditiveAndKeepsDaemonRunningSemantics(t *testing.T)
 		t.Run(tc.name, func(t *testing.T) {
 			isRunningFn = func(string) bool { return tc.running }
 			isProcessAbsentFromPIDFileFn = func(string) bool { return tc.absent }
-			result := commandStatus.baseStatus("isolated.pid")
+			result := commandStatus.baseStatus(context.Background(), "isolated.pid")
 			if result.DaemonState != tc.wantState || result.DaemonRunning != tc.wantRunning || result.DaemonPID != tc.wantPID {
 				t.Fatalf("daemon status = state:%q running:%t pid:%d, want state:%q running:%t pid:%d", result.DaemonState, result.DaemonRunning, result.DaemonPID, tc.wantState, tc.wantRunning, tc.wantPID)
 			}
@@ -147,7 +148,7 @@ func TestStatusOwnershipProofAvailabilityDistinguishesMissingProofFromUnreadable
 	}
 	addStatusTestService(t, regPath, registry.Service{Name: "private", Type: registry.TypeProxy, Target: "http://localhost:3000"})
 
-	missing, err := getStatus(pidPath, regPath)
+	missing, err := getStatus(context.Background(), pidPath, regPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,7 +163,7 @@ func TestStatusOwnershipProofAvailabilityDistinguishesMissingProofFromUnreadable
 	if err := os.WriteFile(ledgerPath, []byte(`{"schema_version":2,"nodes":[`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	unreadable, err := getStatus(pidPath, regPath)
+	unreadable, err := getStatus(context.Background(), pidPath, regPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -262,7 +263,7 @@ func TestStatusURLsExactSnapshotUsesRuntimeEndpoint(t *testing.T) {
 	}
 	withStatusURLSeams(t, true, 4242, startedAt)
 
-	result, err := getStatusURLs(pidPath, regPath, snapshotPath)
+	result, err := getStatusURLs(context.Background(), pidPath, regPath, snapshotPath)
 	if err != nil {
 		t.Fatalf("getStatusURLs: %v", err)
 	}
@@ -291,7 +292,7 @@ func TestStatusAndListLifecycleFieldsExposeRFC3339DeadlineAndRemaining(t *testin
 	statusNowFn = func() time.Time { return now }
 	t.Cleanup(func() { statusNowFn = oldNow })
 
-	result, err := getStatusURLs(pidPath, regPath, snapshotPath)
+	result, err := getStatusURLs(context.Background(), pidPath, regPath, snapshotPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -322,7 +323,7 @@ func TestExpiredFunnelWallClockOverridesPreDeadlineActiveSnapshot(t *testing.T) 
 	oldNow := statusNowFn
 	statusNowFn = func() time.Time { return deadline.Add(time.Second) }
 	t.Cleanup(func() { statusNowFn = oldNow })
-	result, err := getStatusURLs(pidPath, regPath, snapshotPath)
+	result, err := getStatusURLs(context.Background(), pidPath, regPath, snapshotPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -347,7 +348,7 @@ func TestStatusWithoutRuntimeUsesEffectiveExpiredFunnelState(t *testing.T) {
 	oldNow := statusNowFn
 	statusNowFn = func() time.Time { return now }
 	t.Cleanup(func() { statusNowFn = oldNow })
-	result, err := getStatus(pidPath, regPath)
+	result, err := getStatus(context.Background(), pidPath, regPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -390,7 +391,7 @@ func TestStatusAndListExposeFunnelFailureState(t *testing.T) {
 	}
 	withStatusURLSeams(t, true, 4242, startedAt)
 
-	status, err := getPollableStatus(pidPath, regPath, snapshotPath, handoffPath)
+	status, err := getPollableStatus(context.Background(), pidPath, regPath, snapshotPath, handoffPath)
 	if err != nil {
 		t.Fatalf("getPollableStatus: %v", err)
 	}
@@ -405,7 +406,7 @@ func TestStatusAndListExposeFunnelFailureState(t *testing.T) {
 		t.Fatalf("status provisioning = %+v, want machine-readable netmap timeout", statusService.Error.Provision)
 	}
 
-	urls, err := getStatusURLs(pidPath, regPath, snapshotPath)
+	urls, err := getStatusURLs(context.Background(), pidPath, regPath, snapshotPath)
 	if err != nil {
 		t.Fatalf("getStatusURLs: %v", err)
 	}
@@ -414,7 +415,7 @@ func TestStatusAndListExposeFunnelFailureState(t *testing.T) {
 		t.Fatalf("status --urls service = %+v", detailed)
 	}
 
-	listed, err := loadListResultForPaths(regPath, pidPath, snapshotPath, listOptions{})
+	listed, err := loadListResultForPaths(context.Background(), regPath, pidPath, snapshotPath, listOptions{})
 	if err != nil {
 		t.Fatalf("loadListResultForPaths: %v", err)
 	}
@@ -461,9 +462,9 @@ func TestPollableStatusExposesGlobalRuntimeErrorWhenRegistryIsInvalid(t *testing
 	}
 	withStatusURLSeams(t, true, 4242, startedAt)
 
-	result, err := getPollableStatus(pidPath, regPath, snapshotPath, handoffPath)
+	result, err := getPollableStatus(context.Background(), pidPath, regPath, snapshotPath, handoffPath)
 	if err != nil {
-		t.Fatalf("getPollableStatus() error = %v", err)
+		t.Fatalf("getPollableStatus(context.Background(), ) error = %v", err)
 	}
 	if result.GlobalError == nil || result.GlobalError.Code != registry.CodeRegistryReloadInvalid || len(result.GlobalError.Next) != 1 {
 		t.Fatalf("global_error = %+v", result.GlobalError)
@@ -490,7 +491,7 @@ func TestStatusNotAuthenticatedIncludesMachineContinuation(t *testing.T) {
 	addStatusTestService(t, regPath, registry.Service{Name: "web", Type: registry.TypeProxy, Target: "http://localhost:3000"})
 	withStatusURLSeams(t, false, 0, time.Time{})
 
-	status, err := getPollableStatus(pidPath, regPath, snapshotPath, handoffPath)
+	status, err := getPollableStatus(context.Background(), pidPath, regPath, snapshotPath, handoffPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -500,7 +501,7 @@ func TestStatusNotAuthenticatedIncludesMachineContinuation(t *testing.T) {
 	if status.AuthStatus != authStatusNotAuthenticated || !reflect.DeepEqual(status.Next, []string{"tslink install"}) {
 		t.Fatalf("status = %+v, want not_authenticated with install continuation", status)
 	}
-	urls, err := getStatusURLsWithAuth(pidPath, regPath, snapshotPath, handoffPath)
+	urls, err := getStatusURLsWithAuth(context.Background(), pidPath, regPath, snapshotPath, handoffPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -545,9 +546,9 @@ func TestPollableStatusZeroCredentialTransitionsFromNeedsLoginToAuthenticated(t 
 	}
 	t.Cleanup(func() { statusLoadAuthHandoffFn = oldLoadHandoff })
 
-	needsLogin, err := getPollableStatus(pidPath, regPath, snapshotPath, handoffPath)
+	needsLogin, err := getPollableStatus(context.Background(), pidPath, regPath, snapshotPath, handoffPath)
 	if err != nil {
-		t.Fatalf("getPollableStatus(needs_login): %v", err)
+		t.Fatalf("getPollableStatus(context.Background(), needs_login): %v", err)
 	}
 	if needsLogin.Authenticated || needsLogin.NodeAuthorized || needsLogin.AuthorizedServiceCount != 0 || needsLogin.AuthStatus != authStatusNeedsLogin {
 		t.Fatalf("auth state = authenticated:%v status:%q, want needs_login", needsLogin.Authenticated, needsLogin.AuthStatus)
@@ -566,9 +567,9 @@ func TestPollableStatusZeroCredentialTransitionsFromNeedsLoginToAuthenticated(t 
 	if err := tsruntime.Save(snapshotPath, snapshot); err != nil {
 		t.Fatalf("runtime.Save: %v", err)
 	}
-	authenticated, err := getPollableStatus(pidPath, regPath, snapshotPath, handoffPath)
+	authenticated, err := getPollableStatus(context.Background(), pidPath, regPath, snapshotPath, handoffPath)
 	if err != nil {
-		t.Fatalf("getPollableStatus(authenticated): %v", err)
+		t.Fatalf("getPollableStatus(context.Background(), authenticated): %v", err)
 	}
 	if !authenticated.Authenticated || !authenticated.NodeAuthorized || authenticated.AuthorizedServiceCount != 1 || authenticated.AuthStatus != authStatusAuthenticated {
 		t.Fatalf("auth state = authenticated:%v status:%q, want authenticated", authenticated.Authenticated, authenticated.AuthStatus)
@@ -609,7 +610,7 @@ func TestPollableStatusSurfacesPendingHandoffWithoutRunningDaemon(t *testing.T) 
 	}
 	t.Cleanup(func() { statusLoadAuthHandoffFn = oldLoadHandoff })
 
-	result, err := getPollableStatus(pidPath, regPath, snapshotPath, handoffPath)
+	result, err := getPollableStatus(context.Background(), pidPath, regPath, snapshotPath, handoffPath)
 	if err != nil {
 		t.Fatalf("getPollableStatus: %v", err)
 	}
@@ -661,7 +662,7 @@ func TestPollableStatusShowsEarlierServicesWhileNextNeedsLogin(t *testing.T) {
 	}
 	t.Cleanup(func() { statusLoadAuthHandoffFn = oldLoadHandoff })
 
-	result, err := getPollableStatus(pidPath, regPath, snapshotPath, handoffPath)
+	result, err := getPollableStatus(context.Background(), pidPath, regPath, snapshotPath, handoffPath)
 	if err != nil {
 		t.Fatalf("getPollableStatus: %v", err)
 	}
@@ -701,7 +702,7 @@ func TestStatusURLsPartialSnapshotUsesReportedServicesWithoutAuthoritativeOmissi
 	}
 	withStatusURLSeams(t, true, 4242, startedAt)
 
-	result, err := getStatusURLs(pidPath, regPath, snapshotPath)
+	result, err := getStatusURLs(context.Background(), pidPath, regPath, snapshotPath)
 	if err != nil {
 		t.Fatalf("getStatusURLs: %v", err)
 	}
@@ -747,7 +748,7 @@ func TestPollableStatusRejectsAuthHandoffFromDifferentDaemonPID(t *testing.T) {
 	}
 	t.Cleanup(func() { statusLoadAuthHandoffFn = oldLoadHandoff })
 
-	result, err := getPollableStatus(pidPath, regPath, snapshotPath, handoffPath)
+	result, err := getPollableStatus(context.Background(), pidPath, regPath, snapshotPath, handoffPath)
 	if err != nil {
 		t.Fatalf("getPollableStatus: %v", err)
 	}
@@ -772,7 +773,7 @@ func TestStatusURLsMissingSnapshotFallsBackToExpectedEndpoint(t *testing.T) {
 	})
 	withStatusURLSeams(t, true, 4242, startedAt)
 
-	result, err := getStatusURLs(pidPath, regPath, snapshotPath)
+	result, err := getStatusURLs(context.Background(), pidPath, regPath, snapshotPath)
 	if err != nil {
 		t.Fatalf("getStatusURLs: %v", err)
 	}
@@ -836,7 +837,7 @@ func TestStatusURLsRegistryMismatchKeepsRunningServiceEvidence(t *testing.T) {
 	}
 	t.Cleanup(func() { statusLoadAuthHandoffFn = oldLoadHandoff })
 
-	status, err := getPollableStatus(pidPath, regPath, snapshotPath, handoffPath)
+	status, err := getPollableStatus(context.Background(), pidPath, regPath, snapshotPath, handoffPath)
 	if err != nil {
 		t.Fatalf("getPollableStatus: %v", err)
 	}
@@ -854,7 +855,7 @@ func TestStatusURLsRegistryMismatchKeepsRunningServiceEvidence(t *testing.T) {
 		}
 	}
 
-	urls, err := getStatusURLsWithAuth(pidPath, regPath, snapshotPath, handoffPath)
+	urls, err := getStatusURLsWithAuth(context.Background(), pidPath, regPath, snapshotPath, handoffPath)
 	if err != nil {
 		t.Fatalf("getStatusURLsWithAuth: %v", err)
 	}
@@ -932,7 +933,7 @@ func TestStatusURLsStaleEvidenceFallsBackToExpectedEndpoint(t *testing.T) {
 			}
 			withStatusURLSeams(t, true, 4242, lowerBound)
 
-			result, err := getStatusURLs(pidPath, regPath, snapshotPath)
+			result, err := getStatusURLs(context.Background(), pidPath, regPath, snapshotPath)
 			if err != nil {
 				t.Fatalf("getStatusURLs: %v", err)
 			}
@@ -975,7 +976,7 @@ func TestStatusURLsUnreadableSnapshotFallsBackToExpectedEndpoint(t *testing.T) {
 	}
 	t.Cleanup(func() { runtimeLoadSnapshotFn = oldLoad })
 
-	result, err := getStatusURLs(pidPath, regPath, snapshotPath)
+	result, err := getStatusURLs(context.Background(), pidPath, regPath, snapshotPath)
 	if err != nil {
 		t.Fatalf("getStatusURLs: %v", err)
 	}
@@ -1012,7 +1013,7 @@ func TestStatusURLsTCPRendersRawHostPort(t *testing.T) {
 	}
 	withStatusURLSeams(t, true, 4242, startedAt)
 
-	result, err := getStatusURLs(pidPath, regPath, snapshotPath)
+	result, err := getStatusURLs(context.Background(), pidPath, regPath, snapshotPath)
 	if err != nil {
 		t.Fatalf("getStatusURLs: %v", err)
 	}
@@ -1193,7 +1194,7 @@ func TestStatusURLsReturnsRegistryLoadError(t *testing.T) {
 	}
 	withStatusURLSeams(t, false, 0, time.Time{})
 
-	_, err := getStatusURLs(pidPath, regPath, snapshotPath)
+	_, err := getStatusURLs(context.Background(), pidPath, regPath, snapshotPath)
 	if err == nil {
 		t.Fatal("getStatusURLs error = nil, want registry load error")
 	}
@@ -1257,7 +1258,7 @@ func TestPollableStatusRemovalMismatchDoesNotInflateCount(t *testing.T) {
 	}
 	withStatusURLSeams(t, true, 4242, startedAt)
 
-	status, err := getPollableStatus(pidPath, regPath, snapshotPath, handoffPath)
+	status, err := getPollableStatus(context.Background(), pidPath, regPath, snapshotPath, handoffPath)
 	if err != nil {
 		t.Fatalf("getPollableStatus: %v", err)
 	}

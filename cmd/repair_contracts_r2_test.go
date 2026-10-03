@@ -183,11 +183,11 @@ func TestStatusDeadlineCrossingNormalizesFunnel(t *testing.T) {
 				}
 				return deadline.Add(-time.Nanosecond)
 			}
-			ordinary, err := getPollableStatus(pidPath, regPath, snapshotPath, filepath.Join(dir, "handoff.json"))
+			ordinary, err := getPollableStatus(context.Background(), pidPath, regPath, snapshotPath, filepath.Join(dir, "handoff.json"))
 			if err != nil {
 				t.Fatal(err)
 			}
-			urls, err := getStatusURLs(pidPath, regPath, snapshotPath)
+			urls, err := getStatusURLs(context.Background(), pidPath, regPath, snapshotPath)
 			if err != nil {
 				t.Fatal(err)
 			}

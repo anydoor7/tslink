@@ -171,7 +171,7 @@ func TestBuiltinSupervisorStatusRestartingAndBreaker(t *testing.T) {
 	pidPath := filepath.Join(dir, "tslink.pid")
 	data, _ := renderWindowsTask(spec)
 	task := windowsSchedulerStatus{Exists: true, Enabled: true, State: 4, Engines: []int{42}, XML: string(data)}
-	windowsSchedulerFn = func(string, string, []byte) (windowsSchedulerStatus, error) { return task, nil }
+	windowsSchedulerFn = func(context.Context, string, string, []byte) (windowsSchedulerStatus, error) { return task, nil }
 	for _, state := range []string{"restarting", "starting", "stopped", "circuit_open", "failed"} {
 		t.Run(state, func(t *testing.T) {
 			alive := state == "restarting" || state == "starting"
@@ -179,7 +179,7 @@ func TestBuiltinSupervisorStatusRestartingAndBreaker(t *testing.T) {
 			readBuiltinSupervisorFn = func(string) (builtinSupervisorRecord, error) {
 				return builtinSupervisorRecord{Version: 1, ConfigDir: dir, Instance: daemon.SupervisorInstance{PID: 43, Executable: spec.Executable}, SupervisorState: daemon.SupervisorState{State: state, Reason: "fixture_reason", Failures: 8}}, nil
 			}
-			got := detectSupervision(pidPath, false, 0)
+			got := detectSupervision(context.Background(), pidPath, false, 0)
 			if got.Manager != "windows-task-scheduler" || got.RuntimeState != state || got.RestartOnExit != alive || got.FailureReason != "fixture_reason" {
 				t.Fatalf("supervision=%+v", got)
 			}
@@ -192,7 +192,7 @@ func TestBuiltinSupervisorStatusRestartingAndBreaker(t *testing.T) {
 	readBuiltinSupervisorFn = func(string) (builtinSupervisorRecord, error) {
 		return builtinSupervisorRecord{Version: 1, ConfigDir: dir, Instance: daemon.SupervisorInstance{PID: 43, Executable: spec.Executable}, SupervisorState: daemon.SupervisorState{State: "restarting"}}, nil
 	}
-	if got := detectSupervision(pidPath, false, 0); got.Manager != "none" || !strings.Contains(got.Detail, "ownership unverified") {
+	if got := detectSupervision(context.Background(), pidPath, false, 0); got.Manager != "none" || !strings.Contains(got.Detail, "ownership unverified") {
 		t.Fatalf("identity accepted=%+v", got)
 	}
 }
@@ -204,7 +204,7 @@ func TestBuiltinSupervisorTerminalPIDReusePreservesHistoryAndDoesNotSignal(t *te
 	}
 	pidPath := filepath.Join(dir, "tslink.pid")
 	data, _ := renderWindowsTask(spec)
-	windowsSchedulerFn = func(string, string, []byte) (windowsSchedulerStatus, error) {
+	windowsSchedulerFn = func(context.Context, string, string, []byte) (windowsSchedulerStatus, error) {
 		return windowsSchedulerStatus{Exists: true, Enabled: true, State: 3, XML: string(data)}, nil
 	}
 	// Reuse a real live PID with deliberately stale launch identity. No seam
@@ -224,7 +224,7 @@ func TestBuiltinSupervisorTerminalPIDReusePreservesHistoryAndDoesNotSignal(t *te
 				t.Fatal(err)
 			}
 			readBuiltinSupervisorFn = readBuiltinSupervisor
-			got := detectSupervision(pidPath, false, 0)
+			got := detectSupervision(context.Background(), pidPath, false, 0)
 			if got.Manager != "windows-task-scheduler" || got.RuntimeState != state || got.FailureReason != "historical_reason" || got.SupervisorPID != 0 || got.RestartOnExit {
 				t.Fatalf("terminal history=%+v", got)
 			}

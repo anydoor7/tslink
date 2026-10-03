@@ -27,7 +27,7 @@ func TestDoctorReportsAnIsolatedEntryBeforeAValidOne(t *testing.T) {
 		probed = append(probed, address)
 		return nil
 	}
-	result := buildDoctorResult(doctorOptions{})
+	result := buildDoctorResult(context.Background(), doctorOptions{})
 	invalid := map[string]bool{}
 	for _, finding := range result.Findings {
 		if finding.Code == inspect.WarningCodeRegistryServiceInvalid {

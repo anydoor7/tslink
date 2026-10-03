@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/anydoor7/tslink/internal/credentials"
+	"github.com/anydoor7/tslink/internal/mcpscope"
 	"github.com/anydoor7/tslink/internal/registry"
 	tailscale "tailscale.com/client/tailscale/v2"
 )
@@ -318,6 +319,11 @@ func (c *inviteHTTPClient) doResponse(ctx context.Context, method string, parts 
 	}
 	req.SetBasicAuth(c.apiKey, "")
 
+	if method != http.MethodGet {
+		if err := mcpscope.CheckEffect(ctx); err != nil {
+			return err
+		}
+	}
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return err
@@ -638,6 +644,9 @@ func CreateUserInvite(ctx context.Context, email, role string, printLink bool) (
 	if !printLink {
 		request.Email = email
 	}
+	if err := mcpscope.CheckEffect(ctx); err != nil {
+		return Invite{}, err
+	}
 	responses, err := client.CreateUserInvites(ctx, []userInviteRequest{request})
 	if err != nil {
 		return Invite{}, inviteAPIError("create user invite", err)
@@ -683,6 +692,9 @@ func CreateDeviceInvite(ctx context.Context, target DeviceTarget, email string, 
 	request := deviceInviteRequest{MultiUse: multiUse, AllowExitNode: allowExitNode}
 	if !printLink {
 		request.Email = email
+	}
+	if err := mcpscope.CheckEffect(ctx); err != nil {
+		return Invite{}, err
 	}
 	responses, err := client.CreateDeviceInvites(ctx, device.NodeID, []deviceInviteRequest{request})
 	if err != nil {
@@ -844,8 +856,14 @@ func RevokeInvite(ctx context.Context, kind, id string, targets []DeviceTarget) 
 		if err != nil {
 			return Invite{}, err
 		}
+		if err := mcpscope.CheckEffect(ctx); err != nil {
+			return Invite{}, err
+		}
 		err = client.DeleteDeviceInvite(ctx, id)
 	} else {
+		if err := mcpscope.CheckEffect(ctx); err != nil {
+			return Invite{}, err
+		}
 		err = client.DeleteUserInvite(ctx, id)
 	}
 	if err != nil {
@@ -883,8 +901,14 @@ func ResendInvite(ctx context.Context, kind, id string, targets []DeviceTarget) 
 		if err != nil {
 			return Invite{}, err
 		}
+		if err := mcpscope.CheckEffect(ctx); err != nil {
+			return Invite{}, err
+		}
 		err = client.ResendDeviceInvite(ctx, id)
 	} else {
+		if err := mcpscope.CheckEffect(ctx); err != nil {
+			return Invite{}, err
+		}
 		err = client.ResendUserInvite(ctx, id)
 	}
 	if err != nil {

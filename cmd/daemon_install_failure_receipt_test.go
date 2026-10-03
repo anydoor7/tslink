@@ -84,12 +84,12 @@ func TestB3ARealShareKeepsInstallAfterEndpointFailure(t *testing.T) {
 			return err
 		}
 		isRunningFn = func(string) bool { return true }
-		detectSupervisionFn = func(string, bool, int) Supervision {
+		detectSupervisionFn = func(context.Context, string, bool, int) Supervision {
 			return Supervision{Manager: supervisorName(), Installed: true, RestartOnExit: true, Autostart: true}
 		}
 		return tsruntime.Save(filepath.Join(dir, "runtime.json"), tsruntime.NewSnapshot(4242, time.Now(), "fixture", time.Now(), nil))
 	}
-	shareResolveEndpointOnceFn = func(_, _, _, name string) (serviceURLResolution, error) {
+	shareResolveEndpointOnceFn = func(_ context.Context, _, _, _, name string) (serviceURLResolution, error) {
 		return serviceURLResolution{}, output.ErrNotFound("service removed during endpoint wait: " + name)
 	}
 	var notices bytes.Buffer

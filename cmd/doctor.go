@@ -264,8 +264,8 @@ type doctorJSONData struct {
 
 func (d doctorJSONData) MarshalJSON() ([]byte, error) { return json.Marshal(d.Doctor) }
 
-func runDoctor(out io.Writer, opts doctorOptions, isJSON bool) error {
-	result := buildDoctorResult(opts)
+func runDoctor(ctx context.Context, out io.Writer, opts doctorOptions, isJSON bool) error {
+	result := buildDoctorResult(ctx, opts)
 	exit := doctorExit(result)
 	if isJSON {
 		// The diagnosis completed, so ok stays true, but code is the process
@@ -280,7 +280,7 @@ func runDoctor(out io.Writer, opts doctorOptions, isJSON bool) error {
 	return exit
 }
 
-func buildDoctorResult(opts doctorOptions) DoctorResult {
+func buildDoctorResult(ctx context.Context, opts doctorOptions) DoctorResult {
 	result := DoctorResult{
 		SchemaVersion:   inspect.SchemaVersion,
 		ExecutionStatus: doctorExecutionCompleted,
@@ -310,6 +310,7 @@ func buildDoctorResult(opts doctorOptions) DoctorResult {
 		} else {
 			cfg = loaded
 			cfgOK = true
+			diagnoseMCPBindings(&result, cfg, doctorNowFn())
 			if err := registry.ValidateControlURL(cfg.ControlURL); err != nil {
 				result.addFinding(inspect.WarningCodeControlURLInvalid, "", "config", "Global control_url is invalid.", evidenceControlURLInvalid())
 			}
@@ -344,9 +345,9 @@ func buildDoctorResult(opts doctorOptions) DoctorResult {
 	if reg != nil {
 		serviceCount = len(reg.Services)
 	}
-	diagnoseDaemon(&result, serviceCount)
+	diagnoseDaemon(ctx, &result, serviceCount)
+	result.Supervision = detectSupervisionFn(ctx, result.Paths.PID, result.Daemon.Running, result.Daemon.PID)
 	result.Portal = readPortalView(reg, result.Paths.Registry, result.Daemon.Running, result.Daemon.PID)
-	result.Supervision = detectSupervisionFn(result.Paths.PID, result.Daemon.Running, result.Daemon.PID)
 	if result.Supervision.RuntimeState == "circuit_open" || result.Supervision.RuntimeState == "failed" {
 		result.addFinding(inspect.WarningCodeDaemonRestartUnavailable, "", "daemon", "Built-in supervisor stopped crash recovery: "+result.Supervision.FailureReason+". Inspect logs, then run 'tslink install'.", nil)
 	}
@@ -703,7 +704,7 @@ func doctorLegacyAuthKeyConfigured() (bool, error) {
 	return strings.TrimSpace(string(data)) != "", nil
 }
 
-func diagnoseDaemon(result *DoctorResult, serviceCount int) {
+func diagnoseDaemon(ctx context.Context, result *DoctorResult, serviceCount int) {
 	if result.Paths.PID == "" {
 		return
 	}
@@ -717,7 +718,7 @@ func diagnoseDaemon(result *DoctorResult, serviceCount int) {
 		// daemon_unsupervised behind an unverifiable-identity note. Only
 		// evidence that is merely inconclusive (a sidecar from another build, a
 		// timestamp outside tolerance) still earns the conservative treatment.
-		scopeErr := checkSupervisorProcessScope()
+		scopeErr := checkSupervisorProcessScope(ctx)
 		if _, err := os.Stat(result.Paths.PID); (!os.IsNotExist(err) && !daemon.IsProcessAbsentFromPIDFile(result.Paths.PID) && !daemon.IsForeignProcessFromPIDFile(result.Paths.PID)) || scopeErr != nil {
 			result.Daemon.IdentityUnverified = true
 			message := "Daemon identity could not be verified; the process may still be serving (including a different TSLink build). Inspect the PID file, running binary and supervisor with 'tslink status --json' and 'tslink logs' before any install/restart. Backend probes remain enabled."
@@ -1381,7 +1382,7 @@ unknown and the tailscale_ssh_unknown finding says the check was skipped.`,
 		if err != nil {
 			return err
 		}
-		return runDoctor(cmd.OutOrStdout(), doctorOptions{ProbeExternal: probeExternal, ProbeRemote: probeRemote}, jsonOutput(cmd))
+		return runDoctor(cmd.Context(), cmd.OutOrStdout(), doctorOptions{ProbeExternal: probeExternal, ProbeRemote: probeRemote}, jsonOutput(cmd))
 	},
 }
 

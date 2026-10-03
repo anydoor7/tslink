@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/anydoor7/tslink/internal/config"
+	"github.com/anydoor7/tslink/internal/mcpscope"
 	"github.com/anydoor7/tslink/internal/registry"
 	"tailscale.com/ipn/ipnstate"
 )
@@ -38,7 +39,7 @@ const MCPControlPlanePath = "/mcp"
 // authorization principal. It is a refusal to start, not a warning: an
 // endpoint that answers every tailnet peer is the failure this feature exists
 // to avoid.
-var ErrMCPNoPrincipal = errors.New("mcp control plane is enabled but no principal is authorized; set mcp.allow in config.json to one or more login emails or tag:… entries, or disable the control plane")
+var ErrMCPNoPrincipal = errors.New("mcp control plane is enabled but no principal is authorized; set mcp.allow (owner) or mcp.bindings (scoped) in config.json to login emails or tag:… entries, or disable the control plane")
 
 // MCPControlPlane is the daemon-side configuration of the remote MCP
 // transport. Handler carries the tool surface; this package never builds it,
@@ -51,6 +52,7 @@ type MCPControlPlane struct {
 	// AllowedUsers is the authorization principal list. Empty is a start-time
 	// refusal, never "allow everyone".
 	AllowedUsers []string
+	Bindings     []mcpscope.Binding
 	// Handler is the MCP transport handler mounted at MCPControlPlanePath.
 	Handler http.Handler
 	// EventsSnapshot builds the body of one event frame. A nil function
@@ -78,7 +80,10 @@ func (c *MCPControlPlane) Validate() error {
 	if c.Handler == nil {
 		return errors.New("mcp control plane has no handler")
 	}
-	if len(nonEmptyPrincipals(c.AllowedUsers)) == 0 {
+	if err := mcpscope.ValidateBindings(c.AllowedUsers, c.Bindings); err != nil {
+		return err
+	}
+	if len(nonEmptyPrincipals(c.AllowedUsers)) == 0 && len(c.Bindings) == 0 {
 		return ErrMCPNoPrincipal
 	}
 	return nil
@@ -262,10 +267,10 @@ func (s *Server) startMCPControlPlane(ctx context.Context) error {
 
 	slog.Warn("mcp.controlplane.enabled",
 		"code", "mcp.controlplane.enabled",
-		"message", "the remote MCP control plane is reachable by every authorized tailnet peer and can change services, publish Funnel and send invitations",
+		"message", "the remote MCP control plane is reachable by configured tailnet identities within their scopes; legacy allow entries retain owner authority",
 		"name", name,
 		"path", MCPControlPlanePath,
-		"principals", len(nonEmptyPrincipals(cp.AllowedUsers)),
+		"principals", len(nonEmptyPrincipals(cp.AllowedUsers))+len(cp.Bindings),
 		"host", runtimeHostFromStatus(status),
 	)
 	return nil
@@ -305,7 +310,7 @@ func newMCPControlPlaneHandler(cp *MCPControlPlane, localClient *LocalClient, hu
 	// attributable to a source address and no account. Closing it is passing a
 	// resolver here; it is left for a change that can weigh a cached principal
 	// sitting beside this surface's authoritative uncached one.
-	return AccessLogMiddleware(cp.nodeName(), nil, MCPOriginMiddleware(MCPAuthMiddleware(cp.AllowedUsers, localClient, mux)))
+	return AccessLogMiddleware(cp.nodeName(), nil, MCPOriginMiddleware(mcpScopeAuthMiddleware(cp.AllowedUsers, cp.Bindings, localClient, mux)))
 }
 
 func (s *Server) closeMCPControlPlane() {
@@ -327,7 +332,7 @@ func mcpDenied(w http.ResponseWriter) {
 	w.WriteHeader(http.StatusForbidden)
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"jsonrpc": "2.0",
-		"error":   map[string]any{"code": -32600, "message": "forbidden"},
+		"error":   map[string]any{"code": -32600, "message": "forbidden", "data": map[string]any{"code": mcpscope.DeniedCode}},
 	})
 }
 
@@ -340,9 +345,14 @@ func mcpDenied(w http.ResponseWriter) {
 // --allow is a public page inside the tailnet, while a control plane with no
 // principal is a mistake.
 func MCPAuthMiddleware(allowedUsers []string, localClient *LocalClient, next http.Handler) http.Handler {
+	return mcpScopeAuthMiddleware(allowedUsers, nil, localClient, next)
+}
+
+func mcpScopeAuthMiddleware(allowedUsers []string, bindings []mcpscope.Binding, localClient *LocalClient, next http.Handler) http.Handler {
 	principals := nonEmptyPrincipals(allowedUsers)
+	nowFn := serverNowFn
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if len(principals) == 0 {
+		if len(principals) == 0 && len(bindings) == 0 {
 			slog.Error("mcp control plane denied: no principal configured", "remote_addr", r.RemoteAddr)
 			mcpDenied(w)
 			return
@@ -367,12 +377,22 @@ func MCPAuthMiddleware(allowedUsers []string, localClient *LocalClient, next htt
 		if whois.Node != nil {
 			nodeTags = whois.Node.Tags
 		}
-		if !isAllowed(whois.UserProfile.LoginName, nodeTags, principals) {
+		session, resolveErr := mcpscope.Resolve(whois.UserProfile.LoginName, nodeTags, principals, bindings, nowFn())
+		if resolveErr != nil {
 			slog.Info("mcp control plane denied: caller not authorized", "login", whois.UserProfile.LoginName, "remote_addr", r.RemoteAddr)
 			mcpDenied(w)
 			return
 		}
-		next.ServeHTTP(w, r)
+		if whois.Node != nil {
+			session.Identity.Node = mcpscope.NodeIdentity(whois.Node.Name)
+		}
+		ctx := mcpscope.WithSession(r.Context(), session)
+		if session.ExpiresAt != nil {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, session.ExpiresAt.Sub(nowFn()))
+			defer cancel()
+		}
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 

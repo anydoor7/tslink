@@ -75,6 +75,8 @@ var mcpCoveredCommands = map[string]mcpCoveredCommand{
 	"tslink people remove":  {Tools: []string{"people_remove"}, Args: []string{"who"}, Flags: map[string]string{"reconcile-invite": "reconcile_invites"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
 	"tslink portal enable":  {Tools: []string{"portal_enable"}, Flags: map[string]string{"hostname": "hostname", "owner": "owner", "admins": "admins", "funnel": "funnel"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
 	"tslink portal disable": {Tools: []string{"portal_disable"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
+	"tslink mcp":            {Tools: []string{"people_grant", "people_revoke", "app_restart", "health"}, ExcludedFlags: map[string]string{"scope": "trusted transport launch option, not a tool argument", "apps": "trusted transport app restriction", "inventory": "trusted transport inventory opt-in", "max-duration": "trusted transport lifetime limit"}},
+	"tslink mcp-audit":      {Tools: []string{"mcp_audit"}, ExcludedFlags: map[string]string{"json": mcpJSONFlagExclusion}},
 	"tslink share": {
 		Tools: []string{"share"},
 		Args:  []string{"target"},
@@ -287,7 +289,6 @@ var mcpUncoveredCommands = map[string]string{
 	"tslink cleanup":            "reconciles and can delete real tailnet devices; excluded from this tool surface by the owner",
 	"tslink registry check":     "registry file forensics; excluded from this tool surface by the owner. The doctor tool reports registry health",
 	"tslink manifest":           "describes the CLI itself; the MCP client reads tools/list instead",
-	"tslink mcp":                "this server itself",
 	"tslink tags add":           "not requested for this surface; tags_list plus tags_set reach the same end state, and set is the operation that can change reachability",
 	"tslink tags set-default":   "changes the global default tag rather than one service",
 	"tslink tags pull":          "reads the remote Tailscale ACL policy",
@@ -714,7 +715,7 @@ func TestMCPSharePersistsAllowListAndTags(t *testing.T) {
 	restoreShareSeams(t)
 	paths := mcpSharePaths(t)
 	shareIsRunningFn = func(string) bool { return true }
-	shareResolveEndpointOnceFn = func(_, _, _, name string) (serviceURLResolution, error) {
+	shareResolveEndpointOnceFn = func(_ context.Context, _, _, _, name string) (serviceURLResolution, error) {
 		return serviceURLResolution{Result: URLResult{Name: name, URL: "https://" + name + ".tail.ts.net", State: inspect.EndpointStateExact}}, nil
 	}
 	actions := defaultMCPActions(paths, io.Discard)
@@ -791,7 +792,7 @@ func TestMCPShareFunnelGuardrailsStayInTheDomainLayer(t *testing.T) {
 			restoreShareSeams(t)
 			paths := mcpSharePaths(t)
 			shareIsRunningFn = func(string) bool { return true }
-			shareResolveEndpointOnceFn = func(_, _, _, name string) (serviceURLResolution, error) {
+			shareResolveEndpointOnceFn = func(_ context.Context, _, _, _, name string) (serviceURLResolution, error) {
 				return serviceURLResolution{Result: URLResult{Name: name, URL: "https://" + name + ".tail.ts.net"}}, nil
 			}
 			_, err := defaultMCPActions(paths, io.Discard).share(context.Background(), tc.request)
@@ -871,7 +872,7 @@ func TestMCPShareFunnelTTLReachesTheRegistry(t *testing.T) {
 	restoreShareSeams(t)
 	paths := mcpSharePaths(t)
 	shareIsRunningFn = func(string) bool { return true }
-	shareResolveEndpointOnceFn = func(_, _, _, name string) (serviceURLResolution, error) {
+	shareResolveEndpointOnceFn = func(_ context.Context, _, _, _, name string) (serviceURLResolution, error) {
 		return serviceURLResolution{Result: URLResult{Name: name, URL: "https://" + name + ".tail.ts.net"}}, nil
 	}
 	before := time.Now().UTC()
@@ -1063,7 +1064,7 @@ func TestMCPLocalToolsReadAndWriteTheGivenRegistry(t *testing.T) {
 		t.Fatalf("tags_list = %+v", tags)
 	}
 
-	setValue, err := actions.tagsSet("web", "tag:replaced")
+	setValue, err := actions.tagsSet(context.Background(), "web", "tag:replaced")
 	if err != nil {
 		t.Fatalf("tags_set: %v", err)
 	}
@@ -1073,12 +1074,12 @@ func TestMCPLocalToolsReadAndWriteTheGivenRegistry(t *testing.T) {
 	if svc := mcpLoadService(t, paths.Registry, "web"); len(svc.Tags) != 1 || svc.Tags[0] != "tag:replaced" {
 		t.Fatalf("persisted tags = %v", svc.Tags)
 	}
-	if _, err := actions.tagsSet("absent", "tag:x"); err == nil {
+	if _, err := actions.tagsSet(context.Background(), "absent", "tag:x"); err == nil {
 		t.Fatal("tags_set on an absent service was accepted")
 	} else if failure := output.NewFailureForError("", err); failure.Code != output.ExitNotFound || failure.Error.Code != output.StableErrorCode(output.ExitNotFound) {
 		t.Fatalf("tags_set error = %v, envelope = %+v; want the not_found code the CLI --json path reports", err, failure.Error)
 	}
-	if _, err := actions.tagsSet("web", "not-a-tag"); err == nil {
+	if _, err := actions.tagsSet(context.Background(), "web", "not-a-tag"); err == nil {
 		t.Fatal("tags_set accepted a tag without the tag: prefix")
 	}
 
@@ -1094,7 +1095,7 @@ func TestMCPLocalToolsReadAndWriteTheGivenRegistry(t *testing.T) {
 		t.Fatal("access_explain on an absent service was accepted")
 	}
 
-	doctorValue, err := actions.doctor(false)
+	doctorValue, err := actions.doctor(context.Background(), false)
 	if err != nil {
 		t.Fatalf("doctor: %v", err)
 	}
@@ -1341,7 +1342,7 @@ func TestMCPToolOutputSchemasAcceptRealPayloads(t *testing.T) {
 		{"tags_list", TagsListResult{Services: []TagsServiceEntry{{Name: "web", Tags: []string{"tag:tsmain"}}, {Name: "bare", Tags: nil}}}},
 		{"tags_set", TagsSetResult{Service: "web", Tags: []string{"tag:tsmain"}}},
 		{"access_explain", buildAccessExplainResult(svc)},
-		{"doctor", buildDoctorResult(doctorOptions{RegistryPath: filepath.Join(t.TempDir(), "registry.json")})},
+		{"doctor", buildDoctorResult(context.Background(), doctorOptions{RegistryPath: filepath.Join(t.TempDir(), "registry.json")})},
 		{"invite_user", InviteMutationResult{Invite: invite, RemoteSideEffectPlan: invitePlan(invite, "create")}},
 		{"invite_device", InviteMutationResult{Invite: invite, RemoteSideEffectPlan: invitePlan(invite, "create")}},
 		{"invite_list", tailapi.InviteList{

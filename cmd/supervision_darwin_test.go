@@ -43,7 +43,7 @@ func TestBootstrapLaunchdOwnershipMatrix(t *testing.T) {
 				t.Fatal(err)
 			}
 			queries := 0
-			managerOutputFn = func(_ string, args ...string) ([]byte, error) {
+			managerOutputFn = func(ctx context.Context, _ string, args ...string) ([]byte, error) {
 				queries++
 				if tc.readError {
 					return nil, errors.New("manager unavailable")
@@ -53,7 +53,7 @@ func TestBootstrapLaunchdOwnershipMatrix(t *testing.T) {
 				}
 				return launchctlFixture(t, tc.state, tc.managerPID), nil
 			}
-			s := detectSupervision(filepath.Join(dir, "tslink.pid"), tc.running, 4242)
+			s := detectSupervision(context.Background(), filepath.Join(dir, "tslink.pid"), tc.running, 4242)
 			if s.Manager != tc.want || queries == 0 {
 				t.Fatalf("supervision=%+v queries=%d", s, queries)
 			}
@@ -83,8 +83,8 @@ func TestBootstrapLaunchdDisabledOverride(t *testing.T) {
 		{"disabled services = {\n \"com.tslink.daemon\" => disabled\n}\n", false},
 		{"unreadable format", false},
 	} {
-		managerOutputFn = func(string, ...string) ([]byte, error) { return []byte(tc.output), nil }
-		if got := launchdAutostartEnabled("user/fixture"); got != tc.want {
+		managerOutputFn = func(context.Context, string, ...string) ([]byte, error) { return []byte(tc.output), nil }
+		if got := launchdAutostartEnabled(context.Background(), "user/fixture"); got != tc.want {
 			t.Fatalf("output=%q enabled=%t want=%t", tc.output, got, tc.want)
 		}
 	}
@@ -99,13 +99,13 @@ func TestBootstrapLaunchdDisabledOverride(t *testing.T) {
 	if err := os.WriteFile(path, plist.Bytes(), 0600); err != nil {
 		t.Fatal(err)
 	}
-	managerOutputFn = func(_ string, args ...string) ([]byte, error) {
+	managerOutputFn = func(ctx context.Context, _ string, args ...string) ([]byte, error) {
 		if args[0] == "print-disabled" {
 			return []byte("disabled services = {\n \"com.tslink.daemon\" => disabled\n}\n"), nil
 		}
 		return []byte("state = running\npid = 4242\nproperties = keepalive | runatload\n"), nil
 	}
-	s := detectSupervision(filepath.Join(dir, "tslink.pid"), true, 4242)
+	s := detectSupervision(context.Background(), filepath.Join(dir, "tslink.pid"), true, 4242)
 	// Autostart is disabled, so there is nothing to scope. An empty scope is
 	// how the renderer knows to print no boot-versus-login answer at all,
 	// rather than a login answer that would not happen.
@@ -123,11 +123,13 @@ func TestBootstrapLaunchdConfigAndSideEffects(t *testing.T) {
 	if !supervisorConfigMatches(plist.Bytes(), dir) || supervisorConfigMatches(plist.Bytes(), dir+"-other") {
 		t.Fatalf("config did not round-trip escaped XML: %s", &plist)
 	}
-	managerOutputFn = func(string, ...string) ([]byte, error) { return []byte("state = running\npid = 41564\n"), nil }
-	if err := checkUnregisteredSupervisor(); err == nil {
+	managerOutputFn = func(context.Context, string, ...string) ([]byte, error) {
+		return []byte("state = running\npid = 41564\n"), nil
+	}
+	if err := checkUnregisteredSupervisor(context.Background()); err == nil {
 		t.Fatal("accepted a loaded job with no plist")
 	}
-	if err := checkSupervisorProcessScope(); err == nil {
+	if err := checkSupervisorProcessScope(context.Background()); err == nil {
 		t.Fatal("accepted a supervisor PID from another config")
 	}
 }
@@ -175,7 +177,7 @@ func TestBootstrapLaunchdInstallSettles(t *testing.T) {
 		t.Run(tc.scenario, func(t *testing.T) {
 			launchAgentSettleWindow = tc.settle
 			calls := 0
-			launchctlCombinedOutput = func(...string) ([]byte, error) {
+			launchctlCombinedOutput = func(context.Context, ...string) ([]byte, error) {
 				calls++
 				if calls > 2 {
 					if tc.scenario == "dies" {
@@ -187,7 +189,7 @@ func TestBootstrapLaunchdInstallSettles(t *testing.T) {
 				}
 				return []byte("state = running\npid = 42\n"), nil
 			}
-			_, err := waitForLaunchAgentRunning("user/fixture/com.tslink.daemon", tc.timeout, time.Millisecond)
+			_, err := waitForLaunchAgentRunning(context.Background(), "user/fixture/com.tslink.daemon", tc.timeout, time.Millisecond)
 			switch {
 			case tc.wantErr == "" && err != nil:
 				t.Fatalf("scenario=%s err=%v, want success (calls=%d)", tc.scenario, err, calls)
@@ -208,7 +210,7 @@ func TestBootstrapInstallerUsesExistingConflictGuard(t *testing.T) {
 	oldGuard := installDaemonConflictFn
 	t.Cleanup(func() { installDaemonConflictFn = oldGuard })
 	guardCalls := 0
-	installDaemonConflictFn = func() error { guardCalls++; return errors.New("existing conflict guard marker") }
+	installDaemonConflictFn = func(context.Context) error { guardCalls++; return errors.New("existing conflict guard marker") }
 	var out bytes.Buffer
 	err := installDaemonLocked(context.Background(), &out)
 	if err == nil || !strings.Contains(err.Error(), "existing conflict guard marker") || guardCalls != 1 {

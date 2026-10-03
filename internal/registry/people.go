@@ -1,6 +1,7 @@
 package registry
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"sort"
@@ -159,16 +160,17 @@ func PeopleServiceSupported(svc Service) bool {
 // the set on update; nil expiry keeps deadlines unless changeExpiry is true.
 // all selects the current private HTTP/file services, not future additions.
 func ChangePerson(path, who string, apps []string, expiry *time.Time, changeExpiry, update bool) (result Person, err error) {
-	return changePerson(path, who, apps, expiry, changeExpiry, update, nil)
+	return changePerson(context.Background(), path, who, apps, expiry, changeExpiry, update, nil)
 }
 
 // ChangePersonWithLifetime preserves the F1 store contract, but resolves user
 // lifetimes under the same lock as the grants. Omitted add/new-app expiry is 24h.
 func ChangePersonWithLifetime(path, who string, apps []string, update bool, options PersonLifetimeOptions) (Person, error) {
-	return changePerson(path, who, apps, nil, options.Value != nil, update, &options)
+	return changePerson(options.Context, path, who, apps, nil, options.Value != nil, update, &options)
 }
 
 type PersonLifetimeOptions struct {
+	Context  context.Context
 	Value    *string
 	Policy   duration.Policy
 	Audience duration.Audience
@@ -184,7 +186,7 @@ func changePerson(path, who string, apps []string, expiry *time.Time, changeExpi
 	if err != nil {
 		return result, err
 	}
-	err = withLock(path, func() error {
+	err = withLockContext(ctx, path, func() error {
 		reg, err := loadForMutation(path)
 		if err != nil {
 			return err
@@ -341,11 +343,15 @@ func changePerson(path, who string, apps []string, expiry *time.Time, changeExpi
 // RemovePerson retains a deny tombstone so a legacy empty allow-list, a tag
 // rule or an accepted device share cannot restore this login's HTTP access.
 func RemovePerson(path, who string) (removed bool, err error) {
+	return RemovePersonContext(context.Background(), path, who)
+}
+
+func RemovePersonContext(ctx context.Context, path, who string) (removed bool, err error) {
 	login, err := ResolvePersonLogin(path, who)
 	if err != nil {
 		return false, err
 	}
-	err = withLock(path, func() error {
+	err = withLockContext(ctx, path, func() error {
 		reg, err := loadForMutation(path)
 		if err != nil {
 			return err

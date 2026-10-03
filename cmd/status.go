@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -71,6 +72,7 @@ type StatusPendingLogin struct {
 type StatusResult struct {
 	AccessLog               accesslog.Health        `json:"access_log"`
 	Portal                  tsruntime.PortalState   `json:"portal"`
+	MCPBindings             []mcpBindingView        `json:"mcp_bindings,omitempty"`
 	Alerts                  health.AlertsView       `json:"alerts"`
 	Supervision             Supervision             `json:"supervision"`
 	DaemonRunning           bool                    `json:"daemon_running"`
@@ -137,6 +139,7 @@ type StatusServiceState struct {
 type StatusURLsResult struct {
 	AccessLog               accesslog.Health            `json:"access_log"`
 	Portal                  tsruntime.PortalState       `json:"portal"`
+	MCPBindings             []mcpBindingView            `json:"mcp_bindings,omitempty"`
 	Alerts                  health.AlertsView           `json:"alerts"`
 	Supervision             Supervision                 `json:"supervision"`
 	SchemaVersion           int                         `json:"schema_version"`
@@ -211,12 +214,12 @@ var (
 	readOnlyStatus = statusRead{readOnly: true}
 )
 
-func getStatus(pidPath, regPath string) (StatusResult, error) {
-	return commandStatus.getStatus(pidPath, regPath)
+func getStatus(ctx context.Context, pidPath, regPath string) (StatusResult, error) {
+	return commandStatus.getStatus(ctx, pidPath, regPath)
 }
 
-func (s statusRead) getStatus(pidPath, regPath string) (StatusResult, error) {
-	r := s.baseStatus(pidPath)
+func (s statusRead) getStatus(ctx context.Context, pidPath, regPath string) (StatusResult, error) {
+	r := s.baseStatus(ctx, pidPath)
 	r.AccessLog = accessHealthForRegistry(regPath, pidPath, filepath.Join(filepath.Dir(regPath), "runtime.json"))
 	reg, issues, err := registry.LoadForDiagnostics(regPath)
 	if err != nil {
@@ -282,8 +285,9 @@ func ownershipProofsForRegistry(_ string) (map[string]bool, bool) {
 	return proofs, true
 }
 
-func (s statusRead) baseStatus(pidPath string) StatusResult {
+func (s statusRead) baseStatus(ctx context.Context, pidPath string) StatusResult {
 	r := StatusResult{DaemonState: daemonStateUnknown, AuthStatus: authStatusNotAuthenticated, Services: []StatusServiceState{}}
+	r.MCPBindings = mcpBindingViews(statusNowFn())
 	if isRunningFn(pidPath) {
 		r.DaemonRunning = true
 		r.DaemonState = daemonStateRunning
@@ -294,7 +298,7 @@ func (s statusRead) baseStatus(pidPath string) StatusResult {
 		// leaves the state unknown.
 		r.DaemonState = daemonStateAbsent
 	}
-	r.Supervision = detectSupervisionFn(pidPath, r.DaemonRunning, r.DaemonPID)
+	r.Supervision = detectSupervisionFn(ctx, pidPath, r.DaemonRunning, r.DaemonPID)
 	values := credentials.SlotValues{}
 	values.APIKey, _ = getAPIKeyFn()
 	hasClientSecret := hasClientSecretFn()
@@ -439,17 +443,17 @@ func currentRegistryFingerprint(regPath string) string {
 	return fingerprint
 }
 
-func getPollableStatus(pidPath, regPath, snapshotPath, authHandoffPath string) (StatusResult, error) {
-	return commandStatus.getPollableStatus(pidPath, regPath, snapshotPath, authHandoffPath)
+func getPollableStatus(ctx context.Context, pidPath, regPath, snapshotPath, authHandoffPath string) (StatusResult, error) {
+	return commandStatus.getPollableStatus(ctx, pidPath, regPath, snapshotPath, authHandoffPath)
 }
 
-func (s statusRead) getPollableStatus(pidPath, regPath, snapshotPath, authHandoffPath string) (StatusResult, error) {
-	r, err := s.getStatus(pidPath, regPath)
+func (s statusRead) getPollableStatus(ctx context.Context, pidPath, regPath, snapshotPath, authHandoffPath string) (StatusResult, error) {
+	r, err := s.getStatus(ctx, pidPath, regPath)
 	if err != nil {
 		snapshot, snapshotErr := runtimeLoadSnapshotFn(snapshotPath)
 		if snapshotErr == nil && snapshot != nil && snapshot.GlobalError != nil {
 			ownershipProofs, ownershipProofAvailable := ownershipProofsForRegistry(regPath)
-			return s.statusFromGlobalFailure(pidPath, regPath, snapshot, ownershipProofs, ownershipProofAvailable), nil
+			return s.statusFromGlobalFailure(ctx, pidPath, regPath, snapshot, ownershipProofs, ownershipProofAvailable), nil
 		}
 		return StatusResult{}, err
 	}
@@ -575,8 +579,8 @@ func (s statusRead) getPollableStatus(pidPath, regPath, snapshotPath, authHandof
 	return r, nil
 }
 
-func (s statusRead) statusFromGlobalFailure(pidPath, regPath string, snapshot *tsruntime.Snapshot, ownershipProofs map[string]bool, ownershipProofAvailable bool) StatusResult {
-	r := s.baseStatus(pidPath)
+func (s statusRead) statusFromGlobalFailure(ctx context.Context, pidPath, regPath string, snapshot *tsruntime.Snapshot, ownershipProofs map[string]bool, ownershipProofAvailable bool) StatusResult {
+	r := s.baseStatus(ctx, pidPath)
 	r.OwnershipProofAvailable = ownershipProofAvailable
 	r.GlobalError = cloneServiceError(snapshot.GlobalError)
 	// The registry cannot be read, so this snapshot cannot be verified as
@@ -627,6 +631,9 @@ func cloneServiceError(source *tsruntime.ServiceError) *tsruntime.ServiceError {
 func formatStatus(r StatusResult, out io.Writer) {
 	formatAccessHealth(r.AccessLog, out)
 	formatPortal(out, r.Portal)
+	for _, b := range r.MCPBindings {
+		fmt.Fprintf(out, "→ MCP scope: %s role=%s apps=%v inventory=%t expired=%t legacy=%t\n", b.Principal, b.Role, b.Apps, b.Inventory, b.Expired, b.Legacy)
+	}
 	userManagerUnavailable := strings.Contains(r.Supervision.Detail, systemdUserManagerUnavailableMessage)
 	noNodes := false
 	if r.ServiceCount == 0 {
@@ -687,20 +694,20 @@ func formatStatus(r StatusResult, out io.Writer) {
 	formatAlerts(out, r.Alerts)
 }
 
-func getStatusURLs(pidPath, regPath, snapshotPath string) (StatusURLsResult, error) {
-	return commandStatus.getStatusURLs(pidPath, regPath, snapshotPath)
+func getStatusURLs(ctx context.Context, pidPath, regPath, snapshotPath string) (StatusURLsResult, error) {
+	return commandStatus.getStatusURLs(ctx, pidPath, regPath, snapshotPath)
 }
 
-func (s statusRead) getStatusURLs(pidPath, regPath, snapshotPath string) (StatusURLsResult, error) {
-	return s.getStatusURLsWithAuth(pidPath, regPath, snapshotPath, filepath.Join(filepath.Dir(snapshotPath), "auth-handoff.json"))
+func (s statusRead) getStatusURLs(ctx context.Context, pidPath, regPath, snapshotPath string) (StatusURLsResult, error) {
+	return s.getStatusURLsWithAuth(ctx, pidPath, regPath, snapshotPath, filepath.Join(filepath.Dir(snapshotPath), "auth-handoff.json"))
 }
 
-func getStatusURLsWithAuth(pidPath, regPath, snapshotPath, authHandoffPath string) (StatusURLsResult, error) {
-	return commandStatus.getStatusURLsWithAuth(pidPath, regPath, snapshotPath, authHandoffPath)
+func getStatusURLsWithAuth(ctx context.Context, pidPath, regPath, snapshotPath, authHandoffPath string) (StatusURLsResult, error) {
+	return commandStatus.getStatusURLsWithAuth(ctx, pidPath, regPath, snapshotPath, authHandoffPath)
 }
 
-func (s statusRead) getStatusURLsWithAuth(pidPath, regPath, snapshotPath, authHandoffPath string) (StatusURLsResult, error) {
-	status, err := s.getPollableStatus(pidPath, regPath, snapshotPath, authHandoffPath)
+func (s statusRead) getStatusURLsWithAuth(ctx context.Context, pidPath, regPath, snapshotPath, authHandoffPath string) (StatusURLsResult, error) {
+	status, err := s.getPollableStatus(ctx, pidPath, regPath, snapshotPath, authHandoffPath)
 	if err != nil {
 		return StatusURLsResult{}, err
 	}
@@ -726,6 +733,7 @@ func (s statusRead) getStatusURLsWithAuth(pidPath, regPath, snapshotPath, authHa
 	result := StatusURLsResult{
 		AccessLog:               accessHealthForRegistry(regPath, pidPath, snapshotPath),
 		Portal:                  status.Portal,
+		MCPBindings:             status.MCPBindings,
 		SchemaVersion:           inspect.SchemaVersion,
 		Alerts:                  status.Alerts,
 		Supervision:             status.Supervision,
@@ -1009,6 +1017,7 @@ func formatStatusURLs(r StatusURLsResult, out io.Writer) {
 	formatStatus(StatusResult{
 		AccessLog:               r.AccessLog,
 		Portal:                  r.Portal,
+		MCPBindings:             r.MCPBindings,
 		Alerts:                  r.Alerts,
 		Supervision:             r.Supervision,
 		DaemonRunning:           r.DaemonRunning,
@@ -1159,7 +1168,7 @@ Output lines:
 			if err != nil {
 				return err
 			}
-			r, err := getStatusURLsWithAuth(pidPath, regPath, snapshotPath, authHandoffPath)
+			r, err := getStatusURLsWithAuth(cmd.Context(), pidPath, regPath, snapshotPath, authHandoffPath)
 			if err != nil {
 				return err
 			}
@@ -1192,7 +1201,7 @@ Output lines:
 		if err != nil {
 			return err
 		}
-		r, err := getPollableStatus(pidPath, regPath, snapshotPath, authHandoffPath)
+		r, err := getPollableStatus(cmd.Context(), pidPath, regPath, snapshotPath, authHandoffPath)
 		if err != nil {
 			return err
 		}

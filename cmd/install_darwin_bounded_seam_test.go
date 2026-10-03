@@ -2,7 +2,10 @@
 
 package cmd
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 // TestLaunchctlSeamIsBoundedAgainstABlockedManager pins the launchctl seam's
 // default implementation to runBoundedManagerCommand. A seam reverted to an
@@ -11,6 +14,6 @@ import "testing"
 func TestLaunchctlSeamIsBoundedAgainstABlockedManager(t *testing.T) {
 	installBlockingManagerShim(t, "launchctl")
 	requireSeamReturnsWithinBudget(t, "launchctl", func() ([]byte, error) {
-		return launchctlCombinedOutput("print", launchctlDomain()+"/com.tslink.bounded-seam-probe.invalid")
+		return launchctlCombinedOutput(context.Background(), "print", launchctlDomain()+"/com.tslink.bounded-seam-probe.invalid")
 	})
 }

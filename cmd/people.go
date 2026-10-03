@@ -239,7 +239,7 @@ func changePeople(ctx context.Context, paths sharePaths, args peopleArguments, u
 			targets[target.Service] = target
 		}
 	}
-	p, err := registry.ChangePersonWithLifetime(paths.Registry, args.Who, args.Apps, update, registry.PersonLifetimeOptions{Value: value, Policy: policy, Audience: audience, AckNever: args.AckNever, Now: now})
+	p, err := registry.ChangePersonWithLifetime(paths.Registry, args.Who, args.Apps, update, registry.PersonLifetimeOptions{Context: peopleMutationContext(ctx), Value: value, Policy: policy, Audience: audience, AckNever: args.AckNever, Now: now})
 	if err != nil {
 		return PeopleResult{}, err
 	}
@@ -304,7 +304,7 @@ func removePeopleContext(ctx context.Context, path, who string, reconcile ...map
 	if err != nil {
 		return PeopleRemoveResult{}, err
 	}
-	removed, err := registry.RemovePerson(path, login)
+	removed, err := registry.RemovePersonContext(peopleMutationContext(ctx), path, login)
 	if err != nil {
 		return PeopleRemoveResult{}, err
 	}

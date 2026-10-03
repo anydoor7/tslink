@@ -9,6 +9,7 @@ import (
 
 	"github.com/anydoor7/tslink/internal/config"
 	"github.com/anydoor7/tslink/internal/daemon"
+	"github.com/anydoor7/tslink/internal/mcpscope"
 	"github.com/anydoor7/tslink/internal/output"
 	"github.com/anydoor7/tslink/internal/registry"
 	tsruntime "github.com/anydoor7/tslink/internal/runtime"
@@ -146,10 +147,10 @@ func removeServiceResultContext(ctx context.Context, regPath, ownershipPath, nam
 	// a node that enrolled while this command waited for the registry lock is
 	// retired too, rather than left with a row nobody retired.
 	var owned []tsruntime.OwnedNode
-	svc, removed, err := registry.RemoveAndReturnWithin(regPath, name, func(_ registry.Service, commit func() error) error {
+	svc, removed, err := registry.RemoveAndReturnWithinContext(ctx, regPath, name, func(_ registry.Service, commit func() error) error {
 		committing := false
 		var err error
-		owned, err = tsruntime.RetireServiceNodes(ownershipPath, name, removeNowFn(), func() error {
+		owned, err = tsruntime.RetireServiceNodesContext(ctx, ownershipPath, name, removeNowFn(), func() error {
 			committing = true
 			return commit()
 		})
@@ -169,6 +170,9 @@ func removeServiceResultContext(ctx context.Context, regPath, ownershipPath, nam
 	result := RemoveResult{Name: name, Removed: removed}
 
 	if result.Removed {
+		if err := mcpscope.CheckEffect(ctx); err != nil {
+			return result, err
+		}
 		cleanup, err := deleteDevicesFn(ctx, tailapi.CleanupTargetForOwnedService(svc, ownedNodeIDs))
 		if err != nil {
 			if errors.Is(err, tailapi.ErrNoAPIClient) {
@@ -212,10 +216,13 @@ func removeServiceResultContext(ctx context.Context, regPath, ownershipPath, nam
 				// Deliberately silent: the daemon's reconciler deleting the
 				// directory is the ordinary outcome.
 			default:
+				if err := mcpscope.CheckEffect(ctx); err != nil {
+					return result, err
+				}
 				if removeErr := removeNodeStateFn(tsruntime.ServiceNodeStateConfigDir(regPath), name); removeErr != nil {
 					result.DeviceWarning = fmt.Sprintf("service and tailnet node removed but local node state could not be deleted: %v", removeErr)
 				} else if len(cleanup.ResolvedOwnershipIDs) > 0 {
-					if err := tsruntime.RemoveOwnedNodeIDs(ownershipPath, cleanup.ResolvedOwnershipIDs); err != nil {
+					if err := tsruntime.RemoveOwnedNodeIDsContext(ctx, ownershipPath, cleanup.ResolvedOwnershipIDs); err != nil {
 						result.DeviceWarning = fmt.Sprintf("device cleanup succeeded but ownership ledger update failed: %v", err)
 					}
 				}

@@ -17,6 +17,7 @@ import (
 	"github.com/anydoor7/tslink/internal/config"
 	"github.com/anydoor7/tslink/internal/duration"
 	"github.com/anydoor7/tslink/internal/inspect"
+	"github.com/anydoor7/tslink/internal/mcpscope"
 	"github.com/anydoor7/tslink/internal/output"
 	"github.com/anydoor7/tslink/internal/registry"
 	tsruntime "github.com/anydoor7/tslink/internal/runtime"
@@ -449,7 +450,7 @@ func buildAddResult(ctx context.Context, svc registry.Service, created bool, pid
 func resolveAddEndpoint(ctx context.Context, pidPath, regPath, snapshotPath, name string, wait time.Duration) (serviceURLResolution, string, error) {
 	deadline := time.Now().Add(wait)
 	for {
-		resolution, err := resolveServiceEndpointOnce(pidPath, regPath, snapshotPath, name)
+		resolution, err := resolveServiceEndpointOnce(ctx, pidPath, regPath, snapshotPath, name)
 		if err == nil {
 			return resolution, "", nil
 		}
@@ -513,6 +514,7 @@ func executeAdd(ctx context.Context, svc registry.Service, regPath, pidPath, sna
 		return AddResult{}, registry.Service{}, err
 	}
 	outcome, err := registry.AddWithOutcome(regPath, svc, registry.AddOptions{
+		Context:              ctx,
 		PreserveFunnelExpiry: preserveFunnelExpiry,
 		LifetimePolicy:       &policy,
 		Now:                  now,
@@ -535,7 +537,13 @@ func executeAdd(ctx context.Context, svc registry.Service, regPath, pidPath, sna
 			// rollback of a share still waiting on the registration it
 			// created. One gone by now was rolled back before this add could
 			// keep it, and is reported missing rather than present.
-			kept, err := addKeepIfUnchangedFn(regPath, persisted)
+			keep := addKeepIfUnchangedFn
+			if _, scoped := mcpscope.FromContext(ctx); scoped {
+				keep = func(path string, svc registry.Service) (bool, error) {
+					return registry.KeepIfUnchangedContext(ctx, path, svc)
+				}
+			}
+			kept, err := keep(regPath, persisted)
 			if err != nil {
 				return AddResult{}, registry.Service{}, err
 			}

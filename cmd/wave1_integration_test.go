@@ -137,17 +137,19 @@ func TestWave1CombinedProjections(t *testing.T) {
 	actions := defaultMCPActions(sharePaths{Registry: path, PID: pid, Snapshot: snapshotPath, AuthHandoff: handoff}, io.Discard)
 	for _, entry := range []struct {
 		name string
-		read func() (any, error)
+		read func(context.Context) (any, error)
 	}{
-		{"status", func() (any, error) { return getPollableStatus(pid, path, snapshotPath, handoff) }},
-		{"urls", func() (any, error) { return getStatusURLs(pid, path, snapshotPath) }},
-		{"list", func() (any, error) {
-			return loadListResultForPaths(path, pid, snapshotPath, listOptions{Verbose: true})
+		{"status", func(ctx context.Context) (any, error) {
+			return getPollableStatus(ctx, pid, path, snapshotPath, handoff)
+		}},
+		{"urls", func(ctx context.Context) (any, error) { return getStatusURLs(ctx, pid, path, snapshotPath) }},
+		{"list", func(ctx context.Context) (any, error) {
+			return loadListResultForPaths(ctx, path, pid, snapshotPath, listOptions{Verbose: true})
 		}},
 		{"MCP status", actions.status}, {"MCP list", actions.list},
 	} {
 		t.Run(entry.name, func(t *testing.T) {
-			value, err := entry.read()
+			value, err := entry.read(context.Background())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -208,7 +210,7 @@ func TestWave1DoctorCanonicalHost(t *testing.T) {
 			if err := tsruntime.Save(env.snapshotPath, *snapshot); err != nil {
 				t.Fatal(err)
 			}
-			result := buildDoctorResult(doctorOptions{})
+			result := buildDoctorResult(context.Background(), doctorOptions{})
 			if tc.invalid {
 				finding := assertDoctorFinding(t, result, inspect.WarningCodeAppProbeFailed)
 				if finding.Evidence["error_code"] != "health_canonical_host_unavailable" || calls.Load() != 0 {

@@ -1,11 +1,13 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"strings"
 
 	"github.com/anydoor7/tslink/internal/inspect"
+	"github.com/anydoor7/tslink/internal/mcpscope"
 	"github.com/anydoor7/tslink/internal/output"
 	"github.com/anydoor7/tslink/internal/registry"
 	"github.com/spf13/cobra"
@@ -260,6 +262,10 @@ func planTemplateApply(name string, reg *registry.Registry, dryRun bool) (Templa
 }
 
 func applyTemplate(name, regPath string, dryRun bool) (TemplateApplyResult, error) {
+	return applyTemplateContext(context.Background(), name, regPath, dryRun)
+}
+
+func applyTemplateContext(ctx context.Context, name, regPath string, dryRun bool) (TemplateApplyResult, error) {
 	reg, err := registry.Load(regPath)
 	if err != nil {
 		return TemplateApplyResult{}, err
@@ -276,7 +282,13 @@ func applyTemplate(name, regPath string, dryRun bool) (TemplateApplyResult, erro
 		if result.Services[i].Action == templateActionSkipExisting {
 			continue
 		}
-		created, err := templateAddIfMissingFn(regPath, svc)
+		add := templateAddIfMissingFn
+		if _, scoped := mcpscope.FromContext(ctx); scoped {
+			add = func(path string, svc registry.Service) (bool, error) {
+				return registry.AddIfMissingContext(ctx, path, svc)
+			}
+		}
+		created, err := add(regPath, svc)
 		if err != nil {
 			return TemplateApplyResult{}, err
 		}
