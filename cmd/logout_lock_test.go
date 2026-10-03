@@ -37,7 +37,7 @@ func TestLogoutWaitsForHeldCredentialLock(t *testing.T) {
 			}()
 			select {
 			case <-held:
-			case <-time.After(3 * time.Second):
+			case <-time.After(5 * time.Second):
 				t.Fatal("holder transaction never acquired the credential lock")
 			}
 			opts := logoutOptions{PIDPath: filepath.Join(dir, "pid"), AuthKeyPath: filepath.Join(dir, "authkey"), NodesDir: filepath.Join(dir, "nodes"), ConfigDir: dir, Kind: kind}

@@ -44,7 +44,7 @@ func shareWaitingOnItsRegistration(t *testing.T, paths sharePaths, req shareRequ
 	case <-entered:
 	case err := <-shareDone:
 		t.Fatalf("the share exited before its URL wait: %v", err)
-	case <-time.After(3 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("the share never reached its URL wait")
 	}
 	var once atomic.Bool

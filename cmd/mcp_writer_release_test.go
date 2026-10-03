@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -35,23 +36,28 @@ func (w *mcpSlowWriter) Write(p []byte) (int, error) {
 // returns, and nothing may write to out afterwards; otherwise a caller that
 // reads its own buffer races the abandoned session.
 func TestMCPAbandonedSessionStopsWritingBeforeItReturns(t *testing.T) {
-	withMCPEOFWatchdog(t, 50*time.Millisecond, 50*time.Millisecond)
-	out := &mcpSlowWriter{delay: 500 * time.Millisecond}
-	input := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}` + "\n" +
-		`{"jsonrpc":"2.0","id":2,"method":"ping"}` + "\n"
-	done := make(chan error, 1)
-	go func() { done <- runMCPStdio(context.Background(), strings.NewReader(input), out, fakeMCPActions()) }()
-	select {
-	case <-done:
-	case <-time.After(10 * time.Second):
-		t.Fatal("abandoned session did not return")
-	}
-	if n := out.writing.Load(); n != 0 {
-		t.Fatalf("runMCPStdio returned with %d write(s) to out still in progress", n)
-	}
-	out.returned.Store(true)
-	time.Sleep(700 * time.Millisecond)
-	if out.violation.Load() {
-		t.Fatal("the abandoned session wrote to out after runMCPStdio returned")
-	}
+	synctest.Test(t, func(t *testing.T) {
+		withMCPEOFWatchdog(t, 50*time.Millisecond, 50*time.Millisecond)
+		out := &mcpSlowWriter{delay: 500 * time.Millisecond}
+		// Join fixture writes even when a mutation makes the assertion fail.
+		defer func() { time.Sleep(2 * out.delay); synctest.Wait() }()
+		input := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}` + "\n" +
+			`{"jsonrpc":"2.0","id":2,"method":"ping"}` + "\n"
+		done := make(chan error, 1)
+		go func() { done <- runMCPStdio(context.Background(), strings.NewReader(input), out, fakeMCPActions()) }()
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			t.Fatal("abandoned session did not return")
+		}
+		if n := out.writing.Load(); n != 0 {
+			t.Fatalf("runMCPStdio returned with %d write(s) to out still in progress", n)
+		}
+		out.returned.Store(true)
+		time.Sleep(700 * time.Millisecond)
+		synctest.Wait()
+		if out.violation.Load() {
+			t.Fatal("the abandoned session wrote to out after runMCPStdio returned")
+		}
+	})
 }

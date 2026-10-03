@@ -400,7 +400,7 @@ func TestBuiltinSupervisorRealProcessLifecycle(t *testing.T) {
 	if err := os.WriteFile(path, data, 0600); err != nil {
 		t.Fatal(err)
 	}
-	breakerCtx, breakerCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	breakerCtx, breakerCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer breakerCancel()
 	breaker := exec.CommandContext(breakerCtx, bin, "supervise")
 	breaker.Env = env

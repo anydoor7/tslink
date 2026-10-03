@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"syscall"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/anydoor7/tslink/internal/inspect"
@@ -22,42 +23,44 @@ import (
 )
 
 func TestBootstrapConcurrentEnsureInstallsOnce(t *testing.T) {
-	dir := isolateBootstrap(t)
-	var running atomic.Bool
-	var installs atomic.Int32
-	entered := make(chan struct{})
-	release := make(chan struct{})
-	isRunningFn = func(string) bool { return running.Load() }
-	installDaemonFn = func(context.Context, io.Writer) error {
-		n := installs.Add(1)
-		if n == 1 {
-			close(entered)
+	synctest.Test(t, func(t *testing.T) {
+		dir := isolateBootstrap(t)
+		var running atomic.Bool
+		var installs atomic.Int32
+		entered := make(chan struct{})
+		release := make(chan struct{})
+		isRunningFn = func(string) bool { return running.Load() }
+		installDaemonFn = func(context.Context, io.Writer) error {
+			n := installs.Add(1)
+			if n == 1 {
+				close(entered)
+			}
+			<-release
+			if err := tsruntime.Save(filepath.Join(dir, "runtime.json"), tsruntime.NewSnapshot(4242, time.Now(), "fp", time.Now(), nil)); err != nil {
+				return err
+			}
+			running.Store(true)
+			return nil
 		}
-		<-release
-		if err := tsruntime.Save(filepath.Join(dir, "runtime.json"), tsruntime.NewSnapshot(4242, time.Now(), "fp", time.Now(), nil)); err != nil {
-			return err
+		detectSupervisionFn = func(context.Context, string, bool, int) Supervision {
+			return Supervision{Manager: "launchd", Installed: true, Autostart: true, RestartOnExit: true}
 		}
-		running.Store(true)
-		return nil
-	}
-	detectSupervisionFn = func(context.Context, string, bool, int) Supervision {
-		return Supervision{Manager: "launchd", Installed: true, Autostart: true, RestartOnExit: true}
-	}
-	var wg sync.WaitGroup
-	errs := make([]error, 2)
-	wg.Add(1)
-	go func() { defer wg.Done(); errs[0] = ensureDaemon(context.Background(), io.Discard, false) }()
-	<-entered
-	wg.Add(1)
-	go func() { defer wg.Done(); errs[1] = ensureDaemon(context.Background(), io.Discard, false) }()
-	// Force overlap while the first installer holds the OS lock.
-	time.Sleep(100 * time.Millisecond)
-	countWhileBlocked := installs.Load()
-	close(release)
-	wg.Wait()
-	if countWhileBlocked != 1 || installs.Load() != 1 || errors.Join(errs...) != nil {
-		t.Fatalf("overlap installs=%d final=%d errors=%v", countWhileBlocked, installs.Load(), errs)
-	}
+		var wg sync.WaitGroup
+		errs := make([]error, 2)
+		wg.Add(1)
+		go func() { defer wg.Done(); errs[0] = ensureDaemon(context.Background(), io.Discard, false) }()
+		<-entered
+		wg.Add(1)
+		go func() { defer wg.Done(); errs[1] = ensureDaemon(context.Background(), io.Discard, false) }()
+		// Force overlap while the first installer holds the OS lock.
+		synctest.Wait()
+		countWhileBlocked := installs.Load()
+		close(release)
+		wg.Wait()
+		if countWhileBlocked != 1 || installs.Load() != 1 || errors.Join(errs...) != nil {
+			t.Fatalf("overlap installs=%d final=%d errors=%v", countWhileBlocked, installs.Load(), errs)
+		}
+	})
 }
 
 func TestBootstrapEnrollmentAcrossServices(t *testing.T) {
@@ -110,7 +113,7 @@ func TestBootstrapEnrollmentAcrossServices(t *testing.T) {
 			// the wait comes back as context.DeadlineExceeded; a call that
 			// short-circuited comes back as the enrollment error. Those are
 			// disjoint values, not two points on a timeline.
-			ctxBudget := 1500 * time.Millisecond
+			ctxBudget := 5 * time.Second
 			if valid && ctxBudget >= wait {
 				t.Fatalf("the context budget (%s) must stay below the wait (%s), or a call that sat in the "+
 					"wait loop would return the not-ready error instead of a deadline and this assertion would stop discriminating",

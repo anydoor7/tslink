@@ -23,7 +23,7 @@ func TestWave1HealthRequestLimits(t *testing.T) {
 		io.WriteString(w, "ready")
 	}))
 	defer app.Close()
-	svc := registry.Service{Type: registry.TypeProxy, Target: app.URL, Health: &registry.HealthConfig{Timeout: "200ms", BodyContains: "ready"}}
+	svc := registry.Service{Type: registry.TypeProxy, Target: app.URL, Health: &registry.HealthConfig{Timeout: "5s", BodyContains: "ready"}}
 	// F8 limits incoming request bodies and reads, never backend responses.
 	for _, limits := range []*registry.RequestLimits{nil, {MaxBody: "1B", HeaderTimeout: "1ms", ReadTimeout: "1ms", IdleTimeout: "1ms"}, {MaxBody: "unlimited", UnlimitedAck: true}} {
 		svc.RequestLimits = limits

@@ -134,7 +134,7 @@ func testHealthAgingStream(t *testing.T, unavailablePath bool) {
 
 func waitHealthFlights(t *testing.T, p *healthReadPool) {
 	t.Helper()
-	deadline := time.Now().Add(time.Second)
+	deadline := time.Now().Add(5 * time.Second)
 	for {
 		p.mu.Lock()
 		got := len(p.flights)

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/anydoor7/tslink/internal/logrotate"
@@ -159,26 +160,29 @@ func TestStartStderrLogRotationStopsWhenTheLogDirIsUnresolvable(t *testing.T) {
 // terminal, or an operator's redirect. None of those may be touched, and the
 // log directory must stay empty.
 func TestStartStderrLogRotationWritesNothingWhenStderrIsNotTheConfiguredLog(t *testing.T) {
-	logDir := t.TempDir()
-	stubStderrLogRotation(t, logDir, nil) // real logrotate.RotateStderrLog
+	synctest.Test(t, func(t *testing.T) {
+		logDir := t.TempDir()
+		stubStderrLogRotation(t, logDir, nil) // real logrotate.RotateStderrLog
 
-	ctx, cancel := context.WithCancel(context.Background())
-	done := startStderrLogRotation(ctx)
-	time.Sleep(50 * time.Millisecond) // several 5ms ticks
-	cancel()
-	<-done
+		ctx, cancel := context.WithCancel(context.Background())
+		done := startStderrLogRotation(ctx)
+		time.Sleep(50 * time.Millisecond) // ten virtual ticks
+		synctest.Wait()
+		cancel()
+		<-done
 
-	entries, err := os.ReadDir(logDir)
-	if err != nil {
-		t.Fatalf("read the isolated log dir: %v", err)
-	}
-	if len(entries) != 0 {
-		names := make([]string, 0, len(entries))
-		for _, entry := range entries {
-			names = append(names, entry.Name())
+		entries, err := os.ReadDir(logDir)
+		if err != nil {
+			t.Fatalf("read the isolated log dir: %v", err)
 		}
-		t.Fatalf("the rotation timer created %v in the isolated log dir; against a real config dir those writes land in the operator's logs", names)
-	}
+		if len(entries) != 0 {
+			names := make([]string, 0, len(entries))
+			for _, entry := range entries {
+				names = append(names, entry.Name())
+			}
+			t.Fatalf("the rotation timer created %v in the isolated log dir; against a real config dir those writes land in the operator's logs", names)
+		}
+	})
 }
 
 // TestStartStderrLogRotationRotatesTheConfiguredLog is the one end-to-end case,

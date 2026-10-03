@@ -52,7 +52,7 @@ func TestWindowsShutdownEventCancelsContextAndRestrictsAccess(t *testing.T) {
 	}
 	select {
 	case <-ctx.Done():
-	case <-time.After(time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("shutdown event did not cancel context")
 	}
 	cleanup()

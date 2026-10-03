@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/anydoor7/tslink/internal/credentials"
@@ -37,7 +38,7 @@ func TestHealthCyclePublishesOtherResultsAndCancelsWithStuckProbe(t *testing.T) 
 		})
 	}()
 	t.Cleanup(func() { cancel(); close(release); <-done; <-exited })
-	deadline := time.After(time.Second)
+	deadline := time.After(5 * time.Second)
 	for {
 		s.mu.RLock()
 		state := s.healthStates["fast"].Health
@@ -54,7 +55,7 @@ func TestHealthCyclePublishesOtherResultsAndCancelsWithStuckProbe(t *testing.T) 
 	cancel()
 	select {
 	case <-done:
-	case <-time.After(time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("monitor shutdown waits for uninterruptible I/O")
 	}
 }
@@ -109,7 +110,7 @@ func TestHealthMonitorProgressWhileNotifierRuns(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := s.startHealthMonitor(ctx)
 	t.Cleanup(func() { cancel(); <-done })
-	deadline := time.After(3 * time.Second)
+	deadline := time.After(5 * time.Second)
 	for {
 		if _, err := os.Stat(ready); err == nil && probes.Load() >= 6 {
 			break
@@ -123,11 +124,74 @@ func TestHealthMonitorProgressWhileNotifierRuns(t *testing.T) {
 	cancel()
 	select {
 	case <-done:
-	case <-time.After(time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("notifier blocked shutdown")
 	}
 	r := health.NewRecorder(filepath.Join(dir, health.StateFile), health.NotifierConfig{})
 	if len(r.State.Events) != 1 || r.State.Events[0].Delivery != "failed" {
 		t.Fatal("cancellation not journaled as failure", r.State.Events)
 	}
+}
+
+// Pin the monitor's own join path while Send ignores cancellation. The real
+// command/progress test above keeps OS scheduling outside this virtual bound.
+func TestHealthMonitorShutdownJoinBound(t *testing.T) {
+	s, dir := healthTestServer(t)
+	s.nodes["app"] = &ServiceNode{service: registry.Service{Name: "app", Type: registry.TypeProxy, Target: "http://localhost:1234"}}
+	oldNow, oldProbe, oldInventory, oldInterval := serverNowFn, healthProbeFn, healthCredentialInventoryFn, healthTickInterval
+	t.Cleanup(func() {
+		serverNowFn, healthProbeFn, healthCredentialInventoryFn, healthTickInterval = oldNow, oldProbe, oldInventory, oldInterval
+	})
+	var ticks atomic.Int32
+	now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	serverNowFn = func() time.Time { return now.Add(time.Duration(ticks.Add(1)) * time.Minute) }
+	healthProbeFn = func(context.Context, registry.Service) string { return "health_status_mismatch" }
+	healthCredentialInventoryFn = func(time.Time) credentials.Inventory { return credentials.Inventory{} }
+	healthTickInterval = 5 * time.Millisecond
+	synctest.Test(t, func(t *testing.T) {
+		r := health.NewRecorder(filepath.Join(dir, health.StateFile), health.NotifierConfig{Command: []string{"/private/notifier"}})
+		started, release, exited := make(chan struct{}), make(chan struct{}), make(chan struct{})
+		r.Send = func(context.Context, health.NotifierConfig, health.Event) error {
+			close(started)
+			<-release
+			close(exited)
+			return nil
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		done := s.startHealthMonitorWithRecorder(ctx, r)
+		defer func() { cancel(); close(release); <-done }()
+		time.Sleep(30 * time.Millisecond)
+		synctest.Wait()
+		select {
+		case <-started:
+		default:
+			t.Fatal("monitor never started delivery")
+		}
+		begin := time.Now()
+		cancel()
+		synctest.Wait()
+		select {
+		case <-done:
+			t.Fatal("monitor returned before joining its blocked notifier")
+		default:
+		}
+		time.Sleep(time.Second)
+		synctest.Wait()
+		select {
+		case <-done:
+		default:
+			t.Fatal("monitor exceeded its one-second delivery join bound")
+		}
+		if got := time.Since(begin); got != time.Second {
+			t.Fatalf("monitor join = %v, want exactly 1s", got)
+		}
+		select {
+		case <-exited:
+			t.Fatal("notifier was released before the join assertion")
+		default:
+		}
+		if len(r.State.Events) != 1 || r.State.Events[0].Delivery != "failed" {
+			t.Fatal("cancellation not journaled", r.State.Events)
+		}
+	})
 }

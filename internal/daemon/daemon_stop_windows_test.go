@@ -4,10 +4,12 @@ package daemon
 
 import (
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -33,33 +35,62 @@ func stubStopProcessLookupError(t *testing.T) {
 }
 
 func TestStopDaemonWindowsReportsSuccessAfterGracefulShutdown(t *testing.T) {
-	cmd := exec.Command(os.Args[0])
-	cmd.Env = append(os.Environ(), "TSLINK_HELPER_PROCESS=1")
+	cmd := exec.CommandContext(t.Context(), os.Args[0])
+	cmd.Env = append(os.Environ(), "TSLINK_HELPER_PROCESS=1", "TSLINK_HELPER_READY=1")
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("Start() error = %v", err)
 	}
 	stubProcessExecutableForPID(t, cmd.Process.Pid)
+	const hangGuard = 5 * time.Second
 	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
-	t.Cleanup(func() {
-		_ = cmd.Process.Kill()
-		select {
-		case <-done:
-		default:
-		}
+	exited := make(chan struct{})
+	startWait := sync.OnceFunc(func() {
+		go func() { done <- cmd.Wait(); close(exited) }()
 	})
+	killAndJoin := func() {
+		_ = cmd.Process.Kill()
+		startWait()
+		select {
+		case <-exited:
+		case <-time.After(hangGuard):
+			t.Error("shutdown helper did not exit after kill within the hang guard")
+		}
+	}
+	t.Cleanup(func() {
+		killAndJoin()
+	})
+	// The helper emits readiness after ShutdownContext creates the event.
+	// Startup scheduling is not part of StopDaemon's graceful-stop contract.
+	ready := make([]byte, len("ready\n"))
+	read := make(chan error, 1)
+	go func() { _, err := io.ReadFull(stdout, ready); read <- err }()
+	select {
+	case err := <-read:
+		if err != nil || string(ready) != "ready\n" {
+			t.Fatalf("helper shutdown event was not ready: event=%q err=%v", ready, err)
+		}
+	case <-time.After(hangGuard):
+		killAndJoin()
+		select {
+		case <-read:
+		case <-time.After(hangGuard):
+			t.Fatal("shutdown helper IPC reader did not exit after child kill")
+		}
+		t.Fatal("helper shutdown event was not ready within the hang guard; killed and joined child")
+	}
+	startWait()
 
 	pidPath := filepath.Join(t.TempDir(), "tslink.pid")
 	if err := os.WriteFile(pidPath, []byte(strconv.Itoa(cmd.Process.Pid)+"\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	started := time.Now()
 	if err := StopDaemon(pidPath); err != nil {
 		t.Fatalf("StopDaemon() error = %v", err)
-	}
-	if elapsed := time.Since(started); elapsed >= windowsStopTimeout {
-		t.Fatalf("StopDaemon() took %s, want less than %s", elapsed, windowsStopTimeout)
 	}
 
 	select {

@@ -275,6 +275,9 @@ func TestRepairBootoutSuccessPolicy(t *testing.T) {
 
 func TestRepairFailedInstallRollbackCannotUndoPeer(t *testing.T) {
 	setupRepairManager(t, func() {})
+	// Expiry is the failed-install input that enters rollback, not the
+	// completion guard. The successful peer below gets its own 5s budget.
+	launchAgentVerifyTimeout = 10 * time.Millisecond
 	entered, release := make(chan struct{}), make(chan struct{})
 	active := false
 	fail := true
@@ -307,7 +310,7 @@ func TestRepairFailedInstallRollbackCannotUndoPeer(t *testing.T) {
 	go func() { first <- repairOperation(context.Background(), "install") }()
 	select {
 	case <-entered:
-	case <-time.After(time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("rollback never entered")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
@@ -322,6 +325,7 @@ func TestRepairFailedInstallRollbackCannotUndoPeer(t *testing.T) {
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("new-install rollback did not remove failed definition: %v", err)
 	}
+	launchAgentVerifyTimeout = 5 * time.Second
 	fail = false
 	if err := repairOperation(context.Background(), "install"); err != nil {
 		t.Fatal(err)

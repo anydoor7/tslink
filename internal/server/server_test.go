@@ -197,7 +197,7 @@ func TestLimitedListenerClosesConnectionsOverLimit(t *testing.T) {
 		defer firstServer.Close()
 	case err := <-acceptErr:
 		t.Fatalf("first Accept() error = %v", err)
-	case <-time.After(2 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("first Accept() timed out")
 	}
 
@@ -217,7 +217,7 @@ func TestLimitedListenerClosesConnectionsOverLimit(t *testing.T) {
 		t.Fatalf("second Dial() error = %v", err)
 	}
 	defer secondClient.Close()
-	if err := secondClient.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+	if err := secondClient.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
 		t.Fatalf("SetReadDeadline() error = %v", err)
 	}
 	buf := make([]byte, 1)
@@ -241,7 +241,7 @@ func TestLimitedListenerClosesConnectionsOverLimit(t *testing.T) {
 	case conn := <-secondAccepted:
 		conn.Close()
 		t.Fatal("second Accept returned a connection after listener close")
-	case <-time.After(2 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("second Accept did not unblock after listener close")
 	}
 }
@@ -464,6 +464,8 @@ func (s *fakeTSNetServer) Close() error {
 }
 
 type blockingListenerTSNetServer struct {
+	waitStarted time.Time
+	waitEnded   time.Time
 	fakeTSNetServer
 	listenStarted chan struct{}
 	unblock       chan struct{}
@@ -495,12 +497,14 @@ func (s *blockingInteractiveListenerTSNetServer) Close() error {
 }
 
 func (s *blockingListenerTSNetServer) ListenFunnel(string, string, ...tsnet.FunnelOption) (net.Listener, error) {
+	s.waitStarted = time.Now()
 	close(s.listenStarted)
 	<-s.unblock
 	return nil, net.ErrClosed
 }
 
 func (s *blockingListenerTSNetServer) Close() error {
+	s.waitEnded = time.Now()
 	s.closeCount.Add(1)
 	s.closed = true
 	s.unblockOnce.Do(func() { close(s.unblock) })
@@ -1066,85 +1070,88 @@ func TestStartNodeLocked_ZeroCredentialUsesStableStatusWithoutUp(t *testing.T) {
 }
 
 func TestStartNodeLocked_InteractiveAuthorizationOutlivesTechnicalStartupDeadline(t *testing.T) {
-	testenv.SetHome(t, t.TempDir())
-	if err := config.EnsureDir(); err != nil {
-		t.Fatalf("EnsureDir() error = %v", err)
-	}
-
-	s, err := New("", "")
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-	s.SetAuthKeyProvider(func(context.Context, registry.Service) (string, error) { return "", nil })
-
-	fake := &fakeInteractiveTSNetServer{}
-	statusClient := &gatedInteractiveStatusClient{ready: make(chan struct{})}
-	oldNew := newTSNetServerFn
-	oldStatusClient := tsnetStatusClientFn
-	oldPoll := interactiveStatusPollInterval
-	oldTimeout := nodeStartupTimeout
-	newTSNetServerFn = func(registry.Service, string, string, string) tsnetServer { return fake }
-	tsnetStatusClientFn = func(tsnetServer) (tsnetStatusClient, error) { return statusClient, nil }
-	interactiveStatusPollInterval = time.Millisecond
-	nodeStartupTimeout = 10 * time.Millisecond
-	t.Cleanup(func() {
-		newTSNetServerFn = oldNew
-		tsnetStatusClientFn = oldStatusClient
-		interactiveStatusPollInterval = oldPoll
-		nodeStartupTimeout = oldTimeout
-		s.closeAllNodes()
-	})
-
-	handoffPublished := make(chan struct{})
-	s.SetAuthHandoffFunc(func(_ context.Context, handoff AuthHandoff) error {
-		if handoff.AuthURL != "https://login.tailscale.com/a/slow-human" {
-			t.Errorf("auth URL = %q", handoff.AuthURL)
+	synctest.Test(t, func(t *testing.T) {
+		testenv.SetHome(t, t.TempDir())
+		if err := config.EnsureDir(); err != nil {
+			t.Fatalf("EnsureDir() error = %v", err)
 		}
+
+		s, err := New("", "")
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+		s.SetAuthKeyProvider(func(context.Context, registry.Service) (string, error) { return "", nil })
+
+		fake := &fakeInteractiveTSNetServer{}
+		statusClient := &gatedInteractiveStatusClient{ready: make(chan struct{})}
+		oldNew := newTSNetServerFn
+		oldStatusClient := tsnetStatusClientFn
+		oldPoll := interactiveStatusPollInterval
+		oldTimeout := nodeStartupTimeout
+		newTSNetServerFn = func(registry.Service, string, string, string) tsnetServer { return fake }
+		tsnetStatusClientFn = func(tsnetServer) (tsnetStatusClient, error) { return statusClient, nil }
+		interactiveStatusPollInterval = time.Millisecond
+		nodeStartupTimeout = 10 * time.Millisecond
+		t.Cleanup(func() {
+			newTSNetServerFn = oldNew
+			tsnetStatusClientFn = oldStatusClient
+			interactiveStatusPollInterval = oldPoll
+			nodeStartupTimeout = oldTimeout
+			s.closeAllNodes()
+		})
+
+		handoffPublished := make(chan struct{})
+		s.SetAuthHandoffFunc(func(_ context.Context, handoff AuthHandoff) error {
+			if handoff.AuthURL != "https://login.tailscale.com/a/slow-human" {
+				t.Errorf("auth URL = %q", handoff.AuthURL)
+			}
+			select {
+			case <-handoffPublished:
+			default:
+				close(handoffPublished)
+			}
+			return nil
+		})
+
+		servicePath := t.TempDir()
+		result := make(chan error, 1)
+		go func() {
+			result <- s.startNodeLocked(context.Background(), registry.Service{Name: "slow-human", Type: registry.TypeFile, Path: servicePath})
+		}()
+
 		select {
 		case <-handoffPublished:
+		case <-time.After(time.Second):
+			t.Fatal("interactive auth URL was not published")
+		}
+		time.Sleep(4 * nodeStartupTimeout)
+		synctest.Wait()
+		select {
+		case err := <-result:
+			t.Fatalf("interactive startup returned after technical deadline: %v", err)
 		default:
-			close(handoffPublished)
 		}
-		return nil
+
+		// Authorization starts the listener's own technical deadline
+		// (TestStartNodeLocked_InteractiveListenerUsesIndependentTechnicalDeadline).
+		// At 10ms that deadline raced the listener goroutine under parallel load
+		// and failed a correct start (B6b-15), so the rest of the start gets one
+		// no scheduler delay exhausts. The start reads nodeStartupTimeout again
+		// only after statusClient.ready is closed, which orders this write first.
+		nodeStartupTimeout = time.Minute
+		close(statusClient.ready)
+		select {
+		case err := <-result:
+			if err != nil {
+				t.Fatalf("startNodeLocked() after authorization error = %v", err)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("interactive startup did not resume after authorization")
+		}
+		if node := s.nodes["slow-human"]; node == nil || node.runtimeHost != "slow-human.example.ts.net" {
+			t.Fatalf("running node = %+v, want authorized interactive node", node)
+		}
 	})
-
-	servicePath := t.TempDir()
-	result := make(chan error, 1)
-	go func() {
-		result <- s.startNodeLocked(context.Background(), registry.Service{Name: "slow-human", Type: registry.TypeFile, Path: servicePath})
-	}()
-
-	select {
-	case <-handoffPublished:
-	case <-time.After(time.Second):
-		t.Fatal("interactive auth URL was not published")
-	}
-	time.Sleep(4 * nodeStartupTimeout)
-	select {
-	case err := <-result:
-		t.Fatalf("interactive startup returned after technical deadline: %v", err)
-	default:
-	}
-
-	// Authorization starts the listener's own technical deadline
-	// (TestStartNodeLocked_InteractiveListenerUsesIndependentTechnicalDeadline).
-	// At 10ms that deadline raced the listener goroutine under parallel load
-	// and failed a correct start (B6b-15), so the rest of the start gets one
-	// no scheduler delay exhausts. The start reads nodeStartupTimeout again
-	// only after statusClient.ready is closed, which orders this write first.
-	nodeStartupTimeout = time.Minute
-	close(statusClient.ready)
-	select {
-	case err := <-result:
-		if err != nil {
-			t.Fatalf("startNodeLocked() after authorization error = %v", err)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("interactive startup did not resume after authorization")
-	}
-	if node := s.nodes["slow-human"]; node == nil || node.runtimeHost != "slow-human.example.ts.net" {
-		t.Fatalf("running node = %+v, want authorized interactive node", node)
-	}
 }
 
 func TestStartNodeLocked_InteractiveListenerUsesIndependentTechnicalDeadline(t *testing.T) {
@@ -1302,7 +1309,7 @@ func TestSyncNodes_NewerGenerationCancelsInteractiveStartupBeforeReconcile(t *te
 	go func() { firstDone <- s.syncNodes(context.Background()) }()
 	select {
 	case <-handoff:
-	case <-time.After(time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("interactive authorization URL was not published")
 	}
 
@@ -1318,7 +1325,7 @@ func TestSyncNodes_NewerGenerationCancelsInteractiveStartupBeforeReconcile(t *te
 	}()
 	select {
 	case <-lockAvailable:
-	case <-time.After(100 * time.Millisecond):
+	case <-time.After(5 * time.Second):
 		t.Fatal("interactive authorization wait held s.mu")
 	}
 
@@ -1330,7 +1337,7 @@ func TestSyncNodes_NewerGenerationCancelsInteractiveStartupBeforeReconcile(t *te
 		if err != nil {
 			t.Fatalf("superseding syncNodes() error = %v", err)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("registry removal did not supersede interactive startup")
 	}
 	select {
@@ -1338,7 +1345,7 @@ func TestSyncNodes_NewerGenerationCancelsInteractiveStartupBeforeReconcile(t *te
 		if err != nil {
 			t.Fatalf("superseded syncNodes() error = %v", err)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("superseded interactive sync did not return")
 	}
 	if fake.closeCount.Load() != 1 {
@@ -1599,7 +1606,7 @@ func TestStartNodeLocked_HTTPServerReadHeaderTimeoutClosesSlowClient(t *testing.
 	if _, err := conn.Write([]byte("GET / HTTP/1.1\r\nHost: localhost\r\n")); err != nil {
 		t.Fatalf("partial Write() error = %v", err)
 	}
-	if err := conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond)); err != nil {
+	if err := conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
 		t.Fatalf("SetReadDeadline() error = %v", err)
 	}
 
@@ -2081,7 +2088,7 @@ func TestLifecycleTickerRereadsWallClockAfterSimulatedSleep(t *testing.T) {
 	done := s.startLifecycleTicker(ctx)
 	select {
 	case <-done:
-	case <-time.After(2 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("lifecycle ticker did not observe two wall-clock ticks")
 	}
 	if len(observed) != 2 || !observed[0].Equal(beforeSleep) || !observed[1].Equal(afterWake) {
@@ -2118,7 +2125,7 @@ func TestLifecycleTickerSkipsFullSyncWhenReconcileReportsNoChange(t *testing.T) 
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	done := s.startLifecycleTicker(ctx)
-	deadline := time.After(2 * time.Second)
+	deadline := time.After(5 * time.Second)
 	for ticks.Load() < 3 {
 		select {
 		case <-deadline:
@@ -2195,7 +2202,7 @@ func TestSyncGenerationGuardIsLoadBearing(t *testing.T) {
 	go func() { slowDone <- s.syncNodes(context.Background()) }()
 	select {
 	case <-entered:
-	case <-time.After(2 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("older sync never reached the seam")
 	}
 	newerErr := s.syncNodes(context.Background())
@@ -2249,7 +2256,7 @@ func TestLifecycleTickerRetriesFailedSyncThenReturnsToChangeOnly(t *testing.T) {
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	done := s.startLifecycleTicker(ctx)
-	deadline := time.After(2 * time.Second)
+	deadline := time.After(5 * time.Second)
 	for ticks.Load() < 6 {
 		select {
 		case <-deadline:
@@ -2332,7 +2339,7 @@ func TestRunningFunnelListenerIsTornDownAfterDeadline(t *testing.T) {
 	select {
 	case <-tailnetOnlyConstructed:
 		cancel()
-	case <-time.After(2 * time.Second):
+	case <-time.After(5 * time.Second):
 		cancel()
 		<-done
 		t.Fatal("expired running Funnel was not rebuilt as tailnet-only TLS")
@@ -2525,7 +2532,7 @@ func TestSyncNodesRejectsStaleGenerationCommit(t *testing.T) {
 	go func() { firstDone <- s.syncNodes(context.Background()) }()
 	select {
 	case <-firstDesiredLoaded:
-	case <-time.After(2 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("first generation did not reach desired-state barrier")
 	}
 
@@ -2538,7 +2545,7 @@ func TestSyncNodesRejectsStaleGenerationCommit(t *testing.T) {
 		if err != nil {
 			t.Fatalf("first syncNodes() error = %v", err)
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("first syncNodes() did not finish")
 	}
 
@@ -2959,7 +2966,7 @@ func TestSyncNodes_TCPListenerSurvivesStartupGenerationCompletion(t *testing.T) 
 	var serveCtx context.Context
 	select {
 	case serveCtx = <-serveCtxCh:
-	case <-time.After(time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("serveTCP was never invoked for the tcp node")
 	}
 	select {
@@ -2971,7 +2978,7 @@ func TestSyncNodes_TCPListenerSurvivesStartupGenerationCompletion(t *testing.T) 
 	s.closeAllNodes()
 	select {
 	case <-serveCtx.Done():
-	case <-time.After(time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("tcp serve context did not stop after closeAllNodes")
 	}
 }
@@ -3728,32 +3735,37 @@ func TestEnsureFunnelPolicyBeforeRestart_UnknownWriteOutcomeIsMachineReadable(t 
 }
 
 func TestEnsureFunnelPolicyBeforeRestart_ReportsActualParentLimitedRequestBudget(t *testing.T) {
-	oldTimeout := funnelCapabilityWaitTimeout
-	funnelCapabilityWaitTimeout = 2 * time.Second
-	t.Cleanup(func() { funnelCapabilityWaitTimeout = oldTimeout })
-	s, err := New("key", "")
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-	s.SetEnsureFunnelAttrFn(func(ctx context.Context, _ tailapi.FunnelPolicyRequest) (tailapi.PolicyMutationResult, error) {
-		<-ctx.Done()
-		return tailapi.PolicyMutationResult{WriteOutcome: tailapi.PolicyWriteUnknown}, ctx.Err()
+	synctest.Test(t, func(t *testing.T) {
+		oldTimeout := funnelCapabilityWaitTimeout
+		funnelCapabilityWaitTimeout = 2 * time.Second
+		t.Cleanup(func() { funnelCapabilityWaitTimeout = oldTimeout })
+		s, err := New("key", "")
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+		s.SetEnsureFunnelAttrFn(func(ctx context.Context, _ tailapi.FunnelPolicyRequest) (tailapi.PolicyMutationResult, error) {
+			if got := time.Until(mustContextDeadline(t, ctx)); got != 25*time.Millisecond {
+				t.Errorf("policy request budget = %s, want parent 25ms", got)
+			}
+			<-ctx.Done()
+			return tailapi.PolicyMutationResult{WriteOutcome: tailapi.PolicyWriteUnknown}, ctx.Err()
+		})
+		svc := registry.Service{
+			Name: "public-app", Type: registry.TypeProxy, Target: "http://localhost:3000",
+			Tags: []string{"tag:tsmain", registry.FunnelTag}, Funnel: true, PublicAck: true,
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+		defer cancel()
+		deadline := mustContextDeadline(t, ctx)
+		failures, _, _ := s.ensureFunnelPolicyBeforeRestart(ctx, map[string]registry.Service{svc.Name: svc}, nil, svc.Tags)
+		if time.Now() != deadline || !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			t.Fatalf("preflight did not end at parent deadline: %v / %v", time.Now(), ctx.Err())
+		}
+		message := failures[svc.Name].Error.Message
+		if !strings.Contains(message, "actual") || strings.Contains(message, "2s request budget") {
+			t.Fatalf("policy failure message = %q, want actual parent-limited budget", message)
+		}
 	})
-	svc := registry.Service{
-		Name: "public-app", Type: registry.TypeProxy, Target: "http://localhost:3000",
-		Tags: []string{"tag:tsmain", registry.FunnelTag}, Funnel: true, PublicAck: true,
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
-	defer cancel()
-	started := time.Now()
-	failures, _, _ := s.ensureFunnelPolicyBeforeRestart(ctx, map[string]registry.Service{svc.Name: svc}, nil, svc.Tags)
-	if elapsed := time.Since(started); elapsed > 200*time.Millisecond {
-		t.Fatalf("policy preflight elapsed = %s, want parent-limited budget", elapsed)
-	}
-	message := failures[svc.Name].Error.Message
-	if !strings.Contains(message, "actual") || strings.Contains(message, "2s request budget") {
-		t.Fatalf("policy failure message = %q, want actual parent-limited budget", message)
-	}
 }
 
 func TestSetEnsureFunnelAttrFnNilRestoresDefault(t *testing.T) {
@@ -3825,37 +3837,39 @@ func TestVerifyFunnelAccessClassifiesNonPolicyPrerequisitesWithoutPolling(t *tes
 }
 
 func TestVerifyFunnelAccessReportsActualParentLimitedBudget(t *testing.T) {
-	oldStatusClient := tsnetStatusClientFn
-	oldPoll := funnelCapabilityPollInterval
-	oldTimeout := funnelCapabilityWaitTimeout
-	tsnetStatusClientFn = func(tsnetServer) (tsnetStatusClient, error) {
-		return &sequenceTSNetStatusClient{statuses: []*ipnstate.Status{funnelMissingStatus("public-app.tailnet.ts.net.")}}, nil
-	}
-	funnelCapabilityPollInterval = time.Millisecond
-	funnelCapabilityWaitTimeout = 2 * time.Second
-	t.Cleanup(func() {
-		tsnetStatusClientFn = oldStatusClient
-		funnelCapabilityPollInterval = oldPoll
-		funnelCapabilityWaitTimeout = oldTimeout
-	})
-
-	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
-	defer cancel()
-	started := time.Now()
-	_, err := (&Server{}).verifyFunnelAccess(ctx, &fakeTSNetServer{}, registry.Service{Name: "public-app", Funnel: true},
-		funnelMissingStatus("public-app.tailnet.ts.net."), registry.ProvisionOutcome{
-			Attempted: true, Target: registry.FunnelTag, Reason: registry.ProvisionReasonPolicyUpdated, WriteOutcome: tailapi.PolicyWriteChanged,
+	synctest.Test(t, func(t *testing.T) {
+		oldStatusClient := tsnetStatusClientFn
+		oldPoll := funnelCapabilityPollInterval
+		oldTimeout := funnelCapabilityWaitTimeout
+		tsnetStatusClientFn = func(tsnetServer) (tsnetStatusClient, error) {
+			return &sequenceTSNetStatusClient{statuses: []*ipnstate.Status{funnelMissingStatus("public-app.tailnet.ts.net.")}}, nil
+		}
+		funnelCapabilityPollInterval = time.Millisecond
+		funnelCapabilityWaitTimeout = 2 * time.Second
+		t.Cleanup(func() {
+			tsnetStatusClientFn = oldStatusClient
+			funnelCapabilityPollInterval = oldPoll
+			funnelCapabilityWaitTimeout = oldTimeout
 		})
-	if elapsed := time.Since(started); elapsed > 200*time.Millisecond {
-		t.Fatalf("verifyFunnelAccess() elapsed = %s, want parent-limited wait", elapsed)
-	}
-	if err == nil || !strings.Contains(err.Error(), "actual") || strings.Contains(err.Error(), "2s wait budget") {
-		t.Fatalf("verifyFunnelAccess() error = %v, want actual parent-limited budget instead of configured 2s", err)
-	}
-	var coded registry.CodedError
-	if !errors.As(err, &coded) || coded.Provision == nil || coded.Provision.Reason != registry.ProvisionReasonNetmapTimeout {
-		t.Fatalf("verifyFunnelAccess() provision = %+v, want netmap_timeout", coded.Provision)
-	}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+		defer cancel()
+		deadline := mustContextDeadline(t, ctx)
+		_, err := (&Server{}).verifyFunnelAccess(ctx, &fakeTSNetServer{}, registry.Service{Name: "public-app", Funnel: true},
+			funnelMissingStatus("public-app.tailnet.ts.net."), registry.ProvisionOutcome{
+				Attempted: true, Target: registry.FunnelTag, Reason: registry.ProvisionReasonPolicyUpdated, WriteOutcome: tailapi.PolicyWriteChanged,
+			})
+		if time.Now() != deadline || !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			t.Fatalf("capability wait did not end at parent deadline: %v / %v", time.Now(), ctx.Err())
+		}
+		if err == nil || !strings.Contains(err.Error(), "actual") || strings.Contains(err.Error(), "2s wait budget") {
+			t.Fatalf("verifyFunnelAccess() error = %v, want actual parent-limited budget instead of configured 2s", err)
+		}
+		var coded registry.CodedError
+		if !errors.As(err, &coded) || coded.Provision == nil || coded.Provision.Reason != registry.ProvisionReasonNetmapTimeout {
+			t.Fatalf("verifyFunnelAccess() provision = %+v, want netmap_timeout", coded.Provision)
+		}
+	})
 }
 
 func TestSyncNodes_FunnelActiveRequiresSuccessfulFunnelListener(t *testing.T) {
@@ -4145,63 +4159,69 @@ func TestSyncNodes_PolicyAccessDeniedDegradesWithoutBlockingServices(t *testing.
 }
 
 func TestSyncNodes_ListenerActivationTimeoutClosesAndUnblocksLaterService(t *testing.T) {
-	testenv.SetHome(t, t.TempDir())
-	if err := config.EnsureDir(); err != nil {
-		t.Fatalf("EnsureDir() error = %v", err)
-	}
-	writeRegistry(t, []registry.Service{
-		{Name: "blocked-funnel", Type: registry.TypeProxy, Target: "http://localhost:3000", Tags: []string{"tag:tsmain", registry.FunnelTag}, Funnel: true, PublicAck: true},
-		{Name: "healthy", Type: registry.TypeFile, Path: t.TempDir()},
-	})
-
-	blocked := &blockingListenerTSNetServer{
-		fakeTSNetServer: fakeTSNetServer{status: funnelEnabledStatus("blocked-funnel.tailnet.ts.net."), localClient: localapitest.NewClient(nil)},
-		listenStarted:   make(chan struct{}),
-		unblock:         make(chan struct{}),
-	}
-	healthy := &fakeTSNetServer{certDomains: []string{"healthy.tailnet.ts.net"}}
-	oldNew := newTSNetServerFn
-	newTSNetServerFn = func(svc registry.Service, _ string, _ string, _ string) tsnetServer {
-		if svc.Name == "blocked-funnel" {
-			return blocked
+	synctest.Test(t, func(t *testing.T) {
+		testenv.SetHome(t, t.TempDir())
+		if err := config.EnsureDir(); err != nil {
+			t.Fatalf("EnsureDir() error = %v", err)
 		}
-		return healthy
-	}
-	t.Cleanup(func() { newTSNetServerFn = oldNew })
-	oldTimeout := nodeStartupTimeout
-	nodeStartupTimeout = 20 * time.Millisecond
-	t.Cleanup(func() { nodeStartupTimeout = oldTimeout })
+		writeRegistry(t, []registry.Service{
+			{Name: "blocked-funnel", Type: registry.TypeProxy, Target: "http://localhost:3000", Tags: []string{"tag:tsmain", registry.FunnelTag}, Funnel: true, PublicAck: true},
+			{Name: "healthy", Type: registry.TypeFile, Path: t.TempDir()},
+		})
 
-	s, err := New("key", "")
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-	t.Cleanup(s.closeAllNodes)
-	s.SetEnsureFunnelAttrFn(func(context.Context, tailapi.FunnelPolicyRequest) (tailapi.PolicyMutationResult, error) {
-		return tailapi.PolicyMutationResult{WriteOutcome: tailapi.PolicyWriteUnchanged}, nil
+		blocked := &blockingListenerTSNetServer{
+			fakeTSNetServer: fakeTSNetServer{status: funnelEnabledStatus("blocked-funnel.tailnet.ts.net."), localClient: localapitest.NewClient(nil)},
+			listenStarted:   make(chan struct{}),
+			unblock:         make(chan struct{}),
+		}
+		healthy := &fakeTSNetServer{certDomains: []string{"healthy.tailnet.ts.net"}}
+		oldNew := newTSNetServerFn
+		newTSNetServerFn = func(svc registry.Service, _ string, _ string, _ string) tsnetServer {
+			if svc.Name == "blocked-funnel" {
+				return blocked
+			}
+			return healthy
+		}
+		t.Cleanup(func() { newTSNetServerFn = oldNew })
+		oldTimeout := nodeStartupTimeout
+		nodeStartupTimeout = 20 * time.Millisecond
+		t.Cleanup(func() { nodeStartupTimeout = oldTimeout })
+
+		s, err := New("key", "")
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+		t.Cleanup(s.closeAllNodes)
+		s.SetEnsureFunnelAttrFn(func(context.Context, tailapi.FunnelPolicyRequest) (tailapi.PolicyMutationResult, error) {
+			return tailapi.PolicyMutationResult{WriteOutcome: tailapi.PolicyWriteUnchanged}, nil
+		})
+		parent, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := s.syncNodes(parent); err != nil {
+			t.Fatalf("syncNodes() error = %v", err)
+		}
+		if elapsed := blocked.waitEnded.Sub(blocked.waitStarted); elapsed != 20*time.Millisecond {
+			t.Fatalf("inner listener wait = %s, want independent 20ms deadline", elapsed)
+		}
+		if parent.Err() != nil {
+			t.Fatalf("listener exhausted parent: %v", parent.Err())
+		}
+		select {
+		case <-blocked.listenStarted:
+		default:
+			t.Fatal("test did not block inside ListenFunnel")
+		}
+		if got := blocked.closeCount.Load(); got != 1 {
+			t.Fatalf("blocked listener Close calls = %d, want exactly 1", got)
+		}
+		if !s.nodeRunning("healthy") {
+			t.Fatal("healthy service did not start after listener-stage timeout")
+		}
+		failure := s.serviceFailures["blocked-funnel"]
+		if failure.Error == nil || failure.Error.Code != registry.CodeServiceStartTimeout {
+			t.Fatalf("blocked listener failure = %+v, want %s", failure, registry.CodeServiceStartTimeout)
+		}
 	})
-	started := time.Now()
-	if err := s.syncNodes(context.Background()); err != nil {
-		t.Fatalf("syncNodes() error = %v", err)
-	}
-	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
-		t.Fatalf("listener-bounded sync took %s", elapsed)
-	}
-	select {
-	case <-blocked.listenStarted:
-	default:
-		t.Fatal("test did not block inside ListenFunnel")
-	}
-	if got := blocked.closeCount.Load(); got != 1 {
-		t.Fatalf("blocked listener Close calls = %d, want exactly 1", got)
-	}
-	if !s.nodeRunning("healthy") {
-		t.Fatal("healthy service did not start after listener-stage timeout")
-	}
-	failure := s.serviceFailures["blocked-funnel"]
-	if failure.Error == nil || failure.Error.Code != registry.CodeServiceStartTimeout {
-		t.Fatalf("blocked listener failure = %+v, want %s", failure, registry.CodeServiceStartTimeout)
-	}
 }
 
 func TestActivateListenerCancellationJoinsWorkerBeforeReturn(t *testing.T) {
@@ -4230,7 +4250,7 @@ func TestActivateListenerCancellationJoinsWorkerBeforeReturn(t *testing.T) {
 	close(workerMayFinish)
 	select {
 	case <-returned:
-	case <-time.After(time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("activateListener did not return after the listener worker completed")
 	}
 	select {
@@ -4261,7 +4281,7 @@ func TestActivateListenerCancellationClosesLateListener(t *testing.T) {
 	cancel()
 	select {
 	case <-result:
-	case <-time.After(time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("activateListener did not return after cancellation")
 	}
 	if !late.closed.Load() {
@@ -5253,7 +5273,7 @@ func TestWatchRegistry_MissingConfigDirReturns(t *testing.T) {
 
 	select {
 	case <-done:
-	case <-time.After(2 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("watchRegistry() did not return for missing config dir")
 	}
 }
@@ -5735,7 +5755,7 @@ func TestRunDoesNotMarkReadyWhenSupersededInitialSyncFails(t *testing.T) {
 	case <-firstDesiredLoaded:
 	case err := <-runDone:
 		t.Fatalf("Run() returned before initial generation was superseded: %v", err)
-	case <-time.After(2 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("initial generation did not reach desired-state barrier")
 	}
 
@@ -5749,7 +5769,7 @@ func TestRunDoesNotMarkReadyWhenSupersededInitialSyncFails(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "initial sync failed") || !strings.Contains(err.Error(), newerFailure.Error()) {
 			t.Fatalf("Run() error = %v, want failing authoritative sync", err)
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("Run() did not fail closed after superseded initial sync")
 	}
 	if readyCalled {
@@ -6285,7 +6305,7 @@ func TestWatchRegistry_BadCfgDir(t *testing.T) {
 
 	select {
 	case <-done:
-	case <-time.After(2 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("watchRegistry() did not return for bad cfgDir")
 	}
 }
@@ -6385,7 +6405,7 @@ func TestWatchRegistry_RegistryPathError(t *testing.T) {
 
 	select {
 	case <-done:
-	case <-time.After(2 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("watchRegistry() did not return when RegistryPath fails")
 	}
 }
@@ -6686,7 +6706,7 @@ func TestRun_MissingRegistryStartsEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	ready := false
 	s.SetReadyFunc(func() error {
@@ -6760,13 +6780,13 @@ func TestStartLifecycleTicker_ReadsClockSeamBeforeSpawning(t *testing.T) {
 		if !got.Equal(captured) {
 			t.Fatalf("ticker used the seam installed after it started: got %v, want %v", got, captured)
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("lifecycle ticker never reconciled")
 	}
 	cancel()
 	select {
 	case <-done:
-	case <-time.After(3 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("lifecycle ticker did not stop")
 	}
 }

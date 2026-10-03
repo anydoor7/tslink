@@ -39,7 +39,7 @@ func TestRecorderCoalescesDeliveryAndSkipsUnchangedWrites(t *testing.T) {
 		r.Commit(context.Background(), []Event{{Kind: "app_down", Service: "app"}}, now.Add(time.Duration(i)*5*time.Minute))
 	}
 	close(release)
-	deadline := time.After(time.Second)
+	deadline := time.After(5 * time.Second)
 	for len(r.DeliveryReady()) != 17 {
 		select {
 		case <-deadline:

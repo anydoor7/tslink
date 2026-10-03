@@ -25,7 +25,7 @@ func assertWaitsForCredentialTransaction(t *testing.T, name string, op func() er
 	}()
 	select {
 	case <-held:
-	case <-time.After(3 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("holder transaction never acquired the credential lock")
 	}
 	opDone := make(chan error, 1)

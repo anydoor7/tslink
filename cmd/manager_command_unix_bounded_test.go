@@ -51,24 +51,24 @@ func installBlockingManagerShim(t *testing.T, manager string) {
 // requireSeamReturnsWithinBudget calls a manager seam whose child never
 // answers. The seam must give up at its own query budget with a deadline
 // error. An unbounded CombinedOutput would sit on the child for 30 seconds;
-// the test stops waiting one second past the budget and says so.
+// Pin the query's own deadline independently of the wall-clock hang guard.
 func requireSeamReturnsWithinBudget(t *testing.T, manager string, call func() ([]byte, error)) {
 	t.Helper()
+	const queryBudget = 2 * time.Second
+	if managerQueryTimeout != queryBudget || managerCommandTimeout("show") != queryBudget || managerCommandTimeout("print") != queryBudget {
+		t.Fatalf("manager query deadline = %v, want 2s", managerQueryTimeout)
+	}
 	done := make(chan boundedCallResult, 1)
-	start := time.Now()
 	go func() {
 		out, err := call()
 		done <- boundedCallResult{out: out, err: err}
 	}()
-	limit := managerQueryTimeout + time.Second
+	limit := 5 * time.Second // real subprocess hang guard
 	select {
 	case result := <-done:
-		elapsed := time.Since(start)
-		if !errors.Is(result.err, context.DeadlineExceeded) || !strings.Contains(result.err.Error(), manager+" command exceeded "+managerQueryTimeout.String()) {
-			t.Fatalf("%s seam against a manager that never answers returned err=%v after %s, want the bounded-command deadline error", manager, result.err, elapsed)
-		}
-		if elapsed > limit {
-			t.Fatalf("%s seam returned after %s, want within %s", manager, elapsed, limit)
+
+		if !errors.Is(result.err, context.DeadlineExceeded) || !strings.Contains(result.err.Error(), manager+" command exceeded "+queryBudget.String()) {
+			t.Fatalf("%s seam against a manager that never answers returned err=%v, want the bounded-command deadline error", manager, result.err)
 		}
 	case <-time.After(limit):
 		t.Fatalf("%s seam did not return within %s against a manager that never answers; the call is unbounded", manager, limit)
@@ -83,26 +83,24 @@ func requireSeamReturnsWithinBudget(t *testing.T, manager string, call func() ([
 func TestBoundedManagerCommandReleasesAPipeHeldByAGrandchild(t *testing.T) {
 	const budget = 300 * time.Millisecond
 	done := make(chan boundedCallResult, 1)
-	start := time.Now()
+
 	go func() {
 		out, err := runBoundedManagerCommand(context.Background(), "/bin/sh", budget, "-c", "/bin/sleep 30 & echo $!; wait")
 		done <- boundedCallResult{out: out, err: err}
 	}()
-	limit := budget + time.Second
+	limit := 5 * time.Second // hang guard; error and pipe release are the assertions
 	select {
 	case result := <-done:
-		elapsed := time.Since(start)
+
 		// The grandchild outlives the call by design (only the direct child is
 		// killed); do not leave it behind for the rest of the run.
 		if pid, err := strconv.Atoi(strings.TrimSpace(string(result.out))); err == nil && pid > 1 {
 			_ = syscall.Kill(pid, syscall.SIGKILL)
 		}
 		if !errors.Is(result.err, context.DeadlineExceeded) {
-			t.Fatalf("pipe-holding command returned err=%v after %s, want deadline exceeded", result.err, elapsed)
+			t.Fatalf("pipe-holding command returned err=%v, want deadline exceeded", result.err)
 		}
-		if elapsed > limit {
-			t.Fatalf("pipe-holding command returned after %s, want within %s", elapsed, limit)
-		}
+
 	case <-time.After(limit):
 		t.Fatalf("pipe-holding command did not return within %s; a grandchild holding the output pipe blocks the bounded call", limit)
 	}

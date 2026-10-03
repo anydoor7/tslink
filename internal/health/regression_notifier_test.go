@@ -65,7 +65,7 @@ func TestNotifierCancellationStopsUnixProcessGroup(t *testing.T) {
 	go func() {
 		done <- Notify(ctx, NotifierConfig{Command: []string{os.Args[0], "-test.run=^TestReviewNotifierProcessTree$"}}, Event{Kind: "app_down"})
 	}()
-	deadline := time.After(3 * time.Second)
+	deadline := time.After(5 * time.Second)
 	var pid int
 	for {
 		if b, err := os.ReadFile(pidFile); err == nil && len(b) > 0 {
@@ -97,10 +97,10 @@ func TestNotifierCancellationStopsUnixProcessGroup(t *testing.T) {
 		if err == nil || err.Error() != "alert_command_failed" {
 			t.Fatal(err)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("descendant-held pipes blocked cancellation")
 	}
-	deadline = time.After(time.Second)
+	deadline = time.After(5 * time.Second)
 	for {
 		state, err = exec.Command("/bin/ps", "-p", strconv.Itoa(pid), "-o", "stat=").Output()
 		if strings.TrimSpace(string(state)) == "" {

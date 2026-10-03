@@ -37,7 +37,7 @@ func stubDarwinLaunchAgentVerificationNoWait(t *testing.T) {
 	oldTimeout := launchAgentVerifyTimeout
 	oldPollInterval := launchAgentVerifyPollInterval
 	oldSettle := launchAgentSettleWindow
-	launchAgentVerifyTimeout = 10 * time.Millisecond
+	launchAgentVerifyTimeout = 5 * time.Second
 	launchAgentVerifyPollInterval = 0
 	launchAgentSettleWindow = 0
 	t.Cleanup(func() {

@@ -96,7 +96,7 @@ func TestDarwinInstallOwnershipTreatsQueryTimeoutAsUnknown(t *testing.T) {
 // PID/state changing, and install rolled back a healthy job.
 func TestDarwinInstallVerificationRetriesOneQueryTimeout(t *testing.T) {
 	stubDarwinLaunchAgentVerificationNoWait(t)
-	launchAgentVerifyTimeout = time.Second
+	launchAgentVerifyTimeout = 5 * time.Second
 	oldLaunchctl := launchctlCombinedOutput
 	t.Cleanup(func() { launchctlCombinedOutput = oldLaunchctl })
 

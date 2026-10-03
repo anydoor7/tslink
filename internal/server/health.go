@@ -76,14 +76,20 @@ func nodeKeyExpiry(st *ipnstate.Status, now time.Time) health.Expiry {
 // All seams are captured before spawning. Run joins this goroutine before it
 // closes nodes. Uninterruptible I/O retains a bounded worker slot, not the monitor.
 func (s *Server) startHealthMonitor(ctx context.Context) <-chan struct{} {
-	done := make(chan struct{})
-	nowFn, probeFn, inventoryFn := serverNowFn, healthProbeFn, healthCredentialInventoryFn
-	interval := healthTickInterval
 	c, configErr := health.LoadNotifier(filepath.Join(s.cfgDir, health.ConfigFile))
 	r := health.NewRecorder(filepath.Join(s.cfgDir, health.StateFile), c)
 	if configErr != nil {
 		r.Error = configErr.Error()
 	}
+	return s.startHealthMonitorWithRecorder(ctx, r)
+}
+
+// Keep recorder construction separate so tests can exercise this same monitor
+// with a notifier that cannot be interrupted, without starting a real process.
+func (s *Server) startHealthMonitorWithRecorder(ctx context.Context, r *health.Recorder) <-chan struct{} {
+	done := make(chan struct{})
+	nowFn, probeFn, inventoryFn := serverNowFn, healthProbeFn, healthCredentialInventoryFn
+	interval := healthTickInterval
 	go func() {
 		defer close(done)
 		r.StartDelivery(ctx)

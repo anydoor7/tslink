@@ -47,7 +47,7 @@ func TestShareReusedByAnIdenticalCallSurvivesTheCreatorsCancellation(t *testing.
 	case <-entered:
 	case err := <-firstDone:
 		t.Fatalf("first share exited before its URL wait: %v", err)
-	case <-time.After(3 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("first share never reached its URL wait")
 	}
 

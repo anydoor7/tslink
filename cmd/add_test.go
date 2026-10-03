@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/anydoor7/tslink/internal/config"
@@ -651,50 +652,53 @@ func TestAddDryRunPrintsServiceWithoutWriting(t *testing.T) {
 }
 
 func TestAddWaitResolvesURLWhenRuntimeSnapshotArrives(t *testing.T) {
-	dir := t.TempDir()
-	regPath := filepath.Join(dir, "registry.json")
-	pidPath := filepath.Join(dir, "tslink.pid")
-	snapshotPath := filepath.Join(dir, "runtime.json")
-	startedAt := time.Date(2026, 8, 2, 12, 0, 0, 0, time.UTC)
-	svc := registry.Service{Name: "waiting", Type: registry.TypeProxy, Target: "http://localhost:3000"}
-	if _, err := registry.Add(regPath, svc); err != nil {
-		t.Fatalf("registry.Add: %v", err)
-	}
-	reg, err := registry.Load(regPath)
-	if err != nil {
-		t.Fatalf("registry.Load: %v", err)
-	}
-	svc = reg.Services[0]
-	fingerprint := statusRegistryFingerprint(t, regPath)
-	withStatusURLSeams(t, true, 4242, startedAt)
+	synctest.Test(t, func(t *testing.T) {
+		dir := t.TempDir()
+		regPath := filepath.Join(dir, "registry.json")
+		pidPath := filepath.Join(dir, "tslink.pid")
+		snapshotPath := filepath.Join(dir, "runtime.json")
+		startedAt := time.Date(2026, 8, 2, 12, 0, 0, 0, time.UTC)
+		svc := registry.Service{Name: "waiting", Type: registry.TypeProxy, Target: "http://localhost:3000"}
+		if _, err := registry.Add(regPath, svc); err != nil {
+			t.Fatalf("registry.Add: %v", err)
+		}
+		reg, err := registry.Load(regPath)
+		if err != nil {
+			t.Fatalf("registry.Load: %v", err)
+		}
+		svc = reg.Services[0]
+		fingerprint := statusRegistryFingerprint(t, regPath)
+		withStatusURLSeams(t, true, 4242, startedAt)
 
-	saved := make(chan error, 1)
-	go func() {
-		time.Sleep(20 * time.Millisecond)
-		snapshot := tsruntime.NewSnapshot(4242, startedAt, fingerprint, startedAt.Add(time.Second), []tsruntime.ServiceState{{
-			Service: svc, RuntimeHost: "waiting.tailnet-example.ts.net",
-		}})
-		saved <- tsruntime.Save(snapshotPath, snapshot)
-	}()
+		saved := make(chan error, 1)
+		go func() {
+			time.Sleep(20 * time.Millisecond)
+			synctest.Wait()
+			snapshot := tsruntime.NewSnapshot(4242, startedAt, fingerprint, startedAt.Add(time.Second), []tsruntime.ServiceState{{
+				Service: svc, RuntimeHost: "waiting.tailnet-example.ts.net",
+			}})
+			saved <- tsruntime.Save(snapshotPath, snapshot)
+		}()
 
-	result, err := buildAddResult(context.Background(), svc, true, pidPath, regPath, snapshotPath, 500*time.Millisecond)
-	if err != nil {
-		t.Fatalf("buildAddResult: %v", err)
-	}
-	if err := <-saved; err != nil {
-		t.Fatalf("runtime.Save: %v", err)
-	}
-	if result.URL == nil || *result.URL != "https://waiting.tailnet-example.ts.net" || result.URLPending {
-		t.Fatalf("result = %+v, want exact waited URL", result)
-	}
+		result, err := buildAddResult(context.Background(), svc, true, pidPath, regPath, snapshotPath, 500*time.Millisecond)
+		if err != nil {
+			t.Fatalf("buildAddResult: %v", err)
+		}
+		if err := <-saved; err != nil {
+			t.Fatalf("runtime.Save: %v", err)
+		}
+		if result.URL == nil || *result.URL != "https://waiting.tailnet-example.ts.net" || result.URLPending {
+			t.Fatalf("result = %+v, want exact waited URL", result)
+		}
 
-	add, _, err := rootCmd.Find([]string{"add"})
-	if err != nil {
-		t.Fatalf("find add: %v", err)
-	}
-	if flag := add.Flags().Lookup("wait"); flag == nil || flag.NoOptDefVal != "30s" {
-		t.Fatalf("wait flag = %+v, want optional 30s value", flag)
-	}
+		add, _, err := rootCmd.Find([]string{"add"})
+		if err != nil {
+			t.Fatalf("find add: %v", err)
+		}
+		if flag := add.Flags().Lookup("wait"); flag == nil || flag.NoOptDefVal != "30s" {
+			t.Fatalf("wait flag = %+v, want optional 30s value", flag)
+		}
+	})
 }
 
 func TestAddJSON_TCPUsesTypedEndpoint(t *testing.T) {

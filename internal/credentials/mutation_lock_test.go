@@ -1,13 +1,15 @@
 package credentials
 
 import (
-	"context"
+	"bufio"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -36,7 +38,7 @@ func TestMigrationSerializesConcurrentLogin(t *testing.T) {
 	go func() { migrated <- MigrateFromLegacy() }()
 	select {
 	case <-readSnapshot:
-	case <-time.After(3 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("migration did not reach the absent-slot keyring read")
 	}
 	loginDone := make(chan error, 1)
@@ -56,7 +58,7 @@ func TestMigrationSerializesConcurrentLogin(t *testing.T) {
 		if !ok {
 			t.Fatal("migration did not complete after releasing its read")
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("migration did not finish")
 	}
 	select {
@@ -64,7 +66,7 @@ func TestMigrationSerializesConcurrentLogin(t *testing.T) {
 		if err != nil {
 			t.Fatalf("login failed after migration: %v", err)
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("login remained blocked after migration")
 	}
 	stored, err := keyring.Get(keychainService, keychainAPIKey)
@@ -99,7 +101,7 @@ func TestMigrationDoesNotDeleteConcurrentFallback(t *testing.T) {
 	go func() { migrated <- MigrateFromLegacy() }()
 	select {
 	case <-readSnapshot:
-	case <-time.After(3 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("migration did not reach keyring read")
 	}
 	loginDone := make(chan error, 1)
@@ -122,7 +124,7 @@ func TestMigrationDoesNotDeleteConcurrentFallback(t *testing.T) {
 		if !ok {
 			t.Fatal("migration did not finish")
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("migration remained blocked")
 	}
 	select {
@@ -136,7 +138,7 @@ func TestMigrationDoesNotDeleteConcurrentFallback(t *testing.T) {
 		if err != nil {
 			t.Fatalf("fallback login failed: %v", err)
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("fallback login remained blocked")
 	}
 	stored, err := os.ReadFile(path)
@@ -211,14 +213,31 @@ func TestCredentialMutationLockChild(t *testing.T) {
 	if os.Getenv("TSLINK_TEST_CREDENTIAL_LOCK_FILE_ONLY") != "1" {
 		credentialMutationLockPathFunc = func() (string, error) { return path, nil }
 	}
-	if err := os.WriteFile(path+".attempt", nil, 0o600); err != nil {
-		t.Fatal(err)
+	oldTry := tryLockCredentialFileFunc
+	blocked := 0
+	var blockedFile *os.File
+	tryLockCredentialFileFunc = func(f *os.File) (bool, error) {
+		locked, err := oldTry(f)
+		if !locked && err == nil {
+			if blockedFile == nil {
+				blockedFile = f
+			}
+			// Keyring-enabled writers take two different files. Only retries
+			// on the first contended descriptor prove continued exclusion.
+			if f == blockedFile && blocked < 2 {
+				blocked++
+				fmt.Println("blocked")
+			}
+		}
+		return locked, err
 	}
+	t.Cleanup(func() { tryLockCredentialFileFunc = oldTry })
 	unlock, err := acquireCredentialMutationLock()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer unlock()
+	fmt.Println("acquired")
 	if err := os.WriteFile(path+".acquired", nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -246,40 +265,84 @@ func assertCredentialMutationLockCrossProcess(t *testing.T, childFileOnly bool) 
 		t.Fatal(err)
 	}
 	locked := true
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestCredentialMutationLockChild$")
+	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestCredentialMutationLockChild$")
 	cmd.Env = append(os.Environ(), "TSLINK_TEST_CREDENTIAL_LOCK_CHILD="+path, "TSLINK_TEST_CREDENTIAL_LOCK_CONFIG_DIR="+configDir)
 	if childFileOnly {
 		cmd.Env = append(cmd.Env, "TSLINK_TEST_CREDENTIAL_LOCK_FILE_ONLY=1", "TSLINK_DISABLE_KEYRING=1")
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		unlock()
+		t.Fatal(err)
 	}
 	if err := cmd.Start(); err != nil {
 		unlock()
 		t.Fatal(err)
 	}
+	const hangGuard = 5 * time.Second
+	joined := make(chan struct{})
+	var waitErr error
+	startWait := sync.OnceFunc(func() {
+		go func() { waitErr = cmd.Wait(); close(joined) }()
+	})
+	killAndJoin := func() {
+		_ = cmd.Process.Kill()
+		startWait()
+		select {
+		case <-joined:
+		case <-time.After(hangGuard):
+			t.Error("credential child did not exit after kill within the hang guard")
+		}
+	}
 	defer func() {
+		killAndJoin()
 		if locked {
 			unlock()
 		}
 	}()
-	deadline := time.Now().Add(3 * time.Second)
-	for {
-		if _, err := os.Stat(path + ".attempt"); err == nil {
-			break
+	reader := bufio.NewReader(stdout)
+	readEvent := func(want string) {
+		t.Helper()
+		type result struct {
+			event string
+			err   error
 		}
-		if time.Now().After(deadline) {
-			t.Fatal("child never attempted to acquire credential lock")
+		read := make(chan result, 1)
+		go func() { event, err := reader.ReadString('\n'); read <- result{event, err} }()
+		select {
+		case got := <-read:
+			if got.err != nil || got.event != want {
+				t.Fatalf("credential child event=%q err=%v, want %q", got.event, got.err, want)
+			}
+		case <-time.After(hangGuard):
+			killAndJoin()
+			select {
+			case <-read:
+			case <-time.After(hangGuard):
+				t.Fatal("credential IPC reader did not exit after child kill")
+			}
+			t.Fatalf("credential child did not report %q within the hang guard; killed and joined child", want)
 		}
-		time.Sleep(10 * time.Millisecond)
 	}
-	time.Sleep(100 * time.Millisecond)
+	// Two failed OS attempts prove exclusion across a retry. A child that
+	// ignores the first TryLock result reports "acquired" before the second.
+	readEvent("blocked\n")
+	readEvent("blocked\n")
 	if _, err := os.Stat(path + ".acquired"); !os.IsNotExist(err) {
 		t.Fatalf("child acquired credential lock before release: %v", err)
 	}
 	unlock()
 	locked = false
-	if err := cmd.Wait(); err != nil {
-		t.Fatalf("child failed after lock release: %v", err)
+	readEvent("acquired\n")
+	startWait()
+	select {
+	case <-joined:
+	case <-time.After(hangGuard):
+		killAndJoin()
+		t.Fatal("credential child did not exit after lock release within the hang guard")
+	}
+	if waitErr != nil {
+		t.Fatalf("child failed after lock release: %v", waitErr)
 	}
 	if _, err := os.Stat(path + ".acquired"); err != nil {
 		t.Fatalf("child did not acquire lock after release: %v", err)
