@@ -634,6 +634,48 @@ func TestArtifactVerifyChecksEveryBundledDocument(t *testing.T) {
 	}
 
 	var expectedFiles = []string{"LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md", "COMMERCIAL.md"}
+	// Discovery metadata stays in the source tree, outside binary payloads.
+	// llms.txt follows main; server.json does not yet declare an installable package.
+	configBody, err := os.ReadFile(filepath.Join(repoRoot(t), ".goreleaser.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var releaseConfig struct {
+		Archives []struct {
+			Files []string `yaml:"files"`
+		} `yaml:"archives"`
+		NFPMS []struct {
+			Contents []struct {
+				Src string `yaml:"src"`
+			} `yaml:"contents"`
+		} `yaml:"nfpms"`
+	}
+	if err := yaml.Unmarshal(configBody, &releaseConfig); err != nil {
+		t.Fatal(err)
+	}
+	if len(releaseConfig.Archives) == 0 || len(releaseConfig.NFPMS) == 0 {
+		t.Fatal("release payload enumeration is empty")
+	}
+	for _, sourceOnly := range []string{"llms.txt", "server.json"} {
+		if body, err := os.ReadFile(filepath.Join(repoRoot(t), sourceOnly)); err != nil || len(body) == 0 {
+			t.Fatalf("source-only discovery file %s is absent or empty: %v", sourceOnly, err)
+		}
+		var patterns []string
+		for _, archive := range releaseConfig.Archives {
+			patterns = append(patterns, archive.Files...)
+		}
+		for _, pkg := range releaseConfig.NFPMS {
+			for _, content := range pkg.Contents {
+				patterns = append(patterns, content.Src)
+			}
+		}
+		for _, pattern := range patterns {
+			matched, err := filepath.Match(filepath.ToSlash(filepath.Clean(pattern)), sourceOnly)
+			if err != nil || matched {
+				t.Fatalf("release payload pattern %q must not include source-only %s: %v", pattern, sourceOnly, err)
+			}
+		}
+	}
 	var targets = []string{"darwin-amd64", "darwin-arm64", "linux-amd64", "linux-arm64", "windows-amd64", "windows-arm64"}
 	makeFixture := func(t *testing.T) string {
 		t.Helper()

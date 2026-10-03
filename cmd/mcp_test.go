@@ -37,7 +37,7 @@ func fakeMCPActions() mcpActions {
 			if req.Target == "error" {
 				return ShareResult{}, output.ErrUsage("share failed")
 			}
-			return ShareResult{Status: authStatusNeedsLogin, AuthURL: "https://login.tailscale.com/a/mcp"}, nil
+			return ShareResult{Name: "demo", Status: authStatusNeedsLogin, AuthURL: "https://login.tailscale.com/a/mcp"}, nil
 		},
 		add: func(_ context.Context, params AddParams, _ bool) (any, error) {
 			return AddResult{Name: params.Name, Type: registry.TypeProxy, Created: true, URLPending: true}, nil

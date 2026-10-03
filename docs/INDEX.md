@@ -1,6 +1,8 @@
 # Documentation index
 
-[English homepage](../README.md) · [Agent operating guide](../AGENTS.md)
+[English homepage](../README.md) · [Contributor agent instructions](../AGENTS.md)
+
+[llms.txt](../llms.txt) · [Agent quickstart](agent-quickstart.md) · [Choose a sharing tool](comparison.md)
 
 Documentation is English-only. The only translations are the homepage READMEs in `docs/README.<lang>.md`.
 
@@ -34,10 +36,12 @@ Documentation is English-only. The only translations are the homepage READMEs in
 
 | Guide | File |
 |---|---|
+| Agent quickstart | [agent-quickstart.md](agent-quickstart.md) |
 | Agents | [agents.md](agents.md) |
 | App recipes | [apps.md](apps.md) |
 | Architecture | [architecture.md](architecture.md) |
 | Cli Reference | [cli-reference.md](cli-reference.md) |
+| Comparison | [comparison.md](comparison.md) |
 | Credentials And Tags | [credentials-and-tags.md](credentials-and-tags.md) |
 | Daemon Lifecycle | [daemon-lifecycle.md](daemon-lifecycle.md) |
 | Getting Started | [getting-started.md](getting-started.md) |

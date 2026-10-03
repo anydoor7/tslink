@@ -117,6 +117,21 @@ func sortedKeys(values map[string]string) []string {
 	return keys
 }
 
+// privateRootParent keeps a child's roots out of unrelated binaries' startup
+// sweeps. Tests that inspect a dead child's root must own its entire lifecycle:
+// a global sweep could otherwise remove it before an existence assertion, or
+// make a broken cleanup look successful. Children still use the real Main.
+func privateRootParent(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	// Unix uses TMPDIR. Windows uses TMP/TEMP, or SystemTemp when
+	// GetTempPath2 selects the SYSTEM account's temporary directory.
+	for _, name := range []string{"TMPDIR", "TMP", "TEMP", "SystemTemp"} {
+		t.Setenv(name, dir)
+	}
+	return dir
+}
+
 // TestMainScrubsTheContributorEnvironmentAndMovesEveryHomeLocation starts this
 // binary the way `go test` does on a contributor's machine (no marked root),
 // with fake credentials, knobs and a fake home exported, and checks what the
@@ -126,6 +141,7 @@ func TestMainScrubsTheContributorEnvironmentAndMovesEveryHomeLocation(t *testing
 		writeIsolationReport(t)
 		return
 	}
+	parent := privateRootParent(t)
 	goBin, err := exec.LookPath("go")
 	if err != nil {
 		t.Skipf("no go command on PATH, so the toolchain locations this test compares cannot be resolved: %v", err)
@@ -172,8 +188,8 @@ func TestMainScrubsTheContributorEnvironmentAndMovesEveryHomeLocation(t *testing
 	if code != 0 || report == nil {
 		t.Fatalf("top-level probe child: exit %d, report %v\n%s", code, report, out)
 	}
-	if report.Root == "" || !strings.HasPrefix(filepath.Base(report.Root), RootPrefix) {
-		t.Fatalf("child root = %q, want a fresh %s* directory", report.Root, RootPrefix)
+	if filepath.Dir(report.Root) != parent || !strings.HasPrefix(filepath.Base(report.Root), RootPrefix) {
+		t.Fatalf("child root = %q, want a fresh %s* directory under %q", report.Root, RootPrefix, parent)
 	}
 	if _, err := os.Stat(report.Root); !os.IsNotExist(err) {
 		t.Fatalf("child root %s still exists after the child exited: %v", report.Root, err)
@@ -231,6 +247,7 @@ func TestMainKeepsTestChosenTSLinkEnvInAChildOfAnIsolatedBinary(t *testing.T) {
 		writeIsolationReport(t)
 		return
 	}
+	parent := privateRootParent(t)
 	parentRoot := Root()
 	if parentRoot == "" {
 		t.Fatal("this test binary is not running under Main")
@@ -249,8 +266,8 @@ func TestMainKeepsTestChosenTSLinkEnvInAChildOfAnIsolatedBinary(t *testing.T) {
 	if got := report.Env["TSLINK_TEST_HELPER_CANARY"]; got != "kept" {
 		t.Fatalf("test-chosen TSLINK_TEST_HELPER_CANARY in the child = %q, want kept", got)
 	}
-	if report.Root == "" || report.Root == parentRoot {
-		t.Fatalf("child root = %q, want a fresh root distinct from the parent's %q", report.Root, parentRoot)
+	if filepath.Dir(report.Root) != parent || report.Root == parentRoot {
+		t.Fatalf("child root = %q, want a fresh root under %q distinct from the parent's %q", report.Root, parent, parentRoot)
 	}
 	if _, err := os.Stat(report.Root); !os.IsNotExist(err) {
 		t.Fatalf("child root %s still exists after the child exited: %v", report.Root, err)

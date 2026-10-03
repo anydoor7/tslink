@@ -133,6 +133,8 @@ Wkrótce: linki gościnne do przeglądarki, elastyczne okresy, dziennik dostępu
 
 ## Dokumentacja i licencja
 
+[llms.txt](../llms.txt) · [Szybki start dla agentów](agent-quickstart.md) · [Wybór narzędzia do udostępniania](comparison.md)
+
 [Pierwsze kroki](getting-started.md) · [Opis CLI](cli-reference.md) · [Platformy](platforms.md) · [Modele lokalne](local-ai.md) · [Współtworzenie](../CONTRIBUTING.md) · [Bezpieczeństwo](../SECURITY.md)
 
 Apache License 2.0 obejmuje także użytek komercyjny. Przy redystrybucji zachowaj [NOTICE](../NOTICE) i [informacje o podmiotach trzecich](../THIRD_PARTY_NOTICES.md). Warunki i plany Tailscale obowiązują osobno.

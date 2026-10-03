@@ -133,6 +133,8 @@ På vei: gjestelenker i nettleseren, fleksible varigheter, tilgangslogg, en star
 
 ## Dokumentasjon og lisens
 
+[llms.txt](../llms.txt) · [Hurtigstart for agenter](agent-quickstart.md) · [Velg et verktøy for deling](comparison.md)
+
 [Komme i gang](getting-started.md) · [CLI-referanse](cli-reference.md) · [Plattformer](platforms.md) · [Lokale modeller](local-ai.md) · [Bidra](../CONTRIBUTING.md) · [Sikkerhet](../SECURITY.md)
 
 Apache License 2.0, også for kommersiell bruk. Behold [NOTICE](../NOTICE) og [tredjepartsmerknader](../THIRD_PARTY_NOTICES.md) ved videredistribusjon. Vilkårene for Tailscale og abonnementer gjelder separat.

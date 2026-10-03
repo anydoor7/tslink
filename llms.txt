@@ -1,0 +1,21 @@
+# TSLink
+
+> TSLink lets an app owner share existing local web apps, files, and TCP services through separate private Tailscale addresses, inspect shares, and remove them through a CLI or MCP. Private HTTP and file access can be granted to named people with deadlines; public Funnel exposure has its own expiry. TSLink works with Tailscale, independent project.
+
+TSLink does not install or supervise backend apps, isolate workloads on the publishing computer, or replace application login and permissions. It does not enforce per-person access on raw TCP, recall downloaded data, or close already accepted streams when a people grant expires. It does not authorize tools belonging to other MCP servers. Browser guest links, scoped agent roles, and a combined multi-computer inventory are not shipped in this version. Source installation requires Go and Git; fresh nodes need human enrollment and may need device approval.
+
+## Guides
+
+- [Quickstart](https://github.com/anydoor7/tslink/blob/main/docs/getting-started.md): Install from source and complete enrollment.
+- [Sharing and audiences](https://github.com/anydoor7/tslink/blob/main/docs/sharing.md): Private, public, HTTP, files, and TCP boundaries.
+- [People](https://github.com/anydoor7/tslink/blob/main/docs/people.md): Named grants, deadlines, invitations, and revocation.
+- [Health and alerts](https://github.com/anydoor7/tslink/blob/main/docs/health-and-alerts.md): Backend checks and best-effort alerts.
+- [App recipes](https://github.com/anydoor7/tslink/blob/main/docs/apps.md): Detect and share apps already running.
+- [Agent quickstart](https://github.com/anydoor7/tslink/blob/main/docs/agent-quickstart.md): Configure, share, hand off enrollment, verify, and undo.
+- [Agents and MCP](https://github.com/anydoor7/tslink/blob/main/docs/agents.md): Local tools and result contracts.
+- [Remote MCP](https://github.com/anydoor7/tslink/blob/main/docs/remote-mcp.md): Opt-in tailnet control and its authority.
+- [JSON automation](https://github.com/anydoor7/tslink/blob/main/docs/json-automation.md): Versioned results and stable errors.
+- [CLI reference](https://github.com/anydoor7/tslink/blob/main/docs/cli-reference.md): Commands and flags; check the installed binary's manifest.
+- [Platforms](https://github.com/anydoor7/tslink/blob/main/docs/platforms.md): OS requirements and background service behavior.
+- [Security](https://github.com/anydoor7/tslink/blob/main/SECURITY.md): Trust boundaries and reporting.
+- [Choose a sharing tool](https://github.com/anydoor7/tslink/blob/main/docs/comparison.md): Dated, primary-source alternatives and trade-offs.

@@ -133,6 +133,8 @@ Als Nächstes: Browser-Gastlinks, flexible Laufzeiten, ein Zugriffsprotokoll, ei
 
 ## Dokumentation und Lizenz
 
+[llms.txt](../llms.txt) · [Schnellstart für Agenten](agent-quickstart.md) · [Das passende Freigabetool wählen](comparison.md)
+
 [Einstieg](getting-started.md) · [CLI-Referenz](cli-reference.md) · [Plattformen](platforms.md) · [Lokale Modelle](local-ai.md) · [Mitwirken](../CONTRIBUTING.md) · [Sicherheit](../SECURITY.md)
 
 Apache License 2.0, einschließlich kommerzieller Nutzung. Bewahre bei Weitergabe [NOTICE](../NOTICE) und die [Drittherstellerhinweise](../THIRD_PARTY_NOTICES.md) auf. Die Bedingungen und Tarife von Tailscale gelten separat.
