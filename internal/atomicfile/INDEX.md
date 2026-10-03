@@ -10,3 +10,5 @@
 - `testmain_test.go`: isolated test process setup.
 - `rename_unix.go`, `rename_windows.go`: bounded Windows retries for transient replacement sharing failures.
 - `rename_windows_test.go`: real held-reader replacement, persistent failure preservation and exact retry bounds.
+- `read_unix.go`, `read_windows.go`: snapshot reads with bounded Windows sharing retries.
+- `read_windows_test.go`: real exclusive-handle read failure and recovery, permanent errors and retry bounds.

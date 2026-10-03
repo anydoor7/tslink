@@ -19,8 +19,12 @@ func renameFile(oldpath, newpath string) error {
 }
 
 func retryRename(oldpath, newpath string, rename func(string, string) error, wait func(time.Duration)) error {
+	return retryWindows(func() error { return rename(oldpath, newpath) }, wait)
+}
+
+func retryWindows(operation func() error, wait func(time.Duration)) error {
 	for attempt := 0; ; attempt++ {
-		err := rename(oldpath, newpath)
+		err := operation()
 		if err == nil || attempt == 24 || !(errors.Is(err, windows.ERROR_ACCESS_DENIED) ||
 			errors.Is(err, windows.ERROR_SHARING_VIOLATION) || errors.Is(err, windows.ERROR_LOCK_VIOLATION)) {
 			return err

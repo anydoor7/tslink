@@ -1100,7 +1100,7 @@ func ValidateTCPTarget(target string) error {
 // every configured service would be torn down". A test has to be able to
 // produce a non-ENOENT read error to hold that line, and on Unix a regular
 // file the caller owns cannot be made unreadable to that caller.
-var readRegistryFile = os.ReadFile
+var readRegistryFile = atomicfile.ReadFile
 
 // LoadForRuntime strictly decodes registry.json while isolating errors whose
 // service name remains trustworthy. A malformed top-level document or a
@@ -1127,7 +1127,7 @@ func LoadForRuntime(path string) (*Registry, []ServiceIssue, error) {
 // Preflight reads and strictly validates a registry copy without changing its
 // mode or contents. It is suitable for compatibility checks before upgrading.
 func Preflight(path string) (*Registry, []ServiceIssue, error) {
-	data, err := os.ReadFile(path)
+	data, err := atomicfile.ReadFile(path)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1351,7 +1351,7 @@ func loadForMutation(path string) (*Registry, error) {
 	if err := atomicfile.ConvergePrivateFile(path); err != nil {
 		return nil, err
 	}
-	data, err := os.ReadFile(path)
+	data, err := atomicfile.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return emptyRegistry(), nil
