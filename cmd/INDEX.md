@@ -39,8 +39,8 @@ This index records the app recipe additions; the CLI manifest describes the comp
 
 # Windows supervision additions
 
-- [builtin_supervisor_windows.go](builtin_supervisor_windows.go)
-- [builtin_supervisor_windows_test.go](builtin_supervisor_windows_test.go)
+- [builtin_supervisor_windows.go](builtin_supervisor_windows.go): supervisor state reads via `atomicfile.OpenSharedRead`; writes replace one prepared temp via `atomicfile.ReplaceFile` (POSIX semantics) with a one-second sharing-error retry.
+- [builtin_supervisor_windows_test.go](builtin_supervisor_windows_test.go): fail-closed records, concurrent readers, held-snapshot replacement without retry, bounded stall and real process lifecycle.
 - [serve_shutdown_other.go](serve_shutdown_other.go)
 - [serve_shutdown_windows.go](serve_shutdown_windows.go)
 - [service_manager_guard_windows_test.go](service_manager_guard_windows_test.go)

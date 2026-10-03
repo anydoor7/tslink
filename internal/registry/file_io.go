@@ -3,6 +3,7 @@ package registry
 import (
 	"errors"
 	"io"
+	"os"
 	"runtime"
 	"syscall"
 	"time"
@@ -38,6 +39,17 @@ func retryRegistrySharingViolation(operation func() error, sleep func(time.Durat
 	}
 }
 
+// Registry readers allow delete sharing and replacements use POSIX semantics
+// on Windows, so a reader holding the old snapshot cannot block the daemon's
+// writer. atomicfile owns both primitives; other platforms use os.Open/Rename.
+func openRegistryFile(path string) (*os.File, error) {
+	return atomicfile.OpenSharedRead(path)
+}
+
+func replaceRegistryFile(source, target string) error {
+	return atomicfile.ReplaceFile(source, target)
+}
+
 func readRegistryFileOnce(path string) ([]byte, error) {
 	f, err := openRegistryFile(path)
 	if err != nil {
@@ -47,14 +59,27 @@ func readRegistryFileOnce(path string) ([]byte, error) {
 	return io.ReadAll(f)
 }
 
+// readRegistryBytes retries Windows sharing errors (32/5) and, through
+// atomicfile.ReadSettled, rereads a not-exist result while a replacement of
+// path is in progress, so loaders that map "missing" to an empty registry do
+// not report a configured registry as absent mid-replace.
 func readRegistryBytes(path string) ([]byte, error) {
 	var data []byte
-	err := retryRegistryFileOperation(func() error {
-		var err error
-		data, err = readRegistryFile(path)
-		return err
+	err := atomicfile.ReadSettled(path, func() error {
+		return retryRegistryFileOperation(func() error {
+			var err error
+			data, err = readRegistryFile(path)
+			return err
+		})
 	})
 	return data, err
+}
+
+// ReadFile reads a registry file (registry.json or a tentative mark) with the
+// same sharing, retry and replacement-settle behavior as the loaders. Callers
+// outside this package use it instead of os.ReadFile.
+func ReadFile(path string) ([]byte, error) {
+	return readRegistryBytes(path)
 }
 
 func convergeRegistryFile(path string) error {

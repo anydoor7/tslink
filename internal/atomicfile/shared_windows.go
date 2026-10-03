@@ -1,4 +1,6 @@
-package registry
+//go:build windows
+
+package atomicfile
 
 import (
 	"encoding/binary"
@@ -11,11 +13,11 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-var setRegistryFileInformation = windows.SetFileInformationByHandle
+var setFileInformationFn = windows.SetFileInformationByHandle
 
-// registryWindowsPath preserves long-path support without changing Windows
+// windowsExtendedPath preserves long-path support without changing Windows
 // settings. The extended prefix requires an absolute, normalized path.
-func registryWindowsPath(path string) (string, error) {
+func windowsExtendedPath(path string) (string, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return "", err
@@ -29,8 +31,11 @@ func registryWindowsPath(path string) (string, error) {
 	return `\\?\` + abs, nil
 }
 
-func openRegistryFile(path string) (*os.File, error) {
-	abs, err := registryWindowsPath(path)
+// OpenSharedRead opens path for reading with read, write and delete sharing.
+// Unlike os.Open on Go 1.26 and 1.27, the handle lets ReplaceFile swap the
+// directory entry while this reader continues reading the old snapshot.
+func OpenSharedRead(path string) (*os.File, error) {
+	abs, err := windowsExtendedPath(path)
 	if err != nil {
 		return nil, &os.PathError{Op: "open", Path: path, Err: err}
 	}
@@ -38,8 +43,6 @@ func openRegistryFile(path string) (*os.File, error) {
 	if err != nil {
 		return nil, &os.PathError{Op: "open", Path: path, Err: err}
 	}
-	// Unlike os.Open on Go 1.26 and 1.27, allow a writer to replace the
-	// directory entry while this handle continues reading the old snapshot.
 	h, err := windows.CreateFile(wide, windows.GENERIC_READ,
 		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
 		nil, windows.OPEN_EXISTING, windows.FILE_ATTRIBUTE_NORMAL, 0)
@@ -49,16 +52,19 @@ func openRegistryFile(path string) (*os.File, error) {
 	return os.NewFile(uintptr(h), path), nil
 }
 
-func replaceRegistryFile(source, target string) error {
-	err := replaceRegistryFileWindows(source, target)
-	if err != nil {
+// ReplaceFile atomically replaces target with source. It uses
+// SetFileInformationByHandle(FileRenameInfoEx) with POSIX semantics, which
+// succeeds while OpenSharedRead handles hold target; os.Rename (MoveFileEx)
+// returns ERROR_ACCESS_DENIED in that case. Callers own any retry policy.
+func ReplaceFile(source, target string) error {
+	if err := replaceFileWindows(source, target); err != nil {
 		return &os.LinkError{Op: "rename", Old: source, New: target, Err: err}
 	}
 	return nil
 }
 
-func replaceRegistryFileWindows(source, target string) error {
-	abs, err := registryWindowsPath(target)
+func replaceFileWindows(source, target string) error {
+	abs, err := windowsExtendedPath(target)
 	if err != nil {
 		return err
 	}
@@ -66,7 +72,7 @@ func replaceRegistryFileWindows(source, target string) error {
 	if err != nil {
 		return err
 	}
-	src, err := registryWindowsPath(source)
+	src, err := windowsExtendedPath(source)
 	if err != nil {
 		return err
 	}
@@ -97,10 +103,10 @@ func replaceRegistryFileWindows(source, target string) error {
 	for i, ch := range name {
 		binary.LittleEndian.PutUint16(buf[nameOffset+2*i:], ch)
 	}
-	err = setRegistryFileInformation(h, windows.FileRenameInfoEx, &buf[0], uint32(len(buf)))
+	err = setFileInformationFn(h, windows.FileRenameInfoEx, &buf[0], uint32(len(buf)))
 	_ = windows.CloseHandle(h)
 	// Older Windows/filesystems can reject the extended rename class. Keep
-	// their existing rename semantics, still under the same bounded retry.
+	// their existing rename semantics; the caller's retry policy still applies.
 	if errors.Is(err, windows.ERROR_INVALID_PARAMETER) || errors.Is(err, windows.ERROR_INVALID_FUNCTION) || errors.Is(err, windows.ERROR_NOT_SUPPORTED) {
 		return os.Rename(source, target)
 	}

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 )
@@ -80,6 +81,12 @@ func ConvergePrivateFile(path string) error {
 	}
 	if info.Mode().Perm() != PrivateFileMode {
 		if err := chmodFn(path, PrivateFileMode); err != nil {
+			// The name vanished after Lstat: on Windows a concurrent replacement
+			// briefly hides it. Treat it like a missing file and leave the
+			// caller's read to decide whether it is genuinely absent.
+			if errors.Is(err, fs.ErrNotExist) {
+				return nil
+			}
 			return err
 		}
 	}
@@ -122,6 +129,16 @@ func WriteFileInExistingDir(path string, data []byte, mode os.FileMode) error {
 		return err
 	}
 	return writeFile(path, data, mode.Perm())
+}
+
+// WriteFileInExistingDirWithReplace combines WriteFileInExistingDir's parent
+// validation with WriteFileWithReplace's caller-owned replacement step: replace
+// may retry the same fully written, synced and closed temporary file.
+func WriteFileInExistingDirWithReplace(path string, data []byte, mode os.FileMode, replace func(string, string) error) error {
+	if err := validateExistingParent(path); err != nil {
+		return err
+	}
+	return writeFileWithReplace(path, data, mode.Perm(), replace)
 }
 
 func validateExistingParent(path string) error {

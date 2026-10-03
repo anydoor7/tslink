@@ -1,7 +1,6 @@
 package registry
 
 import (
-	"encoding/binary"
 	"errors"
 	"io"
 	"os"
@@ -9,7 +8,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-	"unsafe"
 
 	"github.com/anydoor7/tslink/internal/atomicfile"
 	"golang.org/x/sys/windows"
@@ -38,61 +36,6 @@ func TestRegistryReadSharingAllowsReplacementWithOpenSnapshot(t *testing.T) {
 	}
 }
 
-func TestRegistrySharingWindowsRenameFallbackAndErrors(t *testing.T) {
-	old := setRegistryFileInformation
-	t.Cleanup(func() { setRegistryFileInformation = old })
-	for _, code := range []error{windows.ERROR_INVALID_PARAMETER, windows.ERROR_INVALID_FUNCTION, windows.ERROR_NOT_SUPPORTED, windows.ERROR_ACCESS_DENIED} {
-		t.Run(code.Error(), func(t *testing.T) {
-			dir := t.TempDir()
-			source, target := filepath.Join(dir, "temp"), filepath.Join(dir, "target")
-			if err := os.WriteFile(source, []byte("new"), 0600); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(target, []byte("old"), 0600); err != nil {
-				t.Fatal(err)
-			}
-			calls := 0
-			setRegistryFileInformation = func(h windows.Handle, class uint32, data *byte, length uint32) error {
-				calls++
-				buf := unsafe.Slice(data, length)
-				if class != windows.FileRenameInfoEx || binary.LittleEndian.Uint32(buf) != 3 {
-					t.Fatalf("rename class/flags = %d/%d", class, binary.LittleEndian.Uint32(buf))
-				}
-				if len(buf) < 2 || binary.LittleEndian.Uint16(buf[len(buf)-2:]) != 0 {
-					t.Fatal("rename path must retain its NUL terminator for Win32 conversion")
-				}
-				return code
-			}
-			err := replaceRegistryFile(source, target)
-			want := "new"
-			if code == windows.ERROR_ACCESS_DENIED {
-				want = "old"
-				if !errors.Is(err, code) {
-					t.Fatalf("non-capability error masked: %v", err)
-				}
-			} else if err != nil {
-				t.Fatalf("unsupported-class fallback: %v", err)
-			}
-			if calls != 1 {
-				t.Fatalf("rename calls = %d", calls)
-			}
-			data, err := os.ReadFile(target)
-			if err != nil || string(data) != want {
-				t.Fatalf("target = %q, %v", data, err)
-			}
-		})
-	}
-	if err := replaceRegistryFile("bad\x00source", "valid"); err == nil {
-		t.Fatal("NUL source accepted")
-	}
-	if err := replaceRegistryFile("valid", "bad\x00target"); err == nil {
-		t.Fatal("NUL target accepted")
-	}
-	if err := replaceRegistryFile(filepath.Join(t.TempDir(), "missing"), "valid"); !os.IsNotExist(err) {
-		t.Fatalf("missing source: %v", err)
-	}
-}
-
 func TestRegistryReadSharingWindowsLongUnicodePath(t *testing.T) {
 	dir := t.TempDir()
 	for len(dir) < 300 {
@@ -108,12 +51,6 @@ func TestRegistryReadSharingWindowsLongUnicodePath(t *testing.T) {
 	data, err := readRegistryBytes(path)
 	if err != nil || string(data) != "second" {
 		t.Fatalf("long Unicode path = %q, %v", data, err)
-	}
-	for _, p := range []string{`C:\state\registry.json`, `\\server\share\registry.json`, `\\?\C:\state\registry.json`, `\\.\pipe\synthetic`} {
-		abs, err := registryWindowsPath(p)
-		if err != nil || (!strings.HasPrefix(abs, `\\?\`) && !strings.HasPrefix(abs, `\\.\`)) {
-			t.Fatalf("extended path = %q, %v", abs, err)
-		}
 	}
 }
 

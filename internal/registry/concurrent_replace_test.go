@@ -17,16 +17,35 @@ func TestRegistryConcurrentReplacementReaders(t *testing.T) {
 	if err := save(path, reg); err != nil {
 		t.Fatal(err)
 	}
+	// A successful load must still contain the one saved service: a nil error
+	// with an empty or "missing" registry is the silent failure mode of a
+	// reader that briefly cannot see the file mid-replace.
+	errFalseEmpty := errors.New("successful load without the saved service")
+	check := func(got *Registry, err error) error {
+		if err != nil {
+			return err
+		}
+		if got == nil || len(got.Services) != 1 || got.Services[0].Name != "photos" {
+			return errFalseEmpty
+		}
+		return nil
+	}
 	readers := []struct {
 		name string
 		read func() error
 	}{
-		{"Load", func() error { _, err := Load(path); return err }},
-		{"LoadForRuntime", func() error { _, _, err := LoadForRuntime(path); return err }},
-		{"LoadWithFileState", func() error { _, _, err := LoadWithFileState(path); return err }},
-		{"LoadForDiagnostics", func() error { _, _, err := LoadForDiagnostics(path); return err }},
-		{"Preflight", func() error { _, _, err := Preflight(path); return err }},
-		{"loadForMutation", func() error { _, err := loadForMutation(path); return err }},
+		{"Load", func() error { return check(Load(path)) }},
+		{"LoadForRuntime", func() error { got, _, err := LoadForRuntime(path); return check(got, err) }},
+		{"LoadWithFileState", func() error {
+			got, state, err := LoadWithFileState(path)
+			if err == nil && state != RegistryFileValid {
+				return errFalseEmpty
+			}
+			return check(got, err)
+		}},
+		{"LoadForDiagnostics", func() error { got, _, err := LoadForDiagnostics(path); return check(got, err) }},
+		{"Preflight", func() error { got, _, err := Preflight(path); return check(got, err) }},
+		{"loadForMutation", func() error { return check(loadForMutation(path)) }},
 	}
 	type result struct {
 		name            string
@@ -54,7 +73,9 @@ func TestRegistryConcurrentReplacementReaders(t *testing.T) {
 					r.failures++
 					var errno syscall.Errno
 					code := "non-errno"
-					if errors.As(err, &errno) {
+					if errors.Is(err, errFalseEmpty) {
+						code = "false-empty"
+					} else if errors.As(err, &errno) {
 						code = fmt.Sprint(uintptr(errno))
 					}
 					r.codes[code]++
