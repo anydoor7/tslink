@@ -73,7 +73,7 @@ tslink remove demo
 | **你自己的裝置** | 已登入你的 tailnet | 經驗證的 Tailscale 登入身分 | 移除應用程式時 |
 | **指定的人**（私人 HTTP/檔案） | Tailscale 登入帳戶；網路外的人須逐一接受應用程式邀請 | 經驗證的 Tailscale 登入身分 | 你設定的期限到達時（`--for 7d`），或執行 `tslink people remove` |
 | **任何持有 URL 的人**（Funnel） | 瀏覽器 | 任何人；仍需遵守應用程式本身的登入要求 | 預設 24 小時後（`--funnel-ttl`） |
-| **瀏覽器訪客連結** *（即將推出）* | 瀏覽器，以及選用的 PIN | 連結持有者 | 連結到期或被撤銷時 |
+| **瀏覽器訪客連結** | 瀏覽器，以及選用的 PIN | 連結持有者 | 連結到期或被撤銷時 |
 
 ```bash
 tslink people add alice@example.com --apps photos --for 7d
@@ -99,7 +99,7 @@ TSLink 內建 MCP 伺服器，代理能像你一樣分享、列出、解釋和�
 
 - **準確的結果。** CLI 自動化支援 `--json`，使用 `schema_version: 1` 和穩定的錯誤碼；`tslink mcp` 則使用 JSON-RPC。`tslink manifest` 描述每個指令和參數。代理應透過 `tslink url <name> --wait` 取得真正的 URL，而不要自行組合。
 - **如實回報等待狀態。** 新節點若還需要人完成登入，就會回報 `needs_login`，不會假裝已經就緒。
-- **操作權限。** 本機 MCP 以你的使用者權限執行。遠端 MCP 須主動啟用，只能在 tailnet 內存取，且僅允許你列出的登入身分或標籤。個別代理的角色、應用程式範圍和操作收據*即將推出*。
+- **操作權限。** 本機 MCP 以你的使用者權限執行。遠端 MCP 須主動啟用，只能在 tailnet 內存取，且僅允許你列出的登入身分或標籤。個別代理的角色、應用程式範圍和操作收據均已可用。
 
 TSLink 的 MCP 用來操作 TSLink 本身。如果你透過 TSLink 發布其他 MCP 伺服器，該伺服器仍需要自己的工具權限控制。
 [代理指南 →](agents.md) · [MCP 用戶端 →](mcp-clients.md) · [遠端 MCP →](remote-mcp.md) · [JSON 自動化 →](json-automation.md)

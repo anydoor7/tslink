@@ -93,6 +93,9 @@ func TestWave2ApprovalScopeOwnerAndLifetime(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			paths, request := commandRequest(t)
+			if _, err := registry.ChangePerson(paths.Registry, "alice", []string{"finance"}, nil, false, false); err != nil {
+				t.Fatal(err)
+			}
 			a := wave2Actions(t, paths, "people-manager", tc.app)
 			if tc.expiry > 0 {
 				at := peopleNowFn().Add(tc.expiry)
@@ -247,6 +250,9 @@ func TestWave2SharedLifetimePolicy(t *testing.T) {
 // cannot authorize a now-out-of-scope request.
 func TestWave2LockedApprovalCallback(t *testing.T) {
 	paths, request := commandRequest(t)
+	if _, err := registry.ChangePerson(paths.Registry, "alice", []string{"finance"}, nil, false, false); err != nil {
+		t.Fatal(err)
+	}
 	now := peopleNowFn()
 	s := mcpscope.Session{Who: "owner", Scope: mcpscope.Scope{Role: "people-manager", Apps: []string{"finance"}, MaxDuration: "2h"}}
 	ctx := mcpscope.WithClock(mcpscope.WithSession(context.Background(), s), func() time.Time { return now })

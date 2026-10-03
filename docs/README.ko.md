@@ -73,7 +73,7 @@ tslink remove demo
 | **내 기기** | 내 tailnet에 로그인 | 검증된 Tailscale 로그인 신원 | 앱을 제거할 때 |
 | **지정한 사람**(비공개 HTTP/파일) | Tailscale 계정, 외부인은 앱마다 초대 수락 | 검증된 Tailscale 로그인 신원 | 설정한 기한(`--for 7d`) 또는 `tslink people remove` 실행 시 |
 | **URL을 가진 누구나**(Funnel) | 브라우저 | 누구나, 앱 자체의 로그인은 그대로 적용 | 기본 24시간 후(`--funnel-ttl`) |
-| **브라우저 게스트 링크** *(예정)* | 브라우저와 선택적 PIN | 링크를 가진 사람 | 링크 만료 또는 취소 시 |
+| **브라우저 게스트 링크** | 브라우저와 선택적 PIN | 링크를 가진 사람 | 링크 만료 또는 취소 시 |
 
 ```bash
 tslink people add alice@example.com --apps photos --for 7d
@@ -99,7 +99,7 @@ TSLink에는 MCP 서버가 포함되어 있어 에이전트도 사용자처럼 �
 
 - **정확한 결과.** CLI 자동화는 `--json`, `schema_version: 1`, 안정적인 오류 코드를 지원하며, `tslink mcp`는 JSON-RPC를 사용합니다. `tslink manifest`는 모든 명령과 플래그를 설명합니다. 에이전트는 URL을 조합하지 말고 `tslink url <name> --wait`로 실제 URL을 가져와야 합니다.
 - **대기 상태를 명확하게.** 새 노드에 사람의 로그인이 필요하면 준비된 것처럼 표시하지 않고 `needs_login`을 보고합니다.
-- **권한.** 로컬 MCP는 사용자의 권한으로 실행됩니다. 원격 MCP는 명시적으로 켜야 하는 tailnet 전용 엔드포인트이며, 지정한 로그인 신원이나 태그만 허용합니다. 에이전트별 역할, 앱 범위 및 작업 영수증은 *예정*입니다.
+- **권한.** 로컬 MCP는 사용자의 권한으로 실행됩니다. 원격 MCP는 명시적으로 켜야 하는 tailnet 전용 엔드포인트이며, 지정한 로그인 신원이나 태그만 허용합니다. 에이전트별 역할, 앱 범위 및 작업 영수증을 사용할 수 있습니다.
 
 TSLink의 MCP는 TSLink 자체를 조작합니다. TSLink를 통해 다른 MCP 서버를 공개하더라도 해당 서버에는 별도의 도구 권한 관리가 필요합니다.
 [에이전트 안내 →](agents.md) · [MCP 클라이언트 →](mcp-clients.md) · [원격 MCP →](remote-mcp.md) · [JSON 자동화 →](json-automation.md)

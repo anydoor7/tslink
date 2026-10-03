@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/anydoor7/tslink/internal/duration"
+	"github.com/anydoor7/tslink/internal/mcpscope"
 )
 
 // Request eligibility is narrower than people enforcement: a gated public
@@ -342,7 +343,21 @@ func DecideAccessRequestAuthorized(path, id, status, value, reason string, ackNe
 				if !eligible {
 					return requestError("access_request_unavailable", "app is no longer requestable")
 				}
-				change, err := grantPersonApp(reg, r.Who, r.App, PersonLifetimeOptions{Value: &value, Policy: policy, Now: now, AckNever: ackNever})
+				options := PersonLifetimeOptions{Value: &value, Policy: policy, Now: now, AckNever: ackNever}
+				if session, scoped := mcpscope.FromContext(optionalMutationContext(contexts)); scoped && session.Scope.Role != "owner" {
+					// A new person's grants replace legacy ACL authority across all
+					// apps, including apps outside this session's scope. Resolve and
+					// check the person inside this same locked grant transaction.
+					options.Authorize = func(reg *Registry, login string) error {
+						for _, person := range reg.People {
+							if person.Login == login {
+								return nil
+							}
+						}
+						return CodedError{Code: "mcp_person_owner_required", Message: "The owner must add the person first"}
+					}
+				}
+				change, err := grantPersonApp(reg, r.Who, r.App, options)
 				if err != nil {
 					return err
 				}

@@ -73,7 +73,7 @@ También puedes compartir lo siguiente cuando su backend esté en marcha:
 | **Tus propios dispositivos** | Sesión iniciada en tu tailnet | Identidad Tailscale verificada | Cuando eliminas la aplicación |
 | **Personas concretas** (HTTP/archivos privados) | Una cuenta Tailscale; quienes estén fuera aceptan una invitación por aplicación | Identidad Tailscale verificada | Al cumplirse el plazo indicado (`--for 7d`) o con `tslink people remove` |
 | **Cualquiera con la URL** (Funnel) | Un navegador | Cualquier persona; se mantiene el inicio de sesión de la aplicación | A las 24 horas por defecto (`--funnel-ttl`) |
-| **Enlace de invitado para navegador** *(próximamente)* | Un navegador y, opcionalmente, un PIN | Quien tenga el enlace | Al caducar o revocarse |
+| **Enlace de invitado para navegador** | Un navegador y, opcionalmente, un PIN | Quien tenga el enlace | Al caducar o revocarse |
 
 ```bash
 tslink people add alice@example.com --apps photos --for 7d
@@ -99,7 +99,7 @@ TSLink incluye un servidor MCP para que un agente pueda compartir, listar, expli
 
 - **Resultados exactos.** La automatización por CLI admite `--json` con `schema_version: 1` y códigos de error estables; `tslink mcp` utiliza JSON-RPC. `tslink manifest` describe todos los comandos y opciones. Los agentes deben obtener las URL reales mediante `tslink url <name> --wait` en lugar de construirlas.
 - **Estados de espera claros.** Un nodo nuevo que todavía requiere que una persona inicie sesión informa `needs_login`, sin fingir que está listo.
-- **Permisos.** MCP local se ejecuta con los permisos de tu usuario. MCP remoto se activa expresamente, solo es accesible dentro de la tailnet y se limita a las identidades o etiquetas indicadas. Los roles por agente, ámbitos de aplicaciones y comprobantes de acciones llegarán *próximamente*.
+- **Permisos.** MCP local se ejecuta con los permisos de tu usuario. MCP remoto se activa expresamente, solo es accesible dentro de la tailnet y se limita a las identidades o etiquetas indicadas. Los roles por agente, ámbitos de aplicaciones y comprobantes de acciones están disponibles.
 
 El MCP de TSLink opera sobre TSLink. Si publicas otro servidor MCP a través de TSLink, ese servidor sigue necesitando sus propios permisos de herramientas.
 [Guía para agentes →](agents.md) · [Clientes MCP →](mcp-clients.md) · [MCP remoto →](remote-mcp.md) · [Automatización JSON →](json-automation.md)

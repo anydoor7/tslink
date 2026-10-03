@@ -73,7 +73,7 @@ tslink remove demo
 | **你自己的设备** | 已登录你的 tailnet | 经验证的 Tailscale 登录身份 | 移除应用时 |
 | **指定的人**（私有 HTTP/文件） | Tailscale 登录账户；网络外的人需要逐个接受应用邀请 | 经验证的 Tailscale 登录身份 | 你设定的期限到达时（`--for 7d`），或执行 `tslink people remove` |
 | **任何持有 URL 的人**（Funnel） | 浏览器 | 任何人；仍需遵守应用自身的登录要求 | 默认 24 小时后（`--funnel-ttl`） |
-| **浏览器访客链接** *（即将推出）* | 浏览器，以及可选的 PIN | 链接持有者 | 链接到期或被撤销时 |
+| **浏览器访客链接** | 浏览器，以及可选的 PIN | 链接持有者 | 链接到期或被撤销时 |
 
 ```bash
 tslink people add alice@example.com --apps photos --for 7d
@@ -99,7 +99,7 @@ TSLink 内置 MCP 服务器，智能体可以像你一样分享、列出、解�
 
 - **准确的结果。** CLI 自动化支持 `--json`，使用 `schema_version: 1` 和稳定的错误码；`tslink mcp` 则使用 JSON-RPC。`tslink manifest` 描述每个命令和参数。智能体应通过 `tslink url <name> --wait` 获取真实 URL，而不要自行拼接。
 - **如实报告等待状态。** 新节点如果还需要人完成登录，就会报告 `needs_login`，不会假装已经就绪。
-- **操作权限。** 本地 MCP 以你的用户权限运行。远程 MCP 需要主动启用，只能在 tailnet 内访问，且仅允许你列出的登录身份或标签。每个智能体的角色、应用范围和操作回执*即将推出*。
+- **操作权限。** 本地 MCP 以你的用户权限运行。远程 MCP 需要主动启用，只能在 tailnet 内访问，且仅允许你列出的登录身份或标签。每个智能体的角色、应用范围和操作回执均已可用。
 
 TSLink 的 MCP 用来操作 TSLink 本身。如果你通过 TSLink 发布其他 MCP 服务器，该服务器仍然需要自己的工具权限控制。
 [智能体指南 →](agents.md) · [MCP 客户端 →](mcp-clients.md) · [远程 MCP →](remote-mcp.md) · [JSON 自动化 →](json-automation.md)

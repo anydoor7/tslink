@@ -73,7 +73,7 @@ Andre ting du kan dele når bakenden kjører:
 | **Dine egne enheter** | Innlogging i ditt tailnet | Verifisert Tailscale-innlogging | Når du fjerner appen |
 | **Navngitte personer** (privat HTTP/filer) | En Tailscale-innlogging; utenforstående godtar én invitasjon per app | Verifisert Tailscale-innlogging | Ved fristen du setter (`--for 7d`), eller med `tslink people remove` |
 | **Alle med URL-en** (Funnel) | En nettleser | Hvem som helst; appens egen innlogging gjelder fortsatt | Etter 24 timer som standard (`--funnel-ttl`) |
-| **Gjestelenke i nettleseren** *(kommer)* | En nettleser og en valgfri PIN | Den som har lenken | Ved egen frist eller tilbakekalling |
+| **Gjestelenke i nettleseren** | En nettleser og en valgfri PIN | Den som har lenken | Ved egen frist eller tilbakekalling |
 
 ```bash
 tslink people add alice@example.com --apps photos --for 7d
@@ -99,7 +99,7 @@ TSLink har en MCP-server, slik at en agent kan dele, liste opp, forklare og fjer
 
 - **Nøyaktige resultater.** CLI-automatisering støtter `--json` med `schema_version: 1` og stabile feilkoder; `tslink mcp` bruker i stedet JSON-RPC. `tslink manifest` beskriver alle kommandoer og flagg. Agenter bør hente reelle URL-er med `tslink url <name> --wait` i stedet for å sette dem sammen.
 - **Ærlige ventetilstander.** En ny node som fortsatt trenger menneskelig innlogging, rapporterer `needs_login` i stedet for å late som den er klar.
-- **Rettigheter.** Lokal MCP kjører med brukerens rettigheter. Ekstern MCP må aktiveres uttrykkelig, er bare tilgjengelig i tailnet og begrenses til innloggingene eller taggene du oppgir. Roller per agent, appavgrensninger og kvitteringer for handlinger *kommer*.
+- **Rettigheter.** Lokal MCP kjører med brukerens rettigheter. Ekstern MCP må aktiveres uttrykkelig, er bare tilgjengelig i tailnet og begrenses til innloggingene eller taggene du oppgir. Roller per agent, appavgrensninger og kvitteringer for handlinger er tilgjengelige.
 
 MCP i TSLink styrer TSLink selv. Publiserer du en annen MCP-server gjennom TSLink, trenger den fortsatt egne verktøyrettigheter.
 [Agentveiledning →](agents.md) · [MCP-klienter →](mcp-clients.md) · [Ekstern MCP →](remote-mcp.md) · [JSON-automatisering →](json-automation.md)

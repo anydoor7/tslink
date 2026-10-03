@@ -73,7 +73,7 @@ Andre ting, du kan dele, når deres backend kører:
 | **Dine egne enheder** | Login på dit tailnet | Verificeret Tailscale-login | Når du fjerner appen |
 | **Navngivne personer** (privat HTTP/filer) | Et Tailscale-login; personer udenfor accepterer én invitation pr. app | Verificeret Tailscale-login | Ved den valgte frist (`--for 7d`) eller med `tslink people remove` |
 | **Alle med URL'en** (Funnel) | En browser | Alle; appens eget login gælder stadig | Efter 24 timer som standard (`--funnel-ttl`) |
-| **Gæstelink til browser** *(kommer snart)* | En browser og eventuelt en PIN | Den, der har linket | Ved egen udløbsfrist eller tilbagekaldelse |
+| **Gæstelink til browser** | En browser og eventuelt en PIN | Den, der har linket | Ved egen udløbsfrist eller tilbagekaldelse |
 
 ```bash
 tslink people add alice@example.com --apps photos --for 7d
@@ -99,7 +99,7 @@ TSLink indeholder en MCP-server, så en agent kan dele, liste, forklare og fjern
 
 - **Præcise resultater.** CLI-automatisering understøtter `--json` med `schema_version: 1` og stabile fejlkoder; `tslink mcp` bruger i stedet JSON-RPC. `tslink manifest` beskriver hver kommando og hvert flag. Agenter bør hente rigtige URL'er med `tslink url <name> --wait` i stedet for at konstruere dem.
 - **Tydelige ventetilstande.** En ny knude, der stadig kræver en persons login, rapporterer `needs_login` i stedet for at foregive at være klar.
-- **Rettigheder.** Lokal MCP kører med din brugers rettigheder. Fjern-MCP er et tilvalg, kun tilgængeligt i dit tailnet og begrænset til de angivne loginidentiteter eller tags. Roller pr. agent, appafgrænsninger og handlingskvitteringer *kommer snart*.
+- **Rettigheder.** Lokal MCP kører med din brugers rettigheder. Fjern-MCP er et tilvalg, kun tilgængeligt i dit tailnet og begrænset til de angivne loginidentiteter eller tags. Roller pr. agent, appafgrænsninger og handlingskvitteringer er tilgængelige.
 
 MCP i TSLink styrer TSLink selv. Udgiver du en anden MCP-server gennem TSLink, skal den stadig have sine egne værktøjsrettigheder.
 [Agentvejledning →](agents.md) · [MCP-klienter →](mcp-clients.md) · [Fjern-MCP →](remote-mcp.md) · [JSON-automatisering →](json-automation.md)

@@ -73,7 +73,7 @@ Možete podijeliti i sljedeće kada njihov pozadinski servis radi:
 | **Vaši uređaji** | Prijavu na vaš tailnet | Provjeren Tailscale identitet | Kada uklonite aplikaciju |
 | **Imenovane osobe** (privatni HTTP/datoteke) | Tailscale prijavu; vanjski korisnici prihvataju poziv za svaku aplikaciju | Provjeren Tailscale identitet | U zadanom roku (`--for 7d`) ili uz `tslink people remove` |
 | **Svako ko ima URL** (Funnel) | Preglednik | Bilo ko; prijava same aplikacije i dalje važi | Podrazumijevano nakon 24 sata (`--funnel-ttl`) |
-| **Gostujuća poveznica za preglednik** *(uskoro)* | Preglednik i opcionalni PIN | Vlasnik poveznice | Po isteku njenog roka ili opozivu |
+| **Gostujuća poveznica za preglednik** | Preglednik i opcionalni PIN | Vlasnik poveznice | Po isteku njenog roka ili opozivu |
 
 ```bash
 tslink people add alice@example.com --apps photos --for 7d
@@ -99,7 +99,7 @@ TSLink uključuje MCP server, pa agent može dijeliti, listati, objašnjavati i 
 
 - **Tačni rezultati.** CLI automatizacija podržava `--json` uz `schema_version: 1` i stabilne kodove grešaka; `tslink mcp` koristi JSON-RPC. `tslink manifest` opisuje svaku naredbu i opciju. Agenti trebaju preuzeti stvarne URL-ove uz `tslink url <name> --wait`, umjesto da ih sastavljaju.
 - **Jasno čekanje.** Novi čvor kojem još treba ljudska prijava prijavljuje `needs_login`, umjesto da se prikazuje spremnim.
-- **Ovlasti.** Lokalni MCP radi s ovlastima vašeg korisnika. Udaljeni MCP se izričito uključuje, dostupan je samo u tailnetu i ograničen na navedene prijave ili oznake. Uloge po agentu, opseg aplikacija i potvrde radnji stižu *uskoro*.
+- **Ovlasti.** Lokalni MCP radi s ovlastima vašeg korisnika. Udaljeni MCP se izričito uključuje, dostupan je samo u tailnetu i ograničen na navedene prijave ili oznake. Uloge po agentu, opseg aplikacija i potvrde radnji su dostupni.
 
 MCP koji pruža TSLink upravlja projektom TSLink. Ako preko TSLinka objavite drugi MCP server, njemu su i dalje potrebne vlastite dozvole za alate.
 [Vodič za agente →](agents.md) · [MCP klijenti →](mcp-clients.md) · [Udaljeni MCP →](remote-mcp.md) · [JSON automatizacija →](json-automation.md)

@@ -73,7 +73,7 @@ Voici d'autres éléments à partager une fois leur backend démarré :
 | **Vos propres appareils** | Connexion à votre tailnet | Identité Tailscale vérifiée | Lorsque vous supprimez l'application |
 | **Personnes nommées** (HTTP/fichiers privés) | Un compte Tailscale ; les personnes extérieures acceptent une invitation par application | Identité Tailscale vérifiée | À l'échéance fixée (`--for 7d`) ou avec `tslink people remove` |
 | **Toute personne disposant de l'URL** (Funnel) | Un navigateur | N'importe qui ; la connexion propre à l'application reste applicable | Après 24 heures par défaut (`--funnel-ttl`) |
-| **Lien invité pour navigateur** *(à venir)* | Un navigateur et éventuellement un PIN | La personne qui détient le lien | À son échéance ou lors de sa révocation |
+| **Lien invité pour navigateur** | Un navigateur et éventuellement un PIN | La personne qui détient le lien | À son échéance ou lors de sa révocation |
 
 ```bash
 tslink people add alice@example.com --apps photos --for 7d
@@ -99,7 +99,7 @@ TSLink inclut un serveur MCP : un agent peut partager, lister, expliquer et supp
 
 - **Résultats précis.** L'automatisation CLI prend en charge `--json` avec `schema_version: 1` et des codes d'erreur stables ; `tslink mcp` utilise plutôt JSON-RPC. `tslink manifest` décrit toutes les commandes et options. Les agents doivent récupérer les URL réelles avec `tslink url <name> --wait`, plutôt que les construire.
 - **Attente signalée honnêtement.** Un nouveau nœud nécessitant encore une connexion humaine indique `needs_login` au lieu de prétendre être prêt.
-- **Droits.** MCP local s'exécute avec les droits de votre utilisateur. MCP distant est un point d'accès à activer explicitement, limité au tailnet et aux identités ou tags que vous indiquez. Les rôles par agent, périmètres d'applications et reçus d'actions sont *à venir*.
+- **Droits.** MCP local s'exécute avec les droits de votre utilisateur. MCP distant est un point d'accès à activer explicitement, limité au tailnet et aux identités ou tags que vous indiquez. Les rôles par agent, périmètres d'applications et reçus d'actions sont disponibles.
 
 Le MCP de TSLink pilote TSLink lui-même. Si vous publiez un autre serveur MCP via TSLink, celui-ci a toujours besoin de ses propres autorisations d'outils.
 [Guide des agents →](agents.md) · [Clients MCP →](mcp-clients.md) · [MCP distant →](remote-mcp.md) · [Automatisation JSON →](json-automation.md)

@@ -73,7 +73,7 @@ Você também pode compartilhar estes itens quando o backend estiver rodando:
 | **Seus dispositivos** | Login na sua tailnet | Identidade Tailscale verificada | Quando você remove o app |
 | **Pessoas específicas** (HTTP/arquivos privados) | Login Tailscale; pessoas de fora aceitam um convite por app | Identidade Tailscale verificada | No prazo definido (`--for 7d`) ou com `tslink people remove` |
 | **Qualquer pessoa com a URL** (Funnel) | Um navegador | Qualquer pessoa; o login do próprio app continua valendo | Após 24 horas por padrão (`--funnel-ttl`) |
-| **Link de visitante pelo navegador** *(em breve)* | Um navegador e um PIN opcional | Quem tiver o link | No prazo do link ou na revogação |
+| **Link de visitante pelo navegador** | Um navegador e um PIN opcional | Quem tiver o link | No prazo do link ou na revogação |
 
 ```bash
 tslink people add alice@example.com --apps photos --for 7d
@@ -99,7 +99,7 @@ O TSLink inclui um servidor MCP para que um agente compartilhe, liste, explique 
 
 - **Resultados exatos.** A automação CLI aceita `--json` com `schema_version: 1` e códigos de erro estáveis; `tslink mcp` usa JSON-RPC. `tslink manifest` descreve cada comando e opção. Os agentes devem obter URLs reais com `tslink url <name> --wait` em vez de montá-las.
 - **Espera informada com clareza.** Um novo nó que ainda precisa de login humano informa `needs_login`, sem fingir que está pronto.
-- **Permissões.** O MCP local roda com as permissões do seu usuário. O MCP remoto exige ativação explícita, é acessível apenas na tailnet e se limita às identidades ou tags indicadas. Papéis por agente, escopos de apps e comprovantes de ações chegam *em breve*.
+- **Permissões.** O MCP local roda com as permissões do seu usuário. O MCP remoto exige ativação explícita, é acessível apenas na tailnet e se limita às identidades ou tags indicadas. Papéis por agente, escopos de apps e comprovantes de ações estão disponíveis.
 
 O MCP do TSLink opera o próprio TSLink. Se você publicar outro servidor MCP pelo TSLink, esse servidor ainda precisará das suas próprias permissões de ferramentas.
 [Guia para agentes →](agents.md) · [Clientes MCP →](mcp-clients.md) · [MCP remoto →](remote-mcp.md) · [Automação JSON →](json-automation.md)

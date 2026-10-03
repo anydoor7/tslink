@@ -73,7 +73,7 @@ Other things you can share once their backend is running:
 | **Your own devices** | Signed into your tailnet | Verified Tailscale login | When you remove the app |
 | **Named people** (private HTTP/files) | A Tailscale login; outsiders accept one invitation per app | Verified Tailscale login | At the deadline you set (`--for 7d`), or `tslink people remove` |
 | **Anyone with the URL** (Funnel) | A browser | Anyone; the app's own login applies | After 24 hours by default (`--funnel-ttl`) |
-| **Browser guest link** *(coming)* | A browser, plus an optional PIN | Whoever holds the link | At its own deadline, or on revoke |
+| **Browser guest link** | A browser, plus an optional PIN | Whoever holds the link | At its own deadline, or on revoke |
 
 ```bash
 tslink people add alice@example.com --apps photos --for 7d
@@ -99,7 +99,7 @@ TSLink includes an MCP server, so an agent can share, list, explain and remove s
 
 - **Exact results.** CLI automation supports `--json` with `schema_version: 1` and stable error codes; `tslink mcp` uses JSON-RPC instead. `tslink manifest` describes every command and flag. Agents should fetch real URLs with `tslink url <name> --wait` rather than build them.
 - **Honest pending states.** A new node that still needs a human sign-in reports `needs_login` instead of pretending to be ready.
-- **Authority.** Local MCP runs with your user's authority. Remote MCP is an opt-in, tailnet-only endpoint limited to the logins or tags you list. Per-agent roles, app scopes and action receipts are *coming*.
+- **Authority.** Local MCP runs with your user's authority. Remote MCP is an opt-in, tailnet-only endpoint limited to the logins or tags you list. Per-agent roles, app scopes and action receipts are available.
 
 TSLink's MCP operates TSLink itself. If you publish another MCP server through TSLink, that server still needs its own tool permissions.
 [Agent guide →](docs/agents.md) · [MCP clients →](docs/mcp-clients.md) · [Remote MCP →](docs/remote-mcp.md) · [JSON automation →](docs/json-automation.md)

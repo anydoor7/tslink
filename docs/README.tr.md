@@ -73,7 +73,7 @@ Arka uçları çalışıyorsa şunları da paylaşabilirsiniz:
 | **Kendi cihazlarınız** | tailnet ağınıza giriş | Doğrulanmış Tailscale hesabı | Uygulamayı kaldırdığınızda |
 | **Belirlenen kişiler** (özel HTTP/dosyalar) | Tailscale hesabı; dışarıdakiler uygulama başına bir davet kabul eder | Doğrulanmış Tailscale hesabı | Belirlediğiniz son tarihte (`--for 7d`) veya `tslink people remove` ile |
 | **URL'ye sahip herkes** (Funnel) | Tarayıcı | Herkes; uygulamanın kendi giriş koşulu geçerlidir | Varsayılan olarak 24 saat sonra (`--funnel-ttl`) |
-| **Tarayıcı misafir bağlantısı** *(yakında)* | Tarayıcı ve isteğe bağlı PIN | Bağlantıyı elinde tutan kişi | Kendi süresi dolduğunda veya iptal edilince |
+| **Tarayıcı misafir bağlantısı** | Tarayıcı ve isteğe bağlı PIN | Bağlantıyı elinde tutan kişi | Kendi süresi dolduğunda veya iptal edilince |
 
 ```bash
 tslink people add alice@example.com --apps photos --for 7d
@@ -99,7 +99,7 @@ TSLink bir MCP sunucusu içerir; ajan da sizin gibi paylaşabilir, listeleyebili
 
 - **Kesin sonuçlar.** CLI otomasyonu `--json`, `schema_version: 1` ve kararlı hata kodlarını destekler; `tslink mcp` ise JSON-RPC kullanır. `tslink manifest` her komutu ve bayrağı açıklar. Ajanlar URL'leri oluşturmak yerine `tslink url <name> --wait` ile gerçek URL'leri almalıdır.
 - **Açık bekleme durumları.** İnsan girişi gerektiren yeni bir düğüm hazırmış gibi davranmak yerine `needs_login` bildirir.
-- **Yetki.** Yerel MCP kullanıcınızın yetkileriyle çalışır. Uzak MCP isteğe bağlı açılır, yalnızca tailnet içinden erişilir ve belirttiğiniz hesaplarla ya da etiketlerle sınırlıdır. Ajan rolleri, uygulama kapsamları ve işlem makbuzları *yakında* gelecek.
+- **Yetki.** Yerel MCP kullanıcınızın yetkileriyle çalışır. Uzak MCP isteğe bağlı açılır, yalnızca tailnet içinden erişilir ve belirttiğiniz hesaplarla ya da etiketlerle sınırlıdır. Ajan rolleri, uygulama kapsamları ve işlem makbuzları artık kullanılabilir.
 
 TSLink MCP, TSLink uygulamasının kendisini yönetir. TSLink üzerinden başka bir MCP sunucusu yayımlarsanız onun araç izinlerini ayrıca yönetmeniz gerekir.
 [Ajan rehberi →](agents.md) · [MCP istemcileri →](mcp-clients.md) · [Uzak MCP →](remote-mcp.md) · [JSON otomasyonu →](json-automation.md)

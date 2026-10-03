@@ -73,7 +73,7 @@ Możesz też udostępnić poniższe elementy, gdy ich zaplecze już działa:
 | **Twoje urządzenia** | Logowanie do Twojej sieci tailnet | Zweryfikowana tożsamość Tailscale | Gdy usuniesz aplikację |
 | **Wskazane osoby** (prywatne HTTP/pliki) | Logowanie Tailscale; osoby z zewnątrz przyjmują zaproszenie do każdej aplikacji | Zweryfikowana tożsamość Tailscale | W ustawionym terminie (`--for 7d`) lub po `tslink people remove` |
 | **Każdy, kto ma URL** (Funnel) | Przeglądarka | Dowolna osoba; nadal obowiązuje logowanie w aplikacji | Domyślnie po 24 godzinach (`--funnel-ttl`) |
-| **Link gościnny do przeglądarki** *(wkrótce)* | Przeglądarka i opcjonalny PIN | Posiadacz linku | Po upływie jego terminu lub cofnięciu |
+| **Link gościnny do przeglądarki** | Przeglądarka i opcjonalny PIN | Posiadacz linku | Po upływie jego terminu lub cofnięciu |
 
 ```bash
 tslink people add alice@example.com --apps photos --for 7d
@@ -99,7 +99,7 @@ TSLink zawiera serwer MCP, dzięki któremu agent może tak jak Ty udostępniać
 
 - **Dokładne wyniki.** Automatyzacja CLI obsługuje `--json` z `schema_version: 1` i stabilnymi kodami błędów; `tslink mcp` używa zamiast tego JSON-RPC. `tslink manifest` opisuje każde polecenie i flagę. Agenci powinni pobierać prawdziwe URL-e przez `tslink url <name> --wait`, zamiast je składać.
 - **Rzetelne stany oczekiwania.** Nowy węzeł wymagający logowania przez człowieka zgłasza `needs_login`, zamiast udawać gotowość.
-- **Uprawnienia.** Lokalny MCP działa z uprawnieniami Twojego użytkownika. Zdalny MCP wymaga włączenia, jest dostępny tylko w tailnet i dopuszcza wyłącznie wymienione konta lub tagi. Role agentów, zakresy aplikacji i potwierdzenia działań pojawią się *wkrótce*.
+- **Uprawnienia.** Lokalny MCP działa z uprawnieniami Twojego użytkownika. Zdalny MCP wymaga włączenia, jest dostępny tylko w tailnet i dopuszcza wyłącznie wymienione konta lub tagi. Role agentów, zakresy aplikacji i potwierdzenia działań są już dostępne.
 
 MCP w TSLink steruje samym TSLink. Jeśli udostępnisz przez TSLink inny serwer MCP, nadal potrzebuje on własnych uprawnień do narzędzi.
 [Poradnik dla agentów →](agents.md) · [Klienci MCP →](mcp-clients.md) · [Zdalny MCP →](remote-mcp.md) · [Automatyzacja JSON →](json-automation.md)

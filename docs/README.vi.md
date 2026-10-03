@@ -73,7 +73,7 @@ Bạn còn có thể chia sẻ các nội dung sau khi phần phụ trợ đã c
 | **Thiết bị của bạn** | Đăng nhập tailnet của bạn | Danh tính Tailscale đã xác minh | Khi bạn xóa ứng dụng |
 | **Người được chỉ định** (HTTP/tệp riêng) | Tài khoản Tailscale; người ngoài chấp nhận một lời mời cho mỗi ứng dụng | Danh tính Tailscale đã xác minh | Đến hạn bạn đặt (`--for 7d`) hoặc dùng `tslink people remove` |
 | **Bất kỳ ai có URL** (Funnel) | Trình duyệt | Bất kỳ ai; yêu cầu đăng nhập của ứng dụng vẫn áp dụng | Mặc định sau 24 giờ (`--funnel-ttl`) |
-| **Liên kết khách qua trình duyệt** *(sắp có)* | Trình duyệt và PIN tùy chọn | Người giữ liên kết | Đến hạn riêng hoặc khi bị thu hồi |
+| **Liên kết khách qua trình duyệt** | Trình duyệt và PIN tùy chọn | Người giữ liên kết | Đến hạn riêng hoặc khi bị thu hồi |
 
 ```bash
 tslink people add alice@example.com --apps photos --for 7d
@@ -99,7 +99,7 @@ TSLink có máy chủ MCP để tác tử chia sẻ, liệt kê, giải thích v
 
 - **Kết quả chính xác.** Tự động hóa CLI hỗ trợ `--json` với `schema_version: 1` và mã lỗi ổn định; `tslink mcp` dùng JSON-RPC. `tslink manifest` mô tả mọi lệnh và cờ. Tác tử nên lấy URL thật bằng `tslink url <name> --wait` thay vì tự ghép.
 - **Báo rõ trạng thái chờ.** Nút mới còn cần con người đăng nhập sẽ báo `needs_login`, không giả vờ đã sẵn sàng.
-- **Thẩm quyền.** MCP cục bộ chạy với quyền người dùng của bạn. MCP từ xa cần bật chủ động, chỉ truy cập được trong tailnet và giới hạn theo tài khoản hoặc thẻ bạn liệt kê. Vai trò cho từng tác tử, phạm vi ứng dụng và biên nhận thao tác *sắp có*.
+- **Thẩm quyền.** MCP cục bộ chạy với quyền người dùng của bạn. MCP từ xa cần bật chủ động, chỉ truy cập được trong tailnet và giới hạn theo tài khoản hoặc thẻ bạn liệt kê. Vai trò cho từng tác tử, phạm vi ứng dụng và biên nhận thao tác đã có.
 
 MCP của TSLink điều khiển chính TSLink. Nếu bạn xuất bản máy chủ MCP khác qua TSLink, máy chủ đó vẫn cần quyền công cụ riêng.
 [Hướng dẫn tác tử →](agents.md) · [Máy khách MCP →](mcp-clients.md) · [MCP từ xa →](remote-mcp.md) · [Tự động hóa JSON →](json-automation.md)

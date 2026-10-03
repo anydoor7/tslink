@@ -73,7 +73,7 @@ Altri contenuti che puoi condividere quando il loro backend è in esecuzione:
 | **I tuoi dispositivi** | Accesso alla tua tailnet | Identità Tailscale verificata | Quando rimuovi l'app |
 | **Persone specifiche** (HTTP/file privati) | Un account Tailscale; chi è esterno accetta un invito per app | Identità Tailscale verificata | Alla scadenza impostata (`--for 7d`) o con `tslink people remove` |
 | **Chiunque abbia l'URL** (Funnel) | Un browser | Chiunque; resta valido l'accesso richiesto dall'app | Dopo 24 ore per impostazione predefinita (`--funnel-ttl`) |
-| **Link ospite nel browser** *(in arrivo)* | Un browser e un PIN facoltativo | Chi possiede il link | Alla sua scadenza o alla revoca |
+| **Link ospite nel browser** | Un browser e un PIN facoltativo | Chi possiede il link | Alla sua scadenza o alla revoca |
 
 ```bash
 tslink people add alice@example.com --apps photos --for 7d
@@ -99,7 +99,7 @@ TSLink include un server MCP: un agente può condividere, elencare, spiegare e r
 
 - **Risultati precisi.** L'automazione CLI supporta `--json` con `schema_version: 1` e codici di errore stabili; `tslink mcp` usa invece JSON-RPC. `tslink manifest` descrive ogni comando e opzione. Gli agenti devono ottenere gli URL reali con `tslink url <name> --wait`, senza costruirli.
 - **Attese dichiarate.** Un nuovo nodo che richiede ancora l'accesso di una persona segnala `needs_login`, senza fingere di essere pronto.
-- **Permessi.** MCP locale usa i permessi del tuo utente. MCP remoto è un endpoint da abilitare esplicitamente, accessibile solo dalla tailnet e limitato agli account o tag elencati. Ruoli per agente, ambiti delle app e ricevute delle azioni sono *in arrivo*.
+- **Permessi.** MCP locale usa i permessi del tuo utente. MCP remoto è un endpoint da abilitare esplicitamente, accessibile solo dalla tailnet e limitato agli account o tag elencati. Ruoli per agente, ambiti delle app e ricevute delle azioni sono disponibili.
 
 L'MCP di TSLink gestisce TSLink stesso. Se pubblichi un altro server MCP tramite TSLink, quel server deve comunque avere i propri permessi per gli strumenti.
 [Guida per agenti →](agents.md) · [Client MCP →](mcp-clients.md) · [MCP remoto →](remote-mcp.md) · [Automazione JSON →](json-automation.md)

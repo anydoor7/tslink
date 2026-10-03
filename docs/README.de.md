@@ -73,7 +73,7 @@ Weitere Dinge, die du teilen kannst, sobald ihr Backend läuft:
 | **Deine eigenen Geräte** | Anmeldung in deinem tailnet | Verifizierte Tailscale-Anmeldung | Wenn du die App entfernst |
 | **Benannte Personen** (privates HTTP/Dateien) | Eine Tailscale-Anmeldung; Außenstehende nehmen eine Einladung pro App an | Verifizierte Tailscale-Anmeldung | Zum gesetzten Termin (`--for 7d`) oder durch `tslink people remove` |
 | **Alle mit der URL** (Funnel) | Einen Browser | Beliebige Personen; die Anmeldung der App gilt weiterhin | Standardmäßig nach 24 Stunden (`--funnel-ttl`) |
-| **Gastlink für den Browser** *(demnächst)* | Einen Browser und optional eine PIN | Wer den Link besitzt | Bei Ablauf oder Widerruf |
+| **Gastlink für den Browser** | Einen Browser und optional eine PIN | Wer den Link besitzt | Bei Ablauf oder Widerruf |
 
 ```bash
 tslink people add alice@example.com --apps photos --for 7d
@@ -99,7 +99,7 @@ TSLink enthält einen MCP-Server. Ein Agent kann Freigaben genauso wie du erstel
 
 - **Genaue Ergebnisse.** CLI-Automatisierung unterstützt `--json` mit `schema_version: 1` und stabilen Fehlercodes; `tslink mcp` verwendet stattdessen JSON-RPC. `tslink manifest` beschreibt jeden Befehl und jede Option. Agenten sollten echte URLs mit `tslink url <name> --wait` abrufen, statt sie zusammenzusetzen.
 - **Ehrliche Wartezustände.** Ein neuer Knoten, der noch eine menschliche Anmeldung benötigt, meldet `needs_login`, statt Einsatzbereitschaft vorzutäuschen.
-- **Berechtigungen.** Lokales MCP läuft mit deinen Benutzerrechten. Remote-MCP ist ein ausdrücklich aktivierter Endpunkt nur im tailnet, beschränkt auf die aufgeführten Anmeldungen oder Tags. Rollen pro Agent, App-Bereiche und Aktionsbelege kommen *demnächst*.
+- **Berechtigungen.** Lokales MCP läuft mit deinen Benutzerrechten. Remote-MCP ist ein ausdrücklich aktivierter Endpunkt nur im tailnet, beschränkt auf die aufgeführten Anmeldungen oder Tags. Rollen pro Agent, App-Bereiche und Aktionsbelege sind verfügbar.
 
 Das MCP von TSLink steuert TSLink selbst. Wenn du einen anderen MCP-Server über TSLink veröffentlichst, braucht dieser weiterhin eigene Werkzeugberechtigungen.
 [Agentenleitfaden →](agents.md) · [MCP-Clients →](mcp-clients.md) · [Remote-MCP →](remote-mcp.md) · [JSON-Automatisierung →](json-automation.md)
