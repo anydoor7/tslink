@@ -286,6 +286,7 @@ func commandJSONResultFields(commandPath string) map[string]JSONResultFieldInfo 
 		}
 	case "tslink share":
 		return map[string]JSONResultFieldInfo{
+			"name":           {Type: "string", Description: "Actually registered service name, always present on success, including needs_login. Use this name for continuation and removal; never guess or fall back to the requested name."},
 			"request_limits": {Type: "object", Description: "Effective HTTP limits: max_body_bytes (-1 means acknowledged unlimited), header_timeout, read_timeout (idle between body reads), idle_timeout."},
 			"preserve_host":  {Type: "boolean", Description: "Whether the returned HTTP share forwards this node's trusted canonical external Host. Conflicting reuse is refused."},
 		}

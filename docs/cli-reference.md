@@ -59,6 +59,12 @@ field types, or trailing data report `usage_error` (exit 2), naming the path
 and repair guidance. `list`, `status`, and `doctor` show bad entries beside
 healthy services; fix or remove bad entries before changing the registry.
 
+Successful `share --json` results always include `data.name`, the actually
+registered service name, even while `status` is `needs_login`. Names may receive
+a collision suffix; use the returned name for `url`, `status --urls --name`, and
+`remove`. Never guess or fall back to the requested name. MCP `share` returns
+the same required field for continuation and `unshare`.
+
 During initial `serve` startup, a registry notification for the same state
 reuses the pending node construction. A changed state still supersedes the
 pending startup and is applied before readiness is reported.

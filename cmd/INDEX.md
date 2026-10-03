@@ -53,3 +53,5 @@ This index records the app recipe additions; the CLI manifest describes the comp
 - `wave1_round2_test.go`: scheduler installation schemas with recipe, Host and request-limit contracts.
 
 - `json_test.go`: concurrently drains captured CLI output; `wave1_round2_test.go` covers output larger than the OS pipe buffer.
+
+- `share_registered_name_test.go`: real registry collisions and reuse through CLI JSON and MCP wire output, including both enrollment paths and the required name schema.

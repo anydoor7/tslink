@@ -208,7 +208,7 @@ var (
 	mcpShareOutputSchema = objectSchema(map[string]any{
 		"request_limits":    mcpRequestLimitsOutputSchema,
 		"url":               map[string]any{"type": "string"},
-		"name":              map[string]any{"type": "string"},
+		"name":              map[string]any{"type": "string", "minLength": 1, "description": "Actually registered service name, always present on success, including needs_login. Use this name for url and unshare; never guess or fall back to the requested name."},
 		"preserve_host":     map[string]any{"type": "boolean", "default": false, "description": "Proxy only: forward this node's trusted canonical external name in Host and X-Forwarded-Host; fail closed if unavailable. Default false keeps upstream Host rewriting."},
 		"status":            map[string]any{"type": "string", "enum": []string{shareStatusReady, authStatusNeedsLogin}},
 		"auth_url":          map[string]any{"type": "string"},
@@ -217,7 +217,7 @@ var (
 		"exposure":          mcpExposureViewSchema,
 		"warnings":          mcpWarningArraySchema,
 		"daemon_installed":  mcpDaemonInstalledSchema,
-	}, "status", "exposure")
+	}, "name", "status", "exposure")
 	mcpListOutputSchema = objectSchema(map[string]any{
 		"services": map[string]any{
 			"type": "array",

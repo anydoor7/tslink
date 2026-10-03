@@ -28,17 +28,22 @@ the share, verification, and undo steps explicit.
 ## Share, hand off, verify, undo
 
 Confirm the intended target and audience with the owner. This example assumes
-their HTTP app is already listening on port 3000 and should stay private:
+their HTTP app is already listening on port 3000 and should stay private. The
+shell examples use `jq` to extract the returned name and stop if it is missing:
 
 ```bash
 tslink manifest
-tslink share 3000 --name preview --json
+share_result=$(tslink share 3000 --name preview --json) || exit
+share_name=$(printf '%s\n' "$share_result" | jq -er 'select(.ok == true) | .data.name | strings | select(length > 0)') || exit
 ```
 
 `share` can install/start the user's background service. A requested name may
-receive a numeric suffix on collision; use the actual `name` returned in `data`
-(or the MCP tool result) for subsequent steps. The examples below assume it is
-`preview`.
+receive a numeric suffix on collision, such as `preview-2`. Every successful
+result, including `needs_login`, returns the actually registered `name` in CLI
+`data` or the MCP result. Use only that returned name for continuation,
+verification, and undo. Never guess or fall back to the requested name. If a
+result lacks a nonempty name, stop and check the installed version and result
+contract before continuing; removing `preview` could remove an unrelated share.
 
 Treat `needs_login` as **pending human handoff**, even if the command or tool
 result is otherwise successful. Give the returned `auth_url` to the owner to
@@ -47,18 +52,19 @@ the app is reachable or try to bypass enrollment. After the owner finishes any
 sign-in and device approval, fetch exact runtime evidence:
 
 ```bash
-tslink url preview --wait --json
+tslink url "$share_name" --wait --json
 ```
 
 The general form is `tslink url <name> --wait`; bare `--wait` waits up to 30s.
 Never construct a `.ts.net` hostname from the requested name. If the result is
 pending or fails, follow the structured continuation/error rather than reporting
-success. In MCP, use the `url` tool with `{"name":"preview","wait":"30s"}`.
+success. In MCP, pass the share result's `name` to `url` with `wait: "30s"`;
+for a returned `preview-2`, use `{"name":"preview-2","wait":"30s"}`.
 
 **Verify:** inspect the selected share:
 
 ```bash
-tslink status --urls --name preview --json
+tslink status --urls --name "$share_name" --json
 ```
 
 Require `data.runtime_snapshot.exact: true` and the selected service's
@@ -71,7 +77,7 @@ health alone also cannot prove that recipient path.
 **Undo:** remove the actual name created for this task:
 
 ```bash
-tslink remove preview --json
+tslink remove "$share_name" --json
 ```
 
 MCP uses `unshare` with that name. Removal attempts remote node cleanup only when
