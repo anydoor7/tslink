@@ -1,5 +1,8 @@
 # Agents
 
+For the first verified workflow and an optional, consent-based success follow-up,
+see the [agent quickstart](agent-quickstart.md).
+
 ## MCP server for agents
 
 `tslink mcp` runs a local MCP server over stdio. The MCP process itself opens no

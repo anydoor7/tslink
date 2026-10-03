@@ -1,140 +1,91 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/tslink-mark-dark.svg">
-    <img src="assets/tslink-mark-light.svg" width="88" height="88" alt="TSLink 标志">
+    <img src="assets/tslink-mark-light.svg" width="88" height="88" alt="TSLink logo">
   </picture>
 </p>
-
 <h1 align="center">TSLink</h1>
+<p align="center"><strong>随时随地访问和管理你的应用。<br>保持私有，或按你的意愿分享。</strong></p>
 
+无论应用运行在自己的电脑还是云服务器上，都能通过加密的私有网络访问；也可以主动选择浏览器访客链接或公开访问。自己操作，或交给智能体管理。
+
+<p align="center"><a href="#quickstart">快速开始</a> · <a href="#agents">面向智能体</a> · <a href="#documentation">文档</a></p>
 <p align="center">
-  <strong>把电脑上的应用分享给你选择的人，分享多久由你决定。</strong><br>
-  每个应用在你的 Tailscale 网络中都有独立的私有地址。查看谁能访问，也能随时收回权限。
+<a href="../README.md">English</a> · <strong>简体中文</strong> · <a href="README.zh-TW.md">繁體中文</a> · <a href="README.ko.md">한국어</a> · <a href="README.de.md">Deutsch</a> · <a href="README.es.md">Español</a> · <a href="README.fr.md">Français</a> · <a href="README.it.md">Italiano</a> · <a href="README.da.md">Dansk</a> · <a href="README.ja.md">日本語</a> · <a href="README.pl.md">Polski</a> · <a href="README.ru.md">Русский</a> · <a href="README.bs.md">Bosanski</a> · <a href="README.ar.md">العربية</a> · <a href="README.no.md">Norsk</a> · <a href="README.pt-BR.md">Português (Brasil)</a> · <a href="README.th.md">ไทย</a> · <a href="README.tr.md">Türkçe</a> · <a href="README.uk.md">Українська</a> · <a href="README.bn.md">বাংলা</a> · <a href="README.el.md">Ελληνικά</a> · <a href="README.vi.md">Tiếng Việt</a>
 </p>
 
-<p align="center">
-  <a href="#quickstart">快速开始</a> · <a href="#agents">给智能体</a> · <a href="getting-started.md">文档</a> ·
-  <strong>简体中文</strong> · <a href="../README.md">English</a> · <a href="INDEX.md#translated-homepages">全部语言</a>
-</p>
+<a id="use-cases"></a>
 
-## 大家用它做什么
+## 让应用触手可及
 
-- **在手机上打开自己的工作成果。** 脚本生成的报告、开发服务器、Jupyter 笔记本或本地模型 API，都可以通过私有 HTTPS 地址，在获准的设备上访问。
-- **把一个应用临时分享给一个人。** 让伴侣使用照片库一周，或让同事试用预览版三天。访问权限会自动到期，你也可以提前结束。
-- **让智能体帮你分享。** 编程智能体刚做出了一个仪表盘，你可以让它分享给你和队友，开放到周五。它也能告诉你当前分享了什么，并收回分享。
+| 你的需要 | TSLink 提供的能力 |
+|---|---|
+| 跨设备使用自己的应用 | 为电脑或服务器上的家庭面板、仅本机可用的网页、文件、模型 API 和 TCP 服务提供私有地址。 |
+| 分享给指定的人 | 为指定 HTTP/文件应用设置访问期限并随时撤销，通过真实 Tailscale 登录身份验证；接收方需要使用 Tailscale。[人员授权](people.md) |
+| 让访客用浏览器打开 | 为 HTTP 代理应用创建有期限、可选 PIN 的访客链接，或明确启用 Funnel 公开 HTTPS。访客链接可被转发，不能证明访问者身份。[访客链接](guest-links.md) |
+| 持续管理一组应用 | 每台主机的应用清单、私有入口页、健康检查与告警、访问记录，以及支持智能体角色、应用范围和审计回执的 CLI/MCP 访问管理。[入口页](portal.md) · [MCP 权限](mcp-scopes.md) |
 
-应用继续在原来的地方运行。TSLink 管理每个应用的访问权限，并用一份列表记录分享了什么、分享给谁、到什么时候。
+[应用配方](apps.md)、[上传限制](sharing.md)、[灵活期限](durations.md)和[二维码引导与访问申请](requests.md)让日常维护更方便。这些能力已包含在本源码中。
 
+<a id="installation"></a>
 <a id="quickstart"></a>
 
 ## 快速开始
 
-你需要 **Go 1.26.6+**、Git，以及一个[已启用 MagicDNS 和 HTTPS](https://tailscale.com/docs/how-to/set-up-https-certificates) 的 Tailscale 账户。目前尚未发布预编译版本，请从源码安装：
+使用 **Git 和 Go 1.26.6+** 从源码安装；预编译发行版和 Homebrew 尚未发布。以下命令适用于 bash/zsh。参见 [macOS、Linux 和 Windows 配置](platforms.md)。
 
 ```bash
 git clone https://github.com/anydoor7/tslink.git
-cd tslink && go install .
+cd tslink
+go install .
 export PATH="$PATH:$(go env GOPATH)/bin"
 ```
 
-分享一个页面：
+你需要仓库访问权限、**Tailscale 账户**以及 [MagicDNS 和 HTTPS](https://tailscale.com/docs/how-to/set-up-https-certificates)。私有访问的接收设备需要 Tailscale 和网络策略许可。应用主机上的 Tailscale 由 TSLink 内嵌提供。
+
+假设应用已在 3000 端口运行：
 
 ```bash
-mkdir -p tslink-demo && printf '<h1>Hello from TSLink</h1>\n' > tslink-demo/index.html
-tslink share ./tslink-demo --name demo
-tslink url demo --wait
+tslink share 3000 --name myapp
+tslink url myapp --wait
 ```
 
-首次使用时，TSLink 会输出登录链接，用来注册新的服务节点；你的 tailnet 也可能要求管理员批准设备。注册完成后，在已登录你的 tailnet 且获准访问的设备上打开服务 URL。无需 API 令牌。
+使用尚未占用的名称；若 `share` 返回另一个名称，请在 `url` 中使用返回值。先完成输出提示的浏览器注册和设备审批，再在获准设备上打开准确的应用 URL。`share` 会按需启动后台服务。首次私有访问不需要管理员 API 令牌。文件可用 `tslink share ./report.html` 分享；应用必须已运行，文件必须已存在。[完整配置](getting-started.md)
 
-查看当前分享，然后移除演示服务：
+成功用起来后，如果觉得有帮助，欢迎[给 TSLink 点个 Star](https://github.com/anydoor7/tslink)，帮助更多人发现它。完全自愿。
 
-```bash
-tslink status --urls
-tslink remove demo
-```
+<a id="architecture"></a>
 
-后端启动后，你还可以分享这些内容：
+## 它如何工作
 
-| 内容 | 命令 |
-|---|---|
-| 本地 Web 应用 | `tslink share 3000` |
-| 文件夹 | `tslink share ./public --name files` |
-| 本地模型 API，例如 Ollama | `tslink add model --proxy localhost:11434` |
-| 通过私有 TCP 访问的数据库 | `tslink add database --tcp localhost:5432` |
-| 已支持的自托管应用（Jellyfin、Immich、Home Assistant 等，共 16 种） | `tslink apps detect`，然后执行 `tslink apps share jellyfin --yes` |
+<picture>
+  <source media="(max-width: 600px) and (prefers-color-scheme: dark)" srcset="assets/service-map-dark-mobile.svg">
+  <source media="(max-width: 600px)" srcset="assets/service-map-light-mobile.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="assets/service-map-dark.svg">
+  <img src="assets/service-map-light.svg" alt="一台电脑或云服务器：CLI/MCP 管理共享守护进程和各应用节点。私有设备通过 Tailscale 加密连接；可选的公开 HTTPS/Funnel 通过访客验证或明确的公开发布访问 HTTP 应用。" width="960">
+</picture>
 
-[入门、平台与后台服务 →](getting-started.md)
+可以把它理解为通向应用的私有加密通道。**Tailscale 提供网络传输和 HTTPS；TSLink 在每台主机上管理应用访问。** 一个守护进程为每项服务运行独立的内嵌节点。私有入口页列出获准访问的应用，健康状态和访问记录帮助日常维护。
 
-## 选择谁能打开
-
-| 访问对象 | 接收方需要什么 | 身份依据 | 何时结束 |
-|---|---|---|---|
-| **你自己的设备** | 已登录你的 tailnet | 经验证的 Tailscale 登录身份 | 移除应用时 |
-| **指定的人**（私有 HTTP/文件） | Tailscale 登录账户；网络外的人需要逐个接受应用邀请 | 经验证的 Tailscale 登录身份 | 你设定的期限到达时（`--for 7d`），或执行 `tslink people remove` |
-| **任何持有 URL 的人**（Funnel） | 浏览器 | 任何人；仍需遵守应用自身的登录要求 | 默认 24 小时后（`--funnel-ttl`） |
-| **浏览器访客链接** | 浏览器，以及可选的 PIN | 链接持有者 | 链接到期或被撤销时 |
-
-```bash
-tslink people add alice@example.com --apps photos --for 7d
-tslink people list
-tslink people remove alice@example.com
-```
-
-私有 HTTP 和文件分享会在每次请求时检查期限。撤销权限会阻止新请求；它无法收回已下载的数据，也不会关闭已接受的数据流和 WebSocket 连接。[按人分享 →](people.md) · [分享边界 →](sharing.md)
+公开访问需主动启用：访客需要链接和可选 PIN；开放的 Funnel 则允许任何持有 URL 的人访问。两者都使用公开 HTTPS，而非私有用户身份验证。原始 TCP 保持私有，依赖 tailnet 策略和后端认证。TSLink 不安装应用、不隔离主机进程、不创建云 VPC，也不聚合多台主机。与 Tailscale 配合使用的独立项目。[架构与边界](architecture.md)
 
 <a id="agents"></a>
 
-## 给智能体
+## 面向智能体
 
-TSLink 内置 MCP 服务器，智能体可以像你一样分享、列出、解释和移除分享。在本地 MCP 客户端中加入：
+通过 CLI 或 MCP 管理应用清单、健康状态、URL 和权限。从[智能体快速开始](agent-quickstart.md)入手；读取实际工具 schema，并验证应用确实可访问后再报告成功。
 
 ```json
-{
-  "mcpServers": {
-    "tslink": { "command": "tslink", "args": ["mcp"] }
-  }
-}
+{"mcpServers":{"tslink":{"command":"tslink","args":["mcp"]}}}
 ```
 
-- **准确的结果。** CLI 自动化支持 `--json`，使用 `schema_version: 1` 和稳定的错误码；`tslink mcp` 则使用 JSON-RPC。`tslink manifest` 描述每个命令和参数。智能体应通过 `tslink url <name> --wait` 获取真实 URL，而不要自行拼接。
-- **如实报告等待状态。** 新节点如果还需要人完成登录，就会报告 `needs_login`，不会假装已经就绪。
-- **操作权限。** 本地 MCP 以你的用户权限运行。远程 MCP 需要主动启用，只能在 tailnet 内访问，且仅允许你列出的登录身份或标签。每个智能体的角色、应用范围和操作回执均已可用。
+CLI 自动化使用 `--json`；MCP 通过 stdio 使用 JSON-RPC。[客户端配置](mcp-clients.md) · [远程 MCP](remote-mcp.md) · [角色与应用范围](mcp-scopes.md)
 
-TSLink 的 MCP 用来操作 TSLink 本身。如果你通过 TSLink 发布其他 MCP 服务器，该服务器仍然需要自己的工具权限控制。
-[智能体指南 →](agents.md) · [MCP 客户端 →](mcp-clients.md) · [远程 MCP →](remote-mcp.md) · [JSON 自动化 →](json-automation.md)
+<a id="roadmap"></a>
+<a id="documentation"></a>
 
-## 什么时候选择其他工具
+## 文档与许可证
 
-| 你的需求 | 可以考虑 |
-|---|---|
-| 使用已有的 Tailscale 客户端，在自己的设备上访问一个本地服务 | [`tailscale serve`](https://tailscale.com/docs/reference/tailscale-cli/serve) |
-| 由管理员管理、跨多个主机使用稳定名称的服务 | [Tailscale Services](https://tailscale.com/docs/features/tailscale-services) |
-| 无需 Tailscale 账户的 webhook 或 API 演示公共 URL | [ngrok](https://ngrok.com/docs/start) 或 [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/) |
-| 安装并运行自托管应用，而不只是分享 | [Umbrel](https://umbrel.com) 或 [Coolify](https://coolify.io) |
-| 覆盖整个组织、根据身份控制访问的平台 | [Pangolin](https://github.com/fosrl/pangolin) 或 [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/) |
+[全部指南](INDEX.md) · [CLI 参考](cli-reference.md) · [本地 AI](local-ai.md) · [健康检查](health-and-alerts.md) · [访问记录](access-log.md) · [路线图](roadmap.md)
 
-如果一个人运行着多个应用，想按应用、按人设置有期限的访问权限，并让自己和智能体都能查看，TSLink 就适合这种场景。
-
-## 工作原理
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/service-map-dark.svg">
-  <img src="assets/service-map-light.svg" alt="App、Docs、Database 和 Model 是同一 tailnet 中独立命名的节点，由发布端电脑上的一个 TSLink 后台进程运行。" width="720">
-</picture>
-
-一个后台进程为每个应用运行一个嵌入式 Tailscale 节点，因此每个应用都有自己的名称和地址。私有 HTTP 和文件分享通过 `WhoIs`、按人授权或 `--allow` 规则控制访问，每次请求都会检查按人授权的期限。原始 TCP 使用 tailnet 策略和后端自身的认证。Tailscale 提供 tailnet 传输、加密和证书；TSLink 是独立项目。所有应用共用发布端电脑，TSLink 不会将它们彼此隔离。[架构 →](architecture.md)
-
-## 当前状态
-
-现已可用：每个应用的私有地址、带期限和邀请包的按人分享、带到期时间的公共 Funnel、应用健康检查与告警、自托管应用配方、每个应用的请求限制、Windows 崩溃重启、CLI 和 MCP。 同时提供：浏览器访客链接、灵活的时长、访问日志、应用首页、限定范围的智能体角色、QR 扫码引导和访问申请。
-
-将多台电脑的应用汇总到一个列表中仍在规划中。[路线图 →](roadmap.md)
-
-## 文档与许可
-
-[llms.txt](../llms.txt) · [智能体快速入门](agent-quickstart.md) · [如何选择共享工具](comparison.md)
-
-[入门](getting-started.md) · [CLI 参考](cli-reference.md) · [平台](platforms.md) · [本地模型](local-ai.md) · [贡献](../CONTRIBUTING.md) · [安全](../SECURITY.md)
-
-采用 Apache License 2.0，允许商业使用。重新分发时请保留 [NOTICE](../NOTICE) 和[第三方声明](../THIRD_PARTY_NOTICES.md)。Tailscale 的服务条款与套餐另行适用。
+多主机应用清单仍在规划中。欢迎[贡献](../CONTRIBUTING.md)和[报告安全问题](../SECURITY.md)。[Apache 2.0](../LICENSE) 允许商业使用；再分发时保留 [NOTICE](../NOTICE) 和[第三方声明](../THIRD_PARTY_NOTICES.md)。[商业合作](../COMMERCIAL.md)完全自愿。Tailscale 的条款和套餐另行适用。

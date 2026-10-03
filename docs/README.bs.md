@@ -1,140 +1,91 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/tslink-mark-dark.svg">
-    <img src="assets/tslink-mark-light.svg" width="88" height="88" alt="TSLink logotip">
+    <img src="assets/tslink-mark-light.svg" width="88" height="88" alt="TSLink logo">
   </picture>
 </p>
-
 <h1 align="center">TSLink</h1>
+<p align="center"><strong>Pristupajte svojim aplikacijama i upravljajte njima odakle god želite.<br>Zadržite ih privatnim ili ih dijelite pod svojim uslovima.</strong></p>
 
+Vaše aplikacije na vašem računaru ili cloud serveru: pristupajte im putem šifrirane privatne mreže ili odaberite linkove za goste u pregledniku ili javni pristup. Upravljajte sami ili putem agenta.
+
+<p align="center"><a href="#quickstart">Brzi početak</a> · <a href="#agents">Za agente</a> · <a href="#documentation">Dokumentacija</a></p>
 <p align="center">
-  <strong>Podijelite aplikacije sa svog računara s ljudima koje odaberete, onoliko dugo koliko želite.</strong><br>
-  Svaka aplikacija dobija vlastitu privatnu adresu u vašoj Tailscale mreži. Provjerite ko ima pristup i povucite ga.
+<a href="../README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.zh-TW.md">繁體中文</a> · <a href="README.ko.md">한국어</a> · <a href="README.de.md">Deutsch</a> · <a href="README.es.md">Español</a> · <a href="README.fr.md">Français</a> · <a href="README.it.md">Italiano</a> · <a href="README.da.md">Dansk</a> · <a href="README.ja.md">日本語</a> · <a href="README.pl.md">Polski</a> · <a href="README.ru.md">Русский</a> · <strong>Bosanski</strong> · <a href="README.ar.md">العربية</a> · <a href="README.no.md">Norsk</a> · <a href="README.pt-BR.md">Português (Brasil)</a> · <a href="README.th.md">ไทย</a> · <a href="README.tr.md">Türkçe</a> · <a href="README.uk.md">Українська</a> · <a href="README.bn.md">বাংলা</a> · <a href="README.el.md">Ελληνικά</a> · <a href="README.vi.md">Tiếng Việt</a>
 </p>
 
-<p align="center">
-  <a href="#quickstart">Brzi početak</a> · <a href="#agents">Za agente</a> · <a href="getting-started.md">Dokumentacija</a> ·
-  <strong>Bosanski</strong> · <a href="../README.md">English</a> · <a href="INDEX.md#translated-homepages">Svi jezici</a>
-</p>
+<a id="use-cases"></a>
 
-## Za šta se koristi
+## Vaše aplikacije nadohvat ruke
 
-- **Otvorite svoj rad na telefonu.** Izvještaj koji je napravila skripta, razvojni server, bilježnica ili API lokalnog modela, na privatnoj HTTPS adresi dostupnoj dozvoljenim uređajima.
-- **Dajte jednoj osobi jednu aplikaciju na određeno vrijeme.** Partneru omogućite korištenje biblioteke fotografija sedmicu dana, a kolegi probnu verziju tri dana. Pristup ističe automatski; možete ga i ranije prekinuti.
-- **Prepustite dijeljenje agentu.** Vaš agent za programiranje upravo je napravio kontrolnu ploču. Zamolite ga da je podijeli s vama i kolegom do petka. Može vam reći i šta se trenutno dijeli te povući dijeljenje.
+| Šta vam treba | Šta TSLink nudi |
+|---|---|
+| Korištenje vlastitih aplikacija na više uređaja | Privatne adrese za kućne kontrolne ploče, lokalne web stranice, datoteke, API-je modela i TCP servise na računaru ili serveru. |
+| Dijeljenje s određenim osobama | Odabrane HTTP/datotečne aplikacije, provjeren Tailscale identitet, rok i opoziv pristupa. Primaoci koriste Tailscale. [Osobe](people.md) |
+| Posjeta kroz preglednik | Vremenski ograničeni linkovi s opcionalnim PIN-om za HTTP proxy aplikacije ili izričito javni HTTPS putem Funnela. Linkovi se mogu proslijediti i ne potvrđuju identitet. [Gosti](guest-links.md) |
+| Upravljanje skupom aplikacija | Popis po hostu, privatni portal, provjere stanja i upozorenja, historija pristupa te CLI/MCP upravljanje s ulogama agenata, ograničenjem na aplikacije i revizijskim zapisima. [Portal](portal.md) · [MCP ovlasti](mcp-scopes.md) |
 
-Aplikacije nastavljaju raditi tamo gdje su već pokrenute. TSLink upravlja pristupom svakoj i vodi jedan spisak: šta je podijeljeno, s kim i do kada.
+[Recepti za aplikacije](apps.md), [ograničenja slanja](sharing.md), [fleksibilno trajanje](durations.md) i [QR upute i zahtjevi za pristup](requests.md) olakšavaju održavanje. Ove mogućnosti su uključene u ovaj izvorni kod.
 
+<a id="installation"></a>
 <a id="quickstart"></a>
 
 ## Brzi početak
 
-Potrebni su **Go 1.26.6+**, Git i Tailscale račun s [uključenim MagicDNS i HTTPS](https://tailscale.com/docs/how-to/set-up-https-certificates). Gotova binarna izdanja još nisu objavljena, pa instalirajte iz izvornog koda:
+Instalirajte iz izvornog koda uz **Git i Go 1.26.6+**; gotova binarna izdanja i Homebrew još nisu objavljeni. Naredbe koriste bash/zsh. [Postavljanje na macOS, Linux i Windows](platforms.md)
 
 ```bash
 git clone https://github.com/anydoor7/tslink.git
-cd tslink && go install .
+cd tslink
+go install .
 export PATH="$PATH:$(go env GOPATH)/bin"
 ```
 
-Podijelite stranicu:
+Trebaju vam pristup repozitoriju, **Tailscale račun** te [MagicDNS i HTTPS](https://tailscale.com/docs/how-to/set-up-https-certificates). Uređaji za privatni pristup trebaju Tailscale i dozvolu mrežne politike. TSLink ugrađuje Tailscale na host aplikacija.
+
+Ako vaša aplikacija već radi na portu 3000:
 
 ```bash
-mkdir -p tslink-demo && printf '<h1>Hello from TSLink</h1>\n' > tslink-demo/index.html
-tslink share ./tslink-demo --name demo
-tslink url demo --wait
+tslink share 3000 --name myapp
+tslink url myapp --wait
 ```
 
-Prvi put TSLink ispisuje poveznicu za prijavu radi registracije novog servisnog čvora; vaš tailnet može tražiti i odobrenje uređaja od administratora. Nakon registracije otvorite URL servisa na dozvoljenom uređaju prijavljenom na vaš tailnet. API token nije potreban.
+Odaberite slobodno ime; ako `share` vrati drugo, koristite ga u `url`. Prvo završite prikazanu registraciju u pregledniku i odobrenje uređaja, pa otvorite tačan URL na dozvoljenom uređaju. `share` po potrebi pokreće pozadinski servis. Za prvi privatni pristup ne treba administratorski API token. Datoteke dijelite s `tslink share ./report.html`; moraju postojati, a aplikacije već raditi. [Potpuno postavljanje](getting-started.md)
 
-Provjerite šta se dijeli pa uklonite demonstraciju:
+Kada vam proradi i bude korisno, možete [dati zvjezdicu TSLinku](https://github.com/anydoor7/tslink) da ga drugi lakše pronađu. To je potpuno dobrovoljno.
 
-```bash
-tslink status --urls
-tslink remove demo
-```
+<a id="architecture"></a>
 
-Možete podijeliti i sljedeće kada njihov pozadinski servis radi:
+## Kako sve radi
 
-| Sadržaj | Naredba |
-|---|---|
-| Lokalna web aplikacija | `tslink share 3000` |
-| Mapa s datotekama | `tslink share ./public --name files` |
-| API lokalnog modela, poput Ollama | `tslink add model --proxy localhost:11434` |
-| Baza podataka preko privatnog TCP-a | `tslink add database --tcp localhost:5432` |
-| Poznata samostalno hostovana aplikacija (Jellyfin, Immich, Home Assistant i još 13) | `tslink apps detect`, zatim `tslink apps share jellyfin --yes` |
+<picture>
+  <source media="(max-width: 600px) and (prefers-color-scheme: dark)" srcset="assets/service-map-dark-mobile.svg">
+  <source media="(max-width: 600px)" srcset="assets/service-map-light-mobile.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="assets/service-map-dark.svg">
+  <img src="assets/service-map-light.svg" alt="Jedan računar ili cloud server: CLI/MCP upravlja zajedničkim demonom i čvorovima po aplikaciji. Privatni uređaji koriste šifrirani Tailscale; opcionalni javni HTTPS/Funnel vodi do HTTP aplikacija kroz provjeru gostiju ili izričitu javnu objavu." width="960">
+</picture>
 
-[Prvi koraci, platforme i pozadinski servis →](getting-started.md)
+Zamislite privatni, šifrirani put do svojih aplikacija. **Tailscale pruža mrežni prijenos i HTTPS; TSLink upravlja pristupom aplikacijama na svakom hostu.** Jedan demon pokreće ugrađeni čvor za svaki servis. Privatni portal prikazuje dozvoljene aplikacije; stanje i historija pristupa pomažu u održavanju.
 
-## Odaberite ko može pristupiti
-
-| Publika | Šta primalac treba | Identitet | Kraj pristupa |
-|---|---|---|---|
-| **Vaši uređaji** | Prijavu na vaš tailnet | Provjeren Tailscale identitet | Kada uklonite aplikaciju |
-| **Imenovane osobe** (privatni HTTP/datoteke) | Tailscale prijavu; vanjski korisnici prihvataju poziv za svaku aplikaciju | Provjeren Tailscale identitet | U zadanom roku (`--for 7d`) ili uz `tslink people remove` |
-| **Svako ko ima URL** (Funnel) | Preglednik | Bilo ko; prijava same aplikacije i dalje važi | Podrazumijevano nakon 24 sata (`--funnel-ttl`) |
-| **Gostujuća poveznica za preglednik** | Preglednik i opcionalni PIN | Vlasnik poveznice | Po isteku njenog roka ili opozivu |
-
-```bash
-tslink people add alice@example.com --apps photos --for 7d
-tslink people list
-tslink people remove alice@example.com
-```
-
-Rokovi za privatni HTTP i datoteke provjeravaju se pri svakom zahtjevu. Opoziv zaustavlja nove zahtjeve; ne može povratiti preuzete podatke niti zatvoriti već prihvaćene tokove i WebSocket veze. [Dijeljenje s osobama →](people.md) · [Granice dijeljenja →](sharing.md)
+Javni pristup se izričito uključuje: gostima treba link i eventualni PIN; otvoreni Funnel dostupan je svakome s URL-om. Oba koriste javni HTTPS, ne privatni korisnički identitet. Sirovi TCP ostaje privatan i zavisi od tailnet politike i autentifikacije odredišta. TSLink ne instalira aplikacije, ne izolira procese, ne stvara cloud VPC niti objedinjuje hostove. Nezavisan projekat koji radi s Tailscaleom. [Arhitektura i granice](architecture.md)
 
 <a id="agents"></a>
 
 ## Za agente
 
-TSLink uključuje MCP server, pa agent može dijeliti, listati, objašnjavati i uklanjati dijeljenja kao i vi. Dodajte ga lokalnom MCP klijentu:
+Upravljajte popisom, stanjem, URL-ovima i pristupom putem CLI/MCP-a. Počnite od [vodiča za agente](agent-quickstart.md), pročitajte aktuelne sheme alata i provjerite stvarni pristup prije prijave uspjeha.
 
 ```json
-{
-  "mcpServers": {
-    "tslink": { "command": "tslink", "args": ["mcp"] }
-  }
-}
+{"mcpServers":{"tslink":{"command":"tslink","args":["mcp"]}}}
 ```
 
-- **Tačni rezultati.** CLI automatizacija podržava `--json` uz `schema_version: 1` i stabilne kodove grešaka; `tslink mcp` koristi JSON-RPC. `tslink manifest` opisuje svaku naredbu i opciju. Agenti trebaju preuzeti stvarne URL-ove uz `tslink url <name> --wait`, umjesto da ih sastavljaju.
-- **Jasno čekanje.** Novi čvor kojem još treba ljudska prijava prijavljuje `needs_login`, umjesto da se prikazuje spremnim.
-- **Ovlasti.** Lokalni MCP radi s ovlastima vašeg korisnika. Udaljeni MCP se izričito uključuje, dostupan je samo u tailnetu i ograničen na navedene prijave ili oznake. Uloge po agentu, opseg aplikacija i potvrde radnji su dostupni.
+CLI automatizacija koristi `--json`; MCP koristi JSON-RPC preko stdio. [Klijenti](mcp-clients.md) · [Udaljeni MCP](remote-mcp.md) · [Uloge i opseg](mcp-scopes.md)
 
-MCP koji pruža TSLink upravlja projektom TSLink. Ako preko TSLinka objavite drugi MCP server, njemu su i dalje potrebne vlastite dozvole za alate.
-[Vodič za agente →](agents.md) · [MCP klijenti →](mcp-clients.md) · [Udaljeni MCP →](remote-mcp.md) · [JSON automatizacija →](json-automation.md)
-
-## Kada odabrati drugi alat
-
-| Ako želite | Razmotrite |
-|---|---|
-| Jedan lokalni servis na svojim uređajima, uz Tailscale klijent koji već koristite | [`tailscale serve`](https://tailscale.com/docs/reference/tailscale-cli/serve) |
-| Administratorski upravljane servise sa stabilnim imenima na više računara | [Tailscale Services](https://tailscale.com/docs/features/tailscale-services) |
-| Javni URL za webhook ili API demonstraciju bez Tailscale računa | [ngrok](https://ngrok.com/docs/start) ili [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/) |
-| Instalirati i pokretati samostalno hostovane aplikacije, uz dijeljenje | [Umbrel](https://umbrel.com) ili [Coolify](https://coolify.io) |
-| Platformu za pristup na osnovu identiteta za cijelu organizaciju | [Pangolin](https://github.com/fosrl/pangolin) ili [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/) |
-
-TSLink odgovara osobi koja pokreće više aplikacija i želi vremenski ograničen pristup po aplikaciji i osobi, koji mogu provjeriti i ona i njen agent.
-
-## Kako radi
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/service-map-dark.svg">
-  <img src="assets/service-map-light.svg" alt="App, Docs, Database i Model su zasebno imenovani čvorovi u jednom tailnetu, koje pokreće jedan TSLink daemon na računaru koji objavljuje servise." width="720">
-</picture>
-
-Jedan pozadinski daemon pokreće ugrađeni Tailscale čvor za svaku aplikaciju, pa svaka ima svoje ime i adresu. Za privatni HTTP i datoteke, `WhoIs` i dozvole osobama ili pravila `--allow` kontrolišu pristup; rokovi se provjeravaju pri svakom zahtjevu. Sirovi TCP koristi tailnet pravila i autentifikaciju pozadinskog servisa. Tailscale pruža tailnet prijenos, enkripciju i certifikate; TSLink je nezavisan projekt. Sve aplikacije dijele računar koji ih objavljuje, pa ih TSLink ne izoluje jednu od druge. [Arhitektura →](architecture.md)
-
-## Stanje
-
-Dostupno: privatne adrese po aplikaciji, imenovane osobe s rokovima i paketima poziva, javni Funnel s istekom, provjere zdravlja i upozorenja, recepti za samostalno hostovane aplikacije, ograničenja zahtjeva po aplikaciji, ponovno pokretanje nakon pada na Windows, CLI i MCP. Dostupni su i: gostujuće poveznice za preglednik, fleksibilna trajanja, dnevnik pristupa, početna stranica aplikacija, ograničene uloge agenata, QR uvođenje i zahtjevi za pristup.
-
-Zajednički spisak za više računara je planiran. [Plan razvoja →](roadmap.md)
+<a id="roadmap"></a>
+<a id="documentation"></a>
 
 ## Dokumentacija i licenca
 
-[llms.txt](../llms.txt) · [Brzi početak za agente](agent-quickstart.md) · [Odabir alata za dijeljenje](comparison.md)
+[Svi vodiči](INDEX.md) · [CLI referenca](cli-reference.md) · [Lokalni AI](local-ai.md) · [Stanje](health-and-alerts.md) · [Historija pristupa](access-log.md) · [Plan razvoja](roadmap.md)
 
-[Prvi koraci](getting-started.md) · [CLI referenca](cli-reference.md) · [Platforme](platforms.md) · [Lokalni modeli](local-ai.md) · [Doprinosi](../CONTRIBUTING.md) · [Sigurnost](../SECURITY.md)
-
-Apache License 2.0, uključujući komercijalnu upotrebu. Pri redistribuciji zadržite [NOTICE](../NOTICE) i [obavijesti trećih strana](../THIRD_PARTY_NOTICES.md). Uslovi i paketi usluge Tailscale primjenjuju se zasebno.
+Popis aplikacija s više hostova je planiran. Dobrodošli su [doprinosi](../CONTRIBUTING.md) i [sigurnosne prijave](../SECURITY.md). [Apache 2.0](../LICENSE) dozvoljava komercijalnu upotrebu; pri redistribuciji sačuvajte [NOTICE](../NOTICE) i [obavijesti trećih strana](../THIRD_PARTY_NOTICES.md). [Komercijalna saradnja](../COMMERCIAL.md) je dobrovoljna. Tailscale uslovi i paketi primjenjuju se zasebno.

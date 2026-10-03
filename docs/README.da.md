@@ -1,140 +1,91 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/tslink-mark-dark.svg">
-    <img src="assets/tslink-mark-light.svg" width="88" height="88" alt="TSLink-logo">
+    <img src="assets/tslink-mark-light.svg" width="88" height="88" alt="TSLink logo">
   </picture>
 </p>
-
 <h1 align="center">TSLink</h1>
+<p align="center"><strong>Tilgå og administrer dine apps, uanset hvor du er.<br>Behold dem private, eller del dem på dine vilkår.</strong></p>
 
+Dine apps på din computer eller cloudserver: tilgå dem via et krypteret privat netværk, eller vælg gæstelinks til browseren eller offentlig adgang. Betjen dem selv eller gennem en agent.
+
+<p align="center"><a href="#quickstart">Kom i gang</a> · <a href="#agents">Til agenter</a> · <a href="#documentation">Dokumentation</a></p>
 <p align="center">
-  <strong>Del apps på din computer med dem, du vælger, så længe du ønsker.</strong><br>
-  Hver app får sin egen private adresse på dit Tailscale-netværk. Se, hvem der har adgang, og træk den tilbage.
+<a href="../README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.zh-TW.md">繁體中文</a> · <a href="README.ko.md">한국어</a> · <a href="README.de.md">Deutsch</a> · <a href="README.es.md">Español</a> · <a href="README.fr.md">Français</a> · <a href="README.it.md">Italiano</a> · <strong>Dansk</strong> · <a href="README.ja.md">日本語</a> · <a href="README.pl.md">Polski</a> · <a href="README.ru.md">Русский</a> · <a href="README.bs.md">Bosanski</a> · <a href="README.ar.md">العربية</a> · <a href="README.no.md">Norsk</a> · <a href="README.pt-BR.md">Português (Brasil)</a> · <a href="README.th.md">ไทย</a> · <a href="README.tr.md">Türkçe</a> · <a href="README.uk.md">Українська</a> · <a href="README.bn.md">বাংলা</a> · <a href="README.el.md">Ελληνικά</a> · <a href="README.vi.md">Tiếng Việt</a>
 </p>
 
-<p align="center">
-  <a href="#quickstart">Kom hurtigt i gang</a> · <a href="#agents">Til agenter</a> · <a href="getting-started.md">Dokumentation</a> ·
-  <strong>Dansk</strong> · <a href="../README.md">English</a> · <a href="INDEX.md#translated-homepages">Alle sprog</a>
-</p>
+<a id="use-cases"></a>
 
-## Hvad folk bruger det til
+## Dine apps inden for rækkevidde
 
-- **Åbn dit arbejde på telefonen.** En rapport fra dit script, en udviklingsserver, en notebook eller et lokalt model-API, på en privat HTTPS-adresse, som tilladte enheder kan nå.
-- **Giv én person én app i en periode.** Lad din partner bruge fotobiblioteket i en uge eller en kollega prøve din forhåndsvisning i tre dage. Adgangen udløber automatisk; du kan også afslutte den tidligere.
-- **Lad din agent stå for delingen.** Din kodeagent har lige bygget et dashboard. Bed den dele det med dig og din kollega indtil fredag. Den kan også fortælle, hvad der deles nu, og trække en deling tilbage.
+| Dit behov | Det tilbyder TSLink |
+|---|---|
+| Brug egne apps på tværs af enheder | Private adresser til hjemmets dashboards, lokale websider, filer, model-API'er og TCP-tjenester på pc eller server. |
+| Del med bestemte personer | Udvalgte HTTP-/filapps, bekræftet Tailscale-login, udløb og tilbagekaldelse. Modtagere bruger Tailscale. [Personer](people.md) |
+| Lad nogen besøge via browseren | Tidsbegrænsede gæstelinks med valgfri pinkode til HTTP-proxyapps eller udtrykkeligt offentlig HTTPS via Funnel. Links kan videresendes og beviser ikke identitet. [Gæstelinks](guest-links.md) |
+| Hold styr på flere apps | Oversigt pr. vært, privat portal, sundhedstjek og alarmer, adgangshistorik og CLI/MCP-adgangsstyring med agentroller, appafgrænsning og revisionskvitteringer. [Portal](portal.md) · [MCP-rettigheder](mcp-scopes.md) |
 
-Dine apps kører videre, hvor de allerede kører. TSLink styrer, hvem der kan nå hver app, og fører én liste over, hvad der deles, med hvem og indtil hvornår.
+[Appopskrifter](apps.md), [uploadgrænser](sharing.md), [fleksible varigheder](durations.md) og [QR-introduktion og adgangsanmodninger](requests.md) letter hverdagen. Funktionerne findes i denne kildekode.
 
+<a id="installation"></a>
 <a id="quickstart"></a>
 
-## Kom hurtigt i gang
+## Kom i gang
 
-Du skal bruge **Go 1.26.6+**, Git og en Tailscale-konto med [MagicDNS og HTTPS aktiveret](https://tailscale.com/docs/how-to/set-up-https-certificates). Der er endnu ingen udgivne færdigbyggede versioner, så installer fra kildekoden:
+Installer fra kildekoden med **Git og Go 1.26.6+**. Færdigbyggede udgivelser og Homebrew er endnu ikke udgivet. Kommandoerne bruger bash/zsh. [Opsætning på macOS, Linux og Windows](platforms.md)
 
 ```bash
 git clone https://github.com/anydoor7/tslink.git
-cd tslink && go install .
+cd tslink
+go install .
 export PATH="$PATH:$(go env GOPATH)/bin"
 ```
 
-Del en side:
+Du skal have adgang til repositoriet, en **Tailscale-konto** samt [MagicDNS og HTTPS](https://tailscale.com/docs/how-to/set-up-https-certificates). Private modtagerenheder skal bruge Tailscale og tilladelse i netværkspolitikken. TSLink indlejrer Tailscale på appværten.
+
+Når din app allerede kører på port 3000:
 
 ```bash
-mkdir -p tslink-demo && printf '<h1>Hello from TSLink</h1>\n' > tslink-demo/index.html
-tslink share ./tslink-demo --name demo
-tslink url demo --wait
+tslink share 3000 --name myapp
+tslink url myapp --wait
 ```
 
-Første gang viser TSLink et loginlink til registrering af den nye tjenesteknude; dit tailnet kan også kræve, at en administrator godkender enheden. Åbn derefter tjenestens URL på en tilladt enhed, der er logget ind på dit tailnet. Et API-token er ikke nødvendigt.
+Vælg et ledigt navn; returnerer `share` et andet, bruges det i `url`. Afslut først den viste browserregistrering og enhedsgodkendelse, og åbn derefter den præcise app-URL på en tilladt enhed. `share` starter baggrundstjenesten efter behov. Denne private førstegangsbrug kræver intet administrator-API-token. Del filer med `tslink share ./report.html`; filer skal findes, og apps skal køre. [Fuld opsætning](getting-started.md)
 
-Se, hvad der deles, og fjern så demoen:
+Når det virker for dig, må du gerne [give TSLink en stjerne](https://github.com/anydoor7/tslink), så andre kan opdage det. Det er helt frivilligt.
 
-```bash
-tslink status --urls
-tslink remove demo
-```
+<a id="architecture"></a>
 
-Andre ting, du kan dele, når deres backend kører:
+## Sådan hænger det sammen
 
-| Indhold | Kommando |
-|---|---|
-| En lokal webapp | `tslink share 3000` |
-| En mappe med filer | `tslink share ./public --name files` |
-| Et lokalt model-API, som Ollama | `tslink add model --proxy localhost:11434` |
-| En database via privat TCP | `tslink add database --tcp localhost:5432` |
-| En kendt selvhostet app (Jellyfin, Immich, Home Assistant og 13 andre) | `tslink apps detect`, derefter `tslink apps share jellyfin --yes` |
+<picture>
+  <source media="(max-width: 600px) and (prefers-color-scheme: dark)" srcset="assets/service-map-dark-mobile.svg">
+  <source media="(max-width: 600px)" srcset="assets/service-map-light-mobile.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="assets/service-map-dark.svg">
+  <img src="assets/service-map-light.svg" alt="Én pc eller cloudvært: CLI/MCP styrer en fælles dæmon og noder pr. app. Private enheder bruger krypteret Tailscale; valgfri offentlig HTTPS/Funnel når HTTP-apps via gæsteadgang eller udtrykkelig åben deling." width="960">
+</picture>
 
-[Introduktion, platforme og baggrundstjeneste →](getting-started.md)
+Tænk på en privat, krypteret vej til dine apps. **Tailscale leverer netværkstransport og HTTPS; TSLink administrerer appadgang på hver vært.** Én dæmon kører en indlejret node pr. tjeneste. Den private portal viser tilladte apps; sundhed og adgangshistorik hjælper med vedligeholdelsen.
 
-## Vælg, hvem der kan åbne den
-
-| Målgruppe | Hvad modtageren behøver | Identitet | Adgangen slutter |
-|---|---|---|---|
-| **Dine egne enheder** | Login på dit tailnet | Verificeret Tailscale-login | Når du fjerner appen |
-| **Navngivne personer** (privat HTTP/filer) | Et Tailscale-login; personer udenfor accepterer én invitation pr. app | Verificeret Tailscale-login | Ved den valgte frist (`--for 7d`) eller med `tslink people remove` |
-| **Alle med URL'en** (Funnel) | En browser | Alle; appens eget login gælder stadig | Efter 24 timer som standard (`--funnel-ttl`) |
-| **Gæstelink til browser** | En browser og eventuelt en PIN | Den, der har linket | Ved egen udløbsfrist eller tilbagekaldelse |
-
-```bash
-tslink people add alice@example.com --apps photos --for 7d
-tslink people list
-tslink people remove alice@example.com
-```
-
-Frister for private HTTP- og fildelinger kontrolleres ved hver forespørgsel. Tilbagekaldelse stopper nye forespørgsler; den kan ikke hente downloadede data tilbage eller lukke allerede accepterede streams og WebSocket-forbindelser. [Deling med personer →](people.md) · [Grænser for deling →](sharing.md)
+Offentlig adgang er et aktivt tilvalg: gæster behøver link og eventuel pinkode; åben Funnel kan nås af alle med URL'en. Begge bruger offentlig HTTPS, ikke privat brugeridentitet. Rå TCP forbliver privat med tailnet-politik og backend-godkendelse. TSLink installerer ikke apps, isolerer ikke værtsprocesser, opretter ikke en cloud-VPC og samler ikke flere værter. Et uafhængigt projekt, der fungerer med Tailscale. [Arkitektur og grænser](architecture.md)
 
 <a id="agents"></a>
 
 ## Til agenter
 
-TSLink indeholder en MCP-server, så en agent kan dele, liste, forklare og fjerne delinger ligesom dig. Tilføj den til en lokal MCP-klient:
+Administrer oversigt, sundhed, URL'er og adgang via CLI/MCP. Start med [agentguiden](agent-quickstart.md), læs de aktuelle værktøjsskemaer, og kontroller reel appadgang, før du melder succes.
 
 ```json
-{
-  "mcpServers": {
-    "tslink": { "command": "tslink", "args": ["mcp"] }
-  }
-}
+{"mcpServers":{"tslink":{"command":"tslink","args":["mcp"]}}}
 ```
 
-- **Præcise resultater.** CLI-automatisering understøtter `--json` med `schema_version: 1` og stabile fejlkoder; `tslink mcp` bruger i stedet JSON-RPC. `tslink manifest` beskriver hver kommando og hvert flag. Agenter bør hente rigtige URL'er med `tslink url <name> --wait` i stedet for at konstruere dem.
-- **Tydelige ventetilstande.** En ny knude, der stadig kræver en persons login, rapporterer `needs_login` i stedet for at foregive at være klar.
-- **Rettigheder.** Lokal MCP kører med din brugers rettigheder. Fjern-MCP er et tilvalg, kun tilgængeligt i dit tailnet og begrænset til de angivne loginidentiteter eller tags. Roller pr. agent, appafgrænsninger og handlingskvitteringer er tilgængelige.
+CLI-automatisering bruger `--json`; MCP bruger JSON-RPC via stdio. [Klienter](mcp-clients.md) · [Fjern-MCP](remote-mcp.md) · [Roller og appafgrænsning](mcp-scopes.md)
 
-MCP i TSLink styrer TSLink selv. Udgiver du en anden MCP-server gennem TSLink, skal den stadig have sine egne værktøjsrettigheder.
-[Agentvejledning →](agents.md) · [MCP-klienter →](mcp-clients.md) · [Fjern-MCP →](remote-mcp.md) · [JSON-automatisering →](json-automation.md)
-
-## Hvornår andre værktøjer passer bedre
-
-| Hvis du vil have | Overvej |
-|---|---|
-| Én lokal tjeneste på dine egne enheder med den Tailscale-klient, du allerede kører | [`tailscale serve`](https://tailscale.com/docs/reference/tailscale-cli/serve) |
-| Administratorstyrede tjenester med stabile navne på tværs af flere værter | [Tailscale Services](https://tailscale.com/docs/features/tailscale-services) |
-| En offentlig URL til en webhook eller API-demo uden en Tailscale-konto | [ngrok](https://ngrok.com/docs/start) eller [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/) |
-| Installere og køre selvhostede apps, ud over at dele dem | [Umbrel](https://umbrel.com) eller [Coolify](https://coolify.io) |
-| En identitetsbaseret adgangsplatform til hele organisationen | [Pangolin](https://github.com/fosrl/pangolin) eller [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/) |
-
-TSLink passer, når én person kører flere apps og ønsker tidsbegrænset adgang pr. app og person, som både personen og agenten kan undersøge.
-
-## Sådan virker det
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/service-map-dark.svg">
-  <img src="assets/service-map-light.svg" alt="App, Docs, Database og Model er særskilte navngivne knuder i ét tailnet, drevet af én TSLink-daemon på computeren, der udgiver tjenesterne." width="720">
-</picture>
-
-Én baggrundsdaemon kører en indlejret Tailscale-knude for hver app, så hver app har sit eget navn og sin egen adresse. For privat HTTP og filer styrer `WhoIs` og personrettigheder eller `--allow`-regler adgangen; personfrister kontrolleres ved hver forespørgsel. Rå TCP bruger tailnet-politikken og backendens godkendelse. Tailscale leverer tailnet-transport, kryptering og certifikater; TSLink er et uafhængigt projekt. Alle apps deler computeren, der udgiver dem, så TSLink isolerer dem ikke fra hinanden. [Arkitektur →](architecture.md)
-
-## Status
-
-Tilgængeligt nu: private adresser pr. app, personer med frister og samlede invitationer, offentlig Funnel med udløb, apphelbredstjek og alarmer, opskrifter til selvhostede apps, forespørgselsgrænser pr. app, genstart efter nedbrud i Windows, CLI og MCP. Også tilgængeligt: gæstelinks til browser, fleksible varigheder, adgangslog, en startside med dine apps, afgrænsede agentroller, QR-introduktion og adgangsanmodninger.
-
-En fælles liste for flere computere er planlagt. [Udviklingsplan →](roadmap.md)
+<a id="roadmap"></a>
+<a id="documentation"></a>
 
 ## Dokumentation og licens
 
-[llms.txt](../llms.txt) · [Hurtig start for agenter](agent-quickstart.md) · [Vælg et værktøj til deling](comparison.md)
+[Alle vejledninger](INDEX.md) · [CLI-reference](cli-reference.md) · [Lokal AI](local-ai.md) · [Sundhed](health-and-alerts.md) · [Adgangshistorik](access-log.md) · [Planer](roadmap.md)
 
-[Introduktion](getting-started.md) · [CLI-reference](cli-reference.md) · [Platforme](platforms.md) · [Lokale modeller](local-ai.md) · [Bidrag](../CONTRIBUTING.md) · [Sikkerhed](../SECURITY.md)
-
-Apache License 2.0, også til kommerciel brug. Bevar [NOTICE](../NOTICE) og [tredjepartsmeddelelser](../THIRD_PARTY_NOTICES.md) ved videredistribution. Vilkår for Tailscale og abonnementer gælder separat.
+En oversigt på tværs af værter er planlagt. [Bidrag](../CONTRIBUTING.md) og [sikkerhedsrapporter](../SECURITY.md) er velkomne. [Apache 2.0](../LICENSE) tillader erhvervsbrug; bevar [NOTICE](../NOTICE) og [tredjepartsmeddelelser](../THIRD_PARTY_NOTICES.md) ved videredistribution. [Kommercielt samarbejde](../COMMERCIAL.md) er frivilligt. Tailscales vilkår og abonnementer gælder særskilt.

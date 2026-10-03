@@ -1,140 +1,91 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/tslink-mark-dark.svg">
-    <img src="assets/tslink-mark-light.svg" width="88" height="88" alt="TSLink-Logo">
+    <img src="assets/tslink-mark-light.svg" width="88" height="88" alt="TSLink logo">
   </picture>
 </p>
-
 <h1 align="center">TSLink</h1>
+<p align="center"><strong>Deine Apps überall nutzen und verwalten.<br>Privat behalten oder zu deinen Bedingungen teilen.</strong></p>
 
+Deine Apps auf deinem Computer oder Cloud-Server: Greife über ein verschlüsseltes privates Netzwerk darauf zu oder aktiviere bewusst Browser-Gastlinks und öffentlichen Zugriff. Bediene sie selbst oder über einen Agenten.
+
+<p align="center"><a href="#quickstart">Schnellstart</a> · <a href="#agents">Für Agenten</a> · <a href="#documentation">Dokumentation</a></p>
 <p align="center">
-  <strong>Teile die Apps auf deinem Computer mit den Menschen deiner Wahl, so lange du möchtest.</strong><br>
-  Jede App erhält eine eigene private Adresse in deinem Tailscale-Netzwerk. Sieh nach, wer Zugriff hat, und entziehe ihn wieder.
+<a href="../README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.zh-TW.md">繁體中文</a> · <a href="README.ko.md">한국어</a> · <strong>Deutsch</strong> · <a href="README.es.md">Español</a> · <a href="README.fr.md">Français</a> · <a href="README.it.md">Italiano</a> · <a href="README.da.md">Dansk</a> · <a href="README.ja.md">日本語</a> · <a href="README.pl.md">Polski</a> · <a href="README.ru.md">Русский</a> · <a href="README.bs.md">Bosanski</a> · <a href="README.ar.md">العربية</a> · <a href="README.no.md">Norsk</a> · <a href="README.pt-BR.md">Português (Brasil)</a> · <a href="README.th.md">ไทย</a> · <a href="README.tr.md">Türkçe</a> · <a href="README.uk.md">Українська</a> · <a href="README.bn.md">বাংলা</a> · <a href="README.el.md">Ελληνικά</a> · <a href="README.vi.md">Tiếng Việt</a>
 </p>
 
-<p align="center">
-  <a href="#quickstart">Schnellstart</a> · <a href="#agents">Für Agenten</a> · <a href="getting-started.md">Dokumentation</a> ·
-  <strong>Deutsch</strong> · <a href="../README.md">English</a> · <a href="INDEX.md#translated-homepages">Alle Sprachen</a>
-</p>
+<a id="use-cases"></a>
 
-## Wofür Menschen TSLink nutzen
+## Deine Apps in Reichweite
 
-- **Öffne deine Arbeit auf dem Handy.** Ein Bericht aus deinem Skript, ein Entwicklungsserver, ein Notebook oder eine lokale Modell-API: über eine private HTTPS-Adresse auf berechtigten Geräten erreichbar.
-- **Gib einer Person vorübergehend Zugriff auf eine App.** Lass deinen Partner eine Woche lang die Fotobibliothek nutzen oder einen Kollegen drei Tage lang deine Vorschau testen. Der Zugriff endet automatisch; du kannst ihn auch früher beenden.
-- **Lass deinen Agenten das Teilen übernehmen.** Dein Coding-Agent hat gerade ein Dashboard gebaut. Bitte ihn, es bis Freitag mit dir und deinem Teamkollegen zu teilen. Er kann dir auch sagen, was gerade geteilt wird, und eine Freigabe zurücknehmen.
+| Dein Bedarf | Das bietet TSLink |
+|---|---|
+| Eigene Apps geräteübergreifend nutzen | Private Adressen für Heim-Dashboards, nur lokal erreichbare Webseiten, Dateien, Modell-APIs und TCP-Dienste auf PC oder Server. |
+| Mit bestimmten Personen teilen | Ausgewählte HTTP-/Datei-Apps, geprüfte Tailscale-Anmeldungen, Ablauf und Widerruf. Empfänger brauchen Tailscale. [Personen](people.md) |
+| Besuch per Browser ermöglichen | Befristete Gastlinks mit optionaler PIN für HTTP-Proxy-Apps oder ausdrücklich öffentliches HTTPS über Funnel. Links sind weiterleitbar und kein Identitätsnachweis. [Gastlinks](guest-links.md) |
+| Eine App-Sammlung verwalten | Inventar je Host, privates Portal, Zustandsprüfungen und Alarme, Zugriffshistorie sowie CLI/MCP-Zugriffsverwaltung mit Agentenrollen, App-Grenzen und Auditbelegen. [Portal](portal.md) · [MCP-Berechtigungen](mcp-scopes.md) |
 
-Deine Apps laufen weiter an ihrem bisherigen Ort. TSLink steuert, wer welche App erreichen kann, und führt eine Liste: Was ist geteilt, mit wem und bis wann?
+[App-Rezepte](apps.md), [Upload-Limits](sharing.md), [flexible Laufzeiten](durations.md) und [QR-Einstieg und Zugriffsanfragen](requests.md) erleichtern den Alltag. Diese Funktionen sind im vorliegenden Quellcode enthalten.
 
+<a id="installation"></a>
 <a id="quickstart"></a>
 
 ## Schnellstart
 
-Du brauchst **Go 1.26.6+**, Git und ein Tailscale-Konto mit [aktiviertem MagicDNS und HTTPS](https://tailscale.com/docs/how-to/set-up-https-certificates). Fertige Binärversionen sind noch nicht veröffentlicht; installiere deshalb aus dem Quellcode:
+Installation aus dem Quellcode mit **Git und Go 1.26.6+**. Fertige Releases und Homebrew sind noch nicht veröffentlicht. Die Befehle verwenden bash/zsh. [Einrichtung für macOS, Linux und Windows](platforms.md)
 
 ```bash
 git clone https://github.com/anydoor7/tslink.git
-cd tslink && go install .
+cd tslink
+go install .
 export PATH="$PATH:$(go env GOPATH)/bin"
 ```
 
-Teile eine Seite:
+Du brauchst Repository-Zugriff, ein **Tailscale-Konto** sowie [MagicDNS und HTTPS](https://tailscale.com/docs/how-to/set-up-https-certificates). Private Empfangsgeräte brauchen Tailscale und eine passende Netzwerkfreigabe. Auf dem App-Host ist Tailscale in TSLink eingebettet.
+
+Wenn deine App bereits auf Port 3000 läuft:
 
 ```bash
-mkdir -p tslink-demo && printf '<h1>Hello from TSLink</h1>\n' > tslink-demo/index.html
-tslink share ./tslink-demo --name demo
-tslink url demo --wait
+tslink share 3000 --name myapp
+tslink url myapp --wait
 ```
 
-Beim ersten Mal gibt TSLink einen Anmeldelink zur Registrierung des neuen Dienstknotens aus. Dein tailnet kann zusätzlich eine Gerätefreigabe durch einen Administrator verlangen. Öffne anschließend die Dienst-URL auf einem berechtigten Gerät, das in deinem tailnet angemeldet ist. Ein API-Token ist nicht nötig.
+Wähle einen freien Namen. Gibt `share` einen anderen zurück, verwende diesen bei `url`. Schließe zuerst die angezeigte Browser-Anmeldung und Gerätefreigabe ab und öffne dann die exakte App-URL auf einem erlaubten Gerät. `share` startet bei Bedarf den Hintergrunddienst. Dieser private Einstieg benötigt kein Admin-API-Token. Dateien teilst du mit `tslink share ./report.html`; Apps müssen laufen, Dateien existieren. [Vollständige Einrichtung](getting-started.md)
 
-Prüfe die Freigaben und entferne dann die Demo:
+Wenn es dir hilft, kannst du [TSLink einen Stern geben](https://github.com/anydoor7/tslink), damit andere es entdecken. Das ist völlig freiwillig.
 
-```bash
-tslink status --urls
-tslink remove demo
-```
+<a id="architecture"></a>
 
-Weitere Dinge, die du teilen kannst, sobald ihr Backend läuft:
+## So greift alles ineinander
 
-| Inhalt | Befehl |
-|---|---|
-| Eine lokale Web-App | `tslink share 3000` |
-| Ein Dateiordner | `tslink share ./public --name files` |
-| Eine lokale Modell-API, etwa Ollama | `tslink add model --proxy localhost:11434` |
-| Eine Datenbank über privates TCP | `tslink add database --tcp localhost:5432` |
-| Eine bekannte selbst gehostete App (Jellyfin, Immich, Home Assistant und 13 weitere) | `tslink apps detect`, dann `tslink apps share jellyfin --yes` |
+<picture>
+  <source media="(max-width: 600px) and (prefers-color-scheme: dark)" srcset="assets/service-map-dark-mobile.svg">
+  <source media="(max-width: 600px)" srcset="assets/service-map-light-mobile.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="assets/service-map-dark.svg">
+  <img src="assets/service-map-light.svg" alt="Ein PC oder Cloud-Host: CLI/MCP verwaltet einen gemeinsamen Daemon und Knoten je App. Private Geräte nutzen verschlüsselten Tailscale-Transport; optionales öffentliches HTTPS/Funnel erreicht HTTP-Apps über eine Gastprüfung oder ausdrücklich offene Freigabe." width="960">
+</picture>
 
-[Einstieg, Plattformen und Hintergrunddienst →](getting-started.md)
+Stell dir einen privaten, verschlüsselten Weg zu deinen Apps vor. **Tailscale liefert Netzwerktransport und HTTPS; TSLink verwaltet den App-Zugriff je Host.** Ein Daemon betreibt pro Dienst einen eigenen eingebetteten Knoten. Das private Portal zeigt erlaubte Apps; Zustand und Zugriffshistorie helfen bei der Pflege.
 
-## Bestimme, wer Zugriff bekommt
-
-| Zielgruppe | Was Empfänger brauchen | Identität | Ende |
-|---|---|---|---|
-| **Deine eigenen Geräte** | Anmeldung in deinem tailnet | Verifizierte Tailscale-Anmeldung | Wenn du die App entfernst |
-| **Benannte Personen** (privates HTTP/Dateien) | Eine Tailscale-Anmeldung; Außenstehende nehmen eine Einladung pro App an | Verifizierte Tailscale-Anmeldung | Zum gesetzten Termin (`--for 7d`) oder durch `tslink people remove` |
-| **Alle mit der URL** (Funnel) | Einen Browser | Beliebige Personen; die Anmeldung der App gilt weiterhin | Standardmäßig nach 24 Stunden (`--funnel-ttl`) |
-| **Gastlink für den Browser** | Einen Browser und optional eine PIN | Wer den Link besitzt | Bei Ablauf oder Widerruf |
-
-```bash
-tslink people add alice@example.com --apps photos --for 7d
-tslink people list
-tslink people remove alice@example.com
-```
-
-Bei privaten HTTP- und Dateifreigaben wird die Frist bei jeder Anfrage geprüft. Ein Widerruf verhindert neue Anfragen; bereits heruntergeladene Daten lassen sich nicht zurückholen, und angenommene Streams oder WebSocket-Verbindungen werden nicht geschlossen. [Mit Personen teilen →](people.md) · [Grenzen der Freigabe →](sharing.md)
+Öffentlicher Zugriff ist optional: Gäste brauchen Link und gegebenenfalls PIN; offenes Funnel ist für jeden mit der URL erreichbar. Beide nutzen öffentliches HTTPS statt privater Benutzeridentität. Rohes TCP bleibt privat und benötigt Tailnet-Regeln sowie Backend-Authentifizierung. TSLink installiert keine Apps, isoliert keine Host-Prozesse, erstellt keine Cloud-VPC und fasst keine Hosts zusammen. Unabhängiges Projekt, das mit Tailscale arbeitet. [Architektur und Grenzen](architecture.md)
 
 <a id="agents"></a>
 
 ## Für Agenten
 
-TSLink enthält einen MCP-Server. Ein Agent kann Freigaben genauso wie du erstellen, auflisten, erklären und entfernen. Füge ihn einem lokalen MCP-Client hinzu:
+Verwalte Inventar, Zustand, URLs und Zugriff per CLI/MCP. Beginne beim [Agenten-Schnellstart](agent-quickstart.md), lies die aktuellen Tool-Schemas und prüfe den tatsächlichen App-Zugriff, bevor du Erfolg meldest.
 
 ```json
-{
-  "mcpServers": {
-    "tslink": { "command": "tslink", "args": ["mcp"] }
-  }
-}
+{"mcpServers":{"tslink":{"command":"tslink","args":["mcp"]}}}
 ```
 
-- **Genaue Ergebnisse.** CLI-Automatisierung unterstützt `--json` mit `schema_version: 1` und stabilen Fehlercodes; `tslink mcp` verwendet stattdessen JSON-RPC. `tslink manifest` beschreibt jeden Befehl und jede Option. Agenten sollten echte URLs mit `tslink url <name> --wait` abrufen, statt sie zusammenzusetzen.
-- **Ehrliche Wartezustände.** Ein neuer Knoten, der noch eine menschliche Anmeldung benötigt, meldet `needs_login`, statt Einsatzbereitschaft vorzutäuschen.
-- **Berechtigungen.** Lokales MCP läuft mit deinen Benutzerrechten. Remote-MCP ist ein ausdrücklich aktivierter Endpunkt nur im tailnet, beschränkt auf die aufgeführten Anmeldungen oder Tags. Rollen pro Agent, App-Bereiche und Aktionsbelege sind verfügbar.
+CLI-Automatisierung nutzt `--json`, MCP nutzt JSON-RPC über stdio. [Clients](mcp-clients.md) · [Remote-MCP](remote-mcp.md) · [Rollen und App-Grenzen](mcp-scopes.md)
 
-Das MCP von TSLink steuert TSLink selbst. Wenn du einen anderen MCP-Server über TSLink veröffentlichst, braucht dieser weiterhin eigene Werkzeugberechtigungen.
-[Agentenleitfaden →](agents.md) · [MCP-Clients →](mcp-clients.md) · [Remote-MCP →](remote-mcp.md) · [JSON-Automatisierung →](json-automation.md)
-
-## Wann andere Werkzeuge passen
-
-| Dein Ziel | Mögliche Alternative |
-|---|---|
-| Ein lokaler Dienst auf deinen eigenen Geräten mit dem bereits laufenden Tailscale-Client | [`tailscale serve`](https://tailscale.com/docs/reference/tailscale-cli/serve) |
-| Administrativ verwaltete Dienste mit stabilen Namen über mehrere Hosts hinweg | [Tailscale Services](https://tailscale.com/docs/features/tailscale-services) |
-| Eine öffentliche URL für einen Webhook oder eine API-Demo ohne Tailscale-Konto | [ngrok](https://ngrok.com/docs/start) oder [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/) |
-| Selbst gehostete Apps installieren und betreiben, nicht nur teilen | [Umbrel](https://umbrel.com) oder [Coolify](https://coolify.io) |
-| Eine organisationsweite Zugriffsplattform mit Identitätsprüfung | [Pangolin](https://github.com/fosrl/pangolin) oder [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/) |
-
-TSLink passt, wenn eine Person mehrere Apps betreibt und zeitlich begrenzten Zugriff pro App und Person möchte, den sie und ihr Agent prüfen können.
-
-## So funktioniert es
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/service-map-dark.svg">
-  <img src="assets/service-map-light.svg" alt="App, Docs, Database und Model sind getrennte, benannte Knoten in einem tailnet, betrieben von einem TSLink-Daemon auf dem veröffentlichenden Computer." width="720">
-</picture>
-
-Ein Hintergrund-Daemon betreibt für jede App einen eingebetteten Tailscale-Knoten mit eigenem Namen und eigener Adresse. Bei privaten HTTP- und Dateifreigaben regeln `WhoIs` und Personenfreigaben oder `--allow`-Regeln den Zugriff; Personenfristen werden bei jeder Anfrage geprüft. Rohes TCP verwendet die tailnet-Richtlinie und die Authentifizierung des Backends. Tailscale liefert tailnet-Transport, Verschlüsselung und Zertifikate; TSLink ist ein unabhängiges Projekt. Alle Apps teilen sich den veröffentlichenden Computer und werden durch TSLink nicht voneinander isoliert. [Architektur →](architecture.md)
-
-## Stand
-
-Jetzt verfügbar: private Adressen pro App, Personenfreigaben mit Fristen und gebündelten Einladungen, öffentliches Funnel mit Ablaufdatum, App-Gesundheitsprüfungen und Warnungen, Rezepte für selbst gehostete Apps, Anfragegrenzen pro App, automatischer Neustart des Daemons nach Abstürzen unter Windows, CLI und MCP. Ebenfalls verfügbar: Browser-Gastlinks, flexible Laufzeiten, ein Zugriffsprotokoll, eine Startseite deiner Apps, begrenzte Agentenrollen, QR-Einrichtung und Zugriffsanfragen.
-
-Eine gemeinsame Liste für mehrere Computer ist geplant. [Roadmap →](roadmap.md)
+<a id="roadmap"></a>
+<a id="documentation"></a>
 
 ## Dokumentation und Lizenz
 
-[llms.txt](../llms.txt) · [Schnellstart für Agenten](agent-quickstart.md) · [Das passende Freigabetool wählen](comparison.md)
+[Alle Anleitungen](INDEX.md) · [CLI-Referenz](cli-reference.md) · [Lokale KI](local-ai.md) · [Zustand](health-and-alerts.md) · [Zugriffshistorie](access-log.md) · [Roadmap](roadmap.md)
 
-[Einstieg](getting-started.md) · [CLI-Referenz](cli-reference.md) · [Plattformen](platforms.md) · [Lokale Modelle](local-ai.md) · [Mitwirken](../CONTRIBUTING.md) · [Sicherheit](../SECURITY.md)
-
-Apache License 2.0, einschließlich kommerzieller Nutzung. Bewahre bei Weitergabe [NOTICE](../NOTICE) und die [Drittherstellerhinweise](../THIRD_PARTY_NOTICES.md) auf. Die Bedingungen und Tarife von Tailscale gelten separat.
+Ein hostübergreifendes Inventar ist geplant. [Beiträge](../CONTRIBUTING.md) und [Sicherheitsmeldungen](../SECURITY.md) sind willkommen. [Apache 2.0](../LICENSE) erlaubt kommerzielle Nutzung; [NOTICE](../NOTICE) und [Drittanbieterhinweise](../THIRD_PARTY_NOTICES.md) müssen bei Weitergabe erhalten bleiben. [Kommerzielle Zusammenarbeit](../COMMERCIAL.md) ist freiwillig. Tailscale-Bedingungen und -Tarife gelten separat.
