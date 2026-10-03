@@ -1,0 +1,17 @@
+# Truncate file
+
+echo data >file
+watch /
+echo data >file
+
+Output:
+	write  /file  # truncate
+	write  /file  # write
+
+	# Truncate is chmod on kqueue, except dragonfly where it seems a write.
+	kqueue:
+		chmod  /file
+		write  /file
+	dragonfly:
+		write  /file
+		write  /file

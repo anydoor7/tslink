@@ -1,5 +1,9 @@
 module github.com/anydoor7/tslink
 
+// Scoped fsnotify v1.10.1 kqueue ownership repair; provenance and removal criteria
+// are recorded in third_party/fsnotify/NOTICE.tslink.
+replace github.com/fsnotify/fsnotify => ./third_party/fsnotify
+
 go 1.26.6
 
 require (

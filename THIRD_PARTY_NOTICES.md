@@ -21,7 +21,7 @@ Linked third-party modules: 55
 | `github.com/creachadair/msync` | v0.8.1 | BSD-2-Clause | `LICENSE` |
 | `github.com/danieljoos/wincred` | v1.2.3 | MIT | `LICENSE` |
 | `github.com/dblohm7/wingoes` | v0.0.0-20240119213807-a09d6be7affa | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
-| `github.com/fsnotify/fsnotify` | v1.10.1 | BSD-3-Clause | `LICENSE` |
+| `github.com/fsnotify/fsnotify` | v1.10.1 | BSD-3-Clause | `LICENSE`, `NOTICE.tslink` |
 | `github.com/fxamacker/cbor/v2` | v2.9.0 | MIT | `LICENSE`, `Linked source copyright and license headers` |
 | `github.com/gaissmai/bart` | v0.26.1 | MIT | `LICENSE`, `Linked source copyright and license headers` |
 | `github.com/go-json-experiment/json` | v0.0.0-20260214004413-d219187c3433 | BSD-3-Clause | `LICENSE`, `Linked source copyright and license headers` |
@@ -341,7 +341,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 - Module-root license: BSD-3-Clause (nested and embedded components may differ)
 - Evidence source: `github.com/fsnotify/fsnotify@v1.10.1` from the resolved Go module graph
-- Included files: `LICENSE`
+- Included files: `LICENSE`, `NOTICE.tslink`
 
 #### LICENSE
 
@@ -371,6 +371,59 @@ LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
 ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+~~~~
+
+#### NOTICE.tslink
+
+~~~~text
+TSLink scoped fsnotify dependency
+
+Upstream: https://github.com/fsnotify/fsnotify
+Version: v1.10.1
+Commit: 76b01a6e8f502187fecedea8b025e79e5a86085c
+License: BSD-3-Clause; the upstream LICENSE is retained verbatim.
+
+This directory retains the library's source for all upstream platforms,
+internal helpers, complete library tests and testdata. Upstream examples/CLI,
+CI scripts and general documentation are omitted. No transitive dependency
+sources are copied. The upstream go.mod and go.sum remain unchanged.
+
+Local changes (2026-10-03):
+- backend_kqueue.go serializes watch descriptor operations, leaves final
+  disposal to the reader, joins that reader from every Close call, clears all
+  retained watch maps, and does not release an existing watch descriptor when
+  re-registration fails. There is an unexported instance-local removal barrier
+  for the deterministic test; it is nil in normal use.
+- ownership_kqueue_test.go checks real HTTP listeners across overlapping
+  removal/Close, concurrent and repeated Close, public Add/Remove concurrency,
+  retained descriptors/state, and registration failure ownership.
+- fsnotify_test.go excludes only INDEX.md inventory documentation from the
+  script fixture enumeration. All upstream test scripts are retained.
+- INDEX.md inventories are local documentation.
+
+Public signatures are unchanged. On kqueue, Close now waits for watch disposal,
+reader exit and closure of Events then Errors. It cancels blocked channel sends
+before waiting, and takes no descriptor lock while joining. Add returns
+ErrClosed after closure; Remove retains its upstream no-op behavior after Close.
+Linux and Windows backends are byte-identical to v1.10.1.
+
+Why a local replacement: v1.10.1 Close can close a descriptor already in use by
+the reader's removal path; reuse can turn the second raw close into destruction
+of an unrelated HTTP listener. Current upstream main as of 2026-10-03
+(20b1e15ef3c70caeb37ea2bd184f48ef8382669e) refactors Close through remove2 but
+does not serialize descriptor operations or join the reader. The older revision
+before eadf267ce152b5e62d48cc2c13bb08bd4062b6c7 leaks watches on Close (#732).
+
+Build from a complete TSLink checkout or Git source archive so the relative
+go.mod replacement resolves. Version-suffixed `go install` through a module
+proxy does not support a module with this local replacement. Release binaries
+are built from a checkout and include this notice through gen-notices.
+
+Maintenance: replace this scoped copy with an upstream release only after the
+ownership regressions and complete native/race suites pass against that exact
+revision. Recheck all supported platforms and regenerate THIRD_PARTY_NOTICES.md.
+Run library tests explicitly from this directory; parent `go test ./...` does
+not traverse a nested module. The release-candidate native job does both.
 ~~~~
 
 ### `github.com/fxamacker/cbor/v2` v2.9.0
