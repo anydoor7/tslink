@@ -160,26 +160,34 @@ func TestPeopleLifecycleTickExpiresDurably(t *testing.T) {
 	serverNowFn = func() time.Time { return deadline }
 	lifecycleTickerInterval = time.Millisecond
 	registryPathFn = func() (string, error) { return path, nil }
-	s := &Server{lifecycleReconcileFn: func(context.Context, time.Time) (bool, error) { return false, nil }}
+	tickCompleted := make(chan struct{}, 1)
+	s := &Server{lifecycleReconcileFn: func(context.Context, time.Time) (bool, error) {
+		// Reconciliation runs after the expiry write has returned.
+		select {
+		case tickCompleted <- struct{}{}:
+		default:
+		}
+		return false, nil
+	}}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := s.startLifecycleTicker(ctx)
 	// Captured clock must remain the deadline, despite changing the seam.
 	serverNowFn = func() time.Time { return now.Add(-time.Hour) }
-	defer func() { cancel(); <-done }()
-	timeout := time.After(time.Second)
-	for {
-		reg, err := registry.Load(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if reg.People[0].Grants[0].Expired {
-			break
-		}
-		select {
-		case <-timeout:
-			t.Fatal("tick did not persist expired grant")
-		case <-time.After(time.Millisecond):
-		}
+	t.Cleanup(func() { cancel(); <-done })
+	select {
+	case <-tickCompleted:
+	case <-time.After(time.Second):
+		t.Fatal("tick did not complete")
+	}
+	// Join the writer before checking durability, including on test failure.
+	cancel()
+	<-done
+	reg, err := registry.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reg.People) != 1 || len(reg.People[0].Grants) != 1 || !reg.People[0].Grants[0].Expired {
+		t.Fatal("tick did not persist expired grant")
 	}
 }
 

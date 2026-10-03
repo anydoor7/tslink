@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -128,6 +129,44 @@ func TestBuiltinSupervisorStateConcurrentReadersSeeCompleteRecords(t *testing.T)
 	}
 	if got, err := readBuiltinSupervisor(pidPath); err != nil || got.Reason != record.Reason {
 		t.Fatalf("final record=%+v err=%v", got.SupervisorState, err)
+	}
+}
+
+func TestBuiltinSupervisorStateWriterPreservesHeldSnapshot(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "supervisor.json")
+	if err := os.WriteFile(path, []byte("old"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	// The same shared-delete handle a concurrent status reader holds.
+	f, err := openBuiltinSupervisorState(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	// No retry budget: the first replacement must succeed while the handle is
+	// held. Plain rename returns ERROR_ACCESS_DENIED here until the reader closes.
+	sleeps := 0
+	now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	clock := daemon.SupervisorClock{Now: func() time.Time { return now }, Sleep: func(context.Context, time.Duration) error {
+		sleeps++
+		now = now.Add(time.Hour)
+		return nil
+	}}
+	if err := writeBuiltinSupervisorState(path, []byte("new"), clock); err != nil || sleeps != 0 {
+		t.Fatalf("held shared reader blocked replacement: err=%v sleeps=%d", err, sleeps)
+	}
+	old, err := io.ReadAll(f)
+	if err != nil || string(old) != "old" {
+		t.Fatalf("held snapshot = %q, %v", old, err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || string(data) != "new" {
+		t.Fatalf("fresh record = %q, %v", data, err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("temporary files leaked: %v, %v", entries, err)
 	}
 }
 

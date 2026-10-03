@@ -11,3 +11,4 @@
 - [supervisor_windows.go](supervisor_windows.go)
 - [task_process_windows.go](task_process_windows.go)
 - [task_process_windows_test.go](task_process_windows_test.go)
+- `daemon_test.go`, `helper_signal_unix_test.go`: copied daemon fixtures handle shutdown signals without treating Go's SIGURG preemption as an exit request.

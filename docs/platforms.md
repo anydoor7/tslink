@@ -14,6 +14,31 @@
 | Linux | `--daemon` | systemd user service | Graceful SIGTERM |
 | Windows | `--daemon` | Per-user Task Scheduler (Startup fallback) | Graceful named event |
 
+## Windows registry access
+
+Registry readers allow Windows delete sharing, so the daemon can replace
+`registry.json` while a command or request reads the previous complete snapshot.
+Replacement uses the Windows extended rename API with POSIX semantics, with
+Go's rename as a fallback when the filesystem rejects that API. Each attempt
+uses the same synced temporary file.
+Registry file operations retry Windows sharing violations (32) and access-denied
+errors (5) up to seven times, with 63 ms of total backoff. Persistent denial and
+other errors still reach the caller; this retry budget does not bound filesystem
+operation time or OS scheduling delays. No Windows settings need to change.
+
+While a held file is being replaced, a new open by name can briefly report
+that the file does not exist. Registry reads therefore treat "not found" as
+genuine only when no TSLink temporary file for it is present; otherwise they
+read again, sleeping at most 255 ms in total. A missing registry is still
+reported as missing, so a reader never sees an empty registry because a write
+was in progress.
+
+The built-in supervisor's `supervisor.json` uses the same shared-delete readers
+and POSIX-semantics replacement, so `tslink status` or `stop` reading the record
+cannot block a state update, and its reads apply the same not-found check. Its writer retries errors 32 and 5 for up to one
+second, reusing one synced temporary file; a reader that omits delete sharing
+can still block it for that long.
+
 ## Windows unattended operation
 
 `tslink install` registers `TSLink-<current-user-SID>` in Task Scheduler using

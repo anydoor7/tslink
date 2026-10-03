@@ -45,13 +45,24 @@ func readBuiltinSupervisor(pidPath string) (builtinSupervisorRecord, error) {
 	if err := atomicfile.ConvergePrivateFile(path); err != nil {
 		return builtinSupervisorRecord{}, err
 	}
-	f, err := openBuiltinSupervisorState(path)
+	// A fresh by-name open can briefly report not-exist while the writer
+	// replaces the record; ReadSettled keeps stop/status from reading that as
+	// "no supervisor".
+	var data []byte
+	var readErr error
+	err := atomicfile.ReadSettled(path, func() error {
+		f, err := openBuiltinSupervisorState(path)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		data, readErr = io.ReadAll(io.LimitReader(f, 65537))
+		return nil
+	})
 	if err != nil {
 		return builtinSupervisorRecord{}, err
 	}
-	defer f.Close()
-	data, err := io.ReadAll(io.LimitReader(f, 65537))
-	if err != nil || len(data) > 65536 {
+	if readErr != nil || len(data) > 65536 {
 		return builtinSupervisorRecord{}, fmt.Errorf("supervisor state unreadable or oversized")
 	}
 	var record builtinSupervisorRecord
@@ -65,33 +76,34 @@ func readBuiltinSupervisor(pidPath string) (builtinSupervisorRecord, error) {
 	return record, nil
 }
 
+// Go's os.Open omits FILE_SHARE_DELETE. A status reader holding that handle
+// would make atomic replacement fail and shut down supervision mid-restart.
 func openBuiltinSupervisorState(path string) (*os.File, error) {
-	wide, err := windows.UTF16PtrFromString(path)
-	if err != nil {
-		return nil, err
-	}
-	// Go's os.Open omits FILE_SHARE_DELETE. A status reader holding that handle
-	// would make atomic replacement fail and shut down supervision mid-restart.
-	h, err := windows.CreateFile(wide, windows.GENERIC_READ, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil, windows.OPEN_EXISTING, windows.FILE_ATTRIBUTE_NORMAL, 0)
-	if err != nil {
-		return nil, &os.PathError{Op: "open", Path: path, Err: err}
-	}
-	return os.NewFile(uintptr(h), path), nil
+	return atomicfile.OpenSharedRead(path)
 }
+
+// replaceBuiltinSupervisorStateFn is the replacement primitive; tests swap it
+// to prove that a plain rename cannot coexist with concurrent status readers.
+var replaceBuiltinSupervisorStateFn = atomicfile.ReplaceFile
 
 func writeBuiltinSupervisorState(path string, data []byte, clock daemon.SupervisorClock) error {
 	deadline := clock.Now().Add(time.Second)
-	for {
-		err := atomicfile.WriteFileInExistingDir(path, data, atomicfile.PrivateFileMode)
-		if err == nil || (!errors.Is(err, windows.ERROR_SHARING_VIOLATION) && !errors.Is(err, windows.ERROR_ACCESS_DENIED)) || !clock.Now().Before(deadline) {
-			return err
+	// Retry only the replacement of one prepared temporary file. POSIX-semantics
+	// replacement succeeds while shared-delete readers hold the old record;
+	// os.Rename (MoveFileEx) returned ERROR_ACCESS_DENIED for the whole budget.
+	return atomicfile.WriteFileInExistingDirWithReplace(path, data, atomicfile.PrivateFileMode, func(source, target string) error {
+		for {
+			err := replaceBuiltinSupervisorStateFn(source, target)
+			if err == nil || (!errors.Is(err, windows.ERROR_SHARING_VIOLATION) && !errors.Is(err, windows.ERROR_ACCESS_DENIED)) || !clock.Now().Before(deadline) {
+				return err
+			}
+			// Third-party readers may omit FILE_SHARE_DELETE. Bound this transient
+			// sharing race; permanent I/O failures still stop and reclaim the child.
+			if err := clock.Sleep(context.Background(), 10*time.Millisecond); err != nil {
+				return err
+			}
 		}
-		// Third-party readers may omit FILE_SHARE_DELETE. Bound this transient
-		// sharing race; permanent I/O failures still stop and reclaim the child.
-		if err := clock.Sleep(context.Background(), 10*time.Millisecond); err != nil {
-			return err
-		}
-	}
+	})
 }
 
 // Stop the parent first, even while no daemon PID exists. Its shutdown event

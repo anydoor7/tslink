@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 )
@@ -80,6 +81,12 @@ func ConvergePrivateFile(path string) error {
 	}
 	if info.Mode().Perm() != PrivateFileMode {
 		if err := chmodFn(path, PrivateFileMode); err != nil {
+			// The name vanished after Lstat: on Windows a concurrent replacement
+			// briefly hides it. Treat it like a missing file and leave the
+			// caller's read to decide whether it is genuinely absent.
+			if errors.Is(err, fs.ErrNotExist) {
+				return nil
+			}
 			return err
 		}
 	}
@@ -98,6 +105,17 @@ func WriteFile(path string, data []byte) error {
 	return writeFile(path, data, PrivateFileMode)
 }
 
+// WriteFileWithReplace lets the caller replace one fully written, synced and
+// closed temporary file using its platform-specific primitive and retry policy.
+// The callback must replace source with target on success, and preserve both
+// paths on failure. Preparation, target validation and cleanup remain shared.
+func WriteFileWithReplace(path string, data []byte, replace func(string, string) error) error {
+	if err := EnsurePrivateDir(filepath.Dir(path)); err != nil {
+		return err
+	}
+	return writeFileWithReplace(path, data, PrivateFileMode, replace)
+}
+
 // WriteFileInExistingDir atomically writes a file without creating or changing
 // the parent directory. It validates that the existing parent is a directory,
 // is owned by the current user where ownership is available, and, on Unix, is
@@ -111,6 +129,16 @@ func WriteFileInExistingDir(path string, data []byte, mode os.FileMode) error {
 		return err
 	}
 	return writeFile(path, data, mode.Perm())
+}
+
+// WriteFileInExistingDirWithReplace combines WriteFileInExistingDir's parent
+// validation with WriteFileWithReplace's caller-owned replacement step: replace
+// may retry the same fully written, synced and closed temporary file.
+func WriteFileInExistingDirWithReplace(path string, data []byte, mode os.FileMode, replace func(string, string) error) error {
+	if err := validateExistingParent(path); err != nil {
+		return err
+	}
+	return writeFileWithReplace(path, data, mode.Perm(), replace)
 }
 
 func validateExistingParent(path string) error {
@@ -140,6 +168,10 @@ func validateExistingParent(path string) error {
 }
 
 func writeFile(path string, data []byte, mode os.FileMode) error {
+	return writeFileWithReplace(path, data, mode, renameFn)
+}
+
+func writeFileWithReplace(path string, data []byte, mode os.FileMode, replace func(string, string) error) error {
 	dir := filepath.Dir(path)
 	if err := validateReplaceTarget(path); err != nil {
 		return err
@@ -171,7 +203,7 @@ func writeFile(path string, data []byte, mode os.FileMode) error {
 	if err := closeFileFn(f); err != nil {
 		return err
 	}
-	if err := renameFn(tmpPath, path); err != nil {
+	if err := replace(tmpPath, path); err != nil {
 		return err
 	}
 	renamed = true

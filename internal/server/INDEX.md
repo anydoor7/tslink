@@ -46,3 +46,4 @@ This index covers the recipe integration tests. The repository AGENTS.md describ
 - `request_limits_read_timer_test.go`: HTTP/2 upload timers, backend backpressure and stale callback isolation.
 
 - Watcher fixtures stop and join their workers, then close file nodes before temporary directory cleanup on Windows.
+- `people_test.go`: lifecycle durability waits for post-expiry reconciliation and joins the ticker before reading its registry file.
