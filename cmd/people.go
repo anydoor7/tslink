@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/anydoor7/tslink/internal/config"
+	"github.com/anydoor7/tslink/internal/duration"
 	"github.com/anydoor7/tslink/internal/output"
 	"github.com/anydoor7/tslink/internal/registry"
 	tsruntime "github.com/anydoor7/tslink/internal/runtime"
@@ -19,9 +21,12 @@ import (
 var peopleNowFn = time.Now
 
 type peopleArguments struct {
+	Now        time.Time         `json:"-"`
 	Who        string            `json:"who"`
 	Apps       []string          `json:"apps,omitempty"`
 	For        *string           `json:"for,omitempty"`
+	Until      *string           `json:"until,omitempty"`
+	AckNever   bool              `json:"ack_never,omitempty"`
 	Invite     bool              `json:"invite,omitempty"`
 	PrintLinks bool              `json:"print_links,omitempty"`
 	Reconcile  map[string]string `json:"reconcile_invites,omitempty"`
@@ -159,7 +164,7 @@ func changePeople(ctx context.Context, paths sharePaths, args peopleArguments, u
 	if len(args.Reconcile) > 0 && (!update || !args.Invite) {
 		return PeopleResult{}, output.ErrUsage("reconcile-invite requires people update --invite")
 	}
-	if len(args.Replace) > 0 && (!update || !args.Invite || args.Apps != nil || args.For != nil) {
+	if len(args.Replace) > 0 && (!update || !args.Invite || args.Apps != nil || args.For != nil || args.Until != nil || args.AckNever) {
 		return PeopleResult{}, output.ErrUsage("replace-invite requires people update --invite without --apps or --for; grants and deadlines are preserved")
 	}
 	for app, id := range args.Replace {
@@ -186,17 +191,30 @@ func changePeople(ctx context.Context, paths sharePaths, args peopleArguments, u
 	if !update && len(args.Apps) == 0 {
 		return PeopleResult{}, output.ErrUsage("--apps is required; use a comma-separated app list or all")
 	}
-	if update && args.Apps == nil && args.For == nil && !args.Invite {
-		return PeopleResult{}, output.ErrUsage("update requires --apps, --for or --invite")
+	if update && args.Apps == nil && args.For == nil && args.Until == nil && !args.Invite {
+		return PeopleResult{}, output.ErrUsage("update requires --apps, --for, --until or --invite")
 	}
 	if args.Apps != nil && len(args.Apps) == 0 {
 		return PeopleResult{}, output.ErrUsage("apps must not be empty")
 	}
-	now := peopleNowFn()
-	var expires *time.Time
-	if args.For != nil {
-		expires, err = registry.ParsePersonExpiry(*args.For, now)
-		if err != nil {
+	now := args.Now
+	if now.IsZero() {
+		now = peopleNowFn()
+	}
+	value, err := lifetimeArgument(args.For, args.Until)
+	if err != nil {
+		return PeopleResult{}, err
+	}
+	policy, err := config.LoadLifetimePolicy()
+	if err != nil {
+		return PeopleResult{}, err
+	}
+	audience := duration.TailnetMember
+	if args.Invite {
+		audience = duration.Guest
+	}
+	if value != nil {
+		if _, err := policy.Resolve(*value, audience, args.AckNever, now, time.Local); err != nil {
 			return PeopleResult{}, output.ErrUsage(err.Error())
 		}
 	}
@@ -213,7 +231,7 @@ func changePeople(ctx context.Context, paths sharePaths, args peopleArguments, u
 			targets[target.Service] = target
 		}
 	}
-	p, err := registry.ChangePerson(paths.Registry, args.Who, args.Apps, expires, args.For != nil, update)
+	p, err := registry.ChangePersonWithLifetime(paths.Registry, args.Who, args.Apps, update, registry.PersonLifetimeOptions{Value: value, Policy: policy, Audience: audience, AckNever: args.AckNever, Now: now})
 	if err != nil {
 		return PeopleResult{}, err
 	}
@@ -331,8 +349,8 @@ func writePeopleResult(out io.Writer, command string, data any, isJSON bool) {
 func newPeopleCmd() *cobra.Command {
 	group := &cobra.Command{Use: "people", Short: "Share private apps with people, with optional expiry", Args: cobra.NoArgs, RunE: runCommandGroup}
 	for _, update := range []bool{false, true} {
-		var apps, duration string
-		var invite, printLinks bool
+		var apps, lifetime, until string
+		var invite, printLinks, ackNever bool
 		var reconcile, replace []string
 		name := "add"
 		if update {
@@ -343,7 +361,7 @@ func newPeopleCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			args := peopleArguments{Who: a[0], Invite: invite, PrintLinks: printLinks}
+			args := peopleArguments{Who: a[0], Invite: invite, PrintLinks: printLinks, AckNever: ackNever}
 			if len(replace) > 0 {
 				args.Replace = map[string]string{}
 				for _, value := range replace {
@@ -371,7 +389,10 @@ func newPeopleCmd() *cobra.Command {
 				}
 			}
 			if c.Flags().Changed("for") {
-				args.For = &duration
+				args.For = &lifetime
+			}
+			if c.Flags().Changed("until") {
+				args.Until = &until
 			}
 			result, err := changePeople(c.Context(), sharePaths{Registry: reg, PID: pid, Snapshot: snap}, args, update)
 			if err != nil {
@@ -381,7 +402,9 @@ func newPeopleCmd() *cobra.Command {
 			return nil
 		}}
 		c.Flags().StringVar(&apps, "apps", "", "Comma-separated private HTTP/file apps, or all current supported apps")
-		c.Flags().StringVar(&duration, "for", "", "Grant lifetime such as 1h, 7d or never; update omission preserves deadlines")
+		c.Flags().StringVar(&lifetime, "for", "", "Grant lifetime; presets "+duration.Suggestions+"; relative, 'until <date/time>', or never with --ack-never; default 24h, update omission preserves deadlines")
+		c.Flags().StringVar(&until, "until", "", "Absolute grant deadline: RFC3339, YYYY-MM-DD or YYYY-MM-DDTHH:MM (local without offset); conflicts with --for")
+		c.Flags().BoolVar(&ackNever, "ack-never", false, "Acknowledge permanent access for a tailnet member; refused for device-invited guests")
 		c.Flags().BoolVar(&invite, "invite", false, "Create or resume single-use per-app device invitations (requires a user-owned API token)")
 		c.Flags().BoolVar(&printLinks, "print-links", false, "Explicitly include bearer invitation links in output and the guide")
 		if update {

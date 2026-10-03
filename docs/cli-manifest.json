@@ -516,7 +516,7 @@
           "type": "string",
           "default": "24h",
           "scope": "local",
-          "usage": "Public Funnel lifetime: 1h, 8h, 24h, 72h, 7d, or never"
+          "usage": "Public lifetime: relative or 'until \u003cdate/time\u003e'; presets 1h, 8h, 24h, 3d, 7d; min 1h, default max 7d; never refused"
         },
         {
           "name": "health-body",
@@ -847,7 +847,7 @@
           "type": "string",
           "default": "24h",
           "scope": "local",
-          "usage": "Public lifetime: 1h, 8h, 24h, 72h, 7d, or never",
+          "usage": "Public lifetime: relative or until; presets 1h, 8h, 24h, 3d, 7d; min 1h, default max 7d; never refused",
           "requires": [
             "--funnel"
           ]
@@ -1236,6 +1236,81 @@
             "disabled",
             "unknown"
           ]
+        }
+      }
+    },
+    {
+      "path": "tslink extend",
+      "short": "Set a person grant or Funnel TTL deadline; always returns JSON",
+      "flags": [
+        {
+          "name": "ack-never",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Acknowledge permanent tailnet-member access; never refused for public/guest"
+        },
+        {
+          "name": "for",
+          "type": "string",
+          "scope": "local",
+          "usage": "New lifetime from now; presets 1h, 8h, 24h, 3d, 7d; relative or 'until \u003cdate/time\u003e'"
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "scope": "inherited",
+          "usage": "Output as JSON"
+        },
+        {
+          "name": "person",
+          "type": "string",
+          "scope": "local",
+          "usage": "Person login whose grant for this service is changed; omit for Funnel"
+        },
+        {
+          "name": "regrant",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Explicitly reactivate an expired grant or Funnel TTL; revoked people stay revoked"
+        },
+        {
+          "name": "until",
+          "type": "string",
+          "scope": "local",
+          "usage": "Absolute deadline: RFC3339, YYYY-MM-DD or YYYY-MM-DDTHH:MM; local unless offset supplied"
+        }
+      ],
+      "json_result_fields": {
+        "audience": {
+          "type": "string",
+          "description": "tailnet_member, guest or public, used for policy checks."
+        },
+        "changed_at": {
+          "type": "string",
+          "description": "Operation time in UTC; relative lifetime is measured from this instant."
+        },
+        "expires_at": {
+          "type": "string|null",
+          "description": "New UTC deadline; null for acknowledged permanent member access."
+        },
+        "previous_expires_at": {
+          "type": "string|null",
+          "description": "Previous UTC deadline; null for legacy permanent access."
+        },
+        "regranted": {
+          "type": "boolean",
+          "description": "True only if this operation explicitly renewed an expired grant."
+        },
+        "service": {
+          "type": "string",
+          "description": "App whose person grant or Funnel deadline was changed."
+        },
+        "who": {
+          "type": "string",
+          "description": "Canonical person login; absent for Funnel."
         }
       }
     },
@@ -2013,6 +2088,13 @@
       "short": "Set a person's apps and expiry",
       "flags": [
         {
+          "name": "ack-never",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Acknowledge permanent access for a tailnet member; refused for device-invited guests"
+        },
+        {
           "name": "apps",
           "type": "string",
           "scope": "local",
@@ -2022,7 +2104,7 @@
           "name": "for",
           "type": "string",
           "scope": "local",
-          "usage": "Grant lifetime such as 1h, 7d or never; update omission preserves deadlines"
+          "usage": "Grant lifetime; presets 1h, 8h, 24h, 3d, 7d; relative, 'until \u003cdate/time\u003e', or never with --ack-never; default 24h, update omission preserves deadlines"
         },
         {
           "name": "invite",
@@ -2047,6 +2129,12 @@
           "requires": [
             "--invite"
           ]
+        },
+        {
+          "name": "until",
+          "type": "string",
+          "scope": "local",
+          "usage": "Absolute grant deadline: RFC3339, YYYY-MM-DD or YYYY-MM-DDTHH:MM (local without offset); conflicts with --for"
         }
       ],
       "json_result_fields": {
@@ -2138,6 +2226,13 @@
       "short": "Set a person's apps and expiry",
       "flags": [
         {
+          "name": "ack-never",
+          "type": "bool",
+          "default": "false",
+          "scope": "local",
+          "usage": "Acknowledge permanent access for a tailnet member; refused for device-invited guests"
+        },
+        {
           "name": "apps",
           "type": "string",
           "scope": "local",
@@ -2147,7 +2242,7 @@
           "name": "for",
           "type": "string",
           "scope": "local",
-          "usage": "Grant lifetime such as 1h, 7d or never; update omission preserves deadlines"
+          "usage": "Grant lifetime; presets 1h, 8h, 24h, 3d, 7d; relative, 'until \u003cdate/time\u003e', or never with --ack-never; default 24h, update omission preserves deadlines"
         },
         {
           "name": "invite",
@@ -2196,6 +2291,12 @@
             "--apps",
             "--for"
           ]
+        },
+        {
+          "name": "until",
+          "type": "string",
+          "scope": "local",
+          "usage": "Absolute grant deadline: RFC3339, YYYY-MM-DD or YYYY-MM-DDTHH:MM (local without offset); conflicts with --for"
         }
       ],
       "json_result_fields": {

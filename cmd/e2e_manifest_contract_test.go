@@ -100,6 +100,7 @@ import (
 // zero-argument invocation) and from bare runs under e2eEnv, not inferred from
 // the shape of a command's name.
 var e2eExecutableSafeCommands = map[string]struct{}{
+	"tslink extend":        {}, // ExactArgs(1), no body on bare invocation.
 	"tslink people":        {}, // Group help only; no leaf body.
 	"tslink people add":    {}, // ExactArgs(1), no body on bare invocation.
 	"tslink people update": {}, // ExactArgs(1), no body on bare invocation.

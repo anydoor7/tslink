@@ -155,8 +155,9 @@ func funnelOptionRequiresFunnel(option, funnelOption string, set, funnel bool) e
 	return nil
 }
 
-// resolveFunnelExpiry turns a Funnel TTL selection into a stored deadline.
-// A nil deadline with a nil error means "never". Callers must have already
+var durationNowFn = time.Now
+
+// resolveFunnelExpiry turns a lifetime into a UTC deadline. Callers have already
 // rejected a TTL supplied without Funnel; see funnelOptionRequiresFunnel.
 func resolveFunnelExpiry(funnel bool, ttl string, ttlSet bool, now time.Time) (*time.Time, error) {
 	if !funnel {
@@ -164,22 +165,22 @@ func resolveFunnelExpiry(funnel bool, ttl string, ttlSet bool, now time.Time) (*
 	}
 	if ttl == "" {
 		if ttlSet {
-			return nil, output.ErrUsage("funnel TTL must be one of: 1h, 8h, 24h, 72h, 7d, never")
+			return nil, output.ErrUsage("empty Funnel lifetime; valid examples: " + duration.Examples)
 		}
 		ttl = "24h"
 	}
-	duration, never, err := registry.ParseFunnelTTL(ttl)
+	if now.IsZero() {
+		now = durationNowFn()
+	}
+	policy, err := config.LoadLifetimePolicy()
+	if err != nil {
+		return nil, err
+	}
+	lifetime, err := policy.Resolve(ttl, duration.Public, false, now, time.Local)
 	if err != nil {
 		return nil, output.ErrUsage(err.Error())
 	}
-	if never {
-		return nil, nil
-	}
-	if now.IsZero() {
-		now = time.Now()
-	}
-	expiresAt := now.UTC().Add(duration)
-	return &expiresAt, nil
+	return lifetime.Deadline, nil
 }
 
 // barePortTarget reads a digits-only proxy or tcp target the way `tslink share`
@@ -505,10 +506,16 @@ var addKeepIfUnchangedFn = registry.KeepIfUnchanged
 // tool. The persisted service is returned alongside the result because the
 // human CLI rendering reports fields (TCP target and port) the result does not
 // carry.
-func executeAdd(ctx context.Context, svc registry.Service, regPath, pidPath, snapshotPath string, preserveFunnelExpiry bool, wait time.Duration, afterPersist ...func() error) (AddResult, registry.Service, error) {
+func executeAdd(ctx context.Context, svc registry.Service, regPath, pidPath, snapshotPath string, preserveFunnelExpiry bool, wait time.Duration, now time.Time, afterPersist ...func() error) (AddResult, registry.Service, error) {
 	registryWasAbsent := registryFileAbsent(regPath)
+	policy, err := config.LoadLifetimePolicy()
+	if err != nil {
+		return AddResult{}, registry.Service{}, err
+	}
 	outcome, err := registry.AddWithOutcome(regPath, svc, registry.AddOptions{
 		PreserveFunnelExpiry: preserveFunnelExpiry,
+		LifetimePolicy:       &policy,
+		Now:                  now,
 	})
 	if err != nil {
 		return AddResult{}, registry.Service{}, err
@@ -697,6 +704,7 @@ Examples:
 			dryRun, _ := cmd.Flags().GetBool("dry-run")
 
 			params := AddParams{
+				Now:             durationNowFn(),
 				RequestLimits:   requestLimitsFromFlags(cmd),
 				Name:            args[0],
 				Proxy:           proxyTarget,
@@ -735,7 +743,7 @@ Examples:
 			}
 
 			if dryRun {
-				// Preview the same rule as AddWithOptions: an existing entry's
+				// Preview the same rule as AddWithOptions: a decided public
 				// deadline, or its explicit never, is kept unless the operator
 				// explicitly supplies --funnel-ttl.
 				if !cmd.Flags().Changed("funnel-ttl") {
@@ -748,8 +756,8 @@ Examples:
 						return err
 					}
 					for _, existing := range reg.Services {
-						if existing.Name == svc.Name {
-							if !svc.Funnel || existing.FunnelExpiresAt == nil || existing.FunnelExpiresAt.After(time.Now()) {
+						if existing.Name == svc.Name && existing.HasDecidedPublicLifetime() {
+							if !svc.Funnel || existing.FunnelExpiresAt == nil || existing.FunnelExpiresAt.After(params.Now) {
 								svc.FunnelExpiresAt = existing.FunnelExpiresAt
 							}
 							break
@@ -786,7 +794,7 @@ Examples:
 			if err != nil {
 				return err
 			}
-			result, persisted, err := executeAdd(cmd.Context(), svc, regPath, pidPath, snapshotPath, !cmd.Flags().Changed("funnel-ttl"), wait, func() error {
+			result, persisted, err := executeAdd(cmd.Context(), svc, regPath, pidPath, snapshotPath, !cmd.Flags().Changed("funnel-ttl"), wait, params.Now, func() error {
 				return ensureDaemonFn(cmd.Context(), cmd.ErrOrStderr(), noDaemonInstall)
 			})
 			if err != nil {
@@ -853,7 +861,7 @@ Examples:
 	addCmd.Flags().Bool("ephemeral", false, "Register as ephemeral node (removed on disconnect)")
 	addCmd.Flags().String("tags", "", "Comma-separated ACL tags (e.g., tag:web,tag:internal)")
 	addCmd.Flags().Bool("funnel", false, "Expose publicly via Tailscale Funnel (proxy only, requires --public)")
-	addCmd.Flags().String("funnel-ttl", "24h", "Public Funnel lifetime: 1h, 8h, 24h, 72h, 7d, or never")
+	addCmd.Flags().String("funnel-ttl", "24h", "Public lifetime: relative or 'until <date/time>'; presets "+duration.Suggestions+"; min 1h, default max 7d; never refused")
 	addCmd.Flags().Bool("public", false, "Acknowledge public internet exposure for --funnel (only valid with --funnel)")
 	addCmd.Flags().Bool("no-auto-provision", false, "Disable automatic Funnel policy provisioning (only valid with --funnel)")
 	addCmd.Flags().String("allow", "", "Comma-separated allowed identities (e.g., user@example.com,tag:admin)")

@@ -69,6 +69,7 @@ type shareTargetSpec struct {
 // which runs registry.ValidateService and therefore
 // registry.ValidateFunnelGuardrails.
 type shareRequest struct {
+	Now             time.Time
 	RequestLimits   *registry.RequestLimits
 	Target          string
 	Name            string
@@ -233,7 +234,7 @@ func applyShareExposure(spec shareTargetSpec, req shareRequest) (shareTargetSpec
 			return shareTargetSpec{}, err
 		}
 	}
-	funnelExpiresAt, err := resolveFunnelExpiry(req.Funnel, req.FunnelTTL, req.FunnelTTLSet, time.Time{})
+	funnelExpiresAt, err := resolveFunnelExpiry(req.Funnel, req.FunnelTTL, req.FunnelTTLSet, req.Now)
 	if err != nil {
 		return shareTargetSpec{}, err
 	}

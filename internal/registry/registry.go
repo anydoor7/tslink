@@ -20,6 +20,7 @@ import (
 
 	"github.com/anydoor7/tslink/internal/atomicfile"
 	"github.com/anydoor7/tslink/internal/config"
+	"github.com/anydoor7/tslink/internal/duration"
 	"github.com/anydoor7/tslink/internal/filelock"
 )
 
@@ -111,7 +112,7 @@ const (
 	ProvisionReasonPortUnsupported     = "port_unsupported"
 
 	ErrFunnelAllowedUsers = "funnel services do not support allowed_users; public Funnel cannot be combined with TSLink allow lists"
-	ErrFunnelPublicAck    = "funnel services require recorded public acknowledgement; re-run `tslink add ... --funnel --public` or set public_ack:true and funnel_expires_at (an RFC 3339 deadline or \"never\") after confirming public internet exposure"
+	ErrFunnelPublicAck    = "funnel services require recorded public acknowledgement; re-run `tslink add ... --funnel --public` or set public_ack:true and funnel_expires_at (a finite RFC 3339 deadline) after confirming public internet exposure"
 	ErrFunnelControlURL   = "funnel services do not support per-service control_url; use the default Tailscale control server or disable funnel"
 	ErrFunnelTypeConflict = "funnel can only be used with proxy services; public Funnel is not supported for file or tcp services"
 )
@@ -209,11 +210,11 @@ func FunnelPublicAckError() error {
 func FunnelExpiryRequiredError(serviceName string) error {
 	return CodedError{
 		Code:    CodeFunnelExpiryRequired,
-		Message: fmt.Sprintf("funnel service %q records no funnel_expires_at; set an RFC 3339 deadline or \"never\" to decide how long it stays public", serviceName),
+		Message: fmt.Sprintf("funnel service %q records no funnel_expires_at; set a finite RFC 3339 deadline to decide how long it stays public", serviceName),
 		// Only a hand edit fixes it: like every other entry issue, it makes
 		// the registry refuse typed rewrites until it is resolved.
 		Next: []string{
-			fmt.Sprintf(`Edit registry.json: on service %q set "funnel_expires_at" to the RFC 3339 time the Funnel should stop, such as "funnel_expires_at": "2030-01-01T00:00:00Z", or set "funnel_expires_at": "never" to keep it public with no deadline`, serviceName),
+			fmt.Sprintf(`Edit registry.json: on service %q set "funnel_expires_at" to the RFC 3339 time the Funnel should stop, such as "funnel_expires_at": "2030-01-01T00:00:00Z"; new public lifetimes must be finite (minimum 1h; default maximum 7d)`, serviceName),
 			"tslink registry check --json",
 		},
 		MessageOnly: true,
@@ -524,6 +525,12 @@ func (s Service) FunnelExpiryUndecided() bool {
 	return s.Funnel && s.funnelExpiryUndecided
 }
 
+// HasDecidedPublicLifetime distinguishes an acknowledged public choice from
+// a private service's absent expiry. Expiry reconciliation retains the choice.
+func (s Service) HasDecidedPublicLifetime() bool {
+	return s.PublicAck && !s.FunnelExpiryUndecided() && (s.Funnel || s.FunnelExpiresAt != nil)
+}
+
 // MarshalJSON stores the Funnel lifetime explicitly: an RFC 3339 deadline, or
 // "never" for a Funnel without one. An entry read without a decision is
 // written back without one, so a rewrite never turns it into a permanent
@@ -580,25 +587,10 @@ func (s *Service) UnmarshalJSON(data []byte) error {
 	return expiryErr
 }
 
-// ParseFunnelTTL accepts only the public CLI contract. In particular, Go's
-// time.ParseDuration does not understand days, so 7d is mapped explicitly.
+// ParseFunnelTTL is the relative-only compatibility adapter. User-facing
+// callers use Policy.Resolve, which also handles absolute deadlines.
 func ParseFunnelTTL(value string) (duration time.Duration, never bool, err error) {
-	switch value {
-	case "1h":
-		return time.Hour, false, nil
-	case "8h":
-		return 8 * time.Hour, false, nil
-	case "24h":
-		return DefaultFunnelTTL, false, nil
-	case "72h":
-		return 72 * time.Hour, false, nil
-	case "7d":
-		return 7 * 24 * time.Hour, false, nil
-	case "never":
-		return 0, true, nil
-	default:
-		return 0, false, fmt.Errorf("funnel TTL must be one of: 1h, 8h, 24h, 72h, 7d, never")
-	}
+	return parseFunnelRelative(value)
 }
 
 // FunnelExpiredAt reads wall-clock state. A nil deadline on a decided Funnel is
@@ -1454,9 +1446,12 @@ func Add(path string, svc Service) (created bool, err error) {
 }
 
 type AddOptions struct {
-	// PreserveFunnelExpiry keeps an existing entry's deadline. It is used when
-	// --funnel-ttl was not explicitly supplied, including an explicit never.
+	// PreserveFunnelExpiry keeps a decided public lifetime when the TTL was
+	// omitted. A private service's absent expiry is never a public decision.
 	PreserveFunnelExpiry bool
+	// LifetimePolicy checks the final new public deadline after preservation.
+	// nil retains the trusted raw-store API for existing callers.
+	LifetimePolicy *duration.Policy
 	// Now is injectable for deterministic expiration decisions. Zero uses the
 	// current wall clock.
 	Now time.Time
@@ -1566,14 +1561,21 @@ func AddWithOutcome(path string, svc Service, options AddOptions) (outcome AddOu
 			if err := ValidateService(svc); err != nil {
 				return err
 			}
-			if options.PreserveFunnelExpiry {
+			preservedLifetime := false
+			if options.PreserveFunnelExpiry && existing.HasDecidedPublicLifetime() {
 				if svc.Funnel && existing.FunnelExpiresAt != nil && !existing.FunnelExpiresAt.After(now) {
 					rearmed := now.Add(DefaultFunnelTTL).UTC()
-					svc.FunnelExpiresAt = &rearmed
+					if options.LifetimePolicy == nil {
+						svc.FunnelExpiresAt = &rearmed
+					}
 					outcome.RearmedExpiredFunnel = true
 				} else {
 					svc.FunnelExpiresAt = existing.FunnelExpiresAt
+					preservedLifetime = true
 				}
+			}
+			if err := checkAddedFunnelLifetime(svc, preservedLifetime, options, now); err != nil {
+				return err
 			}
 			reg.Services[i] = svc
 			outcome.Created = false
@@ -1584,6 +1586,9 @@ func AddWithOutcome(path string, svc Service, options AddOptions) (outcome AddOu
 			svc.CreatedAt = time.Now().UTC()
 		}
 
+		if err := checkAddedFunnelLifetime(svc, false, options, now); err != nil {
+			return err
+		}
 		reg.Services = append(reg.Services, svc)
 		outcome.Created = true
 		return save(path, reg)

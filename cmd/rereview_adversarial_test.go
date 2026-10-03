@@ -584,7 +584,7 @@ func TestPeopleReplaceValidationAndTaxonomy(t *testing.T) {
 	}{
 		{"people_add", `{"who":"bad login","apps":["photos"]}`, "usage_error", 2},
 		{"people_add", `{"who":"bob","apps":["missing"]}`, "not_found", 5},
-		{"people_update", `{"who":"missing","for":"never"}`, "not_found", 5},
+		{"people_update", `{"who":"missing","for":"never","ack_never":true}`, "not_found", 5},
 		{"people_add", `{"who":"alice","apps":["photos"]}`, "conflict", 4},
 		{"people_remove", `{"who":"bad login"}`, "usage_error", 2},
 	}

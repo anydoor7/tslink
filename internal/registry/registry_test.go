@@ -2091,12 +2091,12 @@ func TestParseFunnelTTLStrictContractIncludesExplicitSevenDays(t *testing.T) {
 	if err != nil || never || duration != 168*time.Hour {
 		t.Fatalf("ParseFunnelTTL(7d) = %s, %t, %v; want 168h, false, nil", duration, never, err)
 	}
-	if duration, never, err := ParseFunnelTTL("never"); err != nil || !never || duration != 0 {
+	if duration, never, err := ParseFunnelTTL("never"); err == nil || never || duration != 0 {
 		t.Fatalf("ParseFunnelTTL(never) = %s, %t, %v", duration, never, err)
 	}
-	for _, value := range []string{"2h", "168h", "7D", "1.5h", "0"} {
+	for _, value := range []string{"7d1s", "7D", "0", "1h1h"} {
 		if _, _, err := ParseFunnelTTL(value); err == nil {
-			t.Errorf("ParseFunnelTTL(%q) error = nil, want strict whitelist rejection", value)
+			t.Errorf("ParseFunnelTTL(%q) error = nil, want duration policy rejection", value)
 		}
 	}
 }

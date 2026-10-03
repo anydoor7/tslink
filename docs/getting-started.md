@@ -62,7 +62,7 @@ tslink add demo --proxy localhost:8080 --ephemeral
 tslink add internal --proxy localhost:9090 --allow user@example.com,tag:admin
 
 # Public exposure via Tailscale Funnel (requires explicit acknowledgement).
-# Public for 24h by default; --funnel-ttl 1h|8h|24h|72h|7d|never
+# Public for 24h by default; --funnel-ttl 90m or until 2030-06-01T18:00:00Z; presets 1h, 8h, 24h, 3d, 7d
 # ("never" is stored as "funnel_expires_at": "never")
 tslink add public --proxy localhost:3000 --funnel --public
 

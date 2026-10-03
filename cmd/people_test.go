@@ -84,7 +84,7 @@ func TestPeopleCommandAndMCPRoundTrip(t *testing.T) {
 	if string(before) != string(after) {
 		t.Fatal("read-only list wrote registry")
 	}
-	updated, err := callMCPTool(context.Background(), tools, "people_update", json.RawMessage(`{"who":"alice@example.com","apps":["photos"],"for":"never"}`))
+	updated, err := callMCPTool(context.Background(), tools, "people_update", json.RawMessage(`{"who":"alice@example.com","apps":["photos"],"for":"never","ack_never":true}`))
 	if err != nil || updated.IsError {
 		t.Fatal(updated, err)
 	}
@@ -283,12 +283,12 @@ func TestPeopleCLISuccessAndFailurePaths(t *testing.T) {
 		group.SetArgs(args)
 		return group.Execute()
 	}
-	for _, args := range [][]string{{"add", "alice", "--apps", "photos", "--for", "7d"}, {"list"}, {"update", "alice", "--apps", "photos,finance", "--for", "never"}, {"remove", "alice"}} {
+	for _, args := range [][]string{{"add", "alice", "--apps", "photos", "--for", "7d"}, {"list"}, {"update", "alice", "--apps", "photos,finance", "--for", "never", "--ack-never"}, {"remove", "alice"}} {
 		if err := run(args...); err != nil {
 			t.Fatal(args, err)
 		}
 	}
-	for _, args := range [][]string{{"add", "alice", "--apps", "missing"}, {"update", "missing", "--for", "never"}, {"remove", "bad login"}} {
+	for _, args := range [][]string{{"add", "alice", "--apps", "missing"}, {"update", "missing", "--for", "never", "--ack-never"}, {"remove", "bad login"}} {
 		if err := run(args...); err == nil {
 			t.Fatal("invalid command accepted", args)
 		}
@@ -301,7 +301,7 @@ func TestPeopleCLISuccessAndFailurePaths(t *testing.T) {
 	}
 	bad := errors.New("path unavailable")
 	inviteRegistryPathFn = func() (string, error) { return "", bad }
-	for _, args := range [][]string{{"add", "alice", "--apps", "photos"}, {"update", "alice", "--for", "never"}, {"list"}, {"remove", "alice"}} {
+	for _, args := range [][]string{{"add", "alice", "--apps", "photos"}, {"update", "alice", "--for", "never", "--ack-never"}, {"list"}, {"remove", "alice"}} {
 		if err := run(args...); !errors.Is(err, bad) {
 			t.Fatal("wrong path error", err)
 		}

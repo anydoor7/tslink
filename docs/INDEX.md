@@ -40,6 +40,8 @@ Documentation is English-only. The only translations are the homepage READMEs in
 | Cli Reference | [cli-reference.md](cli-reference.md) |
 | Credentials And Tags | [credentials-and-tags.md](credentials-and-tags.md) |
 | Daemon Lifecycle | [daemon-lifecycle.md](daemon-lifecycle.md) |
+| Durations | [durations.md](durations.md) |
+| Funnel | [funnel.md](funnel.md) |
 | Getting Started | [getting-started.md](getting-started.md) |
 | Health and alerts | [health-and-alerts.md](health-and-alerts.md) |
 | Json Automation | [json-automation.md](json-automation.md) |
