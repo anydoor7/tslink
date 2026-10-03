@@ -23,6 +23,8 @@ var mcpWantHints = map[string][4]bool{
 	"extend":         {false, true, false, false},
 	"access_log":     {true, false, true, false},
 	"access_summary": {true, false, true, false},
+	"portal_enable":  {false, false, true, false},
+	"portal_disable": {false, false, true, false},
 	"people_add":     {false, true, false, true},
 	"people_update":  {false, true, false, true},
 	"people_list":    {true, false, true, false},

@@ -171,7 +171,8 @@ type doctorOptions struct {
 }
 
 type DoctorResult struct {
-	AccessLog       accesslog.Health `json:"access_log"`
+	AccessLog       accesslog.Health      `json:"access_log"`
+	Portal          tsruntime.PortalState `json:"portal"`
 	canonicalHosts  map[string]string
 	NodeKeys        map[string]health.Expiry    `json:"node_keys"`
 	Credentials     StatusCredentials           `json:"credentials"`
@@ -344,6 +345,7 @@ func buildDoctorResult(opts doctorOptions) DoctorResult {
 		serviceCount = len(reg.Services)
 	}
 	diagnoseDaemon(&result, serviceCount)
+	result.Portal = readPortalView(reg, result.Paths.Registry, result.Daemon.Running, result.Daemon.PID)
 	result.Supervision = detectSupervisionFn(result.Paths.PID, result.Daemon.Running, result.Daemon.PID)
 	if result.Supervision.RuntimeState == "circuit_open" || result.Supervision.RuntimeState == "failed" {
 		result.addFinding(inspect.WarningCodeDaemonRestartUnavailable, "", "daemon", "Built-in supervisor stopped crash recovery: "+result.Supervision.FailureReason+". Inspect logs, then run 'tslink install'.", nil)
@@ -1233,6 +1235,7 @@ func doctorExit(result DoctorResult) error {
 
 func formatDoctor(result DoctorResult, out io.Writer) {
 	formatAccessHealth(result.AccessLog, out)
+	formatPortal(out, result.Portal)
 	formatEarlyWarnings(out, result.Credentials)
 	formatAlerts(out, result.Alerts)
 	for name, key := range result.NodeKeys {

@@ -519,7 +519,7 @@ func TestPollableStatusZeroCredentialTransitionsFromNeedsLoginToAuthenticated(t 
 	pidPath := filepath.Join(dir, "tslink.pid")
 	snapshotPath := filepath.Join(dir, "runtime.json")
 	handoffPath := filepath.Join(dir, "auth-handoff.json")
-	startedAt := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	startedAt := time.Date(2030, 1, 2, 12, 0, 0, 0, time.UTC)
 	svc := addStatusTestService(t, regPath, registry.Service{
 		Name:   "web",
 		Type:   registry.TypeProxy,
@@ -528,9 +528,12 @@ func TestPollableStatusZeroCredentialTransitionsFromNeedsLoginToAuthenticated(t 
 	})
 	withStatusURLSeams(t, true, 4242, startedAt)
 
+	oldNow := statusNowFn
+	statusNowFn = func() time.Time { return startedAt.Add(time.Minute) }
+	t.Cleanup(func() { statusNowFn = oldNow })
 	oldLoadHandoff := statusLoadAuthHandoffFn
-	statusLoadAuthHandoffFn = func(string) (authHandoffRecord, error) {
-		return authHandoffRecord{
+	statusLoadAuthHandoffFn = func(string) ([]authHandoffRecord, error) {
+		return []authHandoffRecord{{
 			SchemaVersion: authHandoffSchemaVersion,
 			Status:        authStatusNeedsLogin,
 			Service:       "web",
@@ -538,7 +541,7 @@ func TestPollableStatusZeroCredentialTransitionsFromNeedsLoginToAuthenticated(t 
 			ExpiresAt:     startedAt.Add(authHandoffConservativeLifetime),
 			Poll:          "tslink status --json",
 			DaemonPID:     4242,
-		}, nil
+		}}, nil
 	}
 	t.Cleanup(func() { statusLoadAuthHandoffFn = oldLoadHandoff })
 
@@ -584,14 +587,17 @@ func TestPollableStatusSurfacesPendingHandoffWithoutRunningDaemon(t *testing.T) 
 	pidPath := filepath.Join(dir, "tslink.pid")
 	snapshotPath := filepath.Join(dir, "runtime.json")
 	handoffPath := filepath.Join(dir, "auth-handoff.json")
-	startedAt := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	startedAt := time.Date(2030, 1, 2, 12, 0, 0, 0, time.UTC)
 	addStatusTestService(t, regPath, registry.Service{Name: "web", Type: registry.TypeProxy, Target: "http://localhost:3000"})
 	withStatusURLSeams(t, false, 0, startedAt)
 	getAPIKeyFn = func() (string, error) { return "stored-credential-present", nil }
 
+	oldNow := statusNowFn
+	statusNowFn = func() time.Time { return startedAt.Add(time.Minute) }
+	t.Cleanup(func() { statusNowFn = oldNow })
 	oldLoadHandoff := statusLoadAuthHandoffFn
-	statusLoadAuthHandoffFn = func(string) (authHandoffRecord, error) {
-		return authHandoffRecord{
+	statusLoadAuthHandoffFn = func(string) ([]authHandoffRecord, error) {
+		return []authHandoffRecord{{
 			SchemaVersion: authHandoffSchemaVersion,
 			Status:        authStatusNeedsLogin,
 			Service:       "web",
@@ -599,7 +605,7 @@ func TestPollableStatusSurfacesPendingHandoffWithoutRunningDaemon(t *testing.T) 
 			ExpiresAt:     startedAt.Add(authHandoffConservativeLifetime),
 			Poll:          "tslink status --json",
 			DaemonPID:     4242,
-		}, nil
+		}}, nil
 	}
 	t.Cleanup(func() { statusLoadAuthHandoffFn = oldLoadHandoff })
 
@@ -621,7 +627,7 @@ func TestPollableStatusShowsEarlierServicesWhileNextNeedsLogin(t *testing.T) {
 	pidPath := filepath.Join(dir, "tslink.pid")
 	snapshotPath := filepath.Join(dir, "runtime.json")
 	handoffPath := filepath.Join(dir, "auth-handoff.json")
-	startedAt := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	startedAt := time.Date(2030, 1, 2, 12, 0, 0, 0, time.UTC)
 	first := addStatusTestService(t, regPath, registry.Service{
 		Name: "first", Type: registry.TypeFile, Path: t.TempDir(),
 	})
@@ -638,9 +644,12 @@ func TestPollableStatusShowsEarlierServicesWhileNextNeedsLogin(t *testing.T) {
 		t.Fatalf("runtime.Save: %v", err)
 	}
 
+	oldNow := statusNowFn
+	statusNowFn = func() time.Time { return startedAt.Add(time.Minute) }
+	t.Cleanup(func() { statusNowFn = oldNow })
 	oldLoadHandoff := statusLoadAuthHandoffFn
-	statusLoadAuthHandoffFn = func(string) (authHandoffRecord, error) {
-		return authHandoffRecord{
+	statusLoadAuthHandoffFn = func(string) ([]authHandoffRecord, error) {
+		return []authHandoffRecord{{
 			SchemaVersion: authHandoffSchemaVersion,
 			Status:        authStatusNeedsLogin,
 			Service:       "second",
@@ -648,7 +657,7 @@ func TestPollableStatusShowsEarlierServicesWhileNextNeedsLogin(t *testing.T) {
 			ExpiresAt:     startedAt.Add(authHandoffConservativeLifetime),
 			Poll:          "tslink status --json",
 			DaemonPID:     4242,
-		}, nil
+		}}, nil
 	}
 	t.Cleanup(func() { statusLoadAuthHandoffFn = oldLoadHandoff })
 
@@ -715,15 +724,18 @@ func TestPollableStatusRejectsAuthHandoffFromDifferentDaemonPID(t *testing.T) {
 	pidPath := filepath.Join(dir, "tslink.pid")
 	snapshotPath := filepath.Join(dir, "runtime.json")
 	handoffPath := filepath.Join(dir, "auth-handoff.json")
-	startedAt := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	startedAt := time.Date(2030, 1, 2, 12, 0, 0, 0, time.UTC)
 	addStatusTestService(t, regPath, registry.Service{
 		Name: "web", Type: registry.TypeProxy, Target: "http://localhost:3000",
 	})
 	withStatusURLSeams(t, true, 4242, startedAt)
 
+	oldNow := statusNowFn
+	statusNowFn = func() time.Time { return startedAt.Add(time.Minute) }
+	t.Cleanup(func() { statusNowFn = oldNow })
 	oldLoadHandoff := statusLoadAuthHandoffFn
-	statusLoadAuthHandoffFn = func(string) (authHandoffRecord, error) {
-		return authHandoffRecord{
+	statusLoadAuthHandoffFn = func(string) ([]authHandoffRecord, error) {
+		return []authHandoffRecord{{
 			SchemaVersion: authHandoffSchemaVersion,
 			Status:        authStatusNeedsLogin,
 			Service:       "web",
@@ -731,7 +743,7 @@ func TestPollableStatusRejectsAuthHandoffFromDifferentDaemonPID(t *testing.T) {
 			ExpiresAt:     startedAt.Add(authHandoffConservativeLifetime),
 			Poll:          "tslink status --json",
 			DaemonPID:     31337,
-		}, nil
+		}}, nil
 	}
 	t.Cleanup(func() { statusLoadAuthHandoffFn = oldLoadHandoff })
 
@@ -786,7 +798,7 @@ func TestStatusURLsRegistryMismatchKeepsRunningServiceEvidence(t *testing.T) {
 	pidPath := filepath.Join(dir, "tslink.pid")
 	snapshotPath := filepath.Join(dir, "runtime.json")
 	handoffPath := filepath.Join(dir, "auth-handoff.json")
-	startedAt := time.Date(2026, 5, 17, 12, 0, 0, 0, time.UTC)
+	startedAt := time.Date(2030, 1, 2, 12, 0, 0, 0, time.UTC)
 	authorized := addStatusTestService(t, regPath, registry.Service{
 		Name:   "tst-913a",
 		Type:   registry.TypeProxy,
@@ -807,9 +819,12 @@ func TestStatusURLsRegistryMismatchKeepsRunningServiceEvidence(t *testing.T) {
 	}
 	withStatusURLSeams(t, true, 4242, startedAt)
 
+	oldNow := statusNowFn
+	statusNowFn = func() time.Time { return startedAt.Add(time.Minute) }
+	t.Cleanup(func() { statusNowFn = oldNow })
 	oldLoadHandoff := statusLoadAuthHandoffFn
-	statusLoadAuthHandoffFn = func(string) (authHandoffRecord, error) {
-		return authHandoffRecord{
+	statusLoadAuthHandoffFn = func(string) ([]authHandoffRecord, error) {
+		return []authHandoffRecord{{
 			SchemaVersion: authHandoffSchemaVersion,
 			Status:        authStatusNeedsLogin,
 			Service:       "tst-913b",
@@ -817,7 +832,7 @@ func TestStatusURLsRegistryMismatchKeepsRunningServiceEvidence(t *testing.T) {
 			ExpiresAt:     startedAt.Add(authHandoffConservativeLifetime),
 			Poll:          "tslink status --json",
 			DaemonPID:     4242,
-		}, nil
+		}}, nil
 	}
 	t.Cleanup(func() { statusLoadAuthHandoffFn = oldLoadHandoff })
 

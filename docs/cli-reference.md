@@ -53,6 +53,8 @@ People logins accept any nonempty valid UTF-8 string without control characters 
 | `tslink install` | Auto-start on login (macOS LaunchAgent / Linux systemd / Windows Task Scheduler) |
 | `tslink uninstall` | Remove auto-start |
 
+`status --json` and `status --urls --json` report every pending portal/app enrollment in `data.pending_logins` (`node`, `auth_url`, `expires_at`). Human status lists each node and login URL. The compatibility `auth_url`/`auth_status` fields select the oldest still-pending publication. See [home portal](portal.md).
+
 A missing implicit default registry is valid on first run. An explicit missing
 `registry check <path>` reports `not_found` (exit 5). Malformed registry JSON,
 field types, or trailing data report `usage_error` (exit 2), naming the path
@@ -179,3 +181,8 @@ Omitting `--funnel-ttl` when making an existing private service public selects t
 `tslink access log [--app X] [--who Y] [--since 24h|RFC3339] [--until RFC3339] [--decision allowed|denied] [--limit N] [--json]` returns newest-first events plus counts per person and last allowed access per app. The default limit is 100 (1–10000); summaries count all matches. `data` contains `events`, `summary`, and `truncated` in the standard envelope. MCP: `access_log`, `access_summary` (both read-only, suitable for viewer scopes).
 
 `tslink access path <app> <prefix|full|off|inherit|true|false>` controls per-app path mode: prefix by default, full may retain app-specific bearer paths, off omits paths. Global `config set` keys: `access-log-enabled`, `access-log-path` (compatible booleans), `access-log-path-mode` (prefix/full/off); `access-log-retention-days` (default 30), `access-log-max-bytes` (default 67108864), `access-log-queue-size` (default 1024). Empty values reset defaults; restart `serve` for global changes. `status` and `doctor` include `access_log` current-instance health (current, last write, drops, size, missing-history windows; old successful snapshots never replace current failures). See [access-log.md](access-log.md) for strict ranges, privacy, durability and event-count semantics.
+## Home portal
+
+`tslink portal enable --owner <login> [--hostname home] [--admins <login,...>]` saves an independent Tailnet-only home portal. `tslink portal disable` closes only its listener. `--funnel` is explicitly refused. The running daemon applies changes; status/doctor report `portal` state and its exact URL when ready. People guides point to the portal when enabled. MCP equivalents: `portal_enable`, `portal_disable`. See [portal.md](portal.md) for authorization, network reachability and JSON details.
+
+Daemon readiness preserves pending portal enrollment; completed portal runtime evidence prevents a stale login prompt. Private HTTP/file entries match their enforced access. Raw TCP/public Funnel entries are an owner/admin inventory with a per-person enforcement note; omission does not deny visitor connectivity.

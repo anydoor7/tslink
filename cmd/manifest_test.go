@@ -568,6 +568,9 @@ func sortedSet(values map[string]struct{}) []string {
 
 func TestManifestErrorExitTaxonomyMatchesRuntime(t *testing.T) {
 	tests := map[string]error{
+		"portal_funnel_refused":                 registry.ValidatePortal(&registry.PortalConfig{Enabled: true, Hostname: "home", Owner: "owner", Funnel: true}),
+		"portal_identity_invalid":               registry.ValidatePortal(&registry.PortalConfig{Hostname: "home", Owner: "Owner"}),
+		"portal_hostname_conflict":              registry.CodedError{Code: "portal_hostname_conflict", Message: "hostname collision"},
 		"people_service_unsupported":            registry.ValidateService(registry.Service{Name: "db", Type: registry.TypeTCP, Target: "localhost:5432", PeopleScoped: true}),
 		"invite_failed":                         registry.CodedError{Code: "invite_failed", Message: "bundle failure"},
 		"invite_state_failed":                   registry.CodedError{Code: "invite_state_failed", Message: "state failure"},

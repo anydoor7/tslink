@@ -51,6 +51,7 @@ Documentation is English-only. The only translations are the homepage READMEs in
 | Connecting an MCP client | [mcp-clients.md](mcp-clients.md) |
 | Multi Machine | [multi-machine.md](multi-machine.md) |
 | People | [people.md](people.md) |
+| Portal | [portal.md](portal.md) |
 | Platforms | [platforms.md](platforms.md) |
 | Release Artifacts | [release-artifacts.md](release-artifacts.md) |
 | Remote Mcp | [remote-mcp.md](remote-mcp.md) |

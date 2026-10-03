@@ -20,6 +20,8 @@ var mcpToolMinimalArguments = map[string]string{
 	"extend":         `{"service":"web","for":"1h"}`,
 	"access_log":     `{}`,
 	"access_summary": `{}`,
+	"portal_enable":  `{"owner":"owner"}`,
+	"portal_disable": `{}`,
 	"people_add":     `{"who":"alice","apps":["web"]}`,
 	"people_update":  `{"who":"alice","apps":["web"]}`,
 	"people_list":    `{}`,
@@ -67,6 +69,13 @@ func refusingMCPActions() mcpActions {
 		},
 		accessSummary: func(accessLogArguments) (accesslog.Summary, error) {
 			return accesslog.Summary{}, mcpRefusal("access_summary")
+		},
+		portalChange: func(_ portalArguments, enable bool) (any, error) {
+			name := "portal_disable"
+			if enable {
+				name = "portal_enable"
+			}
+			return nil, mcpRefusal(name)
 		},
 		peopleChange: func(_ context.Context, _ peopleArguments, update bool) (any, error) {
 			name := "people_add"

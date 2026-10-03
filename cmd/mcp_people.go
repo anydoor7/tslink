@@ -34,6 +34,7 @@ func peopleViewSchema() map[string]any {
 func peopleResultSchema() map[string]any {
 	return objectSchema(map[string]any{
 		"person":             peopleViewSchema(),
+		"portal":             nestedObjectSchema("Independent home portal configuration and exact runtime address when available."),
 		"complete":           map[string]any{"type": "boolean"},
 		"message":            map[string]any{"type": "string"},
 		"invite_requirement": map[string]any{"type": "string"},

@@ -41,7 +41,7 @@ func peopleMiddleware(path string, initial registry.Service, provide func() (*Lo
 					break
 				}
 			}
-			if len(reg.People) == 0 && !svc.PeopleScoped {
+			if len(reg.People) == 0 && !svc.PeopleScoped && reg.Portal == nil {
 				if len(svc.AllowedUsers) == 0 {
 					next.ServeHTTP(w, r)
 					return
@@ -90,10 +90,8 @@ func peopleMiddleware(path string, initial registry.Service, provide func() (*Lo
 			if who.Node != nil {
 				tags = who.Node.Tags
 			}
-			allowed, authoritative := registry.PeopleAccessAt(reg, svc, who.UserProfile.LoginName, tags, t)
-			if !authoritative {
-				allowed = isAllowed(who.UserProfile.LoginName, tags, svc.AllowedUsers)
-			}
+			_, authoritative := registry.PeopleAccessAt(reg, svc, who.UserProfile.LoginName, tags, t)
+			allowed, _ := AppAccessAt(reg, svc, who.UserProfile.LoginName, tags, t)
 			var grant *accesslog.Grant
 			reason := "people"
 			if authoritative {

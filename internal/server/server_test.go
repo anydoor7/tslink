@@ -1036,7 +1036,9 @@ func TestStartNodeLocked_ZeroCredentialUsesStableStatusWithoutUp(t *testing.T) {
 
 	var handoffs []AuthHandoff
 	s.SetAuthHandoffFunc(func(_ context.Context, handoff AuthHandoff) error {
-		handoffs = append(handoffs, handoff)
+		if handoff.State == "pending" {
+			handoffs = append(handoffs, handoff)
+		}
 		return nil
 	})
 

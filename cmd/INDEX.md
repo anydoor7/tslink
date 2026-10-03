@@ -70,3 +70,14 @@ This index records the app recipe additions; the CLI manifest describes the comp
 - `access_log_test.go`: CLI/envelope, MCP read-only protocol, filters, strict configuration and doctor health.
 
 - `access_runtime_test.go`: current-instance status/doctor health, stale-state refusal and path mode commands.
+# Home portal commands
+
+- `portal.go`: enable/disable CLI and shared MCP actions; exact status view.
+- `mcp_portal.go`: tool schemas, annotations and registry entries.
+- `portal_test.go`: CLI/MCP, status, doctor and people-guide contract tests.
+
+- `f5_review_test.go`: independent enrollment regressions, production readiness/handoff cleanup, portal-only status and real-file failure cases.
+- `auth_handoff_read_unix.go`, `auth_handoff_read_windows.go`: bounded regular-file handoff reads; Unix nonblocking/no-follow open.
+- `portal_handoff_unix_test.go`: real pending-offer cancellation after FIFO/symlink replacement.
+- `pending_enrollment_test.go`: reviewer-derived HTTP polling and multi-node pending/terminal controls (`enrollmenttest` tag).
+- `auth_handoff_multi_test.go`: legacy migration, per-node replacement, concurrent files, exact retirement, write failures and complete status projections.

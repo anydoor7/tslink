@@ -82,8 +82,18 @@ func (v *SnapshotVersion) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// PortalState is runtime evidence for the independent Tailnet portal node.
+type PortalState struct {
+	Enabled  bool   `json:"enabled"`
+	Hostname string `json:"hostname,omitempty"`
+	State    string `json:"state"`
+	URL      string `json:"url,omitempty"`
+	Error    string `json:"error,omitempty"`
+}
+
 type Snapshot struct {
 	AccessLog           *accesslog.Health `json:"access_log,omitempty"`
+	Portal              PortalState       `json:"portal"`
 	Alerts              health.AlertsView `json:"alerts"`
 	SchemaVersion       SnapshotVersion   `json:"schema_version"`
 	DaemonPID           int               `json:"daemon_pid"`
@@ -200,9 +210,14 @@ func newSnapshot(daemonPID int, daemonStartedAt time.Time, registryFingerprint s
 		view := inspect.ServiceViewFor(state.Service)
 		endpoint := view.Endpoint
 		endpoint = applyRuntimeHost(endpoint, state.Service, state.RuntimeHost)
-		if len(state.CertDomains) > 0 && (state.Service.Type == registry.TypeProxy || state.Service.Type == registry.TypeFile) {
-			endpoint.Display = "https://" + state.CertDomains[0]
-			endpoint.Host = state.CertDomains[0]
+		if state.Service.Type == registry.TypeProxy || state.Service.Type == registry.TypeFile {
+			if host := registry.CanonicalProxyHost(state.CertDomains, state.RuntimeHost); host != "" {
+				endpoint.Display = "https://" + host
+				endpoint.Host = host
+			} else if len(state.CertDomains) > 0 {
+				endpoint.Display = ""
+				endpoint.Host = ""
+			}
 		}
 		endpoint.State = endpointState(endpoint)
 		runtimeState := state.RuntimeState
@@ -276,6 +291,9 @@ func RegistryFingerprint(reg *registry.Registry, issues []registry.ServiceIssue)
 	isolated := append([]registry.ServiceIssue(nil), issues...)
 	sort.SliceStable(isolated, func(i, j int) bool { return isolated[i].Index < isolated[j].Index })
 	canonical := registry.Registry{Services: make([]registry.Service, 0, len(valid)+len(isolated))}
+	if reg != nil {
+		canonical.Portal = reg.Portal
+	}
 	for len(valid) > 0 || len(isolated) > 0 {
 		if len(isolated) > 0 && (len(valid) == 0 || isolated[0].Index <= len(canonical.Services)) {
 			canonical.Services = append(canonical.Services, isolated[0].Service)
