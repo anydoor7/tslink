@@ -8,6 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -16,11 +17,10 @@ var testTime = time.Date(2030, 7, 10, 12, 0, 0, 0, time.UTC)
 func closeStore(t *testing.T, s *Store) {
 	t.Helper()
 	s.Close()
-	select {
-	case <-s.Done():
-	case <-time.After(10 * time.Second):
-		t.Fatal("writer did not drain")
-	}
+	// Fixture ownership ends only after queued writes, final health publication
+	// and lock release. Disk throughput is not a test deadline; the go test
+	// process timeout still diagnoses a stuck worker with goroutine stacks.
+	<-s.Done()
 }
 func newTestStore(t *testing.T, dir string, o Options, now func() time.Time) *Store {
 	t.Helper()
@@ -34,6 +34,107 @@ func newTestStore(t *testing.T, dir string, o Options, now func() time.Time) *St
 func event(app, who, path string) Event {
 	return Event{App: app, Kind: "http", Identity: Identity{Login: who}, Path: path, Method: "GET", Status: 200, Decision: "allowed"}
 }
+func TestCloseHelpersJoinDelayedWriter(t *testing.T) {
+	for _, kind := range []string{"store", "lifecycle"} {
+		t.Run(kind, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				dir := t.TempDir()
+				s, err := newStore(dir, Options{}, func() time.Time { return testTime }, func() {
+					// The worker and its delay belong to this bubble. File writes
+					// remain real; no wall-clock I/O speed is asserted.
+					time.Sleep(11 * time.Second)
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer func() { s.Close(); <-s.Done() }()
+				if !s.Record(event("delayed", "alice", "/ok")) {
+					t.Fatal("event not accepted")
+				}
+				start := time.Now()
+				if kind == "store" {
+					closeStore(t, s)
+				} else {
+					closeLifecycle(t, &Lifecycle{store: s})
+				}
+				if time.Since(start) < 11*time.Second {
+					t.Fatal("close returned before the delayed write")
+				}
+				r, err := Query(dir, Filter{})
+				if err != nil || len(r.Events) != 1 || r.Events[0].App != "delayed" {
+					t.Fatalf("delayed write missing: %+v, %v", r, err)
+				}
+			})
+		})
+	}
+}
+
+func TestCloseDrainsAcceptedQueueAndReleasesWriter(t *testing.T) {
+	dir := t.TempDir()
+	entered, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	s, err := newStore(dir, Options{QueueSize: 128}, func() time.Time { return testTime }, func() {
+		once.Do(func() { close(entered); <-release })
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var unblock sync.Once
+	defer func() { unblock.Do(func() { close(release) }); closeStore(t, s) }()
+	for i := 0; i < 96; i++ {
+		e := event("queued", "alice", "/ok")
+		e.Time = testTime.Add(time.Duration(i) * time.Second)
+		if !s.Record(e) {
+			t.Fatalf("event %d not accepted", i)
+		}
+	}
+	<-entered
+	var closers sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		closers.Go(s.Close)
+	}
+	closers.Wait()
+	select {
+	case <-s.Done():
+		t.Fatal("Done closed while an accepted write was blocked")
+	default:
+	}
+	if _, err := New(dir, Options{}, nil); err == nil {
+		t.Fatal("writer lock released before drain")
+	}
+	unblock.Do(func() { close(release) })
+	closeStore(t, s)
+	r, err := Query(dir, Filter{Limit: 10000})
+	if err != nil || len(r.Events) != 96 || r.Summary.Count != 96 {
+		t.Fatalf("accepted queue lost writes: count=%d, %v", len(r.Events), err)
+	}
+	for i, e := range r.Events {
+		if !e.Time.Equal(testTime.Add(time.Duration(95-i) * time.Second)) {
+			t.Fatalf("queued event %d missing or duplicated", 95-i)
+		}
+	}
+	files, err := segments(s.dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var size int64
+	for _, f := range files {
+		size += f.size
+	}
+	h := ReadHealth(dir)
+	if h.Drops != 0 || h.Error != "" || h.Size != size || size == 0 || h.LastWrite == nil || !h.LastWrite.Equal(testTime) || !h.UpdatedAt.Equal(testTime) {
+		t.Fatalf("final health does not match durable files: %+v, size=%d", h, size)
+	}
+	// Done must also release the process lock. Reopening runs real recovery and
+	// proves the persisted records survive a new writer, rather than a cache.
+	reopened := newTestStore(t, dir, Options{}, func() time.Time { return testTime })
+	closeStore(t, reopened)
+	r, err = Query(dir, Filter{Limit: 10000})
+	if err != nil || r.Summary.Count != 96 {
+		t.Fatalf("reopen lost durable records: %+v, %v", r.Summary, err)
+	}
+}
+
 func TestStoreQueryPrivacy(t *testing.T) {
 	dir := t.TempDir()
 	s := newTestStore(t, dir, Options{}, func() time.Time { return testTime })
@@ -159,6 +260,11 @@ func TestRetentionAndSizeEviction(t *testing.T) {
 	}
 	if !r.Events[0].Time.Equal(now().Add(95 * time.Second)) {
 		t.Fatal("oldest-first eviction lost newest event")
+	}
+	for i, e := range r.Events {
+		if !e.Time.Equal(now().Add(time.Duration(95-i) * time.Second)) {
+			t.Fatalf("oldest-first eviction did not retain the newest suffix at %d", i)
+		}
 	}
 }
 func TestCrashTailRecovery(t *testing.T) {
