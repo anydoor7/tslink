@@ -121,6 +121,52 @@ class DiagnosticTests(unittest.TestCase):
             self.assertFalse(receipts[1]['errors'])
             self.assertEqual((out/'control-1.stdout').read_text().strip(),'executed-1')
 
+    def test_nonzero_go_exit_keeps_counts_and_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp); self.fixture(out)
+            item = d.plan('windows-root', 1, out)[0]
+            path = out/(item['id']+'.json')
+            receipt = json.loads(path.read_text())
+            receipt['exit'] = 1
+            counts, errors = d.assess(item, receipt, out)
+            self.assertEqual(counts['passed'], 3)
+            self.assertEqual(errors, ['DONE exit=1'])
+            log = out/(item['id']+'.stdout')
+            text = log.read_text().replace('"Action": "pass"', '"Action": "fail"')
+            log.write_text(text)
+            receipt['stdout_sha256'] = d.digest(log)
+            counts, errors = d.assess(item, receipt, out)
+            self.assertEqual(counts['failed'], 4)  # three tests plus their package
+            self.assertIn('DONE exit=1', errors)
+            self.assertIn('failed tests/packages', errors)
+            d.write(path, receipt)
+            self.assertEqual(self.verdict(out), 1)
+
+    def test_preexisting_helper_skips_are_exact_caller_sites(self):
+        sites = [
+            ('internal/config', 'TestConfigMessagesNameABackslashPath', 'windows_path_rendering_test.go:47'),
+            ('internal/credentials', 'TestDeleteCredentialFilePathStrictReportsAnUnreadableReadback', 'credentials_strict_delete_test.go:162'),
+            ('internal/testenv', 'TestPlantedShimRefusesAndRecords', 'service_manager_path_shim_test.go:42'),
+            ('internal/testenv', 'TestPlantedShimRecordsOneLinePerConcurrentCall', 'service_manager_path_shim_test.go:88'),
+            ('internal/testenv', 'TestReadServiceManagerShimCallsDistinguishesEmptyFromAbsent', 'service_manager_path_shim_test.go:167'),
+            ('cmd', 'TestSystemdInstallE2E', 'install_linux_e2e_test.go:54'),
+        ]
+        for pkg, name, site in sites:
+            with self.subTest(site=site):
+                pkg = 'github.com/anydoor7/tslink/'+pkg
+                values = [{'Action':'start','Package':pkg},
+                          {'Action':'run','Package':pkg,'Test':name},
+                          {'Action':'output','Package':pkg,'Test':name,'Output':'    '+site+': existing platform/opt-in skip\n'},
+                          {'Action':'skip','Package':pkg,'Test':name},
+                          {'Action':'pass','Package':pkg}]
+                encode = lambda: events()+'\n'.join(json.dumps(e) for e in values)+'\n'
+                counts, errors = d.go_results(encode())
+                self.assertFalse(errors)
+                self.assertEqual(len(counts['skipped']), 1)
+                self.assertIn('required business test did not pass: '+name, d.go_results(encode(), [name])[1])
+                values[2]['Output'] = '    '+site+'0: unregistered neighboring line\n'
+                self.assertIn('unapproved skip: '+pkg+':'+name, d.go_results(encode())[1])
+
     def test_go_package_start_terminal_completeness(self):
         control = events()
         extra = [{'Action':'start','Package':'other'},

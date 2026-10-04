@@ -92,6 +92,7 @@ This index covers the recipe integration tests. The repository AGENTS.md describ
 - `guest_idle_test.go`: idle SSE/HTTP2/WebSocket termination, including a separate revoke process.
 
 - `guest_cleanup_test.go`: HTTP/1.1 and HTTP/2 aborted-stream, panic, timer and shutdown cleanup controls.
+- `guest_proxy_cancel_test.go`: real backend admission before revocation, canceled pre-header response classification and post-revoke denial controls.
 - `guest_counter_status.go`: counter persistence warnings for runtime status, with generic public messages.
 - `guest_counter_status_test.go`: real registry publication failures, logs, status refresh and recovery.
 
