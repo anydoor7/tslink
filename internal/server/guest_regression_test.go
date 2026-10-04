@@ -129,9 +129,12 @@ func TestGuestAssetPage(t *testing.T) {
 func TestGuestWriterRecovery(t *testing.T) {
 	f := newGuestFixture(t, "", false, true)
 	cookies := f.login()
+	release := f.holdCounterFlush()
 	if status, e := guestRequest(f.client, f.base, "/control", cookies); e != nil || status != 204 {
+		release()
 		t.Fatal("control", status, e)
 	}
+	release()
 	lock, e := os.OpenFile(f.path+".lock", os.O_RDWR, 0600)
 	if e != nil {
 		t.Fatal(e)
@@ -147,6 +150,7 @@ func TestGuestWriterRecovery(t *testing.T) {
 	if e = filelock.Unlock(lock); e != nil {
 		t.Fatal(e)
 	}
+	defer f.holdCounterFlush()()
 	after, e := guestRequest(f.client, f.base, "/after", cookies)
 	if e != nil {
 		t.Fatal(e)

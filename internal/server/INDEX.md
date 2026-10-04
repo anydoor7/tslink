@@ -76,10 +76,11 @@ This index covers the recipe integration tests. The repository AGENTS.md describ
 # Browser guest links
 
 - guest.go: trusted Funnel guest gate, bounded sessions/challenges, CSRF and source rate limits.
-- guest_test.go: real HTTP/1 and HTTP/2 listener, revocation, expiry, PIN, isolation and privacy.
+- guest_test.go: real HTTP/1 and HTTP/2 listener, revocation, expiry, PIN, isolation and privacy; healthy login owns its read-only window without spanning registry mutations.
 - `guest_timing_test.go`: read budgets, real monitor counter-flush ownership, fixture shared-lock barriers and original-session recovery.
 
-- `guest_unix_test.go`: real listener FIFO refusal and restored positive control.
+- `guest_unix_test.go`: owned FIFO, valid-target symlink and directory refusal windows with original-session TLS recovery.
+- `guest_timing_test.go`: real TLS restore-event counter monitor ownership, bearer/session refusals and joined recovery.
 
 - `guest_regression_test.go`: listener regressions for concurrency, stream lifecycle, credential routes and cookie parsing.
 - `guest_lifecycle.go`: grant-scoped request and connection cancellation, counter flush and shutdown.

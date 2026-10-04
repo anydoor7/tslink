@@ -163,9 +163,13 @@ func (f *guestFixture) request(method, path, body string, cookies []*http.Cookie
 }
 func (f *guestFixture) login() []*http.Cookie {
 	f.t.Helper()
+	// This helper expects a healthy, unexpired grant. Establishing its session
+	// only queues counters; own the read window instead of racing their flush.
+	// Tests of denial or writer contention use request directly.
+	defer f.holdCounterFlush()()
 	r, _ := f.request("GET", "/guest/"+f.token, "", nil)
 	if r.StatusCode != 303 || r.Header.Get("Location") != "/" || r.Header.Get("Referrer-Policy") != "no-referrer" {
-		f.t.Fatalf("link: %d headers=%v", r.StatusCode, r.Header)
+		f.t.Fatalf("healthy link: status=%d location=%q retry-after=%q", r.StatusCode, r.Header.Get("Location"), r.Header.Get("Retry-After"))
 	}
 	cookies := r.Cookies()
 	found := false
@@ -186,6 +190,8 @@ func (f *guestFixture) login() []*http.Cookie {
 // Acquire and retain a shared registry lock: this joins an active counter
 // writer and excludes future flushes throughout a read-only assertion window.
 // The real monitor keeps running, and requests still perform every grant read.
+// Release before PIN writes, expiry latching, revoke, node shutdown or any
+// registry API mutation. Direct fault injection is safe while readers own it.
 func (f *guestFixture) holdCounterFlush() func() {
 	f.t.Helper()
 	lock, err := os.OpenFile(f.path+".lock", os.O_RDWR, 0600)
@@ -485,14 +491,14 @@ func TestGuestListenerCorruptAndMissingRegistry(t *testing.T) {
 		t.Fatal(e)
 	}
 	r, _ := f.request("GET", "/", "", cookies)
-	if r.StatusCode != 503 || f.hits.Load() != 0 {
+	if r.StatusCode != 503 || r.Header.Get("Retry-After") != "1" || f.hits.Load() != 0 {
 		t.Fatal("corrupt registry fail-open")
 	}
 	if e = os.Remove(f.path); e != nil {
 		t.Fatal(e)
 	}
 	r, _ = f.request("GET", "/", "", cookies)
-	if r.StatusCode != 503 {
+	if r.StatusCode != 503 || r.Header.Get("Retry-After") != "1" || f.hits.Load() != 0 {
 		t.Fatal("missing registry fail-open")
 	}
 	if e = os.WriteFile(f.path, raw, 0600); e != nil {
@@ -577,10 +583,10 @@ func TestGuestWriterContentionDeniesPromptly(t *testing.T) {
 	if e = filelock.Unlock(lock); e != nil {
 		t.Fatal(e)
 	}
-	cookies = f.login()
+	defer f.holdCounterFlush()()
 	r, _ = f.request("GET", "/", "", cookies)
-	if r.StatusCode != 204 {
-		t.Fatal("writer release control denied")
+	if r.StatusCode != 204 || f.hits.Load() != 1 {
+		t.Fatalf("writer release lost original session: status=%d hits=%d", r.StatusCode, f.hits.Load())
 	}
 }
 func TestGuestOriginAndChallengeExpiry(t *testing.T) {
