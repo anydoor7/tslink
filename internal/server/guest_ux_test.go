@@ -58,7 +58,7 @@ func TestGuestRecipientPages(t *testing.T) {
 		})
 	}
 	f := newGuestFixture(t, "975310", false, true)
-	form, body := f.request("GET", "/guest/"+f.token, "", nil)
+	form, body := f.healthyRequest("/guest/"+f.token, nil)
 	guestArtifact(t, "pin.html", []byte(body))
 	csrf := regexp.MustCompile(`name="csrf" value="([^"]+)"`).FindStringSubmatch(body)
 	if len(csrf) != 2 {
@@ -134,6 +134,12 @@ func TestGuestReadFailureRetainsSession(t *testing.T) {
 func TestGuestPeriodicAndShutdownCounters(t *testing.T) {
 	f := newGuestFixture(t, "", false, true)
 	cookies := f.login()
+	releaseRead := f.holdCounterFlush()
+	defer func() {
+		if releaseRead != nil {
+			releaseRead()
+		}
+	}()
 	resp, _ := f.request("GET", "/", "", cookies)
 	if resp.StatusCode != 204 {
 		t.Fatal("app control")
@@ -149,6 +155,8 @@ func TestGuestPeriodicAndShutdownCounters(t *testing.T) {
 	if persisted() != 0 {
 		t.Fatal("counter written per request")
 	}
+	releaseRead()
+	releaseRead = nil
 	deadline := time.Now().Add(35 * time.Second)
 	for persisted() == 0 {
 		if time.Now().After(deadline) {
@@ -156,7 +164,7 @@ func TestGuestPeriodicAndShutdownCounters(t *testing.T) {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	resp, _ = f.request("GET", "/", "", cookies)
+	resp, _ = f.healthyRequest("/", cookies)
 	if resp.StatusCode != 204 {
 		t.Fatal("second app control")
 	}

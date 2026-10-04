@@ -2,6 +2,8 @@
 
 This index records the people sharing lifecycle implementation and regression tests in this directory. Other package files are described by the repository architecture guide.
 
+- `guest_test.go`, `guest_timing_test.go`: composable healthy GET ownership, real held-flush refusal/recovery and unchanged 100ms writer budget. Stream and mutation fixtures release read ownership before actual writes and shutdown.
+
 - [people.go](people.go)
 - [people_review_regression_test.go](people_review_regression_test.go)
 - [rereview_identity_test.go](rereview_identity_test.go): ported independent re-review fixtures.

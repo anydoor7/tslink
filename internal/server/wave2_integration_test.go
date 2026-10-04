@@ -75,7 +75,7 @@ func TestWave2GuestPrivateAccessAndAudit(t *testing.T) {
 	t.Run("public_use_revoke", func(t *testing.T) {
 		f := newGuestFixture(t, "", false, true)
 		cookies := f.login()
-		response, _ := f.request("GET", "/", "", cookies)
+		response, _ := f.healthyRequest("/", cookies)
 		if response.StatusCode != 204 {
 			t.Fatal(response.StatusCode)
 		}

@@ -56,6 +56,12 @@ func TestGuestIdleStreamTermination(t *testing.T) {
 					}
 				}))
 				cookies := f.login()
+				releaseRead := f.holdCounterFlush()
+				defer func() {
+					if releaseRead != nil {
+						releaseRead()
+					}
+				}()
 				if strings.HasPrefix(transport, "sse") {
 					req, _ := http.NewRequest("GET", f.base+"/events", nil)
 					for _, cookie := range cookies {
@@ -91,6 +97,8 @@ func TestGuestIdleStreamTermination(t *testing.T) {
 						t.Fatal("WebSocket control", err)
 					}
 				}
+				releaseRead()
+				releaseRead = nil
 				start := time.Now()
 				switch end {
 				case "revoke":
@@ -159,6 +167,12 @@ func TestGuestHijackedConnectionAfterHandlerReturns(t *testing.T) {
 	t.Cleanup(func() { srv.Close() })
 	go srv.Serve(tls.NewListener(ln, f.tlsConfig))
 	base := "https://" + ln.Addr().String()
+	releaseRead := f.holdCounterFlush()
+	defer func() {
+		if releaseRead != nil {
+			releaseRead()
+		}
+	}()
 	resp, err := f.client.Get(base + "/guest/" + f.token)
 	if err != nil {
 		t.Fatal(err)
@@ -193,6 +207,8 @@ func TestGuestHijackedConnectionAfterHandlerReturns(t *testing.T) {
 	if line, err := reader.ReadString('\n'); err != nil || line != "ready\n" {
 		t.Fatal("registered connection closed on handler return", line, err)
 	}
+	releaseRead()
+	releaseRead = nil
 	if _, err = registry.RevokeGuest(f.path, f.grant.ID, accessTestTime); err != nil {
 		t.Fatal(err)
 	}

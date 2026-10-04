@@ -168,6 +168,7 @@ func newBackend(ev chan Event, errs chan error) (backend, error) {
 
 func (w *inotify) Close() error {
 	if w.shared.close() {
+		<-w.doneResp
 		return nil
 	}
 
@@ -354,9 +355,11 @@ func (w *inotify) WatchList() []string {
 // received events into Event objects and sends them via the Events channel
 func (w *inotify) readEvents() {
 	defer func() {
-		close(w.doneResp)
 		close(w.Errors)
 		close(w.Events)
+		// Publish completion only after the public channels are closed. Every
+		// Close caller joins this boundary, including concurrent repeat calls.
+		close(w.doneResp)
 	}()
 
 	var buf [unix.SizeofInotifyEvent * 4096]byte // Buffer for a maximum of 4096 raw events

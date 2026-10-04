@@ -388,7 +388,7 @@ internal helpers, complete library tests and testdata. Upstream examples/CLI,
 CI scripts and general documentation are omitted. No transitive dependency
 sources are copied. The upstream go.mod and go.sum remain unchanged.
 
-Local changes (2026-10-03):
+Local changes (2026-10-03 through 2026-10-04):
 - backend_kqueue.go serializes watch descriptor operations, leaves final
   disposal to the reader, joins that reader from every Close call, clears all
   retained watch maps, and does not release an existing watch descriptor when
@@ -411,12 +411,19 @@ Local changes (2026-10-03):
 - ownership_windows_test.go exercises real IOCP stale packets, same-inode
   replacement, unrelated handle/event survival, error delivery, Close handshake
   preservation and repeated Add/Remove/Close with real directory events.
+- backend_inotify.go closes Errors and Events before publishing doneResp, and
+  repeated Close calls also join doneResp. Previously the join could return
+  before public-channel closure. The same ordering remains in upstream main
+  20b1e15ef3c70caeb37ea2bd184f48ef8382669e (checked 2026-10-04).
+- ownership_inotify_test.go covers immediate public-channel closure, repeated
+  Close joining reader completion, and cancellation of unread Events/Errors.
 
 Public signatures are unchanged. On kqueue, Close now waits for watch disposal,
 reader exit and closure of Events then Errors. It cancels blocked channel sends
 before waiting, and takes no descriptor lock while joining. Add returns
 ErrClosed after closure; Remove retains its upstream no-op behavior after Close.
-The Linux backend is byte-identical to v1.10.1.
+On Linux, every successful Close joins public-channel closure. The original
+descriptor-close error is still returned; no timeout or error suppression is added.
 
 Why a local replacement: v1.10.1 Close can close a descriptor already in use by
 the reader's removal path; reuse can turn the second raw close into destruction
