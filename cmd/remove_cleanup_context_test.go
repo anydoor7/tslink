@@ -1,11 +1,9 @@
 package cmd
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"io"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -25,6 +23,9 @@ func blockingDeleteDevices(t *testing.T) (started, cancelled chan struct{}) {
 	oldDelete := deleteDevicesFn
 	t.Cleanup(func() { deleteDevicesFn = oldDelete })
 	deleteDevicesFn = func(ctx context.Context, _ tailapi.CleanupTarget) (tailapi.CleanupResult, error) {
+		if err := ctx.Err(); err != nil {
+			t.Errorf("device cleanup entered with an already cancelled context: %v", err)
+		}
 		started <- struct{}{}
 		select {
 		case <-ctx.Done():
@@ -83,46 +84,67 @@ func TestMCPUnshareDeviceCleanupSeesSessionCancellation(t *testing.T) {
 	call := initializedMCPInput(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"unshare","arguments":{"name":"web"}}}`)
 
 	t.Run("caller cancels", func(t *testing.T) {
-		regPath, ownershipPath := registerRemovableService(t)
-		started, cancelled := blockingDeleteDevices(t)
-		actions := defaultMCPActions(sharePaths{Registry: regPath, Ownership: ownershipPath}, io.Discard)
-		inReader, inWriter := io.Pipe()
-		defer inWriter.Close()
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		done := make(chan error, 1)
-		go func() { done <- runMCPStdio(ctx, inReader, io.Discard, actions) }()
-		go func() { _, _ = io.WriteString(inWriter, call) }()
-		select {
-		case <-started:
-		case <-time.After(5 * time.Second):
-			t.Fatal("unshare never reached device cleanup")
-		}
-		cancel()
-		select {
-		case <-cancelled:
-		case <-time.After(5 * time.Second):
-			t.Fatal("device cleanup did not see the session's cancellation")
-		}
-		if err := <-done; !errors.Is(err, context.Canceled) {
-			t.Fatalf("session error = %v", err)
-		}
+		synctest.Test(t, func(t *testing.T) {
+			regPath, ownershipPath := registerRemovableService(t)
+			started, cancelled := blockingDeleteDevices(t)
+			actions := defaultMCPActions(sharePaths{Registry: regPath, Ownership: ownershipPath}, io.Discard)
+			inReader, inWriter := io.Pipe()
+			defer inReader.Close()
+			defer inWriter.Close()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			done := make(chan error, 1)
+			go func() { done <- runMCPStdio(ctx, inReader, io.Discard, actions) }()
+			go func() { _, _ = io.WriteString(inWriter, call) }()
+			select {
+			case <-started:
+			case <-time.After(5 * time.Second):
+				t.Fatal("unshare never reached device cleanup")
+			}
+			cancel()
+			select {
+			case <-cancelled:
+			case <-time.After(5 * time.Second):
+				t.Fatal("device cleanup did not see the session's cancellation")
+			}
+			if err := <-done; !errors.Is(err, context.Canceled) {
+				t.Fatalf("session error = %v", err)
+			}
+		})
 	})
 
 	t.Run("post-EOF watchdog", func(t *testing.T) {
-		withMCPEOFWatchdog(t, 300*time.Millisecond, 2*time.Second)
-		regPath, ownershipPath := registerRemovableService(t)
-		_, cancelled := blockingDeleteDevices(t)
-		actions := defaultMCPActions(sharePaths{Registry: regPath, Ownership: ownershipPath}, os.Stderr)
-		var stdout bytes.Buffer
-		err := runMCPStdio(context.Background(), strings.NewReader(call), &stdout, actions)
-		if !errors.Is(err, errMCPEOFWatchdog) {
-			t.Fatalf("session error = %v, want the post-EOF watchdog", err)
-		}
-		select {
-		case <-cancelled:
-		default:
-			t.Fatal("the watchdog did not reach the stuck device cleanup")
+		for _, startupDelay := range []time.Duration{0, time.Second} {
+			t.Run("startup="+startupDelay.String(), func(t *testing.T) {
+				synctest.Test(t, func(t *testing.T) {
+					withMCPEOFWatchdog(t, 300*time.Millisecond, 2*time.Second)
+					regPath, ownershipPath := registerRemovableService(t)
+					started, cancelled := blockingDeleteDevices(t)
+					actions := defaultMCPActions(sharePaths{Registry: regPath, Ownership: ownershipPath}, io.Discard)
+					unshare := actions.unshare
+					actions.unshare = func(ctx context.Context, name string) (any, error) {
+						// Deliberately outlast the watchdog before cleanup begins. A
+						// regressed EOF-before-entry fixture must fail even in model time.
+						time.Sleep(startupDelay)
+						return unshare(ctx, name)
+					}
+					// A finite reader can deliver EOF while authorization and registry I/O
+					// are still running. Pin the actual cleanup entry before arming the
+					// watchdog, then measure only its cancellation budget in model time.
+					_, took, err := runMCPUntil(t, call, actions, started, 5*time.Second)
+					if !errors.Is(err, errMCPEOFWatchdog) {
+						t.Fatalf("session error = %v, want the post-EOF watchdog", err)
+					}
+					select {
+					case <-cancelled:
+					default:
+						t.Fatal("the watchdog did not reach the stuck device cleanup")
+					}
+					if took != 300*time.Millisecond {
+						t.Fatalf("cleanup cancellation took %v, want exactly the watchdog delay", took)
+					}
+				})
+			})
 		}
 	})
 }
