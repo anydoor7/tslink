@@ -21,6 +21,24 @@ function Invoke-TSLink([string[]]$Arguments) {
     if (-not $result.ok -or $result.schema_version -ne 1) { throw 'Invalid TSLink result envelope' }
     return $result.data
 }
+function Read-SharedText([string]$Path) {
+    # Match the product's shared state readers: coexist with writers and atomic
+    # replacement. ReadAllText's FileShare.Read can itself break observation.
+    $stream = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read,
+        ([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
+    try {
+        $reader = [IO.StreamReader]::new($stream)
+        try { return $reader.ReadToEnd() }
+        finally { $reader.Dispose() }
+    } finally { $stream.Dispose() }
+}
+function Get-NewDaemonPID([string]$Path, [int]$DifferentFrom) {
+    if (Test-Path $Path) {
+        $text = (Read-SharedText $Path).Trim()
+        if ($text -match '^\d+$' -and [int]$text -gt 0 -and [int]$text -ne $DifferentFrom) { return [int]$text }
+    }
+    return 0
+}
 function Write-FailureEvidence {
     # Capture before uninstall removes the process/state that explains failure.
     if (-not $script:scratch -or $env:TSLINK_CONFIG_DIR -ne $script:scratch) {
@@ -32,7 +50,7 @@ function Write-FailureEvidence {
     foreach ($name in @('supervisor.json','runtime.json','logs\tslink.err.log','logs\tslink.out.log')) {
         try {
             $path = Join-Path $env:TSLINK_CONFIG_DIR $name
-            if (Test-Path $path) { Write-Output ('FAILURE_' + $name + ' ' + [IO.File]::ReadAllText($path)) }
+            if (Test-Path $path) { Write-Output ('FAILURE_' + $name + ' ' + (Read-SharedText $path)) }
             else { Write-Output ('FAILURE_' + $name + ' absent') }
         } catch { Write-Output ('FAILURE_' + $name + '_ERROR ' + $_.Exception.Message) }
     }
@@ -46,7 +64,7 @@ function Wait-Daemon([int]$DifferentFrom = 0, [int]$Seconds = 30) {
             $s.supervision.restart_on_exit -and $s.supervision.autostart_scope -eq 'login') {
             $runtimePath = Join-Path $env:TSLINK_CONFIG_DIR 'runtime.json'
             if (Test-Path $runtimePath) {
-                $runtime = Get-Content -Raw $runtimePath | ConvertFrom-Json
+                $runtime = Read-SharedText $runtimePath | ConvertFrom-Json
                 $age = [DateTime]::UtcNow - [DateTime]::Parse($runtime.updated_at).ToUniversalTime()
                 if ($runtime.daemon_pid -eq $s.daemon_pid -and $age.TotalSeconds -ge 0 -and $age.TotalSeconds -lt 30) { return $s.daemon_pid }
             }
@@ -56,7 +74,7 @@ function Wait-Daemon([int]$DifferentFrom = 0, [int]$Seconds = 30) {
     Write-Output ('WAIT_TIMEOUT_STATUS ' + ($s | ConvertTo-Json -Compress -Depth 5))
     foreach ($name in @('runtime.json','supervisor.json')) {
         $path = Join-Path $env:TSLINK_CONFIG_DIR $name
-        if (Test-Path $path) { Write-Output ('WAIT_TIMEOUT_' + $name + ' ' + [IO.File]::ReadAllText($path).Trim()) }
+        if (Test-Path $path) { Write-Output ('WAIT_TIMEOUT_' + $name + ' ' + (Read-SharedText $path).Trim()) }
     }
     throw 'Verified daemon and matching runtime artifact did not appear before deadline'
 }
@@ -106,11 +124,8 @@ try {
     $pidDeadline = $killedAt.AddSeconds($RestartTimeoutSeconds)
     $newPID = 0
     do {
-        $pidPath = Join-Path $scratch 'tslink.pid'
-        if (Test-Path $pidPath) {
-            $text = [IO.File]::ReadAllText($pidPath).Trim()
-            if ($text -match '^\d+$' -and [int]$text -ne $first) { $newPID = [int]$text; break }
-        }
+        $newPID = Get-NewDaemonPID -Path (Join-Path $scratch 'tslink.pid') -DifferentFrom $first
+        if ($newPID) { break }
         Start-Sleep -Milliseconds 25
     } while ([DateTime]::UtcNow -lt $pidDeadline)
     if (-not $newPID) { throw 'New daemon PID did not appear within the first crash backoff bound' }
@@ -124,7 +139,7 @@ try {
     Start-Sleep -Seconds 65
     $s = Invoke-TSLink -Arguments @('status','--json')
     Write-Output ('STOP_STATUS ' + ($s | ConvertTo-Json -Compress -Depth 5))
-    Write-Output ('STOP_SUPERVISOR ' + [IO.File]::ReadAllText((Join-Path $scratch 'supervisor.json')).Trim())
+    Write-Output ('STOP_SUPERVISOR ' + (Read-SharedText (Join-Path $scratch 'supervisor.json')).Trim())
     if ($s.daemon_running -or $s.supervision.supervisor_pid -or $s.supervision.runtime_state -ne 'stopped') { throw 'Graceful successful stop unexpectedly restarted or left a supervisor' }
     $null = Invoke-TSLink -Arguments @('install','--json')
     $null = Wait-Daemon
