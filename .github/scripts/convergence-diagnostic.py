@@ -156,11 +156,13 @@ def assess(item, receipt, output):
     errors = []
     if receipt.get('state') != 'DONE' or receipt.get('exit') != 0:
         errors.append(f"{receipt.get('state')} exit={receipt.get('exit')}")
+    corrupt = False
     for suffix in ('stdout', 'stderr'):
         path = output/(item['id']+'.'+suffix)
         if not path.is_file() or receipt.get(suffix+'_sha256') != digest(path):
             errors.append('missing/corrupt '+suffix)
-    if errors: return {}, errors
+            corrupt = True
+    if corrupt: return {}, errors
     text = (output/(item['id']+'.stdout')).read_text(encoding='utf-8')
     counts = {}
     if item['kind'] == 'go':
@@ -170,7 +172,8 @@ def assess(item, receipt, output):
             required = ['TestInotifyCloseJoinsPublicChannels','TestInotifyRepeatedCloseJoinsReader','TestInotifyCloseUnblocksUnreadChannels']
         else:
             required = ['TestGuestWriterLatency','TestGuestListenerRestoreFlushOwnership','TestGuestHealthyRequestFlushOwnership']
-        counts, errors = go_results(text, required)
+        counts, go_errors = go_results(text, required)
+        errors.extend(go_errors)
     elif item['kind'] == 'coverage':
         match = re.search(r'^total:\s+\(statements\)\s+(\d+(?:\.\d+)?)%', text, re.M)
         if not match or float(match[1]) < 85.0: errors.append('missing coverage or below 85.0%')

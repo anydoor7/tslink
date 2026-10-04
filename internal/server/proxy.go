@@ -112,6 +112,9 @@ func NewProxyHandlerWithOptions(target string, identity *IdentityResolver, optio
 				http.Error(w, failure.message, failure.status)
 				return
 			}
+			if denyGuestProxyCancellation(w, r, err) {
+				return
+			}
 			slog.Error("proxy error", "code", "backend_request_failed")
 			if isTimeout(err) {
 				http.Error(w, "Gateway timeout — backend did not respond in time", http.StatusGatewayTimeout)

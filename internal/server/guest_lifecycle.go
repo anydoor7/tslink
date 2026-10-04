@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -26,6 +27,35 @@ type guestFlight struct {
 	conn   net.Conn
 	ended  bool
 	timer  *time.Timer
+}
+
+type guestFlightKey struct{}
+
+// A grant-ended request is an authorization failure, not an offline backend.
+// Require both a canceled transport and our ended flight; ordinary upstream
+// failures and client-only cancellation retain the proxy's error handling.
+func denyGuestProxyCancellation(w http.ResponseWriter, r *http.Request, err error) bool {
+	flight, _ := r.Context().Value(guestFlightKey{}).(*guestFlight)
+	if flight == nil || !errors.Is(err, context.Canceled) {
+		return false
+	}
+	flight.mu.Lock()
+	ended := flight.ended
+	flight.mu.Unlock()
+	if !ended {
+		return false
+	}
+	g := flight.gate
+	_, reason := g.grantState(func() (registry.GuestView, string) {
+		return registry.CheckGuest(g.path, g.svc.Name, flight.id, g.now(), false, false)
+	})
+	if reason == "allowed" {
+		// A monitor read can end a flight on temporary registry unavailability.
+		// Preserve that retryable denial even if the registry has recovered.
+		reason = "unavailable"
+	}
+	g.deny(w, r, flight.id, reason, g.now())
+	return true
 }
 
 func (f *guestFlight) end() {
@@ -215,6 +245,7 @@ func (g *guestGate) serveApp(w http.ResponseWriter, r *http.Request, view regist
 			})
 		}
 		flight.mu.Unlock()
+		ctx = context.WithValue(ctx, guestFlightKey{}, flight)
 		g.app.ServeHTTP(&guestResponse{ResponseWriter: w, gate: g, flight: flight}, stripGuestSecrets(r.WithContext(ctx)))
 	}
 	returned = true

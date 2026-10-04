@@ -3,7 +3,7 @@
     "cmd_test.go:1477", "e2e_dual_daemon_unix_test.go:31", "e2e_dual_daemon_unix_test.go:204",
     "e2e_registry_daemon_concurrency_unix_test.go:43", "e2e_scaffold_unix_test.go:481",
     "e2e_stop_evidence_unix_test.go:37", "e2e_stop_evidence_unix_test.go:148", "e2e_stop_evidence_unix_test.go:196",
-    "install_darwin_test.go:451", "install_linux_e2e_test.go:146", "install_windows_test.go:125",
+    "install_darwin_test.go:451", "install_linux_e2e_test.go:54", "install_linux_e2e_test.go:146", "install_windows_test.go:125",
     "login_rollback_legacy_file_test.go:20", "mcp_manager_context_test.go:17",
     "people_review_regression_test.go:202", "people_test.go:376", "remove_retires_nodes_enrolled_during_wait_test.go:93",
     "review3_input_test.go:85", "service_manager_guard_wiring_unix_test.go:64", "service_manager_guard_wiring_unix_test.go:116",
@@ -15,8 +15,8 @@
     "atomicfile_test.go:141", "atomicfile_test.go:170", "atomicfile_test.go:193", "atomicfile_test.go:208",
     "atomicfile_test.go:241", "atomicfile_test.go:272", "atomicfile_test.go:390", "atomicfile_test.go:430", "atomicfile_test.go:451"
   ],
-  "github.com/anydoor7/tslink/internal/config": ["windows_path_rendering_test.go:34"],
-  "github.com/anydoor7/tslink/internal/credentials": ["credentials_strict_delete_test.go:22", "credentials_strict_delete_test.go:25", "lock_alias_test.go:34", "metadata_test.go:190"],
+  "github.com/anydoor7/tslink/internal/config": ["windows_path_rendering_test.go:34", "windows_path_rendering_test.go:47"],
+  "github.com/anydoor7/tslink/internal/credentials": ["credentials_strict_delete_test.go:22", "credentials_strict_delete_test.go:25", "credentials_strict_delete_test.go:162", "lock_alias_test.go:34", "metadata_test.go:190"],
   "github.com/anydoor7/tslink/internal/daemon": [
     "daemon_test.go:285", "daemon_test.go:507", "daemon_test.go:536", "daemon_test.go:556", "daemon_test.go:579",
     "daemon_test.go:653", "daemon_test.go:848", "daemon_test.go:1105", "daemon_test.go:1520",
@@ -31,7 +31,8 @@
   "github.com/anydoor7/tslink/internal/testenv": [
     "isolation_owner_unix_test.go:27", "isolation_root_lock_test.go:324", "isolation_root_lock_test.go:444", "isolation_test.go:147",
     "report_env_independence_test.go:54", "report_env_independence_test.go:57", "service_manager_guard_lifecycle_test.go:410",
-    "service_manager_guard_lifecycle_test.go:488", "service_manager_path_shim_test.go:17", "service_manager_path_shim_test.go:182"
+    "service_manager_guard_lifecycle_test.go:488", "service_manager_path_shim_test.go:17", "service_manager_path_shim_test.go:42",
+    "service_manager_path_shim_test.go:88", "service_manager_path_shim_test.go:167", "service_manager_path_shim_test.go:182"
   ],
   "github.com/fsnotify/fsnotify": [
     "fsnotify_test.go:103", "fsnotify_test.go:136", "fsnotify_test.go:364", "fsnotify_test.go:437", "fsnotify_test.go:486",
