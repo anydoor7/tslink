@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/anydoor7/tslink/internal/output"
@@ -68,15 +70,68 @@ func TestMCPEOFWatchdogDefaultsOutlastEveryToolWait(t *testing.T) {
 	}
 }
 
-// runMCPUntil runs a finite session and fails the test if it outlives limit,
-// instead of hanging the package.
-func runMCPUntil(t *testing.T, input string, actions mcpActions, limit time.Duration) (string, time.Duration, error) {
+// Exercise the shipped budgets too: shortened test timers alone cannot prove
+// that a default session cancels cooperative work and abandons stuck work.
+func TestMCPEOFWatchdogDefaultBudget(t *testing.T) {
+	for _, cooperative := range []bool{true, false} {
+		name := "ignores cancellation"
+		if cooperative {
+			name = "context-aware"
+		}
+		t.Run(name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				started, release := make(chan struct{}), make(chan struct{})
+				defer close(release)
+				actions := fakeMCPActions()
+				actions.url = func(ctx context.Context, _ string, _ time.Duration) (any, error) {
+					close(started)
+					if cooperative {
+						<-ctx.Done()
+						return nil, ctx.Err()
+					}
+					<-release
+					return URLResult{}, nil
+				}
+				call := initializedMCPInput(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"url","arguments":{"name":"web"}}}`)
+				_, took, err := runMCPUntil(t, call, actions, started, 7*time.Minute)
+				want := 6 * time.Minute
+				if !cooperative {
+					want += 5 * time.Second
+				}
+				if !errors.Is(err, errMCPEOFWatchdog) || took != want {
+					t.Fatalf("default session = %v after %v, want watchdog after %v", err, took, want)
+				}
+			})
+		})
+	}
+}
+
+// runMCPUntil closes stdin only after the target operation is in flight. Call
+// inside synctest so startup and real fixture I/O do not consume the watchdog
+// budget, and elapsed time measures the shutdown protocol rather than load.
+func runMCPUntil(t *testing.T, input string, actions mcpActions, started <-chan struct{}, limit time.Duration) (string, time.Duration, error) {
 	t.Helper()
-	limit = max(limit, 5*time.Second)
 	var stdout bytes.Buffer
+	in, writer := io.Pipe()
+	defer in.Close()
+	defer writer.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	done := make(chan error, 1)
+	go func() { done <- runMCPStdio(ctx, in, &stdout, actions) }()
+	go func() { _, _ = io.WriteString(writer, input) }()
+	select {
+	case <-started:
+	case err := <-done:
+		t.Fatalf("session ended before the target operation started: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("target operation did not start before EOF")
+	}
 	start := time.Now()
-	go func() { done <- runMCPStdio(context.Background(), strings.NewReader(input), &stdout, actions) }()
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	synctest.Wait()
 	select {
 	case err := <-done:
 		return stdout.String(), time.Since(start), err
@@ -91,40 +146,48 @@ func TestMCPEOFWatchdogCancelsACallStuckPastEveryBound(t *testing.T) {
 	call := initializedMCPInput(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"url","arguments":{"name":"web","wait":"1s"}}}`)
 
 	t.Run("context-aware call", func(t *testing.T) {
-		var cancelled atomic.Bool
-		actions := fakeMCPActions()
-		actions.url = func(ctx context.Context, _ string, _ time.Duration) (any, error) {
-			<-ctx.Done()
-			cancelled.Store(true)
-			return nil, ctx.Err()
-		}
-		_, took, err := runMCPUntil(t, call, actions, 5*time.Second)
-		if !errors.Is(err, errMCPEOFWatchdog) {
-			t.Fatalf("session error = %v, want the post-EOF watchdog", err)
-		}
-		if !cancelled.Load() {
-			t.Fatal("the stuck call never saw cancellation")
-		}
-		if took < 300*time.Millisecond {
-			t.Fatalf("session ended after %v, before the watchdog delay", took)
-		}
+		synctest.Test(t, func(t *testing.T) {
+			started := make(chan struct{})
+			var cancelled atomic.Bool
+			actions := fakeMCPActions()
+			actions.url = func(ctx context.Context, _ string, _ time.Duration) (any, error) {
+				close(started)
+				<-ctx.Done()
+				cancelled.Store(true)
+				return nil, ctx.Err()
+			}
+			_, took, err := runMCPUntil(t, call, actions, started, 5*time.Second)
+			if !errors.Is(err, errMCPEOFWatchdog) {
+				t.Fatalf("session error = %v, want the post-EOF watchdog", err)
+			}
+			if !cancelled.Load() {
+				t.Fatal("the stuck call never saw cancellation")
+			}
+			if took != 300*time.Millisecond {
+				t.Fatalf("session ended after %v, want exactly the watchdog delay", took)
+			}
+		})
 	})
 
 	t.Run("call that ignores cancellation", func(t *testing.T) {
-		release := make(chan struct{})
-		t.Cleanup(func() { close(release) })
-		actions := fakeMCPActions()
-		actions.url = func(context.Context, string, time.Duration) (any, error) {
-			<-release
-			return URLResult{}, nil
-		}
-		_, took, err := runMCPUntil(t, call, actions, 5*time.Second)
-		if !errors.Is(err, errMCPEOFWatchdog) {
-			t.Fatalf("session error = %v, want the post-EOF watchdog", err)
-		}
-		if took < 600*time.Millisecond {
-			t.Fatalf("session ended after %v, before the watchdog delay plus the grace", took)
-		}
+		synctest.Test(t, func(t *testing.T) {
+			started := make(chan struct{})
+			release := make(chan struct{})
+			defer close(release)
+			actions := fakeMCPActions()
+			actions.url = func(context.Context, string, time.Duration) (any, error) {
+				close(started)
+				<-release
+				return URLResult{}, nil
+			}
+			_, took, err := runMCPUntil(t, call, actions, started, 5*time.Second)
+			if !errors.Is(err, errMCPEOFWatchdog) {
+				t.Fatalf("session error = %v, want the post-EOF watchdog", err)
+			}
+			if took != 600*time.Millisecond {
+				t.Fatalf("session ended after %v, want exactly the watchdog delay plus the grace", took)
+			}
+		})
 	})
 }
 
@@ -132,43 +195,75 @@ func TestMCPEOFWatchdogCancelsACallStuckPastEveryBound(t *testing.T) {
 // piped use (`printf ... | tslink mcp`) closes stdin at once and must still
 // get the answer of a call that finishes inside its own bound.
 func TestMCPEOFWatchdogLeavesABoundedCallAlone(t *testing.T) {
-	withMCPEOFWatchdog(t, 2*time.Second, 300*time.Millisecond)
-	var cancelled atomic.Bool
-	actions := fakeMCPActions()
-	actions.url = func(ctx context.Context, name string, wait time.Duration) (any, error) {
-		select {
-		case <-ctx.Done():
-			cancelled.Store(true)
-			return nil, ctx.Err()
-		case <-time.After(wait):
-			return URLResult{Name: name, URL: "https://" + name + ".tail.ts.net", State: "exact"}, nil
+	synctest.Test(t, func(t *testing.T) {
+		withMCPEOFWatchdog(t, 2*time.Second, 300*time.Millisecond)
+		var cancelled atomic.Bool
+		started := make(chan struct{})
+		actions := fakeMCPActions()
+		actions.url = func(ctx context.Context, name string, wait time.Duration) (any, error) {
+			close(started)
+			select {
+			case <-ctx.Done():
+				cancelled.Store(true)
+				return nil, ctx.Err()
+			case <-time.After(wait):
+				return URLResult{Name: name, URL: "https://" + name + ".tail.ts.net", State: "exact"}, nil
+			}
 		}
-	}
-	stdout, _, err := runMCPUntil(t, initializedMCPInput(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"url","arguments":{"name":"web","wait":"500ms"}}}`), actions, 10*time.Second)
-	if err != nil {
-		t.Fatalf("session error = %v", err)
-	}
-	if cancelled.Load() {
-		t.Fatal("a call inside its own bound was cancelled after end of input")
-	}
-	result, _ := mcpFrameByID(t, decodeMCPResponses(t, stdout), float64(2))["result"].(map[string]any)
-	if result == nil || result["isError"] == true {
-		t.Fatalf("bounded call after end of input was not answered: %s", stdout)
-	}
+		stdout, took, err := runMCPUntil(t, initializedMCPInput(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"url","arguments":{"name":"web","wait":"500ms"}}}`), actions, started, 10*time.Second)
+		if err != nil {
+			t.Fatalf("session error = %v", err)
+		}
+		if cancelled.Load() {
+			t.Fatal("a call inside its own bound was cancelled after end of input")
+		}
+		if took != 500*time.Millisecond {
+			t.Fatalf("bounded call took %v, want its 500ms wait", took)
+		}
+		result, _ := mcpFrameByID(t, decodeMCPResponses(t, stdout), float64(2))["result"].(map[string]any)
+		if result == nil || result["isError"] == true {
+			t.Fatalf("bounded call after end of input was not answered: %s", stdout)
+		}
+	})
 }
 
 // TestMCPWatchdogEndsTheCommandWithOneErrorLine pins what the user sees when
 // the watchdog fires: `tslink mcp` returns an error main prints as a single
 // "Error: mcp stdio: ..." line with no Next: hints, and exits 1.
 func TestMCPWatchdogEndsTheCommandWithOneErrorLine(t *testing.T) {
+	// The command installs real OS signal handlers, outside synctest's clock.
+	// Keep that boundary real, but establish the call before sending EOF.
 	withMCPEOFWatchdog(t, 200*time.Millisecond, 200*time.Millisecond)
+	started := make(chan struct{})
 	actions := fakeMCPActions()
 	actions.url = func(ctx context.Context, _ string, _ time.Duration) (any, error) {
+		close(started)
 		<-ctx.Done()
 		return nil, ctx.Err()
 	}
 	call := initializedMCPInput(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"url","arguments":{"name":"web","wait":"1s"}}}`)
-	err := runMCPCommand(context.Background(), strings.NewReader(call), &bytes.Buffer{}, actions)
+	in, writer := io.Pipe()
+	defer in.Close()
+	defer writer.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- runMCPCommand(ctx, in, io.Discard, actions) }()
+	go func() { _, _ = io.WriteString(writer, call) }()
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("command did not dispatch the call before EOF")
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var err error
+	select {
+	case err = <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("command did not return after the watchdog")
+	}
 	if !errors.Is(err, errMCPEOFWatchdog) || !strings.HasPrefix(err.Error(), "mcp stdio: ") || strings.Contains(err.Error(), "\n") {
 		t.Fatalf("command error = %q, want one mcp stdio line naming the watchdog", err)
 	}
