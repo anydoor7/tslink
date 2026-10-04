@@ -14,6 +14,24 @@ ROOT = Path(__file__).resolve().parents[2]
 SEEDS = ('1783794398036981000', '20260712', '424242')
 FAMILIES = ('windows-root', 'windows-nested', 'windows-smoke',
             'linux-nested', 'linux-root', 'macos-control')
+# Expanded native reader inventory, including the pending/error/deadline and
+# supervisor-accounting boundaries. A total alone cannot prove these ran.
+READER_CHECKS = (
+    'unlocked PID control', 'old RED and shared writer GREEN',
+    'replacement returns fresh contents', 'delete-access handle is shared',
+    'missing PID never becomes fresh',
+    *(f'reject PID [{value}]' for value in ('111', '0', '-2', 'not-a-pid', '222 extra', '')),
+    'single-attempt shared read still reports exclusive lock',
+    'bounded PID observer treats sharing conflict as pending',
+    'permanent invalid path remains an error',
+    'verified daemon and matching artifact control', 'runtime reader coexists with writer',
+    'persistent runtime lock fails at the original deadline',
+    'supervisor accounting accepts one crash and rejects absorbed failure',
+    *(f'reject {value}' for value in ('not running', 'old PID', 'unowned daemon',
+      'no restart policy', 'wrong autostart scope', 'wrong runtime PID',
+      'stale artifact', 'future artifact', 'missing artifact')),
+    'malformed artifact is an error',
+)
 
 
 def write(path, value):
@@ -80,23 +98,41 @@ def go_results(text, required=()):
     events = [json.loads(line) for line in text.splitlines() if line.strip()]
     run, terminal, passed, skipped, failed = set(), set(), set(), set(), set()
     outputs = {}
-    package_pass = set()
+    package_pass, observed, started, packages_with_tests = set(), set(), set(), set()
+    package_terminal = {}
+    errors = []
     for e in events:
         action, pkg, test = e.get('Action'), e.get('Package'), e.get('Test')
         if not pkg or not action:
             raise ValueError('invalid go test JSON event')
         key = (pkg, test)
+        observed.add(pkg)
+        if not test and action == 'start':
+            if pkg in started: errors.append('duplicate package start: '+pkg)
+            started.add(pkg)
+        if pkg not in started: errors.append('event before package start: '+pkg)
+        if pkg in package_terminal: errors.append('event after package terminal: '+pkg)
         if test:
+            packages_with_tests.add(pkg)
             if action == 'output': outputs.setdefault(key, []).append(e.get('Output', ''))
             if action == 'run':
                 if key in run: raise ValueError('repeated test in one count=1 receipt')
                 run.add(key)
             if action in ('pass', 'skip', 'fail'):
+                if key in terminal: errors.append('duplicate/inconsistent test terminal: '+pkg+':'+test)
                 terminal.add(key)
                 {'pass': passed, 'skip': skipped, 'fail': failed}[action].add(key)
-        elif action == 'pass': package_pass.add(pkg)
-        elif action == 'fail': failed.add(key)
-    errors = []
+        elif action in ('pass', 'skip', 'fail'):
+            if pkg in package_terminal: errors.append('duplicate/inconsistent package terminal: '+pkg)
+            package_terminal[pkg] = action
+            if action == 'pass': package_pass.add(pkg)
+            elif action == 'fail': failed.add(key)
+    if observed != started or observed != set(package_terminal):
+        errors.append('missing package start/terminal events: '+', '.join(sorted(
+            (observed - started) | (observed - set(package_terminal)))))
+    for pkg, action in package_terminal.items():
+        if action == 'skip' and pkg in packages_with_tests:
+            errors.append('package skip with test events: '+pkg)
     if not run or not passed or not package_pass: errors.append('zero executed/passing tests or packages')
     if run != terminal: errors.append('missing or unsolicited test terminal events')
     if failed: errors.append('failed tests/packages')
@@ -139,9 +175,16 @@ def assess(item, receipt, output):
         match = re.search(r'^total:\s+\(statements\)\s+(\d+(?:\.\d+)?)%', text, re.M)
         if not match or float(match[1]) < 85.0: errors.append('missing coverage or below 85.0%')
     elif item['kind'] == 'reader':
-        match = re.search(r'^RESULT passed=(\d+) failed=0\s*$', text, re.M)
-        if not match or int(match[1]) < 24: errors.append('missing complete native reader checks')
-        counts['checks'] = int(match[1]) if match else 0
+        results = re.findall(r'^RESULT passed=(\d+) failed=(\d+)\s*$', text, re.M)
+        checks = re.findall(r'^PASS (.+)\r?$', text, re.M)
+        checks = [name.rstrip('\r') for name in checks]
+        if results != [('28', '0')]: errors.append('missing complete native reader checks (28 required)')
+        if len(checks) != 28 or set(checks) != set(READER_CHECKS):
+            errors.append('native reader check inventory mismatch')
+        sources = re.findall(r'^SOURCE ([0-9a-fA-F]{64})\s*$', text, re.M)
+        if [source.lower() for source in sources] != [digest(ROOT/'scripts/windows-supervision-smoke.ps1')]:
+            errors.append('native reader SOURCE differs from checked-out smoke script')
+        counts['checks'] = len(checks)
     elif item['kind'] == 'smoke':
         path = output/f"{item['family']}-{item['iteration']:02d}-cleanup.json"
         cleanup = json.loads(path.read_text(encoding='utf-8-sig')) if path.is_file() else {}
@@ -218,6 +261,12 @@ def collect(output):
     sha, reps = inputs()
     output.mkdir(parents=True, exist_ok=True)
     errors, summaries, starts, trees = [], [], set(), set()
+    expected_tree = None
+    try:
+        validate()
+        expected_tree = subprocess.check_output(['git', 'rev-parse', sha+'^{tree}'], cwd=ROOT, text=True).strip()
+    except (ValueError, OSError, subprocess.SubprocessError) as exc:
+        errors.append('collector source identity: '+str(exc))
     identity = dict(sha=sha, run_id=os.environ['GITHUB_RUN_ID'], attempt=os.environ['GITHUB_RUN_ATTEMPT'])
     for key in ('PREPARE_RESULT','FAMILIES_RESULT'):
         if os.environ.get(key) != 'success': errors.append(key+'='+str(os.environ.get(key)))
@@ -231,6 +280,7 @@ def collect(output):
             if meta.get('family') != family or outcome.get('family') != family: raise ValueError('family skew')
             if not meta.get('go_version') or not re.fullmatch('[0-9a-f]{40}', meta.get('tree','')) or meta.get('repetitions') != reps: raise ValueError('missing metadata')
             trees.add(meta['tree'])
+            if expected_tree is not None and meta['tree'] != expected_tree: raise ValueError('family source tree differs from requested SHA tree')
             if outcome.get('expected') != len(inventory) or outcome.get('recorded') != len(inventory) or outcome.get('exit') != 0: raise ValueError('family outcome/count not successful')
         except (ValueError, OSError) as exc: errors.append(family+': '+str(exc))
         for item in inventory:
@@ -251,7 +301,7 @@ def collect(output):
     actual = {p.name for p in output.glob('*.json') if re.match(r'.*-\d{2}-(?!cleanup)', p.name)}
     if actual != expected_files: errors.append('receipt inventory mismatch')
     if len(trees) != 1: errors.append('different/missing source trees across families')
-    write(output/'reconciliation.json', dict(**identity, expected=len(expected_files), observed=len(actual), errors=errors, commands=summaries))
+    write(output/'reconciliation.json', dict(**identity, expected_tree=expected_tree, expected=len(expected_files), observed=len(actual), errors=errors, commands=summaries))
     print(json.dumps(dict(expected=len(expected_files), observed=len(actual), errors=errors), indent=2))
     return int(bool(errors))
 

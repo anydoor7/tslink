@@ -6,6 +6,7 @@ import io
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -17,24 +18,52 @@ SPEC.loader.exec_module(d)
 
 
 def events(names=('TestControl',), action='pass'):
-    return '\n'.join(json.dumps(x) for name in names for x in (
+    tests = [x for name in names for x in (
         {'Action':'run','Package':'fixture','Test':name},
-        {'Action':action,'Package':'fixture','Test':name},
-        {'Action':'pass','Package':'fixture'}))+'\n'
+        {'Action':action,'Package':'fixture','Test':name})]
+    return '\n'.join(json.dumps(x) for x in [
+        {'Action':'start','Package':'fixture'}, *tests,
+        {'Action':'pass','Package':'fixture'}])+'\n'
+
+
+def source_identity():
+    return subprocess.check_output(['git', 'rev-parse', 'HEAD', 'HEAD^{tree}'], cwd=d.ROOT, text=True).splitlines()
+
+
+def reader_output():
+    # Independent expected inventory: do not import the collector's allowlist.
+    names = [
+        'unlocked PID control', 'old RED and shared writer GREEN',
+        'replacement returns fresh contents', 'delete-access handle is shared',
+        'missing PID never becomes fresh', 'reject PID [111]', 'reject PID [0]',
+        'reject PID [-2]', 'reject PID [not-a-pid]', 'reject PID [222 extra]', 'reject PID []',
+        'single-attempt shared read still reports exclusive lock',
+        'bounded PID observer treats sharing conflict as pending', 'permanent invalid path remains an error',
+        'verified daemon and matching artifact control', 'runtime reader coexists with writer',
+        'persistent runtime lock fails at the original deadline',
+        'supervisor accounting accepts one crash and rejects absorbed failure',
+        'reject not running', 'reject old PID', 'reject unowned daemon', 'reject no restart policy',
+        'reject wrong autostart scope', 'reject wrong runtime PID', 'reject stale artifact',
+        'reject future artifact', 'reject missing artifact', 'malformed artifact is an error',
+    ]
+    return 'SOURCE '+d.digest(d.ROOT/'scripts/windows-supervision-smoke.ps1').upper()+'\n'+''.join(
+        'PASS '+name+'\n' for name in names)+'RESULT passed=28 failed=0\n'
 
 
 class DiagnosticTests(unittest.TestCase):
     def setUp(self):
-        self.env = mock.patch.dict(os.environ, {'DIAGNOSTIC_SHA':'a'*40,'DIAGNOSTIC_REPETITIONS':'1',
+        sha, _ = source_identity()
+        self.env = mock.patch.dict(os.environ, {'DIAGNOSTIC_SHA':sha,'GITHUB_SHA':sha,'DIAGNOSTIC_REPETITIONS':'1',
             'GITHUB_RUN_ID':'123','GITHUB_RUN_ATTEMPT':'1','PREPARE_RESULT':'success','FAMILIES_RESULT':'success'})
         self.env.start()
         self.addCleanup(self.env.stop)
 
     def fixture(self, out):
-        identity = dict(sha='a'*40,run_id='123',attempt='1')
+        sha, tree = source_identity()
+        identity = dict(sha=sha,run_id='123',attempt='1')
         for family in d.FAMILIES:
             plan = d.plan(family,1,out)
-            d.write(out/(family+'-metadata.json'),dict(**identity,family=family,repetitions=1,go_version='go1.fixture',tree='b'*40))
+            d.write(out/(family+'-metadata.json'),dict(**identity,family=family,repetitions=1,go_version='go1.fixture',tree=tree))
             d.write(out/(family+'-outcome.json'),dict(**identity,family=family,exit=0,expected=len(plan),recorded=len(plan)))
             for index,item in enumerate(plan):
                 if family == 'windows-nested': names=['TestWindowsCloseJoinsPublicChannels','TestWindowsLateCompletionOwnership','TestWindowsSendErrorCloseToken']
@@ -42,7 +71,7 @@ class DiagnosticTests(unittest.TestCase):
                 else: names=['TestGuestWriterLatency','TestGuestListenerRestoreFlushOwnership','TestGuestHealthyRequestFlushOwnership']
                 text = events(names)
                 if item['kind'] == 'coverage': text='total: (statements) 85.1%\n'
-                if item['kind'] == 'reader': text='RESULT passed=28 failed=0\n'
+                if item['kind'] == 'reader': text=reader_output()
                 if item['kind'] == 'smoke':
                     text='PASS Windows supervision: install, runtime artifact, crash restart, graceful stop, reinstall, uninstall\n'
                     d.write(out/f'{family}-01-cleanup.json',dict(cleanup_proven=True,passed=True))
@@ -91,6 +120,77 @@ class DiagnosticTests(unittest.TestCase):
             self.assertTrue(receipts[0]['errors'])
             self.assertFalse(receipts[1]['errors'])
             self.assertEqual((out/'control-1.stdout').read_text().strip(),'executed-1')
+
+    def test_go_package_start_terminal_completeness(self):
+        control = events()
+        extra = [{'Action':'start','Package':'other'},
+                 {'Action':'output','Package':'other','Output':'? other [no test files]\n'},
+                 {'Action':'skip','Package':'other'}]
+        encode = lambda values: '\n'.join(json.dumps(e) for e in values)+'\n'
+        self.assertFalse(d.go_results(control+encode(extra))[1], 'explicit no-test skip control')
+        complete = [json.loads(line) for line in control.splitlines()]
+        mutations = {
+            'missing package start': complete[1:],
+            'missing package terminal': complete[:-1],
+            'duplicate package start': [complete[0], *complete],
+            'duplicate package terminal': [*complete, complete[-1]],
+            'inconsistent package terminal': [*complete, {'Action':'skip','Package':'fixture'}],
+            'package skip with test events': [*complete[:-1], {'Action':'skip','Package':'fixture'}],
+            'duplicate/inconsistent test terminal': [*complete[:-1], complete[-2], complete[-1]],
+        }
+        for name, values in mutations.items():
+            with self.subTest(name=name):
+                errors = d.go_results(encode(values))[1]
+                reason = 'missing package start/terminal' if name.startswith('missing package') else (
+                    'duplicate/inconsistent package terminal' if name.endswith('package terminal') else name)
+                self.assertTrue(any(reason in error for error in errors), errors)
+        self.assertTrue(any('other' in error and 'missing package' in error
+                            for error in d.go_results(control+encode(extra[:-1]))[1]))
+
+    def test_collector_binds_real_checkout_dispatch_and_requested_tree(self):
+        sha, tree = source_identity()
+        self.assertEqual(d.ROOT, Path(__file__).resolve().parents[2])
+        for mutation in ('tree', 'dispatch', 'checkout'):
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as tmp:
+                out = Path(tmp); self.fixture(out)
+                self.assertEqual(self.verdict(out), 0)
+                self.assertEqual(json.loads((out/'reconciliation.json').read_text())['expected_tree'], tree)
+                if mutation == 'tree':
+                    # A real different tree, also available in shallow CI checkouts.
+                    other_tree = subprocess.check_output(['git','rev-parse','HEAD:.github'],cwd=d.ROOT,text=True).strip()
+                    self.assertNotEqual(other_tree, tree)
+                    for path in out.glob('*-metadata.json'):
+                        value=json.loads(path.read_text()); value['tree']=other_tree; d.write(path,value)
+                    env = {}
+                else:
+                    self.assertNotEqual(sha, tree)
+                    env = {'GITHUB_SHA':tree}
+                    if mutation == 'checkout': env['DIAGNOSTIC_SHA']=tree
+                with mock.patch.dict(os.environ,env): self.assertEqual(self.verdict(out),1)
+                errors = json.loads((out/'reconciliation.json').read_text())['errors']
+                reason = 'family source tree differs' if mutation == 'tree' else 'checkout, dispatch workflow and requested SHA'
+                self.assertTrue(any(reason in e for e in errors), errors)
+
+    def test_reader_requires_current_source_and_each_named_check(self):
+        mutations = ('old-count', 'source', 'missing-source', 'missing-check', 'duplicate-check', 'summary-only')
+        for mutation in mutations:
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as tmp:
+                out=Path(tmp); self.fixture(out)
+                self.assertEqual(self.verdict(out),0)
+                log=out/'windows-smoke-01-reader.stdout'; text=log.read_text()
+                boundary='PASS supervisor accounting accepts one crash and rejects absorbed failure\n'
+                if mutation=='old-count': text=text.replace('passed=28','passed=24')
+                elif mutation=='source': text=text.replace(text.splitlines()[0], 'SOURCE '+'0'*64)
+                elif mutation=='missing-source': text='\n'.join(text.splitlines()[1:])+'\n'
+                elif mutation=='missing-check': text=text.replace(boundary,'PASS unrelated check\n')
+                elif mutation=='duplicate-check': text=text.replace(boundary,'PASS unlocked PID control\n')
+                else: text='RESULT passed=28 failed=0\n'
+                log.write_text(text)
+                path=out/'windows-smoke-01-reader.json'; receipt=json.loads(path.read_text())
+                receipt['stdout_sha256']=d.digest(log); d.write(path,receipt)
+                self.assertEqual(self.verdict(out),1)
+                errors=json.loads((out/'reconciliation.json').read_text())['errors']
+                self.assertTrue(all(error.startswith('windows-smoke-01-reader:') for error in errors), errors)
 
     def test_bounded_fresh_process_inventory(self):
         for reps in [1,10]:
