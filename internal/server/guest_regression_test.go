@@ -441,7 +441,7 @@ func TestGuestWriterLatency(t *testing.T) {
 	raw, _ := json.Marshal(map[string]any{"other_grant_revoke_ms": float64(elapsed.Microseconds()) / 1000, "asset_statuses": counts, "same_session_after": after})
 	guestArtifact(t, "writer-latency.json", raw)
 	t.Log(string(raw))
-	if after != 204 || counts[401] != 0 || counts[0] != 0 {
+	if after != 204 || counts[204]+counts[503] != 50 {
 		t.Errorf("unrelated revoke interrupted session: %v after=%d", counts, after)
 	}
 	// Measure an uncontended registry writer on the same file as a local reference.

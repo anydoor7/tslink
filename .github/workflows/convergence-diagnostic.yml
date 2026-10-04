@@ -1,0 +1,109 @@
+name: Convergence diagnostic
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Exact 40-character SHA of this dispatch ref (workflow and source)
+        required: true
+        type: string
+      repetitions:
+        description: Fresh processes per family, 1-10; start with the one-pass pilot
+        required: true
+        default: '1'
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  TSLINK_SHUFFLE_SEEDS: "1783794398036981000 20260712 424242"
+  STATICCHECK_VERSION: v0.7.0
+  GOVULNCHECK_VERSION: v1.6.0
+  DIAGNOSTIC_SHA: ${{ inputs.sha }}
+  DIAGNOSTIC_REPETITIONS: ${{ inputs.repetitions }}
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.sha }}
+          persist-credentials: false
+      - name: Validate immutable dispatch identity and bounded inputs
+        run: python3 .github/scripts/convergence-diagnostic.py validate
+
+  families:
+    needs: prepare
+    name: Diagnostic (${{ matrix.family }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        include:
+          - {family: windows-root, os: windows-latest}
+          - {family: windows-nested, os: windows-latest}
+          - {family: windows-smoke, os: windows-latest}
+          - {family: linux-nested, os: ubuntu-latest}
+          - {family: linux-root, os: ubuntu-latest}
+          - {family: macos-control, os: macos-latest}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          check-latest: true
+          cache: true
+          cache-dependency-path: go.sum
+      - name: Collect every independent command (failure remains failure)
+        shell: bash
+        env:
+          DIAGNOSTIC_FAMILY: ${{ matrix.family }}
+        run: python3 .github/scripts/convergence-diagnostic.py run --output "${RUNNER_TEMP}/diagnostic/${DIAGNOSTIC_FAMILY}"
+      - name: Retain raw logs, JSON and partial receipts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: diagnostic-${{ matrix.family }}
+          path: |
+            ${{ runner.temp }}/diagnostic/${{ matrix.family }}
+            !${{ runner.temp }}/diagnostic/${{ matrix.family }}/*.exe
+          if-no-files-found: error
+
+  collect:
+    name: Strict diagnostic aggregate
+    if: always()
+    needs: [prepare, families]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        if: always()
+        with:
+          pattern: diagnostic-*
+          path: collected
+          merge-multiple: true
+      - name: Reject failures, missing commands, identity skew, zero tests and unapproved skips
+        if: always()
+        env:
+          PREPARE_RESULT: ${{ needs.prepare.result }}
+          FAMILIES_RESULT: ${{ needs.families.result }}
+        run: python3 .github/scripts/convergence-diagnostic.py collect --output collected
+      - name: Retain final reconciliation even when red
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: diagnostic-reconciliation
+          path: collected
+          if-no-files-found: error

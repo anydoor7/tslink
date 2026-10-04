@@ -63,6 +63,59 @@ func TestSupervisorBackoffBreakerAndClock(t *testing.T) {
 	}
 }
 
+func TestSupervisorPIDFailureAccounting(t *testing.T) {
+	for _, publicationFailure := range []bool{false, true} {
+		t.Run(strconv.FormatBool(publicationFailure), func(t *testing.T) {
+			c := newSupervisorTestClock()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			blocker := filepath.Join(t.TempDir(), "not-a-directory")
+			if err := os.WriteFile(blocker, nil, 0600); err != nil {
+				t.Fatal(err)
+			}
+			starts, crashes := 0, 1
+			if publicationFailure {
+				crashes++
+			}
+			var running []int
+			done := make(chan struct{})
+			err := RunSupervisor(ctx, c.clock(), func() (SupervisorChild, error) {
+				starts++
+				n := starts
+				return SupervisorChild{PID: n, Wait: func() error {
+					if publicationFailure && n == 1 {
+						err := WritePIDForProcess(filepath.Join(blocker, "tslink.pid"), 123)
+						if err == nil {
+							t.Error("PID failure control did not fail")
+						}
+						return err
+					}
+					if n <= crashes {
+						return errors.New("deliberate crash")
+					}
+					<-done
+					return nil
+				}, Stop: func() error { close(done); return nil }}, nil
+			}, func(s SupervisorState) error {
+				if s.State == "running" {
+					running = append(running, s.Failures)
+					if len(running) == crashes+1 {
+						cancel()
+					}
+				}
+				return nil
+			})
+			want := []int{0, 1}
+			if publicationFailure {
+				want = []int{0, 1, 2}
+			}
+			if err != nil || !reflect.DeepEqual(running, want) {
+				t.Fatalf("running failures=%v want=%v err=%v", running, want, err)
+			}
+		})
+	}
+}
+
 func TestSupervisorStableRunResetsBackoff(t *testing.T) {
 	c := newSupervisorTestClock()
 	ctx, cancel := context.WithCancel(context.Background())

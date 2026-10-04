@@ -1,0 +1,44 @@
+{
+  "github.com/anydoor7/tslink/cmd": [
+    "cmd_test.go:1477", "e2e_dual_daemon_unix_test.go:31", "e2e_dual_daemon_unix_test.go:204",
+    "e2e_registry_daemon_concurrency_unix_test.go:43", "e2e_scaffold_unix_test.go:481",
+    "e2e_stop_evidence_unix_test.go:37", "e2e_stop_evidence_unix_test.go:148", "e2e_stop_evidence_unix_test.go:196",
+    "install_darwin_test.go:451", "install_linux_e2e_test.go:146", "install_windows_test.go:125",
+    "login_rollback_legacy_file_test.go:20", "mcp_manager_context_test.go:17",
+    "people_review_regression_test.go:202", "people_test.go:376", "remove_retires_nodes_enrolled_during_wait_test.go:93",
+    "review3_input_test.go:85", "service_manager_guard_wiring_unix_test.go:64", "service_manager_guard_wiring_unix_test.go:116",
+    "service_manager_path_shim_unix_test.go:225", "service_manager_path_shim_unix_test.go:339", "service_manager_path_shim_unix_test.go:395",
+    "testmain_isolation_test.go:48"
+  ],
+  "github.com/anydoor7/tslink/internal/atomicfile": [
+    "atomicfile_parent_junction_windows_test.go:19", "atomicfile_parent_unix_test.go:108",
+    "atomicfile_test.go:141", "atomicfile_test.go:170", "atomicfile_test.go:193", "atomicfile_test.go:208",
+    "atomicfile_test.go:241", "atomicfile_test.go:272", "atomicfile_test.go:390", "atomicfile_test.go:430", "atomicfile_test.go:451"
+  ],
+  "github.com/anydoor7/tslink/internal/config": ["windows_path_rendering_test.go:34"],
+  "github.com/anydoor7/tslink/internal/credentials": ["credentials_strict_delete_test.go:22", "credentials_strict_delete_test.go:25", "lock_alias_test.go:34", "metadata_test.go:190"],
+  "github.com/anydoor7/tslink/internal/daemon": [
+    "daemon_test.go:285", "daemon_test.go:507", "daemon_test.go:536", "daemon_test.go:556", "daemon_test.go:579",
+    "daemon_test.go:653", "daemon_test.go:848", "daemon_test.go:1105", "daemon_test.go:1520",
+    "is_process_running_unix_test.go:23", "is_process_running_unix_test.go:47", "is_process_running_unix_test.go:94", "is_process_running_unix_test.go:138"
+  ],
+  "github.com/anydoor7/tslink/internal/logrotate": ["logrotate_test.go:428"],
+  "github.com/anydoor7/tslink/internal/mcpaudit": ["journal_unix_test.go:74"],
+  "github.com/anydoor7/tslink/internal/registry": ["file_root_config_dir_test.go:87", "windows_path_rendering_test.go:17"],
+  "github.com/anydoor7/tslink/internal/release": ["release_verify_script_test.go:24", "release_verify_script_test.go:28", "workflows_test.go:317", "workflows_test.go:612"],
+  "github.com/anydoor7/tslink/internal/runtime": ["ownership_preview_lock_test.go:235", "ownership_preview_lock_test.go:244"],
+  "github.com/anydoor7/tslink/internal/server": ["fileserver_test.go:170", "fileserver_test.go:189", "node_identity_bad_record_test.go:101", "proxy_test.go:249"],
+  "github.com/anydoor7/tslink/internal/testenv": [
+    "isolation_owner_unix_test.go:27", "isolation_root_lock_test.go:324", "isolation_root_lock_test.go:444", "isolation_test.go:147",
+    "report_env_independence_test.go:54", "report_env_independence_test.go:57", "service_manager_guard_lifecycle_test.go:410",
+    "service_manager_guard_lifecycle_test.go:488", "service_manager_path_shim_test.go:17", "service_manager_path_shim_test.go:182"
+  ],
+  "github.com/fsnotify/fsnotify": [
+    "fsnotify_test.go:103", "fsnotify_test.go:136", "fsnotify_test.go:364", "fsnotify_test.go:437", "fsnotify_test.go:486",
+    "fsnotify_test.go:489", "fsnotify_test.go:543", "fsnotify_test.go:546", "fsnotify_test.go:659", "fsnotify_test.go:662",
+    "fsnotify_test.go:713", "fsnotify_test.go:716", "fsnotify_test.go:722", "fsnotify_test.go:1116", "fsnotify_test.go:1124",
+    "helpers_test.go:708", "helpers_test.go:717", "helpers_test.go:827", "helpers_test.go:831", "helpers_test.go:835",
+    "helpers_test.go:839", "helpers_test.go:843", "helpers_test.go:846", "helpers_test.go:849", "helpers_test.go:853",
+    "helpers_test.go:857", "helpers_test.go:863", "helpers_test.go:866", "helpers_test.go:874", "helpers_test.go:878", "helpers_test.go:882"
+  ]
+}
