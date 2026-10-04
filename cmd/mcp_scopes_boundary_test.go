@@ -11,8 +11,10 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/anydoor7/tslink/internal/config"
@@ -72,11 +74,26 @@ func TestMCPOwnerExpiryAfterRegistryWait(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer filelock.Unlock(lock)
-			expiry := time.Now().Add(500 * time.Millisecond)
-			if !expire {
-				expiry = time.Now().Add(5 * time.Second)
-			}
+			// Policy time must not expire during HTTP/SDK/audit fixture setup.
+			// The real transport and OS locks stay outside virtual time.
+			now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+			expiry := now.Add(time.Hour)
+			var policyClock atomic.Int64
+			policyClock.Store(now.UnixNano())
 			a := defaultMCPActions(sharePaths{Registry: path}, io.Discard)
+			a.nowFn = func() time.Time { return time.Unix(0, policyClock.Load()) }
+			locked, release := make(chan struct{}), make(chan struct{})
+			unblock := sync.OnceFunc(func() { close(release) })
+			defer unblock()
+			mutate := tagsMutateServiceFn
+			t.Cleanup(func() { tagsMutateServiceFn = mutate })
+			tagsMutateServiceFn = func(path, name string, fn func(registry.Service) (registry.Service, error)) (registry.Service, error) {
+				return mutate(path, name, func(svc registry.Service) (registry.Service, error) {
+					close(locked)
+					<-release
+					return fn(svc)
+				})
+			}
 			entered, completed := make(chan struct{}), make(chan struct{})
 			original := a.tagsSet
 			a.tagsSet = func(ctx context.Context, service, tag string) (any, error) {
@@ -87,8 +104,7 @@ func TestMCPOwnerExpiryAfterRegistryWait(t *testing.T) {
 			}
 			cp := &server.MCPControlPlane{Bindings: []mcpscope.Binding{{Principal: "owner", Scope: mcpscope.Scope{Role: "owner"}, ExpiresAt: &expiry}}, Handler: newMCPStreamableHandler(a)}
 			h := httptest.NewServer(server.NewMCPControlPlaneHandler(cp, mcpHTTPWhoIsClient(t, "owner")))
-			defer func() { filelock.Unlock(lock); h.Close() }()
-			h.Client().Timeout = 3 * time.Second
+			defer func() { unblock(); filelock.Unlock(lock); h.Close() }()
 			response := make(chan string, 1)
 			go func() {
 				status, body, err := scopedHTTPRequest(t, h, "tags_set", `{"service":"photos","tag":"tag:updated"}`)
@@ -96,21 +112,37 @@ func TestMCPOwnerExpiryAfterRegistryWait(t *testing.T) {
 			}()
 			select {
 			case <-entered:
-			case <-time.After(2 * time.Second):
-				t.Fatal("request did not reach registry writer")
-			}
-			if expire {
-				time.Sleep(time.Until(expiry) + 60*time.Millisecond)
+			case body := <-response:
+				t.Fatalf("request ended before registry writer: %s", body)
 			}
 			if err := filelock.Unlock(lock); err != nil {
 				t.Fatal(err)
 			}
 			select {
-			case <-completed:
-			case <-time.After(2 * time.Second):
-				t.Fatal("registry writer did not complete")
+			case <-locked:
+			case body := <-response:
+				t.Fatalf("request ended before locked mutation: %s", body)
 			}
-			t.Logf("HTTP result: %s", <-response)
+			// A second descriptor cannot acquire the actual writer's lock.
+			if acquired, err := filelock.TryLock(lock); err != nil || acquired {
+				if acquired {
+					filelock.Unlock(lock)
+				}
+				t.Fatalf("mutation does not own registry lock: acquired=%v err=%v", acquired, err)
+			}
+			if expire {
+				policyClock.Store(expiry.UnixNano())
+			}
+			unblock()
+			<-completed
+			body := <-response
+			t.Logf("HTTP result: %s", body)
+			if !strings.Contains(body, `"status":200`) || !strings.Contains(body, `"transport_error":false`) {
+				t.Fatalf("RPC transport failed: %s", body)
+			}
+			if expire && !strings.Contains(body, "mcp_scope_denied") {
+				t.Fatalf("RPC did not report scope denial: %s", body)
+			}
 			reg, err := registry.Load(path)
 			if err != nil {
 				t.Fatal(err)
@@ -148,24 +180,52 @@ func TestMCPScopedReadEndsAtBindingExpiry(t *testing.T) {
 	if _, err := registry.Add(path, registry.Service{Name: "photos", Type: registry.TypeProxy, Target: "http://localhost:3000"}); err != nil {
 		t.Fatal(err)
 	}
-	a := defaultMCPActions(sharePaths{Registry: path, PID: filepath.Join(dir, "pid"), Snapshot: filepath.Join(dir, "runtime.json")}, io.Discard)
-	expiry := time.Now().Add(300 * time.Millisecond)
-	entered, release := make(chan struct{}), make(chan struct{})
-	original := a.list
-	a.list = func(ctx context.Context) (any, error) { close(entered); <-release; return original(ctx) }
-	cp := &server.MCPControlPlane{Bindings: []mcpscope.Binding{{Principal: "reader", Scope: testRoleScope("viewer"), ExpiresAt: &expiry}}, Handler: newMCPStreamableHandler(a)}
-	h := httptest.NewServer(server.NewMCPControlPlaneHandler(cp, mcpHTTPWhoIsClient(t, "reader")))
-	defer h.Close()
-	h.Client().Timeout = 2 * time.Second
-	response := make(chan string, 1)
-	go func() { _, body, _ := scopedHTTPRequest(t, h, "list", `{}`); response <- body }()
-	<-entered
-	time.Sleep(time.Until(expiry) + 40*time.Millisecond)
-	close(release)
-	body := <-response
-	t.Logf("result after expiry: %s", body)
-	if strings.Contains(body, `"name":"photos"`) {
-		t.Fatalf("expired binding received app contents: %s", body)
+	for _, state := range []string{"active-control", "expired"} {
+		t.Run(state, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				// Use the real HTTP/RPC handler without a TCP accept goroutine:
+				// OS network waits are not durably blocked in a synctest bubble.
+				a := defaultMCPActions(sharePaths{Registry: path, PID: filepath.Join(dir, "pid"), Snapshot: filepath.Join(dir, "runtime.json")}, io.Discard)
+				expiry := time.Now().Add(300 * time.Millisecond)
+				entered, release := make(chan struct{}), make(chan struct{})
+				unblock := sync.OnceFunc(func() { close(release) })
+				defer unblock()
+				observed := make(chan error, 1)
+				original := a.list
+				a.list = func(ctx context.Context) (any, error) {
+					close(entered)
+					<-release
+					observed <- ctx.Err()
+					return original(ctx)
+				}
+				cp := &server.MCPControlPlane{Bindings: []mcpscope.Binding{{Principal: "reader", Scope: testRoleScope("viewer"), ExpiresAt: &expiry}}, Handler: newMCPStreamableHandler(a)}
+				h := server.NewMCPControlPlaneHandler(cp, mcpHTTPWhoIsClient(t, "reader"))
+				rr := httptest.NewRecorder()
+				done := make(chan struct{})
+				go func() { defer close(done); h.ServeHTTP(rr, mcpHTTPToolCallRequest("list")) }()
+				select {
+				case <-entered:
+				case <-done:
+					t.Fatalf("read ended before dispatch: %d %s", rr.Code, rr.Body.String())
+				}
+				synctest.Wait()
+				if state == "expired" {
+					time.Sleep(time.Until(expiry))
+					synctest.Wait()
+				}
+				unblock()
+				<-done
+				ctxErr := <-observed
+				body := rr.Body.String()
+				if state == "expired" {
+					if !errors.Is(ctxErr, context.DeadlineExceeded) || strings.Contains(body, `"name":"photos"`) {
+						t.Fatalf("expired read: context=%v body=%s", ctxErr, body)
+					}
+				} else if ctxErr != nil || rr.Code != http.StatusOK || !strings.Contains(body, `"name":"photos"`) {
+					t.Fatalf("active read: context=%v status=%d body=%s", ctxErr, rr.Code, body)
+				}
+			})
+		})
 	}
 }
 
