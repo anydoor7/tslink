@@ -187,6 +187,16 @@ func (f *guestFixture) login() []*http.Cookie {
 	return cookies
 }
 
+// healthyRequest owns only an unexpired GET's read window, including its body.
+// It does not retry or change the response. Use request for writer contention,
+// expiry latching and PIN mutations; use holdCounterFlush around stream setup
+// and release it before revoke, advancing the clock, or Close.
+func (f *guestFixture) healthyRequest(path string, cookies []*http.Cookie) (*http.Response, string) {
+	f.t.Helper()
+	defer f.holdCounterFlush()()
+	return f.request("GET", path, "", cookies)
+}
+
 // Acquire and retain a shared registry lock: this joins an active counter
 // writer and excludes future flushes throughout a read-only assertion window.
 // The real monitor keeps running, and requests still perform every grant read.
@@ -231,7 +241,7 @@ func TestGuestListenerProtocolsAndIsolation(t *testing.T) {
 			}
 			cookies := f.login()
 			cookies = append(cookies, &http.Cookie{Name: "app_session", Value: "app-value"})
-			r, _ := f.request("GET", "/?token="+f.token+"&pin=975310&keep=yes", "", cookies)
+			r, _ := f.healthyRequest("/?token="+f.token+"&pin=975310&keep=yes", cookies)
 			if r.StatusCode != 204 || r.ProtoMajor != map[bool]int{true: 2, false: 1}[h2] || r.Header.Get("Referrer-Policy") != "no-referrer" {
 				t.Fatalf("app response: %+v", r)
 			}
@@ -300,7 +310,7 @@ func TestGuestExpiryAndRevokeMidSession(t *testing.T) {
 		t.Run(reason, func(t *testing.T) {
 			f := newGuestFixture(t, "", false, true)
 			cookies := f.login()
-			r, _ := f.request("GET", "/", "", cookies)
+			r, _ := f.healthyRequest("/", cookies)
 			if r.StatusCode != 204 {
 				t.Fatal("control denied")
 			}
@@ -343,7 +353,7 @@ func TestGuestExpiryAndRevokeMidSession(t *testing.T) {
 }
 func TestGuestPINListener(t *testing.T) {
 	f := newGuestFixture(t, "975310", true, true)
-	form, body := f.request("GET", "/guest/"+f.token, "", nil)
+	form, body := f.healthyRequest("/guest/"+f.token, nil)
 	if form.StatusCode != 200 || strings.Contains(body, f.token) || form.Header.Get("Referrer-Policy") != "no-referrer" {
 		t.Fatal("invalid PIN form")
 	}
@@ -375,7 +385,7 @@ func TestGuestPINListener(t *testing.T) {
 		t.Fatal("PIN lockout bypass")
 	}
 	f.now.Store(accessTestTime.Add(16 * time.Minute).UnixNano())
-	form, body = f.request("GET", "/guest/"+f.token, "", nil)
+	form, body = f.healthyRequest("/guest/"+f.token, nil)
 	csrf = regexp.MustCompile(`name="csrf" value="([^"]+)"`).FindStringSubmatch(body)
 	if len(csrf) != 2 {
 		t.Fatal(body)
@@ -521,7 +531,7 @@ func TestGuestSourceLimitAcrossGrants(t *testing.T) {
 			}
 			f.token = token
 		}
-		form, body := f.request("GET", "/guest/"+f.token, "", nil)
+		form, body := f.healthyRequest("/guest/"+f.token, nil)
 		csrf := regexp.MustCompile(`name="csrf" value="([^"]+)"`).FindStringSubmatch(body)
 		if len(csrf) != 2 {
 			t.Fatal(body)
@@ -591,7 +601,7 @@ func TestGuestWriterContentionDeniesPromptly(t *testing.T) {
 }
 func TestGuestOriginAndChallengeExpiry(t *testing.T) {
 	f := newGuestFixture(t, "975310", false, true)
-	form, body := f.request("GET", "/guest/"+f.token, "", nil)
+	form, body := f.healthyRequest("/guest/"+f.token, nil)
 	csrf := regexp.MustCompile(`name="csrf" value="([^"]+)"`).FindStringSubmatch(body)
 	if len(csrf) != 2 {
 		t.Fatal(body)
@@ -715,7 +725,7 @@ func TestGuestMemoryCapacityAndRecovery(t *testing.T) {
 				}
 			}
 			g.mu.Unlock()
-			form, body := f.request("GET", "/guest/"+f.token, "", nil)
+			form, body := f.healthyRequest("/guest/"+f.token, nil)
 			if kind == "sources" {
 				csrf := regexp.MustCompile(`name="csrf" value="([^"]+)"`).FindStringSubmatch(body)
 				if len(csrf) != 2 {
@@ -731,7 +741,7 @@ func TestGuestMemoryCapacityAndRecovery(t *testing.T) {
 				t.Fatal("failed capacity consumed successful session or PIN", view, e)
 			}
 			f.now.Store(accessTestTime.Add(61 * time.Minute).UnixNano())
-			form, body = f.request("GET", "/guest/"+f.token, "", nil)
+			form, body = f.healthyRequest("/guest/"+f.token, nil)
 			if kind == "sessions" {
 				if form.StatusCode != 303 {
 					t.Fatal("expired sessions did not prune")
@@ -746,7 +756,7 @@ func TestGuestMemoryCapacityAndRecovery(t *testing.T) {
 					t.Fatal("capacity recovery denied")
 				}
 			}
-			r, _ := f.request("GET", "/", "", form.Cookies())
+			r, _ := f.healthyRequest("/", form.Cookies())
 			if r.StatusCode != 204 || f.hits.Load() != 1 {
 				t.Fatal("capacity recovery backend control")
 			}
@@ -766,7 +776,7 @@ func (l *guestAttestedSourceListener) Accept() (net.Conn, error) {
 func TestGuestSourceUsesTrustedFunnelAddress(t *testing.T) {
 	f := newGuestFixture(t, "975310", true, true)
 	g := guestMemoryListener(t, f)
-	form, body := f.request("GET", "/guest/"+f.token, "", nil)
+	form, body := f.healthyRequest("/guest/"+f.token, nil)
 	csrf := regexp.MustCompile(`name="csrf" value="([^"]+)"`).FindStringSubmatch(body)
 	if len(csrf) != 2 {
 		t.Fatal(body)

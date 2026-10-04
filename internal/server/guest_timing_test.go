@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,17 +15,6 @@ import (
 	"github.com/anydoor7/tslink/internal/filelock"
 	"github.com/anydoor7/tslink/internal/registry"
 )
-
-func awaitGuestRecovery(request func() (int, error)) (int, error) {
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		status, err := request()
-		if err != nil || status != http.StatusServiceUnavailable || !time.Now().Before(deadline) {
-			return status, err
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-}
 
 // Exercise the same restore notification as the Unix special-file fixture,
 // through its real TLS listener, OS watcher and counter monitor.
@@ -97,36 +85,88 @@ func TestGuestListenerRestoreFlushOwnership(t *testing.T) {
 	t.Log("joined restore flush: original-session=204 backend-hits=1 fresh-bearer=303")
 }
 
-func TestGuestRecoveryRetriesOnlyTemporaryUnavailable(t *testing.T) {
-	requestErr := errors.New("request failed")
-	for _, tc := range []struct {
-		name        string
-		statuses    []int
-		err         error
-		wantCalls   int
-		wantElapsed time.Duration
-	}{
-		{name: "recovered", statuses: []int{503, 503, 204}, wantCalls: 3, wantElapsed: 20 * time.Millisecond},
-		{name: "revoked", statuses: []int{401, 204}, wantCalls: 1},
-		{name: "transport-error", statuses: []int{503, 204}, err: requestErr, wantCalls: 1},
-		{name: "bounded", statuses: []int{503}, wantCalls: 501, wantElapsed: 5 * time.Second},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			synctest.Test(t, func(t *testing.T) {
-				calls := 0
-				start := time.Now()
-				status, err := awaitGuestRecovery(func() (int, error) {
-					index := min(calls, len(tc.statuses)-1)
-					calls++
-					return tc.statuses[index], tc.err
-				})
-				wantStatus := tc.statuses[min(tc.wantCalls-1, len(tc.statuses)-1)]
-				if status != wantStatus || !errors.Is(err, tc.err) || calls != tc.wantCalls || time.Since(start) != tc.wantElapsed {
-					t.Fatalf("status=%d err=%v calls=%d elapsed=%s; want %d %v %d %s", status, err, calls, time.Since(start), wantStatus, tc.err, tc.wantCalls, tc.wantElapsed)
-				}
-			})
+func TestGuestHealthyRequestFlushOwnership(t *testing.T) {
+	f := newGuestFixture(t, "", true, true)
+	gate := cleanupGate(f)
+	app := gate.app
+	gate.app = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		lock, err := os.OpenFile(f.path+".lock", os.O_RDWR, 0600)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer lock.Close()
+		if acquired, err := filelock.TryLock(lock); err != nil || acquired {
+			if acquired {
+				filelock.Unlock(lock)
+			}
+			t.Errorf("healthy request did not retain read ownership through backend: acquired=%t err=%v", acquired, err)
+		}
+		app.ServeHTTP(w, r)
+	})
+	cookies := f.login()
+	entered, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	unsubscribe := registry.WatchGuestCommits(f.path, func(grants []registry.GuestGrant) {
+		once.Do(func() {
+			if len(grants) != 1 || grants[0].Sessions != 1 {
+				t.Error("flush did not publish login")
+			}
+			close(entered)
+			<-release
 		})
+	})
+	defer unsubscribe()
+	defer close(release)
+	raw, err := os.ReadFile(f.path)
+	if err != nil {
+		t.Fatal(err)
 	}
+	if err := os.WriteFile(f.path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("real monitor flush missing")
+	}
+	// The raw control reproduces the healthy session's 503, not a latency
+	// failure or revocation. The same session recovers without a retry.
+	r, _ := f.request("GET", "/control", "", cookies)
+	if r.StatusCode != 503 || r.Header.Get("Retry-After") != "1" || f.hits.Load() != 0 {
+		t.Fatalf("held flush control: status=%d hits=%d", r.StatusCode, f.hits.Load())
+	}
+	result := make(chan *http.Response, 1)
+	go func() { r, _ := f.healthyRequest("/control", cookies); result <- r }()
+	select {
+	case r := <-result:
+		t.Fatalf("healthy request escaped held writer: %d", r.StatusCode)
+	case <-time.After(150 * time.Millisecond):
+	}
+	release <- struct{}{}
+	select {
+	case r := <-result:
+		if r.StatusCode != 204 || f.hits.Load() != 1 {
+			t.Fatalf("original session: status=%d hits=%d", r.StatusCode, f.hits.Load())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("healthy request did not join released flush")
+	}
+	// A subsequent real mutation must succeed; helper ownership cannot leak
+	// into revoke. Its denial still uses the unmodified raw request path.
+	if _, err := registry.RevokeGuest(f.path, f.grant.ID, accessTestTime); err != nil {
+		t.Fatal(err)
+	}
+	r, _ = f.healthyRequest("/", nil)
+	if r.StatusCode != 401 || f.hits.Load() != 1 {
+		t.Fatal("healthy helper masked denial", r.StatusCode)
+	}
+	defer f.holdCounterFlush()()
+	r, _ = f.request("GET", "/", "", cookies)
+	if r.StatusCode != 401 || f.hits.Load() != 1 {
+		t.Fatal("revoke did not deny original session", r.StatusCode)
+	}
+	t.Log("real flush: raw control=503 hits=0; scoped same-session control=204 hits=1; released-scope revoke=401 hits=1")
 }
 
 func TestGuestReadFailureVirtualBoundAndSessionRecovery(t *testing.T) {

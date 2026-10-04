@@ -174,7 +174,9 @@ jobs:
       - name: Windows Task Scheduler lifecycle smoke
         if: matrix.os == 'windows-latest'
         shell: powershell
-        run: ./scripts/windows-supervision-smoke.ps1 -Binary ./dist/native/tslink.exe
+        run: |
+          ./scripts/windows-supervision-smoke-reader-test.ps1
+          ./scripts/windows-supervision-smoke.ps1 -Binary ./dist/native/tslink.exe
       - name: Coverage (ubuntu)
         if: matrix.os == 'ubuntu-latest'
         shell: bash

@@ -30,6 +30,7 @@ func cleanupWaitEmpty(t *testing.T, g *guestGate) {
 }
 func cleanupSSE(t *testing.T, f *guestFixture, cookies []*http.Cookie) *http.Response {
 	t.Helper()
+	defer f.holdCounterFlush()()
 	req, _ := http.NewRequest("GET", f.base+"/events", nil)
 	for _, c := range cookies {
 		req.AddCookie(c)
@@ -62,6 +63,12 @@ func TestGuestAbortedStreamsCleanup(t *testing.T) {
 			}))
 			cookies := f.login()
 			g := cleanupGate(f)
+			releaseRead := f.holdCounterFlush()
+			defer func() {
+				if releaseRead != nil {
+					releaseRead()
+				}
+			}()
 			req, _ := http.NewRequest("GET", f.base+"/normal", nil)
 			for _, c := range cookies {
 				req.AddCookie(c)
@@ -72,6 +79,8 @@ func TestGuestAbortedStreamsCleanup(t *testing.T) {
 			}
 			raw, e := io.ReadAll(resp.Body)
 			resp.Body.Close()
+			releaseRead()
+			releaseRead = nil
 			if e != nil || !strings.Contains(string(raw), "ready") {
 				t.Fatal("normal EOF control")
 			}

@@ -76,6 +76,8 @@ func TestGuestAssetPage(t *testing.T) {
 			t.Run(fmt.Sprintf("h2=%t/parallel=%d", h2, parallel), func(t *testing.T) {
 				f := newGuestFixture(t, "", h2, true)
 				cookies := f.login()
+				// Pure asset reads: retain ownership across the concurrent batch.
+				defer f.holdCounterFlush()()
 				// Warm the connection and verify that the exact session reaches the backend.
 				if status, e := guestRequest(f.client, f.base, "/control", cookies); e != nil || status != 204 {
 					t.Fatalf("control: %d %v", status, e)
@@ -225,7 +227,15 @@ func TestGuestStreams(t *testing.T) {
 					}
 				}))
 				cookies := f.login()
+				releaseRead := f.holdCounterFlush()
+				defer func() {
+					if releaseRead != nil {
+						releaseRead()
+					}
+				}()
 				invalidate := func() {
+					releaseRead()
+					releaseRead = nil
 					if end == "revoke" {
 						if _, e := registry.RevokeGuest(f.path, f.grant.ID, accessTestTime); e != nil {
 							t.Fatal(e)
@@ -282,23 +292,12 @@ func TestGuestStreams(t *testing.T) {
 						continued = e == nil && string(msg) == "after"
 					}
 				}
-				// Expiry persistence and counter flushing may still hold the writer
-				// lock after stream cancellation. The documented bounded reader
-				// returns 503 during that interval and preserves sessions for retry.
-				// Only retry this temporary refusal; every other status is asserted
-				// immediately, and a persistent outage still fails within five seconds.
-				settledRequest := func(path string, cookies []*http.Cookie) *http.Response {
-					deadline := time.Now().Add(5 * time.Second)
-					for {
-						resp, _ := f.request("GET", path, "", cookies)
-						if resp.StatusCode != http.StatusServiceUnavailable || !time.Now().Before(deadline) {
-							return resp
-						}
-						t.Log("retrying temporary registry refusal after stream termination")
-						time.Sleep(50 * time.Millisecond)
-					}
-				}
-				next := settledRequest("/next", cookies).StatusCode
+				// Stream authorization has finished latching expiry before returning
+				// its final read. Join that work before the read-only denial check.
+				cleanupGate(f).stateReads.Wait()
+				defer f.holdCounterFlush()()
+				response, _ := f.request("GET", "/next", "", cookies)
+				next := response.StatusCode
 				t.Logf("continued_after_%s=%t next_http_status=%d", end, continued, next)
 				if next != 401 {
 					t.Error("new request must be denied")
@@ -306,12 +305,13 @@ func TestGuestStreams(t *testing.T) {
 				if continued {
 					t.Error("stream still transfers application data after grant ends")
 				}
-				resp := settledRequest("/guest/"+longerToken, nil)
+				resp, _ := f.request("GET", "/guest/"+longerToken, "", nil)
 				if resp.StatusCode != 303 {
 					t.Fatal("longer grant lost access", resp.StatusCode)
 				}
-				if status := settledRequest("/longer", resp.Cookies()).StatusCode; status != 204 {
-					t.Fatal("longer grant app access", status)
+				resp, _ = f.request("GET", "/longer", "", resp.Cookies())
+				if resp.StatusCode != 204 {
+					t.Fatal("longer grant app access", resp.StatusCode)
 				}
 			})
 		}
@@ -364,7 +364,7 @@ func TestGuestReservedCookieWhitespace(t *testing.T) {
 		w.WriteHeader(204)
 	}))
 	cookies := f.login()
-	resp, _ := f.request("GET", "/", "", cookies)
+	resp, _ := f.healthyRequest("/", cookies)
 	blocked := true
 	app := false
 	for _, c := range resp.Cookies() {
@@ -393,8 +393,8 @@ func TestGuestWriterLatency(t *testing.T) {
 		t.Fatal(e)
 	}
 	cookies := f.login()
-	if status, e := guestRequest(f.client, f.base, "/control", cookies); e != nil || status != 204 {
-		t.Fatal("control", status, e)
+	if resp, _ := f.healthyRequest("/control", cookies); resp.StatusCode != 204 {
+		t.Fatal("control", resp.StatusCode)
 	}
 	start := make(chan struct{})
 	var wg sync.WaitGroup
@@ -434,14 +434,10 @@ func TestGuestWriterLatency(t *testing.T) {
 	if elapsed < 0 {
 		t.Fatal("writer failed")
 	}
-	// A background usage flush can briefly hold the registry writer lock after
-	// the unrelated revoke. A 503 preserves this session; a 401 must still fail.
-	after, e := awaitGuestRecovery(func() (int, error) {
-		return guestRequest(f.client, f.base, "/after", cookies)
-	})
-	if e != nil {
-		t.Fatal(e)
-	}
+	// Join the completed writer, then own only the recovery read. The actual
+	// concurrent writer above and reference writer below remain unowned.
+	response, _ := f.healthyRequest("/after", cookies)
+	after := response.StatusCode
 	raw, _ := json.Marshal(map[string]any{"other_grant_revoke_ms": float64(elapsed.Microseconds()) / 1000, "asset_statuses": counts, "same_session_after": after})
 	guestArtifact(t, "writer-latency.json", raw)
 	t.Log(string(raw))
