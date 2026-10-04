@@ -11,11 +11,8 @@ import (
 func closeLifecycle(t *testing.T, l *Lifecycle) {
 	t.Helper()
 	l.Close()
-	select {
-	case <-l.Done():
-	case <-time.After(3 * time.Second):
-		t.Fatal("drain")
-	}
+	// Like closeStore, join fixture-owned I/O before inspecting or removing it.
+	<-l.Done()
 }
 func TestLifecycleMissingWindow(t *testing.T) {
 	dir := t.TempDir()
