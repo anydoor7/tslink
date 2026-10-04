@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -25,6 +26,75 @@ func awaitGuestRecovery(request func() (int, error)) (int, error) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+}
+
+// Exercise the same restore notification as the Unix special-file fixture,
+// through its real TLS listener, OS watcher and counter monitor.
+func TestGuestListenerRestoreFlushOwnership(t *testing.T) {
+	f := newGuestFixture(t, "", false, true)
+	cookies := f.login()
+	raw, err := os.ReadFile(f.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entered, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	unsubscribe := registry.WatchGuestCommits(f.path, func(grants []registry.GuestGrant) {
+		once.Do(func() {
+			if len(grants) != 1 || grants[0].Sessions != 1 {
+				t.Error("restore monitor did not persist the login counter")
+			}
+			close(entered)
+			<-release
+		})
+	})
+	defer unsubscribe()
+	defer close(release)
+	if err := os.Remove(f.path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(f.path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("restore notification did not reach the real counter monitor")
+	}
+	lock, err := os.OpenFile(f.path+".lock", os.O_RDWR, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
+	if ok, err := filelock.TryReadLock(lock); err != nil || ok {
+		t.Fatalf("monitor writer ownership: acquired=%t err=%v", ok, err)
+	}
+	for _, path := range []string{"/guest/" + f.token, "/"} {
+		r, _ := f.request("GET", path, "", cookies)
+		if r.StatusCode != 503 || r.Header.Get("Retry-After") != "1" || f.hits.Load() != 0 {
+			t.Fatalf("held restore flush: status=%d hits=%d", r.StatusCode, f.hits.Load())
+		}
+	}
+	t.Log("restore monitor owns writer: bearer=503 original-session=503 backend-hits=0")
+	owned := make(chan func(), 1)
+	go func() { owned <- f.holdCounterFlush() }()
+	release <- struct{}{}
+	var unlock func()
+	select {
+	case unlock = <-owned:
+	case <-time.After(5 * time.Second):
+		t.Fatal("fixture did not join released restore flush")
+	}
+	defer unlock()
+	if ok, err := filelock.TryLock(lock); err != nil || ok {
+		t.Fatalf("fixture ownership: writer acquired=%t err=%v", ok, err)
+	}
+	r, _ := f.request("GET", "/", "", cookies)
+	if r.StatusCode != 204 || f.hits.Load() != 1 {
+		t.Fatalf("restore lost original session: status=%d hits=%d", r.StatusCode, f.hits.Load())
+	}
+	f.login()
+	t.Log("joined restore flush: original-session=204 backend-hits=1 fresh-bearer=303")
 }
 
 func TestGuestRecoveryRetriesOnlyTemporaryUnavailable(t *testing.T) {
