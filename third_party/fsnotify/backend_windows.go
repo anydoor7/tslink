@@ -87,7 +87,10 @@ func (w *readDirChangesW) sendError(err error) bool {
 		return true
 	}
 	select {
-	case <-w.done:
+	case ch := <-w.done:
+		// Close's reply channel must remain available to the reader, just as
+		// in sendEvent. Consuming it here would leave Close waiting forever.
+		w.done <- ch
 		return false
 	case w.Errors <- err:
 		return true
@@ -547,6 +550,18 @@ func (w *readDirChangesW) readEvents() {
 				}
 			default:
 			}
+			continue
+		}
+
+		// A completion can remain queued after remWatch closes the handle.
+		// Only the registered watch owns it: the same inode may already have
+		// a replacement watch, and Windows may have reused the handle value.
+		// Check before handling errors too, since ERROR_ACCESS_DENIED also
+		// tears down and re-arms the watch.
+		w.mu.Lock()
+		live := w.watches.get(watch.ino) == watch
+		w.mu.Unlock()
+		if !live {
 			continue
 		}
 
