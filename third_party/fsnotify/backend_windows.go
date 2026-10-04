@@ -29,9 +29,11 @@ type readDirChangesW struct {
 	input chan *input    // Inputs to the reader are sent on this channel
 	done  chan chan<- error
 
-	mu      sync.Mutex // Protects access to watches, closed
-	watches watchMap   // Map of watches (key: i-number)
-	closed  bool       // Set to true when Close() is first called
+	mu        sync.Mutex    // Protects access to watches, closed
+	watches   watchMap      // Map of watches (key: i-number)
+	closed    bool          // Set to true when Close() is first called
+	closeDone chan struct{} // Shared completion for concurrent/repeated Close
+	closeErr  error         // Published by closing closeDone
 }
 
 var defaultBufferSize = 50
@@ -98,21 +100,27 @@ func (w *readDirChangesW) sendError(err error) bool {
 }
 
 func (w *readDirChangesW) Close() error {
-	if w.isClosed() {
-		return nil
-	}
-
 	w.mu.Lock()
+	if w.closed {
+		done := w.closeDone
+		w.mu.Unlock()
+		<-done
+		return w.closeErr
+	}
 	w.closed = true
+	w.closeDone = make(chan struct{})
 	w.mu.Unlock()
+	defer close(w.closeDone)
 
 	// Send "done" message to the reader goroutine
 	ch := make(chan error)
 	w.done <- ch
 	if err := w.wakeupReader(); err != nil {
+		w.closeErr = err
 		return err
 	}
-	return <-ch
+	w.closeErr = <-ch // Reader closes Events and Errors before replying.
+	return w.closeErr
 }
 
 func (w *readDirChangesW) Add(name string) error { return w.AddWith(name) }

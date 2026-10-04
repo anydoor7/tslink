@@ -9,7 +9,7 @@ if ($env:OS -ne 'Windows_NT') { throw 'Native Windows is required for sharing co
 $tokens = $null; $parseErrors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile($SmokeScript, [ref]$tokens, [ref]$parseErrors)
 if ($parseErrors.Count) { throw ($parseErrors | Out-String) }
-foreach ($name in @('Read-SharedText','Get-NewDaemonPID','Wait-Daemon')) {
+foreach ($name in @('Read-SharedText','Read-PendingText','Get-NewDaemonPID','Wait-Daemon')) {
     $nodes = @($ast.FindAll({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name }, $false))
     if ($nodes.Count -ne 1) { throw "Expected one observer function $name" }
     . ([scriptblock]::Create($nodes[0].Extent.Text))
@@ -85,10 +85,20 @@ try {
             Equal (Get-NewDaemonPID $pidPath 111) 0
         }
     }
-    Check 'exclusive lock remains an error' {
+    Check 'single-attempt shared read still reports exclusive lock' {
         $held = [IO.File]::Open($pidPath, 'Open', 'ReadWrite', 'None')
-        try { Reject { Get-NewDaemonPID $pidPath 111 } 'being used by another process' }
+        try { Reject { Read-SharedText $pidPath } 'being used by another process' }
         finally { $held.Dispose() }
+    }
+    Check 'bounded PID observer treats sharing conflict as pending' {
+        $held = [IO.File]::Open($pidPath, 'Open', 'ReadWrite', 'None')
+        try { Equal (Get-NewDaemonPID $pidPath 111) 0 }
+        finally { $held.Dispose() }
+    }
+    Check 'permanent invalid path remains an error' {
+        $caught = $null
+        try { $null = Read-PendingText ($root + [char]0) } catch { $caught = $_.Exception.GetBaseException() }
+        if (-not ($caught -is [ArgumentException])) { throw "Expected invalid-path ArgumentException, got [$caught]" }
     }
     Check 'verified daemon and matching artifact control' {
         Set-GoodState
@@ -99,6 +109,20 @@ try {
         $held = [IO.File]::Open($runtimePath, 'Open', 'ReadWrite', ([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
         try { Equal (Wait-Daemon -DifferentFrom 111 -Seconds 0) 222 }
         finally { $held.Dispose() }
+    }
+    Check 'persistent runtime lock fails at the original deadline' {
+        Set-GoodState
+        $held = [IO.File]::Open($runtimePath, 'Open', 'ReadWrite', 'None')
+        try { Reject { Wait-Daemon -DifferentFrom 111 -Seconds 0 } 'Verified daemon and matching runtime artifact did not appear before deadline' }
+        finally { $held.Dispose() }
+    }
+    Check 'supervisor accounting accepts one crash and rejects absorbed failure' {
+        Set-GoodState
+        $supervisorPath = Join-Path $root 'supervisor.json'
+        [IO.File]::WriteAllText($supervisorPath, '{"state":"running","daemon_pid":222,"failures":1}')
+        Equal (Wait-Daemon -DifferentFrom 111 -Seconds 0 -ExpectedFailures 1) 222
+        [IO.File]::WriteAllText($supervisorPath, '{"state":"running","daemon_pid":222,"failures":2}')
+        Reject { Wait-Daemon -DifferentFrom 111 -Seconds 0 -ExpectedFailures 1 } 'Unexpected supervisor failure count'
     }
     $badStates = [ordered]@{
         'not running' = { $script:status.daemon_running = $false }

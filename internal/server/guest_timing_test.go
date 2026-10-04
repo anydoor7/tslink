@@ -20,6 +20,10 @@ import (
 // through its real TLS listener, OS watcher and counter monitor.
 func TestGuestListenerRestoreFlushOwnership(t *testing.T) {
 	f := newGuestFixture(t, "", false, true)
+	// Subscribe and prepare the notification before any pending login usage
+	// can be consumed. The login helper's own read scope ends on return.
+	prepared := sync.OnceFunc(f.holdCounterFlush())
+	t.Cleanup(prepared)
 	cookies := f.login()
 	raw, err := os.ReadFile(f.path)
 	if err != nil {
@@ -44,6 +48,7 @@ func TestGuestListenerRestoreFlushOwnership(t *testing.T) {
 	if err := os.WriteFile(f.path, raw, 0600); err != nil {
 		t.Fatal(err)
 	}
+	prepared()
 	select {
 	case <-entered:
 	case <-time.After(5 * time.Second):
@@ -87,6 +92,8 @@ func TestGuestListenerRestoreFlushOwnership(t *testing.T) {
 
 func TestGuestHealthyRequestFlushOwnership(t *testing.T) {
 	f := newGuestFixture(t, "", true, true)
+	prepared := sync.OnceFunc(f.holdCounterFlush())
+	t.Cleanup(prepared)
 	gate := cleanupGate(f)
 	app := gate.app
 	gate.app = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -125,6 +132,7 @@ func TestGuestHealthyRequestFlushOwnership(t *testing.T) {
 	if err := os.WriteFile(f.path, raw, 0600); err != nil {
 		t.Fatal(err)
 	}
+	prepared()
 	select {
 	case <-entered:
 	case <-time.After(5 * time.Second):

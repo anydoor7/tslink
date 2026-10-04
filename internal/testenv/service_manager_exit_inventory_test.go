@@ -171,6 +171,9 @@ var serviceManagerTestArgPassthroughAllowlist = map[string]serviceManagerExitEnt
 	// execCommand seam stubs that forward to the real constructor. None of them
 	// spawns a service manager, and all of them inherit the parent environment.
 	"internal/daemon/daemon_test.go": {note: "self-exec daemon helpers and execCommand seam stubs", occurrences: 4},
+	// Fixed PowerShell argv runs a fixture-owned script that imports only named
+	// reader AST functions. It never evaluates the lifecycle/install body.
+	"internal/daemon/pid_sharing_windows_test.go": {note: "isolated state-reader probe; fixed observer-only AST import, no service verbs", occurrences: 1},
 }
 
 // TestServiceManagerTestArgPassthroughsAreReviewed fails when a test file

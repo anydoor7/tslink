@@ -1,6 +1,7 @@
 param(
     [string]$Binary,
-    [int]$RestartTimeoutSeconds = 30
+    [int]$RestartTimeoutSeconds = 30,
+    [string]$ReceiptPath
 )
 # Run in a clean, disposable Windows user session. No elevation, prompts,
 # credentials, tailnet nodes or network services are used. Existing installations
@@ -13,6 +14,7 @@ $previousConfig = $env:TSLINK_CONFIG_DIR
 $oldSkipSSH = $env:TSLINK_DOCTOR_SKIP_TAILSCALE_SSH
 $startup = $null
 $definition = $null
+$cleanupProven = $false
 
 function Invoke-TSLink([string[]]$Arguments) {
     $text = & $script:Binary @Arguments
@@ -32,9 +34,22 @@ function Read-SharedText([string]$Path) {
         finally { $reader.Dispose() }
     } finally { $stream.Dispose() }
 }
+function Read-PendingText([string]$Path) {
+    # One attempt only. The caller owns the existing poll deadline. Windows
+    # state replacement can briefly remove a name or deny a compatible open.
+    try { return Read-SharedText $Path }
+    catch {
+        $e = $_.Exception.GetBaseException()
+        if (($e -is [IO.IOException] -or $e -is [UnauthorizedAccessException]) -and
+            (($e.HResult -band 65535) -in @(2,3,5,32))) { return $null }
+        throw
+    }
+}
 function Get-NewDaemonPID([string]$Path, [int]$DifferentFrom) {
     if (Test-Path $Path) {
-        $text = (Read-SharedText $Path).Trim()
+        $text = Read-PendingText $Path
+        if ($null -eq $text) { return 0 }
+        $text = $text.Trim()
         if ($text -match '^\d+$' -and [int]$text -gt 0 -and [int]$text -ne $DifferentFrom) { return [int]$text }
     }
     return 0
@@ -55,7 +70,7 @@ function Write-FailureEvidence {
         } catch { Write-Output ('FAILURE_' + $name + '_ERROR ' + $_.Exception.Message) }
     }
 }
-function Wait-Daemon([int]$DifferentFrom = 0, [int]$Seconds = 30) {
+function Wait-Daemon([int]$DifferentFrom = 0, [int]$Seconds = 30, [int]$ExpectedFailures = -1) {
     $deadline = [DateTime]::UtcNow.AddSeconds($Seconds)
     do {
         $s = Invoke-TSLink -Arguments @('status','--json')
@@ -64,9 +79,22 @@ function Wait-Daemon([int]$DifferentFrom = 0, [int]$Seconds = 30) {
             $s.supervision.restart_on_exit -and $s.supervision.autostart_scope -eq 'login') {
             $runtimePath = Join-Path $env:TSLINK_CONFIG_DIR 'runtime.json'
             if (Test-Path $runtimePath) {
-                $runtime = Read-SharedText $runtimePath | ConvertFrom-Json
-                $age = [DateTime]::UtcNow - [DateTime]::Parse($runtime.updated_at).ToUniversalTime()
-                if ($runtime.daemon_pid -eq $s.daemon_pid -and $age.TotalSeconds -ge 0 -and $age.TotalSeconds -lt 30) { return $s.daemon_pid }
+                $text = Read-PendingText $runtimePath
+                if ($null -ne $text) {
+                    $runtime = $text | ConvertFrom-Json
+                    $age = [DateTime]::UtcNow - [DateTime]::Parse($runtime.updated_at).ToUniversalTime()
+                    if ($runtime.daemon_pid -eq $s.daemon_pid -and $age.TotalSeconds -ge 0 -and $age.TotalSeconds -lt 30) {
+                        if ($ExpectedFailures -lt 0) { return $s.daemon_pid }
+                        $text = Read-PendingText (Join-Path $env:TSLINK_CONFIG_DIR 'supervisor.json')
+                        if ($null -ne $text) {
+                            $supervisor = $text | ConvertFrom-Json
+                            if ($supervisor.state -eq 'running' -and $supervisor.daemon_pid -eq $s.daemon_pid) {
+                                if ($null -eq $supervisor.failures -or $supervisor.failures -ne $ExpectedFailures) { throw 'Unexpected supervisor failure count; startup/restart failure was absorbed' }
+                                return $s.daemon_pid
+                            }
+                        }
+                    }
+                }
             }
         }
         Start-Sleep -Milliseconds 500
@@ -74,7 +102,7 @@ function Wait-Daemon([int]$DifferentFrom = 0, [int]$Seconds = 30) {
     Write-Output ('WAIT_TIMEOUT_STATUS ' + ($s | ConvertTo-Json -Compress -Depth 5))
     foreach ($name in @('runtime.json','supervisor.json')) {
         $path = Join-Path $env:TSLINK_CONFIG_DIR $name
-        if (Test-Path $path) { Write-Output ('WAIT_TIMEOUT_' + $name + ' ' + (Read-SharedText $path).Trim()) }
+        if (Test-Path $path) { Write-Output ('WAIT_TIMEOUT_' + $name + ' ' + (Read-PendingText $path)) }
     }
     throw 'Verified daemon and matching runtime artifact did not appear before deadline'
 }
@@ -117,7 +145,9 @@ try {
     $installed = $true # An error can still leave a registered task to clean up.
     $install = Invoke-TSLink -Arguments @('install','--json')
     if ($install.service_manager -ne 'windows-task-scheduler' -or -not $install.started) { throw 'Install did not verify Task Scheduler ownership' }
-    $first = Wait-Daemon
+    # This fresh supervisor has not had a five-minute stable run (the reset
+    # boundary). Zero initial failures, then one deliberate crash, are exact.
+    $first = Wait-Daemon -ExpectedFailures 0
     $killedAt = [DateTime]::UtcNow
     & "$env:SystemRoot\System32\taskkill.exe" /PID $first /F
     if ($LASTEXITCODE -ne 0) { throw 'taskkill did not kill the daemon' }
@@ -130,7 +160,7 @@ try {
     } while ([DateTime]::UtcNow -lt $pidDeadline)
     if (-not $newPID) { throw 'New daemon PID did not appear within the first crash backoff bound' }
     $pidRestartSeconds = ([DateTime]::UtcNow - $killedAt).TotalSeconds
-    $second = Wait-Daemon -DifferentFrom $first -Seconds $RestartTimeoutSeconds
+    $second = Wait-Daemon -DifferentFrom $first -Seconds $RestartTimeoutSeconds -ExpectedFailures 1
     $restartSeconds = ([DateTime]::UtcNow - $killedAt).TotalSeconds
     if ($second -ne $newPID -or $pidRestartSeconds -lt 1 -or $restartSeconds -gt $RestartTimeoutSeconds) { throw 'Crash restart outside the first backoff/initialization bound' }
     Write-Output "PASS crash restart: $first -> $second; new PID in $pidRestartSeconds seconds; verified runtime/ownership in $restartSeconds seconds (first backoff 1s)"
@@ -142,7 +172,7 @@ try {
     Write-Output ('STOP_SUPERVISOR ' + (Read-SharedText (Join-Path $scratch 'supervisor.json')).Trim())
     if ($s.daemon_running -or $s.supervision.supervisor_pid -or $s.supervision.runtime_state -ne 'stopped') { throw 'Graceful successful stop unexpectedly restarted or left a supervisor' }
     $null = Invoke-TSLink -Arguments @('install','--json')
-    $null = Wait-Daemon
+    $null = Wait-Daemon -ExpectedFailures 0
     $uninstall = Invoke-TSLink -Arguments @('uninstall','--json')
     if (-not $uninstall.removed) { throw 'Uninstall did not remove task' }
     $installed = $false
@@ -158,11 +188,28 @@ try {
         catch { Write-Output 'FAIL cleanup: task/config retained for inspection'; $exitCode = 1 }
     }
     if ($scratch -and -not $installed) {
-        try { Remove-Item -Recurse -Force $scratch }
+        try {
+            # A successful uninstall return alone is not proof that a later
+            # diagnostic iteration may safely reuse this disposable account.
+            $clean = Invoke-TSLink -Arguments @('status','--json')
+            if ($clean.daemon_running -or $clean.supervision.installed -or $clean.supervision.supervisor_pid -or
+                (Test-Path $startup) -or (Test-Path $definition)) { throw 'Uninstall cleanup not proved' }
+            try { $null = $folder.GetTask($taskName); throw 'Scheduled task still present' }
+            catch {
+                $e = $_.Exception.GetBaseException()
+                if ($e.HResult -ne -2147024894) { throw }
+            }
+            Remove-Item -Recurse -Force $scratch
+            $cleanupProven = -not (Test-Path $scratch)
+        }
         catch { Write-Output 'FAIL cleanup: scratch config could not be removed'; $exitCode = 1 }
     }
     $env:TSLINK_CONFIG_DIR = $previousConfig
     $env:TSLINK_DOCTOR_SKIP_TAILSCALE_SSH = $oldSkipSSH
+    if ($ReceiptPath) {
+        @{ passed = ($exitCode -eq 0); cleanup_proven = $cleanupProven } |
+            ConvertTo-Json | Set-Content -Encoding UTF8 $ReceiptPath
+    }
 }
 if ($exitCode -eq 0) { Write-Output 'PASS Windows supervision: install, runtime artifact, crash restart, graceful stop, reinstall, uninstall' }
 exit $exitCode

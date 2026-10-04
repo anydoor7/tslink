@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/anydoor7/tslink/internal/atomicfile"
 	"github.com/anydoor7/tslink/internal/cliargs"
 	"github.com/anydoor7/tslink/internal/filelock"
 )
@@ -65,7 +66,7 @@ type processIdentityRecord struct {
 var readExecutableBuildInfo = buildinfo.ReadFile
 
 var (
-	readProcessIdentityData = os.ReadFile
+	readProcessIdentityData = atomicfile.ReadFile
 	errIdentityMismatch     = errors.New("process does not match the TSLink serve daemon")
 	// errForeignProcess is the subset of errIdentityMismatch that carries
 	// positive proof: the PID belongs to some other program. It wraps
@@ -184,29 +185,10 @@ func WritePIDForProcess(path string, pid int) error {
 }
 
 func writePrivateFileAtomic(path string, data []byte) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
-	if err != nil {
-		return err
-	}
-	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
-
-	if err := tmp.Chmod(0o600); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmpPath, path)
+	// Use the shared private-state writer, including Windows replacement and
+	// bounded sharing retries. Its temporary names also let readers settle a
+	// transient missing name rather than misclassifying a replacement as absent.
+	return atomicfile.WriteFile(path, data)
 }
 
 // WithPIDLock holds the PID-file lock while fn runs.
@@ -230,7 +212,7 @@ func WithPIDLock(path string, fn func() error) error {
 
 // ReadPID reads and parses a PID file.
 func ReadPID(path string) (int, error) {
-	data, err := os.ReadFile(path)
+	data, err := atomicfile.ReadFile(path)
 	if err != nil {
 		return 0, err
 	}

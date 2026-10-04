@@ -411,6 +411,11 @@ Local changes (2026-10-03 through 2026-10-04):
 - ownership_windows_test.go exercises real IOCP stale packets, same-inode
   replacement, unrelated handle/event survival, error delivery, Close handshake
   preservation and repeated Add/Remove/Close with real directory events.
+- backend_windows.go elects one Close owner under the mutex; concurrent and
+  repeated callers join a shared completion and receive the original error.
+  Successful completion follows reader disposal and public-channel closure.
+- close_windows_test.go delays the actual IOCP reader launch to prove repeated
+  and concurrent Close calls cannot return before that completion (Go 1.25+).
 - backend_inotify.go closes Errors and Events before publishing doneResp, and
   repeated Close calls also join doneResp. Previously the join could return
   before public-channel closure. The same ordering remains in upstream main
