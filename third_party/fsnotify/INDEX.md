@@ -2,6 +2,7 @@
 
 - `NOTICE.tslink`: exact upstream provenance, local modifications and update policy.
 - `ownership_kqueue_test.go`: real HTTP descriptor regression, join, resource and concurrency contracts.
+- `ownership_windows_test.go`: queued completion ownership, Close handshake, live errors and event lifecycle regressions.
 
 - `LICENSE`: retained upstream source/test payload.
 - `backend_fen.go`: retained upstream source/test payload.

@@ -24,12 +24,21 @@ Local changes (2026-10-03):
   before writing again on the same descriptor, avoiding unread-event coalescing
   without relying on a scheduling delay. All upstream test scripts are retained.
 - INDEX.md inventories are local documentation.
+- backend_windows.go backports the ownership check and Close handshake repair
+  proposed in upstream PR #769, commit d43eaa65f2bb94efd941560d96097ac3910d6871
+  (https://github.com/fsnotify/fsnotify/pull/769; still open on 2026-10-04).
+  Completions for an unregistered or replaced watch cannot touch its retired
+  handle. sendError preserves the reader's Close reply channel. Live errors
+  retain their original reporting behavior; no CancelIo errors are suppressed.
+- ownership_windows_test.go exercises real IOCP stale packets, same-inode
+  replacement, unrelated handle/event survival, error delivery, Close handshake
+  preservation and repeated Add/Remove/Close with real directory events.
 
 Public signatures are unchanged. On kqueue, Close now waits for watch disposal,
 reader exit and closure of Events then Errors. It cancels blocked channel sends
 before waiting, and takes no descriptor lock while joining. Add returns
 ErrClosed after closure; Remove retains its upstream no-op behavior after Close.
-Linux and Windows backends are byte-identical to v1.10.1.
+The Linux backend is byte-identical to v1.10.1.
 
 Why a local replacement: v1.10.1 Close can close a descriptor already in use by
 the reader's removal path; reuse can turn the second raw close into destruction
