@@ -8,7 +8,8 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
-	"time"
+
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 func TestPeopleInviteLedgerAndValidation(t *testing.T) {
@@ -103,7 +104,9 @@ func TestPeopleInviteLockAcrossProcesses(t *testing.T) {
 	if _, e := ChangePerson(path, "alice", []string{"photos"}, nil, false, false); e != nil {
 		t.Fatal(e)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// The context only kills the child on an early return; startup speed of a
+	// race-instrumented child is not a property.
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	child := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestPeopleInviteLockAcrossProcesses$", "-test.count=1")
 	child.Env = append(os.Environ(), "GO_TEST_PEOPLE_LOCK_PATH="+path)
@@ -120,14 +123,22 @@ func TestPeopleInviteLockAcrossProcesses(t *testing.T) {
 	}
 	defer func() { cancel(); _ = child.Wait() }()
 	r := bufio.NewReader(out)
-	for {
-		line, e := r.ReadString('\n')
-		if e != nil {
-			t.Fatal("child did not acquire lock", e)
+	locked := make(chan error, 1)
+	go func() {
+		for {
+			line, e := r.ReadString('\n')
+			if e != nil {
+				locked <- fmt.Errorf("child did not acquire lock: %w", e)
+				return
+			}
+			if line == "LOCKED\n" {
+				locked <- nil
+				return
+			}
 		}
-		if line == "LOCKED\n" {
-			break
-		}
+	}()
+	if e := testwait.Recv(t, locked, "child acquired the people-invite lock"); e != nil {
+		t.Fatal(e)
 	}
 	called := false
 	acquired, e := TryPeopleInviteWork(path, func() error { called = true; return nil })
