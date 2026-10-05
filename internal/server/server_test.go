@@ -2076,24 +2076,39 @@ func TestLifecycleTickerRereadsWallClockAfterSimulatedSleep(t *testing.T) {
 		lifecycleTickerInterval = oldInterval
 	})
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	var observed []time.Time
+	observed := make(chan time.Time)
 	s.SetLifecycleReconcileFn(func(_ context.Context, now time.Time) (bool, error) {
-		observed = append(observed, now)
-		if len(observed) == 2 {
-			cancel()
+		select {
+		case observed <- now:
+		case <-ctx.Done():
 		}
 		return false, nil
 	})
 	done := s.startLifecycleTicker(ctx)
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("lifecycle ticker did not observe two wall-clock ticks")
+	stop := sync.OnceFunc(func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Error("lifecycle ticker did not stop")
+		}
+	})
+	defer stop() // Join before restoring the seams, including on assertion failure.
+	// Observe the first two deliveries, not the total at shutdown: select may
+	// choose a ready tick even when cancellation is also ready. The unbuffered
+	// handoff orders observations, and cancellation releases any later sender.
+	deadline := time.After(5 * time.Second)
+	for i, want := range []time.Time{beforeSleep, afterWake} {
+		select {
+		case got := <-observed:
+			if !got.Equal(want) {
+				t.Errorf("wall clock at tick %d = %v, want %v", i+1, got, want)
+			}
+		case <-deadline:
+			t.Fatal("lifecycle ticker did not observe two wall-clock ticks")
+		}
 	}
-	if len(observed) != 2 || !observed[0].Equal(beforeSleep) || !observed[1].Equal(afterWake) {
-		t.Fatalf("observed wall clocks = %v, want pre-sleep then wake time", observed)
-	}
+	stop()
 }
 
 func TestLifecycleTickerSkipsFullSyncWhenReconcileReportsNoChange(t *testing.T) {
