@@ -492,27 +492,29 @@ func TestMCPCancelledRegistryCallKeepsCompletionAudit(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan string, 1)
+	joined := make(chan struct{})
 	go func() {
+		defer close(joined)
 		r, err := callMCPTool(ctx, a, "tags_set", json.RawMessage(`{"service":"photos","tag":"tag:updated"}`))
 		done <- mcpResultCode(r, err)
 	}()
+	// A result-delivery delay is not a failed cancellation. Join before any
+	// fixture cleanup, including on an assertion failure; the package timeout
+	// bounds a genuinely stuck RPC or real OS I/O.
+	defer func() { cancel(); filelock.Unlock(lock); <-joined }()
 	select {
 	case <-entered:
-	case <-time.After(2 * time.Second):
-		t.Fatal("tags writer did not start")
+	case code := <-done:
+		t.Fatalf("call returned before tags writer: %s", code)
 	}
 	cancel()
 	if err := filelock.Unlock(lock); err != nil {
 		t.Fatal(err)
 	}
-	select {
-	case code := <-done:
-		if code != "mcp_scope_denied" {
-			t.Fatalf("code=%s", code)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("cancelled call did not finish")
+	if code := <-done; code != "mcp_scope_denied" {
+		t.Fatalf("code=%s", code)
 	}
+	<-joined
 	reg, err := registry.Load(path)
 	if err != nil {
 		t.Fatal(err)
@@ -552,6 +554,40 @@ func TestMCPDoctorReportsPotentialTagOverlap(t *testing.T) {
 			}
 		})
 	}
+}
+
+// mcpRegistryEffectContext pauses the first context check made while the actual
+// action owns the registry lock. Earlier dispatch checks can acquire the probe
+// descriptor and continue. No other writer runs in this fixture. Err delegates
+// after release, so cancellation is still evaluated by the real CheckEffect.
+type mcpRegistryEffectContext struct {
+	context.Context
+	lock    *os.File
+	entered chan<- error
+	release <-chan struct{}
+	mu      sync.Mutex
+	seen    bool
+}
+
+func (c *mcpRegistryEffectContext) Err() error {
+	c.mu.Lock()
+	if c.seen {
+		c.mu.Unlock()
+		return c.Context.Err()
+	}
+	acquired, err := filelock.TryLock(c.lock)
+	if acquired {
+		err = filelock.Unlock(c.lock)
+	}
+	if acquired && err == nil {
+		c.mu.Unlock()
+		return c.Context.Err()
+	}
+	c.seen = true
+	c.mu.Unlock()
+	c.entered <- err
+	<-c.release
+	return c.Context.Err()
 }
 
 func TestMCPDefaultMutationsRecheckRegistrySession(t *testing.T) {
@@ -594,10 +630,23 @@ func TestMCPDefaultMutationsRecheckRegistrySession(t *testing.T) {
 					t.Fatal(err)
 				}
 				defer lock.Close()
-				if err := filelock.Lock(lock); err != nil {
+				// Prove this descriptor can acquire an idle registry lock before
+				// using failed acquisition as evidence of the real writer's lock.
+				if acquired, err := filelock.TryLock(lock); err != nil || !acquired {
+					t.Fatalf("idle registry lock: acquired=%v err=%v", acquired, err)
+				}
+				if err := filelock.Unlock(lock); err != nil {
 					t.Fatal(err)
 				}
-				defer filelock.Unlock(lock)
+				locked, release := make(chan error, 1), make(chan struct{})
+				unblock := sync.OnceFunc(func() { close(release) })
+				defer unblock()
+				timeout := mcpSessionTimeoutFn
+				mcpSessionTimeoutFn = func(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc) {
+					ctx, cancel := timeout(ctx, d)
+					return &mcpRegistryEffectContext{Context: ctx, lock: lock, entered: locked, release: release}, cancel
+				}
+				t.Cleanup(func() { mcpSessionTimeoutFn = timeout })
 				now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
 				expiry := now.Add(time.Hour)
 				var expired atomic.Bool
@@ -622,12 +671,25 @@ func TestMCPDefaultMutationsRecheckRegistrySession(t *testing.T) {
 				ctx, cancel := context.WithCancel(context.Background())
 				defer cancel()
 				done := make(chan string, 1)
-				go func() { r, err := callMCPTool(ctx, a, tc.tool, json.RawMessage(tc.raw)); done <- mcpResultCode(r, err) }()
-				<-entered
+				joined := make(chan struct{})
+				go func() {
+					defer close(joined)
+					r, err := callMCPTool(ctx, a, tc.tool, json.RawMessage(tc.raw))
+					done <- mcpResultCode(r, err)
+				}()
+				defer func() { cancel(); unblock(); <-joined }()
 				select {
+				case <-entered:
 				case code := <-done:
-					t.Fatalf("call completed while lock held: %s", code)
-				case <-time.After(30 * time.Millisecond):
+					t.Fatalf("call completed before intent: %s", code)
+				}
+				select {
+				case err := <-locked:
+					if err != nil {
+						t.Fatalf("registry lock probe: %v", err)
+					}
+				case code := <-done:
+					t.Fatalf("call completed before registry effect boundary: %s", code)
 				}
 				if state == "expired" {
 					expired.Store(true)
@@ -635,18 +697,16 @@ func TestMCPDefaultMutationsRecheckRegistrySession(t *testing.T) {
 				if state == "cancelled" {
 					cancel()
 				}
-				if err := filelock.Unlock(lock); err != nil {
-					t.Fatal(err)
-				}
-				var code string
-				select {
-				case code = <-done:
-				case <-time.After(3 * time.Second):
-					t.Fatal("mutation did not complete")
-				}
+				unblock()
+				code := <-done
+				<-joined
 				if state == "active" {
 					if code != "ok" {
 						t.Fatalf("active mutation code=%s", code)
+					}
+					after, err := os.ReadFile(paths.Registry)
+					if err != nil || reflect.DeepEqual(before, after) {
+						t.Fatalf("active default action did not change registry: %v", err)
 					}
 				} else {
 					if code != "mcp_scope_denied" {
