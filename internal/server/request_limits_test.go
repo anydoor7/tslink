@@ -100,18 +100,13 @@ func TestRequestLimitsTLSHandshakeLifecycle(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer client.Close()
-		deadline := time.Now().Add(5 * time.Second)
-		for len(limited.sem) != 1 && time.Now().Before(deadline) {
-			time.Sleep(time.Millisecond)
-		}
-		if len(limited.sem) != 1 {
-			t.Fatal("stalled handshake did not acquire its connection slot")
-		}
+		deadline := time.Now().Add(testwait.Budget(t))
+		testwait.Until(t, "stalled handshake acquired its connection slot", func() bool { return len(limited.sem) == 1 })
 		_ = client.SetReadDeadline(deadline)
 		if _, err := client.Read(make([]byte, 1)); !errors.Is(err, io.EOF) && !errors.Is(err, syscall.ECONNRESET) {
 			t.Fatalf("configured header timeout did not close stalled TLS handshake with EOF or reset: %v", err)
 		}
-		uploadRelease(t, limited, deadline)
+		uploadRelease(t, limited)
 	})
 	for _, path := range []string{"client_close", "invalid", "close", "shutdown"} {
 		t.Run(path, func(t *testing.T) {
@@ -124,13 +119,8 @@ func TestRequestLimitsTLSHandshakeLifecycle(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer client.Close()
-			deadline := time.Now().Add(5 * time.Second)
-			for len(limited.sem) != 1 && time.Now().Before(deadline) {
-				time.Sleep(time.Millisecond)
-			}
-			if len(limited.sem) != 1 {
-				t.Fatal("stalled handshake did not acquire its connection slot")
-			}
+			deadline := time.Now().Add(testwait.Budget(t))
+			testwait.Until(t, "stalled handshake acquired its connection slot", func() bool { return len(limited.sem) == 1 })
 			switch path {
 			case "client_close":
 				_ = client.Close()
@@ -153,12 +143,12 @@ func TestRequestLimitsTLSHandshakeLifecycle(t *testing.T) {
 					t.Fatalf("unserved handshake was not closed before the hang guard: %v", err)
 				}
 			}
-			uploadRelease(t, limited, deadline)
+			uploadRelease(t, limited)
 			if path == "client_close" || path == "invalid" {
 				// A failed handshake must not stop the accept loop.
 				tr := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, ForceAttemptHTTP2: true}
 				defer tr.CloseIdleConnections()
-				resp, err := (&http.Client{Transport: tr, Timeout: 5 * time.Second}).Get("https://" + addr)
+				resp, err := (&http.Client{Transport: tr, Timeout: testwait.Budget(t)}).Get("https://" + addr)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -168,7 +158,7 @@ func TestRequestLimitsTLSHandshakeLifecycle(t *testing.T) {
 					t.Fatalf("handshake recovery response=%s %d", resp.Proto, resp.StatusCode)
 				}
 				tr.CloseIdleConnections()
-				uploadRelease(t, limited, time.Now().Add(5*time.Second), tr)
+				uploadRelease(t, limited, tr)
 			}
 		})
 	}
@@ -180,7 +170,7 @@ func uploadJoinPreparation(t *testing.T, ln *headerBudgetListener) {
 	t.Helper()
 	done := make(chan struct{})
 	go func() { ln.workers.Wait(); close(done) }()
-	uploadWait(t, done, 5*time.Second, "preparation workers did not exit")
+	uploadWait(t, done, "preparation workers did not exit")
 }
 
 type uploadJoinedAcceptListener struct {
@@ -245,7 +235,7 @@ func TestRequestLimitsTLSCertificateLookupStop(t *testing.T) {
 				connectedDone := make(chan struct{})
 				go func() {
 					defer close(connectedDone)
-					c, err := tls.DialWithDialer(&net.Dialer{Timeout: 10 * time.Second}, "tcp", raw.Addr().String(), &tls.Config{InsecureSkipVerify: true, ServerName: "share.example.invalid"})
+					c, err := tls.DialWithDialer(&net.Dialer{Timeout: testwait.Budget(t)}, "tcp", raw.Addr().String(), &tls.Config{InsecureSkipVerify: true, ServerName: "share.example.invalid"})
 					if c != nil {
 						_ = c.Close()
 					}
@@ -259,28 +249,28 @@ func TestRequestLimitsTLSCertificateLookupStop(t *testing.T) {
 						if !errors.Is(err, http.ErrServerClosed) && !errors.Is(err, net.ErrClosed) {
 							t.Error(err)
 						}
-					case <-time.After(5 * time.Second):
+					case <-time.After(testwait.Budget(t)):
 						t.Error("Serve did not exit")
 					}
-					uploadWait(t, acceptDone, 5*time.Second, "accept loop did not exit")
-					uploadWait(t, connectedDone, 5*time.Second, "TLS client did not exit")
+					uploadWait(t, acceptDone, "accept loop did not exit")
+					uploadWait(t, connectedDone, "TLS client did not exit")
 					uploadJoinPreparation(t, ln)
 				}()
-				uploadWait(t, entered, 5*time.Second, "actual GetCertificate was not reached")
+				uploadWait(t, entered, "actual GetCertificate was not reached")
 				if capped && len(limited.sem) != 1 {
 					t.Fatal("handshake did not acquire cap")
 				}
 				// Completion while the provider is still blocked is the contract.
-				// Socket scheduling is bounded only by a loose hang guard.
-				budget, bound := 100*time.Millisecond, 5*time.Second
+				// Socket scheduling is bounded only by the testwait hang guard.
+				budget := 100 * time.Millisecond
 				if stop == "shutdown_production_budget" {
-					budget, bound = httpShutdownTimeout, 6*time.Second
+					budget = httpShutdownTimeout
 				}
 				ctx, cancel := context.WithTimeout(context.Background(), budget)
 				defer cancel()
 				stopped := make(chan error, 1)
 				stopDone := make(chan struct{})
-				defer func() { unblock(); uploadWait(t, stopDone, 5*time.Second, "stop goroutine did not exit") }()
+				defer func() { unblock(); uploadWait(t, stopDone, "stop goroutine did not exit") }()
 				start := time.Now()
 				go func() {
 					defer close(stopDone)
@@ -299,7 +289,7 @@ func TestRequestLimitsTLSCertificateLookupStop(t *testing.T) {
 						t.Errorf("stop returned %v", err)
 					}
 					t.Logf("stop returned in %s with provider still blocked (budget %s)", time.Since(start), budget)
-				case <-time.After(bound):
+				case <-time.After(testwait.Budget(t)):
 					t.Errorf("stop blocked for %s behind GetCertificate; shutdown context=%v", time.Since(start), ctx.Err())
 					unblock()
 					testwait.Recv(t, stopped, "stop did not finish after provider release")
@@ -309,7 +299,7 @@ func TestRequestLimitsTLSCertificateLookupStop(t *testing.T) {
 					if err == nil {
 						t.Error("closed raw transport completed TLS")
 					}
-				case <-time.After(5 * time.Second):
+				case <-time.After(testwait.Budget(t)):
 					t.Error("raw transport survived stop")
 					unblock()
 					<-connected
@@ -323,7 +313,7 @@ func TestRequestLimitsTLSCertificateLookupStop(t *testing.T) {
 					limited.sem <- struct{}{}
 				}
 				unblock()
-				uploadWait(t, lookupDone, 5*time.Second, "certificate provider did not exit")
+				uploadWait(t, lookupDone, "certificate provider did not exit")
 				uploadJoinPreparation(t, ln)
 				if capped && len(limited.sem) != 1 {
 					t.Error("late worker released the cap twice")
@@ -360,7 +350,7 @@ func TestRequestLimitsTLSLateHandoff(t *testing.T) {
 			defer peer.Close()
 			native := tls.Server(raw, cfg)
 			client := tls.Client(peer, &tls.Config{InsecureSkipVerify: true, NextProtos: []string{"h2"}, MaxVersion: tls.VersionTLS12})
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), testwait.Budget(t))
 			defer cancel()
 			handshaken := make(chan error, 1)
 			go func() { handshaken <- native.HandshakeContext(ctx) }()
@@ -401,7 +391,7 @@ func TestRequestLimitsTLSLateHandoff(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-			case <-time.After(5 * time.Second):
+			case <-time.After(testwait.Budget(t)):
 				t.Error("Close waited for a worker before its late handoff")
 				unblock()
 				<-closed
@@ -431,16 +421,10 @@ func TestRequestLimitsTLSHandshakeDoesNotBlockAccept(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer stalled.Close()
-	deadline := time.Now().Add(5 * time.Second)
-	for len(limited.sem) != 1 && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
-	}
-	if len(limited.sem) != 1 {
-		t.Fatal("stalled handshake did not acquire its connection slot")
-	}
+	testwait.Until(t, "stalled handshake acquired its connection slot", func() bool { return len(limited.sem) == 1 })
 	tr := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, ForceAttemptHTTP2: true}
 	defer tr.CloseIdleConnections()
-	resp, err := (&http.Client{Transport: tr, Timeout: 5 * time.Second}).Get("https://" + addr)
+	resp, err := (&http.Client{Transport: tr, Timeout: testwait.Budget(t)}).Get("https://" + addr)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -470,7 +454,7 @@ func TestRequestLimitsTLSHTTP2ServerLifecycle(t *testing.T) {
 			defer tr.CloseIdleConnections()
 			response := make(chan error, 1)
 			go func() {
-				resp, err := (&http.Client{Transport: tr, Timeout: 5 * time.Second}).Get("https://" + addr)
+				resp, err := (&http.Client{Transport: tr, Timeout: testwait.Budget(t)}).Get("https://" + addr)
 				if err == nil {
 					_ = resp.Body.Close()
 					if resp.StatusCode != 204 || resp.ProtoMajor != 2 {
@@ -479,13 +463,13 @@ func TestRequestLimitsTLSHTTP2ServerLifecycle(t *testing.T) {
 				}
 				response <- err
 			}()
-			uploadWait(t, entered, 5*time.Second, "HTTP/2 handler was not reached")
+			uploadWait(t, entered, "HTTP/2 handler was not reached")
 			if len(limited.sem) != 1 {
 				t.Fatal("HTTP/2 connection did not retain its cap")
 			}
 			if shutdown {
 				stopped := make(chan error, 1)
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				ctx, cancel := context.WithTimeout(context.Background(), testwait.Budget(t))
 				defer cancel()
 				go func() { stopped <- srv.Shutdown(ctx) }()
 				select {
@@ -504,11 +488,12 @@ func TestRequestLimitsTLSHTTP2ServerLifecycle(t *testing.T) {
 				if err := srv.Close(); err != nil {
 					t.Fatal(err)
 				}
-				if err := <-response; err == nil {
-					t.Fatal("Close did not interrupt the active HTTP/2 stream")
+				// A client timeout is not an interruption by Close.
+				if err := <-response; err == nil || isTimeout(err) {
+					t.Fatalf("Close did not interrupt the active HTTP/2 stream: %v", err)
 				}
 			}
-			uploadRelease(t, limited, time.Now().Add(5*time.Second), tr)
+			uploadRelease(t, limited, tr)
 		})
 	}
 }
@@ -542,14 +527,12 @@ func TestRequestLimitsTLSPendingHandoffClosed(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer peer.Close()
-			deadline := time.Now().Add(5 * time.Second)
 			var tracked int
-			for tracked == 0 && time.Now().Before(deadline) {
+			testwait.Until(t, "completed TLS handoff tracked", func() bool {
+				tracked = 0
 				ln.tlsSlots.Range(func(_, _ any) bool { tracked++; return true })
-				if tracked == 0 {
-					time.Sleep(time.Millisecond)
-				}
-			}
+				return tracked != 0
+			})
 			if tracked != 1 || (limited != nil && len(limited.sem) != 1) {
 				t.Fatalf("completed TLS handoff was not tracked: connections=%d", tracked)
 			}
@@ -557,7 +540,7 @@ func TestRequestLimitsTLSPendingHandoffClosed(t *testing.T) {
 				t.Fatal(err)
 			}
 			uploadJoinPreparation(t, ln)
-			_ = peer.SetReadDeadline(time.Now().Add(5 * time.Second))
+			_ = peer.SetReadDeadline(time.Now().Add(testwait.Budget(t)))
 			if _, err := peer.Read(make([]byte, 1)); err == nil || isTimeout(err) {
 				t.Fatalf("completed but unserved TLS connection survived Close: %v", err)
 			}
@@ -631,7 +614,7 @@ func TestRequestLimitsTLSAcceptLifecycle(t *testing.T) {
 				done := make(chan error, 1)
 				go func() { done <- srv.Serve(ln) }()
 				defer func() { _ = srv.Close(); <-done }()
-				resp, err := (&http.Client{Timeout: 5 * time.Second}).Get("http://" + raw.Addr().String())
+				resp, err := (&http.Client{Timeout: testwait.Budget(t)}).Get("http://" + raw.Addr().String())
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -650,7 +633,7 @@ func TestRequestLimitsTLSAcceptLifecycle(t *testing.T) {
 			}
 			defer peer.Close()
 			if path == "closed_during_accept" {
-				uploadWait(t, control.accepted, 5*time.Second, "accept did not acquire the connection")
+				uploadWait(t, control.accepted, "accept did not acquire the connection")
 				if len(limited.sem) != 1 {
 					t.Fatal("accept did not acquire the slot")
 				}
@@ -681,11 +664,11 @@ func TestRequestLimitsTLSAcceptLifecycle(t *testing.T) {
 					_ = original.Close()
 				}
 			}
-			_ = peer.SetReadDeadline(time.Now().Add(5 * time.Second))
+			_ = peer.SetReadDeadline(time.Now().Add(testwait.Budget(t)))
 			if _, err := peer.Read(make([]byte, 1)); err == nil || isTimeout(err) {
 				t.Fatalf("connection survived the closed listener: %v", err)
 			}
-			uploadRelease(t, limited, time.Now().Add(5*time.Second))
+			uploadRelease(t, limited)
 		})
 	}
 }
@@ -697,9 +680,9 @@ func TestRequestLimitsTLSUnconsumedBodyDrain(t *testing.T) {
 			for _, complete := range []bool{true, false} {
 				t.Run(fmt.Sprintf("%s/chunked=%v/complete=%v", path, chunked, complete), func(t *testing.T) {
 					t.Setenv(config.ConfigDirEnv, t.TempDir())
-					// Allow Go's additional 500ms TCP reset-avoidance close
-					// grace after our 100ms drain deadline has expired.
-					const bound = 5 * time.Second // hang guard; virtual subtest asserts the disposal policy
+					// The hang guard must also allow Go's additional 500ms TCP
+					// reset-avoidance close grace after our 100ms drain deadline;
+					// the virtual subtest asserts the disposal policy itself.
 					svc := registry.Service{Name: "drain", Type: registry.TypeFile, RequestLimits: &registry.RequestLimits{ReadTimeout: "100ms", IdleTimeout: "5s"}}
 					dir := t.TempDir()
 					urlPath := "/"
@@ -760,7 +743,7 @@ func TestRequestLimitsTLSUnconsumedBodyDrain(t *testing.T) {
 						t.Fatalf("active connections=%d, want 1", got)
 					}
 					start := time.Now()
-					deadline := start.Add(bound)
+					deadline := start.Add(testwait.Budget(t))
 					_ = conn.SetDeadline(deadline)
 					body := "x"
 					if complete || (path == "body_limit" && chunked) {
@@ -780,7 +763,7 @@ func TestRequestLimitsTLSUnconsumedBodyDrain(t *testing.T) {
 					resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
 					if err != nil {
 						if complete || !errors.Is(err, io.EOF) {
-							t.Errorf("no response or EOF within %s: %v", bound, err)
+							t.Errorf("no response or EOF within %s: %v", deadline.Sub(start), err)
 						}
 					} else {
 						if resp.StatusCode != want {
@@ -853,7 +836,7 @@ func TestRequestLimitsTLSProgressAndStall(t *testing.T) {
 				defer func() { reader.Close(); writer.Close(); <-done }()
 				req, _ := http.NewRequest("POST", "https://"+addr, reader)
 				req.ContentLength = 10
-				client := &http.Client{Transport: tr, Timeout: 5 * time.Second}
+				client := &http.Client{Transport: tr, Timeout: testwait.Budget(t)}
 				resp, err := client.Do(req)
 				if err != nil {
 					t.Fatal(err)
@@ -896,9 +879,8 @@ func TestRequestLimitsTLSDisposalAbsoluteDeadline(t *testing.T) {
 			}
 			// Keep sending chunked bytes every 25ms. This is disposal after
 			// an unused body, so progress must not renew the absolute deadline.
-			const bound = 5 * time.Second // hang guard; virtual subtest asserts the disposal policy
-			deadline := time.Now().Add(bound)
-			_ = conn.SetDeadline(deadline)
+			// Hang guard only; the virtual subtest asserts the disposal policy.
+			_ = conn.SetDeadline(time.Now().Add(testwait.Budget(t)))
 			if _, err := fmt.Fprint(conn, "POST / HTTP/1.1\r\nHost: drip\r\nTransfer-Encoding: chunked\r\n\r\n1\r\nx\r\n"); err != nil {
 				t.Fatal(err)
 			}
@@ -930,13 +912,7 @@ func TestRequestLimitsTLSDisposalAbsoluteDeadline(t *testing.T) {
 					t.Errorf("status=%d body read=%v", resp.StatusCode, err)
 				}
 			}
-			deadline = time.Now().Add(5 * time.Second)
-			for len(limited.sem) != 0 && time.Now().Before(deadline) {
-				time.Sleep(time.Millisecond)
-			}
-			if len(limited.sem) != 0 {
-				t.Errorf("dripping client retained slot beyond %s with read timeout %s", bound, idle)
-			}
+			testwait.Until(t, "dripping client's slot released with read timeout "+idle, func() bool { return len(limited.sem) == 0 })
 		})
 	}
 }
@@ -1074,7 +1050,7 @@ func TestRequestLimitsSlowProgressAndStall(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer conn.Close()
-			conn.SetDeadline(time.Now().Add(5 * time.Second))
+			conn.SetDeadline(time.Now().Add(testwait.Budget(t)))
 			fmt.Fprint(conn, "POST / HTTP/1.1\r\nHost: phone\r\nContent-Length: 10\r\n\r\na")
 			if progress {
 				for i := 0; i < 9; i++ {
@@ -1154,7 +1130,7 @@ func TestRequestLimitsHeader408AndKeepAliveIdle(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(5 * time.Second))
+	conn.SetDeadline(time.Now().Add(testwait.Budget(t)))
 	fmt.Fprint(conn, "GET / HTTP/1.1\r\nHost:")
 	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
 	if err != nil {
@@ -1174,7 +1150,7 @@ func TestRequestLimitsHeader408AndKeepAliveIdle(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer blank.Close()
-	blank.SetDeadline(time.Now().Add(5 * time.Second))
+	blank.SetDeadline(time.Now().Add(testwait.Budget(t)))
 	blankResponse, err := http.ReadResponse(bufio.NewReader(blank), nil)
 	if err != nil {
 		t.Fatalf("silent initial request did not receive 408: %v", err)
@@ -1191,7 +1167,7 @@ func TestRequestLimitsHeader408AndKeepAliveIdle(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer c.Close()
-	c.SetDeadline(time.Now().Add(5 * time.Second))
+	c.SetDeadline(time.Now().Add(testwait.Budget(t)))
 	fmt.Fprint(c, "GET / HTTP/1.1\r\nHost: phone\r\n\r\n")
 	rd := bufio.NewReader(c)
 	ok, err := http.ReadResponse(rd, nil)
@@ -1447,19 +1423,19 @@ func (b *uploadReadSignal) Close() error {
 	return err
 }
 
-func uploadWait(t *testing.T, done <-chan struct{}, bound time.Duration, message string) {
+func uploadWait(t *testing.T, done <-chan struct{}, message string) {
 	t.Helper()
-	bound = max(bound, 5*time.Second)
-	select {
-	case <-done:
-	case <-time.After(bound):
-		t.Fatal(message)
-	}
+	testwait.Recv(t, done, message)
 }
 
-func uploadRelease(t *testing.T, listener *limitedListener, deadline time.Time, transport ...*http.Transport) {
+func uploadRelease(t *testing.T, listener *limitedListener, transport ...*http.Transport) {
 	t.Helper()
-	for len(listener.sem) != 0 && time.Now().Before(deadline) {
+	// The disposal policy itself is pinned in virtual time by
+	// assertUploadDisposalDeadline; here the release only has to happen.
+	testwait.Until(t, "server released every connection slot", func() bool {
+		if len(listener.sem) == 0 {
+			return true
+		}
 		// HTTP/2's client marks a just-completed stream idle asynchronously.
 		// Close only idle connections, after response and server Read completion.
 		for _, tr := range transport {
@@ -1467,11 +1443,8 @@ func uploadRelease(t *testing.T, listener *limitedListener, deadline time.Time, 
 				tr.CloseIdleConnections()
 			}
 		}
-		time.Sleep(time.Millisecond)
-	}
-	if got := len(listener.sem); got != 0 {
-		t.Errorf("server retained %d connection slots past the disposal bound", got)
-	}
+		return false
+	})
 }
 
 func TestRequestLimitsTLSProxyEarlyRejection(t *testing.T) {
@@ -1521,8 +1494,6 @@ func TestRequestLimitsTLSProxyEarlyRejection(t *testing.T) {
 				svc := registry.Service{Name: "early-rejection", Type: registry.TypeProxy, RequestLimits: &registry.RequestLimits{ReadTimeout: "1m", IdleTimeout: "5s"}}
 				addr, listener := uploadTLSFrontWithReport(t, svc, handler, h2, func(w inspect.WarningView) { warnings.add(w) })
 				start := time.Now()
-				const bound = 5 * time.Second // real-network hang guard
-				deadline := start.Add(bound)
 				var resp *http.Response
 				var err error
 				var conn *tls.Conn
@@ -1532,7 +1503,7 @@ func TestRequestLimitsTLSProxyEarlyRejection(t *testing.T) {
 				if h2 {
 					transport = &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, ForceAttemptHTTP2: true}
 					defer transport.CloseIdleConnections()
-					client = &http.Client{Transport: transport, Timeout: 5 * time.Second}
+					client = &http.Client{Transport: transport, Timeout: testwait.Budget(t)}
 					reader, writer := io.Pipe()
 					written := make(chan struct{})
 					go func() {
@@ -1556,7 +1527,7 @@ func TestRequestLimitsTLSProxyEarlyRejection(t *testing.T) {
 						t.Fatal(err)
 					}
 					defer conn.Close()
-					_ = conn.SetDeadline(start.Add(5 * time.Second))
+					_ = conn.SetDeadline(start.Add(testwait.Budget(t)))
 					body := "x"
 					if complete {
 						body = strings.Repeat("x", 1000)
@@ -1583,14 +1554,9 @@ func TestRequestLimitsTLSProxyEarlyRejection(t *testing.T) {
 				if resp.ProtoMajor != wantProtocol {
 					t.Fatalf("negotiated %s, want HTTP/%d", resp.Proto, wantProtocol)
 				}
-				uploadWait(t, handlerFinished, 5*time.Second, "proxy handler retained rejected stream")
-				uploadWait(t, readFinished, 5*time.Second, "proxy body Read was not interrupted")
-				var closeElapsed time.Duration
-				select {
-				case closeElapsed = <-closeFinished:
-				case <-time.After(5 * time.Second):
-					t.Fatal("underlying request body was not closed")
-				}
+				uploadWait(t, handlerFinished, "proxy handler retained rejected stream")
+				uploadWait(t, readFinished, "proxy body Read was not interrupted")
+				closeElapsed := testwait.Recv(t, closeFinished, "underlying request body closed")
 				if got := warnings.snapshot(); len(got) != 0 {
 					t.Errorf("backend rejection generated spurious upload warnings: %+v", got)
 				}
@@ -1623,7 +1589,7 @@ func TestRequestLimitsTLSProxyEarlyRejection(t *testing.T) {
 				}
 				// A partial HTTP/1 upload remains open on the client until this
 				// assertion proves that the server released its connection slot.
-				uploadRelease(t, listener, deadline, transport)
+				uploadRelease(t, listener, transport)
 				t.Logf("response complete in %s; proxy Close in %s; slot released after %s", elapsed, closeElapsed, time.Since(start))
 			})
 		}
@@ -1777,7 +1743,7 @@ func TestRequestLimitsTLSConcurrentReadClose(t *testing.T) {
 					}()
 					<-readStarted
 					if complete {
-						uploadWait(t, readDone, 5*time.Second, "complete body did not reach EOF")
+						uploadWait(t, readDone, "complete body did not reach EOF")
 					}
 					select {
 					case <-readDone:
@@ -1818,7 +1784,7 @@ func TestRequestLimitsTLSConcurrentReadClose(t *testing.T) {
 					defer func() { _ = reader.Close(); _ = writer.Close(); <-written }()
 					req, _ := http.NewRequest("POST", "https://"+addr, reader)
 					req.ContentLength = 9
-					resp, err := (&http.Client{Transport: transport, Timeout: 5 * time.Second}).Do(req)
+					resp, err := (&http.Client{Transport: transport, Timeout: testwait.Budget(t)}).Do(req)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -1834,7 +1800,7 @@ func TestRequestLimitsTLSConcurrentReadClose(t *testing.T) {
 						t.Fatal(err)
 					}
 					defer conn.Close()
-					_ = conn.SetDeadline(start.Add(5 * time.Second))
+					_ = conn.SetDeadline(start.Add(testwait.Budget(t)))
 					body := "x"
 					if complete {
 						body = "123456789"
@@ -1859,7 +1825,7 @@ func TestRequestLimitsTLSConcurrentReadClose(t *testing.T) {
 				if got := warnings.snapshot(); len(got) != 0 {
 					t.Errorf("disposal generated upload warnings: %+v", got)
 				}
-				uploadRelease(t, listener, time.Now().Add(5*time.Second), transport)
+				uploadRelease(t, listener, transport)
 				t.Logf("concurrent Close returned in %s", duration)
 			})
 		}
