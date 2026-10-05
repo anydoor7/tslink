@@ -4,6 +4,7 @@ package cmd
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -59,14 +60,20 @@ func TestCompiledDaemonDoesNotOutliveTestLauncher(t *testing.T) {
 		}
 	})
 
-	testwait.Until(t, "detached daemon became observable", func() bool {
+	// Poll every millisecond so the daemon is frozen as soon as it publishes
+	// its PID; only the deadline is a hang guard.
+	deadline := time.Now().Add(testwait.Budget(t))
+	for time.Now().Before(deadline) {
 		pid, err := daemon.ReadPID(pidPath)
 		if err == nil && daemon.IsProcessRunning(pid) {
 			daemonPID = pid
-			return true
+			break
 		}
-		return false
-	})
+		time.Sleep(time.Millisecond)
+	}
+	if daemonPID == 0 {
+		t.Fatalf("detached daemon never became observable: stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
 	if daemonPID == 2469 {
 		t.Fatal("refusing to signal a real installed daemon PID 2469")
 	}
@@ -94,7 +101,9 @@ func TestCompiledDaemonDoesNotOutliveTestLauncher(t *testing.T) {
 	}
 
 	if !launcherExited {
-		if err := launcher.Process.Kill(); err != nil {
+		// The launcher can exit and be reaped between the select above and
+		// this Kill; that is the already-exited case, not a failure.
+		if err := launcher.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
 			t.Fatalf("kill daemon launcher: %v", err)
 		}
 		testwait.Recv(t, launcherDone, "daemon launcher exited after kill")
