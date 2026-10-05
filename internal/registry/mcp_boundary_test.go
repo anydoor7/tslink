@@ -2,6 +2,7 @@ package registry
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"reflect"
 	"sync/atomic"
@@ -100,10 +101,23 @@ func TestMCPRegistryWritersRecheckAfterLockWait(t *testing.T) {
 					t.Fatal(err)
 				}
 				defer filelock.Unlock(lock)
-				entered := make(chan struct{})
+				entered := make(chan error, 1)
 				previous := lockFn
-				lockFn = func(f *os.File) error { close(entered); return filelock.Lock(f) }
-				defer func() { lockFn = previous }()
+				lockFn = func(f *os.File) error {
+					// Observe contention on the writer's actual descriptor, rather
+					// than assuming that goroutine startup means it reached the lock.
+					acquired, err := filelock.TryLock(f)
+					if acquired {
+						filelock.Unlock(f)
+						err = fmt.Errorf("writer acquired the fixture-held registry lock")
+					}
+					entered <- err
+					if err != nil {
+						return err
+					}
+					return filelock.Lock(f)
+				}
+				t.Cleanup(func() { lockFn = previous })
 				now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
 				expiry := now.Add(2 * time.Hour)
 				var expired atomic.Bool
@@ -116,11 +130,18 @@ func TestMCPRegistryWritersRecheckAfterLockWait(t *testing.T) {
 					return now
 				})
 				done := make(chan error, 1)
-				go func() { done <- write(ctx, path) }()
+				joined := make(chan struct{})
+				go func() { defer close(joined); done <- write(ctx, path) }()
+				// Join even on assertion failure, before restoring the seam or
+				// reclaiming the registry. The package timeout bounds real I/O.
+				defer func() { cancel(); filelock.Unlock(lock); <-joined }()
 				select {
-				case <-entered:
-				case <-time.After(2 * time.Second):
-					t.Fatal("writer did not reach registry lock")
+				case err := <-entered:
+					if err != nil {
+						t.Fatal(err)
+					}
+				case err := <-done:
+					t.Fatalf("writer returned before lock contention: %v", err)
 				}
 				if state == "expired" {
 					expired.Store(true)
@@ -131,12 +152,7 @@ func TestMCPRegistryWritersRecheckAfterLockWait(t *testing.T) {
 				if err := filelock.Unlock(lock); err != nil {
 					t.Fatal(err)
 				}
-				var writeErr error
-				select {
-				case writeErr = <-done:
-				case <-time.After(2 * time.Second):
-					t.Fatal("writer did not finish")
-				}
+				writeErr := <-done
 				if state == "active" {
 					if writeErr != nil {
 						t.Fatal(writeErr)

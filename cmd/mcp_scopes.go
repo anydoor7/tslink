@@ -22,6 +22,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// Tests may observe the scoped context at the real registry effect boundary.
+var mcpSessionTimeoutFn = context.WithTimeout
+
 func mcpSession(a mcpActions) mcpscope.Session {
 	if a.session != nil {
 		s := *a.session
@@ -271,7 +274,7 @@ func callMCPTool(ctx context.Context, actions mcpActions, name string, raw json.
 	ctx = mcpscope.WithClock(mcpscope.WithSession(ctx, session), func() time.Time { return mcpNow(actions) })
 	if session.ExpiresAt != nil {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, session.ExpiresAt.Sub(mcpNow(actions)))
+		ctx, cancel = mcpSessionTimeoutFn(ctx, session.ExpiresAt.Sub(mcpNow(actions)))
 		defer cancel()
 	}
 	ctx, changes := mcpaudit.Collect(ctx)
