@@ -68,4 +68,17 @@ Maintenance: replace this scoped copy with an upstream release only after the
 ownership regressions and complete native/race suites pass against that exact
 revision. Recheck all supported platforms and regenerate THIRD_PARTY_NOTICES.md.
 Run library tests explicitly from this directory; parent `go test ./...` does
-not traverse a nested module. The release-candidate native job does both.
+not traverse a nested module.
+
+Test policy: the release-candidate native job runs only TSLink's own
+regression tests here, normally and with -race, on macOS, Linux and Windows:
+every Test function in ownership_*_test.go and close_windows_test.go, selected
+by the anchored TSLINK_FSNOTIFY_OWNED_TESTS pattern in release-candidate.yml.
+The retained upstream suite collects events after fixed sleeps
+(helpers_test.go waitForEvents, 500ms), so it is not part of the gate. Run it
+by hand on every supported platform whenever this copy is updated or a local
+change touches a backend:
+
+    cd third_party/fsnotify
+    go test -count=1 ./...
+    go test -race -count=1 ./...

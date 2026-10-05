@@ -1,6 +1,6 @@
 # fsnotify source inventory
 
-- `NOTICE.tslink`: exact upstream provenance, local modifications and update policy.
+- `NOTICE.tslink`: exact upstream provenance, local modifications, update policy and which tests the gate runs.
 - `ownership_kqueue_test.go`: real HTTP descriptor regression, join, resource and concurrency contracts.
 - `ownership_windows_test.go`: queued completion ownership, Close handshake, live errors and event lifecycle regressions.
 - `close_windows_test.go`: actual IOCP reader completion joined by concurrent/repeated Close callers.

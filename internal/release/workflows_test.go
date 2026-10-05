@@ -10,7 +10,9 @@
 //     is confined to the publish job behind a repository-variable release
 //     authorization guard;
 //   - PR/main CI and the tag path consume the SAME reusable candidate gate;
-//   - the candidate gate still declares every required job.
+//   - the candidate gate still declares every required job;
+//   - the native job runs each test property on the runners where it can
+//     differ (native_gate_test.go).
 //
 // Hosted runner behavior, action resolution, environment reviewer/ruleset
 // readback, and branch protection remain external; this test only proves the
@@ -428,7 +430,7 @@ func TestCandidateDeclaresRequiredGates(t *testing.T) {
 		"tier",                   // conservative PR classification; main/tags always full
 		"policy-tests",           // proposed policy tested separately from trusted classification
 		"gate",                   // aggregate fails on unexpected skips/failures/cancellation
-		"native",                 // 3-OS build/vet/test/race/shuffle/smoke
+		"native",                 // 3-OS build/vet/test/smoke; race/shuffle where they can differ
 		"manifest-platform-diff", // downloaded native manifests prove mark completeness
 		"machine-contract",       // compiled-binary contracts
 		"staticcheck",            // static analysis
