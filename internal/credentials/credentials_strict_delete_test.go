@@ -31,7 +31,7 @@ func TestInspectCredentialStrictReportsCredentialsThatArePresent(t *testing.T) {
 	if err := keyring.Set(keychainService, keychainAPIKey, "tskey-api-<test-only-fake-inspect>"); err != nil {
 		t.Fatalf("keyring.Set() error = %v", err)
 	}
-	if err := os.WriteFile(clientSecretPath(t), []byte("tskey-client-fake-inspect\n"), 0o600); err != nil {
+	if err := os.WriteFile(clientSecretPath(t), []byte("tskey-client-<testonly_fake>-<testonly_inspect>\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile(client secret) error = %v", err)
 	}
 
@@ -337,8 +337,8 @@ func TestCheckedCredentialDeleteSurfacesPathResolutionFailure(t *testing.T) {
 
 func TestClientSecretAuthKeyDerivesFromTheCandidateNotTheStoredCredential(t *testing.T) {
 	setup(t)
-	const stored = "tskey-client-fake-STORED-MUST-NOT-BE-USED"
-	const candidate = "tskey-client-fake-CANDIDATE"
+	const stored = "tskey-client-<testonly_fake>-<testonly_STORED>-<testonly_MUST>-<testonly_NOT>-<testonly_BE>-<testonly_USED>"
+	const candidate = "tskey-client-<testonly_fake>-<testonly_CANDIDATE>"
 	if err := SaveClientSecret(stored); err != nil {
 		t.Fatalf("SaveClientSecret() error = %v", err)
 	}
@@ -377,7 +377,7 @@ func TestClientSecretAuthKeyDerivesFromTheCandidateNotTheStoredCredential(t *tes
 
 func TestClientSecretAuthKeySetsEphemeralFromOptions(t *testing.T) {
 	for _, ephemeral := range []bool{true, false} {
-		got, err := ClientSecretAuthKey("tskey-client-fake-candidate", AuthKeyOptions{
+		got, err := ClientSecretAuthKey("tskey-client-<testonly_fake>-<testonly_candidate>", AuthKeyOptions{
 			Tags:      []string{"tag:tsmain"},
 			Ephemeral: ephemeral,
 		})
@@ -403,14 +403,14 @@ func TestClientSecretAuthKeyOverridesCallerSuppliedAuthAttributes(t *testing.T) 
 	// A candidate that already carries attributes must not be able to smuggle
 	// ephemeral=true or preauthorized=false past the derivation.
 	got, err := ClientSecretAuthKey(
-		"tskey-client-fake-candidate?ephemeral=true&preauthorized=false&keep=me",
+		"tskey-client-<testonly_fake>-<testonly_candidate>?ephemeral=true&preauthorized=false&keep=me",
 		AuthKeyOptions{Tags: []string{"tag:tsmain"}, Ephemeral: false},
 	)
 	if err != nil {
 		t.Fatalf("ClientSecretAuthKey() error = %v", err)
 	}
 	base, rawQuery, _ := strings.Cut(got, "?")
-	if base != "tskey-client-fake-candidate" {
+	if base != "tskey-client-<testonly_fake>-<testonly_candidate>" {
 		t.Fatalf("auth key base = %q, want the secret without its query", base)
 	}
 	values, err := url.ParseQuery(rawQuery)
@@ -429,7 +429,7 @@ func TestClientSecretAuthKeyOverridesCallerSuppliedAuthAttributes(t *testing.T) 
 }
 
 func TestClientSecretAuthKeyRefusesWithoutTags(t *testing.T) {
-	got, err := ClientSecretAuthKey("tskey-client-fake-candidate", AuthKeyOptions{})
+	got, err := ClientSecretAuthKey("tskey-client-<testonly_fake>-<testonly_candidate>", AuthKeyOptions{})
 	if err == nil {
 		t.Fatalf("ClientSecretAuthKey() error = nil, want a tag requirement; got %q", got)
 	}
@@ -442,7 +442,7 @@ func TestClientSecretAuthKeyRefusesWithoutTags(t *testing.T) {
 }
 
 func TestClientSecretAuthKeyRefusesAMalformedAttributeQuery(t *testing.T) {
-	got, err := ClientSecretAuthKey("tskey-client-fake-candidate?%zz=1", AuthKeyOptions{Tags: []string{"tag:tsmain"}})
+	got, err := ClientSecretAuthKey("tskey-client-<testonly_fake>-<testonly_candidate>?%zz=1", AuthKeyOptions{Tags: []string{"tag:tsmain"}})
 	if err == nil {
 		t.Fatalf("ClientSecretAuthKey() error = nil, want a parse refusal; got %q", got)
 	}

@@ -56,7 +56,7 @@ func storeBothCredentials(t *testing.T) {
 	if err := SetAPIKey("tskey-api-<test-only-FAKE-logout>"); err != nil {
 		t.Fatal(err)
 	}
-	if err := SaveClientSecret("tskey-client-FAKE-logout"); err != nil {
+	if err := SaveClientSecret("tskey-client-<testonly_FAKE>-<testonly_logout>"); err != nil {
 		t.Fatal(err)
 	}
 }

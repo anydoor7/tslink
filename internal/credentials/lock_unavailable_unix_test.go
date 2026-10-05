@@ -36,7 +36,7 @@ func TestUnsupportedFileLockFallsBackToInProcessGate(t *testing.T) {
 			}); err != nil {
 				t.Fatalf("login transaction with %v: %v", errno, err)
 			}
-			if err := SaveClientSecret("tskey-client-FAKE-nolock"); err != nil {
+			if err := SaveClientSecret("tskey-client-<testonly_FAKE>-<testonly_nolock>"); err != nil {
 				t.Fatalf("credential write with %v: %v", errno, err)
 			}
 			if err := DeleteStoredCredentialsStrict(); err != nil {

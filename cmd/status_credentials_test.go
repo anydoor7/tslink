@@ -20,7 +20,7 @@ var statusTestNow = time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC)
 
 const (
 	statusFixtureAPIKey       = "tskey-api-<test-only-FAKE-status-fixture>"
-	statusFixtureClientSecret = "tskey-client-FAKE-status-fixture"
+	statusFixtureClientSecret = "tskey-client-<testonly_FAKE>-<testonly_status>-<testonly_fixture>"
 )
 
 // withStatusCredentialSeams stubs the value readers and swaps the inventory for

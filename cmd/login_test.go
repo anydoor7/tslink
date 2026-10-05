@@ -134,7 +134,7 @@ func TestLoginCredentialFlow_APIToken_Success(t *testing.T) {
 
 func TestLoginCredentialFlow_ClientSecret_Success(t *testing.T) {
 	dir := setupLoginTest(t)
-	mockStdin(t, "2", "tskey-client-test-secret-12345")
+	mockStdin(t, "2", "tskey-client-<testonly_test>-<testonly_secret>-<testonly_12345>")
 	mockClientSecretSuccess(t)
 
 	err := loginCredentialFlow(loginCmd, dir)
@@ -184,7 +184,7 @@ func TestLoginCredentialFlow_APIToken_EmptyKey(t *testing.T) {
 
 func TestLoginCredentialFlow_APIToken_WrongPrefix(t *testing.T) {
 	dir := setupLoginTest(t)
-	mockStdin(t, "1", "tskey-client-wrong-type")
+	mockStdin(t, "1", "tskey-client-<testonly_wrong>-<testonly_type>")
 
 	err := loginCredentialFlow(loginCmd, dir)
 	if err == nil {
@@ -197,7 +197,7 @@ func TestLoginCredentialFlow_APIToken_WrongPrefix(t *testing.T) {
 
 func TestLoginCredentialFlow_APIToken_AuthKeyRejected(t *testing.T) {
 	dir := setupLoginTest(t)
-	mockStdin(t, "1", "tskey-auth-some-auth-key")
+	mockStdin(t, "1", "tskey-auth-<testonly_some>-<testonly_auth>-<testonly_key>")
 
 	err := loginCredentialFlow(loginCmd, dir)
 	if err == nil {
@@ -273,7 +273,7 @@ func TestLoginCredentialFlow_APIToken_VerifyFails(t *testing.T) {
 func TestLoginCredentialFlow_ClientSecret_SaveFails(t *testing.T) {
 	dir := setupLoginTest(t)
 	mockLoginMutationTransaction(t)
-	mockStdin(t, "2", "tskey-client-test-secret-12345")
+	mockStdin(t, "2", "tskey-client-<testonly_test>-<testonly_secret>-<testonly_12345>")
 	mockClientSecretSuccess(t) // activation succeeds so the save failure is what surfaces
 
 	old := loginSaveClientSecretFn
@@ -293,7 +293,7 @@ func TestLoginCredentialFlow_ClientSecret_SaveFails(t *testing.T) {
 
 func TestLoginCmd_FullFlow_WithMocks(t *testing.T) {
 	setupLoginTest(t)
-	mockStdin(t, "2", "tskey-client-full-flow-test")
+	mockStdin(t, "2", "tskey-client-<testonly_full>-<testonly_flow>-<testonly_test>")
 	mockClientSecretSuccess(t)
 
 	loginCmd, _, err := rootCmd.Find([]string{"login"})
@@ -470,7 +470,7 @@ func TestLoginCredentialFlow_EnsureTagsFailureNonFatal(t *testing.T) {
 	if err := loginCmd.Flags().Set("manage-acl", "true"); err != nil {
 		t.Fatalf("set manage-acl: %v", err)
 	}
-	mockStdin(t, "2", "tskey-client-test-secret-12345")
+	mockStdin(t, "2", "tskey-client-<testonly_test>-<testonly_secret>-<testonly_12345>")
 	mockClientSecretSuccess(t)
 
 	old := loginEnsureTagsFn

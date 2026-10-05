@@ -34,8 +34,8 @@ func TestWholeProviderUnavailablePreservesAuthority(t *testing.T) {
 				get := GetAPIKey
 				path, pathErr := config.APIKeyPath()
 				if mode == "oauth" {
-					value = "tskey-client-FAKE-review"
-					oldValue = "tskey-client-FAKE-OLD"
+					value = "tskey-client-<testonly_FAKE>-<testonly_review>"
+					oldValue = "tskey-client-<testonly_FAKE>-<testonly_OLD>"
 					set = SaveClientSecretWithBackend
 					get = GetClientSecret
 					path, pathErr = config.ClientSecretPath()

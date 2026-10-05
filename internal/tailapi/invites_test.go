@@ -268,7 +268,7 @@ func TestCreateUserInvite_OAuthOnlyFailsBeforeNetwork(t *testing.T) {
 	old := inviteClientFn
 	inviteClientFn = newInviteClient
 	t.Cleanup(func() { inviteClientFn = old })
-	if err := credentials.SaveClientSecret("tskey-client-placeholder-placeholder"); err != nil {
+	if err := credentials.SaveClientSecret("tskey-client-<testonly_placeholder>-<testonly_placeholder>"); err != nil {
 		t.Fatal(err)
 	}
 	called := false

@@ -38,12 +38,12 @@ func TestKeyringRotationMissingFallbackControl(t *testing.T) {
 
 func TestOAuthKeyringRotationPathErrorAndMissingFallback(t *testing.T) {
 	setup(t)
-	const oldSecret = "tskey-client-FAKE-OLD"
+	const oldSecret = "tskey-client-<testonly_FAKE>-<testonly_OLD>"
 	if err := keyring.Set(keychainService, keychainClientSecret, oldSecret); err != nil {
 		t.Fatal(err)
 	}
 	pathErr := errors.New("synthetic OAuth fallback path failure")
-	backend, err := storeCredentialWithBackendLocked("OAuth client secret", keychainClientSecret, "tskey-client-FAKE-NEW", func() (string, error) { return "", pathErr })
+	backend, err := storeCredentialWithBackendLocked("OAuth client secret", keychainClientSecret, "tskey-client-<testonly_FAKE>-<testonly_NEW>", func() (string, error) { return "", pathErr })
 	if backend != "" || !errors.Is(err, pathErr) {
 		t.Fatalf("OAuth path error hidden: backend=%q err=%v", backend, err)
 	}
@@ -51,7 +51,7 @@ func TestOAuthKeyringRotationPathErrorAndMissingFallback(t *testing.T) {
 		t.Fatalf("OAuth path error changed prior keyring value: present=%t err=%v", got != "", getErr)
 	}
 	missing := filepath.Join(t.TempDir(), "missing")
-	backend, err = storeCredentialWithBackendLocked("OAuth client secret", keychainClientSecret, "tskey-client-FAKE-NEW", func() (string, error) { return missing, nil })
+	backend, err = storeCredentialWithBackendLocked("OAuth client secret", keychainClientSecret, "tskey-client-<testonly_FAKE>-<testonly_NEW>", func() (string, error) { return missing, nil })
 	if err != nil || backend != CredentialBackendKeyring {
 		t.Fatalf("missing OAuth fallback control: backend=%q err=%v", backend, err)
 	}
@@ -119,7 +119,7 @@ func TestKeyringRotationCleanupFailurePreservesPreviousCredential(t *testing.T) 
 				apiKeyPathFunc = fn
 				return func() { apiKeyPathFunc = old }
 			}},
-		{"oauth_prior_keyring", keychainClientSecret, "tskey-client-FAKE-OLD", "tskey-client-FAKE-NEW", true, SaveClientSecretWithBackend, GetClientSecret,
+		{"oauth_prior_keyring", keychainClientSecret, "tskey-client-<testonly_FAKE>-<testonly_OLD>", "tskey-client-<testonly_FAKE>-<testonly_NEW>", true, SaveClientSecretWithBackend, GetClientSecret,
 			func(fn func() (string, error)) func() {
 				old := clientSecretPathFunc
 				clientSecretPathFunc = fn

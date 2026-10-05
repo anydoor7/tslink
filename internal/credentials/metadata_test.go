@@ -359,7 +359,7 @@ func TestDescribeSlotsNoCredentialsTouchesNoDisk(t *testing.T) {
 
 func TestDescribeSlotsBackfillPersistsOnceAndReanchorsOnFingerprintChange(t *testing.T) {
 	setup(t)
-	values := SlotValues{APIKey: "tskey-api-<test-only-FAKE-backfill>", ClientSecret: "tskey-client-FAKE-backfill"}
+	values := SlotValues{APIKey: "tskey-api-<test-only-FAKE-backfill>", ClientSecret: "tskey-client-<testonly_FAKE>-<testonly_backfill>"}
 	// A backfill is persisted only for the value a slot stores (B6a-2), so
 	// the fixture stores the values it describes, as status and doctor read
 	// them from the store.

@@ -337,8 +337,8 @@ func TestCredentialFallbackAvailabilityMatrix(t *testing.T) {
 		{
 			name:           "SaveClientSecretWithBackend",
 			keyringKey:     keychainClientSecret,
-			oldValue:       "tskey-client-matrix-old",
-			newValue:       "tskey-client-matrix-new",
+			oldValue:       "tskey-client-<testonly_matrix>-<testonly_old>",
+			newValue:       "tskey-client-<testonly_matrix>-<testonly_new>",
 			reportsBackend: true,
 			set:            SaveClientSecretWithBackend,
 			get:            GetClientSecret,
@@ -352,8 +352,8 @@ func TestCredentialFallbackAvailabilityMatrix(t *testing.T) {
 		{
 			name:       "SaveClientSecret",
 			keyringKey: keychainClientSecret,
-			oldValue:   "tskey-client-wrapper-matrix-old",
-			newValue:   "tskey-client-wrapper-matrix-new",
+			oldValue:   "tskey-client-<testonly_wrapper>-<testonly_matrix>-<testonly_old>",
+			newValue:   "tskey-client-<testonly_wrapper>-<testonly_matrix>-<testonly_new>",
 			set: func(value string) (CredentialBackend, error) {
 				return "", SaveClientSecret(value)
 			},
@@ -896,8 +896,8 @@ func TestNewTailscaleClient_WithOAuthSecretExchangesTokenWithoutScopes(t *testin
 	setup(t)
 
 	const (
-		clientID     = "clientid"
-		clientSecret = "tskey-client-clientid-secretvalue"
+		clientID     = "<testonly_clientid>"
+		clientSecret = "tskey-client-<testonly_clientid>-<testonly_secretvalue>"
 	)
 	if err := SaveClientSecret(clientSecret + "?ephemeral=true&preauthorized=true"); err != nil {
 		t.Fatalf("SaveClientSecret() error = %v", err)
@@ -909,7 +909,8 @@ func TestNewTailscaleClient_WithOAuthSecretExchangesTokenWithoutScopes(t *testin
 		case "/api/v2/oauth/token":
 			tokenRequests++
 			gotID, gotSecret, ok := r.BasicAuth()
-			if !ok || gotID != clientID || gotSecret != clientSecret {
+			// OAuth form-encodes both fields before applying HTTP Basic Auth.
+			if !ok || gotID != url.QueryEscape(clientID) || gotSecret != url.QueryEscape(clientSecret) {
 				t.Errorf("OAuth basic auth = (%q, redacted, %v), want derived client ID and stripped secret", gotID, ok)
 			}
 			if err := r.ParseForm(); err != nil {
@@ -956,7 +957,7 @@ func TestNewTailscaleClient_OAuthTakesPrecedenceWhenBothCredentialsStored(t *tes
 	if err := SetAPIKey("tskey-api-<test-only-should-not-win>"); err != nil {
 		t.Fatalf("SetAPIKey() error = %v", err)
 	}
-	if err := SaveClientSecret("tskey-client-preferred-clientsecret"); err != nil {
+	if err := SaveClientSecret("tskey-client-<testonly_preferred>-<testonly_clientsecret>"); err != nil {
 		t.Fatalf("SaveClientSecret() error = %v", err)
 	}
 
@@ -971,8 +972,8 @@ func TestNewTailscaleClient_OAuthTakesPrecedenceWhenBothCredentialsStored(t *tes
 		t.Fatalf("client APIKey is populated, want OAuth precedence over stored API key")
 	}
 	oauth, ok := client.Auth.(*tailscale.OAuth)
-	if !ok || oauth.ClientID != "preferred" {
-		t.Fatalf("OAuth auth = %#v, want derived ClientID preferred", client.Auth)
+	if !ok || oauth.ClientID != "<testonly_preferred>" {
+		t.Fatalf("OAuth auth = %#v, want derived ClientID <testonly_preferred>", client.Auth)
 	}
 }
 
@@ -996,7 +997,7 @@ func TestNewTailscaleClient_InvalidOAuthSecretFailsBeforeRequest(t *testing.T) {
 
 func TestNewTailscaleClient_RejectedOAuthCredentialSurfacesError(t *testing.T) {
 	setup(t)
-	if err := SaveClientSecret("tskey-client-clientid-rejected"); err != nil {
+	if err := SaveClientSecret("tskey-client-<testonly_clientid>-<testonly_rejected>"); err != nil {
 		t.Fatalf("SaveClientSecret() error = %v", err)
 	}
 
@@ -1041,7 +1042,7 @@ func TestNewTailscaleClientWithUserOwnedAPIKey_UsesAPIKeyWhenOAuthAlsoExists(t *
 	if err := SetAPIKey("tskey-api-<test-only-placeholder>"); err != nil {
 		t.Fatalf("SetAPIKey() error = %v", err)
 	}
-	if err := SaveClientSecret("tskey-client-placeholder-placeholder"); err != nil {
+	if err := SaveClientSecret("tskey-client-<testonly_placeholder>-<testonly_placeholder>"); err != nil {
 		t.Fatalf("SaveClientSecret() error = %v", err)
 	}
 
@@ -1056,7 +1057,7 @@ func TestNewTailscaleClientWithUserOwnedAPIKey_UsesAPIKeyWhenOAuthAlsoExists(t *
 
 func TestNewTailscaleClientWithUserOwnedAPIKey_OAuthOnlyFailsActionably(t *testing.T) {
 	setup(t)
-	if err := SaveClientSecret("tskey-client-placeholder-placeholder"); err != nil {
+	if err := SaveClientSecret("tskey-client-<testonly_placeholder>-<testonly_placeholder>"); err != nil {
 		t.Fatalf("SaveClientSecret() error = %v", err)
 	}
 
@@ -1461,7 +1462,7 @@ func TestSaveClientSecret_Keychain(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	backend, err := SaveClientSecretWithBackend("tskey-client-my-secret")
+	backend, err := SaveClientSecretWithBackend("tskey-client-<testonly_my>-<testonly_secret>")
 	if err != nil {
 		t.Fatalf("SaveClientSecretWithBackend() error = %v", err)
 	}
@@ -1473,8 +1474,8 @@ func TestSaveClientSecret_Keychain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetClientSecret() error = %v", err)
 	}
-	if got != "tskey-client-my-secret" {
-		t.Fatalf("GetClientSecret() = %q, want %q", got, "tskey-client-my-secret")
+	if got != "tskey-client-<testonly_my>-<testonly_secret>" {
+		t.Fatalf("GetClientSecret() = %q, want %q", got, "tskey-client-<testonly_my>-<testonly_secret>")
 	}
 
 	// File should be removed since keychain succeeded
@@ -1500,7 +1501,7 @@ func TestSaveClientSecret_FileFallback(t *testing.T) {
 	stubUnavailableKeyringWrites(t)
 
 	path := clientSecretPath(t)
-	backend, err := SaveClientSecretWithBackend("tskey-client-file-secret")
+	backend, err := SaveClientSecretWithBackend("tskey-client-<testonly_file>-<testonly_secret>")
 	if assertWindowsFileFallbackDisabled(t, backend, err, path) {
 		return
 	}
@@ -1515,8 +1516,8 @@ func TestSaveClientSecret_FileFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadFile() error = %v", err)
 	}
-	if got := string(data); got != "tskey-client-file-secret" {
-		t.Fatalf("file contents = %q, want %q", got, "tskey-client-file-secret")
+	if got := string(data); got != "tskey-client-<testonly_file>-<testonly_secret>" {
+		t.Fatalf("file contents = %q, want %q", got, "tskey-client-<testonly_file>-<testonly_secret>")
 	}
 
 	info, err := os.Stat(path)
@@ -1537,7 +1538,7 @@ func TestSaveClientSecret_FileFallbackDeletesStaleReadableKeyringValue(t *testin
 			if deleted {
 				return "", keyring.ErrNotFound
 			}
-			return "tskey-client-stale-synthetic", nil
+			return "tskey-client-<testonly_stale>-<testonly_synthetic>", nil
 		},
 		func(string, string, string) error { return errors.New("keyring write failed") },
 		func(string, string) error {
@@ -1546,7 +1547,7 @@ func TestSaveClientSecret_FileFallbackDeletesStaleReadableKeyringValue(t *testin
 		},
 	)
 
-	backend, err := SaveClientSecretWithBackend("tskey-client-replacement-synthetic")
+	backend, err := SaveClientSecretWithBackend("tskey-client-<testonly_replacement>-<testonly_synthetic>")
 	if assertWindowsFileFallbackDisabled(t, backend, err, clientSecretPath(t)) {
 		if deleted {
 			t.Fatal("Windows policy deleted stale keyring material before refusing file fallback")
@@ -1566,7 +1567,7 @@ func TestSaveClientSecret_FileFallbackDeletesStaleReadableKeyringValue(t *testin
 	if err != nil {
 		t.Fatalf("GetClientSecret() error = %v", err)
 	}
-	if got != "tskey-client-replacement-synthetic" {
+	if got != "tskey-client-<testonly_replacement>-<testonly_synthetic>" {
 		t.Fatal("GetClientSecret() returned stale keyring material after file fallback")
 	}
 }
@@ -1574,12 +1575,12 @@ func TestSaveClientSecret_FileFallbackDeletesStaleReadableKeyringValue(t *testin
 func TestSaveClientSecret_FileFallbackRefusesWhenStaleKeyringDeleteFails(t *testing.T) {
 	setup(t)
 	stubKeyring(t,
-		func(string, string) (string, error) { return "tskey-client-stale-synthetic", nil },
+		func(string, string) (string, error) { return "tskey-client-<testonly_stale>-<testonly_synthetic>", nil },
 		func(string, string, string) error { return errors.New("keyring write failed") },
 		func(string, string) error { return errors.New("keyring delete failed") },
 	)
 
-	backend, err := SaveClientSecretWithBackend("tskey-client-replacement-synthetic")
+	backend, err := SaveClientSecretWithBackend("tskey-client-<testonly_replacement>-<testonly_synthetic>")
 	if assertWindowsFileFallbackDisabled(t, backend, err, clientSecretPath(t)) {
 		return
 	}
@@ -1602,7 +1603,7 @@ func TestSaveClientSecret_FileFallback_PathError(t *testing.T) {
 	stubUnavailableKeyringWrites(t)
 	setInvalidConfigHome(t)
 
-	err := SaveClientSecret("tskey-client-some-key")
+	err := SaveClientSecret("tskey-client-<testonly_some>-<testonly_key>")
 	if err == nil {
 		t.Fatal("SaveClientSecret() error = nil, want invalid config path error")
 	}
@@ -1748,7 +1749,7 @@ func TestGetAuthKey_ClientSecretFirst(t *testing.T) {
 	if err := SetAPIKey("tskey-api-<test-only-fake>"); err != nil {
 		t.Fatalf("SetAPIKey() error = %v", err)
 	}
-	if err := SaveClientSecret("tskey-client-my-secret"); err != nil {
+	if err := SaveClientSecret("tskey-client-<testonly_my>-<testonly_secret>"); err != nil {
 		t.Fatalf("SaveClientSecret() error = %v", err)
 	}
 
@@ -1760,7 +1761,7 @@ func TestGetAuthKey_ClientSecretFirst(t *testing.T) {
 		t.Fatalf("GetAuthKey() error = %v", err)
 	}
 	base, rawQuery, _ := strings.Cut(got, "?")
-	if base != "tskey-client-my-secret" {
+	if base != "tskey-client-<testonly_my>-<testonly_secret>" {
 		t.Fatalf("GetAuthKey() base = %q, want client secret priority", base)
 	}
 	values, err := url.ParseQuery(rawQuery)
@@ -1913,14 +1914,14 @@ func TestGetAuthKey_DeriveSuccess(t *testing.T) {
 	origCreateKey := createKeyFunc
 	t.Cleanup(func() { createKeyFunc = origCreateKey })
 	createKeyFunc = func(_ *tailscale.Client, _ context.Context, _ tailscale.CreateKeyRequest) (*tailscale.Key, error) {
-		return &tailscale.Key{Key: "tskey-auth-from-derive"}, nil
+		return &tailscale.Key{Key: "tskey-auth-<testonly_from>-<testonly_derive>"}, nil
 	}
 
 	got, err := GetAuthKey(context.Background(), AuthKeyOptions{})
 	if err != nil {
 		t.Fatalf("GetAuthKey() error = %v", err)
 	}
-	if got != "tskey-auth-from-derive" {
-		t.Fatalf("GetAuthKey() = %q, want %q", got, "tskey-auth-from-derive")
+	if got != "tskey-auth-<testonly_from>-<testonly_derive>" {
+		t.Fatalf("GetAuthKey() = %q, want %q", got, "tskey-auth-<testonly_from>-<testonly_derive>")
 	}
 }

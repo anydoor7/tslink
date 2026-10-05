@@ -234,7 +234,7 @@ func TestDefaultProbeClientFactoryPerSlot(t *testing.T) {
 	if err != nil || client == nil || client.APIKey != "tskey-api-<test-only-FAKE>" {
 		t.Fatalf("api-key factory = %+v, %v", client, err)
 	}
-	client, err = probeClientFactoryFn(SlotClientSecret, "tskey-client-FAKEID-FAKESECRET")
+	client, err = probeClientFactoryFn(SlotClientSecret, "tskey-client-<testonly_FAKEID>-<testonly_FAKESECRET>")
 	if err != nil || client == nil || client.Auth == nil {
 		t.Fatalf("client-secret factory = %+v, %v", client, err)
 	}

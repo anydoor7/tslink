@@ -161,7 +161,7 @@ func stubDoctorTailscaleSSH(t *testing.T, enabled bool, err error) {
 
 const (
 	doctorFixtureAPIKey       = "tskey-api-<test-only-secret-value>"
-	doctorFixtureClientSecret = "tskey-client-FAKE-fixture-secret"
+	doctorFixtureClientSecret = "tskey-client-<testonly_FAKE>-<testonly_fixture>-<testonly_secret>"
 )
 
 // doctorFixtureInventory classifies the fixture values against an in-memory
