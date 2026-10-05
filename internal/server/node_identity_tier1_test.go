@@ -19,6 +19,7 @@ import (
 	"github.com/anydoor7/tslink/internal/tailapi"
 	"github.com/anydoor7/tslink/internal/testenv"
 	"github.com/anydoor7/tslink/internal/testenv/localapitest"
+	"github.com/anydoor7/tslink/internal/testwait"
 	"tailscale.com/ipn"
 	"tailscale.com/ipn/ipnstate"
 )
@@ -159,7 +160,7 @@ func mustRegistryPath(t *testing.T) string {
 // it is ready.
 func runDaemonStart(t *testing.T, s *Server) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), testwait.Budget(t))
 	defer cancel()
 	ready := false
 	s.SetReadyFunc(func() error {
@@ -228,20 +229,12 @@ func expiringPublicService(expires time.Time) registry.Service {
 // node without Funnel.
 func waitForPrivateNode(t *testing.T, s *Server) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for {
+	testwait.Until(t, "the expired Funnel was rebuilt as a tailnet-only node", func() bool {
 		s.mu.RLock()
+		defer s.mu.RUnlock()
 		node := s.nodes["app"]
-		private := node != nil && !node.service.Funnel
-		s.mu.RUnlock()
-		if private {
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("the expired Funnel was not rebuilt as a tailnet-only node")
-		}
-		time.Sleep(time.Millisecond)
-	}
+		return node != nil && !node.service.Funnel
+	})
 }
 
 // expireFunnel enrolls a public service, lets its Funnel deadline pass, and

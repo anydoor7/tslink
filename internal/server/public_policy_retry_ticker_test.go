@@ -11,6 +11,7 @@ import (
 	"github.com/anydoor7/tslink/internal/registry"
 	"github.com/anydoor7/tslink/internal/tailapi"
 	"github.com/anydoor7/tslink/internal/testenv"
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 // A changed public service is withdrawn while the Funnel policy preflight
@@ -75,10 +76,7 @@ func TestLifecycleTickerRetriesPolicyBlockedPublicServiceAfterOutage(t *testing.
 	t.Cleanup(func() { lifecycleTickerInterval = oldInterval })
 	ctx, cancel := context.WithCancel(context.Background())
 	done := s.startLifecycleTicker(ctx)
-	deadline := time.Now().Add(5 * time.Second)
-	for constructs.Load() == 0 && time.Now().Before(deadline) {
-		time.Sleep(5 * time.Millisecond)
-	}
+	testwait.Until(t, "lifecycle ticker rebuilt the blocked public service after the outage", func() bool { return constructs.Load() != 0 })
 	cancel()
 	<-done
 	if constructs.Load() == 0 || policyCalls.Load() < 2 {

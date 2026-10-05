@@ -134,7 +134,7 @@ func TestServeTCP_ForwardsToBackend(t *testing.T) {
 		_ = proxyLn.Close()
 		select {
 		case <-serveDone:
-		case <-time.After(5 * time.Second):
+		case <-time.After(testwait.Budget(t)):
 			t.Error("serveTCP did not stop during cleanup")
 		}
 	})
@@ -218,13 +218,13 @@ func TestStopNodeLocked_ClosesInFlightTCPConnection(t *testing.T) {
 	select {
 	case backendConn := <-backendAccepted:
 		defer backendConn.Close()
-	case <-time.After(5 * time.Second):
+	case <-time.After(testwait.Budget(t)):
 		t.Fatal("backend did not receive in-flight proxy connection")
 	}
 
 	s.stopNodeLocked("db")
 
-	if err := clientConn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+	if err := clientConn.SetReadDeadline(time.Now().Add(testwait.Budget(t))); err != nil {
 		t.Fatalf("SetReadDeadline() error = %v", err)
 	}
 	if _, err := clientConn.Read(make([]byte, 1)); err == nil {

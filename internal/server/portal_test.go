@@ -120,7 +120,7 @@ func (f portalFixture) request(t *testing.T, method, path, host, origin string, 
 	if origin != "" {
 		r.Header.Set("Origin", origin)
 	}
-	resp, err := (&http.Client{Timeout: 3 * time.Second}).Do(r)
+	resp, err := (&http.Client{Timeout: testwait.Budget(t)}).Do(r)
 	if err != nil {
 		t.Fatal(err)
 	}
