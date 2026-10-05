@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/zalando/go-keyring"
+
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 func TestMigrationSerializesConcurrentLogin(t *testing.T) {
@@ -36,11 +38,7 @@ func TestMigrationSerializesConcurrentLogin(t *testing.T) {
 	}, nil, nil)
 	migrated := make(chan bool, 1)
 	go func() { migrated <- MigrateFromLegacy() }()
-	select {
-	case <-readSnapshot:
-	case <-time.After(5 * time.Second):
-		t.Fatal("migration did not reach the absent-slot keyring read")
-	}
+	testwait.Recv(t, readSnapshot, "migration reached the absent-slot keyring read")
 	loginDone := make(chan error, 1)
 	go func() {
 		_, err := SetAPIKeyWithBackend("new-login-key")
@@ -53,21 +51,11 @@ func TestMigrationSerializesConcurrentLogin(t *testing.T) {
 	case <-time.After(100 * time.Millisecond):
 	}
 	close(resumeMigration)
-	select {
-	case ok := <-migrated:
-		if !ok {
-			t.Fatal("migration did not complete after releasing its read")
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("migration did not finish")
+	if ok := testwait.Recv(t, migrated, "migration finished"); !ok {
+		t.Fatal("migration did not complete after releasing its read")
 	}
-	select {
-	case err := <-loginDone:
-		if err != nil {
-			t.Fatalf("login failed after migration: %v", err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("login remained blocked after migration")
+	if err := testwait.Recv(t, loginDone, "login finished after migration"); err != nil {
+		t.Fatalf("login failed after migration: %v", err)
 	}
 	stored, err := keyring.Get(keychainService, keychainAPIKey)
 	if err != nil || stored != "new-login-key" {
@@ -99,11 +87,7 @@ func TestMigrationDoesNotDeleteConcurrentFallback(t *testing.T) {
 	}, nil)
 	migrated := make(chan bool, 1)
 	go func() { migrated <- MigrateFromLegacy() }()
-	select {
-	case <-readSnapshot:
-	case <-time.After(5 * time.Second):
-		t.Fatal("migration did not reach keyring read")
-	}
+	testwait.Recv(t, readSnapshot, "migration reached the keyring read")
 	loginDone := make(chan error, 1)
 	go func() {
 		backend, err := SetAPIKeyWithBackend("new-fallback-key")
@@ -119,27 +103,18 @@ func TestMigrationDoesNotDeleteConcurrentFallback(t *testing.T) {
 	case <-time.After(100 * time.Millisecond):
 	}
 	close(resumeMigration)
-	select {
-	case ok := <-migrated:
-		if !ok {
-			t.Fatal("migration did not finish")
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("migration remained blocked")
+	if ok := testwait.Recv(t, migrated, "migration finished"); !ok {
+		t.Fatal("migration did not finish")
 	}
-	select {
-	case err := <-loginDone:
-		if runtime.GOOS == "windows" {
-			if err == nil || !strings.Contains(err.Error(), "file credential fallback is disabled on Windows") {
-				t.Fatalf("Windows fallback policy was not enforced: %v", err)
-			}
-			return
+	err := testwait.Recv(t, loginDone, "fallback login finished after migration")
+	if runtime.GOOS == "windows" {
+		if err == nil || !strings.Contains(err.Error(), "file credential fallback is disabled on Windows") {
+			t.Fatalf("Windows fallback policy was not enforced: %v", err)
 		}
-		if err != nil {
-			t.Fatalf("fallback login failed: %v", err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("fallback login remained blocked")
+		return
+	}
+	if err != nil {
+		t.Fatalf("fallback login failed: %v", err)
 	}
 	stored, err := os.ReadFile(path)
 	if err != nil || string(stored) != "new-fallback-key" {
@@ -279,7 +254,6 @@ func assertCredentialMutationLockCrossProcess(t *testing.T, childFileOnly bool) 
 		unlock()
 		t.Fatal(err)
 	}
-	const hangGuard = 5 * time.Second
 	joined := make(chan struct{})
 	var waitErr error
 	startWait := sync.OnceFunc(func() {
@@ -288,9 +262,10 @@ func assertCredentialMutationLockCrossProcess(t *testing.T, childFileOnly bool) 
 	killAndJoin := func() {
 		_ = cmd.Process.Kill()
 		startWait()
+		// Runs from deferred cleanup, so it reports without t.Fatal.
 		select {
 		case <-joined:
-		case <-time.After(hangGuard):
+		case <-time.After(testwait.Budget(t)):
 			t.Error("credential child did not exit after kill within the hang guard")
 		}
 	}
@@ -314,13 +289,9 @@ func assertCredentialMutationLockCrossProcess(t *testing.T, childFileOnly bool) 
 			if got.err != nil || got.event != want {
 				t.Fatalf("credential child event=%q err=%v, want %q", got.event, got.err, want)
 			}
-		case <-time.After(hangGuard):
+		case <-time.After(testwait.Budget(t)):
 			killAndJoin()
-			select {
-			case <-read:
-			case <-time.After(hangGuard):
-				t.Fatal("credential IPC reader did not exit after child kill")
-			}
+			testwait.Recv(t, read, "credential IPC reader exited after child kill")
 			t.Fatalf("credential child did not report %q within the hang guard; killed and joined child", want)
 		}
 	}
@@ -337,7 +308,7 @@ func assertCredentialMutationLockCrossProcess(t *testing.T, childFileOnly bool) 
 	startWait()
 	select {
 	case <-joined:
-	case <-time.After(hangGuard):
+	case <-time.After(testwait.Budget(t)):
 		killAndJoin()
 		t.Fatal("credential child did not exit after lock release within the hang guard")
 	}
