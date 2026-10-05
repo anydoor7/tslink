@@ -35,7 +35,9 @@ type deadliner interface {
 }
 
 // Budget returns how long one hang guard may wait: MaxBudget, shortened so
-// the guard expires at least reserve before the test binary's deadline.
+// the guard expires at least reserve before the test binary's deadline. Once
+// less than reserve+minBudget remains, the budget floors at minBudget, so the
+// reserve is best effort and guards in the binary's last 30 seconds are short.
 func Budget(t testing.TB) time.Duration {
 	t.Helper()
 	return budgetAt(t, time.Now())
