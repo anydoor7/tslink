@@ -18,14 +18,28 @@ import (
 
 func cleanupGate(f *guestFixture) *guestGate { return f.s.nodes["photos"].handlerCloser.(*guestGate) }
 func cleanupFlightCount(g *guestGate) int    { g.mu.Lock(); defer g.mu.Unlock(); return len(g.flights) }
-func cleanupWaitEmpty(t *testing.T, g *guestGate) {
+
+// Observe the real listener's outer handler, after guestFlight's deferred
+// cleanup. Backend cancellation and client EOF alone do not establish that join.
+func guestHandlerCompletions(t *testing.T) <-chan string {
 	t.Helper()
-	until := time.Now().Add(2 * time.Second)
-	for cleanupFlightCount(g) != 0 {
-		if time.Now().After(until) {
-			t.Fatalf("flights retained: %d", cleanupFlightCount(g))
+	done := make(chan string, 64)
+	previous := newHTTPServerFn
+	newHTTPServerFn = func(handler http.Handler) *http.Server {
+		return previous(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			defer func() { done <- r.URL.Path }()
+			handler.ServeHTTP(w, r)
+		}))
+	}
+	t.Cleanup(func() { newHTTPServerFn = previous })
+	return done
+}
+
+func waitGuestHandler(done <-chan string, path string) {
+	for completed := range done {
+		if completed == path {
+			return
 		}
-		time.Sleep(5 * time.Millisecond)
 	}
 }
 func cleanupSSE(t *testing.T, f *guestFixture, cookies []*http.Cookie) *http.Response {
@@ -49,8 +63,10 @@ func cleanupSSE(t *testing.T, f *guestFixture, cookies []*http.Cookie) *http.Res
 func TestGuestAbortedStreamsCleanup(t *testing.T) {
 	for _, h2 := range []bool{false, true} {
 		t.Run(fmt.Sprintf("h2=%t", h2), func(t *testing.T) {
+			completed := guestHandlerCompletions(t)
 			f := newGuestFixture(t, "", h2, true)
 			var stopped atomic.Int64
+			backendDone := make(chan struct{}, 20)
 			replaceGuestBackend(t, f, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "text/event-stream")
 				fmt.Fprint(w, "data: ready\n\n")
@@ -60,6 +76,7 @@ func TestGuestAbortedStreamsCleanup(t *testing.T) {
 				}
 				<-r.Context().Done()
 				stopped.Add(1)
+				backendDone <- struct{}{}
 			}))
 			cookies := f.login()
 			g := cleanupGate(f)
@@ -84,19 +101,19 @@ func TestGuestAbortedStreamsCleanup(t *testing.T) {
 			if e != nil || !strings.Contains(string(raw), "ready") {
 				t.Fatal("normal EOF control")
 			}
-			cleanupWaitEmpty(t, g)
+			waitGuestHandler(completed, "/normal")
+			if cleanupFlightCount(g) != 0 {
+				t.Fatal("normal EOF retained a flight")
+			}
 			for i := 0; i < 20; i++ {
 				resp := cleanupSSE(t, f, cookies)
 				resp.Body.Close()
+				<-backendDone
+				waitGuestHandler(completed, "/events")
 			}
-			until := time.Now().Add(2 * time.Second)
-			for stopped.Load() != 20 {
-				if time.Now().After(until) {
-					t.Fatal("backend cancellation missing", stopped.Load())
-				}
-				time.Sleep(5 * time.Millisecond)
+			if stopped.Load() != 20 {
+				t.Fatal("backend cancellation missing", stopped.Load())
 			}
-			time.Sleep(150 * time.Millisecond)
 			count := cleanupFlightCount(g)
 			t.Logf("normal_eof_flights=0 closed_streams=%d retained_flights=%d ", stopped.Load(), count)
 			// Keep the resource count before and after gate shutdown in the receipt.
@@ -112,6 +129,7 @@ func TestGuestAbortedStreamsCleanup(t *testing.T) {
 }
 
 func TestGuestAbortedStreamStopsTimer(t *testing.T) {
+	completed := guestHandlerCompletions(t)
 	f := newGuestFixture(t, "", true, true)
 	stopped := make(chan struct{})
 	replaceGuestBackend(t, f, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -135,12 +153,8 @@ func TestGuestAbortedStreamStopsTimer(t *testing.T) {
 		t.Fatal("active timer control")
 	}
 	resp.Body.Close()
-	select {
-	case <-stopped:
-	case <-time.After(time.Second):
-		t.Fatal("backend cancellation control")
-	}
-	time.Sleep(100 * time.Millisecond)
+	<-stopped
+	waitGuestHandler(completed, "/events")
 	active := 0
 	if timer.Stop() {
 		active++

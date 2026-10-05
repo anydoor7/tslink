@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -19,10 +20,13 @@ func TestGuestProxyRevocationBeforeHeaders(t *testing.T) {
 	for _, h2 := range []bool{false, true} {
 		for _, revoke := range []bool{false, true} {
 			t.Run(fmt.Sprintf("h2=%t/revoke=%t", h2, revoke), func(t *testing.T) {
+				completed := guestHandlerCompletions(t)
 				f := newGuestFixture(t, "", h2, true)
 				entered, release, canceled := make(chan struct{}), make(chan struct{}), make(chan struct{})
+				backendDone := make(chan struct{})
 				var hits atomic.Int64
 				replaceGuestBackend(t, f, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					defer close(backendDone)
 					hits.Add(1)
 					close(entered)
 					select {
@@ -32,7 +36,31 @@ func TestGuestProxyRevocationBeforeHeaders(t *testing.T) {
 						close(canceled)
 					}
 				}))
-				defer close(release)
+				unblock := sync.OnceFunc(func() { close(release) })
+				defer unblock()
+				// Keep the actual HTTP transport and proxy error handler. Hold
+				// delivery of cancellation until the revocation writer has exited
+				// and this fixture owns the subsequent authorization read window.
+				// A busy registry correctly returns 503; that is a separate control.
+				proxy := mustReverseProxy(t, f.svc.Target, nil)
+				transport := proxy.Transport
+				defer transport.(*http.Transport).CloseIdleConnections()
+				transportCanceled, deliver := make(chan struct{}), make(chan struct{})
+				deliverResult := sync.OnceFunc(func() { close(deliver) })
+				defer deliverResult()
+				proxy.Transport = roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+					response, err := transport.RoundTrip(r)
+					if errors.Is(err, context.Canceled) {
+						close(transportCanceled)
+						<-deliver
+					}
+					return response, err
+				})
+				appDone := make(chan struct{})
+				cleanupGate(f).app = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					defer close(appDone)
+					proxy.ServeHTTP(w, r)
+				})
 				cookies := f.login()
 				releaseRead := f.holdCounterFlush()
 				defer func() {
@@ -45,10 +73,13 @@ func TestGuestProxyRevocationBeforeHeaders(t *testing.T) {
 					err    error
 				}
 				done := make(chan result, 1)
+				joined := make(chan struct{})
 				go func() {
+					defer close(joined)
 					status, err := guestRequest(f.client, f.base, "/blocked", cookies)
 					done <- result{status, err}
 				}()
+				defer func() { unblock(); deliverResult(); <-joined }()
 				select {
 				case <-entered:
 				case <-time.After(5 * time.Second):
@@ -61,9 +92,12 @@ func TestGuestProxyRevocationBeforeHeaders(t *testing.T) {
 					if _, err := registry.RevokeGuest(f.path, f.grant.ID, accessTestTime); err != nil {
 						t.Fatal(err)
 					}
+					releaseRead = f.holdCounterFlush()
+					<-transportCanceled
+					deliverResult()
 					want = http.StatusUnauthorized
 				} else {
-					release <- struct{}{}
+					unblock()
 				}
 				select {
 				case got := <-done:
@@ -74,6 +108,9 @@ func TestGuestProxyRevocationBeforeHeaders(t *testing.T) {
 				case <-time.After(5 * time.Second):
 					t.Fatal("request did not finish")
 				}
+				<-backendDone
+				<-appDone
+				waitGuestHandler(completed, "/blocked")
 				if revoke {
 					select {
 					case <-canceled:
