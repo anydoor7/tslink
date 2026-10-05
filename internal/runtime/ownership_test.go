@@ -16,6 +16,7 @@ import (
 	"github.com/anydoor7/tslink/internal/filelock"
 	"github.com/anydoor7/tslink/internal/mcpscope"
 	"github.com/anydoor7/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 func TestOwnershipLedgerRecordsDeduplicatesAndRemovesExactIDs(t *testing.T) {
@@ -391,19 +392,15 @@ func TestMCPOwnershipWritersRecheckAfterLockWait(t *testing.T) {
 				if err := filelock.Unlock(lock); err != nil {
 					t.Fatal(err)
 				}
-				select {
-				case err := <-done:
-					if state == "active" {
-						if err != nil {
-							t.Fatal(err)
-						}
-					} else {
-						if code, _ := registry.ErrorCode(err); code != mcpscope.DeniedCode {
-							t.Fatalf("code=%q err=%v", code, err)
-						}
+				err = testwait.Recv(t, done, "ownership writer finished after the fixture released the lock")
+				if state == "active" {
+					if err != nil {
+						t.Fatal(err)
 					}
-				case <-time.After(2 * time.Second):
-					t.Fatal("ownership writer did not finish")
+				} else {
+					if code, _ := registry.ErrorCode(err); code != mcpscope.DeniedCode {
+						t.Fatalf("code=%q err=%v", code, err)
+					}
 				}
 				after, err := os.ReadFile(path)
 				if err != nil {

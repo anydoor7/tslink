@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 // lockHolderEnv makes a child run of this test binary hold an exclusive lock
@@ -100,17 +102,21 @@ func TestTryLockReportsALockHeldByAnotherProcess(t *testing.T) {
 	case <-ready:
 	case <-drained:
 		t.Fatalf("lock holder exited without reporting the lock (stderr %q)", stderr.String())
-	case <-time.After(30 * time.Second):
-		t.Fatalf("lock holder did not take the lock within 30s (stderr %q)", stderr.String())
+	case <-time.After(testwait.Budget(t)):
+		t.Fatalf("lock holder did not take the lock within the hang guard (stderr %q)", stderr.String())
 	}
 
-	start := time.Now()
-	ok, err := TryLock(f)
-	if ok || err != nil {
-		t.Fatalf("TryLock while another process holds the lock = %v, %v; want false, nil", ok, err)
+	// The holder keeps the lock until stdin closes below, so a TryLock that
+	// waited for it would never return.
+	type tried struct {
+		ok  bool
+		err error
 	}
-	if waited := time.Since(start); waited > 5*time.Second {
-		t.Fatalf("TryLock took %s while another process held the lock; it must not wait", waited)
+	result := make(chan tried, 1)
+	go func() { ok, err := TryLock(f); result <- tried{ok, err} }()
+	got := testwait.Recv(t, result, "TryLock returned while another process held the lock")
+	if got.ok || got.err != nil {
+		t.Fatalf("TryLock while another process holds the lock = %v, %v; want false, nil", got.ok, got.err)
 	}
 
 	_ = stdin.Close()

@@ -10,7 +10,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
-	"time"
+
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 // reportEnvIndependenceChildEnv marks the re-executed copy of this test binary
@@ -110,7 +111,8 @@ func TestNoTestInThisPackageDependsOnTheReportEnvValue(t *testing.T) {
 func runSelfWithReportEnv(t *testing.T, value string) (int, string) {
 	t.Helper()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	// Kills only a hung child; bounded by the binary deadline, not a fixed time.
+	ctx, cancel := context.WithTimeout(context.Background(), testwait.Budget(t))
 	defer cancel()
 
 	child := exec.CommandContext(ctx, os.Args[0], "-test.run", ".", "-test.v", "-test.count=1")
