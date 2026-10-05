@@ -21,6 +21,7 @@ import (
 	"github.com/anydoor7/tslink/internal/output"
 	"github.com/anydoor7/tslink/internal/registry"
 	"github.com/anydoor7/tslink/internal/tailapi"
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 // Separate process, production state transitions, and immediate process death.
@@ -124,7 +125,8 @@ func TestReReviewCrashStateMatrix(t *testing.T) {
 				http.Error(w, "bad", 500)
 			}))
 			defer api.Close()
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			// Kills only a hung child; process start under load is not a property.
+			ctx, cancel := context.WithTimeout(context.Background(), testwait.Budget(t))
 			defer cancel()
 			child := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestReReviewCrashHelper$", "-test.count=1")
 			child.Env = append(os.Environ(), "RR_CRASH_MODE="+mode, "RR_CRASH_DIR="+filepath.Dir(paths.Registry), "RR_CRASH_API="+api.URL)
@@ -161,7 +163,7 @@ func TestReReviewCrashStateMatrix(t *testing.T) {
 					select {
 					case got := <-removal:
 						removed, e = got.result, got.err
-					case <-time.After(5 * time.Second):
+					case <-time.After(testwait.Budget(t)):
 						_ = child.Process.Kill()
 						t.Fatal("local remove blocked on child POST")
 					}
@@ -812,11 +814,7 @@ func TestPeopleReplacementConcurrentRemovalOverRealHTTP(t *testing.T) {
 		done <- result
 		errs <- err
 	}()
-	select {
-	case <-entered:
-	case <-time.After(5 * time.Second):
-		t.Fatal("replacement never reached POST")
-	}
+	testwait.Recv(t, entered, "replacement reached POST")
 	removal := make(chan struct {
 		result PeopleRemoveResult
 		err    error
@@ -828,13 +826,10 @@ func TestPeopleReplacementConcurrentRemovalOverRealHTTP(t *testing.T) {
 			err    error
 		}{result, err}
 	}()
-	var removed PeopleRemoveResult
-	select {
-	case got := <-removal:
-		removed, err = got.result, got.err
-	case <-time.After(5 * time.Second):
-		t.Fatal("removal blocked behind an unreleased POST")
-	}
+	// The POST is released only after this, so a removal blocked behind it
+	// would never return.
+	got := testwait.Recv(t, removal, "removal returned while the POST was unreleased")
+	removed, err := got.result, got.err
 	if err != nil || !removed.Revoked || removed.Complete || removed.Cleanup[0].Code != "people_invite_busy" {
 		t.Fatal("removal blocked behind replacement", removed, err)
 	}

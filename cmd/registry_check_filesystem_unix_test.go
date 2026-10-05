@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/anydoor7/tslink/internal/output"
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 // These two tests pin the boundary that separates "registry.json does not exist
@@ -38,12 +39,10 @@ import (
 // is observable as a divergence between two CLI commands and as a process that
 // does not exit, and neither is a property of a Go function.
 
-// registryFilesystemProbeDeadline bounds every run below. The FIFO failure mode
+// Every run below is bounded by a testwait hang guard. The FIFO failure mode
 // is not "slow", it is "never returns", so the assertion has to be a deadline
-// and not a duration comparison. It is set far above the ~10 ms these commands
-// actually take so that a loaded CI machine cannot turn it into a flake; a
-// process that blocks on a FIFO open blocks forever and will exhaust any bound.
-const registryFilesystemProbeDeadline = 20 * time.Second
+// and not a duration comparison; a process that blocks on a FIFO open blocks
+// forever and will exhaust any bound.
 
 type registryProbeRun struct {
 	Stdout   string
@@ -51,11 +50,13 @@ type registryProbeRun struct {
 	ExitCode int
 	TimedOut bool
 	Elapsed  time.Duration
+	Deadline time.Duration
 }
 
 func runRegistryFilesystemProbe(t *testing.T, binary, configDir string, args ...string) registryProbeRun {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), registryFilesystemProbeDeadline)
+	deadline := testwait.Budget(t)
+	ctx, cancel := context.WithTimeout(context.Background(), deadline)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, binary, args...)
@@ -73,7 +74,7 @@ func runRegistryFilesystemProbe(t *testing.T, binary, configDir string, args ...
 
 	start := time.Now()
 	err := cmd.Run()
-	run := registryProbeRun{Stdout: stdout.String(), Stderr: stderr.String(), Elapsed: time.Since(start)}
+	run := registryProbeRun{Stdout: stdout.String(), Stderr: stderr.String(), Elapsed: time.Since(start), Deadline: deadline}
 	if ctx.Err() != nil {
 		run.TimedOut = true
 		return run
@@ -91,7 +92,7 @@ func runRegistryFilesystemProbe(t *testing.T, binary, configDir string, args ...
 func soleRegistryProbeEnvelope(t *testing.T, label string, run registryProbeRun) output.Result {
 	t.Helper()
 	if run.TimedOut {
-		t.Fatalf("tslink %s did not return within %s", label, registryFilesystemProbeDeadline)
+		t.Fatalf("tslink %s did not return within the %s hang guard", label, run.Deadline)
 	}
 	if run.Stderr != "" {
 		t.Fatalf("tslink %s --json wrote %d bytes to stderr: %q", label, len(run.Stderr), run.Stderr)
@@ -214,22 +215,19 @@ func TestCompiledRegistryCheckDoesNotBlockOnAFifoRegistry(t *testing.T) {
 		}
 		select {
 		case <-writerDone:
-		case <-time.After(5 * time.Second):
+		case <-time.After(testwait.Budget(t)):
 			t.Log("the FIFO writer was still parked in open(2): the command under test never read the FIFO")
 		}
 	})
 
 	check := runRegistryFilesystemProbe(t, binary, configDir, "registry", "check", registryPath, "--json")
 	if check.TimedOut {
-		t.Fatalf("tslink registry check did not return within %s on a FIFO registry.json; "+
+		t.Fatalf("tslink registry check did not return within the %s hang guard on a FIFO registry.json; "+
 			"it consumed the single writer on its first read and is waiting for a second one",
-			registryFilesystemProbeDeadline)
+			check.Deadline)
 	}
-	select {
-	case <-writerDone:
-	case <-time.After(5 * time.Second):
-		t.Fatal("tslink registry check returned without ever reading the FIFO; the writer is still parked in open(2)")
-	}
+	// A command that never opened the FIFO leaves the writer parked forever.
+	testwait.Recv(t, writerDone, "FIFO writer released by registry check reading the FIFO")
 
 	// `list` reaches the same state through atomicfile.ConvergePrivateFile,
 	// which lstats and refuses a non-regular file without opening it, so it
@@ -237,5 +235,5 @@ func TestCompiledRegistryCheckDoesNotBlockOnAFifoRegistry(t *testing.T) {
 	list := runRegistryFilesystemProbe(t, binary, configDir, "list", "--json")
 	assertRegistryCheckAndListAgree(t, "a FIFO registry.json", check, list)
 
-	t.Logf("registry check returned in %s (deadline %s)", check.Elapsed.Round(time.Millisecond), registryFilesystemProbeDeadline)
+	t.Logf("registry check returned in %s (hang guard %s)", check.Elapsed.Round(time.Millisecond), check.Deadline)
 }

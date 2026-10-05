@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/anydoor7/tslink/internal/testenv"
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 func TestBoundedManagerCommandUsesRealSubprocessAndFiniteDeadline(t *testing.T) {
@@ -25,11 +26,7 @@ func TestBoundedManagerCommandUsesRealSubprocessAndFiniteDeadline(t *testing.T) 
 		_, err := runBoundedManagerCommand(context.Background(), "/bin/sleep", 40*time.Millisecond, "30")
 		done <- err
 	}()
-	select {
-	case err = <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("manager command ignored its deadline")
-	}
+	err = testwait.Recv(t, done, "manager command returned at its deadline")
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("blocked helper error = %v, want deadline exceeded", err)
 	}
@@ -49,7 +46,8 @@ func TestBoundedManagerTimeoutReleasesSupervisorTransaction(t *testing.T) {
 		t.Fatalf("blocked helper transaction error = %v", err)
 	}
 	entered := false
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// Hang guard only: a lock still held would make this wait expire.
+	ctx, cancel := context.WithTimeout(context.Background(), testwait.Budget(t))
 	defer cancel()
 	if err := withSupervisorTransaction(ctx, func() error { entered = true; return nil }); err != nil || !entered {
 		t.Fatalf("next transaction could not acquire released lock: entered=%v err=%v", entered, err)

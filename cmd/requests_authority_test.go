@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/anydoor7/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 // Hold the existing command clock seam after the remote owner check. This
@@ -40,23 +41,14 @@ func TestF12ReviewDecisionUsesCurrentOwner(t *testing.T) {
 			go func() {
 				done <- portalRemoteCall(t, srv, "requests_approve", map[string]any{"id": request.ID, "for": "8h"})
 			}()
-			select {
-			case <-entered:
-			case <-time.After(5 * time.Second):
-				t.Fatal("decision did not reach post-authorization clock")
-			}
+			testwait.Recv(t, entered, "decision reached the post-authorization clock")
 			if replace {
 				if err := registry.SetPortal(paths.Registry, &registry.PortalConfig{Enabled: true, Hostname: "home", Owner: "replacement"}); err != nil {
 					t.Fatal(err)
 				}
 			}
 			unblock()
-			var response []byte
-			select {
-			case response = <-done:
-			case <-time.After(5 * time.Second):
-				t.Fatal("decision did not finish")
-			}
+			response := testwait.Recv(t, done, "decision finished")
 			reg, _, err := registry.Preflight(paths.Registry)
 			if err != nil {
 				t.Fatal(err)

@@ -23,6 +23,7 @@ import (
 	"github.com/anydoor7/tslink/internal/registry"
 	tsruntime "github.com/anydoor7/tslink/internal/runtime"
 	"github.com/anydoor7/tslink/internal/tailapi"
+	"github.com/anydoor7/tslink/internal/testwait"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -1248,7 +1249,8 @@ func TestMCPLargeUnderLimitRequestWithInteractiveStdin(t *testing.T) {
 		strings.Repeat("a", mcpMaxRecordBytes/2) + `"}}` + "\n"
 	inReader, inWriter := io.Pipe()
 	outReader, outWriter := io.Pipe()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// The deadline is only the hang guard for both waits below.
+	ctx, cancel := context.WithTimeout(context.Background(), testwait.Budget(t))
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- runMCPStdio(ctx, inReader, outWriter, fakeMCPActions()) }()
@@ -1308,24 +1310,11 @@ func TestMCPCancelInterruptsActiveTool(t *testing.T) {
 					_ = inWriter.Close()
 				}
 			}()
-			select {
-			case <-started:
-			case <-time.After(5 * time.Second):
-				t.Fatal("tool was not dispatched")
-			}
+			testwait.Recv(t, started, "tool was dispatched")
 			cancel()
-			select {
-			case <-stopped:
-			case <-time.After(5 * time.Second):
-				t.Fatal("context-aware tool kept running after caller cancellation")
-			}
-			select {
-			case err := <-done:
-				if !errors.Is(err, context.Canceled) {
-					t.Fatalf("session cancellation error = %v", err)
-				}
-			case <-time.After(5 * time.Second):
-				t.Fatal("MCP session did not return after cancellation")
+			testwait.Recv(t, stopped, "context-aware tool stopped after caller cancellation")
+			if err := testwait.Recv(t, done, "MCP session returned after cancellation"); !errors.Is(err, context.Canceled) {
+				t.Fatalf("session cancellation error = %v", err)
 			}
 		})
 	}
@@ -1348,7 +1337,8 @@ func TestMCPFiniteEOFBoundaryCases(t *testing.T) {
 		{"duplicate request ID", `{"jsonrpc":"2.0","id":7,"method":"ping"}` + "\n" + `{"jsonrpc":"2.0","id":7,"method":"ping"}` + "\n", 7, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			// Hang guard only: finite input must settle on its own.
+			ctx, cancel := context.WithTimeout(context.Background(), testwait.Budget(t))
 			defer cancel()
 			var stdout bytes.Buffer
 			err := runMCPStdio(ctx, strings.NewReader(tc.input), &stdout, fakeMCPActions())

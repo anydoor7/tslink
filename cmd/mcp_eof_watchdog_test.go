@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/anydoor7/tslink/internal/output"
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 // TestMCPURLWaitIsCapped keeps every MCP tool wait bounded: an agent can no
@@ -250,20 +251,11 @@ func TestMCPWatchdogEndsTheCommandWithOneErrorLine(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- runMCPCommand(ctx, in, io.Discard, actions) }()
 	go func() { _, _ = io.WriteString(writer, call) }()
-	select {
-	case <-started:
-	case <-time.After(5 * time.Second):
-		t.Fatal("command did not dispatch the call before EOF")
-	}
+	testwait.Recv(t, started, "command dispatched the call before EOF")
 	if err := writer.Close(); err != nil {
 		t.Fatal(err)
 	}
-	var err error
-	select {
-	case err = <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("command did not return after the watchdog")
-	}
+	err := testwait.Recv(t, done, "command returned after the watchdog")
 	if !errors.Is(err, errMCPEOFWatchdog) || !strings.HasPrefix(err.Error(), "mcp stdio: ") || strings.Contains(err.Error(), "\n") {
 		t.Fatalf("command error = %q, want one mcp stdio line naming the watchdog", err)
 	}

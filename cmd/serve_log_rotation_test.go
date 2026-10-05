@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/anydoor7/tslink/internal/logrotate"
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 // stubStderrLogRotation replaces every seam this file touches and restores them
@@ -69,18 +71,10 @@ func TestStartStderrLogRotationChecksTheConfiguredLogOnATimer(t *testing.T) {
 	done := startStderrLogRotation(ctx)
 
 	for i := 0; i < 2; i++ {
-		select {
-		case <-observed:
-		case <-time.After(5 * time.Second):
-			t.Fatalf("only %d rotation checks ran; the timer is not running", i)
-		}
+		testwait.Recv(t, observed, fmt.Sprintf("rotation check %d ran on the timer", i+1))
 	}
 	cancel()
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("the rotation goroutine did not stop with its context")
-	}
+	testwait.Recv(t, done, "the rotation goroutine stopped with its context")
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -105,33 +99,32 @@ func TestStartStderrLogRotationChecksTheConfiguredLogOnATimer(t *testing.T) {
 // starts against an already-oversized log. Waiting out a full interval first
 // would mean a restart loop never rotates at all.
 func TestStartStderrLogRotationRunsOnceBeforeTheFirstTick(t *testing.T) {
-	logDir := t.TempDir()
-	first := make(chan time.Duration, 1)
-	start := time.Now()
+	// Virtual time: a first check that waited for the one-hour ticker would
+	// advance the bubble clock by that hour, so zero elapsed is exact.
+	synctest.Test(t, func(t *testing.T) {
+		logDir := t.TempDir()
+		first := make(chan time.Duration, 1)
+		start := time.Now()
 
-	stubStderrLogRotation(t, logDir, func(*os.File, string, int64) (logrotate.Result, error) {
-		select {
-		case first <- time.Since(start):
-		default:
+		stubStderrLogRotation(t, logDir, func(*os.File, string, int64) (logrotate.Result, error) {
+			select {
+			case first <- time.Since(start):
+			default:
+			}
+			return logrotate.Result{Reason: "under the size cap"}, nil
+		})
+		stderrLogRotateInterval = time.Hour
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		done := startStderrLogRotation(ctx)
+
+		if elapsed := <-first; elapsed != 0 {
+			t.Fatalf("the first check ran after %s; it waited for the ticker, so an oversized log would stay oversized", elapsed)
 		}
-		return logrotate.Result{Reason: "under the size cap"}, nil
+		cancel()
+		<-done
 	})
-	stderrLogRotateInterval = time.Hour
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	done := startStderrLogRotation(ctx)
-
-	select {
-	case elapsed := <-first:
-		if elapsed > 30*time.Second {
-			t.Fatalf("the first check took %s; it waited for the ticker", elapsed)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("no check ran before the one-hour ticker; an oversized log would stay oversized")
-	}
-	cancel()
-	<-done
 }
 
 // TestStartStderrLogRotationStopsWhenTheLogDirIsUnresolvable keeps a broken
@@ -143,11 +136,7 @@ func TestStartStderrLogRotationStopsWhenTheLogDirIsUnresolvable(t *testing.T) {
 	})
 	serveLogDirFn = func() (string, error) { return "", os.ErrPermission }
 
-	select {
-	case <-startStderrLogRotation(context.Background()):
-	case <-time.After(5 * time.Second):
-		t.Fatal("startStderrLogRotation neither ran nor returned")
-	}
+	testwait.Recv(t, startStderrLogRotation(context.Background()), "startStderrLogRotation returned without running")
 }
 
 // TestStartStderrLogRotationWritesNothingWhenStderrIsNotTheConfiguredLog is the
@@ -205,18 +194,11 @@ func TestStartStderrLogRotationRotatesTheConfiguredLog(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := startStderrLogRotation(ctx)
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		if info, err := os.Stat(target); err == nil && info.Size() == 0 {
-			break
-		}
-		if time.Now().After(deadline) {
-			cancel()
-			<-done
-			t.Fatal("the configured log was never truncated")
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
+	defer func() { cancel(); <-done }()
+	testwait.Until(t, "the configured log was truncated", func() bool {
+		info, err := os.Stat(target)
+		return err == nil && info.Size() == 0
+	})
 	cancel()
 	<-done
 
@@ -313,18 +295,14 @@ func runRotationUntil(t *testing.T, calls int, result logrotate.Result, rotateEr
 	for i := 0; i < calls; i++ {
 		select {
 		case <-observed:
-		case <-time.After(5 * time.Second):
+		case <-time.After(testwait.Budget(t)):
 			cancel()
 			<-done
 			t.Fatalf("only %d rotation checks ran", i)
 		}
 	}
 	cancel()
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("the rotation goroutine did not stop with its context")
-	}
+	testwait.Recv(t, done, "the rotation goroutine stopped with its context")
 	return read()
 }
 
