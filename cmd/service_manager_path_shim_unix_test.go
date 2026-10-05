@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/anydoor7/tslink/internal/testenv"
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 // The seam guard in service_manager_guard_wiring_unix_test.go closes the exits
@@ -354,7 +355,7 @@ func TestServiceManagerShimProbeHelper(t *testing.T) {
 
 func runShimProbeChild(t *testing.T, mode string) (int, string) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), testwait.Budget(t))
 	defer cancel()
 
 	child := exec.CommandContext(ctx, os.Args[0],
