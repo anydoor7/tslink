@@ -15,7 +15,6 @@ import (
 	"path/filepath"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/anydoor7/tslink/internal/server"
 	"github.com/anydoor7/tslink/internal/testwait"
