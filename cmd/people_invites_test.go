@@ -93,7 +93,7 @@ func TestPeopleRemovalWithoutTokenAndAcceptedShares(t *testing.T) {
 		t.Fatal(p, e)
 	}
 	t.Setenv(tailapi.APIBaseURLEnv, savedURL)
-	t.Setenv("TSLINK_API_KEY", "tskey-api-FAKE-review")
+	t.Setenv("TSLINK_API_KEY", "tskey-api-<test-only-FAKE-review>")
 	api.mu.Lock()
 	api.accepted["1001"] = true
 	api.mu.Unlock()
@@ -605,7 +605,7 @@ func TestPeopleCleanupAssociationAndResultSaveFailures(t *testing.T) {
 			}))
 			defer api.Close()
 			t.Setenv(tailapi.APIBaseURLEnv, api.URL)
-			t.Setenv("TSLINK_API_KEY", "tskey-api-FAKE-test")
+			t.Setenv("TSLINK_API_KEY", "tskey-api-<test-only-FAKE-test>")
 			result, e := removePeopleContext(context.Background(), paths.Registry, "alice", map[string]string{"photos": "1001"})
 			if e != nil || !result.Revoked || result.Complete || len(result.Cleanup) != 1 {
 				t.Fatal(result, e)

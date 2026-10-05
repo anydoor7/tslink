@@ -97,7 +97,7 @@ func TestStatusJSON(t *testing.T) {
 
 	isRunningFn = func(string) bool { return true }
 	readPIDFn = func(string) (int, error) { return 42, nil }
-	getAPIKeyFn = func() (string, error) { return "tskey-api-xxx", nil }
+	getAPIKeyFn = func() (string, error) { return "tskey-api-<test-only-xxx>", nil }
 	hasClientSecretFn = func() bool { return false }
 
 	dir := t.TempDir()
@@ -326,7 +326,7 @@ func TestLogoutJSON_LoggedIn(t *testing.T) {
 		isRunningFn = oldIsRunning
 	})
 
-	apiKey := "tskey-api-xxx"
+	apiKey := "tskey-api-<test-only-xxx>"
 	clientSecret := ""
 	inspectStoredCredentialsFn = func() (credentials.StoredCredentialStatus, error) {
 		return logoutCredentialStatus(apiKey != "", clientSecret != ""), nil

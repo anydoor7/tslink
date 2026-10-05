@@ -35,7 +35,7 @@ func TestMigrateFromLegacyWithoutLegacyFileCreatesNoLockFiles(t *testing.T) {
 		}
 	}
 	// Control: with a legacy file the migration does take the lock.
-	if err := os.WriteFile(apiKeyPath(t), []byte("tskey-api-FAKE-legacy"), 0o600); err != nil {
+	if err := os.WriteFile(apiKeyPath(t), []byte("tskey-api-<test-only-FAKE-legacy>"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if !MigrateFromLegacy() {
@@ -55,7 +55,7 @@ func TestMigrateFromLegacyRechecksLegacyFileUnderLock(t *testing.T) {
 		credentialMutationGate <- struct{}{}
 		t.Cleanup(func() { credentialMutationGate = oldGate })
 		setup(t)
-		if err := os.WriteFile(apiKeyPath(t), []byte("tskey-api-FAKE-legacy"), 0o600); err != nil {
+		if err := os.WriteFile(apiKeyPath(t), []byte("tskey-api-<test-only-FAKE-legacy>"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		held := make(chan struct{})

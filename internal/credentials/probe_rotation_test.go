@@ -14,7 +14,7 @@ import (
 // must not receive the old credential's verdict.
 func TestProbeVerdictIsNotRecordedOnCredentialRotatedDuringProbe(t *testing.T) {
 	setup(t)
-	const oldKey, newKey = "tskey-api-FAKE-OLD", "tskey-api-FAKE-NEW"
+	const oldKey, newKey = "tskey-api-<test-only-FAKE-OLD>", "tskey-api-<test-only-FAKE-NEW>"
 	if err := SetAPIKey(oldKey); err != nil {
 		t.Fatal(err)
 	}
@@ -69,12 +69,12 @@ func TestProbeVerdictIsNotRecordedOnCredentialRotatedDuringProbe(t *testing.T) {
 
 func TestRecordVerificationSkipsSlotHoldingAnotherFingerprint(t *testing.T) {
 	setup(t)
-	const key = "tskey-api-FAKE-current"
+	const key = "tskey-api-<test-only-FAKE-current>"
 	if _, _, err := RecordCredentialStored(SlotAPIKey, key, StoredOptions{Now: metaTestNow, Verified: true}); err != nil {
 		t.Fatal(err)
 	}
 	later := metaTestNow.Add(time.Hour)
-	if err := RecordVerification(SlotAPIKey, Fingerprint("tskey-api-FAKE-other"), VerifyResultUnauthorized, later); err != nil {
+	if err := RecordVerification(SlotAPIKey, Fingerprint("tskey-api-<test-only-FAKE-other>"), VerifyResultUnauthorized, later); err != nil {
 		t.Fatalf("RecordVerification(other fingerprint) error = %v", err)
 	}
 	meta, err := ReadSlotMetadata(SlotAPIKey)

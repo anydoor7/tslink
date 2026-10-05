@@ -151,7 +151,7 @@ func TestPeopleBundledInvitesUseFakeRESTAndMaskLinks(t *testing.T) {
 			}))
 			defer api.Close()
 			t.Setenv(tailapi.APIBaseURLEnv, api.URL)
-			t.Setenv("TSLINK_API_KEY", "tskey-api-FAKE-people-test")
+			t.Setenv("TSLINK_API_KEY", "tskey-api-<test-only-FAKE-people-test>")
 			result, err := changePeople(context.Background(), paths, peopleArguments{Who: "alice@example.com", Apps: []string{"photos", "finance"}, Invite: true, PrintLinks: printLinks}, false)
 			if err != nil || !result.Complete || calls != 2 {
 				t.Fatal(result, err, calls)
@@ -161,7 +161,7 @@ func TestPeopleBundledInvitesUseFakeRESTAndMaskLinks(t *testing.T) {
 			if strings.Contains(out.String(), "FAKE-BEARER") != printLinks {
 				t.Fatal("masking failed", out.String())
 			}
-			if strings.Contains(out.String(), "tskey-api-FAKE-people-test") {
+			if strings.Contains(out.String(), "test-only-FAKE-people-test") {
 				t.Fatal("credential in result")
 			}
 			if printLinks && !strings.Contains(result.Message, "accept https://login.tailscale.com/admin/invite/FAKE-BEARER") {

@@ -79,7 +79,7 @@ func TestLogoutKindRemovesOnlySelectedSlot(t *testing.T) {
 			if err := os.MkdirAll(nodesDir, 0o700); err != nil {
 				t.Fatal(err)
 			}
-			h := &logoutKindHarness{apiKey: "tskey-api-FAKE", clientSecret: "tskey-client-FAKE"}
+			h := &logoutKindHarness{apiKey: "tskey-api-<test-only-FAKE>", clientSecret: "tskey-client-FAKE"}
 			installLogoutKindHarness(t, h)
 
 			var buf bytes.Buffer
@@ -113,7 +113,7 @@ func TestLogoutKindRemovesOnlySelectedSlot(t *testing.T) {
 
 func TestLogoutKindJSONListsDeletedAndKeepsOther(t *testing.T) {
 	dir := t.TempDir()
-	h := &logoutKindHarness{apiKey: "tskey-api-FAKE", clientSecret: "tskey-client-FAKE"}
+	h := &logoutKindHarness{apiKey: "tskey-api-<test-only-FAKE>", clientSecret: "tskey-client-FAKE"}
 	installLogoutKindHarness(t, h)
 	got := captureStdout(t, func() {
 		err := logoutUserWithOptions(logoutOptions{PIDPath: filepath.Join(dir, "pid"), AuthKeyPath: filepath.Join(dir, "authkey"), NodesDir: filepath.Join(dir, "nodes"), ConfigDir: dir, Kind: credentials.SlotAPIKey}, true, &bytes.Buffer{})
@@ -169,14 +169,14 @@ func TestLogoutKindAbsentSlotIsNotLoggedIn(t *testing.T) {
 func TestLogoutKindFailureModes(t *testing.T) {
 	dir := t.TempDir()
 	t.Run("invalid kind is usage error", func(t *testing.T) {
-		installLogoutKindHarness(t, &logoutKindHarness{apiKey: "tskey-api-FAKE"})
+		installLogoutKindHarness(t, &logoutKindHarness{apiKey: "tskey-api-<test-only-FAKE>"})
 		err := logoutUserWithOptions(logoutOptions{PIDPath: filepath.Join(dir, "pid"), Kind: "apikey"}, false, &bytes.Buffer{})
 		if output.ExitCode(err) != output.ExitUsage {
 			t.Fatalf("error = %v exit=%d, want usage", err, output.ExitCode(err))
 		}
 	})
 	t.Run("daemon running refuses", func(t *testing.T) {
-		installLogoutKindHarness(t, &logoutKindHarness{apiKey: "tskey-api-FAKE"})
+		installLogoutKindHarness(t, &logoutKindHarness{apiKey: "tskey-api-<test-only-FAKE>"})
 		isRunningFn = func(string) bool { return true }
 		err := logoutUserWithOptions(logoutOptions{PIDPath: filepath.Join(dir, "pid"), Kind: credentials.SlotAPIKey}, false, &bytes.Buffer{})
 		if err == nil || !strings.Contains(err.Error(), "currently running") {
@@ -184,7 +184,7 @@ func TestLogoutKindFailureModes(t *testing.T) {
 		}
 	})
 	t.Run("inspect failure fails closed", func(t *testing.T) {
-		h := &logoutKindHarness{apiKey: "tskey-api-FAKE", inspectErr: errors.New("keyring unreadable")}
+		h := &logoutKindHarness{apiKey: "tskey-api-<test-only-FAKE>", inspectErr: errors.New("keyring unreadable")}
 		installLogoutKindHarness(t, h)
 		err := logoutUserWithOptions(logoutOptions{PIDPath: filepath.Join(dir, "pid"), Kind: credentials.SlotAPIKey}, false, &bytes.Buffer{})
 		if err == nil || len(h.deletedKinds) != 0 {
@@ -192,7 +192,7 @@ func TestLogoutKindFailureModes(t *testing.T) {
 		}
 	})
 	t.Run("delete failure surfaces and skips success", func(t *testing.T) {
-		h := &logoutKindHarness{apiKey: "tskey-api-FAKE", deleteKindErr: errors.New("keyring delete denied")}
+		h := &logoutKindHarness{apiKey: "tskey-api-<test-only-FAKE>", deleteKindErr: errors.New("keyring delete denied")}
 		installLogoutKindHarness(t, h)
 		got := captureStdout(t, func() {
 			err := logoutUserWithOptions(logoutOptions{PIDPath: filepath.Join(dir, "pid"), Kind: credentials.SlotAPIKey}, true, &bytes.Buffer{})
@@ -205,7 +205,7 @@ func TestLogoutKindFailureModes(t *testing.T) {
 		}
 	})
 	t.Run("readback still present fails", func(t *testing.T) {
-		h := &logoutKindHarness{apiKey: "tskey-api-FAKE"}
+		h := &logoutKindHarness{apiKey: "tskey-api-<test-only-FAKE>"}
 		installLogoutKindHarness(t, h)
 		deleteStoredCredentialKindFn = func(string) error { return nil } // pretends to delete, value stays
 		err := logoutUserWithOptions(logoutOptions{PIDPath: filepath.Join(dir, "pid"), Kind: credentials.SlotAPIKey}, false, &bytes.Buffer{})
@@ -217,7 +217,7 @@ func TestLogoutKindFailureModes(t *testing.T) {
 
 func TestFullLogoutRemovesMetadataAndListsDeletedSlots(t *testing.T) {
 	dir := t.TempDir()
-	h := &logoutKindHarness{apiKey: "tskey-api-FAKE", clientSecret: "tskey-client-FAKE"}
+	h := &logoutKindHarness{apiKey: "tskey-api-<test-only-FAKE>", clientSecret: "tskey-client-FAKE"}
 	installLogoutKindHarness(t, h)
 	var buf bytes.Buffer
 	if err := logoutUser(filepath.Join(dir, "pid"), filepath.Join(dir, "authkey"), filepath.Join(dir, "nodes"), dir, false, &buf); err != nil {
@@ -230,7 +230,7 @@ func TestFullLogoutRemovesMetadataAndListsDeletedSlots(t *testing.T) {
 		t.Fatalf("human output = %q", buf.String())
 	}
 
-	h = &logoutKindHarness{apiKey: "tskey-api-FAKE"}
+	h = &logoutKindHarness{apiKey: "tskey-api-<test-only-FAKE>"}
 	installLogoutKindHarness(t, h)
 	got := captureStdout(t, func() {
 		if err := logoutUser(filepath.Join(dir, "pid"), filepath.Join(dir, "authkey"), filepath.Join(dir, "nodes"), dir, true, &bytes.Buffer{}); err != nil {
@@ -249,7 +249,7 @@ func TestFullLogoutRemovesMetadataAndListsDeletedSlots(t *testing.T) {
 
 func TestFullLogoutMetadataRemovalFailureIsReported(t *testing.T) {
 	dir := t.TempDir()
-	h := &logoutKindHarness{apiKey: "tskey-api-FAKE"}
+	h := &logoutKindHarness{apiKey: "tskey-api-<test-only-FAKE>"}
 	installLogoutKindHarness(t, h)
 	removeCredentialMetadataFn = func() error { return errors.New("permission denied") }
 	err := logoutUser(filepath.Join(dir, "pid"), filepath.Join(dir, "authkey"), filepath.Join(dir, "nodes"), dir, false, &bytes.Buffer{})

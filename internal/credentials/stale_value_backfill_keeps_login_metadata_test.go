@@ -20,7 +20,7 @@ func TestStatusBackfillOfAValueReadBeforeALoginKeepsTheLoginMetadata(t *testing.
 	setup(t)
 	now := time.Date(2035, 1, 1, 0, 0, 0, 0, time.UTC)
 	// Synthetic values only; none is printed.
-	oldValue, newValue := "tskey-api-FAKE-before", "tskey-api-FAKE-after"
+	oldValue, newValue := "tskey-api-<test-only-FAKE-before>", "tskey-api-<test-only-FAKE-after>"
 	if err := SetAPIKey(oldValue); err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +73,7 @@ func TestStatusBackfillOfAValueReadBeforeALogoutWritesNoRecord(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			setup(t)
-			if err := SetAPIKey("tskey-api-FAKE-logout"); err != nil {
+			if err := SetAPIKey("tskey-api-<test-only-FAKE-logout>"); err != nil {
 				t.Fatal(err)
 			}
 			stale, err := StoredSlotValues()
@@ -107,7 +107,7 @@ func TestStatusBackfillOfAValueReadBeforeALogoutWritesNoRecord(t *testing.T) {
 func TestStatusBackfillReportsASlotItCannotReadBack(t *testing.T) {
 	setup(t)
 	now := time.Date(2035, 1, 1, 0, 0, 0, 0, time.UTC)
-	if err := SetAPIKey("tskey-api-FAKE-unreadable"); err != nil {
+	if err := SetAPIKey("tskey-api-<test-only-FAKE-unreadable>"); err != nil {
 		t.Fatal(err)
 	}
 	stale, err := StoredSlotValues()

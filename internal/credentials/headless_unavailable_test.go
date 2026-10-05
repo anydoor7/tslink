@@ -28,14 +28,14 @@ func TestWholeProviderUnavailablePreservesAuthority(t *testing.T) {
 					func(string, string) (string, error) { return "", unavailable },
 					func(string, string, string) error { setCalls++; return unavailable },
 					func(string, string) error { deleteCalls++; return unavailable })
-				value := "tskey-api-FAKE-review"
-				oldValue := "tskey-api-FAKE-OLD"
+				value := "tskey-api-<test-only-FAKE-review>"
+				oldValue := "tskey-api-<test-only-FAKE-OLD>"
 				set := SetAPIKeyWithBackend
 				get := GetAPIKey
 				path, pathErr := config.APIKeyPath()
 				if mode == "oauth" {
-					value = "tskey-client-FAKE-review"
-					oldValue = "tskey-client-FAKE-OLD"
+					value = "tskey-client-<testonly_FAKE>-<testonly_review>"
+					oldValue = "tskey-client-<testonly_FAKE>-<testonly_OLD>"
 					set = SaveClientSecretWithBackend
 					get = GetClientSecret
 					path, pathErr = config.ClientSecretPath()

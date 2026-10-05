@@ -81,6 +81,31 @@ What this means for your machine and for the directory `TMPDIR` points at:
   `TestWriteFileInExistingDirReportsSpecialParentModeBits/setgid` skips and says
   why; unsandboxed it runs.
 
+### Synthetic credential fixtures
+
+Use unmistakably noncredential values in tests. When a test exercises the
+API-token kind check, retain the `tskey-api-` prefix but use an angle-bracketed
+suffix such as `tskey-api-<test-only-old>` and `tskey-api-<test-only-new>`.
+The brackets make these literal placeholders, rather than provider-shaped
+tokens. Keep distinct values for rotation, rollback and fingerprint assertions.
+Use plain labels when the credential kind is irrelevant. Avoid colons in
+fixtures passed as HTTP Basic Auth usernames, because colons delimit passwords.
+For generic `tskey-` redaction tests, use an invented kind such as
+`tskey-test-FAKE-error` to keep the contiguous token grammar under test. When
+asserting a fixture is absent from JSON, check a distinctive unescaped suffix
+or decoded fields: JSON escapes angle brackets, so comparing only the raw
+angle-bracketed literal would miss an encoded leak.
+
+Keep keyring, verification and transport operations mocked or loopback-only as
+described above. Do not split strings to conceal a credential-shaped fixture,
+exclude all test files from scanning, or disable a secret-scanning rule.
+
+GitHub Secret Scanning alerts can remain open after a fixture is removed from
+the current tree. A maintainer must verify the exact historical fixture and all
+its locations before closing that individual alert as `used_in_tests`. An
+unverified value must stay open; a test filename alone is not proof. See
+[GitHub's alert-resolution guidance](https://docs.github.com/en/code-security/secret-scanning/managing-alerts-from-secret-scanning/resolving-alerts).
+
 ### Compiled-binary test isolation
 
 Tests that execute a freshly compiled TSLink binary must set all three of

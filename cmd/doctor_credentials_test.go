@@ -166,7 +166,8 @@ func TestDoctorCredentialMetadataStates(t *testing.T) {
 		env := newDoctorTestEnv(t, nil)
 		env.writeExactSnapshot(t)
 		doctorCredentialInventoryFn = func(values credentials.SlotValues, now time.Time, _ bool) credentials.Inventory {
-			return credentials.DescribeSlotsWithMetadata(values, credentials.Metadata{}, errors.New("credential metadata file is unreadable or malformed: token tskey-api-FAKE-inside-error"), now)
+			// The redactor accepts any tskey- token; use an invented test kind.
+			return credentials.DescribeSlotsWithMetadata(values, credentials.Metadata{}, errors.New("credential metadata file is unreadable or malformed: token tskey-test-FAKE-inside-error"), now)
 		}
 		var buf bytes.Buffer
 		err := runDoctor(context.Background(), &buf, doctorOptions{}, true)
@@ -239,7 +240,7 @@ func TestDoctorProbeRemoteRecordsEachSlotOutcome(t *testing.T) {
 				}
 				outcome := credentials.ProbeOutcome{Slot: slot, Present: true, Result: tc.results[slot], Recorded: true}
 				if outcome.Result != credentials.VerifyResultOK {
-					outcome.Cause = errors.New("synthetic probe failure for tskey-api-FAKE-cause")
+					outcome.Cause = errors.New("synthetic probe failure for tskey-test-FAKE-cause")
 				}
 				return outcome, nil
 			}

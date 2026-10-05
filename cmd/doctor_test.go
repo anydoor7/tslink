@@ -160,8 +160,8 @@ func stubDoctorTailscaleSSH(t *testing.T, enabled bool, err error) {
 }
 
 const (
-	doctorFixtureAPIKey       = "tskey-api-secret-value"
-	doctorFixtureClientSecret = "tskey-client-FAKE-fixture-secret"
+	doctorFixtureAPIKey       = "tskey-api-<test-only-secret-value>"
+	doctorFixtureClientSecret = "tskey-client-<testonly_FAKE>-<testonly_fixture>-<testonly_secret>"
 )
 
 // doctorFixtureInventory classifies the fixture values against an in-memory
@@ -294,7 +294,11 @@ func assertDoctorCodesRegistered(t *testing.T, result DoctorResult) {
 func assertDoctorOutputOmits(t *testing.T, raw string, forbidden []string) {
 	t.Helper()
 	for _, value := range forbidden {
-		if strings.Contains(raw, value) {
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(raw, value) || strings.Contains(raw, string(encoded[1:len(encoded)-1])) {
 			t.Fatalf("doctor output leaked %q: %s", value, raw)
 		}
 	}
@@ -627,7 +631,7 @@ func TestDoctorJSONSchemaCountsAndRedaction(t *testing.T) {
 		t.Fatalf("runDoctor JSON returned %v, want nil for info-only findings", err)
 	}
 	raw := buf.String()
-	for _, secret := range []string{"tskey-api-secret-value", "alice@example.com", "bob@example.com"} {
+	for _, secret := range []string{"test-only-secret-value", "alice@example.com", "bob@example.com"} {
 		if strings.Contains(raw, secret) {
 			t.Fatalf("doctor JSON leaked %q: %s", secret, raw)
 		}
@@ -644,7 +648,7 @@ func TestDoctorJSONSchemaCountsAndRedaction(t *testing.T) {
 }
 
 func TestDoctorEvidenceErrorRedactsSecretBearingValues(t *testing.T) {
-	evidence := evidenceError(errors.New(`invalid URL "https://user:pass@example.com?auth=tskey-api-secret": token tskey-other-secret`))
+	evidence := evidenceError(errors.New(`invalid URL "https://user:pass@example.com?auth=tskey-test-secret": token tskey-other-secret`))
 	raw, err := json.Marshal(evidence)
 	if err != nil {
 		t.Fatalf("marshal evidence: %v", err)
@@ -935,7 +939,7 @@ func TestDoctorGlobalInvalidControlURLRedactsRawOutputs(t *testing.T) {
 	env := newDoctorTestEnv(t, nil)
 	env.writeExactSnapshot(t)
 	doctorLoadGlobalConfigFn = func() (config.GlobalConfig, error) {
-		return config.GlobalConfig{ControlURL: "ftp://user:pass@example.com?auth=tskey-api-secret"}, nil
+		return config.GlobalConfig{ControlURL: "ftp://user:pass@example.com?auth=tskey-test-secret"}, nil
 	}
 	forbidden := []string{
 		// "user:pass" targets the leaked URL userinfo specifically. A bare "user"

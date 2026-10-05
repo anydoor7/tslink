@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/anydoor7/tslink/internal/accesslog"
 	"github.com/anydoor7/tslink/internal/registry"
@@ -50,22 +49,36 @@ func TestAccessBearerCapabilityReplay(t *testing.T) {
 					t.Fatalf("backend control %q=%d want %d", p, code, want)
 				}
 			}
-			var result accesslog.Result
-			var err error
-			deadline := time.Now().Add(3 * time.Second)
-			for time.Now().Before(deadline) {
-				result, err = accesslog.Query(dir, accesslog.Filter{})
-				if err != nil {
-					t.Fatal(err)
-				}
-				if len(result.Events) == len(paths) {
-					break
-				}
-				time.Sleep(time.Millisecond)
+			// A completed response does not join either the handler's deferred
+			// record or the asynchronous disk writer. Stop producers, then join
+			// persistence; this test has no disk-throughput requirement.
+			s.stopNodeLocked(svc.Name)
+			drainAccess(t, store)
+			result, err := accesslog.Query(dir, accesslog.Filter{})
+			if err != nil {
+				t.Fatal(err)
 			}
 			if len(result.Events) != len(paths) {
 				t.Fatalf("missing listener records: %+v", result)
 			}
+			statuses := map[int]int{}
+			for _, e := range result.Events {
+				statuses[e.Status]++
+				if e.Kind != "http" || e.App != svc.Name || e.Method != "GET" || !e.Time.Equal(accessTestTime) {
+					t.Fatalf("listener record metadata: %+v", e)
+				}
+			}
+			if statuses[200] != 1 || statuses[204] != 7 || statuses[403] != 1 {
+				t.Fatalf("record statuses: %v", statuses)
+			}
+			if h := store.Health(); h.Drops != 0 || h.Error != "" {
+				t.Fatalf("listener writer health: %+v", h)
+			}
+			// Replay through another real listener with the same policy/backend.
+			// Its own writer keeps replay requests out of the initial nine-record
+			// snapshot without submitting records to an already closed store.
+			replay, replayStore, replayDir, replayBase := setupAccessNode(t, svc, nil, accesslog.Options{PathMode: policy.global}, nil, nil, true)
+			replays := 0
 			mode := policy.want
 			for _, e := range result.Events {
 				if e.Identity.Login != "public" {
@@ -100,29 +113,40 @@ func TestAccessBearerCapabilityReplay(t *testing.T) {
 				if e.Status == 204 {
 					// Replaying a sanitized TSLink/default-prefix path cannot authorize.
 					u := url.URL{Path: decoded}
-					if code := requestAccess(t, base+u.EscapedPath(), "GET", ""); code == 204 {
+					replays++
+					if code := requestAccess(t, replayBase+u.EscapedPath(), "GET", ""); code == 204 {
 						t.Errorf("stored path replays capability: %q", e.Path)
 					}
 				}
 			}
-			s.stopNodeLocked(svc.Name)
-			drainAccess(t, store)
-			files, err := filepath.Glob(filepath.Join(dir, "access-log", "*.jsonl"))
-			if err != nil || len(files) != 1 {
-				t.Fatal(files, err)
+			replay.stopNodeLocked(svc.Name)
+			drainAccess(t, replayStore)
+			replayed, err := accesslog.Query(replayDir, accesslog.Filter{})
+			if err != nil || len(replayed.Events) != replays {
+				t.Fatalf("missing replay records: %+v, %v", replayed, err)
 			}
-			raw, err := os.ReadFile(files[0])
-			if err != nil {
-				t.Fatal(err)
+			if h := replayStore.Health(); h.Drops != 0 || h.Error != "" {
+				t.Fatalf("replay writer health: %+v", h)
 			}
-			// Full mode intentionally permits application-specific paths; remove only
-			// that positive control before checking the exact disk bytes.
-			for _, line := range strings.Split(string(raw), "\n") {
-				if mode == "full" && strings.Contains(line, `"path":"/s/`) {
-					continue
+			t.Logf("listener records: initial=%d statuses=%v replay=%d; both writers drained without drops", len(result.Events), statuses, len(replayed.Events))
+			for _, logDir := range []string{dir, replayDir} {
+				files, err := filepath.Glob(filepath.Join(logDir, "access-log", "*.jsonl"))
+				if err != nil || len(files) != 1 {
+					t.Fatal(files, err)
 				}
-				if strings.Contains(line, capability) || strings.Contains(line, appCapability) {
-					t.Errorf("capability on disk: %s", line)
+				raw, err := os.ReadFile(files[0])
+				if err != nil {
+					t.Fatal(err)
+				}
+				// Full mode intentionally permits application-specific paths; remove only
+				// that positive control before checking the exact disk bytes.
+				for _, line := range strings.Split(string(raw), "\n") {
+					if mode == "full" && strings.Contains(line, `"path":"/s/`) {
+						continue
+					}
+					if strings.Contains(line, capability) || strings.Contains(line, appCapability) {
+						t.Errorf("capability on disk: %s", line)
+					}
 				}
 			}
 		})

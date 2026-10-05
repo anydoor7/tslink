@@ -10,11 +10,11 @@ import (
 // must say so: the operator otherwise never learns the file was kept.
 func TestMigrateFromLegacyWarnsWhenLegacyFileConflictsWithKeyring(t *testing.T) {
 	setup(t)
-	if err := SetAPIKey("tskey-api-FAKE-RING"); err != nil {
+	if err := SetAPIKey("tskey-api-<test-only-FAKE-RING>"); err != nil {
 		t.Fatal(err)
 	}
 	path := apiKeyPath(t)
-	if err := os.WriteFile(path, []byte("tskey-api-FAKE-FILE"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("tskey-api-<test-only-FAKE-FILE>"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	logs := captureCredentialLogs(t)
@@ -28,10 +28,10 @@ func TestMigrateFromLegacyWarnsWhenLegacyFileConflictsWithKeyring(t *testing.T) 
 	if strings.Contains(out, "FAKE-RING") || strings.Contains(out, "FAKE-FILE") {
 		t.Fatalf("warning leaks a credential value:\n%s", out)
 	}
-	if data, err := os.ReadFile(path); err != nil || string(data) != "tskey-api-FAKE-FILE" {
+	if data, err := os.ReadFile(path); err != nil || string(data) != "tskey-api-<test-only-FAKE-FILE>" {
 		t.Fatalf("conflicting legacy file changed: %v", err)
 	}
-	if key, err := GetAPIKey(); err != nil || key != "tskey-api-FAKE-RING" {
-		t.Fatalf("keyring value changed by a conflicting migration: kept=%v err=%v", key == "tskey-api-FAKE-RING", err)
+	if key, err := GetAPIKey(); err != nil || key != "tskey-api-<test-only-FAKE-RING>" {
+		t.Fatalf("keyring value changed by a conflicting migration: kept=%v err=%v", key == "tskey-api-<test-only-FAKE-RING>", err)
 	}
 }

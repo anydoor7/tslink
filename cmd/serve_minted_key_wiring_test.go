@@ -64,20 +64,20 @@ func TestServeUserSuppliedAuthKeyDefaultFollowsCredentialOrder(t *testing.T) {
 		want  bool
 	}{
 		{name: "legacy authkey file only", want: true, setup: func(t *testing.T, dir string) {
-			if err := os.WriteFile(filepath.Join(dir, "authkey"), []byte("tskey-auth-USER-SUPPLIED"), 0o600); err != nil {
+			if err := os.WriteFile(filepath.Join(dir, "authkey"), []byte("tskey-auth-<testonly_USER>-<testonly_SUPPLIED>"), 0o600); err != nil {
 				t.Fatal(err)
 			}
 		}},
 		{name: "API access token beside the legacy file", want: false, setup: func(t *testing.T, dir string) {
-			if err := os.WriteFile(filepath.Join(dir, "authkey"), []byte("tskey-auth-USER-SUPPLIED"), 0o600); err != nil {
+			if err := os.WriteFile(filepath.Join(dir, "authkey"), []byte("tskey-auth-<testonly_USER>-<testonly_SUPPLIED>"), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			if err := credentials.SetAPIKey("tskey-api-TEST-PLACEHOLDER"); err != nil {
+			if err := credentials.SetAPIKey("tskey-api-<test-only-TEST-PLACEHOLDER>"); err != nil {
 				t.Fatal(err)
 			}
 		}},
 		{name: "OAuth client secret", want: false, setup: func(t *testing.T, dir string) {
-			if err := credentials.SaveClientSecret("tskey-client-TEST-PLACEHOLDER"); err != nil {
+			if err := credentials.SaveClientSecret("tskey-client-<testonly_TEST>-<testonly_PLACEHOLDER>"); err != nil {
 				t.Fatal(err)
 			}
 		}},

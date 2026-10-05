@@ -16,7 +16,7 @@ import (
 // mintedTestKey stands for an auth key the credentialed provider mints for the
 // owner's tailnet through api.tailscale.com. tsnet sends whatever key it gets in
 // the registration request to the node's control URL.
-const mintedTestKey = "tskey-auth-MINTED-FOR-OWNER-TAILNET"
+const mintedTestKey = "tskey-auth-<testonly_MINTED>-<testonly_FOR>-<testonly_OWNER>-<testonly_TAILNET>"
 
 // codeCredentialControlURLMismatch is the wire value of the per-service issue;
 // it is spelled out here because the string is the contract.
@@ -201,7 +201,7 @@ func TestUserSuppliedStaticKeyStillReachesItsControlServer(t *testing.T) {
 		return &fakeTSNetServer{}
 	}
 	t.Cleanup(func() { newTSNetServerFn = oldNew })
-	s, err := New("tskey-auth-ISSUED-BY-HEADSCALE", headscale)
+	s, err := New("tskey-auth-<testonly_ISSUED>-<testonly_BY>-<testonly_HEADSCALE>", headscale)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -209,7 +209,7 @@ func TestUserSuppliedStaticKeyStillReachesItsControlServer(t *testing.T) {
 	if err := s.syncNodes(context.Background()); err != nil {
 		t.Fatalf("syncNodes() error = %v", err)
 	}
-	if len(got) != 1 || got[0].authKey != "tskey-auth-ISSUED-BY-HEADSCALE" || got[0].controlURL != headscale || !s.nodeRunning("app") {
+	if len(got) != 1 || got[0].authKey != "tskey-auth-<testonly_ISSUED>-<testonly_BY>-<testonly_HEADSCALE>" || got[0].controlURL != headscale || !s.nodeRunning("app") {
 		t.Fatalf("tsnet nodes = %+v running=%v, want the user's key sent to %s", got, s.nodeRunning("app"), headscale)
 	}
 }

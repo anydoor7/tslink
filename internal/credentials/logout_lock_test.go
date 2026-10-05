@@ -53,10 +53,10 @@ func assertWaitsForCredentialTransaction(t *testing.T, name string, op func() er
 
 func storeBothCredentials(t *testing.T) {
 	t.Helper()
-	if err := SetAPIKey("tskey-api-FAKE-logout"); err != nil {
+	if err := SetAPIKey("tskey-api-<test-only-FAKE-logout>"); err != nil {
 		t.Fatal(err)
 	}
-	if err := SaveClientSecret("tskey-client-FAKE-logout"); err != nil {
+	if err := SaveClientSecret("tskey-client-<testonly_FAKE>-<testonly_logout>"); err != nil {
 		t.Fatal(err)
 	}
 }

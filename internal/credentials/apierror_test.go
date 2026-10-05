@@ -128,7 +128,7 @@ func TestProbeStoredCredentialRecordsEachOutcome(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			setup(t)
-			const key = "tskey-api-FAKE-probe-value"
+			const key = "tskey-api-<test-only-FAKE-probe-value>"
 			if err := SetAPIKey(key); err != nil {
 				t.Fatal(err)
 			}
@@ -204,7 +204,7 @@ func TestProbeStoredCredentialAbsentAndErrors(t *testing.T) {
 
 func TestProbeStoredCredentialWithoutMetadataDoesNotRecordButReports(t *testing.T) {
 	setup(t)
-	if err := SetAPIKey("tskey-api-FAKE"); err != nil {
+	if err := SetAPIKey("tskey-api-<test-only-FAKE>"); err != nil {
 		t.Fatal(err)
 	}
 	baseURL, httpClient, _ := probeServer(t, http.StatusOK)
@@ -230,11 +230,11 @@ func TestProbeStoredCredentialReadFailureIsLocalError(t *testing.T) {
 }
 
 func TestDefaultProbeClientFactoryPerSlot(t *testing.T) {
-	client, err := probeClientFactoryFn(SlotAPIKey, "tskey-api-FAKE")
-	if err != nil || client == nil || client.APIKey != "tskey-api-FAKE" {
+	client, err := probeClientFactoryFn(SlotAPIKey, "tskey-api-<test-only-FAKE>")
+	if err != nil || client == nil || client.APIKey != "tskey-api-<test-only-FAKE>" {
 		t.Fatalf("api-key factory = %+v, %v", client, err)
 	}
-	client, err = probeClientFactoryFn(SlotClientSecret, "tskey-client-FAKEID-FAKESECRET")
+	client, err = probeClientFactoryFn(SlotClientSecret, "tskey-client-<testonly_FAKEID>-<testonly_FAKESECRET>")
 	if err != nil || client == nil || client.Auth == nil {
 		t.Fatalf("client-secret factory = %+v, %v", client, err)
 	}
@@ -258,7 +258,7 @@ func TestDeriveAuthKeyCodes401And403(t *testing.T) {
 			setup(t)
 			baseURL, httpClient, _ := probeServer(t, tc.status)
 			factory := func() (*tailscale.Client, error) {
-				return &tailscale.Client{Tailnet: "-", APIKey: "tskey-api-FAKE", BaseURL: baseURL, HTTP: httpClient}, nil
+				return &tailscale.Client{Tailnet: "-", APIKey: "tskey-api-<test-only-FAKE>", BaseURL: baseURL, HTTP: httpClient}, nil
 			}
 			_, err := DeriveAuthKey(context.Background(), AuthKeyOptions{ClientFactory: factory})
 			code, ok := registry.ErrorCode(err)

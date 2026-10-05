@@ -47,7 +47,7 @@ func TestCredentialLockContentionIsRetryableConflictForLoginAndLogout(t *testing
 	}
 	cases := map[string]func(dir string) error{
 		"login": func(string) error {
-			_, err := commitLoginCredential(context.Background(), defaultLoginCredentialStore{}, loginCredentialModeAPIKey, "tskey-api-FAKE-contended", loginReplaceOptions{Now: loginTestNow})
+			_, err := commitLoginCredential(context.Background(), defaultLoginCredentialStore{}, loginCredentialModeAPIKey, "tskey-api-<test-only-FAKE-contended>", loginReplaceOptions{Now: loginTestNow})
 			return err
 		},
 		"logout": func(dir string) error {
@@ -62,7 +62,7 @@ func TestCredentialLockContentionIsRetryableConflictForLoginAndLogout(t *testing
 			dir := setupLoginTest(t)
 			useRealLoginTransaction(t)
 			mockAPIKeySuccess(t)
-			if err := credentials.SetAPIKey("tskey-api-FAKE-before"); err != nil {
+			if err := credentials.SetAPIKey("tskey-api-<test-only-FAKE-before>"); err != nil {
 				t.Fatal(err)
 			}
 			lockPath := filepath.Join(dir, "credential-test.lock")
@@ -85,8 +85,8 @@ func TestCredentialLockContentionIsRetryableConflictForLoginAndLogout(t *testing
 					t.Fatalf("%s message %q does not mention %q", name, failure.Error.Message, want)
 				}
 			}
-			if key, err := credentials.GetAPIKey(); err != nil || key != "tskey-api-FAKE-before" {
-				t.Fatalf("%s changed the stored credential under contention: kept=%v err=%v", name, key == "tskey-api-FAKE-before", err)
+			if key, err := credentials.GetAPIKey(); err != nil || key != "tskey-api-<test-only-FAKE-before>" {
+				t.Fatalf("%s changed the stored credential under contention: kept=%v err=%v", name, key == "tskey-api-<test-only-FAKE-before>", err)
 			}
 		})
 	}

@@ -119,7 +119,7 @@ func TestCredentialLockContentionIsRetryableConflict(t *testing.T) {
 func TestMigrateFromLegacyWarnsWhenSkippedForLockContention(t *testing.T) {
 	setup(t)
 	t.Cleanup(SetMutationLockTimeoutForTesting(200 * time.Millisecond))
-	if err := os.WriteFile(apiKeyPath(t), []byte("tskey-api-FAKE-legacy"), 0o600); err != nil {
+	if err := os.WriteFile(apiKeyPath(t), []byte("tskey-api-<test-only-FAKE-legacy>"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	lockPath, err := credentialMutationLockPathFunc()

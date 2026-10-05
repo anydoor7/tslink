@@ -34,7 +34,7 @@ func TestReReviewCrashHelper(t *testing.T) {
 	paths := sharePaths{Registry: filepath.Join(dir, "registry.json"), PID: filepath.Join(dir, "pid"), Snapshot: filepath.Join(dir, "runtime.json")}
 	t.Setenv(config.ConfigDirEnv, dir)
 	t.Setenv(tailapi.APIBaseURLEnv, os.Getenv("RR_CRASH_API"))
-	t.Setenv("TSLINK_API_KEY", "tskey-api-FAKE-review2")
+	t.Setenv("TSLINK_API_KEY", "tskey-api-<test-only-FAKE-review2>")
 	restoreInviteCommandSeams(t)
 	now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
 	peopleNowFn = func() time.Time { return now }

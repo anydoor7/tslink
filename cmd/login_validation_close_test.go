@@ -42,7 +42,7 @@ func (s *panicOnCloseValidationServer) Close() error {
 func TestLoginWithClientSecretReturnsAnEarlyUpFailureInsteadOfPanicking(t *testing.T) {
 	setupLoginTest(t)
 	resetLoginFlags(t)
-	if err := credentials.SetAPIKey("tskey-api-existing"); err != nil {
+	if err := credentials.SetAPIKey("tskey-api-<test-only-existing>"); err != nil {
 		t.Fatalf("SetAPIKey() error = %v", err)
 	}
 
@@ -95,7 +95,7 @@ func TestLoginWithClientSecretReturnsAnEarlyUpFailureInsteadOfPanicking(t *testi
 	if err != nil {
 		t.Fatalf("GetAPIKey() error = %v", err)
 	}
-	if gotAPIKey != "tskey-api-existing" {
+	if gotAPIKey != "tskey-api-<test-only-existing>" {
 		t.Fatalf("api key = %q, want the previous credential kept", gotAPIKey)
 	}
 	gotSecret, err := credentials.GetClientSecret()

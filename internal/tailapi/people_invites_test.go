@@ -50,7 +50,7 @@ func TestPeopleInviteRemoteFailureModes(t *testing.T) {
 			}))
 			defer api.Close()
 			t.Setenv(APIBaseURLEnv, api.URL)
-			t.Setenv("TSLINK_API_KEY", "tskey-api-FAKE-test")
+			t.Setenv("TSLINK_API_KEY", "tskey-api-<test-only-FAKE-test>")
 			state, e := RevokePendingDeviceInvite(context.Background(), DeviceTarget{Service: "photos", Hostname: "photos", NodeID: "n1"}, "1001")
 			if (e != nil) != tc.wantError || state != tc.wantState || deletes != tc.wantDeletes {
 				t.Fatal(state, e, deletes)
@@ -85,7 +85,7 @@ func TestPeopleDeletedTargetRequiresSuccessfulOwnershipProof(t *testing.T) {
 			}))
 			defer api.Close()
 			t.Setenv(APIBaseURLEnv, api.URL)
-			t.Setenv("TSLINK_API_KEY", "tskey-api-FAKE-test")
+			t.Setenv("TSLINK_API_KEY", "tskey-api-<test-only-FAKE-test>")
 			state, err := RevokePendingDeviceInvite(context.Background(), DeviceTarget{Service: "photos", Hostname: "photos", NodeID: "n1"}, "1001")
 			if tc.gone {
 				if err != nil || state != "target_gone" {
