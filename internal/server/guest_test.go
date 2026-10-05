@@ -521,10 +521,15 @@ func TestGuestConcurrentRevokeRequests(t *testing.T) {
 	}
 	wg.Wait()
 	hits := f.hits.Load()
+	// The revocation commit wakes the gate monitor, which flushes the
+	// counters queued by the allowed requests as a registry writer; a read
+	// that meets that flush fails closed with 503. These denials are
+	// read-only, so own their read window as login does.
+	defer f.holdCounterFlush()()
 	for range 3 {
 		r, _ := f.request("GET", "/", "", cookies)
 		if r.StatusCode != 401 {
-			t.Fatal("revoked concurrent session authorized")
+			t.Fatalf("revoked concurrent session authorized: status=%d retry-after=%q", r.StatusCode, r.Header.Get("Retry-After"))
 		}
 	}
 	if f.hits.Load() != hits {

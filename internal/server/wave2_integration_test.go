@@ -82,9 +82,15 @@ func TestWave2GuestPrivateAccessAndAudit(t *testing.T) {
 		if _, err := registry.RevokeGuest(f.path, f.grant.ID, accessTestTime); err != nil {
 			t.Fatal(err)
 		}
+		// The revocation commit wakes the gate monitor, which flushes the
+		// queued session counters as a registry writer; a read that meets that
+		// flush fails closed with 503. The denial is read-only, so own its
+		// read window as login does.
+		release := f.holdCounterFlush()
 		response, _ = f.request("GET", "/", "", cookies)
+		release()
 		if response.StatusCode != 401 {
-			t.Fatal(response.StatusCode)
+			t.Fatalf("revoked session: status=%d retry-after=%q", response.StatusCode, response.Header.Get("Retry-After"))
 		}
 		f.s.stopNodeLocked("photos")
 		drainAccess(t, f.store)
