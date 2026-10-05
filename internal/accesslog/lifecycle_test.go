@@ -6,6 +6,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 func closeLifecycle(t *testing.T, l *Lifecycle) {
@@ -111,18 +113,10 @@ func TestLifecycleHealthPublication(t *testing.T) {
 	if !l.Record(event("photos", "alice", "/album/item")) {
 		t.Fatal("record")
 	}
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
+	testwait.Until(t, "writer published the record timestamp", func() bool {
 		h := l.Health()
-		if h.UpdatedAt.Equal(later) && h.LastWrite != nil && h.LastWrite.Equal(later) {
-			break
-		}
-		time.Sleep(time.Millisecond)
-	}
-	h := l.Health()
-	if !h.UpdatedAt.Equal(later) || h.LastWrite == nil || !h.LastWrite.Equal(later) {
-		t.Fatal("writer publication timestamp lost", h)
-	}
+		return h.UpdatedAt.Equal(later) && h.LastWrite != nil && h.LastWrite.Equal(later)
+	})
 	closeLifecycle(t, l)
 	if ReadHealth(dir).Drops != 99 {
 		t.Fatal("historical drop total lost")

@@ -10,6 +10,7 @@ import (
 
 	"github.com/anydoor7/tslink/internal/inspect"
 	"github.com/anydoor7/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 func TestWave1Round2CaptureLargeOutput(t *testing.T) {
@@ -19,7 +20,7 @@ func TestWave1Round2CaptureLargeOutput(t *testing.T) {
 		pipe := os.Stdout
 		// A broken capture is unblocked through this test-owned pipe, so the
 		// regression reports a write/assertion error instead of hanging the suite.
-		guard := time.AfterFunc(5*time.Second, func() { pipe.Close() })
+		guard := time.AfterFunc(testwait.Budget(t), func() { pipe.Close() })
 		defer guard.Stop()
 		_, writeErr = io.WriteString(pipe, wanted)
 	})

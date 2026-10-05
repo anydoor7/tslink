@@ -14,6 +14,7 @@ import (
 
 	"github.com/anydoor7/tslink/internal/registry"
 	"github.com/anydoor7/tslink/internal/tailapi"
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 func TestPeopleRemovalPartialCleanupAndRetry(t *testing.T) {
@@ -215,11 +216,7 @@ func TestPeopleRemovalDuringStalledPostAndConcurrentRetry(t *testing.T) {
 		}
 		done <- v
 	}()
-	select {
-	case <-entered:
-	case <-time.After(5 * time.Second):
-		t.Fatal("POST not reached")
-	}
+	testwait.Recv(t, entered, "invite POST reached")
 	defer func() {
 		select {
 		case <-release:
@@ -241,13 +238,8 @@ func TestPeopleRemovalDuringStalledPostAndConcurrentRetry(t *testing.T) {
 		t.Fatal("local denial blocked by POST", p, e)
 	}
 	close(release)
-	select {
-	case result := <-done:
-		if !result.Person.Revoked {
-			t.Fatal("stale local grant in create result", result)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("stalled POST did not join")
+	if result := testwait.Recv(t, done, "stalled POST joined"); !result.Person.Revoked {
+		t.Fatal("stale local grant in create result", result)
 	}
 	p, e = readPerson(paths.Registry, "alice")
 	if e != nil || p.Invites[0].ID != "1001" || !p.Revoked {
@@ -281,25 +273,18 @@ func TestPeopleInviteContextCancellationBeforeAndAfterPOST(t *testing.T) {
 	}()
 	defer func() {
 		cancel()
+		// Deferred: report without t.Fatal.
 		select {
 		case <-done:
-		case <-time.After(5 * time.Second):
+		case <-time.After(testwait.Budget(t)):
 			t.Error("cancelled invitation operation did not finish")
 		}
 	}()
 	// Reach POST before cancellation; load must not move the test into the
 	// distinct pre-POST failure path.
-	select {
-	case <-entered:
-	case <-time.After(5 * time.Second):
-		t.Fatal("invitation operation did not reach POST")
-	}
+	testwait.Recv(t, entered, "invitation operation reached POST")
 	cancel()
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("cancelled POST did not finish")
-	}
+	testwait.Recv(t, done, "cancelled POST finished")
 	if e != nil || result.Complete || result.Invites[0].State != registry.PersonInviteUnknown {
 		t.Fatal(result, e)
 	}

@@ -7,6 +7,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 // TestMCPHelpDocumentsSessionEndingInputs keeps `tslink mcp --help` honest
@@ -41,7 +43,9 @@ func TestMCPHelpDocumentsSessionEndingInputs(t *testing.T) {
 		"oversize record": `{"jsonrpc":"2.0","id":3,"method":"ping","params":{"note":"` + strings.Repeat("a", mcpMaxRecordBytes) + `"}}`,
 	} {
 		t.Run(name, func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			// The deadline is only the session's hang guard; a session that
+			// ended by it still fails the ctx.Err() check below.
+			ctx, cancel := context.WithTimeout(context.Background(), testwait.Budget(t))
 			defer cancel()
 			started, stopped := make(chan struct{}), make(chan struct{})
 			watching, release := make(chan struct{}), make(chan struct{})

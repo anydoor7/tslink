@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/anydoor7/tslink/internal/filelock"
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 func TestGuestCounterLockFailureWarning(t *testing.T) {
@@ -146,9 +147,11 @@ func TestGuestCounterFlushWriterRecovery(t *testing.T) {
 	if err = filelock.Lock(lock); err != nil {
 		t.Fatal(err)
 	}
-	start := time.Now()
-	err = FlushGuestCounters(path)
-	if err == nil || time.Since(start) > time.Second {
+	// The fixture holds the lock for the whole call, so a flush that waited
+	// for the writer would never return.
+	flushed := make(chan error, 1)
+	go func() { flushed <- FlushGuestCounters(path) }()
+	if err = testwait.Recv(t, flushed, "busy flush returned while another writer held the lock"); err == nil {
 		t.Fatal("busy flush must remain bounded", err)
 	}
 	if err = filelock.Unlock(lock); err != nil {

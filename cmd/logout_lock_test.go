@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/anydoor7/tslink/internal/credentials"
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 // Logout and logout --kind must wait for a credential transaction that is
@@ -35,11 +36,7 @@ func TestLogoutWaitsForHeldCredentialLock(t *testing.T) {
 					return nil
 				})
 			}()
-			select {
-			case <-held:
-			case <-time.After(5 * time.Second):
-				t.Fatal("holder transaction never acquired the credential lock")
-			}
+			testwait.Recv(t, held, "holder transaction acquired the credential lock")
 			opts := logoutOptions{PIDPath: filepath.Join(dir, "pid"), AuthKeyPath: filepath.Join(dir, "authkey"), NodesDir: filepath.Join(dir, "nodes"), ConfigDir: dir, Kind: kind}
 			logoutDone := make(chan error, 1)
 			go func() { logoutDone <- logoutUserWithOptions(opts, false, &bytes.Buffer{}) }()
@@ -54,13 +51,8 @@ func TestLogoutWaitsForHeldCredentialLock(t *testing.T) {
 			if err := <-txDone; err != nil {
 				t.Fatal(err)
 			}
-			select {
-			case err := <-logoutDone:
-				if err != nil {
-					t.Fatalf("logout after the lock was released: %v", err)
-				}
-			case <-time.After(5 * time.Second):
-				t.Fatal("logout remained blocked after the lock was released")
+			if err := testwait.Recv(t, logoutDone, "logout finished after the lock was released"); err != nil {
+				t.Fatalf("logout after the lock was released: %v", err)
 			}
 			if key, err := credentials.GetAPIKey(); err != nil || key != "" {
 				t.Fatalf("api key still stored after logout: present=%v err=%v", key != "", err)

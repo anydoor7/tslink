@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/anydoor7/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 // mcpSignalChildEnv re-enters this test file as a child process running the
@@ -109,7 +110,9 @@ func startMCPSignalChild(t *testing.T, testName, mode string) *mcpSignalChild {
 
 func (c *mcpSignalChild) waitFor(t *testing.T, what string, ready func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
+	// Real child process; the deadline is a hang guard that keeps stderr in
+	// the failure message.
+	deadline := time.Now().Add(testwait.Budget(t))
 	for !ready() {
 		if time.Now().After(deadline) {
 			t.Fatalf("child never reached %s; stderr: %s", what, c.stderr)
@@ -125,10 +128,12 @@ func (c *mcpSignalChild) signal(t *testing.T, sig syscall.Signal) {
 	}
 }
 
-// wait returns the child's exit, failing the test if it takes longer than limit.
-func (c *mcpSignalChild) wait(t *testing.T, limit time.Duration) syscall.WaitStatus {
+// wait returns the child's exit. The exit status and stderr are the
+// assertions; the hang guard only stops a child that never exits (a guard of
+// the product's own 5s grace used to race that grace).
+func (c *mcpSignalChild) wait(t *testing.T) syscall.WaitStatus {
 	t.Helper()
-	limit = max(limit, 5*time.Second)
+	limit := testwait.Budget(t)
 	select {
 	case err := <-c.exited:
 		var exitErr *exec.ExitError
@@ -164,7 +169,7 @@ func TestMCPSignalCancelsTheSessionAndRollsBackAShare(t *testing.T) {
 				return err == nil && len(reg.Services) == 1
 			})
 			child.signal(t, sig)
-			status := child.wait(t, 10*time.Second)
+			status := child.wait(t)
 			t.Logf("child stderr: %s", child.stderr)
 			if status.Signaled() {
 				t.Fatalf("%v killed tslink mcp instead of cancelling it; the share it registered was left behind", status.Signal())
@@ -196,7 +201,7 @@ func TestMCPSignalHardExitsWhenAHandlerIgnoresCancellation(t *testing.T) {
 		child := startMCPSignalChild(t, "TestMCPSignalHardExitsWhenAHandlerIgnoresCancellation", "stuck-grace")
 		child.waitFor(t, "the stuck handler", started(child))
 		child.signal(t, syscall.SIGTERM)
-		status := child.wait(t, 5*time.Second)
+		status := child.wait(t)
 		if status.Signaled() || status.ExitStatus() != 0 || !strings.Contains(child.stderr.String(), "child-result: mcp stdio:") {
 			t.Fatalf("signaled=%v exit=%d stderr=%q; want the session to give up on the handler and return", status.Signaled(), status.ExitStatus(), child.stderr)
 		}
@@ -212,7 +217,7 @@ func TestMCPSignalHardExitsWhenAHandlerIgnoresCancellation(t *testing.T) {
 		case <-time.After(300 * time.Millisecond):
 		}
 		child.signal(t, syscall.SIGTERM)
-		status := child.wait(t, 3*time.Second)
+		status := child.wait(t)
 		if !status.Signaled() || status.Signal() != syscall.SIGTERM {
 			t.Fatalf("signaled=%v exit=%d; want the second SIGTERM to terminate the process", status.Signaled(), status.ExitStatus())
 		}

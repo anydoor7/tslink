@@ -11,6 +11,7 @@ import (
 
 	"github.com/anydoor7/tslink/internal/config"
 	"github.com/anydoor7/tslink/internal/duration"
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 func TestGuestRevokeCrashTransaction(t *testing.T) {
@@ -80,16 +81,7 @@ func TestGuestRevokeCrashTransaction(t *testing.T) {
 					child.Wait()
 				}
 			})
-			deadline := time.Now().Add(5 * time.Second)
-			for {
-				if _, e := os.Stat(ready); e == nil {
-					break
-				}
-				if time.Now().After(deadline) {
-					t.Fatal("child did not reach transaction point")
-				}
-				time.Sleep(5 * time.Millisecond)
-			}
+			testwait.Until(t, "child reached the transaction point", func() bool { _, e := os.Stat(ready); return e == nil })
 			if e = child.Process.Kill(); e != nil {
 				t.Fatal(e)
 			}

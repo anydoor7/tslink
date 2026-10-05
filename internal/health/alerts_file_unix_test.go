@@ -9,6 +9,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 func TestNotifierConfigBoundedFiles(t *testing.T) {
@@ -46,7 +48,7 @@ func TestNotifierConfigBoundedFiles(t *testing.T) {
 				if err == nil {
 					t.Fatal("unsafe notifier configuration accepted")
 				}
-			case <-time.After(time.Second):
+			case <-time.After(testwait.Budget(t)):
 				// Rescue a regressed FIFO read, producing an assertion failure
 				// instead of a worker that survives until the package timeout.
 				if kind == "fifo" {

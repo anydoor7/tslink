@@ -10,6 +10,7 @@ import (
 	"github.com/anydoor7/tslink/internal/registry"
 	tsruntime "github.com/anydoor7/tslink/internal/runtime"
 	"github.com/anydoor7/tslink/internal/tailapi"
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 func immediateNodeStateGate(ctx context.Context, fn func() error) (bool, error) {
@@ -53,7 +54,8 @@ func TestReconcileSkipsBusyFinalProofAndRetries(t *testing.T) {
 				case <-entered:
 				case err := <-writerDone:
 					return tailapi.CleanupResult{}, err
-				case <-time.After(5 * time.Second):
+				case <-time.After(testwait.Budget(t)):
+					// Product goroutine: report through Reconcile, not t.Fatal.
 					return tailapi.CleanupResult{}, context.DeadlineExceeded
 				}
 				return tailapi.CleanupResult{ResolvedOwnershipIDs: []string{"old-node"}}, nil
@@ -71,7 +73,8 @@ func TestReconcileSkipsBusyFinalProofAndRetries(t *testing.T) {
 				if err != nil {
 					t.Errorf("Reconcile: %v", err)
 				}
-			case <-time.After(5 * time.Second):
+			case <-time.After(testwait.Budget(t)):
+				// Non-fatal so the held writer is still released and joined.
 				t.Error("final cleanup waited on a held proof lock")
 			}
 			cancel()
@@ -81,11 +84,7 @@ func TestReconcileSkipsBusyFinalProofAndRetries(t *testing.T) {
 				t.Fatal(err)
 			}
 			if !returned {
-				select {
-				case <-done:
-				case <-time.After(5 * time.Second):
-					t.Fatal("reconciliation did not finish after writer released")
-				}
+				testwait.Recv(t, done, "reconciliation finished after writer released")
 			}
 			cleanupDevicesFn = func(context.Context, []tailapi.CleanupTarget, bool) (tailapi.CleanupResult, error) {
 				return tailapi.CleanupResult{ResolvedOwnershipIDs: []string{"old-node"}}, nil

@@ -10,9 +10,10 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"golang.org/x/sys/windows"
+
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 func TestWindowsShutdownEventCancelsContextAndRestrictsAccess(t *testing.T) {
@@ -50,11 +51,7 @@ func TestWindowsShutdownEventCancelsContextAndRestrictsAccess(t *testing.T) {
 	if err := windows.SetEvent(h); err != nil {
 		t.Fatal(err)
 	}
-	select {
-	case <-ctx.Done():
-	case <-time.After(5 * time.Second):
-		t.Fatal("shutdown event did not cancel context")
-	}
+	testwait.Recv(t, ctx.Done(), "shutdown event canceled the context")
 	cleanup()
 	cleanup() // idempotence and join-before-close
 }

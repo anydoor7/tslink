@@ -10,9 +10,9 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/anydoor7/tslink/internal/testenv"
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 const serviceManagerGuardTripwireEnv = "TSLINK_SERVICE_MANAGER_GUARD_TRIPWIRE"
@@ -81,7 +81,7 @@ func TestServiceManagerGuardTripwireHelper(t *testing.T) {
 
 func runTripwireChild(t *testing.T, mode string) (int, string) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), testwait.Budget(t))
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, os.Args[0],

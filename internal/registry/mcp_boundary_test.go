@@ -11,6 +11,7 @@ import (
 
 	"github.com/anydoor7/tslink/internal/filelock"
 	"github.com/anydoor7/tslink/internal/mcpscope"
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 func TestMCPRegistryWritersRecheckAfterLockWait(t *testing.T) {
@@ -135,6 +136,9 @@ func TestMCPRegistryWritersRecheckAfterLockWait(t *testing.T) {
 				// Join even on assertion failure, before restoring the seam or
 				// reclaiming the registry. The package timeout bounds real I/O.
 				defer func() { cancel(); filelock.Unlock(lock); <-joined }()
+				// Both channels are buffered and written once; the writer cannot
+				// fill done while the fixture still holds the lock it reported.
+				testwait.Until(t, "writer reached the registry lock or returned", func() bool { return len(entered) != 0 || len(done) != 0 })
 				select {
 				case err := <-entered:
 					if err != nil {
@@ -152,7 +156,7 @@ func TestMCPRegistryWritersRecheckAfterLockWait(t *testing.T) {
 				if err := filelock.Unlock(lock); err != nil {
 					t.Fatal(err)
 				}
-				writeErr := <-done
+				writeErr := testwait.Recv(t, done, "writer finished after the fixture released the lock")
 				if state == "active" {
 					if writeErr != nil {
 						t.Fatal(writeErr)

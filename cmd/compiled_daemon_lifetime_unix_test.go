@@ -4,6 +4,8 @@ package cmd
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +15,7 @@ import (
 
 	"github.com/anydoor7/tslink/internal/config"
 	"github.com/anydoor7/tslink/internal/daemon"
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 func TestCompiledDaemonDoesNotOutliveTestLauncher(t *testing.T) {
@@ -47,7 +50,7 @@ func TestCompiledDaemonDoesNotOutliveTestLauncher(t *testing.T) {
 		if !launcherWaited {
 			select {
 			case <-launcherDone:
-			case <-time.After(2 * time.Second):
+			case <-time.After(testwait.Budget(t)):
 			}
 		}
 		if daemonPID > 0 && daemon.IsProcessRunning(daemonPID) {
@@ -57,7 +60,9 @@ func TestCompiledDaemonDoesNotOutliveTestLauncher(t *testing.T) {
 		}
 	})
 
-	deadline := time.Now().Add(10 * time.Second)
+	// Poll every millisecond so the daemon is frozen as soon as it publishes
+	// its PID; only the deadline is a hang guard.
+	deadline := time.Now().Add(testwait.Budget(t))
 	for time.Now().Before(deadline) {
 		pid, err := daemon.ReadPID(pidPath)
 		if err == nil && daemon.IsProcessRunning(pid) {
@@ -96,15 +101,13 @@ func TestCompiledDaemonDoesNotOutliveTestLauncher(t *testing.T) {
 	}
 
 	if !launcherExited {
-		if err := launcher.Process.Kill(); err != nil {
+		// The launcher can exit and be reaped between the select above and
+		// this Kill; that is the already-exited case, not a failure.
+		if err := launcher.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
 			t.Fatalf("kill daemon launcher: %v", err)
 		}
-		select {
-		case <-launcherDone:
-			launcherWaited = true
-		case <-time.After(5 * time.Second):
-			t.Fatal("daemon launcher did not exit after kill")
-		}
+		testwait.Recv(t, launcherDone, "daemon launcher exited after kill")
+		launcherWaited = true
 	}
 	if err := daemonProcess.Signal(syscall.SIGCONT); err != nil {
 		if !daemon.IsProcessRunning(daemonPID) {
@@ -113,12 +116,5 @@ func TestCompiledDaemonDoesNotOutliveTestLauncher(t *testing.T) {
 		t.Fatalf("resume detached daemon %d: %v", daemonPID, err)
 	}
 
-	exitDeadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(exitDeadline) {
-		if !daemon.IsProcessRunning(daemonPID) {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatalf("detached daemon %d survived launcher exit", daemonPID)
+	testwait.Until(t, fmt.Sprintf("detached daemon %d exited after its launcher", daemonPID), func() bool { return !daemon.IsProcessRunning(daemonPID) })
 }

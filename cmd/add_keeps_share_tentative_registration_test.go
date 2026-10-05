@@ -12,6 +12,7 @@ import (
 
 	"github.com/anydoor7/tslink/internal/config"
 	"github.com/anydoor7/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 // shareWaitingOnItsRegistration starts a share that creates a registration and
@@ -40,12 +41,19 @@ func shareWaitingOnItsRegistration(t *testing.T, paths sharePaths, req shareRequ
 		_, err := executeShare(ctx, paths, req, time.Minute, io.Discard)
 		shareDone <- err
 	}()
+	// entered is closed once and shareDone is buffered: polling consumes neither.
+	testwait.Until(t, "the share reached its URL wait or exited", func() bool {
+		select {
+		case <-entered:
+			return true
+		default:
+			return len(shareDone) != 0
+		}
+	})
 	select {
 	case <-entered:
 	case err := <-shareDone:
 		t.Fatalf("the share exited before its URL wait: %v", err)
-	case <-time.After(5 * time.Second):
-		t.Fatal("the share never reached its URL wait")
 	}
 	var once atomic.Bool
 	cancel = func() {

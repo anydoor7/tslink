@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"golang.org/x/sys/windows"
+
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 func stubProcessLivenessError(t *testing.T) {
@@ -45,7 +47,6 @@ func TestStopDaemonWindowsReportsSuccessAfterGracefulShutdown(t *testing.T) {
 		t.Fatalf("Start() error = %v", err)
 	}
 	stubProcessExecutableForPID(t, cmd.Process.Pid)
-	const hangGuard = 5 * time.Second
 	done := make(chan error, 1)
 	exited := make(chan struct{})
 	startWait := sync.OnceFunc(func() {
@@ -54,9 +55,10 @@ func TestStopDaemonWindowsReportsSuccessAfterGracefulShutdown(t *testing.T) {
 	killAndJoin := func() {
 		_ = cmd.Process.Kill()
 		startWait()
+		// Runs from cleanup, so it reports without t.Fatal.
 		select {
 		case <-exited:
-		case <-time.After(hangGuard):
+		case <-time.After(testwait.Budget(t)):
 			t.Error("shutdown helper did not exit after kill within the hang guard")
 		}
 	}
@@ -73,13 +75,9 @@ func TestStopDaemonWindowsReportsSuccessAfterGracefulShutdown(t *testing.T) {
 		if err != nil || string(ready) != "ready\n" {
 			t.Fatalf("helper shutdown event was not ready: event=%q err=%v", ready, err)
 		}
-	case <-time.After(hangGuard):
+	case <-time.After(testwait.Budget(t)):
 		killAndJoin()
-		select {
-		case <-read:
-		case <-time.After(hangGuard):
-			t.Fatal("shutdown helper IPC reader did not exit after child kill")
-		}
+		testwait.Recv(t, read, "shutdown helper IPC reader exited after child kill")
 		t.Fatal("helper shutdown event was not ready within the hang guard; killed and joined child")
 	}
 	startWait()
@@ -93,13 +91,8 @@ func TestStopDaemonWindowsReportsSuccessAfterGracefulShutdown(t *testing.T) {
 		t.Fatalf("StopDaemon() error = %v", err)
 	}
 
-	select {
-	case waitErr := <-done:
-		if waitErr != nil {
-			t.Fatalf("graceful helper did not exit successfully: %v", waitErr)
-		}
-	case <-time.After(windowsStopTimeout):
-		t.Fatal("terminated helper process did not exit")
+	if waitErr := testwait.Recv(t, done, "stopped helper process exited"); waitErr != nil {
+		t.Fatalf("graceful helper did not exit successfully: %v", waitErr)
 	}
 	if _, err := os.Stat(pidPath); !os.IsNotExist(err) {
 		t.Fatalf("PID file still exists after successful stop: %v", err)

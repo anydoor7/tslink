@@ -7,7 +7,8 @@ import (
 	"path/filepath"
 	"syscall"
 	"testing"
-	"time"
+
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 func TestPortalSpecialFilesDoNotStall(t *testing.T) {
@@ -16,12 +17,11 @@ func TestPortalSpecialFilesDoNotStall(t *testing.T) {
 	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	start := time.Now()
-	if _, _, err := PortalPreflight(fifo); err == nil {
+	// A FIFO with no peer blocks an open forever: returning is the property.
+	preflight := make(chan error, 1)
+	go func() { _, _, err := PortalPreflight(fifo); preflight <- err }()
+	if err := testwait.Recv(t, preflight, "portal preflight returned instead of stalling on a FIFO"); err == nil {
 		t.Fatal("FIFO admitted")
-	}
-	if time.Since(start) > time.Second {
-		t.Fatal("FIFO stalled")
 	}
 	regular := filepath.Join(dir, "regular.json")
 	if err := os.WriteFile(regular, []byte(`{"schema_version":2,"services":[]}`), 0o600); err != nil {

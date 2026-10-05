@@ -11,6 +11,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 func TestPortalHandoffSpecialFileCleanup(t *testing.T) {
@@ -44,16 +46,21 @@ func TestPortalHandoffSpecialFileCleanup(t *testing.T) {
 						return err
 					}
 				}
-				started := time.Now()
-				err := m.authHandoff(ctx, portalHandoffEvent("home", "cancelled"))
+				// A FIFO with no peer blocks an open forever: returning is the
+				// property. This runs inside the runner, so it reports by error.
+				handed := make(chan error, 1)
+				go func() { handed <- m.authHandoff(ctx, portalHandoffEvent("home", "cancelled")) }()
+				var err error
+				select {
+				case err = <-handed:
+				case <-time.After(testwait.Budget(t)):
+					return fmt.Errorf("special-file cleanup stalled")
+				}
 				if kind == "fifo" && (err == nil || !strings.Contains(err.Error(), "regular file")) {
 					return fmt.Errorf("FIFO refusal=%v want regular-file error", err)
 				}
 				if kind == "symlink" && (err == nil || !strings.Contains(err.Error(), "too many levels")) {
 					return fmt.Errorf("symlink refusal=%v want no-follow error", err)
-				}
-				if time.Since(started) > time.Second {
-					return fmt.Errorf("special-file cleanup stalled")
 				}
 				if _, err := os.Lstat(path); err != nil {
 					return fmt.Errorf("special file removed despite refusal: %w", err)

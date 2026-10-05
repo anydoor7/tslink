@@ -9,6 +9,7 @@ import (
 
 	"github.com/anydoor7/tslink/internal/duration"
 	"github.com/anydoor7/tslink/internal/filelock"
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 func TestPersonAuthorityUsesLockedPreMutationState(t *testing.T) {
@@ -97,13 +98,8 @@ func TestPersonAuthorityUsesLockedPreMutationState(t *testing.T) {
 				t.Fatal(err)
 			}
 			locked = false
-			select {
-			case err := <-done:
-				if !errors.Is(err, denied) {
-					t.Fatal("locked pre-mutation authorization did not refuse", err)
-				}
-			case <-time.After(5 * time.Second):
-				t.Fatal("registry writer did not finish")
+			if err := testwait.Recv(t, done, "registry writer finished after lock release"); !errors.Is(err, denied) {
+				t.Fatal("locked pre-mutation authorization did not refuse", err)
 			}
 			after, err := os.ReadFile(path)
 			if err != nil || !bytes.Equal(before, after) {

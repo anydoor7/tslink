@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 func setupRepairManager(t *testing.T, gate func()) {
@@ -75,11 +77,7 @@ func TestRepairFailedInstallRollbackCannotUndoPeer(t *testing.T) {
 	}
 	first := make(chan error, 1)
 	go func() { first <- repairOperation(context.Background(), "install") }()
-	select {
-	case <-entered:
-	case <-time.After(5 * time.Second):
-		t.Fatal("rollback never entered")
-	}
+	testwait.Recv(t, entered, "rollback entered")
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 	err := repairOperation(ctx, "install")
 	cancel()

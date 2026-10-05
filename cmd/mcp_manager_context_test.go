@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/anydoor7/tslink/internal/mcpscope"
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 func TestManagerCallerContextHelper(t *testing.T) {
@@ -44,25 +45,23 @@ func TestReview2ManagerCallerContext(t *testing.T) {
 			if state == "expired" {
 				current = expiry
 			}
-			joined := make(chan bool, 1)
 			if state == "cancelled" {
 				t.Setenv("TSLINK_TEST_MANAGER_WAIT", "yes")
-				go func() {
-					deadline := time.Now().Add(3 * time.Second)
-					for time.Now().Before(deadline) {
-						if _, err := os.Stat(marker); err == nil {
-							cancel()
-							joined <- true
-							return
-						}
-						time.Sleep(time.Millisecond)
-					}
-					cancel()
-					joined <- false
-				}()
 			}
-			started := time.Now()
-			_, err := runBoundedManagerCommandContext(ctx, exe, 5*time.Second, "-test.run=^TestManagerCallerContextHelper$")
+			// The manager deadline is set past any hang guard, so in the cancelled
+			// state only the caller's cancellation can end the hour-long child.
+			// Startup speed of the child process is not part of the property.
+			beyondHangGuard := 2 * testwait.MaxBudget
+			done := make(chan error, 1)
+			go func() {
+				_, err := runBoundedManagerCommandContext(ctx, exe, beyondHangGuard, "-test.run=^TestManagerCallerContextHelper$")
+				done <- err
+			}()
+			if state == "cancelled" {
+				testwait.Until(t, "child reached the real process boundary", func() bool { _, err := os.Stat(marker); return err == nil })
+				cancel()
+			}
+			err := testwait.Recv(t, done, "bounded manager command returned")
 			_, statErr := os.Stat(marker)
 			switch state {
 			case "active-control":
@@ -74,11 +73,8 @@ func TestReview2ManagerCallerContext(t *testing.T) {
 					t.Fatalf("expired policy started child: %v %v", err, statErr)
 				}
 			case "cancelled":
-				if !<-joined {
-					t.Fatal("child did not reach the real process boundary")
-				}
-				if !errors.Is(err, context.Canceled) || time.Since(started) > 4*time.Second {
-					t.Fatalf("caller cancellation did not end child before 5s manager timeout: %v elapsed=%s", err, time.Since(started))
+				if !errors.Is(err, context.Canceled) {
+					t.Fatalf("caller cancellation did not end the child: %v", err)
 				}
 			}
 		})

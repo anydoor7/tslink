@@ -10,6 +10,7 @@ import (
 	"github.com/anydoor7/tslink/internal/registry"
 	tsruntime "github.com/anydoor7/tslink/internal/runtime"
 	"github.com/anydoor7/tslink/internal/tailapi"
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 // The CLI supplies neither node-state gate. Once local state is absent,
@@ -69,13 +70,8 @@ func TestReconcileCLICleanupWaitsForProofLocks(t *testing.T) {
 				}
 			}
 			if !returned {
-				select {
-				case err := <-done:
-					if err != nil {
-						t.Fatal(err)
-					}
-				case <-time.After(5 * time.Second):
-					t.Fatal("cleanup did not finish after the proof lock was released")
+				if err := testwait.Recv(t, done, "cleanup finished after the proof lock was released"); err != nil {
+					t.Fatal(err)
 				}
 			}
 			ledger, err := tsruntime.LoadOwnership(ownershipPath)

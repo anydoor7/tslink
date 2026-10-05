@@ -14,6 +14,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 // windowsStartupScript must take the kill switch as a required argument. A
@@ -345,7 +347,8 @@ func TestWindowsDirectTransactionsCancelAndPreserveFinalState(t *testing.T) {
 					return nil
 				}
 			}
-			ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+			// Hang guard only: a nested lock would block until it expires.
+			ctx, cancel = context.WithTimeout(context.Background(), testwait.Budget(t))
 			defer cancel()
 			if err := operation(ctx); err != nil {
 				t.Fatalf("positive control after unlock (nested lock?): %v", err)

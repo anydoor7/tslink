@@ -11,6 +11,7 @@ import (
 
 	"github.com/anydoor7/tslink/internal/config"
 	"github.com/anydoor7/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 // B6a-5 (audit X4-5). Share A creates a registration and waits for its URL.
@@ -43,12 +44,19 @@ func TestShareReusedByAnIdenticalCallSurvivesTheCreatorsCancellation(t *testing.
 	defer cancel()
 	firstDone := make(chan error, 1)
 	go func() { _, err := executeShare(ctx, paths, req, time.Minute, io.Discard); firstDone <- err }()
+	// entered is closed once and firstDone is buffered: polling consumes neither.
+	testwait.Until(t, "first share reached its URL wait or exited", func() bool {
+		select {
+		case <-entered:
+			return true
+		default:
+			return len(firstDone) != 0
+		}
+	})
 	select {
 	case <-entered:
 	case err := <-firstDone:
 		t.Fatalf("first share exited before its URL wait: %v", err)
-	case <-time.After(5 * time.Second):
-		t.Fatal("first share never reached its URL wait")
 	}
 
 	second, secondErr := executeShare(context.Background(), paths, req, time.Second, io.Discard)

@@ -11,6 +11,7 @@ import (
 	"github.com/anydoor7/tslink/internal/registry"
 	tsruntime "github.com/anydoor7/tslink/internal/runtime"
 	"github.com/anydoor7/tslink/internal/tailapi"
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 // The API seam models a concurrent re-add while the remote cleanup is in flight.
@@ -119,13 +120,8 @@ func TestReconcileSerializesFinalRemovalWithReadd(t *testing.T) {
 	if len(result.Warnings) != 0 {
 		t.Fatalf("cleanup warnings = %v", result.Warnings)
 	}
-	select {
-	case err := <-addDone:
-		if err != nil {
-			t.Fatal(err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("re-add remained blocked after cleanup")
+	if err := testwait.Recv(t, addDone, "re-add finished after cleanup"); err != nil {
+		t.Fatal(err)
 	}
 	data, err := os.ReadFile(statePath)
 	if err != nil || string(data) != "state-after-readd" {
@@ -175,11 +171,7 @@ func TestReconcileWaitsForInProgressStartupBeforeRemovingState(t *testing.T) {
 				})
 				done <- reconcileResult{result, err}
 			}()
-			select {
-			case <-attempted:
-			case <-time.After(5 * time.Second):
-				t.Fatal("cleanup never reached startup gate")
-			}
+			testwait.Recv(t, attempted, "cleanup reached the startup gate")
 			if readd {
 				if _, err := registry.Add(regPath, registry.Service{Name: "orphan", Type: registry.TypeProxy, Target: "http://localhost:4001"}); err != nil {
 					t.Fatal(err)
@@ -193,13 +185,8 @@ func TestReconcileWaitsForInProgressStartupBeforeRemovingState(t *testing.T) {
 			}
 			<-gate
 			released = true
-			select {
-			case outcome := <-done:
-				if outcome.err != nil || len(outcome.result.Warnings) != 0 {
-					t.Fatalf("cleanup error=%v warnings=%v", outcome.err, outcome.result.Warnings)
-				}
-			case <-time.After(5 * time.Second):
-				t.Fatal("cleanup did not resume after startup")
+			if outcome := testwait.Recv(t, done, "cleanup resumed after startup"); outcome.err != nil || len(outcome.result.Warnings) != 0 {
+				t.Fatalf("cleanup error=%v warnings=%v", outcome.err, outcome.result.Warnings)
 			}
 			data, err := os.ReadFile(statePath)
 			if readd {

@@ -14,6 +14,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 func TestCatalog(t *testing.T) {
@@ -245,10 +247,12 @@ func TestDetectionTimeoutAndBodyBound(t *testing.T) {
 	if got := probeClient().Timeout; got != 700*time.Millisecond {
 		t.Fatalf("probe request timeout = %s, want 700ms", got)
 	}
-	parent, stop := context.WithTimeout(context.Background(), 5*time.Second)
-	defer stop()
-	got = detectListeners(parent, []Listener{listenerFor(t, slow)}, nil)
-	if len(got.Matches) != 0 || !got.Complete || parent.Err() != nil {
+	// The caller's context has no deadline and the backend never answers, so
+	// only the probe's own 700ms timeout can end detection.
+	detected := make(chan Detection, 1)
+	go func() { detected <- detectListeners(context.Background(), []Listener{listenerFor(t, slow)}, nil) }()
+	got = testwait.Recv(t, detected, "detection ended by the probe's own timeout")
+	if len(got.Matches) != 0 || !got.Complete {
 		t.Fatalf("short timeout failed: %v", got)
 	}
 	// A known closed numeric loopback port proves connection failure is tolerated.
@@ -322,9 +326,18 @@ func TestOSInventoryFindsFixture(t *testing.T) {
 	}
 	defer listener.Close()
 	port := listener.Addr().(*net.TCPAddr).Port
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// Inventory runs real OS tooling; its speed on a loaded runner is not the
+	// property. The context only stops it after the test ends.
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	got, err := listeningTCP(ctx)
+	type inventory struct {
+		listeners []Listener
+		err       error
+	}
+	listed := make(chan inventory, 1)
+	go func() { got, err := listeningTCP(ctx); listed <- inventory{got, err} }()
+	res := testwait.Recv(t, listed, "OS listener inventory returned")
+	got, err := res.listeners, res.err
 	if err != nil {
 		t.Fatal(err)
 	}

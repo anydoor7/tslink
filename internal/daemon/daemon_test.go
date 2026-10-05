@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/anydoor7/tslink/internal/testenv"
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 var (
@@ -350,11 +351,7 @@ func TestWithPIDLockSerializes(t *testing.T) {
 		})
 	}()
 
-	select {
-	case <-firstEntered:
-	case <-time.After(5 * time.Second):
-		t.Fatal("first lock holder did not enter")
-	}
+	testwait.Recv(t, firstEntered, "first lock holder entered")
 
 	secondEntered := make(chan struct{})
 	secondDone := make(chan error, 1)
@@ -375,11 +372,7 @@ func TestWithPIDLockSerializes(t *testing.T) {
 	if err := <-firstDone; err != nil {
 		t.Fatalf("first WithPIDLock() error = %v", err)
 	}
-	select {
-	case <-secondEntered:
-	case <-time.After(5 * time.Second):
-		t.Fatal("second lock holder did not enter after release")
-	}
+	testwait.Recv(t, secondEntered, "second lock holder entered after release")
 	if err := <-secondDone; err != nil {
 		t.Fatalf("second WithPIDLock() error = %v", err)
 	}
@@ -974,13 +967,8 @@ func startCopiedHelperProcessWithArgs(t *testing.T, executablePath string, args 
 		}
 		ready <- err
 	}()
-	select {
-	case err := <-ready:
-		if err != nil {
-			t.Fatalf("copied helper did not become ready: %v", err)
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("copied helper did not become ready within 10s")
+	if err := testwait.Recv(t, ready, "copied helper became ready"); err != nil {
+		t.Fatalf("copied helper did not become ready: %v", err)
 	}
 	return cmd
 }
@@ -1449,14 +1437,9 @@ func TestStopDaemon_Success(t *testing.T) {
 		t.Fatalf("StopDaemon() error = %v", err)
 	}
 
-	select {
-	case waitErr := <-done:
-		var exitErr *exec.ExitError
-		if waitErr != nil && !errors.As(waitErr, &exitErr) {
-			t.Fatalf("Wait() error = %v", waitErr)
-		}
-	case <-time.After(6 * time.Second):
-		t.Fatal("helper process did not exit after StopDaemon()")
+	var exitErr *exec.ExitError
+	if waitErr := testwait.Recv(t, done, "helper process exited after StopDaemon()"); waitErr != nil && !errors.As(waitErr, &exitErr) {
+		t.Fatalf("Wait() error = %v", waitErr)
 	}
 
 	if _, err := os.Stat(path); !os.IsNotExist(err) {

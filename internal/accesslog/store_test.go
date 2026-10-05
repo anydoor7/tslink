@@ -298,55 +298,60 @@ func TestCrashTailRecovery(t *testing.T) {
 	}
 }
 func TestQueueSaturationAndConcurrentClose(t *testing.T) {
-	dir := t.TempDir()
-	entered := make(chan struct{})
-	release := make(chan struct{})
-	var once sync.Once
-	s, e := newStore(dir, Options{QueueSize: 1}, func() time.Time { return testTime }, func() { once.Do(func() { close(entered); <-release }) })
-	if e != nil {
-		t.Fatal(e)
-	}
-	s.Record(event("first", "alice", "/ok"))
-	<-entered
-	if !s.Record(event("queued", "bob", "/ok")) {
-		t.Fatal("queue should have room")
-	}
-	start := time.Now()
-	for i := 0; i < 100; i++ {
-		if s.Record(event("drop", "bob", "/ok")) {
-			t.Fatal("saturated queue accepted")
+	synctest.Test(t, func(t *testing.T) {
+		// Virtual time: a Record that waited for queue space, however briefly,
+		// would advance the bubble clock (or deadlock it), and scheduler speed
+		// cannot. The health publisher's ticker runs on the same clock.
+		dir := t.TempDir()
+		entered := make(chan struct{})
+		release := make(chan struct{})
+		var once, unblock sync.Once
+		s, e := newStore(dir, Options{QueueSize: 1}, func() time.Time { return testTime }, func() { once.Do(func() { close(entered); <-release }) })
+		if e != nil {
+			t.Fatal(e)
 		}
-	}
-	if time.Since(start) > 100*time.Millisecond {
-		t.Fatal("queue blocked serving")
-	}
-	if s.Health().Drops != 100 {
-		t.Fatalf("drops %d", s.Health().Drops)
-	}
-	deadline := time.Now().Add(3 * time.Second)
-	for ReadHealth(dir).Drops != 100 && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
-	}
-	if ReadHealth(dir).Drops != 100 {
-		t.Fatal("saturated writer did not surface drops while append was stalled")
-	}
+		defer func() { unblock.Do(func() { close(release) }); s.Close(); <-s.Done() }()
+		s.Record(event("first", "alice", "/ok"))
+		<-entered
+		if !s.Record(event("queued", "bob", "/ok")) {
+			t.Fatal("queue should have room")
+		}
+		start := time.Now()
+		for i := 0; i < 100; i++ {
+			if s.Record(event("drop", "bob", "/ok")) {
+				t.Fatal("saturated queue accepted")
+			}
+		}
+		if waited := time.Since(start); waited != 0 {
+			t.Fatalf("queue blocked serving: saturated admission waited %v", waited)
+		}
+		if s.Health().Drops != 100 {
+			t.Fatalf("drops %d", s.Health().Drops)
+		}
+		for ReadHealth(dir).Drops != 100 {
+			if time.Since(start) > time.Minute {
+				t.Fatal("saturated writer did not surface drops while append was stalled")
+			}
+			time.Sleep(time.Millisecond)
+		}
 
-	s.Close()
-	if s.Record(event("closed", "bob", "/ok")) {
-		t.Fatal("closed writer accepted")
-	}
-	close(release)
-	closeStore(t, s)
-	if h := ReadHealth(dir); h.Drops != 101 {
-		t.Fatalf("persisted drops %+v", h)
-	}
-	r, e := Query(dir, Filter{})
-	if e != nil || r.Summary.Count != 2 {
-		t.Fatalf("drain %+v %v", r, e)
-	}
+		s.Close()
+		if s.Record(event("closed", "bob", "/ok")) {
+			t.Fatal("closed writer accepted")
+		}
+		unblock.Do(func() { close(release) })
+		closeStore(t, s)
+		if h := ReadHealth(dir); h.Drops != 101 {
+			t.Fatalf("persisted drops %+v", h)
+		}
+		r, e := Query(dir, Filter{})
+		if e != nil || r.Summary.Count != 2 {
+			t.Fatalf("drain %+v %v", r, e)
+		}
+	})
 	// Raced admission is either accepted and drained, or explicitly counted.
-	dir = t.TempDir()
-	s = newTestStore(t, dir, Options{QueueSize: 1024}, func() time.Time { return testTime })
+	dir := t.TempDir()
+	s := newTestStore(t, dir, Options{QueueSize: 1024}, func() time.Time { return testTime })
 	var wg sync.WaitGroup
 	for i := 0; i < 8; i++ {
 		wg.Add(1)
@@ -360,7 +365,7 @@ func TestQueueSaturationAndConcurrentClose(t *testing.T) {
 	s.Close()
 	wg.Wait()
 	closeStore(t, s)
-	r, e = Query(dir, Filter{Limit: 10000})
+	r, e := Query(dir, Filter{Limit: 10000})
 	if e != nil || uint64(r.Summary.Count)+s.Health().Drops != 400 {
 		t.Fatalf("admission lost event %+v %v", s.Health(), e)
 	}

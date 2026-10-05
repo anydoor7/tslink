@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/anydoor7/tslink/internal/filelock"
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 const heldRootReportPrefix = "testenv-held-root: "
@@ -71,8 +72,8 @@ func startRootOwner(t *testing.T, testName string) *rootOwner {
 	case owner.root = <-reported:
 	case <-owner.drained:
 		t.Fatalf("root owner exited without reporting its root (stderr %q)", stderr.String())
-	case <-time.After(30 * time.Second):
-		t.Fatalf("root owner did not report its root within 30s (stderr %q)", stderr.String())
+	case <-time.After(testwait.Budget(t)):
+		t.Fatalf("root owner did not report its root within the hang guard (stderr %q)", stderr.String())
 	}
 	if owner.root == "" {
 		t.Fatalf("root owner reported no root: it is not running under Main (stderr %q)", stderr.String())
@@ -86,19 +87,6 @@ func (o *rootOwner) kill() {
 	_ = o.cmd.Process.Kill()
 	<-o.drained
 	_ = o.cmd.Wait()
-}
-
-// eventually polls cond for up to 10s. The OS drops a dead process's file
-// locks as it tears the process down; this allows for that to lag.
-func eventually(cond func() bool) bool {
-	deadline := time.Now().Add(10 * time.Second)
-	for !cond() {
-		if time.Now().After(deadline) {
-			return false
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	return true
 }
 
 // plantRoot makes dir/name the way a binary that died after locking and
@@ -213,9 +201,8 @@ func TestAStaleRootIsReclaimedOnlyOnceItsOwnerIsGone(t *testing.T) {
 
 	owner.kill()
 	requireExists(t, home, "the killed owner could not have removed its root, so the checks below would prove nothing")
-	if !eventually(func() bool { return inheritedRoot() == "" }) {
-		t.Fatalf("inheritedRoot() = %q 10s after its owner was killed, want \"\"", inheritedRoot())
-	}
+	// The OS drops a dead process's file locks as it tears the process down.
+	testwait.Until(t, "inheritedRoot() cleared after its owner was killed", func() bool { return inheritedRoot() == "" })
 	if state := rootMarkerState(root); state != markerAbandoned {
 		t.Fatalf("marker state after the owner's death = %d, want markerAbandoned (%d)", state, markerAbandoned)
 	}
@@ -416,7 +403,7 @@ func TestConcurrentReclaimsAreHarmless(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !eventually(func() bool {
+	testwait.Until(t, "deferred roots reclaimed after competing probes closed", func() bool {
 		reclaimStaleRoots(dir)
 		for _, root := range abandoned {
 			if _, err := os.Lstat(root); !os.IsNotExist(err) {
@@ -424,9 +411,7 @@ func TestConcurrentReclaimsAreHarmless(t *testing.T) {
 			}
 		}
 		return true
-	}) {
-		t.Fatal("deferred roots were not reclaimed within 10s after competing probes closed")
-	}
+	})
 	for _, root := range abandoned {
 		requireGone(t, root, "every abandoned root must be removed")
 	}

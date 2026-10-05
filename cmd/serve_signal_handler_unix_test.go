@@ -11,9 +11,9 @@ import (
 	"strings"
 	"syscall"
 	"testing"
-	"time"
 
 	"github.com/anydoor7/tslink/internal/testenv"
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 // serveSignalHandlerChildEnv re-enters this test file as a child process. The
@@ -96,15 +96,11 @@ func runServeSignalHandlerChild(t *testing.T) {
 		t.Fatalf("raise SIGTERM: %v", err)
 	}
 
-	select {
-	case <-ctx.Done():
-		if ctx.Err() != context.Canceled {
-			t.Fatalf("signal context ended with %v, want context.Canceled", ctx.Err())
-		}
-	case <-time.After(10 * time.Second):
-		// Handler swallowed the signal without cancelling the context, so a
-		// clean stop would hang instead of exiting.
-		t.Fatal("SIGTERM was caught but did not cancel the signal context")
+	// A handler that swallowed the signal without cancelling the context
+	// would make a clean stop hang instead of exiting.
+	testwait.Recv(t, ctx.Done(), "SIGTERM cancelled the signal context")
+	if ctx.Err() != context.Canceled {
+		t.Fatalf("signal context ended with %v, want context.Canceled", ctx.Err())
 	}
 }
 

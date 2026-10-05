@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/anydoor7/tslink/internal/credentials"
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 func TestLoginRollbackCannotOverwriteConcurrentCredentialWriter(t *testing.T) {
@@ -31,11 +32,7 @@ func TestLoginRollbackCannotOverwriteConcurrentCredentialWriter(t *testing.T) {
 		_, err := commitLoginCredential(context.Background(), defaultLoginCredentialStore{}, loginCredentialModeAPIKey, "tskey-api-<test-only-candidate>", loginReplaceOptions{})
 		commitDone <- err
 	}()
-	select {
-	case <-metadataReached:
-	case <-time.After(5 * time.Second):
-		t.Fatal("login did not reach the metadata failure boundary")
-	}
+	testwait.Recv(t, metadataReached, "login reached the metadata failure boundary")
 	writerDone := make(chan error, 1)
 	go func() {
 		_, err := credentials.SetAPIKeyWithBackend("tskey-api-<test-only-after-rollback>")
@@ -48,21 +45,11 @@ func TestLoginRollbackCannotOverwriteConcurrentCredentialWriter(t *testing.T) {
 	case <-time.After(100 * time.Millisecond):
 	}
 	close(resumeRollback)
-	select {
-	case err := <-commitDone:
-		if err == nil || !strings.Contains(err.Error(), "synthetic metadata write failure") {
-			t.Fatalf("login did not fail through the intended rollback path: %v", err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("login rollback did not finish")
+	if err := testwait.Recv(t, commitDone, "login rollback finished"); err == nil || !strings.Contains(err.Error(), "synthetic metadata write failure") {
+		t.Fatalf("login did not fail through the intended rollback path: %v", err)
 	}
-	select {
-	case err := <-writerDone:
-		if err != nil {
-			t.Fatalf("concurrent credential writer failed after rollback: %v", err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("concurrent credential writer remained blocked")
+	if err := testwait.Recv(t, writerDone, "concurrent credential writer finished after rollback"); err != nil {
+		t.Fatalf("concurrent credential writer failed after rollback: %v", err)
 	}
 	stored, err := credentials.GetAPIKey()
 	if err != nil || stored != "tskey-api-<test-only-after-rollback>" {
