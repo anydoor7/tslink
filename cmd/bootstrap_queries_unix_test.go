@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/anydoor7/tslink/internal/mcpscope"
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 // Retain the real supervisor lock and bootstrap-scope inspection. Invalidate
@@ -117,11 +118,15 @@ func bootstrapObserveQueries(t *testing.T, observe func(context.Context)) {
 
 // bootstrapSetQueryProcess runs each manager query as a real test child and
 // reports each query's error in order, so a cancellation test can tell a query
-// ended by its caller from one ended by its own managerQueryTimeout.
+// ended by its caller from one ended by its own deadline. The query uses the
+// production executor with a deadline beyond the hang guard: the 2s
+// managerQueryTimeout (pinned by requireSeamReturnsWithinBudget) would
+// otherwise race the child's own start on a loaded runner.
 func bootstrapSetQueryProcess(t *testing.T, exe string) <-chan error {
 	queries := make(chan error, 16)
+	deadline := 2 * testwait.Budget(t)
 	managerOutputFn = func(ctx context.Context, name string, args ...string) ([]byte, error) {
-		_, err := boundedManagerOutput(ctx, exe, "-test.run=^TestManagerCallerContextHelper$")
+		_, err := runBoundedManagerCommandContext(ctx, exe, deadline, "-test.run=^TestManagerCallerContextHelper$")
 		select {
 		case queries <- err:
 		default:
