@@ -235,6 +235,22 @@ func (f *guestFixture) holdCounterFlush() func() {
 		}
 	}
 }
+
+// persistedGuestExpired reads the fixture grant's durable expiry latch.
+func persistedGuestExpired(t *testing.T, f *guestFixture) bool {
+	t.Helper()
+	reg, _, err := registry.Preflight(f.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, grant := range reg.Guests {
+		if grant.ID == f.grant.ID {
+			return grant.Expired
+		}
+	}
+	t.Fatal("fixture grant missing from the registry")
+	return false
+}
 func TestGuestListenerProtocolsAndIsolation(t *testing.T) {
 	for _, h2 := range []bool{false, true} {
 		t.Run(fmt.Sprintf("http2=%t", h2), func(t *testing.T) {
@@ -331,16 +347,33 @@ func TestGuestExpiryAndRevokeMidSession(t *testing.T) {
 					t.Fatal(e)
 				}
 			}
+			// Every committed registry write wakes the gate monitor, which then
+			// flushes the queued session counters as a registry writer. A read
+			// that meets that flush waits 100ms and then fails closed with 503.
+			// The revoked denial and the rollback check below are read-only, so
+			// they own a read window as login does. The expiry denial must not:
+			// it takes the writer lock to persist the rollback latch.
+			release := func() {}
+			if reason == "revoked" {
+				release = f.holdCounterFlush()
+			}
 			r, _ = f.request("GET", "/", "", cookies)
+			release()
 			if r.StatusCode != 401 || f.hits.Load() != hits {
-				t.Fatal("dead grant reached backend")
+				t.Fatalf("dead grant reached backend: status=%d retry-after=%q backend hits %d -> %d", r.StatusCode, r.Header.Get("Retry-After"), hits, f.hits.Load())
 			}
 			// A rollback cannot resurrect an expired grant.
 			if reason == "expired" {
+				release = f.holdCounterFlush()
+				// The expiry denial is only allowed after its latch is durable.
+				if !persistedGuestExpired(t, f) {
+					t.Fatal("expiry denial did not persist the rollback latch")
+				}
 				f.now.Store(accessTestTime.UnixNano())
 				r, _ = f.request("GET", "/guest/"+f.token, "", nil)
+				release()
 				if r.StatusCode != 401 {
-					t.Fatal("rollback revived expiry")
+					t.Fatalf("rollback revived expiry: status=%d retry-after=%q", r.StatusCode, r.Header.Get("Retry-After"))
 				}
 			}
 			drainAccess(t, f.store)
