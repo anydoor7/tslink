@@ -6,7 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
+
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 func TestAccessLogProxyInformationalThenFinalStatus(t *testing.T) {
@@ -67,11 +68,7 @@ func TestAccessLogProxyInformationalThenFinalStatus(t *testing.T) {
 			}
 			// Receiving the response can precede the access-log write, especially
 			// for HEAD and 204. Wait for this request's handler to finish.
-			select {
-			case <-completed:
-			case <-time.After(5 * time.Second):
-				t.Fatal("request handler did not finish")
-			}
+			testwait.Recv(t, completed, "request handler did not finish")
 			if resp.StatusCode != tc.wantStatus || string(body) != tc.wantBody {
 				t.Fatalf("response = %d %q, want %d %q", resp.StatusCode, body, tc.wantStatus, tc.wantBody)
 			}

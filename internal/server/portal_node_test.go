@@ -18,6 +18,7 @@ import (
 
 	"github.com/anydoor7/tslink/internal/config"
 	"github.com/anydoor7/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/testwait"
 	"tailscale.com/client/tailscale/apitype"
 	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/tailcfg"
@@ -136,21 +137,13 @@ func TestPortalInteractiveEnrollmentAndCancellation(t *testing.T) {
 			s.syncPortal(context.Background(), &registry.PortalConfig{Enabled: true, Hostname: "home", Owner: "owner"})
 			run := s.portalRun
 			if cancelEnrollment {
-				select {
-				case <-entered:
-				case <-time.After(time.Second):
-					t.Fatal("portal enrollment never started")
-				}
+				testwait.Recv(t, entered, "portal enrollment never started")
 				s.closePortal()
 				if s.portalState.State != "disabled" || s.portalRetryPending.Load() {
 					t.Fatal("cancelled enrollment published a stale failure or retry")
 				}
 			} else {
-				select {
-				case <-run.done:
-				case <-time.After(time.Second):
-					t.Fatal("interactive enrollment did not finish")
-				}
+				testwait.Recv(t, run.done, "interactive enrollment did not finish")
 				if !fake.startCalled || fake.upCalled || s.portalState.URL != "https://home.tailnet.ts.net" {
 					t.Fatalf("interactive portal=%+v", s.portalState)
 				}
@@ -189,7 +182,7 @@ func TestPortalRequestLimitsListener(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	_ = conn.SetDeadline(time.Now().Add(2 * time.Second))
+	_ = conn.SetDeadline(time.Now().Add(testwait.Budget(t)))
 	if _, err := conn.Write([]byte("POST / HTTP/1.1\r\nHost: home.tailnet.ts.net\r\nContent-Length: 33554433\r\n\r\n")); err != nil {
 		t.Fatal(err)
 	}
@@ -208,17 +201,38 @@ func TestPortalRequestLimitsListener(t *testing.T) {
 
 func TestPortalWhoIsStallListener(t *testing.T) {
 	f := newPortalFixture(t)
-	f.fake.localClient.Transport = roundTripperFunc(func(r *http.Request) (*http.Response, error) { <-r.Context().Done(); return nil, r.Context().Err() })
+	// Assert the portal's own WhoIs deadline instead of wall-clock elapsed
+	// time: the stalled lookup must carry a deadline of at most 5s and end
+	// because that deadline expired, not because the client gave up.
+	type stallEnd struct {
+		hasDeadline bool
+		remaining   time.Duration
+		err         error
+	}
+	ended := make(chan stallEnd, 1)
+	f.fake.localClient.Transport = roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		deadline, ok := r.Context().Deadline()
+		remaining := time.Until(deadline)
+		<-r.Context().Done()
+		select {
+		case ended <- stallEnd{ok, remaining, r.Context().Err()}:
+		default:
+		}
+		return nil, r.Context().Err()
+	})
 	r, _ := http.NewRequest("GET", "http://"+f.addr+"/api/apps", nil)
 	r.Host = "home.tailnet.ts.net"
-	start := time.Now()
-	resp, err := (&http.Client{Timeout: 7 * time.Second}).Do(r)
+	resp, err := (&http.Client{Timeout: testwait.Budget(t)}).Do(r)
 	if err != nil {
 		t.Fatal(err)
 	}
 	resp.Body.Close()
-	if resp.StatusCode != 403 || time.Since(start) > 6*time.Second {
-		t.Fatalf("WhoIs stall status=%d elapsed=%s", resp.StatusCode, time.Since(start))
+	if resp.StatusCode != 403 {
+		t.Fatalf("WhoIs stall status=%d", resp.StatusCode)
+	}
+	got := testwait.Recv(t, ended, "stalled WhoIs lookup ended")
+	if !got.hasDeadline || got.remaining <= 0 || got.remaining > 5*time.Second || !errors.Is(got.err, context.DeadlineExceeded) {
+		t.Fatalf("WhoIs stall bound: deadline=%t remaining=%s err=%v, want the portal's own 5s deadline to expire", got.hasDeadline, got.remaining, got.err)
 	}
 }
 
@@ -342,7 +356,7 @@ func TestPortalTLSListener(t *testing.T) {
 	newTSNetServerFn = func(registry.Service, string, string, string) tsnetServer { return fake }
 	f.s.syncPortal(context.Background(), &registry.PortalConfig{Enabled: true, Hostname: "home", Owner: "owner"})
 	<-f.s.portalRun.done
-	client := &http.Client{Timeout: 3 * time.Second, Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool, ServerName: "public.review.example", MinVersion: tls.VersionTLS12}}}
+	client := &http.Client{Timeout: testwait.Budget(t), Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool, ServerName: "public.review.example", MinVersion: tls.VersionTLS12}}}
 	defer client.CloseIdleConnections()
 	r, _ := http.NewRequest("GET", "https://"+ln.Addr().String()+"/api/apps", nil)
 	r.Host = "home.tailnet.ts.net"

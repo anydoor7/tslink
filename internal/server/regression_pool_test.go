@@ -18,6 +18,7 @@ import (
 	"github.com/anydoor7/tslink/internal/health"
 	"github.com/anydoor7/tslink/internal/registry"
 	"github.com/anydoor7/tslink/internal/testenv/localapitest"
+	"github.com/anydoor7/tslink/internal/testwait"
 	"tailscale.com/client/local"
 	"tailscale.com/ipn/ipnstate"
 )
@@ -166,11 +167,13 @@ func TestReReviewLocalAPIPoolGuardSaturationAndRecovery(t *testing.T) {
 		}
 	}
 	finish()
-	deadline := time.Now().Add(5 * time.Second)
-	for reads.Load() < 8 && time.Now().Before(deadline) {
+	testwait.Until(t, "LocalAPI recovery reached eight reads", func() bool {
+		if reads.Load() >= 8 {
+			return true
+		}
 		s.healthCycle(context.Background(), r, now.Add(4*time.Minute), probe)
-		time.Sleep(time.Millisecond)
-	}
+		return false
+	})
 	if reads.Load() != 8 || monitorError(t, r) != "" {
 		t.Errorf("LocalAPI recovery reads=%d monitor=%q", reads.Load(), monitorError(t, r))
 	}

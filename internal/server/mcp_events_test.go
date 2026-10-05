@@ -19,6 +19,7 @@ import (
 	"time"
 
 	runtimesnapshot "github.com/anydoor7/tslink/internal/runtime"
+	"github.com/anydoor7/tslink/internal/testwait"
 	"tailscale.com/client/tailscale/apitype"
 	"tailscale.com/tailcfg"
 )
@@ -182,14 +183,7 @@ func TestMCPEventStreamSendsSnapshotThenUpdate(t *testing.T) {
 
 func waitForSubscribers(t *testing.T, hub *eventHub, want int) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if hub.subscriberCount() == want {
-			return
-		}
-		time.Sleep(2 * time.Millisecond)
-	}
-	t.Fatalf("subscriber count = %d, want %d", hub.subscriberCount(), want)
+	testwait.Until(t, fmt.Sprintf("subscriber count reached %d", want), func() bool { return hub.subscriberCount() == want })
 }
 
 // TestMCPEventStreamRejectsUnauthorizedCallerWithoutBuildingState covers the
@@ -369,13 +363,7 @@ func TestMCPEventStreamEmitsKeepaliveFrames(t *testing.T) {
 		}, time.Now), hub, 5*time.Millisecond, time.Now)
 	}()
 
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if strings.Count(rr.String(), "event: "+MCPEventKeepalive) >= 2 {
-			break
-		}
-		time.Sleep(2 * time.Millisecond)
-	}
+	testwait.Until(t, "two keepalive frames written", func() bool { return strings.Count(rr.String(), "event: "+MCPEventKeepalive) >= 2 })
 	cancel()
 	<-done
 
@@ -987,7 +975,7 @@ func TestMCPEventStateCacheReleasesWaitersWhenABuildPanics(t *testing.T) {
 		if !strings.Contains(err.Error(), "panicked") {
 			t.Fatalf("waiter error = %v, want it to name the panic", err)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(testwait.Budget(t)):
 		t.Fatal("a waiter behind a panicking build never returned")
 	}
 

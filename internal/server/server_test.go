@@ -31,6 +31,7 @@ import (
 	"github.com/anydoor7/tslink/internal/tailapi"
 	"github.com/anydoor7/tslink/internal/testenv"
 	"github.com/anydoor7/tslink/internal/testenv/localapitest"
+	"github.com/anydoor7/tslink/internal/testwait"
 	"github.com/fsnotify/fsnotify"
 	"tailscale.com/ipn"
 	"tailscale.com/ipn/ipnstate"
@@ -81,13 +82,14 @@ func startRegistryWatcherTest(t *testing.T, s *Server) func() {
 		t.Fatalf("startRegistryWatcher() error = %v", err)
 	}
 
+	// Callers run both in synctest bubbles, where t.Deadline (and therefore
+	// testwait) is unavailable, and in real time. A watcher that ignores
+	// cancellation is reported by synctest's deadlock detection inside a
+	// bubble and by the test binary timeout outside one; no short real-time
+	// guard can expire on a slow runner here.
 	stop := func() {
 		cancel()
-		select {
-		case <-done:
-		case <-time.After(10 * time.Second):
-			t.Errorf("watchRegistry() did not return after context cancellation")
-		}
+		<-done
 	}
 	t.Cleanup(stop)
 	return stop
@@ -95,7 +97,7 @@ func startRegistryWatcherTest(t *testing.T, s *Server) func() {
 
 func waitRegistrySyncTest(t *testing.T, s *Server, generation uint64) syncResult {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), testwait.Budget(t))
 	defer cancel()
 	result, err := s.waitForSyncResult(ctx, generation)
 	if err != nil {
@@ -197,7 +199,7 @@ func TestLimitedListenerClosesConnectionsOverLimit(t *testing.T) {
 		defer firstServer.Close()
 	case err := <-acceptErr:
 		t.Fatalf("first Accept() error = %v", err)
-	case <-time.After(5 * time.Second):
+	case <-time.After(testwait.Budget(t)):
 		t.Fatal("first Accept() timed out")
 	}
 
@@ -217,7 +219,7 @@ func TestLimitedListenerClosesConnectionsOverLimit(t *testing.T) {
 		t.Fatalf("second Dial() error = %v", err)
 	}
 	defer secondClient.Close()
-	if err := secondClient.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+	if err := secondClient.SetReadDeadline(time.Now().Add(testwait.Budget(t))); err != nil {
 		t.Fatalf("SetReadDeadline() error = %v", err)
 	}
 	buf := make([]byte, 1)
@@ -241,7 +243,7 @@ func TestLimitedListenerClosesConnectionsOverLimit(t *testing.T) {
 	case conn := <-secondAccepted:
 		conn.Close()
 		t.Fatal("second Accept returned a connection after listener close")
-	case <-time.After(5 * time.Second):
+	case <-time.After(testwait.Budget(t)):
 		t.Fatal("second Accept did not unblock after listener close")
 	}
 }
@@ -1307,11 +1309,7 @@ func TestSyncNodes_NewerGenerationCancelsInteractiveStartupBeforeReconcile(t *te
 
 	firstDone := make(chan error, 1)
 	go func() { firstDone <- s.syncNodes(context.Background()) }()
-	select {
-	case <-handoff:
-	case <-time.After(5 * time.Second):
-		t.Fatal("interactive authorization URL was not published")
-	}
+	testwait.Recv(t, handoff, "interactive authorization URL was not published")
 
 	lockAvailable := make(chan struct{})
 	go func() {
@@ -1323,11 +1321,7 @@ func TestSyncNodes_NewerGenerationCancelsInteractiveStartupBeforeReconcile(t *te
 		s.mu.Unlock()
 		close(lockAvailable)
 	}()
-	select {
-	case <-lockAvailable:
-	case <-time.After(5 * time.Second):
-		t.Fatal("interactive authorization wait held s.mu")
-	}
+	testwait.Recv(t, lockAvailable, "interactive authorization wait held s.mu")
 
 	writeRegistry(t, nil)
 	secondDone := make(chan error, 1)
@@ -1337,7 +1331,7 @@ func TestSyncNodes_NewerGenerationCancelsInteractiveStartupBeforeReconcile(t *te
 		if err != nil {
 			t.Fatalf("superseding syncNodes() error = %v", err)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(testwait.Budget(t)):
 		t.Fatal("registry removal did not supersede interactive startup")
 	}
 	select {
@@ -1345,7 +1339,7 @@ func TestSyncNodes_NewerGenerationCancelsInteractiveStartupBeforeReconcile(t *te
 		if err != nil {
 			t.Fatalf("superseded syncNodes() error = %v", err)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(testwait.Budget(t)):
 		t.Fatal("superseded interactive sync did not return")
 	}
 	if fake.closeCount.Load() != 1 {
@@ -1606,7 +1600,7 @@ func TestStartNodeLocked_HTTPServerReadHeaderTimeoutClosesSlowClient(t *testing.
 	if _, err := conn.Write([]byte("GET / HTTP/1.1\r\nHost: localhost\r\n")); err != nil {
 		t.Fatalf("partial Write() error = %v", err)
 	}
-	if err := conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+	if err := conn.SetReadDeadline(time.Now().Add(testwait.Budget(t))); err != nil {
 		t.Fatalf("SetReadDeadline() error = %v", err)
 	}
 
@@ -2089,7 +2083,7 @@ func TestLifecycleTickerRereadsWallClockAfterSimulatedSleep(t *testing.T) {
 		cancel()
 		select {
 		case <-done:
-		case <-time.After(5 * time.Second):
+		case <-time.After(testwait.Budget(t)):
 			t.Error("lifecycle ticker did not stop")
 		}
 	})
@@ -2097,15 +2091,9 @@ func TestLifecycleTickerRereadsWallClockAfterSimulatedSleep(t *testing.T) {
 	// Observe the first two deliveries, not the total at shutdown: select may
 	// choose a ready tick even when cancellation is also ready. The unbuffered
 	// handoff orders observations, and cancellation releases any later sender.
-	deadline := time.After(5 * time.Second)
 	for i, want := range []time.Time{beforeSleep, afterWake} {
-		select {
-		case got := <-observed:
-			if !got.Equal(want) {
-				t.Errorf("wall clock at tick %d = %v, want %v", i+1, got, want)
-			}
-		case <-deadline:
-			t.Fatal("lifecycle ticker did not observe two wall-clock ticks")
+		if got := testwait.Recv(t, observed, fmt.Sprintf("lifecycle ticker wall-clock tick %d", i+1)); !got.Equal(want) {
+			t.Errorf("wall clock at tick %d = %v, want %v", i+1, got, want)
 		}
 	}
 	stop()
@@ -2140,14 +2128,7 @@ func TestLifecycleTickerSkipsFullSyncWhenReconcileReportsNoChange(t *testing.T) 
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	done := s.startLifecycleTicker(ctx)
-	deadline := time.After(5 * time.Second)
-	for ticks.Load() < 3 {
-		select {
-		case <-deadline:
-			t.Fatal("lifecycle ticker did not run")
-		case <-time.After(time.Millisecond):
-		}
-	}
+	testwait.Until(t, "lifecycle ticker ran three ticks", func() bool { return ticks.Load() >= 3 })
 	cancel()
 	<-done
 	if got := constructed.Load(); got != 0 {
@@ -2215,11 +2196,7 @@ func TestSyncGenerationGuardIsLoadBearing(t *testing.T) {
 	}
 	slowDone := make(chan error, 1)
 	go func() { slowDone <- s.syncNodes(context.Background()) }()
-	select {
-	case <-entered:
-	case <-time.After(5 * time.Second):
-		t.Fatal("older sync never reached the seam")
-	}
+	testwait.Recv(t, entered, "older sync never reached the seam")
 	newerErr := s.syncNodes(context.Background())
 	bitAfterNewerFailure := s.lastSyncFailed.Load()
 	close(release)
@@ -2271,14 +2248,7 @@ func TestLifecycleTickerRetriesFailedSyncThenReturnsToChangeOnly(t *testing.T) {
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	done := s.startLifecycleTicker(ctx)
-	deadline := time.After(5 * time.Second)
-	for ticks.Load() < 6 {
-		select {
-		case <-deadline:
-			t.Fatal("lifecycle ticker did not run")
-		case <-time.After(time.Millisecond):
-		}
-	}
+	testwait.Until(t, "lifecycle ticker ran six ticks", func() bool { return ticks.Load() >= 6 })
 	cancel()
 	<-done
 	if got := syncAttempts.Load(); got != 2 {
@@ -2354,7 +2324,7 @@ func TestRunningFunnelListenerIsTornDownAfterDeadline(t *testing.T) {
 	select {
 	case <-tailnetOnlyConstructed:
 		cancel()
-	case <-time.After(5 * time.Second):
+	case <-time.After(testwait.Budget(t)):
 		cancel()
 		<-done
 		t.Fatal("expired running Funnel was not rebuilt as tailnet-only TLS")
@@ -2545,11 +2515,7 @@ func TestSyncNodesRejectsStaleGenerationCommit(t *testing.T) {
 
 	firstDone := make(chan error, 1)
 	go func() { firstDone <- s.syncNodes(context.Background()) }()
-	select {
-	case <-firstDesiredLoaded:
-	case <-time.After(5 * time.Second):
-		t.Fatal("first generation did not reach desired-state barrier")
-	}
+	testwait.Recv(t, firstDesiredLoaded, "first generation did not reach desired-state barrier")
 
 	if err := s.syncNodes(context.Background()); err != nil {
 		t.Fatalf("second syncNodes() error = %v", err)
@@ -2560,7 +2526,7 @@ func TestSyncNodesRejectsStaleGenerationCommit(t *testing.T) {
 		if err != nil {
 			t.Fatalf("first syncNodes() error = %v", err)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(testwait.Budget(t)):
 		t.Fatal("first syncNodes() did not finish")
 	}
 
@@ -2981,7 +2947,7 @@ func TestSyncNodes_TCPListenerSurvivesStartupGenerationCompletion(t *testing.T) 
 	var serveCtx context.Context
 	select {
 	case serveCtx = <-serveCtxCh:
-	case <-time.After(5 * time.Second):
+	case <-time.After(testwait.Budget(t)):
 		t.Fatal("serveTCP was never invoked for the tcp node")
 	}
 	select {
@@ -2991,11 +2957,7 @@ func TestSyncNodes_TCPListenerSurvivesStartupGenerationCompletion(t *testing.T) 
 	}
 
 	s.closeAllNodes()
-	select {
-	case <-serveCtx.Done():
-	case <-time.After(5 * time.Second):
-		t.Fatal("tcp serve context did not stop after closeAllNodes")
-	}
+	testwait.Recv(t, serveCtx.Done(), "tcp serve context did not stop after closeAllNodes")
 }
 
 // startNodeLocked must read the serveTCP seam on the caller's goroutine. The
@@ -3050,11 +3012,7 @@ func TestStartNode_ReadsServeTCPSeamBeforeSpawningAcceptLoop(t *testing.T) {
 	// Swap the seam the way the next test would.
 	serveTCPFn = swappedInAfterSync
 
-	select {
-	case <-served:
-	case <-time.After(5 * time.Second):
-		t.Fatal("tcp accept loop never invoked the serveTCP seam")
-	}
+	testwait.Recv(t, served, "tcp accept loop never invoked the serveTCP seam")
 	if got := variant.Load(); got != 1 {
 		t.Fatalf("accept loop invoked seam variant %d, want 1 (the value installed before syncNodes)", got)
 	}
@@ -4263,11 +4221,7 @@ func TestActivateListenerCancellationJoinsWorkerBeforeReturn(t *testing.T) {
 	case <-time.After(20 * time.Millisecond):
 	}
 	close(workerMayFinish)
-	select {
-	case <-returned:
-	case <-time.After(5 * time.Second):
-		t.Fatal("activateListener did not return after the listener worker completed")
-	}
+	testwait.Recv(t, returned, "activateListener did not return after the listener worker completed")
 	select {
 	case <-workerDone:
 	default:
@@ -4294,11 +4248,7 @@ func TestActivateListenerCancellationClosesLateListener(t *testing.T) {
 	}()
 	<-listenerStarted
 	cancel()
-	select {
-	case <-result:
-	case <-time.After(5 * time.Second):
-		t.Fatal("activateListener did not return after cancellation")
-	}
+	testwait.Recv(t, result, "activateListener did not return after cancellation")
 	if !late.closed.Load() {
 		t.Fatal("listener returned after cancellation was not closed")
 	}
@@ -5286,11 +5236,7 @@ func TestWatchRegistry_MissingConfigDirReturns(t *testing.T) {
 		close(done)
 	}()
 
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("watchRegistry() did not return for missing config dir")
-	}
+	testwait.Recv(t, done, "watchRegistry() did not return for missing config dir")
 }
 
 func TestWatchRegistry_ReactsToCreate(t *testing.T) {
@@ -5770,7 +5716,7 @@ func TestRunDoesNotMarkReadyWhenSupersededInitialSyncFails(t *testing.T) {
 	case <-firstDesiredLoaded:
 	case err := <-runDone:
 		t.Fatalf("Run() returned before initial generation was superseded: %v", err)
-	case <-time.After(5 * time.Second):
+	case <-time.After(testwait.Budget(t)):
 		t.Fatal("initial generation did not reach desired-state barrier")
 	}
 
@@ -5784,7 +5730,7 @@ func TestRunDoesNotMarkReadyWhenSupersededInitialSyncFails(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "initial sync failed") || !strings.Contains(err.Error(), newerFailure.Error()) {
 			t.Fatalf("Run() error = %v, want failing authoritative sync", err)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(testwait.Budget(t)):
 		t.Fatal("Run() did not fail closed after superseded initial sync")
 	}
 	if readyCalled {
@@ -6318,11 +6264,7 @@ func TestWatchRegistry_BadCfgDir(t *testing.T) {
 		close(done)
 	}()
 
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("watchRegistry() did not return for bad cfgDir")
-	}
+	testwait.Recv(t, done, "watchRegistry() did not return for bad cfgDir")
 }
 
 func TestSyncNodes_FunnelChange_TriggersRestart(t *testing.T) {
@@ -6418,11 +6360,7 @@ func TestWatchRegistry_RegistryPathError(t *testing.T) {
 		close(done)
 	}()
 
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("watchRegistry() did not return when RegistryPath fails")
-	}
+	testwait.Recv(t, done, "watchRegistry() did not return when RegistryPath fails")
 }
 
 func TestWatchRegistry_IgnoresNonRegistryFile(t *testing.T) {
@@ -6721,7 +6659,7 @@ func TestRun_MissingRegistryStartsEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), testwait.Budget(t))
 	defer cancel()
 	ready := false
 	s.SetReadyFunc(func() error {
@@ -6795,13 +6733,9 @@ func TestStartLifecycleTicker_ReadsClockSeamBeforeSpawning(t *testing.T) {
 		if !got.Equal(captured) {
 			t.Fatalf("ticker used the seam installed after it started: got %v, want %v", got, captured)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(testwait.Budget(t)):
 		t.Fatal("lifecycle ticker never reconciled")
 	}
 	cancel()
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("lifecycle ticker did not stop")
-	}
+	testwait.Recv(t, done, "lifecycle ticker did not stop")
 }

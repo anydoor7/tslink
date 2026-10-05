@@ -16,6 +16,7 @@ import (
 	"github.com/anydoor7/tslink/internal/registry"
 	"github.com/anydoor7/tslink/internal/tailapi"
 	"github.com/anydoor7/tslink/internal/testenv"
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 // policyTickRecorder counts lifecycle ticks through the reconcile seam, which
@@ -86,7 +87,7 @@ func runLifecycleTicks(t *testing.T, s *Server, r *policyTickRecorder, last int3
 	done := s.startLifecycleTicker(ctx)
 	select {
 	case <-reached:
-	case <-time.After(20 * time.Second):
+	case <-time.After(testwait.Budget(t)):
 		t.Errorf("lifecycle ticker delivered only %d of %d ticks", r.ticks.Load(), last)
 	}
 	cancel()

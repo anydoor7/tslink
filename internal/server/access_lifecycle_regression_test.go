@@ -7,6 +7,7 @@ import (
 	"github.com/anydoor7/tslink/internal/registry"
 	runtimesnapshot "github.com/anydoor7/tslink/internal/runtime"
 	"github.com/anydoor7/tslink/internal/testenv"
+	"github.com/anydoor7/tslink/internal/testwait"
 	"net"
 	"os"
 	"path/filepath"
@@ -74,11 +75,7 @@ func TestAccessActiveInitFailureRecovery(t *testing.T) {
 		}
 	})
 	defer stop()
-	select {
-	case <-ready:
-	case <-time.After(3 * time.Second):
-		t.Fatal("not ready")
-	}
+	testwait.Recv(t, ready, "not ready")
 	for i := 0; i < 3; i++ {
 		if requestAccess(t, "http://"+ln.Addr().String()+"/", "GET", "") != 200 {
 			t.Fatal("live request failed")
@@ -87,19 +84,19 @@ func TestAccessActiveInitFailureRecovery(t *testing.T) {
 	snapshotPath, _ := config.RuntimeSnapshotPath()
 	waitHealth := func(recovered bool) accesslog.Health {
 		t.Helper()
-		deadline := time.Now().Add(3 * time.Second)
-		for time.Now().Before(deadline) {
+		var published accesslog.Health
+		testwait.Until(t, "current access-log health published", func() bool {
 			snapshot, err := runtimesnapshot.Load(snapshotPath)
 			if err == nil && snapshot.AccessLog != nil {
 				h := *snapshot.AccessLog
 				if h.Drops == 3 && h.Current && ((!recovered && h.Error == "access_log_init_failed") || (recovered && h.Error == "" && len(h.MissingHistory) == 1 && h.MissingHistory[0].End != nil)) {
-					return h
+					published = h
+					return true
 				}
 			}
-			time.Sleep(time.Millisecond)
-		}
-		t.Fatal("current health not published")
-		return accesslog.Health{}
+			return false
+		})
+		return published
 	}
 	after := waitHealth(false)
 	r, err := accesslog.Query(dir, accesslog.Filter{})

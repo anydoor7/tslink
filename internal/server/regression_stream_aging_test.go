@@ -15,6 +15,7 @@ import (
 	"github.com/anydoor7/tslink/internal/health"
 	"github.com/anydoor7/tslink/internal/registry"
 	tsruntime "github.com/anydoor7/tslink/internal/runtime"
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 func TestHealthUnattemptedAgingWakesConnectedStream(t *testing.T) {
@@ -74,7 +75,7 @@ func testHealthAgingStream(t *testing.T, unavailablePath bool) {
 	}
 	cp := &MCPControlPlane{AllowedUsers: []string{"alice@example.com"}, Handler: &mcpProbeHandler{}, EventsSnapshot: builder, EventsKeepalive: 5 * time.Second}
 	srv := httptest.NewServer(newMCPControlPlaneHandler(cp, mcpEventsAllowedClient(t), s.events))
-	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), testwait.Budget(t))
 	defer func() { cancel(); srv.Close() }()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+MCPEventsPath, nil)
 	if err != nil {
@@ -134,17 +135,9 @@ func testHealthAgingStream(t *testing.T, unavailablePath bool) {
 
 func waitHealthFlights(t *testing.T, p *healthReadPool) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for {
+	testwait.Until(t, "health read flights drained", func() bool {
 		p.mu.Lock()
-		got := len(p.flights)
-		p.mu.Unlock()
-		if got == 0 {
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("flights=%d want=0", got)
-		}
-		time.Sleep(time.Millisecond)
-	}
+		defer p.mu.Unlock()
+		return len(p.flights) == 0
+	})
 }

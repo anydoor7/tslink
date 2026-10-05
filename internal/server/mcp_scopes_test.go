@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/anydoor7/tslink/internal/config"
@@ -80,12 +81,20 @@ func TestMCPScopeHTTPWhoIsTagAndClockCapture(t *testing.T) {
 	who := &apitype.WhoIsResponse{UserProfile: &tailcfg.UserProfile{LoginName: "tagged-devices"}, Node: &tailcfg.Node{Tags: []string{"tag:helper"}}}
 	h := NewMCPControlPlaneHandler(cp, fakeWhoIsClient(t, who, nil))
 	serverNowFn = func() time.Time { panic("handler reread clock seam") }
-	started := time.Now()
-	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, httptest.NewRequest("POST", "https://mcp.test/mcp", nil))
-	if rr.Code != 204 || time.Since(started) > time.Second {
-		t.Fatal(rr.Code, time.Since(started))
-	}
+	// The binding expires 40ms after the captured clock; in virtual time the
+	// request must end at exactly that instant, not merely "soon".
+	synctest.Test(t, func(t *testing.T) {
+		// A virtual-time request bound, so a handler that ignored expiry ends
+		// with a wrong elapsed time instead of a bubble deadlock.
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		started := time.Now()
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, httptest.NewRequestWithContext(ctx, "POST", "https://mcp.test/mcp", nil))
+		if elapsed := time.Since(started); rr.Code != 204 || elapsed != 40*time.Millisecond {
+			t.Fatalf("status=%d elapsed=%v, want 204 at the 40ms binding expiry", rr.Code, elapsed)
+		}
+	})
 }
 
 func TestMCPRestartReconcilesOnlySelectedGatewayAndKeepsIdentity(t *testing.T) {

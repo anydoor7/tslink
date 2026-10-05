@@ -11,6 +11,7 @@ import (
 
 	"github.com/anydoor7/tslink/internal/config"
 	"github.com/anydoor7/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 type preserveHostTSNetServer struct {
@@ -59,7 +60,7 @@ func TestStartNodePreserveHost(t *testing.T) {
 				t.Fatal(err)
 			}
 			req.Host = "app.review.example"
-			res, err := (&http.Client{Timeout: httpReadHeaderTimeout}).Do(req)
+			res, err := (&http.Client{Timeout: testwait.Budget(t)}).Do(req)
 			if err != nil {
 				t.Fatal(err)
 			}
