@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"github.com/anydoor7/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/testwait"
 	"io"
 	"net"
 	"net/http"
@@ -100,7 +101,7 @@ func TestLimitedTLSConnectionRetainsCapAndReleasesSlot(t *testing.T) {
 	case firstServer = <-accepted:
 	case err := <-acceptErr:
 		t.Fatal(err)
-	case <-time.After(5 * time.Second):
+	case <-time.After(testwait.Budget(t)):
 		t.Fatal("first accept timed out")
 	}
 	if _, ok := firstServer.(*limitedTLSConn); !ok {
@@ -114,7 +115,7 @@ func TestLimitedTLSConnectionRetainsCapAndReleasesSlot(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer secondClient.Close()
-	_ = secondClient.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_ = secondClient.SetReadDeadline(time.Now().Add(testwait.Budget(t)))
 	buf := make([]byte, 1)
 	if _, err := secondClient.Read(buf); err == nil {
 		t.Fatal("over-cap connection remained open")
@@ -138,7 +139,7 @@ func TestLimitedTLSConnectionRetainsCapAndReleasesSlot(t *testing.T) {
 		_ = thirdServer.Close()
 	case err := <-acceptErr:
 		t.Fatal(err)
-	case <-time.After(5 * time.Second):
+	case <-time.After(testwait.Budget(t)):
 		t.Fatal("slot was not reusable")
 	}
 }
@@ -216,17 +217,17 @@ func TestProxyResponseStreamOutlivesRequestReadBudget(t *testing.T) {
 			recorded := &streamDeadlineListener{Listener: raw, accepted: make(chan *streamDeadlineConn, 1)}
 			var ln net.Listener = recorded
 			scheme := "http://"
-			client := &http.Client{Timeout: 5 * time.Second}
+			client := &http.Client{Timeout: testwait.Budget(t)}
 			if useTLS {
 				ln = newLimitedListener(tls.NewListener(recorded, certServer.TLS.Clone()), 256, "http", "stream")
 				scheme = "https://"
 				client = certServer.Client()
-				client.Timeout = 5 * time.Second
+				client.Timeout = testwait.Budget(t)
 			}
 			srv := newHTTPServerFn(ResourceBudgetMiddleware(h))
 			// Request/handshake scheduling gets a wall hang guard. Pin the
 			// response's actual inner deadline while the backend is still held.
-			srv.ReadTimeout = 5 * time.Second
+			srv.ReadTimeout = testwait.Budget(t)
 			done := make(chan struct{})
 			go func() { defer close(done); _ = srv.Serve(ln) }()
 			defer func() { _ = srv.Close(); _ = ln.Close(); <-done }()
@@ -244,7 +245,7 @@ func TestProxyResponseStreamOutlivesRequestReadBudget(t *testing.T) {
 				if deadline := c.responseDeadline(); !deadline.IsZero() {
 					t.Fatalf("active response write deadline = %v, want none", deadline)
 				}
-			case <-time.After(5 * time.Second):
+			case <-time.After(testwait.Budget(t)):
 				t.Fatal("stream did not expose its server connection")
 			}
 			finish()
@@ -297,7 +298,7 @@ func TestTCPBackendHalfCloseReachesTsnetShapedClient(t *testing.T) {
 			done := make(chan struct{})
 			go func() { defer close(done); handleTCPConn(ctx, conn, backend.Addr().String(), "audit") }()
 			defer func() { cancel(); _ = client.Close(); <-done; <-backendDone }()
-			_ = client.SetReadDeadline(time.Now().Add(5 * time.Second))
+			_ = client.SetReadDeadline(time.Now().Add(testwait.Budget(t)))
 			body, err := io.ReadAll(client)
 			t.Logf("backend sent FIN; wrapped=%v body=%q readError=%v", wrapped, body, err)
 			if string(body) != "response" {
@@ -325,7 +326,7 @@ func TestTCPClientHalfCloseReachesWrappedBackend(t *testing.T) {
 			return
 		}
 		defer conn.Close()
-		_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+		_ = conn.SetReadDeadline(time.Now().Add(testwait.Budget(t)))
 		body, err := io.ReadAll(conn)
 		if err != nil {
 			backendResult <- err.Error()
@@ -368,7 +369,7 @@ func TestTCPClientHalfCloseReachesWrappedBackend(t *testing.T) {
 	if err := client.(*net.TCPConn).CloseWrite(); err != nil {
 		t.Fatal(err)
 	}
-	_ = client.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_ = client.SetReadDeadline(time.Now().Add(testwait.Budget(t)))
 	response, err := io.ReadAll(client)
 	if err != nil || string(response) != "ack" {
 		t.Fatalf("response = %q, error = %v, want ack and EOF", response, err)

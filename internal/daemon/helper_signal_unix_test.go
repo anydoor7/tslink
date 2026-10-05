@@ -10,6 +10,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 func TestCopiedHelperSurvivesRuntimePreemptionSignal(t *testing.T) {
@@ -28,9 +30,10 @@ func TestCopiedHelperSurvivesRuntimePreemptionSignal(t *testing.T) {
 	go func() { done <- cmd.Wait() }()
 	t.Cleanup(func() {
 		_ = cmd.Process.Kill()
+		// Cleanup reports without t.Fatal.
 		select {
 		case <-done:
-		case <-time.After(5 * time.Second):
+		case <-time.After(testwait.Budget(t)):
 			t.Error("copied helper did not exit")
 		}
 		_ = stdout.Close()
@@ -44,13 +47,8 @@ func TestCopiedHelperSurvivesRuntimePreemptionSignal(t *testing.T) {
 		}
 		ready <- err
 	}()
-	select {
-	case err := <-ready:
-		if err != nil {
-			t.Fatal(err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("copied helper did not become ready")
+	if err := testwait.Recv(t, ready, "copied helper became ready"); err != nil {
+		t.Fatal(err)
 	}
 	if err := cmd.Process.Signal(syscall.SIGURG); err != nil {
 		t.Fatal(err)

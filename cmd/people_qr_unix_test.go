@@ -8,7 +8,8 @@ import (
 	"path/filepath"
 	"syscall"
 	"testing"
-	"time"
+
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 func TestPeopleQRSpecialFilesRefused(t *testing.T) {
@@ -29,12 +30,11 @@ func TestPeopleQRSpecialFilesRefused(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			start := time.Now()
-			if err := qrPNG("https://home.tailnet.ts.net", file); err == nil {
+			// A FIFO with no peer blocks an open forever: returning is the property.
+			wrote := make(chan error, 1)
+			go func() { wrote <- qrPNG("https://home.tailnet.ts.net", file) }()
+			if err := testwait.Recv(t, wrote, "QR write returned instead of stalling on the destination"); err == nil {
 				t.Fatal("unsafe destination accepted")
-			}
-			if time.Since(start) > time.Second {
-				t.Fatal("QR write stalled")
 			}
 			data, err := os.ReadFile(target)
 			if err != nil || !bytes.Equal(data, []byte("keep")) {

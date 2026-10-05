@@ -21,6 +21,7 @@ import (
 	"github.com/anydoor7/tslink/internal/duration"
 	"github.com/anydoor7/tslink/internal/health"
 	"github.com/anydoor7/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/testwait"
 	"tailscale.com/client/tailscale/apitype"
 	"tailscale.com/tailcfg"
 )
@@ -71,7 +72,7 @@ func requestPost(t *testing.T, f portalFixture, form url.Values, origin string) 
 		r.Header.Set("Origin", origin)
 	}
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	c := &http.Client{Timeout: 15 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	c := &http.Client{Timeout: testwait.Budget(t), CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	response, err := c.Do(r)
 	if err != nil {
 		t.Fatal(err)
@@ -362,11 +363,7 @@ func restartRequestPortal(t *testing.T, f *portalFixture, p *registry.PortalConf
 	f.fake.ln = ln
 	f.addr = ln.Addr().String()
 	f.s.syncPortal(t.Context(), p)
-	select {
-	case <-f.s.portalRun.done:
-	case <-time.After(3 * time.Second):
-		t.Fatal("restart stalled")
-	}
+	testwait.Recv(t, f.s.portalRun.done, "restart stalled")
 	if f.s.portalState.State != "running" {
 		t.Fatal(f.s.portalState)
 	}
@@ -480,7 +477,7 @@ func TestAccessRequestNotificationFailureAndPartialBody(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(2 * time.Second))
+	conn.SetDeadline(time.Now().Add(testwait.Budget(t)))
 	fmt.Fprintf(conn, "POST /access-requests HTTP/1.1\r\nHost: home.tailnet.ts.net\r\nOrigin: https://home.tailnet.ts.net\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: 100\r\nConnection: close\r\n\r\ncsrf=partial")
 	if tcp, ok := conn.(*net.TCPConn); ok {
 		tcp.CloseWrite()

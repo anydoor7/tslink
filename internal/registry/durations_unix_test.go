@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/anydoor7/tslink/internal/config"
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 func TestDurationSpecialFilesRefusedThroughRuntime(t *testing.T) {
@@ -37,12 +38,11 @@ func TestDurationSpecialFilesRefusedThroughRuntime(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			started := time.Now()
-			if _, err := config.LoadLifetimePolicy(); err == nil || !strings.Contains(err.Error(), "unsafe state file") {
+			// A FIFO with no peer blocks an open forever: returning is the property.
+			loaded := make(chan error, 1)
+			go func() { _, err := config.LoadLifetimePolicy(); loaded <- err }()
+			if err := testwait.Recv(t, loaded, "special config load returned instead of stalling"); err == nil || !strings.Contains(err.Error(), "unsafe state file") {
 				t.Fatalf("config %s: %v", kind, err)
-			}
-			if time.Since(started) > time.Second {
-				t.Fatal("special config stalled")
 			}
 			if err := os.Rename(path, filepath.Join(dir, "registry.json")); err != nil {
 				t.Fatal(err)

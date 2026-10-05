@@ -13,6 +13,12 @@ import (
 	"testing"
 )
 
+// holdProcessObject has nothing to hold on unix: once Wait reaps the helper,
+// kill(pid, 0) reports ESRCH until the PID space wraps around.
+func holdProcessObject(*testing.T, int) {}
+
+func requireHeldExitedProcess(*testing.T, int) {}
+
 func stubProcessLivenessError(t *testing.T) {
 	t.Helper()
 	orig := findProcess

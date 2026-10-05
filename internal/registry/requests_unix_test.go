@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"syscall"
 	"testing"
-	"time"
 
 	"github.com/anydoor7/tslink/internal/duration"
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 func TestAccessRequestSpecialFileAndWriterFailure(t *testing.T) {
@@ -42,15 +42,19 @@ func TestAccessRequestSpecialFileAndWriterFailure(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			start := time.Now()
-			if _, err := SubmitAccessRequest(path, "alice", "photos", "", "", requestTestNow); err == nil {
+			// A FIFO with no peer blocks an open forever: returning is the property.
+			results := make(chan [2]error, 1)
+			go func() {
+				_, submitErr := SubmitAccessRequest(path, "alice", "photos", "", "", requestTestNow)
+				_, _, decideErr := DecideAccessRequest(path, "id", RequestApproved, "8h", "", false, duration.Policy{}, requestTestNow)
+				results <- [2]error{submitErr, decideErr}
+			}()
+			errs := testwait.Recv(t, results, "request I/O on a special registry returned instead of stalling")
+			if errs[0] == nil {
 				t.Fatal("special registry accepted", kind)
 			}
-			if _, _, err := DecideAccessRequest(path, "id", RequestApproved, "8h", "", false, duration.Policy{}, requestTestNow); err == nil {
+			if errs[1] == nil {
 				t.Fatal("decision accepted", kind)
-			}
-			if time.Since(start) > time.Second {
-				t.Fatal("new I/O stalled", kind)
 			}
 			if kind != "missing" {
 				if err := os.Remove(path); err != nil {
@@ -75,12 +79,14 @@ func TestAccessRequestSpecialFileAndWriterFailure(t *testing.T) {
 	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
 		t.Fatal(err)
 	}
-	start := time.Now()
-	_, err = SubmitAccessRequest(path, "alice", "photos", "", "", requestTestNow)
-	requestCode(t, err, "access_request_busy")
-	if time.Since(start) > time.Second {
-		t.Fatal("busy writer stalled submit")
-	}
+	// The fixture holds the lock for the whole call, so a submit that waited
+	// for the writer would never return.
+	submitted := make(chan error, 1)
+	go func() {
+		_, err := SubmitAccessRequest(path, "alice", "photos", "", "", requestTestNow)
+		submitted <- err
+	}()
+	requestCode(t, testwait.Recv(t, submitted, "submit returned while another writer held the lock"), "access_request_busy")
 	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_UN); err != nil {
 		t.Fatal(err)
 	}

@@ -11,6 +11,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 type supervisorTestClock struct {
@@ -314,32 +316,30 @@ func TestSupervisorProcessFixture(t *testing.T) {
 func TestSupervisorRealChildCrashesTwiceThenStabilizes(t *testing.T) {
 	root := t.TempDir()
 	c := newSupervisorTestClock()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// Cancellation follows the third child's stable marker; how long three
+	// race-instrumented process starts take is not part of the contract.
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	joined := make(chan struct{})
-	go func() {
-		defer close(joined)
-		defer cancel()
-		for ctx.Err() == nil {
-			data, _ := os.ReadFile(filepath.Join(root, "stable"))
-			if string(data) == "stable" {
-				return
-			}
-			time.Sleep(10 * time.Millisecond)
-		}
-	}()
 	var pids []int
 	stops := 0
-	err := RunSupervisor(ctx, c.clock(), func() (SupervisorChild, error) {
-		command := exec.Command(os.Args[0], "-test.run=^TestSupervisorProcessFixture$")
-		command.Env = append(os.Environ(), "TSLINK_SUPERVISOR_HELPER=1", "TSLINK_SUPERVISOR_HELPER_DIR="+root)
-		if err := command.Start(); err != nil {
-			return SupervisorChild{}, err
-		}
-		pids = append(pids, command.Process.Pid)
-		return SupervisorChild{PID: command.Process.Pid, Wait: command.Wait, Stop: func() error { stops++; return command.Process.Kill() }}, nil
-	}, func(SupervisorState) error { return nil })
-	<-joined
+	supervised := make(chan error, 1)
+	go func() {
+		supervised <- RunSupervisor(ctx, c.clock(), func() (SupervisorChild, error) {
+			command := exec.Command(os.Args[0], "-test.run=^TestSupervisorProcessFixture$")
+			command.Env = append(os.Environ(), "TSLINK_SUPERVISOR_HELPER=1", "TSLINK_SUPERVISOR_HELPER_DIR="+root)
+			if err := command.Start(); err != nil {
+				return SupervisorChild{}, err
+			}
+			pids = append(pids, command.Process.Pid)
+			return SupervisorChild{PID: command.Process.Pid, Wait: command.Wait, Stop: func() error { stops++; return command.Process.Kill() }}, nil
+		}, func(SupervisorState) error { return nil })
+	}()
+	testwait.Until(t, "supervised child stabilized after two crashes", func() bool {
+		data, _ := os.ReadFile(filepath.Join(root, "stable"))
+		return string(data) == "stable"
+	})
+	cancel()
+	err := testwait.Recv(t, supervised, "supervisor returned after cancellation")
 	data, _ := os.ReadFile(filepath.Join(root, "count"))
 	if err != nil || string(data) != "3" || len(pids) != 3 || stops != 1 || !reflect.DeepEqual(c.delays, []time.Duration{time.Second, 2 * time.Second}) {
 		t.Fatalf("count=%s pids=%v stops=%d delays=%v err=%v", data, pids, stops, c.delays, err)

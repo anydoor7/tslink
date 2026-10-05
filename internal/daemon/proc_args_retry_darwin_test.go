@@ -7,6 +7,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -164,15 +165,18 @@ func TestReadDarwinProcArgsWaitsBetweenAttempts(t *testing.T) {
 	darwinProcArgs = func(int) ([]byte, error) { return nil, unix.EIO }
 	t.Cleanup(func() { darwinProcArgs, darwinProcArgsRetryDelay = prevFn, prevDelay })
 
-	start := time.Now()
-	_, _, _ = readDarwinProcArgs(4242)
-	elapsed := time.Since(start)
+	// Virtual time counts exactly the retry sleeps, independent of the host.
+	synctest.Test(t, func(t *testing.T) {
+		start := time.Now()
+		_, _, _ = readDarwinProcArgs(4242)
+		elapsed := time.Since(start)
 
-	wantAtLeast := time.Duration(darwinProcArgsAttempts-1) * darwinProcArgsRetryDelay
-	if elapsed < wantAtLeast {
-		t.Fatalf("readDarwinProcArgs() took %v, want at least %v (%d waits)",
-			elapsed, wantAtLeast, darwinProcArgsAttempts-1)
-	}
+		want := time.Duration(darwinProcArgsAttempts-1) * darwinProcArgsRetryDelay
+		if elapsed != want {
+			t.Fatalf("readDarwinProcArgs() took %v, want exactly %v (%d waits)",
+				elapsed, want, darwinProcArgsAttempts-1)
+		}
+	})
 }
 
 // The ceiling is not a taste question: cmd/serve.go polls IsProcessRunning every

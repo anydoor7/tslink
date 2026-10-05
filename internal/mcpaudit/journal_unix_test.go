@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/anydoor7/tslink/internal/filelock"
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 func TestJournalSpecialFilesAndBoundedLock(t *testing.T) {
@@ -33,12 +34,12 @@ func TestJournalSpecialFilesAndBoundedLock(t *testing.T) {
 			} else if err := syscall.Mkfifo(path, 0600); err != nil {
 				t.Fatal(err)
 			}
-			started := time.Now()
-			if err := j.Record(context.Background(), auditFixture()); err == nil {
+			// Opening a FIFO with no peer blocks forever, so returning at all is
+			// the property; how fast the refusal happens is not.
+			recorded := make(chan error, 1)
+			go func() { recorded <- j.Record(context.Background(), auditFixture()) }()
+			if err := testwait.Recv(t, recorded, "Record returned instead of blocking on the special file"); err == nil {
 				t.Fatal("special file accepted")
-			}
-			if time.Since(started) > time.Second {
-				t.Fatal("blocked on special file")
 			}
 			if kind != "lock-fifo" {
 				if _, err := j.Read(); err == nil {

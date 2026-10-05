@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"golang.org/x/sys/windows"
+
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 func TestReviewAssignmentWindowFixture(t *testing.T) {
@@ -64,15 +66,13 @@ func creationFixtureCommand(role, ready string) *exec.Cmd {
 
 func awaitCreationFile(t *testing.T, path string) []byte {
 	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		if data, err := os.ReadFile(path); err == nil && len(data) > 0 {
-			return data
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatalf("missing creation-boundary positive control: %s", path)
-	return nil
+	var data []byte
+	testwait.Until(t, "creation-boundary positive control "+path, func() bool {
+		var err error
+		data, err = os.ReadFile(path)
+		return err == nil && len(data) > 0
+	})
+	return data
 }
 
 func TestReviewSupervisorDeathBeforeAssignDoesNotOrphan(t *testing.T) {
@@ -105,7 +105,7 @@ func TestReviewSupervisorDeathBeforeAssignDoesNotOrphan(t *testing.T) {
 	if inspectProcessLiveness(parent.Process.Pid) != processLivenessAbsent {
 		t.Fatal("parent death not confirmed")
 	}
-	if err := waitForProcessExit(child, 5*time.Second); err != nil {
+	if err := waitForProcessExit(child, testwait.Budget(t)); err != nil {
 		t.Fatalf("parent exited but creation-boundary child PID %d remains alive: %v", pid, err)
 	}
 }

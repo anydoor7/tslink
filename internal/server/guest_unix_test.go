@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"syscall"
 	"testing"
-	"time"
 )
 
 func TestGuestSpecialRegistryFailsClosed(t *testing.T) {
@@ -42,10 +41,11 @@ func TestGuestSpecialRegistryFailsClosed(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			start := time.Now()
+			// A gate that opened the FIFO would block without a writer, so a
+			// refusal that is not immediate fails as a hang, not by elapsed time.
 			r, _ := f.request("GET", "/", "", cookies)
-			if r.StatusCode != 503 || r.Header.Get("Retry-After") != "1" || time.Since(start) > time.Second || f.hits.Load() != 0 {
-				t.Fatalf("special file refusal: status=%d elapsed=%s hits=%d", r.StatusCode, time.Since(start), f.hits.Load())
+			if r.StatusCode != 503 || r.Header.Get("Retry-After") != "1" || f.hits.Load() != 0 {
+				t.Fatalf("special file refusal: status=%d hits=%d", r.StatusCode, f.hits.Load())
 			}
 			if err := os.Remove(f.path); err != nil {
 				t.Fatal(err)

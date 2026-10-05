@@ -7,7 +7,8 @@ import (
 	"path/filepath"
 	"syscall"
 	"testing"
-	"time"
+
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 func tempLockFile(t *testing.T) *os.File {
@@ -89,12 +90,7 @@ func TestUnlockAllowsRelock(t *testing.T) {
 		done <- Unlock(f2)
 	}()
 
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("re-lock failed: %v", err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("re-lock timed out — lock was not properly released")
+	if err := testwait.Recv(t, done, "re-lock after Unlock"); err != nil {
+		t.Fatalf("re-lock failed: %v", err)
 	}
 }

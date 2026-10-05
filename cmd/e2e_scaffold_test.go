@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/anydoor7/tslink/internal/output"
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 // Cross-platform half of the e2e scaffolding: the helpers that run a
@@ -19,12 +20,6 @@ import (
 // long-lived child, enumerates processes by absolute path, or reaps by PID lives
 // in e2e_scaffold_unix_test.go, which is POSIX-only. Splitting on that line is
 // what keeps the Windows build free of unused symbols.
-
-const (
-	// e2eCommandTimeout bounds every non-daemon CLI invocation so a hung child
-	// fails the test instead of hanging the package.
-	e2eCommandTimeout = 30 * time.Second
-)
 
 // e2eEnv builds the isolated child environment shared by every e2e invocation.
 // It mirrors runTSLinkBinaryWithConfigDir and adds nothing that could reach a
@@ -47,10 +42,12 @@ type e2eRun struct {
 	Elapsed  time.Duration
 }
 
-// e2eRunBinary invokes a compiled tslink binary with a bounded deadline.
+// e2eRunBinary invokes a compiled tslink binary. The kill deadline is a hang
+// guard so a hung child fails the test instead of hanging the package.
 func e2eRunBinary(t *testing.T, binary, configDir, stdin string, env []string, args ...string) e2eRun {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), e2eCommandTimeout)
+	budget := testwait.Budget(t)
+	ctx, cancel := context.WithTimeout(context.Background(), budget)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, binary, offlineRegistrationArgs(args)...)
@@ -73,7 +70,7 @@ func e2eRunBinary(t *testing.T, binary, configDir, stdin string, env []string, a
 		result.ExitCode = exitErr.ExitCode()
 	}
 	if ctx.Err() != nil {
-		t.Fatalf("run %s %v exceeded %s", filepath.Base(binary), args, e2eCommandTimeout)
+		t.Fatalf("run %s %v exceeded the %s hang guard", filepath.Base(binary), args, budget)
 	}
 	return result
 }

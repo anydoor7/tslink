@@ -12,6 +12,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 func TestStoreFailureRecoveryAndHealth(t *testing.T) {
@@ -29,22 +31,13 @@ func TestStoreFailureRecoveryAndHealth(t *testing.T) {
 		t.Fatal(err)
 	}
 	close(release)
-	deadline := time.Now().Add(3 * time.Second)
-	for s.Health().Drops == 0 && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
-	}
+	testwait.Until(t, "disk error counted as a drop", func() bool { return s.Health().Drops != 0 })
 	if s.Health().Drops != 1 || s.Health().Error != "access_log_io_failed" {
 		t.Fatalf("disk error %+v", s.Health())
 	}
 	// A repair is read by the worker's periodic recovery without delaying serving.
 	os.Remove(bad)
-	deadline = time.Now().Add(3 * time.Second)
-	for s.Health().Error != "" && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
-	}
-	if s.Health().Error != "" {
-		t.Fatal("disk recovery did not resume")
-	}
+	testwait.Until(t, "disk recovery resumed", func() bool { return s.Health().Error == "" })
 	s.RecordResolved(event("recovered", "alice", "/ok"), func() Identity { return Identity{Node: "tag-node", Tags: []string{"tag:reader"}} })
 	closeStore(t, s)
 	r, e := Query(dir, Filter{Who: "tag:reader"})
@@ -66,31 +59,22 @@ func TestStoreFailureRecoveryAndHealth(t *testing.T) {
 		t.Fatal("special health file admitted")
 	}
 	s = newTestStore(t, dir, Options{}, func() time.Time { return testTime })
-	deadline = time.Now().Add(3 * time.Second)
-	for s.Health().Error == "" && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
-	}
+	testwait.Until(t, "health snapshot failure reported", func() bool { return s.Health().Error != "" })
 	if s.Health().Error != "access_log_io_failed" {
 		t.Fatal("health snapshot failure was not reported")
 	}
 	os.Remove(filepath.Join(dir, "access-log", "health.json"))
 	s.Record(event("health-repaired", "alice", "/ok"))
-	deadline = time.Now().Add(3 * time.Second)
-	for (s.Health().Error != "" || s.Health().LastWrite == nil) && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
-	}
-	if s.Health().Error != "" || s.Health().LastWrite == nil {
-		t.Fatal("health failure did not recover after filesystem repair")
-	}
+	testwait.Until(t, "health failure recovered after filesystem repair", func() bool {
+		h := s.Health()
+		return h.Error == "" && h.LastWrite != nil
+	})
 	// With no queued event, the idle eviction timer must surface file failures.
 	idleBad := filepath.Join(dir, "access-log", "2030-07-10-000001.jsonl")
 	if err := os.Mkdir(idleBad, 0700); err != nil {
 		t.Fatal(err)
 	}
-	deadline = time.Now().Add(3 * time.Second)
-	for s.Health().Error == "" && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
-	}
+	testwait.Until(t, "idle eviction failure reported", func() bool { return s.Health().Error != "" })
 	if s.Health().Error != "access_log_io_failed" {
 		t.Fatal("idle eviction failure was not reported")
 	}
@@ -105,22 +89,13 @@ func TestIdleRetentionClockAndGlobalPath(t *testing.T) {
 	off := false
 	s := newTestStore(t, dir, Options{RetentionDays: 1, RecordPath: &off}, now)
 	s.Record(event("app", "alice", "/sensitive-name"))
-	deadline := time.Now().Add(3 * time.Second)
-	for s.Health().LastWrite == nil && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
-	}
+	testwait.Until(t, "first record written", func() bool { return s.Health().LastWrite != nil })
 	r, e := Query(dir, Filter{})
 	if e != nil || r.Summary.Count != 1 || r.Events[0].Path != "" {
 		t.Fatalf("global path %+v %v", r, e)
 	}
 	clock.Store(testTime.Add(24 * time.Hour).UnixNano())
-	deadline = time.Now().Add(3 * time.Second)
-	for s.Health().Size > 0 && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
-	}
-	if s.Health().Size != 0 {
-		t.Fatal("idle retention did not evict with injected clock")
-	}
+	testwait.Until(t, "idle retention evicted with injected clock", func() bool { return s.Health().Size == 0 })
 	closeStore(t, s)
 }
 func TestStoreAppendFailures(t *testing.T) {

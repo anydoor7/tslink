@@ -17,6 +17,7 @@ import (
 
 	"github.com/anydoor7/tslink/internal/config"
 	"github.com/anydoor7/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/testwait"
 	"tailscale.com/client/tailscale/apitype"
 	"tailscale.com/tailcfg"
 )
@@ -97,7 +98,7 @@ func TestF5ReviewPortalOnlyRunRestart(t *testing.T) {
 		go func() { done <- s.Run(ctx) }()
 		select {
 		case <-ready:
-		case <-time.After(3 * time.Second):
+		case <-time.After(testwait.Budget(t)):
 			cancel()
 			<-done
 			t.Fatal("Run did not become ready")
@@ -107,7 +108,7 @@ func TestF5ReviewPortalOnlyRunRestart(t *testing.T) {
 		s.mu.Unlock()
 		select {
 		case <-run.done:
-		case <-time.After(3 * time.Second):
+		case <-time.After(testwait.Budget(t)):
 			cancel()
 			<-done
 			t.Fatal("portal did not start")
@@ -125,7 +126,7 @@ func TestF5ReviewPortalOnlyRunRestart(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-		case <-time.After(3 * time.Second):
+		case <-time.After(testwait.Budget(t)):
 			t.Fatal("Run failed to join shutdown")
 		}
 		if fake.closeCount.Load() != 1 {
@@ -201,7 +202,7 @@ func TestF5ReviewPendingPortalLifecycle(t *testing.T) {
 	case err := <-done:
 		cancel()
 		t.Fatalf("Run returned before ready: %v", err)
-	case <-time.After(3 * time.Second):
+	case <-time.After(testwait.Budget(t)):
 		cancel()
 		<-done
 		t.Fatal("handoff not emitted")
@@ -220,7 +221,7 @@ func TestF5ReviewPendingPortalLifecycle(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(testwait.Budget(t)):
 		t.Fatal("pending enrollment failed to join on Run cancellation")
 	}
 	if fake.closeCount.Load() != 1 {
@@ -356,12 +357,12 @@ func TestF5ReviewTCPMatchesPortal(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer f.s.stopNodeLocked(svc.Name)
-	conn, err := net.DialTimeout("tcp", ln.Addr().String(), time.Second)
+	conn, err := net.DialTimeout("tcp", ln.Addr().String(), testwait.Budget(t))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	_ = conn.SetDeadline(time.Now().Add(2 * time.Second))
+	_ = conn.SetDeadline(time.Now().Add(testwait.Budget(t)))
 	buf := make([]byte, len("PRIVATE-DB-HELLO\n"))
 	if _, err := io.ReadFull(conn, buf); err != nil || string(buf) != "PRIVATE-DB-HELLO\n" {
 		t.Fatalf("real TCP backend not served: %q %v", buf, err)

@@ -8,6 +8,7 @@ import (
 	"github.com/anydoor7/tslink/internal/config"
 	"github.com/anydoor7/tslink/internal/registry"
 	"github.com/anydoor7/tslink/internal/testenv"
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 func TestTryNodeStateGateSkipsContentionAndCancellation(t *testing.T) {
@@ -95,23 +96,15 @@ func TestRunShutdownDoesNotWaitForBusyFinalProof(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			done := make(chan error, 1)
 			go func() { done <- s.Run(ctx) }()
-			select {
-			case <-ready:
-			case <-time.After(5 * time.Second):
-				t.Fatal("server never ready")
-			}
-			select {
-			case <-atFinal:
-			case <-time.After(5 * time.Second):
-				t.Fatal("ticker never reached final proof")
-			}
+			testwait.Recv(t, ready, "server never ready")
+			testwait.Recv(t, atFinal, "ticker never reached final proof")
 			cancel()
 			select {
 			case err := <-done:
 				if err != nil {
 					t.Error(err)
 				}
-			case <-time.After(5 * time.Second):
+			case <-time.After(testwait.Budget(t)):
 				t.Error("Run shutdown waited for registry writer")
 			}
 			if len(s.reconcileGate) != 0 {

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/anydoor7/tslink/internal/mcpscope"
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 func TestBootstrapQueriesCheckCaller(t *testing.T) {
@@ -116,12 +117,24 @@ func bootstrapInspectInstaller(t *testing.T, ctx context.Context, path string, e
 	}
 }
 
-func bootstrapSetQueryProcess(t *testing.T, exe string) {
+// bootstrapSetQueryProcess runs each scheduler query as a real test child and
+// reports each query's error in order, so a cancellation test can tell a query
+// ended by its caller from one ended by its own deadline. The deadline is
+// beyond the hang guard: the product's 2s managerQueryTimeout would otherwise
+// race the child's own start on a loaded runner.
+func bootstrapSetQueryProcess(t *testing.T, exe string) <-chan error {
+	queries := make(chan error, 16)
+	deadline := 2 * testwait.Budget(t)
 	windowsSchedulerFn = func(managerCtx context.Context, op, name string, data []byte) (windowsSchedulerStatus, error) {
 		if op != "query" {
 			t.Fatalf("unexpected manager mutation: %s", op)
 		}
-		_, err := runBoundedManagerCommandContext(managerCtx, exe, managerQueryTimeout, "-test.run=^TestManagerCallerContextHelper$")
+		_, err := runBoundedManagerCommandContext(managerCtx, exe, deadline, "-test.run=^TestManagerCallerContextHelper$")
+		select {
+		case queries <- err:
+		default:
+		}
 		return windowsSchedulerStatus{}, err
 	}
+	return queries
 }

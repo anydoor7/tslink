@@ -13,6 +13,7 @@ import (
 
 	"github.com/anydoor7/tslink/internal/config"
 	"github.com/anydoor7/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 func TestProxyCanonicalHostAvailability(t *testing.T) {
@@ -138,7 +139,7 @@ func TestStartNodeCanonicalAuthority(t *testing.T) {
 				req, _ := http.NewRequest(http.MethodGet, "http://"+ln.Addr().String(), nil)
 				req.Host = host
 				req.Header.Set("X-Forwarded-Host", "forged.invalid")
-				res, err := (&http.Client{Timeout: httpReadHeaderTimeout}).Do(req)
+				res, err := (&http.Client{Timeout: testwait.Budget(t)}).Do(req)
 				if err != nil {
 					t.Fatal(err)
 				}

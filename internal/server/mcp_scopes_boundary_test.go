@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/anydoor7/tslink/internal/duration"
@@ -194,27 +195,27 @@ func TestMCPOwnerEventsEndsAtBindingExpiry(t *testing.T) {
 	previous := serverNowFn
 	serverNowFn = func() time.Time { return now }
 	defer func() { serverNowFn = previous }()
-	cp := &MCPControlPlane{Bindings: []mcpscope.Binding{{Principal: "owner", Scope: mcpscope.Scope{Role: "owner"}, ExpiresAt: &expiry}}, Handler: http.NotFoundHandler(), EventsSnapshot: func(context.Context) (any, error) { return map[string]any{"marker": "owner-snapshot"}, nil }}
-	h := httptest.NewServer(NewMCPControlPlaneHandler(cp, fakeWhoIsClient(t, &apitype.WhoIsResponse{UserProfile: &tailcfg.UserProfile{LoginName: "owner"}}, nil)))
-	defer h.Close()
-	h.Client().Timeout = 2 * time.Second
-	started := time.Now()
-	response, err := h.Client().Get(h.URL + MCPEventsPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer response.Body.Close()
-	b, err := io.ReadAll(response.Body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if response.StatusCode != 200 || !strings.Contains(string(b), "owner-snapshot") {
-		t.Fatalf("stream control failed: %d %s", response.StatusCode, b)
-	}
-	if time.Since(started) > time.Second {
-		t.Fatalf("stream continued beyond expiry: %v", time.Since(started))
-	}
-	t.Logf("owner snapshot received, stream closed after %v", time.Since(started))
+	// Serve the shipped handler in virtual time: the stream must end at exactly
+	// the 120ms binding expiry, not merely before a wall-clock bound.
+	synctest.Test(t, func(t *testing.T) {
+		cp := &MCPControlPlane{Bindings: []mcpscope.Binding{{Principal: "owner", Scope: mcpscope.Scope{Role: "owner"}, ExpiresAt: &expiry}}, Handler: http.NotFoundHandler(), EventsSnapshot: func(context.Context) (any, error) { return map[string]any{"marker": "owner-snapshot"}, nil }}
+		h := NewMCPControlPlaneHandler(cp, fakeWhoIsClient(t, &apitype.WhoIsResponse{UserProfile: &tailcfg.UserProfile{LoginName: "owner"}}, nil))
+		// A virtual-time request bound, so a stream that ignored expiry ends
+		// with a wrong elapsed time instead of running its keepalives forever.
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		started := time.Now()
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, httptest.NewRequestWithContext(ctx, http.MethodGet, "https://mcp.test"+MCPEventsPath, nil))
+		elapsed := time.Since(started)
+		if rr.Code != 200 || !strings.Contains(rr.Body.String(), "owner-snapshot") {
+			t.Fatalf("stream control failed: %d %s", rr.Code, rr.Body.String())
+		}
+		if elapsed != 120*time.Millisecond {
+			t.Fatalf("stream ended after %v, want exactly the 120ms binding expiry", elapsed)
+		}
+		t.Logf("owner snapshot received, stream closed after %v virtual", elapsed)
+	})
 }
 
 func TestMCPMultipleMatchingRemoteTagsAreRefused(t *testing.T) {

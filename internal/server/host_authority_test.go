@@ -21,6 +21,7 @@ import (
 
 	"github.com/anydoor7/tslink/internal/config"
 	"github.com/anydoor7/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/testwait"
 	"tailscale.com/client/tailscale/apitype"
 	"tailscale.com/tailcfg"
 )
@@ -109,7 +110,7 @@ func TestProxyHostCannotCrossNodePolicy(t *testing.T) {
 					t.Fatal(err)
 				}
 				defer c.Close()
-				_ = c.SetDeadline(time.Now().Add(5 * time.Second))
+				_ = c.SetDeadline(time.Now().Add(testwait.Budget(t)))
 				if len(c.ConnectionState().VerifiedChains) == 0 {
 					t.Fatal("TLS certificate not verified")
 				}

@@ -4,10 +4,10 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/anydoor7/tslink/internal/config"
 	"github.com/anydoor7/tslink/internal/testenv"
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 // newCredentialStateServer builds a Server whose config directory is a scratch
@@ -179,11 +179,7 @@ func TestCredentialFileChangeNotifiesThroughTheWatcher(t *testing.T) {
 
 	writeCredentialFile(t, cfgDir, config.CredentialMetaFileName, `{"slots":{"api_key":{"fingerprint":"abc"}}}`)
 
-	select {
-	case <-changed:
-	case <-time.After(10 * time.Second):
-		t.Fatal("a credential metadata write produced no event frame")
-	}
+	testwait.Recv(t, changed, "a credential metadata write produced no event frame")
 
 	if count := srv.syncGeneration.Load(); count != 0 {
 		t.Fatalf("a credential write triggered %d registry syncs", count)

@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -14,6 +15,8 @@ import (
 	"github.com/anydoor7/tslink/internal/mcpscope"
 	"github.com/anydoor7/tslink/internal/output"
 	"github.com/anydoor7/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/testwait"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // Keep MCP dispatch, default read actions, real supervision queries and files.
@@ -99,42 +102,42 @@ func TestReadToolManagerProcessCancellation(t *testing.T) {
 			if state == "cancelled" {
 				t.Setenv("TSLINK_TEST_MANAGER_WAIT", "yes")
 			}
-			bootstrapSetQueryProcess(t, exe)
+			queries := bootstrapSetQueryProcess(t, exe)
 			dir, _ := config.Dir()
 			a := defaultMCPActions(sharePaths{Registry: filepath.Join(dir, "registry.json"), PID: filepath.Join(dir, "tslink.pid"), Snapshot: filepath.Join(dir, "runtime.json"), AuthHandoff: filepath.Join(dir, "auth-handoff.json")}, io.Discard)
 			a.session = &mcpscope.Session{Who: "viewer-test", Scope: mcpscope.Scope{Role: "viewer", Apps: []string{"photos"}}}
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
-			cancelled := make(chan time.Time, 1)
-			if state == "cancelled" {
-				go func() {
-					deadline := time.Now().Add(5 * time.Second)
-					for time.Now().Before(deadline) {
-						if _, err := os.Stat(marker); err == nil {
-							when := time.Now()
-							cancel()
-							cancelled <- when
-							return
-						}
-						time.Sleep(time.Millisecond)
-					}
-					cancel()
-					cancelled <- time.Time{}
-				}()
+			type called struct {
+				result *mcp.CallToolResult
+				err    error
 			}
-			result, err := callMCPTool(ctx, a, "status", json.RawMessage(`{}`))
+			done := make(chan called, 1)
+			go func() {
+				result, err := callMCPTool(ctx, a, "status", json.RawMessage(`{}`))
+				done <- called{result, err}
+			}()
+			if state == "cancelled" {
+				testwait.Until(t, "read query child started", func() bool { _, err := os.Stat(marker); return err == nil })
+				cancel()
+			}
+			call := testwait.Recv(t, done, "status tool returned")
+			result, err := call.result, call.err
 			if _, e := os.Stat(marker); e != nil {
 				t.Fatalf("query child did not run: %v result=%v error=%v", e, result, err)
 			}
 			if state == "cancelled" {
-				when := <-cancelled
-				if when.IsZero() {
-					t.Fatal("no child-start marker")
+				// The child sleeps for an hour: Canceled means the caller ended the
+				// query, DeadlineExceeded that it ran to managerQueryTimeout.
+				var queryErr error
+				select {
+				case queryErr = <-queries:
+				default:
+					t.Fatal("no manager query ran")
 				}
-				delay := time.Since(when)
-				t.Logf("post-cancellation return delay=%s result_code=%s", delay, mcpResultCode(result, err))
-				if delay > time.Second {
-					t.Fatalf("read query ignored cancellation for %s", delay)
+				t.Logf("query error=%v result_code=%s", queryErr, mcpResultCode(result, err))
+				if !errors.Is(queryErr, context.Canceled) {
+					t.Fatalf("read query ignored cancellation: %v", queryErr)
 				}
 			}
 		})

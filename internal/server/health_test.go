@@ -20,6 +20,7 @@ import (
 	"github.com/anydoor7/tslink/internal/registry"
 	tsruntime "github.com/anydoor7/tslink/internal/runtime"
 	"github.com/anydoor7/tslink/internal/testenv/localapitest"
+	"github.com/anydoor7/tslink/internal/testwait"
 	"tailscale.com/ipn/ipnstate"
 )
 
@@ -103,21 +104,16 @@ func TestHealthMonitorCapturesClockAndFunctionsBeforeSpawning(t *testing.T) {
 	serverNowFn = func() time.Time { panic("uncaptured clock") }
 	healthProbeFn = func(context.Context, registry.Service) string { panic("uncaptured probe") }
 	healthCredentialInventoryFn = func(time.Time) credentials.Inventory { panic("uncaptured credentials") }
-	deadline := time.After(5 * time.Second)
-	for {
+	testwait.Until(t, "monitor observation published", func() bool {
 		snapshot, err := tsruntime.Load(filepath.Join(dir, "runtime.json"))
 		if err == nil && len(snapshot.Services) > 0 && snapshot.Services[0].Health.LastChecked != nil {
 			if !snapshot.Services[0].Health.LastChecked.Equal(now) {
 				t.Fatal("wrong clock", snapshot.Services[0].Health)
 			}
-			break
+			return true
 		}
-		select {
-		case <-deadline:
-			t.Fatal("no monitor observation")
-		case <-time.After(5 * time.Millisecond):
-		}
-	}
+		return false
+	})
 }
 
 func TestHealthCycleIgnoresWithdrawnNodeAndKeepsPartialSnapshot(t *testing.T) {
@@ -172,7 +168,7 @@ func TestHealthTransitionsArriveOnEventsStream(t *testing.T) {
 	s.writeRuntimeSnapshotLocked("health-fixture", true)
 	s.mu.Unlock()
 	srv := mcpEventsTestServer(t, s.events, func(context.Context) (any, error) { return tsruntime.Load(filepath.Join(dir, "runtime.json")) })
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), testwait.Budget(t))
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+MCPEventsPath, nil)
 	if err != nil {
@@ -235,8 +231,7 @@ func TestHealthMonitorCredentialExpiryAndInvalidNotifier(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := s.startHealthMonitor(ctx)
 	t.Cleanup(func() { cancel(); <-done })
-	deadline := time.After(5 * time.Second)
-	for {
+	testwait.Until(t, "credential warning published", func() bool {
 		s.mu.RLock()
 		alerts := s.alerts
 		s.mu.RUnlock()
@@ -244,14 +239,10 @@ func TestHealthMonitorCredentialExpiryAndInvalidNotifier(t *testing.T) {
 			if alerts.Error != "alert_webhook_invalid" || alerts.Notifier != "none" || alerts.Events[0].Expiry.Source != credentials.ExpirySourceAssumedMax || alerts.Events[0].Expiry.Warning != "critical_3d" {
 				t.Fatalf("%+v", alerts)
 			}
-			break
+			return true
 		}
-		select {
-		case <-deadline:
-			t.Fatal("credential warning missing")
-		case <-time.After(5 * time.Millisecond):
-		}
-	}
+		return false
+	})
 }
 
 func TestHealthCycleFailedNodesAndCancellation(t *testing.T) {

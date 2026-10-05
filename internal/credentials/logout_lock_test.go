@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/zalando/go-keyring"
+
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 // assertWaitsForCredentialTransaction holds the credential mutation lock in a
@@ -23,11 +25,7 @@ func assertWaitsForCredentialTransaction(t *testing.T, name string, op func() er
 			return nil
 		})
 	}()
-	select {
-	case <-held:
-	case <-time.After(5 * time.Second):
-		t.Fatal("holder transaction never acquired the credential lock")
-	}
+	testwait.Recv(t, held, "holder transaction acquired the credential lock")
 	opDone := make(chan error, 1)
 	go func() { opDone <- op() }()
 	select {
@@ -41,13 +39,8 @@ func assertWaitsForCredentialTransaction(t *testing.T, name string, op func() er
 	if err := <-txDone; err != nil {
 		t.Fatalf("holder transaction: %v", err)
 	}
-	select {
-	case err := <-opDone:
-		if err != nil {
-			t.Fatalf("%s after the lock was released: %v", name, err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatalf("%s remained blocked after the lock was released", name)
+	if err := testwait.Recv(t, opDone, name+" finished after the lock was released"); err != nil {
+		t.Fatalf("%s after the lock was released: %v", name, err)
 	}
 }
 

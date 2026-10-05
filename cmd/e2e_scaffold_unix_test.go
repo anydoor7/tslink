@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/anydoor7/tslink/internal/daemon"
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 // Process-level e2e scaffolding.
@@ -57,9 +58,6 @@ const (
 	// e2eDaemonReadyLine is what the overlay fake daemon prints once it has
 	// published its PID identity sidecar.
 	e2eDaemonReadyLine = "ready\n"
-
-	// e2eDaemonReadyTimeout bounds fake-daemon startup.
-	e2eDaemonReadyTimeout = 30 * time.Second
 )
 
 var (
@@ -263,6 +261,7 @@ type e2eDaemonHandle struct {
 	cmd   *exec.Cmd
 	stdin io.WriteCloser
 	done  chan struct{}
+	t     *testing.T // bounds stopAndReap's waits by the binary deadline
 }
 
 // e2eStartFakeDaemon starts the overlay fake daemon against configDir, waits
@@ -303,6 +302,7 @@ func e2eStartFakeDaemon(t *testing.T, configDir string) *e2eDaemonHandle {
 		cmd:        cmd,
 		stdin:      stdin,
 		done:       make(chan struct{}),
+		t:          t,
 	}
 	go func() {
 		_ = cmd.Wait()
@@ -320,8 +320,8 @@ func e2eStartFakeDaemon(t *testing.T, configDir string) *e2eDaemonHandle {
 		if line != e2eDaemonReadyLine {
 			t.Fatalf("fake daemon readiness = %q, want %q (stderr=%q)", line, e2eDaemonReadyLine, stderr.String())
 		}
-	case <-time.After(e2eDaemonReadyTimeout):
-		t.Fatalf("fake daemon did not become ready within %s (stderr=%q)", e2eDaemonReadyTimeout, stderr.String())
+	case <-time.After(testwait.Budget(t)):
+		t.Fatalf("fake daemon did not become ready within the hang guard (stderr=%q)", stderr.String())
 	}
 
 	pidPath := filepath.Join(configDir, "tslink.pid")
@@ -346,20 +346,21 @@ func e2eStartFakeDaemon(t *testing.T, configDir string) *e2eDaemonHandle {
 	return handle
 }
 
-// stopAndReap terminates only the recorded PID owned by this handle.
+// stopAndReap terminates only the recorded PID owned by this handle. A daemon
+// that ignores stdin EOF for a whole hang guard is killed.
 func (h *e2eDaemonHandle) stopAndReap() {
 	_ = h.stdin.Close()
 	select {
 	case <-h.done:
 		return
-	case <-time.After(5 * time.Second):
+	case <-time.After(testwait.Budget(h.t)):
 	}
 	if h.cmd.Process != nil {
 		_ = h.cmd.Process.Kill()
 	}
 	select {
 	case <-h.done:
-	case <-time.After(5 * time.Second):
+	case <-time.After(testwait.Budget(h.t)):
 	}
 }
 
@@ -497,7 +498,7 @@ func e2eAssertProcessCount(t *testing.T, binaryPath string, want int, context st
 	t.Helper()
 	// A just-signalled process can linger briefly before the kernel reaps it,
 	// so converge on the expected count instead of sampling once.
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(testwait.Budget(t))
 	var pids []int
 	for {
 		pids = e2eLivePIDsForBinary(t, binaryPath)

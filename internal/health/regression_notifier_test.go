@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 // The notifier re-execs this test binary and starts /bin/sleep directly; no shell or network.
@@ -47,11 +49,16 @@ func TestReviewNotifierProcessTree(t *testing.T) {
 	t.Logf("control duration=%s", time.Since(start))
 	t.Setenv("TSLINK_REVIEW_NOTIFIER_PHASE", "parent")
 	start = time.Now()
-	err := Notify(context.Background(), c, Event{Kind: "app_down"})
-	elapsed := time.Since(start)
-	t.Logf("descendant-held pipes duration=%s err=%v", elapsed, err)
-	if elapsed > 11*time.Second {
-		t.Errorf("10s notifier timeout exceeded; returned after %s", elapsed)
+	// The descendant outlives Notify's own 10s deadline (sleep 12). Waiting on
+	// it would expire that deadline and report alert_command_failed, so success
+	// is the assertion on the product's inner deadline; testwait only bounds a
+	// Notify that ignores its deadline entirely.
+	notified := make(chan error, 1)
+	go func() { notified <- Notify(context.Background(), c, Event{Kind: "app_down"}) }()
+	err := testwait.Recv(t, notified, "Notify returned while a descendant held its output")
+	t.Logf("descendant-held pipes duration=%s err=%v", time.Since(start), err)
+	if err != nil {
+		t.Errorf("Notify waited for the descendant past its 10s deadline: %v", err)
 	}
 }
 
@@ -65,21 +72,15 @@ func TestNotifierCancellationStopsUnixProcessGroup(t *testing.T) {
 	go func() {
 		done <- Notify(ctx, NotifierConfig{Command: []string{os.Args[0], "-test.run=^TestReviewNotifierProcessTree$"}}, Event{Kind: "app_down"})
 	}()
-	deadline := time.After(5 * time.Second)
-	var pid int
-	for {
-		if b, err := os.ReadFile(pidFile); err == nil && len(b) > 0 {
-			pid, err = strconv.Atoi(string(b))
-			if err != nil {
-				t.Fatal(err)
-			}
-			break
-		}
-		select {
-		case <-deadline:
-			t.Fatal("descendant helper never started")
-		case <-time.After(time.Millisecond):
-		}
+	var pidText []byte
+	testwait.Until(t, "descendant helper started", func() bool {
+		b, err := os.ReadFile(pidFile)
+		pidText = b
+		return err == nil && len(b) > 0
+	})
+	pid, err := strconv.Atoi(string(pidText))
+	if err != nil {
+		t.Fatal(err)
 	}
 	t.Cleanup(func() {
 		if child, err := os.FindProcess(pid); err == nil {
@@ -92,32 +93,22 @@ func TestNotifierCancellationStopsUnixProcessGroup(t *testing.T) {
 		t.Fatalf("process-state control failed: %q %v", state, err)
 	}
 	cancel()
-	select {
-	case err := <-done:
-		if err == nil || err.Error() != "alert_command_failed" {
-			t.Fatal(err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("descendant-held pipes blocked cancellation")
+	if err := testwait.Recv(t, done, "canceled Notify returned despite descendant-held pipes"); err == nil || err.Error() != "alert_command_failed" {
+		t.Fatal(err)
 	}
-	deadline = time.After(5 * time.Second)
-	for {
+	testwait.Until(t, "notifier descendant exited after cancellation", func() bool {
 		state, err = exec.Command("/bin/ps", "-p", strconv.Itoa(pid), "-o", "stat=").Output()
 		if strings.TrimSpace(string(state)) == "" {
 			if _, ok := err.(*exec.ExitError); ok {
-				break
+				return true
 			}
 		}
 		if err == nil && strings.HasPrefix(strings.TrimSpace(string(state)), "Z") {
-			break
+			return true
 		}
 		if err != nil {
 			t.Fatal("ps probe failed", err)
 		}
-		select {
-		case <-deadline:
-			t.Fatal("notifier descendant survived cancellation", string(state))
-		case <-time.After(time.Millisecond):
-		}
-	}
+		return false
+	})
 }

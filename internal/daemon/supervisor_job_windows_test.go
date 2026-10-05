@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"testing"
 	"time"
+
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 func TestSupervisorWindowsJobKillsOwnedChildAndPreservesParent(t *testing.T) {
@@ -29,27 +31,20 @@ func TestSupervisorWindowsJobKillsOwnedChildAndPreservesParent(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer command.Process.Kill()
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		if _, err := os.Stat(root + "/stable"); err == nil {
-			break
-		}
-		if time.Now().After(deadline) {
+	jobClosed := false
+	defer func() {
+		if !jobClosed {
 			job.Close()
-			t.Fatal("owned child did not stabilize")
 		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	}()
+	testwait.Until(t, "owned child stabilized", func() bool { _, err := os.Stat(root + "/stable"); return err == nil })
 	job.Close()
+	jobClosed = true
 	done := make(chan error, 1)
 	go func() { done <- child.Wait() }()
-	select {
-	case <-done:
-		// Closing a Windows job can terminate a process with exit code zero.
-		// Reaping the previously infinite helper proves termination.
-	case <-time.After(5 * time.Second):
-		t.Fatal("job close left live child")
-	}
+	// Closing a Windows job can terminate a process with exit code zero.
+	// Reaping the previously infinite helper proves termination.
+	testwait.Recv(t, done, "job close terminated the owned child")
 	if inspectProcessLiveness(os.Getpid()) != processLivenessAlive {
 		t.Fatal("job affected parent")
 	}
@@ -117,32 +112,29 @@ func TestSupervisorWindowsJobReclaimsDescendants(t *testing.T) {
 		t.Fatal(err)
 	}
 	leafPID := 0
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
+	jobClosed := false
+	defer func() {
+		if !jobClosed {
+			job.Close()
+		}
+	}()
+	testwait.Until(t, "descendant positive control", func() bool {
 		data, _ := os.ReadFile(filepath.Join(root, "leaf.pid"))
 		leafPID, _ = strconv.Atoi(string(data))
-		if leafPID > 0 {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	if leafPID <= 0 {
-		job.Close()
-		t.Fatal("descendant positive control missing")
-	}
+		return leafPID > 0
+	})
 	leaf, err := os.FindProcess(leafPID)
 	if err != nil {
-		job.Close()
 		t.Fatal(err)
 	}
 	defer leaf.Release()
 	defer leaf.Kill()
 	if inspectProcessLiveness(leafPID) != processLivenessAlive {
-		job.Close()
 		t.Fatal("descendant not alive before job close")
 	}
 	job.Close()
-	if err := waitForProcessExit(leaf, 5*time.Second); err != nil {
+	jobClosed = true
+	if err := waitForProcessExit(leaf, testwait.Budget(t)); err != nil {
 		t.Fatalf("job left descendant: %v", err)
 	}
 	_ = child.Wait()

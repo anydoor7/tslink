@@ -18,6 +18,7 @@ import (
 	tsruntime "github.com/anydoor7/tslink/internal/runtime"
 	"github.com/anydoor7/tslink/internal/tailapi"
 	"github.com/anydoor7/tslink/internal/testenv"
+	"github.com/anydoor7/tslink/internal/testwait"
 	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/tailcfg"
 )
@@ -142,11 +143,7 @@ func useEnrollingNode(t *testing.T, node *enrollingNode) {
 
 func waitFor(t *testing.T, ch <-chan struct{}, what string) {
 	t.Helper()
-	select {
-	case <-ch:
-	case <-time.After(5 * time.Second):
-		t.Fatalf("timed out waiting for %s", what)
-	}
+	testwait.Recv(t, ch, what)
 }
 
 func ownershipRecords(t *testing.T, path, nodeID string) bool {

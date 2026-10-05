@@ -15,9 +15,9 @@ import (
 	"path/filepath"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/anydoor7/tslink/internal/server"
+	"github.com/anydoor7/tslink/internal/testwait"
 	"tailscale.com/ipn/ipnstate"
 )
 
@@ -75,13 +75,8 @@ func TestPendingOfferSurvivesOtherNodes(t *testing.T) {
 					go func() { defer close(joined); n.done <- server.WaitForEnrollmentTest(nctx, callback, name, lc) }()
 					deferCleanup := func() { cancel(); <-joined; api.Close() }
 					t.Cleanup(deferCleanup)
-					select {
-					case got := <-pending:
-						if got != name {
-							t.Fatalf("published %s want %s", got, name)
-						}
-					case <-time.After(3 * time.Second):
-						t.Fatal("pending not published")
+					if got := testwait.Recv(t, pending, "pending enrollment published"); got != name {
+						t.Fatalf("published %s want %s", got, name)
 					}
 					records, err := loadAuthHandoffs(path)
 					found := false
@@ -120,24 +115,13 @@ func TestPendingOfferSurvivesOtherNodes(t *testing.T) {
 					} else {
 						n.running.Store(true)
 					}
-					select {
-					case err := <-n.done:
-						if err != nil && !((kind == "portal-first-cancelled" || kind == "app-first-cancelled") && errors.Is(err, context.Canceled)) {
-							t.Fatalf("terminal: %v", err)
-						}
-					case <-time.After(3 * time.Second):
-						t.Fatal("terminal not joined")
+					if err := testwait.Recv(t, n.done, "terminal enrollment joined"); err != nil && !((kind == "portal-first-cancelled" || kind == "app-first-cancelled") && errors.Is(err, context.Canceled)) {
+						t.Fatalf("terminal: %v", err)
 					}
 				}
 				assertSurvivor := func(stage string) {
 					calls := survivor.requests.Load()
-					deadline := time.Now().Add(time.Second)
-					for survivor.requests.Load() < calls+3 && time.Now().Before(deadline) {
-						time.Sleep(10 * time.Millisecond)
-					}
-					if survivor.requests.Load() < calls+3 {
-						t.Fatal("pending poller stopped; invalid probe")
-					}
+					testwait.Until(t, "pending poller kept polling (3 more requests)", func() bool { return survivor.requests.Load() >= calls+3 })
 					record, err := loadAuthHandoff(path)
 					t.Logf("%s: pending=%s polls=%d file_service=%q load_err=%v", stage, first, survivor.requests.Load(), record.Service, err)
 					if err != nil || record.Service != first {

@@ -21,6 +21,10 @@ env:
   # historically failing seed kept as a regression anchor. Changing this list
   # is an intentional re-recording, not an incidental edit.
   TSLINK_SHUFFLE_SEEDS: "1783794398036981000 20260712 424242"
+  # TSLink's own regression tests in the scoped fsnotify copy, one anchored
+  # alternative per Test function in its ownership and close_windows test
+  # sources. TestScopedFsnotifyPatternSelectsOnlyOwnedTests prints the value.
+  TSLINK_FSNOTIFY_OWNED_TESTS: '^(TestDescriptorOwnership|TestInotifyCloseJoinsPublicChannels|TestInotifyCloseUnblocksUnreadChannels|TestInotifyRepeatedCloseJoinsReader|TestOwnershipCloseJoinsEveryCaller|TestOwnershipConcurrentPublicOperations|TestOwnershipRegistrationFailure|TestOwnershipRetainedDescriptors|TestWindowsCloseJoinsPublicChannels|TestWindowsLateCompletionOwnership|TestWindowsRepeatedWatchLifecycle|TestWindowsSendErrorCloseToken)$'
   # Pinned analysis tool versions. CI stays deterministic; the vulnerability
   # database itself is still fetched fresh at run time (see the govulncheck
   # jobs) because the advisory set is time-dependent.
@@ -122,17 +126,48 @@ jobs:
           output="$(go run ./tools/gen-manifest -check)"
           printf '%s\n' "${output}"
           test "${output}" = "gen-manifest: docs/cli-manifest.json is up to date"
+      # Every suite execution is another chance of a test-side timing failure
+      # (measured: about 1.8% per execution, no data race reports), so each
+      # property runs only where it can differ. Every OS runs the suite once;
+      # race covers the whole module on macOS, comes from Coverage on Ubuntu
+      # and covers packages with Windows-specific production code on Windows;
+      # the shuffle seeds run on Ubuntu. Scoped fsnotify runs TSLink's own
+      # regressions; its upstream suite waits on fixed 500ms sleeps and is
+      # run by hand on update. TestNativeJobRunsEachPropertyWhereItCanDiffer
+      # pins this shape.
       - name: Test
         run: go test -count=1 ./...
       - name: Race
+        if: matrix.os == 'macos-latest'
         run: go test -race -count=1 ./...
+      - name: Race (Windows-specific packages)
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          listing="$(go list -f '{{.ImportPath}}{{range .GoFiles}} {{.}}{{end}}' ./...)"
+          selected="$(printf '%s\n' "${listing}" | awk '{ for (i = 2; i <= NF; i++) if ($i ~ /_windows\.go$/) { print $1; next } }')"
+          if [ -z "${selected}" ]; then
+            echo "::error::no package has a _windows.go production source; Windows race would test nothing"
+            exit 1
+          fi
+          packages=()
+          while IFS= read -r package; do
+            packages+=("${package}")
+          done <<< "${selected}"
+          printf 'Windows race packages (%d):\n' "${#packages[@]}"
+          printf '  %s\n' "${packages[@]}"
+          go test -race -count=1 "${packages[@]}"
       - name: Scoped fsnotify native tests
         working-directory: third_party/fsnotify
-        run: go test -count=1 ./...
+        shell: bash
+        run: go test -count=1 -run "${TSLINK_FSNOTIFY_OWNED_TESTS:?}" ./...
       - name: Scoped fsnotify race
         working-directory: third_party/fsnotify
-        run: go test -race -count=1 ./...
+        shell: bash
+        run: go test -race -count=1 -run "${TSLINK_FSNOTIFY_OWNED_TESTS:?}" ./...
       - name: Recorded deterministic shuffle
+        if: matrix.os == 'ubuntu-latest'
         shell: bash
         run: |
           set -euo pipefail

@@ -15,6 +15,7 @@ import (
 	"github.com/anydoor7/tslink/internal/config"
 	"github.com/anydoor7/tslink/internal/registry"
 	tsruntime "github.com/anydoor7/tslink/internal/runtime"
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 type startObservation struct {
@@ -28,7 +29,7 @@ type startObservation struct {
 // what failed, and what runtime.json said at the moment it became ready.
 func runUntilReady(t *testing.T, s *Server) (startObservation, error) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), testwait.Budget(t))
 	defer cancel()
 	var obs startObservation
 	s.SetReadyFunc(func() error {
@@ -330,14 +331,11 @@ func TestNodeIdentityRecordMovedAsideRecoversOnTicker(t *testing.T) {
 	t.Cleanup(func() { lifecycleTickerInterval = oldInterval })
 	ctx, cancel := context.WithCancel(context.Background())
 	done := s.startLifecycleTicker(ctx)
-	deadline := time.Now().Add(5 * time.Second)
-	for !s.nodeRunning("api") && time.Now().Before(deadline) {
-		time.Sleep(5 * time.Millisecond)
-	}
+	testwait.Until(t, "api recovered on the ticker after its record was moved aside", func() bool { return s.nodeRunning("api") })
 	cancel()
 	<-done
 	if !s.nodeRunning("api") {
-		t.Fatal("api did not recover on the ticker after its record was moved aside")
+		t.Fatal("api stopped after the ticker joined")
 	}
 	s.mu.RLock()
 	_, stillFailed := s.serviceFailures["api"]

@@ -14,6 +14,7 @@ import (
 
 	"github.com/anydoor7/tslink/internal/config"
 	"github.com/anydoor7/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/testwait"
 	"tailscale.com/client/tailscale/apitype"
 	"tailscale.com/tailcfg"
 )
@@ -64,12 +65,12 @@ func TestPeopleWebSocketKeepsRootRoutingAndDeniesReconnect(t *testing.T) {
 	defer front.Close()
 	connect := func(want string) (net.Conn, *bufio.Reader) {
 		t.Helper()
-		conn, err := net.DialTimeout("tcp", strings.TrimPrefix(front.URL, "http://"), 5*time.Second)
+		conn, err := net.DialTimeout("tcp", strings.TrimPrefix(front.URL, "http://"), testwait.Budget(t))
 		if err != nil {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { conn.Close() })
-		conn.SetDeadline(time.Now().Add(5 * time.Second))
+		conn.SetDeadline(time.Now().Add(testwait.Budget(t)))
 		fmt.Fprint(conn, "GET /socket HTTP/1.1\r\nHost: photos.test\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n")
 		reader := bufio.NewReader(conn)
 		line, err := reader.ReadString('\n')

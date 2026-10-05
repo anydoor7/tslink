@@ -9,6 +9,7 @@ import (
 
 	"github.com/anydoor7/tslink/internal/duration"
 	"github.com/anydoor7/tslink/internal/filelock"
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 func TestAccessRequestExpiryMaintenanceContention(t *testing.T) {
@@ -50,11 +51,19 @@ func TestAccessRequestExpiryMaintenanceContention(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			start := time.Now()
-			rows, err := ListAccessRequests(path, requestTestNow.Add(7*24*time.Hour))
-			if time.Since(start) > time.Second {
-				t.Fatal("maintenance read waited for writer")
+			// In the busy case the fixture holds the lock for the whole call, so
+			// a maintenance read that waited for the writer would never return.
+			type listed struct {
+				rows []AccessRequest
+				err  error
 			}
+			done := make(chan listed, 1)
+			go func() {
+				rows, err := ListAccessRequests(path, requestTestNow.Add(7*24*time.Hour))
+				done <- listed{rows, err}
+			}()
+			res := testwait.Recv(t, done, "maintenance read returned without waiting for the writer")
+			rows, err := res.rows, res.err
 			if busy {
 				requestCode(t, err, "access_request_busy")
 				if rows != nil {

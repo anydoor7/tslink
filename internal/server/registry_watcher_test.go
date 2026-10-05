@@ -13,6 +13,7 @@ import (
 	"github.com/anydoor7/tslink/internal/config"
 	"github.com/anydoor7/tslink/internal/registry"
 	"github.com/anydoor7/tslink/internal/testenv"
+	"github.com/anydoor7/tslink/internal/testwait"
 	"github.com/fsnotify/fsnotify"
 )
 
@@ -195,7 +196,7 @@ func TestCredentialWatcherObservesReplacementAndRemoval(t *testing.T) {
 		}
 		select {
 		case <-changed:
-		case <-time.After(10 * time.Second):
+		case <-time.After(testwait.Budget(t)):
 			t.Fatalf("credential transition %q produced no frame", value)
 		}
 	}

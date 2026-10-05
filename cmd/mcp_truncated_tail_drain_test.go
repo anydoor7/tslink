@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 // TestMCPTruncatedFinalRecordStillAnswersEarlierRequests covers a client that
@@ -36,7 +38,8 @@ func TestMCPTruncatedFinalRecordStillAnswersEarlierRequests(t *testing.T) {
 			}
 			input := initializedMCPInput(tc.calls) + truncated
 			for attempt := 0; attempt < tc.attempts; attempt++ {
-				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				// Hang guard only: truncated input must settle on its own.
+				ctx, cancel := context.WithTimeout(context.Background(), testwait.Budget(t))
 				var stdout bytes.Buffer
 				err := runMCPStdio(ctx, strings.NewReader(input), &stdout, actions)
 				cancel()

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 // TestMCPFiniteEOFCRJoinedRecordsAnswerEveryCall pins the answer-loss half of
@@ -57,7 +59,8 @@ func TestMCPFiniteEOFCRJoinedRecordsAnswerEveryCall(t *testing.T) {
 			var sessionErrors []error
 			const attempts = 60
 			for attempt := 0; attempt < attempts; attempt++ {
-				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				// Hang guard only: finite input must settle on its own.
+				ctx, cancel := context.WithTimeout(context.Background(), testwait.Budget(t))
 				var stdout bytes.Buffer
 				err := runMCPStdio(ctx, strings.NewReader(tc.input), &stdout, actions)
 				cancel()

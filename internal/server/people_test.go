@@ -13,6 +13,7 @@ import (
 
 	"github.com/anydoor7/tslink/internal/config"
 	"github.com/anydoor7/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/testwait"
 	"tailscale.com/client/tailscale/apitype"
 	"tailscale.com/tailcfg"
 )
@@ -174,11 +175,7 @@ func TestPeopleLifecycleTickExpiresDurably(t *testing.T) {
 	// Captured clock must remain the deadline, despite changing the seam.
 	serverNowFn = func() time.Time { return now.Add(-time.Hour) }
 	t.Cleanup(func() { cancel(); <-done })
-	select {
-	case <-tickCompleted:
-	case <-time.After(5 * time.Second):
-		t.Fatal("tick did not complete")
-	}
+	testwait.Recv(t, tickCompleted, "tick did not complete")
 	// Join the writer before checking durability, including on test failure.
 	cancel()
 	<-done

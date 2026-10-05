@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/anydoor7/tslink/internal/testenv"
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 // boundedCallResult carries one seam call out of the goroutine that makes it,
@@ -63,15 +64,12 @@ func requireSeamReturnsWithinBudget(t *testing.T, manager string, call func() ([
 		out, err := call()
 		done <- boundedCallResult{out: out, err: err}
 	}()
-	limit := 5 * time.Second // real subprocess hang guard
-	select {
-	case result := <-done:
-
-		if !errors.Is(result.err, context.DeadlineExceeded) || !strings.Contains(result.err.Error(), manager+" command exceeded "+queryBudget.String()) {
-			t.Fatalf("%s seam against a manager that never answers returned err=%v, want the bounded-command deadline error", manager, result.err)
-		}
-	case <-time.After(limit):
-		t.Fatalf("%s seam did not return within %s against a manager that never answers; the call is unbounded", manager, limit)
+	// The deadline error naming the 2s budget is the assertion; an unbounded
+	// call returns the child's own exit after 30s instead. testwait only stops
+	// a call that never returns.
+	result := testwait.Recv(t, done, manager+" seam returned against a manager that never answers")
+	if !errors.Is(result.err, context.DeadlineExceeded) || !strings.Contains(result.err.Error(), manager+" command exceeded "+queryBudget.String()) {
+		t.Fatalf("%s seam against a manager that never answers returned err=%v, want the bounded-command deadline error", manager, result.err)
 	}
 }
 
@@ -88,20 +86,16 @@ func TestBoundedManagerCommandReleasesAPipeHeldByAGrandchild(t *testing.T) {
 		out, err := runBoundedManagerCommand(context.Background(), "/bin/sh", budget, "-c", "/bin/sleep 30 & echo $!; wait")
 		done <- boundedCallResult{out: out, err: err}
 	}()
-	limit := 5 * time.Second // hang guard; error and pipe release are the assertions
-	select {
-	case result := <-done:
-
-		// The grandchild outlives the call by design (only the direct child is
-		// killed); do not leave it behind for the rest of the run.
-		if pid, err := strconv.Atoi(strings.TrimSpace(string(result.out))); err == nil && pid > 1 {
-			_ = syscall.Kill(pid, syscall.SIGKILL)
-		}
-		if !errors.Is(result.err, context.DeadlineExceeded) {
-			t.Fatalf("pipe-holding command returned err=%v, want deadline exceeded", result.err)
-		}
-
-	case <-time.After(limit):
-		t.Fatalf("pipe-holding command did not return within %s; a grandchild holding the output pipe blocks the bounded call", limit)
+	// Hang guard only; the deadline error and the pipe release are the
+	// assertions. Without WaitDelay the call returns when the 30s grandchild
+	// exits, long after the 300ms budget, so the error identity still decides.
+	result := testwait.Recv(t, done, "pipe-holding command returned while a grandchild held the output pipe")
+	// The grandchild outlives the call by design (only the direct child is
+	// killed); do not leave it behind for the rest of the run.
+	if pid, err := strconv.Atoi(strings.TrimSpace(string(result.out))); err == nil && pid > 1 {
+		_ = syscall.Kill(pid, syscall.SIGKILL)
+	}
+	if !errors.Is(result.err, context.DeadlineExceeded) {
+		t.Fatalf("pipe-holding command returned err=%v, want deadline exceeded", result.err)
 	}
 }

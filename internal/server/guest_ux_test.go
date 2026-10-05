@@ -8,10 +8,10 @@ import (
 	"regexp"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/anydoor7/tslink/internal/filelock"
 	"github.com/anydoor7/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 func TestGuestRecipientPages(t *testing.T) {
@@ -157,13 +157,9 @@ func TestGuestPeriodicAndShutdownCounters(t *testing.T) {
 	}
 	releaseRead()
 	releaseRead = nil
-	deadline := time.Now().Add(35 * time.Second)
-	for persisted() == 0 {
-		if time.Now().After(deadline) {
-			t.Fatal("periodic counter batch missing")
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
+	// The 30s period itself is pinned in virtual time by
+	// TestGuestMonitorFlushOwnershipAndSessionRecovery.
+	testwait.Until(t, "periodic counter batch persisted", func() bool { return persisted() != 0 })
 	resp, _ = f.healthyRequest("/", cookies)
 	if resp.StatusCode != 204 {
 		t.Fatal("second app control")

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/anydoor7/tslink/internal/credentials"
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 func useRealLoginTransaction(t *testing.T) {
@@ -59,9 +60,10 @@ func TestLogoutCannotRemoveMetadataOfLoginCommittedDuringLogout(t *testing.T) {
 	t.Cleanup(func() { inspectStoredCredentialsFn = originalInspect })
 	inspectStoredCredentialsFn = func() (credentials.StoredCredentialStatus, error) {
 		if loginStarted.Load() {
+			// Inside the product hook: report without t.Fatal.
 			select {
 			case <-loginFinished:
-			case <-time.After(10 * time.Second):
+			case <-time.After(testwait.Budget(t)):
 				t.Error("concurrent login did not finish")
 			}
 		}
@@ -74,13 +76,9 @@ func TestLogoutCannotRemoveMetadataOfLoginCommittedDuringLogout(t *testing.T) {
 	if err := logoutUser(filepath.Join(dir, "pid"), filepath.Join(dir, "authkey"), filepath.Join(dir, "nodes"), dir, false, &out); err != nil && !strings.Contains(err.Error(), "credential still present after cleanup") {
 		t.Fatalf("logout: %v", err)
 	}
-	select {
-	case <-loginFinished:
-		if loginErr != nil {
-			t.Fatalf("concurrent login: %v", loginErr)
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("concurrent login did not finish")
+	testwait.Recv(t, loginFinished, "concurrent login finished")
+	if loginErr != nil {
+		t.Fatalf("concurrent login: %v", loginErr)
 	}
 
 	key, err := credentials.GetAPIKey()

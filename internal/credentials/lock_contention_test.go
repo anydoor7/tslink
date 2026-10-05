@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/anydoor7/tslink/internal/registry"
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 func captureCredentialLogs(t *testing.T) *bytes.Buffer {
@@ -55,11 +56,7 @@ func holdCredentialTransaction(t *testing.T) {
 			return nil
 		})
 	}()
-	select {
-	case <-held:
-	case <-time.After(5 * time.Second):
-		t.Fatal("holder transaction never acquired the credential lock")
-	}
+	testwait.Recv(t, held, "holder transaction acquired the credential lock")
 	t.Cleanup(func() {
 		close(release)
 		<-done
