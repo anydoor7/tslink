@@ -8,6 +8,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/anydoor7/tslink/internal/testwait"
 )
 
 func TestSpecialFileAndSymlinkRefusal(t *testing.T) {
@@ -34,13 +36,27 @@ func TestSpecialFileAndSymlinkRefusal(t *testing.T) {
 					}
 				})
 			}
-			start := time.Now()
-			s := newTestStore(t, dir, Options{}, func() time.Time { return testTime })
-			s.Record(event("app", "alice", "/ok"))
-			closeStore(t, s)
-			if time.Since(start) > time.Second {
-				t.Fatal("special-file I/O blocked")
+			// Opening a FIFO with no peer blocks forever, so returning at all is
+			// the property; how fast the refusal happens is not.
+			type opened struct {
+				s   *Store
+				err error
 			}
+			done := make(chan opened, 1)
+			go func() {
+				s, err := New(dir, Options{}, func() time.Time { return testTime })
+				if err == nil {
+					s.Record(event("app", "alice", "/ok"))
+					s.Close()
+					<-s.Done()
+				}
+				done <- opened{s, err}
+			}()
+			res := testwait.Recv(t, done, "special-file store returned without blocking on the file")
+			if res.err != nil {
+				t.Fatal(res.err)
+			}
+			s := res.s
 			if s.Health().Drops != 1 || s.Health().Error == "" {
 				t.Fatalf("special file health %+v", s.Health())
 			}
